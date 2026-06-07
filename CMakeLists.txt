@@ -69,7 +69,8 @@ set(ENGINE_PUBLIC_INCLUDE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 # engine_rhi — thin Vulkan abstraction (instance/device, swapchain, ...).
 # ---------------------------------------------------------------------------
 add_library(engine_rhi STATIC
-    src/rhi/device.cpp)
+    src/rhi/device.cpp
+    src/rhi/swapchain.cpp)
 target_link_libraries(engine_rhi PUBLIC engine_flags Vulkan::Vulkan)
 target_include_directories(engine_rhi PUBLIC ${ENGINE_PUBLIC_INCLUDE})
 

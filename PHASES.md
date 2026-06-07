@@ -36,7 +36,7 @@ Goal: a window opens, Vulkan initialises, a black frame is presented, the app cl
   Validation layers enabled in debug builds.
   *Commit: `[Phase1/Slice3] Vulkan device creation`*
 
-- [ ] **1.4 — Swapchain + present loop**
+- [x] **1.4 — Swapchain + present loop**
   `src/rhi/swapchain.cpp`: swapchain, image views, per-frame sync primitives (2 frames in flight).
   Main loop acquires, submits an empty command buffer, presents. No rendering yet.
   *Commit: `[Phase1/Slice4] swapchain and present loop`*
