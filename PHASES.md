@@ -30,7 +30,7 @@ Goal: a window opens, Vulkan initialises, a black frame is presented, the app cl
   No Vulkan yet.
   *Commit: `[Phase1/Slice2] SDL3 window and event loop`*
 
-- [ ] **1.3 — Vulkan device**
+- [x] **1.3 — Vulkan device**
   `src/rhi/device.cpp`: instance, debug messenger, physical device selection (prefer discrete),
   logical device, graphics + compute + transfer queues.
   Validation layers enabled in debug builds.

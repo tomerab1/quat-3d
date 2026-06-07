@@ -56,19 +56,29 @@ if(ENGINE_EDITOR)
 endif()
 
 # ---------------------------------------------------------------------------
-# Third-party dependencies (vcpkg manifest mode; grown per phase).
+# Third-party dependencies.
+#   - SDL3 from vcpkg (manifest mode; grown per phase).
+#   - Vulkan from the system SDK/loader via CMake's bundled FindVulkan.
 # ---------------------------------------------------------------------------
 find_package(SDL3 CONFIG REQUIRED)
+find_package(Vulkan REQUIRED)
+
+set(ENGINE_PUBLIC_INCLUDE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 
 # ---------------------------------------------------------------------------
-# Targets
-#
-# The full target graph (engine_core / engine_rhi / engine_renderer /
-# engine_editor / game) is built up phase by phase as modules gain sources.
-# Phase 1 only needs the `game` executable entry point.
+# engine_rhi — thin Vulkan abstraction (instance/device, swapchain, ...).
+# ---------------------------------------------------------------------------
+add_library(engine_rhi STATIC
+    src/rhi/device.cpp)
+target_link_libraries(engine_rhi PUBLIC engine_flags Vulkan::Vulkan)
+target_include_directories(engine_rhi PUBLIC ${ENGINE_PUBLIC_INCLUDE})
+
+# ---------------------------------------------------------------------------
+# game — executable entry point. The full target graph (engine_core /
+# engine_renderer / engine_editor) grows phase by phase as modules gain sources.
 # ---------------------------------------------------------------------------
 add_executable(game src/main.cpp)
-target_link_libraries(game PRIVATE engine_flags SDL3::SDL3)
+target_link_libraries(game PRIVATE engine_flags engine_rhi SDL3::SDL3)
 target_include_directories(game PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${ENGINE_PUBLIC_INCLUDE}
     ${CMAKE_CURRENT_SOURCE_DIR}/src)
