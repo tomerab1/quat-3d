@@ -63,7 +63,7 @@ Goal: render graph infrastructure exists; a hard-coded triangle appears on scree
   Parse reflection JSON to auto-derive push constant ranges and descriptor layouts.
   *Commit: `[Phase2/Slice2] pipeline cache and shader reflection`*
 
-- [ ] **2.3 — Descriptor buffer setup**
+- [x] **2.3 — Descriptor buffer setup**
   Implement descriptor buffer allocation (one buffer per descriptor set layout).
   Helper to write sampler/image/buffer descriptors into the buffer at a given offset.
   *Commit: `[Phase2/Slice3] descriptor buffer infrastructure`*

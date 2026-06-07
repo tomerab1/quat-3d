@@ -16,11 +16,11 @@ namespace {
 constexpr const char* k_validation_layer = "VK_LAYER_KHRONOS_validation";
 
 // Device extensions every selected GPU must support. dynamic_rendering and
-// synchronization2 are core in Vulkan 1.3, so only the swapchain extension is
-// listed here — it is foundational for presentation (Slice 1.4) and is enabled
-// at device-creation time.
-constexpr std::array<const char*, 1> k_required_device_extensions = {
+// synchronization2 are core in Vulkan 1.3; swapchain is foundational for
+// presentation; descriptor_buffer is the mandated descriptor model (CLAUDE.md).
+constexpr std::array<const char*, 2> k_required_device_extensions = {
     VK_KHR_SWAPCHAIN_EXTENSION_NAME,
+    VK_EXT_DESCRIPTOR_BUFFER_EXTENSION_NAME,
 };
 
 [[nodiscard]] std::string vk_result_string(VkResult result) {
@@ -162,8 +162,14 @@ struct Candidate {
 
     Candidate best{};
     for (VkPhysicalDevice device : devices) {
+        VkPhysicalDeviceDescriptorBufferFeaturesEXT db_features{};
+        db_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_BUFFER_FEATURES_EXT;
+        VkPhysicalDeviceVulkan12Features features12{};
+        features12.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES;
+        features12.pNext = &db_features;
         VkPhysicalDeviceVulkan13Features features13{};
         features13.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES;
+        features13.pNext = &features12;
         VkPhysicalDeviceFeatures2 features2{};
         features2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
         features2.pNext = &features13;
@@ -177,6 +183,7 @@ struct Candidate {
             continue;
         }
         if (!features13.dynamicRendering || !features13.synchronization2) continue;
+        if (!features12.bufferDeviceAddress || !db_features.descriptorBuffer) continue;
 
         const auto exts = device_extensions(device);
         const bool all_exts = std::all_of(
@@ -278,10 +285,20 @@ std::expected<Device, core::Error> Device::create(const CreateInfo& info) {
         queue_infos.push_back(qi);
     }
 
+    VkPhysicalDeviceDescriptorBufferFeaturesEXT db_features{};
+    db_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_BUFFER_FEATURES_EXT;
+    db_features.descriptorBuffer = VK_TRUE;
+
+    VkPhysicalDeviceVulkan12Features features12{};
+    features12.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES;
+    features12.bufferDeviceAddress = VK_TRUE;
+    features12.pNext = &db_features;
+
     VkPhysicalDeviceVulkan13Features features13{};
     features13.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES;
     features13.dynamicRendering = VK_TRUE;
     features13.synchronization2 = VK_TRUE;
+    features13.pNext = &features12;
 
     VkDeviceCreateInfo device_info{};
     device_info.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
@@ -300,6 +317,16 @@ std::expected<Device, core::Error> Device::create(const CreateInfo& info) {
     vkGetDeviceQueue(dev.device_, candidate.families.graphics, 0, &dev.graphics_queue_);
     vkGetDeviceQueue(dev.device_, candidate.families.compute, 0, &dev.compute_queue_);
     vkGetDeviceQueue(dev.device_, candidate.families.transfer, 0, &dev.transfer_queue_);
+
+    // Descriptor buffer sizes/alignments, needed when laying out descriptor
+    // buffers (Slice 2.3). pNext is cleared so the cached struct is self-contained.
+    dev.descriptor_buffer_props_.sType =
+        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_BUFFER_PROPERTIES_EXT;
+    VkPhysicalDeviceProperties2 props2{};
+    props2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2;
+    props2.pNext = &dev.descriptor_buffer_props_;
+    vkGetPhysicalDeviceProperties2(dev.physical_device_, &props2);
+    dev.descriptor_buffer_props_.pNext = nullptr;
 
     return dev;
 }
@@ -345,6 +372,7 @@ Device& Device::operator=(Device&& other) noexcept {
         compute_queue_   = std::exchange(other.compute_queue_, VK_NULL_HANDLE);
         transfer_queue_  = std::exchange(other.transfer_queue_, VK_NULL_HANDLE);
         properties_      = other.properties_;
+        descriptor_buffer_props_ = other.descriptor_buffer_props_;
     }
     return *this;
 }

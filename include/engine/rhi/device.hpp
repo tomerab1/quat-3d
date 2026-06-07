@@ -52,6 +52,8 @@ public:
     [[nodiscard]] VkQueue compute_queue() const { return compute_queue_; }
     [[nodiscard]] VkQueue transfer_queue() const { return transfer_queue_; }
     [[nodiscard]] const VkPhysicalDeviceProperties& properties() const { return properties_; }
+    [[nodiscard]] const VkPhysicalDeviceDescriptorBufferPropertiesEXT&
+    descriptor_buffer_properties() const { return descriptor_buffer_props_; }
 
 private:
     void destroy() noexcept;
@@ -65,6 +67,7 @@ private:
     VkQueue                  compute_queue_    = VK_NULL_HANDLE;
     VkQueue                  transfer_queue_   = VK_NULL_HANDLE;
     VkPhysicalDeviceProperties properties_{};
+    VkPhysicalDeviceDescriptorBufferPropertiesEXT descriptor_buffer_props_{};
 };
 
 } // namespace engine::rhi

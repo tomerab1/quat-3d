@@ -129,6 +129,9 @@ std::expected<GpuAllocator, core::Error> GpuAllocator::create(const Device& devi
     fns.vkGetDeviceProcAddr = vkGetDeviceProcAddr;
 
     VmaAllocatorCreateInfo info{};
+    // Buffers may request a device address (required by descriptor buffers and
+    // bindless), so the allocator must opt into VK_KHR_buffer_device_address.
+    info.flags = VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT;
     info.instance = device.instance();
     info.physicalDevice = device.physical_device();
     info.device = device.handle();

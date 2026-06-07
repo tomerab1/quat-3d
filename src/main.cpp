@@ -14,6 +14,7 @@
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_vulkan.h>
 
+#include "engine/rhi/descriptor_buffer.hpp"
 #include "engine/rhi/device.hpp"
 #include "engine/rhi/gpu_allocator.hpp"
 #include "engine/rhi/pipeline_cache.hpp"
@@ -139,6 +140,13 @@ int main() {
             std::fprintf(stderr, "[selftest] VMA GPU round-trip OK\n");
         } else {
             std::fprintf(stderr, "[selftest] FAILED: %s\n", r.error().message.c_str());
+        }
+
+        if (auto r = engine::rhi::run_descriptor_buffer_self_test(device, allocator); r) {
+            std::fprintf(stderr, "[selftest] descriptor buffer OK\n");
+        } else {
+            std::fprintf(stderr, "[selftest] descriptor buffer FAILED: %s\n",
+                         r.error().message.c_str());
         }
 
         if (auto cache = engine::rhi::PipelineCache::create(device); cache) {
