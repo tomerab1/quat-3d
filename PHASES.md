@@ -58,7 +58,7 @@ Goal: render graph infrastructure exists; a hard-coded triangle appears on scree
   Add a trivial `passthrough.slang` (fullscreen triangle, outputs solid colour) to verify.
   *Commit: `[Phase2/Slice1] Slang shader compilation pipeline`*
 
-- [ ] **2.2 — Pipeline cache + shader module loader**
+- [x] **2.2 — Pipeline cache + shader module loader**
   `src/rhi/pipeline_cache.cpp`: load SPIR-V, create `VkShaderModule`, cache by path hash.
   Parse reflection JSON to auto-derive push constant ranges and descriptor layouts.
   *Commit: `[Phase2/Slice2] pipeline cache and shader reflection`*

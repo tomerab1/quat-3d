@@ -16,6 +16,7 @@
 
 #include "engine/rhi/device.hpp"
 #include "engine/rhi/gpu_allocator.hpp"
+#include "engine/rhi/pipeline_cache.hpp"
 #include "engine/rhi/swapchain.hpp"
 
 namespace {
@@ -138,6 +139,28 @@ int main() {
             std::fprintf(stderr, "[selftest] VMA GPU round-trip OK\n");
         } else {
             std::fprintf(stderr, "[selftest] FAILED: %s\n", r.error().message.c_str());
+        }
+
+        if (auto cache = engine::rhi::PipelineCache::create(device); cache) {
+            const std::string spv = std::string(QUAT_COOKED_SHADER_DIR) + "/passthrough.spv";
+            if (auto shader = cache->load(spv); shader) {
+                const auto& refl = (*shader)->reflection;
+                std::fprintf(stderr,
+                    "[selftest] passthrough loaded: %zu entry points, "
+                    "%zu push-constant ranges, %zu descriptor bindings\n",
+                    refl.entry_points.size(), refl.push_constant_ranges.size(),
+                    refl.descriptor_bindings.size());
+                for (const auto& ep : refl.entry_points) {
+                    std::fprintf(stderr, "[selftest]   entry: %s (stage 0x%x)\n",
+                                 ep.name.c_str(), ep.stage);
+                }
+            } else {
+                std::fprintf(stderr, "[selftest] shader load FAILED: %s\n",
+                             shader.error().message.c_str());
+            }
+        } else {
+            std::fprintf(stderr, "[selftest] pipeline cache FAILED: %s\n",
+                         cache.error().message.c_str());
         }
     }
 

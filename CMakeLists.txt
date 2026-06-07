@@ -63,6 +63,7 @@ endif()
 find_package(SDL3 CONFIG REQUIRED)
 find_package(Vulkan REQUIRED)
 find_package(VulkanMemoryAllocator CONFIG REQUIRED)
+find_package(nlohmann_json CONFIG REQUIRED)
 
 set(ENGINE_PUBLIC_INCLUDE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 
@@ -73,9 +74,13 @@ add_library(engine_rhi STATIC
     src/rhi/device.cpp
     src/rhi/swapchain.cpp
     src/rhi/gpu_allocator.cpp
-    src/rhi/vma_impl.cpp)
+    src/rhi/vma_impl.cpp
+    src/rhi/shader_reflection.cpp
+    src/rhi/pipeline_cache.cpp)
 target_link_libraries(engine_rhi PUBLIC
     engine_flags Vulkan::Vulkan GPUOpen::VulkanMemoryAllocator)
+# nlohmann_json is an implementation detail of the reflection parser (PRIVATE).
+target_link_libraries(engine_rhi PRIVATE nlohmann_json::nlohmann_json)
 target_include_directories(engine_rhi PUBLIC ${ENGINE_PUBLIC_INCLUDE})
 
 # VMA's implementation is not warning-clean under our strict flags; compile just
@@ -91,6 +96,10 @@ target_link_libraries(game PRIVATE engine_flags engine_rhi SDL3::SDL3)
 target_include_directories(game PRIVATE
     ${ENGINE_PUBLIC_INCLUDE}
     ${CMAKE_CURRENT_SOURCE_DIR}/src)
+# Absolute path to cooked shaders so the binary finds them regardless of CWD.
+# A proper asset-path resolver arrives with the asset manager in Phase 3.
+target_compile_definitions(game PRIVATE
+    QUAT_COOKED_SHADER_DIR="${CMAKE_CURRENT_SOURCE_DIR}/cooked/shaders")
 
 # ---------------------------------------------------------------------------
 # Offline shader cooking: assets/shaders/*.slang -> cooked/shaders/*.{spv,json}
