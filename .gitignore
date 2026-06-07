@@ -1,0 +1,22 @@
+# Build output
+/build/
+/out/
+*.o
+*.obj
+
+# Cooked assets (offline-generated, never committed)
+/cooked/
+
+# vcpkg
+/vcpkg_installed/
+/vcpkg/
+
+# IDE / editor
+/.vscode/
+/.idea/
+/.cache/
+compile_commands.json
+
+# OS
+.DS_Store
+Thumbs.db

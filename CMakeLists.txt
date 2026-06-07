@@ -1,0 +1,69 @@
+# quat-3d game engine — root build script.
+#
+# Toolchain: the project requires a C++23 standard library with <expected> and
+# <flat_map>. On this machine only clang++ with libc++ provides both, so the
+# presets pin CMAKE_CXX_COMPILER=clang++ and -stdlib=libc++. See CMakePresets.json.
+#
+# Note: CLAUDE.md targets CMake 3.28+, but the installed toolchain ships 3.22, so
+# the minimum is pinned to 3.22. Raise this once a newer CMake is available.
+cmake_minimum_required(VERSION 3.22)
+
+project(quat_3d
+    VERSION 0.1.0
+    DESCRIPTION "Modular data-driven C++23 game engine"
+    LANGUAGES CXX)
+
+# ---------------------------------------------------------------------------
+# Global settings
+# ---------------------------------------------------------------------------
+set(CMAKE_CXX_STANDARD 23)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
+
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
+if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
+    set(CMAKE_BUILD_TYPE Debug CACHE STRING "Build type" FORCE)
+endif()
+
+option(ENGINE_EDITOR "Build the ImGui-based editor layer" ON)
+option(ENGINE_PROFILE "Enable Tracy profiling in non-debug builds" OFF)
+
+# ---------------------------------------------------------------------------
+# Common compile options applied to all first-party engine targets.
+# Third-party (vcpkg) targets are unaffected.
+# ---------------------------------------------------------------------------
+add_library(engine_flags INTERFACE)
+
+target_compile_features(engine_flags INTERFACE cxx_std_23)
+
+if(MSVC)
+    target_compile_options(engine_flags INTERFACE /W4 /permissive- /EHs-c- /GR-)
+else()
+    target_compile_options(engine_flags INTERFACE
+        -Wall -Wextra -Wshadow
+        -fno-exceptions -fno-rtti)
+endif()
+
+# Per CLAUDE.md: column-major, reverse-Z friendly depth range [0, 1].
+target_compile_definitions(engine_flags INTERFACE
+    GLM_FORCE_DEPTH_ZERO_TO_ONE
+    GLM_FORCE_RADIANS
+    $<$<CONFIG:Release>:NDEBUG>)
+
+if(ENGINE_EDITOR)
+    target_compile_definitions(engine_flags INTERFACE ENGINE_EDITOR)
+endif()
+
+# ---------------------------------------------------------------------------
+# Targets
+#
+# The full target graph (engine_core / engine_rhi / engine_renderer /
+# engine_editor / game) is built up phase by phase as modules gain sources.
+# Phase 1 only needs the `game` executable entry point.
+# ---------------------------------------------------------------------------
+add_executable(game src/main.cpp)
+target_link_libraries(game PRIVATE engine_flags)
+target_include_directories(game PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/src)
