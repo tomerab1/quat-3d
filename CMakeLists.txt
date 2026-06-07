@@ -91,3 +91,10 @@ target_link_libraries(game PRIVATE engine_flags engine_rhi SDL3::SDL3)
 target_include_directories(game PRIVATE
     ${ENGINE_PUBLIC_INCLUDE}
     ${CMAKE_CURRENT_SOURCE_DIR}/src)
+
+# ---------------------------------------------------------------------------
+# Offline shader cooking: assets/shaders/*.slang -> cooked/shaders/*.{spv,json}
+# ---------------------------------------------------------------------------
+include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/CompileShaders.cmake)
+add_shader_compilation(shaders)
+add_dependencies(game shaders)

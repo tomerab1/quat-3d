@@ -52,7 +52,7 @@ Goal: a window opens, Vulkan initialises, a black frame is presented, the app cl
 
 Goal: render graph infrastructure exists; a hard-coded triangle appears on screen via a Slang shader.
 
-- [ ] **2.1 — Slang shader compilation pipeline**
+- [x] **2.1 — Slang shader compilation pipeline**
   CMake custom command runs `slangc` on all `.slang` files in `assets/shaders/`,
   outputs SPIR-V + reflection JSON to `cooked/shaders/`.
   Add a trivial `passthrough.slang` (fullscreen triangle, outputs solid colour) to verify.
