@@ -25,7 +25,7 @@ Goal: a window opens, Vulkan initialises, a black frame is presented, the app cl
   `.gitignore`, and this `CLAUDE.md` + `PHASES.md` at root.
   *Commit: `[Phase1/Slice1] repo scaffold and build system`*
 
-- [ ] **1.2 — SDL3 window + event loop**
+- [x] **1.2 — SDL3 window + event loop**
   `src/main.cpp` opens an SDL3 window, pumps events, exits cleanly on close/ESC.
   No Vulkan yet.
   *Commit: `[Phase1/Slice2] SDL3 window and event loop`*

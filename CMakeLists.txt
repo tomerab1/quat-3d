@@ -56,6 +56,11 @@ if(ENGINE_EDITOR)
 endif()
 
 # ---------------------------------------------------------------------------
+# Third-party dependencies (vcpkg manifest mode; grown per phase).
+# ---------------------------------------------------------------------------
+find_package(SDL3 CONFIG REQUIRED)
+
+# ---------------------------------------------------------------------------
 # Targets
 #
 # The full target graph (engine_core / engine_rhi / engine_renderer /
@@ -63,7 +68,7 @@ endif()
 # Phase 1 only needs the `game` executable entry point.
 # ---------------------------------------------------------------------------
 add_executable(game src/main.cpp)
-target_link_libraries(game PRIVATE engine_flags)
+target_link_libraries(game PRIVATE engine_flags SDL3::SDL3)
 target_include_directories(game PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
     ${CMAKE_CURRENT_SOURCE_DIR}/src)
