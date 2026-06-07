@@ -78,7 +78,8 @@ add_library(engine_rhi STATIC
     src/rhi/shader_reflection.cpp
     src/rhi/pipeline_cache.cpp
     src/rhi/descriptor_buffer.cpp
-    src/rhi/render_graph.cpp)
+    src/rhi/render_graph.cpp
+    src/rhi/graphics_pipeline.cpp)
 target_link_libraries(engine_rhi PUBLIC
     engine_flags Vulkan::Vulkan GPUOpen::VulkanMemoryAllocator)
 # nlohmann_json is an implementation detail of the reflection parser (PRIVATE).

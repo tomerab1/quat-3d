@@ -74,7 +74,7 @@ Goal: render graph infrastructure exists; a hard-coded triangle appears on scree
   Transient image pool. No actual passes yet — just the framework.
   *Commit: `[Phase2/Slice4] render graph core`*
 
-- [ ] **2.5 — First triangle**
+- [x] **2.5 — First triangle**
   `assets/shaders/mesh.slang`: minimal vertex + fragment shader (hardcoded triangle, UV-based colour).
   `GraphicsPass` registered in the render graph writing to the swapchain image.
   Triangle appears on screen.
