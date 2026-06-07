@@ -68,7 +68,7 @@ Goal: render graph infrastructure exists; a hard-coded triangle appears on scree
   Helper to write sampler/image/buffer descriptors into the buffer at a given offset.
   *Commit: `[Phase2/Slice3] descriptor buffer infrastructure`*
 
-- [ ] **2.4 — Render graph core**
+- [x] **2.4 — Render graph core**
   `src/rhi/render_graph.cpp`: `RenderPass` declaration (reads/writes), topological sort,
   automatic `VkImageMemoryBarrier2` insertion via synchronization2, execution loop.
   Transient image pool. No actual passes yet — just the framework.

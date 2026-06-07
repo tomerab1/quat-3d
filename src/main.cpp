@@ -18,6 +18,7 @@
 #include "engine/rhi/device.hpp"
 #include "engine/rhi/gpu_allocator.hpp"
 #include "engine/rhi/pipeline_cache.hpp"
+#include "engine/rhi/render_graph.hpp"
 #include "engine/rhi/swapchain.hpp"
 
 namespace {
@@ -147,6 +148,16 @@ int main() {
         } else {
             std::fprintf(stderr, "[selftest] descriptor buffer FAILED: %s\n",
                          r.error().message.c_str());
+        }
+
+        {
+            engine::rhi::TransientImagePool pool(device, allocator);
+            if (auto r = engine::rhi::run_render_graph_self_test(device, allocator, pool); r) {
+                std::fprintf(stderr, "[selftest] render graph OK\n");
+            } else {
+                std::fprintf(stderr, "[selftest] render graph FAILED: %s\n",
+                             r.error().message.c_str());
+            }
         }
 
         if (auto cache = engine::rhi::PipelineCache::create(device); cache) {
