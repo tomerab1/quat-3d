@@ -15,6 +15,7 @@
 #include <SDL3/SDL_vulkan.h>
 
 #include "engine/rhi/device.hpp"
+#include "engine/rhi/gpu_allocator.hpp"
 #include "engine/rhi/swapchain.hpp"
 
 namespace {
@@ -121,6 +122,24 @@ int main() {
     }
     engine::rhi::Device& device = *device_result;
     const VkDevice vk_device = device.handle();
+
+    auto allocator_result = engine::rhi::GpuAllocator::create(device);
+    if (!allocator_result) {
+        std::fprintf(stderr, "[fatal] allocator creation failed: %s\n",
+                     allocator_result.error().message.c_str());
+        SDL_DestroyWindow(window);
+        SDL_Quit();
+        return 1;
+    }
+    engine::rhi::GpuAllocator& allocator = *allocator_result;
+
+    if (std::getenv("QUAT_SELFTEST") != nullptr) {
+        if (auto r = engine::rhi::run_gpu_round_trip_self_test(device, allocator); r) {
+            std::fprintf(stderr, "[selftest] VMA GPU round-trip OK\n");
+        } else {
+            std::fprintf(stderr, "[selftest] FAILED: %s\n", r.error().message.c_str());
+        }
+    }
 
     VkSurfaceKHR surface = VK_NULL_HANDLE;
     if (!SDL_Vulkan_CreateSurface(window, device.instance(), nullptr, &surface)) {

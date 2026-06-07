@@ -13,6 +13,7 @@
         "wayland",
         "vulkan"
       ]
-    }
+    },
+    "vulkan-memory-allocator"
   ]
 }

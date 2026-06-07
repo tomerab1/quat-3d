@@ -41,7 +41,7 @@ Goal: a window opens, Vulkan initialises, a black frame is presented, the app cl
   Main loop acquires, submits an empty command buffer, presents. No rendering yet.
   *Commit: `[Phase1/Slice4] swapchain and present loop`*
 
-- [ ] **1.5 — VMA + GpuBuffer / GpuImage wrappers**
+- [x] **1.5 — VMA + GpuBuffer / GpuImage wrappers**
   Integrate VulkanMemoryAllocator. Implement `GpuBuffer` and `GpuImage` RAII wrappers.
   Add a staging helper for CPU→GPU uploads.
   *Commit: `[Phase1/Slice5] VMA and GPU resource wrappers`*

@@ -62,6 +62,7 @@ endif()
 # ---------------------------------------------------------------------------
 find_package(SDL3 CONFIG REQUIRED)
 find_package(Vulkan REQUIRED)
+find_package(VulkanMemoryAllocator CONFIG REQUIRED)
 
 set(ENGINE_PUBLIC_INCLUDE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 
@@ -70,9 +71,16 @@ set(ENGINE_PUBLIC_INCLUDE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 # ---------------------------------------------------------------------------
 add_library(engine_rhi STATIC
     src/rhi/device.cpp
-    src/rhi/swapchain.cpp)
-target_link_libraries(engine_rhi PUBLIC engine_flags Vulkan::Vulkan)
+    src/rhi/swapchain.cpp
+    src/rhi/gpu_allocator.cpp
+    src/rhi/vma_impl.cpp)
+target_link_libraries(engine_rhi PUBLIC
+    engine_flags Vulkan::Vulkan GPUOpen::VulkanMemoryAllocator)
 target_include_directories(engine_rhi PUBLIC ${ENGINE_PUBLIC_INCLUDE})
+
+# VMA's implementation is not warning-clean under our strict flags; compile just
+# that TU permissively (our code using VMA stays strict).
+set_source_files_properties(src/rhi/vma_impl.cpp PROPERTIES COMPILE_OPTIONS "-w")
 
 # ---------------------------------------------------------------------------
 # game — executable entry point. The full target graph (engine_core /
