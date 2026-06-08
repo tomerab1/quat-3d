@@ -7,6 +7,7 @@
 // trailing transition to PRESENT_SRC. Two frames in flight.
 
 #include <array>
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -18,8 +19,12 @@
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_vulkan.h>
 
+#include <glm/glm.hpp>
+#include <glm/gtc/matrix_transform.hpp>
+
 #include "engine/asset/asset_manager.hpp"
 #include "engine/asset/material_asset.hpp"
+#include "engine/asset/mesh_asset.hpp"
 #include "engine/renderer/lighting_pass.hpp"
 #include "engine/renderer/mesh_pass.hpp"
 #include "engine/renderer/tonemap_pass.hpp"
@@ -202,6 +207,204 @@ run_triangle_self_test(const engine::rhi::Device& device, engine::rhi::GpuAlloca
     return result;
 }
 
+// Per-frame-in-flight bundle for the live deferred chain. Each frame slot owns
+// its own pass instances (which hold per-frame descriptor buffers) and transient
+// image pool, so building frame N+1's graph never stomps resources still in use
+// by frame N. The main loop waits on the slot's fence before reusing it, which
+// makes resetting the pool and rebuilding the descriptor buffers safe.
+struct DeferredFrame {
+    engine::renderer::MeshPass       mesh;
+    engine::renderer::LightingPass   lighting;
+    engine::renderer::TonemapPass    tonemap;
+    engine::rhi::TransientImagePool  pool;
+};
+
+// A unit cube centred at the origin with per-face normals (24 vertices, 36
+// indices). Stands in as the demo mesh until glTF scene-graph loading (4.4).
+engine::scene::MeshData make_cube_data() {
+    using engine::asset::Vertex;
+    engine::scene::MeshData d;
+    const glm::vec3 face_normals[6] = {{1, 0, 0},  {-1, 0, 0}, {0, 1, 0},
+                                       {0, -1, 0}, {0, 0, 1},  {0, 0, -1}};
+    for (const glm::vec3& n : face_normals) {
+        const glm::vec3 up = (std::abs(n.y) > 0.9F) ? glm::vec3(0, 0, 1) : glm::vec3(0, 1, 0);
+        const glm::vec3 t = glm::normalize(glm::cross(up, n));
+        const glm::vec3 b = glm::cross(n, t);
+        const glm::vec3 c = n * 0.5F;
+        const glm::vec3 corners[4] = {
+            c - t * 0.5F - b * 0.5F, c + t * 0.5F - b * 0.5F,
+            c + t * 0.5F + b * 0.5F, c - t * 0.5F + b * 0.5F};
+        const glm::vec2 uvs[4] = {{0, 0}, {1, 0}, {1, 1}, {0, 1}};
+        const auto base = static_cast<std::uint32_t>(d.vertices.size());
+        for (int i = 0; i < 4; ++i) {
+            Vertex v;
+            v.position = corners[i];
+            v.normal = n;
+            v.uv = uvs[i];
+            v.tangent = glm::vec4(t, 1.0F);
+            d.vertices.push_back(v);
+        }
+        for (std::uint32_t idx : {base, base + 1, base + 2, base, base + 2, base + 3}) {
+            d.indices.push_back(idx);
+        }
+    }
+    d.bounds = {{-0.5F, -0.5F, -0.5F}, {0.5F, 0.5F, 0.5F}};
+    d.submeshes = {engine::asset::SubMesh{0, static_cast<std::uint32_t>(d.indices.size()), 0}};
+    return d;
+}
+
+// Offscreen render of the demo scene (cube + perspective camera + sun) through
+// the full deferred chain into an LDR image, read back to verify the camera
+// frames the cube: the centre pixel (on the cube) is lit and a corner pixel
+// (background) stays black. Unlike the Phase 3 chain self-tests this drives the
+// real camera_system matrices, so it catches a broken projection / view / Y-flip
+// that "runs clean" would miss.
+std::expected<void, engine::core::Error>
+run_scene_render_self_test(const engine::rhi::Device& device, engine::rhi::GpuAllocator& allocator,
+                           engine::rhi::PipelineCache& cache,
+                           const engine::rhi::TransferContext& transfer,
+                           const std::string& shader_dir) {
+    using namespace engine;
+    constexpr VkExtent2D extent{128, 128};
+    constexpr VkFormat ldr_format = VK_FORMAT_R8G8B8A8_UNORM;
+    constexpr VkDeviceSize bytes = static_cast<VkDeviceSize>(extent.width) * extent.height * 4;
+
+    auto mesh = scene::upload_mesh(make_cube_data(), allocator, transfer);
+    if (!mesh) return std::unexpected(mesh.error());
+    asset::PbrMaterialParams params;
+    params.base_color_factor = {0.85F, 0.35F, 0.2F, 1.0F};
+    params.metallic_factor = 0.0F;
+    params.roughness_factor = 0.6F;
+    auto material = asset::upload_material(params, asset::MaterialTextures{}, allocator, transfer);
+    if (!material) return std::unexpected(material.error());
+
+    auto mesh_pass = renderer::MeshPass::create(device, allocator, cache, transfer, shader_dir);
+    if (!mesh_pass) return std::unexpected(mesh_pass.error());
+    auto lighting_pass = renderer::LightingPass::create(device, allocator, cache, shader_dir);
+    if (!lighting_pass) return std::unexpected(lighting_pass.error());
+    auto tonemap_pass =
+        renderer::TonemapPass::create(device, allocator, cache, shader_dir, ldr_format);
+    if (!tonemap_pass) return std::unexpected(tonemap_pass.error());
+
+    // Camera framing the cube; aspect 1 for the square render target.
+    scene::Scene s;
+    const entt::entity cam_e = s.create_entity("camera");
+    s.registry().get<scene::Transform>(cam_e).local =
+        glm::inverse(glm::lookAt(glm::vec3(3.0F, 2.5F, 4.0F), glm::vec3(0.0F),
+                                 glm::vec3(0.0F, 1.0F, 0.0F)));
+    s.registry().emplace<scene::Camera>(cam_e);
+    s.tick();
+    const scene::CameraMatrices cam = scene::camera_system(s.registry(), 1.0F);
+
+    renderer::DirectionalLightParams light;
+    light.direction = glm::vec4(-glm::normalize(glm::vec3(-0.4F, -1.0F, -0.3F)), 0.0F);
+    light.color = glm::vec4(1.0F, 0.98F, 0.95F, 3.0F);
+
+    const renderer::DrawItem item{&*mesh, &*material, glm::mat4(1.0F)};
+
+    auto readback = allocator.create_buffer(
+        bytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT, VMA_MEMORY_USAGE_AUTO,
+        VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT);
+    if (!readback) return std::unexpected(readback.error());
+    const VkBuffer readback_buffer = readback->handle();
+
+    rhi::TransientImagePool pool(device, allocator);
+    rhi::RenderGraph graph(pool);
+    auto gbuffer = mesh_pass->add_to_graph(graph, extent, cam.view_proj, {&item, 1});
+    if (!gbuffer) return std::unexpected(gbuffer.error());
+    auto hdr = lighting_pass->add_to_graph(graph, *gbuffer, extent, light);
+    if (!hdr) return std::unexpected(hdr.error());
+    const rhi::ResourceHandle ldr = graph.create_transient_image(
+        "scene_ldr", ldr_format, extent,
+        VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT);
+    if (auto r = tonemap_pass->add_to_graph(graph, *hdr, ldr, extent); !r) {
+        return std::unexpected(r.error());
+    }
+    if (auto compiled = graph.compile(); !compiled) return std::unexpected(compiled.error());
+
+    const VkImage ldr_image = graph.binding(ldr).image;
+
+    VkCommandPool cmd_pool = VK_NULL_HANDLE;
+    VkCommandPoolCreateInfo pool_info{};
+    pool_info.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+    pool_info.flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT;
+    pool_info.queueFamilyIndex = device.queue_families().graphics;
+    vkCreateCommandPool(device.handle(), &pool_info, nullptr, &cmd_pool);
+
+    VkCommandBufferAllocateInfo alloc{};
+    alloc.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+    alloc.commandPool = cmd_pool;
+    alloc.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    alloc.commandBufferCount = 1;
+    VkCommandBuffer cmd = VK_NULL_HANDLE;
+    vkAllocateCommandBuffers(device.handle(), &alloc, &cmd);
+
+    VkCommandBufferBeginInfo begin{};
+    begin.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+    vkBeginCommandBuffer(cmd, &begin);
+    graph.execute(cmd);
+
+    // Tonemap left the LDR image in COLOR_ATTACHMENT_OPTIMAL; move it to
+    // TRANSFER_SRC for the read-back copy.
+    VkImageMemoryBarrier2 to_src{};
+    to_src.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2;
+    to_src.srcStageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT;
+    to_src.srcAccessMask = VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT;
+    to_src.dstStageMask = VK_PIPELINE_STAGE_2_COPY_BIT;
+    to_src.dstAccessMask = VK_ACCESS_2_TRANSFER_READ_BIT;
+    to_src.oldLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    to_src.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+    to_src.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    to_src.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    to_src.image = ldr_image;
+    to_src.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+    VkDependencyInfo dep{};
+    dep.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO;
+    dep.imageMemoryBarrierCount = 1;
+    dep.pImageMemoryBarriers = &to_src;
+    vkCmdPipelineBarrier2(cmd, &dep);
+
+    VkBufferImageCopy region{};
+    region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    region.imageSubresource.layerCount = 1;
+    region.imageExtent = {extent.width, extent.height, 1};
+    vkCmdCopyImageToBuffer(cmd, ldr_image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, readback_buffer, 1,
+                           &region);
+    vkEndCommandBuffer(cmd);
+
+    VkCommandBufferSubmitInfo cmd_info{};
+    cmd_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO;
+    cmd_info.commandBuffer = cmd;
+    VkSubmitInfo2 submit{};
+    submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO_2;
+    submit.commandBufferInfoCount = 1;
+    submit.pCommandBufferInfos = &cmd_info;
+
+    std::expected<void, core::Error> result{};
+    if (vkQueueSubmit2(device.graphics_queue(), 1, &submit, VK_NULL_HANDLE) != VK_SUCCESS) {
+        result = std::unexpected(core::Error{"scene render self-test: vkQueueSubmit2 failed"});
+    } else {
+        vkQueueWaitIdle(device.graphics_queue());
+        const auto* px = static_cast<const std::uint8_t*>(readback->mapped());
+        const auto luma = [&](std::uint32_t x, std::uint32_t y) {
+            const std::size_t o = (static_cast<std::size_t>(y) * extent.width + x) * 4;
+            return static_cast<int>(px[o]) + px[o + 1] + px[o + 2];
+        };
+        if (luma(extent.width / 2, extent.height / 2) <= 30) {
+            result = std::unexpected(
+                core::Error{"scene render self-test: cube centre is black (camera not framing it)"});
+        } else if (luma(2, 2) > 30) {
+            result = std::unexpected(
+                core::Error{"scene render self-test: corner is not background-black"});
+        }
+    }
+
+    vkFreeCommandBuffers(device.handle(), cmd_pool, 1, &cmd);
+    vkDestroyCommandPool(device.handle(), cmd_pool, nullptr);
+    return result;
+}
+
 } // namespace
 
 int main() {
@@ -367,6 +570,14 @@ int main() {
                         std::fprintf(stderr, "[selftest] tonemap pass FAILED: %s\n",
                                      r.error().message.c_str());
                     }
+                    if (auto r = run_scene_render_self_test(device, allocator, *mesh_cache, transfer,
+                                                            shader_dir);
+                        r) {
+                        std::fprintf(stderr, "[selftest] scene render OK (camera frames the cube)\n");
+                    } else {
+                        std::fprintf(stderr, "[selftest] scene render FAILED: %s\n",
+                                     r.error().message.c_str());
+                    }
                 }
                 // Optional real-asset smoke test: QUAT_GLTF=<path> loads a glTF/GLB
                 // mesh + its textures and reports counts. Exercises the real decode
@@ -462,49 +673,99 @@ int main() {
     }
     engine::rhi::Swapchain& swapchain = *swapchain_result;
 
-    // ---- Triangle pipeline -------------------------------------------------
+    // ---- Deferred renderer + demo scene ------------------------------------
+    auto fatal = [&](const char* what, const std::string& detail) {
+        std::fprintf(stderr, "[fatal] %s: %s\n", what, detail.c_str());
+        vkDestroySurfaceKHR(device.instance(), surface, nullptr);
+        SDL_DestroyWindow(window);
+        SDL_Quit();
+    };
+
     auto pipeline_cache = engine::rhi::PipelineCache::create(device);
     if (!pipeline_cache) {
-        std::fprintf(stderr, "[fatal] pipeline cache creation failed: %s\n",
-                     pipeline_cache.error().message.c_str());
-        vkDestroySurfaceKHR(device.instance(), surface, nullptr);
-        SDL_DestroyWindow(window);
-        SDL_Quit();
+        fatal("pipeline cache creation failed", pipeline_cache.error().message);
         return 1;
     }
 
-    const std::string mesh_spv = std::string(QUAT_COOKED_SHADER_DIR) + "/mesh.spv";
-    auto mesh_shader = pipeline_cache->load(mesh_spv);
-    if (!mesh_shader) {
-        std::fprintf(stderr, "[fatal] mesh shader load failed: %s\n",
-                     mesh_shader.error().message.c_str());
-        vkDestroySurfaceKHR(device.instance(), surface, nullptr);
-        SDL_DestroyWindow(window);
-        SDL_Quit();
-        return 1;
+    const std::string shader_dir = QUAT_COOKED_SHADER_DIR;
+    const VkFormat swap_format = swapchain.format();
+
+    // One-time transfer context for setup uploads (demo mesh/material + each
+    // pass's fallback resources). Destroyed once setup completes.
+    VkCommandPool setup_pool = VK_NULL_HANDLE;
+    {
+        VkCommandPoolCreateInfo info{};
+        info.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+        info.queueFamilyIndex = device.queue_families().transfer;
+        vkCreateCommandPool(vk_device, &info, nullptr, &setup_pool);
+    }
+    const engine::rhi::TransferContext setup_transfer{vk_device, setup_pool,
+                                                      device.transfer_queue()};
+
+    // Per-frame-in-flight deferred chains (GBuffer -> lighting -> tonemap). Each
+    // slot owns its passes' descriptor buffers and a transient image pool, so
+    // building one frame's graph never disturbs the other in-flight frame.
+    std::array<DeferredFrame, k_frames_in_flight> frames;
+    bool frames_ok = true;
+    for (auto& f : frames) {
+        auto mesh = engine::renderer::MeshPass::create(device, allocator, *pipeline_cache,
+                                                       setup_transfer, shader_dir);
+        auto light = engine::renderer::LightingPass::create(device, allocator, *pipeline_cache,
+                                                            shader_dir);
+        auto tone = engine::renderer::TonemapPass::create(device, allocator, *pipeline_cache,
+                                                          shader_dir, swap_format);
+        if (!mesh || !light || !tone) {
+            frames_ok = false;
+            std::fprintf(stderr, "[fatal] deferred pass creation failed: %s\n",
+                         (!mesh ? mesh.error() : (!light ? light.error() : tone.error()))
+                             .message.c_str());
+            break;
+        }
+        f.mesh = std::move(*mesh);
+        f.lighting = std::move(*light);
+        f.tonemap = std::move(*tone);
+        f.pool = engine::rhi::TransientImagePool(device, allocator);
     }
 
-    const VkFormat color_format = swapchain.format();
-    auto pipeline_result = engine::rhi::GraphicsPipeline::create(
-        device, pipeline_cache->handle(),
-        {
-            .vertex = *mesh_shader,
-            .fragment = *mesh_shader,
-            .color_formats = {&color_format, 1},
+    // Demo scene assets, owned by an AssetManager so MeshRenderer handles keep
+    // them alive: a cube mesh + a coloured dielectric material.
+    engine::asset::AssetManager assets;
+    auto cube_handle = assets.load<engine::asset::MeshAsset>(
+        "demo/cube", [&](const std::filesystem::path&) {
+            return engine::scene::upload_mesh(make_cube_data(), allocator, setup_transfer);
         });
-    if (!pipeline_result) {
-        std::fprintf(stderr, "[fatal] triangle pipeline creation failed: %s\n",
-                     pipeline_result.error().message.c_str());
-        vkDestroySurfaceKHR(device.instance(), surface, nullptr);
-        SDL_DestroyWindow(window);
-        SDL_Quit();
+    auto mat_handle = assets.load<engine::asset::MaterialAsset>(
+        "demo/material", [&](const std::filesystem::path&) {
+            engine::asset::PbrMaterialParams params;
+            params.base_color_factor = {0.85F, 0.35F, 0.2F, 1.0F};
+            params.metallic_factor = 0.0F;
+            params.roughness_factor = 0.6F;
+            return engine::asset::upload_material(params, engine::asset::MaterialTextures{},
+                                                  allocator, setup_transfer);
+        });
+
+    vkDestroyCommandPool(vk_device, setup_pool, nullptr);
+
+    if (!frames_ok || !cube_handle.is_loaded() || !mat_handle.is_loaded()) {
+        fatal("deferred renderer setup failed", "see [fatal] lines above");
         return 1;
     }
-    engine::rhi::GraphicsPipeline& triangle_pipeline = *pipeline_result;
 
-    // Transient image pool backing per-frame render graphs (no transient images
-    // are declared yet — the triangle renders straight into the swapchain image).
-    engine::rhi::TransientImagePool transient_pool(device, allocator);
+    // Scene: a slowly spinning cube, a camera framing it, and a sun light.
+    engine::scene::Scene scene;
+    const entt::entity cube_entity = scene.create_entity("cube");
+    scene.registry().emplace<engine::scene::MeshRenderer>(cube_entity, cube_handle, mat_handle);
+
+    const entt::entity camera_entity = scene.create_entity("camera");
+    scene.registry().get<engine::scene::Transform>(camera_entity).local =
+        glm::inverse(glm::lookAt(glm::vec3(3.0F, 2.5F, 4.0F), glm::vec3(0.0F),
+                                 glm::vec3(0.0F, 1.0F, 0.0F)));
+    scene.registry().emplace<engine::scene::Camera>(camera_entity);
+
+    const entt::entity sun_entity = scene.create_entity("sun");
+    scene.registry().emplace<engine::scene::DirectionalLight>(
+        sun_entity, glm::normalize(glm::vec3(-0.4F, -1.0F, -0.3F)),
+        glm::vec3(1.0F, 0.98F, 0.95F), 3.0F);
 
     // ---- Per-frame command + sync resources --------------------------------
     VkCommandPool command_pool = VK_NULL_HANDLE;
@@ -635,22 +896,55 @@ int main() {
         begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
         vkBeginCommandBuffer(cmd, &begin);
 
-        // Build this frame's render graph: import the swapchain image and draw
-        // the triangle into it via a single graphics pass. The graph owns the
-        // UNDEFINED -> COLOR_ATTACHMENT -> PRESENT_SRC layout transitions.
-        engine::rhi::RenderGraph graph(transient_pool);
+        // Build this frame's deferred graph into the slot's own resources and
+        // render the scene to the acquired swapchain image. The slot's fence was
+        // waited above, so resetting its transient pool and rebuilding the passes'
+        // descriptor buffers does not race the other in-flight frame.
+        DeferredFrame& fr = frames[frame];
+        fr.pool.reset();
+
         const VkExtent2D draw_extent = swapchain.extent();
-        const VkImageView color_view = swapchain.image_views()[image_index];
-        const VkPipeline pipeline = triangle_pipeline.handle();
+        const float aspect =
+            draw_extent.height == 0
+                ? 1.0F
+                : static_cast<float>(draw_extent.width) / static_cast<float>(draw_extent.height);
+
+        // Spin the cube, tick the scene, then derive camera + light from the ECS.
+        scene.registry().get<engine::scene::Transform>(cube_entity).local =
+            glm::rotate(glm::mat4(1.0F), static_cast<float>(presented) * 0.02F,
+                        glm::normalize(glm::vec3(0.3F, 1.0F, 0.2F)));
+        scene.tick();
+        const engine::scene::CameraMatrices cam =
+            engine::scene::camera_system(scene.registry(), aspect);
+
+        engine::renderer::DirectionalLightParams light;
+        const auto light_view = scene.registry().view<const engine::scene::DirectionalLight>();
+        for (const entt::entity e : light_view) {
+            const auto& dl = light_view.get<const engine::scene::DirectionalLight>(e);
+            light.direction = glm::vec4(-glm::normalize(dl.direction), 0.0F);
+            light.color = glm::vec4(dl.color, dl.intensity);
+            break;
+        }
+
+        engine::rhi::RenderGraph graph(fr.pool);
+        auto gbuffer = fr.mesh.add_to_graph(graph, draw_extent, cam.view_proj, scene.draw_list());
+        if (!gbuffer) {
+            std::fprintf(stderr, "[fatal] gbuffer pass: %s\n", gbuffer.error().message.c_str());
+            break;
+        }
+        auto hdr = fr.lighting.add_to_graph(graph, *gbuffer, draw_extent, light);
+        if (!hdr) {
+            std::fprintf(stderr, "[fatal] lighting pass: %s\n", hdr.error().message.c_str());
+            break;
+        }
         const engine::rhi::ResourceHandle backbuffer = graph.import_image(
-            "swapchain", swapchain.images()[image_index], color_view,
-            swapchain.format(), draw_extent,
-            VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
-        graph.add_pass("triangle", engine::rhi::PassType::graphics)
-            .writes(backbuffer, engine::rhi::ResourceUsage::color_attachment)
-            .execute([=](engine::rhi::PassContext& ctx) {
-                record_triangle(ctx.cmd(), color_view, draw_extent, pipeline);
-            });
+            "swapchain", swapchain.images()[image_index], swapchain.image_views()[image_index],
+            swapchain.format(), draw_extent, VK_IMAGE_LAYOUT_UNDEFINED,
+            VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
+        if (auto r = fr.tonemap.add_to_graph(graph, *hdr, backbuffer, draw_extent); !r) {
+            std::fprintf(stderr, "[fatal] tonemap pass: %s\n", r.error().message.c_str());
+            break;
+        }
         if (auto compiled = graph.compile(); !compiled) {
             std::fprintf(stderr, "[fatal] render graph compile failed: %s\n",
                          compiled.error().message.c_str());

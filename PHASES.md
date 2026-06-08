@@ -138,7 +138,7 @@ Goal: entities with components drive rendering; a scene can be constructed in co
   Systems: `TransformSystem` (propagate world matrices), `RenderCollectSystem` (fill draw list).
   *Commit: `[Phase4/Slice2] scene and system scheduler`*
 
-- [ ] **4.3 — Camera system**
+- [x] **4.3 — Camera system**
   `CameraSystem`: project + view matrix from active `Camera` + `Transform`.
   Push to GPU via per-frame uniform buffer. Update GBuffer + lighting shaders to use it.
   *Commit: `[Phase4/Slice3] camera system and per-frame uniforms`*

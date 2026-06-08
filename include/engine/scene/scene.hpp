@@ -71,6 +71,22 @@ void transform_system(entt::registry& registry);
 void render_collect_system(const entt::registry& registry,
                            std::vector<renderer::DrawItem>& out);
 
+// View / projection matrices for the active camera, derived from its world
+// Transform and Camera parameters. The projection uses a reverse-friendly [0,1]
+// depth range (GLM_FORCE_DEPTH_ZERO_TO_ONE) with the Vulkan clip-space Y flip
+// baked in. Identity matrices if there is no active camera.
+struct CameraMatrices {
+    glm::mat4 view{1.0F};
+    glm::mat4 projection{1.0F};
+    glm::mat4 view_proj{1.0F};
+    glm::vec3 position{0.0F};
+};
+
+// Compute the active camera's matrices for the given viewport aspect ratio
+// (width / height). Runs TransformSystem's output (reads Transform.world), so
+// tick() the scene first.
+[[nodiscard]] CameraMatrices camera_system(const entt::registry& registry, float aspect_ratio);
+
 // Builds a small hierarchy, ticks the scene, and verifies world-matrix
 // propagation and draw-list collection. No device needed.
 [[nodiscard]] std::expected<void, core::Error> run_scene_self_test();

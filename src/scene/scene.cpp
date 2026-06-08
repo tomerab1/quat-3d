@@ -91,6 +91,31 @@ void render_collect_system(const entt::registry& registry,
     }
 }
 
+CameraMatrices camera_system(const entt::registry& registry, float aspect_ratio) {
+    CameraMatrices out;
+
+    entt::entity active = entt::null;
+    for (auto [e, cam] : registry.view<const Camera>().each()) {
+        if (cam.is_active) {
+            active = e;
+            break;
+        }
+    }
+    if (active == entt::null || !registry.all_of<Transform>(active)) {
+        return out;
+    }
+
+    const auto& cam = registry.get<const Camera>(active);
+    const glm::mat4& world = registry.get<const Transform>(active).world;
+
+    out.position   = glm::vec3(world[3]);
+    out.view       = glm::inverse(world);
+    out.projection = glm::perspective(cam.fov_y, aspect_ratio, cam.near_z, cam.far_z);
+    out.projection[1][1] *= -1.0F; // Vulkan clip space: Y points down
+    out.view_proj  = out.projection * out.view;
+    return out;
+}
+
 // ---------------------------------------------------------------------------
 // Self-test
 // ---------------------------------------------------------------------------
@@ -146,6 +171,19 @@ std::expected<void, core::Error> run_scene_self_test() {
     const glm::vec3 detached_world = glm::vec3(scene.registry().get<Transform>(child).world[3]);
     if (glm::distance(detached_world, glm::vec3(0.0F, 2.0F, 0.0F)) > 1e-4F) {
         return std::unexpected(core::Error{"scene self-test: detached child did not become a root"});
+    }
+
+    // Camera at +5 Z, identity orientation: the view matrix is the inverse of its
+    // world transform, so it translates the world by -5 Z and reports position +5 Z.
+    scene.registry().get<Transform>(parent).local =
+        glm::translate(glm::mat4(1.0F), glm::vec3(0.0F, 0.0F, 5.0F));
+    scene.tick();
+    const CameraMatrices cam = camera_system(scene.registry(), 16.0F / 9.0F);
+    if (glm::distance(glm::vec3(cam.view[3]), glm::vec3(0.0F, 0.0F, -5.0F)) > 1e-4F) {
+        return std::unexpected(core::Error{"scene self-test: camera view translation wrong"});
+    }
+    if (glm::distance(cam.position, glm::vec3(0.0F, 0.0F, 5.0F)) > 1e-4F) {
+        return std::unexpected(core::Error{"scene self-test: camera position wrong"});
     }
 
     return {};
