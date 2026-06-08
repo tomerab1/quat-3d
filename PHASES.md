@@ -172,7 +172,7 @@ Goal: a glTF character with skin and animations plays back and renders correctly
   Store as `AnimClipAsset`. Support LINEAR and STEP interpolation. CUBICSPLINE deferred.
   *Commit: `[Phase5/Slice2] animation clip loading`*
 
-- [ ] **5.3 — Animator + local-space sampling**
+- [x] **5.3 — Animator + local-space sampling**
   `src/animation/animator.cpp`: `Animator` component. `AnimationSystem` samples clip at current time,
   writes local TRS per joint, `compute_world_transforms()` walks hierarchy.
   Produces `joint_matrices` array (skinning matrix = joint_world × inverse_bind).

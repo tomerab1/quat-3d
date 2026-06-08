@@ -26,7 +26,8 @@ namespace engine::animation {
 // no animation channel drives this joint).
 struct Joint {
     std::string name;
-    int         parent = -1;
+    int         parent = -1; // index into joints, -1 = root
+    int         node = -1;    // source glTF node index (maps clip channels here)
 
     glm::vec3 translation{0.0F};
     glm::quat rotation{1.0F, 0.0F, 0.0F, 0.0F}; // identity (w, x, y, z)

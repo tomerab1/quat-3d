@@ -23,6 +23,7 @@
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 
+#include "engine/animation/animator.hpp"
 #include "engine/animation/clip.hpp"
 #include "engine/animation/skeleton.hpp"
 #include "engine/asset/asset_manager.hpp"
@@ -526,6 +527,13 @@ int main() {
             std::fprintf(stderr, "[selftest] clip sampling OK\n");
         } else {
             std::fprintf(stderr, "[selftest] clip sampling FAILED: %s\n",
+                         r.error().message.c_str());
+        }
+
+        if (auto r = engine::animation::run_animator_self_test(); r) {
+            std::fprintf(stderr, "[selftest] animator OK\n");
+        } else {
+            std::fprintf(stderr, "[selftest] animator FAILED: %s\n",
                          r.error().message.c_str());
         }
 
@@ -1098,7 +1106,7 @@ int main() {
                 glm::rotate(glm::mat4(1.0F), static_cast<float>(presented) * 0.02F,
                             glm::normalize(glm::vec3(0.3F, 1.0F, 0.2F)));
         }
-        scene.tick();
+        scene.tick(dt); // advances any Animators by real elapsed time
         const engine::scene::CameraMatrices cam =
             engine::scene::camera_system(scene.registry(), aspect);
 

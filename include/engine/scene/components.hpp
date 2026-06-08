@@ -17,6 +17,7 @@
 #include <entt/entity/fwd.hpp>
 #include <glm/glm.hpp>
 
+#include "engine/animation/clip.hpp"
 #include "engine/animation/skeleton.hpp"
 #include "engine/asset/asset_manager.hpp"
 #include "engine/asset/material_asset.hpp"
@@ -48,6 +49,16 @@ struct MeshRenderer {
 struct SkinnedMesh {
     asset::AssetHandle<animation::SkeletonAsset> skeleton;
     std::vector<glm::mat4>                       joint_matrices;
+};
+
+// Plays an animation clip on a skinned entity. The AnimationSystem advances
+// `time` by dt*speed each tick (wrapping when `looping`), samples the clip, and
+// writes the result into the entity's SkinnedMesh::joint_matrices.
+struct Animator {
+    asset::AssetHandle<animation::AnimClipAsset> clip;
+    float time    = 0.0F;
+    float speed   = 1.0F;
+    bool  looping = true;
 };
 
 // Perspective camera parameters. The view/projection matrices are derived each

@@ -36,10 +36,11 @@ public:
     // the old and new parent.
     void set_parent(entt::entity child, entt::entity parent);
 
-    // Run the fixed system sequence for one tick:
-    //   1. TransformSystem    — propagate world matrices down the hierarchy.
-    //   2. RenderCollectSystem — gather drawable entities into draw_list().
-    void tick();
+    // Run the fixed system sequence for one tick (`dt` seconds since the last):
+    //   1. AnimationSystem     — advance Animators, write skinning matrices.
+    //   2. TransformSystem     — propagate world matrices down the hierarchy.
+    //   3. RenderCollectSystem — gather drawable entities into draw_list().
+    void tick(float dt = 0.0F);
 
     // First entity with an active Camera, or entt::null if none.
     [[nodiscard]] entt::entity active_camera() const;
@@ -58,6 +59,12 @@ private:
 // ---------------------------------------------------------------------------
 // Systems — stateless, exposed for explicit ordering and direct testing.
 // ---------------------------------------------------------------------------
+
+// Advance every Animator by `dt` (scaled by its speed, wrapped when looping),
+// sample its clip against the entity's SkinnedMesh skeleton, and write the
+// per-joint skinning matrices into SkinnedMesh::joint_matrices. Entities with a
+// SkinnedMesh but no/!loaded Animator clip get the bind pose.
+void animation_system(entt::registry& registry, float dt);
 
 // Propagate world-space transforms down the Parent/Children hierarchy:
 // world = parent.world * local, starting from roots (entities with no Parent, or

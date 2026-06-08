@@ -3,10 +3,13 @@
 #include "engine/scene/scene.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <utility>
 
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
+
+#include "engine/animation/animator.hpp"
 
 namespace engine::scene {
 
@@ -52,7 +55,8 @@ void Scene::set_parent(entt::entity child, entt::entity parent) {
     registry_.get_or_emplace<Children>(parent).entities.push_back(child);
 }
 
-void Scene::tick() {
+void Scene::tick(float dt) {
+    animation_system(registry_, dt);
     transform_system(registry_);
     render_collect_system(registry_, draw_list_);
 }
@@ -67,6 +71,31 @@ entt::entity Scene::active_camera() const {
 // ---------------------------------------------------------------------------
 // Systems
 // ---------------------------------------------------------------------------
+
+void animation_system(entt::registry& registry, float dt) {
+    for (auto [e, anim, skinned] : registry.view<Animator, SkinnedMesh>().each()) {
+        if (!skinned.skeleton.valid() || !skinned.skeleton.is_loaded()) {
+            continue;
+        }
+        const animation::SkeletonAsset& skeleton = *skinned.skeleton;
+
+        if (anim.clip.valid() && anim.clip.is_loaded() && anim.clip->valid()) {
+            const animation::AnimClipAsset& clip = *anim.clip;
+            anim.time += dt * anim.speed;
+            if (clip.duration > 0.0F) {
+                if (anim.looping) {
+                    anim.time = std::fmod(anim.time, clip.duration);
+                    if (anim.time < 0.0F) anim.time += clip.duration;
+                } else {
+                    anim.time = std::clamp(anim.time, 0.0F, clip.duration);
+                }
+            }
+            skinned.joint_matrices = animation::sample_skinning_matrices(skeleton, clip, anim.time);
+        } else {
+            skinned.joint_matrices = animation::bind_skinning_matrices(skeleton);
+        }
+    }
+}
 
 void transform_system(entt::registry& registry) {
     const glm::mat4 identity(1.0F);

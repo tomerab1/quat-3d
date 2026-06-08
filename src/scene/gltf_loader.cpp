@@ -250,6 +250,7 @@ extract_primitive(const fastgltf::Asset& asset, const fastgltf::Primitive& prim)
         const fastgltf::Node& node = asset.nodes[node_index];
         animation::Joint& j = out.joints[i];
         j.name.assign(node.name.begin(), node.name.end());
+        j.node = static_cast<int>(node_index);
 
         const int pn = parent_node[node_index];
         const auto it =

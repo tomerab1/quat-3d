@@ -113,7 +113,8 @@ target_include_directories(engine_asset PUBLIC ${ENGINE_PUBLIC_INCLUDE})
 # ---------------------------------------------------------------------------
 add_library(engine_animation STATIC
     src/animation/skeleton.cpp
-    src/animation/clip.cpp)
+    src/animation/clip.cpp
+    src/animation/animator.cpp)
 target_link_libraries(engine_animation PUBLIC engine_flags glm::glm)
 target_include_directories(engine_animation PUBLIC ${ENGINE_PUBLIC_INCLUDE})
 
