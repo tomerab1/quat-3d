@@ -49,7 +49,7 @@ function(add_shader_compilation TARGET_NAME)
             OUTPUT ${spv} ${json}
             COMMAND ${CMAKE_COMMAND} -E make_directory ${shader_out_dir}
             COMMAND ${SLANGC_EXECUTABLE} ${src} -I ${shader_lib_dir}
-                    -target spirv -emit-spirv-directly
+                    -target spirv -emit-spirv-directly -fvk-use-entrypoint-name
                     -o ${spv} -reflection-json ${json}
             DEPENDS ${src} ${module_outputs}
             COMMENT "slangc ${name}.slang -> SPIR-V + reflection"

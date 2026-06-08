@@ -112,7 +112,7 @@ Goal: a glTF static mesh loads and renders with a basic PBR material under a dir
   Render all `MeshRenderer` entities.
   *Commit: `[Phase3/Slice5] deferred GBuffer pass`*
 
-- [ ] **3.6 — Lighting pass**
+- [x] **3.6 — Lighting pass**
   `assets/shaders/lighting.slang` + `src/renderer/lighting_pass.cpp`:
   Fullscreen compute pass reading GBuffer, applying one directional light, writing HDR colour.
   *Commit: `[Phase3/Slice6] deferred lighting pass`*

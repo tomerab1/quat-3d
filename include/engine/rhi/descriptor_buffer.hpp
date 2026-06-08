@@ -70,6 +70,7 @@ public:
     void write_uniform_buffer(std::uint32_t binding, VkDeviceAddress address, VkDeviceSize range);
     void write_storage_buffer(std::uint32_t binding, VkDeviceAddress address, VkDeviceSize range);
     void write_sampled_image(std::uint32_t binding, VkImageView view, VkImageLayout layout);
+    void write_storage_image(std::uint32_t binding, VkImageView view, VkImageLayout layout);
     void write_sampler(std::uint32_t binding, VkSampler sampler);
 
     [[nodiscard]] VkDeviceAddress device_address() const { return address_; }

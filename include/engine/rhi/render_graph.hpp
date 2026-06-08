@@ -20,9 +20,10 @@ class Device;
 enum class ResourceUsage : std::uint8_t {
     color_attachment,
     depth_attachment,
-    sampled,        // read in a shader as a sampled image
-    storage_read,   // read in a shader as a storage image
-    storage_write,  // written in a shader as a storage image
+    sampled,          // read in a fragment shader as a sampled image
+    sampled_compute,  // read in a compute shader as a sampled image
+    storage_read,     // read in a shader as a storage image
+    storage_write,    // written in a shader as a storage image
     transfer_src,
     transfer_dst,
     present,

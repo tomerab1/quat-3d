@@ -82,7 +82,8 @@ add_library(engine_rhi STATIC
     src/rhi/pipeline_cache.cpp
     src/rhi/descriptor_buffer.cpp
     src/rhi/render_graph.cpp
-    src/rhi/graphics_pipeline.cpp)
+    src/rhi/graphics_pipeline.cpp
+    src/rhi/compute_pipeline.cpp)
 target_link_libraries(engine_rhi PUBLIC
     engine_flags Vulkan::Vulkan GPUOpen::VulkanMemoryAllocator)
 # nlohmann_json is an implementation detail of the reflection parser (PRIVATE).
@@ -126,7 +127,8 @@ set_source_files_properties(src/scene/stb_image_impl.cpp PROPERTIES COMPILE_OPTI
 # GBuffer pass (mesh_pass); lighting/tonemap/imgui passes follow in later slices.
 # ---------------------------------------------------------------------------
 add_library(engine_renderer STATIC
-    src/renderer/mesh_pass.cpp)
+    src/renderer/mesh_pass.cpp
+    src/renderer/lighting_pass.cpp)
 target_link_libraries(engine_renderer PUBLIC engine_flags engine_rhi engine_asset glm::glm)
 target_include_directories(engine_renderer PUBLIC ${ENGINE_PUBLIC_INCLUDE})
 

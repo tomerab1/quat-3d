@@ -201,6 +201,24 @@ void DescriptorBuffer::write_sampled_image(std::uint32_t binding, VkImageView vi
     fns_->get_descriptor(device_->handle(), &get, props.sampledImageDescriptorSize, dst);
 }
 
+void DescriptorBuffer::write_storage_image(std::uint32_t binding, VkImageView view,
+                                           VkImageLayout layout) {
+    const auto& props = device_->descriptor_buffer_properties();
+
+    VkDescriptorImageInfo image{};
+    image.sampler = VK_NULL_HANDLE;
+    image.imageView = view;
+    image.imageLayout = layout;
+
+    VkDescriptorGetInfoEXT get{};
+    get.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_GET_INFO_EXT;
+    get.type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+    get.data.pStorageImage = &image;
+
+    auto* dst = static_cast<char*>(buffer_.mapped()) + layout_->binding_offset(binding);
+    fns_->get_descriptor(device_->handle(), &get, props.storageImageDescriptorSize, dst);
+}
+
 void DescriptorBuffer::write_sampler(std::uint32_t binding, VkSampler sampler) {
     const auto& props = device_->descriptor_buffer_properties();
 
