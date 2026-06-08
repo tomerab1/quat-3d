@@ -24,6 +24,7 @@
 #include "engine/renderer/mesh_pass.hpp"
 #include "engine/renderer/tonemap_pass.hpp"
 #include "engine/rhi/descriptor_buffer.hpp"
+#include "engine/scene/components.hpp"
 #include "engine/scene/gltf_loader.hpp"
 #include "engine/rhi/device.hpp"
 #include "engine/rhi/gpu_allocator.hpp"
@@ -256,6 +257,13 @@ int main() {
             std::fprintf(stderr, "[selftest] asset manager OK\n");
         } else {
             std::fprintf(stderr, "[selftest] asset manager FAILED: %s\n",
+                         r.error().message.c_str());
+        }
+
+        if (auto r = engine::scene::run_ecs_self_test(); r) {
+            std::fprintf(stderr, "[selftest] ECS world OK\n");
+        } else {
+            std::fprintf(stderr, "[selftest] ECS world FAILED: %s\n",
                          r.error().message.c_str());
         }
 

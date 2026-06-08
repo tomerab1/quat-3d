@@ -128,7 +128,7 @@ Goal: a glTF static mesh loads and renders with a basic PBR material under a dir
 
 Goal: entities with components drive rendering; a scene can be constructed in code.
 
-- [ ] **4.1 — ECS world + core components**
+- [x] **4.1 — ECS world + core components**
   Integrate entt. Define all core components from `components.hpp` (Transform, MeshRenderer,
   Camera, DirectionalLight, Name, Parent, Children).
   *Commit: `[Phase4/Slice1] ECS world and core components`*
