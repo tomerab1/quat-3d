@@ -50,11 +50,14 @@ struct GBufferTargets {
 };
 
 // One thing to draw. `material` may be null — the pass then uses its built-in
-// default (white, untextured) material.
+// default (white, untextured) material. `skinned_vertices`, when set, overrides
+// the mesh's bind-pose vertex buffer with a skinned buffer produced by the
+// skinning pass this frame (same asset::Vertex layout).
 struct DrawItem {
     const asset::MeshAsset*     mesh     = nullptr;
     const asset::MaterialAsset* material = nullptr;
     glm::mat4                   model{1.0F};
+    VkBuffer                    skinned_vertices = VK_NULL_HANDLE;
 };
 
 // Push-constant block, mirrors PushConstants in gbuffer.slang (128 bytes).

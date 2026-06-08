@@ -167,7 +167,8 @@ MeshPass::add_to_graph(rhi::RenderGraph& graph, VkExtent2D extent, const glm::ma
         db->write_sampler(6, sampler_.handle());
 
         FrameDraw fd;
-        fd.vertex_buffer = d.mesh->vertex_buffer.handle();
+        fd.vertex_buffer = d.skinned_vertices != VK_NULL_HANDLE ? d.skinned_vertices
+                                                                : d.mesh->vertex_buffer.handle();
         fd.index_buffer = d.mesh->index_buffer.handle();
         fd.submeshes = d.mesh->submeshes;
         fd.model = d.model;

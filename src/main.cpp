@@ -15,6 +15,7 @@
 #include <expected>
 #include <limits>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include <SDL3/SDL.h>
@@ -218,12 +219,66 @@ run_triangle_self_test(const engine::rhi::Device& device, engine::rhi::GpuAlloca
 // image pool, so building frame N+1's graph never stomps resources still in use
 // by frame N. The main loop waits on the slot's fence before reusing it, which
 // makes resetting the pool and rebuilding the descriptor buffers safe.
+// Per-skinned-entity GPU buffers for one frame slot: the joint matrices (host
+// visible, re-uploaded each frame) and the skinned vertex output (device local,
+// written by the skinning pass and read by the GBuffer as a vertex buffer).
+struct SkinnedEntityGpu {
+    engine::rhi::GpuBuffer joints;
+    engine::rhi::GpuBuffer skinned_verts;
+    VkDeviceAddress        joints_addr = 0;
+    VkDeviceAddress        skinned_addr = 0;
+    std::uint32_t          vertex_count = 0;
+    std::uint32_t          joint_count = 0;
+};
+
 struct DeferredFrame {
     engine::renderer::MeshPass       mesh;
     engine::renderer::LightingPass   lighting;
     engine::renderer::TonemapPass    tonemap;
+    engine::renderer::SkinningPass   skinning;
     engine::rhi::TransientImagePool  pool;
+    // Skinning resources, lazily created per skinned entity (keyed by entity).
+    std::unordered_map<entt::entity, SkinnedEntityGpu> skin_gpu;
 };
+
+// Fetch (or create) this frame slot's skinning buffers for `entity`. Returns
+// nullptr if allocation fails (the caller then renders the bind pose).
+SkinnedEntityGpu* ensure_skin_gpu(DeferredFrame& frame, entt::entity entity,
+                                  const engine::asset::MeshAsset& mesh, VkDevice vk_device,
+                                  engine::rhi::GpuAllocator& allocator, std::uint32_t joint_count) {
+    auto it = frame.skin_gpu.find(entity);
+    if (it != frame.skin_gpu.end() && it->second.vertex_count == mesh.vertex_count &&
+        it->second.joint_count == joint_count) {
+        return &it->second;
+    }
+
+    const VkDeviceSize joints_size = static_cast<VkDeviceSize>(joint_count) * sizeof(glm::mat4);
+    const VkDeviceSize verts_size =
+        static_cast<VkDeviceSize>(mesh.vertex_count) * sizeof(engine::asset::Vertex);
+
+    auto joints = allocator.create_buffer(
+        joints_size,
+        VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+        VMA_MEMORY_USAGE_AUTO,
+        VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT);
+    if (!joints) return nullptr;
+    auto verts = allocator.create_buffer(
+        verts_size,
+        VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT |
+            VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+        VMA_MEMORY_USAGE_AUTO, 0);
+    if (!verts) return nullptr;
+
+    SkinnedEntityGpu g;
+    g.joints = std::move(*joints);
+    g.skinned_verts = std::move(*verts);
+    g.joints_addr = engine::rhi::buffer_device_address(vk_device, g.joints);
+    g.skinned_addr = engine::rhi::buffer_device_address(vk_device, g.skinned_verts);
+    g.vertex_count = mesh.vertex_count;
+    g.joint_count = joint_count;
+    frame.skin_gpu[entity] = std::move(g);
+    return &frame.skin_gpu[entity];
+}
 
 // A unit cube centred at the origin with per-face normals (24 vertices, 36
 // indices). Stands in as the demo mesh until glTF scene-graph loading (4.4).
@@ -269,11 +324,15 @@ bool scene_world_bounds(engine::scene::Scene& scene, glm::vec3& out_min, glm::ve
     for (auto [e, t, mr] :
          scene.registry().view<engine::scene::Transform, engine::scene::MeshRenderer>().each()) {
         if (!mr.mesh.valid() || !mr.mesh.is_loaded()) continue;
+        // Skinned meshes render with an identity model (their skinning matrices
+        // already place the vertices), so frame their bounds in that same space.
+        const glm::mat4 model =
+            scene.registry().all_of<engine::scene::SkinnedMesh>(e) ? glm::mat4(1.0F) : t.world;
         const engine::asset::Aabb& ab = mr.mesh->bounds;
         for (int i = 0; i < 8; ++i) {
             const glm::vec3 corner((i & 1) ? ab.max.x : ab.min.x, (i & 2) ? ab.max.y : ab.min.y,
                                    (i & 4) ? ab.max.z : ab.min.z);
-            const glm::vec3 w = glm::vec3(t.world * glm::vec4(corner, 1.0F));
+            const glm::vec3 w = glm::vec3(model * glm::vec4(corner, 1.0F));
             out_min = glm::min(out_min, w);
             out_max = glm::max(out_max, w);
             any = true;
@@ -748,6 +807,34 @@ int main() {
                         std::fprintf(stderr, "[gltf] animation load FAILED: %s\n",
                                      clips.error().message.c_str());
                     }
+                    // Instantiate into a scene and tick it, to confirm skinned
+                    // entities get an Animator that poses their joint matrices.
+                    {
+                        engine::asset::AssetManager smoke_assets;
+                        engine::scene::Scene smoke_scene;
+                        if (auto roots = engine::scene::GltfLoader::instantiate(
+                                gltf_path, allocator, transfer, smoke_assets, smoke_scene);
+                            roots) {
+                            smoke_scene.tick(0.5F); // runs the animation system
+                            int skinned = 0;
+                            bool posed = false;
+                            for (auto [e, sm] :
+                                 smoke_scene.registry().view<engine::scene::SkinnedMesh>().each()) {
+                                ++skinned;
+                                for (const glm::mat4& jm : sm.joint_matrices) {
+                                    if (jm != glm::mat4(1.0F)) {
+                                        posed = true;
+                                        break;
+                                    }
+                                }
+                            }
+                            std::fprintf(stderr, "[gltf] %d skinned entity(ies), animated=%s\n",
+                                         skinned, posed ? "yes" : "no");
+                        } else {
+                            std::fprintf(stderr, "[gltf] instantiate FAILED: %s\n",
+                                         roots.error().message.c_str());
+                        }
+                    }
                 }
                 vkDestroyCommandPool(device.handle(), pool, nullptr);
             } else {
@@ -839,16 +926,21 @@ int main() {
                                                             shader_dir);
         auto tone = engine::renderer::TonemapPass::create(device, allocator, *pipeline_cache,
                                                           shader_dir, swap_format);
-        if (!mesh || !light || !tone) {
+        auto skin = engine::renderer::SkinningPass::create(device, allocator, *pipeline_cache,
+                                                           shader_dir);
+        if (!mesh || !light || !tone || !skin) {
             frames_ok = false;
             std::fprintf(stderr, "[fatal] deferred pass creation failed: %s\n",
-                         (!mesh ? mesh.error() : (!light ? light.error() : tone.error()))
+                         (!mesh ? mesh.error()
+                                : (!light ? light.error()
+                                          : (!tone ? tone.error() : skin.error())))
                              .message.c_str());
             break;
         }
         f.mesh = std::move(*mesh);
         f.lighting = std::move(*light);
         f.tonemap = std::move(*tone);
+        f.skinning = std::move(*skin);
         f.pool = engine::rhi::TransientImagePool(device, allocator);
     }
 
@@ -1143,8 +1235,53 @@ int main() {
             break;
         }
 
+        // Build the draw list, collecting per-skinned-entity skinning work. A
+        // skinned entity uploads its joint matrices into this frame slot's buffer
+        // and gets a SkinDispatch; its draw points at the skinned output buffer.
+        std::vector<engine::renderer::DrawItem> draws;
+        std::vector<engine::renderer::SkinDispatch> dispatches;
+        for (auto [e, t, mr] :
+             scene.registry().view<engine::scene::Transform, engine::scene::MeshRenderer>().each()) {
+            engine::renderer::DrawItem item;
+            item.mesh = mr.mesh.valid() ? &*mr.mesh : nullptr;
+            item.material = mr.material.valid() ? &*mr.material : nullptr;
+            item.model = t.world;
+
+            const auto* sm = scene.registry().try_get<engine::scene::SkinnedMesh>(e);
+            if (item.mesh != nullptr && item.mesh->skinned() && sm != nullptr &&
+                !sm->joint_matrices.empty()) {
+                SkinnedEntityGpu* g = ensure_skin_gpu(
+                    fr, e, *item.mesh, vk_device, allocator,
+                    static_cast<std::uint32_t>(sm->joint_matrices.size()));
+                if (g != nullptr) {
+                    std::memcpy(g->joints.mapped(), sm->joint_matrices.data(),
+                                sm->joint_matrices.size() * sizeof(glm::mat4));
+                    engine::renderer::SkinDispatch d;
+                    d.vertices_in =
+                        engine::rhi::buffer_device_address(vk_device, item.mesh->vertex_buffer);
+                    d.vertices_in_size = static_cast<VkDeviceSize>(item.mesh->vertex_count) *
+                                         sizeof(engine::asset::Vertex);
+                    d.skin = engine::rhi::buffer_device_address(vk_device, item.mesh->skin_buffer);
+                    d.skin_size = static_cast<VkDeviceSize>(item.mesh->vertex_count) *
+                                  sizeof(engine::asset::SkinVertex);
+                    d.joints = g->joints_addr;
+                    d.joints_size = static_cast<VkDeviceSize>(g->joint_count) * sizeof(glm::mat4);
+                    d.vertices_out = g->skinned_addr;
+                    d.vertices_out_size = static_cast<VkDeviceSize>(g->vertex_count) *
+                                          sizeof(engine::asset::Vertex);
+                    d.vertex_count = item.mesh->vertex_count;
+                    dispatches.push_back(d);
+                    item.skinned_vertices = g->skinned_verts.handle();
+                    // Skinned vertices are already in skin space (glTF ignores the
+                    // mesh node transform), so draw them with an identity model.
+                    item.model = glm::mat4(1.0F);
+                }
+            }
+            draws.push_back(item);
+        }
+
         engine::rhi::RenderGraph graph(fr.pool);
-        auto gbuffer = fr.mesh.add_to_graph(graph, draw_extent, cam.view_proj, scene.draw_list());
+        auto gbuffer = fr.mesh.add_to_graph(graph, draw_extent, cam.view_proj, draws);
         if (!gbuffer) {
             std::fprintf(stderr, "[fatal] gbuffer pass: %s\n", gbuffer.error().message.c_str());
             break;
@@ -1167,6 +1304,14 @@ int main() {
             std::fprintf(stderr, "[fatal] render graph compile failed: %s\n",
                          compiled.error().message.c_str());
             break;
+        }
+        // Skin (compute) before the graph; record() adds the compute -> vertex
+        // fetch barrier so the GBuffer sees the skinned vertices.
+        if (!dispatches.empty()) {
+            if (auto rs = fr.skinning.record(cmd, dispatches); !rs) {
+                std::fprintf(stderr, "[fatal] skinning pass: %s\n", rs.error().message.c_str());
+                break;
+            }
         }
         graph.execute(cmd);
 

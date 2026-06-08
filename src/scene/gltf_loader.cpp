@@ -893,6 +893,23 @@ assemble_scene(const fastgltf::Asset& a, const std::string& key_prefix,
         }
     }
 
+    // Skeletons + animation clips, cached in the AssetManager. A skinned node
+    // gets a SkinnedMesh (its skeleton) + an Animator playing the first clip.
+    const std::vector<animation::SkeletonAsset> skeletons = extract_skeletons(a);
+    std::vector<asset::AssetHandle<animation::SkeletonAsset>> skel_handles(skeletons.size());
+    for (std::size_t i = 0; i < skeletons.size(); ++i) {
+        skel_handles[i] = assets.load<animation::SkeletonAsset>(
+            key_prefix + "#skin" + std::to_string(i),
+            [&](const std::filesystem::path&) { return skeletons[i]; });
+    }
+    const std::vector<animation::AnimClipAsset> clips = extract_animations(a);
+    std::vector<asset::AssetHandle<animation::AnimClipAsset>> clip_handles(clips.size());
+    for (std::size_t i = 0; i < clips.size(); ++i) {
+        clip_handles[i] = assets.load<animation::AnimClipAsset>(
+            key_prefix + "#anim" + std::to_string(i),
+            [&](const std::filesystem::path&) { return clips[i]; });
+    }
+
     // Walk the node hierarchy into ECS entities. Node TRS -> Transform.local; a
     // single-primitive mesh becomes a MeshRenderer on the node, a multi-primitive
     // mesh fans out into one child entity per primitive.
@@ -910,10 +927,22 @@ assemble_scene(const fastgltf::Asset& a, const std::string& key_prefix,
                 roots.push_back(e);
             }
 
+            // Attach skin + animator to whichever entity carries the MeshRenderer.
+            const auto attach_skin = [&](entt::entity ent) {
+                if (n.skinIndex.has_value() && n.skinIndex.value() < skel_handles.size()) {
+                    reg.emplace<SkinnedMesh>(ent, skel_handles[n.skinIndex.value()],
+                                             std::vector<glm::mat4>{});
+                    if (!clip_handles.empty()) {
+                        reg.emplace<Animator>(ent, clip_handles[0], 0.0F, 1.0F, true);
+                    }
+                }
+            };
+
             if (n.meshIndex.has_value()) {
                 const std::vector<PrimRef>& prims = mesh_prims[n.meshIndex.value()];
                 if (prims.size() == 1) {
                     reg.emplace<MeshRenderer>(e, prims[0].mesh, prims[0].material);
+                    attach_skin(e);
                 } else {
                     for (std::size_t p = 0; p < prims.size(); ++p) {
                         const entt::entity pe = scene.create_entity(
@@ -921,6 +950,7 @@ assemble_scene(const fastgltf::Asset& a, const std::string& key_prefix,
                             std::to_string(p));
                         scene.set_parent(pe, e);
                         reg.emplace<MeshRenderer>(pe, prims[p].mesh, prims[p].material);
+                        attach_skin(pe);
                     }
                 }
             }
