@@ -18,6 +18,7 @@
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_vulkan.h>
 
+#include "engine/asset/asset_manager.hpp"
 #include "engine/rhi/descriptor_buffer.hpp"
 #include "engine/rhi/device.hpp"
 #include "engine/rhi/gpu_allocator.hpp"
@@ -246,6 +247,13 @@ int main() {
     engine::rhi::GpuAllocator& allocator = *allocator_result;
 
     if (std::getenv("QUAT_SELFTEST") != nullptr) {
+        if (auto r = engine::asset::run_asset_manager_self_test(); r) {
+            std::fprintf(stderr, "[selftest] asset manager OK\n");
+        } else {
+            std::fprintf(stderr, "[selftest] asset manager FAILED: %s\n",
+                         r.error().message.c_str());
+        }
+
         if (auto r = engine::rhi::run_gpu_round_trip_self_test(device, allocator); r) {
             std::fprintf(stderr, "[selftest] VMA GPU round-trip OK\n");
         } else {

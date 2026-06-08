@@ -91,11 +91,21 @@ target_include_directories(engine_rhi PUBLIC ${ENGINE_PUBLIC_INCLUDE})
 set_source_files_properties(src/rhi/vma_impl.cpp PROPERTIES COMPILE_OPTIONS "-w")
 
 # ---------------------------------------------------------------------------
+# engine_asset — asset identity, ref-counted handles, synchronous load path.
+# Type-agnostic and graphics-free for now; gains an engine_rhi dependency in
+# Phase 3.2 when MeshAsset starts holding GPU buffers.
+# ---------------------------------------------------------------------------
+add_library(engine_asset STATIC
+    src/asset/asset_manager.cpp)
+target_link_libraries(engine_asset PUBLIC engine_flags)
+target_include_directories(engine_asset PUBLIC ${ENGINE_PUBLIC_INCLUDE})
+
+# ---------------------------------------------------------------------------
 # game — executable entry point. The full target graph (engine_core /
 # engine_renderer / engine_editor) grows phase by phase as modules gain sources.
 # ---------------------------------------------------------------------------
 add_executable(game src/main.cpp)
-target_link_libraries(game PRIVATE engine_flags engine_rhi SDL3::SDL3)
+target_link_libraries(game PRIVATE engine_flags engine_rhi engine_asset SDL3::SDL3)
 target_include_directories(game PRIVATE
     ${ENGINE_PUBLIC_INCLUDE}
     ${CMAKE_CURRENT_SOURCE_DIR}/src)

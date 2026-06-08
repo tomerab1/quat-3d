@@ -86,7 +86,7 @@ Goal: render graph infrastructure exists; a hard-coded triangle appears on scree
 
 Goal: a glTF static mesh loads and renders with a basic PBR material under a directional light.
 
-- [ ] **3.1 — Asset manager skeleton**
+- [x] **3.1 — Asset manager skeleton**
   `src/asset/asset_manager.cpp`: `AssetId` (xxHash64 of relative path), `AssetHandle<T>`,
   synchronous load path (async deferred to Phase 6). Default fallback assets.
   *Commit: `[Phase3/Slice1] asset manager skeleton`*
