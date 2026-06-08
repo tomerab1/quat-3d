@@ -324,10 +324,11 @@ bool scene_world_bounds(engine::scene::Scene& scene, glm::vec3& out_min, glm::ve
     for (auto [e, t, mr] :
          scene.registry().view<engine::scene::Transform, engine::scene::MeshRenderer>().each()) {
         if (!mr.mesh.valid() || !mr.mesh.is_loaded()) continue;
-        // Skinned meshes render with an identity model (their skinning matrices
-        // already place the vertices), so frame their bounds in that same space.
-        const glm::mat4 model =
-            scene.registry().all_of<engine::scene::SkinnedMesh>(e) ? glm::mat4(1.0F) : t.world;
+        // Skinned meshes render with an identity model (their skinning matrices,
+        // which fold in the armature transform, already place the vertices), so
+        // frame their bind bounds through that same armature transform.
+        const auto* sm = scene.registry().try_get<engine::scene::SkinnedMesh>(e);
+        const glm::mat4 model = sm != nullptr ? sm->root_transform : t.world;
         const engine::asset::Aabb& ab = mr.mesh->bounds;
         for (int i = 0; i < 8; ++i) {
             const glm::vec3 corner((i & 1) ? ab.max.x : ab.min.x, (i & 2) ? ab.max.y : ab.min.y,

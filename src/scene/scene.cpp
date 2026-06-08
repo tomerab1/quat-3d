@@ -90,9 +90,11 @@ void animation_system(entt::registry& registry, float dt) {
                     anim.time = std::clamp(anim.time, 0.0F, clip.duration);
                 }
             }
-            skinned.joint_matrices = animation::sample_skinning_matrices(skeleton, clip, anim.time);
+            skinned.joint_matrices =
+                animation::sample_skinning_matrices(skeleton, clip, anim.time, skinned.root_transform);
         } else {
-            skinned.joint_matrices = animation::bind_skinning_matrices(skeleton);
+            skinned.joint_matrices =
+                animation::bind_skinning_matrices(skeleton, skinned.root_transform);
         }
     }
 }

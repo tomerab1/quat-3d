@@ -48,9 +48,11 @@ struct SkeletonAsset {
 
 // Compose world-space joint matrices from per-joint local matrices, resolving
 // parents before children (robust to any joint ordering). `local.size()` must
-// equal the joint count.
+// equal the joint count. Root joints (parent < 0) are seeded with
+// `root_transform` (the skeleton's ancestor/armature world transform).
 [[nodiscard]] std::vector<glm::mat4>
-compute_world_matrices(const SkeletonAsset& skeleton, std::span<const glm::mat4> local);
+compute_world_matrices(const SkeletonAsset& skeleton, std::span<const glm::mat4> local,
+                       const glm::mat4& root_transform = glm::mat4(1.0F));
 
 // World-space joint matrices for the bind pose (every joint at its bind TRS).
 [[nodiscard]] std::vector<glm::mat4> compute_bind_world(const SkeletonAsset& skeleton);

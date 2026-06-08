@@ -100,12 +100,13 @@ std::vector<JointPose> apply_additive(const std::vector<JointPose>& base,
 }
 
 std::vector<glm::mat4> pose_skinning_matrices(const SkeletonAsset& skeleton,
-                                              const std::vector<JointPose>& pose) {
+                                              const std::vector<JointPose>& pose,
+                                              const glm::mat4& root_transform) {
     std::vector<glm::mat4> local(pose.size());
     for (std::size_t i = 0; i < pose.size(); ++i) {
         local[i] = compose(pose[i]);
     }
-    const std::vector<glm::mat4> world = compute_world_matrices(skeleton, local);
+    const std::vector<glm::mat4> world = compute_world_matrices(skeleton, local, root_transform);
     std::vector<glm::mat4> out(skeleton.joints.size());
     for (std::size_t i = 0; i < skeleton.joints.size(); ++i) {
         out[i] = world[i] * skeleton.joints[i].inverse_bind;
@@ -126,13 +127,15 @@ std::vector<glm::mat4> BlendTree::evaluate(const SkeletonAsset& skeleton) const 
     return pose_skinning_matrices(skeleton, pose);
 }
 
-std::vector<glm::mat4> bind_skinning_matrices(const SkeletonAsset& skeleton) {
-    return pose_skinning_matrices(skeleton, bind_pose(skeleton));
+std::vector<glm::mat4> bind_skinning_matrices(const SkeletonAsset& skeleton,
+                                              const glm::mat4& root_transform) {
+    return pose_skinning_matrices(skeleton, bind_pose(skeleton), root_transform);
 }
 
 std::vector<glm::mat4> sample_skinning_matrices(const SkeletonAsset& skeleton,
-                                                const AnimClipAsset& clip, float time) {
-    return pose_skinning_matrices(skeleton, sample_local_pose(skeleton, clip, time));
+                                                const AnimClipAsset& clip, float time,
+                                                const glm::mat4& root_transform) {
+    return pose_skinning_matrices(skeleton, sample_local_pose(skeleton, clip, time), root_transform);
 }
 
 // ---------------------------------------------------------------------------

@@ -49,6 +49,11 @@ struct MeshRenderer {
 struct SkinnedMesh {
     asset::AssetHandle<animation::SkeletonAsset> skeleton;
     std::vector<glm::mat4>                       joint_matrices;
+    // World transform of the skeleton's root ancestor (the "armature" node above
+    // the joints). The skeleton hierarchy is resolved relative to this, so it
+    // must be folded into the joint matrices for the character to sit in the
+    // right place. Identity when the skeleton roots at the scene root.
+    glm::mat4                                    root_transform{1.0F};
 };
 
 // Plays an animation clip on a skinned entity. The AnimationSystem advances

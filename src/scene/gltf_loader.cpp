@@ -910,6 +910,35 @@ assemble_scene(const fastgltf::Asset& a, const std::string& key_prefix,
             [&](const std::filesystem::path&) { return clips[i]; });
     }
 
+    // Each skin's armature transform: the global transform of the parent of its
+    // root joint, so the skeleton is placed correctly when it lives under a
+    // transformed (e.g. Z-up -> Y-up) node.
+    std::vector<int> parent_node(a.nodes.size(), -1);
+    for (std::size_t ni = 0; ni < a.nodes.size(); ++ni) {
+        for (std::size_t c : a.nodes[ni].children) {
+            parent_node[c] = static_cast<int>(ni);
+        }
+    }
+    std::vector<glm::mat4> node_global(a.nodes.size(), glm::mat4(1.0F));
+    std::vector<char> node_done(a.nodes.size(), 0);
+    std::function<glm::mat4(int)> node_global_of = [&](int ni) -> glm::mat4 {
+        if (ni < 0) return glm::mat4(1.0F);
+        if (node_done[ni] == 0) {
+            node_global[ni] = node_global_of(parent_node[ni]) * node_local_matrix(a.nodes[ni]);
+            node_done[ni] = 1;
+        }
+        return node_global[ni];
+    };
+    std::vector<glm::mat4> skin_root_transform(skeletons.size(), glm::mat4(1.0F));
+    for (std::size_t i = 0; i < skeletons.size(); ++i) {
+        for (const animation::Joint& j : skeletons[i].joints) {
+            if (j.parent < 0) {
+                skin_root_transform[i] = node_global_of(parent_node[j.node]);
+                break;
+            }
+        }
+    }
+
     // Walk the node hierarchy into ECS entities. Node TRS -> Transform.local; a
     // single-primitive mesh becomes a MeshRenderer on the node, a multi-primitive
     // mesh fans out into one child entity per primitive.
@@ -930,8 +959,9 @@ assemble_scene(const fastgltf::Asset& a, const std::string& key_prefix,
             // Attach skin + animator to whichever entity carries the MeshRenderer.
             const auto attach_skin = [&](entt::entity ent) {
                 if (n.skinIndex.has_value() && n.skinIndex.value() < skel_handles.size()) {
-                    reg.emplace<SkinnedMesh>(ent, skel_handles[n.skinIndex.value()],
-                                             std::vector<glm::mat4>{});
+                    SkinnedMesh& sm = reg.emplace<SkinnedMesh>(
+                        ent, skel_handles[n.skinIndex.value()], std::vector<glm::mat4>{});
+                    sm.root_transform = skin_root_transform[n.skinIndex.value()];
                     if (!clip_handles.empty()) {
                         reg.emplace<Animator>(ent, clip_handles[0], 0.0F, 1.0F, true);
                     }

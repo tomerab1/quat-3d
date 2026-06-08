@@ -15,7 +15,8 @@ glm::mat4 SkeletonAsset::local_bind(std::size_t i) const {
 }
 
 std::vector<glm::mat4> compute_world_matrices(const SkeletonAsset& skeleton,
-                                              std::span<const glm::mat4> local) {
+                                              std::span<const glm::mat4> local,
+                                              const glm::mat4& root_transform) {
     const std::size_t n = skeleton.joints.size();
     std::vector<glm::mat4> world(n, glm::mat4(1.0F));
     std::vector<char> resolved(n, 0);
@@ -26,7 +27,7 @@ std::vector<glm::mat4> compute_world_matrices(const SkeletonAsset& skeleton,
         if (resolved[i] != 0) return;
         const int parent = skeleton.joints[i].parent;
         if (parent < 0) {
-            world[i] = local[i];
+            world[i] = root_transform * local[i];
         } else {
             resolve(static_cast<std::size_t>(parent));
             world[i] = world[static_cast<std::size_t>(parent)] * local[i];

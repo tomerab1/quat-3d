@@ -49,9 +49,11 @@ apply_additive(const std::vector<JointPose>& base, const std::vector<JointPose>&
                const std::vector<JointPose>& reference, float weight,
                std::span<const std::uint32_t> mask);
 
-// Compose a pose into skinning matrices (joint_world * inverse_bind).
+// Compose a pose into skinning matrices (joint_world * inverse_bind), with the
+// skeleton resolved under `root_transform` (its armature/ancestor world transform).
 [[nodiscard]] std::vector<glm::mat4>
-pose_skinning_matrices(const SkeletonAsset& skeleton, const std::vector<JointPose>& pose);
+pose_skinning_matrices(const SkeletonAsset& skeleton, const std::vector<JointPose>& pose,
+                       const glm::mat4& root_transform = glm::mat4(1.0F));
 
 // 1D blend of two clips plus an optional masked additive layer, all sampled at
 // the same `time`. clip_b/additive may be null.
@@ -71,10 +73,13 @@ struct BlendTree {
 
 // --- Single-clip convenience (Slice 5.3) -----------------------------------
 
-[[nodiscard]] std::vector<glm::mat4> bind_skinning_matrices(const SkeletonAsset& skeleton);
+[[nodiscard]] std::vector<glm::mat4>
+bind_skinning_matrices(const SkeletonAsset& skeleton,
+                       const glm::mat4& root_transform = glm::mat4(1.0F));
 
 [[nodiscard]] std::vector<glm::mat4>
-sample_skinning_matrices(const SkeletonAsset& skeleton, const AnimClipAsset& clip, float time);
+sample_skinning_matrices(const SkeletonAsset& skeleton, const AnimClipAsset& clip, float time,
+                         const glm::mat4& root_transform = glm::mat4(1.0F));
 
 // Self-tests: single-clip posing (5.3) and blend/additive layering (5.5).
 [[nodiscard]] std::expected<void, core::Error> run_animator_self_test();
