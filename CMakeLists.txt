@@ -150,7 +150,8 @@ set_source_files_properties(src/scene/stb_image_impl.cpp PROPERTIES COMPILE_OPTI
 add_library(engine_renderer STATIC
     src/renderer/mesh_pass.cpp
     src/renderer/lighting_pass.cpp
-    src/renderer/tonemap_pass.cpp)
+    src/renderer/tonemap_pass.cpp
+    src/renderer/skinning_pass.cpp)
 target_link_libraries(engine_renderer PUBLIC engine_flags engine_rhi engine_asset glm::glm)
 target_include_directories(engine_renderer PUBLIC ${ENGINE_PUBLIC_INCLUDE})
 

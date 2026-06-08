@@ -25,6 +25,14 @@ struct Vertex {
     glm::vec4 tangent{1.0F, 0.0F, 0.0F, 1.0F}; // xyz = tangent, w = bitangent sign
 };
 
+// Per-vertex skinning influences (parallel to the vertex array), for skinned
+// meshes only. `joints` indexes into the skeleton's joint array; `weights` sum
+// to 1. Matches the SkinVertex layout the skinning compute shader reads.
+struct SkinVertex {
+    glm::uvec4 joints{0U};
+    glm::vec4  weights{0.0F};
+};
+
 // Axis-aligned bounding box in mesh-local space.
 struct Aabb {
     glm::vec3 min{0.0F};
@@ -42,6 +50,9 @@ struct SubMesh {
 struct MeshAsset {
     rhi::GpuBuffer vertex_buffer;
     rhi::GpuBuffer index_buffer;
+    // Skinned meshes only: per-vertex joints/weights (SkinVertex), parallel to the
+    // vertex buffer. The skinning compute pass reads vertex_buffer + skin_buffer.
+    rhi::GpuBuffer skin_buffer;
     std::uint32_t  vertex_count = 0;
     std::uint32_t  index_count  = 0;
     Aabb           bounds{};
@@ -53,6 +64,9 @@ struct MeshAsset {
 
     [[nodiscard]] bool valid() const noexcept {
         return index_count > 0 && index_buffer.handle() != VK_NULL_HANDLE;
+    }
+    [[nodiscard]] bool skinned() const noexcept {
+        return skin_buffer.handle() != VK_NULL_HANDLE;
     }
 };
 

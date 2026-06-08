@@ -171,6 +171,21 @@ extract_primitive(const fastgltf::Asset& asset, const fastgltf::Primitive& prim)
             [&](fastgltf::math::fvec4 v, std::size_t i) { out.vertices[i].tangent = to_glm(v); });
     }
 
+    // Skin influences (parallel to vertices), if this primitive is skinned.
+    const auto* joints_attr = prim.findAttribute("JOINTS_0");
+    const auto* weights_attr = prim.findAttribute("WEIGHTS_0");
+    if (joints_attr != prim.attributes.cend() && weights_attr != prim.attributes.cend()) {
+        out.skin.resize(out.vertices.size());
+        fastgltf::iterateAccessorWithIndex<fastgltf::math::uvec4>(
+            asset, asset.accessors[joints_attr->accessorIndex],
+            [&](fastgltf::math::uvec4 v, std::size_t i) {
+                out.skin[i].joints = glm::uvec4(v[0], v[1], v[2], v[3]);
+            });
+        fastgltf::iterateAccessorWithIndex<fastgltf::math::fvec4>(
+            asset, asset.accessors[weights_attr->accessorIndex],
+            [&](fastgltf::math::fvec4 v, std::size_t i) { out.skin[i].weights = to_glm(v); });
+    }
+
     if (!prim.indicesAccessor.has_value()) {
         return fail("glTF primitive has no index accessor after generation");
     }
@@ -602,10 +617,19 @@ std::expected<asset::MeshAsset, core::Error>
 upload_mesh(const MeshData& data, rhi::GpuAllocator& allocator,
             const rhi::TransferContext& transfer) {
     asset::MeshAsset mesh;
+    const bool skinned = !data.skin.empty();
+
+    // A skinned mesh's vertex buffer is also read by the skinning compute pass as
+    // a storage buffer (via its device address).
+    VkBufferUsageFlags vertex_usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
+    if (skinned) {
+        vertex_usage |= VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
+                        VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
+    }
 
     auto vertex_buffer = rhi::upload_device_buffer(
         allocator, transfer, data.vertices.data(),
-        data.vertices.size() * sizeof(asset::Vertex), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
+        data.vertices.size() * sizeof(asset::Vertex), vertex_usage);
     if (!vertex_buffer) return std::unexpected(vertex_buffer.error());
 
     auto index_buffer = rhi::upload_device_buffer(
@@ -615,6 +639,15 @@ upload_mesh(const MeshData& data, rhi::GpuAllocator& allocator,
 
     mesh.vertex_buffer = std::move(*vertex_buffer);
     mesh.index_buffer = std::move(*index_buffer);
+
+    if (skinned) {
+        auto skin_buffer = rhi::upload_device_buffer(
+            allocator, transfer, data.skin.data(), data.skin.size() * sizeof(asset::SkinVertex),
+            VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
+        if (!skin_buffer) return std::unexpected(skin_buffer.error());
+        mesh.skin_buffer = std::move(*skin_buffer);
+    }
+
     mesh.vertex_count = static_cast<std::uint32_t>(data.vertices.size());
     mesh.index_count = static_cast<std::uint32_t>(data.indices.size());
     mesh.bounds = data.bounds;

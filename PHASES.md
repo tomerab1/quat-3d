@@ -178,7 +178,7 @@ Goal: a glTF character with skin and animations plays back and renders correctly
   Produces `joint_matrices` array (skinning matrix = joint_world × inverse_bind).
   *Commit: `[Phase5/Slice3] animator and joint matrix computation`*
 
-- [ ] **5.4 — GPU skinning compute pass**
+- [x] **5.4 — GPU skinning compute pass**
   `assets/shaders/skinning.slang` + `src/renderer/skinning_pass.cpp`:
   Compute shader reads original vertex buffer + joint matrices SSBO, writes skinned positions + normals.
   Runs before GBuffer pass. GBuffer pass reads skinned buffer.

@@ -31,6 +31,7 @@
 #include "engine/asset/mesh_asset.hpp"
 #include "engine/renderer/lighting_pass.hpp"
 #include "engine/renderer/mesh_pass.hpp"
+#include "engine/renderer/skinning_pass.hpp"
 #include "engine/renderer/tonemap_pass.hpp"
 #include "engine/rhi/descriptor_buffer.hpp"
 #include "engine/scene/components.hpp"
@@ -655,6 +656,14 @@ int main() {
                         std::fprintf(stderr, "[selftest] scene render OK (camera frames the cube)\n");
                     } else {
                         std::fprintf(stderr, "[selftest] scene render FAILED: %s\n",
+                                     r.error().message.c_str());
+                    }
+                    if (auto r = engine::renderer::run_skinning_pass_self_test(
+                            device, allocator, *mesh_cache, transfer, shader_dir);
+                        r) {
+                        std::fprintf(stderr, "[selftest] GPU skinning OK\n");
+                    } else {
+                        std::fprintf(stderr, "[selftest] GPU skinning FAILED: %s\n",
                                      r.error().message.c_str());
                     }
                 }

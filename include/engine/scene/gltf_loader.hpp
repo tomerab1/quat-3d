@@ -37,10 +37,13 @@ inline constexpr std::size_t no_texture = static_cast<std::size_t>(-1);
 // CPU-side extracted geometry, before GPU upload. Exposed separately so the
 // fastgltf extraction can be exercised without a device.
 struct MeshData {
-    std::vector<asset::Vertex>  vertices;
-    std::vector<std::uint32_t>  indices;
-    asset::Aabb                 bounds{};
-    std::vector<asset::SubMesh> submeshes;
+    std::vector<asset::Vertex>     vertices;
+    std::vector<std::uint32_t>     indices;
+    asset::Aabb                    bounds{};
+    std::vector<asset::SubMesh>    submeshes;
+    // Per-vertex skin influences, parallel to `vertices`, present only when the
+    // glTF primitive(s) carry JOINTS_0/WEIGHTS_0. Empty for static meshes.
+    std::vector<asset::SkinVertex> skin;
 };
 
 // CPU-side decoded texture (always RGBA8, tightly packed), before GPU upload.
