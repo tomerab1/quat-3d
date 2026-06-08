@@ -830,11 +830,19 @@ int main() {
     scene.tick(); // resolve world transforms before measuring the scene bounds
     glm::vec3 bmin{};
     glm::vec3 bmax{};
-    scene.registry().get<engine::scene::Transform>(camera_entity).local =
-        scene_world_bounds(scene, bmin, bmax)
-            ? frame_camera_world(bmin, bmax, camera.fov_y)
-            : glm::inverse(glm::lookAt(glm::vec3(3.0F, 2.5F, 4.0F), glm::vec3(0.0F),
-                                       glm::vec3(0.0F, 1.0F, 0.0F)));
+    const bool has_geo = scene_world_bounds(scene, bmin, bmax);
+    const glm::mat4 framed =
+        has_geo ? frame_camera_world(bmin, bmax, camera.fov_y)
+                : glm::inverse(glm::lookAt(glm::vec3(3.0F, 2.5F, 4.0F), glm::vec3(0.0F),
+                                           glm::vec3(0.0F, 1.0F, 0.0F)));
+
+    // Free-fly camera state, seeded from the framed transform so the opening view
+    // matches the auto-frame. Updated each frame from input (WASD + right-drag).
+    glm::vec3 cam_pos = glm::vec3(framed[3]);
+    const glm::vec3 cam_fwd0 = -glm::normalize(glm::vec3(framed[2])); // camera looks down -Z
+    float cam_yaw = std::atan2(cam_fwd0.z, cam_fwd0.x);
+    float cam_pitch = std::asin(glm::clamp(cam_fwd0.y, -0.999F, 0.999F));
+    const float move_speed = has_geo ? glm::max(1.0F, 0.5F * glm::length(bmax - bmin)) : 3.0F;
 
     // ---- Per-frame command + sync resources --------------------------------
     VkCommandPool command_pool = VK_NULL_HANDLE;
@@ -904,8 +912,14 @@ int main() {
     std::uint32_t frame = 0;
     bool running = true;
     bool needs_recreate = false;
+    bool looking = false; // right mouse button held -> mouse-look active
+    std::uint64_t last_ticks = SDL_GetTicksNS();
 
     while (running) {
+        // Per-frame accumulated mouse-look delta.
+        float look_dx = 0.0F;
+        float look_dy = 0.0F;
+
         SDL_Event event;
         while (SDL_PollEvent(&event)) {
             switch (event.type) {
@@ -917,6 +931,24 @@ int main() {
                 break;
             case SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED:
                 needs_recreate = true;
+                break;
+            case SDL_EVENT_MOUSE_BUTTON_DOWN:
+                if (event.button.button == SDL_BUTTON_RIGHT) {
+                    looking = true;
+                    SDL_SetWindowRelativeMouseMode(window, true);
+                }
+                break;
+            case SDL_EVENT_MOUSE_BUTTON_UP:
+                if (event.button.button == SDL_BUTTON_RIGHT) {
+                    looking = false;
+                    SDL_SetWindowRelativeMouseMode(window, false);
+                }
+                break;
+            case SDL_EVENT_MOUSE_MOTION:
+                if (looking) {
+                    look_dx += event.motion.xrel;
+                    look_dy += event.motion.yrel;
+                }
                 break;
             default:
                 break;
@@ -977,6 +1009,34 @@ int main() {
             draw_extent.height == 0
                 ? 1.0F
                 : static_cast<float>(draw_extent.width) / static_cast<float>(draw_extent.height);
+
+        // Free-fly camera: right-drag looks, WASD moves, Q/E down/up, Shift = fast.
+        const std::uint64_t now_ticks = SDL_GetTicksNS();
+        const float dt = static_cast<float>(now_ticks - last_ticks) * 1e-9F;
+        last_ticks = now_ticks;
+
+        constexpr float look_sensitivity = 0.0025F;
+        cam_yaw += look_dx * look_sensitivity;
+        cam_pitch = glm::clamp(cam_pitch - look_dy * look_sensitivity, glm::radians(-89.0F),
+                               glm::radians(89.0F));
+        const glm::vec3 cam_fwd(std::cos(cam_pitch) * std::cos(cam_yaw), std::sin(cam_pitch),
+                                std::cos(cam_pitch) * std::sin(cam_yaw));
+        const glm::vec3 world_up(0.0F, 1.0F, 0.0F);
+        const glm::vec3 cam_right = glm::normalize(glm::cross(cam_fwd, world_up));
+
+        const bool* keys = SDL_GetKeyboardState(nullptr);
+        const auto axis = [&](SDL_Scancode pos, SDL_Scancode neg) {
+            return (keys[pos] ? 1.0F : 0.0F) - (keys[neg] ? 1.0F : 0.0F);
+        };
+        const glm::vec3 move = cam_fwd * axis(SDL_SCANCODE_W, SDL_SCANCODE_S) +
+                               cam_right * axis(SDL_SCANCODE_D, SDL_SCANCODE_A) +
+                               world_up * axis(SDL_SCANCODE_E, SDL_SCANCODE_Q);
+        const float speed = move_speed * (keys[SDL_SCANCODE_LSHIFT] ? 4.0F : 1.0F);
+        if (move != glm::vec3(0.0F)) {
+            cam_pos += glm::normalize(move) * speed * dt;
+        }
+        scene.registry().get<engine::scene::Transform>(camera_entity).local =
+            glm::inverse(glm::lookAt(cam_pos, cam_pos + cam_fwd, world_up));
 
         // Spin the demo cube (if present), tick the scene, then derive camera +
         // light from the ECS.
