@@ -15,6 +15,7 @@
 
 #include <entt/entity/fwd.hpp>
 
+#include "engine/animation/skeleton.hpp"
 #include "engine/asset/material_asset.hpp"
 #include "engine/asset/mesh_asset.hpp"
 #include "engine/asset/texture_asset.hpp"
@@ -105,6 +106,15 @@ public:
     load_material_data_from_memory(std::span<const std::byte> bytes,
                                    const std::filesystem::path& base_dir);
 
+    // Extract every glTF skin as a SkeletonAsset (joint names, parent indices,
+    // bind-pose TRS, inverse bind matrices). No device needed.
+    [[nodiscard]] static std::expected<std::vector<animation::SkeletonAsset>, core::Error>
+    load_skeletons(const std::filesystem::path& path);
+
+    [[nodiscard]] static std::expected<std::vector<animation::SkeletonAsset>, core::Error>
+    load_skeletons_from_memory(std::span<const std::byte> bytes,
+                               const std::filesystem::path& base_dir);
+
     // Instantiate a whole glTF scene into `scene` as ECS entities. Every mesh
     // primitive, image, and material is uploaded once and cached in `assets`
     // (keyed by `path` + index) so the MeshRenderer handles keep them alive.
@@ -154,5 +164,10 @@ run_material_extract_self_test();
 // transform composes through its parent after a scene tick.
 [[nodiscard]] std::expected<void, core::Error>
 run_gltf_scene_self_test(rhi::GpuAllocator& allocator, const rhi::TransferContext& transfer);
+
+// Parses an in-memory glTF skin (two-joint chain with inverse bind matrices) and
+// verifies the extracted SkeletonAsset: joint count, names, parent indices,
+// bind-pose TRS, and inverse-bind matrices. No device needed.
+[[nodiscard]] std::expected<void, core::Error> run_skeleton_load_self_test();
 
 } // namespace engine::scene

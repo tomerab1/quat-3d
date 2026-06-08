@@ -17,6 +17,7 @@
 #include <entt/entity/fwd.hpp>
 #include <glm/glm.hpp>
 
+#include "engine/animation/skeleton.hpp"
 #include "engine/asset/asset_manager.hpp"
 #include "engine/asset/material_asset.hpp"
 #include "engine/asset/mesh_asset.hpp"
@@ -38,6 +39,15 @@ struct Transform {
 struct MeshRenderer {
     asset::AssetHandle<asset::MeshAsset>     mesh;
     asset::AssetHandle<asset::MaterialAsset> material;
+};
+
+// Marks an entity (alongside its MeshRenderer) as skinned: its mesh deforms with
+// `skeleton`. `joint_matrices` holds the per-joint skinning matrices the
+// animation system writes each frame (joint_world * inverse_bind); the GPU
+// skinning pass (5.4) consumes them. Empty until an AnimationSystem fills it.
+struct SkinnedMesh {
+    asset::AssetHandle<animation::SkeletonAsset> skeleton;
+    std::vector<glm::mat4>                       joint_matrices;
 };
 
 // Perspective camera parameters. The view/projection matrices are derived each

@@ -23,6 +23,7 @@
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 
+#include "engine/animation/skeleton.hpp"
 #include "engine/asset/asset_manager.hpp"
 #include "engine/asset/material_asset.hpp"
 #include "engine/asset/mesh_asset.hpp"
@@ -513,6 +514,20 @@ int main() {
                          r.error().message.c_str());
         }
 
+        if (auto r = engine::animation::run_skeleton_self_test(); r) {
+            std::fprintf(stderr, "[selftest] skeleton runtime OK\n");
+        } else {
+            std::fprintf(stderr, "[selftest] skeleton runtime FAILED: %s\n",
+                         r.error().message.c_str());
+        }
+
+        if (auto r = engine::scene::run_skeleton_load_self_test(); r) {
+            std::fprintf(stderr, "[selftest] skeleton load OK\n");
+        } else {
+            std::fprintf(stderr, "[selftest] skeleton load FAILED: %s\n",
+                         r.error().message.c_str());
+        }
+
         if (auto r = engine::rhi::run_gpu_round_trip_self_test(device, allocator); r) {
             std::fprintf(stderr, "[selftest] VMA GPU round-trip OK\n");
         } else {
@@ -663,6 +678,16 @@ int main() {
                     } else {
                         std::fprintf(stderr, "[gltf] material load FAILED: %s\n",
                                      mats.error().message.c_str());
+                    }
+                    if (auto skels = engine::scene::GltfLoader::load_skeletons(gltf_path); skels) {
+                        std::fprintf(stderr, "[gltf] %zu skin(s)\n", skels->size());
+                        for (std::size_t i = 0; i < skels->size(); ++i) {
+                            std::fprintf(stderr, "[gltf]   skin %zu: %zu joint(s)\n", i,
+                                         (*skels)[i].joint_count());
+                        }
+                    } else {
+                        std::fprintf(stderr, "[gltf] skeleton load FAILED: %s\n",
+                                     skels.error().message.c_str());
                     }
                 }
                 vkDestroyCommandPool(device.handle(), pool, nullptr);

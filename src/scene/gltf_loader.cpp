@@ -1,10 +1,13 @@
 #include "engine/scene/gltf_loader.hpp"
 
+#define GLM_ENABLE_EXPERIMENTAL
+
 #include <array>
 #include <cstring>
 #include <functional>
 #include <limits>
 #include <string>
+#include <unordered_map>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -16,7 +19,9 @@
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/quaternion.hpp>
+#include <glm/gtx/matrix_decompose.hpp>
 
+#include "engine/animation/skeleton.hpp"
 #include "engine/asset/asset_manager.hpp"
 #include "engine/scene/components.hpp"
 #include "engine/scene/scene.hpp"
@@ -204,6 +209,100 @@ extract_primitive(const fastgltf::Asset& asset, const fastgltf::Primitive& prim)
                 return out;
             }},
         node.transform);
+}
+
+// Convert a fastgltf column-major 4x4 to glm (also column-major).
+[[nodiscard]] glm::mat4 to_glm_mat4(const fastgltf::math::fmat4x4& m) {
+    glm::mat4 out(1.0F);
+    for (int c = 0; c < 4; ++c) {
+        for (int r = 0; r < 4; ++r) {
+            out[c][r] = m[c][r];
+        }
+    }
+    return out;
+}
+
+// Flatten one glTF skin into a SkeletonAsset: joint names, parent indices within
+// the joint set, bind-pose local TRS (from each joint node), and inverse bind
+// matrices.
+[[nodiscard]] animation::SkeletonAsset extract_skin(const fastgltf::Asset& asset,
+                                                    const fastgltf::Skin& skin) {
+    animation::SkeletonAsset out;
+    const std::size_t n = skin.joints.size();
+    out.joints.resize(n);
+
+    // node index -> joint index, and node -> parent node over the whole graph.
+    std::unordered_map<std::size_t, int> node_to_joint;
+    for (std::size_t i = 0; i < n; ++i) {
+        node_to_joint[skin.joints[i]] = static_cast<int>(i);
+    }
+    std::vector<int> parent_node(asset.nodes.size(), -1);
+    for (std::size_t ni = 0; ni < asset.nodes.size(); ++ni) {
+        for (std::size_t child : asset.nodes[ni].children) {
+            parent_node[child] = static_cast<int>(ni);
+        }
+    }
+
+    for (std::size_t i = 0; i < n; ++i) {
+        const std::size_t node_index = skin.joints[i];
+        const fastgltf::Node& node = asset.nodes[node_index];
+        animation::Joint& j = out.joints[i];
+        j.name.assign(node.name.begin(), node.name.end());
+
+        const int pn = parent_node[node_index];
+        const auto it =
+            pn >= 0 ? node_to_joint.find(static_cast<std::size_t>(pn)) : node_to_joint.end();
+        j.parent = it != node_to_joint.end() ? it->second : -1;
+
+        std::visit(fastgltf::visitor{
+                       [&](const fastgltf::TRS& trs) {
+                           j.translation = to_glm(trs.translation);
+                           // fastgltf quaternion is [x,y,z,w]; glm::quat is (w,x,y,z).
+                           j.rotation = glm::quat(trs.rotation[3], trs.rotation[0],
+                                                  trs.rotation[1], trs.rotation[2]);
+                           j.scale = to_glm(trs.scale);
+                       },
+                       [&](const fastgltf::math::fmat4x4& m) {
+                           glm::vec3 skew;
+                           glm::vec4 perspective;
+                           glm::decompose(to_glm_mat4(m), j.scale, j.rotation, j.translation, skew,
+                                          perspective);
+                       }},
+                   node.transform);
+    }
+
+    if (skin.inverseBindMatrices.has_value()) {
+        const fastgltf::Accessor& acc = asset.accessors[skin.inverseBindMatrices.value()];
+        fastgltf::iterateAccessorWithIndex<fastgltf::math::fmat4x4>(
+            asset, acc, [&](fastgltf::math::fmat4x4 m, std::size_t idx) {
+                if (idx < out.joints.size()) {
+                    out.joints[idx].inverse_bind = to_glm_mat4(m);
+                }
+            });
+    }
+    return out;
+}
+
+[[nodiscard]] std::vector<animation::SkeletonAsset>
+extract_skeletons(const fastgltf::Asset& asset) {
+    std::vector<animation::SkeletonAsset> out;
+    out.reserve(asset.skins.size());
+    for (const fastgltf::Skin& skin : asset.skins) {
+        out.push_back(extract_skin(asset, skin));
+    }
+    return out;
+}
+
+[[nodiscard]] std::expected<std::vector<animation::SkeletonAsset>, core::Error>
+parse_and_extract_skeletons(fastgltf::GltfDataBuffer& data,
+                            const std::filesystem::path& base_dir) {
+    fastgltf::Parser parser;
+    fastgltf::Expected<fastgltf::Asset> asset = parser.loadGltf(data, base_dir, kLoadOptions);
+    if (asset.error() != fastgltf::Error::None) {
+        return fail(std::string("fastgltf parse failed: ") +
+                    std::string(fastgltf::getErrorMessage(asset.error())));
+    }
+    return extract_skeletons(asset.get());
 }
 
 [[nodiscard]] std::expected<MeshData, core::Error>
@@ -545,6 +644,27 @@ GltfLoader::load_material_data_from_memory(std::span<const std::byte> bytes,
                     std::string(fastgltf::getErrorMessage(data.error())));
     }
     return parse_and_extract_materials(data.get(), base_dir);
+}
+
+std::expected<std::vector<animation::SkeletonAsset>, core::Error>
+GltfLoader::load_skeletons(const std::filesystem::path& path) {
+    auto data = fastgltf::GltfDataBuffer::FromPath(path);
+    if (data.error() != fastgltf::Error::None) {
+        return fail("fastgltf: could not read '" + path.string() + "': " +
+                    std::string(fastgltf::getErrorMessage(data.error())));
+    }
+    return parse_and_extract_skeletons(data.get(), path.parent_path());
+}
+
+std::expected<std::vector<animation::SkeletonAsset>, core::Error>
+GltfLoader::load_skeletons_from_memory(std::span<const std::byte> bytes,
+                                       const std::filesystem::path& base_dir) {
+    auto data = fastgltf::GltfDataBuffer::FromBytes(bytes.data(), bytes.size());
+    if (data.error() != fastgltf::Error::None) {
+        return fail("fastgltf: could not wrap memory buffer: " +
+                    std::string(fastgltf::getErrorMessage(data.error())));
+    }
+    return parse_and_extract_skeletons(data.get(), base_dir);
 }
 
 // ---------------------------------------------------------------------------
@@ -974,6 +1094,65 @@ run_gltf_scene_self_test(rhi::GpuAllocator& allocator, const rhi::TransferContex
     // The mesh handle resolved and uploaded.
     if (!reg.get<MeshRenderer>(parent).mesh.is_loaded()) {
         return fail("gltf scene self-test: parent mesh handle did not load");
+    }
+    return {};
+}
+
+std::expected<void, core::Error> run_skeleton_load_self_test() {
+    // Two inverse bind matrices (column-major), one per joint: identity for the
+    // root, translate(-2,0,0) for the child (= inverse of its bind world).
+    const std::array<float, 32> ibm{
+        1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0,  0, 0, 1,  // root: identity
+        1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, -2, 0, 0, 1}; // child: translate(-2,0,0)
+    std::array<std::byte, sizeof(ibm)> buffer{};
+    std::memcpy(buffer.data(), ibm.data(), sizeof(ibm));
+    const std::string b64 = base64_encode(buffer);
+
+    // Root (origin) with a child translated +2 X; skin joins both, IBM accessor 0.
+    const std::string gltf =
+        R"({"asset":{"version":"2.0"},"scene":0,)"
+        R"("scenes":[{"nodes":[0]}],)"
+        R"("nodes":[)"
+        R"({"name":"root","children":[1]},)"
+        R"({"name":"child","translation":[2.0,0.0,0.0]}],)"
+        R"("skins":[{"joints":[0,1],"inverseBindMatrices":0}],)"
+        R"("buffers":[{"byteLength":128,"uri":"data:application/octet-stream;base64,)" +
+        b64 + R"("}],)"
+        R"("bufferViews":[{"buffer":0,"byteOffset":0,"byteLength":128}],)"
+        R"("accessors":[{"bufferView":0,"componentType":5126,"count":2,"type":"MAT4"}]})";
+
+    const std::span<const std::byte> bytes(reinterpret_cast<const std::byte*>(gltf.data()),
+                                           gltf.size());
+    auto skeletons = GltfLoader::load_skeletons_from_memory(bytes, ".");
+    if (!skeletons) return std::unexpected(skeletons.error());
+    if (skeletons->size() != 1) {
+        return fail("skeleton self-test: expected exactly one skin");
+    }
+    const animation::SkeletonAsset& s = (*skeletons)[0];
+    if (s.joints.size() != 2) {
+        return fail("skeleton self-test: expected two joints");
+    }
+    if (s.joints[0].name != "root" || s.joints[0].parent != -1) {
+        return fail("skeleton self-test: root joint name/parent wrong");
+    }
+    if (s.joints[1].name != "child" || s.joints[1].parent != 0) {
+        return fail("skeleton self-test: child joint name/parent wrong");
+    }
+    if (glm::distance(s.joints[1].translation, glm::vec3(2.0F, 0.0F, 0.0F)) > 1e-5F) {
+        return fail("skeleton self-test: child bind translation wrong");
+    }
+    if (glm::distance(glm::vec3(s.joints[1].inverse_bind[3]), glm::vec3(-2.0F, 0.0F, 0.0F)) >
+        1e-5F) {
+        return fail("skeleton self-test: child inverse-bind matrix wrong");
+    }
+
+    // The loaded skeleton round-trips: bind world * inverse bind == identity.
+    const std::vector<glm::mat4> world = animation::compute_bind_world(s);
+    for (std::size_t i = 0; i < s.joints.size(); ++i) {
+        const glm::mat4 skinning = world[i] * s.joints[i].inverse_bind;
+        if (glm::distance(skinning[3], glm::vec4(0.0F, 0.0F, 0.0F, 1.0F)) > 1e-5F) {
+            return fail("skeleton self-test: loaded bind-pose skinning matrix is not identity");
+        }
     }
     return {};
 }

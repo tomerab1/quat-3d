@@ -162,7 +162,7 @@ Goal: entities with components drive rendering; a scene can be constructed in co
 
 Goal: a glTF character with skin and animations plays back and renders correctly.
 
-- [ ] **5.1 — Skeleton asset loading**
+- [x] **5.1 — Skeleton asset loading**
   `src/animation/skeleton.cpp`: load glTF `skin` — joint names, parent indices, inverse bind matrices.
   Store as `SkeletonAsset`. Add `SkinnedMesh` component.
   *Commit: `[Phase5/Slice1] skeleton asset loading`*

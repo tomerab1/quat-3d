@@ -107,6 +107,16 @@ target_link_libraries(engine_asset PUBLIC engine_flags engine_rhi glm::glm)
 target_include_directories(engine_asset PUBLIC ${ENGINE_PUBLIC_INCLUDE})
 
 # ---------------------------------------------------------------------------
+# engine_animation — CPU-side skeletal animation (skeletons, clips, animator).
+# Graphics-free: plain data + math, consumed by engine_scene and the renderer's
+# GPU skinning pass. Starts with SkeletonAsset (5.1).
+# ---------------------------------------------------------------------------
+add_library(engine_animation STATIC
+    src/animation/skeleton.cpp)
+target_link_libraries(engine_animation PUBLIC engine_flags glm::glm)
+target_include_directories(engine_animation PUBLIC ${ENGINE_PUBLIC_INCLUDE})
+
+# ---------------------------------------------------------------------------
 # engine_scene — scene-construction side of the asset pipeline. For now just the
 # glTF loader (fastgltf -> MeshAsset); gains the ECS world + systems in Phase 4.
 # fastgltf is an implementation detail of the loader (PRIVATE).
@@ -119,8 +129,10 @@ add_library(engine_scene STATIC
 # EnTT is PUBLIC: components.hpp exposes entt types (Parent/Children) to consumers.
 # engine_renderer is PUBLIC: scene.hpp's RenderCollectSystem fills a renderer
 # DrawItem list (no cycle — the renderer does not depend on the scene).
+# engine_animation is PUBLIC: components.hpp's SkinnedMesh holds a SkeletonAsset
+# handle and the glTF loader extracts skins.
 target_link_libraries(engine_scene PUBLIC
-    engine_flags engine_asset engine_rhi engine_renderer EnTT::EnTT)
+    engine_flags engine_asset engine_rhi engine_renderer engine_animation EnTT::EnTT)
 # fastgltf and stb (image decode) are implementation details of the loader.
 target_link_libraries(engine_scene PRIVATE fastgltf::fastgltf)
 target_include_directories(engine_scene PRIVATE ${Stb_INCLUDE_DIR})
