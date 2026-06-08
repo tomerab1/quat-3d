@@ -107,6 +107,15 @@ void physics_system(entt::registry& registry, physics::PhysicsWorld& world, floa
 // physics system and verifies its Transform fell and came to rest on the floor.
 [[nodiscard]] std::expected<void, core::Error> run_physics_body_self_test();
 
+// Advance every CharacterController: integrate gravity, apply `move` * `speed`
+// horizontally, move + resolve collisions via the character controller, and write
+// the result back into Transform.
+void character_system(entt::registry& registry, physics::PhysicsWorld& world, float dt);
+
+// Drops a character onto a floor, then walks it, verifying it lands (on_ground)
+// and moves horizontally.
+[[nodiscard]] std::expected<void, core::Error> run_character_self_test();
+
 // Builds a small hierarchy, ticks the scene, and verifies world-matrix
 // propagation and draw-list collection. No device needed.
 [[nodiscard]] std::expected<void, core::Error> run_scene_self_test();

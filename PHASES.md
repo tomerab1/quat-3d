@@ -211,7 +211,7 @@ Goal: rigid bodies simulate, a character controller walks on a static mesh colli
   On tick: sync kinematic transforms Jolt→ECS and ECS→Jolt for dynamic bodies.
   *Commit: `[Phase6/Slice2] collider shapes and rigid body sync`*
 
-- [ ] **6.3 — Character controller**
+- [x] **6.3 — Character controller**
   `src/physics/character.cpp`: `JPH::CharacterVirtual` wrapper.
   `CharacterController` component: move input → velocity, `UpdateCharacter` system.
   Gravity, ground detection, step-up.

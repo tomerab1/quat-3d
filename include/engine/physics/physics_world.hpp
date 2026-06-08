@@ -74,6 +74,18 @@ public:
     void set_body_transform(std::uint32_t body, const glm::vec3& position,
                             const glm::quat& rotation);
 
+    // ---- Character controller (predictive, JPH::CharacterVirtual). ------------
+    // A capsule character: full cylinder half-height + radius, at `position`.
+    [[nodiscard]] std::uint32_t create_character(float half_height, float radius,
+                                                 const glm::vec3& position);
+    // The caller integrates gravity into the velocity; update moves + resolves
+    // collisions (with stair step-up) for `dt`.
+    void character_set_velocity(std::uint32_t character, const glm::vec3& velocity);
+    [[nodiscard]] glm::vec3 character_velocity(std::uint32_t character) const;
+    void character_update(std::uint32_t character, float dt);
+    [[nodiscard]] glm::vec3 character_position(std::uint32_t character) const;
+    [[nodiscard]] bool character_on_ground(std::uint32_t character) const;
+
 private:
     PhysicsWorld() = default;
 

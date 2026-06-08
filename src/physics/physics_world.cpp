@@ -17,6 +17,8 @@
 #include <Jolt/Core/JobSystemThreadPool.h>
 #include <Jolt/Core/TempAllocator.h>
 #include <Jolt/Physics/Body/BodyCreationSettings.h>
+#include <Jolt/Physics/Character/CharacterVirtual.h>
+#include <Jolt/Physics/Collision/ObjectLayer.h>
 #include <Jolt/Physics/Collision/Shape/BoxShape.h>
 #include <Jolt/Physics/Collision/Shape/CapsuleShape.h>
 #include <Jolt/Physics/Collision/Shape/ConvexHullShape.h>
@@ -127,6 +129,7 @@ struct PhysicsWorld::Impl {
     ObjectLayerPairFilterImpl                 obj_pair;
     JPH::PhysicsSystem                        system;
     std::vector<JPH::ShapeRefC>               shapes;
+    std::vector<JPH::Ref<JPH::CharacterVirtual>> characters;
     float                                     accumulator = 0.0F;
 };
 
@@ -265,6 +268,50 @@ void PhysicsWorld::set_body_transform(std::uint32_t body, const glm::vec3& posit
     if (body == invalid_body) return;
     impl_->system.GetBodyInterface().SetPositionAndRotation(
         JPH::BodyID(body), to_jph_r(position), to_jph(rotation), JPH::EActivation::Activate);
+}
+
+std::uint32_t PhysicsWorld::create_character(float half_height, float radius,
+                                             const glm::vec3& position) {
+    JPH::Ref<JPH::CharacterVirtualSettings> settings = new JPH::CharacterVirtualSettings();
+    settings->mShape = new JPH::CapsuleShape(half_height, radius);
+    // Accept ground contacts within the bottom hemisphere as "supporting".
+    settings->mSupportingVolume = JPH::Plane(JPH::Vec3::sAxisY(), -radius);
+    JPH::Ref<JPH::CharacterVirtual> character = new JPH::CharacterVirtual(
+        settings, to_jph_r(position), JPH::Quat::sIdentity(), 0, &impl_->system);
+    impl_->characters.push_back(character);
+    return static_cast<std::uint32_t>(impl_->characters.size() - 1);
+}
+
+void PhysicsWorld::character_set_velocity(std::uint32_t character, const glm::vec3& velocity) {
+    if (character >= impl_->characters.size()) return;
+    impl_->characters[character]->SetLinearVelocity(to_jph(velocity));
+}
+
+glm::vec3 PhysicsWorld::character_velocity(std::uint32_t character) const {
+    if (character >= impl_->characters.size()) return glm::vec3(0.0F);
+    return to_glm(impl_->characters[character]->GetLinearVelocity());
+}
+
+void PhysicsWorld::character_update(std::uint32_t character, float dt) {
+    if (character >= impl_->characters.size()) return;
+    const JPH::ObjectLayer layer = object_layer_of(Layer::character);
+    const JPH::DefaultBroadPhaseLayerFilter bp_filter(impl_->obj_vs_bp, layer);
+    const JPH::DefaultObjectLayerFilter obj_filter(impl_->obj_pair, layer);
+    JPH::CharacterVirtual::ExtendedUpdateSettings update_settings;
+    impl_->characters[character]->ExtendedUpdate(dt, impl_->system.GetGravity(), update_settings,
+                                                 bp_filter, obj_filter, JPH::BodyFilter{},
+                                                 JPH::ShapeFilter{}, *impl_->temp_allocator);
+}
+
+glm::vec3 PhysicsWorld::character_position(std::uint32_t character) const {
+    if (character >= impl_->characters.size()) return glm::vec3(0.0F);
+    return to_glm(impl_->characters[character]->GetPosition());
+}
+
+bool PhysicsWorld::character_on_ground(std::uint32_t character) const {
+    if (character >= impl_->characters.size()) return false;
+    return impl_->characters[character]->GetGroundState() ==
+           JPH::CharacterBase::EGroundState::OnGround;
 }
 
 std::expected<void, core::Error> run_physics_self_test() {

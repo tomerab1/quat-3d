@@ -83,6 +83,81 @@ void physics_system(entt::registry& registry, physics::PhysicsWorld& world, floa
     }
 }
 
+void character_system(entt::registry& registry, physics::PhysicsWorld& world, float dt) {
+    const std::uint32_t invalid = physics::PhysicsWorld::invalid_body;
+    constexpr float gravity = -9.81F;
+
+    for (auto [e, cc, t] : registry.view<CharacterController, Transform>().each()) {
+        if (cc.character == invalid) {
+            cc.character = world.create_character(cc.half_height, cc.radius, position_of(t));
+        }
+
+        glm::vec3 velocity = cc.velocity;
+        if (cc.on_ground && velocity.y < 0.0F) {
+            velocity.y = 0.0F; // grounded: stop accumulating downward speed
+        }
+        velocity.y += gravity * dt;
+        velocity.x = cc.move.x * cc.speed;
+        velocity.z = cc.move.z * cc.speed;
+
+        world.character_set_velocity(cc.character, velocity);
+        world.character_update(cc.character, dt);
+
+        cc.velocity = world.character_velocity(cc.character);
+        cc.on_ground = world.character_on_ground(cc.character);
+        const glm::vec3 pos = world.character_position(cc.character);
+        t.local = glm::translate(glm::mat4(1.0F), pos);
+        t.world = t.local;
+    }
+}
+
+std::expected<void, core::Error> run_character_self_test() {
+    auto world = physics::PhysicsWorld::create();
+    if (!world) return std::unexpected(world.error());
+
+    // Static floor (top at y=0), added directly to the world.
+    physics::PhysicsWorld::BodyParams floor;
+    floor.shape = world->create_box(glm::vec3(50.0F, 1.0F, 50.0F));
+    floor.position = glm::vec3(0.0F, -1.0F, 0.0F);
+    floor.motion = physics::Motion::static_body;
+    floor.layer = physics::Layer::static_body;
+    (void)world->add_body(floor);
+
+    entt::registry registry;
+    const entt::entity e = registry.create();
+    registry.emplace<Transform>(e).local =
+        glm::translate(glm::mat4(1.0F), glm::vec3(0.0F, 5.0F, 0.0F));
+    registry.emplace<CharacterController>(e);
+
+    // Fall onto the floor (4 s).
+    for (int i = 0; i < 240; ++i) {
+        character_system(registry, *world, 1.0F / 60.0F);
+    }
+    auto& cc = registry.get<CharacterController>(e);
+    const float landed_y = registry.get<Transform>(e).local[3].y;
+    if (landed_y > 4.0F) {
+        return std::unexpected(core::Error{"character self-test: did not fall"});
+    }
+    if (!cc.on_ground) {
+        return std::unexpected(core::Error{"character self-test: not grounded after landing"});
+    }
+    if (landed_y < 0.0F) {
+        return std::unexpected(core::Error{"character self-test: sank through floor"});
+    }
+
+    // Walk +X for 1 s and confirm horizontal motion.
+    const float start_x = registry.get<Transform>(e).local[3].x;
+    cc.move = glm::vec3(1.0F, 0.0F, 0.0F);
+    for (int i = 0; i < 60; ++i) {
+        character_system(registry, *world, 1.0F / 60.0F);
+    }
+    const float end_x = registry.get<Transform>(e).local[3].x;
+    if (end_x - start_x < 1.0F) {
+        return std::unexpected(core::Error{"character self-test: did not walk forward"});
+    }
+    return {};
+}
+
 std::expected<void, core::Error> run_physics_body_self_test() {
     auto world = physics::PhysicsWorld::create();
     if (!world) return std::unexpected(world.error());

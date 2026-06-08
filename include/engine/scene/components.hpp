@@ -97,6 +97,19 @@ struct RigidBody {
     std::uint32_t body = 0xFFFFFFFFU; // PhysicsWorld body handle
 };
 
+// A capsule character controller (predictive, no rigid body). `move` is the
+// desired horizontal direction (xz, magnitude <= 1) the controller reads each
+// tick; `velocity`/`on_ground`/`character` are system-managed.
+struct CharacterController {
+    float         radius = 0.3F;
+    float         half_height = 0.6F; // capsule cylinder half-height
+    float         speed = 4.0F;
+    glm::vec3     move{0.0F};
+    glm::vec3     velocity{0.0F};
+    bool          on_ground = false;
+    std::uint32_t character = 0xFFFFFFFFU;
+};
+
 // Single directional light (sun). `direction` points from the light toward the
 // scene (i.e. the direction photons travel) in world space.
 struct DirectionalLight {
