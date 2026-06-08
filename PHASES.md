@@ -91,7 +91,7 @@ Goal: a glTF static mesh loads and renders with a basic PBR material under a dir
   synchronous load path (async deferred to Phase 6). Default fallback assets.
   *Commit: `[Phase3/Slice1] asset manager skeleton`*
 
-- [ ] **3.2 — glTF static mesh loading**
+- [x] **3.2 — glTF static mesh loading**
   `src/scene/gltf_loader.cpp` using fastgltf: load positions, normals, UVs, tangents, indices.
   Upload to device-local vertex + index buffers. Store as `MeshAsset`.
   *Commit: `[Phase3/Slice2] glTF static mesh loading`*

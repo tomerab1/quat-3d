@@ -64,6 +64,8 @@ find_package(SDL3 CONFIG REQUIRED)
 find_package(Vulkan REQUIRED)
 find_package(VulkanMemoryAllocator CONFIG REQUIRED)
 find_package(nlohmann_json CONFIG REQUIRED)
+find_package(glm CONFIG REQUIRED)
+find_package(fastgltf CONFIG REQUIRED)
 
 set(ENGINE_PUBLIC_INCLUDE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 
@@ -91,21 +93,32 @@ target_include_directories(engine_rhi PUBLIC ${ENGINE_PUBLIC_INCLUDE})
 set_source_files_properties(src/rhi/vma_impl.cpp PROPERTIES COMPILE_OPTIONS "-w")
 
 # ---------------------------------------------------------------------------
-# engine_asset — asset identity, ref-counted handles, synchronous load path.
-# Type-agnostic and graphics-free for now; gains an engine_rhi dependency in
-# Phase 3.2 when MeshAsset starts holding GPU buffers.
+# engine_asset — asset identity, ref-counted handles, synchronous load path,
+# and asset types (MeshAsset). MeshAsset owns GpuBuffers, so engine_rhi and glm
+# are PUBLIC: any consumer of the asset headers needs them transitively.
 # ---------------------------------------------------------------------------
 add_library(engine_asset STATIC
     src/asset/asset_manager.cpp)
-target_link_libraries(engine_asset PUBLIC engine_flags)
+target_link_libraries(engine_asset PUBLIC engine_flags engine_rhi glm::glm)
 target_include_directories(engine_asset PUBLIC ${ENGINE_PUBLIC_INCLUDE})
+
+# ---------------------------------------------------------------------------
+# engine_scene — scene-construction side of the asset pipeline. For now just the
+# glTF loader (fastgltf -> MeshAsset); gains the ECS world + systems in Phase 4.
+# fastgltf is an implementation detail of the loader (PRIVATE).
+# ---------------------------------------------------------------------------
+add_library(engine_scene STATIC
+    src/scene/gltf_loader.cpp)
+target_link_libraries(engine_scene PUBLIC engine_flags engine_asset engine_rhi)
+target_link_libraries(engine_scene PRIVATE fastgltf::fastgltf)
+target_include_directories(engine_scene PUBLIC ${ENGINE_PUBLIC_INCLUDE})
 
 # ---------------------------------------------------------------------------
 # game — executable entry point. The full target graph (engine_core /
 # engine_renderer / engine_editor) grows phase by phase as modules gain sources.
 # ---------------------------------------------------------------------------
 add_executable(game src/main.cpp)
-target_link_libraries(game PRIVATE engine_flags engine_rhi engine_asset SDL3::SDL3)
+target_link_libraries(game PRIVATE engine_flags engine_rhi engine_asset engine_scene SDL3::SDL3)
 target_include_directories(game PRIVATE
     ${ENGINE_PUBLIC_INCLUDE}
     ${CMAKE_CURRENT_SOURCE_DIR}/src)

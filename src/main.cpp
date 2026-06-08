@@ -20,6 +20,7 @@
 
 #include "engine/asset/asset_manager.hpp"
 #include "engine/rhi/descriptor_buffer.hpp"
+#include "engine/scene/gltf_loader.hpp"
 #include "engine/rhi/device.hpp"
 #include "engine/rhi/gpu_allocator.hpp"
 #include "engine/rhi/graphics_pipeline.hpp"
@@ -284,6 +285,27 @@ int main() {
             } else {
                 std::fprintf(stderr, "[selftest] triangle render FAILED: %s\n",
                              r.error().message.c_str());
+            }
+        }
+
+        {
+            // Transient transfer context for the glTF upload path.
+            VkCommandPool pool = VK_NULL_HANDLE;
+            VkCommandPoolCreateInfo pool_info{};
+            pool_info.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+            pool_info.queueFamilyIndex = device.queue_families().transfer;
+            if (vkCreateCommandPool(device.handle(), &pool_info, nullptr, &pool) == VK_SUCCESS) {
+                const engine::rhi::TransferContext transfer{device.handle(), pool,
+                                                            device.transfer_queue()};
+                if (auto r = engine::scene::run_gltf_loader_self_test(allocator, transfer); r) {
+                    std::fprintf(stderr, "[selftest] glTF loader OK\n");
+                } else {
+                    std::fprintf(stderr, "[selftest] glTF loader FAILED: %s\n",
+                                 r.error().message.c_str());
+                }
+                vkDestroyCommandPool(device.handle(), pool, nullptr);
+            } else {
+                std::fprintf(stderr, "[selftest] glTF loader FAILED: command pool creation\n");
             }
         }
 

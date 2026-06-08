@@ -43,14 +43,17 @@ enum class AssetState : std::uint8_t { not_loaded, loading, loaded, failed };
 
 // Shared storage backing every handle to a given asset. The manager owns one
 // slot per (type, id); handles hold a shared_ptr to it, so the asset lives as
-// long as either the cache or any outstanding handle references it. `value`
-// always holds a valid T — the per-type default until a load succeeds — so a
-// handle can be dereferenced before (or despite a failed) load.
+// long as either the cache or any outstanding handle references it. `value` is
+// meaningful only once `state == loaded`; until then (or on failure) a handle
+// resolves to `fallback`, the per-type default shared by every unloaded slot.
+// Sharing the default by pointer — rather than copying it into each slot — also
+// lets move-only assets (e.g. a MeshAsset owning GpuBuffers) be cached.
 template <typename T>
 struct AssetSlot {
     AssetId id{};
     std::atomic<AssetState> state{AssetState::not_loaded};
     T value{};
+    std::shared_ptr<const T> fallback;
 };
 
 // Ref-counted, nullable handle to an asset of type T. Copyable and cheap.
@@ -73,22 +76,34 @@ public:
     }
     [[nodiscard]] bool is_loaded() const noexcept { return state() == AssetState::loaded; }
 
-    // Precondition: valid(). Returns the loaded asset, else the default.
-    [[nodiscard]] const T& operator*() const noexcept { return slot_->value; }
-    [[nodiscard]] const T* operator->() const noexcept { return &slot_->value; }
+    // Precondition: valid(). Returns the loaded asset, else the per-type default.
+    [[nodiscard]] const T& operator*() const noexcept { return resolve(); }
+    [[nodiscard]] const T* operator->() const noexcept { return &resolve(); }
 
 private:
+    [[nodiscard]] const T& resolve() const noexcept {
+        return slot_->state.load(std::memory_order_acquire) == AssetState::loaded
+                   ? slot_->value
+                   : *slot_->fallback;
+    }
+
     std::shared_ptr<AssetSlot<T>> slot_;
 };
 
-// Per-type cache: maps AssetId -> slot, plus the default asset cloned into a
-// slot's value until a load succeeds. Type-erased behind a void shared_ptr in
-// the manager (see AssetManager::cache_for).
+// Per-type cache: maps AssetId -> slot, plus the shared default asset that
+// unloaded slots resolve to. Type-erased behind a void shared_ptr in the
+// manager (see AssetManager::cache_for).
 template <typename T>
 class AssetCache {
 public:
-    void set_default(T value) { default_ = std::move(value); }
-    [[nodiscard]] const T& default_value() const noexcept { return default_; }
+    void set_default(T value) { default_ = std::make_shared<const T>(std::move(value)); }
+
+    // The shared default, lazily materialised to a default-constructed T so a
+    // handle is always dereferenceable even if no explicit default was set.
+    [[nodiscard]] std::shared_ptr<const T> default_ptr() {
+        if (!default_) default_ = std::make_shared<const T>();
+        return default_;
+    }
 
     [[nodiscard]] std::shared_ptr<AssetSlot<T>> find(AssetId id) const {
         const auto it = slots_.find(id.value);
@@ -100,7 +115,7 @@ public:
 
 private:
     std::unordered_map<std::uint64_t, std::shared_ptr<AssetSlot<T>>> slots_;
-    T default_{};
+    std::shared_ptr<const T> default_;
 };
 
 class AssetManager {
@@ -133,7 +148,7 @@ public:
 
         auto slot = std::make_shared<AssetSlot<T>>();
         slot->id = id;
-        slot->value = cache.default_value();
+        slot->fallback = cache.default_ptr();
         cache.insert(slot);
 
         const std::filesystem::path absolute = asset_root_ / std::filesystem::path(relative_path);
