@@ -23,6 +23,7 @@
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 
+#include "engine/animation/clip.hpp"
 #include "engine/animation/skeleton.hpp"
 #include "engine/asset/asset_manager.hpp"
 #include "engine/asset/material_asset.hpp"
@@ -521,10 +522,24 @@ int main() {
                          r.error().message.c_str());
         }
 
+        if (auto r = engine::animation::run_clip_self_test(); r) {
+            std::fprintf(stderr, "[selftest] clip sampling OK\n");
+        } else {
+            std::fprintf(stderr, "[selftest] clip sampling FAILED: %s\n",
+                         r.error().message.c_str());
+        }
+
         if (auto r = engine::scene::run_skeleton_load_self_test(); r) {
             std::fprintf(stderr, "[selftest] skeleton load OK\n");
         } else {
             std::fprintf(stderr, "[selftest] skeleton load FAILED: %s\n",
+                         r.error().message.c_str());
+        }
+
+        if (auto r = engine::scene::run_animation_load_self_test(); r) {
+            std::fprintf(stderr, "[selftest] animation load OK\n");
+        } else {
+            std::fprintf(stderr, "[selftest] animation load FAILED: %s\n",
                          r.error().message.c_str());
         }
 
@@ -688,6 +703,18 @@ int main() {
                     } else {
                         std::fprintf(stderr, "[gltf] skeleton load FAILED: %s\n",
                                      skels.error().message.c_str());
+                    }
+                    if (auto clips = engine::scene::GltfLoader::load_animations(gltf_path); clips) {
+                        std::fprintf(stderr, "[gltf] %zu animation(s)\n", clips->size());
+                        for (std::size_t i = 0; i < clips->size(); ++i) {
+                            std::fprintf(stderr,
+                                         "[gltf]   clip %zu '%s': %.2fs, %zu channel(s)\n", i,
+                                         (*clips)[i].name.c_str(), (*clips)[i].duration,
+                                         (*clips)[i].channels.size());
+                        }
+                    } else {
+                        std::fprintf(stderr, "[gltf] animation load FAILED: %s\n",
+                                     clips.error().message.c_str());
                     }
                 }
                 vkDestroyCommandPool(device.handle(), pool, nullptr);

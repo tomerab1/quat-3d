@@ -2,6 +2,7 @@
 
 #define GLM_ENABLE_EXPERIMENTAL
 
+#include <algorithm>
 #include <array>
 #include <cstring>
 #include <functional>
@@ -21,6 +22,7 @@
 #include <glm/gtc/quaternion.hpp>
 #include <glm/gtx/matrix_decompose.hpp>
 
+#include "engine/animation/clip.hpp"
 #include "engine/animation/skeleton.hpp"
 #include "engine/asset/asset_manager.hpp"
 #include "engine/scene/components.hpp"
@@ -303,6 +305,102 @@ parse_and_extract_skeletons(fastgltf::GltfDataBuffer& data,
                     std::string(fastgltf::getErrorMessage(asset.error())));
     }
     return extract_skeletons(asset.get());
+}
+
+// Flatten one glTF animation into an AnimClipAsset. CUBICSPLINE samplers keep
+// only their value keyframes (dropping the in/out tangents) and become LINEAR.
+[[nodiscard]] animation::AnimClipAsset extract_animation(const fastgltf::Asset& asset,
+                                                         const fastgltf::Animation& anim) {
+    animation::AnimClipAsset clip;
+    clip.name.assign(anim.name.begin(), anim.name.end());
+
+    clip.samplers.reserve(anim.samplers.size());
+    for (const fastgltf::AnimationSampler& smp : anim.samplers) {
+        animation::AnimSampler out;
+        const fastgltf::Accessor& in_acc = asset.accessors[smp.inputAccessor];
+        out.input.reserve(in_acc.count);
+        fastgltf::iterateAccessor<float>(asset, in_acc,
+                                         [&](float v) { out.input.push_back(v); });
+
+        const bool cubic = smp.interpolation == fastgltf::AnimationInterpolation::CubicSpline;
+        out.interpolation = smp.interpolation == fastgltf::AnimationInterpolation::Step
+                                ? animation::Interpolation::step
+                                : animation::Interpolation::linear;
+
+        const fastgltf::Accessor& out_acc = asset.accessors[smp.outputAccessor];
+        std::vector<glm::vec4> raw;
+        raw.reserve(out_acc.count);
+        if (out_acc.type == fastgltf::AccessorType::Vec4) {
+            fastgltf::iterateAccessor<fastgltf::math::fvec4>(
+                asset, out_acc, [&](fastgltf::math::fvec4 v) { raw.push_back(to_glm(v)); });
+        } else {
+            fastgltf::iterateAccessor<fastgltf::math::fvec3>(
+                asset, out_acc,
+                [&](fastgltf::math::fvec3 v) { raw.emplace_back(to_glm(v), 0.0F); });
+        }
+
+        if (cubic) {
+            // [inTangent, value, outTangent] per key -> keep the values only.
+            std::vector<glm::vec4> values;
+            values.reserve(out.input.size());
+            for (std::size_t k = 0; k < out.input.size(); ++k) {
+                const std::size_t vi = k * 3 + 1;
+                if (vi < raw.size()) values.push_back(raw[vi]);
+            }
+            out.output = std::move(values);
+        } else {
+            out.output = std::move(raw);
+        }
+
+        if (!out.input.empty()) {
+            clip.duration = std::max(clip.duration, out.input.back());
+        }
+        clip.samplers.push_back(std::move(out));
+    }
+
+    clip.channels.reserve(anim.channels.size());
+    for (const fastgltf::AnimationChannel& ch : anim.channels) {
+        animation::AnimChannel out;
+        out.target_node = ch.nodeIndex.has_value() ? static_cast<int>(ch.nodeIndex.value()) : -1;
+        out.sampler = ch.samplerIndex;
+        switch (ch.path) {
+        case fastgltf::AnimationPath::Translation:
+            out.path = animation::AnimPath::translation;
+            break;
+        case fastgltf::AnimationPath::Rotation:
+            out.path = animation::AnimPath::rotation;
+            break;
+        case fastgltf::AnimationPath::Scale:
+            out.path = animation::AnimPath::scale;
+            break;
+        default:
+            continue; // morph-target weights unsupported
+        }
+        clip.channels.push_back(out);
+    }
+    return clip;
+}
+
+[[nodiscard]] std::vector<animation::AnimClipAsset>
+extract_animations(const fastgltf::Asset& asset) {
+    std::vector<animation::AnimClipAsset> out;
+    out.reserve(asset.animations.size());
+    for (const fastgltf::Animation& anim : asset.animations) {
+        out.push_back(extract_animation(asset, anim));
+    }
+    return out;
+}
+
+[[nodiscard]] std::expected<std::vector<animation::AnimClipAsset>, core::Error>
+parse_and_extract_animations(fastgltf::GltfDataBuffer& data,
+                             const std::filesystem::path& base_dir) {
+    fastgltf::Parser parser;
+    fastgltf::Expected<fastgltf::Asset> asset = parser.loadGltf(data, base_dir, kLoadOptions);
+    if (asset.error() != fastgltf::Error::None) {
+        return fail(std::string("fastgltf parse failed: ") +
+                    std::string(fastgltf::getErrorMessage(asset.error())));
+    }
+    return extract_animations(asset.get());
 }
 
 [[nodiscard]] std::expected<MeshData, core::Error>
@@ -665,6 +763,27 @@ GltfLoader::load_skeletons_from_memory(std::span<const std::byte> bytes,
                     std::string(fastgltf::getErrorMessage(data.error())));
     }
     return parse_and_extract_skeletons(data.get(), base_dir);
+}
+
+std::expected<std::vector<animation::AnimClipAsset>, core::Error>
+GltfLoader::load_animations(const std::filesystem::path& path) {
+    auto data = fastgltf::GltfDataBuffer::FromPath(path);
+    if (data.error() != fastgltf::Error::None) {
+        return fail("fastgltf: could not read '" + path.string() + "': " +
+                    std::string(fastgltf::getErrorMessage(data.error())));
+    }
+    return parse_and_extract_animations(data.get(), path.parent_path());
+}
+
+std::expected<std::vector<animation::AnimClipAsset>, core::Error>
+GltfLoader::load_animations_from_memory(std::span<const std::byte> bytes,
+                                        const std::filesystem::path& base_dir) {
+    auto data = fastgltf::GltfDataBuffer::FromBytes(bytes.data(), bytes.size());
+    if (data.error() != fastgltf::Error::None) {
+        return fail("fastgltf: could not wrap memory buffer: " +
+                    std::string(fastgltf::getErrorMessage(data.error())));
+    }
+    return parse_and_extract_animations(data.get(), base_dir);
 }
 
 // ---------------------------------------------------------------------------
@@ -1153,6 +1272,87 @@ std::expected<void, core::Error> run_skeleton_load_self_test() {
         if (glm::distance(skinning[3], glm::vec4(0.0F, 0.0F, 0.0F, 1.0F)) > 1e-5F) {
             return fail("skeleton self-test: loaded bind-pose skinning matrix is not identity");
         }
+    }
+    return {};
+}
+
+std::expected<void, core::Error> run_animation_load_self_test() {
+    // One node animated over [0,1]: translation (LINEAR) (0,0,0)->(10,0,0),
+    // scale (STEP) (1,1,1)->(2,2,2), rotation (LINEAR) identity->90 deg about Y.
+    const std::array<float, 22> data{
+        0.0F, 1.0F,                                     // input times       (acc0)
+        0.0F, 0.0F, 0.0F, 10.0F, 0.0F, 0.0F,            // translation VEC3   (acc1)
+        1.0F, 1.0F, 1.0F, 2.0F, 2.0F, 2.0F,             // scale VEC3         (acc2)
+        0.0F, 0.0F, 0.0F, 1.0F, 0.0F, 0.70710678F, 0.0F, 0.70710678F}; // rotation VEC4 (acc3)
+    std::array<std::byte, sizeof(data)> buffer{};
+    std::memcpy(buffer.data(), data.data(), sizeof(data));
+    const std::string b64 = base64_encode(buffer);
+
+    const std::string gltf =
+        R"({"asset":{"version":"2.0"},"scene":0,)"
+        R"("scenes":[{"nodes":[0]}],"nodes":[{"name":"bone"}],)"
+        R"("animations":[{"name":"clip0",)"
+        R"("samplers":[)"
+        R"({"input":0,"output":1,"interpolation":"LINEAR"},)"
+        R"({"input":0,"output":2,"interpolation":"STEP"},)"
+        R"({"input":0,"output":3,"interpolation":"LINEAR"}],)"
+        R"("channels":[)"
+        R"({"sampler":0,"target":{"node":0,"path":"translation"}},)"
+        R"({"sampler":1,"target":{"node":0,"path":"scale"}},)"
+        R"({"sampler":2,"target":{"node":0,"path":"rotation"}}]}],)"
+        R"("buffers":[{"byteLength":88,"uri":"data:application/octet-stream;base64,)" +
+        b64 + R"("}],)"
+        R"("bufferViews":[)"
+        R"({"buffer":0,"byteOffset":0,"byteLength":8},)"
+        R"({"buffer":0,"byteOffset":8,"byteLength":24},)"
+        R"({"buffer":0,"byteOffset":32,"byteLength":24},)"
+        R"({"buffer":0,"byteOffset":56,"byteLength":32}],)"
+        R"("accessors":[)"
+        R"({"bufferView":0,"componentType":5126,"count":2,"type":"SCALAR","min":[0.0],"max":[1.0]},)"
+        R"({"bufferView":1,"componentType":5126,"count":2,"type":"VEC3"},)"
+        R"({"bufferView":2,"componentType":5126,"count":2,"type":"VEC3"},)"
+        R"({"bufferView":3,"componentType":5126,"count":2,"type":"VEC4"}]})";
+
+    const std::span<const std::byte> bytes(reinterpret_cast<const std::byte*>(gltf.data()),
+                                           gltf.size());
+    auto clips = GltfLoader::load_animations_from_memory(bytes, ".");
+    if (!clips) return std::unexpected(clips.error());
+    if (clips->size() != 1) {
+        return fail("animation self-test: expected exactly one clip");
+    }
+    const animation::AnimClipAsset& clip = (*clips)[0];
+    if (clip.name != "clip0" || std::abs(clip.duration - 1.0F) > 1e-5F) {
+        return fail("animation self-test: clip name/duration wrong");
+    }
+    if (clip.channels.size() != 3 || clip.samplers.size() != 3) {
+        return fail("animation self-test: wrong channel/sampler count");
+    }
+
+    const auto sampler_for = [&](animation::AnimPath p) -> const animation::AnimSampler* {
+        for (const animation::AnimChannel& c : clip.channels) {
+            if (c.path == p && c.target_node == 0 && c.sampler < clip.samplers.size()) {
+                return &clip.samplers[c.sampler];
+            }
+        }
+        return nullptr;
+    };
+
+    const animation::AnimSampler* ts = sampler_for(animation::AnimPath::translation);
+    const animation::AnimSampler* ss = sampler_for(animation::AnimPath::scale);
+    const animation::AnimSampler* rs = sampler_for(animation::AnimPath::rotation);
+    if (ts == nullptr || ss == nullptr || rs == nullptr) {
+        return fail("animation self-test: a channel/path is missing");
+    }
+    if (glm::distance(ts->sample_vec3(0.5F), glm::vec3(5, 0, 0)) > 1e-5F) {
+        return fail("animation self-test: translation sample wrong");
+    }
+    if (glm::distance(ss->sample_vec3(0.5F), glm::vec3(1, 1, 1)) > 1e-5F) {
+        return fail("animation self-test: STEP scale sample wrong");
+    }
+    const glm::quat r = rs->sample_quat(0.5F);
+    const glm::quat expected(0.92387953F, 0.0F, 0.38268343F, 0.0F);
+    if (glm::abs(glm::dot(r, expected)) < 0.9999F) {
+        return fail("animation self-test: rotation slerp sample wrong");
     }
     return {};
 }

@@ -15,6 +15,7 @@
 
 #include <entt/entity/fwd.hpp>
 
+#include "engine/animation/clip.hpp"
 #include "engine/animation/skeleton.hpp"
 #include "engine/asset/material_asset.hpp"
 #include "engine/asset/mesh_asset.hpp"
@@ -115,6 +116,15 @@ public:
     load_skeletons_from_memory(std::span<const std::byte> bytes,
                                const std::filesystem::path& base_dir);
 
+    // Extract every glTF animation as an AnimClipAsset (samplers + channels).
+    // No device needed.
+    [[nodiscard]] static std::expected<std::vector<animation::AnimClipAsset>, core::Error>
+    load_animations(const std::filesystem::path& path);
+
+    [[nodiscard]] static std::expected<std::vector<animation::AnimClipAsset>, core::Error>
+    load_animations_from_memory(std::span<const std::byte> bytes,
+                                const std::filesystem::path& base_dir);
+
     // Instantiate a whole glTF scene into `scene` as ECS entities. Every mesh
     // primitive, image, and material is uploaded once and cached in `assets`
     // (keyed by `path` + index) so the MeshRenderer handles keep them alive.
@@ -169,5 +179,10 @@ run_gltf_scene_self_test(rhi::GpuAllocator& allocator, const rhi::TransferContex
 // verifies the extracted SkeletonAsset: joint count, names, parent indices,
 // bind-pose TRS, and inverse-bind matrices. No device needed.
 [[nodiscard]] std::expected<void, core::Error> run_skeleton_load_self_test();
+
+// Parses an in-memory glTF animation (translation LINEAR, scale STEP, rotation
+// slerp on one node) and verifies the extracted clip's channels/samplers and a
+// few sampled values. No device needed.
+[[nodiscard]] std::expected<void, core::Error> run_animation_load_self_test();
 
 } // namespace engine::scene

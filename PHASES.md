@@ -167,7 +167,7 @@ Goal: a glTF character with skin and animations plays back and renders correctly
   Store as `SkeletonAsset`. Add `SkinnedMesh` component.
   *Commit: `[Phase5/Slice1] skeleton asset loading`*
 
-- [ ] **5.2 — Animation clip loading**
+- [x] **5.2 — Animation clip loading**
   `src/animation/clip.cpp`: load glTF `animation` channels (translation/rotation/scale samplers).
   Store as `AnimClipAsset`. Support LINEAR and STEP interpolation. CUBICSPLINE deferred.
   *Commit: `[Phase5/Slice2] animation clip loading`*
