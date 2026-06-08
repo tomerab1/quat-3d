@@ -205,7 +205,7 @@ Goal: rigid bodies simulate, a character controller walks on a static mesh colli
   Collision layers: STATIC, DYNAMIC, CHARACTER, TRIGGER.
   *Commit: `[Phase6/Slice1] Jolt Physics world integration`*
 
-- [ ] **6.2 — Collider shapes + RigidBody component**
+- [x] **6.2 — Collider shapes + RigidBody component**
   `src/physics/collider.cpp`: shape factory helpers (box, sphere, capsule, convex hull, mesh).
   `PhysicsSystem`: on entity creation with `RigidBody`+`Collider`, create Jolt body.
   On tick: sync kinematic transforms Jolt→ECS and ECS→Jolt for dynamic bodies.

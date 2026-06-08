@@ -18,6 +18,10 @@
 #include "engine/renderer/mesh_pass.hpp"
 #include "engine/scene/components.hpp"
 
+namespace engine::physics {
+class PhysicsWorld;
+}
+
 namespace engine::scene {
 
 class Scene {
@@ -93,6 +97,15 @@ struct CameraMatrices {
 // (width / height). Runs TransformSystem's output (reads Transform.world), so
 // tick() the scene first.
 [[nodiscard]] CameraMatrices camera_system(const entt::registry& registry, float aspect_ratio);
+
+// Bridge ECS <-> physics: create a body for each new RigidBody+Collider+Transform
+// entity, push kinematic transforms into the world, step it by `dt`, then write
+// dynamic bodies' transforms back into Transform (entities are treated as roots).
+void physics_system(entt::registry& registry, physics::PhysicsWorld& world, float dt);
+
+// Drops a dynamic sphere entity onto a static box-floor entity through the ECS
+// physics system and verifies its Transform fell and came to rest on the floor.
+[[nodiscard]] std::expected<void, core::Error> run_physics_body_self_test();
 
 // Builds a small hierarchy, ticks the scene, and verifies world-matrix
 // propagation and draw-list collection. No device needed.

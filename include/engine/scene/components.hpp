@@ -76,6 +76,27 @@ struct Camera {
     bool  is_active = true;
 };
 
+// Collision shape for a physics body. Primitive shapes only; `half_extents`
+// means box half-extents, sphere radius in x, or capsule (radius in x,
+// half-height in y). `offset` reserved for shape-local offset (unused for now).
+enum class ColliderShape : std::uint8_t { box, sphere, capsule };
+struct Collider {
+    ColliderShape shape = ColliderShape::box;
+    glm::vec3     half_extents{0.5F};
+    glm::vec3     offset{0.0F};
+};
+
+// A physics body. `body` is the handle assigned by the PhysicsSystem when it
+// creates the Jolt body from this entity's Collider + Transform (invalid until
+// then). Static bodies never move; kinematic are driven ECS->physics; dynamic
+// are driven physics->ECS.
+enum class BodyMotion : std::uint8_t { static_body, kinematic, dynamic };
+struct RigidBody {
+    BodyMotion    motion = BodyMotion::dynamic;
+    float         mass = 1.0F;
+    std::uint32_t body = 0xFFFFFFFFU; // PhysicsWorld body handle
+};
+
 // Single directional light (sun). `direction` points from the light toward the
 // scene (i.e. the direction photons travel) in world space.
 struct DirectionalLight {

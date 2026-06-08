@@ -2,6 +2,7 @@
 
 #include <cmath>
 #include <thread>
+#include <vector>
 
 // Jolt headers are not clean under our strict warning flags; quiet them here
 // (our own code in this TU stays under the project's warnings).
@@ -17,6 +18,9 @@
 #include <Jolt/Core/TempAllocator.h>
 #include <Jolt/Physics/Body/BodyCreationSettings.h>
 #include <Jolt/Physics/Collision/Shape/BoxShape.h>
+#include <Jolt/Physics/Collision/Shape/CapsuleShape.h>
+#include <Jolt/Physics/Collision/Shape/ConvexHullShape.h>
+#include <Jolt/Physics/Collision/Shape/MeshShape.h>
 #include <Jolt/Physics/Collision/Shape/SphereShape.h>
 #include <Jolt/Physics/PhysicsSettings.h>
 #include <Jolt/Physics/PhysicsSystem.h>
@@ -95,6 +99,24 @@ void ensure_jolt_initialized() {
     return std::unexpected(core::Error{std::move(what)});
 }
 
+[[nodiscard]] JPH::Vec3 to_jph(const glm::vec3& v) { return JPH::Vec3(v.x, v.y, v.z); }
+[[nodiscard]] JPH::RVec3 to_jph_r(const glm::vec3& v) {
+    return JPH::RVec3(static_cast<JPH::Real>(v.x), static_cast<JPH::Real>(v.y),
+                      static_cast<JPH::Real>(v.z));
+}
+[[nodiscard]] JPH::Quat to_jph(const glm::quat& q) { return JPH::Quat(q.x, q.y, q.z, q.w); }
+[[nodiscard]] glm::vec3 to_glm(JPH::RVec3Arg v) {
+    return {static_cast<float>(v.GetX()), static_cast<float>(v.GetY()),
+            static_cast<float>(v.GetZ())};
+}
+[[nodiscard]] glm::quat to_glm(JPH::QuatArg q) {
+    return {q.GetW(), q.GetX(), q.GetY(), q.GetZ()}; // glm::quat is (w, x, y, z)
+}
+
+[[nodiscard]] JPH::ObjectLayer object_layer_of(Layer layer) {
+    return static_cast<JPH::ObjectLayer>(layer);
+}
+
 } // namespace
 
 struct PhysicsWorld::Impl {
@@ -104,6 +126,7 @@ struct PhysicsWorld::Impl {
     ObjectVsBroadPhaseFilterImpl              obj_vs_bp;
     ObjectLayerPairFilterImpl                 obj_pair;
     JPH::PhysicsSystem                        system;
+    std::vector<JPH::ShapeRefC>               shapes;
     float                                     accumulator = 0.0F;
 };
 
@@ -145,6 +168,103 @@ void PhysicsWorld::update(float dt) {
         impl_->accumulator -= fixed_timestep;
         ++steps;
     }
+}
+
+std::uint32_t PhysicsWorld::create_box(const glm::vec3& half_extents) {
+    impl_->shapes.emplace_back(new JPH::BoxShape(to_jph(half_extents)));
+    return static_cast<std::uint32_t>(impl_->shapes.size() - 1);
+}
+
+std::uint32_t PhysicsWorld::create_sphere(float radius) {
+    impl_->shapes.emplace_back(new JPH::SphereShape(radius));
+    return static_cast<std::uint32_t>(impl_->shapes.size() - 1);
+}
+
+std::uint32_t PhysicsWorld::create_capsule(float half_height, float radius) {
+    impl_->shapes.emplace_back(new JPH::CapsuleShape(half_height, radius));
+    return static_cast<std::uint32_t>(impl_->shapes.size() - 1);
+}
+
+std::uint32_t PhysicsWorld::create_convex(std::span<const glm::vec3> points) {
+    JPH::Array<JPH::Vec3> jpoints;
+    jpoints.reserve(points.size());
+    for (const glm::vec3& p : points) {
+        jpoints.push_back(to_jph(p));
+    }
+    JPH::ConvexHullShapeSettings settings(jpoints);
+    JPH::ShapeSettings::ShapeResult result = settings.Create();
+    if (result.HasError()) {
+        return invalid_body;
+    }
+    impl_->shapes.push_back(result.Get());
+    return static_cast<std::uint32_t>(impl_->shapes.size() - 1);
+}
+
+std::uint32_t PhysicsWorld::create_mesh(std::span<const glm::vec3> points,
+                                        std::span<const std::uint32_t> indices) {
+    JPH::VertexList verts;
+    verts.reserve(points.size());
+    for (const glm::vec3& p : points) {
+        verts.push_back(JPH::Float3(p.x, p.y, p.z));
+    }
+    JPH::IndexedTriangleList tris;
+    tris.reserve(indices.size() / 3);
+    for (std::size_t i = 0; i + 2 < indices.size(); i += 3) {
+        tris.push_back(JPH::IndexedTriangle(indices[i], indices[i + 1], indices[i + 2], 0));
+    }
+    JPH::MeshShapeSettings settings(verts, tris);
+    JPH::ShapeSettings::ShapeResult result = settings.Create();
+    if (result.HasError()) {
+        return invalid_body;
+    }
+    impl_->shapes.push_back(result.Get());
+    return static_cast<std::uint32_t>(impl_->shapes.size() - 1);
+}
+
+std::uint32_t PhysicsWorld::add_body(const BodyParams& params) {
+    if (params.shape >= impl_->shapes.size()) {
+        return invalid_body;
+    }
+    const JPH::EMotionType motion = params.motion == Motion::static_body ? JPH::EMotionType::Static
+                                    : params.motion == Motion::kinematic ? JPH::EMotionType::Kinematic
+                                                                         : JPH::EMotionType::Dynamic;
+    JPH::BodyCreationSettings settings(impl_->shapes[params.shape], to_jph_r(params.position),
+                                       to_jph(params.rotation), motion,
+                                       object_layer_of(params.layer));
+    if (params.motion == Motion::dynamic && params.mass > 0.0F) {
+        settings.mOverrideMassProperties = JPH::EOverrideMassProperties::CalculateInertia;
+        settings.mMassPropertiesOverride.mMass = params.mass;
+    }
+    const JPH::EActivation activation =
+        params.motion == Motion::static_body ? JPH::EActivation::DontActivate
+                                             : JPH::EActivation::Activate;
+    const JPH::BodyID id =
+        impl_->system.GetBodyInterface().CreateAndAddBody(settings, activation);
+    return id.IsInvalid() ? invalid_body : id.GetIndexAndSequenceNumber();
+}
+
+void PhysicsWorld::remove_body(std::uint32_t body) {
+    if (body == invalid_body) return;
+    const JPH::BodyID id(body);
+    JPH::BodyInterface& bodies = impl_->system.GetBodyInterface();
+    bodies.RemoveBody(id);
+    bodies.DestroyBody(id);
+}
+
+void PhysicsWorld::body_transform(std::uint32_t body, glm::vec3& position,
+                                  glm::quat& rotation) const {
+    if (body == invalid_body) return;
+    const JPH::BodyID id(body);
+    const JPH::BodyInterface& bodies = impl_->system.GetBodyInterface();
+    position = to_glm(bodies.GetPosition(id));
+    rotation = to_glm(bodies.GetRotation(id));
+}
+
+void PhysicsWorld::set_body_transform(std::uint32_t body, const glm::vec3& position,
+                                      const glm::quat& rotation) {
+    if (body == invalid_body) return;
+    impl_->system.GetBodyInterface().SetPositionAndRotation(
+        JPH::BodyID(body), to_jph_r(position), to_jph(rotation), JPH::EActivation::Activate);
 }
 
 std::expected<void, core::Error> run_physics_self_test() {

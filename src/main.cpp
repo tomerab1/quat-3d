@@ -621,6 +621,13 @@ int main() {
                          r.error().message.c_str());
         }
 
+        if (auto r = engine::scene::run_physics_body_self_test(); r) {
+            std::fprintf(stderr, "[selftest] physics bodies + ECS sync OK\n");
+        } else {
+            std::fprintf(stderr, "[selftest] physics bodies + ECS sync FAILED: %s\n",
+                         r.error().message.c_str());
+        }
+
         if (auto r = engine::scene::run_skeleton_load_self_test(); r) {
             std::fprintf(stderr, "[selftest] skeleton load OK\n");
         } else {
