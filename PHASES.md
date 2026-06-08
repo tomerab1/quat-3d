@@ -189,7 +189,7 @@ Goal: a glTF character with skin and animations plays back and renders correctly
   Additive layer support (per-joint mask bitmask). `BlendTree` struct.
   *Commit: `[Phase5/Slice5] animation blending and additive layers`*
 
-- [ ] **5.6 — Animation state machine**
+- [x] **5.6 — Animation state machine**
   `AnimStateMachine`: states, parameterized transitions, crossfade (linear blend during transition duration).
   *Commit: `[Phase5/Slice6] animation state machine with crossfade`*
 

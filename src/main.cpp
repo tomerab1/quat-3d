@@ -26,6 +26,7 @@
 #include "engine/animation/animator.hpp"
 #include "engine/animation/clip.hpp"
 #include "engine/animation/skeleton.hpp"
+#include "engine/animation/state_machine.hpp"
 #include "engine/asset/asset_manager.hpp"
 #include "engine/asset/material_asset.hpp"
 #include "engine/asset/mesh_asset.hpp"
@@ -542,6 +543,13 @@ int main() {
             std::fprintf(stderr, "[selftest] blend + additive OK\n");
         } else {
             std::fprintf(stderr, "[selftest] blend + additive FAILED: %s\n",
+                         r.error().message.c_str());
+        }
+
+        if (auto r = engine::animation::run_state_machine_self_test(); r) {
+            std::fprintf(stderr, "[selftest] state machine OK\n");
+        } else {
+            std::fprintf(stderr, "[selftest] state machine FAILED: %s\n",
                          r.error().message.c_str());
         }
 

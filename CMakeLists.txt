@@ -114,7 +114,8 @@ target_include_directories(engine_asset PUBLIC ${ENGINE_PUBLIC_INCLUDE})
 add_library(engine_animation STATIC
     src/animation/skeleton.cpp
     src/animation/clip.cpp
-    src/animation/animator.cpp)
+    src/animation/animator.cpp
+    src/animation/state_machine.cpp)
 target_link_libraries(engine_animation PUBLIC engine_flags glm::glm)
 target_include_directories(engine_animation PUBLIC ${ENGINE_PUBLIC_INCLUDE})
 
@@ -169,6 +170,14 @@ target_include_directories(game PRIVATE
 # A proper asset-path resolver arrives with the asset manager in Phase 3.
 target_compile_definitions(game PRIVATE
     QUAT_COOKED_SHADER_DIR="${CMAKE_CURRENT_SOURCE_DIR}/cooked/shaders")
+
+# ---------------------------------------------------------------------------
+# anim_smoke — windowless CPU harness for the animation self-tests (no SDL /
+# Vulkan), so the animation runtime can be verified without a display.
+# ---------------------------------------------------------------------------
+add_executable(anim_smoke tests/anim_smoke.cpp)
+target_link_libraries(anim_smoke PRIVATE engine_flags engine_animation)
+target_include_directories(anim_smoke PRIVATE ${ENGINE_PUBLIC_INCLUDE})
 
 # ---------------------------------------------------------------------------
 # Offline shader cooking: assets/shaders/*.slang -> cooked/shaders/*.{spv,json}
