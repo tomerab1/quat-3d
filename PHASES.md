@@ -199,7 +199,7 @@ Goal: a glTF character with skin and animations plays back and renders correctly
 
 Goal: rigid bodies simulate, a character controller walks on a static mesh collider.
 
-- [ ] **6.1 — Jolt integration**
+- [x] **6.1 — Jolt integration**
   `src/physics/physics_world.cpp`: `JPH::PhysicsSystem`, broad/narrow phase, fixed timestep
   accumulator (1/120s), Jolt job system wired to engine thread pool.
   Collision layers: STATIC, DYNAMIC, CHARACTER, TRIGGER.

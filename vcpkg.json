@@ -19,6 +19,7 @@
     "glm",
     "fastgltf",
     "stb",
-    "entt"
+    "entt",
+    "joltphysics"
   ]
 }

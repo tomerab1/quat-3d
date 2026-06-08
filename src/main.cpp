@@ -31,6 +31,7 @@
 #include "engine/asset/asset_manager.hpp"
 #include "engine/asset/material_asset.hpp"
 #include "engine/asset/mesh_asset.hpp"
+#include "engine/physics/physics_world.hpp"
 #include "engine/renderer/lighting_pass.hpp"
 #include "engine/renderer/mesh_pass.hpp"
 #include "engine/renderer/skinning_pass.hpp"
@@ -610,6 +611,13 @@ int main() {
             std::fprintf(stderr, "[selftest] state machine OK\n");
         } else {
             std::fprintf(stderr, "[selftest] state machine FAILED: %s\n",
+                         r.error().message.c_str());
+        }
+
+        if (auto r = engine::physics::run_physics_self_test(); r) {
+            std::fprintf(stderr, "[selftest] physics world OK\n");
+        } else {
+            std::fprintf(stderr, "[selftest] physics world FAILED: %s\n",
                          r.error().message.c_str());
         }
 

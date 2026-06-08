@@ -68,6 +68,7 @@ find_package(glm CONFIG REQUIRED)
 find_package(fastgltf CONFIG REQUIRED)
 find_package(Stb REQUIRED)
 find_package(EnTT CONFIG REQUIRED)
+find_package(Jolt CONFIG REQUIRED)
 
 set(ENGINE_PUBLIC_INCLUDE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 
@@ -120,6 +121,16 @@ target_link_libraries(engine_animation PUBLIC engine_flags glm::glm)
 target_include_directories(engine_animation PUBLIC ${ENGINE_PUBLIC_INCLUDE})
 
 # ---------------------------------------------------------------------------
+# engine_physics — Jolt Physics wrapper (PhysicsWorld). Jolt is an
+# implementation detail (PRIVATE); the public header is Jolt-free (PIMPL).
+# ---------------------------------------------------------------------------
+add_library(engine_physics STATIC
+    src/physics/physics_world.cpp)
+target_link_libraries(engine_physics PUBLIC engine_flags)
+target_link_libraries(engine_physics PRIVATE Jolt::Jolt)
+target_include_directories(engine_physics PUBLIC ${ENGINE_PUBLIC_INCLUDE})
+
+# ---------------------------------------------------------------------------
 # engine_scene — scene-construction side of the asset pipeline. For now just the
 # glTF loader (fastgltf -> MeshAsset); gains the ECS world + systems in Phase 4.
 # fastgltf is an implementation detail of the loader (PRIVATE).
@@ -162,7 +173,7 @@ target_include_directories(engine_renderer PUBLIC ${ENGINE_PUBLIC_INCLUDE})
 # ---------------------------------------------------------------------------
 add_executable(game src/main.cpp)
 target_link_libraries(game PRIVATE
-    engine_flags engine_rhi engine_asset engine_scene engine_renderer SDL3::SDL3)
+    engine_flags engine_rhi engine_asset engine_scene engine_renderer engine_physics SDL3::SDL3)
 target_include_directories(game PRIVATE
     ${ENGINE_PUBLIC_INCLUDE}
     ${CMAKE_CURRENT_SOURCE_DIR}/src)
