@@ -106,7 +106,7 @@ Goal: a glTF static mesh loads and renders with a basic PBR material under a dir
   `MaterialAsset` stores GPU buffer with material parameters + texture descriptors.
   *Commit: `[Phase3/Slice4] material asset and Slang material interface`*
 
-- [ ] **3.5 — GBuffer pass**
+- [x] **3.5 — GBuffer pass**
   `assets/shaders/gbuffer.slang` + `src/renderer/mesh_pass.cpp`:
   Deferred GBuffer: albedo (RGB), normal (RG oct-encoded), material (metallic/roughness/AO), depth.
   Render all `MeshRenderer` entities.

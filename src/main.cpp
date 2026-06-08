@@ -20,6 +20,7 @@
 
 #include "engine/asset/asset_manager.hpp"
 #include "engine/asset/material_asset.hpp"
+#include "engine/renderer/mesh_pass.hpp"
 #include "engine/rhi/descriptor_buffer.hpp"
 #include "engine/scene/gltf_loader.hpp"
 #include "engine/rhi/device.hpp"
@@ -321,6 +322,17 @@ int main() {
                 } else {
                     std::fprintf(stderr, "[selftest] material extract FAILED: %s\n",
                                  r.error().message.c_str());
+                }
+                if (auto mesh_cache = engine::rhi::PipelineCache::create(device); mesh_cache) {
+                    const std::string shader_dir = QUAT_COOKED_SHADER_DIR;
+                    if (auto r = engine::renderer::run_mesh_pass_self_test(
+                            device, allocator, *mesh_cache, transfer, shader_dir);
+                        r) {
+                        std::fprintf(stderr, "[selftest] GBuffer pass OK\n");
+                    } else {
+                        std::fprintf(stderr, "[selftest] GBuffer pass FAILED: %s\n",
+                                     r.error().message.c_str());
+                    }
                 }
                 // Optional real-asset smoke test: QUAT_GLTF=<path> loads a glTF/GLB
                 // mesh + its textures and reports counts. Exercises the real decode

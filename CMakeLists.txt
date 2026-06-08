@@ -122,11 +122,21 @@ target_include_directories(engine_scene PUBLIC ${ENGINE_PUBLIC_INCLUDE})
 set_source_files_properties(src/scene/stb_image_impl.cpp PROPERTIES COMPILE_OPTIONS "-w")
 
 # ---------------------------------------------------------------------------
+# engine_renderer — high-level passes built on the RHI. Starts with the deferred
+# GBuffer pass (mesh_pass); lighting/tonemap/imgui passes follow in later slices.
+# ---------------------------------------------------------------------------
+add_library(engine_renderer STATIC
+    src/renderer/mesh_pass.cpp)
+target_link_libraries(engine_renderer PUBLIC engine_flags engine_rhi engine_asset glm::glm)
+target_include_directories(engine_renderer PUBLIC ${ENGINE_PUBLIC_INCLUDE})
+
+# ---------------------------------------------------------------------------
 # game — executable entry point. The full target graph (engine_core /
 # engine_renderer / engine_editor) grows phase by phase as modules gain sources.
 # ---------------------------------------------------------------------------
 add_executable(game src/main.cpp)
-target_link_libraries(game PRIVATE engine_flags engine_rhi engine_asset engine_scene SDL3::SDL3)
+target_link_libraries(game PRIVATE
+    engine_flags engine_rhi engine_asset engine_scene engine_renderer SDL3::SDL3)
 target_include_directories(game PRIVATE
     ${ENGINE_PUBLIC_INCLUDE}
     ${CMAKE_CURRENT_SOURCE_DIR}/src)

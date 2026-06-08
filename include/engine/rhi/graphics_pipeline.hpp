@@ -29,11 +29,26 @@ public:
         const char*         vertex_entry   = "vertex_main";
         const char*         fragment_entry = "fragment_main";
         // Colour attachment formats for the dynamic-rendering pipeline. Must
-        // match the formats the pass renders into.
+        // match the formats the pass renders into. One disabled blend attachment
+        // is created per format (MRT-ready).
         std::span<const VkFormat> color_formats{};
         VkFormat                  depth_format = VK_FORMAT_UNDEFINED;
+        VkCompareOp               depth_compare_op = VK_COMPARE_OP_GREATER_OR_EQUAL;
         VkCullModeFlags           cull_mode  = VK_CULL_MODE_NONE;
         VkFrontFace               front_face = VK_FRONT_FACE_COUNTER_CLOCKWISE;
+
+        // Vertex input. Empty (the default) makes a vertex-buffer-less pipeline
+        // that draws from SV_VertexID, as the hard-coded triangle does.
+        std::span<const VkVertexInputBindingDescription>   vertex_bindings{};
+        std::span<const VkVertexInputAttributeDescription> vertex_attributes{};
+
+        // Descriptor set layouts (descriptor-buffer layouts). When non-empty the
+        // pipeline is created with the descriptor-buffer bit.
+        std::span<const VkDescriptorSetLayout> set_layouts{};
+
+        // Push-constant ranges. When empty, the ranges are derived from shader
+        // reflection; pass explicit ranges to override (e.g. a known MVP block).
+        std::span<const VkPushConstantRange> push_constants{};
     };
 
     [[nodiscard]] static std::expected<GraphicsPipeline, core::Error>

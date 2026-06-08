@@ -50,10 +50,19 @@ GraphicsPipeline::create(const Device& device, VkPipelineCache cache, const Crea
 
     const VkDevice vk_device = device.handle();
 
-    // ---- Pipeline layout (push constants only; no descriptor sets yet) ------
-    const std::vector<VkPushConstantRange> pc = push_constant_ranges(*info.vertex, *info.fragment);
+    // ---- Pipeline layout (descriptor set layouts + push constants) ----------
+    // Explicit push-constant ranges (info.push_constants) win; otherwise derive
+    // a single VERTEX|FRAGMENT range from shader reflection.
+    std::vector<VkPushConstantRange> reflected;
+    std::span<const VkPushConstantRange> pc = info.push_constants;
+    if (pc.empty()) {
+        reflected = push_constant_ranges(*info.vertex, *info.fragment);
+        pc = reflected;
+    }
     VkPipelineLayoutCreateInfo layout_info{};
     layout_info.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+    layout_info.setLayoutCount = static_cast<std::uint32_t>(info.set_layouts.size());
+    layout_info.pSetLayouts = info.set_layouts.empty() ? nullptr : info.set_layouts.data();
     layout_info.pushConstantRangeCount = static_cast<std::uint32_t>(pc.size());
     layout_info.pPushConstantRanges = pc.empty() ? nullptr : pc.data();
 
@@ -77,6 +86,14 @@ GraphicsPipeline::create(const Device& device, VkPipelineCache cache, const Crea
     // ---- Fixed-function state ----------------------------------------------
     VkPipelineVertexInputStateCreateInfo vertex_input{};
     vertex_input.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+    vertex_input.vertexBindingDescriptionCount =
+        static_cast<std::uint32_t>(info.vertex_bindings.size());
+    vertex_input.pVertexBindingDescriptions =
+        info.vertex_bindings.empty() ? nullptr : info.vertex_bindings.data();
+    vertex_input.vertexAttributeDescriptionCount =
+        static_cast<std::uint32_t>(info.vertex_attributes.size());
+    vertex_input.pVertexAttributeDescriptions =
+        info.vertex_attributes.empty() ? nullptr : info.vertex_attributes.data();
 
     VkPipelineInputAssemblyStateCreateInfo input_assembly{};
     input_assembly.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
@@ -103,17 +120,20 @@ GraphicsPipeline::create(const Device& device, VkPipelineCache cache, const Crea
     const bool has_depth = info.depth_format != VK_FORMAT_UNDEFINED;
     depth_stencil.depthTestEnable = has_depth ? VK_TRUE : VK_FALSE;
     depth_stencil.depthWriteEnable = has_depth ? VK_TRUE : VK_FALSE;
-    depth_stencil.depthCompareOp = VK_COMPARE_OP_GREATER_OR_EQUAL; // reverse-Z friendly
+    depth_stencil.depthCompareOp = info.depth_compare_op;
 
-    VkPipelineColorBlendAttachmentState blend_attachment{};
-    blend_attachment.blendEnable = VK_FALSE;
-    blend_attachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT
-                                      | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+    // One disabled blend attachment per colour target (opaque MRT writes).
+    VkPipelineColorBlendAttachmentState blend_template{};
+    blend_template.blendEnable = VK_FALSE;
+    blend_template.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT
+                                    | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+    std::vector<VkPipelineColorBlendAttachmentState> blend_attachments(
+        info.color_formats.size(), blend_template);
 
     VkPipelineColorBlendStateCreateInfo color_blend{};
     color_blend.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
-    color_blend.attachmentCount = 1;
-    color_blend.pAttachments = &blend_attachment;
+    color_blend.attachmentCount = static_cast<std::uint32_t>(blend_attachments.size());
+    color_blend.pAttachments = blend_attachments.data();
 
     const std::array<VkDynamicState, 2> dynamic_states{
         VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
@@ -132,6 +152,10 @@ GraphicsPipeline::create(const Device& device, VkPipelineCache cache, const Crea
     VkGraphicsPipelineCreateInfo pipeline_info{};
     pipeline_info.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
     pipeline_info.pNext = &rendering_info;
+    // Pipelines that bind descriptor-buffer set layouts must declare it.
+    if (!info.set_layouts.empty()) {
+        pipeline_info.flags = VK_PIPELINE_CREATE_DESCRIPTOR_BUFFER_BIT_EXT;
+    }
     pipeline_info.stageCount = static_cast<std::uint32_t>(stages.size());
     pipeline_info.pStages = stages.data();
     pipeline_info.pVertexInputState = &vertex_input;
