@@ -993,8 +993,10 @@ int main() {
     engine::asset::AssetManager assets;
     engine::scene::Scene scene;
     entt::entity spin_entity = entt::null; // the demo cube spins; a glTF stays put
-    std::optional<engine::physics::PhysicsWorld> physics_world; // set in physics demo
+    std::optional<engine::physics::PhysicsWorld> physics_world; // set in physics/character demo
     bool physics_mode = false;
+    bool character_mode = false;
+    entt::entity character_entity = entt::null;
     bool scene_ok = true;
 
     if (const char* gltf_path = std::getenv("QUAT_GLTF"); gltf_path != nullptr) {
@@ -1079,6 +1081,66 @@ int main() {
                                                    glm::vec3(0.0F));
                 scene.registry().emplace<RigidBody>(b, BodyMotion::dynamic, 1.0F, no_body);
             }
+        }
+    } else if (std::getenv("QUAT_CHARACTER") != nullptr) {
+        // Character demo: walk a capsule around a floor with WASD (third-person).
+        character_mode = true;
+        using engine::scene::Camera;
+        using engine::scene::CharacterController;
+        using engine::scene::MeshRenderer;
+        using engine::scene::Transform;
+
+        auto world = engine::physics::PhysicsWorld::create();
+        auto floor_mesh = assets.load<engine::asset::MeshAsset>(
+            "demo/cfloor", [&](const std::filesystem::path&) {
+                return engine::scene::upload_mesh(make_box_data(glm::vec3(10.0F, 0.5F, 10.0F)),
+                                                  allocator, setup_transfer);
+            });
+        // Capsule stand-in: a box sized to the capsule's bounding volume.
+        auto body_mesh = assets.load<engine::asset::MeshAsset>(
+            "demo/player", [&](const std::filesystem::path&) {
+                return engine::scene::upload_mesh(make_box_data(glm::vec3(0.3F, 0.9F, 0.3F)),
+                                                  allocator, setup_transfer);
+            });
+        auto floor_mat = assets.load<engine::asset::MaterialAsset>(
+            "demo/cfloor_mat", [&](const std::filesystem::path&) {
+                engine::asset::PbrMaterialParams p;
+                p.base_color_factor = {0.5F, 0.5F, 0.55F, 1.0F};
+                p.roughness_factor = 0.9F;
+                return engine::asset::upload_material(p, engine::asset::MaterialTextures{},
+                                                      allocator, setup_transfer);
+            });
+        auto body_mat = assets.load<engine::asset::MaterialAsset>(
+            "demo/player_mat", [&](const std::filesystem::path&) {
+                engine::asset::PbrMaterialParams p;
+                p.base_color_factor = {0.25F, 0.5F, 0.85F, 1.0F};
+                p.roughness_factor = 0.4F;
+                return engine::asset::upload_material(p, engine::asset::MaterialTextures{},
+                                                      allocator, setup_transfer);
+            });
+
+        if (!world || !floor_mesh.is_loaded() || !body_mesh.is_loaded()) {
+            scene_ok = false;
+        } else {
+            // Static floor body (collision) added directly to the world.
+            engine::physics::PhysicsWorld::BodyParams floor_body;
+            floor_body.shape = world->create_box(glm::vec3(10.0F, 0.5F, 10.0F));
+            floor_body.position = glm::vec3(0.0F, -0.5F, 0.0F);
+            floor_body.motion = engine::physics::Motion::static_body;
+            floor_body.layer = engine::physics::Layer::static_body;
+            (void)world->add_body(floor_body);
+            physics_world = std::move(*world);
+
+            const entt::entity floor = scene.create_entity("floor");
+            scene.registry().get<Transform>(floor).local =
+                glm::translate(glm::mat4(1.0F), glm::vec3(0.0F, -0.5F, 0.0F));
+            scene.registry().emplace<MeshRenderer>(floor, floor_mesh, floor_mat);
+
+            character_entity = scene.create_entity("player");
+            scene.registry().get<Transform>(character_entity).local =
+                glm::translate(glm::mat4(1.0F), glm::vec3(0.0F, 2.0F, 0.0F));
+            scene.registry().emplace<MeshRenderer>(character_entity, body_mesh, body_mat);
+            scene.registry().emplace<CharacterController>(character_entity);
         }
     } else {
         auto cube_handle = assets.load<engine::asset::MeshAsset>(
@@ -1320,36 +1382,67 @@ int main() {
         cam_yaw += look_dx * look_sensitivity;
         cam_pitch = glm::clamp(cam_pitch - look_dy * look_sensitivity, glm::radians(-89.0F),
                                glm::radians(89.0F));
-        const glm::vec3 cam_fwd(std::cos(cam_pitch) * std::cos(cam_yaw), std::sin(cam_pitch),
-                                std::cos(cam_pitch) * std::sin(cam_yaw));
         const glm::vec3 world_up(0.0F, 1.0F, 0.0F);
-        const glm::vec3 cam_right = glm::normalize(glm::cross(cam_fwd, world_up));
-
         const bool* keys = SDL_GetKeyboardState(nullptr);
         const auto axis = [&](SDL_Scancode pos, SDL_Scancode neg) {
             return (keys[pos] ? 1.0F : 0.0F) - (keys[neg] ? 1.0F : 0.0F);
         };
-        const glm::vec3 move = cam_fwd * axis(SDL_SCANCODE_W, SDL_SCANCODE_S) +
-                               cam_right * axis(SDL_SCANCODE_D, SDL_SCANCODE_A) +
-                               world_up * axis(SDL_SCANCODE_E, SDL_SCANCODE_Q);
-        const float speed = move_speed * (keys[SDL_SCANCODE_LSHIFT] ? 4.0F : 1.0F);
-        if (move != glm::vec3(0.0F)) {
-            cam_pos += glm::normalize(move) * speed * dt;
-        }
-        scene.registry().get<engine::scene::Transform>(camera_entity).local =
-            glm::inverse(glm::lookAt(cam_pos, cam_pos + cam_fwd, world_up));
 
-        // Spin the demo cube (if present), tick the scene, then derive camera +
-        // light from the ECS.
+        if (character_mode) {
+            // WASD drives the character along the camera's heading (third-person).
+            const glm::vec3 fwd_h =
+                glm::normalize(glm::vec3(std::cos(cam_yaw), 0.0F, std::sin(cam_yaw)));
+            const glm::vec3 right_h = glm::normalize(glm::cross(fwd_h, world_up));
+            const glm::vec3 wish = fwd_h * axis(SDL_SCANCODE_W, SDL_SCANCODE_S) +
+                                   right_h * axis(SDL_SCANCODE_D, SDL_SCANCODE_A);
+            scene.registry().get<engine::scene::CharacterController>(character_entity).move =
+                wish != glm::vec3(0.0F) ? glm::normalize(wish) : glm::vec3(0.0F);
+        } else {
+            // Free-fly camera: right-drag looks, WASD moves, Q/E down/up, Shift fast.
+            const glm::vec3 cam_fwd(std::cos(cam_pitch) * std::cos(cam_yaw), std::sin(cam_pitch),
+                                    std::cos(cam_pitch) * std::sin(cam_yaw));
+            const glm::vec3 cam_right = glm::normalize(glm::cross(cam_fwd, world_up));
+            const glm::vec3 move = cam_fwd * axis(SDL_SCANCODE_W, SDL_SCANCODE_S) +
+                                   cam_right * axis(SDL_SCANCODE_D, SDL_SCANCODE_A) +
+                                   world_up * axis(SDL_SCANCODE_E, SDL_SCANCODE_Q);
+            const float speed = move_speed * (keys[SDL_SCANCODE_LSHIFT] ? 4.0F : 1.0F);
+            if (move != glm::vec3(0.0F)) {
+                cam_pos += glm::normalize(move) * speed * dt;
+            }
+            scene.registry().get<engine::scene::Transform>(camera_entity).local =
+                glm::inverse(glm::lookAt(cam_pos, cam_pos + cam_fwd, world_up));
+        }
+
+        // Spin the demo cube (if present), then step physics / the character.
         if (spin_entity != entt::null) {
             scene.registry().get<engine::scene::Transform>(spin_entity).local =
                 glm::rotate(glm::mat4(1.0F), static_cast<float>(presented) * 0.02F,
                             glm::normalize(glm::vec3(0.3F, 1.0F, 0.2F)));
         }
         if (physics_world) {
-            engine::scene::physics_system(scene.registry(), *physics_world, dt);
+            if (character_mode) {
+                engine::scene::character_system(scene.registry(), *physics_world, dt);
+            } else {
+                engine::scene::physics_system(scene.registry(), *physics_world, dt);
+            }
         }
         scene.tick(dt); // advances any Animators by real elapsed time
+
+        // Third-person follow camera, placed after the character has moved.
+        if (character_mode) {
+            const glm::vec3 target =
+                glm::vec3(scene.registry()
+                              .get<engine::scene::Transform>(character_entity)
+                              .world[3]) +
+                glm::vec3(0.0F, 0.8F, 0.0F);
+            const glm::vec3 cam_fwd(std::cos(cam_pitch) * std::cos(cam_yaw), std::sin(cam_pitch),
+                                    std::cos(cam_pitch) * std::sin(cam_yaw));
+            cam_pos = target - cam_fwd * 5.0F;
+            const glm::mat4 view_inv = glm::inverse(glm::lookAt(cam_pos, target, world_up));
+            auto& camera_tf = scene.registry().get<engine::scene::Transform>(camera_entity);
+            camera_tf.local = view_inv;
+            camera_tf.world = view_inv;
+        }
         const engine::scene::CameraMatrices cam =
             engine::scene::camera_system(scene.registry(), aspect);
 
