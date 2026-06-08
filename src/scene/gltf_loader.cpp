@@ -217,6 +217,74 @@ parse_and_extract_textures(fastgltf::GltfDataBuffer& data,
     return extract_textures(asset.get());
 }
 
+// -------------------------------------------------------------------------
+// Materials
+// -------------------------------------------------------------------------
+
+// glTF image index behind a texture reference, or no_texture when unset. A
+// texture with no image source also resolves to no_texture. Templated on the
+// whole optional type: fastgltf::Optional is an alias (conditional_t), so the
+// contained TextureInfo type can't be deduced through it directly.
+template <typename OptTextureInfo>
+[[nodiscard]] std::size_t image_of(const fastgltf::Asset& asset,
+                                   const OptTextureInfo& info) {
+    if (!info.has_value()) return no_texture;
+    const fastgltf::Texture& tex = asset.textures[info->textureIndex];
+    return tex.imageIndex.has_value() ? tex.imageIndex.value() : no_texture;
+}
+
+[[nodiscard]] std::vector<MaterialData> extract_materials(const fastgltf::Asset& asset) {
+    std::vector<MaterialData> out;
+    out.reserve(asset.materials.size());
+    for (const fastgltf::Material& mat : asset.materials) {
+        MaterialData md;
+        asset::PbrMaterialParams& p = md.params;
+
+        const auto& bcf = mat.pbrData.baseColorFactor;
+        p.base_color_factor = {bcf[0], bcf[1], bcf[2], bcf[3]};
+        const auto& ef = mat.emissiveFactor;
+        p.emissive_factor = {ef[0], ef[1], ef[2], 0.0F};
+        p.metallic_factor = mat.pbrData.metallicFactor;
+        p.roughness_factor = mat.pbrData.roughnessFactor;
+        p.alpha_cutoff = mat.alphaCutoff;
+        if (mat.normalTexture.has_value()) p.normal_scale = mat.normalTexture->scale;
+        if (mat.occlusionTexture.has_value()) {
+            p.occlusion_strength = mat.occlusionTexture->strength;
+        }
+
+        md.base_color_image = image_of(asset, mat.pbrData.baseColorTexture);
+        md.metallic_roughness_image = image_of(asset, mat.pbrData.metallicRoughnessTexture);
+        md.normal_image = image_of(asset, mat.normalTexture);
+        md.occlusion_image = image_of(asset, mat.occlusionTexture);
+        md.emissive_image = image_of(asset, mat.emissiveTexture);
+
+        std::uint32_t flags = 0;
+        if (md.base_color_image != no_texture) flags |= asset::material_has_base_color;
+        if (md.normal_image != no_texture) flags |= asset::material_has_normal;
+        if (md.metallic_roughness_image != no_texture) {
+            flags |= asset::material_has_metallic_roughness;
+        }
+        if (md.emissive_image != no_texture) flags |= asset::material_has_emissive;
+        if (md.occlusion_image != no_texture) flags |= asset::material_has_occlusion;
+        p.flags = flags;
+
+        out.push_back(md);
+    }
+    return out;
+}
+
+[[nodiscard]] std::expected<std::vector<MaterialData>, core::Error>
+parse_and_extract_materials(fastgltf::GltfDataBuffer& data,
+                            const std::filesystem::path& base_dir) {
+    fastgltf::Parser parser;
+    fastgltf::Expected<fastgltf::Asset> asset = parser.loadGltf(data, base_dir, kLoadOptions);
+    if (asset.error() != fastgltf::Error::None) {
+        return fail(std::string("fastgltf parse failed: ") +
+                    std::string(fastgltf::getErrorMessage(asset.error())));
+    }
+    return extract_materials(asset.get());
+}
+
 } // namespace
 
 std::expected<MeshData, core::Error>
@@ -366,6 +434,27 @@ GltfLoader::load_textures(const std::filesystem::path& path, rhi::GpuAllocator& 
     return textures;
 }
 
+std::expected<std::vector<MaterialData>, core::Error>
+GltfLoader::load_material_data(const std::filesystem::path& path) {
+    auto data = fastgltf::GltfDataBuffer::FromPath(path);
+    if (data.error() != fastgltf::Error::None) {
+        return fail("fastgltf: could not read '" + path.string() + "': " +
+                    std::string(fastgltf::getErrorMessage(data.error())));
+    }
+    return parse_and_extract_materials(data.get(), path.parent_path());
+}
+
+std::expected<std::vector<MaterialData>, core::Error>
+GltfLoader::load_material_data_from_memory(std::span<const std::byte> bytes,
+                                           const std::filesystem::path& base_dir) {
+    auto data = fastgltf::GltfDataBuffer::FromBytes(bytes.data(), bytes.size());
+    if (data.error() != fastgltf::Error::None) {
+        return fail("fastgltf: could not wrap memory buffer: " +
+                    std::string(fastgltf::getErrorMessage(data.error())));
+    }
+    return parse_and_extract_materials(data.get(), base_dir);
+}
+
 // ---------------------------------------------------------------------------
 // Self-test
 // ---------------------------------------------------------------------------
@@ -511,6 +600,49 @@ run_texture_loader_self_test(rhi::GpuAllocator& allocator, const rhi::TransferCo
     if (!texture) return std::unexpected(texture.error());
     if (!texture->valid() || texture->format != VK_FORMAT_R8G8B8A8_SRGB) {
         return fail("texture self-test: uploaded TextureAsset is not valid");
+    }
+    return {};
+}
+
+std::expected<void, core::Error> run_material_extract_self_test() {
+    // A material with known factors and a baseColorTexture (image 0) but no other
+    // textures — so exactly one HAS_* flag should be set.
+    const std::string gltf =
+        R"({"asset":{"version":"2.0"},)"
+        R"("images":[{"uri":"data:image/png;base64,iVBORw0KGgo="}],)"
+        R"("samplers":[{}],)"
+        R"("textures":[{"source":0,"sampler":0}],)"
+        R"("materials":[{)"
+        R"("pbrMetallicRoughness":{)"
+        R"("baseColorFactor":[0.2,0.4,0.6,1.0],)"
+        R"("metallicFactor":0.1,"roughnessFactor":0.7,)"
+        R"("baseColorTexture":{"index":0}},)"
+        R"("emissiveFactor":[0.5,0.25,0.0],"alphaCutoff":0.25}]})";
+    const std::span<const std::byte> bytes(reinterpret_cast<const std::byte*>(gltf.data()),
+                                           gltf.size());
+
+    auto mats = GltfLoader::load_material_data_from_memory(bytes, ".");
+    if (!mats) return std::unexpected(mats.error());
+    if (mats->size() != 1) {
+        return fail("material extract self-test: expected exactly one material");
+    }
+    const MaterialData& m = (*mats)[0];
+    if (m.params.base_color_factor != glm::vec4(0.2F, 0.4F, 0.6F, 1.0F)) {
+        return fail("material extract self-test: baseColorFactor mismatch");
+    }
+    if (m.params.metallic_factor != 0.1F || m.params.roughness_factor != 0.7F ||
+        m.params.alpha_cutoff != 0.25F) {
+        return fail("material extract self-test: scalar factors mismatch");
+    }
+    if (m.params.emissive_factor != glm::vec4(0.5F, 0.25F, 0.0F, 0.0F)) {
+        return fail("material extract self-test: emissiveFactor mismatch");
+    }
+    if (m.base_color_image != 0 || m.normal_image != no_texture ||
+        m.emissive_image != no_texture) {
+        return fail("material extract self-test: texture image indices wrong");
+    }
+    if (m.params.flags != asset::material_has_base_color) {
+        return fail("material extract self-test: only HAS_BASE_COLOR should be set");
     }
     return {};
 }

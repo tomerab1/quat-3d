@@ -304,6 +304,13 @@ upload_device_buffer(GpuAllocator& allocator, const TransferContext& transfer,
     return std::move(*device_buffer);
 }
 
+VkDeviceAddress buffer_device_address(VkDevice device, const GpuBuffer& buffer) {
+    VkBufferDeviceAddressInfo info{};
+    info.sType = VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO;
+    info.buffer = buffer.handle();
+    return vkGetBufferDeviceAddress(device, &info);
+}
+
 std::expected<GpuImage, core::Error>
 upload_device_image(GpuAllocator& allocator, const TransferContext& transfer,
                     const void* data, VkDeviceSize size, VkExtent2D extent,

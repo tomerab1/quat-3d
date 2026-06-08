@@ -99,7 +99,8 @@ set_source_files_properties(src/rhi/vma_impl.cpp PROPERTIES COMPILE_OPTIONS "-w"
 # are PUBLIC: any consumer of the asset headers needs them transitively.
 # ---------------------------------------------------------------------------
 add_library(engine_asset STATIC
-    src/asset/asset_manager.cpp)
+    src/asset/asset_manager.cpp
+    src/asset/material_asset.cpp)
 target_link_libraries(engine_asset PUBLIC engine_flags engine_rhi glm::glm)
 target_include_directories(engine_asset PUBLIC ${ENGINE_PUBLIC_INCLUDE})
 

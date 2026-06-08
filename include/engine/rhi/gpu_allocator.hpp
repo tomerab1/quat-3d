@@ -153,6 +153,11 @@ struct TransferContext {
 upload_device_buffer(GpuAllocator& allocator, const TransferContext& transfer,
                      const void* data, VkDeviceSize size, VkBufferUsageFlags usage);
 
+// Device address of a buffer created with VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS.
+// Required to reference uniform/storage buffers from a descriptor buffer.
+[[nodiscard]] VkDeviceAddress
+buffer_device_address(VkDevice device, const GpuBuffer& buffer);
+
 // Creates a device-local, optimally-tiled image and uploads `data` (tightly
 // packed pixels matching `format` and `extent`) through a staging buffer. The
 // image is left in VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL; SAMPLED and

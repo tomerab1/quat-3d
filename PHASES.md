@@ -101,7 +101,7 @@ Goal: a glTF static mesh loads and renders with a basic PBR material under a dir
   Upload to `GpuImage`, create `VkImageView` + `VkSampler`. Store as `TextureAsset`.
   *Commit: `[Phase3/Slice3] glTF texture loading`*
 
-- [ ] **3.4 — Material asset + Slang material interface**
+- [x] **3.4 — Material asset + Slang material interface**
   Define `IMaterial` Slang interface. Implement `PbrMaterial` struct.
   `MaterialAsset` stores GPU buffer with material parameters + texture descriptors.
   *Commit: `[Phase3/Slice4] material asset and Slang material interface`*

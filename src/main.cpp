@@ -19,6 +19,7 @@
 #include <SDL3/SDL_vulkan.h>
 
 #include "engine/asset/asset_manager.hpp"
+#include "engine/asset/material_asset.hpp"
 #include "engine/rhi/descriptor_buffer.hpp"
 #include "engine/scene/gltf_loader.hpp"
 #include "engine/rhi/device.hpp"
@@ -309,6 +310,18 @@ int main() {
                     std::fprintf(stderr, "[selftest] texture loader FAILED: %s\n",
                                  r.error().message.c_str());
                 }
+                if (auto r = engine::asset::run_material_asset_self_test(allocator, transfer); r) {
+                    std::fprintf(stderr, "[selftest] material asset OK\n");
+                } else {
+                    std::fprintf(stderr, "[selftest] material asset FAILED: %s\n",
+                                 r.error().message.c_str());
+                }
+                if (auto r = engine::scene::run_material_extract_self_test(); r) {
+                    std::fprintf(stderr, "[selftest] material extract OK\n");
+                } else {
+                    std::fprintf(stderr, "[selftest] material extract FAILED: %s\n",
+                                 r.error().message.c_str());
+                }
                 // Optional real-asset smoke test: QUAT_GLTF=<path> loads a glTF/GLB
                 // mesh + its textures and reports counts. Exercises the real decode
                 // paths (GLB bufferView images, external PNG/JPEG files).
@@ -336,6 +349,22 @@ int main() {
                     } else {
                         std::fprintf(stderr, "[gltf] texture load FAILED: %s\n",
                                      texs.error().message.c_str());
+                    }
+                    if (auto mats = engine::scene::GltfLoader::load_material_data(gltf_path);
+                        mats) {
+                        std::fprintf(stderr, "[gltf] %zu material(s)\n", mats->size());
+                        for (std::size_t i = 0; i < mats->size(); ++i) {
+                            const auto& p = (*mats)[i].params;
+                            std::fprintf(stderr,
+                                         "[gltf]   mat %zu: baseColor=(%.2f,%.2f,%.2f,%.2f) "
+                                         "metallic=%.2f roughness=%.2f flags=0x%x\n",
+                                         i, p.base_color_factor.x, p.base_color_factor.y,
+                                         p.base_color_factor.z, p.base_color_factor.w,
+                                         p.metallic_factor, p.roughness_factor, p.flags);
+                        }
+                    } else {
+                        std::fprintf(stderr, "[gltf] material load FAILED: %s\n",
+                                     mats.error().message.c_str());
                     }
                 }
                 vkDestroyCommandPool(device.handle(), pool, nullptr);

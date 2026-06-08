@@ -13,12 +13,16 @@
 #include <span>
 #include <vector>
 
+#include "engine/asset/material_asset.hpp"
 #include "engine/asset/mesh_asset.hpp"
 #include "engine/asset/texture_asset.hpp"
 #include "engine/core/error.hpp"
 #include "engine/rhi/gpu_allocator.hpp"
 
 namespace engine::scene {
+
+// Sentinel for a material texture slot that the glTF material does not bind.
+inline constexpr std::size_t no_texture = static_cast<std::size_t>(-1);
 
 // CPU-side extracted geometry, before GPU upload. Exposed separately so the
 // fastgltf extraction can be exercised without a device.
@@ -37,6 +41,19 @@ struct TextureData {
     std::uint32_t            width  = 0;
     std::uint32_t            height = 0;
     asset::TextureColorSpace color_space = asset::TextureColorSpace::linear;
+};
+
+// CPU-side material extracted from glTF: scalar PBR parameters (factors + flags)
+// plus the glTF image index backing each texture slot (`no_texture` if absent).
+// Texture *handles* are wired during scene assembly (later phase); this is the
+// pure data the GBuffer pass and material upload need.
+struct MaterialData {
+    asset::PbrMaterialParams params;
+    std::size_t base_color_image         = no_texture;
+    std::size_t normal_image             = no_texture;
+    std::size_t metallic_roughness_image = no_texture;
+    std::size_t emissive_image           = no_texture;
+    std::size_t occlusion_image          = no_texture;
 };
 
 class GltfLoader {
@@ -70,6 +87,15 @@ public:
     [[nodiscard]] static std::expected<std::vector<asset::TextureAsset>, core::Error>
     load_textures(const std::filesystem::path& path, rhi::GpuAllocator& allocator,
                   const rhi::TransferContext& transfer);
+
+    // Extract every glTF material's scalar parameters + texture image indices.
+    // No device needed.
+    [[nodiscard]] static std::expected<std::vector<MaterialData>, core::Error>
+    load_material_data(const std::filesystem::path& path);
+
+    [[nodiscard]] static std::expected<std::vector<MaterialData>, core::Error>
+    load_material_data_from_memory(std::span<const std::byte> bytes,
+                                   const std::filesystem::path& base_dir);
 };
 
 // Decode a single encoded image (PNG/JPEG/etc.) into RGBA8 pixels via stb_image.
@@ -97,5 +123,10 @@ run_gltf_loader_self_test(rhi::GpuAllocator& allocator, const rhi::TransferConte
 // end.
 [[nodiscard]] std::expected<void, core::Error>
 run_texture_loader_self_test(rhi::GpuAllocator& allocator, const rhi::TransferContext& transfer);
+
+// Parses an in-memory glTF material with known factors/flags and verifies the
+// extracted MaterialData. No device needed.
+[[nodiscard]] std::expected<void, core::Error>
+run_material_extract_self_test();
 
 } // namespace engine::scene
