@@ -226,7 +226,7 @@ Goal: rigid bodies simulate, a character controller walks on a static mesh colli
 
 ## Phase 7 — Shadows & Lighting Improvements
 
-Goal: directional shadow maps, point lights, basic sky.
+Goal: directional shadow maps, point lights, basic sky, transparent & glass materials.
 
 - [ ] **7.1 — Cascaded shadow maps**
   `src/renderer/shadow_pass.cpp` + `assets/shaders/shadow.slang`:
@@ -243,6 +243,22 @@ Goal: directional shadow maps, point lights, basic sky.
   `assets/shaders/sky.slang`: Preetham/Hillaire analytic sky model.
   Sky pass renders to HDR buffer before transparent pass.
   *Commit: `[Phase7/Slice3] procedural sky`*
+
+- [ ] **7.4 — Forward transparent pass**
+  Split scene collection into opaque vs alpha-blended draws. New forward `TransparentPass`
+  after the deferred lighting that writes into the HDR buffer, depth-tested against the opaque
+  GBuffer depth, reusing the PBR BRDF (factored out of `lighting.slang` into a shared Slang
+  module). Back-to-front sorted. Alpha-blend (`BLEND`) and alpha-cutout (`MASK`) materials from
+  glTF render correctly.
+  *Commit: `[Phase7/Slice4] forward transparent pass`*
+
+- [ ] **7.5 — Glass / transmission (KHR_materials_transmission)**
+  Load `KHR_materials_transmission` / `_volume` / `_ior` in the glTF loader. Copy the opaque
+  HDR result into a mip-chained scene-colour texture; transmissive surfaces in the transparent
+  pass sample it at a refracted screen-space offset (roughness selects the mip, for frosted vs
+  clear glass), Fresnel-mix reflection vs refraction, and apply Beer-Lambert volume attenuation
+  from thickness. Renders the glass dragon (`DragonAttenuation`) correctly.
+  *Commit: `[Phase7/Slice5] glass / transmission`*
 
 ---
 
