@@ -635,6 +635,13 @@ int main() {
                          r.error().message.c_str());
         }
 
+        if (auto r = engine::physics::run_trigger_self_test(); r) {
+            std::fprintf(stderr, "[selftest] trigger events OK\n");
+        } else {
+            std::fprintf(stderr, "[selftest] trigger events FAILED: %s\n",
+                         r.error().message.c_str());
+        }
+
         if (auto r = engine::scene::run_skeleton_load_self_test(); r) {
             std::fprintf(stderr, "[selftest] skeleton load OK\n");
         } else {

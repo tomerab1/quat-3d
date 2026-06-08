@@ -62,6 +62,14 @@ public:
         Motion        motion = Motion::dynamic;
         Layer         layer = Layer::dynamic;
         float         mass = 1.0F; // dynamic only; <= 0 uses the shape's computed mass
+        bool          sensor = false; // a trigger volume: detects overlaps, no physical response
+    };
+
+    // A trigger overlap event, recorded by the contact listener during update().
+    struct TriggerEvent {
+        std::uint32_t trigger = invalid_body; // the sensor body
+        std::uint32_t other = invalid_body;   // the body that entered / left it
+        bool          entered = true;         // true = began overlapping, false = stopped
     };
 
     // Create a body and add it to the simulation. Returns its id (invalid_body on
@@ -86,6 +94,10 @@ public:
     [[nodiscard]] glm::vec3 character_position(std::uint32_t character) const;
     [[nodiscard]] bool character_on_ground(std::uint32_t character) const;
 
+    // Trigger (sensor) overlap events recorded during the most recent update().
+    // Valid until the next update() call.
+    [[nodiscard]] std::span<const TriggerEvent> trigger_events() const;
+
 private:
     PhysicsWorld() = default;
 
@@ -98,5 +110,9 @@ private:
 // Creates a world with a static floor and a dynamic sphere dropped from above,
 // steps ~2 s, and verifies the sphere fell and came to rest on the floor.
 [[nodiscard]] std::expected<void, core::Error> run_physics_self_test();
+
+// Drops a dynamic sphere through a static sensor volume and verifies the contact
+// listener reports both an enter and an exit trigger event.
+[[nodiscard]] std::expected<void, core::Error> run_trigger_self_test();
 
 } // namespace engine::physics

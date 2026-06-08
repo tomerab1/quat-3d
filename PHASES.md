@@ -217,7 +217,7 @@ Goal: rigid bodies simulate, a character controller walks on a static mesh colli
   Gravity, ground detection, step-up.
   *Commit: `[Phase6/Slice3] character controller`*
 
-- [ ] **6.4 — Trigger / contact callbacks**
+- [x] **6.4 — Trigger / contact callbacks**
   Implement Jolt contact listener. `TriggerEvent` posted to a per-frame event queue.
   Systems can iterate trigger events this frame.
   *Commit: `[Phase6/Slice4] trigger and contact callbacks`*

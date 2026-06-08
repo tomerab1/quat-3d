@@ -84,6 +84,7 @@ struct Collider {
     ColliderShape shape = ColliderShape::box;
     glm::vec3     half_extents{0.5F};
     glm::vec3     offset{0.0F};
+    bool          is_sensor = false; // a trigger volume (overlap events, no response)
 };
 
 // A physics body. `body` is the handle assigned by the PhysicsSystem when it

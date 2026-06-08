@@ -55,8 +55,10 @@ void physics_system(entt::registry& registry, physics::PhysicsWorld& world, floa
         params.position = position_of(t);
         params.rotation = rotation_of(t);
         params.motion = to_motion(rb.motion);
-        params.layer = rb.motion == BodyMotion::static_body ? physics::Layer::static_body
-                                                            : physics::Layer::dynamic;
+        params.sensor = col.is_sensor;
+        params.layer = col.is_sensor ? physics::Layer::sensor
+                       : rb.motion == BodyMotion::static_body ? physics::Layer::static_body
+                                                              : physics::Layer::dynamic;
         params.mass = rb.mass;
         rb.body = world.add_body(params);
     }

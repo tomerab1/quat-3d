@@ -1,7 +1,9 @@
 #include "engine/physics/physics_world.hpp"
 
 #include <cmath>
+#include <mutex>
 #include <thread>
+#include <unordered_set>
 #include <vector>
 
 // Jolt headers are not clean under our strict warning flags; quiet them here
@@ -16,8 +18,10 @@
 #include <Jolt/Core/Factory.h>
 #include <Jolt/Core/JobSystemThreadPool.h>
 #include <Jolt/Core/TempAllocator.h>
+#include <Jolt/Physics/Body/Body.h>
 #include <Jolt/Physics/Body/BodyCreationSettings.h>
 #include <Jolt/Physics/Character/CharacterVirtual.h>
+#include <Jolt/Physics/Collision/ContactListener.h>
 #include <Jolt/Physics/Collision/ObjectLayer.h>
 #include <Jolt/Physics/Collision/Shape/BoxShape.h>
 #include <Jolt/Physics/Collision/Shape/CapsuleShape.h>
@@ -85,6 +89,38 @@ public:
     }
 };
 
+// Records trigger (sensor) overlaps into a shared queue. Jolt calls these from
+// worker threads during Update, so the queue is guarded by a mutex.
+class ContactListenerImpl final : public JPH::ContactListener {
+public:
+    std::vector<PhysicsWorld::TriggerEvent>* events = nullptr;
+    std::mutex*                              mutex = nullptr;
+    std::unordered_set<std::uint32_t>*       sensors = nullptr;
+
+    void OnContactAdded(const JPH::Body& b1, const JPH::Body& b2, const JPH::ContactManifold&,
+                        JPH::ContactSettings&) override {
+        const bool s1 = b1.IsSensor();
+        const bool s2 = b2.IsSensor();
+        if (!s1 && !s2) return;
+        const std::uint32_t id1 = b1.GetID().GetIndexAndSequenceNumber();
+        const std::uint32_t id2 = b2.GetID().GetIndexAndSequenceNumber();
+        const std::scoped_lock lock(*mutex);
+        events->push_back(s1 ? PhysicsWorld::TriggerEvent{id1, id2, true}
+                             : PhysicsWorld::TriggerEvent{id2, id1, true});
+    }
+
+    void OnContactRemoved(const JPH::SubShapeIDPair& pair) override {
+        const std::uint32_t id1 = pair.GetBody1ID().GetIndexAndSequenceNumber();
+        const std::uint32_t id2 = pair.GetBody2ID().GetIndexAndSequenceNumber();
+        const std::scoped_lock lock(*mutex);
+        if (sensors->contains(id1)) {
+            events->push_back({id1, id2, false});
+        } else if (sensors->contains(id2)) {
+            events->push_back({id2, id1, false});
+        }
+    }
+};
+
 // Jolt's global state (allocator, factory, type registration) initialised once
 // for the process. Never torn down — it lives for the program's lifetime.
 void ensure_jolt_initialized() {
@@ -130,6 +166,10 @@ struct PhysicsWorld::Impl {
     JPH::PhysicsSystem                        system;
     std::vector<JPH::ShapeRefC>               shapes;
     std::vector<JPH::Ref<JPH::CharacterVirtual>> characters;
+    ContactListenerImpl                       contact_listener;
+    std::vector<PhysicsWorld::TriggerEvent>   trigger_events;
+    std::mutex                                trigger_mutex;
+    std::unordered_set<std::uint32_t>         sensor_bodies;
     float                                     accumulator = 0.0F;
 };
 
@@ -153,6 +193,11 @@ std::expected<PhysicsWorld, core::Error> PhysicsWorld::create() {
     m.system.Init(max_bodies, num_body_mutexes, max_body_pairs, max_contacts, m.bp_layer,
                   m.obj_vs_bp, m.obj_pair);
     m.system.SetGravity(JPH::Vec3(0.0F, -9.81F, 0.0F));
+
+    m.contact_listener.events = &m.trigger_events;
+    m.contact_listener.mutex = &m.trigger_mutex;
+    m.contact_listener.sensors = &m.sensor_bodies;
+    m.system.SetContactListener(&m.contact_listener);
     return world;
 }
 
@@ -162,6 +207,10 @@ PhysicsWorld::~PhysicsWorld() = default;
 
 void PhysicsWorld::update(float dt) {
     if (!impl_) return;
+    {
+        const std::scoped_lock lock(impl_->trigger_mutex);
+        impl_->trigger_events.clear();
+    }
     impl_->accumulator += dt;
     int steps = 0;
     // Clamp the number of catch-up steps so a long frame can't spiral.
@@ -238,12 +287,20 @@ std::uint32_t PhysicsWorld::add_body(const BodyParams& params) {
         settings.mOverrideMassProperties = JPH::EOverrideMassProperties::CalculateInertia;
         settings.mMassPropertiesOverride.mMass = params.mass;
     }
+    settings.mIsSensor = params.sensor;
     const JPH::EActivation activation =
         params.motion == Motion::static_body ? JPH::EActivation::DontActivate
                                              : JPH::EActivation::Activate;
     const JPH::BodyID id =
         impl_->system.GetBodyInterface().CreateAndAddBody(settings, activation);
-    return id.IsInvalid() ? invalid_body : id.GetIndexAndSequenceNumber();
+    if (id.IsInvalid()) {
+        return invalid_body;
+    }
+    const std::uint32_t value = id.GetIndexAndSequenceNumber();
+    if (params.sensor) {
+        impl_->sensor_bodies.insert(value);
+    }
+    return value;
 }
 
 void PhysicsWorld::remove_body(std::uint32_t body) {
@@ -314,6 +371,10 @@ bool PhysicsWorld::character_on_ground(std::uint32_t character) const {
            JPH::CharacterBase::EGroundState::OnGround;
 }
 
+std::span<const PhysicsWorld::TriggerEvent> PhysicsWorld::trigger_events() const {
+    return {impl_->trigger_events.data(), impl_->trigger_events.size()};
+}
+
 std::expected<void, core::Error> run_physics_self_test() {
     auto world = PhysicsWorld::create();
     if (!world) return std::unexpected(world.error());
@@ -353,6 +414,42 @@ std::expected<void, core::Error> run_physics_self_test() {
     if (std::abs(y - 0.5F) > 0.25F) {
         return fail("physics self-test: sphere did not come to rest on the floor");
     }
+    return {};
+}
+
+std::expected<void, core::Error> run_trigger_self_test() {
+    auto world = PhysicsWorld::create();
+    if (!world) return std::unexpected(world.error());
+
+    // Static sensor box at y=3, half-extents (1,1,1) -> spans y in [2,4].
+    PhysicsWorld::BodyParams trigger;
+    trigger.shape = world->create_box(glm::vec3(1.0F, 1.0F, 1.0F));
+    trigger.position = glm::vec3(0.0F, 3.0F, 0.0F);
+    trigger.motion = Motion::static_body;
+    trigger.layer = Layer::sensor;
+    trigger.sensor = true;
+    const std::uint32_t sensor = world->add_body(trigger);
+
+    // Dynamic sphere dropped from y=6, falling straight through the sensor.
+    PhysicsWorld::BodyParams ball;
+    ball.shape = world->create_sphere(0.5F);
+    ball.position = glm::vec3(0.0F, 6.0F, 0.0F);
+    ball.motion = Motion::dynamic;
+    const std::uint32_t sphere = world->add_body(ball);
+
+    bool entered = false;
+    bool exited = false;
+    for (int i = 0; i < 240; ++i) {
+        world->update(1.0F / 60.0F);
+        for (const PhysicsWorld::TriggerEvent& ev : world->trigger_events()) {
+            if (ev.trigger == sensor && ev.other == sphere) {
+                (ev.entered ? entered : exited) = true;
+            }
+        }
+    }
+
+    if (!entered) return fail("trigger self-test: no enter event for the sensor");
+    if (!exited) return fail("trigger self-test: no exit event for the sensor");
     return {};
 }
 
