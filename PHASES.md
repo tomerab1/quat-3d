@@ -96,7 +96,7 @@ Goal: a glTF static mesh loads and renders with a basic PBR material under a dir
   Upload to device-local vertex + index buffers. Store as `MeshAsset`.
   *Commit: `[Phase3/Slice2] glTF static mesh loading`*
 
-- [ ] **3.3 — Texture loading**
+- [x] **3.3 — Texture loading**
   Load glTF images (base colour, normal, metallic-roughness, emissive) via fastgltf.
   Upload to `GpuImage`, create `VkImageView` + `VkSampler`. Store as `TextureAsset`.
   *Commit: `[Phase3/Slice3] glTF texture loading`*

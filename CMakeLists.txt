@@ -66,6 +66,7 @@ find_package(VulkanMemoryAllocator CONFIG REQUIRED)
 find_package(nlohmann_json CONFIG REQUIRED)
 find_package(glm CONFIG REQUIRED)
 find_package(fastgltf CONFIG REQUIRED)
+find_package(Stb REQUIRED)
 
 set(ENGINE_PUBLIC_INCLUDE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 
@@ -108,10 +109,16 @@ target_include_directories(engine_asset PUBLIC ${ENGINE_PUBLIC_INCLUDE})
 # fastgltf is an implementation detail of the loader (PRIVATE).
 # ---------------------------------------------------------------------------
 add_library(engine_scene STATIC
-    src/scene/gltf_loader.cpp)
+    src/scene/gltf_loader.cpp
+    src/scene/stb_image_impl.cpp)
 target_link_libraries(engine_scene PUBLIC engine_flags engine_asset engine_rhi)
+# fastgltf and stb (image decode) are implementation details of the loader.
 target_link_libraries(engine_scene PRIVATE fastgltf::fastgltf)
+target_include_directories(engine_scene PRIVATE ${Stb_INCLUDE_DIR})
 target_include_directories(engine_scene PUBLIC ${ENGINE_PUBLIC_INCLUDE})
+
+# stb's implementation TU is not warning-clean under our strict flags.
+set_source_files_properties(src/scene/stb_image_impl.cpp PROPERTIES COMPILE_OPTIONS "-w")
 
 # ---------------------------------------------------------------------------
 # game — executable entry point. The full target graph (engine_core /

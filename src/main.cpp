@@ -303,6 +303,41 @@ int main() {
                     std::fprintf(stderr, "[selftest] glTF loader FAILED: %s\n",
                                  r.error().message.c_str());
                 }
+                if (auto r = engine::scene::run_texture_loader_self_test(allocator, transfer); r) {
+                    std::fprintf(stderr, "[selftest] texture loader OK\n");
+                } else {
+                    std::fprintf(stderr, "[selftest] texture loader FAILED: %s\n",
+                                 r.error().message.c_str());
+                }
+                // Optional real-asset smoke test: QUAT_GLTF=<path> loads a glTF/GLB
+                // mesh + its textures and reports counts. Exercises the real decode
+                // paths (GLB bufferView images, external PNG/JPEG files).
+                if (const char* gltf_path = std::getenv("QUAT_GLTF"); gltf_path != nullptr) {
+                    if (auto mesh = engine::scene::GltfLoader::load(gltf_path, allocator, transfer);
+                        mesh) {
+                        std::fprintf(stderr,
+                                     "[gltf] %s: %u vertices, %u indices, %zu submeshes\n",
+                                     gltf_path, mesh->vertex_count, mesh->index_count,
+                                     mesh->submeshes.size());
+                    } else {
+                        std::fprintf(stderr, "[gltf] mesh load FAILED: %s\n",
+                                     mesh.error().message.c_str());
+                    }
+                    if (auto texs =
+                            engine::scene::GltfLoader::load_textures(gltf_path, allocator, transfer);
+                        texs) {
+                        std::fprintf(stderr, "[gltf] %zu texture(s) loaded\n", texs->size());
+                        for (std::size_t i = 0; i < texs->size(); ++i) {
+                            std::fprintf(stderr, "[gltf]   tex %zu: %ux%u format=%d valid=%d\n", i,
+                                         (*texs)[i].width, (*texs)[i].height,
+                                         static_cast<int>((*texs)[i].format),
+                                         static_cast<int>((*texs)[i].valid()));
+                        }
+                    } else {
+                        std::fprintf(stderr, "[gltf] texture load FAILED: %s\n",
+                                     texs.error().message.c_str());
+                    }
+                }
                 vkDestroyCommandPool(device.handle(), pool, nullptr);
             } else {
                 std::fprintf(stderr, "[selftest] glTF loader FAILED: command pool creation\n");

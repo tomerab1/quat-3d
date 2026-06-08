@@ -121,6 +121,54 @@ GpuImage& GpuImage::operator=(GpuImage&& other) noexcept {
 }
 
 // ===========================================================================
+// ImageView
+// ===========================================================================
+void ImageView::destroy() noexcept {
+    if (view_ != VK_NULL_HANDLE && device_ != VK_NULL_HANDLE) {
+        vkDestroyImageView(device_, view_, nullptr);
+    }
+    device_ = VK_NULL_HANDLE;
+    view_ = VK_NULL_HANDLE;
+}
+
+ImageView::~ImageView() { destroy(); }
+
+ImageView::ImageView(ImageView&& other) noexcept { *this = std::move(other); }
+
+ImageView& ImageView::operator=(ImageView&& other) noexcept {
+    if (this != &other) {
+        destroy();
+        device_ = std::exchange(other.device_, VK_NULL_HANDLE);
+        view_   = std::exchange(other.view_, VK_NULL_HANDLE);
+    }
+    return *this;
+}
+
+// ===========================================================================
+// Sampler
+// ===========================================================================
+void Sampler::destroy() noexcept {
+    if (sampler_ != VK_NULL_HANDLE && device_ != VK_NULL_HANDLE) {
+        vkDestroySampler(device_, sampler_, nullptr);
+    }
+    device_ = VK_NULL_HANDLE;
+    sampler_ = VK_NULL_HANDLE;
+}
+
+Sampler::~Sampler() { destroy(); }
+
+Sampler::Sampler(Sampler&& other) noexcept { *this = std::move(other); }
+
+Sampler& Sampler::operator=(Sampler&& other) noexcept {
+    if (this != &other) {
+        destroy();
+        device_  = std::exchange(other.device_, VK_NULL_HANDLE);
+        sampler_ = std::exchange(other.sampler_, VK_NULL_HANDLE);
+    }
+    return *this;
+}
+
+// ===========================================================================
 // GpuAllocator
 // ===========================================================================
 std::expected<GpuAllocator, core::Error> GpuAllocator::create(const Device& device) {
@@ -254,6 +302,116 @@ upload_device_buffer(GpuAllocator& allocator, const TransferContext& transfer,
     if (!copied) return std::unexpected(copied.error());
 
     return std::move(*device_buffer);
+}
+
+std::expected<GpuImage, core::Error>
+upload_device_image(GpuAllocator& allocator, const TransferContext& transfer,
+                    const void* data, VkDeviceSize size, VkExtent2D extent,
+                    VkFormat format, VkImageUsageFlags usage) {
+    auto staging = allocator.create_staging_buffer(size);
+    if (!staging) return std::unexpected(staging.error());
+    std::memcpy(staging->mapped(), data, size);
+
+    auto image = allocator.create_image(
+        format, extent,
+        usage | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT);
+    if (!image) return std::unexpected(image.error());
+
+    const VkBuffer src = staging->handle();
+    const VkImage  dst = image->handle();
+    auto uploaded = run_one_time_commands(transfer, [&](VkCommandBuffer cmd) {
+        VkImageSubresourceRange range{};
+        range.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        range.levelCount = 1;
+        range.layerCount = 1;
+
+        // UNDEFINED -> TRANSFER_DST_OPTIMAL before the copy.
+        VkImageMemoryBarrier2 to_dst{};
+        to_dst.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2;
+        to_dst.srcStageMask = VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT;
+        to_dst.srcAccessMask = VK_ACCESS_2_NONE;
+        to_dst.dstStageMask = VK_PIPELINE_STAGE_2_COPY_BIT;
+        to_dst.dstAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT;
+        to_dst.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        to_dst.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+        to_dst.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        to_dst.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        to_dst.image = dst;
+        to_dst.subresourceRange = range;
+
+        VkDependencyInfo dep{};
+        dep.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO;
+        dep.imageMemoryBarrierCount = 1;
+        dep.pImageMemoryBarriers = &to_dst;
+        vkCmdPipelineBarrier2(cmd, &dep);
+
+        VkBufferImageCopy region{};
+        region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        region.imageSubresource.layerCount = 1;
+        region.imageExtent = {extent.width, extent.height, 1};
+        vkCmdCopyBufferToImage(cmd, src, dst, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                               1, &region);
+
+        // TRANSFER_DST_OPTIMAL -> SHADER_READ_ONLY_OPTIMAL for sampling.
+        VkImageMemoryBarrier2 to_read = to_dst;
+        to_read.srcStageMask = VK_PIPELINE_STAGE_2_COPY_BIT;
+        to_read.srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT;
+        to_read.dstStageMask = VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT;
+        to_read.dstAccessMask = VK_ACCESS_2_SHADER_SAMPLED_READ_BIT;
+        to_read.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+        to_read.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        dep.pImageMemoryBarriers = &to_read;
+        vkCmdPipelineBarrier2(cmd, &dep);
+    });
+    if (!uploaded) return std::unexpected(uploaded.error());
+
+    return std::move(*image);
+}
+
+std::expected<ImageView, core::Error>
+create_image_view(VkDevice device, VkImage image, VkFormat format,
+                  VkImageAspectFlags aspect, std::uint32_t mip_levels) {
+    VkImageViewCreateInfo info{};
+    info.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+    info.image = image;
+    info.viewType = VK_IMAGE_VIEW_TYPE_2D;
+    info.format = format;
+    info.subresourceRange.aspectMask = aspect;
+    info.subresourceRange.levelCount = mip_levels;
+    info.subresourceRange.layerCount = 1;
+
+    VkImageView view = VK_NULL_HANDLE;
+    if (vkCreateImageView(device, &info, nullptr, &view) != VK_SUCCESS) {
+        return fail("create_image_view: vkCreateImageView failed");
+    }
+    return ImageView{device, view};
+}
+
+std::expected<Sampler, core::Error>
+create_sampler(VkDevice device, SamplerAddress address, std::uint32_t mip_levels) {
+    VkSamplerAddressMode mode = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+    switch (address) {
+        case SamplerAddress::repeat:          mode = VK_SAMPLER_ADDRESS_MODE_REPEAT; break;
+        case SamplerAddress::clamp_to_edge:   mode = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE; break;
+        case SamplerAddress::mirrored_repeat: mode = VK_SAMPLER_ADDRESS_MODE_MIRRORED_REPEAT; break;
+    }
+
+    VkSamplerCreateInfo info{};
+    info.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+    info.magFilter = VK_FILTER_LINEAR;
+    info.minFilter = VK_FILTER_LINEAR;
+    info.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+    info.addressModeU = mode;
+    info.addressModeV = mode;
+    info.addressModeW = mode;
+    info.maxLod = static_cast<float>(mip_levels);
+    info.borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_BLACK;
+
+    VkSampler sampler = VK_NULL_HANDLE;
+    if (vkCreateSampler(device, &info, nullptr, &sampler) != VK_SUCCESS) {
+        return fail("create_sampler: vkCreateSampler failed");
+    }
+    return Sampler{device, sampler};
 }
 
 std::expected<void, core::Error>

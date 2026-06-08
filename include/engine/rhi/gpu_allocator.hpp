@@ -66,6 +66,47 @@ private:
     VkExtent3D    extent_{};
 };
 
+// Move-only RAII wrapper over a VkImageView. Unlike GpuImage the view is a plain
+// device object (no VMA allocation); it borrows the VkImage it is created from.
+class ImageView {
+public:
+    ImageView() = default;
+    ImageView(VkDevice device, VkImageView view) : device_(device), view_(view) {}
+    ~ImageView();
+    ImageView(ImageView&& other) noexcept;
+    ImageView& operator=(ImageView&& other) noexcept;
+    ImageView(const ImageView&) = delete;
+    ImageView& operator=(const ImageView&) = delete;
+
+    [[nodiscard]] VkImageView handle() const { return view_; }
+
+private:
+    void destroy() noexcept;
+
+    VkDevice    device_ = VK_NULL_HANDLE;     // non-owning
+    VkImageView view_   = VK_NULL_HANDLE;
+};
+
+// Move-only RAII wrapper over a VkSampler.
+class Sampler {
+public:
+    Sampler() = default;
+    Sampler(VkDevice device, VkSampler sampler) : device_(device), sampler_(sampler) {}
+    ~Sampler();
+    Sampler(Sampler&& other) noexcept;
+    Sampler& operator=(Sampler&& other) noexcept;
+    Sampler(const Sampler&) = delete;
+    Sampler& operator=(const Sampler&) = delete;
+
+    [[nodiscard]] VkSampler handle() const { return sampler_; }
+
+private:
+    void destroy() noexcept;
+
+    VkDevice  device_  = VK_NULL_HANDLE;       // non-owning
+    VkSampler sampler_ = VK_NULL_HANDLE;
+};
+
 // Owns the VmaAllocator and is the single entry point for GPU allocations.
 class GpuAllocator {
 public:
@@ -111,6 +152,31 @@ struct TransferContext {
 [[nodiscard]] std::expected<GpuBuffer, core::Error>
 upload_device_buffer(GpuAllocator& allocator, const TransferContext& transfer,
                      const void* data, VkDeviceSize size, VkBufferUsageFlags usage);
+
+// Creates a device-local, optimally-tiled image and uploads `data` (tightly
+// packed pixels matching `format` and `extent`) through a staging buffer. The
+// image is left in VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL; SAMPLED and
+// TRANSFER_DST are always added to `usage`.
+[[nodiscard]] std::expected<GpuImage, core::Error>
+upload_device_image(GpuAllocator& allocator, const TransferContext& transfer,
+                    const void* data, VkDeviceSize size, VkExtent2D extent,
+                    VkFormat format,
+                    VkImageUsageFlags usage = VK_IMAGE_USAGE_SAMPLED_BIT);
+
+// Creates a 2D VkImageView over `image` wrapped in an RAII ImageView.
+[[nodiscard]] std::expected<ImageView, core::Error>
+create_image_view(VkDevice device, VkImage image, VkFormat format,
+                  VkImageAspectFlags aspect = VK_IMAGE_ASPECT_COLOR_BIT,
+                  std::uint32_t mip_levels = 1);
+
+// Sampler addressing modes for create_sampler. Filtering is always linear with a
+// linear mip mode — sufficient for the asset pipeline until mip generation lands.
+enum class SamplerAddress : std::uint8_t { repeat, clamp_to_edge, mirrored_repeat };
+
+// Creates a linear-filtered VkSampler wrapped in an RAII Sampler.
+[[nodiscard]] std::expected<Sampler, core::Error>
+create_sampler(VkDevice device, SamplerAddress address = SamplerAddress::repeat,
+               std::uint32_t mip_levels = 1);
 
 // Debug round-trip self-test: upload bytes to a device-local buffer, copy them
 // back to a host buffer, and verify they match. Returns an error on mismatch.

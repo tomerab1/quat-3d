@@ -17,6 +17,7 @@
     "vulkan-memory-allocator",
     "nlohmann-json",
     "glm",
-    "fastgltf"
+    "fastgltf",
+    "stb"
   ]
 }
