@@ -14,6 +14,7 @@
 #include <cstring>
 #include <expected>
 #include <limits>
+#include <optional>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -312,6 +313,18 @@ engine::scene::MeshData make_cube_data() {
     }
     d.bounds = {{-0.5F, -0.5F, -0.5F}, {0.5F, 0.5F, 0.5F}};
     d.submeshes = {engine::asset::SubMesh{0, static_cast<std::uint32_t>(d.indices.size()), 0}};
+    return d;
+}
+
+// A box with the given half-extents (the unit cube scaled into geometry, so the
+// mesh carries no Transform scale — keeps physics rotation extraction clean).
+engine::scene::MeshData make_box_data(const glm::vec3& half_extents) {
+    engine::scene::MeshData d = make_cube_data();
+    const glm::vec3 s = half_extents / 0.5F;
+    for (engine::asset::Vertex& v : d.vertices) {
+        v.position *= s;
+    }
+    d.bounds = {-half_extents, half_extents};
     return d;
 }
 
@@ -980,6 +993,8 @@ int main() {
     engine::asset::AssetManager assets;
     engine::scene::Scene scene;
     entt::entity spin_entity = entt::null; // the demo cube spins; a glTF stays put
+    std::optional<engine::physics::PhysicsWorld> physics_world; // set in physics demo
+    bool physics_mode = false;
     bool scene_ok = true;
 
     if (const char* gltf_path = std::getenv("QUAT_GLTF"); gltf_path != nullptr) {
@@ -994,6 +1009,76 @@ int main() {
                          roots->size(),
                          static_cast<std::size_t>(
                              scene.registry().view<engine::scene::Transform>().size()));
+        }
+    } else if (std::getenv("QUAT_PHYSICS") != nullptr) {
+        // Physics demo: a pile of boxes dropped onto a static floor.
+        physics_mode = true;
+        using engine::scene::BodyMotion;
+        using engine::scene::Collider;
+        using engine::scene::ColliderShape;
+        using engine::scene::MeshRenderer;
+        using engine::scene::RigidBody;
+        using engine::scene::Transform;
+        constexpr std::uint32_t no_body = engine::physics::PhysicsWorld::invalid_body;
+
+        auto world = engine::physics::PhysicsWorld::create();
+        auto floor_mesh = assets.load<engine::asset::MeshAsset>(
+            "demo/floor", [&](const std::filesystem::path&) {
+                return engine::scene::upload_mesh(make_box_data(glm::vec3(10.0F, 0.5F, 10.0F)),
+                                                  allocator, setup_transfer);
+            });
+        auto box_mesh = assets.load<engine::asset::MeshAsset>(
+            "demo/box", [&](const std::filesystem::path&) {
+                return engine::scene::upload_mesh(make_box_data(glm::vec3(0.5F)), allocator,
+                                                  setup_transfer);
+            });
+        auto floor_mat = assets.load<engine::asset::MaterialAsset>(
+            "demo/floor_mat", [&](const std::filesystem::path&) {
+                engine::asset::PbrMaterialParams p;
+                p.base_color_factor = {0.5F, 0.5F, 0.55F, 1.0F};
+                p.metallic_factor = 0.0F;
+                p.roughness_factor = 0.9F;
+                return engine::asset::upload_material(p, engine::asset::MaterialTextures{},
+                                                      allocator, setup_transfer);
+            });
+        auto box_mat = assets.load<engine::asset::MaterialAsset>(
+            "demo/box_mat", [&](const std::filesystem::path&) {
+                engine::asset::PbrMaterialParams p;
+                p.base_color_factor = {0.85F, 0.4F, 0.2F, 1.0F};
+                p.metallic_factor = 0.0F;
+                p.roughness_factor = 0.5F;
+                return engine::asset::upload_material(p, engine::asset::MaterialTextures{},
+                                                      allocator, setup_transfer);
+            });
+
+        if (!world || !floor_mesh.is_loaded() || !box_mesh.is_loaded()) {
+            scene_ok = false;
+        } else {
+            physics_world = std::move(*world);
+
+            const entt::entity floor = scene.create_entity("floor");
+            scene.registry().get<Transform>(floor).local =
+                glm::translate(glm::mat4(1.0F), glm::vec3(0.0F, -0.5F, 0.0F));
+            scene.registry().emplace<MeshRenderer>(floor, floor_mesh, floor_mat);
+            scene.registry().emplace<Collider>(floor, ColliderShape::box,
+                                               glm::vec3(10.0F, 0.5F, 10.0F), glm::vec3(0.0F));
+            scene.registry().emplace<RigidBody>(floor, BodyMotion::static_body, 1.0F, no_body);
+
+            // A stack of boxes, jittered into 3x3 columns climbing upward.
+            for (int i = 0; i < 12; ++i) {
+                const float fx = static_cast<float>((i % 3) - 1) * 0.6F;
+                const float fz = static_cast<float>((i / 3) % 3 - 1) * 0.6F;
+                const float fy = 3.0F + static_cast<float>(i) * 1.15F;
+                const entt::entity b = scene.create_entity("box");
+                scene.registry().get<Transform>(b).local =
+                    glm::translate(glm::mat4(1.0F), glm::vec3(fx, fy, fz)) *
+                    glm::rotate(glm::mat4(1.0F), 0.3F * static_cast<float>(i),
+                                glm::normalize(glm::vec3(1.0F, 0.6F, 0.3F)));
+                scene.registry().emplace<MeshRenderer>(b, box_mesh, box_mat);
+                scene.registry().emplace<Collider>(b, ColliderShape::box, glm::vec3(0.5F),
+                                                   glm::vec3(0.0F));
+                scene.registry().emplace<RigidBody>(b, BodyMotion::dynamic, 1.0F, no_body);
+            }
         }
     } else {
         auto cube_handle = assets.load<engine::asset::MeshAsset>(
@@ -1045,11 +1130,20 @@ int main() {
 
     // Free-fly camera state, seeded from the framed transform so the opening view
     // matches the auto-frame. Updated each frame from input (WASD + right-drag).
-    glm::vec3 cam_pos = glm::vec3(framed[3]);
-    const glm::vec3 cam_fwd0 = -glm::normalize(glm::vec3(framed[2])); // camera looks down -Z
+    // The physics demo's huge floor would push the auto-frame far away; use a
+    // fixed view of the drop zone instead.
+    const glm::mat4 framed_view =
+        physics_mode ? glm::inverse(glm::lookAt(glm::vec3(8.0F, 5.0F, 10.0F),
+                                                glm::vec3(0.0F, 1.5F, 0.0F),
+                                                glm::vec3(0.0F, 1.0F, 0.0F)))
+                     : framed;
+    glm::vec3 cam_pos = glm::vec3(framed_view[3]);
+    const glm::vec3 cam_fwd0 = -glm::normalize(glm::vec3(framed_view[2])); // camera looks down -Z
     float cam_yaw = std::atan2(cam_fwd0.z, cam_fwd0.x);
     float cam_pitch = std::asin(glm::clamp(cam_fwd0.y, -0.999F, 0.999F));
-    const float move_speed = has_geo ? glm::max(1.0F, 0.5F * glm::length(bmax - bmin)) : 3.0F;
+    const float move_speed = physics_mode ? 6.0F
+                             : has_geo    ? glm::max(1.0F, 0.5F * glm::length(bmax - bmin))
+                                          : 3.0F;
 
     // ---- Per-frame command + sync resources --------------------------------
     VkCommandPool command_pool = VK_NULL_HANDLE;
@@ -1251,6 +1345,9 @@ int main() {
             scene.registry().get<engine::scene::Transform>(spin_entity).local =
                 glm::rotate(glm::mat4(1.0F), static_cast<float>(presented) * 0.02F,
                             glm::normalize(glm::vec3(0.3F, 1.0F, 0.2F)));
+        }
+        if (physics_world) {
+            engine::scene::physics_system(scene.registry(), *physics_world, dt);
         }
         scene.tick(dt); // advances any Animators by real elapsed time
         const engine::scene::CameraMatrices cam =
