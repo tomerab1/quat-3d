@@ -26,6 +26,7 @@
 #include "engine/rhi/descriptor_buffer.hpp"
 #include "engine/scene/components.hpp"
 #include "engine/scene/gltf_loader.hpp"
+#include "engine/scene/scene.hpp"
 #include "engine/rhi/device.hpp"
 #include "engine/rhi/gpu_allocator.hpp"
 #include "engine/rhi/graphics_pipeline.hpp"
@@ -264,6 +265,13 @@ int main() {
             std::fprintf(stderr, "[selftest] ECS world OK\n");
         } else {
             std::fprintf(stderr, "[selftest] ECS world FAILED: %s\n",
+                         r.error().message.c_str());
+        }
+
+        if (auto r = engine::scene::run_scene_self_test(); r) {
+            std::fprintf(stderr, "[selftest] scene + systems OK\n");
+        } else {
+            std::fprintf(stderr, "[selftest] scene + systems FAILED: %s\n",
                          r.error().message.c_str());
         }
 

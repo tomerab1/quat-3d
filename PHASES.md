@@ -133,7 +133,7 @@ Goal: entities with components drive rendering; a scene can be constructed in co
   Camera, DirectionalLight, Name, Parent, Children).
   *Commit: `[Phase4/Slice1] ECS world and core components`*
 
-- [ ] **4.2 — Scene + system scheduler**
+- [x] **4.2 — Scene + system scheduler**
   `src/scene/scene.cpp`: owns `entt::registry`, registers and ticks systems in fixed order.
   Systems: `TransformSystem` (propagate world matrices), `RenderCollectSystem` (fill draw list).
   *Commit: `[Phase4/Slice2] scene and system scheduler`*

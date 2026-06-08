@@ -114,9 +114,13 @@ target_include_directories(engine_asset PUBLIC ${ENGINE_PUBLIC_INCLUDE})
 add_library(engine_scene STATIC
     src/scene/gltf_loader.cpp
     src/scene/stb_image_impl.cpp
-    src/scene/components.cpp)
+    src/scene/components.cpp
+    src/scene/scene.cpp)
 # EnTT is PUBLIC: components.hpp exposes entt types (Parent/Children) to consumers.
-target_link_libraries(engine_scene PUBLIC engine_flags engine_asset engine_rhi EnTT::EnTT)
+# engine_renderer is PUBLIC: scene.hpp's RenderCollectSystem fills a renderer
+# DrawItem list (no cycle — the renderer does not depend on the scene).
+target_link_libraries(engine_scene PUBLIC
+    engine_flags engine_asset engine_rhi engine_renderer EnTT::EnTT)
 # fastgltf and stb (image decode) are implementation details of the loader.
 target_link_libraries(engine_scene PRIVATE fastgltf::fastgltf)
 target_include_directories(engine_scene PRIVATE ${Stb_INCLUDE_DIR})
