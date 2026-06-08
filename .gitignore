@@ -7,6 +7,9 @@
 # Cooked assets (offline-generated, never committed)
 /cooked/
 
+# Downloaded glTF test models (Khronos sample assets — fetched on demand, not committed)
+/sample-assets/
+
 # vcpkg
 /vcpkg_installed/
 /vcpkg/
