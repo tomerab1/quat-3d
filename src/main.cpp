@@ -346,7 +346,8 @@ run_scene_render_self_test(const engine::rhi::Device& device, engine::rhi::GpuAl
     rhi::RenderGraph graph(pool);
     auto gbuffer = mesh_pass->add_to_graph(graph, extent, cam.view_proj, {&item, 1});
     if (!gbuffer) return std::unexpected(gbuffer.error());
-    auto hdr = lighting_pass->add_to_graph(graph, *gbuffer, extent, light);
+    auto hdr = lighting_pass->add_to_graph(graph, *gbuffer, extent, light,
+                                           glm::inverse(cam.view_proj), cam.position);
     if (!hdr) return std::unexpected(hdr.error());
     const rhi::ResourceHandle ldr = graph.create_transient_image(
         "scene_ldr", ldr_format, extent,
@@ -1064,7 +1065,8 @@ int main() {
             std::fprintf(stderr, "[fatal] gbuffer pass: %s\n", gbuffer.error().message.c_str());
             break;
         }
-        auto hdr = fr.lighting.add_to_graph(graph, *gbuffer, draw_extent, light);
+        auto hdr = fr.lighting.add_to_graph(graph, *gbuffer, draw_extent, light,
+                                            glm::inverse(cam.view_proj), cam.position);
         if (!hdr) {
             std::fprintf(stderr, "[fatal] lighting pass: %s\n", hdr.error().message.c_str());
             break;

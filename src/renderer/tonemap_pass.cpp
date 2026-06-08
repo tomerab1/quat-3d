@@ -16,6 +16,7 @@
 #include "engine/rhi/device.hpp"
 #include "engine/rhi/gpu_allocator.hpp"
 #include "engine/rhi/pipeline_cache.hpp"
+#include "pbr_reference.hpp"
 
 namespace engine::renderer {
 
@@ -224,6 +225,7 @@ run_tonemap_pass_self_test(const rhi::Device& device, rhi::GpuAllocator& allocat
     asset::PbrMaterialParams params;
     params.base_color_factor = {base, 1.0F};
     params.metallic_factor = 0.0F;
+    params.roughness_factor = 1.0F;
     auto material = asset::upload_material(params, asset::MaterialTextures{}, allocator, transfer);
     if (!material) return std::unexpected(material.error());
 
@@ -250,7 +252,8 @@ run_tonemap_pass_self_test(const rhi::Device& device, rhi::GpuAllocator& allocat
     const DrawItem item{&mesh, &*material, glm::mat4(1.0F)};
     auto targets = mesh_pass->add_to_graph(graph, extent, glm::mat4(1.0F), {&item, 1});
     if (!targets) return std::unexpected(targets.error());
-    auto hdr = lighting->add_to_graph(graph, *targets, extent, light);
+    auto hdr = lighting->add_to_graph(graph, *targets, extent, light, glm::mat4(1.0F),
+                                      glm::vec3(0.0F, 0.0F, 1.0F));
     if (!hdr) return std::unexpected(hdr.error());
     const rhi::ResourceHandle ldr = graph.create_transient_image(
         "ldr_color", ldr_format, extent,
@@ -292,12 +295,15 @@ run_tonemap_pass_self_test(const rhi::Device& device, rhi::GpuAllocator& allocat
     if (!submitted) return std::unexpected(submitted.error());
 
     // Expected LDR = sRGB(ACES(lit)). The GBuffer quantised the base colour to 8
-    // bits, so use the same quantised value the lighting pass actually read.
+    // bits; light the same value head-on (N = V = L = +Z) via the shared PBR
+    // reference, then run the same tonemap the shader does.
     glm::vec3 quantised;
     for (int i = 0; i < 3; ++i) {
         quantised[i] = std::round(base[i] * 255.0F) / 255.0F;
     }
-    const glm::vec3 mapped = aces(quantised);
+    const glm::vec3 z(0.0F, 0.0F, 1.0F);
+    const glm::vec3 lit = pbr_ref::direct(quantised, 0.0F, 1.0F, z, z, z, glm::vec3(1.0F), 1.0F);
+    const glm::vec3 mapped = aces(lit);
     const std::array<int, 3> expected{
         static_cast<int>(std::round(linear_to_srgb(mapped.x) * 255.0F)),
         static_cast<int>(std::round(linear_to_srgb(mapped.y) * 255.0F)),

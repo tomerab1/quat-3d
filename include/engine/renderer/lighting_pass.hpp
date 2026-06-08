@@ -52,11 +52,14 @@ public:
     LightingPass& operator=(const LightingPass&) = delete;
 
     // Declare the HDR target and the lighting compute pass into `graph`, reading
-    // `gbuffer`. The descriptor buffer is owned by the pass and lives until the
-    // next call, so the graph must be compiled + executed before reuse.
+    // `gbuffer` (including its depth). `inv_view_proj` and `camera_pos` let the
+    // shader reconstruct each pixel's world position (for the specular view
+    // vector). The descriptor buffer is owned by the pass and lives until the next
+    // call, so the graph must be compiled + executed before reuse.
     [[nodiscard]] std::expected<rhi::ResourceHandle, core::Error>
     add_to_graph(rhi::RenderGraph& graph, const GBufferTargets& gbuffer, VkExtent2D extent,
-                 const DirectionalLightParams& light);
+                 const DirectionalLightParams& light, const glm::mat4& inv_view_proj,
+                 const glm::vec3& camera_pos);
 
 private:
     const rhi::Device* device_    = nullptr;   // non-owning

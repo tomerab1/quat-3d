@@ -148,6 +148,14 @@ Goal: entities with components drive rendering; a scene can be constructed in co
   Load a multi-node glTF scene and render it correctly.
   *Commit: `[Phase4/Slice4] glTF scene graph to ECS`*
 
+- [x] **4.5 — PBR direct lighting**
+  Upgrade the deferred lighting compute pass from Lambert to a Cook-Torrance microfacet
+  BRDF (GGX NDF, height-correlated Smith visibility, Schlick Fresnel) for the directional
+  light. Reconstruct world position from the GBuffer depth + inverse view-proj so the pass
+  has the per-pixel view vector; feed it the camera position. Makes the loaded
+  metallic/roughness data actually drive shading. IBL/environment ambient deferred to Phase 7/8.
+  *Commit: `[Phase4/Slice5] PBR direct lighting`*
+
 ---
 
 ## Phase 5 — Skeletal Animation

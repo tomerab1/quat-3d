@@ -1,16 +1,20 @@
 #include "engine/renderer/lighting_pass.hpp"
 
 #include <array>
+#include <cmath>
 #include <cstdint>
 #include <cstring>
 #include <string>
 #include <utility>
+
+#include <glm/glm.hpp>
 
 #include "engine/asset/material_asset.hpp"
 #include "engine/asset/mesh_asset.hpp"
 #include "engine/rhi/device.hpp"
 #include "engine/rhi/gpu_allocator.hpp"
 #include "engine/rhi/pipeline_cache.hpp"
+#include "pbr_reference.hpp"
 
 namespace engine::renderer {
 
@@ -22,16 +26,29 @@ namespace {
 
 constexpr VkShaderStageFlags kComputeStage = VK_SHADER_STAGE_COMPUTE_BIT;
 
-// Lighting descriptor set 0: GBuffer albedo/normal/material as sampled images
-// (read via Load — no sampler) plus the HDR output as a storage image. Matches
-// lighting.slang (verified against its SPIR-V).
-[[nodiscard]] std::array<rhi::DescriptorBinding, 4> lighting_bindings() {
+// GPU push-constant block, mirrors LightParams in lighting.slang (128 bytes).
+// The light fields match DirectionalLightParams; the leading camera fields let
+// the shader reconstruct world position from depth.
+struct LightingPushConstants {
+    glm::mat4 inv_view_proj{1.0F};
+    glm::vec4 camera_pos{0.0F};
+    glm::vec4 direction{0.0F, 0.0F, 1.0F, 0.0F};
+    glm::vec4 color{1.0F};
+    glm::vec4 ambient{0.0F};
+};
+static_assert(sizeof(LightingPushConstants) == 128, "must match lighting.slang LightParams");
+
+// Lighting descriptor set 0: GBuffer albedo/normal/material/depth as sampled
+// images (read via Load — no sampler) plus the HDR output as a storage image.
+// Matches lighting.slang (verified against its SPIR-V).
+[[nodiscard]] std::array<rhi::DescriptorBinding, 5> lighting_bindings() {
     using rhi::DescriptorBinding;
     return {{
         {0, 0, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, kComputeStage},
         {0, 1, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, kComputeStage},
         {0, 2, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, kComputeStage},
-        {0, 3, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, kComputeStage},
+        {0, 3, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, kComputeStage},
+        {0, 4, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, kComputeStage},
     }};
 }
 
@@ -58,7 +75,7 @@ LightingPass::create(const rhi::Device& device, rhi::GpuAllocator& allocator,
     if (!shader) return std::unexpected(shader.error());
 
     const VkDescriptorSetLayout set_layout = out.layout_.handle();
-    const VkPushConstantRange pc{kComputeStage, 0, sizeof(DirectionalLightParams)};
+    const VkPushConstantRange pc{kComputeStage, 0, sizeof(LightingPushConstants)};
 
     rhi::ComputePipeline::CreateInfo info{};
     info.shader = *shader;
@@ -73,7 +90,8 @@ LightingPass::create(const rhi::Device& device, rhi::GpuAllocator& allocator,
 
 std::expected<rhi::ResourceHandle, core::Error>
 LightingPass::add_to_graph(rhi::RenderGraph& graph, const GBufferTargets& gbuffer,
-                           VkExtent2D extent, const DirectionalLightParams& light) {
+                           VkExtent2D extent, const DirectionalLightParams& light,
+                           const glm::mat4& inv_view_proj, const glm::vec3& camera_pos) {
     const rhi::ResourceHandle hdr = graph.create_transient_image(
         "hdr_color", hdr_color_format, extent,
         VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT);
@@ -82,23 +100,32 @@ LightingPass::add_to_graph(rhi::RenderGraph& graph, const GBufferTargets& gbuffe
     if (!db) return std::unexpected(db.error());
     frame_descriptor_ = std::move(*db);
 
+    LightingPushConstants push{};
+    push.inv_view_proj = inv_view_proj;
+    push.camera_pos = glm::vec4(camera_pos, 1.0F);
+    push.direction = light.direction;
+    push.color = light.color;
+    push.ambient = light.ambient;
+
     graph.add_pass("lighting", rhi::PassType::compute)
         .reads(gbuffer.albedo, rhi::ResourceUsage::sampled_compute)
         .reads(gbuffer.normal, rhi::ResourceUsage::sampled_compute)
         .reads(gbuffer.material, rhi::ResourceUsage::sampled_compute)
+        .reads(gbuffer.depth, rhi::ResourceUsage::sampled_compute)
         .writes(hdr, rhi::ResourceUsage::storage_write)
-        .execute([this, gbuffer, hdr, extent, light](rhi::PassContext& ctx) {
+        .execute([this, gbuffer, hdr, extent, push](rhi::PassContext& ctx) {
             const VkCommandBuffer cmd = ctx.cmd();
             constexpr VkImageLayout ro = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
             frame_descriptor_.write_sampled_image(0, ctx.resolve(gbuffer.albedo).view, ro);
             frame_descriptor_.write_sampled_image(1, ctx.resolve(gbuffer.normal).view, ro);
             frame_descriptor_.write_sampled_image(2, ctx.resolve(gbuffer.material).view, ro);
-            frame_descriptor_.write_storage_image(3, ctx.resolve(hdr).view,
+            frame_descriptor_.write_sampled_image(3, ctx.resolve(gbuffer.depth).view, ro);
+            frame_descriptor_.write_storage_image(4, ctx.resolve(hdr).view,
                                                   VK_IMAGE_LAYOUT_GENERAL);
 
             vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline_.handle());
             frame_descriptor_.bind(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline_.layout(), 0);
-            vkCmdPushConstants(cmd, pipeline_.layout(), kComputeStage, 0, sizeof(light), &light);
+            vkCmdPushConstants(cmd, pipeline_.layout(), kComputeStage, 0, sizeof(push), &push);
 
             const std::uint32_t gx = (extent.width + 7) / 8;
             const std::uint32_t gy = (extent.height + 7) / 8;
@@ -216,9 +243,18 @@ run_lighting_pass_self_test(const rhi::Device& device, rhi::GpuAllocator& alloca
     mesh.index_count = 3;
     mesh.submeshes = {asset::SubMesh{0, 3, 0}};
 
+    // A smooth metal: diffuse is killed (metallic = 1), so the lit value is pure
+    // Cook-Torrance specular — a strong head-on highlight a Lambert shader could
+    // never produce. This makes the test sensitive to the whole BRDF (D/Vis/F).
+    // Values chosen to land exactly on 8-bit UNORM steps so GPU and std::round
+    // agree (0.3 would hit the 76.5 half-step where the two round differently).
+    const glm::vec3 base{0.25F, 0.5F, 0.75F};
+    constexpr float test_metallic = 1.0F;  // 255
+    constexpr float test_roughness = 0.5F; // 127.5 -> 128 either way
     asset::PbrMaterialParams params;
-    params.base_color_factor = {0.25F, 0.5F, 0.75F, 1.0F};
-    params.metallic_factor = 0.0F; // dielectric, so diffuse = base colour
+    params.base_color_factor = {base, 1.0F};
+    params.metallic_factor = test_metallic;
+    params.roughness_factor = test_roughness;
     auto material = asset::upload_material(params, asset::MaterialTextures{}, allocator, transfer);
     if (!material) return std::unexpected(material.error());
 
@@ -227,8 +263,8 @@ run_lighting_pass_self_test(const rhi::Device& device, rhi::GpuAllocator& alloca
     auto lighting = LightingPass::create(device, allocator, cache, cooked_shader_dir);
     if (!lighting) return std::unexpected(lighting.error());
 
-    // Light straight down +Z (at the triangle's normal), white, intensity 1, no
-    // ambient — so a covered pixel's HDR value equals its base colour.
+    // Light along +Z (the triangle's normal), white, intensity 1, no ambient.
+    // With the camera also along +Z this is a head-on view: N = V = L = +Z.
     DirectionalLightParams light;
     light.direction = {0.0F, 0.0F, 1.0F, 0.0F};
     light.color = {1.0F, 1.0F, 1.0F, 1.0F};
@@ -245,7 +281,10 @@ run_lighting_pass_self_test(const rhi::Device& device, rhi::GpuAllocator& alloca
     const DrawItem item{&mesh, &*material, glm::mat4(1.0F)};
     auto targets = mesh_pass->add_to_graph(graph, extent, glm::mat4(1.0F), {&item, 1});
     if (!targets) return std::unexpected(targets.error());
-    auto hdr = lighting->add_to_graph(graph, *targets, extent, light);
+    // Identity view_proj (geometry already in clip space); camera sits at +Z so
+    // the reconstructed view vector is +Z, matching the light and normal.
+    auto hdr = lighting->add_to_graph(graph, *targets, extent, light, glm::mat4(1.0F),
+                                      glm::vec3(0.0F, 0.0F, 1.0F));
     if (!hdr) return std::unexpected(hdr.error());
     if (auto compiled = graph.compile(); !compiled) return std::unexpected(compiled.error());
 
@@ -284,13 +323,33 @@ run_lighting_pass_self_test(const rhi::Device& device, rhi::GpuAllocator& alloca
     const auto rgb = [&](std::uint32_t x, std::uint32_t y, int c) {
         return half_to_float(halfs[(static_cast<std::size_t>(y) * extent.width + x) * 4 + c]);
     };
-    const auto near = [](float v, float t) { return v >= t - 0.03F && v <= t + 0.03F; };
+    const auto near = [](float v, float t) { return std::abs(v - t) <= 0.02F; };
+    const auto quant = [](float v) { return std::round(v * 255.0F) / 255.0F; };
 
+    // The GBuffer quantised albedo/metallic/roughness to 8 bits. Reconstruct the
+    // centre pixel's view vector exactly as the shader does (identity view_proj,
+    // surface depth 0, camera at +Z): low-roughness specular is too sharp to
+    // assume perfect head-on for a pixel that is not dead-centre of projection.
     const std::uint32_t cx = extent.width / 2;
     const std::uint32_t cy = extent.height / 2;
-    if (!near(rgb(cx, cy, 0), 0.25F) || !near(rgb(cx, cy, 1), 0.5F) ||
-        !near(rgb(cx, cy, 2), 0.75F)) {
-        return fail("lighting self-test: lit centre pixel is not the expected Lambert colour");
+    const float u = (static_cast<float>(cx) + 0.5F) / static_cast<float>(extent.width);
+    const float vv = (static_cast<float>(cy) + 0.5F) / static_cast<float>(extent.height);
+    const glm::vec3 surface(u * 2.0F - 1.0F, vv * 2.0F - 1.0F, 0.0F);
+    const glm::vec3 N(0.0F, 0.0F, 1.0F);
+    const glm::vec3 V = glm::normalize(glm::vec3(0.0F, 0.0F, 1.0F) - surface);
+    const glm::vec3 L(0.0F, 0.0F, 1.0F);
+    const glm::vec3 base_q{quant(base.x), quant(base.y), quant(base.z)};
+    const glm::vec3 expected = pbr_ref::direct(base_q, quant(test_metallic), quant(test_roughness),
+                                               N, V, L, glm::vec3(1.0F), 1.0F);
+
+    if (!near(rgb(cx, cy, 0), expected.x) || !near(rgb(cx, cy, 1), expected.y) ||
+        !near(rgb(cx, cy, 2), expected.z)) {
+        return fail("lighting self-test: lit centre pixel is not the expected PBR specular");
+    }
+    // The metallic highlight should be strong (brighter than the albedo), not a
+    // dim diffuse term — a guard against a regression that drops the specular lobe.
+    if (rgb(cx, cy, 2) < base_q.z) {
+        return fail("lighting self-test: metallic specular highlight is too weak");
     }
     if (rgb(1, 1, 0) != 0.0F || rgb(1, 1, 1) != 0.0F || rgb(1, 1, 2) != 0.0F) {
         return fail("lighting self-test: background pixel is not black");
