@@ -538,6 +538,13 @@ int main() {
                          r.error().message.c_str());
         }
 
+        if (auto r = engine::animation::run_blend_self_test(); r) {
+            std::fprintf(stderr, "[selftest] blend + additive OK\n");
+        } else {
+            std::fprintf(stderr, "[selftest] blend + additive FAILED: %s\n",
+                         r.error().message.c_str());
+        }
+
         if (auto r = engine::scene::run_skeleton_load_self_test(); r) {
             std::fprintf(stderr, "[selftest] skeleton load OK\n");
         } else {

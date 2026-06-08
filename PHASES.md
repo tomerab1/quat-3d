@@ -184,7 +184,7 @@ Goal: a glTF character with skin and animations plays back and renders correctly
   Runs before GBuffer pass. GBuffer pass reads skinned buffer.
   *Commit: `[Phase5/Slice4] GPU skinning compute pass`*
 
-- [ ] **5.5 — Animation blending**
+- [x] **5.5 — Animation blending**
   `src/animation/animator.cpp`: linear 1D blend between two clips (blend weight parameter).
   Additive layer support (per-joint mask bitmask). `BlendTree` struct.
   *Commit: `[Phase5/Slice5] animation blending and additive layers`*
