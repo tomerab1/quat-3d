@@ -117,7 +117,7 @@ Goal: a glTF static mesh loads and renders with a basic PBR material under a dir
   Fullscreen compute pass reading GBuffer, applying one directional light, writing HDR colour.
   *Commit: `[Phase3/Slice6] deferred lighting pass`*
 
-- [ ] **3.7 — Tonemap + present**
+- [x] **3.7 — Tonemap + present**
   `assets/shaders/tonemap.slang`: ACES tonemap, gamma correction, write to swapchain image.
   Static glTF mesh now visible with correct lighting.
   *Commit: `[Phase3/Slice7] tonemap pass and lit static mesh`*
