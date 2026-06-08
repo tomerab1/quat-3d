@@ -2,6 +2,7 @@
 
 #include <array>
 #include <cstring>
+#include <functional>
 #include <limits>
 #include <string>
 #include <utility>
@@ -13,6 +14,12 @@
 #include <fastgltf/tools.hpp>
 #include <fastgltf/types.hpp>
 #include <glm/glm.hpp>
+#include <glm/gtc/matrix_transform.hpp>
+#include <glm/gtc/quaternion.hpp>
+
+#include "engine/asset/asset_manager.hpp"
+#include "engine/scene/components.hpp"
+#include "engine/scene/scene.hpp"
 
 // Declarations only — the stb_image implementation lives in stb_image_impl.cpp,
 // compiled permissively (see CMakeLists.txt), so its warnings stay out of our
@@ -112,6 +119,91 @@ constexpr auto kLoadOptions = fastgltf::Options::LoadExternalBuffers |
     }
     out.bounds = {bmin, bmax};
     return out;
+}
+
+// Extract a single triangle primitive into its own self-contained MeshData (one
+// submesh spanning all its indices). Used by scene instantiation so each glTF
+// primitive becomes one MeshAsset with its own material — the granularity the
+// one-material-per-draw renderer needs.
+[[nodiscard]] std::expected<MeshData, core::Error>
+extract_primitive(const fastgltf::Asset& asset, const fastgltf::Primitive& prim) {
+    if (prim.type != fastgltf::PrimitiveType::Triangles) {
+        return fail("glTF primitive is not a triangle list");
+    }
+    const auto* pos_attr = prim.findAttribute("POSITION");
+    if (pos_attr == prim.attributes.cend()) {
+        return fail("glTF primitive missing required POSITION attribute");
+    }
+
+    MeshData out;
+    glm::vec3 bmin(std::numeric_limits<float>::max());
+    glm::vec3 bmax(std::numeric_limits<float>::lowest());
+
+    const fastgltf::Accessor& pos_acc = asset.accessors[pos_attr->accessorIndex];
+    out.vertices.resize(pos_acc.count);
+    fastgltf::iterateAccessorWithIndex<fastgltf::math::fvec3>(
+        asset, pos_acc, [&](fastgltf::math::fvec3 v, std::size_t i) {
+            const glm::vec3 p = to_glm(v);
+            out.vertices[i].position = p;
+            bmin = glm::min(bmin, p);
+            bmax = glm::max(bmax, p);
+        });
+    if (const auto* a = prim.findAttribute("NORMAL"); a != prim.attributes.cend()) {
+        fastgltf::iterateAccessorWithIndex<fastgltf::math::fvec3>(
+            asset, asset.accessors[a->accessorIndex],
+            [&](fastgltf::math::fvec3 v, std::size_t i) { out.vertices[i].normal = to_glm(v); });
+    }
+    if (const auto* a = prim.findAttribute("TEXCOORD_0"); a != prim.attributes.cend()) {
+        fastgltf::iterateAccessorWithIndex<fastgltf::math::fvec2>(
+            asset, asset.accessors[a->accessorIndex],
+            [&](fastgltf::math::fvec2 v, std::size_t i) { out.vertices[i].uv = to_glm(v); });
+    }
+    if (const auto* a = prim.findAttribute("TANGENT"); a != prim.attributes.cend()) {
+        fastgltf::iterateAccessorWithIndex<fastgltf::math::fvec4>(
+            asset, asset.accessors[a->accessorIndex],
+            [&](fastgltf::math::fvec4 v, std::size_t i) { out.vertices[i].tangent = to_glm(v); });
+    }
+
+    if (!prim.indicesAccessor.has_value()) {
+        return fail("glTF primitive has no index accessor after generation");
+    }
+    const fastgltf::Accessor& idx_acc = asset.accessors[prim.indicesAccessor.value()];
+    out.indices.reserve(idx_acc.count);
+    fastgltf::iterateAccessor<std::uint32_t>(
+        asset, idx_acc, [&](std::uint32_t idx) { out.indices.push_back(idx); });
+
+    if (out.vertices.empty() || out.indices.empty()) {
+        return fail("glTF primitive contained no triangle geometry");
+    }
+    out.bounds = {bmin, bmax};
+    out.submeshes = {asset::SubMesh{0, static_cast<std::uint32_t>(out.indices.size()), 0}};
+    return out;
+}
+
+// glTF node local transform as a glm matrix (column-major). A node carries either
+// an explicit matrix or a TRS triple; both resolve to the same composition.
+[[nodiscard]] glm::mat4 node_local_matrix(const fastgltf::Node& node) {
+    return std::visit(
+        fastgltf::visitor{
+            [](const fastgltf::TRS& trs) {
+                const glm::vec3 t = to_glm(trs.translation);
+                // fastgltf quaternion is [x, y, z, w]; glm::quat ctor is (w,x,y,z).
+                const glm::quat q(trs.rotation[3], trs.rotation[0], trs.rotation[1],
+                                  trs.rotation[2]);
+                const glm::vec3 s = to_glm(trs.scale);
+                return glm::translate(glm::mat4(1.0F), t) * glm::mat4_cast(q) *
+                       glm::scale(glm::mat4(1.0F), s);
+            },
+            [](const fastgltf::math::fmat4x4& m) {
+                glm::mat4 out(1.0F);
+                for (int c = 0; c < 4; ++c) {
+                    for (int r = 0; r < 4; ++r) {
+                        out[c][r] = m[c][r];
+                    }
+                }
+                return out;
+            }},
+        node.transform);
 }
 
 [[nodiscard]] std::expected<MeshData, core::Error>
@@ -456,6 +548,152 @@ GltfLoader::load_material_data_from_memory(std::span<const std::byte> bytes,
 }
 
 // ---------------------------------------------------------------------------
+// Scene instantiation
+// ---------------------------------------------------------------------------
+
+// Build ECS entities from a parsed glTF asset. File-local so both the path-based
+// public entry and the in-memory self-test share it. `key_prefix` namespaces the
+// AssetManager cache keys (so two files' meshes/materials don't collide).
+[[nodiscard]] static std::expected<std::vector<entt::entity>, core::Error>
+assemble_scene(const fastgltf::Asset& a, const std::string& key_prefix,
+               rhi::GpuAllocator& allocator, const rhi::TransferContext& transfer,
+               asset::AssetManager& assets, Scene& scene) {
+    // Textures: decode + upload each image once, cached by "<path>#img<i>".
+    auto tex_datas = extract_textures(a);
+    if (!tex_datas) return std::unexpected(tex_datas.error());
+    std::vector<asset::AssetHandle<asset::TextureAsset>> tex_handles(a.images.size());
+    for (std::size_t i = 0; i < a.images.size(); ++i) {
+        const std::string k = key_prefix + "#img" + std::to_string(i);
+        tex_handles[i] = assets.load<asset::TextureAsset>(
+            k, [&](const std::filesystem::path&) {
+                return upload_texture((*tex_datas)[i], allocator, transfer);
+            });
+    }
+
+    // Materials: wire the decoded textures into each material's slots, upload.
+    const std::vector<MaterialData> mat_datas = extract_materials(a);
+    const auto tex_or_null = [&](std::size_t image) {
+        return image != no_texture ? tex_handles[image]
+                                   : asset::AssetHandle<asset::TextureAsset>{};
+    };
+    std::vector<asset::AssetHandle<asset::MaterialAsset>> mat_handles(a.materials.size());
+    for (std::size_t i = 0; i < a.materials.size(); ++i) {
+        const MaterialData& md = mat_datas[i];
+        asset::MaterialTextures textures;
+        textures.base_color = tex_or_null(md.base_color_image);
+        textures.normal = tex_or_null(md.normal_image);
+        textures.metallic_roughness = tex_or_null(md.metallic_roughness_image);
+        textures.emissive = tex_or_null(md.emissive_image);
+        textures.occlusion = tex_or_null(md.occlusion_image);
+        const std::string k = key_prefix + "#mat" + std::to_string(i);
+        mat_handles[i] = assets.load<asset::MaterialAsset>(
+            k, [&](const std::filesystem::path&) {
+                return asset::upload_material(md.params, textures, allocator, transfer);
+            });
+    }
+
+    // Mesh primitives: one MeshAsset (single submesh) + material handle each.
+    struct PrimRef {
+        asset::AssetHandle<asset::MeshAsset>     mesh;
+        asset::AssetHandle<asset::MaterialAsset> material;
+    };
+    std::vector<std::vector<PrimRef>> mesh_prims(a.meshes.size());
+    for (std::size_t m = 0; m < a.meshes.size(); ++m) {
+        const fastgltf::Mesh& mesh = a.meshes[m];
+        for (std::size_t p = 0; p < mesh.primitives.size(); ++p) {
+            const fastgltf::Primitive& prim = mesh.primitives[p];
+            if (prim.type != fastgltf::PrimitiveType::Triangles) continue;
+            auto md = extract_primitive(a, prim);
+            if (!md) return std::unexpected(md.error());
+            const MeshData prim_data = std::move(*md);
+            const std::string k =
+                key_prefix + "#mesh" + std::to_string(m) + ".prim" + std::to_string(p);
+            PrimRef ref;
+            ref.mesh = assets.load<asset::MeshAsset>(
+                k, [&](const std::filesystem::path&) {
+                    return upload_mesh(prim_data, allocator, transfer);
+                });
+            ref.material = prim.materialIndex.has_value()
+                               ? mat_handles[prim.materialIndex.value()]
+                               : asset::AssetHandle<asset::MaterialAsset>{};
+            mesh_prims[m].push_back(ref);
+        }
+    }
+
+    // Walk the node hierarchy into ECS entities. Node TRS -> Transform.local; a
+    // single-primitive mesh becomes a MeshRenderer on the node, a multi-primitive
+    // mesh fans out into one child entity per primitive.
+    std::vector<entt::entity> roots;
+    entt::registry& reg = scene.registry();
+    std::function<void(std::size_t, entt::entity)> build =
+        [&](std::size_t node_index, entt::entity parent) {
+            const fastgltf::Node& n = a.nodes[node_index];
+            std::string name(n.name.begin(), n.name.end());
+            const entt::entity e = scene.create_entity(std::move(name));
+            reg.get<Transform>(e).local = node_local_matrix(n);
+            if (parent != entt::null) {
+                scene.set_parent(e, parent);
+            } else {
+                roots.push_back(e);
+            }
+
+            if (n.meshIndex.has_value()) {
+                const std::vector<PrimRef>& prims = mesh_prims[n.meshIndex.value()];
+                if (prims.size() == 1) {
+                    reg.emplace<MeshRenderer>(e, prims[0].mesh, prims[0].material);
+                } else {
+                    for (std::size_t p = 0; p < prims.size(); ++p) {
+                        const entt::entity pe = scene.create_entity(
+                            std::string(n.name.begin(), n.name.end()) + ".prim" +
+                            std::to_string(p));
+                        scene.set_parent(pe, e);
+                        reg.emplace<MeshRenderer>(pe, prims[p].mesh, prims[p].material);
+                    }
+                }
+            }
+            for (std::size_t child : n.children) {
+                build(child, e);
+            }
+        };
+
+    const std::size_t scene_index = a.defaultScene.value_or(0);
+    if (scene_index < a.scenes.size()) {
+        for (std::size_t root : a.scenes[scene_index].nodeIndices) {
+            build(root, entt::null);
+        }
+    } else {
+        // No scene block: roots are nodes not referenced as anyone's child.
+        std::vector<bool> is_child(a.nodes.size(), false);
+        for (const fastgltf::Node& n : a.nodes) {
+            for (std::size_t c : n.children) is_child[c] = true;
+        }
+        for (std::size_t i = 0; i < a.nodes.size(); ++i) {
+            if (!is_child[i]) build(i, entt::null);
+        }
+    }
+    return roots;
+}
+
+std::expected<std::vector<entt::entity>, core::Error>
+GltfLoader::instantiate(const std::filesystem::path& path, rhi::GpuAllocator& allocator,
+                        const rhi::TransferContext& transfer, asset::AssetManager& assets,
+                        Scene& scene) {
+    auto data = fastgltf::GltfDataBuffer::FromPath(path);
+    if (data.error() != fastgltf::Error::None) {
+        return fail("fastgltf: could not read '" + path.string() + "': " +
+                    std::string(fastgltf::getErrorMessage(data.error())));
+    }
+    fastgltf::Parser parser;
+    fastgltf::Expected<fastgltf::Asset> parsed =
+        parser.loadGltf(data.get(), path.parent_path(), kLoadOptions);
+    if (parsed.error() != fastgltf::Error::None) {
+        return fail(std::string("fastgltf parse failed: ") +
+                    std::string(fastgltf::getErrorMessage(parsed.error())));
+    }
+    return assemble_scene(parsed.get(), path.generic_string(), allocator, transfer, assets, scene);
+}
+
+// ---------------------------------------------------------------------------
 // Self-test
 // ---------------------------------------------------------------------------
 namespace {
@@ -643,6 +881,99 @@ std::expected<void, core::Error> run_material_extract_self_test() {
     }
     if (m.params.flags != asset::material_has_base_color) {
         return fail("material extract self-test: only HAS_BASE_COLOR should be set");
+    }
+    return {};
+}
+
+std::expected<void, core::Error>
+run_gltf_scene_self_test(rhi::GpuAllocator& allocator, const rhi::TransferContext& transfer) {
+    // Triangle geometry (positions then uint16 indices), as in the mesh test.
+    const std::array<float, 9> positions{0.0F, 0.0F, 0.0F, 1.0F, 0.0F, 0.0F, 0.0F, 1.0F, 0.0F};
+    const std::array<std::uint16_t, 3> indices{0, 1, 2};
+    std::array<std::byte, 42> buffer{};
+    std::memcpy(buffer.data(), positions.data(), sizeof(positions));
+    std::memcpy(buffer.data() + sizeof(positions), indices.data(), sizeof(indices));
+    const std::string b64 = base64_encode(buffer);
+
+    // A two-node hierarchy: "parent" (translated +2 X, mesh 0) with child "child"
+    // (translated +3 Y, mesh 0). One scene rooted at the parent.
+    const std::string gltf =
+        R"({"asset":{"version":"2.0"},"scene":0,)"
+        R"("scenes":[{"nodes":[0]}],)"
+        R"("nodes":[)"
+        R"({"name":"parent","translation":[2.0,0.0,0.0],"mesh":0,"children":[1]},)"
+        R"({"name":"child","translation":[0.0,3.0,0.0],"mesh":0}],)"
+        R"("meshes":[{"primitives":[{"attributes":{"POSITION":0},"indices":1,"material":0}]}],)"
+        R"("materials":[{"pbrMetallicRoughness":{"baseColorFactor":[0.2,0.4,0.6,1.0],)"
+        R"("metallicFactor":0.0}}],)"
+        R"("buffers":[{"byteLength":42,"uri":"data:application/octet-stream;base64,)" +
+        b64 + R"("}],)"
+        R"("bufferViews":[)"
+        R"({"buffer":0,"byteOffset":0,"byteLength":36},)"
+        R"({"buffer":0,"byteOffset":36,"byteLength":6}],)"
+        R"("accessors":[)"
+        R"({"bufferView":0,"componentType":5126,"count":3,"type":"VEC3",)"
+        R"("min":[0.0,0.0,0.0],"max":[1.0,1.0,0.0]},)"
+        R"({"bufferView":1,"componentType":5123,"count":3,"type":"SCALAR"}]})";
+
+    auto data = fastgltf::GltfDataBuffer::FromBytes(
+        reinterpret_cast<const std::byte*>(gltf.data()), gltf.size());
+    if (data.error() != fastgltf::Error::None) {
+        return fail("gltf scene self-test: could not wrap buffer");
+    }
+    fastgltf::Parser parser;
+    fastgltf::Expected<fastgltf::Asset> parsed = parser.loadGltf(data.get(), ".", kLoadOptions);
+    if (parsed.error() != fastgltf::Error::None) {
+        return fail(std::string("gltf scene self-test: parse failed: ") +
+                    std::string(fastgltf::getErrorMessage(parsed.error())));
+    }
+
+    Scene scene;
+    asset::AssetManager assets;
+    auto roots = assemble_scene(parsed.get(), "scene_selftest", allocator, transfer, assets, scene);
+    if (!roots) return std::unexpected(roots.error());
+
+    if (roots->size() != 1) {
+        return fail("gltf scene self-test: expected exactly one root node");
+    }
+    entt::registry& reg = scene.registry();
+    if (reg.view<Transform>().size() != 2) {
+        return fail("gltf scene self-test: expected two node entities");
+    }
+    if (reg.view<MeshRenderer>().size() != 2) {
+        return fail("gltf scene self-test: both nodes should carry a MeshRenderer");
+    }
+
+    const entt::entity parent = roots->front();
+    const auto* kids = reg.try_get<Children>(parent);
+    if (kids == nullptr || kids->entities.size() != 1) {
+        return fail("gltf scene self-test: parent should have exactly one child");
+    }
+    const entt::entity child = kids->entities.front();
+    if (reg.get<Parent>(child).entity != parent) {
+        return fail("gltf scene self-test: child->parent link is wrong");
+    }
+
+    // Local translations come straight from the node TRS.
+    if (glm::distance(glm::vec3(reg.get<Transform>(parent).local[3]),
+                      glm::vec3(2.0F, 0.0F, 0.0F)) > 1e-4F) {
+        return fail("gltf scene self-test: parent local translation wrong");
+    }
+    if (glm::distance(glm::vec3(reg.get<Transform>(child).local[3]),
+                      glm::vec3(0.0F, 3.0F, 0.0F)) > 1e-4F) {
+        return fail("gltf scene self-test: child local translation wrong");
+    }
+
+    // After a tick, the child's world transform composes through the parent.
+    scene.tick();
+    if (glm::distance(glm::vec3(reg.get<Transform>(child).world[3]),
+                      glm::vec3(2.0F, 3.0F, 0.0F)) > 1e-4F) {
+        return fail("gltf scene self-test: child world transform did not compose");
+    }
+
+    // The mesh handle resolved and uploaded.
+    if (!reg.get<MeshRenderer>(parent).mesh.is_loaded()) {
+        return fail("gltf scene self-test: parent mesh handle did not load");
     }
     return {};
 }

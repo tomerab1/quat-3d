@@ -13,13 +13,21 @@
 #include <span>
 #include <vector>
 
+#include <entt/entity/fwd.hpp>
+
 #include "engine/asset/material_asset.hpp"
 #include "engine/asset/mesh_asset.hpp"
 #include "engine/asset/texture_asset.hpp"
 #include "engine/core/error.hpp"
 #include "engine/rhi/gpu_allocator.hpp"
 
+namespace engine::asset {
+class AssetManager;
+}
+
 namespace engine::scene {
+
+class Scene;
 
 // Sentinel for a material texture slot that the glTF material does not bind.
 inline constexpr std::size_t no_texture = static_cast<std::size_t>(-1);
@@ -96,6 +104,17 @@ public:
     [[nodiscard]] static std::expected<std::vector<MaterialData>, core::Error>
     load_material_data_from_memory(std::span<const std::byte> bytes,
                                    const std::filesystem::path& base_dir);
+
+    // Instantiate a whole glTF scene into `scene` as ECS entities. Every mesh
+    // primitive, image, and material is uploaded once and cached in `assets`
+    // (keyed by `path` + index) so the MeshRenderer handles keep them alive.
+    // Node TRS -> Transform.local; the glTF node hierarchy -> Parent/Children. A
+    // node's mesh becomes a MeshRenderer on that entity (single-primitive mesh)
+    // or one child entity per primitive (multi-material mesh), matching the
+    // renderer's one-material-per-draw model. Returns the root entities created.
+    [[nodiscard]] static std::expected<std::vector<entt::entity>, core::Error>
+    instantiate(const std::filesystem::path& path, rhi::GpuAllocator& allocator,
+                const rhi::TransferContext& transfer, asset::AssetManager& assets, Scene& scene);
 };
 
 // Decode a single encoded image (PNG/JPEG/etc.) into RGBA8 pixels via stb_image.
@@ -128,5 +147,12 @@ run_texture_loader_self_test(rhi::GpuAllocator& allocator, const rhi::TransferCo
 // extracted MaterialData. No device needed.
 [[nodiscard]] std::expected<void, core::Error>
 run_material_extract_self_test();
+
+// Instantiates a small two-node glTF hierarchy (a parent translated in X with a
+// translated child, each carrying a mesh) and verifies the produced ECS entities:
+// node count, Parent/Children links, local transforms, and that the child's world
+// transform composes through its parent after a scene tick.
+[[nodiscard]] std::expected<void, core::Error>
+run_gltf_scene_self_test(rhi::GpuAllocator& allocator, const rhi::TransferContext& transfer);
 
 } // namespace engine::scene

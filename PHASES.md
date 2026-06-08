@@ -143,7 +143,7 @@ Goal: entities with components drive rendering; a scene can be constructed in co
   Push to GPU via per-frame uniform buffer. Update GBuffer + lighting shaders to use it.
   *Commit: `[Phase4/Slice3] camera system and per-frame uniforms`*
 
-- [ ] **4.4 — glTF scene graph loading**
+- [x] **4.4 — glTF scene graph loading**
   `GltfLoader` now creates entities: nodes → `Transform` + `MeshRenderer`, scene hierarchy → `Parent`/`Children`.
   Load a multi-node glTF scene and render it correctly.
   *Commit: `[Phase4/Slice4] glTF scene graph to ECS`*

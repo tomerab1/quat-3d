@@ -13,6 +13,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <expected>
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -251,6 +252,39 @@ engine::scene::MeshData make_cube_data() {
     d.bounds = {{-0.5F, -0.5F, -0.5F}, {0.5F, 0.5F, 0.5F}};
     d.submeshes = {engine::asset::SubMesh{0, static_cast<std::uint32_t>(d.indices.size()), 0}};
     return d;
+}
+
+// World-space AABB over every loaded renderable (mesh local bounds transformed by
+// its world matrix). Returns false if the scene has no loaded geometry. Tick the
+// scene first so world transforms are current.
+bool scene_world_bounds(engine::scene::Scene& scene, glm::vec3& out_min, glm::vec3& out_max) {
+    out_min = glm::vec3(std::numeric_limits<float>::max());
+    out_max = glm::vec3(std::numeric_limits<float>::lowest());
+    bool any = false;
+    for (auto [e, t, mr] :
+         scene.registry().view<engine::scene::Transform, engine::scene::MeshRenderer>().each()) {
+        if (!mr.mesh.valid() || !mr.mesh.is_loaded()) continue;
+        const engine::asset::Aabb& ab = mr.mesh->bounds;
+        for (int i = 0; i < 8; ++i) {
+            const glm::vec3 corner((i & 1) ? ab.max.x : ab.min.x, (i & 2) ? ab.max.y : ab.min.y,
+                                   (i & 4) ? ab.max.z : ab.min.z);
+            const glm::vec3 w = glm::vec3(t.world * glm::vec4(corner, 1.0F));
+            out_min = glm::min(out_min, w);
+            out_max = glm::max(out_max, w);
+            any = true;
+        }
+    }
+    return any;
+}
+
+// Camera world transform that frames the given AABB: looks at its centre from a
+// distance sized so the bounding sphere fits the vertical field of view.
+glm::mat4 frame_camera_world(const glm::vec3& bmin, const glm::vec3& bmax, float fov_y) {
+    const glm::vec3 center = 0.5F * (bmin + bmax);
+    const float radius = glm::max(0.001F, 0.5F * glm::length(bmax - bmin));
+    const float dist = radius / std::tan(fov_y * 0.5F) * 1.6F;
+    const glm::vec3 eye = center + glm::normalize(glm::vec3(0.6F, 0.45F, 1.0F)) * dist;
+    return glm::inverse(glm::lookAt(eye, center, glm::vec3(0.0F, 1.0F, 0.0F)));
 }
 
 // Offscreen render of the demo scene (cube + perspective camera + sun) through
@@ -544,6 +578,12 @@ int main() {
                     std::fprintf(stderr, "[selftest] material extract FAILED: %s\n",
                                  r.error().message.c_str());
                 }
+                if (auto r = engine::scene::run_gltf_scene_self_test(allocator, transfer); r) {
+                    std::fprintf(stderr, "[selftest] glTF scene graph OK\n");
+                } else {
+                    std::fprintf(stderr, "[selftest] glTF scene graph FAILED: %s\n",
+                                 r.error().message.c_str());
+                }
                 if (auto mesh_cache = engine::rhi::PipelineCache::create(device); mesh_cache) {
                     const std::string shader_dir = QUAT_COOKED_SHADER_DIR;
                     if (auto r = engine::renderer::run_mesh_pass_self_test(
@@ -727,45 +767,74 @@ int main() {
         f.pool = engine::rhi::TransientImagePool(device, allocator);
     }
 
-    // Demo scene assets, owned by an AssetManager so MeshRenderer handles keep
-    // them alive: a cube mesh + a coloured dielectric material.
+    // Scene assets live in an AssetManager so MeshRenderer handles keep them
+    // alive. QUAT_GLTF=<path> instantiates a real glTF scene graph; otherwise a
+    // spinning demo cube stands in.
     engine::asset::AssetManager assets;
-    auto cube_handle = assets.load<engine::asset::MeshAsset>(
-        "demo/cube", [&](const std::filesystem::path&) {
-            return engine::scene::upload_mesh(make_cube_data(), allocator, setup_transfer);
-        });
-    auto mat_handle = assets.load<engine::asset::MaterialAsset>(
-        "demo/material", [&](const std::filesystem::path&) {
-            engine::asset::PbrMaterialParams params;
-            params.base_color_factor = {0.85F, 0.35F, 0.2F, 1.0F};
-            params.metallic_factor = 0.0F;
-            params.roughness_factor = 0.6F;
-            return engine::asset::upload_material(params, engine::asset::MaterialTextures{},
-                                                  allocator, setup_transfer);
-        });
+    engine::scene::Scene scene;
+    entt::entity spin_entity = entt::null; // the demo cube spins; a glTF stays put
+    bool scene_ok = true;
+
+    if (const char* gltf_path = std::getenv("QUAT_GLTF"); gltf_path != nullptr) {
+        auto roots = engine::scene::GltfLoader::instantiate(gltf_path, allocator, setup_transfer,
+                                                            assets, scene);
+        if (!roots) {
+            std::fprintf(stderr, "[fatal] glTF instantiate failed: %s\n",
+                         roots.error().message.c_str());
+            scene_ok = false;
+        } else {
+            std::fprintf(stderr, "[info] loaded '%s': %zu root node(s), %zu entities\n", gltf_path,
+                         roots->size(),
+                         static_cast<std::size_t>(
+                             scene.registry().view<engine::scene::Transform>().size()));
+        }
+    } else {
+        auto cube_handle = assets.load<engine::asset::MeshAsset>(
+            "demo/cube", [&](const std::filesystem::path&) {
+                return engine::scene::upload_mesh(make_cube_data(), allocator, setup_transfer);
+            });
+        auto mat_handle = assets.load<engine::asset::MaterialAsset>(
+            "demo/material", [&](const std::filesystem::path&) {
+                engine::asset::PbrMaterialParams params;
+                params.base_color_factor = {0.85F, 0.35F, 0.2F, 1.0F};
+                params.metallic_factor = 0.0F;
+                params.roughness_factor = 0.6F;
+                return engine::asset::upload_material(params, engine::asset::MaterialTextures{},
+                                                      allocator, setup_transfer);
+            });
+        if (!cube_handle.is_loaded() || !mat_handle.is_loaded()) {
+            scene_ok = false;
+        } else {
+            spin_entity = scene.create_entity("cube");
+            scene.registry().emplace<engine::scene::MeshRenderer>(spin_entity, cube_handle,
+                                                                  mat_handle);
+        }
+    }
 
     vkDestroyCommandPool(vk_device, setup_pool, nullptr);
 
-    if (!frames_ok || !cube_handle.is_loaded() || !mat_handle.is_loaded()) {
+    if (!frames_ok || !scene_ok) {
         fatal("deferred renderer setup failed", "see [fatal] lines above");
         return 1;
     }
 
-    // Scene: a slowly spinning cube, a camera framing it, and a sun light.
-    engine::scene::Scene scene;
-    const entt::entity cube_entity = scene.create_entity("cube");
-    scene.registry().emplace<engine::scene::MeshRenderer>(cube_entity, cube_handle, mat_handle);
-
-    const entt::entity camera_entity = scene.create_entity("camera");
-    scene.registry().get<engine::scene::Transform>(camera_entity).local =
-        glm::inverse(glm::lookAt(glm::vec3(3.0F, 2.5F, 4.0F), glm::vec3(0.0F),
-                                 glm::vec3(0.0F, 1.0F, 0.0F)));
-    scene.registry().emplace<engine::scene::Camera>(camera_entity);
-
+    // A sun light, and a camera that auto-frames whatever was loaded.
     const entt::entity sun_entity = scene.create_entity("sun");
     scene.registry().emplace<engine::scene::DirectionalLight>(
         sun_entity, glm::normalize(glm::vec3(-0.4F, -1.0F, -0.3F)),
         glm::vec3(1.0F, 0.98F, 0.95F), 3.0F);
+
+    const entt::entity camera_entity = scene.create_entity("camera");
+    const engine::scene::Camera& camera =
+        scene.registry().emplace<engine::scene::Camera>(camera_entity);
+    scene.tick(); // resolve world transforms before measuring the scene bounds
+    glm::vec3 bmin{};
+    glm::vec3 bmax{};
+    scene.registry().get<engine::scene::Transform>(camera_entity).local =
+        scene_world_bounds(scene, bmin, bmax)
+            ? frame_camera_world(bmin, bmax, camera.fov_y)
+            : glm::inverse(glm::lookAt(glm::vec3(3.0F, 2.5F, 4.0F), glm::vec3(0.0F),
+                                       glm::vec3(0.0F, 1.0F, 0.0F)));
 
     // ---- Per-frame command + sync resources --------------------------------
     VkCommandPool command_pool = VK_NULL_HANDLE;
@@ -909,10 +978,13 @@ int main() {
                 ? 1.0F
                 : static_cast<float>(draw_extent.width) / static_cast<float>(draw_extent.height);
 
-        // Spin the cube, tick the scene, then derive camera + light from the ECS.
-        scene.registry().get<engine::scene::Transform>(cube_entity).local =
-            glm::rotate(glm::mat4(1.0F), static_cast<float>(presented) * 0.02F,
-                        glm::normalize(glm::vec3(0.3F, 1.0F, 0.2F)));
+        // Spin the demo cube (if present), tick the scene, then derive camera +
+        // light from the ECS.
+        if (spin_entity != entt::null) {
+            scene.registry().get<engine::scene::Transform>(spin_entity).local =
+                glm::rotate(glm::mat4(1.0F), static_cast<float>(presented) * 0.02F,
+                            glm::normalize(glm::vec3(0.3F, 1.0F, 0.2F)));
+        }
         scene.tick();
         const engine::scene::CameraMatrices cam =
             engine::scene::camera_system(scene.registry(), aspect);
