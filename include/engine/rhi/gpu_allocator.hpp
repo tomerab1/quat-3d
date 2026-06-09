@@ -130,9 +130,12 @@ public:
     [[nodiscard]] std::expected<GpuBuffer, core::Error>
     create_staging_buffer(VkDeviceSize size, VkBufferUsageFlags usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
 
+    // `array_layers`/`flags` support cubemaps (6 layers +
+    // VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT) and other layered images.
     [[nodiscard]] std::expected<GpuImage, core::Error>
     create_image(VkFormat format, VkExtent2D extent, VkImageUsageFlags usage,
-                 std::uint32_t mip_levels = 1);
+                 std::uint32_t mip_levels = 1, std::uint32_t array_layers = 1,
+                 VkImageCreateFlags flags = 0);
 
 private:
     VmaAllocator allocator_ = nullptr;
@@ -168,11 +171,17 @@ upload_device_image(GpuAllocator& allocator, const TransferContext& transfer,
                     VkFormat format,
                     VkImageUsageFlags usage = VK_IMAGE_USAGE_SAMPLED_BIT);
 
-// Creates a 2D VkImageView over `image` wrapped in an RAII ImageView.
+// Creates a VkImageView over `image` wrapped in an RAII ImageView. Defaults to a
+// 2D colour view of mip 0; the extra parameters cover cube views
+// (VK_IMAGE_VIEW_TYPE_CUBE, layer_count = 6), single-mip array views for storage
+// writes (VK_IMAGE_VIEW_TYPE_2D_ARRAY, base_mip = mip, layer_count = 6), etc.
 [[nodiscard]] std::expected<ImageView, core::Error>
 create_image_view(VkDevice device, VkImage image, VkFormat format,
                   VkImageAspectFlags aspect = VK_IMAGE_ASPECT_COLOR_BIT,
-                  std::uint32_t mip_levels = 1);
+                  std::uint32_t mip_levels = 1,
+                  VkImageViewType view_type = VK_IMAGE_VIEW_TYPE_2D,
+                  std::uint32_t base_mip = 0, std::uint32_t base_layer = 0,
+                  std::uint32_t layer_count = 1);
 
 // Sampler addressing modes for create_sampler. Filtering is always linear with a
 // linear mip mode — sufficient for the asset pipeline until mip generation lands.

@@ -12,6 +12,7 @@
 
 #include "engine/asset/material_asset.hpp"
 #include "engine/asset/mesh_asset.hpp"
+#include "engine/renderer/ibl_pass.hpp"
 #include "engine/rhi/device.hpp"
 #include "engine/rhi/gpu_allocator.hpp"
 #include "engine/rhi/pipeline_cache.hpp"
@@ -44,7 +45,7 @@ static_assert(sizeof(LightingPushConstants) == 192, "must match lighting.slang L
 // Lighting descriptor set 0: GBuffer albedo/normal/material/depth as sampled
 // images (read via Load — no sampler), the HDR output as a storage image, then
 // the shadow map (sampled) + its sampler. Matches lighting.slang.
-[[nodiscard]] std::array<rhi::DescriptorBinding, 8> lighting_bindings() {
+[[nodiscard]] std::array<rhi::DescriptorBinding, 12> lighting_bindings() {
     using rhi::DescriptorBinding;
     return {{
         {0, 0, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, kComputeStage},
@@ -55,6 +56,10 @@ static_assert(sizeof(LightingPushConstants) == 192, "must match lighting.slang L
         {0, 5, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, kComputeStage},
         {0, 6, VK_DESCRIPTOR_TYPE_SAMPLER, 1, kComputeStage},
         {0, 7, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kComputeStage},
+        {0, 8, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, kComputeStage}, // irradiance cube
+        {0, 9, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, kComputeStage}, // prefiltered cube
+        {0, 10, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, kComputeStage}, // BRDF LUT
+        {0, 11, VK_DESCRIPTOR_TYPE_SAMPLER, 1, kComputeStage},       // IBL sampler
     }};
 }
 
@@ -105,6 +110,12 @@ LightingPass::create(const rhi::Device& device, rhi::GpuAllocator& allocator,
     out.point_light_buffer_ = std::move(*plb);
     out.point_light_address_ = rhi::buffer_device_address(device.handle(), out.point_light_buffer_);
 
+    // Black fallback IBL maps so bindings 8-11 are always valid (the shader only
+    // samples them when the environment is enabled).
+    auto fallback = IblMaps::create_fallback(device, allocator);
+    if (!fallback) return std::unexpected(fallback.error());
+    out.fallback_ibl_ = std::move(*fallback);
+
     return out;
 }
 
@@ -113,7 +124,8 @@ LightingPass::add_to_graph(rhi::RenderGraph& graph, const GBufferTargets& gbuffe
                            VkExtent2D extent, const DirectionalLightParams& light,
                            const glm::mat4& inv_view_proj, const glm::vec3& camera_pos,
                            rhi::ResourceHandle shadow_map, const glm::mat4& light_view_proj,
-                           std::span<const PointLightGpu> point_lights, bool enable_sky) {
+                           std::span<const PointLightGpu> point_lights, bool enable_sky,
+                           const IblMaps* ibl) {
     const rhi::ResourceHandle hdr = graph.create_transient_image(
         "hdr_color", hdr_color_format, extent,
         VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
@@ -153,7 +165,10 @@ LightingPass::add_to_graph(rhi::RenderGraph& graph, const GBufferTargets& gbuffe
     if (has_shadow) {
         pass.reads(shadow_map, rhi::ResourceUsage::sampled_compute);
     }
-    pass.execute([this, gbuffer, hdr, shadow, extent, push](rhi::PassContext& ctx) {
+    // Stable pointer (fallback_ibl_ is a member, *ibl is caller-owned) — capturing
+    // a reference to a local would dangle when the execute lambda runs later.
+    const IblMaps* maps_ptr = (ibl != nullptr && ibl->valid()) ? ibl : &fallback_ibl_;
+    pass.execute([this, gbuffer, hdr, shadow, extent, push, maps_ptr](rhi::PassContext& ctx) {
         const VkCommandBuffer cmd = ctx.cmd();
         constexpr VkImageLayout ro = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
         frame_descriptor_.write_sampled_image(0, ctx.resolve(gbuffer.albedo).view, ro);
@@ -166,6 +181,10 @@ LightingPass::add_to_graph(rhi::RenderGraph& graph, const GBufferTargets& gbuffe
         frame_descriptor_.write_storage_buffer(
             7, point_light_address_,
             static_cast<VkDeviceSize>(max_point_lights) * sizeof(PointLightGpu));
+        frame_descriptor_.write_sampled_image(8, maps_ptr->irradiance_view.handle(), ro);
+        frame_descriptor_.write_sampled_image(9, maps_ptr->prefiltered_view.handle(), ro);
+        frame_descriptor_.write_sampled_image(10, maps_ptr->brdf_lut_view.handle(), ro);
+        frame_descriptor_.write_sampler(11, maps_ptr->sampler.handle());
 
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline_.handle());
         frame_descriptor_.bind(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline_.layout(), 0);
@@ -509,6 +528,121 @@ run_point_light_self_test(const rhi::Device& device, rhi::GpuAllocator& allocato
     if (!dark) return std::unexpected(dark.error());
     if (dark->r + dark->g + dark->b > 0.01F) {
         return fail("point light self-test: light leaked past its radius");
+    }
+    return {};
+}
+
+std::expected<void, core::Error>
+run_ibl_lighting_self_test(const rhi::Device& device, rhi::GpuAllocator& allocator,
+                           rhi::PipelineCache& cache, const rhi::TransferContext& transfer,
+                           const std::string& cooked_shader_dir) {
+    constexpr VkExtent2D extent{64, 64};
+    constexpr VkDeviceSize bytes = static_cast<VkDeviceSize>(extent.width) * extent.height * 8;
+
+    std::array<asset::Vertex, 3> verts{};
+    verts[0].position = {-0.9F, -0.9F, 0.0F};
+    verts[1].position = {0.9F, -0.9F, 0.0F};
+    verts[2].position = {0.0F, 0.9F, 0.0F};
+    const std::array<std::uint32_t, 3> indices{0, 1, 2};
+    auto vbuf = rhi::upload_device_buffer(allocator, transfer, verts.data(), sizeof(verts),
+                                          VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
+    if (!vbuf) return std::unexpected(vbuf.error());
+    auto ibuf = rhi::upload_device_buffer(allocator, transfer, indices.data(), sizeof(indices),
+                                          VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
+    if (!ibuf) return std::unexpected(ibuf.error());
+    asset::MeshAsset mesh;
+    mesh.vertex_buffer = std::move(*vbuf);
+    mesh.index_buffer = std::move(*ibuf);
+    mesh.vertex_count = 3;
+    mesh.index_count = 3;
+    mesh.submeshes = {asset::SubMesh{0, 3, 0}};
+
+    // Smooth metal: no diffuse, so any lit value is the environment reflection.
+    asset::PbrMaterialParams params;
+    params.base_color_factor = {0.6F, 0.6F, 0.6F, 1.0F};
+    params.metallic_factor = 1.0F;
+    params.roughness_factor = 0.05F;
+    auto material = asset::upload_material(params, asset::MaterialTextures{}, allocator, transfer);
+    if (!material) return std::unexpected(material.error());
+
+    auto baker = IblBaker::create(device, allocator, cache, cooked_shader_dir);
+    if (!baker) return std::unexpected(baker.error());
+    auto maps = baker->bake(glm::normalize(glm::vec3(0.3F, 1.0F, 0.3F)));
+    if (!maps) return std::unexpected(maps.error());
+
+    auto mesh_pass = MeshPass::create(device, allocator, cache, transfer, cooked_shader_dir);
+    if (!mesh_pass) return std::unexpected(mesh_pass.error());
+    auto lighting = LightingPass::create(device, allocator, cache, cooked_shader_dir);
+    if (!lighting) return std::unexpected(lighting.error());
+
+    // Direct light off (intensity 0) and no ambient: only the environment lights it.
+    DirectionalLightParams dir;
+    dir.color = {1.0F, 1.0F, 1.0F, 0.0F};
+    dir.ambient = {0.0F, 0.0F, 0.0F, 0.0F};
+
+    const auto render_centre =
+        [&](bool enable_sky, const IblMaps* ibl) -> std::expected<glm::vec3, core::Error> {
+        auto readback = allocator.create_buffer(
+            bytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT, VMA_MEMORY_USAGE_AUTO,
+            VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT);
+        if (!readback) return std::unexpected(readback.error());
+        rhi::TransientImagePool pool(device, allocator);
+        rhi::RenderGraph graph(pool);
+        const DrawItem item{&mesh, &*material, glm::mat4(1.0F)};
+        auto targets = mesh_pass->add_to_graph(graph, extent, glm::mat4(1.0F), {&item, 1});
+        if (!targets) return std::unexpected(targets.error());
+        auto hdr = lighting->add_to_graph(graph, *targets, extent, dir, glm::mat4(1.0F),
+                                          glm::vec3(0.0F, 0.0F, 1.0F), rhi::ResourceHandle{},
+                                          glm::mat4(1.0F), {}, enable_sky, ibl);
+        if (!hdr) return std::unexpected(hdr.error());
+        if (auto c = graph.compile(); !c) return std::unexpected(c.error());
+        const VkImage hdr_image = graph.binding(*hdr).image;
+        const VkBuffer rb = readback->handle();
+        auto submitted = run_graphics_commands(device, [&](VkCommandBuffer cmd) {
+            graph.execute(cmd);
+            VkImageMemoryBarrier2 b{};
+            b.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2;
+            b.srcStageMask = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT;
+            b.srcAccessMask = VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT;
+            b.dstStageMask = VK_PIPELINE_STAGE_2_COPY_BIT;
+            b.dstAccessMask = VK_ACCESS_2_TRANSFER_READ_BIT;
+            b.oldLayout = VK_IMAGE_LAYOUT_GENERAL;
+            b.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+            b.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            b.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            b.image = hdr_image;
+            b.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+            VkDependencyInfo dep{};
+            dep.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO;
+            dep.imageMemoryBarrierCount = 1;
+            dep.pImageMemoryBarriers = &b;
+            vkCmdPipelineBarrier2(cmd, &dep);
+            VkBufferImageCopy region{};
+            region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+            region.imageSubresource.layerCount = 1;
+            region.imageExtent = {extent.width, extent.height, 1};
+            vkCmdCopyImageToBuffer(cmd, hdr_image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, rb, 1,
+                                   &region);
+        });
+        if (!submitted) return std::unexpected(submitted.error());
+        const auto* halfs = static_cast<const std::uint16_t*>(readback->mapped());
+        const std::size_t o =
+            (static_cast<std::size_t>(extent.height / 2) * extent.width + extent.width / 2) * 4;
+        return glm::vec3(half_to_float(halfs[o]), half_to_float(halfs[o + 1]),
+                         half_to_float(halfs[o + 2]));
+    };
+
+    // With IBL the metal reflects the sky: non-black and blue-dominant.
+    auto lit = render_centre(true, &*maps);
+    if (!lit) return std::unexpected(lit.error());
+    if (lit->r + lit->g + lit->b <= 0.02F || lit->b < lit->r) {
+        return fail("ibl lighting self-test: metal does not reflect the environment");
+    }
+    // With the environment disabled (and no direct light) it is black.
+    auto dark = render_centre(false, nullptr);
+    if (!dark) return std::unexpected(dark.error());
+    if (dark->r + dark->g + dark->b > 0.02F) {
+        return fail("ibl lighting self-test: surface is lit without the environment");
     }
     return {};
 }

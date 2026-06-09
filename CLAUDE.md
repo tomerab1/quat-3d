@@ -3,8 +3,12 @@
 ## Project Overview
 A modular, data-driven C++23 game engine with a Vulkan 1.3 renderer, Slang shaders,
 glTF 2.0 skeletal animation, physics integration, and ImGui tooling. The goal is a
-clean, hackable foundation — not AAA complexity, but no shortcuts that would require
-rewriting later.
+**high-quality, production-usable engine** — correct, well-architected, and performant.
+Favour established, industry-standard techniques and best practices (the same algorithms
+a shipping engine would use), not quick approximations or shortcuts. Code should be
+clean, maintainable, and properly optimised; correctness and quality come first, and we
+do not take shortcuts that trade away visual fidelity, performance, or sound architecture.
+When there is a "proper" way and a "cheap" way to do something, default to the proper way.
 
 ---
 

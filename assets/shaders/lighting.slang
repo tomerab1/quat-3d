@@ -8,7 +8,13 @@
 // giving the per-pixel view vector specular needs. The material target's alpha is
 // the coverage mask (1 where geometry was rasterised, 0 for background).
 
+import sky;
+
 static const float PI = 3.14159265358979;
+
+// Prefiltered specular cubemap mip count - 1 (the highest roughness LOD). Must
+// match prefilter_mip_count in ibl_pass.cpp.
+static const float PREFILTER_MAX_LOD = 4.0;
 
 // Light + camera parameters, pushed as a 192-byte block (matches
 // LightingPushConstants in lighting_pass.cpp).
@@ -36,20 +42,39 @@ struct PointLight {
 [[vk::binding(6)]] SamplerState               g_shadow_sampler;
 [[vk::binding(7)]] StructuredBuffer<PointLight> g_point_lights; // pc.ambient.w entries
 
-// Analytic procedural sky: a horizon->zenith gradient with a ground tint below
-// the horizon and a sun disk + glow toward `sun_dir`. `dir` is the view ray.
-float3 sky(float3 dir, float3 sun_dir) {
-    float up = dir.y;
-    float3 horizon = float3(0.75, 0.82, 0.95);
-    float3 zenith = float3(0.18, 0.40, 0.78);
-    float3 ground = float3(0.22, 0.20, 0.18);
-    float3 col = up >= 0.0 ? lerp(horizon, zenith, pow(saturate(up), 0.45))
-                           : lerp(horizon, ground, saturate(-up * 3.0));
-    float sun_amt = saturate(dot(dir, sun_dir));
-    float disk = pow(sun_amt, 1500.0);
-    float glow = pow(sun_amt, 8.0) * 0.25;
-    col += (disk * 12.0 + glow) * float3(1.0, 0.92, 0.75);
-    return col;
+// Split-sum IBL maps (precomputed once in ibl_pass.cpp): diffuse irradiance cube,
+// prefiltered specular cube (roughness -> mip), and the BRDF integration LUT.
+[[vk::binding(8)]]  TextureCube  g_irradiance;
+[[vk::binding(9)]]  TextureCube  g_prefiltered;
+[[vk::binding(10)]] Texture2D    g_brdf_lut;
+[[vk::binding(11)]] SamplerState g_ibl_sampler;
+
+// Schlick Fresnel with a roughness term, for the ambient/environment specular
+// (the view-independent IBL term, unlike the per-light f_schlick).
+float3 fresnel_schlick_roughness(float ndotv, float3 f0, float roughness) {
+    float3 fmax = max(float3(1.0 - roughness, 1.0 - roughness, 1.0 - roughness), f0);
+    return f0 + (fmax - f0) * pow(saturate(1.0 - ndotv), 5.0);
+}
+
+// Image-based ambient: diffuse irradiance + prefiltered specular reflection,
+// combined through the split-sum BRDF LUT. Replaces the flat constant ambient.
+float3 ibl_ambient(float3 N, float3 V, float3 albedo, float metallic, float roughness,
+                   float occlusion) {
+    float ndotv = max(dot(N, V), 1e-4);
+    float3 f0 = lerp(float3(0.04, 0.04, 0.04), albedo, metallic);
+    float3 F = fresnel_schlick_roughness(ndotv, f0, roughness);
+    float3 kd = (1.0 - F) * (1.0 - metallic);
+
+    float3 irradiance = g_irradiance.SampleLevel(g_ibl_sampler, N, 0.0).rgb;
+    float3 diffuse = irradiance * albedo;
+
+    float3 R = reflect(-V, N);
+    float3 prefiltered =
+        g_prefiltered.SampleLevel(g_ibl_sampler, R, roughness * PREFILTER_MAX_LOD).rgb;
+    float2 brdf = g_brdf_lut.SampleLevel(g_ibl_sampler, float2(ndotv, roughness), 0.0).rg;
+    float3 specular = prefiltered * (F * brdf.x + brdf.y);
+
+    return (kd * diffuse + specular) * occlusion;
 }
 
 // Octahedral decode (inverse of gbuffer.slang's oct_encode).
@@ -209,6 +234,12 @@ void compute_main(uint3 tid : SV_DispatchThreadID) {
                  pl.color_intensity.rgb * pl.color_intensity.w * att;
     }
 
-    color += pc.ambient.rgb * albedo.rgb * occlusion;
+    // Ambient: image-based lighting when the environment is enabled (same flag as
+    // the sky background, since the IBL reflects that sky), else a flat constant.
+    if (pc.direction.w > 0.5) {
+        color += ibl_ambient(n, v, albedo.rgb, metallic, roughness, occlusion);
+    } else {
+        color += pc.ambient.rgb * albedo.rgb * occlusion;
+    }
     g_hdr[coord] = float4(color, 1.0);
 }

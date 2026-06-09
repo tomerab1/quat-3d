@@ -15,6 +15,7 @@
 #include <vulkan/vulkan.h>
 
 #include "engine/core/error.hpp"
+#include "engine/renderer/ibl_pass.hpp"
 #include "engine/renderer/mesh_pass.hpp"
 #include "engine/rhi/compute_pipeline.hpp"
 #include "engine/rhi/descriptor_buffer.hpp"
@@ -75,7 +76,7 @@ public:
                  const DirectionalLightParams& light, const glm::mat4& inv_view_proj,
                  const glm::vec3& camera_pos, rhi::ResourceHandle shadow_map,
                  const glm::mat4& light_view_proj, std::span<const PointLightGpu> point_lights = {},
-                 bool enable_sky = false);
+                 bool enable_sky = false, const IblMaps* ibl = nullptr);
 
 private:
     const rhi::Device* device_    = nullptr;   // non-owning
@@ -88,6 +89,8 @@ private:
 
     rhi::GpuBuffer  point_light_buffer_;     // host-visible, holds up to max_point_lights
     VkDeviceAddress point_light_address_ = 0;
+
+    IblMaps fallback_ibl_; // bound at 8-11 when no real IBL maps are supplied
 
     rhi::DescriptorBuffer frame_descriptor_;   // rebuilt each add_to_graph call
 };
@@ -106,5 +109,13 @@ run_lighting_pass_self_test(const rhi::Device& device, rhi::GpuAllocator& alloca
 run_point_light_self_test(const rhi::Device& device, rhi::GpuAllocator& allocator,
                           rhi::PipelineCache& cache, const rhi::TransferContext& transfer,
                           const std::string& cooked_shader_dir);
+
+// Bakes IBL and lights a smooth metal with the direct light off: the surface is
+// lit purely by the environment reflection, so it must be non-black and sky-
+// tinted with IBL enabled, and black with the environment disabled.
+[[nodiscard]] std::expected<void, core::Error>
+run_ibl_lighting_self_test(const rhi::Device& device, rhi::GpuAllocator& allocator,
+                           rhi::PipelineCache& cache, const rhi::TransferContext& transfer,
+                           const std::string& cooked_shader_dir);
 
 } // namespace engine::renderer

@@ -35,6 +35,7 @@
 #include "engine/asset/material_asset.hpp"
 #include "engine/asset/mesh_asset.hpp"
 #include "engine/physics/physics_world.hpp"
+#include "engine/renderer/ibl_pass.hpp"
 #include "engine/renderer/lighting_pass.hpp"
 #include "engine/renderer/mesh_pass.hpp"
 #include "engine/renderer/shadow_pass.hpp"
@@ -1294,6 +1295,22 @@ int main() {
                         std::fprintf(stderr, "[selftest] point lights FAILED: %s\n",
                                      r.error().message.c_str());
                     }
+                    if (auto r = engine::renderer::run_ibl_self_test(device, allocator, *mesh_cache,
+                                                                     shader_dir);
+                        r) {
+                        std::fprintf(stderr, "[selftest] IBL OK (irradiance/prefilter/BRDF LUT)\n");
+                    } else {
+                        std::fprintf(stderr, "[selftest] IBL FAILED: %s\n",
+                                     r.error().message.c_str());
+                    }
+                    if (auto r = engine::renderer::run_ibl_lighting_self_test(
+                            device, allocator, *mesh_cache, transfer, shader_dir);
+                        r) {
+                        std::fprintf(stderr, "[selftest] IBL lighting OK (metal reflects sky)\n");
+                    } else {
+                        std::fprintf(stderr, "[selftest] IBL lighting FAILED: %s\n",
+                                     r.error().message.c_str());
+                    }
                     if (auto r = engine::renderer::run_tonemap_pass_self_test(
                             device, allocator, *mesh_cache, transfer, shader_dir);
                         r) {
@@ -1859,6 +1876,34 @@ int main() {
                                                             14.0F, 12.0F);
     }
 
+    // Image-based lighting: bake the environment (procedural sky) into a diffuse
+    // irradiance cube + prefiltered specular cube + BRDF LUT once, using the sun
+    // direction. The deferred lighting pass samples these every frame for its
+    // ambient/reflection term, so metals and smooth surfaces reflect the sky
+    // instead of reading as flat grey. Falls back to flat ambient on failure.
+    engine::renderer::IblMaps ibl_maps;
+    {
+        glm::vec3 sun_to = glm::normalize(glm::vec3(0.4F, 1.0F, 0.3F));
+        const auto dlv = scene.registry().view<const engine::scene::DirectionalLight>();
+        for (const entt::entity e : dlv) {
+            sun_to = -glm::normalize(dlv.get<const engine::scene::DirectionalLight>(e).direction);
+            break;
+        }
+        if (auto baker = engine::renderer::IblBaker::create(device, allocator, *pipeline_cache,
+                                                            shader_dir);
+            baker) {
+            if (auto baked = baker->bake(sun_to); baked) {
+                ibl_maps = std::move(*baked);
+                std::fprintf(stderr, "[info] baked IBL environment\n");
+            } else {
+                std::fprintf(stderr, "[warn] IBL bake failed: %s\n", baked.error().message.c_str());
+            }
+        } else {
+            std::fprintf(stderr, "[warn] IBL baker create failed: %s\n",
+                         baker.error().message.c_str());
+        }
+    }
+
     const entt::entity camera_entity = scene.create_entity("camera");
     const engine::scene::Camera& camera =
         scene.registry().emplace<engine::scene::Camera>(camera_entity);
@@ -2234,7 +2279,8 @@ int main() {
         }
         auto hdr = fr.lighting.add_to_graph(graph, *gbuffer, draw_extent, light,
                                             glm::inverse(cam.view_proj), cam.position, *shadow,
-                                            light_view_proj, point_lights, /*enable_sky=*/true);
+                                            light_view_proj, point_lights, /*enable_sky=*/true,
+                                            &ibl_maps);
         if (!hdr) {
             std::fprintf(stderr, "[fatal] lighting pass: %s\n", hdr.error().message.c_str());
             break;

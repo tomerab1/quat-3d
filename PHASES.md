@@ -260,6 +260,20 @@ Goal: directional shadow maps, point lights, basic sky, transparent & glass mate
   from thickness. Renders the glass dragon (`DragonAttenuation`) correctly.
   *Commit: `[Phase7/Slice5] glass / transmission`*
 
+- [x] **7.6 — Image-Based Lighting (split-sum IBL)**
+  Industry-standard environment lighting (the same pipeline the glTF Sample Viewer uses), so
+  metals and smooth dielectrics reflect the environment instead of reading as flat grey. A
+  one-time precompute (rebuilt only when the environment changes): bake the environment into a
+  cubemap (from the procedural sky now, an equirectangular `.hdr` later), convolve a diffuse
+  **irradiance** cubemap (cosine-weighted), generate a **prefiltered specular** cubemap mip chain
+  (GGX importance sampling, roughness → mip), and integrate the **BRDF LUT** (split-sum
+  scale/bias). The deferred lighting pass adds the IBL ambient term: `kD·irradiance·albedo +
+  prefiltered·(F·brdf.x + brdf.y)`, scaled by AO. Replaces the flat constant ambient. Needs
+  cubemap RHI support (cube-compatible images, cube + per-face/per-mip array views). Verified by
+  a self-test (LUT/irradiance/prefilter sanity + a metal surface that brightens and takes on the
+  environment) and visually on DamagedHelmet (reflective visor + chrome).
+  *Commit: `[Phase7/Slice6] image-based lighting`*
+
 ---
 
 ## Phase 8 — Post-Processing

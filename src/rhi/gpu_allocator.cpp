@@ -250,14 +250,16 @@ GpuAllocator::create_staging_buffer(VkDeviceSize size, VkBufferUsageFlags usage)
 
 std::expected<GpuImage, core::Error>
 GpuAllocator::create_image(VkFormat format, VkExtent2D extent, VkImageUsageFlags usage,
-                           std::uint32_t mip_levels) {
+                           std::uint32_t mip_levels, std::uint32_t array_layers,
+                           VkImageCreateFlags flags) {
     VkImageCreateInfo image_info{};
     image_info.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+    image_info.flags = flags;
     image_info.imageType = VK_IMAGE_TYPE_2D;
     image_info.format = format;
     image_info.extent = {extent.width, extent.height, 1};
     image_info.mipLevels = mip_levels;
-    image_info.arrayLayers = 1;
+    image_info.arrayLayers = array_layers;
     image_info.samples = VK_SAMPLE_COUNT_1_BIT;
     image_info.tiling = VK_IMAGE_TILING_OPTIMAL;
     image_info.usage = usage;
@@ -377,15 +379,19 @@ upload_device_image(GpuAllocator& allocator, const TransferContext& transfer,
 
 std::expected<ImageView, core::Error>
 create_image_view(VkDevice device, VkImage image, VkFormat format,
-                  VkImageAspectFlags aspect, std::uint32_t mip_levels) {
+                  VkImageAspectFlags aspect, std::uint32_t mip_levels,
+                  VkImageViewType view_type, std::uint32_t base_mip,
+                  std::uint32_t base_layer, std::uint32_t layer_count) {
     VkImageViewCreateInfo info{};
     info.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
     info.image = image;
-    info.viewType = VK_IMAGE_VIEW_TYPE_2D;
+    info.viewType = view_type;
     info.format = format;
     info.subresourceRange.aspectMask = aspect;
+    info.subresourceRange.baseMipLevel = base_mip;
     info.subresourceRange.levelCount = mip_levels;
-    info.subresourceRange.layerCount = 1;
+    info.subresourceRange.baseArrayLayer = base_layer;
+    info.subresourceRange.layerCount = layer_count;
 
     VkImageView view = VK_NULL_HANDLE;
     if (vkCreateImageView(device, &info, nullptr, &view) != VK_SUCCESS) {
