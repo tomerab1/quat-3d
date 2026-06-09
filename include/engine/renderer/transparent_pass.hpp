@@ -82,6 +82,7 @@ private:
     rhi::DescriptorSetLayout       material_layout_;
     rhi::GraphicsPipeline          pipeline_;
     rhi::Sampler                   sampler_;
+    rhi::Sampler                   scene_sampler_; // samples the copied scene colour
     asset::TextureAsset            fallback_texture_;
     asset::MaterialAsset           default_material_;
 

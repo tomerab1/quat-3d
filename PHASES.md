@@ -252,7 +252,7 @@ Goal: directional shadow maps, point lights, basic sky, transparent & glass mate
   glTF render correctly.
   *Commit: `[Phase7/Slice4] forward transparent pass`*
 
-- [ ] **7.5 — Glass / transmission (KHR_materials_transmission)**
+- [x] **7.5 — Glass / transmission (KHR_materials_transmission)**
   Load `KHR_materials_transmission` / `_volume` / `_ior` in the glTF loader. Copy the opaque
   HDR result into a mip-chained scene-colour texture; transmissive surfaces in the transparent
   pass sample it at a refracted screen-space offset (roughness selects the mip, for frosted vs

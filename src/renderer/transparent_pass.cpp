@@ -19,9 +19,9 @@ namespace {
 
 constexpr VkShaderStageFlags kMaterialStages = VK_SHADER_STAGE_FRAGMENT_BIT;
 
-// Same material set as the GBuffer pass (PbrMaterial): uniform params at 0, the
-// five optional textures at 1..5, shared sampler at 6.
-[[nodiscard]] std::array<rhi::DescriptorBinding, 7> material_bindings() {
+// Material (uniform params at 0, five textures at 1..5, sampler at 6) plus the
+// copied scene-colour texture at 7 + its sampler at 8 (for glass transmission).
+[[nodiscard]] std::array<rhi::DescriptorBinding, 9> material_bindings() {
     using rhi::DescriptorBinding;
     return {{
         {0, 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, kMaterialStages},
@@ -31,6 +31,8 @@ constexpr VkShaderStageFlags kMaterialStages = VK_SHADER_STAGE_FRAGMENT_BIT;
         {0, 4, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, kMaterialStages},
         {0, 5, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, kMaterialStages},
         {0, 6, VK_DESCRIPTOR_TYPE_SAMPLER, 1, kMaterialStages},
+        {0, 7, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, kMaterialStages},
+        {0, 8, VK_DESCRIPTOR_TYPE_SAMPLER, 1, kMaterialStages},
     }};
 }
 
@@ -91,6 +93,10 @@ TransparentPass::create(const rhi::Device& device, rhi::GpuAllocator& allocator,
     auto sampler = rhi::create_sampler(device.handle());
     if (!sampler) return std::unexpected(sampler.error());
     out.sampler_ = std::move(*sampler);
+
+    auto scene_sampler = rhi::create_sampler(device.handle(), rhi::SamplerAddress::clamp_to_edge);
+    if (!scene_sampler) return std::unexpected(scene_sampler.error());
+    out.scene_sampler_ = std::move(*scene_sampler);
 
     const std::array<std::uint8_t, 4> white{255, 255, 255, 255};
     auto img = rhi::upload_device_image(allocator, transfer, white.data(), white.size(),
@@ -156,17 +162,46 @@ TransparentPass::add_to_graph(rhi::RenderGraph& graph, rhi::ResourceHandle hdr,
     TransparentPushConstants push{};
     push.view_proj = view_proj;
     push.camera_pos = glm::vec4(camera_pos, 1.0F);
-    push.light_direction = light.direction;
+    // light_direction.w / ambient.w carry the render extent (for screen UVs).
+    push.light_direction = glm::vec4(glm::vec3(light.direction), static_cast<float>(extent.width));
     push.light_color = light.color;
-    push.ambient = light.ambient;
+    push.ambient = glm::vec4(glm::vec3(light.ambient), static_cast<float>(extent.height));
+
+    // Snapshot the opaque HDR so transmissive (glass) surfaces can sample what is
+    // behind them.
+    const rhi::ResourceHandle scene_color = graph.create_transient_image(
+        "scene_color", hdr_color_format, extent,
+        VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT);
+    graph.add_pass("scene_copy", rhi::PassType::transfer)
+        .reads(hdr, rhi::ResourceUsage::transfer_src)
+        .writes(scene_color, rhi::ResourceUsage::transfer_dst)
+        .execute([hdr, scene_color, extent](rhi::PassContext& ctx) {
+            const rhi::ResourceBinding src = ctx.resolve(hdr);
+            const rhi::ResourceBinding dst = ctx.resolve(scene_color);
+            VkImageCopy region{};
+            region.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+            region.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+            region.extent = {extent.width, extent.height, 1};
+            vkCmdCopyImage(ctx.cmd(), src.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, dst.image,
+                           VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+        });
 
     graph.add_pass("transparent", rhi::PassType::graphics)
         .reads(depth, rhi::ResourceUsage::depth_attachment)
+        .reads(scene_color, rhi::ResourceUsage::sampled)
         .writes(hdr, rhi::ResourceUsage::color_attachment)
-        .execute([this, hdr, depth, extent, push](rhi::PassContext& ctx) {
+        .execute([this, hdr, depth, scene_color, extent, push](rhi::PassContext& ctx) {
             const VkCommandBuffer cmd = ctx.cmd();
             const rhi::ResourceBinding color = ctx.resolve(hdr);
             const rhi::ResourceBinding depth_b = ctx.resolve(depth);
+
+            // Finish each draw's descriptor set with the resolved scene-colour view.
+            constexpr VkImageLayout ro = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+            const VkImageView scene_view = ctx.resolve(scene_color).view;
+            for (rhi::DescriptorBuffer& db : frame_descriptors_) {
+                db.write_sampled_image(7, scene_view, ro);
+                db.write_sampler(8, scene_sampler_.handle());
+            }
 
             VkRenderingAttachmentInfo color_attachment{};
             color_attachment.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;

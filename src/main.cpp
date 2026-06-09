@@ -843,6 +843,169 @@ run_transparent_self_test(const engine::rhi::Device& device, engine::rhi::GpuAll
     return result;
 }
 
+// Glass / transmission (7.5): a bright white wall behind a blue-tinted transmission
+// panel. The panel must show the wall *through* it, tinted blue — so a pixel behind
+// the panel is blue-dominant, while off the panel the wall reads plain white.
+[[nodiscard]] std::expected<void, engine::core::Error>
+run_glass_self_test(const engine::rhi::Device& device, engine::rhi::GpuAllocator& allocator,
+                    engine::rhi::PipelineCache& cache,
+                    const engine::rhi::TransferContext& transfer, const std::string& shader_dir) {
+    using namespace engine;
+    constexpr VkExtent2D extent{128, 128};
+    constexpr VkFormat ldr_format = VK_FORMAT_R8G8B8A8_UNORM;
+    constexpr VkDeviceSize bytes = static_cast<VkDeviceSize>(extent.width) * extent.height * 4;
+
+    auto wall = scene::upload_mesh(make_box_data(glm::vec3(3.0F, 3.0F, 0.2F)), allocator, transfer);
+    auto panel = scene::upload_mesh(make_box_data(glm::vec3(1.0F, 1.0F, 0.05F)), allocator, transfer);
+    if (!wall || !panel) return std::unexpected((!wall ? wall : panel).error());
+
+    asset::PbrMaterialParams white_params;
+    white_params.base_color_factor = {1.0F, 1.0F, 1.0F, 1.0F};
+    white_params.roughness_factor = 0.9F;
+    auto white = asset::upload_material(white_params, asset::MaterialTextures{}, allocator, transfer);
+    asset::PbrMaterialParams glass_params;
+    glass_params.base_color_factor = {0.1F, 0.25F, 1.0F, 1.0F}; // blue tint
+    glass_params.emissive_factor = {0.0F, 0.0F, 0.0F, 1.0F};    // w = transmission
+    glass_params.roughness_factor = 0.8F;                       // damp specular
+    glass_params.flags = asset::material_transmission;
+    auto glass = asset::upload_material(glass_params, asset::MaterialTextures{}, allocator, transfer);
+    if (!white || !glass) return std::unexpected((!white ? white : glass).error());
+
+    auto mesh_pass = renderer::MeshPass::create(device, allocator, cache, transfer, shader_dir);
+    auto lighting = renderer::LightingPass::create(device, allocator, cache, shader_dir);
+    auto transparent =
+        renderer::TransparentPass::create(device, allocator, cache, transfer, shader_dir);
+    auto tonemap = renderer::TonemapPass::create(device, allocator, cache, shader_dir, ldr_format);
+    if (!mesh_pass || !lighting || !transparent || !tonemap) {
+        return std::unexpected(core::Error{"glass self-test: pass creation failed"});
+    }
+
+    const glm::vec3 eye(0.0F, 0.0F, 3.5F);
+    glm::mat4 proj = glm::perspective(glm::radians(45.0F), 1.0F, 0.1F, 100.0F);
+    proj[1][1] *= -1.0F;
+    const glm::mat4 view_proj = proj * glm::lookAt(eye, glm::vec3(0.0F), glm::vec3(0.0F, 1.0F, 0.0F));
+
+    renderer::DirectionalLightParams light;
+    light.direction = {0.0F, 0.0F, 1.0F, 0.0F};
+    light.color = {1.0F, 1.0F, 1.0F, 1.5F};
+    light.ambient = {0.2F, 0.2F, 0.2F, 0.0F};
+
+    const renderer::DrawItem wall_item{&*wall, &*white,
+                                       glm::translate(glm::mat4(1.0F), glm::vec3(0.0F, 0.0F, -1.0F))};
+    const renderer::DrawItem panel_item{&*panel, &*glass, glm::mat4(1.0F)};
+
+    auto readback = allocator.create_buffer(
+        bytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT, VMA_MEMORY_USAGE_AUTO,
+        VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT);
+    if (!readback) return std::unexpected(readback.error());
+    const VkBuffer readback_buffer = readback->handle();
+
+    rhi::TransientImagePool pool(device, allocator);
+    rhi::RenderGraph graph(pool);
+    auto gbuffer = mesh_pass->add_to_graph(graph, extent, view_proj, {&wall_item, 1});
+    if (!gbuffer) return std::unexpected(gbuffer.error());
+    auto hdr = lighting->add_to_graph(graph, *gbuffer, extent, light, glm::inverse(view_proj), eye,
+                                      rhi::ResourceHandle{}, glm::mat4(1.0F));
+    if (!hdr) return std::unexpected(hdr.error());
+    if (auto r = transparent->add_to_graph(graph, *hdr, gbuffer->depth, extent, view_proj, light,
+                                           eye, {&panel_item, 1});
+        !r) {
+        return std::unexpected(r.error());
+    }
+    const rhi::ResourceHandle ldr = graph.create_transient_image(
+        "g_ldr", ldr_format, extent,
+        VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT);
+    if (auto r = tonemap->add_to_graph(graph, *hdr, ldr, extent); !r) {
+        return std::unexpected(r.error());
+    }
+    if (auto c = graph.compile(); !c) return std::unexpected(c.error());
+    const VkImage ldr_image = graph.binding(ldr).image;
+
+    VkCommandPool cmd_pool = VK_NULL_HANDLE;
+    VkCommandPoolCreateInfo pi{};
+    pi.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+    pi.flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT;
+    pi.queueFamilyIndex = device.queue_families().graphics;
+    vkCreateCommandPool(device.handle(), &pi, nullptr, &cmd_pool);
+    VkCommandBufferAllocateInfo ai{};
+    ai.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+    ai.commandPool = cmd_pool;
+    ai.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    ai.commandBufferCount = 1;
+    VkCommandBuffer cmd = VK_NULL_HANDLE;
+    vkAllocateCommandBuffers(device.handle(), &ai, &cmd);
+    VkCommandBufferBeginInfo bi{};
+    bi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+    vkBeginCommandBuffer(cmd, &bi);
+    graph.execute(cmd);
+    VkImageMemoryBarrier2 to_src{};
+    to_src.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2;
+    to_src.srcStageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT;
+    to_src.srcAccessMask = VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT;
+    to_src.dstStageMask = VK_PIPELINE_STAGE_2_COPY_BIT;
+    to_src.dstAccessMask = VK_ACCESS_2_TRANSFER_READ_BIT;
+    to_src.oldLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    to_src.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+    to_src.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    to_src.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    to_src.image = ldr_image;
+    to_src.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+    VkDependencyInfo dep{};
+    dep.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO;
+    dep.imageMemoryBarrierCount = 1;
+    dep.pImageMemoryBarriers = &to_src;
+    vkCmdPipelineBarrier2(cmd, &dep);
+    VkBufferImageCopy region{};
+    region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    region.imageSubresource.layerCount = 1;
+    region.imageExtent = {extent.width, extent.height, 1};
+    vkCmdCopyImageToBuffer(cmd, ldr_image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, readback_buffer, 1,
+                           &region);
+    vkEndCommandBuffer(cmd);
+    VkCommandBufferSubmitInfo ci{};
+    ci.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO;
+    ci.commandBuffer = cmd;
+    VkSubmitInfo2 si{};
+    si.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO_2;
+    si.commandBufferInfoCount = 1;
+    si.pCommandBufferInfos = &ci;
+    const VkResult sr = vkQueueSubmit2(device.graphics_queue(), 1, &si, VK_NULL_HANDLE);
+    std::expected<void, core::Error> result{};
+    if (sr != VK_SUCCESS) {
+        result = std::unexpected(core::Error{"glass self-test: submit failed"});
+    } else {
+        vkQueueWaitIdle(device.graphics_queue());
+        const auto* px = static_cast<const std::uint8_t*>(readback->mapped());
+        const auto chan = [&](std::uint32_t x, std::uint32_t y, int c) {
+            return static_cast<int>(px[(static_cast<std::size_t>(y) * extent.width + x) * 4 + c]);
+        };
+        const std::uint32_t cy = extent.height / 2;
+        const std::uint32_t px_panel = extent.width / 2 - 18; // behind panel, off the highlight
+        const int pr = chan(px_panel, cy, 0);
+        const int pb = chan(px_panel, cy, 2);
+        const int wr = chan(6, cy, 0);
+        const int wb = chan(6, cy, 2);
+        if (std::getenv("QUAT_GLASS_DEBUG") != nullptr) {
+            std::fprintf(stderr, "[glass] panel rgb=%d,%d,%d  wall rgb=%d,%d,%d\n", pr,
+                         chan(px_panel, cy, 1), pb, wr, chan(6, cy, 1), wb);
+        }
+        if (wr <= 60 || wb <= 60) {
+            result = std::unexpected(core::Error{"glass self-test: wall is not lit white"});
+        } else if (pb <= 40) {
+            result =
+                std::unexpected(core::Error{"glass self-test: nothing transmitted through glass"});
+        } else if (pb <= pr + 15) {
+            result = std::unexpected(
+                core::Error{"glass self-test: transmitted wall is not blue-tinted by the glass"});
+        }
+    }
+
+    vkFreeCommandBuffers(device.handle(), cmd_pool, 1, &cmd);
+    vkDestroyCommandPool(device.handle(), cmd_pool, nullptr);
+    return result;
+}
+
 } // namespace
 
 int main() {
@@ -1129,6 +1292,14 @@ int main() {
                         std::fprintf(stderr, "[selftest] transparency OK (alpha blend)\n");
                     } else {
                         std::fprintf(stderr, "[selftest] transparency FAILED: %s\n",
+                                     r.error().message.c_str());
+                    }
+                    if (auto r = run_glass_self_test(device, allocator, *mesh_cache, transfer,
+                                                     shader_dir);
+                        r) {
+                        std::fprintf(stderr, "[selftest] glass OK (transmission shows wall)\n");
+                    } else {
+                        std::fprintf(stderr, "[selftest] glass FAILED: %s\n",
                                      r.error().message.c_str());
                     }
                 }
@@ -1447,10 +1618,11 @@ int main() {
             auto glass_mat = assets.load<engine::asset::MaterialAsset>(
                 "demo/glass_mat", [&](const std::filesystem::path&) {
                     engine::asset::PbrMaterialParams p;
-                    p.base_color_factor = {0.45F, 0.7F, 1.0F, 0.35F};
+                    p.base_color_factor = {0.75F, 0.88F, 1.0F, 1.0F}; // light blue tint
+                    p.emissive_factor = {0.0F, 0.0F, 0.0F, 1.0F};     // w = transmission factor
                     p.metallic_factor = 0.0F;
-                    p.roughness_factor = 0.15F;
-                    p.flags = engine::asset::material_blend;
+                    p.roughness_factor = 0.05F; // clear glass
+                    p.flags = engine::asset::material_transmission;
                     return engine::asset::upload_material(p, engine::asset::MaterialTextures{},
                                                           allocator, setup_transfer);
                 });
@@ -1904,10 +2076,11 @@ int main() {
                     item.model = glm::mat4(1.0F);
                 }
             }
-            // Route alpha-blended materials to the forward transparent pass.
+            // Route alpha-blended + transmissive (glass) materials to the forward pass.
             const bool is_transparent =
                 item.material != nullptr &&
-                (item.material->params.flags & engine::asset::material_blend) != 0;
+                (item.material->params.flags &
+                 (engine::asset::material_blend | engine::asset::material_transmission)) != 0;
             (is_transparent ? transparent_draws : draws).push_back(item);
         }
 

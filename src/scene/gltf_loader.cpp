@@ -45,6 +45,11 @@ constexpr auto kLoadOptions = fastgltf::Options::LoadExternalBuffers |
                               fastgltf::Options::LoadExternalImages |
                               fastgltf::Options::GenerateMeshIndices;
 
+// glTF material extensions the loader understands (glass / transmission).
+constexpr auto kParserExtensions = fastgltf::Extensions::KHR_materials_transmission |
+                                   fastgltf::Extensions::KHR_materials_ior |
+                                   fastgltf::Extensions::KHR_materials_volume;
+
 [[nodiscard]] glm::vec3 to_glm(fastgltf::math::fvec3 v) { return {v[0], v[1], v[2]}; }
 [[nodiscard]] glm::vec2 to_glm(fastgltf::math::fvec2 v) { return {v[0], v[1]}; }
 [[nodiscard]] glm::vec4 to_glm(fastgltf::math::fvec4 v) { return {v[0], v[1], v[2], v[3]}; }
@@ -314,7 +319,7 @@ extract_skeletons(const fastgltf::Asset& asset) {
 [[nodiscard]] std::expected<std::vector<animation::SkeletonAsset>, core::Error>
 parse_and_extract_skeletons(fastgltf::GltfDataBuffer& data,
                             const std::filesystem::path& base_dir) {
-    fastgltf::Parser parser;
+    fastgltf::Parser parser(kParserExtensions);
     fastgltf::Expected<fastgltf::Asset> asset = parser.loadGltf(data, base_dir, kLoadOptions);
     if (asset.error() != fastgltf::Error::None) {
         return fail(std::string("fastgltf parse failed: ") +
@@ -410,7 +415,7 @@ extract_animations(const fastgltf::Asset& asset) {
 [[nodiscard]] std::expected<std::vector<animation::AnimClipAsset>, core::Error>
 parse_and_extract_animations(fastgltf::GltfDataBuffer& data,
                              const std::filesystem::path& base_dir) {
-    fastgltf::Parser parser;
+    fastgltf::Parser parser(kParserExtensions);
     fastgltf::Expected<fastgltf::Asset> asset = parser.loadGltf(data, base_dir, kLoadOptions);
     if (asset.error() != fastgltf::Error::None) {
         return fail(std::string("fastgltf parse failed: ") +
@@ -421,7 +426,7 @@ parse_and_extract_animations(fastgltf::GltfDataBuffer& data,
 
 [[nodiscard]] std::expected<MeshData, core::Error>
 parse_and_extract(fastgltf::GltfDataBuffer& data, const std::filesystem::path& base_dir) {
-    fastgltf::Parser parser;
+    fastgltf::Parser parser(kParserExtensions);
     fastgltf::Expected<fastgltf::Asset> asset = parser.loadGltf(data, base_dir, kLoadOptions);
     if (asset.error() != fastgltf::Error::None) {
         return fail(std::string("fastgltf parse failed: ") +
@@ -513,7 +518,7 @@ extract_textures(const fastgltf::Asset& asset) {
 [[nodiscard]] std::expected<std::vector<TextureData>, core::Error>
 parse_and_extract_textures(fastgltf::GltfDataBuffer& data,
                            const std::filesystem::path& base_dir) {
-    fastgltf::Parser parser;
+    fastgltf::Parser parser(kParserExtensions);
     fastgltf::Expected<fastgltf::Asset> asset = parser.loadGltf(data, base_dir, kLoadOptions);
     if (asset.error() != fastgltf::Error::None) {
         return fail(std::string("fastgltf parse failed: ") +
@@ -572,6 +577,12 @@ template <typename OptTextureInfo>
         if (md.emissive_image != no_texture) flags |= asset::material_has_emissive;
         if (md.occlusion_image != no_texture) flags |= asset::material_has_occlusion;
         if (mat.alphaMode == fastgltf::AlphaMode::Blend) flags |= asset::material_blend;
+        // KHR_materials_transmission → see-through glass; stash the factor in
+        // emissive_factor.w (the transparent pass reads it there).
+        if (mat.transmission != nullptr && mat.transmission->transmissionFactor > 0.0F) {
+            flags |= asset::material_transmission;
+            p.emissive_factor.w = mat.transmission->transmissionFactor;
+        }
         p.flags = flags;
 
         out.push_back(md);
@@ -582,7 +593,7 @@ template <typename OptTextureInfo>
 [[nodiscard]] std::expected<std::vector<MaterialData>, core::Error>
 parse_and_extract_materials(fastgltf::GltfDataBuffer& data,
                             const std::filesystem::path& base_dir) {
-    fastgltf::Parser parser;
+    fastgltf::Parser parser(kParserExtensions);
     fastgltf::Expected<fastgltf::Asset> asset = parser.loadGltf(data, base_dir, kLoadOptions);
     if (asset.error() != fastgltf::Error::None) {
         return fail(std::string("fastgltf parse failed: ") +
@@ -1017,7 +1028,7 @@ GltfLoader::instantiate(const std::filesystem::path& path, rhi::GpuAllocator& al
         return fail("fastgltf: could not read '" + path.string() + "': " +
                     std::string(fastgltf::getErrorMessage(data.error())));
     }
-    fastgltf::Parser parser;
+    fastgltf::Parser parser(kParserExtensions);
     fastgltf::Expected<fastgltf::Asset> parsed =
         parser.loadGltf(data.get(), path.parent_path(), kLoadOptions);
     if (parsed.error() != fastgltf::Error::None) {
@@ -1255,7 +1266,7 @@ run_gltf_scene_self_test(rhi::GpuAllocator& allocator, const rhi::TransferContex
     if (data.error() != fastgltf::Error::None) {
         return fail("gltf scene self-test: could not wrap buffer");
     }
-    fastgltf::Parser parser;
+    fastgltf::Parser parser(kParserExtensions);
     fastgltf::Expected<fastgltf::Asset> parsed = parser.loadGltf(data.get(), ".", kLoadOptions);
     if (parsed.error() != fastgltf::Error::None) {
         return fail(std::string("gltf scene self-test: parse failed: ") +

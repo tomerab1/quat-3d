@@ -28,6 +28,7 @@ enum MaterialTextureFlags : std::uint32_t {
     material_has_emissive           = 1u << 3,
     material_has_occlusion          = 1u << 4,
     material_blend                  = 1u << 5, // alpha-blended (glTF BLEND) -> forward pass
+    material_transmission           = 1u << 6, // refractive glass (KHR_materials_transmission)
 };
 
 // GPU uniform-buffer layout, std140-compatible (64 bytes). Field order and
