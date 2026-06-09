@@ -46,10 +46,12 @@ constexpr auto kLoadOptions = fastgltf::Options::LoadExternalBuffers |
                               fastgltf::Options::LoadExternalImages |
                               fastgltf::Options::GenerateMeshIndices;
 
-// glTF material extensions the loader understands (glass / transmission).
+// glTF material extensions the loader understands.
 constexpr auto kParserExtensions = fastgltf::Extensions::KHR_materials_transmission |
                                    fastgltf::Extensions::KHR_materials_ior |
-                                   fastgltf::Extensions::KHR_materials_volume;
+                                   fastgltf::Extensions::KHR_materials_volume |
+                                   fastgltf::Extensions::KHR_texture_transform |
+                                   fastgltf::Extensions::KHR_materials_emissive_strength;
 
 [[nodiscard]] glm::vec3 to_glm(fastgltf::math::fvec3 v) { return {v[0], v[1], v[2]}; }
 [[nodiscard]] glm::vec2 to_glm(fastgltf::math::fvec2 v) { return {v[0], v[1]}; }
@@ -544,6 +546,30 @@ template <typename OptTextureInfo>
     return tex.imageIndex.has_value() ? tex.imageIndex.value() : no_texture;
 }
 
+// Folds a texture slot's KHR_texture_transform into the per-slot UV arrays of
+// `p` (see PbrMaterialParams: uv' = M * uv + offset, rows packed in uv_mat,
+// offsets two per vec4). Templated like image_of: fastgltf::Optional hides the
+// contained TextureInfo type.
+template <typename OptTextureInfo>
+void apply_uv_transform(asset::PbrMaterialParams& p, std::size_t slot,
+                        const OptTextureInfo& info) {
+    if (!info.has_value() || info->transform == nullptr) return;
+    const fastgltf::TextureTransform& t = *info->transform;
+    // T * R * S from the KHR_texture_transform spec.
+    const float c = std::cos(t.rotation);
+    const float s = std::sin(t.rotation);
+    p.uv_mat[slot] = {c * t.uvScale[0], -s * t.uvScale[1],
+                      s * t.uvScale[0],  c * t.uvScale[1]};
+    glm::vec4& packed = p.uv_offset[slot / 2];
+    if (slot % 2 == 0) {
+        packed.x = t.uvOffset[0];
+        packed.y = t.uvOffset[1];
+    } else {
+        packed.z = t.uvOffset[0];
+        packed.w = t.uvOffset[1];
+    }
+}
+
 [[nodiscard]] std::vector<MaterialData> extract_materials(const fastgltf::Asset& asset) {
     std::vector<MaterialData> out;
     out.reserve(asset.materials.size());
@@ -553,8 +579,11 @@ template <typename OptTextureInfo>
 
         const auto& bcf = mat.pbrData.baseColorFactor;
         p.base_color_factor = {bcf[0], bcf[1], bcf[2], bcf[3]};
+        // KHR_materials_emissive_strength is a plain multiplier (1 when absent)
+        // — premultiply it so no shader change is needed.
         const auto& ef = mat.emissiveFactor;
-        p.emissive_factor = {ef[0], ef[1], ef[2], 0.0F};
+        p.emissive_factor = {ef[0] * mat.emissiveStrength, ef[1] * mat.emissiveStrength,
+                             ef[2] * mat.emissiveStrength, 0.0F};
         p.metallic_factor = mat.pbrData.metallicFactor;
         p.roughness_factor = mat.pbrData.roughnessFactor;
         p.alpha_cutoff = mat.alphaCutoff;
@@ -568,6 +597,14 @@ template <typename OptTextureInfo>
         md.normal_image = image_of(asset, mat.normalTexture);
         md.occlusion_image = image_of(asset, mat.occlusionTexture);
         md.emissive_image = image_of(asset, mat.emissiveTexture);
+
+        // KHR_texture_transform per slot (identity when absent).
+        apply_uv_transform(p, asset::material_slot_base_color, mat.pbrData.baseColorTexture);
+        apply_uv_transform(p, asset::material_slot_metallic_roughness,
+                           mat.pbrData.metallicRoughnessTexture);
+        apply_uv_transform(p, asset::material_slot_normal, mat.normalTexture);
+        apply_uv_transform(p, asset::material_slot_occlusion, mat.occlusionTexture);
+        apply_uv_transform(p, asset::material_slot_emissive, mat.emissiveTexture);
 
         std::uint32_t flags = 0;
         if (md.base_color_image != no_texture) flags |= asset::material_has_base_color;
@@ -596,6 +633,7 @@ template <typename OptTextureInfo>
             p.thickness = mat.volume->thicknessFactor;
             md.thickness_image = image_of(asset, mat.volume->thicknessTexture);
             if (md.thickness_image != no_texture) flags |= asset::material_has_thickness;
+            apply_uv_transform(p, asset::material_slot_thickness, mat.volume->thicknessTexture);
         }
         p.flags = flags;
 
@@ -725,15 +763,19 @@ upload_texture(const TextureData& data, rhi::GpuAllocator& allocator,
                                 ? VK_FORMAT_R8G8B8A8_SRGB
                                 : VK_FORMAT_R8G8B8A8_UNORM;
     const VkExtent2D extent{data.width, data.height};
+    const std::uint32_t mips = rhi::full_mip_levels(extent);
 
     auto image = rhi::upload_device_image(allocator, transfer, data.pixels.data(),
-                                          data.pixels.size(), extent, format);
+                                          data.pixels.size(), extent, format,
+                                          VK_IMAGE_USAGE_SAMPLED_BIT, mips);
     if (!image) return std::unexpected(image.error());
 
-    auto view = rhi::create_image_view(transfer.device, image->handle(), format);
+    auto view = rhi::create_image_view(transfer.device, image->handle(), format,
+                                       VK_IMAGE_ASPECT_COLOR_BIT, mips);
     if (!view) return std::unexpected(view.error());
 
-    auto sampler = rhi::create_sampler(transfer.device);
+    auto sampler = rhi::create_sampler(transfer.device, rhi::SamplerAddress::repeat,
+                                       mips, transfer.max_anisotropy);
     if (!sampler) return std::unexpected(sampler.error());
 
     asset::TextureAsset texture;

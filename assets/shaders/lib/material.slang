@@ -18,8 +18,17 @@ static const uint MATERIAL_HAS_METALLIC_ROUGHNESS = 1u << 2;
 static const uint MATERIAL_HAS_EMISSIVE           = 1u << 3;
 static const uint MATERIAL_HAS_OCCLUSION          = 1u << 4;
 
+// Texture slot indices for the per-slot KHR_texture_transform arrays. Mirrors
+// engine::asset::MaterialTextureSlot.
+public static const uint MATERIAL_SLOT_BASE_COLOR         = 0;
+public static const uint MATERIAL_SLOT_NORMAL             = 1;
+public static const uint MATERIAL_SLOT_METALLIC_ROUGHNESS = 2;
+public static const uint MATERIAL_SLOT_EMISSIVE           = 3;
+public static const uint MATERIAL_SLOT_OCCLUSION          = 4;
+public static const uint MATERIAL_SLOT_THICKNESS          = 5;
+
 // Scalar material parameters. Layout mirrors engine::asset::PbrMaterialParams
-// (std140, 96 bytes) exactly — keep the two definitions in sync.
+// (std140, 240 bytes) exactly — keep the two definitions in sync.
 public struct PbrMaterialParams {
     public float4 base_color_factor;
     public float4 emissive_factor;     // xyz used; w is padding
@@ -33,7 +42,24 @@ public struct PbrMaterialParams {
     public float  ior;                 // KHR_materials_ior
     public float4 attenuation;         // rgb = attenuation colour, w = distance (0 = none)
     public float  thickness;           // KHR_materials_volume thicknessFactor
-    public float3 pad;
+    // Three scalar floats, NOT float3: std140 would align a float3 to offset 96,
+    // desynchronising every later field from the C++ glm::vec3 at offset 84.
+    public float  pad0;
+    public float  pad1;
+    public float  pad2;
+    // KHR_texture_transform per texture slot: uv' = M * uv + offset. uv_mat
+    // packs the 2x2 matrix rows as (m00, m01, m10, m11); offsets are packed two
+    // per float4 (slot 2k -> xy, slot 2k+1 -> zw). Identity when absent.
+    public float4 uv_mat[6];
+    public float4 uv_offset[3];
+}
+
+// Applies the KHR_texture_transform of `slot` to `uv`.
+public float2 material_transform_uv(PbrMaterialParams p, uint slot, float2 uv) {
+    float4 m = p.uv_mat[slot];
+    float4 packed = p.uv_offset[slot >> 1];
+    float2 offset = ((slot & 1u) == 0u) ? packed.xy : packed.zw;
+    return float2(m.x * uv.x + m.y * uv.y, m.z * uv.x + m.w * uv.y) + offset;
 }
 
 // Surface attributes produced at a shading point, consumed by the GBuffer pass.
@@ -68,7 +94,8 @@ public struct PbrMaterial : IMaterial {
 
         float4 base = params.base_color_factor;
         if ((params.flags & MATERIAL_HAS_BASE_COLOR) != 0) {
-            base *= base_color_tex.Sample(samp, uv);
+            base *= base_color_tex.Sample(
+                samp, material_transform_uv(params, MATERIAL_SLOT_BASE_COLOR, uv));
         }
         s.albedo = base.rgb;
         s.alpha  = base.a;
@@ -77,7 +104,8 @@ public struct PbrMaterial : IMaterial {
         float roughness = params.roughness_factor;
         if ((params.flags & MATERIAL_HAS_METALLIC_ROUGHNESS) != 0) {
             // glTF packs roughness in G, metallic in B.
-            float3 mr = metallic_roughness_tex.Sample(samp, uv).rgb;
+            float3 mr = metallic_roughness_tex.Sample(
+                samp, material_transform_uv(params, MATERIAL_SLOT_METALLIC_ROUGHNESS, uv)).rgb;
             roughness *= mr.g;
             metallic  *= mr.b;
         }
@@ -86,20 +114,31 @@ public struct PbrMaterial : IMaterial {
 
         float3 n = float3(0, 0, 1);
         if ((params.flags & MATERIAL_HAS_NORMAL) != 0) {
-            n = normal_tex.Sample(samp, uv).xyz * 2.0 - 1.0;
-            n = normalize(float3(n.xy * params.normal_scale, n.z));
+            // Reconstruct Z from XY instead of trusting the blue channel: equal
+            // for well-formed maps, but keeps mip-filtered or degenerate texels
+            // (e.g. pure black) from producing backward-facing normals.
+            float2 nxy = normal_tex.Sample(
+                             samp, material_transform_uv(params, MATERIAL_SLOT_NORMAL, uv)).xy *
+                             2.0 - 1.0;
+            nxy *= params.normal_scale;
+            float nz = sqrt(saturate(1.0 - dot(nxy, nxy)));
+            n = normalize(float3(nxy, max(nz, 1e-3)));
         }
         s.normal_ts = n;
 
         float occ = 1.0;
         if ((params.flags & MATERIAL_HAS_OCCLUSION) != 0) {
-            occ = lerp(1.0, occlusion_tex.Sample(samp, uv).r, params.occlusion_strength);
+            occ = lerp(1.0,
+                       occlusion_tex.Sample(
+                           samp, material_transform_uv(params, MATERIAL_SLOT_OCCLUSION, uv)).r,
+                       params.occlusion_strength);
         }
         s.occlusion = occ;
 
         float3 emissive = params.emissive_factor.rgb;
         if ((params.flags & MATERIAL_HAS_EMISSIVE) != 0) {
-            emissive *= emissive_tex.Sample(samp, uv).rgb;
+            emissive *= emissive_tex.Sample(
+                samp, material_transform_uv(params, MATERIAL_SLOT_EMISSIVE, uv)).rgb;
         }
         s.emissive = emissive;
 

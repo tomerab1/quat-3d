@@ -290,6 +290,21 @@ Goal: directional shadow maps, point lights, basic sky, transparent & glass mate
   matches reference) and the showcase scene.
   *Commit: `[Phase7/Slice7] physically-based transmission: volume, IOR, rough refraction, glass shadows`*
 
+- [x] **7.8 — Texture mipmaps, KHR_texture_transform, emissive strength**
+  Production texture pipeline fixes driven by the CarConcept sample. glTF textures now upload
+  a full mip chain (vkCmdBlitImage downsample at upload; upload contexts moved to the graphics
+  queue, where blits are legal) and sample with trilinear + anisotropic filtering
+  (`samplerAnisotropy` enabled when the device offers it). `KHR_texture_transform` is parsed
+  per texture slot (offset/rotation/scale folded into a 2x2 matrix + offset in the material
+  params, applied in the GBuffer and transparent shaders) — CarConcept's car-paint flake
+  normal map tiles 30x30 and its interior fabrics 200x400 instead of stretching once across
+  the mesh. `KHR_materials_emissive_strength` premultiplies the emissive factor. Normal
+  sampling reconstructs Z from XY (robust against degenerate/mip-averaged texels). Also fixes
+  a latent std140 mismatch: Slang `float3` padding aligns to 16 bytes, so the shader-side
+  material struct silently diverged from the C++ layout past offset 84 — padding is now three
+  scalar floats and the struct is 240 bytes on both sides.
+  *Commit: `[Phase7/Slice8] texture mipmaps + anisotropy, KHR_texture_transform, emissive strength`*
+
 ---
 
 ## Phase 8 — Post-Processing

@@ -8,6 +8,7 @@
 // descriptor buffer from `param_address` + the texture views/samplers; this
 // slice defines the asset and its GPU upload only.
 
+#include <array>
 #include <cstdint>
 
 #include <glm/glm.hpp>
@@ -33,7 +34,19 @@ enum MaterialTextureFlags : std::uint32_t {
     material_has_thickness          = 1u << 8, // KHR_materials_volume thicknessTexture (G channel)
 };
 
-// GPU uniform-buffer layout, std140-compatible (96 bytes). Field order and
+// Texture slot indices for the per-slot KHR_texture_transform arrays below.
+// Order matches the MaterialTextures fields and the shader-side convention.
+enum MaterialTextureSlot : std::size_t {
+    material_slot_base_color = 0,
+    material_slot_normal,
+    material_slot_metallic_roughness,
+    material_slot_emissive,
+    material_slot_occlusion,
+    material_slot_thickness,
+    material_slot_count,
+};
+
+// GPU uniform-buffer layout, std140-compatible (240 bytes). Field order and
 // padding mirror PbrMaterialParams in material.slang exactly.
 struct PbrMaterialParams {
     glm::vec4     base_color_factor{1.0F, 1.0F, 1.0F, 1.0F};
@@ -50,10 +63,21 @@ struct PbrMaterialParams {
     // (0 = no attenuation; the spec default of +inf is stored as 0).
     glm::vec4     attenuation{1.0F, 1.0F, 1.0F, 0.0F};
     float         thickness = 0.0F;           // KHR_materials_volume thicknessFactor
+    // Padding to 96. The shader mirrors this as three scalar floats (a slang
+    // float3 would be std140-aligned to offset 96 and shift the arrays below).
     glm::vec3     pad{0.0F, 0.0F, 0.0F};
+    // KHR_texture_transform, one affine UV transform per texture slot (indexed
+    // by MaterialTextureSlot): uv' = M * uv + offset. Each uv_mat entry packs
+    // the 2x2 rotation*scale matrix rows as (m00, m01, m10, m11); offsets are
+    // packed two per vec4 (slot 2k -> xy, slot 2k+1 -> zw). Identity default.
+    std::array<glm::vec4, material_slot_count> uv_mat{
+        glm::vec4{1.0F, 0.0F, 0.0F, 1.0F}, glm::vec4{1.0F, 0.0F, 0.0F, 1.0F},
+        glm::vec4{1.0F, 0.0F, 0.0F, 1.0F}, glm::vec4{1.0F, 0.0F, 0.0F, 1.0F},
+        glm::vec4{1.0F, 0.0F, 0.0F, 1.0F}, glm::vec4{1.0F, 0.0F, 0.0F, 1.0F}};
+    std::array<glm::vec4, material_slot_count / 2> uv_offset{};
 };
-static_assert(sizeof(PbrMaterialParams) == 96,
-              "PbrMaterialParams must stay 96 bytes and std140-compatible to "
+static_assert(sizeof(PbrMaterialParams) == 240,
+              "PbrMaterialParams must stay 240 bytes and std140-compatible to "
               "match material.slang");
 
 // The (optional) textures a material samples. A slot is a null handle when the

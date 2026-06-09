@@ -54,6 +54,9 @@ public:
     [[nodiscard]] const VkPhysicalDeviceProperties& properties() const { return properties_; }
     [[nodiscard]] const VkPhysicalDeviceDescriptorBufferPropertiesEXT&
     descriptor_buffer_properties() const { return descriptor_buffer_props_; }
+    // Device limit for anisotropic filtering; 0 when samplerAnisotropy is
+    // unsupported (the feature is enabled whenever the device offers it).
+    [[nodiscard]] float max_sampler_anisotropy() const { return max_sampler_anisotropy_; }
 
 private:
     void destroy() noexcept;
@@ -68,6 +71,7 @@ private:
     VkQueue                  transfer_queue_   = VK_NULL_HANDLE;
     VkPhysicalDeviceProperties properties_{};
     VkPhysicalDeviceDescriptorBufferPropertiesEXT descriptor_buffer_props_{};
+    float                    max_sampler_anisotropy_ = 0.0F;
 };
 
 } // namespace engine::rhi

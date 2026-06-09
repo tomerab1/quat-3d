@@ -1241,10 +1241,13 @@ int main() {
             VkCommandPool pool = VK_NULL_HANDLE;
             VkCommandPoolCreateInfo pool_info{};
             pool_info.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
-            pool_info.queueFamilyIndex = device.queue_families().transfer;
+            // Graphics family: mip-generation blits (vkCmdBlitImage) are only
+            // legal on a graphics-capable queue.
+            pool_info.queueFamilyIndex = device.queue_families().graphics;
             if (vkCreateCommandPool(device.handle(), &pool_info, nullptr, &pool) == VK_SUCCESS) {
-                const engine::rhi::TransferContext transfer{device.handle(), pool,
-                                                            device.transfer_queue()};
+                const engine::rhi::TransferContext transfer{
+                    device.handle(), pool, device.graphics_queue(),
+                    device.max_sampler_anisotropy()};
                 if (auto r = engine::scene::run_gltf_loader_self_test(allocator, transfer); r) {
                     std::fprintf(stderr, "[selftest] glTF loader OK\n");
                 } else {
@@ -1569,11 +1572,14 @@ int main() {
     {
         VkCommandPoolCreateInfo info{};
         info.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
-        info.queueFamilyIndex = device.queue_families().transfer;
+        // Graphics family: mip-generation blits (vkCmdBlitImage) are only legal
+        // on a graphics-capable queue.
+        info.queueFamilyIndex = device.queue_families().graphics;
         vkCreateCommandPool(vk_device, &info, nullptr, &setup_pool);
     }
     const engine::rhi::TransferContext setup_transfer{vk_device, setup_pool,
-                                                      device.transfer_queue()};
+                                                      device.graphics_queue(),
+                                                      device.max_sampler_anisotropy()};
 
     // Per-frame-in-flight deferred chains (GBuffer -> lighting -> tonemap). Each
     // slot owns its passes' descriptor buffers and a transient image pool, so

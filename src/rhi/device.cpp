@@ -289,6 +289,16 @@ std::expected<Device, core::Error> Device::create(const CreateInfo& info) {
     db_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_BUFFER_FEATURES_EXT;
     db_features.descriptorBuffer = VK_TRUE;
 
+    // Anisotropic filtering is optional (lavapipe gained it only recently) —
+    // enable it when offered and record the limit so samplers can use it.
+    VkPhysicalDeviceFeatures supported_core{};
+    vkGetPhysicalDeviceFeatures(dev.physical_device_, &supported_core);
+    VkPhysicalDeviceFeatures core_features{};
+    core_features.samplerAnisotropy = supported_core.samplerAnisotropy;
+    if (supported_core.samplerAnisotropy == VK_TRUE) {
+        dev.max_sampler_anisotropy_ = candidate.properties.limits.maxSamplerAnisotropy;
+    }
+
     VkPhysicalDeviceVulkan12Features features12{};
     features12.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES;
     features12.bufferDeviceAddress = VK_TRUE;
@@ -308,6 +318,7 @@ std::expected<Device, core::Error> Device::create(const CreateInfo& info) {
     device_info.enabledExtensionCount =
         static_cast<std::uint32_t>(k_required_device_extensions.size());
     device_info.ppEnabledExtensionNames = k_required_device_extensions.data();
+    device_info.pEnabledFeatures = &core_features;
 
     if (VkResult r = vkCreateDevice(dev.physical_device_, &device_info, nullptr, &dev.device_);
         r != VK_SUCCESS) {
@@ -373,6 +384,7 @@ Device& Device::operator=(Device&& other) noexcept {
         transfer_queue_  = std::exchange(other.transfer_queue_, VK_NULL_HANDLE);
         properties_      = other.properties_;
         descriptor_buffer_props_ = other.descriptor_buffer_props_;
+        max_sampler_anisotropy_  = other.max_sampler_anisotropy_;
     }
     return *this;
 }

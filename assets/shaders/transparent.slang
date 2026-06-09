@@ -22,7 +22,7 @@ static const uint MAT_HAS_THICKNESS  = 1u << 8;
 // Prefiltered specular cubemap mip count - 1. Must match ibl_pass.cpp.
 static const float PREFILTER_MAX_LOD = 4.0;
 
-// Mirrors engine::asset::PbrMaterialParams (std140, 96 bytes).
+// Mirrors engine::asset::PbrMaterialParams (std140, 240 bytes).
 struct MaterialParams {
     float4 base_color_factor;
     float4 emissive_factor;     // xyz used; w is padding
@@ -36,7 +36,17 @@ struct MaterialParams {
     float  ior;                 // KHR_materials_ior
     float4 attenuation;         // rgb = attenuation colour, w = distance (0 = none)
     float  thickness;           // KHR_materials_volume (local units)
-    float3 pad;
+    // Three scalar floats, NOT float3: std140 would align a float3 to offset 96,
+    // desynchronising every later field from the C++ glm::vec3 at offset 84.
+    float  pad0;
+    float  pad1;
+    float  pad2;
+    // KHR_texture_transform per texture slot (0=base colour, 1=normal, 2=MR,
+    // 3=emissive, 4=occlusion, 5=thickness): uv' = M * uv + offset. uv_mat
+    // packs the 2x2 matrix rows as (m00, m01, m10, m11); offsets are packed
+    // two per float4 (slot 2k -> xy, slot 2k+1 -> zw).
+    float4 uv_mat[6];
+    float4 uv_offset[3];
 }
 
 struct PushConstants {
@@ -63,6 +73,14 @@ struct PushConstants {
 [[vk::binding(11)]] Texture2D    g_brdf_lut;
 [[vk::binding(12)]] SamplerState g_ibl_sampler;
 [[vk::binding(13)]] Texture2D    g_thickness;     // KHR_materials_volume (G channel)
+
+// Applies the KHR_texture_transform of texture slot `slot` to `uv`.
+float2 transformed_uv(uint slot, float2 uv) {
+    float4 m = g_params.uv_mat[slot];
+    float4 packed = g_params.uv_offset[slot >> 1];
+    float2 offset = ((slot & 1u) == 0u) ? packed.xy : packed.zw;
+    return float2(m.x * uv.x + m.y * uv.y, m.z * uv.x + m.w * uv.y) + offset;
+}
 
 struct VsIn {
     float3 position : POSITION;
@@ -102,7 +120,7 @@ float3 fresnel_schlick_roughness(float ndotv, float3 f0, float roughness) {
 float4 fragment_main(VsOut input) : SV_Target0 {
     float4 base = g_params.base_color_factor;
     if ((g_params.flags & MAT_HAS_BASE_COLOR) != 0) {
-        base *= g_base_color.Sample(g_samp, input.uv);
+        base *= g_base_color.Sample(g_samp, transformed_uv(0, input.uv));
     }
     float3 albedo = base.rgb;
     float  alpha = base.a;
@@ -110,22 +128,27 @@ float4 fragment_main(VsOut input) : SV_Target0 {
     float metallic = g_params.metallic_factor;
     float roughness = g_params.roughness_factor;
     if ((g_params.flags & MAT_HAS_MR) != 0) {
-        float3 mr = g_metallic_roughness.Sample(g_samp, input.uv).rgb;
+        float3 mr = g_metallic_roughness.Sample(g_samp, transformed_uv(2, input.uv)).rgb;
         roughness *= mr.g;
         metallic *= mr.b;
     }
     float3 nts = float3(0, 0, 1);
     if ((g_params.flags & MAT_HAS_NORMAL) != 0) {
-        nts = g_normal.Sample(g_samp, input.uv).xyz * 2.0 - 1.0;
-        nts = normalize(float3(nts.xy * g_params.normal_scale, nts.z));
+        // Reconstruct Z from XY (see material.slang): robust against degenerate
+        // or mip-filtered texels that would otherwise flip the normal backwards.
+        float2 nxy = g_normal.Sample(g_samp, transformed_uv(1, input.uv)).xy * 2.0 - 1.0;
+        nxy *= g_params.normal_scale;
+        float nz = sqrt(saturate(1.0 - dot(nxy, nxy)));
+        nts = normalize(float3(nxy, max(nz, 1e-3)));
     }
     float occ = 1.0;
     if ((g_params.flags & MAT_HAS_OCCLUSION) != 0) {
-        occ = lerp(1.0, g_occlusion.Sample(g_samp, input.uv).r, g_params.occlusion_strength);
+        occ = lerp(1.0, g_occlusion.Sample(g_samp, transformed_uv(4, input.uv)).r,
+                   g_params.occlusion_strength);
     }
     float3 emissive = g_params.emissive_factor.rgb;
     if ((g_params.flags & MAT_HAS_EMISSIVE) != 0) {
-        emissive *= g_emissive.Sample(g_samp, input.uv).rgb;
+        emissive *= g_emissive.Sample(g_samp, transformed_uv(3, input.uv)).rgb;
     }
 
     float3 n = normalize(input.world_n);
@@ -153,7 +176,7 @@ float4 fragment_main(VsOut input) : SV_Target0 {
         float scale = length(mul((float3x3)pc.model, float3(0.577350, 0.577350, 0.577350)));
         float thickness_world = g_params.thickness * scale;
         if ((g_params.flags & MAT_HAS_THICKNESS) != 0) {
-            thickness_world *= g_thickness.Sample(g_samp, input.uv).g;
+            thickness_world *= g_thickness.Sample(g_samp, transformed_uv(5, input.uv)).g;
         }
         float3 refr = refract(-V, world_n, 1.0 / g_params.ior);
         float3 exit_pos = input.world_pos + refr * thickness_world;

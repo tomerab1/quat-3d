@@ -142,11 +142,14 @@ private:
 };
 
 // Immutable transfer context (transfer-capable queue + a command pool created on
-// its family) used by the staging upload helper.
+// its family) used by the staging upload helper. `max_anisotropy` carries the
+// device's sampler anisotropy limit (0 = feature unavailable) so asset uploads
+// can build properly filtered samplers without a Device reference.
 struct TransferContext {
-    VkDevice      device = VK_NULL_HANDLE;
-    VkCommandPool pool   = VK_NULL_HANDLE;
-    VkQueue       queue  = VK_NULL_HANDLE;
+    VkDevice      device         = VK_NULL_HANDLE;
+    VkCommandPool pool           = VK_NULL_HANDLE;
+    VkQueue       queue          = VK_NULL_HANDLE;
+    float         max_anisotropy = 0.0F;
 };
 
 // Creates a device-local buffer and uploads `data` into it through a temporary
@@ -161,15 +164,21 @@ upload_device_buffer(GpuAllocator& allocator, const TransferContext& transfer,
 [[nodiscard]] VkDeviceAddress
 buffer_device_address(VkDevice device, const GpuBuffer& buffer);
 
+// Full mip chain length for an extent: floor(log2(max(w, h))) + 1.
+[[nodiscard]] std::uint32_t full_mip_levels(VkExtent2D extent);
+
 // Creates a device-local, optimally-tiled image and uploads `data` (tightly
-// packed pixels matching `format` and `extent`) through a staging buffer. The
-// image is left in VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL; SAMPLED and
+// packed pixels matching `format` and `extent`) through a staging buffer. When
+// `mip_levels` > 1 the remaining levels are generated with a vkCmdBlitImage
+// downsample chain (the format must support linear blits). The image is left in
+// VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL (all levels); SAMPLED and
 // TRANSFER_DST are always added to `usage`.
 [[nodiscard]] std::expected<GpuImage, core::Error>
 upload_device_image(GpuAllocator& allocator, const TransferContext& transfer,
                     const void* data, VkDeviceSize size, VkExtent2D extent,
                     VkFormat format,
-                    VkImageUsageFlags usage = VK_IMAGE_USAGE_SAMPLED_BIT);
+                    VkImageUsageFlags usage = VK_IMAGE_USAGE_SAMPLED_BIT,
+                    std::uint32_t mip_levels = 1);
 
 // Creates a VkImageView over `image` wrapped in an RAII ImageView. Defaults to a
 // 2D colour view of mip 0; the extra parameters cover cube views
@@ -184,13 +193,15 @@ create_image_view(VkDevice device, VkImage image, VkFormat format,
                   std::uint32_t layer_count = 1);
 
 // Sampler addressing modes for create_sampler. Filtering is always linear with a
-// linear mip mode — sufficient for the asset pipeline until mip generation lands.
+// linear mip mode.
 enum class SamplerAddress : std::uint8_t { repeat, clamp_to_edge, mirrored_repeat };
 
 // Creates a linear-filtered VkSampler wrapped in an RAII Sampler.
+// `max_anisotropy` > 0 enables anisotropic filtering at that level (the caller
+// clamps to the device limit; pass TransferContext::max_anisotropy).
 [[nodiscard]] std::expected<Sampler, core::Error>
 create_sampler(VkDevice device, SamplerAddress address = SamplerAddress::repeat,
-               std::uint32_t mip_levels = 1);
+               std::uint32_t mip_levels = 1, float max_anisotropy = 0.0F);
 
 // Debug round-trip self-test: upload bytes to a device-local buffer, copy them
 // back to a host buffer, and verify they match. Returns an error on mismatch.

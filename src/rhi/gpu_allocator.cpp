@@ -1,6 +1,8 @@
 #include "engine/rhi/gpu_allocator.hpp"
 
+#include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstring>
 #include <format>
 #include <utility>
@@ -313,46 +315,60 @@ VkDeviceAddress buffer_device_address(VkDevice device, const GpuBuffer& buffer) 
     return vkGetBufferDeviceAddress(device, &info);
 }
 
+std::uint32_t full_mip_levels(VkExtent2D extent) {
+    const std::uint32_t largest = std::max(extent.width, extent.height);
+    return largest == 0 ? 1U
+                        : static_cast<std::uint32_t>(std::floor(std::log2(largest))) + 1U;
+}
+
 std::expected<GpuImage, core::Error>
 upload_device_image(GpuAllocator& allocator, const TransferContext& transfer,
                     const void* data, VkDeviceSize size, VkExtent2D extent,
-                    VkFormat format, VkImageUsageFlags usage) {
+                    VkFormat format, VkImageUsageFlags usage,
+                    std::uint32_t mip_levels) {
+    mip_levels = std::max(mip_levels, 1U);
+
     auto staging = allocator.create_staging_buffer(size);
     if (!staging) return std::unexpected(staging.error());
     std::memcpy(staging->mapped(), data, size);
 
-    auto image = allocator.create_image(
-        format, extent,
-        usage | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT);
+    VkImageUsageFlags image_usage =
+        usage | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+    if (mip_levels > 1) image_usage |= VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+
+    auto image = allocator.create_image(format, extent, image_usage, mip_levels);
     if (!image) return std::unexpected(image.error());
 
     const VkBuffer src = staging->handle();
     const VkImage  dst = image->handle();
     auto uploaded = run_one_time_commands(transfer, [&](VkCommandBuffer cmd) {
-        VkImageSubresourceRange range{};
-        range.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-        range.levelCount = 1;
-        range.layerCount = 1;
+        const auto barrier = [&](std::uint32_t base_mip, std::uint32_t count,
+                                 VkPipelineStageFlags2 src_stage, VkAccessFlags2 src_access,
+                                 VkPipelineStageFlags2 dst_stage, VkAccessFlags2 dst_access,
+                                 VkImageLayout old_layout, VkImageLayout new_layout) {
+            VkImageMemoryBarrier2 b{};
+            b.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2;
+            b.srcStageMask = src_stage;
+            b.srcAccessMask = src_access;
+            b.dstStageMask = dst_stage;
+            b.dstAccessMask = dst_access;
+            b.oldLayout = old_layout;
+            b.newLayout = new_layout;
+            b.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            b.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            b.image = dst;
+            b.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, base_mip, count, 0, 1};
+            VkDependencyInfo dep{};
+            dep.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO;
+            dep.imageMemoryBarrierCount = 1;
+            dep.pImageMemoryBarriers = &b;
+            vkCmdPipelineBarrier2(cmd, &dep);
+        };
 
-        // UNDEFINED -> TRANSFER_DST_OPTIMAL before the copy.
-        VkImageMemoryBarrier2 to_dst{};
-        to_dst.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2;
-        to_dst.srcStageMask = VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT;
-        to_dst.srcAccessMask = VK_ACCESS_2_NONE;
-        to_dst.dstStageMask = VK_PIPELINE_STAGE_2_COPY_BIT;
-        to_dst.dstAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT;
-        to_dst.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-        to_dst.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-        to_dst.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        to_dst.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        to_dst.image = dst;
-        to_dst.subresourceRange = range;
-
-        VkDependencyInfo dep{};
-        dep.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO;
-        dep.imageMemoryBarrierCount = 1;
-        dep.pImageMemoryBarriers = &to_dst;
-        vkCmdPipelineBarrier2(cmd, &dep);
+        // UNDEFINED -> TRANSFER_DST_OPTIMAL (all levels) before the copy.
+        barrier(0, mip_levels, VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT, VK_ACCESS_2_NONE,
+                VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
+                VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
 
         VkBufferImageCopy region{};
         region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
@@ -361,16 +377,43 @@ upload_device_image(GpuAllocator& allocator, const TransferContext& transfer,
         vkCmdCopyBufferToImage(cmd, src, dst, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
                                1, &region);
 
-        // TRANSFER_DST_OPTIMAL -> SHADER_READ_ONLY_OPTIMAL for sampling.
-        VkImageMemoryBarrier2 to_read = to_dst;
-        to_read.srcStageMask = VK_PIPELINE_STAGE_2_COPY_BIT;
-        to_read.srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT;
-        to_read.dstStageMask = VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT;
-        to_read.dstAccessMask = VK_ACCESS_2_SHADER_SAMPLED_READ_BIT;
-        to_read.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-        to_read.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-        dep.pImageMemoryBarriers = &to_read;
-        vkCmdPipelineBarrier2(cmd, &dep);
+        // Generate the remaining levels with a linear blit downsample chain:
+        // each level becomes TRANSFER_SRC once written, then feeds the next.
+        std::int32_t w = static_cast<std::int32_t>(extent.width);
+        std::int32_t h = static_cast<std::int32_t>(extent.height);
+        for (std::uint32_t mip = 1; mip < mip_levels; ++mip) {
+            barrier(mip - 1, 1, VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT,
+                    VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_2_BLIT_BIT,
+                    VK_ACCESS_2_TRANSFER_READ_BIT, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                    VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+
+            const std::int32_t next_w = std::max(w / 2, 1);
+            const std::int32_t next_h = std::max(h / 2, 1);
+            VkImageBlit blit{};
+            blit.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, mip - 1, 0, 1};
+            blit.srcOffsets[1] = {w, h, 1};
+            blit.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, mip, 0, 1};
+            blit.dstOffsets[1] = {next_w, next_h, 1};
+            vkCmdBlitImage(cmd, dst, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, dst,
+                           VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &blit,
+                           VK_FILTER_LINEAR);
+            w = next_w;
+            h = next_h;
+        }
+
+        // Everything -> SHADER_READ_ONLY_OPTIMAL for sampling. Levels 0..n-2 sit
+        // in TRANSFER_SRC after feeding the chain; the last is still TRANSFER_DST.
+        if (mip_levels > 1) {
+            barrier(0, mip_levels - 1, VK_PIPELINE_STAGE_2_BLIT_BIT,
+                    VK_ACCESS_2_TRANSFER_READ_BIT, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+                    VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
+                    VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                    VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+        }
+        barrier(mip_levels - 1, 1, VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT,
+                VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+                VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
     });
     if (!uploaded) return std::unexpected(uploaded.error());
 
@@ -401,7 +444,8 @@ create_image_view(VkDevice device, VkImage image, VkFormat format,
 }
 
 std::expected<Sampler, core::Error>
-create_sampler(VkDevice device, SamplerAddress address, std::uint32_t mip_levels) {
+create_sampler(VkDevice device, SamplerAddress address, std::uint32_t mip_levels,
+               float max_anisotropy) {
     VkSamplerAddressMode mode = VK_SAMPLER_ADDRESS_MODE_REPEAT;
     switch (address) {
         case SamplerAddress::repeat:          mode = VK_SAMPLER_ADDRESS_MODE_REPEAT; break;
@@ -418,6 +462,8 @@ create_sampler(VkDevice device, SamplerAddress address, std::uint32_t mip_levels
     info.addressModeV = mode;
     info.addressModeW = mode;
     info.maxLod = static_cast<float>(mip_levels);
+    info.anisotropyEnable = max_anisotropy > 0.0F ? VK_TRUE : VK_FALSE;
+    info.maxAnisotropy = std::max(max_anisotropy, 1.0F);
     info.borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_BLACK;
 
     VkSampler sampler = VK_NULL_HANDLE;
