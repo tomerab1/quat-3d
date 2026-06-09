@@ -29,23 +29,31 @@ enum MaterialTextureFlags : std::uint32_t {
     material_has_occlusion          = 1u << 4,
     material_blend                  = 1u << 5, // alpha-blended (glTF BLEND) -> forward pass
     material_transmission           = 1u << 6, // refractive glass (KHR_materials_transmission)
+    material_double_sided           = 1u << 7, // glTF doubleSided -> disable back-face culling
+    material_has_thickness          = 1u << 8, // KHR_materials_volume thicknessTexture (G channel)
 };
 
-// GPU uniform-buffer layout, std140-compatible (64 bytes). Field order and
+// GPU uniform-buffer layout, std140-compatible (96 bytes). Field order and
 // padding mirror PbrMaterialParams in material.slang exactly.
 struct PbrMaterialParams {
     glm::vec4     base_color_factor{1.0F, 1.0F, 1.0F, 1.0F};
-    glm::vec4     emissive_factor{0.0F, 0.0F, 0.0F, 0.0F};
+    glm::vec4     emissive_factor{0.0F, 0.0F, 0.0F, 0.0F}; // xyz used; w is padding
     float         metallic_factor    = 1.0F;
     float         roughness_factor   = 1.0F;
     float         occlusion_strength = 1.0F;
     float         normal_scale       = 1.0F;
     float         alpha_cutoff       = 0.5F;
     std::uint32_t flags              = 0;
-    glm::vec2     pad{0.0F, 0.0F};
+    float         transmission_factor = 0.0F; // KHR_materials_transmission
+    float         ior                 = 1.5F; // KHR_materials_ior
+    // KHR_materials_volume: rgb = attenuation colour, w = attenuation distance
+    // (0 = no attenuation; the spec default of +inf is stored as 0).
+    glm::vec4     attenuation{1.0F, 1.0F, 1.0F, 0.0F};
+    float         thickness = 0.0F;           // KHR_materials_volume thicknessFactor
+    glm::vec3     pad{0.0F, 0.0F, 0.0F};
 };
-static_assert(sizeof(PbrMaterialParams) == 64,
-              "PbrMaterialParams must stay 64 bytes and std140-compatible to "
+static_assert(sizeof(PbrMaterialParams) == 96,
+              "PbrMaterialParams must stay 96 bytes and std140-compatible to "
               "match material.slang");
 
 // The (optional) textures a material samples. A slot is a null handle when the
@@ -56,6 +64,7 @@ struct MaterialTextures {
     AssetHandle<TextureAsset> metallic_roughness;
     AssetHandle<TextureAsset> emissive;
     AssetHandle<TextureAsset> occlusion;
+    AssetHandle<TextureAsset> thickness; // KHR_materials_volume (linear, G channel)
 };
 
 // Move-only: owns the parameter uniform buffer. Texture handles are ref-counted

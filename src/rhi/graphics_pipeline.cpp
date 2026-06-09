@@ -144,11 +144,11 @@ GraphicsPipeline::create(const Device& device, VkPipelineCache cache, const Crea
     color_blend.attachmentCount = static_cast<std::uint32_t>(blend_attachments.size());
     color_blend.pAttachments = blend_attachments.data();
 
-    const std::array<VkDynamicState, 2> dynamic_states{
-        VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
+    std::array<VkDynamicState, 3> dynamic_states{
+        VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR, VK_DYNAMIC_STATE_CULL_MODE};
     VkPipelineDynamicStateCreateInfo dynamic_state{};
     dynamic_state.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
-    dynamic_state.dynamicStateCount = static_cast<std::uint32_t>(dynamic_states.size());
+    dynamic_state.dynamicStateCount = info.dynamic_cull_mode ? 3u : 2u;
     dynamic_state.pDynamicStates = dynamic_states.data();
 
     // ---- Dynamic rendering: declare attachment formats (no VkRenderPass) ----

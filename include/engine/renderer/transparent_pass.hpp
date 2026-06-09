@@ -1,11 +1,18 @@
 #pragma once
 
-// TransparentPass — forward alpha-blended pass (Phase 7, Slice 7.4).
+// TransparentPass — forward pass for alpha-blended and transmissive geometry
+// (Phase 7, Slices 7.4/7.5/7.7).
 //
-// Renders alpha-blended draw items over the deferred HDR result (transparent.slang),
-// depth-tested against the opaque GBuffer depth without writing depth, blended
-// SRC_ALPHA / ONE_MINUS_SRC_ALPHA. Forward-shades with one directional light +
-// ambient via the shared PBR module. Draws should be supplied back-to-front.
+// Two pipelines over the deferred HDR result (transparent.slang):
+//  - Blend: glTF BLEND materials, depth-tested read-only, SRC_ALPHA blending,
+//    two-sided. Draws should be supplied back-to-front.
+//  - Transmission: KHR_materials_transmission glass. Per the glTF spec this is
+//    NOT alpha blending — surfaces write depth, are back-face culled (unless the
+//    material is doubleSided; cull mode is dynamic state) and replace the pixel
+//    with refracted scene colour + reflection. The pass snapshots the opaque HDR
+//    into a private mip chain so rough transmission can sample a blurred
+//    background (mip = f(roughness, ior)), and binds the IBL maps so glass picks
+//    up environment reflections.
 
 #include <cstdint>
 #include <expected>
@@ -19,6 +26,7 @@
 #include "engine/asset/material_asset.hpp"
 #include "engine/asset/texture_asset.hpp"
 #include "engine/core/error.hpp"
+#include "engine/renderer/ibl_pass.hpp"
 #include "engine/renderer/lighting_pass.hpp"
 #include "engine/renderer/mesh_pass.hpp"
 #include "engine/rhi/descriptor_buffer.hpp"
@@ -56,16 +64,26 @@ public:
     TransparentPass(const TransparentPass&) = delete;
     TransparentPass& operator=(const TransparentPass&) = delete;
 
-    // Blend `draws` into `hdr`, depth-tested against `depth` (the opaque GBuffer
-    // depth). No-op (but still valid) when there are no transparent draws.
+    // Render `draws` into `hdr`, depth-tested against `depth` (the opaque GBuffer
+    // depth; transmissive draws also write it). `ibl` supplies the environment
+    // maps glass reflects — a black fallback is bound when null/invalid. No-op
+    // (but still valid) when there are no transparent draws.
     [[nodiscard]] std::expected<void, core::Error>
     add_to_graph(rhi::RenderGraph& graph, rhi::ResourceHandle hdr, rhi::ResourceHandle depth,
                  VkExtent2D extent, const glm::mat4& view_proj, const DirectionalLightParams& light,
-                 const glm::vec3& camera_pos, std::span<const DrawItem> draws);
+                 const glm::vec3& camera_pos, std::span<const DrawItem> draws,
+                 const IblMaps* ibl = nullptr);
 
 private:
+    // Mip levels of the scene-colour snapshot — how far rough transmission can
+    // blur. Must cover the LOD range transparent.slang computes from roughness.
+    static constexpr std::uint32_t kSceneColorMips = 6;
+
     [[nodiscard]] VkImageView texture_view_or_fallback(
         const asset::AssetHandle<asset::TextureAsset>& handle) const;
+
+    // (Re)creates the persistent mipped scene-colour image on extent change.
+    [[nodiscard]] std::expected<void, core::Error> ensure_scene_color(VkExtent2D extent);
 
     struct FrameDraw {
         VkBuffer                        vertex_buffer = VK_NULL_HANDLE;
@@ -73,6 +91,8 @@ private:
         std::span<const asset::SubMesh> submeshes{};
         glm::mat4                       model{1.0F};
         std::uint32_t                   descriptor_index = 0;
+        bool                            transmissive = false;
+        VkCullModeFlags                 cull_mode = VK_CULL_MODE_NONE;
     };
 
     const rhi::Device* device_    = nullptr;
@@ -80,11 +100,19 @@ private:
 
     rhi::DescriptorBufferFunctions db_fns_{};
     rhi::DescriptorSetLayout       material_layout_;
-    rhi::GraphicsPipeline          pipeline_;
+    rhi::GraphicsPipeline          blend_pipeline_;        // alpha blend, no depth write
+    rhi::GraphicsPipeline          transmission_pipeline_; // depth write, dynamic cull
     rhi::Sampler                   sampler_;
-    rhi::Sampler                   scene_sampler_; // samples the copied scene colour
+    rhi::Sampler                   scene_sampler_; // samples the scene-colour mip chain
     asset::TextureAsset            fallback_texture_;
     asset::MaterialAsset           default_material_;
+    IblMaps                        fallback_ibl_;
+
+    // Persistent scene-colour snapshot with a blurred mip chain (rough glass).
+    rhi::GpuImage  scene_color_;
+    rhi::ImageView scene_color_view_;
+    VkExtent2D     scene_color_extent_{0, 0};
+    std::uint32_t  scene_color_mips_ = 0;
 
     std::vector<rhi::DescriptorBuffer> frame_descriptors_;
     std::vector<FrameDraw>             frame_draws_;

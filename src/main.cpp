@@ -912,8 +912,8 @@ run_glass_self_test(const engine::rhi::Device& device, engine::rhi::GpuAllocator
     auto white = asset::upload_material(white_params, asset::MaterialTextures{}, allocator, transfer);
     asset::PbrMaterialParams glass_params;
     glass_params.base_color_factor = {0.1F, 0.25F, 1.0F, 1.0F}; // blue tint
-    glass_params.emissive_factor = {0.0F, 0.0F, 0.0F, 1.0F};    // w = transmission
-    glass_params.roughness_factor = 0.8F;                       // damp specular
+    glass_params.transmission_factor = 1.0F;
+    glass_params.roughness_factor = 0.8F; // damp specular
     glass_params.flags = asset::material_transmission;
     auto glass = asset::upload_material(glass_params, asset::MaterialTextures{}, allocator, transfer);
     if (!white || !glass) return std::unexpected((!white ? white : glass).error());
@@ -1732,7 +1732,7 @@ int main() {
                 "demo/glass_mat", [&](const std::filesystem::path&) {
                     engine::asset::PbrMaterialParams p;
                     p.base_color_factor = {0.75F, 0.88F, 1.0F, 1.0F}; // light blue tint
-                    p.emissive_factor = {0.0F, 0.0F, 0.0F, 1.0F};     // w = transmission factor
+                    p.transmission_factor = 1.0F;
                     p.metallic_factor = 0.0F;
                     p.roughness_factor = 0.05F; // clear glass
                     p.flags = engine::asset::material_transmission;
@@ -1821,9 +1821,10 @@ int main() {
                     p.base_color_factor = color;
                     p.metallic_factor = metal;
                     p.roughness_factor = rough;
-                    p.emissive_factor = glm::vec4(emissive, (flags & engine::asset::material_transmission)
-                                                                ? 1.0F
-                                                                : 0.0F);
+                    p.emissive_factor = glm::vec4(emissive, 0.0F);
+                    if ((flags & engine::asset::material_transmission) != 0) {
+                        p.transmission_factor = 1.0F;
+                    }
                     p.flags = flags;
                     return engine::asset::upload_material(p, engine::asset::MaterialTextures{},
                                                           allocator, setup_transfer);
@@ -2050,6 +2051,11 @@ int main() {
     if (const char* env = std::getenv("QUAT_MAX_FRAMES"); env != nullptr) {
         max_frames = std::strtoull(env, nullptr, 10);
     }
+    // QUAT_SCREENSHOT, combined with QUAT_MAX_FRAMES, writes the final presented
+    // frame to the given path as binary PPM — headless visual verification.
+    const char* screenshot_path = std::getenv("QUAT_SCREENSHOT");
+    engine::rhi::GpuBuffer screenshot_buffer;
+    bool screenshot_recorded = false;
 
     std::uint64_t presented = 0;
     std::uint32_t frame = 0;
@@ -2321,6 +2327,16 @@ int main() {
                       return da > db;
                   });
 
+        // Shadow casters: all opaques plus transmissive glass (solid surfaces —
+        // they block the sun like opaque geometry; alpha-blended items do not cast).
+        std::vector<engine::renderer::DrawItem> shadow_draws = draws;
+        for (const engine::renderer::DrawItem& d : transparent_draws) {
+            if (d.material != nullptr &&
+                (d.material->params.flags & engine::asset::material_transmission) != 0) {
+                shadow_draws.push_back(d);
+            }
+        }
+
         // Directional shadow: an orthographic light view fit to a fixed box
         // around the scene (the demos all sit near the origin).
         const glm::vec3 sun_dir = -glm::normalize(glm::vec3(light.direction)); // travel direction
@@ -2334,7 +2350,7 @@ int main() {
         const glm::mat4 light_view_proj = shadow_proj * shadow_view;
 
         engine::rhi::RenderGraph graph(fr.pool);
-        auto shadow = fr.shadow.add_to_graph(graph, light_view_proj, draws);
+        auto shadow = fr.shadow.add_to_graph(graph, light_view_proj, shadow_draws);
         if (!shadow) {
             std::fprintf(stderr, "[fatal] shadow pass: %s\n", shadow.error().message.c_str());
             break;
@@ -2356,7 +2372,7 @@ int main() {
         if (!transparent_draws.empty()) {
             if (auto r = fr.transparent.add_to_graph(graph, *hdr, gbuffer->depth, draw_extent,
                                                      jittered_vp, light, cam.position,
-                                                     transparent_draws);
+                                                     transparent_draws, &ibl_maps);
                 !r) {
                 std::fprintf(stderr, "[fatal] transparent pass: %s\n", r.error().message.c_str());
                 break;
@@ -2412,6 +2428,59 @@ int main() {
         }
         graph.execute(cmd);
 
+        // Screenshot capture on the final frame: the graph leaves the swapchain
+        // image in PRESENT_SRC — round-trip it through TRANSFER_SRC and copy to
+        // a host-visible buffer, written out as PPM after the queue idles.
+        screenshot_recorded = false;
+        if (screenshot_path != nullptr && max_frames != 0 && presented + 1 >= max_frames) {
+            const VkDeviceSize shot_bytes =
+                static_cast<VkDeviceSize>(draw_extent.width) * draw_extent.height * 4;
+            if (screenshot_buffer.handle() == VK_NULL_HANDLE) {
+                auto buf = allocator.create_buffer(shot_bytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+                                                   VMA_MEMORY_USAGE_AUTO,
+                                                   VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT |
+                                                       VMA_ALLOCATION_CREATE_MAPPED_BIT);
+                if (buf) screenshot_buffer = std::move(*buf);
+            }
+            if (screenshot_buffer.handle() != VK_NULL_HANDLE) {
+                const VkImage shot_image = swapchain.images()[image_index];
+                VkImageMemoryBarrier2 to_src{};
+                to_src.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2;
+                to_src.srcStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
+                to_src.srcAccessMask = VK_ACCESS_2_MEMORY_WRITE_BIT;
+                to_src.dstStageMask = VK_PIPELINE_STAGE_2_COPY_BIT;
+                to_src.dstAccessMask = VK_ACCESS_2_TRANSFER_READ_BIT;
+                to_src.oldLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+                to_src.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+                to_src.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+                to_src.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+                to_src.image = shot_image;
+                to_src.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+                VkDependencyInfo dep{};
+                dep.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO;
+                dep.imageMemoryBarrierCount = 1;
+                dep.pImageMemoryBarriers = &to_src;
+                vkCmdPipelineBarrier2(cmd, &dep);
+
+                VkBufferImageCopy region{};
+                region.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+                region.imageExtent = {draw_extent.width, draw_extent.height, 1};
+                vkCmdCopyImageToBuffer(cmd, shot_image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                                       screenshot_buffer.handle(), 1, &region);
+
+                VkImageMemoryBarrier2 to_present = to_src;
+                to_present.srcStageMask = VK_PIPELINE_STAGE_2_COPY_BIT;
+                to_present.srcAccessMask = VK_ACCESS_2_TRANSFER_READ_BIT;
+                to_present.dstStageMask = VK_PIPELINE_STAGE_2_NONE;
+                to_present.dstAccessMask = 0;
+                to_present.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+                to_present.newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+                dep.pImageMemoryBarriers = &to_present;
+                vkCmdPipelineBarrier2(cmd, &dep);
+                screenshot_recorded = true;
+            }
+        }
+
         vkEndCommandBuffer(cmd);
 
         VkSemaphoreSubmitInfo wait{};
@@ -2453,6 +2522,31 @@ int main() {
             std::fprintf(stderr, "[fatal] vkQueuePresentKHR failed (%d)\n",
                          static_cast<int>(present_result));
             break;
+        }
+
+        if (screenshot_recorded) {
+            vkQueueWaitIdle(device.graphics_queue());
+            const bool bgra = swapchain.format() == VK_FORMAT_B8G8R8A8_SRGB ||
+                              swapchain.format() == VK_FORMAT_B8G8R8A8_UNORM;
+            if (FILE* f = std::fopen(screenshot_path, "wb")) {
+                std::fprintf(f, "P6\n%u %u\n255\n", draw_extent.width, draw_extent.height);
+                const auto* px = static_cast<const std::uint8_t*>(screenshot_buffer.mapped());
+                std::vector<std::uint8_t> row(static_cast<std::size_t>(draw_extent.width) * 3);
+                for (std::uint32_t y = 0; y < draw_extent.height; ++y) {
+                    for (std::uint32_t x = 0; x < draw_extent.width; ++x) {
+                        const std::uint8_t* p =
+                            px + (static_cast<std::size_t>(y) * draw_extent.width + x) * 4;
+                        row[x * 3 + 0] = bgra ? p[2] : p[0];
+                        row[x * 3 + 1] = p[1];
+                        row[x * 3 + 2] = bgra ? p[0] : p[2];
+                    }
+                    std::fwrite(row.data(), 1, row.size(), f);
+                }
+                std::fclose(f);
+                std::fprintf(stderr, "[screenshot] wrote %s\n", screenshot_path);
+            } else {
+                std::fprintf(stderr, "[screenshot] could not open %s\n", screenshot_path);
+            }
         }
 
         frame = (frame + 1) % k_frames_in_flight;

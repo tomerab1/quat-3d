@@ -45,7 +45,7 @@ run_material_asset_self_test(rhi::GpuAllocator& allocator, const rhi::TransferCo
         return fail("material self-test: asset not valid (buffer/address)");
     }
     if (material->param_buffer.size() != sizeof(PbrMaterialParams)) {
-        return fail("material self-test: param buffer is not 64 bytes");
+        return fail("material self-test: param buffer size mismatch");
     }
     if (material->params.flags != (material_has_base_color | material_has_metallic_roughness)) {
         return fail("material self-test: flags were not preserved");

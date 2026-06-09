@@ -274,6 +274,22 @@ Goal: directional shadow maps, point lights, basic sky, transparent & glass mate
   environment) and visually on DamagedHelmet (reflective visor + chrome).
   *Commit: `[Phase7/Slice6] image-based lighting`*
 
+- [x] **7.7 — Physically-based transmission overhaul**
+  Rework 7.5 to match the glTF spec / sample-viewer reference instead of approximating
+  transmission with alpha blending. Transmissive surfaces get their own pipeline: depth-write
+  on, opaque blend state, per-draw culling via `VK_DYNAMIC_STATE_CULL_MODE` (honouring glTF
+  `doubleSided`, parsed in the loader) — eliminating the self-overdraw speckles. The shader
+  composites the background itself: view ray refracted by the real IOR (`KHR_materials_ior`,
+  dielectric f0 derived from it), walked through the volume thickness (`thicknessFactor` ×
+  `thicknessTexture.g`, node-scale aware) and the exit point projected back to screen space;
+  the opaque scene colour is sampled from a blit-downsampled mip chain (LOD from roughness ×
+  IOR, per sample viewer) and tinted by Beer-Lambert attenuation (`KHR_materials_volume`
+  attenuation colour/distance). Glass also receives split-sum IBL reflection + sun specular,
+  and transmissive meshes now cast shadows. Swapchain gains TRANSFER_SRC + a `QUAT_SCREENSHOT`
+  PPM dump for headless visual verification. Verified on `DragonAttenuation` (amber dragon
+  matches reference) and the showcase scene.
+  *Commit: `[Phase7/Slice7] physically-based transmission: volume, IOR, rough refraction, glass shadows`*
+
 ---
 
 ## Phase 8 — Post-Processing

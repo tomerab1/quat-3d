@@ -79,8 +79,10 @@ std::expected<void, core::Error> Swapchain::build(VkExtent2D window_extent) {
     info.imageColorSpace = surface_format.colorSpace;
     info.imageExtent = extent;
     info.imageArrayLayers = 1;
-    // COLOR_ATTACHMENT for future render passes, TRANSFER_DST for the clear-to-black.
-    info.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+    // COLOR_ATTACHMENT for render passes, TRANSFER_DST for the TAA resolve copy,
+    // TRANSFER_SRC for headless screenshot capture (QUAT_SCREENSHOT).
+    info.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT |
+                      VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
     info.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
     info.preTransform = caps.currentTransform;
     info.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;

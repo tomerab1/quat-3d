@@ -38,6 +38,10 @@ public:
         bool                      alpha_blend = false; // SRC_ALPHA / ONE_MINUS_SRC_ALPHA
         VkCullModeFlags           cull_mode  = VK_CULL_MODE_NONE;
         VkFrontFace               front_face = VK_FRONT_FACE_COUNTER_CLOCKWISE;
+        // When true the cull mode is a dynamic state (vkCmdSetCullMode, core in
+        // Vulkan 1.3) and `cull_mode` is ignored — the pass must set it before
+        // drawing (e.g. per-material doubleSided).
+        bool                      dynamic_cull_mode = false;
 
         // Vertex input. Empty (the default) makes a vertex-buffer-less pipeline
         // that draws from SV_VertexID, as the hard-coded triangle does.

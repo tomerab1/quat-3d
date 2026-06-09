@@ -19,7 +19,7 @@ static const uint MATERIAL_HAS_EMISSIVE           = 1u << 3;
 static const uint MATERIAL_HAS_OCCLUSION          = 1u << 4;
 
 // Scalar material parameters. Layout mirrors engine::asset::PbrMaterialParams
-// (std140, 64 bytes) exactly — keep the two definitions in sync.
+// (std140, 96 bytes) exactly — keep the two definitions in sync.
 public struct PbrMaterialParams {
     public float4 base_color_factor;
     public float4 emissive_factor;     // xyz used; w is padding
@@ -29,7 +29,11 @@ public struct PbrMaterialParams {
     public float  normal_scale;
     public float  alpha_cutoff;
     public uint   flags;
-    public float2 pad;
+    public float  transmission_factor; // KHR_materials_transmission
+    public float  ior;                 // KHR_materials_ior
+    public float4 attenuation;         // rgb = attenuation colour, w = distance (0 = none)
+    public float  thickness;           // KHR_materials_volume thicknessFactor
+    public float3 pad;
 }
 
 // Surface attributes produced at a shading point, consumed by the GBuffer pass.

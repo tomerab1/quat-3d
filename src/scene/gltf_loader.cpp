@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstring>
 #include <functional>
 #include <limits>
@@ -577,11 +578,24 @@ template <typename OptTextureInfo>
         if (md.emissive_image != no_texture) flags |= asset::material_has_emissive;
         if (md.occlusion_image != no_texture) flags |= asset::material_has_occlusion;
         if (mat.alphaMode == fastgltf::AlphaMode::Blend) flags |= asset::material_blend;
-        // KHR_materials_transmission → see-through glass; stash the factor in
-        // emissive_factor.w (the transparent pass reads it there).
+        if (mat.doubleSided) flags |= asset::material_double_sided;
+        // KHR_materials_transmission → see-through glass.
         if (mat.transmission != nullptr && mat.transmission->transmissionFactor > 0.0F) {
             flags |= asset::material_transmission;
-            p.emissive_factor.w = mat.transmission->transmissionFactor;
+            p.transmission_factor = mat.transmission->transmissionFactor;
+        }
+        // KHR_materials_ior (defaults to 1.5 when the extension is absent).
+        p.ior = mat.ior;
+        // KHR_materials_volume → Beer-Lambert attenuation through the medium.
+        // The spec default attenuationDistance is +inf (no attenuation); store
+        // that as 0 so the shader can branch on `attenuation.w > 0`.
+        if (mat.volume != nullptr) {
+            const auto& ac = mat.volume->attenuationColor;
+            const float ad = mat.volume->attenuationDistance;
+            p.attenuation = {ac[0], ac[1], ac[2], std::isfinite(ad) ? ad : 0.0F};
+            p.thickness = mat.volume->thicknessFactor;
+            md.thickness_image = image_of(asset, mat.volume->thicknessTexture);
+            if (md.thickness_image != no_texture) flags |= asset::material_has_thickness;
         }
         p.flags = flags;
 
@@ -870,6 +884,7 @@ assemble_scene(const fastgltf::Asset& a, const std::string& key_prefix,
         textures.metallic_roughness = tex_or_null(md.metallic_roughness_image);
         textures.emissive = tex_or_null(md.emissive_image);
         textures.occlusion = tex_or_null(md.occlusion_image);
+        textures.thickness = tex_or_null(md.thickness_image);
         const std::string k = key_prefix + "#mat" + std::to_string(i);
         mat_handles[i] = assets.load<asset::MaterialAsset>(
             k, [&](const std::filesystem::path&) {

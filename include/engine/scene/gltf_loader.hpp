@@ -67,6 +67,7 @@ struct MaterialData {
     std::size_t metallic_roughness_image = no_texture;
     std::size_t emissive_image           = no_texture;
     std::size_t occlusion_image          = no_texture;
+    std::size_t thickness_image          = no_texture; // KHR_materials_volume
 };
 
 class GltfLoader {
