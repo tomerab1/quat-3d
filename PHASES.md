@@ -280,7 +280,7 @@ Goal: directional shadow maps, point lights, basic sky, transparent & glass mate
 
 Goal: TAA, bloom, exposure, final image looks polished.
 
-- [ ] **8.1 — Temporal Anti-Aliasing**
+- [x] **8.1 — Temporal Anti-Aliasing**
   Jitter camera per frame (Halton sequence). `assets/shaders/taa.slang`:
   reproject previous frame, history blend, neighbourhood clamp.
   *Commit: `[Phase8/Slice1] temporal anti-aliasing`*

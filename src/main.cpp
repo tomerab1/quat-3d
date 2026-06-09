@@ -39,6 +39,7 @@
 #include "engine/renderer/exposure_pass.hpp"
 #include "engine/renderer/ibl_pass.hpp"
 #include "engine/renderer/lighting_pass.hpp"
+#include "engine/renderer/taa_pass.hpp"
 #include "engine/renderer/mesh_pass.hpp"
 #include "engine/renderer/shadow_pass.hpp"
 #include "engine/renderer/skinning_pass.hpp"
@@ -249,6 +250,7 @@ struct DeferredFrame {
     engine::renderer::TransparentPass transparent;
     engine::renderer::BloomPass      bloom;
     engine::renderer::ExposurePass   exposure;
+    engine::renderer::TaaPass        taa;
     engine::rhi::TransientImagePool  pool;
     // Skinning resources, lazily created per skinned entity (keyed by entity).
     std::unordered_map<entt::entity, SkinnedEntityGpu> skin_gpu;
@@ -1331,6 +1333,14 @@ int main() {
                         std::fprintf(stderr, "[selftest] exposure FAILED: %s\n",
                                      r.error().message.c_str());
                     }
+                    if (auto r = engine::renderer::run_taa_self_test(device, allocator, *mesh_cache,
+                                                                     shader_dir);
+                        r) {
+                        std::fprintf(stderr, "[selftest] TAA OK (clamp rejects ghosting)\n");
+                    } else {
+                        std::fprintf(stderr, "[selftest] TAA FAILED: %s\n",
+                                     r.error().message.c_str());
+                    }
                     if (auto r = engine::renderer::run_tonemap_pass_self_test(
                             device, allocator, *mesh_cache, transfer, shader_dir);
                         r) {
@@ -1540,6 +1550,18 @@ int main() {
 
     const std::string shader_dir = QUAT_COOKED_SHADER_DIR;
     const VkFormat swap_format = swapchain.format();
+    // The swapchain is usually sRGB, which cannot be a storage image (TAA writes
+    // one) and would double-encode if the tonemap shader's explicit sRGB output
+    // were hardware-encoded again. So tonemap + post-process work in the matching
+    // UNORM format (the shader does the sRGB encode), then a size-compatible copy
+    // moves the bits into the sRGB swapchain.
+    const VkFormat ldr_format = [swap_format] {
+        switch (swap_format) {
+            case VK_FORMAT_B8G8R8A8_SRGB: return VK_FORMAT_B8G8R8A8_UNORM;
+            case VK_FORMAT_R8G8B8A8_SRGB: return VK_FORMAT_R8G8B8A8_UNORM;
+            default: return swap_format;
+        }
+    }();
 
     // One-time transfer context for setup uploads (demo mesh/material + each
     // pass's fallback resources). Destroyed once setup completes.
@@ -1564,7 +1586,7 @@ int main() {
         auto light = engine::renderer::LightingPass::create(device, allocator, *pipeline_cache,
                                                             shader_dir);
         auto tone = engine::renderer::TonemapPass::create(device, allocator, *pipeline_cache,
-                                                          shader_dir, swap_format);
+                                                          shader_dir, ldr_format);
         auto skin = engine::renderer::SkinningPass::create(device, allocator, *pipeline_cache,
                                                            shader_dir);
         auto shadow = engine::renderer::ShadowPass::create(device, *pipeline_cache, shader_dir);
@@ -1574,7 +1596,9 @@ int main() {
                                                          shader_dir);
         auto expo = engine::renderer::ExposurePass::create(device, allocator, *pipeline_cache,
                                                            shader_dir);
-        if (!mesh || !light || !tone || !skin || !shadow || !transp || !bloom || !expo) {
+        auto taa = engine::renderer::TaaPass::create(device, allocator, *pipeline_cache, shader_dir,
+                                                     ldr_format);
+        if (!mesh || !light || !tone || !skin || !shadow || !transp || !bloom || !expo || !taa) {
             frames_ok = false;
             std::fprintf(stderr, "[fatal] deferred pass creation failed: %s\n",
                          (!mesh    ? mesh.error()
@@ -1584,7 +1608,8 @@ int main() {
                           : !shadow ? shadow.error()
                           : !transp ? transp.error()
                           : !bloom  ? bloom.error()
-                                    : expo.error())
+                          : !expo   ? expo.error()
+                                    : taa.error())
                              .message.c_str());
             break;
         }
@@ -1596,6 +1621,7 @@ int main() {
         f.transparent = std::move(*transp);
         f.bloom = std::move(*bloom);
         f.exposure = std::move(*expo);
+        f.taa = std::move(*taa);
         f.pool = engine::rhi::TransientImagePool(device, allocator);
     }
 
@@ -2031,6 +2057,8 @@ int main() {
     bool needs_recreate = false;
     bool looking = false; // right mouse button held -> mouse-look active
     std::uint64_t last_ticks = SDL_GetTicksNS();
+    glm::mat4 prev_jittered_vp(1.0F); // previous frame's jittered view-proj, for TAA
+    bool taa_history_valid = false;
 
     while (running) {
         // Per-frame accumulated mouse-look delta.
@@ -2202,6 +2230,17 @@ int main() {
         const engine::scene::CameraMatrices cam =
             engine::scene::camera_system(scene.registry(), aspect);
 
+        // TAA: jitter the projection sub-pixel each frame (Halton). The whole
+        // frame renders with the jittered view-proj; the resolve reprojects and
+        // accumulates, and prev_jittered_vp drives the reprojection.
+        const glm::vec2 jitter =
+            engine::renderer::taa_jitter(presented, draw_extent.width, draw_extent.height);
+        glm::mat4 jitter_mat(1.0F);
+        jitter_mat[3][0] = jitter.x;
+        jitter_mat[3][1] = jitter.y;
+        const glm::mat4 jittered_vp = jitter_mat * cam.view_proj;
+        const glm::mat4 jittered_inv_vp = glm::inverse(jittered_vp);
+
         engine::renderer::DirectionalLightParams light;
         const auto light_view = scene.registry().view<const engine::scene::DirectionalLight>();
         for (const entt::entity e : light_view) {
@@ -2300,15 +2339,14 @@ int main() {
             std::fprintf(stderr, "[fatal] shadow pass: %s\n", shadow.error().message.c_str());
             break;
         }
-        auto gbuffer = fr.mesh.add_to_graph(graph, draw_extent, cam.view_proj, draws);
+        auto gbuffer = fr.mesh.add_to_graph(graph, draw_extent, jittered_vp, draws);
         if (!gbuffer) {
             std::fprintf(stderr, "[fatal] gbuffer pass: %s\n", gbuffer.error().message.c_str());
             break;
         }
-        auto hdr = fr.lighting.add_to_graph(graph, *gbuffer, draw_extent, light,
-                                            glm::inverse(cam.view_proj), cam.position, *shadow,
-                                            light_view_proj, point_lights, /*enable_sky=*/true,
-                                            &ibl_maps);
+        auto hdr = fr.lighting.add_to_graph(graph, *gbuffer, draw_extent, light, jittered_inv_vp,
+                                            cam.position, *shadow, light_view_proj, point_lights,
+                                            /*enable_sky=*/true, &ibl_maps);
         if (!hdr) {
             std::fprintf(stderr, "[fatal] lighting pass: %s\n", hdr.error().message.c_str());
             break;
@@ -2317,7 +2355,7 @@ int main() {
         // against the opaque GBuffer depth.
         if (!transparent_draws.empty()) {
             if (auto r = fr.transparent.add_to_graph(graph, *hdr, gbuffer->depth, draw_extent,
-                                                     cam.view_proj, light, cam.position,
+                                                     jittered_vp, light, cam.position,
                                                      transparent_draws);
                 !r) {
                 std::fprintf(stderr, "[fatal] transparent pass: %s\n", r.error().message.c_str());
@@ -2339,12 +2377,26 @@ int main() {
             "swapchain", swapchain.images()[image_index], swapchain.image_views()[image_index],
             swapchain.format(), draw_extent, VK_IMAGE_LAYOUT_UNDEFINED,
             VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
-        if (auto r = fr.tonemap.add_to_graph(graph, *hdr, backbuffer, draw_extent,
+        // Tonemap to an intermediate LDR image; TAA resolves it into the swapchain.
+        const engine::rhi::ResourceHandle ldr_current = graph.create_transient_image(
+            "ldr_current", ldr_format, draw_extent,
+            VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT);
+        if (auto r = fr.tonemap.add_to_graph(graph, *hdr, ldr_current, draw_extent,
                                              fr.exposure.exposure_buffer_address());
             !r) {
             std::fprintf(stderr, "[fatal] tonemap pass: %s\n", r.error().message.c_str());
             break;
         }
+        // Temporal anti-aliasing: resolve the jittered frame against history.
+        if (auto r = fr.taa.add_to_graph(graph, ldr_current, gbuffer->depth, backbuffer, draw_extent,
+                                         jittered_inv_vp, prev_jittered_vp, presented,
+                                         taa_history_valid);
+            !r) {
+            std::fprintf(stderr, "[fatal] taa pass: %s\n", r.error().message.c_str());
+            break;
+        }
+        prev_jittered_vp = jittered_vp;
+        taa_history_valid = true;
         if (auto compiled = graph.compile(); !compiled) {
             std::fprintf(stderr, "[fatal] render graph compile failed: %s\n",
                          compiled.error().message.c_str());
