@@ -6,6 +6,7 @@
 // triangle from mesh.slang. The graph inserts the layout barriers and the
 // trailing transition to PRESENT_SRC. Two frames in flight.
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstdint>
@@ -38,6 +39,7 @@
 #include "engine/renderer/shadow_pass.hpp"
 #include "engine/renderer/skinning_pass.hpp"
 #include "engine/renderer/tonemap_pass.hpp"
+#include "engine/renderer/transparent_pass.hpp"
 #include "engine/rhi/descriptor_buffer.hpp"
 #include "engine/scene/components.hpp"
 #include "engine/scene/gltf_loader.hpp"
@@ -240,6 +242,7 @@ struct DeferredFrame {
     engine::renderer::TonemapPass    tonemap;
     engine::renderer::SkinningPass   skinning;
     engine::renderer::ShadowPass     shadow;
+    engine::renderer::TransparentPass transparent;
     engine::rhi::TransientImagePool  pool;
     // Skinning resources, lazily created per skinned entity (keyed by entity).
     std::unordered_map<entt::entity, SkinnedEntityGpu> skin_gpu;
@@ -685,6 +688,161 @@ run_shadow_self_test(const engine::rhi::Device& device, engine::rhi::GpuAllocato
     return {};
 }
 
+// Renders an opaque red wall with a half-transparent blue panel in front and
+// verifies the panel pixel is a blend (both red showing through and blue added),
+// while a pixel off the panel stays red — proving alpha blending works.
+std::expected<void, engine::core::Error>
+run_transparent_self_test(const engine::rhi::Device& device, engine::rhi::GpuAllocator& allocator,
+                          engine::rhi::PipelineCache& cache,
+                          const engine::rhi::TransferContext& transfer,
+                          const std::string& shader_dir) {
+    using namespace engine;
+    constexpr VkExtent2D extent{128, 128};
+    constexpr VkFormat ldr_format = VK_FORMAT_R8G8B8A8_UNORM;
+    constexpr VkDeviceSize bytes = static_cast<VkDeviceSize>(extent.width) * extent.height * 4;
+
+    auto wall = scene::upload_mesh(make_box_data(glm::vec3(3.0F, 3.0F, 0.2F)), allocator, transfer);
+    auto panel = scene::upload_mesh(make_box_data(glm::vec3(1.0F, 1.0F, 0.05F)), allocator, transfer);
+    if (!wall || !panel) return std::unexpected((!wall ? wall : panel).error());
+
+    asset::PbrMaterialParams red_params;
+    red_params.base_color_factor = {0.9F, 0.1F, 0.1F, 1.0F};
+    red_params.roughness_factor = 0.9F;
+    auto red = asset::upload_material(red_params, asset::MaterialTextures{}, allocator, transfer);
+    asset::PbrMaterialParams blue_params;
+    blue_params.base_color_factor = {0.1F, 0.2F, 0.95F, 0.5F};
+    blue_params.roughness_factor = 0.5F;
+    blue_params.flags = asset::material_blend;
+    auto blue = asset::upload_material(blue_params, asset::MaterialTextures{}, allocator, transfer);
+    if (!red || !blue) return std::unexpected((!red ? red : blue).error());
+
+    auto mesh_pass = renderer::MeshPass::create(device, allocator, cache, transfer, shader_dir);
+    auto lighting = renderer::LightingPass::create(device, allocator, cache, shader_dir);
+    auto transparent =
+        renderer::TransparentPass::create(device, allocator, cache, transfer, shader_dir);
+    auto tonemap = renderer::TonemapPass::create(device, allocator, cache, shader_dir, ldr_format);
+    if (!mesh_pass || !lighting || !transparent || !tonemap) {
+        return std::unexpected(core::Error{"transparent self-test: pass creation failed"});
+    }
+
+    const glm::vec3 eye(0.0F, 0.0F, 3.5F);
+    glm::mat4 proj = glm::perspective(glm::radians(45.0F), 1.0F, 0.1F, 100.0F);
+    proj[1][1] *= -1.0F;
+    const glm::mat4 view_proj = proj * glm::lookAt(eye, glm::vec3(0.0F), glm::vec3(0.0F, 1.0F, 0.0F));
+
+    renderer::DirectionalLightParams light;
+    light.direction = {0.0F, 0.0F, 1.0F, 0.0F};
+    light.color = {1.0F, 1.0F, 1.0F, 3.0F};
+    light.ambient = {0.1F, 0.1F, 0.1F, 0.0F};
+
+    const renderer::DrawItem wall_item{&*wall, &*red,
+                                       glm::translate(glm::mat4(1.0F), glm::vec3(0.0F, 0.0F, -1.0F))};
+    const renderer::DrawItem panel_item{&*panel, &*blue, glm::mat4(1.0F)};
+
+    auto readback = allocator.create_buffer(
+        bytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT, VMA_MEMORY_USAGE_AUTO,
+        VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT);
+    if (!readback) return std::unexpected(readback.error());
+    const VkBuffer readback_buffer = readback->handle();
+
+    rhi::TransientImagePool pool(device, allocator);
+    rhi::RenderGraph graph(pool);
+    auto gbuffer = mesh_pass->add_to_graph(graph, extent, view_proj, {&wall_item, 1});
+    if (!gbuffer) return std::unexpected(gbuffer.error());
+    auto hdr = lighting->add_to_graph(graph, *gbuffer, extent, light, glm::inverse(view_proj), eye,
+                                      rhi::ResourceHandle{}, glm::mat4(1.0F));
+    if (!hdr) return std::unexpected(hdr.error());
+    if (auto r = transparent->add_to_graph(graph, *hdr, gbuffer->depth, extent, view_proj, light,
+                                           eye, {&panel_item, 1});
+        !r) {
+        return std::unexpected(r.error());
+    }
+    const rhi::ResourceHandle ldr = graph.create_transient_image(
+        "t_ldr", ldr_format, extent,
+        VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT);
+    if (auto r = tonemap->add_to_graph(graph, *hdr, ldr, extent); !r) {
+        return std::unexpected(r.error());
+    }
+    if (auto c = graph.compile(); !c) return std::unexpected(c.error());
+    const VkImage ldr_image = graph.binding(ldr).image;
+
+    VkCommandPool cmd_pool = VK_NULL_HANDLE;
+    VkCommandPoolCreateInfo pi{};
+    pi.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+    pi.flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT;
+    pi.queueFamilyIndex = device.queue_families().graphics;
+    vkCreateCommandPool(device.handle(), &pi, nullptr, &cmd_pool);
+    VkCommandBufferAllocateInfo ai{};
+    ai.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+    ai.commandPool = cmd_pool;
+    ai.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    ai.commandBufferCount = 1;
+    VkCommandBuffer cmd = VK_NULL_HANDLE;
+    vkAllocateCommandBuffers(device.handle(), &ai, &cmd);
+    VkCommandBufferBeginInfo bi{};
+    bi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+    vkBeginCommandBuffer(cmd, &bi);
+    graph.execute(cmd);
+    VkImageMemoryBarrier2 to_src{};
+    to_src.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2;
+    to_src.srcStageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT;
+    to_src.srcAccessMask = VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT;
+    to_src.dstStageMask = VK_PIPELINE_STAGE_2_COPY_BIT;
+    to_src.dstAccessMask = VK_ACCESS_2_TRANSFER_READ_BIT;
+    to_src.oldLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    to_src.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+    to_src.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    to_src.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    to_src.image = ldr_image;
+    to_src.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+    VkDependencyInfo dep{};
+    dep.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO;
+    dep.imageMemoryBarrierCount = 1;
+    dep.pImageMemoryBarriers = &to_src;
+    vkCmdPipelineBarrier2(cmd, &dep);
+    VkBufferImageCopy region{};
+    region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    region.imageSubresource.layerCount = 1;
+    region.imageExtent = {extent.width, extent.height, 1};
+    vkCmdCopyImageToBuffer(cmd, ldr_image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, readback_buffer, 1,
+                           &region);
+    vkEndCommandBuffer(cmd);
+    VkCommandBufferSubmitInfo ci{};
+    ci.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO;
+    ci.commandBuffer = cmd;
+    VkSubmitInfo2 si{};
+    si.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO_2;
+    si.commandBufferInfoCount = 1;
+    si.pCommandBufferInfos = &ci;
+    const VkResult sr = vkQueueSubmit2(device.graphics_queue(), 1, &si, VK_NULL_HANDLE);
+    std::expected<void, core::Error> result{};
+    if (sr != VK_SUCCESS) {
+        result = std::unexpected(core::Error{"transparent self-test: submit failed"});
+    } else {
+        vkQueueWaitIdle(device.graphics_queue());
+        const auto* px = static_cast<const std::uint8_t*>(readback->mapped());
+        const auto chan = [&](std::uint32_t x, std::uint32_t y, int c) {
+            return static_cast<int>(px[(static_cast<std::size_t>(y) * extent.width + x) * 4 + c]);
+        };
+        // Centre is behind the panel: blend of red wall + blue panel -> both present.
+        const std::uint32_t cx = extent.width / 2;
+        const std::uint32_t cy = extent.height / 2;
+        if (chan(cx, cy, 0) <= 25 || chan(cx, cy, 2) <= 25) {
+            result = std::unexpected(
+                core::Error{"transparent self-test: panel pixel is not a red/blue blend"});
+        } else if (chan(6, cy, 0) <= chan(6, cy, 2)) {
+            // Off the panel (left edge) the wall is plain red: red > blue.
+            result = std::unexpected(
+                core::Error{"transparent self-test: off-panel wall is not red"});
+        }
+    }
+
+    vkFreeCommandBuffers(device.handle(), cmd_pool, 1, &cmd);
+    vkDestroyCommandPool(device.handle(), cmd_pool, nullptr);
+    return result;
+}
+
 } // namespace
 
 int main() {
@@ -965,6 +1123,14 @@ int main() {
                         std::fprintf(stderr, "[selftest] shadow map FAILED: %s\n",
                                      r.error().message.c_str());
                     }
+                    if (auto r = run_transparent_self_test(device, allocator, *mesh_cache, transfer,
+                                                           shader_dir);
+                        r) {
+                        std::fprintf(stderr, "[selftest] transparency OK (alpha blend)\n");
+                    } else {
+                        std::fprintf(stderr, "[selftest] transparency FAILED: %s\n",
+                                     r.error().message.c_str());
+                    }
                 }
                 // Optional real-asset smoke test: QUAT_GLTF=<path> loads a glTF/GLB
                 // mesh + its textures and reports counts. Exercises the real decode
@@ -1154,14 +1320,17 @@ int main() {
         auto skin = engine::renderer::SkinningPass::create(device, allocator, *pipeline_cache,
                                                            shader_dir);
         auto shadow = engine::renderer::ShadowPass::create(device, *pipeline_cache, shader_dir);
-        if (!mesh || !light || !tone || !skin || !shadow) {
+        auto transp = engine::renderer::TransparentPass::create(device, allocator, *pipeline_cache,
+                                                                setup_transfer, shader_dir);
+        if (!mesh || !light || !tone || !skin || !shadow || !transp) {
             frames_ok = false;
             std::fprintf(stderr, "[fatal] deferred pass creation failed: %s\n",
-                         (!mesh   ? mesh.error()
-                          : !light ? light.error()
-                          : !tone  ? tone.error()
-                          : !skin  ? skin.error()
-                                   : shadow.error())
+                         (!mesh    ? mesh.error()
+                          : !light  ? light.error()
+                          : !tone   ? tone.error()
+                          : !skin   ? skin.error()
+                          : !shadow ? shadow.error()
+                                    : transp.error())
                              .message.c_str());
             break;
         }
@@ -1170,6 +1339,7 @@ int main() {
         f.tonemap = std::move(*tone);
         f.skinning = std::move(*skin);
         f.shadow = std::move(*shadow);
+        f.transparent = std::move(*transp);
         f.pool = engine::rhi::TransientImagePool(device, allocator);
     }
 
@@ -1266,6 +1436,29 @@ int main() {
                 scene.registry().emplace<Collider>(b, ColliderShape::box, glm::vec3(0.5F),
                                                    glm::vec3(0.0F));
                 scene.registry().emplace<RigidBody>(b, BodyMotion::dynamic, 1.0F, no_body);
+            }
+
+            // A transparent glass panel in front of the pile (visual only).
+            auto glass_mesh = assets.load<engine::asset::MeshAsset>(
+                "demo/glass", [&](const std::filesystem::path&) {
+                    return engine::scene::upload_mesh(make_box_data(glm::vec3(3.0F, 2.2F, 0.08F)),
+                                                      allocator, setup_transfer);
+                });
+            auto glass_mat = assets.load<engine::asset::MaterialAsset>(
+                "demo/glass_mat", [&](const std::filesystem::path&) {
+                    engine::asset::PbrMaterialParams p;
+                    p.base_color_factor = {0.45F, 0.7F, 1.0F, 0.35F};
+                    p.metallic_factor = 0.0F;
+                    p.roughness_factor = 0.15F;
+                    p.flags = engine::asset::material_blend;
+                    return engine::asset::upload_material(p, engine::asset::MaterialTextures{},
+                                                          allocator, setup_transfer);
+                });
+            if (glass_mesh.is_loaded()) {
+                const entt::entity glass = scene.create_entity("glass");
+                scene.registry().get<Transform>(glass).local =
+                    glm::translate(glm::mat4(1.0F), glm::vec3(0.0F, 2.2F, 3.0F));
+                scene.registry().emplace<MeshRenderer>(glass, glass_mesh, glass_mat);
             }
         }
     } else if (std::getenv("QUAT_CHARACTER") != nullptr) {
@@ -1672,6 +1865,7 @@ int main() {
         // skinned entity uploads its joint matrices into this frame slot's buffer
         // and gets a SkinDispatch; its draw points at the skinned output buffer.
         std::vector<engine::renderer::DrawItem> draws;
+        std::vector<engine::renderer::DrawItem> transparent_draws;
         std::vector<engine::renderer::SkinDispatch> dispatches;
         for (auto [e, t, mr] :
              scene.registry().view<engine::scene::Transform, engine::scene::MeshRenderer>().each()) {
@@ -1710,8 +1904,20 @@ int main() {
                     item.model = glm::mat4(1.0F);
                 }
             }
-            draws.push_back(item);
+            // Route alpha-blended materials to the forward transparent pass.
+            const bool is_transparent =
+                item.material != nullptr &&
+                (item.material->params.flags & engine::asset::material_blend) != 0;
+            (is_transparent ? transparent_draws : draws).push_back(item);
         }
+
+        // Sort transparent draws back-to-front (farthest from the camera first).
+        std::sort(transparent_draws.begin(), transparent_draws.end(),
+                  [&](const engine::renderer::DrawItem& a, const engine::renderer::DrawItem& b) {
+                      const float da = glm::distance(glm::vec3(a.model[3]), cam.position);
+                      const float db = glm::distance(glm::vec3(b.model[3]), cam.position);
+                      return da > db;
+                  });
 
         // Directional shadow: an orthographic light view fit to a fixed box
         // around the scene (the demos all sit near the origin).
@@ -1742,6 +1948,17 @@ int main() {
         if (!hdr) {
             std::fprintf(stderr, "[fatal] lighting pass: %s\n", hdr.error().message.c_str());
             break;
+        }
+        // Forward-blend transparent geometry over the lit HDR, depth-tested
+        // against the opaque GBuffer depth.
+        if (!transparent_draws.empty()) {
+            if (auto r = fr.transparent.add_to_graph(graph, *hdr, gbuffer->depth, draw_extent,
+                                                     cam.view_proj, light, cam.position,
+                                                     transparent_draws);
+                !r) {
+                std::fprintf(stderr, "[fatal] transparent pass: %s\n", r.error().message.c_str());
+                break;
+            }
         }
         const engine::rhi::ResourceHandle backbuffer = graph.import_image(
             "swapchain", swapchain.images()[image_index], swapchain.image_views()[image_index],

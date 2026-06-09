@@ -244,7 +244,7 @@ Goal: directional shadow maps, point lights, basic sky, transparent & glass mate
   Sky pass renders to HDR buffer before transparent pass.
   *Commit: `[Phase7/Slice3] procedural sky`*
 
-- [ ] **7.4 — Forward transparent pass**
+- [x] **7.4 — Forward transparent pass**
   Split scene collection into opaque vs alpha-blended draws. New forward `TransparentPass`
   after the deferred lighting that writes into the HDR buffer, depth-tested against the opaque
   GBuffer depth, reusing the PBR BRDF (factored out of `lighting.slang` into a shared Slang

@@ -34,6 +34,8 @@ public:
         std::span<const VkFormat> color_formats{};
         VkFormat                  depth_format = VK_FORMAT_UNDEFINED;
         VkCompareOp               depth_compare_op = VK_COMPARE_OP_GREATER_OR_EQUAL;
+        bool                      depth_write = true;  // false for read-only depth (transparent)
+        bool                      alpha_blend = false; // SRC_ALPHA / ONE_MINUS_SRC_ALPHA
         VkCullModeFlags           cull_mode  = VK_CULL_MODE_NONE;
         VkFrontFace               front_face = VK_FRONT_FACE_COUNTER_CLOCKWISE;
 

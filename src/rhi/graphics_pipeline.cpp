@@ -121,12 +121,19 @@ GraphicsPipeline::create(const Device& device, VkPipelineCache cache, const Crea
     depth_stencil.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
     const bool has_depth = info.depth_format != VK_FORMAT_UNDEFINED;
     depth_stencil.depthTestEnable = has_depth ? VK_TRUE : VK_FALSE;
-    depth_stencil.depthWriteEnable = has_depth ? VK_TRUE : VK_FALSE;
+    depth_stencil.depthWriteEnable = (has_depth && info.depth_write) ? VK_TRUE : VK_FALSE;
     depth_stencil.depthCompareOp = info.depth_compare_op;
 
-    // One disabled blend attachment per colour target (opaque MRT writes).
+    // One blend attachment per colour target. Opaque writes are unblended; the
+    // transparent pass uses standard SRC_ALPHA / ONE_MINUS_SRC_ALPHA blending.
     VkPipelineColorBlendAttachmentState blend_template{};
-    blend_template.blendEnable = VK_FALSE;
+    blend_template.blendEnable = info.alpha_blend ? VK_TRUE : VK_FALSE;
+    blend_template.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
+    blend_template.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+    blend_template.colorBlendOp = VK_BLEND_OP_ADD;
+    blend_template.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+    blend_template.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+    blend_template.alphaBlendOp = VK_BLEND_OP_ADD;
     blend_template.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT
                                     | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
     std::vector<VkPipelineColorBlendAttachmentState> blend_attachments(

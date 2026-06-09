@@ -571,6 +571,7 @@ template <typename OptTextureInfo>
         }
         if (md.emissive_image != no_texture) flags |= asset::material_has_emissive;
         if (md.occlusion_image != no_texture) flags |= asset::material_has_occlusion;
+        if (mat.alphaMode == fastgltf::AlphaMode::Blend) flags |= asset::material_blend;
         p.flags = flags;
 
         out.push_back(md);
