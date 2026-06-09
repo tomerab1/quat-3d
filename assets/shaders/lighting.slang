@@ -22,13 +22,19 @@ struct LightParams {
 }
 [[vk::push_constant]] LightParams pc;
 
-[[vk::binding(0)]] Texture2D          g_albedo;
-[[vk::binding(1)]] Texture2D          g_normal;
-[[vk::binding(2)]] Texture2D          g_material;
-[[vk::binding(3)]] Texture2D          g_depth;
-[[vk::binding(4)]] RWTexture2D<float4> g_hdr;
-[[vk::binding(5)]] Texture2D          g_shadow;
-[[vk::binding(6)]] SamplerState       g_shadow_sampler;
+struct PointLight {
+    float4 position_radius; // xyz = world position, w = radius
+    float4 color_intensity; // rgb = colour, w = intensity
+}
+
+[[vk::binding(0)]] Texture2D                  g_albedo;
+[[vk::binding(1)]] Texture2D                  g_normal;
+[[vk::binding(2)]] Texture2D                  g_material;
+[[vk::binding(3)]] Texture2D                  g_depth;
+[[vk::binding(4)]] RWTexture2D<float4>        g_hdr;
+[[vk::binding(5)]] Texture2D                  g_shadow;
+[[vk::binding(6)]] SamplerState               g_shadow_sampler;
+[[vk::binding(7)]] StructuredBuffer<PointLight> g_point_lights; // pc.ambient.w entries
 
 // Octahedral decode (inverse of gbuffer.slang's oct_encode).
 float3 oct_decode(float2 e) {
@@ -67,6 +73,34 @@ float v_smith(float ndotv, float ndotl, float a) {
 
 float3 f_schlick(float vdoth, float3 f0) {
     return f0 + (1.0 - f0) * pow(1.0 - vdoth, 5.0);
+}
+
+// Cook-Torrance response for one light direction L (unit), without the light's
+// radiance — returns (diffuse + specular) * NdotL.
+float3 surface_brdf(float3 N, float3 V, float3 L, float3 albedo, float metallic, float roughness) {
+    float3 h = normalize(V + L);
+    float ndotl = max(dot(N, L), 0.0);
+    float ndotv = max(dot(N, V), 1e-4);
+    float ndoth = max(dot(N, h), 0.0);
+    float vdoth = max(dot(V, h), 0.0);
+
+    float  a  = max(roughness * roughness, 1e-3);
+    float3 f0 = lerp(float3(0.04), albedo, metallic);
+
+    float  D   = d_ggx(ndoth, a);
+    float  Vis = v_smith(ndotv, ndotl, a);
+    float3 F   = f_schlick(vdoth, f0);
+
+    float3 spec    = D * Vis * F;
+    float3 kd      = (1.0 - F) * (1.0 - metallic);
+    float3 diffuse = kd * albedo / PI;
+    return (diffuse + spec) * ndotl;
+}
+
+// Smooth radius-limited falloff (windowed inverse-square).
+float point_attenuation(float dist, float radius) {
+    float t = saturate(1.0 - pow(dist / radius, 4.0));
+    return t * t / (dist * dist + 1.0);
 }
 
 // Fraction of the directional light reaching `world_pos` (1 = lit, 0 = shadowed),
@@ -130,29 +164,28 @@ void compute_main(uint3 tid : SV_DispatchThreadID) {
     float3 n = oct_decode(enc);
     float3 world_pos = world_from_depth(coord, width, height, depth);
     float3 v = normalize(pc.camera_pos.xyz - world_pos);
-    float3 l = normalize(pc.direction.xyz);
-    float3 h = normalize(v + l);
 
-    float ndotl = max(dot(n, l), 0.0);
-    float ndotv = max(dot(n, v), 1e-4);
-    float ndoth = max(dot(n, h), 0.0);
-    float vdoth = max(dot(v, h), 0.0);
+    // Directional light (shadowed).
+    float3 ldir   = normalize(pc.direction.xyz);
+    float  shadow = shadow_factor(world_pos, max(dot(n, ldir), 0.0));
+    float3 color  = surface_brdf(n, v, ldir, albedo.rgb, metallic, roughness) *
+                   pc.color.rgb * pc.color.w * shadow;
 
-    float  a  = max(roughness * roughness, 1e-3);
-    float3 f0 = lerp(float3(0.04), albedo.rgb, metallic);
+    // Point lights (no shadows).
+    uint light_count = uint(pc.ambient.w);
+    for (uint i = 0; i < light_count; ++i) {
+        PointLight pl = g_point_lights[i];
+        float3 to = pl.position_radius.xyz - world_pos;
+        float dist = length(to);
+        if (dist >= pl.position_radius.w) {
+            continue;
+        }
+        float3 lp = to / max(dist, 1e-4);
+        float att = point_attenuation(dist, pl.position_radius.w);
+        color += surface_brdf(n, v, lp, albedo.rgb, metallic, roughness) *
+                 pl.color_intensity.rgb * pl.color_intensity.w * att;
+    }
 
-    float  D   = d_ggx(ndoth, a);
-    float  Vis = v_smith(ndotv, ndotl, a);
-    float3 F   = f_schlick(vdoth, f0);
-
-    float3 spec    = D * Vis * F;
-    float3 kd      = (1.0 - F) * (1.0 - metallic);
-    float3 diffuse = kd * albedo.rgb / PI;
-
-    float  shadow   = shadow_factor(world_pos, ndotl);
-    float3 radiance = pc.color.rgb * pc.color.w;
-    float3 lit      = (diffuse + spec) * radiance * ndotl * shadow;
-    float3 ambient  = pc.ambient.rgb * albedo.rgb * occlusion;
-
-    g_hdr[coord] = float4(lit + ambient, 1.0);
+    color += pc.ambient.rgb * albedo.rgb * occlusion;
+    g_hdr[coord] = float4(color, 1.0);
 }

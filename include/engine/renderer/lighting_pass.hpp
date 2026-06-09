@@ -8,6 +8,7 @@
 
 #include <cstdint>
 #include <expected>
+#include <span>
 #include <string>
 
 #include <glm/glm.hpp>
@@ -39,6 +40,16 @@ struct DirectionalLightParams {
 };
 static_assert(sizeof(DirectionalLightParams) == 48, "must match lighting.slang LightParams");
 
+// One point light, GPU layout (matches PointLight in lighting.slang).
+struct PointLightGpu {
+    glm::vec4 position_radius{0.0F, 0.0F, 0.0F, 10.0F}; // xyz position, w radius
+    glm::vec4 color_intensity{1.0F, 1.0F, 1.0F, 1.0F};  // rgb colour, w intensity
+};
+static_assert(sizeof(PointLightGpu) == 32, "must match lighting.slang PointLight");
+
+// Maximum point lights uploaded per frame.
+inline constexpr std::uint32_t max_point_lights = 64;
+
 class LightingPass {
 public:
     [[nodiscard]] static std::expected<LightingPass, core::Error>
@@ -63,7 +74,7 @@ public:
     add_to_graph(rhi::RenderGraph& graph, const GBufferTargets& gbuffer, VkExtent2D extent,
                  const DirectionalLightParams& light, const glm::mat4& inv_view_proj,
                  const glm::vec3& camera_pos, rhi::ResourceHandle shadow_map,
-                 const glm::mat4& light_view_proj);
+                 const glm::mat4& light_view_proj, std::span<const PointLightGpu> point_lights = {});
 
 private:
     const rhi::Device* device_    = nullptr;   // non-owning
@@ -73,6 +84,9 @@ private:
     rhi::DescriptorSetLayout       layout_;
     rhi::ComputePipeline           pipeline_;
     rhi::Sampler                   shadow_sampler_; // samples the shadow map
+
+    rhi::GpuBuffer  point_light_buffer_;     // host-visible, holds up to max_point_lights
+    VkDeviceAddress point_light_address_ = 0;
 
     rhi::DescriptorBuffer frame_descriptor_;   // rebuilt each add_to_graph call
 };
@@ -84,5 +98,12 @@ private:
 run_lighting_pass_self_test(const rhi::Device& device, rhi::GpuAllocator& allocator,
                             rhi::PipelineCache& cache, const rhi::TransferContext& transfer,
                             const std::string& cooked_shader_dir);
+
+// Lights a surface with only a point light (directional + ambient off) and
+// verifies it is lit within the light's radius and dark beyond it.
+[[nodiscard]] std::expected<void, core::Error>
+run_point_light_self_test(const rhi::Device& device, rhi::GpuAllocator& allocator,
+                          rhi::PipelineCache& cache, const rhi::TransferContext& transfer,
+                          const std::string& cooked_shader_dir);
 
 } // namespace engine::renderer

@@ -234,7 +234,7 @@ Goal: directional shadow maps, point lights, basic sky, transparent & glass mate
   Sample in lighting pass with PCF.
   *Commit: `[Phase7/Slice1] cascaded shadow maps`*
 
-- [ ] **7.2 — Point lights**
+- [x] **7.2 — Point lights**
   `PointLight` component. Clustered light list built on CPU, uploaded as SSBO.
   Lighting compute shader samples cluster for the fragment's tile.
   *Commit: `[Phase7/Slice2] clustered point lights`*

@@ -119,6 +119,13 @@ struct DirectionalLight {
     float     intensity = 1.0F;
 };
 
+// Point light at the entity's world position; falls off to nothing at `radius`.
+struct PointLight {
+    glm::vec3 color{1.0F};
+    float     radius = 10.0F;
+    float     intensity = 1.0F;
+};
+
 // Human-readable label. Editor-only metadata, not on any hot path.
 struct Name {
     std::string value;

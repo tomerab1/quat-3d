@@ -921,6 +921,14 @@ int main() {
                         std::fprintf(stderr, "[selftest] lighting pass FAILED: %s\n",
                                      r.error().message.c_str());
                     }
+                    if (auto r = engine::renderer::run_point_light_self_test(
+                            device, allocator, *mesh_cache, transfer, shader_dir);
+                        r) {
+                        std::fprintf(stderr, "[selftest] point lights OK\n");
+                    } else {
+                        std::fprintf(stderr, "[selftest] point lights FAILED: %s\n",
+                                     r.error().message.c_str());
+                    }
                     if (auto r = engine::renderer::run_tonemap_pass_self_test(
                             device, allocator, *mesh_cache, transfer, shader_dir);
                         r) {
@@ -1352,6 +1360,21 @@ int main() {
         sun_entity, glm::normalize(glm::vec3(-0.4F, -1.0F, -0.3F)),
         glm::vec3(1.0F, 0.98F, 0.95F), 3.0F);
 
+    // Two coloured point lights for warmer/cooler fill (skipped for bare glTF
+    // loads so a model is shown under just its own lighting setup).
+    if (!std::getenv("QUAT_GLTF")) {
+        const entt::entity warm = scene.create_entity("point_warm");
+        scene.registry().get<engine::scene::Transform>(warm).local =
+            glm::translate(glm::mat4(1.0F), glm::vec3(-3.5F, 3.0F, 2.5F));
+        scene.registry().emplace<engine::scene::PointLight>(warm, glm::vec3(1.0F, 0.55F, 0.2F),
+                                                            14.0F, 12.0F);
+        const entt::entity cool = scene.create_entity("point_cool");
+        scene.registry().get<engine::scene::Transform>(cool).local =
+            glm::translate(glm::mat4(1.0F), glm::vec3(3.5F, 3.0F, -2.5F));
+        scene.registry().emplace<engine::scene::PointLight>(cool, glm::vec3(0.3F, 0.5F, 1.0F),
+                                                            14.0F, 12.0F);
+    }
+
     const entt::entity camera_entity = scene.create_entity("camera");
     const engine::scene::Camera& camera =
         scene.registry().emplace<engine::scene::Camera>(camera_entity);
@@ -1629,6 +1652,18 @@ int main() {
             break;
         }
 
+        // Gather point lights from the ECS (world position from Transform).
+        std::vector<engine::renderer::PointLightGpu> point_lights;
+        for (auto [e, t, pl] :
+             scene.registry()
+                 .view<const engine::scene::Transform, const engine::scene::PointLight>()
+                 .each()) {
+            engine::renderer::PointLightGpu g;
+            g.position_radius = glm::vec4(glm::vec3(t.world[3]), pl.radius);
+            g.color_intensity = glm::vec4(pl.color, pl.intensity);
+            point_lights.push_back(g);
+        }
+
         // Build the draw list, collecting per-skinned-entity skinning work. A
         // skinned entity uploads its joint matrices into this frame slot's buffer
         // and gets a SkinDispatch; its draw points at the skinned output buffer.
@@ -1699,7 +1734,7 @@ int main() {
         }
         auto hdr = fr.lighting.add_to_graph(graph, *gbuffer, draw_extent, light,
                                             glm::inverse(cam.view_proj), cam.position, *shadow,
-                                            light_view_proj);
+                                            light_view_proj, point_lights);
         if (!hdr) {
             std::fprintf(stderr, "[fatal] lighting pass: %s\n", hdr.error().message.c_str());
             break;

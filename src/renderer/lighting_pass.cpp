@@ -1,5 +1,6 @@
 #include "engine/renderer/lighting_pass.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstdint>
@@ -43,7 +44,7 @@ static_assert(sizeof(LightingPushConstants) == 192, "must match lighting.slang L
 // Lighting descriptor set 0: GBuffer albedo/normal/material/depth as sampled
 // images (read via Load — no sampler), the HDR output as a storage image, then
 // the shadow map (sampled) + its sampler. Matches lighting.slang.
-[[nodiscard]] std::array<rhi::DescriptorBinding, 7> lighting_bindings() {
+[[nodiscard]] std::array<rhi::DescriptorBinding, 8> lighting_bindings() {
     using rhi::DescriptorBinding;
     return {{
         {0, 0, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, kComputeStage},
@@ -53,6 +54,7 @@ static_assert(sizeof(LightingPushConstants) == 192, "must match lighting.slang L
         {0, 4, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, kComputeStage},
         {0, 5, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, kComputeStage},
         {0, 6, VK_DESCRIPTOR_TYPE_SAMPLER, 1, kComputeStage},
+        {0, 7, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kComputeStage},
     }};
 }
 
@@ -93,6 +95,16 @@ LightingPass::create(const rhi::Device& device, rhi::GpuAllocator& allocator,
     if (!sampler) return std::unexpected(sampler.error());
     out.shadow_sampler_ = std::move(*sampler);
 
+    // Host-visible point-light buffer (re-uploaded each frame from the ECS).
+    auto plb = allocator.create_buffer(
+        static_cast<VkDeviceSize>(max_point_lights) * sizeof(PointLightGpu),
+        VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+        VMA_MEMORY_USAGE_AUTO,
+        VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT);
+    if (!plb) return std::unexpected(plb.error());
+    out.point_light_buffer_ = std::move(*plb);
+    out.point_light_address_ = rhi::buffer_device_address(device.handle(), out.point_light_buffer_);
+
     return out;
 }
 
@@ -100,7 +112,8 @@ std::expected<rhi::ResourceHandle, core::Error>
 LightingPass::add_to_graph(rhi::RenderGraph& graph, const GBufferTargets& gbuffer,
                            VkExtent2D extent, const DirectionalLightParams& light,
                            const glm::mat4& inv_view_proj, const glm::vec3& camera_pos,
-                           rhi::ResourceHandle shadow_map, const glm::mat4& light_view_proj) {
+                           rhi::ResourceHandle shadow_map, const glm::mat4& light_view_proj,
+                           std::span<const PointLightGpu> point_lights) {
     const rhi::ResourceHandle hdr = graph.create_transient_image(
         "hdr_color", hdr_color_format, extent,
         VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT);
@@ -108,6 +121,14 @@ LightingPass::add_to_graph(rhi::RenderGraph& graph, const GBufferTargets& gbuffe
     auto db = rhi::DescriptorBuffer::create(*device_, *allocator_, db_fns_, layout_);
     if (!db) return std::unexpected(db.error());
     frame_descriptor_ = std::move(*db);
+
+    // Upload the active point lights into the host-visible buffer.
+    const std::uint32_t light_count =
+        static_cast<std::uint32_t>(std::min<std::size_t>(point_lights.size(), max_point_lights));
+    if (light_count > 0) {
+        std::memcpy(point_light_buffer_.mapped(), point_lights.data(),
+                    static_cast<std::size_t>(light_count) * sizeof(PointLightGpu));
+    }
 
     // When no shadow map is supplied, sample the GBuffer depth as a harmless
     // placeholder at binding 5 (descriptors must be bound) and disable shadows.
@@ -120,7 +141,7 @@ LightingPass::add_to_graph(rhi::RenderGraph& graph, const GBufferTargets& gbuffe
     push.camera_pos = glm::vec4(camera_pos, has_shadow ? 1.0F : 0.0F);
     push.direction = light.direction;
     push.color = light.color;
-    push.ambient = light.ambient;
+    push.ambient = glm::vec4(glm::vec3(light.ambient), static_cast<float>(light_count));
 
     auto pass = graph.add_pass("lighting", rhi::PassType::compute);
     pass.reads(gbuffer.albedo, rhi::ResourceUsage::sampled_compute)
@@ -141,6 +162,9 @@ LightingPass::add_to_graph(rhi::RenderGraph& graph, const GBufferTargets& gbuffe
         frame_descriptor_.write_storage_image(4, ctx.resolve(hdr).view, VK_IMAGE_LAYOUT_GENERAL);
         frame_descriptor_.write_sampled_image(5, ctx.resolve(shadow).view, ro);
         frame_descriptor_.write_sampler(6, shadow_sampler_.handle());
+        frame_descriptor_.write_storage_buffer(
+            7, point_light_address_,
+            static_cast<VkDeviceSize>(max_point_lights) * sizeof(PointLightGpu));
 
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline_.handle());
         frame_descriptor_.bind(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline_.layout(), 0);
@@ -373,6 +397,117 @@ run_lighting_pass_self_test(const rhi::Device& device, rhi::GpuAllocator& alloca
     }
     if (rgb(1, 1, 0) != 0.0F || rgb(1, 1, 1) != 0.0F || rgb(1, 1, 2) != 0.0F) {
         return fail("lighting self-test: background pixel is not black");
+    }
+    return {};
+}
+
+std::expected<void, core::Error>
+run_point_light_self_test(const rhi::Device& device, rhi::GpuAllocator& allocator,
+                          rhi::PipelineCache& cache, const rhi::TransferContext& transfer,
+                          const std::string& cooked_shader_dir) {
+    constexpr VkExtent2D extent{64, 64};
+    constexpr VkDeviceSize bytes = static_cast<VkDeviceSize>(extent.width) * extent.height * 8;
+
+    std::array<asset::Vertex, 3> verts{};
+    verts[0].position = {-0.5F, -0.5F, 0.0F};
+    verts[1].position = {0.5F, -0.5F, 0.0F};
+    verts[2].position = {0.0F, 0.5F, 0.0F};
+    const std::array<std::uint32_t, 3> indices{0, 1, 2};
+    auto vbuf = rhi::upload_device_buffer(allocator, transfer, verts.data(), sizeof(verts),
+                                          VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
+    if (!vbuf) return std::unexpected(vbuf.error());
+    auto ibuf = rhi::upload_device_buffer(allocator, transfer, indices.data(), sizeof(indices),
+                                          VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
+    if (!ibuf) return std::unexpected(ibuf.error());
+    asset::MeshAsset mesh;
+    mesh.vertex_buffer = std::move(*vbuf);
+    mesh.index_buffer = std::move(*ibuf);
+    mesh.vertex_count = 3;
+    mesh.index_count = 3;
+    mesh.submeshes = {asset::SubMesh{0, 3, 0}};
+
+    asset::PbrMaterialParams params;
+    params.base_color_factor = {0.25F, 0.5F, 0.75F, 1.0F};
+    params.metallic_factor = 0.0F;
+    params.roughness_factor = 1.0F;
+    auto material = asset::upload_material(params, asset::MaterialTextures{}, allocator, transfer);
+    if (!material) return std::unexpected(material.error());
+
+    auto mesh_pass = MeshPass::create(device, allocator, cache, transfer, cooked_shader_dir);
+    if (!mesh_pass) return std::unexpected(mesh_pass.error());
+    auto lighting = LightingPass::create(device, allocator, cache, cooked_shader_dir);
+    if (!lighting) return std::unexpected(lighting.error());
+
+    // No directional light, no ambient — only the point light lights the surface.
+    DirectionalLightParams dir;
+    dir.color = {1.0F, 1.0F, 1.0F, 0.0F};
+    dir.ambient = {0.0F, 0.0F, 0.0F, 0.0F};
+
+    const auto render_centre = [&](float radius) -> std::expected<glm::vec3, core::Error> {
+        auto readback = allocator.create_buffer(
+            bytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT, VMA_MEMORY_USAGE_AUTO,
+            VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT);
+        if (!readback) return std::unexpected(readback.error());
+
+        const PointLightGpu pl{glm::vec4(0.0F, 0.0F, 1.0F, radius), glm::vec4(1.0F, 1.0F, 1.0F, 4.0F)};
+        rhi::TransientImagePool pool(device, allocator);
+        rhi::RenderGraph graph(pool);
+        const DrawItem item{&mesh, &*material, glm::mat4(1.0F)};
+        auto targets = mesh_pass->add_to_graph(graph, extent, glm::mat4(1.0F), {&item, 1});
+        if (!targets) return std::unexpected(targets.error());
+        auto hdr = lighting->add_to_graph(graph, *targets, extent, dir, glm::mat4(1.0F),
+                                          glm::vec3(0.0F, 0.0F, 1.0F), rhi::ResourceHandle{},
+                                          glm::mat4(1.0F), {&pl, 1});
+        if (!hdr) return std::unexpected(hdr.error());
+        if (auto c = graph.compile(); !c) return std::unexpected(c.error());
+        const VkImage hdr_image = graph.binding(*hdr).image;
+        const VkBuffer rb = readback->handle();
+        auto submitted = run_graphics_commands(device, [&](VkCommandBuffer cmd) {
+            graph.execute(cmd);
+            VkImageMemoryBarrier2 b{};
+            b.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2;
+            b.srcStageMask = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT;
+            b.srcAccessMask = VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT;
+            b.dstStageMask = VK_PIPELINE_STAGE_2_COPY_BIT;
+            b.dstAccessMask = VK_ACCESS_2_TRANSFER_READ_BIT;
+            b.oldLayout = VK_IMAGE_LAYOUT_GENERAL;
+            b.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+            b.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            b.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            b.image = hdr_image;
+            b.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+            VkDependencyInfo dep{};
+            dep.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO;
+            dep.imageMemoryBarrierCount = 1;
+            dep.pImageMemoryBarriers = &b;
+            vkCmdPipelineBarrier2(cmd, &dep);
+            VkBufferImageCopy region{};
+            region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+            region.imageSubresource.layerCount = 1;
+            region.imageExtent = {extent.width, extent.height, 1};
+            vkCmdCopyImageToBuffer(cmd, hdr_image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, rb, 1,
+                                   &region);
+        });
+        if (!submitted) return std::unexpected(submitted.error());
+        const auto* halfs = static_cast<const std::uint16_t*>(readback->mapped());
+        const std::size_t o = (static_cast<std::size_t>(extent.height / 2) * extent.width +
+                               extent.width / 2) * 4;
+        return glm::vec3(half_to_float(halfs[o]), half_to_float(halfs[o + 1]),
+                         half_to_float(halfs[o + 2]));
+    };
+
+    // Within radius the point light lights the surface; the dielectric diffuse
+    // preserves the base-colour ordering (b > g > r).
+    auto lit = render_centre(5.0F);
+    if (!lit) return std::unexpected(lit.error());
+    if (lit->b <= 0.01F || lit->b <= lit->g || lit->g <= lit->r) {
+        return fail("point light self-test: surface not lit by the point light");
+    }
+    // Shrunk so the surface is outside the radius -> no contribution -> black.
+    auto dark = render_centre(0.5F);
+    if (!dark) return std::unexpected(dark.error());
+    if (dark->r + dark->g + dark->b > 0.01F) {
+        return fail("point light self-test: light leaked past its radius");
     }
     return {};
 }
