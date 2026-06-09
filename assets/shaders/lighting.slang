@@ -10,14 +10,15 @@
 
 static const float PI = 3.14159265358979;
 
-// Light + camera parameters, pushed as a 128-byte block (matches
+// Light + camera parameters, pushed as a 192-byte block (matches
 // LightingPushConstants in lighting_pass.cpp).
 struct LightParams {
-    float4x4 inv_view_proj; // reconstruct world pos from depth
-    float4   camera_pos;    // xyz = world-space camera position
-    float4   direction;     // xyz = direction TO the light (normalised)
-    float4   color;         // rgb = colour, w = intensity
-    float4   ambient;       // rgb = ambient colour, w unused
+    float4x4 inv_view_proj;   // reconstruct world pos from depth
+    float4x4 light_view_proj; // world -> shadow-map clip space
+    float4   camera_pos;      // xyz = world-space camera position, w = shadows enabled
+    float4   direction;       // xyz = direction TO the light (normalised)
+    float4   color;           // rgb = colour, w = intensity
+    float4   ambient;         // rgb = ambient colour, w unused
 }
 [[vk::push_constant]] LightParams pc;
 
@@ -26,6 +27,8 @@ struct LightParams {
 [[vk::binding(2)]] Texture2D          g_material;
 [[vk::binding(3)]] Texture2D          g_depth;
 [[vk::binding(4)]] RWTexture2D<float4> g_hdr;
+[[vk::binding(5)]] Texture2D          g_shadow;
+[[vk::binding(6)]] SamplerState       g_shadow_sampler;
 
 // Octahedral decode (inverse of gbuffer.slang's oct_encode).
 float3 oct_decode(float2 e) {
@@ -64,6 +67,39 @@ float v_smith(float ndotv, float ndotl, float a) {
 
 float3 f_schlick(float vdoth, float3 f0) {
     return f0 + (1.0 - f0) * pow(1.0 - vdoth, 5.0);
+}
+
+// Fraction of the directional light reaching `world_pos` (1 = lit, 0 = shadowed),
+// 3x3 PCF over the shadow map. Returns 1 when shadows are disabled or the point
+// falls outside the map.
+float shadow_factor(float3 world_pos, float ndotl) {
+    if (pc.camera_pos.w < 0.5) {
+        return 1.0;
+    }
+    float4 light_clip = mul(pc.light_view_proj, float4(world_pos, 1.0));
+    float3 ndc = light_clip.xyz / light_clip.w;
+    float2 uv = ndc.xy * 0.5 + 0.5;
+    if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0 || ndc.z > 1.0) {
+        return 1.0;
+    }
+
+    uint width = 0;
+    uint height = 0;
+    g_shadow.GetDimensions(width, height);
+    float2 texel = 1.0 / float2(width, height);
+    float bias = max(0.0025 * (1.0 - ndotl), 0.0008);
+
+    float sum = 0.0;
+    [unroll]
+    for (int dy = -1; dy <= 1; ++dy) {
+        [unroll]
+        for (int dx = -1; dx <= 1; ++dx) {
+            float closest =
+                g_shadow.SampleLevel(g_shadow_sampler, uv + float2(dx, dy) * texel, 0).r;
+            sum += (ndc.z - bias) > closest ? 0.0 : 1.0;
+        }
+    }
+    return sum / 9.0;
 }
 
 [shader("compute")]
@@ -113,8 +149,9 @@ void compute_main(uint3 tid : SV_DispatchThreadID) {
     float3 kd      = (1.0 - F) * (1.0 - metallic);
     float3 diffuse = kd * albedo.rgb / PI;
 
+    float  shadow   = shadow_factor(world_pos, ndotl);
     float3 radiance = pc.color.rgb * pc.color.w;
-    float3 lit      = (diffuse + spec) * radiance * ndotl;
+    float3 lit      = (diffuse + spec) * radiance * ndotl * shadow;
     float3 ambient  = pc.ambient.rgb * albedo.rgb * occlusion;
 
     g_hdr[coord] = float4(lit + ambient, 1.0);

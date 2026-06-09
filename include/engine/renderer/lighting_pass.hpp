@@ -56,10 +56,14 @@ public:
     // shader reconstruct each pixel's world position (for the specular view
     // vector). The descriptor buffer is owned by the pass and lives until the next
     // call, so the graph must be compiled + executed before reuse.
+    // `shadow_map` is the directional shadow depth map sampled for shadowing, with
+    // `light_view_proj` mapping world space into it; pass an invalid handle (and
+    // any matrix) to disable shadows.
     [[nodiscard]] std::expected<rhi::ResourceHandle, core::Error>
     add_to_graph(rhi::RenderGraph& graph, const GBufferTargets& gbuffer, VkExtent2D extent,
                  const DirectionalLightParams& light, const glm::mat4& inv_view_proj,
-                 const glm::vec3& camera_pos);
+                 const glm::vec3& camera_pos, rhi::ResourceHandle shadow_map,
+                 const glm::mat4& light_view_proj);
 
 private:
     const rhi::Device* device_    = nullptr;   // non-owning
@@ -68,6 +72,7 @@ private:
     rhi::DescriptorBufferFunctions db_fns_{};
     rhi::DescriptorSetLayout       layout_;
     rhi::ComputePipeline           pipeline_;
+    rhi::Sampler                   shadow_sampler_; // samples the shadow map
 
     rhi::DescriptorBuffer frame_descriptor_;   // rebuilt each add_to_graph call
 };

@@ -253,7 +253,8 @@ run_tonemap_pass_self_test(const rhi::Device& device, rhi::GpuAllocator& allocat
     auto targets = mesh_pass->add_to_graph(graph, extent, glm::mat4(1.0F), {&item, 1});
     if (!targets) return std::unexpected(targets.error());
     auto hdr = lighting->add_to_graph(graph, *targets, extent, light, glm::mat4(1.0F),
-                                      glm::vec3(0.0F, 0.0F, 1.0F));
+                                      glm::vec3(0.0F, 0.0F, 1.0F), rhi::ResourceHandle{},
+                                      glm::mat4(1.0F));
     if (!hdr) return std::unexpected(hdr.error());
     const rhi::ResourceHandle ldr = graph.create_transient_image(
         "ldr_color", ldr_format, extent,

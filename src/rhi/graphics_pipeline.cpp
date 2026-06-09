@@ -44,8 +44,10 @@ GraphicsPipeline::create(const Device& device, VkPipelineCache cache, const Crea
     if (info.vertex == nullptr || info.fragment == nullptr) {
         return fail("GraphicsPipeline::create: vertex/fragment shader missing");
     }
-    if (info.color_formats.empty()) {
-        return fail("GraphicsPipeline::create: no colour attachment formats");
+    // A pipeline must write somewhere: at least one colour target, or depth (a
+    // depth-only pass such as the shadow map).
+    if (info.color_formats.empty() && info.depth_format == VK_FORMAT_UNDEFINED) {
+        return fail("GraphicsPipeline::create: no colour or depth attachment formats");
     }
 
     const VkDevice vk_device = device.handle();

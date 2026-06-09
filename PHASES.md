@@ -228,7 +228,7 @@ Goal: rigid bodies simulate, a character controller walks on a static mesh colli
 
 Goal: directional shadow maps, point lights, basic sky, transparent & glass materials.
 
-- [ ] **7.1 — Cascaded shadow maps**
+- [x] **7.1 — Cascaded shadow maps**
   `src/renderer/shadow_pass.cpp` + `assets/shaders/shadow.slang`:
   4-cascade CSM for the directional light. Depth-only pass per cascade.
   Sample in lighting pass with PCF.

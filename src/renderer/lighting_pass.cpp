@@ -26,22 +26,24 @@ namespace {
 
 constexpr VkShaderStageFlags kComputeStage = VK_SHADER_STAGE_COMPUTE_BIT;
 
-// GPU push-constant block, mirrors LightParams in lighting.slang (128 bytes).
-// The light fields match DirectionalLightParams; the leading camera fields let
-// the shader reconstruct world position from depth.
+// GPU push-constant block, mirrors LightParams in lighting.slang (192 bytes).
+// The light fields match DirectionalLightParams; the camera/light matrices let
+// the shader reconstruct world position and sample the shadow map. camera_pos.w
+// is the shadows-enabled flag.
 struct LightingPushConstants {
     glm::mat4 inv_view_proj{1.0F};
+    glm::mat4 light_view_proj{1.0F};
     glm::vec4 camera_pos{0.0F};
     glm::vec4 direction{0.0F, 0.0F, 1.0F, 0.0F};
     glm::vec4 color{1.0F};
     glm::vec4 ambient{0.0F};
 };
-static_assert(sizeof(LightingPushConstants) == 128, "must match lighting.slang LightParams");
+static_assert(sizeof(LightingPushConstants) == 192, "must match lighting.slang LightParams");
 
 // Lighting descriptor set 0: GBuffer albedo/normal/material/depth as sampled
-// images (read via Load — no sampler) plus the HDR output as a storage image.
-// Matches lighting.slang (verified against its SPIR-V).
-[[nodiscard]] std::array<rhi::DescriptorBinding, 5> lighting_bindings() {
+// images (read via Load — no sampler), the HDR output as a storage image, then
+// the shadow map (sampled) + its sampler. Matches lighting.slang.
+[[nodiscard]] std::array<rhi::DescriptorBinding, 7> lighting_bindings() {
     using rhi::DescriptorBinding;
     return {{
         {0, 0, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, kComputeStage},
@@ -49,6 +51,8 @@ static_assert(sizeof(LightingPushConstants) == 128, "must match lighting.slang L
         {0, 2, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, kComputeStage},
         {0, 3, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, kComputeStage},
         {0, 4, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, kComputeStage},
+        {0, 5, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, kComputeStage},
+        {0, 6, VK_DESCRIPTOR_TYPE_SAMPLER, 1, kComputeStage},
     }};
 }
 
@@ -85,13 +89,18 @@ LightingPass::create(const rhi::Device& device, rhi::GpuAllocator& allocator,
     if (!pipeline) return std::unexpected(pipeline.error());
     out.pipeline_ = std::move(*pipeline);
 
+    auto sampler = rhi::create_sampler(device.handle(), rhi::SamplerAddress::clamp_to_edge);
+    if (!sampler) return std::unexpected(sampler.error());
+    out.shadow_sampler_ = std::move(*sampler);
+
     return out;
 }
 
 std::expected<rhi::ResourceHandle, core::Error>
 LightingPass::add_to_graph(rhi::RenderGraph& graph, const GBufferTargets& gbuffer,
                            VkExtent2D extent, const DirectionalLightParams& light,
-                           const glm::mat4& inv_view_proj, const glm::vec3& camera_pos) {
+                           const glm::mat4& inv_view_proj, const glm::vec3& camera_pos,
+                           rhi::ResourceHandle shadow_map, const glm::mat4& light_view_proj) {
     const rhi::ResourceHandle hdr = graph.create_transient_image(
         "hdr_color", hdr_color_format, extent,
         VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT);
@@ -100,37 +109,47 @@ LightingPass::add_to_graph(rhi::RenderGraph& graph, const GBufferTargets& gbuffe
     if (!db) return std::unexpected(db.error());
     frame_descriptor_ = std::move(*db);
 
+    // When no shadow map is supplied, sample the GBuffer depth as a harmless
+    // placeholder at binding 5 (descriptors must be bound) and disable shadows.
+    const bool has_shadow = shadow_map.valid();
+    const rhi::ResourceHandle shadow = has_shadow ? shadow_map : gbuffer.depth;
+
     LightingPushConstants push{};
     push.inv_view_proj = inv_view_proj;
-    push.camera_pos = glm::vec4(camera_pos, 1.0F);
+    push.light_view_proj = light_view_proj;
+    push.camera_pos = glm::vec4(camera_pos, has_shadow ? 1.0F : 0.0F);
     push.direction = light.direction;
     push.color = light.color;
     push.ambient = light.ambient;
 
-    graph.add_pass("lighting", rhi::PassType::compute)
-        .reads(gbuffer.albedo, rhi::ResourceUsage::sampled_compute)
+    auto pass = graph.add_pass("lighting", rhi::PassType::compute);
+    pass.reads(gbuffer.albedo, rhi::ResourceUsage::sampled_compute)
         .reads(gbuffer.normal, rhi::ResourceUsage::sampled_compute)
         .reads(gbuffer.material, rhi::ResourceUsage::sampled_compute)
         .reads(gbuffer.depth, rhi::ResourceUsage::sampled_compute)
-        .writes(hdr, rhi::ResourceUsage::storage_write)
-        .execute([this, gbuffer, hdr, extent, push](rhi::PassContext& ctx) {
-            const VkCommandBuffer cmd = ctx.cmd();
-            constexpr VkImageLayout ro = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-            frame_descriptor_.write_sampled_image(0, ctx.resolve(gbuffer.albedo).view, ro);
-            frame_descriptor_.write_sampled_image(1, ctx.resolve(gbuffer.normal).view, ro);
-            frame_descriptor_.write_sampled_image(2, ctx.resolve(gbuffer.material).view, ro);
-            frame_descriptor_.write_sampled_image(3, ctx.resolve(gbuffer.depth).view, ro);
-            frame_descriptor_.write_storage_image(4, ctx.resolve(hdr).view,
-                                                  VK_IMAGE_LAYOUT_GENERAL);
+        .writes(hdr, rhi::ResourceUsage::storage_write);
+    if (has_shadow) {
+        pass.reads(shadow_map, rhi::ResourceUsage::sampled_compute);
+    }
+    pass.execute([this, gbuffer, hdr, shadow, extent, push](rhi::PassContext& ctx) {
+        const VkCommandBuffer cmd = ctx.cmd();
+        constexpr VkImageLayout ro = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        frame_descriptor_.write_sampled_image(0, ctx.resolve(gbuffer.albedo).view, ro);
+        frame_descriptor_.write_sampled_image(1, ctx.resolve(gbuffer.normal).view, ro);
+        frame_descriptor_.write_sampled_image(2, ctx.resolve(gbuffer.material).view, ro);
+        frame_descriptor_.write_sampled_image(3, ctx.resolve(gbuffer.depth).view, ro);
+        frame_descriptor_.write_storage_image(4, ctx.resolve(hdr).view, VK_IMAGE_LAYOUT_GENERAL);
+        frame_descriptor_.write_sampled_image(5, ctx.resolve(shadow).view, ro);
+        frame_descriptor_.write_sampler(6, shadow_sampler_.handle());
 
-            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline_.handle());
-            frame_descriptor_.bind(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline_.layout(), 0);
-            vkCmdPushConstants(cmd, pipeline_.layout(), kComputeStage, 0, sizeof(push), &push);
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline_.handle());
+        frame_descriptor_.bind(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline_.layout(), 0);
+        vkCmdPushConstants(cmd, pipeline_.layout(), kComputeStage, 0, sizeof(push), &push);
 
-            const std::uint32_t gx = (extent.width + 7) / 8;
-            const std::uint32_t gy = (extent.height + 7) / 8;
-            vkCmdDispatch(cmd, gx, gy, 1);
-        });
+        const std::uint32_t gx = (extent.width + 7) / 8;
+        const std::uint32_t gy = (extent.height + 7) / 8;
+        vkCmdDispatch(cmd, gx, gy, 1);
+    });
 
     return hdr;
 }
@@ -284,7 +303,8 @@ run_lighting_pass_self_test(const rhi::Device& device, rhi::GpuAllocator& alloca
     // Identity view_proj (geometry already in clip space); camera sits at +Z so
     // the reconstructed view vector is +Z, matching the light and normal.
     auto hdr = lighting->add_to_graph(graph, *targets, extent, light, glm::mat4(1.0F),
-                                      glm::vec3(0.0F, 0.0F, 1.0F));
+                                      glm::vec3(0.0F, 0.0F, 1.0F), rhi::ResourceHandle{},
+                                      glm::mat4(1.0F));
     if (!hdr) return std::unexpected(hdr.error());
     if (auto compiled = graph.compile(); !compiled) return std::unexpected(compiled.error());
 
