@@ -113,7 +113,7 @@ LightingPass::add_to_graph(rhi::RenderGraph& graph, const GBufferTargets& gbuffe
                            VkExtent2D extent, const DirectionalLightParams& light,
                            const glm::mat4& inv_view_proj, const glm::vec3& camera_pos,
                            rhi::ResourceHandle shadow_map, const glm::mat4& light_view_proj,
-                           std::span<const PointLightGpu> point_lights) {
+                           std::span<const PointLightGpu> point_lights, bool enable_sky) {
     const rhi::ResourceHandle hdr = graph.create_transient_image(
         "hdr_color", hdr_color_format, extent,
         VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT);
@@ -139,7 +139,7 @@ LightingPass::add_to_graph(rhi::RenderGraph& graph, const GBufferTargets& gbuffe
     push.inv_view_proj = inv_view_proj;
     push.light_view_proj = light_view_proj;
     push.camera_pos = glm::vec4(camera_pos, has_shadow ? 1.0F : 0.0F);
-    push.direction = light.direction;
+    push.direction = glm::vec4(glm::vec3(light.direction), enable_sky ? 1.0F : 0.0F);
     push.color = light.color;
     push.ambient = glm::vec4(glm::vec3(light.ambient), static_cast<float>(light_count));
 

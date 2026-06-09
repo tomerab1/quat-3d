@@ -74,7 +74,8 @@ public:
     add_to_graph(rhi::RenderGraph& graph, const GBufferTargets& gbuffer, VkExtent2D extent,
                  const DirectionalLightParams& light, const glm::mat4& inv_view_proj,
                  const glm::vec3& camera_pos, rhi::ResourceHandle shadow_map,
-                 const glm::mat4& light_view_proj, std::span<const PointLightGpu> point_lights = {});
+                 const glm::mat4& light_view_proj, std::span<const PointLightGpu> point_lights = {},
+                 bool enable_sky = false);
 
 private:
     const rhi::Device* device_    = nullptr;   // non-owning

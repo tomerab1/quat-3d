@@ -239,7 +239,7 @@ Goal: directional shadow maps, point lights, basic sky, transparent & glass mate
   Lighting compute shader samples cluster for the fragment's tile.
   *Commit: `[Phase7/Slice2] clustered point lights`*
 
-- [ ] **7.3 — Procedural sky**
+- [x] **7.3 — Procedural sky**
   `assets/shaders/sky.slang`: Preetham/Hillaire analytic sky model.
   Sky pass renders to HDR buffer before transparent pass.
   *Commit: `[Phase7/Slice3] procedural sky`*

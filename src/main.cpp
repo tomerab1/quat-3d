@@ -429,7 +429,8 @@ run_scene_render_self_test(const engine::rhi::Device& device, engine::rhi::GpuAl
     if (!gbuffer) return std::unexpected(gbuffer.error());
     auto hdr = lighting_pass->add_to_graph(graph, *gbuffer, extent, light,
                                            glm::inverse(cam.view_proj), cam.position,
-                                           engine::rhi::ResourceHandle{}, glm::mat4(1.0F));
+                                           engine::rhi::ResourceHandle{}, glm::mat4(1.0F), {},
+                                           /*enable_sky=*/true);
     if (!hdr) return std::unexpected(hdr.error());
     const rhi::ResourceHandle ldr = graph.create_transient_image(
         "scene_ldr", ldr_format, extent,
@@ -504,16 +505,19 @@ run_scene_render_self_test(const engine::rhi::Device& device, engine::rhi::GpuAl
     } else {
         vkQueueWaitIdle(device.graphics_queue());
         const auto* px = static_cast<const std::uint8_t*>(readback->mapped());
+        const auto chan = [&](std::uint32_t x, std::uint32_t y, int c) {
+            return static_cast<int>(px[(static_cast<std::size_t>(y) * extent.width + x) * 4 + c]);
+        };
         const auto luma = [&](std::uint32_t x, std::uint32_t y) {
-            const std::size_t o = (static_cast<std::size_t>(y) * extent.width + x) * 4;
-            return static_cast<int>(px[o]) + px[o + 1] + px[o + 2];
+            return chan(x, y, 0) + chan(x, y, 1) + chan(x, y, 2);
         };
         if (luma(extent.width / 2, extent.height / 2) <= 30) {
             result = std::unexpected(
                 core::Error{"scene render self-test: cube centre is black (camera not framing it)"});
-        } else if (luma(2, 2) > 30) {
+        } else if (luma(2, 2) <= 60 || chan(2, 2, 2) <= chan(2, 2, 0)) {
+            // The corner is sky now: it must be bright and blue-dominant.
             result = std::unexpected(
-                core::Error{"scene render self-test: corner is not background-black"});
+                core::Error{"scene render self-test: sky background missing or not blue"});
         }
     }
 
@@ -1734,7 +1738,7 @@ int main() {
         }
         auto hdr = fr.lighting.add_to_graph(graph, *gbuffer, draw_extent, light,
                                             glm::inverse(cam.view_proj), cam.position, *shadow,
-                                            light_view_proj, point_lights);
+                                            light_view_proj, point_lights, /*enable_sky=*/true);
         if (!hdr) {
             std::fprintf(stderr, "[fatal] lighting pass: %s\n", hdr.error().message.c_str());
             break;
