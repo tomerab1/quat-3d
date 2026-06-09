@@ -290,7 +290,7 @@ Goal: TAA, bloom, exposure, final image looks polished.
   Composite onto HDR buffer before tonemap.
   *Commit: `[Phase8/Slice2] bloom`*
 
-- [ ] **8.3 — Exposure & auto-exposure**
+- [x] **8.3 — Exposure & auto-exposure**
   Luminance histogram compute pass → exposure value. Lerp toward target EV over time.
   *Commit: `[Phase8/Slice3] exposure and auto-exposure`*
 

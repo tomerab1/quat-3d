@@ -4,6 +4,7 @@
 #include <array>
 #include <cmath>
 #include <cstdint>
+#include <cstring>
 #include <string>
 #include <utility>
 
@@ -28,14 +29,24 @@ namespace {
 
 constexpr VkShaderStageFlags kFragment = VK_SHADER_STAGE_FRAGMENT_BIT;
 
-// Tonemap descriptor set 0: HDR sampled image + sampler. Matches tonemap.slang.
-[[nodiscard]] std::array<rhi::DescriptorBinding, 2> tonemap_bindings() {
+// Tonemap descriptor set 0: HDR sampled image + sampler + the auto-exposure
+// luminance buffer. Matches tonemap.slang.
+[[nodiscard]] std::array<rhi::DescriptorBinding, 3> tonemap_bindings() {
     using rhi::DescriptorBinding;
     return {{
         {0, 0, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, kFragment},
         {0, 1, VK_DESCRIPTOR_TYPE_SAMPLER, 1, kFragment},
+        {0, 2, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kFragment},
     }};
 }
+
+// Mirrors TonemapParams in tonemap.slang.
+struct TonemapPushConstants {
+    float auto_exposure = 0.0F;
+    float key = 0.18F;
+    float min_exposure = 0.05F;
+    float max_exposure = 16.0F;
+};
 
 } // namespace
 
@@ -62,6 +73,7 @@ TonemapPass::create(const rhi::Device& device, rhi::GpuAllocator& allocator,
 
     const std::array<VkFormat, 1> color_formats{output_format};
     const VkDescriptorSetLayout set_layout = out.layout_.handle();
+    const VkPushConstantRange pc_range{kFragment, 0, sizeof(TonemapPushConstants)};
 
     rhi::GraphicsPipeline::CreateInfo info{};
     info.vertex = *shader;
@@ -69,6 +81,7 @@ TonemapPass::create(const rhi::Device& device, rhi::GpuAllocator& allocator,
     info.color_formats = color_formats; // fullscreen triangle, no vertex input
     info.cull_mode = VK_CULL_MODE_NONE;
     info.set_layouts = {&set_layout, 1};
+    info.push_constants = {&pc_range, 1};
 
     auto pipeline = rhi::GraphicsPipeline::create(device, cache.handle(), info);
     if (!pipeline) return std::unexpected(pipeline.error());
@@ -78,24 +91,43 @@ TonemapPass::create(const rhi::Device& device, rhi::GpuAllocator& allocator,
     if (!sampler) return std::unexpected(sampler.error());
     out.sampler_ = std::move(*sampler);
 
+    // Fallback exposure buffer (one float) bound when auto-exposure is off.
+    auto buf = allocator.create_buffer(
+        sizeof(float), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+        VMA_MEMORY_USAGE_AUTO,
+        VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT);
+    if (!buf) return std::unexpected(buf.error());
+    const float one = 1.0F;
+    std::memcpy(buf->mapped(), &one, sizeof(one));
+    out.fallback_exposure_buffer_ = std::move(*buf);
+    out.fallback_exposure_address_ =
+        rhi::buffer_device_address(device.handle(), out.fallback_exposure_buffer_);
+
     return out;
 }
 
 std::expected<void, core::Error>
 TonemapPass::add_to_graph(rhi::RenderGraph& graph, rhi::ResourceHandle hdr,
-                          rhi::ResourceHandle output, VkExtent2D extent) {
+                          rhi::ResourceHandle output, VkExtent2D extent,
+                          VkDeviceAddress exposure_buffer) {
     auto db = rhi::DescriptorBuffer::create(*device_, *allocator_, db_fns_, layout_);
     if (!db) return std::unexpected(db.error());
     frame_descriptor_ = std::move(*db);
 
+    TonemapPushConstants push{};
+    push.auto_exposure = exposure_buffer != 0 ? 1.0F : 0.0F;
+    const VkDeviceAddress exposure_addr =
+        exposure_buffer != 0 ? exposure_buffer : fallback_exposure_address_;
+
     graph.add_pass("tonemap", rhi::PassType::graphics)
         .reads(hdr, rhi::ResourceUsage::sampled)
         .writes(output, rhi::ResourceUsage::color_attachment)
-        .execute([this, hdr, output, extent](rhi::PassContext& ctx) {
+        .execute([this, hdr, output, extent, push, exposure_addr](rhi::PassContext& ctx) {
             const VkCommandBuffer cmd = ctx.cmd();
             frame_descriptor_.write_sampled_image(0, ctx.resolve(hdr).view,
                                                   VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
             frame_descriptor_.write_sampler(1, sampler_.handle());
+            frame_descriptor_.write_storage_buffer(2, exposure_addr, sizeof(float));
 
             VkRenderingAttachmentInfo color{};
             color.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
@@ -125,6 +157,7 @@ TonemapPass::add_to_graph(rhi::RenderGraph& graph, rhi::ResourceHandle hdr,
 
             vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_.handle());
             frame_descriptor_.bind(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_.layout(), 0);
+            vkCmdPushConstants(cmd, pipeline_.layout(), kFragment, 0, sizeof(push), &push);
             vkCmdDraw(cmd, 3, 1, 0, 0);
 
             vkCmdEndRendering(cmd);

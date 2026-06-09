@@ -42,9 +42,11 @@ public:
     // Add a fullscreen tonemap of `hdr` into the colour target `output` (which
     // must already be a graph resource — imported swapchain or transient). The
     // descriptor buffer is owned by the pass and lives until the next call.
+    // `exposure_buffer` is the device address of the auto-exposure pass's adapted-
+    // luminance buffer; pass 0 to disable auto-exposure (exposure multiplier 1).
     [[nodiscard]] std::expected<void, core::Error>
     add_to_graph(rhi::RenderGraph& graph, rhi::ResourceHandle hdr, rhi::ResourceHandle output,
-                 VkExtent2D extent);
+                 VkExtent2D extent, VkDeviceAddress exposure_buffer = 0);
 
 private:
     const rhi::Device* device_    = nullptr;   // non-owning
@@ -54,6 +56,9 @@ private:
     rhi::DescriptorSetLayout       layout_;
     rhi::GraphicsPipeline          pipeline_;
     rhi::Sampler                   sampler_;
+
+    rhi::GpuBuffer  fallback_exposure_buffer_;  // bound when auto-exposure is off
+    VkDeviceAddress fallback_exposure_address_ = 0;
 
     rhi::DescriptorBuffer frame_descriptor_;   // rebuilt each add_to_graph call
 };

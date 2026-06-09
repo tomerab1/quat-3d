@@ -36,6 +36,7 @@
 #include "engine/asset/mesh_asset.hpp"
 #include "engine/physics/physics_world.hpp"
 #include "engine/renderer/bloom_pass.hpp"
+#include "engine/renderer/exposure_pass.hpp"
 #include "engine/renderer/ibl_pass.hpp"
 #include "engine/renderer/lighting_pass.hpp"
 #include "engine/renderer/mesh_pass.hpp"
@@ -247,6 +248,7 @@ struct DeferredFrame {
     engine::renderer::ShadowPass     shadow;
     engine::renderer::TransparentPass transparent;
     engine::renderer::BloomPass      bloom;
+    engine::renderer::ExposurePass   exposure;
     engine::rhi::TransientImagePool  pool;
     // Skinning resources, lazily created per skinned entity (keyed by entity).
     std::unordered_map<entt::entity, SkinnedEntityGpu> skin_gpu;
@@ -1321,6 +1323,14 @@ int main() {
                         std::fprintf(stderr, "[selftest] bloom FAILED: %s\n",
                                      r.error().message.c_str());
                     }
+                    if (auto r = engine::renderer::run_exposure_self_test(device, allocator,
+                                                                          *mesh_cache, shader_dir);
+                        r) {
+                        std::fprintf(stderr, "[selftest] exposure OK (adapts to brightness)\n");
+                    } else {
+                        std::fprintf(stderr, "[selftest] exposure FAILED: %s\n",
+                                     r.error().message.c_str());
+                    }
                     if (auto r = engine::renderer::run_tonemap_pass_self_test(
                             device, allocator, *mesh_cache, transfer, shader_dir);
                         r) {
@@ -1562,7 +1572,9 @@ int main() {
                                                                 setup_transfer, shader_dir);
         auto bloom = engine::renderer::BloomPass::create(device, allocator, *pipeline_cache,
                                                          shader_dir);
-        if (!mesh || !light || !tone || !skin || !shadow || !transp || !bloom) {
+        auto expo = engine::renderer::ExposurePass::create(device, allocator, *pipeline_cache,
+                                                           shader_dir);
+        if (!mesh || !light || !tone || !skin || !shadow || !transp || !bloom || !expo) {
             frames_ok = false;
             std::fprintf(stderr, "[fatal] deferred pass creation failed: %s\n",
                          (!mesh    ? mesh.error()
@@ -1571,7 +1583,8 @@ int main() {
                           : !skin   ? skin.error()
                           : !shadow ? shadow.error()
                           : !transp ? transp.error()
-                                    : bloom.error())
+                          : !bloom  ? bloom.error()
+                                    : expo.error())
                              .message.c_str());
             break;
         }
@@ -1582,6 +1595,7 @@ int main() {
         f.shadow = std::move(*shadow);
         f.transparent = std::move(*transp);
         f.bloom = std::move(*bloom);
+        f.exposure = std::move(*expo);
         f.pool = engine::rhi::TransientImagePool(device, allocator);
     }
 
@@ -2316,11 +2330,18 @@ int main() {
             std::fprintf(stderr, "[fatal] bloom pass: %s\n", r.error().message.c_str());
             break;
         }
+        // Auto-exposure: measure the (post-bloom) HDR luminance and adapt over time.
+        if (auto r = fr.exposure.add_to_graph(graph, *hdr, draw_extent, dt); !r) {
+            std::fprintf(stderr, "[fatal] exposure pass: %s\n", r.error().message.c_str());
+            break;
+        }
         const engine::rhi::ResourceHandle backbuffer = graph.import_image(
             "swapchain", swapchain.images()[image_index], swapchain.image_views()[image_index],
             swapchain.format(), draw_extent, VK_IMAGE_LAYOUT_UNDEFINED,
             VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
-        if (auto r = fr.tonemap.add_to_graph(graph, *hdr, backbuffer, draw_extent); !r) {
+        if (auto r = fr.tonemap.add_to_graph(graph, *hdr, backbuffer, draw_extent,
+                                             fr.exposure.exposure_buffer_address());
+            !r) {
             std::fprintf(stderr, "[fatal] tonemap pass: %s\n", r.error().message.c_str());
             break;
         }
