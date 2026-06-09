@@ -35,6 +35,7 @@
 #include "engine/asset/material_asset.hpp"
 #include "engine/asset/mesh_asset.hpp"
 #include "engine/physics/physics_world.hpp"
+#include "engine/renderer/bloom_pass.hpp"
 #include "engine/renderer/ibl_pass.hpp"
 #include "engine/renderer/lighting_pass.hpp"
 #include "engine/renderer/mesh_pass.hpp"
@@ -245,6 +246,7 @@ struct DeferredFrame {
     engine::renderer::SkinningPass   skinning;
     engine::renderer::ShadowPass     shadow;
     engine::renderer::TransparentPass transparent;
+    engine::renderer::BloomPass      bloom;
     engine::rhi::TransientImagePool  pool;
     // Skinning resources, lazily created per skinned entity (keyed by entity).
     std::unordered_map<entt::entity, SkinnedEntityGpu> skin_gpu;
@@ -1311,6 +1313,14 @@ int main() {
                         std::fprintf(stderr, "[selftest] IBL lighting FAILED: %s\n",
                                      r.error().message.c_str());
                     }
+                    if (auto r = engine::renderer::run_bloom_self_test(device, allocator, *mesh_cache,
+                                                                       shader_dir);
+                        r) {
+                        std::fprintf(stderr, "[selftest] bloom OK (highlights glow)\n");
+                    } else {
+                        std::fprintf(stderr, "[selftest] bloom FAILED: %s\n",
+                                     r.error().message.c_str());
+                    }
                     if (auto r = engine::renderer::run_tonemap_pass_self_test(
                             device, allocator, *mesh_cache, transfer, shader_dir);
                         r) {
@@ -1550,7 +1560,9 @@ int main() {
         auto shadow = engine::renderer::ShadowPass::create(device, *pipeline_cache, shader_dir);
         auto transp = engine::renderer::TransparentPass::create(device, allocator, *pipeline_cache,
                                                                 setup_transfer, shader_dir);
-        if (!mesh || !light || !tone || !skin || !shadow || !transp) {
+        auto bloom = engine::renderer::BloomPass::create(device, allocator, *pipeline_cache,
+                                                         shader_dir);
+        if (!mesh || !light || !tone || !skin || !shadow || !transp || !bloom) {
             frames_ok = false;
             std::fprintf(stderr, "[fatal] deferred pass creation failed: %s\n",
                          (!mesh    ? mesh.error()
@@ -1558,7 +1570,8 @@ int main() {
                           : !tone   ? tone.error()
                           : !skin   ? skin.error()
                           : !shadow ? shadow.error()
-                                    : transp.error())
+                          : !transp ? transp.error()
+                                    : bloom.error())
                              .message.c_str());
             break;
         }
@@ -1568,6 +1581,7 @@ int main() {
         f.skinning = std::move(*skin);
         f.shadow = std::move(*shadow);
         f.transparent = std::move(*transp);
+        f.bloom = std::move(*bloom);
         f.pool = engine::rhi::TransientImagePool(device, allocator);
     }
 
@@ -2295,6 +2309,12 @@ int main() {
                 std::fprintf(stderr, "[fatal] transparent pass: %s\n", r.error().message.c_str());
                 break;
             }
+        }
+        // Bloom: blur the bright parts of the HDR and add them back before tonemap.
+        if (auto r = fr.bloom.add_to_graph(graph, *hdr, draw_extent, engine::renderer::BloomParams{});
+            !r) {
+            std::fprintf(stderr, "[fatal] bloom pass: %s\n", r.error().message.c_str());
+            break;
         }
         const engine::rhi::ResourceHandle backbuffer = graph.import_image(
             "swapchain", swapchain.images()[image_index], swapchain.image_views()[image_index],

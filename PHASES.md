@@ -285,7 +285,7 @@ Goal: TAA, bloom, exposure, final image looks polished.
   reproject previous frame, history blend, neighbourhood clamp.
   *Commit: `[Phase8/Slice1] temporal anti-aliasing`*
 
-- [ ] **8.2 — Bloom**
+- [x] **8.2 — Bloom**
   Dual-kawase downsample/upsample chain. Threshold + intensity parameters.
   Composite onto HDR buffer before tonemap.
   *Commit: `[Phase8/Slice2] bloom`*

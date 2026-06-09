@@ -167,7 +167,8 @@ add_library(engine_renderer STATIC
     src/renderer/skinning_pass.cpp
     src/renderer/shadow_pass.cpp
     src/renderer/transparent_pass.cpp
-    src/renderer/ibl_pass.cpp)
+    src/renderer/ibl_pass.cpp
+    src/renderer/bloom_pass.cpp)
 target_link_libraries(engine_renderer PUBLIC engine_flags engine_rhi engine_asset glm::glm)
 target_include_directories(engine_renderer PUBLIC ${ENGINE_PUBLIC_INCLUDE})
 
