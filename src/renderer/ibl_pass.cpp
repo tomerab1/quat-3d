@@ -530,7 +530,8 @@ run_ibl_self_test(const rhi::Device& device, rhi::GpuAllocator& allocator,
     if (!pre) return std::unexpected(pre.error());
     const std::size_t pc = (static_cast<std::size_t>(kPrefilterSize / 2) * kPrefilterSize +
                             kPrefilterSize / 2) * 4;
-    if ((*pre)[pc] <= 0.0F || (*pre)[pc + 2] <= (*pre)[pc]) {
+    // b >= r (the exact +Y texel may land on a white cloud, where b == r).
+    if ((*pre)[pc] <= 0.0F || (*pre)[pc + 2] < (*pre)[pc]) {
         return fail("ibl self-test: prefiltered mirror is not positive sky-blue");
     }
     return {};
