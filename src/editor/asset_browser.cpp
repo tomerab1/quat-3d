@@ -1,6 +1,7 @@
 #include "asset_browser.hpp"
 
 #include <algorithm>
+#include <cstdio>
 #include <filesystem>
 #include <string>
 #include <vector>
@@ -58,8 +59,13 @@ void draw_directory(const fs::path& dir, std::string& instantiate_request) {
         const std::string label = std::string(file_tag(entry.path())) + " " + name;
         ImGui::Selectable(label.c_str(), false, ImGuiSelectableFlags_AllowDoubleClick);
         if (is_gltf(entry.path())) {
-            if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
+            const auto request = [&]() {
                 instantiate_request = entry.path().string();
+                std::fprintf(stderr, "[editor] instantiate requested: %s\n",
+                             instantiate_request.c_str());
+            };
+            if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
+                request();
             }
             if (ImGui::BeginDragDropSource()) {
                 const std::string path = entry.path().string();
@@ -67,8 +73,13 @@ void draw_directory(const fs::path& dir, std::string& instantiate_request) {
                 ImGui::Text("instantiate %s", name.c_str());
                 ImGui::EndDragDropSource();
             }
+            if (ImGui::BeginPopupContextItem()) {
+                if (ImGui::MenuItem("Instantiate")) request();
+                ImGui::EndPopup();
+            }
             if (ImGui::IsItemHovered()) {
-                ImGui::SetTooltip("double-click (or drag onto the viewport) to instantiate");
+                ImGui::SetTooltip(
+                    "double-click, right-click, or drag onto the viewport to instantiate");
             }
         }
     }

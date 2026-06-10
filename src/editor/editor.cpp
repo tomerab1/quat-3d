@@ -1,6 +1,7 @@
 #include "engine/editor/editor.hpp"
 
 #include <algorithm>
+#include <cstdio>
 #include <filesystem>
 #include <limits>
 #include <string>
@@ -192,6 +193,10 @@ bool EditorLayer::wants_keyboard() const {
     return initialized_ && ImGui::GetIO().WantCaptureKeyboard;
 }
 
+bool EditorLayer::wants_text_input() const {
+    return initialized_ && ImGui::GetIO().WantTextInput;
+}
+
 void EditorLayer::begin_frame() {
     if (!initialized_) return;
     ImGui_ImplSDL3_NewFrame();
@@ -250,6 +255,8 @@ void EditorLayer::build_viewport_panel(const EditorContext& ctx) {
             if (const ImGuiPayload* payload =
                     ImGui::AcceptDragDropPayload(asset_drag_payload)) {
                 *ctx.instantiate_request = static_cast<const char*>(payload->Data);
+                std::fprintf(stderr, "[editor] instantiate requested (drop): %s\n",
+                             ctx.instantiate_request->c_str());
             }
             ImGui::EndDragDropTarget();
         }

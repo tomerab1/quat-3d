@@ -105,6 +105,9 @@ public:
     void process_event(const SDL_Event& event);
     [[nodiscard]] bool wants_mouse() const;
     [[nodiscard]] bool wants_keyboard() const;
+    // True only while a text field is being edited — gates game movement keys
+    // (wants_keyboard also fires for UI navigation, which is too aggressive).
+    [[nodiscard]] bool wants_text_input() const;
 
     // The Viewport panel's content size (pixels) and hover state from the last
     // built frame — the scene renders at this size, and camera input is only
@@ -116,6 +119,7 @@ public:
 
     // The entity selected in the hierarchy (entt::null when none).
     [[nodiscard]] entt::entity selected() const { return selected_; }
+    void set_selected(entt::entity entity) { selected_ = entity; }
 
     // Frame flow: begin_frame() right after event processing, build_ui() once
     // the frame's numbers are known, end_frame() to obtain the draw data for

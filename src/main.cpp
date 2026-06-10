@@ -2262,6 +2262,18 @@ int main() {
                 if (auto roots = engine::scene::GltfLoader::instantiate(
                         path, allocator, load_transfer, assets, scene);
                     roots) {
+                    // Place the new roots in front of the camera (instead of at
+                    // their authored origin, which may be out of view) and
+                    // select the first so the gizmo picks it up immediately.
+                    const glm::vec3 fwd(std::cos(cam_pitch) * std::cos(cam_yaw),
+                                        std::sin(cam_pitch),
+                                        std::cos(cam_pitch) * std::sin(cam_yaw));
+                    const glm::vec3 spawn = cam_pos + fwd * 5.0F;
+                    for (const entt::entity root : *roots) {
+                        auto& t = scene.registry().get<engine::scene::Transform>(root);
+                        t.local = glm::translate(glm::mat4(1.0F), spawn) * t.local;
+                    }
+                    if (!roots->empty()) editor.set_selected(roots->front());
                     std::fprintf(stderr, "[editor] instantiated %s (%zu roots)\n", path.c_str(),
                                  roots->size());
                 } else {
@@ -2350,15 +2362,20 @@ int main() {
         const glm::vec3 world_up(0.0F, 1.0F, 0.0F);
         const bool* keys = SDL_GetKeyboardState(nullptr);
 #ifdef ENGINE_EDITOR
-        // Editor mode: fly movement only during a right-drag (W/E/R switch the
-        // gizmo otherwise), and never while a text field owns the keyboard.
-        const bool game_keys =
-            !editor.wants_keyboard() && (!editor.active() || looking || character_mode);
+        // Editor mode: WASD flies only during a right-drag (W/E/R switch the
+        // gizmo otherwise); the ARROW keys fly whenever the cursor is over the
+        // viewport (they conflict with nothing). Text input freezes both.
+        const bool typing = editor.wants_text_input();
+        const bool wasd_ok =
+            !typing && (!editor.active() || looking || character_mode);
+        const bool arrows_ok =
+            !typing && (!editor.active() || looking || editor.viewport_hovered());
 #else
-        const bool game_keys = true;
+        const bool wasd_ok = true;
+        const bool arrows_ok = true;
 #endif
-        const auto axis = [&](SDL_Scancode pos, SDL_Scancode neg) {
-            if (!game_keys) return 0.0F;
+        const auto axis = [&](bool ok, SDL_Scancode pos, SDL_Scancode neg) {
+            if (!ok) return 0.0F;
             return (keys[pos] ? 1.0F : 0.0F) - (keys[neg] ? 1.0F : 0.0F);
         };
 
@@ -2367,8 +2384,11 @@ int main() {
             const glm::vec3 fwd_h =
                 glm::normalize(glm::vec3(std::cos(cam_yaw), 0.0F, std::sin(cam_yaw)));
             const glm::vec3 right_h = glm::normalize(glm::cross(fwd_h, world_up));
-            const glm::vec3 wish = fwd_h * axis(SDL_SCANCODE_W, SDL_SCANCODE_S) +
-                                   right_h * axis(SDL_SCANCODE_D, SDL_SCANCODE_A);
+            const glm::vec3 wish =
+                fwd_h * (axis(wasd_ok, SDL_SCANCODE_W, SDL_SCANCODE_S) +
+                         axis(arrows_ok, SDL_SCANCODE_UP, SDL_SCANCODE_DOWN)) +
+                right_h * (axis(wasd_ok, SDL_SCANCODE_D, SDL_SCANCODE_A) +
+                           axis(arrows_ok, SDL_SCANCODE_RIGHT, SDL_SCANCODE_LEFT));
             scene.registry().get<engine::scene::CharacterController>(character_entity).move =
                 wish != glm::vec3(0.0F) ? glm::normalize(wish) : glm::vec3(0.0F);
         } else {
@@ -2376,9 +2396,13 @@ int main() {
             const glm::vec3 cam_fwd(std::cos(cam_pitch) * std::cos(cam_yaw), std::sin(cam_pitch),
                                     std::cos(cam_pitch) * std::sin(cam_yaw));
             const glm::vec3 cam_right = glm::normalize(glm::cross(cam_fwd, world_up));
-            const glm::vec3 move = cam_fwd * axis(SDL_SCANCODE_W, SDL_SCANCODE_S) +
-                                   cam_right * axis(SDL_SCANCODE_D, SDL_SCANCODE_A) +
-                                   world_up * axis(SDL_SCANCODE_E, SDL_SCANCODE_Q);
+            const glm::vec3 move =
+                cam_fwd * (axis(wasd_ok, SDL_SCANCODE_W, SDL_SCANCODE_S) +
+                           axis(arrows_ok, SDL_SCANCODE_UP, SDL_SCANCODE_DOWN)) +
+                cam_right * (axis(wasd_ok, SDL_SCANCODE_D, SDL_SCANCODE_A) +
+                             axis(arrows_ok, SDL_SCANCODE_RIGHT, SDL_SCANCODE_LEFT)) +
+                world_up * (axis(wasd_ok, SDL_SCANCODE_E, SDL_SCANCODE_Q) +
+                            axis(arrows_ok, SDL_SCANCODE_PAGEUP, SDL_SCANCODE_PAGEDOWN));
             const float speed = move_speed * (keys[SDL_SCANCODE_LSHIFT] ? 4.0F : 1.0F);
             if (move != glm::vec3(0.0F)) {
                 cam_pos += glm::normalize(move) * speed * dt;
