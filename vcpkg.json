@@ -9,8 +9,14 @@
       "name": "sdl3",
       "default-features": false,
       "features": [
-        "x11",
-        "wayland",
+        {
+          "name": "x11",
+          "platform": "linux"
+        },
+        {
+          "name": "wayland",
+          "platform": "linux"
+        },
         "vulkan"
       ]
     },
