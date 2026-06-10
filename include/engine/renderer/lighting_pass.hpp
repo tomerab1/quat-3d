@@ -71,12 +71,18 @@ public:
     // `shadow_map` is the directional shadow depth map sampled for shadowing, with
     // `light_view_proj` mapping world space into it; pass an invalid handle (and
     // any matrix) to disable shadows.
+    // `atmosphere_skyview`/`atmosphere_transmittance` (Phase 11.1): when both
+    // are set and the sky is enabled, the background uses the physically-based
+    // sky-view LUT and the sun is transmittance-tinted; otherwise the
+    // procedural sky.
     [[nodiscard]] std::expected<rhi::ResourceHandle, core::Error>
     add_to_graph(rhi::RenderGraph& graph, const GBufferTargets& gbuffer, VkExtent2D extent,
                  const DirectionalLightParams& light, const glm::mat4& inv_view_proj,
                  const glm::vec3& camera_pos, rhi::ResourceHandle shadow_map,
                  const glm::mat4& light_view_proj, std::span<const PointLightGpu> point_lights = {},
-                 bool enable_sky = false, const IblMaps* ibl = nullptr);
+                 bool enable_sky = false, const IblMaps* ibl = nullptr,
+                 VkImageView atmosphere_skyview = VK_NULL_HANDLE,
+                 VkImageView atmosphere_transmittance = VK_NULL_HANDLE);
 
 private:
     const rhi::Device* device_    = nullptr;   // non-owning

@@ -66,15 +66,20 @@ public:
     // Bake the full IBL set for a sun pointing along `sun_dir` (direction TO the
     // sun). Records all precompute dispatches into a one-time command buffer on the
     // graphics queue and blocks until they finish; the maps are left in
-    // SHADER_READ_ONLY_OPTIMAL, ready to sample.
-    [[nodiscard]] std::expected<IblMaps, core::Error> bake(const glm::vec3& sun_dir);
+    // SHADER_READ_ONLY_OPTIMAL, ready to sample. When the atmosphere LUT views
+    // are provided (Phase 11.1), the environment is baked from the physically-
+    // based sky-view LUT (+ transmittance-tinted sun disc) instead of the
+    // procedural sky, so ambient/reflections match the background.
+    [[nodiscard]] std::expected<IblMaps, core::Error>
+    bake(const glm::vec3& sun_dir, VkImageView atmosphere_skyview = VK_NULL_HANDLE,
+         VkImageView atmosphere_transmittance = VK_NULL_HANDLE);
 
 private:
     const rhi::Device* device_    = nullptr;
     rhi::GpuAllocator* allocator_ = nullptr;
 
     rhi::DescriptorBufferFunctions db_fns_{};
-    rhi::DescriptorSetLayout       env_layout_;   // b0 storage
+    rhi::DescriptorSetLayout       env_layout_;   // b0 storage, b1-2 LUTs, b3 sampler
     rhi::DescriptorSetLayout       conv_layout_;  // b0 sampled, b1 sampler, b2 storage
     rhi::DescriptorSetLayout       lut_layout_;   // b0 storage
     rhi::ComputePipeline           env_pipeline_;
@@ -82,6 +87,8 @@ private:
     rhi::ComputePipeline           prefilter_pipeline_;
     rhi::ComputePipeline           lut_pipeline_;
     rhi::Sampler                   env_sampler_;
+    rhi::GpuImage                  fallback_lut_;      // 1x1 black for unused LUT slots
+    rhi::ImageView                 fallback_lut_view_;
 };
 
 // Self-test: bake the IBL set and verify the BRDF LUT, irradiance, and prefiltered

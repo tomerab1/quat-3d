@@ -45,7 +45,7 @@ static_assert(sizeof(LightingPushConstants) == 192, "must match lighting.slang L
 // Lighting descriptor set 0: GBuffer albedo/normal/material/depth as sampled
 // images (read via Load — no sampler), the HDR output as a storage image, then
 // the shadow map (sampled) + its sampler. Matches lighting.slang.
-[[nodiscard]] std::array<rhi::DescriptorBinding, 13> lighting_bindings() {
+[[nodiscard]] std::array<rhi::DescriptorBinding, 15> lighting_bindings() {
     using rhi::DescriptorBinding;
     return {{
         {0, 0, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, kComputeStage},
@@ -61,6 +61,8 @@ static_assert(sizeof(LightingPushConstants) == 192, "must match lighting.slang L
         {0, 10, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, kComputeStage}, // BRDF LUT
         {0, 11, VK_DESCRIPTOR_TYPE_SAMPLER, 1, kComputeStage},       // IBL sampler
         {0, 12, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, kComputeStage}, // GBuffer clearcoat
+        {0, 13, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, kComputeStage}, // atmosphere sky-view
+        {0, 14, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, kComputeStage}, // atmosphere transmittance
     }};
 }
 
@@ -126,7 +128,8 @@ LightingPass::add_to_graph(rhi::RenderGraph& graph, const GBufferTargets& gbuffe
                            const glm::mat4& inv_view_proj, const glm::vec3& camera_pos,
                            rhi::ResourceHandle shadow_map, const glm::mat4& light_view_proj,
                            std::span<const PointLightGpu> point_lights, bool enable_sky,
-                           const IblMaps* ibl) {
+                           const IblMaps* ibl, VkImageView atmosphere_skyview,
+                           VkImageView atmosphere_transmittance) {
     const rhi::ResourceHandle hdr = graph.create_transient_image(
         "hdr_color", hdr_color_format, extent,
         VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
@@ -149,11 +152,15 @@ LightingPass::add_to_graph(rhi::RenderGraph& graph, const GBufferTargets& gbuffe
     const bool has_shadow = shadow_map.valid();
     const rhi::ResourceHandle shadow = has_shadow ? shadow_map : gbuffer.depth;
 
+    // Sky mode: 0 = off, 1 = procedural, 2 = atmosphere LUTs.
+    const bool has_atmosphere =
+        atmosphere_skyview != VK_NULL_HANDLE && atmosphere_transmittance != VK_NULL_HANDLE;
     LightingPushConstants push{};
     push.inv_view_proj = inv_view_proj;
     push.light_view_proj = light_view_proj;
     push.camera_pos = glm::vec4(camera_pos, has_shadow ? 1.0F : 0.0F);
-    push.direction = glm::vec4(glm::vec3(light.direction), enable_sky ? 1.0F : 0.0F);
+    push.direction = glm::vec4(glm::vec3(light.direction),
+                               enable_sky ? (has_atmosphere ? 2.0F : 1.0F) : 0.0F);
     push.color = light.color;
     push.ambient = glm::vec4(glm::vec3(light.ambient), static_cast<float>(light_count));
 
@@ -170,7 +177,11 @@ LightingPass::add_to_graph(rhi::RenderGraph& graph, const GBufferTargets& gbuffe
     // Stable pointer (fallback_ibl_ is a member, *ibl is caller-owned) — capturing
     // a reference to a local would dangle when the execute lambda runs later.
     const IblMaps* maps_ptr = (ibl != nullptr && ibl->valid()) ? ibl : &fallback_ibl_;
-    pass.execute([this, gbuffer, hdr, shadow, extent, push, maps_ptr](rhi::PassContext& ctx) {
+    const VkImageView skyview_view = has_atmosphere ? atmosphere_skyview : VK_NULL_HANDLE;
+    const VkImageView transmittance_view =
+        has_atmosphere ? atmosphere_transmittance : VK_NULL_HANDLE;
+    pass.execute([this, gbuffer, hdr, shadow, extent, push, maps_ptr, skyview_view,
+                  transmittance_view](rhi::PassContext& ctx) {
         const VkCommandBuffer cmd = ctx.cmd();
         constexpr VkImageLayout ro = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
         frame_descriptor_.write_sampled_image(0, ctx.resolve(gbuffer.albedo).view, ro);
@@ -188,6 +199,16 @@ LightingPass::add_to_graph(rhi::RenderGraph& graph, const GBufferTargets& gbuffe
         frame_descriptor_.write_sampled_image(10, maps_ptr->brdf_lut_view.handle(), ro);
         frame_descriptor_.write_sampler(11, maps_ptr->sampler.handle());
         frame_descriptor_.write_sampled_image(12, ctx.resolve(gbuffer.clearcoat).view, ro);
+        // Atmosphere LUTs; the (black) fallback BRDF LUT stands in when absent
+        // (the shader never samples them below sky mode 2).
+        frame_descriptor_.write_sampled_image(
+            13, skyview_view != VK_NULL_HANDLE ? skyview_view : maps_ptr->brdf_lut_view.handle(),
+            ro);
+        frame_descriptor_.write_sampled_image(
+            14,
+            transmittance_view != VK_NULL_HANDLE ? transmittance_view
+                                                 : maps_ptr->brdf_lut_view.handle(),
+            ro);
 
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline_.handle());
         frame_descriptor_.bind(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline_.layout(), 0);

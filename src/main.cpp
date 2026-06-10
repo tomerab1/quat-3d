@@ -35,6 +35,7 @@
 #include "engine/asset/material_asset.hpp"
 #include "engine/asset/mesh_asset.hpp"
 #include "engine/physics/physics_world.hpp"
+#include "engine/renderer/atmosphere_pass.hpp"
 #include "engine/renderer/bloom_pass.hpp"
 #include "engine/renderer/exposure_pass.hpp"
 #include "engine/renderer/ibl_pass.hpp"
@@ -1380,6 +1381,14 @@ int main() {
                                      r.error().message.c_str());
                     }
 #endif
+                    if (auto r = engine::renderer::run_atmosphere_self_test(
+                            device, allocator, *mesh_cache, shader_dir);
+                        r) {
+                        std::fprintf(stderr, "[selftest] atmosphere OK (Hillaire LUTs)\n");
+                    } else {
+                        std::fprintf(stderr, "[selftest] atmosphere FAILED: %s\n",
+                                     r.error().message.c_str());
+                    }
                     if (auto r = engine::renderer::run_ibl_self_test(device, allocator, *mesh_cache,
                                                                      shader_dir);
                         r) {
@@ -2052,11 +2061,45 @@ int main() {
                                                             14.0F, 12.0F);
     }
 
-    // Image-based lighting: bake the environment (procedural sky) into a diffuse
-    // irradiance cube + prefiltered specular cube + BRDF LUT once, using the sun
-    // direction. The deferred lighting pass samples these every frame for its
-    // ambient/reflection term, so metals and smooth surfaces reflect the sky
-    // instead of reading as flat grey. Falls back to flat ambient on failure.
+    // Physically-based atmosphere (Phase 11.1): static transmittance/multi-
+    // scatter LUTs now, sky-view LUT refreshed whenever the sun moves. The
+    // procedural sky remains the fallback if creation fails.
+    std::optional<engine::renderer::AtmospherePass> atmosphere;
+    {
+        glm::vec3 sun_to = glm::normalize(glm::vec3(0.4F, 1.0F, 0.3F));
+        const auto dlv = scene.registry().view<const engine::scene::DirectionalLight>();
+        for (const entt::entity e : dlv) {
+            sun_to = -glm::normalize(dlv.get<const engine::scene::DirectionalLight>(e).direction);
+            break;
+        }
+        if (auto atmos = engine::renderer::AtmospherePass::create(device, allocator,
+                                                                  *pipeline_cache, shader_dir);
+            atmos) {
+            atmosphere = std::move(*atmos);
+            if (auto r = atmosphere->ensure_skyview(sun_to); !r) {
+                std::fprintf(stderr, "[warn] sky-view LUT failed: %s\n",
+                             r.error().message.c_str());
+                atmosphere.reset();
+            } else {
+                std::fprintf(stderr, "[info] atmosphere LUTs ready\n");
+            }
+        } else {
+            std::fprintf(stderr, "[warn] atmosphere create failed: %s\n",
+                         atmos.error().message.c_str());
+        }
+    }
+    const auto atmos_skyview = [&]() {
+        return atmosphere ? atmosphere->skyview_view() : VK_NULL_HANDLE;
+    };
+    const auto atmos_transmittance = [&]() {
+        return atmosphere ? atmosphere->transmittance_view() : VK_NULL_HANDLE;
+    };
+
+    // Image-based lighting: bake the environment (the atmosphere sky when
+    // available, else the procedural one) into a diffuse irradiance cube +
+    // prefiltered specular cube + BRDF LUT once, using the sun direction. The
+    // deferred lighting pass samples these every frame for its ambient/
+    // reflection term. Falls back to flat ambient on failure.
     engine::renderer::IblMaps ibl_maps;
     {
         glm::vec3 sun_to = glm::normalize(glm::vec3(0.4F, 1.0F, 0.3F));
@@ -2068,7 +2111,8 @@ int main() {
         if (auto baker = engine::renderer::IblBaker::create(device, allocator, *pipeline_cache,
                                                             shader_dir);
             baker) {
-            if (auto baked = baker->bake(sun_to); baked) {
+            if (auto baked = baker->bake(sun_to, atmos_skyview(), atmos_transmittance());
+                baked) {
                 ibl_maps = std::move(*baked);
                 std::fprintf(stderr, "[info] baked IBL environment\n");
             } else {
@@ -2253,10 +2297,17 @@ int main() {
                     -glm::normalize(dlv.get<const engine::scene::DirectionalLight>(e).direction);
                 break;
             }
+            if (atmosphere) {
+                if (auto r = atmosphere->ensure_skyview(sun_to); !r) {
+                    std::fprintf(stderr, "[warn] sky-view LUT refresh failed: %s\n",
+                                 r.error().message.c_str());
+                }
+            }
             if (auto baker = engine::renderer::IblBaker::create(device, allocator,
                                                                 *pipeline_cache, shader_dir);
                 baker) {
-                if (auto baked = baker->bake(sun_to); baked) {
+                if (auto baked = baker->bake(sun_to, atmos_skyview(), atmos_transmittance());
+                    baked) {
                     ibl_maps = std::move(*baked);
                     std::fprintf(stderr, "[info] rebaked IBL environment\n");
                 }
@@ -2659,7 +2710,8 @@ int main() {
         }
         auto hdr = fr.lighting.add_to_graph(graph, *gbuffer, draw_extent, light, jittered_inv_vp,
                                             cam.position, *shadow, light_view_proj, point_lights,
-                                            /*enable_sky=*/true, &ibl_maps);
+                                            /*enable_sky=*/true, &ibl_maps, atmos_skyview(),
+                                            atmos_transmittance());
         if (!hdr) {
             std::fprintf(stderr, "[fatal] lighting pass: %s\n", hdr.error().message.c_str());
             break;

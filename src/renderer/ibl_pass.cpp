@@ -139,7 +139,14 @@ IblBaker::create(const rhi::Device& device, rhi::GpuAllocator& allocator,
     if (!out.db_fns_.valid()) return fail("ibl: descriptor buffer functions unavailable");
 
     using rhi::DescriptorBinding;
-    const std::array<DescriptorBinding, 1> env_b{{{0, 0, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, kComputeStage}}};
+    // Env bake: cube storage out + the atmosphere LUTs (fallback-bound when the
+    // procedural sky path is used).
+    const std::array<DescriptorBinding, 4> env_b{{
+        {0, 0, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, kComputeStage},
+        {0, 1, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, kComputeStage},
+        {0, 2, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, kComputeStage},
+        {0, 3, VK_DESCRIPTOR_TYPE_SAMPLER, 1, kComputeStage},
+    }};
     const std::array<DescriptorBinding, 3> conv_b{{
         {0, 0, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, kComputeStage},
         {0, 1, VK_DESCRIPTOR_TYPE_SAMPLER, 1, kComputeStage},
@@ -177,10 +184,39 @@ IblBaker::create(const rhi::Device& device, rhi::GpuAllocator& allocator,
                                        prefilter_mip_count);
     if (!sampler) return std::unexpected(sampler.error());
     out.env_sampler_ = std::move(*sampler);
+
+    // 1x1 black fallback bound at the atmosphere-LUT slots when the procedural
+    // sky path is used (the shader never samples them then).
+    auto fb = allocator.create_image(kCubeFormat, {1, 1},
+                                     VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT);
+    if (!fb) return std::unexpected(fb.error());
+    out.fallback_lut_ = std::move(*fb);
+    const VkImage fb_img = out.fallback_lut_.handle();
+    auto cleared = submit_blocking(device, [&](VkCommandBuffer cmd) {
+        VkClearColorValue black{};
+        transition(cmd, fb_img, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                   VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT, 0, VK_PIPELINE_STAGE_2_CLEAR_BIT,
+                   VK_ACCESS_2_TRANSFER_WRITE_BIT);
+        VkImageSubresourceRange range{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+        vkCmdClearColorImage(cmd, fb_img, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &black, 1,
+                             &range);
+        transition(cmd, fb_img, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                   VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_PIPELINE_STAGE_2_CLEAR_BIT,
+                   VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                   VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
+    });
+    if (!cleared) return std::unexpected(cleared.error());
+    auto fb_view = rhi::create_image_view(device.handle(), fb_img, kCubeFormat);
+    if (!fb_view) return std::unexpected(fb_view.error());
+    out.fallback_lut_view_ = std::move(*fb_view);
     return out;
 }
 
-std::expected<IblMaps, core::Error> IblBaker::bake(const glm::vec3& sun_dir) {
+std::expected<IblMaps, core::Error> IblBaker::bake(const glm::vec3& sun_dir,
+                                                   VkImageView atmosphere_skyview,
+                                                   VkImageView atmosphere_transmittance) {
+    const bool has_atmosphere =
+        atmosphere_skyview != VK_NULL_HANDLE && atmosphere_transmittance != VK_NULL_HANDLE;
     const VkDevice dev = device_->handle();
     // TRANSFER_SRC enables debug readback (the self-test) and future mip blits.
     constexpr VkImageUsageFlags map_usage =
@@ -251,6 +287,11 @@ std::expected<IblMaps, core::Error> IblBaker::bake(const glm::vec3& sun_dir) {
     auto env_db = new_db(env_layout_);
     if (!env_db) return std::unexpected(env_db.error());
     (*env_db)->write_storage_image(0, env_store->handle(), gen);
+    (*env_db)->write_sampled_image(
+        1, has_atmosphere ? atmosphere_skyview : fallback_lut_view_.handle(), ro);
+    (*env_db)->write_sampled_image(
+        2, has_atmosphere ? atmosphere_transmittance : fallback_lut_view_.handle(), ro);
+    (*env_db)->write_sampler(3, env_sampler_.handle());
 
     auto irr_db = new_db(conv_layout_);
     if (!irr_db) return std::unexpected(irr_db.error());
@@ -297,7 +338,7 @@ std::expected<IblMaps, core::Error> IblBaker::bake(const glm::vec3& sun_dir) {
         transition(cmd, env_img, VK_IMAGE_LAYOUT_UNDEFINED, gen, VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT,
                    0, cs, w, 1, 6);
         BakeParams bp{};
-        bp.sun_dir = glm::vec4(sun, 0.0F);
+        bp.sun_dir = glm::vec4(sun, has_atmosphere ? 1.0F : 0.0F);
         bp.face_size = kEnvSize;
         dispatch(env_pipeline_, **env_db, &bp, sizeof(bp), groups(kEnvSize), groups(kEnvSize), 6);
 

@@ -485,8 +485,20 @@ These are tackled in any order once Phase 10 is done.
 
 Goal: a fully dynamic sky — movable sun with correct scattering, volumetric clouds.
 
-- [ ] **11.1 — Physically-based sky** (Hillaire 2020): transmittance/multi-scattering LUTs,
-  aerial perspective; replaces the analytic gradient sky. Time-of-day from the sun entity.
+- [x] **11.1 — Physically-based sky** (Hillaire 2020): `lib/atmosphere.slang` models the
+  Rayleigh/Mie/ozone medium with Bruneton's transmittance parameterisation and Hillaire's
+  sky-view warp. Three LUTs (`AtmospherePass`): transmittance 256x64 + multiple-scattering
+  32x32 computed once at startup, and a 192x108 sky-view LUT (32-step single-scatter march
+  with the multi-scatter term + sun-lit ground for below-horizon rays) recomputed whenever
+  the sun moves — so the Renderer panel's sun sliders drive a fully physical sky. The
+  lighting background samples the sky-view LUT (+ analytic transmittance-tinted sun disc),
+  the direct sun light is transmittance-tinted (red sunsets on geometry), and the IBL
+  environment bakes from the same LUTs so ambient/reflections match. The procedural sky
+  remains as a fallback (sky mode tri-state in the push constants), keeping all pre-existing
+  self-tests exact. Self-test: LUT readbacks — horizon ray reddened vs zenith, sky-view
+  blue-dominant above the horizon and darker below. Aerial perspective on geometry and
+  time-of-day animation defer to 11.2/11.3.
+  *Commit: `[Phase11/Slice1] physically-based sky (Hillaire LUTs)`*
 - [ ] **11.2 — Volumetric clouds**: raymarched (Schneider/Nubis-style), Worley-Perlin noise
   field, temporal reprojection at quarter res, lit by the sun + ambient.
 - [ ] **11.3 — Dynamic IBL**: re-render the environment probe incrementally (a face per frame)

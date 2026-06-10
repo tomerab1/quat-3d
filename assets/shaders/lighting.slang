@@ -8,9 +8,14 @@
 // giving the per-pixel view vector specular needs. The material target's alpha is
 // the coverage mask (1 where geometry was rasterised, 0 for background).
 
+import atmosphere;
 import sky;
 
 static const float PI = 3.14159265358979;
+
+// Scales the sky-view LUT's luminance (per-unit sun irradiance) into the
+// engine's HDR lighting range.
+static const float SKY_LUT_BRIGHTNESS = 8.0;
 
 // Prefiltered specular cubemap mip count - 1 (the highest roughness LOD). Must
 // match prefilter_mip_count in ibl_pass.cpp.
@@ -49,6 +54,9 @@ struct PointLight {
 [[vk::binding(10)]] Texture2D    g_brdf_lut;
 [[vk::binding(11)]] SamplerState g_ibl_sampler;
 [[vk::binding(12)]] Texture2D    g_clearcoat; // r = coat strength, g = coat roughness
+// Atmosphere LUTs (Phase 11.1; bound to fallbacks when pc.direction.w < 2).
+[[vk::binding(13)]] Texture2D    g_skyview;
+[[vk::binding(14)]] Texture2D    g_transmittance_lut;
 
 // Schlick Fresnel with a roughness term, for the ambient/environment specular
 // (the view-independent IBL term, unlike the per-light f_schlick).
@@ -226,13 +234,26 @@ void compute_main(uint3 tid : SV_DispatchThreadID) {
     int2 coord = int2(tid.xy);
 
     float4 mat = g_material.Load(int3(coord, 0));
-    if (mat.a < 0.5) { // background: sky (pc.direction.w enabled) or black
+    if (mat.a < 0.5) { // background: sky (pc.direction.w: 0 off, 1 procedural, 2 LUT)
         float3 bg = float3(0.0, 0.0, 0.0);
         if (pc.direction.w > 0.5) {
             float bg_depth = g_depth.Load(int3(coord, 0)).r;
             float3 far_pos = world_from_depth(coord, width, height, bg_depth);
             float3 ray = normalize(far_pos - pc.camera_pos.xyz);
-            bg = sky(ray, normalize(pc.direction.xyz));
+            float3 sun = normalize(pc.direction.xyz);
+            if (pc.direction.w > 1.5) {
+                // Physically-based sky (Hillaire LUTs) + analytic sun disc
+                // tinted by the transmittance toward the sun.
+                bg = sample_skyview(g_skyview, g_ibl_sampler, ray, sun) * SKY_LUT_BRIGHTNESS;
+                float cos_sun = dot(ray, sun);
+                if (cos_sun > 0.9998) {
+                    float3 sun_trans = sample_transmittance(
+                        g_transmittance_lut, g_ibl_sampler, ATMOS_VIEW_HEIGHT, sun.y);
+                    bg += sun_trans * 80.0 * smoothstep(0.9998, 0.99995, cos_sun);
+                }
+            } else {
+                bg = sky(ray, sun);
+            }
         }
         g_hdr[coord] = float4(bg, 1.0);
         return;
@@ -253,12 +274,18 @@ void compute_main(uint3 tid : SV_DispatchThreadID) {
     float3 world_pos = world_from_depth(coord, width, height, depth);
     float3 v = normalize(pc.camera_pos.xyz - world_pos);
 
-    // Directional light (shadowed).
+    // Directional light (shadowed). With the atmosphere active, the sun's
+    // light is tinted by its transmittance through the air mass — low sun
+    // reddens the direct lighting, matching the LUT sky.
     float3 ldir   = normalize(pc.direction.xyz);
+    float3 sun_radiance = pc.color.rgb * pc.color.w;
+    if (pc.direction.w > 1.5) {
+        sun_radiance *= sample_transmittance(g_transmittance_lut, g_ibl_sampler,
+                                             ATMOS_VIEW_HEIGHT, ldir.y);
+    }
     float  shadow = shadow_factor(world_pos, max(dot(n, ldir), 0.0));
     float3 sun    = surface_brdf(n, v, ldir, albedo.rgb, metallic, roughness);
-    float3 color  = layer_clearcoat_direct(sun, n, v, ldir, cc, ccr) *
-                   pc.color.rgb * pc.color.w * shadow;
+    float3 color  = layer_clearcoat_direct(sun, n, v, ldir, cc, ccr) * sun_radiance * shadow;
 
     // Point lights (no shadows).
     uint light_count = uint(pc.ambient.w);
