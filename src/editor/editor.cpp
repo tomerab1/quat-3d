@@ -8,6 +8,7 @@
 #include <imgui_internal.h> // DockBuilder API (initial layout)
 
 #include "engine/renderer/imgui_pass.hpp" // viewport_texture_id
+#include "inspector.hpp"
 #include "scene_hierarchy.hpp"
 #include "vendor/imgui_impl_sdl3.h"
 
@@ -179,6 +180,10 @@ void EditorLayer::build_ui(const EditorContext& ctx) {
     build_stats_panel(ctx);
     if (ctx.scene != nullptr) {
         draw_scene_hierarchy(*ctx.scene, selected_);
+        draw_inspector(*ctx.scene, selected_);
+    }
+    if (ctx.renderer != nullptr) {
+        draw_renderer_panel(*ctx.renderer);
     }
     if (show_demo_) {
         ImGui::ShowDemoWindow(&show_demo_);

@@ -382,10 +382,14 @@ Goal: a usable in-engine editor with scene hierarchy, inspector, asset browser, 
   entity. Mutation-safe iteration via snapshots.
   *Commit: `[Phase9/Slice3] scene hierarchy panel`*
 
-- [ ] **9.4 — Inspector panel**
-  `src/editor/inspector.cpp`: for selected entity, reflect all attached components via
-  `ComponentInspector<T>` template specialisations. Edit Transform, MeshRenderer, lights inline.
-  *Commit: `[Phase9/Slice4] inspector panel`*
+- [x] **9.4 — Inspector panel**
+  `src/editor/inspector.cpp`: for the selected entity, component editors via
+  `ComponentInspector<T>` specialisations — Name, Transform (decompose → T/euler/S → recompose),
+  DirectionalLight (the live sun control, since lighting reads the ECS), PointLight, Camera,
+  MeshRenderer (info), Animator. Plus the Renderer panel: bloom parameter sliders feeding the
+  frame's BloomParams through `editor::RendererSettings`, and an IBL rebake button consumed at
+  frame start.
+  *Commit: `[Phase9/Slice4] inspector + renderer settings panel`*
 
 - [ ] **9.5 — Asset browser**
   `src/editor/asset_browser.cpp`: filesystem tree under `assets/`. Icon thumbnails.

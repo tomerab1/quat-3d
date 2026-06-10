@@ -1652,6 +1652,7 @@ int main() {
     // frame slots: each slot's ImGuiPass uploads the font atlas of this
     // context. QUAT_NO_UI=1 disables it (deterministic headless renders).
     engine::editor::EditorLayer editor;
+    engine::editor::RendererSettings render_settings;
     const bool editor_enabled = std::getenv("QUAT_NO_UI") == nullptr;
     if (editor_enabled) {
         if (auto e = engine::editor::EditorLayer::create(window); e) {
@@ -2218,6 +2219,28 @@ int main() {
 
 #ifdef ENGINE_EDITOR
         editor.begin_frame();
+
+        // IBL rebake requested from the Renderer panel (sun edited via its
+        // entity). bake() waits the graphics queue idle internally before
+        // returning, so replacing the maps cannot race in-flight frames.
+        if (render_settings.rebake_ibl) {
+            render_settings.rebake_ibl = false;
+            glm::vec3 sun_to = glm::normalize(glm::vec3(0.4F, 1.0F, 0.3F));
+            const auto dlv = scene.registry().view<const engine::scene::DirectionalLight>();
+            for (const entt::entity e : dlv) {
+                sun_to =
+                    -glm::normalize(dlv.get<const engine::scene::DirectionalLight>(e).direction);
+                break;
+            }
+            if (auto baker = engine::renderer::IblBaker::create(device, allocator,
+                                                                *pipeline_cache, shader_dir);
+                baker) {
+                if (auto baked = baker->bake(sun_to); baked) {
+                    ibl_maps = std::move(*baked);
+                    std::fprintf(stderr, "[info] rebaked IBL environment\n");
+                }
+            }
+        }
 #endif
 
         const VkExtent2D pixel_extent = window_pixel_extent(window);
@@ -2510,8 +2533,14 @@ int main() {
             }
         }
         // Bloom: blur the bright parts of the HDR and add them back before tonemap.
-        if (auto r = fr.bloom.add_to_graph(graph, *hdr, draw_extent, engine::renderer::BloomParams{});
-            !r) {
+        engine::renderer::BloomParams bloom_params{};
+#ifdef ENGINE_EDITOR
+        bloom_params.threshold = render_settings.bloom_threshold;
+        bloom_params.knee = render_settings.bloom_knee;
+        bloom_params.intensity = render_settings.bloom_intensity;
+        bloom_params.radius = render_settings.bloom_radius;
+#endif
+        if (auto r = fr.bloom.add_to_graph(graph, *hdr, draw_extent, bloom_params); !r) {
             std::fprintf(stderr, "[fatal] bloom pass: %s\n", r.error().message.c_str());
             break;
         }
@@ -2573,6 +2602,7 @@ int main() {
             ui_ctx.entity_count = static_cast<int>(
                 scene.registry().view<engine::scene::Transform>().size());
             ui_ctx.scene = &scene;
+            ui_ctx.renderer = &render_settings;
             editor.build_ui(ui_ctx);
             if (auto r = fr.imgui.add_to_graph(graph, backbuffer, present_extent,
                                                editor.end_frame(), viewport_handle,

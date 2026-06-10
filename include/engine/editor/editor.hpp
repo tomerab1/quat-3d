@@ -27,6 +27,17 @@ class Scene;
 
 namespace engine::editor {
 
+// Renderer parameters the editor edits and the frame loop applies. Owned by
+// the loop (initialised to the engine defaults), pointed to by EditorContext.
+struct RendererSettings {
+    float bloom_threshold = 1.0F;
+    float bloom_knee      = 0.6F;
+    float bloom_intensity = 0.06F;
+    float bloom_radius    = 1.0F;
+    // Set by the panel's button, consumed (and reset) by the frame loop.
+    bool rebake_ibl = false;
+};
+
 // Everything the UI needs from (and feeds back to) the engine for one frame.
 struct EditorContext {
     // Stats panel inputs.
@@ -35,6 +46,8 @@ struct EditorContext {
     int   entity_count = 0;
     // Scene access for the hierarchy/inspector panels (may be null).
     scene::Scene* scene = nullptr;
+    // Renderer settings the panel edits (may be null).
+    RendererSettings* renderer = nullptr;
 };
 
 class EditorLayer {
