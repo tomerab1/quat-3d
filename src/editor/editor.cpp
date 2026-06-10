@@ -9,6 +9,7 @@
 
 #include "animation_preview.hpp"
 #include "asset_browser.hpp"
+#include "physics_debug.hpp"
 #include "engine/renderer/imgui_pass.hpp" // viewport_texture_id
 #include "inspector.hpp"
 #include "scene_hierarchy.hpp"
@@ -123,6 +124,7 @@ void EditorLayer::build_dock_layout(unsigned int dockspace_id) {
     ImGui::DockBuilderDockWindow("Viewport", centre);
     ImGui::DockBuilderDockWindow("Hierarchy", left_top);
     ImGui::DockBuilderDockWindow("Stats", left_bottom);
+    ImGui::DockBuilderDockWindow("Physics", left_bottom);
     ImGui::DockBuilderDockWindow("Inspector", right);
     ImGui::DockBuilderDockWindow("Renderer", right);
     ImGui::DockBuilderDockWindow("Assets", bottom);
@@ -200,6 +202,7 @@ void EditorLayer::build_ui(const EditorContext& ctx) {
         draw_inspector(*ctx.scene, selected_);
         draw_animation_preview(*ctx.scene, selected_, ctx.view_proj, viewport_rect_,
                                anim_state_);
+        draw_physics_debug(*ctx.scene, ctx.view_proj, viewport_rect_, physics_state_);
     }
     if (ctx.renderer != nullptr) {
         draw_renderer_panel(*ctx.renderer);

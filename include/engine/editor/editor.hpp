@@ -36,6 +36,14 @@ struct AnimationPreviewState {
     float resume_speed = 1.0F; // speed restored by the play button after pause
 };
 
+// Physics overlay state owned by EditorLayer.
+struct PhysicsDebugState {
+    bool enabled      = false;
+    bool show_static  = true;
+    bool show_dynamic = true; // dynamic + kinematic bodies
+    bool show_sensors = true;
+};
+
 // Renderer parameters the editor edits and the frame loop applies. Owned by
 // the loop (initialised to the engine defaults), pointed to by EditorContext.
 struct RendererSettings {
@@ -127,6 +135,7 @@ private:
     float viewport_rect_[4]{0.0F, 0.0F, 0.0F, 0.0F};
 
     AnimationPreviewState anim_state_;
+    PhysicsDebugState     physics_state_;
 
     entt::entity selected_ = entt::null;
 };

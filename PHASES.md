@@ -408,9 +408,14 @@ Goal: a usable in-engine editor with scene hierarchy, inspector, asset browser, 
   Blend-weight sliders arrive with a BlendTree component (the ECS Animator plays single clips).
   *Commit: `[Phase9/Slice6] animation preview panel`*
 
-- [ ] **9.7 — Physics debug draw**
-  Implement Jolt `DebugRenderer` interface → emit lines into ImGui draw list.
-  Toggle per collision layer. Show contact points.
+- [x] **9.7 — Physics debug draw**
+  `src/editor/physics_debug.cpp`: collision-shape wireframes (box edges, sphere great circles,
+  capsule caps + side lines) drawn from the ECS Collider components, projected over the
+  Viewport via the ImGui foreground draw list, colour-coded and toggleable per category
+  (static green / dynamic+kinematic blue / sensors yellow). vcpkg's Jolt is compiled without
+  `JPH_DEBUG_RENDERER`, so the engine renders its own shape descriptors instead of implementing
+  the Jolt interface against a library that cannot service it; contact points are deferred to a
+  Jolt build with the debug renderer enabled.
   *Commit: `[Phase9/Slice7] physics debug draw`*
 
 - [ ] **9.8 — ImGuizmo gizmos**

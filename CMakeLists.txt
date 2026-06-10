@@ -201,6 +201,7 @@ if(ENGINE_EDITOR)
         src/editor/inspector.cpp
         src/editor/asset_browser.cpp
         src/editor/animation_preview.cpp
+        src/editor/physics_debug.cpp
         src/editor/vendor/imgui_impl_sdl3.cpp)
     # engine_scene is PUBLIC: editor.hpp exposes entt entity types (selection)
     # and the hierarchy/inspector panels reflect scene components.
