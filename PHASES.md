@@ -374,9 +374,12 @@ Goal: a usable in-engine editor with scene hierarchy, inspector, asset browser, 
   engages over the Viewport panel. `QUAT_NO_UI` keeps the direct-to-swapchain path.
   *Commit: `[Phase9/Slice2] editor viewport panel`*
 
-- [ ] **9.3 — Scene hierarchy panel**
-  `src/editor/scene_hierarchy.cpp`: tree view of entities (using `Name` + `Parent`/`Children`).
-  Click to select. Right-click: create entity, delete entity, duplicate.
+- [x] **9.3 — Scene hierarchy panel**
+  `src/editor/scene_hierarchy.cpp`: tree view of entities (using `Name` + `Parent`/`Children`),
+  roots = live entities without a parent. Click to select (selection lives in EditorLayer, not
+  the ECS). Right-click an item: create child, duplicate (shallow component clone), delete
+  (recursive subtree destroy, unlinked from the parent first); right-click blank space: create
+  entity. Mutation-safe iteration via snapshots.
   *Commit: `[Phase9/Slice3] scene hierarchy panel`*
 
 - [ ] **9.4 — Inspector panel**

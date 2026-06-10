@@ -197,6 +197,7 @@ endif()
 if(ENGINE_EDITOR)
     add_library(engine_editor STATIC
         src/editor/editor.cpp
+        src/editor/scene_hierarchy.cpp
         src/editor/vendor/imgui_impl_sdl3.cpp)
     # engine_scene is PUBLIC: editor.hpp exposes entt entity types (selection)
     # and the hierarchy/inspector panels reflect scene components.
