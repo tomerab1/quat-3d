@@ -2269,9 +2269,25 @@ int main() {
         if (editor_play != editor_play_prev) {
             if (editor_play) {
                 play_snapshot = engine::editor::capture_scene(scene);
+                // Unity convention: a Collider without a RigidBody simulates as
+                // a static body. Added AFTER the snapshot, so Stop removes it.
+                {
+                    std::vector<entt::entity> static_only;
+                    for (const entt::entity e :
+                         scene.registry().view<engine::scene::Collider>(
+                             entt::exclude<engine::scene::RigidBody>)) {
+                        static_only.push_back(e);
+                    }
+                    for (const entt::entity e : static_only) {
+                        scene.registry().emplace<engine::scene::RigidBody>(
+                            e, engine::scene::BodyMotion::static_body, 0.0F);
+                    }
+                }
                 if (auto world = engine::physics::PhysicsWorld::create(); world) {
                     play_physics = std::move(*world);
-                    std::fprintf(stderr, "[editor] play\n");
+                    std::fprintf(stderr, "[editor] play (%zu colliders, %zu bodies)\n",
+                                 scene.registry().view<engine::scene::Collider>().size(),
+                                 scene.registry().view<engine::scene::RigidBody>().size());
                 } else {
                     std::fprintf(stderr, "[editor] play failed: %s\n",
                                  world.error().message.c_str());

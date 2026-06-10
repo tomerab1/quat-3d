@@ -39,8 +39,17 @@ namespace {
     return physics::Motion::dynamic;
 }
 
-[[nodiscard]] glm::vec3 position_of(const Transform& t) { return glm::vec3(t.local[3]); }
-[[nodiscard]] glm::quat rotation_of(const Transform& t) { return glm::quat_cast(glm::mat3(t.local)); }
+// Bodies live in WORLD space: entities with colliders may sit anywhere in the
+// hierarchy (e.g. glTF mesh children), so Transform.world — not local — is the
+// simulation pose. Rotation is extracted scale-free.
+[[nodiscard]] glm::vec3 position_of(const Transform& t) { return glm::vec3(t.world[3]); }
+[[nodiscard]] glm::quat rotation_of(const Transform& t) {
+    glm::mat3 m(t.world);
+    m[0] = glm::normalize(m[0]);
+    m[1] = glm::normalize(m[1]);
+    m[2] = glm::normalize(m[2]);
+    return glm::quat_cast(m);
+}
 
 } // namespace
 
@@ -73,14 +82,30 @@ void physics_system(entt::registry& registry, physics::PhysicsWorld& world, floa
     // 3. Step the simulation.
     world.update(dt);
 
-    // 4. Pull dynamic bodies' transforms back into the ECS (entities are roots).
+    // 4. Pull dynamic bodies' world poses back into the ECS. The entity's
+    // authored scale is preserved, and parented entities convert the pose
+    // through the parent's world so the transform system reproduces it.
     for (auto [e, rb, t] : registry.view<RigidBody, Transform>().each()) {
         if (rb.motion == BodyMotion::dynamic && rb.body != invalid) {
             glm::vec3 pos(0.0F);
             glm::quat rot(1.0F, 0.0F, 0.0F, 0.0F);
             world.body_transform(rb.body, pos, rot);
-            t.local = glm::translate(glm::mat4(1.0F), pos) * glm::mat4_cast(rot);
-            t.world = t.local;
+            const glm::vec3 scale(glm::length(glm::vec3(t.world[0])),
+                                  glm::length(glm::vec3(t.world[1])),
+                                  glm::length(glm::vec3(t.world[2])));
+            const glm::mat4 pose = glm::translate(glm::mat4(1.0F), pos) * glm::mat4_cast(rot) *
+                                   glm::scale(glm::mat4(1.0F), scale);
+
+            glm::mat4 parent_world(1.0F);
+            if (const auto* parent = registry.try_get<Parent>(e);
+                parent != nullptr && parent->entity != entt::null &&
+                registry.valid(parent->entity)) {
+                if (const auto* pt = registry.try_get<Transform>(parent->entity)) {
+                    parent_world = pt->world;
+                }
+            }
+            t.local = glm::inverse(parent_world) * pose;
+            t.world = pose;
         }
     }
 }
@@ -166,10 +191,18 @@ std::expected<void, core::Error> run_physics_body_self_test() {
 
     entt::registry registry;
 
+    // Bodies are created from Transform.world (entities may be parented); this
+    // bare-registry test has no transform system, so world is set explicitly.
+    const auto place = [&](entt::entity e, const glm::vec3& pos) -> Transform& {
+        auto& t = registry.emplace<Transform>(e);
+        t.local = glm::translate(glm::mat4(1.0F), pos);
+        t.world = t.local;
+        return t;
+    };
+
     // Static floor: 100x2x100 box centred at y=-1 (top at y=0).
     const entt::entity floor = registry.create();
-    registry.emplace<Transform>(floor).local =
-        glm::translate(glm::mat4(1.0F), glm::vec3(0.0F, -1.0F, 0.0F));
+    place(floor, glm::vec3(0.0F, -1.0F, 0.0F));
     registry.emplace<Collider>(floor, ColliderShape::box, glm::vec3(50.0F, 1.0F, 50.0F),
                                glm::vec3(0.0F));
     registry.emplace<RigidBody>(floor, BodyMotion::static_body, 1.0F,
@@ -177,10 +210,24 @@ std::expected<void, core::Error> run_physics_body_self_test() {
 
     // Dynamic sphere (radius 0.5) dropped from y=5.
     const entt::entity sphere = registry.create();
-    registry.emplace<Transform>(sphere).local =
-        glm::translate(glm::mat4(1.0F), glm::vec3(0.0F, 5.0F, 0.0F));
+    place(sphere, glm::vec3(0.0F, 5.0F, 0.0F));
     registry.emplace<Collider>(sphere, ColliderShape::sphere, glm::vec3(0.5F), glm::vec3(0.0F));
     registry.emplace<RigidBody>(sphere, BodyMotion::dynamic, 1.0F,
+                                physics::PhysicsWorld::invalid_body);
+
+    // Parented dynamic sphere (the glTF-child case): the parent carries the
+    // spawn offset, the child's local is identity — the body must be created
+    // at the WORLD position and the pulled pose written back through the
+    // parent (local = inverse(parent_world) * pose).
+    const entt::entity parent = registry.create();
+    Transform& parent_t = place(parent, glm::vec3(10.0F, 5.0F, 0.0F));
+    const entt::entity child = registry.create();
+    auto& child_t = registry.emplace<Transform>(child);
+    child_t.local = glm::mat4(1.0F);
+    child_t.world = parent_t.world; // as the transform system would compute
+    registry.emplace<Parent>(child, parent);
+    registry.emplace<Collider>(child, ColliderShape::sphere, glm::vec3(0.5F), glm::vec3(0.0F));
+    registry.emplace<RigidBody>(child, BodyMotion::dynamic, 1.0F,
                                 physics::PhysicsWorld::invalid_body);
 
     for (int i = 0; i < 120; ++i) {
@@ -196,6 +243,19 @@ std::expected<void, core::Error> run_physics_body_self_test() {
     }
     if (std::abs(y - 0.5F) > 0.25F) {
         return std::unexpected(core::Error{"physics body self-test: sphere not resting on floor"});
+    }
+
+    // The child body fell at x=10 (its world position, not its identity local).
+    const glm::vec3 child_world = glm::vec3(registry.get<Transform>(child).world[3]);
+    if (std::abs(child_world.x - 10.0F) > 0.5F || std::abs(child_world.y - 0.5F) > 0.25F) {
+        return std::unexpected(
+            core::Error{"physics body self-test: parented body not simulated in world space"});
+    }
+    // And its local pose composes through the parent to reproduce that world.
+    const glm::mat4 recomposed = parent_t.world * registry.get<Transform>(child).local;
+    if (std::abs(recomposed[3].y - child_world.y) > 0.01F) {
+        return std::unexpected(
+            core::Error{"physics body self-test: parented local/world out of sync"});
     }
     return {};
 }

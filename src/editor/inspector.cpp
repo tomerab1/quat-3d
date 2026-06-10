@@ -151,7 +151,8 @@ struct ComponentInspector<scene::Collider> {
         }
         ImGui::DragFloat3("offset", &collider.offset.x, 0.05F);
         ImGui::Checkbox("sensor (trigger)", &collider.is_sensor);
-        ImGui::TextDisabled("tip: enable 'draw colliders' in the Physics panel");
+        ImGui::TextDisabled("without a Rigid Body this simulates as static;");
+        ImGui::TextDisabled("add a dynamic Rigid Body to make it fall in Play");
     }
 };
 

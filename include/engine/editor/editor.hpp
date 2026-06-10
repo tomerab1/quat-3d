@@ -37,9 +37,10 @@ struct AnimationPreviewState {
     float resume_speed = 1.0F; // speed restored by the play button after pause
 };
 
-// Physics overlay state owned by EditorLayer.
+// Physics overlay state owned by EditorLayer. The overlay defaults ON so a
+// freshly added collider is immediately visible.
 struct PhysicsDebugState {
-    bool enabled      = false;
+    bool enabled      = true;
     bool show_static  = true;
     bool show_dynamic = true; // dynamic + kinematic bodies
     bool show_sensors = true;
