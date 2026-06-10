@@ -1,10 +1,13 @@
 #include "engine/editor/editor.hpp"
 
+#include <algorithm>
 #include <string>
 #include <utility>
 
 #include <imgui.h>
+#include <imgui_internal.h> // DockBuilder API (initial layout)
 
+#include "engine/renderer/imgui_pass.hpp" // viewport_texture_id
 #include "vendor/imgui_impl_sdl3.h"
 
 namespace engine::editor {
@@ -56,8 +59,13 @@ EditorLayer& EditorLayer::operator=(EditorLayer&& other) noexcept {
     if (this != &other) {
         destroy();
         initialized_ = std::exchange(other.initialized_, false);
+        layout_built_ = other.layout_built_;
         show_stats_ = other.show_stats_;
         show_demo_ = other.show_demo_;
+        viewport_width_ = other.viewport_width_;
+        viewport_height_ = other.viewport_height_;
+        viewport_hovered_ = other.viewport_hovered_;
+        selected_ = other.selected_;
     }
     return *this;
 }
@@ -88,13 +96,74 @@ void EditorLayer::begin_frame() {
     ImGui::NewFrame();
 }
 
-void EditorLayer::build_ui(const FrameStats& stats) {
+// One-time split of the fullscreen dockspace: Viewport fills the centre,
+// Hierarchy + Stats dock left, Inspector right, Assets/Animation bottom.
+// Windows from later slices are docked by name up front — DockBuilder accepts
+// names for windows that do not exist yet.
+void EditorLayer::build_dock_layout(unsigned int dockspace_id) {
+    ImGui::DockBuilderRemoveNode(dockspace_id);
+    ImGui::DockBuilderAddNode(dockspace_id, ImGuiDockNodeFlags_DockSpace);
+    ImGui::DockBuilderSetNodeSize(dockspace_id, ImGui::GetMainViewport()->WorkSize);
+
+    ImGuiID centre = dockspace_id;
+    const ImGuiID right = ImGui::DockBuilderSplitNode(centre, ImGuiDir_Right, 0.22F, nullptr,
+                                                      &centre);
+    const ImGuiID left = ImGui::DockBuilderSplitNode(centre, ImGuiDir_Left, 0.24F, nullptr,
+                                                     &centre);
+    const ImGuiID bottom = ImGui::DockBuilderSplitNode(centre, ImGuiDir_Down, 0.28F, nullptr,
+                                                       &centre);
+    ImGuiID left_bottom = 0;
+    const ImGuiID left_top = ImGui::DockBuilderSplitNode(left, ImGuiDir_Up, 0.65F, nullptr,
+                                                         &left_bottom);
+
+    ImGui::DockBuilderDockWindow("Viewport", centre);
+    ImGui::DockBuilderDockWindow("Hierarchy", left_top);
+    ImGui::DockBuilderDockWindow("Stats", left_bottom);
+    ImGui::DockBuilderDockWindow("Inspector", right);
+    ImGui::DockBuilderDockWindow("Renderer", right);
+    ImGui::DockBuilderDockWindow("Assets", bottom);
+    ImGui::DockBuilderDockWindow("Animation", bottom);
+    ImGui::DockBuilderFinish(dockspace_id);
+}
+
+void EditorLayer::build_viewport_panel() {
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
+    if (ImGui::Begin("Viewport")) {
+        const ImVec2 avail = ImGui::GetContentRegionAvail();
+        viewport_width_ = static_cast<std::uint32_t>(std::max(avail.x, 1.0F));
+        viewport_height_ = static_cast<std::uint32_t>(std::max(avail.y, 1.0F));
+        ImGui::Image(static_cast<ImTextureID>(renderer::ImGuiPass::viewport_texture_id), avail);
+        viewport_hovered_ = ImGui::IsItemHovered();
+    } else {
+        viewport_hovered_ = false;
+    }
+    ImGui::End();
+    ImGui::PopStyleVar();
+}
+
+void EditorLayer::build_stats_panel(const EditorContext& ctx) {
+    if (!show_stats_) return;
+    if (ImGui::Begin("Stats", &show_stats_)) {
+        const ImGuiIO& io = ImGui::GetIO();
+        ImGui::Text("%.1f fps (%.2f ms)", io.Framerate,
+                    io.Framerate > 0.0F ? 1000.0F / io.Framerate : 0.0F);
+        ImGui::Text("frame: %.2f ms", ctx.frame_ms);
+        ImGui::Text("draws: %d", ctx.draw_count);
+        ImGui::Text("entities: %d", ctx.entity_count);
+        ImGui::Text("viewport: %ux%u", viewport_width_, viewport_height_);
+    }
+    ImGui::End();
+}
+
+void EditorLayer::build_ui(const EditorContext& ctx) {
     if (!initialized_) return;
 
-    // Fullscreen dockspace; the central node stays transparent so the scene
-    // renders through until the offscreen viewport panel lands (9.2).
-    ImGui::DockSpaceOverViewport(0, ImGui::GetMainViewport(),
-                                 ImGuiDockNodeFlags_PassthruCentralNode);
+    const ImGuiID dockspace_id =
+        ImGui::DockSpaceOverViewport(0, ImGui::GetMainViewport(), ImGuiDockNodeFlags_None);
+    if (!layout_built_) {
+        layout_built_ = true;
+        build_dock_layout(dockspace_id);
+    }
 
     if (ImGui::BeginMainMenuBar()) {
         if (ImGui::BeginMenu("View")) {
@@ -105,17 +174,8 @@ void EditorLayer::build_ui(const FrameStats& stats) {
         ImGui::EndMainMenuBar();
     }
 
-    if (show_stats_) {
-        if (ImGui::Begin("Stats", &show_stats_)) {
-            const ImGuiIO& io = ImGui::GetIO();
-            ImGui::Text("%.1f fps (%.2f ms)", io.Framerate,
-                        io.Framerate > 0.0F ? 1000.0F / io.Framerate : 0.0F);
-            ImGui::Text("frame: %.2f ms", stats.frame_ms);
-            ImGui::Text("draws: %d", stats.draw_count);
-            ImGui::Text("entities: %d", stats.entity_count);
-        }
-        ImGui::End();
-    }
+    build_viewport_panel();
+    build_stats_panel(ctx);
     if (show_demo_) {
         ImGui::ShowDemoWindow(&show_demo_);
     }

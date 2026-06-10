@@ -198,8 +198,10 @@ if(ENGINE_EDITOR)
     add_library(engine_editor STATIC
         src/editor/editor.cpp
         src/editor/vendor/imgui_impl_sdl3.cpp)
+    # engine_scene is PUBLIC: editor.hpp exposes entt entity types (selection)
+    # and the hierarchy/inspector panels reflect scene components.
     target_link_libraries(engine_editor
-        PUBLIC engine_flags
+        PUBLIC engine_flags engine_scene
         PRIVATE imgui::imgui SDL3::SDL3)
     target_include_directories(engine_editor PUBLIC ${ENGINE_PUBLIC_INCLUDE})
     # Vendored third-party backend: not warning-clean under our strict flags.

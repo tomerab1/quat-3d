@@ -37,6 +37,13 @@ namespace engine::renderer {
 
 class ImGuiPass {
 public:
+    // ImTextureID values understood by this renderer. The font atlas id is
+    // assigned to the ImGui context at create(); the viewport id is what the
+    // editor's Viewport panel passes to ImGui::Image — it resolves to the
+    // offscreen scene image handed to add_to_graph.
+    static constexpr std::uint64_t font_texture_id     = 1;
+    static constexpr std::uint64_t viewport_texture_id = 2;
+
     // Builds the UI pipeline (targeting `output_format`) and uploads the font
     // atlas of the CURRENT ImGui context — one must exist before this call.
     [[nodiscard]] static std::expected<ImGuiPass, core::Error>
@@ -52,12 +59,18 @@ public:
 
     // Copies `draw_data` (vertices, indices, clipped draw commands) into this
     // pass's host-visible buffers and appends a graphics pass compositing the
-    // UI over `target` (loadOp LOAD). No-op when there is nothing to draw.
-    // The copy means `draw_data` only needs to stay valid for this call, and
-    // each frame-in-flight slot owns its own ImGuiPass instance.
+    // UI over `target`. No-op when there is nothing to draw. The copy means
+    // `draw_data` only needs to stay valid for this call, and each
+    // frame-in-flight slot owns its own ImGuiPass instance.
+    //
+    // `viewport`, when valid, is the offscreen scene image the Viewport panel
+    // samples (ImGui::Image with viewport_texture_id); the pass declares the
+    // read so the graph orders/transitions it. `clear` clears `target` first
+    // (editor mode owns the whole swapchain) instead of compositing (LOAD).
     [[nodiscard]] std::expected<void, core::Error>
     add_to_graph(rhi::RenderGraph& graph, rhi::ResourceHandle target, VkExtent2D extent,
-                 const ImDrawData* draw_data);
+                 const ImDrawData* draw_data, rhi::ResourceHandle viewport = {},
+                 bool clear = false);
 
 private:
     struct UiDrawCmd {
@@ -65,6 +78,7 @@ private:
         std::uint32_t index_count = 0;
         std::uint32_t first_index = 0;
         std::int32_t  vertex_offset = 0;
+        std::uint64_t texture = font_texture_id;
     };
 
     [[nodiscard]] std::expected<void, core::Error> ensure_buffers(VkDeviceSize vertex_bytes,
@@ -85,6 +99,10 @@ private:
     // stopped moving.
     rhi::DescriptorBuffer font_descriptor_;
     bool                  font_descriptor_ready_ = false;
+    // Same, for the Viewport panel's scene image (rewritten every frame — the
+    // resolved view changes when the panel is resized).
+    rhi::DescriptorBuffer viewport_descriptor_;
+    bool                  viewport_descriptor_ready_ = false;
 
     // Host-visible, persistently mapped; grown on demand, rewritten per frame.
     rhi::GpuBuffer vertex_buffer_;

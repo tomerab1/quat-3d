@@ -258,11 +258,43 @@ struct DeferredFrame {
     engine::renderer::TaaPass        taa;
 #ifdef ENGINE_EDITOR
     engine::renderer::ImGuiPass      imgui;
+    // Offscreen scene target for the editor's Viewport panel: TAA resolves the
+    // frame here (instead of the swapchain) and the UI samples it. Recreated
+    // when the panel is resized.
+    engine::rhi::GpuImage            viewport_image;
+    engine::rhi::ImageView           viewport_view;
+    VkExtent2D                       viewport_extent{0, 0};
 #endif
     engine::rhi::TransientImagePool  pool;
     // Skinning resources, lazily created per skinned entity (keyed by entity).
     std::unordered_map<entt::entity, SkinnedEntityGpu> skin_gpu;
 };
+
+#ifdef ENGINE_EDITOR
+// (Re)creates the slot's offscreen viewport image at `extent`. Safe to replace
+// here: the slot's fence was waited before its frame is rebuilt. The image uses
+// the swapchain format so the TAA resolve copy and the UI's sRGB sampling
+// behave exactly as the direct-to-swapchain path.
+bool ensure_viewport_target(DeferredFrame& frame, const engine::rhi::Device& device,
+                            engine::rhi::GpuAllocator& allocator, VkFormat format,
+                            VkExtent2D extent) {
+    if (frame.viewport_image.handle() != VK_NULL_HANDLE &&
+        frame.viewport_extent.width == extent.width &&
+        frame.viewport_extent.height == extent.height) {
+        return true;
+    }
+    auto image = allocator.create_image(format, extent,
+                                        VK_IMAGE_USAGE_TRANSFER_DST_BIT |
+                                            VK_IMAGE_USAGE_SAMPLED_BIT);
+    if (!image) return false;
+    auto view = engine::rhi::create_image_view(device.handle(), image->handle(), format);
+    if (!view) return false;
+    frame.viewport_image = std::move(*image);
+    frame.viewport_view = std::move(*view);
+    frame.viewport_extent = extent;
+    return true;
+}
+#endif
 
 // Fetch (or create) this frame slot's skinning buffers for `entity`. Returns
 // nullptr if allocation fails (the caller then renders the bind pose).
@@ -2157,7 +2189,9 @@ int main() {
                 break;
             case SDL_EVENT_MOUSE_BUTTON_DOWN:
 #ifdef ENGINE_EDITOR
-                if (editor.wants_mouse()) break; // UI owns the click
+                // Camera input belongs to the Viewport panel; clicks anywhere
+                // else are the UI's.
+                if (editor.active() && !editor.viewport_hovered()) break;
 #endif
                 if (event.button.button == SDL_BUTTON_RIGHT) {
                     looking = true;
@@ -2234,7 +2268,18 @@ int main() {
         DeferredFrame& fr = frames[frame];
         fr.pool.reset();
 
-        const VkExtent2D draw_extent = swapchain.extent();
+        // The scene renders at `draw_extent`; the swapchain presents at
+        // `present_extent`. They differ only in editor mode, where the scene
+        // fills the Viewport panel (sized by last frame's UI) instead of the
+        // whole window.
+        const VkExtent2D present_extent = swapchain.extent();
+        VkExtent2D draw_extent = present_extent;
+#ifdef ENGINE_EDITOR
+        if (editor.active() && editor.viewport_width() > 0 && editor.viewport_height() > 0) {
+            draw_extent.width = std::clamp(editor.viewport_width(), 16U, 4096U);
+            draw_extent.height = std::clamp(editor.viewport_height(), 16U, 4096U);
+        }
+#endif
         const float aspect =
             draw_extent.height == 0
                 ? 1.0F
@@ -2477,9 +2522,27 @@ int main() {
         }
         const engine::rhi::ResourceHandle backbuffer = graph.import_image(
             "swapchain", swapchain.images()[image_index], swapchain.image_views()[image_index],
-            swapchain.format(), draw_extent, VK_IMAGE_LAYOUT_UNDEFINED,
+            swapchain.format(), present_extent, VK_IMAGE_LAYOUT_UNDEFINED,
             VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
-        // Tonemap to an intermediate LDR image; TAA resolves it into the swapchain.
+        // In editor mode the frame resolves into the slot's offscreen viewport
+        // image (sampled by the Viewport panel); otherwise straight into the
+        // swapchain as before.
+        engine::rhi::ResourceHandle scene_target = backbuffer;
+#ifdef ENGINE_EDITOR
+        engine::rhi::ResourceHandle viewport_handle{};
+        if (editor.active()) {
+            if (!ensure_viewport_target(fr, device, allocator, swapchain.format(), draw_extent)) {
+                std::fprintf(stderr, "[fatal] viewport target creation failed\n");
+                break;
+            }
+            viewport_handle = graph.import_image(
+                "viewport", fr.viewport_image.handle(), fr.viewport_view.handle(),
+                swapchain.format(), draw_extent, VK_IMAGE_LAYOUT_UNDEFINED,
+                VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+            scene_target = viewport_handle;
+        }
+#endif
+        // Tonemap to an intermediate LDR image; TAA resolves it into the target.
         const engine::rhi::ResourceHandle ldr_current = graph.create_transient_image(
             "ldr_current", ldr_format, draw_extent,
             VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT);
@@ -2490,8 +2553,8 @@ int main() {
             break;
         }
         // Temporal anti-aliasing: resolve the jittered frame against history.
-        if (auto r = fr.taa.add_to_graph(graph, ldr_current, gbuffer->depth, backbuffer, draw_extent,
-                                         jittered_inv_vp, prev_jittered_vp, presented,
+        if (auto r = fr.taa.add_to_graph(graph, ldr_current, gbuffer->depth, scene_target,
+                                         draw_extent, jittered_inv_vp, prev_jittered_vp, presented,
                                          taa_history_valid);
             !r) {
             std::fprintf(stderr, "[fatal] taa pass: %s\n", r.error().message.c_str());
@@ -2500,18 +2563,20 @@ int main() {
         prev_jittered_vp = jittered_vp;
         taa_history_valid = true;
 #ifdef ENGINE_EDITOR
-        // Editor UI: build the dockspace + panels, then composite the draw data
-        // over the swapchain image as the last pass. A null/empty draw list
-        // (editor disabled) adds no pass.
+        // Editor UI: build the dockspace + panels (the Viewport panel samples
+        // the offscreen scene image), then draw the UI into the swapchain as
+        // the last pass. A null/empty draw list (editor disabled) adds no pass.
         {
-            engine::editor::EditorLayer::FrameStats ui_stats;
-            ui_stats.frame_ms = dt * 1000.0F;
-            ui_stats.draw_count =
-                static_cast<int>(draws.size() + transparent_draws.size());
-            ui_stats.entity_count = static_cast<int>(
+            engine::editor::EditorContext ui_ctx;
+            ui_ctx.frame_ms = dt * 1000.0F;
+            ui_ctx.draw_count = static_cast<int>(draws.size() + transparent_draws.size());
+            ui_ctx.entity_count = static_cast<int>(
                 scene.registry().view<engine::scene::Transform>().size());
-            editor.build_ui(ui_stats);
-            if (auto r = fr.imgui.add_to_graph(graph, backbuffer, draw_extent, editor.end_frame());
+            ui_ctx.scene = &scene;
+            editor.build_ui(ui_ctx);
+            if (auto r = fr.imgui.add_to_graph(graph, backbuffer, present_extent,
+                                               editor.end_frame(), viewport_handle,
+                                               /*clear=*/editor.active());
                 !r) {
                 std::fprintf(stderr, "[fatal] imgui pass: %s\n", r.error().message.c_str());
                 break;
@@ -2539,7 +2604,7 @@ int main() {
         screenshot_recorded = false;
         if (screenshot_path != nullptr && max_frames != 0 && presented + 1 >= max_frames) {
             const VkDeviceSize shot_bytes =
-                static_cast<VkDeviceSize>(draw_extent.width) * draw_extent.height * 4;
+                static_cast<VkDeviceSize>(present_extent.width) * present_extent.height * 4;
             if (screenshot_buffer.handle() == VK_NULL_HANDLE) {
                 auto buf = allocator.create_buffer(shot_bytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT,
                                                    VMA_MEMORY_USAGE_AUTO,
@@ -2569,7 +2634,7 @@ int main() {
 
                 VkBufferImageCopy region{};
                 region.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
-                region.imageExtent = {draw_extent.width, draw_extent.height, 1};
+                region.imageExtent = {present_extent.width, present_extent.height, 1};
                 vkCmdCopyImageToBuffer(cmd, shot_image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
                                        screenshot_buffer.handle(), 1, &region);
 
@@ -2634,13 +2699,13 @@ int main() {
             const bool bgra = swapchain.format() == VK_FORMAT_B8G8R8A8_SRGB ||
                               swapchain.format() == VK_FORMAT_B8G8R8A8_UNORM;
             if (FILE* f = std::fopen(screenshot_path, "wb")) {
-                std::fprintf(f, "P6\n%u %u\n255\n", draw_extent.width, draw_extent.height);
+                std::fprintf(f, "P6\n%u %u\n255\n", present_extent.width, present_extent.height);
                 const auto* px = static_cast<const std::uint8_t*>(screenshot_buffer.mapped());
-                std::vector<std::uint8_t> row(static_cast<std::size_t>(draw_extent.width) * 3);
-                for (std::uint32_t y = 0; y < draw_extent.height; ++y) {
-                    for (std::uint32_t x = 0; x < draw_extent.width; ++x) {
+                std::vector<std::uint8_t> row(static_cast<std::size_t>(present_extent.width) * 3);
+                for (std::uint32_t y = 0; y < present_extent.height; ++y) {
+                    for (std::uint32_t x = 0; x < present_extent.width; ++x) {
                         const std::uint8_t* p =
-                            px + (static_cast<std::size_t>(y) * draw_extent.width + x) * 4;
+                            px + (static_cast<std::size_t>(y) * present_extent.width + x) * 4;
                         row[x * 3 + 0] = bgra ? p[2] : p[0];
                         row[x * 3 + 1] = p[1];
                         row[x * 3 + 2] = bgra ? p[0] : p[2];

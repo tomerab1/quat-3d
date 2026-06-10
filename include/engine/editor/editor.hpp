@@ -1,14 +1,19 @@
 #pragma once
 
-// EditorLayer — ImGui editor shell (Phase 9, Slice 9.1).
+// EditorLayer — ImGui editor shell (Phase 9).
 //
 // Owns the ImGui context and the SDL3 platform backend (input/windowing only;
 // rendering is the engine's ImGuiPass). Builds the docking shell each frame:
-// a fullscreen passthrough dockspace, the main menu bar, and the first panels.
-// Editor state lives here, not in the ECS (CLAUDE.md). ImGui types stay out of
-// this header — sources under src/editor/ are the only ImGui includes.
+// the dockspace, main menu bar, the offscreen-scene Viewport panel, and the
+// tool panels. Editor state (selection, panel visibility, viewport size) lives
+// here, not in the ECS (CLAUDE.md). ImGui types stay out of this header —
+// sources under src/editor/ are the only ImGui includes.
 
+#include <cstdint>
 #include <expected>
+
+#include <entt/entity/fwd.hpp>
+#include <entt/entity/entity.hpp>
 
 #include "engine/core/error.hpp"
 
@@ -16,17 +21,24 @@ struct SDL_Window;
 union SDL_Event;
 struct ImDrawData;
 
+namespace engine::scene {
+class Scene;
+}
+
 namespace engine::editor {
+
+// Everything the UI needs from (and feeds back to) the engine for one frame.
+struct EditorContext {
+    // Stats panel inputs.
+    float frame_ms     = 0.0F;
+    int   draw_count   = 0;
+    int   entity_count = 0;
+    // Scene access for the hierarchy/inspector panels (may be null).
+    scene::Scene* scene = nullptr;
+};
 
 class EditorLayer {
 public:
-    // Per-frame numbers surfaced in the Stats panel.
-    struct FrameStats {
-        float frame_ms     = 0.0F;
-        int   draw_count   = 0;
-        int   entity_count = 0;
-    };
-
     // Creates the ImGui context (docking enabled) and the SDL3 platform
     // backend for `window`. One EditorLayer per process.
     [[nodiscard]] static std::expected<EditorLayer, core::Error> create(SDL_Window* window);
@@ -48,19 +60,40 @@ public:
     [[nodiscard]] bool wants_mouse() const;
     [[nodiscard]] bool wants_keyboard() const;
 
+    // The Viewport panel's content size (pixels) and hover state from the last
+    // built frame — the scene renders at this size, and camera input is only
+    // captured while the cursor is over the panel. Zero size until the first
+    // frame; callers fall back to the swapchain extent.
+    [[nodiscard]] std::uint32_t viewport_width() const { return viewport_width_; }
+    [[nodiscard]] std::uint32_t viewport_height() const { return viewport_height_; }
+    [[nodiscard]] bool viewport_hovered() const { return viewport_hovered_; }
+
+    // The entity selected in the hierarchy (entt::null when none).
+    [[nodiscard]] entt::entity selected() const { return selected_; }
+
     // Frame flow: begin_frame() right after event processing, build_ui() once
-    // the frame's stats are known, end_frame() to obtain the draw data for
+    // the frame's numbers are known, end_frame() to obtain the draw data for
     // ImGuiPass::add_to_graph.
     void begin_frame();
-    void build_ui(const FrameStats& stats);
+    void build_ui(const EditorContext& ctx);
     [[nodiscard]] const ImDrawData* end_frame();
 
 private:
     void destroy() noexcept;
+    void build_dock_layout(unsigned int dockspace_id);
+    void build_viewport_panel();
+    void build_stats_panel(const EditorContext& ctx);
 
-    bool initialized_ = false;
-    bool show_stats_  = true;
-    bool show_demo_   = false;
+    bool initialized_  = false;
+    bool layout_built_ = false;
+    bool show_stats_   = true;
+    bool show_demo_    = false;
+
+    std::uint32_t viewport_width_   = 0;
+    std::uint32_t viewport_height_  = 0;
+    bool          viewport_hovered_ = false;
+
+    entt::entity selected_ = entt::null;
 };
 
 } // namespace engine::editor

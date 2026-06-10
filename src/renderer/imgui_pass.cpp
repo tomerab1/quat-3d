@@ -101,6 +101,7 @@ ImGuiPass::create(const rhi::Device& device, rhi::GpuAllocator& allocator,
     if (pixels == nullptr || width <= 0 || height <= 0) {
         return fail("imgui pass: font atlas build failed");
     }
+    io.Fonts->SetTexID(static_cast<ImTextureID>(font_texture_id));
 
     const VkExtent2D font_extent{static_cast<std::uint32_t>(width),
                                  static_cast<std::uint32_t>(height)};
@@ -150,7 +151,9 @@ std::expected<void, core::Error> ImGuiPass::ensure_buffers(VkDeviceSize vertex_b
 std::expected<void, core::Error> ImGuiPass::add_to_graph(rhi::RenderGraph& graph,
                                                          rhi::ResourceHandle target,
                                                          VkExtent2D extent,
-                                                         const ImDrawData* draw_data) {
+                                                         const ImDrawData* draw_data,
+                                                         rhi::ResourceHandle viewport,
+                                                         bool clear) {
     frame_cmds_.clear();
     if (draw_data == nullptr || draw_data->TotalVtxCount <= 0 || draw_data->CmdListsCount <= 0) {
         return {};
@@ -167,6 +170,12 @@ std::expected<void, core::Error> ImGuiPass::add_to_graph(rhi::RenderGraph& graph
                                              VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
         font_descriptor_.write_sampler(1, font_sampler_.handle());
         font_descriptor_ready_ = true;
+    }
+    if (viewport.valid() && !viewport_descriptor_ready_) {
+        auto db = rhi::DescriptorBuffer::create(*device_, *allocator_, db_fns_, layout_);
+        if (!db) return std::unexpected(db.error());
+        viewport_descriptor_ = std::move(*db);
+        viewport_descriptor_ready_ = true;
     }
 
     const VkDeviceSize vertex_bytes =
@@ -215,6 +224,7 @@ std::expected<void, core::Error> ImGuiPass::add_to_graph(rhi::RenderGraph& graph
             out.index_count = cmd.ElemCount;
             out.first_index = global_idx + cmd.IdxOffset;
             out.vertex_offset = global_vtx + static_cast<std::int32_t>(cmd.VtxOffset);
+            out.texture = static_cast<std::uint64_t>(cmd.GetTexID());
             frame_cmds_.push_back(out);
         }
         global_vtx += list->VtxBuffer.Size;
@@ -228,16 +238,30 @@ std::expected<void, core::Error> ImGuiPass::add_to_graph(rhi::RenderGraph& graph
     frame_translate_[1] = -1.0F - draw_data->DisplayPos.y * frame_scale_[1];
 
     auto pass = graph.add_pass("imgui", rhi::PassType::graphics);
-    pass.writes(target, rhi::ResourceUsage::color_attachment)
-        .execute([this, target, extent](rhi::PassContext& ctx) {
+    pass.writes(target, rhi::ResourceUsage::color_attachment);
+    if (viewport.valid()) {
+        pass.reads(viewport, rhi::ResourceUsage::sampled);
+    }
+    pass.execute([this, target, extent, viewport, clear](rhi::PassContext& ctx) {
             const VkCommandBuffer cmd = ctx.cmd();
             const rhi::ResourceBinding t = ctx.resolve(target);
+
+            // The viewport panel's scene image: rebind every frame, the view
+            // changes when the panel is resized.
+            if (viewport.valid()) {
+                viewport_descriptor_.write_sampled_image(
+                    0, ctx.resolve(viewport).view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+                viewport_descriptor_.write_sampler(1, font_sampler_.handle());
+            }
 
             VkRenderingAttachmentInfo color{};
             color.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
             color.imageView = t.view;
             color.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-            color.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD; // composite over the scene
+            // Editor mode owns the whole swapchain (clear); overlay mode
+            // composites over the scene already present (load).
+            color.loadOp = clear ? VK_ATTACHMENT_LOAD_OP_CLEAR : VK_ATTACHMENT_LOAD_OP_LOAD;
+            color.clearValue.color = {{0.06F, 0.06F, 0.07F, 1.0F}};
             color.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
 
             VkRenderingInfo rendering{};
@@ -248,15 +272,14 @@ std::expected<void, core::Error> ImGuiPass::add_to_graph(rhi::RenderGraph& graph
             rendering.pColorAttachments = &color;
             vkCmdBeginRendering(cmd, &rendering);
 
-            VkViewport viewport{};
-            viewport.width = static_cast<float>(extent.width);
-            viewport.height = static_cast<float>(extent.height);
-            viewport.minDepth = 0.0F;
-            viewport.maxDepth = 1.0F;
-            vkCmdSetViewport(cmd, 0, 1, &viewport);
+            VkViewport vk_viewport{};
+            vk_viewport.width = static_cast<float>(extent.width);
+            vk_viewport.height = static_cast<float>(extent.height);
+            vk_viewport.minDepth = 0.0F;
+            vk_viewport.maxDepth = 1.0F;
+            vkCmdSetViewport(cmd, 0, 1, &vk_viewport);
 
             vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_.handle());
-            font_descriptor_.bind(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_.layout(), 0);
 
             UiPushConstants push{};
             push.scale[0] = frame_scale_[0];
@@ -271,7 +294,16 @@ std::expected<void, core::Error> ImGuiPass::add_to_graph(rhi::RenderGraph& graph
             vkCmdBindVertexBuffers(cmd, 0, 1, &vb, &zero);
             vkCmdBindIndexBuffer(cmd, index_buffer_.handle(), 0, VK_INDEX_TYPE_UINT16);
 
+            std::uint64_t bound = 0;
             for (const UiDrawCmd& dc : frame_cmds_) {
+                const bool use_viewport =
+                    dc.texture == viewport_texture_id && viewport.valid();
+                const std::uint64_t want = use_viewport ? viewport_texture_id : font_texture_id;
+                if (want != bound) {
+                    (use_viewport ? viewport_descriptor_ : font_descriptor_)
+                        .bind(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_.layout(), 0);
+                    bound = want;
+                }
                 vkCmdSetScissor(cmd, 0, 1, &dc.scissor);
                 vkCmdDrawIndexed(cmd, dc.index_count, 1, dc.first_index, dc.vertex_offset, 0);
             }

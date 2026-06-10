@@ -363,9 +363,15 @@ Goal: a usable in-engine editor with scene hierarchy, inspector, asset browser, 
   editor for deterministic headless renders. All gated behind `ENGINE_EDITOR`.
   *Commit: `[Phase9/Slice1] ImGui integration with docking`*
 
-- [ ] **9.2 — Viewport panel**
-  Scene renders to offscreen `GpuImage`. Displayed in ImGui viewport panel via `ImGui::Image`.
-  Viewport camera controlled with mouse (orbit / fly) when panel is focused.
+- [x] **9.2 — Viewport panel**
+  The frame resolves into a per-frame-slot offscreen `GpuImage` (swapchain format, TAA copy
+  target) instead of the swapchain when the editor is active; the Viewport panel samples it via
+  `ImGui::Image` (ImGuiPass texture registry: font id 1, viewport id 2, descriptor rebound per
+  frame so panel resizes track the recreated image). The scene renders at the panel's content
+  size (camera aspect follows), the UI pass clears + owns the whole swapchain, and DockBuilder
+  lays out the initial dock split (Viewport centre, Hierarchy/Stats left, Inspector/Renderer
+  right, Assets/Animation bottom — future panels docked by name). Free-fly camera input only
+  engages over the Viewport panel. `QUAT_NO_UI` keeps the direct-to-swapchain path.
   *Commit: `[Phase9/Slice2] editor viewport panel`*
 
 - [ ] **9.3 — Scene hierarchy panel**
