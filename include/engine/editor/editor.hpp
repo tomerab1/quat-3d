@@ -15,6 +15,7 @@
 
 #include <entt/entity/fwd.hpp>
 #include <entt/entity/entity.hpp>
+#include <glm/glm.hpp>
 
 #include "engine/core/error.hpp"
 
@@ -27,6 +28,13 @@ class Scene;
 }
 
 namespace engine::editor {
+
+// Animation panel state owned by EditorLayer (editor state stays out of the
+// ECS).
+struct AnimationPreviewState {
+    bool  show_joints  = true;
+    float resume_speed = 1.0F; // speed restored by the play button after pause
+};
 
 // Renderer parameters the editor edits and the frame loop applies. Owned by
 // the loop (initialised to the engine defaults), pointed to by EditorContext.
@@ -54,6 +62,9 @@ struct EditorContext {
     // Out: glTF path the user asked to instantiate (double-click or viewport
     // drop); the frame loop consumes and clears it (may be null).
     std::string* instantiate_request = nullptr;
+    // The scene camera's (unjittered) view-projection — used by panels that
+    // project world-space overlays into the viewport (joints, gizmos).
+    glm::mat4 view_proj{1.0F};
 };
 
 class EditorLayer {
@@ -111,6 +122,11 @@ private:
     std::uint32_t viewport_width_   = 0;
     std::uint32_t viewport_height_  = 0;
     bool          viewport_hovered_ = false;
+    // Viewport image rect in screen pixels (min x/y, max x/y) — overlays
+    // (joints, gizmos) project into this.
+    float viewport_rect_[4]{0.0F, 0.0F, 0.0F, 0.0F};
+
+    AnimationPreviewState anim_state_;
 
     entt::entity selected_ = entt::null;
 };

@@ -7,6 +7,7 @@
 #include <imgui.h>
 #include <imgui_internal.h> // DockBuilder API (initial layout)
 
+#include "animation_preview.hpp"
 #include "asset_browser.hpp"
 #include "engine/renderer/imgui_pass.hpp" // viewport_texture_id
 #include "inspector.hpp"
@@ -137,6 +138,12 @@ void EditorLayer::build_viewport_panel(const EditorContext& ctx) {
         viewport_height_ = static_cast<std::uint32_t>(std::max(avail.y, 1.0F));
         ImGui::Image(static_cast<ImTextureID>(renderer::ImGuiPass::viewport_texture_id), avail);
         viewport_hovered_ = ImGui::IsItemHovered();
+        const ImVec2 rect_min = ImGui::GetItemRectMin();
+        const ImVec2 rect_max = ImGui::GetItemRectMax();
+        viewport_rect_[0] = rect_min.x;
+        viewport_rect_[1] = rect_min.y;
+        viewport_rect_[2] = rect_max.x;
+        viewport_rect_[3] = rect_max.y;
 
         // Drop target for the asset browser's glTF drag payload.
         if (ctx.instantiate_request != nullptr && ImGui::BeginDragDropTarget()) {
@@ -191,6 +198,8 @@ void EditorLayer::build_ui(const EditorContext& ctx) {
     if (ctx.scene != nullptr) {
         draw_scene_hierarchy(*ctx.scene, selected_);
         draw_inspector(*ctx.scene, selected_);
+        draw_animation_preview(*ctx.scene, selected_, ctx.view_proj, viewport_rect_,
+                               anim_state_);
     }
     if (ctx.renderer != nullptr) {
         draw_renderer_panel(*ctx.renderer);

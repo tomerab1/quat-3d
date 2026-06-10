@@ -2633,6 +2633,7 @@ int main() {
             ui_ctx.renderer = &render_settings;
             ui_ctx.project_root = QUAT_PROJECT_ROOT;
             ui_ctx.instantiate_request = &pending_instantiate;
+            ui_ctx.view_proj = cam.view_proj; // unjittered, for overlays
             editor.build_ui(ui_ctx);
             if (auto r = fr.imgui.add_to_graph(graph, backbuffer, present_extent,
                                                editor.end_frame(), viewport_handle,

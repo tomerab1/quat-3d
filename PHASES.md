@@ -399,9 +399,13 @@ Goal: a usable in-engine editor with scene hierarchy, inspector, asset browser, 
   transient graphics-queue upload context, like the startup path.
   *Commit: `[Phase9/Slice5] asset browser`*
 
-- [ ] **9.6 — Animation preview**
-  `src/editor/animation_preview.cpp`: timeline scrubber, play/pause/loop, blend weight sliders.
-  Joint hierarchy overlay on viewport (lines via ImGui draw list).
+- [x] **9.6 — Animation preview**
+  `src/editor/animation_preview.cpp`: timeline scrubber (0..clip duration), play/pause (resume
+  speed remembered in editor state), loop + speed controls for the selected entity's Animator.
+  Joint hierarchy overlay over the viewport: joint world positions recovered by applying each
+  skinning matrix to its joint's bind-pose world position, projected with the scene camera and
+  drawn as bone lines + joint dots via the ImGui foreground draw list (clipped to the panel).
+  Blend-weight sliders arrive with a BlendTree component (the ECS Animator plays single clips).
   *Commit: `[Phase9/Slice6] animation preview panel`*
 
 - [ ] **9.7 — Physics debug draw**
