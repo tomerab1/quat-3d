@@ -501,6 +501,11 @@ Goal: large-scale procedurally generated terrain, editable and walkable.
 - [ ] **12.2 — Chunked LOD rendering**: quadtree chunks with skirt stitching (or geometry
   clipmaps), normal/splat maps, triplanar material blending.
 - [ ] **12.3 — Terrain physics**: Jolt `HeightFieldShape` per chunk; editor brush stub.
+- [ ] **12.4 — Terrain / world streaming**: chunks (terrain + the entities standing on them)
+  load and unload around the camera on the worker pool — generation/IO off the main thread,
+  GPU uploads through a per-frame budget, physics bodies created/destroyed with their chunk.
+  Builds on Phase 10's async asset pipeline; entity streaming needs scene serialization
+  (cell-based world partition).
 
 ## Phase 13 — Gameplay Framework (NPCs)
 
