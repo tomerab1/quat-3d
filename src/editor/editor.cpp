@@ -7,6 +7,7 @@
 #include <imgui.h>
 #include <imgui_internal.h> // DockBuilder API (initial layout)
 
+#include "asset_browser.hpp"
 #include "engine/renderer/imgui_pass.hpp" // viewport_texture_id
 #include "inspector.hpp"
 #include "scene_hierarchy.hpp"
@@ -128,7 +129,7 @@ void EditorLayer::build_dock_layout(unsigned int dockspace_id) {
     ImGui::DockBuilderFinish(dockspace_id);
 }
 
-void EditorLayer::build_viewport_panel() {
+void EditorLayer::build_viewport_panel(const EditorContext& ctx) {
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
     if (ImGui::Begin("Viewport")) {
         const ImVec2 avail = ImGui::GetContentRegionAvail();
@@ -136,6 +137,15 @@ void EditorLayer::build_viewport_panel() {
         viewport_height_ = static_cast<std::uint32_t>(std::max(avail.y, 1.0F));
         ImGui::Image(static_cast<ImTextureID>(renderer::ImGuiPass::viewport_texture_id), avail);
         viewport_hovered_ = ImGui::IsItemHovered();
+
+        // Drop target for the asset browser's glTF drag payload.
+        if (ctx.instantiate_request != nullptr && ImGui::BeginDragDropTarget()) {
+            if (const ImGuiPayload* payload =
+                    ImGui::AcceptDragDropPayload(asset_drag_payload)) {
+                *ctx.instantiate_request = static_cast<const char*>(payload->Data);
+            }
+            ImGui::EndDragDropTarget();
+        }
     } else {
         viewport_hovered_ = false;
     }
@@ -176,7 +186,7 @@ void EditorLayer::build_ui(const EditorContext& ctx) {
         ImGui::EndMainMenuBar();
     }
 
-    build_viewport_panel();
+    build_viewport_panel(ctx);
     build_stats_panel(ctx);
     if (ctx.scene != nullptr) {
         draw_scene_hierarchy(*ctx.scene, selected_);
@@ -184,6 +194,9 @@ void EditorLayer::build_ui(const EditorContext& ctx) {
     }
     if (ctx.renderer != nullptr) {
         draw_renderer_panel(*ctx.renderer);
+    }
+    if (!ctx.project_root.empty() && ctx.instantiate_request != nullptr) {
+        draw_asset_browser(ctx.project_root, *ctx.instantiate_request);
     }
     if (show_demo_) {
         ImGui::ShowDemoWindow(&show_demo_);

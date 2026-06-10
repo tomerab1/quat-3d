@@ -11,6 +11,7 @@
 
 #include <cstdint>
 #include <expected>
+#include <string>
 
 #include <entt/entity/fwd.hpp>
 #include <entt/entity/entity.hpp>
@@ -48,6 +49,11 @@ struct EditorContext {
     scene::Scene* scene = nullptr;
     // Renderer settings the panel edits (may be null).
     RendererSettings* renderer = nullptr;
+    // Project root for the asset browser (empty disables the panel).
+    std::string project_root;
+    // Out: glTF path the user asked to instantiate (double-click or viewport
+    // drop); the frame loop consumes and clears it (may be null).
+    std::string* instantiate_request = nullptr;
 };
 
 class EditorLayer {
@@ -94,7 +100,7 @@ public:
 private:
     void destroy() noexcept;
     void build_dock_layout(unsigned int dockspace_id);
-    void build_viewport_panel();
+    void build_viewport_panel(const EditorContext& ctx);
     void build_stats_panel(const EditorContext& ctx);
 
     bool initialized_  = false;

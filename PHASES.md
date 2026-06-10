@@ -391,9 +391,12 @@ Goal: a usable in-engine editor with scene hierarchy, inspector, asset browser, 
   frame start.
   *Commit: `[Phase9/Slice4] inspector + renderer settings panel`*
 
-- [ ] **9.5 — Asset browser**
-  `src/editor/asset_browser.cpp`: filesystem tree under `assets/`. Icon thumbnails.
-  Drag mesh/texture/material onto viewport or inspector slot.
+- [x] **9.5 — Asset browser**
+  `src/editor/asset_browser.cpp`: filesystem tree of `assets/` + `sample-assets/` (project root
+  from a compile definition), directories-first sorted, type tags per extension (real thumbnails
+  deferred). glTF/GLB files instantiate into the scene on double-click or by dragging onto the
+  Viewport panel (ImGui drag-and-drop payload); the frame loop consumes the request through a
+  transient graphics-queue upload context, like the startup path.
   *Commit: `[Phase9/Slice5] asset browser`*
 
 - [ ] **9.6 — Animation preview**

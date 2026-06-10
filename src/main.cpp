@@ -1653,6 +1653,7 @@ int main() {
     // context. QUAT_NO_UI=1 disables it (deterministic headless renders).
     engine::editor::EditorLayer editor;
     engine::editor::RendererSettings render_settings;
+    std::string pending_instantiate; // set by the asset browser, consumed below
     const bool editor_enabled = std::getenv("QUAT_NO_UI") == nullptr;
     if (editor_enabled) {
         if (auto e = engine::editor::EditorLayer::create(window); e) {
@@ -2241,6 +2242,33 @@ int main() {
                 }
             }
         }
+
+        // glTF instantiate requested from the asset browser (double-click or
+        // viewport drop): blocking load through a transient upload context on
+        // the graphics queue (mip blits), like the startup path.
+        if (!pending_instantiate.empty()) {
+            const std::string path = std::exchange(pending_instantiate, {});
+            VkCommandPool load_pool = VK_NULL_HANDLE;
+            VkCommandPoolCreateInfo pool_info{};
+            pool_info.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+            pool_info.flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT;
+            pool_info.queueFamilyIndex = device.queue_families().graphics;
+            if (vkCreateCommandPool(vk_device, &pool_info, nullptr, &load_pool) == VK_SUCCESS) {
+                const engine::rhi::TransferContext load_transfer{
+                    vk_device, load_pool, device.graphics_queue(),
+                    device.max_sampler_anisotropy()};
+                if (auto roots = engine::scene::GltfLoader::instantiate(
+                        path, allocator, load_transfer, assets, scene);
+                    roots) {
+                    std::fprintf(stderr, "[editor] instantiated %s (%zu roots)\n", path.c_str(),
+                                 roots->size());
+                } else {
+                    std::fprintf(stderr, "[editor] instantiate failed: %s\n",
+                                 roots.error().message.c_str());
+                }
+                vkDestroyCommandPool(vk_device, load_pool, nullptr);
+            }
+        }
 #endif
 
         const VkExtent2D pixel_extent = window_pixel_extent(window);
@@ -2603,6 +2631,8 @@ int main() {
                 scene.registry().view<engine::scene::Transform>().size());
             ui_ctx.scene = &scene;
             ui_ctx.renderer = &render_settings;
+            ui_ctx.project_root = QUAT_PROJECT_ROOT;
+            ui_ctx.instantiate_request = &pending_instantiate;
             editor.build_ui(ui_ctx);
             if (auto r = fr.imgui.add_to_graph(graph, backbuffer, present_extent,
                                                editor.end_frame(), viewport_handle,

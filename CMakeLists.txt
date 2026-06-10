@@ -199,6 +199,7 @@ if(ENGINE_EDITOR)
         src/editor/editor.cpp
         src/editor/scene_hierarchy.cpp
         src/editor/inspector.cpp
+        src/editor/asset_browser.cpp
         src/editor/vendor/imgui_impl_sdl3.cpp)
     # engine_scene is PUBLIC: editor.hpp exposes entt entity types (selection)
     # and the hierarchy/inspector panels reflect scene components.
@@ -227,7 +228,8 @@ target_include_directories(game PRIVATE
 # Absolute path to cooked shaders so the binary finds them regardless of CWD.
 # A proper asset-path resolver arrives with the asset manager in Phase 3.
 target_compile_definitions(game PRIVATE
-    QUAT_COOKED_SHADER_DIR="${CMAKE_CURRENT_SOURCE_DIR}/cooked/shaders")
+    QUAT_COOKED_SHADER_DIR="${CMAKE_CURRENT_SOURCE_DIR}/cooked/shaders"
+    QUAT_PROJECT_ROOT="${CMAKE_CURRENT_SOURCE_DIR}")
 
 # ---------------------------------------------------------------------------
 # anim_smoke — windowless CPU harness for the animation self-tests (no SDL /
