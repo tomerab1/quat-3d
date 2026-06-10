@@ -36,16 +36,18 @@ namespace engine::renderer {
 
 // GBuffer attachment formats. Albedo/material are 8-bit UNORM; the world normal
 // is octahedral-encoded into an RG16F target; depth is 32-bit float.
-inline constexpr VkFormat gbuffer_albedo_format   = VK_FORMAT_R8G8B8A8_UNORM;
-inline constexpr VkFormat gbuffer_normal_format   = VK_FORMAT_R16G16_SFLOAT;
-inline constexpr VkFormat gbuffer_material_format = VK_FORMAT_R8G8B8A8_UNORM;
-inline constexpr VkFormat gbuffer_depth_format    = VK_FORMAT_D32_SFLOAT;
+inline constexpr VkFormat gbuffer_albedo_format    = VK_FORMAT_R8G8B8A8_UNORM;
+inline constexpr VkFormat gbuffer_normal_format    = VK_FORMAT_R16G16_SFLOAT;
+inline constexpr VkFormat gbuffer_material_format  = VK_FORMAT_R8G8B8A8_UNORM;
+inline constexpr VkFormat gbuffer_clearcoat_format = VK_FORMAT_R8G8_UNORM;
+inline constexpr VkFormat gbuffer_depth_format     = VK_FORMAT_D32_SFLOAT;
 
 // Resource handles for the GBuffer targets within a compiled RenderGraph frame.
 struct GBufferTargets {
     rhi::ResourceHandle albedo;
     rhi::ResourceHandle normal;
     rhi::ResourceHandle material;
+    rhi::ResourceHandle clearcoat; // r = coat strength, g = coat roughness
     rhi::ResourceHandle depth;
 };
 
@@ -123,5 +125,13 @@ private:
 run_mesh_pass_self_test(const rhi::Device& device, rhi::GpuAllocator& allocator,
                         rhi::PipelineCache& cache, const rhi::TransferContext& transfer,
                         const std::string& cooked_shader_dir);
+
+// Verifies the geometric specular AA at GBuffer-write time: a flat triangle's
+// stored roughness stays at the authored 0, while one with wildly divergent
+// vertex normals (large screen-space normal variance) is widened.
+[[nodiscard]] std::expected<void, core::Error>
+run_specular_aa_self_test(const rhi::Device& device, rhi::GpuAllocator& allocator,
+                          rhi::PipelineCache& cache, const rhi::TransferContext& transfer,
+                          const std::string& cooked_shader_dir);
 
 } // namespace engine::renderer

@@ -36,11 +36,12 @@ struct MaterialParams {
     float  ior;                 // KHR_materials_ior
     float4 attenuation;         // rgb = attenuation colour, w = distance (0 = none)
     float  thickness;           // KHR_materials_volume (local units)
-    // Three scalar floats, NOT float3: std140 would align a float3 to offset 96,
-    // desynchronising every later field from the C++ glm::vec3 at offset 84.
-    float  pad0;
-    float  pad1;
-    float  pad2;
+    // KHR_materials_clearcoat factors (not yet shaded in the forward pass) +
+    // padding. Scalar floats, NOT a float3: std140 would align a float3 to
+    // offset 96, desynchronising every later field from the C++ layout.
+    float  clearcoat_factor;
+    float  clearcoat_roughness;
+    float  pad;
     // KHR_texture_transform per texture slot (0=base colour, 1=normal, 2=MR,
     // 3=emissive, 4=occlusion, 5=thickness): uv' = M * uv + offset. uv_mat
     // packs the 2x2 matrix rows as (m00, m01, m10, m11); offsets are packed
@@ -161,6 +162,10 @@ float4 fragment_main(VsOut input) : SV_Target0 {
     // with culling off, so flip the shading normal to face the viewer.
     if (dot(world_n, V) < 0.0) world_n = -world_n;
     float3 L = normalize(pc.light_direction.xyz);
+
+    // Specular AA: widen roughness by sub-pixel normal variance (same as the
+    // GBuffer pass) so glass highlights and reflections don't sparkle.
+    roughness = pbr_specular_aa(world_n, roughness);
 
     if ((g_params.flags & MAT_TRANSMISSION) != 0) {
         float ndotv = max(dot(world_n, V), 1e-4);

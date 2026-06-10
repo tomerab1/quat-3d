@@ -48,6 +48,7 @@ struct PointLight {
 [[vk::binding(9)]]  TextureCube  g_prefiltered;
 [[vk::binding(10)]] Texture2D    g_brdf_lut;
 [[vk::binding(11)]] SamplerState g_ibl_sampler;
+[[vk::binding(12)]] Texture2D    g_clearcoat; // r = coat strength, g = coat roughness
 
 // Schlick Fresnel with a roughness term, for the ambient/environment specular
 // (the view-independent IBL term, unlike the per-light f_schlick).
@@ -138,6 +139,42 @@ float3 surface_brdf(float3 N, float3 V, float3 L, float3 albedo, float metallic,
     return (diffuse + spec) * ndotl;
 }
 
+// KHR_materials_clearcoat: a second dielectric specular lobe (f0 = 0.04) on top
+// of the base material, layered per the glTF spec —
+//   coated = base * (1 - cc * Fc) + cc * f_clearcoat
+// where Fc is the coat's Schlick fresnel. The coat shares the base normal (coat
+// normal maps are not yet supported).
+
+// Coat fresnel used both to weight the coat lobe and attenuate the base layer.
+float coat_fresnel(float cosine) {
+    return 0.04 + 0.96 * pow(saturate(1.0 - cosine), 5.0);
+}
+
+// Punctual-light coat response: layered (base, coat) for one light direction.
+float3 layer_clearcoat_direct(float3 base, float3 N, float3 V, float3 L, float cc, float ccr) {
+    if (cc <= 0.0) return base;
+    float3 h = normalize(V + L);
+    float ndotl = max(dot(N, L), 0.0);
+    float ndotv = max(dot(N, V), 1e-4);
+    float ndoth = max(dot(N, h), 0.0);
+    float vdoth = max(dot(V, h), 0.0);
+    float ac = max(ccr * ccr, 1e-3);
+    float coat = d_ggx(ndoth, ac) * v_smith(ndotv, ndotl, ac) * coat_fresnel(vdoth) * ndotl;
+    return base * (1.0 - cc * coat_fresnel(ndotv)) + cc * coat;
+}
+
+// Environment coat response: prefiltered reflection at the coat roughness,
+// split-sum with the coat f0, layered over the base IBL.
+float3 layer_clearcoat_ibl(float3 base, float3 N, float3 V, float cc, float ccr) {
+    if (cc <= 0.0) return base;
+    float ndotv = max(dot(N, V), 1e-4);
+    float3 R = reflect(-V, N);
+    float3 prefiltered = g_prefiltered.SampleLevel(g_ibl_sampler, R, ccr * PREFILTER_MAX_LOD).rgb;
+    float2 brdf = g_brdf_lut.SampleLevel(g_ibl_sampler, float2(ndotv, ccr), 0.0).rg;
+    float3 coat = prefiltered * (0.04 * brdf.x + brdf.y);
+    return base * (1.0 - cc * coat_fresnel(ndotv)) + cc * coat;
+}
+
 // Smooth radius-limited falloff (windowed inverse-square).
 float point_attenuation(float dist, float radius) {
     float t = saturate(1.0 - pow(dist / radius, 4.0));
@@ -208,6 +245,9 @@ void compute_main(uint3 tid : SV_DispatchThreadID) {
     float metallic  = mat.r;
     float roughness = mat.g;
     float occlusion = mat.b;
+    float2 coat     = g_clearcoat.Load(int3(coord, 0)).rg;
+    float  cc       = coat.r;
+    float  ccr      = max(coat.g, 0.03); // floor keeps the smooth-coat GGX finite
 
     float3 n = oct_decode(enc);
     float3 world_pos = world_from_depth(coord, width, height, depth);
@@ -216,7 +256,8 @@ void compute_main(uint3 tid : SV_DispatchThreadID) {
     // Directional light (shadowed).
     float3 ldir   = normalize(pc.direction.xyz);
     float  shadow = shadow_factor(world_pos, max(dot(n, ldir), 0.0));
-    float3 color  = surface_brdf(n, v, ldir, albedo.rgb, metallic, roughness) *
+    float3 sun    = surface_brdf(n, v, ldir, albedo.rgb, metallic, roughness);
+    float3 color  = layer_clearcoat_direct(sun, n, v, ldir, cc, ccr) *
                    pc.color.rgb * pc.color.w * shadow;
 
     // Point lights (no shadows).
@@ -230,14 +271,16 @@ void compute_main(uint3 tid : SV_DispatchThreadID) {
         }
         float3 lp = to / max(dist, 1e-4);
         float att = point_attenuation(dist, pl.position_radius.w);
-        color += surface_brdf(n, v, lp, albedo.rgb, metallic, roughness) *
+        float3 base = surface_brdf(n, v, lp, albedo.rgb, metallic, roughness);
+        color += layer_clearcoat_direct(base, n, v, lp, cc, ccr) *
                  pl.color_intensity.rgb * pl.color_intensity.w * att;
     }
 
     // Ambient: image-based lighting when the environment is enabled (same flag as
     // the sky background, since the IBL reflects that sky), else a flat constant.
     if (pc.direction.w > 0.5) {
-        color += ibl_ambient(n, v, albedo.rgb, metallic, roughness, occlusion);
+        float3 ambient = ibl_ambient(n, v, albedo.rgb, metallic, roughness, occlusion);
+        color += layer_clearcoat_ibl(ambient, n, v, cc, ccr);
     } else {
         color += pc.ambient.rgb * albedo.rgb * occlusion;
     }

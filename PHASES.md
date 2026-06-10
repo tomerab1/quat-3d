@@ -305,6 +305,22 @@ Goal: directional shadow maps, point lights, basic sky, transparent & glass mate
   scalar floats and the struct is 240 bytes on both sides.
   *Commit: `[Phase7/Slice8] texture mipmaps + anisotropy, KHR_texture_transform, emissive strength`*
 
+- [x] **7.9 — Clearcoat + geometric specular anti-aliasing**
+  `KHR_materials_clearcoat` (factors; coat textures deferred): clearcoat factor/roughness ride
+  in the former material-params padding, the GBuffer gains a fourth RG8 target (coat strength +
+  roughness), and the deferred lighting layers a second dielectric specular lobe (f0 = 0.04)
+  per the glTF spec — `coated = base·(1 − cc·Fc) + cc·f_coat` — for the sun, point lights, and
+  IBL (prefiltered reflection at the coat roughness). Geometric specular AA (Kaplanyan /
+  Filament `normalFiltering`): at GBuffer-write time the screen-space variance of the shading
+  normal widens the stored perceptual roughness (clamped kernel), and the forward transparent
+  shader applies the same — sub-pixel normal detail reads as roughness instead of sparkle.
+  Kills CarConcept's interior specular-sparkle grid and trim dots; the paint gains the authored
+  coat sheen. New self-tests: clearcoat (coat adds an achromatic head-on highlight a rough
+  diffuse base cannot produce) and specular AA (flat normals stay at authored roughness 0,
+  divergent normals widen), plus clearcoat/texture-transform/emissive-strength coverage in the
+  material extract test.
+  *Commit: `[Phase7/Slice9] clearcoat + geometric specular anti-aliasing`*
+
 ---
 
 ## Phase 8 — Post-Processing

@@ -7,6 +7,7 @@
 // block. Per-draw transforms arrive as push constants.
 
 import material;
+import pbr;
 
 // Per-draw transforms. 128 bytes (two 4x4 matrices).
 struct PushConstants {
@@ -63,9 +64,10 @@ float2 oct_encode(float3 n) {
 }
 
 struct GBufferOut {
-    float4 albedo   : SV_Target0;   // rgb albedo, a = alpha
-    float2 normal   : SV_Target1;   // oct-encoded world normal
-    float4 material : SV_Target2;   // r metallic, g roughness, b occlusion
+    float4 albedo    : SV_Target0;   // rgb albedo, a = alpha
+    float2 normal    : SV_Target1;   // oct-encoded world normal
+    float4 material  : SV_Target2;   // r metallic, g roughness, b occlusion
+    float2 clearcoat : SV_Target3;   // r coat strength, g coat perceptual roughness
 }
 
 [shader("fragment")]
@@ -78,9 +80,15 @@ GBufferOut fragment_main(VsOut input) {
     float3 b = cross(n, t) * input.world_t.w;
     float3 world_n = normalize(t * s.normal_ts.x + b * s.normal_ts.y + n * s.normal_ts.z);
 
+    // Specular AA at GBuffer-write time (the deferred lighting pass is compute
+    // and has no derivatives): fold sub-pixel normal variance into roughness.
+    float roughness = pbr_specular_aa(world_n, s.roughness);
+    float coat_roughness = pbr_specular_aa(world_n, s.clearcoat_roughness);
+
     GBufferOut o;
-    o.albedo   = float4(s.albedo, s.alpha);
-    o.normal   = oct_encode(world_n);
-    o.material = float4(s.metallic, s.roughness, s.occlusion, 1.0);
+    o.albedo    = float4(s.albedo, s.alpha);
+    o.normal    = oct_encode(world_n);
+    o.material  = float4(s.metallic, roughness, s.occlusion, 1.0);
+    o.clearcoat = float2(s.clearcoat, coat_roughness);
     return o;
 }

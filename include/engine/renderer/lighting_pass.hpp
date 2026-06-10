@@ -118,4 +118,12 @@ run_ibl_lighting_self_test(const rhi::Device& device, rhi::GpuAllocator& allocat
                            rhi::PipelineCache& cache, const rhi::TransferContext& transfer,
                            const std::string& cooked_shader_dir);
 
+// Renders a fully rough dielectric with and without a smooth clearcoat under a
+// head-on light: the coat must add a strong achromatic specular highlight that
+// the diffuse base alone cannot produce.
+[[nodiscard]] std::expected<void, core::Error>
+run_clearcoat_self_test(const rhi::Device& device, rhi::GpuAllocator& allocator,
+                        rhi::PipelineCache& cache, const rhi::TransferContext& transfer,
+                        const std::string& cooked_shader_dir);
+
 } // namespace engine::renderer

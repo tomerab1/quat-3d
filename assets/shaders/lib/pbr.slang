@@ -24,6 +24,22 @@ public float3 pbr_f_schlick(float vdoth, float3 f0) {
     return f0 + (1.0 - f0) * pow(1.0 - vdoth, 5.0);
 }
 
+// Geometric specular anti-aliasing (Kaplanyan 2016 / Tokuyoshi-Kaplanyan, as
+// shipped in Filament & Unity HDRP): widen the GGX lobe by the screen-space
+// variance of the shading normal, so sub-pixel normal detail (dense normal-map
+// tiling, high-curvature silhouettes) reads as roughness instead of sparkle.
+// Fragment-stage only (uses derivatives). Takes and returns PERCEPTUAL
+// roughness; the variance/clamp constants follow Filament's defaults.
+public float pbr_specular_aa(float3 world_normal, float perceptual_roughness) {
+    float3 du = ddx(world_normal);
+    float3 dv = ddy(world_normal);
+    float variance = 0.25 * (dot(du, du) + dot(dv, dv));
+    float kernel_alpha2 = min(2.0 * variance, 0.18);
+    float alpha = perceptual_roughness * perceptual_roughness;
+    float alpha2 = saturate(alpha * alpha + kernel_alpha2);
+    return sqrt(sqrt(alpha2));
+}
+
 // (diffuse + specular) * NdotL for one unit light direction L (no radiance).
 public float3 pbr_surface_brdf(float3 N, float3 V, float3 L, float3 albedo, float metallic,
                                float roughness) {

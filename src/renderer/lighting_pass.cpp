@@ -45,7 +45,7 @@ static_assert(sizeof(LightingPushConstants) == 192, "must match lighting.slang L
 // Lighting descriptor set 0: GBuffer albedo/normal/material/depth as sampled
 // images (read via Load — no sampler), the HDR output as a storage image, then
 // the shadow map (sampled) + its sampler. Matches lighting.slang.
-[[nodiscard]] std::array<rhi::DescriptorBinding, 12> lighting_bindings() {
+[[nodiscard]] std::array<rhi::DescriptorBinding, 13> lighting_bindings() {
     using rhi::DescriptorBinding;
     return {{
         {0, 0, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, kComputeStage},
@@ -60,6 +60,7 @@ static_assert(sizeof(LightingPushConstants) == 192, "must match lighting.slang L
         {0, 9, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, kComputeStage}, // prefiltered cube
         {0, 10, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, kComputeStage}, // BRDF LUT
         {0, 11, VK_DESCRIPTOR_TYPE_SAMPLER, 1, kComputeStage},       // IBL sampler
+        {0, 12, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, kComputeStage}, // GBuffer clearcoat
     }};
 }
 
@@ -160,6 +161,7 @@ LightingPass::add_to_graph(rhi::RenderGraph& graph, const GBufferTargets& gbuffe
     pass.reads(gbuffer.albedo, rhi::ResourceUsage::sampled_compute)
         .reads(gbuffer.normal, rhi::ResourceUsage::sampled_compute)
         .reads(gbuffer.material, rhi::ResourceUsage::sampled_compute)
+        .reads(gbuffer.clearcoat, rhi::ResourceUsage::sampled_compute)
         .reads(gbuffer.depth, rhi::ResourceUsage::sampled_compute)
         .writes(hdr, rhi::ResourceUsage::storage_write);
     if (has_shadow) {
@@ -185,6 +187,7 @@ LightingPass::add_to_graph(rhi::RenderGraph& graph, const GBufferTargets& gbuffe
         frame_descriptor_.write_sampled_image(9, maps_ptr->prefiltered_view.handle(), ro);
         frame_descriptor_.write_sampled_image(10, maps_ptr->brdf_lut_view.handle(), ro);
         frame_descriptor_.write_sampler(11, maps_ptr->sampler.handle());
+        frame_descriptor_.write_sampled_image(12, ctx.resolve(gbuffer.clearcoat).view, ro);
 
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline_.handle());
         frame_descriptor_.bind(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline_.layout(), 0);
@@ -528,6 +531,126 @@ run_point_light_self_test(const rhi::Device& device, rhi::GpuAllocator& allocato
     if (!dark) return std::unexpected(dark.error());
     if (dark->r + dark->g + dark->b > 0.01F) {
         return fail("point light self-test: light leaked past its radius");
+    }
+    return {};
+}
+
+std::expected<void, core::Error>
+run_clearcoat_self_test(const rhi::Device& device, rhi::GpuAllocator& allocator,
+                        rhi::PipelineCache& cache, const rhi::TransferContext& transfer,
+                        const std::string& cooked_shader_dir) {
+    constexpr VkExtent2D extent{64, 64};
+    constexpr VkDeviceSize bytes = static_cast<VkDeviceSize>(extent.width) * extent.height * 8;
+
+    std::array<asset::Vertex, 3> verts{};
+    verts[0].position = {-0.5F, -0.5F, 0.0F};
+    verts[1].position = {0.5F, -0.5F, 0.0F};
+    verts[2].position = {0.0F, 0.5F, 0.0F};
+    const std::array<std::uint32_t, 3> indices{0, 1, 2};
+    auto vbuf = rhi::upload_device_buffer(allocator, transfer, verts.data(), sizeof(verts),
+                                          VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
+    if (!vbuf) return std::unexpected(vbuf.error());
+    auto ibuf = rhi::upload_device_buffer(allocator, transfer, indices.data(), sizeof(indices),
+                                          VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
+    if (!ibuf) return std::unexpected(ibuf.error());
+    asset::MeshAsset mesh;
+    mesh.vertex_buffer = std::move(*vbuf);
+    mesh.index_buffer = std::move(*ibuf);
+    mesh.vertex_count = 3;
+    mesh.index_count = 3;
+    mesh.submeshes = {asset::SubMesh{0, 3, 0}};
+
+    auto mesh_pass = MeshPass::create(device, allocator, cache, transfer, cooked_shader_dir);
+    if (!mesh_pass) return std::unexpected(mesh_pass.error());
+    auto lighting = LightingPass::create(device, allocator, cache, cooked_shader_dir);
+    if (!lighting) return std::unexpected(lighting.error());
+
+    // Head-on directional light (N = V = L), no ambient.
+    DirectionalLightParams light;
+    light.direction = {0.0F, 0.0F, 1.0F, 0.0F};
+    light.color = {1.0F, 1.0F, 1.0F, 1.0F};
+    light.ambient = {0.0F, 0.0F, 0.0F, 0.0F};
+
+    const auto render_centre = [&](float clearcoat) -> std::expected<glm::vec3, core::Error> {
+        // Fully rough dielectric base: pure diffuse, so any sharp head-on
+        // highlight can only come from the coat lobe.
+        asset::PbrMaterialParams params;
+        params.base_color_factor = {0.25F, 0.5F, 0.75F, 1.0F};
+        params.metallic_factor = 0.0F;
+        params.roughness_factor = 1.0F;
+        params.clearcoat_factor = clearcoat;
+        params.clearcoat_roughness = 0.2F;
+        auto material =
+            asset::upload_material(params, asset::MaterialTextures{}, allocator, transfer);
+        if (!material) return std::unexpected(material.error());
+
+        auto readback = allocator.create_buffer(
+            bytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT, VMA_MEMORY_USAGE_AUTO,
+            VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT);
+        if (!readback) return std::unexpected(readback.error());
+
+        rhi::TransientImagePool pool(device, allocator);
+        rhi::RenderGraph graph(pool);
+        const DrawItem item{&mesh, &*material, glm::mat4(1.0F)};
+        auto targets = mesh_pass->add_to_graph(graph, extent, glm::mat4(1.0F), {&item, 1});
+        if (!targets) return std::unexpected(targets.error());
+        auto hdr = lighting->add_to_graph(graph, *targets, extent, light, glm::mat4(1.0F),
+                                          glm::vec3(0.0F, 0.0F, 1.0F), rhi::ResourceHandle{},
+                                          glm::mat4(1.0F));
+        if (!hdr) return std::unexpected(hdr.error());
+        if (auto c = graph.compile(); !c) return std::unexpected(c.error());
+        const VkImage hdr_image = graph.binding(*hdr).image;
+        const VkBuffer rb = readback->handle();
+        auto submitted = run_graphics_commands(device, [&](VkCommandBuffer cmd) {
+            graph.execute(cmd);
+            VkImageMemoryBarrier2 b{};
+            b.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2;
+            b.srcStageMask = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT;
+            b.srcAccessMask = VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT;
+            b.dstStageMask = VK_PIPELINE_STAGE_2_COPY_BIT;
+            b.dstAccessMask = VK_ACCESS_2_TRANSFER_READ_BIT;
+            b.oldLayout = VK_IMAGE_LAYOUT_GENERAL;
+            b.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+            b.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            b.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            b.image = hdr_image;
+            b.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+            VkDependencyInfo dep{};
+            dep.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO;
+            dep.imageMemoryBarrierCount = 1;
+            dep.pImageMemoryBarriers = &b;
+            vkCmdPipelineBarrier2(cmd, &dep);
+            VkBufferImageCopy region{};
+            region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+            region.imageSubresource.layerCount = 1;
+            region.imageExtent = {extent.width, extent.height, 1};
+            vkCmdCopyImageToBuffer(cmd, hdr_image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, rb, 1,
+                                   &region);
+        });
+        if (!submitted) return std::unexpected(submitted.error());
+        const auto* halfs = static_cast<const std::uint16_t*>(readback->mapped());
+        const std::size_t o = (static_cast<std::size_t>(extent.height / 2) * extent.width +
+                               extent.width / 2) * 4;
+        return glm::vec3(half_to_float(halfs[o]), half_to_float(halfs[o + 1]),
+                         half_to_float(halfs[o + 2]));
+    };
+
+    auto base = render_centre(0.0F);
+    if (!base) return std::unexpected(base.error());
+    auto coated = render_centre(1.0F);
+    if (!coated) return std::unexpected(coated.error());
+
+    // The smooth coat adds a strong white head-on highlight the rough diffuse
+    // base cannot produce (D_GGX(a=0.04) * Vis * F0c is far above the diffuse).
+    const float dr = coated->r - base->r;
+    const float db = coated->b - base->b;
+    if (dr < 0.5F) {
+        return fail("clearcoat self-test: coat lobe did not add a specular highlight");
+    }
+    // The coat is achromatic — the highlight it adds must be (near) equal across
+    // channels (the 4% base attenuation difference is far below this tolerance).
+    if (std::abs(dr - db) > 0.1F + 0.05F * dr) {
+        return fail("clearcoat self-test: coat highlight should be achromatic");
     }
     return {};
 }

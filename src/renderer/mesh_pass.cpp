@@ -71,8 +71,9 @@ MeshPass::create(const rhi::Device& device, rhi::GpuAllocator& allocator,
         {2, 0, VK_FORMAT_R32G32_SFLOAT, offsetof(asset::Vertex, uv)},
         {3, 0, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(asset::Vertex, tangent)},
     }};
-    const std::array<VkFormat, 3> color_formats{gbuffer_albedo_format, gbuffer_normal_format,
-                                                gbuffer_material_format};
+    const std::array<VkFormat, 4> color_formats{gbuffer_albedo_format, gbuffer_normal_format,
+                                                gbuffer_material_format,
+                                                gbuffer_clearcoat_format};
     const VkPushConstantRange pc{VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
                                  sizeof(GBufferPushConstants)};
     const VkDescriptorSetLayout set_layout = out.material_layout_.handle();
@@ -146,6 +147,8 @@ MeshPass::add_to_graph(rhi::RenderGraph& graph, VkExtent2D extent, const glm::ma
         graph.create_transient_image("gbuffer_normal", gbuffer_normal_format, extent, color_usage);
     targets.material = graph.create_transient_image("gbuffer_material", gbuffer_material_format,
                                                     extent, color_usage);
+    targets.clearcoat = graph.create_transient_image("gbuffer_clearcoat",
+                                                     gbuffer_clearcoat_format, extent, color_usage);
     targets.depth = graph.create_transient_image(
         "gbuffer_depth", gbuffer_depth_format, extent,
         VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT);
@@ -183,12 +186,14 @@ MeshPass::add_to_graph(rhi::RenderGraph& graph, VkExtent2D extent, const glm::ma
         .writes(t.albedo, rhi::ResourceUsage::color_attachment)
         .writes(t.normal, rhi::ResourceUsage::color_attachment)
         .writes(t.material, rhi::ResourceUsage::color_attachment)
+        .writes(t.clearcoat, rhi::ResourceUsage::color_attachment)
         .writes(t.depth, rhi::ResourceUsage::depth_attachment)
         .execute([this, t, extent, vp](rhi::PassContext& ctx) {
             const VkCommandBuffer cmd = ctx.cmd();
             const rhi::ResourceBinding a = ctx.resolve(t.albedo);
             const rhi::ResourceBinding n = ctx.resolve(t.normal);
             const rhi::ResourceBinding m = ctx.resolve(t.material);
+            const rhi::ResourceBinding cc = ctx.resolve(t.clearcoat);
             const rhi::ResourceBinding depth = ctx.resolve(t.depth);
 
             const auto color_attachment = [](VkImageView view) {
@@ -201,8 +206,9 @@ MeshPass::add_to_graph(rhi::RenderGraph& graph, VkExtent2D extent, const glm::ma
                 ai.clearValue.color = {{0.0F, 0.0F, 0.0F, 0.0F}};
                 return ai;
             };
-            const std::array<VkRenderingAttachmentInfo, 3> colors{
-                color_attachment(a.view), color_attachment(n.view), color_attachment(m.view)};
+            const std::array<VkRenderingAttachmentInfo, 4> colors{
+                color_attachment(a.view), color_attachment(n.view), color_attachment(m.view),
+                color_attachment(cc.view)};
 
             VkRenderingAttachmentInfo depth_attachment{};
             depth_attachment.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
@@ -412,6 +418,115 @@ run_mesh_pass_self_test(const rhi::Device& device, rhi::GpuAllocator& allocator,
     const std::uint8_t* corner = pixel(1, 1);
     if (corner[0] != 0 || corner[1] != 0 || corner[2] != 0 || corner[3] != 0) {
         return fail("mesh pass self-test: corner pixel is not the clear colour");
+    }
+    return {};
+}
+
+std::expected<void, core::Error>
+run_specular_aa_self_test(const rhi::Device& device, rhi::GpuAllocator& allocator,
+                          rhi::PipelineCache& cache, const rhi::TransferContext& transfer,
+                          const std::string& cooked_shader_dir) {
+    constexpr VkExtent2D extent{64, 64};
+    constexpr VkDeviceSize bytes = static_cast<VkDeviceSize>(extent.width) * extent.height * 4;
+
+    auto pass = MeshPass::create(device, allocator, cache, transfer, cooked_shader_dir);
+    if (!pass) return std::unexpected(pass.error());
+
+    // Authored roughness 0: any roughness in the GBuffer material target can only
+    // come from the specular-AA normal-variance widening.
+    asset::PbrMaterialParams params;
+    params.roughness_factor = 0.0F;
+    auto material = asset::upload_material(params, asset::MaterialTextures{}, allocator, transfer);
+    if (!material) return std::unexpected(material.error());
+
+    // Renders a clip-space triangle with the given vertex normals and returns the
+    // centre pixel's stored (widened) roughness from the material target.
+    const auto centre_roughness =
+        [&](const std::array<glm::vec3, 3>& normals) -> std::expected<std::uint8_t, core::Error> {
+        std::array<asset::Vertex, 3> verts{};
+        verts[0].position = {-0.5F, -0.5F, 0.0F};
+        verts[1].position = {0.5F, -0.5F, 0.0F};
+        verts[2].position = {0.0F, 0.5F, 0.0F};
+        for (std::size_t i = 0; i < 3; ++i) verts[i].normal = normals[i];
+
+        const std::array<std::uint32_t, 3> indices{0, 1, 2};
+        auto vbuf = rhi::upload_device_buffer(allocator, transfer, verts.data(), sizeof(verts),
+                                              VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
+        if (!vbuf) return std::unexpected(vbuf.error());
+        auto ibuf = rhi::upload_device_buffer(allocator, transfer, indices.data(), sizeof(indices),
+                                              VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
+        if (!ibuf) return std::unexpected(ibuf.error());
+        asset::MeshAsset mesh;
+        mesh.vertex_buffer = std::move(*vbuf);
+        mesh.index_buffer = std::move(*ibuf);
+        mesh.vertex_count = 3;
+        mesh.index_count = 3;
+        mesh.submeshes = {asset::SubMesh{0, 3, 0}};
+
+        auto readback = allocator.create_buffer(
+            bytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT, VMA_MEMORY_USAGE_AUTO,
+            VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT);
+        if (!readback) return std::unexpected(readback.error());
+        const VkBuffer rb = readback->handle();
+
+        rhi::TransientImagePool pool(device, allocator);
+        rhi::RenderGraph graph(pool);
+        const DrawItem item{&mesh, &*material, glm::mat4(1.0F)};
+        auto targets = pass->add_to_graph(graph, extent, glm::mat4(1.0F), {&item, 1});
+        if (!targets) return std::unexpected(targets.error());
+        if (auto compiled = graph.compile(); !compiled) return std::unexpected(compiled.error());
+
+        const VkImage material_image = graph.binding(targets->material).image;
+        auto submitted = run_graphics_commands(device, [&](VkCommandBuffer cmd) {
+            graph.execute(cmd);
+            VkImageMemoryBarrier2 to_src{};
+            to_src.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2;
+            to_src.srcStageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT;
+            to_src.srcAccessMask = VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT;
+            to_src.dstStageMask = VK_PIPELINE_STAGE_2_COPY_BIT;
+            to_src.dstAccessMask = VK_ACCESS_2_TRANSFER_READ_BIT;
+            to_src.oldLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+            to_src.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+            to_src.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            to_src.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            to_src.image = material_image;
+            to_src.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+            VkDependencyInfo dep{};
+            dep.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO;
+            dep.imageMemoryBarrierCount = 1;
+            dep.pImageMemoryBarriers = &to_src;
+            vkCmdPipelineBarrier2(cmd, &dep);
+            VkBufferImageCopy region{};
+            region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+            region.imageSubresource.layerCount = 1;
+            region.imageExtent = {extent.width, extent.height, 1};
+            vkCmdCopyImageToBuffer(cmd, material_image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, rb,
+                                   1, &region);
+        });
+        if (!submitted) return std::unexpected(submitted.error());
+
+        const auto* px = static_cast<const std::uint8_t*>(readback->mapped());
+        const std::size_t o = (static_cast<std::size_t>(extent.height / 2) * extent.width +
+                               extent.width / 2) * 4;
+        return px[o + 1]; // material target .g = stored roughness
+    };
+
+    // Constant normals: zero screen-space variance, roughness must stay 0 (this
+    // also guards the pixel-exact lighting/tonemap tests against AA drift).
+    auto flat = centre_roughness({glm::vec3(0.0F, 0.0F, 1.0F), glm::vec3(0.0F, 0.0F, 1.0F),
+                                  glm::vec3(0.0F, 0.0F, 1.0F)});
+    if (!flat) return std::unexpected(flat.error());
+    if (*flat > 2) {
+        return fail("specular AA self-test: flat surface picked up roughness");
+    }
+
+    // Wildly divergent vertex normals: large per-pixel normal derivatives must
+    // widen the stored roughness even though the authored roughness is 0.
+    auto curved = centre_roughness({glm::vec3(1.0F, 0.0F, 0.0F), glm::vec3(-1.0F, 0.0F, 0.0F),
+                                    glm::vec3(0.0F, 1.0F, 0.0F)});
+    if (!curved) return std::unexpected(curved.error());
+    if (*curved < 20) {
+        return fail("specular AA self-test: high-variance normals were not widened");
     }
     return {};
 }

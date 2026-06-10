@@ -51,7 +51,8 @@ constexpr auto kParserExtensions = fastgltf::Extensions::KHR_materials_transmiss
                                    fastgltf::Extensions::KHR_materials_ior |
                                    fastgltf::Extensions::KHR_materials_volume |
                                    fastgltf::Extensions::KHR_texture_transform |
-                                   fastgltf::Extensions::KHR_materials_emissive_strength;
+                                   fastgltf::Extensions::KHR_materials_emissive_strength |
+                                   fastgltf::Extensions::KHR_materials_clearcoat;
 
 [[nodiscard]] glm::vec3 to_glm(fastgltf::math::fvec3 v) { return {v[0], v[1], v[2]}; }
 [[nodiscard]] glm::vec2 to_glm(fastgltf::math::fvec2 v) { return {v[0], v[1]}; }
@@ -623,6 +624,12 @@ void apply_uv_transform(asset::PbrMaterialParams& p, std::size_t slot,
         }
         // KHR_materials_ior (defaults to 1.5 when the extension is absent).
         p.ior = mat.ior;
+        // KHR_materials_clearcoat — factors only; the coat strength/roughness/
+        // normal textures are not yet bound (rarely authored, later slice).
+        if (mat.clearcoat != nullptr) {
+            p.clearcoat_factor = mat.clearcoat->clearcoatFactor;
+            p.clearcoat_roughness = mat.clearcoat->clearcoatRoughnessFactor;
+        }
         // KHR_materials_volume → Beer-Lambert attenuation through the medium.
         // The spec default attenuationDistance is +inf (no attenuation); store
         // that as 0 so the shader can branch on `attenuation.w > 0`.
@@ -1256,8 +1263,12 @@ std::expected<void, core::Error> run_material_extract_self_test() {
         R"("pbrMetallicRoughness":{)"
         R"("baseColorFactor":[0.2,0.4,0.6,1.0],)"
         R"("metallicFactor":0.1,"roughnessFactor":0.7,)"
-        R"("baseColorTexture":{"index":0}},)"
-        R"("emissiveFactor":[0.5,0.25,0.0],"alphaCutoff":0.25}]})";
+        R"("baseColorTexture":{"index":0,)"
+        R"("extensions":{"KHR_texture_transform":{"offset":[0.5,0.25],"scale":[2.0,4.0]}}}},)"
+        R"("emissiveFactor":[0.5,0.25,0.0],"alphaCutoff":0.25,)"
+        R"("extensions":{)"
+        R"("KHR_materials_emissive_strength":{"emissiveStrength":2.0},)"
+        R"("KHR_materials_clearcoat":{"clearcoatFactor":0.8,"clearcoatRoughnessFactor":0.3}}}]})";
     const std::span<const std::byte> bytes(reinterpret_cast<const std::byte*>(gltf.data()),
                                            gltf.size());
 
@@ -1274,7 +1285,8 @@ std::expected<void, core::Error> run_material_extract_self_test() {
         m.params.alpha_cutoff != 0.25F) {
         return fail("material extract self-test: scalar factors mismatch");
     }
-    if (m.params.emissive_factor != glm::vec4(0.5F, 0.25F, 0.0F, 0.0F)) {
+    // emissiveFactor premultiplied by KHR_materials_emissive_strength (2.0).
+    if (m.params.emissive_factor != glm::vec4(1.0F, 0.5F, 0.0F, 0.0F)) {
         return fail("material extract self-test: emissiveFactor mismatch");
     }
     if (m.base_color_image != 0 || m.normal_image != no_texture ||
@@ -1283,6 +1295,16 @@ std::expected<void, core::Error> run_material_extract_self_test() {
     }
     if (m.params.flags != asset::material_has_base_color) {
         return fail("material extract self-test: only HAS_BASE_COLOR should be set");
+    }
+    // KHR_texture_transform on the base colour slot: scale (2,4), offset
+    // (0.5,0.25), no rotation -> diagonal matrix; other slots stay identity.
+    if (m.params.uv_mat[asset::material_slot_base_color] != glm::vec4(2.0F, 0.0F, 0.0F, 4.0F) ||
+        m.params.uv_offset[0] != glm::vec4(0.5F, 0.25F, 0.0F, 0.0F) ||
+        m.params.uv_mat[asset::material_slot_normal] != glm::vec4(1.0F, 0.0F, 0.0F, 1.0F)) {
+        return fail("material extract self-test: KHR_texture_transform mismatch");
+    }
+    if (m.params.clearcoat_factor != 0.8F || m.params.clearcoat_roughness != 0.3F) {
+        return fail("material extract self-test: clearcoat factors mismatch");
     }
     return {};
 }

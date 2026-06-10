@@ -1304,6 +1304,22 @@ int main() {
                         std::fprintf(stderr, "[selftest] point lights FAILED: %s\n",
                                      r.error().message.c_str());
                     }
+                    if (auto r = engine::renderer::run_clearcoat_self_test(
+                            device, allocator, *mesh_cache, transfer, shader_dir);
+                        r) {
+                        std::fprintf(stderr, "[selftest] clearcoat OK (coat specular lobe)\n");
+                    } else {
+                        std::fprintf(stderr, "[selftest] clearcoat FAILED: %s\n",
+                                     r.error().message.c_str());
+                    }
+                    if (auto r = engine::renderer::run_specular_aa_self_test(
+                            device, allocator, *mesh_cache, transfer, shader_dir);
+                        r) {
+                        std::fprintf(stderr, "[selftest] specular AA OK (variance widens roughness)\n");
+                    } else {
+                        std::fprintf(stderr, "[selftest] specular AA FAILED: %s\n",
+                                     r.error().message.c_str());
+                    }
                     if (auto r = engine::renderer::run_ibl_self_test(device, allocator, *mesh_cache,
                                                                      shader_dir);
                         r) {

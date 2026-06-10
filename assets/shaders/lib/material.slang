@@ -42,11 +42,12 @@ public struct PbrMaterialParams {
     public float  ior;                 // KHR_materials_ior
     public float4 attenuation;         // rgb = attenuation colour, w = distance (0 = none)
     public float  thickness;           // KHR_materials_volume thicknessFactor
-    // Three scalar floats, NOT float3: std140 would align a float3 to offset 96,
-    // desynchronising every later field from the C++ glm::vec3 at offset 84.
-    public float  pad0;
-    public float  pad1;
-    public float  pad2;
+    // KHR_materials_clearcoat factors + padding. Scalar floats, NOT a float3:
+    // std140 would align a float3 to offset 96, desynchronising every later
+    // field from the C++ layout at offset 84.
+    public float  clearcoat_factor;
+    public float  clearcoat_roughness;
+    public float  pad;
     // KHR_texture_transform per texture slot: uv' = M * uv + offset. uv_mat
     // packs the 2x2 matrix rows as (m00, m01, m10, m11); offsets are packed two
     // per float4 (slot 2k -> xy, slot 2k+1 -> zw). Identity when absent.
@@ -71,6 +72,8 @@ public struct SurfaceSample {
     public float  occlusion;
     public float3 emissive;
     public float  alpha;
+    public float  clearcoat;           // KHR_materials_clearcoat strength
+    public float  clearcoat_roughness; // perceptual coat roughness
 }
 
 public interface IMaterial {
@@ -141,6 +144,9 @@ public struct PbrMaterial : IMaterial {
                 samp, material_transform_uv(params, MATERIAL_SLOT_EMISSIVE, uv)).rgb;
         }
         s.emissive = emissive;
+
+        s.clearcoat = params.clearcoat_factor;
+        s.clearcoat_roughness = params.clearcoat_roughness;
 
         return s;
     }

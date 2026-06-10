@@ -63,9 +63,13 @@ struct PbrMaterialParams {
     // (0 = no attenuation; the spec default of +inf is stored as 0).
     glm::vec4     attenuation{1.0F, 1.0F, 1.0F, 0.0F};
     float         thickness = 0.0F;           // KHR_materials_volume thicknessFactor
-    // Padding to 96. The shader mirrors this as three scalar floats (a slang
-    // float3 would be std140-aligned to offset 96 and shift the arrays below).
-    glm::vec3     pad{0.0F, 0.0F, 0.0F};
+    // KHR_materials_clearcoat (factors only; coat textures are a later slice).
+    // Together with pad they fill bytes 84..96 as three scalar floats — the
+    // shader must mirror them as scalars (a slang float3 would be std140-aligned
+    // to offset 96 and shift the arrays below).
+    float         clearcoat_factor    = 0.0F;
+    float         clearcoat_roughness = 0.0F;
+    float         pad                 = 0.0F;
     // KHR_texture_transform, one affine UV transform per texture slot (indexed
     // by MaterialTextureSlot): uv' = M * uv + offset. Each uv_mat entry packs
     // the 2x2 rotation*scale matrix rows as (m00, m01, m10, m11); offsets are
