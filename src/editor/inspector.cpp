@@ -3,6 +3,7 @@
 #define GLM_ENABLE_EXPERIMENTAL
 #include <cstring>
 #include <string>
+#include <utility>
 
 #include <glm/glm.hpp>
 #include <glm/gtc/quaternion.hpp>
@@ -127,15 +128,79 @@ struct ComponentInspector<scene::Animator> {
     }
 };
 
-template <typename T>
-void inspect(entt::registry& registry, entt::entity entity) {
-    if (auto* component = registry.try_get<T>(entity)) {
-        if (ImGui::CollapsingHeader(ComponentInspector<T>::title,
-                                    ImGuiTreeNodeFlags_DefaultOpen)) {
-            ImGui::PushID(ComponentInspector<T>::title);
-            ComponentInspector<T>::draw(registry, entity, *component);
-            ImGui::PopID();
+template <>
+struct ComponentInspector<scene::Collider> {
+    static constexpr const char* title = "Collider";
+    static void draw(entt::registry&, entt::entity, scene::Collider& collider) {
+        const char* shapes[] = {"box", "sphere", "capsule"};
+        int shape = static_cast<int>(collider.shape);
+        if (ImGui::Combo("shape", &shape, shapes, 3)) {
+            collider.shape = static_cast<scene::ColliderShape>(shape);
         }
+        switch (collider.shape) {
+        case scene::ColliderShape::box:
+            ImGui::DragFloat3("half extents", &collider.half_extents.x, 0.05F, 0.01F, 1000.0F);
+            break;
+        case scene::ColliderShape::sphere:
+            ImGui::DragFloat("radius", &collider.half_extents.x, 0.05F, 0.01F, 1000.0F);
+            break;
+        case scene::ColliderShape::capsule:
+            ImGui::DragFloat("radius", &collider.half_extents.x, 0.05F, 0.01F, 1000.0F);
+            ImGui::DragFloat("half height", &collider.half_extents.y, 0.05F, 0.01F, 1000.0F);
+            break;
+        }
+        ImGui::DragFloat3("offset", &collider.offset.x, 0.05F);
+        ImGui::Checkbox("sensor (trigger)", &collider.is_sensor);
+        ImGui::TextDisabled("tip: enable 'draw colliders' in the Physics panel");
+    }
+};
+
+template <>
+struct ComponentInspector<scene::RigidBody> {
+    static constexpr const char* title = "Rigid Body";
+    static void draw(entt::registry&, entt::entity, scene::RigidBody& body) {
+        const char* motions[] = {"static", "kinematic", "dynamic"};
+        int motion = static_cast<int>(body.motion);
+        if (ImGui::Combo("motion", &motion, motions, 3)) {
+            body.motion = static_cast<scene::BodyMotion>(motion);
+        }
+        ImGui::DragFloat("mass", &body.mass, 0.1F, 0.01F, 10000.0F);
+        ImGui::TextDisabled(body.body == 0xFFFFFFFFU ? "body: not created (press Play)"
+                                                     : "body: live");
+    }
+};
+
+// Draws the component's collapsing header + editor. `removable` adds a
+// right-click "Remove component" to the header; returns false if removed.
+template <typename T>
+bool inspect(entt::registry& registry, entt::entity entity, bool removable = false) {
+    auto* component = registry.try_get<T>(entity);
+    if (component == nullptr) return true;
+
+    const bool open =
+        ImGui::CollapsingHeader(ComponentInspector<T>::title, ImGuiTreeNodeFlags_DefaultOpen);
+    if (removable && ImGui::BeginPopupContextItem(ComponentInspector<T>::title)) {
+        const bool remove = ImGui::MenuItem("Remove component");
+        ImGui::EndPopup();
+        if (remove) {
+            registry.remove<T>(entity);
+            return false;
+        }
+    }
+    if (open) {
+        ImGui::PushID(ComponentInspector<T>::title);
+        ComponentInspector<T>::draw(registry, entity, *component);
+        ImGui::PopID();
+    }
+    return true;
+}
+
+// "Add Component" popup entry: shown only when the entity lacks T.
+template <typename T, typename... Args>
+void add_component_item(entt::registry& registry, entt::entity entity, Args&&... defaults) {
+    if (registry.all_of<T>(entity)) return;
+    if (ImGui::MenuItem(ComponentInspector<T>::title)) {
+        registry.emplace<T>(entity, std::forward<Args>(defaults)...);
     }
 }
 
@@ -158,18 +223,72 @@ void draw_inspector(scene::Scene& scene, entt::entity selected) {
     inspect<scene::Name>(r, selected);
     inspect<scene::Transform>(r, selected);
     inspect<scene::MeshRenderer>(r, selected);
-    inspect<scene::DirectionalLight>(r, selected);
-    inspect<scene::PointLight>(r, selected);
-    inspect<scene::Camera>(r, selected);
+    inspect<scene::DirectionalLight>(r, selected, true);
+    inspect<scene::PointLight>(r, selected, true);
+    inspect<scene::Camera>(r, selected, true);
     inspect<scene::Animator>(r, selected);
+    inspect<scene::Collider>(r, selected, true);
+    inspect<scene::RigidBody>(r, selected, true);
+
+    ImGui::Separator();
+    if (ImGui::Button("Add component", ImVec2(-1.0F, 0.0F))) {
+        ImGui::OpenPopup("add_component");
+    }
+    if (ImGui::BeginPopup("add_component")) {
+        add_component_item<scene::Collider>(r, selected);
+        add_component_item<scene::RigidBody>(r, selected);
+        add_component_item<scene::PointLight>(r, selected, glm::vec3(1.0F), 10.0F, 5.0F);
+        add_component_item<scene::DirectionalLight>(
+            r, selected, glm::vec3(-0.4F, -1.0F, -0.3F), glm::vec3(1.0F), 3.0F);
+        add_component_item<scene::Camera>(r, selected);
+        ImGui::EndPopup();
+    }
     ImGui::End();
 }
 
-void draw_renderer_panel(RendererSettings& settings) {
+void draw_renderer_panel(RendererSettings& settings, scene::Scene* scene) {
     if (!ImGui::Begin("Renderer")) {
         ImGui::End();
         return;
     }
+
+    if (ImGui::CollapsingHeader("Sun", ImGuiTreeNodeFlags_DefaultOpen)) {
+        scene::DirectionalLight* sun = nullptr;
+        if (scene != nullptr) {
+            for (const entt::entity e : scene->registry().view<scene::DirectionalLight>()) {
+                sun = &scene->registry().get<scene::DirectionalLight>(e);
+                break;
+            }
+        }
+        if (sun == nullptr) {
+            ImGui::TextUnformatted("(no DirectionalLight in the scene)");
+        } else {
+            // direction = travel direction (sun -> scene), unit length.
+            const glm::vec3 dir = glm::normalize(sun->direction);
+            float azimuth = glm::degrees(std::atan2(dir.z, dir.x));
+            float elevation = glm::degrees(std::asin(glm::clamp(-dir.y, -1.0F, 1.0F)));
+
+            bool changed = false;
+            changed |= ImGui::SliderFloat("azimuth", &azimuth, -180.0F, 180.0F, "%.0f deg");
+            const bool azimuth_done = ImGui::IsItemDeactivatedAfterEdit();
+            changed |= ImGui::SliderFloat("elevation", &elevation, 2.0F, 89.0F, "%.0f deg");
+            const bool elevation_done = ImGui::IsItemDeactivatedAfterEdit();
+            if (changed) {
+                const float az = glm::radians(azimuth);
+                const float el = glm::radians(glm::clamp(elevation, 2.0F, 89.0F));
+                sun->direction = glm::vec3(std::cos(el) * std::cos(az), -std::sin(el),
+                                           std::cos(el) * std::sin(az));
+            }
+            // Sky + direct light follow the drag live; the baked environment
+            // (IBL ambient/reflections) snaps into place on release.
+            if (azimuth_done || elevation_done) {
+                settings.rebake_ibl = true;
+            }
+            ImGui::ColorEdit3("colour", &sun->color.x);
+            ImGui::DragFloat("intensity", &sun->intensity, 0.05F, 0.0F, 100.0F);
+        }
+    }
+
     if (ImGui::CollapsingHeader("Bloom", ImGuiTreeNodeFlags_DefaultOpen)) {
         ImGui::SliderFloat("threshold", &settings.bloom_threshold, 0.0F, 8.0F);
         ImGui::SliderFloat("knee", &settings.bloom_knee, 0.0F, 1.0F);
@@ -177,10 +296,9 @@ void draw_renderer_panel(RendererSettings& settings) {
         ImGui::SliderFloat("radius", &settings.bloom_radius, 0.2F, 2.0F);
     }
     if (ImGui::CollapsingHeader("Environment", ImGuiTreeNodeFlags_DefaultOpen)) {
-        ImGui::TextWrapped("Sun direction/colour: edit the DirectionalLight entity in the "
-                           "Inspector. The IBL environment is baked once; rebake after "
-                           "changing the sun.");
-        if (ImGui::Button("Rebake IBL")) {
+        ImGui::TextWrapped("The IBL environment (ambient + reflections) is baked from the sun; "
+                           "it rebakes automatically when a sun slider is released.");
+        if (ImGui::Button("Rebake IBL now")) {
             settings.rebake_ibl = true;
         }
     }

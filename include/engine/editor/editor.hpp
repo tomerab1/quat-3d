@@ -71,6 +71,10 @@ struct EditorContext {
     // Out: glTF path the user asked to instantiate (double-click or viewport
     // drop); the frame loop consumes and clears it (may be null).
     std::string* instantiate_request = nullptr;
+    // In/out play-mode flag (the menu-bar Play/Stop button toggles it; the
+    // frame loop snapshots/restores the scene on the transition). Null hides
+    // the button (e.g. while a physics demo owns the world).
+    bool* play_mode = nullptr;
     // The scene camera's (unjittered) view-projection — used by panels that
     // project world-space overlays into the viewport (joints, physics shapes)
     // and to build picking rays. Carries the renderer's Vulkan Y flip.

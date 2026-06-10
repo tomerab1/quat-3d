@@ -429,6 +429,20 @@ Goal: a usable in-engine editor with scene hierarchy, inspector, asset browser, 
   custom dark theme (flat panels, accent blue, consistent rounding).
   *Commit: `[Phase9/Slice8] ImGuizmo gizmos, click picking, editor theme`*
 
+- [x] **9.9 — Play mode + physics authoring + sun control**
+  Unity-style Play/Stop in the menu bar: Play snapshots the whole scene (`SceneSnapshot` —
+  every entity + component copied; restore rebuilds the registry with EXACT entity ids via
+  entt `create(hint)`, so hierarchy links and the selection survive) and brings up a dedicated
+  `PhysicsWorld`; `physics_system` runs while playing; Stop tears the world down and restores
+  the snapshot. Inspector gains component authoring: "Add component" popup (Collider,
+  RigidBody, lights, Camera), right-click header to remove, and full Collider (shape /
+  dimensions / offset / sensor) + RigidBody (motion / mass) editors. Renderer panel gains
+  UE-style sun control: azimuth/elevation sliders drive the scene's DirectionalLight live
+  (sky + direct light follow the drag) and the IBL environment rebakes automatically on
+  slider release. Self-test: snapshot round trip (mutate/destroy/create, verify exact-id
+  restore).
+  *Commit: `[Phase9/Slice9] editor play mode, collider authoring, sun control`*
+
 ---
 
 ## Phase 10 — Async Asset Loading & Hot Reload
@@ -464,3 +478,43 @@ These are tackled in any order once Phase 10 is done.
 - [ ] GPU-driven indirect rendering (one `vkCmdDrawIndexedIndirect` per pass)
 - [ ] Frustum + occlusion culling on GPU (Hi-Z)
 - [ ] Serialize/deserialize scene to JSON or binary flatbuffer
+
+---
+
+## Phase 11 — Atmosphere & Volumetric Clouds
+
+Goal: a fully dynamic sky — movable sun with correct scattering, volumetric clouds.
+
+- [ ] **11.1 — Physically-based sky** (Hillaire 2020): transmittance/multi-scattering LUTs,
+  aerial perspective; replaces the analytic gradient sky. Time-of-day from the sun entity.
+- [ ] **11.2 — Volumetric clouds**: raymarched (Schneider/Nubis-style), Worley-Perlin noise
+  field, temporal reprojection at quarter res, lit by the sun + ambient.
+- [ ] **11.3 — Dynamic IBL**: re-render the environment probe incrementally (a face per frame)
+  so ambient/reflections track the moving sun without bake hitches.
+
+## Phase 12 — Terrain
+
+Goal: large-scale procedurally generated terrain, editable and walkable.
+
+- [ ] **12.1 — Heightmap generation**: layered FBM + domain warping (+ optional hydraulic
+  erosion pass), seeded, on a worker thread.
+- [ ] **12.2 — Chunked LOD rendering**: quadtree chunks with skirt stitching (or geometry
+  clipmaps), normal/splat maps, triplanar material blending.
+- [ ] **12.3 — Terrain physics**: Jolt `HeightFieldShape` per chunk; editor brush stub.
+
+## Phase 13 — Gameplay Framework (NPCs)
+
+Goal: NPCs that navigate and act in the world.
+
+- [ ] **13.1 — Navmesh**: Recast/Detour generation from static geometry, debug-draw overlay.
+- [ ] **13.2 — Agents**: locomotion via CharacterVirtual, path following, avoidance.
+- [ ] **13.3 — Behaviour**: behaviour trees (or utility AI) as data assets; perception stubs.
+
+## Phase 14 — Networking
+
+Goal: multiplayer-ready replication layer.
+
+- [ ] **14.1 — Transport**: client/server over UDP (e.g. GameNetworkingSockets/ENet style),
+  connection management, channels.
+- [ ] **14.2 — Replication**: snapshot deltas of ECS components, interest management.
+- [ ] **14.3 — Prediction**: client-side prediction + reconciliation for the local character.

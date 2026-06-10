@@ -399,6 +399,23 @@ void EditorLayer::build_ui(const EditorContext& ctx) {
             ImGui::MenuItem("ImGui Demo", nullptr, &show_demo_);
             ImGui::EndMenu();
         }
+        // Play/Stop, centred-ish in the bar. The loop owns the transition
+        // (scene snapshot + physics world); this just flips the flag.
+        if (ctx.play_mode != nullptr) {
+            ImGui::SetCursorPosX(ImGui::GetWindowWidth() * 0.5F - 30.0F);
+            const bool playing = *ctx.play_mode;
+            if (playing) {
+                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.70F, 0.25F, 0.22F, 1.0F));
+                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.80F, 0.32F, 0.28F, 1.0F));
+            }
+            if (ImGui::SmallButton(playing ? "[] Stop" : "|> Play")) {
+                *ctx.play_mode = !playing;
+            }
+            if (playing) {
+                ImGui::PopStyleColor(2);
+                ImGui::TextDisabled("simulating");
+            }
+        }
         ImGui::EndMainMenuBar();
     }
 
@@ -412,7 +429,7 @@ void EditorLayer::build_ui(const EditorContext& ctx) {
         draw_physics_debug(*ctx.scene, ctx.view_proj, viewport_rect_, physics_state_);
     }
     if (ctx.renderer != nullptr) {
-        draw_renderer_panel(*ctx.renderer);
+        draw_renderer_panel(*ctx.renderer, ctx.scene);
     }
     if (!ctx.project_root.empty() && ctx.instantiate_request != nullptr) {
         draw_asset_browser(ctx.project_root, *ctx.instantiate_request);

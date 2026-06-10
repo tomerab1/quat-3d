@@ -47,6 +47,7 @@
 #include "engine/renderer/transparent_pass.hpp"
 
 #ifdef ENGINE_EDITOR
+#include "editor/scene_snapshot.hpp"
 #include "engine/editor/editor.hpp"
 #include "engine/renderer/imgui_pass.hpp"
 #endif
@@ -1166,6 +1167,15 @@ int main() {
                          r.error().message.c_str());
         }
 
+#ifdef ENGINE_EDITOR
+        if (auto r = engine::editor::run_scene_snapshot_self_test(); r) {
+            std::fprintf(stderr, "[selftest] scene snapshot OK (play-mode round trip)\n");
+        } else {
+            std::fprintf(stderr, "[selftest] scene snapshot FAILED: %s\n",
+                         r.error().message.c_str());
+        }
+#endif
+
         if (auto r = engine::animation::run_skeleton_self_test(); r) {
             std::fprintf(stderr, "[selftest] skeleton runtime OK\n");
         } else {
@@ -1654,6 +1664,12 @@ int main() {
     engine::editor::EditorLayer editor;
     engine::editor::RendererSettings render_settings;
     std::string pending_instantiate; // set by the asset browser, consumed below
+    // Play mode: snapshot taken on Play, restored on Stop; the play session
+    // owns its own physics world (demo modes keep theirs).
+    bool editor_play = false;
+    bool editor_play_prev = false;
+    std::optional<engine::editor::SceneSnapshot> play_snapshot;
+    std::optional<engine::physics::PhysicsWorld> play_physics;
     const bool editor_enabled = std::getenv("QUAT_NO_UI") == nullptr;
     if (editor_enabled) {
         if (auto e = engine::editor::EditorLayer::create(
@@ -2247,6 +2263,32 @@ int main() {
             }
         }
 
+        // Play/Stop transition: Play snapshots the scene and brings up a
+        // dedicated physics world; Stop tears the world down and restores the
+        // snapshot (exact entity ids — selection and hierarchy stay valid).
+        if (editor_play != editor_play_prev) {
+            if (editor_play) {
+                play_snapshot = engine::editor::capture_scene(scene);
+                if (auto world = engine::physics::PhysicsWorld::create(); world) {
+                    play_physics = std::move(*world);
+                    std::fprintf(stderr, "[editor] play\n");
+                } else {
+                    std::fprintf(stderr, "[editor] play failed: %s\n",
+                                 world.error().message.c_str());
+                    editor_play = false;
+                    play_snapshot.reset();
+                }
+            } else {
+                play_physics.reset();
+                if (play_snapshot) {
+                    engine::editor::restore_scene(scene, *play_snapshot);
+                    play_snapshot.reset();
+                }
+                std::fprintf(stderr, "[editor] stop\n");
+            }
+            editor_play_prev = editor_play;
+        }
+
         // glTF instantiate requested from the asset browser (double-click or
         // viewport drop): blocking load through a transient upload context on
         // the graphics queue (mip blits), like the startup path.
@@ -2428,6 +2470,11 @@ int main() {
                 engine::scene::physics_system(scene.registry(), *physics_world, dt);
             }
         }
+#ifdef ENGINE_EDITOR
+        else if (editor_play && play_physics) {
+            engine::scene::physics_system(scene.registry(), *play_physics, dt);
+        }
+#endif
         scene.tick(dt); // advances any Animators by real elapsed time
 
         // Third-person follow camera, placed after the character has moved.
@@ -2663,6 +2710,8 @@ int main() {
             ui_ctx.renderer = &render_settings;
             ui_ctx.project_root = QUAT_PROJECT_ROOT;
             ui_ctx.instantiate_request = &pending_instantiate;
+            // Demo modes own their physics world — hide the Play button there.
+            ui_ctx.play_mode = physics_world ? nullptr : &editor_play;
             ui_ctx.view_proj = cam.view_proj; // unjittered, for overlays
             ui_ctx.view = cam.view;
             ui_ctx.proj_no_flip = cam.projection;
