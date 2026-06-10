@@ -1,5 +1,6 @@
 // ECS <-> physics bridge system (Phase 6, Slice 6.2).
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 
@@ -15,16 +16,23 @@ namespace engine::scene {
 
 namespace {
 
-[[nodiscard]] std::uint32_t make_shape(physics::PhysicsWorld& world, const Collider& col) {
+// Builds the Jolt shape with the entity's world scale baked in, so the shape
+// matches what the editor's collider wireframe shows (the overlay draws
+// through the scaled world matrix). Spheres/capsules cannot scale
+// non-uniformly in Jolt; they take the dominant axes.
+[[nodiscard]] std::uint32_t make_shape(physics::PhysicsWorld& world, const Collider& col,
+                                       const glm::vec3& scale) {
     switch (col.shape) {
     case ColliderShape::box:
-        return world.create_box(col.half_extents);
+        return world.create_box(col.half_extents * scale);
     case ColliderShape::sphere:
-        return world.create_sphere(col.half_extents.x);
+        return world.create_sphere(col.half_extents.x *
+                                   std::max({scale.x, scale.y, scale.z}));
     case ColliderShape::capsule:
-        return world.create_capsule(col.half_extents.y, col.half_extents.x);
+        return world.create_capsule(col.half_extents.y * scale.y,
+                                    col.half_extents.x * std::max(scale.x, scale.z));
     }
-    return world.create_box(col.half_extents);
+    return world.create_box(col.half_extents * scale);
 }
 
 [[nodiscard]] physics::Motion to_motion(BodyMotion m) {
@@ -50,6 +58,15 @@ namespace {
     m[2] = glm::normalize(m[2]);
     return glm::quat_cast(m);
 }
+[[nodiscard]] glm::vec3 scale_of(const Transform& t) {
+    return {glm::length(glm::vec3(t.world[0])), glm::length(glm::vec3(t.world[1])),
+            glm::length(glm::vec3(t.world[2]))};
+}
+// The collider offset in world units, rotated into the entity's frame — the
+// body's centre is the entity position plus this.
+[[nodiscard]] glm::vec3 world_offset(const Transform& t, const Collider& col) {
+    return rotation_of(t) * (scale_of(t) * col.offset);
+}
 
 } // namespace
 
@@ -60,8 +77,8 @@ void physics_system(entt::registry& registry, physics::PhysicsWorld& world, floa
     for (auto [e, rb, col, t] : registry.view<RigidBody, Collider, Transform>().each()) {
         if (rb.body != invalid) continue;
         physics::PhysicsWorld::BodyParams params;
-        params.shape = make_shape(world, col);
-        params.position = position_of(t);
+        params.shape = make_shape(world, col, scale_of(t));
+        params.position = position_of(t) + world_offset(t, col);
         params.rotation = rotation_of(t);
         params.motion = to_motion(rb.motion);
         params.sensor = col.is_sensor;
@@ -73,26 +90,28 @@ void physics_system(entt::registry& registry, physics::PhysicsWorld& world, floa
     }
 
     // 2. Push kinematic bodies' transforms into the simulation.
-    for (auto [e, rb, t] : registry.view<RigidBody, Transform>().each()) {
+    for (auto [e, rb, col, t] : registry.view<RigidBody, Collider, Transform>().each()) {
         if (rb.motion == BodyMotion::kinematic && rb.body != invalid) {
-            world.set_body_transform(rb.body, position_of(t), rotation_of(t));
+            world.set_body_transform(rb.body, position_of(t) + world_offset(t, col),
+                                     rotation_of(t));
         }
     }
 
     // 3. Step the simulation.
     world.update(dt);
 
-    // 4. Pull dynamic bodies' world poses back into the ECS. The entity's
-    // authored scale is preserved, and parented entities convert the pose
-    // through the parent's world so the transform system reproduces it.
-    for (auto [e, rb, t] : registry.view<RigidBody, Transform>().each()) {
+    // 4. Pull dynamic bodies' world poses back into the ECS. The body centre
+    // carries the collider offset, so it is subtracted (in the body's current
+    // orientation) to recover the entity position. The entity's authored scale
+    // is preserved, and parented entities convert the pose through the
+    // parent's world so the transform system reproduces it.
+    for (auto [e, rb, col, t] : registry.view<RigidBody, Collider, Transform>().each()) {
         if (rb.motion == BodyMotion::dynamic && rb.body != invalid) {
             glm::vec3 pos(0.0F);
             glm::quat rot(1.0F, 0.0F, 0.0F, 0.0F);
             world.body_transform(rb.body, pos, rot);
-            const glm::vec3 scale(glm::length(glm::vec3(t.world[0])),
-                                  glm::length(glm::vec3(t.world[1])),
-                                  glm::length(glm::vec3(t.world[2])));
+            const glm::vec3 scale = scale_of(t);
+            pos -= rot * (scale * col.offset);
             const glm::mat4 pose = glm::translate(glm::mat4(1.0F), pos) * glm::mat4_cast(rot) *
                                    glm::scale(glm::mat4(1.0F), scale);
 
@@ -230,8 +249,26 @@ std::expected<void, core::Error> run_physics_body_self_test() {
     registry.emplace<RigidBody>(child, BodyMotion::dynamic, 1.0F,
                                 physics::PhysicsWorld::invalid_body);
 
+    // Scaled dynamic sphere (the glTF-with-node-scale case): world scale 2 and
+    // authored radius 0.5 must simulate as a radius-1 body — it rests at y=1,
+    // matching what the editor's collider wireframe shows.
+    const entt::entity scaled = registry.create();
+    auto& scaled_t = registry.emplace<Transform>(scaled);
+    scaled_t.local = glm::translate(glm::mat4(1.0F), glm::vec3(20.0F, 5.0F, 0.0F)) *
+                     glm::scale(glm::mat4(1.0F), glm::vec3(2.0F));
+    scaled_t.world = scaled_t.local;
+    registry.emplace<Collider>(scaled, ColliderShape::sphere, glm::vec3(0.5F), glm::vec3(0.0F));
+    registry.emplace<RigidBody>(scaled, BodyMotion::dynamic, 1.0F,
+                                physics::PhysicsWorld::invalid_body);
+
     for (int i = 0; i < 120; ++i) {
         physics_system(registry, *world, 1.0F / 60.0F);
+    }
+
+    const float scaled_y = registry.get<Transform>(scaled).world[3].y;
+    if (std::abs(scaled_y - 1.0F) > 0.25F) {
+        return std::unexpected(
+            core::Error{"physics body self-test: world scale not applied to collider shape"});
     }
 
     const float y = registry.get<Transform>(sphere).local[3].y;
