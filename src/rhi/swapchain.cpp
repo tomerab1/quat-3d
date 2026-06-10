@@ -2,8 +2,10 @@
 
 #include <algorithm>
 #include <array>
+#include <cstdlib>
 #include <format>
 #include <utility>
+#include <vector>
 
 #include "engine/rhi/device.hpp"
 
@@ -86,7 +88,22 @@ std::expected<void, core::Error> Swapchain::build(VkExtent2D window_extent) {
     info.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
     info.preTransform = caps.currentTransform;
     info.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
-    info.presentMode = VK_PRESENT_MODE_FIFO_KHR; // guaranteed available
+    // FIFO (vsync) is the guaranteed default. QUAT_NO_VSYNC=1 prefers MAILBOX,
+    // then IMMEDIATE, for uncapped frame-rate measurement.
+    info.presentMode = VK_PRESENT_MODE_FIFO_KHR;
+    if (std::getenv("QUAT_NO_VSYNC") != nullptr) {
+        std::uint32_t mode_count = 0;
+        vkGetPhysicalDeviceSurfacePresentModesKHR(gpu, surface_, &mode_count, nullptr);
+        std::vector<VkPresentModeKHR> modes(mode_count);
+        vkGetPhysicalDeviceSurfacePresentModesKHR(gpu, surface_, &mode_count, modes.data());
+        for (const VkPresentModeKHR want :
+             {VK_PRESENT_MODE_MAILBOX_KHR, VK_PRESENT_MODE_IMMEDIATE_KHR}) {
+            if (std::find(modes.begin(), modes.end(), want) != modes.end()) {
+                info.presentMode = want;
+                break;
+            }
+        }
+    }
     info.clipped = VK_TRUE;
     info.oldSwapchain = VK_NULL_HANDLE;
 

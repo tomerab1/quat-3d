@@ -39,6 +39,12 @@ target_compile_features(engine_flags INTERFACE cxx_std_23)
 
 if(MSVC)
     target_compile_options(engine_flags INTERFACE /W4 /permissive- /EHs-c- /GR-)
+    # getenv/fopen are used deliberately (portable C, bounds-checked call
+    # sites); _HAS_EXCEPTIONS=0 matches /EHs-c- so the STL stops emitting
+    # C4530 from its internal try/catch.
+    target_compile_definitions(engine_flags INTERFACE
+        _CRT_SECURE_NO_WARNINGS
+        _HAS_EXCEPTIONS=0)
 else()
     target_compile_options(engine_flags INTERFACE
         -Wall -Wextra -Wshadow
