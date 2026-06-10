@@ -20,6 +20,12 @@
     "fastgltf",
     "stb",
     "entt",
-    "joltphysics"
+    "joltphysics",
+    {
+      "name": "imgui",
+      "features": [
+        "docking-experimental"
+      ]
+    }
   ]
 }

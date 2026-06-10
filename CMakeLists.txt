@@ -69,6 +69,9 @@ find_package(fastgltf CONFIG REQUIRED)
 find_package(Stb REQUIRED)
 find_package(EnTT CONFIG REQUIRED)
 find_package(Jolt CONFIG REQUIRED)
+if(ENGINE_EDITOR)
+    find_package(imgui CONFIG REQUIRED)
+endif()
 
 set(ENGINE_PUBLIC_INCLUDE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 
@@ -174,6 +177,36 @@ add_library(engine_renderer STATIC
 target_link_libraries(engine_renderer PUBLIC engine_flags engine_rhi engine_asset glm::glm)
 target_include_directories(engine_renderer PUBLIC ${ENGINE_PUBLIC_INCLUDE})
 
+# The ImGui overlay pass is editor-only. It is a from-scratch renderer on the
+# engine RHI (descriptor buffers — the stock imgui_impl_vulkan backend uses
+# descriptor pools, which may not be mixed with descriptor buffers in one
+# command buffer). imgui_pass.cpp is the only renderer TU allowed to include
+# ImGui headers.
+if(ENGINE_EDITOR)
+    target_sources(engine_renderer PRIVATE src/renderer/imgui_pass.cpp)
+    target_link_libraries(engine_renderer PRIVATE imgui::imgui)
+endif()
+
+# ---------------------------------------------------------------------------
+# engine_editor — ImGui editor layer (context, SDL3 platform backend, panels).
+# The SDL3 input backend is vendored (src/editor/vendor) rather than pulled via
+# imgui[sdl3-binding]: that vcpkg feature re-enables SDL3's default features
+# (dbus/ibus -> libsystemd -> libxcrypt), a dependency chain the engine does
+# not want.
+# ---------------------------------------------------------------------------
+if(ENGINE_EDITOR)
+    add_library(engine_editor STATIC
+        src/editor/editor.cpp
+        src/editor/vendor/imgui_impl_sdl3.cpp)
+    target_link_libraries(engine_editor
+        PUBLIC engine_flags
+        PRIVATE imgui::imgui SDL3::SDL3)
+    target_include_directories(engine_editor PUBLIC ${ENGINE_PUBLIC_INCLUDE})
+    # Vendored third-party backend: not warning-clean under our strict flags.
+    set_source_files_properties(src/editor/vendor/imgui_impl_sdl3.cpp
+        PROPERTIES COMPILE_OPTIONS "-w")
+endif()
+
 # ---------------------------------------------------------------------------
 # game — executable entry point. The full target graph (engine_core /
 # engine_renderer / engine_editor) grows phase by phase as modules gain sources.
@@ -181,6 +214,9 @@ target_include_directories(engine_renderer PUBLIC ${ENGINE_PUBLIC_INCLUDE})
 add_executable(game src/main.cpp)
 target_link_libraries(game PRIVATE
     engine_flags engine_rhi engine_asset engine_scene engine_renderer engine_physics SDL3::SDL3)
+if(ENGINE_EDITOR)
+    target_link_libraries(game PRIVATE engine_editor)
+endif()
 target_include_directories(game PRIVATE
     ${ENGINE_PUBLIC_INCLUDE}
     ${CMAKE_CURRENT_SOURCE_DIR}/src)

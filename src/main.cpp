@@ -45,6 +45,11 @@
 #include "engine/renderer/skinning_pass.hpp"
 #include "engine/renderer/tonemap_pass.hpp"
 #include "engine/renderer/transparent_pass.hpp"
+
+#ifdef ENGINE_EDITOR
+#include "engine/editor/editor.hpp"
+#include "engine/renderer/imgui_pass.hpp"
+#endif
 #include "engine/rhi/descriptor_buffer.hpp"
 #include "engine/scene/components.hpp"
 #include "engine/scene/gltf_loader.hpp"
@@ -251,6 +256,9 @@ struct DeferredFrame {
     engine::renderer::BloomPass      bloom;
     engine::renderer::ExposurePass   exposure;
     engine::renderer::TaaPass        taa;
+#ifdef ENGINE_EDITOR
+    engine::renderer::ImGuiPass      imgui;
+#endif
     engine::rhi::TransientImagePool  pool;
     // Skinning resources, lazily created per skinned entity (keyed by entity).
     std::unordered_map<entt::entity, SkinnedEntityGpu> skin_gpu;
@@ -1320,6 +1328,16 @@ int main() {
                         std::fprintf(stderr, "[selftest] specular AA FAILED: %s\n",
                                      r.error().message.c_str());
                     }
+#ifdef ENGINE_EDITOR
+                    if (auto r = engine::renderer::run_imgui_pass_self_test(
+                            device, allocator, *mesh_cache, transfer, shader_dir);
+                        r) {
+                        std::fprintf(stderr, "[selftest] imgui pass OK (UI over cleared target)\n");
+                    } else {
+                        std::fprintf(stderr, "[selftest] imgui pass FAILED: %s\n",
+                                     r.error().message.c_str());
+                    }
+#endif
                     if (auto r = engine::renderer::run_ibl_self_test(device, allocator, *mesh_cache,
                                                                      shader_dir);
                         r) {
@@ -1597,6 +1615,21 @@ int main() {
                                                       device.graphics_queue(),
                                                       device.max_sampler_anisotropy()};
 
+#ifdef ENGINE_EDITOR
+    // Editor shell (ImGui context + SDL3 input backend). Created before the
+    // frame slots: each slot's ImGuiPass uploads the font atlas of this
+    // context. QUAT_NO_UI=1 disables it (deterministic headless renders).
+    engine::editor::EditorLayer editor;
+    const bool editor_enabled = std::getenv("QUAT_NO_UI") == nullptr;
+    if (editor_enabled) {
+        if (auto e = engine::editor::EditorLayer::create(window); e) {
+            editor = std::move(*e);
+        } else {
+            std::fprintf(stderr, "[warn] editor disabled: %s\n", e.error().message.c_str());
+        }
+    }
+#endif
+
     // Per-frame-in-flight deferred chains (GBuffer -> lighting -> tonemap). Each
     // slot owns its passes' descriptor buffers and a transient image pool, so
     // building one frame's graph never disturbs the other in-flight frame.
@@ -1620,6 +1653,20 @@ int main() {
                                                            shader_dir);
         auto taa = engine::renderer::TaaPass::create(device, allocator, *pipeline_cache, shader_dir,
                                                      ldr_format);
+#ifdef ENGINE_EDITOR
+        if (editor.active()) {
+            auto ui = engine::renderer::ImGuiPass::create(device, allocator, *pipeline_cache,
+                                                          setup_transfer, shader_dir,
+                                                          swapchain.format());
+            if (!ui) {
+                frames_ok = false;
+                std::fprintf(stderr, "[fatal] imgui pass creation failed: %s\n",
+                             ui.error().message.c_str());
+                break;
+            }
+            f.imgui = std::move(*ui);
+        }
+#endif
         if (!mesh || !light || !tone || !skin || !shadow || !transp || !bloom || !expo || !taa) {
             frames_ok = false;
             std::fprintf(stderr, "[fatal] deferred pass creation failed: %s\n",
@@ -2095,6 +2142,9 @@ int main() {
 
         SDL_Event event;
         while (SDL_PollEvent(&event)) {
+#ifdef ENGINE_EDITOR
+            editor.process_event(event);
+#endif
             switch (event.type) {
             case SDL_EVENT_QUIT:
                 running = false;
@@ -2106,6 +2156,9 @@ int main() {
                 needs_recreate = true;
                 break;
             case SDL_EVENT_MOUSE_BUTTON_DOWN:
+#ifdef ENGINE_EDITOR
+                if (editor.wants_mouse()) break; // UI owns the click
+#endif
                 if (event.button.button == SDL_BUTTON_RIGHT) {
                     looking = true;
                     SDL_SetWindowRelativeMouseMode(window, true);
@@ -2128,6 +2181,10 @@ int main() {
             }
         }
         if (!running) break;
+
+#ifdef ENGINE_EDITOR
+        editor.begin_frame();
+#endif
 
         const VkExtent2D pixel_extent = window_pixel_extent(window);
         if (pixel_extent.width == 0 || pixel_extent.height == 0) {
@@ -2194,7 +2251,14 @@ int main() {
                                glm::radians(89.0F));
         const glm::vec3 world_up(0.0F, 1.0F, 0.0F);
         const bool* keys = SDL_GetKeyboardState(nullptr);
+#ifdef ENGINE_EDITOR
+        // A focused UI text field owns the keyboard — freeze game movement.
+        const bool game_keys = !editor.wants_keyboard();
+#else
+        const bool game_keys = true;
+#endif
         const auto axis = [&](SDL_Scancode pos, SDL_Scancode neg) {
+            if (!game_keys) return 0.0F;
             return (keys[pos] ? 1.0F : 0.0F) - (keys[neg] ? 1.0F : 0.0F);
         };
 
@@ -2435,6 +2499,25 @@ int main() {
         }
         prev_jittered_vp = jittered_vp;
         taa_history_valid = true;
+#ifdef ENGINE_EDITOR
+        // Editor UI: build the dockspace + panels, then composite the draw data
+        // over the swapchain image as the last pass. A null/empty draw list
+        // (editor disabled) adds no pass.
+        {
+            engine::editor::EditorLayer::FrameStats ui_stats;
+            ui_stats.frame_ms = dt * 1000.0F;
+            ui_stats.draw_count =
+                static_cast<int>(draws.size() + transparent_draws.size());
+            ui_stats.entity_count = static_cast<int>(
+                scene.registry().view<engine::scene::Transform>().size());
+            editor.build_ui(ui_stats);
+            if (auto r = fr.imgui.add_to_graph(graph, backbuffer, draw_extent, editor.end_frame());
+                !r) {
+                std::fprintf(stderr, "[fatal] imgui pass: %s\n", r.error().message.c_str());
+                break;
+            }
+        }
+#endif
         if (auto compiled = graph.compile(); !compiled) {
             std::fprintf(stderr, "[fatal] render graph compile failed: %s\n",
                          compiled.error().message.c_str());

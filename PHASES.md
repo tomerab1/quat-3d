@@ -347,9 +347,20 @@ Goal: TAA, bloom, exposure, final image looks polished.
 
 Goal: a usable in-engine editor with scene hierarchy, inspector, asset browser, and viewport.
 
-- [ ] **9.1 — ImGui integration**
-  `src/renderer/imgui_pass.cpp`: ImGui Vulkan + SDL3 backend. Docking layout.
-  Render as final overlay pass. Gated behind `ENGINE_EDITOR` CMake flag.
+- [x] **9.1 — ImGui integration**
+  `src/renderer/imgui_pass.cpp`: a from-scratch ImGui renderer on the engine RHI — the stock
+  `imgui_impl_vulkan` backend allocates descriptor sets from pools, which cannot be mixed with
+  `VK_EXT_descriptor_buffer` in one command buffer (and is banned by CLAUDE.md). One pipeline
+  (`imgui.slang`: pixel-space verts → clip via push constant, sRGB-linearised vertex colours so
+  the sRGB swapchain attachment composites correctly), per-frame host-visible vertex/index
+  upload, scissor per draw command, font atlas + sampler through a descriptor buffer. Runs as
+  the final pass over the swapchain image (loadOp LOAD after the TAA resolve). The SDL3
+  platform backend (input only) is vendored under `src/editor/vendor/` — the vcpkg
+  `imgui[sdl3-binding]` feature re-enables SDL3's default features (dbus/ibus → libsystemd), a
+  dependency chain we don't want. `EditorLayer` (`src/editor/editor.cpp`) owns the ImGui
+  context: docking enabled, fullscreen passthrough dockspace, main menu bar, Stats panel, demo
+  window toggle; `wants_mouse()/wants_keyboard()` gate game input. `QUAT_NO_UI=1` disables the
+  editor for deterministic headless renders. All gated behind `ENGINE_EDITOR`.
   *Commit: `[Phase9/Slice1] ImGui integration with docking`*
 
 - [ ] **9.2 — Viewport panel**
