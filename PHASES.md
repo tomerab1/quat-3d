@@ -418,10 +418,16 @@ Goal: a usable in-engine editor with scene hierarchy, inspector, asset browser, 
   Jolt build with the debug renderer enabled.
   *Commit: `[Phase9/Slice7] physics debug draw`*
 
-- [ ] **9.8 — ImGuizmo gizmos**
-  Translate/rotate/scale gizmos for selected entity's `Transform` in the viewport.
-  Mode toggle in toolbar (W/E/R shortcuts).
-  *Commit: `[Phase9/Slice8] ImGuizmo transform gizmos`*
+- [x] **9.8 — ImGuizmo gizmos, picking, theme**
+  ImGuizmo (vcpkg) translate/rotate/scale on the selected entity: manipulates the WORLD matrix
+  (unflipped projection — ImGuizmo expects y-up NDC), converted back to local through the
+  parent's world. W/E/R switch modes over the viewport (except during right-drag, which owns
+  WASD for the fly camera — fly movement now requires holding RMB, Unity-style) + a floating
+  mode toolbar in the panel corner. Left-click picking: ray through the clicked pixel
+  (flipped view-proj, same convention as the renderer) against each mesh's local AABB
+  (slab test in mesh space), nearest hit selects. Polish: vendored Roboto-Medium UI font and a
+  custom dark theme (flat panels, accent blue, consistent rounding).
+  *Commit: `[Phase9/Slice8] ImGuizmo gizmos, click picking, editor theme`*
 
 ---
 

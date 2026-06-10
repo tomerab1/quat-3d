@@ -1656,7 +1656,9 @@ int main() {
     std::string pending_instantiate; // set by the asset browser, consumed below
     const bool editor_enabled = std::getenv("QUAT_NO_UI") == nullptr;
     if (editor_enabled) {
-        if (auto e = engine::editor::EditorLayer::create(window); e) {
+        if (auto e = engine::editor::EditorLayer::create(
+                window, std::string(QUAT_PROJECT_ROOT) + "/assets/fonts/Roboto-Medium.ttf");
+            e) {
             editor = std::move(*e);
         } else {
             std::fprintf(stderr, "[warn] editor disabled: %s\n", e.error().message.c_str());
@@ -2348,8 +2350,10 @@ int main() {
         const glm::vec3 world_up(0.0F, 1.0F, 0.0F);
         const bool* keys = SDL_GetKeyboardState(nullptr);
 #ifdef ENGINE_EDITOR
-        // A focused UI text field owns the keyboard — freeze game movement.
-        const bool game_keys = !editor.wants_keyboard();
+        // Editor mode: fly movement only during a right-drag (W/E/R switch the
+        // gizmo otherwise), and never while a text field owns the keyboard.
+        const bool game_keys =
+            !editor.wants_keyboard() && (!editor.active() || looking || character_mode);
 #else
         const bool game_keys = true;
 #endif
@@ -2634,6 +2638,9 @@ int main() {
             ui_ctx.project_root = QUAT_PROJECT_ROOT;
             ui_ctx.instantiate_request = &pending_instantiate;
             ui_ctx.view_proj = cam.view_proj; // unjittered, for overlays
+            ui_ctx.view = cam.view;
+            ui_ctx.proj_no_flip = cam.projection;
+            ui_ctx.proj_no_flip[1][1] *= -1.0F; // undo the Vulkan Y flip for ImGuizmo
             editor.build_ui(ui_ctx);
             if (auto r = fr.imgui.add_to_graph(graph, backbuffer, present_extent,
                                                editor.end_frame(), viewport_handle,

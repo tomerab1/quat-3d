@@ -22,6 +22,7 @@
 struct SDL_Window;
 union SDL_Event;
 struct ImDrawData;
+struct ImVec2;
 
 namespace engine::scene {
 class Scene;
@@ -71,15 +72,22 @@ struct EditorContext {
     // drop); the frame loop consumes and clears it (may be null).
     std::string* instantiate_request = nullptr;
     // The scene camera's (unjittered) view-projection — used by panels that
-    // project world-space overlays into the viewport (joints, gizmos).
+    // project world-space overlays into the viewport (joints, physics shapes)
+    // and to build picking rays. Carries the renderer's Vulkan Y flip.
     glm::mat4 view_proj{1.0F};
+    // Separate view + projection for ImGuizmo, WITHOUT the Vulkan Y flip (the
+    // gizmo maps NDC to the rect itself and expects a y-up projection).
+    glm::mat4 view{1.0F};
+    glm::mat4 proj_no_flip{1.0F};
 };
 
 class EditorLayer {
 public:
     // Creates the ImGui context (docking enabled) and the SDL3 platform
-    // backend for `window`. One EditorLayer per process.
-    [[nodiscard]] static std::expected<EditorLayer, core::Error> create(SDL_Window* window);
+    // backend for `window`. `font_path` (TTF) replaces the default bitmap font
+    // when it exists. One EditorLayer per process.
+    [[nodiscard]] static std::expected<EditorLayer, core::Error>
+    create(SDL_Window* window, const std::string& font_path = {});
 
     EditorLayer() = default;
     ~EditorLayer();
@@ -121,6 +129,9 @@ private:
     void build_dock_layout(unsigned int dockspace_id);
     void build_viewport_panel(const EditorContext& ctx);
     void build_stats_panel(const EditorContext& ctx);
+    void build_gizmo(const EditorContext& ctx, const ImVec2& rect_min, const ImVec2& rect_max);
+    void handle_picking(const EditorContext& ctx, const ImVec2& rect_min,
+                        const ImVec2& rect_max);
 
     bool initialized_  = false;
     bool layout_built_ = false;
@@ -136,6 +147,8 @@ private:
 
     AnimationPreviewState anim_state_;
     PhysicsDebugState     physics_state_;
+
+    int gizmo_op_ = 0; // 0 translate, 1 rotate, 2 scale (W/E/R over the viewport)
 
     entt::entity selected_ = entt::null;
 };

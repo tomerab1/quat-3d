@@ -71,6 +71,7 @@ find_package(EnTT CONFIG REQUIRED)
 find_package(Jolt CONFIG REQUIRED)
 if(ENGINE_EDITOR)
     find_package(imgui CONFIG REQUIRED)
+    find_package(imguizmo CONFIG REQUIRED)
 endif()
 
 set(ENGINE_PUBLIC_INCLUDE ${CMAKE_CURRENT_SOURCE_DIR}/include)
@@ -207,7 +208,7 @@ if(ENGINE_EDITOR)
     # and the hierarchy/inspector panels reflect scene components.
     target_link_libraries(engine_editor
         PUBLIC engine_flags engine_scene
-        PRIVATE imgui::imgui SDL3::SDL3)
+        PRIVATE imgui::imgui imguizmo::imguizmo SDL3::SDL3)
     target_include_directories(engine_editor PUBLIC ${ENGINE_PUBLIC_INCLUDE})
     # Vendored third-party backend: not warning-clean under our strict flags.
     set_source_files_properties(src/editor/vendor/imgui_impl_sdl3.cpp
