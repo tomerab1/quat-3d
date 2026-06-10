@@ -2449,8 +2449,13 @@ int main() {
                          axis(arrows_ok, SDL_SCANCODE_UP, SDL_SCANCODE_DOWN)) +
                 right_h * (axis(wasd_ok, SDL_SCANCODE_D, SDL_SCANCODE_A) +
                            axis(arrows_ok, SDL_SCANCODE_RIGHT, SDL_SCANCODE_LEFT));
-            scene.registry().get<engine::scene::CharacterController>(character_entity).move =
-                wish != glm::vec3(0.0F) ? glm::normalize(wish) : glm::vec3(0.0F);
+            // try_get: the editor can delete any entity, including this one.
+            if (auto* cc = scene.registry().valid(character_entity)
+                               ? scene.registry().try_get<engine::scene::CharacterController>(
+                                     character_entity)
+                               : nullptr) {
+                cc->move = wish != glm::vec3(0.0F) ? glm::normalize(wish) : glm::vec3(0.0F);
+            }
         } else {
             // Free-fly camera: right-drag looks, WASD moves, Q/E down/up, Shift fast.
             const glm::vec3 cam_fwd(std::cos(cam_pitch) * std::cos(cam_yaw), std::sin(cam_pitch),
@@ -2467,17 +2472,30 @@ int main() {
             if (move != glm::vec3(0.0F)) {
                 cam_pos += glm::normalize(move) * speed * dt;
             }
-            scene.registry().get<engine::scene::Transform>(camera_entity).local =
-                glm::inverse(glm::lookAt(cam_pos, cam_pos + cam_fwd, world_up));
+            // try_get: the editor can delete any entity, including the camera.
+            if (auto* cam_tf = scene.registry().valid(camera_entity)
+                                   ? scene.registry().try_get<engine::scene::Transform>(
+                                         camera_entity)
+                                   : nullptr) {
+                cam_tf->local =
+                    glm::inverse(glm::lookAt(cam_pos, cam_pos + cam_fwd, world_up));
+            }
         }
 
-        // Spin the demo cube (if present), then step physics / the character.
+        // Spin the demo cube (if present — the editor may have deleted it).
         if (spin_entity != entt::null) {
-            scene.registry().get<engine::scene::Transform>(spin_entity).local =
-                glm::translate(glm::mat4(1.0F), spin_pos) *
-                glm::rotate(glm::mat4(1.0F), static_cast<float>(presented) * 0.02F,
-                            glm::normalize(glm::vec3(0.3F, 1.0F, 0.2F))) *
-                glm::scale(glm::mat4(1.0F), glm::vec3(spin_scale));
+            auto* spin_tf = scene.registry().valid(spin_entity)
+                                ? scene.registry().try_get<engine::scene::Transform>(spin_entity)
+                                : nullptr;
+            if (spin_tf == nullptr) {
+                spin_entity = entt::null; // deleted in the editor — stop driving it
+            } else {
+                spin_tf->local =
+                    glm::translate(glm::mat4(1.0F), spin_pos) *
+                    glm::rotate(glm::mat4(1.0F), static_cast<float>(presented) * 0.02F,
+                                glm::normalize(glm::vec3(0.3F, 1.0F, 0.2F))) *
+                    glm::scale(glm::mat4(1.0F), glm::vec3(spin_scale));
+            }
         }
         if (physics_world) {
             if (character_mode) {
@@ -2494,19 +2512,23 @@ int main() {
         scene.tick(dt); // advances any Animators by real elapsed time
 
         // Third-person follow camera, placed after the character has moved.
-        if (character_mode) {
-            const glm::vec3 target =
-                glm::vec3(scene.registry()
-                              .get<engine::scene::Transform>(character_entity)
-                              .world[3]) +
-                glm::vec3(0.0F, 0.8F, 0.0F);
-            const glm::vec3 cam_fwd(std::cos(cam_pitch) * std::cos(cam_yaw), std::sin(cam_pitch),
-                                    std::cos(cam_pitch) * std::sin(cam_yaw));
-            cam_pos = target - cam_fwd * 5.0F;
-            const glm::mat4 view_inv = glm::inverse(glm::lookAt(cam_pos, target, world_up));
-            auto& camera_tf = scene.registry().get<engine::scene::Transform>(camera_entity);
-            camera_tf.local = view_inv;
-            camera_tf.world = view_inv;
+        // try_get both ends: the editor can delete either entity.
+        if (character_mode && scene.registry().valid(character_entity) &&
+            scene.registry().valid(camera_entity)) {
+            const auto* char_tf =
+                scene.registry().try_get<engine::scene::Transform>(character_entity);
+            auto* camera_tf = scene.registry().try_get<engine::scene::Transform>(camera_entity);
+            if (char_tf != nullptr && camera_tf != nullptr) {
+                const glm::vec3 target =
+                    glm::vec3(char_tf->world[3]) + glm::vec3(0.0F, 0.8F, 0.0F);
+                const glm::vec3 cam_fwd(std::cos(cam_pitch) * std::cos(cam_yaw),
+                                        std::sin(cam_pitch),
+                                        std::cos(cam_pitch) * std::sin(cam_yaw));
+                cam_pos = target - cam_fwd * 5.0F;
+                const glm::mat4 view_inv = glm::inverse(glm::lookAt(cam_pos, target, world_up));
+                camera_tf->local = view_inv;
+                camera_tf->world = view_inv;
+            }
         }
         const engine::scene::CameraMatrices cam =
             engine::scene::camera_system(scene.registry(), aspect);
