@@ -2163,6 +2163,8 @@ int main() {
     bool screenshot_recorded = false;
 
     std::uint64_t presented = 0;
+    double        frame_time_sum = 0.0;     // avg-frame-time report at exit
+    std::uint64_t frame_time_samples = 0;
     std::uint32_t frame = 0;
     bool running = true;
     bool needs_recreate = false;
@@ -2811,10 +2813,24 @@ int main() {
             }
         }
 
+        // Average frame time over the run, skipping the first frame (it carries
+        // one-time pipeline/descriptor warmup). Reported at exit.
+        if (presented > 0) {
+            frame_time_sum += dt;
+            frame_time_samples += 1;
+        }
+
         frame = (frame + 1) % k_frames_in_flight;
         if (max_frames != 0 && ++presented >= max_frames) {
             running = false;
         }
+    }
+
+    if (frame_time_samples > 0) {
+        const double avg_ms = frame_time_sum / static_cast<double>(frame_time_samples) * 1000.0;
+        std::fprintf(stderr, "[stats] avg frame %.2f ms (%.1f fps) over %llu frames\n", avg_ms,
+                     avg_ms > 0.0 ? 1000.0 / avg_ms : 0.0,
+                     static_cast<unsigned long long>(frame_time_samples));
     }
 
     // ---- Teardown ----------------------------------------------------------
