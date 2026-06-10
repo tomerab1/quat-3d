@@ -150,7 +150,11 @@ struct ComponentInspector<scene::Collider> {
             break;
         }
         ImGui::DragFloat3("offset", &collider.offset.x, 0.05F);
-        ImGui::Checkbox("sensor (trigger)", &collider.is_sensor);
+        ImGui::Checkbox("trigger (overlap events only)", &collider.is_sensor);
+        if (collider.is_sensor) {
+            ImGui::TextColored(ImVec4(1.0F, 0.65F, 0.2F, 1.0F),
+                               "no collision response: objects pass through");
+        }
         ImGui::TextDisabled("without a Rigid Body this simulates as static;");
         ImGui::TextDisabled("add a dynamic Rigid Body to make it fall in Play");
     }
