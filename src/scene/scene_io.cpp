@@ -127,6 +127,11 @@ std::expected<void, core::Error> save_scene(const Scene& scene,
         if (const auto* b = r.try_get<BehaviorTree>(e)) {
             je["behavior"] = {{"source", b->source}, {"enabled", b->enabled}};
         }
+        if (const auto* pr = r.try_get<PatrolRoute>(e)) {
+            json pts = json::array();
+            for (const glm::vec3& pt : pr->points) pts.push_back(vec3_to_json(pt));
+            je["patrol"] = {{"points", std::move(pts)}, {"loop", pr->loop}};
+        }
         entities.push_back(std::move(je));
     }
 
@@ -303,6 +308,17 @@ load_scene(Scene& scene, const std::filesystem::path& path, rhi::GpuAllocator& a
             b.source = jb.value("source", std::string{});
             b.enabled = jb.value("enabled", true);
             r.emplace<BehaviorTree>(e, b);
+        }
+        if (je.contains("patrol")) {
+            const json& jp = je["patrol"];
+            PatrolRoute route;
+            if (jp.contains("points") && jp["points"].is_array()) {
+                for (const json& pt : jp["points"]) {
+                    route.points.push_back(vec3_from_json(pt));
+                }
+            }
+            route.loop = jp.value("loop", true);
+            r.emplace<PatrolRoute>(e, route);
         }
     }
 

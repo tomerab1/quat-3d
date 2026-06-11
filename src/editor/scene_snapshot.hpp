@@ -46,6 +46,7 @@ struct SceneSnapshot {
     Stored<scene::Terrain>             terrains;
     Stored<scene::NavAgent>            nav_agents;
     Stored<scene::BehaviorTree>        behavior_trees;
+    Stored<scene::PatrolRoute>         patrol_routes;
 };
 
 // Copies the whole scene (all engine components) into a snapshot.

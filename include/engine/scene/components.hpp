@@ -181,6 +181,16 @@ struct Terrain {
     int  stream_radius = 1;
 };
 
+// An authored walk route (editor: Shift+click the ground to append points).
+// The nav system feeds the points to the entity's NavAgent in order; `loop`
+// wraps back to the first point, otherwise the agent stops at the last.
+// `next` is system-managed.
+struct PatrolRoute {
+    std::vector<glm::vec3> points;
+    bool        loop = true;
+    std::size_t next = 0;
+};
+
 // Marks an entity for network replication (14.2): the server broadcasts its
 // Transform to clients, matched by `net_id` (stable across both ends — both
 // load the same scene). 0 is unassigned.

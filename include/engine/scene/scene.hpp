@@ -158,6 +158,9 @@ void nav_agent_system(entt::registry& registry, const nav::NavMesh& navmesh, flo
 // it must arrive at the target and must have detoured through the gap.
 [[nodiscard]] std::expected<void, core::Error> run_nav_agent_self_test();
 
+// A looping two-point patrol drives the agent A -> B -> A on a flat plate.
+[[nodiscard]] std::expected<void, core::Error> run_patrol_self_test();
+
 // Builds a small hierarchy, ticks the scene, and verifies world-matrix
 // propagation and draw-list collection. No device needed.
 [[nodiscard]] std::expected<void, core::Error> run_scene_self_test();

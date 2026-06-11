@@ -135,6 +135,32 @@ struct ComponentInspector<scene::NavAgent> {
 };
 
 template <>
+struct ComponentInspector<scene::PatrolRoute> {
+    static constexpr const char* title = "Patrol Route";
+    static void draw(entt::registry&, entt::entity, scene::PatrolRoute& route) {
+        ImGui::Checkbox("loop", &route.loop);
+        int remove = -1;
+        for (int i = 0; i < static_cast<int>(route.points.size()); ++i) {
+            ImGui::PushID(i);
+            ImGui::DragFloat3("##pt", &route.points[static_cast<std::size_t>(i)].x, 0.1F);
+            ImGui::SameLine();
+            if (ImGui::SmallButton("x")) remove = i;
+            ImGui::PopID();
+        }
+        if (remove >= 0) {
+            route.points.erase(route.points.begin() + remove);
+            route.next = 0;
+        }
+        if (!route.points.empty() && ImGui::Button("Clear", ImVec2(-1.0F, 0.0F))) {
+            route.points.clear();
+            route.next = 0;
+        }
+        ImGui::TextWrapped("Shift+click the ground in the viewport to add points; "
+                           "Ctrl+click sends the agent somewhere once.");
+    }
+};
+
+template <>
 struct ComponentInspector<scene::BehaviorTree> {
     static constexpr const char* title = "Behavior Tree";
     static void draw(entt::registry&, entt::entity, scene::BehaviorTree& bt) {
@@ -313,6 +339,7 @@ void draw_inspector(scene::Scene& scene, entt::entity selected) {
     inspect<scene::Terrain>(r, selected, true);
     inspect<scene::NavAgent>(r, selected, true);
     inspect<scene::BehaviorTree>(r, selected, true);
+    inspect<scene::PatrolRoute>(r, selected, true);
     inspect<scene::Collider>(r, selected, true);
     inspect<scene::RigidBody>(r, selected, true);
 
@@ -326,6 +353,7 @@ void draw_inspector(scene::Scene& scene, entt::entity selected) {
         add_component_item<scene::Terrain>(r, selected);
         add_component_item<scene::NavAgent>(r, selected);
         add_component_item<scene::BehaviorTree>(r, selected);
+        add_component_item<scene::PatrolRoute>(r, selected);
         add_component_item<scene::PointLight>(r, selected, glm::vec3(1.0F), 10.0F, 5.0F);
         add_component_item<scene::DirectionalLight>(
             r, selected, glm::vec3(-0.4F, -1.0F, -0.3F), glm::vec3(1.0F), 3.0F);

@@ -1460,6 +1460,12 @@ int main() {
                         std::fprintf(stderr, "[selftest] transport FAILED: %s\n",
                                      r.error().message.c_str());
                     }
+                    if (auto r = engine::scene::run_patrol_self_test(); r) {
+                        std::fprintf(stderr, "[selftest] patrol route OK (loop + advance)\n");
+                    } else {
+                        std::fprintf(stderr, "[selftest] patrol FAILED: %s\n",
+                                     r.error().message.c_str());
+                    }
                     if (auto r = engine::scene::run_behavior_self_test(); r) {
                         std::fprintf(stderr, "[selftest] behavior tree OK (patrol + wait)\n");
                     } else {
@@ -2275,6 +2281,7 @@ int main() {
     std::optional<engine::terrain::TerrainStreamer> terrain_streamer; // 12.4
     engine::nav::NavMesh navmesh;        // baked on request from the Physics panel (13.1)
     bool navmesh_request = false;
+    std::optional<engine::editor::EditorContext::GroundClick> ground_click; // 13.4
 
     // Networking (14.1/14.2): QUAT_HOST=<port> serves this scene's replicated
     // entities; QUAT_JOIN=<ip:port> mirrors them. net_ids hash entity names, so
@@ -3160,6 +3167,80 @@ int main() {
             }
         }
 
+        // Ctrl/Shift+click in the viewport (13.4): resolve the ray against the
+        // terrain (bisected raymarch) or the ground plane, then command the
+        // selected entity: Ctrl = walk here now, Shift = append a patrol point.
+        if (ground_click) {
+            const auto click = *ground_click;
+            ground_click.reset();
+            const auto height_at = [&](float x, float z) -> std::optional<float> {
+                if (terrain_streamer) {
+                    const float tile = terrain_streamer->base().tile_size_m;
+                    const glm::ivec2 coord(
+                        static_cast<int>(std::floor((x - terrain_anchor.x) / tile + 0.5F)),
+                        static_cast<int>(std::floor((z - terrain_anchor.z) / tile + 0.5F)));
+                    const auto it = terrain_streamer->maps().find(coord);
+                    if (it == terrain_streamer->maps().end()) return std::nullopt;
+                    const glm::vec3 org = terrain_streamer->tile_origin(coord, terrain_anchor);
+                    return org.y + it->second.sample(x - org.x, z - org.z);
+                }
+                if (terrain_present && terrain_heightmap.valid()) {
+                    const float half = terrain_heightmap.tile_size_m * 0.5F;
+                    const float lx = x - (terrain_anchor.x - half);
+                    const float lz = z - (terrain_anchor.z - half);
+                    if (lx < 0.0F || lz < 0.0F || lx > terrain_heightmap.tile_size_m ||
+                        lz > terrain_heightmap.tile_size_m) {
+                        return std::nullopt;
+                    }
+                    return terrain_anchor.y + terrain_heightmap.sample(lx, lz);
+                }
+                return std::nullopt;
+            };
+            std::optional<glm::vec3> hit;
+            float prev_t = 0.0F;
+            for (float t = 2.0F; t < 2000.0F && !hit; t += 2.0F) {
+                const glm::vec3 pos = click.origin + click.dir * t;
+                const auto h = height_at(pos.x, pos.z);
+                if (h && pos.y <= *h) {
+                    // Bisect between the last point above and this one below.
+                    float lo = prev_t;
+                    float hi = t;
+                    for (int i = 0; i < 16; ++i) {
+                        const float mid = 0.5F * (lo + hi);
+                        const glm::vec3 mp = click.origin + click.dir * mid;
+                        const auto mh = height_at(mp.x, mp.z);
+                        (mh && mp.y <= *mh ? hi : lo) = mid;
+                    }
+                    const glm::vec3 hp = click.origin + click.dir * hi;
+                    hit = glm::vec3(hp.x, height_at(hp.x, hp.z).value_or(hp.y), hp.z);
+                }
+                prev_t = t;
+            }
+            if (!hit && click.dir.y < -1e-4F) { // no terrain: ground plane
+                const float t = (terrain_anchor.y - click.origin.y) / click.dir.y;
+                if (t > 0.0F) hit = click.origin + click.dir * t;
+            }
+            const entt::entity sel = editor.selected();
+            if (hit && scene.registry().valid(sel) &&
+                scene.registry().any_of<engine::scene::Transform>(sel)) {
+                auto& agent = scene.registry().get_or_emplace<engine::scene::NavAgent>(sel);
+                if (click.add_waypoint) {
+                    auto& route =
+                        scene.registry().get_or_emplace<engine::scene::PatrolRoute>(sel);
+                    route.points.push_back(*hit);
+                    std::fprintf(stderr, "[nav] waypoint %zu at (%.1f, %.1f, %.1f)\n",
+                                 route.points.size(), hit->x, hit->y, hit->z);
+                } else {
+                    agent.target = *hit;
+                    agent.active = true;
+                    agent.arrived = false;
+                    agent.path.clear();
+                    std::fprintf(stderr, "[nav] go to (%.1f, %.1f, %.1f)\n", hit->x, hit->y,
+                                 hit->z);
+                }
+            }
+        }
+
         // Navmesh bake requested from the Physics panel: gather the static
         // walkable geometry (terrain + static box colliders) and run Recast.
         // Blocking, but explicit and logged (editor tooling).
@@ -3333,6 +3414,7 @@ int main() {
             // Demo modes own their physics world — hide the Play button there.
             ui_ctx.play_mode = physics_world ? nullptr : &editor_play;
             ui_ctx.build_navmesh_request = &navmesh_request;
+            ui_ctx.ground_click = &ground_click;
             ui_ctx.nav_edges = navmesh.valid() ? &navmesh.debug_edges() : nullptr;
             ui_ctx.view_proj = cam.view_proj; // unjittered, for overlays
             ui_ctx.view = cam.view;

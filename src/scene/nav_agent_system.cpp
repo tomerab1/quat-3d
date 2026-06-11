@@ -27,6 +27,28 @@ constexpr float kSeparation = 1.2F;     // agent-agent comfort radius
 void nav_agent_system(entt::registry& registry, const nav::NavMesh& navmesh, float dt) {
     if (!navmesh.valid()) return;
 
+    // Patrol routes feed the agent target point by point: advance on arrival,
+    // wrap when looping, stop at the end otherwise.
+    for (auto [e, route, agent] : registry.view<PatrolRoute, NavAgent>().each()) {
+        if (route.points.empty()) continue;
+        route.next = route.next % route.points.size();
+        if (agent.arrived &&
+            glm::distance(agent.target, route.points[route.next]) < 0.01F) {
+            if (route.next + 1 < route.points.size()) {
+                ++route.next;
+            } else if (route.loop) {
+                route.next = 0;
+            } else {
+                continue; // finished a one-way route
+            }
+            agent.arrived = false;
+        }
+        if (!agent.active && !agent.arrived) {
+            agent.target = route.points[route.next];
+            agent.active = true;
+        }
+    }
+
     const auto view = registry.view<Transform, NavAgent>();
     for (auto [e, transform, agent] : view.each()) {
         auto* controller = registry.try_get<CharacterController>(e);
@@ -147,6 +169,43 @@ std::expected<void, core::Error> run_nav_agent_self_test() {
         return std::unexpected(
             core::Error{"nav agent self-test: walked through the wall instead of the gap"});
     }
+    return {};
+}
+
+std::expected<void, core::Error> run_patrol_self_test() {
+    // Flat plate, two-point looping route.
+    std::vector<glm::vec3> verts{{-20.0F, 0.0F, -20.0F},
+                                 {-20.0F, 0.0F, 20.0F},
+                                 {20.0F, 0.0F, 20.0F},
+                                 {20.0F, 0.0F, -20.0F}};
+    std::vector<std::uint32_t> idx{0, 1, 2, 0, 2, 3};
+    auto navmesh = nav::NavMesh::build(verts, idx);
+    if (!navmesh) return std::unexpected(navmesh.error());
+
+    entt::registry registry;
+    const entt::entity e = registry.create();
+    auto& t = registry.emplace<Transform>(e);
+    t.local = glm::translate(glm::mat4(1.0F), glm::vec3(0.0F));
+    t.world = t.local;
+    auto& agent = registry.emplace<NavAgent>(e);
+    agent.speed = 8.0F;
+    auto& route = registry.emplace<PatrolRoute>(e);
+    route.points = {{10.0F, 0.0F, 0.0F}, {-10.0F, 0.0F, 0.0F}};
+    route.loop = true;
+
+    bool reached_a = false;
+    bool reached_b = false;
+    bool wrapped = false;
+    for (int i = 0; i < 60 * 40 && !(reached_a && reached_b && wrapped); ++i) {
+        nav_agent_system(registry, *navmesh, 1.0F / 60.0F);
+        const glm::vec3 pos(registry.get<Transform>(e).world[3]);
+        reached_a = reached_a || glm::distance(pos, route.points[0]) < 1.0F;
+        reached_b = reached_b || (reached_a && glm::distance(pos, route.points[1]) < 1.0F);
+        wrapped = wrapped || (reached_b && route.next == 0);
+    }
+    if (!reached_a) return std::unexpected(core::Error{"patrol self-test: never reached A"});
+    if (!reached_b) return std::unexpected(core::Error{"patrol self-test: never reached B"});
+    if (!wrapped) return std::unexpected(core::Error{"patrol self-test: route did not loop"});
     return {};
 }
 

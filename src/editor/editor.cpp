@@ -347,6 +347,18 @@ void EditorLayer::handle_picking(const EditorContext& ctx, const ImVec2& rect_mi
     const glm::vec3 target = glm::vec3(far_h) / far_h.w;
     const glm::vec3 dir = glm::normalize(target - origin);
 
+    // Ctrl/Shift+click: command rays for the frame loop (walk-here / add
+    // waypoint) — selection stays untouched.
+    const ImGuiIO& io = ImGui::GetIO();
+    if ((io.KeyCtrl || io.KeyShift) && ctx.ground_click != nullptr) {
+        EditorContext::GroundClick click;
+        click.origin = origin;
+        click.dir = dir;
+        click.add_waypoint = io.KeyShift;
+        *ctx.ground_click = click;
+        return;
+    }
+
     entt::registry& r = ctx.scene->registry();
     float best = std::numeric_limits<float>::max();
     entt::entity hit = entt::null;

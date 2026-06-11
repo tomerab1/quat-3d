@@ -616,6 +616,15 @@ Goal: NPCs that navigate and act in the world.
   tree walks an agent across the walled plate, then the wait branch takes over on arrival.
   *Commit: `[Phase13/Slice3] behaviour trees (data-driven JSON + leaf registry)`*
 
+- [x] **13.4 — Path authoring (QoL)**: point-and-click agent control. **Ctrl+click** the
+  ground in the viewport sends the selected entity walking there (auto-adds a NavAgent);
+  **Shift+click** appends waypoints to a `PatrolRoute` component (magenta polyline overlay,
+  editable point list in the inspector, persisted in scene files, looping or one-way). The
+  nav system feeds route points to the agent on arrival. Ground hits resolve by bisected
+  raymarch against the terrain heightmap(s) (streamed tiles included), falling back to the
+  ground plane. Self-test: a two-point looping patrol drives A → B → wrap.
+  *Commit: `[Phase13/Slice4] click-to-walk + patrol routes`*
+
 ## Phase 14 — Networking
 
 Goal: multiplayer-ready replication layer.

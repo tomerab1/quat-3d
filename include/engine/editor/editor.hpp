@@ -11,6 +11,7 @@
 
 #include <cstdint>
 #include <expected>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -87,6 +88,15 @@ struct EditorContext {
     // Out: the Physics panel's "Build navmesh" button; the frame loop bakes a
     // NavMesh from the current static geometry and clears the flag (may be null).
     bool* build_navmesh_request = nullptr;
+    // Out: Ctrl/Shift+click in the viewport — a picking ray the frame loop
+    // resolves against the ground. Ctrl commands the selected agent to walk
+    // there; Shift appends a patrol waypoint (may be null).
+    struct GroundClick {
+        glm::vec3 origin{0.0F};
+        glm::vec3 dir{0.0F};
+        bool      add_waypoint = false; // true = Shift (append), false = Ctrl (go)
+    };
+    std::optional<GroundClick>* ground_click = nullptr;
     // In: polygon edges of the baked navmesh for the overlay (may be null).
     const std::vector<std::pair<glm::vec3, glm::vec3>>* nav_edges = nullptr;
     // The scene camera's (unjittered) view-projection — used by panels that

@@ -125,6 +125,34 @@ void draw_physics_debug(scene::Scene& scene, const glm::mat4& view_proj,
     }
     ImGui::End();
 
+    // Patrol routes: magenta polylines with point markers (always on — they
+    // are authored content, not debug state).
+    {
+        OverlayContext route_ctx;
+        route_ctx.draw = ImGui::GetForegroundDrawList();
+        route_ctx.view_proj = &view_proj;
+        route_ctx.rect = viewport_rect;
+        route_ctx.color = IM_COL32(230, 80, 230, 220);
+        route_ctx.draw->PushClipRect(ImVec2(viewport_rect[0], viewport_rect[1]),
+                                     ImVec2(viewport_rect[2], viewport_rect[3]), true);
+        for (auto [e, route] : scene.registry().view<const scene::PatrolRoute>().each()) {
+            const auto& pts = route.points;
+            for (std::size_t i = 0; i < pts.size(); ++i) {
+                const glm::vec3 lift(0.0F, 0.15F, 0.0F);
+                ImVec2 px;
+                if (project(route_ctx, pts[i] + lift, px)) {
+                    route_ctx.draw->AddCircleFilled(px, 4.0F, route_ctx.color);
+                }
+                if (i + 1 < pts.size()) {
+                    line(route_ctx, pts[i] + lift, pts[i + 1] + lift);
+                } else if (route.loop && pts.size() > 2) {
+                    line(route_ctx, pts[i] + lift, pts[0] + lift);
+                }
+            }
+        }
+        route_ctx.draw->PopClipRect();
+    }
+
     // Navmesh overlay draws independently of the collider toggle.
     if (state.show_navmesh && nav_edges != nullptr && !nav_edges->empty()) {
         OverlayContext nav_ctx;

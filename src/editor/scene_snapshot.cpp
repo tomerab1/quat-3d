@@ -57,6 +57,7 @@ SceneSnapshot capture_scene(const scene::Scene& scene) {
     capture_type(r, snap.terrains);
     capture_type(r, snap.nav_agents);
     capture_type(r, snap.behavior_trees);
+    capture_type(r, snap.patrol_routes);
     return snap;
 }
 
@@ -88,6 +89,7 @@ void restore_scene(scene::Scene& scene, const SceneSnapshot& snapshot) {
     restore_type(r, snapshot.terrains);
     restore_type(r, snapshot.nav_agents);
     restore_type(r, snapshot.behavior_trees);
+    restore_type(r, snapshot.patrol_routes);
 }
 
 std::expected<void, core::Error> run_scene_snapshot_self_test() {
