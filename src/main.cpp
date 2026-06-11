@@ -3167,12 +3167,25 @@ int main() {
             navmesh_request = false;
             std::vector<glm::vec3> nav_verts;
             std::vector<std::uint32_t> nav_indices;
-            engine::scene::collect_nav_geometry(
-                scene.registry(), terrain_heightmap.valid() ? &terrain_heightmap : nullptr,
-                terrain_anchor, nav_verts, nav_indices);
             if (terrain_streamer) {
-                std::fprintf(stderr,
-                             "[nav] note: streamed tiles are not baked yet (centre tile only)\n");
+                // Streamed world: bake every loaded tile (colliders once).
+                bool first = true;
+                for (const auto& [coord, map] : terrain_streamer->maps()) {
+                    const glm::vec3 origin = terrain_streamer->tile_origin(coord, terrain_anchor);
+                    const glm::vec3 centre(origin.x + map.tile_size_m * 0.5F, terrain_anchor.y,
+                                           origin.z + map.tile_size_m * 0.5F);
+                    engine::scene::collect_nav_geometry(scene.registry(), &map, centre, nav_verts,
+                                                        nav_indices, first);
+                    first = false;
+                }
+                if (first) { // no tiles loaded yet: at least the colliders
+                    engine::scene::collect_nav_geometry(scene.registry(), nullptr, terrain_anchor,
+                                                        nav_verts, nav_indices, true);
+                }
+            } else {
+                engine::scene::collect_nav_geometry(
+                    scene.registry(), terrain_heightmap.valid() ? &terrain_heightmap : nullptr,
+                    terrain_anchor, nav_verts, nav_indices);
             }
             if (auto built = engine::nav::NavMesh::build(nav_verts, nav_indices); built) {
                 navmesh = std::move(*built);

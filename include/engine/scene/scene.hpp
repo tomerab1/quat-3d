@@ -127,7 +127,7 @@ void physics_system(entt::registry& registry, physics::PhysicsWorld& world, floa
 // tile (map null = no terrain).
 void collect_nav_geometry(entt::registry& registry, const terrain::Heightmap* map,
                           const glm::vec3& anchor, std::vector<glm::vec3>& verts,
-                          std::vector<std::uint32_t>& indices);
+                          std::vector<std::uint32_t>& indices, bool include_colliders = true);
 
 // Tile-level variant for streamed worlds: a static height-field body whose
 // minimum XZ corner sits at `origin` (12.4 creates/destroys one per tile).

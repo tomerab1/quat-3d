@@ -82,6 +82,20 @@ std::expected<NavMesh, core::Error> NavMesh::build(std::span<const glm::vec3> ve
     rcVcopy(cfg.bmax, &bmax.x);
     rcCalcGridSize(cfg.bmin, cfg.bmax, cfg.cs, &cfg.width, &cfg.height);
 
+    // Terrain-scale input: cap the voxel grid (memory and bake time grow with
+    // its square). Coarser cells on a 2 km world are the right trade — the
+    // agent radius/climb stay in metres and re-derive from the new cell size.
+    constexpr int kMaxGrid = 1024;
+    if (cfg.width > kMaxGrid || cfg.height > kMaxGrid) {
+        const float scale =
+            static_cast<float>(std::max(cfg.width, cfg.height)) / static_cast<float>(kMaxGrid);
+        cfg.cs *= scale;
+        cfg.walkableRadius = static_cast<int>(std::ceil(params.agent_radius / cfg.cs));
+        cfg.maxEdgeLen = static_cast<int>(12.0F / cfg.cs);
+        cfg.detailSampleDist = 6.0F * cfg.cs;
+        rcCalcGridSize(cfg.bmin, cfg.bmax, cfg.cs, &cfg.width, &cfg.height);
+    }
+
     rcContext ctx(false);
 
     rcHeightfield* hf = rcAllocHeightfield();

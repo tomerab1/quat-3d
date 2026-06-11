@@ -335,7 +335,7 @@ std::uint32_t add_height_field_body(physics::PhysicsWorld& world, const terrain:
 
 void collect_nav_geometry(entt::registry& registry, const terrain::Heightmap* map,
                           const glm::vec3& anchor, std::vector<glm::vec3>& verts,
-                          std::vector<std::uint32_t>& indices) {
+                          std::vector<std::uint32_t>& indices, bool include_colliders) {
     if (map != nullptr && map->valid()) {
         // Decimate the grid so even 1k maps stay around ~32k triangles.
         const std::uint32_t res = map->resolution;
@@ -365,6 +365,7 @@ void collect_nav_geometry(entt::registry& registry, const terrain::Heightmap* ma
         }
     }
 
+    if (!include_colliders) return;
     // Static box colliders become 12 triangles each (the world matrix carries
     // scale/rotation, matching the simulated shape closely enough for nav).
     for (auto [e, t, col] : registry.view<const Transform, const Collider>().each()) {
