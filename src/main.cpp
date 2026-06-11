@@ -47,6 +47,7 @@
 #include "engine/renderer/lighting_pass.hpp"
 #include "engine/renderer/taa_pass.hpp"
 #include "engine/nav/navmesh.hpp"
+#include "engine/scene/behavior.hpp"
 #include "engine/renderer/terrain_pass.hpp"
 #include "engine/terrain/streamer.hpp"
 #include "engine/renderer/mesh_pass.hpp"
@@ -1436,6 +1437,12 @@ int main() {
                         std::fprintf(stderr, "[selftest] terrain FAILED: %s\n",
                                      r.error().message.c_str());
                     }
+                    if (auto r = engine::scene::run_behavior_self_test(); r) {
+                        std::fprintf(stderr, "[selftest] behavior tree OK (patrol + wait)\n");
+                    } else {
+                        std::fprintf(stderr, "[selftest] behavior tree FAILED: %s\n",
+                                     r.error().message.c_str());
+                    }
                     if (auto r = engine::scene::run_nav_agent_self_test(); r) {
                         std::fprintf(stderr, "[selftest] nav agent OK (walks the gap)\n");
                     } else {
@@ -2746,6 +2753,7 @@ int main() {
         }
 #ifdef ENGINE_EDITOR
         else if (editor_play && play_physics) {
+            engine::scene::bt_system(scene.registry(), dt);
             if (navmesh.valid()) {
                 engine::scene::nav_agent_system(scene.registry(), navmesh, dt);
             }

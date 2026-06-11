@@ -10,6 +10,7 @@
 
 #include <cstdint>
 #include <expected>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -136,6 +137,18 @@ struct NavAgent {
     std::vector<glm::vec3> path;
     std::size_t            waypoint = 0;
     glm::vec3              planned_target{1e30F, 1e30F, 1e30F}; // path's target
+};
+
+// A data-driven behaviour tree (13.3): `source` is the tree JSON (composed of
+// sequence/selector/inverter nodes over named C++ leaves — see behavior.hpp).
+// The system compiles it lazily; a parse error logs once and disables the
+// tree. compiled/node_state/parse_failed are system-managed.
+struct BehaviorTree {
+    std::string source;
+    bool        enabled = true;
+    std::shared_ptr<const class BehaviorTreeAsset> compiled;
+    std::vector<float> node_state; // per-node scratch (e.g. wait timers)
+    bool parse_failed = false;
 };
 
 // Single directional light (sun). `direction` points from the light toward the

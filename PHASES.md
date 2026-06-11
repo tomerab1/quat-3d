@@ -606,7 +606,15 @@ Goal: NPCs that navigate and act in the world.
   scene file, inspector (Go/Stop button), Add-component. Self-test: a kinematic agent walks
   the walled plate and arrives via the gap.
   *Commit: `[Phase13/Slice2] nav agents (path following + separation)`*
-- [ ] **13.3 — Behaviour**: behaviour trees (or utility AI) as data assets; perception stubs.
+- [x] **13.3 — Behaviour**: behaviour trees as data assets — trees are JSON
+  (sequence/selector/inverter over leaves), leaves are C++ factories registered by name that
+  bind their parameters at parse time (bad names/params fail the asset, not a tick). Built-in
+  leaves: `move_to` (drives the NavAgent), `wait` (per-node scratch timer), `near_point`, and
+  `near_camera` (the perception stub). `BehaviorTree` component holds the inline JSON +
+  lazily compiled asset; `bt_system` ticks in play mode before the nav agents. Inspector:
+  multiline JSON editor + Recompile + status. Full component checklist. Self-test: a patrol
+  tree walks an agent across the walled plate, then the wait branch takes over on arrival.
+  *Commit: `[Phase13/Slice3] behaviour trees (data-driven JSON + leaf registry)`*
 
 ## Phase 14 — Networking
 

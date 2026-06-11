@@ -124,6 +124,9 @@ std::expected<void, core::Error> save_scene(const Scene& scene,
                                {"speed", a->speed},
                                {"active", a->active}};
         }
+        if (const auto* b = r.try_get<BehaviorTree>(e)) {
+            je["behavior"] = {{"source", b->source}, {"enabled", b->enabled}};
+        }
         entities.push_back(std::move(je));
     }
 
@@ -293,6 +296,13 @@ load_scene(Scene& scene, const std::filesystem::path& path, rhi::GpuAllocator& a
             a.speed = ja.value("speed", 3.0F);
             a.active = ja.value("active", false);
             r.emplace<NavAgent>(e, a);
+        }
+        if (je.contains("behavior")) {
+            const json& jb = je["behavior"];
+            BehaviorTree b;
+            b.source = jb.value("source", std::string{});
+            b.enabled = jb.value("enabled", true);
+            r.emplace<BehaviorTree>(e, b);
         }
     }
 

@@ -11,6 +11,7 @@
 #include <imgui.h>
 
 #include "engine/editor/editor.hpp"
+#include "engine/scene/behavior.hpp"
 #include "engine/scene/components.hpp"
 #include "engine/scene/scene.hpp"
 
@@ -130,6 +131,32 @@ struct ComponentInspector<scene::NavAgent> {
         ImGui::Text(agent.arrived ? "arrived" : (agent.active ? "moving" : "idle"));
         ImGui::TextWrapped("Bake a navmesh (Physics panel) and press Play; the agent "
                            "paths to the target.");
+    }
+};
+
+template <>
+struct ComponentInspector<scene::BehaviorTree> {
+    static constexpr const char* title = "Behavior Tree";
+    static void draw(entt::registry&, entt::entity, scene::BehaviorTree& bt) {
+        ImGui::Checkbox("enabled", &bt.enabled);
+        static char buffer[4096];
+        std::strncpy(buffer, bt.source.c_str(), sizeof(buffer) - 1);
+        buffer[sizeof(buffer) - 1] = 0;
+        if (ImGui::InputTextMultiline("##bt_json", buffer, sizeof(buffer),
+                                      ImVec2(-1.0F, ImGui::GetTextLineHeight() * 8.0F))) {
+            bt.source = buffer;
+        }
+        if (ImGui::Button("Recompile", ImVec2(-1.0F, 0.0F))) {
+            bt.compiled.reset();
+            bt.parse_failed = false;
+        }
+        if (bt.parse_failed) {
+            ImGui::TextColored(ImVec4(1.0F, 0.4F, 0.3F, 1.0F), "parse failed (see log)");
+        } else if (bt.compiled != nullptr) {
+            ImGui::Text("compiled: %zu nodes", bt.compiled->nodes().size());
+        }
+        ImGui::TextWrapped("JSON: sequence/selector/inverter over leaves "
+                           "move_to, wait, near_point, near_camera.");
     }
 };
 
@@ -285,6 +312,7 @@ void draw_inspector(scene::Scene& scene, entt::entity selected) {
     inspect<scene::Animator>(r, selected);
     inspect<scene::Terrain>(r, selected, true);
     inspect<scene::NavAgent>(r, selected, true);
+    inspect<scene::BehaviorTree>(r, selected, true);
     inspect<scene::Collider>(r, selected, true);
     inspect<scene::RigidBody>(r, selected, true);
 
@@ -297,6 +325,7 @@ void draw_inspector(scene::Scene& scene, entt::entity selected) {
         add_component_item<scene::RigidBody>(r, selected);
         add_component_item<scene::Terrain>(r, selected);
         add_component_item<scene::NavAgent>(r, selected);
+        add_component_item<scene::BehaviorTree>(r, selected);
         add_component_item<scene::PointLight>(r, selected, glm::vec3(1.0F), 10.0F, 5.0F);
         add_component_item<scene::DirectionalLight>(
             r, selected, glm::vec3(-0.4F, -1.0F, -0.3F), glm::vec3(1.0F), 3.0F);
