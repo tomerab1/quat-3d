@@ -194,14 +194,23 @@ struct ComponentInspector<scene::BehaviorTree> {
 template <>
 struct ComponentInspector<scene::Camera> {
     static constexpr const char* title = "Camera";
-    static void draw(entt::registry&, entt::entity, scene::Camera& camera) {
+    static void draw(entt::registry& r, entt::entity e, scene::Camera& camera) {
         float fov_deg = glm::degrees(camera.fov_y);
         if (ImGui::SliderFloat("fov (deg)", &fov_deg, 10.0F, 140.0F)) {
             camera.fov_y = glm::radians(fov_deg);
         }
         ImGui::DragFloat("near", &camera.near_z, 0.01F, 0.001F, 100.0F);
         ImGui::DragFloat("far", &camera.far_z, 1.0F, 0.1F, 100000.0F);
-        ImGui::Checkbox("active", &camera.is_active);
+        // Exactly one camera owns the play view: activating this one
+        // deactivates the rest (radio semantics, like a "main camera" tag).
+        if (ImGui::Checkbox("active", &camera.is_active) && camera.is_active) {
+            for (auto [other, cam] : r.view<scene::Camera>().each()) {
+                if (other != e) cam.is_active = false;
+            }
+        }
+        ImGui::TextWrapped("Play + \"Game camera\" (menu bar) views through the active "
+                           "camera. Put it on a child entity offset from the body — on the "
+                           "mesh itself the view sits inside the geometry.");
     }
 };
 

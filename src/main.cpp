@@ -1798,6 +1798,7 @@ int main() {
     // Play mode: snapshot taken on Play, restored on Stop; the play session
     // owns its own physics world (demo modes keep theirs).
     bool editor_play = false;
+    bool play_use_scene_camera = false; // menu-bar "Game camera" checkbox
     bool editor_play_prev = false;
     std::optional<engine::editor::SceneSnapshot> play_snapshot;
     std::optional<engine::physics::PhysicsWorld> play_physics;
@@ -3018,12 +3019,14 @@ int main() {
             }
         }
 #ifdef ENGINE_EDITOR
-        // Edit mode always renders through the editor's fly camera; play mode
-        // hands the view to the scene's active Camera entity when one exists
-        // (a camera parented to a moving object follows it), and falls back to
-        // the fly camera otherwise.
+        // The editor's fly camera is the default view in BOTH modes — Play
+        // must never take movement away from the user (old scene files also
+        // carry stale "camera" entities that would hijack the view). The
+        // menu-bar "Game camera" checkbox opts the play view into the scene's
+        // active Camera entity (a camera parented to a moving object follows
+        // it); it falls back to the fly camera when none is active.
         const bool through_scene_camera =
-            editor_play &&
+            editor_play && play_use_scene_camera &&
             engine::scene::find_active_camera(scene.registry()) != entt::null;
         const engine::scene::CameraMatrices cam =
             through_scene_camera
@@ -3462,6 +3465,7 @@ int main() {
             ui_ctx.load_request = &pending_load;
             // Demo modes own their physics world — hide the Play button there.
             ui_ctx.play_mode = physics_world ? nullptr : &editor_play;
+            ui_ctx.play_use_scene_camera = physics_world ? nullptr : &play_use_scene_camera;
             ui_ctx.build_navmesh_request = &navmesh_request;
             ui_ctx.ground_click = &ground_click;
             ui_ctx.nav_edges = navmesh.valid() ? &navmesh.debug_edges() : nullptr;

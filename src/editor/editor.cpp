@@ -443,6 +443,13 @@ void EditorLayer::build_ui(const EditorContext& ctx) {
             }
             if (playing) {
                 ImGui::PopStyleColor(2);
+                if (ctx.play_use_scene_camera != nullptr) {
+                    ImGui::Checkbox("Game camera", ctx.play_use_scene_camera);
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::SetTooltip("View through the scene's active Camera entity\n"
+                                          "(unchecked: keep flying the editor camera)");
+                    }
+                }
                 ImGui::TextDisabled("simulating");
             }
         }

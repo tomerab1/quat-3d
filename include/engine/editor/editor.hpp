@@ -85,6 +85,11 @@ struct EditorContext {
     // frame loop snapshots/restores the scene on the transition). Null hides
     // the button (e.g. while a physics demo owns the world).
     bool* play_mode = nullptr;
+    // In/out: while playing, render the viewport through the scene's active
+    // Camera entity instead of the editor fly camera (menu-bar checkbox,
+    // shown only in play mode). The fly camera remains the default so Play
+    // never takes movement away from the user.
+    bool* play_use_scene_camera = nullptr;
     // Out: the Physics panel's "Build navmesh" button; the frame loop bakes a
     // NavMesh from the current static geometry and clears the flag (may be null).
     bool* build_navmesh_request = nullptr;
