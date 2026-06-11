@@ -597,7 +597,15 @@ Goal: NPCs that navigate and act in the world.
   Physics panel (streamed tiles bake centre-tile only for now). Self-test: a plate with a
   walled gap — the path detours through the gap, never over the wall.
   *Commit: `[Phase13/Slice1] navmesh (Recast/Detour) + editor overlay`*
-- [ ] **13.2 — Agents**: locomotion via CharacterVirtual, path following, avoidance.
+- [x] **13.2 — Agents**: `NavAgent` component (target/speed/active/arrived) +
+  `nav_agent_system` — repaths on the baked navmesh when the target moves, follows the
+  string-pulled waypoints, and eases away from nearby agents (separation steering;
+  DetourCrowd is the planned upgrade). Locomotion drives the entity's CharacterController
+  (move/speed — collisions + gravity via CharacterVirtual; character_system now runs in play
+  mode) or falls back to kinematic Transform motion. Full component checklist: snapshot,
+  scene file, inspector (Go/Stop button), Add-component. Self-test: a kinematic agent walks
+  the walled plate and arrives via the gap.
+  *Commit: `[Phase13/Slice2] nav agents (path following + separation)`*
 - [ ] **13.3 — Behaviour**: behaviour trees (or utility AI) as data assets; perception stubs.
 
 ## Phase 14 — Networking

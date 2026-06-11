@@ -44,6 +44,7 @@ struct SceneSnapshot {
     Stored<scene::RigidBody>           rigid_bodies;
     Stored<scene::CharacterController> characters;
     Stored<scene::Terrain>             terrains;
+    Stored<scene::NavAgent>            nav_agents;
 };
 
 // Copies the whole scene (all engine components) into a snapshot.

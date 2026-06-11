@@ -119,6 +119,11 @@ std::expected<void, core::Error> save_scene(const Scene& scene,
                              {"streaming", t->streaming},
                              {"stream_radius", t->stream_radius}};
         }
+        if (const auto* a = r.try_get<NavAgent>(e)) {
+            je["nav_agent"] = {{"target", vec3_to_json(a->target)},
+                               {"speed", a->speed},
+                               {"active", a->active}};
+        }
         entities.push_back(std::move(je));
     }
 
@@ -280,6 +285,14 @@ load_scene(Scene& scene, const std::filesystem::path& path, rhi::GpuAllocator& a
             t.stream_radius = jt.value("stream_radius", 1);
             t.regenerate = true; // rebuild on load
             r.emplace<Terrain>(e, t);
+        }
+        if (je.contains("nav_agent")) {
+            const json& ja = je["nav_agent"];
+            NavAgent a;
+            a.target = vec3_from_json(ja["target"]);
+            a.speed = ja.value("speed", 3.0F);
+            a.active = ja.value("active", false);
+            r.emplace<NavAgent>(e, a);
         }
     }
 

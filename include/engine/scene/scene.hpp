@@ -18,6 +18,9 @@
 #include "engine/renderer/mesh_pass.hpp"
 #include "engine/scene/components.hpp"
 
+namespace engine::nav {
+class NavMesh;
+}
 namespace engine::physics {
 class PhysicsWorld;
 }
@@ -144,6 +147,16 @@ void character_system(entt::registry& registry, physics::PhysicsWorld& world, fl
 // Drops a character onto a floor, then walks it, verifying it lands (on_ground)
 // and moves horizontally.
 [[nodiscard]] std::expected<void, core::Error> run_character_self_test();
+
+// Advance every active NavAgent: repath on the navmesh when the target moved,
+// steer toward the current waypoint with simple agent-agent separation, and
+// either drive the entity's CharacterController (move/speed) or translate the
+// Transform kinematically. Call before character_system each tick.
+void nav_agent_system(entt::registry& registry, const nav::NavMesh& navmesh, float dt);
+
+// A kinematic agent walks from one side of the walled test plate to the other:
+// it must arrive at the target and must have detoured through the gap.
+[[nodiscard]] std::expected<void, core::Error> run_nav_agent_self_test();
 
 // Builds a small hierarchy, ticks the scene, and verifies world-matrix
 // propagation and draw-list collection. No device needed.

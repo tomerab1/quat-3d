@@ -118,6 +118,22 @@ struct ComponentInspector<scene::Terrain> {
 };
 
 template <>
+struct ComponentInspector<scene::NavAgent> {
+    static constexpr const char* title = "Nav Agent";
+    static void draw(entt::registry&, entt::entity, scene::NavAgent& agent) {
+        ImGui::DragFloat3("target", &agent.target.x, 0.1F);
+        ImGui::DragFloat("speed", &agent.speed, 0.1F, 0.1F, 50.0F, "%.1f m/s");
+        if (ImGui::Button(agent.active ? "Stop" : "Go", ImVec2(-1.0F, 0.0F))) {
+            agent.active = !agent.active;
+            agent.path.clear();
+        }
+        ImGui::Text(agent.arrived ? "arrived" : (agent.active ? "moving" : "idle"));
+        ImGui::TextWrapped("Bake a navmesh (Physics panel) and press Play; the agent "
+                           "paths to the target.");
+    }
+};
+
+template <>
 struct ComponentInspector<scene::Camera> {
     static constexpr const char* title = "Camera";
     static void draw(entt::registry&, entt::entity, scene::Camera& camera) {
@@ -268,6 +284,7 @@ void draw_inspector(scene::Scene& scene, entt::entity selected) {
     inspect<scene::Camera>(r, selected, true);
     inspect<scene::Animator>(r, selected);
     inspect<scene::Terrain>(r, selected, true);
+    inspect<scene::NavAgent>(r, selected, true);
     inspect<scene::Collider>(r, selected, true);
     inspect<scene::RigidBody>(r, selected, true);
 
@@ -279,6 +296,7 @@ void draw_inspector(scene::Scene& scene, entt::entity selected) {
         add_component_item<scene::Collider>(r, selected);
         add_component_item<scene::RigidBody>(r, selected);
         add_component_item<scene::Terrain>(r, selected);
+        add_component_item<scene::NavAgent>(r, selected);
         add_component_item<scene::PointLight>(r, selected, glm::vec3(1.0F), 10.0F, 5.0F);
         add_component_item<scene::DirectionalLight>(
             r, selected, glm::vec3(-0.4F, -1.0F, -0.3F), glm::vec3(1.0F), 3.0F);

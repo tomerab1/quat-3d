@@ -1436,6 +1436,12 @@ int main() {
                         std::fprintf(stderr, "[selftest] terrain FAILED: %s\n",
                                      r.error().message.c_str());
                     }
+                    if (auto r = engine::scene::run_nav_agent_self_test(); r) {
+                        std::fprintf(stderr, "[selftest] nav agent OK (walks the gap)\n");
+                    } else {
+                        std::fprintf(stderr, "[selftest] nav agent FAILED: %s\n",
+                                     r.error().message.c_str());
+                    }
                     if (auto r = engine::nav::run_navmesh_self_test(); r) {
                         std::fprintf(stderr, "[selftest] navmesh OK (build + wall detour)\n");
                     } else {
@@ -2740,6 +2746,10 @@ int main() {
         }
 #ifdef ENGINE_EDITOR
         else if (editor_play && play_physics) {
+            if (navmesh.valid()) {
+                engine::scene::nav_agent_system(scene.registry(), navmesh, dt);
+            }
+            engine::scene::character_system(scene.registry(), *play_physics, dt);
             engine::scene::physics_system(scene.registry(), *play_physics, dt);
         }
 #endif

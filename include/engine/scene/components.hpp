@@ -123,6 +123,21 @@ struct CharacterController {
     std::uint32_t character = 0xFFFFFFFFU;
 };
 
+// Autonomous navigation: the agent repaths on the baked navmesh whenever
+// `target` changes and follows the waypoints at `speed`. With a
+// CharacterController on the entity it steers the controller (collisions,
+// gravity); otherwise it moves the Transform kinematically. `arrived` flips
+// when the last waypoint is reached. path/waypoint are system-managed.
+struct NavAgent {
+    glm::vec3 target{0.0F};
+    float     speed = 3.0F;
+    bool      active = false;
+    bool      arrived = false;
+    std::vector<glm::vec3> path;
+    std::size_t            waypoint = 0;
+    glm::vec3              planned_target{1e30F, 1e30F, 1e30F}; // path's target
+};
+
 // Single directional light (sun). `direction` points from the light toward the
 // scene (i.e. the direction photons travel) in world space.
 struct DirectionalLight {
