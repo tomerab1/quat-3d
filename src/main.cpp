@@ -1233,6 +1233,13 @@ int main() {
                          r.error().message.c_str());
         }
 
+        if (auto r = engine::scene::run_terrain_physics_self_test(); r) {
+            std::fprintf(stderr, "[selftest] terrain physics OK (height-field rest)\n");
+        } else {
+            std::fprintf(stderr, "[selftest] terrain physics FAILED: %s\n",
+                         r.error().message.c_str());
+        }
+
         if (auto r = engine::scene::run_character_self_test(); r) {
             std::fprintf(stderr, "[selftest] character controller OK\n");
         } else {
@@ -2212,6 +2219,7 @@ int main() {
         std::fprintf(stderr, "[warn] terrain pass create failed: %s\n", tp.error().message.c_str());
     }
     std::future<engine::terrain::Heightmap> terrain_job;
+    engine::terrain::Heightmap terrain_heightmap; // CPU copy retained for physics (12.3)
 
     // QUAT_TERRAIN=1: drop a procedural terrain tile under the showcase scene
     // (sunken so its mid heights sit near the platform) — exercises the full
@@ -2412,6 +2420,15 @@ int main() {
                 }
                 if (auto world = engine::physics::PhysicsWorld::create(); world) {
                     play_physics = std::move(*world);
+                    // Terrain joins the simulation as a static Jolt height
+                    // field matching the rendered surface (12.3).
+                    if (terrain_heightmap.valid()) {
+                        if (engine::scene::add_terrain_body(scene.registry(), *play_physics,
+                                                            terrain_heightmap) !=
+                            engine::physics::PhysicsWorld::invalid_body) {
+                            std::fprintf(stderr, "[terrain] height-field body added\n");
+                        }
+                    }
                     std::fprintf(stderr, "[editor] play (%zu colliders, %zu bodies)\n",
                                  scene.registry().view<engine::scene::Collider>().size(),
                                  scene.registry().view<engine::scene::RigidBody>().size());
@@ -2846,10 +2863,11 @@ int main() {
         }
         if (terrain_job.valid() &&
             terrain_job.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
-            const engine::terrain::Heightmap map = terrain_job.get();
-            if (auto r = terrain_pass.set_heightmap(map, terrain_transfer); r) {
+            terrain_heightmap = terrain_job.get();
+            if (auto r = terrain_pass.set_heightmap(terrain_heightmap, terrain_transfer); r) {
                 std::fprintf(stderr, "[terrain] tile ready (%.0f m, heights %.1f..%.1f m)\n",
-                             map.tile_size_m, map.min_height, map.max_height);
+                             terrain_heightmap.tile_size_m, terrain_heightmap.min_height,
+                             terrain_heightmap.max_height);
             } else {
                 std::fprintf(stderr, "[terrain] upload failed: %s\n", r.error().message.c_str());
             }

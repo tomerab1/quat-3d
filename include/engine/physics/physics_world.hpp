@@ -54,6 +54,13 @@ public:
     [[nodiscard]] std::uint32_t create_convex(std::span<const glm::vec3> points);
     [[nodiscard]] std::uint32_t create_mesh(std::span<const glm::vec3> points,
                                             std::span<const std::uint32_t> indices);
+    // Static terrain surface: sample (x, z) sits at offset + scale * (x, h, z)
+    // with h = samples[z * sample_count + x]. sample_count must be a multiple
+    // of Jolt's block size (2) — callers pad odd grids by duplicating an edge.
+    [[nodiscard]] std::uint32_t create_height_field(std::span<const float> samples,
+                                                    std::uint32_t sample_count,
+                                                    const glm::vec3& offset,
+                                                    const glm::vec3& scale);
 
     struct BodyParams {
         std::uint32_t shape = 0;

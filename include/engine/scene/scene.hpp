@@ -107,6 +107,21 @@ void physics_system(entt::registry& registry, physics::PhysicsWorld& world, floa
 // physics system and verifies its Transform fell and came to rest on the floor.
 [[nodiscard]] std::expected<void, core::Error> run_physics_body_self_test();
 
+// Create a static Jolt height-field body for the first Terrain entity in the
+// registry, matching the rendered surface: the body sits at the tile's minimum
+// XZ corner (entity translation - tile_size/2, heights offset by translation.y)
+// and the grid is edge-padded by one duplicated row/column so the sample count
+// satisfies Jolt's block alignment while every interior cell aligns exactly
+// with the rendered texels. Returns the body id (PhysicsWorld::invalid_body
+// when there is no Terrain entity or the map is invalid).
+[[nodiscard]] std::uint32_t add_terrain_body(entt::registry& registry,
+                                             physics::PhysicsWorld& world,
+                                             const terrain::Heightmap& map);
+
+// Generates a small tile, adds its height-field body, drops a sphere onto it
+// through the ECS physics system, and verifies it rests on the surface height.
+[[nodiscard]] std::expected<void, core::Error> run_terrain_physics_self_test();
+
 // Advance every CharacterController: integrate gravity, apply `move` * `speed`
 // horizontally, move + resolve collisions via the character controller, and write
 // the result back into Transform.

@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <vector>
 
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
@@ -10,6 +11,7 @@
 
 #include "engine/physics/physics_world.hpp"
 #include "engine/scene/components.hpp"
+#include "engine/terrain/generator.hpp"
 #include "engine/scene/scene.hpp"
 
 namespace engine::scene {
@@ -293,6 +295,103 @@ std::expected<void, core::Error> run_physics_body_self_test() {
     if (std::abs(recomposed[3].y - child_world.y) > 0.01F) {
         return std::unexpected(
             core::Error{"physics body self-test: parented local/world out of sync"});
+    }
+    return {};
+}
+
+std::uint32_t add_terrain_body(entt::registry& registry, physics::PhysicsWorld& world,
+                               const terrain::Heightmap& map) {
+    if (!map.valid()) return physics::PhysicsWorld::invalid_body;
+    const auto view = registry.view<const Terrain>();
+    if (view.begin() == view.end()) return physics::PhysicsWorld::invalid_body;
+    const entt::entity e = *view.begin();
+    const auto* tf = registry.try_get<Transform>(e);
+    const glm::vec3 pos = tf != nullptr ? glm::vec3(tf->world[3]) : glm::vec3(0.0F);
+    const float tile = map.tile_size_m;
+    const glm::vec3 origin(pos.x - tile * 0.5F, pos.y, pos.z - tile * 0.5F);
+
+    // Jolt wants the sample count block-aligned (multiple of 2); our grids are
+    // 2^n + 1, so pad one duplicated row/column. Interior cells then align
+    // exactly with the rendered texels; the pad adds a flat one-texel apron
+    // beyond the tile edge.
+    const std::uint32_t res = map.resolution;
+    const std::uint32_t padded = res % 2 == 0 ? res : res + 1;
+    std::vector<float> samples(static_cast<std::size_t>(padded) * padded);
+    for (std::uint32_t z = 0; z < padded; ++z) {
+        const std::uint32_t sz = std::min(z, res - 1);
+        for (std::uint32_t x = 0; x < padded; ++x) {
+            const std::uint32_t sx = std::min(x, res - 1);
+            samples[static_cast<std::size_t>(z) * padded + x] =
+                map.heights[static_cast<std::size_t>(sz) * res + sx];
+        }
+    }
+
+    const float texel = map.metres_per_texel();
+    const std::uint32_t shape = world.create_height_field(
+        samples, padded, glm::vec3(0.0F), glm::vec3(texel, 1.0F, texel));
+    if (shape == physics::PhysicsWorld::invalid_body) {
+        return physics::PhysicsWorld::invalid_body;
+    }
+    physics::PhysicsWorld::BodyParams params;
+    params.shape = shape;
+    params.position = origin;
+    params.motion = physics::Motion::static_body;
+    params.layer = physics::Layer::static_body;
+    return world.add_body(params);
+}
+
+std::expected<void, core::Error> run_terrain_physics_self_test() {
+    terrain::TerrainParams tp;
+    tp.resolution = 65;
+    tp.tile_size_m = 64.0F;
+    tp.height_m = 8.0F;
+    tp.octaves = 4;
+    tp.erosion_droplets = 0;
+    const terrain::Heightmap map = terrain::generate(tp);
+
+    auto world = physics::PhysicsWorld::create();
+    if (!world) return std::unexpected(world.error());
+
+    entt::registry registry;
+    const entt::entity te = registry.create();
+    registry.emplace<Terrain>(te, Terrain{tp});
+    auto& tf = registry.emplace<Transform>(te);
+    tf.local = glm::translate(glm::mat4(1.0F), glm::vec3(10.0F, 2.0F, -5.0F));
+    tf.world = tf.local;
+
+    if (add_terrain_body(registry, *world, map) == physics::PhysicsWorld::invalid_body) {
+        return std::unexpected(core::Error{"terrain physics self-test: body creation failed"});
+    }
+
+    // Drop a sphere onto the tile centre through the ECS physics system.
+    constexpr float radius = 0.5F;
+    const entt::entity sphere = registry.create();
+    auto& st = registry.emplace<Transform>(sphere);
+    st.local = glm::translate(glm::mat4(1.0F), glm::vec3(10.0F, 40.0F, -5.0F));
+    st.world = st.local;
+    Collider col;
+    col.shape = ColliderShape::sphere;
+    col.half_extents = glm::vec3(radius);
+    registry.emplace<Collider>(sphere, col);
+    RigidBody rb;
+    rb.motion = BodyMotion::dynamic;
+    registry.emplace<RigidBody>(sphere, rb);
+
+    for (int i = 0; i < 300; ++i) {
+        physics_system(registry, *world, 1.0F / 60.0F);
+    }
+
+    // Expected rest height: world terrain surface at the drop point + radius.
+    // The tile centre sits at the entity's translation, so the drop at
+    // (10, -5) lands at heightmap centre; entity y (2) offsets the surface.
+    const float surface = 2.0F + map.sample(map.tile_size_m * 0.5F, map.tile_size_m * 0.5F);
+    const float y = registry.get<Transform>(sphere).world[3].y;
+    if (y > 39.0F) {
+        return std::unexpected(core::Error{"terrain physics self-test: sphere did not fall"});
+    }
+    if (std::abs(y - (surface + radius)) > 1.0F) {
+        return std::unexpected(
+            core::Error{"terrain physics self-test: sphere not resting on the terrain surface"});
     }
     return {};
 }

@@ -26,6 +26,7 @@
 #include <Jolt/Physics/Collision/Shape/BoxShape.h>
 #include <Jolt/Physics/Collision/Shape/CapsuleShape.h>
 #include <Jolt/Physics/Collision/Shape/ConvexHullShape.h>
+#include <Jolt/Physics/Collision/Shape/HeightFieldShape.h>
 #include <Jolt/Physics/Collision/Shape/MeshShape.h>
 #include <Jolt/Physics/Collision/Shape/SphereShape.h>
 #include <Jolt/Physics/PhysicsSettings.h>
@@ -265,6 +266,24 @@ std::uint32_t PhysicsWorld::create_mesh(std::span<const glm::vec3> points,
         tris.push_back(JPH::IndexedTriangle(indices[i], indices[i + 1], indices[i + 2], 0));
     }
     JPH::MeshShapeSettings settings(verts, tris);
+    JPH::ShapeSettings::ShapeResult result = settings.Create();
+    if (result.HasError()) {
+        return invalid_body;
+    }
+    impl_->shapes.push_back(result.Get());
+    return static_cast<std::uint32_t>(impl_->shapes.size() - 1);
+}
+
+std::uint32_t PhysicsWorld::create_height_field(std::span<const float> samples,
+                                                std::uint32_t sample_count,
+                                                const glm::vec3& offset, const glm::vec3& scale) {
+    if (sample_count < 2 ||
+        samples.size() != static_cast<std::size_t>(sample_count) * sample_count) {
+        return invalid_body;
+    }
+    JPH::HeightFieldShapeSettings settings(samples.data(),
+                                           JPH::Vec3(offset.x, offset.y, offset.z),
+                                           JPH::Vec3(scale.x, scale.y, scale.z), sample_count);
     JPH::ShapeSettings::ShapeResult result = settings.Create();
     if (result.HasError()) {
         return invalid_body;

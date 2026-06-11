@@ -560,7 +560,15 @@ Goal: large-scale procedurally generated terrain, editable and walkable.
   *Commit: `[Phase12/Slice1] seeded heightmap generation (FBM + warp + erosion)`*
 - [ ] **12.2 — Chunked LOD rendering**: quadtree chunks with skirt stitching (or geometry
   clipmaps), normal/splat maps, triplanar material blending.
-- [ ] **12.3 — Terrain physics**: Jolt `HeightFieldShape` per chunk; editor brush stub.
+- [x] **12.3 — Terrain physics**: `PhysicsWorld::create_height_field` (Jolt
+  `HeightFieldShapeSettings`) + `scene::add_terrain_body` — a static height-field body for the
+  Terrain entity, edge-padded one duplicated row/column so the 2^n+1 grid satisfies Jolt's
+  block alignment while every interior cell aligns exactly with the rendered texels. Play
+  mode adds the body alongside the collider-only statics (the frame loop retains the CPU
+  heightmap); Stop tears it down with the world. Self-test: a sphere dropped through the ECS
+  physics system rests on the sampled surface height. The editor brush moves to 12.4+ (it
+  needs partial re-upload, which streaming's tile machinery provides).
+  *Commit: `[Phase12/Slice3] terrain physics (Jolt height field)`*
 - [ ] **12.4 — Terrain / world streaming**: chunks (terrain + the entities standing on them)
   load and unload around the camera on the worker pool — generation/IO off the main thread,
   GPU uploads through a per-frame budget, physics bodies created/destroyed with their chunk.
