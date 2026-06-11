@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstdlib>
 #include <cstring>
 #include <thread>
 #include <unordered_map>
@@ -300,11 +301,32 @@ std::expected<NetClient, core::Error> NetClient::connect(const std::string& host
     out.impl_ = std::make_unique<Impl>();
     out.impl_->sockets = SteamNetworkingSockets();
 
+    // Parse the IPv4 dotted quad ourselves: SteamNetworkingIPAddr::ParseString
+    // is not exported from the Windows DLL build (SetIPv4 is header-inline).
+    const std::string ip = host == "localhost" ? "127.0.0.1" : host;
+    std::uint32_t octets[4] = {0, 0, 0, 0};
+    int parsed = 0;
+    std::size_t start = 0;
+    for (int i = 0; i < 4 && start <= ip.size(); ++i) {
+        const std::size_t dot = ip.find('.', start);
+        const std::string part = ip.substr(start, dot == std::string::npos ? std::string::npos
+                                                                           : dot - start);
+        if (part.empty() || part.size() > 3) break;
+        octets[i] = static_cast<std::uint32_t>(std::atoi(part.c_str()));
+        if (octets[i] > 255) break;
+        ++parsed;
+        if (dot == std::string::npos) {
+            start = ip.size() + 1;
+            break;
+        }
+        start = dot + 1;
+    }
+    if (parsed != 4) {
+        return fail("net: bad IPv4 address '" + host + "'");
+    }
     SteamNetworkingIPAddr addr;
     addr.Clear();
-    if (!addr.ParseString((host + ":" + std::to_string(port)).c_str())) {
-        return fail("net: bad address '" + host + "'");
-    }
+    addr.SetIPv4((octets[0] << 24) | (octets[1] << 16) | (octets[2] << 8) | octets[3], port);
 
     SteamNetworkingConfigValue_t opt;
     opt.SetPtr(k_ESteamNetworkingConfig_Callback_ConnectionStatusChanged,
