@@ -39,6 +39,7 @@
 #include "engine/renderer/bloom_pass.hpp"
 #include "engine/renderer/exposure_pass.hpp"
 #include "engine/renderer/dynamic_ibl.hpp"
+#include "engine/terrain/generator.hpp"
 #include "engine/renderer/ibl_pass.hpp"
 #include "engine/renderer/lighting_pass.hpp"
 #include "engine/renderer/taa_pass.hpp"
@@ -1413,6 +1414,13 @@ int main() {
                                      "[selftest] dynamic IBL OK (incremental cycle + flip)\n");
                     } else {
                         std::fprintf(stderr, "[selftest] dynamic IBL FAILED: %s\n",
+                                     r.error().message.c_str());
+                    }
+                    if (auto r = engine::terrain::run_terrain_self_test(); r) {
+                        std::fprintf(stderr,
+                                     "[selftest] terrain OK (seeded FBM + warp + erosion)\n");
+                    } else {
+                        std::fprintf(stderr, "[selftest] terrain FAILED: %s\n",
                                      r.error().message.c_str());
                     }
                     if (auto r = engine::renderer::run_ibl_lighting_self_test(

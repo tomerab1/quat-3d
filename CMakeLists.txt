@@ -180,6 +180,15 @@ target_include_directories(engine_scene PUBLIC ${ENGINE_PUBLIC_INCLUDE})
 set_source_files_properties(src/scene/stb_image_impl.cpp PROPERTIES COMPILE_OPTIONS "-w")
 
 # ---------------------------------------------------------------------------
+# engine_terrain — procedural terrain (Phase 12). Pure CPU heightmap generation
+# in 12.1; chunked LOD rendering and Jolt height fields layer on in 12.2/12.3.
+# ---------------------------------------------------------------------------
+add_library(engine_terrain STATIC
+    src/terrain/generator.cpp)
+target_link_libraries(engine_terrain PUBLIC engine_flags glm::glm)
+target_include_directories(engine_terrain PUBLIC ${ENGINE_PUBLIC_INCLUDE})
+
+# ---------------------------------------------------------------------------
 # engine_renderer — high-level passes built on the RHI. Starts with the deferred
 # GBuffer pass (mesh_pass); lighting/tonemap/imgui passes follow in later slices.
 # ---------------------------------------------------------------------------
@@ -243,7 +252,8 @@ endif()
 # ---------------------------------------------------------------------------
 add_executable(game src/main.cpp)
 target_link_libraries(game PRIVATE
-    engine_flags engine_rhi engine_asset engine_scene engine_renderer engine_physics SDL3::SDL3)
+    engine_flags engine_rhi engine_asset engine_scene engine_renderer engine_physics
+    engine_terrain SDL3::SDL3)
 if(ENGINE_EDITOR)
     target_link_libraries(game PRIVATE engine_editor)
 endif()

@@ -549,8 +549,15 @@ Goal: a fully dynamic sky — movable sun with correct scattering, volumetric cl
 
 Goal: large-scale procedurally generated terrain, editable and walkable.
 
-- [ ] **12.1 — Heightmap generation**: layered FBM + domain warping (+ optional hydraulic
-  erosion pass), seeded, on a worker thread.
+- [x] **12.1 — Heightmap generation**: `engine_terrain` lib — seeded gradient-noise FBM with
+  iq domain warping, composed as a low-frequency continental mask blending rolling plains
+  into ridged mountains, plus particle-based hydraulic erosion (Beyer droplets — gullies and
+  sediment fans). Fully deterministic per seed (PCG32 everywhere, serial droplets); the FBM
+  pass parallelises across rows on std::jthread; `generate_async()` runs off the main thread
+  (Phase 10's pool will absorb it). `Heightmap` carries metres, bilinear `sample()` and
+  central-difference `normal()` for 12.2/12.3. Self-test: bit-exact determinism, seed
+  sensitivity, bounds, warp effect, erosion-smooths-gradient.
+  *Commit: `[Phase12/Slice1] seeded heightmap generation (FBM + warp + erosion)`*
 - [ ] **12.2 — Chunked LOD rendering**: quadtree chunks with skirt stitching (or geometry
   clipmaps), normal/splat maps, triplanar material blending.
 - [ ] **12.3 — Terrain physics**: Jolt `HeightFieldShape` per chunk; editor brush stub.
