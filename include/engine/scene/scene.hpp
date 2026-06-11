@@ -9,6 +9,8 @@
 
 #include <cstdint>
 #include <expected>
+#include <functional>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -101,6 +103,11 @@ struct CameraMatrices {
 // tick() the scene first.
 [[nodiscard]] CameraMatrices camera_system(const entt::registry& registry, float aspect_ratio);
 
+// First entity carrying an active Camera + Transform, or entt::null. The
+// editor's fly camera is editor state (not an entity), so "a scene camera
+// exists" is what decides whether play mode renders through the scene.
+[[nodiscard]] entt::entity find_active_camera(const entt::registry& registry);
+
 // Bridge ECS <-> physics: create a body for each new RigidBody+Collider+Transform
 // entity, push kinematic transforms into the world, step it by `dt`, then write
 // dynamic bodies' transforms back into Transform (entities are treated as roots).
@@ -152,7 +159,20 @@ void character_system(entt::registry& registry, physics::PhysicsWorld& world, fl
 // steer toward the current waypoint with simple agent-agent separation, and
 // either drive the entity's CharacterController (move/speed) or translate the
 // Transform kinematically. Call before character_system each tick.
-void nav_agent_system(entt::registry& registry, const nav::NavMesh& navmesh, float dt);
+//
+// Detour returns best-effort paths (partial when the buffer fills or the target
+// poly is unreachable): when an agent exhausts its path away from the target it
+// replans the next leg, and when it can make no further progress it settles for
+// the closest reachable point (arrived). Failed plans retry on a cooldown; a
+// PatrolRoute skips unreachable points instead of stalling the route.
+//
+// `ground_height(x, z)` (optional) supplies the authoritative ground height for
+// kinematic agents — coarse terrain navmeshes can float metres off the real
+// surface, so path heights are only a fallback. Agents with a
+// CharacterController ignore it (physics owns their height).
+using GroundHeightFn = std::function<std::optional<float>(float x, float z)>;
+void nav_agent_system(entt::registry& registry, const nav::NavMesh& navmesh, float dt,
+                      const GroundHeightFn& ground_height = {});
 
 // A kinematic agent walks from one side of the walled test plate to the other:
 // it must arrive at the target and must have detoured through the gap.

@@ -15,16 +15,18 @@ namespace engine::scene {
 
 namespace {
 
-constexpr float kWaypointReach = 0.6F;  // advance when this close (xz)
-constexpr float kArriveReach = 0.4F;    // final waypoint tolerance
-constexpr float kRepathDistance = 0.5F; // target moved farther -> repath
-constexpr float kSeparation = 1.2F;     // agent-agent comfort radius
+constexpr float kWaypointReach = 0.6F;     // advance when this close (xz)
+constexpr float kArriveReach = 0.4F;       // final waypoint tolerance
+constexpr float kRepathDistance = 0.5F;    // target moved farther -> repath
+constexpr float kSeparation = 1.2F;        // agent-agent comfort radius
+constexpr float kPlanRetrySeconds = 1.0F;  // cooldown after a failed/stuck plan
 
 [[nodiscard]] glm::vec2 xz(const glm::vec3& v) { return {v.x, v.z}; }
 
 } // namespace
 
-void nav_agent_system(entt::registry& registry, const nav::NavMesh& navmesh, float dt) {
+void nav_agent_system(entt::registry& registry, const nav::NavMesh& navmesh, float dt,
+                      const GroundHeightFn& ground_height) {
     if (!navmesh.valid()) return;
 
     // Patrol routes feed the agent target point by point: advance on arrival,
@@ -56,6 +58,14 @@ void nav_agent_system(entt::registry& registry, const nav::NavMesh& navmesh, flo
             if (controller != nullptr) controller->move = glm::vec3(0.0F);
             continue;
         }
+        // Failed and stuck plans retry on a cooldown instead of hammering the
+        // query (and, through the patrol feed, replanning every frame).
+        if (agent.retry_s > 0.0F) {
+            agent.retry_s -= dt;
+            if (controller != nullptr) controller->move = glm::vec3(0.0F);
+            continue;
+        }
+
         const glm::vec3 pos(transform.world[3]);
 
         // (Re)plan when the target moved or no plan exists.
@@ -63,7 +73,29 @@ void nav_agent_system(entt::registry& registry, const nav::NavMesh& navmesh, flo
             glm::distance(agent.target, agent.planned_target) > kRepathDistance) {
             auto path = navmesh.find_path(pos, agent.target);
             if (!path) {
-                agent.active = false; // unreachable: stop rather than wander
+                // No polygon near the agent or the target. A patrol route
+                // skips the unreachable point instead of stalling the route.
+                if (auto* route = registry.try_get<PatrolRoute>(e);
+                    route != nullptr && !route->points.empty()) {
+                    route->next = (route->next + 1) % route->points.size();
+                    agent.target = route->points[route->next];
+                }
+                agent.retry_s = kPlanRetrySeconds;
+                if (controller != nullptr) controller->move = glm::vec3(0.0F);
+                continue;
+            }
+            // Detour paths are best-effort (partial when the target's polygon
+            // is unreachable or the buffer fills). A plan that cannot leave
+            // the agent's position will never progress: settle here as
+            // "arrived" at the closest reachable point and let the route move
+            // on — the cooldown stops an unreachable route from replanning
+            // every frame.
+            if (glm::distance(xz(path->back()), xz(pos)) < kArriveReach &&
+                glm::distance(xz(path->back()), xz(agent.target)) > kWaypointReach) {
+                agent.active = false;
+                agent.arrived = true;
+                agent.path.clear();
+                agent.retry_s = kPlanRetrySeconds;
                 if (controller != nullptr) controller->move = glm::vec3(0.0F);
                 continue;
             }
@@ -80,10 +112,15 @@ void nav_agent_system(entt::registry& registry, const nav::NavMesh& navmesh, flo
             ++agent.waypoint;
         }
         if (agent.waypoint >= agent.path.size()) {
-            agent.active = false;
-            agent.arrived = true;
             agent.path.clear();
-            if (controller != nullptr) controller->move = glm::vec3(0.0F);
+            if (glm::distance(xz(pos), xz(agent.target)) <= kWaypointReach) {
+                agent.active = false;
+                agent.arrived = true;
+                if (controller != nullptr) controller->move = glm::vec3(0.0F);
+            }
+            // Otherwise the (partial) path ran out short of the target: leave
+            // the agent active with no path so the next frame plans the next
+            // leg from here.
             continue;
         }
 
@@ -109,10 +146,19 @@ void nav_agent_system(entt::registry& registry, const nav::NavMesh& navmesh, flo
             controller->move = glm::vec3(dir.x, 0.0F, dir.y);
             controller->speed = agent.speed;
         } else {
-            // Kinematic fallback: slide along the path, following its height.
+            // Kinematic fallback: slide along the path. Heights come from the
+            // real ground when a sampler is provided — coarse terrain bakes
+            // put the navmesh metres off the surface — falling back to the
+            // path's own (navmesh) heights.
             const float step = glm::min(agent.speed * dt, glm::max(len, 0.0F));
             glm::vec3 new_pos = pos + glm::vec3(dir.x, 0.0F, dir.y) * step;
-            new_pos.y = glm::mix(pos.y, next.y, len > 1e-4F ? step / len : 1.0F);
+            std::optional<float> ground;
+            if (ground_height) ground = ground_height(new_pos.x, new_pos.z);
+            const float ground_y =
+                ground ? *ground
+                       : glm::mix(pos.y - agent.ground_offset, next.y,
+                                  len > 1e-4F ? step / len : 1.0F);
+            new_pos.y = ground_y + agent.ground_offset;
             // Entities driven kinematically are treated as roots (like physics).
             transform.local[3] = glm::vec4(new_pos, 1.0F);
             transform.world[3] = glm::vec4(new_pos, 1.0F);
@@ -173,7 +219,8 @@ std::expected<void, core::Error> run_nav_agent_self_test() {
 }
 
 std::expected<void, core::Error> run_patrol_self_test() {
-    // Flat plate, two-point looping route.
+    // Flat plate; looping route whose third point floats far off the mesh —
+    // the route must skip it (after the plan-retry cooldown) and keep cycling.
     std::vector<glm::vec3> verts{{-20.0F, 0.0F, -20.0F},
                                  {-20.0F, 0.0F, 20.0F},
                                  {20.0F, 0.0F, 20.0F},
@@ -190,7 +237,7 @@ std::expected<void, core::Error> run_patrol_self_test() {
     auto& agent = registry.emplace<NavAgent>(e);
     agent.speed = 8.0F;
     auto& route = registry.emplace<PatrolRoute>(e);
-    route.points = {{10.0F, 0.0F, 0.0F}, {-10.0F, 0.0F, 0.0F}};
+    route.points = {{10.0F, 0.0F, 0.0F}, {-10.0F, 0.0F, 0.0F}, {0.0F, 50.0F, 0.0F}};
     route.loop = true;
 
     bool reached_a = false;

@@ -124,6 +124,11 @@ struct ComponentInspector<scene::NavAgent> {
     static void draw(entt::registry&, entt::entity, scene::NavAgent& agent) {
         ImGui::DragFloat3("target", &agent.target.x, 0.1F);
         ImGui::DragFloat("speed", &agent.speed, 0.1F, 0.1F, 50.0F, "%.1f m/s");
+        ImGui::DragFloat("ground offset", &agent.ground_offset, 0.05F, 0.0F, 10.0F, "%.2f m");
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Entity origin height above the ground while walking\n"
+                              "(half-height for a centre-pivot mesh, e.g. 0.5 for the unit cube)");
+        }
         if (ImGui::Button(agent.active ? "Stop" : "Go", ImVec2(-1.0F, 0.0F))) {
             agent.active = !agent.active;
             agent.path.clear();

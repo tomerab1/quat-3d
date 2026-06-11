@@ -127,16 +127,21 @@ struct CharacterController {
 // Autonomous navigation: the agent repaths on the baked navmesh whenever
 // `target` changes and follows the waypoints at `speed`. With a
 // CharacterController on the entity it steers the controller (collisions,
-// gravity); otherwise it moves the Transform kinematically. `arrived` flips
-// when the last waypoint is reached. path/waypoint are system-managed.
+// gravity); otherwise it moves the Transform kinematically, snapped to the
+// ground + `ground_offset` (set it to the entity's half-height when the pivot
+// sits at the centre). `arrived` flips when the last waypoint is reached —
+// or at the closest reachable point when the target itself is unreachable.
+// path/waypoint/planned_target/retry_s are system-managed.
 struct NavAgent {
     glm::vec3 target{0.0F};
     float     speed = 3.0F;
+    float     ground_offset = 0.0F; // entity origin height above the ground
     bool      active = false;
     bool      arrived = false;
     std::vector<glm::vec3> path;
     std::size_t            waypoint = 0;
     glm::vec3              planned_target{1e30F, 1e30F, 1e30F}; // path's target
+    float                  retry_s = 0.0F; // cooldown after a failed plan
 };
 
 // A data-driven behaviour tree (13.3): `source` is the tree JSON (composed of

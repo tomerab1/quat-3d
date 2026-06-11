@@ -131,17 +131,20 @@ void render_collect_system(const entt::registry& registry,
     }
 }
 
+entt::entity find_active_camera(const entt::registry& registry) {
+    for (auto [e, cam] : registry.view<const Camera>().each()) {
+        if (cam.is_active && registry.all_of<Transform>(e)) {
+            return e;
+        }
+    }
+    return entt::null;
+}
+
 CameraMatrices camera_system(const entt::registry& registry, float aspect_ratio) {
     CameraMatrices out;
 
-    entt::entity active = entt::null;
-    for (auto [e, cam] : registry.view<const Camera>().each()) {
-        if (cam.is_active) {
-            active = e;
-            break;
-        }
-    }
-    if (active == entt::null || !registry.all_of<Transform>(active)) {
+    const entt::entity active = find_active_camera(registry);
+    if (active == entt::null) {
         return out;
     }
 

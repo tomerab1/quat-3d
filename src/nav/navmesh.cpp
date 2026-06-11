@@ -278,7 +278,9 @@ NavMesh::find_path(const glm::vec3& start, const glm::vec3& end) const {
         return fail("navmesh: endpoint is off the mesh");
     }
 
-    constexpr int max_polys = 256;
+    // Long terrain routes need room: a full corridor that exceeds this comes
+    // back partial and the agent plans the next leg when it runs out.
+    constexpr int max_polys = 1024;
     dtPolyRef polys[max_polys];
     int npolys = 0;
     if (dtStatusFailed(impl_->query->findPath(start_ref, end_ref, snapped_start, snapped_end,

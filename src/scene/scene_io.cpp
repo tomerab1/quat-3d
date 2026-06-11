@@ -122,6 +122,7 @@ std::expected<void, core::Error> save_scene(const Scene& scene,
         if (const auto* a = r.try_get<NavAgent>(e)) {
             je["nav_agent"] = {{"target", vec3_to_json(a->target)},
                                {"speed", a->speed},
+                               {"ground_offset", a->ground_offset},
                                {"active", a->active}};
         }
         if (const auto* b = r.try_get<BehaviorTree>(e)) {
@@ -299,6 +300,7 @@ load_scene(Scene& scene, const std::filesystem::path& path, rhi::GpuAllocator& a
             NavAgent a;
             a.target = vec3_from_json(ja["target"]);
             a.speed = ja.value("speed", 3.0F);
+            a.ground_offset = ja.value("ground_offset", 0.0F);
             a.active = ja.value("active", false);
             r.emplace<NavAgent>(e, a);
         }

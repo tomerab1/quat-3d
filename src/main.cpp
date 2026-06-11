@@ -464,6 +464,24 @@ bool scene_world_bounds(engine::scene::Scene& scene, glm::vec3& out_min, glm::ve
     return any;
 }
 
+// View/projection for the free-fly camera. In editor builds the fly camera is
+// editor state (per CLAUDE.md it never lives in the ECS): scene Camera entities
+// belong to the user's scene, keep their authored transforms, and take over the
+// view only in play mode. Conventions mirror camera_system (Vulkan Y flip).
+[[maybe_unused]] engine::scene::CameraMatrices
+fly_camera_matrices(const glm::vec3& pos, float yaw, float pitch, float aspect) {
+    const glm::vec3 fwd(std::cos(pitch) * std::cos(yaw), std::sin(pitch),
+                        std::cos(pitch) * std::sin(yaw));
+    const engine::scene::Camera defaults{};
+    engine::scene::CameraMatrices out;
+    out.position = pos;
+    out.view = glm::lookAt(pos, pos + fwd, glm::vec3(0.0F, 1.0F, 0.0F));
+    out.projection = glm::perspective(defaults.fov_y, aspect, defaults.near_z, defaults.far_z);
+    out.projection[1][1] *= -1.0F; // Vulkan clip space: Y points down
+    out.view_proj = out.projection * out.view;
+    return out;
+}
+
 // Camera world transform that frames the given AABB: looks at its centre from a
 // distance sized so the bounding sphere fits the vertical field of view.
 glm::mat4 frame_camera_world(const glm::vec3& bmin, const glm::vec3& bmax, float fov_y) {
@@ -2279,6 +2297,12 @@ int main() {
     std::future<engine::terrain::Heightmap> terrain_job;
     engine::terrain::Heightmap terrain_heightmap; // CPU copy retained for physics (12.3)
     std::optional<engine::terrain::TerrainStreamer> terrain_streamer; // 12.4
+    // Terrain placement, written by the per-frame upkeep block and read at the
+    // top of the next frame by the nav ground snap (the anchor moves rarely).
+    glm::vec3 terrain_anchor(0.0F);
+    float terrain_snowline = 110.0F;
+    bool terrain_present = false;
+    bool terrain_stream_mode = false;
     engine::nav::NavMesh navmesh;        // baked on request from the Physics panel (13.1)
     bool navmesh_request = false;
     std::optional<engine::editor::EditorContext::GroundClick> ground_click; // 13.4
@@ -2364,15 +2388,20 @@ int main() {
         std::fprintf(stderr, "[terrain] QUAT_TERRAIN tile requested\n");
     }
 
+    // Non-editor builds keep a scene camera entity driven by the fly input
+    // (camera_system is their only view path). Editor builds own the fly
+    // camera as editor state instead — scene Camera entities are the user's.
+#ifndef ENGINE_EDITOR
     entt::entity camera_entity = scene.create_entity("camera");
-    const engine::scene::Camera& camera =
-        scene.registry().emplace<engine::scene::Camera>(camera_entity);
+    scene.registry().emplace<engine::scene::Camera>(camera_entity);
+#endif
+    const engine::scene::Camera default_camera{};
     scene.tick(); // resolve world transforms before measuring the scene bounds
     glm::vec3 bmin{};
     glm::vec3 bmax{};
     const bool has_geo = scene_world_bounds(scene, bmin, bmax);
     const glm::mat4 framed =
-        has_geo ? frame_camera_world(bmin, bmax, camera.fov_y)
+        has_geo ? frame_camera_world(bmin, bmax, default_camera.fov_y)
                 : glm::inverse(glm::lookAt(glm::vec3(3.0F, 2.5F, 4.0F), glm::vec3(0.0F),
                                            glm::vec3(0.0F, 1.0F, 0.0F)));
 
@@ -2622,17 +2651,8 @@ int main() {
                     r) {
                     std::fprintf(stderr, "[editor] loaded scene: %s\n", path.c_str());
                     // Rebind the loop's cached entities to the loaded scene.
+                    // (The view camera is editor state — nothing to rebind.)
                     spin_entity = entt::null;
-                    camera_entity = entt::null;
-                    for (const entt::entity e :
-                         scene.registry().view<engine::scene::Camera>()) {
-                        camera_entity = e;
-                        break;
-                    }
-                    if (camera_entity == entt::null) {
-                        camera_entity = scene.create_entity("camera");
-                        scene.registry().emplace<engine::scene::Camera>(camera_entity);
-                    }
                     editor.set_selected(entt::null);
                     // The dynamic IBL probe picks up the loaded scene's sun
                     // within one refresh cycle — no explicit rebake needed.
@@ -2827,6 +2847,7 @@ int main() {
             if (move != glm::vec3(0.0F)) {
                 cam_pos += glm::normalize(move) * speed * dt;
             }
+#ifndef ENGINE_EDITOR
             // try_get: the editor can delete any entity, including the camera.
             if (auto* cam_tf = scene.registry().valid(camera_entity)
                                    ? scene.registry().try_get<engine::scene::Transform>(
@@ -2835,6 +2856,7 @@ int main() {
                 cam_tf->local =
                     glm::inverse(glm::lookAt(cam_pos, cam_pos + cam_fwd, world_up));
             }
+#endif
         }
 
         // Spin the demo cube (if present — the editor may have deleted it).
@@ -2852,6 +2874,34 @@ int main() {
                     glm::scale(glm::mat4(1.0F), glm::vec3(spin_scale));
             }
         }
+        // Authoritative ground height at world (x, z): streamed tiles first,
+        // then the single editing tile. Shared by kinematic nav agents (the
+        // coarse navmesh floats off the real surface) and ground clicks.
+        [[maybe_unused]] const engine::scene::GroundHeightFn ground_height_at =
+            [&](float x, float z) -> std::optional<float> {
+            if (terrain_streamer) {
+                const float tile = terrain_streamer->base().tile_size_m;
+                const glm::ivec2 coord(
+                    static_cast<int>(std::floor((x - terrain_anchor.x) / tile + 0.5F)),
+                    static_cast<int>(std::floor((z - terrain_anchor.z) / tile + 0.5F)));
+                const auto it = terrain_streamer->maps().find(coord);
+                if (it == terrain_streamer->maps().end()) return std::nullopt;
+                const glm::vec3 org = terrain_streamer->tile_origin(coord, terrain_anchor);
+                return org.y + it->second.sample(x - org.x, z - org.z);
+            }
+            if (terrain_present && terrain_heightmap.valid()) {
+                const float half = terrain_heightmap.tile_size_m * 0.5F;
+                const float lx = x - (terrain_anchor.x - half);
+                const float lz = z - (terrain_anchor.z - half);
+                if (lx < 0.0F || lz < 0.0F || lx > terrain_heightmap.tile_size_m ||
+                    lz > terrain_heightmap.tile_size_m) {
+                    return std::nullopt;
+                }
+                return terrain_anchor.y + terrain_heightmap.sample(lx, lz);
+            }
+            return std::nullopt;
+        };
+
         if (physics_world) {
             if (character_mode) {
                 engine::scene::character_system(scene.registry(), *physics_world, dt);
@@ -2863,7 +2913,8 @@ int main() {
         else if (editor_play && play_physics) {
             engine::scene::bt_system(scene.registry(), dt);
             if (navmesh.valid()) {
-                engine::scene::nav_agent_system(scene.registry(), navmesh, dt);
+                engine::scene::nav_agent_system(scene.registry(), navmesh, dt,
+                                                ground_height_at);
             }
             engine::scene::character_system(scene.registry(), *play_physics, dt);
             engine::scene::physics_system(scene.registry(), *play_physics, dt);
@@ -2942,26 +2993,46 @@ int main() {
         }
 
         // Third-person follow camera, placed after the character has moved.
-        // try_get both ends: the editor can delete either entity.
-        if (character_mode && scene.registry().valid(character_entity) &&
-            scene.registry().valid(camera_entity)) {
+        // try_get: the editor can delete the character entity.
+        if (character_mode && scene.registry().valid(character_entity)) {
             const auto* char_tf =
                 scene.registry().try_get<engine::scene::Transform>(character_entity);
-            auto* camera_tf = scene.registry().try_get<engine::scene::Transform>(camera_entity);
-            if (char_tf != nullptr && camera_tf != nullptr) {
+            if (char_tf != nullptr) {
                 const glm::vec3 target =
                     glm::vec3(char_tf->world[3]) + glm::vec3(0.0F, 0.8F, 0.0F);
                 const glm::vec3 cam_fwd(std::cos(cam_pitch) * std::cos(cam_yaw),
                                         std::sin(cam_pitch),
                                         std::cos(cam_pitch) * std::sin(cam_yaw));
                 cam_pos = target - cam_fwd * 5.0F;
-                const glm::mat4 view_inv = glm::inverse(glm::lookAt(cam_pos, target, world_up));
-                camera_tf->local = view_inv;
-                camera_tf->world = view_inv;
+#ifndef ENGINE_EDITOR
+                if (auto* camera_tf = scene.registry().valid(camera_entity)
+                                          ? scene.registry().try_get<engine::scene::Transform>(
+                                                camera_entity)
+                                          : nullptr) {
+                    const glm::mat4 view_inv =
+                        glm::inverse(glm::lookAt(cam_pos, target, world_up));
+                    camera_tf->local = view_inv;
+                    camera_tf->world = view_inv;
+                }
+#endif
             }
         }
+#ifdef ENGINE_EDITOR
+        // Edit mode always renders through the editor's fly camera; play mode
+        // hands the view to the scene's active Camera entity when one exists
+        // (a camera parented to a moving object follows it), and falls back to
+        // the fly camera otherwise.
+        const bool through_scene_camera =
+            editor_play &&
+            engine::scene::find_active_camera(scene.registry()) != entt::null;
+        const engine::scene::CameraMatrices cam =
+            through_scene_camera
+                ? engine::scene::camera_system(scene.registry(), aspect)
+                : fly_camera_matrices(cam_pos, cam_yaw, cam_pitch, aspect);
+#else
         const engine::scene::CameraMatrices cam =
             engine::scene::camera_system(scene.registry(), aspect);
+#endif
 
         // TAA: jitter the projection sub-pixel each frame (Halton). The whole
         // frame renders with the jittered view-proj; the resolve reprojects and
@@ -3079,10 +3150,10 @@ int main() {
         // Terrain upkeep: single-tile mode generates async on demand; streaming
         // mode keeps a seamless tile window centred on the camera (12.4). Both
         // upload before this frame's graph builds, without pipeline stalls.
-        glm::vec3 terrain_anchor(0.0F);
-        float terrain_snowline = 110.0F;
-        bool terrain_present = false;
-        bool terrain_stream_mode = false;
+        terrain_anchor = glm::vec3(0.0F);
+        terrain_snowline = 110.0F;
+        terrain_present = false;
+        terrain_stream_mode = false;
         for (auto&& [te, tcomp] : scene.registry().view<engine::scene::Terrain>().each()) {
             terrain_present = true;
             terrain_stream_mode = tcomp.streaming;
@@ -3173,29 +3244,7 @@ int main() {
         if (ground_click) {
             const auto click = *ground_click;
             ground_click.reset();
-            const auto height_at = [&](float x, float z) -> std::optional<float> {
-                if (terrain_streamer) {
-                    const float tile = terrain_streamer->base().tile_size_m;
-                    const glm::ivec2 coord(
-                        static_cast<int>(std::floor((x - terrain_anchor.x) / tile + 0.5F)),
-                        static_cast<int>(std::floor((z - terrain_anchor.z) / tile + 0.5F)));
-                    const auto it = terrain_streamer->maps().find(coord);
-                    if (it == terrain_streamer->maps().end()) return std::nullopt;
-                    const glm::vec3 org = terrain_streamer->tile_origin(coord, terrain_anchor);
-                    return org.y + it->second.sample(x - org.x, z - org.z);
-                }
-                if (terrain_present && terrain_heightmap.valid()) {
-                    const float half = terrain_heightmap.tile_size_m * 0.5F;
-                    const float lx = x - (terrain_anchor.x - half);
-                    const float lz = z - (terrain_anchor.z - half);
-                    if (lx < 0.0F || lz < 0.0F || lx > terrain_heightmap.tile_size_m ||
-                        lz > terrain_heightmap.tile_size_m) {
-                        return std::nullopt;
-                    }
-                    return terrain_anchor.y + terrain_heightmap.sample(lx, lz);
-                }
-                return std::nullopt;
-            };
+            const auto& height_at = ground_height_at; // shared sampler (above)
             std::optional<glm::vec3> hit;
             float prev_t = 0.0F;
             for (float t = 2.0F; t < 2000.0F && !hit; t += 2.0F) {
