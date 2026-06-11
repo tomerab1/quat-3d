@@ -54,6 +54,7 @@ SceneSnapshot capture_scene(const scene::Scene& scene) {
     capture_type(r, snap.colliders);
     capture_type(r, snap.rigid_bodies);
     capture_type(r, snap.characters);
+    capture_type(r, snap.terrains);
     return snap;
 }
 
@@ -82,6 +83,7 @@ void restore_scene(scene::Scene& scene, const SceneSnapshot& snapshot) {
     restore_type(r, snapshot.colliders);
     restore_type(r, snapshot.rigid_bodies);
     restore_type(r, snapshot.characters);
+    restore_type(r, snapshot.terrains);
 }
 
 std::expected<void, core::Error> run_scene_snapshot_self_test() {
@@ -97,6 +99,12 @@ std::expected<void, core::Error> run_scene_snapshot_self_test() {
                                glm::vec3(0.0F));
     r.emplace<scene::RigidBody>(parent, scene::BodyMotion::dynamic, 2.5F);
     r.emplace<scene::PointLight>(child, glm::vec3(1.0F, 0.5F, 0.25F), 7.0F, 3.0F);
+    {
+        scene::Terrain terrain;
+        terrain.params.seed = 99;
+        terrain.regenerate = false; // restored as-is: tiles persist across Stop
+        r.emplace<scene::Terrain>(parent, terrain);
+    }
 
     const SceneSnapshot snap = capture_scene(scene);
 
@@ -131,6 +139,10 @@ std::expected<void, core::Error> run_scene_snapshot_self_test() {
     }
     if (r.get<scene::Collider>(parent).shape != scene::ColliderShape::sphere) {
         return fail("snapshot self-test: collider not restored");
+    }
+    const auto* terrain = r.try_get<scene::Terrain>(parent);
+    if (terrain == nullptr || terrain->params.seed != 99) {
+        return fail("snapshot self-test: terrain component lost across play/stop");
     }
     return {};
 }
