@@ -17,6 +17,7 @@
 #include <expected>
 #include <future>
 #include <limits>
+#include <map>
 #include <optional>
 #include <string>
 #include <unordered_map>
@@ -46,6 +47,7 @@
 #include "engine/renderer/lighting_pass.hpp"
 #include "engine/renderer/taa_pass.hpp"
 #include "engine/renderer/terrain_pass.hpp"
+#include "engine/terrain/streamer.hpp"
 #include "engine/renderer/mesh_pass.hpp"
 #include "engine/renderer/shadow_pass.hpp"
 #include "engine/renderer/skinning_pass.hpp"
@@ -1433,6 +1435,13 @@ int main() {
                         std::fprintf(stderr, "[selftest] terrain FAILED: %s\n",
                                      r.error().message.c_str());
                     }
+                    if (auto r = engine::terrain::run_terrain_streaming_self_test(); r) {
+                        std::fprintf(stderr,
+                                     "[selftest] terrain streaming OK (window + seams)\n");
+                    } else {
+                        std::fprintf(stderr, "[selftest] terrain streaming FAILED: %s\n",
+                                     r.error().message.c_str());
+                    }
                     if (auto r = engine::renderer::run_terrain_pass_self_test(
                             device, allocator, *mesh_cache, transfer, shader_dir);
                         r) {
@@ -2220,6 +2229,9 @@ int main() {
     }
     std::future<engine::terrain::Heightmap> terrain_job;
     engine::terrain::Heightmap terrain_heightmap; // CPU copy retained for physics (12.3)
+    std::optional<engine::terrain::TerrainStreamer> terrain_streamer; // 12.4
+    std::map<glm::ivec2, std::uint32_t, engine::terrain::TileCoordLess>
+        terrain_bodies; // streamed tiles' play-mode physics bodies
 
     // QUAT_TERRAIN=1: drop a procedural terrain tile under the showcase scene
     // (sunken so its mid heights sit near the platform) — exercises the full
@@ -2420,9 +2432,27 @@ int main() {
                 }
                 if (auto world = engine::physics::PhysicsWorld::create(); world) {
                     play_physics = std::move(*world);
-                    // Terrain joins the simulation as a static Jolt height
-                    // field matching the rendered surface (12.3).
-                    if (terrain_heightmap.valid()) {
+                    // Terrain joins the simulation as static Jolt height
+                    // fields matching the rendered surface (12.3/12.4).
+                    if (terrain_streamer) {
+                        glm::vec3 anchor(0.0F);
+                        for (auto&& [te2, t2] :
+                             scene.registry().view<engine::scene::Terrain>().each()) {
+                            const auto* tf2 =
+                                scene.registry().try_get<engine::scene::Transform>(te2);
+                            anchor = tf2 != nullptr ? glm::vec3(tf2->world[3]) : glm::vec3(0.0F);
+                            break;
+                        }
+                        for (const auto& [c, m] : terrain_streamer->maps()) {
+                            const std::uint32_t body = engine::scene::add_height_field_body(
+                                *play_physics, m, terrain_streamer->tile_origin(c, anchor));
+                            if (body != engine::physics::PhysicsWorld::invalid_body) {
+                                terrain_bodies.emplace(c, body);
+                            }
+                        }
+                        std::fprintf(stderr, "[terrain] %zu height-field bodies added\n",
+                                     terrain_bodies.size());
+                    } else if (terrain_heightmap.valid()) {
                         if (engine::scene::add_terrain_body(scene.registry(), *play_physics,
                                                             terrain_heightmap) !=
                             engine::physics::PhysicsWorld::invalid_body) {
@@ -2440,6 +2470,7 @@ int main() {
                 }
             } else {
                 play_physics.reset();
+                terrain_bodies.clear(); // died with the play world
                 if (play_snapshot) {
                     engine::editor::restore_scene(scene, *play_snapshot);
                     play_snapshot.reset();
@@ -2840,31 +2871,89 @@ int main() {
                                                  shadow_radius, 0.1F, shadow_radius * 3.5F);
         const glm::mat4 light_view_proj = shadow_proj * shadow_view;
 
-        // Terrain upkeep: kick async generation when a Terrain component asks,
-        // and upload finished heightmaps (set_heightmap drains the pipeline —
-        // an explicit, logged editor action) before this frame's graph builds.
-        glm::vec3 terrain_origin(0.0F);
+        // Terrain upkeep: single-tile mode generates async on demand; streaming
+        // mode keeps a seamless tile window centred on the camera (12.4). Both
+        // upload before this frame's graph builds, without pipeline stalls.
+        glm::vec3 terrain_anchor(0.0F);
         float terrain_snowline = 110.0F;
         bool terrain_present = false;
+        bool terrain_stream_mode = false;
         for (auto&& [te, tcomp] : scene.registry().view<engine::scene::Terrain>().each()) {
             terrain_present = true;
-            if (tcomp.regenerate && !terrain_job.valid()) {
-                tcomp.regenerate = false;
-                terrain_job = engine::terrain::generate_async(tcomp.params);
-                std::fprintf(stderr, "[terrain] generating %ux%u tile (seed %u)...\n",
-                             tcomp.params.resolution, tcomp.params.resolution, tcomp.params.seed);
-            }
+            terrain_stream_mode = tcomp.streaming;
             const auto* tf = scene.registry().try_get<engine::scene::Transform>(te);
-            const glm::vec3 pos = tf != nullptr ? glm::vec3(tf->world[3]) : glm::vec3(0.0F);
-            terrain_origin = glm::vec3(pos.x - tcomp.params.tile_size_m * 0.5F, pos.y,
-                                       pos.z - tcomp.params.tile_size_m * 0.5F);
+            terrain_anchor = tf != nullptr ? glm::vec3(tf->world[3]) : glm::vec3(0.0F);
             terrain_snowline = tcomp.snowline_m;
-            break; // one tile for now; streaming grids arrive in 12.4
+
+            if (tcomp.streaming) {
+                if (tcomp.regenerate || !terrain_streamer) {
+                    tcomp.regenerate = false;
+                    // Tear down whichever mode ran before this configuration.
+                    if (terrain_streamer) {
+                        for (const auto& [c, m] : terrain_streamer->maps()) {
+                            terrain_pass.remove_tile(c);
+                        }
+                    }
+                    terrain_pass.remove_tile(glm::ivec2(0, 0));
+                    terrain_streamer.emplace(tcomp.params, tcomp.stream_radius);
+                    std::fprintf(stderr, "[terrain] streaming world (seed %u, radius %d)\n",
+                                 tcomp.params.seed, tcomp.stream_radius);
+                }
+            } else {
+                if (terrain_streamer) {
+                    for (const auto& [c, m] : terrain_streamer->maps()) {
+                        terrain_pass.remove_tile(c);
+                    }
+                    terrain_streamer.reset();
+                    tcomp.regenerate = true; // rebuild the fixed tile
+                }
+                if (tcomp.regenerate && !terrain_job.valid()) {
+                    tcomp.regenerate = false;
+                    terrain_job = engine::terrain::generate_async(tcomp.params);
+                    std::fprintf(stderr, "[terrain] generating %ux%u tile (seed %u)...\n",
+                                 tcomp.params.resolution, tcomp.params.resolution,
+                                 tcomp.params.seed);
+                }
+            }
+            break; // a single Terrain entity drives the world
+        }
+        if (terrain_streamer && terrain_present && terrain_stream_mode) {
+            const auto ev = terrain_streamer->update(glm::vec2(
+                cam.position.x - terrain_anchor.x, cam.position.z - terrain_anchor.z));
+            for (const glm::ivec2& c : ev.removed) {
+                terrain_pass.remove_tile(c);
+#ifdef ENGINE_EDITOR
+                if (play_physics && terrain_bodies.contains(c)) {
+                    play_physics->remove_body(terrain_bodies.at(c));
+                    terrain_bodies.erase(c);
+                }
+#endif
+            }
+            for (const glm::ivec2& c : ev.ready) {
+                const engine::terrain::Heightmap& map = terrain_streamer->maps().at(c);
+                if (auto r = terrain_pass.set_tile(c, map, terrain_transfer); r) {
+                    std::fprintf(stderr, "[terrain] tile (%d,%d) streamed in\n", c.x, c.y);
+                } else {
+                    std::fprintf(stderr, "[terrain] tile upload failed: %s\n",
+                                 r.error().message.c_str());
+                }
+#ifdef ENGINE_EDITOR
+                if (play_physics) {
+                    const std::uint32_t body = engine::scene::add_height_field_body(
+                        *play_physics, map, terrain_streamer->tile_origin(c, terrain_anchor));
+                    if (body != engine::physics::PhysicsWorld::invalid_body) {
+                        terrain_bodies.emplace(c, body);
+                    }
+                }
+#endif
+            }
         }
         if (terrain_job.valid() &&
             terrain_job.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
             terrain_heightmap = terrain_job.get();
-            if (auto r = terrain_pass.set_heightmap(terrain_heightmap, terrain_transfer); r) {
+            if (auto r = terrain_pass.set_tile(glm::ivec2(0, 0), terrain_heightmap,
+                                               terrain_transfer);
+                r) {
                 std::fprintf(stderr, "[terrain] tile ready (%.0f m, heights %.1f..%.1f m)\n",
                              terrain_heightmap.tile_size_m, terrain_heightmap.min_height,
                              terrain_heightmap.max_height);
@@ -2909,9 +2998,9 @@ int main() {
             std::fprintf(stderr, "[fatal] gbuffer pass: %s\n", gbuffer.error().message.c_str());
             break;
         }
-        if (terrain_present && terrain_pass.has_heightmap()) {
+        if (terrain_present && terrain_pass.has_tiles()) {
             terrain_pass.add_to_graph(graph, *gbuffer, draw_extent, jittered_vp, cam.position,
-                                      terrain_origin, terrain_snowline);
+                                      terrain_anchor, terrain_snowline);
         }
         auto hdr = fr.lighting.add_to_graph(graph, *gbuffer, draw_extent, light, jittered_inv_vp,
                                             cam.position, *shadow, light_view_proj, point_lights,

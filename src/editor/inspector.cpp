@@ -101,10 +101,19 @@ struct ComponentInspector<scene::Terrain> {
         }
         ImGui::DragFloat("snowline", &terrain.snowline_m, 1.0F, -1000.0F, 5000.0F, "%.0f m");
         ImGui::Separator();
+        if (ImGui::Checkbox("streaming", &terrain.streaming)) {
+            terrain.regenerate = true; // rebuild in the new mode
+        }
+        if (terrain.streaming) {
+            if (ImGui::SliderInt("radius (tiles)", &terrain.stream_radius, 1, 4)) {
+                terrain.regenerate = true;
+            }
+            ImGui::TextWrapped("An endless seeded world streams in around the camera.");
+        }
         if (ImGui::Button("Regenerate", ImVec2(-1.0F, 0.0F))) {
             terrain.regenerate = true;
         }
-        ImGui::TextWrapped("Generation runs on a worker thread; the tile pops in when ready.");
+        ImGui::TextWrapped("Generation runs on a worker thread; tiles pop in when ready.");
     }
 };
 

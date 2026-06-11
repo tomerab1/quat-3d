@@ -27,6 +27,10 @@ struct TerrainParams {
     std::uint32_t resolution = 1025; // texels per side (2^n + 1 plays well with LOD)
     float tile_size_m = 2000.0F;     // world extent of one side
     float height_m = 180.0F;         // peak-to-valley scale before erosion
+    // Tile coordinate in an infinite streamed world: the noise field is
+    // sampled at (world_tile + local01), so neighbouring tiles generated from
+    // the same seed continue each other exactly. (0,0) for a single tile.
+    glm::ivec2 world_tile{0, 0};
 
     // FBM shape.
     int   octaves = 7;

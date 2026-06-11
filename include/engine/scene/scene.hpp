@@ -118,6 +118,12 @@ void physics_system(entt::registry& registry, physics::PhysicsWorld& world, floa
                                              physics::PhysicsWorld& world,
                                              const terrain::Heightmap& map);
 
+// Tile-level variant for streamed worlds: a static height-field body whose
+// minimum XZ corner sits at `origin` (12.4 creates/destroys one per tile).
+[[nodiscard]] std::uint32_t add_height_field_body(physics::PhysicsWorld& world,
+                                                  const terrain::Heightmap& map,
+                                                  const glm::vec3& origin);
+
 // Generates a small tile, adds its height-field body, drops a sphere onto it
 // through the ECS physics system, and verifies it rests on the surface height.
 [[nodiscard]] std::expected<void, core::Error> run_terrain_physics_self_test();

@@ -299,17 +299,9 @@ std::expected<void, core::Error> run_physics_body_self_test() {
     return {};
 }
 
-std::uint32_t add_terrain_body(entt::registry& registry, physics::PhysicsWorld& world,
-                               const terrain::Heightmap& map) {
+std::uint32_t add_height_field_body(physics::PhysicsWorld& world, const terrain::Heightmap& map,
+                                    const glm::vec3& origin) {
     if (!map.valid()) return physics::PhysicsWorld::invalid_body;
-    const auto view = registry.view<const Terrain>();
-    if (view.begin() == view.end()) return physics::PhysicsWorld::invalid_body;
-    const entt::entity e = *view.begin();
-    const auto* tf = registry.try_get<Transform>(e);
-    const glm::vec3 pos = tf != nullptr ? glm::vec3(tf->world[3]) : glm::vec3(0.0F);
-    const float tile = map.tile_size_m;
-    const glm::vec3 origin(pos.x - tile * 0.5F, pos.y, pos.z - tile * 0.5F);
-
     // Jolt wants the sample count block-aligned (multiple of 2); our grids are
     // 2^n + 1, so pad one duplicated row/column. Interior cells then align
     // exactly with the rendered texels; the pad adds a flat one-texel apron
@@ -338,6 +330,17 @@ std::uint32_t add_terrain_body(entt::registry& registry, physics::PhysicsWorld& 
     params.motion = physics::Motion::static_body;
     params.layer = physics::Layer::static_body;
     return world.add_body(params);
+}
+
+std::uint32_t add_terrain_body(entt::registry& registry, physics::PhysicsWorld& world,
+                               const terrain::Heightmap& map) {
+    const auto view = registry.view<const Terrain>();
+    if (view.begin() == view.end()) return physics::PhysicsWorld::invalid_body;
+    const auto* tf = registry.try_get<Transform>(*view.begin());
+    const glm::vec3 pos = tf != nullptr ? glm::vec3(tf->world[3]) : glm::vec3(0.0F);
+    const float tile = map.tile_size_m;
+    return add_height_field_body(world, map,
+                                 glm::vec3(pos.x - tile * 0.5F, pos.y, pos.z - tile * 0.5F));
 }
 
 std::expected<void, core::Error> run_terrain_physics_self_test() {

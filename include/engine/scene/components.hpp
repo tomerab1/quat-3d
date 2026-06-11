@@ -147,6 +147,10 @@ struct Terrain {
     terrain::TerrainParams params{};
     float snowline_m = 110.0F; // world height where snow takes over
     bool  regenerate = true;   // consumed by the frame loop
+    // Streaming (12.4): keep a (2*radius+1)² window of seamless tiles loaded
+    // around the camera instead of one fixed tile.
+    bool streaming = false;
+    int  stream_radius = 1;
 };
 
 // Human-readable label. Editor-only metadata, not on any hot path.

@@ -128,10 +128,12 @@ private:
     return value / total;
 }
 
-// One texel of the composed height field, normalised [0, 1]. `uv` in [0, 1]².
+// One texel of the composed height field, normalised [0, 1]. `uv` in [0, 1]²
+// within the tile; world_tile shifts the noise domain so neighbouring tiles
+// from the same seed continue each other seamlessly.
 [[nodiscard]] float compose_height(const GradientNoise& noise, glm::vec2 uv,
                                    const TerrainParams& tp) {
-    const glm::vec2 p = uv * tp.base_frequency;
+    const glm::vec2 p = (glm::vec2(tp.world_tile) + uv) * tp.base_frequency;
 
     // iq domain warp: offset the sample position by another FBM pair.
     const float wx = fbm(noise, p + glm::vec2(5.2F, 1.3F), 4, tp.lacunarity, tp.gain);
@@ -160,8 +162,27 @@ void erode(std::vector<float>& h, std::uint32_t res, const TerrainParams& tp) {
     const auto at = [&](std::int32_t x, std::int32_t z) -> float& {
         return h[static_cast<std::size_t>(z) * res + static_cast<std::size_t>(x)];
     };
-    Pcg32 rng(static_cast<std::uint64_t>(tp.seed) * 0x9e3779b97f4a7c15ULL + 1);
+    // Droplets vary per world tile but stay fully deterministic.
+    const auto tile_mix = static_cast<std::uint64_t>(
+                              static_cast<std::uint32_t>(tp.world_tile.x) * 73856093U ^
+                              static_cast<std::uint32_t>(tp.world_tile.y) * 19349663U)
+                          << 32;
+    Pcg32 rng((static_cast<std::uint64_t>(tp.seed) ^ tile_mix) * 0x9e3779b97f4a7c15ULL + 1);
     const auto fres = static_cast<float>(res);
+
+    // Erosion is tile-local, so it must not touch the borders: edges stay pure
+    // FBM and therefore match the neighbouring tile exactly (streaming seams).
+    // The fade is applied to the deposited/eroded amounts (conserving mass) and
+    // must reach zero a full brush radius before the edge — the erode brush
+    // spreads 3 cells around the droplet and would otherwise leak onto border
+    // texels from inside the band.
+    const float fade_band = glm::max(fres * 0.05F, 4.0F);
+    const auto edge_fade = [&](glm::vec2 p) {
+        const float d = glm::min(glm::min(p.x, p.y),
+                                 glm::min(fres - 1.0F - p.x, fres - 1.0F - p.y)) -
+                        4.0F;
+        return glm::clamp(d / fade_band, 0.0F, 1.0F);
+    };
 
     for (std::uint32_t d = 0; d < tp.erosion_droplets; ++d) {
         glm::vec2 pos(rng.next_float() * (fres - 2.0F), rng.next_float() * (fres - 2.0F));
@@ -211,11 +232,13 @@ void erode(std::vector<float>& h, std::uint32_t res, const TerrainParams& tp) {
 
             const float capacity =
                 glm::max(-delta, 0.01F) * speed * water * tp.erosion_capacity;
+            const float fade = edge_fade(pos);
             if (sediment > capacity || delta > 0.0F) {
                 // Deposit: fill the pit when moving uphill, else drop the excess.
-                const float deposit = delta > 0.0F
-                                          ? glm::min(delta, sediment)
-                                          : (sediment - capacity) * tp.erosion_deposit_rate;
+                const float deposit = (delta > 0.0F
+                                           ? glm::min(delta, sediment)
+                                           : (sediment - capacity) * tp.erosion_deposit_rate) *
+                                      fade;
                 sediment -= deposit;
                 at(xi, zi) += deposit * (1.0F - fx) * (1.0F - fz);
                 at(xi + 1, zi) += deposit * fx * (1.0F - fz);
@@ -227,7 +250,7 @@ void erode(std::vector<float>& h, std::uint32_t res, const TerrainParams& tp) {
                 // high-frequency noise; the brush is what makes droplets carve
                 // smooth gullies (Beyer).
                 const float amount =
-                    glm::min((capacity - sediment) * tp.erosion_erode_rate, -delta);
+                    glm::min((capacity - sediment) * tp.erosion_erode_rate, -delta) * fade;
                 sediment += amount;
                 constexpr std::int32_t radius = 3;
                 float weight_total = 0.0F;

@@ -165,79 +165,108 @@ TerrainPass::create(const rhi::Device& device, rhi::GpuAllocator& allocator,
     return out;
 }
 
-std::expected<void, core::Error> TerrainPass::set_heightmap(const terrain::Heightmap& map,
-                                                            const rhi::TransferContext& transfer) {
+std::expected<void, core::Error> TerrainPass::set_tile(const glm::ivec2& coord,
+                                                       const terrain::Heightmap& map,
+                                                       const rhi::TransferContext& transfer) {
     if (!map.valid()) return fail("terrain pass: invalid heightmap");
-    // In-flight frames may still sample the old texture; regeneration is an
-    // explicit editor action, so a one-off pipeline drain is acceptable.
-    vkDeviceWaitIdle(device_->handle());
 
+    Tile tile;
     auto image = rhi::upload_device_image(
         *allocator_, transfer, map.heights.data(), map.heights.size() * sizeof(float),
         {map.resolution, map.resolution}, VK_FORMAT_R32_SFLOAT);
     if (!image) return std::unexpected(image.error());
-    auto view = rhi::create_image_view(device_->handle(), image->handle(), VK_FORMAT_R32_SFLOAT);
+    tile.image = std::move(*image);
+    auto view = rhi::create_image_view(device_->handle(), tile.image.handle(),
+                                       VK_FORMAT_R32_SFLOAT);
     if (!view) return std::unexpected(view.error());
-
-    heightmap_ = std::move(*image);
-    heightmap_view_ = std::move(*view);
-    resolution_ = map.resolution;
-    tile_size_m_ = map.tile_size_m;
-    min_height_ = map.min_height;
-    max_height_ = map.max_height;
+    tile.view = std::move(*view);
+    tile.resolution = map.resolution;
+    tile.tile_size_m = map.tile_size_m;
+    tile.min_height = map.min_height;
+    tile.max_height = map.max_height;
 
     auto db = rhi::DescriptorBuffer::create(*device_, *allocator_, db_fns_, layout_);
     if (!db) return std::unexpected(db.error());
-    db->write_sampled_image(0, heightmap_view_.handle(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    db->write_sampled_image(0, tile.view.handle(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
     db->write_sampler(1, sampler_.handle());
-    descriptor_ = std::move(*db);
+    tile.descriptor = std::move(*db);
+
+    if (auto it = tiles_.find(coord); it != tiles_.end()) {
+        retired_.emplace_back(3, std::move(it->second)); // outlive in-flight frames
+        tiles_.erase(it);
+    }
+    tiles_.emplace(coord, std::move(tile));
     return {};
+}
+
+void TerrainPass::remove_tile(const glm::ivec2& coord) {
+    if (auto it = tiles_.find(coord); it != tiles_.end()) {
+        retired_.emplace_back(3, std::move(it->second));
+        tiles_.erase(it);
+    }
 }
 
 void TerrainPass::add_to_graph(rhi::RenderGraph& graph, const renderer::GBufferTargets& gbuffer,
                                VkExtent2D extent, const glm::mat4& view_proj,
-                               const glm::vec3& camera_pos, const glm::vec3& origin,
+                               const glm::vec3& camera_pos, const glm::vec3& anchor,
                                float snowline_m) {
-    if (!has_heightmap()) return;
-
-    // CPU pass: cull each chunk's AABB and pick its LOD by distance.
-    const std::uint32_t chunks =
-        glm::max((resolution_ - 1) / chunk_quads, 1U);
-    const float chunk_size = tile_size_m_ / static_cast<float>(chunks);
-    const float skirt = glm::max((max_height_ - min_height_) * 0.05F, 1.0F);
-    const auto planes = frustum_planes(view_proj);
-
-    frame_draws_.clear();
-    for (std::uint32_t cz = 0; cz < chunks; ++cz) {
-        for (std::uint32_t cx = 0; cx < chunks; ++cx) {
-            const glm::vec2 corner(origin.x + static_cast<float>(cx) * chunk_size,
-                                   origin.z + static_cast<float>(cz) * chunk_size);
-            const glm::vec3 mn(corner.x, origin.y + min_height_ - skirt, corner.y);
-            const glm::vec3 mx(corner.x + chunk_size, origin.y + max_height_,
-                               corner.y + chunk_size);
-            if (!aabb_visible(planes, mn, mx)) continue;
-
-            const glm::vec2 centre = corner + chunk_size * 0.5F;
-            const float dist = glm::length(centre - glm::vec2(camera_pos.x, camera_pos.z));
-            const float ratio = glm::max(dist / (chunk_size * 2.0F), 1.0F);
-            const auto lod = glm::min(static_cast<std::uint32_t>(std::log2(ratio)),
-                                      lod_count - 1);
-
-            ChunkDraw draw;
-            draw.chunk = glm::vec4(corner, chunk_size, skirt);
-            const float uv_scale = 1.0F / static_cast<float>(chunks);
-            draw.region = glm::vec4(static_cast<float>(cx) * uv_scale,
-                                    static_cast<float>(cz) * uv_scale, uv_scale,
-                                    tile_size_m_ / static_cast<float>(resolution_ - 1));
-            draw.lod = lod;
-            frame_draws_.push_back(draw);
+    // Age the retire queue (called once per frame): destroy tiles once every
+    // frame that could have referenced them has left the GPU.
+    for (auto it = retired_.begin(); it != retired_.end();) {
+        if (--it->first <= 0) {
+            it = retired_.erase(it);
+        } else {
+            ++it;
         }
+    }
+    if (tiles_.empty()) return;
+
+    const auto planes = frustum_planes(view_proj);
+    frame_draws_.clear();
+    for (const auto& [coord, tile] : tiles_) {
+        // Tile (0,0) is centred on the anchor; neighbours continue the grid.
+        const float tsize = tile.tile_size_m;
+        const glm::vec3 origin(anchor.x + (static_cast<float>(coord.x) - 0.5F) * tsize, anchor.y,
+                               anchor.z + (static_cast<float>(coord.y) - 0.5F) * tsize);
+
+        const std::uint32_t chunks = glm::max((tile.resolution - 1) / chunk_quads, 1U);
+        const float chunk_size = tsize / static_cast<float>(chunks);
+        const float skirt = glm::max((tile.max_height - tile.min_height) * 0.05F, 1.0F);
+
+        TileDraws draws;
+        draws.tile = &tile;
+        for (std::uint32_t cz = 0; cz < chunks; ++cz) {
+            for (std::uint32_t cx = 0; cx < chunks; ++cx) {
+                const glm::vec2 corner(origin.x + static_cast<float>(cx) * chunk_size,
+                                       origin.z + static_cast<float>(cz) * chunk_size);
+                const glm::vec3 mn(corner.x, origin.y + tile.min_height - skirt, corner.y);
+                const glm::vec3 mx(corner.x + chunk_size, origin.y + tile.max_height,
+                                   corner.y + chunk_size);
+                if (!aabb_visible(planes, mn, mx)) continue;
+
+                const glm::vec2 centre = corner + chunk_size * 0.5F;
+                const float dist = glm::length(centre - glm::vec2(camera_pos.x, camera_pos.z));
+                const float ratio = glm::max(dist / (chunk_size * 2.0F), 1.0F);
+                const auto lod = glm::min(static_cast<std::uint32_t>(std::log2(ratio)),
+                                          lod_count - 1);
+
+                ChunkDraw draw;
+                draw.chunk = glm::vec4(corner, chunk_size, skirt);
+                const float uv_scale = 1.0F / static_cast<float>(chunks);
+                draw.region = glm::vec4(static_cast<float>(cx) * uv_scale,
+                                        static_cast<float>(cz) * uv_scale, uv_scale,
+                                        tsize / static_cast<float>(tile.resolution - 1));
+                draw.lod = lod;
+                draws.chunks.push_back(draw);
+            }
+        }
+        if (!draws.chunks.empty()) frame_draws_.push_back(std::move(draws));
     }
     if (frame_draws_.empty()) return;
 
     const GBufferTargets t = gbuffer;
     const glm::mat4 vp = view_proj;
-    const float origin_y = origin.y;
+    const float origin_y = anchor.y;
     graph.add_pass("terrain", rhi::PassType::graphics)
         .writes(t.albedo, rhi::ResourceUsage::color_attachment)
         .writes(t.normal, rhi::ResourceUsage::color_attachment)
@@ -286,21 +315,24 @@ void TerrainPass::add_to_graph(rhi::RenderGraph& graph, const renderer::GBufferT
             vkCmdSetScissor(cmd, 0, 1, &scissor);
 
             vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_.handle());
-            descriptor_.bind(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_.layout(), 0);
 
-            const float texel_uv = 1.0F / static_cast<float>(resolution_);
-            for (const ChunkDraw& draw : frame_draws_) {
-                TerrainPushConstants push{};
-                push.view_proj = vp;
-                push.chunk = draw.chunk;
-                push.region = draw.region;
-                push.shade = glm::vec4(static_cast<float>(chunk_quads), texel_uv, snowline_m,
-                                       0.72F);
-                push.misc = glm::vec4(origin_y, 0.0F, 0.0F, 0.0F);
-                vkCmdPushConstants(cmd, pipeline_.layout(), kStages, 0, sizeof(push), &push);
-                vkCmdBindIndexBuffer(cmd, lods_[draw.lod].buffer.handle(), 0,
-                                     VK_INDEX_TYPE_UINT32);
-                vkCmdDrawIndexed(cmd, lods_[draw.lod].count, 1, 0, 0, 0);
+            for (const TileDraws& draws : frame_draws_) {
+                draws.tile->descriptor.bind(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                            pipeline_.layout(), 0);
+                const float texel_uv = 1.0F / static_cast<float>(draws.tile->resolution);
+                for (const ChunkDraw& draw : draws.chunks) {
+                    TerrainPushConstants push{};
+                    push.view_proj = vp;
+                    push.chunk = draw.chunk;
+                    push.region = draw.region;
+                    push.shade = glm::vec4(static_cast<float>(chunk_quads), texel_uv,
+                                           snowline_m, 0.72F);
+                    push.misc = glm::vec4(origin_y, 0.0F, 0.0F, 0.0F);
+                    vkCmdPushConstants(cmd, pipeline_.layout(), kStages, 0, sizeof(push), &push);
+                    vkCmdBindIndexBuffer(cmd, lods_[draw.lod].buffer.handle(), 0,
+                                         VK_INDEX_TYPE_UINT32);
+                    vkCmdDrawIndexed(cmd, lods_[draw.lod].count, 1, 0, 0, 0);
+                }
             }
             vkCmdEndRendering(cmd);
         });
@@ -367,7 +399,9 @@ run_terrain_pass_self_test(const rhi::Device& device, rhi::GpuAllocator& allocat
     tp.octaves = 5;
     tp.erosion_droplets = 2'000;
     const terrain::Heightmap map = terrain::generate(tp);
-    if (auto r = pass->set_heightmap(map, transfer); !r) return std::unexpected(r.error());
+    if (auto r = pass->set_tile(glm::ivec2(0, 0), map, transfer); !r) {
+        return std::unexpected(r.error());
+    }
 
     // Top-down camera over the tile centre.
     constexpr VkExtent2D extent{128, 128};
@@ -382,7 +416,8 @@ run_terrain_pass_self_test(const rhi::Device& device, rhi::GpuAllocator& allocat
     rhi::RenderGraph graph(pool);
     auto targets = mesh_pass->add_to_graph(graph, extent, vp, {}); // clears only
     if (!targets) return std::unexpected(targets.error());
-    pass->add_to_graph(graph, *targets, extent, vp, eye, glm::vec3(0.0F), /*snowline=*/1000.0F);
+    pass->add_to_graph(graph, *targets, extent, vp, eye, glm::vec3(128.0F, 0.0F, 128.0F),
+                       /*snowline=*/1000.0F);
     if (auto c = graph.compile(); !c) return std::unexpected(c.error());
 
     const VkDeviceSize bytes = static_cast<VkDeviceSize>(extent.width) * extent.height * 4;

@@ -115,7 +115,9 @@ std::expected<void, core::Error> save_scene(const Scene& scene,
                              {"octaves", t->params.octaves},
                              {"warp", t->params.warp_strength},
                              {"droplets", t->params.erosion_droplets},
-                             {"snowline", t->snowline_m}};
+                             {"snowline", t->snowline_m},
+                             {"streaming", t->streaming},
+                             {"stream_radius", t->stream_radius}};
         }
         entities.push_back(std::move(je));
     }
@@ -274,6 +276,8 @@ load_scene(Scene& scene, const std::filesystem::path& path, rhi::GpuAllocator& a
             t.params.warp_strength = jt.value("warp", 0.30F);
             t.params.erosion_droplets = jt.value("droplets", 120'000U);
             t.snowline_m = jt.value("snowline", 110.0F);
+            t.streaming = jt.value("streaming", false);
+            t.stream_radius = jt.value("stream_radius", 1);
             t.regenerate = true; // rebuild on load
             r.emplace<Terrain>(e, t);
         }

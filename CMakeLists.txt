@@ -185,7 +185,8 @@ set_source_files_properties(src/scene/stb_image_impl.cpp PROPERTIES COMPILE_OPTI
 # in 12.1; chunked LOD rendering and Jolt height fields layer on in 12.2/12.3.
 # ---------------------------------------------------------------------------
 add_library(engine_terrain STATIC
-    src/terrain/generator.cpp)
+    src/terrain/generator.cpp
+    src/terrain/streamer.cpp)
 target_link_libraries(engine_terrain PUBLIC engine_flags glm::glm)
 target_include_directories(engine_terrain PUBLIC ${ENGINE_PUBLIC_INCLUDE})
 

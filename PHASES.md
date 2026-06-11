@@ -569,11 +569,20 @@ Goal: large-scale procedurally generated terrain, editable and walkable.
   physics system rests on the sampled surface height. The editor brush moves to 12.4+ (it
   needs partial re-upload, which streaming's tile machinery provides).
   *Commit: `[Phase12/Slice3] terrain physics (Jolt height field)`*
-- [ ] **12.4 — Terrain / world streaming**: chunks (terrain + the entities standing on them)
-  load and unload around the camera on the worker pool — generation/IO off the main thread,
-  GPU uploads through a per-frame budget, physics bodies created/destroyed with their chunk.
-  Builds on Phase 10's async asset pipeline; entity streaming needs scene serialization
-  (cell-based world partition).
+- [x] **12.4 — Terrain streaming**: `TerrainStreamer` keeps a (2*radius+1)² window of tiles
+  loaded around the camera — one generation job at a time on a worker thread (nearest-missing
+  first), tiles dropped as the window moves. Tiles of one seed are **seam-free**: the
+  generator samples noise in world-tile coordinates (`TerrainParams::world_tile`) and fades
+  erosion to zero a brush-radius before tile borders (mass-conserving), so adjacent edges are
+  bit-identical (self-test asserts it). TerrainPass became multi-tile (per-tile heightmap
+  texture + descriptor, shared LOD index buffers); uploads never stall — fresh images per
+  tile, replaced/unloaded tiles retire for 3 frames before destruction. Play mode creates and
+  destroys a static height-field body with each tile. Terrain component gains
+  streaming/stream_radius (inspector + scene file). One ready tile uploads per frame (the
+  single-job streamer is the natural budget). ENTITY streaming (cells of scene content) still
+  defers to Phase 10's async asset pipeline as planned; the editor sculpt brush also waits
+  (needs partial texture re-upload).
+  *Commit: `[Phase12/Slice4] terrain streaming (seamless seeded tiles)`*
 
 ## Phase 13 — Gameplay Framework (NPCs)
 
