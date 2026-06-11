@@ -315,6 +315,10 @@ void draw_renderer_panel(RendererSettings& settings, scene::Scene* scene) {
         rebake |= ImGui::IsItemDeactivatedAfterEdit();
         ImGui::SliderFloat("detail", &c.detail, 0.0F, 1.0F, "%.2f");
         rebake |= ImGui::IsItemDeactivatedAfterEdit();
+        // Wind only drifts the field — no rebake needed (reflections lag the
+        // drift until the next bake anyway, which is imperceptible).
+        ImGui::SliderFloat("wind speed", &c.wind_speed, 0.0F, 80.0F, "%.0f m/s");
+        ImGui::SliderFloat("wind direction", &c.wind_dir_deg, -180.0F, 180.0F, "%.0f deg");
         ImGui::EndDisabled();
         if (rebake) {
             settings.rebake_ibl = true;

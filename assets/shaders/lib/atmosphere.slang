@@ -196,11 +196,13 @@ public struct CloudParams {
     public float thickness_km; // shell thickness
     public float freq;         // 1 / base feature size in km
     public float detail;       // edge erosion strength (0..1)
+    public float wind_x;       // accumulated wind drift (km, world xz)
+    public float wind_z;
 };
 
 // Unpacks the two push-constant float4s (matches CloudSettings::pack on the
 // CPU): a = (coverage, extinction, bottom_km, thickness_km), b = (freq,
-// detail, unused, unused).
+// detail, wind drift x, wind drift z).
 public CloudParams unpack_cloud_params(float4 a, float4 b) {
     CloudParams cp;
     cp.coverage = a.x;
@@ -209,6 +211,8 @@ public CloudParams unpack_cloud_params(float4 a, float4 b) {
     cp.thickness_km = a.w;
     cp.freq = b.x;
     cp.detail = b.y;
+    cp.wind_x = b.z;
+    cp.wind_z = b.w;
     return cp;
 }
 
@@ -217,8 +221,13 @@ public float interleaved_gradient_noise(float2 px) {
     return frac(52.9829189 * frac(0.06711056 * px.x + 0.00583715 * px.y));
 }
 
+// Sin-free hash (Dave Hoskins' hash12). frac(sin(dot)) hashes need full-
+// precision sin at huge arguments — fine on llvmpipe, but hardware fast-trig
+// (NVIDIA) collapses the lattice into blocky cells. Never hash through sin.
 float cloud_hash(float2 p) {
-    return frac(sin(dot(p, float2(127.1, 311.7))) * 43758.5453);
+    float3 q = frac(float3(p.x, p.y, p.x) * 0.1031);
+    q += dot(q, float3(q.y, q.z, q.x) + 33.33);
+    return frac((q.x + q.y) * q.z);
 }
 
 float cloud_value_noise(float2 p) {
@@ -233,11 +242,14 @@ float cloud_value_noise(float2 p) {
 }
 
 float cloud_fbm(float2 p) {
+    // Rotate between octaves so lattice axes don't line up across scales
+    // (axis-aligned streaking otherwise).
+    const float2x2 rot = float2x2(0.80, 0.60, -0.60, 0.80);
     float v = 0.0;
     float amp = 0.5;
     for (int i = 0; i < 5; ++i) {
         v += amp * cloud_value_noise(p);
-        p = p * 2.17 + float2(13.7, 9.1);
+        p = mul(rot, p) * 2.17 + float2(13.7, 9.1);
         amp *= 0.5;
     }
     return v;
@@ -249,12 +261,15 @@ float cloud_density(float3 p, float altitude_km, float bottom_r, float top_r, Cl
     float profile = smoothstep(0.0, 0.20, h01) * (1.0 - smoothstep(0.5, 1.0, h01));
     if (profile <= 0.0) return 0.0;
 
-    float2 uv = p.xz * cp.freq;
+    // Wind advects the whole field; the detail layer drifts a little faster so
+    // shapes churn and evolve instead of translating rigidly.
+    float2 wind = float2(cp.wind_x, cp.wind_z);
+    float2 uv = (p.xz + wind) * cp.freq;
     float base = cloud_fbm(uv);
     float coverage_t = 1.0 - cp.coverage;
     float d = saturate((base - coverage_t) / max(1.0 - coverage_t, 1e-3));
     // Erode edges more than cores for billowy silhouettes.
-    float detail = cloud_fbm(uv * 5.31 + 17.7);
+    float detail = cloud_fbm(uv * 5.31 + 17.7 + wind * cp.freq * 2.3);
     d = saturate(d - (1.0 - d) * detail * cp.detail);
     return d * d * (3.0 - 2.0 * d) * profile;
 }

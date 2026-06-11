@@ -523,9 +523,14 @@ Goal: a fully dynamic sky — movable sun with correct scattering, volumetric cl
   editor's Renderer panel (IBL rebakes on slider release, like the sun). Full-parallax
   volumetrics with a real noise-texture stack + temporal reprojection (Schneider-style) are
   the follow-up.
+  Cloud noise hashes are sin-free (Hoskins hash12 — `frac(sin())` collapses into blocky
+  lattice cells on hardware fast-trig like NVIDIA), with octave rotation in the FBM, and the
+  field drifts with an editor-controlled wind (speed + heading; the detail layer advects
+  faster so shapes churn rather than translate rigidly).
   *Commits: `[Phase11/Slice2] volumetric clouds in the sky-view LUT`,
   `[Phase11/Slice2.1] clouds marched per pixel - sharp shapes`,
-  `[Phase11/Slice2.2] cloud march jitter (de-banding) + editor cloud controls`*
+  `[Phase11/Slice2.2] cloud march jitter (de-banding) + editor cloud controls`,
+  `[Phase11/Slice2.3] sin-free cloud hash (NVIDIA blocks) + wind drift`*
 - [ ] **11.3 — Dynamic IBL**: re-render the environment probe incrementally (a face per frame)
   so ambient/reflections track the moving sun without bake hitches.
 

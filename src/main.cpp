@@ -1701,13 +1701,17 @@ int main() {
 #endif
 
     // Cloud parameters for the lighting background + IBL bake: the editor's
-    // Renderer panel edits them; headless builds use the defaults.
+    // Renderer panel edits them; headless builds use the defaults. The frame
+    // loop accumulates cloud_time_s to drive the wind drift (always, like the
+    // animated sky in other engines — not gated on play mode).
+    float cloud_time_s = 0.0F;
     const auto current_clouds = [&]() -> engine::renderer::CloudSettings {
+        engine::renderer::CloudSettings c{};
 #ifdef ENGINE_EDITOR
-        return render_settings.clouds;
-#else
-        return {};
+        c = render_settings.clouds;
 #endif
+        c.time_s = cloud_time_s;
+        return c;
     };
 
     // Per-frame-in-flight deferred chains (GBuffer -> lighting -> tonemap). Each
@@ -2544,6 +2548,7 @@ int main() {
         const std::uint64_t now_ticks = SDL_GetTicksNS();
         const float dt = static_cast<float>(now_ticks - last_ticks) * 1e-9F;
         last_ticks = now_ticks;
+        cloud_time_s += dt;
 
         constexpr float look_sensitivity = 0.0025F;
         cam_yaw += look_dx * look_sensitivity;
