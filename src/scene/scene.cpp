@@ -56,8 +56,11 @@ void Scene::set_parent(entt::entity child, entt::entity parent) {
 }
 
 void Scene::tick(float dt) {
-    animation_system(registry_, dt);
+    // Transforms first: the animation system folds each skinned entity's
+    // current Transform.world into its skinning matrices, so worlds must be
+    // up to date before sampling (animation writes no transforms itself).
     transform_system(registry_);
+    animation_system(registry_, dt);
     render_collect_system(registry_, draw_list_);
 }
 
@@ -73,11 +76,18 @@ entt::entity Scene::active_camera() const {
 // ---------------------------------------------------------------------------
 
 void animation_system(entt::registry& registry, float dt) {
-    for (auto [e, anim, skinned] : registry.view<Animator, SkinnedMesh>().each()) {
+    for (auto [e, anim, skinned, transform] :
+         registry.view<Animator, SkinnedMesh, Transform>().each()) {
         if (!skinned.skeleton.valid() || !skinned.skeleton.is_loaded()) {
             continue;
         }
         const animation::SkeletonAsset& skeleton = *skinned.skeleton;
+
+        // The armature root in world space: the entity's current world transform
+        // (fresh — transform_system runs first) times the load-time offset from
+        // the entity's frame to the armature. Skinned draws use an identity
+        // model matrix, so this is what places (and moves) the model.
+        const glm::mat4 root = transform.world * skinned.root_transform;
 
         if (anim.clip.valid() && anim.clip.is_loaded() && anim.clip->valid()) {
             const animation::AnimClipAsset& clip = *anim.clip;
@@ -91,10 +101,9 @@ void animation_system(entt::registry& registry, float dt) {
                 }
             }
             skinned.joint_matrices =
-                animation::sample_skinning_matrices(skeleton, clip, anim.time, skinned.root_transform);
+                animation::sample_skinning_matrices(skeleton, clip, anim.time, root);
         } else {
-            skinned.joint_matrices =
-                animation::bind_skinning_matrices(skeleton, skinned.root_transform);
+            skinned.joint_matrices = animation::bind_skinning_matrices(skeleton, root);
         }
     }
 }

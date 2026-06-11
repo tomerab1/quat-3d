@@ -1043,7 +1043,14 @@ assemble_scene(const fastgltf::Asset& a, const std::string& key_prefix,
                 if (n.skinIndex.has_value() && n.skinIndex.value() < skel_handles.size()) {
                     SkinnedMesh& sm = reg.emplace<SkinnedMesh>(
                         ent, skel_handles[n.skinIndex.value()], std::vector<glm::mat4>{});
-                    sm.root_transform = skin_root_transform[n.skinIndex.value()];
+                    // Rebase the armature global into this entity's frame: the
+                    // animation system multiplies the entity's Transform.world on
+                    // top each tick (so editing the transform moves the model).
+                    // For an untouched instance world == the mesh node's glTF
+                    // global, and the product reduces to the armature global.
+                    sm.root_transform =
+                        glm::inverse(node_global_of(static_cast<int>(node_index))) *
+                        skin_root_transform[n.skinIndex.value()];
                     if (!clip_handles.empty()) {
                         reg.emplace<Animator>(ent, clip_handles[0], 0.0F, 1.0F, true);
                     }

@@ -59,10 +59,11 @@ struct MeshSource {
 struct SkinnedMesh {
     asset::AssetHandle<animation::SkeletonAsset> skeleton;
     std::vector<glm::mat4>                       joint_matrices;
-    // World transform of the skeleton's root ancestor (the "armature" node above
-    // the joints). The skeleton hierarchy is resolved relative to this, so it
-    // must be folded into the joint matrices for the character to sit in the
-    // right place. Identity when the skeleton roots at the scene root.
+    // Load-time offset from this entity's frame to the skeleton's root ancestor
+    // (the "armature" node above the joints): inverse(mesh node global) *
+    // armature global, both in glTF scene space. The animation system folds the
+    // entity's current Transform.world on top each tick, so the skinned mesh
+    // follows the entity when it is moved. Identity when armature == mesh node.
     glm::mat4                                    root_transform{1.0F};
 };
 
