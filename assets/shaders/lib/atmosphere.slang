@@ -155,8 +155,9 @@ public void skyview_params_from_uv(float2 uv, out float view_zenith, out float l
 }
 
 // Samples the sky-view LUT for a world-space view direction (y up) and sun
-// direction (pointing FROM the scene TOWARD the sun).
-public float3 sample_skyview(Texture2D lut, SamplerState samp, float3 view_dir,
+// direction (pointing FROM the scene TOWARD the sun). rgb = sky luminance,
+// a = cloud transmittance along the ray (1 = clear).
+public float4 sample_skyview(Texture2D lut, SamplerState samp, float3 view_dir,
                              float3 sun_dir) {
     float view_zenith_cos = view_dir.y;
     float horizon_cos = -sqrt(max(1.0 - (ATMOS_GROUND_RADIUS * ATMOS_GROUND_RADIUS) /
@@ -171,5 +172,5 @@ public float3 sample_skyview(Texture2D lut, SamplerState samp, float3 view_dir,
     float azimuth_cos = dot(view_h, sun_h);
 
     float2 uv = skyview_uv_from(view_zenith_cos, azimuth_cos, below);
-    return lut.SampleLevel(samp, uv, 0.0).rgb;
+    return lut.SampleLevel(samp, uv, 0.0);
 }

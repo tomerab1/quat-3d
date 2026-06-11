@@ -353,19 +353,23 @@ run_atmosphere_self_test(const rhi::Device& device, rhi::GpuAllocator& allocator
         return fail("atmosphere self-test: horizon ray not reddened vs zenith");
     }
 
-    // Sky-view (high sun): the upper (sky) half must be non-black and
-    // blue-dominant; the lower (ground) half darker than the sky.
+    // Sky-view (high sun): averaged over a high-altitude row so individual
+    // (white-ish) cloud texels cannot skew it — the sky half must be non-black
+    // and blue-dominant, and the below-horizon half dimmer than the sky.
     auto sky = read_image(pass->skyview_image(), kSkyViewW, kSkyViewH);
     if (!sky) return std::unexpected(sky.error());
-    const auto sky_px = [&](std::uint32_t x, std::uint32_t y, int c) {
-        return (*sky)[(std::size_t(y) * kSkyViewW + x) * 4 + std::size_t(c)];
+    const auto row_mean = [&](std::uint32_t y, int c) {
+        float sum = 0.0F;
+        for (std::uint32_t x = 0; x < kSkyViewW; ++x) {
+            sum += (*sky)[(std::size_t(y) * kSkyViewW + x) * 4 + std::size_t(c)];
+        }
+        return sum / float(kSkyViewW);
     };
-    const std::uint32_t cx = kSkyViewW / 2;
-    const float up_r = sky_px(cx, kSkyViewH / 8, 0);
-    const float up_b = sky_px(cx, kSkyViewH / 8, 2);
-    const float down_b = sky_px(cx, kSkyViewH - 2, 2);
+    const float up_r = row_mean(kSkyViewH / 8, 0);
+    const float up_b = row_mean(kSkyViewH / 8, 2);
+    const float down_b = row_mean(kSkyViewH - 2, 2);
     if (!(up_b > 1e-4F && up_b > up_r)) {
-        return fail("atmosphere self-test: sky-view zenith not blue-dominant");
+        return fail("atmosphere self-test: sky-view zenith row not blue-dominant");
     }
     if (!(down_b < up_b)) {
         return fail("atmosphere self-test: below-horizon brighter than the sky");

@@ -38,12 +38,13 @@ void compute_main(uint3 tid : SV_DispatchThreadID) {
 
     float3 radiance;
     if (pc.sun_dir.w > 0.5) {
-        radiance = sample_skyview(g_skyview, g_samp, dir, sun) * SKY_LUT_BRIGHTNESS;
+        float4 sky_sample = sample_skyview(g_skyview, g_samp, dir, sun);
+        radiance = sky_sample.rgb * SKY_LUT_BRIGHTNESS;
         float cos_sun = dot(dir, sun);
         if (cos_sun > 0.9998) {
             float3 sun_trans =
                 sample_transmittance(g_transmittance, g_samp, ATMOS_VIEW_HEIGHT, sun.y);
-            radiance += sun_trans * 80.0 * smoothstep(0.9998, 0.99995, cos_sun);
+            radiance += sun_trans * sky_sample.a * 80.0 * smoothstep(0.9998, 0.99995, cos_sun);
         }
     } else {
         radiance = sky(dir, sun);

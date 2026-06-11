@@ -243,13 +243,16 @@ void compute_main(uint3 tid : SV_DispatchThreadID) {
             float3 sun = normalize(pc.direction.xyz);
             if (pc.direction.w > 1.5) {
                 // Physically-based sky (Hillaire LUTs) + analytic sun disc
-                // tinted by the transmittance toward the sun.
-                bg = sample_skyview(g_skyview, g_ibl_sampler, ray, sun) * SKY_LUT_BRIGHTNESS;
+                // tinted by the transmittance toward the sun and dimmed by the
+                // cloud transmittance stored in the sky-view alpha.
+                float4 sky_sample = sample_skyview(g_skyview, g_ibl_sampler, ray, sun);
+                bg = sky_sample.rgb * SKY_LUT_BRIGHTNESS;
                 float cos_sun = dot(ray, sun);
                 if (cos_sun > 0.9998) {
                     float3 sun_trans = sample_transmittance(
                         g_transmittance_lut, g_ibl_sampler, ATMOS_VIEW_HEIGHT, sun.y);
-                    bg += sun_trans * 80.0 * smoothstep(0.9998, 0.99995, cos_sun);
+                    bg += sun_trans * sky_sample.a * 80.0 *
+                          smoothstep(0.9998, 0.99995, cos_sun);
                 }
             } else {
                 bg = sky(ray, sun);
