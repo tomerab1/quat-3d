@@ -161,8 +161,9 @@ GraphicsPipeline::create(const Device& device, VkPipelineCache cache, const Crea
     VkGraphicsPipelineCreateInfo pipeline_info{};
     pipeline_info.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
     pipeline_info.pNext = &rendering_info;
-    // Pipelines that bind descriptor-buffer set layouts must declare it.
-    if (!info.set_layouts.empty()) {
+    // Pipelines that bind descriptor-buffer set layouts must declare it. Not set
+    // on the classic-sets fallback backend, which binds plain descriptor sets.
+    if (!info.set_layouts.empty() && device.uses_descriptor_buffer()) {
         pipeline_info.flags = VK_PIPELINE_CREATE_DESCRIPTOR_BUFFER_BIT_EXT;
     }
     pipeline_info.stageCount = static_cast<std::uint32_t>(stages.size());

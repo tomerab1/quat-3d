@@ -2,6 +2,9 @@
 
 #include <cstdint>
 #include <expected>
+#ifdef ENGINE_DESCRIPTOR_SETS_FALLBACK
+#include <optional>
+#endif
 
 #include <vulkan/vulkan.h>
 #include <vk_mem_alloc.h>
@@ -163,6 +166,19 @@ upload_device_buffer(GpuAllocator& allocator, const TransferContext& transfer,
 // Required to reference uniform/storage buffers from a descriptor buffer.
 [[nodiscard]] VkDeviceAddress
 buffer_device_address(VkDevice device, const GpuBuffer& buffer);
+
+#ifdef ENGINE_DESCRIPTOR_SETS_FALLBACK
+// Classic-sets fallback support: vkUpdateDescriptorSets needs VkBuffer + offset,
+// but the descriptor API traffics in raw device addresses. Buffers created with
+// SHADER_DEVICE_ADDRESS usage are recorded so a write can be translated back to
+// the buffer that contains the address.
+struct BufferAddressRange {
+    VkBuffer     buffer = VK_NULL_HANDLE;
+    VkDeviceSize offset = 0;
+};
+[[nodiscard]] std::optional<BufferAddressRange>
+find_buffer_for_address(VkDeviceAddress address);
+#endif
 
 // Full mip chain length for an extent: floor(log2(max(w, h))) + 1.
 [[nodiscard]] std::uint32_t full_mip_levels(VkExtent2D extent);

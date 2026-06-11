@@ -1,5 +1,6 @@
 #include "engine/rhi/descriptor_buffer.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cstdio>
 #include <utility>
@@ -43,8 +44,18 @@ DescriptorBufferFunctions DescriptorBufferFunctions::load(VkDevice device) {
 }
 
 bool DescriptorBufferFunctions::valid() const {
-    return get_layout_size && get_binding_offset && get_descriptor && cmd_bind_buffers
-        && cmd_set_offsets;
+    const bool all = get_layout_size && get_binding_offset && get_descriptor
+        && cmd_bind_buffers && cmd_set_offsets;
+#ifdef ENGINE_DESCRIPTOR_SETS_FALLBACK
+    // Classic-sets backend: the device was created without the extension, so the
+    // entry points are absent as a set. Treat the fully-unloaded struct as valid
+    // — those functions are never called on the fallback path.
+    const bool none = !get_layout_size && !get_binding_offset && !get_descriptor
+        && !cmd_bind_buffers && !cmd_set_offsets;
+    return all || none;
+#else
+    return all;
+#endif
 }
 
 // ===========================================================================
@@ -53,6 +64,8 @@ bool DescriptorBufferFunctions::valid() const {
 std::expected<DescriptorSetLayout, core::Error>
 DescriptorSetLayout::create(const Device& device, const DescriptorBufferFunctions& fns,
                             std::span<const DescriptorBinding> bindings) {
+    const bool classic = device.descriptor_backend() == DescriptorBackend::classic_sets;
+
     std::vector<VkDescriptorSetLayoutBinding> vk_bindings;
     vk_bindings.reserve(bindings.size());
     for (const DescriptorBinding& b : bindings) {
@@ -66,15 +79,31 @@ DescriptorSetLayout::create(const Device& device, const DescriptorBufferFunction
 
     VkDescriptorSetLayoutCreateInfo info{};
     info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-    info.flags = VK_DESCRIPTOR_SET_LAYOUT_CREATE_DESCRIPTOR_BUFFER_BIT_EXT;
+    info.flags = classic ? 0 : VK_DESCRIPTOR_SET_LAYOUT_CREATE_DESCRIPTOR_BUFFER_BIT_EXT;
     info.bindingCount = static_cast<std::uint32_t>(vk_bindings.size());
     info.pBindings = vk_bindings.data();
 
     DescriptorSetLayout out;
     out.device_ = device.handle();
+    out.classic_ = classic;
     if (VkResult r = vkCreateDescriptorSetLayout(out.device_, &info, nullptr, &out.layout_);
         r != VK_SUCCESS) {
         return fail("vkCreateDescriptorSetLayout (descriptor buffer) failed");
+    }
+
+    if (classic) {
+        // No driver layout-size/offset queries on this backend; record the pool
+        // sizes a single-set descriptor pool needs instead (merged per type).
+        for (const DescriptorBinding& b : bindings) {
+            auto it = std::find_if(out.pool_sizes_.begin(), out.pool_sizes_.end(),
+                                   [&](const VkDescriptorPoolSize& p) { return p.type == b.type; });
+            if (it != out.pool_sizes_.end()) {
+                it->descriptorCount += b.count;
+            } else {
+                out.pool_sizes_.push_back(VkDescriptorPoolSize{b.type, b.count});
+            }
+        }
+        return out;
     }
 
     fns.get_layout_size(out.device_, out.layout_, &out.size_);
@@ -101,6 +130,8 @@ void DescriptorSetLayout::destroy() noexcept {
     layout_ = VK_NULL_HANDLE;
     size_ = 0;
     offsets_.clear();
+    classic_ = false;
+    pool_sizes_.clear();
 }
 
 DescriptorSetLayout::~DescriptorSetLayout() { destroy(); }
@@ -112,10 +143,12 @@ DescriptorSetLayout::DescriptorSetLayout(DescriptorSetLayout&& other) noexcept {
 DescriptorSetLayout& DescriptorSetLayout::operator=(DescriptorSetLayout&& other) noexcept {
     if (this != &other) {
         destroy();
-        device_  = std::exchange(other.device_, VK_NULL_HANDLE);
-        layout_  = std::exchange(other.layout_, VK_NULL_HANDLE);
-        size_    = std::exchange(other.size_, 0);
-        offsets_ = std::move(other.offsets_);
+        device_     = std::exchange(other.device_, VK_NULL_HANDLE);
+        layout_     = std::exchange(other.layout_, VK_NULL_HANDLE);
+        size_       = std::exchange(other.size_, 0);
+        offsets_    = std::move(other.offsets_);
+        classic_    = std::exchange(other.classic_, false);
+        pool_sizes_ = std::move(other.pool_sizes_);
     }
     return *this;
 }
@@ -127,6 +160,41 @@ std::expected<DescriptorBuffer, core::Error>
 DescriptorBuffer::create(const Device& device, GpuAllocator& allocator,
                          const DescriptorBufferFunctions& fns,
                          const DescriptorSetLayout& layout) {
+#ifdef ENGINE_DESCRIPTOR_SETS_FALLBACK
+    if (layout.is_classic()) {
+        // Classic-sets backend: one tiny pool per set keeps the RAII lifetime
+        // identical to the EXT path (destroying the pool frees the set).
+        DescriptorBuffer out;
+        out.device_ = &device;
+        out.fns_ = &fns;
+        out.layout_ = &layout;
+
+        const auto sizes = layout.pool_sizes();
+        // A pool needs at least one size entry even for an empty layout.
+        const VkDescriptorPoolSize empty_size{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1};
+        VkDescriptorPoolCreateInfo pool_info{};
+        pool_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+        pool_info.maxSets = 1;
+        pool_info.poolSizeCount = sizes.empty() ? 1u : static_cast<std::uint32_t>(sizes.size());
+        pool_info.pPoolSizes = sizes.empty() ? &empty_size : sizes.data();
+        if (vkCreateDescriptorPool(device.handle(), &pool_info, nullptr, &out.pool_)
+            != VK_SUCCESS) {
+            return fail("vkCreateDescriptorPool (classic-sets fallback) failed");
+        }
+
+        const VkDescriptorSetLayout layout_handle = layout.handle();
+        VkDescriptorSetAllocateInfo alloc_info{};
+        alloc_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+        alloc_info.descriptorPool = out.pool_;
+        alloc_info.descriptorSetCount = 1;
+        alloc_info.pSetLayouts = &layout_handle;
+        if (vkAllocateDescriptorSets(device.handle(), &alloc_info, &out.set_) != VK_SUCCESS) {
+            return fail("vkAllocateDescriptorSets (classic-sets fallback) failed");
+        }
+        return out;
+    }
+#endif
+
     const VkDeviceSize size = layout.size() != 0 ? layout.size() : 1;
     const VkBufferUsageFlags usage =
         VK_BUFFER_USAGE_RESOURCE_DESCRIPTOR_BUFFER_BIT_EXT
@@ -147,8 +215,65 @@ DescriptorBuffer::create(const Device& device, GpuAllocator& allocator,
     return out;
 }
 
+void DescriptorBuffer::destroy() noexcept {
+    // Classic-sets backend only: the pool owns the set. On the EXT path pool_ is
+    // always VK_NULL_HANDLE and buffer_'s own RAII handles the storage.
+    if (pool_ != VK_NULL_HANDLE && device_ != nullptr) {
+        vkDestroyDescriptorPool(device_->handle(), pool_, nullptr);
+    }
+    pool_ = VK_NULL_HANDLE;
+    set_ = VK_NULL_HANDLE;
+}
+
+DescriptorBuffer::~DescriptorBuffer() { destroy(); }
+
+DescriptorBuffer::DescriptorBuffer(DescriptorBuffer&& other) noexcept {
+    *this = std::move(other);
+}
+
+DescriptorBuffer& DescriptorBuffer::operator=(DescriptorBuffer&& other) noexcept {
+    if (this != &other) {
+        destroy();
+        device_  = std::exchange(other.device_, nullptr);
+        fns_     = std::exchange(other.fns_, nullptr);
+        layout_  = std::exchange(other.layout_, nullptr);
+        buffer_  = std::move(other.buffer_);
+        address_ = std::exchange(other.address_, 0);
+        pool_    = std::exchange(other.pool_, VK_NULL_HANDLE);
+        set_     = std::exchange(other.set_, VK_NULL_HANDLE);
+    }
+    return *this;
+}
+
 void DescriptorBuffer::write_buffer_descriptor(std::uint32_t binding, VkDescriptorType type,
                                                VkDeviceAddress address, VkDeviceSize range) {
+#ifdef ENGINE_DESCRIPTOR_SETS_FALLBACK
+    if (set_ != VK_NULL_HANDLE) {
+        // Classic path: translate the device address back to buffer + offset.
+        const auto located = find_buffer_for_address(address);
+        if (!located) {
+            std::fprintf(stderr,
+                         "[rhi] classic descriptor write: no buffer registered for address 0x%llx\n",
+                         static_cast<unsigned long long>(address));
+            return;
+        }
+        VkDescriptorBufferInfo buffer_info{};
+        buffer_info.buffer = located->buffer;
+        buffer_info.offset = located->offset;
+        buffer_info.range = range;
+
+        VkWriteDescriptorSet write{};
+        write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        write.dstSet = set_;
+        write.dstBinding = binding;
+        write.descriptorCount = 1;
+        write.descriptorType = type;
+        write.pBufferInfo = &buffer_info;
+        vkUpdateDescriptorSets(device_->handle(), 1, &write, 0, nullptr);
+        return;
+    }
+#endif
+
     const auto& props = device_->descriptor_buffer_properties();
 
     VkDescriptorAddressInfoEXT addr{};
@@ -183,15 +308,41 @@ void DescriptorBuffer::write_storage_buffer(std::uint32_t binding, VkDeviceAddre
     write_buffer_descriptor(binding, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, address, range);
 }
 
+#ifdef ENGINE_DESCRIPTOR_SETS_FALLBACK
+namespace {
+
+// Classic-path helper shared by the image/sampler writes.
+void write_classic_image_descriptor(VkDevice device, VkDescriptorSet set, std::uint32_t binding,
+                                    VkDescriptorType type, const VkDescriptorImageInfo& image) {
+    VkWriteDescriptorSet write{};
+    write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    write.dstSet = set;
+    write.dstBinding = binding;
+    write.descriptorCount = 1;
+    write.descriptorType = type;
+    write.pImageInfo = &image;
+    vkUpdateDescriptorSets(device, 1, &write, 0, nullptr);
+}
+
+} // namespace
+#endif
+
 void DescriptorBuffer::write_sampled_image(std::uint32_t binding, VkImageView view,
                                            VkImageLayout layout) {
-    const auto& props = device_->descriptor_buffer_properties();
-
     VkDescriptorImageInfo image{};
     image.sampler = VK_NULL_HANDLE;
     image.imageView = view;
     image.imageLayout = layout;
 
+#ifdef ENGINE_DESCRIPTOR_SETS_FALLBACK
+    if (set_ != VK_NULL_HANDLE) {
+        write_classic_image_descriptor(device_->handle(), set_, binding,
+                                       VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, image);
+        return;
+    }
+#endif
+
+    const auto& props = device_->descriptor_buffer_properties();
     VkDescriptorGetInfoEXT get{};
     get.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_GET_INFO_EXT;
     get.type = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
@@ -203,13 +354,20 @@ void DescriptorBuffer::write_sampled_image(std::uint32_t binding, VkImageView vi
 
 void DescriptorBuffer::write_storage_image(std::uint32_t binding, VkImageView view,
                                            VkImageLayout layout) {
-    const auto& props = device_->descriptor_buffer_properties();
-
     VkDescriptorImageInfo image{};
     image.sampler = VK_NULL_HANDLE;
     image.imageView = view;
     image.imageLayout = layout;
 
+#ifdef ENGINE_DESCRIPTOR_SETS_FALLBACK
+    if (set_ != VK_NULL_HANDLE) {
+        write_classic_image_descriptor(device_->handle(), set_, binding,
+                                       VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, image);
+        return;
+    }
+#endif
+
+    const auto& props = device_->descriptor_buffer_properties();
     VkDescriptorGetInfoEXT get{};
     get.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_GET_INFO_EXT;
     get.type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
@@ -220,8 +378,17 @@ void DescriptorBuffer::write_storage_image(std::uint32_t binding, VkImageView vi
 }
 
 void DescriptorBuffer::write_sampler(std::uint32_t binding, VkSampler sampler) {
-    const auto& props = device_->descriptor_buffer_properties();
+#ifdef ENGINE_DESCRIPTOR_SETS_FALLBACK
+    if (set_ != VK_NULL_HANDLE) {
+        VkDescriptorImageInfo image{};
+        image.sampler = sampler;
+        write_classic_image_descriptor(device_->handle(), set_, binding,
+                                       VK_DESCRIPTOR_TYPE_SAMPLER, image);
+        return;
+    }
+#endif
 
+    const auto& props = device_->descriptor_buffer_properties();
     VkDescriptorGetInfoEXT get{};
     get.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_GET_INFO_EXT;
     get.type = VK_DESCRIPTOR_TYPE_SAMPLER;
@@ -233,6 +400,13 @@ void DescriptorBuffer::write_sampler(std::uint32_t binding, VkSampler sampler) {
 
 void DescriptorBuffer::bind(VkCommandBuffer cmd, VkPipelineBindPoint bind_point,
                             VkPipelineLayout pipeline_layout, std::uint32_t set) const {
+#ifdef ENGINE_DESCRIPTOR_SETS_FALLBACK
+    if (set_ != VK_NULL_HANDLE) {
+        vkCmdBindDescriptorSets(cmd, bind_point, pipeline_layout, set, 1, &set_, 0, nullptr);
+        return;
+    }
+#endif
+
     VkDescriptorBufferBindingInfoEXT binding_info{};
     binding_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_BUFFER_BINDING_INFO_EXT;
     binding_info.address = address_;
@@ -259,7 +433,11 @@ run_descriptor_buffer_self_test(const Device& device, GpuAllocator& allocator) {
         0, 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_ALL}};
     auto layout = DescriptorSetLayout::create(device, fns, bindings);
     if (!layout) return std::unexpected(layout.error());
-    if (layout->size() == 0) return fail("descriptor set layout reported zero size");
+    // The classic-sets fallback layout has no byte size (the driver owns the
+    // storage); the size check only applies to the descriptor-buffer path.
+    if (!layout->is_classic() && layout->size() == 0) {
+        return fail("descriptor set layout reported zero size");
+    }
 
     auto ubo = allocator.create_buffer(
         64, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,

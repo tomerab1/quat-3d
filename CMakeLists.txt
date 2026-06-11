@@ -28,6 +28,13 @@ endif()
 
 option(ENGINE_EDITOR "Build the ImGui-based editor layer" ON)
 option(ENGINE_PROFILE "Enable Tracy profiling in non-debug builds" OFF)
+# Compatibility switch for drivers without VK_EXT_descriptor_buffer (MoltenVK on
+# macOS). When ON, the RHI may fall back to classic descriptor pools/sets and the
+# instance opts into portability (non-conformant) ICD enumeration. Descriptor
+# buffers remain the mandated model (CLAUDE.md); this exists only so the engine
+# can run on platforms where the extension does not exist.
+option(ENGINE_DESCRIPTOR_SETS_FALLBACK
+    "Allow classic descriptor-set fallback on drivers without VK_EXT_descriptor_buffer" OFF)
 
 # ---------------------------------------------------------------------------
 # Common compile options applied to all first-party engine targets.
@@ -59,6 +66,10 @@ target_compile_definitions(engine_flags INTERFACE
 
 if(ENGINE_EDITOR)
     target_compile_definitions(engine_flags INTERFACE ENGINE_EDITOR)
+endif()
+
+if(ENGINE_DESCRIPTOR_SETS_FALLBACK)
+    target_compile_definitions(engine_flags INTERFACE ENGINE_DESCRIPTOR_SETS_FALLBACK)
 endif()
 
 # ---------------------------------------------------------------------------

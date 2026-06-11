@@ -6,6 +6,11 @@
 #include <cstring>
 #include <format>
 #include <utility>
+#ifdef ENGINE_DESCRIPTOR_SETS_FALLBACK
+#include <map>
+#include <mutex>
+#include <unordered_map>
+#endif
 
 #include "engine/rhi/device.hpp"
 
@@ -16,6 +21,42 @@ namespace {
 [[nodiscard]] std::unexpected<core::Error> fail(std::string what) {
     return std::unexpected(core::Error{std::move(what)});
 }
+
+#ifdef ENGINE_DESCRIPTOR_SETS_FALLBACK
+// Address -> buffer registry for the classic-sets fallback (see
+// find_buffer_for_address in the header). Process-global because GpuBuffer only
+// holds the VmaAllocator, not the GpuAllocator that created it. Guarded by a
+// mutex: buffer create/destroy happens on asset-loader threads, never per draw,
+// so this stays off the hot path required by CLAUDE.md.
+struct AddressEntry {
+    VkBuffer     buffer = VK_NULL_HANDLE;
+    VkDeviceSize size = 0;
+};
+std::mutex g_address_registry_mutex;
+std::map<VkDeviceAddress, AddressEntry> g_address_registry;        // keyed by base address
+std::unordered_map<VkBuffer, VkDeviceAddress> g_buffer_to_address; // for unregistering
+
+void register_buffer_address(VmaAllocator allocator, VkBuffer buffer, VkDeviceSize size) {
+    VmaAllocatorInfo allocator_info{};
+    vmaGetAllocatorInfo(allocator, &allocator_info);
+    VkBufferDeviceAddressInfo info{};
+    info.sType = VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO;
+    info.buffer = buffer;
+    const VkDeviceAddress address = vkGetBufferDeviceAddress(allocator_info.device, &info);
+
+    const std::lock_guard<std::mutex> lock(g_address_registry_mutex);
+    g_address_registry[address] = AddressEntry{buffer, size};
+    g_buffer_to_address[buffer] = address;
+}
+
+void unregister_buffer_address(VkBuffer buffer) {
+    const std::lock_guard<std::mutex> lock(g_address_registry_mutex);
+    if (auto it = g_buffer_to_address.find(buffer); it != g_buffer_to_address.end()) {
+        g_address_registry.erase(it->second);
+        g_buffer_to_address.erase(it);
+    }
+}
+#endif
 
 // Records `record` into a one-time command buffer from the transfer pool,
 // submits it via synchronization2, and blocks until the queue is idle.
@@ -67,6 +108,9 @@ run_one_time_commands(const TransferContext& transfer, Record&& record) {
 // ===========================================================================
 void GpuBuffer::destroy() noexcept {
     if (buffer_ != VK_NULL_HANDLE && allocator_ != nullptr) {
+#ifdef ENGINE_DESCRIPTOR_SETS_FALLBACK
+        unregister_buffer_address(buffer_);
+#endif
         vmaDestroyBuffer(allocator_, buffer_, allocation_);
     }
     allocator_ = nullptr;
@@ -240,6 +284,11 @@ GpuAllocator::create_buffer(VkDeviceSize size, VkBufferUsageFlags usage,
     if (flags & VMA_ALLOCATION_CREATE_MAPPED_BIT) {
         buffer.mapped_ = result_info.pMappedData;
     }
+#ifdef ENGINE_DESCRIPTOR_SETS_FALLBACK
+    if (usage & VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT) {
+        register_buffer_address(allocator_, buffer.buffer_, size);
+    }
+#endif
     return buffer;
 }
 
@@ -314,6 +363,17 @@ VkDeviceAddress buffer_device_address(VkDevice device, const GpuBuffer& buffer) 
     info.buffer = buffer.handle();
     return vkGetBufferDeviceAddress(device, &info);
 }
+
+#ifdef ENGINE_DESCRIPTOR_SETS_FALLBACK
+std::optional<BufferAddressRange> find_buffer_for_address(VkDeviceAddress address) {
+    const std::lock_guard<std::mutex> lock(g_address_registry_mutex);
+    auto it = g_address_registry.upper_bound(address);
+    if (it == g_address_registry.begin()) return std::nullopt;
+    --it; // greatest base address <= address
+    if (address >= it->first + it->second.size) return std::nullopt;
+    return BufferAddressRange{it->second.buffer, address - it->first};
+}
+#endif
 
 std::uint32_t full_mip_levels(VkExtent2D extent) {
     const std::uint32_t largest = std::max(extent.width, extent.height);

@@ -10,6 +10,14 @@
 
 namespace engine::rhi {
 
+// Which descriptor model the device was created with. ext_descriptor_buffer is
+// the engine's mandated model (CLAUDE.md). classic_sets exists only as the
+// ENGINE_DESCRIPTOR_SETS_FALLBACK compatibility path for drivers that do not
+// implement VK_EXT_descriptor_buffer (MoltenVK on macOS); without that build
+// flag a device lacking the extension is rejected and this is always
+// ext_descriptor_buffer.
+enum class DescriptorBackend : std::uint8_t { ext_descriptor_buffer, classic_sets };
+
 // Queue family indices selected for the logical device. Compute and transfer
 // fall back to the graphics family when no dedicated family exists.
 struct QueueFamilies {
@@ -57,6 +65,10 @@ public:
     // Device limit for anisotropic filtering; 0 when samplerAnisotropy is
     // unsupported (the feature is enabled whenever the device offers it).
     [[nodiscard]] float max_sampler_anisotropy() const { return max_sampler_anisotropy_; }
+    [[nodiscard]] DescriptorBackend descriptor_backend() const { return descriptor_backend_; }
+    [[nodiscard]] bool uses_descriptor_buffer() const {
+        return descriptor_backend_ == DescriptorBackend::ext_descriptor_buffer;
+    }
 
 private:
     void destroy() noexcept;
@@ -72,6 +84,7 @@ private:
     VkPhysicalDeviceProperties properties_{};
     VkPhysicalDeviceDescriptorBufferPropertiesEXT descriptor_buffer_props_{};
     float                    max_sampler_anisotropy_ = 0.0F;
+    DescriptorBackend        descriptor_backend_ = DescriptorBackend::ext_descriptor_buffer;
 };
 
 } // namespace engine::rhi

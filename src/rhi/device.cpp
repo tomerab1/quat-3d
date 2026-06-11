@@ -17,11 +17,9 @@ constexpr const char* k_validation_layer = "VK_LAYER_KHRONOS_validation";
 
 // Device extensions every selected GPU must support. dynamic_rendering and
 // synchronization2 are core in Vulkan 1.3; swapchain is foundational for
-// presentation; descriptor_buffer is the mandated descriptor model (CLAUDE.md).
-constexpr std::array<const char*, 2> k_required_device_extensions = {
-    VK_KHR_SWAPCHAIN_EXTENSION_NAME,
-    VK_EXT_DESCRIPTOR_BUFFER_EXTENSION_NAME,
-};
+// presentation. descriptor_buffer is the mandated descriptor model (CLAUDE.md);
+// it is hard-required unless ENGINE_DESCRIPTOR_SETS_FALLBACK permits the
+// classic-sets compatibility path on drivers that lack it (MoltenVK on macOS).
 
 [[nodiscard]] std::string vk_result_string(VkResult result) {
     switch (result) {
@@ -149,6 +147,9 @@ struct Candidate {
     QueueFamilies families{};
     VkPhysicalDeviceProperties properties{};
     int score = -1;
+    // VK_EXT_descriptor_buffer feature + extension both present. Always true
+    // unless ENGINE_DESCRIPTOR_SETS_FALLBACK admits classic-sets devices.
+    bool has_descriptor_buffer = false;
 };
 
 // Require Vulkan 1.3 + dynamicRendering + synchronization2 + swapchain, then
@@ -183,20 +184,25 @@ struct Candidate {
             continue;
         }
         if (!features13.dynamicRendering || !features13.synchronization2) continue;
-        if (!features12.bufferDeviceAddress || !db_features.descriptorBuffer) continue;
+        if (!features12.bufferDeviceAddress) continue;
 
         const auto exts = device_extensions(device);
-        const bool all_exts = std::all_of(
-            k_required_device_extensions.begin(), k_required_device_extensions.end(),
-            [&](const char* name) { return has_extension(exts, name); });
-        if (!all_exts) continue;
+        if (!has_extension(exts, VK_KHR_SWAPCHAIN_EXTENSION_NAME)) continue;
+
+        const bool db_ok = db_features.descriptorBuffer == VK_TRUE
+            && has_extension(exts, VK_EXT_DESCRIPTOR_BUFFER_EXTENSION_NAME);
+#ifndef ENGINE_DESCRIPTOR_SETS_FALLBACK
+        if (!db_ok) continue;
+#endif
 
         const QueueSelection queues = select_queue_families(device);
         if (!queues.valid) continue;
 
-        const int score = device_type_score(props.deviceType);
+        // +1 tie-breaker: prefer a descriptor-buffer-capable device over an
+        // otherwise equal one that would force the classic-sets fallback.
+        const int score = device_type_score(props.deviceType) + (db_ok ? 1 : 0);
         if (score > best.score) {
-            best = Candidate{device, queues.families, props, score};
+            best = Candidate{device, queues.families, props, score, db_ok};
         }
     }
     return best;
@@ -226,6 +232,24 @@ std::expected<Device, core::Error> Device::create(const CreateInfo& info) {
         layers.push_back(k_validation_layer);
     }
 
+#ifdef ENGINE_DESCRIPTOR_SETS_FALLBACK
+    // Portability (non-conformant) ICDs such as MoltenVK are only enumerated
+    // when the instance opts in via VK_KHR_portability_enumeration; without it
+    // vkCreateInstance fails with VK_ERROR_INCOMPATIBLE_DRIVER on macOS.
+    bool enumerate_portability = false;
+    {
+        std::uint32_t count = 0;
+        vkEnumerateInstanceExtensionProperties(nullptr, &count, nullptr);
+        std::vector<VkExtensionProperties> available(count);
+        vkEnumerateInstanceExtensionProperties(nullptr, &count, available.data());
+        enumerate_portability = has_extension(
+            available, VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME);
+    }
+    if (enumerate_portability) {
+        extensions.push_back(VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME);
+    }
+#endif
+
     VkDebugUtilsMessengerCreateInfoEXT debug_info = make_debug_messenger_info();
 
     VkInstanceCreateInfo instance_info{};
@@ -238,6 +262,11 @@ std::expected<Device, core::Error> Device::create(const CreateInfo& info) {
     if (want_validation) {
         instance_info.pNext = &debug_info; // also covers create/destroy messages
     }
+#ifdef ENGINE_DESCRIPTOR_SETS_FALLBACK
+    if (enumerate_portability) {
+        instance_info.flags |= VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR;
+    }
+#endif
 
     if (VkResult r = vkCreateInstance(&instance_info, nullptr, &dev.instance_); r != VK_SUCCESS) {
         return fail("vkCreateInstance failed", r);
@@ -255,19 +284,25 @@ std::expected<Device, core::Error> Device::create(const CreateInfo& info) {
     // ---- Physical device ------------------------------------------------
     const Candidate candidate = pick_physical_device(dev.instance_);
     if (candidate.device == VK_NULL_HANDLE) {
-        return fail("no Vulkan 1.3 device with dynamic_rendering + synchronization2 + swapchain found");
+        return fail("no Vulkan 1.3 device with dynamic_rendering + synchronization2 "
+                    "+ swapchain + descriptor_buffer found");
     }
     dev.physical_device_ = candidate.device;
     dev.queue_families_  = candidate.families;
     dev.properties_      = candidate.properties;
+    dev.descriptor_backend_ = candidate.has_descriptor_buffer
+        ? DescriptorBackend::ext_descriptor_buffer
+        : DescriptorBackend::classic_sets;
 
-    std::fprintf(stderr, "[rhi] selected GPU: %s (Vulkan %u.%u.%u, queues g=%u c=%u t=%u)\n",
+    std::fprintf(stderr, "[rhi] selected GPU: %s (Vulkan %u.%u.%u, queues g=%u c=%u t=%u, "
+                 "descriptors: %s)\n",
                  candidate.properties.deviceName,
                  VK_API_VERSION_MAJOR(candidate.properties.apiVersion),
                  VK_API_VERSION_MINOR(candidate.properties.apiVersion),
                  VK_API_VERSION_PATCH(candidate.properties.apiVersion),
                  candidate.families.graphics, candidate.families.compute,
-                 candidate.families.transfer);
+                 candidate.families.transfer,
+                 candidate.has_descriptor_buffer ? "descriptor_buffer" : "classic sets (fallback)");
 
     // ---- Logical device -------------------------------------------------
     const std::set<std::uint32_t> unique_families = {
@@ -302,7 +337,9 @@ std::expected<Device, core::Error> Device::create(const CreateInfo& info) {
     VkPhysicalDeviceVulkan12Features features12{};
     features12.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES;
     features12.bufferDeviceAddress = VK_TRUE;
-    features12.pNext = &db_features;
+    // Only chain the descriptor-buffer feature struct when the extension is
+    // actually enabled; requesting it otherwise is a spec violation.
+    features12.pNext = candidate.has_descriptor_buffer ? &db_features : nullptr;
 
     VkPhysicalDeviceVulkan13Features features13{};
     features13.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES;
@@ -310,14 +347,27 @@ std::expected<Device, core::Error> Device::create(const CreateInfo& info) {
     features13.synchronization2 = VK_TRUE;
     features13.pNext = &features12;
 
+    std::vector<const char*> device_exts = {VK_KHR_SWAPCHAIN_EXTENSION_NAME};
+    if (candidate.has_descriptor_buffer) {
+        device_exts.push_back(VK_EXT_DESCRIPTOR_BUFFER_EXTENSION_NAME);
+    }
+#ifdef ENGINE_DESCRIPTOR_SETS_FALLBACK
+    // Portability-subset ICDs advertise VK_KHR_portability_subset, and the spec
+    // requires it to be enabled whenever present. String spelled out to avoid
+    // pulling in vulkan_beta.h.
+    const auto available_device_exts = device_extensions(dev.physical_device_);
+    if (has_extension(available_device_exts, "VK_KHR_portability_subset")) {
+        device_exts.push_back("VK_KHR_portability_subset");
+    }
+#endif
+
     VkDeviceCreateInfo device_info{};
     device_info.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
     device_info.pNext = &features13;
     device_info.queueCreateInfoCount = static_cast<std::uint32_t>(queue_infos.size());
     device_info.pQueueCreateInfos = queue_infos.data();
-    device_info.enabledExtensionCount =
-        static_cast<std::uint32_t>(k_required_device_extensions.size());
-    device_info.ppEnabledExtensionNames = k_required_device_extensions.data();
+    device_info.enabledExtensionCount = static_cast<std::uint32_t>(device_exts.size());
+    device_info.ppEnabledExtensionNames = device_exts.data();
     device_info.pEnabledFeatures = &core_features;
 
     if (VkResult r = vkCreateDevice(dev.physical_device_, &device_info, nullptr, &dev.device_);
@@ -331,13 +381,17 @@ std::expected<Device, core::Error> Device::create(const CreateInfo& info) {
 
     // Descriptor buffer sizes/alignments, needed when laying out descriptor
     // buffers (Slice 2.3). pNext is cleared so the cached struct is self-contained.
-    dev.descriptor_buffer_props_.sType =
-        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_BUFFER_PROPERTIES_EXT;
-    VkPhysicalDeviceProperties2 props2{};
-    props2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2;
-    props2.pNext = &dev.descriptor_buffer_props_;
-    vkGetPhysicalDeviceProperties2(dev.physical_device_, &props2);
-    dev.descriptor_buffer_props_.pNext = nullptr;
+    // Skipped on the classic-sets fallback backend: the extension is absent and
+    // the struct stays zeroed (nothing reads it on that path).
+    if (candidate.has_descriptor_buffer) {
+        dev.descriptor_buffer_props_.sType =
+            VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_BUFFER_PROPERTIES_EXT;
+        VkPhysicalDeviceProperties2 props2{};
+        props2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2;
+        props2.pNext = &dev.descriptor_buffer_props_;
+        vkGetPhysicalDeviceProperties2(dev.physical_device_, &props2);
+        dev.descriptor_buffer_props_.pNext = nullptr;
+    }
 
     return dev;
 }
@@ -385,6 +439,7 @@ Device& Device::operator=(Device&& other) noexcept {
         properties_      = other.properties_;
         descriptor_buffer_props_ = other.descriptor_buffer_props_;
         max_sampler_anisotropy_  = other.max_sampler_anisotropy_;
+        descriptor_backend_      = other.descriptor_backend_;
     }
     return *this;
 }

@@ -25,11 +25,16 @@ struct DescriptorBufferFunctions {
     PFN_vkCmdSetDescriptorBufferOffsetsEXT       cmd_set_offsets = nullptr;
 
     [[nodiscard]] static DescriptorBufferFunctions load(VkDevice device);
+    // True when all entry points loaded. Under ENGINE_DESCRIPTOR_SETS_FALLBACK a
+    // fully-unloaded struct is also valid: it is the classic-sets backend, where
+    // these entry points are never called.
     [[nodiscard]] bool valid() const;
 };
 
 // A VkDescriptorSetLayout created with the descriptor-buffer bit, plus its total
 // byte size and the byte offset of each binding (both queried from the driver).
+// On the classic-sets fallback backend the layout is created without the bit and
+// instead records the pool sizes needed to allocate a matching descriptor set.
 class DescriptorSetLayout {
 public:
     [[nodiscard]] static std::expected<DescriptorSetLayout, core::Error>
@@ -46,6 +51,8 @@ public:
     [[nodiscard]] VkDescriptorSetLayout handle() const { return layout_; }
     [[nodiscard]] VkDeviceSize size() const { return size_; }
     [[nodiscard]] VkDeviceSize binding_offset(std::uint32_t binding) const;
+    [[nodiscard]] bool is_classic() const { return classic_; }
+    [[nodiscard]] std::span<const VkDescriptorPoolSize> pool_sizes() const { return pool_sizes_; }
 
 private:
     void destroy() noexcept;
@@ -54,11 +61,15 @@ private:
     VkDescriptorSetLayout layout_ = VK_NULL_HANDLE;
     VkDeviceSize          size_ = 0;
     std::unordered_map<std::uint32_t, VkDeviceSize> offsets_;
+    bool                  classic_ = false;
+    std::vector<VkDescriptorPoolSize> pool_sizes_; // classic backend only
 };
 
 // Host-visible buffer holding one set's worth of descriptors for a layout.
 // Descriptors are written directly into mapped memory via vkGetDescriptorEXT,
-// then bound at draw time with bind().
+// then bound at draw time with bind(). On the classic-sets fallback backend the
+// same interface is backed by a single-set VkDescriptorPool: writes go through
+// vkUpdateDescriptorSets and bind() uses vkCmdBindDescriptorSets.
 class DescriptorBuffer {
 public:
     [[nodiscard]] static std::expected<DescriptorBuffer, core::Error>
@@ -66,6 +77,11 @@ public:
            const DescriptorBufferFunctions& fns, const DescriptorSetLayout& layout);
 
     DescriptorBuffer() = default;
+    ~DescriptorBuffer();
+    DescriptorBuffer(DescriptorBuffer&& other) noexcept;
+    DescriptorBuffer& operator=(DescriptorBuffer&& other) noexcept;
+    DescriptorBuffer(const DescriptorBuffer&) = delete;
+    DescriptorBuffer& operator=(const DescriptorBuffer&) = delete;
 
     void write_uniform_buffer(std::uint32_t binding, VkDeviceAddress address, VkDeviceSize range);
     void write_storage_buffer(std::uint32_t binding, VkDeviceAddress address, VkDeviceSize range);
@@ -80,6 +96,7 @@ public:
               VkPipelineLayout pipeline_layout, std::uint32_t set) const;
 
 private:
+    void destroy() noexcept;
     void write_buffer_descriptor(std::uint32_t binding, VkDescriptorType type,
                                  VkDeviceAddress address, VkDeviceSize range);
 
@@ -88,6 +105,9 @@ private:
     const DescriptorSetLayout*       layout_ = nullptr;
     GpuBuffer                        buffer_;
     VkDeviceAddress                  address_ = 0;
+    // Classic-sets fallback backend only; VK_NULL_HANDLE on the EXT path.
+    VkDescriptorPool                 pool_ = VK_NULL_HANDLE;
+    VkDescriptorSet                  set_ = VK_NULL_HANDLE;
 };
 
 // Debug self-test: build a one-uniform-buffer layout, allocate a descriptor

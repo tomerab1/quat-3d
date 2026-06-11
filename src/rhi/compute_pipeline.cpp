@@ -47,7 +47,8 @@ ComputePipeline::create(const Device& device, VkPipelineCache cache, const Creat
     pipeline_info.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
     pipeline_info.stage = stage;
     pipeline_info.layout = out.layout_;
-    if (!info.set_layouts.empty()) {
+    // Not set on the classic-sets fallback backend (plain descriptor sets).
+    if (!info.set_layouts.empty() && device.uses_descriptor_buffer()) {
         pipeline_info.flags = VK_PIPELINE_CREATE_DESCRIPTOR_BUFFER_BIT_EXT;
     }
 
