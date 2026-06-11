@@ -20,6 +20,7 @@
 #include "engine/animation/clip.hpp"
 #include "engine/animation/skeleton.hpp"
 #include "engine/asset/asset_manager.hpp"
+#include "engine/terrain/generator.hpp"
 #include "engine/asset/material_asset.hpp"
 #include "engine/asset/mesh_asset.hpp"
 #include "engine/core/error.hpp"
@@ -135,6 +136,17 @@ struct PointLight {
     glm::vec3 color{1.0F};
     float     radius = 10.0F;
     float     intensity = 1.0F;
+};
+
+// Procedural terrain tile anchored at the entity's world position (the tile's
+// minimum XZ corner sits at translation - tile_size/2 on each axis, heights
+// offset by translation.y). The frame loop owns generation: it kicks an async
+// rebuild whenever `regenerate` is set (the inspector's button / fresh
+// component) and uploads the result to the terrain pass.
+struct Terrain {
+    terrain::TerrainParams params{};
+    float snowline_m = 110.0F; // world height where snow takes over
+    bool  regenerate = true;   // consumed by the frame loop
 };
 
 // Human-readable label. Editor-only metadata, not on any hot path.

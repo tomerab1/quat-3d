@@ -83,6 +83,32 @@ struct ComponentInspector<scene::PointLight> {
 };
 
 template <>
+struct ComponentInspector<scene::Terrain> {
+    static constexpr const char* title = "Terrain";
+    static void draw(entt::registry&, entt::entity, scene::Terrain& terrain) {
+        terrain::TerrainParams& p = terrain.params;
+        int seed = static_cast<int>(p.seed);
+        if (ImGui::DragInt("seed", &seed, 1.0F, 0, 1 << 30)) {
+            p.seed = static_cast<std::uint32_t>(seed);
+        }
+        ImGui::DragFloat("tile size", &p.tile_size_m, 10.0F, 100.0F, 20000.0F, "%.0f m");
+        ImGui::DragFloat("height", &p.height_m, 1.0F, 1.0F, 2000.0F, "%.0f m");
+        ImGui::SliderInt("octaves", &p.octaves, 1, 10);
+        ImGui::SliderFloat("warp", &p.warp_strength, 0.0F, 1.0F, "%.2f");
+        int droplets = static_cast<int>(p.erosion_droplets);
+        if (ImGui::DragInt("erosion droplets", &droplets, 1000.0F, 0, 1'000'000)) {
+            p.erosion_droplets = static_cast<std::uint32_t>(glm::max(droplets, 0));
+        }
+        ImGui::DragFloat("snowline", &terrain.snowline_m, 1.0F, -1000.0F, 5000.0F, "%.0f m");
+        ImGui::Separator();
+        if (ImGui::Button("Regenerate", ImVec2(-1.0F, 0.0F))) {
+            terrain.regenerate = true;
+        }
+        ImGui::TextWrapped("Generation runs on a worker thread; the tile pops in when ready.");
+    }
+};
+
+template <>
 struct ComponentInspector<scene::Camera> {
     static constexpr const char* title = "Camera";
     static void draw(entt::registry&, entt::entity, scene::Camera& camera) {
@@ -232,6 +258,7 @@ void draw_inspector(scene::Scene& scene, entt::entity selected) {
     inspect<scene::PointLight>(r, selected, true);
     inspect<scene::Camera>(r, selected, true);
     inspect<scene::Animator>(r, selected);
+    inspect<scene::Terrain>(r, selected, true);
     inspect<scene::Collider>(r, selected, true);
     inspect<scene::RigidBody>(r, selected, true);
 
@@ -242,6 +269,7 @@ void draw_inspector(scene::Scene& scene, entt::entity selected) {
     if (ImGui::BeginPopup("add_component")) {
         add_component_item<scene::Collider>(r, selected);
         add_component_item<scene::RigidBody>(r, selected);
+        add_component_item<scene::Terrain>(r, selected);
         add_component_item<scene::PointLight>(r, selected, glm::vec3(1.0F), 10.0F, 5.0F);
         add_component_item<scene::DirectionalLight>(
             r, selected, glm::vec3(-0.4F, -1.0F, -0.3F), glm::vec3(1.0F), 3.0F);

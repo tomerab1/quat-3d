@@ -107,6 +107,16 @@ std::expected<void, core::Error> save_scene(const Scene& scene,
                             {"far", c->far_z},
                             {"active", c->is_active}};
         }
+        if (const auto* t = r.try_get<Terrain>(e)) {
+            je["terrain"] = {{"seed", t->params.seed},
+                             {"resolution", t->params.resolution},
+                             {"tile_size", t->params.tile_size_m},
+                             {"height", t->params.height_m},
+                             {"octaves", t->params.octaves},
+                             {"warp", t->params.warp_strength},
+                             {"droplets", t->params.erosion_droplets},
+                             {"snowline", t->snowline_m}};
+        }
         entities.push_back(std::move(je));
     }
 
@@ -252,6 +262,20 @@ load_scene(Scene& scene, const std::filesystem::path& path, rhi::GpuAllocator& a
             c.far_z = jc.value("far", 1000.0F);
             c.is_active = jc.value("active", true);
             r.emplace<Camera>(e, c);
+        }
+        if (je.contains("terrain")) {
+            const json& jt = je["terrain"];
+            Terrain t;
+            t.params.seed = jt.value("seed", 1337U);
+            t.params.resolution = jt.value("resolution", 1025U);
+            t.params.tile_size_m = jt.value("tile_size", 2000.0F);
+            t.params.height_m = jt.value("height", 180.0F);
+            t.params.octaves = jt.value("octaves", 7);
+            t.params.warp_strength = jt.value("warp", 0.30F);
+            t.params.erosion_droplets = jt.value("droplets", 120'000U);
+            t.snowline_m = jt.value("snowline", 110.0F);
+            t.regenerate = true; // rebuild on load
+            r.emplace<Terrain>(e, t);
         }
     }
 

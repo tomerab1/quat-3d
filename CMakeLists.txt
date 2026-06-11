@@ -169,7 +169,8 @@ add_library(engine_scene STATIC
 # engine_animation is PUBLIC: components.hpp's SkinnedMesh holds a SkeletonAsset
 # handle and the glTF loader extracts skins.
 target_link_libraries(engine_scene PUBLIC
-    engine_flags engine_asset engine_rhi engine_renderer engine_animation engine_physics EnTT::EnTT)
+    engine_flags engine_asset engine_rhi engine_renderer engine_animation engine_physics
+    engine_terrain EnTT::EnTT)
 # fastgltf and stb (image decode) are implementation details of the loader;
 # nlohmann_json of the scene serializer.
 target_link_libraries(engine_scene PRIVATE fastgltf::fastgltf nlohmann_json::nlohmann_json)
@@ -204,8 +205,10 @@ add_library(engine_renderer STATIC
     src/renderer/bloom_pass.cpp
     src/renderer/exposure_pass.cpp
     src/renderer/taa_pass.cpp
-    src/renderer/atmosphere_pass.cpp)
-target_link_libraries(engine_renderer PUBLIC engine_flags engine_rhi engine_asset glm::glm)
+    src/renderer/atmosphere_pass.cpp
+    src/renderer/terrain_pass.cpp)
+target_link_libraries(engine_renderer PUBLIC
+    engine_flags engine_rhi engine_asset engine_terrain glm::glm)
 target_include_directories(engine_renderer PUBLIC ${ENGINE_PUBLIC_INCLUDE})
 
 # The ImGui overlay pass is editor-only. It is a from-scratch renderer on the

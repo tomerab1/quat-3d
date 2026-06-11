@@ -8,12 +8,14 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <expected>
+#include <future>
 #include <limits>
 #include <optional>
 #include <string>
@@ -43,6 +45,7 @@
 #include "engine/renderer/ibl_pass.hpp"
 #include "engine/renderer/lighting_pass.hpp"
 #include "engine/renderer/taa_pass.hpp"
+#include "engine/renderer/terrain_pass.hpp"
 #include "engine/renderer/mesh_pass.hpp"
 #include "engine/renderer/shadow_pass.hpp"
 #include "engine/renderer/skinning_pass.hpp"
@@ -1423,6 +1426,14 @@ int main() {
                         std::fprintf(stderr, "[selftest] terrain FAILED: %s\n",
                                      r.error().message.c_str());
                     }
+                    if (auto r = engine::renderer::run_terrain_pass_self_test(
+                            device, allocator, *mesh_cache, transfer, shader_dir);
+                        r) {
+                        std::fprintf(stderr, "[selftest] terrain pass OK (VTF chunks + splat)\n");
+                    } else {
+                        std::fprintf(stderr, "[selftest] terrain pass FAILED: %s\n",
+                                     r.error().message.c_str());
+                    }
                     if (auto r = engine::renderer::run_ibl_lighting_self_test(
                             device, allocator, *mesh_cache, transfer, shader_dir);
                         r) {
@@ -2177,6 +2188,47 @@ int main() {
         }
     }
 
+    // Terrain (Phase 12): the pass owns the heightmap texture + LOD index
+    // buffers; the frame loop generates async whenever a Terrain component
+    // asks and uploads the result here. Uploads need a transfer pool that
+    // outlives setup (setup_pool is destroyed after scene construction).
+    VkCommandPool terrain_pool = VK_NULL_HANDLE;
+    {
+        VkCommandPoolCreateInfo info{};
+        info.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+        info.flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT;
+        info.queueFamilyIndex = device.queue_families().graphics;
+        vkCreateCommandPool(vk_device, &info, nullptr, &terrain_pool);
+    }
+    const engine::rhi::TransferContext terrain_transfer{vk_device, terrain_pool,
+                                                        device.graphics_queue(),
+                                                        device.max_sampler_anisotropy()};
+    engine::renderer::TerrainPass terrain_pass;
+    if (auto tp = engine::renderer::TerrainPass::create(device, allocator, *pipeline_cache,
+                                                        terrain_transfer, shader_dir);
+        tp) {
+        terrain_pass = std::move(*tp);
+    } else {
+        std::fprintf(stderr, "[warn] terrain pass create failed: %s\n", tp.error().message.c_str());
+    }
+    std::future<engine::terrain::Heightmap> terrain_job;
+
+    // QUAT_TERRAIN=1: drop a procedural terrain tile under the showcase scene
+    // (sunken so its mid heights sit near the platform) — exercises the full
+    // async generate -> upload -> chunked LOD draw path without the editor.
+    if (std::getenv("QUAT_TERRAIN") != nullptr) {
+        const entt::entity te = scene.create_entity("terrain");
+        auto& t = scene.registry().emplace<engine::scene::Terrain>(te);
+        t.params.resolution = 513;
+        t.params.tile_size_m = 800.0F;
+        t.params.height_m = 90.0F;
+        t.params.erosion_droplets = 40'000;
+        t.snowline_m = 30.0F;
+        scene.registry().get<engine::scene::Transform>(te).local =
+            glm::translate(glm::mat4(1.0F), glm::vec3(0.0F, -40.0F, 0.0F));
+        std::fprintf(stderr, "[terrain] QUAT_TERRAIN tile requested\n");
+    }
+
     entt::entity camera_entity = scene.create_entity("camera");
     const engine::scene::Camera& camera =
         scene.registry().emplace<engine::scene::Camera>(camera_entity);
@@ -2771,6 +2823,38 @@ int main() {
                                                  shadow_radius, 0.1F, shadow_radius * 3.5F);
         const glm::mat4 light_view_proj = shadow_proj * shadow_view;
 
+        // Terrain upkeep: kick async generation when a Terrain component asks,
+        // and upload finished heightmaps (set_heightmap drains the pipeline —
+        // an explicit, logged editor action) before this frame's graph builds.
+        glm::vec3 terrain_origin(0.0F);
+        float terrain_snowline = 110.0F;
+        bool terrain_present = false;
+        for (auto&& [te, tcomp] : scene.registry().view<engine::scene::Terrain>().each()) {
+            terrain_present = true;
+            if (tcomp.regenerate && !terrain_job.valid()) {
+                tcomp.regenerate = false;
+                terrain_job = engine::terrain::generate_async(tcomp.params);
+                std::fprintf(stderr, "[terrain] generating %ux%u tile (seed %u)...\n",
+                             tcomp.params.resolution, tcomp.params.resolution, tcomp.params.seed);
+            }
+            const auto* tf = scene.registry().try_get<engine::scene::Transform>(te);
+            const glm::vec3 pos = tf != nullptr ? glm::vec3(tf->world[3]) : glm::vec3(0.0F);
+            terrain_origin = glm::vec3(pos.x - tcomp.params.tile_size_m * 0.5F, pos.y,
+                                       pos.z - tcomp.params.tile_size_m * 0.5F);
+            terrain_snowline = tcomp.snowline_m;
+            break; // one tile for now; streaming grids arrive in 12.4
+        }
+        if (terrain_job.valid() &&
+            terrain_job.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
+            const engine::terrain::Heightmap map = terrain_job.get();
+            if (auto r = terrain_pass.set_heightmap(map, terrain_transfer); r) {
+                std::fprintf(stderr, "[terrain] tile ready (%.0f m, heights %.1f..%.1f m)\n",
+                             map.tile_size_m, map.min_height, map.max_height);
+            } else {
+                std::fprintf(stderr, "[terrain] upload failed: %s\n", r.error().message.c_str());
+            }
+        }
+
         engine::rhi::RenderGraph graph(fr.pool);
 
         // Sky + environment upkeep, declared FIRST so their trailing barriers
@@ -2806,6 +2890,10 @@ int main() {
         if (!gbuffer) {
             std::fprintf(stderr, "[fatal] gbuffer pass: %s\n", gbuffer.error().message.c_str());
             break;
+        }
+        if (terrain_present && terrain_pass.has_heightmap()) {
+            terrain_pass.add_to_graph(graph, *gbuffer, draw_extent, jittered_vp, cam.position,
+                                      terrain_origin, terrain_snowline);
         }
         auto hdr = fr.lighting.add_to_graph(graph, *gbuffer, draw_extent, light, jittered_inv_vp,
                                             cam.position, *shadow, light_view_proj, point_lights,
@@ -3075,6 +3163,8 @@ int main() {
 
     // ---- Teardown ----------------------------------------------------------
     vkDeviceWaitIdle(vk_device);
+    if (terrain_job.valid()) terrain_job.wait(); // worker may still hold the params
+    vkDestroyCommandPool(vk_device, terrain_pool, nullptr);
     for (VkSemaphore s : render_finished) {
         vkDestroySemaphore(vk_device, s, nullptr);
     }
