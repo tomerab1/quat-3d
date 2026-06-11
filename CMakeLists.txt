@@ -150,7 +150,8 @@ add_library(engine_scene STATIC
     src/scene/stb_image_impl.cpp
     src/scene/components.cpp
     src/scene/scene.cpp
-    src/scene/physics_system.cpp)
+    src/scene/physics_system.cpp
+    src/scene/scene_io.cpp)
 # EnTT is PUBLIC: components.hpp exposes entt types (Parent/Children) to consumers.
 # engine_renderer is PUBLIC: scene.hpp's RenderCollectSystem fills a renderer
 # DrawItem list (no cycle — the renderer does not depend on the scene).
@@ -158,8 +159,9 @@ add_library(engine_scene STATIC
 # handle and the glTF loader extracts skins.
 target_link_libraries(engine_scene PUBLIC
     engine_flags engine_asset engine_rhi engine_renderer engine_animation engine_physics EnTT::EnTT)
-# fastgltf and stb (image decode) are implementation details of the loader.
-target_link_libraries(engine_scene PRIVATE fastgltf::fastgltf)
+# fastgltf and stb (image decode) are implementation details of the loader;
+# nlohmann_json of the scene serializer.
+target_link_libraries(engine_scene PRIVATE fastgltf::fastgltf nlohmann_json::nlohmann_json)
 target_include_directories(engine_scene PRIVATE ${Stb_INCLUDE_DIR})
 target_include_directories(engine_scene PUBLIC ${ENGINE_PUBLIC_INCLUDE})
 

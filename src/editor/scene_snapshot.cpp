@@ -45,6 +45,7 @@ SceneSnapshot capture_scene(const scene::Scene& scene) {
     capture_type(r, snap.parents);
     capture_type(r, snap.children);
     capture_type(r, snap.mesh_renderers);
+    capture_type(r, snap.mesh_sources);
     capture_type(r, snap.skinned_meshes);
     capture_type(r, snap.animators);
     capture_type(r, snap.cameras);
@@ -72,6 +73,7 @@ void restore_scene(scene::Scene& scene, const SceneSnapshot& snapshot) {
     restore_type(r, snapshot.parents);
     restore_type(r, snapshot.children);
     restore_type(r, snapshot.mesh_renderers);
+    restore_type(r, snapshot.mesh_sources);
     restore_type(r, snapshot.skinned_meshes);
     restore_type(r, snapshot.animators);
     restore_type(r, snapshot.cameras);

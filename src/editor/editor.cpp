@@ -394,6 +394,24 @@ void EditorLayer::build_ui(const EditorContext& ctx) {
     }
 
     if (ImGui::BeginMainMenuBar()) {
+        if (ImGui::BeginMenu("File")) {
+            ImGui::SetNextItemWidth(260.0F);
+            ImGui::InputText("scene file", scene_file_, sizeof(scene_file_));
+            const auto resolve = [&]() {
+                std::filesystem::path p(scene_file_);
+                if (p.is_relative() && !ctx.project_root.empty()) {
+                    p = std::filesystem::path(ctx.project_root) / p;
+                }
+                return p.string();
+            };
+            if (ctx.save_request != nullptr && ImGui::MenuItem("Save scene")) {
+                *ctx.save_request = resolve();
+            }
+            if (ctx.load_request != nullptr && ImGui::MenuItem("Load scene")) {
+                *ctx.load_request = resolve();
+            }
+            ImGui::EndMenu();
+        }
         if (ImGui::BeginMenu("View")) {
             ImGui::MenuItem("Stats", nullptr, &show_stats_);
             ImGui::MenuItem("ImGui Demo", nullptr, &show_demo_);

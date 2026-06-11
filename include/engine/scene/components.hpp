@@ -42,6 +42,16 @@ struct MeshRenderer {
     asset::AssetHandle<asset::MaterialAsset> material;
 };
 
+// Provenance of a MeshRenderer's assets, for scene serialization (editor save/
+// load): the AssetManager cache keys, plus the glTF file that produces them.
+// An empty gltf_path means engine code creates the keyed assets at startup
+// (e.g. the showcase primitives), so a loaded scene resolves them by cache hit.
+struct MeshSource {
+    std::string mesh_key;
+    std::string material_key; // empty -> default material
+    std::string gltf_path;    // empty -> code-created assets
+};
+
 // Marks an entity (alongside its MeshRenderer) as skinned: its mesh deforms with
 // `skeleton`. `joint_matrices` holds the per-joint skinning matrices the
 // animation system writes each frame (joint_world * inverse_bind); the GPU

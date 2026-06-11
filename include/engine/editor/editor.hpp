@@ -72,6 +72,9 @@ struct EditorContext {
     // Out: glTF path the user asked to instantiate (double-click or viewport
     // drop); the frame loop consumes and clears it (may be null).
     std::string* instantiate_request = nullptr;
+    // Out: scene file paths from the File menu; consumed by the frame loop.
+    std::string* save_request = nullptr;
+    std::string* load_request = nullptr;
     // In/out play-mode flag (the menu-bar Play/Stop button toggles it; the
     // frame loop snapshots/restores the scene on the transition). Null hides
     // the button (e.g. while a physics demo owns the world).
@@ -158,6 +161,8 @@ private:
     PhysicsDebugState     physics_state_;
 
     int gizmo_op_ = 0; // 0 translate, 1 rotate, 2 scale (W/E/R over the viewport)
+
+    char scene_file_[160] = "scenes/editor.json"; // File menu path (project-relative)
 
     entt::entity selected_ = entt::null;
 };

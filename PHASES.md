@@ -443,6 +443,18 @@ Goal: a usable in-engine editor with scene hierarchy, inspector, asset browser, 
   restore).
   *Commit: `[Phase9/Slice9] editor play mode, collider authoring, sun control`*
 
+- [x] **9.10 — Scene save/load**
+  JSON scene serialization (`scene_io`): flat entity array with parent indices, Transform/Name/
+  Collider/RigidBody/lights/Camera, and mesh references through the new `MeshSource` provenance
+  component (AssetManager cache keys + originating glTF path — the glTF loader and the showcase
+  tag every renderable). Loading clears the scene, re-instantiates referenced glTF files into a
+  scratch scene to repopulate the asset cache, resolves handles by cache key, rebuilds the
+  hierarchy, and ticks once. Editor File menu (path field + Save/Load) feeds requests the frame
+  loop consumes; on load the loop rebinds its camera, clears the selection, and rebakes the
+  IBL. Skinned meshes/animators are not yet serialized. Self-test: full round trip through a
+  temp file (hierarchy, collider, rigid body, light, mesh re-resolution).
+  *Commit: `[Phase9/Slice10] scene save/load (JSON)`*
+
 ---
 
 ## Phase 10 — Async Asset Loading & Hot Reload

@@ -34,6 +34,7 @@ struct SceneSnapshot {
     Stored<scene::Parent>              parents;
     Stored<scene::Children>            children;
     Stored<scene::MeshRenderer>        mesh_renderers;
+    Stored<scene::MeshSource>          mesh_sources;
     Stored<scene::SkinnedMesh>         skinned_meshes;
     Stored<scene::Animator>            animators;
     Stored<scene::Camera>              cameras;

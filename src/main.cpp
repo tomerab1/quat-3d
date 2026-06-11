@@ -56,6 +56,7 @@
 #include "engine/scene/components.hpp"
 #include "engine/scene/gltf_loader.hpp"
 #include "engine/scene/scene.hpp"
+#include "engine/scene/scene_io.hpp"
 #include "engine/rhi/device.hpp"
 #include "engine/rhi/gpu_allocator.hpp"
 #include "engine/rhi/graphics_pipeline.hpp"
@@ -1329,6 +1330,12 @@ int main() {
                     std::fprintf(stderr, "[selftest] glTF scene graph FAILED: %s\n",
                                  r.error().message.c_str());
                 }
+                if (auto r = engine::scene::run_scene_io_self_test(allocator, transfer); r) {
+                    std::fprintf(stderr, "[selftest] scene io OK (save/load round trip)\n");
+                } else {
+                    std::fprintf(stderr, "[selftest] scene io FAILED: %s\n",
+                                 r.error().message.c_str());
+                }
                 if (auto mesh_cache = engine::rhi::PipelineCache::create(device); mesh_cache) {
                     const std::string shader_dir = QUAT_COOKED_SHADER_DIR;
                     if (auto r = engine::renderer::run_mesh_pass_self_test(
@@ -1673,6 +1680,8 @@ int main() {
     engine::editor::EditorLayer editor;
     engine::editor::RendererSettings render_settings;
     std::string pending_instantiate; // set by the asset browser, consumed below
+    std::string pending_save;        // scene file requests from the File menu
+    std::string pending_load;
     // Play mode: snapshot taken on Play, restored on Stop; the play session
     // owns its own physics world (demo modes keep theirs).
     bool editor_play = false;
@@ -1981,10 +1990,14 @@ int main() {
         if (!ground_mesh.is_loaded() || !sphere_mesh.is_loaded() || !cube_mesh.is_loaded()) {
             scene_ok = false;
         } else {
+            // MeshSource tags carry the cache keys so scene save/load can
+            // re-resolve these code-created assets (recreated every startup).
+            using engine::scene::MeshSource;
             const entt::entity ground = scene.create_entity("ground");
             scene.registry().get<Transform>(ground).local =
                 glm::translate(glm::mat4(1.0F), glm::vec3(0.0F, -0.25F, 0.0F));
             scene.registry().emplace<MeshRenderer>(ground, ground_mesh, ground_mat);
+            scene.registry().emplace<MeshSource>(ground, "show/ground", "show/ground_mat", "");
 
             constexpr int count = 6;
             for (int i = 0; i < count; ++i) {
@@ -1998,6 +2011,8 @@ int main() {
                     m, sphere_mesh,
                     make_mat("show/metal" + std::to_string(i), {0.95F, 0.78F, 0.45F, 1.0F}, 1.0F,
                              glm::clamp(t, 0.05F, 0.95F)));
+                scene.registry().emplace<MeshSource>(m, "show/sphere",
+                                                     "show/metal" + std::to_string(i), "");
                 // Bottom row: coloured dielectric, metalness sweep.
                 const entt::entity d_ent = scene.create_entity("dielectric_sphere");
                 scene.registry().get<Transform>(d_ent).local =
@@ -2006,6 +2021,8 @@ int main() {
                     d_ent, sphere_mesh,
                     make_mat("show/diel" + std::to_string(i), {0.2F, 0.45F, 0.85F, 1.0F},
                              glm::clamp(t, 0.0F, 1.0F), 0.35F));
+                scene.registry().emplace<MeshSource>(d_ent, "show/sphere",
+                                                     "show/diel" + std::to_string(i), "");
             }
 
             // A warm emissive cube as a visible local light source.
@@ -2017,6 +2034,7 @@ int main() {
                 glow, cube_mesh,
                 make_mat("show/glow_mat", {0.0F, 0.0F, 0.0F, 1.0F}, 0.0F, 1.0F,
                          glm::vec3(3.0F, 1.2F, 0.3F)));
+            scene.registry().emplace<MeshSource>(glow, "show/cube", "show/glow_mat", "");
 
             // A clear glass sphere up front that refracts the spheres behind it.
             const entt::entity glass = scene.create_entity("glass_sphere");
@@ -2030,6 +2048,7 @@ int main() {
                 glass, sphere_mesh,
                 make_mat("show/glass_mat", {0.85F, 0.92F, 1.0F, 1.0F}, 0.0F, 0.04F,
                          glm::vec3(0.0F), engine::asset::material_transmission));
+            scene.registry().emplace<MeshSource>(glass, "show/sphere", "show/glass_mat", "");
         }
     }
 
@@ -2124,7 +2143,7 @@ int main() {
         }
     }
 
-    const entt::entity camera_entity = scene.create_entity("camera");
+    entt::entity camera_entity = scene.create_entity("camera");
     const engine::scene::Camera& camera =
         scene.registry().emplace<engine::scene::Camera>(camera_entity);
     scene.tick(); // resolve world transforms before measuring the scene bounds
@@ -2354,6 +2373,54 @@ int main() {
                 std::fprintf(stderr, "[editor] stop\n");
             }
             editor_play_prev = editor_play;
+        }
+
+        // Scene save/load requested from the File menu. Saving is pure CPU;
+        // loading clears the scene and needs an upload context for asset
+        // re-resolution, then the loop's cached entities are rebound.
+        if (!pending_save.empty()) {
+            const std::string path = std::exchange(pending_save, {});
+            if (auto r = engine::scene::save_scene(scene, path); r) {
+                std::fprintf(stderr, "[editor] saved scene: %s\n", path.c_str());
+            } else {
+                std::fprintf(stderr, "[editor] save failed: %s\n", r.error().message.c_str());
+            }
+        }
+        if (!pending_load.empty() && !editor_play) {
+            const std::string path = std::exchange(pending_load, {});
+            VkCommandPool load_pool = VK_NULL_HANDLE;
+            VkCommandPoolCreateInfo pool_info{};
+            pool_info.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+            pool_info.flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT;
+            pool_info.queueFamilyIndex = device.queue_families().graphics;
+            if (vkCreateCommandPool(vk_device, &pool_info, nullptr, &load_pool) == VK_SUCCESS) {
+                const engine::rhi::TransferContext load_transfer{
+                    vk_device, load_pool, device.graphics_queue(),
+                    device.max_sampler_anisotropy()};
+                if (auto r = engine::scene::load_scene(scene, path, allocator, load_transfer,
+                                                       assets);
+                    r) {
+                    std::fprintf(stderr, "[editor] loaded scene: %s\n", path.c_str());
+                    // Rebind the loop's cached entities to the loaded scene.
+                    spin_entity = entt::null;
+                    camera_entity = entt::null;
+                    for (const entt::entity e :
+                         scene.registry().view<engine::scene::Camera>()) {
+                        camera_entity = e;
+                        break;
+                    }
+                    if (camera_entity == entt::null) {
+                        camera_entity = scene.create_entity("camera");
+                        scene.registry().emplace<engine::scene::Camera>(camera_entity);
+                    }
+                    editor.set_selected(entt::null);
+                    render_settings.rebake_ibl = true; // sun may have changed
+                } else {
+                    std::fprintf(stderr, "[editor] load failed: %s\n",
+                                 r.error().message.c_str());
+                }
+                vkDestroyCommandPool(vk_device, load_pool, nullptr);
+            }
         }
 
         // glTF instantiate requested from the asset browser (double-click or
@@ -2800,6 +2867,8 @@ int main() {
             ui_ctx.renderer = &render_settings;
             ui_ctx.project_root = QUAT_PROJECT_ROOT;
             ui_ctx.instantiate_request = &pending_instantiate;
+            ui_ctx.save_request = &pending_save;
+            ui_ctx.load_request = &pending_load;
             // Demo modes own their physics world — hide the Play button there.
             ui_ctx.play_mode = physics_world ? nullptr : &editor_play;
             ui_ctx.view_proj = cam.view_proj; // unjittered, for overlays

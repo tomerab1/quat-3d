@@ -942,9 +942,12 @@ assemble_scene(const fastgltf::Asset& a, const std::string& key_prefix,
     }
 
     // Mesh primitives: one MeshAsset (single submesh) + material handle each.
+    // The cache keys ride along for MeshSource (scene serialization).
     struct PrimRef {
         asset::AssetHandle<asset::MeshAsset>     mesh;
         asset::AssetHandle<asset::MaterialAsset> material;
+        std::string                              mesh_key;
+        std::string                              material_key;
     };
     std::vector<std::vector<PrimRef>> mesh_prims(a.meshes.size());
     for (std::size_t m = 0; m < a.meshes.size(); ++m) {
@@ -962,9 +965,12 @@ assemble_scene(const fastgltf::Asset& a, const std::string& key_prefix,
                 k, [&](const std::filesystem::path&) {
                     return upload_mesh(prim_data, allocator, transfer);
                 });
-            ref.material = prim.materialIndex.has_value()
-                               ? mat_handles[prim.materialIndex.value()]
-                               : asset::AssetHandle<asset::MaterialAsset>{};
+            ref.mesh_key = k;
+            if (prim.materialIndex.has_value()) {
+                ref.material = mat_handles[prim.materialIndex.value()];
+                ref.material_key =
+                    key_prefix + "#mat" + std::to_string(prim.materialIndex.value());
+            }
             mesh_prims[m].push_back(ref);
         }
     }
@@ -1048,6 +1054,8 @@ assemble_scene(const fastgltf::Asset& a, const std::string& key_prefix,
                 const std::vector<PrimRef>& prims = mesh_prims[n.meshIndex.value()];
                 if (prims.size() == 1) {
                     reg.emplace<MeshRenderer>(e, prims[0].mesh, prims[0].material);
+                    reg.emplace<MeshSource>(e, prims[0].mesh_key, prims[0].material_key,
+                                            key_prefix);
                     attach_skin(e);
                 } else {
                     for (std::size_t p = 0; p < prims.size(); ++p) {
@@ -1056,6 +1064,8 @@ assemble_scene(const fastgltf::Asset& a, const std::string& key_prefix,
                             std::to_string(p));
                         scene.set_parent(pe, e);
                         reg.emplace<MeshRenderer>(pe, prims[p].mesh, prims[p].material);
+                        reg.emplace<MeshSource>(pe, prims[p].mesh_key, prims[p].material_key,
+                                                key_prefix);
                         attach_skin(pe);
                     }
                 }
