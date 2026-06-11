@@ -444,7 +444,8 @@ void EditorLayer::build_ui(const EditorContext& ctx) {
         draw_inspector(*ctx.scene, selected_);
         draw_animation_preview(*ctx.scene, selected_, ctx.view_proj, viewport_rect_,
                                anim_state_);
-        draw_physics_debug(*ctx.scene, ctx.view_proj, viewport_rect_, physics_state_);
+        draw_physics_debug(*ctx.scene, ctx.view_proj, viewport_rect_, physics_state_,
+                           ctx.build_navmesh_request, ctx.nav_edges);
     }
     if (ctx.renderer != nullptr) {
         draw_renderer_panel(*ctx.renderer, ctx.scene);

@@ -12,6 +12,8 @@
 #include <cstdint>
 #include <expected>
 #include <string>
+#include <utility>
+#include <vector>
 
 #include <entt/entity/fwd.hpp>
 #include <entt/entity/entity.hpp>
@@ -45,6 +47,7 @@ struct PhysicsDebugState {
     bool show_static  = true;
     bool show_dynamic = true; // dynamic + kinematic bodies
     bool show_sensors = true;
+    bool show_navmesh = true; // overlay the baked navmesh polygons (13.1)
 };
 
 // Renderer parameters the editor edits and the frame loop applies. Owned by
@@ -81,6 +84,11 @@ struct EditorContext {
     // frame loop snapshots/restores the scene on the transition). Null hides
     // the button (e.g. while a physics demo owns the world).
     bool* play_mode = nullptr;
+    // Out: the Physics panel's "Build navmesh" button; the frame loop bakes a
+    // NavMesh from the current static geometry and clears the flag (may be null).
+    bool* build_navmesh_request = nullptr;
+    // In: polygon edges of the baked navmesh for the overlay (may be null).
+    const std::vector<std::pair<glm::vec3, glm::vec3>>* nav_edges = nullptr;
     // The scene camera's (unjittered) view-projection — used by panels that
     // project world-space overlays into the viewport (joints, physics shapes)
     // and to build picking rays. Carries the renderer's Vulkan Y flip.

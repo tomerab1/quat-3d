@@ -8,6 +8,9 @@
 // Jolt interface against a library that cannot service it; contact points are
 // deferred until a Jolt build with the debug renderer is used.
 
+#include <utility>
+#include <vector>
+
 #include <glm/glm.hpp>
 
 #include "engine/editor/editor.hpp" // PhysicsDebugState
@@ -21,6 +24,8 @@ namespace engine::editor {
 // Draws the "Physics" window (toggles) and, when enabled, wireframes every
 // matching Collider into the viewport rect via the ImGui foreground draw list.
 void draw_physics_debug(scene::Scene& scene, const glm::mat4& view_proj,
-                        const float viewport_rect[4], PhysicsDebugState& state);
+                        const float viewport_rect[4], PhysicsDebugState& state,
+                        bool* build_navmesh_request,
+                        const std::vector<std::pair<glm::vec3, glm::vec3>>* nav_edges);
 
 } // namespace engine::editor

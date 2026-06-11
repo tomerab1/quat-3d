@@ -118,6 +118,14 @@ void physics_system(entt::registry& registry, physics::PhysicsWorld& world, floa
                                              physics::PhysicsWorld& world,
                                              const terrain::Heightmap& map);
 
+// Gather world-space triangles of the static, walkable scene for navmesh
+// baking (13.1): the terrain heightmap (decimated to keep triangle counts
+// sane) plus every static box collider. `map`/`anchor` may describe a terrain
+// tile (map null = no terrain).
+void collect_nav_geometry(entt::registry& registry, const terrain::Heightmap* map,
+                          const glm::vec3& anchor, std::vector<glm::vec3>& verts,
+                          std::vector<std::uint32_t>& indices);
+
 // Tile-level variant for streamed worlds: a static height-field body whose
 // minimum XZ corner sits at `origin` (12.4 creates/destroys one per tile).
 [[nodiscard]] std::uint32_t add_height_field_body(physics::PhysicsWorld& world,

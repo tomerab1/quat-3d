@@ -1,6 +1,7 @@
 // ECS <-> physics bridge system (Phase 6, Slice 6.2).
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdint>
 #include <vector>
@@ -330,6 +331,59 @@ std::uint32_t add_height_field_body(physics::PhysicsWorld& world, const terrain:
     params.motion = physics::Motion::static_body;
     params.layer = physics::Layer::static_body;
     return world.add_body(params);
+}
+
+void collect_nav_geometry(entt::registry& registry, const terrain::Heightmap* map,
+                          const glm::vec3& anchor, std::vector<glm::vec3>& verts,
+                          std::vector<std::uint32_t>& indices) {
+    if (map != nullptr && map->valid()) {
+        // Decimate the grid so even 1k maps stay around ~32k triangles.
+        const std::uint32_t res = map->resolution;
+        const std::uint32_t step = std::max(1U, (res - 1) / 128U);
+        const std::uint32_t cells = (res - 1) / step;
+        const float texel = map->metres_per_texel();
+        const glm::vec3 origin(anchor.x - map->tile_size_m * 0.5F, anchor.y,
+                               anchor.z - map->tile_size_m * 0.5F);
+        const auto base = static_cast<std::uint32_t>(verts.size());
+        for (std::uint32_t z = 0; z <= cells; ++z) {
+            for (std::uint32_t x = 0; x <= cells; ++x) {
+                const std::uint32_t sx = std::min(x * step, res - 1);
+                const std::uint32_t sz = std::min(z * step, res - 1);
+                verts.emplace_back(origin.x + static_cast<float>(sx) * texel,
+                                   origin.y + map->at(static_cast<std::int32_t>(sx),
+                                                      static_cast<std::int32_t>(sz)),
+                                   origin.z + static_cast<float>(sz) * texel);
+            }
+        }
+        const std::uint32_t stride = cells + 1;
+        for (std::uint32_t z = 0; z < cells; ++z) {
+            for (std::uint32_t x = 0; x < cells; ++x) {
+                const std::uint32_t i00 = base + z * stride + x;
+                indices.insert(indices.end(), {i00, i00 + stride, i00 + 1, i00 + 1, i00 + stride,
+                                               i00 + stride + 1});
+            }
+        }
+    }
+
+    // Static box colliders become 12 triangles each (the world matrix carries
+    // scale/rotation, matching the simulated shape closely enough for nav).
+    for (auto [e, t, col] : registry.view<const Transform, const Collider>().each()) {
+        if (col.shape != ColliderShape::box || col.is_sensor) continue;
+        const auto* body = registry.try_get<RigidBody>(e);
+        if (body != nullptr && body->motion != BodyMotion::static_body) continue;
+        const auto base = static_cast<std::uint32_t>(verts.size());
+        for (int corner = 0; corner < 8; ++corner) {
+            const glm::vec3 sign(((corner & 1) != 0) ? 1.0F : -1.0F,
+                                 ((corner & 2) != 0) ? 1.0F : -1.0F,
+                                 ((corner & 4) != 0) ? 1.0F : -1.0F);
+            verts.emplace_back(
+                glm::vec3(t.world * glm::vec4(col.offset + col.half_extents * sign, 1.0F)));
+        }
+        constexpr std::array<std::uint32_t, 36> box_idx{
+            0, 1, 3, 0, 3, 2, 4, 6, 7, 4, 7, 5, 0, 2, 6, 0, 6, 4,
+            1, 5, 7, 1, 7, 3, 0, 4, 5, 0, 5, 1, 2, 3, 7, 2, 7, 6};
+        for (const std::uint32_t i : box_idx) indices.push_back(base + i);
+    }
 }
 
 std::uint32_t add_terrain_body(entt::registry& registry, physics::PhysicsWorld& world,

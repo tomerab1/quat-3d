@@ -33,6 +33,7 @@
         "docking-experimental"
       ]
     },
-    "imguizmo"
+    "imguizmo",
+    "recastnavigation"
   ]
 }

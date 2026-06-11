@@ -588,7 +588,15 @@ Goal: large-scale procedurally generated terrain, editable and walkable.
 
 Goal: NPCs that navigate and act in the world.
 
-- [ ] **13.1 — Navmesh**: Recast/Detour generation from static geometry, debug-draw overlay.
+- [x] **13.1 — Navmesh**: `engine_nav` (Recast/Detour via vcpkg, PIMPL — consumers see glm
+  only). `NavMesh::build` runs the full Recast pipeline (voxelize → filter → erode by agent
+  radius → regions → contours → poly + detail mesh) over world triangles and bakes a Detour
+  mesh + query; `find_path` returns the string-pulled waypoint list, `nearest_point` snaps.
+  `scene::collect_nav_geometry` gathers the walkable static scene (decimated terrain heightmap
+  + static box colliders). Editor: "Build navmesh" button + cyan polygon-edge overlay in the
+  Physics panel (streamed tiles bake centre-tile only for now). Self-test: a plate with a
+  walled gap — the path detours through the gap, never over the wall.
+  *Commit: `[Phase13/Slice1] navmesh (Recast/Detour) + editor overlay`*
 - [ ] **13.2 — Agents**: locomotion via CharacterVirtual, path following, avoidance.
 - [ ] **13.3 — Behaviour**: behaviour trees (or utility AI) as data assets; perception stubs.
 

@@ -105,14 +105,41 @@ void draw_capsule(const OverlayContext& ctx, const glm::mat4& world, const glm::
 } // namespace
 
 void draw_physics_debug(scene::Scene& scene, const glm::mat4& view_proj,
-                        const float viewport_rect[4], PhysicsDebugState& state) {
+                        const float viewport_rect[4], PhysicsDebugState& state,
+                        bool* build_navmesh_request,
+                        const std::vector<std::pair<glm::vec3, glm::vec3>>* nav_edges) {
     if (ImGui::Begin("Physics")) {
         ImGui::Checkbox("draw colliders", &state.enabled);
         ImGui::Checkbox("static", &state.show_static);
         ImGui::Checkbox("dynamic / kinematic", &state.show_dynamic);
         ImGui::Checkbox("sensors", &state.show_sensors);
+        ImGui::Separator();
+        if (build_navmesh_request != nullptr &&
+            ImGui::Button("Build navmesh", ImVec2(-1.0F, 0.0F))) {
+            *build_navmesh_request = true;
+        }
+        ImGui::Checkbox("show navmesh", &state.show_navmesh);
+        if (nav_edges != nullptr && !nav_edges->empty()) {
+            ImGui::Text("navmesh: %zu edges", nav_edges->size());
+        }
     }
     ImGui::End();
+
+    // Navmesh overlay draws independently of the collider toggle.
+    if (state.show_navmesh && nav_edges != nullptr && !nav_edges->empty()) {
+        OverlayContext nav_ctx;
+        nav_ctx.draw = ImGui::GetForegroundDrawList();
+        nav_ctx.view_proj = &view_proj;
+        nav_ctx.rect = viewport_rect;
+        nav_ctx.color = IM_COL32(60, 220, 220, 200); // cyan
+        nav_ctx.draw->PushClipRect(ImVec2(viewport_rect[0], viewport_rect[1]),
+                                   ImVec2(viewport_rect[2], viewport_rect[3]), true);
+        for (const auto& [a, b] : *nav_edges) {
+            line(nav_ctx, a + glm::vec3(0.0F, 0.05F, 0.0F),
+                 b + glm::vec3(0.0F, 0.05F, 0.0F)); // lift off the ground
+        }
+        nav_ctx.draw->PopClipRect();
+    }
     if (!state.enabled) return;
 
     OverlayContext ctx;

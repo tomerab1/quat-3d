@@ -46,6 +46,7 @@
 #include "engine/renderer/ibl_pass.hpp"
 #include "engine/renderer/lighting_pass.hpp"
 #include "engine/renderer/taa_pass.hpp"
+#include "engine/nav/navmesh.hpp"
 #include "engine/renderer/terrain_pass.hpp"
 #include "engine/terrain/streamer.hpp"
 #include "engine/renderer/mesh_pass.hpp"
@@ -1435,6 +1436,12 @@ int main() {
                         std::fprintf(stderr, "[selftest] terrain FAILED: %s\n",
                                      r.error().message.c_str());
                     }
+                    if (auto r = engine::nav::run_navmesh_self_test(); r) {
+                        std::fprintf(stderr, "[selftest] navmesh OK (build + wall detour)\n");
+                    } else {
+                        std::fprintf(stderr, "[selftest] navmesh FAILED: %s\n",
+                                     r.error().message.c_str());
+                    }
                     if (auto r = engine::terrain::run_terrain_streaming_self_test(); r) {
                         std::fprintf(stderr,
                                      "[selftest] terrain streaming OK (window + seams)\n");
@@ -2230,6 +2237,8 @@ int main() {
     std::future<engine::terrain::Heightmap> terrain_job;
     engine::terrain::Heightmap terrain_heightmap; // CPU copy retained for physics (12.3)
     std::optional<engine::terrain::TerrainStreamer> terrain_streamer; // 12.4
+    engine::nav::NavMesh navmesh;        // baked on request from the Physics panel (13.1)
+    bool navmesh_request = false;
     std::map<glm::ivec2, std::uint32_t, engine::terrain::TileCoordLess>
         terrain_bodies; // streamed tiles' play-mode physics bodies
 
@@ -2962,6 +2971,29 @@ int main() {
             }
         }
 
+        // Navmesh bake requested from the Physics panel: gather the static
+        // walkable geometry (terrain + static box colliders) and run Recast.
+        // Blocking, but explicit and logged (editor tooling).
+        if (navmesh_request) {
+            navmesh_request = false;
+            std::vector<glm::vec3> nav_verts;
+            std::vector<std::uint32_t> nav_indices;
+            engine::scene::collect_nav_geometry(
+                scene.registry(), terrain_heightmap.valid() ? &terrain_heightmap : nullptr,
+                terrain_anchor, nav_verts, nav_indices);
+            if (terrain_streamer) {
+                std::fprintf(stderr,
+                             "[nav] note: streamed tiles are not baked yet (centre tile only)\n");
+            }
+            if (auto built = engine::nav::NavMesh::build(nav_verts, nav_indices); built) {
+                navmesh = std::move(*built);
+                std::fprintf(stderr, "[nav] navmesh baked: %zu tris in, %zu edges out\n",
+                             nav_indices.size() / 3, navmesh.debug_edges().size());
+            } else {
+                std::fprintf(stderr, "[nav] bake failed: %s\n", built.error().message.c_str());
+            }
+        }
+
         engine::rhi::RenderGraph graph(fr.pool);
 
         // Sky + environment upkeep, declared FIRST so their trailing barriers
@@ -3098,6 +3130,8 @@ int main() {
             ui_ctx.load_request = &pending_load;
             // Demo modes own their physics world — hide the Play button there.
             ui_ctx.play_mode = physics_world ? nullptr : &editor_play;
+            ui_ctx.build_navmesh_request = &navmesh_request;
+            ui_ctx.nav_edges = navmesh.valid() ? &navmesh.debug_edges() : nullptr;
             ui_ctx.view_proj = cam.view_proj; // unjittered, for overlays
             ui_ctx.view = cam.view;
             ui_ctx.proj_no_flip = cam.projection;

@@ -86,6 +86,7 @@ find_package(fastgltf CONFIG REQUIRED)
 find_package(Stb REQUIRED)
 find_package(EnTT CONFIG REQUIRED)
 find_package(Jolt CONFIG REQUIRED)
+find_package(recastnavigation CONFIG REQUIRED)
 if(ENGINE_EDITOR)
     find_package(imgui CONFIG REQUIRED)
     find_package(imguizmo CONFIG REQUIRED)
@@ -191,6 +192,17 @@ target_link_libraries(engine_terrain PUBLIC engine_flags glm::glm)
 target_include_directories(engine_terrain PUBLIC ${ENGINE_PUBLIC_INCLUDE})
 
 # ---------------------------------------------------------------------------
+# engine_nav — Recast/Detour navigation (Phase 13). Recast is an implementation
+# detail (PRIVATE); the public header is Recast-free (PIMPL).
+# ---------------------------------------------------------------------------
+add_library(engine_nav STATIC
+    src/nav/navmesh.cpp)
+target_link_libraries(engine_nav PUBLIC engine_flags glm::glm)
+target_link_libraries(engine_nav PRIVATE
+    RecastNavigation::Recast RecastNavigation::Detour RecastNavigation::DetourCrowd)
+target_include_directories(engine_nav PUBLIC ${ENGINE_PUBLIC_INCLUDE})
+
+# ---------------------------------------------------------------------------
 # engine_renderer — high-level passes built on the RHI. Starts with the deferred
 # GBuffer pass (mesh_pass); lighting/tonemap/imgui passes follow in later slices.
 # ---------------------------------------------------------------------------
@@ -257,7 +269,7 @@ endif()
 add_executable(game src/main.cpp)
 target_link_libraries(game PRIVATE
     engine_flags engine_rhi engine_asset engine_scene engine_renderer engine_physics
-    engine_terrain SDL3::SDL3)
+    engine_terrain engine_nav SDL3::SDL3)
 if(ENGINE_EDITOR)
     target_link_libraries(game PRIVATE engine_editor)
 endif()
