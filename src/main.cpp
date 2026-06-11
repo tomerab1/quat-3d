@@ -47,6 +47,8 @@
 #include "engine/renderer/lighting_pass.hpp"
 #include "engine/renderer/taa_pass.hpp"
 #include "engine/nav/navmesh.hpp"
+#include "engine/net/replication.hpp"
+#include "engine/net/transport.hpp"
 #include "engine/scene/behavior.hpp"
 #include "engine/renderer/terrain_pass.hpp"
 #include "engine/terrain/streamer.hpp"
@@ -1437,6 +1439,19 @@ int main() {
                         std::fprintf(stderr, "[selftest] terrain FAILED: %s\n",
                                      r.error().message.c_str());
                     }
+                    if (auto r = engine::net::run_replication_self_test(); r) {
+                        std::fprintf(stderr,
+                                     "[selftest] replication OK (loopback transform sync)\n");
+                    } else {
+                        std::fprintf(stderr, "[selftest] replication FAILED: %s\n",
+                                     r.error().message.c_str());
+                    }
+                    if (auto r = engine::net::run_transport_self_test(); r) {
+                        std::fprintf(stderr, "[selftest] transport OK (loopback ping/pong)\n");
+                    } else {
+                        std::fprintf(stderr, "[selftest] transport FAILED: %s\n",
+                                     r.error().message.c_str());
+                    }
                     if (auto r = engine::scene::run_behavior_self_test(); r) {
                         std::fprintf(stderr, "[selftest] behavior tree OK (patrol + wait)\n");
                     } else {
@@ -2252,6 +2267,54 @@ int main() {
     std::optional<engine::terrain::TerrainStreamer> terrain_streamer; // 12.4
     engine::nav::NavMesh navmesh;        // baked on request from the Physics panel (13.1)
     bool navmesh_request = false;
+
+    // Networking (14.1/14.2): QUAT_HOST=<port> serves this scene's replicated
+    // entities; QUAT_JOIN=<ip:port> mirrors them. net_ids hash entity names, so
+    // both ends must run the same scene.
+    std::optional<engine::net::NetServer> net_server;
+    std::optional<engine::net::NetClient> net_client;
+    engine::net::ReplicationServer net_replication;
+    engine::net::ReplicationClient net_receiver;
+    const auto assign_net_ids = [&]() {
+        std::uint32_t tagged = 0;
+        for (auto [e, name] : scene.registry().view<engine::scene::Name>().each()) {
+            if (scene.registry().any_of<engine::scene::NetReplicated>(e)) continue;
+            if (!scene.registry().any_of<engine::scene::Transform>(e)) continue;
+            // FNV-1a of the name: deterministic across runs and both ends.
+            std::uint32_t h = 2166136261U;
+            for (const char c : name.value) h = (h ^ static_cast<unsigned char>(c)) * 16777619U;
+            if (h == 0) h = 1;
+            scene.registry().emplace<engine::scene::NetReplicated>(e, h);
+            ++tagged;
+        }
+        std::fprintf(stderr, "[net] %u entities tagged for replication\n", tagged);
+    };
+    if (const char* host_port = std::getenv("QUAT_HOST"); host_port != nullptr) {
+        if (auto s2 = engine::net::NetServer::listen(
+                static_cast<std::uint16_t>(std::atoi(host_port)));
+            s2) {
+            net_server = std::move(*s2);
+            assign_net_ids();
+            std::fprintf(stderr, "[net] hosting on port %s\n", host_port);
+        } else {
+            std::fprintf(stderr, "[net] host failed: %s\n", s2.error().message.c_str());
+        }
+    } else if (const char* join_addr = std::getenv("QUAT_JOIN"); join_addr != nullptr) {
+        const std::string addr(join_addr);
+        const std::size_t colon = addr.rfind(':');
+        if (colon != std::string::npos) {
+            if (auto c = engine::net::NetClient::connect(
+                    addr.substr(0, colon),
+                    static_cast<std::uint16_t>(std::atoi(addr.c_str() + colon + 1)));
+                c) {
+                net_client = std::move(*c);
+                assign_net_ids();
+                std::fprintf(stderr, "[net] joining %s\n", join_addr);
+            } else {
+                std::fprintf(stderr, "[net] join failed: %s\n", c.error().message.c_str());
+            }
+        }
+    }
     std::map<glm::ivec2, std::uint32_t, engine::terrain::TileCoordLess>
         terrain_bodies; // streamed tiles' play-mode physics bodies
 
@@ -2762,6 +2825,29 @@ int main() {
         }
 #endif
         scene.tick(dt); // advances any Animators by real elapsed time
+
+        // Replication: the host broadcasts moved entities; a joined client
+        // smooths its copies toward the latest snapshot (after tick so the
+        // interpolated pose wins the frame).
+        if (net_server) {
+            for (const engine::net::NetEvent& ev : net_server->poll()) {
+                if (ev.type == engine::net::NetEvent::Type::connected) {
+                    std::fprintf(stderr, "[net] client %u connected\n", ev.client);
+                } else if (ev.type == engine::net::NetEvent::Type::disconnected) {
+                    std::fprintf(stderr, "[net] client %u left\n", ev.client);
+                }
+            }
+            net_replication.tick(scene.registry(), *net_server, dt);
+        } else if (net_client) {
+            for (const engine::net::NetEvent& ev : net_client->poll()) {
+                if (ev.type == engine::net::NetEvent::Type::message) {
+                    net_receiver.receive(ev.payload);
+                } else if (ev.type == engine::net::NetEvent::Type::connected) {
+                    std::fprintf(stderr, "[net] connected to host\n");
+                }
+            }
+            net_receiver.apply(scene.registry(), dt);
+        }
 
         // Third-person follow camera, placed after the character has moved.
         // try_get both ends: the editor can delete either entity.

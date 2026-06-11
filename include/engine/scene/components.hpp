@@ -181,6 +181,13 @@ struct Terrain {
     int  stream_radius = 1;
 };
 
+// Marks an entity for network replication (14.2): the server broadcasts its
+// Transform to clients, matched by `net_id` (stable across both ends — both
+// load the same scene). 0 is unassigned.
+struct NetReplicated {
+    std::uint32_t net_id = 0;
+};
+
 // Human-readable label. Editor-only metadata, not on any hot path.
 struct Name {
     std::string value;

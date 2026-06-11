@@ -620,7 +620,20 @@ Goal: NPCs that navigate and act in the world.
 
 Goal: multiplayer-ready replication layer.
 
-- [ ] **14.1 — Transport**: client/server over UDP (e.g. GameNetworkingSockets/ENet style),
-  connection management, channels.
-- [ ] **14.2 — Replication**: snapshot deltas of ECS components, interest management.
+- [x] **14.1 — Transport**: `engine_net` over GameNetworkingSockets (Valve; encrypted,
+  congestion-controlled UDP; vcpkg + an overlay port fixing its libstdc++-only `<debug/map>`
+  guard for the libc++ triplet). PIMPL NetServer (listen/accept/poll events/send/broadcast/
+  kick) + NetClient (connect/poll/send), reliable + unreliable channels, poll-driven (no
+  background threads touch engine state). GNS exposes ONE global interface, so connection
+  callbacks route to their owning endpoint by listen-socket/connection handle. Self-test:
+  real loopback handshake + reliable/unreliable ping-pong.
+  *Commit: `[Phase14/Slice1] transport (GameNetworkingSockets client/server)`*
+- [x] **14.2 — Replication**: server-authoritative Transform snapshots for entities tagged
+  `NetReplicated` (net_id = FNV-1a of the entity name — deterministic on both ends of a
+  shared scene). 20 Hz, changed-entities-only deltas on the unreliable channel + periodic
+  reliable keyframes (joiners/loss); clients smooth toward snapshots over a 100 ms window.
+  `QUAT_HOST=<port>` / `QUAT_JOIN=<ip:port>` drive it in the frame loop. Interest management
+  (per-client radius) lands with player-owned avatars in 14.3+. Self-test: a gliding server
+  entity converges on the client over real GNS loopback.
+  *Commit: `[Phase14/Slice2] replication (snapshot deltas over GNS)`*
 - [ ] **14.3 — Prediction**: client-side prediction + reconciliation for the local character.
