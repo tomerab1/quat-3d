@@ -216,7 +216,8 @@ target_include_directories(engine_nav PUBLIC ${ENGINE_PUBLIC_INCLUDE})
 # ---------------------------------------------------------------------------
 add_library(engine_net STATIC
     src/net/transport.cpp
-    src/net/replication.cpp)
+    src/net/replication.cpp
+    src/net/prediction.cpp)
 target_link_libraries(engine_net PUBLIC engine_flags glm::glm EnTT::EnTT)
 # Linux (static triplet) exports ::static; Windows (dynamic) exports ::shared.
 if(TARGET GameNetworkingSockets::static)

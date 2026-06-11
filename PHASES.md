@@ -636,4 +636,14 @@ Goal: multiplayer-ready replication layer.
   (per-client radius) lands with player-owned avatars in 14.3+. Self-test: a gliding server
   entity converges on the client over real GNS loopback.
   *Commit: `[Phase14/Slice2] replication (snapshot deltas over GNS)`*
-- [ ] **14.3 — Prediction**: client-side prediction + reconciliation for the local character.
+- [x] **14.3 — Prediction**: client-side prediction + reconciliation for the local
+  character. `CharacterPredictor` (engine-agnostic, injected step function): the owning
+  client applies inputs immediately, ships them with sequence numbers (kind-2 messages);
+  the host applies them authoritatively to the "player" character and acks the last
+  processed sequence with the resulting state (kind-3). On every ack the client drops
+  acknowledged inputs and replays the rest on top of the server position — corrections
+  never erase recent input. The predicted character is excluded from the replication
+  stream (client-owned); the host claims one remote owner (v1: one networked player).
+  Self-test: a deliberate mid-stream server divergence lands exactly on server-state +
+  unacked-input replay.
+  *Commit: `[Phase14/Slice3] client-side prediction + reconciliation`*
