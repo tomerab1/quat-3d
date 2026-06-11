@@ -174,3 +174,128 @@ public float4 sample_skyview(Texture2D lut, SamplerState samp, float3 view_dir,
     float2 uv = skyview_uv_from(view_zenith_cos, azimuth_cos, below);
     return lut.SampleLevel(samp, uv, 0.0);
 }
+
+// ---------------------------------------------------------------------------
+// Volumetric cloud layer (Phase 11.2). Marched PER PIXEL by the lighting
+// background (and per texel by the IBL bake) — the sky-view LUT is far too
+// coarse for cloud shapes. Luminance is returned in sky-view LUT units; the
+// caller applies the same brightness scale it uses for the LUT sky.
+// ---------------------------------------------------------------------------
+static const float CLOUD_BOTTOM = ATMOS_GROUND_RADIUS + 1.5; // km
+static const float CLOUD_TOP    = ATMOS_GROUND_RADIUS + 4.0; // km
+static const float CLOUD_COVERAGE = 0.42;
+static const float CLOUD_EXTINCTION = 24.0; // /km at full density
+static const int   CLOUD_STEPS = 28;
+static const int   CLOUD_SUN_STEPS = 5;
+
+float cloud_hash(float2 p) {
+    return frac(sin(dot(p, float2(127.1, 311.7))) * 43758.5453);
+}
+
+float cloud_value_noise(float2 p) {
+    float2 i = floor(p);
+    float2 f = frac(p);
+    float2 u = f * f * (3.0 - 2.0 * f);
+    float a = cloud_hash(i);
+    float b = cloud_hash(i + float2(1, 0));
+    float c = cloud_hash(i + float2(0, 1));
+    float d = cloud_hash(i + float2(1, 1));
+    return lerp(lerp(a, b, u.x), lerp(c, d, u.x), u.y);
+}
+
+float cloud_fbm(float2 p) {
+    float v = 0.0;
+    float amp = 0.5;
+    for (int i = 0; i < 5; ++i) {
+        v += amp * cloud_value_noise(p);
+        p = p * 2.17 + float2(13.7, 9.1);
+        amp *= 0.5;
+    }
+    return v;
+}
+
+// Density at a world-space point (km, planet-centred altitude supplied).
+float cloud_density(float3 p, float altitude_km) {
+    float h01 = saturate((altitude_km - CLOUD_BOTTOM) / (CLOUD_TOP - CLOUD_BOTTOM));
+    float profile = smoothstep(0.0, 0.20, h01) * (1.0 - smoothstep(0.5, 1.0, h01));
+    if (profile <= 0.0) return 0.0;
+
+    float2 uv = p.xz * 0.10; // base features ~10 km
+    float base = cloud_fbm(uv);
+    float coverage_t = 1.0 - CLOUD_COVERAGE;
+    float d = saturate((base - coverage_t) / max(1.0 - coverage_t, 1e-3));
+    // Erode edges more than cores for billowy silhouettes.
+    float detail = cloud_fbm(uv * 5.31 + 17.7);
+    d = saturate(d - (1.0 - d) * detail * 0.4);
+    return d * d * (3.0 - 2.0 * d) * profile;
+}
+
+float cloud_shell_distance(float r, float mu, float shell_radius) {
+    float disc = r * r * (mu * mu - 1.0) + shell_radius * shell_radius;
+    if (disc < 0.0) return -1.0;
+    return -r * mu + sqrt(disc);
+}
+
+float cloud_hg_phase(float cos_theta, float g) {
+    float g2 = g * g;
+    return (1.0 - g2) / (4.0 * ATMOS_PI * pow(1.0 + g2 - 2.0 * g * cos_theta, 1.5));
+}
+
+// Marches the cloud shell along `dir` (world space, y up) from the standard
+// view height. `ambient` is the sky light bathing the clouds, in sky-view LUT
+// units (callers sample the sky-view LUT near the zenith for it). Returns
+// rgb = in-scattered luminance (LUT units), a = transmittance (1 = clear).
+public float4 march_clouds(float3 dir, float3 sun_dir, Texture2D transmittance_lut,
+                           SamplerState samp, float3 ambient) {
+    float r = ATMOS_VIEW_HEIGHT;
+    float mu = dir.y;
+    if (mu <= 0.02) return float4(0.0, 0.0, 0.0, 1.0); // below/at horizon: clear
+
+    float t_out = cloud_shell_distance(r, mu, CLOUD_TOP);
+    if (t_out <= 0.0) return float4(0.0, 0.0, 0.0, 1.0);
+    float t_in = max(cloud_shell_distance(r, mu, CLOUD_BOTTOM), 0.0);
+    float march_len = t_out - t_in;
+    if (march_len <= 0.0 || march_len > 60.0) return float4(0.0, 0.0, 0.0, 1.0);
+
+    float mu_sun = clamp(sun_dir.y, -1.0, 1.0);
+    float cos_theta = dot(dir, sun_dir);
+    float3 sun_trans = sample_transmittance(transmittance_lut, samp,
+                                            clamp(r + 2.0, ATMOS_GROUND_RADIUS, ATMOS_TOP_RADIUS),
+                                            mu_sun);
+    float3 sun_energy = sun_trans * 0.45;
+    float phase = lerp(cloud_hg_phase(cos_theta, 0.55), cloud_hg_phase(cos_theta, -0.2), 0.3) +
+                  0.12;
+    // Aerial perspective: distant banks dissolve into haze.
+    float distance_fade = exp(-t_in * 0.045);
+
+    float dt = march_len / CLOUD_STEPS;
+    float trans = 1.0;
+    float3 lum = float3(0.0, 0.0, 0.0);
+    for (int i = 0; i < CLOUD_STEPS; ++i) {
+        if (trans < 0.01) break;
+        float t = t_in + (float(i) + 0.5) * dt;
+        float3 p = dir * t;
+        float altitude = sqrt(r * r + t * t + 2.0 * r * t * mu);
+        float dens = cloud_density(p, altitude);
+        if (dens <= 0.002) continue;
+
+        float sigma = dens * CLOUD_EXTINCTION;
+        float shadow_depth = 0.0;
+        float ds = (CLOUD_TOP - CLOUD_BOTTOM) / float(CLOUD_SUN_STEPS);
+        for (int s = 1; s <= CLOUD_SUN_STEPS; ++s) {
+            float3 sp = p + sun_dir * (float(s) * ds);
+            float s_alt = altitude + sun_dir.y * float(s) * ds;
+            shadow_depth += cloud_density(sp, s_alt) * ds;
+        }
+        float light = exp(-shadow_depth * CLOUD_EXTINCTION * 0.6);
+        float powder = 1.0 - exp(-2.0 * sigma * dt);
+
+        float3 scatter = sun_energy * light * phase * (0.7 + 0.3 * powder) + ambient;
+        float step_trans = exp(-sigma * dt);
+        lum += trans * scatter * (1.0 - step_trans);
+        trans *= step_trans;
+    }
+    lum *= distance_fade;
+    trans = lerp(1.0, trans, distance_fade);
+    return float4(lum, trans);
+}

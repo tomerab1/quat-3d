@@ -38,13 +38,19 @@ void compute_main(uint3 tid : SV_DispatchThreadID) {
 
     float3 radiance;
     if (pc.sun_dir.w > 0.5) {
-        float4 sky_sample = sample_skyview(g_skyview, g_samp, dir, sun);
-        radiance = sky_sample.rgb * SKY_LUT_BRIGHTNESS;
+        // Atmosphere from the LUT + per-texel volumetric clouds (the same
+        // march the lighting background uses), so reflections match the sky.
+        float3 sky_rgb = sample_skyview(g_skyview, g_samp, dir, sun).rgb;
+        float3 cloud_ambient =
+            sample_skyview(g_skyview, g_samp, float3(0.2, 0.97, 0.0), sun).rgb * 0.8 +
+            float3(0.008, 0.011, 0.016);
+        float4 clouds = march_clouds(dir, sun, g_transmittance, g_samp, cloud_ambient);
+        radiance = (sky_rgb * clouds.a + clouds.rgb) * SKY_LUT_BRIGHTNESS;
         float cos_sun = dot(dir, sun);
         if (cos_sun > 0.9998) {
             float3 sun_trans =
                 sample_transmittance(g_transmittance, g_samp, ATMOS_VIEW_HEIGHT, sun.y);
-            radiance += sun_trans * sky_sample.a * 80.0 * smoothstep(0.9998, 0.99995, cos_sun);
+            radiance += sun_trans * clouds.a * 80.0 * smoothstep(0.9998, 0.99995, cos_sun);
         }
     } else {
         radiance = sky(dir, sun);

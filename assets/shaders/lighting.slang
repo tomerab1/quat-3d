@@ -242,17 +242,23 @@ void compute_main(uint3 tid : SV_DispatchThreadID) {
             float3 ray = normalize(far_pos - pc.camera_pos.xyz);
             float3 sun = normalize(pc.direction.xyz);
             if (pc.direction.w > 1.5) {
-                // Physically-based sky (Hillaire LUTs) + analytic sun disc
-                // tinted by the transmittance toward the sun and dimmed by the
-                // cloud transmittance stored in the sky-view alpha.
-                float4 sky_sample = sample_skyview(g_skyview, g_ibl_sampler, ray, sun);
-                bg = sky_sample.rgb * SKY_LUT_BRIGHTNESS;
+                // Physically-based sky: atmosphere from the sky-view LUT,
+                // volumetric clouds marched per pixel (sharp shapes — the LUT
+                // is too coarse for them), analytic sun disc tinted by the
+                // transmittance and dimmed behind clouds.
+                bg = sample_skyview(g_skyview, g_ibl_sampler, ray, sun).rgb;
+                float3 cloud_ambient =
+                    sample_skyview(g_skyview, g_ibl_sampler, float3(0.2, 0.97, 0.0), sun).rgb *
+                        0.8 +
+                    float3(0.008, 0.011, 0.016);
+                float4 clouds =
+                    march_clouds(ray, sun, g_transmittance_lut, g_ibl_sampler, cloud_ambient);
+                bg = (bg * clouds.a + clouds.rgb) * SKY_LUT_BRIGHTNESS;
                 float cos_sun = dot(ray, sun);
                 if (cos_sun > 0.9998) {
                     float3 sun_trans = sample_transmittance(
                         g_transmittance_lut, g_ibl_sampler, ATMOS_VIEW_HEIGHT, sun.y);
-                    bg += sun_trans * sky_sample.a * 80.0 *
-                          smoothstep(0.9998, 0.99995, cos_sun);
+                    bg += sun_trans * clouds.a * 80.0 * smoothstep(0.9998, 0.99995, cos_sun);
                 }
             } else {
                 bg = sky(ray, sun);
