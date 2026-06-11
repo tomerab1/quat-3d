@@ -143,11 +143,27 @@ load_scene(Scene& scene, const std::filesystem::path& path, rhi::GpuAllocator& a
             if (!p.empty()) gltf_paths.insert(p);
         }
     }
+    // The scene file does not persist SkinnedMesh/Animator (asset handles are
+    // not serializable); harvest them from the scratch instantiation instead,
+    // keyed by primitive mesh key, and re-attach below. root_transform is
+    // entity-relative, so the copied value is valid wherever the saved entity
+    // ended up.
+    std::unordered_map<std::string, SkinnedMesh> skin_by_mesh_key;
+    std::unordered_map<std::string, Animator> animator_by_mesh_key;
     for (const std::string& p : gltf_paths) {
         Scene scratch;
         if (auto roots = GltfLoader::instantiate(p, allocator, transfer, assets, scratch);
             !roots) {
             return fail("load_scene: glTF '" + p + "' failed: " + roots.error().message);
+        }
+        for (auto [se, ssrc, sskin] :
+             scratch.registry().view<MeshSource, SkinnedMesh>().each()) {
+            SkinnedMesh copy = sskin;
+            copy.joint_matrices.clear(); // rewritten by the animation system
+            skin_by_mesh_key.emplace(ssrc.mesh_key, std::move(copy));
+            if (const auto* sanim = scratch.registry().try_get<Animator>(se)) {
+                animator_by_mesh_key.emplace(ssrc.mesh_key, *sanim);
+            }
         }
     }
     // Cache-hit-only loaders: the asset must already exist under the key.
@@ -192,6 +208,15 @@ load_scene(Scene& scene, const std::filesystem::path& path, rhi::GpuAllocator& a
                              src.mesh_key.c_str());
             }
             r.emplace<MeshRenderer>(e, std::move(mr));
+            // Re-adopt the skin/animator this primitive carries in its source
+            // glTF (see the scratch harvest above).
+            if (auto it = skin_by_mesh_key.find(src.mesh_key); it != skin_by_mesh_key.end()) {
+                r.emplace<SkinnedMesh>(e, it->second);
+                if (auto ai = animator_by_mesh_key.find(src.mesh_key);
+                    ai != animator_by_mesh_key.end()) {
+                    r.emplace<Animator>(e, ai->second);
+                }
+            }
             r.emplace<MeshSource>(e, std::move(src));
         }
         if (je.contains("collider")) {
