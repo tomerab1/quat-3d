@@ -210,14 +210,14 @@ TransparentPass::add_to_graph(rhi::RenderGraph& graph, rhi::ResourceHandle hdr,
                               rhi::ResourceHandle depth, VkExtent2D extent,
                               const glm::mat4& view_proj, const DirectionalLightParams& light,
                               const glm::vec3& camera_pos, std::span<const DrawItem> draws,
-                              const IblMaps* ibl) {
+                              IblViewSet ibl) {
     frame_descriptors_.clear();
     frame_draws_.clear();
 
     if (auto r = ensure_scene_color(extent); !r) return r;
 
-    // Stable pointers: fallback_ibl_ is a member, *ibl is caller-owned.
-    const IblMaps* maps = (ibl != nullptr && ibl->valid()) ? ibl : &fallback_ibl_;
+    // Non-owning view set; falls back to the member black maps when empty.
+    const IblViewSet maps = ibl.valid() ? ibl : fallback_ibl_.views();
 
     bool any_transmissive = false;
     for (const DrawItem& d : draws) {
@@ -237,10 +237,10 @@ TransparentPass::add_to_graph(rhi::RenderGraph& graph, rhi::ResourceHandle hdr,
         db->write_sampler(6, sampler_.handle());
         db->write_sampled_image(7, scene_color_view_.handle(), ro);
         db->write_sampler(8, scene_sampler_.handle());
-        db->write_sampled_image(9, maps->irradiance_view.handle(), ro);
-        db->write_sampled_image(10, maps->prefiltered_view.handle(), ro);
-        db->write_sampled_image(11, maps->brdf_lut_view.handle(), ro);
-        db->write_sampler(12, maps->sampler.handle());
+        db->write_sampled_image(9, maps.irradiance, ro);
+        db->write_sampled_image(10, maps.prefiltered, ro);
+        db->write_sampled_image(11, maps.brdf_lut, ro);
+        db->write_sampler(12, maps.sampler);
         db->write_sampled_image(13, texture_view_or_fallback(mat.textures.thickness), ro);
 
         FrameDraw fd;

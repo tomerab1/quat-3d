@@ -483,11 +483,12 @@ namespace {
     return out;
 }
 
-// Copy one (mip, layer) subresource of an RGBA16F image (currently in
-// SHADER_READ_ONLY_OPTIMAL) into host floats, RGBA per texel.
-[[nodiscard]] std::expected<std::vector<float>, core::Error>
-read_subresource(const rhi::Device& device, rhi::GpuAllocator& allocator, VkImage image,
-                 std::uint32_t mip, std::uint32_t layer, std::uint32_t w, std::uint32_t h) {
+} // namespace
+
+std::expected<std::vector<float>, core::Error>
+read_rgba16f_subresource(const rhi::Device& device, rhi::GpuAllocator& allocator, VkImage image,
+                         std::uint32_t mip, std::uint32_t layer, std::uint32_t w,
+                         std::uint32_t h) {
     const VkDeviceSize bytes = static_cast<VkDeviceSize>(w) * h * 8;
     auto readback = allocator.create_buffer(
         bytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT, VMA_MEMORY_USAGE_AUTO,
@@ -534,8 +535,6 @@ read_subresource(const rhi::Device& device, rhi::GpuAllocator& allocator, VkImag
     return out;
 }
 
-} // namespace
-
 std::expected<void, core::Error>
 run_ibl_self_test(const rhi::Device& device, rhi::GpuAllocator& allocator,
                   rhi::PipelineCache& cache, const std::string& cooked_shader_dir) {
@@ -546,7 +545,7 @@ run_ibl_self_test(const rhi::Device& device, rhi::GpuAllocator& allocator,
 
     // BRDF LUT: at high NdotV + low roughness the scale -> ~1, bias -> ~0; every
     // texel must be finite and in [0, ~1].
-    auto lut = read_subresource(device, allocator, maps->brdf_lut.handle(), 0, 0, kBrdfSize,
+    auto lut = read_rgba16f_subresource(device, allocator, maps->brdf_lut.handle(), 0, 0, kBrdfSize,
                                 kBrdfSize);
     if (!lut) return std::unexpected(lut.error());
     const auto lut_at = [&](std::uint32_t x, std::uint32_t y, int c) {
@@ -560,7 +559,7 @@ run_ibl_self_test(const rhi::Device& device, rhi::GpuAllocator& allocator,
 
     // Irradiance, +Y (up) face centre: positive and blue-dominant (the sky zenith).
     constexpr std::uint32_t up_face = 2;
-    auto irr = read_subresource(device, allocator, maps->irradiance.handle(), 0, up_face,
+    auto irr = read_rgba16f_subresource(device, allocator, maps->irradiance.handle(), 0, up_face,
                                 kIrradianceSize, kIrradianceSize);
     if (!irr) return std::unexpected(irr.error());
     const std::size_t ic = (static_cast<std::size_t>(kIrradianceSize / 2) * kIrradianceSize +
@@ -571,7 +570,7 @@ run_ibl_self_test(const rhi::Device& device, rhi::GpuAllocator& allocator,
 
     // Prefiltered mip 0 (mirror), +Y face centre: a near-mirror sky sample, also
     // positive and blue-dominant.
-    auto pre = read_subresource(device, allocator, maps->prefiltered.handle(), 0, up_face,
+    auto pre = read_rgba16f_subresource(device, allocator, maps->prefiltered.handle(), 0, up_face,
                                 kPrefilterSize, kPrefilterSize);
     if (!pre) return std::unexpected(pre.error());
     const std::size_t pc = (static_cast<std::size_t>(kPrefilterSize / 2) * kPrefilterSize +

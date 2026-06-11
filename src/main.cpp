@@ -38,6 +38,7 @@
 #include "engine/renderer/atmosphere_pass.hpp"
 #include "engine/renderer/bloom_pass.hpp"
 #include "engine/renderer/exposure_pass.hpp"
+#include "engine/renderer/dynamic_ibl.hpp"
 #include "engine/renderer/ibl_pass.hpp"
 #include "engine/renderer/lighting_pass.hpp"
 #include "engine/renderer/taa_pass.hpp"
@@ -1404,6 +1405,15 @@ int main() {
                         std::fprintf(stderr, "[selftest] IBL FAILED: %s\n",
                                      r.error().message.c_str());
                     }
+                    if (auto r = engine::renderer::run_dynamic_ibl_self_test(
+                            device, allocator, *mesh_cache, shader_dir);
+                        r) {
+                        std::fprintf(stderr,
+                                     "[selftest] dynamic IBL OK (incremental cycle + flip)\n");
+                    } else {
+                        std::fprintf(stderr, "[selftest] dynamic IBL FAILED: %s\n",
+                                     r.error().message.c_str());
+                    }
                     if (auto r = engine::renderer::run_ibl_lighting_self_test(
                             device, allocator, *mesh_cache, transfer, shader_dir);
                         r) {
@@ -2128,12 +2138,13 @@ int main() {
         return atmosphere ? atmosphere->transmittance_view() : VK_NULL_HANDLE;
     };
 
-    // Image-based lighting: bake the environment (the atmosphere sky when
-    // available, else the procedural one) into a diffuse irradiance cube +
-    // prefiltered specular cube + BRDF LUT once, using the sun direction. The
-    // deferred lighting pass samples these every frame for its ambient/
-    // reflection term. Falls back to flat ambient on failure.
-    engine::renderer::IblMaps ibl_maps;
+    // Image-based lighting: a dynamic environment probe (11.3). create() runs
+    // one blocking full cycle so ambient/reflections are complete from frame
+    // one; afterwards the probe re-renders incrementally, one compute step per
+    // frame inside the render graph, so the IBL tracks the moving sun and
+    // drifting clouds with no rebake hitches. Falls back to flat ambient on
+    // failure.
+    std::optional<engine::renderer::DynamicIbl> dynamic_ibl;
     {
         glm::vec3 sun_to = glm::normalize(glm::vec3(0.4F, 1.0F, 0.3F));
         const auto dlv = scene.registry().view<const engine::scene::DirectionalLight>();
@@ -2141,20 +2152,19 @@ int main() {
             sun_to = -glm::normalize(dlv.get<const engine::scene::DirectionalLight>(e).direction);
             break;
         }
-        if (auto baker = engine::renderer::IblBaker::create(device, allocator, *pipeline_cache,
-                                                            shader_dir);
-            baker) {
-            if (auto baked =
-                    baker->bake(sun_to, atmos_skyview(), atmos_transmittance(), current_clouds());
-                baked) {
-                ibl_maps = std::move(*baked);
-                std::fprintf(stderr, "[info] baked IBL environment\n");
-            } else {
-                std::fprintf(stderr, "[warn] IBL bake failed: %s\n", baked.error().message.c_str());
-            }
+        engine::renderer::IblCycleParams initial{};
+        initial.sun_to = sun_to;
+        initial.skyview = atmos_skyview();
+        initial.transmittance = atmos_transmittance();
+        initial.clouds = current_clouds();
+        if (auto dyn = engine::renderer::DynamicIbl::create(device, allocator, *pipeline_cache,
+                                                            shader_dir, initial);
+            dyn) {
+            dynamic_ibl = std::move(*dyn);
+            std::fprintf(stderr, "[info] dynamic IBL probe ready\n");
         } else {
-            std::fprintf(stderr, "[warn] IBL baker create failed: %s\n",
-                         baker.error().message.c_str());
+            std::fprintf(stderr, "[warn] dynamic IBL create failed: %s\n",
+                         dyn.error().message.c_str());
         }
     }
 
@@ -2319,36 +2329,6 @@ int main() {
 #ifdef ENGINE_EDITOR
         editor.begin_frame();
 
-        // IBL rebake requested from the Renderer panel (sun edited via its
-        // entity). bake() waits the graphics queue idle internally before
-        // returning, so replacing the maps cannot race in-flight frames.
-        if (render_settings.rebake_ibl) {
-            render_settings.rebake_ibl = false;
-            glm::vec3 sun_to = glm::normalize(glm::vec3(0.4F, 1.0F, 0.3F));
-            const auto dlv = scene.registry().view<const engine::scene::DirectionalLight>();
-            for (const entt::entity e : dlv) {
-                sun_to =
-                    -glm::normalize(dlv.get<const engine::scene::DirectionalLight>(e).direction);
-                break;
-            }
-            if (atmosphere) {
-                if (auto r = atmosphere->ensure_skyview(sun_to); !r) {
-                    std::fprintf(stderr, "[warn] sky-view LUT refresh failed: %s\n",
-                                 r.error().message.c_str());
-                }
-            }
-            if (auto baker = engine::renderer::IblBaker::create(device, allocator,
-                                                                *pipeline_cache, shader_dir);
-                baker) {
-                if (auto baked = baker->bake(sun_to, atmos_skyview(), atmos_transmittance(),
-                                             current_clouds());
-                    baked) {
-                    ibl_maps = std::move(*baked);
-                    std::fprintf(stderr, "[info] rebaked IBL environment\n");
-                }
-            }
-        }
-
         // Play/Stop transition: Play snapshots the scene and brings up a
         // dedicated physics world; Stop tears the world down and restores the
         // snapshot (exact entity ids — selection and hierarchy stay valid).
@@ -2430,7 +2410,8 @@ int main() {
                         scene.registry().emplace<engine::scene::Camera>(camera_entity);
                     }
                     editor.set_selected(entt::null);
-                    render_settings.rebake_ibl = true; // sun may have changed
+                    // The dynamic IBL probe picks up the loaded scene's sun
+                    // within one refresh cycle — no explicit rebake needed.
                 } else {
                     std::fprintf(stderr, "[editor] load failed: %s\n",
                                  r.error().message.c_str());
@@ -2782,6 +2763,31 @@ int main() {
         const glm::mat4 light_view_proj = shadow_proj * shadow_view;
 
         engine::rhi::RenderGraph graph(fr.pool);
+
+        // Sky + environment upkeep, declared FIRST so their trailing barriers
+        // precede every consumer this frame (the graph keeps declaration order
+        // for independent passes). The sky-view LUT recomputes in-graph when
+        // the sun moved (no pipeline stall on sun drags); the dynamic IBL
+        // probe advances one step per frame and flips when a cycle completes.
+        const glm::vec3 sun_to = glm::vec3(light.direction);
+        if (atmosphere) {
+            if (auto r = atmosphere->add_skyview_update_to_graph(graph, sun_to); !r) {
+                std::fprintf(stderr, "[warn] sky-view update: %s\n", r.error().message.c_str());
+            }
+        }
+        if (dynamic_ibl) {
+            engine::renderer::IblCycleParams cycle{};
+            cycle.sun_to = sun_to;
+            cycle.skyview = atmos_skyview();
+            cycle.transmittance = atmos_transmittance();
+            cycle.clouds = current_clouds();
+            if (auto r = dynamic_ibl->add_step_to_graph(graph, cycle); !r) {
+                std::fprintf(stderr, "[warn] ibl step: %s\n", r.error().message.c_str());
+            }
+        }
+        const engine::renderer::IblViewSet ibl_views =
+            dynamic_ibl ? dynamic_ibl->views() : engine::renderer::IblViewSet{};
+
         auto shadow = fr.shadow.add_to_graph(graph, light_view_proj, shadow_draws);
         if (!shadow) {
             std::fprintf(stderr, "[fatal] shadow pass: %s\n", shadow.error().message.c_str());
@@ -2794,7 +2800,7 @@ int main() {
         }
         auto hdr = fr.lighting.add_to_graph(graph, *gbuffer, draw_extent, light, jittered_inv_vp,
                                             cam.position, *shadow, light_view_proj, point_lights,
-                                            /*enable_sky=*/true, &ibl_maps, atmos_skyview(),
+                                            /*enable_sky=*/true, ibl_views, atmos_skyview(),
                                             atmos_transmittance(), current_clouds());
         if (!hdr) {
             std::fprintf(stderr, "[fatal] lighting pass: %s\n", hdr.error().message.c_str());
@@ -2805,7 +2811,7 @@ int main() {
         if (!transparent_draws.empty()) {
             if (auto r = fr.transparent.add_to_graph(graph, *hdr, gbuffer->depth, draw_extent,
                                                      jittered_vp, light, cam.position,
-                                                     transparent_draws, &ibl_maps);
+                                                     transparent_draws, ibl_views);
                 !r) {
                 std::fprintf(stderr, "[fatal] transparent pass: %s\n", r.error().message.c_str());
                 break;

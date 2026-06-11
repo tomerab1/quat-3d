@@ -11,6 +11,7 @@
 #include <cstdint>
 #include <expected>
 #include <string>
+#include <vector>
 
 #include <glm/glm.hpp>
 #include <vulkan/vulkan.h>
@@ -35,6 +36,18 @@ inline constexpr std::uint32_t prefilter_mip_count = 5;
 // The precomputed IBL maps the lighting pass samples. Cube sample views for the
 // irradiance + prefiltered maps, a 2D view for the BRDF LUT, and one shared
 // linear/clamp sampler. Move-only (owns GPU images + views + sampler).
+// Non-owning view bundle the lighting/transparent passes bind. Passed by value
+// into pass-execute lambdas, so there is no pointer lifetime to manage; the
+// owner (IblMaps or DynamicIbl) must outlive the frames that sample it.
+struct IblViewSet {
+    VkImageView irradiance  = VK_NULL_HANDLE; // cube
+    VkImageView prefiltered = VK_NULL_HANDLE; // cube, all mips
+    VkImageView brdf_lut    = VK_NULL_HANDLE; // 2D
+    VkSampler   sampler     = VK_NULL_HANDLE;
+
+    [[nodiscard]] bool valid() const { return irradiance != VK_NULL_HANDLE; }
+};
+
 struct IblMaps {
     rhi::GpuImage  irradiance;
     rhi::GpuImage  prefiltered;
@@ -45,6 +58,11 @@ struct IblMaps {
     rhi::Sampler   sampler;
 
     [[nodiscard]] bool valid() const { return irradiance_view.handle() != VK_NULL_HANDLE; }
+
+    [[nodiscard]] IblViewSet views() const {
+        return {irradiance_view.handle(), prefiltered_view.handle(), brdf_lut_view.handle(),
+                sampler.handle()};
+    }
 
     // A 1x1 black fallback (cubes + LUT cleared to 0), so the lighting pass always
     // has valid descriptors to bind at bindings 8-11 even when IBL is disabled.
@@ -101,5 +119,12 @@ private:
 [[nodiscard]] std::expected<void, core::Error>
 run_ibl_self_test(const rhi::Device& device, rhi::GpuAllocator& allocator,
                   rhi::PipelineCache& cache, const std::string& cooked_shader_dir);
+
+// Test/debug helper shared with the dynamic-IBL self-test: blocking copy of one
+// (mip, layer) subresource of an RGBA16F image (in SHADER_READ_ONLY_OPTIMAL)
+// into host floats, RGBA per texel. Restores the sampled layout afterwards.
+[[nodiscard]] std::expected<std::vector<float>, core::Error>
+read_rgba16f_subresource(const rhi::Device& device, rhi::GpuAllocator& allocator, VkImage image,
+                         std::uint32_t mip, std::uint32_t layer, std::uint32_t w, std::uint32_t h);
 
 } // namespace engine::renderer

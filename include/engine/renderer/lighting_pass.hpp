@@ -82,7 +82,7 @@ public:
                  const DirectionalLightParams& light, const glm::mat4& inv_view_proj,
                  const glm::vec3& camera_pos, rhi::ResourceHandle shadow_map,
                  const glm::mat4& light_view_proj, std::span<const PointLightGpu> point_lights = {},
-                 bool enable_sky = false, const IblMaps* ibl = nullptr,
+                 bool enable_sky = false, IblViewSet ibl = {},
                  VkImageView atmosphere_skyview = VK_NULL_HANDLE,
                  VkImageView atmosphere_transmittance = VK_NULL_HANDLE,
                  const CloudSettings& clouds = {});

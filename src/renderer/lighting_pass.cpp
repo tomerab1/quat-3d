@@ -130,7 +130,7 @@ LightingPass::add_to_graph(rhi::RenderGraph& graph, const GBufferTargets& gbuffe
                            const glm::mat4& inv_view_proj, const glm::vec3& camera_pos,
                            rhi::ResourceHandle shadow_map, const glm::mat4& light_view_proj,
                            std::span<const PointLightGpu> point_lights, bool enable_sky,
-                           const IblMaps* ibl, VkImageView atmosphere_skyview,
+                           IblViewSet ibl, VkImageView atmosphere_skyview,
                            VkImageView atmosphere_transmittance, const CloudSettings& clouds) {
     const rhi::ResourceHandle hdr = graph.create_transient_image(
         "hdr_color", hdr_color_format, extent,
@@ -178,13 +178,12 @@ LightingPass::add_to_graph(rhi::RenderGraph& graph, const GBufferTargets& gbuffe
     if (has_shadow) {
         pass.reads(shadow_map, rhi::ResourceUsage::sampled_compute);
     }
-    // Stable pointer (fallback_ibl_ is a member, *ibl is caller-owned) — capturing
-    // a reference to a local would dangle when the execute lambda runs later.
-    const IblMaps* maps_ptr = (ibl != nullptr && ibl->valid()) ? ibl : &fallback_ibl_;
+    // Non-owning view set, captured by value — no pointer lifetime to manage.
+    const IblViewSet maps = ibl.valid() ? ibl : fallback_ibl_.views();
     const VkImageView skyview_view = has_atmosphere ? atmosphere_skyview : VK_NULL_HANDLE;
     const VkImageView transmittance_view =
         has_atmosphere ? atmosphere_transmittance : VK_NULL_HANDLE;
-    pass.execute([this, gbuffer, hdr, shadow, extent, push, maps_ptr, skyview_view,
+    pass.execute([this, gbuffer, hdr, shadow, extent, push, maps, skyview_view,
                   transmittance_view](rhi::PassContext& ctx) {
         const VkCommandBuffer cmd = ctx.cmd();
         constexpr VkImageLayout ro = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
@@ -198,21 +197,17 @@ LightingPass::add_to_graph(rhi::RenderGraph& graph, const GBufferTargets& gbuffe
         frame_descriptor_.write_storage_buffer(
             7, point_light_address_,
             static_cast<VkDeviceSize>(max_point_lights) * sizeof(PointLightGpu));
-        frame_descriptor_.write_sampled_image(8, maps_ptr->irradiance_view.handle(), ro);
-        frame_descriptor_.write_sampled_image(9, maps_ptr->prefiltered_view.handle(), ro);
-        frame_descriptor_.write_sampled_image(10, maps_ptr->brdf_lut_view.handle(), ro);
-        frame_descriptor_.write_sampler(11, maps_ptr->sampler.handle());
+        frame_descriptor_.write_sampled_image(8, maps.irradiance, ro);
+        frame_descriptor_.write_sampled_image(9, maps.prefiltered, ro);
+        frame_descriptor_.write_sampled_image(10, maps.brdf_lut, ro);
+        frame_descriptor_.write_sampler(11, maps.sampler);
         frame_descriptor_.write_sampled_image(12, ctx.resolve(gbuffer.clearcoat).view, ro);
         // Atmosphere LUTs; the (black) fallback BRDF LUT stands in when absent
         // (the shader never samples them below sky mode 2).
         frame_descriptor_.write_sampled_image(
-            13, skyview_view != VK_NULL_HANDLE ? skyview_view : maps_ptr->brdf_lut_view.handle(),
-            ro);
+            13, skyview_view != VK_NULL_HANDLE ? skyview_view : maps.brdf_lut, ro);
         frame_descriptor_.write_sampled_image(
-            14,
-            transmittance_view != VK_NULL_HANDLE ? transmittance_view
-                                                 : maps_ptr->brdf_lut_view.handle(),
-            ro);
+            14, transmittance_view != VK_NULL_HANDLE ? transmittance_view : maps.brdf_lut, ro);
 
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline_.handle());
         frame_descriptor_.bind(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline_.layout(), 0);
@@ -729,7 +724,7 @@ run_ibl_lighting_self_test(const rhi::Device& device, rhi::GpuAllocator& allocat
     dir.ambient = {0.0F, 0.0F, 0.0F, 0.0F};
 
     const auto render_centre =
-        [&](bool enable_sky, const IblMaps* ibl) -> std::expected<glm::vec3, core::Error> {
+        [&](bool enable_sky, IblViewSet ibl) -> std::expected<glm::vec3, core::Error> {
         auto readback = allocator.create_buffer(
             bytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT, VMA_MEMORY_USAGE_AUTO,
             VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT);
@@ -781,13 +776,13 @@ run_ibl_lighting_self_test(const rhi::Device& device, rhi::GpuAllocator& allocat
     };
 
     // With IBL the metal reflects the sky: non-black and blue-dominant.
-    auto lit = render_centre(true, &*maps);
+    auto lit = render_centre(true, maps->views());
     if (!lit) return std::unexpected(lit.error());
     if (lit->r + lit->g + lit->b <= 0.02F || lit->b < lit->r) {
         return fail("ibl lighting self-test: metal does not reflect the environment");
     }
     // With the environment disabled (and no direct light) it is black.
-    auto dark = render_centre(false, nullptr);
+    auto dark = render_centre(false, {});
     if (!dark) return std::unexpected(dark.error());
     if (dark->r + dark->g + dark->b > 0.02F) {
         return fail("ibl lighting self-test: surface is lit without the environment");

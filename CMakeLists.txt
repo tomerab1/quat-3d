@@ -180,6 +180,7 @@ add_library(engine_renderer STATIC
     src/renderer/shadow_pass.cpp
     src/renderer/transparent_pass.cpp
     src/renderer/ibl_pass.cpp
+    src/renderer/dynamic_ibl.cpp
     src/renderer/bloom_pass.cpp
     src/renderer/exposure_pass.cpp
     src/renderer/taa_pass.cpp

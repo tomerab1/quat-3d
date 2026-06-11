@@ -16,10 +16,12 @@ struct BakeParams {
     float4 sun_dir;  // xyz = direction to the sun, w = 1 to use the LUT sky
     float4 cloud_a;  // coverage, extinction /km, bottom km, thickness km
     float4 cloud_b;  // 1/size km, detail erosion, unused, unused
-    uint   face_size; // pixels per cube face edge
-    uint   pad0;
-    uint   pad1;
-    uint   pad2;
+    uint   face_size;   // pixels per cube face edge
+    uint   face_offset; // first cube face this dispatch covers (dynamic IBL
+                        // bakes per-face tiles; the full bake passes 0 and
+                        // dispatches all 6 layers)
+    uint   tile_x;      // texel offset of this dispatch's tile (0 = full face)
+    uint   tile_y;
 }
 [[vk::push_constant]] BakeParams pc;
 
@@ -31,11 +33,13 @@ struct BakeParams {
 [shader("compute")]
 [numthreads(8, 8, 1)]
 void compute_main(uint3 tid : SV_DispatchThreadID) {
-    if (tid.x >= pc.face_size || tid.y >= pc.face_size) {
+    uint2 px = tid.xy + uint2(pc.tile_x, pc.tile_y);
+    if (px.x >= pc.face_size || px.y >= pc.face_size) {
         return;
     }
-    float2 uv = (float2(tid.xy) + 0.5) / float(pc.face_size);
-    float3 dir = cube_dir(tid.z, uv);
+    uint face = tid.z + pc.face_offset;
+    float2 uv = (float2(px) + 0.5) / float(pc.face_size);
+    float3 dir = cube_dir(face, uv);
     float3 sun = normalize(pc.sun_dir.xyz);
 
     float3 radiance;
@@ -48,7 +52,7 @@ void compute_main(uint3 tid : SV_DispatchThreadID) {
             float3(0.008, 0.011, 0.016);
         CloudParams cp = unpack_cloud_params(pc.cloud_a, pc.cloud_b);
         float jitter = interleaved_gradient_noise(
-            float2(tid.x + tid.z * pc.face_size, tid.y));
+            float2(px.x + face * pc.face_size, px.y));
         float4 clouds =
             march_clouds(dir, sun, g_transmittance, g_samp, cloud_ambient, cp, jitter);
         radiance = (sky_rgb * clouds.a + clouds.rgb) * SKY_LUT_BRIGHTNESS;
@@ -61,5 +65,5 @@ void compute_main(uint3 tid : SV_DispatchThreadID) {
     } else {
         radiance = sky(dir, sun);
     }
-    g_out[tid] = float4(radiance, 1.0);
+    g_out[uint3(px, face)] = float4(radiance, 1.0);
 }

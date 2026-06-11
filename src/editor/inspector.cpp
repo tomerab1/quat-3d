@@ -275,19 +275,12 @@ void draw_renderer_panel(RendererSettings& settings, scene::Scene* scene) {
 
             bool changed = false;
             changed |= ImGui::SliderFloat("azimuth", &azimuth, -180.0F, 180.0F, "%.0f deg");
-            const bool azimuth_done = ImGui::IsItemDeactivatedAfterEdit();
             changed |= ImGui::SliderFloat("elevation", &elevation, 2.0F, 89.0F, "%.0f deg");
-            const bool elevation_done = ImGui::IsItemDeactivatedAfterEdit();
             if (changed) {
                 const float az = glm::radians(azimuth);
                 const float el = glm::radians(glm::clamp(elevation, 2.0F, 89.0F));
                 sun->direction = glm::vec3(std::cos(el) * std::cos(az), -std::sin(el),
                                            std::cos(el) * std::sin(az));
-            }
-            // Sky + direct light follow the drag live; the baked environment
-            // (IBL ambient/reflections) snaps into place on release.
-            if (azimuth_done || elevation_done) {
-                settings.rebake_ibl = true;
             }
             ImGui::ColorEdit3("colour", &sun->color.x);
             ImGui::DragFloat("intensity", &sun->intensity, 0.05F, 0.0F, 100.0F);
@@ -296,33 +289,17 @@ void draw_renderer_panel(RendererSettings& settings, scene::Scene* scene) {
 
     if (ImGui::CollapsingHeader("Clouds", ImGuiTreeNodeFlags_DefaultOpen)) {
         renderer::CloudSettings& c = settings.clouds;
-        // The background march follows every change live; the baked environment
-        // (ambient/reflections) rebakes when a slider is released, like the sun.
-        bool rebake = false;
-        if (ImGui::Checkbox("enabled", &c.enabled)) {
-            rebake = true;
-        }
+        ImGui::Checkbox("enabled", &c.enabled);
         ImGui::BeginDisabled(!c.enabled);
         ImGui::SliderFloat("coverage", &c.coverage, 0.0F, 1.0F, "%.2f");
-        rebake |= ImGui::IsItemDeactivatedAfterEdit();
         ImGui::SliderFloat("density", &c.density, 2.0F, 64.0F, "%.0f /km");
-        rebake |= ImGui::IsItemDeactivatedAfterEdit();
         ImGui::SliderFloat("altitude", &c.bottom_km, 0.5F, 10.0F, "%.1f km");
-        rebake |= ImGui::IsItemDeactivatedAfterEdit();
         ImGui::SliderFloat("thickness", &c.thickness_km, 0.5F, 8.0F, "%.1f km");
-        rebake |= ImGui::IsItemDeactivatedAfterEdit();
         ImGui::SliderFloat("puff size", &c.size_km, 2.0F, 40.0F, "%.0f km");
-        rebake |= ImGui::IsItemDeactivatedAfterEdit();
         ImGui::SliderFloat("detail", &c.detail, 0.0F, 1.0F, "%.2f");
-        rebake |= ImGui::IsItemDeactivatedAfterEdit();
-        // Wind only drifts the field — no rebake needed (reflections lag the
-        // drift until the next bake anyway, which is imperceptible).
         ImGui::SliderFloat("wind speed", &c.wind_speed, 0.0F, 80.0F, "%.0f m/s");
         ImGui::SliderFloat("wind direction", &c.wind_dir_deg, -180.0F, 180.0F, "%.0f deg");
         ImGui::EndDisabled();
-        if (rebake) {
-            settings.rebake_ibl = true;
-        }
     }
 
     if (ImGui::CollapsingHeader("Bloom", ImGuiTreeNodeFlags_DefaultOpen)) {
@@ -332,11 +309,8 @@ void draw_renderer_panel(RendererSettings& settings, scene::Scene* scene) {
         ImGui::SliderFloat("radius", &settings.bloom_radius, 0.2F, 2.0F);
     }
     if (ImGui::CollapsingHeader("Environment", ImGuiTreeNodeFlags_DefaultOpen)) {
-        ImGui::TextWrapped("The IBL environment (ambient + reflections) is baked from the sun; "
-                           "it rebakes automatically when a sun slider is released.");
-        if (ImGui::Button("Rebake IBL now")) {
-            settings.rebake_ibl = true;
-        }
+        ImGui::TextWrapped("The IBL environment (ambient + reflections) re-renders continuously "
+                           "(one step per frame), so it tracks the sun and clouds by itself.");
     }
     ImGui::End();
 }

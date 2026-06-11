@@ -280,6 +280,55 @@ std::expected<void, core::Error> AtmospherePass::ensure_skyview(const glm::vec3&
     return {};
 }
 
+std::expected<void, core::Error>
+AtmospherePass::add_skyview_update_to_graph(rhi::RenderGraph& graph, const glm::vec3& sun_to) {
+    const glm::vec3 sun = glm::normalize(sun_to);
+    if (glm::dot(sun, skyview_sun_) > 0.99999F) return {}; // unchanged
+
+    auto db = rhi::DescriptorBuffer::create(*device_, *allocator_, db_fns_, skyview_layout_);
+    if (!db) return std::unexpected(db.error());
+    constexpr VkImageLayout gen = VK_IMAGE_LAYOUT_GENERAL;
+    constexpr VkImageLayout ro = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    db->write_sampled_image(0, transmittance_view_.handle(), ro);
+    db->write_sampled_image(1, multiscatter_view_.handle(), ro);
+    db->write_sampler(2, sampler_.handle());
+    db->write_storage_image(3, skyview_view_.handle(), gen);
+    ring_ = (ring_ + 1) % db_ring_.size();
+    db_ring_[ring_] = std::move(*db);
+
+    SkyViewPush push{};
+    push.sun_direction[0] = sun.x;
+    push.sun_direction[1] = sun.y;
+    push.sun_direction[2] = sun.z;
+    push.sun_direction[3] = 0.0F;
+
+    auto pass = graph.add_pass("skyview_update", rhi::PassType::compute);
+    pass.execute([this, slot = ring_, push](rhi::PassContext& ctx) {
+        const VkCommandBuffer cmd = ctx.cmd();
+        const VkImage sky_image = skyview_.handle();
+        constexpr VkImageLayout g = VK_IMAGE_LAYOUT_GENERAL;
+        constexpr VkImageLayout r = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        // Prior frames' samples (lighting compute + any fragment use) are in
+        // the src scope; the trailing barrier re-publishes for this frame's
+        // consumers, which are recorded after this pass.
+        transition(cmd, sky_image, r, g,
+                   VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+                   VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                   VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT);
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, skyview_pipeline_.handle());
+        db_ring_[slot].bind(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, skyview_pipeline_.layout(), 0);
+        vkCmdPushConstants(cmd, skyview_pipeline_.layout(), kComputeStage, 0, sizeof(push), &push);
+        vkCmdDispatch(cmd, (kSkyViewW + 7) / 8, (kSkyViewH + 7) / 8, 1);
+        transition(cmd, sky_image, g, r, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                   VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT,
+                   VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                   VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
+    });
+
+    skyview_sun_ = sun;
+    return {};
+}
+
 // ---------------------------------------------------------------------------
 // Self-test
 // ---------------------------------------------------------------------------

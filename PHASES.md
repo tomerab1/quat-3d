@@ -531,8 +531,19 @@ Goal: a fully dynamic sky — movable sun with correct scattering, volumetric cl
   `[Phase11/Slice2.1] clouds marched per pixel - sharp shapes`,
   `[Phase11/Slice2.2] cloud march jitter (de-banding) + editor cloud controls`,
   `[Phase11/Slice2.3] sin-free cloud hash (NVIDIA blocks) + wind drift`*
-- [ ] **11.3 — Dynamic IBL**: re-render the environment probe incrementally (a face per frame)
-  so ambient/reflections track the moving sun without bake hitches.
+- [x] **11.3 — Dynamic IBL**: the environment probe re-renders incrementally inside the render
+  graph — one compute step per frame (6 env-cube faces in 128x128 tiles to bound the per-frame
+  cloud-march cost, the irradiance convolution, then one prefiltered mip per frame; 30-step
+  cycle) into the back set of two ping-ponged map sets, flipping on completion. Between cycles
+  the probe idles unless the sun/cloud settings changed or the cloud-drift refresh cadence
+  (1 s) is due. Lighting/transparent take a non-owning `IblViewSet` fetched per frame; the
+  BRDF LUT is sun-independent and baked once. The sky-view LUT recompute also moved in-graph
+  (`add_skyview_update_to_graph`, dirty-checked), so sun drags and drifting clouds update
+  ambient/reflections continuously with zero pipeline stalls — the slider-release rebake hack
+  and the Renderer panel's rebake button are gone. A startup blocking cycle keeps frame one
+  fully lit. Self-test: an incremental cycle with a near-horizon sun (atmosphere LUT path)
+  flips the sets and dims the zenith irradiance vs the initial noon bake.
+  *Commit: `[Phase11/Slice3] dynamic IBL - incremental in-graph probe refresh`*
 
 ## Phase 12 — Terrain
 

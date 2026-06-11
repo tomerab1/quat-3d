@@ -66,13 +66,13 @@ public:
 
     // Render `draws` into `hdr`, depth-tested against `depth` (the opaque GBuffer
     // depth; transmissive draws also write it). `ibl` supplies the environment
-    // maps glass reflects — a black fallback is bound when null/invalid. No-op
-    // (but still valid) when there are no transparent draws.
+    // maps glass reflects — a black fallback is bound when empty. No-op (but
+    // still valid) when there are no transparent draws.
     [[nodiscard]] std::expected<void, core::Error>
     add_to_graph(rhi::RenderGraph& graph, rhi::ResourceHandle hdr, rhi::ResourceHandle depth,
                  VkExtent2D extent, const glm::mat4& view_proj, const DirectionalLightParams& light,
                  const glm::vec3& camera_pos, std::span<const DrawItem> draws,
-                 const IblMaps* ibl = nullptr);
+                 IblViewSet ibl = {});
 
 private:
     // Mip levels of the scene-colour snapshot — how far rough transmission can

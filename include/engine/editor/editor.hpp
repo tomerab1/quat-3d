@@ -54,11 +54,9 @@ struct RendererSettings {
     float bloom_knee      = 0.6F;
     float bloom_intensity = 0.06F;
     float bloom_radius    = 1.0F;
-    // Volumetric cloud layer (background follows the sliders live; the baked
-    // environment snaps into place via rebake_ibl on slider release).
+    // Volumetric cloud layer. The background follows edits live and the
+    // dynamic IBL probe re-renders continuously, so no rebake plumbing.
     renderer::CloudSettings clouds;
-    // Set by the panel's button, consumed (and reset) by the frame loop.
-    bool rebake_ibl = false;
 };
 
 // Everything the UI needs from (and feeds back to) the engine for one frame.
