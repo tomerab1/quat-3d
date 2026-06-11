@@ -95,6 +95,15 @@ std::expected<NavMesh, core::Error> NavMesh::build(std::span<const glm::vec3> ve
         cfg.detailSampleDist = 6.0F * cfg.cs;
         rcCalcGridSize(cfg.bmin, cfg.bmax, cfg.cs, &cfg.width, &cfg.height);
     }
+    // The inter-cell step test must agree with the slope limit at the chosen
+    // cell size: neighbouring cells on a max-slope incline rise cs*tan(slope).
+    // Without this, coarsened terrain bakes disconnect every hillside and only
+    // flat ground survives (the per-triangle slope filter still rejects
+    // anything steeper than the limit).
+    const float slope_rise =
+        cfg.cs * std::tan(params.agent_max_slope_deg * 3.14159265F / 180.0F);
+    cfg.walkableClimb =
+        std::max(cfg.walkableClimb, static_cast<int>(std::ceil(slope_rise / cfg.ch)));
 
     rcContext ctx(false);
 
