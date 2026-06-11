@@ -511,17 +511,21 @@ Goal: a fully dynamic sky — movable sun with correct scattering, volumetric cl
   blue-dominant above the horizon and darker below. Aerial perspective on geometry and
   time-of-day animation defer to 11.2/11.3.
   *Commit: `[Phase11/Slice1] physically-based sky (Hillaire LUTs)`*
-- [x] **11.2 — Volumetric clouds** (sky-view LUT resolution): a 1.5–4 km cloud shell marched
-  inside `atmos_skyview` — value-noise FBM density (coverage threshold + detail erosion +
-  rounded height profile), Beer-Lambert absorption, a 5-step sun shadow march,
-  Henyey-Greenstein phase (+powder), ambient from the multiple-scattering LUT, and aerial
-  perspective so distant banks fade into haze instead of walling the horizon. Cloud luminance
-  composites over the sky inside the LUT; the alpha channel stores cloud transmittance, which
-  dims the analytic sun disc (lighting + IBL bake). Clouds are therefore a distant cloudscape
-  shared by the background and the reflections; full-parallax per-pixel volumetrics with
-  temporal reprojection (Schneider-style) are the follow-up once a real noise-texture stack
-  and history buffers exist.
-  *Commit: `[Phase11/Slice2] volumetric clouds in the sky-view LUT`*
+- [x] **11.2 — Volumetric clouds**: a parameterizable cloud shell marched **per pixel** in the
+  lighting background (and per texel in the IBL bake — the sky-view LUT smears anything
+  high-frequency, so it stays atmosphere-only): value-noise FBM density (coverage threshold +
+  detail erosion + rounded height profile), Beer-Lambert absorption, a 5-step sun shadow
+  march, Henyey-Greenstein phase (+powder), zenith-sampled sky ambient, and aerial perspective
+  so distant banks fade into haze instead of walling the horizon. Cloud transmittance dims the
+  analytic sun disc. Interleaved-gradient-noise jitter on the march start kills step banding.
+  All artistic parameters (enable, coverage, density, altitude, thickness, puff size, detail)
+  live in `CloudSettings`, packed into two push-constant float4s and driven live from the
+  editor's Renderer panel (IBL rebakes on slider release, like the sun). Full-parallax
+  volumetrics with a real noise-texture stack + temporal reprojection (Schneider-style) are
+  the follow-up.
+  *Commits: `[Phase11/Slice2] volumetric clouds in the sky-view LUT`,
+  `[Phase11/Slice2.1] clouds marched per pixel - sharp shapes`,
+  `[Phase11/Slice2.2] cloud march jitter (de-banding) + editor cloud controls`*
 - [ ] **11.3 — Dynamic IBL**: re-render the environment probe incrementally (a face per frame)
   so ambient/reflections track the moving sun without bake hitches.
 

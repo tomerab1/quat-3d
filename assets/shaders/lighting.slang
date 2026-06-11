@@ -21,7 +21,7 @@ static const float SKY_LUT_BRIGHTNESS = 8.0;
 // match prefilter_mip_count in ibl_pass.cpp.
 static const float PREFILTER_MAX_LOD = 4.0;
 
-// Light + camera parameters, pushed as a 192-byte block (matches
+// Light + camera parameters, pushed as a 224-byte block (matches
 // LightingPushConstants in lighting_pass.cpp).
 struct LightParams {
     float4x4 inv_view_proj;   // reconstruct world pos from depth
@@ -30,6 +30,8 @@ struct LightParams {
     float4   direction;       // xyz = direction TO the light (normalised)
     float4   color;           // rgb = colour, w = intensity
     float4   ambient;         // rgb = ambient colour, w unused
+    float4   cloud_a;         // coverage, extinction /km, bottom km, thickness km
+    float4   cloud_b;         // 1/size km, detail erosion, unused, unused
 }
 [[vk::push_constant]] LightParams pc;
 
@@ -251,8 +253,10 @@ void compute_main(uint3 tid : SV_DispatchThreadID) {
                     sample_skyview(g_skyview, g_ibl_sampler, float3(0.2, 0.97, 0.0), sun).rgb *
                         0.8 +
                     float3(0.008, 0.011, 0.016);
-                float4 clouds =
-                    march_clouds(ray, sun, g_transmittance_lut, g_ibl_sampler, cloud_ambient);
+                CloudParams cp = unpack_cloud_params(pc.cloud_a, pc.cloud_b);
+                float jitter = interleaved_gradient_noise(float2(coord));
+                float4 clouds = march_clouds(ray, sun, g_transmittance_lut, g_ibl_sampler,
+                                             cloud_ambient, cp, jitter);
                 bg = (bg * clouds.a + clouds.rgb) * SKY_LUT_BRIGHTNESS;
                 float cos_sun = dot(ray, sun);
                 if (cos_sun > 0.9998) {

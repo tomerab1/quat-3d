@@ -18,6 +18,7 @@
 #include <glm/glm.hpp>
 
 #include "engine/core/error.hpp"
+#include "engine/renderer/cloud_settings.hpp"
 
 struct SDL_Window;
 union SDL_Event;
@@ -53,6 +54,9 @@ struct RendererSettings {
     float bloom_knee      = 0.6F;
     float bloom_intensity = 0.06F;
     float bloom_radius    = 1.0F;
+    // Volumetric cloud layer (background follows the sliders live; the baked
+    // environment snaps into place via rebake_ibl on slider release).
+    renderer::CloudSettings clouds;
     // Set by the panel's button, consumed (and reset) by the frame loop.
     bool rebake_ibl = false;
 };

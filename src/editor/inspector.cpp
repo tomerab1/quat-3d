@@ -294,6 +294,33 @@ void draw_renderer_panel(RendererSettings& settings, scene::Scene* scene) {
         }
     }
 
+    if (ImGui::CollapsingHeader("Clouds", ImGuiTreeNodeFlags_DefaultOpen)) {
+        renderer::CloudSettings& c = settings.clouds;
+        // The background march follows every change live; the baked environment
+        // (ambient/reflections) rebakes when a slider is released, like the sun.
+        bool rebake = false;
+        if (ImGui::Checkbox("enabled", &c.enabled)) {
+            rebake = true;
+        }
+        ImGui::BeginDisabled(!c.enabled);
+        ImGui::SliderFloat("coverage", &c.coverage, 0.0F, 1.0F, "%.2f");
+        rebake |= ImGui::IsItemDeactivatedAfterEdit();
+        ImGui::SliderFloat("density", &c.density, 2.0F, 64.0F, "%.0f /km");
+        rebake |= ImGui::IsItemDeactivatedAfterEdit();
+        ImGui::SliderFloat("altitude", &c.bottom_km, 0.5F, 10.0F, "%.1f km");
+        rebake |= ImGui::IsItemDeactivatedAfterEdit();
+        ImGui::SliderFloat("thickness", &c.thickness_km, 0.5F, 8.0F, "%.1f km");
+        rebake |= ImGui::IsItemDeactivatedAfterEdit();
+        ImGui::SliderFloat("puff size", &c.size_km, 2.0F, 40.0F, "%.0f km");
+        rebake |= ImGui::IsItemDeactivatedAfterEdit();
+        ImGui::SliderFloat("detail", &c.detail, 0.0F, 1.0F, "%.2f");
+        rebake |= ImGui::IsItemDeactivatedAfterEdit();
+        ImGui::EndDisabled();
+        if (rebake) {
+            settings.rebake_ibl = true;
+        }
+    }
+
     if (ImGui::CollapsingHeader("Bloom", ImGuiTreeNodeFlags_DefaultOpen)) {
         ImGui::SliderFloat("threshold", &settings.bloom_threshold, 0.0F, 8.0F);
         ImGui::SliderFloat("knee", &settings.bloom_knee, 0.0F, 1.0F);

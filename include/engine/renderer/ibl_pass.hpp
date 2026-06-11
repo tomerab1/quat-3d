@@ -16,6 +16,7 @@
 #include <vulkan/vulkan.h>
 
 #include "engine/core/error.hpp"
+#include "engine/renderer/cloud_settings.hpp"
 #include "engine/rhi/compute_pipeline.hpp"
 #include "engine/rhi/descriptor_buffer.hpp"
 #include "engine/rhi/gpu_allocator.hpp"
@@ -69,10 +70,13 @@ public:
     // SHADER_READ_ONLY_OPTIMAL, ready to sample. When the atmosphere LUT views
     // are provided (Phase 11.1), the environment is baked from the physically-
     // based sky-view LUT (+ transmittance-tinted sun disc) instead of the
-    // procedural sky, so ambient/reflections match the background.
+    // procedural sky, so ambient/reflections match the background. `clouds`
+    // drives the volumetric cloud layer baked into the environment (LUT path
+    // only) — pass the same settings the lighting pass uses.
     [[nodiscard]] std::expected<IblMaps, core::Error>
     bake(const glm::vec3& sun_dir, VkImageView atmosphere_skyview = VK_NULL_HANDLE,
-         VkImageView atmosphere_transmittance = VK_NULL_HANDLE);
+         VkImageView atmosphere_transmittance = VK_NULL_HANDLE,
+         const CloudSettings& clouds = {});
 
 private:
     const rhi::Device* device_    = nullptr;

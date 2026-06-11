@@ -29,6 +29,8 @@ constexpr std::uint32_t kBrdfSize       = 256; // BRDF LUT edge
 // Push-constant blocks mirroring the IBL shaders.
 struct BakeParams {
     glm::vec4     sun_dir{0.0F};
+    glm::vec4     cloud_a{0.0F}; // CloudSettings::pack_a (LUT-sky path only)
+    glm::vec4     cloud_b{0.0F}; // CloudSettings::pack_b
     std::uint32_t face_size = 0;
     std::uint32_t pad0 = 0, pad1 = 0, pad2 = 0;
 };
@@ -214,7 +216,8 @@ IblBaker::create(const rhi::Device& device, rhi::GpuAllocator& allocator,
 
 std::expected<IblMaps, core::Error> IblBaker::bake(const glm::vec3& sun_dir,
                                                    VkImageView atmosphere_skyview,
-                                                   VkImageView atmosphere_transmittance) {
+                                                   VkImageView atmosphere_transmittance,
+                                                   const CloudSettings& clouds) {
     const bool has_atmosphere =
         atmosphere_skyview != VK_NULL_HANDLE && atmosphere_transmittance != VK_NULL_HANDLE;
     const VkDevice dev = device_->handle();
@@ -339,6 +342,8 @@ std::expected<IblMaps, core::Error> IblBaker::bake(const glm::vec3& sun_dir,
                    0, cs, w, 1, 6);
         BakeParams bp{};
         bp.sun_dir = glm::vec4(sun, has_atmosphere ? 1.0F : 0.0F);
+        bp.cloud_a = clouds.pack_a();
+        bp.cloud_b = clouds.pack_b();
         bp.face_size = kEnvSize;
         dispatch(env_pipeline_, **env_db, &bp, sizeof(bp), groups(kEnvSize), groups(kEnvSize), 6);
 

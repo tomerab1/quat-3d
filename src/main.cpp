@@ -1700,6 +1700,16 @@ int main() {
     }
 #endif
 
+    // Cloud parameters for the lighting background + IBL bake: the editor's
+    // Renderer panel edits them; headless builds use the defaults.
+    const auto current_clouds = [&]() -> engine::renderer::CloudSettings {
+#ifdef ENGINE_EDITOR
+        return render_settings.clouds;
+#else
+        return {};
+#endif
+    };
+
     // Per-frame-in-flight deferred chains (GBuffer -> lighting -> tonemap). Each
     // slot owns its passes' descriptor buffers and a transient image pool, so
     // building one frame's graph never disturbs the other in-flight frame.
@@ -2130,7 +2140,8 @@ int main() {
         if (auto baker = engine::renderer::IblBaker::create(device, allocator, *pipeline_cache,
                                                             shader_dir);
             baker) {
-            if (auto baked = baker->bake(sun_to, atmos_skyview(), atmos_transmittance());
+            if (auto baked =
+                    baker->bake(sun_to, atmos_skyview(), atmos_transmittance(), current_clouds());
                 baked) {
                 ibl_maps = std::move(*baked);
                 std::fprintf(stderr, "[info] baked IBL environment\n");
@@ -2325,7 +2336,8 @@ int main() {
             if (auto baker = engine::renderer::IblBaker::create(device, allocator,
                                                                 *pipeline_cache, shader_dir);
                 baker) {
-                if (auto baked = baker->bake(sun_to, atmos_skyview(), atmos_transmittance());
+                if (auto baked = baker->bake(sun_to, atmos_skyview(), atmos_transmittance(),
+                                             current_clouds());
                     baked) {
                     ibl_maps = std::move(*baked);
                     std::fprintf(stderr, "[info] rebaked IBL environment\n");
@@ -2778,7 +2790,7 @@ int main() {
         auto hdr = fr.lighting.add_to_graph(graph, *gbuffer, draw_extent, light, jittered_inv_vp,
                                             cam.position, *shadow, light_view_proj, point_lights,
                                             /*enable_sky=*/true, &ibl_maps, atmos_skyview(),
-                                            atmos_transmittance());
+                                            atmos_transmittance(), current_clouds());
         if (!hdr) {
             std::fprintf(stderr, "[fatal] lighting pass: %s\n", hdr.error().message.c_str());
             break;

@@ -28,10 +28,10 @@ namespace {
 
 constexpr VkShaderStageFlags kComputeStage = VK_SHADER_STAGE_COMPUTE_BIT;
 
-// GPU push-constant block, mirrors LightParams in lighting.slang (192 bytes).
+// GPU push-constant block, mirrors LightParams in lighting.slang (224 bytes).
 // The light fields match DirectionalLightParams; the camera/light matrices let
 // the shader reconstruct world position and sample the shadow map. camera_pos.w
-// is the shadows-enabled flag.
+// is the shadows-enabled flag; cloud_a/cloud_b are CloudSettings::pack_a/b.
 struct LightingPushConstants {
     glm::mat4 inv_view_proj{1.0F};
     glm::mat4 light_view_proj{1.0F};
@@ -39,8 +39,10 @@ struct LightingPushConstants {
     glm::vec4 direction{0.0F, 0.0F, 1.0F, 0.0F};
     glm::vec4 color{1.0F};
     glm::vec4 ambient{0.0F};
+    glm::vec4 cloud_a{0.0F};
+    glm::vec4 cloud_b{0.0F};
 };
-static_assert(sizeof(LightingPushConstants) == 192, "must match lighting.slang LightParams");
+static_assert(sizeof(LightingPushConstants) == 224, "must match lighting.slang LightParams");
 
 // Lighting descriptor set 0: GBuffer albedo/normal/material/depth as sampled
 // images (read via Load — no sampler), the HDR output as a storage image, then
@@ -129,7 +131,7 @@ LightingPass::add_to_graph(rhi::RenderGraph& graph, const GBufferTargets& gbuffe
                            rhi::ResourceHandle shadow_map, const glm::mat4& light_view_proj,
                            std::span<const PointLightGpu> point_lights, bool enable_sky,
                            const IblMaps* ibl, VkImageView atmosphere_skyview,
-                           VkImageView atmosphere_transmittance) {
+                           VkImageView atmosphere_transmittance, const CloudSettings& clouds) {
     const rhi::ResourceHandle hdr = graph.create_transient_image(
         "hdr_color", hdr_color_format, extent,
         VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
@@ -163,6 +165,8 @@ LightingPass::add_to_graph(rhi::RenderGraph& graph, const GBufferTargets& gbuffe
                                enable_sky ? (has_atmosphere ? 2.0F : 1.0F) : 0.0F);
     push.color = light.color;
     push.ambient = glm::vec4(glm::vec3(light.ambient), static_cast<float>(light_count));
+    push.cloud_a = clouds.pack_a();
+    push.cloud_b = clouds.pack_b();
 
     auto pass = graph.add_pass("lighting", rhi::PassType::compute);
     pass.reads(gbuffer.albedo, rhi::ResourceUsage::sampled_compute)

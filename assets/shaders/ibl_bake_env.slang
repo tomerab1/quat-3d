@@ -14,6 +14,8 @@ static const float SKY_LUT_BRIGHTNESS = 8.0;
 
 struct BakeParams {
     float4 sun_dir;  // xyz = direction to the sun, w = 1 to use the LUT sky
+    float4 cloud_a;  // coverage, extinction /km, bottom km, thickness km
+    float4 cloud_b;  // 1/size km, detail erosion, unused, unused
     uint   face_size; // pixels per cube face edge
     uint   pad0;
     uint   pad1;
@@ -44,7 +46,11 @@ void compute_main(uint3 tid : SV_DispatchThreadID) {
         float3 cloud_ambient =
             sample_skyview(g_skyview, g_samp, float3(0.2, 0.97, 0.0), sun).rgb * 0.8 +
             float3(0.008, 0.011, 0.016);
-        float4 clouds = march_clouds(dir, sun, g_transmittance, g_samp, cloud_ambient);
+        CloudParams cp = unpack_cloud_params(pc.cloud_a, pc.cloud_b);
+        float jitter = interleaved_gradient_noise(
+            float2(tid.x + tid.z * pc.face_size, tid.y));
+        float4 clouds =
+            march_clouds(dir, sun, g_transmittance, g_samp, cloud_ambient, cp, jitter);
         radiance = (sky_rgb * clouds.a + clouds.rgb) * SKY_LUT_BRIGHTNESS;
         float cos_sun = dot(dir, sun);
         if (cos_sun > 0.9998) {

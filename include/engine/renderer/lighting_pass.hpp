@@ -15,6 +15,7 @@
 #include <vulkan/vulkan.h>
 
 #include "engine/core/error.hpp"
+#include "engine/renderer/cloud_settings.hpp"
 #include "engine/renderer/ibl_pass.hpp"
 #include "engine/renderer/mesh_pass.hpp"
 #include "engine/rhi/compute_pipeline.hpp"
@@ -74,7 +75,8 @@ public:
     // `atmosphere_skyview`/`atmosphere_transmittance` (Phase 11.1): when both
     // are set and the sky is enabled, the background uses the physically-based
     // sky-view LUT and the sun is transmittance-tinted; otherwise the
-    // procedural sky.
+    // procedural sky. `clouds` drives the per-pixel volumetric cloud march
+    // (LUT sky only).
     [[nodiscard]] std::expected<rhi::ResourceHandle, core::Error>
     add_to_graph(rhi::RenderGraph& graph, const GBufferTargets& gbuffer, VkExtent2D extent,
                  const DirectionalLightParams& light, const glm::mat4& inv_view_proj,
@@ -82,7 +84,8 @@ public:
                  const glm::mat4& light_view_proj, std::span<const PointLightGpu> point_lights = {},
                  bool enable_sky = false, const IblMaps* ibl = nullptr,
                  VkImageView atmosphere_skyview = VK_NULL_HANDLE,
-                 VkImageView atmosphere_transmittance = VK_NULL_HANDLE);
+                 VkImageView atmosphere_transmittance = VK_NULL_HANDLE,
+                 const CloudSettings& clouds = {});
 
 private:
     const rhi::Device* device_    = nullptr;   // non-owning
