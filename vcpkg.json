@@ -34,6 +34,7 @@
       ]
     },
     "imguizmo",
-    "recastnavigation"
+    "recastnavigation",
+    "gamenetworkingsockets"
   ]
 }

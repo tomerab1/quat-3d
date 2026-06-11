@@ -1,0 +1,13 @@
+--- a/src/steamnetworkingsockets/steamnetworkingsockets_internal.h
++++ b/src/steamnetworkingsockets/steamnetworkingsockets_internal.h
+@@ -1166,7 +1166,9 @@
+ 	#endif
+ #endif
+ 
+-#if defined(__GNUC__ ) && defined( __linux__ ) && !defined( __ANDROID__ )
++// The GNU debug containers belong to libstdc++, not to the GNU compiler:
++// clang + libc++ defines __GNUC__ but has no <debug/map>.
++#if defined(__GLIBCXX__) && defined( __linux__ ) && !defined( __ANDROID__ )
+ 	#if STEAMNETWORKINGSOCKETS_SNP_PARANOIA >= 2
+ 		#define STEAMNETWORKINGSOCKETS_USE_GNU_DEBUG_MAP
+ 		#include <debug/map>

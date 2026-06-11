@@ -8,6 +8,11 @@
 # the minimum is pinned to 3.22. Raise this once a newer CMake is available.
 cmake_minimum_required(VERSION 3.22)
 
+# Overlay ports: local patches for upstream vcpkg ports (GameNetworkingSockets'
+# libstdc++-only <debug/map> guard breaks the libc++ triplet). Must be set
+# before project() so the vcpkg toolchain sees it.
+set(VCPKG_OVERLAY_PORTS "${CMAKE_CURRENT_SOURCE_DIR}/ports")
+
 project(quat_3d
     VERSION 0.1.0
     DESCRIPTION "Modular data-driven C++23 game engine"
@@ -87,6 +92,7 @@ find_package(Stb REQUIRED)
 find_package(EnTT CONFIG REQUIRED)
 find_package(Jolt CONFIG REQUIRED)
 find_package(recastnavigation CONFIG REQUIRED)
+find_package(GameNetworkingSockets CONFIG REQUIRED)
 if(ENGINE_EDITOR)
     find_package(imgui CONFIG REQUIRED)
     find_package(imguizmo CONFIG REQUIRED)
@@ -205,6 +211,23 @@ target_link_libraries(engine_nav PRIVATE
 target_include_directories(engine_nav PUBLIC ${ENGINE_PUBLIC_INCLUDE})
 
 # ---------------------------------------------------------------------------
+# engine_net — GameNetworkingSockets transport (Phase 14). GNS is an
+# implementation detail (PRIVATE); the public header is GNS-free (PIMPL).
+# ---------------------------------------------------------------------------
+add_library(engine_net STATIC
+    src/net/transport.cpp
+    src/net/replication.cpp)
+target_link_libraries(engine_net PUBLIC engine_flags glm::glm EnTT::EnTT)
+# Linux (static triplet) exports ::static; Windows (dynamic) exports ::shared.
+if(TARGET GameNetworkingSockets::static)
+    target_link_libraries(engine_net PRIVATE GameNetworkingSockets::static)
+else()
+    target_link_libraries(engine_net PRIVATE GameNetworkingSockets::shared)
+endif()
+target_link_libraries(engine_net PRIVATE engine_scene)
+target_include_directories(engine_net PUBLIC ${ENGINE_PUBLIC_INCLUDE})
+
+# ---------------------------------------------------------------------------
 # engine_renderer — high-level passes built on the RHI. Starts with the deferred
 # GBuffer pass (mesh_pass); lighting/tonemap/imgui passes follow in later slices.
 # ---------------------------------------------------------------------------
@@ -271,7 +294,7 @@ endif()
 add_executable(game src/main.cpp)
 target_link_libraries(game PRIVATE
     engine_flags engine_rhi engine_asset engine_scene engine_renderer engine_physics
-    engine_terrain engine_nav SDL3::SDL3)
+    engine_terrain engine_nav engine_net SDL3::SDL3)
 if(ENGINE_EDITOR)
     target_link_libraries(game PRIVATE engine_editor)
 endif()
