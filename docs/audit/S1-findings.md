@@ -39,11 +39,11 @@ static body emplace; Recast cleanup on failure; Jolt layer filters.
 |---|---|---|---|---|
 | A1 | H | `presented` only increments when `QUAT_MAX_FRAMES` is set → no TAA jitter, frame index always 0, demo cube static, no frame stats, `engine.info` frame 0 | `main.cpp` end of loop | verified — **fix together with A2 + A14**: enabling jitter while history is broken makes the image shimmer |
 | A2 | H | TAA history ping-pongs per frame slot, so each slot always reads a never-written (black) history image; validity not reset on resize | `taa_pass.cpp`, `main.cpp` | open |
-| A3 | H | First swapchain write (TAA copy, ALL_TRANSFER) isn't ordered after the acquire semaphore (waits only COLOR_ATTACHMENT_OUTPUT); imported images start at stage NONE | `main.cpp` submit, `render_graph.cpp` import | open |
-| A4 | H | Render graph emits no barrier for a second reader in an uncovered stage (hdr: compute write → exposure barrier covers COMPUTE only → tonemap fragment read unsynchronised) | `render_graph.cpp` | open |
+| A3 | H | First swapchain write (TAA copy, ALL_TRANSFER) isn't ordered after the acquire semaphore (waits only COLOR_ATTACHMENT_OUTPUT); imported images start at stage NONE | `main.cpp` submit, `render_graph.cpp` import | fixed (S1.6, pending CI) |
+| A4 | H | Render graph emits no barrier for a second reader in an uncovered stage (hdr: compute write → exposure barrier covers COMPUTE only → tonemap fragment read unsynchronised) | `render_graph.cpp` | fixed (S1.6, pending CI) |
 | A5 | H | Transient image pool never evicts → VRAM grows with every resize / viewport drag | `render_graph.cpp` pool | fixed (S1.5, pending CI) — images idle for 4 resets are freed |
 | A6 | M | Default `DirectionalLight` (0,-1,0) is parallel to lookAt's up → NaN light view, shadows vanish | `main.cpp` shadow setup | open |
-| A7 | M | Bloom composite does read-modify-write on hdr but declares write-only access | `bloom_pass.cpp`, `bloom_composite.slang` | open |
+| A7 | M | Bloom composite does read-modify-write on hdr but declares write-only access | `bloom_pass.cpp`, `bloom_composite.slang` | fixed (S1.6, pending CI) |
 | A8 | M | Descriptor buffers allocated per frame and per draw (VMA alloc + rebind per draw) | mesh/transparent/skinning/bloom/lighting/tonemap/taa/exposure passes | open (perf → R5) |
 | A9 | M | `vkQueueWaitIdle` inside the frame loop for terrain tile uploads and TAA/transparent resizes | `gpu_allocator.cpp` one-time commands | open (perf → R1) |
 | A10 | M | Storage images declared without format and `shaderStorageImageWriteWithoutFormat` never enabled; TAA history uses BGRA8 as a storage image (optional support) | shaders, `CompileShaders.cmake`, `device.cpp` | open (plausible) |

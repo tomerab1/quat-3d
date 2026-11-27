@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <functional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include <vulkan/vulkan.h>
@@ -24,6 +25,7 @@ enum class ResourceUsage : std::uint8_t {
     sampled_compute,  // read in a compute shader as a sampled image
     storage_read,     // read in a shader as a storage image
     storage_write,    // written in a shader as a storage image
+    storage_read_write, // read-modify-write of a storage image (e.g. bloom composite)
     transfer_src,
     transfer_dst,
     present,
@@ -137,10 +139,17 @@ public:
     // Import an externally-owned image. `current_layout` is the layout the image
     // is in when the graph begins; `final_layout` is the layout the graph leaves
     // it in (a trailing barrier is inserted if the last pass left it elsewhere).
+    // `available_stage` / `available_access` describe what made the image
+    // available to this graph — the first barrier on it waits for them. For a
+    // swapchain image pass the stage the acquire semaphore is waited at, so
+    // the first write (layout transition, copy, …) is chained after the
+    // presentation engine releases the image. NONE means "nothing to wait for".
     ResourceHandle import_image(const char* name, VkImage image, VkImageView view,
                                 VkFormat format, VkExtent2D extent,
                                 VkImageLayout current_layout,
-                                VkImageLayout final_layout);
+                                VkImageLayout final_layout,
+                                VkPipelineStageFlags2 available_stage = VK_PIPELINE_STAGE_2_NONE,
+                                VkAccessFlags2 available_access = 0);
 
     // Declare a graph-managed transient image. Backed by the transient pool at
     // compile time. `usage` must cover every way passes touch it.
@@ -167,6 +176,10 @@ public:
     // dependencies, and plan every barrier. Errors on a dependency cycle or a
     // failed transient allocation.
     [[nodiscard]] std::expected<void, core::Error> compile();
+
+    // Barriers compile() planned to run before the pass named `pass_name`
+    // (empty if none or unknown). For tests and debugging tools.
+    [[nodiscard]] std::vector<VkImageMemoryBarrier2> planned_barriers(std::string_view pass_name) const;
 
     // Replay the compiled plan into `cmd`: barriers then execute lambda, per
     // pass in dependency order, followed by trailing import final-layout barriers.
@@ -198,11 +211,19 @@ private:
         VkImageUsageFlags usage  = 0;                 // transient only
         VkImageLayout     initial_layout = VK_IMAGE_LAYOUT_UNDEFINED;
         VkImageLayout     final_layout   = VK_IMAGE_LAYOUT_UNDEFINED;
-        // Tracked while planning barriers:
+        VkPipelineStageFlags2 available_stage = VK_PIPELINE_STAGE_2_NONE; // imported only
+        VkAccessFlags2        available_access = 0;
+        // Tracked while planning barriers. The last write (its stage/access)
+        // is what every later reader must see; `visible_*` record which stages
+        // and accesses a barrier already made that write visible to, and
+        // `read_stages` which stages read it since (a later write or layout
+        // change must wait for them: write-after-read).
         VkImageLayout         cur_layout = VK_IMAGE_LAYOUT_UNDEFINED;
-        VkPipelineStageFlags2 last_stage = VK_PIPELINE_STAGE_2_NONE;
-        VkAccessFlags2        last_access = 0;
-        bool                  last_was_write = false;
+        VkPipelineStageFlags2 write_stage = VK_PIPELINE_STAGE_2_NONE;
+        VkAccessFlags2        write_access = 0;
+        VkPipelineStageFlags2 read_stages = VK_PIPELINE_STAGE_2_NONE;
+        VkPipelineStageFlags2 visible_stages = VK_PIPELINE_STAGE_2_NONE;
+        VkAccessFlags2        visible_access = 0;
     };
 
     TransientImagePool* pool_ = nullptr;   // non-owning

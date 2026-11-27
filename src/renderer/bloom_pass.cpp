@@ -257,7 +257,10 @@ BloomPass::add_to_graph(rhi::RenderGraph& graph, rhi::ResourceHandle hdr, VkExte
     if (!cidx) return std::unexpected(cidx.error());
     graph.add_pass("bloom_composite", rhi::PassType::compute)
         .reads(bloom, rhi::ResourceUsage::sampled_compute)
-        .writes(hdr, rhi::ResourceUsage::storage_write)
+        // Read-modify-write: the composite adds the blurred chain onto the
+        // HDR texels it reads (audit A7 — write-only access left the read
+        // unsynchronised).
+        .writes(hdr, rhi::ResourceUsage::storage_read_write)
         .execute([this, di = *cidx, bloom, hdr, extent, params](rhi::PassContext& ctx) {
             rhi::DescriptorBuffer& db = frame_descriptors_[di];
             db.write_sampled_image(0, ctx.resolve(bloom).view, ro);

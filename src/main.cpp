@@ -84,6 +84,10 @@ constexpr int  k_window_width  = 1280;
 constexpr int  k_window_height = 720;
 constexpr char k_window_title[] = "quat-3d";
 constexpr std::uint32_t k_frames_in_flight = 2;
+// Stage the image-acquire semaphore is waited at; the swapchain image's first
+// render-graph barrier is chained to it.
+constexpr VkPipelineStageFlags2 k_acquire_wait_stage =
+    VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT;
 
 #ifndef NDEBUG
 constexpr bool k_enable_validation = true;
@@ -1760,7 +1764,11 @@ int main() {
         const engine::rhi::ResourceHandle backbuffer = graph.import_image(
             "swapchain", swapchain.images()[image_index], swapchain.image_views()[image_index],
             swapchain.format(), present_extent, VK_IMAGE_LAYOUT_UNDEFINED,
-            VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
+            VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+            // The first barrier waits on the acquire semaphore's stage, so
+            // every first touch (layout transition, TAA's copy) is ordered
+            // after the presentation engine releases the image (audit A3).
+            k_acquire_wait_stage);
         // In editor mode the frame resolves into the slot's offscreen viewport
         // image (sampled by the Viewport panel); otherwise straight into the
         // swapchain as before.
@@ -1908,7 +1916,7 @@ int main() {
         VkSemaphoreSubmitInfo wait{};
         wait.sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO;
         wait.semaphore = image_available[frame];
-        wait.stageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT;
+        wait.stageMask = k_acquire_wait_stage;
 
         VkSemaphoreSubmitInfo signal{};
         signal.sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO;
