@@ -22,7 +22,7 @@ the CI screenshot pipeline.
 ![mountain forest](docs/screenshots/mountain-forest.png)
 
 *Mountain forest (`QUAT_DEMO=mountain`): GPU-synthesised, eroded terrain,
-~11k GPU-instanced trees, rocks and bushes scattered by slope and height
+~10k GPU-instanced trees, rocks and bushes scattered by slope and height
 (procedurally generated models), GPU grass, golden-hour sun.*
 
 | Showcase (PBR materials, glass) | Terrain (GPU synthesis + GPU grass) | Physics |

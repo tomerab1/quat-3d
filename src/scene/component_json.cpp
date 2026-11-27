@@ -561,6 +561,10 @@ json encode_components(const entt::registry& r, entt::entity e, const EncodeOpti
                           {"droplets", t->params.erosion_droplets},
                           {"erosion_steps", t->params.grid.iterations},
                           {"erosion_talus", t->params.grid.talus},
+                          {"erosion_rain", t->params.grid.rain},
+                          {"erosion_capacity", t->params.grid.capacity},
+                          {"erosion_rate", t->params.grid.erode_rate},
+                          {"erosion_thermal", t->params.grid.thermal_rate},
                           {"snowline", t->snowline_m},
                           {"streaming", t->streaming},
                           {"stream_radius", t->stream_radius},
@@ -851,6 +855,10 @@ std::expected<void, core::Error> apply_component(entt::registry& r, entt::entity
             f.integer("droplets", p.erosion_droplets, 0, 50'000'000);
             f.integer("erosion_steps", p.grid.iterations, 0, terrain::max_grid_erosion_steps);
             f.number("erosion_talus", p.grid.talus, 0.05F, 4.0F);
+            f.number("erosion_rain", p.grid.rain, 0.0F, 1.0F);
+            f.number("erosion_capacity", p.grid.capacity, 0.0F, 20.0F);
+            f.number("erosion_rate", p.grid.erode_rate, 0.0F, 10.0F);
+            f.number("erosion_thermal", p.grid.thermal_rate, 0.0F, 1.0F);
             f.number("snowline", t.snowline_m);
             f.boolean("streaming", t.streaming);
             f.integer("stream_radius", t.stream_radius, 0, 8);

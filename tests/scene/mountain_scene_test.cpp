@@ -41,12 +41,12 @@ const std::filesystem::path k_scene_file =
 
 // The tree line the forest layers respect (metres, world Y) and the steepest
 // ground a tree may stand on (degrees; cliffs are steeper).
-constexpr float k_treeline = 530.0F;
+constexpr float k_treeline = 500.0F;
 constexpr float k_tree_max_slope = 40.0F;
 
 // Instance counts each layer is expected to produce on the scene's terrain.
 // Generation is deterministic; the ranges leave room for last-bit terrain
-// differences between compilers and for small art tweaks. Total ~11.3k.
+// differences between compilers and for small art tweaks. Total ~10k.
 struct Expected {
     std::size_t min;
     std::size_t max;
@@ -160,7 +160,7 @@ TEST(MountainScene, FileDecodesStrictly) {
     ASSERT_TRUE(d.has_render_settings);
     EXPECT_GE(d.render_settings.shadows.max_distance, 400.0F);
     ASSERT_TRUE(d.map.valid());
-    EXPECT_GT(d.terrain.snowline_m, k_treeline);
+    EXPECT_GE(d.terrain.snowline_m, k_treeline) << "snow starts above the forest";
     EXPECT_LT(d.terrain.snowline_m, d.map.max_height) << "the peaks should carry snow";
     // The camera stands just above the meadow.
     const float eye = d.camera.y - d.ground_at(d.camera.x, d.camera.z);

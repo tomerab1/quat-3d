@@ -138,9 +138,15 @@ GBufferOut fragment_main(VsOut input) {
 
     const float rock_w =
         smoothstep(pc.shade.w + 0.12, pc.shade.w - 0.12, n.y + (detail - 0.5) * 0.10);
+    // Snow holds on slopes up to ~50 degrees at the snowline, rising to ~60
+    // degrees 200 m above it, where colder, wind-packed snow and rime plaster
+    // steeper faces (slopes past ~60 degrees shed their snow and stay rock).
+    const float above_snowline = saturate((input.world.y - pc.shade.z) / 200.0);
+    const float snow_hold_ny = lerp(0.643, 0.5, above_snowline); // cos 50 .. cos 60 deg
     const float snow_w = smoothstep(pc.shade.z - 12.0, pc.shade.z + 12.0,
                                     input.world.y + (macro - 0.5) * 30.0) *
-                         smoothstep(0.55, 0.75, n.y);
+                         smoothstep(snow_hold_ny - 0.06, snow_hold_ny + 0.06,
+                                    n.y + (detail - 0.5) * 0.08);
 
     float3 albedo = lerp(grass, rock, rock_w);
     albedo = lerp(albedo, snow, snow_w);
