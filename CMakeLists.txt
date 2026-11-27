@@ -402,7 +402,10 @@ if(ENGINE_EDITOR)
         src/editor/grass_inspector.cpp
         src/editor/behavior_panel.cpp
         src/editor/behavior_canvas.cpp
+        src/editor/inspector_world.cpp
         src/editor/panels/console.cpp
+        src/editor/panels/inspector_parts.cpp
+        src/editor/renderer_panel.cpp
         src/editor/shell/command_palette.cpp
         src/editor/shell/commands.cpp
         src/editor/shell/dialogs.cpp

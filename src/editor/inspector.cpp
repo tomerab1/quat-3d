@@ -20,32 +20,39 @@
 #include "engine/scene/components.hpp"
 #include "engine/scene/scatter.hpp"
 #include "engine/scene/scene.hpp"
+#include "inspector_world.hpp"
+#include "panels/inspector_parts.hpp"
 #include "shell/panels.hpp"
+#include "ui/fonts.hpp"
+#include "ui/icons.hpp"
+#include "ui/metrics.hpp"
+#include "ui/widgets.hpp"
 
 namespace engine::editor {
 
 namespace {
 
 // One editor per component type; the generic `inspect<T>` below finds the
-// component on the entity and wraps the editor in a collapsing header.
+// component on the entity and draws its section header (ui::component_header)
+// and, for editors declaring `property_grid`, the label / value grid.
+// Optional members: `codec` (scene-codec name: enables reset / copy / paste),
+// `icon`, `enabled(T&)` (an enable toggle in the header).
 template <typename T>
 struct ComponentInspector;
 
-template <>
-struct ComponentInspector<scene::Name> {
-    static constexpr const char* title = "Name";
-    static void draw(entt::registry&, entt::entity, scene::Name& name) {
-        char buffer[128]{};
-        std::strncpy(buffer, name.value.c_str(), sizeof(buffer) - 1);
-        if (ImGui::InputText("name", buffer, sizeof(buffer))) {
-            name.value = buffer;
-        }
-    }
-};
+// Small read-only / explanatory line under a component's fields.
+void hint(const char* text) {
+    ImGui::PushTextWrapPos(0.0F);
+    ui::text_colored(ui::tokens().text_secondary, text);
+    ImGui::PopTextWrapPos();
+}
 
 template <>
 struct ComponentInspector<scene::Transform> {
     static constexpr const char* title = "Transform";
+    static constexpr const char* codec = "transform";
+    static constexpr const char* icon = icon::move;
+    static constexpr bool property_grid = true;
     static void draw(entt::registry&, entt::entity, scene::Transform& transform) {
         glm::vec3 translation{};
         glm::vec3 scale{};
@@ -53,15 +60,18 @@ struct ComponentInspector<scene::Transform> {
         glm::vec3 skew{};
         glm::vec4 perspective{};
         if (!glm::decompose(transform.local, scale, rotation, translation, skew, perspective)) {
-            ImGui::TextUnformatted("(non-decomposable matrix)");
+            ui::prop_value("Matrix", "not decomposable (shear / projection)");
             return;
         }
         glm::vec3 euler_deg = glm::degrees(glm::eulerAngles(rotation));
 
         bool changed = false;
-        changed |= ImGui::DragFloat3("translation", &translation.x, 0.05F);
-        changed |= ImGui::DragFloat3("rotation (deg)", &euler_deg.x, 0.5F);
-        changed |= ImGui::DragFloat3("scale", &scale.x, 0.02F, 0.001F, 1000.0F);
+        changed |= ui::prop_vec3("Position", translation, {.speed = 0.05F},
+                                 {.reset = glm::vec3(0.0F)});
+        changed |= ui::prop_vec3("Rotation", euler_deg, {.speed = 0.5F, .format = "%.1f°"},
+                                 {.reset = glm::vec3(0.0F), .tooltip = "Euler angles, degrees"});
+        changed |= ui::prop_vec3("Scale", scale, {.speed = 0.02F, .min = 0.001F, .max = 1000.0F},
+                                 {.reset = glm::vec3(1.0F)});
         if (changed) {
             transform.local = glm::translate(glm::mat4(1.0F), translation) *
                               glm::mat4_cast(glm::quat(glm::radians(euler_deg))) *
@@ -73,259 +83,146 @@ struct ComponentInspector<scene::Transform> {
 template <>
 struct ComponentInspector<scene::DirectionalLight> {
     static constexpr const char* title = "Directional Light";
+    static constexpr const char* codec = "dir_light";
+    static constexpr const char* icon = icon::sun;
+    static constexpr bool property_grid = true;
     static void draw(entt::registry&, entt::entity, scene::DirectionalLight& light) {
-        ImGui::DragFloat3("direction", &light.direction.x, 0.01F, -1.0F, 1.0F);
-        ImGui::ColorEdit3("color", &light.color.x);
-        ImGui::DragFloat("intensity", &light.intensity, 0.05F, 0.0F, 100.0F);
+        (void)ui::prop_vec3("Direction", light.direction,
+                            {.speed = 0.01F, .min = -1.0F, .max = 1.0F},
+                            {.tooltip = "Travel direction of the light (sun to scene)"});
+        (void)ui::prop_color3("Colour", light.color, {.reset = glm::vec3(1.0F)});
+        (void)ui::prop_float("Intensity", light.intensity,
+                             {.speed = 0.05F, .min = 0.0F, .max = 100.0F}, {.reset = 1.0F});
     }
 };
 
 template <>
 struct ComponentInspector<scene::PointLight> {
     static constexpr const char* title = "Point Light";
+    static constexpr const char* codec = "point_light";
+    static constexpr const char* icon = icon::lightbulb;
+    static constexpr bool property_grid = true;
     static void draw(entt::registry&, entt::entity, scene::PointLight& light) {
-        ImGui::ColorEdit3("color", &light.color.x);
-        ImGui::DragFloat("radius", &light.radius, 0.1F, 0.01F, 1000.0F);
-        ImGui::DragFloat("intensity", &light.intensity, 0.05F, 0.0F, 100.0F);
+        (void)ui::prop_color3("Colour", light.color, {.reset = glm::vec3(1.0F)});
+        (void)ui::prop_float("Radius", light.radius,
+                             {.speed = 0.1F, .min = 0.01F, .max = 1000.0F, .format = "%.2f m"});
+        (void)ui::prop_float("Intensity", light.intensity,
+                             {.speed = 0.05F, .min = 0.0F, .max = 100.0F});
     }
 };
 
 template <>
 struct ComponentInspector<scene::Terrain> {
     static constexpr const char* title = "Terrain";
+    static constexpr const char* codec = "terrain";
+    static constexpr const char* icon = icon::mountain;
+    static constexpr bool property_grid = true;
     static void draw(entt::registry&, entt::entity, scene::Terrain& terrain) {
-        terrain::TerrainParams& p = terrain.params;
-        int seed = static_cast<int>(p.seed);
-        if (ImGui::DragInt("seed", &seed, 1.0F, 0, 1 << 30)) {
-            p.seed = static_cast<std::uint32_t>(seed);
-        }
-        ImGui::DragFloat("tile size", &p.tile_size_m, 10.0F, 100.0F, 20000.0F, "%.0f m");
-        ImGui::DragFloat("height", &p.height_m, 1.0F, 1.0F, 2000.0F, "%.0f m");
-        ImGui::SliderInt("octaves", &p.octaves, 1, 10);
-        ImGui::SliderFloat("warp", &p.warp_strength, 0.0F, 1.0F, "%.2f");
-        int model = p.erosion_model == terrain::ErosionModel::grid ? 1 : 0;
-        if (ImGui::Combo("erosion", &model, "droplets (CPU)\0grid (GPU)\0")) {
-            p.erosion_model =
-                model == 1 ? terrain::ErosionModel::grid : terrain::ErosionModel::droplets;
-        }
-        if (p.erosion_model == terrain::ErosionModel::grid) {
-            int steps = static_cast<int>(p.grid.iterations);
-            if (ImGui::DragInt("erosion steps", &steps, 5.0F, 0, 5'000)) {
-                p.grid.iterations = static_cast<std::uint32_t>(glm::max(steps, 0));
-            }
-        } else {
-            int droplets = static_cast<int>(p.erosion_droplets);
-            if (ImGui::DragInt("erosion droplets", &droplets, 1000.0F, 0, 1'000'000)) {
-                p.erosion_droplets = static_cast<std::uint32_t>(glm::max(droplets, 0));
-            }
-        }
-        if (ImGui::Checkbox("generate on GPU", &terrain.gpu_generate)) {
-            terrain.regenerate = true;
-        }
-        ImGui::DragFloat("snowline", &terrain.snowline_m, 1.0F, -1000.0F, 5000.0F, "%.0f m");
-        ImGui::Separator();
-        if (ImGui::Checkbox("streaming", &terrain.streaming)) {
-            terrain.regenerate = true; // rebuild in the new mode
-        }
-        if (terrain.streaming) {
-            if (ImGui::SliderInt("radius (tiles)", &terrain.stream_radius, 1, 4)) {
-                terrain.regenerate = true;
-            }
-            ImGui::TextWrapped("An endless seeded world streams in around the camera.");
-        }
-        if (ImGui::Button("Regenerate", ImVec2(-1.0F, 0.0F))) {
-            terrain.regenerate = true;
-        }
-        ImGui::TextWrapped("%s", terrain.gpu_generate
-                                     ? "Tiles synthesise on the GPU (droplet erosion stays on a "
-                                       "CPU worker); they pop in when ready."
-                                     : "Generation runs on a worker thread; tiles pop in when "
-                                       "ready.");
+        draw_terrain(terrain);
     }
 };
 
 template <>
 struct ComponentInspector<scene::Grass> {
     static constexpr const char* title = "Grass";
+    static constexpr const char* codec = "grass";
+    static constexpr const char* icon = icon::sprout;
     static void draw(entt::registry&, entt::entity, scene::Grass& grass) { draw_grass(grass); }
+};
+
+template <>
+struct ComponentInspector<scene::Primitive> {
+    static constexpr const char* title = "Primitive";
+    static constexpr const char* codec = "primitive";
+    static constexpr const char* icon = icon::shapes;
+    static constexpr bool property_grid = true;
+    static void draw(entt::registry&, entt::entity, scene::Primitive& p) {
+        draw_primitive(p);
+    }
 };
 
 template <>
 struct ComponentInspector<scene::InstancedMesh> {
     static constexpr const char* title = "Instanced Mesh";
+    static constexpr const char* codec = "instanced_mesh";
+    static constexpr const char* icon = icon::boxes;
+    static constexpr bool property_grid = true;
     static void draw(entt::registry& r, entt::entity e, scene::InstancedMesh& mesh) {
-        // Paths commit on Enter: every edit re-resolves the model.
-        char path[512]{};
-        std::strncpy(path, mesh.gltf_path.c_str(), sizeof(path) - 1);
-        if (ImGui::InputText("glTF", path, sizeof(path), ImGuiInputTextFlags_EnterReturnsTrue)) {
-            mesh.gltf_path = path;
-        }
-        if (ImGui::IsItemHovered()) {
-            ImGui::SetTooltip("Model file relative to the project root (Enter to apply);\n"
-                              "empty = the primitive shape below");
-        }
-        if (!mesh.gltf_path.empty()) {
-            char node[256]{};
-            std::strncpy(node, mesh.gltf_node.c_str(), sizeof(node) - 1);
-            if (ImGui::InputText("node", node, sizeof(node), ImGuiInputTextFlags_EnterReturnsTrue)) {
-                mesh.gltf_node = node;
-            }
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Only this node's subtree (empty = all)");
-        } else {
-            scene::Primitive& p = mesh.primitive;
-            const char* shapes[] = {"cube", "sphere", "plane", "cylinder", "cone", "capsule"};
-            int shape = static_cast<int>(p.shape);
-            if (ImGui::Combo("shape", &shape, shapes, 6)) {
-                p.shape = static_cast<scene::PrimitiveShape>(shape);
-            }
-            ImGui::ColorEdit4("color", &p.color.x);
-            ImGui::SliderFloat("metallic", &p.metallic, 0.0F, 1.0F);
-            ImGui::SliderFloat("roughness", &p.roughness, 0.0F, 1.0F);
-            ImGui::ColorEdit3("emissive", &p.emissive.x, ImGuiColorEditFlags_HDR);
-        }
-        ImGui::Checkbox("cast shadows", &mesh.cast_shadows);
-
-        if (const auto* parts = r.try_get<scene::InstancedMeshParts>(e)) {
-            ImGui::Text("model: %zu part(s), radius %.2f m", parts->parts.size(), parts->bounds.w);
-        } else {
-            ImGui::TextDisabled("model: resolving...");
-        }
-        ImGui::Separator();
-        if (const auto* scatter = r.try_get<scene::Scatter>(e)) {
-            ImGui::Text("%zu placements (scatter generation %u)", mesh.instances.size(),
-                        scatter->generation);
-            ImGui::TextDisabled("generated by the Scatter; remove it to edit by hand");
-            return;
-        }
-        ImGui::Text("%zu placements", mesh.instances.size());
-        constexpr int k_listed = 64; // a long list is edited through scene files / remote API
-        int remove = -1;
-        const int shown = std::min(static_cast<int>(mesh.instances.size()), k_listed);
-        for (int i = 0; i < shown; ++i) {
-            scene::InstanceTransform& t = mesh.instances[static_cast<std::size_t>(i)];
-            ImGui::PushID(i);
-            ImGui::DragFloat3("##pos", &t.position.x, 0.05F);
-            ImGui::SameLine();
-            if (ImGui::SmallButton("x")) remove = i;
-            glm::vec3 euler = glm::degrees(glm::eulerAngles(t.rotation));
-            if (ImGui::DragFloat3("##rot", &euler.x, 0.5F)) {
-                t.rotation = glm::quat(glm::radians(euler));
-            }
-            float uniform = t.scale.x;
-            if (ImGui::DragFloat("##scale", &uniform, 0.01F, 0.01F, 1000.0F, "scale %.2f")) {
-                t.scale = glm::vec3(uniform);
-            }
-            ImGui::PopID();
-        }
-        if (static_cast<int>(mesh.instances.size()) > shown) {
-            ImGui::TextDisabled("(%zu more not listed)", mesh.instances.size() - shown);
-        }
-        if (remove >= 0) mesh.instances.erase(mesh.instances.begin() + remove);
-        if (ImGui::Button("Add placement")) {
-            scene::InstanceTransform t;
-            if (!mesh.instances.empty()) {
-                t.position = mesh.instances.back().position + glm::vec3(2.0F, 0.0F, 0.0F);
-            }
-            mesh.instances.push_back(t);
-        }
-        ImGui::SameLine();
-        if (!mesh.instances.empty() && ImGui::Button("Clear")) mesh.instances.clear();
+        draw_instanced_mesh(r, e, mesh);
     }
 };
 
 template <>
 struct ComponentInspector<scene::Scatter> {
     static constexpr const char* title = "Scatter";
+    static constexpr const char* codec = "scatter";
+    static constexpr const char* icon = icon::trees;
+    static constexpr bool property_grid = true;
     static void draw(entt::registry& r, entt::entity e, scene::Scatter& s) {
-        int seed = static_cast<int>(s.seed & 0x7FFFFFFFU);
-        if (ImGui::DragInt("seed", &seed, 1.0F, 0, 0x7FFFFFFF)) {
-            s.seed = static_cast<std::uint32_t>(seed);
-        }
-        const char* areas[] = {"rectangle", "circle"};
-        int area = static_cast<int>(s.area);
-        if (ImGui::Combo("area", &area, areas, 2)) s.area = static_cast<scene::ScatterArea>(area);
-        if (s.area == scene::ScatterArea::rect) {
-            ImGui::DragFloat2("size (x, z)", &s.size.x, 0.5F, 0.0F, 20000.0F, "%.1f m");
-        } else {
-            ImGui::DragFloat("radius", &s.radius, 0.25F, 0.0F, 10000.0F, "%.1f m");
-        }
-        ImGui::DragFloat("density", &s.density, 0.001F, 0.0F, 100.0F, "%.3f / m2");
-        ImGui::DragFloat("min spacing", &s.min_spacing, 0.05F, 0.0F, 1000.0F, "%.2f m");
-        const char* patterns[] = {"poisson disc", "jittered grid"};
-        int pattern = static_cast<int>(s.pattern);
-        if (ImGui::Combo("pattern", &pattern, patterns, 2)) {
-            s.pattern = static_cast<scene::ScatterPattern>(pattern);
-        }
-        ImGui::DragFloatRange2("scale", &s.scale_range.x, &s.scale_range.y, 0.01F, 0.01F, 100.0F);
-        ImGui::Checkbox("random yaw", &s.random_yaw);
-        ImGui::SliderFloat("align to ground", &s.align_to_normal, 0.0F, 1.0F);
-        ImGui::DragFloat("base offset", &s.base_offset, 0.01F, -100.0F, 100.0F, "%.2f x scale");
-        if (ImGui::IsItemHovered()) {
-            ImGui::SetTooltip("Lift along the placement's up axis, times its scale\n"
-                              "(0.5 seats a unit primitive on the ground)");
-        }
-        ImGui::DragFloatRange2("slope", &s.slope_deg.x, &s.slope_deg.y, 0.5F, 0.0F, 90.0F,
-                               "%.0f deg");
-        ImGui::DragFloatRange2("height", &s.height_m.x, &s.height_m.y, 1.0F, -100000.0F,
-                               100000.0F, "%.0f m");
-        int max_instances = static_cast<int>(s.max_instances);
-        if (ImGui::DragInt("max instances", &max_instances, 100.0F, 0,
-                           static_cast<int>(scene::k_scatter_instance_limit))) {
-            s.max_instances = static_cast<std::uint32_t>(std::max(max_instances, 0));
-        }
-        const auto* mesh = r.try_get<scene::InstancedMesh>(e);
-        ImGui::Text("%zu placements (generation %u)", mesh != nullptr ? mesh->instances.size() : 0,
-                    s.generation);
-        ImGui::TextWrapped("Regenerates when these settings, the entity's position or the "
-                           "terrain change. Removing the Scatter keeps the placements.");
+        draw_scatter(r, e, s);
     }
 };
 
 template <>
 struct ComponentInspector<scene::NavAgent> {
     static constexpr const char* title = "Nav Agent";
+    static constexpr const char* codec = "nav_agent";
+    static constexpr const char* icon = icon::footprints;
+    static constexpr bool property_grid = true;
     static void draw(entt::registry& r, entt::entity e, scene::NavAgent& agent) {
         // Editing the target mid-walk is an order: a patrol route waits for it.
-        if (ImGui::DragFloat3("target", &agent.target.x, 0.1F) && agent.active) {
+        if (ui::prop_vec3("Target", agent.target, {.speed = 0.1F}) && agent.active) {
             agent.commanded = true;
         }
-        ImGui::DragFloat("speed", &agent.speed, 0.1F, 0.1F, 50.0F, "%.1f m/s");
-        ImGui::DragFloat("ground offset", &agent.ground_offset, 0.05F, 0.0F, 10.0F, "%.2f m");
-        if (ImGui::IsItemHovered()) {
-            ImGui::SetTooltip("Entity origin height above the ground while walking\n"
-                              "(half-height for a centre-pivot mesh, e.g. 0.5 for the unit cube)");
-        }
+        (void)ui::prop_float("Speed", agent.speed,
+                             {.speed = 0.1F, .min = 0.1F, .max = 50.0F, .format = "%.1f m/s"});
+        (void)ui::prop_float("Ground offset", agent.ground_offset,
+                             {.speed = 0.05F, .min = 0.0F, .max = 10.0F, .format = "%.2f m"},
+                             {.tooltip = "Entity origin height above the ground while walking "
+                                         "(half-height for a centre-pivot mesh, e.g. 0.5 for the "
+                                         "unit cube)"});
         const auto* route = r.try_get<scene::PatrolRoute>(e);
         const bool patrolling = route != nullptr && !route->points.empty();
         const bool running = !agent.paused && (agent.active || patrolling);
-        if (ImGui::Button(running ? "Stop" : "Go", ImVec2(-1.0F, 0.0F))) {
+        ui::prop_value("State", agent.paused   ? "stopped"
+                                : agent.active ? "moving"
+                                : agent.arrived ? "arrived"
+                                : agent.failed ? "failed (unreachable or stuck)"
+                                               : "idle");
+        ui::prop_begin("", nullptr, false, false);
+        if (ui::button(ui::label(running ? icon::square : icon::play, running ? "Stop" : "Go").c_str(),
+                       ui::ButtonKind::secondary, ImVec2(-1.0F, 0.0F))) {
             if (running) {
                 scene::nav_agent_stop(agent);
             } else {
                 scene::nav_agent_resume(r, e);
             }
         }
-        ImGui::Text("%s", agent.paused   ? "stopped"
-                          : agent.active ? "moving"
-                          : agent.arrived ? "arrived"
-                          : agent.failed ? "failed (unreachable or stuck)"
-                                         : "idle");
-        ImGui::TextWrapped("Bake a navmesh (Physics panel) and press Play; the agent "
-                           "paths to the target.");
+        (void)ui::prop_end(false, false);
+        ui::prop_note("Bake a navmesh (Physics panel) and press Play; the agent paths to the "
+                      "target.");
     }
 };
 
 template <>
 struct ComponentInspector<scene::PatrolRoute> {
     static constexpr const char* title = "Patrol Route";
+    static constexpr const char* codec = "patrol";
+    static constexpr const char* icon = icon::route;
+    static constexpr bool property_grid = true;
     static void draw(entt::registry&, entt::entity, scene::PatrolRoute& route) {
-        ImGui::Checkbox("loop", &route.loop);
+        (void)ui::prop_bool("Loop", route.loop);
         int remove = -1;
         for (int i = 0; i < static_cast<int>(route.points.size()); ++i) {
             ImGui::PushID(i);
-            ImGui::DragFloat3("##pt", &route.points[static_cast<std::size_t>(i)].x, 0.1F);
-            ImGui::SameLine();
-            if (ImGui::SmallButton("x")) remove = i;
+            char label[24];
+            std::snprintf(label, sizeof(label), "Point %d", i + 1);
+            ui::prop_begin(label, nullptr, true, true);
+            float* xyz = &route.points[static_cast<std::size_t>(i)].x;
+            ImGui::DragFloat3("##pt", xyz, 0.1F);
+            ImGui::SameLine(0.0F, ImGui::GetStyle().ItemInnerSpacing.x);
+            if (ui::icon_button("remove", icon::x, "Remove this point")) remove = i;
+            ImGui::PopID(); // prop_begin's ID
             ImGui::PopID();
         }
         if (remove >= 0) {
@@ -333,88 +230,118 @@ struct ComponentInspector<scene::PatrolRoute> {
             route.next = 0;
             route.finished = false;
         }
-        if (!route.points.empty() && ImGui::Button("Clear", ImVec2(-1.0F, 0.0F))) {
-            route.points.clear();
-            route.next = 0;
-            route.finished = false;
+        if (!route.points.empty()) {
+            ui::prop_begin("", nullptr, false, false);
+            if (ui::button(ui::label(icon::trash_2, "Clear points").c_str(),
+                           ui::ButtonKind::secondary, ImVec2(-1.0F, 0.0F))) {
+                route.points.clear();
+                route.next = 0;
+                route.finished = false;
+            }
+            (void)ui::prop_end(false, false);
         }
-        ImGui::TextWrapped("Shift+click the ground in the viewport to add points; "
-                           "Ctrl+click sends the agent somewhere once.");
+        ui::prop_note("Shift+click the ground in the viewport to add points; Ctrl+click sends "
+                      "the agent somewhere once.");
     }
 };
 
 template <>
 struct ComponentInspector<scene::BehaviorTree> {
     static constexpr const char* title = "Behavior Tree";
+    static constexpr const char* codec = "behavior";
+    static constexpr const char* icon = icon::workflow;
+    static bool* enabled(scene::BehaviorTree& bt) { return &bt.enabled; }
     static void draw(entt::registry&, entt::entity, scene::BehaviorTree& bt) {
-        ImGui::Checkbox("enabled", &bt.enabled);
-        if (ImGui::Button("Edit graph", ImVec2(-1.0F, 0.0F))) {
+        if (ui::button(ui::label(icon::workflow, "Edit graph").c_str(), ui::ButtonKind::primary,
+                       ImVec2(-1.0F, 0.0F))) {
             ImGui::SetWindowFocus(behavior_panel_title);
         }
         // Resizable: trees with saved editor layout outgrow any fixed buffer.
-        ImGui::InputTextMultiline("##bt_json", &bt.source,
-                                  ImVec2(-1.0F, ImGui::GetTextLineHeight() * 8.0F));
-        if (ImGui::Button("Recompile", ImVec2(-1.0F, 0.0F))) {
+        {
+            ui::FontScope mono(ui::FontRole::mono);
+            ImGui::InputTextMultiline("##bt_json", &bt.source,
+                                      ImVec2(-1.0F, ImGui::GetTextLineHeight() * 8.0F));
+        }
+        if (ui::button(ui::label(icon::refresh_cw, "Recompile").c_str(), ui::ButtonKind::secondary,
+                       ImVec2(-1.0F, 0.0F))) {
             bt.compiled.reset();
             bt.parse_failed = false;
         }
         if (bt.parse_failed) {
-            ImGui::TextColored(ImVec4(1.0F, 0.4F, 0.3F, 1.0F), "parse failed (see log)");
+            ui::text_colored(ui::tokens().error, ui::label(icon::circle_x, "Parse failed (see the Console)"));
         } else if (bt.compiled != nullptr) {
-            ImGui::Text("compiled: %zu nodes", bt.compiled->nodes().size());
+            ui::text_colored(ui::tokens().success,
+                             ui::label(icon::circle_check, "Compiled: " +
+                                                               std::to_string(bt.compiled->nodes().size()) +
+                                                               " nodes"));
         }
         std::string leaves;
         for (const scene::BtLeafInfo& leaf : scene::bt_builtin_leaf_info()) {
             leaves += (leaves.empty() ? "" : ", ") + std::string(leaf.name);
         }
-        ImGui::TextWrapped("JSON: sequence/selector (resume the running child), "
-                           "reactive_sequence/reactive_selector (re-check every tick, "
-                           "pre-empting), inverter; leaves %s.",
-                           leaves.c_str());
+        const std::string text = "JSON: sequence/selector (resume the running child), "
+                                 "reactive_sequence/reactive_selector (re-check every tick, "
+                                 "pre-empting), inverter; leaves " + leaves + ".";
+        hint(text.c_str());
     }
 };
 
 template <>
 struct ComponentInspector<scene::Camera> {
     static constexpr const char* title = "Camera";
+    static constexpr const char* codec = "camera";
+    static constexpr const char* icon = icon::camera;
+    static constexpr bool property_grid = true;
     static void draw(entt::registry& r, entt::entity e, scene::Camera& camera) {
-        float fov_deg = glm::degrees(camera.fov_y);
-        if (ImGui::SliderFloat("fov (deg)", &fov_deg, 10.0F, 140.0F)) {
-            camera.fov_y = glm::radians(fov_deg);
-        }
-        ImGui::DragFloat("near", &camera.near_z, 0.01F, 0.001F, 100.0F);
-        ImGui::DragFloat("far", &camera.far_z, 1.0F, 0.1F, 100000.0F);
+        (void)ui::prop_angle("Field of view", camera.fov_y,
+                             {.min = 10.0F, .max = 140.0F, .format = "%.0f°", .slider = true},
+                             {.tooltip = "Vertical field of view"});
+        (void)ui::prop_float("Near", camera.near_z, {.speed = 0.01F, .min = 0.001F, .max = 100.0F,
+                                                     .format = "%.3f m"});
+        (void)ui::prop_float("Far", camera.far_z, {.speed = 1.0F, .min = 0.1F, .max = 100000.0F,
+                                                   .format = "%.0f m"});
         // Exactly one camera owns the play view: activating this one
         // deactivates the rest (radio semantics, like a "main camera" tag).
-        if (ImGui::Checkbox("active", &camera.is_active) && camera.is_active) {
+        if (ui::prop_bool("Active", camera.is_active,
+                          {.tooltip = "Play + Game camera views through the active camera"}) &&
+            camera.is_active) {
             for (auto [other, cam] : r.view<scene::Camera>().each()) {
                 if (other != e) cam.is_active = false;
             }
         }
-        ImGui::TextWrapped("Play + \"Game camera\" (menu bar) views through the active "
-                           "camera. Put it on a child entity offset from the body — on the "
-                           "mesh itself the view sits inside the geometry.");
+        ui::prop_note("Put the camera on a child entity offset from the body; on the mesh itself "
+                      "the view sits inside the geometry.");
     }
 };
 
 template <>
 struct ComponentInspector<scene::MeshRenderer> {
     static constexpr const char* title = "Mesh Renderer";
+    static constexpr const char* icon = icon::box;
+    static constexpr bool property_grid = true;
     static void draw(entt::registry&, entt::entity, scene::MeshRenderer& mr) {
+        char buf[128];
         if (mr.mesh.valid() && mr.mesh.is_loaded()) {
-            ImGui::Text("mesh: %u vertices, %u indices", mr.mesh->vertex_count,
-                        mr.mesh->index_count);
+            std::snprintf(buf, sizeof(buf), "%u vertices, %u indices", mr.mesh->vertex_count,
+                          mr.mesh->index_count);
+            ui::prop_value("Mesh", buf, nullptr, true);
         } else {
-            ImGui::TextUnformatted("mesh: <none>");
+            ui::prop_value("Mesh", "none");
         }
         if (mr.material.valid() && mr.material.is_loaded()) {
             const auto& p = mr.material->params;
-            ImGui::Text("material: flags 0x%x", p.flags);
-            ImGui::Text("  base %.2f %.2f %.2f | metal %.2f rough %.2f", p.base_color_factor.x,
-                        p.base_color_factor.y, p.base_color_factor.z, p.metallic_factor,
-                        p.roughness_factor);
+            std::snprintf(buf, sizeof(buf), "%.2f %.2f %.2f", static_cast<double>(p.base_color_factor.x),
+                          static_cast<double>(p.base_color_factor.y),
+                          static_cast<double>(p.base_color_factor.z));
+            ui::prop_value("Base colour", buf, nullptr, true);
+            std::snprintf(buf, sizeof(buf), "metal %.2f  rough %.2f",
+                          static_cast<double>(p.metallic_factor),
+                          static_cast<double>(p.roughness_factor));
+            ui::prop_value("Surface", buf, nullptr, true);
+            std::snprintf(buf, sizeof(buf), "0x%x", p.flags);
+            ui::prop_value("Flags", buf, "Material feature flags", true);
         } else {
-            ImGui::TextUnformatted("material: <default>");
+            ui::prop_value("Material", "default");
         }
     }
 };
@@ -422,63 +349,80 @@ struct ComponentInspector<scene::MeshRenderer> {
 template <>
 struct ComponentInspector<scene::Animator> {
     static constexpr const char* title = "Animator";
+    static constexpr const char* codec = "animator";
+    static constexpr const char* icon = icon::clapperboard;
+    static constexpr bool property_grid = true;
     static void draw(entt::registry&, entt::entity, scene::Animator& animator) {
-        ImGui::Text("time: %.2fs", animator.time);
-        ImGui::DragFloat("speed", &animator.speed, 0.05F, -4.0F, 4.0F);
-        ImGui::Checkbox("looping", &animator.looping);
+        char buf[32];
+        std::snprintf(buf, sizeof(buf), "%.2f s", static_cast<double>(animator.time));
+        ui::prop_value("Time", buf, nullptr, true);
+        (void)ui::prop_float("Speed", animator.speed, {.speed = 0.05F, .min = -4.0F, .max = 4.0F},
+                             {.reset = 1.0F});
+        (void)ui::prop_bool("Looping", animator.looping);
     }
 };
 
 template <>
 struct ComponentInspector<scene::Collider> {
     static constexpr const char* title = "Collider";
+    static constexpr const char* codec = "collider";
+    static constexpr const char* icon = icon::shield;
+    static constexpr bool property_grid = true;
     static void draw(entt::registry&, entt::entity, scene::Collider& collider) {
-        const char* shapes[] = {"box", "sphere", "capsule"};
-        int shape = static_cast<int>(collider.shape);
-        if (ImGui::Combo("shape", &shape, shapes, 3)) {
-            collider.shape = static_cast<scene::ColliderShape>(shape);
-        }
+        static constexpr ui::EnumItem shapes[] = {
+            {static_cast<int>(scene::ColliderShape::box), "Box", nullptr},
+            {static_cast<int>(scene::ColliderShape::sphere), "Sphere", nullptr},
+            {static_cast<int>(scene::ColliderShape::capsule), "Capsule", nullptr},
+        };
+        (void)ui::prop_enum("Shape", collider.shape, shapes);
+        const ui::DragSpec size{.speed = 0.05F, .min = 0.01F, .max = 1000.0F};
         switch (collider.shape) {
         case scene::ColliderShape::box:
-            ImGui::DragFloat3("half extents", &collider.half_extents.x, 0.05F, 0.01F, 1000.0F);
+            (void)ui::prop_vec3("Half extents", collider.half_extents, size);
             break;
         case scene::ColliderShape::sphere:
-            ImGui::DragFloat("radius", &collider.half_extents.x, 0.05F, 0.01F, 1000.0F);
+            (void)ui::prop_float("Radius", collider.half_extents.x, size);
             break;
         case scene::ColliderShape::capsule:
-            ImGui::DragFloat("radius", &collider.half_extents.x, 0.05F, 0.01F, 1000.0F);
-            ImGui::DragFloat("half height", &collider.half_extents.y, 0.05F, 0.01F, 1000.0F);
+            (void)ui::prop_float("Radius", collider.half_extents.x, size);
+            (void)ui::prop_float("Half height", collider.half_extents.y, size);
             break;
         }
-        ImGui::DragFloat3("offset", &collider.offset.x, 0.05F);
-        ImGui::Checkbox("trigger (overlap events only)", &collider.is_sensor);
+        (void)ui::prop_vec3("Offset", collider.offset, {.speed = 0.05F}, {.reset = glm::vec3(0.0F)});
+        (void)ui::prop_bool("Trigger", collider.is_sensor,
+                            {.reset = false, .tooltip = "Overlap events only: objects pass through"});
         if (collider.is_sensor) {
-            ImGui::TextColored(ImVec4(1.0F, 0.65F, 0.2F, 1.0F),
-                               "no collision response: objects pass through");
+            ui::prop_note("No collision response: objects pass through.", ui::tokens().warning);
         }
-        ImGui::TextDisabled("without a Rigid Body this simulates as static;");
-        ImGui::TextDisabled("add a dynamic Rigid Body to make it fall in Play");
+        ui::prop_note("Without a Rigid Body this simulates as static; add a dynamic Rigid Body "
+                      "to make it fall in Play.");
     }
 };
 
 template <>
 struct ComponentInspector<scene::RigidBody> {
     static constexpr const char* title = "Rigid Body";
+    static constexpr const char* codec = "rigidbody";
+    static constexpr const char* icon = icon::atom;
+    static constexpr bool property_grid = true;
     static void draw(entt::registry&, entt::entity, scene::RigidBody& body) {
-        const char* motions[] = {"static", "kinematic", "dynamic"};
-        int motion = static_cast<int>(body.motion);
-        if (ImGui::Combo("motion", &motion, motions, 3)) {
-            body.motion = static_cast<scene::BodyMotion>(motion);
-        }
-        ImGui::DragFloat("mass", &body.mass, 0.1F, 0.01F, 10000.0F);
-        ImGui::TextDisabled(body.body == 0xFFFFFFFFU ? "body: not created (press Play)"
-                                                     : "body: live");
+        static constexpr ui::EnumItem motions[] = {
+            {static_cast<int>(scene::BodyMotion::static_body), "Static", "Never moves"},
+            {static_cast<int>(scene::BodyMotion::kinematic), "Kinematic", "Moved by the transform"},
+            {static_cast<int>(scene::BodyMotion::dynamic), "Dynamic", "Simulated by Jolt"},
+        };
+        (void)ui::prop_enum("Motion", body.motion, motions);
+        (void)ui::prop_float("Mass", body.mass,
+                             {.speed = 0.1F, .min = 0.01F, .max = 10000.0F, .format = "%.2f kg"});
+        ui::prop_value("Body", body.body == 0xFFFFFFFFU ? "not created (press Play)" : "live");
     }
 };
 
 template <>
 struct ComponentInspector<scene::AudioSource> {
     static constexpr const char* title = "Audio Source";
+    static constexpr const char* codec = "audio_source";
+    static constexpr const char* icon = icon::volume_2;
     static void draw(entt::registry&, entt::entity, scene::AudioSource& source) {
         draw_audio_source(source);
     }
@@ -487,64 +431,76 @@ struct ComponentInspector<scene::AudioSource> {
 template <>
 struct ComponentInspector<scene::AudioListener> {
     static constexpr const char* title = "Audio Listener";
+    static constexpr const char* codec = "audio_listener";
+    static constexpr const char* icon = icon::ear;
     static void draw(entt::registry& r, entt::entity e, scene::AudioListener& listener) {
         draw_audio_listener(r, e, listener);
     }
 };
 
-// Draws the component's collapsing header + editor. `removable` adds a
-// right-click "Remove component" to the header; returns false if removed.
+panels::InspectorState g_state; // Add Component search, copied values
+
+// Draws the component's section (ui::component_header with codec-backed
+// reset / copy / paste) and its editor. `removable` offers Remove; returns
+// false if the component was removed.
 template <typename T>
 bool inspect(entt::registry& registry, entt::entity entity, bool removable = false) {
+    using I = ComponentInspector<T>;
     auto* component = registry.try_get<T>(entity);
     if (component == nullptr) return true;
 
-    const bool open =
-        ImGui::CollapsingHeader(ComponentInspector<T>::title, ImGuiTreeNodeFlags_DefaultOpen);
-    if (removable && ImGui::BeginPopupContextItem(ComponentInspector<T>::title)) {
-        const bool remove = ImGui::MenuItem("Remove component");
-        ImGui::EndPopup();
-        if (remove) {
-            registry.remove<T>(entity);
-            return false;
-        }
-    }
-    if (open) {
-        ImGui::PushID(ComponentInspector<T>::title);
-        ComponentInspector<T>::draw(registry, entity, *component);
-        ImGui::PopID();
-    }
-    return true;
-}
+    const char* codec_name = nullptr;
+    if constexpr (requires { I::codec; }) codec_name = I::codec;
+    const char* glyph = icon::box;
+    if constexpr (requires { I::icon; }) glyph = I::icon;
+    bool* enabled_flag = nullptr;
+    if constexpr (requires { I::enabled(*component); }) enabled_flag = I::enabled(*component);
 
-// "Add Component" popup entry: shown only when the entity lacks T.
-template <typename T, typename... Args>
-void add_component_item(entt::registry& registry, entt::entity entity, Args&&... defaults) {
-    if (registry.all_of<T>(entity)) return;
-    if (ImGui::MenuItem(ComponentInspector<T>::title)) {
-        registry.emplace<T>(entity, std::forward<Args>(defaults)...);
+    const panels::SectionResult s = panels::component_section(
+        registry, entity, g_state, codec_name, glyph, I::title, enabled_flag, removable);
+    if (s.removed) {
+        registry.remove<T>(entity);
+        return false;
     }
+    // A reset / paste may have replaced the component.
+    component = registry.try_get<T>(entity);
+    if (!s.open || component == nullptr) return true;
+    ImGui::PushID(I::title);
+    ImGui::Indent(ui::scaled(ui::Spacing::xxs));
+    bool grid = false;
+    if constexpr (requires { I::property_grid; }) grid = I::property_grid;
+    if (grid && ui::begin_property_grid("##grid")) {
+        I::draw(registry, entity, *component);
+        ui::end_property_grid();
+    } else if (!grid) {
+        I::draw(registry, entity, *component);
+    }
+    ImGui::Unindent(ui::scaled(ui::Spacing::xxs));
+    ImGui::Dummy(ImVec2(0.0F, ui::scaled(ui::Spacing::xxs)));
+    ImGui::PopID();
+    return true;
 }
 
 } // namespace
 
 void draw_inspector(scene::Scene& scene, entt::entity selected) {
-    if (!ImGui::Begin(shell::panel_window_name(shell::Panel::inspector))) {
+    if (!ImGui::Begin(shell::panel_window_name(shell::Panel::inspector),
+                      shell::panel_open_flag(shell::Panel::inspector))) {
         ImGui::End();
         return;
     }
     entt::registry& r = scene.registry();
     if (selected == entt::null || !r.valid(selected)) {
-        ImGui::TextUnformatted("(no entity selected)");
+        (void)ui::empty_state(icon::mouse_pointer_2, "Nothing selected",
+                              "Select an entity in the Hierarchy or click it in the viewport.");
         ImGui::End();
         return;
     }
 
-    ImGui::Text("entity %u", static_cast<std::uint32_t>(selected));
-    ImGui::Separator();
-    inspect<scene::Name>(r, selected);
+    panels::entity_header(scene, selected);
     inspect<scene::Transform>(r, selected);
-    inspect<scene::MeshRenderer>(r, selected);
+    inspect<scene::Primitive>(r, selected, true);
+    if (!r.all_of<scene::Primitive>(selected)) inspect<scene::MeshRenderer>(r, selected);
     inspect<scene::DirectionalLight>(r, selected, true);
     inspect<scene::PointLight>(r, selected, true);
     inspect<scene::Camera>(r, selected, true);
@@ -563,101 +519,7 @@ void draw_inspector(scene::Scene& scene, entt::entity selected) {
     inspect<scene::AudioSource>(r, selected, true);
     inspect<scene::AudioListener>(r, selected, true);
 
-    ImGui::Separator();
-    if (ImGui::Button("Add component", ImVec2(-1.0F, 0.0F))) {
-        ImGui::OpenPopup("add_component");
-    }
-    if (ImGui::BeginPopup("add_component")) {
-        add_component_item<scene::Collider>(r, selected);
-        add_component_item<scene::RigidBody>(r, selected);
-        add_component_item<scene::Terrain>(r, selected);
-        add_component_item<scene::Grass>(r, selected);
-        add_component_item<scene::InstancedMesh>(r, selected);
-        add_component_item<scene::Scatter>(r, selected); // adds an Instanced Mesh on demand
-        add_component_item<scene::NavAgent>(r, selected);
-        add_component_item<scene::BehaviorTree>(r, selected);
-        add_component_item<scene::PatrolRoute>(r, selected);
-        add_component_item<scene::PointLight>(r, selected, glm::vec3(1.0F), 10.0F, 5.0F);
-        add_component_item<scene::DirectionalLight>(
-            r, selected, glm::vec3(-0.4F, -1.0F, -0.3F), glm::vec3(1.0F), 3.0F);
-        add_component_item<scene::Camera>(r, selected);
-        add_component_item<scene::AudioSource>(r, selected);
-        add_component_item<scene::AudioListener>(r, selected);
-        ImGui::EndPopup();
-    }
-    ImGui::End();
-}
-
-void draw_renderer_panel(RendererSettings& settings, scene::Scene* scene) {
-    if (!ImGui::Begin(shell::panel_window_name(shell::Panel::renderer))) {
-        ImGui::End();
-        return;
-    }
-
-    // Collapsing headers don't scope IDs: each section pushes its own, so
-    // equally labelled widgets (the sun's and bloom's "intensity") stay
-    // distinct.
-    if (ImGui::CollapsingHeader("Sun", ImGuiTreeNodeFlags_DefaultOpen)) {
-        ImGui::PushID("sun");
-        scene::DirectionalLight* sun = nullptr;
-        if (scene != nullptr) {
-            for (const entt::entity e : scene->registry().view<scene::DirectionalLight>()) {
-                sun = &scene->registry().get<scene::DirectionalLight>(e);
-                break;
-            }
-        }
-        if (sun == nullptr) {
-            ImGui::TextUnformatted("(no DirectionalLight in the scene)");
-        } else {
-            // direction = travel direction (sun -> scene), unit length.
-            const glm::vec3 dir = glm::normalize(sun->direction);
-            float azimuth = glm::degrees(std::atan2(dir.z, dir.x));
-            float elevation = glm::degrees(std::asin(glm::clamp(-dir.y, -1.0F, 1.0F)));
-
-            bool changed = false;
-            changed |= ImGui::SliderFloat("azimuth", &azimuth, -180.0F, 180.0F, "%.0f deg");
-            changed |= ImGui::SliderFloat("elevation", &elevation, 2.0F, 89.0F, "%.0f deg");
-            if (changed) {
-                const float az = glm::radians(azimuth);
-                const float el = glm::radians(glm::clamp(elevation, 2.0F, 89.0F));
-                sun->direction = glm::vec3(std::cos(el) * std::cos(az), -std::sin(el),
-                                           std::cos(el) * std::sin(az));
-            }
-            ImGui::ColorEdit3("colour", &sun->color.x);
-            ImGui::DragFloat("intensity", &sun->intensity, 0.05F, 0.0F, 100.0F);
-        }
-        ImGui::PopID();
-    }
-
-    if (ImGui::CollapsingHeader("Clouds", ImGuiTreeNodeFlags_DefaultOpen)) {
-        ImGui::PushID("clouds");
-        renderer::CloudSettings& c = settings.clouds;
-        ImGui::Checkbox("enabled", &c.enabled);
-        ImGui::BeginDisabled(!c.enabled);
-        ImGui::SliderFloat("coverage", &c.coverage, 0.0F, 1.0F, "%.2f");
-        ImGui::SliderFloat("density", &c.density, 2.0F, 64.0F, "%.0f /km");
-        ImGui::SliderFloat("altitude", &c.bottom_km, 0.5F, 10.0F, "%.1f km");
-        ImGui::SliderFloat("thickness", &c.thickness_km, 0.5F, 8.0F, "%.1f km");
-        ImGui::SliderFloat("puff size", &c.size_km, 2.0F, 40.0F, "%.0f km");
-        ImGui::SliderFloat("detail", &c.detail, 0.0F, 1.0F, "%.2f");
-        ImGui::SliderFloat("wind speed", &c.wind_speed, 0.0F, 80.0F, "%.0f m/s");
-        ImGui::SliderFloat("wind direction", &c.wind_dir_deg, -180.0F, 180.0F, "%.0f deg");
-        ImGui::EndDisabled();
-        ImGui::PopID();
-    }
-
-    if (ImGui::CollapsingHeader("Bloom", ImGuiTreeNodeFlags_DefaultOpen)) {
-        ImGui::PushID("bloom");
-        ImGui::SliderFloat("threshold", &settings.bloom_threshold, 0.0F, 8.0F);
-        ImGui::SliderFloat("knee", &settings.bloom_knee, 0.0F, 1.0F);
-        ImGui::SliderFloat("intensity", &settings.bloom_intensity, 0.0F, 0.5F);
-        ImGui::SliderFloat("radius", &settings.bloom_radius, 0.2F, 2.0F);
-        ImGui::PopID();
-    }
-    if (ImGui::CollapsingHeader("Environment", ImGuiTreeNodeFlags_DefaultOpen)) {
-        ImGui::TextWrapped("The IBL environment (ambient + reflections) re-renders continuously "
-                           "(one step per frame), so it tracks the sun and clouds by itself.");
-    }
+    panels::add_component_button(r, selected, g_state);
     ImGui::End();
 }
 

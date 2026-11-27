@@ -18,6 +18,8 @@
 #include "engine/scene/scene.hpp"
 #include "behavior_panel_style.hpp"
 #include "shell/panels.hpp"
+#include "ui/icons.hpp"
+#include "ui/widgets.hpp"
 
 namespace engine::editor {
 
@@ -89,9 +91,13 @@ void BehaviorPanel::draw(scene::Scene& scene, entt::entity selected) {
     auto* bt = valid ? r.try_get<scene::BehaviorTree>(selected) : nullptr;
     if (bt == nullptr) {
         entity_ = entt::null;
-        ImGui::TextDisabled(valid ? "This entity has no Behavior Tree component."
-                                  : "Select an entity to edit its behaviour tree.");
-        if (valid && ImGui::Button("Add Behavior Tree")) r.emplace<scene::BehaviorTree>(selected);
+        if (ui::empty_state(icon::workflow,
+                            valid ? "No behaviour tree" : "Nothing selected",
+                            valid ? "Give this entity a Behavior Tree to author its AI as a graph."
+                                  : "Select an entity to edit its behaviour tree.",
+                            valid ? "Add Behavior Tree" : nullptr)) {
+            r.emplace<scene::BehaviorTree>(selected);
+        }
         ImGui::End();
         return;
     }

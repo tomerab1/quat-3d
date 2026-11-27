@@ -26,6 +26,27 @@ into CLAUDE.md or the brief template in [`CYCLE.md`](CYCLE.md).
 
 ## Build and CI
 
+- **Hand-rolled local builds must rebuild dependents of changed headers.**
+  The E8 worker's scratch build script recompiled a `.cpp` only when it was
+  newer than its object; after a member was added to `EditorShell`, stale
+  objects disagreed on its size and the game aborted in `free()` at exit
+  (heap corruption, not a logic bug). → Scratch scripts rebuild every TU of a
+  module when any of its headers is newer than the object (or use `FORCE=1`);
+  a crash right after a header change is a stale-object suspect first.
+- **The editor can be seen headless.** `QUAT_SCREENSHOT` copies the presented
+  swapchain image, UI included; `scripts/editor-screenshots.sh` runs the
+  game under Xvfb + lavapipe at 1600x900 with `QUAT_EDITOR_SELECT` /
+  `QUAT_EDITOR_FOCUS` / `QUAT_EDITOR_LAYOUT=default` to pose it. CI's
+  `showcase-editor` image was never broken, only useless: 1280x720 halved to
+  640x360. Editor captures are taken at 1600x900 or larger without
+  downscaling; the remote `view.screenshot` deliberately returns only the
+  viewport image.
+- **A full game build without vcpkg works in the container**: header clones
+  in `~/deps` plus prebuilt `libJolt.a` / `libfastgltf.a` / SDL3 / GNS, and
+  ImGui, ImGuizmo (tag 1.10), imgui-node-editor and Recast compiled from
+  source, linked with `-lSDL3 -lGameNetworkingSockets -lvulkan`. It takes
+  20-40 minutes of shared CPU from scratch; captures are then
+  `scripts/editor-screenshots.sh <game> <dir> <prefix>`.
 - **`--validation` silently runs without the layer when it isn't
   installed.** The container lacks the Khronos layer;
   `apt-get install -y vulkan-validationlayers` adds it (R10.2 ran its GPU
@@ -101,6 +122,25 @@ into CLAUDE.md or the brief template in [`CYCLE.md`](CYCLE.md).
 
 ## C++ in this codebase
 
+- **Designated initializers + `-Wextra` warn for every omitted field that
+  has no default member initializer** (clang's
+  `-Wmissing-field-initializers`). Option structs meant for `{.a = 1}` call
+  sites (the editor's `PropOpts`, `Command`, `DragSpec`) give every member a
+  default (`std::string id{};`), or each call site warns.
+- **Inter (and other UI faces) put stylistic alternates in the Unicode
+  Private Use Area**, where icon fonts live. Merging an icon font into it
+  without `ImFontConfig::GlyphExcludeRanges = {0xE000, 0xF8FF}` on the text
+  face makes some icons render as alternate digits / letters (E8: Inspector's
+  icon showed "3", Stats' showed "ǒ").
+- **ImGui docking: the focused window's tab stays in front.** New windows take
+  focus as they appear, so the last panel submitted wins its tab group no
+  matter what the DockBuilder said. Select tabs through the dock node's tab
+  bar and move focus elsewhere (the viewport) for the first frames after
+  building a layout.
+- **An ImGui settings handler's `UserData` must outlive the context, or the
+  ini must be written first.** `DestroyContext` saves the ini through every
+  handler; the editor saves explicitly, clears `IniFilename`, then destroys
+  the shell the handler points at.
 - **slangc 2025.6.1 segfaults after reporting a compile error** when
   `-reflection-json` is passed (exit by SIGSEGV, diagnostics already
   printed). Treat any non-zero exit *or* signal as a failed compile and keep

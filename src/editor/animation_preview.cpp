@@ -9,6 +9,8 @@
 #include "engine/scene/components.hpp"
 #include "engine/scene/scene.hpp"
 #include "shell/panels.hpp"
+#include "ui/icons.hpp"
+#include "ui/widgets.hpp"
 
 namespace engine::editor {
 
@@ -80,7 +82,9 @@ void draw_animation_preview(scene::Scene& scene, entt::entity selected,
         (selected != entt::null && r.valid(selected)) ? r.try_get<scene::Animator>(selected)
                                                       : nullptr;
     if (animator == nullptr) {
-        ImGui::TextUnformatted("(select an entity with an Animator)");
+        (void)ui::empty_state(icon::clapperboard, "No animation",
+                              "Select an entity with an Animator (an animated glTF) to scrub "
+                              "its clip.");
         ImGui::End();
         return;
     }

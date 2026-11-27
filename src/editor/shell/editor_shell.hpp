@@ -22,6 +22,8 @@
 #include <entt/entity/entity.hpp>
 #include <imgui.h>
 
+#include "../asset_browser.hpp"
+#include "../scene_hierarchy.hpp"
 #include "../ui/appearance.hpp"
 #include "commands.hpp"
 #include "engine/editor/editor.hpp"
@@ -100,6 +102,8 @@ public:
     bool                     rename_pending = false; // F2: the hierarchy starts renaming
     AnimationPreviewState    anim_state;
     PhysicsDebugState        physics_state;
+    HierarchyState                        hierarchy;
+    AssetBrowserState                     assets;
     std::unique_ptr<BehaviorPanel>        behavior_panel;
     std::unique_ptr<panels::ConsoleState> console;
 

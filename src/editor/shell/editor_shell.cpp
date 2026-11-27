@@ -355,9 +355,17 @@ void EditorShell::draw_panels() {
     draw_viewport(*this);
     if (c.scene != nullptr && *open(Panel::inspector)) draw_inspector(*c.scene, selected);
     if (c.renderer != nullptr) draw_renderer_panel(*c.renderer, c.scene);
-    if (c.scene != nullptr && *open(Panel::hierarchy)) draw_scene_hierarchy(*c.scene, selected);
-    if (!c.project_root.empty() && c.instantiate_request != nullptr && *open(Panel::assets)) {
-        draw_asset_browser(c.project_root, *c.instantiate_request);
+    if (c.scene != nullptr) {
+        if (rename_pending) {
+            begin_rename(hierarchy, *c.scene, selected);
+            rename_pending = false;
+        }
+        draw_scene_hierarchy(*c.scene, selected, hierarchy, spawn_point(c.view),
+                             panel_window_name(Panel::hierarchy), open(Panel::hierarchy));
+    }
+    if (!c.project_root.empty() && c.instantiate_request != nullptr) {
+        draw_asset_browser(c.project_root, *c.instantiate_request, assets,
+                           panel_window_name(Panel::assets), open(Panel::assets));
     }
     panels::draw_console(*console, panel_window_name(Panel::console), open(Panel::console));
     if (c.scene != nullptr) {

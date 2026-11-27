@@ -24,6 +24,10 @@ progress, ROADMAP R12).
 |---|---|---|
 | ![showcase](docs/screenshots/showcase.png) | ![terrain](docs/screenshots/terrain.png) | ![physics](docs/screenshots/physics.png) |
 
+The editor (dark theme; a light theme is one click away in View > Theme):
+
+![editor](docs/screenshots/editor/after-inspector.png)
+
 ## What it can do today
 
 **Rendering**
@@ -60,11 +64,19 @@ progress, ROADMAP R12).
   client-side prediction
 
 **Editor**
-- Docked editor with viewport, scene hierarchy, inspector, asset browser,
-  animation preview and physics debug view
-- Move/rotate/scale gizmos, click-to-select, play/stop with automatic scene restore
-- Save and load scenes as JSON
-- Click-to-walk and patrol authoring for NPCs
+- Docked editor: viewport, hierarchy, inspector, asset browser, console,
+  animation preview, behaviour-tree graph editor, physics and stats panels;
+  the layout and preferences persist per project
+- Dark and light themes (WCAG AA contrast), Inter + JetBrains Mono with Lucide
+  icons, scaling with the display's DPI
+- A command palette (Ctrl+P) over every action, one shortcut table (F1), a
+  toolbar with play / pause / step / stop, move / rotate / scale gizmos in
+  world or local space with snapping, and a status bar with frame timing,
+  selection and the AI-tool (MCP) connection
+- Inspector property grid with reset-to-default, coloured X/Y/Z fields and a
+  searchable Add Component list; hierarchy search, type icons, rename,
+  duplicate and drag-to-re-parent
+- Save and load scenes as JSON; click-to-walk and patrol authoring for NPCs
 
 ## Platforms
 
@@ -143,7 +155,11 @@ driver, or Mesa) — or a build with `ENGINE_DESCRIPTOR_SETS_FALLBACK=ON`.
 
 `./build/release/game` opens the editor with a showcase scene. Hold the right
 mouse button in the viewport and use WASD to fly; W/E/R switch the gizmo
-between move, rotate and scale.
+between move, rotate and scale, X toggles world/local space and Y snapping.
+F5 plays, F6 pauses, F10 steps one frame, Shift+F5 stops. Ctrl+P opens the
+command palette and F1 lists every shortcut. The layout and editor
+preferences are saved to `.quat/editor.ini` in the project root (View >
+Reset Layout restores the default).
 
 Environment variables switch on extra modes:
 
@@ -154,10 +170,14 @@ Environment variables switch on extra modes:
 | `QUAT_PHYSICS=1` / `QUAT_CHARACTER=1` | Physics / character-controller demo scenes |
 | `QUAT_HOST=<port>` / `QUAT_JOIN=<ip:port>` | Host or join a networked session |
 | `QUAT_REMOTE=<port>` | Open the remote-control endpoint for AI tools (`1` = port 7878); add `QUAT_REMOTE_TOKEN=<secret>` to require a token — see [`docs/remote-control.md`](docs/remote-control.md) |
-| `QUAT_LOG_CAPTURE=0` | With `QUAT_REMOTE`: do not tee stderr into the engine log the AI debugging tools read (`debug.log`) |
+| `QUAT_LOG_CAPTURE=0` | Do not tee stderr into the engine log that the editor Console and the AI debugging tools (`debug.log`) read |
 | `QUAT_SHADER_HOT_RELOAD=0` / `=1` | Turn shader hot reload off (on by default in editor builds) or on (in non-editor builds): saving a `.slang` file under `assets/shaders/` recompiles it and swaps the pipelines in — see [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md#shader-hot-reload) |
 | `QUAT_SLANGC=<path>` | The `slangc` hot reload compiles with (default: the one the build used, else `PATH`) |
 | `QUAT_NO_UI=1` | Run without the editor UI |
+| `QUAT_EDITOR_THEME=light` | Start the editor in the light theme |
+| `QUAT_EDITOR_LAYOUT=default` | Start from the default layout and do not save it (captures, tests) |
+| `QUAT_EDITOR_SELECT=<name>` / `QUAT_EDITOR_FOCUS=<panel>` | Select an entity / bring a panel forward at startup (`scripts/editor-screenshots.sh`) |
+| `QUAT_WINDOW_SIZE=<w>x<h>` | Initial window size (default 1280x720) |
 | `QUAT_NO_VSYNC=1` | Disable vsync |
 | `QUAT_NO_AUDIO=1` | Mute: run audio without opening a playback device |
 | `QUAT_MAX_FRAMES=<n>` + `QUAT_SCREENSHOT=<file.ppm>` | Render n frames, save the last one, exit (headless checks) |
@@ -247,6 +267,7 @@ The plan lives in [`ROADMAP.md`](ROADMAP.md), grouped into tracks:
 | [`docs/STATUS.md`](docs/STATUS.md) | What is in progress, what is blocked, what comes next |
 | [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md) | Building, testing, CI, and conventions for contributors |
 | [`docs/remote-control.md`](docs/remote-control.md) | The remote-control protocol AI tools use to drive the engine |
+| [`docs/editor-ux.md`](docs/editor-ux.md) | The editor's design system: principles, tokens, widget kit, layout, shortcuts |
 | [`docs/CYCLE.md`](docs/CYCLE.md) | How development runs: the repeating plan → parallel agents → merge → CI → audit → learn cycle |
 | [`docs/LEARNINGS.md`](docs/LEARNINGS.md) | Lessons recorded by past cycles |
 | [`ROADMAP.md`](ROADMAP.md) | The full plan, with completed history |
