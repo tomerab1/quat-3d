@@ -51,19 +51,12 @@ constexpr float k_max_ray = 100'000.0F;
 
 [[nodiscard]] Json watch_entity(const entt::registry& r, entt::entity e,
                                 const std::vector<std::string>& only) {
-    const Json all = scene::encode_components(r, e);
-    Json components = Json::object();
+    // Only the requested components are encoded (a hand-placed
+    // instanced_mesh lists every instance).
+    Json components = scene::encode_components(r, e, {.only = only});
     Json missing = Json::array();
-    if (only.empty()) {
-        components = all;
-    } else {
-        for (const std::string& name : only) {
-            if (const auto it = all.find(name); it != all.end()) {
-                components[name] = *it;
-            } else {
-                missing.push_back(name);
-            }
-        }
+    for (const std::string& name : only) {
+        if (!components.contains(name)) missing.push_back(name);
     }
     const auto* n = r.try_get<scene::Name>(e);
     Json out{{"id", entity_json(e)},

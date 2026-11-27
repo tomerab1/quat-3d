@@ -238,9 +238,14 @@ sim_time_s}`. `engine.info` also reports `paused`.
   audio, networking and rendering keep running in real time, so a paused
   scene can still be inspected, screenshotted and flown around.
   `debug.step` pauses (if running) and queues `frames` single steps, each
-  advancing the simulation by exactly `dt` (unscaled) on one rendered frame;
+  advancing the simulation by exactly `dt` (unscaled) on one rendered frame
+  (one loop iteration while the window is minimised);
   the reply comes after the last step ran, so a following `debug.watch`
-  sees the result. `debug.resume` drops pending steps (their `debug.step`
+  sees the result. Further requests queue behind pending steps, each keeping
+  its own `dt`; at most 100000 steps, 64 runs of differing `dt` and 64
+  waiting requests are accepted (beyond that a request fails with `failed`
+  and queues nothing).
+  `debug.resume` drops pending steps (their `debug.step`
   replies then complete). Physics itself still integrates in fixed 1/120 s
   substeps, at most 8 per frame, so very high time scales are capped by
   that catch-up limit. The clock state survives play/stop: a paused clock
