@@ -4,6 +4,8 @@
 #include <string>
 #include <utility>
 
+#include <glm/mat4x4.hpp>
+
 #include "engine/rhi/device.hpp"
 #include "engine/rhi/gpu_allocator.hpp"
 #include "engine/rhi/pipeline_cache.hpp"
