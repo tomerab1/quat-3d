@@ -30,6 +30,18 @@ into CLAUDE.md or the brief template in [`CYCLE.md`](CYCLE.md).
   rebuilt only changed .cpp files linked objects compiled against an old
   class layout and crashed (R12). Compile with `-MMD -MF` and rebuild when
   any listed dependency is newer than the object.
+- **Hand-compiling translation units proves neither that they are in a CMake
+  target nor that they link.** G8.4 passed every `-fsyntax-only` check, but
+  `game` failed to link: `compress_clips` was declared in
+  `scene::gltf_detail` (internal.hpp) and defined in `scene`. → Before
+  pushing, grep CMakeLists for every new `.cpp`, and for a new cross-file
+  function compile caller and callee with `-c` and compare `nm` (the
+  undefined symbol must match the defined one).
+- **Local `-c` object caches go stale across merges.** A GPU test failed with
+  "no Vulkan device" after master changed `rhi::Device`: unchanged test
+  sources kept objects built against the old header. Rebuild from scratch
+  after merging.
+
 - **`--validation` silently runs without the layer when it isn't
   installed.** The container lacks the Khronos layer;
   `apt-get install -y vulkan-validationlayers` adds it (R10.2 ran its GPU
@@ -124,6 +136,16 @@ into CLAUDE.md or the brief template in [`CYCLE.md`](CYCLE.md).
 - **Far-field image tests need footprints of several pixels.** A probe on a
   floor 70 m away under a camera 3 m up covers ~7 m per pixel row; elongate
   occluders along the view axis and test a small window, not one pixel.
+- **vcpkg's `acl` port is POSIX access-control lists, not the animation
+  codec.** ACL + RTM are header-only and fetched by `cmake/FetchAcl.cmake`,
+  pinned to release commits. Check a port's description before adding it.
+- **A compressed clip can match every key and still drift between them.**
+  glTF rotations interpolate with slerp, ACL (like most runtimes) with
+  normalized lerp; on fast clips (the Khronos Fox's Walk / Run) the gap mid-key was
+  orders of magnitude over the error budget, and ACL's keyframe stripping only checks the samples it
+  removes. G8 resamples at a whole multiple of the key rate chosen by
+  measuring the between-sample error, splits the budget half/half, keeps
+  stripping off, and keeps a clip raw when compression does not pay.
 
 - **slangc 2025.6.1 segfaults after reporting a compile error** when
   `-reflection-json` is passed (exit by SIGSEGV, diagnostics already
