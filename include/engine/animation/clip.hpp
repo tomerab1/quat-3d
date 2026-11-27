@@ -9,6 +9,7 @@
 // time and maps the target node onto a skeleton joint.
 
 #include <cstdint>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -43,13 +44,18 @@ struct AnimChannel {
     std::size_t sampler = 0; // index into AnimClipAsset::samplers
 };
 
+struct CompressedClip; // compression.hpp
+
 struct AnimClipAsset {
     std::string              name;
     float                    duration = 0.0F; // max keyframe time across samplers
     std::vector<AnimSampler> samplers;
     std::vector<AnimChannel> channels;
+    // ACL-compressed form for one skeleton; samplers/channels may be empty
+    // once it exists (CompressionSettings::keep_raw).
+    std::shared_ptr<const CompressedClip> compressed;
 
-    [[nodiscard]] bool valid() const noexcept { return !channels.empty(); }
+    [[nodiscard]] bool valid() const noexcept { return !channels.empty() || compressed != nullptr; }
 };
 
 } // namespace engine::animation

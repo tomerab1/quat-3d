@@ -26,6 +26,18 @@ into CLAUDE.md or the brief template in [`CYCLE.md`](CYCLE.md).
 
 ## Build and CI
 
+- **Hand-compiling translation units proves neither that they are in a CMake
+  target nor that they link.** G8.4 passed every `-fsyntax-only` check, but
+  `game` failed to link: `compress_clips` was declared in
+  `scene::gltf_detail` (internal.hpp) and defined in `scene`. → Before
+  pushing, grep CMakeLists for every new `.cpp`, and for a new cross-file
+  function compile caller and callee with `-c` and compare `nm` (the
+  undefined symbol must match the defined one).
+- **Local `-c` object caches go stale across merges.** A GPU test failed with
+  "no Vulkan device" after master changed `rhi::Device`: unchanged test
+  sources kept objects built against the old header. Rebuild from scratch
+  after merging.
+
 - **`--validation` silently runs without the layer when it isn't
   installed.** The container lacks the Khronos layer;
   `apt-get install -y vulkan-validationlayers` adds it (R10.2 ran its GPU
@@ -118,6 +130,16 @@ into CLAUDE.md or the brief template in [`CYCLE.md`](CYCLE.md).
   flag). Give it an empty descriptor-buffer set layout (VelocityPass).
 - **Slang lays out `uint3` at 16-byte alignment in push constants**: `uint;
   uint3` is a 28-byte block, not 16. Pad with scalars.
+- **vcpkg's `acl` port is POSIX access-control lists, not the animation
+  codec.** ACL + RTM are header-only and fetched by `cmake/FetchAcl.cmake`,
+  pinned to release commits. Check a port's description before adding it.
+- **A compressed clip can match every key and still drift between them.**
+  glTF rotations interpolate with slerp, ACL (like most runtimes) with
+  normalized lerp; on fast clips (the Khronos Fox's Walk / Run) the gap mid-key was
+  orders of magnitude over the error budget, and ACL's keyframe stripping only checks the samples it
+  removes. G8 resamples at a whole multiple of the key rate chosen by
+  measuring the between-sample error, splits the budget half/half, keeps
+  stripping off, and keeps a clip raw when compression does not pay.
 
 - **slangc 2025.6.1 segfaults after reporting a compile error** when
   `-reflection-json` is passed (exit by SIGSEGV, diagnostics already
