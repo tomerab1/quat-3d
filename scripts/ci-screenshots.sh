@@ -49,6 +49,13 @@ if [ -z "${VK_ICD_FILENAMES:-}" ]; then
 fi
 mkdir -p "$OUT" || die "cannot create $OUT"
 
+# The last $2 lines of log $1 without the line libc++'s libunwind prints for
+# every function lavapipe's LLVM JIT registers (hundreds per run; they would
+# push everything useful out of the tail).
+log_tail() {
+  grep -v -e '__unw_add_dynamic_fde' "$1" | tail -n "$2"
+}
+
 # PPM width from the header the engine writes ("P6\n<w> <h>\n255\n").
 ppm_width() {
   local magic w _
@@ -93,7 +100,7 @@ for row in "${SCENE_TABLE[@]}"; do
     timeout --kill-after=15 "$TIMEOUT" "$GAME" >"$log" 2>&1
   code=$?
   elapsed=$((SECONDS - start))
-  tail -n 20 "$log"
+  log_tail "$log" 20
   echo "::endgroup::"
 
   if [ "$code" -eq 124 ] || [ "$code" -eq 137 ]; then
@@ -120,7 +127,7 @@ for row in "${SCENE_TABLE[@]}"; do
     failures+=$'\n'"<details><summary><code>$name</code>: $status — last 40 log lines</summary>"$'\n\n```\n'
     # A fence inside the log would end the code block early.
     # shellcheck disable=SC2016
-    failures+="$(tail -n 40 "$log" | sed 's/```/` ` `/g')"
+    failures+="$(log_tail "$log" 40 | sed 's/```/` ` `/g')"
     failures+=$'\n```\n</details>\n'
   fi
   echo "| \`$name\` | $status | ${elapsed} s | \`${scene_env:-(defaults)}\` |" >>"$summary"

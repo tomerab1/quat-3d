@@ -26,6 +26,18 @@ into CLAUDE.md or the brief template in [`CYCLE.md`](CYCLE.md).
 
 ## Build and CI
 
+- **The real `game` runs locally under Xvfb + lavapipe.** Without vcpkg, a
+  non-editor build links from the `~/deps` clones: build SDL3
+  (`~/deps/sdl`, cmake, shared) and link libJolt / libfastgltf / GNS /
+  Recast sources; then `scripts/ci-screenshots.sh <game>` renders the CI
+  scenes (about 0.7 s per frame on 4 cores). libc++'s libunwind prints
+  `__unw_add_dynamic_fde: bad fde` for every function lavapipe's JIT
+  registers — hundreds of lines per run — so filter it before reading a log
+  tail (the screenshot script does).
+- **`git ls-files` + `check-compile.sh` catches includes lost in merges.**
+  `skinning_pass.cpp` used `glm::mat4` with no glm include after S3.3
+  removed the self-test that pulled it in.
+
 - **`--validation` silently runs without the layer when it isn't
   installed.** The container lacks the Khronos layer;
   `apt-get install -y vulkan-validationlayers` adds it (R10.2 ran its GPU
