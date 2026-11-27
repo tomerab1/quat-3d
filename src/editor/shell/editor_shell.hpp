@@ -90,8 +90,12 @@ public:
     float         viewport_rect[4]{0.0F, 0.0F, 0.0F, 0.0F}; // screen min x/y, max x/y
 
     ui::Appearance& appearance() { return appearance_; }
-    // A theme chosen at startup (QUAT_EDITOR_THEME): wins over the saved one.
+    // A theme chosen at startup (QUAT_EDITOR_THEME): wins over the saved one
+    // and is not written back to the ini.
     void force_theme(ui::ThemeId theme);
+    // A theme the user picks in the editor (menu, palette, Preferences):
+    // shown and saved.
+    void choose_theme(ui::ThemeId theme);
     void focus_panel(std::string title) { pending_focus_ = std::move(title); }
     void notify(NoticeKind kind, std::string text);
     // Loads the saved layout (QUAT_EDITOR_LAYOUT=default ignores and does not
@@ -159,7 +163,7 @@ private:
     bool           settings_installed_ = false;
     int            layout_focus_frames_ = 0;
     bool           use_saved_layout_ = true;
-    bool           theme_forced_ = false;
+    ThemePreference theme_pref_;
     float          last_dt_ = 0.0F;
 };
 

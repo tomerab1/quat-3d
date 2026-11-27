@@ -57,7 +57,8 @@ struct AssetBrowserState {
 // The panel's listing of project-relative `dir` ("" = the asset roots):
 // folders first, then files, by name; hidden (dot) entries skipped. A
 // non-empty `filter` searches recursively (names relative to `root`).
-// Empty when `dir` leaves the project.
+// Empty when `dir` leaves the project; symlinks (files or folders) that
+// resolve outside the project are not listed.
 [[nodiscard]] std::vector<AssetBrowserState::Entry>
 list_assets(const std::filesystem::path& root, const std::filesystem::path& dir,
             std::string_view filter);

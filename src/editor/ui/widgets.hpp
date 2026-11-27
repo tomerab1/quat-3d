@@ -145,6 +145,7 @@ struct DragSpec {
     float       max = 0.0F;
     const char* format = "%.3f";
     bool        slider = false; // a slider instead of a drag (needs min < max)
+    bool        clamp = false;  // keep typed (Ctrl+click) values inside [min, max] too
 };
 struct IntSpec {
     float       speed = 1.0F;
@@ -184,6 +185,10 @@ bool prop_range(const char* label, glm::vec2& v, const DragSpec& spec = {},
 // A full-width colour swatch showing its values; click opens a picker.
 // `rgba` holds 3 floats (4 with `alpha`).
 bool color_field(const char* id, float* rgba, bool alpha, bool hdr = false);
+// Whether values are drawn on a swatch of `color` (as stored, clamped to
+// 0..1) in dark text (true) or light text: the one with the higher WCAG
+// contrast against the swatch's relative luminance.
+[[nodiscard]] bool swatch_text_is_dark(Rgba color);
 // Sliders drawn as a fill bar from the left edge to the value, with the value
 // text on top: no grab handle for the text to collide with.
 bool slider_float(const char* id, float* v, float min, float max, const char* format,

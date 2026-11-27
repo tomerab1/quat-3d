@@ -207,9 +207,11 @@ these and take colours and sizes from the tokens.
   snapping, viewport statistics, the current scene and recent scenes. The
   file is external data: `shell/prefs.cpp` parses each line on its own
   (numbers must be plain, finite decimals and are clamped to the UI's
-  ranges; scene paths must be project-relative `.json` paths without `..`;
-  recent scenes are de-duplicated and capped at eight) and ignores anything
-  else. `QUAT_EDITOR_THEME` wins over the saved theme.
+  ranges; scene paths must be valid UTF-8, project-relative `.json` paths
+  without `..`; recent scenes are de-duplicated and capped at eight) and
+  ignores anything else. `QUAT_EDITOR_THEME` wins over the saved theme
+  without replacing it: the ini keeps its theme until the user picks one in
+  the editor.
 - **Dialogs**: File > Open lists the project's scene files with a filter;
   Save As validates the path (project-relative, `.json`, warns before
   replacing); Help > Keyboard Shortcuts is generated from the registry;
@@ -244,7 +246,9 @@ there, Shift+click adds a patrol waypoint.
   double-click; Enter / focus loss commit, Esc cancels; an entity without
   a Name gets one), drag onto a row to
   re-parent and onto empty space to un-parent, keeping the entity's world
-  pose (cycles refused by `Scene::set_parent`), a context menu with Create Child, Rename, Duplicate,
+  pose (cycles refused by `Scene::set_parent`; a parent scaled to zero on
+  an axis cannot hold the pose, so that drop is refused with a toast), a
+  context menu with Create Child, Rename, Duplicate,
   Unparent and Delete, a + button with the Create menu, and an empty state
   with a Create Entity action.
 - **Inspector**: entity header (type icon, name field, id), then one
@@ -270,7 +274,8 @@ there, Shift+click adds a patrol waypoint.
   results and no asset folders. Listings are cached and refreshed on
   navigation, search or every two seconds instead of every frame, and
   confined to the project: a folder path that is absolute, contains `..` or
-  resolves through a symlink to outside the project lists nothing.
+  resolves through a symlink to outside the project lists nothing, and
+  symlinked files or folders that resolve outside it are not listed.
 - **Console**: tails the engine log ring (`core::LogRing`, A5)
   incrementally; error / warning / info / debug toggles with counts, text
   filter, auto-scroll (stops when you scroll up), copy visible lines, copy
