@@ -18,7 +18,7 @@ add_executable(engine_tests
 target_link_libraries(engine_tests PRIVATE
     engine_flags engine_core engine_rhi engine_asset engine_scene engine_renderer engine_physics
     engine_animation engine_terrain engine_nav engine_net engine_remote engine_remote_world
-    engine_audio
+    engine_audio quat_asset_gen
     GTest::gtest)
 if(ENGINE_EDITOR)
     # imgui: the ImGui pass test builds its draw data in a private context.
@@ -30,7 +30,8 @@ target_include_directories(engine_tests PRIVATE
     ${ENGINE_PUBLIC_INCLUDE}
     ${Stb_INCLUDE_DIR}) # image round trips (stb_image) in the screenshot tests
 target_compile_definitions(engine_tests PRIVATE
-    QUAT_COOKED_SHADER_DIR="${PROJECT_SOURCE_DIR}/cooked/shaders")
+    QUAT_COOKED_SHADER_DIR="${PROJECT_SOURCE_DIR}/cooked/shaders"
+    QUAT_PROJECT_ROOT="${PROJECT_SOURCE_DIR}") # committed assets (assets/, generated files)
 add_dependencies(engine_tests shaders)
 
 add_test(NAME engine_tests_cpu COMMAND engine_tests "--gtest_filter=-Gpu*")
