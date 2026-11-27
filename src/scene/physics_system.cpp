@@ -105,6 +105,11 @@ void physics_system(entt::registry& registry, physics::PhysicsWorld& world, floa
                        : rb.motion == BodyMotion::static_body ? physics::Layer::static_body
                                                               : physics::Layer::dynamic;
         params.mass = rb.mass;
+        params.friction = rb.friction;
+        params.restitution = rb.restitution;
+        params.gravity_factor = rb.gravity_factor;
+        params.linear_damping = rb.linear_damping;
+        params.angular_damping = rb.angular_damping;
         params.owner = static_cast<std::uint32_t>(entt::to_integral(e));
         rb.body = world.add_body(params);
         // The body owns its shape; a shape that backs no body is given back.

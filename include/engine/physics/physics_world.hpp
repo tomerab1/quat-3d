@@ -24,6 +24,16 @@ namespace engine::physics {
 // Object collision layers (mirrors the values used inside the Jolt wrapper).
 enum class Layer : std::uint16_t { static_body = 0, dynamic = 1, character = 2, trigger = 3, sensor = 4 };
 
+// A set of object layers (query filters): bit (1 << layer) per layer.
+using LayerMask = std::uint32_t;
+[[nodiscard]] constexpr LayerMask layer_bit(Layer layer) {
+    return LayerMask{1} << static_cast<unsigned>(layer);
+}
+inline constexpr LayerMask all_layers = 0x1FU;
+// What queries hit unless told otherwise: solid things, not trigger volumes.
+inline constexpr LayerMask solid_layers =
+    layer_bit(Layer::static_body) | layer_bit(Layer::dynamic) | layer_bit(Layer::character);
+
 // How a body moves: never (static), driven by the engine (kinematic), or by the
 // simulation (dynamic).
 enum class Motion : std::uint8_t { static_body, kinematic, dynamic };
@@ -88,6 +98,13 @@ public:
         // away bodies whose owner no longer exists; no_owner bodies (terrain
         // height fields, demo floors) are never listed.
         std::uint32_t owner = no_owner;
+        // Surface and motion tuning (Jolt's defaults). Damping and the
+        // gravity factor only affect moving bodies.
+        float friction = 0.2F;
+        float restitution = 0.0F;
+        float gravity_factor = 1.0F;
+        float linear_damping = 0.05F;
+        float angular_damping = 0.05F;
     };
     static constexpr std::uint32_t no_owner = 0xFFFFFFFFU;
 
@@ -135,6 +152,8 @@ public:
     // handle goes stale (generation), so every character_* call on it becomes
     // a no-op.
     void remove_character(std::uint32_t character);
+    // Whether `character` is a live character handle.
+    [[nodiscard]] bool has_character(std::uint32_t character) const;
     // (character, owner) for every live character created with an owner.
     [[nodiscard]] std::vector<OwnedBody> owned_characters() const;
     // The caller integrates gravity into the velocity; update moves + resolves
@@ -189,6 +208,57 @@ public:
     // Fixed steps simulated since create(), and the simulated seconds they make.
     [[nodiscard]] std::uint64_t step_count() const;
     [[nodiscard]] double        simulated_time() const;
+
+    // ---- Body control (A10.1 remote, G7 scripts) ------------------------------
+    // Runtime state of a live body; nullopt for an unknown / removed body.
+    struct BodyState {
+        Motion    motion = Motion::static_body;
+        Layer     layer = Layer::static_body;
+        bool      sensor = false;
+        bool      awake = false;
+        float     mass = 0.0F; // kg; 0 for static and kinematic bodies
+        glm::vec3 linear_velocity{0.0F};  // m/s
+        glm::vec3 angular_velocity{0.0F}; // rad/s about world axes
+        glm::vec3 position{0.0F};         // centre of the body (collider offset included)
+        glm::quat rotation{1.0F, 0.0F, 0.0F, 0.0F};
+        float     friction = 0.0F;
+        float     restitution = 0.0F;
+        float     gravity_factor = 1.0F;  // moving bodies
+        float     linear_damping = 0.0F;  // moving bodies
+        float     angular_damping = 0.0F; // moving bodies
+    };
+    [[nodiscard]] std::optional<BodyState> body_state(std::uint32_t body) const;
+
+    // The calls below are no-ops unless `body` is a live dynamic body.
+    // Impulses (N*s) change the velocity at once and wake the body; a force
+    // (N) or torque (N*m) acts on every simulation step for `duration_s` of
+    // simulated time (Jolt clears forces after each step, so the world keeps
+    // re-applying them), clamped to max_force_duration.
+    static constexpr float max_force_duration = 10.0F;
+    [[nodiscard]] bool is_dynamic(std::uint32_t body) const;
+    void add_impulse(std::uint32_t body, const glm::vec3& impulse);
+    void add_impulse(std::uint32_t body, const glm::vec3& impulse, const glm::vec3& world_point);
+    void add_angular_impulse(std::uint32_t body, const glm::vec3& impulse);
+    void add_force(std::uint32_t body, const glm::vec3& force, float duration_s);
+    void add_force(std::uint32_t body, const glm::vec3& force, const glm::vec3& world_point,
+                   float duration_s);
+    void add_torque(std::uint32_t body, const glm::vec3& torque, float duration_s);
+    void set_linear_velocity(std::uint32_t body, const glm::vec3& velocity);
+    [[nodiscard]] glm::vec3 linear_velocity(std::uint32_t body) const;
+    void set_angular_velocity(std::uint32_t body, const glm::vec3& radians_per_s);
+    [[nodiscard]] glm::vec3 angular_velocity(std::uint32_t body) const;
+
+    // Switches a body between dynamic and kinematic (any body not created
+    // static). False when the body is static or unknown, or `motion` is static.
+    bool set_motion(std::uint32_t body, Motion motion);
+    // Surface / motion tuning of any live body (damping and the gravity
+    // factor are ignored by static bodies).
+    void set_friction(std::uint32_t body, float friction);
+    void set_restitution(std::uint32_t body, float restitution);
+    void set_gravity_factor(std::uint32_t body, float factor);
+    void set_damping(std::uint32_t body, float linear, float angular);
+    // Wakes a body up, or puts it to sleep.
+    void set_awake(std::uint32_t body, bool awake);
 
     // ---- Queries (debugging, gameplay) -------------------------------------
     // Bodies in the simulation (all kinds, terrain included; not the

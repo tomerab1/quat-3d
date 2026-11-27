@@ -51,6 +51,10 @@ void PhysicsWorld::remove_character(std::uint32_t character) {
     impl_->characters.erase(character); // releases the CharacterVirtual (+ inner body)
 }
 
+bool PhysicsWorld::has_character(std::uint32_t character) const {
+    return impl_ && impl_->characters.contains(character);
+}
+
 std::vector<PhysicsWorld::OwnedBody> PhysicsWorld::owned_characters() const {
     std::vector<OwnedBody> out;
     impl_->characters.for_each([&](std::uint32_t id, const CharacterRecord& c) {

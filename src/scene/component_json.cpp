@@ -523,7 +523,13 @@ json encode_components(const entt::registry& r, entt::entity e, const EncodeOpti
                            {"sensor", c->is_sensor}};
     }
     if (const auto* b = pick.get<RigidBody>("rigidbody")) {
-        out["rigidbody"] = {{"motion", enum_name(k_motions, b->motion)}, {"mass", b->mass}};
+        out["rigidbody"] = {{"motion", enum_name(k_motions, b->motion)},
+                            {"mass", b->mass},
+                            {"friction", b->friction},
+                            {"restitution", b->restitution},
+                            {"gravity_factor", b->gravity_factor},
+                            {"linear_damping", b->linear_damping},
+                            {"angular_damping", b->angular_damping}};
     }
     if (const auto* c = pick.get<CharacterController>("character")) {
         out["character"] = {{"radius", c->radius},
@@ -775,6 +781,11 @@ std::expected<void, core::Error> apply_component(entt::registry& r, entt::entity
     if (name == "rigidbody") {
         auto ok = merge<RigidBody>(r, e, v, name, strict, [](JsonFields& f, RigidBody& b) {
             f.enumeration("motion", b.motion, k_motions).number("mass", b.mass, 0.0F);
+            f.number("friction", b.friction, 0.0F, 10.0F);
+            f.number("restitution", b.restitution, 0.0F, 1.0F);
+            f.number("gravity_factor", b.gravity_factor, -10.0F, 10.0F);
+            f.number("linear_damping", b.linear_damping, 0.0F, 100.0F);
+            f.number("angular_damping", b.angular_damping, 0.0F, 100.0F);
         });
         if (ok) invalidate_physics(r, e);
         return ok;

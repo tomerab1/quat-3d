@@ -77,6 +77,7 @@ void PhysicsWorld::update(float dt) {
     int steps = 0;
     // Clamp the number of catch-up steps so a long frame can't spiral.
     while (m.accumulator >= fixed_timestep && steps < max_steps_per_update) {
+        m.apply_forces(fixed_timestep); // Jolt clears them after every step
         m.system.Update(fixed_timestep, 1, m.temp_allocator.get(), m.job_system.get());
         m.accumulator -= fixed_timestep;
         ++steps;
@@ -190,6 +191,14 @@ std::uint32_t PhysicsWorld::add_body(const BodyParams& params) {
         settings.mMassPropertiesOverride.mMass = params.mass;
     }
     settings.mIsSensor = params.sensor;
+    settings.mFriction = params.friction;
+    settings.mRestitution = params.restitution;
+    settings.mGravityFactor = params.gravity_factor;
+    settings.mLinearDamping = params.linear_damping;
+    settings.mAngularDamping = params.angular_damping;
+    // Moving bodies can switch between dynamic and kinematic at runtime
+    // (set_motion); static ones skip the motion state that would need.
+    settings.mAllowDynamicOrKinematic = params.motion != Motion::static_body;
     const JPH::EActivation activation =
         params.motion == Motion::static_body ? JPH::EActivation::DontActivate
                                              : JPH::EActivation::Activate;

@@ -471,6 +471,11 @@ struct ComponentInspector<scene::RigidBody> {
             body.motion = static_cast<scene::BodyMotion>(motion);
         }
         ImGui::DragFloat("mass", &body.mass, 0.1F, 0.01F, 10000.0F);
+        ImGui::DragFloat("friction", &body.friction, 0.01F, 0.0F, 10.0F);
+        ImGui::DragFloat("restitution", &body.restitution, 0.01F, 0.0F, 1.0F);
+        ImGui::DragFloat("gravity factor", &body.gravity_factor, 0.05F, -10.0F, 10.0F);
+        ImGui::DragFloat("linear damping", &body.linear_damping, 0.01F, 0.0F, 100.0F);
+        ImGui::DragFloat("angular damping", &body.angular_damping, 0.01F, 0.0F, 100.0F);
         ImGui::TextDisabled(body.body == 0xFFFFFFFFU ? "body: not created (press Play)"
                                                      : "body: live");
     }

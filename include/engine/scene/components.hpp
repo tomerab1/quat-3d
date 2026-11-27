@@ -228,6 +228,13 @@ struct RigidBody {
     BodyMotion    motion = BodyMotion::dynamic;
     float         mass = 1.0F;
     std::uint32_t body = 0xFFFFFFFFU; // PhysicsWorld body handle
+    // Surface and motion tuning (authoring data, saved with the scene).
+    // Damping and the gravity factor only affect moving bodies.
+    float friction = 0.2F;        // Coulomb friction coefficient
+    float restitution = 0.0F;     // bounciness, 0..1
+    float gravity_factor = 1.0F;  // scales the world gravity for this body
+    float linear_damping = 0.05F; // 1/s
+    float angular_damping = 0.05F;
 };
 
 // A capsule character controller (predictive, no rigid body). `move` is the

@@ -1,4 +1,5 @@
-// Physics control over remote (A10.1): events.poll.
+// Physics control over remote (A10.1): events.poll, physics.get / set /
+// apply.
 
 #include <cstdint>
 #include <optional>
@@ -10,6 +11,7 @@
 
 #include "engine/core/event_ring.hpp"
 #include "engine/physics/physics_world.hpp"
+#include "engine/scene/scene.hpp"
 #include "remote/world_fixture.hpp"
 #include "support/expect_ok.hpp"
 
@@ -106,6 +108,140 @@ TEST_F(PhysicsCommands, EventsPollValidatesItsParameters) {
     err("events.poll", {{"since", -1}}, rpc_code::invalid_params);
     err("events.poll", {{"sinse", 3}}, rpc_code::invalid_params);
     err("events.poll", {{"entity", "Nobody"}}, rpc_code::not_found);
+}
+
+// ---- physics.get / set / apply ---------------------------------------------
+
+class BodyCommands : public PhysicsCommands {
+protected:
+    void SetUp() override {
+        PhysicsCommands::SetUp();
+        auto w = PhysicsWorld::create();
+        ASSERT_OK(w);
+        physics.emplace(std::move(*w));
+    }
+
+    // Creates an entity with the given components and builds its body.
+    Json spawn(const std::string& name, const Json& components) {
+        const Json id = ok("scene.create", {{"name", name}, {"components", components}})["id"];
+        engine::scene::physics_system(reg(), *physics, 0.0F); // build, no step
+        return id;
+    }
+    Json crate(const std::string& name = "Crate") {
+        return spawn(name, {{"transform", {{"position", {0, 5, 0}}}},
+                            {"collider", {{"shape", "box"}, {"half_extents", {0.5, 0.5, 0.5}}}},
+                            {"rigidbody", {{"motion", "dynamic"}, {"mass", 2}}}});
+    }
+    void simulate(int frames) {
+        for (int i = 0; i < frames; ++i) {
+            engine::scene::physics_system(reg(), *physics, PhysicsWorld::fixed_timestep);
+        }
+    }
+};
+
+TEST_F(BodyCommands, GetReportsTheBodyState) {
+    const Json id = crate();
+    const Json s = ok("physics.get", {{"entity", "Crate"}});
+    EXPECT_EQ(s["entity"], id);
+    EXPECT_EQ(s["kind"], "body");
+    EXPECT_EQ(s["motion_type"], "dynamic");
+    EXPECT_EQ(s["layer"], "dynamic");
+    EXPECT_FALSE(s["sleeping"].get<bool>());
+    EXPECT_NEAR(s["mass"].get<float>(), 2.0F, 1e-4F);
+    EXPECT_NEAR(s["position"][1].get<float>(), 5.0F, 1e-4F);
+    EXPECT_NEAR(s["friction"].get<float>(), 0.2F, 1e-6F);
+}
+
+TEST_F(BodyCommands, SetChangesVelocityAndTuningAndPersistsAuthoringFields) {
+    crate();
+    const Json s = ok("physics.set", {{"entity", "Crate"},
+                                      {"linear_velocity", {1, 2, 3}},
+                                      {"angular_velocity", {0, 90, 0}},
+                                      {"friction", 0.8},
+                                      {"restitution", 0.5},
+                                      {"gravity_factor", 0}});
+    EXPECT_EQ(s["linear_velocity"], Json::array({1.0, 2.0, 3.0}));
+    EXPECT_NEAR(s["angular_velocity"][1].get<float>(), 90.0F, 1e-3F);
+    EXPECT_NEAR(s["restitution"].get<float>(), 0.5F, 1e-6F);
+    // The authoring values land in the component (scene.get, scene files).
+    const Json c = ok("scene.get", {{"entity", "Crate"}})["components"]["rigidbody"];
+    EXPECT_NEAR(c["friction"].get<float>(), 0.8F, 1e-6F);
+    EXPECT_NEAR(c["gravity_factor"].get<float>(), 0.0F, 1e-6F);
+    simulate(60);
+    const Json after = ok("physics.get", {{"entity", "Crate"}});
+    EXPECT_NEAR(after["position"][1].get<float>(), 6.0F, 0.1F) << "gravity factor 0: rises at 2 m/s for 0.5 s";
+}
+
+TEST_F(BodyCommands, SetSwitchesMotionType) {
+    crate();
+    Json s = ok("physics.set", {{"entity", "Crate"}, {"motion_type", "kinematic"}});
+    EXPECT_EQ(s["motion_type"], "kinematic");
+    EXPECT_EQ(reg().get<engine::scene::RigidBody>(entity(s["entity"])).motion,
+              engine::scene::BodyMotion::kinematic);
+    // To static: rebuilt from the component on the next frame.
+    s = ok("physics.set", {{"entity", "Crate"}, {"motion_type", "static"}});
+    EXPECT_TRUE(s["rebuilt"].get<bool>());
+    simulate(1);
+    EXPECT_EQ(ok("physics.get", {{"entity", "Crate"}})["motion_type"], "static");
+}
+
+TEST_F(BodyCommands, ApplyPushesADynamicBody) {
+    crate(); // 2 kg
+    Json s = ok("physics.apply", {{"entity", "Crate"}, {"impulse", {0, 0, 4}}});
+    EXPECT_EQ(s["applied"], "impulse");
+    EXPECT_NEAR(s["linear_velocity"][2].get<float>(), 2.0F, 1e-4F);
+    s = ok("physics.apply", {{"entity", "Crate"}, {"torque", {0, 10, 0}}, {"duration_s", 0.5}});
+    EXPECT_EQ(s["applied"], "torque");
+    EXPECT_FLOAT_EQ(s["duration_s"].get<float>(), 0.5F);
+    simulate(60);
+    EXPECT_GT(ok("physics.get", {{"entity", "Crate"}})["angular_velocity"][1].get<float>(), 1.0F);
+}
+
+TEST_F(BodyCommands, ErrorsArePrecise) {
+    crate();
+    spawn("Wall", {{"collider", {{"shape", "box"}}}, {"rigidbody", {{"motion", "static"}}}});
+    spawn("Lamp", {{"point_light", Json::object()}});
+    const auto code = rpc_code::invalid_params;
+    EXPECT_NE(err("physics.get", {{"entity", "Lamp"}}, code).find("has no rigidbody"),
+              std::string::npos);
+    EXPECT_NE(err("physics.apply", {{"entity", "Wall"}, {"impulse", {0, 1, 0}}}, code)
+                  .find("static"),
+              std::string::npos);
+    EXPECT_NE(err("physics.apply", {{"entity", "Crate"}}, code).find("exactly one"),
+              std::string::npos);
+    err("physics.apply", {{"entity", "Crate"}, {"impulse", {0, 1, 0}}, {"force", {1, 0, 0}}},
+        code);
+    EXPECT_NE(err("physics.apply",
+                  {{"entity", "Crate"}, {"angular_impulse", {0, 1, 0}}, {"at_point", {0, 0, 0}}},
+                  code)
+                  .find("at_point"),
+              std::string::npos);
+    EXPECT_NE(err("physics.apply", {{"entity", "Crate"}, {"impulse", {0, 1, 0}}, {"duration_s", 1}},
+                  code)
+                  .find("duration_s"),
+              std::string::npos);
+    EXPECT_NE(err("physics.apply", {{"entity", "Crate"}, {"impulse", {0, 1e9, 0}}}, code)
+                  .find("exceeds"),
+              std::string::npos);
+    err("physics.set", {{"entity", "Crate"}, {"restitution", 2}}, code);
+    err("physics.set", {{"entity", "Crate"}, {"motion_type", "floating"}}, code);
+    err("physics.set", {{"entity", "Crate"}, {"linear_velocity", {0, "fast", 0}}}, code);
+    EXPECT_NE(err("physics.set", {{"entity", "Wall"}, {"linear_velocity", {1, 0, 0}}}, code)
+                  .find("only dynamic bodies"),
+              std::string::npos);
+    err("physics.set", {{"entity", "Crate"}, {"velocity", {1, 0, 0}}}, code); // unknown field
+    err("physics.get", {{"entity", 999999}}, rpc_code::not_found);
+
+    physics.reset();
+    EXPECT_NE(err("physics.get", {{"entity", "Crate"}}, rpc_code::unavailable).find("sim.play"),
+              std::string::npos);
+}
+
+TEST_F(BodyCommands, AnUnbuiltBodyIsReportedAsPending) {
+    ok("scene.create", {{"name", "Late"},
+                        {"components", {{"collider", {{"shape", "sphere"}}}, {"rigidbody", Json::object()}}}});
+    EXPECT_NE(err("physics.get", {{"entity", "Late"}}, rpc_code::unavailable).find("next simulated"),
+              std::string::npos);
 }
 
 TEST_F(PhysicsCommands, EventsPollFiltersByEntity) {

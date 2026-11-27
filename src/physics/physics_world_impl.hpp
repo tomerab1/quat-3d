@@ -151,6 +151,16 @@ struct BodyRecord {
     bool          sensor = false;
 };
 
+// A force / torque that keeps acting for `remaining` simulated seconds.
+struct ForceRecord {
+    JPH::BodyID body;
+    JPH::Vec3   force = JPH::Vec3::sZero();
+    JPH::Vec3   torque = JPH::Vec3::sZero();
+    JPH::RVec3  point = JPH::RVec3::sZero();
+    bool        at_point = false;
+    float       remaining = 0.0F;
+};
+
 struct CharacterRecord {
     JPH::Ref<JPH::CharacterVirtual> character;
     std::uint32_t                   owner = PhysicsWorld::no_owner;
@@ -203,6 +213,27 @@ struct PhysicsWorld::Impl {
     std::unordered_set<std::uint32_t>         sensor_bodies;
     std::uint64_t                             steps = 0;
     float                                     accumulator = 0.0F;
+    std::vector<detail::ForceRecord>          forces; // timed forces / torques
+
+    // Applies the timed forces for one step of `dt` and retires expired ones
+    // (and those of removed or no longer dynamic bodies).
+    void apply_forces(float dt) {
+        if (forces.empty()) return;
+        JPH::BodyInterface& bi = system.GetBodyInterfaceNoLock();
+        std::erase_if(forces, [&](detail::ForceRecord& f) {
+            if (!bi.IsAdded(f.body) || bi.GetMotionType(f.body) != JPH::EMotionType::Dynamic) {
+                return true;
+            }
+            if (f.at_point) {
+                bi.AddForce(f.body, f.force, f.point);
+            } else if (!f.force.IsNearZero(0.0F)) {
+                bi.AddForce(f.body, f.force);
+            }
+            if (!f.torque.IsNearZero(0.0F)) bi.AddTorque(f.body, f.torque);
+            f.remaining -= dt;
+            return f.remaining <= 1e-6F;
+        });
+    }
 
     [[nodiscard]] JPH::CharacterVirtual* character(std::uint32_t id) const {
         const detail::CharacterRecord* c = characters.get(id);

@@ -5,16 +5,89 @@
 #include <cstdint>
 #include <limits>
 #include <string>
+#include <string_view>
+#include <utility>
 #include <vector>
 
 #include <nlohmann/json.hpp>
 
 #include "engine/core/event_ring.hpp"
+#include "engine/physics/physics_world.hpp"
 #include "engine/scene/components.hpp"
 #include "engine/scene/scene.hpp"
 #include "internal.hpp"
 
 namespace engine::remote::world {
+
+// ---- Shared physics helpers (internal.hpp) --------------------------------------
+
+std::expected<physics::PhysicsWorld*, RpcError> running_physics(const Context& ctx) {
+    physics::PhysicsWorld* w = ctx.services.physics_control ? ctx.services.physics_control()
+                                                            : nullptr;
+    if (w == nullptr) {
+        return rpc_fail(rpc_code::unavailable,
+                        "no physics world is running: bodies exist only in play mode (call "
+                        "sim.play) or the physics demo modes");
+    }
+    return w;
+}
+
+namespace {
+
+constexpr std::array<std::pair<std::string_view, physics::Layer>, 5> k_layers = {{
+    {"static", physics::Layer::static_body},
+    {"dynamic", physics::Layer::dynamic},
+    {"character", physics::Layer::character},
+    {"trigger", physics::Layer::trigger},
+    {"sensor", physics::Layer::sensor},
+}};
+
+} // namespace
+
+std::string_view layer_name(physics::Layer layer) {
+    for (const auto& [name, value] : k_layers) {
+        if (value == layer) return name;
+    }
+    return "unknown";
+}
+
+std::expected<void, RpcError> read_layer_mask(const Json* layers, std::uint32_t& mask) {
+    if (layers == nullptr || layers->is_null()) return {};
+    constexpr const char* expected =
+        "layers: expected a non-empty array of layer names: static, dynamic, character, "
+        "trigger, sensor";
+    if (!layers->is_array() || layers->empty() || layers->size() > k_layers.size()) {
+        return bad_params(expected);
+    }
+    std::uint32_t out = 0;
+    for (const Json& l : *layers) {
+        bool matched = false;
+        for (const auto& [name, value] : k_layers) {
+            if (l.is_string() && l.get_ref<const std::string&>() == name) {
+                out |= physics::layer_bit(value);
+                matched = true;
+            }
+        }
+        if (!matched) {
+            return bad_params(std::string(expected) + " (got " +
+                              l.dump(-1, ' ', false, Json::error_handler_t::replace) + ")");
+        }
+    }
+    mask = out;
+    return {};
+}
+
+void put_owner(const entt::registry& registry, std::uint32_t owner, Json& out) {
+    if (owner == physics::PhysicsWorld::no_owner) {
+        out["entity"] = nullptr;
+        return;
+    }
+    out["entity"] = owner;
+    const auto e = static_cast<entt::entity>(owner);
+    if (registry.valid(e)) {
+        if (const auto* n = registry.try_get<scene::Name>(e)) out["name"] = n->value;
+    }
+}
 
 namespace {
 
