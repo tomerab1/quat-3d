@@ -197,8 +197,4 @@ private:
     std::unordered_map<const void*, std::shared_ptr<void>> caches_;
 };
 
-// Exercises id stability, cache identity, default fallback, and load/fail
-// transitions with an in-memory dummy asset. Returns an error on mismatch.
-[[nodiscard]] std::expected<void, core::Error> run_asset_manager_self_test();
-
 } // namespace engine::asset

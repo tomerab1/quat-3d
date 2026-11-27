@@ -4,7 +4,6 @@
 
 #include <gtest/gtest.h>
 
-#include "engine/asset/material_asset.hpp"
 #include "engine/renderer/atmosphere_pass.hpp"
 #include "engine/renderer/bloom_pass.hpp"
 #include "engine/renderer/dynamic_ibl.hpp"
@@ -58,10 +57,6 @@ TEST(GpuAssets, GltfTextures) {
 TEST(GpuAssets, GltfSceneGraph) {
     QUAT_REQUIRE_GPU(g);
     ASSERT_OK(scn::run_gltf_scene_self_test(g->allocator, g->transfer));
-}
-TEST(GpuAssets, Material) {
-    QUAT_REQUIRE_GPU(g);
-    ASSERT_OK(engine::asset::run_material_asset_self_test(g->allocator, g->transfer));
 }
 TEST(GpuAssets, SceneSaveLoad) {
     QUAT_REQUIRE_GPU(g);

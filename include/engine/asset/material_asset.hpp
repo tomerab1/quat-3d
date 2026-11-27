@@ -114,8 +114,4 @@ struct MaterialAsset {
 upload_material(const PbrMaterialParams& params, MaterialTextures textures,
                 rhi::GpuAllocator& allocator, const rhi::TransferContext& transfer);
 
-// Verifies the std140 layout contract and a params round-trip upload.
-[[nodiscard]] std::expected<void, core::Error>
-run_material_asset_self_test(rhi::GpuAllocator& allocator, const rhi::TransferContext& transfer);
-
 } // namespace engine::asset

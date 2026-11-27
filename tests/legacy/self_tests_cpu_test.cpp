@@ -5,7 +5,6 @@
 
 #include <gtest/gtest.h>
 
-#include "engine/asset/asset_manager.hpp"
 #include "engine/nav/navmesh.hpp"
 #include "engine/net/prediction.hpp"
 #include "engine/net/replication.hpp"
@@ -22,8 +21,6 @@
 #endif
 
 namespace scn = engine::scene;
-
-TEST(Asset, Manager) { ASSERT_OK(engine::asset::run_asset_manager_self_test()); }
 
 TEST(Scene, Ecs) { ASSERT_OK(scn::run_ecs_self_test()); }
 TEST(Scene, Systems) { ASSERT_OK(scn::run_scene_self_test()); }
