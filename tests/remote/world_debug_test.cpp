@@ -441,17 +441,26 @@ TEST_F(DebugStep, LaterRequestsKeepQueuedStepsDt) {
     EXPECT_FLOAT_EQ(clock.advance(0.5F), 0.02F);
 }
 
-// A step dt above what one physics update simulates exactly is refused with a
-// precise error, and nothing is queued.
-TEST_F(DebugStep, StepDtAboveThePhysicsBudgetIsRefused) {
+// debug.step at exactly SimClock::max_step_dt (1/15 s, what one physics
+// update simulates exactly) is queued with that dt; above it the request is
+// refused with a precise error and queues nothing (no silent clamp).
+TEST_F(DebugStep, StepDtAtTheCapIsKeptAboveItRefused) {
     send({{"jsonrpc", "2.0"}, {"id", 6}, {"method", "debug.step"},
+          {"params", {{"frames", 1}, {"dt", static_cast<double>(core::SimClock::max_step_dt)}}}});
+    EXPECT_TRUE(pump(100).is_null()) << "a valid step answers once it has run";
+    ASSERT_EQ(waiters.size(), 1U);
+    EXPECT_EQ(clock.state().pending_steps, 1U);
+
+    send({{"jsonrpc", "2.0"}, {"id", 7}, {"method", "debug.step"},
           {"params", {{"frames", 1}, {"dt", 0.1}}}});
     const Json reply = pump(2000);
     ASSERT_TRUE(reply.is_object());
+    EXPECT_EQ(reply["id"], 7);
     EXPECT_EQ(reply["error"]["code"], code::invalid_params);
     EXPECT_TRUE(contains(reply["error"]["message"].get<std::string>(), "dt"));
-    EXPECT_TRUE(waiters.empty());
-    EXPECT_EQ(clock.state().pending_steps, 0U);
+    EXPECT_EQ(waiters.size(), 1U);
+    EXPECT_EQ(clock.state().pending_steps, 1U) << "the refused request queued nothing";
+    EXPECT_FLOAT_EQ(clock.advance(0.5F), core::SimClock::max_step_dt);
 }
 
 TEST_F(DebugStep, WaitingRequestsAreCapped) {

@@ -131,6 +131,22 @@ TEST(SimClock, QueuedStepsKeepTheirOwnDt) {
     EXPECT_NEAR(c.state().sim_time_s, 0.21, 1e-6);
 }
 
+// A step of exactly max_step_dt keeps its dt; a larger request is clamped to
+// the cap and so joins that run; a later request with a different dt leaves
+// both runs alone.
+TEST(SimClock, QueuedStepsKeepTheirDtAtTheCap) {
+    SimClock c;
+    ASSERT_OK(c.step(1, SimClock::max_step_dt));
+    ASSERT_OK(c.step(1, 0.1F)); // clamped to the cap: same run
+    ASSERT_OK(c.step(2, 0.02F));
+    EXPECT_EQ(c.state().pending_steps, 4U);
+    EXPECT_FLOAT_EQ(c.advance(0.5F), SimClock::max_step_dt);
+    EXPECT_FLOAT_EQ(c.advance(0.5F), SimClock::max_step_dt);
+    EXPECT_FLOAT_EQ(c.advance(0.5F), 0.02F);
+    EXPECT_FLOAT_EQ(c.advance(0.5F), 0.02F);
+    EXPECT_EQ(c.advance(0.5F), 0.0F);
+}
+
 TEST(SimClock, RejectsStepsBeyondItsQueueLimits) {
     SimClock c;
     // Alternating dt values: one run each, up to max_step_runs.
