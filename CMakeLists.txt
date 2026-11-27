@@ -381,6 +381,8 @@ add_executable(game
     src/main.cpp
     src/app/demo_scenes.cpp
     src/app/fly_camera.cpp
+    src/app/frame_renderer.cpp
+    src/app/frame_graph.cpp
     src/app/audio_runtime.cpp
     src/app/nav_bake.cpp
     src/app/remote_bridge.cpp

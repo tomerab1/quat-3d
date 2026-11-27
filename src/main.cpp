@@ -33,6 +33,7 @@
 #include "app/audio_runtime.hpp"
 #include "app/demo_scenes.hpp"
 #include "app/fly_camera.hpp"
+#include "app/frame_renderer.hpp"
 #include "app/nav_bake.hpp"
 #include "app/remote_bridge.hpp"
 #include "app/world_runtime.hpp"
@@ -86,11 +87,7 @@ namespace {
 constexpr int  k_window_width  = 1280;
 constexpr int  k_window_height = 720;
 constexpr char k_window_title[] = "quat-3d";
-constexpr std::uint32_t k_frames_in_flight = 2;
-// Stage the image-acquire semaphore is waited at; the swapchain image's first
-// render-graph barrier is chained to it.
-constexpr VkPipelineStageFlags2 k_acquire_wait_stage =
-    VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT;
+using quat::app::k_frames_in_flight;
 
 #ifndef NDEBUG
 constexpr bool k_enable_validation = true;
@@ -104,118 +101,6 @@ VkExtent2D window_pixel_extent(SDL_Window* window) {
     SDL_GetWindowSizeInPixels(window, &w, &h);
     return VkExtent2D{static_cast<std::uint32_t>(w), static_cast<std::uint32_t>(h)};
 }
-
-
-// Per-frame-in-flight bundle for the live deferred chain. Each frame slot owns
-// its own pass instances (which hold per-frame descriptor buffers) and transient
-// image pool, so building frame N+1's graph never stomps resources still in use
-// by frame N. The main loop waits on the slot's fence before reusing it, which
-// makes resetting the pool and rebuilding the descriptor buffers safe.
-// Per-skinned-entity GPU buffers for one frame slot: the joint matrices (host
-// visible, re-uploaded each frame) and the skinned vertex output (device local,
-// written by the skinning pass and read by the GBuffer as a vertex buffer).
-struct SkinnedEntityGpu {
-    engine::rhi::GpuBuffer joints;
-    engine::rhi::GpuBuffer skinned_verts;
-    VkDeviceAddress        joints_addr = 0;
-    VkDeviceAddress        skinned_addr = 0;
-    std::uint32_t          vertex_count = 0;
-    std::uint32_t          joint_count = 0;
-};
-
-struct DeferredFrame {
-    engine::renderer::MeshPass       mesh;
-    engine::renderer::LightCullPass  light_cull;
-    engine::renderer::LightingPass   lighting;
-    engine::renderer::TonemapPass    tonemap;
-    engine::renderer::SkinningPass   skinning;
-    engine::renderer::ShadowPass     shadow;
-    engine::renderer::TransparentPass transparent;
-    engine::renderer::BloomPass      bloom;
-    engine::renderer::ExposurePass   exposure;
-    engine::renderer::TaaPass        taa;
-#ifdef ENGINE_EDITOR
-    engine::renderer::ImGuiPass      imgui;
-    // Offscreen scene target for the editor's Viewport panel: TAA resolves the
-    // frame here (instead of the swapchain) and the UI samples it. Recreated
-    // when the panel is resized.
-    engine::rhi::GpuImage            viewport_image;
-    engine::rhi::ImageView           viewport_view;
-    VkExtent2D                       viewport_extent{0, 0};
-#endif
-    engine::rhi::TransientImagePool  pool;
-    // Skinning resources, lazily created per skinned entity (keyed by entity).
-    std::unordered_map<entt::entity, SkinnedEntityGpu> skin_gpu;
-};
-
-#ifdef ENGINE_EDITOR
-// (Re)creates the slot's offscreen viewport image at `extent`. Safe to replace
-// here: the slot's fence was waited before its frame is rebuilt. The image uses
-// the swapchain format so the TAA resolve copy and the UI's sRGB sampling
-// behave exactly as the direct-to-swapchain path.
-bool ensure_viewport_target(DeferredFrame& frame, const engine::rhi::Device& device,
-                            engine::rhi::GpuAllocator& allocator, VkFormat format,
-                            VkExtent2D extent) {
-    if (frame.viewport_image.handle() != VK_NULL_HANDLE &&
-        frame.viewport_extent.width == extent.width &&
-        frame.viewport_extent.height == extent.height) {
-        return true;
-    }
-    // TRANSFER_SRC: remote screenshots copy the scene view out of it.
-    auto image = allocator.create_image(format, extent,
-                                        VK_IMAGE_USAGE_TRANSFER_DST_BIT |
-                                            VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
-                                            VK_IMAGE_USAGE_SAMPLED_BIT);
-    if (!image) return false;
-    auto view = engine::rhi::create_image_view(device.handle(), image->handle(), format);
-    if (!view) return false;
-    frame.viewport_image = std::move(*image);
-    frame.viewport_view = std::move(*view);
-    frame.viewport_extent = extent;
-    return true;
-}
-#endif
-
-// Fetch (or create) this frame slot's skinning buffers for `entity`. Returns
-// nullptr if allocation fails (the caller then renders the bind pose).
-SkinnedEntityGpu* ensure_skin_gpu(DeferredFrame& frame, entt::entity entity,
-                                  const engine::asset::MeshAsset& mesh, VkDevice vk_device,
-                                  engine::rhi::GpuAllocator& allocator, std::uint32_t joint_count) {
-    auto it = frame.skin_gpu.find(entity);
-    if (it != frame.skin_gpu.end() && it->second.vertex_count == mesh.vertex_count &&
-        it->second.joint_count == joint_count) {
-        return &it->second;
-    }
-
-    const VkDeviceSize joints_size = static_cast<VkDeviceSize>(joint_count) * sizeof(glm::mat4);
-    const VkDeviceSize verts_size =
-        static_cast<VkDeviceSize>(mesh.vertex_count) * sizeof(engine::asset::Vertex);
-
-    auto joints = allocator.create_buffer(
-        joints_size,
-        VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
-        VMA_MEMORY_USAGE_AUTO,
-        VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT);
-    if (!joints) return nullptr;
-    auto verts = allocator.create_buffer(
-        verts_size,
-        VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT |
-            VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
-        VMA_MEMORY_USAGE_AUTO, 0);
-    if (!verts) return nullptr;
-
-    SkinnedEntityGpu g;
-    g.joints = std::move(*joints);
-    g.skinned_verts = std::move(*verts);
-    g.joints_addr = engine::rhi::buffer_device_address(vk_device, g.joints);
-    g.skinned_addr = engine::rhi::buffer_device_address(vk_device, g.skinned_verts);
-    g.vertex_count = mesh.vertex_count;
-    g.joint_count = joint_count;
-    frame.skin_gpu[entity] = std::move(g);
-    return &frame.skin_gpu[entity];
-}
-
-
 
 } // namespace
 
@@ -304,19 +189,6 @@ int main() {
     }
 
     const std::string shader_dir = QUAT_COOKED_SHADER_DIR;
-    const VkFormat swap_format = swapchain.format();
-    // The swapchain is usually sRGB, which cannot be a storage image (TAA writes
-    // one) and would double-encode if the tonemap shader's explicit sRGB output
-    // were hardware-encoded again. So tonemap + post-process work in the matching
-    // UNORM format (the shader does the sRGB encode), then a size-compatible copy
-    // moves the bits into the sRGB swapchain.
-    const VkFormat ldr_format = [swap_format] {
-        switch (swap_format) {
-            case VK_FORMAT_B8G8R8A8_SRGB: return VK_FORMAT_B8G8R8A8_UNORM;
-            case VK_FORMAT_R8G8B8A8_SRGB: return VK_FORMAT_R8G8B8A8_UNORM;
-            default: return swap_format;
-        }
-    }();
 
     // One-time transfer context for setup uploads (demo mesh/material + each
     // pass's fallback resources). Destroyed once setup completes.
@@ -360,104 +232,16 @@ int main() {
     }
 #endif
 
-    // Cloud parameters for the lighting background + IBL bake: the editor's
-    // Renderer panel edits them; headless builds use the defaults. The frame
-    // loop accumulates cloud_time_s to drive the wind drift (always, like the
-    // animated sky in other engines — not gated on play mode).
-    float cloud_time_s = 0.0F;
-    const auto current_clouds = [&]() -> engine::renderer::CloudSettings {
-        engine::renderer::CloudSettings c{};
+    // Per-frame-in-flight deferred chains + temporal state (frame_renderer.hpp).
+    quat::app::FrameRenderer renderer;
 #ifdef ENGINE_EDITOR
-        c = render_settings.clouds;
+    renderer.set_render_settings(&render_settings);
+    const bool with_ui = editor.active();
+#else
+    const bool with_ui = false;
 #endif
-        c.time_s = cloud_time_s;
-        return c;
-    };
-
-    // Temporal state shared by both slots (audit A2 / A11): one TAA history and
-    // one adapted luminance, each advanced exactly once per frame. Declared
-    // before `frames` so it outlives every pass that references it.
-    const auto taa_history =
-        std::make_shared<engine::renderer::TaaHistory>(device, allocator, k_frames_in_flight);
-    auto exposure_state = engine::renderer::ExposureState::create(device, allocator);
-    // Per-frame-in-flight deferred chains (GBuffer -> lighting -> tonemap). Each
-    // slot owns its passes' descriptor buffers and a transient image pool, so
-    // building one frame's graph never disturbs the other in-flight frame.
-    std::array<DeferredFrame, k_frames_in_flight> frames;
-    bool frames_ok = exposure_state.has_value();
-    if (!exposure_state) {
-        std::fprintf(stderr, "[fatal] exposure state creation failed: %s\n",
-                     exposure_state.error().message.c_str());
-    }
-    for (auto& f : frames) {
-        if (!frames_ok) break;
-        auto mesh = engine::renderer::MeshPass::create(device, allocator, *pipeline_cache,
-                                                       setup_transfer, shader_dir);
-        auto light = engine::renderer::LightingPass::create(device, allocator, *pipeline_cache,
-                                                            shader_dir);
-        auto tone = engine::renderer::TonemapPass::create(device, allocator, *pipeline_cache,
-                                                          shader_dir, ldr_format);
-        auto skin = engine::renderer::SkinningPass::create(device, allocator, *pipeline_cache,
-                                                           shader_dir);
-        auto shadow = engine::renderer::ShadowPass::create(device, allocator, *pipeline_cache,
-                                                           shader_dir);
-        auto transp = engine::renderer::TransparentPass::create(device, allocator, *pipeline_cache,
-                                                                setup_transfer, shader_dir);
-        auto bloom = engine::renderer::BloomPass::create(device, allocator, *pipeline_cache,
-                                                         shader_dir);
-        auto expo = engine::renderer::ExposurePass::create(device, allocator, *pipeline_cache,
-                                                           shader_dir, *exposure_state);
-        auto taa = engine::renderer::TaaPass::create(device, allocator, *pipeline_cache, shader_dir,
-                                                     ldr_format, taa_history);
-#ifdef ENGINE_EDITOR
-        if (editor.active()) {
-            auto ui = engine::renderer::ImGuiPass::create(device, allocator, *pipeline_cache,
-                                                          setup_transfer, shader_dir,
-                                                          swapchain.format());
-            if (!ui) {
-                frames_ok = false;
-                std::fprintf(stderr, "[fatal] imgui pass creation failed: %s\n",
-                             ui.error().message.c_str());
-                break;
-            }
-            f.imgui = std::move(*ui);
-        }
-#endif
-        if (!mesh || !light || !tone || !skin || !shadow || !transp || !bloom || !expo || !taa) {
-            frames_ok = false;
-            std::fprintf(stderr, "[fatal] deferred pass creation failed: %s\n",
-                         (!mesh    ? mesh.error()
-                          : !light  ? light.error()
-                          : !tone   ? tone.error()
-                          : !skin   ? skin.error()
-                          : !shadow ? shadow.error()
-                          : !transp ? transp.error()
-                          : !bloom  ? bloom.error()
-                          : !expo   ? expo.error()
-                                    : taa.error())
-                             .message.c_str());
-            break;
-        }
-        f.mesh = std::move(*mesh);
-        f.lighting = std::move(*light);
-        f.tonemap = std::move(*tone);
-        f.skinning = std::move(*skin);
-        f.shadow = std::move(*shadow);
-        f.transparent = std::move(*transp);
-        f.bloom = std::move(*bloom);
-        f.exposure = std::move(*expo);
-        f.taa = std::move(*taa);
-        f.pool = engine::rhi::TransientImagePool(device, allocator);
-        auto cull = engine::renderer::LightCullPass::create(device, allocator, *pipeline_cache,
-                                                            shader_dir);
-        if (!cull) {
-            frames_ok = false;
-            std::fprintf(stderr, "[fatal] light cull pass creation failed: %s\n",
-                         cull.error().message.c_str());
-            break;
-        }
-        f.light_cull = std::move(*cull);
-    }
+    const bool frames_ok = renderer.create_passes(device, allocator, *pipeline_cache,
+                                                  setup_transfer, shader_dir, swapchain, with_ui);
 
     // Scene assets live in an AssetManager so MeshRenderer handles keep them
     // alive. QUAT_GLTF=<path> instantiates a real glTF scene graph; otherwise a
@@ -477,69 +261,8 @@ int main() {
     }
 
     quat::app::add_default_lighting(scene, !world.from_gltf());
-    // Physically-based atmosphere (Phase 11.1): static transmittance/multi-
-    // scatter LUTs now, sky-view LUT refreshed whenever the sun moves. The
-    // procedural sky remains the fallback if creation fails.
-    std::optional<engine::renderer::AtmospherePass> atmosphere;
-    {
-        glm::vec3 sun_to = glm::normalize(glm::vec3(0.4F, 1.0F, 0.3F));
-        const auto dlv = scene.registry().view<const engine::scene::DirectionalLight>();
-        for (const entt::entity e : dlv) {
-            sun_to = -glm::normalize(dlv.get<const engine::scene::DirectionalLight>(e).direction);
-            break;
-        }
-        if (auto atmos = engine::renderer::AtmospherePass::create(device, allocator,
-                                                                  *pipeline_cache, shader_dir);
-            atmos) {
-            atmosphere = std::move(*atmos);
-            if (auto r = atmosphere->ensure_skyview(sun_to); !r) {
-                std::fprintf(stderr, "[warn] sky-view LUT failed: %s\n",
-                             r.error().message.c_str());
-                atmosphere.reset();
-            } else {
-                std::fprintf(stderr, "[info] atmosphere LUTs ready\n");
-            }
-        } else {
-            std::fprintf(stderr, "[warn] atmosphere create failed: %s\n",
-                         atmos.error().message.c_str());
-        }
-    }
-    const auto atmos_skyview = [&]() {
-        return atmosphere ? atmosphere->skyview_view() : VK_NULL_HANDLE;
-    };
-    const auto atmos_transmittance = [&]() {
-        return atmosphere ? atmosphere->transmittance_view() : VK_NULL_HANDLE;
-    };
-
-    // Image-based lighting: a dynamic environment probe (11.3). create() runs
-    // one blocking full cycle so ambient/reflections are complete from frame
-    // one; afterwards the probe re-renders incrementally, one compute step per
-    // frame inside the render graph, so the IBL tracks the moving sun and
-    // drifting clouds with no rebake hitches. Falls back to flat ambient on
-    // failure.
-    std::optional<engine::renderer::DynamicIbl> dynamic_ibl;
-    {
-        glm::vec3 sun_to = glm::normalize(glm::vec3(0.4F, 1.0F, 0.3F));
-        const auto dlv = scene.registry().view<const engine::scene::DirectionalLight>();
-        for (const entt::entity e : dlv) {
-            sun_to = -glm::normalize(dlv.get<const engine::scene::DirectionalLight>(e).direction);
-            break;
-        }
-        engine::renderer::IblCycleParams initial{};
-        initial.sun_to = sun_to;
-        initial.skyview = atmos_skyview();
-        initial.transmittance = atmos_transmittance();
-        initial.clouds = current_clouds();
-        if (auto dyn = engine::renderer::DynamicIbl::create(device, allocator, *pipeline_cache,
-                                                            shader_dir, initial);
-            dyn) {
-            dynamic_ibl = std::move(*dyn);
-            std::fprintf(stderr, "[info] dynamic IBL probe ready\n");
-        } else {
-            std::fprintf(stderr, "[warn] dynamic IBL create failed: %s\n",
-                         dyn.error().message.c_str());
-        }
-    }
+    // Atmosphere LUTs + dynamic IBL probe, lit by the scene's sun.
+    renderer.create_environment(scene, *pipeline_cache, shader_dir);
 
     // Terrain, navmesh, networking (QUAT_HOST / QUAT_JOIN) and QUAT_TERRAIN.
     world.init(device, allocator, *pipeline_cache, shader_dir, scene);
@@ -549,61 +272,9 @@ int main() {
 
     // Free-fly view camera, seeded by framing the scene (see fly_camera.hpp).
     quat::app::FlyCamera camera = quat::app::FlyCamera::create(scene, physics_mode);
+
     // ---- Per-frame command + sync resources --------------------------------
-    VkCommandPool command_pool = VK_NULL_HANDLE;
-    {
-        VkCommandPoolCreateInfo pool_info{};
-        pool_info.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
-        pool_info.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
-        pool_info.queueFamilyIndex = device.queue_families().graphics;
-        vkCreateCommandPool(vk_device, &pool_info, nullptr, &command_pool);
-    }
-
-    std::array<VkCommandBuffer, k_frames_in_flight> command_buffers{};
-    {
-        VkCommandBufferAllocateInfo alloc{};
-        alloc.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
-        alloc.commandPool = command_pool;
-        alloc.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-        alloc.commandBufferCount = k_frames_in_flight;
-        vkAllocateCommandBuffers(vk_device, &alloc, command_buffers.data());
-    }
-
-    auto make_semaphore = [vk_device] {
-        VkSemaphore s = VK_NULL_HANDLE;
-        VkSemaphoreCreateInfo info{};
-        info.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
-        vkCreateSemaphore(vk_device, &info, nullptr, &s);
-        return s;
-    };
-
-    // image_available + in-flight fence are per frame-in-flight; render_finished
-    // is per swapchain image (it is signalled by the submit that targets that
-    // image and waited on by its present).
-    std::array<VkSemaphore, k_frames_in_flight> image_available{};
-    std::array<VkFence, k_frames_in_flight> in_flight{};
-    for (std::uint32_t i = 0; i < k_frames_in_flight; ++i) {
-        image_available[i] = make_semaphore();
-        VkFenceCreateInfo fence_info{};
-        fence_info.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
-        fence_info.flags = VK_FENCE_CREATE_SIGNALED_BIT;
-        vkCreateFence(vk_device, &fence_info, nullptr, &in_flight[i]);
-    }
-
-    std::vector<VkSemaphore> render_finished(swapchain.image_count(), VK_NULL_HANDLE);
-    for (VkSemaphore& s : render_finished) {
-        s = make_semaphore();
-    }
-
-    auto recreate_render_finished = [&] {
-        for (VkSemaphore s : render_finished) {
-            vkDestroySemaphore(vk_device, s, nullptr);
-        }
-        render_finished.assign(swapchain.image_count(), VK_NULL_HANDLE);
-        for (VkSemaphore& s : render_finished) {
-            s = make_semaphore();
-        }
-    };
+    renderer.create_frame_sync();
 
     // ---- Main loop ---------------------------------------------------------
     // QUAT_MAX_FRAMES, when set, auto-quits after that many presented frames.
@@ -614,16 +285,14 @@ int main() {
     }
     // QUAT_SCREENSHOT, combined with QUAT_MAX_FRAMES, writes the final presented
     // frame to the given path as binary PPM — headless visual verification.
-    const char* screenshot_path = std::getenv("QUAT_SCREENSHOT");
-    engine::rhi::GpuBuffer screenshot_buffer;
-    bool screenshot_recorded = false;
+    if (const char* screenshot_path = std::getenv("QUAT_SCREENSHOT")) {
+        renderer.set_screenshot_path(std::string(screenshot_path));
+    }
 
     std::uint64_t presented = 0;
     double        frame_time_sum = 0.0;     // avg-frame-time report at exit
     std::uint64_t frame_time_samples = 0;
-    std::uint32_t frame = 0;
     bool running = true;
-    bool needs_recreate = false;
     std::uint64_t last_ticks = SDL_GetTicksNS();
 
     // Remote control (ROADMAP A2/A3): QUAT_REMOTE=<port> opens the loopback
@@ -667,7 +336,7 @@ int main() {
                 if (event.key.key == SDLK_ESCAPE) running = false;
                 break;
             case SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED:
-                needs_recreate = true;
+                renderer.request_swapchain_recreate();
                 break;
             case SDL_EVENT_MOUSE_BUTTON_DOWN:
             case SDL_EVENT_MOUSE_BUTTON_UP:
@@ -810,54 +479,20 @@ int main() {
             continue;
         }
 
-        if (needs_recreate) {
-            if (auto r = swapchain.recreate(pixel_extent); !r) {
-                std::fprintf(stderr, "[fatal] swapchain recreate failed: %s\n",
-                             r.error().message.c_str());
-                break;
-            }
-            recreate_render_finished();
-            needs_recreate = false;
-        }
+        if (!renderer.ensure_swapchain(pixel_extent)) break;
 
-        vkWaitForFences(vk_device, 1, &in_flight[frame], VK_TRUE, UINT64_MAX);
+        const std::uint32_t frame = renderer.wait_for_slot();
         remote_bridge.on_frame_complete(frame); // the slot's screenshot readback landed
 
-        std::uint32_t image_index = 0;
-        VkResult acquire = vkAcquireNextImageKHR(
-            vk_device, swapchain.handle(), UINT64_MAX, image_available[frame],
-            VK_NULL_HANDLE, &image_index);
-        if (acquire == VK_ERROR_OUT_OF_DATE_KHR) {
-            needs_recreate = true;
-            continue;
-        }
-        if (acquire != VK_SUCCESS && acquire != VK_SUBOPTIMAL_KHR) {
-            std::fprintf(stderr, "[fatal] vkAcquireNextImageKHR failed (%d)\n",
-                         static_cast<int>(acquire));
-            break;
-        }
-
-        vkResetFences(vk_device, 1, &in_flight[frame]);
-
-        VkCommandBuffer cmd = command_buffers[frame];
-        vkResetCommandBuffer(cmd, 0);
-        VkCommandBufferBeginInfo begin{};
-        begin.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-        begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-        vkBeginCommandBuffer(cmd, &begin);
-
-        // Build this frame's deferred graph into the slot's own resources and
-        // render the scene to the acquired swapchain image. The slot's fence was
-        // waited above, so resetting its transient pool and rebuilding the passes'
-        // descriptor buffers does not race the other in-flight frame.
-        DeferredFrame& fr = frames[frame];
-        fr.pool.reset();
+        const auto acquired = renderer.acquire_and_begin();
+        if (acquired == quat::app::FrameRenderer::Acquire::retry) continue;
+        if (acquired == quat::app::FrameRenderer::Acquire::failed) break;
 
         // The scene renders at `draw_extent`; the swapchain presents at
         // `present_extent`. They differ only in editor mode, where the scene
         // fills the Viewport panel (sized by last frame's UI) instead of the
         // whole window.
-        const VkExtent2D present_extent = swapchain.extent();
+        const VkExtent2D present_extent = renderer.present_extent();
         VkExtent2D draw_extent = present_extent;
 #ifdef ENGINE_EDITOR
         if (editor.active() && editor.viewport_width() > 0 && editor.viewport_height() > 0) {
@@ -874,7 +509,7 @@ int main() {
         const std::uint64_t now_ticks = SDL_GetTicksNS();
         const float dt = static_cast<float>(now_ticks - last_ticks) * 1e-9F;
         last_ticks = now_ticks;
-        cloud_time_s += dt;
+        renderer.advance_time(dt);
 
         camera.apply_look();
         quat::app::FlyInputGate gate;
@@ -928,118 +563,8 @@ int main() {
         world.update_audio(scene, cam.view, /*live=*/true, dt);
 #endif
 
-        // TAA: jitter the projection sub-pixel each frame (Halton). The whole
-        // frame renders with the jittered view-proj; the resolve accumulates
-        // into the shared history, reprojecting with the UNjittered
-        // cam.view_proj (audit A14).
-        const glm::vec2 jitter =
-            engine::renderer::taa_jitter(presented, draw_extent.width, draw_extent.height);
-        glm::mat4 jitter_mat(1.0F);
-        jitter_mat[3][0] = jitter.x;
-        jitter_mat[3][1] = jitter.y;
-        const glm::mat4 jittered_vp = jitter_mat * cam.view_proj;
-        const glm::mat4 jittered_inv_vp = glm::inverse(jittered_vp);
-
-        engine::renderer::DirectionalLightParams light;
-        const auto light_view = scene.registry().view<const engine::scene::DirectionalLight>();
-        for (const entt::entity e : light_view) {
-            const auto& dl = light_view.get<const engine::scene::DirectionalLight>(e);
-            light.direction = glm::vec4(-glm::normalize(dl.direction), 0.0F);
-            light.color = glm::vec4(dl.color, dl.intensity);
-            break;
-        }
-
-        // Gather point lights from the ECS (world position from Transform); the
-        // light-cull compute pass bins them into view clusters on the GPU.
-        std::vector<engine::renderer::GpuLight> point_lights;
-        for (auto [e, t, pl] :
-             scene.registry()
-                 .view<const engine::scene::Transform, const engine::scene::PointLight>()
-                 .each()) {
-            point_lights.push_back(engine::renderer::make_point_light(
-                glm::vec3(t.world[3]), pl.radius, pl.color, pl.intensity));
-        }
-
-        // Build the draw list, collecting per-skinned-entity skinning work. A
-        // skinned entity uploads its joint matrices into this frame slot's buffer
-        // and gets a SkinDispatch; its draw points at the skinned output buffer.
-        std::vector<engine::renderer::DrawItem> draws;
-        std::vector<engine::renderer::DrawItem> transparent_draws;
-        std::vector<engine::renderer::SkinDispatch> dispatches;
-        for (auto [e, t, mr] :
-             scene.registry().view<engine::scene::Transform, engine::scene::MeshRenderer>().each()) {
-            engine::renderer::DrawItem item;
-            item.mesh = mr.mesh.valid() ? &*mr.mesh : nullptr;
-            item.material = mr.material.valid() ? &*mr.material : nullptr;
-            item.model = t.world;
-
-            const auto* sm = scene.registry().try_get<engine::scene::SkinnedMesh>(e);
-            if (item.mesh != nullptr && item.mesh->skinned() && sm != nullptr &&
-                !sm->joint_matrices.empty()) {
-                SkinnedEntityGpu* g = ensure_skin_gpu(
-                    fr, e, *item.mesh, vk_device, allocator,
-                    static_cast<std::uint32_t>(sm->joint_matrices.size()));
-                if (g != nullptr) {
-                    std::memcpy(g->joints.mapped(), sm->joint_matrices.data(),
-                                sm->joint_matrices.size() * sizeof(glm::mat4));
-                    engine::renderer::SkinDispatch d;
-                    d.vertices_in =
-                        engine::rhi::buffer_device_address(vk_device, item.mesh->vertex_buffer);
-                    d.vertices_in_size = static_cast<VkDeviceSize>(item.mesh->vertex_count) *
-                                         sizeof(engine::asset::Vertex);
-                    d.skin = engine::rhi::buffer_device_address(vk_device, item.mesh->skin_buffer);
-                    d.skin_size = static_cast<VkDeviceSize>(item.mesh->vertex_count) *
-                                  sizeof(engine::asset::SkinVertex);
-                    d.joints = g->joints_addr;
-                    d.joints_size = static_cast<VkDeviceSize>(g->joint_count) * sizeof(glm::mat4);
-                    d.vertices_out = g->skinned_addr;
-                    d.vertices_out_size = static_cast<VkDeviceSize>(g->vertex_count) *
-                                          sizeof(engine::asset::Vertex);
-                    d.vertex_count = item.mesh->vertex_count;
-                    dispatches.push_back(d);
-                    item.skinned_vertices = g->skinned_verts.handle();
-                    // Skinned vertices are already in skin space (glTF ignores the
-                    // mesh node transform), so draw them with an identity model.
-                    item.model = glm::mat4(1.0F);
-                }
-            }
-            // Route alpha-blended + transmissive (glass) materials to the forward pass.
-            const bool is_transparent =
-                item.material != nullptr &&
-                (item.material->params.flags &
-                 (engine::asset::material_blend | engine::asset::material_transmission)) != 0;
-            (is_transparent ? transparent_draws : draws).push_back(item);
-        }
-
-        // Sort transparent draws back-to-front (farthest from the camera first).
-        std::sort(transparent_draws.begin(), transparent_draws.end(),
-                  [&](const engine::renderer::DrawItem& a, const engine::renderer::DrawItem& b) {
-                      const float da = glm::distance(glm::vec3(a.model[3]), cam.position);
-                      const float db = glm::distance(glm::vec3(b.model[3]), cam.position);
-                      return da > db;
-                  });
-
-        // Shadow casters: all opaques plus transmissive glass (solid surfaces —
-        // they block the sun like opaque geometry; alpha-blended items do not cast).
-        std::vector<engine::renderer::DrawItem> shadow_draws = draws;
-        for (const engine::renderer::DrawItem& d : transparent_draws) {
-            if (d.material != nullptr &&
-                (d.material->params.flags & engine::asset::material_transmission) != 0) {
-                shadow_draws.push_back(d);
-            }
-        }
-
-        // Directional shadow: an orthographic light view fit to a fixed box
-        // around the scene (the demos all sit near the origin).
-        const glm::vec3 sun_dir = -glm::normalize(glm::vec3(light.direction)); // travel direction
-        const glm::vec3 shadow_center(0.0F, 1.5F, 0.0F);
-        constexpr float shadow_radius = 14.0F;
-        const glm::vec3 light_eye = shadow_center - sun_dir * (shadow_radius * 1.5F);
-        const glm::mat4 shadow_view =
-            glm::lookAt(light_eye, shadow_center, glm::vec3(0.0F, 1.0F, 0.0F));
-        const glm::mat4 shadow_proj = glm::ortho(-shadow_radius, shadow_radius, -shadow_radius,
-                                                 shadow_radius, 0.1F, shadow_radius * 3.5F);
-        const glm::mat4 light_view_proj = shadow_proj * shadow_view;
+        const quat::app::FrameScene frame_scene =
+            renderer.gather(scene, cam, draw_extent, presented);
 
         world.update_terrain(scene, cam.position);
 
@@ -1096,148 +621,25 @@ int main() {
 
         world.service_navmesh_request(scene);
 
-        engine::rhi::RenderGraph graph(fr.pool);
-
-        // Sky + environment upkeep, declared FIRST so their trailing barriers
-        // precede every consumer this frame (the graph keeps declaration order
-        // for independent passes). The sky-view LUT recomputes in-graph when
-        // the sun moved (no pipeline stall on sun drags); the dynamic IBL
-        // probe advances one step per frame and flips when a cycle completes.
-        const glm::vec3 sun_to = glm::vec3(light.direction);
-        if (atmosphere) {
-            if (auto r = atmosphere->add_skyview_update_to_graph(graph, sun_to); !r) {
-                std::fprintf(stderr, "[warn] sky-view update: %s\n", r.error().message.c_str());
-            }
-        }
-        if (dynamic_ibl) {
-            engine::renderer::IblCycleParams cycle{};
-            cycle.sun_to = sun_to;
-            cycle.skyview = atmos_skyview();
-            cycle.transmittance = atmos_transmittance();
-            cycle.clouds = current_clouds();
-            if (auto r = dynamic_ibl->add_step_to_graph(graph, cycle); !r) {
-                std::fprintf(stderr, "[warn] ibl step: %s\n", r.error().message.c_str());
-            }
-        }
-        const engine::renderer::IblViewSet ibl_views =
-            dynamic_ibl ? dynamic_ibl->views() : engine::renderer::IblViewSet{};
-
-        // R9.1: draws sharing mesh + material collapse into instanced draws.
-        const engine::renderer::InstancedDrawList shadow_batches =
-            engine::renderer::batch_draws(shadow_draws);
-        const engine::renderer::InstancedDrawList opaque_batches =
-            engine::renderer::batch_draws(draws);
-        auto shadow = fr.shadow.add_to_graph(graph, light_view_proj, shadow_batches);
-        if (!shadow) {
-            std::fprintf(stderr, "[fatal] shadow pass: %s\n", shadow.error().message.c_str());
-            break;
-        }
-        auto gbuffer = fr.mesh.add_to_graph(graph, draw_extent, jittered_vp, opaque_batches);
-        if (!gbuffer) {
-            std::fprintf(stderr, "[fatal] gbuffer pass: %s\n", gbuffer.error().message.c_str());
-            break;
-        }
+        quat::app::FrameInputs frame_inputs;
+        frame_inputs.scene = &frame_scene;
+        frame_inputs.cam = &cam;
+        frame_inputs.draw_extent = draw_extent;
+        frame_inputs.dt = dt;
         if (world.terrain_drawable()) {
-            world.terrain_pass().add_to_graph(graph, *gbuffer, draw_extent, jittered_vp,
-                                              cam.position, world.terrain_anchor(),
-                                              world.terrain_snowline());
-        }
-        // Clustered light culling (R10.1). A camera the clusters cannot
-        // represent (non-perspective / no finite far plane) renders unlit by
-        // point lights rather than stopping the frame loop.
-        engine::renderer::ClusteredLights clustered{};
-        if (auto c = fr.light_cull.add_to_graph(graph, cam.view, cam.projection, point_lights)) {
-            clustered = *c;
-        } else {
-            std::fprintf(stderr, "[warn] light cull: %s\n", c.error().message.c_str());
-        }
-        auto hdr = fr.lighting.add_to_graph(graph, *gbuffer, draw_extent, light, jittered_inv_vp,
-                                            cam.position, *shadow, light_view_proj, clustered,
-                                            /*enable_sky=*/true, ibl_views, atmos_skyview(),
-                                            atmos_transmittance(), current_clouds());
-        if (!hdr) {
-            std::fprintf(stderr, "[fatal] lighting pass: %s\n", hdr.error().message.c_str());
-            break;
-        }
-        // Forward-blend transparent geometry over the lit HDR, depth-tested
-        // against the opaque GBuffer depth.
-        if (!transparent_draws.empty()) {
-            if (auto r = fr.transparent.add_to_graph(graph, *hdr, gbuffer->depth, draw_extent,
-                                                     jittered_vp, light, cam.position,
-                                                     transparent_draws, ibl_views, clustered);
-                !r) {
-                std::fprintf(stderr, "[fatal] transparent pass: %s\n", r.error().message.c_str());
-                break;
-            }
-        }
-        // Bloom: blur the bright parts of the HDR and add them back before tonemap.
-        engine::renderer::BloomParams bloom_params{};
-#ifdef ENGINE_EDITOR
-        bloom_params.threshold = render_settings.bloom_threshold;
-        bloom_params.knee = render_settings.bloom_knee;
-        bloom_params.intensity = render_settings.bloom_intensity;
-        bloom_params.radius = render_settings.bloom_radius;
-#endif
-        if (auto r = fr.bloom.add_to_graph(graph, *hdr, draw_extent, bloom_params); !r) {
-            std::fprintf(stderr, "[fatal] bloom pass: %s\n", r.error().message.c_str());
-            break;
-        }
-        // Auto-exposure: measure the (post-bloom) HDR luminance and adapt over time.
-        if (auto r = fr.exposure.add_to_graph(graph, *hdr, draw_extent, dt); !r) {
-            std::fprintf(stderr, "[fatal] exposure pass: %s\n", r.error().message.c_str());
-            break;
-        }
-        const engine::rhi::ResourceHandle backbuffer = graph.import_image(
-            "swapchain", swapchain.images()[image_index], swapchain.image_views()[image_index],
-            swapchain.format(), present_extent, VK_IMAGE_LAYOUT_UNDEFINED,
-            VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
-            // The first barrier waits on the acquire semaphore's stage, so
-            // every first touch (layout transition, TAA's copy) is ordered
-            // after the presentation engine releases the image (audit A3).
-            k_acquire_wait_stage);
-        // In editor mode the frame resolves into the slot's offscreen viewport
-        // image (sampled by the Viewport panel); otherwise straight into the
-        // swapchain as before.
-        engine::rhi::ResourceHandle scene_target = backbuffer;
-#ifdef ENGINE_EDITOR
-        engine::rhi::ResourceHandle viewport_handle{};
-        if (editor.active()) {
-            if (!ensure_viewport_target(fr, device, allocator, swapchain.format(), draw_extent)) {
-                std::fprintf(stderr, "[fatal] viewport target creation failed\n");
-                break;
-            }
-            viewport_handle = graph.import_image(
-                "viewport", fr.viewport_image.handle(), fr.viewport_view.handle(),
-                swapchain.format(), draw_extent, VK_IMAGE_LAYOUT_UNDEFINED,
-                VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-            scene_target = viewport_handle;
-        }
-#endif
-        // Tonemap to an intermediate LDR image; TAA resolves it into the target.
-        const engine::rhi::ResourceHandle ldr_current = graph.create_transient_image(
-            "ldr_current", ldr_format, draw_extent,
-            VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT);
-        if (auto r = fr.tonemap.add_to_graph(graph, *hdr, ldr_current, draw_extent,
-                                             fr.exposure.exposure_buffer_address());
-            !r) {
-            std::fprintf(stderr, "[fatal] tonemap pass: %s\n", r.error().message.c_str());
-            break;
-        }
-        // Temporal anti-aliasing: resolve the jittered frame against history.
-        if (auto r = fr.taa.add_to_graph(graph, ldr_current, gbuffer->depth, scene_target,
-                                         draw_extent, cam.view_proj);
-            !r) {
-            std::fprintf(stderr, "[fatal] taa pass: %s\n", r.error().message.c_str());
-            break;
+            frame_inputs.terrain = &world.terrain_pass();
+            frame_inputs.terrain_anchor = world.terrain_anchor();
+            frame_inputs.terrain_snowline = world.terrain_snowline();
         }
 #ifdef ENGINE_EDITOR
         // Editor UI: build the dockspace + panels (the Viewport panel samples
         // the offscreen scene image), then draw the UI into the swapchain as
         // the last pass. A null/empty draw list (editor disabled) adds no pass.
-        {
+        frame_inputs.build_ui = [&]() -> const ImDrawData* {
             engine::editor::EditorContext ui_ctx;
             ui_ctx.frame_ms = dt * 1000.0F;
-            ui_ctx.draw_count = static_cast<int>(draws.size() + transparent_draws.size());
+            ui_ctx.draw_count =
+                static_cast<int>(frame_scene.draws.size() + frame_scene.transparent_draws.size());
             ui_ctx.entity_count = static_cast<int>(
                 scene.registry().view<engine::scene::Transform>().size());
             ui_ctx.scene = &scene;
@@ -1260,160 +662,16 @@ int main() {
             ui_ctx.proj_no_flip = cam.projection;
             ui_ctx.proj_no_flip[1][1] *= -1.0F; // undo the Vulkan Y flip for ImGuizmo
             editor.build_ui(ui_ctx);
-            if (auto r = fr.imgui.add_to_graph(graph, backbuffer, present_extent,
-                                               editor.end_frame(), viewport_handle,
-                                               /*clear=*/editor.active());
-                !r) {
-                std::fprintf(stderr, "[fatal] imgui pass: %s\n", r.error().message.c_str());
-                break;
-            }
-        }
+            return editor.end_frame();
+        };
 #endif
-        if (auto compiled = graph.compile(); !compiled) {
-            std::fprintf(stderr, "[fatal] render graph compile failed: %s\n",
-                         compiled.error().message.c_str());
+        if (!renderer.record(frame_inputs)) break;
+
+        remote_bridge.record_capture(renderer.command_buffer(), renderer.frame_slot(),
+                                     renderer.capture_source());
+
+        if (!renderer.submit_and_present(max_frames != 0 && presented + 1 >= max_frames)) {
             break;
-        }
-        // Skin (compute) before the graph; record() adds the compute -> vertex
-        // fetch barrier so the GBuffer sees the skinned vertices.
-        if (!dispatches.empty()) {
-            if (auto rs = fr.skinning.record(cmd, dispatches); !rs) {
-                std::fprintf(stderr, "[fatal] skinning pass: %s\n", rs.error().message.c_str());
-                break;
-            }
-        }
-        graph.execute(cmd);
-
-        // Remote screenshots copy the final scene image (no editor UI).
-        quat::app::CaptureSource capture{swapchain.images()[image_index], swapchain.format(),
-                                         present_extent, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR};
-#ifdef ENGINE_EDITOR
-        if (editor.active()) {
-            capture = {fr.viewport_image.handle(), swapchain.format(), draw_extent,
-                       VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
-        }
-#endif
-        remote_bridge.record_capture(cmd, frame, capture);
-
-        // Screenshot capture on the final frame: the graph leaves the swapchain
-        // image in PRESENT_SRC — round-trip it through TRANSFER_SRC and copy to
-        // a host-visible buffer, written out as PPM after the queue idles.
-        screenshot_recorded = false;
-        if (screenshot_path != nullptr && max_frames != 0 && presented + 1 >= max_frames) {
-            const VkDeviceSize shot_bytes =
-                static_cast<VkDeviceSize>(present_extent.width) * present_extent.height * 4;
-            if (screenshot_buffer.handle() == VK_NULL_HANDLE) {
-                auto buf = allocator.create_buffer(shot_bytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-                                                   VMA_MEMORY_USAGE_AUTO,
-                                                   VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT |
-                                                       VMA_ALLOCATION_CREATE_MAPPED_BIT);
-                if (buf) screenshot_buffer = std::move(*buf);
-            }
-            if (screenshot_buffer.handle() != VK_NULL_HANDLE) {
-                const VkImage shot_image = swapchain.images()[image_index];
-                VkImageMemoryBarrier2 to_src{};
-                to_src.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2;
-                to_src.srcStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
-                to_src.srcAccessMask = VK_ACCESS_2_MEMORY_WRITE_BIT;
-                to_src.dstStageMask = VK_PIPELINE_STAGE_2_COPY_BIT;
-                to_src.dstAccessMask = VK_ACCESS_2_TRANSFER_READ_BIT;
-                to_src.oldLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
-                to_src.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
-                to_src.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-                to_src.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-                to_src.image = shot_image;
-                to_src.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
-                VkDependencyInfo dep{};
-                dep.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO;
-                dep.imageMemoryBarrierCount = 1;
-                dep.pImageMemoryBarriers = &to_src;
-                vkCmdPipelineBarrier2(cmd, &dep);
-
-                VkBufferImageCopy region{};
-                region.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
-                region.imageExtent = {present_extent.width, present_extent.height, 1};
-                vkCmdCopyImageToBuffer(cmd, shot_image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-                                       screenshot_buffer.handle(), 1, &region);
-
-                VkImageMemoryBarrier2 to_present = to_src;
-                to_present.srcStageMask = VK_PIPELINE_STAGE_2_COPY_BIT;
-                to_present.srcAccessMask = VK_ACCESS_2_TRANSFER_READ_BIT;
-                to_present.dstStageMask = VK_PIPELINE_STAGE_2_NONE;
-                to_present.dstAccessMask = 0;
-                to_present.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
-                to_present.newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
-                dep.pImageMemoryBarriers = &to_present;
-                vkCmdPipelineBarrier2(cmd, &dep);
-                screenshot_recorded = true;
-            }
-        }
-
-        vkEndCommandBuffer(cmd);
-
-        VkSemaphoreSubmitInfo wait{};
-        wait.sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO;
-        wait.semaphore = image_available[frame];
-        wait.stageMask = k_acquire_wait_stage;
-
-        VkSemaphoreSubmitInfo signal{};
-        signal.sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO;
-        signal.semaphore = render_finished[image_index];
-        signal.stageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
-
-        VkCommandBufferSubmitInfo cmd_info{};
-        cmd_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO;
-        cmd_info.commandBuffer = cmd;
-
-        VkSubmitInfo2 submit{};
-        submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO_2;
-        submit.waitSemaphoreInfoCount = 1;
-        submit.pWaitSemaphoreInfos = &wait;
-        submit.commandBufferInfoCount = 1;
-        submit.pCommandBufferInfos = &cmd_info;
-        submit.signalSemaphoreInfoCount = 1;
-        submit.pSignalSemaphoreInfos = &signal;
-        vkQueueSubmit2(device.graphics_queue(), 1, &submit, in_flight[frame]);
-
-        VkSwapchainKHR sc = swapchain.handle();
-        VkPresentInfoKHR present{};
-        present.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
-        present.waitSemaphoreCount = 1;
-        present.pWaitSemaphores = &render_finished[image_index];
-        present.swapchainCount = 1;
-        present.pSwapchains = &sc;
-        present.pImageIndices = &image_index;
-        VkResult present_result = vkQueuePresentKHR(device.graphics_queue(), &present);
-        if (present_result == VK_ERROR_OUT_OF_DATE_KHR || present_result == VK_SUBOPTIMAL_KHR) {
-            needs_recreate = true;
-        } else if (present_result != VK_SUCCESS) {
-            std::fprintf(stderr, "[fatal] vkQueuePresentKHR failed (%d)\n",
-                         static_cast<int>(present_result));
-            break;
-        }
-
-        if (screenshot_recorded) {
-            vkQueueWaitIdle(device.graphics_queue());
-            const bool bgra = swapchain.format() == VK_FORMAT_B8G8R8A8_SRGB ||
-                              swapchain.format() == VK_FORMAT_B8G8R8A8_UNORM;
-            if (FILE* f = std::fopen(screenshot_path, "wb")) {
-                std::fprintf(f, "P6\n%u %u\n255\n", present_extent.width, present_extent.height);
-                const auto* px = static_cast<const std::uint8_t*>(screenshot_buffer.mapped());
-                std::vector<std::uint8_t> row(static_cast<std::size_t>(present_extent.width) * 3);
-                for (std::uint32_t y = 0; y < present_extent.height; ++y) {
-                    for (std::uint32_t x = 0; x < present_extent.width; ++x) {
-                        const std::uint8_t* p =
-                            px + (static_cast<std::size_t>(y) * present_extent.width + x) * 4;
-                        row[x * 3 + 0] = bgra ? p[2] : p[0];
-                        row[x * 3 + 1] = p[1];
-                        row[x * 3 + 2] = bgra ? p[0] : p[2];
-                    }
-                    std::fwrite(row.data(), 1, row.size(), f);
-                }
-                std::fclose(f);
-                std::fprintf(stderr, "[screenshot] wrote %s\n", screenshot_path);
-            } else {
-                std::fprintf(stderr, "[screenshot] could not open %s\n", screenshot_path);
-            }
         }
 
         // Average frame time over the run, skipping the first frame (it carries
@@ -1423,7 +681,6 @@ int main() {
             frame_time_samples += 1;
         }
 
-        frame = (frame + 1) % k_frames_in_flight;
         // Advances every frame (audit A1): drives TAA jitter, the demo cube,
         // frame stats and engine.info — not only QUAT_MAX_FRAMES runs.
         ++presented;
@@ -1442,14 +699,7 @@ int main() {
     // ---- Teardown ----------------------------------------------------------
     vkDeviceWaitIdle(vk_device);
     world.shutdown(); // waits for a running terrain job, frees its upload pool
-    for (VkSemaphore s : render_finished) {
-        vkDestroySemaphore(vk_device, s, nullptr);
-    }
-    for (std::uint32_t i = 0; i < k_frames_in_flight; ++i) {
-        vkDestroySemaphore(vk_device, image_available[i], nullptr);
-        vkDestroyFence(vk_device, in_flight[i], nullptr);
-    }
-    vkDestroyCommandPool(vk_device, command_pool, nullptr);
+    renderer.destroy_frame_sync();
     swapchain = engine::rhi::Swapchain{};     // destroy swapchain before surface
     vkDestroySurfaceKHR(device.instance(), surface, nullptr);
     SDL_DestroyWindow(window);
