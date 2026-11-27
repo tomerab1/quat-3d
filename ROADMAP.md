@@ -225,8 +225,13 @@ JSON-RPC over loopback TCP to the engine.
 - [ ] **R16 — Water.** FFT ocean (JONSWAP) with single-layer water shading and
   Jolt buoyancy from a deterministic CPU height reference; later heightfield /
   shallow-water local sims and rivers from R10.2 erosion flow. *(medium)*
-- [ ] **R17 — Asset cooker formats.** KTX2 + Basis Universal textures,
-  meshoptimizer codecs and quantisation. *(quick win)*
+- [x] **R17 — Asset cooker formats.** KTX2 + Basis Universal textures,
+  meshoptimizer codecs and quantisation. *(quick win)* Simplified mesh LODs
+  were cut from R17 (no consumer yet) and moved to R17.1.
+  - [ ] **R17.1 Mesh LODs.** Cooker writes simplified index buffers
+    (`meshopt_simplifyWithAttributes` with the normal stream), the loader
+    validates and exposes them on `MeshAsset`, the renderer selects by
+    screen size; round-trip test.
 - [ ] **R18 — VFX graph (Niagara-class).** On R10.3's GPU particle core: a
   modular emitter model (spawn / init / update / render stages), a node
   graph compiled to Slang compute modules (shares R7's codegen), events

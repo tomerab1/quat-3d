@@ -1,0 +1,27 @@
+--- a/lib/basis_transcode.cpp
++++ b/lib/basis_transcode.cpp
+@@ -514,13 +514,17 @@
+     std::vector<basisu_transcoder_state> xcoderStates;
+     xcoderStates.resize(This->isVideo ? This->numFaces : 1);
+ 
+-    bit.decode_palettes(bgdh.endpointCount, BGD_ENDPOINTS_ADDR(bgd, imageCount),
+-                        bgdh.endpointsByteLength,
+-                        bgdh.selectorCount, BGD_SELECTORS_ADDR(bgd, bgdh, imageCount),
+-                        bgdh.selectorsByteLength);
+-
+-    bit.decode_tables(BGD_TABLES_ADDR(bgd, bgdh, imageCount),
+-                      bgdh.tablesByteLength);
++    // Corrupt codebooks or Huffman tables leave the transcoder's state
++    // partially built; transcoding slices with it reads out of bounds.
++    if (!bit.decode_palettes(bgdh.endpointCount, BGD_ENDPOINTS_ADDR(bgd, imageCount),
++                             bgdh.endpointsByteLength,
++                             bgdh.selectorCount, BGD_SELECTORS_ADDR(bgd, bgdh, imageCount),
++                             bgdh.selectorsByteLength)
++        || !bit.decode_tables(BGD_TABLES_ADDR(bgd, bgdh, imageCount),
++                              bgdh.tablesByteLength)) {
++        delete[] firstImages;
++        return KTX_FILE_DATA_ERROR;
++    }
+ 
+     // Find matching VkFormat and calculate output sizes.
+ 
