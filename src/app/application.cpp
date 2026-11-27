@@ -15,8 +15,6 @@
 namespace quat::app {
 namespace {
 
-constexpr int  k_window_width  = 1280;
-constexpr int  k_window_height = 720;
 constexpr char k_window_title[] = "quat-3d";
 
 #ifndef NDEBUG
@@ -71,8 +69,9 @@ bool Application::init_platform() {
     }
     platform_.sdl_initialized = true;
 
-    platform_.window = SDL_CreateWindow(k_window_title, k_window_width, k_window_height,
-                                        SDL_WINDOW_RESIZABLE | SDL_WINDOW_VULKAN);
+    platform_.window =
+        SDL_CreateWindow(k_window_title, config_.window_width, config_.window_height,
+                         SDL_WINDOW_RESIZABLE | SDL_WINDOW_VULKAN);
     if (platform_.window == nullptr) {
         SDL_Log("SDL_CreateWindow failed: %s", SDL_GetError());
         return false;
@@ -220,7 +219,8 @@ bool Application::init_subsystems() {
                   .world = &world_,
                   .camera = &camera_,
                   .shader_reload = shader_reload_.get(),
-                  .render_settings = &renderer_.render_settings()});
+                  .render_settings = &renderer_.render_settings(),
+                  .remote = &*remote_});
 #endif
     return true;
 }
@@ -293,6 +293,7 @@ bool Application::run_frame() {
     remote_->poll();
 #ifdef ENGINE_EDITOR
     editor_.begin_frame(); // UI frame + Play/Stop, save/load, instantiate
+    if (editor_.take_font_atlas_changed()) renderer_.reload_ui_fonts(); // DPI change
 #endif
 
     const VkExtent2D pixel_extent = window_pixel_extent(platform_.window);

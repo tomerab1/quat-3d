@@ -31,8 +31,12 @@ TIMEOUT="${SCENE_TIMEOUT:-300}"
 # Frame counts: TAA history and auto-exposure settle within ~30 frames; the
 # GPU terrain tile (513^2, 200 erosion steps, async readback) needs a few
 # frames to arrive, and the physics scene needs simulated seconds to fall.
+# Editor rows run at 1600x900 from the default layout (QUAT_EDITOR_LAYOUT;
+# scripts/editor-screenshots.sh captures more editor states) and are never
+# downscaled.
 SCENE_TABLE=(
-  "showcase-editor|30||Showcase scene with the editor UI"
+  "showcase-editor|30|QUAT_WINDOW_SIZE=1600x900 QUAT_EDITOR_LAYOUT=default|Showcase scene with the editor UI (1600x900)"
+  "editor-inspector|30|QUAT_WINDOW_SIZE=1600x900 QUAT_EDITOR_LAYOUT=default QUAT_EDITOR_SELECT=metal_sphere|Editor with an entity selected (Inspector)"
   "showcase|30|QUAT_NO_UI=1|Showcase scene, no UI"
   "terrain|90|QUAT_NO_UI=1 QUAT_TERRAIN=1|Showcase + GPU-generated terrain tile"
   "physics|90|QUAT_NO_UI=1 QUAT_PHYSICS=1|Physics demo (Jolt) after 90 frames"
