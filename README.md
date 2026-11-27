@@ -158,5 +158,5 @@ src/editor/       ImGui editor layer (ENGINE_EDITOR builds only)
 tests/            Windowless self-test harnesses (e.g. anim_smoke)
 ```
 
-Development follows the phased plan in [`PHASES.md`](PHASES.md); engine conventions
+Development follows the track-based plan in [`ROADMAP.md`](ROADMAP.md); engine conventions
 live in [`CLAUDE.md`](CLAUDE.md).

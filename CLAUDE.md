@@ -14,15 +14,21 @@ When there is a "proper" way and a "cheap" way to do something, default to the p
 
 ## Development Process
 
-See **`PHASES.md`** for the full phased plan. Work is divided into phases and slices.
-**Each slice ends with a git commit** using the format `[PhaseN/SliceM] <description>`.
+See **`ROADMAP.md`** for the plan. Work is organised into tracks (S stability,
+A AI tooling/MCP, R rendering, P platforms, G gameplay, E editor); each item
+has an ID and ends in commits titled `[<ID>] <description>` (`[<ID>.<n>]` for
+multi-commit items).
 
 Rules:
-- Complete and commit one slice before starting the next.
-- Build must be warning-free before committing.
-- Update the checkbox in `PHASES.md` for the completed slice as part of its commit.
-- Never implement functionality that belongs to a later phase.
-- If blocked, stop and report — do not skip ahead.
+- Follow the priority order stated in `ROADMAP.md`; finish an item before
+  starting work that depends on it.
+- Build must be warning-free and the headless tests green before committing.
+- New behaviour comes with a test the headless runner executes.
+- Tick the item's checkbox in `ROADMAP.md` in the commit that completes it.
+- If an item's scope is wrong, update `ROADMAP.md` first — do not drift silently.
+- All external data (files, network, remote requests) is untrusted: the engine
+  builds without exceptions, so never call `nlohmann::json::get`/`value` on it
+  directly — read it through `engine/core/json_fields.hpp`.
 
 ---
 
@@ -94,6 +100,7 @@ engine/
 │   │   ├── mesh_asset.cpp/.hpp
 │   │   ├── texture_asset.cpp/.hpp
 │   │   └── material_asset.cpp/.hpp
+│   ├── remote/                    # Remote-control JSON-RPC endpoint (MCP bridge target)
 │   ├── editor/                    # ImGui-based editor tools
 │   │   ├── editor.cpp/.hpp
 │   │   ├── scene_hierarchy.cpp/.hpp
@@ -101,6 +108,8 @@ engine/
 │   │   ├── asset_browser.cpp/.hpp
 │   │   └── animation_preview.cpp/.hpp
 │   └── main.cpp
+├── tools/
+│   └── quat-mcp/                  # Rust MCP server bridging models to engine_remote
 └── include/                       # Public headers mirroring src/ structure
     └── engine/
         ├── core/
@@ -213,6 +222,24 @@ struct Children     { std::vector<entt::entity> entities; };
 - State machine (`AnimStateMachine`) has states and parameterized transitions with crossfade duration.
 
 ---
+
+## Platforms
+
+- Linux and Windows run Vulkan natively. macOS runs Vulkan-on-Metal
+  (MoltenVK / KosmicKrisp); `ENGINE_DESCRIPTOR_SETS_FALLBACK` exists only for
+  drivers without `VK_EXT_descriptor_buffer`.
+- A native Metal backend is planned (ROADMAP P2/P5): keep new Vulkan types out
+  of renderer-facing APIs so the RHI can grow a second backend.
+
+## Remote control & MCP
+
+- `engine_remote` serves JSON-RPC 2.0 on 127.0.0.1 only (`QUAT_REMOTE=<port>`,
+  optional `QUAT_REMOTE_TOKEN`), polled once per frame on the main thread —
+  handlers may touch the ECS directly; no locks.
+- Handlers validate every parameter and return precise errors (models
+  self-correct from them). Paths from requests are confined to the project root.
+- `tools/quat-mcp` (Rust, rmcp) is the only MCP surface; the engine never
+  speaks MCP itself.
 
 ## Physics (Jolt)
 
