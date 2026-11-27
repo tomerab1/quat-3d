@@ -92,6 +92,15 @@ Details the contract leaves open, as implemented:
   yaw/pitch. `camera.frame` keeps the heading, looks down at least 20° and
   backs off until the bounding sphere of what the entity (and its children)
   draws fits the vertical field of view.
+- **Camera lens** (R20): the view's physical lens — `aperture_f` [0.7, 64],
+  `shutter_s` [1/16000, 30] s, `iso` [25, 409600], `sensor_height_mm`
+  [1, 100], `focal_length_mm` [0, 2000] (0 = `fov_deg` applies; otherwise it
+  sets the field of view from the sensor) and `focus_distance_m`
+  [0.05, 100000]. It drives depth of field (`dof`), the motion-blur shutter
+  and, with `exposure.physical`, the exposure. In the editor it belongs to
+  the fly camera (Renderer panel, "View camera lens"); in play through a
+  scene camera, and in non-editor builds, the active `camera` component's
+  lens fields are used.
 - **`render.screenshot`** captures the scene view (the editor viewport
   without UI, else the window), copied on the GPU into a per-frame readback
   buffer that is read after that frame's fence — no stall — then downscaled
@@ -182,8 +191,8 @@ values. Unknown fields are errors (they name the known fields).
 | `environment.get` | — | `{sun:{azimuth_deg, elevation_deg, intensity, color}, clouds:{enabled, coverage, density, bottom_km, thickness_km, size_km, detail, wind_speed, wind_dir_deg}}` |
 | `environment.set` | same shape, every field optional | `environment.get` result |
 | `world.ground_height` | `{points:[[x,z],...]}` (≤ 1024) | `{heights:[y \| null]}` — null where no terrain covers the point |
-| `camera.get` | — | `{position, yaw_deg, pitch_deg, fov_deg}` |
-| `camera.set` | `{position?, look_at?, yaw_deg?, pitch_deg?, fov_deg?}` | `camera.get` result |
+| `camera.get` | — | `{position, yaw_deg, pitch_deg, fov_deg, lens: {aperture_f, shutter_s, iso, sensor_height_mm, focal_length_mm, focus_distance_m}}` |
+| `camera.set` | `{position?, look_at?, yaw_deg?, pitch_deg?, fov_deg?, lens?}` (`lens` merges: omitted fields keep their values) | `camera.get` result |
 | `camera.frame` | `{entity?}` (whole scene when omitted) | `camera.get` result |
 | `render.screenshot` *(deferred)* | `{max_size?=1024}` | `{mime:"image/png", width, height, data:<base64>}` |
 | `asset.list_models` | — | `{models:[project-relative paths of .gltf/.glb]}` |

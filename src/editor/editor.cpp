@@ -514,7 +514,7 @@ void EditorLayer::build_ui(const EditorContext& ctx) {
         behavior_panel_->draw(*ctx.scene, selected_);
     }
     if (ctx.renderer != nullptr) {
-        draw_renderer_panel(*ctx.renderer, ctx.scene);
+        draw_renderer_panel(*ctx.renderer, ctx.scene, ctx.view_lens, ctx.view_fov_y);
     }
     if (!ctx.project_root.empty() && ctx.instantiate_request != nullptr) {
         draw_asset_browser(ctx.project_root, *ctx.instantiate_request);

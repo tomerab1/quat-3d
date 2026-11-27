@@ -13,6 +13,7 @@
 #include <glm/glm.hpp>
 #include <imgui.h>
 
+#include "engine/renderer/physical_camera.hpp"
 #include "engine/renderer/render_settings.hpp"
 #include "engine/scene/components.hpp"
 #include "engine/scene/material_override.hpp"
@@ -196,7 +197,36 @@ bool draw_material_field(entt::registry& r, entt::entity e, const scene::Materia
 
 } // namespace
 
-void draw_renderer_panel(RenderSettings& settings, scene::Scene* scene) {
+bool draw_lens_controls(renderer::PhysicalCamera& lens, float fov_y) {
+    using L = renderer::PhysicalCameraLimits;
+    constexpr ImGuiSliderFlags log = ImGuiSliderFlags_Logarithmic | ImGuiSliderFlags_AlwaysClamp;
+    bool changed = false;
+    changed |= ImGui::SliderFloat("aperture (f/)", &lens.aperture_f, 1.0F, 22.0F, "f/%.1f", log);
+    tooltip("Lower f-number: brighter and shallower depth of field");
+    float denominator = 1.0F / lens.shutter_s;
+    if (ImGui::SliderFloat("shutter (1/s)", &denominator, 1.0F / L::max_shutter, 8000.0F,
+                           "1/%.0f s", log)) {
+        lens.shutter_s = 1.0F / denominator;
+        changed = true;
+    }
+    tooltip("Exposure time; also the motion blur length (shutter angle)");
+    changed |= ImGui::SliderFloat("ISO", &lens.iso, 50.0F, 12800.0F, "%.0f", log);
+    changed |= ImGui::SliderFloat("focal length", &lens.focal_length_mm, 0.0F, 600.0F,
+                                  lens.focal_length_mm > 0.0F ? "%.0f mm" : "off (uses fov)",
+                                  ImGuiSliderFlags_AlwaysClamp);
+    tooltip("> 0 sets the field of view from the sensor size");
+    changed |= ImGui::SliderFloat("sensor height", &lens.sensor_height_mm, 4.0F, 60.0F,
+                                  "%.1f mm", ImGuiSliderFlags_AlwaysClamp);
+    changed |= ImGui::SliderFloat("focus distance", &lens.focus_distance_m, L::min_focus_m,
+                                  1000.0F, "%.2f m", log);
+    tooltip("Distance that is sharp with depth of field on");
+    ImGui::Text("EV100 %.1f, focal length %.0f mm", renderer::ev100(lens),
+                renderer::effective_focal_length_mm(lens, fov_y));
+    return changed;
+}
+
+void draw_renderer_panel(RenderSettings& settings, scene::Scene* scene,
+                         renderer::PhysicalCamera* view_lens, float view_fov_y) {
     if (!ImGui::Begin("Renderer")) {
         ImGui::End();
         return;
@@ -208,6 +238,15 @@ void draw_renderer_panel(RenderSettings& settings, scene::Scene* scene) {
         ImGui::PushID("sun");
         draw_sun(scene);
         ImGui::PopID();
+    }
+    if (view_lens != nullptr) {
+        const bool open = ImGui::CollapsingHeader("View camera lens");
+        tooltip("The editor camera's lens: depth of field, motion blur and physical exposure");
+        if (open) {
+            ImGui::PushID("view_lens");
+            (void)draw_lens_controls(*view_lens, view_fov_y);
+            ImGui::PopID();
+        }
     }
     for (const renderer::RenderSettingGroup& g : renderer::render_setting_groups()) {
         const std::string header(g.label);

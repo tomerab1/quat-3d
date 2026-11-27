@@ -15,6 +15,7 @@
 #include <entt/entity/entity.hpp>
 #include <glm/glm.hpp>
 
+#include "engine/renderer/physical_camera.hpp"
 #include "engine/scene/scene.hpp" // CameraMatrices
 
 struct SDL_Window;
@@ -72,6 +73,10 @@ public:
     float     yaw = 0.0F;
     float     pitch = 0.0F;
     float     fov_y = 0.0F; // remote camera.set can change it
+    // R20: the view's physical lens (exposure, depth of field, shutter); a
+    // focal length > 0 replaces fov_y. Remote camera.set and the editor's
+    // Renderer panel edit it.
+    engine::renderer::PhysicalCamera lens{};
 
 private:
     float move_speed_ = 3.0F;

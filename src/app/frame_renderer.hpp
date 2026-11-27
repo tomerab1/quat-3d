@@ -188,6 +188,9 @@ struct FrameInputs {
     const engine::scene::CameraMatrices* cam = nullptr; // unjittered
     VkExtent2D                           draw_extent{0, 0};
     float                                dt = 0.0F;
+    // R20: the lens of the camera `cam` views through when it is not a scene
+    // entity (the editor's fly camera); null: the scene's active Camera's.
+    const engine::renderer::PhysicalCamera* view_lens = nullptr;
     // Terrain tiles to draw into the GBuffer (null: none this frame).
     engine::renderer::TerrainPass* terrain = nullptr;
     glm::vec3                      terrain_anchor{0.0F};

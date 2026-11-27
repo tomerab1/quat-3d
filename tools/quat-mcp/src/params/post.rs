@@ -8,6 +8,30 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+/// A camera's physical lens (`camera_set` `lens`, the `camera` component).
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct LensParams {
+    /// Aperture f-number, 0.7..64 (default 2.8): lower is brighter with shallower depth of field.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub aperture_f: Option<f64>,
+    /// Shutter (exposure) time in seconds, 1/16000..30 (default 0.02): also the motion-blur length.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shutter_s: Option<f64>,
+    /// Sensitivity, 25..409600 (default 100).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub iso: Option<f64>,
+    /// Sensor height in mm, 1..100 (default 24, full frame).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sensor_height_mm: Option<f64>,
+    /// Focal length in mm, 0..2000 (0 = keep `fov_deg`; e.g. 24 wide, 50 normal, 85 portrait).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub focal_length_mm: Option<f64>,
+    /// Distance in metres that is in focus, 0.05..100000 (default 10).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub focus_distance_m: Option<f64>,
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct DofParams {
@@ -149,5 +173,23 @@ mod tests {
             serde_json::from_value(json!({"lut": "assets/luts/warm.cube", "gain_b": 1.1})).unwrap();
         assert_eq!(g.lut.as_deref(), Some("assets/luts/warm.cube"));
         assert!(serde_json::from_value::<FilmParams>(json!({"grain": 1})).is_err());
+    }
+
+    #[test]
+    fn camera_lens_is_forwarded_as_given() {
+        let p: crate::params::CameraSetParams = serde_json::from_value(
+            json!({"lens": {"focal_length_mm": 85, "aperture_f": 1.8, "focus_distance_m": 3}}),
+        )
+        .unwrap();
+        assert_eq!(
+            serde_json::to_value(&p).unwrap(),
+            json!({"lens": {"focal_length_mm": 85.0, "aperture_f": 1.8, "focus_distance_m": 3.0}})
+        );
+        assert!(
+            serde_json::from_value::<crate::params::CameraSetParams>(
+                json!({"lens": {"f_stop": 2}})
+            )
+            .is_err()
+        );
     }
 }

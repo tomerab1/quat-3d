@@ -100,6 +100,7 @@ struct RemoteBridgeTargets {
     float*     cam_yaw = nullptr;
     float*     cam_pitch = nullptr;
     float*     cam_fov_y = nullptr;
+    engine::renderer::PhysicalCamera* cam_lens = nullptr; // R20 view lens
 
     const engine::scene::GroundHeightFn* ground_height = nullptr;
 

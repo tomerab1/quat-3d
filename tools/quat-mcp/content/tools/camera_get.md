@@ -1,1 +1,1 @@
-Current viewport camera: `{position, yaw_deg, pitch_deg, fov_deg}`. yaw 0 looks along +X and 90 along +Z; positive pitch looks up.
+Current viewport camera: `{position, yaw_deg, pitch_deg, fov_deg, lens}`. yaw 0 looks along +X and 90 along +Z; positive pitch looks up. `lens` is the physical lens: `aperture_f`, `shutter_s`, `iso`, `sensor_height_mm`, `focal_length_mm` (0 = `fov_deg` applies) and `focus_distance_m`.

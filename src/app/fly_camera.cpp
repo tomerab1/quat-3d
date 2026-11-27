@@ -218,7 +218,8 @@ engine::scene::CameraMatrices FlyCamera::matrices(float aspect) const {
     engine::scene::CameraMatrices out;
     out.position = pos;
     out.view = glm::lookAt(pos, pos + fwd, glm::vec3(0.0F, 1.0F, 0.0F));
-    out.projection = glm::perspective(fov_y, aspect, defaults.near_z, defaults.far_z);
+    out.projection = glm::perspective(engine::renderer::effective_fov_y(lens, fov_y), aspect,
+                                      defaults.near_z, defaults.far_z);
     out.projection[1][1] *= -1.0F; // Vulkan clip space: Y points down
     out.view_proj = out.projection * out.view;
     return out;

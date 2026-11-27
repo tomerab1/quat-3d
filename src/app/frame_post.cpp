@@ -30,12 +30,16 @@ struct Lens {
     float             fov_y = 1.0471976F;
 };
 
-[[nodiscard]] Lens active_lens(const entt::registry* registry,
-                               const engine::scene::CameraMatrices& cam) {
+[[nodiscard]] Lens active_lens(const FrameInputs& in) {
     Lens out;
     // The projection's own FOV (P[1][1] = -1 / tan(fov / 2) after the Vulkan flip).
-    const float p11 = std::abs(cam.projection[1][1]);
+    const float p11 = std::abs(in.cam->projection[1][1]);
     if (p11 > 0.0F && std::isfinite(p11)) out.fov_y = 2.0F * std::atan(1.0F / p11);
+    if (in.view_lens != nullptr) {
+        out.camera = r::sanitized(*in.view_lens);
+        return out;
+    }
+    const entt::registry* registry = in.registry;
     if (registry == nullptr) return out;
     const entt::entity e = engine::scene::find_active_camera(*registry);
     if (e == entt::null) return out;
@@ -51,7 +55,7 @@ engine::rhi::ResourceHandle FrameRenderer::add_cinematic_post(
     DeferredFrame& fr = frames_[frame_];
     const FrameScene& fs = *in.scene;
     const engine::scene::CameraMatrices& cam = *in.cam;
-    const Lens lens = active_lens(in.registry, cam);
+    const Lens lens = active_lens(in);
     const float proj22 = cam.projection[2][2];
     const float proj32 = cam.projection[3][2];
 
@@ -141,7 +145,7 @@ engine::renderer::TonemapLook FrameRenderer::tonemap_look(const FrameInputs& in,
                                                           DeferredFrame& frame) {
     update_color_lut();
     frame.lut_in_use = lut_;
-    const Lens lens = active_lens(in.registry, *in.cam);
+    const Lens lens = active_lens(in);
     r::TonemapLook look;
     look.op = static_cast<r::TonemapOperator>(settings_.tonemap.op);
     look.grading = settings_.grading;

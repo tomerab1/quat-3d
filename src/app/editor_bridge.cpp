@@ -237,6 +237,10 @@ const ImDrawData* EditorBridge::build_ui(float dt, int draw_count,
     ui_ctx.scripts = world.scripts();
     ui_ctx.scene = &scene;
     ui_ctx.renderer = t_.render_settings;
+    if (!through_scene_camera()) {
+        ui_ctx.view_lens = &t_.camera->lens;
+        ui_ctx.view_fov_y = t_.camera->fov_y;
+    }
     ui_ctx.project_root = engine::core::path_to_utf8(project_root()); // UTF-8 for ImGui
     ui_ctx.instantiate_request = &pending_instantiate_;
     ui_ctx.save_request = &pending_save_;

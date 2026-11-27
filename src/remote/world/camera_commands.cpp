@@ -18,11 +18,41 @@ namespace {
 
 constexpr float k_max_pitch = 89.0F;
 
+[[nodiscard]] Json lens_json(const renderer::PhysicalCamera& l) {
+    return Json{{"aperture_f", l.aperture_f},
+                {"shutter_s", l.shutter_s},
+                {"iso", l.iso},
+                {"sensor_height_mm", l.sensor_height_mm},
+                {"focal_length_mm", l.focal_length_mm},
+                {"focus_distance_m", l.focus_distance_m}};
+}
+
 [[nodiscard]] Json pose_json(const CameraPose& p) {
     return Json{{"position", vec3_json(p.position)},
                 {"yaw_deg", p.yaw_deg},
                 {"pitch_deg", p.pitch_deg},
-                {"fov_deg", p.fov_deg}};
+                {"fov_deg", p.fov_deg},
+                {"lens", lens_json(p.lens)}};
+}
+
+// Merges the optional `lens` object (R20) into `lens`; fields it omits keep
+// their values. Errors land in `f` under "lens.<field>".
+void read_lens(core::JsonFields& f, renderer::PhysicalCamera& lens) {
+    const Json* v = f.raw("lens");
+    if (v == nullptr || v->is_null()) return;
+    if (!v->is_object()) {
+        f.fail("lens", "expected an object of lens fields");
+        return;
+    }
+    using L = renderer::PhysicalCameraLimits;
+    core::JsonFields l(*v, "lens");
+    l.number("aperture_f", lens.aperture_f, L::min_aperture, L::max_aperture)
+        .number("shutter_s", lens.shutter_s, L::min_shutter, L::max_shutter)
+        .number("iso", lens.iso, L::min_iso, L::max_iso)
+        .number("sensor_height_mm", lens.sensor_height_mm, L::min_sensor_mm, L::max_sensor_mm)
+        .number("focal_length_mm", lens.focal_length_mm, 0.0F, L::max_focal_mm)
+        .number("focus_distance_m", lens.focus_distance_m, L::min_focus_m, L::max_focus_m);
+    if (auto ok = finish(l); !ok) f.fail("lens", ok.error().message);
 }
 
 [[nodiscard]] glm::vec3 forward_of(const CameraPose& p) {
@@ -60,6 +90,7 @@ RpcResult camera_set(Context& ctx, const Json& params) {
     f.number("yaw_deg", pose.yaw_deg, -360.0F, 360.0F);
     f.number("pitch_deg", pose.pitch_deg, -k_max_pitch, k_max_pitch);
     f.number("fov_deg", pose.fov_deg, 1.0F, 179.0F);
+    read_lens(f, pose.lens);
     if (has_target && has_angles) f.fail("look_at", "give either look_at or yaw_deg/pitch_deg, not both");
     if (has_target && f.ok()) {
         if (glm::length(target - pose.position) < 1e-4F) {
@@ -161,11 +192,11 @@ void screenshot(Context& ctx, const Json& params, Responder responder) {
 void register_camera_commands(RpcServer& server, const ContextPtr& ctx) {
     server.add_method("camera.get",
                       "View camera: {position, yaw_deg (0 = +X, 90 = +Z), pitch_deg (up > 0), "
-                      "fov_deg}.",
+                      "fov_deg, lens}.",
                       [ctx](const Json& p) { return camera_get(*ctx, p); });
     server.add_method("camera.set",
                       "Move the view camera: {position?, look_at? | yaw_deg?/pitch_deg?, "
-                      "fov_deg?}; returns camera.get.",
+                      "fov_deg?, lens?}; returns camera.get.",
                       [ctx](const Json& p) { return camera_set(*ctx, p); });
     server.add_method("camera.frame",
                       "Point the view camera at an entity (and its children) or, without "

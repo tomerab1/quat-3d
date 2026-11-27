@@ -270,6 +270,7 @@ void Application::connect_remote() {
     remote_targets.cam_yaw = &camera_.yaw;
     remote_targets.cam_pitch = &camera_.pitch;
     remote_targets.cam_fov_y = &camera_.fov_y;
+    remote_targets.cam_lens = &camera_.lens;
     remote_targets.render_settings = &renderer_.render_settings();
     remote_targets.material_overrides = &renderer_.material_overrides();
     remote_targets.reset_temporal = [this] { renderer_.reset_temporal(); };
@@ -389,6 +390,10 @@ bool Application::run_frame() {
     frame_inputs.cam = &cam;
     frame_inputs.draw_extent = draw_extent;
     frame_inputs.dt = dt;
+#ifdef ENGINE_EDITOR
+    // The editor views through its fly camera unless Play uses the scene's.
+    if (!editor_.through_scene_camera()) frame_inputs.view_lens = &camera_.lens;
+#endif
     frame_inputs.grass = world_.grass();
     frame_inputs.particles = world_.particles();
     frame_inputs.sim_dt = sim_dt;

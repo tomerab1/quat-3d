@@ -138,6 +138,7 @@ struct RemoteBridge::Impl {
         p.yaw_deg = glm::degrees(*t.cam_yaw);
         p.pitch_deg = glm::degrees(*t.cam_pitch);
         p.fov_deg = glm::degrees(*t.cam_fov_y);
+        if (t.cam_lens != nullptr) p.lens = *t.cam_lens;
         return p;
     }
 
@@ -146,12 +147,14 @@ struct RemoteBridge::Impl {
         *t.cam_yaw = glm::radians(p.yaw_deg);
         *t.cam_pitch = glm::radians(glm::clamp(p.pitch_deg, -89.0F, 89.0F));
         *t.cam_fov_y = glm::radians(p.fov_deg);
+        if (t.cam_lens != nullptr) *t.cam_lens = engine::renderer::sanitized(p.lens);
         if (t.reset_temporal) t.reset_temporal(); // a teleport, not a camera move
 #ifndef ENGINE_EDITOR
         // Without the editor the view renders through the scene camera.
         entt::registry& r = t.scene->registry();
         if (const entt::entity cam = engine::scene::find_active_camera(r); cam != entt::null) {
             r.get<engine::scene::Camera>(cam).fov_y = *t.cam_fov_y;
+            if (t.cam_lens != nullptr) r.get<engine::scene::Camera>(cam).lens = *t.cam_lens;
         }
 #endif
     }

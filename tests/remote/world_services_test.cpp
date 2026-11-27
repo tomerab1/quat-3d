@@ -211,6 +211,50 @@ TEST_F(WorldWithServices, CameraSetLookAtAndFrame) {
     err("camera.frame", {{"entity", "missing"}}, code::not_found);
 }
 
+// R20: camera.set merges the view's physical lens; bad lens values are
+// rejected with the field and change nothing.
+TEST_F(WorldWithServices, CameraSetMergesTheLens) {
+    Json got = ok("camera.get");
+    EXPECT_FLOAT_EQ(got["lens"]["aperture_f"].get<float>(), 2.8F);
+    got = ok("camera.set", {{"lens", {{"focal_length_mm", 85}, {"focus_distance_m", 3}}}});
+    EXPECT_FLOAT_EQ(camera.lens.focal_length_mm, 85.0F);
+    EXPECT_FLOAT_EQ(camera.lens.focus_distance_m, 3.0F);
+    EXPECT_FLOAT_EQ(camera.lens.aperture_f, 2.8F); // kept
+    EXPECT_FLOAT_EQ(got["lens"]["focal_length_mm"].get<float>(), 85.0F);
+    const std::string msg =
+        err("camera.set", {{"lens", {{"aperture_f", 0.1}}}}, code::invalid_params);
+    EXPECT_NE(msg.find("aperture_f"), std::string::npos) << msg;
+    err("camera.set", {{"lens", {{"f_stop", 2}}}}, code::invalid_params);
+    err("camera.set", {{"lens", 3}}, code::invalid_params);
+    EXPECT_FLOAT_EQ(camera.lens.aperture_f, 2.8F);
+}
+
+// R20: a look LUT set over render.settings.set must be a valid .cube inside
+// the project; the parser's error comes back and nothing changes.
+TEST_F(WorldWithServices, LookLutIsValidatedOnSet) {
+    fs::create_directories(root.path() / "luts");
+    {
+        std::ofstream good(root.path() / "luts" / "id.cube");
+        good << "LUT_3D_SIZE 2\n0 0 0\n1 0 0\n0 1 0\n1 1 0\n0 0 1\n1 0 1\n0 1 1\n1 1 1\n";
+        std::ofstream bad(root.path() / "luts" / "bad.cube");
+        bad << "LUT_3D_SIZE 2\n0 0 0\n";
+    }
+    ok("render.settings.set", {{"grading", {{"lut", "luts/id.cube"}}}});
+    EXPECT_EQ(settings.grading.lut, "luts/id.cube");
+    std::string msg = err("render.settings.set",
+                          {{"grading", {{"lut", "luts/bad.cube"}, {"contrast", 1.5}}}},
+                          code::invalid_params);
+    EXPECT_TRUE(contains(msg, "grading.lut") && contains(msg, "expected 8")) << msg;
+    msg = err("render.settings.set", {{"grading", {{"lut", "luts/missing.cube"}}}},
+              code::invalid_params);
+    EXPECT_TRUE(contains(msg, "missing.cube")) << msg;
+    err("render.settings.set", {{"grading", {{"lut", "../outside.cube"}}}}, code::invalid_params);
+    EXPECT_EQ(settings.grading.lut, "luts/id.cube");
+    EXPECT_FLOAT_EQ(settings.grading.contrast, 1.0F); // the failed call changed nothing
+    ok("render.settings.set", {{"grading", {{"lut", ""}}}});
+    EXPECT_EQ(settings.grading.lut, "");
+}
+
 TEST_F(WorldWithServices, PathsAreConfinedToTheProjectRoot) {
     for (const char* bad : {"../outside.json", "/etc/passwd.json", "a/../../x.json", "", "."}) {
         const std::string msg = err("scene.save", {{"path", bad}}, code::invalid_params);

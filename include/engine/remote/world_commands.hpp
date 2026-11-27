@@ -36,6 +36,7 @@
 
 #include "engine/core/error.hpp"
 #include "engine/remote/rpc_server.hpp"
+#include "engine/renderer/physical_camera.hpp"
 
 namespace engine::core {
 class LogRing;
@@ -67,6 +68,9 @@ struct CameraPose {
     float     yaw_deg = 0.0F;
     float     pitch_deg = 0.0F;
     float     fov_deg = 60.0F; // vertical field of view
+    // R20 physical lens of the view (exposure, depth of field, shutter); a
+    // focal length > 0 overrides fov_deg.
+    renderer::PhysicalCamera lens{};
 };
 
 // Frame timing over the last `samples` frames and renderer counters, for

@@ -288,6 +288,9 @@ pub struct CameraSetParams {
     /// Vertical field of view in degrees.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fov_deg: Option<f64>,
+    /// Physical lens of the view (depth of field, motion blur, physical exposure); omitted fields keep their values.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lens: Option<LensParams>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
