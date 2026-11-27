@@ -55,6 +55,9 @@ TEST_F(ComponentJson, RoundTripsEveryWritableComponent) {
                      {"octaves", 5}, {"warp", 0.2}, {"droplets", 1000}, {"snowline", 40},
                      {"streaming", true}, {"stream_radius", 2}}},
         {"net_replicated", {{"net_id", 1234}}},
+        {"audio_source", {{"clip", "assets/audio/hum.wav"}, {"bus", "sfx"}, {"volume", 0.5},
+                          {"pitch", 2}, {"loop", true}, {"spatial", false}}},
+        {"audio_listener", {{"active", true}}},
     };
     for (const auto& [name, value] : authored.items()) {
         ASSERT_OK(apply(name, value)) << "while applying " << name;

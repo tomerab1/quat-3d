@@ -30,6 +30,7 @@
 #include <glm/gtc/constants.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 
+#include "app/audio_runtime.hpp"
 #include "app/demo_scenes.hpp"
 #include "engine/animation/animator.hpp"
 #include "engine/animation/clip.hpp"
@@ -865,6 +866,8 @@ int main() {
             });
     }
 
+    quat::app::AudioRuntime audio_runtime = quat::app::AudioRuntime::create(QUAT_PROJECT_ROOT);
+
     while (running) {
         // Per-frame accumulated mouse-look delta.
         float look_dx = 0.0F;
@@ -1398,9 +1401,11 @@ int main() {
             through_scene_camera
                 ? engine::scene::camera_system(scene.registry(), aspect)
                 : fly_camera_matrices(cam_pos, cam_yaw, cam_pitch, aspect);
+        audio_runtime.update(scene.registry(), cam.view, editor_play, dt);
 #else
         const engine::scene::CameraMatrices cam =
             engine::scene::camera_system(scene.registry(), aspect);
+        audio_runtime.update(scene.registry(), cam.view, /*live=*/true, dt);
 #endif
 
         // TAA: jitter the projection sub-pixel each frame (Halton). The whole

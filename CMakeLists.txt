@@ -93,6 +93,17 @@ find_package(EnTT CONFIG REQUIRED)
 find_package(Jolt CONFIG REQUIRED)
 find_package(recastnavigation CONFIG REQUIRED)
 find_package(GameNetworkingSockets CONFIG REQUIRED)
+# miniaudio: vcpkg's port is header-only (it installs miniaudio.h and nothing
+# else), so it is wrapped in an imported target here and engine_audio compiles
+# the implementation (src/audio/miniaudio_impl.cpp). Linux needs pthread, libm
+# and libdl (playback backends are dlopen'ed at runtime).
+find_package(Threads REQUIRED)
+find_path(MINIAUDIO_INCLUDE_DIR miniaudio.h REQUIRED)
+add_library(miniaudio_headers INTERFACE IMPORTED)
+set_target_properties(miniaudio_headers PROPERTIES
+    INTERFACE_INCLUDE_DIRECTORIES "${MINIAUDIO_INCLUDE_DIR}")
+target_link_libraries(miniaudio_headers INTERFACE
+    Threads::Threads ${CMAKE_DL_LIBS} $<$<PLATFORM_ID:Linux,FreeBSD>:m>)
 if(ENGINE_EDITOR)
     find_package(imgui CONFIG REQUIRED)
     find_package(imguizmo CONFIG REQUIRED)
@@ -178,6 +189,7 @@ add_library(engine_scene STATIC
     src/scene/behavior.cpp
     src/scene/scene_io.cpp
     src/scene/component_json.cpp
+    src/scene/audio_system.cpp
     src/scene/primitives.cpp)
 # EnTT is PUBLIC: components.hpp exposes entt types (Parent/Children) to consumers.
 # engine_renderer is PUBLIC: scene.hpp's RenderCollectSystem fills a renderer
@@ -186,7 +198,7 @@ add_library(engine_scene STATIC
 # handle and the glTF loader extracts skins.
 target_link_libraries(engine_scene PUBLIC
     engine_flags engine_asset engine_rhi engine_renderer engine_animation engine_physics
-    engine_terrain engine_nav EnTT::EnTT)
+    engine_terrain engine_nav engine_audio EnTT::EnTT)
 # fastgltf and stb (image decode) are implementation details of the loader.
 # nlohmann_json is PUBLIC: component_json.hpp exposes JSON values (the codec
 # shared by scene files and the remote-control API).
@@ -236,6 +248,19 @@ else()
 endif()
 target_link_libraries(engine_net PRIVATE engine_scene)
 target_include_directories(engine_net PUBLIC ${ENGINE_PUBLIC_INCLUDE})
+
+# ---------------------------------------------------------------------------
+# engine_audio — miniaudio mixer, buses and 3D sound (G1). miniaudio is an
+# implementation detail (PRIVATE); the public header is miniaudio-free (PIMPL).
+# ---------------------------------------------------------------------------
+add_library(engine_audio STATIC
+    src/audio/audio_engine.cpp
+    src/audio/miniaudio_impl.cpp)
+target_link_libraries(engine_audio PUBLIC engine_flags glm::glm)
+target_link_libraries(engine_audio PRIVATE miniaudio_headers)
+target_include_directories(engine_audio PUBLIC ${ENGINE_PUBLIC_INCLUDE})
+# miniaudio's implementation is not warning-clean under our strict flags.
+set_source_files_properties(src/audio/miniaudio_impl.cpp PROPERTIES COMPILE_OPTIONS "-w")
 
 # ---------------------------------------------------------------------------
 # engine_remote — remote-control endpoint (Phase 15): loopback JSON-RPC 2.0
@@ -302,6 +327,7 @@ if(ENGINE_EDITOR)
         src/editor/animation_preview.cpp
         src/editor/physics_debug.cpp
         src/editor/scene_snapshot.cpp
+        src/editor/audio_inspector.cpp
         src/editor/vendor/imgui_impl_sdl3.cpp)
     # engine_scene is PUBLIC: editor.hpp exposes entt entity types (selection)
     # and the hierarchy/inspector panels reflect scene components.
@@ -322,10 +348,11 @@ endif()
 # the frame loop pieces moving out of main.cpp); it is not an engine library.
 add_executable(game
     src/main.cpp
-    src/app/demo_scenes.cpp)
+    src/app/demo_scenes.cpp
+    src/app/audio_runtime.cpp)
 target_link_libraries(game PRIVATE
     engine_flags engine_rhi engine_asset engine_scene engine_renderer engine_physics
-    engine_terrain engine_nav engine_net engine_remote SDL3::SDL3)
+    engine_terrain engine_nav engine_net engine_remote engine_audio SDL3::SDL3)
 if(ENGINE_EDITOR)
     target_link_libraries(game PRIVATE engine_editor)
 endif()

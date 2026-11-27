@@ -40,6 +40,8 @@ constexpr std::array k_components = {
     ComponentInfo{"patrol", "Patrol route the nav agent walks", true, true},
     ComponentInfo{"terrain", "Procedural terrain tile / streamed world", true, true},
     ComponentInfo{"net_replicated", "Replicate this entity's transform to network clients", true, true},
+    ComponentInfo{"audio_source", "Sound emitter: wav/flac/mp3 clip on a bus, optionally 3D", true, true},
+    ComponentInfo{"audio_listener", "The audio listener follows this entity (else the camera)", true, true},
     ComponentInfo{"animator", "Animation playback of a glTF clip (time, speed, looping)", false, true},
     ComponentInfo{"mesh", "glTF mesh provenance (read-only)", false, false},
 };
@@ -54,6 +56,15 @@ constexpr EnumName<PrimitiveShape> k_primitive_shapes[] = {
     {"cube", PrimitiveShape::cube},         {"sphere", PrimitiveShape::sphere},
     {"plane", PrimitiveShape::plane},       {"cylinder", PrimitiveShape::cylinder},
     {"cone", PrimitiveShape::cone},         {"capsule", PrimitiveShape::capsule}};
+
+constexpr EnumName<audio::AudioBus> k_audio_buses[] = {
+    {"master", audio::AudioBus::master}, {"music", audio::AudioBus::music},
+    {"sfx", audio::AudioBus::sfx},       {"ui", audio::AudioBus::ui},
+    {"ambience", audio::AudioBus::ambience}};
+constexpr EnumName<AudioCommand> k_audio_commands[] = {
+    {"none", AudioCommand::none}, {"play", AudioCommand::play}, {"stop", AudioCommand::stop},
+    {"pause", AudioCommand::pause}, {"resume", AudioCommand::resume}};
+constexpr std::size_t k_max_clip_path = 4096;
 
 template <typename E, std::size_t N>
 [[nodiscard]] std::string enum_name(const EnumName<E> (&names)[N], E value) {
@@ -312,6 +323,20 @@ json encode_components(const entt::registry& r, entt::entity e, const EncodeOpti
                           {"stream_radius", t->stream_radius}};
     }
     if (const auto* n = r.try_get<NetReplicated>(e)) out["net_replicated"] = {{"net_id", n->net_id}};
+    if (const auto* a = r.try_get<AudioSource>(e)) {
+        out["audio_source"] = {{"clip", a->clip},
+                               {"bus", enum_name(k_audio_buses, a->bus)},
+                               {"volume", a->volume},
+                               {"pitch", a->pitch},
+                               {"loop", a->loop},
+                               {"play_on_start", a->play_on_start},
+                               {"spatial", a->spatial},
+                               {"min_distance", a->min_distance},
+                               {"max_distance", a->max_distance},
+                               {"rolloff", a->rolloff},
+                               {"doppler", a->doppler}};
+    }
+    if (const auto* l = r.try_get<AudioListener>(e)) out["audio_listener"] = {{"active", l->active}};
     if (const auto* a = r.try_get<Animator>(e)) {
         out["animator"] = {{"time", a->time}, {"speed", a->speed}, {"looping", a->looping}};
     }
@@ -466,6 +491,26 @@ std::expected<void, core::Error> apply_component(entt::registry& r, entt::entity
             f.integer("net_id", n.net_id, 0, 0xFFFFFFFFLL);
         });
     }
+    if (name == "audio_source") {
+        // `command` is write-only: the audio system consumes it (play, stop,
+        // pause, resume) — how remote tools trigger a sound.
+        return merge<AudioSource>(r, e, v, name, strict, [](JsonFields& f, AudioSource& a) {
+            f.string("clip", a.clip, k_max_clip_path).enumeration("bus", a.bus, k_audio_buses);
+            if (a.clip.find('\0') != std::string::npos) f.fail("clip", "must not contain NUL");
+            f.number("volume", a.volume, 0.0F, 16.0F).number("pitch", a.pitch, 0.01F, 16.0F);
+            f.boolean("loop", a.loop).boolean("play_on_start", a.play_on_start);
+            f.boolean("spatial", a.spatial);
+            f.number("min_distance", a.min_distance, 0.01F, 1.0e6F);
+            f.number("max_distance", a.max_distance, 0.01F, 1.0e6F);
+            f.number("rolloff", a.rolloff, 0.0F, 100.0F).number("doppler", a.doppler, 0.0F, 10.0F);
+            f.enumeration("command", a.command, k_audio_commands);
+            if (a.max_distance < a.min_distance) f.fail("max_distance", "must be >= min_distance");
+        });
+    }
+    if (name == "audio_listener") {
+        return merge<AudioListener>(r, e, v, name, strict,
+                                    [](JsonFields& f, AudioListener& l) { f.boolean("active", l.active); });
+    }
     if (name == "animator") {
         if (!r.all_of<Animator>(e)) {
             return std::unexpected(core::Error{
@@ -502,6 +547,8 @@ bool remove_component(entt::registry& r, entt::entity e, std::string_view name) 
     if (name == "patrol") return r.remove<PatrolRoute>(e) > 0;
     if (name == "terrain") return r.remove<Terrain>(e) > 0;
     if (name == "net_replicated") return r.remove<NetReplicated>(e) > 0;
+    if (name == "audio_source") return r.remove<AudioSource>(e) > 0;
+    if (name == "audio_listener") return r.remove<AudioListener>(e) > 0;
     if (name == "animator") return r.remove<Animator>(e) > 0;
     return false; // transform (not removable) or unknown
 }
