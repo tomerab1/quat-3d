@@ -249,6 +249,51 @@ JSON-RPC over loopback TCP to the engine.
   (MoltenVK included) has a path; foliage and instanced meshes first, then
   shadows (virtual shadow maps as a follow-up). *(very large; after R5, R6,
   R9.4)*
+- [ ] **R22 — Time of day, sun & moon, night sky** *(owner request: "starry
+  nights … a time system where the sun rises and sets, with a moon")*.
+  Canonical reference: Jensen, Durand, Stark, Premože, Dorsey, Shirley, "A
+  Physically-Based Night Sky Model" (SIGGRAPH 2001).
+  - [ ] **R22.1 World clock + astronomy** (simulation only, no shader
+    changes). `engine_astro`: pure double-precision CPU ephemerides — UTC ↔
+    Julian date with ΔT, Greenwich / local mean sidereal time, precession,
+    nutation (low precision), the Meeus / NOAA low-precision Sun (≈ 0.01°)
+    with the equation of time, sunrise / sunset / solar noon, the Meeus
+    ch. 47 Moon (≪ 1°) with phase angle, illuminated fraction, bright-limb
+    angle, optical libration and moonrise / moonset, refraction, airmass and
+    extra-atmospheric sun / moon illuminance (lux), and the celestial-sphere
+    rotation (J2000 → world) for the star field. Tested against Meeus'
+    worked examples and published rise / set times. A `WorldClock` (one per
+    scene, like `WeatherState`) advances on the sim clock (pause / step /
+    time scale apply), derives a renderer-facing `SkyState` POD each tick
+    and, when enabled, drives the scene's `DirectionalLight` so real
+    sunrises and sunsets work with the existing atmosphere; disabled, nothing
+    changes. Scene files, remote `time.get` / `time.set` / `time.skip`,
+    quat-mcp tools, an editor Time of Day section and CI sunrise / noon /
+    sunset screenshots. Lua binding when G7 lands.
+  - [ ] **R22.2 Night sky rendering** (after #80 lighting realism and #64
+    weather land; state of the art, physical units throughout):
+    - *Atmosphere:* Hillaire 2020 with the Moon as a second light; airglow and
+      zodiacal light (Jensen et al. 2001); a light-pollution skyglow parameter
+      (Garstang model).
+    - *Stars:* a tiered catalogue — bright stars (Hipparcos or Yale BSC) as
+      energy-conserving, TAA-stable sub-pixel PSF splats in physical units,
+      B−V → colour, airmass extinction from the transmittance LUT, refraction
+      near the horizon, scintillation; faint stars and the Milky Way as an HDR
+      sky texture (ESA Gaia sky map, CC BY-SA 3.0 IGO, or NASA SVS Deep Star
+      Maps, public domain — licences verified before import) rotated by
+      `SkyState`'s sidereal matrix.
+    - *Moon:* NASA CGI Moon Kit textures; a Hapke / Lommel-Seeliger BRDF with
+      the opposition surge; correct phase and libration (from `SkyState`);
+      earthshine; moonlight as the shadow caster with a twilight hand-off
+      from the sun.
+    - *Perception:* wide-range histogram auto-exposure; scotopic / mesopic
+      response with the Purkinje shift; night acuity loss and noise
+      (Thompson, Shirley & Ferwerda 2002; Kirk & O'Brien 2011).
+    - *Integration:* time-sliced IBL rebakes; moonlit volumetric clouds and
+      fog; optional aurora and meteors.
+    - *Validation:* photometric reference checks (full-moon ground
+      illuminance ≈ 0.1–0.3 lux, moonless clear sky ≈ 0.001 lux, Sirius at
+      magnitude −1.46) and twilight / night golden screenshots.
 
 ## P — Platforms & shipping
 
