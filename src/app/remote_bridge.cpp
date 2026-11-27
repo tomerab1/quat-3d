@@ -614,6 +614,8 @@ float RemoteBridge::advance_sim(float real_dt) {
     return m.clock.advance(real_dt);
 }
 
+float RemoteBridge::advance_sim_unrendered() { return impl_->clock.advance(0.0F); }
+
 void RemoteBridge::note_draws(std::size_t draws) {
     impl_->draws = static_cast<std::uint32_t>(std::min<std::size_t>(draws, UINT32_MAX));
 }

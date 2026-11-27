@@ -36,6 +36,8 @@ namespace {
 constexpr int k_max_log_limit = 1000;
 constexpr std::size_t k_max_filter = 256;
 constexpr int k_max_step_frames = 10'000;
+// Outstanding debug.step waits (each parks a responder until its steps run).
+constexpr std::size_t k_max_step_waits = 64;
 
 [[nodiscard]] Json log_line_json(const core::LogLine& l) {
     return Json{{"seq", l.seq},
@@ -205,14 +207,28 @@ void debug_step(const ContextPtr& ctx, const Json& params, Responder responder) 
         responder.reply(std::unexpected(clock.error()));
         return;
     }
-    const std::uint64_t target = (*clock)->step(static_cast<std::uint32_t>(frames), dt);
-    if (!ctx->services.when_stepped) {
+    const bool waits = static_cast<bool>(ctx->services.when_stepped);
+    if (waits && ctx->step_waits >= k_max_step_waits) {
+        responder.reply(rpc_fail(rpc_code::failed,
+                                 "busy: " + std::to_string(k_max_step_waits) +
+                                     " debug.step requests are already waiting for their steps; "
+                                     "retry once one replies, or debug.resume to drop them"));
+        return;
+    }
+    const auto target = (*clock)->step(static_cast<std::uint32_t>(frames), dt);
+    if (!target) {
+        responder.reply(rpc_fail(rpc_code::failed, "debug.step: " + target.error().message));
+        return;
+    }
+    if (!waits) {
         responder.reply(sim_clock_json(**clock));
         return;
     }
     // std::function needs a copyable callable; the Responder is move-only.
     auto shared = std::make_shared<Responder>(std::move(responder));
-    ctx->services.when_stepped(target, [ctx, shared] {
+    ++ctx->step_waits;
+    ctx->services.when_stepped(*target, [ctx, shared] {
+        --ctx->step_waits;
         if (ctx->services.sim_clock != nullptr) {
             shared->reply(sim_clock_json(*ctx->services.sim_clock));
         } else {

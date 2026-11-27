@@ -22,7 +22,9 @@
 //                        scatter regeneration, finished screenshots,
 //                        completed debug.step requests
 //   advance_sim(dt)      once per frame with the real frame time: records it
-//                        and returns the simulation dt (0 while paused)
+//                        and returns the simulation dt (0 while paused);
+//                        advance_sim_unrendered() instead on iterations that
+//                        draw nothing (minimised)
 //   note_draws(n)        the frame's submitted draw count (debug.stats)
 //   record_capture()     after the frame's graph is recorded: copies the
 //                        final scene image for pending screenshots
@@ -139,6 +141,10 @@ public:
 
     // Simulation dt for this frame given the real frame time `real_dt`.
     [[nodiscard]] float advance_sim(float real_dt);
+    // Simulation dt for a loop iteration that draws no frame (minimised
+    // window): the next queued debug.step step, else 0 — real-time simulation
+    // stays frozen, but stepping callers still get their reply.
+    [[nodiscard]] float advance_sim_unrendered();
     void note_draws(std::size_t draws);
 
     [[nodiscard]] bool listening() const;
