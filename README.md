@@ -14,6 +14,16 @@ drive directly to build and debug worlds from a prompt.
 > Context Protocol, macOS support, and audio. See [Roadmap](#roadmap) and
 > [`docs/STATUS.md`](docs/STATUS.md) for what is in progress right now.
 
+## Screenshots
+
+Real engine output, rendered headless on a software Vulkan driver (lavapipe) by
+the CI screenshot pipeline — no ambient occlusion or cascaded shadows yet (in
+progress, ROADMAP R12).
+
+| Showcase (PBR materials, glass) | Terrain (GPU synthesis + GPU grass) | Physics |
+|---|---|---|
+| ![showcase](docs/screenshots/showcase.png) | ![terrain](docs/screenshots/terrain.png) | ![physics](docs/screenshots/physics.png) |
+
 ## What it can do today
 
 **Rendering**
@@ -191,6 +201,8 @@ Environment variables switch on extra modes:
 | `QUAT_HOST=<port>` / `QUAT_JOIN=<ip:port>` | Host or join a networked session |
 | `QUAT_REMOTE=<port>` | Open the remote-control endpoint for AI tools (`1` = port 7878); add `QUAT_REMOTE_TOKEN=<secret>` to require a token — see [`docs/remote-control.md`](docs/remote-control.md) |
 | `QUAT_LOG_CAPTURE=0` | With `QUAT_REMOTE`: do not tee stderr into the engine log the AI debugging tools read (`debug.log`) |
+| `QUAT_SHADER_HOT_RELOAD=0` / `=1` | Turn shader hot reload off (on by default in editor builds) or on (in non-editor builds): saving a `.slang` file under `assets/shaders/` recompiles it and swaps the pipelines in — see [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md#shader-hot-reload) |
+| `QUAT_SLANGC=<path>` | The `slangc` hot reload compiles with (default: the one the build used, else `PATH`) |
 | `QUAT_NO_UI=1` | Run without the editor UI |
 | `QUAT_NO_VSYNC=1` | Disable vsync |
 | `QUAT_NO_AUDIO=1` | Mute: run audio without opening a playback device |

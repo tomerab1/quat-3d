@@ -99,7 +99,7 @@ demand (`workflow_dispatch`):
 
 | Job | Runner | Preset | Tests |
 |---|---|---|---|
-| `linux` | ubuntu-24.04 | `release` | CPU + GPU on Mesa lavapipe |
+| `linux` | ubuntu-24.04 | `release` | CPU + GPU on Mesa lavapipe; then `game` once more with `ENGINE_EDITOR=OFF` (sharing the dependency tree) |
 | `windows` | windows-2022 | `windows-release` | CPU + GPU on Mesa lavapipe (Windows build, from `jakoch/install-vulkan-sdk-action`) |
 | `macos` | macos-15 (Apple Silicon) | `macos-release` | CPU; GPU on MoltenVK over the runner's paravirtual Metal device — informational (`continue-on-error`) until P1 makes it a gate |
 | `rust` | ubuntu-24.04 | — | `tools/quat-mcp` fmt, clippy, tests |

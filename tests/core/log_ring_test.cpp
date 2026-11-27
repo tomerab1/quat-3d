@@ -235,4 +235,40 @@ TEST(StderrLineParsing, InterpretsLeadingTags) {
     EXPECT_EQ(p.message, "[ spaced tag ] kept");
 }
 
+// counts() is kept on push (no copy of the ring) and covers only the retained
+// lines, whatever the ring's capacity.
+TEST(LogRing, CountsRetainedWarningsAndErrors) {
+    LogRing ring(4);
+    EXPECT_EQ(ring.counts().warnings, 0U);
+    EXPECT_EQ(ring.counts().last_error_seq, 0U);
+
+    (void)ring.push(LogLevel::warn, "a", "w1");  // seq 1
+    (void)ring.push(LogLevel::error, "a", "e1"); // seq 2
+    (void)ring.push(LogLevel::info, "a", "i1");  // seq 3
+    (void)ring.push(LogLevel::error, "a", "e2"); // seq 4
+    auto c = ring.counts();
+    EXPECT_EQ(c.warnings, 1U);
+    EXPECT_EQ(c.errors, 2U);
+    EXPECT_EQ(c.last_error_seq, 4U);
+
+    (void)ring.push(LogLevel::info, "a", "i2"); // evicts w1
+    (void)ring.push(LogLevel::info, "a", "i3"); // evicts e1
+    c = ring.counts();
+    EXPECT_EQ(c.warnings, 0U);
+    EXPECT_EQ(c.errors, 1U);
+    EXPECT_EQ(c.last_error_seq, 4U);
+
+    (void)ring.push(LogLevel::debug, "a", "d1"); // evicts i1
+    (void)ring.push(LogLevel::warn, "a", "w2");  // evicts e2: no error retained
+    c = ring.counts();
+    EXPECT_EQ(c.warnings, 1U);
+    EXPECT_EQ(c.errors, 0U);
+    EXPECT_EQ(c.last_error_seq, 0U);
+
+    // Agrees with a full query of the ring.
+    LogQuery q = since(0, ring.capacity());
+    q.min_level = LogLevel::warn;
+    EXPECT_EQ(ring.query(q).lines.size(), c.warnings + c.errors);
+}
+
 } // namespace

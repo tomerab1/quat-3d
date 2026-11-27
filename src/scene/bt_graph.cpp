@@ -6,6 +6,7 @@
 #include <cstdlib>
 #include <limits>
 #include <optional>
+#include <span>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -147,8 +148,39 @@ struct Reader {
     }
 };
 
+// FNV-1a over the tree's shape in `order` (pre-order): each node's kind, leaf
+// name and child count, the notion of shape bt_graph_reuse_layout uses.
+// Parameters are left out so a value edit keeps the saved layout.
+[[nodiscard]] std::string shape_fingerprint(const BtGraph& graph,
+                                            std::span<const std::uint32_t> order) {
+    std::uint64_t h = 14695981039346656037ULL;
+    const auto mix = [&h](std::string_view bytes) {
+        for (const char c : bytes) {
+            h ^= static_cast<unsigned char>(c);
+            h *= 1099511628211ULL;
+        }
+    };
+    constexpr std::string_view sep("\0", 1);
+    for (const std::uint32_t id : order) {
+        const BtGraphNode& n = *graph.find(id);
+        mix(Asset::kind_name(n.kind));
+        mix(sep);
+        mix(n.leaf);
+        mix(sep);
+        mix(std::to_string(n.children.size()));
+        mix(sep);
+    }
+    char buf[17];
+    const auto r = std::to_chars(buf, buf + sizeof(buf), h, 16);
+    return std::string(buf, r.ptr);
+}
+
 // Applies the "editor" layout when it describes exactly this tree. Nodes were
-// read in pre-order, which is the order the layout lists them in.
+// read in pre-order, which is the order the layout lists them in. A layout
+// saved for another shape (the tree was edited elsewhere, e.g. children
+// re-ordered in the inspector) is rejected — its fingerprint differs, or its
+// positions contradict the child order — because the panel re-sorts children
+// by x on every commit and would silently re-order them.
 [[nodiscard]] bool apply_layout(BtGraph& graph, const json& root) {
     if (!root.is_object()) return false;
     const auto editor = root.find(bt_editor_field);
@@ -162,6 +194,14 @@ struct Reader {
     const auto nodes = editor->find("nodes");
     if (nodes == editor->end() || !nodes->is_array() || nodes->size() != graph.nodes.size()) {
         return false;
+    }
+    // Optional: layouts saved before the fingerprint existed have none.
+    if (const auto shape = editor->find("shape"); shape != editor->end()) {
+        std::vector<std::uint32_t> order;
+        order.reserve(graph.nodes.size());
+        for (const BtGraphNode& n : graph.nodes) order.push_back(n.id);
+        const auto* saved = shape->get_ptr<const json::string_t*>();
+        if (saved == nullptr || *saved != shape_fingerprint(graph, order)) return false;
     }
     std::vector<std::uint32_t> ids;
     std::vector<glm::vec2>     positions;
@@ -179,17 +219,20 @@ struct Reader {
         positions.push_back(p);
     }
 
+    BtGraph placed = graph;
     std::unordered_map<std::uint32_t, std::uint32_t> remap; // read id -> saved id
-    for (std::size_t i = 0; i < graph.nodes.size(); ++i) remap[graph.nodes[i].id] = ids[i];
+    for (std::size_t i = 0; i < placed.nodes.size(); ++i) remap[placed.nodes[i].id] = ids[i];
     std::uint32_t max_id = 0;
-    for (std::size_t i = 0; i < graph.nodes.size(); ++i) {
-        BtGraphNode& n = graph.nodes[i];
+    for (std::size_t i = 0; i < placed.nodes.size(); ++i) {
+        BtGraphNode& n = placed.nodes[i];
         n.id = ids[i];
         n.pos = positions[i];
         for (std::uint32_t& c : n.children) c = remap[c];
         max_id = std::max(max_id, n.id);
     }
-    graph.next_id = max_id + 1;
+    placed.next_id = max_id + 1;
+    if (!bt_graph_children_follow_x(placed)) return false;
+    graph = std::move(placed);
     return true;
 }
 
@@ -368,11 +411,14 @@ std::expected<std::string, core::Error> bt_graph_to_json(const BtGraph& graph,
     // Layout on one line after the tree, so the tree stays readable in the
     // inspector's text view.
     json layout = json::array();
-    for (const std::uint32_t id : bt_graph_preorder(graph)) {
+    const std::vector<std::uint32_t> order = bt_graph_preorder(graph);
+    for (const std::uint32_t id : order) {
         const BtGraphNode& n = *graph.find(id);
         layout.push_back(json::array({id, std::lround(n.pos.x), std::lround(n.pos.y)}));
     }
-    const json editor = {{"version", kLayoutVersion}, {"nodes", std::move(layout)}};
+    const json editor = {{"version", kLayoutVersion},
+                         {"shape", shape_fingerprint(graph, order)},
+                         {"nodes", std::move(layout)}};
     // The pretty-printed object ends in "\n}".
     text.resize(text.size() - 2);
     text += ",\n  \"" + std::string(bt_editor_field) + "\": " + editor.dump() + "\n}";

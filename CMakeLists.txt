@@ -471,6 +471,7 @@ add_executable(game
     src/app/grass_runtime.cpp
     src/app/nav_bake.cpp
     src/app/remote_bridge.cpp
+    src/app/screenshot_capture.cpp
     src/app/asset_root.cpp)
 target_link_libraries(game PRIVATE
     engine_flags engine_core engine_rhi engine_asset engine_scene engine_renderer engine_physics
