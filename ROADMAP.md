@@ -77,6 +77,11 @@ JSON-RPC over loopback TCP to the engine.
 - [ ] **A4 — `quat-mcp` server.** rmcp-based, typed tool schemas, screenshots
   as MCP image content, reconnect handling, tests against a mock engine,
   setup docs for Claude Code / Claude Desktop.
+- [ ] **A4.1 — `quat-mcp` idiom pass.** Split `server.rs`/`client.rs` by
+  responsibility (tool groups as modules, files under ~600 lines), clippy
+  pedantic clean, typed serde structs instead of ad-hoc `Value` handling,
+  no hand-rolled code where a standard crate fits (CLAUDE.md Rust rules).
+  After A5 lands.
 - [ ] **A5 — Debugging tools.** Log tail + filters (S6), Vulkan validation
   messages, frame/GPU timings, pause / single-step / time scale, entity watch,
   physics raycasts and contact queries, navmesh path queries.

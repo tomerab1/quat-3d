@@ -103,3 +103,13 @@ into CLAUDE.md or the brief template in [`CYCLE.md`](CYCLE.md).
   defined exactly once — faster and safer than retyping.
 - **Load into a staging object, swap on success.** Loaders that clear live
   state before validating input lose user data on a bad file (scene files).
+
+## Scheduled fresh sessions start without repository access (cycle 1)
+
+The first scheduled cycle (fresh session per run) cloned the public repo
+read-only and stopped: pushes were refused ("not in this session's authorized
+repository set") and the GitHub API was blocked. Scheduled tasks don't carry
+the creating session's repository grant.
+**Rule:** bind recurring cycles to the live session (it already has push + PR
+access), or attach the repository to the environment before relying on
+fresh-session runs. Check the first scheduled run's transcript, never assume.

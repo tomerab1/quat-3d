@@ -10,8 +10,8 @@ _Last updated: 2026-11-27._
 ## How work runs
 
 As repeated improvement cycles — see [`CYCLE.md`](CYCLE.md) (up to 8 parallel
-worktree agents per cycle, a scheduled cloud session every 2 hours, one PR per
-cycle) and [`LEARNINGS.md`](LEARNINGS.md).
+worktree agents per cycle, a scheduled task every 2 hours that resumes the
+live session, one PR per cycle, merged once its CI is green) and [`LEARNINGS.md`](LEARNINGS.md).
 
 ## Current focus
 
@@ -35,7 +35,7 @@ Cycle 1's eight worker branches are merged into `claude/nifty-hopper-nb68qe`
 (PR #2) and await a green CI run there (run 8 on 473ec53).
 
 **Cycle 2** — eight worktree agents started from 473ec53; each pushes
-`feat/<id>`. Merges wait until PR #2 is merged, then go into a new cycle PR.
+`feat/<id>`. Merges wait until PR #2 is merged (merged as soon as its CI is green), then go into a new cycle PR.
 
 | Item | Branch | Scope |
 |---|---|---|
@@ -97,6 +97,8 @@ top.
 - Use compute shaders wherever data-parallel work can move to the GPU (CLAUDE.md "GPU compute first", ROADMAP R10).
 - Instancing for trees/grass is wanted (R9); the owner recalls navmesh/NPC bugs — a dedicated nav audit is part of S1.
 - Keep `README.md` human-readable and current; keep this file current.
+- Merge a cycle PR once its CI is fully green (CYCLE.md "Merge rule").
+- `tools/quat-mcp`: idiomatic Rust built on well-known crates (rmcp, serde, schemars, thiserror/anyhow, tokio-util codecs, tracing, clap) — never hand-roll what a standard crate does.
 
 ## Blockers
 
