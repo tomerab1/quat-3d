@@ -83,13 +83,27 @@ std::uint64_t LogRing::push(LogLevel level, std::string_view category, std::stri
     const std::scoped_lock lock(mutex_);
     line.seq = next_seq_++;
     const std::uint64_t seq = line.seq;
+    if (level == LogLevel::warn) ++warnings_;
+    if (level == LogLevel::error) {
+        ++errors_;
+        last_error_seq_ = seq;
+    }
     if (lines_.size() < capacity_) {
         lines_.push_back(std::move(line));
     } else {
+        const LogLevel evicted = lines_[head_].level;
+        if (evicted == LogLevel::warn) --warnings_;
+        if (evicted == LogLevel::error) --errors_;
         lines_[head_] = std::move(line);
         head_ = (head_ + 1) % capacity_;
     }
     return seq;
+}
+
+LogCounts LogRing::counts() const {
+    const std::scoped_lock lock(mutex_);
+    // Lines leave in seq order, so the newest error is retained iff any is.
+    return LogCounts{warnings_, errors_, errors_ > 0 ? last_error_seq_ : 0};
 }
 
 LogQueryResult LogRing::query(const LogQuery& q) const {

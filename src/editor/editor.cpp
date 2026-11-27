@@ -374,19 +374,23 @@ void EditorLayer::build_shader_status(const EditorContext& ctx) {
     const std::vector<rhi::ShaderStatus>& shaders = *ctx.shader_statuses;
     std::size_t errors = 0;
     std::size_t compiling = 0;
+    std::size_t restart = 0;
     for (const rhi::ShaderStatus& s : shaders) {
         if (s.state == rhi::ShaderStatus::State::error) ++errors;
         if (s.state == rhi::ShaderStatus::State::compiling) ++compiling;
+        if (s.state == rhi::ShaderStatus::State::needs_restart) ++restart;
     }
-    char header[96];
-    std::snprintf(header, sizeof(header), "Shaders (%zu, %zu error%s%s)###shaders", shaders.size(),
-                  errors, errors == 1 ? "" : "s", compiling > 0 ? ", compiling" : "");
+    char header[128];
+    std::snprintf(header, sizeof(header), "Shaders (%zu, %zu error%s%s%s)###shaders",
+                  shaders.size(), errors, errors == 1 ? "" : "s", compiling > 0 ? ", compiling" : "",
+                  restart > 0 ? ", restart to apply" : "");
     if (errors > 0) ImGui::SetNextItemOpen(true, ImGuiCond_Always);
     if (!ImGui::CollapsingHeader(header)) return;
 
     const ImVec4 colour_error(1.0F, 0.4F, 0.35F, 1.0F);
     const ImVec4 colour_ok(0.45F, 0.85F, 0.45F, 1.0F);
     const ImVec4 colour_busy(0.95F, 0.8F, 0.3F, 1.0F);
+    const ImVec4 colour_restart(0.45F, 0.7F, 1.0F, 1.0F);
     for (const rhi::ShaderStatus& s : shaders) {
         ImGui::PushID(s.name.c_str());
         const std::string_view state = rhi::to_string(s.state);
@@ -399,6 +403,9 @@ void EditorLayer::build_shader_status(const EditorContext& ctx) {
             break;
         case rhi::ShaderStatus::State::compiling:
             ImGui::TextColored(colour_busy, "%-9.*s", static_cast<int>(state.size()), state.data());
+            break;
+        case rhi::ShaderStatus::State::needs_restart:
+            ImGui::TextColored(colour_restart, "%-9.*s", static_cast<int>(state.size()), state.data());
             break;
         case rhi::ShaderStatus::State::cooked:
             ImGui::TextDisabled("%-9.*s", static_cast<int>(state.size()), state.data());
@@ -414,7 +421,9 @@ void EditorLayer::build_shader_status(const EditorContext& ctx) {
         if (!s.message.empty()) {
             const bool failed = s.state == rhi::ShaderStatus::State::error;
             if (failed) ImGui::SetNextItemOpen(true, ImGuiCond_Once);
-            if (ImGui::TreeNode(failed ? "diagnostics" : "warnings")) {
+            const bool restart_note = s.state == rhi::ShaderStatus::State::needs_restart;
+            if (restart_note) ImGui::SetNextItemOpen(true, ImGuiCond_Once);
+            if (ImGui::TreeNode(failed ? "diagnostics" : restart_note ? "not applied" : "warnings")) {
                 ImGui::PushTextWrapPos(0.0F);
                 if (failed) ImGui::PushStyleColor(ImGuiCol_Text, colour_error);
                 ImGui::TextUnformatted(s.message.c_str());

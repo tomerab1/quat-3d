@@ -36,6 +36,15 @@ pub struct DebugSessionArgs {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct DesignBehaviorArgs {
+    /// What the NPC should do, e.g. "patrol between the gates and chase the player when near".
+    pub goal: String,
+    /// The entity (id or name) to give the behaviour, if it already exists.
+    #[serde(default)]
+    pub entity: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct WriteGameScriptArgs {
     /// What the script should do, e.g. "coins that spin and add to a score when the player touches them".
     pub goal: String,
@@ -104,6 +113,22 @@ impl QuatServer {
             "debug_session",
             DebugSessionArgs {
                 problem: non_blank(problem),
+                entity: non_blank(entity),
+            },
+        )
+    }
+
+    /// Design an NPC behaviour tree in the running quat-3d engine: look up the leaves, plan the tree, build it, play, watch what it does, iterate.
+    #[prompt]
+    async fn design_behavior(
+        &self,
+        args: Parameters<DesignBehaviorArgs>,
+    ) -> Result<Vec<PromptMessage>, ErrorData> {
+        let DesignBehaviorArgs { goal, entity } = args.0;
+        user_prompt(
+            "design_behavior",
+            DesignBehaviorArgs {
+                goal: goal.trim().to_owned(),
                 entity: non_blank(entity),
             },
         )

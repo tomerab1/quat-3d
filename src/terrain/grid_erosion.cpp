@@ -11,6 +11,7 @@
 // same operations in the same order; GpuTerrainSynth tests compare the two.
 
 #include <array>
+#include <atomic>
 #include <barrier>
 #include <cmath>
 #include <cstddef>
@@ -208,34 +209,41 @@ GridErosionStep grid_erosion_step(const GridErosionParams& p, float cell_m) {
     return k;
 }
 
-void erode_grid(std::vector<float>& heights_m, std::uint32_t resolution, float cell_m,
-                const GridErosionParams& params) {
+bool erode_grid(std::vector<float>& heights_m, std::uint32_t resolution, float cell_m,
+                const GridErosionParams& params, const std::atomic<bool>* cancel) {
     if (params.iterations == 0 || resolution < 3 || !(cell_m > 0.0F) ||
         heights_m.size() != static_cast<std::size_t>(resolution) * resolution) {
-        return;
+        return true;
     }
     GridSim sim(heights_m, resolution, grid_erosion_step(params, cell_m));
     const auto rows = static_cast<std::int32_t>(resolution);
 
     // One fixed worker set for the whole simulation (spawning threads per
     // pass would cost more than the passes on small tiles); a barrier ends
-    // each pass, like the GPU's barrier between dispatches.
+    // each pass, like the GPU's barrier between dispatches. The barrier's
+    // completion step samples the cancel flag once per phase, so every
+    // worker sees the same decision and leaves at the same step.
     const auto workers = static_cast<std::int32_t>(
         glm::clamp(std::thread::hardware_concurrency(), 1U, glm::min(resolution, 16U)));
-    std::barrier sync(workers);
+    bool stop = false;
+    const auto sample_cancel = [&]() noexcept {
+        stop = cancel != nullptr && cancel->load(std::memory_order_relaxed);
+    };
+    std::barrier sync(workers, sample_cancel);
     const auto run = [&](std::int32_t w) {
         const auto pass = [&](const auto& row) {
             for (std::int32_t z = w; z < rows; z += workers) row(z);
             sync.arrive_and_wait();
         };
         std::uint32_t cur = 0;
-        for (std::uint32_t it = 0; it < params.iterations; ++it) {
+        for (std::uint32_t it = 0; it < params.iterations && !stop; ++it) {
             pass([&](std::int32_t z) { sim.flux_row(z); });
             pass([&](std::int32_t z) { sim.water_row(z); });
             pass([&](std::int32_t z) { sim.apply_row(z, cur); });
             pass([&](std::int32_t z) { sim.transport_row(z, cur); });
             cur ^= 1U;
         }
+        if (stop) return;
         for (std::int32_t z = w; z < rows; z += workers) sim.settle_row(z, cur);
     };
     // std::thread + explicit join (libc++ 18 gates std::jthread).
@@ -244,6 +252,7 @@ void erode_grid(std::vector<float>& heights_m, std::uint32_t resolution, float c
     for (std::int32_t w = 1; w < workers; ++w) threads.emplace_back(run, w);
     run(0);
     for (std::thread& t : threads) t.join();
+    return !stop;
 }
 
 } // namespace engine::terrain

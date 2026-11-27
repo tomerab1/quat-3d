@@ -28,6 +28,7 @@
 // readback buffer, then a VkEvent the host polls). collect() returns the
 // finished jobs. Jobs run one at a time, in order.
 
+#include <cstddef>
 #include <cstdint>
 #include <expected>
 #include <memory>
@@ -38,7 +39,6 @@
 #include <vulkan/vulkan.h>
 
 #include "engine/core/error.hpp"
-#include "engine/rhi/compute_pipeline.hpp"
 #include "engine/rhi/descriptor_buffer.hpp"
 #include "engine/rhi/gpu_allocator.hpp"
 #include "engine/rhi/render_graph.hpp"
@@ -56,7 +56,7 @@ class TerrainSynthPass {
 public:
     // Largest tile the GPU path synthesises (scratch is ~52 bytes a texel and
     // one float4 field must fit the device's storage-buffer range).
-    static constexpr std::uint32_t max_resolution = 2049;
+    static constexpr std::uint32_t max_resolution = terrain::max_grid_erosion_resolution;
     // Default erosion budget per frame, in texel-steps (≈16 steps of a
     // 1025² tile): a few milliseconds of compute on a desktop GPU.
     static constexpr std::uint64_t default_cell_budget = 16ULL * 1025 * 1025;
@@ -82,12 +82,24 @@ public:
     // or 0 when !supports(params).
     [[nodiscard]] std::uint64_t enqueue(const terrain::TerrainParams& params);
 
+    // Cancels a job: a queued one is dropped, the one being recorded stops
+    // (no further slices; its resources retire once the frames in flight are
+    // done), so the next job starts at once. A job whose last slice is already
+    // recorded completes and is still reported by collect(). No-op for
+    // unknown ids.
+    void cancel(std::uint64_t id);
+
+    // Per-frame upkeep, independent of add_to_graph (which only runs while
+    // terrain draws): frees the resources of finished and cancelled jobs once
+    // the frames that used them are done. Call once per frame.
+    void tick();
+
     // Erosion texel-steps recorded per add_to_graph (0 = a whole job per
     // call: tests, offline baking). At least one step always runs.
     void set_cell_budget(std::uint64_t cells_per_frame);
 
-    // Records this frame's synthesis work (nothing when idle). Call once per
-    // frame, before compiling the graph; also ages released GPU resources.
+    // Records this frame's synthesis work (nothing when idle). Call at most
+    // once per frame, before compiling the graph.
     // A job whose resources cannot be created fails (collect() reports it)
     // without failing the frame.
     [[nodiscard]] std::expected<void, core::Error> add_to_graph(rhi::RenderGraph& graph);
@@ -104,6 +116,9 @@ public:
 
     // Nothing queued, being recorded, or awaiting its readback.
     [[nodiscard]] bool idle() const;
+
+    // Jobs whose GPU resources are released but not yet freed (tests).
+    [[nodiscard]] std::size_t retired_count() const;
 
 private:
     struct Job;

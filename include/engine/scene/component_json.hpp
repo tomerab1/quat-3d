@@ -20,6 +20,7 @@
 //   nav_agent, behavior, patrol
 //   script           Lua gameplay script path + property overrides (G7)
 //   terrain
+//   grass            GPU grass around the camera (density, blades, colours, wind, limits, LOD)
 //   net_replicated
 //   audio_source     clip / bus / volume / pitch / loop / 3D falloff (+ write-only command)
 //   audio_listener
@@ -34,6 +35,7 @@
 #include <cstdint>
 #include <expected>
 #include <span>
+#include <string>
 #include <string_view>
 #include <vector>
 
@@ -62,9 +64,13 @@ struct EncodeOptions {
     bool transform_as_matrix = false;
     // Include read-only components (mesh provenance).
     bool include_read_only = true;
+    // Non-empty: encode only the components named here (unknown names are
+    // ignored), skipping the cost of the rest (instance lists can be long).
+    std::span<const std::string> only{};
 };
 
-// Every codec component the entity carries, as {"<name>": {...}, ...}.
+// Every codec component the entity carries (or those of `options.only`), as
+// {"<name>": {...}, ...}.
 [[nodiscard]] nlohmann::json encode_components(const entt::registry& registry,
                                                entt::entity entity,
                                                const EncodeOptions& options = {});

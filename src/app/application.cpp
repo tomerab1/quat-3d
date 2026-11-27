@@ -305,6 +305,7 @@ bool Application::run_frame() {
     const VkExtent2D pixel_extent = window_pixel_extent(platform_.window);
     if (pixel_extent.width == 0 || pixel_extent.height == 0) {
         SDL_Delay(10); // minimized — nothing to draw
+        run_unrendered_step();
         return true;
     }
     if (!renderer_.ensure_swapchain(pixel_extent)) return false;
@@ -352,6 +353,8 @@ bool Application::run_frame() {
     frame_inputs.cam = &cam;
     frame_inputs.draw_extent = draw_extent;
     frame_inputs.dt = dt;
+    frame_inputs.grass = world_.grass();
+    frame_inputs.sim_dt = sim_dt;
     if (world_.terrain_drawable()) {
         frame_inputs.terrain = &world_.terrain_pass();
         frame_inputs.terrain_anchor = world_.terrain_anchor();
@@ -388,6 +391,25 @@ bool Application::run_frame() {
     return max_frames == 0 || presented_ < max_frames;
 }
 
+void Application::run_unrendered_step() {
+    // Only a queued debug.step advances the clock here, so real-time
+    // simulation stays frozen while minimised but a stepping remote caller
+    // still gets its reply. No camera input or audio: nothing is shown.
+    const float sim_dt = remote_->advance_sim_unrendered();
+    if (sim_dt <= 0.0F) return;
+    const std::optional<PlayStep> play = play_step();
+    world_.simulate(scene_, presented_, 0.0F, sim_dt, play ? &*play : nullptr);
+}
+
+std::optional<PlayStep> Application::play_step() const {
+#ifdef ENGINE_EDITOR
+    return editor_.play_step(camera_.pos);
+#else
+    if (!playing_) return std::nullopt;
+    return PlayStep{.use_scene_camera = true, .fly_camera_pos = camera_.pos};
+#endif
+}
+
 engine::scene::CameraMatrices Application::update_world(float dt, float sim_dt, float aspect) {
     const bool character_mode = world_.character_mode();
 
@@ -403,12 +425,7 @@ engine::scene::CameraMatrices Application::update_world(float dt, float sim_dt, 
         camera_.fly(scene_, gate, dt);
     }
 
-    std::optional<PlayStep> play;
-#ifdef ENGINE_EDITOR
-    play = editor_.play_step(camera_.pos);
-#else
-    if (playing_) play = PlayStep{.use_scene_camera = true, .fly_camera_pos = camera_.pos};
-#endif
+    const std::optional<PlayStep> play = play_step();
     world_.simulate(scene_, presented_, dt, sim_dt, play ? &*play : nullptr);
 
     // Third-person follow camera, placed after the character has moved.

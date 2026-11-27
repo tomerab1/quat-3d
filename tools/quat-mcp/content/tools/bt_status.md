@@ -1,0 +1,3 @@
+What an entity's behaviour tree did on its last tick: for each node (by id, indented like `bt_get`), whether it was `running`, returned `success` or `failure`, or was `idle` (not reached). Read it to find out why an NPC is not doing what you expect — which condition failed, which branch is running, whether a `move_to` gave up.
+
+Trees tick only during Play: start it with `sim_play`, let it run (or `debug_pause` and `debug_step` a few frames), then call this. Right after a change the tree has not ticked yet, so there are no node results. Combine with `debug_watch` on the entity (`nav_agent_state` tells why a `move_to` fails) and `debug_log` (tree parse errors are logged with category `bt`).

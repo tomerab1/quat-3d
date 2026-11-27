@@ -151,8 +151,9 @@ target_link_libraries(engine_rhi PUBLIC
 # types, and the debug messenger routes validation messages into its log ring.
 # The hot-reload compile worker runs on a std::thread.
 target_link_libraries(engine_rhi PRIVATE Threads::Threads)
-# nlohmann_json is an implementation detail of the reflection parser (PRIVATE).
-target_link_libraries(engine_rhi PRIVATE nlohmann_json::nlohmann_json)
+# nlohmann_json is an implementation detail of the reflection parser (PRIVATE);
+# glm because the parser reads slangc's JSON through core::JsonFields.
+target_link_libraries(engine_rhi PRIVATE nlohmann_json::nlohmann_json glm::glm)
 target_include_directories(engine_rhi PUBLIC ${ENGINE_PUBLIC_INCLUDE})
 
 # VMA's implementation is not warning-clean under our strict flags; compile just
@@ -213,6 +214,8 @@ add_library(engine_scene STATIC
     src/scene/nav_agent_system.cpp
     src/scene/navigation.cpp
     src/scene/behavior.cpp
+    src/scene/bt_graph.cpp
+    src/scene/bt_graph_edit.cpp
     src/scene/scene_io.cpp
     src/scene/component_json.cpp
     src/scene/script_component.cpp
@@ -344,8 +347,9 @@ endif()
 
 # ---------------------------------------------------------------------------
 # engine_remote_world — the world commands (ROADMAP A2/A3): scene.*,
-# environment.*, camera.*, render.screenshot, asset.*, sim.*, nav.bake, on top
-# of engine_remote + the scene codec. Application-only capabilities come in
+# environment.*, camera.*, render.screenshot, asset.*, sim.*, nav.bake, debug.*
+# and bt.* (behaviour-tree authoring), on top of engine_remote + the scene
+# codec and the behaviour-tree graph model. Application-only capabilities come in
 # through WorldServices callbacks (src/app/remote_bridge.cpp wires them), so
 # the commands are testable on a bare Scene.
 # ---------------------------------------------------------------------------
@@ -358,6 +362,8 @@ add_library(engine_remote_world STATIC
     src/remote/world/app_commands.cpp
     src/remote/world/debug_commands.cpp
     src/remote/world/debug_query_commands.cpp
+    src/remote/world/behavior_commands.cpp
+    src/remote/world/behavior_edit_commands.cpp
     src/remote/world/script_commands.cpp
     src/remote/world/image_encode.cpp
     src/remote/world/stb_image_write_impl.cpp)
@@ -375,6 +381,8 @@ set_source_files_properties(src/remote/world/stb_image_write_impl.cpp
 # ---------------------------------------------------------------------------
 add_library(engine_renderer STATIC
     src/renderer/draw_batching.cpp
+    src/renderer/grass.cpp
+    src/renderer/grass_pass.cpp
     src/renderer/instance_buffer.cpp
     src/renderer/mesh_pass.cpp
     src/renderer/lighting_pass.cpp
@@ -426,7 +434,7 @@ if(ENGINE_EDITOR)
         src/editor/scene_snapshot.cpp
         src/editor/audio_inspector.cpp
         src/editor/script_inspector.cpp
-        src/editor/bt_graph.cpp
+        src/editor/grass_inspector.cpp
         src/editor/behavior_panel.cpp
         src/editor/behavior_canvas.cpp
         src/editor/vendor/imgui_impl_sdl3.cpp)
@@ -463,8 +471,10 @@ add_executable(game
     src/app/demo_scenes.cpp
     src/app/audio_runtime.cpp
     src/app/input_sampler.cpp
+    src/app/grass_runtime.cpp
     src/app/nav_bake.cpp
-    src/app/remote_bridge.cpp)
+    src/app/remote_bridge.cpp
+    src/app/screenshot_capture.cpp)
 target_link_libraries(game PRIVATE
     engine_flags engine_core engine_rhi engine_asset engine_scene engine_renderer engine_physics
     engine_terrain engine_nav engine_net engine_remote engine_remote_world engine_audio

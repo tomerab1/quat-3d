@@ -27,6 +27,7 @@
 #include "engine/asset/material_asset.hpp"
 #include "engine/asset/mesh_asset.hpp"
 #include "engine/core/error.hpp"
+#include "engine/renderer/grass.hpp"
 
 namespace engine::scene {
 
@@ -273,16 +274,22 @@ struct BtNodeState {
     bool          running = false; // returned running on that tick
 };
 
+// What a compiled node returned on its tree's last tick (idle: not reached).
+// Unlike BtNodeState it survives the resets that end a tick, so tools can
+// show which branch failed (the remote bt.status method).
+enum class BtNodeResult : std::uint8_t { idle, success, failure, running };
+
 // A data-driven behaviour tree (13.3): `source` is the tree JSON (composed of
 // sequence/selector/reactive_*/inverter nodes over named C++ leaves — see
 // behavior.hpp). The system compiles it lazily; a parse error logs once and
-// disables the tree. compiled/node_state/tick_count/parse_failed are
-// system-managed.
+// disables the tree. compiled/node_state/last_result/tick_count/parse_failed
+// are system-managed.
 struct BehaviorTree {
     std::string source;
     bool        enabled = true;
     std::shared_ptr<const class BehaviorTreeAsset> compiled;
-    std::vector<BtNodeState> node_state; // one per compiled node
+    std::vector<BtNodeState>  node_state;  // one per compiled node
+    std::vector<BtNodeResult> last_result; // one per compiled node
     std::uint32_t            tick_count = 0;
     bool parse_failed = false;
 };
@@ -348,6 +355,16 @@ struct Terrain {
     // noise and grid erosion; droplet erosion and oversized tiles fall back
     // to the CPU generator. Physics/navmesh use the read-back heights.
     bool gpu_generate = true;
+};
+
+// Dense, wind-animated grass around the camera (R9.3), generated and drawn
+// on the GPU every frame (renderer/grass.hpp has the placement and LOD
+// rules). It grows on the terrain within `settings.radius` of the camera;
+// with `terrain_only` off it also covers flat ground at `ground_y` where no
+// terrain is loaded. The first Grass entity drives the field; its transform
+// is not used.
+struct Grass {
+    renderer::GrassSettings settings{};
 };
 
 // An authored walk route (editor: Shift+click the ground to append points).

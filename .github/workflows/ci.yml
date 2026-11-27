@@ -7,9 +7,12 @@ on:
     branches: [main, master]
   pull_request:
 
+# A running build is never cancelled: a new push waits for it (GitHub keeps
+# only the newest pending run per group), so every build finishes even while
+# commits land frequently.
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 env:
   # Pinned to vcpkg.json's builtin-baseline.
@@ -90,6 +93,17 @@ jobs:
           echo "Using Vulkan ICD: $icd"
           export VK_ICD_FILENAMES="$icd"
           ctest --test-dir build/release --output-on-failure --timeout 900
+
+      # The game without the editor layer compiles other code paths (it broke
+      # once unnoticed). Shares the release build's vcpkg_installed tree, so
+      # no dependency is rebuilt; only the `game` target is built.
+      - name: Build game without the editor (ENGINE_EDITOR=OFF)
+        if: ${{ !cancelled() && steps.configure.outcome == 'success' }}
+        run: |
+          cmake --preset release -B build/release-noeditor \
+            -DENGINE_PROFILE=OFF -DENGINE_EDITOR=OFF \
+            -DVCPKG_INSTALLED_DIR="${{ github.workspace }}/build/release/vcpkg_installed"
+          cmake --build build/release-noeditor --target game
 
       - name: Upload logs on failure
         if: failure()

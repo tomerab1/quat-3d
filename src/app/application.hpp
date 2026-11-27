@@ -91,6 +91,12 @@ private:
     // Camera input, simulation, follow camera, then the view matrices. `dt`
     // is the real frame time, `sim_dt` the simulation's (remote debug clock).
     [[nodiscard]] engine::scene::CameraMatrices update_world(float dt, float sim_dt, float aspect);
+    // A loop iteration that draws nothing (minimised window): runs the next
+    // queued debug.step step, if any, through the simulation.
+    void run_unrendered_step();
+    // This frame's play-mode input (editor Play, or always in the non-editor
+    // game); none outside play.
+    [[nodiscard]] std::optional<PlayStep> play_step() const;
     void report_stats() const;
 
     AppConfig config_;

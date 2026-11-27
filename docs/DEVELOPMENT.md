@@ -83,7 +83,12 @@ destroyed once the frames in flight are done.
 
 - A compile error keeps the previous pipeline and cooked files; the
   diagnostics show under **Stats → Shaders** and on stderr
-  (`ShaderHotReload::statuses()` for tools).
+  (`ShaderHotReload::statuses()` for tools). A slangc run that takes longer
+  than `Config::compile_timeout` (60 s) is killed and reported the same way;
+  shutting down kills a compile in flight instead of waiting for it.
+- A shader used only by one-shot work (a bake pass whose pipeline is gone)
+  compiles but has no live pipeline to swap: it is listed as **restart**
+  ("compiled; no live pipeline uses it - restart to apply").
 - Edits that change the pipeline layout (a new binding, a changed descriptor
   type, a bigger push-constant block, a renamed entry point) are rejected the
   same way — the C++ side builds the layouts, so they need a restart.
@@ -96,7 +101,8 @@ destroyed once the frames in flight are done.
 ## CI
 
 `.github/workflows/ci.yml` builds the `release` preset on Ubuntu 24.04 and runs
-`ctest` with lavapipe. The vcpkg binary cache is saved right after configure,
+`ctest` with lavapipe, then builds the `game` target once more with
+`ENGINE_EDITOR=OFF` (sharing the dependency tree). The vcpkg binary cache is saved right after configure,
 so only the first run (or a dependency change) pays for the full dependency
 build. Logs are uploaded as an artifact when a run fails.
 

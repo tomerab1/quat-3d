@@ -121,6 +121,10 @@ command ends in `quat-mcp.exe`.
 | `debug_watch` | `debug.watch` | Live component snapshot of up to 64 entities (+ nav agent state) |
 | `debug_raycast` | `debug.raycast` | Physics ray: hit entity, point, normal (play mode) |
 | `debug_nav_path` | `debug.nav_path` | Navmesh path between two points, partial or not |
+| `bt_leaves` | `bt.leaves` | Behaviour-tree node kinds and leaves with their parameters, defaults and ranges |
+| `bt_get` / `bt_set` | `bt.get` / `bt.set` | Read an entity's tree (outline with stable node ids, issues, tree JSON); replace it (validated) |
+| `bt_add_node` / `bt_remove_node` / `bt_move_node` / `bt_set_params` | `bt.*` | Edit the tree by node id; invalid results are refused with per-node errors |
+| `bt_status` | `bt.status` | What each node returned on the last tick (Play) |
 | `script_list` / `script_get` | `script.list` / `script.get` | Lua scripts with their status (errors with file:line); read one |
 | `script_create` / `script_update` | `script.create` / `script.update` | Write a script (compiled first, syntax errors name the line); updates hot-reload while playing |
 | `script_delete` / `script_check` | `script.delete` / `script.check` | Delete a script; compile a draft without saving |
@@ -136,9 +140,11 @@ short hint, so the model can correct itself.
 **Prompts** — `build_world` (inspect → plan → build with `scene_batch` →
 screenshot → iterate), `inspect_scene` (survey and review the current
 scene), `debug_session` (diagnose a problem: stats → logs → watch →
-pause / step → raycast / nav path → conclude) and `write_game_script`
-(read the Lua reference → write → compile → attach → play → read the log →
-iterate). In Claude Code they appear as `/mcp__quat-3d__build_world`.
+pause / step → raycast / nav path → conclude), `design_behavior` (an NPC
+behaviour tree: leaves → plan → `bt_set` or edits → play → `bt_status` /
+`debug_watch` → iterate) and `write_game_script` (read the Lua reference →
+write → compile → attach → play → read the log → iterate). In Claude Code
+they appear as `/mcp__quat-3d__build_world`.
 
 **Resources** — `quat://scene/summary`: engine info, the first 500 entities,
 the environment and the camera as JSON; `quat://docs/scripting`: the Lua
@@ -177,8 +183,8 @@ Layout:
 |---|---|
 | `content/` | **Everything the model reads**, as Markdown: server instructions, one file per tool description, the component reference, prompt templates ([MiniJinja](https://docs.rs/minijinja)). See `content/README.md`. |
 | `src/client/` | Engine JSON-RPC client: `mod.rs` (calls, reconnects, handshake), `connection.rs` (socket, reader task, in-flight calls), `error.rs` (error codes, `EngineError`) |
-| `src/server/` | MCP server: `mod.rs` (handler, resource), tools grouped by area (`scene_tools.rs`, `world_tools.rs`, `sim_tools.rs`, `debug_tools.rs`, `script_tools.rs`, each its own rmcp router), `prompts.rs`, `results.rs` |
-| `src/params.rs` | Typed tool inputs — their doc comments are the JSON schemas the model reads |
+| `src/server/` | MCP server: `mod.rs` (handler, resource), tools grouped by area (`scene_tools.rs`, `world_tools.rs`, `sim_tools.rs`, `debug_tools.rs`, `behavior_tools.rs`, `script_tools.rs`, each its own rmcp router), `bt_outline.rs` (behaviour-tree outlines), `prompts.rs`, `results.rs` |
+| `src/params.rs`, `src/params/` | Typed tool inputs — their doc comments are the JSON schemas the model reads (`debug.rs`, `behavior.rs`, `script.rs` per area) |
 | `src/content.rs` | Embeds `content/` and renders prompt templates |
 | `src/config.rs` | Flags / environment |
 

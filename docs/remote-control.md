@@ -137,6 +137,15 @@ per m², `min_spacing` m, `pattern` poisson/jittered_grid, `scale` [min,max],
 unit primitive), `slope` [min,max] degrees, `height` [min,max] m,
 `max_instances`; regenerates when these, the entity position or the terrain
 change; removing it keeps the placements),
+`grass` (GPU grass around the camera, one field per scene — the first
+`grass` entity's: `seed`, `density` blades per m² (0..1000), `radius` m
+(0..500), `blade_height` / `blade_width` [min,max] m, `base_color` /
+`tip_color` `"#rrggbb"` or linear `[r,g,b]`, `wind_strength` 0..4,
+`wind_direction` [x,z] (normalised), `wind_frequency` Hz 0..10, `slope`
+[min,max] degrees, `height` [min,max] ground height m, `terrain_only` (false:
+also flat ground at `ground_y` where no terrain is loaded), `lod_start`
+0..1 × radius where blades start thinning, `far_density` 0..1 kept at the
+radius),
 `point_light`, `dir_light`, `camera`, `collider`, `rigidbody`, `character`,
 `nav_agent`, `behavior`, `patrol`, `terrain`, `net_replicated`,
 `audio_source` (`clip`, `bus`: master/music/sfx/ui/ambience, `volume`,
@@ -230,9 +239,14 @@ sim_time_s}`. `engine.info` also reports `paused`.
   audio, networking and rendering keep running in real time, so a paused
   scene can still be inspected, screenshotted and flown around.
   `debug.step` pauses (if running) and queues `frames` single steps, each
-  advancing the simulation by exactly `dt` (unscaled) on one rendered frame;
+  advancing the simulation by exactly `dt` (unscaled) on one rendered frame
+  (one loop iteration while the window is minimised);
   the reply comes after the last step ran, so a following `debug.watch`
-  sees the result. `debug.resume` drops pending steps (their `debug.step`
+  sees the result. Further requests queue behind pending steps, each keeping
+  its own `dt`; at most 100000 steps, 64 runs of differing `dt` and 64
+  waiting requests are accepted (beyond that a request fails with `failed`
+  and queues nothing).
+  `debug.resume` drops pending steps (their `debug.step`
   replies then complete). Physics itself still integrates in fixed 1/120 s
   substeps, at most 8 per frame, so very high time scales are capped by
   that catch-up limit. The clock state survives play/stop: a paused clock
@@ -255,6 +269,84 @@ sim_time_s}`. `engine.info` also reports `paused`.
   the snapped start; `partial` means the target is unreachable and the path
   ends at the closest reachable point. No baked navmesh is `unavailable`
   (call `nav.bake`); an end off the mesh is `failed`.
+
+## Behaviour-tree authoring (ROADMAP A7)
+
+Methods that build, inspect and edit an entity's behaviour tree — the same
+graph the editor's Behaviour panel (G2) shows. Contract first: the engine
+(`src/remote/world/behavior_commands.cpp`, on the graph model in
+`engine/scene/bt_graph.hpp`) and quat-mcp's `bt_*` tools follow this table.
+
+| Method | Params | Result |
+|---|---|---|
+| `bt.leaves` | — | `{kinds:[{name, min_children, max_children, help}], leaves:[{name, help, params:[{name, type, default, min?, max?, optional, help}]}]}` |
+| `bt.get` | `{entity}` | `<tree view>` |
+| `bt.set` | `{entity, tree, enabled?}` | `<tree view>` |
+| `bt.add_node` | `{entity, parent, index?, kind, leaf?, params?, children?}` | `<tree view>` + `node` (the new id) |
+| `bt.remove_node` | `{entity, node, keep_children?=false}` | `<tree view>` |
+| `bt.move_node` | `{entity, node, parent, index?}` | `<tree view>` |
+| `bt.set_params` | `{entity, node, params:{name: number \| null}}` | `<tree view>` |
+| `bt.status` | `{entity}` | `{entity, playing, enabled, compiled, tick, root_status, nodes:[{id, path, status}]}` |
+
+`<tree view>` is `{entity, enabled, compiled, parse_failed, root, nodes:[{id,
+kind, leaf?, params?, children:[ids], path, position:[x, y]}], issues:[{node,
+path?, message}], tree}`: `nodes` in depth-first pre-order (the order the
+runtime compiles them in), `root` the root's id (null for an empty tree),
+`tree` the tree JSON without the editor's layout field, `issues` what keeps
+the stored tree from running (empty for a valid tree).
+
+- **Trees** are the runtime's JSON (`engine/scene/behavior.hpp`):
+  `{"type": <kind>, "children": [...]}` for composites, `{"type": "leaf",
+  "name": <leaf>, <param>: <number>...}` for leaves. `bt.leaves` lists the
+  kinds and every leaf with its parameters (defaults, ranges, which may be
+  omitted) from the runtime's reflection table. `tree` may be an object or
+  its JSON text. Parameters a leaf node omits take the leaf's default.
+- **Node ids** are stable: they are stored with the layout in the tree's
+  root `"editor"` field (the Behaviour panel's ids and positions), kept by
+  every edit, and new nodes get the next unused id. A tree written without
+  that field gets ids 1..N in pre-order. `bt.set` with a tree of the same
+  shape as the current one (same kinds, leaves and child counts in pre-order,
+  e.g. only parameters changed) keeps the current ids and layout. `path` is
+  the node's place in the tree JSON (`root.children[1].children[0]`), the
+  same spelling runtime parse errors use.
+- **Validation.** Every write validates the resulting tree first (and then
+  compiles it with the runtime, the final authority) and never stores an
+  invalid tree: a failure is `invalid_params` whose message names each
+  problem with the node's id and path (`node 4 at root.children[1]:
+  wait.seconds: expected a number in [0, 1000000]`), with the same list as
+  `data: {issues:[{node, path, message}]}`. Unknown kinds, leaves and
+  parameters list the known ones. A successful write sets
+  `BehaviorTree::source` and recompiles, exactly like the panel and the
+  inspector (the tree restarts from its root); `bt.set` creates the
+  `behavior` component when the entity lacks it, the other methods answer
+  `not_found` then.
+- **Edits.** `parent`/`node` are node ids. `index` is the position among the
+  parent's children once the node being placed (and, for `bt.add_node`, any
+  adopted children) has been taken out; it defaults to the end. `bt.add_node`
+  adds a leaf (`kind: "leaf"`, `leaf`, `params`) or a composite whose
+  `children` are tree-JSON node objects (new subtrees) or ids of existing
+  nodes (moved under it with their subtrees — e.g. wrapping a node in an
+  inverter). `parent: null` makes the new node the root: allowed for an
+  empty tree, or when it adopts the current root. `bt.remove_node` removes
+  the node with its subtree, or with `keep_children` splices its children
+  into its place; the root can only be removed with `keep_children` when it
+  has exactly one child. `bt.move_node` re-parents or re-orders a node with
+  its subtree (cycles are refused). `bt.set_params` merges leaf parameters:
+  a number sets one, `null` removes it (back to the default).
+- **Layout.** A tree whose layout is the automatic one stays automatically
+  laid out after an edit; otherwise new and moved nodes are placed between
+  their siblings below their parent, and the whole tree is re-laid out only
+  if sibling order on screen would no longer match child order (the panel
+  orders children by x).
+- **Status.** `status` per node is what it returned on the tree's last tick:
+  `running`, `success`, `failure`, or `idle` (not reached that tick).
+  `root_status` is the root's. Trees tick only during Play, so outside Play
+  the last tick of the previous session (or nothing) is reported;
+  `tick` counts ticks since the tree was compiled. `compiled: false` (not
+  ticked since the last change) reports no nodes. Edits work during Play
+  too (the tree restarts from its root), but like every edit made while
+  playing they are undone when Play stops and the editor restores the scene
+  it started from.
 
 ## Gameplay scripts (ROADMAP G7)
 

@@ -3,7 +3,7 @@
 // "Behaviour" panel (ROADMAP G2): a visual node editor (imgui-node-editor) for
 // the selected entity's BehaviorTree. Private editor header.
 //
-// The panel edits a BtGraph (bt_graph.hpp) mirrored from BehaviorTree::source:
+// The panel edits a BtGraph (engine/scene/bt_graph.hpp) mirrored from BehaviorTree::source:
 // nodes are composites / decorators / leaves, a link runs from a parent's
 // bottom pin to a child's top pin, and children tick left to right (dragging
 // a node sideways reorders its siblings). Leaf parameters are edited inside
@@ -22,7 +22,7 @@
 #include <entt/entity/entity.hpp>
 #include <glm/glm.hpp>
 
-#include "bt_graph.hpp"
+#include "engine/scene/bt_graph.hpp"
 
 namespace ax::NodeEditor {
 struct EditorContext;
@@ -36,6 +36,12 @@ struct BehaviorTree;
 namespace engine::editor {
 
 inline constexpr const char* behavior_panel_title = "Behaviour";
+
+using scene::BtGraph;
+using scene::BtGraphIssue;
+using scene::BtGraphNode;
+using scene::BtGraphParam;
+using scene::BtKind;
 
 class BehaviorPanel {
 public:

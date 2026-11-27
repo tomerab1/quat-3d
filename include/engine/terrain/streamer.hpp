@@ -12,7 +12,8 @@
 //
 // Generation runs on the CPU, or on a TileGenerator backend (the GPU
 // synthesis pass, R10.2) set with set_generator(): tiles it supports go to
-// it, the rest — and every blocking update — stay on the CPU.
+// it, the rest — and every blocking update — stay on the CPU. A job the
+// streamer drops (blocking fallback, destruction) is cancelled on either.
 
 #include <cstdint>
 #include <future>
@@ -40,6 +41,16 @@ public:
     TerrainStreamer() = default;
     TerrainStreamer(TerrainParams base, int radius)
         : base_(base), radius_(glm::max(radius, 0)) {}
+    // Cancels the running job, so dropping the streamer (regenerate, mode
+    // switch, teardown) never waits out a long CPU generation and never
+    // leaves a GPU job occupying the backend.
+    ~TerrainStreamer() {
+        if (cancel_) cancel_->store(true);
+    }
+    TerrainStreamer(TerrainStreamer&&) noexcept = default;
+    TerrainStreamer& operator=(TerrainStreamer&&) noexcept = default;
+    TerrainStreamer(const TerrainStreamer&) = delete;
+    TerrainStreamer& operator=(const TerrainStreamer&) = delete;
 
     struct Events {
         std::vector<glm::ivec2> ready;   // freshly loaded tiles (maps() has them)
@@ -80,6 +91,7 @@ private:
     bool                   job_active_ = false;
     bool                   job_external_ = false; // job_ runs on generator_
     TileGenerator*         generator_ = nullptr;
+    CancelToken            cancel_; // the running job's (CPU or backend)
 };
 
 } // namespace engine::terrain

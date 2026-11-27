@@ -25,6 +25,8 @@ struct Context {
     RpcServer*     server = nullptr;
     scene::Scene*  scene = nullptr;
     WorldServices  services;
+    // debug.step requests parked in services.when_stepped (capped).
+    std::size_t    step_waits = 0;
 };
 using ContextPtr = std::shared_ptr<Context>;
 
@@ -100,6 +102,8 @@ void register_camera_commands(RpcServer& server, const ContextPtr& ctx);
 void register_app_commands(RpcServer& server, const ContextPtr& ctx);
 void register_debug_commands(RpcServer& server, const ContextPtr& ctx);
 void register_debug_query_commands(RpcServer& server, const ContextPtr& ctx);
+void register_behavior_commands(RpcServer& server, const ContextPtr& ctx);
+void register_behavior_edit_commands(RpcServer& server, const ContextPtr& ctx);
 void register_script_commands(RpcServer& server, const ContextPtr& ctx);
 
 // {paused, time_scale, pending_steps, steps_run, sim_frames, sim_time_s}.

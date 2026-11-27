@@ -41,14 +41,14 @@ struct Push {
     uint cur; // sediment half holding the current state (0 or 1)
 };
 
-[[vk::binding(0)]] ConstantBuffer<SynthParams> g_params;
-[[vk::binding(1)]] StructuredBuffer<uint>      g_perm;     // 512: permutation, twice
-[[vk::binding(2)]] RWStructuredBuffer<float>   g_height;   // eroding terrain, m
-[[vk::binding(3)]] RWStructuredBuffer<float>   g_water;    // water depth, m
-[[vk::binding(4)]] RWStructuredBuffer<float>   g_sediment; // 2 x n: suspended sediment, m
-[[vk::binding(5)]] RWStructuredBuffer<float4>  g_flux;     // outflow L (-x), R (+x), T (-z), B (+z)
-[[vk::binding(6)]] RWStructuredBuffer<float4>  g_flow;     // u, v, sin(tilt), thermal delta
-[[vk::binding(7)]] RWStructuredBuffer<float>   g_out;      // base field, then the result, m
+ConstantBuffer<SynthParams> g_params;
+StructuredBuffer<uint>      g_perm;     // 512: permutation, twice
+RWStructuredBuffer<float>   g_height;   // eroding terrain, m
+RWStructuredBuffer<float>   g_water;    // water depth, m
+RWStructuredBuffer<float>   g_sediment; // 2 x n: suspended sediment, m
+RWStructuredBuffer<float4>  g_flux;     // outflow L (-x), R (+x), T (-z), B (+z)
+RWStructuredBuffer<float4>  g_flow;     // u, v, sin(tilt), thermal delta
+RWStructuredBuffer<float>   g_out;      // base field, then the result, m
 
 [[vk::push_constant]] Push pc;
 

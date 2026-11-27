@@ -5,6 +5,7 @@
 //   GPU skinning is recorded before the graph executes.
 
 #include "app/frame_renderer.hpp"
+#include "app/grass_runtime.hpp"
 
 #include <algorithm>
 #include <cstdio>
@@ -164,8 +165,13 @@ FrameScene FrameRenderer::gather(engine::scene::Scene& scene,
                 fr, e, *item.mesh, vk_device, allocator,
                 static_cast<std::uint32_t>(sm->joint_matrices.size()));
             if (g != nullptr) {
-                std::memcpy(g->joints.mapped(), sm->joint_matrices.data(),
-                            sm->joint_matrices.size() * sizeof(glm::mat4));
+                const VkDeviceSize joint_bytes = sm->joint_matrices.size() * sizeof(glm::mat4);
+                std::memcpy(g->joints.mapped(), sm->joint_matrices.data(), joint_bytes);
+                // Sequential-write host memory may be non-coherent (S1.A15).
+                if (auto flushed = g->joints.flush(0, joint_bytes); !flushed) {
+                    std::fprintf(stderr, "[warn] joint matrix flush: %s\n",
+                                 flushed.error().message.c_str());
+                }
                 engine::renderer::SkinDispatch d;
                 d.vertices_in =
                     engine::rhi::buffer_device_address(vk_device, item.mesh->vertex_buffer);
@@ -298,6 +304,10 @@ bool FrameRenderer::record(const FrameInputs& in) {
     if (in.terrain != nullptr) {
         in.terrain->add_to_graph(graph, *gbuffer, draw_extent, fs.jittered_vp, cam.position,
                                  in.terrain_anchor, in.terrain_snowline);
+    }
+    if (in.grass != nullptr) {
+        in.grass->add_to_graph(graph, frame_, *in.registry, *gbuffer, draw_extent, fs.jittered_vp,
+                               cam, in.terrain, in.terrain_anchor, in.sim_dt);
     }
     // Clustered light culling (R10.1). A camera the clusters cannot
     // represent (non-perspective / no finite far plane) renders unlit by

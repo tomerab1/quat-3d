@@ -6,7 +6,9 @@
 // render.screenshot, asset.*, sim.*, scene.save/load, nav.bake — the
 // debugging commands (ROADMAP A5): debug.log, debug.stats, debug.pause /
 // resume / step / time_scale, debug.watch, debug.raycast, debug.nav_path —
-// and the gameplay script files (ROADMAP G7): script.list / get / create /
+// behaviour-tree authoring (ROADMAP A7): bt.leaves, bt.get, bt.set,
+// bt.add_node, bt.remove_node, bt.move_node, bt.set_params, bt.status — and
+// the gameplay script files (ROADMAP G7): script.list / get / create /
 // update / delete / check. The method contract is docs/remote-control.md.
 //
 // Scene editing works on any Scene. Everything that only the running
@@ -121,6 +123,7 @@ struct WorldServices {
     // Calls `done` (on the main thread, from a later poll) once the clock's
     // steps_run reaches `steps_target` or no steps are pending any more
     // (resume drops them). Without it debug.step replies right after queueing.
+    // debug.step keeps at most 64 waits outstanding (it replies busy beyond).
     std::function<void(std::uint64_t steps_target, std::function<void()> done)> when_stepped;
 
     // Frame timing and renderer counters for debug.stats.

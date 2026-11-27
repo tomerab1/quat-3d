@@ -29,6 +29,10 @@ const PROMPTS: &[(&str, &str)] = &[
         include_str!("../content/prompts/debug_session.md"),
     ),
     (
+        "design_behavior",
+        include_str!("../content/prompts/design_behavior.md"),
+    ),
+    (
         "write_game_script",
         include_str!("../content/prompts/write_game_script.md"),
     ),

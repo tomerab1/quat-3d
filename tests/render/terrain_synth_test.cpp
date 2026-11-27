@@ -27,6 +27,7 @@
 #include "engine/renderer/terrain_synth_pass.hpp"
 #include "engine/rhi/device.hpp"
 #include "engine/rhi/gpu_allocator.hpp"
+#include "engine/rhi/pipeline_cache.hpp"
 #include "engine/rhi/render_graph.hpp"
 #include "engine/terrain/generator.hpp"
 #include "support/expect_ok.hpp"
@@ -285,6 +286,25 @@ TEST(GpuTerrainSynth, TileImageHoldsTheReadBackHeights) {
     ASSERT_OK(readback->invalidate_mapped());
     EXPECT_EQ(std::memcmp(readback->mapped(), res.heights.heights.data(), bytes), 0)
         << "the sampled tile image differs from the read-back heights";
+}
+
+// The six kernels are hot-reloadable pipelines whose bindings come from
+// reflection by name: reloading the unchanged shader passes the R2
+// compatibility check, rebuilds all six, and synthesis still matches.
+TEST(GpuTerrainSynth, HotReloadRebuildsEveryKernel) {
+    QUAT_REQUIRE_GPU(g);
+    r::TerrainSynthPass pass = make_pass(*g);
+    ASSERT_TRUE(pass.valid());
+    const t::TerrainParams p = eroded_params();
+    const t::Heightmap before = synthesize(*g, pass, p);
+
+    auto report = g->cache.reload(g->shader_dir + "/terrain_synth.spv");
+    ASSERT_OK(report);
+    EXPECT_TRUE(report->errors.empty()) << report->errors.front();
+    EXPECT_GE(report->rebuilt, 6U);
+    const t::Heightmap after = synthesize(*g, pass, p);
+    ASSERT_TRUE(after.valid());
+    EXPECT_TRUE(bit_identical(before, after)) << "the reloaded kernels changed the result";
 }
 
 TEST(GpuTerrainSynth, DropletErosionStaysOnTheCpu) {
