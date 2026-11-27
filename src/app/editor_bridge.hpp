@@ -15,6 +15,7 @@
 
 #ifdef ENGINE_EDITOR
 
+#include <functional>
 #include <optional>
 #include <string>
 
@@ -63,6 +64,9 @@ struct EditorBridgeTargets {
     // The renderer's settings: the Renderer panel edits them and scene files
     // save / load them (A8).
     engine::renderer::RenderSettings* render_settings = nullptr;
+    // Camera cut for the renderer's temporal state (R11): called after a scene
+    // load and on every Play / Stop transition. May be empty.
+    std::function<void()> reset_temporal;
 };
 
 class EditorBridge {

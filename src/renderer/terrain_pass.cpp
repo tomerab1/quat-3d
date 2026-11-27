@@ -23,15 +23,17 @@ namespace {
     return std::unexpected(core::Error{std::move(what)});
 }
 
-// Mirrors PushConstants in terrain.slang (128 bytes).
+// Mirrors PushConstants in terrain.slang (208 bytes).
 struct TerrainPushConstants {
     glm::mat4 view_proj{1.0F};
     glm::vec4 chunk{0.0F};  // origin xz, chunk size m, skirt depth m
     glm::vec4 region{0.0F}; // uv offset, uv scale, metres per texel
     glm::vec4 shade{0.0F};  // grid_n, heightmap texel uv, snowline m, rock slope
     glm::vec4 misc{0.0F};   // x = origin y, yzw unused
+    glm::mat4 prev_view_proj{1.0F}; // velocity: last frame, unjittered
+    glm::vec4 motion{0.0F};         // xy = this frame's jitter (NDC)
 };
-static_assert(sizeof(TerrainPushConstants) == 128, "must match terrain.slang PushConstants");
+static_assert(sizeof(TerrainPushConstants) == 208, "must match terrain.slang PushConstants");
 
 constexpr VkShaderStageFlags kStages = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
 
@@ -132,15 +134,13 @@ TerrainPass::create(const rhi::Device& device, rhi::GpuAllocator& allocator,
     auto shader = cache.load(cooked_shader_dir + "/terrain.spv");
     if (!shader) return std::unexpected(shader.error());
 
-    const std::array<VkFormat, 4> color_formats{gbuffer_albedo_format, gbuffer_normal_format,
-                                                gbuffer_material_format, gbuffer_clearcoat_format};
     const VkPushConstantRange pc{kStages, 0, sizeof(TerrainPushConstants)};
     const VkDescriptorSetLayout set_layout = out.layout_.handle();
 
     rhi::GraphicsPipeline::CreateInfo info{};
     info.vertex = *shader;
     info.fragment = *shader;
-    info.color_formats = color_formats;
+    info.color_formats = gbuffer_color_formats;
     info.depth_format = gbuffer_depth_format;
     info.depth_compare_op = VK_COMPARE_OP_LESS_OR_EQUAL; // standard [0,1] depth
     info.cull_mode = VK_CULL_MODE_NONE;                  // top faces + skirts
@@ -335,6 +335,7 @@ void TerrainPass::add_to_graph(rhi::RenderGraph& graph, const renderer::GBufferT
         .writes(t.normal, rhi::ResourceUsage::color_attachment)
         .writes(t.material, rhi::ResourceUsage::color_attachment)
         .writes(t.clearcoat, rhi::ResourceUsage::color_attachment)
+        .writes(t.velocity, rhi::ResourceUsage::color_attachment)
         .writes(t.depth, rhi::ResourceUsage::depth_attachment)
         .execute([this, t, extent, vp, origin_y, snowline_m](rhi::PassContext& ctx) {
             const VkCommandBuffer cmd = ctx.cmd();
@@ -347,11 +348,12 @@ void TerrainPass::add_to_graph(rhi::RenderGraph& graph, const renderer::GBufferT
                 ai.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
                 return ai;
             };
-            const std::array<VkRenderingAttachmentInfo, 4> colors{
+            const std::array<VkRenderingAttachmentInfo, gbuffer_color_formats.size()> colors{
                 color_attachment(ctx.resolve(t.albedo).view),
                 color_attachment(ctx.resolve(t.normal).view),
                 color_attachment(ctx.resolve(t.material).view),
-                color_attachment(ctx.resolve(t.clearcoat).view)};
+                color_attachment(ctx.resolve(t.clearcoat).view),
+                color_attachment(ctx.resolve(t.velocity).view)};
 
             VkRenderingAttachmentInfo depth{};
             depth.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
@@ -391,6 +393,8 @@ void TerrainPass::add_to_graph(rhi::RenderGraph& graph, const renderer::GBufferT
                     push.shade = glm::vec4(static_cast<float>(chunk_quads), texel_uv,
                                            snowline_m, 0.72F);
                     push.misc = glm::vec4(origin_y, 0.0F, 0.0F, 0.0F);
+                    push.prev_view_proj = t.motion.prev_view_proj;
+                    push.motion = glm::vec4(t.motion.jitter_ndc, 0.0F, 0.0F);
                     vkCmdPushConstants(cmd, pipeline_.layout(), kStages, 0, sizeof(push), &push);
                     vkCmdBindIndexBuffer(cmd, lods_[draw.lod].buffer.handle(), 0,
                                          VK_INDEX_TYPE_UINT32);

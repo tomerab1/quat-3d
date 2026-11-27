@@ -490,6 +490,11 @@ add_library(engine_renderer STATIC
     src/renderer/bloom_pass.cpp
     src/renderer/exposure_pass.cpp
     src/renderer/taa_pass.cpp
+    src/renderer/jitter.cpp
+    src/renderer/velocity.cpp
+    src/renderer/velocity_pass.cpp
+    src/renderer/motion_history.cpp
+    src/renderer/upscaler.cpp
     src/renderer/atmosphere_pass.cpp
     src/renderer/terrain_pass.cpp
     src/renderer/terrain_gpu_tiles.cpp
@@ -580,6 +585,7 @@ add_executable(game
     src/app/application.cpp
     src/app/fly_camera.cpp
     src/app/frame_graph.cpp
+    src/app/frame_temporal.cpp
     src/app/frame_renderer.cpp
     src/app/remote_bridge.cpp
     src/app/screenshot_capture.cpp

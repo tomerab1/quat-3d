@@ -3,12 +3,14 @@
 // MeshPass — deferred GBuffer pass (Phase 3, Slice 3.5).
 //
 // Rasterises instanced (mesh, material) draws into the GBuffer (albedo,
-// octahedral world normal, packed metallic/roughness/occlusion, depth) using
-// gbuffer.slang. Materials are bound through a descriptor buffer per distinct
-// material (the IMaterial parameter block from Slice 3.4); per-instance
-// transforms come from the pass's instance buffer (R9.1, draw_batching.hpp).
-// The lighting pass (3.6) consumes the GBuffer this pass produces.
+// octahedral world normal, packed metallic/roughness/occlusion, velocity,
+// depth) using gbuffer.slang. Materials are bound through a descriptor buffer
+// per distinct material (the IMaterial parameter block from Slice 3.4);
+// per-instance transforms come from the pass's instance buffer (R9.1,
+// draw_batching.hpp) and their previous-frame poses from a parallel motion
+// buffer (R11, velocity.hpp). The lighting pass (3.6) consumes the GBuffer.
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <expected>
@@ -25,6 +27,7 @@
 #include "engine/core/error.hpp"
 #include "engine/renderer/draw_batching.hpp"
 #include "engine/renderer/instance_buffer.hpp"
+#include "engine/renderer/velocity.hpp"
 #include "engine/rhi/descriptor_buffer.hpp"
 #include "engine/rhi/managed_pipeline.hpp"
 #include "engine/rhi/render_graph.hpp"
@@ -45,23 +48,42 @@ inline constexpr VkFormat gbuffer_material_format  = VK_FORMAT_R8G8B8A8_UNORM;
 inline constexpr VkFormat gbuffer_clearcoat_format = VK_FORMAT_R8G8_UNORM;
 inline constexpr VkFormat gbuffer_depth_format     = VK_FORMAT_D32_SFLOAT;
 
-// Resource handles for the GBuffer targets within a compiled RenderGraph frame.
+// Upper bound on the mips material samplers may reach (covers 32k textures);
+// shared by the GBuffer and transparent passes.
+inline constexpr std::uint32_t material_sampler_max_lod = 16;
+
+// Colour attachments of every GBuffer writer, in SV_Target order.
+inline constexpr std::array<VkFormat, 5> gbuffer_color_formats{
+    gbuffer_albedo_format, gbuffer_normal_format, gbuffer_material_format,
+    gbuffer_clearcoat_format, velocity_format};
+
+// Resource handles for the GBuffer targets within a compiled RenderGraph frame,
+// plus the view motion every writer of these targets computes velocity with
+// (terrain and grass draw into them after the mesh pass).
 struct GBufferTargets {
     rhi::ResourceHandle albedo;
     rhi::ResourceHandle normal;
     rhi::ResourceHandle material;
     rhi::ResourceHandle clearcoat; // r = coat strength, g = coat roughness
+    rhi::ResourceHandle velocity;  // velocity_format, velocity.hpp convention
     rhi::ResourceHandle depth;
+    ViewMotion          motion{};
 };
 
-// Push-constant block, mirrors PushConstants in gbuffer.slang (72 bytes):
-// the view-projection and the device address of the InstanceData array.
+// Push-constant block, mirrors PushConstants in gbuffer.slang (160 bytes): the
+// jittered view-projection, last frame's unjittered one, the device addresses
+// of the InstanceData and InstanceMotion arrays, and this frame's jitter.
 struct GBufferPushConstants {
     glm::mat4       view_proj{1.0F};
+    glm::mat4       prev_view_proj{1.0F};
     VkDeviceAddress instances = 0;
+    VkDeviceAddress motion = 0;
+    glm::vec2       jitter_ndc{0.0F};
+    std::uint32_t   has_motion = 0;
+    std::uint32_t   pad = 0;
 };
-static_assert(sizeof(GBufferPushConstants) == 72, "must match gbuffer.slang PushConstants");
-static_assert(offsetof(GBufferPushConstants, instances) == 64,
+static_assert(sizeof(GBufferPushConstants) == 160, "must match gbuffer.slang PushConstants");
+static_assert(offsetof(GBufferPushConstants, instances) == 128,
               "must match gbuffer.slang PushConstants");
 
 class MeshPass {
@@ -83,6 +105,14 @@ public:
     // descriptor buffer per distinct material. Those (and the per-frame draw
     // record) are owned by the pass and live until the next call, so `graph`
     // must be compiled + executed before add_to_graph is called again.
+    //
+    // `view_proj` is what rasterisation uses (jittered in the frame loop);
+    // `motion` turns positions into the velocity target (velocity.hpp).
+    [[nodiscard]] std::expected<GBufferTargets, core::Error>
+    add_to_graph(rhi::RenderGraph& graph, VkExtent2D extent, const glm::mat4& view_proj,
+                 const InstancedDrawList& list, const ViewMotion& motion);
+
+    // Without camera motion or jitter (ViewMotion::still(view_proj)).
     [[nodiscard]] std::expected<GBufferTargets, core::Error>
     add_to_graph(rhi::RenderGraph& graph, VkExtent2D extent, const glm::mat4& view_proj,
                  const InstancedDrawList& list);
@@ -91,6 +121,11 @@ public:
     [[nodiscard]] std::expected<GBufferTargets, core::Error>
     add_to_graph(rhi::RenderGraph& graph, VkExtent2D extent, const glm::mat4& view_proj,
                  std::span<const DrawItem> draws);
+
+    // Texture LOD bias for material sampling (texture_lod_bias(): negative
+    // when rendering below display resolution). Recreates the material
+    // sampler when it changes; call between frames of this pass's slot.
+    [[nodiscard]] std::expected<void, core::Error> set_texture_lod_bias(float bias);
 
 private:
     struct FrameDraw {
@@ -113,12 +148,15 @@ private:
     rhi::ManagedPipeline           pipeline_;
 
     rhi::Sampler         sampler_;            // shared sampler (binding 6)
+    float                lod_bias_ = 0.0F;    // the sampler's mipLodBias
     asset::TextureAsset  fallback_texture_;   // 1x1 white, for unbound slots
     asset::MaterialAsset default_material_;   // white, untextured
 
     // Per-frame, rebuilt each add_to_graph call.
     InstanceBuffer                     instances_;
+    InstanceBuffer                     motion_;
     VkDeviceAddress                    frame_instances_ = 0;
+    VkDeviceAddress                    frame_motion_ = 0;
     std::vector<rhi::DescriptorBuffer> frame_descriptors_;
     std::vector<FrameDraw>             frame_draws_;
 };

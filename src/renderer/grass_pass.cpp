@@ -20,7 +20,7 @@ namespace {
     return std::unexpected(core::Error{std::move(what)});
 }
 
-// Mirrors GrassParams in lib/grass_common.slang (std140, 480 bytes).
+// Mirrors GrassParams in lib/grass_common.slang (std140, 560 bytes).
 struct GrassParamsGpu {
     glm::mat4  view_proj{1.0F};
     glm::vec4  planes[6]{};
@@ -38,8 +38,10 @@ struct GrassParamsGpu {
     glm::vec4  tile_rect[grass_max_height_tiles]{};
     glm::vec4  tile_info[grass_max_height_tiles]{};
     glm::vec4  ground{0.0F};
+    glm::mat4  prev_view_proj{1.0F};
+    glm::vec4  motion{0.0F}; // x previous wind time, yz jitter (NDC)
 };
-static_assert(sizeof(GrassParamsGpu) == 480, "must match grass_common.slang GrassParams");
+static_assert(sizeof(GrassParamsGpu) == 560, "must match grass_common.slang GrassParams");
 
 // Mirrors PushConstants in grass.slang.
 struct GrassDrawPush {
@@ -94,7 +96,8 @@ void append_strip(std::vector<std::uint32_t>& out, std::uint32_t segments) {
 
 [[nodiscard]] GrassParamsGpu make_params(const GrassFrame& frame, const GrassSettings& s,
                                          const GrassGrid& grid, const GrassCapacity& capacity,
-                                         std::span<const TerrainHeightTile> tiles) {
+                                         std::span<const TerrainHeightTile> tiles,
+                                         const ViewMotion& motion) {
     GrassParamsGpu p;
     p.view_proj = frame.draw_view_proj;
     const auto planes = grass_frustum_planes(frame.cull_view_proj);
@@ -131,6 +134,8 @@ void append_strip(std::vector<std::uint32_t>& out, std::uint32_t segments) {
         hi = std::max(hi, s.ground_y);
     }
     p.ground = glm::vec4(lo, hi, 0.0F, 0.0F);
+    p.prev_view_proj = motion.prev_view_proj;
+    p.motion = glm::vec4(frame.prev_time_s.value_or(frame.time_s), motion.jitter_ndc, 0.0F);
     return p;
 }
 
@@ -175,14 +180,12 @@ GrassPass::create(const rhi::Device& device, rhi::GpuAllocator& allocator,
 
     auto draw_shader = cache.load(cooked_shader_dir + "/grass.spv");
     if (!draw_shader) return std::unexpected(draw_shader.error());
-    const std::array<VkFormat, 4> color_formats{gbuffer_albedo_format, gbuffer_normal_format,
-                                                gbuffer_material_format, gbuffer_clearcoat_format};
     const VkPushConstantRange push{VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(GrassDrawPush)};
     const VkDescriptorSetLayout draw_set = s.draw_layout.handle();
     rhi::GraphicsPipeline::CreateInfo gi{};
     gi.vertex = *draw_shader;
     gi.fragment = *draw_shader;
-    gi.color_formats = color_formats;
+    gi.color_formats = gbuffer_color_formats;
     gi.depth_format = gbuffer_depth_format;
     gi.depth_compare_op = VK_COMPARE_OP_LESS_OR_EQUAL; // standard [0,1] depth
     gi.cull_mode = VK_CULL_MODE_NONE;                  // blades are two-sided
@@ -285,7 +288,9 @@ GrassPass::add_to_graph(rhi::RenderGraph& graph, std::uint32_t slot_index,
 
     // Host writes land before vkQueueSubmit, which makes them visible to the
     // device — no graph barrier needed for the params.
-    const GrassParamsGpu params = make_params(frame, settings, grid, capacity, tiles);
+    const ViewMotion motion =
+        gbuffer != nullptr ? gbuffer->motion : ViewMotion::still(frame.draw_view_proj);
+    const GrassParamsGpu params = make_params(frame, settings, grid, capacity, tiles, motion);
     std::memcpy(slot.params.mapped(), &params, sizeof(params));
     if (auto f = slot.params.flush(0, kParamsBytes); !f) return std::unexpected(f.error());
 
@@ -350,6 +355,7 @@ GrassPass::add_to_graph(rhi::RenderGraph& graph, std::uint32_t slot_index,
         .writes(t.normal, rhi::ResourceUsage::color_attachment)
         .writes(t.material, rhi::ResourceUsage::color_attachment)
         .writes(t.clearcoat, rhi::ResourceUsage::color_attachment)
+        .writes(t.velocity, rhi::ResourceUsage::color_attachment)
         .writes(t.depth, rhi::ResourceUsage::depth_attachment)
         .execute([state = &s, set = &slot.draw_set, t, args, extent,
                   far_base = capacity.near](rhi::PassContext& ctx) {
@@ -363,11 +369,12 @@ GrassPass::add_to_graph(rhi::RenderGraph& graph, std::uint32_t slot_index,
                 ai.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
                 return ai;
             };
-            const std::array<VkRenderingAttachmentInfo, 4> colors{
+            const std::array<VkRenderingAttachmentInfo, gbuffer_color_formats.size()> colors{
                 color_attachment(ctx.resolve(t.albedo).view),
                 color_attachment(ctx.resolve(t.normal).view),
                 color_attachment(ctx.resolve(t.material).view),
-                color_attachment(ctx.resolve(t.clearcoat).view)};
+                color_attachment(ctx.resolve(t.clearcoat).view),
+                color_attachment(ctx.resolve(t.velocity).view)};
             VkRenderingAttachmentInfo depth{};
             depth.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
             depth.imageView = ctx.resolve(t.depth).view;

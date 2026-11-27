@@ -45,11 +45,10 @@ bool FrameRenderer::create_passes(const engine::rhi::Device& device,
     editor_active_ = with_ui;
 
     const VkFormat swap_format = swapchain.format();
-    // The swapchain is usually sRGB, which cannot be a storage image (TAA writes
-    // one) and would double-encode if the tonemap shader's explicit sRGB output
-    // were hardware-encoded again. So tonemap + post-process work in the matching
-    // UNORM format (the shader does the sRGB encode), then a size-compatible copy
-    // moves the bits into the sRGB swapchain.
+    // The swapchain is usually sRGB, which would double-encode if the tonemap
+    // shader's explicit sRGB output were hardware-encoded again. So the
+    // tonemap works in the matching UNORM format (the shader does the sRGB
+    // encode), then a size-compatible copy moves the bits into the swapchain.
     ldr_format_ = [swap_format] {
         switch (swap_format) {
             case VK_FORMAT_B8G8R8A8_SRGB: return VK_FORMAT_B8G8R8A8_UNORM;
@@ -59,10 +58,21 @@ bool FrameRenderer::create_passes(const engine::rhi::Device& device,
     }();
     const VkFormat ldr_format = ldr_format_;
 
-    // Temporal state shared by both slots (audit A2 / A11): one TAA history and
-    // one adapted luminance, each advanced exactly once per frame.
-    taa_history_ =
-        std::make_shared<engine::renderer::TaaHistory>(device, allocator, k_frames_in_flight);
+    // Temporal state shared by both slots (audit A2 / A11): the upscaler's
+    // history and one adapted luminance, each advanced exactly once per frame.
+    {
+        auto upscaler = engine::renderer::create_upscaler(
+            engine::renderer::UpscalerBackend::taau, device, allocator, pipeline_cache,
+            shader_dir, k_frames_in_flight);
+        auto velocity = engine::renderer::VelocityPass::create(device, pipeline_cache, shader_dir);
+        if (!upscaler || !velocity) {
+            std::fprintf(stderr, "[fatal] upscaler / velocity pass creation failed: %s\n",
+                         (!upscaler ? upscaler.error() : velocity.error()).message.c_str());
+            return false;
+        }
+        upscaler_ = std::move(*upscaler);
+        velocity_ = std::move(*velocity);
+    }
     auto exposure_state = engine::renderer::ExposureState::create(device, allocator);
     // Per-frame-in-flight deferred chains (GBuffer -> lighting -> tonemap). Each
     // slot owns its passes' descriptor buffers and a transient image pool, so
@@ -101,8 +111,6 @@ bool FrameRenderer::create_passes(const engine::rhi::Device& device,
                                                          shader_dir);
         auto expo = engine::renderer::ExposurePass::create(device, allocator, pipeline_cache,
                                                            shader_dir, exposure_state_);
-        auto taa = engine::renderer::TaaPass::create(device, allocator, pipeline_cache, shader_dir,
-                                                     ldr_format, taa_history_);
 #ifdef ENGINE_EDITOR
         if (with_ui) {
             auto ui = engine::renderer::ImGuiPass::create(device, allocator, pipeline_cache,
@@ -117,7 +125,7 @@ bool FrameRenderer::create_passes(const engine::rhi::Device& device,
             f.imgui = std::move(*ui);
         }
 #endif
-        if (!mesh || !light || !tone || !skin || !shadow || !transp || !bloom || !expo || !taa) {
+        if (!mesh || !light || !tone || !skin || !shadow || !transp || !bloom || !expo) {
             frames_ok = false;
             std::fprintf(stderr, "[fatal] deferred pass creation failed: %s\n",
                          (!mesh    ? mesh.error()
@@ -127,8 +135,7 @@ bool FrameRenderer::create_passes(const engine::rhi::Device& device,
                           : !shadow ? shadow.error()
                           : !transp ? transp.error()
                           : !bloom  ? bloom.error()
-                          : !expo   ? expo.error()
-                                    : taa.error())
+                                    : expo.error())
                              .message.c_str());
             break;
         }
@@ -140,7 +147,6 @@ bool FrameRenderer::create_passes(const engine::rhi::Device& device,
         f.transparent = std::move(*transp);
         f.bloom = std::move(*bloom);
         f.exposure = std::move(*expo);
-        f.taa = std::move(*taa);
         f.pool = engine::rhi::TransientImagePool(device, allocator);
         auto cull = engine::renderer::LightCullPass::create(device, allocator, pipeline_cache,
                                                             shader_dir);
@@ -186,9 +192,9 @@ bool FrameRenderer::create_passes(const engine::rhi::Device& device,
                 using engine::renderer::NonFiniteSource;
                 frames_[i].bloom.set_non_finite_counter(
                     non_finite_->address(i, NonFiniteSource::bloom_prefilter));
-                frames_[i].taa.set_non_finite_counter(
-                    non_finite_->address(i, NonFiniteSource::taa_history));
             }
+            // The TAAU resolve is shared by the slots; add_upscale passes it
+            // the current slot's taa_history counter with each frame's inputs.
         } else {
             std::fprintf(stderr, "[warn] non-finite counters unavailable: %s\n",
                          counters.error().message.c_str());

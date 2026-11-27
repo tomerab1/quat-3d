@@ -1,6 +1,7 @@
 #include "tuning_panels.hpp"
 
 #include <cmath>
+#include <cstddef>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -50,6 +51,18 @@ bool draw_setting(RenderSettings& s, const RenderSettingDesc& d) {
     bool changed = false;
     if (ref.b != nullptr) {
         changed = ImGui::Checkbox(label.c_str(), ref.b);
+    } else if (d.type == renderer::RenderSettingType::choice && ref.i != nullptr) {
+        const std::string current(renderer::render_setting_choice_name(d, static_cast<float>(*ref.i)));
+        if (ImGui::BeginCombo(label.c_str(), current.c_str())) {
+            for (std::size_t k = 0; k < d.choices.size(); ++k) {
+                const std::string name(d.choices[k]);
+                if (ImGui::Selectable(name.c_str(), static_cast<int>(k) == *ref.i)) {
+                    *ref.i = static_cast<int>(k);
+                    changed = true;
+                }
+            }
+            ImGui::EndCombo();
+        }
     } else if (ref.i != nullptr) {
         changed = ImGui::SliderInt(label.c_str(), ref.i, static_cast<int>(d.min),
                                    static_cast<int>(d.max), format.c_str(), flags);
@@ -69,6 +82,8 @@ bool draw_setting(RenderSettings& s, const RenderSettingDesc& d) {
         enabled != nullptr && renderer::render_setting_value(s, *enabled) == 0.0F) {
         return true;
     }
+    // Upscaling needs the temporal resolve (TAA off renders at native scale).
+    if (d.group == "upscaler" && !s.taa.enabled) return true;
     return d.group == "exposure" && !s.exposure.auto_exposure && d.name != "auto" &&
            d.name != "compensation_ev";
 }

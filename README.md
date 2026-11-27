@@ -36,7 +36,11 @@ the CI screenshot pipeline.
 - Glass and transparency (refraction, absorption, IOR), clearcoat car paint
 - Physically based sky with volumetric clouds and a moving sun
 - Image-based lighting that keeps up with the sky in real time
-- Anti-aliasing (TAA), bloom, auto-exposure, filmic tonemapping
+- Temporal anti-aliasing and upscaling (TAAU) with per-object motion vectors for
+  moving, skinned, instanced and wind-animated geometry; render scale modes
+  (native, quality, balanced, performance), set like every other render
+  setting from the Renderer panel, `render.settings.*` / MCP or a scene file
+- Bloom, auto-exposure, filmic tonemapping
 - Automatic instancing: objects sharing a mesh and material (trees, rocks,
   crates) are drawn together in one instanced draw
 - GPU particles for sparks, fire, smoke and dust: simulated in compute

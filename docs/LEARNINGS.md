@@ -167,6 +167,23 @@ into CLAUDE.md or the brief template in [`CYCLE.md`](CYCLE.md).
   to InstanceIndex - BaseInstance), which the device does not enable — the
   validation layer flags every pipeline. Use `instancing.slang`'s
   `instance_index()` (plain InstanceIndex) in vertex shaders.
+- **Half-float accumulation buffers stall and drift.** A running average
+  whose per-frame weight falls below ~1/1000 (R11's TAAU at 50% render scale)
+  loses its updates to RGBA16F rounding, and the float->half conversion mode
+  is implementation-defined (lavapipe truncates: a systematic darkening that
+  the 1/weight averaging amplifies); the upscale test's error rose from
+  0.0017 to 0.0047. Round explicitly and stochastically onto the half grid in
+  the shader (taa.slang `stochastic_round_half`) — it matches RGBA32F at half
+  the bandwidth. Adding a dither and letting the hardware round is not enough
+  (still biased under truncation).
+- **A Slang pointer null test (`p != nullptr`) emits the Int64 capability**,
+  which needs `shaderInt64` (not enabled): the validation layer rejects the
+  pipeline. Pass a presence flag next to device addresses instead.
+- **A pipeline without descriptor sets drawn while a descriptor buffer is
+  bound** fails VUID-vkCmdDraw-None-08117 (it lacks the descriptor-buffer
+  flag). Give it an empty descriptor-buffer set layout (VelocityPass).
+- **Slang lays out `uint3` at 16-byte alignment in push constants**: `uint;
+  uint3` is a 28-byte block, not 16. Pad with scalars.
 - **Fuzz every payload variant, not just one.** R17's KTX2 fuzz test first
   mutated only UASTC files; the review asked for ETC1S too, and the first
   ETC1S run crashed inside libktx (it ignores `decode_palettes` failures and

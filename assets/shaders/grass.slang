@@ -10,10 +10,12 @@
 // camera so the field does not thin out at grazing angles. Normals are
 // rounded across the blade's width and pulled toward the ground's up
 // direction for soft, ground-cover-like shading. Opaque (no alpha test or
-// blending), so grass stays in the deferred path.
+// blending), so grass stays in the deferred path. The velocity target (R11)
+// gets the blade's motion by evaluating it again at the previous wind time.
 
 import grass_common;
 import instancing; // instance_index(): InstanceIndex including firstInstance
+import velocity;
 
 [[vk::binding(0)]] ConstantBuffer<GrassParams>  g_params;
 [[vk::binding(1)]] StructuredBuffer<GrassBlade> g_blades;
@@ -33,6 +35,8 @@ struct VsOut {
     float3 side   : TANGENT;  // across the blade
     float2 coord  : TEXCOORD0; // x across width [-1, 1], y along the blade [0, 1]
     nointerpolation float variation : TEXCOORD1;
+    float4 cur_clip  : CUR_CLIP;
+    float4 prev_clip : PREV_CLIP; // the blade at the previous wind time, last frame's camera
 }
 
 float wind_hash(float2 p) {
@@ -49,12 +53,12 @@ float wind_noise(float2 p) {
                 lerp(wind_hash(i + float2(0, 1)), wind_hash(i + float2(1, 1)), w.x), w.y);
 }
 
-// Horizontal tip displacement per metre of blade height from the wind.
-float2 wind_offset(float3 root, float phase, float variation) {
+// Horizontal tip displacement per metre of blade height from the wind at
+// `time` (seconds on the wind clock).
+float2 wind_offset(float3 root, float phase, float variation, float time) {
     const float2 dir = g_params.wind.xy;
     const float strength = g_params.wind.z;
     const float freq = g_params.wind.w;
-    const float time = g_params.camera.w;
     // Gusts: two octaves of value noise scrolling downwind (~16 m and ~6 m waves).
     const float2 q = root.xz * 0.06 - dir * time * freq;
     const float gust = 0.65 * wind_noise(q) + 0.35 * wind_noise(q * 2.7 + 13.1);
@@ -85,26 +89,39 @@ VsOut vertex_main(uint vertex_id : SV_VertexID) {
     }
     const float3 side = float3(-facing.y, 0.0, facing.x);
 
-    // Tip direction: static lean along the facing plus the wind; the control
-    // point drops as the blade bends so its length stays roughly constant.
-    const float2 offset = facing * shape.lean + wind_offset(root, shape.phase, shape.variation);
-    const float3 tip_dir = normalize(float3(offset.x, 1.0, offset.y));
-    const float3 p0 = root;
-    const float3 p1 = root + up * (height * 0.62 * tip_dir.y);
-    const float3 p2 = root + tip_dir * height;
-
     const uint segments = pc.segments;
     const uint level = min(vertex_id / 2, segments);
     const float across = level == segments ? 0.0 : ((vertex_id & 1u) == 0u ? -1.0 : 1.0);
     const float t = float(level) / float(segments);
     const float s = 1.0 - t;
-    const float3 centre = s * s * p0 + 2.0 * s * t * p1 + t * t * p2;
-    const float3 tangent = normalize(2.0 * s * (p1 - p0) + 2.0 * t * (p2 - p1) + up * 1e-4);
     const float half_width = 0.5 * width * pow(max(s, 0.0), 0.65);
 
+    // Tip direction: static lean along the facing plus the wind; the control
+    // point drops as the blade bends so its length stays roughly constant.
+    // Evaluated at this frame's and the previous frame's wind time (velocity).
+    float3 tangent = up;
+    float3 world[2];
+    [unroll]
+    for (int frame = 0; frame < 2; ++frame) {
+        const float time = frame == 0 ? g_params.camera.w : g_params.motion.x;
+        const float2 offset =
+            facing * shape.lean + wind_offset(root, shape.phase, shape.variation, time);
+        const float3 tip_dir = normalize(float3(offset.x, 1.0, offset.y));
+        const float3 p0 = root;
+        const float3 p1 = root + up * (height * 0.62 * tip_dir.y);
+        const float3 p2 = root + tip_dir * height;
+        const float3 centre = s * s * p0 + 2.0 * s * t * p1 + t * t * p2;
+        world[frame] = centre + side * (across * half_width);
+        if (frame == 0) {
+            tangent = normalize(2.0 * s * (p1 - p0) + 2.0 * t * (p2 - p1) + up * 1e-4);
+        }
+    }
+
     VsOut o;
-    o.world = centre + side * (across * half_width);
+    o.world = world[0];
     o.clip = mul(g_params.view_proj, float4(o.world, 1.0));
+    o.cur_clip = o.clip;
+    o.prev_clip = mul(g_params.prev_view_proj, float4(world[1], 1.0));
     o.normal = normalize(cross(side, tangent));
     o.side = side;
     o.coord = float2(across, t);
@@ -130,6 +147,7 @@ struct GBufferOut {
     float2 normal    : SV_Target1;
     float4 material  : SV_Target2; // r metallic, g roughness, b occlusion, a coverage
     float2 clearcoat : SV_Target3;
+    float2 velocity  : SV_Target4;
 }
 
 [shader("fragment")]
@@ -154,5 +172,6 @@ GBufferOut fragment_main(VsOut input) {
     o.normal = oct_encode(n);
     o.material = float4(0.0, 0.62, occlusion, 1.0);
     o.clearcoat = float2(0.0, 0.0);
+    o.velocity = surface_velocity(input.cur_clip, input.prev_clip, g_params.motion.yz);
     return o;
 }

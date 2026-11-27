@@ -30,6 +30,7 @@ r::RenderSettings tuned() {
         case r::RenderSettingType::boolean: v = 1.0F - d.default_value; break;
         case r::RenderSettingType::integer: v = d.default_value == d.max ? d.min : d.max; break;
         case r::RenderSettingType::number: v = d.min + (d.max - d.min) * 0.37F; break;
+        case r::RenderSettingType::choice: v = d.default_value == d.max ? d.min : d.max; break;
         }
         r::set_render_setting(out, d, v);
     }
@@ -52,6 +53,7 @@ TEST(RenderSettingsJson, EncodeDecodeRoundTripsEveryField) {
         case r::RenderSettingType::boolean: EXPECT_TRUE(v.is_boolean()); break;
         case r::RenderSettingType::integer: EXPECT_TRUE(v.is_number_integer()); break;
         case r::RenderSettingType::number: EXPECT_TRUE(v.is_number_float()); break;
+        case r::RenderSettingType::choice: EXPECT_TRUE(v.is_string()); break;
         }
     }
     // One group only.
@@ -164,6 +166,11 @@ TEST(RenderSettingsJson, SchemaMirrorsTheTable) {
             if (type == "boolean") {
                 EXPECT_FALSE(f.contains("min"));
                 EXPECT_TRUE(f["default"].is_boolean());
+            } else if (d->type == r::RenderSettingType::choice) {
+                EXPECT_EQ(type, "string");
+                ASSERT_TRUE(f["enum"].is_array());
+                EXPECT_EQ(f["enum"].size(), d->choices.size());
+                EXPECT_TRUE(f["default"].is_string());
             } else {
                 EXPECT_FLOAT_EQ(f["min"].get<float>(), d->min);
                 EXPECT_FLOAT_EQ(f["max"].get<float>(), d->max);
@@ -173,6 +180,27 @@ TEST(RenderSettingsJson, SchemaMirrorsTheTable) {
     }
     EXPECT_EQ(fields, r::render_setting_fields().size());
     EXPECT_EQ(schema["groups"][0]["fields"][1]["unit"], "EV"); // exposure.compensation_ev
+}
+
+// R11: the upscaler's enums travel by name; anything else is rejected
+// strictly, with the list of names, and leaves the settings untouched.
+TEST(RenderSettingsJson, ChoiceFieldsUseNames) {
+    r::RenderSettings settings;
+    ASSERT_OK(s::apply_render_settings_json(
+        settings, json{{"upscaler", {{"mode", "performance"}, {"backend", "fsr2"}}}}, true));
+    EXPECT_EQ(r::upscaler_mode(settings.upscaler), r::UpscalerMode::performance);
+    EXPECT_EQ(r::upscaler_backend(settings.upscaler), r::UpscalerBackend::fsr2);
+    EXPECT_EQ(s::encode_render_settings(settings, "upscaler")["upscaler"]["mode"], "performance");
+
+    for (const json& bad : {json("ultra"), json(2), json(true)}) {
+        r::RenderSettings untouched = settings;
+        auto result =
+            s::apply_render_settings_json(untouched, json{{"upscaler", {{"mode", bad}}}}, true);
+        ASSERT_FALSE(result.has_value()) << bad.dump();
+        EXPECT_TRUE(contains(result.error().message, "upscaler.mode")) << result.error().message;
+        EXPECT_TRUE(contains(result.error().message, "\"balanced\"")) << result.error().message;
+        EXPECT_EQ(untouched.upscaler.mode, settings.upscaler.mode);
+    }
 }
 
 } // namespace

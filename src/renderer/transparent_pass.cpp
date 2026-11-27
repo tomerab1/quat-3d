@@ -144,7 +144,8 @@ TransparentPass::create(const rhi::Device& device, rhi::GpuAllocator& allocator,
     if (!transmission) return std::unexpected(transmission.error());
     out.transmission_pipeline_ = std::move(*transmission);
 
-    auto sampler = rhi::create_sampler(device.handle());
+    auto sampler = rhi::create_sampler(device.handle(), rhi::SamplerAddress::repeat,
+                                       material_sampler_max_lod);
     if (!sampler) return std::unexpected(sampler.error());
     out.sampler_ = std::move(*sampler);
 
@@ -210,6 +211,18 @@ std::expected<void, core::Error> TransparentPass::ensure_scene_color(VkExtent2D 
     scene_color_view_ = std::move(*view);
     scene_color_extent_ = extent;
     scene_color_mips_ = mips;
+    return {};
+}
+
+std::expected<void, core::Error> TransparentPass::set_texture_lod_bias(float bias) {
+    if (bias == lod_bias_ && sampler_.handle() != VK_NULL_HANDLE) return {};
+    // The slot's previous frame has finished and the material descriptors are
+    // rebuilt every add_to_graph, so the old sampler can go now.
+    auto sampler = rhi::create_sampler(device_->handle(), rhi::SamplerAddress::repeat,
+                                       material_sampler_max_lod, 0.0F, bias);
+    if (!sampler) return std::unexpected(sampler.error());
+    sampler_ = std::move(*sampler);
+    lod_bias_ = bias;
     return {};
 }
 

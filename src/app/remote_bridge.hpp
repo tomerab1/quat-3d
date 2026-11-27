@@ -38,6 +38,7 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <memory>
 #include <optional>
 
@@ -116,6 +117,9 @@ struct RemoteBridgeTargets {
     engine::renderer::RenderSettings* render_settings = nullptr;
     // The renderer's per-entity derived materials (A8), resolved in poll().
     engine::scene::MaterialOverrideStore* material_overrides = nullptr;
+    // Camera cut for the renderer's temporal state (R11): called after
+    // scene.load and camera.set (a teleport). May be empty.
+    std::function<void()> reset_temporal;
 
 #ifdef ENGINE_EDITOR
     engine::editor::EditorLayer* editor = nullptr;
