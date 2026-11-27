@@ -19,6 +19,7 @@
 #include "engine/core/json_fields.hpp"
 #include "engine/physics/physics_world.hpp"
 #include "engine/scene/components.hpp"
+#include "engine/scene/script_component.hpp"
 
 namespace engine::scene {
 
@@ -42,6 +43,7 @@ constexpr std::array k_components = {
     ComponentInfo{"nav_agent", "Navmesh path-following agent", true, true},
     ComponentInfo{"behavior", "Behaviour tree (JSON source)", true, true},
     ComponentInfo{"patrol", "Patrol route the nav agent walks", true, true},
+    ComponentInfo{"script", "Lua gameplay script (assets/scripts/) with property overrides", true, true},
     ComponentInfo{"terrain", "Procedural terrain tile / streamed world", true, true},
     ComponentInfo{"net_replicated", "Replicate this entity's transform to network clients", true, true},
     ComponentInfo{"audio_source", "Sound emitter: wav/flac/mp3 clip on a bus, optionally 3D", true, true},
@@ -455,6 +457,7 @@ json encode_components(const entt::registry& r, entt::entity e, const EncodeOpti
     if (const auto* b = r.try_get<BehaviorTree>(e)) {
         out["behavior"] = {{"source", b->source}, {"enabled", b->enabled}};
     }
+    if (const auto* sc = r.try_get<Script>(e)) out["script"] = encode_script(*sc);
     if (const auto* p = r.try_get<PatrolRoute>(e)) {
         json pts = json::array();
         for (const glm::vec3& pt : p->points) pts.push_back(vec3_json(pt));
@@ -524,6 +527,7 @@ std::vector<std::string_view> component_names(const entt::registry& r, entt::ent
     add(r.all_of<NavAgent>(e), "nav_agent");
     add(r.all_of<BehaviorTree>(e), "behavior");
     add(r.all_of<PatrolRoute>(e), "patrol");
+    add(r.all_of<Script>(e), "script");
     add(r.all_of<Terrain>(e), "terrain");
     add(r.all_of<NetReplicated>(e), "net_replicated");
     add(r.all_of<AudioSource>(e), "audio_source");
@@ -725,6 +729,15 @@ std::expected<void, core::Error> apply_component(entt::registry& r, entt::entity
             f.vec3_list("points", p.points).boolean("loop", p.loop);
         });
     }
+    if (name == "script") {
+        const bool adding = !r.all_of<Script>(e);
+        return merge<Script>(r, e, v, name, strict, [adding](JsonFields& f, Script& sc) {
+            if (adding && !f.has("path")) {
+                f.fail("path", "required when adding a script (relative to assets/scripts/)");
+            }
+            decode_script_fields(f, sc);
+        });
+    }
     if (name == "terrain") {
         return merge<Terrain>(r, e, v, name, strict, [](JsonFields& f, Terrain& t) {
             terrain::TerrainParams& p = t.params;
@@ -810,6 +823,7 @@ bool remove_component(entt::registry& r, entt::entity e, std::string_view name) 
     if (name == "nav_agent") return r.remove<NavAgent>(e) > 0;
     if (name == "behavior") return r.remove<BehaviorTree>(e) > 0;
     if (name == "patrol") return r.remove<PatrolRoute>(e) > 0;
+    if (name == "script") return r.remove<Script>(e) > 0;
     if (name == "terrain") return r.remove<Terrain>(e) > 0;
     if (name == "net_replicated") return r.remove<NetReplicated>(e) > 0;
     if (name == "audio_source") return r.remove<AudioSource>(e) > 0;

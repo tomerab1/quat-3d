@@ -38,7 +38,8 @@ using SnapshotComponents =
                   scene::RigidBody, scene::CharacterController, scene::Terrain,
                   scene::NavAgent, scene::BehaviorTree, scene::PatrolRoute, scene::Primitive,
                   scene::InstancedMesh, scene::InstancedMeshParts, scene::Scatter,
-                  scene::NetReplicated, scene::AudioSource, scene::AudioListener>;
+                  scene::NetReplicated, scene::AudioSource, scene::AudioListener,
+                  scene::Script>;
 
 namespace detail {
 template <typename List>

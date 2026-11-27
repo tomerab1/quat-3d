@@ -127,6 +127,12 @@ struct CameraMatrices {
 // see set_world_transform).
 void physics_system(entt::registry& registry, physics::PhysicsWorld& world, float dt);
 
+// The body of `e`'s RigidBody, created now (as physics_system's first step
+// would) when it has none yet — so gameplay code can push a body it spawned
+// this frame. invalid_body without RigidBody + Collider + Transform.
+std::uint32_t ensure_rigid_body(entt::registry& registry, physics::PhysicsWorld& world,
+                                entt::entity e);
+
 // Create a static Jolt height-field body for the first Terrain entity in the
 // registry, matching the rendered surface: the body sits at the tile's minimum
 // XZ corner (entity translation - tile_size/2, heights offset by translation.y)

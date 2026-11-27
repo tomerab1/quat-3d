@@ -93,6 +93,9 @@ find_package(EnTT CONFIG REQUIRED)
 find_package(Jolt CONFIG REQUIRED)
 find_package(recastnavigation CONFIG REQUIRED)
 find_package(GameNetworkingSockets CONFIG REQUIRED)
+# Lua 5.4 (C library, longjmp error handling) + sol2 (header-only bindings).
+find_package(Lua REQUIRED)
+find_package(sol2 CONFIG REQUIRED)
 # miniaudio: vcpkg's port is header-only (it installs miniaudio.h and nothing
 # else), so it is wrapped in an imported target here and engine_audio compiles
 # the implementation (src/audio/miniaudio_impl.cpp). Linux needs pthread, libm
@@ -211,6 +214,7 @@ add_library(engine_scene STATIC
     src/scene/behavior.cpp
     src/scene/scene_io.cpp
     src/scene/component_json.cpp
+    src/scene/script_component.cpp
     src/scene/audio_system.cpp
     src/scene/primitives.cpp
     src/scene/primitive_resolve.cpp
@@ -235,6 +239,34 @@ target_include_directories(engine_scene PUBLIC ${ENGINE_PUBLIC_INCLUDE})
 
 # stb's implementation TU is not warning-clean under our strict flags.
 set_source_files_properties(src/scene/stb_image_impl.cpp PROPERTIES COMPILE_OPTIONS "-w")
+
+# ---------------------------------------------------------------------------
+# engine_script — Lua gameplay scripting (G7): one sandboxed Lua 5.4 state
+# per play session with per-call instruction / memory limits, the Script
+# component's runtime, hot reload, and the engine API scripts call (entities,
+# components through the codec, physics, input, audio, navigation). Lua and
+# sol2 are implementation details (PRIVATE); the public headers are Lua-free.
+# sol2 runs without exceptions (the engine builds with -fno-exceptions) and
+# with every safety check on.
+# ---------------------------------------------------------------------------
+add_library(engine_script STATIC
+    src/script/lua_vm.cpp
+    src/script/lua_bind.cpp
+    src/script/lua_json.cpp
+    src/script/script_api_math.cpp
+    src/script/script_api_entity.cpp
+    src/script/script_api_scene.cpp
+    src/script/script_api_services.cpp
+    src/script/script_api_input.cpp
+    src/script/script_input.cpp
+    src/script/script_source.cpp
+    src/script/script_runtime.cpp
+    src/script/script_files.cpp)
+target_link_libraries(engine_script PUBLIC engine_flags engine_core engine_scene engine_physics)
+target_link_libraries(engine_script PRIVATE sol2::sol2 ${LUA_LIBRARIES})
+target_include_directories(engine_script PRIVATE ${LUA_INCLUDE_DIR})
+target_include_directories(engine_script PUBLIC ${ENGINE_PUBLIC_INCLUDE})
+target_compile_definitions(engine_script PRIVATE SOL_NO_EXCEPTIONS=1 SOL_ALL_SAFETIES_ON=1)
 
 # ---------------------------------------------------------------------------
 # engine_terrain — procedural terrain (Phase 12). Pure CPU heightmap generation
@@ -327,7 +359,7 @@ add_library(engine_remote_world STATIC
     src/remote/world/image_encode.cpp
     src/remote/world/stb_image_write_impl.cpp)
 target_link_libraries(engine_remote_world PUBLIC
-    engine_flags engine_core engine_remote engine_scene engine_physics engine_nav)
+    engine_flags engine_core engine_remote engine_scene engine_physics engine_nav engine_script)
 target_include_directories(engine_remote_world PUBLIC ${ENGINE_PUBLIC_INCLUDE})
 target_include_directories(engine_remote_world PRIVATE ${Stb_INCLUDE_DIR})
 # stb's implementation TU is not warning-clean under our strict flags.
@@ -400,7 +432,7 @@ if(ENGINE_EDITOR)
     # vcpkg target does not declare the imgui dependency, so a single-pass
     # linker must see it first to resolve its ImGui references.
     target_link_libraries(engine_editor
-        PUBLIC engine_flags engine_scene
+        PUBLIC engine_flags engine_scene engine_script
         PRIVATE unofficial::imgui-node-editor::imgui-node-editor
                 imgui::imgui imguizmo::imguizmo SDL3::SDL3)
     target_include_directories(engine_editor PUBLIC ${ENGINE_PUBLIC_INCLUDE})
@@ -431,7 +463,7 @@ add_executable(game
 target_link_libraries(game PRIVATE
     engine_flags engine_core engine_rhi engine_asset engine_scene engine_renderer engine_physics
     engine_terrain engine_nav engine_net engine_remote engine_remote_world engine_audio
-    SDL3::SDL3)
+    engine_script SDL3::SDL3)
 if(ENGINE_EDITOR)
     target_sources(game PRIVATE src/app/editor_bridge.cpp)
     target_link_libraries(game PRIVATE engine_editor)

@@ -52,7 +52,11 @@ namespace obj_layers {
 constexpr JPH::ObjectLayer k_dynamic = 1;
 constexpr JPH::ObjectLayer k_character = 2;
 [[maybe_unused]] constexpr JPH::ObjectLayer k_trigger = 3; // used from 6.2
-[[maybe_unused]] constexpr JPH::ObjectLayer k_sensor = 4;  // used from 6.2
+constexpr JPH::ObjectLayer k_sensor = 4;
+// A character's inner body (G7): gives the CharacterVirtual a presence that
+// sensors detect. It overlaps triggers only — the character's own sweep
+// already handles every physical contact.
+constexpr JPH::ObjectLayer k_character_presence = 5;
 } // namespace obj_layers
 
 namespace bp_layers {
@@ -62,7 +66,12 @@ constexpr JPH::uint k_count = 2;
 } // namespace bp_layers
 
 [[nodiscard]] bool is_moving(JPH::ObjectLayer layer) {
-    return layer == obj_layers::k_dynamic || layer == obj_layers::k_character;
+    return layer == obj_layers::k_dynamic || layer == obj_layers::k_character ||
+           layer == obj_layers::k_character_presence;
+}
+
+[[nodiscard]] bool is_trigger(JPH::ObjectLayer layer) {
+    return layer == obj_layers::k_sensor || layer == obj_layers::k_trigger;
 }
 
 class BroadPhaseLayerImpl final : public JPH::BroadPhaseLayerInterface {
@@ -90,6 +99,9 @@ public:
 class ObjectLayerPairFilterImpl final : public JPH::ObjectLayerPairFilter {
 public:
     bool ShouldCollide(JPH::ObjectLayer a, JPH::ObjectLayer b) const override {
+        // A character presence only meets triggers.
+        if (a == obj_layers::k_character_presence) return is_trigger(b);
+        if (b == obj_layers::k_character_presence) return is_trigger(a);
         return is_moving(a) || is_moving(b); // at least one body must be moving
     }
 };
@@ -173,6 +185,7 @@ struct PhysicsWorld::Impl {
     std::unordered_set<std::uint32_t>         sensor_bodies;
     std::unordered_map<std::uint32_t, std::uint32_t> body_owner;       // body -> owner
     std::vector<std::uint32_t>                character_owner;           // parallel to characters
+    std::unordered_map<std::uint32_t, std::uint32_t> inner_body_character; // inner body -> character
     float                                     accumulator = 0.0F;
 
     [[nodiscard]] JPH::CharacterVirtual* character(std::uint32_t id) const {
@@ -377,16 +390,27 @@ std::uint32_t PhysicsWorld::create_character(float half_height, float radius,
     settings->mShape = new JPH::CapsuleShape(half_height, radius);
     // Accept ground contacts within the bottom hemisphere as "supporting".
     settings->mSupportingVolume = JPH::Plane(JPH::Vec3::sAxisY(), -radius);
+    // Inner body: a kinematic capsule that follows the character so sensors
+    // report it (trigger events name it; body_owner() maps it back).
+    settings->mInnerBodyShape = settings->mShape;
+    settings->mInnerBodyLayer = obj_layers::k_character_presence;
     JPH::Ref<JPH::CharacterVirtual> character = new JPH::CharacterVirtual(
         settings, to_jph_r(position), JPH::Quat::sIdentity(), 0, &impl_->system);
+    const auto index = static_cast<std::uint32_t>(impl_->characters.size());
+    if (const JPH::BodyID inner = character->GetInnerBodyID(); !inner.IsInvalid()) {
+        impl_->inner_body_character[inner.GetIndexAndSequenceNumber()] = index;
+    }
     impl_->characters.push_back(character);
     impl_->character_owner.push_back(owner);
-    return static_cast<std::uint32_t>(impl_->characters.size() - 1);
+    return index;
 }
 
 void PhysicsWorld::remove_character(std::uint32_t character) {
     if (character >= impl_->characters.size()) return;
-    impl_->characters[character] = nullptr; // releases the CharacterVirtual
+    if (const JPH::CharacterVirtual* c = impl_->characters[character].GetPtr()) {
+        impl_->inner_body_character.erase(c->GetInnerBodyID().GetIndexAndSequenceNumber());
+    }
+    impl_->characters[character] = nullptr; // releases the CharacterVirtual (and its inner body)
     impl_->character_owner[character] = no_owner;
 }
 
@@ -445,6 +469,40 @@ bool PhysicsWorld::character_on_ground(std::uint32_t character) const {
     return c != nullptr && c->GetGroundState() == JPH::CharacterBase::EGroundState::OnGround;
 }
 
+std::uint32_t PhysicsWorld::body_owner(std::uint32_t body) const {
+    if (!impl_ || body == invalid_body) return no_owner;
+    if (const auto it = impl_->body_owner.find(body); it != impl_->body_owner.end()) {
+        return it->second;
+    }
+    if (const auto it = impl_->inner_body_character.find(body);
+        it != impl_->inner_body_character.end() && it->second < impl_->character_owner.size()) {
+        return impl_->character_owner[it->second];
+    }
+    return no_owner;
+}
+
+bool PhysicsWorld::is_dynamic(std::uint32_t body) const {
+    if (!impl_ || body == invalid_body) return false;
+    const JPH::BodyLockRead lock(impl_->system.GetBodyLockInterface(), JPH::BodyID(body));
+    return lock.Succeeded() && lock.GetBody().IsDynamic();
+}
+
+void PhysicsWorld::add_impulse(std::uint32_t body, const glm::vec3& impulse) {
+    if (!is_dynamic(body)) return;
+    impl_->system.GetBodyInterface().AddImpulse(JPH::BodyID(body), to_jph(impulse));
+}
+
+void PhysicsWorld::set_linear_velocity(std::uint32_t body, const glm::vec3& velocity) {
+    if (!is_dynamic(body)) return;
+    impl_->system.GetBodyInterface().SetLinearVelocity(JPH::BodyID(body), to_jph(velocity));
+}
+
+glm::vec3 PhysicsWorld::linear_velocity(std::uint32_t body) const {
+    if (!impl_ || body == invalid_body) return glm::vec3(0.0F);
+    const JPH::Vec3 v = impl_->system.GetBodyInterface().GetLinearVelocity(JPH::BodyID(body));
+    return {v.GetX(), v.GetY(), v.GetZ()};
+}
+
 std::span<const PhysicsWorld::TriggerEvent> PhysicsWorld::trigger_events() const {
     return {impl_->trigger_events.data(), impl_->trigger_events.size()};
 }
@@ -465,16 +523,23 @@ std::uint32_t PhysicsWorld::character_count() const {
 }
 
 namespace {
-// Skips sensor (trigger) bodies unless asked to include them.
+// Skips sensor (trigger) bodies unless asked to include them, and
+// characters' inner bodies (cast_ray tests character shapes itself).
 class SensorBodyFilter final : public JPH::BodyFilter {
 public:
-    explicit SensorBodyFilter(bool include_sensors) : include_sensors_(include_sensors) {}
+    SensorBodyFilter(bool include_sensors,
+                     const std::unordered_map<std::uint32_t, std::uint32_t>& inner_bodies)
+        : include_sensors_(include_sensors), inner_bodies_(inner_bodies) {}
+    [[nodiscard]] bool ShouldCollide(const JPH::BodyID& id) const override {
+        return !inner_bodies_.contains(id.GetIndexAndSequenceNumber());
+    }
     [[nodiscard]] bool ShouldCollideLocked(const JPH::Body& body) const override {
         return include_sensors_ || !body.IsSensor();
     }
 
 private:
     bool include_sensors_;
+    const std::unordered_map<std::uint32_t, std::uint32_t>& inner_bodies_;
 };
 } // namespace
 
@@ -492,7 +557,7 @@ std::optional<PhysicsWorld::RayHit> PhysicsWorld::cast_ray(const glm::vec3& orig
     float best_fraction = 1.0F + FLT_EPSILON;
 
     JPH::RayCastResult result;
-    const SensorBodyFilter filter(include_sensors);
+    const SensorBodyFilter filter(include_sensors, impl_->inner_body_character);
     if (impl_->system.GetNarrowPhaseQuery().CastRay(ray, result, JPH::BroadPhaseLayerFilter{},
                                                     JPH::ObjectLayerFilter{}, filter)) {
         RayHit hit;

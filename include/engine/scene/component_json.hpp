@@ -18,6 +18,7 @@
 //   point_light, dir_light, camera
 //   collider, rigidbody, character
 //   nav_agent, behavior, patrol
+//   script           Lua gameplay script path + property overrides (G7)
 //   terrain
 //   net_replicated
 //   audio_source     clip / bus / volume / pitch / loop / 3D falloff (+ write-only command)

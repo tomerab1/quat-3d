@@ -287,6 +287,29 @@ struct BehaviorTree {
     bool parse_failed = false;
 };
 
+// A gameplay script (G7): a Lua file under assets/scripts/ (`path` relative
+// to that directory, e.g. "coin.lua") whose callbacks the script runtime
+// (engine/script/script_runtime.hpp) runs in play mode. `properties`
+// override the values the script declares in its `properties` table; they
+// show up in the inspector and the codec. `revision` changes whenever the
+// properties are edited, so a running instance picks the new values up.
+// One script per entity; the runtime keeps the Lua state, not this struct.
+enum class ScriptValueType : std::uint8_t { number, boolean, string, vec3 };
+struct ScriptProperty {
+    std::string     name;
+    ScriptValueType type = ScriptValueType::number;
+    double          number = 0.0;
+    bool            boolean = false;
+    std::string     text;
+    glm::vec3       vec{0.0F};
+};
+struct Script {
+    std::string                 path;
+    bool                        enabled = true;
+    std::vector<ScriptProperty> properties;
+    std::uint32_t               revision = 0;
+};
+
 // Single directional light (sun). `direction` points from the light toward the
 // scene (i.e. the direction photons travel) in world space.
 struct DirectionalLight {
