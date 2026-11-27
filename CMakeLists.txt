@@ -112,6 +112,18 @@ endif()
 set(ENGINE_PUBLIC_INCLUDE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 
 # ---------------------------------------------------------------------------
+# engine_core — graphics-free foundations: the log ring + log() helper, stderr
+# capture into the ring, and the simulation clock (ROADMAP A5; S6 grows the
+# logging layer here).
+# ---------------------------------------------------------------------------
+add_library(engine_core STATIC
+    src/core/log.cpp
+    src/core/stderr_capture.cpp
+    src/core/sim_clock.cpp)
+target_link_libraries(engine_core PUBLIC engine_flags Threads::Threads)
+target_include_directories(engine_core PUBLIC ${ENGINE_PUBLIC_INCLUDE})
+
+# ---------------------------------------------------------------------------
 # engine_rhi — thin Vulkan abstraction (instance/device, swapchain, ...).
 # ---------------------------------------------------------------------------
 add_library(engine_rhi STATIC
@@ -127,6 +139,8 @@ add_library(engine_rhi STATIC
     src/rhi/compute_pipeline.cpp)
 target_link_libraries(engine_rhi PUBLIC
     engine_flags Vulkan::Vulkan GPUOpen::VulkanMemoryAllocator)
+# The debug messenger routes validation messages into the log ring.
+target_link_libraries(engine_rhi PRIVATE engine_core)
 # nlohmann_json is an implementation detail of the reflection parser (PRIVATE).
 target_link_libraries(engine_rhi PRIVATE nlohmann_json::nlohmann_json)
 target_include_directories(engine_rhi PUBLIC ${ENGINE_PUBLIC_INCLUDE})
@@ -297,9 +311,12 @@ add_library(engine_remote_world STATIC
     src/remote/world/environment_commands.cpp
     src/remote/world/camera_commands.cpp
     src/remote/world/app_commands.cpp
+    src/remote/world/debug_commands.cpp
+    src/remote/world/debug_query_commands.cpp
     src/remote/world/image_encode.cpp
     src/remote/world/stb_image_write_impl.cpp)
-target_link_libraries(engine_remote_world PUBLIC engine_flags engine_remote engine_scene)
+target_link_libraries(engine_remote_world PUBLIC
+    engine_flags engine_core engine_remote engine_scene engine_physics engine_nav)
 target_include_directories(engine_remote_world PUBLIC ${ENGINE_PUBLIC_INCLUDE})
 target_include_directories(engine_remote_world PRIVATE ${Stb_INCLUDE_DIR})
 # stb's implementation TU is not warning-clean under our strict flags.
@@ -384,7 +401,7 @@ add_executable(game
     src/app/nav_bake.cpp
     src/app/remote_bridge.cpp)
 target_link_libraries(game PRIVATE
-    engine_flags engine_rhi engine_asset engine_scene engine_renderer engine_physics
+    engine_flags engine_core engine_rhi engine_asset engine_scene engine_renderer engine_physics
     engine_terrain engine_nav engine_net engine_remote engine_remote_world engine_audio
     SDL3::SDL3)
 if(ENGINE_EDITOR)

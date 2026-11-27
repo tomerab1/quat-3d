@@ -2,6 +2,7 @@
 //! contract) grouped by area, workflow prompts, and a scene-summary resource.
 //! Everything the model reads is Markdown under `content/`.
 
+mod debug_tools;
 mod prompts;
 mod results;
 mod scene_tools;
@@ -25,7 +26,7 @@ use serde_json::{Value, json};
 use crate::client::{EngineClient, EngineError};
 use crate::content;
 
-pub use prompts::{BuildWorldArgs, InspectSceneArgs};
+pub use prompts::{BuildWorldArgs, DebugSessionArgs, InspectSceneArgs};
 pub use results::{error_result, normalize_method};
 pub use world_tools::MAX_GROUND_POINTS;
 
@@ -64,7 +65,7 @@ impl QuatServer {
     /// Every tool this server offers, across all tool groups.
     #[must_use]
     pub fn tools() -> ToolRouter<Self> {
-        Self::scene_tools() + Self::world_tools() + Self::sim_tools()
+        Self::scene_tools() + Self::world_tools() + Self::sim_tools() + Self::debug_tools()
     }
 
     /// Timeout for slow engine work (loading, baking, screenshots).

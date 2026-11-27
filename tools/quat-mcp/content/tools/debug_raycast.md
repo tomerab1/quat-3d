@@ -1,0 +1,3 @@
+Cast a physics ray and report the first thing it hits: `{hit, entity, name, kind, point, normal, distance, sensor}`, or `{hit: false}`. `kind` is `body` (owned by `entity`), `character`, or `static_world` (terrain or geometry no entity owns; `entity` is null). Use it to check line of sight, what lies under an object (`"direction": [0, -1, 0]`), or why something falls through or collides.
+
+Needs a running physics world: call `sim_play` first (outside play mode it reports unavailable). `direction` need not be normalized; `max_distance` defaults to 1000 m. Trigger volumes are ignored unless `include_sensors` is true.

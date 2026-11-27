@@ -1,0 +1,3 @@
+Health snapshot of the running engine: real frame time over the last 240 frames (`frame_time_ms` last / avg / worst, `fps`), draw count, entity count, physics bodies (`null` outside play mode), nav agents (total, moving, failed) and navmesh size, process memory, the simulation clock (paused, time scale, simulated time) and how many warnings and errors the log holds.
+
+Call it first when diagnosing. A `worst` frame time far above `avg` means hitches; `log.errors` > 0 means read `debug_log` with `level: "error"`; `nav.failed` > 0 means agents gave up on their targets (check them with `debug_watch` and `debug_nav_path`); `sim.paused: true` means the simulation is frozen (`debug_resume`).

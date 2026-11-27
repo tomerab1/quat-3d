@@ -1,5 +1,6 @@
 #include "engine/physics/physics_world.hpp"
 
+#include <cfloat>
 #include <cmath>
 #include <mutex>
 #include <thread>
@@ -20,9 +21,13 @@
 #include <Jolt/Core/JobSystemThreadPool.h>
 #include <Jolt/Core/TempAllocator.h>
 #include <Jolt/Physics/Body/Body.h>
+#include <Jolt/Physics/Body/BodyFilter.h>
+#include <Jolt/Physics/Body/BodyLock.h>
 #include <Jolt/Physics/Body/BodyCreationSettings.h>
 #include <Jolt/Physics/Character/CharacterVirtual.h>
+#include <Jolt/Physics/Collision/CastResult.h>
 #include <Jolt/Physics/Collision/ContactListener.h>
+#include <Jolt/Physics/Collision/RayCast.h>
 #include <Jolt/Physics/Collision/ObjectLayer.h>
 #include <Jolt/Physics/Collision/Shape/BoxShape.h>
 #include <Jolt/Physics/Collision/Shape/CapsuleShape.h>
@@ -448,6 +453,99 @@ bool PhysicsWorld::character_on_ground(std::uint32_t character) const {
 
 std::span<const PhysicsWorld::TriggerEvent> PhysicsWorld::trigger_events() const {
     return {impl_->trigger_events.data(), impl_->trigger_events.size()};
+}
+
+std::uint32_t PhysicsWorld::body_count() const {
+    return impl_ ? impl_->system.GetNumBodies() : 0;
+}
+
+std::uint32_t PhysicsWorld::active_body_count() const {
+    return impl_ ? impl_->system.GetNumActiveBodies(JPH::EBodyType::RigidBody) : 0;
+}
+
+std::uint32_t PhysicsWorld::character_count() const {
+    if (!impl_) return 0;
+    std::uint32_t n = 0;
+    for (const auto& c : impl_->characters) n += c != nullptr ? 1U : 0U;
+    return n;
+}
+
+namespace {
+// Skips sensor (trigger) bodies unless asked to include them.
+class SensorBodyFilter final : public JPH::BodyFilter {
+public:
+    explicit SensorBodyFilter(bool include_sensors) : include_sensors_(include_sensors) {}
+    [[nodiscard]] bool ShouldCollideLocked(const JPH::Body& body) const override {
+        return include_sensors_ || !body.IsSensor();
+    }
+
+private:
+    bool include_sensors_;
+};
+} // namespace
+
+std::optional<PhysicsWorld::RayHit> PhysicsWorld::cast_ray(const glm::vec3& origin,
+                                                           const glm::vec3& direction,
+                                                           float max_distance,
+                                                           bool include_sensors) const {
+    const float len = glm::length(direction);
+    if (!impl_ || !(len > 1e-6F) || !(max_distance > 0.0F) || !std::isfinite(max_distance)) {
+        return std::nullopt;
+    }
+    const glm::vec3 dir = direction / len;
+    const JPH::RRayCast ray(to_jph_r(origin), to_jph(dir * max_distance));
+    std::optional<RayHit> best;
+    float best_fraction = 1.0F + FLT_EPSILON;
+
+    JPH::RayCastResult result;
+    const SensorBodyFilter filter(include_sensors);
+    if (impl_->system.GetNarrowPhaseQuery().CastRay(ray, result, JPH::BroadPhaseLayerFilter{},
+                                                    JPH::ObjectLayerFilter{}, filter)) {
+        RayHit hit;
+        hit.body = result.mBodyID.GetIndexAndSequenceNumber();
+        const JPH::RVec3 point = ray.GetPointOnRay(result.mFraction);
+        hit.point = to_glm(point);
+        hit.distance = result.mFraction * max_distance;
+        const JPH::BodyLockRead lock(impl_->system.GetBodyLockInterface(), result.mBodyID);
+        if (lock.Succeeded()) {
+            const JPH::Body& body = lock.GetBody();
+            const JPH::Vec3 n = body.GetWorldSpaceSurfaceNormal(result.mSubShapeID2, point);
+            hit.normal = glm::vec3(n.GetX(), n.GetY(), n.GetZ());
+            hit.sensor = body.IsSensor();
+        }
+        if (const auto it = impl_->body_owner.find(hit.body); it != impl_->body_owner.end()) {
+            hit.owner = it->second;
+        }
+        best_fraction = result.mFraction;
+        best = hit;
+    }
+
+    // Character controllers are not bodies: test their shapes directly, in
+    // each character's centre-of-mass space.
+    for (std::size_t i = 0; i < impl_->characters.size(); ++i) {
+        const JPH::CharacterVirtual* c = impl_->characters[i].GetPtr();
+        if (c == nullptr) continue;
+        const JPH::RMat44 com = c->GetCenterOfMassTransform();
+        const JPH::RRayCast local_r = ray.Transformed(com.InversedRotationTranslation());
+        const JPH::RayCast local(JPH::Vec3(local_r.mOrigin), local_r.mDirection);
+        JPH::RayCastResult ch;
+        ch.mFraction = best_fraction;
+        if (!c->GetShape()->CastRay(local, JPH::SubShapeIDCreator(), ch) ||
+            ch.mFraction >= best_fraction) {
+            continue;
+        }
+        RayHit hit;
+        hit.character = static_cast<std::uint32_t>(i);
+        hit.owner = impl_->character_owner[i];
+        hit.point = to_glm(ray.GetPointOnRay(ch.mFraction));
+        hit.distance = ch.mFraction * max_distance;
+        const JPH::Vec3 n = com.Multiply3x3(
+            c->GetShape()->GetSurfaceNormal(ch.mSubShapeID2, local.GetPointOnRay(ch.mFraction)));
+        hit.normal = glm::vec3(n.GetX(), n.GetY(), n.GetZ());
+        best_fraction = ch.mFraction;
+        best = hit;
+    }
+    return best;
 }
 
 std::expected<void, core::Error> run_physics_self_test() {

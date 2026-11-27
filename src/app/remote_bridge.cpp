@@ -2,7 +2,11 @@
 
 #include "app/remote_bridge.hpp"
 
+#include <array>
+#include <algorithm>
 #include <chrono>
+#include <cmath>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <functional>
@@ -11,12 +15,19 @@
 #include <utility>
 #include <vector>
 
+#if defined(__linux__)
+#include <unistd.h>
+#endif
+
 #include <entt/entity/registry.hpp>
 #include <glm/gtc/constants.hpp>
 
 #include "app/nav_bake.hpp"
 #include "engine/asset/asset_manager.hpp"
+#include "engine/core/log.hpp"
+#include "engine/core/sim_clock.hpp"
 #include "engine/nav/navmesh.hpp"
+#include "engine/physics/physics_world.hpp"
 #include "engine/remote/image_encode.hpp"
 #include "engine/remote/rpc_server.hpp"
 #include "engine/remote/world_commands.hpp"
@@ -64,6 +75,23 @@ struct EncodedShot {
     std::string   base64;
 };
 
+// Process resident set size, where cheaply available.
+[[nodiscard]] std::optional<std::uint64_t> resident_bytes() {
+#if defined(__linux__)
+    std::FILE* f = std::fopen("/proc/self/statm", "r");
+    if (f == nullptr) return std::nullopt;
+    unsigned long long total = 0;
+    unsigned long long resident = 0;
+    const int read = std::fscanf(f, "%llu %llu", &total, &resident);
+    std::fclose(f);
+    const long page = sysconf(_SC_PAGESIZE);
+    if (read != 2 || page <= 0) return std::nullopt;
+    return static_cast<std::uint64_t>(resident) * static_cast<std::uint64_t>(page);
+#else
+    return std::nullopt;
+#endif
+}
+
 } // namespace
 
 struct RemoteBridge::Impl {
@@ -93,6 +121,21 @@ struct RemoteBridge::Impl {
     std::vector<Slot>                slots;
     std::vector<Encoding>            encodings;
     bool                             warned_primitives = false;
+
+    // ---- Debugging (A5) -----------------------------------------------------
+    engine::core::SimClock clock;
+    struct StepWaiter {
+        std::uint64_t         target = 0;
+        std::function<void()> done;
+    };
+    std::vector<StepWaiter> step_waiters;
+    // Real frame times (ms) of the last k_frame_window frames.
+    static constexpr std::size_t           k_frame_window = 240;
+    std::array<float, k_frame_window>      frame_ms{};
+    std::size_t                            frame_count = 0; // samples stored (<= window)
+    std::size_t                            frame_next = 0;
+    float                                  frame_last_ms = 0.0F;
+    std::optional<std::uint32_t>           draws;
 
     // ---- Helpers ------------------------------------------------------------
 
@@ -187,6 +230,46 @@ struct RemoteBridge::Impl {
         return t.navmesh->polygon_count();
     }
 
+    [[nodiscard]] remote::FrameStats frame_stats() const {
+        remote::FrameStats fs;
+        fs.frame = *t.frame_counter;
+        fs.samples = static_cast<std::uint32_t>(frame_count);
+        fs.last_ms = frame_last_ms;
+        float sum = 0.0F;
+        for (std::size_t i = 0; i < frame_count; ++i) {
+            sum += frame_ms[i];
+            fs.worst_ms = std::max(fs.worst_ms, frame_ms[i]);
+        }
+        fs.avg_ms = frame_count > 0 ? sum / static_cast<float>(frame_count) : 0.0F;
+        fs.draws = draws;
+        fs.resident_bytes = resident_bytes();
+        return fs;
+    }
+
+    [[nodiscard]] const engine::physics::PhysicsWorld* physics_world() const {
+        for (const auto* w : {t.demo_physics, t.play_physics}) {
+            if (w != nullptr && w->has_value()) return &**w;
+        }
+        return nullptr;
+    }
+
+    // Answers debug.step requests whose steps have run (or were dropped by
+    // resume).
+    void finish_steps() {
+        if (step_waiters.empty()) return;
+        const engine::core::SimClockState s = clock.state();
+        std::vector<StepWaiter> ready;
+        for (auto it = step_waiters.begin(); it != step_waiters.end();) {
+            if (s.steps_run >= it->target || s.pending_steps == 0) {
+                ready.push_back(std::move(*it));
+                it = step_waiters.erase(it);
+            } else {
+                ++it;
+            }
+        }
+        for (StepWaiter& w : ready) w.done();
+    }
+
     void request_screenshot(std::uint32_t max_size, remote::Responder responder) {
         std::size_t in_flight = pending.size() + encodings.size();
         for (const Slot& s : slots) in_flight += s.waiting.size();
@@ -232,7 +315,17 @@ struct RemoteBridge::Impl {
             return engine::scene::save_scene(*t.scene, p);
         };
         s.load_scene = [this](const std::filesystem::path& p) { return load_scene(p); };
-        if (t.navmesh != nullptr) s.nav_bake = [this] { return nav_bake(); };
+        if (t.navmesh != nullptr) {
+            s.nav_bake = [this] { return nav_bake(); };
+            s.navmesh = [this]() -> const engine::nav::NavMesh* { return t.navmesh; };
+        }
+        s.log_ring = &engine::core::log_ring();
+        s.sim_clock = &clock;
+        s.when_stepped = [this](std::uint64_t target, std::function<void()> done) {
+            step_waiters.push_back({target, std::move(done)});
+        };
+        s.frame_stats = [this] { return frame_stats(); };
+        s.physics_world = [this] { return physics_world(); };
         return s;
     }
 
@@ -272,6 +365,7 @@ struct RemoteBridge::Impl {
                             {"entities",
                              t.scene->registry().view<engine::scene::Transform>().size()},
                             {"playing", is_playing()},
+                            {"paused", clock.state().paused},
                             {"editor", editor}};
             });
         // The server lives in this Impl (stable address), as batching requires.
@@ -448,9 +542,38 @@ RemoteBridge& RemoteBridge::operator=(RemoteBridge&&) noexcept = default;
 RemoteBridge::~RemoteBridge() = default;
 
 void RemoteBridge::poll() {
+    impl_->finish_steps(); // steps run last frame: reply before new requests
     if (impl_->server) impl_->server->poll();
     impl_->resolve_primitives();
     impl_->finish_encodings();
+}
+
+float RemoteBridge::advance_sim(float real_dt) {
+    Impl& m = *impl_;
+    const float ms = std::isfinite(real_dt) && real_dt > 0.0F ? real_dt * 1000.0F : 0.0F;
+    m.frame_last_ms = ms;
+    m.frame_ms[m.frame_next] = ms;
+    m.frame_next = (m.frame_next + 1) % Impl::k_frame_window;
+    m.frame_count = std::min(m.frame_count + 1, Impl::k_frame_window);
+    return m.clock.advance(real_dt);
+}
+
+void RemoteBridge::note_draws(std::size_t draws) {
+    impl_->draws = static_cast<std::uint32_t>(std::min<std::size_t>(draws, UINT32_MAX));
+}
+
+engine::core::StderrCapture capture_stderr_for_remote() {
+    if (std::getenv("QUAT_REMOTE") == nullptr) return {};
+    if (const char* opt = std::getenv("QUAT_LOG_CAPTURE"); opt != nullptr && std::string(opt) == "0") {
+        return {};
+    }
+    auto capture = engine::core::StderrCapture::start(engine::core::log_ring());
+    if (!capture) {
+        engine::core::log(engine::core::LogLevel::warn, "remote", "stderr capture disabled: {}",
+                          capture.error().message);
+        return {};
+    }
+    return std::move(*capture);
 }
 
 void RemoteBridge::record_capture(VkCommandBuffer cmd, std::uint32_t frame_slot,

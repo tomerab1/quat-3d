@@ -248,6 +248,8 @@ void register_world_commands(RpcServer& server, scene::Scene& scene, WorldServic
     world::register_environment_commands(server, ctx);
     world::register_camera_commands(server, ctx);
     world::register_app_commands(server, ctx);
+    world::register_debug_commands(server, ctx);
+    world::register_debug_query_commands(server, ctx);
 }
 
 } // namespace engine::remote
