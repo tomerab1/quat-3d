@@ -26,6 +26,32 @@ into CLAUDE.md or the brief template in [`CYCLE.md`](CYCLE.md).
 
 ## Build and CI
 
+- **Link the game executable locally after any merge that touches library
+  targets.** R17 linked libktx into `game` directly while engine_asset only
+  compiled against its headers; the tests (linking the full libktx) passed,
+  but after the G8 merge engine_asset was re-emitted after `libktx_read.a`
+  on the game's link line and GNU ld's single pass left the KTX2 symbols
+  undefined (CI run 46028587322). A library now owns its archive dependency
+  (engine_asset links libktx through a per-executable `QUAT_KTX_FULL`
+  switch), and without vcpkg a stub prefix (`find_package` configs over the
+  `~/deps` builds) is enough to configure and link `game` / `engine_tests`.
+
+- **Local test builds must track header dependencies.** A scratch build that
+  rebuilt only changed .cpp files linked objects compiled against an old
+  class layout and crashed (R12). Compile with `-MMD -MF` and rebuild when
+  any listed dependency is newer than the object.
+- **Hand-compiling translation units proves neither that they are in a CMake
+  target nor that they link.** G8.4 passed every `-fsyntax-only` check, but
+  `game` failed to link: `compress_clips` was declared in
+  `scene::gltf_detail` (internal.hpp) and defined in `scene`. → Before
+  pushing, grep CMakeLists for every new `.cpp`, and for a new cross-file
+  function compile caller and callee with `-c` and compare `nm` (the
+  undefined symbol must match the defined one).
+- **Local `-c` object caches go stale across merges.** A GPU test failed with
+  "no Vulkan device" after master changed `rhi::Device`: unchanged test
+  sources kept objects built against the old header. Rebuild from scratch
+  after merging.
+
 - **`--validation` silently runs without the layer when it isn't
   installed.** The container lacks the Khronos layer;
   `apt-get install -y vulkan-validationlayers` adds it (R10.2 ran its GPU
@@ -100,6 +126,59 @@ into CLAUDE.md or the brief template in [`CYCLE.md`](CYCLE.md).
   wayland-protocols, libdecor. The first CI run failed on xcursor.
 
 ## C++ in this codebase
+
+- **Fuzz every payload variant, not just one.** R17's KTX2 fuzz test first
+  mutated only UASTC files; the review asked for ETC1S too, and the first
+  ETC1S run crashed inside libktx (it ignores `decode_palettes` failures and
+  transcodes with half-built codebooks; fixed in the `ktx` overlay port) and
+  ASan then found a wrapped allocation from out-of-order level offsets. →
+  Fuzz tests cover each codec / format branch, biased into each structure
+  the parser trusts, and get one run under ASan + valgrind before merging.
+- **libktx's `ktx` and `ktx_read` archives cannot share a program** (same
+  objects, duplicate symbols). engine_asset compiles against the headers and
+  each executable links one: the game `KTX::ktx_read`, tests / cooker
+  `KTX::ktx`.
+- **meshoptimizer 1.x encodes vertex codec v1 by default, which
+  `EXT_meshopt_compression` does not allow** (v1 is for the newer
+  `KHR_meshopt_compression`). The cooker calls
+  `meshopt_encodeVertexBufferLevel(..., version 0)` explicitly (R17).
+- **Basis UASTC -> BC5 reads R and A, not R and G.** BC5 is only correct for
+  normal maps stored X-in-RGB / Y-in-alpha (libktx `normalMap`); RGB normal
+  maps go to BC7, and non-BC5 targets of the X/Y layout get an RA view
+  swizzle (R17).
+- **libktx initialises the Basis transcoder behind an unguarded static
+  flag.** Parallel transcodes are serialised until the first one succeeds
+  (`ktx2_transcode.cpp`); the encoder has the same pattern, so the cooker
+  encodes one image at a time with libktx's own worker threads.
+- **Shadow acne has more than one cause; test it with an image test first.**
+  R12.9: D16 over a caster-padded range gave 0.83 of the unshadowed value on
+  a sloped lit floor; pancaking (depth clamp, tight range) alone still gave
+  0.84. Per-tap receiver-plane depth plus a one-texel slope-scaled bias fixed
+  it (≥ 0.97). Wide PCF / PCSS kernels need the receiver plane, not just a
+  constant bias.
+
+- **A graphics pipeline with no descriptor sets cannot draw after a pass
+  that bound descriptor buffers** (validation VUID-vkCmdDrawIndexed-None-08117,
+  R12): the bound buffers stay on the bind point and the pipeline lacks the
+  descriptor-buffer bit. Give such a pipeline an empty set layout (the
+  shadow caster pipeline does) — pass order in the graph is not fixed.
+- **Screen-space marches self-intersect at grazing angles with nearest-texel
+  depth** (R12 contact shadows): one pixel can span metres of depth. Sample
+  the depth bilinearly (one GatherRed; NDC depth is affine over a plane) so a
+  planar receiver is reconstructed exactly, and keep a grazing-floor test.
+- **Far-field image tests need footprints of several pixels.** A probe on a
+  floor 70 m away under a camera 3 m up covers ~7 m per pixel row; elongate
+  occluders along the view axis and test a small window, not one pixel.
+- **vcpkg's `acl` port is POSIX access-control lists, not the animation
+  codec.** ACL + RTM are header-only and fetched by `cmake/FetchAcl.cmake`,
+  pinned to release commits. Check a port's description before adding it.
+- **A compressed clip can match every key and still drift between them.**
+  glTF rotations interpolate with slerp, ACL (like most runtimes) with
+  normalized lerp; on fast clips (the Khronos Fox's Walk / Run) the gap mid-key was
+  orders of magnitude over the error budget, and ACL's keyframe stripping only checks the samples it
+  removes. G8 resamples at a whole multiple of the key rate chosen by
+  measuring the between-sample error, splits the budget half/half, keeps
+  stripping off, and keeps a clip raw when compression does not pay.
 
 - **slangc 2025.6.1 segfaults after reporting a compile error** when
   `-reflection-json` is passed (exit by SIGSEGV, diagnostics already
@@ -234,3 +313,48 @@ finished worker's worktree, whose files then no longer matched its HEAD.
 **Rule:** in scratch worktrees use a unique local branch name and push with
 `git push origin HEAD:feat/<id>`; never create or reset a local branch that
 another worktree has checked out (`git worktree list` shows them).
+
+## Central registration lists turn every merge into N conflicts (factory)
+
+Merging A8 (#17) made #19, #22, #25, #26 and #34 conflict at once — mostly
+in the same lists every feature appends to (CMake source lists,
+`component_json.cpp`'s component table, `remote_bridge`, quat-mcp
+`server/mod.rs`, `inspector.cpp`). **Rule:** a feature adds its own files
+and registers itself in one line; central lists are split per module (S9).
+Until S9 lands, merge PRs that touch registration lists one at a time and
+re-run CI on each merged head.
+
+## Hand-compiled translation units are not proof of a CMake target (G8)
+
+G8 compiled every new `.cpp` with `check-compile.sh`, but `compress_clips`'s
+source was not in the target `engine_scene` links, so `game` failed to link
+in CI. **Rule:** before pushing, grep the CMake lists for every new `.cpp`;
+compile checks cover syntax, only a real configure + link covers targets.
+
+## Re-merging master into every open PR burned the Actions budget (factory)
+
+After each merge the orchestrator merged `master` into every other open PR,
+including ones without conflicts. Each push started a full Linux + Rust
+build, plus Windows and macOS once #24's jobs existed, and docs pushes ran
+the same build. On 2026-11-27, 107 runs used about 2,700 billed minutes. The
+private repo's Actions spending limit was hit at 15:52 UTC, after which
+GitHub refused every new job. **Rule:** merge `master` into a PR only when
+GitHub reports it unmergeable; `pull_request` CI already builds the PR merged
+with the current base. Docs-only changes skip CI (#57). When a check fails
+within seconds, read the check run's annotations before the logs: a billing
+refusal leaves no log at all (the log download returns 404).
+
+## A local trial merge said "clean" while GitHub said "conflict" (factory)
+
+`git merge-tree` run from the orchestrator's checkout applied that
+checkout's `.gitattributes` (`docs/LEARNINGS.md merge=union`). #24's branch
+had no such line and GitHub's mergeability check ignores it, so #24 showed
+clean locally and conflicting on GitHub. **Rule:** trust GitHub's
+`mergeable` flag, or trial-merge in a worktree on the PR's own branch.
+
+## Every PR needs a reviewer session, created when it leaves draft (factory)
+
+#20 sat ready for review with no Reviewer session, so nobody looked at it
+until the orchestrator noticed. **Rule:** marking a PR ready and creating
+its Reviewer session are one step; the orchestrator's status sweep checks
+that every non-draft PR has one.

@@ -168,7 +168,10 @@ std::expected<void, RpcError> apply_components_atomic(entt::registry& registry,
     const entt::entity s = scratch.create();
     scratch.emplace<scene::Transform>(s);
     if (registry.valid(target)) {
-        if (registry.all_of<scene::Animator>(target)) scratch.emplace<scene::Animator>(s);
+        // Animators are edit-only: copy the live one (its clip list).
+        if (const auto* anim = registry.try_get<scene::Animator>(target)) {
+            scratch.emplace<scene::Animator>(s, *anim);
+        }
         scene::EncodeOptions options;
         options.transform_as_matrix = true;
         options.include_read_only = false;

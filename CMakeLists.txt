@@ -88,11 +88,14 @@ find_package(VulkanMemoryAllocator CONFIG REQUIRED)
 find_package(nlohmann_json CONFIG REQUIRED)
 find_package(glm CONFIG REQUIRED)
 find_package(fastgltf CONFIG REQUIRED)
+find_package(Ktx CONFIG REQUIRED)            # KTX2 + Basis Universal (R17)
+find_package(meshoptimizer CONFIG REQUIRED)  # mesh codecs / optimisation (R17)
 find_package(Stb REQUIRED)
 find_package(EnTT CONFIG REQUIRED)
 find_package(Jolt CONFIG REQUIRED)
 find_package(recastnavigation CONFIG REQUIRED)
 find_package(GameNetworkingSockets CONFIG REQUIRED)
+include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/FetchAcl.cmake) # ACL + RTM (header-only)
 # miniaudio: vcpkg's port is header-only (it installs miniaudio.h and nothing
 # else), so it is wrapped in an imported target here and engine_audio compiles
 # the implementation (src/audio/miniaudio_impl.cpp). Linux needs pthread, libm
@@ -135,6 +138,7 @@ add_library(engine_rhi STATIC
     src/rhi/queue_selection.cpp
     src/rhi/swapchain.cpp
     src/rhi/gpu_allocator.cpp
+    src/rhi/image_upload.cpp
     src/rhi/vma_impl.cpp
     src/rhi/shader_reflection.cpp
     src/rhi/pipeline_cache.cpp
@@ -164,23 +168,55 @@ set_source_files_properties(src/rhi/vma_impl.cpp PROPERTIES COMPILE_OPTIONS "-w"
 # and asset types (MeshAsset). MeshAsset owns GpuBuffers, so engine_rhi and glm
 # are PUBLIC: any consumer of the asset headers needs them transitively.
 # ---------------------------------------------------------------------------
+# engine_image — graphics-free texture data, limits and the guarded PNG/JPEG
+# decoder (stb_image), shared by engine_asset and the cooker.
+add_library(engine_image STATIC
+    src/asset/texture_data.cpp
+    src/asset/image_decode.cpp)
+target_link_libraries(engine_image PUBLIC engine_flags)
+target_link_libraries(engine_image PRIVATE engine_stb_image)
+target_include_directories(engine_image PUBLIC ${ENGINE_PUBLIC_INCLUDE})
+target_include_directories(engine_image PRIVATE ${Stb_INCLUDE_DIR})
+
+# libktx (KTX2 parsing, Zstd, Basis Universal transcoding) backs the KTX2
+# loader. A program can hold only one libktx archive (ktx and ktx_read share
+# objects: duplicate symbols), so engine_asset's link interface picks it for
+# the executable being linked: KTX::ktx_read (decoder only; ports/ktx,
+# game_has_no_texture_encoder) unless the executable sets QUAT_KTX_FULL, as
+# the cooker and the tests do (they need the full KTX::ktx for encoding).
+# The bare $<TARGET_PROPERTY:QUAT_KTX_FULL> is evaluated on the consuming
+# executable, and as engine_asset's own dependency the archive is emitted
+# after every copy of libengine_asset.a on the link line.
 add_library(engine_asset STATIC
     src/asset/asset_manager.cpp
-    src/asset/material_asset.cpp)
-target_link_libraries(engine_asset PUBLIC engine_flags engine_rhi glm::glm)
+    src/asset/material_asset.cpp
+    src/asset/ktx2_validate.cpp
+    src/asset/ktx2_transcode.cpp
+    src/asset/texture_upload.cpp)
+target_link_libraries(engine_asset PUBLIC engine_flags engine_rhi engine_image glm::glm)
+target_link_libraries(engine_asset PRIVATE
+    $<IF:$<BOOL:$<TARGET_PROPERTY:QUAT_KTX_FULL>>,KTX::ktx,KTX::ktx_read>)
 target_include_directories(engine_asset PUBLIC ${ENGINE_PUBLIC_INCLUDE})
 
 # ---------------------------------------------------------------------------
-# engine_animation — CPU-side skeletal animation (skeletons, clips, animator).
-# Graphics-free: plain data + math, consumed by engine_scene and the renderer's
-# GPU skinning pass. Starts with SkeletonAsset (5.1).
+# engine_animation — CPU-side skeletal animation (skeletons, clips, animator,
+# inertialization, two-bone / foot IK, ACL clip compression). Graphics-free:
+# plain data + math, consumed by engine_scene and the GPU skinning pass.
 # ---------------------------------------------------------------------------
 add_library(engine_animation STATIC
     src/animation/skeleton.cpp
     src/animation/clip.cpp
     src/animation/animator.cpp
-    src/animation/state_machine.cpp)
+    src/animation/state_machine.cpp
+    src/animation/inertialization.cpp
+    src/animation/clip_resample.cpp
+    src/animation/acl_compress.cpp
+    src/animation/acl_decompress.cpp
+    src/animation/ik/two_bone_ik.cpp
+    src/animation/ik/foot_placement.cpp)
 target_link_libraries(engine_animation PUBLIC engine_flags glm::glm)
+# ACL is an implementation detail of the clip codec (acl_*.cpp).
+target_link_libraries(engine_animation PRIVATE acl_headers)
 target_include_directories(engine_animation PUBLIC ${ENGINE_PUBLIC_INCLUDE})
 
 # ---------------------------------------------------------------------------
@@ -205,15 +241,16 @@ target_include_directories(engine_physics PUBLIC ${ENGINE_PUBLIC_INCLUDE})
 # fastgltf is an implementation detail of the loader (PRIVATE).
 # ---------------------------------------------------------------------------
 add_library(engine_scene STATIC
-    src/scene/gltf/validate.cpp
     src/scene/gltf/mesh.cpp
     src/scene/gltf/material.cpp
     src/scene/gltf/skin_animation.cpp
+    src/scene/gltf/clip_compression.cpp
     src/scene/gltf/scene_assembly.cpp
     src/scene/gltf/self_tests.cpp
-    src/scene/stb_image_impl.cpp
+    src/scene/gltf/texture.cpp
     src/scene/components.cpp
     src/scene/scene.cpp
+    src/scene/animation_system.cpp
     src/scene/physics_system.cpp
     src/scene/joint_system.cpp
     src/scene/nav_agent_system.cpp
@@ -224,6 +261,7 @@ add_library(engine_scene STATIC
     src/scene/scene_io.cpp
     src/scene/component_json.cpp
     src/scene/component_json_physics.cpp
+    src/scene/component_json_animation.cpp
     src/scene/material_override.cpp
     src/scene/render_settings_json.cpp
     src/scene/physics_settings.cpp
@@ -245,12 +283,50 @@ target_link_libraries(engine_scene PUBLIC
 # nlohmann_json is PUBLIC: component_json.hpp exposes JSON values (the codec
 # shared by scene files and the remote-control API).
 target_link_libraries(engine_scene PUBLIC nlohmann_json::nlohmann_json)
-target_link_libraries(engine_scene PRIVATE fastgltf::fastgltf)
+target_link_libraries(engine_scene PRIVATE fastgltf::fastgltf engine_gltf_io)
 target_include_directories(engine_scene PRIVATE ${Stb_INCLUDE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_include_directories(engine_scene PUBLIC ${ENGINE_PUBLIC_INCLUDE})
 
-# stb's implementation TU is not warning-clean under our strict flags.
+# engine_gltf_io — glTF parse + validation, EXT_meshopt_compression decoding
+# and buffer access (src/scene/gltf/gltf_io.hpp): fastgltf only, no ECS or
+# GPU, so the cooker parses and validates exactly like the runtime loader.
+add_library(engine_gltf_io STATIC
+    src/scene/gltf/validate.cpp
+    src/scene/gltf/meshopt_decode.cpp
+    src/scene/gltf/gltf_source.cpp)
+target_link_libraries(engine_gltf_io PUBLIC engine_flags engine_image fastgltf::fastgltf)
+target_link_libraries(engine_gltf_io PRIVATE meshoptimizer::meshoptimizer)
+target_include_directories(engine_gltf_io PUBLIC
+    ${ENGINE_PUBLIC_INCLUDE} ${CMAKE_CURRENT_SOURCE_DIR}/src)
+
+# stb_image's implementation (PNG + JPEG only), used through engine_image's
+# guarded decoder. Its TU is not warning-clean under our strict flags.
+add_library(engine_stb_image STATIC src/scene/stb_image_impl.cpp)
+target_link_libraries(engine_stb_image PRIVATE engine_flags)
+target_include_directories(engine_stb_image PRIVATE ${Stb_INCLUDE_DIR})
 set_source_files_properties(src/scene/stb_image_impl.cpp PROPERTIES COMPILE_OPTIONS "-w")
+
+# ---------------------------------------------------------------------------
+# engine_cook — offline asset cooker (R17): glTF textures -> KTX2/Basis,
+# meshes -> meshoptimizer passes, quantisation and EXT_meshopt_compression.
+# Used by tools/quat-cook and the tests; never linked into the game.
+# ---------------------------------------------------------------------------
+add_library(engine_cook STATIC
+    src/cook/gltf_access.cpp
+    src/cook/gltf_cooker.cpp
+    src/cook/mesh_cook.cpp
+    src/cook/mesh_streams.cpp
+    src/cook/texture_encode.cpp)
+target_link_libraries(engine_cook PUBLIC engine_flags)
+target_link_libraries(engine_cook PRIVATE
+    engine_image engine_gltf_io fastgltf::fastgltf KTX::ktx meshoptimizer::meshoptimizer)
+target_include_directories(engine_cook PUBLIC ${ENGINE_PUBLIC_INCLUDE})
+target_include_directories(engine_cook PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+
+add_executable(quat-cook tools/quat-cook/main.cpp)
+target_link_libraries(quat-cook PRIVATE engine_flags engine_cook)
+# Full libktx (engine_cook encodes); see engine_asset.
+set_target_properties(quat-cook PROPERTIES QUAT_KTX_FULL ON)
 
 # ---------------------------------------------------------------------------
 # engine_terrain — procedural terrain (Phase 12). Pure CPU heightmap generation
@@ -362,10 +438,13 @@ set_source_files_properties(src/remote/world/stb_image_write_impl.cpp
 # GBuffer pass (mesh_pass); lighting/tonemap/imgui passes follow in later slices.
 # ---------------------------------------------------------------------------
 add_library(engine_renderer STATIC
+    src/renderer/csm.cpp
     src/renderer/draw_batching.cpp
     src/renderer/render_settings.cpp
     src/renderer/grass.cpp
     src/renderer/grass_pass.cpp
+    src/renderer/gtao_pass.cpp
+    src/renderer/hiz_pass.cpp
     src/renderer/instance_buffer.cpp
     src/renderer/mesh_pass.cpp
     src/renderer/lighting_pass.cpp
@@ -383,7 +462,8 @@ add_library(engine_renderer STATIC
     src/renderer/atmosphere_pass.cpp
     src/renderer/terrain_pass.cpp
     src/renderer/terrain_gpu_tiles.cpp
-    src/renderer/terrain_synth_pass.cpp)
+    src/renderer/terrain_synth_pass.cpp
+    src/renderer/terrain_shadow.cpp)
 target_link_libraries(engine_renderer PUBLIC
     engine_flags engine_rhi engine_asset engine_terrain glm::glm)
 target_include_directories(engine_renderer PUBLIC ${ENGINE_PUBLIC_INCLUDE})
@@ -417,6 +497,7 @@ if(ENGINE_EDITOR)
         src/editor/picking.cpp
         src/editor/scene_snapshot.cpp
         src/editor/audio_inspector.cpp
+        src/editor/animation_inspector.cpp
         src/editor/grass_inspector.cpp
         src/editor/behavior_panel.cpp
         src/editor/behavior_canvas.cpp
@@ -461,6 +542,10 @@ target_link_libraries(game PRIVATE
     engine_flags engine_core engine_rhi engine_asset engine_scene engine_renderer engine_physics
     engine_terrain engine_nav engine_net engine_remote engine_remote_world engine_audio
     SDL3::SDL3)
+if(MSVC)
+    # Linker map for the game_has_no_texture_encoder test.
+    target_link_options(game PRIVATE "/MAP:$<TARGET_FILE_DIR:game>/game.map")
+endif()
 if(ENGINE_EDITOR)
     target_sources(game PRIVATE src/app/editor_bridge.cpp)
     target_link_libraries(game PRIVATE engine_editor)

@@ -5,16 +5,20 @@
 //
 //   validate.cpp        structural validation of a parsed asset
 //   mesh.cpp            vertex/index extraction + mesh upload
-//   material.cpp        image decode / texture upload + PBR materials
+//   texture.cpp         image decode (PNG/JPEG via stb, KTX2) + texture upload
+//   material.cpp        PBR materials
+//   meshopt_decode.cpp  EXT_meshopt_compression buffer views
 //   skin_animation.cpp  skeletons and animation clips
 //   scene_assembly.cpp  scene graph -> ECS entities
 //
-// Every parse goes through parser.loadGltf(..., kLoadOptions) followed by
-// validate_asset() before any extraction (glTF files are untrusted input).
+// Every parse goes through parse_gltf() (gltf_io.hpp: fastgltf parse, meshopt
+// decode, validate_asset()) before any extraction (glTF files are untrusted
+// input).
 
 #include <expected>
 #include <filesystem>
 #include <optional>
+#include <span>
 #include <string>
 #include <utility>
 #include <vector>
@@ -28,7 +32,10 @@
 #include "engine/animation/clip.hpp"
 #include "engine/animation/skeleton.hpp"
 #include "engine/core/error.hpp"
+
+#include "clip_compression.hpp"
 #include "engine/scene/gltf_loader.hpp"
+#include "scene/gltf/gltf_io.hpp"
 
 namespace engine::asset {
 class AssetManager;
@@ -40,32 +47,11 @@ class Scene;
 
 namespace engine::scene::gltf_detail {
 
-[[nodiscard]] inline std::unexpected<core::Error> fail(std::string what) {
-    return std::unexpected(core::Error{std::move(what)});
-}
-
-// No Options::GenerateMeshIndices: fastgltf runs it during parsing, before
-// validate_asset() can range-check the accessor indices it dereferences.
-// Non-indexed primitives get sequential indices in mesh.cpp instead.
-inline constexpr auto kLoadOptions = fastgltf::Options::LoadExternalBuffers |
-                                     fastgltf::Options::LoadExternalImages;
-
-// glTF material extensions the loader understands.
-inline constexpr auto kParserExtensions = fastgltf::Extensions::KHR_materials_transmission |
-                                          fastgltf::Extensions::KHR_materials_ior |
-                                          fastgltf::Extensions::KHR_materials_volume |
-                                          fastgltf::Extensions::KHR_texture_transform |
-                                          fastgltf::Extensions::KHR_materials_emissive_strength |
-                                          fastgltf::Extensions::KHR_materials_clearcoat;
-
 [[nodiscard]] inline glm::vec3 to_glm(fastgltf::math::fvec3 v) { return {v[0], v[1], v[2]}; }
 [[nodiscard]] inline glm::vec2 to_glm(fastgltf::math::fvec2 v) { return {v[0], v[1]}; }
 [[nodiscard]] inline glm::vec4 to_glm(fastgltf::math::fvec4 v) {
     return {v[0], v[1], v[2], v[3]};
 }
-
-// validate.cpp
-[[nodiscard]] std::expected<void, core::Error> validate_asset(const fastgltf::Asset& asset);
 
 // mesh.cpp
 [[nodiscard]] std::expected<MeshData, core::Error> extract(const fastgltf::Asset& asset);
@@ -90,9 +76,15 @@ parse_and_extract_skeletons(fastgltf::GltfDataBuffer& data, const std::filesyste
 [[nodiscard]] std::expected<std::vector<animation::AnimClipAsset>, core::Error>
 parse_and_extract_animations(fastgltf::GltfDataBuffer& data, const std::filesystem::path& base_dir);
 
-// material.cpp
+// texture.cpp — decodes every image a material samples (in parallel, all
+// together within limits.max_total_decoded_bytes), with KTX2 images
+// transcoded for `caps`. Images only referenced as a KHR_texture_basisu
+// fallback are left empty.
 [[nodiscard]] std::expected<std::vector<TextureData>, core::Error>
-extract_textures(const fastgltf::Asset& asset);
+extract_textures(const fastgltf::Asset& asset, const rhi::TextureCaps& caps = {},
+                 const asset::TextureLimits& limits = {});
+
+// material.cpp
 [[nodiscard]] std::expected<std::vector<TextureData>, core::Error>
 parse_and_extract_textures(fastgltf::GltfDataBuffer& data, const std::filesystem::path& base_dir);
 [[nodiscard]] std::vector<MaterialData> extract_materials(const fastgltf::Asset& asset);

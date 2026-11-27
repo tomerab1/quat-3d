@@ -153,14 +153,14 @@ async fn settings_tools_forward_to_the_engine() {
     let r = call(
         &client,
         "render_settings_set",
-        json!({"exposure": {"auto": false, "compensation_ev": 0.5}, "shadows": {"pcf_radius": 2}}),
+        json!({"exposure": {"auto": false, "compensation_ev": 0.5}, "shadows": {"pcf_radius": 2.5}}),
     )
     .await;
     assert_eq!(r.is_error, Some(false), "{}", text(&r));
     assert_eq!(
         engine.last_params("render.settings.set"),
         Some(json!({"exposure": {"auto": false, "compensation_ev": 0.5},
-                    "shadows": {"pcf_radius": 2}}))
+                    "shadows": {"pcf_radius": 2.5}}))
     );
 
     let r = call(&client, "render_settings_reset", json!({"group": "bloom"})).await;

@@ -1,8 +1,11 @@
 #include "app/world_runtime.hpp"
 
+#include <algorithm>
+#include <vector>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <span>
 #include <utility>
 
 #include <glm/gtc/matrix_transform.hpp>
@@ -46,6 +49,36 @@ WorldRuntime::WorldRuntime() {
         }
         return std::nullopt;
     };
+
+    // Ground under a foot (FootIK): a physics raycast in the running world
+    // (skipping the character's own colliders), else the terrain height.
+    foot_probe_ = [this](const glm::vec3& origin, float length,
+                         std::span<const entt::entity> ignore)
+        -> std::optional<engine::animation::GroundHit> {
+        const engine::physics::PhysicsWorld* world =
+            play_physics_         ? &*play_physics_
+            : demo_.physics_world ? &*demo_.physics_world
+                                  : nullptr;
+        if (world != nullptr) {
+            std::vector<std::uint32_t>& owners = probe_owners_; // reused buffer
+            owners.clear();
+            for (const entt::entity e : ignore) {
+                owners.push_back(static_cast<std::uint32_t>(entt::to_integral(e)));
+            }
+            if (const auto hit = world->cast_ray(origin, glm::vec3(0.0F, -1.0F, 0.0F), length,
+                                                 false, owners)) {
+                return engine::animation::GroundHit{hit->point, hit->normal};
+            }
+        }
+        const std::optional<float> h = ground_height_at_(origin.x, origin.z);
+        if (!h || *h > origin.y || *h < origin.y - length) return std::nullopt;
+        constexpr float e = 0.25F; // normal from central differences
+        const auto at = [&](float x, float z) { return ground_height_at_(x, z).value_or(*h); };
+        const glm::vec3 normal = glm::normalize(
+            glm::vec3(at(origin.x - e, origin.z) - at(origin.x + e, origin.z), 2.0F * e,
+                      at(origin.x, origin.z - e) - at(origin.x, origin.z + e)));
+        return engine::animation::GroundHit{glm::vec3(origin.x, *h, origin.z), normal};
+    };
 }
 
 WorldRuntime::~WorldRuntime() {
@@ -78,7 +111,8 @@ void WorldRuntime::init(const engine::rhi::Device& device, engine::rhi::GpuAlloc
     }
     terrain_transfer_ = engine::rhi::TransferContext{device_, terrain_pool_,
                                                      device.graphics_queue(),
-                                                     device.max_sampler_anisotropy()};
+                                                     device.max_sampler_anisotropy(),
+                                                     device.texture_caps()};
     if (auto tp = engine::renderer::TerrainPass::create(device, allocator, pipeline_cache,
                                                         terrain_transfer_, shader_dir);
         tp) {
@@ -194,7 +228,7 @@ void WorldRuntime::simulate(engine::scene::Scene& scene, std::uint64_t frame_num
         engine::scene::physics_system(scene.registry(), *play_physics_, sim_dt);
         engine::scene::publish_physics_events(*play_physics_, engine::core::event_ring());
     }
-    scene.tick(sim_dt); // advances any Animators by simulated time
+    scene.tick(sim_dt, foot_probe_); // advances any Animators by simulated time
 
     // Replication: the host broadcasts moved entities (fresh world poses).
     net_.publish(scene.registry(), dt);

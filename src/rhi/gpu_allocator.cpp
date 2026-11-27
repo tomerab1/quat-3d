@@ -12,6 +12,7 @@
 #endif
 
 #include "engine/rhi/device.hpp"
+#include "one_time_commands.hpp"
 
 namespace engine::rhi {
 
@@ -56,49 +57,6 @@ void unregister_buffer_address(VkBuffer buffer) {
     }
 }
 #endif
-
-// Records `record` into a one-time command buffer from the transfer pool,
-// submits it via synchronization2, and blocks until the queue is idle.
-template <typename Record>
-[[nodiscard]] std::expected<void, core::Error>
-run_one_time_commands(const TransferContext& transfer, Record&& record) {
-    VkCommandBufferAllocateInfo alloc{};
-    alloc.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
-    alloc.commandPool = transfer.pool;
-    alloc.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-    alloc.commandBufferCount = 1;
-
-    VkCommandBuffer cmd = VK_NULL_HANDLE;
-    if (vkAllocateCommandBuffers(transfer.device, &alloc, &cmd) != VK_SUCCESS) {
-        return fail("vkAllocateCommandBuffers (one-time) failed");
-    }
-
-    VkCommandBufferBeginInfo begin{};
-    begin.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-    begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-    vkBeginCommandBuffer(cmd, &begin);
-    record(cmd);
-    vkEndCommandBuffer(cmd);
-
-    VkCommandBufferSubmitInfo cmd_info{};
-    cmd_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO;
-    cmd_info.commandBuffer = cmd;
-
-    VkSubmitInfo2 submit{};
-    submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO_2;
-    submit.commandBufferInfoCount = 1;
-    submit.pCommandBufferInfos = &cmd_info;
-
-    const VkResult r = vkQueueSubmit2(transfer.queue, 1, &submit, VK_NULL_HANDLE);
-    if (r == VK_SUCCESS) {
-        vkQueueWaitIdle(transfer.queue);
-    }
-    vkFreeCommandBuffers(transfer.device, transfer.pool, 1, &cmd);
-    if (r != VK_SUCCESS) {
-        return fail("vkQueueSubmit2 (one-time) failed");
-    }
-    return {};
-}
 
 } // namespace
 
@@ -365,7 +323,7 @@ upload_device_buffer(GpuAllocator& allocator, const TransferContext& transfer,
 
     const VkBuffer src = staging->handle();
     const VkBuffer dst = device_buffer->handle();
-    auto copied = run_one_time_commands(transfer, [&](VkCommandBuffer cmd) {
+    auto copied = detail::run_one_time_commands(transfer, [&](VkCommandBuffer cmd) {
         VkBufferCopy region{0, 0, size};
         vkCmdCopyBuffer(cmd, src, dst, 1, &region);
     });
@@ -419,7 +377,7 @@ upload_device_image(GpuAllocator& allocator, const TransferContext& transfer,
 
     const VkBuffer src = staging->handle();
     const VkImage  dst = image->handle();
-    auto uploaded = run_one_time_commands(transfer, [&](VkCommandBuffer cmd) {
+    auto uploaded = detail::run_one_time_commands(transfer, [&](VkCommandBuffer cmd) {
         const auto barrier = [&](std::uint32_t base_mip, std::uint32_t count,
                                  VkPipelineStageFlags2 src_stage, VkAccessFlags2 src_access,
                                  VkPipelineStageFlags2 dst_stage, VkAccessFlags2 dst_access,
@@ -502,12 +460,14 @@ std::expected<ImageView, core::Error>
 create_image_view(VkDevice device, VkImage image, VkFormat format,
                   VkImageAspectFlags aspect, std::uint32_t mip_levels,
                   VkImageViewType view_type, std::uint32_t base_mip,
-                  std::uint32_t base_layer, std::uint32_t layer_count) {
+                  std::uint32_t base_layer, std::uint32_t layer_count,
+                  VkComponentMapping components) {
     VkImageViewCreateInfo info{};
     info.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
     info.image = image;
     info.viewType = view_type;
     info.format = format;
+    info.components = components;
     info.subresourceRange.aspectMask = aspect;
     info.subresourceRange.baseMipLevel = base_mip;
     info.subresourceRange.levelCount = mip_levels;
@@ -543,6 +503,27 @@ create_sampler(VkDevice device, SamplerAddress address, std::uint32_t mip_levels
     info.anisotropyEnable = max_anisotropy > 0.0F ? VK_TRUE : VK_FALSE;
     info.maxAnisotropy = std::max(max_anisotropy, 1.0F);
     info.borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_BLACK;
+
+    VkSampler sampler = VK_NULL_HANDLE;
+    if (vkCreateSampler(device, &info, nullptr, &sampler) != VK_SUCCESS) {
+        return fail("create_sampler: vkCreateSampler failed");
+    }
+    return Sampler{device, sampler};
+}
+
+std::expected<Sampler, core::Error> create_sampler(VkDevice device, const SamplerDesc& desc) {
+    VkSamplerCreateInfo info{};
+    info.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+    info.magFilter = desc.filter;
+    info.minFilter = desc.filter;
+    info.mipmapMode = desc.mip_mode;
+    info.addressModeU = desc.address;
+    info.addressModeV = desc.address;
+    info.addressModeW = desc.address;
+    info.maxLod = desc.max_lod;
+    info.compareEnable = desc.compare ? VK_TRUE : VK_FALSE;
+    info.compareOp = desc.compare_op;
+    info.borderColor = desc.border;
 
     VkSampler sampler = VK_NULL_HANDLE;
     if (vkCreateSampler(device, &info, nullptr, &sampler) != VK_SUCCESS) {

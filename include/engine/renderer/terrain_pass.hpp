@@ -24,8 +24,9 @@
 // this pass samples, and set_tile() adopts it (Heightmap::gpu_tile) instead
 // of uploading the read-back heights again.
 //
-// Not yet: terrain does not cast into the shadow map (the shadow pass renders
-// vertex-buffer meshes only); it receives shadows and IBL like everything else.
+// Terrain casts into the sun's cascaded shadow map through shadow_casters()
+// (R12): a ShadowCasterFn the ShadowPass records inside every cascade, drawing
+// the same chunk geometry at the same LODs with terrain_shadow.slang.
 
 #include <cstdint>
 #include <expected>
@@ -40,6 +41,7 @@
 
 #include "engine/core/error.hpp"
 #include "engine/renderer/mesh_pass.hpp"
+#include "engine/renderer/shadow_pass.hpp"
 #include "engine/renderer/terrain_gpu_tiles.hpp"
 #include "engine/renderer/terrain_height_source.hpp"
 #include "engine/rhi/descriptor_buffer.hpp"
@@ -127,6 +129,15 @@ public:
                       VkExtent2D extent, const glm::mat4& view_proj, const glm::vec3& camera_pos,
                       const glm::vec3& anchor, float snowline_m);
 
+    // The loaded tiles as sun-shadow casters for this frame (R12): chunks
+    // inside `cull_view_proj` (ShadowPass's caster volume), at the LODs the
+    // camera at `camera_pos` sees. Hand the result to ShadowPass::add_to_graph
+    // as an extra caster; it is valid for this frame only (like the draw
+    // list, it is rebuilt by the next call). Empty when there are no tiles.
+    [[nodiscard]] ShadowCasterFn shadow_casters(const glm::mat4& cull_view_proj,
+                                                const glm::vec3& camera_pos,
+                                                const glm::vec3& anchor);
+
 private:
     const rhi::Device* device_    = nullptr;
     rhi::GpuAllocator* allocator_ = nullptr;
@@ -169,6 +180,18 @@ private:
         std::vector<ChunkDraw> chunks;
     };
     std::vector<TileDraws> frame_draws_; // rebuilt each add_to_graph, consumed same frame
+
+    // Visible chunks of every tile (frustum `cull_view_proj`) with their LODs
+    // for a camera at `camera_pos`.
+    void collect_chunks(const glm::mat4& cull_view_proj, const glm::vec3& camera_pos,
+                        const glm::vec3& anchor, std::vector<TileDraws>& out) const;
+    [[nodiscard]] std::expected<void, core::Error>
+    create_shadow_pipeline(rhi::PipelineCache& cache, const std::string& cooked_shader_dir);
+    void record_shadow(VkCommandBuffer cmd, std::uint32_t cascade, VkDeviceAddress cascades,
+                       float origin_y) const;
+
+    rhi::ManagedPipeline   shadow_pipeline_;     // terrain_shadow.slang, depth only
+    std::vector<TileDraws> shadow_draws_;        // rebuilt each shadow_casters call
 };
 
 } // namespace engine::renderer

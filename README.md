@@ -17,8 +17,7 @@ drive directly to build and debug worlds from a prompt.
 ## Screenshots
 
 Real engine output, rendered headless on a software Vulkan driver (lavapipe) by
-the CI screenshot pipeline — no ambient occlusion or cascaded shadows yet (in
-progress, ROADMAP R12).
+the CI screenshot pipeline.
 
 | Showcase (PBR materials, glass) | Terrain (GPU synthesis + GPU grass) | Physics |
 |---|---|---|
@@ -27,18 +26,34 @@ progress, ROADMAP R12).
 ## What it can do today
 
 **Rendering**
-- Deferred physically based shading with cascaded shadow maps and clustered point lights
-  (GPU light culling into view-space froxels, up to 4096 lights per frame)
+- Deferred physically based shading with clustered point lights (GPU light
+  culling into view-space froxels, up to 4096 lights per frame)
+- Sun shadows from four cascades fitted on the GPU to what the camera sees,
+  stable under camera motion, with soft PCF / PCSS edges and screen-space
+  contact shadows for small detail; meshes, instanced objects and terrain cast
+- Ambient occlusion (GTAO) with bent normals that also darkens reflections in
+  crevices; every shadow / AO setting is tunable in the editor's Renderer panel
 - Glass and transparency (refraction, absorption, IOR), clearcoat car paint
 - Physically based sky with volumetric clouds and a moving sun
 - Image-based lighting that keeps up with the sky in real time
 - Anti-aliasing (TAA), bloom, auto-exposure, filmic tonemapping
 - Automatic instancing: objects sharing a mesh and material (trees, rocks,
   crates) are drawn together in one instanced draw
+- GPU-compressed textures: KTX2 / Basis Universal textures (glTF
+  `KHR_texture_basisu` or loose `.ktx2`) are transcoded at load to BC7 / BC5 /
+  BC4 on desktop GPUs, ASTC on Apple GPUs, or plain RGBA8 elsewhere
+- Compressed meshes: glTF `EXT_meshopt_compression` and `KHR_mesh_quantization`
 
 **Animation**
 - Skeletal animation from glTF files, skinned on the GPU
-- Blending between clips, additive layers, and a state machine with crossfades
+- Blending between clips, additive layers, and a state machine
+- Inertialized transitions (Gears of War style): switching clips evaluates
+  only the new clip while the old pose's offset decays smoothly; crossfades
+  remain available
+- Foot IK: feet plant on uneven ground and slopes (physics raycasts or the
+  terrain height) with the pelvis lowered to the lower foot
+- Clips are compressed on load with ACL (the codec Unreal uses), within
+  0.1 mm of the source animation
 
 **World**
 - Procedural terrain: seeded generation with erosion, level of detail, and
@@ -190,6 +205,22 @@ cd /tmp/gltf-samples && git sparse-checkout set Models/Fox Models/ToyCar
 cp -R Models/Fox/glTF ~/quat-3d/sample-assets/Fox
 ```
 
+### Cooking assets for shipping
+
+`quat-cook` (built with the engine) rewrites a glTF for release: textures
+become KTX2 / Basis Universal with mip chains, meshes are reordered for the
+GPU caches, quantised and compressed with meshoptimizer. A cooked model loads
+faster and needs about a quarter of the texture memory:
+
+```sh
+./build/release/quat-cook sample-assets/DamagedHelmet.glb sample-assets/DamagedHelmet.cooked.glb
+```
+
+Cooked files are meant for the engine: normal maps are stored in a two-channel
+layout other glTF viewers do not expect (`--normal-layout rgb` avoids that).
+Options (codecs, quality) are listed in
+[`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md#cooking-assets).
+
 ## AI tools (MCP)
 
 [`tools/quat-mcp`](tools/quat-mcp/README.md) is an MCP server that lets AI
@@ -269,6 +300,7 @@ src/                Implementation, mirroring include/ (rhi, renderer, scene, ph
 src/editor/         The editor (only in builds with ENGINE_EDITOR=ON, the default)
 src/remote/         Remote-control endpoint used by AI tooling
 tools/quat-mcp/     MCP server for AI assistants (Rust, standalone Cargo crate)
+tools/quat-cook/    Offline asset cooker CLI (src/cook/ holds the cooking library)
 tests/              GoogleTest suite (engine_tests): tests/<module>/, shared helpers in tests/support/
 docs/               Project documentation
 ports/, triplets/   vcpkg customisations
@@ -278,4 +310,4 @@ ports/, triplets/   vcpkg customisations
 
 Vulkan 1.3 · Slang · SDL3 · Jolt Physics · EnTT · fastgltf · glm · Dear ImGui +
 ImGuizmo · Vulkan Memory Allocator · Recast/Detour · GameNetworkingSockets ·
-nlohmann/json · CMake + vcpkg
+KTX-Software (Basis Universal) · meshoptimizer · nlohmann/json · CMake + vcpkg
