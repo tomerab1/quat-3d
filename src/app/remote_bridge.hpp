@@ -20,7 +20,8 @@
 //   poll()               once per frame before the scene updates: RPC
 //                        requests, primitive + instanced-mesh resolution,
 //                        scatter regeneration, finished screenshots,
-//                        completed debug.step requests
+//                        completed debug.step requests, finished
+//                        shader.create / update compiles
 //   advance_sim(dt)      once per frame with the real frame time: records it
 //                        and returns the simulation dt (0 while paused);
 //                        advance_sim_unrendered() instead on iterations that
@@ -71,6 +72,7 @@ struct RenderSettings;
 namespace engine::rhi {
 class Device;
 class GpuAllocator;
+class ShaderHotReload;
 } // namespace engine::rhi
 namespace engine::scene {
 class MaterialOverrideStore;
@@ -138,6 +140,9 @@ struct RemoteBridgeTargets {
     std::function<void()> reset_temporal;
     // Gameplay scripts (G7): script.* statuses and reloads (may be null).
     engine::script::ScriptRuntime* scripts = nullptr;
+    // Compiles material shaders for shader.create / update (A6); null when
+    // shader hot reload is off (those methods then answer `unavailable`).
+    engine::rhi::ShaderHotReload* shader_reload = nullptr;
 
 #ifdef ENGINE_EDITOR
     engine::editor::EditorLayer* editor = nullptr;

@@ -138,6 +138,11 @@ command ends in `quat-mcp.exe`.
 | `script_list` / `script_get` | `script.list` / `script.get` | Lua scripts with their status (errors with file:line); read one |
 | `script_create` / `script_update` | `script.create` / `script.update` | Write a script (compiled first, syntax errors name the line); updates hot-reload while playing |
 | `script_delete` / `script_check` | `script.delete` / `script.check` | Delete a script; compile a draft without saving |
+| `shader_list` | `shader.list` | Material shaders (built-in + authored) and their compile state |
+| `shader_get` | `shader.get` | One material shader's source, state and last diagnostics |
+| `shader_template` | `shader.template` | The starter material shader module |
+| `shader_create` / `shader_update` | `shader.create` / `shader.update` | Write + compile a material shader; errors as `file:line:column` with a caret; a failed update keeps the old version |
+| `shader_delete` | `shader.delete` | Delete a material shader; entities using it fall back to the built-in |
 
 Tool descriptions spell out units and conventions (metres, Y up, Euler degrees
 in YXZ order, `"#rrggbb"` sRGB colours for primitives and linear `[r,g,b]` for
@@ -154,9 +159,11 @@ pause / step → raycast / nav path → conclude), `design_behavior` (an NPC
 behaviour tree: leaves → plan → `bt_set` or edits → play → `bt_status` /
 `debug_watch` → iterate), `tune_look` (screenshot → read settings and
 schema → exposure first, then bloom, shadows, sky light and materials, one
-change and one screenshot at a time) and `write_game_script` (read the Lua
-reference → write → compile → attach → play → read the log → iterate). In
-Claude Code they appear as `/mcp__quat-3d__build_world`.
+change and one screenshot at a time), `write_game_script` (read the Lua
+reference → write → compile → attach → play → read the log → iterate) and
+`write_material_shader` (template → write → `shader_create` → fix from the
+diagnostics → assign to an entity → screenshot → iterate). In Claude Code they
+appear as `/mcp__quat-3d__build_world`.
 
 **Resources** — `quat://scene/summary`: engine info, the first 500 entities,
 the environment and the camera as JSON; `quat://docs/scripting`: the Lua
@@ -195,8 +202,8 @@ Layout:
 |---|---|
 | `content/` | **Everything the model reads**, as Markdown: server instructions, one file per tool description, the component reference, prompt templates ([MiniJinja](https://docs.rs/minijinja)). See `content/README.md`. |
 | `src/client/` | Engine JSON-RPC client: `mod.rs` (calls, reconnects, handshake), `connection.rs` (socket, reader task, in-flight calls), `error.rs` (error codes, `EngineError`) |
-| `src/server/` | MCP server: `mod.rs` (handler, resource), tools grouped by area (`scene_tools.rs`, `world_tools.rs`, `sim_tools.rs`, `debug_tools.rs`, `behavior_tools.rs`, `tuning_tools.rs`, `script_tools.rs`, each its own rmcp router), `bt_outline.rs` (behaviour-tree outlines), `prompts.rs`, `results.rs` |
-| `src/params.rs`, `src/params/` | Typed tool inputs — their doc comments are the JSON schemas the model reads (`debug.rs`, `behavior.rs`, `tuning.rs`, `script.rs` per area) |
+| `src/server/` | MCP server: `mod.rs` (handler, resource), tools grouped by area (`scene_tools.rs`, `world_tools.rs`, `sim_tools.rs`, `debug_tools.rs`, `behavior_tools.rs`, `tuning_tools.rs`, `script_tools.rs`, `shader_tools.rs`, each its own rmcp router), `bt_outline.rs` (behaviour-tree outlines), `prompts.rs`, `results.rs` |
+| `src/params.rs`, `src/params/` | Typed tool inputs — their doc comments are the JSON schemas the model reads (`debug.rs`, `behavior.rs`, `tuning.rs`, `script.rs`, `shader.rs` per area) |
 | `src/content.rs` | Embeds `content/` and renders prompt templates |
 | `src/config.rs` | Flags / environment |
 

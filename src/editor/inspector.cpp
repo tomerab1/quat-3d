@@ -16,6 +16,7 @@
 #include "audio_inspector.hpp"
 #include "script_inspector.hpp"
 #include "behavior_panel.hpp"
+#include "material_inspector.hpp"
 #include "tuning_panels.hpp"
 #include "grass_inspector.hpp"
 #include "particle_inspector.hpp"
@@ -147,6 +148,14 @@ struct ComponentInspector<scene::Terrain> {
 };
 
 template <>
+struct ComponentInspector<scene::Primitive> {
+    static constexpr const char* title = "Primitive";
+    static void draw(entt::registry&, entt::entity, scene::Primitive& primitive) {
+        draw_primitive_fields(primitive); // resolve_primitives rebuilds on change
+    }
+};
+
+template <>
 struct ComponentInspector<scene::Grass> {
     static constexpr const char* title = "Grass";
     static void draw(entt::registry&, entt::entity, scene::Grass& grass) { draw_grass(grass); }
@@ -182,16 +191,7 @@ struct ComponentInspector<scene::InstancedMesh> {
             }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Only this node's subtree (empty = all)");
         } else {
-            scene::Primitive& p = mesh.primitive;
-            const char* shapes[] = {"cube", "sphere", "plane", "cylinder", "cone", "capsule"};
-            int shape = static_cast<int>(p.shape);
-            if (ImGui::Combo("shape", &shape, shapes, 6)) {
-                p.shape = static_cast<scene::PrimitiveShape>(shape);
-            }
-            ImGui::ColorEdit4("color", &p.color.x);
-            ImGui::SliderFloat("metallic", &p.metallic, 0.0F, 1.0F);
-            ImGui::SliderFloat("roughness", &p.roughness, 0.0F, 1.0F);
-            ImGui::ColorEdit3("emissive", &p.emissive.x, ImGuiColorEditFlags_HDR);
+            draw_primitive_fields(mesh.primitive);
         }
         ImGui::Checkbox("cast shadows", &mesh.cast_shadows);
 
@@ -560,6 +560,7 @@ void draw_inspector(scene::Scene& scene, entt::entity selected, script::ScriptRu
     ImGui::Separator();
     inspect<scene::Name>(r, selected);
     inspect<scene::Transform>(r, selected);
+    inspect<scene::Primitive>(r, selected);
     inspect<scene::MeshRenderer>(r, selected);
     draw_material_inspector(r, selected);
     inspect<scene::DirectionalLight>(r, selected, true);

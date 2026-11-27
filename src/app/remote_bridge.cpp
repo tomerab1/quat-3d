@@ -21,6 +21,7 @@
 #include <glm/gtc/constants.hpp>
 
 #include "engine/core/utf8_path.hpp"
+#include "app/asset_root.hpp"
 #include "app/nav_bake.hpp"
 #include "engine/asset/asset_manager.hpp"
 #include "engine/core/log.hpp"
@@ -31,6 +32,8 @@
 #include "engine/remote/world_commands.hpp"
 #include "engine/rhi/device.hpp"
 #include "engine/rhi/gpu_allocator.hpp"
+#include "engine/rhi/material_shader_registry.hpp"
+#include "engine/rhi/shader_hot_reload.hpp"
 #include "engine/scene/components.hpp"
 #include "engine/scene/gltf_loader.hpp"
 #include "engine/scene/instanced_mesh.hpp"
@@ -85,6 +88,9 @@ struct RemoteBridge::Impl {
     // Declared first so responders below are destroyed (answering "dropped")
     // while the server still exists.
     std::optional<remote::RpcServer> server;
+    // Authored material shaders (A6); after `server` so pending create /
+    // update replies are dropped while the server still exists.
+    std::optional<engine::rhi::MaterialShaderRegistry> material_shaders;
     ScreenshotCapture                shots;
     bool                             warned_primitives = false;
     bool                             camera_cut = false; // take_camera_cut()
@@ -289,7 +295,29 @@ struct RemoteBridge::Impl {
         s.frame_stats = [this] { return frame_stats(); };
         s.physics_world = [this] { return physics_world(); };
         if (t.scripts != nullptr) s.scripts = [this] { return t.scripts; };
+        if (material_shaders) s.material_shaders = &*material_shaders;
         return s;
+    }
+
+    // The registry behind shader.* — the hot reload service's directories when
+    // it runs, else the project's (listing and reading still work).
+    void open_material_shaders() {
+        namespace fs = std::filesystem;
+        const fs::path shaders = t.project_root / "assets" / "shaders";
+        engine::rhi::MaterialShaderRegistry::Config c;
+        c.cooked_dir = cooked_shader_dir(); // app/asset_root.hpp (#24)
+        c.material_dir = shaders / "materials";
+        c.module_dir = shaders / "lib";
+        if (t.shader_reload != nullptr) {
+            const engine::rhi::ShaderCompilerConfig& cc = t.shader_reload->compiler_config();
+            c.material_dir = cc.material_dir;
+            c.module_dir = cc.module_dir;
+            c.cooked_dir = cc.output_dir;
+        }
+        c.template_path = shaders / "templates" / "material.slang";
+        c.builtin_path = c.module_dir / "material.slang";
+        c.display_root = t.project_root;
+        material_shaders.emplace(std::move(c), t.shader_reload);
     }
 
     // ---- Endpoint ---------------------------------------------------------------
@@ -331,6 +359,7 @@ struct RemoteBridge::Impl {
                             {"paused", clock.state().paused},
                             {"editor", editor}};
             });
+        open_material_shaders();
         // The server lives in this Impl (stable address), as batching requires.
         remote::register_world_commands(*server, *t.scene, services());
     }
@@ -440,6 +469,7 @@ RemoteBridge::~RemoteBridge() = default;
 void RemoteBridge::poll() {
     impl_->finish_steps(); // steps run last frame: reply before new requests
     if (impl_->server) impl_->server->poll();
+    if (impl_->material_shaders) impl_->material_shaders->poll(); // compiles finished (A6)
     impl_->resolve_primitives();
     impl_->resolve_material_overrides();
     impl_->update_instanced_meshes();

@@ -247,6 +247,16 @@ into CLAUDE.md or the brief template in [`CYCLE.md`](CYCLE.md).
 - **A script's own pcall must not swallow a resource limit.** The sandbox's
   pcall/xpcall re-raise once the instruction or memory budget is exhausted;
   otherwise `while true do pcall(f) end` hangs the engine despite the hook.
+- **slangc puts every `.slang` input of one run into one module** (A6):
+  `extern struct` in one file and `export struct` in another conflict, and
+  `-entry` cannot find a generic entry point for `-specialize`. Link-time
+  specialisation works by passing the *cooked* driver module instead:
+  `slangc material.slang cooked/driver.slang-module -I lib -I cooked`. A
+  serialized module finds its own imports only as `.slang-module`s on an `-I`
+  path, so the cooked directory must be on it.
+- **Adding a field to an aggregate config struct warns at every positional
+  `{a, b, c}` initialisation** (`-Wmissing-field-initializers`, part of
+  `-Wextra`). Grep the call sites (tests included) in the same change.
 - **Fuzz every payload variant, not just one.** R17's KTX2 fuzz test first
   mutated only UASTC files; the review asked for ETC1S too, and the first
   ETC1S run crashed inside libktx (it ignores `decode_palettes` failures and

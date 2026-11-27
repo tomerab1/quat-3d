@@ -283,6 +283,7 @@ void Application::connect_remote() {
 #ifdef ENGINE_EDITOR
     editor_.fill_remote_targets(remote_targets);
 #endif
+    remote_targets.shader_reload = shader_reload_.get(); // A6: shader.create / update compile
     remote_targets.project_root = project_root();
     remote_.emplace(std::move(remote_targets), k_frames_in_flight);
 }

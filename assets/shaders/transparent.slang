@@ -27,7 +27,7 @@ static const uint MAT_HAS_THICKNESS  = 1u << 8;
 // Prefiltered specular cubemap mip count - 1. Must match ibl_pass.cpp.
 static const float PREFILTER_MAX_LOD = 4.0;
 
-// Mirrors engine::asset::PbrMaterialParams (std140, 240 bytes).
+// Mirrors engine::asset::PbrMaterialParams (std140, 272 bytes).
 struct MaterialParams {
     float4 base_color_factor;
     float4 emissive_factor;     // xyz used; w is padding
@@ -53,6 +53,7 @@ struct MaterialParams {
     // two per float4 (slot 2k -> xy, slot 2k+1 -> zw).
     float4 uv_mat[6];
     float4 uv_offset[3];
+    float4 shader_params[2];    // material-shader parameters (unused here)
 }
 
 // Mirrors engine::renderer::TransparentPushConstants (144 bytes). Each
