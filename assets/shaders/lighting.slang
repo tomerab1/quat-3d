@@ -221,14 +221,10 @@ float3 sun_visibility(int2 coord, uint2 size, float3 world_pos, float3 n, float3
         f.light_tan = g_frame.csm_filter.y;
         f.normal_bias = g_frame.csm_filter.z;
         f.depth_bias = g_frame.csm_filter.w;
-        float opaque = csm_visibility(g_cascades[0], g_shadow_map, g_shadow_cmp,
-                                      g_point_sampler, world_pos, n, ldir, clip.w, f, noise,
-                                      cascade);
-        vis = float3(opaque, opaque, opaque);
-        if (g_frame.camera_pos.w > 1.5 && opaque > 0.0) {
-            vis *= csm_transmittance(g_cascades[0], g_shadow_transmittance, g_point_sampler,
-                                     world_pos, n, ldir, clip.w, f);
-        }
+        // Translucent casters' tint filtered with the same kernel (w > 1.5).
+        vis = csm_visibility(g_cascades[0], g_shadow_map, g_shadow_cmp, g_point_sampler,
+                             g_shadow_transmittance, g_frame.camera_pos.w > 1.5, world_pos, n,
+                             ldir, clip.w, f, noise, cascade);
     }
     if (g_frame.contact.x > 0.0 && any(vis > 0.0) && dot(n, ldir) > 0.0) {
         // Start just off the surface so the march does not re-hit its own pixel.

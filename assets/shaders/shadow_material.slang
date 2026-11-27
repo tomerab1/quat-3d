@@ -10,12 +10,20 @@
 //     into the translucency map instead of the depth cascades: each surface
 //     the light crosses multiplies its transmittance into rgb, alpha keeps the
 //     nearest such surface's depth (the pipeline blends rgb multiplicatively
-//     and alpha with MIN). The lighting pass tints receivers behind that depth
-//     (lib/csm.slang csm_transmittance).
+//     and alpha with MIN). The lighting pass tints receivers behind that depth,
+//     tap by tap inside the depth PCF / PCSS kernel (lib/csm.slang
+//     sample_cascade).
 // Per surface the light crosses, a blended caster of alpha a lets (1 - a)
-// through, and a transmissive one transmission x (1 - Fresnel) x base colour
-// (the interface terms of transparent.slang): a closed glass object has two
-// such interfaces on every light path. Beer-Lambert volume absorption belongs
+// through, and a transmissive one transmission x (1 - F_avg) x base colour: a
+// closed glass object has two such interfaces on every light path. F_avg is
+// the cosine-weighted hemispherical average of the dielectric Fresnel term,
+// not the Fresnel at the light's angle: the shadow map does not model
+// refraction, so the light a curved surface reflects at grazing angles is not
+// balanced by the light it bends toward the centre (the caustic). With the
+// angle-dependent term the silhouette texels of a glass sphere went black and
+// drew a dark rim around its shadow (issue #77). 1 - F_avg is exactly the
+// fraction a sphere's interface transmits over its projected area, so the
+// shadow still lets the right amount of light through overall. Beer-Lambert volume absorption belongs
 // to the volume, not to an interface: KHR_materials_volume `thickness` is the
 // whole medium under the surface, so it is applied once, on the face where
 // the light enters (outward normal toward the sun), and a ray through a
@@ -100,16 +108,22 @@ void fragment_masked(MaskedVsOut input) {
     AlphaMasked::test(alpha, g_params.alpha_cutoff);
 }
 
-// Light one translucent surface lets through (rgb), given its base colour,
-// |cos| of the angle between its normal and the sun, and the volume thickness
-// to absorb over (0 on faces where the light leaves the volume).
-float3 surface_transmittance(float4 base, float cos_l, float thickness_world) {
+// Cosine-weighted hemispherical average of the dielectric Fresnel
+// reflectance for relative index `ior` (d'Eon & Irving 2011 fit; 0.09 at
+// 1.5). Light crossing from the denser side reflects the same average.
+float average_fresnel(float ior) {
+    float eta = max(ior, 1.0 / max(ior, 1e-3));
+    return (eta - 1.0) / (4.08567 + 1.00071 * eta);
+}
+
+// Light one translucent surface lets through (rgb), given its base colour and
+// the volume thickness to absorb over (0 on faces where the light leaves the
+// volume).
+float3 surface_transmittance(float4 base, float thickness_world) {
     float opacity = (g_params.flags & MATERIAL_BLEND) != 0 ? base.a : 1.0;
     float3 through = float3(0.0, 0.0, 0.0);
     if ((g_params.flags & MATERIAL_TRANSMISSION) != 0) {
-        float f0 = (g_params.ior - 1.0) / (g_params.ior + 1.0);
-        f0 *= f0;
-        float fresnel = f0 + (1.0 - f0) * pow(saturate(1.0 - cos_l), 5.0);
+        float fresnel = average_fresnel(g_params.ior);
         float3 tint = base.rgb;
         if (g_params.attenuation.w > 0.0 && thickness_world > 0.0) {
             float3 sigma = -log(clamp(g_params.attenuation.rgb, 1e-3, 1.0)) /
@@ -131,9 +145,8 @@ float4 fragment_translucent(VsOut input) : SV_Target0 {
         AlphaMasked::test(base.a, g_params.alpha_cutoff);
     }
     float3 n = normalize(input.world_n);
-    float n_dot_l = dot(n, pc.to_light.xyz);
-    float cos_l = abs(n_dot_l);
     // Absorb once per volume: on the light's entry face only.
-    float thickness_world = n_dot_l > 0.0 ? g_params.thickness * input.thickness_scale : 0.0;
-    return float4(surface_transmittance(base, cos_l, thickness_world), saturate(input.depth));
+    float thickness_world =
+        dot(n, pc.to_light.xyz) > 0.0 ? g_params.thickness * input.thickness_scale : 0.0;
+    return float4(surface_transmittance(base, thickness_world), saturate(input.depth));
 }

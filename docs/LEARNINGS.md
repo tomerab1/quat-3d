@@ -190,6 +190,17 @@ into CLAUDE.md or the brief template in [`CYCLE.md`](CYCLE.md).
   the result and the working set up front, claim them from the DecodeBudget,
   read level 0 in place, keep two float levels alive, and write straight into
   the final buffer; prove it with an allocation probe (tests/support).
+- **A shadow term that is filtered apart from the depth PCF draws its own
+  hard edge** (issue #77). Glass shadows were looked up with a 2x2 gather of
+  a half-resolution map, after the PCSS-filtered depth test, so their edge
+  stair-stepped; and the angle-dependent Fresnel at the sphere's grazing
+  silhouette wrote black texels (the dump showed transmittance 0.0 there),
+  a dark ring. Multiply each PCF tap's depth test by that tap's
+  transmittance, let translucent depth join the PCSS blocker search, and use
+  the hemispherical average Fresnel (1 - F_avg is what a sphere transmits
+  over its projected area) because the map cannot model the caustic that
+  balances grazing reflection. Debug by dumping the map (`read_rgba16f` on
+  `CsmShared::translucent_map`) before guessing.
 - **Count volume absorption once per volume, not per face.** A shadow
   caster sees both faces of closed glass; KHR_materials_volume `thickness` is
   the whole medium, so Beer-Lambert belongs on the light's entry face only.
