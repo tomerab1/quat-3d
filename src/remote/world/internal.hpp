@@ -25,6 +25,8 @@ struct Context {
     RpcServer*     server = nullptr;
     scene::Scene*  scene = nullptr;
     WorldServices  services;
+    // debug.step requests parked in services.when_stepped (capped).
+    std::size_t    step_waits = 0;
 };
 using ContextPtr = std::shared_ptr<Context>;
 

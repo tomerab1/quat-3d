@@ -3,6 +3,7 @@
 #define GLM_ENABLE_EXPERIMENTAL
 #include "engine/scene/component_json.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <filesystem>
@@ -438,16 +439,36 @@ const ComponentInfo* find_component_info(std::string_view name) {
     return nullptr;
 }
 
+namespace {
+
+// Looks a component up only when the caller asked for it by name.
+struct Picker {
+    const entt::registry&        r;
+    entt::entity                 e;
+    std::span<const std::string> only;
+
+    template <typename C>
+    [[nodiscard]] const C* get(std::string_view name) const {
+        if (!only.empty() && std::ranges::find(only, name) == only.end()) return nullptr;
+        return r.try_get<C>(e);
+    }
+};
+
+} // namespace
+
 json encode_components(const entt::registry& r, entt::entity e, const EncodeOptions& options) {
     json out = json::object();
-    if (const auto* t = r.try_get<Transform>(e)) {
+    const Picker pick{r, e, options.only};
+    if (const auto* t = pick.get<Transform>("transform")) {
         out["transform"] = encode_transform(*t, options.transform_as_matrix);
     }
-    if (const auto* p = r.try_get<Primitive>(e)) out["primitive"] = primitive_fields_json(*p);
-    if (const auto* m = r.try_get<MaterialOverride>(e); m != nullptr && m->mask != 0) {
+    if (const auto* p = pick.get<Primitive>("primitive")) {
+        out["primitive"] = primitive_fields_json(*p);
+    }
+    if (const auto* m = pick.get<MaterialOverride>("material"); m != nullptr && m->mask != 0) {
         out["material"] = encode_material_override(*m);
     }
-    if (const auto* m = r.try_get<InstancedMesh>(e)) {
+    if (const auto* m = pick.get<InstancedMesh>("instanced_mesh")) {
         json j = primitive_fields_json(m->primitive);
         j["gltf"] = m->gltf_path;
         j["node"] = m->gltf_node;
@@ -463,7 +484,7 @@ json encode_components(const entt::registry& r, entt::entity e, const EncodeOpti
         }
         out["instanced_mesh"] = std::move(j);
     }
-    if (const auto* sc = r.try_get<Scatter>(e)) {
+    if (const auto* sc = pick.get<Scatter>("scatter")) {
         out["scatter"] = {{"seed", sc->seed},
                           {"area", enum_name(k_scatter_areas, sc->area)},
                           {"size", json::array({sc->size.x, sc->size.y})},
@@ -479,52 +500,52 @@ json encode_components(const entt::registry& r, entt::entity e, const EncodeOpti
                           {"height", json::array({sc->height_m.x, sc->height_m.y})},
                           {"max_instances", sc->max_instances}};
     }
-    if (const auto* l = r.try_get<PointLight>(e)) {
+    if (const auto* l = pick.get<PointLight>("point_light")) {
         out["point_light"] = {{"color", vec3_json(l->color)},
                               {"radius", l->radius},
                               {"intensity", l->intensity}};
     }
-    if (const auto* l = r.try_get<DirectionalLight>(e)) {
+    if (const auto* l = pick.get<DirectionalLight>("dir_light")) {
         out["dir_light"] = {{"direction", vec3_json(l->direction)},
                             {"color", vec3_json(l->color)},
                             {"intensity", l->intensity}};
     }
-    if (const auto* c = r.try_get<Camera>(e)) {
+    if (const auto* c = pick.get<Camera>("camera")) {
         out["camera"] = {{"fov_deg", glm::degrees(c->fov_y)},
                          {"near", c->near_z},
                          {"far", c->far_z},
                          {"active", c->is_active}};
     }
-    if (const auto* c = r.try_get<Collider>(e)) {
+    if (const auto* c = pick.get<Collider>("collider")) {
         out["collider"] = {{"shape", enum_name(k_collider_shapes, c->shape)},
                            {"half_extents", vec3_json(c->half_extents)},
                            {"offset", vec3_json(c->offset)},
                            {"sensor", c->is_sensor}};
     }
-    if (const auto* b = r.try_get<RigidBody>(e)) {
+    if (const auto* b = pick.get<RigidBody>("rigidbody")) {
         out["rigidbody"] = {{"motion", enum_name(k_motions, b->motion)}, {"mass", b->mass}};
     }
-    if (const auto* c = r.try_get<CharacterController>(e)) {
+    if (const auto* c = pick.get<CharacterController>("character")) {
         out["character"] = {{"radius", c->radius},
                             {"half_height", c->half_height},
                             {"speed", c->speed}};
     }
-    if (const auto* a = r.try_get<NavAgent>(e)) {
+    if (const auto* a = pick.get<NavAgent>("nav_agent")) {
         out["nav_agent"] = {{"target", vec3_json(a->target)},
                             {"speed", a->speed},
                             {"ground_offset", a->ground_offset},
                             {"active", a->active},
                             {"paused", a->paused}};
     }
-    if (const auto* b = r.try_get<BehaviorTree>(e)) {
+    if (const auto* b = pick.get<BehaviorTree>("behavior")) {
         out["behavior"] = {{"source", b->source}, {"enabled", b->enabled}};
     }
-    if (const auto* p = r.try_get<PatrolRoute>(e)) {
+    if (const auto* p = pick.get<PatrolRoute>("patrol")) {
         json pts = json::array();
         for (const glm::vec3& pt : p->points) pts.push_back(vec3_json(pt));
         out["patrol"] = {{"points", std::move(pts)}, {"loop", p->loop}};
     }
-    if (const auto* t = r.try_get<Terrain>(e)) {
+    if (const auto* t = pick.get<Terrain>("terrain")) {
         out["terrain"] = {{"seed", t->params.seed},
                           {"resolution", t->params.resolution},
                           {"tile_size", t->params.tile_size_m},
@@ -539,9 +560,11 @@ json encode_components(const entt::registry& r, entt::entity e, const EncodeOpti
                           {"stream_radius", t->stream_radius},
                           {"gpu", t->gpu_generate}};
     }
-    if (const auto* g = r.try_get<Grass>(e)) out["grass"] = encode_grass(g->settings);
-    if (const auto* n = r.try_get<NetReplicated>(e)) out["net_replicated"] = {{"net_id", n->net_id}};
-    if (const auto* a = r.try_get<AudioSource>(e)) {
+    if (const auto* g = pick.get<Grass>("grass")) out["grass"] = encode_grass(g->settings);
+    if (const auto* n = pick.get<NetReplicated>("net_replicated")) {
+        out["net_replicated"] = {{"net_id", n->net_id}};
+    }
+    if (const auto* a = pick.get<AudioSource>("audio_source")) {
         out["audio_source"] = {{"clip", a->clip},
                                {"bus", enum_name(k_audio_buses, a->bus)},
                                {"volume", a->volume},
@@ -554,12 +577,14 @@ json encode_components(const entt::registry& r, entt::entity e, const EncodeOpti
                                {"rolloff", a->rolloff},
                                {"doppler", a->doppler}};
     }
-    if (const auto* l = r.try_get<AudioListener>(e)) out["audio_listener"] = {{"active", l->active}};
-    if (const auto* a = r.try_get<Animator>(e)) {
+    if (const auto* l = pick.get<AudioListener>("audio_listener")) {
+        out["audio_listener"] = {{"active", l->active}};
+    }
+    if (const auto* a = pick.get<Animator>("animator")) {
         out["animator"] = {{"time", a->time}, {"speed", a->speed}, {"looping", a->looping}};
     }
     if (options.include_read_only) {
-        if (const auto* m = r.try_get<MeshSource>(e)) {
+        if (const auto* m = pick.get<MeshSource>("mesh")) {
             out["mesh"] = {{"mesh_key", m->mesh_key},
                            {"material_key", m->material_key},
                            {"gltf", m->gltf_path}};

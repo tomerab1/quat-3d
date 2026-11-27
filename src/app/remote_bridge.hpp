@@ -22,7 +22,9 @@
 //                        scatter regeneration, finished screenshots,
 //                        completed debug.step requests
 //   advance_sim(dt)      once per frame with the real frame time: records it
-//                        and returns the simulation dt (0 while paused)
+//                        and returns the simulation dt (0 while paused);
+//                        advance_sim_unrendered() instead on iterations that
+//                        draw nothing (minimised)
 //   note_draws(n)        the frame's submitted draw count (debug.stats)
 //   record_capture()     after the frame's graph is recorded: copies the
 //                        final scene image for pending screenshots
@@ -31,7 +33,8 @@
 //
 // Screenshots never stall the GPU: the copy lands in a per-slot host-visible
 // buffer that is read only once that slot's fence has signalled anyway, and
-// PNG encoding runs on a worker thread; the reply goes out from poll().
+// PNG encoding runs on a worker thread; the reply goes out from poll()
+// (screenshot_capture.hpp).
 
 #include <cstdint>
 #include <filesystem>
@@ -42,6 +45,7 @@
 #include <glm/glm.hpp>
 #include <vulkan/vulkan.h>
 
+#include "app/screenshot_capture.hpp" // CaptureSource
 #include "engine/core/stderr_capture.hpp"
 #include "engine/scene/scene.hpp" // GroundHeightFn
 
@@ -116,16 +120,6 @@ struct RemoteBridgeTargets {
     std::filesystem::path project_root;
 };
 
-// The image a screenshot copies: the final scene colour (the editor's
-// offscreen viewport, else the swapchain image) as the recorded frame leaves
-// it. Needs TRANSFER_SRC usage.
-struct CaptureSource {
-    VkImage       image = VK_NULL_HANDLE;
-    VkFormat      format = VK_FORMAT_UNDEFINED;
-    VkExtent2D    extent{0, 0};
-    VkImageLayout layout = VK_IMAGE_LAYOUT_UNDEFINED; // before and after the copy
-};
-
 class RemoteBridge {
 public:
     // Opens the endpoint when QUAT_REMOTE is set (failure is logged, the
@@ -144,6 +138,10 @@ public:
 
     // Simulation dt for this frame given the real frame time `real_dt`.
     [[nodiscard]] float advance_sim(float real_dt);
+    // Simulation dt for a loop iteration that draws no frame (minimised
+    // window): the next queued debug.step step, else 0 — real-time simulation
+    // stays frozen, but stepping callers still get their reply.
+    [[nodiscard]] float advance_sim_unrendered();
     void note_draws(std::size_t draws);
 
     [[nodiscard]] bool listening() const;

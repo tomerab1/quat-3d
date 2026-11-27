@@ -44,7 +44,11 @@ static_assert(sizeof(GrassParamsGpu) == 480, "must match grass_common.slang Gras
 // Mirrors PushConstants in grass.slang.
 struct GrassDrawPush {
     std::uint32_t segments = 0;
-    std::uint32_t pad[3]{};
+    // First blade of this LOD's region in the blade buffer. Indirect draws
+    // always use firstInstance = 0 (drawIndirectFirstInstance is not
+    // required), so the region base travels here instead.
+    std::uint32_t base = 0;
+    std::uint32_t pad[2]{};
 };
 static_assert(sizeof(GrassDrawPush) == 16, "must match grass.slang PushConstants");
 
@@ -347,7 +351,8 @@ GrassPass::add_to_graph(rhi::RenderGraph& graph, std::uint32_t slot_index,
         .writes(t.material, rhi::ResourceUsage::color_attachment)
         .writes(t.clearcoat, rhi::ResourceUsage::color_attachment)
         .writes(t.depth, rhi::ResourceUsage::depth_attachment)
-        .execute([state = &s, set = &slot.draw_set, t, args, extent](rhi::PassContext& ctx) {
+        .execute([state = &s, set = &slot.draw_set, t, args, extent,
+                  far_base = capacity.near](rhi::PassContext& ctx) {
             const VkCommandBuffer cmd = ctx.cmd();
             const auto color_attachment = [](VkImageView view) {
                 VkRenderingAttachmentInfo ai{};
@@ -394,10 +399,12 @@ GrassPass::add_to_graph(rhi::RenderGraph& graph, std::uint32_t slot_index,
             constexpr VkDeviceSize stride = sizeof(VkDrawIndexedIndirectCommand);
             GrassDrawPush push{};
             push.segments = grass_near_segments;
+            push.base = 0;
             vkCmdPushConstants(cmd, state->draw.layout(), VK_SHADER_STAGE_VERTEX_BIT, 0,
                                sizeof(push), &push);
             vkCmdDrawIndexedIndirect(cmd, args_buffer, offsetof(GrassArgsGpu, near), 1, stride);
             push.segments = grass_far_segments;
+            push.base = far_base;
             vkCmdPushConstants(cmd, state->draw.layout(), VK_SHADER_STAGE_VERTEX_BIT, 0,
                                sizeof(push), &push);
             vkCmdDrawIndexedIndirect(cmd, args_buffer, offsetof(GrassArgsGpu, far), 1, stride);

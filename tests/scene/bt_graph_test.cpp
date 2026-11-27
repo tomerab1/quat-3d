@@ -150,6 +150,61 @@ TEST(BtGraph, HandEditedShapeFallsBackToAutoLayout) {
     for (const std::uint32_t c : r.children) EXPECT_GT(edited->find(c)->pos.y, r.pos.y);
 }
 
+// Children re-ordered outside the panel (inspector text, scene.set_component)
+// keep the node count, so a count check alone would apply the stale layout by
+// pre-order index; the panel's sort-by-x would then re-order the children.
+TEST(BtGraph, ReorderedChildrenWithStaleLayoutAreAutoLaidOut) {
+    constexpr const char* kTree = R"({"type":"sequence","children":[
+        {"type":"leaf","name":"wait","seconds":1},
+        {"type":"sequence","children":[
+            {"type":"leaf","name":"wait","seconds":2},
+            {"type":"leaf","name":"near_camera","range":3}]}]})";
+    auto g = s::bt_graph_from_json(kTree);
+    ASSERT_OK(g);
+    auto text = s::bt_graph_to_json(*g);
+    ASSERT_OK(text);
+    nlohmann::json saved = nlohmann::json::parse(*text);
+    ASSERT_TRUE(saved["editor"].contains("shape"));
+
+    nlohmann::json swapped = saved;
+    std::swap(swapped["children"][0], swapped["children"][1]); // [B, A], editor kept
+    nlohmann::json legacy = swapped;                            // a layout without "shape"
+    legacy["editor"].erase("shape");
+
+    for (const nlohmann::json& doc : {swapped, legacy}) {
+        auto edited = s::bt_graph_from_json(doc.dump());
+        ASSERT_OK(edited);
+        ASSERT_EQ(edited->nodes.size(), 5U);
+        EXPECT_TRUE(s::bt_graph_has_auto_layout(*edited)) << "stale layout ignored";
+        EXPECT_TRUE(s::bt_graph_children_follow_x(*edited));
+
+        // An unrelated panel edit (a parameter), then the panel's commit sort.
+        const std::uint32_t root = s::bt_graph_root(*edited);
+        const std::uint32_t inner = edited->find(root)->children[0];
+        ASSERT_EQ(edited->find(inner)->kind, Kind::sequence);
+        const std::vector<std::uint32_t> before = edited->find(inner)->children;
+        edited->find(before[0])->params[0].value = 5.0F;
+        EXPECT_FALSE(s::bt_graph_sort_children_by_x(*edited));
+        auto out = s::bt_graph_to_json(*edited);
+        ASSERT_OK(out);
+        const nlohmann::json j = nlohmann::json::parse(*out);
+        EXPECT_EQ(j["children"][0]["children"][0]["name"], "wait");
+        EXPECT_EQ(j["children"][0]["children"][1]["name"], "near_camera");
+        EXPECT_EQ(j["children"][1]["name"], "wait");
+    }
+
+    // A parameter edit keeps the shape, so the saved ids and layout stay.
+    g->nodes[0].pos.x += 40.0F; // root moved by hand (still follows x)
+    auto moved = s::bt_graph_to_json(*g);
+    ASSERT_OK(moved);
+    nlohmann::json tweaked = nlohmann::json::parse(*moved);
+    tweaked["children"][0]["seconds"] = 7;
+    auto kept = s::bt_graph_from_json(tweaked.dump());
+    ASSERT_OK(kept);
+    EXPECT_FALSE(s::bt_graph_has_auto_layout(*kept));
+    EXPECT_NEAR(kept->nodes[0].pos.x, g->nodes[0].pos.x, 0.5F);
+}
+
 TEST(BtGraph, RuntimeIgnoresEditorFieldOnlyAtTheRoot) {
     EXPECT_OK(s::BehaviorTreeAsset::parse(
         R"({"type":"leaf","name":"wait","seconds":1,"editor":{"anything":[1,2]}})"));
