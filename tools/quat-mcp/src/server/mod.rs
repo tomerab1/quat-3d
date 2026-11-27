@@ -12,6 +12,8 @@ mod results;
 #[allow(clippy::doc_markdown)]
 mod scene_tools;
 #[allow(clippy::doc_markdown)]
+mod script_tools;
+#[allow(clippy::doc_markdown)]
 mod sim_tools;
 #[allow(clippy::doc_markdown)]
 mod world_tools;
@@ -33,12 +35,14 @@ use serde_json::{Value, json};
 use crate::client::{EngineClient, EngineError};
 use crate::content;
 
-pub use prompts::{BuildWorldArgs, DebugSessionArgs, InspectSceneArgs};
+pub use prompts::{BuildWorldArgs, DebugSessionArgs, InspectSceneArgs, WriteGameScriptArgs};
 pub use results::{error_result, normalize_method};
 pub use world_tools::MAX_GROUND_POINTS;
 
 /// URI of the scene-summary resource.
 pub const SCENE_SUMMARY_URI: &str = "quat://scene/summary";
+/// URI of the Lua scripting reference resource.
+pub const SCRIPTING_REFERENCE_URI: &str = "quat://docs/scripting";
 
 /// The quat-mcp server. Cheap to clone; all clones share one engine connection.
 #[derive(Clone)]
@@ -72,7 +76,11 @@ impl QuatServer {
     /// Every tool this server offers, across all tool groups.
     #[must_use]
     pub fn tools() -> ToolRouter<Self> {
-        Self::scene_tools() + Self::world_tools() + Self::sim_tools() + Self::debug_tools()
+        Self::scene_tools()
+            + Self::world_tools()
+            + Self::sim_tools()
+            + Self::debug_tools()
+            + Self::script_tools()
     }
 
     /// Timeout for slow engine work (loading, baking, screenshots).
@@ -141,6 +149,12 @@ impl ServerHandler for QuatServer {
                 .with_title("Current scene summary")
                 .with_description(include_str!("../../content/resources/scene_summary.md").trim())
                 .with_mime_type("application/json"),
+            Resource::new(SCRIPTING_REFERENCE_URI, "scripting_reference")
+                .with_title("Lua scripting reference")
+                .with_description(
+                    include_str!("../../content/resources/scripting_reference.md").trim(),
+                )
+                .with_mime_type("text/markdown"),
         ]))
     }
 
@@ -149,10 +163,18 @@ impl ServerHandler for QuatServer {
         request: ReadResourceRequestParams,
         _context: RequestContext<RoleServer>,
     ) -> Result<ReadResourceResponse, ErrorData> {
+        if request.uri == SCRIPTING_REFERENCE_URI {
+            return Ok(ReadResourceResult::new(vec![
+                ResourceContents::text(content::SCRIPTING_REFERENCE, SCRIPTING_REFERENCE_URI)
+                    .with_mime_type("text/markdown"),
+            ])
+            .into());
+        }
         if request.uri != SCENE_SUMMARY_URI {
             return Err(ErrorData::resource_not_found(
                 format!(
-                    "unknown resource `{}`; available: {SCENE_SUMMARY_URI}",
+                    "unknown resource `{}`; available: {SCENE_SUMMARY_URI}, \
+                     {SCRIPTING_REFERENCE_URI}",
                     request.uri
                 ),
                 None,

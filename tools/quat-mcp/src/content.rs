@@ -10,6 +10,10 @@ use serde::Serialize;
 /// MCP server instructions, sent to the client on `initialize`.
 pub const INSTRUCTIONS: &str = include_str!("../content/instructions.md");
 
+/// The Lua scripting reference served as the `quat://docs/scripting`
+/// resource — the engine's own docs/scripting.md, so there is one source.
+pub const SCRIPTING_REFERENCE: &str = include_str!("../../../docs/scripting.md");
+
 /// Prompt templates by name.
 const PROMPTS: &[(&str, &str)] = &[
     (
@@ -23,6 +27,10 @@ const PROMPTS: &[(&str, &str)] = &[
     (
         "debug_session",
         include_str!("../content/prompts/debug_session.md"),
+    ),
+    (
+        "write_game_script",
+        include_str!("../content/prompts/write_game_script.md"),
     ),
 ];
 

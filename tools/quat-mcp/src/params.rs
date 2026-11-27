@@ -7,7 +7,9 @@ use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::{Map, Value};
 
 mod debug;
+mod script;
 pub use debug::*;
+pub use script::*;
 
 /// A JSON object keyed by component name (see the tool description).
 pub type Components = Map<String, Value>;
