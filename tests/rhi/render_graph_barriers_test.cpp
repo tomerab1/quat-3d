@@ -290,6 +290,73 @@ TEST(RenderGraphTransitions, WriteAfterTransitionResetsTheChain) {
 }
 
 // ---------------------------------------------------------------------------
+// Final-layout transitions of imported images (issue #9). The trailing
+// barrier's second scope is the stage the next consumer waits at, never NONE:
+// a transition ordered before nothing is not covered by a later semaphore
+// signal, so present could race it.
+// ---------------------------------------------------------------------------
+
+// Default: ALL_COMMANDS, which any consumer's wait chains onto.
+TEST(RenderGraphFinalLayout, FinalBarrierHasARealSecondScope) {
+    RenderGraph graph;
+    const auto img = graph.import_image("viewport", fake_image(0x200), VK_NULL_HANDLE,
+                                        VK_FORMAT_R8G8B8A8_UNORM, k_extent,
+                                        VK_IMAGE_LAYOUT_UNDEFINED,
+                                        VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    (void)graph.add_pass("draw", PassType::graphics).writes(img, ResourceUsage::color_attachment);
+    ASSERT_OK(graph.compile());
+    const auto& b = graph.planned_final_barriers();
+    ASSERT_EQ(b.size(), 1U);
+    EXPECT_EQ(b[0].oldLayout, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+    EXPECT_EQ(b[0].newLayout, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    EXPECT_NE(b[0].dstStageMask, VK_PIPELINE_STAGE_2_NONE);
+    EXPECT_EQ(b[0].dstStageMask, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT);
+    EXPECT_EQ(b[0].dstAccessMask, 0U);
+    EXPECT_TRUE(b[0].srcStageMask & VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT);
+}
+
+// A swapchain image: the final PRESENT_SRC transition's second scope is the
+// stage the render-finished semaphore is signalled at.
+TEST(RenderGraphFinalLayout, PresentTransitionEndsAtTheSignalStage) {
+    RenderGraph graph;
+    constexpr VkPipelineStageFlags2 k_stage = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT;
+    const auto img = graph.import_image("swapchain", fake_image(0x210), VK_NULL_HANDLE,
+                                        VK_FORMAT_B8G8R8A8_SRGB, k_extent,
+                                        VK_IMAGE_LAYOUT_UNDEFINED,
+                                        VK_IMAGE_LAYOUT_PRESENT_SRC_KHR, k_stage, 0, k_stage);
+    (void)graph.add_pass("resolve", PassType::transfer).writes(img, ResourceUsage::transfer_dst);
+    ASSERT_OK(graph.compile());
+    const auto& b = graph.planned_final_barriers();
+    ASSERT_EQ(b.size(), 1U);
+    EXPECT_EQ(b[0].newLayout, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
+    EXPECT_EQ(b[0].dstStageMask, k_stage);
+    EXPECT_TRUE(b[0].srcStageMask & VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT);
+    EXPECT_TRUE(b[0].srcAccessMask & VK_ACCESS_2_TRANSFER_WRITE_BIT);
+}
+
+// An image left in its final layout by the last pass needs no final barrier.
+TEST(RenderGraphFinalLayout, NoFinalBarrierWhenAlreadyInTheFinalLayout) {
+    RenderGraph graph;
+    const auto img = graph.import_image("img", fake_image(0x220), VK_NULL_HANDLE,
+                                        VK_FORMAT_R8G8B8A8_UNORM, k_extent,
+                                        VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL);
+    (void)graph.add_pass("w", PassType::compute).writes(img, ResourceUsage::storage_write);
+    ASSERT_OK(graph.compile());
+    EXPECT_TRUE(graph.planned_final_barriers().empty());
+}
+
+// A NONE final stage with a final layout is a declaration bug.
+TEST(RenderGraphFinalLayout, NoneFinalStageIsAnError) {
+    RenderGraph graph;
+    const auto img = graph.import_image("swapchain", fake_image(0x230), VK_NULL_HANDLE,
+                                        VK_FORMAT_B8G8R8A8_SRGB, k_extent,
+                                        VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+                                        VK_PIPELINE_STAGE_2_NONE, 0, VK_PIPELINE_STAGE_2_NONE);
+    (void)graph.add_pass("w", PassType::transfer).writes(img, ResourceUsage::transfer_dst);
+    ASSERT_ERR(graph.compile());
+}
+
+// ---------------------------------------------------------------------------
 // Buffer resources (R10.1). Imported buffers need no device or pool: barrier
 // planning is pure bookkeeping, so these run as CPU tests with fake handles.
 // ---------------------------------------------------------------------------

@@ -1,25 +1,33 @@
-// Queue family selection and presentation support (issue #5).
+// Queue family selection and presentation support (issues #5, #9).
 //
 // select_queue_families() is a pure function over queue-family properties and
 // a present-support callback, so the selection rules are tested here with
 // injected families. The Gpu* tests check the surface-less test device and a
 // real surface (VK_EXT_headless_surface) end to end: device selection,
-// swapchain creation and a present on Device::present_queue().
+// swapchain creation, a render graph ending in the PRESENT_SRC transition and
+// a present on Device::present_queue(), clean under synchronization
+// validation.
 
 #include <algorithm>
 #include <array>
 #include <cstdint>
+#include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <expected>
+#include <optional>
 #include <set>
+#include <string>
 #include <utility>
 #include <vector>
 
 #include <gtest/gtest.h>
 #include <vulkan/vulkan.h>
 
+#include "engine/core/log.hpp"
 #include "engine/rhi/device.hpp"
 #include "engine/rhi/queue_selection.hpp"
+#include "engine/rhi/render_graph.hpp"
 #include "engine/rhi/swapchain.hpp"
 #include "support/expect_ok.hpp"
 #include "support/gpu_context.hpp"
@@ -147,6 +155,29 @@ TEST(GpuDevicePresent, SurfacelessDeviceHasNoPresentQueue) {
     EXPECT_ERR(engine::rhi::Swapchain::create(g->device, VK_NULL_HANDLE, VkExtent2D{64, 64}));
 }
 
+// Portable setenv / unsetenv (an empty value unsets on Windows).
+void set_env(const char* name, const char* value) {
+#ifdef _WIN32
+    _putenv_s(name, value != nullptr ? value : "");
+#else
+    if (value != nullptr) {
+        setenv(name, value, 1);
+    } else {
+        unsetenv(name);
+    }
+#endif
+}
+
+[[nodiscard]] bool validation_layer_installed() {
+    std::uint32_t count = 0;
+    vkEnumerateInstanceLayerProperties(&count, nullptr);
+    std::vector<VkLayerProperties> layers(count);
+    vkEnumerateInstanceLayerProperties(&count, layers.data());
+    return std::any_of(layers.begin(), layers.end(), [](const VkLayerProperties& l) {
+        return std::strcmp(l.layerName, "VK_LAYER_KHRONOS_validation") == 0;
+    });
+}
+
 [[nodiscard]] bool instance_extension_available(const char* name) {
     std::uint32_t count = 0;
     vkEnumerateInstanceExtensionProperties(nullptr, &count, nullptr);
@@ -158,7 +189,10 @@ TEST(GpuDevicePresent, SurfacelessDeviceHasNoPresentQueue) {
 }
 
 // With a surface, Device::create picks a device and family that can present
-// to it, and the swapchain built on it presents from present_queue().
+// to it, and the swapchain built on it presents from present_queue(). The
+// frame is a real render graph ending in the backbuffer's PRESENT_SRC
+// transition; synchronization validation must report nothing (issue #9: the
+// transition used to have a NONE second scope, so present raced it).
 TEST(GpuDevicePresent, HeadlessSurfaceSelectsAPresentQueueAndPresents) {
     QUAT_REQUIRE_GPU(g);
     if (!instance_extension_available(VK_EXT_HEADLESS_SURFACE_EXTENSION_NAME)) {
@@ -166,9 +200,17 @@ TEST(GpuDevicePresent, HeadlessSurfaceSelectsAPresentQueueAndPresents) {
     }
     const std::array<const char*, 2> instance_exts{VK_KHR_SURFACE_EXTENSION_NAME,
                                                    VK_EXT_HEADLESS_SURFACE_EXTENSION_NAME};
+    // Always under validation with synchronization validation (when the layer
+    // is installed): the layer reads VK_LAYER_ENABLES at instance creation,
+    // so it is set only around this device's creation and then restored.
+    const std::uint64_t log_start = engine::core::log_ring().last_seq();
+    const char* previous_enables = std::getenv("VK_LAYER_ENABLES");
+    const std::optional<std::string> saved_enables =
+        previous_enables != nullptr ? std::optional<std::string>(previous_enables) : std::nullopt;
+    set_env("VK_LAYER_ENABLES", "VK_VALIDATION_FEATURE_ENABLE_SYNCHRONIZATION_VALIDATION_EXT");
     auto device = engine::rhi::Device::create({
         .instance_extensions = instance_exts,
-        .enable_validation = quat::test::gpu_options().validation,
+        .enable_validation = true,
         .application_name = "engine_tests_present",
         .create_surface = [](VkInstance instance)
             -> std::expected<VkSurfaceKHR, engine::core::Error> {
@@ -186,6 +228,7 @@ TEST(GpuDevicePresent, HeadlessSurfaceSelectsAPresentQueueAndPresents) {
             return surface;
         },
     });
+    set_env("VK_LAYER_ENABLES", saved_enables ? saved_enables->c_str() : nullptr);
     ASSERT_OK(device);
     const QueueFamilies& families = device->queue_families();
     ASSERT_NE(device->surface(), VK_NULL_HANDLE);
@@ -231,33 +274,39 @@ TEST(GpuDevicePresent, HeadlessSurfaceSelectsAPresentQueueAndPresents) {
     begin.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
     begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
     vkBeginCommandBuffer(cmd, &begin);
-    VkImageMemoryBarrier2 barrier{};
-    barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2;
-    barrier.srcStageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT;
-    // The semaphore signal below (ALL_COMMANDS) must chain onto the layout
-    // transition, so the destination scope is a real stage, not NONE.
-    barrier.dstStageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT;
-    barrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-    barrier.newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
-    barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    barrier.image = swapchain->images()[index];
-    barrier.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
-    VkDependencyInfo dep{};
-    dep.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO;
-    dep.imageMemoryBarrierCount = 1;
-    dep.pImageMemoryBarriers = &barrier;
-    vkCmdPipelineBarrier2(cmd, &dep);
+    // A real render graph, as the frame builds it: the acquired image is
+    // imported (first barrier waits at the acquire stage), written by a pass,
+    // and left in PRESENT_SRC by the graph's final barrier, whose second scope
+    // is the stage the render-finished semaphore is signalled at (issue #9).
+    constexpr VkPipelineStageFlags2 k_acquire_stage = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT;
+    constexpr VkPipelineStageFlags2 k_signal_stage = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT;
+    engine::rhi::RenderGraph graph;
+    const auto backbuffer = graph.import_image(
+        "swapchain", swapchain->images()[index], swapchain->image_views()[index],
+        swapchain->format(), swapchain->extent(), VK_IMAGE_LAYOUT_UNDEFINED,
+        VK_IMAGE_LAYOUT_PRESENT_SRC_KHR, k_acquire_stage, 0, k_signal_stage);
+    (void)graph.add_pass("clear", engine::rhi::PassType::transfer)
+        .writes(backbuffer, engine::rhi::ResourceUsage::transfer_dst)
+        .execute([backbuffer](engine::rhi::PassContext& ctx) {
+            const VkClearColorValue color{{0.2F, 0.4F, 0.6F, 1.0F}};
+            const VkImageSubresourceRange range{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+            vkCmdClearColorImage(ctx.cmd(), ctx.resolve(backbuffer).image,
+                                 VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &color, 1, &range);
+        });
+    ASSERT_OK(graph.compile());
+    ASSERT_EQ(graph.planned_final_barriers().size(), 1U);
+    EXPECT_EQ(graph.planned_final_barriers()[0].dstStageMask, k_signal_stage);
+    graph.execute(cmd);
     vkEndCommandBuffer(cmd);
 
     VkSemaphoreSubmitInfo wait{};
     wait.sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO;
     wait.semaphore = acquired;
-    wait.stageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT;
+    wait.stageMask = k_acquire_stage;
     VkSemaphoreSubmitInfo signal{};
     signal.sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO;
     signal.semaphore = rendered;
-    signal.stageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
+    signal.stageMask = k_signal_stage;
     VkCommandBufferSubmitInfo cmd_info{};
     cmd_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO;
     cmd_info.commandBuffer = cmd;
@@ -287,6 +336,18 @@ TEST(GpuDevicePresent, HeadlessSurfaceSelectsAPresentQueueAndPresents) {
     vkDestroySemaphore(vk, rendered, nullptr);
     vkDestroySemaphore(vk, acquired, nullptr);
     *swapchain = engine::rhi::Swapchain{}; // before the device destroys the surface
+
+    // The validation layer (with synchronization validation) reported
+    // nothing: present is ordered after the graph's PRESENT_SRC transition.
+    engine::core::LogQuery query;
+    query.since_seq = log_start;
+    query.min_level = engine::core::LogLevel::warn;
+    query.category = "vulkan";
+    const auto messages = engine::core::log_ring().query(query);
+    for (const auto& line : messages.lines) ADD_FAILURE() << line.message;
+    if (!validation_layer_installed()) {
+        std::printf("[ note ] validation layer not installed: message check is vacuous\n");
+    }
 }
 
 } // namespace

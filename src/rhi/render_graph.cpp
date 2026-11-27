@@ -106,7 +106,9 @@ struct UsageState {
         return {VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
                 VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT};
     case ResourceUsage::present:
-        return {VK_IMAGE_LAYOUT_PRESENT_SRC_KHR, VK_PIPELINE_STAGE_2_NONE, 0};
+        // No access, but a real stage: the transition into PRESENT_SRC must be
+        // ordered before the semaphore signal present waits on (issue #9).
+        return {VK_IMAGE_LAYOUT_PRESENT_SRC_KHR, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, 0};
     // Buffers have no layout; UNDEFINED is never used for them.
     case ResourceUsage::buffer_read_compute:
         return {VK_IMAGE_LAYOUT_UNDEFINED, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
@@ -325,10 +327,12 @@ ResourceHandle RenderGraph::import_image(const char* name, VkImage image, VkImag
                                          VkImageLayout current_layout,
                                          VkImageLayout final_layout,
                                          VkPipelineStageFlags2 available_stage,
-                                         VkAccessFlags2 available_access) {
+                                         VkAccessFlags2 available_access,
+                                         VkPipelineStageFlags2 final_stage) {
     Resource r;
     r.available_stage = available_stage;
     r.available_access = available_access;
+    r.final_stage = final_stage;
     r.name = name;
     r.imported = true;
     r.image = image;
@@ -424,6 +428,17 @@ std::expected<void, core::Error> RenderGraph::compile() {
         r.read_stages = VK_PIPELINE_STAGE_2_NONE;
         r.visible_stages = VK_PIPELINE_STAGE_2_NONE;
         r.visible_access = 0;
+    }
+
+    // A final layout needs a real second scope for its trailing transition.
+    for (const Resource& r : resources_) {
+        if (r.imported && !r.is_buffer && r.final_layout != VK_IMAGE_LAYOUT_UNDEFINED &&
+            r.final_stage == VK_PIPELINE_STAGE_2_NONE) {
+            return fail(std::format("RenderGraph::compile: image '{}' has a final layout but "
+                                    "final_stage NONE (its final transition would be ordered "
+                                    "before nothing)",
+                                    r.name));
+        }
     }
 
     // Every access must fit its resource kind (a layout-bearing image usage
@@ -603,13 +618,18 @@ std::expected<void, core::Error> RenderGraph::compile() {
     }
 
     // 4. Trailing transitions for imported resources that must end in a specific
-    //    layout (e.g. swapchain image -> PRESENT_SRC).
+    //    layout (e.g. swapchain image -> PRESENT_SRC). The second scope is the
+    //    stage the next consumer waits at (final_stage), never NONE: the
+    //    transition is a write ordered only before that scope, so the
+    //    consumer's wait (e.g. the render-finished semaphore signal) must
+    //    chain onto it (issue #9). No access: the consumer's own dependency
+    //    makes the image visible to it.
     for (Resource& r : resources_) {
         if (r.imported && !r.is_buffer && r.final_layout != VK_IMAGE_LAYOUT_UNDEFINED
             && r.final_layout != r.cur_layout) {
             final_barriers_.push_back(make_barrier(
                 r.image, aspect_for_format(r.format), r.cur_layout, r.final_layout,
-                r.write_stage | r.read_stages, r.write_access, VK_PIPELINE_STAGE_2_NONE, 0));
+                r.write_stage | r.read_stages, r.write_access, r.final_stage, 0));
             r.cur_layout = r.final_layout;
         }
     }
