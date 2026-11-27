@@ -91,6 +91,24 @@ TEST(Nav, OffMeshTargetFailsAfterRetries) {
     EXPECT_FALSE(w.nav(e).active);
 }
 
+// Regression (S1 N13): a retry cooldown left over from an unreachable
+// target delayed the next one.
+TEST(Nav, NewTargetSkipsTheOldRetryCooldown) {
+    World w;
+    add_box(w.registry, glm::vec3(0.0F, -0.5F, 0.0F), glm::vec3(10.0F, 0.5F, 10.0F));
+    w.bake();
+    const entt::entity e = w.agent({0.0F, 0.0F, 0.0F});
+    s::nav_agent_set_target(w.nav(e), {0.0F, 60.0F, 0.0F}); // off the mesh
+    w.run(2, [] { return false; });
+    ASSERT_GT(w.nav(e).retry_s, 0.0F);
+    ASSERT_EQ(w.nav(e).plan_failures, 1U);
+
+    w.nav(e).target = {5.0F, 0.0F, 0.0F}; // edited directly (inspector / codec)
+    w.run(1, [] { return false; });
+    EXPECT_FALSE(w.nav(e).path.empty()) << "planned at once, no leftover cooldown";
+    EXPECT_EQ(w.nav(e).plan_failures, 0U);
+}
+
 // A target just off the mesh (inside a wall's clearance) snaps to the
 // closest on-mesh point: arriving there is success, not failure.
 TEST(Nav, TargetBesideAWallArrivesAtTheClosestPoint) {

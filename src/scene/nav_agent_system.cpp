@@ -20,6 +20,9 @@ constexpr float kArriveReach = 0.4F;       // final waypoint tolerance
 constexpr float kRepathDistance = 0.5F;    // target moved farther -> repath
 constexpr float kSeparation = 1.2F;        // agent-agent comfort radius
 constexpr float kPlanRetrySeconds = 1.0F;  // cooldown after a failed plan
+constexpr float kStuckSeconds = 1.5F;      // no progress for this long -> replan
+constexpr float kStuckRetrySeconds = 0.5F; // cooldown before replanning when stuck
+constexpr float kProgressStep = 0.1F;      // closing in by this much counts as progress
 constexpr std::uint8_t kMaxPlanFailures = 3; // attempts without progress before giving up
 
 [[nodiscard]] glm::vec2 xz(const glm::vec3& v) { return {v.x, v.z}; }
@@ -37,13 +40,22 @@ void give_up(NavAgent& agent) {
     agent.retry_s = 0.0F;
 }
 
-// An attempt that got nowhere: retry after a cooldown, give up after a few.
-void attempt_failed(NavAgent& agent) {
+void reset_progress(NavAgent& agent) {
+    agent.progress_best = 1e30F;
+    agent.progress_timer = 0.0F;
+}
+
+// An attempt that got nowhere (no plan, or stuck): retry after a cooldown,
+// give up after a few. planned_target records which target the failures
+// belong to — retargeting starts the count (and the cooldown) afresh.
+void attempt_failed(NavAgent& agent, float cooldown) {
     agent.path.clear();
+    agent.planned_target = agent.target;
+    reset_progress(agent);
     if (++agent.plan_failures >= kMaxPlanFailures) {
         give_up(agent);
     } else {
-        agent.retry_s = kPlanRetrySeconds;
+        agent.retry_s = cooldown;
     }
 }
 
@@ -90,6 +102,7 @@ void nav_agent_set_target(NavAgent& agent, const glm::vec3& target) {
     agent.path.clear();
     agent.waypoint = 0;
     agent.retry_s = 0.0F;
+    reset_progress(agent);
 }
 
 void nav_agent_command(NavAgent& agent, const glm::vec3& target) {
@@ -143,6 +156,13 @@ void nav_agent_system(entt::registry& registry, const nav::NavMesh& navmesh, flo
             stop(controller);
             continue;
         }
+        // A new target (set directly, e.g. by an inspector edit) starts over:
+        // no leftover cooldown or failure count from the previous one.
+        if (glm::distance(agent.target, agent.planned_target) > kRepathDistance &&
+            (agent.retry_s > 0.0F || agent.plan_failures > 0)) {
+            agent.retry_s = 0.0F;
+            agent.plan_failures = 0;
+        }
         // Failed plans retry on a cooldown instead of hammering the query
         // (and, through the patrol feed, replanning every frame).
         if (agent.retry_s > 0.0F) {
@@ -159,7 +179,7 @@ void nav_agent_system(entt::registry& registry, const nav::NavMesh& navmesh, flo
             glm::distance(agent.target, agent.planned_target) > kRepathDistance) {
             auto plan = navmesh.plan_path(feet, agent.target);
             if (!plan) { // no polygon near the agent or the target
-                attempt_failed(agent);
+                attempt_failed(agent, kPlanRetrySeconds);
                 stop(controller);
                 continue;
             }
@@ -176,14 +196,17 @@ void nav_agent_system(entt::registry& registry, const nav::NavMesh& navmesh, flo
             agent.waypoint = 0;
             agent.planned_target = agent.target;
             agent.arrived = false;
+            reset_progress(agent);
         }
 
         // Advance waypoints as they are reached.
         while (agent.waypoint < agent.path.size() &&
                glm::distance(xz(pos), xz(agent.path[agent.waypoint])) <
                    (agent.waypoint + 1 == agent.path.size() ? kArriveReach : kWaypointReach)) {
+            // Reaching a waypoint past the path's start is real progress.
+            if (agent.waypoint > 0) agent.plan_failures = 0;
             ++agent.waypoint;
-            agent.plan_failures = 0; // progress
+            reset_progress(agent);
         }
         if (agent.waypoint >= agent.path.size()) {
             agent.path.clear();
@@ -203,6 +226,21 @@ void nav_agent_system(entt::registry& registry, const nav::NavMesh& navmesh, flo
         const glm::vec3 next = agent.path[agent.waypoint];
         glm::vec2 dir = xz(next) - xz(pos);
         const float len = glm::length(dir);
+
+        // Stuck detection: the agent must keep closing in on its waypoint.
+        // A controller pushing into geometry the navmesh does not know about
+        // (a dynamic body, a door, another character) or an agent boxed in by
+        // its neighbours replans after a cooldown, and gives up after a few
+        // attempts without progress.
+        const float min_step = glm::min(kProgressStep, 0.2F * agent.speed * kStuckSeconds);
+        if (len < agent.progress_best - min_step) {
+            agent.progress_best = len;
+            agent.progress_timer = 0.0F;
+        } else if ((agent.progress_timer += dt) > kStuckSeconds) {
+            attempt_failed(agent, kStuckRetrySeconds);
+            stop(controller);
+            continue;
+        }
         if (len > 1e-5F) dir /= len;
 
         // Separation: ease away from nearby fellow agents (avoidance-lite; a

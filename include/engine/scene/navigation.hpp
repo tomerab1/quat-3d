@@ -56,8 +56,9 @@ void nav_agent_resume(entt::registry& registry, entt::entity entity);
 // next leg from there, and when no further progress is possible it gives up
 // (failed). A target off the mesh within NavMesh::query_extents snaps to its
 // nearest polygon (arriving there counts). Failed plans retry on a cooldown
-// and give up after a few attempts; a PatrolRoute skips points its agent
-// failed to reach.
+// and give up after a few attempts; so does an agent that stops closing in
+// on its waypoint (a controller pushing into an obstacle the navmesh does not
+// know). A PatrolRoute skips points its agent failed to reach.
 //
 // `ground_height(x, z)` (optional) supplies the authoritative ground height for
 // kinematic agents — coarse terrain navmeshes can float metres off the real

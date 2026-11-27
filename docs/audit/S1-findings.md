@@ -97,7 +97,7 @@ The owner reported NPCs "don't work". Ranked by user impact. N2 re-verified
 | N3 | H | Navmesh never saved/auto-baked; stale after load/terrain change; phantom terrain in bakes; agents keep old paths after re-bake; nav silently skipped without one | `main.cpp`, `nav_agent_system.cpp` | open |
 | N4 | H | `move_to` without `y` fails on terrain (query extents); `move_to` never reports failure (no failed flag; settle reports success) | `behavior.cpp`, `navmesh.cpp`, `nav_agent_system.cpp` | fixed (S1.N4) |
 | N5 | M | Patrol routes stall after Ctrl+click / point edits / late Shift+click; Stop can't stop a patroller | `nav_agent_system.cpp`, `main.cpp`, `inspector.cpp` | fixed (S1.N5) |
-| N6 | M | CharacterController agents have no stuck detection (push in place forever) | `nav_agent_system.cpp` | open |
+| N6 | M | CharacterController agents have no stuck detection (push in place forever) | `nav_agent_system.cpp` | fixed (S1.N6) |
 | N7 | M | Coarse single-tile bake on large terrain (≈2 m cells, raised step height) disagrees with physics; vertex limit; should be a tiled navmesh with fixed cell size | `navmesh.cpp`, `physics_system.cpp` | open |
 | N8 | M | `near_camera` always fails in editor Play (no Camera entity) | `behavior.cpp` | open |
 | N9 | M | Nav + behaviour trees only tick in editor Play; never in the game build or demo modes | `main.cpp` | open |
