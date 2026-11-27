@@ -2,7 +2,7 @@ Change the scene's weather. Every field is optional and omitted fields keep thei
 
 The weather drives:
 - the wind the grass bends in (gust fronts sweep downwind);
-- the cloud cover, the clouds' drift and the clouds' shadows on the ground;
+- the cloud cover, the clouds' drift and the clouds' shadows on the ground (scenes without a weather have no cloud shadows);
 - wet surfaces: darker and glossier, with puddles on flat ground once `wetness` passes about 0.55;
 - snow lying on upward-facing surfaces (it also lowers the terrain's snowline).
 

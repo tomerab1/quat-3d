@@ -248,7 +248,7 @@ pub struct CloudParams {
     /// World-space heading the clouds drift toward, degrees, -180..180 (default 35). Ignored while the scene has a weather.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub wind_dir_deg: Option<f64>,
-    /// Clouds shadow the sun on the ground (default true).
+    /// With a weather in the scene, clouds shadow the sun on the ground (default true).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub shadows: Option<bool>,
 }

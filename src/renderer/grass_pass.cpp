@@ -20,7 +20,7 @@ namespace {
     return std::unexpected(core::Error{std::move(what)});
 }
 
-// Mirrors GrassParams in lib/grass_common.slang (std140, 496 bytes).
+// Mirrors GrassParams in lib/grass_common.slang (std140, 512 bytes).
 struct GrassParamsGpu {
     glm::mat4  view_proj{1.0F};
     glm::vec4  planes[6]{};
@@ -39,8 +39,9 @@ struct GrassParamsGpu {
     glm::vec4  tile_info[grass_max_height_tiles]{};
     glm::vec4  ground{0.0F};
     glm::vec4  wind_rect{0.0F}; // wind texture corner XZ, 1 / size, profile at blade height
+    glm::vec4  wind_flow{0.0F}; // mean heading XZ (flutter phase), field bound (1) or R9.3 sway (0)
 };
-static_assert(sizeof(GrassParamsGpu) == 496, "must match grass_common.slang GrassParams");
+static_assert(sizeof(GrassParamsGpu) == 512, "must match grass_common.slang GrassParams");
 
 // Mirrors PushConstants in grass.slang.
 struct GrassDrawPush {
@@ -140,6 +141,8 @@ void append_strip(std::vector<std::uint32_t>& out, std::uint32_t segments) {
     p.ground = glm::vec4(lo, hi, 0.0F, 0.0F);
     p.wind_rect = frame.wind.valid() ? frame.wind.rect : glm::vec4(0.0F, 0.0F, 1.0F, 0.0F);
     p.wind_rect.w = weather::wind_profile(kBladeWindHeightM);
+    // Without a field (no weather) the blades keep the R9.3 sway exactly.
+    p.wind_flow = frame.wind.valid() ? glm::vec4(frame.wind.heading, 1.0F, 0.0F) : glm::vec4(0.0F);
     return p;
 }
 

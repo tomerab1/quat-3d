@@ -66,6 +66,10 @@ struct WindFieldOutput {
     // (world X, world Z of the texture's corner, 1 / covered size m, 0) —
     // wind_texture_sample()'s `rect`.
     glm::vec4 rect{0.0F};
+    // The mean wind's unit heading (XZ): constant over the field, for
+    // phases of travelling waves (grass flutter) that must not follow the
+    // local, turbulent direction.
+    glm::vec2 heading{1.0F, 0.0F};
 
     [[nodiscard]] bool valid() const { return texture.valid(); }
 };

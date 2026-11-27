@@ -34,12 +34,12 @@ the CI screenshot pipeline.
 - Ambient occlusion (GTAO) with bent normals that also darkens reflections in
   crevices; every shadow / AO setting is tunable in the editor's Renderer panel
 - Glass and transparency (refraction, absorption, IOR), clearcoat car paint
-- Physically based sky with volumetric clouds and a moving sun; the clouds
-  cast moving shadows on the ground
+- Physically based sky with volumetric clouds and a moving sun
 - Weather: wind, cloud cover, rain or snow, wet ground and snow cover, set
   in the editor's Renderer panel, saved with the scene, and scriptable over
   MCP. Wet surfaces darken and turn glossy, with puddles on flat ground; snow
-  settles on upward-facing surfaces and lowers the terrain's snowline. With
+  settles on upward-facing surfaces and lowers the terrain's snowline; the
+  clouds cast moving shadows (a cloud shadow map computed on the GPU). With
   accumulation on, rain soaks the ground, snow settles in the cold and melts
   in the warm, and the ground slowly dries.
 - Image-based lighting that keeps up with the sky in real time
@@ -68,9 +68,9 @@ the CI screenshot pipeline.
   thermal erosion) are synthesised on the GPU in milliseconds, with the
   deterministic CPU generator as fallback and reference
 - Dense grass generated on the GPU every frame around the camera (slope /
-  height limits, distance level of detail, no popping), bending in a global
-  wind field computed on the GPU: gust fronts sweep across the field and
-  eddies swirl through it, following the weather
+  height limits, distance level of detail, no popping); with weather it bends
+  in a global wind field computed on the GPU: gust fronts sweep across the
+  field and eddies swirl through it
 - Jolt physics: rigid bodies, character controller, triggers, terrain collision
 
 **Audio**

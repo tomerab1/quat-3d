@@ -1,5 +1,6 @@
 // Wind field CPU reference — mirrored operation for operation by
-// assets/shaders/lib/wind_field.slang (keep the two in sync).
+// assets/shaders/lib/wind_common.slang (keep the two in sync; the pass's
+// entry point is assets/shaders/wind_field.slang).
 
 #include "engine/weather/wind_field.hpp"
 
@@ -141,8 +142,8 @@ glm::vec3 wind_at(const WeatherState& state, const glm::vec3& position, double t
 
 float wind_profile(float height_above_ground_m) {
     const float z0 = k_wind_roughness_length_m;
-    const float h = std::max(std::isfinite(height_above_ground_m) ? height_above_ground_m : 0.0F,
-                             1.5F * z0);
+    const float h = std::clamp(std::isfinite(height_above_ground_m) ? height_above_ground_m : 0.0F,
+                               1.5F * z0, k_surface_layer_top_m);
     return std::log(h / z0) / std::log(k_wind_reference_height_m / z0);
 }
 

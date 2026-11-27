@@ -178,6 +178,24 @@ into CLAUDE.md or the brief template in [`CYCLE.md`](CYCLE.md).
 
 ## C++ in this codebase
 
+- **A feature must not change scenes that do not use it** (R13.1 review).
+  The first R13.1 cut changed every master scene: cloud shadows defaulted
+  on, clouds moved from camera-relative to world-anchored, and grass swapped
+  its sway for the wind field. That breaks the CI screenshot baselines and
+  the owner's existing scenes. Gate new looks on the feature's presence
+  (here a weather entity), keep the old path verbatim, and test that the
+  absent-feature constants equal the old ones.
+- **Data that is constant over tens of metres belongs in a map, not a
+  per-pixel march** (R13.1 review): cloud shadows first ray-marched 12 fBm
+  per pixel in the lighting pass. A cloud shadow map (one compute pass, an
+  orthographic projection along the sun, texel-snapped) costs the same at any
+  resolution, needs no TAA to converge, and can be shared with fog and
+  transparents.
+- **Travelling-wave phases must not use a turbulent direction** (R13.1
+  review): `dot(root, local_dir)` far from the origin jumps by many radians
+  when the local wind turns slightly. Use the mean heading (or a hash) for
+  phases; keep the local direction for the displacement only.
+
 - **A Slang pass shader and a library module must not share a name**
   (R13.1): `assets/shaders/wind_field.slang` importing
   `lib/wind_field.slang` fails with "module `wind_field` recursively imports

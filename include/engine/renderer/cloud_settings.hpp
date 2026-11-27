@@ -24,14 +24,15 @@ struct CloudSettings {
     float detail       = 0.4F;  // edge erosion strength (0..1)
     float wind_speed   = 12.0F; // drift speed, m/s
     float wind_dir_deg = 35.0F; // world-space heading the clouds drift toward
-    bool  shadows      = true;  // shadow the sun on the ground (R13.1)
+    bool  shadows      = true;  // with weather: clouds shadow the sun (R13.1)
     // Accumulated engine time driving the drift — set by the frame loop, not a
     // user parameter.
     float time_s = 0.0F;
     // Extra offset of the cloud field (km, world XZ) — frame-loop state, not a
-    // user parameter: the camera's world position (so clouds and their
-    // shadows stay anchored to the world as the camera moves) plus, while the
-    // scene has weather, the drift integrated from the weather's wind (R13.1).
+    // user parameter. 0 without weather (camera-relative clouds, as before
+    // R13.1); with weather, the camera's world position (so clouds and their
+    // shadows stay anchored to the world) plus the drift integrated from the
+    // weather's wind (scene::frame_clouds).
     glm::vec2 offset_km{0.0F};
 
     // The two push-constant words consumed by unpack_cloud_params(). A zero

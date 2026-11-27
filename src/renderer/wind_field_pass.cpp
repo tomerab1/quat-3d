@@ -84,6 +84,7 @@ WindFieldPass::add_to_graph(rhi::RenderGraph& graph, const weather::WindFieldPar
     WindFieldOutput out;
     const glm::vec2 corner = wind_field_corner(camera_xz);
     out.rect = {corner, 1.0F / kExtentM, 0.0F};
+    out.heading = params.direction;
     constexpr VkExtent2D extent{wind_field_resolution, wind_field_resolution};
     out.texture = graph.create_transient_image(
         "wind_field", wind_field_format, extent,

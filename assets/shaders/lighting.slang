@@ -17,7 +17,8 @@
 // R13.1: each pixel's surface passes through the weather's layers
 // (lib/weather_surface.slang: wet surfaces + puddles, then snow) before it is
 // shaded, and the sun is also shadowed by the cloud layer above the point
-// (cloud_sun_transmittance), composed with the CSM and contact shadows.
+// (one bilinear fetch of the cloud shadow map, CloudShadowPass), composed with
+// the CSM and contact shadows. Without weather neither applies.
 
 import atmosphere;
 import clustered_lights;
@@ -28,6 +29,7 @@ import sky;
 import pbr; // pbr_punctual_alpha
 import hdr; // hdr_store
 import weather_surface;
+import cloud_shadow_common;
 
 static const float PI = 3.14159265358979;
 
@@ -39,7 +41,7 @@ static const float SKY_LUT_BRIGHTNESS = 8.0;
 // match prefilter_mip_count in ibl_pass.cpp.
 static const float PREFILTER_MAX_LOD = 4.0;
 
-// Per-frame values (std140, 320 bytes; LightingConstants in lighting_pass.cpp).
+// Per-frame values (std140, 352 bytes; LightingConstants in lighting_pass.cpp).
 // Matrices are glm columns (applied with mul_cols).
 struct LightingConstants {
     float4 inv_view_proj[4]; // clip -> world (jittered), reconstructs positions
@@ -55,7 +57,9 @@ struct LightingConstants {
     float4 contact;          // x intensity (0 = off), y length m, z steps, w thickness m
     float4 ao;               // x GTAO on, y bent normals, z specular occlusion, w multi-bounce
     float4 weather;          // x wetness, y puddle water level, z snow amount, w snowline m
-    float4 weather_b;        // x cloud shadows on, yzw unused
+    float4 weather_b;        // x cloud shadow map bound, yzw unused
+    float4 cloud_shadow_u;   // CloudShadowProjection of g_cloud_shadow
+    float4 cloud_shadow_v;
 }
 ConstantBuffer<LightingConstants> g_frame;
 
@@ -89,6 +93,8 @@ ConstantBuffer<ClusterParams> g_cluster_params;
 StructuredBuffer<GpuLight>    g_lights;
 StructuredBuffer<uint2>       g_cluster_grid;    // offset, count
 StructuredBuffer<uint>        g_cluster_indices;
+// Cloud shadow map (CloudShadowPass; sampled when weather_b.x > 0.5).
+Texture2D                     g_cloud_shadow;
 
 // Schlick Fresnel with a roughness term, for the ambient/environment specular
 // (the view-independent IBL term, unlike the per-light f_schlick).
@@ -334,12 +340,12 @@ void compute_main(uint3 tid : SV_DispatchThreadID) {
     }
     uint   cascade = CSM_MAX_CASCADES;
     float  shadow = sun_visibility(coord, uint2(width, height), world_pos, n, ldir, cascade);
-    if (g_frame.direction.w > 1.5 && g_frame.weather_b.x > 0.5 && shadow > 0.0) {
+    if (g_frame.weather_b.x > 0.5 && shadow > 0.0) {
         // Cloud shadows: the sun through the cloud layer above this point.
-        CloudParams cp = unpack_cloud_params(g_frame.cloud_a, g_frame.cloud_b);
-        float jitter = interleaved_gradient_noise(float2(coord) + g_frame.csm_misc.y);
-        shadow *= cloud_sun_transmittance((world_pos - g_frame.camera_pos.xyz) * 0.001, ldir, cp,
-                                          jitter);
+        CloudShadowProjection csp;
+        csp.u_axis = g_frame.cloud_shadow_u;
+        csp.v_axis = g_frame.cloud_shadow_v;
+        shadow *= cloud_shadow_sample(g_cloud_shadow, g_ibl_sampler, csp, world_pos);
     }
     float3 sun    = surface_brdf(n, v, ldir, base_color, metallic, roughness, f0);
     float3 color  = layer_clearcoat_direct(sun, n, v, ldir, cc, ccr) * sun_radiance * shadow;

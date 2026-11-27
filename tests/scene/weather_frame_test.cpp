@@ -51,8 +51,7 @@ TEST(WeatherFrame, CloudsDriftWithTheMeanWindAloft) {
     const r::CloudSettings clouds;
     const glm::vec2 v = s::cloud_wind(state, clouds);
     EXPECT_NEAR(v.y, 0.0F, 1e-5F);
-    const float mid_m = (clouds.bottom_km + 0.5F * clouds.thickness_km) * 1000.0F;
-    EXPECT_NEAR(v.x, 5.0F * w::wind_profile(mid_m), 1e-4F);
+    EXPECT_NEAR(v.x, 5.0F * w::k_geostrophic_factor, 1e-4F); // free atmosphere
     EXPECT_GT(v.x, 5.0F); // faster aloft
 }
 
@@ -81,6 +80,42 @@ TEST(CloudSettings, OffsetAnchorsTheFieldToTheWorld) {
     EXPECT_FLOAT_EQ(moved.z - base.z, 1.5F);
     EXPECT_FLOAT_EQ(moved.w - base.w, -2.0F);
     EXPECT_FLOAT_EQ(moved.x, base.x);
+}
+
+// Scenes without weather render as before R13.1: the clouds the frame packs
+// are exactly master's (settings + time-driven drift, camera-relative), and
+// the cloud shadow map is not built (frame_graph gates it on weather).
+TEST(WeatherFrame, WithoutWeatherTheCloudsAreUnchanged) {
+    r::CloudSettings settings;
+    settings.coverage = 0.63F;
+    settings.wind_speed = 17.0F;
+    settings.wind_dir_deg = -48.0F;
+    const float time_s = 1234.5F;
+    const r::CloudSettings c = s::frame_clouds(settings, time_s, nullptr, {7.0F, -3.0F},
+                                               glm::vec3(4000.0F, 12.0F, -2500.0F));
+    EXPECT_EQ(c.offset_km, glm::vec2(0.0F)) << "camera-relative, no weather drift";
+    EXPECT_EQ(c.time_s, time_s);
+    // pack_a / pack_b exactly as master computed them.
+    const float heading = glm::radians(settings.wind_dir_deg);
+    const float drift_km = settings.wind_speed * time_s * 0.001F;
+    EXPECT_EQ(c.pack_a(), glm::vec4(settings.coverage, settings.density, settings.bottom_km,
+                                    settings.thickness_km));
+    EXPECT_EQ(c.pack_b(), glm::vec4(1.0F / settings.size_km, settings.detail,
+                                    drift_km * std::cos(heading), drift_km * std::sin(heading)));
+}
+
+TEST(WeatherFrame, WithWeatherTheCloudsFollowItAndStayAnchored) {
+    r::CloudSettings settings;
+    w::WeatherState state;
+    state.cloud_cover = 0.9F;
+    state.precipitation = 0.5F;
+    const glm::vec3 camera(4000.0F, 12.0F, -2500.0F);
+    const r::CloudSettings c = s::frame_clouds(settings, 99.0F, &state, {7.0F, -3.0F}, camera);
+    EXPECT_FLOAT_EQ(c.coverage, 0.9F);
+    EXPECT_FLOAT_EQ(c.density, settings.density * 1.5F);
+    EXPECT_EQ(c.time_s, 0.0F) << "drift comes from the integrated weather wind";
+    EXPECT_FLOAT_EQ(c.offset_km.x, 7.0F + 4.0F);
+    EXPECT_FLOAT_EQ(c.offset_km.y, -3.0F - 2.5F);
 }
 
 } // namespace

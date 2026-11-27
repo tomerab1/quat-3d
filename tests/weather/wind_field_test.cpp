@@ -109,6 +109,9 @@ TEST(WindField, LogProfileScalesWithHeight) {
     EXPECT_LT(w::wind_profile(0.5F), 0.6F);
     EXPECT_GT(w::wind_profile(0.5F), 0.4F);
     EXPECT_GT(w::wind_profile(100.0F), 1.3F);
+    // The log law stops at the top of the surface layer.
+    EXPECT_EQ(w::wind_profile(2000.0F), w::wind_profile(w::k_surface_layer_top_m));
+    EXPECT_LT(w::wind_profile(w::k_surface_layer_top_m), w::k_geostrophic_factor);
     EXPECT_GT(w::wind_profile(0.0F), 0.0F); // clamped, never zero or negative
     EXPECT_LT(w::wind_profile(2.0F), w::wind_profile(4.0F));
 }

@@ -352,20 +352,29 @@ public float4 march_clouds(float3 dir, float3 sun_dir, Texture2D transmittance_l
 
 // ---------------------------------------------------------------------------
 // Cloud shadows (R13.1). Transmittance of the sun's light through the cloud
-// layer above a surface point: march the sun ray through the cloud shell and
-// integrate the same density the sky shows (so shadows sit under the visible
-// clouds), with the same multiple-scattering softening (x 0.6) march_clouds
-// lights the clouds with. `offset_km` is the point relative to the camera in
-// km (the sky's frame: CloudParams' wind offset carries the camera's world
-// position, so clouds and their shadows are anchored to the world).
-// `jitter` (0..1) offsets the samples (interleaved gradient noise; TAA
-// resolves it). 1 = clear.
+// layer along a line parallel to the sun: march it through the cloud shell
+// and integrate the same density the sky shows (so shadows sit under the
+// visible clouds), with the same multiple-scattering softening (x 0.6)
+// march_clouds lights the clouds with. `offset_km` is a point of the line
+// below the clouds, relative to the camera in km (the sky's frame;
+// CloudParams' wind offset carries the camera's world position while the
+// scene has weather, so clouds and their shadows stay anchored to the
+// world). CloudShadowPass evaluates it once per texel of the cloud shadow
+// map (cloud_shadow.slang); the lighting pass only samples that map. The
+// CPU mirror is engine::renderer::cloud_sun_transmittance_reference.
+//
+// `sun_dir` must be at least CLOUD_SHADOW_MIN_SUN_Y above the horizon (the
+// pass clamps the sun's elevation): at low sun the path through the thin
+// shell grows long, and instead of giving up (a sudden switch to full sun)
+// the march follows up to CLOUD_SHADOW_MAX_PATH_KM of it, so an overcast
+// sky stays dark down to sunset. 1 = clear.
 // ---------------------------------------------------------------------------
-static const int CLOUD_SHADOW_STEPS = 6;
+public static const int   CLOUD_SHADOW_STEPS = 16;
+public static const float CLOUD_SHADOW_MIN_SUN_Y = 0.0523; // sin(3 deg)
+public static const float CLOUD_SHADOW_MAX_PATH_KM = 80.0;
 
-public float cloud_sun_transmittance(float3 offset_km, float3 sun_dir, CloudParams cp,
-                                     float jitter) {
-    if (cp.coverage <= 0.001 || sun_dir.y <= 0.02) return 1.0;
+public float cloud_sun_transmittance(float3 offset_km, float3 sun_dir, CloudParams cp) {
+    if (cp.coverage <= 0.001) return 1.0;
     float bottom_r = ATMOS_GROUND_RADIUS + cp.bottom_km;
     float top_r = bottom_r + cp.thickness_km;
     // Planet-centred position: the camera stands at ATMOS_VIEW_HEIGHT.
@@ -374,13 +383,13 @@ public float cloud_sun_transmittance(float3 offset_km, float3 sun_dir, CloudPara
     float mu = dot(p0, sun_dir) / r;
     float t_out = cloud_shell_distance(r, mu, top_r);
     if (t_out <= 0.0) return 1.0;
-    float t_in = r < bottom_r ? cloud_shell_distance(r, mu, bottom_r) : 0.0;
-    float len = t_out - max(t_in, 0.0);
-    if (len <= 0.0 || len > 60.0) return 1.0;
-    float dt = len / CLOUD_SHADOW_STEPS;
+    float t_in = r < bottom_r ? max(cloud_shell_distance(r, mu, bottom_r), 0.0) : 0.0;
+    float len = min(t_out - t_in, CLOUD_SHADOW_MAX_PATH_KM);
+    if (len <= 0.0) return 1.0;
+    float dt = len / float(CLOUD_SHADOW_STEPS);
     float depth = 0.0;
     for (int i = 0; i < CLOUD_SHADOW_STEPS; ++i) {
-        float t = max(t_in, 0.0) + (float(i) + jitter) * dt;
+        float t = t_in + (float(i) + 0.5) * dt; // midpoint rule
         float3 p = p0 + sun_dir * t;
         float3 rel = p - float3(0.0, ATMOS_VIEW_HEIGHT, 0.0);
         depth += cloud_density(rel, length(p), bottom_r, top_r, cp) * dt;

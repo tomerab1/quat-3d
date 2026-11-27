@@ -257,7 +257,7 @@ constexpr std::array k_fields = {
                       35.0F, "deg", "Heading the clouds drift toward (from +X toward +Z)",
                       &field_ref<&S::clouds, &CloudSettings::wind_dir_deg>},
     RenderSettingDesc{"clouds", "shadows", "shadows", T::boolean, 0.0F, 1.0F, 1.0F, "",
-                      "Clouds shadow the sun on the ground",
+                      "With weather: clouds shadow the sun on the ground",
                       &field_ref<&S::clouds, &CloudSettings::shadows>},
 };
 

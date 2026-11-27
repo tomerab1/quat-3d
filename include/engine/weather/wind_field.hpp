@@ -16,7 +16,10 @@
 //
 // The field is evaluated at the k_wind_reference_height_m reference height;
 // wind_profile() scales it to another height above the ground with the
-// neutral-stability logarithmic wind profile.
+// neutral-stability logarithmic wind profile. The log law only holds in the
+// surface layer, so the profile stops at k_surface_layer_top_m; the free
+// atmosphere above (cloud drift) uses the fixed k_geostrophic_factor, the
+// typical ratio of the geostrophic wind to the 10 m wind over land.
 //
 // The renderer's wind_field.slang evaluates exactly this function on the GPU
 // (WindFieldPass writes it into a texture around the camera that grass
@@ -36,6 +39,8 @@ struct WeatherState;
 
 inline constexpr float k_wind_reference_height_m = 10.0F;
 inline constexpr float k_wind_roughness_length_m = 0.03F; // open grassland
+inline constexpr float k_surface_layer_top_m = 150.0F;     // log law's upper limit
+inline constexpr float k_geostrophic_factor = 1.6F;        // free-atmosphere wind / 10 m wind
 inline constexpr float k_gust_along_m = 48.0F;   // gust lattice cell along the wind
 inline constexpr float k_gust_across_m = 160.0F; // ... and across it
 inline constexpr float k_turbulence_m = 14.0F;   // swirl lattice cell
@@ -87,7 +92,9 @@ struct WindSample {
 
 // Logarithmic wind profile: the factor turning the reference-height wind into
 // the wind `height_above_ground_m` above the ground (1 at the reference
-// height; heights below 1.5 roughness lengths are clamped).
+// height). Heights are clamped to [1.5 roughness lengths,
+// k_surface_layer_top_m]: above the surface layer the log law no longer
+// holds (use k_geostrophic_factor for the free atmosphere).
 [[nodiscard]] float wind_profile(float height_above_ground_m);
 
 } // namespace engine::weather

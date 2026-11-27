@@ -157,6 +157,15 @@ bool FrameRenderer::create_passes(const engine::rhi::Device& device,
             break;
         }
         f.wind = std::move(*wind);
+        auto cloud_shadow = engine::renderer::CloudShadowPass::create(device, allocator,
+                                                                      pipeline_cache, shader_dir);
+        if (!cloud_shadow) {
+            frames_ok = false;
+            std::fprintf(stderr, "[fatal] cloud shadow pass creation failed: %s\n",
+                         cloud_shadow.error().message.c_str());
+            break;
+        }
+        f.cloud_shadow = std::move(*cloud_shadow);
         // Hi-Z and GTAO are optional (they need extended storage formats):
         // without them the cascades are fitted on the CPU and there is no AO.
         if (auto hiz = engine::renderer::HiZPass::create(device, allocator, pipeline_cache,

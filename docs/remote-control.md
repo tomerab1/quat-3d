@@ -386,7 +386,7 @@ Settings groups (the renderer implements exactly these):
 | `ao` | GTAO: `enabled`, `radius` [0.05, 10] m, `strength` [0.5, 5], `falloff_range` [0, 1], `sample_distribution_power` [1, 4], `thin_occluder_compensation` [0, 0.7], `depth_mip_offset` [0, 8], `slices` integer [1, 9], `steps_per_slice` integer [1, 8], `denoise_passes` integer [0, 3], `denoise_blur_beta` [0.1, 10], `bent_normals`, `specular_occlusion`, `multi_bounce` |
 | `contact_shadows` | `enabled`, `length` [0.01, 4] m, `steps` integer [2, 64], `thickness` [0.01, 4] m, `intensity` [0, 1] |
 | `ibl` | `intensity` [0, 4] — scales image-based ambient light and reflections |
-| `clouds` | as `environment.*`: `enabled`, `coverage` [0, 1], `density` [0, 128] /km, `bottom_km` [0.2, 15], `thickness_km` [0.2, 10], `size_km` [1, 80], `detail` [0, 1], `wind_speed` [0, 100] m/s, `wind_dir_deg` [-180, 180], `shadows` (clouds shadow the sun on the ground). While the scene has a weather, its `cloud_cover` replaces `coverage` and its wind drives the drift |
+| `clouds` | as `environment.*`: `enabled`, `coverage` [0, 1], `density` [0, 128] /km, `bottom_km` [0.2, 15], `thickness_km` [0.2, 10], `size_km` [1, 80], `detail` [0, 1], `wind_speed` [0, 100] m/s, `wind_dir_deg` [-180, 180], `shadows` (with weather: clouds shadow the sun on the ground). While the scene has a weather, its `cloud_cover` replaces `coverage` and its wind drives the drift |
 
 The tonemap operator (ACES filmic fit) is fixed; the renderer has no fog or
 debug views, so neither is listed. The sun is scene data: `environment.*`.
@@ -466,10 +466,14 @@ Fields:
   `weather.wind_speed: expected a number in [0, 60] (m/s)`. Unknown fields
   list the known ones. The first set creates an entity named `Weather`.
 - **Precedence.** While the scene has weather, it overrides the cloud
-  layer's `coverage` and drift (the clouds advect with the weather's wind)
-  and the grass's `wind_direction`. Without it, the clouds and grass keep
-  their own settings, and the wind field runs with the default weather
-  (heading taken from the grass, when the scene has grass).
+  layer's `coverage` and drift (the clouds advect with the weather's wind,
+  anchored to the world), the clouds shadow the sun (`clouds.shadows`), and
+  grass bends in the global wind field instead of its own sway (its
+  `wind_direction` is unused). Without weather nothing changes: the clouds,
+  their drift and the grass's sway are exactly the settings', there are no
+  cloud shadows, and the wind field and cloud shadow map do not run.
+  `wind_at` then answers for the default weather (heading taken from the
+  grass, when the scene has grass).
 - **Scene files** store it as the `weather` component (lenient decode:
   unknown fields ignored, numbers clamped).
 

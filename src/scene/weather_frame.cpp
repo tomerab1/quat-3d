@@ -29,10 +29,27 @@ bool frame_weather(const entt::registry& registry, weather::WeatherState& out) {
 
 glm::vec2 cloud_wind(const weather::WeatherState& state, const renderer::CloudSettings& clouds) {
     const weather::WeatherState s = weather::sanitized(state);
+    (void)clouds; // the cloud layer sits in the free atmosphere at any altitude
     const float heading = glm::radians(s.wind_dir_deg);
-    const float mid_m = (clouds.bottom_km + 0.5F * clouds.thickness_km) * 1000.0F;
-    const float speed = s.wind_speed * weather::wind_profile(mid_m);
+    const float speed = s.wind_speed * weather::k_geostrophic_factor;
     return glm::vec2(std::cos(heading), std::sin(heading)) * speed;
+}
+
+renderer::CloudSettings frame_clouds(const renderer::CloudSettings& settings, float time_s,
+                                     const weather::WeatherState* weather, glm::vec2 drift_km,
+                                     const glm::vec3& camera) {
+    renderer::CloudSettings c = settings;
+    if (weather == nullptr) {
+        c.time_s = time_s;
+        c.offset_km = glm::vec2(0.0F);
+        return c;
+    }
+    const weather::WeatherState w = weather::sanitized(*weather);
+    c.coverage = w.cloud_cover;
+    c.density *= 1.0F + w.precipitation;
+    c.time_s = 0.0F;
+    c.offset_km = drift_km + glm::vec2(camera.x, camera.z) * 0.001F;
+    return c;
 }
 
 } // namespace engine::scene

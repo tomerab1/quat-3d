@@ -23,6 +23,7 @@ public struct GrassParams {
     public float4   tile_info[4];  // x texel uv, y metres per texel
     public float4   ground;        // x min ground y, y max ground y (tile culling bounds)
     public float4   wind_rect;     // R13.1 wind texture: xy world XZ corner, z 1 / size m, w log-profile factor at blade height
+    public float4   wind_flow;     // R13.1: xy mean heading (flutter phase), z 1 = wind field bound (else the R9.3 sway)
 }
 
 // A visible blade: world root + packed variation (bits 0-15 shape hash,

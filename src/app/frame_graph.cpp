@@ -102,23 +102,9 @@ SkinnedEntityGpu* ensure_skin_gpu(DeferredFrame& frame, entt::entity entity,
 } // namespace
 
 engine::renderer::CloudSettings FrameRenderer::current_clouds() const {
-    engine::renderer::CloudSettings c = settings_.clouds;
-    // Anchor the clouds (and their shadows) to the world: the shaders work
-    // relative to the camera.
-    const glm::vec2 camera_km = glm::vec2(camera_pos_.x, camera_pos_.z) * 0.001F;
-    if (has_weather_) {
-        // R13.1: the weather's cover; its wind's integrated drift (no
-        // settings-driven drift); rain / snow clouds are denser.
-        const engine::weather::WeatherState w = engine::weather::sanitized(weather_);
-        c.coverage = w.cloud_cover;
-        c.density *= 1.0F + w.precipitation;
-        c.time_s = 0.0F;
-        c.offset_km = cloud_drift_km_ + camera_km;
-    } else {
-        c.time_s = cloud_time_s_;
-        c.offset_km = camera_km;
-    }
-    return c;
+    return engine::scene::frame_clouds(settings_.clouds, cloud_time_s_,
+                                       has_weather_ ? &weather_ : nullptr, cloud_drift_km_,
+                                       camera_pos_);
 }
 
 void FrameRenderer::advance_time(float dt) {
@@ -318,11 +304,12 @@ bool FrameRenderer::record(const FrameInputs& in) {
     const engine::renderer::IblViewSet ibl_views =
         dynamic_ibl_ ? dynamic_ibl_->views() : engine::renderer::IblViewSet{};
 
-    // R13.1: the global wind field around the camera (grass samples it),
-    // advanced by simulated time so pausing freezes the wind with the world.
+    // R13.1: with weather, the global wind field around the camera (grass
+    // samples it), advanced by simulated time so pausing freezes the wind
+    // with the world. Without weather nothing runs: grass keeps its R9.3 sway.
     wind_clock_.advance(engine::weather::sanitized(fs.weather).wind_speed, in.sim_dt);
     engine::renderer::WindFieldOutput wind{};
-    if (fr.wind.valid()) {
+    if (fs.has_weather && fr.wind.valid()) {
         if (auto w = fr.wind.add_to_graph(
                 graph, engine::weather::wind_field_params(fs.weather, wind_clock_),
                 glm::vec2(cam.position.x, cam.position.z))) {
@@ -408,17 +395,30 @@ bool FrameRenderer::record(const FrameInputs& in) {
     } else {
         std::fprintf(stderr, "[warn] light cull: %s\n", c.error().message.c_str());
     }
+    // R13.1: with weather, the cloud shadow map (one compute pass; the
+    // lighting pass samples it). Needs the atmosphere's cloud layer.
+    const engine::renderer::CloudSettings clouds = current_clouds();
+    engine::renderer::CloudShadowMap cloud_shadow{};
+    if (fs.has_weather && atmosphere_ && clouds.enabled && clouds.shadows &&
+        fr.cloud_shadow.valid()) {
+        if (auto m = fr.cloud_shadow.add_to_graph(graph, sun_to, cam.position, clouds)) {
+            cloud_shadow = *m;
+        } else {
+            std::fprintf(stderr, "[warn] cloud shadow map: %s\n", m.error().message.c_str());
+        }
+    }
     auto hdr = fr.lighting.add_to_graph(graph, *gbuffer, draw_extent, fs.light,
                                         fs.jittered_inv_vp, cam.position, occlusion, clustered,
                                         /*enable_sky=*/true, ibl_views, atmos_skyview(),
-                                        atmos_transmittance(), current_clouds(),
+                                        atmos_transmittance(), clouds,
                                         engine::renderer::LightingTuning{
                                             .ibl_intensity = settings.ibl.intensity,
                                             .weather = engine::renderer::WeatherSurfaces::from(
                                                 fs.weather,
                                                 in.terrain != nullptr
                                                     ? in.terrain_snowline
-                                                    : engine::renderer::k_no_snowline_m)});
+                                                    : engine::renderer::k_no_snowline_m),
+                                            .cloud_shadow = cloud_shadow});
     if (!hdr) {
         std::fprintf(stderr, "[fatal] lighting pass: %s\n", hdr.error().message.c_str());
         return false;

@@ -18,6 +18,7 @@
 #include "engine/asset/mesh_asset.hpp"
 #include "engine/renderer/atmosphere_pass.hpp"
 #include "engine/renderer/cloud_settings.hpp"
+#include "engine/renderer/cloud_shadow_pass.hpp"
 #include "engine/renderer/lighting_pass.hpp"
 #include "engine/renderer/mesh_pass.hpp"
 #include "engine/renderer/weather_surfaces.hpp"
@@ -59,6 +60,7 @@ struct Floor {
     r::WeatherSurfaces    weather{};
     bool                  sky = false; // atmosphere LUTs + clouds
     r::CloudSettings      clouds{};
+    bool                  cloud_map = false; // run CloudShadowPass (as the frame does with weather)
 };
 
 std::expected<HostImage, Error> render_floor(quat::test::GpuContext& g, const Floor& f) {
@@ -103,6 +105,15 @@ std::expected<HostImage, Error> render_floor(quat::test::GpuContext& g, const Fl
 
     rhi::TransientImagePool pool(g.device, g.allocator);
     rhi::RenderGraph graph(pool);
+    std::optional<r::CloudShadowPass> cloud_pass;
+    if (f.cloud_map) {
+        auto c = r::CloudShadowPass::create(g.device, g.allocator, g.cache, g.shader_dir);
+        if (!c) return std::unexpected(c.error());
+        cloud_pass = std::move(*c);
+        auto map = cloud_pass->add_to_graph(graph, k_sun, f.camera, f.clouds);
+        if (!map) return std::unexpected(map.error());
+        tuning.cloud_shadow = *map;
+    }
     const glm::mat4 vp = top_down_view_proj();
     const r::DrawItem item{&*mesh, &*material, glm::mat4(1.0F)};
     auto targets = mesh_pass->add_to_graph(graph, k_extent, vp, {&item, 1});
@@ -240,10 +251,10 @@ TEST(GpuWeatherLighting, CloudsShadowTheSun) {
     f.sky = true;
     f.clouds.coverage = 1.0F;
     f.clouds.density = 60.0F;
-    f.clouds.shadows = false;
+    f.cloud_map = false; // no weather: no cloud shadow map
     auto lit = render_floor(*g, f);
     ASSERT_OK(lit);
-    f.clouds.shadows = true;
+    f.cloud_map = true;
     auto shaded = render_floor(*g, f);
     ASSERT_OK(shaded);
     f.clouds.coverage = 0.0F;

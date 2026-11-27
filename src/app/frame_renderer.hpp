@@ -55,6 +55,7 @@
 #include "engine/renderer/taa_pass.hpp"
 #include "engine/renderer/tonemap_pass.hpp"
 #include "engine/renderer/transparent_pass.hpp"
+#include "engine/renderer/cloud_shadow_pass.hpp"
 #include "engine/renderer/wind_field_pass.hpp"
 #include "engine/rhi/gpu_allocator.hpp"
 #include "engine/rhi/render_graph.hpp"
@@ -126,7 +127,8 @@ struct DeferredFrame {
     engine::renderer::BloomPass      bloom;
     engine::renderer::ExposurePass   exposure;
     engine::renderer::TaaPass        taa;
-    engine::renderer::WindFieldPass  wind; // R13.1 global wind field
+    engine::renderer::WindFieldPass  wind;          // R13.1 global wind field
+    engine::renderer::CloudShadowPass cloud_shadow; // R13.1 cloud shadow map
 #ifdef ENGINE_EDITOR
     engine::renderer::ImGuiPass      imgui;
     // Offscreen scene target for the editor's Viewport panel: TAA resolves the
