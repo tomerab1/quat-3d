@@ -98,8 +98,14 @@ TEST(MaterialOverride, CodecMergesClearsAndRejects) {
     EXPECT_TRUE(contains(e.error().message, "material.shininess: unknown field")) << e.error().message;
     EXPECT_FALSE(s::decode_material_override(json{{"attenuation_color", {2, 0, 0}}}, o, true));
     EXPECT_FALSE(s::decode_material_override(json{{"emissive", "#ff000080"}}, o, true));
-    // Lenient (scene files): unknown fields are ignored.
+    // Lenient (scene files): unknown fields are ignored, out-of-range values
+    // clamped; wrong types still fail.
     EXPECT_OK(s::decode_material_override(json{{"shininess", 1}}, o, false));
+    ASSERT_OK(s::decode_material_override(
+        json{{"roughness", 2}, {"attenuation_color", {2, 0.5, -1}}}, o, false));
+    EXPECT_FLOAT_EQ(o.values.roughness_factor, 1.0F);
+    EXPECT_EQ(glm::vec3(o.values.attenuation), glm::vec3(1.0F, 0.5F, 0.0F));
+    EXPECT_FALSE(s::decode_material_override(json{{"roughness", "rough"}}, o, false));
 }
 
 TEST(MaterialOverride, PrimitiveFieldsEditThePrimitive) {
@@ -150,24 +156,12 @@ TEST(MaterialOverride, MeshMaterialsAreOverriddenPerEntity) {
     EXPECT_FLOAT_EQ(s::effective_material_params(r, b)->roughness_factor, 0.8F);
     EXPECT_FLOAT_EQ(handle->params.roughness_factor, 0.8F); // shared asset untouched
 
-    // Until resolved the base material is drawn; the override needs a resolve.
-    const auto& mr = r.get<s::MeshRenderer>(a);
-    EXPECT_EQ(s::drawn_material(r, a, mr), &*handle);
-    EXPECT_TRUE(s::material_overrides_need_resolve(r));
-
-    // Simulate a resolve (the GPU suite runs the real one).
-    auto& o = r.get<s::MaterialOverride>(a);
-    const auto derived = cpu_material(assets, "test/derived", s::apply_material_override(base, o));
-    o.derived = derived;
-    o.base_id = handle.id();
-    EXPECT_EQ(s::drawn_material(r, a, mr), &*derived);
-    EXPECT_EQ(s::drawn_material(r, b, r.get<s::MeshRenderer>(b)), &*handle);
-
-    // A different base (e.g. a primitive rebuilt its material) is drawn as-is
-    // until the override is resolved again.
-    const auto other = cpu_material(assets, "test/other", base);
-    r.get<s::MeshRenderer>(a).material = other;
-    EXPECT_EQ(s::drawn_material(r, a, r.get<s::MeshRenderer>(a)), &*other);
+    // Until the store resolved it the base material is drawn. (The GPU suite
+    // runs real resolves: tests/scene/material_override_gpu_test.cpp.)
+    const s::MaterialOverrideStore store;
+    EXPECT_EQ(store.drawn(r, a, r.get<s::MeshRenderer>(a)), &*handle);
+    EXPECT_TRUE(store.needs_resolve(r));
+    EXPECT_EQ(store.live_count(), 0U);
 
     // The codec carries the overrides; removing the component reverts.
     const json comps = s::encode_components(r, a, {});
@@ -175,7 +169,7 @@ TEST(MaterialOverride, MeshMaterialsAreOverriddenPerEntity) {
     EXPECT_FLOAT_EQ(comps["material"]["roughness"].get<float>(), 0.2F);
     EXPECT_TRUE(s::remove_component(r, a, "material"));
     EXPECT_FLOAT_EQ(s::effective_material_params(r, a)->roughness_factor, 0.8F);
-    EXPECT_EQ(s::drawn_material(r, a, r.get<s::MeshRenderer>(a)), &*other);
+    EXPECT_FALSE(store.needs_resolve(r));
 }
 
 } // namespace

@@ -47,6 +47,13 @@ static_assert(sizeof(ShadowPushConstants) == 72, "must match shadow.slang PushCo
 static_assert(offsetof(ShadowPushConstants, instances) == 64,
               "must match shadow.slang PushConstants");
 
+// Light view-projection of the directional shadow map: an orthographic box of
+// half-size `extent_m` (RenderSettings::shadows.extent_m) centred on `center`,
+// seen along the light's travel direction `travel_dir`. Depth spans 3.5 x
+// extent from an eye 1.5 x extent behind the centre.
+[[nodiscard]] glm::mat4 directional_shadow_view_proj(const glm::vec3& travel_dir,
+                                                     const glm::vec3& center, float extent_m);
+
 class ShadowPass {
 public:
     [[nodiscard]] static std::expected<ShadowPass, core::Error>

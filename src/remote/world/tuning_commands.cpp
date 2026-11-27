@@ -183,7 +183,7 @@ RpcResult material_set(Context& ctx, const Json& params) {
             plan.push_back({field, std::nullopt});
             continue;
         }
-        auto decoded = scene::decode_material_field(value, *field);
+        auto decoded = scene::decode_material_field(value, *field, /*strict=*/true);
         if (!decoded) return bad_params("material." + key + ": " + decoded.error().message);
         plan.push_back({field, *decoded});
     }

@@ -1,12 +1,24 @@
 // RenderSettings descriptor table (A8): every entry points at the field it
-// names, its default is the struct's default, and the setters clamp.
+// names, its default is the struct's default, and the setters clamp; the
+// shadow extent sizes the light-space box.
+//
+// What these CPU tests do not cover: the frame graph's per-frame decisions
+// (src/app/frame_graph.cpp) — bloom.enabled = false skipping the bloom pass,
+// shadows.enabled = false skipping the shadow pass, the TAA jitter switch —
+// live in the app layer, which engine_tests does not link. Each pass's side is
+// covered by Gpu* tests (render_settings_gpu_test.cpp: exposure, TAA off;
+// lighting_pass_test.cpp: no shadow map, PCF radius, bias, IBL intensity) and
+// the wiring by CI's demo render.
 
+#include <cmath>
 #include <set>
 #include <string>
 
+#include <glm/glm.hpp>
 #include <gtest/gtest.h>
 
 #include "engine/renderer/render_settings.hpp"
+#include "engine/renderer/shadow_pass.hpp"
 
 namespace {
 
@@ -92,6 +104,25 @@ TEST(RenderSettings, ResetRestoresOneGroupOrAll) {
     ASSERT_TRUE(r::reset_render_settings(s));
     EXPECT_FLOAT_EQ(s.exposure.compensation_ev, 0.0F);
     EXPECT_FLOAT_EQ(s.clouds.time_s, 42.0F);
+}
+
+// shadows.extent_m is the half-size of the shadowed box: a point inside it
+// projects into the shadow map's clip square, one beyond it does not.
+TEST(RenderSettings, ShadowExtentSizesTheLightBox) {
+    const glm::vec3 travel = glm::normalize(glm::vec3(0.3F, -1.0F, 0.2F));
+    const glm::vec3 centre(0.0F, 1.5F, 0.0F);
+    const auto inside = [&](float extent, const glm::vec3& p) {
+        const glm::vec4 c = r::directional_shadow_view_proj(travel, centre, extent) *
+                            glm::vec4(p, 1.0F);
+        const glm::vec3 ndc = glm::vec3(c) / c.w;
+        return std::abs(ndc.x) <= 1.0F && std::abs(ndc.y) <= 1.0F && ndc.z >= 0.0F &&
+               ndc.z <= 1.0F;
+    };
+    const float extent = r::ShadowSettings{}.extent_m;
+    EXPECT_TRUE(inside(extent, centre));
+    EXPECT_TRUE(inside(extent, centre + glm::vec3(0.7F * extent, 0.0F, 0.0F)));
+    EXPECT_FALSE(inside(extent, centre + glm::vec3(2.0F * extent, 0.0F, 0.0F)));
+    EXPECT_TRUE(inside(3.0F * extent, centre + glm::vec3(2.0F * extent, 0.0F, 0.0F)));
 }
 
 } // namespace

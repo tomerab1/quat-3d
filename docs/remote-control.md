@@ -322,17 +322,20 @@ debug views, so neither is listed. The sun is scene data: `environment.*`.
   shared material asset, which itself never changes (`shared_by` counts the
   entities drawing it). `null` reverts one override. A `transmission` above 0
   routes the material to the forward glass pass. The derived material is
-  uploaded once per distinct (base material, overrides) pair, content-keyed
-  in the asset manager like the primitives' materials, and drawn from the next
-  frame. Instanced meshes keep their material in `instanced_mesh`
+  each entity's own copy of its base material with the overrides applied, drawn
+  from the next frame; a replaced copy (every edit makes one) is destroyed
+  once the frames in flight that may read it have completed, so tuning never
+  accumulates materials. Instanced meshes keep their material in
+  `instanced_mesh`
   (`invalid_params`); an entity without a primitive or mesh has no material
   (`invalid_params`).
 - **Scene files** carry the settings in an optional, versioned
   `"render_settings"` block (`{"version": 1, "<group>": {...}}`) and material
   overrides as the `material` component. A file without the block loads with
-  the default settings; a newer file's unknown groups / fields are ignored and
-  out-of-range numbers clamped; a malformed block fails the load and leaves
-  the scene and settings untouched.
+  the default settings. Files decode leniently: unknown groups / fields are
+  ignored and out-of-range numbers clamped (in the block and in `material`
+  overrides). A block whose `version` is newer than the build reads, or a
+  malformed one, fails the load and leaves the scene and settings untouched.
 
 ## Behaviour-tree authoring (ROADMAP A7)
 

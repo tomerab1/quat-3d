@@ -4,14 +4,14 @@
 
 #include <algorithm>
 #include <array>
-#include <cstdio>
+#include <memory>
 #include <string>
-#include <vector>
+#include <unordered_map>
 
 #include <entt/entity/registry.hpp>
 #include <nlohmann/json.hpp>
 
-#include "engine/asset/asset_manager.hpp"
+#include "engine/core/deferred_release_queue.hpp"
 #include "engine/core/json_fields.hpp"
 #include "engine/scene/component_json.hpp"
 #include "engine/scene/components.hpp"
@@ -125,12 +125,6 @@ constexpr std::array k_fields = {
         for (int i = 0; i < 4; ++i) h.f32(v[i]);
     }
     return h.nonzero();
-}
-
-[[nodiscard]] bool stale(const MeshRenderer& mr, const MaterialOverride& o) {
-    if (o.mask == 0 || !mr.material.valid()) return false;
-    const asset::AssetId base = mr.material.id();
-    return !o.derived.valid() || o.base_id != base || o.resolved != override_hash(o, base);
 }
 
 } // namespace
@@ -277,10 +271,17 @@ json material_fields_schema() {
 }
 
 std::expected<glm::vec4, core::Error> decode_material_field(const json& value,
-                                                           const MaterialFieldInfo& f) {
+                                                           const MaterialFieldInfo& f,
+                                                           bool strict) {
+    // A number within the field's range; lenient decoding clamps instead.
+    const auto in_range = [&](float& x) {
+        if (x >= f.min && x <= f.max) return true;
+        x = std::clamp(x, f.min, f.max);
+        return !strict;
+    };
     if (f.kind == K::scalar) {
         float x = 0.0F;
-        if (!core::JsonFields::read_float(value, x) || x < f.min || x > f.max) {
+        if (!core::JsonFields::read_float(value, x) || !in_range(x)) {
             return std::unexpected(core::Error{"expected a number in " + range(f)});
         }
         return glm::vec4(x, 0.0F, 0.0F, 0.0F);
@@ -304,7 +305,7 @@ std::expected<glm::vec4, core::Error> decode_material_field(const json& value,
     glm::vec4 c(0.0F, 0.0F, 0.0F, f.kind == K::color4 ? 1.0F : 0.0F);
     for (std::size_t i = 0; i < n; ++i) {
         float x = 0.0F;
-        if (!core::JsonFields::read_float(value[i], x) || x < f.min || x > f.max) {
+        if (!core::JsonFields::read_float(value[i], x) || !in_range(x)) {
             return std::unexpected(core::Error{expected});
         }
         c[static_cast<glm::length_t>(i)] = x;
@@ -325,7 +326,7 @@ std::expected<void, core::Error> decode_material_override(const json& value, Mat
             mask &= ~f.bit;
             continue;
         }
-        auto decoded = decode_material_field(*v, f);
+        auto decoded = decode_material_field(*v, f, strict);
         if (!decoded) {
             fields.fail(f.name, decoded.error().message);
             continue;
@@ -339,48 +340,115 @@ std::expected<void, core::Error> decode_material_override(const json& value, Mat
     return {};
 }
 
-const asset::MaterialAsset* drawn_material(const entt::registry& r, entt::entity e,
-                                           const MeshRenderer& renderer) {
-    if (!renderer.material.valid()) return nullptr;
-    if (const auto* o = r.try_get<MaterialOverride>(e);
-        o != nullptr && o->mask != 0 && o->derived.valid() &&
-        o->base_id == renderer.material.id()) {
-        return &*o->derived;
+// ---- MaterialOverrideStore ----------------------------------------------------------
+
+struct MaterialOverrideStore::Entry {
+    std::shared_ptr<asset::MaterialAsset> material; // null after a failed upload
+    asset::AssetId                        base{};
+    std::uint64_t                         hash = 0;
+};
+
+struct MaterialOverrideStore::State {
+    explicit State(std::uint32_t frames_in_flight) : retired(frames_in_flight) {}
+    std::unordered_map<entt::entity, Entry> entries;
+    core::DeferredReleaseQueue              retired;
+    std::uint64_t                           last_frame = 0;
+
+    // Retires `material` (if any): destroyed once no frame in flight reads it.
+    void retire(std::shared_ptr<asset::MaterialAsset> material, std::uint64_t frame) {
+        if (!material) return;
+        retired.push(frame, [m = std::move(material)]() mutable { m.reset(); });
     }
-    return &*renderer.material;
+};
+
+namespace {
+
+// True when the entity has overrides to apply to a material it draws.
+[[nodiscard]] bool has_active_override(const entt::registry& r, entt::entity e) {
+    if (!r.valid(e)) return false;
+    const auto* mr = r.try_get<MeshRenderer>(e);
+    const auto* o = r.try_get<MaterialOverride>(e);
+    return mr != nullptr && o != nullptr && o->mask != 0 && mr->material.valid();
 }
 
-bool material_overrides_need_resolve(const entt::registry& r) {
+} // namespace
+
+MaterialOverrideStore::MaterialOverrideStore(std::uint32_t frames_in_flight)
+    : state_(std::make_unique<State>(frames_in_flight)) {}
+MaterialOverrideStore::~MaterialOverrideStore() = default;
+MaterialOverrideStore::MaterialOverrideStore(MaterialOverrideStore&&) noexcept = default;
+MaterialOverrideStore& MaterialOverrideStore::operator=(MaterialOverrideStore&&) noexcept = default;
+
+const asset::MaterialAsset* MaterialOverrideStore::drawn(const entt::registry& r, entt::entity e,
+                                                         const MeshRenderer& renderer) const {
+    if (!renderer.material.valid()) return nullptr;
+    const asset::MaterialAsset* base = &*renderer.material;
+    const auto it = state_->entries.find(e);
+    if (it == state_->entries.end() || !it->second.material) return base;
+    const auto* o = r.try_get<MaterialOverride>(e);
+    if (o == nullptr || o->mask == 0) return base;
+    const asset::AssetId base_id = renderer.material.id();
+    const Entry& entry = it->second;
+    // Stale (edited since the last resolve, or another entity reusing the id):
+    // the base until resolve() catches up.
+    if (entry.base != base_id || entry.hash != override_hash(*o, base_id)) return base;
+    return entry.material.get();
+}
+
+bool MaterialOverrideStore::needs_resolve(const entt::registry& r) const {
+    for (const auto& [e, entry] : state_->entries) {
+        if (!has_active_override(r, e)) return true; // orphaned
+    }
     for (auto [e, mr, o] : r.view<const MeshRenderer, const MaterialOverride>().each()) {
-        if (stale(mr, o)) return true;
+        if (o.mask == 0 || !mr.material.valid()) continue;
+        const auto it = state_->entries.find(e);
+        const asset::AssetId base = mr.material.id();
+        if (it == state_->entries.end() || it->second.base != base ||
+            it->second.hash != override_hash(o, base)) {
+            return true;
+        }
     }
     return false;
 }
 
 std::expected<std::size_t, core::Error>
-resolve_material_overrides(entt::registry& r, rhi::GpuAllocator& allocator,
-                           const rhi::TransferContext& transfer, asset::AssetManager& assets) {
+MaterialOverrideStore::resolve(entt::registry& r, rhi::GpuAllocator& allocator,
+                               const rhi::TransferContext& transfer, std::uint64_t frame) {
+    State& st = *state_;
+    // Orphans: the entity lost its override, its mesh, or no longer exists
+    // (destroyed, or a scene load replaced the registry).
+    for (auto it = st.entries.begin(); it != st.entries.end();) {
+        if (!has_active_override(r, it->first)) {
+            st.retire(std::move(it->second.material), frame);
+            it = st.entries.erase(it);
+        } else {
+            ++it;
+        }
+    }
+
     std::size_t rebuilt = 0;
     std::string failures;
-    for (auto [e, mr, o] : r.view<const MeshRenderer, MaterialOverride>().each()) {
-        if (!stale(mr, o)) continue;
-        const asset::AssetId base = mr.material.id();
-        const std::uint64_t hash = override_hash(o, base);
-        char key[96];
-        std::snprintf(key, sizeof key, "material_override/%016llx/%016llx",
-                      static_cast<unsigned long long>(base.value),
-                      static_cast<unsigned long long>(hash));
-        const asset::MaterialAsset& base_material = *mr.material;
-        const asset::PbrMaterialParams params = apply_material_override(base_material.params, o);
-        o.derived = assets.load<asset::MaterialAsset>(key, [&](const std::filesystem::path&) {
-            return asset::upload_material(params, base_material.textures, allocator, transfer);
-        });
-        // Recorded even on failure (like primitives): the next edit retries.
-        o.base_id = base;
-        o.resolved = hash;
+    for (auto [e, mr, o] : r.view<const MeshRenderer, const MaterialOverride>().each()) {
+        if (o.mask == 0 || !mr.material.valid()) continue;
+        const asset::AssetId base_id = mr.material.id();
+        const std::uint64_t hash = override_hash(o, base_id);
+        Entry& entry = st.entries[e];
+        if (entry.hash == hash && entry.base == base_id && entry.hash != 0) continue;
+
+        const asset::MaterialAsset& base = *mr.material;
+        auto derived = asset::derive_material(base, apply_material_override(base.params, o),
+                                              allocator, transfer);
+        st.retire(std::move(entry.material), frame);
+        entry.material = derived ? std::make_shared<asset::MaterialAsset>(std::move(*derived))
+                                 : nullptr;
+        // Recorded even on failure, so a failing upload is not retried every
+        // frame; the next edit retries it.
+        entry.base = base_id;
+        entry.hash = hash;
         ++rebuilt;
-        if (!o.derived.is_loaded() && failures.find(key) == std::string::npos) {
-            failures += (failures.empty() ? "" : ", ") + std::string(key);
+        if (!derived) {
+            failures += (failures.empty() ? "" : "; ") + std::string("entity ") +
+                        std::to_string(entt::to_integral(e)) + ": " + derived.error().message;
         }
     }
     if (!failures.empty()) {
@@ -388,5 +456,20 @@ resolve_material_overrides(entt::registry& r, rhi::GpuAllocator& allocator,
     }
     return rebuilt;
 }
+
+void MaterialOverrideStore::collect(std::uint64_t frame) { (void)state_->retired.collect(frame); }
+
+void MaterialOverrideStore::clear() {
+    state_->entries.clear();
+    state_->retired.flush();
+}
+
+std::size_t MaterialOverrideStore::live_count() const {
+    std::size_t n = 0;
+    for (const auto& [e, entry] : state_->entries) n += entry.material ? 1U : 0U;
+    return n;
+}
+
+std::size_t MaterialOverrideStore::retired_count() const { return state_->retired.size(); }
 
 } // namespace engine::scene

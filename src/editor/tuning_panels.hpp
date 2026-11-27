@@ -23,8 +23,9 @@ namespace engine::editor {
 void draw_renderer_panel(renderer::RenderSettings& settings, scene::Scene* scene);
 
 // The Inspector's "Material" section for an entity drawn with a material
-// (primitive or mesh): every factor of material_fields(), editable; a factor
-// overridden on this entity gets a revert button.
+// (primitive or mesh): every factor of material_fields(), editable — except a
+// primitive's own colour / metallic / roughness / emissive, which belong to its
+// Primitive component; a factor overridden on this entity gets a revert button.
 void draw_material_inspector(entt::registry& registry, entt::entity entity);
 
 } // namespace engine::editor

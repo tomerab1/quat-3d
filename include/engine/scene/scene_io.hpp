@@ -38,8 +38,9 @@ save_scene(const Scene& scene, const std::filesystem::path& path,
 // Ticks the scene once so world transforms are valid on return. With
 // `render_settings`, they are replaced by the file's block (decoded leniently:
 // unknown fields ignored, out-of-range numbers clamped), or reset to the
-// defaults when the file has none; a malformed block fails the load. Nothing
-// changes when the load fails.
+// defaults when the file has none; a malformed block, or one whose "version"
+// is newer than k_render_settings_version, fails the load. Nothing changes
+// when the load fails.
 [[nodiscard]] std::expected<void, core::Error>
 load_scene(Scene& scene, const std::filesystem::path& path, rhi::GpuAllocator& allocator,
            const rhi::TransferContext& transfer, asset::AssetManager& assets,

@@ -187,6 +187,17 @@ load_scene(Scene& scene, const std::filesystem::path& path, rhi::GpuAllocator& a
     if (render_settings != nullptr) {
         settings.emplace();
         if (const auto it = root.find("render_settings"); it != root.end() && !it->is_null()) {
+            core::JsonFields block(*it, "render_settings", /*strict=*/false);
+            int version = 1;
+            block.integer("version", version, 1, 1000);
+            if (auto ok = block.finish(); !ok) {
+                return fail("load_scene: '" + path.string() + "': " + ok.error().message);
+            }
+            if (version > k_render_settings_version) {
+                return fail("load_scene: '" + path.string() + "': render_settings version " +
+                            std::to_string(version) + " is newer than this build reads (" +
+                            std::to_string(k_render_settings_version) + ")");
+            }
             if (auto ok = apply_render_settings_json(*settings, *it, /*strict=*/false); !ok) {
                 return fail("load_scene: '" + path.string() + "': render_settings: " +
                             ok.error().message);

@@ -52,6 +52,7 @@
 #include "engine/renderer/transparent_pass.hpp"
 #include "engine/rhi/gpu_allocator.hpp"
 #include "engine/rhi/render_graph.hpp"
+#include "engine/scene/material_override.hpp"
 #ifdef ENGINE_EDITOR
 #include "engine/renderer/imgui_pass.hpp"
 #endif
@@ -180,6 +181,11 @@ public:
     // Every tunable renderer parameter (A8). Read by the passes each frame;
     // the editor's Renderer panel, the remote API and scene files edit it.
     [[nodiscard]] engine::renderer::RenderSettings& render_settings() { return settings_; }
+    // Per-entity derived materials of MaterialOverride components (A8): the
+    // remote bridge resolves them each frame, gather() draws them.
+    [[nodiscard]] engine::scene::MaterialOverrideStore& material_overrides() {
+        return material_overrides_;
+    }
     // Atmosphere LUTs + dynamic IBL probe, lit by the scene's sun. Optional:
     // failures are logged and fall back to the procedural sky / flat ambient.
     void create_environment(engine::scene::Scene& scene,
@@ -232,6 +238,8 @@ private:
     VkFormat                   ldr_format_ = VK_FORMAT_UNDEFINED;
     bool                       editor_active_ = false;
     engine::renderer::RenderSettings settings_;
+    // Destroyed (cleared) with the frame sync, after the device went idle.
+    engine::scene::MaterialOverrideStore material_overrides_{k_frames_in_flight};
 
     // Drives the clouds' wind drift (settings_.clouds.time_s is ignored). The
     // frame loop accumulates it always, like the animated sky in other engines

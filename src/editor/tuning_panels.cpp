@@ -173,8 +173,12 @@ void draw_material_inspector(entt::registry& r, entt::entity e) {
     const std::optional<asset::PbrMaterialParams> params = scene::effective_material_params(r, e);
     if (!params) return;
     if (!ImGui::CollapsingHeader("Material", ImGuiTreeNodeFlags_DefaultOpen)) return;
+    // A primitive owns its colour, metallic, roughness and emission (its
+    // component fields): they are edited there, not here.
+    const bool primitive = r.all_of<scene::Primitive>(e);
     ImGui::PushID("material_tuning");
     for (const scene::MaterialFieldInfo& f : scene::material_fields()) {
+        if (primitive && f.primitive_owned) continue;
         const std::string id(f.name);
         ImGui::PushID(id.c_str());
         if (draw_material_field(r, e, f, *params)) {

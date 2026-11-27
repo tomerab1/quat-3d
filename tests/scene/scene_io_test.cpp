@@ -252,12 +252,32 @@ TEST(GpuSceneIo, RenderSettingsAndMaterialOverridesRoundTrip) {
     EXPECT_TRUE(settings.bloom.enabled);
     std::filesystem::remove(path);
 
-    // A newer file: unknown fields ignored, out-of-range values clamped.
-    const auto newer = write_temp("quat_newer_settings.json", R"({"version": 2, "entities": [],
-        "render_settings": {"version": 3, "bloom": {"intensity": 9, "flare": true},
+    // Lenient decoding: unknown groups / fields ignored, out-of-range values
+    // clamped — render settings and material overrides alike.
+    const auto loose = write_temp("quat_loose_settings.json", R"({"version": 2, "entities": [
+        {"name": "orb", "primitive": {"shape": "sphere"},
+         "material": {"clearcoat": 3, "ior": 0.5, "sheen": 1}}],
+        "render_settings": {"version": 1, "bloom": {"intensity": 9, "flare": true},
                             "lens": {"dirt": 1}}})");
-    ASSERT_OK(s::load_scene(loaded, newer, g->allocator, g->transfer, assets, &settings));
+    ASSERT_OK(s::load_scene(loaded, loose, g->allocator, g->transfer, assets, &settings));
     EXPECT_FLOAT_EQ(settings.bloom.intensity, 1.0F);
+    const entt::entity orb = find_named(loaded, "orb");
+    ASSERT_NE(orb, k_none);
+    const auto orb_params = s::effective_material_params(loaded.registry(), orb);
+    ASSERT_TRUE(orb_params.has_value());
+    EXPECT_FLOAT_EQ(orb_params->clearcoat_factor, 1.0F); // clamped into [0, 1]
+    EXPECT_FLOAT_EQ(orb_params->ior, 1.0F);              // clamped into [1, 3]
+    std::filesystem::remove(loose);
+
+    // A block newer than this build reads fails the load with a clear error.
+    const auto newer = write_temp("quat_newer_settings.json", R"({"entities": [],
+        "render_settings": {"version": 99, "bloom": {"intensity": 0.5}}})");
+    auto too_new = s::load_scene(loaded, newer, g->allocator, g->transfer, assets, &settings);
+    ASSERT_FALSE(too_new);
+    EXPECT_NE(too_new.error().message.find("render_settings version 99 is newer"),
+              std::string::npos)
+        << too_new.error().message;
+    EXPECT_NE(find_named(loaded, "orb"), k_none); // the live scene is kept
     std::filesystem::remove(newer);
 
     // A malformed block fails the load and changes nothing.

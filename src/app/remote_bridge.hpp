@@ -65,6 +65,9 @@ namespace engine::rhi {
 class Device;
 class GpuAllocator;
 } // namespace engine::rhi
+namespace engine::scene {
+class MaterialOverrideStore;
+}
 namespace engine::terrain {
 class TerrainStreamer;
 struct Heightmap;
@@ -111,6 +114,8 @@ struct RemoteBridgeTargets {
     // The renderer's settings (render.settings.*, environment.* clouds,
     // scene files).
     engine::renderer::RenderSettings* render_settings = nullptr;
+    // The renderer's per-entity derived materials (A8), resolved in poll().
+    engine::scene::MaterialOverrideStore* material_overrides = nullptr;
 
 #ifdef ENGINE_EDITOR
     engine::editor::EditorLayer* editor = nullptr;

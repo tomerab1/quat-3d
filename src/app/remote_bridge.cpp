@@ -341,13 +341,18 @@ struct RemoteBridge::Impl {
     }
 
     // A8: derived materials of changed MaterialOverrides (after the
-    // primitives, whose rebuilt materials are the overrides' bases).
+    // primitives, whose rebuilt materials are the overrides' bases). Runs
+    // before the frame is recorded: replaced materials are retired as of this
+    // frame and freed once the frames in flight before it completed.
     void resolve_material_overrides() {
-        if (!engine::scene::material_overrides_need_resolve(t.scene->registry())) return;
+        if (t.material_overrides == nullptr) return;
+        engine::scene::MaterialOverrideStore& store = *t.material_overrides;
+        const std::uint64_t frame = *t.frame_counter;
+        store.collect(frame);
+        if (!store.needs_resolve(t.scene->registry())) return;
         std::expected<std::size_t, Error> result = fail("not run");
         auto ctx = with_upload([&](const engine::rhi::TransferContext& transfer) {
-            result = engine::scene::resolve_material_overrides(t.scene->registry(), *t.allocator,
-                                                               transfer, *t.assets);
+            result = store.resolve(t.scene->registry(), *t.allocator, transfer, frame);
         });
         if (!ctx || !result) {
             const std::string& msg = (!ctx ? ctx.error() : result.error()).message;

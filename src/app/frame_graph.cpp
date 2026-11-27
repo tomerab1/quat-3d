@@ -152,7 +152,7 @@ FrameScene FrameRenderer::gather(engine::scene::Scene& scene,
          scene.registry().view<engine::scene::Transform, engine::scene::MeshRenderer>().each()) {
         engine::renderer::DrawItem item;
         item.mesh = mr.mesh.valid() ? &*mr.mesh : nullptr;
-        item.material = engine::scene::drawn_material(scene.registry(), e, mr);
+        item.material = material_overrides_.drawn(scene.registry(), e, mr);
         item.model = t.world;
 
         const auto* sm = scene.registry().try_get<engine::scene::SkinnedMesh>(e);
@@ -222,15 +222,9 @@ FrameScene FrameRenderer::gather(engine::scene::Scene& scene,
     // Directional shadow: an orthographic light view fit to a fixed box
     // around the scene origin (the demos all sit near it), its half-size set
     // by the shadow settings.
-    const glm::vec3 sun_dir = -glm::normalize(glm::vec3(light.direction)); // travel direction
-    const glm::vec3 shadow_center(0.0F, 1.5F, 0.0F);
-    const float shadow_radius = settings_.shadows.extent_m;
-    const glm::vec3 light_eye = shadow_center - sun_dir * (shadow_radius * 1.5F);
-    const glm::mat4 shadow_view =
-        glm::lookAt(light_eye, shadow_center, glm::vec3(0.0F, 1.0F, 0.0F));
-    const glm::mat4 shadow_proj = glm::ortho(-shadow_radius, shadow_radius, -shadow_radius,
-                                             shadow_radius, 0.1F, shadow_radius * 3.5F);
-    out.light_view_proj = shadow_proj * shadow_view;
+    const glm::vec3 sun_dir = -glm::vec3(light.direction); // travel direction
+    out.light_view_proj = engine::renderer::directional_shadow_view_proj(
+        sun_dir, glm::vec3(0.0F, 1.5F, 0.0F), settings_.shadows.extent_m);
     return out;
 }
 

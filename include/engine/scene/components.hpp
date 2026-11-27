@@ -50,16 +50,11 @@ struct MeshRenderer {
 // Per-entity overrides of the scalar PBR factors the entity's MeshRenderer
 // material is drawn with (A8 material tuning); the shared material asset is
 // never modified. `mask` holds the MaterialField bits (material_override.hpp)
-// of the fields set in `values`. resolve_material_overrides() builds
-// `derived` (base material + overrides) and the renderer draws it instead of
-// the base while `base_id` still names the MeshRenderer's material.
+// of the fields set in `values`. Plain data: the derived material the renderer
+// draws is owned by a MaterialOverrideStore, not by the component.
 struct MaterialOverride {
     std::uint32_t            mask = 0;
     asset::PbrMaterialParams values{};
-    // Runtime state (not serialized).
-    asset::AssetHandle<asset::MaterialAsset> derived;
-    asset::AssetId                           base_id{};
-    std::uint64_t                            resolved = 0; // hash `derived` was built from
 };
 
 // Provenance of a MeshRenderer's assets, for scene serialization (editor save/

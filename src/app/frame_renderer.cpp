@@ -235,6 +235,7 @@ void FrameRenderer::create_frame_sync() {
 }
 
 void FrameRenderer::destroy_frame_sync() {
+    material_overrides_.clear(); // the device is idle: no frame reads them
     if (device_ == nullptr || command_pool_ == VK_NULL_HANDLE) return;
     const VkDevice vk_device = device_->handle();
     for (VkSemaphore s : render_finished_) {

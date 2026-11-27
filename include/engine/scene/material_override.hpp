@@ -13,12 +13,14 @@
 // emission (they are its component fields), so set_entity_material_field()
 // writes those to the Primitive; every other factor — and every factor of a
 // glTF / code-created material — becomes a MaterialOverride on the entity.
-// Overrides never modify the shared material asset: resolve_material_overrides()
-// uploads a derived material (content-keyed in the AssetManager, like the
-// primitives' materials) and the renderer draws it in place of the base.
+// Overrides never modify the shared material asset: a MaterialOverrideStore
+// (owned by the renderer) builds one derived material per entity — a copy of
+// the base with the overridden parameters — and the renderer draws it in place
+// of the base.
 
 #include <cstdint>
 #include <expected>
+#include <memory>
 #include <optional>
 #include <span>
 #include <string_view>
@@ -103,37 +105,77 @@ void clear_material_override_field(entt::registry& registry, entt::entity entity
 [[nodiscard]] nlohmann::json encode_material_override(const MaterialOverride& overrides);
 // Every field of `params`, as encode_material_override() writes them.
 [[nodiscard]] nlohmann::json encode_material_params(const asset::PbrMaterialParams& params);
-// Reads one field's value: colours as a linear array or "#rrggbb" (sRGB),
-// range-checked. The error message names what was expected.
+// Reads one field's value: colours as a linear array or "#rrggbb" (sRGB).
+// `strict` (remote requests) rejects values outside the field's range;
+// lenient (scene files) clamps them. Wrong types are always errors; the
+// message names what was expected.
 [[nodiscard]] std::expected<glm::vec4, core::Error>
-decode_material_field(const nlohmann::json& value, const MaterialFieldInfo& field);
+decode_material_field(const nlohmann::json& value, const MaterialFieldInfo& field, bool strict);
 // The descriptor table: [{name, label, kind: "color4"|"color3"|"scalar", min,
 // max, hint, primitive_field}].
 [[nodiscard]] nlohmann::json material_fields_schema();
 // Merges `value` into `overrides`: a field with a value is overridden, a field
 // set to null is no longer overridden, absent fields are kept. `strict`
-// rejects unknown fields. Nothing changes on error.
+// rejects unknown fields and out-of-range values (lenient: ignored / clamped,
+// as for scene files). Nothing changes on error.
 [[nodiscard]] std::expected<void, core::Error>
 decode_material_override(const nlohmann::json& value, MaterialOverride& overrides, bool strict);
 
 // ---- Rendering -----------------------------------------------------------------
 
-// The material asset to draw `entity` with: its resolved MaterialOverride's
-// derived material when current, else the MeshRenderer's (null if unset).
-[[nodiscard]] const asset::MaterialAsset* drawn_material(const entt::registry& registry,
-                                                         entt::entity entity,
-                                                         const MeshRenderer& renderer);
+// Owns the derived material of every entity with a MaterialOverride: one per
+// entity, rebuilt when the overrides or the base material change. A replaced
+// material — and the material of an entity that lost its override, was
+// destroyed or belongs to a replaced scene — is retired and destroyed only
+// once no frame in flight can still read it, so the live derived materials
+// never exceed one per overridden entity plus those retired within the last
+// `frames_in_flight` frames. Main thread only; destroy (or clear()) it only
+// with the device idle.
+class MaterialOverrideStore {
+public:
+    explicit MaterialOverrideStore(std::uint32_t frames_in_flight = 2);
+    ~MaterialOverrideStore();
+    MaterialOverrideStore(MaterialOverrideStore&&) noexcept;
+    MaterialOverrideStore& operator=(MaterialOverrideStore&&) noexcept;
+    MaterialOverrideStore(const MaterialOverrideStore&) = delete;
+    MaterialOverrideStore& operator=(const MaterialOverrideStore&) = delete;
 
-// True when some MaterialOverride's derived material is missing or stale.
-// Cheap (no GPU access).
-[[nodiscard]] bool material_overrides_need_resolve(const entt::registry& registry);
+    // The material to draw `entity` with: its derived material while it is
+    // current for the entity's overrides and base material, else the
+    // MeshRenderer's (null if unset).
+    [[nodiscard]] const asset::MaterialAsset* drawn(const entt::registry& registry,
+                                                   entt::entity entity,
+                                                   const MeshRenderer& renderer) const;
 
-// (Re)builds the derived material of every stale MaterialOverride, under the
-// AssetManager key "material_override/<base id>/<override hash>" (equal
-// overrides of one base share a material). Returns the number rebuilt; an
-// upload failure is reported after every entity was processed.
-[[nodiscard]] std::expected<std::size_t, core::Error>
-resolve_material_overrides(entt::registry& registry, rhi::GpuAllocator& allocator,
-                           const rhi::TransferContext& transfer, asset::AssetManager& assets);
+    // True when resolve() has work: a derived material is missing or stale,
+    // or one belongs to an entity that no longer has an override. Cheap (no
+    // GPU access).
+    [[nodiscard]] bool needs_resolve(const entt::registry& registry) const;
+
+    // Rebuilds stale derived materials and retires the replaced and orphaned
+    // ones. `frame` numbers the frame about to be recorded (monotonic; the
+    // frame loop's presented-frame count). Returns the number rebuilt; upload
+    // failures are reported after every entity was processed (that entity
+    // draws its base material until its overrides change).
+    [[nodiscard]] std::expected<std::size_t, core::Error>
+    resolve(entt::registry& registry, rhi::GpuAllocator& allocator,
+            const rhi::TransferContext& transfer, std::uint64_t frame);
+
+    // Destroys retired materials no frame in flight can read any more: call
+    // once per frame with the number of the frame about to be recorded,
+    // after the previous frame's slot fence was waited.
+    void collect(std::uint64_t frame);
+
+    // Destroys everything now (the device must be idle).
+    void clear();
+
+    [[nodiscard]] std::size_t live_count() const;    // current derived materials
+    [[nodiscard]] std::size_t retired_count() const; // awaiting release
+
+private:
+    struct Entry;
+    struct State;
+    std::unique_ptr<State> state_;
+};
 
 } // namespace engine::scene
