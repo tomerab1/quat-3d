@@ -11,6 +11,7 @@
 
 #include <cstdint>
 #include <expected>
+#include <memory>
 #include <optional>
 #include <string>
 #include <utility>
@@ -33,6 +34,8 @@ class Scene;
 }
 
 namespace engine::editor {
+
+class BehaviorPanel;
 
 // Animation panel state owned by EditorLayer (editor state stays out of the
 // ECS).
@@ -125,7 +128,7 @@ public:
     [[nodiscard]] static std::expected<EditorLayer, core::Error>
     create(SDL_Window* window, const std::string& font_path = {});
 
-    EditorLayer() = default;
+    EditorLayer(); // out of line: BehaviorPanel is incomplete here
     ~EditorLayer();
     EditorLayer(EditorLayer&& other) noexcept;
     EditorLayer& operator=(EditorLayer&& other) noexcept;
@@ -187,6 +190,9 @@ private:
 
     AnimationPreviewState anim_state_;
     PhysicsDebugState     physics_state_;
+    // Behaviour-tree node editor (G2); created with the first frame, destroyed
+    // before the ImGui context.
+    std::unique_ptr<BehaviorPanel> behavior_panel_;
 
     int gizmo_op_ = 0; // 0 translate, 1 rotate, 2 scale (W/E/R over the viewport)
 

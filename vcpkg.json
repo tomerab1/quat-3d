@@ -34,6 +34,7 @@
       ]
     },
     "imguizmo",
+    "imgui-node-editor",
     "recastnavigation",
     "gamenetworkingsockets",
     "miniaudio",
