@@ -344,10 +344,12 @@ endif()
 # the frame loop pieces moving out of main.cpp); it is not an engine library.
 add_executable(game
     src/main.cpp
-    src/app/demo_scenes.cpp)
+    src/app/demo_scenes.cpp
+    src/app/nav_bake.cpp
+    src/app/remote_bridge.cpp)
 target_link_libraries(game PRIVATE
     engine_flags engine_rhi engine_asset engine_scene engine_renderer engine_physics
-    engine_terrain engine_nav engine_net engine_remote SDL3::SDL3)
+    engine_terrain engine_nav engine_net engine_remote engine_remote_world SDL3::SDL3)
 if(ENGINE_EDITOR)
     target_link_libraries(game PRIVATE engine_editor)
 endif()

@@ -12,8 +12,8 @@ quat-mcp  (Rust, tools/quat-mcp — planned, ROADMAP A4)
 engine_remote inside the running engine (src/remote/)
 ```
 
-The engine side exists today (ROADMAP A1); the world-building commands (A2,
-A3) and the Rust MCP server (A4) are next. This page documents the engine
+The engine side exists today: the transport (ROADMAP A1) and the
+world-building commands (A2, A3). The Rust MCP server (A4) is next. This page documents the engine
 protocol so either side can be built and tested independently.
 
 ## Starting the endpoint
@@ -53,13 +53,61 @@ token, `session.hello` is optional (it still reports the protocol version).
 
 ## Methods (implemented)
 
+Everything in the v1 contract below is implemented (`src/remote/world/`,
+wired into the game by `src/app/remote_bridge.cpp`), plus:
+
 | Method | Params | Result |
 |---|---|---|
 | `session.hello` | `{token?}` | `{protocol, server, methods}` |
 | `rpc.methods` | — | `[{name, summary, deferred}]` |
 | `engine.info` | — | `{engine, frame, entities, playing, editor}` |
 
-## Methods (v1 contract — being implemented, ROADMAP A2/A3)
+`rpc.methods` lists every registered method with a one-line summary.
+Details the contract leaves open, as implemented:
+
+- **Entity ids** are entt identifiers including the version bits, so an id
+  of a destroyed entity never refers to a later one (`not_found`).
+- **Atomic edits.** `scene.create` / `scene.update` validate every component
+  on a scratch copy first: any bad field fails the whole call and changes
+  nothing. Edits update world transforms immediately (a following
+  `scene.get` / `camera.frame` in the same frame sees them).
+- **`scene.batch`**: `"@N"` is 0-based (the index in `commands`) and resolves
+  to that command's `id` (or the single entry of `asset.spawn_model`'s
+  `roots`); it is substituted in the top-level `entity` / `parent` params
+  only. The batch's shape is validated before anything runs. `results` always
+  has one entry per command; with `stop_on_error` the commands after the
+  first failure are reported as `{ok:false, error:{code:-32004, message:"not
+  run: ..."}}`. Batches cannot nest; edits are not rolled back.
+- **`scene.clear`** with `keep_lights` keeps entities carrying `dir_light` or
+  `point_light`, detached to the root at their world placement.
+- **`environment.get`**: `sun` is `null` when the scene has no directional
+  light (`environment.set {sun}` then creates one named `sun`); `clouds` is
+  `null` when the engine has no cloud control (no editor layer).
+  `sun.color` accepts linear `[r,g,b]` (may exceed 1) or `"#rrggbb"`.
+- **Camera angles**: `yaw_deg` is the heading in the XZ plane from +X toward
+  +Z (forward = `(cos p cos y, sin p, cos p sin y)`), `pitch_deg` is positive
+  looking up, clamped to ±89. `camera.set` takes `look_at` *or*
+  yaw/pitch. `camera.frame` keeps the heading, looks down at least 20° and
+  backs off until the bounding sphere of what the entity (and its children)
+  draws fits the vertical field of view.
+- **`render.screenshot`** captures the scene view (the editor viewport
+  without UI, else the window), copied on the GPU into a per-frame readback
+  buffer that is read after that frame's fence — no stall — then downscaled
+  (area filter in linear light) and PNG-encoded off the main thread. At most
+  8 may be in flight.
+- **Paths** (`scene.save/load`, `asset.spawn_model`) must be relative to the
+  project root; absolute paths, `..` escapes and symlinks leading out are
+  refused. `scene.save` writes only `.json` and refuses to overwrite a file
+  that is not a scene file; save and load refuse while playing.
+- **`asset.list_models`** lists `.gltf`/`.glb` under `assets/`.
+  **`asset.spawn_model`**: a model with several root nodes is grouped under a
+  new entity (named `name`, else the file stem) when `name`, `parent` or
+  `components` are given, so they apply to the model as a whole.
+- **`sim.play` / `sim.stop`** toggle the editor's play mode (the transition
+  runs later that frame); `unavailable` without the editor or in the physics
+  / character demo modes, which own their physics world.
+
+## Methods (v1 contract, ROADMAP A2/A3)
 
 This is the agreed contract between the engine (`src/remote/`) and the MCP
 server (`tools/quat-mcp`). Change it here first if either side needs a

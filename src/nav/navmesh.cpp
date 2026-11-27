@@ -32,6 +32,7 @@ struct NavMesh::Impl {
     std::unique_ptr<dtNavMesh, NavMeshDeleter>      mesh;
     std::unique_ptr<dtNavMeshQuery, QueryDeleter>   query;
     std::vector<std::pair<glm::vec3, glm::vec3>>    edges;
+    std::size_t                                     polygons = 0;
 };
 
 NavMesh::NavMesh() = default;
@@ -40,6 +41,8 @@ NavMesh& NavMesh::operator=(NavMesh&&) noexcept = default;
 NavMesh::~NavMesh() = default;
 
 bool NavMesh::valid() const { return impl_ != nullptr && impl_->mesh != nullptr; }
+
+std::size_t NavMesh::polygon_count() const { return valid() ? impl_->polygons : 0; }
 
 const std::vector<std::pair<glm::vec3, glm::vec3>>& NavMesh::debug_edges() const {
     static const std::vector<std::pair<glm::vec3, glm::vec3>> empty;
@@ -208,6 +211,7 @@ std::expected<NavMesh, core::Error> NavMesh::build(std::span<const glm::vec3> ve
 
     NavMesh out;
     out.impl_ = std::make_unique<Impl>();
+    out.impl_->polygons = static_cast<std::size_t>(pmesh->npolys);
 
     // Editor overlay: polygon edges in world space (quantized verts -> world).
     const glm::vec3 pb(pmesh->bmin[0], pmesh->bmin[1], pmesh->bmin[2]);

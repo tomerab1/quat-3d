@@ -32,6 +32,11 @@ public:
     // Non-null only when the buffer was created persistently mapped.
     [[nodiscard]] void* mapped() const { return mapped_; }
 
+    // Makes device writes visible to host reads through mapped() (a no-op on
+    // host-coherent memory). Call after the GPU work that wrote the buffer
+    // has completed (fence waited) and before reading it.
+    [[nodiscard]] std::expected<void, core::Error> invalidate_mapped() const;
+
 private:
     friend class GpuAllocator;
     void destroy() noexcept;

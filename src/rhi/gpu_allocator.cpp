@@ -120,6 +120,15 @@ void GpuBuffer::destroy() noexcept {
     mapped_ = nullptr;
 }
 
+std::expected<void, core::Error> GpuBuffer::invalidate_mapped() const {
+    if (buffer_ == VK_NULL_HANDLE || allocator_ == nullptr) return fail("invalidate: no buffer");
+    if (const VkResult r = vmaInvalidateAllocation(allocator_, allocation_, 0, VK_WHOLE_SIZE);
+        r != VK_SUCCESS) {
+        return fail(std::format("vmaInvalidateAllocation failed ({})", static_cast<int>(r)));
+    }
+    return {};
+}
+
 GpuBuffer::~GpuBuffer() { destroy(); }
 
 GpuBuffer::GpuBuffer(GpuBuffer&& other) noexcept { *this = std::move(other); }
