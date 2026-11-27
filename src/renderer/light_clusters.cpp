@@ -32,6 +32,19 @@ GpuLight make_point_light(const glm::vec3& position, float range, const glm::vec
     return l;
 }
 
+GpuLight make_spot_light(const glm::vec3& position, const glm::vec3& direction, float range,
+                         float inner_cone, float outer_cone, const glm::vec3& color,
+                         float intensity) {
+    GpuLight l = make_point_light(position, range, color, intensity);
+    l.type = static_cast<std::uint32_t>(LightType::spot);
+    l.direction = glm::normalize(direction);
+    const float cos_outer = std::cos(outer_cone);
+    const float cos_inner = std::max(std::cos(inner_cone), cos_outer);
+    const float scale = 1.0F / std::max(cos_inner - cos_outer, 1e-4F);
+    l.spot_scale_offset = glm::vec4(scale, -cos_outer * scale, 0.0F, 0.0F);
+    return l;
+}
+
 std::expected<ClusterParams, core::Error>
 make_cluster_params(const glm::mat4& view, const glm::mat4& proj, std::uint32_t light_count) {
     // A right-handed perspective projection writes -z_view into clip w:

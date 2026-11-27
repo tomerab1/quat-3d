@@ -24,10 +24,13 @@ constexpr VkShaderStageFlags kMaterialStages = VK_SHADER_STAGE_FRAGMENT_BIT;
 
 // Material (uniform params at 0, five textures at 1..5, sampler at 6), the
 // scene-colour mip chain at 7 + its sampler at 8 (glass transmission), the
-// IBL maps at 9..12 (environment reflection on glass), and the volume
-// thickness texture at 13.
-[[nodiscard]] std::array<rhi::DescriptorBinding, 14> material_bindings() {
+// IBL maps at 9..12 (environment reflection on glass), the volume
+// thickness texture at 13 and the clustered lights at 14..17.
+constexpr std::uint32_t kClusterBinding = 14;
+
+[[nodiscard]] std::array<rhi::DescriptorBinding, 18> material_bindings() {
     using rhi::DescriptorBinding;
+    const auto clusters = clustered_light_bindings(kClusterBinding, kMaterialStages);
     return {{
         {0, 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, kMaterialStages},
         {0, 1, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, kMaterialStages},
@@ -43,6 +46,7 @@ constexpr VkShaderStageFlags kMaterialStages = VK_SHADER_STAGE_FRAGMENT_BIT;
         {0, 11, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, kMaterialStages},
         {0, 12, VK_DESCRIPTOR_TYPE_SAMPLER, 1, kMaterialStages},
         {0, 13, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, kMaterialStages},
+        clusters[0], clusters[1], clusters[2], clusters[3],
     }};
 }
 
@@ -168,6 +172,10 @@ TransparentPass::create(const rhi::Device& device, rhi::GpuAllocator& allocator,
     if (!fallback_ibl) return std::unexpected(fallback_ibl.error());
     out.fallback_ibl_ = std::move(*fallback_ibl);
 
+    auto empty = EmptyLightClusters::create(device, allocator);
+    if (!empty) return std::unexpected(empty.error());
+    out.empty_lights_ = std::move(*empty);
+
     return out;
 }
 
@@ -210,7 +218,7 @@ TransparentPass::add_to_graph(rhi::RenderGraph& graph, rhi::ResourceHandle hdr,
                               rhi::ResourceHandle depth, VkExtent2D extent,
                               const glm::mat4& view_proj, const DirectionalLightParams& light,
                               const glm::vec3& camera_pos, std::span<const DrawItem> draws,
-                              IblViewSet ibl) {
+                              IblViewSet ibl, const ClusteredLights& lights) {
     frame_descriptors_.clear();
     frame_draws_.clear();
 
@@ -218,6 +226,8 @@ TransparentPass::add_to_graph(rhi::RenderGraph& graph, rhi::ResourceHandle hdr,
 
     // Non-owning view set; falls back to the member black maps when empty.
     const IblViewSet maps = ibl.valid() ? ibl : fallback_ibl_.views();
+    const ClusteredLightBuffers cluster_buffers =
+        lights.valid() ? lights.buffers : empty_lights_.buffers();
 
     bool any_transmissive = false;
     for (const DrawItem& d : draws) {
@@ -242,6 +252,7 @@ TransparentPass::add_to_graph(rhi::RenderGraph& graph, rhi::ResourceHandle hdr,
         db->write_sampled_image(11, maps.brdf_lut, ro);
         db->write_sampler(12, maps.sampler);
         db->write_sampled_image(13, texture_view_or_fallback(mat.textures.thickness), ro);
+        write_clustered_light_descriptors(*db, kClusterBinding, cluster_buffers);
 
         FrameDraw fd;
         fd.vertex_buffer = d.skinned_vertices != VK_NULL_HANDLE ? d.skinned_vertices
@@ -361,6 +372,8 @@ TransparentPass::add_to_graph(rhi::RenderGraph& graph, rhi::ResourceHandle hdr,
     if (any_transmissive) {
         pass.reads(scene_handle, rhi::ResourceUsage::sampled);
     }
+    // Cluster lists written by the cull compute pass, read per fragment.
+    read_clustered_lights(pass, lights, rhi::ResourceUsage::buffer_read_fragment);
     pass.execute([this, hdr, depth, extent, push](rhi::PassContext& ctx) {
         const VkCommandBuffer cmd = ctx.cmd();
         const rhi::ResourceBinding color = ctx.resolve(hdr);

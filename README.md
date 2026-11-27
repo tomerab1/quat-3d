@@ -18,6 +18,7 @@ drive directly to build and debug worlds from a prompt.
 
 **Rendering**
 - Deferred physically based shading with cascaded shadow maps and clustered point lights
+  (GPU light culling into view-space froxels, up to 4096 lights per frame)
 - Glass and transparency (refraction, absorption, IOR), clearcoat car paint
 - Physically based sky with volumetric clouds and a moving sun
 - Image-based lighting that keeps up with the sky in real time

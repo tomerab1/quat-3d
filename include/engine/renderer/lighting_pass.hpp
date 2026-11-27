@@ -3,8 +3,10 @@
 // LightingPass — deferred lighting (Phase 3, Slice 3.6).
 //
 // A fullscreen compute pass that consumes the GBuffer produced by MeshPass,
-// applies a single directional light plus flat ambient (lighting.slang), and
-// writes a linear HDR colour image. The tonemap pass (3.7) reads that HDR image.
+// applies the directional light, the clustered punctual lights (R10.1: each
+// pixel loops only over its froxel's light list, built by LightCullPass) and
+// image-based / flat ambient (lighting.slang), and writes a linear HDR colour
+// image. The tonemap pass (3.7) reads that HDR image.
 
 #include <cstdint>
 #include <expected>
@@ -17,6 +19,7 @@
 #include "engine/core/error.hpp"
 #include "engine/renderer/cloud_settings.hpp"
 #include "engine/renderer/ibl_pass.hpp"
+#include "engine/renderer/light_cull_pass.hpp"
 #include "engine/renderer/mesh_pass.hpp"
 #include "engine/rhi/compute_pipeline.hpp"
 #include "engine/rhi/descriptor_buffer.hpp"
@@ -42,16 +45,6 @@ struct DirectionalLightParams {
 };
 static_assert(sizeof(DirectionalLightParams) == 48, "must match lighting.slang LightParams");
 
-// One point light, GPU layout (matches PointLight in lighting.slang).
-struct PointLightGpu {
-    glm::vec4 position_radius{0.0F, 0.0F, 0.0F, 10.0F}; // xyz position, w radius
-    glm::vec4 color_intensity{1.0F, 1.0F, 1.0F, 1.0F};  // rgb colour, w intensity
-};
-static_assert(sizeof(PointLightGpu) == 32, "must match lighting.slang PointLight");
-
-// Maximum point lights uploaded per frame.
-inline constexpr std::uint32_t max_point_lights = 64;
-
 class LightingPass {
 public:
     [[nodiscard]] static std::expected<LightingPass, core::Error>
@@ -72,6 +65,8 @@ public:
     // `shadow_map` is the directional shadow depth map sampled for shadowing, with
     // `light_view_proj` mapping world space into it; pass an invalid handle (and
     // any matrix) to disable shadows.
+    // `lights` is this frame's LightCullPass output (point/spot lights); the
+    // default (invalid) set lights with the directional light + ambient only.
     // `atmosphere_skyview`/`atmosphere_transmittance` (Phase 11.1): when both
     // are set and the sky is enabled, the background uses the physically-based
     // sky-view LUT and the sun is transmittance-tinted; otherwise the
@@ -81,7 +76,7 @@ public:
     add_to_graph(rhi::RenderGraph& graph, const GBufferTargets& gbuffer, VkExtent2D extent,
                  const DirectionalLightParams& light, const glm::mat4& inv_view_proj,
                  const glm::vec3& camera_pos, rhi::ResourceHandle shadow_map,
-                 const glm::mat4& light_view_proj, std::span<const PointLightGpu> point_lights = {},
+                 const glm::mat4& light_view_proj, const ClusteredLights& lights = {},
                  bool enable_sky = false, IblViewSet ibl = {},
                  VkImageView atmosphere_skyview = VK_NULL_HANDLE,
                  VkImageView atmosphere_transmittance = VK_NULL_HANDLE,
@@ -96,8 +91,7 @@ private:
     rhi::ComputePipeline           pipeline_;
     rhi::Sampler                   shadow_sampler_; // samples the shadow map
 
-    rhi::GpuBuffer  point_light_buffer_;     // host-visible, holds up to max_point_lights
-    VkDeviceAddress point_light_address_ = 0;
+    EmptyLightClusters empty_lights_; // bound when no clustered lights are supplied
 
     IblMaps fallback_ibl_; // bound at 8-11 when no real IBL maps are supplied
 
@@ -111,13 +105,6 @@ private:
 run_lighting_pass_self_test(const rhi::Device& device, rhi::GpuAllocator& allocator,
                             rhi::PipelineCache& cache, const rhi::TransferContext& transfer,
                             const std::string& cooked_shader_dir);
-
-// Lights a surface with only a point light (directional + ambient off) and
-// verifies it is lit within the light's radius and dark beyond it.
-[[nodiscard]] std::expected<void, core::Error>
-run_point_light_self_test(const rhi::Device& device, rhi::GpuAllocator& allocator,
-                          rhi::PipelineCache& cache, const rhi::TransferContext& transfer,
-                          const std::string& cooked_shader_dir);
 
 // Bakes IBL and lights a smooth metal with the direct light off: the surface is
 // lit purely by the environment reflection, so it must be non-black and sky-

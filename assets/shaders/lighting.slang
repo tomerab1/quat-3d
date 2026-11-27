@@ -7,8 +7,11 @@
 // colour. World position is reconstructed from depth via the inverse view-proj,
 // giving the per-pixel view vector specular needs. The material target's alpha is
 // the coverage mask (1 where geometry was rasterised, 0 for background).
+// Point/spot lights are clustered (R10.1): each pixel loops only over the light
+// list of the froxel it falls in, built by the light_cull compute pass.
 
 import atmosphere;
+import clustered_lights;
 import sky;
 
 static const float PI = 3.14159265358979;
@@ -35,11 +38,6 @@ struct LightParams {
 }
 [[vk::push_constant]] LightParams pc;
 
-struct PointLight {
-    float4 position_radius; // xyz = world position, w = radius
-    float4 color_intensity; // rgb = colour, w = intensity
-}
-
 [[vk::binding(0)]] Texture2D                  g_albedo;
 [[vk::binding(1)]] Texture2D                  g_normal;
 [[vk::binding(2)]] Texture2D                  g_material;
@@ -47,7 +45,7 @@ struct PointLight {
 [[vk::binding(4)]] RWTexture2D<float4>        g_hdr;
 [[vk::binding(5)]] Texture2D                  g_shadow;
 [[vk::binding(6)]] SamplerState               g_shadow_sampler;
-[[vk::binding(7)]] StructuredBuffer<PointLight> g_point_lights; // pc.ambient.w entries
+// Binding 7 is unused (it held the pre-R10.1 flat point-light list).
 
 // Split-sum IBL maps (precomputed once in ibl_pass.cpp): diffuse irradiance cube,
 // prefiltered specular cube (roughness -> mip), and the BRDF integration LUT.
@@ -59,6 +57,11 @@ struct PointLight {
 // Atmosphere LUTs (Phase 11.1; bound to fallbacks when pc.direction.w < 2).
 [[vk::binding(13)]] Texture2D    g_skyview;
 [[vk::binding(14)]] Texture2D    g_transmittance_lut;
+// Clustered lights (light_cull.slang output; dims.w = 0 when there are none).
+[[vk::binding(15)]] ConstantBuffer<ClusterParams> g_cluster_params;
+[[vk::binding(16)]] StructuredBuffer<GpuLight>    g_lights;
+[[vk::binding(17)]] StructuredBuffer<uint2>       g_cluster_grid;    // offset, count
+[[vk::binding(18)]] StructuredBuffer<uint>        g_cluster_indices;
 
 // Schlick Fresnel with a roughness term, for the ambient/environment specular
 // (the view-independent IBL term, unlike the per-light f_schlick).
@@ -185,12 +188,6 @@ float3 layer_clearcoat_ibl(float3 base, float3 N, float3 V, float cc, float ccr)
     return base * (1.0 - cc * coat_fresnel(ndotv)) + cc * coat;
 }
 
-// Smooth radius-limited falloff (windowed inverse-square).
-float point_attenuation(float dist, float radius) {
-    float t = saturate(1.0 - pow(dist / radius, 4.0));
-    return t * t / (dist * dist + 1.0);
-}
-
 // Fraction of the directional light reaching `world_pos` (1 = lit, 0 = shadowed),
 // 3x3 PCF over the shadow map. Returns 1 when shadows are disabled or the point
 // falls outside the map.
@@ -300,20 +297,19 @@ void compute_main(uint3 tid : SV_DispatchThreadID) {
     float3 sun    = surface_brdf(n, v, ldir, albedo.rgb, metallic, roughness);
     float3 color  = layer_clearcoat_direct(sun, n, v, ldir, cc, ccr) * sun_radiance * shadow;
 
-    // Point lights (no shadows).
-    uint light_count = uint(pc.ambient.w);
-    for (uint i = 0; i < light_count; ++i) {
-        PointLight pl = g_point_lights[i];
-        float3 to = pl.position_radius.xyz - world_pos;
-        float dist = length(to);
-        if (dist >= pl.position_radius.w) {
-            continue;
+    // Clustered point/spot lights (no shadows): only this pixel's froxel list.
+    if (g_cluster_params.dims.w > 0) {
+        uint2 range = g_cluster_grid[cluster_index_of_world(g_cluster_params, world_pos)];
+        for (uint k = 0; k < range.y; ++k) {
+            GpuLight light = g_lights[g_cluster_indices[range.x + k]];
+            float3 lp;
+            float3 radiance;
+            if (!light_incident(light, world_pos, lp, radiance)) {
+                continue;
+            }
+            float3 base = surface_brdf(n, v, lp, albedo.rgb, metallic, roughness);
+            color += layer_clearcoat_direct(base, n, v, lp, cc, ccr) * radiance;
         }
-        float3 lp = to / max(dist, 1e-4);
-        float att = point_attenuation(dist, pl.position_radius.w);
-        float3 base = surface_brdf(n, v, lp, albedo.rgb, metallic, roughness);
-        color += layer_clearcoat_direct(base, n, v, lp, cc, ccr) *
-                 pl.color_intensity.rgb * pl.color_intensity.w * att;
     }
 
     // Ambient: image-based lighting when the environment is enabled (same flag as

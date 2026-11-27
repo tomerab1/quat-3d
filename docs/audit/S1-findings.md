@@ -51,7 +51,7 @@ static body emplace; Recast cleanup on failure; Jolt layer filters.
 | A12 | M | Per-slot skinning GPU buffers never released for deleted entities / scene loads | `main.cpp` `skin_gpu` | open |
 | A13 | M | Normals/tangents transformed by the model 3x3 (wrong under non-uniform scale; tangent sign under mirroring) | `gbuffer.slang` | open |
 | A14 | M | TAA reprojects with jittered matrices → resampling blur + swimming | `main.cpp`, `taa.slang` | open (with A1/A2) |
-| A16 | M | "Clustered" point lights (Phase 7.2) are a flat per-pixel loop over all lights (max 64): cost scales with scene lights, no clustering | `lighting.slang`, `lighting_pass.cpp` | open → R10.1 |
+| A16 | M | "Clustered" point lights (Phase 7.2) are a flat per-pixel loop over all lights (max 64): cost scales with scene lights, no clustering | `lighting.slang`, `lighting_pass.cpp` | fixed (R10.1, pending CI): `light_cull` compute pass bins up to 4096 lights into 16×9×24 froxels; deferred + transparent passes read only their cluster list |
 | A15 | L | Mapped host buffers written without flush/coherence check; pipelines duplicated per frame slot | `gpu_allocator.cpp`, `descriptor_buffer.cpp`, `main.cpp` | open (plausible) |
 
 Checked and found sound: fence/acquire ordering and per-image semaphores,

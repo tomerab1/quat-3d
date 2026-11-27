@@ -71,6 +71,13 @@ static_assert(sizeof(GpuLight) == 64, "must match clustered_lights.slang GpuLigh
 [[nodiscard]] GpuLight make_point_light(const glm::vec3& position, float range,
                                         const glm::vec3& color, float intensity);
 
+// A spot light pointing along `direction` with full intensity inside
+// `inner_cone` and none outside `outer_cone` (half-angles in radians,
+// KHR_lights_punctual semantics; inner is clamped below outer).
+[[nodiscard]] GpuLight make_spot_light(const glm::vec3& position, const glm::vec3& direction,
+                                       float range, float inner_cone, float outer_cone,
+                                       const glm::vec3& color, float intensity);
+
 // Per-frame cluster parameters, uniform-buffer layout (std140, 240 bytes;
 // mirrors ClusterParams in clustered_lights.slang). Matrices are glm
 // column-major (the shader reads them as four column vectors).
