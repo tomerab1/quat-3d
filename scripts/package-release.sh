@@ -118,9 +118,10 @@ with open(dst, "w") as f:
 PY
 
   chmod u+w "$contents"/Frameworks/*.dylib
-  # Drop the existing (linker / Homebrew ad-hoc) signatures before rewriting
-  # load commands; everything is re-signed below.
-  codesign --remove-signature "$contents/MacOS/game" "$contents"/Frameworks/*.dylib
+  # install_name_tool warns that this invalidates the existing ad-hoc
+  # signatures; everything is re-signed below. (Stripping the signatures
+  # first is not an option: codesign --remove-signature leaves a __LINKEDIT
+  # layout install_name_tool refuses to edit.)
   install_name_tool -id @rpath/libvulkan.1.dylib "$contents/Frameworks/libvulkan.1.dylib"
   install_name_tool -id @rpath/libMoltenVK.dylib "$contents/Frameworks/libMoltenVK.dylib"
   old=$(otool -L "$contents/MacOS/game" | awk '/libvulkan/ && !done { print $1; done = 1 }')

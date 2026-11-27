@@ -26,6 +26,16 @@ into CLAUDE.md or the brief template in [`CYCLE.md`](CYCLE.md).
 
 ## Build and CI
 
+- **Release packaging (P4) gotchas.** Explicit `shell: bash` steps run with
+  `-eo pipefail` (the default macOS/Linux shell does not), so `ls a b | head`
+  lookups and early-exiting `awk` readers fail scripts there; Git Bash on
+  Windows has no `/dev/stderr`. Linux packages must ship libc++ (not
+  installed by default) with RUNPATH `$ORIGIN/lib` on the game *and*
+  `$ORIGIN` on the bundled libs (RUNPATH is not transitive). Homebrew
+  bottles carry the runner's macOS as `minos` — the .app's minimum OS is
+  computed from all bundled binaries, not assumed. A packaged smoke test only
+  proves relocation if the binary has no build-tree fallback
+  (`ENGINE_PACKAGE_BUILD=ON`) and, on macOS, Homebrew's Vulkan is removed.
 - **Windows/macOS CI (S4) needed no source fixes** — the tree was already
   conversion-clean (clang `-Wshorten-64-to-32 -Wimplicit-*-conversion` is a
   good local proxy for MSVC's C4244/C4267). Handled up front, then verified
