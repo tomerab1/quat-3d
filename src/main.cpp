@@ -35,6 +35,7 @@
 #include "app/fly_camera.hpp"
 #include "app/nav_bake.hpp"
 #include "app/remote_bridge.hpp"
+#include "app/world_runtime.hpp"
 #include "engine/animation/animator.hpp"
 #include "engine/animation/clip.hpp"
 #include "engine/animation/skeleton.hpp"
@@ -347,7 +348,6 @@ int main() {
     bool play_use_scene_camera = false; // menu-bar "Game camera" checkbox
     bool editor_play_prev = false;
     std::optional<engine::editor::SceneSnapshot> play_snapshot;
-    std::optional<engine::physics::PhysicsWorld> play_physics;
     const bool editor_enabled = std::getenv("QUAT_NO_UI") == nullptr;
     if (editor_enabled) {
         if (auto e = engine::editor::EditorLayer::create(
@@ -464,17 +464,10 @@ int main() {
     // spinning demo cube stands in.
     engine::asset::AssetManager assets;
     engine::scene::Scene scene;
-    auto demo_result = quat::app::build_demo_scene(scene, assets, allocator, setup_transfer);
-    const bool scene_ok = demo_result.has_value();
-    quat::app::DemoScene demo = scene_ok ? std::move(*demo_result) : quat::app::DemoScene{};
-    // The frame loop below refers to these by their historical names.
-    entt::entity& spin_entity = demo.spin_entity;
-    glm::vec3& spin_pos = demo.spin_pos;
-    float& spin_scale = demo.spin_scale;
-    std::optional<engine::physics::PhysicsWorld>& physics_world = demo.physics_world;
-    const bool physics_mode = demo.physics_mode;
-    const bool character_mode = demo.character_mode;
-    entt::entity& character_entity = demo.character_entity;
+    quat::app::WorldRuntime world;
+    const bool scene_ok = world.build_scene(scene, assets, allocator, setup_transfer);
+    const bool physics_mode = world.physics_mode();
+    const bool character_mode = world.character_mode();
 
     vkDestroyCommandPool(vk_device, setup_pool, nullptr);
 
@@ -483,7 +476,7 @@ int main() {
         return 1;
     }
 
-    quat::app::add_default_lighting(scene, !demo.from_gltf);
+    quat::app::add_default_lighting(scene, !world.from_gltf());
     // Physically-based atmosphere (Phase 11.1): static transmittance/multi-
     // scatter LUTs now, sky-view LUT refreshed whenever the sun moves. The
     // procedural sky remains the fallback if creation fails.
@@ -548,66 +541,11 @@ int main() {
         }
     }
 
-    // Terrain (Phase 12): the pass owns the heightmap texture + LOD index
-    // buffers; the frame loop generates async whenever a Terrain component
-    // asks and uploads the result here. Uploads need a transfer pool that
-    // outlives setup (setup_pool is destroyed after scene construction).
-    VkCommandPool terrain_pool = VK_NULL_HANDLE;
-    {
-        VkCommandPoolCreateInfo info{};
-        info.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
-        info.flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT;
-        info.queueFamilyIndex = device.queue_families().graphics;
-        vkCreateCommandPool(vk_device, &info, nullptr, &terrain_pool);
-    }
-    const engine::rhi::TransferContext terrain_transfer{vk_device, terrain_pool,
-                                                        device.graphics_queue(),
-                                                        device.max_sampler_anisotropy()};
-    engine::renderer::TerrainPass terrain_pass;
-    if (auto tp = engine::renderer::TerrainPass::create(device, allocator, *pipeline_cache,
-                                                        terrain_transfer, shader_dir);
-        tp) {
-        terrain_pass = std::move(*tp);
-    } else {
-        std::fprintf(stderr, "[warn] terrain pass create failed: %s\n", tp.error().message.c_str());
-    }
-    std::future<engine::terrain::Heightmap> terrain_job;
-    engine::terrain::Heightmap terrain_heightmap; // CPU copy retained for physics (12.3)
-    std::optional<engine::terrain::TerrainStreamer> terrain_streamer; // 12.4
-    // Terrain placement, written by the per-frame upkeep block and read at the
-    // top of the next frame by the nav ground snap (the anchor moves rarely).
-    glm::vec3 terrain_anchor(0.0F);
-    float terrain_snowline = 110.0F;
-    bool terrain_present = false;
-    bool terrain_stream_mode = false;
-    engine::nav::NavMesh navmesh;        // baked on request from the Physics panel (13.1)
-    bool navmesh_request = false;
-    bool navmesh_auto_bake = false;      // armed: bake once if Play has agents and no mesh
-    std::string navmesh_status;          // last bake / invalidation, for the Physics panel
-    // A navmesh describes the geometry it was baked from: drop it when that
-    // changes (scene load, terrain regeneration) and re-arm the auto-bake.
-    const auto invalidate_navmesh = [&](const char* why) {
-        navmesh_auto_bake = true;
-        if (!navmesh.valid()) return;
-        navmesh = {};
-        navmesh_status = std::string("cleared: ") + why + " (rebake)";
-        std::fprintf(stderr, "[nav] navmesh cleared: %s\n", why);
-    };
+    // Terrain, navmesh, networking (QUAT_HOST / QUAT_JOIN) and QUAT_TERRAIN.
+    world.init(device, allocator, *pipeline_cache, shader_dir, scene);
 #ifdef ENGINE_EDITOR
     std::optional<engine::editor::EditorContext::GroundClick> ground_click; // 13.4
 #endif
-
-    // Networking (Phase 14; S1 B1-B5): QUAT_HOST=<port> hosts this scene,
-    // QUAT_JOIN=<ip:port> joins a host running the same scene. See
-    // engine/net/session.hpp for the per-frame protocol.
-    engine::net::NetSession net = engine::net::NetSession::from_environment(scene.registry());
-    std::map<glm::ivec2, std::uint32_t, engine::terrain::TileCoordLess>
-        terrain_bodies; // streamed tiles' play-mode physics bodies
-
-    // QUAT_TERRAIN=1: drop a procedural terrain tile under the showcase scene
-    // (sunken so its mid heights sit near the platform) — exercises the full
-    // async generate -> upload -> chunked LOD draw path without the editor.
-    quat::app::add_env_terrain(scene);
 
     // Free-fly view camera, seeded by framing the scene (see fly_camera.hpp).
     quat::app::FlyCamera camera = quat::app::FlyCamera::create(scene, physics_mode);
@@ -688,34 +626,6 @@ int main() {
     bool needs_recreate = false;
     std::uint64_t last_ticks = SDL_GetTicksNS();
 
-    // Authoritative ground height at world (x, z): streamed tiles first,
-    // then the single editing tile. Shared by kinematic nav agents (the
-    // coarse navmesh floats off the real surface) and ground clicks.
-    const engine::scene::GroundHeightFn ground_height_at =
-        [&](float x, float z) -> std::optional<float> {
-        if (terrain_streamer) {
-            const float tile = terrain_streamer->base().tile_size_m;
-            const glm::ivec2 coord(
-                static_cast<int>(std::floor((x - terrain_anchor.x) / tile + 0.5F)),
-                static_cast<int>(std::floor((z - terrain_anchor.z) / tile + 0.5F)));
-            const auto it = terrain_streamer->maps().find(coord);
-            if (it == terrain_streamer->maps().end()) return std::nullopt;
-            const glm::vec3 org = terrain_streamer->tile_origin(coord, terrain_anchor);
-            return org.y + it->second.sample(x - org.x, z - org.z);
-        }
-        if (terrain_present && terrain_heightmap.valid()) {
-            const float half = terrain_heightmap.tile_size_m * 0.5F;
-            const float lx = x - (terrain_anchor.x - half);
-            const float lz = z - (terrain_anchor.z - half);
-            if (lx < 0.0F || lz < 0.0F || lx > terrain_heightmap.tile_size_m ||
-                lz > terrain_heightmap.tile_size_m) {
-                return std::nullopt;
-            }
-            return terrain_anchor.y + terrain_heightmap.sample(lx, lz);
-        }
-        return std::nullopt;
-    };
-
     // Remote control (ROADMAP A2/A3): QUAT_REMOTE=<port> opens the loopback
     // JSON-RPC endpoint the quat-mcp bridge talks to (QUAT_REMOTE_TOKEN
     // requires session.hello). The bridge also resolves Primitive components
@@ -730,21 +640,16 @@ int main() {
     remote_targets.cam_yaw = &camera.yaw;
     remote_targets.cam_pitch = &camera.pitch;
     remote_targets.cam_fov_y = &camera.fov_y;
-    remote_targets.ground_height = &ground_height_at;
-    remote_targets.terrain_streamer = &terrain_streamer;
-    remote_targets.terrain_heightmap = &terrain_heightmap;
-    remote_targets.terrain_anchor = &terrain_anchor;
-    remote_targets.navmesh = &navmesh;
-    remote_targets.spin_entity = &spin_entity;
+    world.fill_remote_targets(remote_targets);
 #ifdef ENGINE_EDITOR
     remote_targets.editor = &editor;
     remote_targets.render_settings = &render_settings;
-    remote_targets.play = physics_world ? nullptr : &editor_play; // demo modes own physics
+    remote_targets.play = world.has_demo_physics() ? nullptr : &editor_play; // demo modes own physics
 #endif
     remote_targets.project_root = QUAT_PROJECT_ROOT;
     quat::app::RemoteBridge remote_bridge(std::move(remote_targets), k_frames_in_flight);
 
-    quat::app::AudioRuntime audio_runtime = quat::app::AudioRuntime::create(QUAT_PROJECT_ROOT);
+    world.init_audio(QUAT_PROJECT_ROOT);
 
     while (running) {
         camera.begin_input(); // per-frame accumulated mouse-look delta
@@ -800,48 +705,18 @@ int main() {
                 // a static body (kinematic on nav agents, none on characters).
                 // Added AFTER the snapshot, so Stop removes it.
                 (void)engine::scene::promote_collider_only_bodies(scene.registry());
-                if (auto world = engine::physics::PhysicsWorld::create(); world) {
-                    play_physics = std::move(*world);
-                    // Terrain joins the simulation as static Jolt height
-                    // fields matching the rendered surface (12.3/12.4).
-                    if (terrain_streamer) {
-                        glm::vec3 anchor(0.0F);
-                        for (auto&& [te2, t2] :
-                             scene.registry().view<engine::scene::Terrain>().each()) {
-                            const auto* tf2 =
-                                scene.registry().try_get<engine::scene::Transform>(te2);
-                            anchor = tf2 != nullptr ? glm::vec3(tf2->world[3]) : glm::vec3(0.0F);
-                            break;
-                        }
-                        for (const auto& [c, m] : terrain_streamer->maps()) {
-                            const std::uint32_t body = engine::scene::add_height_field_body(
-                                *play_physics, m, terrain_streamer->tile_origin(c, anchor));
-                            if (body != engine::physics::PhysicsWorld::invalid_body) {
-                                terrain_bodies.emplace(c, body);
-                            }
-                        }
-                        std::fprintf(stderr, "[terrain] %zu height-field bodies added\n",
-                                     terrain_bodies.size());
-                    } else if (terrain_heightmap.valid()) {
-                        if (engine::scene::add_terrain_body(scene.registry(), *play_physics,
-                                                            terrain_heightmap) !=
-                            engine::physics::PhysicsWorld::invalid_body) {
-                            std::fprintf(stderr, "[terrain] height-field body added\n");
-                        }
-                    }
-                    navmesh_auto_bake = true; // bake now if agents have no mesh
+                if (auto started = world.begin_play(scene); started) {
                     std::fprintf(stderr, "[editor] play (%zu colliders, %zu bodies)\n",
                                  scene.registry().view<engine::scene::Collider>().size(),
                                  scene.registry().view<engine::scene::RigidBody>().size());
                 } else {
                     std::fprintf(stderr, "[editor] play failed: %s\n",
-                                 world.error().message.c_str());
+                                 started.error().message.c_str());
                     editor_play = false;
                     play_snapshot.reset();
                 }
             } else {
-                play_physics.reset();
-                terrain_bodies.clear(); // died with the play world
+                world.end_play();
                 if (play_snapshot) {
                     engine::editor::restore_scene(scene, *play_snapshot);
                     play_snapshot.reset();
@@ -877,10 +752,10 @@ int main() {
                                                        assets);
                     r) {
                     std::fprintf(stderr, "[editor] loaded scene: %s\n", path.c_str());
-                    invalidate_navmesh("scene loaded");
+                    world.invalidate_navmesh("scene loaded");
                     // Rebind the loop's cached entities to the loaded scene.
                     // (The view camera is editor state — nothing to rebind.)
-                    spin_entity = entt::null;
+                    world.clear_spin_entity();
                     editor.set_selected(entt::null);
                     // The dynamic IBL probe picks up the loaded scene's sun
                     // within one refresh cycle — no explicit rebake needed.
@@ -1014,72 +889,24 @@ int main() {
 #endif
 
         if (character_mode) {
-            // Offline this sets the controller's move; networked, NetSession
-            // predicts it (client) or leaves it to the remote player (host).
-            net.drive_character(scene.registry(), physics_world ? &*physics_world : nullptr,
-                                character_entity, camera.character_wish(gate), dt);
+            world.drive_character(scene, camera.character_wish(gate), dt);
         } else {
             camera.fly(scene, gate, dt);
         }
 
-        // Spin the demo cube (if present — the editor may have deleted it).
-        if (spin_entity != entt::null) {
-            auto* spin_tf = scene.registry().valid(spin_entity)
-                                ? scene.registry().try_get<engine::scene::Transform>(spin_entity)
-                                : nullptr;
-            if (spin_tf == nullptr) {
-                spin_entity = entt::null; // deleted in the editor — stop driving it
-            } else {
-                spin_tf->local =
-                    glm::translate(glm::mat4(1.0F), spin_pos) *
-                    glm::rotate(glm::mat4(1.0F), static_cast<float>(presented) * 0.02F,
-                                glm::normalize(glm::vec3(0.3F, 1.0F, 0.2F))) *
-                    glm::scale(glm::mat4(1.0F), glm::vec3(spin_scale));
-            }
-        }
-
-        // Networking before the simulation: the host steps the remote player's
-        // inputs, a joined client reconciles and applies replicated poses (so
-        // this frame's physics and draw list see them).
-        net.update(scene.registry(), physics_world ? &*physics_world : nullptr,
-                   character_entity, dt);
-        if (physics_world) {
-            if (character_mode) {
-                engine::scene::character_system(scene.registry(), *physics_world, dt);
-            } else {
-                engine::scene::physics_system(scene.registry(), *physics_world, dt);
-            }
-        }
+        const quat::app::PlayStep* play = nullptr;
 #ifdef ENGINE_EDITOR
-        else if (editor_play && play_physics) {
-            // Perception: the trees see the user's view — the fly camera,
-            // unless Play looks through the scene's active Camera entity
-            // (then near_camera falls back to that entity).
-            const bool viewing_scene_camera =
-                play_use_scene_camera &&
-                engine::scene::find_active_camera(scene.registry()) != entt::null;
-            engine::scene::bt_system(
-                scene.registry(), dt,
-                {.navmesh = &navmesh,
-                 .ground_height = ground_height_at,
-                 .viewer = viewing_scene_camera ? std::nullopt : std::optional(camera.pos)});
-            if (std::exchange(navmesh_auto_bake, false) && !navmesh.valid() &&
-                !scene.registry().view<engine::scene::NavAgent>().empty()) {
-                navmesh_request = true; // baked below, this frame
-                std::fprintf(stderr, "[nav] no navmesh for the agents: baking one\n");
-            }
-            engine::scene::nav_agent_system(scene.registry(), navmesh, dt, ground_height_at);
-            engine::scene::character_system(scene.registry(), *play_physics, dt);
-            engine::scene::physics_system(scene.registry(), *play_physics, dt);
+        quat::app::PlayStep play_step;
+        if (editor_play) {
+            play_step.use_scene_camera = play_use_scene_camera;
+            play_step.fly_camera_pos = camera.pos;
+            play = &play_step;
         }
 #endif
-        scene.tick(dt); // advances any Animators by real elapsed time
-
-        // Replication: the host broadcasts moved entities (fresh world poses).
-        net.publish(scene.registry(), dt);
+        world.simulate(scene, presented, dt, play);
 
         // Third-person follow camera, placed after the character has moved.
-        if (character_mode) camera.follow(scene, character_entity);
+        if (character_mode) camera.follow(scene, world.character_entity());
 #ifdef ENGINE_EDITOR
         // The editor's fly camera is the default view in BOTH modes — Play
         // must never take movement away from the user (old scene files also
@@ -1094,11 +921,11 @@ int main() {
             through_scene_camera
                 ? engine::scene::camera_system(scene.registry(), aspect)
                 : camera.matrices(aspect);
-        audio_runtime.update(scene.registry(), cam.view, editor_play, dt);
+        world.update_audio(scene, cam.view, editor_play, dt);
 #else
         const engine::scene::CameraMatrices cam =
             engine::scene::camera_system(scene.registry(), aspect);
-        audio_runtime.update(scene.registry(), cam.view, /*live=*/true, dt);
+        world.update_audio(scene, cam.view, /*live=*/true, dt);
 #endif
 
         // TAA: jitter the projection sub-pixel each frame (Halton). The whole
@@ -1214,98 +1041,7 @@ int main() {
                                                  shadow_radius, 0.1F, shadow_radius * 3.5F);
         const glm::mat4 light_view_proj = shadow_proj * shadow_view;
 
-        // Terrain upkeep: single-tile mode generates async on demand; streaming
-        // mode keeps a seamless tile window centred on the camera (12.4). Both
-        // upload before this frame's graph builds, without pipeline stalls.
-        terrain_anchor = glm::vec3(0.0F);
-        terrain_snowline = 110.0F;
-        terrain_present = false;
-        terrain_stream_mode = false;
-        for (auto&& [te, tcomp] : scene.registry().view<engine::scene::Terrain>().each()) {
-            terrain_present = true;
-            terrain_stream_mode = tcomp.streaming;
-            const auto* tf = scene.registry().try_get<engine::scene::Transform>(te);
-            terrain_anchor = tf != nullptr ? glm::vec3(tf->world[3]) : glm::vec3(0.0F);
-            terrain_snowline = tcomp.snowline_m;
-
-            if (tcomp.streaming) {
-                if (tcomp.regenerate || !terrain_streamer) {
-                    tcomp.regenerate = false;
-                    // Tear down whichever mode ran before this configuration.
-                    if (terrain_streamer) {
-                        for (const auto& [c, m] : terrain_streamer->maps()) {
-                            terrain_pass.remove_tile(c);
-                        }
-                    }
-                    terrain_pass.remove_tile(glm::ivec2(0, 0));
-                    terrain_streamer.emplace(tcomp.params, tcomp.stream_radius);
-                    invalidate_navmesh("terrain regenerated");
-                    std::fprintf(stderr, "[terrain] streaming world (seed %u, radius %d)\n",
-                                 tcomp.params.seed, tcomp.stream_radius);
-                }
-            } else {
-                if (terrain_streamer) {
-                    for (const auto& [c, m] : terrain_streamer->maps()) {
-                        terrain_pass.remove_tile(c);
-                    }
-                    terrain_streamer.reset();
-                    tcomp.regenerate = true; // rebuild the fixed tile
-                }
-                if (tcomp.regenerate && !terrain_job.valid()) {
-                    tcomp.regenerate = false;
-                    terrain_job = engine::terrain::generate_async(tcomp.params);
-                    std::fprintf(stderr, "[terrain] generating %ux%u tile (seed %u)...\n",
-                                 tcomp.params.resolution, tcomp.params.resolution,
-                                 tcomp.params.seed);
-                }
-            }
-            break; // a single Terrain entity drives the world
-        }
-        if (terrain_streamer && terrain_present && terrain_stream_mode) {
-            const auto ev = terrain_streamer->update(glm::vec2(
-                cam.position.x - terrain_anchor.x, cam.position.z - terrain_anchor.z));
-            for (const glm::ivec2& c : ev.removed) {
-                terrain_pass.remove_tile(c);
-#ifdef ENGINE_EDITOR
-                if (play_physics && terrain_bodies.contains(c)) {
-                    play_physics->remove_body(terrain_bodies.at(c));
-                    terrain_bodies.erase(c);
-                }
-#endif
-            }
-            for (const glm::ivec2& c : ev.ready) {
-                const engine::terrain::Heightmap& map = terrain_streamer->maps().at(c);
-                if (auto r = terrain_pass.set_tile(c, map, terrain_transfer); r) {
-                    std::fprintf(stderr, "[terrain] tile (%d,%d) streamed in\n", c.x, c.y);
-                } else {
-                    std::fprintf(stderr, "[terrain] tile upload failed: %s\n",
-                                 r.error().message.c_str());
-                }
-#ifdef ENGINE_EDITOR
-                if (play_physics) {
-                    const std::uint32_t body = engine::scene::add_height_field_body(
-                        *play_physics, map, terrain_streamer->tile_origin(c, terrain_anchor));
-                    if (body != engine::physics::PhysicsWorld::invalid_body) {
-                        terrain_bodies.emplace(c, body);
-                    }
-                }
-#endif
-            }
-        }
-        if (terrain_job.valid() &&
-            terrain_job.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
-            terrain_heightmap = terrain_job.get();
-            invalidate_navmesh("terrain regenerated");
-            if (auto r = terrain_pass.set_tile(glm::ivec2(0, 0), terrain_heightmap,
-                                               terrain_transfer);
-                r) {
-                std::fprintf(stderr, "[terrain] tile ready (%.0f m, heights %.1f..%.1f m)\n",
-                             terrain_heightmap.tile_size_m, terrain_heightmap.min_height,
-                             terrain_heightmap.max_height);
-            } else {
-                std::fprintf(stderr, "[terrain] upload failed: %s\n", r.error().message.c_str());
-            }
-        }
+        world.update_terrain(scene, cam.position);
 
 #ifdef ENGINE_EDITOR
         // Ctrl/Shift+click in the viewport (13.4): resolve the ray against the
@@ -1314,7 +1050,7 @@ int main() {
         if (ground_click) {
             const auto click = *ground_click;
             ground_click.reset();
-            const auto& height_at = ground_height_at; // shared sampler (above)
+            const auto& height_at = world.ground_height(); // shared sampler
             std::optional<glm::vec3> hit;
             float prev_t = 0.0F;
             for (float t = 2.0F; t < 2000.0F && !hit; t += 2.0F) {
@@ -1336,7 +1072,7 @@ int main() {
                 prev_t = t;
             }
             if (!hit && click.dir.y < -1e-4F) { // no terrain: ground plane
-                const float t = (terrain_anchor.y - click.origin.y) / click.dir.y;
+                const float t = (world.terrain_anchor().y - click.origin.y) / click.dir.y;
                 if (t > 0.0F) hit = click.origin + click.dir * t;
             }
             const entt::entity sel = editor.selected();
@@ -1358,26 +1094,7 @@ int main() {
         }
 #endif
 
-        // Navmesh bake requested from the Physics panel: gather the static
-        // walkable geometry (terrain + static box colliders) and run Recast.
-        // Blocking, but explicit and logged (editor tooling).
-        if (navmesh_request) {
-            navmesh_request = false;
-            if (auto built = quat::app::bake_navmesh(
-                    scene.registry(), terrain_streamer ? &*terrain_streamer : nullptr,
-                    &terrain_heightmap, terrain_anchor);
-                built) {
-                navmesh = std::move(*built);
-                const std::size_t edges = navmesh.debug_edges().size();
-                navmesh_status = "baked: " + std::to_string(edges) + " edges";
-            } else {
-                // Never keep the old mesh silently: it no longer matches the scene.
-                navmesh = {};
-                navmesh_status = "bake failed: " + built.error().message;
-                std::fprintf(stderr, "[nav] bake failed (navmesh cleared): %s\n",
-                             built.error().message.c_str());
-            }
-        }
+        world.service_navmesh_request(scene);
 
         engine::rhi::RenderGraph graph(fr.pool);
 
@@ -1420,9 +1137,10 @@ int main() {
             std::fprintf(stderr, "[fatal] gbuffer pass: %s\n", gbuffer.error().message.c_str());
             break;
         }
-        if (terrain_present && terrain_pass.has_tiles()) {
-            terrain_pass.add_to_graph(graph, *gbuffer, draw_extent, jittered_vp, cam.position,
-                                      terrain_anchor, terrain_snowline);
+        if (world.terrain_drawable()) {
+            world.terrain_pass().add_to_graph(graph, *gbuffer, draw_extent, jittered_vp,
+                                              cam.position, world.terrain_anchor(),
+                                              world.terrain_snowline());
         }
         // Clustered light culling (R10.1). A camera the clusters cannot
         // represent (non-perspective / no finite far plane) renders unlit by
@@ -1529,12 +1247,14 @@ int main() {
             ui_ctx.save_request = &pending_save;
             ui_ctx.load_request = &pending_load;
             // Demo modes own their physics world — hide the Play button there.
-            ui_ctx.play_mode = physics_world ? nullptr : &editor_play;
-            ui_ctx.play_use_scene_camera = physics_world ? nullptr : &play_use_scene_camera;
-            ui_ctx.build_navmesh_request = &navmesh_request;
+            ui_ctx.play_mode = world.has_demo_physics() ? nullptr : &editor_play;
+            ui_ctx.play_use_scene_camera =
+                world.has_demo_physics() ? nullptr : &play_use_scene_camera;
+            ui_ctx.build_navmesh_request = &world.navmesh().request;
             ui_ctx.ground_click = &ground_click;
-            ui_ctx.nav_edges = navmesh.valid() ? &navmesh.debug_edges() : nullptr;
-            ui_ctx.nav_status = &navmesh_status;
+            ui_ctx.nav_edges =
+                world.navmesh().mesh.valid() ? &world.navmesh().mesh.debug_edges() : nullptr;
+            ui_ctx.nav_status = &world.navmesh().status;
             ui_ctx.view_proj = cam.view_proj; // unjittered, for overlays
             ui_ctx.view = cam.view;
             ui_ctx.proj_no_flip = cam.projection;
@@ -1721,8 +1441,7 @@ int main() {
 
     // ---- Teardown ----------------------------------------------------------
     vkDeviceWaitIdle(vk_device);
-    if (terrain_job.valid()) terrain_job.wait(); // worker may still hold the params
-    vkDestroyCommandPool(vk_device, terrain_pool, nullptr);
+    world.shutdown(); // waits for a running terrain job, frees its upload pool
     for (VkSemaphore s : render_finished) {
         vkDestroySemaphore(vk_device, s, nullptr);
     }
