@@ -62,7 +62,8 @@ int sol_lua_push(sol::types<Result<T>> /*tag*/, lua_State* L, const Result<T>& r
     }
 }
 
-// Calls upvalue 1 with the arguments; raises its failure as a Lua error.
+// Calls upvalue 1 with the arguments (protected, between native_enter and
+// native_leave); raises its failure, or an error it raised, as a Lua error.
 int checked_call(lua_State* L);
 
 // A Lua function value that runs `f` through checked_call.

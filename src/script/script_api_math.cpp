@@ -69,6 +69,7 @@ using glm::vec3;
 }
 
 void register_vec3(sol::state_view lua) {
+    lua_State* L = lua.lua_state();
     auto t = lua.new_usertype<vec3>("vec3", no_automagic());
     t.set(sol::call_constructor,
           sol::factories([] { return vec3(0.0F); }, [](float s) { return vec3(s); },
@@ -87,10 +88,10 @@ void register_vec3(sol::state_view lua) {
                         [](const vec3& a, float s) { return a / s; }));
     t.set(sol::meta_function::unary_minus, [](const vec3& a) { return -a; });
     t.set(sol::meta_function::equal_to, [](const vec3& a, const vec3& b) { return a == b; });
-    t.set(sol::meta_function::to_string, [](const vec3& v) {
-        return "vec3(" + format_number(v.x) + ", " + format_number(v.y) + ", " +
-               format_number(v.z) + ")";
-    });
+    t.set(sol::meta_function::to_string, bind(L, [](const vec3& v) -> Result<std::string> {
+              return "vec3(" + format_number(v.x) + ", " + format_number(v.y) + ", " +
+                     format_number(v.z) + ")";
+          }));
     t.set("length", [](const vec3& v) { return glm::length(v); });
     t.set("length_squared", [](const vec3& v) { return glm::dot(v, v); });
     t.set("normalized", [](const vec3& v) { return safe_normalize(v); });
@@ -102,6 +103,7 @@ void register_vec3(sol::state_view lua) {
 }
 
 void register_quat(sol::state_view lua) {
+    lua_State* L = lua.lua_state();
     auto t = lua.new_usertype<quat>("quat", no_automagic());
     t.set(sol::call_constructor,
           sol::factories([] { return quat(1.0F, 0.0F, 0.0F, 0.0F); },
@@ -123,10 +125,10 @@ void register_quat(sol::state_view lua) {
           sol::overload([](const quat& a, const quat& b) { return a * b; },
                         [](const quat& q, const vec3& v) { return q * v; }));
     t.set(sol::meta_function::equal_to, [](const quat& a, const quat& b) { return a == b; });
-    t.set(sol::meta_function::to_string, [](const quat& q) {
-        return "quat(" + format_number(q.x) + ", " + format_number(q.y) + ", " +
-               format_number(q.z) + ", " + format_number(q.w) + ")";
-    });
+    t.set(sol::meta_function::to_string, bind(L, [](const quat& q) -> Result<std::string> {
+              return "quat(" + format_number(q.x) + ", " + format_number(q.y) + ", " +
+                     format_number(q.z) + ", " + format_number(q.w) + ")";
+          }));
     t.set("to_euler", [](const quat& q) { return to_euler_deg(q); });
     t.set("inverse", [](const quat& q) { return glm::inverse(q); });
     t.set("normalized", [](const quat& q) { return glm::normalize(q); });

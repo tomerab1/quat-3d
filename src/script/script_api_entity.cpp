@@ -418,12 +418,12 @@ void register_entity(LuaVm& vm, ApiContext& c) {
     t.set("valid", [ctx](const ScriptEntity& e) {
         return ctx->scene != nullptr && ctx->scene->registry().valid(e.id);
     });
-    t.set(sol::meta_function::to_string, [ctx](const ScriptEntity& e) {
-        if (ctx->scene == nullptr || !ctx->scene->registry().valid(e.id)) {
-            return "Entity(" + std::to_string(entity_id(e.id)) + ", destroyed)";
-        }
-        return "Entity(" + describe_entity(ctx->scene->registry(), e.id) + ")";
-    });
+    t.set(sol::meta_function::to_string, bind(L, [ctx](const ScriptEntity& e) -> Result<std::string> {
+              if (ctx->scene == nullptr || !ctx->scene->registry().valid(e.id)) {
+                  return "Entity(" + std::to_string(entity_id(e.id)) + ", destroyed)";
+              }
+              return "Entity(" + describe_entity(ctx->scene->registry(), e.id) + ")";
+          }));
     bind_transform(t, L, c);
     bind_components(t, L, c);
     bind_hierarchy(t, L, c);

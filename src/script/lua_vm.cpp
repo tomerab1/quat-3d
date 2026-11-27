@@ -96,21 +96,17 @@ int message_handler(lua_State* L) {
 }
 
 // pcall / xpcall for scripts: a limit error is re-raised instead of caught.
-// An error raised inside an engine binding skipped its native_leave(): the
-// binding depth from before the call (the continuation context) comes back.
-int protected_k(lua_State* L, int /*status*/, lua_KContext ctx) {
-    VmState* vm = vm_of(L);
-    vm->in_native = static_cast<int>(ctx);
+int protected_k(lua_State* L, int /*status*/, lua_KContext /*ctx*/) {
+    const VmState* vm = vm_of(L);
     if (vm->aborting) return luaL_error(L, "%s", vm->abort_message);
     return lua_gettop(L);
 }
 
 int sandbox_pcall(lua_State* L) {
-    const lua_KContext depth = vm_of(L)->in_native;
     lua_pushvalue(L, lua_upvalueindex(1)); // the real pcall / xpcall
     lua_insert(L, 1);
-    lua_callk(L, lua_gettop(L) - 1, LUA_MULTRET, depth, protected_k);
-    return protected_k(L, LUA_OK, depth);
+    lua_callk(L, lua_gettop(L) - 1, LUA_MULTRET, 0, protected_k);
+    return protected_k(L, LUA_OK, 0);
 }
 
 // setmetatable for scripts: no __gc. Finalizers run whenever the collector
@@ -402,11 +398,10 @@ std::expected<void, std::string> LuaVm::finish_call(int base, int nargs, int nre
     if (vm.call_depth++ == 0) {
         vm.instructions = 0;
         vm.aborting = false;
-        vm.in_native = 0;
         vm.call_start_bytes = vm.bytes;
     }
     const int status = lua_pcall(L, nargs, nresults, base + 1);
-    if (--vm.call_depth == 0) vm.in_native = 0; // a binding that raised skipped its leave
+    --vm.call_depth;
     if (status == LUA_OK) {
         lua_remove(L, base + 1);
         return {};

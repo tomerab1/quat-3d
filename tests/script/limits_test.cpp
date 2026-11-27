@@ -151,5 +151,27 @@ TEST_F(ScriptTest, EngineCallResultsCountAgainstTheBudget) {
     EXPECT_NE(s->message.find("memory limit exceeded"), std::string::npos) << s->message;
 }
 
+// Review G7 (in_native bypass): a binding raising inside coroutine.resume
+// skipped native_leave, leaving the memory caps off for the rest of the call.
+TEST_F(ScriptTest, ABindingErrorCaughtByACoroutineKeepsTheMemoryCaps) {
+    write("bypass.lua", R"(
+        function on_start(self)
+            coroutine.resume(coroutine.create(function() scene.destroy("x") end))
+            local t = {}
+            for i = 1, 1e6 do t[i] = string.rep("x", 1 << 20) .. i end
+        end
+    )");
+    scripted("bypass", "bypass.lua");
+    engine::script::ScriptLimits limits;
+    limits.memory_bytes = 64U << 20;
+    limits.call_memory_bytes = 16U << 20;
+    start(limits);
+    frames();
+    const ScriptStatus* s = status("bypass.lua");
+    ASSERT_NE(s, nullptr);
+    EXPECT_EQ(s->failed, 1U);
+    EXPECT_NE(s->message.find("memory limit exceeded"), std::string::npos) << s->message;
+}
+
 } // namespace
 } // namespace quat::test

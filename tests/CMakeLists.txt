@@ -31,6 +31,11 @@ target_include_directories(engine_tests PRIVATE
     ${PROJECT_SOURCE_DIR}/src
     ${ENGINE_PUBLIC_INCLUDE}
     ${Stb_INCLUDE_DIR}) # image round trips (stb_image) in the screenshot tests
+# White-box script VM tests (tests/script/vm_test.cpp) include engine_script's
+# private headers, which use sol2 and Lua.
+target_link_libraries(engine_tests PRIVATE sol2::sol2 ${LUA_LIBRARIES})
+target_include_directories(engine_tests SYSTEM PRIVATE ${LUA_INCLUDE_DIR})
+target_compile_definitions(engine_tests PRIVATE SOL_NO_EXCEPTIONS=1 SOL_ALL_SAFETIES_ON=1)
 target_compile_definitions(engine_tests PRIVATE
     QUAT_COOKED_SHADER_DIR="${PROJECT_SOURCE_DIR}/cooked/shaders"
     QUAT_PROJECT_ROOT="${PROJECT_SOURCE_DIR}") # shipped assets (the G7 demo scripts)

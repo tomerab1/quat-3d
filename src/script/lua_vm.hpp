@@ -108,6 +108,8 @@ public:
 
     // Lua heap in use (bytes).
     [[nodiscard]] std::size_t memory() const { return vm_->bytes; }
+    // Engine bindings currently running (0 between bindings; tests).
+    [[nodiscard]] int native_depth() const { return vm_->in_native; }
     [[nodiscard]] const VmLimits& limits() const { return vm_->limits; }
 
 private:
