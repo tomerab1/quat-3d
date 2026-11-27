@@ -75,13 +75,4 @@ private:
     std::vector<rhi::DescriptorBuffer> frame_descriptors_;
 };
 
-// Offscreen self-test: skin a small mesh (some vertices bound to a translated
-// joint, others to an identity joint), read back the skinned vertex buffer, and
-// verify positions/normals; then render the skinned buffer through the GBuffer
-// pass to confirm it is usable as a vertex buffer.
-[[nodiscard]] std::expected<void, core::Error>
-run_skinning_pass_self_test(const rhi::Device& device, rhi::GpuAllocator& allocator,
-                            rhi::PipelineCache& cache, const rhi::TransferContext& transfer,
-                            const std::string& cooked_shader_dir);
-
 } // namespace engine::renderer

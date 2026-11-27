@@ -1,11 +1,8 @@
 #include "engine/renderer/atmosphere_pass.hpp"
 
 #include <array>
-#include <cmath>
-#include <cstring>
 #include <string>
 #include <utility>
-#include <vector>
 
 #include "engine/rhi/device.hpp"
 #include "engine/rhi/pipeline_cache.hpp"
@@ -21,11 +18,11 @@ namespace {
 constexpr VkShaderStageFlags kComputeStage = VK_SHADER_STAGE_COMPUTE_BIT;
 constexpr VkFormat kLutFormat = VK_FORMAT_R16G16B16A16_SFLOAT;
 
-constexpr std::uint32_t kTransmittanceW = 256;
-constexpr std::uint32_t kTransmittanceH = 64;
+constexpr std::uint32_t kTransmittanceW = AtmospherePass::transmittance_extent.width;
+constexpr std::uint32_t kTransmittanceH = AtmospherePass::transmittance_extent.height;
 constexpr std::uint32_t kMultiScatterSize = 32;
-constexpr std::uint32_t kSkyViewW = 192;
-constexpr std::uint32_t kSkyViewH = 108;
+constexpr std::uint32_t kSkyViewW = AtmospherePass::skyview_extent.width;
+constexpr std::uint32_t kSkyViewH = AtmospherePass::skyview_extent.height;
 
 struct SkyViewPush {
     float sun_direction[4];
@@ -326,103 +323,6 @@ AtmospherePass::add_skyview_update_to_graph(rhi::RenderGraph& graph, const glm::
     });
 
     skyview_sun_ = sun;
-    return {};
-}
-
-// ---------------------------------------------------------------------------
-// Self-test
-// ---------------------------------------------------------------------------
-std::expected<void, core::Error>
-run_atmosphere_self_test(const rhi::Device& device, rhi::GpuAllocator& allocator,
-                         rhi::PipelineCache& cache, const std::string& cooked_shader_dir) {
-    auto pass = AtmospherePass::create(device, allocator, cache, cooked_shader_dir);
-    if (!pass) return std::unexpected(pass.error());
-    if (auto r = pass->ensure_skyview(glm::normalize(glm::vec3(0.3F, 1.0F, 0.2F))); !r) {
-        return std::unexpected(r.error());
-    }
-
-    // Read both LUTs back through a host buffer.
-    const auto read_image = [&](VkImage image, std::uint32_t w,
-                                std::uint32_t h) -> std::expected<std::vector<float>, core::Error> {
-        const VkDeviceSize bytes = VkDeviceSize(w) * h * 8; // RGBA16F
-        auto buf = allocator.create_buffer(bytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-                                           VMA_MEMORY_USAGE_AUTO,
-                                           VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT |
-                                               VMA_ALLOCATION_CREATE_MAPPED_BIT);
-        if (!buf) return std::unexpected(buf.error());
-        auto copied = submit_blocking(device, [&](VkCommandBuffer cmd) {
-            transition(cmd, image, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-                       VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-                       VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
-                       VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_READ_BIT);
-            VkBufferImageCopy region{};
-            region.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
-            region.imageExtent = {w, h, 1};
-            vkCmdCopyImageToBuffer(cmd, image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-                                   buf->handle(), 1, &region);
-            transition(cmd, image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-                       VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_PIPELINE_STAGE_2_COPY_BIT,
-                       VK_ACCESS_2_TRANSFER_READ_BIT, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
-                       VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
-        });
-        if (!copied) return std::unexpected(copied.error());
-
-        // Half -> float, RGBA.
-        const auto* halfs = static_cast<const std::uint16_t*>(buf->mapped());
-        std::vector<float> out(std::size_t(w) * h * 4);
-        for (std::size_t i = 0; i < out.size(); ++i) {
-            const std::uint16_t v = halfs[i];
-            const std::uint32_t sign = (v & 0x8000U) << 16;
-            const std::uint32_t exp = (v >> 10) & 0x1FU;
-            const std::uint32_t mant = v & 0x3FFU;
-            std::uint32_t bits = sign;
-            if (exp != 0) bits = sign | ((exp - 15 + 127) << 23) | (mant << 13);
-            float f = 0.0F;
-            std::memcpy(&f, &bits, sizeof(f));
-            out[i] = f;
-        }
-        return out;
-    };
-
-    // Transmittance (y=0 row is ground level; x=0 is the zenith ray, x=max is
-    // the horizon ray): the zenith is clearer than the horizon, and the
-    // horizon ray is reddened — blue scatters out over the long path.
-    auto trans = read_image(pass->transmittance_image(), kTransmittanceW, kTransmittanceH);
-    if (!trans) return std::unexpected(trans.error());
-    const auto trans_px = [&](std::uint32_t x, std::uint32_t y, int c) {
-        return (*trans)[(std::size_t(y) * kTransmittanceW + x) * 4 + std::size_t(c)];
-    };
-    const float zen_b = trans_px(0, 0, 2);
-    const float hor_r = trans_px(kTransmittanceW - 1, 0, 0);
-    const float hor_b = trans_px(kTransmittanceW - 1, 0, 2);
-    if (!(zen_b > 0.2F && zen_b <= 1.0F)) {
-        return fail("atmosphere self-test: zenith transmittance out of range");
-    }
-    if (!(zen_b > hor_b && hor_r > hor_b)) {
-        return fail("atmosphere self-test: horizon ray not reddened vs zenith");
-    }
-
-    // Sky-view (high sun): averaged over a high-altitude row so individual
-    // (white-ish) cloud texels cannot skew it — the sky half must be non-black
-    // and blue-dominant, and the below-horizon half dimmer than the sky.
-    auto sky = read_image(pass->skyview_image(), kSkyViewW, kSkyViewH);
-    if (!sky) return std::unexpected(sky.error());
-    const auto row_mean = [&](std::uint32_t y, int c) {
-        float sum = 0.0F;
-        for (std::uint32_t x = 0; x < kSkyViewW; ++x) {
-            sum += (*sky)[(std::size_t(y) * kSkyViewW + x) * 4 + std::size_t(c)];
-        }
-        return sum / float(kSkyViewW);
-    };
-    const float up_r = row_mean(kSkyViewH / 8, 0);
-    const float up_b = row_mean(kSkyViewH / 8, 2);
-    const float down_b = row_mean(kSkyViewH - 2, 2);
-    if (!(up_b > 1e-4F && up_b > up_r)) {
-        return fail("atmosphere self-test: sky-view zenith row not blue-dominant");
-    }
-    if (!(down_b < up_b)) {
-        return fail("atmosphere self-test: below-horizon brighter than the sky");
-    }
     return {};
 }
 

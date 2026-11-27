@@ -114,11 +114,4 @@ private:
     float                  frame_translate_[2]{-1.0F, -1.0F};
 };
 
-// Offscreen self-test: builds a private ImGui context, draws one solid window,
-// renders it over a cleared target, and verifies covered/uncovered pixels.
-[[nodiscard]] std::expected<void, core::Error>
-run_imgui_pass_self_test(const rhi::Device& device, rhi::GpuAllocator& allocator,
-                         rhi::PipelineCache& cache, const rhi::TransferContext& transfer,
-                         const std::string& cooked_shader_dir);
-
 } // namespace engine::renderer

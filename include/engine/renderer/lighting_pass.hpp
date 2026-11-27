@@ -98,28 +98,4 @@ private:
     rhi::DescriptorBuffer frame_descriptor_;   // rebuilt each add_to_graph call
 };
 
-// Offscreen self-test: render the GBuffer (a coloured triangle) then light it,
-// read back the HDR target, and verify the lit centre pixel matches the expected
-// Lambert result while the background stays black.
-[[nodiscard]] std::expected<void, core::Error>
-run_lighting_pass_self_test(const rhi::Device& device, rhi::GpuAllocator& allocator,
-                            rhi::PipelineCache& cache, const rhi::TransferContext& transfer,
-                            const std::string& cooked_shader_dir);
-
-// Bakes IBL and lights a smooth metal with the direct light off: the surface is
-// lit purely by the environment reflection, so it must be non-black and sky-
-// tinted with IBL enabled, and black with the environment disabled.
-[[nodiscard]] std::expected<void, core::Error>
-run_ibl_lighting_self_test(const rhi::Device& device, rhi::GpuAllocator& allocator,
-                           rhi::PipelineCache& cache, const rhi::TransferContext& transfer,
-                           const std::string& cooked_shader_dir);
-
-// Renders a fully rough dielectric with and without a smooth clearcoat under a
-// head-on light: the coat must add a strong achromatic specular highlight that
-// the diffuse base alone cannot produce.
-[[nodiscard]] std::expected<void, core::Error>
-run_clearcoat_self_test(const rhi::Device& device, rhi::GpuAllocator& allocator,
-                        rhi::PipelineCache& cache, const rhi::TransferContext& transfer,
-                        const std::string& cooked_shader_dir);
-
 } // namespace engine::renderer

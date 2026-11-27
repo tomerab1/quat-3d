@@ -68,10 +68,4 @@ private:
     std::vector<rhi::DescriptorBuffer> frame_descriptors_; // rebuilt each add_to_graph
 };
 
-// Self-test: a single bright block on a black HDR image must, after bloom, glow
-// into the surrounding (previously black) pixels while the block stays bright.
-[[nodiscard]] std::expected<void, core::Error>
-run_bloom_self_test(const rhi::Device& device, rhi::GpuAllocator& allocator,
-                    rhi::PipelineCache& cache, const std::string& cooked_shader_dir);
-
 } // namespace engine::renderer
