@@ -18,7 +18,7 @@ void draw_inspector(scene::Scene& scene, entt::entity selected);
 
 // Draws the "Renderer" window: sun direction (azimuth/elevation, applied to
 // the scene's DirectionalLight live; IBL rebakes automatically on slider
-// release), bloom parameters, and a manual IBL rebake button.
+// release), clouds, bloom, and the R12 shadow / ambient-occlusion settings.
 void draw_renderer_panel(RendererSettings& settings, scene::Scene* scene);
 
 } // namespace engine::editor

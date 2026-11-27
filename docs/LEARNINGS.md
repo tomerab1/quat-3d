@@ -26,6 +26,10 @@ into CLAUDE.md or the brief template in [`CYCLE.md`](CYCLE.md).
 
 ## Build and CI
 
+- **Local test builds must track header dependencies.** A scratch build that
+  rebuilt only changed .cpp files linked objects compiled against an old
+  class layout and crashed (R12). Compile with `-MMD -MF` and rebuild when
+  any listed dependency is newer than the object.
 - **`--validation` silently runs without the layer when it isn't
   installed.** The container lacks the Khronos layer;
   `apt-get install -y vulkan-validationlayers` adds it (R10.2 ran its GPU
@@ -100,6 +104,19 @@ into CLAUDE.md or the brief template in [`CYCLE.md`](CYCLE.md).
   wayland-protocols, libdecor. The first CI run failed on xcursor.
 
 ## C++ in this codebase
+
+- **A graphics pipeline with no descriptor sets cannot draw after a pass
+  that bound descriptor buffers** (validation VUID-vkCmdDrawIndexed-None-08117,
+  R12): the bound buffers stay on the bind point and the pipeline lacks the
+  descriptor-buffer bit. Give such a pipeline an empty set layout (the
+  shadow caster pipeline does) — pass order in the graph is not fixed.
+- **Screen-space marches self-intersect at grazing angles with nearest-texel
+  depth** (R12 contact shadows): one pixel can span metres of depth. Sample
+  the depth bilinearly (one GatherRed; NDC depth is affine over a plane) so a
+  planar receiver is reconstructed exactly, and keep a grazing-floor test.
+- **Far-field image tests need footprints of several pixels.** A probe on a
+  floor 70 m away under a camera 3 m up covers ~7 m per pixel row; elongate
+  occluders along the view axis and test a small window, not one pixel.
 
 - **slangc 2025.6.1 segfaults after reporting a compile error** when
   `-reflection-json` is passed (exit by SIGSEGV, diagnostics already

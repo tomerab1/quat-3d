@@ -403,6 +403,7 @@ if(ENGINE_EDITOR)
         src/editor/scene_snapshot.cpp
         src/editor/audio_inspector.cpp
         src/editor/grass_inspector.cpp
+        src/editor/shadow_ao_panel.cpp
         src/editor/behavior_panel.cpp
         src/editor/behavior_canvas.cpp
         src/editor/vendor/imgui_impl_sdl3.cpp)

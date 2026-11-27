@@ -15,6 +15,7 @@
 #include "audio_inspector.hpp"
 #include "behavior_panel.hpp"
 #include "grass_inspector.hpp"
+#include "shadow_ao_panel.hpp"
 #include "engine/editor/editor.hpp"
 #include "engine/scene/behavior.hpp"
 #include "engine/scene/components.hpp"
@@ -653,6 +654,7 @@ void draw_renderer_panel(RendererSettings& settings, scene::Scene* scene) {
         ImGui::SliderFloat("radius", &settings.bloom_radius, 0.2F, 2.0F);
         ImGui::PopID();
     }
+    draw_shadow_ao_settings(settings);
     if (ImGui::CollapsingHeader("Environment", ImGuiTreeNodeFlags_DefaultOpen)) {
         ImGui::TextWrapped("The IBL environment (ambient + reflections) re-renders continuously "
                            "(one step per frame), so it tracks the sun and clouds by itself.");
