@@ -227,6 +227,7 @@ add_library(engine_net STATIC
     src/net/net_ids.cpp
     src/net/transport.cpp
     src/net/replication.cpp
+    src/net/replication_transport.cpp
     src/net/prediction.cpp)
 target_link_libraries(engine_net PUBLIC engine_flags glm::glm EnTT::EnTT)
 # Linux (static triplet) exports ::static; Windows (dynamic) exports ::shared.

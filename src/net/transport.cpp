@@ -43,6 +43,20 @@ constexpr int send_flags(bool reliable) {
     return reliable ? k_nSteamNetworkingSend_Reliable : k_nSteamNetworkingSend_Unreliable;
 }
 
+static_assert(max_message_bytes ==
+                  static_cast<std::size_t>(k_cbMaxSteamNetworkingSocketsMessageSizeSend),
+              "transport.hpp's max_message_bytes must match GNS");
+
+// One message to one connection; false if it is oversized or GNS refused it
+// (send queue full, connection closed).
+[[nodiscard]] bool send_one(ISteamNetworkingSockets* sockets, HSteamNetConnection conn,
+                            std::span<const std::uint8_t> bytes, bool reliable) {
+    if (bytes.size() > max_message_bytes) return false;
+    return sockets->SendMessageToConnection(conn, bytes.data(),
+                                            static_cast<std::uint32_t>(bytes.size()),
+                                            send_flags(reliable), nullptr) == k_EResultOK;
+}
+
 // GNS standalone exposes ONE global interface: RunCallbacks() from any
 // endpoint dispatches every pending callback, so events must be routed to
 // their owning endpoint by listen socket / connection handle. The engine is
@@ -218,22 +232,20 @@ std::vector<NetEvent> NetServer::poll() {
     return events;
 }
 
-void NetServer::send(ClientId client, std::span<const std::uint8_t> bytes, bool reliable) {
-    if (!valid()) return;
-    if (const auto it = impl_->connections.find(client); it != impl_->connections.end()) {
-        impl_->sockets->SendMessageToConnection(it->second, bytes.data(),
-                                                static_cast<std::uint32_t>(bytes.size()),
-                                                send_flags(reliable), nullptr);
-    }
+bool NetServer::send(ClientId client, std::span<const std::uint8_t> bytes, bool reliable) {
+    if (!valid()) return false;
+    const auto it = impl_->connections.find(client);
+    return it != impl_->connections.end() &&
+           send_one(impl_->sockets, it->second, bytes, reliable);
 }
 
-void NetServer::broadcast(std::span<const std::uint8_t> bytes, bool reliable) {
-    if (!valid()) return;
+bool NetServer::broadcast(std::span<const std::uint8_t> bytes, bool reliable) {
+    if (!valid()) return false;
+    bool all_sent = true;
     for (const auto& [id, conn] : impl_->connections) {
-        impl_->sockets->SendMessageToConnection(conn, bytes.data(),
-                                                static_cast<std::uint32_t>(bytes.size()),
-                                                send_flags(reliable), nullptr);
+        all_sent = send_one(impl_->sockets, conn, bytes, reliable) && all_sent;
     }
+    return all_sent;
 }
 
 void NetServer::disconnect(ClientId client) {
@@ -362,11 +374,8 @@ std::vector<NetEvent> NetClient::poll() {
     return events;
 }
 
-void NetClient::send(std::span<const std::uint8_t> bytes, bool reliable) {
-    if (!connected()) return;
-    impl_->sockets->SendMessageToConnection(impl_->connection, bytes.data(),
-                                            static_cast<std::uint32_t>(bytes.size()),
-                                            send_flags(reliable), nullptr);
+bool NetClient::send(std::span<const std::uint8_t> bytes, bool reliable) {
+    return connected() && send_one(impl_->sockets, impl_->connection, bytes, reliable);
 }
 
 // ---------------------------------------------------------------------------
@@ -397,7 +406,9 @@ std::expected<void, core::Error> run_transport_self_test() {
 
     // Client -> server reliable; server -> client unreliable echo.
     const std::uint8_t ping[] = {'p', 'i', 'n', 'g'};
-    client->send(ping, /*reliable=*/true);
+    if (!client->send(ping, /*reliable=*/true)) {
+        return fail("transport self-test: reliable send refused");
+    }
     bool got_ping = false;
     for (int i = 0; i < 500 && !got_ping; ++i) {
         for (const NetEvent& ev : server->poll()) {
@@ -411,8 +422,16 @@ std::expected<void, core::Error> run_transport_self_test() {
     if (!got_ping) return fail("transport self-test: reliable message lost");
 
     const std::uint8_t pong[] = {'p', 'o', 'n', 'g'};
-    server->send(id, pong, /*reliable=*/false);
-    server->broadcast(pong, /*reliable=*/false);
+    if (!server->send(id, pong, /*reliable=*/false) ||
+        !server->broadcast(pong, /*reliable=*/false)) {
+        return fail("transport self-test: unreliable send refused");
+    }
+    // Oversized messages are refused up front, not dropped silently.
+    const std::vector<std::uint8_t> oversized(max_message_bytes + 1, 0);
+    if (server->send(id, oversized, /*reliable=*/true) ||
+        client->send(oversized, /*reliable=*/true)) {
+        return fail("transport self-test: oversized message was accepted");
+    }
     bool got_pong = false;
     for (int i = 0; i < 500 && !got_pong; ++i) {
         (void)server->poll();

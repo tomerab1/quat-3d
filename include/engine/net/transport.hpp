@@ -10,6 +10,7 @@
 // detail (PIMPL); the library is initialised on first use and torn down with
 // the last endpoint.
 
+#include <cstddef>
 #include <cstdint>
 #include <expected>
 #include <memory>
@@ -23,6 +24,12 @@ namespace engine::net {
 
 using ClientId = std::uint32_t;
 inline constexpr ClientId invalid_client = 0;
+
+// GNS's per-message send limit (k_cbMaxSteamNetworkingSocketsMessageSizeSend);
+// larger messages are refused. Unreliable messages above the path MTU
+// (~1200 B) are fragmented and lost whole if any fragment drops, so
+// latency-sensitive streams stay well under it (see replication.hpp).
+inline constexpr std::size_t max_message_bytes = 512U * 1024U;
 
 struct NetEvent {
     enum class Type : std::uint8_t { connected, disconnected, message };
@@ -47,8 +54,11 @@ public:
     // Pump callbacks and drain everything that arrived since the last call.
     [[nodiscard]] std::vector<NetEvent> poll();
 
-    void send(ClientId client, std::span<const std::uint8_t> bytes, bool reliable);
-    void broadcast(std::span<const std::uint8_t> bytes, bool reliable);
+    // Messages up to max_message_bytes. send() is false when the client is
+    // unknown or GNS refused the message (oversized, send queue full, closed
+    // connection); broadcast() is false if any connection refused it.
+    [[nodiscard]] bool send(ClientId client, std::span<const std::uint8_t> bytes, bool reliable);
+    [[nodiscard]] bool broadcast(std::span<const std::uint8_t> bytes, bool reliable);
     void disconnect(ClientId client);
 
     struct Impl; // PIMPL; public name so the .cpp's callback router can refer to it
@@ -74,7 +84,8 @@ public:
     [[nodiscard]] bool connected() const;
 
     [[nodiscard]] std::vector<NetEvent> poll();
-    void send(std::span<const std::uint8_t> bytes, bool reliable);
+    // False when not connected or GNS refused the message (see NetServer::send).
+    [[nodiscard]] bool send(std::span<const std::uint8_t> bytes, bool reliable);
 
     struct Impl; // PIMPL; public name so the .cpp's callback router can refer to it
 

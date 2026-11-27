@@ -27,7 +27,7 @@ Severity: **H** crash, corruption, exploit or broken core feature ·
 | B12 | M | Play/Stop drops `NetReplicated` (snapshot doesn't capture it) | `scene_snapshot.cpp` | fixed (S2.2) |
 | B13 | M | `Scene::set_parent` accepts self-parenting and cycles → entity drops out of transform propagation; delete recurses forever | `scene.cpp` | fixed (S1.1, pending CI) |
 | B14 | L | `character_system` / kinematic nav agents discard rotation, scale and parent space | `physics_system.cpp`, `nav_agent_system.cpp` | open |
-| B15 | L | Replication snapshot `uint16` count wraps; large keyframes exceed GNS send limit silently; send accumulator drift | `replication.cpp` | open |
+| B15 | L | Replication snapshot `uint16` count wraps; large keyframes exceed GNS send limit silently; send accumulator drift | `replication.cpp` | fixed (S1.B15; snapshot tests pass locally, transport self-test CI-only) — verified: one unbounded packet, send results ignored, `accumulator_ = 0` |
 
 Checked and found sound: packet decoders are bounds-safe; GNS init/refcount;
 `glm::slerp` shortest path; erosion border fade keeps seams exact; Play-start

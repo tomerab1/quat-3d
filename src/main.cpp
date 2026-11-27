@@ -1164,7 +1164,11 @@ int main() {
                     input.sequence = ++net_input_seq;
                     input.move = cc->move;
                     input.dt = dt;
-                    net_client->send(engine::net::encode_input(input), /*reliable=*/true);
+                    if (!net_client->send(engine::net::encode_input(input),
+                                          /*reliable=*/true)) {
+                        std::fprintf(stderr, "[net] input %u refused by the transport\n",
+                                     input.sequence);
+                    }
                     auto& tf = scene.registry().get<engine::scene::Transform>(character_entity);
                     const glm::vec3 predicted =
                         net_predictor.predict(glm::vec3(tf.world[3]), input);
@@ -1303,10 +1307,12 @@ int main() {
                 const auto* tf =
                     scene.registry().try_get<engine::scene::Transform>(character_entity);
                 if (tf != nullptr) {
-                    net_server->send(net_player_owner,
-                                     engine::net::encode_character_state(
-                                         net_last_input_seq, glm::vec3(tf->world[3])),
-                                     /*reliable=*/false);
+                    // Unreliable latest-wins: a refused state is superseded
+                    // by next frame's.
+                    (void)net_server->send(net_player_owner,
+                                           engine::net::encode_character_state(
+                                               net_last_input_seq, glm::vec3(tf->world[3])),
+                                           /*reliable=*/false);
                 }
             }
             net_replication.tick(scene.registry(), *net_server, dt);
