@@ -1,0 +1,1 @@
+Call any engine remote-control method by name with a params object, and return its raw result. Escape hatch for methods newer than this server; prefer the dedicated tools, which document their parameters.

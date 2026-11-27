@@ -156,9 +156,21 @@ tokio TCP server speaking the line protocol) used to test the client
 (handshake and tokens, id matching, timeouts, reconnects, error mapping, size
 limits) and the tools end to end through an in-process MCP client.
 
-Layout: `src/client.rs` (engine JSON-RPC client), `src/server.rs` (tools,
-prompts, resource), `src/params.rs` (typed tool inputs — their doc comments
-are the JSON schemas the model reads), `src/config.rs` (flags / environment).
+Layout:
+
+| Path | What |
+|---|---|
+| `content/` | **Everything the model reads**, as Markdown: server instructions, one file per tool description, the component reference, prompt templates ([MiniJinja](https://docs.rs/minijinja)). See `content/README.md`. |
+| `src/client/` | Engine JSON-RPC client: `mod.rs` (calls, reconnects, handshake), `connection.rs` (socket, reader task, in-flight calls), `error.rs` (error codes, `EngineError`) |
+| `src/server/` | MCP server: `mod.rs` (handler, resource), tools grouped by area (`scene_tools.rs`, `world_tools.rs`, `sim_tools.rs`, each its own rmcp router), `prompts.rs`, `results.rs` |
+| `src/params.rs` | Typed tool inputs — their doc comments are the JSON schemas the model reads |
+| `src/content.rs` | Embeds `content/` and renders prompt templates |
+| `src/config.rs` | Flags / environment |
+
+To change what the model is told, edit the Markdown — no prose lives in Rust
+string literals (error messages excepted). A new tool is a function with
+`#[doc = include_str!("../../content/tools/<name>.md")]` + `#[tool]`; a test
+fails if a tool and its Markdown file don't match one-to-one.
 
 When the engine contract in `docs/remote-control.md` changes, update it there
 first, then the matching tool here.

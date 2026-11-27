@@ -7,7 +7,7 @@ use clap::Parser;
 use crate::client::{ENGINE_MAX_MESSAGE_BYTES, EngineConfig};
 
 /// MCP server for the quat-3d engine. Speaks MCP over stdio; connects to the
-/// engine's remote-control endpoint (start the engine with QUAT_REMOTE=<port>).
+/// engine's remote-control endpoint (start the engine with `QUAT_REMOTE`=<port>).
 #[derive(Debug, Clone, Parser)]
 #[command(name = "quat-mcp", version, about, long_about = None)]
 pub struct Cli {
@@ -15,11 +15,11 @@ pub struct Cli {
     #[arg(long, env = "QUAT_REMOTE_HOST", default_value = "127.0.0.1")]
     pub host: String,
 
-    /// Engine remote-control port (the engine's QUAT_REMOTE value).
+    /// Engine remote-control port (the engine's `QUAT_REMOTE` value).
     #[arg(long, env = "QUAT_REMOTE_PORT", default_value_t = 7878)]
     pub port: u16,
 
-    /// Session token, if the engine was started with QUAT_REMOTE_TOKEN.
+    /// Session token, if the engine was started with `QUAT_REMOTE_TOKEN`.
     #[arg(long, env = "QUAT_REMOTE_TOKEN", hide_env_values = true)]
     pub token: Option<String>,
 
@@ -38,6 +38,7 @@ pub struct Cli {
 }
 
 impl Cli {
+    #[must_use]
     pub fn engine_config(&self) -> EngineConfig {
         let mut c = EngineConfig::new(format!("{}:{}", self.host, self.port));
         c.token = self.token.clone().filter(|t| !t.is_empty());
@@ -47,6 +48,7 @@ impl Cli {
         c
     }
 
+    #[must_use]
     pub fn long_timeout(&self) -> Duration {
         secs(self.long_timeout_secs, 120.0)
     }

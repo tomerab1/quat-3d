@@ -113,7 +113,8 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        # Same version as tools/quat-mcp/rust-toolchain.toml.
+        uses: dtolnay/rust-toolchain@1.97.0
         with:
           components: rustfmt, clippy
 

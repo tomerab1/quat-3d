@@ -7,12 +7,15 @@
 //! - [`client`]: the engine's line-delimited JSON-RPC client (lazy connect,
 //!   `session.hello`, id matching, timeouts, reconnect).
 //! - [`server`]: the MCP tools, prompts and resources.
+//! - [`content`]: the Markdown the model reads (instructions, tool
+//!   descriptions, prompt templates), embedded from `content/`.
 //! - [`params`]: typed tool inputs (their doc comments are the schemas the
 //!   model reads).
 //! - [`config`]: command line / environment configuration.
 
 pub mod client;
 pub mod config;
+pub mod content;
 pub mod params;
 pub mod server;
 

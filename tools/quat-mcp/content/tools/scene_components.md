@@ -1,0 +1,1 @@
+List the component types the engine understands: `[{name, summary, addable, writable}]`. `addable=false` components cannot be added by `scene_create`/`scene_update` (e.g. animator is edit-only, mesh is read-only). Call this first when building.

@@ -47,6 +47,9 @@ Every cycle starts by reading, in order: [`STATUS.md`](STATUS.md),
    summary), re-run `scripts/check-compile.sh` on changed files, run the
    CPU tests that link locally, merge into the cycle branch, resolve
    conflicts. Reject or send back work that breaks a rule in CLAUDE.md.
+   Review **structure**, not only behaviour: file sizes, prose embedded in
+   source (CLAUDE.md "No prose in source"), lint level, reuse of standard
+   libraries/crates instead of hand-rolled code, `main.cpp` growth.
 7. **Verify.** Push; wait for CI (subscribe to the PR rather than polling);
    fix failures. Mark the PR ready for review only when CI is green.
 8. **Audit.** Spawn 1–2 fresh reviewers on the cycle's diff (give them the
@@ -83,7 +86,9 @@ Every brief contains:
 3. **Read first** — CLAUDE.md, DEVELOPMENT.md, LEARNINGS.md, and the
    specific files/findings for the item.
 4. **What exists** — APIs to reuse (so the agent doesn't rebuild them).
-5. **What to build** — scope boundaries, including what NOT to touch.
+5. **What to build** — scope boundaries, including what NOT to touch, and
+   the quality rules that apply (CLAUDE.md file sizes, "No prose in source",
+   standard libraries/crates over hand-rolled code).
 6. **Verification** — `scripts/check-compile.sh` on every touched file (zero
    warnings); build and run CPU tests locally where they link; GPU tests
    named `Gpu*` for CI; shaders compiled with `slangc`.
