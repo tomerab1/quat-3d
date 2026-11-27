@@ -311,7 +311,11 @@ endif()
 # game — executable entry point. The full target graph (engine_core /
 # engine_renderer / engine_editor) grows phase by phase as modules gain sources.
 # ---------------------------------------------------------------------------
-add_executable(game src/main.cpp)
+# src/app/ is the application layer (startup scenes, and - per ROADMAP S7 -
+# the frame loop pieces moving out of main.cpp); it is not an engine library.
+add_executable(game
+    src/main.cpp
+    src/app/demo_scenes.cpp)
 target_link_libraries(game PRIVATE
     engine_flags engine_rhi engine_asset engine_scene engine_renderer engine_physics
     engine_terrain engine_nav engine_net engine_remote SDL3::SDL3)
