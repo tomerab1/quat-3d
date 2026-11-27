@@ -24,3 +24,6 @@ compile_commands.json
 .DS_Store
 Thumbs.db
 imgui.ini
+
+# Claude Code agent worktrees (local, never committed)
+/.claude/worktrees/
