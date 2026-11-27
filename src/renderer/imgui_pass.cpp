@@ -230,6 +230,14 @@ std::expected<void, core::Error> ImGuiPass::add_to_graph(rhi::RenderGraph& graph
         global_vtx += list->VtxBuffer.Size;
         global_idx += static_cast<std::uint32_t>(list->IdxBuffer.Size);
     }
+    // Host-visible memory VMA may place in a non-coherent type: make the
+    // geometry visible to the device's vertex fetch (no-op when coherent).
+    if (vertex_bytes > 0) {
+        if (auto f = vertex_buffer_.flush(0, vertex_bytes); !f) return std::unexpected(f.error());
+    }
+    if (index_bytes > 0) {
+        if (auto f = index_buffer_.flush(0, index_bytes); !f) return std::unexpected(f.error());
+    }
     if (frame_cmds_.empty()) return {};
 
     frame_scale_[0] = 2.0F / draw_data->DisplaySize.x;

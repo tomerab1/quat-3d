@@ -18,10 +18,11 @@ CharacterState character_state(const entt::registry& registry, entt::entity char
 void restore_character(entt::registry& registry, physics::PhysicsWorld& world,
                        entt::entity character, const CharacterState& state) {
     auto& cc = registry.get<scene::CharacterController>(character);
-    auto& t = registry.get<scene::Transform>(character);
-    // character_system writes translation-only transforms for characters.
-    t.local[3] = glm::vec4(state.position, 1.0F);
-    t.world[3] = glm::vec4(state.position, 1.0F);
+    // Like character_system: move the origin, keep rotation, scale and the
+    // parent's space.
+    glm::mat4 pose = registry.get<scene::Transform>(character).world;
+    pose[3] = glm::vec4(state.position, 1.0F);
+    scene::set_world_transform(registry, character, pose);
     // A character not created yet spawns at the Transform on its first step.
     if (cc.character != physics::PhysicsWorld::invalid_body &&
         world.character_position(cc.character) != state.position) {

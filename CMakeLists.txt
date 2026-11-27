@@ -384,6 +384,7 @@ if(ENGINE_EDITOR)
         src/editor/asset_browser.cpp
         src/editor/animation_preview.cpp
         src/editor/physics_debug.cpp
+        src/editor/picking.cpp
         src/editor/scene_snapshot.cpp
         src/editor/audio_inspector.cpp
         src/editor/bt_graph.cpp

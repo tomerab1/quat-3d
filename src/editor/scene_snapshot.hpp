@@ -9,6 +9,7 @@
 // stay valid across a play/stop round trip.
 
 #include <expected>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -23,37 +24,48 @@ class Scene;
 
 namespace engine::editor {
 
+template <typename... Ts>
+struct ComponentList {};
+
+// Every engine component the editor copies as a whole: the play-mode snapshot
+// (capture/restore) and the hierarchy's Duplicate both walk this one list, so
+// a component added here is covered by both. Runtime-only tags (NetDriven)
+// are deliberately absent.
+using SnapshotComponents =
+    ComponentList<scene::Name, scene::Transform, scene::Parent, scene::Children,
+                  scene::MeshRenderer, scene::MeshSource, scene::SkinnedMesh, scene::Animator,
+                  scene::Camera, scene::DirectionalLight, scene::PointLight, scene::Collider,
+                  scene::RigidBody, scene::CharacterController, scene::Terrain,
+                  scene::NavAgent, scene::BehaviorTree, scene::PatrolRoute, scene::Primitive,
+                  scene::InstancedMesh, scene::InstancedMeshParts, scene::Scatter,
+                  scene::NetReplicated, scene::AudioSource, scene::AudioListener>;
+
+namespace detail {
+template <typename List>
+struct StoredTuple;
+template <typename... Ts>
+struct StoredTuple<ComponentList<Ts...>> {
+    using type = std::tuple<std::vector<std::pair<entt::entity, Ts>>...>;
+};
+} // namespace detail
+
 struct SceneSnapshot {
     std::vector<entt::entity> entities;
 
     template <typename T>
     using Stored = std::vector<std::pair<entt::entity, T>>;
 
-    Stored<scene::Name>                names;
-    Stored<scene::Transform>           transforms;
-    Stored<scene::Parent>              parents;
-    Stored<scene::Children>            children;
-    Stored<scene::MeshRenderer>        mesh_renderers;
-    Stored<scene::MeshSource>          mesh_sources;
-    Stored<scene::SkinnedMesh>         skinned_meshes;
-    Stored<scene::Animator>            animators;
-    Stored<scene::Camera>              cameras;
-    Stored<scene::DirectionalLight>    directional_lights;
-    Stored<scene::PointLight>          point_lights;
-    Stored<scene::Collider>            colliders;
-    Stored<scene::RigidBody>           rigid_bodies;
-    Stored<scene::CharacterController> characters;
-    Stored<scene::Terrain>             terrains;
-    Stored<scene::NavAgent>            nav_agents;
-    Stored<scene::BehaviorTree>        behavior_trees;
-    Stored<scene::PatrolRoute>         patrol_routes;
-    Stored<scene::Primitive>           primitives;
-    Stored<scene::InstancedMesh>       instanced_meshes;
-    Stored<scene::InstancedMeshParts>  instanced_mesh_parts;
-    Stored<scene::Scatter>             scatters;
-    Stored<scene::NetReplicated>       net_replicated;
-    Stored<scene::AudioSource>         audio_sources; // runtime state cleared at capture
-    Stored<scene::AudioListener>       audio_listeners;
+    // One Stored<T> per SnapshotComponents type.
+    detail::StoredTuple<SnapshotComponents>::type components;
+
+    template <typename T>
+    [[nodiscard]] Stored<T>& stored() {
+        return std::get<Stored<T>>(components);
+    }
+    template <typename T>
+    [[nodiscard]] const Stored<T>& stored() const {
+        return std::get<Stored<T>>(components);
+    }
 };
 
 // Copies the whole scene (all engine components) into a snapshot.
@@ -63,6 +75,14 @@ struct SceneSnapshot {
 // identifiers. Anything created during play disappears; anything destroyed
 // comes back.
 void restore_scene(scene::Scene& scene, const SceneSnapshot& snapshot);
+
+// Clones `source` onto a new sibling entity (same parent, name + " copy"):
+// every SnapshotComponents component except the hierarchy links, with
+// runtime state the copy must not share reset — physics body / character
+// handles (the systems create its own), audio sound handles and playback
+// state, and the network id (reassigned on the next session start). Children
+// are not cloned. Returns the copy (entt::null if `source` is invalid).
+entt::entity duplicate_entity(scene::Scene& scene, entt::entity source);
 
 // Round-trip self-test: capture, mutate/destroy/create, restore, verify the
 // original entities (ids included) and component values are back.

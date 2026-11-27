@@ -50,10 +50,14 @@ struct MeshRenderer {
 // load): the AssetManager cache keys, plus the glTF file that produces them.
 // An empty gltf_path means engine code creates the keyed assets at startup
 // (e.g. the showcase primitives), so a loaded scene resolves them by cache hit.
+// `gltf_node` is the glTF node that instanced the mesh: one mesh can be
+// instanced by several nodes with different skins (and armature offsets), so
+// a loaded scene re-attaches skins by (mesh_key, node), not by mesh alone.
 struct MeshSource {
     std::string mesh_key;
-    std::string material_key; // empty -> default material
-    std::string gltf_path;    // empty -> code-created assets
+    std::string material_key;   // empty -> default material
+    std::string gltf_path;      // empty -> code-created assets
+    int         gltf_node = -1; // -1: not instanced from a glTF node (or unknown)
 };
 
 // A procedural shape with a flat PBR material (Phase 15) — the data-driven way

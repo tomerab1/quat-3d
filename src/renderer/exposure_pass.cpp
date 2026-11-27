@@ -130,6 +130,7 @@ ExposureState::create(const rhi::Device& device, rhi::GpuAllocator& allocator) {
     if (!buffer) return std::unexpected(buffer.error());
     const float zero = 0.0F;
     std::memcpy(buffer->mapped(), &zero, sizeof(zero));
+    if (auto flushed = buffer->flush(); !flushed) return std::unexpected(flushed.error());
     auto state = std::make_shared<ExposureState>(Key{});
     state->buffer_ = std::move(*buffer);
     state->address_ = rhi::buffer_device_address(device.handle(), state->buffer_);
@@ -137,7 +138,11 @@ ExposureState::create(const rhi::Device& device, rhi::GpuAllocator& allocator) {
 }
 
 float ExposureState::adapted_luminance() const {
-    return buffer_.mapped() != nullptr ? *static_cast<const float*>(buffer_.mapped()) : 0.0F;
+    if (buffer_.mapped() == nullptr) return 0.0F;
+    // Device writes reach the host only after an invalidate on non-coherent
+    // memory (a no-op on coherent memory).
+    if (!buffer_.invalidate_mapped()) return 0.0F;
+    return *static_cast<const float*>(buffer_.mapped());
 }
 
 std::expected<ExposurePass, core::Error>

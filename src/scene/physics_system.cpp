@@ -132,27 +132,17 @@ void physics_system(entt::registry& registry, physics::PhysicsWorld& world, floa
             world.body_transform(rb.body, pos, rot);
             const glm::vec3 scale = scale_of(t);
             pos -= rot * (scale * col.offset);
-            const glm::mat4 pose = glm::translate(glm::mat4(1.0F), pos) * glm::mat4_cast(rot) *
-                                   glm::scale(glm::mat4(1.0F), scale);
-
-            glm::mat4 parent_world(1.0F);
-            if (const auto* parent = registry.try_get<Parent>(e);
-                parent != nullptr && parent->entity != entt::null &&
-                registry.valid(parent->entity)) {
-                if (const auto* pt = registry.try_get<Transform>(parent->entity)) {
-                    parent_world = pt->world;
-                }
-            }
-            t.local = glm::inverse(parent_world) * pose;
-            t.world = pose;
+            set_world_transform(registry, e,
+                                glm::translate(glm::mat4(1.0F), pos) * glm::mat4_cast(rot) *
+                                    glm::scale(glm::mat4(1.0F), scale));
         }
     }
 }
 
 namespace {
 
-void advance_character(entt::entity e, CharacterController& cc, Transform& t,
-                       physics::PhysicsWorld& world, float dt) {
+void advance_character(entt::registry& registry, entt::entity e, CharacterController& cc,
+                       const Transform& t, physics::PhysicsWorld& world, float dt) {
     constexpr float gravity = -9.81F;
     if (cc.character == physics::PhysicsWorld::invalid_body) {
         cc.character = world.create_character(cc.half_height, cc.radius, position_of(t),
@@ -172,9 +162,11 @@ void advance_character(entt::entity e, CharacterController& cc, Transform& t,
 
     cc.velocity = world.character_velocity(cc.character);
     cc.on_ground = world.character_on_ground(cc.character);
-    const glm::vec3 pos = world.character_position(cc.character);
-    t.local = glm::translate(glm::mat4(1.0F), pos);
-    t.world = t.local;
+    // The controller moves the entity's origin only: keep its world rotation
+    // and scale (a capsule never turns) and its parent's space.
+    glm::mat4 pose = t.world;
+    pose[3] = glm::vec4(world.character_position(cc.character), 1.0F);
+    set_world_transform(registry, e, pose);
 }
 
 } // namespace
@@ -191,7 +183,7 @@ void character_system(entt::registry& registry, physics::PhysicsWorld& world, fl
 
     for (auto [e, cc, t] :
          registry.view<CharacterController, Transform>(entt::exclude<NetDriven>).each()) {
-        advance_character(e, cc, t, world, dt);
+        advance_character(registry, e, cc, t, world, dt);
     }
 }
 
@@ -201,7 +193,7 @@ void step_character(entt::registry& registry, physics::PhysicsWorld& world, entt
     auto* cc = registry.try_get<CharacterController>(e);
     auto* t = registry.try_get<Transform>(e);
     if (cc == nullptr || t == nullptr) return;
-    advance_character(e, *cc, *t, world, dt);
+    advance_character(registry, e, *cc, *t, world, dt);
 }
 
 std::expected<void, core::Error> run_character_self_test() {

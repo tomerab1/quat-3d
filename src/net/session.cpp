@@ -223,9 +223,9 @@ void NetSession::client_update(entt::registry& registry, physics::PhysicsWorld* 
     if (latest && controllable(registry, character)) {
         if (world == nullptr) {
             // No local physics to predict with: show the host's state.
-            auto& tf = registry.get<scene::Transform>(character);
-            tf.local[3] = glm::vec4(latest->second.position, 1.0F);
-            tf.world[3] = glm::vec4(latest->second.position, 1.0F);
+            glm::mat4 pose = registry.get<scene::Transform>(character).world;
+            pose[3] = glm::vec4(latest->second.position, 1.0F);
+            scene::set_world_transform(registry, character, pose);
         } else if (const std::optional<CharacterState> corrected = predictor_.reconcile(
                        latest->first, latest->second,
                        character_stepper(registry, *world, character))) {

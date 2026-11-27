@@ -114,8 +114,9 @@ resolve_primitives(entt::registry& registry, rhi::GpuAllocator& allocator,
             failures += (failures.empty() ? "" : ", ") + a.material_key;
         }
         registry.emplace_or_replace<MeshRenderer>(e, std::move(a.mesh), std::move(a.material));
-        // Recorded even on failure: the AssetManager caches the failed slot,
-        // so retrying every frame could not succeed.
+        // Recorded even on failure, so a failing upload (out of device
+        // memory) is not retried every frame; the next edit of the primitive
+        // resolves it again, and the AssetManager retries the failed slot.
         p.resolved = primitive_hash(p);
     }
     if (!failures.empty()) {

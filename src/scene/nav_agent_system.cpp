@@ -10,6 +10,7 @@
 #include "engine/nav/navmesh.hpp"
 #include "engine/scene/components.hpp"
 #include "engine/scene/navigation.hpp"
+#include "engine/scene/scene.hpp"
 
 namespace engine::scene {
 
@@ -299,9 +300,11 @@ void nav_agent_system(entt::registry& registry, const nav::NavMesh& navmesh, flo
                        : glm::mix(feet.y, next.y,
                                   len > 1e-4F ? glm::length(disp) / len : 1.0F);
             new_pos.y = ground_y + agent.ground_offset;
-            // Entities driven kinematically are treated as roots (like physics).
-            transform.local[3] = glm::vec4(new_pos, 1.0F);
-            transform.world[3] = glm::vec4(new_pos, 1.0F);
+            // Only the origin moves: rotation and scale are kept, and a
+            // parented agent stays in its parent's space.
+            glm::mat4 pose = transform.world;
+            pose[3] = glm::vec4(new_pos, 1.0F);
+            set_world_transform(registry, e, pose);
         }
     }
 }

@@ -493,6 +493,7 @@ json encode_components(const entt::registry& r, entt::entity e, const EncodeOpti
             out["mesh"] = {{"mesh_key", m->mesh_key},
                            {"material_key", m->material_key},
                            {"gltf", m->gltf_path}};
+            if (m->gltf_node >= 0) out["mesh"]["node"] = m->gltf_node;
         }
     }
     return out;
