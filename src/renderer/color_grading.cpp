@@ -155,9 +155,10 @@ const glm::mat3& rec709_to_ap1() {
 }
 
 const glm::mat3& ap1_to_rec709() {
-    static const glm::mat3 m = rows(1.7048586763F, -0.6217160219F, -0.0832993717F, -0.1300768242F,
-                                    1.1407357748F, -0.0105598017F, -0.0239640729F, -0.1289755083F,
-                                    1.1530140189F);
+    // The exact inverse of rec709_to_ap1 (both keep white).
+    static const glm::mat3 m = rows(1.7050509927F, -0.6217921207F, -0.0832588720F, -0.1302564176F,
+                                    1.1408047365F, -0.0105483191F, -0.0240033568F, -0.1289689760F,
+                                    1.1529723328F);
     return m;
 }
 

@@ -16,6 +16,7 @@
 #include <vulkan/vulkan.h>
 
 #include "engine/core/error.hpp"
+#include "engine/rhi/device.hpp"
 #include "engine/rhi/gpu_allocator.hpp"
 #include "engine/rhi/render_graph.hpp"
 #include "support/gpu_context.hpp"
@@ -28,8 +29,9 @@ struct PostImage {
     VkFormat               format = VK_FORMAT_UNDEFINED;
     VkExtent2D             extent{0, 0};
 
+    // `name` must outlive the graph (a string literal).
     [[nodiscard]] engine::rhi::ResourceHandle import(engine::rhi::RenderGraph& graph,
-                                                     const std::string& name) const {
+                                                     const char* name) const {
         constexpr VkImageLayout ro = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
         return graph.import_image(name, image.handle(), view.handle(), format, extent, ro, ro);
     }

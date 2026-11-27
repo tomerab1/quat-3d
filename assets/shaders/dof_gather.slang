@@ -70,7 +70,9 @@ void compute_main(uint3 tid : SV_DispatchThreadID) {
             far_sum += s.rgb * wf;
             far_w += wf;
             const float near_r = max(-s.a, 0.0);
-            const float wn = saturate(near_r - dist + 1.0);
+            // Only defocused samples form the near layer (a sharp sample
+            // would otherwise cover its own pixel and soften it).
+            const float wn = saturate(near_r - dist + 1.0) * smoothstep(0.25, 1.0, near_r);
             near_sum += s.rgb * wn;
             near_w += wn;
             // Share of the sample's scatter disc this pixel's sample covers.

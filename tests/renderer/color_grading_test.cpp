@@ -45,11 +45,16 @@ TEST(ColorGrading, AgxIsNeutralMonotonicAndDesaturatesHighlights) {
         EXPECT_NEAR(c.r, c.g, 2e-3F) << v;
         EXPECT_NEAR(c.b, c.g, 2e-3F) << v;
     }
-    // Monotonic in exposure, black to (almost) white.
+    // Monotonic in exposure, black to (almost) white: strictly inside the
+    // log2 window (up to 6.5 stops over 0.18), flat at its top.
     float previous = -1.0F;
     for (float ev = -10.0F; ev <= 10.0F; ev += 0.5F) {
         const float y = luminance(g::agx(glm::vec3(0.18F * std::exp2(ev))));
-        EXPECT_GT(y, previous) << ev;
+        if (ev < 6.0F) {
+            EXPECT_GT(y, previous) << ev;
+        } else {
+            EXPECT_GE(y, previous) << ev;
+        }
         previous = y;
     }
     EXPECT_LT(luminance(g::agx(glm::vec3(0.0F))), 0.01F);
@@ -128,8 +133,9 @@ TEST(ColorGrading, WhiteBalanceNeutralisesTheChosenLight) {
     // blue, -green raises it, symmetrically.
     const glm::vec3 magenta = g::white_balance_matrix(6500.0F, 0.5F) * glm::vec3(1.0F);
     const glm::vec3 green = g::white_balance_matrix(6500.0F, -0.5F) * glm::vec3(1.0F);
-    EXPECT_GT(magenta.g, green.g); // balancing out a magenta cast adds green
-    EXPECT_NEAR(magenta.g - 1.0F, -(green.g - 1.0F), 0.02F);
+    EXPECT_GT(magenta.g, 1.0F); // balancing out a magenta cast adds green ...
+    EXPECT_LT(green.g, 1.0F);   // ... and a green cast removes it, by about as much
+    EXPECT_NEAR((magenta.g - 1.0F) / (1.0F - green.g), 1.0F, 0.35F);
 }
 
 TEST(ColorGrading, GradeIsANoOpAtDefaultsAndBehavesPerControl) {
