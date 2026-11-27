@@ -245,6 +245,25 @@ JSON-RPC over loopback TCP to the engine.
   (MoltenVK included) has a path; foliage and instanced meshes first, then
   shadows (virtual shadow maps as a follow-up). *(very large; after R5, R6,
   R9.4)*
+- [ ] **R21 — Lighting realism: SSR, HDRI IBL, energy-conserving specular.**
+  Takes over R12's stochastic-SSR step. *(medium; needs R11, R12)*
+  - [ ] **R21.1 Energy-conserving specular.** DFG LUT with the punctual
+    lights' height-correlated Smith term; multiple-scattering GGX for the
+    environment (Fdez-Agüera 2019) and punctual lights (Kulla-Conty 2017
+    compensation); horizon occlusion of normal-mapped reflections against
+    the geometric normal from depth; A8 toggles; white-furnace tests.
+  - [ ] **R21.2 HDRI environments.** Guarded Radiance `.hdr` decode (limits,
+    budget, fuzz test); GPU equirect → cube with rotation / intensity,
+    filtered-importance-sampled GGX prefilter (Křivánek & Colbert 2008),
+    SH9 irradiance, split-sum LUT; the HDRI's sun extracted into a shadowed
+    directional light and clamped out of the maps; A8 `environment` group,
+    `environment.set hdri`, scene files, editor; CPU-reference tests.
+  - [ ] **R21.3 Screen-space reflections.** Stochastic SSR (Stachowiak
+    2015): GGX visible-normal rays marched through R12's Hi-Z pyramid,
+    ray-reuse resolve, temporal accumulation on R11 velocity, IBL fallback
+    with edge and roughness fades; A8 `ssr` group; mirror-plane test.
+  - [ ] **R21.4 OpenEXR HDRIs** (tinyexr or OpenEXR core via vcpkg, with
+    the same limits and fuzzing as `.hdr`).
 
 ## P — Platforms & shipping
 

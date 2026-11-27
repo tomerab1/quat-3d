@@ -27,7 +27,7 @@ constexpr VkShaderStageFlags kComputeStage = VK_SHADER_STAGE_COMPUTE_BIT;
 // Bound when the frame has no sun shadows (never sampled then).
 constexpr VkFormat kFallbackShadowFormat = VK_FORMAT_D16_UNORM;
 
-// Mirrors LightingConstants in lighting.slang (std140, 288 bytes).
+// Mirrors LightingConstants in lighting.slang (std140, 304 bytes).
 struct LightingConstants {
     glm::mat4 inv_view_proj{1.0F};
     glm::mat4 view_proj{1.0F};
@@ -41,8 +41,9 @@ struct LightingConstants {
     glm::vec4 csm_misc{0.0F};   // debug cascades, noise offset, depth -> view (A, B)
     glm::vec4 contact{0.0F};    // intensity (0 = off), length, steps, thickness
     glm::vec4 ao{0.0F};         // on, bent normals, specular occlusion, multi-bounce
+    glm::vec4 realism{0.0F};    // multiscatter, horizon occlusion, reflections bound (R21)
 };
-static_assert(sizeof(LightingConstants) == 288, "must match lighting.slang LightingConstants");
+static_assert(sizeof(LightingConstants) == 304, "must match lighting.slang LightingConstants");
 
 // lighting.slang's resources by name; slots_ holds their reflected bindings
 // in this order.
@@ -50,7 +51,7 @@ enum Slot : std::uint8_t {
     s_frame, s_albedo, s_normal, s_material, s_depth, s_hdr, s_clearcoat, s_shadow_map,
     s_shadow_cmp, s_point, s_cascades, s_ao, s_irradiance, s_prefiltered, s_brdf_lut,
     s_ibl_sampler, s_skyview, s_transmittance, s_cluster_params, s_lights, s_cluster_grid,
-    s_cluster_indices, s_count
+    s_cluster_indices, s_reflections, s_environment, s_count
 };
 constexpr std::array<rhi::BindingRequest, s_count> kResources{{
     {"g_frame", VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER},
@@ -75,6 +76,8 @@ constexpr std::array<rhi::BindingRequest, s_count> kResources{{
     {"g_lights", VK_DESCRIPTOR_TYPE_STORAGE_BUFFER},
     {"g_cluster_grid", VK_DESCRIPTOR_TYPE_STORAGE_BUFFER},
     {"g_cluster_indices", VK_DESCRIPTOR_TYPE_STORAGE_BUFFER},
+    {"g_reflections", VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE},
+    {"g_environment", VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE},
 }};
 
 [[nodiscard]] std::expected<rhi::GpuBuffer, core::Error>
@@ -128,6 +131,7 @@ LightingPass::create(const rhi::Device& device, rhi::GpuAllocator& allocator,
     if (!shader) return std::unexpected(shader.error());
     auto bindings = rhi::reflected_bindings((*shader)->reflection, kResources, kComputeStage);
     if (!bindings) return fail("lighting pass: " + bindings.error().message);
+    static_assert(s_count == k_slot_count, "lighting_pass.hpp k_slot_count must match kResources");
     for (std::size_t i = 0; i < s_count; ++i) out.slots_[i] = (*bindings)[i].binding;
     auto layout = rhi::DescriptorSetLayout::create(device, out.db_fns_, *bindings);
     if (!layout) return std::unexpected(layout.error());
@@ -207,20 +211,25 @@ LightingPass::add_to_graph(rhi::RenderGraph& graph, const GBufferTargets& gbuffe
     if (!db) return std::unexpected(db.error());
     frame_descriptor_ = std::move(*db);
 
-    // Sky mode: 0 = off, 1 = procedural, 2 = atmosphere LUTs.
+    // Sky mode: 0 = off, 1 = procedural, 2 = atmosphere LUTs, 3 = HDRI (R21).
     const bool has_atmosphere =
         atmosphere_skyview != VK_NULL_HANDLE && atmosphere_transmittance != VK_NULL_HANDLE;
+    const bool has_hdri = tuning.environment != VK_NULL_HANDLE;
     LightingConstants c{};
     c.inv_view_proj = inv_view_proj;
     c.view_proj = glm::inverse(inv_view_proj);
     c.camera_pos = glm::vec4(camera_pos, 0.0F);
     c.direction = glm::vec4(glm::vec3(light.direction),
-                            enable_sky ? (has_atmosphere ? 2.0F : 1.0F) : 0.0F);
+                            enable_sky ? (has_hdri ? 3.0F : has_atmosphere ? 2.0F : 1.0F) : 0.0F);
     c.color = light.color;
     c.ambient = glm::vec4(glm::vec3(light.ambient), std::max(tuning.ibl_intensity, 0.0F));
     c.cloud_a = clouds.pack_a();
     c.cloud_b = clouds.pack_b();
     fill_occlusion(c, occlusion);
+    // R21: the energy terms need the real DFG LUT (the fallback is black).
+    const rhi::ResourceHandle reflections = tuning.reflections;
+    c.realism = {flag(tuning.multiscatter && ibl.valid()), flag(tuning.horizon_occlusion),
+                 flag(reflections.valid()), 0.0F};
     // Host writes land before vkQueueSubmit, which makes them visible.
     std::memcpy(constants_.mapped(), &c, sizeof(c));
     if (auto f = constants_.flush(0, sizeof(c)); !f) return std::unexpected(f.error());
@@ -249,6 +258,7 @@ LightingPass::add_to_graph(rhi::RenderGraph& graph, const GBufferTargets& gbuffe
         pass.reads(occlusion.shadows.cascades, rhi::ResourceUsage::buffer_read_compute);
     }
     if (ao.valid()) pass.reads(ao, rhi::ResourceUsage::sampled_compute);
+    if (reflections.valid()) pass.reads(reflections, rhi::ResourceUsage::sampled_compute);
     // The cull pass's grid/index writes reach this pass through the graph's
     // compute -> compute buffer barriers.
     read_clustered_lights(pass, lights, rhi::ResourceUsage::buffer_read_compute);
@@ -260,8 +270,10 @@ LightingPass::add_to_graph(rhi::RenderGraph& graph, const GBufferTargets& gbuffe
         has_atmosphere ? atmosphere_transmittance : VK_NULL_HANDLE;
     const VkDeviceAddress constants_address =
         rhi::buffer_device_address(device_->handle(), constants_);
+    const VkImageView environment = has_hdri ? tuning.environment : maps.prefiltered;
     pass.execute([this, gbuffer, hdr, shadow_map, cascades, ao, extent, maps, skyview_view,
-                  transmittance_view, cl, constants_address](rhi::PassContext& ctx) {
+                  transmittance_view, cl, constants_address, reflections,
+                  environment](rhi::PassContext& ctx) {
         const VkCommandBuffer cmd = ctx.cmd();
         constexpr VkImageLayout ro = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
         rhi::DescriptorBuffer& d = frame_descriptor_;
@@ -294,6 +306,12 @@ LightingPass::add_to_graph(rhi::RenderGraph& graph, const GBufferTargets& gbuffe
         d.write_storage_buffer(s[s_lights], cl.lights, cl.lights_size);
         d.write_storage_buffer(s[s_cluster_grid], cl.grid, cl.grid_size);
         d.write_storage_buffer(s[s_cluster_indices], cl.indices, cl.indices_size);
+        // R21: without reflections the (black) fallback BRDF LUT stands in
+        // (never read); without an HDRI the prefiltered cube does.
+        d.write_sampled_image(s[s_reflections],
+                              reflections.valid() ? ctx.resolve(reflections).view : maps.brdf_lut,
+                              ro);
+        d.write_sampled_image(s[s_environment], environment, ro);
 
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline_.handle());
         d.bind(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline_.layout(), 0);

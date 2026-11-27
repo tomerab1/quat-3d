@@ -30,6 +30,8 @@ using S = RenderSettings;
 using Csm = CsmSettings;
 using Gtao = GtaoSettings;
 using Contact = ContactShadowSettings;
+using Env = EnvironmentSettings;
+using Ssr = SsrSettings;
 
 constexpr std::array k_groups = {
     RenderSettingGroup{"exposure", "Exposure", "Auto exposure and exposure compensation"},
@@ -41,6 +43,9 @@ constexpr std::array k_groups = {
     RenderSettingGroup{"contact_shadows", "Contact shadows",
                        "Screen-space sun shadows for small detail"},
     RenderSettingGroup{"ibl", "Environment light", "Image-based ambient light and reflections"},
+    RenderSettingGroup{"environment", "Sky & HDRI",
+                       "Procedural sky or an HDRI panorama for background, ambient and reflections"},
+    RenderSettingGroup{"ssr", "Reflections", "Screen-space reflections over the environment"},
     RenderSettingGroup{"clouds", "Clouds", "Volumetric cloud layer of the sky"},
 };
 
@@ -247,6 +252,48 @@ constexpr std::array k_fields = {
     RenderSettingDesc{"ibl", "intensity", "intensity", T::number, 0.0F, 4.0F, 1.0F, "",
                       "Scales image-based ambient light and reflections",
                       &field_ref<&S::ibl, &IblSettings::intensity>},
+    RenderSettingDesc{"ibl", "multiscatter", "multiple scattering", T::boolean, 0.0F, 1.0F, 1.0F,
+                      "", "Restore the energy rough metals lose to single-scattering GGX",
+                      &field_ref<&S::ibl, &IblSettings::multiscatter>},
+    RenderSettingDesc{"ibl", "horizon_occlusion", "horizon occlusion", T::boolean, 0.0F, 1.0F,
+                      1.0F, "", "Fade normal-mapped reflections that dip below the surface",
+                      &field_ref<&S::ibl, &IblSettings::horizon_occlusion>},
+    // ---- environment (R21) ----
+    RenderSettingDesc{"environment", "source", "sky", T::choice, 0.0F,
+                      static_cast<float>(sky_source_names.size() - 1), 0.0F, "",
+                      "procedural (atmosphere) or hdri (needs environment.set hdri.path)",
+                      &field_ref<&S::environment, &Env::source>, sky_source_names},
+    RenderSettingDesc{"environment", "hdri_intensity", "HDRI intensity", T::number,
+                      Env::k_intensity.min, Env::k_intensity.max, Env{}.hdri_intensity, "",
+                      "Scales the HDRI's background, lighting and sun",
+                      &field_ref<&S::environment, &Env::hdri_intensity>},
+    RenderSettingDesc{"environment", "hdri_rotation_deg", "HDRI rotation", T::number,
+                      Env::k_rotation_deg.min, Env::k_rotation_deg.max, Env{}.hdri_rotation_deg,
+                      "deg", "Turns the HDRI about the vertical axis",
+                      &field_ref<&S::environment, &Env::hdri_rotation_deg>},
+    RenderSettingDesc{"environment", "hdri_sun", "HDRI sun", T::boolean, 0.0F, 1.0F, 1.0F, "",
+                      "The HDRI's sun becomes the shadowed directional light",
+                      &field_ref<&S::environment, &Env::hdri_sun>},
+    // ---- ssr (R21) ----
+    RenderSettingDesc{"ssr", "enabled", "enabled", T::boolean, 0.0F, 1.0F, 1.0F, "",
+                      "Trace screen-space reflections; off leaves the environment only",
+                      &field_ref<&S::ssr, &Ssr::enabled>},
+    RenderSettingDesc{"ssr", "quality", "quality", T::choice, 0.0F,
+                      static_cast<float>(ssr_quality_names.size() - 1), 1.0F, "",
+                      "low: 32 steps, 1 reused ray; medium: 64, 4; high: 128, 4",
+                      &field_ref<&S::ssr, &Ssr::quality>, ssr_quality_names},
+    RenderSettingDesc{"ssr", "max_roughness", "max roughness", T::number,
+                      Ssr::k_max_roughness.min, Ssr::k_max_roughness.max, Ssr{}.max_roughness,
+                      "", "Rougher surfaces use the environment only",
+                      &field_ref<&S::ssr, &Ssr::max_roughness>},
+    RenderSettingDesc{"ssr", "thickness", "thickness", T::number, Ssr::k_thickness.min,
+                      Ssr::k_thickness.max, Ssr{}.thickness, "m",
+                      "How far behind the depth buffer a ray still hits",
+                      &field_ref<&S::ssr, &Ssr::thickness>},
+    RenderSettingDesc{"ssr", "edge_fade", "edge fade", T::number, Ssr::k_edge_fade.min,
+                      Ssr::k_edge_fade.max, Ssr{}.edge_fade, "",
+                      "Screen-edge band where reflections fade to the environment",
+                      &field_ref<&S::ssr, &Ssr::edge_fade>},
     // ---- clouds ----
     RenderSettingDesc{"clouds", "enabled", "enabled", T::boolean, 0.0F, 1.0F, 1.0F, "",
                       "Draw the volumetric cloud layer",
@@ -290,6 +337,11 @@ constexpr std::array k_deprecated = {
 } // namespace
 
 std::span<const RenderSettingGroup> render_setting_groups() { return k_groups; }
+
+SkySource sky_source(const EnvironmentSettings& settings) {
+    return settings.source == static_cast<int>(SkySource::hdri) ? SkySource::hdri
+                                                                : SkySource::procedural;
+}
 
 std::span<const DeprecatedRenderSetting> deprecated_render_settings() { return k_deprecated; }
 

@@ -195,6 +195,7 @@ bool Application::init_subsystems() {
     }
     // Atmosphere LUTs + dynamic IBL probe, lit by the scene's sun.
     renderer_.create_environment(scene_, pipeline_cache_, shader_dir_);
+    renderer_.create_reflections(pipeline_cache_, shader_dir_); // R21: HDRI + SSR
     // Terrain, networking (QUAT_HOST / QUAT_JOIN) and the QUAT_TERRAIN tile.
     world_.init(device_, allocator_, pipeline_cache_, shader_dir_, project_root(), scene_);
 

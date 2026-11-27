@@ -78,6 +78,16 @@ struct LightingOcclusion {
 // sun-shadow filter and biases are CsmSettings (LightingOcclusion::csm).
 struct LightingTuning {
     float ibl_intensity = 1.0F; // scales image-based ambient + reflections
+    // R21: multiple-scattering GGX energy (environment and punctual lights;
+    // needs real IBL maps) and horizon occlusion of normal-mapped reflections.
+    bool multiscatter = true;
+    bool horizon_occlusion = true;
+    // R21: SsrPass output (rgb radiance, a weight) replacing the environment
+    // where screen-space rays hit; invalid = environment only.
+    rhi::ResourceHandle reflections{};
+    // R21: the HdriEnvironment cube; set (with the sky enabled) it is the
+    // background (sky mode 3) instead of the procedural / atmosphere sky.
+    VkImageView environment = VK_NULL_HANDLE;
 };
 
 class LightingPass {
@@ -118,7 +128,7 @@ public:
 private:
     // Descriptor slots of lighting.slang's resources, from reflection (in
     // the order of kResources in lighting_pass.cpp).
-    static constexpr std::size_t k_slot_count = 22;
+    static constexpr std::size_t k_slot_count = 24;
 
     const rhi::Device* device_    = nullptr;   // non-owning
     rhi::GpuAllocator* allocator_ = nullptr;   // non-owning

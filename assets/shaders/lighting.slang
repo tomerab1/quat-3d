@@ -14,6 +14,12 @@
 // normals for the diffuse irradiance lookup, multi-bounce, and cone-based
 // specular occlusion (lib/occlusion.slang). Resource bindings come from
 // reflection (no explicit indices); per-frame values are in g_frame.
+// R21: energy-conserving specular (lib/brdf_energy.slang: Fdez-Aguera
+// multiple scattering for the environment, Kulla-Conty compensation for
+// punctual lights), horizon occlusion of normal-mapped reflections against
+// the geometric normal reconstructed from depth, screen-space reflections
+// (SsrPass; they replace the environment's specular radiance where they
+// hit) and an HDRI sky (sky mode 3: the HdriEnvironment cube).
 
 import atmosphere;
 import clustered_lights;
@@ -23,6 +29,7 @@ import octahedral;
 import sky;
 import pbr; // pbr_punctual_alpha
 import hdr; // hdr_store
+import brdf_energy;
 
 static const float PI = 3.14159265358979;
 
@@ -34,7 +41,7 @@ static const float SKY_LUT_BRIGHTNESS = 8.0;
 // match prefilter_mip_count in ibl_pass.cpp.
 static const float PREFILTER_MAX_LOD = 4.0;
 
-// Per-frame values (std140, 288 bytes; LightingConstants in lighting_pass.cpp).
+// Per-frame values (std140, 304 bytes; LightingConstants in lighting_pass.cpp).
 // Matrices are glm columns (applied with mul_cols).
 struct LightingConstants {
     float4 inv_view_proj[4]; // clip -> world (jittered), reconstructs positions
@@ -49,6 +56,7 @@ struct LightingConstants {
     float4 csm_misc;         // x debug cascades, y noise offset (frame), zw depth -> view (A, B)
     float4 contact;          // x intensity (0 = off), y length m, z steps, w thickness m
     float4 ao;               // x GTAO on, y bent normals, z specular occlusion, w multi-bounce
+    float4 realism;          // x multiscatter, y horizon occlusion, z reflections bound (R21)
 }
 ConstantBuffer<LightingConstants> g_frame;
 
@@ -82,6 +90,10 @@ ConstantBuffer<ClusterParams> g_cluster_params;
 StructuredBuffer<GpuLight>    g_lights;
 StructuredBuffer<uint2>       g_cluster_grid;    // offset, count
 StructuredBuffer<uint>        g_cluster_indices;
+// R21: screen-space reflections (SsrPass; rgb radiance, a weight; read when
+// realism.z > 0.5) and the HDRI environment cube (sky mode 3 background).
+Texture2D                     g_reflections;
+TextureCube                   g_environment;
 
 // Schlick Fresnel with a roughness term, for the ambient/environment specular
 // (the view-independent IBL term, unlike the per-light f_schlick).
@@ -91,26 +103,26 @@ float3 fresnel_schlick_roughness(float ndotv, float3 f0, float roughness) {
 }
 
 // Image-based ambient: diffuse irradiance + prefiltered specular reflection,
-// combined through the split-sum BRDF LUT. Replaces the flat constant ambient.
-// `diffuse_n` is the irradiance lookup direction (the GTAO bent normal when
-// available); the occlusion terms apply per lobe.
+// combined through the split-sum BRDF LUT (`dfg` at NdotV, roughness).
+// Replaces the flat constant ambient. `diffuse_n` is the irradiance lookup
+// direction (the GTAO bent normal when available); the occlusion terms apply
+// per lobe. R21: the multiple-scattering lobe and the energy left to diffuse
+// follow lib/brdf_energy.slang, and `reflection` (screen-space hits: rgb
+// radiance, a weight) replaces the occluded environment radiance.
 float3 ibl_ambient(float3 N, float3 diffuse_n, float3 V, float3 albedo, float metallic,
-                   float roughness, float3 diffuse_occlusion, float specular_occlusion) {
+                   float roughness, float3 diffuse_occlusion, float specular_occlusion,
+                   float2 dfg, float4 reflection) {
     float ndotv = max(dot(N, V), 1e-4);
     float3 f0 = lerp(float3(0.04, 0.04, 0.04), albedo, metallic);
     float3 F = fresnel_schlick_roughness(ndotv, f0, roughness);
-    float3 kd = (1.0 - F) * (1.0 - metallic);
+    IblEnergy e = ibl_energy(f0, F, dfg, albedo * (1.0 - metallic), g_frame.realism.x > 0.5);
 
     float3 irradiance = g_irradiance.SampleLevel(g_ibl_sampler, diffuse_n, 0.0).rgb;
-    float3 diffuse = irradiance * albedo;
-
     float3 R = reflect(-V, N);
     float3 prefiltered =
         g_prefiltered.SampleLevel(g_ibl_sampler, R, roughness * PREFILTER_MAX_LOD).rgb;
-    float2 brdf = g_brdf_lut.SampleLevel(g_ibl_sampler, float2(ndotv, roughness), 0.0).rg;
-    float3 specular = prefiltered * (F * brdf.x + brdf.y);
-
-    return kd * diffuse * diffuse_occlusion + specular * specular_occlusion;
+    float3 radiance = lerp(prefiltered * specular_occlusion, reflection.rgb, reflection.a);
+    return e.single * radiance + (e.multi + e.diffuse) * irradiance * diffuse_occlusion;
 }
 
 // Reconstruct world position from the pixel's screen UV + sampled depth. The
@@ -122,6 +134,36 @@ float3 world_from_depth(int2 coord, uint width, uint height, float depth) {
     float4 clip = float4(ndc, depth, 1.0);
     float4 world = mul_cols(g_frame.inv_view_proj, clip);
     return world.xyz / world.w;
+}
+
+// R21: the geometric (unperturbed) normal from the depth buffer, for horizon
+// occlusion. Each axis takes the neighbour whose depth is closer to this
+// pixel's (no smearing across silhouettes; the screen edge uses the inner
+// side), and the result faces the viewer. Falls back to `shading_n`.
+float3 geometric_normal(int2 coord, uint width, uint height, float depth, float3 p, float3 v,
+                        float3 shading_n) {
+    int2 last = int2(int(width), int(height)) - 1;
+    int2 cl = int2(max(coord.x - 1, 0), coord.y);
+    int2 cr = int2(min(coord.x + 1, last.x), coord.y);
+    int2 cu = int2(coord.x, max(coord.y - 1, 0));
+    int2 cd = int2(coord.x, min(coord.y + 1, last.y));
+    float dl = g_depth.Load(int3(cl, 0)).r;
+    float dr = g_depth.Load(int3(cr, 0)).r;
+    float du = g_depth.Load(int3(cu, 0)).r;
+    float dd = g_depth.Load(int3(cd, 0)).r;
+    bool right = coord.x == 0 || (coord.x < last.x && abs(dr - depth) < abs(dl - depth));
+    bool down = coord.y == 0 || (coord.y < last.y && abs(dd - depth) < abs(du - depth));
+    float3 px = right ? world_from_depth(cr, width, height, dr) - p
+                      : p - world_from_depth(cl, width, height, dl);
+    float3 py = down ? world_from_depth(cd, width, height, dd) - p
+                     : p - world_from_depth(cu, width, height, du);
+    float3 ng = cross(px, py);
+    float len = length(ng);
+    if (!(len > 1e-12)) {
+        return shading_n;
+    }
+    ng /= len;
+    return dot(ng, v) < 0.0 ? -ng : ng;
 }
 
 // GGX / Trowbridge-Reitz normal distribution. `a` = roughness^2.
@@ -144,8 +186,10 @@ float3 f_schlick(float vdoth, float3 f0) {
 }
 
 // Cook-Torrance response for one light direction L (unit), without the light's
-// radiance — returns (diffuse + specular) * NdotL.
-float3 surface_brdf(float3 N, float3 V, float3 L, float3 albedo, float metallic, float roughness) {
+// radiance — returns (diffuse + specular) * NdotL. `energy` scales the
+// specular lobe (R21 multiple-scattering compensation; 1 = single scatter).
+float3 surface_brdf(float3 N, float3 V, float3 L, float3 albedo, float metallic, float roughness,
+                    float3 energy) {
     float3 h = normalize(V + L);
     float ndotl = max(dot(N, L), 0.0);
     float ndotv = max(dot(N, V), 1e-4);
@@ -159,7 +203,7 @@ float3 surface_brdf(float3 N, float3 V, float3 L, float3 albedo, float metallic,
     float  Vis = v_smith(ndotv, ndotl, a);
     float3 F   = f_schlick(vdoth, f0);
 
-    float3 spec    = D * Vis * F;
+    float3 spec    = D * Vis * F * energy;
     float3 kd      = (1.0 - F) * (1.0 - metallic);
     float3 diffuse = kd * albedo / PI;
     return (diffuse + spec) * ndotl;
@@ -251,7 +295,10 @@ void compute_main(uint3 tid : SV_DispatchThreadID) {
             float3 far_pos = world_from_depth(coord, width, height, bg_depth);
             float3 ray = normalize(far_pos - g_frame.camera_pos.xyz);
             float3 sun = normalize(g_frame.direction.xyz);
-            if (g_frame.direction.w > 1.5) {
+            if (g_frame.direction.w > 2.5) {
+                // R21: HDRI environment (rotation and intensity baked in).
+                bg = g_environment.SampleLevel(g_ibl_sampler, ray, 0.0).rgb;
+            } else if (g_frame.direction.w > 1.5) {
                 // Physically-based sky: atmosphere from the sky-view LUT,
                 // volumetric clouds marched per pixel (sharp shapes — the LUT
                 // is too coarse for them), analytic sun disc tinted by the
@@ -300,13 +347,20 @@ void compute_main(uint3 tid : SV_DispatchThreadID) {
     // reddens the direct lighting, matching the LUT sky.
     float3 ldir   = normalize(g_frame.direction.xyz);
     float3 sun_radiance = g_frame.color.rgb * g_frame.color.w;
-    if (g_frame.direction.w > 1.5) {
+    if (g_frame.direction.w > 1.5 && g_frame.direction.w < 2.5) {
         sun_radiance *= sample_transmittance(g_transmittance_lut, g_ibl_sampler,
                                              ATMOS_VIEW_HEIGHT, ldir.y);
     }
+    // R21: the split-sum DFG at this pixel drives the multiple-scattering
+    // energy of both the punctual lights and the environment (only with real
+    // IBL maps bound: the fallback LUT is black, so realism.x is 0 then).
+    float  ndotv  = max(dot(n, v), 1e-4);
+    float2 dfg    = g_brdf_lut.SampleLevel(g_ibl_sampler, float2(ndotv, roughness), 0.0).rg;
+    float3 energy = punctual_energy_compensation(lerp(float3(0.04), albedo.rgb, metallic), dfg,
+                                                 g_frame.realism.x > 0.5);
     uint   cascade = CSM_MAX_CASCADES;
     float  shadow = sun_visibility(coord, uint2(width, height), world_pos, n, ldir, cascade);
-    float3 sun    = surface_brdf(n, v, ldir, albedo.rgb, metallic, roughness);
+    float3 sun    = surface_brdf(n, v, ldir, albedo.rgb, metallic, roughness, energy);
     float3 color  = layer_clearcoat_direct(sun, n, v, ldir, cc, ccr) * sun_radiance * shadow;
 
     // Clustered point/spot lights (no shadows): only this pixel's froxel list.
@@ -319,7 +373,7 @@ void compute_main(uint3 tid : SV_DispatchThreadID) {
             if (!light_incident(light, world_pos, lp, radiance)) {
                 continue;
             }
-            float3 base = surface_brdf(n, v, lp, albedo.rgb, metallic, roughness);
+            float3 base = surface_brdf(n, v, lp, albedo.rgb, metallic, roughness, energy);
             color += layer_clearcoat_direct(base, n, v, lp, cc, ccr) * radiance;
         }
     }
@@ -345,8 +399,14 @@ void compute_main(uint3 tid : SV_DispatchThreadID) {
         }
     }
     if (g_frame.direction.w > 0.5) {
+        if (g_frame.realism.y > 0.5) {
+            float3 ng = geometric_normal(coord, width, height, depth, world_pos, v, n);
+            specular_occ *= horizon_occlusion(reflect(-v, n), ng);
+        }
+        float4 reflection = g_frame.realism.z > 0.5 ? g_reflections.Load(int3(coord, 0))
+                                                    : float4(0.0, 0.0, 0.0, 0.0);
         float3 ambient = ibl_ambient(n, diffuse_n, v, albedo.rgb, metallic, roughness,
-                                     diffuse_occ, specular_occ);
+                                     diffuse_occ, specular_occ, dfg, reflection);
         color += layer_clearcoat_ibl(ambient, n, v, cc, ccr) * g_frame.ambient.w;
     } else {
         color += g_frame.ambient.rgb * albedo.rgb * diffuse_occ;
