@@ -2,12 +2,14 @@
 
 #include <cstdint>
 #include <expected>
+#include <functional>
 #include <span>
 #include <string_view>
 
 #include <vulkan/vulkan.h>
 
 #include "engine/core/error.hpp"
+#include "engine/rhi/queue_selection.hpp"
 
 namespace engine::rhi {
 
@@ -19,17 +21,14 @@ namespace engine::rhi {
 // ext_descriptor_buffer.
 enum class DescriptorBackend : std::uint8_t { ext_descriptor_buffer, classic_sets };
 
-// Queue family indices selected for the logical device. Compute and transfer
-// fall back to the graphics family when no dedicated family exists.
-struct QueueFamilies {
-    std::uint32_t graphics = VK_QUEUE_FAMILY_IGNORED;
-    std::uint32_t compute  = VK_QUEUE_FAMILY_IGNORED;
-    std::uint32_t transfer = VK_QUEUE_FAMILY_IGNORED;
-};
+// Creates the window surface for a freshly created instance (e.g. via
+// SDL_Vulkan_CreateSurface). See Device::CreateInfo::create_surface.
+using CreateSurfaceFn = std::function<std::expected<VkSurfaceKHR, core::Error>(VkInstance)>;
 
-// Owns the core Vulkan objects: instance, (debug build) debug messenger,
-// the selected physical device, the logical device, and the three queues.
-// Move-only RAII wrapper — destroying it tears everything down in order.
+// Owns the core Vulkan objects: instance, (debug build) debug messenger, the
+// window surface (when one was requested), the selected physical device, the
+// logical device, and its queues. Move-only RAII wrapper — destroying it tears
+// everything down in order.
 class Device {
 public:
     struct CreateInfo {
@@ -41,6 +40,14 @@ public:
         // passes true in debug builds, false in release.
         bool enable_validation = false;
         const char* application_name = "quat-3d";
+        // Optional. Called once the instance exists and before a physical
+        // device is chosen: only devices with a queue family that can present
+        // to the returned surface are considered (a graphics family that also
+        // presents is preferred), and present_queue() is valid. The device
+        // owns the surface and destroys it before the instance. Leave empty
+        // for a surface-less device (tools, tests): present_queue() is then
+        // null and queue_families().present is VK_QUEUE_FAMILY_IGNORED.
+        CreateSurfaceFn create_surface{};
     };
 
     [[nodiscard]] static std::expected<Device, core::Error> create(const CreateInfo& info);
@@ -60,6 +67,13 @@ public:
     [[nodiscard]] VkQueue graphics_queue() const { return graphics_queue_; }
     [[nodiscard]] VkQueue compute_queue() const { return compute_queue_; }
     [[nodiscard]] VkQueue transfer_queue() const { return transfer_queue_; }
+    // The queue that presents to surface(): the graphics queue when its family
+    // can present (the usual case), else one from queue_families().present.
+    // Null for a surface-less device.
+    [[nodiscard]] VkQueue present_queue() const { return present_queue_; }
+    // The surface created through CreateInfo::create_surface (owned by the
+    // device), or null.
+    [[nodiscard]] VkSurfaceKHR surface() const { return surface_; }
     [[nodiscard]] const VkPhysicalDeviceProperties& properties() const { return properties_; }
     [[nodiscard]] const VkPhysicalDeviceDescriptorBufferPropertiesEXT&
     descriptor_buffer_properties() const { return descriptor_buffer_props_; }
@@ -103,12 +117,14 @@ private:
 
     VkInstance               instance_         = VK_NULL_HANDLE;
     VkDebugUtilsMessengerEXT debug_messenger_  = VK_NULL_HANDLE;
+    VkSurfaceKHR             surface_          = VK_NULL_HANDLE;
     VkPhysicalDevice         physical_device_  = VK_NULL_HANDLE;
     VkDevice                 device_           = VK_NULL_HANDLE;
     QueueFamilies            queue_families_{};
     VkQueue                  graphics_queue_   = VK_NULL_HANDLE;
     VkQueue                  compute_queue_    = VK_NULL_HANDLE;
     VkQueue                  transfer_queue_   = VK_NULL_HANDLE;
+    VkQueue                  present_queue_    = VK_NULL_HANDLE;
     VkPhysicalDeviceProperties properties_{};
     VkPhysicalDeviceDescriptorBufferPropertiesEXT descriptor_buffer_props_{};
     float                    max_sampler_anisotropy_ = 0.0F;

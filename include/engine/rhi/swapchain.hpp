@@ -13,9 +13,12 @@ namespace engine::rhi {
 
 class Device;
 
-// Owns the VkSwapchainKHR and its image views. The surface is created and owned
-// by the caller; the swapchain only references it. FIFO present mode (always
-// available), preferring a B8G8R8A8_SRGB surface format.
+// Owns the VkSwapchainKHR and its image views. The surface is owned elsewhere
+// (normally the Device, via CreateInfo::create_surface); the swapchain only
+// references it, and creation fails clearly when the device's present queue
+// family cannot present to it. FIFO present mode (always available),
+// preferring a B8G8R8A8_SRGB surface format. Images are rendered on the
+// graphics queue and presented with Device::present_queue().
 class Swapchain {
 public:
     [[nodiscard]] static std::expected<Swapchain, core::Error>

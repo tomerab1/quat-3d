@@ -401,7 +401,8 @@ bool FrameRenderer::record_screenshot_copy(VkCommandBuffer cmd) {
     VkImageMemoryBarrier2 to_present = to_src;
     to_present.srcStageMask = VK_PIPELINE_STAGE_2_COPY_BIT;
     to_present.srcAccessMask = VK_ACCESS_2_TRANSFER_READ_BIT;
-    to_present.dstStageMask = VK_PIPELINE_STAGE_2_NONE;
+    // Chained onto by the render-finished signal (see k_present_signal_stage).
+    to_present.dstStageMask = k_present_signal_stage;
     to_present.dstAccessMask = 0;
     to_present.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
     to_present.newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
@@ -451,7 +452,10 @@ bool FrameRenderer::submit_and_present(bool screenshot_frame) {
     VkSemaphoreSubmitInfo signal{};
     signal.sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO;
     signal.semaphore = render_finished_[image_index_];
-    signal.stageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
+    // Chains onto the PRESENT_SRC transitions, whose second scope is this
+    // stage; the swapchain image's writes are in those barriers' first scope.
+    // The frame fence covers the rest of the frame's work.
+    signal.stageMask = k_present_signal_stage;
 
     VkCommandBufferSubmitInfo cmd_info{};
     cmd_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO;
@@ -475,7 +479,7 @@ bool FrameRenderer::submit_and_present(bool screenshot_frame) {
     present.swapchainCount = 1;
     present.pSwapchains = &sc;
     present.pImageIndices = &image_index_;
-    VkResult present_result = vkQueuePresentKHR(device_->graphics_queue(), &present);
+    VkResult present_result = vkQueuePresentKHR(device_->present_queue(), &present);
     if (present_result == VK_ERROR_OUT_OF_DATE_KHR || present_result == VK_SUBOPTIMAL_KHR) {
         needs_recreate_ = true;
     } else if (present_result != VK_SUCCESS) {
