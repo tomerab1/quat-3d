@@ -1,7 +1,10 @@
 #include "tuning_panels.hpp"
 
+#include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstddef>
+#include <vector>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -42,8 +45,48 @@ void tooltip(std::string_view hint) {
     return f;
 }
 
+// A `path` field: edited in a text box and committed on Enter when it passes
+// the table's path check (the renderer loads and validates the file itself;
+// a bad file is reported on stderr and leaves the image ungraded).
+bool draw_path_setting(RenderSettings& s, const RenderSettingDesc& d, std::string& value) {
+    struct Edit {
+        const RenderSettingDesc* field = nullptr;
+        std::array<char, 257>    text{};
+        std::string              error;
+        bool                     active = false; // being typed into last frame
+    };
+    static std::vector<Edit> edits;
+    Edit* e = nullptr;
+    for (Edit& candidate : edits) {
+        if (candidate.field == &d) e = &candidate;
+    }
+    if (e == nullptr) e = &edits.emplace_back(Edit{&d, {}, {}, false});
+    const std::string label(d.label);
+    if (!e->active) { // show the current value unless the user is typing
+        const std::size_t n = std::min(value.size(), e->text.size() - 1);
+        std::copy_n(value.data(), n, e->text.data());
+        e->text[n] = '\0';
+    }
+    bool changed = false;
+    if (ImGui::InputText(label.c_str(), e->text.data(), e->text.size(),
+                         ImGuiInputTextFlags_EnterReturnsTrue)) {
+        e->active = false;
+        const std::string_view entered(e->text.data());
+        e->error = renderer::check_render_setting_path(d, entered);
+        if (e->error.empty()) {
+            changed = renderer::set_render_setting_text(s, d, entered);
+        }
+    } else {
+        e->active = ImGui::IsItemActive();
+    }
+    tooltip(d.hint);
+    if (!e->error.empty()) ImGui::TextColored(ImVec4(1.0F, 0.45F, 0.35F, 1.0F), "%s", e->error.c_str());
+    return changed;
+}
+
 bool draw_setting(RenderSettings& s, const RenderSettingDesc& d) {
     const RenderSettingRef ref = d.ref(s);
+    if (ref.s != nullptr) return draw_path_setting(s, d, *ref.s);
     const std::string label(d.label);
     const std::string format = slider_format(d.min, d.max, d.unit);
     ImGuiSliderFlags flags = ImGuiSliderFlags_AlwaysClamp;
@@ -84,8 +127,10 @@ bool draw_setting(RenderSettings& s, const RenderSettingDesc& d) {
     }
     // Upscaling needs the temporal resolve (TAA off renders at native scale).
     if (d.group == "upscaler" && !s.taa.enabled) return true;
-    return d.group == "exposure" && !s.exposure.auto_exposure && d.name != "auto" &&
-           d.name != "compensation_ev";
+    if (d.group != "exposure" || d.name == "compensation_ev" || d.name == "physical") return false;
+    // The physical camera overrides auto exposure; manual uses only the bias.
+    if (s.exposure.physical) return true;
+    return !s.exposure.auto_exposure && d.name != "auto";
 }
 
 void draw_sun(scene::Scene* scene) {

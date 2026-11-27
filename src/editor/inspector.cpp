@@ -405,6 +405,36 @@ struct ComponentInspector<scene::Camera> {
         ImGui::TextWrapped("Play + \"Game camera\" (menu bar) views through the active "
                            "camera. Put it on a child entity offset from the body — on the "
                            "mesh itself the view sits inside the geometry.");
+        draw_lens(camera);
+    }
+
+    // R20 physical lens: exposure (Renderer > Exposure > physical camera),
+    // depth of field and the motion-blur shutter read it.
+    static void draw_lens(scene::Camera& camera) {
+        using L = renderer::PhysicalCameraLimits;
+        renderer::PhysicalCamera& lens = camera.lens;
+        if (!ImGui::TreeNodeEx("Lens", ImGuiTreeNodeFlags_DefaultOpen)) return;
+        constexpr ImGuiSliderFlags log = ImGuiSliderFlags_Logarithmic | ImGuiSliderFlags_AlwaysClamp;
+        ImGui::SliderFloat("aperture (f/)", &lens.aperture_f, 1.0F, 22.0F, "f/%.1f", log);
+        ImGui::SetItemTooltip("Lower f-number: brighter and shallower depth of field");
+        float denominator = 1.0F / lens.shutter_s;
+        if (ImGui::SliderFloat("shutter (1/s)", &denominator, 1.0F / L::max_shutter, 8000.0F,
+                               "1/%.0f s", log)) {
+            lens.shutter_s = 1.0F / denominator;
+        }
+        ImGui::SetItemTooltip("Exposure time; also the motion blur length (shutter angle)");
+        ImGui::SliderFloat("ISO", &lens.iso, 50.0F, 12800.0F, "%.0f", log);
+        ImGui::SliderFloat("focal length", &lens.focal_length_mm, 0.0F, 600.0F,
+                           lens.focal_length_mm > 0.0F ? "%.0f mm" : "off (uses fov)",
+                           ImGuiSliderFlags_AlwaysClamp);
+        ImGui::SetItemTooltip("> 0 sets the field of view from the sensor size");
+        ImGui::SliderFloat("sensor height", &lens.sensor_height_mm, 4.0F, 60.0F, "%.1f mm",
+                           ImGuiSliderFlags_AlwaysClamp);
+        ImGui::SliderFloat("focus distance", &lens.focus_distance_m, L::min_focus_m, 1000.0F,
+                           "%.2f m", log);
+        const float focal = renderer::effective_focal_length_mm(lens, camera.fov_y);
+        ImGui::Text("EV100 %.1f, focal length %.0f mm", renderer::ev100(lens), focal);
+        ImGui::TreePop();
     }
 };
 

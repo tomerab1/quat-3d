@@ -36,16 +36,25 @@ TEST(RenderSettings, TableEntriesAreConsistent) {
         EXPECT_NE(r::find_render_setting_group(d.group), nullptr) << key;
         EXPECT_FALSE(d.label.empty()) << key;
         EXPECT_FALSE(d.hint.empty()) << key;
+        // The reference matches the declared type.
+        r::RenderSettings s;
+        const r::RenderSettingRef ref = d.ref(s);
+        const int set = (ref.b != nullptr) + (ref.f != nullptr) + (ref.i != nullptr) +
+                        (ref.s != nullptr);
+        EXPECT_EQ(set, 1) << key;
+        if (d.type == r::RenderSettingType::path) {
+            // A file path: empty by default, the extension in `unit`.
+            EXPECT_NE(ref.s, nullptr) << key;
+            EXPECT_EQ(r::render_setting_text(defaults, d), "") << key;
+            EXPECT_EQ(d.unit.front(), '.') << key;
+            EXPECT_EQ(r::find_render_setting(d.group, d.name), &d) << key;
+            continue;
+        }
         EXPECT_LE(d.min, d.default_value) << key;
         EXPECT_GE(d.max, d.default_value) << key;
         EXPECT_LT(d.min, d.max) << key;
         // The table default is the struct default.
         EXPECT_FLOAT_EQ(r::render_setting_value(defaults, d), d.default_value) << key;
-        // The reference matches the declared type.
-        r::RenderSettings s;
-        const r::RenderSettingRef ref = d.ref(s);
-        const int set = (ref.b != nullptr) + (ref.f != nullptr) + (ref.i != nullptr);
-        EXPECT_EQ(set, 1) << key;
         switch (d.type) {
         case r::RenderSettingType::boolean: EXPECT_NE(ref.b, nullptr) << key; break;
         case r::RenderSettingType::number: EXPECT_NE(ref.f, nullptr) << key; break;
@@ -56,6 +65,7 @@ TEST(RenderSettings, TableEntriesAreConsistent) {
             EXPECT_EQ(d.min, 0.0F) << key;
             EXPECT_EQ(static_cast<std::size_t>(d.max) + 1, d.choices.size()) << key;
             break;
+        case r::RenderSettingType::path: break;
         }
         EXPECT_EQ(r::find_render_setting(d.group, d.name), &d) << key;
     }
@@ -71,6 +81,7 @@ TEST(RenderSettings, TableEntriesAreConsistent) {
 TEST(RenderSettings, EntriesReachDistinctStorage) {
     // Writing each field to a non-default value changes exactly that field.
     for (const r::RenderSettingDesc& d : r::render_setting_fields()) {
+        if (d.type == r::RenderSettingType::path) continue; // RenderSettings.PathFields
         r::RenderSettings s;
         const float other = d.type == r::RenderSettingType::boolean
                                 ? 1.0F - d.default_value
@@ -159,6 +170,37 @@ TEST(RenderSettings, RetiredShadowKeysAreDeprecated) {
         EXPECT_FALSE(d->note.empty());
     }
     EXPECT_EQ(r::find_deprecated_render_setting("shadows", "pcf_radius"), nullptr);
+}
+
+} // namespace
+
+namespace {
+
+// R20: `path` fields hold a project-relative file of the field's extension;
+// anything that could leave the project or is not that kind of file is
+// refused, the value stays, and a reset clears it.
+TEST(RenderSettings, PathFields) {
+    const r::RenderSettingDesc* lut = r::find_render_setting("grading", "lut");
+    ASSERT_NE(lut, nullptr);
+    ASSERT_EQ(lut->type, r::RenderSettingType::path);
+    r::RenderSettings s;
+    EXPECT_TRUE(r::set_render_setting_text(s, *lut, "assets/luts/teal orange.cube"));
+    EXPECT_EQ(s.grading.lut, "assets/luts/teal orange.cube");
+    EXPECT_EQ(r::render_setting_text(s, *lut), s.grading.lut);
+    for (const char* bad : {"/etc/passwd.cube", "../outside.cube", "assets/../../x.cube",
+                            "C:/luts/x.cube", "assets\\x.cube", "assets/x.png", ".cube",
+                            "assets/x\n.cube"}) {
+        EXPECT_FALSE(r::check_render_setting_path(*lut, bad).empty()) << bad;
+        EXPECT_FALSE(r::set_render_setting_text(s, *lut, bad)) << bad;
+    }
+    EXPECT_FALSE(r::check_render_setting_path(*lut, std::string(300, 'a') + ".cube").empty());
+    EXPECT_EQ(s.grading.lut, "assets/luts/teal orange.cube"); // refused values left it
+    EXPECT_TRUE(r::check_render_setting_path(*lut, "").empty()); // none
+    // Numeric setters do not touch a path; a group reset clears it.
+    r::set_render_setting(s, *lut, 1.0F);
+    EXPECT_EQ(s.grading.lut, "assets/luts/teal orange.cube");
+    ASSERT_TRUE(r::reset_render_settings(s, "grading"));
+    EXPECT_EQ(s.grading.lut, "");
 }
 
 } // namespace

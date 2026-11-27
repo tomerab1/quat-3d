@@ -208,7 +208,8 @@ set_source_files_properties(src/rhi/vma_impl.cpp PROPERTIES COMPILE_OPTIONS "${E
 # decoder (stb_image), shared by engine_asset and the cooker.
 add_library(engine_image STATIC
     src/asset/texture_data.cpp
-    src/asset/image_decode.cpp)
+    src/asset/image_decode.cpp
+    src/asset/cube_lut.cpp)
 target_link_libraries(engine_image PUBLIC engine_flags)
 target_link_libraries(engine_image PRIVATE engine_stb_image)
 target_include_directories(engine_image PUBLIC ${ENGINE_PUBLIC_INCLUDE})
@@ -518,6 +519,12 @@ add_library(engine_renderer STATIC
     src/renderer/particle_sort.cpp
     src/renderer/particle_draw.cpp
     src/renderer/tonemap_pass.cpp
+    src/renderer/color_grading.cpp
+    src/renderer/color_lut.cpp
+    src/renderer/physical_camera.cpp
+    src/renderer/post_stage.cpp
+    src/renderer/dof_pass.cpp
+    src/renderer/motion_blur_pass.cpp
     src/renderer/skinning_pass.cpp
     src/renderer/shadow_pass.cpp
     src/renderer/transparent_pass.cpp
@@ -624,6 +631,7 @@ add_executable(game
     src/app/fly_camera.cpp
     src/app/frame_graph.cpp
     src/app/frame_temporal.cpp
+    src/app/frame_post.cpp
     src/app/frame_renderer.cpp
     src/app/input_sampler.cpp
     src/app/remote_bridge.cpp

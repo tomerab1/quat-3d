@@ -38,6 +38,8 @@
 #include "app/screenshot_capture.hpp" // CaptureSource
 #include "engine/renderer/atmosphere_pass.hpp"
 #include "engine/renderer/bloom_pass.hpp"
+#include "engine/renderer/color_lut.hpp"
+#include "engine/renderer/dof_pass.hpp"
 #include "engine/renderer/cloud_settings.hpp"
 #include "engine/renderer/draw_batching.hpp"
 #include "engine/renderer/dynamic_ibl.hpp"
@@ -49,6 +51,7 @@
 #include "engine/renderer/jitter.hpp"
 #include "engine/renderer/lighting_pass.hpp"
 #include "engine/renderer/mesh_pass.hpp"
+#include "engine/renderer/motion_blur_pass.hpp"
 #include "engine/renderer/motion_history.hpp"
 #include "engine/renderer/non_finite_counters.hpp"
 #include "engine/renderer/shadow_ao_settings.hpp"
@@ -134,6 +137,13 @@ struct DeferredFrame {
     engine::renderer::TransparentPass transparent;
     engine::renderer::BloomPass      bloom;
     engine::renderer::ExposurePass   exposure;
+    // R20 cinematic post (optional: they need extended storage formats).
+    engine::renderer::DofPass        dof;
+    engine::renderer::MotionBlurPass motion_blur;
+    // The look LUT this slot's last frame sampled: kept alive until the slot
+    // records again (its fence has then been waited), so swapping the LUT
+    // never frees one a frame in flight still reads.
+    std::shared_ptr<const engine::renderer::ColorLutTexture> lut_in_use;
 #ifdef ENGINE_EDITOR
     engine::renderer::ImGuiPass      imgui;
     // Offscreen scene target for the editor's Viewport panel: the tonemapped
@@ -294,6 +304,18 @@ private:
     add_upscale(engine::rhi::RenderGraph& graph, const FrameScene& scene,
                 engine::rhi::ResourceHandle hdr, const engine::renderer::GBufferTargets& gbuffer,
                 VkExtent2D display);
+    // ---- R20 cinematic post (frame_post.cpp) ------------------------------------
+    // Depth of field and motion blur on the display-extent `hdr` (after the
+    // upscaler); returns the image bloom and the tonemap continue from.
+    [[nodiscard]] engine::rhi::ResourceHandle
+    add_cinematic_post(engine::rhi::RenderGraph& graph, const FrameInputs& in,
+                       const engine::renderer::GBufferTargets& gbuffer,
+                       engine::rhi::ResourceHandle hdr);
+    // The tonemap's look (operator, grading, film, LUT, physical exposure)
+    // for this frame; (re)loads the look LUT when grading.lut changed.
+    [[nodiscard]] engine::renderer::TonemapLook tonemap_look(const FrameInputs& in,
+                                                             DeferredFrame& frame);
+    void update_color_lut();
     // The editor's R12 settings (defaults in headless builds).
     [[nodiscard]] engine::renderer::CsmSettings current_csm() const;
     [[nodiscard]] engine::renderer::GtaoSettings current_gtao() const;
@@ -349,6 +371,11 @@ private:
     std::uint32_t image_index_ = 0; // acquired swapchain image
     VkExtent2D    draw_extent_{0, 0};
     std::size_t   draw_count_ = 0;
+
+    // R20 look LUT: the settings path it was loaded for (also after a failed
+    // load, which is logged once) and the texture.
+    std::string                                              lut_path_;
+    std::shared_ptr<const engine::renderer::ColorLutTexture> lut_;
 
     std::optional<std::filesystem::path> screenshot_path_;
     engine::rhi::GpuBuffer     screenshot_buffer_;

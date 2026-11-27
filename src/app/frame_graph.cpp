@@ -3,9 +3,9 @@
 //   sky-view LUT update, dynamic IBL step, GBuffer, terrain, grass,
 //   background velocity, Hi-Z, cascaded shadows (GPU fit + cascades), GTAO,
 //   light culling, lighting, transparent, particles (all at the render
-//   extent), upscaler (render -> display extent), bloom, exposure, tonemap,
-//   present copy, editor UI; GPU skinning is recorded before the graph
-//   executes.
+//   extent), upscaler (render -> display extent), depth of field, motion
+//   blur (R20, frame_post.cpp), bloom, exposure, tonemap / grade, present
+//   copy, editor UI; GPU skinning is recorded before the graph executes.
 
 #include "app/frame_renderer.hpp"
 #include "app/grass_runtime.hpp"
@@ -433,6 +433,8 @@ bool FrameRenderer::record(const FrameInputs& in) {
         return false;
     }
     hdr = *upscaled;
+    // R20: depth of field and motion blur on the resolved display image.
+    hdr = add_cinematic_post(graph, in, *gbuffer, *hdr);
     // Bloom: blur the bright parts of the HDR and add them back before tonemap.
     if (settings.bloom.enabled) {
         const engine::renderer::BloomParams bloom_params{
@@ -495,7 +497,7 @@ bool FrameRenderer::record(const FrameInputs& in) {
             VK_IMAGE_USAGE_TRANSFER_SRC_BIT);
     if (auto r = fr.tonemap.add_to_graph(graph, *hdr, ldr_current, draw_extent,
                                          fr.exposure.exposure_buffer_address(),
-                                         settings.exposure);
+                                         settings.exposure, tonemap_look(in, fr));
         !r) {
         std::fprintf(stderr, "[fatal] tonemap pass: %s\n", r.error().message.c_str());
         return false;

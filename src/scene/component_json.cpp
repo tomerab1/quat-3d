@@ -532,7 +532,13 @@ json encode_components(const entt::registry& r, entt::entity e, const EncodeOpti
         out["camera"] = {{"fov_deg", glm::degrees(c->fov_y)},
                          {"near", c->near_z},
                          {"far", c->far_z},
-                         {"active", c->is_active}};
+                         {"active", c->is_active},
+                         {"aperture_f", c->lens.aperture_f},
+                         {"shutter_s", c->lens.shutter_s},
+                         {"iso", c->lens.iso},
+                         {"sensor_height_mm", c->lens.sensor_height_mm},
+                         {"focal_length_mm", c->lens.focal_length_mm},
+                         {"focus_distance_m", c->lens.focus_distance_m}};
     }
     if (const auto* c = pick.get<Collider>("collider")) {
         out["collider"] = {{"shape", enum_name(k_collider_shapes, c->shape)},
@@ -783,6 +789,15 @@ std::expected<void, core::Error> apply_component(entt::registry& r, entt::entity
             c.fov_y = glm::radians(fov_deg);
             f.number("near", c.near_z, 1e-4F).number("far", c.far_z, 1e-3F).boolean("active", c.is_active);
             if (c.far_z <= c.near_z) f.fail("far", "must be greater than near");
+            // R20 physical lens.
+            using L = renderer::PhysicalCameraLimits;
+            renderer::PhysicalCamera& lens = c.lens;
+            f.number("aperture_f", lens.aperture_f, L::min_aperture, L::max_aperture)
+                .number("shutter_s", lens.shutter_s, L::min_shutter, L::max_shutter)
+                .number("iso", lens.iso, L::min_iso, L::max_iso)
+                .number("sensor_height_mm", lens.sensor_height_mm, L::min_sensor_mm, L::max_sensor_mm)
+                .number("focal_length_mm", lens.focal_length_mm, 0.0F, L::max_focal_mm)
+                .number("focus_distance_m", lens.focus_distance_m, L::min_focus_m, L::max_focus_m);
         });
     }
     if (name == "collider") {

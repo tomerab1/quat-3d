@@ -145,7 +145,8 @@ CameraMatrices camera_system(const entt::registry& registry, float aspect_ratio)
 
     out.position   = glm::vec3(world[3]);
     out.view       = glm::inverse(world);
-    out.projection = glm::perspective(cam.fov_y, aspect_ratio, cam.near_z, cam.far_z);
+    out.projection = glm::perspective(renderer::effective_fov_y(cam.lens, cam.fov_y),
+                                      aspect_ratio, cam.near_z, cam.far_z);
     out.projection[1][1] *= -1.0F; // Vulkan clip space: Y points down
     out.view_proj  = out.projection * out.view;
     return out;
