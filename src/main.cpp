@@ -439,16 +439,23 @@ int main() {
         return c;
     };
 
-    // TAA history shared by both slots (audit A2), advanced exactly once per
-    // frame. Declared before `frames` so it outlives every pass using it.
+    // Temporal state shared by both slots (audit A2 / A11): one TAA history and
+    // one adapted luminance, each advanced exactly once per frame. Declared
+    // before `frames` so it outlives every pass that references it.
     const auto taa_history =
         std::make_shared<engine::renderer::TaaHistory>(device, allocator, k_frames_in_flight);
+    auto exposure_state = engine::renderer::ExposureState::create(device, allocator);
     // Per-frame-in-flight deferred chains (GBuffer -> lighting -> tonemap). Each
     // slot owns its passes' descriptor buffers and a transient image pool, so
     // building one frame's graph never disturbs the other in-flight frame.
     std::array<DeferredFrame, k_frames_in_flight> frames;
-    bool frames_ok = true;
+    bool frames_ok = exposure_state.has_value();
+    if (!exposure_state) {
+        std::fprintf(stderr, "[fatal] exposure state creation failed: %s\n",
+                     exposure_state.error().message.c_str());
+    }
     for (auto& f : frames) {
+        if (!frames_ok) break;
         auto mesh = engine::renderer::MeshPass::create(device, allocator, *pipeline_cache,
                                                        setup_transfer, shader_dir);
         auto light = engine::renderer::LightingPass::create(device, allocator, *pipeline_cache,
@@ -463,7 +470,7 @@ int main() {
         auto bloom = engine::renderer::BloomPass::create(device, allocator, *pipeline_cache,
                                                          shader_dir);
         auto expo = engine::renderer::ExposurePass::create(device, allocator, *pipeline_cache,
-                                                           shader_dir);
+                                                           shader_dir, *exposure_state);
         auto taa = engine::renderer::TaaPass::create(device, allocator, *pipeline_cache, shader_dir,
                                                      ldr_format, taa_history);
 #ifdef ENGINE_EDITOR

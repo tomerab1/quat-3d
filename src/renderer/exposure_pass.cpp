@@ -2,6 +2,7 @@
 
 #include <array>
 #include <cstring>
+#include <memory>
 #include <string>
 #include <utility>
 
@@ -25,7 +26,7 @@ constexpr VkDeviceSize       kHistBytes    = kBins * sizeof(std::uint32_t);
 constexpr float kMinLogLum = -8.0F;
 constexpr float kMaxLogLum = 4.0F;
 constexpr float kLogLumRange = kMaxLogLum - kMinLogLum;
-constexpr float kTau = 1.1F; // adaptation time constant (seconds)
+constexpr float kTau = ExposurePass::k_adaptation_tau; // seconds
 
 struct HistogramParams {
     float         min_log_lum;
@@ -117,9 +118,32 @@ void buffer_barrier(VkCommandBuffer cmd, VkBuffer buffer, VkDeviceSize size,
 
 } // namespace
 
+std::expected<std::shared_ptr<ExposureState>, core::Error>
+ExposureState::create(const rhi::Device& device, rhi::GpuAllocator& allocator) {
+    // Host-visible so it starts at 0 (the shader seeds from the first frame's
+    // measured luminance when prev <= 0) and can be read back for inspection.
+    auto buffer = allocator.create_buffer(
+        sizeof(float),
+        VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+        VMA_MEMORY_USAGE_AUTO,
+        VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT);
+    if (!buffer) return std::unexpected(buffer.error());
+    const float zero = 0.0F;
+    std::memcpy(buffer->mapped(), &zero, sizeof(zero));
+    auto state = std::make_shared<ExposureState>(Key{});
+    state->buffer_ = std::move(*buffer);
+    state->address_ = rhi::buffer_device_address(device.handle(), state->buffer_);
+    return state;
+}
+
+float ExposureState::adapted_luminance() const {
+    return buffer_.mapped() != nullptr ? *static_cast<const float*>(buffer_.mapped()) : 0.0F;
+}
+
 std::expected<ExposurePass, core::Error>
 ExposurePass::create(const rhi::Device& device, rhi::GpuAllocator& allocator,
-                     rhi::PipelineCache& cache, const std::string& cooked_shader_dir) {
+                     rhi::PipelineCache& cache, const std::string& cooked_shader_dir,
+                     std::shared_ptr<ExposureState> state) {
     ExposurePass out;
     out.device_ = &device;
     out.allocator_ = &allocator;
@@ -161,19 +185,12 @@ ExposurePass::create(const rhi::Device& device, rhi::GpuAllocator& allocator,
     out.histogram_buffer_ = std::move(*histb);
     out.histogram_address_ = rhi::buffer_device_address(device.handle(), out.histogram_buffer_);
 
-    // Adapted-luminance buffer, host-visible so it starts at 0 (the shader seeds
-    // from the first frame's measured luminance when prev <= 0).
-    auto expb = allocator.create_buffer(
-        sizeof(float),
-        VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
-        VMA_MEMORY_USAGE_AUTO,
-        VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT);
-    if (!expb) return std::unexpected(expb.error());
-    const float zero = 0.0F;
-    std::memcpy(expb->mapped(), &zero, sizeof(zero));
-    out.exposure_buffer_ = std::move(*expb);
-    out.exposure_address_ = rhi::buffer_device_address(device.handle(), out.exposure_buffer_);
-
+    if (!state) {
+        auto own = ExposureState::create(device, allocator);
+        if (!own) return std::unexpected(own.error());
+        state = std::move(*own);
+    }
+    out.state_ = std::move(state);
     return out;
 }
 
@@ -189,7 +206,8 @@ ExposurePass::add_to_graph(rhi::RenderGraph& graph, rhi::ResourceHandle hdr, VkE
 
     const VkBuffer hist_buf = histogram_buffer_.handle();
     const VkDeviceAddress hist_addr = histogram_address_;
-    const VkDeviceAddress exp_addr = exposure_address_;
+    const VkBuffer exp_buf = state_->buffer();
+    const VkDeviceAddress exp_addr = state_->address();
 
     HistogramParams hp{kMinLogLum, 1.0F / kLogLumRange, extent.width, extent.height};
     AverageParams ap{kMinLogLum, kLogLumRange, dt,
@@ -198,8 +216,20 @@ ExposurePass::add_to_graph(rhi::RenderGraph& graph, rhi::ResourceHandle hdr, VkE
 
     graph.add_pass("exposure", rhi::PassType::compute)
         .reads(hdr, rhi::ResourceUsage::sampled_compute)
-        .execute([this, hdr, hist_buf, hist_addr, exp_addr, extent, hp, ap](rhi::PassContext& ctx) {
+        .execute([this, hdr, hist_buf, hist_addr, exp_buf, exp_addr, extent, hp,
+                  ap](rhi::PassContext& ctx) {
             const VkCommandBuffer cmd = ctx.cmd();
+            // The adapted luminance is shared with the other frame in flight:
+            // its average dispatch wrote it and its tonemap read it. Order this
+            // frame's read-modify-write after both (same queue, earlier
+            // submission; the fences alone no longer cover it).
+            buffer_barrier(cmd, exp_buf, sizeof(float),
+                           VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT |
+                               VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+                           VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT,
+                           VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                           VK_ACCESS_2_SHADER_STORAGE_READ_BIT |
+                               VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT);
             constexpr VkImageLayout ro = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
             histogram_descriptor_.write_sampled_image(0, ctx.resolve(hdr).view, ro);
             histogram_descriptor_.write_storage_buffer(1, hist_addr, kHistBytes);
@@ -229,20 +259,15 @@ ExposurePass::add_to_graph(rhi::RenderGraph& graph, rhi::ResourceHandle hdr, VkE
             vkCmdPushConstants(cmd, average_pipeline_.layout(), kComputeStage, 0, sizeof(ap), &ap);
             vkCmdDispatch(cmd, 1, 1, 1);
 
-            // Make the adapted luminance visible to the tonemap fragment shader.
-            buffer_barrier(cmd, exposure_buffer_.handle(), sizeof(float),
-                           VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+            // Make the adapted luminance visible to the tonemap fragment shader
+            // and to host reads (adapted_luminance()) once the frame's fence
+            // has signalled.
+            buffer_barrier(cmd, exp_buf, sizeof(float), VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
                            VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT,
-                           VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
-                           VK_ACCESS_2_SHADER_STORAGE_READ_BIT);
+                           VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_2_HOST_BIT,
+                           VK_ACCESS_2_SHADER_STORAGE_READ_BIT | VK_ACCESS_2_HOST_READ_BIT);
         });
     return {};
-}
-
-float ExposurePass::adapted_luminance() const {
-    return exposure_buffer_.mapped() != nullptr
-               ? *static_cast<const float*>(exposure_buffer_.mapped())
-               : 0.0F;
 }
 
 std::expected<void, core::Error>
