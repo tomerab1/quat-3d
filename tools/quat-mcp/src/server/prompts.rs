@@ -35,6 +35,15 @@ pub struct DebugSessionArgs {
     pub entity: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct DesignBehaviorArgs {
+    /// What the NPC should do, e.g. "patrol between the gates and chase the player when near".
+    pub goal: String,
+    /// The entity (id or name) to give the behaviour, if it already exists.
+    #[serde(default)]
+    pub entity: Option<String>,
+}
+
 /// `Some(trimmed)` for non-blank text.
 fn non_blank(text: Option<String>) -> Option<String> {
     text.map(|t| t.trim().to_owned()).filter(|t| !t.is_empty())
@@ -92,6 +101,22 @@ impl QuatServer {
             "debug_session",
             DebugSessionArgs {
                 problem: non_blank(problem),
+                entity: non_blank(entity),
+            },
+        )
+    }
+
+    /// Design an NPC behaviour tree in the running quat-3d engine: look up the leaves, plan the tree, build it, play, watch what it does, iterate.
+    #[prompt]
+    async fn design_behavior(
+        &self,
+        args: Parameters<DesignBehaviorArgs>,
+    ) -> Result<Vec<PromptMessage>, ErrorData> {
+        let DesignBehaviorArgs { goal, entity } = args.0;
+        user_prompt(
+            "design_behavior",
+            DesignBehaviorArgs {
+                goal: goal.trim().to_owned(),
                 entity: non_blank(entity),
             },
         )

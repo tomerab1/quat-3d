@@ -312,7 +312,10 @@ the stored tree from running (empty for a valid tree).
   `root_status` is the root's. Trees tick only during Play, so outside Play
   the last tick of the previous session (or nothing) is reported;
   `tick` counts ticks since the tree was compiled. `compiled: false` (not
-  ticked since the last change) reports no nodes.
+  ticked since the last change) reports no nodes. Edits work during Play
+  too (the tree restarts from its root), but like every edit made while
+  playing they are undone when Play stops and the editor restores the scene
+  it started from.
 
 ## Errors
 
