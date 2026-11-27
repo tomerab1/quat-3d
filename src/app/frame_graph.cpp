@@ -275,16 +275,15 @@ bool FrameRenderer::record(const FrameInputs& in) {
     const engine::renderer::IblViewSet ibl_views =
         dynamic_ibl_ ? dynamic_ibl_->views() : engine::renderer::IblViewSet{};
 
-    // R9.1: draws sharing mesh + material collapse into instanced draws.
-    engine::renderer::InstancedDrawList shadow_batches =
-        engine::renderer::batch_draws(fs.shadow_draws);
-    engine::renderer::InstancedDrawList opaque_batches =
-        engine::renderer::batch_draws(fs.draws);
-    // R9.2: InstancedMesh placements, one draw per (mesh, material), culled per instance.
-    engine::scene::append_instanced_draws(*in.registry, fs.light_view_proj,
-                                          engine::scene::InstancedPass::shadow, shadow_batches);
-    engine::scene::append_instanced_draws(*in.registry, cam.view_proj,
-                                          engine::scene::InstancedPass::opaque, opaque_batches);
+    // R9.1: draws sharing mesh + material collapse into instanced draws;
+    // R9.2: InstancedMesh placements join them, one draw per (mesh,
+    // material), culled per instance.
+    const engine::scene::FrameDrawLists batches = engine::scene::build_frame_draw_lists(
+        *in.registry, fs.draws, fs.shadow_draws, cam.view_proj, fs.light_view_proj);
+    const engine::renderer::InstancedDrawList& shadow_batches = batches.shadow;
+    const engine::renderer::InstancedDrawList& opaque_batches = batches.opaque;
+    // A5 debug.stats + the editor's Stats panel: draws after batching.
+    draw_count_ = engine::scene::frame_draw_count(batches, fs.transparent_draws.size());
     auto shadow = fr.shadow.add_to_graph(graph, fs.light_view_proj, shadow_batches);
     if (!shadow) {
         std::fprintf(stderr, "[fatal] shadow pass: %s\n", shadow.error().message.c_str());

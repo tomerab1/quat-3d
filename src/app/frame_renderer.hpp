@@ -20,6 +20,7 @@
 // Not movable: passes and the remote bridge hold pointers into it.
 
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -215,6 +216,11 @@ public:
     // (logged).
     [[nodiscard]] bool record(const FrameInputs& in);
 
+    // Scene draws record() submitted this frame, counted after batching
+    // (opaque + shadow + transparent, InstancedMesh batches included). Valid
+    // from inside build_ui on.
+    [[nodiscard]] std::size_t draw_count() const { return draw_count_; }
+
     [[nodiscard]] VkCommandBuffer command_buffer() const { return command_buffers_[frame_]; }
     [[nodiscard]] std::uint32_t frame_slot() const { return frame_; }
     // The final scene image (no editor UI), for remote screenshots.
@@ -267,6 +273,7 @@ private:
     std::uint32_t frame_ = 0;       // current frame-in-flight slot
     std::uint32_t image_index_ = 0; // acquired swapchain image
     VkExtent2D    draw_extent_{0, 0};
+    std::size_t   draw_count_ = 0;
 
     std::optional<std::string> screenshot_path_;
     engine::rhi::GpuBuffer     screenshot_buffer_;

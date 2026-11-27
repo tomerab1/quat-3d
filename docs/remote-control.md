@@ -216,8 +216,10 @@ sim_time_s}`. `engine.info` also reports `paused`.
   beyond the newest line (a cursor from before an engine restart) reads from
   the oldest retained line. `t` is seconds since the log started.
 - **Stats.** Frame times are real (wall-clock) frame times over the last 240
-  frames; `draws` is the previous frame's draw-item count; `memory` is the
-  process resident set (Linux; `null` elsewhere); `physics` is `null` while
+  frames; `draws` counts the previous frame's scene draws after instancing
+  (opaque + shadow batches, InstancedMesh batches included, plus one per
+  transparent item); `memory` is the process resident set (Linux; `null`
+  elsewhere); `physics` is `null` while
   no physics world runs (edit mode). `nav.moving` counts active agents that
   have not arrived, `nav.failed` agents that gave up on their target. Fields
   the running engine cannot provide are `null`.

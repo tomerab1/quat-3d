@@ -328,14 +328,13 @@ bool Application::run_frame() {
     }
 #ifdef ENGINE_EDITOR
     frame_inputs.build_ui = [&]() {
-        return editor_.build_ui(
-            dt, static_cast<int>(frame_scene.draws.size() + frame_scene.transparent_draws.size()),
-            cam);
+        // record() calls this after batching, so the count is this frame's.
+        return editor_.build_ui(dt, static_cast<int>(renderer_.draw_count()), cam);
     };
 #endif
-    // A5 debug.stats: the frame's submitted draws (noted before batching).
-    remote_->note_draws(frame_scene.draws.size() + frame_scene.transparent_draws.size());
     if (!renderer_.record(frame_inputs)) return false;
+    // A5 debug.stats: the frame's submitted draws, counted after batching.
+    remote_->note_draws(renderer_.draw_count());
 
     remote_->record_capture(renderer_.command_buffer(), renderer_.frame_slot(),
                             renderer_.capture_source());
