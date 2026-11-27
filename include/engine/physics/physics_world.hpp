@@ -11,6 +11,7 @@
 #include <expected>
 #include <memory>
 #include <span>
+#include <vector>
 
 #include <glm/glm.hpp>
 #include <glm/gtc/quaternion.hpp>
@@ -76,7 +77,13 @@ public:
         Layer         layer = Layer::dynamic;
         float         mass = 1.0F; // dynamic only; <= 0 uses the shape's computed mass
         bool          sensor = false; // a trigger volume: detects overlaps, no physical response
+        // Opaque id of whatever owns the body (the ECS passes its entity id).
+        // Owned bodies are listed by owned_bodies() so the owner can sweep
+        // away bodies whose owner no longer exists; no_owner bodies (terrain
+        // height fields, demo floors) are never listed.
+        std::uint32_t owner = no_owner;
     };
+    static constexpr std::uint32_t no_owner = 0xFFFFFFFFU;
 
     // A trigger overlap event, recorded by the contact listener during update().
     struct TriggerEvent {
@@ -90,6 +97,13 @@ public:
     [[nodiscard]] std::uint32_t add_body(const BodyParams& params);
     void remove_body(std::uint32_t body);
 
+    // (body, owner) for every live body created with an owner.
+    struct OwnedBody {
+        std::uint32_t body = invalid_body;
+        std::uint32_t owner = no_owner;
+    };
+    [[nodiscard]] std::vector<OwnedBody> owned_bodies() const;
+
     // Read / write a body's world transform. set_* is for kinematic bodies.
     void body_transform(std::uint32_t body, glm::vec3& position, glm::quat& rotation) const;
     void set_body_transform(std::uint32_t body, const glm::vec3& position,
@@ -97,8 +111,15 @@ public:
 
     // ---- Character controller (predictive, JPH::CharacterVirtual). ------------
     // A capsule character: full cylinder half-height + radius, at `position`.
+    // `owner` works as for bodies (see owned_characters()).
     [[nodiscard]] std::uint32_t create_character(float half_height, float radius,
-                                                 const glm::vec3& position);
+                                                 const glm::vec3& position,
+                                                 std::uint32_t owner = no_owner);
+    // Removes the character from the world; its id stays reserved (ids are
+    // indices) and every character_* call on it becomes a no-op.
+    void remove_character(std::uint32_t character);
+    // (character, owner) for every live character created with an owner.
+    [[nodiscard]] std::vector<OwnedBody> owned_characters() const;
     // The caller integrates gravity into the velocity; update moves + resolves
     // collisions (with stair step-up) for `dt`.
     void character_set_velocity(std::uint32_t character, const glm::vec3& velocity);

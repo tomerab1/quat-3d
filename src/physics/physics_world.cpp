@@ -3,6 +3,7 @@
 #include <cmath>
 #include <mutex>
 #include <thread>
+#include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
@@ -171,7 +172,13 @@ struct PhysicsWorld::Impl {
     std::vector<PhysicsWorld::TriggerEvent>   trigger_events;
     std::mutex                                trigger_mutex;
     std::unordered_set<std::uint32_t>         sensor_bodies;
+    std::unordered_map<std::uint32_t, std::uint32_t> body_owner;       // body -> owner
+    std::vector<std::uint32_t>                character_owner;           // parallel to characters
     float                                     accumulator = 0.0F;
+
+    [[nodiscard]] JPH::CharacterVirtual* character(std::uint32_t id) const {
+        return id < characters.size() ? characters[id].GetPtr() : nullptr;
+    }
 };
 
 std::expected<PhysicsWorld, core::Error> PhysicsWorld::create() {
@@ -325,6 +332,7 @@ std::uint32_t PhysicsWorld::add_body(const BodyParams& params) {
         return invalid_body;
     }
     const std::uint32_t value = id.GetIndexAndSequenceNumber();
+    if (params.owner != no_owner) impl_->body_owner[value] = params.owner;
     if (params.sensor) {
         impl_->sensor_bodies.insert(value);
     }
@@ -337,6 +345,15 @@ void PhysicsWorld::remove_body(std::uint32_t body) {
     JPH::BodyInterface& bodies = impl_->system.GetBodyInterface();
     bodies.RemoveBody(id);
     bodies.DestroyBody(id);
+    impl_->body_owner.erase(body);
+    impl_->sensor_bodies.erase(body);
+}
+
+std::vector<PhysicsWorld::OwnedBody> PhysicsWorld::owned_bodies() const {
+    std::vector<OwnedBody> out;
+    out.reserve(impl_->body_owner.size());
+    for (const auto& [body, owner] : impl_->body_owner) out.push_back({body, owner});
+    return out;
 }
 
 void PhysicsWorld::body_transform(std::uint32_t body, glm::vec3& position,
@@ -356,7 +373,7 @@ void PhysicsWorld::set_body_transform(std::uint32_t body, const glm::vec3& posit
 }
 
 std::uint32_t PhysicsWorld::create_character(float half_height, float radius,
-                                             const glm::vec3& position) {
+                                             const glm::vec3& position, std::uint32_t owner) {
     JPH::Ref<JPH::CharacterVirtualSettings> settings = new JPH::CharacterVirtualSettings();
     settings->mShape = new JPH::CapsuleShape(half_height, radius);
     // Accept ground contacts within the bottom hemisphere as "supporting".
@@ -364,39 +381,56 @@ std::uint32_t PhysicsWorld::create_character(float half_height, float radius,
     JPH::Ref<JPH::CharacterVirtual> character = new JPH::CharacterVirtual(
         settings, to_jph_r(position), JPH::Quat::sIdentity(), 0, &impl_->system);
     impl_->characters.push_back(character);
+    impl_->character_owner.push_back(owner);
     return static_cast<std::uint32_t>(impl_->characters.size() - 1);
 }
 
-void PhysicsWorld::character_set_velocity(std::uint32_t character, const glm::vec3& velocity) {
+void PhysicsWorld::remove_character(std::uint32_t character) {
     if (character >= impl_->characters.size()) return;
-    impl_->characters[character]->SetLinearVelocity(to_jph(velocity));
+    impl_->characters[character] = nullptr; // releases the CharacterVirtual
+    impl_->character_owner[character] = no_owner;
+}
+
+std::vector<PhysicsWorld::OwnedBody> PhysicsWorld::owned_characters() const {
+    std::vector<OwnedBody> out;
+    for (std::size_t i = 0; i < impl_->characters.size(); ++i) {
+        if (impl_->characters[i] != nullptr && impl_->character_owner[i] != no_owner) {
+            out.push_back({static_cast<std::uint32_t>(i), impl_->character_owner[i]});
+        }
+    }
+    return out;
+}
+
+void PhysicsWorld::character_set_velocity(std::uint32_t character, const glm::vec3& velocity) {
+    if (JPH::CharacterVirtual* c = impl_->character(character)) {
+        c->SetLinearVelocity(to_jph(velocity));
+    }
 }
 
 glm::vec3 PhysicsWorld::character_velocity(std::uint32_t character) const {
-    if (character >= impl_->characters.size()) return glm::vec3(0.0F);
-    return to_glm(impl_->characters[character]->GetLinearVelocity());
+    const JPH::CharacterVirtual* c = impl_->character(character);
+    return c != nullptr ? to_glm(c->GetLinearVelocity()) : glm::vec3(0.0F);
 }
 
 void PhysicsWorld::character_update(std::uint32_t character, float dt) {
-    if (character >= impl_->characters.size()) return;
+    JPH::CharacterVirtual* c = impl_->character(character);
+    if (c == nullptr) return;
     const JPH::ObjectLayer layer = object_layer_of(Layer::character);
     const JPH::DefaultBroadPhaseLayerFilter bp_filter(impl_->obj_vs_bp, layer);
     const JPH::DefaultObjectLayerFilter obj_filter(impl_->obj_pair, layer);
     JPH::CharacterVirtual::ExtendedUpdateSettings update_settings;
-    impl_->characters[character]->ExtendedUpdate(dt, impl_->system.GetGravity(), update_settings,
-                                                 bp_filter, obj_filter, JPH::BodyFilter{},
-                                                 JPH::ShapeFilter{}, *impl_->temp_allocator);
+    c->ExtendedUpdate(dt, impl_->system.GetGravity(), update_settings, bp_filter, obj_filter,
+                      JPH::BodyFilter{}, JPH::ShapeFilter{}, *impl_->temp_allocator);
 }
 
 glm::vec3 PhysicsWorld::character_position(std::uint32_t character) const {
-    if (character >= impl_->characters.size()) return glm::vec3(0.0F);
-    return to_glm(impl_->characters[character]->GetPosition());
+    const JPH::CharacterVirtual* c = impl_->character(character);
+    return c != nullptr ? to_glm(c->GetPosition()) : glm::vec3(0.0F);
 }
 
 bool PhysicsWorld::character_on_ground(std::uint32_t character) const {
-    if (character >= impl_->characters.size()) return false;
-    return impl_->characters[character]->GetGroundState() ==
-           JPH::CharacterBase::EGroundState::OnGround;
+    const JPH::CharacterVirtual* c = impl_->character(character);
+    return c != nullptr && c->GetGroundState() == JPH::CharacterBase::EGroundState::OnGround;
 }
 
 std::span<const PhysicsWorld::TriggerEvent> PhysicsWorld::trigger_events() const {

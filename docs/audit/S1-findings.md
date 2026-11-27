@@ -18,7 +18,7 @@ Severity: **H** crash, corruption, exploit or broken core feature ·
 | B3 | H | `net_id` = FNV(name): duplicate names collide (physics demo's 12 "box" entities converge to one pose) | `main.cpp` assign, `replication.cpp` | open |
 | B4 | M | Client runs local physics on replicated bodies (fights snapshots); world pose written into `local` (wrong for children); applied after the draw list is built (one frame stale) | `replication.cpp` `apply`, `main.cpp` | open |
 | B5 | M | Predicted character position overwritten each frame by the local `CharacterVirtual` | `main.cpp`, `physics_system.cpp` | open |
-| B6 | H | Jolt bodies never removed when an entity / RigidBody / Collider is destroyed (ghost colliders, duplicate bodies, leaks across Play/Stop in demo modes) | `physics_system.cpp` | open |
+| B6 | H | Jolt bodies never removed when an entity / RigidBody / Collider is destroyed (ghost colliders, duplicate bodies, leaks across Play/Stop in demo modes) | `physics_system.cpp` | fixed (S1.3, pending CI) — still open: demo-mode Stop doesn't reset dynamic bodies; inspector edits to Collider/RigidBody fields don't rebuild the body |
 | B7 | M | Fixed-step accumulator keeps the excess after the 8-step cap: after a hitch the sim runs ~4x fast, and never recovers below 15 fps | `physics_world.cpp` `update` | fixed (S1.1, pending CI) |
 | B8 | M | Terrain height-field bodies go stale / leak when terrain regenerates or streaming toggles during Play | `main.cpp` terrain block | open |
 | B9 | M | Height-field padding duplicates edge heights → flat collision shelf over the neighbouring streamed tile | `physics_system.cpp` padding | open |
@@ -69,7 +69,7 @@ screenshot readback barriers, AssetManager-owned mesh lifetime.
 | C5 | M | Index values and JOINTS_0 values never range-checked → GPU out-of-bounds reads (possible device loss) | `gltf_loader.cpp`, `skinning.slang` | partly fixed (S1.2): vertex indices checked; JOINTS_0 vs skin joint count still open |
 | C6 | H | `load_scene` aborts / UB on malformed scene JSON — after the live scene was already cleared | `scene_io.cpp` | open (S2) |
 | C7 | H | = B10 (behaviour-tree JSON aborts) | `behavior.cpp` | open (S2) |
-| C8 | H | = B6 (deleting entities / removing Collider or RigidBody in Play leaves live Jolt bodies) | `physics_system.cpp`, editor | open |
+| C8 | H | = B6 (deleting entities / removing Collider or RigidBody in Play leaves live Jolt bodies) | `physics_system.cpp`, editor | fixed with B6 (S1.3) |
 | C9 | M | = B12, plus `load_scene` also drops `NetReplicated` | `scene_snapshot.*`, `scene_io.cpp` | open |
 | C10 | M | If Play fails to create the physics world, the auto-added static RigidBodies stay in the edit scene | `main.cpp` play transition | open |
 | C11 | M | Save/load loses CharacterController, NetReplicated, Animator speed/looping, and meshes without MeshSource (editor Duplicate copies too little; demo meshes untagged) | `scene_io.cpp`, `scene_hierarchy.cpp`, `main.cpp` | open |
