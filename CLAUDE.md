@@ -283,7 +283,10 @@ struct Children     { std::vector<entt::entity> entities; };
   instructions, tool and resource descriptions, prompts, long help text) lives
   in Markdown files (`tools/quat-mcp/content/`) embedded with `include_str!`
   — tool descriptions via `#[doc = include_str!(..)]` on the tool function,
-  templates rendered with MiniJinja. Only error messages stay in code.
+  templates rendered with MiniJinja. What stays in code: error messages and
+  short UI strings (labels, one-sentence tooltips, parameter hints in a
+  reflection table). Anything longer, or anything written for a model, is
+  Markdown.
 
 ## Physics (Jolt)
 
