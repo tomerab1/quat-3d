@@ -302,8 +302,9 @@ endif()
 
 # ---------------------------------------------------------------------------
 # engine_remote_world — the world commands (ROADMAP A2/A3): scene.*,
-# environment.*, camera.*, render.screenshot, asset.*, sim.*, nav.bake, on top
-# of engine_remote + the scene codec. Application-only capabilities come in
+# environment.*, camera.*, render.screenshot, asset.*, sim.*, nav.bake, debug.*
+# and bt.* (behaviour-tree authoring), on top of engine_remote + the scene
+# codec and the behaviour-tree graph model. Application-only capabilities come in
 # through WorldServices callbacks (src/app/remote_bridge.cpp wires them), so
 # the commands are testable on a bare Scene.
 # ---------------------------------------------------------------------------
@@ -316,6 +317,8 @@ add_library(engine_remote_world STATIC
     src/remote/world/app_commands.cpp
     src/remote/world/debug_commands.cpp
     src/remote/world/debug_query_commands.cpp
+    src/remote/world/behavior_commands.cpp
+    src/remote/world/behavior_edit_commands.cpp
     src/remote/world/image_encode.cpp
     src/remote/world/stb_image_write_impl.cpp)
 target_link_libraries(engine_remote_world PUBLIC

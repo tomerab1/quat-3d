@@ -333,12 +333,52 @@ TEST(BtGraph, SubtreesAndPathsFollowTheJson) {
     ASSERT_OK(g);
     EXPECT_EQ(s::bt_graph_subtree(*g, 2), (std::vector<std::uint32_t>{2, 3, 4, 5}));
     EXPECT_TRUE(s::bt_graph_subtree(*g, 99).empty());
-    EXPECT_EQ(s::bt_graph_path(*g, 1), "root");
-    EXPECT_EQ(s::bt_graph_path(*g, 5), "root.children[0].children[1].children[0]");
-    EXPECT_EQ(s::bt_graph_path(*g, 8), "root.children[1].children[1]");
     const std::uint32_t stray = s::bt_graph_add_node(*g, Kind::leaf, "wait", {});
-    EXPECT_EQ(s::bt_graph_path(*g, stray), "") << "not under the root";
-    EXPECT_EQ(s::bt_graph_path(*g, 99), "");
+    const auto paths = s::bt_graph_paths(*g);
+    EXPECT_EQ(paths.size(), 8U) << "the stray node is not under the root";
+    EXPECT_EQ(paths.at(1), "root");
+    EXPECT_EQ(paths.at(5), "root.children[0].children[1].children[0]");
+    EXPECT_EQ(paths.at(8), "root.children[1].children[1]");
+    EXPECT_FALSE(paths.contains(stray));
+}
+
+TEST(BtGraph, SameShapeReusesIdsAndLayout) {
+    auto g = s::bt_graph_from_json(kGuard);
+    ASSERT_OK(g);
+    g->find(7)->pos = {1234.0F, 567.0F};
+    ASSERT_OK(s::bt_graph_attach(*g, 6, 8, 0)); // ids no longer pre-order: 1..6, 8, 7
+    auto text = s::bt_graph_to_json(*g);
+    ASSERT_OK(text);
+    nlohmann::json tree = nlohmann::json::parse(*text);
+    tree.erase("editor");
+    tree["children"][1]["children"][1]["speed"] = 4; // a parameter edit, ids lost
+
+    auto edited = s::bt_graph_from_json(tree.dump());
+    ASSERT_OK(edited);
+    EXPECT_EQ(edited->find(6)->children, (std::vector<std::uint32_t>{7, 8})) << "fresh ids";
+    ASSERT_TRUE(s::bt_graph_reuse_layout(*edited, *g));
+    EXPECT_EQ(edited->find(6)->children, (std::vector<std::uint32_t>{8, 7}));
+    EXPECT_EQ(edited->find(7)->pos, glm::vec2(1234.0F, 567.0F));
+    EXPECT_FLOAT_EQ(edited->find(7)->params.back().value, 4.0F);
+    EXPECT_GE(edited->next_id, g->next_id);
+
+    // A different shape keeps its own ids.
+    tree["children"][1]["children"].erase(0);
+    auto other = s::bt_graph_from_json(tree.dump());
+    ASSERT_OK(other);
+    EXPECT_FALSE(s::bt_graph_reuse_layout(*other, *g));
+    EXPECT_EQ(s::bt_graph_preorder(*other).back(), 7U);
+}
+
+TEST(BtGraph, SubtreeLayoutKeepsItsRootInPlace) {
+    auto g = s::bt_graph_from_json(kGuard);
+    ASSERT_OK(g);
+    g->find(2)->pos = {-800.0F, 40.0F};
+    g->find(5)->pos = {3000.0F, 3000.0F};
+    s::bt_graph_layout_subtree(*g, 2);
+    EXPECT_EQ(g->find(2)->pos, glm::vec2(-800.0F, 40.0F));
+    EXPECT_GT(g->find(5)->pos.y, g->find(4)->pos.y);
+    EXPECT_LT(g->find(3)->pos.x, g->find(4)->pos.x);
 }
 
 TEST(BtGraph, AttachPlacesAtAnIndexAndReorders) {

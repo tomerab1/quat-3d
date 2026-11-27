@@ -310,6 +310,22 @@ void validate_node(const BtGraphNode& n, BtLeafCatalog leaves, std::vector<BtGra
     }
 }
 
+// The parentless node heading the largest tree (other parentless nodes are
+// stray), or 0 when every node has a parent.
+[[nodiscard]] std::uint32_t main_root(const BtGraph& graph,
+                                      const std::vector<std::uint32_t>& parentless) {
+    std::uint32_t root = 0;
+    std::size_t   best = 0;
+    for (const std::uint32_t r : parentless) {
+        const std::size_t size = reachable(graph, r).size();
+        if (size > best) {
+            best = size;
+            root = r;
+        }
+    }
+    return root;
+}
+
 } // namespace
 
 BtGraphNode* BtGraph::find(std::uint32_t id) {
@@ -393,17 +409,7 @@ std::vector<BtGraphIssue> bt_graph_validate(const BtGraph& graph, BtLeafCatalog 
                                         " parents (a node has exactly one)"});
         }
     }
-    // The root is the parentless node heading the largest tree; other
-    // parentless nodes are stray.
-    std::uint32_t root = 0;
-    std::size_t   best = 0;
-    for (const std::uint32_t r : roots) {
-        const std::size_t size = reachable(graph, r).size();
-        if (size > best) {
-            best = size;
-            root = r;
-        }
-    }
+    const std::uint32_t root = main_root(graph, roots);
     if (root == 0) {
         issues.push_back({0, "no root: every node has a parent, so the links form a cycle"});
     } else {
@@ -450,27 +456,31 @@ std::vector<std::uint32_t> bt_graph_subtree(const BtGraph& graph, std::uint32_t 
     return reachable(graph, id);
 }
 
-std::string bt_graph_path(const BtGraph& graph, std::uint32_t id) {
-    const std::uint32_t root = bt_graph_root(graph);
-    if (root == 0 || graph.find(id) == nullptr) return {};
-    // Climb to the root, collecting each step's child index (bounded, so a
-    // cycle above `id` ends the walk).
-    std::vector<std::size_t> steps;
-    std::uint32_t at = id;
-    for (std::size_t guard = 0; at != root && guard <= graph.nodes.size(); ++guard) {
-        const std::uint32_t parent = bt_graph_parent(graph, at);
-        if (parent == 0) return {};
-        const auto& siblings = graph.find(parent)->children;
-        steps.push_back(static_cast<std::size_t>(std::ranges::find(siblings, at) -
-                                                 siblings.begin()));
-        at = parent;
+std::unordered_map<std::uint32_t, std::string> bt_graph_paths(const BtGraph& graph) {
+    std::unordered_map<std::uint32_t, std::string> paths;
+    std::vector<std::uint32_t> parentless;
+    for (const auto& [id, count] : parent_counts(graph)) {
+        if (count == 0) parentless.push_back(id);
     }
-    if (at != root) return {};
-    std::string path = "root";
-    for (auto it = steps.rbegin(); it != steps.rend(); ++it) {
-        path += ".children[" + std::to_string(*it) + "]";
+    std::ranges::sort(parentless); // deterministic choice between equal trees
+    const std::uint32_t root = main_root(graph, parentless);
+    if (root == 0) return paths;
+    // Depth-first; a node already named keeps its first path (cycles end).
+    std::vector<std::uint32_t> stack{root};
+    paths.emplace(root, "root");
+    while (!stack.empty()) {
+        const std::uint32_t id = stack.back();
+        stack.pop_back();
+        const BtGraphNode* n = graph.find(id);
+        if (n == nullptr) continue;
+        const std::string prefix = paths.at(id) + ".children[";
+        for (std::size_t i = 0; i < n->children.size(); ++i) {
+            const std::uint32_t c = n->children[i];
+            if (graph.find(c) == nullptr) continue;
+            if (paths.emplace(c, prefix + std::to_string(i) + "]").second) stack.push_back(c);
+        }
     }
-    return path;
+    return paths;
 }
 
 } // namespace engine::scene

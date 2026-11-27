@@ -27,6 +27,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <vector>
 
 #include <glm/glm.hpp>
@@ -106,9 +107,11 @@ bt_graph_validate(const BtGraph& graph, BtLeafCatalog leaves = bt_builtin_leaf_i
 // `id` and its descendants, depth-first pre-order (cycle-safe); empty for an
 // unknown id.
 [[nodiscard]] std::vector<std::uint32_t> bt_graph_subtree(const BtGraph& graph, std::uint32_t id);
-// Where `id` sits in the tree JSON, spelled like runtime parse errors:
-// "root", "root.children[1].children[0]". Empty when it is not under the root.
-[[nodiscard]] std::string bt_graph_path(const BtGraph& graph, std::uint32_t id);
+// Where each node of the tree sits in its JSON, spelled like runtime parse
+// errors: "root", "root.children[1].children[0]". The root is the parentless
+// node heading the most nodes (as in bt_graph_validate); stray nodes are
+// absent.
+[[nodiscard]] std::unordered_map<std::uint32_t, std::string> bt_graph_paths(const BtGraph& graph);
 
 // --- edits (keep one parent per node and no cycles) --------------------------
 
@@ -154,6 +157,15 @@ bool bt_graph_sort_children_by_x(BtGraph& graph);
 // Tidy top-down layout of the tree under the root (parents centred over their
 // children); nodes outside the tree keep their positions.
 void bt_graph_auto_layout(BtGraph& graph);
+
+// Tidy layout of `id`'s subtree (as bt_graph_auto_layout) with `id` staying
+// where it is.
+void bt_graph_layout_subtree(BtGraph& graph, std::uint32_t id);
+
+// When `graph` has the same shape as `previous` (the same kinds, leaves and
+// child counts in pre-order, e.g. only parameters differ), gives its nodes
+// previous's ids and positions and returns true; otherwise changes nothing.
+bool bt_graph_reuse_layout(BtGraph& graph, const BtGraph& previous);
 
 // Whether every node already sits where bt_graph_auto_layout would put it
 // (within the rounding of the saved layout).

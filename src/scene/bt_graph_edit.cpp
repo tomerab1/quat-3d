@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <string>
+#include <unordered_map>
 #include <unordered_set>
 #include <utility>
 
@@ -32,6 +33,30 @@ constexpr float kLayoutTolerance = 1.0F;
 // Translates `id` and its subtree by `delta`.
 void shift_subtree(BtGraph& graph, std::uint32_t id, glm::vec2 delta) {
     for (const std::uint32_t n : bt_graph_subtree(graph, id)) graph.find(n)->pos += delta;
+}
+
+// Tidy top-down layout of `root`'s subtree with `root` at the origin: leaves
+// take consecutive columns, parents centre over their children.
+void layout_from(BtGraph& graph, std::uint32_t root) {
+    std::unordered_set<std::uint32_t> placed;
+    float next_x = 0.0F;
+    const auto place = [&](const auto& self, std::uint32_t id, int depth) -> float {
+        BtGraphNode* n = graph.find(id);
+        if (n == nullptr || !placed.insert(id).second) return next_x;
+        std::vector<float> xs;
+        for (const std::uint32_t c : n->children) {
+            if (!placed.contains(c) && graph.find(c) != nullptr) xs.push_back(self(self, c, depth + 1));
+        }
+        if (xs.empty()) {
+            n->pos.x = next_x;
+            next_x += kLayoutSpacingX;
+        } else {
+            n->pos.x = 0.5F * (xs.front() + xs.back());
+        }
+        n->pos.y = static_cast<float>(depth) * kLayoutSpacingY;
+        return n->pos.x;
+    };
+    place(place, root, 0);
 }
 
 } // namespace
@@ -127,26 +152,15 @@ bool bt_graph_sort_children_by_x(BtGraph& graph) {
 void bt_graph_auto_layout(BtGraph& graph) {
     std::uint32_t root = bt_graph_root(graph);
     if (root == 0 && !graph.nodes.empty()) root = graph.nodes.front().id;
-    std::unordered_set<std::uint32_t> placed;
-    float next_x = 0.0F;
-    // Leaves take consecutive columns; parents centre over their children.
-    const auto place = [&](const auto& self, std::uint32_t id, int depth) -> float {
-        BtGraphNode* n = graph.find(id);
-        if (n == nullptr || !placed.insert(id).second) return next_x;
-        std::vector<float> xs;
-        for (const std::uint32_t c : n->children) {
-            if (!placed.contains(c) && graph.find(c) != nullptr) xs.push_back(self(self, c, depth + 1));
-        }
-        if (xs.empty()) {
-            n->pos.x = next_x;
-            next_x += kLayoutSpacingX;
-        } else {
-            n->pos.x = 0.5F * (xs.front() + xs.back());
-        }
-        n->pos.y = static_cast<float>(depth) * kLayoutSpacingY;
-        return n->pos.x;
-    };
-    if (root != 0) place(place, root, 0);
+    if (root != 0) layout_from(graph, root);
+}
+
+void bt_graph_layout_subtree(BtGraph& graph, std::uint32_t id) {
+    const BtGraphNode* n = graph.find(id);
+    if (n == nullptr) return;
+    const glm::vec2 anchor = n->pos;
+    layout_from(graph, id);
+    shift_subtree(graph, id, anchor - graph.find(id)->pos);
 }
 
 std::expected<void, core::Error> bt_graph_attach(BtGraph& graph, std::uint32_t parent,
@@ -195,6 +209,31 @@ void bt_graph_place_subtree(BtGraph& graph, std::uint32_t id) {
         target.x = right->pos.x - kLayoutSpacingX;
     }
     shift_subtree(graph, id, target - n->pos);
+}
+
+bool bt_graph_reuse_layout(BtGraph& graph, const BtGraph& previous) {
+    const std::vector<std::uint32_t> now = bt_graph_preorder(graph);
+    const std::vector<std::uint32_t> before = bt_graph_preorder(previous);
+    if (now.empty() || now.size() != before.size() || now.size() != graph.nodes.size()) {
+        return false;
+    }
+    std::unordered_map<std::uint32_t, std::uint32_t> remap; // id now -> id before
+    for (std::size_t i = 0; i < now.size(); ++i) {
+        const BtGraphNode& a = *graph.find(now[i]);
+        const BtGraphNode& b = *previous.find(before[i]);
+        if (a.kind != b.kind || a.leaf != b.leaf || a.children.size() != b.children.size()) {
+            return false;
+        }
+        remap[now[i]] = before[i];
+    }
+    for (BtGraphNode& n : graph.nodes) {
+        n.id = remap[n.id];
+        n.pos = previous.find(n.id)->pos;
+        for (std::uint32_t& c : n.children) c = remap[c];
+    }
+    graph.next_id = previous.next_id;
+    for (const BtGraphNode& n : graph.nodes) graph.next_id = std::max(graph.next_id, n.id + 1);
+    return true;
 }
 
 bool bt_graph_children_follow_x(const BtGraph& graph) {

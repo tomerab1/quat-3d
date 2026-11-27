@@ -5,7 +5,9 @@
 // build the world: scene.*, environment.*, world.ground_height, camera.*,
 // render.screenshot, asset.*, sim.*, scene.save/load, nav.bake — and the
 // debugging commands (ROADMAP A5): debug.log, debug.stats, debug.pause /
-// resume / step / time_scale, debug.watch, debug.raycast, debug.nav_path. The
+// resume / step / time_scale, debug.watch, debug.raycast, debug.nav_path — and
+// behaviour-tree authoring (ROADMAP A7): bt.leaves, bt.get, bt.set,
+// bt.add_node, bt.remove_node, bt.move_node, bt.set_params, bt.status. The
 // method contract is docs/remote-control.md.
 //
 // Scene editing works on any Scene. Everything that only the running
