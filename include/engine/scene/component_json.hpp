@@ -29,8 +29,10 @@
 #include <expected>
 #include <span>
 #include <string_view>
+#include <vector>
 
 #include <entt/entity/fwd.hpp>
+#include <glm/glm.hpp>
 #include <nlohmann/json_fwd.hpp>
 
 #include "engine/core/error.hpp"
@@ -61,12 +63,25 @@ struct EncodeOptions {
                                                entt::entity entity,
                                                const EncodeOptions& options = {});
 
+// Names of the codec components the entity carries, in canonical order —
+// the cheap form of encode_components(...).items() for listings and filters.
+[[nodiscard]] std::vector<std::string_view> component_names(const entt::registry& registry,
+                                                            entt::entity entity,
+                                                            bool include_read_only = true);
+
 // Add or merge-update component `name` on `entity` from `value`. `strict`
 // rejects unknown fields (remote requests); scene files decode leniently so
 // newer files still load in older builds. Read-only components are refused.
 [[nodiscard]] std::expected<void, core::Error>
 apply_component(entt::registry& registry, entt::entity entity, std::string_view name,
                 const nlohmann::json& value, bool strict);
+
+// Decodes a colour as the codec accepts it everywhere: "#rrggbb" /
+// "#rrggbbaa" (sRGB, converted to linear) or a linear [r, g, b] / [r, g, b, a]
+// array in 0..1 (a 3-element array keeps `out`'s alpha). `out` is untouched
+// on error.
+[[nodiscard]] std::expected<void, core::Error> decode_color(const nlohmann::json& value,
+                                                            glm::vec4& out);
 
 // Remove component `name` (and what it implies: removing `primitive` also
 // removes the MeshRenderer it produced). Returns false for an unknown name or

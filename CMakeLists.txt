@@ -254,6 +254,29 @@ if(WIN32)
 endif()
 
 # ---------------------------------------------------------------------------
+# engine_remote_world — the world commands (ROADMAP A2/A3): scene.*,
+# environment.*, camera.*, render.screenshot, asset.*, sim.*, nav.bake, on top
+# of engine_remote + the scene codec. Application-only capabilities come in
+# through WorldServices callbacks (src/app/remote_bridge.cpp wires them), so
+# the commands are testable on a bare Scene.
+# ---------------------------------------------------------------------------
+add_library(engine_remote_world STATIC
+    src/remote/world/common.cpp
+    src/remote/world/scene_commands.cpp
+    src/remote/world/batch_command.cpp
+    src/remote/world/environment_commands.cpp
+    src/remote/world/camera_commands.cpp
+    src/remote/world/app_commands.cpp
+    src/remote/world/image_encode.cpp
+    src/remote/world/stb_image_write_impl.cpp)
+target_link_libraries(engine_remote_world PUBLIC engine_flags engine_remote engine_scene)
+target_include_directories(engine_remote_world PUBLIC ${ENGINE_PUBLIC_INCLUDE})
+target_include_directories(engine_remote_world PRIVATE ${Stb_INCLUDE_DIR})
+# stb's implementation TU is not warning-clean under our strict flags.
+set_source_files_properties(src/remote/world/stb_image_write_impl.cpp
+    PROPERTIES COMPILE_OPTIONS "-w")
+
+# ---------------------------------------------------------------------------
 # engine_renderer — high-level passes built on the RHI. Starts with the deferred
 # GBuffer pass (mesh_pass); lighting/tonemap/imgui passes follow in later slices.
 # ---------------------------------------------------------------------------
