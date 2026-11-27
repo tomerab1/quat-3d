@@ -106,6 +106,8 @@ void physics_system(entt::registry& registry, physics::PhysicsWorld& world, floa
         params.mass = rb.mass;
         params.owner = static_cast<std::uint32_t>(entt::to_integral(e));
         rb.body = world.add_body(params);
+        // The body owns its shape; a shape that backs no body is given back.
+        if (rb.body == invalid) world.release_shape(params.shape);
     }
 
     // 2. Push kinematic bodies' transforms into the simulation.
@@ -225,7 +227,9 @@ std::uint32_t add_height_field_body(physics::PhysicsWorld& world, const terrain:
     params.position = origin;
     params.motion = physics::Motion::static_body;
     params.layer = physics::Layer::static_body;
-    return world.add_body(params);
+    const std::uint32_t body = world.add_body(params);
+    if (body == physics::PhysicsWorld::invalid_body) world.release_shape(shape);
+    return body; // removing the body releases its height field
 }
 
 void collect_nav_geometry(entt::registry& registry, const terrain::Heightmap* map,

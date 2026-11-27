@@ -54,8 +54,13 @@ public:
     // Sentinel for "no body".
     static constexpr std::uint32_t invalid_body = 0xFFFFFFFFU;
 
-    // ---- Collision shape factories: return an opaque shape id owned by the
-    // world (Jolt ref-counts; the id is reusable across many bodies). -----------
+    // ---- Collision shape factories ---------------------------------------
+    // Each returns a shape handle (invalid_body on bad input). A shape may back
+    // any number of bodies; it is reference-counted by them and released when
+    // the last body using it is removed, so streamed terrain tiles and rebuilt
+    // colliders do not accumulate (issue #47). A shape that never backs a body
+    // must be given back with release_shape(). Handles carry a generation:
+    // a released handle never resolves to a later shape in the same slot.
     [[nodiscard]] std::uint32_t create_box(const glm::vec3& half_extents);
     [[nodiscard]] std::uint32_t create_sphere(float radius);
     [[nodiscard]] std::uint32_t create_capsule(float half_height, float radius);
@@ -94,9 +99,16 @@ public:
     };
 
     // Create a body and add it to the simulation. Returns its id (invalid_body on
-    // failure / an out-of-range shape).
+    // failure / an unknown shape handle). The body holds a reference to its
+    // shape until remove_body().
     [[nodiscard]] std::uint32_t add_body(const BodyParams& params);
     void remove_body(std::uint32_t body);
+
+    // Releases a shape no body uses (one whose add_body failed, or that was
+    // never attached). Shapes in use are left alone: their bodies own them.
+    void release_shape(std::uint32_t shape);
+    // Live collision shapes (created and not yet released).
+    [[nodiscard]] std::uint32_t shape_count() const;
 
     // (body, owner) for every live body created with an owner.
     struct OwnedBody {
@@ -116,8 +128,9 @@ public:
     [[nodiscard]] std::uint32_t create_character(float half_height, float radius,
                                                  const glm::vec3& position,
                                                  std::uint32_t owner = no_owner);
-    // Removes the character from the world; its id stays reserved (ids are
-    // indices) and every character_* call on it becomes a no-op.
+    // Removes the character from the world and frees its slot for reuse; the
+    // handle goes stale (generation), so every character_* call on it becomes
+    // a no-op.
     void remove_character(std::uint32_t character);
     // (character, owner) for every live character created with an owner.
     [[nodiscard]] std::vector<OwnedBody> owned_characters() const;
