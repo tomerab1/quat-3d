@@ -34,6 +34,7 @@ struct ComponentList {};
 using SnapshotComponents =
     ComponentList<scene::Name, scene::Transform, scene::Parent, scene::Children,
                   scene::MeshRenderer, scene::MeshSource, scene::SkinnedMesh, scene::Animator,
+                  scene::FootIK,
                   scene::Camera, scene::DirectionalLight, scene::PointLight, scene::Collider,
                   scene::RigidBody, scene::CharacterController, scene::Terrain,
                   scene::Grass,

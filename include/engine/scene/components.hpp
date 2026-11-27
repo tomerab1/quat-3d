@@ -21,6 +21,7 @@
 
 #include "engine/audio/audio_types.hpp"
 #include "engine/animation/clip.hpp"
+#include "engine/animation/inertialization.hpp"
 #include "engine/animation/skeleton.hpp"
 #include "engine/asset/asset_manager.hpp"
 #include "engine/terrain/generator.hpp"
@@ -180,12 +181,35 @@ struct SkinnedMesh {
 
 // Plays an animation clip on a skinned entity. The AnimationSystem advances
 // `time` by dt*speed each tick (wrapping when `looping`), samples the clip, and
-// writes the result into the entity's SkinnedMesh::joint_matrices.
+// writes the result into the entity's SkinnedMesh::joint_matrices. Switching
+// `clip` (normally to another of `clips`, the source glTF's animations)
+// transitions over `blend_time` seconds: inertialized (only the new clip is
+// evaluated) or crossfaded.
 struct Animator {
     asset::AssetHandle<animation::AnimClipAsset> clip;
     float time    = 0.0F;
     float speed   = 1.0F;
     bool  looping = true;
+    animation::BlendMode blend_mode = animation::BlendMode::inertialize;
+    float                blend_time = 0.25F;
+    std::vector<asset::AssetHandle<animation::AnimClipAsset>> clips;
+};
+
+// Foot placement for a skinned, animated entity: legs reach the ground
+// (physics raycasts, else the terrain height) and the pelvis lowers to the
+// lower foot. Runs after animation sampling, before skinning. Joint names
+// pick the ankles (knee = parent, hip = grandparent) and pelvis; empty names
+// are detected from common rig conventions.
+struct FootIK {
+    bool        enabled = true;
+    std::string pelvis;
+    std::string left_foot;
+    std::string right_foot;
+    float       ray_up = 0.5F;           // probe start above the ankle (m)
+    float       ray_down = 0.8F;         // probe reach below the ankle (m)
+    float       max_adjust = 0.45F;      // largest pelvis / foot offset (m)
+    float       max_foot_angle = 35.0F;  // ground-alignment limit (degrees)
+    float       smoothing = 0.05F;       // spring half-life (s)
 };
 
 // Perspective camera parameters. The view/projection matrices are derived each

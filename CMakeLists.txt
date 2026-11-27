@@ -209,6 +209,7 @@ add_library(engine_scene STATIC
     src/scene/stb_image_impl.cpp
     src/scene/components.cpp
     src/scene/scene.cpp
+    src/scene/animation_system.cpp
     src/scene/physics_system.cpp
     src/scene/nav_agent_system.cpp
     src/scene/navigation.cpp
@@ -217,6 +218,7 @@ add_library(engine_scene STATIC
     src/scene/bt_graph_edit.cpp
     src/scene/scene_io.cpp
     src/scene/component_json.cpp
+    src/scene/component_json_animation.cpp
     src/scene/audio_system.cpp
     src/scene/primitives.cpp
     src/scene/primitive_resolve.cpp
@@ -401,6 +403,7 @@ if(ENGINE_EDITOR)
         src/editor/picking.cpp
         src/editor/scene_snapshot.cpp
         src/editor/audio_inspector.cpp
+        src/editor/animation_inspector.cpp
         src/editor/grass_inspector.cpp
         src/editor/behavior_panel.cpp
         src/editor/behavior_canvas.cpp

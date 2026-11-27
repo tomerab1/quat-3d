@@ -229,7 +229,9 @@ assemble_scene(const fastgltf::Asset& a, const std::string& key_prefix,
                         glm::inverse(node_global_of(static_cast<int>(node_index))) *
                         skin_root_transform[n.skinIndex.value()];
                     if (!clip_handles.empty()) {
-                        reg.emplace<Animator>(ent, clip_handles[0], 0.0F, 1.0F, true);
+                        Animator& anim = reg.emplace<Animator>(ent);
+                        anim.clip = clip_handles[0];
+                        anim.clips = clip_handles; // what the animator can switch to
                     }
                 }
             };
