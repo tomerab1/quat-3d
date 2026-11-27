@@ -12,8 +12,17 @@ inputs:
     description: vcpkg commit; must equal vcpkg.json's builtin-baseline.
     default: 10ceb139a610ebf3c6aa49cdc4a4b7f3db5d3f2b
   slang-version:
-    description: Slang release used on every OS.
+    description: Slang release used on every OS (update the SHA-256s with it).
     default: 2025.6.1
+  slang-sha256-linux:
+    description: SHA-256 of slang-<version>-linux-x86_64.tar.gz.
+    default: 836c8a23b5619dcfec13676c924ddadb46d8dd5e82cae2cad26d3a28da4d7538
+  slang-sha256-macos:
+    description: SHA-256 of slang-<version>-macos-aarch64.tar.gz.
+    default: b2684ad6050a0adb4779605e2632a03fff1fc27cd5265010ff59877b4a59bbea
+  slang-sha256-windows:
+    description: SHA-256 of slang-<version>-windows-x86_64.zip.
+    default: 47ef4f7f2df17f9965612bc39e63dac0d9748985887339bb5f11f2d931c0cb61
   vulkan-sdk-version:
     description: Windows only (headers, import library, loader runtime, lavapipe).
     default: 1.4.321.1
@@ -49,7 +58,7 @@ runs:
     # for the GPU suites and the packaged-game smoke test.
     - name: Vulkan SDK + lavapipe (Windows)
       if: runner.os == 'Windows'
-      uses: jakoch/install-vulkan-sdk-action@v1.8.1
+      uses: jakoch/install-vulkan-sdk-action@7fe84289ddbf750f7eff9f8e4588e600e1dd06c8 # v1.8.1
       with:
         vulkan_version: ${{ inputs.vulkan-sdk-version }}
         install_runtime: true
@@ -74,20 +83,23 @@ runs:
         echo "VULKAN_SDK=$(brew --prefix)" >> "$GITHUB_ENV"
 
     # ---- Slang: the same release everywhere (added to PATH after the SDK,
-    # whose own slangc it shadows) ------------------------------------------
+    # whose own slangc it shadows), checked against pinned SHA-256s ---------
     - name: Slang compiler (Linux / macOS)
       if: runner.os != 'Windows'
       shell: bash
       env:
         SLANG_VERSION: ${{ inputs.slang-version }}
+        SHA_LINUX: ${{ inputs.slang-sha256-linux }}
+        SHA_MACOS: ${{ inputs.slang-sha256-macos }}
       run: |
         case "$RUNNER_OS" in
-          Linux) asset="linux-x86_64" ;;
-          macOS) asset="macos-aarch64" ;;
+          Linux) asset="linux-x86_64"; sha="$SHA_LINUX"; check="sha256sum -c" ;;
+          macOS) asset="macos-aarch64"; sha="$SHA_MACOS"; check="shasum -a 256 -c" ;;
         esac
         mkdir -p "$HOME/slang"
-        curl -sSL -o "$RUNNER_TEMP/slang.tgz" \
+        curl -fsSL -o "$RUNNER_TEMP/slang.tgz" \
           "https://github.com/shader-slang/slang/releases/download/v${SLANG_VERSION}/slang-${SLANG_VERSION}-${asset}.tar.gz"
+        echo "$sha  $RUNNER_TEMP/slang.tgz" | $check
         tar -xzf "$RUNNER_TEMP/slang.tgz" -C "$HOME/slang"
         echo "$HOME/slang/bin" >> "$GITHUB_PATH"
 
@@ -96,9 +108,12 @@ runs:
       shell: pwsh
       env:
         SLANG_VERSION: ${{ inputs.slang-version }}
+        SHA_WINDOWS: ${{ inputs.slang-sha256-windows }}
       run: |
         $url = "https://github.com/shader-slang/slang/releases/download/v$env:SLANG_VERSION/slang-$env:SLANG_VERSION-windows-x86_64.zip"
         Invoke-WebRequest -Uri $url -OutFile "$env:RUNNER_TEMP\slang.zip"
+        $hash = (Get-FileHash -Algorithm SHA256 "$env:RUNNER_TEMP\slang.zip").Hash
+        if ($hash -ne $env:SHA_WINDOWS) { throw "slang.zip SHA-256 mismatch: $hash" }
         Expand-Archive "$env:RUNNER_TEMP\slang.zip" -DestinationPath "$env:USERPROFILE\slang"
         "$env:USERPROFILE\slang\bin" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
 
@@ -149,6 +164,6 @@ runs:
     # Visual Studio's bundled vcpkg; the presets' CMAKE_TOOLCHAIN_FILE wins.)
     - name: MSVC environment (Windows)
       if: runner.os == 'Windows'
-      uses: ilammy/msvc-dev-cmd@v1.13.0
+      uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1.13.0
       with:
         arch: x64

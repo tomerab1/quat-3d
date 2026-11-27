@@ -50,8 +50,10 @@ jobs:
         id: configure
         run: cmake --preset ${{ matrix.preset }} -DENGINE_PACKAGE_BUILD=ON -DENGINE_PROFILE=OFF
 
+      # Not on tag refs: tag runs restore the caches master/CI built but never
+      # add their own (a tag's cache would only serve that one tag).
       - name: Save vcpkg binary cache
-        if: always() && steps.setup.outputs.cache-key != ''
+        if: always() && steps.setup.outputs.cache-key != '' && github.ref_type != 'tag'
         uses: actions/cache/save@v4
         with:
           path: ${{ github.workspace }}/.vcpkg-archives
@@ -61,11 +63,17 @@ jobs:
         if: steps.configure.outcome == 'success'
         run: cmake --build --preset ${{ matrix.preset }} --target game
 
+      # Tags must look like v1.2.3 or v1.2.3-rc.1: the version ends up in file
+      # names, Info.plist and the release title.
       - name: Version
         id: version
         shell: bash
         run: |
           if [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            if ! [[ "$GITHUB_REF_NAME" =~ ^v[0-9]+(\.[0-9]+)*(-[0-9A-Za-z.]+)?$ ]]; then
+              echo "::error::tag '$GITHUB_REF_NAME' is not a release version (v1.2.3 or v1.2.3-rc.1)"
+              exit 1
+            fi
             echo "version=$GITHUB_REF_NAME" >> "$GITHUB_OUTPUT"
           else
             echo "version=dev-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
@@ -76,16 +84,23 @@ jobs:
       - name: Package
         id: package
         shell: bash
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          BUILD_DIR: build/${{ matrix.preset }}
         run: |
-          bash scripts/package-release.sh "build/${{ matrix.preset }}" dist "${{ steps.version.outputs.version }}" | tee package.log
+          bash scripts/package-release.sh "$BUILD_DIR" dist "$VERSION" | tee package.log
           archive=$(tail -n1 package.log)
           echo "archive=dist/$(basename "$archive")" >> "$GITHUB_OUTPUT"
           ls -l dist
 
+      # Unpacked under a directory with a space and a non-ASCII character:
+      # the game must resolve its data through UTF-8-safe paths.
       - name: Smoke test (launch the package headless)
         timeout-minutes: 15
         shell: bash
-        run: bash scripts/smoke-test-package.sh "${{ steps.package.outputs.archive }}" "$RUNNER_TEMP/smoke"
+        env:
+          ARCHIVE: ${{ steps.package.outputs.archive }}
+        run: bash scripts/smoke-test-package.sh "$ARCHIVE" "$RUNNER_TEMP/smoke dir ü"
 
       - name: Upload package
         uses: actions/upload-artifact@v4
@@ -102,8 +117,8 @@ jobs:
         with:
           name: smoke-${{ matrix.name }}
           path: |
-            ${{ runner.temp }}/smoke/smoke.log
-            ${{ runner.temp }}/smoke/smoke.ppm
+            ${{ runner.temp }}/smoke dir ü/smoke.log
+            ${{ runner.temp }}/smoke dir ü/smoke.ppm
             build/${{ matrix.preset }}/vcpkg-manifest-install.log
           if-no-files-found: ignore
 

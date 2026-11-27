@@ -7,8 +7,10 @@
 #   scripts/smoke-test-package.sh <archive> <scratch-dir>
 #
 # Linux: Xvfb + Mesa lavapipe. Windows: the lavapipe ICD registered by the
-# Vulkan SDK action. macOS: the MoltenVK bundled in the .app, with Homebrew's
-# loader and MoltenVK uninstalled first so only the bundle can satisfy Vulkan.
+# Vulkan SDK action, with the DLL imports checked and a scrubbed PATH. macOS:
+# the MoltenVK bundled in the .app, with Homebrew's
+# loader and MoltenVK uninstalled first (CI only) so only the bundle can
+# satisfy Vulkan.
 set -euo pipefail
 
 if [ $# -ne 2 ]; then
@@ -43,14 +45,42 @@ case "$archive" in
 *windows-x64.zip)
   (cd "$scratch" && 7z x -bso0 -bsp0 "$archive")
   dir=$(ls -d "$scratch"/quat-3d-*/)
-  (cd "$scratch" && "$dir/game.exe") 2>&1 | tee "$log"
+  dir=${dir%/}
+  sys32=$(cygpath -u "${SYSTEMROOT:-C:\\Windows}")/System32
+  # Every DLL the game or a bundled DLL imports must be in the package or a
+  # Windows system DLL; vulkan-1.dll comes with the GPU driver.
+  missing=0
+  for bin in "$dir/game.exe" "$dir"/*.dll; do
+    while read -r dll; do
+      case "${dll,,}" in
+        api-ms-*|ext-ms-*|vulkan-1.dll) continue ;;
+      esac
+      [ -f "$dir/$dll" ] || [ -f "$sys32/$dll" ] && continue
+      echo "$(basename "$bin") imports $dll: not in the package or System32" >&2
+      missing=1
+    done < <(dumpbin //nologo //dependents "$(cygpath -w "$bin")" | tr -d '\r' |
+               awk 'NF == 1 && /\.[Dd][Ll][Ll]$/ { print $1 }')
+  done
+  [ "$missing" = 0 ] || exit 1
+  # Run with a scrubbed PATH (System32, Windows, the Vulkan runtime only), so
+  # a DLL the package lacks cannot be picked up from the runner's tool dirs.
+  clean_path="$sys32:$(dirname "$sys32")"
+  [ -n "${VULKAN_SDK:-}" ] && clean_path="$clean_path:$(cygpath -u "$VULKAN_SDK")/runtime/x64"
+  (cd "$scratch" && PATH="$clean_path" "$dir/game.exe") 2>&1 | tee "$log"
   ;;
 *macos-arm64.zip)
   ditto -x -k "$archive" "$scratch"
   dir=$(ls -d "$scratch"/quat-3d-*/)
   app="$dir/Quat3D.app"
   codesign --verify --deep --strict "$app"
-  brew uninstall --ignore-dependencies vulkan-tools molten-vk vulkan-loader >/dev/null
+  # Uninstalling Homebrew packages is only acceptable on a throwaway CI runner;
+  # locally the test runs with them installed (the loader log check below
+  # still requires the bundle's manifest).
+  if [ "${CI:-}" = "true" ]; then
+    brew uninstall --ignore-dependencies vulkan-tools molten-vk vulkan-loader >/dev/null
+  else
+    echo "note: not on CI - keeping Homebrew's Vulkan installed" >&2
+  fi
   export VK_LOADER_DEBUG=driver
   (cd "$scratch" && "$app/Contents/MacOS/game") 2>&1 | tee "$log"
   grep -q 'Quat3D.app/Contents/Resources/vulkan/icd.d' "$log" \

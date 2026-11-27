@@ -16,6 +16,10 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: false
 
+# Least privilege: CI only reads the repository.
+permissions:
+  contents: read
+
 # Toolchain pins (vcpkg baseline, Slang, Vulkan SDK) live in the shared
 # .github/actions/setup-build action, also used by release.yml.
 
