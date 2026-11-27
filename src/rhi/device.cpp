@@ -7,6 +7,7 @@
 #include <cstring>
 #include <format>
 #include <set>
+#include <string>
 #include <vector>
 
 #include "engine/core/log.hpp"
@@ -400,6 +401,26 @@ std::expected<Device, core::Error> Device::create(const CreateInfo& info) {
     }
 
     return dev;
+}
+
+std::expected<void, core::Error>
+Device::check_storage_image_formats(std::span<const VkFormat> formats,
+                                    std::string_view what) const {
+    for (const VkFormat format : formats) {
+        if (format == VK_FORMAT_UNDEFINED) {
+            return std::unexpected(core::Error{
+                std::string(what) + ": a storage image is declared without a format "
+                                    "(declare [format(...)] on the RWTexture)"});
+        }
+        VkFormatProperties props{};
+        vkGetPhysicalDeviceFormatProperties(physical_device_, format, &props);
+        if ((props.optimalTilingFeatures & VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT) == 0) {
+            return std::unexpected(core::Error{std::string(what) + ": storage image format " +
+                                               std::to_string(static_cast<int>(format)) +
+                                               " is not supported for storage on this device"});
+        }
+    }
+    return {};
 }
 
 void Device::destroy() noexcept {

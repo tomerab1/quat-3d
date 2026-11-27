@@ -357,6 +357,7 @@ upload_device_buffer(GpuAllocator& allocator, const TransferContext& transfer,
     auto staging = allocator.create_staging_buffer(size);
     if (!staging) return std::unexpected(staging.error());
     std::memcpy(staging->mapped(), data, size);
+    if (auto flushed = staging->flush(); !flushed) return std::unexpected(flushed.error());
 
     auto device_buffer = allocator.create_buffer(
         size, usage | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VMA_MEMORY_USAGE_AUTO);
@@ -407,6 +408,7 @@ upload_device_image(GpuAllocator& allocator, const TransferContext& transfer,
     auto staging = allocator.create_staging_buffer(size);
     if (!staging) return std::unexpected(staging.error());
     std::memcpy(staging->mapped(), data, size);
+    if (auto flushed = staging->flush(); !flushed) return std::unexpected(flushed.error());
 
     VkImageUsageFlags image_usage =
         usage | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;

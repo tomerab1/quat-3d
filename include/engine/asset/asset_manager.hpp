@@ -140,16 +140,23 @@ public:
     // returned and the loader is not invoked. On a miss the slot is created
     // pre-filled with the default, the loader runs inline, and the slot
     // transitions to loaded (value replaced) or failed (default retained).
+    // A failed slot is retried: loading its path again re-runs the loader
+    // into the same slot, so a file that was missing or broken loads once it
+    // is fixed, and every handle already holding the slot sees the result.
     template <typename T, typename Loader>
     AssetHandle<T> load(std::string_view relative_path, Loader&& loader) {
         AssetCache<T>& cache = cache_for<T>();
         const AssetId id = asset_id_from_path(relative_path);
-        if (auto existing = cache.find(id)) return AssetHandle<T>(std::move(existing));
-
-        auto slot = std::make_shared<AssetSlot<T>>();
-        slot->id = id;
-        slot->fallback = cache.default_ptr();
-        cache.insert(slot);
+        std::shared_ptr<AssetSlot<T>> slot = cache.find(id);
+        if (slot && slot->state.load(std::memory_order_acquire) != AssetState::failed) {
+            return AssetHandle<T>(std::move(slot));
+        }
+        if (!slot) {
+            slot = std::make_shared<AssetSlot<T>>();
+            slot->id = id;
+            slot->fallback = cache.default_ptr();
+            cache.insert(slot);
+        }
 
         const std::filesystem::path absolute = asset_root_ / std::filesystem::path(relative_path);
         std::expected<T, core::Error> result = std::forward<Loader>(loader)(absolute);

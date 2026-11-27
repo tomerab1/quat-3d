@@ -50,10 +50,14 @@ struct MeshRenderer {
 // load): the AssetManager cache keys, plus the glTF file that produces them.
 // An empty gltf_path means engine code creates the keyed assets at startup
 // (e.g. the showcase primitives), so a loaded scene resolves them by cache hit.
+// `gltf_node` is the glTF node that instanced the mesh: one mesh can be
+// instanced by several nodes with different skins (and armature offsets), so
+// a loaded scene re-attaches skins by (mesh_key, node), not by mesh alone.
 struct MeshSource {
     std::string mesh_key;
-    std::string material_key; // empty -> default material
-    std::string gltf_path;    // empty -> code-created assets
+    std::string material_key;   // empty -> default material
+    std::string gltf_path;      // empty -> code-created assets
+    int         gltf_node = -1; // -1: not instanced from a glTF node (or unknown)
 };
 
 // A procedural shape with a flat PBR material (Phase 15) — the data-driven way
@@ -304,13 +308,23 @@ struct PointLight {
 // rebuild whenever `regenerate` is set (the inspector's button / fresh
 // component) and uploads the result to the terrain pass.
 struct Terrain {
-    terrain::TerrainParams params{};
+    // New terrains erode with the grid model, which the GPU can synthesise
+    // (TerrainParams itself defaults to the CPU-only droplet model).
+    terrain::TerrainParams params = [] {
+        terrain::TerrainParams p;
+        p.erosion_model = terrain::ErosionModel::grid;
+        return p;
+    }();
     float snowline_m = 110.0F; // world height where snow takes over
     bool  regenerate = true;   // consumed by the frame loop
     // Streaming (12.4): keep a (2*radius+1)² window of seamless tiles loaded
     // around the camera instead of one fixed tile.
     bool streaming = false;
     int  stream_radius = 1;
+    // R10.2: synthesise tiles on the GPU (milliseconds) when a device can —
+    // noise and grid erosion; droplet erosion and oversized tiles fall back
+    // to the CPU generator. Physics/navmesh use the read-back heights.
+    bool gpu_generate = true;
 };
 
 // An authored walk route (editor: Shift+click the ground to append points).

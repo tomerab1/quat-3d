@@ -303,6 +303,7 @@ run_bloom_self_test(const rhi::Device& device, rhi::GpuAllocator& allocator,
     auto staging = allocator.create_staging_buffer(static_cast<VkDeviceSize>(block) * block * 8);
     if (!staging) return std::unexpected(staging.error());
     std::memcpy(staging->mapped(), px.data(), px.size() * sizeof(std::uint16_t));
+    if (auto flushed = staging->flush(); !flushed) return std::unexpected(flushed.error());
 
     const VkImage hdr_image = hdr->handle();
     const VkBuffer stage_buf = staging->handle();

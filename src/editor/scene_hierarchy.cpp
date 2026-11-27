@@ -7,6 +7,7 @@
 
 #include "engine/scene/components.hpp"
 #include "engine/scene/scene.hpp"
+#include "scene_snapshot.hpp"
 
 namespace engine::editor {
 
@@ -43,23 +44,6 @@ void delete_subtree(scene::Scene& scene, entt::entity root, entt::entity& select
     }
 }
 
-// Shallow duplicate: clones the common components onto a sibling entity.
-// Children are not cloned.
-void duplicate_entity(scene::Scene& scene, entt::entity source) {
-    entt::registry& r = scene.registry();
-    const entt::entity copy = scene.create_entity(entity_label(r, source) + " copy");
-    r.get<scene::Transform>(copy) = r.get<scene::Transform>(source);
-    if (const auto* c = r.try_get<scene::MeshRenderer>(source)) r.emplace<scene::MeshRenderer>(copy, *c);
-    if (const auto* c = r.try_get<scene::PointLight>(source)) r.emplace<scene::PointLight>(copy, *c);
-    if (const auto* c = r.try_get<scene::DirectionalLight>(source)) {
-        r.emplace<scene::DirectionalLight>(copy, *c);
-    }
-    if (const auto* c = r.try_get<scene::Camera>(source)) r.emplace<scene::Camera>(copy, *c);
-    if (const auto* p = r.try_get<scene::Parent>(source); p != nullptr && p->entity != entt::null) {
-        scene.set_parent(copy, p->entity);
-    }
-}
-
 // Draws one entity row (and its subtree). Returns false if the entity was
 // deleted (the caller's child list iteration must stop — it was mutated).
 [[nodiscard]] bool draw_entity_node(scene::Scene& scene, entt::entity e,
@@ -88,7 +72,7 @@ void duplicate_entity(scene::Scene& scene, entt::entity source) {
             scene.set_parent(child, e);
         }
         if (ImGui::MenuItem("Duplicate")) {
-            duplicate_entity(scene, e);
+            (void)duplicate_entity(scene, e);
         }
         if (ImGui::MenuItem("Delete")) {
             delete_subtree(scene, e, selected);

@@ -166,6 +166,7 @@ std::expected<LoadedShader, core::Error> PipelineCache::read_shader(const std::s
         return fail("vkCreateShaderModule failed for " + key);
     }
     out.reflection = std::move(*reflection);
+    out.storage_image_formats = spirv_storage_image_formats(*words);
     out.path = key;
     return out;
 }

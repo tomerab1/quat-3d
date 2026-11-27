@@ -8,7 +8,7 @@ import atmosphere;
 
 [[vk::binding(0)]] Texture2D            g_transmittance;
 [[vk::binding(1)]] SamplerState         g_samp;
-[[vk::binding(2)]] RWTexture2D<float4>  g_out;
+[[vk::binding(2)]] [format("rgba16f")] RWTexture2D<float4>  g_out;
 
 static const int DIR_SQRT = 8;  // 64 sphere directions
 static const int STEPS = 20;

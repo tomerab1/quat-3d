@@ -99,6 +99,9 @@ private:
     void destroy() noexcept;
     void write_buffer_descriptor(std::uint32_t binding, VkDescriptorType type,
                                  VkDeviceAddress address, VkDeviceSize range);
+    // Writes one descriptor at `binding`'s offset and flushes those bytes.
+    void put_descriptor(std::uint32_t binding, const VkDescriptorGetInfoEXT& get,
+                        std::size_t size);
 
     const Device*                    device_ = nullptr;
     const DescriptorBufferFunctions* fns_ = nullptr;

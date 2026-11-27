@@ -22,6 +22,11 @@ ComputePipeline::create(const Device& device, VkPipelineCache cache, const Creat
         return fail("ComputePipeline::create: shader missing");
     }
     const VkDevice vk_device = device.handle();
+    if (auto ok = device.check_storage_image_formats(info.shader->storage_image_formats,
+                                                     info.shader->path);
+        !ok) {
+        return std::unexpected(ok.error());
+    }
 
     VkPipelineLayoutCreateInfo layout_info{};
     layout_info.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;

@@ -25,7 +25,11 @@ class Device;
 struct LoadedShader {
     VkShaderModule   module = VK_NULL_HANDLE;
     ShaderReflection reflection;
-    std::string      path; // normalised .spv path (the cache key); empty if not cached
+    // Declared format of each storage image (spirv_storage_image_formats);
+    // pipeline creation checks the device supports them (Device::
+    // check_storage_image_formats).
+    std::vector<VkFormat> storage_image_formats;
+    std::string           path; // normalised .spv path (the cache key); empty if not cached
 };
 
 // Outcome of PipelineCache::reload for one shader.
