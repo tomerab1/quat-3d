@@ -362,6 +362,11 @@ add_library(engine_renderer STATIC
     src/renderer/bloom_pass.cpp
     src/renderer/exposure_pass.cpp
     src/renderer/taa_pass.cpp
+    src/renderer/jitter.cpp
+    src/renderer/velocity.cpp
+    src/renderer/velocity_pass.cpp
+    src/renderer/motion_history.cpp
+    src/renderer/upscaler.cpp
     src/renderer/atmosphere_pass.cpp
     src/renderer/terrain_pass.cpp
     src/renderer/terrain_gpu_tiles.cpp
@@ -399,6 +404,7 @@ if(ENGINE_EDITOR)
         src/editor/scene_snapshot.cpp
         src/editor/audio_inspector.cpp
         src/editor/grass_inspector.cpp
+        src/editor/upscaler_inspector.cpp
         src/editor/behavior_panel.cpp
         src/editor/behavior_canvas.cpp
         src/editor/vendor/imgui_impl_sdl3.cpp)

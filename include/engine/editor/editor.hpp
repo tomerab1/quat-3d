@@ -23,6 +23,7 @@
 
 #include "engine/core/error.hpp"
 #include "engine/renderer/cloud_settings.hpp"
+#include "engine/renderer/upscaler_settings.hpp"
 #include "engine/rhi/shader_status.hpp"
 
 struct SDL_Window;
@@ -65,6 +66,8 @@ struct RendererSettings {
     // Volumetric cloud layer. The background follows edits live and the
     // dynamic IBL probe re-renders continuously, so no rebake plumbing.
     renderer::CloudSettings clouds;
+    // Temporal anti-aliasing / upscaling (R11): render scale, sharpness.
+    renderer::UpscalerSettings upscaler;
 };
 
 // Everything the UI needs from (and feeds back to) the engine for one frame.

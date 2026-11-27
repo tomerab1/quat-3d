@@ -55,21 +55,22 @@ using Planes = std::array<glm::vec4, 6>;
     return part.material.valid() ? &*part.material : nullptr;
 }
 
-// Calls emit(model) for every placement of the entity whose world bounding
-// sphere intersects the frustum.
+// Calls emit(model, placement) for every placement of the entity whose world
+// bounding sphere intersects the frustum (model = world * placement).
 template <typename Emit>
 void for_each_visible(const Planes& planes, const Transform& transform, const InstancedMesh& mesh,
                       const InstancedMeshParts& parts, Emit&& emit) {
     const glm::vec4 local_centre(glm::vec3(parts.bounds), 1.0F);
     const float radius = parts.bounds.w;
     for (const InstanceTransform& instance : mesh.instances) {
-        const glm::mat4 model = transform.world * instance_matrix(instance);
+        const glm::mat4 placement = instance_matrix(instance);
+        const glm::mat4 model = transform.world * placement;
         const glm::vec3 centre(model * local_centre);
         const float max_scale2 = std::max({glm::dot(glm::vec3(model[0]), glm::vec3(model[0])),
                                            glm::dot(glm::vec3(model[1]), glm::vec3(model[1])),
                                            glm::dot(glm::vec3(model[2]), glm::vec3(model[2]))});
         if (!sphere_visible(planes, centre, radius * std::sqrt(max_scale2))) continue;
-        emit(model);
+        emit(model, placement);
     }
 }
 
@@ -132,15 +133,18 @@ bool instanced_meshes_need_resolve(const entt::registry& registry) {
 
 std::size_t append_instanced_draws(const entt::registry& registry,
                                    const glm::mat4& cull_view_proj, InstancedPass pass,
-                                   renderer::InstancedDrawList& out) {
+                                   renderer::InstancedDrawList& out,
+                                   renderer::MotionHistory* motion) {
     struct Bucket {
-        const asset::MeshAsset*            mesh = nullptr;
-        const asset::MaterialAsset*        material = nullptr;
-        std::vector<renderer::InstanceData> instances;
+        const asset::MeshAsset*              mesh = nullptr;
+        const asset::MaterialAsset*          material = nullptr;
+        std::vector<renderer::InstanceData>  instances;
+        std::vector<renderer::InstanceMotion> motion;
     };
     std::vector<Bucket> buckets;
     std::vector<int>    part_bucket; // per part of the current entity; -1 = not drawn here
     const Planes planes = frustum_planes(cull_view_proj);
+    const bool with_motion = out.motion.size() == out.instances.size();
 
     for (auto [e, transform, mesh, parts] :
          registry.view<const Transform, const InstancedMesh, const InstancedMeshParts>().each()) {
@@ -158,7 +162,7 @@ std::size_t append_instanced_draws(const entt::registry& registry,
                 return b.mesh == m && b.material == mat;
             });
             if (it == buckets.end()) {
-                buckets.push_back(Bucket{m, mat, {}});
+                buckets.push_back(Bucket{m, mat, {}, {}});
                 it = buckets.end() - 1;
             }
             part_bucket[i] = static_cast<int>(it - buckets.begin());
@@ -166,11 +170,22 @@ std::size_t append_instanced_draws(const entt::registry& registry,
         }
         if (!any) continue;
 
-        for_each_visible(planes, transform, mesh, parts, [&](const glm::mat4& model) {
+        // Recorded before culling, so an entity entering the view still has
+        // last frame's transform.
+        const glm::mat4 prev_world =
+            motion != nullptr
+                ? motion->advance(static_cast<std::uint64_t>(entt::to_integral(e)), transform.world)
+                : transform.world;
+        for_each_visible(planes, transform, mesh, parts, [&](const glm::mat4& model,
+                                                             const glm::mat4& placement) {
             for (std::size_t i = 0; i < parts.parts.size(); ++i) {
                 if (part_bucket[i] < 0) continue;
-                buckets[static_cast<std::size_t>(part_bucket[i])].instances.push_back(
-                    renderer::make_instance_data(model * parts.parts[i].local));
+                Bucket& b = buckets[static_cast<std::size_t>(part_bucket[i])];
+                b.instances.push_back(renderer::make_instance_data(model * parts.parts[i].local));
+                if (with_motion) {
+                    b.motion.push_back(renderer::make_instance_motion(prev_world * placement *
+                                                                      parts.parts[i].local));
+                }
             }
         });
     }
@@ -184,6 +199,7 @@ std::size_t append_instanced_draws(const entt::registry& registry,
         draw.first_instance = static_cast<std::uint32_t>(out.instances.size());
         draw.instance_count = static_cast<std::uint32_t>(b.instances.size());
         out.instances.insert(out.instances.end(), b.instances.begin(), b.instances.end());
+        out.motion.insert(out.motion.end(), b.motion.begin(), b.motion.end());
         out.draws.push_back(draw);
         appended += b.instances.size();
     }
@@ -201,7 +217,8 @@ std::size_t append_instanced_transparent_items(const entt::registry& registry,
             return mesh_of(p) != nullptr && is_transparent(material_of(p));
         });
         if (!any || mesh.instances.empty()) continue;
-        for_each_visible(planes, transform, mesh, parts, [&](const glm::mat4& model) {
+        for_each_visible(planes, transform, mesh, parts, [&](const glm::mat4& model,
+                                                             const glm::mat4& /*placement*/) {
             for (const InstancedMeshPart& part : parts.parts) {
                 const asset::MaterialAsset* mat = material_of(part);
                 if (mesh_of(part) == nullptr || !is_transparent(mat)) continue;

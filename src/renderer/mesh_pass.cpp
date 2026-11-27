@@ -23,6 +23,9 @@ namespace {
 
 constexpr VkShaderStageFlags kMaterialStages = VK_SHADER_STAGE_FRAGMENT_BIT;
 
+// Upper bound on material texture mips the sampler may reach (covers 32k).
+constexpr std::uint32_t kMaterialMaxLod = 16;
+
 // Material descriptor set 0, matching PbrMaterial in material.slang (verified
 // against the gbuffer.slang SPIR-V): uniform params at 0, the five optional
 // textures as sampled images at 1..5, and the shared sampler at 6.
@@ -71,9 +74,6 @@ MeshPass::create(const rhi::Device& device, rhi::GpuAllocator& allocator,
         {2, 0, VK_FORMAT_R32G32_SFLOAT, offsetof(asset::Vertex, uv)},
         {3, 0, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(asset::Vertex, tangent)},
     }};
-    const std::array<VkFormat, 4> color_formats{gbuffer_albedo_format, gbuffer_normal_format,
-                                                gbuffer_material_format,
-                                                gbuffer_clearcoat_format};
     const VkPushConstantRange pc{VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
                                  sizeof(GBufferPushConstants)};
     const VkDescriptorSetLayout set_layout = out.material_layout_.handle();
@@ -81,7 +81,7 @@ MeshPass::create(const rhi::Device& device, rhi::GpuAllocator& allocator,
     rhi::GraphicsPipeline::CreateInfo info{};
     info.vertex = *shader;
     info.fragment = *shader;
-    info.color_formats = color_formats;
+    info.color_formats = gbuffer_color_formats;
     info.depth_format = gbuffer_depth_format;
     info.depth_compare_op = VK_COMPARE_OP_LESS_OR_EQUAL; // standard [0,1] depth
     info.cull_mode = VK_CULL_MODE_NONE;                  // double-sided for now
@@ -94,7 +94,8 @@ MeshPass::create(const rhi::Device& device, rhi::GpuAllocator& allocator,
     if (!pipeline) return std::unexpected(pipeline.error());
     out.pipeline_ = std::move(*pipeline);
 
-    auto sampler = rhi::create_sampler(device.handle());
+    auto sampler = rhi::create_sampler(device.handle(), rhi::SamplerAddress::repeat,
+                                       kMaterialMaxLod);
     if (!sampler) return std::unexpected(sampler.error());
     out.sampler_ = std::move(*sampler);
 
@@ -127,6 +128,18 @@ VkImageView MeshPass::texture_view_or_fallback(
     return fallback_texture_.view.handle();
 }
 
+std::expected<void, core::Error> MeshPass::set_texture_lod_bias(float bias) {
+    if (bias == lod_bias_ && sampler_.handle() != VK_NULL_HANDLE) return {};
+    // The slot's previous frame has finished (frame-slot ownership), and the
+    // descriptors are rewritten every add_to_graph: replacing it is safe.
+    auto sampler = rhi::create_sampler(device_->handle(), rhi::SamplerAddress::repeat,
+                                       kMaterialMaxLod, 0.0F, bias);
+    if (!sampler) return std::unexpected(sampler.error());
+    sampler_ = std::move(*sampler);
+    lod_bias_ = bias;
+    return {};
+}
+
 std::expected<GBufferTargets, core::Error>
 MeshPass::add_to_graph(rhi::RenderGraph& graph, VkExtent2D extent, const glm::mat4& view_proj,
                        std::span<const DrawItem> draws) {
@@ -136,13 +149,25 @@ MeshPass::add_to_graph(rhi::RenderGraph& graph, VkExtent2D extent, const glm::ma
 std::expected<GBufferTargets, core::Error>
 MeshPass::add_to_graph(rhi::RenderGraph& graph, VkExtent2D extent, const glm::mat4& view_proj,
                        const InstancedDrawList& list) {
+    return add_to_graph(graph, extent, view_proj, list, ViewMotion::still(view_proj));
+}
+
+std::expected<GBufferTargets, core::Error>
+MeshPass::add_to_graph(rhi::RenderGraph& graph, VkExtent2D extent, const glm::mat4& view_proj,
+                       const InstancedDrawList& list, const ViewMotion& motion) {
     frame_descriptors_.clear();
     frame_draws_.clear();
     frame_draws_.reserve(list.draws.size());
 
+    if (!list.motion.empty() && list.motion.size() != list.instances.size()) {
+        return fail("gbuffer pass: motion records do not match the instance array");
+    }
     auto instances = instances_.upload(*device_, *allocator_, list.instances);
     if (!instances) return std::unexpected(instances.error());
     frame_instances_ = *instances;
+    auto motion_addr = motion_.upload(*device_, *allocator_, list.motion);
+    if (!motion_addr) return std::unexpected(motion_addr.error());
+    frame_motion_ = *motion_addr;
 
     // GBuffer targets. SAMPLED is added so the lighting pass (3.6) can read them;
     // TRANSFER_SRC lets tests and debug tooling read them back.
@@ -158,6 +183,9 @@ MeshPass::add_to_graph(rhi::RenderGraph& graph, VkExtent2D extent, const glm::ma
                                                     extent, color_usage);
     targets.clearcoat = graph.create_transient_image("gbuffer_clearcoat",
                                                      gbuffer_clearcoat_format, extent, color_usage);
+    targets.velocity =
+        graph.create_transient_image("gbuffer_velocity", velocity_format, extent, color_usage);
+    targets.motion = motion;
     targets.depth = graph.create_transient_image(
         "gbuffer_depth", gbuffer_depth_format, extent,
         VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT);
@@ -204,19 +232,27 @@ MeshPass::add_to_graph(rhi::RenderGraph& graph, VkExtent2D extent, const glm::ma
     }
 
     const GBufferTargets t = targets;
-    const glm::mat4 vp = view_proj;
+    GBufferPushConstants push{};
+    push.view_proj = view_proj;
+    push.prev_view_proj = motion.prev_view_proj;
+    push.instances = frame_instances_;
+    push.motion = frame_motion_;
+    push.jitter_ndc = motion.jitter_ndc;
+    push.has_motion = frame_motion_ != 0 ? 1U : 0U;
     graph.add_pass("gbuffer", rhi::PassType::graphics)
         .writes(t.albedo, rhi::ResourceUsage::color_attachment)
         .writes(t.normal, rhi::ResourceUsage::color_attachment)
         .writes(t.material, rhi::ResourceUsage::color_attachment)
         .writes(t.clearcoat, rhi::ResourceUsage::color_attachment)
+        .writes(t.velocity, rhi::ResourceUsage::color_attachment)
         .writes(t.depth, rhi::ResourceUsage::depth_attachment)
-        .execute([this, t, extent, vp](rhi::PassContext& ctx) {
+        .execute([this, t, extent, push](rhi::PassContext& ctx) {
             const VkCommandBuffer cmd = ctx.cmd();
             const rhi::ResourceBinding a = ctx.resolve(t.albedo);
             const rhi::ResourceBinding n = ctx.resolve(t.normal);
             const rhi::ResourceBinding m = ctx.resolve(t.material);
             const rhi::ResourceBinding cc = ctx.resolve(t.clearcoat);
+            const rhi::ResourceBinding vel = ctx.resolve(t.velocity);
             const rhi::ResourceBinding depth = ctx.resolve(t.depth);
 
             const auto color_attachment = [](VkImageView view) {
@@ -229,9 +265,9 @@ MeshPass::add_to_graph(rhi::RenderGraph& graph, VkExtent2D extent, const glm::ma
                 ai.clearValue.color = {{0.0F, 0.0F, 0.0F, 0.0F}};
                 return ai;
             };
-            const std::array<VkRenderingAttachmentInfo, 4> colors{
+            const std::array<VkRenderingAttachmentInfo, gbuffer_color_formats.size()> colors{
                 color_attachment(a.view), color_attachment(n.view), color_attachment(m.view),
-                color_attachment(cc.view)};
+                color_attachment(cc.view), color_attachment(vel.view)};
 
             VkRenderingAttachmentInfo depth_attachment{};
             depth_attachment.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
@@ -262,10 +298,7 @@ MeshPass::add_to_graph(rhi::RenderGraph& graph, VkExtent2D extent, const glm::ma
 
             vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_.handle());
 
-            // The instance array is shared by every draw: push it once.
-            GBufferPushConstants push{};
-            push.view_proj = vp;
-            push.instances = frame_instances_;
+            // The instance + motion arrays are shared by every draw: push once.
             vkCmdPushConstants(cmd, pipeline_.layout(),
                                VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
                                sizeof(push), &push);

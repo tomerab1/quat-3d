@@ -5,16 +5,24 @@
 // metallic/roughness/occlusion. Shading inputs come from the material via the
 // IMaterial interface (PbrMaterial), bound as a descriptor-buffer parameter
 // block. Draws are instanced (R9.1): per-instance model + normal matrices are
-// read through a buffer device address (lib/instancing.slang).
+// read through a buffer device address (lib/instancing.slang). The velocity
+// target (R11, lib/velocity.slang) gets each vertex's motion from the
+// per-instance previous model matrix (and previous skinned position).
 
 import instancing;
 import material;
 import pbr;
+import velocity;
 
-// Mirrors engine::renderer::GBufferPushConstants (72 bytes).
+// Mirrors engine::renderer::GBufferPushConstants (160 bytes).
 struct PushConstants {
-    float4x4      view_proj;
-    InstanceData* instances; // indexed by instance_index() (includes firstInstance)
+    float4x4        view_proj;      // this frame, jittered
+    float4x4        prev_view_proj; // last frame, unjittered
+    InstanceData*   instances;      // indexed by instance_index() (includes firstInstance)
+    InstanceMotion* motion;         // parallel to instances, valid when has_motion != 0
+    float2          jitter_ndc;     // this frame's projection jitter
+    uint            has_motion;     // 0: camera-only velocity (no previous poses)
+    uint            pad;
 }
 [[vk::push_constant]] PushConstants pc;
 
@@ -30,17 +38,30 @@ struct VsIn {
 }
 
 struct VsOut {
-    float4 clip    : SV_Position;
-    float3 world_n : NORMAL;
-    float4 world_t : TANGENT;
-    float2 uv      : TEXCOORD0;
+    float4 clip      : SV_Position;
+    float3 world_n   : NORMAL;
+    float4 world_t   : TANGENT;
+    float2 uv        : TEXCOORD0;
+    float4 cur_clip  : CUR_CLIP;  // = clip, interpolated as a plain varying
+    float4 prev_clip : PREV_CLIP; // last frame's clip position (unjittered)
 }
 
 [shader("vertex")]
 VsOut vertex_main(VsIn input) {
-    InstanceData inst = pc.instances[instance_index()];
+    const uint instance = instance_index();
+    InstanceData inst = pc.instances[instance];
     VsOut o;
     o.clip = mul(pc.view_proj, inst.world_position(input.position));
+
+    float4x4 prev_model = inst.model;
+    float3 prev_position = input.position;
+    if (pc.has_motion != 0) {
+        const InstanceMotion m = pc.motion[instance];
+        prev_model = m.prev_model;
+        if (m.has_prev_positions != 0) prev_position = m.prev_positions[vertex_index()].xyz;
+    }
+    o.cur_clip = o.clip;
+    o.prev_clip = mul(pc.prev_view_proj, mul(prev_model, float4(prev_position, 1.0)));
 
     // Cofactor normal matrix (non-uniform scale) + mirrored tangent handedness.
     o.world_n = normalize(inst.world_normal(input.normal));
@@ -70,6 +91,7 @@ struct GBufferOut {
     float2 normal    : SV_Target1;   // oct-encoded world normal
     float4 material  : SV_Target2;   // r metallic, g roughness, b occlusion
     float2 clearcoat : SV_Target3;   // r coat strength, g coat perceptual roughness
+    float2 velocity  : SV_Target4;   // uv motion (lib/velocity.slang)
 }
 
 [shader("fragment")]
@@ -92,5 +114,6 @@ GBufferOut fragment_main(VsOut input) {
     o.normal    = oct_encode(world_n);
     o.material  = float4(s.metallic, roughness, s.occlusion, 1.0);
     o.clearcoat = float2(s.clearcoat, coat_roughness);
+    o.velocity  = surface_velocity(input.cur_clip, input.prev_clip, pc.jitter_ndc);
     return o;
 }

@@ -33,6 +33,7 @@ void GrassRuntime::add_to_graph(engine::rhi::RenderGraph& graph, std::uint32_t s
                                 const engine::scene::CameraMatrices& camera,
                                 const engine::renderer::TerrainPass* terrain,
                                 const glm::vec3& terrain_anchor, float dt) {
+    const double prev_wind_time_s = wind_time_s_;
     wind_time_s_ += static_cast<double>(dt);
     const auto settings = active_grass(registry);
     if (!settings || create_failed_) return;
@@ -53,6 +54,7 @@ void GrassRuntime::add_to_graph(engine::rhi::RenderGraph& graph, std::uint32_t s
     frame.cull_view_proj = camera.view_proj;
     frame.camera = camera.position;
     frame.time_s = static_cast<float>(wind_time_s_);
+    frame.prev_time_s = static_cast<float>(prev_wind_time_s); // velocity of the wind motion
     std::vector<engine::renderer::TerrainHeightTile> tiles;
     if (terrain != nullptr) {
         tiles = terrain->height_tiles(glm::vec2(camera.position.x, camera.position.z),

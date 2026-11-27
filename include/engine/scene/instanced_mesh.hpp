@@ -29,6 +29,7 @@
 
 #include "engine/core/error.hpp"
 #include "engine/renderer/draw_batching.hpp"
+#include "engine/renderer/motion_history.hpp"
 #include "engine/scene/components.hpp"
 
 namespace engine::asset {
@@ -81,9 +82,15 @@ enum class InstancedPass : std::uint8_t {
 // shared across entities, in the order each pair is first met. Instances
 // whose bounding sphere lies outside the frustum of `cull_view_proj`
 // (Vulkan [0, 1] depth) are dropped. Returns the instances appended.
+//
+// Velocity (R11): when `out.motion` is parallel to `out.instances`, a motion
+// record is appended per instance — each instance's previous model is the
+// entity's previous world transform (from `motion`, keyed by the entity id;
+// null or unseen: the current one) times its placement.
 std::size_t append_instanced_draws(const entt::registry& registry,
                                    const glm::mat4& cull_view_proj, InstancedPass pass,
-                                   renderer::InstancedDrawList& out);
+                                   renderer::InstancedDrawList& out,
+                                   renderer::MotionHistory* motion = nullptr);
 
 // Appends one DrawItem per visible placement of every alpha-blended or
 // transmissive part (for the forward pass, which sorts them back to front).

@@ -15,6 +15,7 @@
 #include "audio_inspector.hpp"
 #include "behavior_panel.hpp"
 #include "grass_inspector.hpp"
+#include "upscaler_inspector.hpp"
 #include "engine/editor/editor.hpp"
 #include "engine/scene/behavior.hpp"
 #include "engine/scene/components.hpp"
@@ -651,6 +652,11 @@ void draw_renderer_panel(RendererSettings& settings, scene::Scene* scene) {
         ImGui::SliderFloat("knee", &settings.bloom_knee, 0.0F, 1.0F);
         ImGui::SliderFloat("intensity", &settings.bloom_intensity, 0.0F, 0.5F);
         ImGui::SliderFloat("radius", &settings.bloom_radius, 0.2F, 2.0F);
+        ImGui::PopID();
+    }
+    if (ImGui::CollapsingHeader("Anti-aliasing / upscaling", ImGuiTreeNodeFlags_DefaultOpen)) {
+        ImGui::PushID("upscaler");
+        draw_upscaler_settings(settings.upscaler);
         ImGui::PopID();
     }
     if (ImGui::CollapsingHeader("Environment", ImGuiTreeNodeFlags_DefaultOpen)) {

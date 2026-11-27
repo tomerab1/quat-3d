@@ -226,8 +226,11 @@ enum class SamplerAddress : std::uint8_t { repeat, clamp_to_edge, mirrored_repea
 // Creates a linear-filtered VkSampler wrapped in an RAII Sampler.
 // `max_anisotropy` > 0 enables anisotropic filtering at that level (the caller
 // clamps to the device limit; pass TransferContext::max_anisotropy).
+// `mip_lod_bias` is added to every LOD (negative = sharper; upscaled rendering
+// uses texture_lod_bias(), R11).
 [[nodiscard]] std::expected<Sampler, core::Error>
 create_sampler(VkDevice device, SamplerAddress address = SamplerAddress::repeat,
-               std::uint32_t mip_levels = 1, float max_anisotropy = 0.0F);
+               std::uint32_t mip_levels = 1, float max_anisotropy = 0.0F,
+               float mip_lod_bias = 0.0F);
 
 } // namespace engine::rhi

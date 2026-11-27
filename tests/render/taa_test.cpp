@@ -1,278 +1,115 @@
-// Temporal anti-aliasing across frames (audit S1 A1/A2/A14).
+// Temporal anti-aliasing (TAAU at native resolution) across frames (audit S1
+// A1/A2/A14, R11 velocity reprojection).
 //
 // Frames are driven the way the engine's frame loop drives them: two
-// frame-in-flight slots, each with its own TaaPass, sharing one TaaHistory and
-// alternating every frame. The current frame is a checkerboard whose phase
-// flips every frame (what sub-pixel jitter does to detail finer than a pixel):
-// a working history accumulates it to its mean, a broken one shows the raw
-// alternation. Uniform frames check the neighbourhood clamp on flat regions.
+// frame-in-flight slots of one TaaUpscaler sharing one history, alternating
+// every frame. The current frame is a checkerboard whose phase flips every
+// frame (what sub-pixel jitter does to detail finer than a pixel): a working
+// history accumulates it, a broken one shows the raw alternation. Uniform
+// frames check the neighbourhood clamp on flat regions; a moving square checks
+// that reprojecting with the velocity target removes the ghosting that
+// camera-only (depth) reprojection leaves behind moving objects.
+//
+// The resolve blends in exposed, Reinhard-compressed space (y = g / (1 + g)
+// for a grey g at exposure 1), so expected values are computed through it.
 
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
-#include <cstdlib>
-#include <cstring>
-#include <expected>
+#include <cstdio>
 #include <memory>
 #include <string>
 #include <vector>
 
 #include <glm/glm.hpp>
-#include <glm/gtc/matrix_transform.hpp>
 #include <gtest/gtest.h>
 #include <vulkan/vulkan.h>
 
 #include "engine/renderer/taa_pass.hpp"
-#include "engine/rhi/device.hpp"
-#include "engine/rhi/gpu_allocator.hpp"
-#include "engine/rhi/render_graph.hpp"
+#include "render/temporal_rig.hpp"
 #include "support/expect_ok.hpp"
-#include "support/gpu_commands.hpp"
 #include "support/gpu_context.hpp"
 
 namespace {
 
 namespace r = engine::renderer;
 namespace rhi = engine::rhi;
-using engine::core::Error;
-using quat::test::image_barrier;
-using quat::test::submit_blocking;
+using quat::test::HostImage;
+using quat::test::TemporalFrame;
+using quat::test::TemporalRig;
 
-constexpr std::uint8_t k_hi = 204; // 0.8
-constexpr std::uint8_t k_lo = 51;  // 0.2
+constexpr float k_hi = 0.8F;
+constexpr float k_lo = 0.2F;
+// The resolve keeps a running average over the samples that landed on the
+// pixel, capped at 10: the n-th frame since a reset (from 0) blends the current
+// frame in with weight 1 / min(n + 1, 10). Without jitter every sample lands
+// on its pixel (confidence 1).
+float current_weight(int n) { return 1.0F / static_cast<float>(std::min(n + 1, 10)); }
+// RGBA16F round trip + resolve-space conversions.
+constexpr float k_exact = 3e-3F;
 
-[[nodiscard]] std::unexpected<Error> fail(std::string what) {
-    return std::unexpected(Error{std::move(what)});
-}
+float to_y(float g) { return g / (1.0F + g); }
+float from_y(float y) { return y / (1.0F - y); }
 
-// RGBA8 checkerboard: grey k_hi where (x + y + phase) is even, k_lo elsewhere.
-std::vector<std::uint8_t> checker(VkExtent2D e, std::uint32_t phase) {
-    std::vector<std::uint8_t> px(static_cast<std::size_t>(e.width) * e.height * 4);
+// Checkerboard: k_hi where (x + y + phase) is even, k_lo elsewhere.
+TemporalFrame checker(VkExtent2D e, std::uint32_t phase) {
+    TemporalFrame f;
+    f.color.resize(static_cast<std::size_t>(e.width) * e.height);
     for (std::uint32_t y = 0; y < e.height; ++y) {
         for (std::uint32_t x = 0; x < e.width; ++x) {
-            const std::uint8_t v = ((x + y + phase) % 2 == 0) ? k_hi : k_lo;
-            std::uint8_t* p = &px[(static_cast<std::size_t>(y) * e.width + x) * 4];
-            p[0] = p[1] = p[2] = v;
-            p[3] = 255;
+            const float v = ((x + y + phase) % 2 == 0) ? k_hi : k_lo;
+            f.color[static_cast<std::size_t>(y) * e.width + x] = glm::vec4(v, v, v, 1.0F);
         }
     }
-    return px;
+    return f;
 }
 
-// Offscreen inputs (current colour, depth) and output target for one extent,
-// plus the glue to run one TAA frame through a render graph and read back the
-// target bytes.
-class Rig {
-public:
-    [[nodiscard]] static std::expected<Rig, Error> create(quat::test::GpuContext& g, VkFormat fmt,
-                                                          VkExtent2D extent) {
-        Rig rig;
-        rig.g_ = &g;
-        rig.fmt_ = fmt;
-        rig.extent_ = extent;
-        const VkDevice dev = g.device.handle();
-        auto cur = g.allocator.create_image(fmt, extent, VK_IMAGE_USAGE_SAMPLED_BIT |
-                                                             VK_IMAGE_USAGE_TRANSFER_DST_BIT);
-        auto depth = g.allocator.create_image(
-            VK_FORMAT_D32_SFLOAT, extent,
-            VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT);
-        auto target = g.allocator.create_image(fmt, extent, VK_IMAGE_USAGE_TRANSFER_DST_BIT |
-                                                                VK_IMAGE_USAGE_TRANSFER_SRC_BIT);
-        if (!cur || !depth || !target) return fail("taa test: image creation failed");
-        auto cur_view = rhi::create_image_view(dev, cur->handle(), fmt);
-        auto depth_view = rhi::create_image_view(dev, depth->handle(), VK_FORMAT_D32_SFLOAT,
-                                                 VK_IMAGE_ASPECT_DEPTH_BIT);
-        if (!cur_view || !depth_view) return fail("taa test: view creation failed");
-        const VkDeviceSize bytes = rig.byte_size();
-        auto staging = g.allocator.create_buffer(
-            bytes, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VMA_MEMORY_USAGE_AUTO,
-            VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT |
-                VMA_ALLOCATION_CREATE_MAPPED_BIT);
-        auto readback = g.allocator.create_buffer(
-            bytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT, VMA_MEMORY_USAGE_AUTO,
-            VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT);
-        if (!staging || !readback) return fail("taa test: buffer creation failed");
-        rig.cur_ = std::move(*cur);
-        rig.cur_view_ = std::move(*cur_view);
-        rig.depth_ = std::move(*depth);
-        rig.depth_view_ = std::move(*depth_view);
-        rig.target_ = std::move(*target);
-        rig.staging_ = std::move(*staging);
-        rig.readback_ = std::move(*readback);
-        rig.pool_ = std::make_unique<rhi::TransientImagePool>(g.device, g.allocator);
+TemporalFrame uniform(VkExtent2D e, float v) {
+    TemporalFrame f;
+    f.color.assign(static_cast<std::size_t>(e.width) * e.height, glm::vec4(v, v, v, 1.0F));
+    return f;
+}
 
-        // Constant depth: any value reconstructs a valid world point.
-        const VkImage depth_img = rig.depth_.handle();
-        const bool ok = submit_blocking(g.device, [&](VkCommandBuffer cmd) {
-            image_barrier(cmd, depth_img, VK_IMAGE_ASPECT_DEPTH_BIT, VK_IMAGE_LAYOUT_UNDEFINED,
-                          VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_PIPELINE_STAGE_2_NONE, 0,
-                          VK_PIPELINE_STAGE_2_CLEAR_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT);
-            const VkClearDepthStencilValue dc{0.5F, 0};
-            const VkImageSubresourceRange range{VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1};
-            vkCmdClearDepthStencilImage(cmd, depth_img, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &dc,
-                                        1, &range);
-            image_barrier(cmd, depth_img, VK_IMAGE_ASPECT_DEPTH_BIT,
-                          VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-                          VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_PIPELINE_STAGE_2_CLEAR_BIT,
-                          VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
-                          VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
-        });
-        if (!ok) return fail("taa test: depth clear failed");
-        return rig;
-    }
-
-    // Upload `pixels` (byte_size() bytes, in the image's own channel order) as
-    // the current frame, resolve it with `taa` and return the target's bytes.
-    [[nodiscard]] std::expected<std::vector<std::uint8_t>, Error>
-    frame(r::TaaPass& taa, const std::vector<std::uint8_t>& pixels, const glm::mat4& view_proj) {
-        if (pixels.size() != byte_size()) return fail("taa test: wrong pixel count");
-        std::memcpy(staging_.mapped(), pixels.data(), pixels.size());
-
-        constexpr VkImageLayout ro = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-        rhi::RenderGraph graph(*pool_);
-        const rhi::ResourceHandle h_cur = graph.import_image(
-            "test_current", cur_.handle(), cur_view_.handle(), fmt_, extent_, ro, ro);
-        const rhi::ResourceHandle h_depth =
-            graph.import_image("test_depth", depth_.handle(), depth_view_.handle(),
-                               VK_FORMAT_D32_SFLOAT, extent_, ro, ro);
-        // No final layout: the copy-out below transitions the target itself.
-        const rhi::ResourceHandle h_target =
-            graph.import_image("test_target", target_.handle(), VK_NULL_HANDLE, fmt_, extent_,
-                               VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_UNDEFINED);
-        if (auto a = taa.add_to_graph(graph, h_cur, h_depth, h_target, extent_, view_proj); !a) {
-            return std::unexpected(a.error());
+// Largest per-channel (rgb) difference between an output and a frame's input.
+float max_abs_diff(const HostImage& out, const TemporalFrame& f) {
+    float worst = 0.0F;
+    for (std::uint32_t y = 0; y < out.extent.height; ++y) {
+        for (std::uint32_t x = 0; x < out.extent.width; ++x) {
+            const glm::vec3 d = glm::abs(glm::vec3(out.rgba16f(x, y)) -
+                                         glm::vec3(f.color[y * out.extent.width + x]));
+            worst = std::max({worst, d.x, d.y, d.z});
         }
-        if (auto c = graph.compile(); !c) return std::unexpected(c.error());
-
-        const VkImage cur_img = cur_.handle();
-        const VkImage target_img = target_.handle();
-        const VkBuffer staging = staging_.handle();
-        const VkBuffer readback = readback_.handle();
-        const VkExtent2D e = extent_;
-        const bool ok = submit_blocking(g_->device, [&](VkCommandBuffer cmd) {
-            VkBufferImageCopy region{};
-            region.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
-            region.imageExtent = {e.width, e.height, 1};
-            image_barrier(cmd, cur_img, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_UNDEFINED,
-                          VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-                          VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, 0, VK_PIPELINE_STAGE_2_COPY_BIT,
-                          VK_ACCESS_2_TRANSFER_WRITE_BIT);
-            vkCmdCopyBufferToImage(cmd, staging, cur_img, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1,
-                                   &region);
-            image_barrier(cmd, cur_img, VK_IMAGE_ASPECT_COLOR_BIT,
-                          VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, ro, VK_PIPELINE_STAGE_2_COPY_BIT,
-                          VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
-                          VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
-
-            graph.execute(cmd);
-
-            image_barrier(cmd, target_img, VK_IMAGE_ASPECT_COLOR_BIT,
-                          VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-                          VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-                          VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
-                          VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_READ_BIT);
-            vkCmdCopyImageToBuffer(cmd, target_img, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, readback,
-                                   1, &region);
-            VkMemoryBarrier2 host{};
-            host.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2;
-            host.srcStageMask = VK_PIPELINE_STAGE_2_COPY_BIT;
-            host.srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT;
-            host.dstStageMask = VK_PIPELINE_STAGE_2_HOST_BIT;
-            host.dstAccessMask = VK_ACCESS_2_HOST_READ_BIT;
-            VkDependencyInfo dep{};
-            dep.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO;
-            dep.memoryBarrierCount = 1;
-            dep.pMemoryBarriers = &host;
-            vkCmdPipelineBarrier2(cmd, &dep);
-        });
-        if (!ok) return fail("taa test: frame submit failed");
-        pool_->reset(); // the frame finished: transient images are free again
-
-        const auto* px = static_cast<const std::uint8_t*>(readback_.mapped());
-        return std::vector<std::uint8_t>(px, px + byte_size());
-    }
-
-    [[nodiscard]] std::size_t byte_size() const {
-        return static_cast<std::size_t>(extent_.width) * extent_.height * 4;
-    }
-    [[nodiscard]] std::size_t centre() const {
-        return (static_cast<std::size_t>(extent_.height / 2) * extent_.width + extent_.width / 2) *
-               4;
-    }
-
-private:
-    quat::test::GpuContext* g_ = nullptr;
-    VkFormat                fmt_ = VK_FORMAT_UNDEFINED;
-    VkExtent2D              extent_{};
-    rhi::GpuImage           cur_;
-    rhi::ImageView          cur_view_;
-    rhi::GpuImage           depth_;
-    rhi::ImageView          depth_view_;
-    rhi::GpuImage           target_;
-    rhi::GpuBuffer          staging_;
-    rhi::GpuBuffer          readback_;
-    std::unique_ptr<rhi::TransientImagePool> pool_;
-};
-
-// Largest per-byte difference between two images (alpha included).
-int max_abs_diff(const std::vector<std::uint8_t>& a, const std::vector<std::uint8_t>& b) {
-    int worst = 0;
-    for (std::size_t i = 0; i < a.size() && i < b.size(); ++i) {
-        worst = std::max(worst, std::abs(int{a[i]} - int{b[i]}));
     }
     return worst;
 }
 
-// Two frame-in-flight slots sharing one history, as the engine sets them up.
-struct Slots {
-    std::shared_ptr<r::TaaHistory> history;
-    r::TaaPass                     pass[2];
-};
-
-std::expected<Slots, Error> make_slots(quat::test::GpuContext& g, VkFormat fmt) {
-    Slots s;
-    s.history = std::make_shared<r::TaaHistory>(g.device, g.allocator, 2U);
-    for (r::TaaPass& p : s.pass) {
-        auto created = r::TaaPass::create(g.device, g.allocator, g.cache, g.shader_dir, fmt,
-                                          s.history);
-        if (!created) return std::unexpected(created.error());
-        p = std::move(*created);
-    }
-    return s;
+std::unique_ptr<r::TaaUpscaler> make_upscaler(quat::test::GpuContext& g) {
+    auto up = r::TaaUpscaler::create(g.device, g.allocator, g.cache, g.shader_dir, 2);
+    return up ? std::move(*up) : nullptr;
 }
 
-// RGBA8 image of uniform grey `v`, opaque.
-std::vector<std::uint8_t> uniform(VkExtent2D e, std::uint8_t v) {
-    std::vector<std::uint8_t> px(static_cast<std::size_t>(e.width) * e.height * 4, v);
-    for (std::size_t i = 3; i < px.size(); i += 4) px[i] = 255;
-    return px;
+// Resolves with slot `slot` of `up`.
+auto with(r::Upscaler& up, std::uint32_t slot) {
+    return [&up, slot](rhi::RenderGraph& graph, const r::UpscalerInputs& in) {
+        return up.add_to_graph(graph, slot, in);
+    };
 }
 
-// One pass with its own history resolving uniform grey frames (identity
-// matrices + constant depth: identity reprojection); returns the centre value
-// of each frame's output.
-std::expected<std::vector<int>, Error> resolve_uniform_frames(
-    quat::test::GpuContext& g, const std::vector<std::uint8_t>& greys) {
-    constexpr VkFormat fmt = VK_FORMAT_R8G8B8A8_UNORM;
+// One upscaler resolving uniform grey frames at native 32x32 (zero velocity,
+// no jitter); returns the centre value of each output.
+std::vector<float> resolve_uniform_frames(quat::test::GpuContext& g,
+                                          const std::vector<float>& greys) {
     constexpr VkExtent2D extent{32, 32};
-    auto rig = Rig::create(g, fmt, extent);
-    if (!rig) return std::unexpected(rig.error());
-    auto taa = r::TaaPass::create(g.device, g.allocator, g.cache, g.shader_dir, fmt);
-    if (!taa) return std::unexpected(taa.error());
-    std::vector<int> centres;
-    for (const std::uint8_t grey : greys) {
-        auto out = rig->frame(*taa, uniform(extent, grey), glm::mat4(1.0F));
-        if (!out) return std::unexpected(out.error());
-        centres.push_back((*out)[rig->centre()]);
+    auto rig = TemporalRig::create(g, extent, extent);
+    auto up = make_upscaler(g);
+    std::vector<float> centres;
+    if (!rig || !up) return centres;
+    for (std::size_t i = 0; i < greys.size(); ++i) {
+        auto out = rig->frame(uniform(extent, greys[i]), with(*up, static_cast<std::uint32_t>(i % 2)));
+        if (!out) return centres;
+        centres.push_back(quat::test::grey(*out, 16, 16));
     }
     return centres;
-}
-
-// A perspective camera like the engine's (Vulkan Y flip, depth [0,1]).
-glm::mat4 camera_view_proj() {
-    glm::mat4 proj = glm::perspective(glm::radians(60.0F), 1.0F, 0.1F, 100.0F);
-    proj[1][1] *= -1.0F;
-    return proj * glm::lookAt(glm::vec3(2.0F, 1.5F, 3.0F), glm::vec3(0.0F),
-                              glm::vec3(0.0F, 1.0F, 0.0F));
 }
 
 } // namespace
@@ -282,173 +119,207 @@ glm::mat4 camera_view_proj() {
 // every slot read a never-written image and the output was the raw input.
 TEST(GpuTaa, HistoryAccumulatesAcrossFrameSlots) {
     QUAT_REQUIRE_GPU(g);
-    constexpr VkFormat fmt = VK_FORMAT_R8G8B8A8_UNORM;
     constexpr VkExtent2D extent{16, 16};
-    auto rig = Rig::create(*g, fmt, extent);
+    auto rig = TemporalRig::create(*g, extent, extent);
     ASSERT_OK(rig);
-    auto slots = make_slots(*g, fmt);
-    ASSERT_OK(slots);
-    const glm::mat4 vp = camera_view_proj();
-    const std::size_t c = rig->centre();
+    auto up = make_upscaler(*g);
+    ASSERT_NE(up, nullptr);
 
     constexpr int k_frames = 48;
-    std::vector<std::vector<std::uint8_t>> out;
+    std::vector<float> centre;
+    float expected = 0.0F; // CPU model of the centre pixel, in resolve space
     for (int i = 0; i < k_frames; ++i) {
-        const std::vector<std::uint8_t> input = checker(extent, static_cast<std::uint32_t>(i));
-        auto o = rig->frame(slots->pass[i % 2], input, vp);
+        const TemporalFrame input = checker(extent, static_cast<std::uint32_t>(i));
+        auto o = rig->frame(input, with(*up, static_cast<std::uint32_t>(i % 2)));
         ASSERT_OK(o) << "frame " << i;
-        if (i == 0) {
-            EXPECT_LE(max_abs_diff(*o, input), 1) << "the first frame has no history";
-        }
-        out.push_back(std::move(*o));
+        if (i == 0) EXPECT_LE(max_abs_diff(*o, input), k_exact) << "the first frame has no history";
+        const float cur = input.color[8 * extent.width + 8].r;
+        expected = glm::mix(expected, to_y(cur), current_weight(i));
+        centre.push_back(quat::test::grey(*o, 8, 8));
     }
-    EXPECT_EQ(slots->history->frame_count(), static_cast<std::uint64_t>(k_frames));
-    EXPECT_TRUE(slots->history->valid());
+    EXPECT_EQ(up->history().frame_count(), static_cast<std::uint64_t>(k_frames));
+    EXPECT_TRUE(up->history().valid());
 
-    // Frame 1 (slot B) blends with frame 0's output (slot A): 0.1 * 0.2 +
-    // 0.9 * 0.8 = 0.74 at the centre. A broken history shows the raw 0.2.
-    EXPECT_NEAR(out[1][c], 189, 3) << "frame 1 did not read frame 0's history";
-
-    // Converged: the alternating input (0.2 <-> 0.8) accumulates to its mean;
-    // the steady state oscillates only 0.484 <-> 0.516.
-    const int last = out[k_frames - 1][c];
-    const int prev = out[k_frames - 2][c];
-    EXPECT_NEAR(last, 128, 8);
-    EXPECT_NEAR(prev, 128, 8);
-    EXPECT_LE(std::abs(last - prev), 12) << "history did not converge (input swings 153)";
+    // Frame 1 (slot B) blends with frame 0's output (slot A); a broken history
+    // shows the raw 0.2.
+    EXPECT_NEAR(centre[1], from_y(glm::mix(to_y(k_hi), to_y(k_lo), current_weight(1))), 0.01F)
+        << "frame 1 did not read frame 0's history";
+    // Converged: the alternating input accumulates to its (resolve-space)
+    // mean, oscillating only slightly.
+    EXPECT_NEAR(centre[k_frames - 1], from_y(expected), 0.01F);
+    EXPECT_LE(std::abs(centre[k_frames - 1] - centre[k_frames - 2]), 0.08F)
+        << "history did not converge (input swings 0.6)";
 }
 
-// A14: reprojection between unjittered matrices maps a static camera's pixels
-// exactly onto themselves, so a static image stays pixel-exact (no resampling
-// blur). The control run shows the test is sensitive: reprojecting between
-// view-projections half a pixel apart (what jittered matrices did) blurs it.
-TEST(GpuTaa, StaticCameraReprojectsOntoItself) {
+// A14 / R11: with zero velocity a static image reprojects exactly onto itself
+// (no resampling blur). The control run shows the test is sensitive: a
+// velocity of half a pixel samples the history between texels and blurs it.
+TEST(GpuTaa, StaticImageWithZeroVelocityStaysExact) {
     QUAT_REQUIRE_GPU(g);
-    constexpr VkFormat fmt = VK_FORMAT_R8G8B8A8_UNORM;
     constexpr VkExtent2D extent{16, 16};
-    auto rig = Rig::create(*g, fmt, extent);
+    auto rig = TemporalRig::create(*g, extent, extent);
     ASSERT_OK(rig);
-    const std::vector<std::uint8_t> image = checker(extent, 0);
-    const glm::mat4 vp = camera_view_proj();
+    const TemporalFrame image = checker(extent, 0);
 
-    auto slots = make_slots(*g, fmt);
-    ASSERT_OK(slots);
-    std::vector<std::uint8_t> last;
+    auto up = make_upscaler(*g);
+    ASSERT_NE(up, nullptr);
+    float last = 0.0F;
     for (int i = 0; i < 8; ++i) {
-        auto o = rig->frame(slots->pass[i % 2], image, vp);
+        auto o = rig->frame(image, with(*up, static_cast<std::uint32_t>(i % 2)));
         ASSERT_OK(o) << "frame " << i;
-        last = std::move(*o);
+        last = max_abs_diff(*o, image);
     }
-    EXPECT_LE(max_abs_diff(last, image), 1) << "static camera: history was resampled";
+    EXPECT_LE(last, k_exact) << "static image: history was resampled";
 
-    // Control: alternate the view-projection by half a pixel (jittered
-    // matrices) — the history is then sampled between texels and blurs.
-    auto control = make_slots(*g, fmt);
-    ASSERT_OK(control);
+    auto control = make_upscaler(*g);
+    ASSERT_NE(control, nullptr);
+    TemporalFrame shifted = image;
+    shifted.velocity.assign(rig->render_pixels(), glm::vec2(0.5F / 16.0F, 0.0F));
     for (int i = 0; i < 8; ++i) {
-        glm::mat4 jitter(1.0F);
-        jitter[3][0] = (i % 2 == 0 ? 0.5F : -0.5F) / static_cast<float>(extent.width);
-        auto o = rig->frame(control->pass[i % 2], image, jitter * vp);
+        auto o = rig->frame(shifted, with(*control, static_cast<std::uint32_t>(i % 2)));
         ASSERT_OK(o) << "control frame " << i;
-        last = std::move(*o);
+        last = max_abs_diff(*o, image);
     }
-    EXPECT_GT(max_abs_diff(last, image), 40) << "control run unexpectedly stayed sharp";
+    EXPECT_GT(last, 0.1F) << "control run unexpectedly stayed sharp";
 }
 
-// A2: a resize (new extent) recreates the history and drops its validity, so
-// the first frame at the new size is exactly the current frame; accumulation
-// resumes on the next one. invalidate() does the same without a resize.
+// A2: a resize (new display extent) recreates the history and drops its
+// validity, so the first frame at the new size is exactly the current frame;
+// accumulation resumes on the next one. reset_history() does the same.
 TEST(GpuTaa, ResizeResetsHistory) {
     QUAT_REQUIRE_GPU(g);
-    constexpr VkFormat fmt = VK_FORMAT_R8G8B8A8_UNORM;
-    const glm::mat4 vp = camera_view_proj();
-    auto slots = make_slots(*g, fmt);
-    ASSERT_OK(slots);
+    auto up = make_upscaler(*g);
+    ASSERT_NE(up, nullptr);
 
     constexpr VkExtent2D small{16, 16};
-    auto rig_small = Rig::create(*g, fmt, small);
+    auto rig_small = TemporalRig::create(*g, small, small);
     ASSERT_OK(rig_small);
-    int frame = 0;
+    std::uint32_t frame = 0;
     for (; frame < 6; ++frame) {
-        auto o = rig_small->frame(slots->pass[frame % 2],
-                                  checker(small, static_cast<std::uint32_t>(frame)), vp);
-        ASSERT_OK(o) << "frame " << frame;
+        ASSERT_OK(rig_small->frame(checker(small, frame), with(*up, frame % 2)));
     }
-    ASSERT_TRUE(slots->history->valid());
+    ASSERT_TRUE(up->history().valid());
 
     constexpr VkExtent2D big{24, 20};
-    auto rig_big = Rig::create(*g, fmt, big);
+    auto rig_big = TemporalRig::create(*g, big, big);
     ASSERT_OK(rig_big);
-    const std::vector<std::uint8_t> first = checker(big, 0);
-    auto o = rig_big->frame(slots->pass[frame % 2], first, vp);
+    const TemporalFrame first = checker(big, 0);
+    auto o = rig_big->frame(first, with(*up, frame++ % 2));
     ASSERT_OK(o);
-    ++frame;
-    EXPECT_EQ(slots->history->extent().width, big.width);
-    EXPECT_EQ(slots->history->extent().height, big.height);
-    EXPECT_LE(max_abs_diff(*o, first), 1) << "stale history blended after a resize";
+    EXPECT_EQ(up->history().extent().width, big.width);
+    EXPECT_EQ(up->history().extent().height, big.height);
+    EXPECT_LE(max_abs_diff(*o, first), k_exact) << "stale history blended after a resize";
 
     // History is live again at the new size: the flipped checker blends.
-    const std::size_t c = rig_big->centre();
-    auto next = rig_big->frame(slots->pass[frame % 2], checker(big, 1), vp);
+    auto next = rig_big->frame(checker(big, 1), with(*up, frame++ % 2));
     ASSERT_OK(next);
-    ++frame;
-    EXPECT_NEAR((*next)[c], 189, 3) << "history not accumulating after the resize";
+    EXPECT_NEAR(quat::test::grey(*next, 12, 10),
+                from_y(glm::mix(to_y(k_hi), to_y(k_lo), current_weight(1))), 0.01F)
+        << "history not accumulating after the resize";
 
-    // Explicit invalidation (camera cut) behaves like a resize.
-    slots->history->invalidate();
-    const std::vector<std::uint8_t> cut = checker(big, 0);
-    auto after_cut = rig_big->frame(slots->pass[frame % 2], cut, vp);
+    // An explicit reset (camera cut) behaves like a resize.
+    up->reset_history();
+    const TemporalFrame cut = checker(big, 0);
+    auto after_cut = rig_big->frame(cut, with(*up, frame++ % 2));
     ASSERT_OK(after_cut);
-    EXPECT_LE(max_abs_diff(*after_cut, cut), 1) << "history blended after invalidate()";
+    EXPECT_LE(max_abs_diff(*after_cut, cut), k_exact) << "history blended after a reset";
 }
 
-// The resolve writes RGBA8 (always storage-capable, A10) and byte-copies into
-// the target; for a BGRA target the channels must still land in place.
-TEST(GpuTaa, BgraTargetKeepsChannelOrder) {
-    QUAT_REQUIRE_GPU(g);
-    constexpr VkFormat fmt = VK_FORMAT_B8G8R8A8_UNORM;
-    constexpr VkExtent2D extent{8, 8};
-    auto rig = Rig::create(*g, fmt, extent);
-    ASSERT_OK(rig);
-    auto slots = make_slots(*g, fmt);
-    ASSERT_OK(slots);
-
-    // Memory order B, G, R, A: a distinctly orange pixel.
-    std::vector<std::uint8_t> input(rig->byte_size());
-    for (std::size_t i = 0; i < input.size(); i += 4) {
-        input[i + 0] = 40;
-        input[i + 1] = 120;
-        input[i + 2] = 220;
-        input[i + 3] = 255;
-    }
-    for (int i = 0; i < 3; ++i) {
-        auto o = rig->frame(slots->pass[i % 2], input, camera_view_proj());
-        ASSERT_OK(o) << "frame " << i;
-        EXPECT_LE(max_abs_diff(*o, input), 1) << "frame " << i << ": channels swapped";
-    }
-}
-
-// Without history the output is the current frame (0.5 -> ~128).
+// Without history the output is the current frame.
 TEST(GpuTaa, FirstFrameShowsTheCurrentFrame) {
     QUAT_REQUIRE_GPU(g);
-    auto centres = resolve_uniform_frames(*g, {128});
-    ASSERT_OK(centres);
-    EXPECT_NEAR((*centres)[0], 128, 10);
+    const std::vector<float> centres = resolve_uniform_frames(*g, {0.5F});
+    ASSERT_EQ(centres.size(), 1U);
+    EXPECT_NEAR(centres[0], 0.5F, k_exact);
 }
 
-// History (0.5) matching the current frame (0.5) resolves to itself.
+// History matching the current frame resolves to itself.
 TEST(GpuTaa, UniformFrameResolvesToItself) {
     QUAT_REQUIRE_GPU(g);
-    auto centres = resolve_uniform_frames(*g, {128, 128});
-    ASSERT_OK(centres);
-    EXPECT_NEAR((*centres)[1], 128, 10);
+    const std::vector<float> centres = resolve_uniform_frames(*g, {0.5F, 0.5F});
+    ASSERT_EQ(centres.size(), 2U);
+    EXPECT_NEAR(centres[1], 0.5F, k_exact);
 }
 
 // Switching a flat region from 0.5 to 0.8: the neighbourhood clamp rejects the
-// stale history, so it resolves to ~204, not a ghosted blend near ~135.
+// stale history, so it resolves to 0.8, not a ghosted blend.
 TEST(GpuTaa, ClampRejectsStaleHistoryInFlatRegions) {
     QUAT_REQUIRE_GPU(g);
-    auto centres = resolve_uniform_frames(*g, {128, 128, k_hi});
-    ASSERT_OK(centres);
-    EXPECT_GE((*centres)[2], 188);
+    const std::vector<float> centres = resolve_uniform_frames(*g, {0.5F, 0.5F, k_hi});
+    ASSERT_EQ(centres.size(), 3U);
+    EXPECT_NEAR(centres[2], k_hi, k_exact);
+}
+
+namespace {
+
+constexpr VkExtent2D k_scene{32, 32};
+constexpr float k_background = 0.05F;
+constexpr float k_object = 2.0F;
+constexpr int k_square = 6;
+
+// A bright square (near) at column `x0` over a dark background (far); with
+// `motion` the velocity target holds the square's motion of +1 pixel per
+// frame, otherwise it is camera-only (zero: the camera is static), which is
+// what depth-only reprojection amounted to.
+TemporalFrame moving_square(int x0, bool motion) {
+    TemporalFrame f;
+    const std::size_t n = static_cast<std::size_t>(k_scene.width) * k_scene.height;
+    f.color.assign(n, glm::vec4(k_background, k_background, k_background, 1.0F));
+    f.depth.assign(n, 0.9F);
+    f.velocity.assign(n, glm::vec2(0.0F));
+    for (int y = 13; y < 13 + k_square; ++y) {
+        for (int x = x0; x < x0 + k_square; ++x) {
+            const std::size_t i = static_cast<std::size_t>(y) * k_scene.width +
+                                  static_cast<std::size_t>(x);
+            f.color[i] = glm::vec4(k_object, k_object, k_object, 1.0F);
+            f.depth[i] = 0.3F;
+            if (motion) f.velocity[i] = glm::vec2(1.0F / static_cast<float>(k_scene.width), 0.0F);
+        }
+    }
+    return f;
+}
+
+// Mean error of the resolved square scene against the frame's true image, in
+// tonemapped units (g / (1 + g)) so the bright object does not dominate.
+float ghosting_error(const HostImage& out, const TemporalFrame& truth) {
+    double sum = 0.0;
+    for (std::uint32_t y = 0; y < k_scene.height; ++y) {
+        for (std::uint32_t x = 0; x < k_scene.width; ++x) {
+            const float got = quat::test::grey(out, x, y);
+            const float want = truth.color[y * k_scene.width + x].r;
+            sum += std::abs(to_y(got) - to_y(want));
+        }
+    }
+    return static_cast<float>(sum / (k_scene.width * k_scene.height));
+}
+
+} // namespace
+
+// R11: an object moving across a static background. Reprojecting its pixels
+// with their own motion keeps the history aligned; camera-only reprojection
+// (the pre-R11 depth path) smears the history behind and inside the object.
+TEST(GpuTaa, VelocityReprojectionReducesGhostingOfAMovingObject) {
+    QUAT_REQUIRE_GPU(g);
+    auto rig = TemporalRig::create(*g, k_scene, k_scene);
+    ASSERT_OK(rig);
+    float error[2] = {0.0F, 0.0F};
+    for (int mode = 0; mode < 2; ++mode) {
+        const bool motion = mode == 1;
+        auto up = make_upscaler(*g);
+        ASSERT_NE(up, nullptr);
+        constexpr int k_frames = 14;
+        for (int i = 0; i < k_frames; ++i) {
+            const TemporalFrame f = moving_square(4 + i, motion);
+            auto o = rig->frame(f, with(*up, static_cast<std::uint32_t>(i % 2)));
+            ASSERT_OK(o) << "frame " << i;
+            if (i >= k_frames - 4) error[mode] += ghosting_error(*o, f) / 4.0F;
+        }
+    }
+    RecordProperty("ghosting_depth_only", std::to_string(error[0]));
+    RecordProperty("ghosting_velocity", std::to_string(error[1]));
+    std::printf("[taa] mean ghosting error: camera-only %.4f, velocity %.4f\n",
+                static_cast<double>(error[0]), static_cast<double>(error[1]));
+    EXPECT_LT(error[1], error[0] * 0.5F)
+        << "velocity " << error[1] << " vs camera-only " << error[0];
+    EXPECT_LT(error[1], 0.01F) << "the moving object still ghosts with velocity";
 }

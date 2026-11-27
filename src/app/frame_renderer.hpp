@@ -42,13 +42,17 @@
 #include "engine/renderer/exposure_pass.hpp"
 #include "engine/renderer/light_clusters.hpp"
 #include "engine/renderer/light_cull_pass.hpp"
+#include "engine/renderer/jitter.hpp"
 #include "engine/renderer/lighting_pass.hpp"
 #include "engine/renderer/mesh_pass.hpp"
+#include "engine/renderer/motion_history.hpp"
 #include "engine/renderer/shadow_pass.hpp"
 #include "engine/renderer/skinning_pass.hpp"
-#include "engine/renderer/taa_pass.hpp"
 #include "engine/renderer/tonemap_pass.hpp"
 #include "engine/renderer/transparent_pass.hpp"
+#include "engine/renderer/upscaler.hpp"
+#include "engine/renderer/velocity.hpp"
+#include "engine/renderer/velocity_pass.hpp"
 #include "engine/rhi/gpu_allocator.hpp"
 #include "engine/rhi/render_graph.hpp"
 #ifdef ENGINE_EDITOR
@@ -85,14 +89,20 @@ inline constexpr std::uint32_t k_frames_in_flight = 2;
 inline constexpr VkPipelineStageFlags2 k_acquire_wait_stage =
     VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT;
 
-// Per-skinned-entity GPU buffers for one frame slot: the joint matrices (host
-// visible, re-uploaded each frame) and the skinned vertex output (device local,
-// written by the skinning pass and read by the GBuffer as a vertex buffer).
+// Per-skinned-entity GPU buffers for one frame slot: this and last frame's
+// joint matrices (host visible, re-uploaded each frame), the skinned vertex
+// output (device local, written by the skinning pass and read by the GBuffer
+// as a vertex buffer) and the positions skinned with last frame's palette
+// (velocity, R11).
 struct SkinnedEntityGpu {
     engine::rhi::GpuBuffer joints;
+    engine::rhi::GpuBuffer prev_joints;
     engine::rhi::GpuBuffer skinned_verts;
+    engine::rhi::GpuBuffer prev_positions;
     VkDeviceAddress        joints_addr = 0;
+    VkDeviceAddress        prev_joints_addr = 0;
     VkDeviceAddress        skinned_addr = 0;
+    VkDeviceAddress        prev_positions_addr = 0;
     std::uint32_t          vertex_count = 0;
     std::uint32_t          joint_count = 0;
 };
@@ -112,12 +122,11 @@ struct DeferredFrame {
     engine::renderer::TransparentPass transparent;
     engine::renderer::BloomPass      bloom;
     engine::renderer::ExposurePass   exposure;
-    engine::renderer::TaaPass        taa;
 #ifdef ENGINE_EDITOR
     engine::renderer::ImGuiPass      imgui;
-    // Offscreen scene target for the editor's Viewport panel: TAA resolves the
-    // frame here (instead of the swapchain) and the UI samples it. Recreated
-    // when the panel is resized.
+    // Offscreen scene target for the editor's Viewport panel: the tonemapped
+    // frame lands here (instead of the swapchain) and the UI samples it.
+    // Recreated when the panel is resized.
     engine::rhi::GpuImage            viewport_image;
     engine::rhi::ImageView           viewport_view;
     VkExtent2D                       viewport_extent{0, 0};
@@ -128,8 +137,13 @@ struct DeferredFrame {
 };
 
 // The scene's render inputs for one frame, gathered after the simulation.
+// The scene renders at `render_extent` (the upscaler's render scale applied to
+// the draw extent) with the projection jittered by `jitter` (R11).
 struct FrameScene {
-    glm::mat4 jittered_vp{1.0F};     // TAA-jittered view-projection
+    VkExtent2D                     render_extent{0, 0};
+    engine::renderer::ViewJitter   jitter{};
+    engine::renderer::ViewMotion   motion{};      // velocity: previous view, jitter
+    glm::mat4 jittered_vp{1.0F};     // jittered view-projection
     glm::mat4 jittered_inv_vp{1.0F};
     engine::renderer::DirectionalLightParams       light;
     std::vector<engine::renderer::GpuLight>        point_lights;
@@ -183,11 +197,17 @@ public:
                                      const std::string& shader_dir,
                                      engine::rhi::Swapchain& swapchain, bool with_ui);
 #ifdef ENGINE_EDITOR
-    // The editor's Renderer panel settings (clouds, bloom); null = defaults.
+    // The editor's Renderer panel settings (clouds, bloom, upscaler); null =
+    // defaults.
     void set_render_settings(const engine::editor::RendererSettings* settings) {
         render_settings_ = settings;
     }
 #endif
+    // Upscaler mode / scale / sharpness for builds without the editor panel
+    // (editor builds read the panel's settings instead).
+    void set_upscaler_settings(const engine::renderer::UpscalerSettings& settings) {
+        upscaler_settings_ = settings;
+    }
     // Atmosphere LUTs + dynamic IBL probe, lit by the scene's sun. Optional:
     // failures are logged and fall back to the procedural sky / flat ambient.
     void create_environment(engine::scene::Scene& scene,
@@ -230,6 +250,7 @@ public:
 
 private:
     [[nodiscard]] engine::renderer::CloudSettings current_clouds() const;
+    [[nodiscard]] engine::renderer::UpscalerSettings current_upscaler() const;
     void recreate_render_finished();
     [[nodiscard]] bool record_screenshot_copy(VkCommandBuffer cmd);
     void write_screenshot() const;
@@ -249,10 +270,17 @@ private:
     // animated sky in other engines — not gated on play mode).
     float cloud_time_s_ = 0.0F;
 
-    // Temporal state shared by both slots (audit A2 / A11): one TAA history and
-    // one adapted luminance, each advanced exactly once per frame. Declared
-    // before `frames_` so it outlives every pass that references it.
-    std::shared_ptr<engine::renderer::TaaHistory>    taa_history_;
+    // Temporal state shared by both slots (audit A2 / A11): the upscaler (its
+    // history), one adapted luminance and the motion history, each advanced
+    // exactly once per frame. Declared before `frames_` so it outlives every
+    // pass that references it.
+    std::unique_ptr<engine::renderer::Upscaler>      upscaler_;
+    bool                                             backend_warned_ = false;
+    engine::renderer::UpscalerSettings               upscaler_settings_{};
+    engine::renderer::VelocityPass                   velocity_;
+    engine::renderer::MotionHistory                  motion_;
+    glm::mat4                                        prev_view_proj_{1.0F};
+    bool                                             has_prev_view_ = false;
     std::shared_ptr<engine::renderer::ExposureState> exposure_state_;
     std::array<DeferredFrame, k_frames_in_flight>    frames_;
 
