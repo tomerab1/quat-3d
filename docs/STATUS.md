@@ -27,7 +27,7 @@ Decisions already made (do not re-litigate without the owner):
 
 | Item | State | Verified? |
 |---|---|---|
-| S1 bug audit | 46 findings recorded in [`audit/S1-findings.md`](audit/S1-findings.md) with severity and status. Fixed so far: B7, B11/C4, B13 (`[S1.1]`); C1–C3 + C5 index part — glTF structural validation (`[S1.2]`); B6/C8 orphaned Jolt bodies/characters swept (`[S1.3]`) | Animation fix verified locally; physics/scene fixes await CI |
+| S1 bug audit | 46 findings recorded in [`audit/S1-findings.md`](audit/S1-findings.md) with severity and status. Fixed so far: B7, B11/C4, B13 (`[S1.1]`); C1–C3 + C5 index part — glTF structural validation (`[S1.2]`); B6/C8 orphaned Jolt bodies/characters swept (`[S1.3]`); B10/C7 behaviour-tree parsing hardened (`[S1.4]`) | Animation fix verified locally; physics/scene fixes await CI |
 | S3 `engine_tests` | Written (`tests/engine_tests.cpp`, CTest entries in `CMakeLists.txt`) | Not yet compiled |
 | S4 CI | Linux job in `.github/workflows/ci.yml` | First runs in progress on GitHub — check the Actions tab |
 | A1 remote transport | `src/remote/`, `include/engine/remote/rpc_server.hpp`, wired in `main.cpp` (`QUAT_REMOTE`) | Library compiled warning-free + self-test passed standalone; `main.cpp` wiring not yet compiled |
@@ -67,7 +67,11 @@ top.
   but the proxy had not picked it up by the end of that session. In a new
   session select the `quat-3d` environment, then follow the cloud-container
   steps in [`DEVELOPMENT.md`](DEVELOPMENT.md#building-in-a-cloud-container).
-  Until local builds work, CI is the source of truth for compilation.
+  Until local builds work, CI is the source of truth for linking and tests.
+  Meanwhile individual files can be **syntax/warning-checked locally**
+  against header-only clones of the dependencies (plain `git clone` from
+  GitHub works) — see "Compile-checking without vcpkg" in
+  [`DEVELOPMENT.md`](DEVELOPMENT.md).
 
 ## Next steps
 
@@ -77,6 +81,6 @@ top.
    status. Suggested order — highest risk first: C5 joints part, A3–A5 + A7 (render-graph sync and pool eviction),
    then A1+A2+A14 **together** (TAA jitter/history — fixing A1 alone makes the
    image shimmer), B1–B5 (networking/prediction), the rest.
-3. S2: move `scene_io.cpp` and `behavior.cpp` JSON reads onto `JsonFields`.
+3. S2: move `scene_io.cpp` JSON reads onto `JsonFields` (`behavior.cpp` done in S1.4).
 4. S3/S4 done → tick them in `ROADMAP.md`; add Windows/macOS CI jobs.
 5. Then A2 → A3 → A4 (Rust server) → A5 (debugging tools).

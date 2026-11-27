@@ -85,6 +85,32 @@ cmake --build --preset release
 VK_ICD_FILENAMES=/opt/lavapipe/lvp_icd.json ctest --test-dir build/release --output-on-failure
 ```
 
+### Compile-checking without vcpkg
+
+When vcpkg can't download (blocked network), clone the dependency headers at
+the versions vcpkg pins (`grep '"version' ~/vcpkg/ports/<port>/vcpkg.json`) and
+syntax-check translation units with the engine's warning flags:
+
+```sh
+mkdir -p ~/deps && cd ~/deps
+git clone --depth 1 --branch v3.16.0 https://github.com/skypjack/entt.git
+git clone --depth 1 --branch v3.4.0  https://github.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator.git vma
+git clone --depth 1 --branch v5.5.0  https://github.com/jrouwe/JoltPhysics.git jolt
+git clone --depth 1 --branch v0.9.0  https://github.com/spnda/fastgltf.git
+git clone --depth 1 https://github.com/nothings/stb.git
+git clone --depth 1 --branch release-3.4.10 https://github.com/libsdl-org/SDL.git sdl
+apt-get install -y nlohmann-json3-dev libglm-dev libvulkan-dev
+
+D=~/deps; cd ~/quat-3d
+clang++ -std=c++23 -stdlib=libc++ -Wall -Wextra -Wshadow -fno-exceptions -fno-rtti -fsyntax-only \
+  -DGLM_FORCE_DEPTH_ZERO_TO_ONE -DGLM_FORCE_RADIANS -DENGINE_EDITOR \
+  -DQUAT_COOKED_SHADER_DIR='"x"' -DQUAT_PROJECT_ROOT='"x"' -Iinclude -Isrc -Isrc/remote \
+  -isystem $D/entt/src -isystem $D/vma/include -isystem $D/jolt -isystem $D/fastgltf/include \
+  -isystem $D/stb -isystem $D/sdl/include  src/scene/scene.cpp
+```
+
+This catches compile errors and warnings, not link errors or test failures.
+
 Quick check without vcpkg (the remote-control library only needs
 nlohmann-json and glm headers — `apt-get install nlohmann-json3-dev libglm-dev`):
 

@@ -1,6 +1,8 @@
 #include "engine/scene/behavior.hpp"
 
 #include <cstdio>
+#include <functional>
+#include <string>
 #include <unordered_map>
 #include <utility>
 
@@ -8,6 +10,7 @@
 #include <glm/glm.hpp>
 #include <nlohmann/json.hpp>
 
+#include "engine/core/json_fields.hpp"
 #include "engine/nav/navmesh.hpp"
 #include "engine/scene/components.hpp"
 #include "engine/scene/scene.hpp"
@@ -31,13 +34,18 @@ using nlohmann::json;
     return glm::length(glm::vec2(a.x, a.z) - glm::vec2(b.x, b.z));
 }
 
-// Leaf factories: name -> (node json -> leaf instance). Parameters bind at
-// parse time, so a bad leaf name or missing field fails the asset, not a tick.
-using LeafFactory = std::expected<BtLeafFn, core::Error> (*)(const json&);
+// Leaf factories: name -> (node fields -> leaf instance). Parameters bind at
+// parse time through checked reads (tree JSON is user-authored, and the engine
+// has no exceptions — a mistyped field must fail the asset, never abort), so a
+// bad leaf name, a wrong type or an out-of-range value fails the asset, not a
+// tick. The caller rejects fields a leaf did not read (typo detection).
+using LeafFactory = std::expected<BtLeafFn, core::Error> (*)(core::JsonFields&);
 
-std::expected<BtLeafFn, core::Error> make_move_to(const json& n) {
-    const glm::vec3 target(n.value("x", 0.0F), n.value("y", 0.0F), n.value("z", 0.0F));
-    const float speed = n.value("speed", 3.0F);
+std::expected<BtLeafFn, core::Error> make_move_to(core::JsonFields& f) {
+    glm::vec3 target(0.0F);
+    float speed = 3.0F;
+    f.number("x", target.x).number("y", target.y).number("z", target.z);
+    f.number("speed", speed, 0.0F, 1000.0F);
     return BtLeafFn([target, speed](entt::registry& r, entt::entity e, float, float& state) {
         auto* agent = r.try_get<NavAgent>(e);
         if (agent == nullptr) return BtStatus::failure;
@@ -62,8 +70,9 @@ std::expected<BtLeafFn, core::Error> make_move_to(const json& n) {
     });
 }
 
-std::expected<BtLeafFn, core::Error> make_wait(const json& n) {
-    const float seconds = n.value("seconds", 1.0F);
+std::expected<BtLeafFn, core::Error> make_wait(core::JsonFields& f) {
+    float seconds = 1.0F;
+    f.number("seconds", seconds, 0.0F, 1.0e6F);
     return BtLeafFn([seconds](entt::registry&, entt::entity, float dt, float& state) {
         state += dt;
         if (state >= seconds) {
@@ -74,17 +83,20 @@ std::expected<BtLeafFn, core::Error> make_wait(const json& n) {
     });
 }
 
-std::expected<BtLeafFn, core::Error> make_near_point(const json& n) {
-    const glm::vec3 point(n.value("x", 0.0F), n.value("y", 0.0F), n.value("z", 0.0F));
-    const float range = n.value("range", 2.0F);
+std::expected<BtLeafFn, core::Error> make_near_point(core::JsonFields& f) {
+    glm::vec3 point(0.0F);
+    float range = 2.0F;
+    f.number("x", point.x).number("y", point.y).number("z", point.z);
+    f.number("range", range, 0.0F);
     return BtLeafFn([point, range](entt::registry& r, entt::entity e, float, float&) {
         return xz_distance(entity_pos(r, e), point) <= range ? BtStatus::success
                                                              : BtStatus::failure;
     });
 }
 
-std::expected<BtLeafFn, core::Error> make_near_camera(const json& n) {
-    const float range = n.value("range", 5.0F);
+std::expected<BtLeafFn, core::Error> make_near_camera(core::JsonFields& f) {
+    float range = 5.0F;
+    f.number("range", range, 0.0F);
     return BtLeafFn([range](entt::registry& r, entt::entity e, float, float&) {
         for (auto [ce, cam, ct] : r.view<const Camera, const Transform>().each()) {
             if (!cam.is_active) continue;
@@ -114,24 +126,37 @@ BehaviorTreeAsset::parse(std::string_view json_text) {
     if (root.is_discarded()) return fail("behavior tree: invalid JSON");
 
     auto asset = std::make_shared<BehaviorTreeAsset>();
-    // Depth-first flatten; returns the node's index or an error.
-    const std::function<std::expected<std::uint32_t, core::Error>(const json&)> build =
-        [&](const json& n) -> std::expected<std::uint32_t, core::Error> {
-        if (!n.is_object() || !n.contains("type")) {
-            return fail("behavior tree: node without a type");
+    // Depth-first flatten; returns the node's index or an error. Depth is
+    // bounded so hostile nesting cannot overflow the stack.
+    constexpr int max_depth = 64;
+    const std::function<std::expected<std::uint32_t, core::Error>(const json&, int,
+                                                                  const std::string&)>
+        build = [&](const json& n, int depth,
+                    const std::string& where) -> std::expected<std::uint32_t, core::Error> {
+        if (depth > max_depth) {
+            return fail("behavior tree: nesting deeper than " + std::to_string(max_depth));
         }
-        const std::string type = n["type"].get<std::string>();
+        core::JsonFields f(n, where);
+        std::string type;
+        f.string("type", type, 64);
+        if (!f.ok()) return std::unexpected(f.finish().error());
+        if (type.empty()) return fail("behavior tree: " + where + " has no \"type\"");
         const auto index = static_cast<std::uint32_t>(asset->nodes_.size());
         asset->nodes_.emplace_back();
 
         if (type == "leaf") {
-            const std::string name = n.value("name", "");
+            std::string name;
+            f.string("name", name, 64);
             const auto it = leaf_factories().find(name);
             if (it == leaf_factories().end()) {
-                return fail("behavior tree: unknown leaf '" + name + "'");
+                std::string known;
+                for (const auto& [k, v] : leaf_factories()) known += (known.empty() ? "" : ", ") + k;
+                return fail("behavior tree: " + where + ": unknown leaf '" + name +
+                            "' (known: " + known + ")");
             }
-            auto leaf = it->second(n);
+            auto leaf = it->second(f);
             if (!leaf) return std::unexpected(leaf.error());
+            if (auto ok = f.finish(); !ok) return fail("behavior tree: " + ok.error().message);
             asset->nodes_[index].kind = Kind::leaf;
             asset->nodes_[index].leaf = std::move(*leaf);
             return index;
@@ -141,23 +166,29 @@ BehaviorTreeAsset::parse(std::string_view json_text) {
         if (type == "sequence") kind = Kind::sequence;
         else if (type == "selector") kind = Kind::selector;
         else if (type == "inverter") kind = Kind::inverter;
-        else return fail("behavior tree: unknown node type '" + type + "'");
+        else {
+            return fail("behavior tree: " + where + ": unknown node type '" + type +
+                        "' (known: leaf, sequence, selector, inverter)");
+        }
         asset->nodes_[index].kind = kind;
 
-        if (!n.contains("children") || !n["children"].is_array() || n["children"].empty()) {
-            return fail("behavior tree: composite '" + type + "' needs children");
+        const json* children = f.raw("children");
+        if (auto ok = f.finish(); !ok) return fail("behavior tree: " + ok.error().message);
+        if (children == nullptr || !children->is_array() || children->empty()) {
+            return fail("behavior tree: " + where + ": '" + type + "' needs a children array");
         }
-        if (kind == Kind::inverter && n["children"].size() != 1) {
-            return fail("behavior tree: inverter takes exactly one child");
+        if (kind == Kind::inverter && children->size() != 1) {
+            return fail("behavior tree: " + where + ": inverter takes exactly one child");
         }
-        for (const json& c : n["children"]) {
-            auto child = build(c);
+        for (std::size_t i = 0; i < children->size(); ++i) {
+            auto child = build((*children)[i], depth + 1,
+                               where + ".children[" + std::to_string(i) + "]");
             if (!child) return std::unexpected(child.error());
             asset->nodes_[index].children.push_back(*child);
         }
         return index;
     };
-    if (auto r = build(root); !r) return std::unexpected(r.error());
+    if (auto r = build(root, 0, "root"); !r) return std::unexpected(r.error());
     return std::shared_ptr<const BehaviorTreeAsset>(std::move(asset));
 }
 
@@ -215,6 +246,36 @@ void bt_system(entt::registry& registry, float dt) {
 // Self-test
 // ---------------------------------------------------------------------------
 std::expected<void, core::Error> run_behavior_self_test() {
+    // Malformed trees fail to parse with an error — they used to abort the
+    // process through nlohmann's throwing accessors (S1 audit B10/C7).
+    {
+        std::string deep;
+        for (int i = 0; i < 200; ++i) deep += R"({"type":"inverter","children":[)";
+        deep += R"({"type":"leaf","name":"wait"})";
+        for (int i = 0; i < 200; ++i) deep += "]}";
+        const char* const bad[] = {
+            R"({"type":1})",
+            R"({"type":"leaf","name":"wait","seconds":"2"})",
+            R"({"type":"leaf","name":"wait","second":2})",
+            R"({"type":"leaf","name":"wait","seconds":-1})",
+            R"({"type":"leaf","name":7})",
+            R"({"type":"leaf","name":"move_to","x":[1]})",
+            R"({"type":"sequence","children":{}})",
+            R"({"type":"sequence","children":[5]})",
+            R"([1,2,3])",
+            deep.c_str(),
+        };
+        for (const char* text : bad) {
+            if (BehaviorTreeAsset::parse(text)) {
+                return fail(std::string("behavior self-test: accepted malformed tree ") +
+                            std::string(text).substr(0, 60));
+            }
+        }
+        if (!BehaviorTreeAsset::parse(R"({"type":"leaf","name":"wait","seconds":2})")) {
+            return fail("behavior self-test: rejected a valid leaf");
+        }
+    }
+
     // The walled plate from the nav tests; the tree patrols to the far side.
     std::vector<glm::vec3> verts;
     std::vector<std::uint32_t> idx;
