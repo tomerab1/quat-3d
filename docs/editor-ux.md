@@ -27,7 +27,10 @@ script halves every image of 1280 px or more, so the UI ends up as a
 (MCP) is different on purpose: in editor builds it copies the *viewport's*
 offscreen image, never the UI, so a tool that asks the engine for a picture
 of the editor gets only the scene. Editor captures therefore use `QUAT_SCREENSHOT` at
-1600x900 without downscaling (`scripts/editor-screenshots.sh`).
+1600x900 without downscaling (`scripts/editor-screenshots.sh`). The CI
+screenshot job (`scripts/ci-screenshots.sh`) captures `showcase-editor` and
+`editor-inspector` the same way: `QUAT_WINDOW_SIZE=1600x900`,
+`QUAT_EDITOR_LAYOUT=default`, no downscale.
 
 ## UX problems in the old editor
 

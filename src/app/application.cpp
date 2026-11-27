@@ -1,5 +1,6 @@
 #include "app/application.hpp"
 
+#include <algorithm>
 #include <cstdio>
 #include <expected>
 #include <string>
@@ -182,14 +183,26 @@ bool Application::init_subsystems() {
         return false;
     }
 
-    add_default_lighting(scene_, !world_.from_gltf());
+    add_default_lighting(scene_, !world_.from_gltf(), world_.demo_root());
     // Atmosphere LUTs + dynamic IBL probe, lit by the scene's sun.
     renderer_.create_environment(scene_, pipeline_cache_, shader_dir_);
     // Terrain, networking (QUAT_HOST / QUAT_JOIN) and the QUAT_TERRAIN tile.
     world_.init(device_, allocator_, pipeline_cache_, shader_dir_, scene_);
 
     // Free-fly view camera, seeded by framing the scene.
-    camera_ = FlyCamera::create(scene_, world_.physics_mode());
+    // Issue #8: frame the demo content (not its ground plate) for the view it
+    // renders into. The editor's Viewport panel is narrower than the window,
+    // so its framing assumes at most 4:3.
+    {
+        const VkExtent2D extent = renderer_.present_extent();
+        float aspect = extent.height == 0 ? 16.0F / 9.0F
+                                          : static_cast<float>(extent.width) /
+                                                static_cast<float>(extent.height);
+        if (with_ui) aspect = std::min(aspect, 4.0F / 3.0F);
+        camera_ = FlyCamera::create(scene_, {.physics_mode = world_.physics_mode(),
+                                             .aspect = aspect,
+                                             .exclude = world_.framing_exclude()});
+    }
 
     // ---- Per-frame command + sync resources --------------------------------
     renderer_.create_frame_sync();
@@ -322,6 +335,7 @@ bool Application::run_frame() {
     const FrameScene frame_scene = renderer_.gather(scene_, cam, draw_extent, presented_);
 
     world_.update_terrain(scene_, cam.position);
+    camera_.pos.y += world_.take_demo_shift(); // the content moved onto the terrain (#7)
 #ifdef ENGINE_EDITOR
     editor_.handle_ground_click();
 #endif
@@ -342,14 +356,13 @@ bool Application::run_frame() {
     }
 #ifdef ENGINE_EDITOR
     frame_inputs.build_ui = [&]() {
-        return editor_.build_ui(
-            dt, static_cast<int>(frame_scene.draws.size() + frame_scene.transparent_draws.size()),
-            cam);
+        // record() calls this after batching, so the count is this frame's.
+        return editor_.build_ui(dt, static_cast<int>(renderer_.draw_count()), cam);
     };
 #endif
-    // A5 debug.stats: the frame's submitted draws (noted before batching).
-    remote_->note_draws(frame_scene.draws.size() + frame_scene.transparent_draws.size());
     if (!renderer_.record(frame_inputs)) return false;
+    // A5 debug.stats: the frame's submitted draws, counted after batching.
+    remote_->note_draws(renderer_.draw_count());
 
     remote_->record_capture(renderer_.command_buffer(), renderer_.frame_slot(),
                             renderer_.capture_source());

@@ -31,11 +31,20 @@ struct FlyInputGate {
 
 class FlyCamera {
 public:
+    // How the opening view is chosen.
+    struct Start {
+        bool  physics_mode = false; // fixed view of the physics demo's drop zone
+        float aspect = 16.0F / 9.0F; // of the view the scene renders into
+        // Left out of the framed bounds (the showcase's pedestal).
+        entt::entity exclude = entt::null;
+    };
     // Frames the scene's renderables (ticks the scene first so world
-    // transforms are current); the physics demo gets a fixed view of its drop
-    // zone instead. Builds without the editor also create the scene camera
-    // entity here.
-    [[nodiscard]] static FlyCamera create(engine::scene::Scene& scene, bool physics_mode);
+    // transforms are current) from a fixed heading, looking down 25 degrees,
+    // as close as fits them with a 10% margin (scene::frame_box) — the same
+    // view every run. The physics demo gets a fixed view of its drop zone
+    // instead. Builds without the editor also create the scene camera entity
+    // here.
+    [[nodiscard]] static FlyCamera create(engine::scene::Scene& scene, const Start& start);
 
     // Per frame, before the event pump: clears the accumulated mouse look.
     void begin_input();

@@ -195,6 +195,7 @@ Environment variables switch on extra modes:
 | `QUAT_WINDOW_SIZE=<w>x<h>` | Initial window size (default 1280x720) |
 | `QUAT_NO_VSYNC=1` | Disable vsync |
 | `QUAT_NO_AUDIO=1` | Mute: run audio without opening a playback device |
+| `QUAT_NON_FINITE_CHECK=1` | Count NaN/Inf values the bloom / TAA guards replace and log them per frame (always on in debug builds) |
 | `QUAT_MAX_FRAMES=<n>` + `QUAT_SCREENSHOT=<file.ppm>` | Render n frames, save the last one, exit (headless checks) |
 
 ### Audio
@@ -279,7 +280,11 @@ ctest --test-dir build/release --output-on-failure      # everything
 
 GPU tests run on any Vulkan device; without a GPU, Mesa's software driver
 (lavapipe) works — that is what CI uses. Every push is built and tested on
-Linux by [GitHub Actions](.github/workflows/ci.yml).
+Linux by [GitHub Actions](.github/workflows/ci.yml), which also renders a few
+scenes headlessly and publishes the screenshots on the run page and on the
+[`ci-screenshots`](https://github.com/tomerab1/quat-3d/blob/ci-screenshots/index.md)
+branch. `scripts/ci-screenshots.sh build/release/game` renders the same set
+locally (needs `xvfb`).
 
 ## Roadmap
 

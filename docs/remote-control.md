@@ -207,7 +207,7 @@ engine (`src/remote/world/debug_*.cpp`, services wired by
 | `debug.log` | `{since_seq?, level?, category?, contains?, limit?=100}` (limit 1..1000) | `{lines:[{seq, t, level, category, message}], cursor, more, missed, oldest_seq, capacity}` |
 | `debug.stats` | — | `{frame, frame_time_ms:{last, avg, worst, samples}, fps, draws, memory:{resident_bytes}, entities, physics:{bodies, active_bodies, characters}, nav:{agents, moving, failed, navmesh_polygons}, sim:<clock>, log:{last_seq, warnings, errors, last_error_seq}}` |
 | `debug.pause` / `debug.resume` | — | `<clock>` |
-| `debug.step` *(deferred)* | `{frames?=1, dt?=1/60}` (frames 1..10000, dt in [0.0001, 0.1] s) | `<clock>` once the steps have run |
+| `debug.step` *(deferred)* | `{frames?=1, dt?=1/60}` (frames 1..10000, dt in [0.0001, 1/15] s) | `<clock>` once the steps have run |
 | `debug.time_scale` | `{scale}` in [0.01, 10] | `<clock>` |
 | `debug.watch` | `{entity}` or `{entities:[...]}` (≤ 64), `components?:[names]` | `{entities:[{id, name, world_position, components:{...}, missing?:[names], nav_agent_state?}], frame?, sim_time_s?}` |
 | `debug.raycast` | `{origin, direction, max_distance?=1000, include_sensors?=false}` | `{hit:false}` or `{hit:true, entity, name, kind, point, normal, distance, sensor}` |
@@ -233,8 +233,10 @@ sim_time_s}`. `engine.info` also reports `paused`.
   beyond the newest line (a cursor from before an engine restart) reads from
   the oldest retained line. `t` is seconds since the log started.
 - **Stats.** Frame times are real (wall-clock) frame times over the last 240
-  frames; `draws` is the previous frame's draw-item count; `memory` is the
-  process resident set (Linux; `null` elsewhere); `physics` is `null` while
+  frames; `draws` counts the previous frame's scene draws after instancing
+  (opaque + shadow batches, InstancedMesh batches included, plus one per
+  transparent item); `memory` is the process resident set (Linux; `null`
+  elsewhere); `physics` is `null` while
   no physics world runs (edit mode). `nav.moving` counts active agents that
   have not arrived, `nav.failed` agents that gave up on their target. Fields
   the running engine cannot provide are `null`.
@@ -252,10 +254,18 @@ sim_time_s}`. `engine.info` also reports `paused`.
   waiting requests are accepted (beyond that a request fails with `failed`
   and queues nothing).
   `debug.resume` drops pending steps (their `debug.step`
-  replies then complete). Physics itself still integrates in fixed 1/120 s
-  substeps, at most 8 per frame, so very high time scales are capped by
-  that catch-up limit. The clock state survives play/stop: a paused clock
-  stays paused when play starts.
+  replies then complete). Every simulation system advances by the same
+  simulated time: real frame time beyond 0.25 s (a hitch) is dropped for
+  all of them, a step's `dt` is at most 1/15 s (what one physics update —
+  8 fixed 1/120 s substeps — simulates exactly; `debug.step` refuses a
+  larger `dt` with `invalid_params` naming `dt` and queues nothing, rather
+  than silently clamping it, so a stepped trace never runs with a dt the
+  caller did not ask for), and a frame above 1/15 s (a slow
+  frame, or any frame at a high time scale) runs the simulation in equal
+  slices of at most 1/15 s, so physics
+  keeps up with agents, characters and animation at any time scale. The
+  clock state survives play/stop: a paused clock stays paused when play
+  starts.
 - **Watch** reuses the component codec (same shapes as `scene.get`);
   `components` restricts the snapshot (unknown names are `invalid_params`,
   names the entity lacks are listed in `missing`). Entities with a nav agent

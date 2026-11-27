@@ -1,25 +1,30 @@
 #include "app/world_runtime.hpp"
 
 #include <algorithm>
-#include <vector>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <span>
 #include <utility>
+#include <vector>
 
 #include <glm/gtc/matrix_transform.hpp>
 
 #include "app/frame_renderer.hpp" // k_frames_in_flight
 #include "app/nav_bake.hpp"
 #include "app/remote_bridge.hpp"
+#include "engine/core/sim_clock.hpp"
 #include "engine/rhi/device.hpp"
 #include "engine/rhi/pipeline_cache.hpp"
 #include "engine/scene/behavior.hpp"
 #include "engine/scene/components.hpp"
+#include "engine/scene/ground_placement.hpp"
 #include "engine/scene/scene.hpp"
 
 namespace quat::app {
+
+// A single debug step fits one physics update; longer frames are sliced.
+static_assert(engine::core::SimClock::max_step_dt <= engine::physics::PhysicsWorld::max_update_dt);
 
 WorldRuntime::WorldRuntime() {
     // Authoritative ground height at world (x, z): streamed tiles first,
@@ -196,6 +201,40 @@ void WorldRuntime::simulate(engine::scene::Scene& scene, std::uint64_t frame_num
     // this frame's physics and draw list see them).
     net_.update(scene.registry(), demo_.physics_world ? &*demo_.physics_world : nullptr,
                 demo_.character_entity, dt);
+
+    // Audit D2: every simulation system advances by the same sim_dt. A scaled
+    // dt above the physics budget runs in equal slices (systems in the same
+    // order per slice); animation samples the whole sim_dt in the scene tick.
+    // A paused frame still runs the systems once with dt 0 (bodies for new
+    // entities, swept bodies, kinematic poses).
+    //
+    // World transforms are resolved before every slice, the first included:
+    // the systems read Transform.world (physics creates bodies at it, nav and
+    // behaviour trees steer from it), and entities created or edited since
+    // the last scene tick — the startup scene on frame 0, a remote spawn, an
+    // editor edit — would otherwise be read at a stale or identity world
+    // (issue #21: the physics demo's boxes were all created at the origin,
+    // inside the floor, and fell out of the world).
+    // Nothing simulates in edit mode without a demo physics world: the
+    // transform passes and empty slices are skipped (the scene tick below
+    // still resolves transforms and animates).
+    const bool simulates = demo_.physics_world.has_value() ||
+                           (play != nullptr && play_physics_.has_value());
+    engine::core::SimSlices slices =
+        engine::core::slice_sim_dt(sim_dt, engine::physics::PhysicsWorld::max_update_dt);
+    if (slices.count == 0) slices = {.count = 1, .dt = 0.0F};
+    for (std::uint32_t i = 0; simulates && i < slices.count; ++i) {
+        engine::scene::transform_system(scene.registry());
+        simulate_slice(scene, slices.dt, play);
+    }
+    scene.tick(sim_dt, foot_probe_); // advances any Animators by simulated time
+
+    // Replication: the host broadcasts moved entities (fresh world poses).
+    net_.publish(scene.registry(), dt);
+}
+
+void WorldRuntime::simulate_slice(engine::scene::Scene& scene, float sim_dt,
+                                  const PlayStep* play) {
     if (demo_.physics_world) {
         if (demo_.character_mode) {
             engine::scene::character_system(scene.registry(), *demo_.physics_world, sim_dt);
@@ -224,10 +263,6 @@ void WorldRuntime::simulate(engine::scene::Scene& scene, std::uint64_t frame_num
         engine::scene::character_system(scene.registry(), *play_physics_, sim_dt);
         engine::scene::physics_system(scene.registry(), *play_physics_, sim_dt);
     }
-    scene.tick(sim_dt, foot_probe_); // advances any Animators by simulated time
-
-    // Replication: the host broadcasts moved entities (fresh world poses).
-    net_.publish(scene.registry(), dt);
 }
 
 void WorldRuntime::update_audio(engine::scene::Scene& scene, const glm::mat4& view, bool live,
@@ -339,10 +374,59 @@ void WorldRuntime::update_terrain(engine::scene::Scene& scene, const glm::vec3& 
             std::fprintf(stderr, "[terrain] tile ready (%.0f m, heights %.1f..%.1f m)\n",
                          terrain_heightmap_.tile_size_m, terrain_heightmap_.min_height,
                          terrain_heightmap_.max_height);
+            settle_demo_on_terrain(scene);
         } else {
             std::fprintf(stderr, "[terrain] upload failed: %s\n", r.error().message.c_str());
         }
     }
+}
+
+void WorldRuntime::settle_demo_on_terrain(engine::scene::Scene& scene) {
+    entt::registry& r = scene.registry();
+    if (demo_.root == entt::null || demo_.pedestal == entt::null) return;
+    // A replaced scene may have recycled the ids: only the showcase's own
+    // pedestal-under-root pair is moved.
+    const auto* parent = r.valid(demo_.pedestal) ? r.try_get<engine::scene::Parent>(demo_.pedestal)
+                                                 : nullptr;
+    if (!r.valid(demo_.root) || parent == nullptr || parent->entity != demo_.root ||
+        !r.all_of<engine::scene::Transform>(demo_.root) ||
+        !r.all_of<engine::scene::Transform>(demo_.pedestal) || !terrain_heightmap_.valid()) {
+        return;
+    }
+    // Room above the highest ground for the tallest grass blades (0.75 m by
+    // default) so none pokes through the plate; the foot is buried a little.
+    constexpr float k_clearance = 0.8F;
+    constexpr float k_embed = 0.5F;
+    auto& root_tf = r.get<engine::scene::Transform>(demo_.root);
+    const glm::vec2 centre(root_tf.world[3].x, root_tf.world[3].z);
+    const float half = terrain_heightmap_.tile_size_m * 0.5F;
+    const engine::scene::GroundLattice lattice{
+        glm::vec2(terrain_anchor_.x - half, terrain_anchor_.z - half),
+        terrain_heightmap_.metres_per_texel()};
+    const auto span =
+        engine::scene::ground_span(ground_height_at_, centre, demo_.footprint_half, lattice);
+    if (!span) {
+        std::fprintf(stderr, "[terrain] showcase plate is off the terrain tile; left in place\n");
+        return;
+    }
+    const engine::scene::Pedestal pedestal = engine::scene::pedestal_on(*span, k_clearance, k_embed);
+
+    // The root is a scene root (no parent): its local is its world.
+    const float old_y = root_tf.local[3].y;
+    root_tf.local[3].y = pedestal.top_y;
+    root_tf.world = root_tf.local;
+    // The pedestal box hangs below the root's origin, scaled to the depth.
+    const float depth = std::max(pedestal.depth(), 2.0F * k_pedestal_mesh_half_height);
+    r.get<engine::scene::Transform>(demo_.pedestal).local =
+        glm::translate(glm::mat4(1.0F), glm::vec3(0.0F, -0.5F * depth, 0.0F)) *
+        glm::scale(glm::mat4(1.0F),
+                   glm::vec3(1.0F, depth / (2.0F * k_pedestal_mesh_half_height), 1.0F));
+    engine::scene::transform_system(r);
+    demo_shift_ += pedestal.top_y - old_y;
+    std::fprintf(stderr,
+                 "[terrain] showcase settled on the terrain: plate top %.2f m (ground %.2f..%.2f m "
+                 "under it)\n",
+                 pedestal.top_y, span->min_y, span->max_y);
 }
 
 void WorldRuntime::service_navmesh_request(engine::scene::Scene& scene) {

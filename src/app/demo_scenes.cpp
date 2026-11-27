@@ -28,6 +28,9 @@ build_demo_scene(engine::scene::Scene& scene, engine::asset::AssetManager& asset
                  engine::rhi::GpuAllocator& allocator,
                  const engine::rhi::TransferContext& setup_transfer) {
     entt::entity spin_entity = entt::null;
+    entt::entity demo_root = entt::null;
+    entt::entity pedestal = entt::null;
+    glm::vec2 footprint_half{0.0F};
     glm::vec3 spin_pos{0.0F};
     float spin_scale = 1.0F;
     std::optional<engine::physics::PhysicsWorld> physics_world;
@@ -119,11 +122,13 @@ build_demo_scene(engine::scene::Scene& scene, engine::asset::AssetManager& asset
                 scene.registry().emplace<RigidBody>(b, BodyMotion::dynamic, 1.0F, no_body);
             }
 
-            // A transparent glass panel in front of the pile (visual only).
+            // A transparent glass panel in front of the pile: a static body
+            // matching its mesh, so boxes bounce off it (issue #46).
+            const glm::vec3 glass_half(3.0F, 2.2F, 0.08F);
             auto glass_mesh = assets.load<engine::asset::MeshAsset>(
                 "demo/glass", [&](const std::filesystem::path&) {
-                    return engine::scene::upload_mesh(make_box_data(glm::vec3(3.0F, 2.2F, 0.08F)),
-                                                      allocator, setup_transfer);
+                    return engine::scene::upload_mesh(make_box_data(glass_half), allocator,
+                                                      setup_transfer);
                 });
             auto glass_mat = assets.load<engine::asset::MaterialAsset>(
                 "demo/glass_mat", [&](const std::filesystem::path&) {
@@ -141,6 +146,9 @@ build_demo_scene(engine::scene::Scene& scene, engine::asset::AssetManager& asset
                 scene.registry().get<Transform>(glass).local =
                     glm::translate(glm::mat4(1.0F), glm::vec3(0.0F, 2.2F, 3.0F));
                 scene.registry().emplace<MeshRenderer>(glass, glass_mesh, glass_mat);
+                scene.registry().emplace<Collider>(glass, ColliderShape::box, glass_half,
+                                                   glm::vec3(0.0F));
+                scene.registry().emplace<RigidBody>(glass, BodyMotion::static_body, 1.0F, no_body);
             }
         }
     } else if (std::getenv("QUAT_CHARACTER") != nullptr) {
@@ -228,10 +236,13 @@ build_demo_scene(engine::scene::Scene& scene, engine::asset::AssetManager& asset
                 });
         };
 
+        const glm::vec2 k_plate_half(14.0F, 14.0F);
         auto ground_mesh = assets.load<engine::asset::MeshAsset>(
             "show/ground", [&](const std::filesystem::path&) {
-                return engine::scene::upload_mesh(make_box_data(glm::vec3(14.0F, 0.25F, 14.0F)),
-                                                  allocator, setup_transfer);
+                return engine::scene::upload_mesh(
+                    make_box_data(glm::vec3(k_plate_half.x, k_pedestal_mesh_half_height,
+                                            k_plate_half.y)),
+                    allocator, setup_transfer);
             });
         auto sphere_mesh = assets.load<engine::asset::MeshAsset>(
             "show/sphere", [&](const std::filesystem::path&) {
@@ -251,9 +262,19 @@ build_demo_scene(engine::scene::Scene& scene, engine::asset::AssetManager& asset
             // MeshSource tags carry the cache keys so scene save/load can
             // re-resolve these code-created assets (recreated every startup).
             using engine::scene::MeshSource;
-            const entt::entity ground = scene.create_entity("ground");
-            scene.registry().get<Transform>(ground).local =
-                glm::translate(glm::mat4(1.0F), glm::vec3(0.0F, -0.25F, 0.0F));
+            // Everything hangs under one root so the showcase moves as a
+            // whole (QUAT_TERRAIN settles it onto the generated ground).
+            demo_root = scene.create_entity("showcase");
+            const auto add = [&](const char* name) {
+                const entt::entity e = scene.create_entity(name);
+                scene.set_parent(e, demo_root);
+                return e;
+            };
+            const entt::entity ground = add("ground");
+            pedestal = ground;
+            footprint_half = k_plate_half;
+            scene.registry().get<Transform>(ground).local = glm::translate(
+                glm::mat4(1.0F), glm::vec3(0.0F, -k_pedestal_mesh_half_height, 0.0F));
             scene.registry().emplace<MeshRenderer>(ground, ground_mesh, ground_mat);
             scene.registry().emplace<MeshSource>(ground, "show/ground", "show/ground_mat", "");
 
@@ -262,7 +283,7 @@ build_demo_scene(engine::scene::Scene& scene, engine::asset::AssetManager& asset
                 const float t = static_cast<float>(i) / static_cast<float>(count - 1);
                 const float x = (t - 0.5F) * 7.5F;
                 // Top row: polished metal, roughness sweep.
-                const entt::entity m = scene.create_entity("metal_sphere");
+                const entt::entity m = add("metal_sphere");
                 scene.registry().get<Transform>(m).local =
                     glm::translate(glm::mat4(1.0F), glm::vec3(x, 0.55F, -1.6F));
                 scene.registry().emplace<MeshRenderer>(
@@ -272,7 +293,7 @@ build_demo_scene(engine::scene::Scene& scene, engine::asset::AssetManager& asset
                 scene.registry().emplace<MeshSource>(m, "show/sphere",
                                                      "show/metal" + std::to_string(i), "");
                 // Bottom row: coloured dielectric, metalness sweep.
-                const entt::entity d_ent = scene.create_entity("dielectric_sphere");
+                const entt::entity d_ent = add("dielectric_sphere");
                 scene.registry().get<Transform>(d_ent).local =
                     glm::translate(glm::mat4(1.0F), glm::vec3(x, 0.55F, 1.4F));
                 scene.registry().emplace<MeshRenderer>(
@@ -284,7 +305,7 @@ build_demo_scene(engine::scene::Scene& scene, engine::asset::AssetManager& asset
             }
 
             // A warm emissive cube as a visible local light source.
-            const entt::entity glow = scene.create_entity("glow_cube");
+            const entt::entity glow = add("glow_cube");
             scene.registry().get<Transform>(glow).local =
                 glm::translate(glm::mat4(1.0F), glm::vec3(-5.5F, 0.5F, 4.0F)) *
                 glm::rotate(glm::mat4(1.0F), 0.6F, glm::vec3(0.2F, 1.0F, 0.1F));
@@ -295,7 +316,7 @@ build_demo_scene(engine::scene::Scene& scene, engine::asset::AssetManager& asset
             scene.registry().emplace<MeshSource>(glow, "show/cube", "show/glow_mat", "");
 
             // A clear glass sphere up front that refracts the spheres behind it.
-            const entt::entity glass = scene.create_entity("glass_sphere");
+            const entt::entity glass = add("glass_sphere");
             spin_entity = glass; // gently rotate it so the refraction shifts
             spin_pos = glm::vec3(0.0F, 0.85F, 4.2F);
             spin_scale = 1.5F;
@@ -320,10 +341,13 @@ build_demo_scene(engine::scene::Scene& scene, engine::asset::AssetManager& asset
     out.spin_entity = spin_entity;
     out.spin_pos = spin_pos;
     out.spin_scale = spin_scale;
+    out.root = demo_root;
+    out.pedestal = pedestal;
+    out.footprint_half = footprint_half;
     return out;
 }
 
-void add_default_lighting(engine::scene::Scene& scene, bool fill_lights) {
+void add_default_lighting(engine::scene::Scene& scene, bool fill_lights, entt::entity root) {
 // A sun light, and a camera that auto-frames whatever was loaded.
 const entt::entity sun_entity = scene.create_entity("sun");
 scene.registry().emplace<engine::scene::DirectionalLight>(
@@ -343,6 +367,10 @@ if (fill_lights) {
         glm::translate(glm::mat4(1.0F), glm::vec3(3.5F, 3.0F, -2.5F));
     scene.registry().emplace<engine::scene::PointLight>(cool, glm::vec3(0.3F, 0.5F, 1.0F),
                                                         14.0F, 12.0F);
+    if (root != entt::null) {
+        scene.set_parent(warm, root);
+        scene.set_parent(cool, root);
+    }
 }
 
 }

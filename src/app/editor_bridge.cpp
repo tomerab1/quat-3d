@@ -176,7 +176,7 @@ void EditorBridge::apply_scene_file_requests() {
             (void)engine::renderer::reset_render_settings(*t_.render_settings);
         }
         t_.world->invalidate_navmesh("new scene");
-        t_.world->clear_spin_entity();
+        t_.world->clear_demo_entities();
         editor_.set_selected(entt::null);
         editor_.notify(NoticeKind::info, "New scene");
     }
@@ -201,7 +201,7 @@ void EditorBridge::apply_scene_file_requests() {
                 t_.world->invalidate_navmesh("scene loaded");
                 // Rebind the loop's cached entities to the loaded scene.
                 // (The view camera is editor state — nothing to rebind.)
-                t_.world->clear_spin_entity();
+                t_.world->clear_demo_entities();
                 editor_.set_selected(entt::null);
                 // The dynamic IBL probe picks up the loaded scene's sun
                 // within one refresh cycle — no explicit rebake needed.

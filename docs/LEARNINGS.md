@@ -26,6 +26,12 @@ into CLAUDE.md or the brief template in [`CYCLE.md`](CYCLE.md).
 
 ## Build and CI
 
+- **A clean auto-merge can still break the build.** Merging master (#20)
+  into the E8 branch raised no conflict, but master had renamed
+  `WorldRuntime::clear_spin_entity` while the branch added a new call to it;
+  the 40-minute forced rebuild failed late. → After any merge, compile-check
+  the TUs both sides touched (`scripts/check-compile.sh` on the merge's file
+  list) before starting a long build.
 - **Hand-rolled local builds must rebuild dependents of changed headers.**
   The E8 worker's scratch build script recompiled a `.cpp` only when it was
   newer than its object; after a member was added to `EditorShell`, stale
@@ -47,6 +53,36 @@ into CLAUDE.md or the brief template in [`CYCLE.md`](CYCLE.md).
   source, linked with `-lSDL3 -lGameNetworkingSockets -lvulkan`. It takes
   20-40 minutes of shared CPU from scratch; captures are then
   `scripts/editor-screenshots.sh <game> <dir> <prefix>`.
+- **Don't tie the hitch clamp to the physics budget.** D2 first capped the
+  sim frame dt at 1/15 s (8 physics substeps), so on slow machines (CI's
+  lavapipe at 1-3 fps) the whole world ran several times slower than real
+  time. The clamp is now 0.25 s (only true hitches are dropped) and frames
+  above 1/15 s are sliced for physics; 1/15 s bounds only `debug.step`.
+- **Half-float HDR targets overflow on mirror highlights (#45).** A punctual
+  GGX peak of 1/(pi alpha^2) exceeds 65504 for alpha < ~0.003; some drivers
+  round to +Inf (CI's lavapipe), others saturate (the container's), so the
+  bug only showed in CI. Floor punctual roughness (0.089), clamp HDR writes
+  (`lib/hdr.slang`), and test overflow with `<` 65504, not `<=`.
+
+- **Look at every render you report on (issue #21).** A worker reported the
+  physics demo "unchanged" after #7/#8 without opening the image; every box
+  had fallen out of the world. Cause: `physics_system` creates bodies at
+  `Transform.world`, and on frame 0 only `FlyCamera::create`'s `scene.tick()`
+  had resolved those — #8 skipped it for the physics demo. → Systems resolve
+  the transforms they read (`WorldRuntime::simulate` now does, every slice),
+  and `tests/app/` drives the real `WorldRuntime` path (`game_world` library).
+
+- **The real `game` runs locally under Xvfb + lavapipe.** Without vcpkg, a
+  non-editor build links from the `~/deps` clones: build SDL3
+  (`~/deps/sdl`, cmake, shared) and link libJolt / libfastgltf / GNS /
+  Recast sources; then `scripts/ci-screenshots.sh <game>` renders the CI
+  scenes (about 0.7 s per frame on 4 cores). libc++'s libunwind prints
+  `__unw_add_dynamic_fde: bad fde` for every function lavapipe's JIT
+  registers — hundreds of lines per run — so filter it before reading a log
+  tail (the screenshot script does).
+- **`git ls-files` + `check-compile.sh` catches includes lost in merges.**
+  `skinning_pass.cpp` used `glm::mat4` with no glm include after S3.3
+  removed the self-test that pulled it in.
 - **Link the game executable locally after any merge that touches library
   targets.** R17 linked libktx into `game` directly while engine_asset only
   compiled against its headers; the tests (linking the full libktx) passed,

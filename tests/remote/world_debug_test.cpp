@@ -204,7 +204,7 @@ TEST_F(DebugCommands, WatchSnapshotsSelectedComponents) {
            {"primitive", {{"shape", "cube"}}},
            {"nav_agent", {{"target", {4, 0, 4}}, {"speed", 2}}}}}});
     reg().get<engine::scene::NavAgent>(e).failed = true;
-    (void)clock.advance(0.5F);
+    (void)clock.advance(0.05F);
     frame.frame = 42;
 
     Json r = ok("debug.watch", {{"entity", "crate"}, {"components", {"transform", "rigidbody"}}});
@@ -217,7 +217,7 @@ TEST_F(DebugCommands, WatchSnapshotsSelectedComponents) {
     EXPECT_EQ(w["missing"], Json({"rigidbody"}));
     EXPECT_FALSE(w.contains("nav_agent_state")) << "nav_agent was not asked for";
     EXPECT_EQ(r["frame"], 42);
-    EXPECT_NEAR(r["sim_time_s"].get<double>(), 0.5, 1e-6);
+    EXPECT_NEAR(r["sim_time_s"].get<double>(), 0.05, 1e-6);
 
     r = ok("debug.watch", {{"entities", {entt::to_integral(e)}}});
     const Json& all = r["entities"][0];
@@ -425,18 +425,42 @@ TEST_F(DebugStep, DroppedWaitStillAnswers) {
     EXPECT_TRUE(reply.contains("error")) << reply.dump();
 }
 
+// (dt values stay within SimClock::max_step_dt = 1/15 s, audit D2: a larger
+// dt is refused with invalid_params and would queue nothing.)
 TEST_F(DebugStep, LaterRequestsKeepQueuedStepsDt) {
     send({{"jsonrpc", "2.0"}, {"id", 4}, {"method", "debug.step"},
-          {"params", {{"frames", 2}, {"dt", 0.1}}}});
+          {"params", {{"frames", 2}, {"dt", 0.05}}}});
     send({{"jsonrpc", "2.0"}, {"id", 5}, {"method", "debug.step"},
           {"params", {{"frames", 1}, {"dt", 0.02}}}});
     EXPECT_TRUE(pump(100).is_null());
     ASSERT_EQ(waiters.size(), 2U);
     EXPECT_EQ(waiters[0].first, 2U);
     EXPECT_EQ(waiters[1].first, 3U);
-    EXPECT_FLOAT_EQ(clock.advance(0.5F), 0.1F);
-    EXPECT_FLOAT_EQ(clock.advance(0.5F), 0.1F);
+    EXPECT_FLOAT_EQ(clock.advance(0.5F), 0.05F);
+    EXPECT_FLOAT_EQ(clock.advance(0.5F), 0.05F);
     EXPECT_FLOAT_EQ(clock.advance(0.5F), 0.02F);
+}
+
+// debug.step at exactly SimClock::max_step_dt (1/15 s, what one physics
+// update simulates exactly) is queued with that dt; above it the request is
+// refused with a precise error and queues nothing (no silent clamp).
+TEST_F(DebugStep, StepDtAtTheCapIsKeptAboveItRefused) {
+    send({{"jsonrpc", "2.0"}, {"id", 6}, {"method", "debug.step"},
+          {"params", {{"frames", 1}, {"dt", static_cast<double>(core::SimClock::max_step_dt)}}}});
+    EXPECT_TRUE(pump(100).is_null()) << "a valid step answers once it has run";
+    ASSERT_EQ(waiters.size(), 1U);
+    EXPECT_EQ(clock.state().pending_steps, 1U);
+
+    send({{"jsonrpc", "2.0"}, {"id", 7}, {"method", "debug.step"},
+          {"params", {{"frames", 1}, {"dt", 0.1}}}});
+    const Json reply = pump(2000);
+    ASSERT_TRUE(reply.is_object());
+    EXPECT_EQ(reply["id"], 7);
+    EXPECT_EQ(reply["error"]["code"], code::invalid_params);
+    EXPECT_TRUE(contains(reply["error"]["message"].get<std::string>(), "dt"));
+    EXPECT_EQ(waiters.size(), 1U);
+    EXPECT_EQ(clock.state().pending_steps, 1U) << "the refused request queued nothing";
+    EXPECT_FLOAT_EQ(clock.advance(0.5F), core::SimClock::max_step_dt);
 }
 
 TEST_F(DebugStep, WaitingRequestsAreCapped) {

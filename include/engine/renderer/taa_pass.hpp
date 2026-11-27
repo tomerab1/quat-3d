@@ -141,6 +141,11 @@ public:
 
     [[nodiscard]] TaaHistory& history() { return *history_; }
 
+    // Debug: device address of a uint32 the resolve increments for every
+    // non-finite reprojection, history or current value it rejects
+    // (NonFiniteCounters); 0 turns it off.
+    void set_non_finite_counter(VkDeviceAddress counter) { non_finite_counter_ = counter; }
+
 private:
     const rhi::Device* device_    = nullptr;
     rhi::GpuAllocator* allocator_ = nullptr;
@@ -153,6 +158,7 @@ private:
 
     std::shared_ptr<TaaHistory> history_;
     rhi::DescriptorBuffer       frame_descriptor_;
+    VkDeviceAddress             non_finite_counter_ = 0;
 };
 
 } // namespace engine::renderer

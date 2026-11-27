@@ -260,7 +260,9 @@ add_library(engine_scene STATIC
     src/scene/primitive_resolve.cpp
     src/scene/scatter.cpp
     src/scene/instanced_mesh.cpp
-    src/scene/instanced_mesh_resolve.cpp)
+    src/scene/instanced_mesh_resolve.cpp
+    src/scene/ground_placement.cpp
+    src/scene/camera_framing.cpp)
 # EnTT is PUBLIC: components.hpp exposes entt types (Parent/Children) to consumers.
 # engine_renderer is PUBLIC: scene.hpp's RenderCollectSystem fills a renderer
 # DrawItem list (no cycle — the renderer does not depend on the scene).
@@ -433,6 +435,7 @@ add_library(engine_renderer STATIC
     src/renderer/gtao_pass.cpp
     src/renderer/hiz_pass.cpp
     src/renderer/instance_buffer.cpp
+    src/renderer/non_finite_counters.cpp
     src/renderer/mesh_pass.cpp
     src/renderer/lighting_pass.cpp
     src/renderer/light_clusters.cpp
@@ -535,20 +538,33 @@ endif()
 # frame loop; FrameRenderer, WorldRuntime, FlyCamera, EditorBridge, the remote
 # bridge and the startup scenes run inside it); it is not an engine library.
 # main.cpp only parses the environment and hands off to Application.
+#
+# game_world holds the window-free part of the app layer — WorldRuntime (the
+# simulated world: demo scenes, terrain, grass, navmesh, audio) — so tests
+# can drive the exact frame-loop simulation path (tests/app/) without SDL.
+add_library(game_world STATIC
+    src/app/world_runtime.cpp
+    src/app/demo_scenes.cpp
+    src/app/audio_runtime.cpp
+    src/app/grass_runtime.cpp
+    src/app/nav_bake.cpp)
+target_link_libraries(game_world PUBLIC
+    engine_flags engine_core engine_rhi engine_asset engine_scene engine_renderer engine_physics
+    engine_terrain engine_nav engine_net engine_audio)
+target_include_directories(game_world PUBLIC
+    ${ENGINE_PUBLIC_INCLUDE}
+    ${CMAKE_CURRENT_SOURCE_DIR}/src)
+
 add_executable(game
     src/main.cpp
     src/app/application.cpp
     src/app/fly_camera.cpp
     src/app/frame_graph.cpp
     src/app/frame_renderer.cpp
-    src/app/world_runtime.cpp
-    src/app/demo_scenes.cpp
-    src/app/audio_runtime.cpp
-    src/app/grass_runtime.cpp
-    src/app/nav_bake.cpp
     src/app/remote_bridge.cpp
     src/app/screenshot_capture.cpp)
 target_link_libraries(game PRIVATE
+    game_world
     engine_flags engine_core engine_rhi engine_asset engine_scene engine_renderer engine_physics
     engine_terrain engine_nav engine_net engine_remote engine_remote_world engine_audio
     SDL3::SDL3)
