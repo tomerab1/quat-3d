@@ -28,6 +28,7 @@
 #include "app/remote_bridge.hpp"
 #include "app/world_runtime.hpp"
 #include "engine/asset/asset_manager.hpp"
+#include "engine/core/frame_timer.hpp"
 #include "engine/rhi/device.hpp"
 #include "engine/rhi/gpu_allocator.hpp"
 #include "engine/rhi/pipeline_cache.hpp"
@@ -122,7 +123,7 @@ private:
     std::uint64_t presented_ = 0;
     double        frame_time_sum_ = 0.0; // avg-frame-time report at exit
     std::uint64_t frame_time_samples_ = 0;
-    std::uint64_t last_ticks_ = 0;
+    engine::core::FrameTimer frame_timer_; // real frame dt; skips minimised gaps (#61)
 };
 
 } // namespace quat::app

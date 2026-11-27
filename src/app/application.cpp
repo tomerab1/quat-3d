@@ -208,7 +208,7 @@ bool Application::init_subsystems() {
     renderer_.create_frame_sync();
     renderer_.set_screenshot_path(config_.screenshot_path);
 
-    last_ticks_ = SDL_GetTicksNS();
+    frame_timer_.skip(SDL_GetTicksNS()); // setup time is not frame time
     connect_remote();
     world_.init_audio(QUAT_PROJECT_ROOT);
 #ifdef ENGINE_EDITOR
@@ -227,8 +227,9 @@ bool Application::init_subsystems() {
 
 void Application::connect_remote() {
     // Remote control (ROADMAP A2/A3): QUAT_REMOTE=<port> opens the loopback
-    // JSON-RPC endpoint the quat-mcp bridge talks to (QUAT_REMOTE_TOKEN
-    // requires session.hello). The bridge also resolves Primitive components
+    // JSON-RPC endpoint the quat-mcp bridge talks to (always token-protected:
+    // QUAT_REMOTE_TOKEN or a generated one in a user-only token file). The
+    // bridge also resolves Primitive components
     // every frame, endpoint or not. See src/app/remote_bridge.hpp.
     RemoteBridgeTargets remote_targets;
     remote_targets.device = &device_;
@@ -298,6 +299,9 @@ bool Application::run_frame() {
     const VkExtent2D pixel_extent = window_pixel_extent(platform_.window);
     if (pixel_extent.width == 0 || pixel_extent.height == 0) {
         SDL_Delay(10); // minimized — nothing to draw
+        // Time spent minimised is not frame time (#61): without this the first
+        // frame after restore would advance everything by the whole gap.
+        frame_timer_.skip(SDL_GetTicksNS());
         run_unrendered_step();
         return true;
     }
@@ -307,7 +311,7 @@ bool Application::run_frame() {
     if (shader_reload_) shader_reload_->update(presented_); // R2: swap rebuilt pipelines
     remote_->on_frame_complete(slot); // the slot's screenshot readback landed
     switch (renderer_.acquire_and_begin()) {
-    case FrameRenderer::Acquire::retry: return true;
+    case FrameRenderer::Acquire::retry: frame_timer_.skip(SDL_GetTicksNS()); return true;
     case FrameRenderer::Acquire::failed: return false;
     case FrameRenderer::Acquire::ok: break;
     }
@@ -325,9 +329,7 @@ bool Application::run_frame() {
             ? 1.0F
             : static_cast<float>(draw_extent.width) / static_cast<float>(draw_extent.height);
 
-    const std::uint64_t now_ticks = SDL_GetTicksNS();
-    const float dt = static_cast<float>(now_ticks - last_ticks_) * 1e-9F;
-    last_ticks_ = now_ticks;
+    const float dt = frame_timer_.tick(SDL_GetTicksNS());
     renderer_.advance_time(dt);
     const float sim_dt = remote_->advance_sim(dt); // A5: pause / step / time scale
 
