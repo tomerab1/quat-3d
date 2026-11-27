@@ -85,21 +85,39 @@ private:
 // Client: apply incoming snapshots and smooth entities toward them.
 class ReplicationClient {
 public:
-    // Feed every transport message payload here; non-snapshot kinds are ignored.
+    // Interpolation window: a snapshot's pose is ~95 % reached after this long
+    // (frame-rate independent exponential smoothing; 1-2 snapshot intervals).
+    static constexpr float interpolation_window = 0.1F;
+
+    // Feed every transport message payload here; non-snapshot kinds and
+    // malformed / non-finite entries are ignored.
     void receive(const std::vector<std::uint8_t>& payload);
 
-    // Smooth replicated entities toward their latest snapshot. `dt` drives the
-    // interpolation (window ~0.1 s — one to two snapshot intervals).
+    // Smooth replicated entities toward their latest snapshot and write the
+    // pose: Transform.world, and Transform.local through the entity's parent
+    // (snapshots carry world poses; parents are resolved first). The smoothed
+    // pose is owned here, so local systems writing these Transforms do not
+    // fight the stream. Call before the physics systems and scene.tick(), so
+    // kinematic bodies and this frame's draw list see the new pose.
     void apply(entt::registry& registry, float dt);
 
 private:
     struct Target {
         glm::vec3 position{0.0F};
         glm::quat rotation{1.0F, 0.0F, 0.0F, 0.0F};
-        bool      fresh = false;
+        glm::vec3 smoothed_position{0.0F};
+        glm::quat smoothed_rotation{1.0F, 0.0F, 0.0F, 0.0F};
+        bool      has_smoothed = false; // starts from the entity's own pose
     };
     std::unordered_map<std::uint32_t, Target> targets_;
 };
+
+// Client: replicated rigid bodies follow snapshots instead of simulating
+// locally. Dynamic RigidBodies on NetReplicated entities become kinematic
+// (their Jolt bodies are rebuilt on the next physics_system tick, and are
+// pushed from the replicated Transform from then on). Returns how many
+// changed. Call once after joining (after assign_net_ids).
+std::uint32_t make_replicas_kinematic(entt::registry& registry);
 
 // Loopback self-test: a moving server entity replicates to a client registry
 // over real GNS loopback; the client copy converges on the server transform.

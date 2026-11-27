@@ -73,7 +73,10 @@ NetSession NetSession::from_environment(entt::registry& registry) {
                    c) {
             session.client_ = std::move(*c);
             (void)assign_net_ids(registry);
-            std::fprintf(stderr, "[net] joining %s\n", join_addr);
+            // The host simulates; local copies of its bodies only follow.
+            const std::uint32_t replicas = make_replicas_kinematic(registry);
+            std::fprintf(stderr, "[net] joining %s (%u replicated bodies made kinematic)\n",
+                         join_addr, replicas);
         } else {
             std::fprintf(stderr, "[net] join failed: %s\n", c.error().message.c_str());
         }
