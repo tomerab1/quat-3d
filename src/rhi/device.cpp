@@ -19,8 +19,9 @@ namespace {
 constexpr const char* k_validation_layer = "VK_LAYER_KHRONOS_validation";
 
 // Device extensions every selected GPU must support. dynamic_rendering and
-// synchronization2 are core in Vulkan 1.3; swapchain is foundational for
-// presentation. descriptor_buffer is the mandated descriptor model (CLAUDE.md);
+// synchronization2 are core in Vulkan 1.3; swapchain is required (and
+// enabled) only for a presentable device — one whose instance has
+// VK_KHR_surface; headless devices must not enable it. descriptor_buffer is the mandated descriptor model (CLAUDE.md);
 // it is hard-required unless ENGINE_DESCRIPTOR_SETS_FALLBACK permits the
 // classic-sets compatibility path on drivers that lack it (MoltenVK on macOS).
 
@@ -159,10 +160,11 @@ struct Candidate {
     bool has_descriptor_buffer = false;
 };
 
-// Require Vulkan 1.3 + dynamicRendering + synchronization2 + swapchain, then
-// rank by device type (prefer discrete). In this WSL2 box only llvmpipe
-// qualifies; on real hardware this picks the discrete GPU. See CLAUDE.md.
-[[nodiscard]] Candidate pick_physical_device(VkInstance instance) {
+// Require Vulkan 1.3 + dynamicRendering + synchronization2 (+ swapchain when
+// `presentable`), then rank by device type (prefer discrete). In this WSL2
+// box only llvmpipe qualifies; on real hardware this picks the discrete GPU.
+// See CLAUDE.md.
+[[nodiscard]] Candidate pick_physical_device(VkInstance instance, bool presentable) {
     std::uint32_t count = 0;
     vkEnumeratePhysicalDevices(instance, &count, nullptr);
     std::vector<VkPhysicalDevice> devices(count);
@@ -194,7 +196,7 @@ struct Candidate {
         if (!features12.bufferDeviceAddress) continue;
 
         const auto exts = device_extensions(device);
-        if (!has_extension(exts, VK_KHR_SWAPCHAIN_EXTENSION_NAME)) continue;
+        if (presentable && !has_extension(exts, VK_KHR_SWAPCHAIN_EXTENSION_NAME)) continue;
 
         const bool db_ok = db_features.descriptorBuffer == VK_TRUE
             && has_extension(exts, VK_EXT_DESCRIPTOR_BUFFER_EXTENSION_NAME);
@@ -233,6 +235,9 @@ std::expected<Device, core::Error> Device::create(const CreateInfo& info) {
 
     std::vector<const char*> extensions(info.instance_extensions.begin(),
                                         info.instance_extensions.end());
+    dev.presentable_ = std::any_of(extensions.begin(), extensions.end(), [](const char* e) {
+        return e != nullptr && std::strcmp(e, VK_KHR_SURFACE_EXTENSION_NAME) == 0;
+    });
     std::vector<const char*> layers;
     if (want_validation) {
         extensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
@@ -289,10 +294,13 @@ std::expected<Device, core::Error> Device::create(const CreateInfo& info) {
     }
 
     // ---- Physical device ------------------------------------------------
-    const Candidate candidate = pick_physical_device(dev.instance_);
+    const Candidate candidate = pick_physical_device(dev.instance_, dev.presentable_);
     if (candidate.device == VK_NULL_HANDLE) {
-        return fail("no Vulkan 1.3 device with dynamic_rendering + synchronization2 "
-                    "+ swapchain + descriptor_buffer found");
+        return fail(dev.presentable_
+                        ? "no Vulkan 1.3 device with dynamic_rendering + synchronization2 "
+                          "+ swapchain + descriptor_buffer found"
+                        : "no Vulkan 1.3 device with dynamic_rendering + synchronization2 "
+                          "+ descriptor_buffer found");
     }
     dev.physical_device_ = candidate.device;
     dev.queue_families_  = candidate.families;
@@ -354,7 +362,8 @@ std::expected<Device, core::Error> Device::create(const CreateInfo& info) {
     features13.synchronization2 = VK_TRUE;
     features13.pNext = &features12;
 
-    std::vector<const char*> device_exts = {VK_KHR_SWAPCHAIN_EXTENSION_NAME};
+    std::vector<const char*> device_exts;
+    if (dev.presentable_) device_exts.push_back(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
     if (candidate.has_descriptor_buffer) {
         device_exts.push_back(VK_EXT_DESCRIPTOR_BUFFER_EXTENSION_NAME);
     }
@@ -467,6 +476,7 @@ Device& Device::operator=(Device&& other) noexcept {
         descriptor_buffer_props_ = other.descriptor_buffer_props_;
         max_sampler_anisotropy_  = other.max_sampler_anisotropy_;
         descriptor_backend_      = other.descriptor_backend_;
+        presentable_             = std::exchange(other.presentable_, false);
     }
     return *this;
 }

@@ -35,7 +35,11 @@ public:
     struct CreateInfo {
         // Instance extensions required by the windowing system (from
         // SDL_Vulkan_GetInstanceExtensions). The device adds debug-utils itself
-        // when validation is enabled.
+        // when validation is enabled. VK_KHR_surface among them makes the
+        // device presentable: it then requires and enables VK_KHR_swapchain.
+        // Without it (headless tests and tools) the swapchain extension is
+        // neither required nor enabled — enabling it without VK_KHR_surface
+        // is invalid (VUID-vkCreateDevice-ppEnabledExtensionNames-01387).
         std::span<const char* const> instance_extensions{};
         // Enable VK_LAYER_KHRONOS_validation + debug messenger. Caller usually
         // passes true in debug builds, false in release.
@@ -67,6 +71,8 @@ public:
     // unsupported (the feature is enabled whenever the device offers it).
     [[nodiscard]] float max_sampler_anisotropy() const { return max_sampler_anisotropy_; }
     [[nodiscard]] DescriptorBackend descriptor_backend() const { return descriptor_backend_; }
+    // VK_KHR_swapchain is enabled (see CreateInfo::instance_extensions).
+    [[nodiscard]] bool presentable() const { return presentable_; }
     [[nodiscard]] bool uses_descriptor_buffer() const {
         return descriptor_backend_ == DescriptorBackend::ext_descriptor_buffer;
     }
@@ -96,6 +102,7 @@ private:
     VkPhysicalDeviceDescriptorBufferPropertiesEXT descriptor_buffer_props_{};
     float                    max_sampler_anisotropy_ = 0.0F;
     DescriptorBackend        descriptor_backend_ = DescriptorBackend::ext_descriptor_buffer;
+    bool                     presentable_ = false;
 };
 
 } // namespace engine::rhi
