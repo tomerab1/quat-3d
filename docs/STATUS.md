@@ -91,8 +91,7 @@ top.
 1. Check CI for the latest commit; fix compile errors in the WIP code.
 2. Continue S1 from [`audit/S1-findings.md`](audit/S1-findings.md): re-verify
    each finding against the code, fix with a regression test, update its
-   status. Suggested order — highest risk first: C5 joints part, A3, A4 + A7 (render-graph sync and pool eviction),
-   then A1+A2+A14 **together** (TAA jitter/history — fixing A1 alone makes the
+   status. Suggested order — highest risk first: C5 joints part, then A1+A2+A14 **together** (TAA jitter/history — fixing A1 alone makes the
    image shimmer), B1–B5 (networking/prediction), the rest.
 3. S2 remaining: bounds-check untrusted network packets (B2 input validation).
 4. S3/S4 done → tick them in `ROADMAP.md`; add Windows/macOS CI jobs.
