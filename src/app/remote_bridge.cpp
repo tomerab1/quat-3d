@@ -120,7 +120,8 @@ struct RemoteBridge::Impl {
             return fail("could not create an upload command pool");
         }
         fn(engine::rhi::TransferContext{dev, pool, t.device->graphics_queue(),
-                                        t.device->max_sampler_anisotropy()});
+                                        t.device->max_sampler_anisotropy(),
+                                        t.device->texture_caps()});
         vkDestroyCommandPool(dev, pool, nullptr);
         return {};
     }
