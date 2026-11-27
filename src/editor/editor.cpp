@@ -17,6 +17,7 @@
 
 #include "animation_preview.hpp"
 #include "asset_browser.hpp"
+#include "behavior_panel.hpp"
 #include "physics_debug.hpp"
 #include "engine/renderer/imgui_pass.hpp" // viewport_texture_id
 #include "inspector.hpp"
@@ -150,6 +151,8 @@ std::expected<EditorLayer, core::Error> EditorLayer::create(SDL_Window* window,
     return out;
 }
 
+EditorLayer::EditorLayer() = default;
+
 EditorLayer::~EditorLayer() {
     destroy();
 }
@@ -169,11 +172,13 @@ EditorLayer& EditorLayer::operator=(EditorLayer&& other) noexcept {
         viewport_height_ = other.viewport_height_;
         viewport_hovered_ = other.viewport_hovered_;
         selected_ = other.selected_;
+        behavior_panel_ = std::move(other.behavior_panel_);
     }
     return *this;
 }
 
 void EditorLayer::destroy() noexcept {
+    behavior_panel_.reset(); // its node-editor context needs ImGui alive
     if (initialized_) {
         ImGui_ImplSDL3_Shutdown();
         ImGui::DestroyContext();
@@ -232,6 +237,7 @@ void EditorLayer::build_dock_layout(unsigned int dockspace_id) {
     ImGui::DockBuilderDockWindow("Renderer", right);
     ImGui::DockBuilderDockWindow("Assets", bottom);
     ImGui::DockBuilderDockWindow("Animation", bottom);
+    ImGui::DockBuilderDockWindow(behavior_panel_title, bottom);
     ImGui::DockBuilderFinish(dockspace_id);
 }
 
@@ -465,6 +471,8 @@ void EditorLayer::build_ui(const EditorContext& ctx) {
                                anim_state_);
         draw_physics_debug(*ctx.scene, ctx.view_proj, viewport_rect_, physics_state_,
                            ctx.build_navmesh_request, ctx.nav_edges, ctx.nav_status);
+        if (behavior_panel_ == nullptr) behavior_panel_ = std::make_unique<BehaviorPanel>();
+        behavior_panel_->draw(*ctx.scene, selected_);
     }
     if (ctx.renderer != nullptr) {
         draw_renderer_panel(*ctx.renderer, ctx.scene);

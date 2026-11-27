@@ -110,6 +110,12 @@ git clone --depth 1 --branch v0.9.0  https://github.com/spnda/fastgltf.git
 git clone --depth 1 https://github.com/nothings/stb.git
 git clone --depth 1 --branch release-3.4.10 https://github.com/libsdl-org/SDL.git sdl
 git clone --depth 1 --branch 0.11.25 https://github.com/mackron/miniaudio.git
+git clone --depth 1 --branch v1.92.8-docking https://github.com/ocornut/imgui.git
+# imgui-node-editor (Behaviour panel): the vcpkg port's tag plus its patches,
+# which make 0.9.3 build against imgui 1.92
+git clone --depth 1 --branch v0.9.3 https://github.com/thedmd/imgui-node-editor.git
+for p in fix-vec2-math-operators remove-getkeyindex fix-imgui-v1.92.5; do
+  patch -d imgui-node-editor -p1 < ~/vcpkg/ports/imgui-node-editor/$p.patch; done
 apt-get install -y nlohmann-json3-dev libglm-dev libvulkan-dev
 
 D=~/deps; cd ~/quat-3d

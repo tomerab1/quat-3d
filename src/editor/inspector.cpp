@@ -9,8 +9,10 @@
 #include <glm/gtc/quaternion.hpp>
 #include <glm/gtx/matrix_decompose.hpp>
 #include <imgui.h>
+#include <imgui_stdlib.h>
 
 #include "audio_inspector.hpp"
+#include "behavior_panel.hpp"
 #include "engine/editor/editor.hpp"
 #include "engine/scene/behavior.hpp"
 #include "engine/scene/components.hpp"
@@ -186,13 +188,12 @@ struct ComponentInspector<scene::BehaviorTree> {
     static constexpr const char* title = "Behavior Tree";
     static void draw(entt::registry&, entt::entity, scene::BehaviorTree& bt) {
         ImGui::Checkbox("enabled", &bt.enabled);
-        static char buffer[4096];
-        std::strncpy(buffer, bt.source.c_str(), sizeof(buffer) - 1);
-        buffer[sizeof(buffer) - 1] = 0;
-        if (ImGui::InputTextMultiline("##bt_json", buffer, sizeof(buffer),
-                                      ImVec2(-1.0F, ImGui::GetTextLineHeight() * 8.0F))) {
-            bt.source = buffer;
+        if (ImGui::Button("Edit graph", ImVec2(-1.0F, 0.0F))) {
+            ImGui::SetWindowFocus(behavior_panel_title);
         }
+        // Resizable: trees with saved editor layout outgrow any fixed buffer.
+        ImGui::InputTextMultiline("##bt_json", &bt.source,
+                                  ImVec2(-1.0F, ImGui::GetTextLineHeight() * 8.0F));
         if (ImGui::Button("Recompile", ImVec2(-1.0F, 0.0F))) {
             bt.compiled.reset();
             bt.parse_failed = false;
@@ -202,10 +203,14 @@ struct ComponentInspector<scene::BehaviorTree> {
         } else if (bt.compiled != nullptr) {
             ImGui::Text("compiled: %zu nodes", bt.compiled->nodes().size());
         }
+        std::string leaves;
+        for (const scene::BtLeafInfo& leaf : scene::bt_builtin_leaf_info()) {
+            leaves += (leaves.empty() ? "" : ", ") + std::string(leaf.name);
+        }
         ImGui::TextWrapped("JSON: sequence/selector (resume the running child), "
                            "reactive_sequence/reactive_selector (re-check every tick, "
-                           "pre-empting), inverter; leaves move_to, wait, near_point, "
-                           "near_camera.");
+                           "pre-empting), inverter; leaves %s.",
+                           leaves.c_str());
     }
 };
 

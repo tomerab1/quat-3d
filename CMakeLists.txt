@@ -107,6 +107,7 @@ target_link_libraries(miniaudio_headers INTERFACE
 if(ENGINE_EDITOR)
     find_package(imgui CONFIG REQUIRED)
     find_package(imguizmo CONFIG REQUIRED)
+    find_package(unofficial-imgui-node-editor CONFIG REQUIRED)
 endif()
 
 set(ENGINE_PUBLIC_INCLUDE ${CMAKE_CURRENT_SOURCE_DIR}/include)
@@ -360,12 +361,18 @@ if(ENGINE_EDITOR)
         src/editor/scene_snapshot.cpp
         src/editor/audio_inspector.cpp
         src/editor/bt_graph.cpp
+        src/editor/behavior_panel.cpp
+        src/editor/behavior_canvas.cpp
         src/editor/vendor/imgui_impl_sdl3.cpp)
     # engine_scene is PUBLIC: editor.hpp exposes entt entity types (selection)
     # and the hierarchy/inspector panels reflect scene components.
+    # imgui-node-editor (Behaviour panel, G2) comes before imgui::imgui: its
+    # vcpkg target does not declare the imgui dependency, so a single-pass
+    # linker must see it first to resolve its ImGui references.
     target_link_libraries(engine_editor
         PUBLIC engine_flags engine_scene
-        PRIVATE imgui::imgui imguizmo::imguizmo SDL3::SDL3)
+        PRIVATE unofficial::imgui-node-editor::imgui-node-editor
+                imgui::imgui imguizmo::imguizmo SDL3::SDL3)
     target_include_directories(engine_editor PUBLIC ${ENGINE_PUBLIC_INCLUDE})
     # Vendored third-party backend: not warning-clean under our strict flags.
     set_source_files_properties(src/editor/vendor/imgui_impl_sdl3.cpp
