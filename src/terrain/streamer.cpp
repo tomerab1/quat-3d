@@ -25,16 +25,23 @@ TerrainStreamer::Events TerrainStreamer::update(glm::vec2 local_xz, bool block) 
     }
 
     do {
+        const bool ready =
+            job_active_ && job_.wait_for(std::chrono::seconds(0)) == std::future_status::ready;
+        if (block && job_active_ && job_external_ && !ready) {
+            // The backend only progresses between frames: regenerate on the CPU.
+            if (cancel_) cancel_->store(true);
+            job_ = {};
+            job_active_ = false;
+        }
         // Collect a finished job.
-        if (job_active_ &&
-            (block || job_.wait_for(std::chrono::seconds(0)) == std::future_status::ready)) {
+        if (job_active_ && (block || ready)) {
             Heightmap map = job_.get();
             job_active_ = false;
             const glm::ivec2 d = job_coord_ - centre;
-            if (glm::abs(d.x) <= radius_ && glm::abs(d.y) <= radius_) {
+            if (map.valid() && glm::abs(d.x) <= radius_ && glm::abs(d.y) <= radius_) {
                 maps_.emplace(job_coord_, std::move(map));
                 events.ready.push_back(job_coord_);
-            } // else: the camera outran the job — discard.
+            } // else: the camera outran the job (or the backend shut down) — discard.
         }
 
         // Kick the nearest missing tile (one job in flight).
@@ -56,7 +63,10 @@ TerrainStreamer::Events TerrainStreamer::update(glm::vec2 local_xz, bool block) 
             TerrainParams params = base_;
             params.world_tile = best;
             job_coord_ = best;
-            job_ = generate_async(params);
+            job_external_ = !block && generator_ != nullptr && generator_->supports(params);
+            cancel_ = make_cancel_token();
+            job_ = job_external_ ? generator_->generate(params, cancel_)
+                                 : generate_async(params, cancel_);
             job_active_ = true;
         }
     } while (block); // blocking mode drains the whole window synchronously

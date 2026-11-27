@@ -30,9 +30,9 @@
 #include "engine/core/error.hpp"
 #include "engine/renderer/cloud_settings.hpp"
 #include "engine/renderer/ibl_pass.hpp"
-#include "engine/rhi/compute_pipeline.hpp"
 #include "engine/rhi/descriptor_buffer.hpp"
 #include "engine/rhi/gpu_allocator.hpp"
+#include "engine/rhi/managed_pipeline.hpp"
 #include "engine/rhi/render_graph.hpp"
 
 namespace engine::rhi {
@@ -81,7 +81,12 @@ public:
     [[nodiscard]] std::expected<void, core::Error>
     add_step_to_graph(rhi::RenderGraph& graph, const IblCycleParams& params);
 
-    // Raw front-set image for the self-test's readback.
+    // Steps in one full refresh cycle (env tiles, irradiance, one per
+    // prefiltered mip).
+    [[nodiscard]] static std::uint32_t cycle_step_count();
+
+    // Raw front-set irradiance image (SHADER_READ_ONLY_OPTIMAL between
+    // steps), for readback.
     [[nodiscard]] VkImage front_irradiance_image() const {
         return sets_[front_].irradiance.handle();
     }
@@ -111,10 +116,10 @@ private:
     rhi::DescriptorBufferFunctions db_fns_{};
     rhi::DescriptorSetLayout       env_layout_;
     rhi::DescriptorSetLayout       conv_layout_;
-    rhi::ComputePipeline           env_pipeline_;
-    rhi::ComputePipeline           irradiance_pipeline_;
-    rhi::ComputePipeline           prefilter_pipeline_;
-    rhi::ComputePipeline           lut_pipeline_;
+    rhi::ManagedPipeline           env_pipeline_;
+    rhi::ManagedPipeline           irradiance_pipeline_;
+    rhi::ManagedPipeline           prefilter_pipeline_;
+    rhi::ManagedPipeline           lut_pipeline_;
     rhi::Sampler                   sampler_;
 
     rhi::GpuImage  env_;       // shared scratch env cube (GENERAL for life)
@@ -135,12 +140,5 @@ private:
     std::array<rhi::DescriptorBuffer, 3> db_ring_;
     std::size_t                          ring_ = 0;
 };
-
-// Self-test: a full blocking cycle (procedural sky) yields sky-blue zenith
-// irradiance; a second cycle with a low sun flips the sets and lands a
-// measurably different irradiance in the new front set.
-[[nodiscard]] std::expected<void, core::Error>
-run_dynamic_ibl_self_test(const rhi::Device& device, rhi::GpuAllocator& allocator,
-                          rhi::PipelineCache& cache, const std::string& cooked_shader_dir);
 
 } // namespace engine::renderer

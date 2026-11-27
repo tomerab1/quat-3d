@@ -89,6 +89,42 @@ TEST_F(AssetManagerCache, FailedLoadFallsBackToTheDefault) {
     EXPECT_EQ(bad->tag, "fallback");
 }
 
+// Audit C16: a failed slot used to be cached forever, so a file fixed (or
+// created) after the first attempt never loaded until restart.
+TEST_F(AssetManagerCache, FailedSlotIsRetriedOnTheNextLoad) {
+    int attempts = 0;
+    const auto loader = [&](const std::filesystem::path&) -> std::expected<DummyAsset, Error> {
+        ++attempts;
+        if (attempts == 1) return std::unexpected(Error{"not there yet"});
+        return DummyAsset{7, "fixed"};
+    };
+    const auto first = manager.load<DummyAsset>("meshes/late.gltf", loader);
+    ASSERT_EQ(first.state(), AssetState::failed);
+
+    const auto second = manager.load<DummyAsset>("meshes/late.gltf", loader);
+    EXPECT_EQ(attempts, 2);
+    ASSERT_TRUE(second.is_loaded());
+    EXPECT_EQ(second->value, 7);
+    // Same slot: the handle from the failed attempt sees the asset too.
+    EXPECT_TRUE(first.is_loaded());
+    EXPECT_EQ(first->tag, "fixed");
+    EXPECT_EQ(manager.count<DummyAsset>(), 1U);
+
+    // Loaded now: further loads are cache hits again.
+    (void)manager.load<DummyAsset>("meshes/late.gltf", loader);
+    EXPECT_EQ(attempts, 2);
+}
+
+TEST_F(AssetManagerCache, RetryThatFailsAgainKeepsTheDefault) {
+    const auto failing = [](const std::filesystem::path&) -> std::expected<DummyAsset, Error> {
+        return std::unexpected(Error{"still broken"});
+    };
+    (void)manager.load<DummyAsset>("meshes/broken.gltf", failing);
+    const auto again = manager.load<DummyAsset>("meshes/broken.gltf", failing);
+    EXPECT_EQ(again.state(), AssetState::failed);
+    EXPECT_EQ(again->tag, "fallback");
+}
+
 TEST_F(AssetManagerCache, GetFindsCachedAssetsAndNothingForUnknownIds) {
     const auto duck = load_duck();
     const auto found = manager.get<DummyAsset>(duck.id());

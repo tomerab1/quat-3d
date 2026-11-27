@@ -19,12 +19,18 @@
 // create fresh images and unloads retire the old tile until in-flight frames
 // have finished with it.
 //
+// GPU synthesis (R10.2): tile_generator() generates tiles with the
+// TerrainSynthPass, recorded by add_to_graph; the GPU writes the very image
+// this pass samples, and set_tile() adopts it (Heightmap::gpu_tile) instead
+// of uploading the read-back heights again.
+//
 // Not yet: terrain does not cast into the shadow map (the shadow pass renders
 // vertex-buffer meshes only); it receives shadows and IBL like everything else.
 
 #include <cstdint>
 #include <expected>
 #include <map>
+#include <memory>
 #include <string>
 #include <utility>
 #include <vector>
@@ -34,12 +40,15 @@
 
 #include "engine/core/error.hpp"
 #include "engine/renderer/mesh_pass.hpp"
+#include "engine/renderer/terrain_gpu_tiles.hpp"
+#include "engine/renderer/terrain_height_source.hpp"
 #include "engine/rhi/descriptor_buffer.hpp"
 #include "engine/rhi/gpu_allocator.hpp"
-#include "engine/rhi/graphics_pipeline.hpp"
+#include "engine/rhi/managed_pipeline.hpp"
 #include "engine/rhi/render_graph.hpp"
 #include "engine/terrain/heightmap.hpp"
 #include "engine/terrain/streamer.hpp"
+#include "engine/terrain/tile_generator.hpp"
 
 namespace engine::rhi {
 class Device;
@@ -68,20 +77,52 @@ public:
     // Upload a generated tile at grid coordinate `coord` (R32F, metres). Never
     // stalls the pipeline: a fresh image is created and any tile it replaces is
     // retired (destroyed a few frames later, once in-flight frames are done).
+    // A GPU-synthesised map (gpu_tile != 0) adopts the image the GPU already
+    // wrote; it is uploaded from `heights` only if that image has expired.
     [[nodiscard]] std::expected<void, core::Error>
     set_tile(const glm::ivec2& coord, const terrain::Heightmap& map,
              const rhi::TransferContext& transfer);
 
+    // The GPU tile backend (R10.2) for TerrainStreamer::set_generator /
+    // terrain::generate_tile_async; null when GPU synthesis is unavailable
+    // (no compute shader, descriptor buffers...). Its tiles are synthesised
+    // by add_to_graph, so their futures only progress while frames run.
+    [[nodiscard]] terrain::TileGenerator* tile_generator() const { return gpu_tiles_.get(); }
+
     // Retire a tile (streaming unload). No-op for unknown coordinates.
     void remove_tile(const glm::ivec2& coord);
 
-    [[nodiscard]] bool has_tiles() const { return !tiles_.empty(); }
+    // Per-frame upkeep, whether or not terrain draws this frame (call once
+    // per frame, before add_to_graph): retires replaced / removed tiles once
+    // in-flight frames are done with them, and runs the GPU tile backend's
+    // upkeep (cancellations, deliveries, freeing finished jobs' memory).
+    void tick();
+
+    // Cancels GPU tiles not yet delivered (GpuTileSource::abandon): their
+    // futures resolve to an invalid Heightmap without further frames.
+    void abandon_pending_tiles() {
+        if (gpu_tiles_) gpu_tiles_->abandon();
+    }
+
+    // Tiles to draw, or GPU tiles being synthesised (add_to_graph drives them).
+    [[nodiscard]] bool has_tiles() const {
+        return !tiles_.empty() || (gpu_tiles_ && gpu_tiles_->busy());
+    }
+
+    // The loaded tiles whose XZ footprint overlaps the disc (`centre`,
+    // `radius`), nearest first, at most `max_tiles` — for passes that sample
+    // the terrain on the GPU (grass). `anchor` as for add_to_graph. The views
+    // stay valid until the frame after the tile is removed or replaced.
+    [[nodiscard]] std::vector<TerrainHeightTile> height_tiles(const glm::vec2& centre,
+                                                              float radius,
+                                                              const glm::vec3& anchor,
+                                                              std::size_t max_tiles) const;
 
     // Record every loaded tile into the frame. `anchor` is the world position
     // tile (0,0) is centred on (anchor.y offsets all heights); `snowline_m` is
-    // the world height where snow takes over. Call once per frame (it also
-    // ages the retire queue) and declare AFTER the mesh pass — the chunks
-    // render into its GBuffer attachments.
+    // the world height where snow takes over. Call at most once per frame,
+    // after tick() (it also records GPU tile synthesis), and declare AFTER
+    // the mesh pass — the chunks render into its GBuffer attachments.
     void add_to_graph(rhi::RenderGraph& graph, const renderer::GBufferTargets& gbuffer,
                       VkExtent2D extent, const glm::mat4& view_proj, const glm::vec3& camera_pos,
                       const glm::vec3& anchor, float snowline_m);
@@ -92,7 +133,7 @@ private:
 
     rhi::DescriptorBufferFunctions db_fns_{};
     rhi::DescriptorSetLayout       layout_;
-    rhi::GraphicsPipeline          pipeline_;
+    rhi::ManagedPipeline           pipeline_;
     rhi::Sampler                   sampler_;
 
     // Shared chunk index buffers, one per LOD (grid triangles + skirt ring).
@@ -101,6 +142,9 @@ private:
         std::uint32_t  count = 0;
     };
     std::vector<LodIndices> lods_;
+
+    // GPU tile synthesis; heap-held so tile_generator() stays valid on move.
+    std::unique_ptr<GpuTileSource> gpu_tiles_;
 
     struct Tile {
         rhi::GpuImage         image;
@@ -126,13 +170,5 @@ private:
     };
     std::vector<TileDraws> frame_draws_; // rebuilt each add_to_graph, consumed same frame
 };
-
-// Offscreen self-test: generate a small tile, upload it, render it over a
-// cleared GBuffer from a top-down camera, and verify the centre albedo texel
-// is terrain-coloured (the geometry pipeline + VTF + splat actually ran).
-[[nodiscard]] std::expected<void, core::Error>
-run_terrain_pass_self_test(const rhi::Device& device, rhi::GpuAllocator& allocator,
-                           rhi::PipelineCache& cache, const rhi::TransferContext& transfer,
-                           const std::string& cooked_shader_dir);
 
 } // namespace engine::renderer

@@ -283,7 +283,10 @@ struct Children     { std::vector<entt::entity> entities; };
   instructions, tool and resource descriptions, prompts, long help text) lives
   in Markdown files (`tools/quat-mcp/content/`) embedded with `include_str!`
   — tool descriptions via `#[doc = include_str!(..)]` on the tool function,
-  templates rendered with MiniJinja. Only error messages stay in code.
+  templates rendered with MiniJinja. What stays in code: error messages and
+  short UI strings (labels, one-sentence tooltips, parameter hints in a
+  reflection table). Anything longer, or anything written for a model, is
+  Markdown.
 
 ## Physics (Jolt)
 
@@ -396,6 +399,9 @@ path against it.
 - Never store raw Vulkan handles (`VkImage`, `VkBuffer`) in components or assets — always wrapped types.
 - Never allocate GPU memory with `vkAllocateMemory` directly — always VMA.
 - Never write skinning in the vertex shader — skinning is a compute pass.
+  (Procedural vertex offsets such as foliage wind bending are not skinning and
+  may run in the vertex shader; the depth, shadow and velocity passes must apply
+  the same offset.)
 - Never use `#ifdef` for material/shader variants — use Slang interfaces.
 - Never put system logic inside component structs.
 - Never throw exceptions.

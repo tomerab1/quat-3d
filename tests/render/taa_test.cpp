@@ -5,7 +5,7 @@
 // alternating every frame. The current frame is a checkerboard whose phase
 // flips every frame (what sub-pixel jitter does to detail finer than a pixel):
 // a working history accumulates it to its mean, a broken one shows the raw
-// alternation.
+// alternation. Uniform frames check the neighbourhood clamp on flat regions.
 
 #include <algorithm>
 #include <cstdint>
@@ -240,6 +240,33 @@ std::expected<Slots, Error> make_slots(quat::test::GpuContext& g, VkFormat fmt) 
     return s;
 }
 
+// RGBA8 image of uniform grey `v`, opaque.
+std::vector<std::uint8_t> uniform(VkExtent2D e, std::uint8_t v) {
+    std::vector<std::uint8_t> px(static_cast<std::size_t>(e.width) * e.height * 4, v);
+    for (std::size_t i = 3; i < px.size(); i += 4) px[i] = 255;
+    return px;
+}
+
+// One pass with its own history resolving uniform grey frames (identity
+// matrices + constant depth: identity reprojection); returns the centre value
+// of each frame's output.
+std::expected<std::vector<int>, Error> resolve_uniform_frames(
+    quat::test::GpuContext& g, const std::vector<std::uint8_t>& greys) {
+    constexpr VkFormat fmt = VK_FORMAT_R8G8B8A8_UNORM;
+    constexpr VkExtent2D extent{32, 32};
+    auto rig = Rig::create(g, fmt, extent);
+    if (!rig) return std::unexpected(rig.error());
+    auto taa = r::TaaPass::create(g.device, g.allocator, g.cache, g.shader_dir, fmt);
+    if (!taa) return std::unexpected(taa.error());
+    std::vector<int> centres;
+    for (const std::uint8_t grey : greys) {
+        auto out = rig->frame(*taa, uniform(extent, grey), glm::mat4(1.0F));
+        if (!out) return std::unexpected(out.error());
+        centres.push_back((*out)[rig->centre()]);
+    }
+    return centres;
+}
+
 // A perspective camera like the engine's (Vulkan Y flip, depth [0,1]).
 glm::mat4 camera_view_proj() {
     glm::mat4 proj = glm::perspective(glm::radians(60.0F), 1.0F, 0.1F, 100.0F);
@@ -399,4 +426,29 @@ TEST(GpuTaa, BgraTargetKeepsChannelOrder) {
         ASSERT_OK(o) << "frame " << i;
         EXPECT_LE(max_abs_diff(*o, input), 1) << "frame " << i << ": channels swapped";
     }
+}
+
+// Without history the output is the current frame (0.5 -> ~128).
+TEST(GpuTaa, FirstFrameShowsTheCurrentFrame) {
+    QUAT_REQUIRE_GPU(g);
+    auto centres = resolve_uniform_frames(*g, {128});
+    ASSERT_OK(centres);
+    EXPECT_NEAR((*centres)[0], 128, 10);
+}
+
+// History (0.5) matching the current frame (0.5) resolves to itself.
+TEST(GpuTaa, UniformFrameResolvesToItself) {
+    QUAT_REQUIRE_GPU(g);
+    auto centres = resolve_uniform_frames(*g, {128, 128});
+    ASSERT_OK(centres);
+    EXPECT_NEAR((*centres)[1], 128, 10);
+}
+
+// Switching a flat region from 0.5 to 0.8: the neighbourhood clamp rejects the
+// stale history, so it resolves to ~204, not a ghosted blend near ~135.
+TEST(GpuTaa, ClampRejectsStaleHistoryInFlatRegions) {
+    QUAT_REQUIRE_GPU(g);
+    auto centres = resolve_uniform_frames(*g, {128, 128, k_hi});
+    ASSERT_OK(centres);
+    EXPECT_GE((*centres)[2], 188);
 }

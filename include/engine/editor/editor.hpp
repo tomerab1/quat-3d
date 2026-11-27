@@ -11,6 +11,7 @@
 
 #include <cstdint>
 #include <expected>
+#include <memory>
 #include <optional>
 #include <string>
 #include <utility>
@@ -22,6 +23,7 @@
 
 #include "engine/core/error.hpp"
 #include "engine/renderer/cloud_settings.hpp"
+#include "engine/rhi/shader_status.hpp"
 
 struct SDL_Window;
 union SDL_Event;
@@ -33,6 +35,8 @@ class Scene;
 }
 
 namespace engine::editor {
+
+class BehaviorPanel;
 
 // Animation panel state owned by EditorLayer (editor state stays out of the
 // ECS).
@@ -69,6 +73,9 @@ struct EditorContext {
     float frame_ms     = 0.0F;
     int   draw_count   = 0;
     int   entity_count = 0;
+    // Shader hot-reload state (R2), listed in the Stats panel; null when hot
+    // reload is off.
+    const std::vector<rhi::ShaderStatus>* shader_statuses = nullptr;
     // Scene access for the hierarchy/inspector panels (may be null).
     scene::Scene* scene = nullptr;
     // Renderer settings the panel edits (may be null).
@@ -125,7 +132,7 @@ public:
     [[nodiscard]] static std::expected<EditorLayer, core::Error>
     create(SDL_Window* window, const std::string& font_path = {});
 
-    EditorLayer() = default;
+    EditorLayer(); // out of line: BehaviorPanel is incomplete here
     ~EditorLayer();
     EditorLayer(EditorLayer&& other) noexcept;
     EditorLayer& operator=(EditorLayer&& other) noexcept;
@@ -169,6 +176,7 @@ private:
     void build_dock_layout(unsigned int dockspace_id);
     void build_viewport_panel(const EditorContext& ctx);
     void build_stats_panel(const EditorContext& ctx);
+    void build_shader_status(const EditorContext& ctx);
     void build_gizmo(const EditorContext& ctx, const ImVec2& rect_min, const ImVec2& rect_max);
     void handle_picking(const EditorContext& ctx, const ImVec2& rect_min,
                         const ImVec2& rect_max);
@@ -187,6 +195,9 @@ private:
 
     AnimationPreviewState anim_state_;
     PhysicsDebugState     physics_state_;
+    // Behaviour-tree node editor (G2); created with the first frame, destroyed
+    // before the ImGui context.
+    std::unique_ptr<BehaviorPanel> behavior_panel_;
 
     int gizmo_op_ = 0; // 0 translate, 1 rotate, 2 scale (W/E/R over the viewport)
 

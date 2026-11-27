@@ -244,6 +244,21 @@ DescriptorBuffer& DescriptorBuffer::operator=(DescriptorBuffer&& other) noexcept
     return *this;
 }
 
+void DescriptorBuffer::put_descriptor(std::uint32_t binding, const VkDescriptorGetInfoEXT& get,
+                                      std::size_t size) {
+    const VkDeviceSize offset = layout_->binding_offset(binding);
+    fns_->get_descriptor(device_->handle(), &get, size,
+                         static_cast<char*>(buffer_.mapped()) + offset);
+    // The buffer is host-random-access memory VMA may place in a
+    // non-HOST_COHERENT type: make the write visible to the device (a no-op
+    // on coherent memory). Submission happens after recording, so flushing
+    // here is in time.
+    if (auto flushed = buffer_.flush(offset, size); !flushed) {
+        std::fprintf(stderr, "[rhi] descriptor buffer flush failed: %s\n",
+                     flushed.error().message.c_str());
+    }
+}
+
 void DescriptorBuffer::write_buffer_descriptor(std::uint32_t binding, VkDescriptorType type,
                                                VkDeviceAddress address, VkDeviceSize range) {
 #ifdef ENGINE_DESCRIPTOR_SETS_FALLBACK
@@ -293,8 +308,7 @@ void DescriptorBuffer::write_buffer_descriptor(std::uint32_t binding, VkDescript
         descriptor_size = props.storageBufferDescriptorSize;
     }
 
-    auto* dst = static_cast<char*>(buffer_.mapped()) + layout_->binding_offset(binding);
-    fns_->get_descriptor(device_->handle(), &get, descriptor_size, dst);
+    put_descriptor(binding, get, descriptor_size);
 }
 
 void DescriptorBuffer::write_uniform_buffer(std::uint32_t binding, VkDeviceAddress address,
@@ -347,8 +361,7 @@ void DescriptorBuffer::write_sampled_image(std::uint32_t binding, VkImageView vi
     get.type = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
     get.data.pSampledImage = &image;
 
-    auto* dst = static_cast<char*>(buffer_.mapped()) + layout_->binding_offset(binding);
-    fns_->get_descriptor(device_->handle(), &get, props.sampledImageDescriptorSize, dst);
+    put_descriptor(binding, get, props.sampledImageDescriptorSize);
 }
 
 void DescriptorBuffer::write_storage_image(std::uint32_t binding, VkImageView view,
@@ -372,8 +385,7 @@ void DescriptorBuffer::write_storage_image(std::uint32_t binding, VkImageView vi
     get.type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
     get.data.pStorageImage = &image;
 
-    auto* dst = static_cast<char*>(buffer_.mapped()) + layout_->binding_offset(binding);
-    fns_->get_descriptor(device_->handle(), &get, props.storageImageDescriptorSize, dst);
+    put_descriptor(binding, get, props.storageImageDescriptorSize);
 }
 
 void DescriptorBuffer::write_sampler(std::uint32_t binding, VkSampler sampler) {
@@ -393,8 +405,7 @@ void DescriptorBuffer::write_sampler(std::uint32_t binding, VkSampler sampler) {
     get.type = VK_DESCRIPTOR_TYPE_SAMPLER;
     get.data.pSampler = &sampler;
 
-    auto* dst = static_cast<char*>(buffer_.mapped()) + layout_->binding_offset(binding);
-    fns_->get_descriptor(device_->handle(), &get, props.samplerDescriptorSize, dst);
+    put_descriptor(binding, get, props.samplerDescriptorSize);
 }
 
 void DescriptorBuffer::bind(VkCommandBuffer cmd, VkPipelineBindPoint bind_point,

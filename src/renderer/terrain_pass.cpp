@@ -1,14 +1,15 @@
 #include "engine/renderer/terrain_pass.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
-
-#include <glm/gtc/matrix_transform.hpp>
 
 #include "engine/rhi/device.hpp"
 #include "engine/rhi/pipeline_cache.hpp"
@@ -145,7 +146,7 @@ TerrainPass::create(const rhi::Device& device, rhi::GpuAllocator& allocator,
     info.cull_mode = VK_CULL_MODE_NONE;                  // top faces + skirts
     info.set_layouts = {&set_layout, 1};
     info.push_constants = {&pc, 1};
-    auto pipeline = rhi::GraphicsPipeline::create(device, cache.handle(), info);
+    auto pipeline = cache.create_graphics_pipeline(info);
     if (!pipeline) return std::unexpected(pipeline.error());
     out.pipeline_ = std::move(*pipeline);
 
@@ -162,6 +163,15 @@ TerrainPass::create(const rhi::Device& device, rhi::GpuAllocator& allocator,
         if (!buf) return std::unexpected(buf.error());
         out.lods_.push_back({std::move(*buf), static_cast<std::uint32_t>(indices.size())});
     }
+
+    // GPU synthesis is optional: without it tiles generate on the CPU.
+    if (auto gpu = GpuTileSource::create(device, allocator, cache, cooked_shader_dir); gpu) {
+        out.gpu_tiles_ = std::move(*gpu);
+    } else {
+        std::fprintf(stderr,
+                     "[terrain] GPU synthesis unavailable (%s); tiles generate on the CPU\n",
+                     gpu.error().message.c_str());
+    }
     return out;
 }
 
@@ -171,11 +181,17 @@ std::expected<void, core::Error> TerrainPass::set_tile(const glm::ivec2& coord,
     if (!map.valid()) return fail("terrain pass: invalid heightmap");
 
     Tile tile;
-    auto image = rhi::upload_device_image(
-        *allocator_, transfer, map.heights.data(), map.heights.size() * sizeof(float),
-        {map.resolution, map.resolution}, VK_FORMAT_R32_SFLOAT);
-    if (!image) return std::unexpected(image.error());
-    tile.image = std::move(*image);
+    std::optional<rhi::GpuImage> synthesised;
+    if (map.gpu_tile != 0 && gpu_tiles_) synthesised = gpu_tiles_->take_image(map.gpu_tile);
+    if (synthesised) {
+        tile.image = std::move(*synthesised); // the GPU already wrote these heights
+    } else {
+        auto image = rhi::upload_device_image(
+            *allocator_, transfer, map.heights.data(), map.heights.size() * sizeof(float),
+            {map.resolution, map.resolution}, VK_FORMAT_R32_SFLOAT);
+        if (!image) return std::unexpected(image.error());
+        tile.image = std::move(*image);
+    }
     auto view = rhi::create_image_view(device_->handle(), tile.image.handle(),
                                        VK_FORMAT_R32_SFLOAT);
     if (!view) return std::unexpected(view.error());
@@ -199,19 +215,9 @@ std::expected<void, core::Error> TerrainPass::set_tile(const glm::ivec2& coord,
     return {};
 }
 
-void TerrainPass::remove_tile(const glm::ivec2& coord) {
-    if (auto it = tiles_.find(coord); it != tiles_.end()) {
-        retired_.emplace_back(3, std::move(it->second));
-        tiles_.erase(it);
-    }
-}
-
-void TerrainPass::add_to_graph(rhi::RenderGraph& graph, const renderer::GBufferTargets& gbuffer,
-                               VkExtent2D extent, const glm::mat4& view_proj,
-                               const glm::vec3& camera_pos, const glm::vec3& anchor,
-                               float snowline_m) {
-    // Age the retire queue (called once per frame): destroy tiles once every
-    // frame that could have referenced them has left the GPU.
+void TerrainPass::tick() {
+    // Destroy retired tiles once every frame that could have referenced them
+    // has left the GPU.
     for (auto it = retired_.begin(); it != retired_.end();) {
         if (--it->first <= 0) {
             it = retired_.erase(it);
@@ -219,6 +225,54 @@ void TerrainPass::add_to_graph(rhi::RenderGraph& graph, const renderer::GBufferT
             ++it;
         }
     }
+    if (gpu_tiles_) gpu_tiles_->tick();
+}
+
+void TerrainPass::remove_tile(const glm::ivec2& coord) {
+    if (auto it = tiles_.find(coord); it != tiles_.end()) {
+        retired_.emplace_back(3, std::move(it->second));
+        tiles_.erase(it);
+    }
+}
+
+std::vector<TerrainHeightTile> TerrainPass::height_tiles(const glm::vec2& centre, float radius,
+                                                        const glm::vec3& anchor,
+                                                        std::size_t max_tiles) const {
+    std::vector<std::pair<float, TerrainHeightTile>> found;
+    for (const auto& [coord, tile] : tiles_) {
+        const float tsize = tile.tile_size_m;
+        // Tile (0,0) is centred on the anchor (as add_to_graph places it).
+        const glm::vec2 origin(anchor.x + (static_cast<float>(coord.x) - 0.5F) * tsize,
+                               anchor.z + (static_cast<float>(coord.y) - 0.5F) * tsize);
+        const glm::vec2 nearest = glm::clamp(centre, origin, origin + tsize);
+        const float dist = glm::length(nearest - centre);
+        if (dist > radius) continue;
+        TerrainHeightTile t;
+        t.view = tile.view.handle();
+        t.origin_xz = origin;
+        t.size_m = tsize;
+        t.base_y = anchor.y;
+        t.min_height = tile.min_height;
+        t.max_height = tile.max_height;
+        t.resolution = tile.resolution;
+        found.emplace_back(dist, t);
+    }
+    std::ranges::sort(found, {}, &std::pair<float, TerrainHeightTile>::first);
+    std::vector<TerrainHeightTile> out;
+    for (const auto& [dist, t] : found) {
+        if (out.size() >= max_tiles) break;
+        out.push_back(t);
+    }
+    return out;
+}
+
+void TerrainPass::add_to_graph(rhi::RenderGraph& graph, const renderer::GBufferTargets& gbuffer,
+                               VkExtent2D extent, const glm::mat4& view_proj,
+                               const glm::vec3& camera_pos, const glm::vec3& anchor,
+                               float snowline_m) {
+    // GPU tile synthesis records its compute work into this frame (it is
+    // independent of the draws below and of the GBuffer).
+    if (gpu_tiles_) gpu_tiles_->add_to_graph(graph);
     if (tiles_.empty()) return;
 
     const auto planes = frustum_planes(view_proj);
@@ -336,138 +390,6 @@ void TerrainPass::add_to_graph(rhi::RenderGraph& graph, const renderer::GBufferT
             }
             vkCmdEndRendering(cmd);
         });
-}
-
-// ---------------------------------------------------------------------------
-// Self-test
-// ---------------------------------------------------------------------------
-namespace {
-
-template <typename Record>
-[[nodiscard]] std::expected<void, core::Error> run_graphics_blocking(const rhi::Device& device,
-                                                                     Record&& record) {
-    VkCommandPool pool = VK_NULL_HANDLE;
-    VkCommandPoolCreateInfo pi{};
-    pi.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
-    pi.flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT;
-    pi.queueFamilyIndex = device.queue_families().graphics;
-    if (vkCreateCommandPool(device.handle(), &pi, nullptr, &pool) != VK_SUCCESS) {
-        return fail("terrain pass self-test: vkCreateCommandPool failed");
-    }
-    VkCommandBufferAllocateInfo ai{};
-    ai.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
-    ai.commandPool = pool;
-    ai.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-    ai.commandBufferCount = 1;
-    VkCommandBuffer cmd = VK_NULL_HANDLE;
-    vkAllocateCommandBuffers(device.handle(), &ai, &cmd);
-    VkCommandBufferBeginInfo bi{};
-    bi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-    bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-    vkBeginCommandBuffer(cmd, &bi);
-    record(cmd);
-    vkEndCommandBuffer(cmd);
-    VkCommandBufferSubmitInfo ci{};
-    ci.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO;
-    ci.commandBuffer = cmd;
-    VkSubmitInfo2 si{};
-    si.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO_2;
-    si.commandBufferInfoCount = 1;
-    si.pCommandBufferInfos = &ci;
-    const VkResult r = vkQueueSubmit2(device.graphics_queue(), 1, &si, VK_NULL_HANDLE);
-    if (r == VK_SUCCESS) vkQueueWaitIdle(device.graphics_queue());
-    vkDestroyCommandPool(device.handle(), pool, nullptr);
-    return r == VK_SUCCESS ? std::expected<void, core::Error>{}
-                           : fail("terrain pass self-test: submit failed");
-}
-
-} // namespace
-
-std::expected<void, core::Error>
-run_terrain_pass_self_test(const rhi::Device& device, rhi::GpuAllocator& allocator,
-                           rhi::PipelineCache& cache, const rhi::TransferContext& transfer,
-                           const std::string& cooked_shader_dir) {
-    auto mesh_pass = MeshPass::create(device, allocator, cache, transfer, cooked_shader_dir);
-    if (!mesh_pass) return std::unexpected(mesh_pass.error());
-    auto pass = TerrainPass::create(device, allocator, cache, transfer, cooked_shader_dir);
-    if (!pass) return std::unexpected(pass.error());
-
-    terrain::TerrainParams tp;
-    tp.resolution = 129;
-    tp.tile_size_m = 256.0F;
-    tp.height_m = 40.0F;
-    tp.octaves = 5;
-    tp.erosion_droplets = 2'000;
-    const terrain::Heightmap map = terrain::generate(tp);
-    if (auto r = pass->set_tile(glm::ivec2(0, 0), map, transfer); !r) {
-        return std::unexpected(r.error());
-    }
-
-    // Top-down camera over the tile centre.
-    constexpr VkExtent2D extent{128, 128};
-    const glm::vec3 eye(128.0F, 300.0F, 128.0F);
-    const glm::mat4 view = glm::lookAt(eye, glm::vec3(128.0F, 0.0F, 128.0F),
-                                       glm::vec3(0.0F, 0.0F, 1.0F));
-    glm::mat4 proj = glm::perspective(glm::radians(60.0F), 1.0F, 0.1F, 1000.0F);
-    proj[1][1] *= -1.0F; // Vulkan clip-space Y flip, matching the runtime camera
-    const glm::mat4 vp = proj * view;
-
-    rhi::TransientImagePool pool(device, allocator);
-    rhi::RenderGraph graph(pool);
-    auto targets = mesh_pass->add_to_graph(graph, extent, vp, InstancedDrawList{}); // clears only
-    if (!targets) return std::unexpected(targets.error());
-    pass->add_to_graph(graph, *targets, extent, vp, eye, glm::vec3(128.0F, 0.0F, 128.0F),
-                       /*snowline=*/1000.0F);
-    if (auto c = graph.compile(); !c) return std::unexpected(c.error());
-
-    const VkDeviceSize bytes = static_cast<VkDeviceSize>(extent.width) * extent.height * 4;
-    auto readback = allocator.create_buffer(
-        bytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT, VMA_MEMORY_USAGE_AUTO,
-        VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT);
-    if (!readback) return std::unexpected(readback.error());
-
-    const VkImage albedo_img = graph.binding(targets->albedo).image;
-    const VkBuffer rb = readback->handle();
-    auto ran = run_graphics_blocking(device, [&](VkCommandBuffer cmd) {
-        graph.execute(cmd);
-        VkImageMemoryBarrier2 b{};
-        b.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2;
-        b.srcStageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT;
-        b.srcAccessMask = VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT;
-        b.dstStageMask = VK_PIPELINE_STAGE_2_COPY_BIT;
-        b.dstAccessMask = VK_ACCESS_2_TRANSFER_READ_BIT;
-        b.oldLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-        b.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
-        b.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        b.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        b.image = albedo_img;
-        b.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
-        VkDependencyInfo dep{};
-        dep.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO;
-        dep.imageMemoryBarrierCount = 1;
-        dep.pImageMemoryBarriers = &b;
-        vkCmdPipelineBarrier2(cmd, &dep);
-        VkBufferImageCopy region{};
-        region.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
-        region.imageExtent = {extent.width, extent.height, 1};
-        vkCmdCopyImageToBuffer(cmd, albedo_img, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, rb, 1,
-                               &region);
-    });
-    if (!ran) return std::unexpected(ran.error());
-
-    const auto* px = static_cast<const std::uint8_t*>(readback->mapped());
-    const std::size_t centre =
-        (static_cast<std::size_t>(extent.height / 2) * extent.width + extent.width / 2) * 4;
-    const std::uint8_t r8 = px[centre + 0];
-    const std::uint8_t g8 = px[centre + 1];
-    const std::uint8_t a8 = px[centre + 3];
-    // Cleared albedo is (0,0,0,0); a rasterised terrain texel has alpha 1 and a
-    // green-leaning ground colour (snow is disabled by the high snowline).
-    if (a8 < 200) return fail("terrain pass self-test: no terrain rasterised at the centre");
-    if (g8 == 0 || g8 + r8 < 10) {
-        return fail("terrain pass self-test: centre texel is not terrain-coloured");
-    }
-    return {};
 }
 
 } // namespace engine::renderer

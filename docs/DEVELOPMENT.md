@@ -57,13 +57,42 @@ Test layout:
 | `tests/<module>/*_test.cpp` | Test cases (new tests go here) |
 | `tests/support/expect_ok.hpp` | `ASSERT_OK` / `EXPECT_OK` / `ASSERT_ERR` for `std::expected` results |
 | `tests/support/gpu_context.hpp` | Shared surface-less Vulkan device; start GPU tests with `QUAT_REQUIRE_GPU(ctx)` and name the suite `Gpu*` |
+| `tests/support/render_readback.hpp` | GPU pass tests: `upload_mesh`, `render_to_host` (appends a read-back pass to a graph, runs it, returns the pixels), `read_rgba16f` (baked LUTs / probes) |
 | `tests/legacy/` | Wrappers around the old `run_*_self_test()` functions, removed as their bodies migrate into `tests/<module>/` |
 
+
+## Shader hot reload
+
+Editor builds watch `assets/shaders/` and `assets/shaders/lib/` while running
+(`QUAT_SHADER_HOT_RELOAD=0` turns it off, `=1` turns it on in non-editor
+builds). Saving a `.slang` file recompiles it with the build's slangc (same
+flags as `cmake/CompileShaders.cmake`, into `cooked/shaders/`) on a worker
+thread; editing a library module also recompiles every shader importing it.
+The next frame swaps the rebuilt pipelines in; replaced pipelines are
+destroyed once the frames in flight are done.
+
+- A compile error keeps the previous pipeline and cooked files; the
+  diagnostics show under **Stats → Shaders** and on stderr
+  (`ShaderHotReload::statuses()` for tools). A slangc run that takes longer
+  than `Config::compile_timeout` (60 s) is killed and reported the same way;
+  shutting down kills a compile in flight instead of waiting for it.
+- A shader used only by one-shot work (a bake pass whose pipeline is gone)
+  compiles but has no live pipeline to swap: it is listed as **restart**
+  ("compiled; no live pipeline uses it - restart to apply").
+- Edits that change the pipeline layout (a new binding, a changed descriptor
+  type, a bigger push-constant block, a renamed entry point) are rejected the
+  same way — the C++ side builds the layouts, so they need a restart.
+- Passes opt in by creating pipelines through
+  `PipelineCache::create_compute_pipeline` / `create_graphics_pipeline` and
+  holding the returned `rhi::ManagedPipeline`, reading `handle()` /
+  `layout()` when recording.
+- `QUAT_SLANGC=<path>` overrides which slangc is used.
 
 ## CI
 
 `.github/workflows/ci.yml` builds the `release` preset on Ubuntu 24.04 and runs
-`ctest` with lavapipe. The vcpkg binary cache is saved right after configure,
+`ctest` with lavapipe, then builds the `game` target once more with
+`ENGINE_EDITOR=OFF` (sharing the dependency tree). The vcpkg binary cache is saved right after configure,
 so only the first run (or a dependency change) pays for the full dependency
 build. Logs are uploaded as an artifact when a run fails.
 
@@ -110,6 +139,12 @@ git clone --depth 1 --branch v0.9.0  https://github.com/spnda/fastgltf.git
 git clone --depth 1 https://github.com/nothings/stb.git
 git clone --depth 1 --branch release-3.4.10 https://github.com/libsdl-org/SDL.git sdl
 git clone --depth 1 --branch 0.11.25 https://github.com/mackron/miniaudio.git
+git clone --depth 1 --branch v1.92.8-docking https://github.com/ocornut/imgui.git
+# imgui-node-editor (Behaviour panel): the vcpkg port's tag plus its patches,
+# which make 0.9.3 build against imgui 1.92
+git clone --depth 1 --branch v0.9.3 https://github.com/thedmd/imgui-node-editor.git
+for p in fix-vec2-math-operators remove-getkeyindex fix-imgui-v1.92.5; do
+  patch -d imgui-node-editor -p1 < ~/vcpkg/ports/imgui-node-editor/$p.patch; done
 apt-get install -y nlohmann-json3-dev libglm-dev libvulkan-dev
 
 D=~/deps; cd ~/quat-3d

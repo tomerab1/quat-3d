@@ -17,6 +17,7 @@
 #include <entt/entity/entity.hpp>
 #include <entt/entity/fwd.hpp>
 #include <glm/glm.hpp>
+#include <glm/gtc/quaternion.hpp>
 
 #include "engine/audio/audio_types.hpp"
 #include "engine/animation/clip.hpp"
@@ -26,6 +27,7 @@
 #include "engine/asset/material_asset.hpp"
 #include "engine/asset/mesh_asset.hpp"
 #include "engine/core/error.hpp"
+#include "engine/renderer/grass.hpp"
 
 namespace engine::scene {
 
@@ -49,10 +51,14 @@ struct MeshRenderer {
 // load): the AssetManager cache keys, plus the glTF file that produces them.
 // An empty gltf_path means engine code creates the keyed assets at startup
 // (e.g. the showcase primitives), so a loaded scene resolves them by cache hit.
+// `gltf_node` is the glTF node that instanced the mesh: one mesh can be
+// instanced by several nodes with different skins (and armature offsets), so
+// a loaded scene re-attaches skins by (mesh_key, node), not by mesh alone.
 struct MeshSource {
     std::string mesh_key;
-    std::string material_key; // empty -> default material
-    std::string gltf_path;    // empty -> code-created assets
+    std::string material_key;   // empty -> default material
+    std::string gltf_path;      // empty -> code-created assets
+    int         gltf_node = -1; // -1: not instanced from a glTF node (or unknown)
 };
 
 // A procedural shape with a flat PBR material (Phase 15) — the data-driven way
@@ -71,6 +77,90 @@ struct Primitive {
     float          roughness = 0.5F;
     glm::vec3      emissive{0.0F};                // linear emitted radiance (HDR)
     std::uint64_t  resolved = 0;                  // hash the MeshRenderer was built from
+};
+
+// One placement of an InstancedMesh, relative to the entity (R9.2): the
+// instance's model matrix is entity.world * T(position) * R(rotation) *
+// S(scale).
+struct InstanceTransform {
+    glm::vec3 position{0.0F};
+    glm::quat rotation{1.0F, 0.0F, 0.0F, 0.0F}; // (w, x, y, z): identity
+    glm::vec3 scale{1.0F};
+};
+
+// Many placements of one model on a single entity (R9.2) — forests, rocks,
+// props — drawn as one instanced draw per (mesh, material) instead of one
+// entity per copy. The model is a glTF file (`gltf_path`, relative to the
+// project root; the whole scene, or only the subtree of the node named
+// `gltf_node`) or, when `gltf_path` is empty, `primitive`'s shape and flat
+// material (its `resolved` field is unused here). `instances` are authored
+// placements, or the output of a Scatter on the same entity (which rewrites
+// them whenever it regenerates). resolve_instanced_meshes()
+// (instanced_mesh.hpp) builds the InstancedMeshParts the renderer draws.
+struct InstancedMesh {
+    std::string                    gltf_path;
+    std::string                    gltf_node;
+    Primitive                      primitive{};
+    std::vector<InstanceTransform> instances;
+    bool                           cast_shadows = true;
+};
+
+// One (mesh, material) of an InstancedMesh's model; `local` places it in the
+// instance's frame (the glTF node hierarchy below the chosen root).
+struct InstancedMeshPart {
+    asset::AssetHandle<asset::MeshAsset>     mesh;
+    asset::AssetHandle<asset::MaterialAsset> material;
+    glm::mat4                                local{1.0F};
+};
+
+// System-managed: the resolved model of an InstancedMesh (like the
+// MeshRenderer a Primitive resolves into). `bounds` is the bounding sphere of
+// all parts in the instance's frame (xyz centre, w radius) for culling;
+// `resolved` is the source hash the parts were built from.
+struct InstancedMeshParts {
+    std::vector<InstancedMeshPart> parts;
+    glm::vec4                      bounds{0.0F};
+    std::uint64_t                  resolved = 0;
+};
+
+// Seeded procedural placement on the ground (R9.2): generates the entity's
+// InstancedMesh::instances (adding a default InstancedMesh if it has none).
+// The area is centred on the entity's world position and axis-aligned in
+// world XZ: a `size` rectangle (metres) or a `radius` circle. Candidates are
+// Poisson-disc samples (blue noise; Bridson) or a jittered grid at `density`
+// instances per m², never closer than `min_spacing`; each one samples the
+// terrain (streamed tiles too; flat ground at the entity's height without
+// terrain) and is kept only when the ground slope (degrees) and height
+// (metres) fall within the limits. Each placement gets a uniform scale in
+// `scale_range`, an optional random yaw, tilts `align_to_normal` (0 upright
+// .. 1 along the ground normal) and is lifted `base_offset` * scale along
+// its up axis (0.5 seats a unit primitive on the ground). Generation is
+// deterministic per seed, and a candidate's fate depends only on its own
+// ground sample, so terrain streaming in or out never reshuffles the rest.
+// scatter_system (scatter.hpp) regenerates whenever the parameters, the
+// entity's transform or the terrain under the area change; `generated` (key
+// of the last generation) and `generation` (count) are system-managed.
+// Removing the Scatter keeps the current instances (baked).
+enum class ScatterArea : std::uint8_t { rect, circle };
+enum class ScatterPattern : std::uint8_t { poisson, jittered_grid };
+struct Scatter {
+    std::uint32_t  seed = 1;
+    ScatterArea    area = ScatterArea::rect;
+    glm::vec2      size{40.0F, 40.0F}; // rect: extent along world X and Z, metres
+    float          radius = 20.0F;     // circle
+    float          density = 0.05F;    // instances per m^2
+    float          min_spacing = 2.0F; // metres
+    ScatterPattern pattern = ScatterPattern::poisson;
+    glm::vec2      scale_range{0.8F, 1.2F};
+    bool           random_yaw = true;
+    float          align_to_normal = 0.0F;
+    float          base_offset = 0.0F;
+    glm::vec2      slope_deg{0.0F, 35.0F};       // keep ground slopes in [x, y]
+    glm::vec2      height_m{-10000.0F, 10000.0F}; // keep ground heights in [x, y]
+    std::uint32_t  max_instances = 20000;
+    // System-managed.
+    std::uint64_t  generated = 0;
+    std::uint32_t  generation = 0;
 };
 
 // Marks an entity (alongside its MeshRenderer) as skinned: its mesh deforms with
@@ -184,16 +274,22 @@ struct BtNodeState {
     bool          running = false; // returned running on that tick
 };
 
+// What a compiled node returned on its tree's last tick (idle: not reached).
+// Unlike BtNodeState it survives the resets that end a tick, so tools can
+// show which branch failed (the remote bt.status method).
+enum class BtNodeResult : std::uint8_t { idle, success, failure, running };
+
 // A data-driven behaviour tree (13.3): `source` is the tree JSON (composed of
 // sequence/selector/reactive_*/inverter nodes over named C++ leaves — see
 // behavior.hpp). The system compiles it lazily; a parse error logs once and
-// disables the tree. compiled/node_state/tick_count/parse_failed are
-// system-managed.
+// disables the tree. compiled/node_state/last_result/tick_count/parse_failed
+// are system-managed.
 struct BehaviorTree {
     std::string source;
     bool        enabled = true;
     std::shared_ptr<const class BehaviorTreeAsset> compiled;
-    std::vector<BtNodeState> node_state; // one per compiled node
+    std::vector<BtNodeState>  node_state;  // one per compiled node
+    std::vector<BtNodeResult> last_result; // one per compiled node
     std::uint32_t            tick_count = 0;
     bool parse_failed = false;
 };
@@ -219,13 +315,33 @@ struct PointLight {
 // rebuild whenever `regenerate` is set (the inspector's button / fresh
 // component) and uploads the result to the terrain pass.
 struct Terrain {
-    terrain::TerrainParams params{};
+    // New terrains erode with the grid model, which the GPU can synthesise
+    // (TerrainParams itself defaults to the CPU-only droplet model).
+    terrain::TerrainParams params = [] {
+        terrain::TerrainParams p;
+        p.erosion_model = terrain::ErosionModel::grid;
+        return p;
+    }();
     float snowline_m = 110.0F; // world height where snow takes over
     bool  regenerate = true;   // consumed by the frame loop
     // Streaming (12.4): keep a (2*radius+1)² window of seamless tiles loaded
     // around the camera instead of one fixed tile.
     bool streaming = false;
     int  stream_radius = 1;
+    // R10.2: synthesise tiles on the GPU (milliseconds) when a device can —
+    // noise and grid erosion; droplet erosion and oversized tiles fall back
+    // to the CPU generator. Physics/navmesh use the read-back heights.
+    bool gpu_generate = true;
+};
+
+// Dense, wind-animated grass around the camera (R9.3), generated and drawn
+// on the GPU every frame (renderer/grass.hpp has the placement and LOD
+// rules). It grows on the terrain within `settings.radius` of the camera;
+// with `terrain_only` off it also covers flat ground at `ground_y` where no
+// terrain is loaded. The first Grass entity drives the field; its transform
+// is not used.
+struct Grass {
+    renderer::GrassSettings settings{};
 };
 
 // An authored walk route (editor: Shift+click the ground to append points).

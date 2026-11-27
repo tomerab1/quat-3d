@@ -108,9 +108,4 @@ private:
     std::unique_ptr<Impl> impl_;
 };
 
-// Self-test: a flat plate with a wall across the middle (gap at one side) —
-// the path from one half to the other exists, stays on the plate, and routes
-// through the gap rather than the wall.
-[[nodiscard]] std::expected<void, core::Error> run_navmesh_self_test();
-
 } // namespace engine::nav

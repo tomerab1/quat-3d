@@ -26,6 +26,7 @@ enum class ResourceUsage : std::uint8_t {
     depth_attachment,
     sampled,          // read in a fragment shader as a sampled image
     sampled_compute,  // read in a compute shader as a sampled image
+    sampled_graphics, // read in vertex and fragment shaders as a sampled image (e.g. VTF)
     storage_read,     // read in a shader as a storage image
     storage_write,    // written in a shader as a storage image
     storage_read_write, // read-modify-write of a storage image (e.g. bloom composite)
@@ -35,6 +36,8 @@ enum class ResourceUsage : std::uint8_t {
     buffer_read_compute,   // storage/uniform buffer read in a compute shader
     buffer_write_compute,  // storage buffer written (incl. atomics / read-back) in compute
     buffer_read_fragment,  // storage/uniform buffer read in a fragment shader
+    buffer_read_vertex,    // storage/uniform buffer read in a vertex shader
+    buffer_read_indirect,  // indirect draw/dispatch arguments (vkCmdDraw*Indirect)
 };
 
 // Coarse pass category. Only affects nothing in barrier planning today (stages

@@ -20,9 +20,9 @@
 #include <vulkan/vulkan.h>
 
 #include "engine/core/error.hpp"
-#include "engine/rhi/compute_pipeline.hpp"
 #include "engine/rhi/descriptor_buffer.hpp"
 #include "engine/rhi/gpu_allocator.hpp"
+#include "engine/rhi/managed_pipeline.hpp"
 #include "engine/rhi/render_graph.hpp"
 
 namespace engine::rhi {
@@ -99,8 +99,8 @@ private:
     rhi::DescriptorBufferFunctions db_fns_{};
     rhi::DescriptorSetLayout       histogram_layout_; // sampled image, storage buffer
     rhi::DescriptorSetLayout       average_layout_;   // storage buffer, storage buffer
-    rhi::ComputePipeline           histogram_pipeline_;
-    rhi::ComputePipeline           average_pipeline_;
+    rhi::ManagedPipeline           histogram_pipeline_;
+    rhi::ManagedPipeline           average_pipeline_;
 
     rhi::GpuBuffer  histogram_buffer_;  // 256 uint bins (per slot, cleared each frame)
     VkDeviceAddress histogram_address_ = 0;
@@ -109,12 +109,5 @@ private:
     rhi::DescriptorBuffer histogram_descriptor_;
     rhi::DescriptorBuffer average_descriptor_;
 };
-
-// Self-test: a uniform dim HDR image adapts to ~its luminance; a uniform bright
-// image then pushes the adapted luminance up. Verifies the histogram measures
-// luminance and the temporal adaptation tracks it.
-[[nodiscard]] std::expected<void, core::Error>
-run_exposure_self_test(const rhi::Device& device, rhi::GpuAllocator& allocator,
-                       rhi::PipelineCache& cache, const std::string& cooked_shader_dir);
 
 } // namespace engine::renderer

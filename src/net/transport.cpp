@@ -1,10 +1,7 @@
 #include "engine/net/transport.hpp"
 
 #include <algorithm>
-#include <chrono>
 #include <cstdlib>
-#include <cstring>
-#include <thread>
 #include <unordered_map>
 #include <utility>
 
@@ -376,75 +373,6 @@ std::vector<NetEvent> NetClient::poll() {
 
 bool NetClient::send(std::span<const std::uint8_t> bytes, bool reliable) {
     return connected() && send_one(impl_->sockets, impl_->connection, bytes, reliable);
-}
-
-// ---------------------------------------------------------------------------
-// Self-test
-// ---------------------------------------------------------------------------
-std::expected<void, core::Error> run_transport_self_test() {
-    auto server = NetServer::listen(42777);
-    if (!server) return std::unexpected(server.error());
-    auto client = NetClient::connect("127.0.0.1", 42777);
-    if (!client) return std::unexpected(client.error());
-
-    // Pump both ends until the handshake completes (encrypted: a few RTTs).
-    bool server_saw_connect = false;
-    ClientId id = invalid_client;
-    for (int i = 0; i < 500 && !(server_saw_connect && client->connected()); ++i) {
-        for (const NetEvent& ev : server->poll()) {
-            if (ev.type == NetEvent::Type::connected) {
-                server_saw_connect = true;
-                id = ev.client;
-            }
-        }
-        (void)client->poll();
-        std::this_thread::sleep_for(std::chrono::milliseconds(2));
-    }
-    if (!server_saw_connect || !client->connected()) {
-        return fail("transport self-test: loopback handshake never completed");
-    }
-
-    // Client -> server reliable; server -> client unreliable echo.
-    const std::uint8_t ping[] = {'p', 'i', 'n', 'g'};
-    if (!client->send(ping, /*reliable=*/true)) {
-        return fail("transport self-test: reliable send refused");
-    }
-    bool got_ping = false;
-    for (int i = 0; i < 500 && !got_ping; ++i) {
-        for (const NetEvent& ev : server->poll()) {
-            if (ev.type == NetEvent::Type::message && ev.payload.size() == 4 &&
-                std::memcmp(ev.payload.data(), "ping", 4) == 0 && ev.client == id) {
-                got_ping = true;
-            }
-        }
-        std::this_thread::sleep_for(std::chrono::milliseconds(2));
-    }
-    if (!got_ping) return fail("transport self-test: reliable message lost");
-
-    const std::uint8_t pong[] = {'p', 'o', 'n', 'g'};
-    if (!server->send(id, pong, /*reliable=*/false) ||
-        !server->broadcast(pong, /*reliable=*/false)) {
-        return fail("transport self-test: unreliable send refused");
-    }
-    // Oversized messages are refused up front, not dropped silently.
-    const std::vector<std::uint8_t> oversized(max_message_bytes + 1, 0);
-    if (server->send(id, oversized, /*reliable=*/true) ||
-        client->send(oversized, /*reliable=*/true)) {
-        return fail("transport self-test: oversized message was accepted");
-    }
-    bool got_pong = false;
-    for (int i = 0; i < 500 && !got_pong; ++i) {
-        (void)server->poll();
-        for (const NetEvent& ev : client->poll()) {
-            if (ev.type == NetEvent::Type::message && ev.payload.size() == 4 &&
-                std::memcmp(ev.payload.data(), "pong", 4) == 0) {
-                got_pong = true;
-            }
-        }
-        std::this_thread::sleep_for(std::chrono::milliseconds(2));
-    }
-    if (!got_pong) return fail("transport self-test: unreliable message lost on loopback");
-    return {};
 }
 
 } // namespace engine::net

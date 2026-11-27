@@ -5,25 +5,28 @@ flight, what is verified, what is blocked, and what to do next. Whoever ends a
 work session updates it (keep it short — history belongs in git and
 `ROADMAP.md`).
 
-_Last updated: 2026-11-27._
+_Last updated: 2026-11-27 (factory running)._
 
 ## How work runs
 
-As repeated improvement cycles — see [`CYCLE.md`](CYCLE.md) (up to 8 parallel
-worktree agents per cycle, a scheduled task every 2 hours that resumes the
-live session, one PR per cycle, merged once its CI is green) and [`LEARNINGS.md`](LEARNINGS.md).
+As a software factory — see [`FACTORY.md`](FACTORY.md) (hourly Scanner and
+Visual QA sessions open issues; one Reviewer session per PR; the live
+orchestrator session fans issues and ROADMAP items out to worktree agents,
+one `feat/<id>` branch + PR each) on top of the cycle mechanics in
+[`CYCLE.md`](CYCLE.md) and the lessons in [`LEARNINGS.md`](LEARNINGS.md).
 
 ## Current focus
 
 Priority order agreed with the project owner: **stability (track S) → AI
 tooling / MCP (track A) → macOS via Vulkan-on-Metal (P1/P2) → audio with
-miniaudio (G1)**, then the rest of [`ROADMAP.md`](../ROADMAP.md).
+miniaudio (G1)**, then the rest of [`ROADMAP.md`](../ROADMAP.md). The tech
+radar ([`research/reports/`](research/reports/)) fed R11–R17 and G8–G10.
 
 Decisions already made (do not re-litigate without the owner):
 
 - macOS: ship through Vulkan-on-Metal (MoltenVK / KosmicKrisp) now; keep the
   RHI ready for a native Metal backend later (P2 seam, P5 backend).
-- Audio: miniaudio.
+- Audio: miniaudio. Scripting: Lua 5.4 + sol2 (G7).
 - MCP: a Rust server (`tools/quat-mcp`, rmcp crate) bridging to the engine's
   loopback JSON-RPC endpoint; the engine never speaks MCP itself.
 - Steam: Steamworks behind an engine interface; the owner must add the SDK
@@ -31,40 +34,30 @@ Decisions already made (do not re-litigate without the owner):
 
 ## Claimed by the live session (do not pick up)
 
-Cycle 1's eight worker branches are merged into `claude/nifty-hopper-nb68qe`
-(PR #2) and await a green CI run there (run 8 on 473ec53).
+Cycle 1 is merged into `master` (PR #2, `c6acf19`). **Cycle 2** is PR #3
+(`claude/nifty-hopper-nb68qe` → `master`): A5, G2, R2, R9.2, R9.3, R10.2,
+S1 batch 2, S3.3, S7.3, A7 and the PR #3 review fixes are merged into it;
+review is non-blocking; it merges when CI on its head is green. Item PRs
+below are stacked on it and get retargeted to `master` after it merges.
 
-**Cycle 2** — eight worktree agents started from 473ec53; each pushes
-`feat/<id>`. Merges wait until PR #2 is merged (merged as soon as its CI is green), then go into a new cycle PR.
+| PR | Item | Branch | State |
+|---|---|---|---|
+| #17 | A8 live tuning | `feat/a8-tuning` | review blocking (derived-material leak, A6 shader copy, shadow tests, base conflict) — worker fixing; merges before #19 |
+| #18 | S1: issues #4 #5 #9 (RHI) | `feat/issues-4-5` | review clean; merges when CI is green |
+| #19 | A6 shader authoring | `feat/a6-shader-authoring` | review blocking (source path confinement, timeout rollback, A8 composition, base conflict) — worker fixing |
+| #20 | CI screenshots + audit D2/D7, fixes #7 #8 #21 | `feat/ci-screenshots` | #21 fixed (bodies spawned inside the floor); merging base to clear conflicts |
+| #22 | G7 Lua scripting | `feat/g7-lua` | in review |
+| #24 | S4/P1 Win + macOS CI, P6 release | `feat/s4-platform-ci` | review blocking (Windows UTF-8 paths, action SHA pins, base conflict) — worker fixing; tag `v0.1.0` after it merges |
+| #25 | R12 shadows + AO foundation | `feat/r12-shadows-ao` | worker running |
+| #26 | R10.3 GPU particles | `feat/r10-particles` | worker running |
+| #28 | G8 animation quick wins | `feat/g8-animation` | worker running |
+| — | R11 velocity + FSR | `feat/r11-velocity` | worker running (PR opens on first push) |
+| — | R17 KTX2/Basis + meshopt | `feat/r17-cooker` | worker running |
+| — | Mountain forest showcase | `feat/showcase-mountain` | worker running |
 
-| Item | Branch | Scope |
-|---|---|---|
-| S7.3 | `feat/s7-app-layer` | main.cpp → app layer (Application, FrameRenderer, EditorBridge, WorldRuntime, FlyCamera); fixes the ENGINE_EDITOR=OFF build. **Sole main.cpp restructurer** |
-| G2 | `feat/g2-bt-editor` | Behaviour-tree node editor on imgui-node-editor; JSON ↔ graph model |
-| A5 | `feat/a5-debug-tools` | `debug.*` remote methods (log ring, stats, pause/step/time scale, watch, raycast, nav path) + quat-mcp tools |
-| R9.2 | `feat/r9-scatter` | `InstancedMesh` + seeded `Scatter` on terrain |
-| R10.2 | `feat/r10-gpu-terrain` | Compute-shader heightmap synthesis, CPU reference kept |
-| R2 | `feat/r2-shader-reload` | Shader hot reload (watcher, slangc service, deferred pipeline swap) |
-| S1 batch 2 | `feat/s1-batch2` | B14, C5 joints, C11, C12, C14, C15, C16, A10, A15 |
-| S4/P1 | `feat/s4-platform-ci` | Windows + macOS CI jobs and portability fixes |
-
-## Work in flight
-
-| Item | State | Verified? |
-|---|---|---|
-| S1 bug audit | 46 findings recorded in [`audit/S1-findings.md`](audit/S1-findings.md) with severity and status. Fixed so far: B7, B11/C4, B13 (`[S1.1]`); C1–C3 + C5 index part — glTF structural validation (`[S1.2]`); B6/C8 orphaned Jolt bodies/characters swept (`[S1.3]`); B10/C7 behaviour-tree parsing hardened (`[S1.4]`); C6, B12/C9, parts of C11/C16 via the component codec + scene_io rewrite (`[S2.1]`, `[S2.2]`); A5 transient-pool eviction (`[S1.5]`); A3/A4/A7 render-graph synchronisation (`[S1.6]`) | Animation fix verified locally; physics/scene fixes await CI |
-| S3 GoogleTest | Step 1 done: `tests/` (gtest via vcpkg), legacy self-tests wrapped (`tests/legacy/`), GPU fixture, CTest CPU/GPU split. Step 2 (move test bodies out of engine sources) not started | Harness built and run locally against a source-built gtest (RPC tests pass); full suite awaits CI |
-| S4 CI | Linux job in `.github/workflows/ci.yml` | First runs in progress on GitHub — check the Actions tab |
-| S7 thin `main.cpp` | S7.1 + S7.2 done: tests, mesh generators and demo-scene construction (`src/app/demo_scenes.*`) moved out, `QUAT_SELFTEST` removed — 3,723 → ~2,010 lines. Next: the frame loop (`Application` / `FrameRenderer` / `EditorBridge`), and move the remote setup out of `main.cpp` | Compile-checked locally |
-| S8 split oversized files | S8.1 done: `gltf_loader.cpp` (1,770 lines) → `src/scene/gltf/` (validate, mesh, material, skin_animation, scene_assembly, self_tests; largest 400 lines + 540 of legacy tests) with a private `internal.hpp` | Every file compile-checked locally; link verified by CI |
-| A4 Rust MCP server | **Merged** (`tools/quat-mcp`): 27 tools, prompts, scene resource; 31 tests + fmt + clippy pass locally; Rust CI job added. Not yet tried against the real engine (A2/A3 in progress) | Verified locally |
-| CI | Run 3: all vcpkg dependencies built + cached; engine build failed on a pre-existing `std::jthread` (libc++ 18) — fixed in `219b406`, next run in progress | — |
-| A1 remote transport | `src/remote/`, `include/engine/remote/rpc_server.hpp`, wired in `main.cpp` (`QUAT_REMOTE`) | Library compiled warning-free + self-test passed standalone; `main.cpp` wiring not yet compiled |
-| A2 world commands | Component codec done (`component_json.*`, 10 gtest cases pass locally); `Primitive` serialized but `resolve_primitives()` (mesh/material build) and the RPC commands not written | Codec verified locally |
-
-Commit `1adbed7` is a WIP commit made before full-build verification; the
-next session must confirm CI is green for it (or fix it) before building on
-top.
+Triaged issues queued for the next free agents: #10 + #11, #14 + #23
+(glass), #13 (aerial perspective → R13), #15 + #27 (terrain/grass look →
+R14), #30 (Lua patterns).
 
 ### A2 design notes (agreed, not yet implemented)
 

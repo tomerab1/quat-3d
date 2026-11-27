@@ -10,6 +10,7 @@
 #include <cstdint>
 #include <expected>
 #include <memory>
+#include <optional>
 #include <span>
 #include <vector>
 
@@ -135,21 +136,35 @@ public:
     // Valid until the next update() call.
     [[nodiscard]] std::span<const TriggerEvent> trigger_events() const;
 
+    // ---- Queries (debugging, gameplay) -------------------------------------
+    // Bodies in the simulation (all kinds, terrain included) and how many of
+    // them are awake (active rigid bodies).
+    [[nodiscard]] std::uint32_t body_count() const;
+    [[nodiscard]] std::uint32_t active_body_count() const;
+    // Live character controllers.
+    [[nodiscard]] std::uint32_t character_count() const;
+
+    struct RayHit {
+        std::uint32_t body = invalid_body;      // set when a body was hit
+        std::uint32_t character = invalid_body; // set when a character was hit
+        std::uint32_t owner = no_owner;         // the hit body's / character's owner
+        glm::vec3     point{0.0F};
+        glm::vec3     normal{0.0F, 1.0F, 0.0F}; // world-space surface normal
+        float         distance = 0.0F;          // from the ray origin, metres
+        bool          sensor = false;
+    };
+    // Closest hit along `direction` (need not be normalized; zero = no hit)
+    // within `max_distance`, against bodies (sensors only when
+    // `include_sensors`) and character capsules. nullopt when nothing is hit.
+    [[nodiscard]] std::optional<RayHit> cast_ray(const glm::vec3& origin, const glm::vec3& direction,
+                                                 float max_distance,
+                                                 bool include_sensors = false) const;
+
 private:
     PhysicsWorld() = default;
 
     struct Impl;
     std::unique_ptr<Impl> impl_;
-
-    friend std::expected<void, core::Error> run_physics_self_test();
 };
-
-// Creates a world with a static floor and a dynamic sphere dropped from above,
-// steps ~2 s, and verifies the sphere fell and came to rest on the floor.
-[[nodiscard]] std::expected<void, core::Error> run_physics_self_test();
-
-// Drops a dynamic sphere through a static sensor volume and verifies the contact
-// listener reports both an enter and an exit trigger event.
-[[nodiscard]] std::expected<void, core::Error> run_trigger_self_test();
 
 } // namespace engine::physics

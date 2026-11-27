@@ -18,6 +18,8 @@ ID (`S3`, `A2`, …) and ends in one or more commits titled `[<ID>] <description
 - If an item turns out to be wrongly scoped, edit this file first (in its own
   commit) rather than silently drifting.
 
+Research basis for R11–R17 and G8–G10: [`docs/research/reports/Real time rendering tech radar.md`](docs/research/reports/Real%20time%20rendering%20tech%20radar.md).
+
 **Current priority order:** S1 audit fixes (incl. the navmesh / NPC bugs) →
 S3 GoogleTest → S7/S8 (thin `main.cpp`, split oversized files) → R9
 instancing → rest of S → A (AI tooling / MCP) → P1/P2 (Mac) → G1 (audio) →
@@ -62,19 +64,19 @@ Language models drive the engine through the Model Context Protocol: a Rust
 MCP server (`tools/quat-mcp`) speaks MCP over stdio to the client and
 JSON-RPC over loopback TCP to the engine.
 
-- [ ] **A1 — Remote-control transport.** `engine_remote`: loopback JSON-RPC 2.0,
+- [x] **A1 — Remote-control transport.** `engine_remote`: loopback JSON-RPC 2.0,
   newline-delimited, token auth, poll-driven on the main thread, deferred
   replies. `QUAT_REMOTE=<port>`, `QUAT_REMOTE_TOKEN`. *(implemented, awaiting
   full-build verification)*
-- [ ] **A2 — World commands.** Entity create/update/destroy/reparent/list/get,
+- [x] **A2 — World commands.** Entity create/update/destroy/reparent/list/get,
   every component through one shared JSON codec (also used by scene files),
   the data-driven `Primitive` component (shapes + PBR material, serialized),
   sun/sky/clouds, terrain, ground-height queries, batched commands with
   back-references.
-- [ ] **A3 — Frame services.** Viewport screenshots (PNG, non-stalling GPU
+- [x] **A3 — Frame services.** Viewport screenshots (PNG, non-stalling GPU
   readback), camera get/set/frame, glTF spawn, play/stop, save/load (paths
   confined to the project), navmesh bake.
-- [ ] **A4 — `quat-mcp` server.** rmcp-based, typed tool schemas, screenshots
+- [x] **A4 — `quat-mcp` server.** rmcp-based, typed tool schemas, screenshots
   as MCP image content, reconnect handling, tests against a mock engine,
   setup docs for Claude Code / Claude Desktop.
 - [x] **A4.1 — `quat-mcp` idiom pass.** Model-facing text moved to Markdown
@@ -92,9 +94,13 @@ JSON-RPC over loopback TCP to the engine.
 
 ## R — Rendering & performance
 
+- [ ] **A8 — Live tuning.** Every renderer / post-process / material
+  parameter readable and writable over the remote API and MCP from one
+  settings model the editor also edits (schema with ranges and units),
+  saved with the scene; a `tune_look` workflow prompt.
 - [ ] **R1 — Async asset loading.** Thread-pool loads, `is_ready()` handles,
   fallback assets while loading, upload queue budgeted per frame.
-- [ ] **R2 — Shader hot reload.** File watcher → `slangc` → pipeline recreation
+- [x] **R2 — Shader hot reload.** File watcher → `slangc` → pipeline recreation
   on the next frame; compile errors surfaced, old pipeline kept on failure.
 - [ ] **R3 — Asset hot reload.** Meshes/textures re-imported on change.
 - [ ] **R4 — Profiling.** Tracy CPU zones on every system/pass, GPU zones via
@@ -105,12 +111,12 @@ JSON-RPC over loopback TCP to the engine.
 - [ ] **R7 — Shader graph runtime.** Node graph → generated Slang module
   implementing the material interface (no `#ifdef` variants).
 - [ ] **R9 — Instanced rendering (trees, rocks, grass).**
-  - **R9.1 Instanced draws.** The renderer batches identical mesh+material
+  - ✅ **R9.1 Instanced draws.** (cycle 1) The renderer batches identical mesh+material
     draws into one instanced draw; shaders read per-instance transforms
     through a buffer device address (GBuffer + shadow passes), deriving the
     normal matrix per instance (fixes audit A13). Existing per-entity
     MeshRenderers are batched automatically.
-  - **R9.2 `InstancedMesh` + `Scatter`.** One entity carries thousands of
+  - ✅ **R9.2 `InstancedMesh` + `Scatter`.** (cycle 2) One entity carries thousands of
     placements; seeded procedural scattering on terrain (density, slope /
     height limits, scale/rotation jitter) for trees and rocks. Serialized,
     inspector + remote/MCP editable.
@@ -120,7 +126,7 @@ JSON-RPC over loopback TCP to the engine.
     instance (with R6) and distance fade / LOD selection.
 - [ ] **R10 — GPU compute migration.** Move data-parallel work to compute
   passes (CLAUDE.md "GPU compute first"):
-  - **R10.1 Clustered light culling on the GPU.** Phase 7.2 shipped a flat
+  - ✅ **R10.1 Clustered light culling on the GPU.** (cycle 1) Phase 7.2 shipped a flat
     per-pixel loop over every point light (max 64) — no clustering. A
     compute pass bins lights into view-space clusters (froxels); deferred
     lighting and the forward transparent pass read only their cluster's
@@ -134,6 +140,35 @@ JSON-RPC over loopback TCP to the engine.
 - [ ] **R8 — Image quality.** GTAO, screen-space reflections, contact shadows,
   optional ray-traced shadows/AO, CUBICSPLINE animation interpolation.
 
+- [ ] **R11 — Velocity + upscalers.** Complete per-object velocity buffer
+  (skinned previous positions, instances, wind offsets, particles), reactive
+  mask and one jitter contract feeding TAA and a single upscaler interface;
+  FSR 2/3.1 first (MIT, runs on MoltenVK), then DLSS / XeSS / FSR 4.1 plugins
+  on Windows/Linux. *(tech radar: quick win)*
+- [ ] **R12 — Shadows + AO foundation.** Hi-Z depth pyramid (shared with R6),
+  4-cascade CSM with GPU depth bounds and texel snapping, XeGTAO port with
+  bent normals → visibility-bitmask SSILVB, contact shadows, then stochastic
+  SSR. Supersedes the AO/SSR/contact-shadow parts of R8. *(quick win)*
+- [ ] **R13 — Weather + wind.** One `WeatherState` (ECS singleton, Lua + MCP
+  `set_weather`) driving a global wind field (grass, foliage, cloth, particles,
+  ocean, clouds), wetness/snow layers, rain with an occlusion map, cloud
+  shadows; then froxel volumetric fog + local fog volumes (on R10.1's
+  clusters) and a 2.5D volumetric cloud layer. *(quick win → medium)*
+- [ ] **R14 — Foliage.** Main + detail wind bending, two-sided foliage shading
+  model ID in the GBuffer, hashed alpha with coverage-preserving mips, GPU
+  instance cull + LOD cross-fade (with R9.4), octahedral impostors, GPU
+  density placement from R10.2 terrain maps with **biome recipes authored
+  over MCP**. *(quick win → medium)*
+- [ ] **R15 — Global illumination tiers.** One world-space radiance-cache
+  interface with pluggable tracers: probe volume (tier 0), compute SDF tracer
+  à la AMD Brixelizer GI (tier 1, runs on macOS), `VK_KHR_ray_query` tracer +
+  denoiser on RT GPUs (tier 2), ReSTIR / path tracing long-term. Needs R12.
+- [ ] **R16 — Water.** FFT ocean (JONSWAP) with single-layer water shading and
+  Jolt buoyancy from a deterministic CPU height reference; later heightfield /
+  shallow-water local sims and rivers from R10.2 erosion flow. *(medium)*
+- [ ] **R17 — Asset cooker formats.** KTX2 + Basis Universal textures,
+  meshoptimizer codecs and quantisation. *(quick win)*
+
 ## P — Platforms & shipping
 
 - [ ] **P1 — macOS via Vulkan-on-Metal.** MoltenVK/KosmicKrisp, harden the
@@ -146,16 +181,19 @@ JSON-RPC over loopback TCP to the engine.
   the SDK): init/overlay, achievements, stats, cloud saves, rich presence,
   Steam networking (GameNetworkingSockets already matches its API). The SDK
   must be added to the repo by hand (Valve's partner download).
+- [ ] **P6 — Release builds.** Tag-driven GitHub Releases with Linux,
+  Windows and macOS (Vulkan-on-Metal) archives the owner can download and
+  run; runtime asset-root resolution; smoke-tested in CI.
 - [ ] **P4 — Game packaging.** Engine-as-library + game project template,
   editor vs runtime builds, cooked asset bundles, shipping config, depot layout.
 - [ ] **P5 — Native Metal backend.** On top of P2.
 
 ## G — Gameplay systems
 
-- [ ] **G1 — Audio (miniaudio).** `AudioSource` / `AudioListener` components,
+- [x] **G1 — Audio (miniaudio).** `AudioSource` / `AudioListener` components,
   3D spatialisation and attenuation, mixer buses, streaming music, editor
   preview, scene serialization.
-- [ ] **G2 — Behaviour node graph.** Visual node editor built on
+- [x] **G2 — Behaviour node graph.** Visual node editor built on
   `imgui-node-editor` (thedmd, vcpkg port) over the existing data-driven
   behaviour trees (JSON stays the asset format); blackboard; more leaves
   (perception, animation parameters).
@@ -165,7 +203,24 @@ JSON-RPC over loopback TCP to the engine.
   interest management, RPCs, lag compensation, dedicated-server build.
 - [ ] **G5 — Input actions.** Action maps over keyboard/mouse/gamepad,
   rebinding, saved per user.
+- [ ] **G7 — Game scripting (Lua 5.4 + sol2).** `Script` component with
+  lifecycle callbacks, a sandboxed per-scene Lua state with instruction and
+  memory limits, an API over entities/components (via the codec), input,
+  physics, audio, navigation; hot reload; remote `script.*` + MCP tools so
+  assistants can write gameplay; a small playable example.
 - [ ] **G6 — In-game UI.** A runtime UI system for games (not ImGui).
+
+- [ ] **G8 — Animation upgrades.** Inertialization, two-bone foot IK,
+  ACL compression; then Jolt ragdolls / powered hit reactions, Jolt cloth,
+  motion matching. *(quick win → medium)*
+- [ ] **G9 — Hair + fur.** Shell + fin fur and hair cards with a hair shading
+  model now; spike Jolt 5.6 GPU strand-hair simulation (must share the device
+  and VMA); compute-rasterised strands long-term (64-bit atomics, check
+  macOS). *(medium → long)*
+- [ ] **G10 — Destruction.** Offline pre-fracture cooker, Blast-style bond
+  graph on Jolt compound shapes, breakable constraints, debris tiers and a
+  `DEBRIS` layer, bond-delta replication over the net layer, destruction
+  fields over MCP. *(medium)*
 
 ## E — Editor (production readiness)
 

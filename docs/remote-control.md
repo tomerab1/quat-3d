@@ -60,7 +60,7 @@ wired into the game by `src/app/remote_bridge.cpp`), plus:
 |---|---|---|
 | `session.hello` | `{token?}` | `{protocol, server, methods}` |
 | `rpc.methods` | — | `[{name, summary, deferred}]` |
-| `engine.info` | — | `{engine, frame, entities, playing, editor}` |
+| `engine.info` | — | `{engine, frame, entities, playing, paused, editor}` |
 
 `rpc.methods` lists every registered method with a one-line summary.
 Details the contract leaves open, as implemented:
@@ -123,6 +123,29 @@ codec (`engine/scene/component_json.hpp`): `transform` (`position`,
 `rotation` in Euler degrees YXZ, `scale` number or `[x,y,z]`, `look_at`),
 `primitive` (`shape`: cube/sphere/plane/cylinder/cone/capsule, `color`
 `"#rrggbb"` or linear `[r,g,b,a]`, `metallic`, `roughness`, `emissive`),
+`instanced_mesh` (many copies of one model in one entity, drawn instanced:
+`gltf` path relative to the project root + optional `node`, or — with `gltf`
+empty — the `primitive` fields `shape` / `color` / `metallic` / `roughness` /
+`emissive`; `cast_shadows`; `instances`: `[{position, rotation (Euler degrees
+YXZ), scale (number or [x,y,z])}, ...]` or bare `[x,y,z]` positions, at most
+100000, entity-local; read-only `instance_count`. `instances` is omitted —
+and cannot be written — while a `scatter` generates them),
+`scatter` (seeded placement of the instanced mesh on the terrain around the
+entity: `seed`, `area` rect/circle, `size` [x,z] m, `radius` m, `density`
+per m², `min_spacing` m, `pattern` poisson/jittered_grid, `scale` [min,max],
+`random_yaw`, `align_to_normal` 0..1, `base_offset` (× scale, 0.5 seats a
+unit primitive), `slope` [min,max] degrees, `height` [min,max] m,
+`max_instances`; regenerates when these, the entity position or the terrain
+change; removing it keeps the placements),
+`grass` (GPU grass around the camera, one field per scene — the first
+`grass` entity's: `seed`, `density` blades per m² (0..1000), `radius` m
+(0..500), `blade_height` / `blade_width` [min,max] m, `base_color` /
+`tip_color` `"#rrggbb"` or linear `[r,g,b]`, `wind_strength` 0..4,
+`wind_direction` [x,z] (normalised), `wind_frequency` Hz 0..10, `slope`
+[min,max] degrees, `height` [min,max] ground height m, `terrain_only` (false:
+also flat ground at `ground_y` where no terrain is loaded), `lod_start`
+0..1 × radius where blades start thinning, `far_density` 0..1 kept at the
+radius),
 `point_light`, `dir_light`, `camera`, `collider`, `rigidbody`, `character`,
 `nav_agent`, `behavior`, `patrol`, `terrain`, `net_replicated`,
 `audio_source` (`clip`, `bus`: master/music/sfx/ui/ambience, `volume`,
@@ -161,8 +184,166 @@ direction `d` gives `azimuth_deg = atan2(d.z, d.x)` and `elevation_deg =
 asin(-d.y)`.
 
 Methods that need something only the full application has (camera,
-screenshot, clouds, glTF spawn, play/stop, save/load, nav bake) return
+screenshot, clouds, glTF spawn, play/stop, save/load, nav bake, and the
+debugging services: log, clock, physics world, navmesh) return
 `unavailable` when the engine runs without it (e.g. in tests).
+
+## Debugging methods (ROADMAP A5)
+
+Methods that let a model diagnose a running game. Contract first: the
+engine (`src/remote/world/debug_*.cpp`, services wired by
+`src/app/remote_bridge.cpp`) and quat-mcp's `debug_*` tools follow this table.
+
+| Method | Params | Result |
+|---|---|---|
+| `debug.log` | `{since_seq?, level?, category?, contains?, limit?=100}` (limit 1..1000) | `{lines:[{seq, t, level, category, message}], cursor, more, missed, oldest_seq, capacity}` |
+| `debug.stats` | — | `{frame, frame_time_ms:{last, avg, worst, samples}, fps, draws, memory:{resident_bytes}, entities, physics:{bodies, active_bodies, characters}, nav:{agents, moving, failed, navmesh_polygons}, sim:<clock>, log:{last_seq, warnings, errors, last_error_seq}}` |
+| `debug.pause` / `debug.resume` | — | `<clock>` |
+| `debug.step` *(deferred)* | `{frames?=1, dt?=1/60}` (frames 1..10000, dt in [0.0001, 0.1] s) | `<clock>` once the steps have run |
+| `debug.time_scale` | `{scale}` in [0.01, 10] | `<clock>` |
+| `debug.watch` | `{entity}` or `{entities:[...]}` (≤ 64), `components?:[names]` | `{entities:[{id, name, world_position, components:{...}, missing?:[names], nav_agent_state?}], frame?, sim_time_s?}` |
+| `debug.raycast` | `{origin, direction, max_distance?=1000, include_sensors?=false}` | `{hit:false}` or `{hit:true, entity, name, kind, point, normal, distance, sensor}` |
+| `debug.nav_path` | `{from, to}` | `{points:[[x,y,z]...], partial, length}` |
+
+`<clock>` is `{paused, time_scale, pending_steps, steps_run, sim_frames,
+sim_time_s}`. `engine.info` also reports `paused`.
+
+- **Log.** The engine keeps the most recent 4096 log lines in a ring
+  (`engine/core/log.hpp`): lines written through `core::log()` (category as
+  given; Vulkan validation messages arrive as category `vulkan`) and — when
+  the endpoint is enabled — everything the process writes to stderr, tee'd
+  through a pipe (`QUAT_LOG_CAPTURE=0` disables the capture). Captured lines
+  are parsed for leading tags: `[warn] x` is level `warn`, category `stderr`;
+  `[nav] x` is level `info`, category `nav`; `[vulkan][ERROR] x` is `error` /
+  `vulkan`. `level` is the minimum level (`trace` < `debug` < `info` <
+  `warn` < `error`), `category` an exact match, `contains` a case-sensitive
+  substring. Without `since_seq` the call returns the newest `limit`
+  matching lines (oldest first); with it, the lines after `since_seq`.
+  Either way pass `cursor` back as the next `since_seq` to tail the log;
+  `more` means `limit` cut the read short, `missed` counts lines after
+  `since_seq` that the ring overwrote before they were read. A `since_seq`
+  beyond the newest line (a cursor from before an engine restart) reads from
+  the oldest retained line. `t` is seconds since the log started.
+- **Stats.** Frame times are real (wall-clock) frame times over the last 240
+  frames; `draws` is the previous frame's draw-item count; `memory` is the
+  process resident set (Linux; `null` elsewhere); `physics` is `null` while
+  no physics world runs (edit mode). `nav.moving` counts active agents that
+  have not arrived, `nav.failed` agents that gave up on their target. Fields
+  the running engine cannot provide are `null`.
+- **Simulation clock.** The frame loop feeds the simulation (physics,
+  characters, behaviour trees, navigation agents, animation) a clock dt:
+  real dt × `time_scale` while running, 0 while paused. The camera, editor,
+  audio, networking and rendering keep running in real time, so a paused
+  scene can still be inspected, screenshotted and flown around.
+  `debug.step` pauses (if running) and queues `frames` single steps, each
+  advancing the simulation by exactly `dt` (unscaled) on one rendered frame
+  (one loop iteration while the window is minimised);
+  the reply comes after the last step ran, so a following `debug.watch`
+  sees the result. Further requests queue behind pending steps, each keeping
+  its own `dt`; at most 100000 steps, 64 runs of differing `dt` and 64
+  waiting requests are accepted (beyond that a request fails with `failed`
+  and queues nothing).
+  `debug.resume` drops pending steps (their `debug.step`
+  replies then complete). Physics itself still integrates in fixed 1/120 s
+  substeps, at most 8 per frame, so very high time scales are capped by
+  that catch-up limit. The clock state survives play/stop: a paused clock
+  stays paused when play starts.
+- **Watch** reuses the component codec (same shapes as `scene.get`);
+  `components` restricts the snapshot (unknown names are `invalid_params`,
+  names the entity lacks are listed in `missing`). Entities with a nav agent
+  also get `nav_agent_state` — the system-managed state the codec does not
+  expose: `active, paused, arrived, failed, commanded, plan_failures,
+  path_partial, waypoint, path, retry_s, stuck_s`.
+- **Raycast** runs against the physics world being simulated — it exists
+  only in play mode (or the physics/character demo modes); otherwise
+  `unavailable`. It hits rigid bodies, static colliders, terrain height
+  fields and character capsules; sensors only with `include_sensors`.
+  `direction` need not be normalized (zero is `invalid_params`). `kind` is
+  `body` (owned by `entity`), `character`, or `static_world` (a body no
+  entity owns: streamed terrain, demo floors — `entity` is null).
+- **Nav path** snaps both ends to the baked navmesh (within ±4 m
+  horizontally, ±16 m vertically) and returns the string-pulled path from
+  the snapped start; `partial` means the target is unreachable and the path
+  ends at the closest reachable point. No baked navmesh is `unavailable`
+  (call `nav.bake`); an end off the mesh is `failed`.
+
+## Behaviour-tree authoring (ROADMAP A7)
+
+Methods that build, inspect and edit an entity's behaviour tree — the same
+graph the editor's Behaviour panel (G2) shows. Contract first: the engine
+(`src/remote/world/behavior_commands.cpp`, on the graph model in
+`engine/scene/bt_graph.hpp`) and quat-mcp's `bt_*` tools follow this table.
+
+| Method | Params | Result |
+|---|---|---|
+| `bt.leaves` | — | `{kinds:[{name, min_children, max_children, help}], leaves:[{name, help, params:[{name, type, default, min?, max?, optional, help}]}]}` |
+| `bt.get` | `{entity}` | `<tree view>` |
+| `bt.set` | `{entity, tree, enabled?}` | `<tree view>` |
+| `bt.add_node` | `{entity, parent, index?, kind, leaf?, params?, children?}` | `<tree view>` + `node` (the new id) |
+| `bt.remove_node` | `{entity, node, keep_children?=false}` | `<tree view>` |
+| `bt.move_node` | `{entity, node, parent, index?}` | `<tree view>` |
+| `bt.set_params` | `{entity, node, params:{name: number \| null}}` | `<tree view>` |
+| `bt.status` | `{entity}` | `{entity, playing, enabled, compiled, tick, root_status, nodes:[{id, path, status}]}` |
+
+`<tree view>` is `{entity, enabled, compiled, parse_failed, root, nodes:[{id,
+kind, leaf?, params?, children:[ids], path, position:[x, y]}], issues:[{node,
+path?, message}], tree}`: `nodes` in depth-first pre-order (the order the
+runtime compiles them in), `root` the root's id (null for an empty tree),
+`tree` the tree JSON without the editor's layout field, `issues` what keeps
+the stored tree from running (empty for a valid tree).
+
+- **Trees** are the runtime's JSON (`engine/scene/behavior.hpp`):
+  `{"type": <kind>, "children": [...]}` for composites, `{"type": "leaf",
+  "name": <leaf>, <param>: <number>...}` for leaves. `bt.leaves` lists the
+  kinds and every leaf with its parameters (defaults, ranges, which may be
+  omitted) from the runtime's reflection table. `tree` may be an object or
+  its JSON text. Parameters a leaf node omits take the leaf's default.
+- **Node ids** are stable: they are stored with the layout in the tree's
+  root `"editor"` field (the Behaviour panel's ids and positions), kept by
+  every edit, and new nodes get the next unused id. A tree written without
+  that field gets ids 1..N in pre-order. `bt.set` with a tree of the same
+  shape as the current one (same kinds, leaves and child counts in pre-order,
+  e.g. only parameters changed) keeps the current ids and layout. `path` is
+  the node's place in the tree JSON (`root.children[1].children[0]`), the
+  same spelling runtime parse errors use.
+- **Validation.** Every write validates the resulting tree first (and then
+  compiles it with the runtime, the final authority) and never stores an
+  invalid tree: a failure is `invalid_params` whose message names each
+  problem with the node's id and path (`node 4 at root.children[1]:
+  wait.seconds: expected a number in [0, 1000000]`), with the same list as
+  `data: {issues:[{node, path, message}]}`. Unknown kinds, leaves and
+  parameters list the known ones. A successful write sets
+  `BehaviorTree::source` and recompiles, exactly like the panel and the
+  inspector (the tree restarts from its root); `bt.set` creates the
+  `behavior` component when the entity lacks it, the other methods answer
+  `not_found` then.
+- **Edits.** `parent`/`node` are node ids. `index` is the position among the
+  parent's children once the node being placed (and, for `bt.add_node`, any
+  adopted children) has been taken out; it defaults to the end. `bt.add_node`
+  adds a leaf (`kind: "leaf"`, `leaf`, `params`) or a composite whose
+  `children` are tree-JSON node objects (new subtrees) or ids of existing
+  nodes (moved under it with their subtrees — e.g. wrapping a node in an
+  inverter). `parent: null` makes the new node the root: allowed for an
+  empty tree, or when it adopts the current root. `bt.remove_node` removes
+  the node with its subtree, or with `keep_children` splices its children
+  into its place; the root can only be removed with `keep_children` when it
+  has exactly one child. `bt.move_node` re-parents or re-orders a node with
+  its subtree (cycles are refused). `bt.set_params` merges leaf parameters:
+  a number sets one, `null` removes it (back to the default).
+- **Layout.** A tree whose layout is the automatic one stays automatically
+  laid out after an edit; otherwise new and moved nodes are placed between
+  their siblings below their parent, and the whole tree is re-laid out only
+  if sibling order on screen would no longer match child order (the panel
+  orders children by x).
+- **Status.** `status` per node is what it returned on the tree's last tick:
+  `running`, `success`, `failure`, or `idle` (not reached that tick).
+  `root_status` is the root's. Trees tick only during Play, so outside Play
+  the last tick of the previous session (or nothing) is reported;
+  `tick` counts ticks since the tree was compiled. `compiled: false` (not
+  ticked since the last change) reports no nodes. Edits work during Play
+  too (the tree restarts from its root), but like every edit made while
+  playing they are undone when Play stops and the editor restores the scene
+  it started from.
 
 ## Errors
 

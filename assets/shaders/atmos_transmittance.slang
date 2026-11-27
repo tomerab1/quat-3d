@@ -6,7 +6,7 @@
 
 import atmosphere;
 
-[[vk::binding(0)]] RWTexture2D<float4> g_out;
+[[vk::binding(0)]] [format("rgba16f")] RWTexture2D<float4> g_out;
 
 static const int STEPS = 40;
 

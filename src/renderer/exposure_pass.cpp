@@ -43,8 +43,8 @@ struct AverageParams {
     float pad0, pad1, pad2;
 };
 
-[[nodiscard]] std::expected<rhi::ComputePipeline, core::Error>
-make_pipeline(const rhi::Device& device, rhi::PipelineCache& cache, const std::string& spv,
+[[nodiscard]] std::expected<rhi::ManagedPipeline, core::Error>
+make_pipeline(rhi::PipelineCache& cache, const std::string& spv,
               const rhi::DescriptorSetLayout& layout, std::uint32_t push_size) {
     auto shader = cache.load(spv);
     if (!shader) return std::unexpected(shader.error());
@@ -54,45 +54,7 @@ make_pipeline(const rhi::Device& device, rhi::PipelineCache& cache, const std::s
     info.shader = *shader;
     info.set_layouts = {&set_layout, 1};
     info.push_constants = {&pc, 1};
-    return rhi::ComputePipeline::create(device, cache.handle(), info);
-}
-
-template <typename Record>
-[[nodiscard]] std::expected<void, core::Error> submit_blocking(const rhi::Device& device,
-                                                               Record&& record) {
-    VkCommandPool pool = VK_NULL_HANDLE;
-    VkCommandPoolCreateInfo pi{};
-    pi.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
-    pi.flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT;
-    pi.queueFamilyIndex = device.queue_families().graphics;
-    if (vkCreateCommandPool(device.handle(), &pi, nullptr, &pool) != VK_SUCCESS) {
-        return fail("exposure: vkCreateCommandPool failed");
-    }
-    VkCommandBufferAllocateInfo ai{};
-    ai.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
-    ai.commandPool = pool;
-    ai.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-    ai.commandBufferCount = 1;
-    VkCommandBuffer cmd = VK_NULL_HANDLE;
-    vkAllocateCommandBuffers(device.handle(), &ai, &cmd);
-    VkCommandBufferBeginInfo bi{};
-    bi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-    bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-    vkBeginCommandBuffer(cmd, &bi);
-    record(cmd);
-    vkEndCommandBuffer(cmd);
-    VkCommandBufferSubmitInfo ci{};
-    ci.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO;
-    ci.commandBuffer = cmd;
-    VkSubmitInfo2 si{};
-    si.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO_2;
-    si.commandBufferInfoCount = 1;
-    si.pCommandBufferInfos = &ci;
-    const VkResult r = vkQueueSubmit2(device.graphics_queue(), 1, &si, VK_NULL_HANDLE);
-    if (r == VK_SUCCESS) vkQueueWaitIdle(device.graphics_queue());
-    vkDestroyCommandPool(device.handle(), pool, nullptr);
-    return r == VK_SUCCESS ? std::expected<void, core::Error>{}
-                           : fail("exposure: vkQueueSubmit2 failed");
+    return cache.create_compute_pipeline(info);
 }
 
 void buffer_barrier(VkCommandBuffer cmd, VkBuffer buffer, VkDeviceSize size,
@@ -130,6 +92,7 @@ ExposureState::create(const rhi::Device& device, rhi::GpuAllocator& allocator) {
     if (!buffer) return std::unexpected(buffer.error());
     const float zero = 0.0F;
     std::memcpy(buffer->mapped(), &zero, sizeof(zero));
+    if (auto flushed = buffer->flush(); !flushed) return std::unexpected(flushed.error());
     auto state = std::make_shared<ExposureState>(Key{});
     state->buffer_ = std::move(*buffer);
     state->address_ = rhi::buffer_device_address(device.handle(), state->buffer_);
@@ -137,7 +100,11 @@ ExposureState::create(const rhi::Device& device, rhi::GpuAllocator& allocator) {
 }
 
 float ExposureState::adapted_luminance() const {
-    return buffer_.mapped() != nullptr ? *static_cast<const float*>(buffer_.mapped()) : 0.0F;
+    if (buffer_.mapped() == nullptr) return 0.0F;
+    // Device writes reach the host only after an invalidate on non-coherent
+    // memory (a no-op on coherent memory).
+    if (!buffer_.invalidate_mapped()) return 0.0F;
+    return *static_cast<const float*>(buffer_.mapped());
 }
 
 std::expected<ExposurePass, core::Error>
@@ -167,11 +134,11 @@ ExposurePass::create(const rhi::Device& device, rhi::GpuAllocator& allocator,
     if (!avg_layout) return std::unexpected(avg_layout.error());
     out.average_layout_ = std::move(*avg_layout);
 
-    auto hist = make_pipeline(device, cache, cooked_shader_dir + "/exposure_histogram.spv",
+    auto hist = make_pipeline(cache, cooked_shader_dir + "/exposure_histogram.spv",
                               out.histogram_layout_, sizeof(HistogramParams));
     if (!hist) return std::unexpected(hist.error());
     out.histogram_pipeline_ = std::move(*hist);
-    auto avg = make_pipeline(device, cache, cooked_shader_dir + "/exposure_average.spv",
+    auto avg = make_pipeline(cache, cooked_shader_dir + "/exposure_average.spv",
                              out.average_layout_, sizeof(AverageParams));
     if (!avg) return std::unexpected(avg.error());
     out.average_pipeline_ = std::move(*avg);
@@ -267,88 +234,6 @@ ExposurePass::add_to_graph(rhi::RenderGraph& graph, rhi::ResourceHandle hdr, VkE
                            VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_2_HOST_BIT,
                            VK_ACCESS_2_SHADER_STORAGE_READ_BIT | VK_ACCESS_2_HOST_READ_BIT);
         });
-    return {};
-}
-
-std::expected<void, core::Error>
-run_exposure_self_test(const rhi::Device& device, rhi::GpuAllocator& allocator,
-                       rhi::PipelineCache& cache, const std::string& cooked_shader_dir) {
-    constexpr VkExtent2D extent{64, 64};
-    auto exposure = ExposurePass::create(device, allocator, cache, cooked_shader_dir);
-    if (!exposure) return std::unexpected(exposure.error());
-
-    auto img = allocator.create_image(VK_FORMAT_R16G16B16A16_SFLOAT, extent,
-                                      VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT);
-    if (!img) return std::unexpected(img.error());
-    auto view = rhi::create_image_view(device.handle(), img->handle(),
-                                       VK_FORMAT_R16G16B16A16_SFLOAT);
-    if (!view) return std::unexpected(view.error());
-    const VkImage image = img->handle();
-
-    // Fill the image to a uniform luminance and run one fully-adapted exposure
-    // pass (huge dt -> adaptation rate ~1). Returns the resulting adapted lum.
-    const auto measure = [&](float value, VkImageLayout old_layout)
-        -> std::expected<float, core::Error> {
-        auto prep = submit_blocking(device, [&](VkCommandBuffer cmd) {
-            VkImageMemoryBarrier2 b{};
-            b.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2;
-            b.srcStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
-            b.dstStageMask = VK_PIPELINE_STAGE_2_CLEAR_BIT;
-            b.dstAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT;
-            b.oldLayout = old_layout;
-            b.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-            b.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-            b.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-            b.image = image;
-            b.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
-            VkDependencyInfo dep{};
-            dep.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO;
-            dep.imageMemoryBarrierCount = 1;
-            dep.pImageMemoryBarriers = &b;
-            vkCmdPipelineBarrier2(cmd, &dep);
-
-            VkClearColorValue c{};
-            c.float32[0] = c.float32[1] = c.float32[2] = value;
-            c.float32[3] = 1.0F;
-            VkImageSubresourceRange range{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
-            vkCmdClearColorImage(cmd, image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &c, 1, &range);
-
-            b.srcStageMask = VK_PIPELINE_STAGE_2_CLEAR_BIT;
-            b.srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT;
-            b.dstStageMask = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT;
-            b.dstAccessMask = VK_ACCESS_2_SHADER_SAMPLED_READ_BIT;
-            b.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-            b.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-            vkCmdPipelineBarrier2(cmd, &dep);
-        });
-        if (!prep) return std::unexpected(prep.error());
-
-        rhi::TransientImagePool pool(device, allocator);
-        rhi::RenderGraph graph(pool);
-        const rhi::ResourceHandle hdr = graph.import_image(
-            "exposure_test", image, view->handle(), VK_FORMAT_R16G16B16A16_SFLOAT, extent,
-            VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-        if (auto r = exposure->add_to_graph(graph, hdr, extent, 1000.0F); !r) {
-            return std::unexpected(r.error());
-        }
-        if (auto c = graph.compile(); !c) return std::unexpected(c.error());
-        auto done = submit_blocking(device, [&](VkCommandBuffer cmd) { graph.execute(cmd); });
-        if (!done) return std::unexpected(done.error());
-        return exposure->adapted_luminance();
-    };
-
-    // Grey 0.25 -> luminance 0.25; the adapted value should track it.
-    auto dim = measure(0.25F, VK_IMAGE_LAYOUT_UNDEFINED);
-    if (!dim) return std::unexpected(dim.error());
-    if (*dim < 0.15F || *dim > 0.45F) {
-        return fail("exposure self-test: adapted luminance did not match the dim scene");
-    }
-    // A bright scene (2.0) should pull the adapted luminance well up.
-    auto bright = measure(2.0F, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-    if (!bright) return std::unexpected(bright.error());
-    if (*bright <= *dim + 0.5F) {
-        return fail("exposure self-test: adaptation did not rise for the bright scene");
-    }
     return {};
 }
 
