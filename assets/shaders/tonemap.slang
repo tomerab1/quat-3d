@@ -26,13 +26,18 @@ VsOut vertex_main(uint id : SV_VertexID) {
 [[vk::binding(1)]] SamplerState            g_sampler;
 [[vk::binding(2)]] StructuredBuffer<float> g_exposure; // [0] = adapted avg luminance
 
-// Exposure controls. auto_exposure 0 -> multiplier 1 (the pixel-exact self-test
-// path); 1 -> key / adapted-luminance, clamped to [min, max].
+// Exposure controls (RenderSettings::exposure). auto_exposure 0 -> multiplier
+// exposure_scale (1 in the pixel-exact test path); 1 -> key / adapted-luminance,
+// clamped to [min, max], times exposure_scale (2^compensation EV).
 struct TonemapParams {
     float auto_exposure;
     float key;
     float min_exposure;
     float max_exposure;
+    float exposure_scale;
+    float pad0;
+    float pad1;
+    float pad2;
 };
 [[vk::push_constant]] TonemapParams pc;
 
@@ -54,10 +59,10 @@ float3 linear_to_srgb(float3 c) {
 [shader("fragment")]
 float4 fragment_main(VsOut input) : SV_Target {
     float3 hdr = g_hdr.Sample(g_sampler, input.uv).rgb;
-    float exposure = 1.0;
+    float exposure = pc.exposure_scale;
     if (pc.auto_exposure > 0.5) {
         float avg = max(g_exposure[0], 1e-4);
-        exposure = clamp(pc.key / avg, pc.min_exposure, pc.max_exposure);
+        exposure *= clamp(pc.key / avg, pc.min_exposure, pc.max_exposure);
     }
     float3 ldr = linear_to_srgb(aces(hdr * exposure));
     return float4(ldr, 1.0);

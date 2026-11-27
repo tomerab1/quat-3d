@@ -114,4 +114,11 @@ struct MaterialAsset {
 upload_material(const PbrMaterialParams& params, MaterialTextures textures,
                 rhi::GpuAllocator& allocator, const rhi::TransferContext& transfer);
 
+// A copy of `base` with `params` (per-entity material tuning, A8): every field
+// but the parameter buffer is copied from `base` — keep it that way when
+// MaterialAsset grows — and `params` is uploaded into a buffer of its own.
+[[nodiscard]] std::expected<MaterialAsset, core::Error>
+derive_material(const MaterialAsset& base, const PbrMaterialParams& params,
+                rhi::GpuAllocator& allocator, const rhi::TransferContext& transfer);
+
 } // namespace engine::asset
