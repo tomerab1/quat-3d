@@ -426,6 +426,10 @@ void collect_nav_geometry(entt::registry& registry, const terrain::Heightmap* ma
     if (!include_colliders) return;
     // Static box colliders become 12 triangles each (the world matrix carries
     // scale/rotation, matching the simulated shape closely enough for nav).
+    // Triangles are wound counter-clockwise seen from outside, so every
+    // face's (v1 - v0) x (v2 - v0) normal points away from the box (the same
+    // convention as the terrain grid above): Recast's slope filter keeps the
+    // top faces walkable and rejects the bottoms.
     for (auto [e, t, col] : registry.view<const Transform, const Collider>().each()) {
         if (col.shape != ColliderShape::box || col.is_sensor) continue;
         const auto* body = registry.try_get<RigidBody>(e);
@@ -438,9 +442,14 @@ void collect_nav_geometry(entt::registry& registry, const terrain::Heightmap* ma
             verts.emplace_back(
                 glm::vec3(t.world * glm::vec4(col.offset + col.half_extents * sign, 1.0F)));
         }
+        // Corner bits: 1 = +x, 2 = +y, 4 = +z.
         constexpr std::array<std::uint32_t, 36> box_idx{
-            0, 1, 3, 0, 3, 2, 4, 6, 7, 4, 7, 5, 0, 2, 6, 0, 6, 4,
-            1, 5, 7, 1, 7, 3, 0, 4, 5, 0, 5, 1, 2, 3, 7, 2, 7, 6};
+            0, 3, 1, 0, 2, 3,  // -z
+            4, 7, 6, 4, 5, 7,  // +z
+            0, 6, 2, 0, 4, 6,  // -x
+            1, 7, 5, 1, 3, 7,  // +x
+            0, 5, 4, 0, 1, 5,  // -y (bottom)
+            2, 7, 3, 2, 6, 7}; // +y (top)
         for (const std::uint32_t i : box_idx) indices.push_back(base + i);
     }
 }

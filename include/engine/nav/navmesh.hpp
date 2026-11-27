@@ -32,7 +32,11 @@ struct NavMeshParams {
 
 class NavMesh {
 public:
-    // Builds from world-space triangles (CCW or CW; Recast filters by slope).
+    // Builds from world-space triangles. Winding matters: Recast takes each
+    // triangle's normal as (v1 - v0) x (v2 - v0) and only marks triangles
+    // whose normal points up within the slope limit as walkable, so walkable
+    // surfaces must be counter-clockwise seen from above (outward-facing for
+    // closed shapes).
     [[nodiscard]] static std::expected<NavMesh, core::Error>
     build(std::span<const glm::vec3> vertices, std::span<const std::uint32_t> indices,
           const NavMeshParams& params = {});
