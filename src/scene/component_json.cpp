@@ -711,6 +711,7 @@ std::expected<void, core::Error> apply_component(entt::registry& r, entt::entity
                 }
                 b.compiled.reset(); // recompile lazily
                 b.node_state.clear();
+                b.last_result.clear();
                 b.parse_failed = false;
             }
             f.boolean("enabled", b.enabled);

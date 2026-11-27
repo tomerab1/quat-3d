@@ -209,6 +209,8 @@ add_library(engine_scene STATIC
     src/scene/nav_agent_system.cpp
     src/scene/navigation.cpp
     src/scene/behavior.cpp
+    src/scene/bt_graph.cpp
+    src/scene/bt_graph_edit.cpp
     src/scene/scene_io.cpp
     src/scene/component_json.cpp
     src/scene/audio_system.cpp
@@ -310,8 +312,9 @@ endif()
 
 # ---------------------------------------------------------------------------
 # engine_remote_world — the world commands (ROADMAP A2/A3): scene.*,
-# environment.*, camera.*, render.screenshot, asset.*, sim.*, nav.bake, on top
-# of engine_remote + the scene codec. Application-only capabilities come in
+# environment.*, camera.*, render.screenshot, asset.*, sim.*, nav.bake, debug.*
+# and bt.* (behaviour-tree authoring), on top of engine_remote + the scene
+# codec and the behaviour-tree graph model. Application-only capabilities come in
 # through WorldServices callbacks (src/app/remote_bridge.cpp wires them), so
 # the commands are testable on a bare Scene.
 # ---------------------------------------------------------------------------
@@ -324,6 +327,8 @@ add_library(engine_remote_world STATIC
     src/remote/world/app_commands.cpp
     src/remote/world/debug_commands.cpp
     src/remote/world/debug_query_commands.cpp
+    src/remote/world/behavior_commands.cpp
+    src/remote/world/behavior_edit_commands.cpp
     src/remote/world/image_encode.cpp
     src/remote/world/stb_image_write_impl.cpp)
 target_link_libraries(engine_remote_world PUBLIC
@@ -390,7 +395,6 @@ if(ENGINE_EDITOR)
         src/editor/picking.cpp
         src/editor/scene_snapshot.cpp
         src/editor/audio_inspector.cpp
-        src/editor/bt_graph.cpp
         src/editor/behavior_panel.cpp
         src/editor/behavior_canvas.cpp
         src/editor/vendor/imgui_impl_sdl3.cpp)
