@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <optional>
 #include <utility>
+#include <vector>
 
 #include <glm/glm.hpp>
 #include <gtest/gtest.h>
@@ -116,6 +117,30 @@ TEST_F(PhysicsWorldTest, SensorReportsEnterAndExitEvents) {
     }
     EXPECT_TRUE(entered) << "no enter event for the sensor";
     EXPECT_TRUE(exited) << "no exit event for the sensor";
+}
+
+// Foot probes skip the probing character's own colliders (G8 foot IK).
+TEST_F(PhysicsWorldTest, RaysSkipIgnoredOwners) {
+    add_floor();
+    PhysicsWorld::BodyParams crate;
+    crate.shape = world->create_box(glm::vec3(0.5F));
+    crate.position = glm::vec3(0.0F, 1.0F, 0.0F);
+    crate.motion = Motion::static_body;
+    crate.layer = Layer::static_body;
+    crate.owner = 7;
+    ASSERT_NE(world->add_body(crate), PhysicsWorld::invalid_body);
+    ASSERT_NE(world->create_character(1.0F, 0.3F, glm::vec3(5.0F, 1.0F, 0.0F), 9),
+              PhysicsWorld::invalid_body);
+
+    const glm::vec3 down(0.0F, -1.0F, 0.0F);
+    const auto hit_y = [&](float x, std::vector<std::uint32_t> ignore) {
+        const auto hit = world->cast_ray(glm::vec3(x, 4.0F, 0.0F), down, 10.0F, false, ignore);
+        return hit ? hit->point.y : -100.0F;
+    };
+    EXPECT_NEAR(hit_y(0.0F, {}), 1.5F, 1e-3F) << "the crate's top";
+    EXPECT_NEAR(hit_y(0.0F, {7}), 0.0F, 1e-3F) << "ignored crate: the floor";
+    EXPECT_GT(hit_y(5.0F, {}), 0.5F) << "the character's capsule";
+    EXPECT_NEAR(hit_y(5.0F, {9, 7}), 0.0F, 1e-3F) << "ignored character: the floor";
 }
 
 } // namespace

@@ -1,4 +1,5 @@
-// Animation state machine: parameter-driven transitions with a crossfade.
+// Animation state machine: parameter-driven transitions with a crossfade
+// (inertialized transitions: inertialization_test.cpp).
 
 #include <vector>
 
@@ -26,7 +27,8 @@ protected:
 
     void SetUp() override {
         sm.add_transition(
-            {idle_state, walk_state, {"speed", AnimCondition::Op::greater, 0.5F}, 1.0F});
+            {idle_state, walk_state, {"speed", AnimCondition::Op::greater, 0.5F}, 1.0F,
+             BlendMode::crossfade});
         sm.set_current(idle_state);
     }
 };
