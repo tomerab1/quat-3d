@@ -171,7 +171,8 @@ add_library(engine_scene STATIC
     src/scene/physics_system.cpp
     src/scene/nav_agent_system.cpp
     src/scene/behavior.cpp
-    src/scene/scene_io.cpp)
+    src/scene/scene_io.cpp
+    src/scene/component_json.cpp)
 # EnTT is PUBLIC: components.hpp exposes entt types (Parent/Children) to consumers.
 # engine_renderer is PUBLIC: scene.hpp's RenderCollectSystem fills a renderer
 # DrawItem list (no cycle — the renderer does not depend on the scene).
@@ -180,9 +181,11 @@ add_library(engine_scene STATIC
 target_link_libraries(engine_scene PUBLIC
     engine_flags engine_asset engine_rhi engine_renderer engine_animation engine_physics
     engine_terrain engine_nav EnTT::EnTT)
-# fastgltf and stb (image decode) are implementation details of the loader;
-# nlohmann_json of the scene serializer.
-target_link_libraries(engine_scene PRIVATE fastgltf::fastgltf nlohmann_json::nlohmann_json)
+# fastgltf and stb (image decode) are implementation details of the loader.
+# nlohmann_json is PUBLIC: component_json.hpp exposes JSON values (the codec
+# shared by scene files and the remote-control API).
+target_link_libraries(engine_scene PUBLIC nlohmann_json::nlohmann_json)
+target_link_libraries(engine_scene PRIVATE fastgltf::fastgltf)
 target_include_directories(engine_scene PRIVATE ${Stb_INCLUDE_DIR})
 target_include_directories(engine_scene PUBLIC ${ENGINE_PUBLIC_INCLUDE})
 

@@ -192,6 +192,12 @@ public:
         return *this;
     }
 
+    // Convenience for a fixed table of names (deduces E through the array).
+    template <typename E, std::size_t N>
+    JsonFields& enumeration(std::string_view key, E& out, const EnumName<E> (&names)[N]) {
+        return enumeration(key, out, std::span<const EnumName<E>>(names, N));
+    }
+
     // Array of [x, y, z] points (at most `max_count`).
     JsonFields& vec3_list(std::string_view key, std::vector<glm::vec3>& out,
                           std::size_t max_count = 4096) {
