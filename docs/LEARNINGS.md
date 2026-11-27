@@ -34,6 +34,14 @@ into CLAUDE.md or the brief template in [`CYCLE.md`](CYCLE.md).
   heightmap preview (the generator is the reference) and a few 12-frame
   renders; render 30 frames only for the keepers. Frame timings vary ±30 %
   while other agents share the machine.
+- **A local editor build must compile `src/main.cpp` with `ENGINE_EDITOR`
+  too.** `Application`'s members differ between editor and non-editor
+  builds; linking a non-editor `main.o` into an editor binary corrupts it
+  at startup (it showed up as `SDL_Init failed: No available video device`).
+  Recompile main, `src/app/*`, `shader_hot_reload.cpp`, `imgui_pass.cpp`,
+  `src/editor/**`, ImGui (+ `misc/cpp/imgui_stdlib.cpp`), imgui-node-editor
+  (needs `-include exception`) and ImGuizmo with the define; the other
+  engine objects are shared with the non-editor build.
 - **The real `game` runs locally under Xvfb + lavapipe.** Without vcpkg, a
   non-editor build links from the `~/deps` clones: build SDL3
   (`~/deps/sdl`, cmake, shared) and link libJolt / libfastgltf / GNS /
