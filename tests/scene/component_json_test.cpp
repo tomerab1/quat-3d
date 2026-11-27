@@ -102,6 +102,21 @@ TEST_F(ComponentJson, TerrainCarriesErosionModelAndGpuFlag) {
     EXPECT_FALSE(apply("terrain", {{"erosion", "rivers"}}));
 }
 
+// Audit D3: grid erosion cost (resolution² x steps) is bounded at the codec,
+// so a remote request cannot start hours of CPU work or a multi-GB
+// allocation; droplet terrains keep their own (droplet-count) bound.
+TEST_F(ComponentJson, TerrainGridErosionCostIsBounded) {
+    ASSERT_OK(apply("terrain",
+                    {{"erosion", "grid"}, {"resolution", 1025}, {"erosion_steps", 5000}}));
+    EXPECT_FALSE(apply("terrain", {{"erosion_steps", 100000}}));
+    EXPECT_FALSE(apply("terrain", {{"resolution", 8193}}));
+    EXPECT_FALSE(apply("terrain", {{"resolution", 2049}})); // 2049² x 5000 over budget
+    ASSERT_OK(apply("terrain", {{"resolution", 2049}, {"erosion_steps", 1000}}));
+    EXPECT_EQ(r.get<s::Terrain>(e).params.resolution, 2049U);
+    ASSERT_OK(apply("terrain", {{"erosion", "droplets"}, {"resolution", 8193}}));
+    EXPECT_EQ(r.get<s::Terrain>(e).params.resolution, 8193U);
+}
+
 TEST_F(ComponentJson, MergeKeepsFieldsNotMentioned) {
     ASSERT_OK(apply("point_light", {{"color", {1, 0, 0}}, {"radius", 3}, {"intensity", 9}}));
     ASSERT_OK(apply("point_light", {{"radius", 12}}));

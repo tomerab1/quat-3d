@@ -55,7 +55,7 @@ class TerrainSynthPass {
 public:
     // Largest tile the GPU path synthesises (scratch is ~52 bytes a texel and
     // one float4 field must fit the device's storage-buffer range).
-    static constexpr std::uint32_t max_resolution = 2049;
+    static constexpr std::uint32_t max_resolution = terrain::max_grid_erosion_resolution;
     // Default erosion budget per frame, in texel-steps (≈16 steps of a
     // 1025² tile): a few milliseconds of compute on a desktop GPU.
     static constexpr std::uint64_t default_cell_budget = 16ULL * 1025 * 1025;
