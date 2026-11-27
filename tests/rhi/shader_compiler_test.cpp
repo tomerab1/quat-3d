@@ -142,6 +142,46 @@ TEST(ShaderCompiler, ReturnsDiagnosticsAndKeepsTheLastGoodOutput) {
     EXPECT_EQ(read_file(t.out / "pass.spv"), good_spv) << "failed compile clobbered the output";
 }
 
+// The .spv/.json pair is installed as a unit: when the second move fails
+// (forced here by putting a non-empty directory where pass.spv goes), the
+// reflection already moved into place is rolled back.
+TEST(ShaderCompiler, FailedInstallRestoresThePreviousPair) {
+    REQUIRE_SLANGC();
+    ShaderTree t;
+    auto compiler = ShaderCompiler::create({{}, t.src, {}, t.out});
+    ASSERT_OK(compiler);
+    ASSERT_TRUE(compiler->compile(t.src / "pass.slang").ok);
+    const std::string good_json = read_file(t.out / "pass.json");
+    ASSERT_FALSE(good_json.empty());
+
+    std::error_code ec;
+    fs::remove(t.out / "pass.spv", ec);
+    fs::create_directories(t.out / "pass.spv");
+    write_file(t.out / "pass.spv" / "blocker", "x");
+    // A second binding: the new reflection differs from the installed one.
+    write_file(t.src / "pass.slang", std::string("[[vk::binding(1)]] RWStructuredBuffer<uint> g_more;\n") +
+                                         k_valid_pass);
+    const ShaderCompileResult r = compiler->compile(t.src / "pass.slang");
+    EXPECT_FALSE(r.ok);
+    EXPECT_TRUE(r.outputs.empty());
+    EXPECT_NE(r.diagnostics.find("cannot install"), std::string::npos) << r.diagnostics;
+    EXPECT_NE(r.diagnostics.find("previous outputs kept"), std::string::npos) << r.diagnostics;
+    EXPECT_EQ(read_file(t.out / "pass.json"), good_json) << "reflection not rolled back";
+
+    // Nothing is left behind in the staging area.
+    for (const char* name : {"pass.spv", "pass.json"}) {
+        EXPECT_FALSE(fs::exists(t.out / ".hot_reload" / name)) << name;
+        EXPECT_FALSE(fs::exists(t.out / ".hot_reload" / "prev" / name)) << name;
+    }
+
+    // Unblocked, the same compile installs both.
+    fs::remove_all(t.out / "pass.spv", ec);
+    const ShaderCompileResult again = compiler->compile(t.src / "pass.slang");
+    ASSERT_TRUE(again.ok) << again.diagnostics;
+    EXPECT_NE(read_file(t.out / "pass.json"), good_json);
+    EXPECT_TRUE(fs::is_regular_file(t.out / "pass.spv"));
+}
+
 TEST(ShaderCompiler, FailsWithoutSlangc) {
     ShaderTree t;
     EXPECT_FALSE(ShaderCompiler::create({"/nonexistent/slangc", t.src, {}, t.out}).has_value());

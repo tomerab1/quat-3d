@@ -12,7 +12,8 @@
 //              -reflection-json <out>/<name>.json
 // It compiles into a staging directory under the output directory and only
 // moves the outputs into place when slangc succeeds, so a failed compile never
-// clobbers the last good cooked shader. The captured stdout/stderr is returned
+// clobbers the last good cooked shader. The .spv/.json pair is installed as a
+// unit: if a move fails, the outputs already replaced are restored. The captured stdout/stderr is returned
 // as the diagnostics (warnings on success, errors on failure).
 //
 // ShaderDependencyGraph tracks `import` declarations between Slang sources so a
