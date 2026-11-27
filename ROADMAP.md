@@ -161,8 +161,43 @@ JSON-RPC over loopback TCP to the engine.
 - [x] **R2 — Shader hot reload.** File watcher → `slangc` → pipeline recreation
   on the next frame; compile errors surfaced, old pipeline kept on failure.
 - [ ] **R3 — Asset hot reload.** Meshes/textures re-imported on change.
-- [ ] **R4 — Profiling.** Tracy CPU zones on every system/pass, GPU zones via
-  the Vulkan extension; in-editor frame-time breakdown.
+- [ ] **R4 — Profiling.** *(owner request: "no prod engine could be taken
+  seriously without it; the MCP should be able to query it")* Instrumentation
+  is central (graph executor, system calls, frame loop), not sprinkled.
+  - **R4.1 Profiling facade + Tracy.** `tracy` from vcpkg (overlay port:
+    on demand, loopback-only listener) behind `ENGINE_PROFILE` (default ON
+    for Debug / RelWithDebInfo, OFF for Release unless asked). One public
+    header of macros (`QUAT_ZONE*`, `QUAT_FRAME_MARK`, `QUAT_PLOT`,
+    `QUAT_THREAD_NAME`) feeding Tracy and the built-in profiler; Tracy
+    headers stay out of every other header. Named main / worker / loader
+    threads; one zone per render-graph pass, per scene system, and for the
+    physics step, nav, scripting, audio, remote poll, editor and asset
+    upload; plots for draws, instances, triangles and VMA budget / usage.
+  - **R4.2 GPU zones + built-in frame profiler.** Per-pass GPU timing from a
+    timestamp query pool per frame in flight (`vkCmdWriteTimestamp2`, read
+    back a frame later without stalling, availability-checked, honouring
+    `timestampValidBits` / `timestampPeriod`, disabled gracefully without
+    timestamps); TracyVkContext (calibrated where the device offers it)
+    when Tracy is on. Allocation-free per-frame scope ring; rolling avg /
+    p50 / p95 / max per pass and system (CPU and GPU) and per frame (CPU,
+    GPU, present wait) over 240 frames; editor Profiler panel (frame graph,
+    sortable CPU vs GPU table).
+  - **R4.3 Remote commands.** `profile.frame`, `profile.capture` (async over
+    frames; `profile.result {id}`: top zones by total and p95, spikes over a
+    budget with their worst zones, per-frame totals), `profile.counters`,
+    `profile.reset`; bounded inputs, compact replies.
+  - **R4.4 MCP.** `profile_frame`, `profile_capture` (starts, then polls
+    with bounded waiting), `profile_counters`; a "find a performance
+    problem" workflow prompt.
+- [ ] **R4.5 — Data-oriented CPU pass** *(after R4; benchmark-gated: each
+  change is kept only when an R4 capture or a benchmark shows a win)*:
+  a per-frame linear / arena allocator in core; hot / cold splitting of
+  components (strings, vectors and `shared_ptr` out of hot components such
+  as `MeshSource`, `BehaviorTree`, `NavAgent`, `FootIK`; names resolved to
+  indices at load); a compact TRS local transform and a parent-first
+  hierarchy sweep; an `entt::group` for render extraction; cache-line
+  padding of per-thread data; a glm SIMD trial behind the layout
+  `static_assert`s.
 - [ ] **R5 — GPU-driven rendering.** Bindless materials, one indirect draw per
   pass, instance data in storage buffers.
 - [ ] **R6 — GPU culling.** Frustum + Hi-Z occlusion culling in compute.
