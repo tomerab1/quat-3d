@@ -34,8 +34,13 @@ the game finds `assets/` + `cooked/shaders/` next to its executable or in
 
 Targets: the engine libraries (`engine_core`, `engine_rhi`, `engine_renderer`,
 `engine_scene`, `engine_physics`, `engine_animation`, `engine_terrain`,
-`engine_nav`, `engine_net`, `engine_remote`, `engine_audio`, `engine_editor`), the `game`
-executable, and the GoogleTest suite `engine_tests` (`tests/`).
+`engine_nav`, `engine_net`, `engine_remote`, `engine_audio`, `engine_project`,
+`engine_editor`), the `game` executable (the editor when `ENGINE_EDITOR` is
+on), `quat-player` (the runtime player games ship with — always without the
+editor), the game packager `quat-pack` (`engine_pack`), and the GoogleTest
+suite `engine_tests` (`tests/`). `ENGINE_EDITOR` is a per-target definition
+(the `engine_editor_build` interface target), not a global one, so one
+editor build produces both executables from the same application sources.
 
 ## Testing
 
@@ -113,7 +118,7 @@ a run fails. The Windows and macOS test steps print GoogleTest's brief summary
 
 ## Releases
 
-`.github/workflows/release.yml` builds `game` in Release with
+`.github/workflows/release.yml` builds `game`, `quat-player` and `quat-pack` in Release with
 `ENGINE_PACKAGE_BUILD=ON` on all three OSes (toolchain setup shared with CI
 through `.github/actions/setup-build`), packages it with
 `scripts/package-release.sh`, and smoke-tests each package with
@@ -125,12 +130,43 @@ a clean exit, a screenshot, and data resolved next to the executable):
 | `quat-3d-<v>-linux-x64.tar.gz` | `game` (RUNPATH `$ORIGIN/lib`), `lib/` libc++ runtime, data | Xvfb + lavapipe |
 | `quat-3d-<v>-windows-x64.zip` | `game.exe`, vcpkg DLLs (applocal), MSVC runtime DLLs, data | lavapipe |
 | `quat-3d-<v>-macos-arm64.zip` | `Quat3D.app`: Vulkan loader + MoltenVK in `Frameworks/` (ICD manifest in `Resources/vulkan/icd.d`), data in `Resources/`, ad-hoc signed | MoltenVK, with Homebrew's Vulkan uninstalled first |
+| `coin-collector-<v>[-dev.<sha>]-<os>.{tar.gz,zip}` | The sample game through `quat-pack`: `coin-collector` / `coin-collector.exe` / `Coin Collector.app` (Info.plist and icon from `game.json`) next to `game.json`, `manifest.json` and only the data it uses | as above, plus the start scene must load |
 
 Each archive carries `packaging/README-RUN-<os>.txt` as `README-RUN.txt`.
 Pushing a `v*` tag publishes a GitHub Release (tags with a `-`, e.g.
 `v0.2.0-rc1`, are prereleases); running the workflow by hand
 (`gh workflow run release.yml --ref <branch>`) only uploads the packages as
 workflow artifacts.
+
+## Game projects and packaging
+
+Games live in `games/<name>/` with a `game.json` (docs/game-packaging.md):
+
+```sh
+QUAT_GAME=games/coin-collector ./build/release/game          # edit it in the editor
+QUAT_GAME=games/coin-collector ./build/release/quat-player   # play it, no editor
+./build/release/quat-pack games/coin-collector --player ./build/release/quat-player \
+    --out dist [--config development] [--smoke-test] [--stage-only]
+```
+
+`quat-pack` validates `game.json`, collects the files the game references
+(the start scene and scenes in `content` roots → models, audio, scripts; Lua
+`require`s and script literals), cooks models with `quat-cook` when it is
+next to `quat-pack` or on `PATH` (R17), stages the data root with
+`manifest.json`, and lays out the package with
+`scripts/package-release.sh` (`--stage-only` stops after staging). Progress
+lines (`[pack] step i/n ...`, `[pack] package <archive>`) drive the editor's
+*File → Build & Export…* dialog and the remote `project.build` /
+`project.build_status` methods, which run it in the background. Development
+builds of `quat-pack` find the cooked shaders and scripts in the source
+tree; package builds take `--shaders` and `--engine-root` (or
+`QUAT_SHADER_DIR` / `QUAT_ENGINE_ROOT`). On Windows the layout runs under
+Git Bash (`QUAT_BASH` overrides where it is).
+
+The player resolves its game from `QUAT_GAME`, else `game.json` in the data
+root next to the executable; it changes the working directory to the game
+project so scene-relative paths resolve the same everywhere. In a shipping
+package (`manifest.json` `"config": "shipping"`) it ignores `QUAT_REMOTE`.
 
 ## Building in a cloud container
 

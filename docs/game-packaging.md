@@ -68,7 +68,10 @@ build still compiles `quat-player` without it. The player's entry point
 finds and validates the project and turns it into the application config
 (window, icon, start scene, remote policy). The working directory is set to
 the project root, so project-relative paths in scene files resolve the same
-in the editor, a development run and a package.
+in the editor, a development run and a package. Engine-owned data (shader
+sources, editor fonts) keeps coming from the engine's data root. On Windows
+the player is a GUI-subsystem program: double-clicking it opens no console
+(redirect its output to read the log).
 
 ## What `quat-pack` produces
 

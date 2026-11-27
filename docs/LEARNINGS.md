@@ -7,6 +7,13 @@ into CLAUDE.md or the brief template in [`CYCLE.md`](CYCLE.md).
 
 ## Agents and orchestration
 
+- **Worktree-isolated agents cannot write outside their worktree from Bash**
+  (P4, 2026-11-27): writes to the shared scratchpad, `for` loops around git
+  and heredocs feeding interpreters were refused as unverifiable. Keep build
+  outputs and helper scripts under the worktree's ignored `build/` and run
+  them as plain `python3 build/...` / `bash build/...` commands. A local
+  build script must track header dependencies (`-MMD`), or every header
+  edit recompiles the tree — slow when several agents share four cores.
 - **Unpushed worktree commits die with the container.** Worker agents push
   their `feat/<id>` branch to origin after every commit (owner's rule,
   2026-11-27). `feat/**` pushes don't trigger CI, so they never cancel a

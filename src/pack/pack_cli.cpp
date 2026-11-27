@@ -114,7 +114,7 @@ private:
         std::error_code ec;
         if (fs::is_regular_file(root, ec)) root = root.parent_path();
         root = fs::absolute(root, ec).lexically_normal();
-        if (root.has_filename() == false) root = root.parent_path();
+        if (!root.has_filename()) root = root.parent_path(); // "dir/"
         auto project = project::load_game_project(root);
         if (!project) return std::unexpected(project.error());
         const std::string slug = project::executable_slug(*project);
