@@ -32,6 +32,11 @@ public:
     // Non-null only when the buffer was created persistently mapped.
     [[nodiscard]] void* mapped() const { return mapped_; }
 
+    // Makes host writes to the mapped range visible to the device. A no-op on
+    // HOST_COHERENT memory (VMA checks); required on non-coherent memory
+    // before a submission that reads the data (audit A15).
+    void flush(VkDeviceSize offset = 0, VkDeviceSize size = VK_WHOLE_SIZE) const;
+
 private:
     friend class GpuAllocator;
     void destroy() noexcept;
