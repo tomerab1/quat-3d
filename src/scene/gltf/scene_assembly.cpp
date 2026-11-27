@@ -162,14 +162,6 @@ assemble_scene(const fastgltf::Asset& a, const std::string& key_prefix,
             key_prefix + "#skin" + std::to_string(i),
             [&](const std::filesystem::path&) { return skeletons[i]; });
     }
-    const std::vector<animation::AnimClipAsset> clips = extract_animations(a);
-    std::vector<asset::AssetHandle<animation::AnimClipAsset>> clip_handles(clips.size());
-    for (std::size_t i = 0; i < clips.size(); ++i) {
-        clip_handles[i] = assets.load<animation::AnimClipAsset>(
-            key_prefix + "#anim" + std::to_string(i),
-            [&](const std::filesystem::path&) { return clips[i]; });
-    }
-
     // Each skin's armature transform: the global transform of the parent of its
     // root joint, so the skeleton is placed correctly when it lives under a
     // transformed (e.g. Z-up -> Y-up) node.
@@ -197,6 +189,21 @@ assemble_scene(const fastgltf::Asset& a, const std::string& key_prefix,
                 break;
             }
         }
+    }
+
+    // Clips are ACL-compressed once, when they first enter the cache.
+    std::vector<animation::AnimClipAsset> clips = extract_animations(a);
+    const auto clip_key = [&](std::size_t i) { return key_prefix + "#anim" + std::to_string(i); };
+    bool cached = !clips.empty();
+    for (std::size_t i = 0; i < clips.size() && cached; ++i) {
+        const auto h = assets.get<animation::AnimClipAsset>(asset::asset_id_from_path(clip_key(i)));
+        cached = h.valid() && h.is_loaded();
+    }
+    if (!cached) compress_clips(clips, skeletons, skin_root_transform, key_prefix);
+    std::vector<asset::AssetHandle<animation::AnimClipAsset>> clip_handles(clips.size());
+    for (std::size_t i = 0; i < clips.size(); ++i) {
+        clip_handles[i] = assets.load<animation::AnimClipAsset>(
+            clip_key(i), [&](const std::filesystem::path&) { return clips[i]; });
     }
 
     // Walk the node hierarchy into ECS entities. Node TRS -> Transform.local; a
@@ -230,7 +237,9 @@ assemble_scene(const fastgltf::Asset& a, const std::string& key_prefix,
                         glm::inverse(node_global_of(static_cast<int>(node_index))) *
                         skin_root_transform[n.skinIndex.value()];
                     if (!clip_handles.empty()) {
-                        reg.emplace<Animator>(ent, clip_handles[0], 0.0F, 1.0F, true);
+                        Animator& anim = reg.emplace<Animator>(ent);
+                        anim.clip = clip_handles[0];
+                        anim.clips = clip_handles; // what the animator can switch to
                     }
                 }
             };
