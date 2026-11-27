@@ -164,7 +164,6 @@ bool Application::init_subsystems() {
     // frame slots: each slot's ImGuiPass uploads the font atlas of this
     // context. QUAT_NO_UI=1 disables it (deterministic headless renders).
     editor_.create(platform_.window, config_.editor_ui);
-    renderer_.set_render_settings(&editor_.render_settings());
     with_ui = editor_.active();
 #endif
 
@@ -208,7 +207,8 @@ bool Application::init_subsystems() {
                   .scene = &scene_,
                   .world = &world_,
                   .camera = &camera_,
-                  .shader_reload = shader_reload_.get()});
+                  .shader_reload = shader_reload_.get(),
+                  .render_settings = &renderer_.render_settings()});
 #endif
     return true;
 }
@@ -231,6 +231,8 @@ void Application::connect_remote() {
     remote_targets.cam_near_override = &camera_.near_override;
     remote_targets.cam_far_override = &camera_.far_override;
     remote_targets.cam_derived_clip = &camera_.derived_clip();
+    remote_targets.render_settings = &renderer_.render_settings();
+    remote_targets.material_overrides = &renderer_.material_overrides();
     world_.fill_remote_targets(remote_targets);
 #ifdef ENGINE_EDITOR
     editor_.fill_remote_targets(remote_targets, world_.has_demo_physics());

@@ -1,5 +1,6 @@
 #include "engine/renderer/exposure_pass.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cstring>
 #include <memory>
@@ -26,7 +27,6 @@ constexpr VkDeviceSize       kHistBytes    = kBins * sizeof(std::uint32_t);
 constexpr float kMinLogLum = -8.0F;
 constexpr float kMaxLogLum = 4.0F;
 constexpr float kLogLumRange = kMaxLogLum - kMinLogLum;
-constexpr float kTau = ExposurePass::k_adaptation_tau; // seconds
 
 struct HistogramParams {
     float         min_log_lum;
@@ -163,7 +163,7 @@ ExposurePass::create(const rhi::Device& device, rhi::GpuAllocator& allocator,
 
 std::expected<void, core::Error>
 ExposurePass::add_to_graph(rhi::RenderGraph& graph, rhi::ResourceHandle hdr, VkExtent2D extent,
-                           float dt) {
+                           float dt, float adaptation_tau) {
     auto hist_db = rhi::DescriptorBuffer::create(*device_, *allocator_, db_fns_, histogram_layout_);
     if (!hist_db) return std::unexpected(hist_db.error());
     histogram_descriptor_ = std::move(*hist_db);
@@ -178,7 +178,8 @@ ExposurePass::add_to_graph(rhi::RenderGraph& graph, rhi::ResourceHandle hdr, VkE
 
     HistogramParams hp{kMinLogLum, 1.0F / kLogLumRange, extent.width, extent.height};
     AverageParams ap{kMinLogLum, kLogLumRange, dt,
-                     static_cast<float>(extent.width) * static_cast<float>(extent.height), kTau,
+                     static_cast<float>(extent.width) * static_cast<float>(extent.height),
+                     std::max(adaptation_tau, 1e-3F),
                      0.0F, 0.0F, 0.0F};
 
     graph.add_pass("exposure", rhi::PassType::compute)

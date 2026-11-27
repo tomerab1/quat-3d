@@ -26,6 +26,18 @@ into CLAUDE.md or the brief template in [`CYCLE.md`](CYCLE.md).
 
 ## Build and CI
 
+- **Hand-compiling translation units proves neither that they are in a CMake
+  target nor that they link.** G8.4 passed every `-fsyntax-only` check, but
+  `game` failed to link: `compress_clips` was declared in
+  `scene::gltf_detail` (internal.hpp) and defined in `scene`. → Before
+  pushing, grep CMakeLists for every new `.cpp`, and for a new cross-file
+  function compile caller and callee with `-c` and compare `nm` (the
+  undefined symbol must match the defined one).
+- **Local `-c` object caches go stale across merges.** A GPU test failed with
+  "no Vulkan device" after master changed `rhi::Device`: unchanged test
+  sources kept objects built against the old header. Rebuild from scratch
+  after merging.
+
 - **`--validation` silently runs without the layer when it isn't
   installed.** The container lacks the Khronos layer;
   `apt-get install -y vulkan-validationlayers` adds it (R10.2 ran its GPU
@@ -100,6 +112,17 @@ into CLAUDE.md or the brief template in [`CYCLE.md`](CYCLE.md).
   wayland-protocols, libdecor. The first CI run failed on xcursor.
 
 ## C++ in this codebase
+
+- **vcpkg's `acl` port is POSIX access-control lists, not the animation
+  codec.** ACL + RTM are header-only and fetched by `cmake/FetchAcl.cmake`,
+  pinned to release commits. Check a port's description before adding it.
+- **A compressed clip can match every key and still drift between them.**
+  glTF rotations interpolate with slerp, ACL (like most runtimes) with
+  normalized lerp; on fast clips (the Khronos Fox's Walk / Run) the gap mid-key was
+  orders of magnitude over the error budget, and ACL's keyframe stripping only checks the samples it
+  removes. G8 resamples at a whole multiple of the key rate chosen by
+  measuring the between-sample error, splits the budget half/half, keeps
+  stripping off, and keeps a clip raw when compression does not pay.
 
 - **slangc 2025.6.1 segfaults after reporting a compile error** when
   `-reflection-json` is passed (exit by SIGSEGV, diagnostics already
@@ -210,3 +233,27 @@ duplicate YAML keys; a combined `git revert -q ...; git commit --amend` then
 amended the already-pushed commit instead of reverting. **Rule:** grep for a
 key before adding it; never chain revert + amend — make one plain new commit
 and check `git status -sb` before pushing.
+
+## Issue label update dropped the other labels (factory)
+
+Setting `labels: ["in-review"]` through the GitHub issue update replaced the
+whole label set on #16, stripping `factory`/`visual`/severity/area. **Rule:**
+a label update sends the complete set — read the issue's labels first and
+send them back with the status label swapped (`triaged` → `in-progress` →
+`in-review`).
+
+## Docs pushes restart the cycle PR's CI gate (factory)
+
+A STATUS-only commit pushed to the cycle branch while its CI was queued moved
+PR #3's merge gate to the new head. **Rule:** while a cycle PR waits on CI,
+keep docs edits local and push them together with the next code change or
+right after the merge.
+
+## A temporary worktree moved another worktree's branch (factory)
+
+To merge the base into a worker's PR branch, a scratch worktree ran
+`git checkout -B feat/issues-4-5`; that branch was still checked out in the
+finished worker's worktree, whose files then no longer matched its HEAD.
+**Rule:** in scratch worktrees use a unique local branch name and push with
+`git push origin HEAD:feat/<id>`; never create or reset a local branch that
+another worktree has checked out (`git worktree list` shows them).

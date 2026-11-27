@@ -20,6 +20,9 @@
 #include "engine/core/json_fields.hpp"
 #include "engine/physics/physics_world.hpp"
 #include "engine/scene/components.hpp"
+#include "engine/scene/material_override.hpp"
+
+#include "component_json_animation.hpp"
 
 namespace engine::scene {
 
@@ -32,6 +35,7 @@ using core::JsonFields;
 constexpr std::array k_components = {
     ComponentInfo{"transform", "Local position / rotation (Euler degrees, YXZ) / scale", false, true},
     ComponentInfo{"primitive", "Procedural shape (cube, sphere, plane, cylinder, cone, capsule) with a PBR colour", true, true},
+    ComponentInfo{"material", "Per-entity overrides of the drawn material's PBR factors (null clears one)", true, true},
     ComponentInfo{"instanced_mesh", "Many placements of one model (glTF or primitive shape), drawn instanced", true, true},
     ComponentInfo{"scatter", "Seeded procedural placement of the entity's instanced mesh on the terrain", true, true},
     ComponentInfo{"point_light", "Point light at the entity position", true, true},
@@ -48,7 +52,8 @@ constexpr std::array k_components = {
     ComponentInfo{"net_replicated", "Replicate this entity's transform to network clients", true, true},
     ComponentInfo{"audio_source", "Sound emitter: wav/flac/mp3 clip on a bus, optionally 3D", true, true},
     ComponentInfo{"audio_listener", "The audio listener follows this entity (else the camera)", true, true},
-    ComponentInfo{"animator", "Animation playback of a glTF clip (time, speed, looping)", false, true},
+    ComponentInfo{"animator", "Animation playback of a glTF clip: clip switching (inertialized or crossfaded), time, speed, looping", false, true},
+    ComponentInfo{"foot_ik", "Foot placement on uneven ground for an animated character (leg IK + pelvis)", true, true},
     ComponentInfo{"mesh", "glTF mesh provenance (read-only)", false, false},
 };
 
@@ -463,6 +468,9 @@ json encode_components(const entt::registry& r, entt::entity e, const EncodeOpti
     if (const auto* p = pick.get<Primitive>("primitive")) {
         out["primitive"] = primitive_fields_json(*p);
     }
+    if (const auto* m = pick.get<MaterialOverride>("material"); m != nullptr && m->mask != 0) {
+        out["material"] = encode_material_override(*m);
+    }
     if (const auto* m = pick.get<InstancedMesh>("instanced_mesh")) {
         json j = primitive_fields_json(m->primitive);
         j["gltf"] = m->gltf_path;
@@ -575,9 +583,8 @@ json encode_components(const entt::registry& r, entt::entity e, const EncodeOpti
     if (const auto* l = pick.get<AudioListener>("audio_listener")) {
         out["audio_listener"] = {{"active", l->active}};
     }
-    if (const auto* a = pick.get<Animator>("animator")) {
-        out["animator"] = {{"time", a->time}, {"speed", a->speed}, {"looping", a->looping}};
-    }
+    if (const auto* a = pick.get<Animator>("animator")) out["animator"] = detail::encode_animator(*a);
+    if (const auto* k = pick.get<FootIK>("foot_ik")) out["foot_ik"] = detail::encode_foot_ik(*k);
     if (options.include_read_only) {
         if (const auto* m = pick.get<MeshSource>("mesh")) {
             out["mesh"] = {{"mesh_key", m->mesh_key},
@@ -598,6 +605,8 @@ std::vector<std::string_view> component_names(const entt::registry& r, entt::ent
     };
     add(r.all_of<Transform>(e), "transform");
     add(r.all_of<Primitive>(e), "primitive");
+    const auto* material = r.try_get<MaterialOverride>(e);
+    add(material != nullptr && material->mask != 0, "material");
     add(r.all_of<InstancedMesh>(e), "instanced_mesh");
     add(r.all_of<Scatter>(e), "scatter");
     add(r.all_of<PointLight>(e), "point_light");
@@ -615,6 +624,7 @@ std::vector<std::string_view> component_names(const entt::registry& r, entt::ent
     add(r.all_of<AudioSource>(e), "audio_source");
     add(r.all_of<AudioListener>(e), "audio_listener");
     add(r.all_of<Animator>(e), "animator");
+    add(r.all_of<FootIK>(e), "foot_ik");
     add(include_read_only && r.all_of<MeshSource>(e), "mesh");
     return out;
 }
@@ -649,6 +659,17 @@ std::expected<void, core::Error> apply_component(entt::registry& r, entt::entity
         });
         if (ok) r.remove<MeshSource>(e); // the primitive is now the mesh's provenance
         return ok;
+    }
+    if (name == "material") {
+        MaterialOverride o = r.all_of<MaterialOverride>(e) ? r.get<MaterialOverride>(e)
+                                                           : MaterialOverride{};
+        if (auto ok = decode_material_override(v, o, strict); !ok) return ok;
+        if (o.mask == 0) {
+            r.remove<MaterialOverride>(e);
+        } else {
+            r.emplace_or_replace<MaterialOverride>(e, std::move(o));
+        }
+        return {};
     }
     if (name == "instanced_mesh") {
         const bool scattered = r.all_of<Scatter>(e);
@@ -880,11 +901,9 @@ std::expected<void, core::Error> apply_component(entt::registry& r, entt::entity
             return std::unexpected(core::Error{
                 "animator: the entity has no animation (animators come from glTF files)"});
         }
-        return merge<Animator>(r, e, v, name, strict, [](JsonFields& f, Animator& a) {
-            f.number("time", a.time, 0.0F).number("speed", a.speed, -100.0F, 100.0F);
-            f.boolean("looping", a.looping);
-        });
+        return merge<Animator>(r, e, v, name, strict, detail::decode_animator);
     }
+    if (name == "foot_ik") return merge<FootIK>(r, e, v, name, strict, detail::decode_foot_ik);
     return std::unexpected(core::Error{"component '" + std::string(name) + "' has no decoder"});
 }
 
@@ -906,6 +925,7 @@ bool remove_component(entt::registry& r, entt::entity e, std::string_view name) 
         if (had) r.remove<InstancedMeshParts, Scatter>(e);
         return had;
     }
+    if (name == "material") return r.remove<MaterialOverride>(e) > 0;
     if (name == "scatter") return r.remove<Scatter>(e) > 0; // keeps the placements (baked)
     if (name == "point_light") return r.remove<PointLight>(e) > 0;
     if (name == "dir_light") return r.remove<DirectionalLight>(e) > 0;
@@ -922,6 +942,7 @@ bool remove_component(entt::registry& r, entt::entity e, std::string_view name) 
     if (name == "audio_source") return r.remove<AudioSource>(e) > 0;
     if (name == "audio_listener") return r.remove<AudioListener>(e) > 0;
     if (name == "animator") return r.remove<Animator>(e) > 0;
+    if (name == "foot_ik") return r.remove<FootIK>(e) > 0;
     return false; // transform (not removable) or unknown
 }
 

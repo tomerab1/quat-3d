@@ -8,6 +8,8 @@ World building:
 - Placement: `scene_get` reports `world_bounds` / `local_bounds` (size and origin of any model); `world_place_on_ground` sets an entity down on the terrain or on colliders below it, optionally tilted to the slope. Do not guess sink depths.
 - Looking: the user may be using the viewport. Prefer `screenshot` with a `camera` (a position and `look_at`, or `frame` an entity) for verification shots, which leaves their view alone; use `camera_set` only to change what they see. The camera's clip planes follow the scene (distant streamed terrain stays visible), so leave `near` / `far` alone unless a shot needs them.
 
+To change how the scene looks, tune the renderer (`render_settings_get` / `render_settings_set` / `render_settings_schema`: exposure, bloom, anti-aliasing, shadows, sky light, clouds) and per-entity materials (`material_get` / `material_set`), checking each change with `screenshot`; the `tune_look` prompt walks through it.
+
 NPC behaviour is a behaviour tree per entity: `bt_leaves` lists the node kinds and leaves, `bt_set` writes a whole tree, `bt_get` shows it with stable node ids for the incremental `bt_add_node` / `bt_move_node` / `bt_remove_node` / `bt_set_params`, and `bt_status` shows what each node did on the last tick during Play.
 
-Engine errors name the offending field and what was expected — fix the call instead of repeating it. The `build_world`, `inspect_scene`, `debug_session` and `design_behavior` prompts describe the workflows in detail.
+Engine errors name the offending field and what was expected — fix the call instead of repeating it. The `build_world`, `inspect_scene`, `debug_session`, `design_behavior` and `tune_look` prompts describe the workflows in detail.

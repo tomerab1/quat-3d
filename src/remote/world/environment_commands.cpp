@@ -7,8 +7,10 @@
 #include <glm/gtc/constants.hpp>
 #include <nlohmann/json.hpp>
 
+#include "engine/renderer/render_settings.hpp"
 #include "engine/scene/component_json.hpp"
 #include "engine/scene/components.hpp"
+#include "engine/scene/render_settings_json.hpp"
 #include "engine/scene/scene.hpp"
 #include "internal.hpp"
 
@@ -40,12 +42,10 @@ struct SunAngles {
     return entt::null;
 }
 
-[[nodiscard]] Json clouds_json(const renderer::CloudSettings& c) {
-    return Json{{"enabled", c.enabled},         {"coverage", c.coverage},
-                {"density", c.density},         {"bottom_km", c.bottom_km},
-                {"thickness_km", c.thickness_km}, {"size_km", c.size_km},
-                {"detail", c.detail},           {"wind_speed", c.wind_speed},
-                {"wind_dir_deg", c.wind_dir_deg}};
+// The cloud layer is the `clouds` group of the render settings: same codec,
+// same ranges as render.settings.*.
+[[nodiscard]] const renderer::RenderSettingGroup& clouds_group() {
+    return *renderer::find_render_setting_group("clouds");
 }
 
 RpcResult environment_get(Context& ctx, const Json& params) {
@@ -64,7 +64,10 @@ RpcResult environment_get(Context& ctx, const Json& params) {
     } else {
         out["sun"] = nullptr;
     }
-    out["clouds"] = ctx.services.clouds_get ? clouds_json(ctx.services.clouds_get()) : Json(nullptr);
+    out["clouds"] = ctx.services.render_settings != nullptr
+                        ? scene::encode_render_setting_group(*ctx.services.render_settings,
+                                                             clouds_group())
+                        : Json(nullptr);
     return out;
 }
 
@@ -105,19 +108,15 @@ RpcResult environment_set(Context& ctx, const Json& params) {
         set_sun = true;
     }
 
-    std::optional<renderer::CloudSettings> clouds;
+    std::optional<renderer::RenderSettings> settings;
     if (clouds_in != nullptr && !clouds_in->is_null()) {
-        if (!ctx.services.clouds_get || !ctx.services.clouds_set) return unavailable("cloud control");
-        renderer::CloudSettings c = ctx.services.clouds_get();
-        core::JsonFields s(*clouds_in, "clouds");
-        s.boolean("enabled", c.enabled);
-        s.number("coverage", c.coverage, 0.0F, 1.0F).number("density", c.density, 0.0F, 1000.0F);
-        s.number("bottom_km", c.bottom_km, 0.0F, 30.0F).number("thickness_km", c.thickness_km, 0.1F, 30.0F);
-        s.number("size_km", c.size_km, 0.5F, 200.0F).number("detail", c.detail, 0.0F, 1.0F);
-        s.number("wind_speed", c.wind_speed, 0.0F, 500.0F);
-        s.number("wind_dir_deg", c.wind_dir_deg, -360.0F, 360.0F);
-        if (auto ok = finish(s); !ok) return std::unexpected(ok.error());
-        clouds = c;
+        if (ctx.services.render_settings == nullptr) return unavailable("cloud control");
+        settings = *ctx.services.render_settings;
+        if (auto ok = scene::apply_render_setting_group(*settings, clouds_group(), *clouds_in,
+                                                        /*strict=*/true, "clouds");
+            !ok) {
+            return bad_params(ok.error().message);
+        }
     }
 
     if (set_sun) {
@@ -125,7 +124,7 @@ RpcResult environment_set(Context& ctx, const Json& params) {
         if (sun == entt::null) sun = ctx.scene->create_entity("sun");
         r.emplace_or_replace<scene::DirectionalLight>(sun, light);
     }
-    if (clouds) ctx.services.clouds_set(*clouds);
+    if (settings) *ctx.services.render_settings = *settings;
     return environment_get(ctx, Json::object());
 }
 

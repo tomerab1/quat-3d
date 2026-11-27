@@ -1,6 +1,8 @@
 #include "engine/renderer/tonemap_pass.hpp"
 
+#include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstdint>
 #include <cstring>
 #include <string>
@@ -39,7 +41,12 @@ struct TonemapPushConstants {
     float key = 0.18F;
     float min_exposure = 0.05F;
     float max_exposure = 16.0F;
+    float exposure_scale = 1.0F; // 2^compensation EV
+    float pad0 = 0.0F;
+    float pad1 = 0.0F;
+    float pad2 = 0.0F;
 };
+static_assert(sizeof(TonemapPushConstants) == 32, "must match tonemap.slang TonemapParams");
 
 } // namespace
 
@@ -103,13 +110,17 @@ TonemapPass::create(const rhi::Device& device, rhi::GpuAllocator& allocator,
 std::expected<void, core::Error>
 TonemapPass::add_to_graph(rhi::RenderGraph& graph, rhi::ResourceHandle hdr,
                           rhi::ResourceHandle output, VkExtent2D extent,
-                          VkDeviceAddress exposure_buffer) {
+                          VkDeviceAddress exposure_buffer, const ExposureSettings& exposure) {
     auto db = rhi::DescriptorBuffer::create(*device_, *allocator_, db_fns_, layout_);
     if (!db) return std::unexpected(db.error());
     frame_descriptor_ = std::move(*db);
 
     TonemapPushConstants push{};
-    push.auto_exposure = exposure_buffer != 0 ? 1.0F : 0.0F;
+    push.auto_exposure = exposure_buffer != 0 && exposure.auto_exposure ? 1.0F : 0.0F;
+    push.key = exposure.key;
+    push.min_exposure = std::min(exposure.min_exposure, exposure.max_exposure);
+    push.max_exposure = std::max(exposure.min_exposure, exposure.max_exposure);
+    push.exposure_scale = std::exp2(exposure.compensation_ev);
     const VkDeviceAddress exposure_addr =
         exposure_buffer != 0 ? exposure_buffer : fallback_exposure_address_;
 

@@ -14,6 +14,7 @@
 #include <vulkan/vulkan.h>
 
 #include "engine/core/error.hpp"
+#include "engine/renderer/render_settings.hpp"
 #include "engine/rhi/descriptor_buffer.hpp"
 #include "engine/rhi/managed_pipeline.hpp"
 #include "engine/rhi/render_graph.hpp"
@@ -43,10 +44,13 @@ public:
     // must already be a graph resource — imported swapchain or transient). The
     // descriptor buffer is owned by the pass and lives until the next call.
     // `exposure_buffer` is the device address of the auto-exposure pass's adapted-
-    // luminance buffer; pass 0 to disable auto-exposure (exposure multiplier 1).
+    // luminance buffer. Exposure = clamp(key / adapted, min, max) * 2^EV when it is
+    // set and `exposure.auto_exposure` is on, else 2^EV (the default settings
+    // with no buffer give a multiplier of exactly 1).
     [[nodiscard]] std::expected<void, core::Error>
     add_to_graph(rhi::RenderGraph& graph, rhi::ResourceHandle hdr, rhi::ResourceHandle output,
-                 VkExtent2D extent, VkDeviceAddress exposure_buffer = 0);
+                 VkExtent2D extent, VkDeviceAddress exposure_buffer = 0,
+                 const ExposureSettings& exposure = {});
 
 private:
     const rhi::Device* device_    = nullptr;   // non-owning
