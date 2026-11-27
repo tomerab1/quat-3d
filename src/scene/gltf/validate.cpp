@@ -1,42 +1,80 @@
 // glTF structural validation (see internal.hpp).
 
-#define GLM_ENABLE_EXPERIMENTAL
-
-#include "engine/scene/gltf_loader.hpp"
-
-#include <algorithm>
-#include <array>
-#include <cmath>
-#include <cstdio>
-#include <cstring>
-#include <functional>
-#include <limits>
 #include <string>
 #include <string_view>
-#include <unordered_map>
 #include <utility>
 #include <variant>
 #include <vector>
 
 #include <fastgltf/core.hpp>
-#include <fastgltf/math.hpp>
 #include <fastgltf/tools.hpp>
 #include <fastgltf/types.hpp>
-#include <glm/glm.hpp>
-#include <glm/gtc/matrix_transform.hpp>
-#include <glm/gtc/quaternion.hpp>
-#include <glm/gtx/matrix_decompose.hpp>
 
-#include "engine/animation/clip.hpp"
-#include "engine/animation/skeleton.hpp"
-#include "engine/asset/asset_manager.hpp"
-#include "engine/scene/components.hpp"
-#include "engine/scene/scene.hpp"
-#include "scene/gltf/internal.hpp"
+#include "scene/gltf/gltf_io.hpp"
 
 namespace engine::scene {
 
 namespace gltf_detail {
+
+namespace {
+
+// [offset, offset + length) lies within `size` bytes.
+[[nodiscard]] bool in_range(std::size_t offset, std::size_t length, std::size_t size) {
+    return offset <= size && length <= size - offset;
+}
+
+// Buffer views lie inside loaded buffers and accessors (dense and sparse)
+// inside their views: fastgltf's accessor iteration reads without bounds
+// checks. Runs after EXT_meshopt_compression decoding, so a view still on a
+// data-less fallback buffer is rejected here.
+[[nodiscard]] std::expected<void, core::Error> validate_buffer_ranges(const fastgltf::Asset& asset) {
+    for (std::size_t vi = 0; vi < asset.bufferViews.size(); ++vi) {
+        const fastgltf::BufferView& view = asset.bufferViews[vi];
+        const std::string what = "glTF: bufferView " + std::to_string(vi);
+        if (view.bufferIndex >= asset.buffers.size()) return fail(what + " buffer index out of range");
+        auto bytes = data_source_bytes(asset, asset.buffers[view.bufferIndex].data);
+        if (!bytes) return fail(what + ": " + bytes.error().message);
+        if (!in_range(view.byteOffset, view.byteLength, bytes->size())) {
+            return fail(what + " exceeds its buffer");
+        }
+    }
+    const auto view_holds = [&](std::size_t view, std::size_t offset, std::size_t count,
+                                std::size_t elem, std::size_t stride) {
+        if (view >= asset.bufferViews.size()) return false;
+        if (count == 0) return true;
+        const std::size_t length = asset.bufferViews[view].byteLength;
+        if (stride < elem || count - 1 > length / stride) return false;
+        return in_range(offset, (count - 1) * stride + elem, length);
+    };
+    for (std::size_t ai = 0; ai < asset.accessors.size(); ++ai) {
+        const fastgltf::Accessor& acc = asset.accessors[ai];
+        const std::string what = "glTF: accessor " + std::to_string(ai);
+        const std::size_t elem = fastgltf::getElementByteSize(acc.type, acc.componentType);
+        if (elem == 0) return fail(what + " has an invalid type");
+        if (acc.bufferViewIndex.has_value()) {
+            const std::size_t view = acc.bufferViewIndex.value();
+            const std::size_t stride = view < asset.bufferViews.size()
+                                           ? asset.bufferViews[view].byteStride.value_or(elem)
+                                           : elem;
+            if (!view_holds(view, acc.byteOffset, acc.count, elem, stride)) {
+                return fail(what + " exceeds its bufferView");
+            }
+        }
+        if (acc.sparse.has_value()) {
+            const fastgltf::SparseAccessor& sp = acc.sparse.value();
+            const std::size_t index_size = fastgltf::getComponentByteSize(sp.indexComponentType);
+            if (sp.count > acc.count || index_size == 0 ||
+                !view_holds(sp.indicesBufferView, sp.indicesByteOffset, sp.count, index_size,
+                            index_size) ||
+                !view_holds(sp.valuesBufferView, sp.valuesByteOffset, sp.count, elem, elem)) {
+                return fail(what + " sparse storage out of range");
+            }
+        }
+    }
+    return {};
+}
+
+} // namespace
 
 // Structural validation of a parsed asset, run before any extraction. glTF
 // files are untrusted input: every cross-reference the loader follows is
@@ -49,6 +87,7 @@ namespace gltf_detail {
 // the loader handles fine — these checks cover exactly what the loader
 // dereferences.
 [[nodiscard]] std::expected<void, core::Error> validate_asset(const fastgltf::Asset& asset) {
+    if (auto ok = validate_buffer_ranges(asset); !ok) return ok;
     const std::size_t n_acc = asset.accessors.size();
     const std::size_t n_nodes = asset.nodes.size();
 
@@ -80,11 +119,15 @@ namespace gltf_detail {
         }
     }
 
+    for (const fastgltf::Texture& tex : asset.textures) {
+        if ((tex.imageIndex.has_value() && tex.imageIndex.value() >= asset.images.size()) ||
+            (tex.basisuImageIndex.has_value() &&
+             tex.basisuImageIndex.value() >= asset.images.size())) {
+            return fail("glTF: texture image index out of range");
+        }
+    }
     const auto check_texture = [&](const auto& info) -> bool {
-        if (!info.has_value()) return true;
-        if (info->textureIndex >= asset.textures.size()) return false;
-        const fastgltf::Texture& tex = asset.textures[info->textureIndex];
-        return !tex.imageIndex.has_value() || tex.imageIndex.value() < asset.images.size();
+        return !info.has_value() || info->textureIndex < asset.textures.size();
     };
     for (const fastgltf::Material& mat : asset.materials) {
         bool ok = check_texture(mat.pbrData.baseColorTexture) &&
@@ -160,6 +203,21 @@ namespace gltf_detail {
     return {};
 }
 
+std::expected<fastgltf::Asset, core::Error>
+parse_gltf(fastgltf::GltfDataBuffer& data, const std::filesystem::path& base_dir) {
+    fastgltf::Parser parser(kParserExtensions);
+    fastgltf::Expected<fastgltf::Asset> parsed = parser.loadGltf(data, base_dir, kLoadOptions);
+    if (parsed.error() != fastgltf::Error::None) {
+        return fail(std::string("fastgltf parse failed: ") +
+                    std::string(fastgltf::getErrorMessage(parsed.error())));
+    }
+    fastgltf::Asset asset = std::move(parsed.get());
+    if (auto decoded = decode_meshopt_buffers(asset); !decoded) {
+        return std::unexpected(decoded.error());
+    }
+    if (auto valid = validate_asset(asset); !valid) return std::unexpected(valid.error());
+    return asset;
+}
 
 } // namespace gltf_detail
 
