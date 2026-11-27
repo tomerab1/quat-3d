@@ -208,7 +208,11 @@ ctest --test-dir build/release --output-on-failure      # everything
 
 GPU tests run on any Vulkan device; without a GPU, Mesa's software driver
 (lavapipe) works — that is what CI uses. Every push is built and tested on
-Linux by [GitHub Actions](.github/workflows/ci.yml).
+Linux by [GitHub Actions](.github/workflows/ci.yml), which also renders a few
+scenes headlessly and publishes the screenshots on the run page and on the
+[`ci-screenshots`](https://github.com/tomerab1/quat-3d/blob/ci-screenshots/index.md)
+branch. `scripts/ci-screenshots.sh build/release/game` renders the same set
+locally (needs `xvfb`).
 
 ## Roadmap
 

@@ -22,6 +22,11 @@ jobs:
     name: Linux (clang + libc++, lavapipe)
     runs-on: ubuntu-24.04
     timeout-minutes: 120
+    # contents: write lets the Screenshots publish step commit to the
+    # ci-screenshots branch (pushes and same-repo PRs only; a fork PR's token
+    # stays read-only whatever this says).
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
 
@@ -33,7 +38,7 @@ jobs:
             libx11-dev libxext-dev libxft-dev libxcursor-dev libxrandr-dev libxi-dev \
             libxss-dev libxtst-dev libxfixes-dev libxkbcommon-dev \
             libwayland-dev wayland-protocols libegl-dev libdecor-0-dev \
-            libvulkan-dev mesa-vulkan-drivers autoconf automake libtool
+            libvulkan-dev mesa-vulkan-drivers autoconf automake libtool xvfb
 
       - name: Slang compiler
         run: |
@@ -78,6 +83,7 @@ jobs:
           key: ${{ steps.vcpkg-cache.outputs.cache-primary-key }}
 
       - name: Build
+        id: build
         if: steps.configure.outcome == 'success'
         run: cmake --build --preset release
 
@@ -90,6 +96,41 @@ jobs:
           echo "Using Vulkan ICD: $icd"
           export VK_ICD_FILENAMES="$icd"
           ctest --test-dir build/release --output-on-failure --timeout 900
+
+      # Real engine frames on lavapipe under Xvfb (scripts/ci-screenshots.sh),
+      # also when the tests failed. continue-on-error is TEMPORARY, until the
+      # headless scenes have proven stable in CI: a crashed or hung scene is
+      # reported (step summary + ::error annotation) without failing the job.
+      - name: Screenshots
+        id: shots
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        continue-on-error: true
+        run: scripts/ci-screenshots.sh build/release/game screenshots
+
+      - name: Upload screenshots
+        if: ${{ !cancelled() && steps.shots.outcome != 'skipped' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-screenshots
+          path: screenshots/
+          retention-days: 14
+          if-no-files-found: ignore
+
+      # Commits the PNGs to the ci-screenshots branch (runs/<pr-N|branch>/<sha>/,
+      # index.md newest first) and shows them inline in the step summary, so
+      # they can be viewed without downloading the artifact. Never for fork PRs.
+      - name: Publish screenshots
+        if: >-
+          ${{ !cancelled() && steps.shots.outcome != 'skipped' &&
+          (github.event_name == 'push' ||
+          github.event.pull_request.head.repo.full_name == github.repository) }}
+        continue-on-error: true
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          HEAD_REF: ${{ github.head_ref }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+        run: scripts/ci-publish-screenshots.sh screenshots
 
       - name: Upload logs on failure
         if: failure()
