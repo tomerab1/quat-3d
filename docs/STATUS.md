@@ -38,7 +38,6 @@ branches merge into `claude/nifty-hopper-nb68qe` (PR #1):
 |---|---|
 | R9.1 instanced draws | `feat/r9-instancing` |
 | A2/A3 remote world commands, Primitive resolve, screenshots | `feat/a2-world-commands` |
-| A4 Rust MCP server | `feat/a4-quat-mcp` |
 | G1 audio (miniaudio) | `feat/g1-audio` |
 | S1 nav/NPC fixes N1–N6, N8, N10, N12, N13 | `feat/s1-nav-fixes` |
 | S3.2 legacy self-tests → GoogleTest (animation, terrain, asset, remote, rhi) | `feat/s3-test-migration` |
@@ -57,6 +56,8 @@ live session ended before merging them: treat the items as unclaimed.
 | S4 CI | Linux job in `.github/workflows/ci.yml` | First runs in progress on GitHub — check the Actions tab |
 | S7 thin `main.cpp` | S7.1 + S7.2 done: tests, mesh generators and demo-scene construction (`src/app/demo_scenes.*`) moved out, `QUAT_SELFTEST` removed — 3,723 → ~2,010 lines. Next: the frame loop (`Application` / `FrameRenderer` / `EditorBridge`), and move the remote setup out of `main.cpp` | Compile-checked locally |
 | S8 split oversized files | S8.1 done: `gltf_loader.cpp` (1,770 lines) → `src/scene/gltf/` (validate, mesh, material, skin_animation, scene_assembly, self_tests; largest 400 lines + 540 of legacy tests) with a private `internal.hpp` | Every file compile-checked locally; link verified by CI |
+| A4 Rust MCP server | **Merged** (`tools/quat-mcp`): 27 tools, prompts, scene resource; 31 tests + fmt + clippy pass locally; Rust CI job added. Not yet tried against the real engine (A2/A3 in progress) | Verified locally |
+| CI | Run 3: all vcpkg dependencies built + cached; engine build failed on a pre-existing `std::jthread` (libc++ 18) — fixed in `219b406`, next run in progress | — |
 | A1 remote transport | `src/remote/`, `include/engine/remote/rpc_server.hpp`, wired in `main.cpp` (`QUAT_REMOTE`) | Library compiled warning-free + self-test passed standalone; `main.cpp` wiring not yet compiled |
 | A2 world commands | Component codec done (`component_json.*`, 10 gtest cases pass locally); `Primitive` serialized but `resolve_primitives()` (mesh/material build) and the RPC commands not written | Codec verified locally |
 
