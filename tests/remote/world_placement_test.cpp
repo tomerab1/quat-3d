@@ -33,6 +33,12 @@ void expect_vec3(const Json& v, const glm::vec3& want, float tol = 1e-3F) {
 class Placement : public quat::test::WorldCommands {
 protected:
     std::optional<PhysicsWorld> physics;
+    engine::remote::TerrainStatus status{.generating = false,
+                                         .tiles_loaded = 1,
+                                         .tiles_wanted = 1,
+                                         .has_bounds = true,
+                                         .bounds_min = {-100.0F, -10.0F, -100.0F},
+                                         .bounds_max = {100.0F, 10.0F, 100.0F}};
 
     void SetUp() override {
         // Terrain tiles (within 100 m of the anchor): a slope rising 0.1 m per
@@ -41,14 +47,7 @@ protected:
             if (std::abs(x) > 100.0F || std::abs(z) > 100.0F) return std::nullopt;
             return 0.1F * x;
         };
-        services.terrain_status = [] {
-            return engine::remote::TerrainStatus{.generating = false,
-                                                 .tiles_loaded = 1,
-                                                 .tiles_wanted = 1,
-                                                 .has_bounds = true,
-                                                 .bounds_min = {-100.0F, -10.0F, -100.0F},
-                                                 .bounds_max = {100.0F, 10.0F, 100.0F}};
-        };
+        services.terrain_status = [this] { return status; };
         services.physics_world = [this]() -> const PhysicsWorld* {
             return physics ? &*physics : nullptr;
         };
@@ -202,6 +201,44 @@ TEST_F(Placement, RestsOnPhysicsBodies) {
     EXPECT_EQ(r["surface"]["kind"], "body");
     EXPECT_EQ(r["surface"]["entity"], box["id"]);
     expect_vec3(r["surface"]["normal"], {0.0F, 1.0F, 0.0F});
+}
+
+// Review of #53: a failed placement changes nothing, even after `at` moved
+// the entity and `align_to_normal` tilted it.
+TEST_F(Placement, FailedPlacementLeavesTheTransformAlone) {
+    add_terrain();
+    create({{"name", "crate"},
+            {"components",
+             {{"transform", {{"position", {3, 7, -2}}, {"rotation", {0, 30, 0}}}},
+              {"primitive", {{"shape", "cube"}}}}}});
+    const glm::mat4 before = world_of("crate");
+    const Json before_json = ok("scene.get", {{"entity", "crate"}})["components"]["transform"];
+    // Off the terrain (it ends at |x| = 100): nothing below.
+    err("world.place_on_ground", {{"entity", "crate"}, {"at", {500, 500}}}, code::failed);
+    err("world.place_on_ground",
+        {{"entity", "crate"}, {"at", {500, 500}}, {"align_to_normal", true}}, code::failed);
+    EXPECT_EQ(world_of("crate"), before);
+    EXPECT_EQ(ok("scene.get", {{"entity", "crate"}})["components"]["transform"], before_json);
+}
+
+// Review of #53: while a single terrain tile regenerates, its kept heightmap
+// is the old shape; heights are missing rather than stale.
+TEST_F(Placement, RegeneratingSingleTileHasNoHeights) {
+    add_terrain();
+    create({{"name", "rock"},
+            {"components",
+             {{"transform", {{"position", {10, 50, 0}}}}, {"primitive", {{"shape", "cube"}}}}}});
+    status.generating = true; // the runtime started the job (regenerate already cleared)
+    const Json h = ok("world.ground_height", {{"points", {{10, 0}}}});
+    EXPECT_TRUE(h["heights"][0].is_null()) << h.dump();
+    EXPECT_EQ(h["generating"], true);
+    const std::string msg = err("world.place_on_ground", {{"entity", "rock"}}, code::failed);
+    EXPECT_TRUE(contains(msg, "nothing to rest on")) << msg;
+    EXPECT_NEAR(world_of("rock")[3][1], 50.0F, 1e-4F);
+
+    status.generating = false; // the new tile is in
+    const Json r = ok("world.place_on_ground", {{"entity", "rock"}});
+    expect_vec3(r["position"], {10.0F, 3.45F, 0.0F});
 }
 
 TEST_F(Placement, ErrorsSayWhatToDo) {

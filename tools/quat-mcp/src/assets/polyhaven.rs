@@ -12,7 +12,7 @@ use futures::future::join_all;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use super::http::{Http, HttpError};
+use super::http::{Http, HttpError, UrlPolicy};
 
 /// Largest API (JSON) response accepted.
 const MAX_JSON_BYTES: u64 = 32 * 1024 * 1024;
@@ -149,19 +149,27 @@ pub struct SearchResult {
 pub struct PolyHaven<H> {
     http: H,
     api: String,
+    policy: UrlPolicy,
 }
 
 impl<H: Http> PolyHaven<H> {
     /// `api` is the API base URL, e.g. `https://api.polyhaven.com`.
     pub fn new(http: H, api: impl Into<String>) -> Self {
+        let api = api.into().trim_end_matches('/').to_owned();
         Self {
             http,
-            api: api.into().trim_end_matches('/').to_owned(),
+            policy: UrlPolicy::new(&api),
+            api,
         }
     }
 
     pub(super) fn http(&self) -> &H {
         &self.http
+    }
+
+    /// The URLs this client may download from.
+    pub(super) fn policy(&self) -> &UrlPolicy {
+        &self.policy
     }
 
     async fn json<T: for<'de> Deserialize<'de>>(&self, path: &str) -> Result<T, AssetError> {

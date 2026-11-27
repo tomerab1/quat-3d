@@ -75,7 +75,9 @@ std::optional<float> WorldRuntime::local_ground_height(float lx, float lz) const
         const glm::vec3 org = terrain_streamer_->tile_origin(coord, glm::vec3(0.0F));
         return it->second.sample(lx - org.x, lz - org.z);
     }
-    if (terrain_present_ && terrain_heightmap_.valid()) {
+    // While a regeneration job runs, the kept heightmap is the previous shape
+    // (the job cleared Terrain::regenerate when it started): no heights.
+    if (terrain_present_ && terrain_heightmap_.valid() && !terrain_job_.valid()) {
         const float size = terrain_heightmap_.tile_size_m;
         const float x = lx + size * 0.5F;
         const float z = lz + size * 0.5F;

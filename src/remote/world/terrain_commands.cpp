@@ -34,6 +34,13 @@ std::optional<TerrainRef> find_terrain(const entt::registry& registry) {
 std::optional<float> terrain_height_at(const Context& ctx, const TerrainRef& terrain, float x,
                                        float z) {
     if (!ctx.services.terrain_height || terrain.regenerating) return std::nullopt;
+    // A single tile being regenerated still holds the previous shape's
+    // heights until the job finishes (the runtime cleared `regenerate` when
+    // it started the job). Streamed tiles are always current.
+    if (!terrain.streaming && ctx.services.terrain_status &&
+        ctx.services.terrain_status().generating) {
+        return std::nullopt;
+    }
     const std::optional<float> h =
         ctx.services.terrain_height(x - terrain.anchor.x, z - terrain.anchor.z);
     if (!h) return std::nullopt;

@@ -28,10 +28,11 @@ reqwest = { version = "0.12", default-features = false, features = ["rustls-tls-
 md-5 = "0.10"
 humantime = "2"
 which = "8"
+percent-encoding = "2"
+tempfile = "3"
 
 [dev-dependencies]
 rmcp = { version = "3.12", default-features = false, features = ["server", "client", "macros", "transport-io", "schemars", "base64"] }
-tempfile = "3"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "sync", "time"] }
 
 [lints.rust]

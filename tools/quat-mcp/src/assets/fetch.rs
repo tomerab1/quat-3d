@@ -10,7 +10,7 @@ use md5::{Digest, Md5};
 use serde::Serialize;
 use serde_json::Value;
 
-use super::http::Http;
+use super::http::{Http, UrlPolicy};
 use super::paths::{POLYHAVEN_DIR, safe_relative, slash_path, url_file_name, valid_asset_id};
 use super::polyhaven::{AssetError, FileEntry, PolyHaven};
 use crate::content;
@@ -91,12 +91,14 @@ fn io_err(path: &Path) -> impl FnOnce(std::io::Error) -> AssetError + '_ {
 }
 
 /// The files to download: the glTF (named as in its URL) and its includes,
-/// each with a validated relative path.
+/// each with a validated relative path and a URL `policy` allows — all
+/// checked before anything is requested.
 fn plan<'a>(
     id: &str,
     resolution: &str,
     gltf: &'a FileEntry,
     max_bytes: u64,
+    policy: &UrlPolicy,
 ) -> Result<Vec<(PathBuf, &'a FileEntry)>, AssetError> {
     let unsafe_path = |p: &str| AssetError::UnsafePath { path: p.to_owned() };
     let name = url_file_name(&gltf.url).ok_or_else(|| unsafe_path(&gltf.url))?;
@@ -111,6 +113,9 @@ fn plan<'a>(
     for (rel, entry) in &gltf.include {
         files.push((safe_relative(rel).ok_or_else(|| unsafe_path(rel))?, entry));
     }
+    for (_, entry) in &files {
+        policy.check(&entry.url)?;
+    }
     let total: u64 = files.iter().map(|(_, f)| f.size).sum();
     if files.len() > MAX_FILES || total > max_bytes {
         return Err(AssetError::TooLarge {
@@ -121,6 +126,40 @@ fn plan<'a>(
         });
     }
     Ok(files)
+}
+
+/// Every external `buffers[].uri` / `images[].uri` of the glTF (percent-
+/// decoded) must name one of the files downloaded with it, so the engine's
+/// loader can only open files inside the model's folder; `data:` URIs are
+/// embedded and fine.
+fn check_gltf_uris(gltf: &[u8], planned: &[(PathBuf, &FileEntry)]) -> Result<(), AssetError> {
+    let doc: Value = serde_json::from_slice(gltf).map_err(|e| AssetError::Corrupt {
+        file: format!("glTF ({e})"),
+        what: "JSON format",
+    })?;
+    let uris = ["buffers", "images"]
+        .iter()
+        .flat_map(|key| doc[*key].as_array().into_iter().flatten())
+        .filter_map(|item| item.get("uri"));
+    for uri in uris {
+        let unsafe_uri = || AssetError::UnsafePath {
+            path: uri.to_string(),
+        };
+        let Some(text) = uri.as_str() else {
+            return Err(unsafe_uri());
+        };
+        if text.starts_with("data:") {
+            continue;
+        }
+        let decoded = percent_encoding::percent_decode_str(text)
+            .decode_utf8()
+            .map_err(|_| unsafe_uri())?;
+        let rel = safe_relative(&decoded).ok_or_else(unsafe_uri)?;
+        if !planned.iter().skip(1).any(|(p, _)| *p == rel) {
+            return Err(unsafe_uri());
+        }
+    }
+    Ok(())
 }
 
 /// Material count per alphaMode in a glTF document.
@@ -163,7 +202,7 @@ pub async fn fetch<H: Http>(
             available: files.gltf.keys().cloned().collect::<Vec<_>>().join(", "),
         });
     };
-    let planned = plan(id, &opts.resolution, gltf, opts.max_bytes)?;
+    let planned = plan(id, &opts.resolution, gltf, opts.max_bytes, ph.policy())?;
 
     let rel_dir = Path::new(POLYHAVEN_DIR).join(id);
     let dest = root.join(&rel_dir);
@@ -194,18 +233,22 @@ pub async fn fetch<H: Http>(
         return Ok(report);
     }
 
-    // Download everything into a staging directory, then move it in place.
-    let staging = root.join(POLYHAVEN_DIR).join(format!(".{id}.partial"));
-    let result = download(ph, &staging, &planned, &info.authors, &report).await;
-    let moved = match result {
-        Ok(modes) => {
-            report.alpha_modes = modes;
-            replace_dir(&staging, &dest).await
-        }
-        Err(e) => Err(e),
-    };
-    if let Err(e) = moved {
-        let _ = tokio::fs::remove_dir_all(&staging).await;
+    // Download everything into a staging directory of this request's own
+    // (concurrent fetches of the same id never share one), then move it in
+    // place. Dropping the TempDir on an error removes it.
+    let parent = root.join(POLYHAVEN_DIR);
+    tokio::fs::create_dir_all(&parent)
+        .await
+        .map_err(io_err(&parent))?;
+    let staging = tempfile::Builder::new()
+        .prefix(&format!(".{id}."))
+        .suffix(".partial")
+        .tempdir_in(&parent)
+        .map_err(io_err(&parent))?;
+    report.alpha_modes = download(ph, staging.path(), &planned, &info.authors, &report).await?;
+    let staged = staging.keep();
+    if let Err(e) = replace_dir(&staged, &dest).await {
+        let _ = tokio::fs::remove_dir_all(&staged).await;
         return Err(e);
     }
 
@@ -224,11 +267,6 @@ async fn download<H: Http>(
     authors: &BTreeMap<String, String>,
     report: &FetchReport,
 ) -> Result<BTreeMap<String, u32>, AssetError> {
-    if staging.exists() {
-        tokio::fs::remove_dir_all(staging)
-            .await
-            .map_err(io_err(staging))?;
-    }
     let mut modes = BTreeMap::new();
     for (i, (rel, entry)) in planned.iter().enumerate() {
         let bytes = ph.http().get(&entry.url, entry.size).await?;
@@ -245,6 +283,8 @@ async fn download<H: Http>(
             });
         }
         if i == 0 {
+            // Before fetching anything it references.
+            check_gltf_uris(&bytes, planned)?;
             modes = alpha_modes(&bytes);
         }
         let path = staging.join(rel);

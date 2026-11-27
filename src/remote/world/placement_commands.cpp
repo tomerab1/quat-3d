@@ -151,88 +151,99 @@ RpcResult place_on_ground(Context& ctx, const Json& params) {
         return bad_params("entity: the terrain (or an ancestor of it) cannot be placed on itself");
     }
 
-    glm::mat4 world = world_matrix(r, *e);
-    if (has_at) {
-        world[3].x = at.x;
-        world[3].z = at.y;
-        set_world_matrix(r, *e, world);
-    }
-    const auto bounds_now = [&] {
-        const glm::vec3 p(world_matrix(r, *e)[3]);
-        return subtree_world_bounds(ctx, *e, false).value_or(asset::Aabb{p, p});
-    };
+    // The placement moves the entity in steps (at, tilt, rest); a failure at
+    // any step restores the transform it had, so an error changes nothing.
+    const glm::mat4 saved_local = r.get<scene::Transform>(*e).local;
+    const auto place = [&]() -> RpcResult {
+        glm::mat4 world = world_matrix(r, *e);
+        if (has_at) {
+            world[3].x = at.x;
+            world[3].z = at.y;
+            set_world_matrix(r, *e, world);
+        }
+        const auto bounds_now = [&] {
+            const glm::vec3 p(world_matrix(r, *e)[3]);
+            return subtree_world_bounds(ctx, *e, false).value_or(asset::Aabb{p, p});
+        };
 
-    // 1. Tilt to the surface under the entity's centre.
-    float tilt_deg = 0.0F;
-    if (align) {
+        // 1. Tilt to the surface under the entity's centre.
+        float tilt_deg = 0.0F;
+        if (align) {
+            const asset::Aabb box = bounds_now();
+            const glm::vec3 c = 0.5F * (box.min + box.max);
+            const SurfaceSample s = sample_surfaces(ctx, terrain, ignore, c.x, c.z, box.max.y + 1e-3F);
+            const Surface* surface = top_surface(s);
+            if (surface == nullptr) return nothing_below(c);
+            const glm::vec3 up = glm::normalize(glm::vec3(world[1]));
+            const glm::quat q = tilt_between(up, glm::normalize(surface->normal),
+                                             glm::radians(max_tilt_deg));
+            const glm::vec3 pivot(world[3]);
+            world = glm::translate(glm::mat4(1.0F), pivot) * glm::mat4_cast(q) *
+                    glm::translate(glm::mat4(1.0F), -pivot) * world;
+            set_world_matrix(r, *e, world);
+            tilt_deg = glm::degrees(std::acos(glm::clamp(glm::dot(glm::normalize(glm::vec3(world[1])),
+                                                                  glm::vec3(0.0F, 1.0F, 0.0F)),
+                                                         -1.0F, 1.0F)));
+        }
+
+        // 2. Rest the bounds on the surfaces under a 3x3 footprint grid.
         const asset::Aabb box = bounds_now();
-        const glm::vec3 c = 0.5F * (box.min + box.max);
-        const SurfaceSample s = sample_surfaces(ctx, terrain, ignore, c.x, c.z, box.max.y + 1e-3F);
-        const Surface* surface = top_surface(s);
-        if (surface == nullptr) return nothing_below(c);
-        const glm::vec3 up = glm::normalize(glm::vec3(world[1]));
-        const glm::quat q = tilt_between(up, glm::normalize(surface->normal),
-                                         glm::radians(max_tilt_deg));
-        const glm::vec3 pivot(world[3]);
-        world = glm::translate(glm::mat4(1.0F), pivot) * glm::mat4_cast(q) *
-                glm::translate(glm::mat4(1.0F), -pivot) * world;
+        std::array<SurfaceSample, 9> samples;
+        for (int i = 0; i < 9; ++i) {
+            const float u = static_cast<float>(i % 3) * 0.5F;
+            const float v = static_cast<float>(i / 3) * 0.5F;
+            samples[static_cast<std::size_t>(i)] =
+                sample_surfaces(ctx, terrain, ignore, glm::mix(box.min.x, box.max.x, u),
+                                glm::mix(box.min.z, box.max.z, v), box.max.y + 1e-3F);
+        }
+        const SurfaceSample& centre = samples[4];
+        float dy = 0.0F;
+        if (align) {
+            // Tilted: the bottom centre of the entity's own bounds sits on the
+            // surface under it (the footprint's corners follow the slope).
+            const auto local = subtree_local_bounds(ctx, *e);
+            const glm::vec3 bottom_local =
+                local ? glm::vec3(0.5F * (local->min.x + local->max.x), local->min.y,
+                                  0.5F * (local->min.z + local->max.z))
+                      : glm::vec3(0.0F);
+            const glm::vec3 bottom(world * glm::vec4(bottom_local, 1.0F));
+            const SurfaceSample s = sample_surfaces(ctx, terrain, ignore, bottom.x, bottom.z,
+                                                    box.max.y + 1e-3F);
+            const Surface* surface = top_surface(s);
+            if (surface == nullptr) return nothing_below(bottom);
+            dy = surface->y - bottom.y;
+        } else {
+            const std::optional<float> rest = rest_height(samples);
+            if (!rest) return nothing_below(0.5F * (box.min + box.max));
+            dy = *rest - box.min.y;
+        }
+        dy += offset;
+        world = glm::translate(glm::mat4(1.0F), glm::vec3(0.0F, dy, 0.0F)) * world;
         set_world_matrix(r, *e, world);
-        tilt_deg = glm::degrees(std::acos(glm::clamp(glm::dot(glm::normalize(glm::vec3(world[1])),
-                                                              glm::vec3(0.0F, 1.0F, 0.0F)),
-                                                     -1.0F, 1.0F)));
-    }
 
-    // 2. Rest the bounds on the surfaces under a 3x3 footprint grid.
-    const asset::Aabb box = bounds_now();
-    std::array<SurfaceSample, 9> samples;
-    for (int i = 0; i < 9; ++i) {
-        const float u = static_cast<float>(i % 3) * 0.5F;
-        const float v = static_cast<float>(i / 3) * 0.5F;
-        samples[static_cast<std::size_t>(i)] =
-            sample_surfaces(ctx, terrain, ignore, glm::mix(box.min.x, box.max.x, u),
-                            glm::mix(box.min.z, box.max.z, v), box.max.y + 1e-3F);
+        const Surface* under = top_surface(centre);
+        const asset::Aabb placed = bounds_now();
+        Json surface = nullptr;
+        if (under != nullptr) {
+            surface = Json{{"kind", under->kind},
+                           {"entity", under->entity == entt::null ? Json(nullptr)
+                                                                  : entity_json(under->entity)},
+                           {"y", under->y},
+                           {"normal", vec3_json(under->normal)}};
+        }
+        return Json{{"id", entity_json(*e)},
+                    {"position", vec3_json(glm::vec3(world[3]))},
+                    {"world_bounds", bounds_json(placed)},
+                    {"moved_y", dy},
+                    {"tilt_deg", tilt_deg},
+                    {"surface", std::move(surface)}};
+    };
+    RpcResult result = place();
+    if (!result) {
+        r.get<scene::Transform>(*e).local = saved_local;
+        refresh_world(r, *e);
     }
-    const SurfaceSample& centre = samples[4];
-    float dy = 0.0F;
-    if (align) {
-        // Tilted: the bottom centre of the entity's own bounds sits on the
-        // surface under it (the footprint's corners follow the slope).
-        const auto local = subtree_local_bounds(ctx, *e);
-        const glm::vec3 bottom_local =
-            local ? glm::vec3(0.5F * (local->min.x + local->max.x), local->min.y,
-                              0.5F * (local->min.z + local->max.z))
-                  : glm::vec3(0.0F);
-        const glm::vec3 bottom(world * glm::vec4(bottom_local, 1.0F));
-        const SurfaceSample s = sample_surfaces(ctx, terrain, ignore, bottom.x, bottom.z,
-                                                box.max.y + 1e-3F);
-        const Surface* surface = top_surface(s);
-        if (surface == nullptr) return nothing_below(bottom);
-        dy = surface->y - bottom.y;
-    } else {
-        const std::optional<float> rest = rest_height(samples);
-        if (!rest) return nothing_below(0.5F * (box.min + box.max));
-        dy = *rest - box.min.y;
-    }
-    dy += offset;
-    world = glm::translate(glm::mat4(1.0F), glm::vec3(0.0F, dy, 0.0F)) * world;
-    set_world_matrix(r, *e, world);
-
-    const Surface* under = top_surface(centre);
-    const asset::Aabb placed = bounds_now();
-    Json surface = nullptr;
-    if (under != nullptr) {
-        surface = Json{{"kind", under->kind},
-                       {"entity", under->entity == entt::null ? Json(nullptr)
-                                                              : entity_json(under->entity)},
-                       {"y", under->y},
-                       {"normal", vec3_json(under->normal)}};
-    }
-    return Json{{"id", entity_json(*e)},
-                {"position", vec3_json(glm::vec3(world[3]))},
-                {"world_bounds", bounds_json(placed)},
-                {"moved_y", dy},
-                {"tilt_deg", tilt_deg},
-                {"surface", std::move(surface)}};
+    return result;
 }
 
 } // namespace

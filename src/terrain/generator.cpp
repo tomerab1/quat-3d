@@ -305,6 +305,12 @@ bool erosion_enabled(const TerrainParams& params) {
                                                       : params.erosion_droplets > 0;
 }
 
+// same_shape lists every field by hand: a new parameter must be added there
+// too (or a shape edit would silently skip regeneration). These sizes trip
+// when the structs change.
+static_assert(sizeof(GridErosionParams) == 44, "GridErosionParams changed: update same_shape");
+static_assert(sizeof(TerrainParams) == 120, "TerrainParams changed: update same_shape");
+
 bool same_shape(const TerrainParams& a, const TerrainParams& b) {
     const GridErosionParams& ga = a.grid;
     const GridErosionParams& gb = b.grid;

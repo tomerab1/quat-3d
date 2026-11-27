@@ -175,6 +175,12 @@ Details the contract leaves open, as implemented:
   and characters in play mode (ownerless bodies such as streamed terrain
   count as ground). The entity's own colliders are skipped. Nothing below is
   `failed`; placing the terrain (or an ancestor of it) is `invalid_params`.
+  A failure restores the entity's transform (`at` and the tilt included).
+  While a single terrain tile regenerates its old heights are not used
+  (`world.ground_height` answers null, placement on it fails). Known gaps
+  while a physics world runs: colliders created earlier in the same batch
+  are not bodies yet (only the physics world is consulted), and a placed
+  dynamic body is pulled back by the simulation.
 
 ## Methods (v1 contract, ROADMAP A2/A3)
 
@@ -504,9 +510,13 @@ fetch downloads the glTF and its `include` files into
 `<project>/assets/meshes/polyhaven/<id>/` (`--project-root`, default the
 current directory). Ids must be Poly Haven slugs and every path from the API
 must be a plain relative path (no `..`, absolute, hidden or backslash
-components); the declared total is capped (`--asset-max-mb`, default 512)
+components); every URL (and redirect, at most 3) must be https on
+`dl.polyhaven.org` or the API's host, or share the configured API's exact
+origin; every non-`data:` `buffers[].uri` / `images[].uri` of the glTF
+(percent-decoded) must name one of the downloaded files; the declared total is capped (`--asset-max-mb`, default 512)
 before anything is downloaded, and each file must match its declared size
-and MD5. Files land in a staging directory that is moved into place only
+and MD5. Files land in a staging directory private to the request (concurrent
+fetches of one model never share it) that is moved into place only
 when everything verified, next to `LICENSE.md` (CC0, authors, source) and
 `polyhaven.json` (provenance). With `quat-cook` on PATH the model is also
 cooked to `<id>.glb`. The folder is gitignored. The engine then loads the

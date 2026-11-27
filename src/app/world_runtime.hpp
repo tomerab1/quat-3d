@@ -141,7 +141,8 @@ public:
         return ground_height_at_;
     }
     // Terrain height above the anchor at anchor-relative (lx, lz); nullopt
-    // where no tile is loaded.
+    // where no tile is loaded, and everywhere while the single tile
+    // regenerates (its old heightmap is stale).
     [[nodiscard]] std::optional<float> local_ground_height(float lx, float lz) const;
     // Tiles loaded / wanted, generation in flight, loaded extent (remote
     // terrain.status, issue #39).

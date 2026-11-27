@@ -59,7 +59,7 @@ fn md5_hex(b: &[u8]) -> String {
     format!("{:x}", Md5::digest(b))
 }
 
-const GLTF: &str = r#"{"asset":{"version":"2.0"},"materials":[{"name":"bark"},{"name":"leaves","alphaMode":"MASK"},{"alphaMode":"MASK"}]}"#;
+const GLTF: &str = r#"{"asset":{"version":"2.0"},"materials":[{"name":"bark"},{"name":"leaves","alphaMode":"MASK"},{"alphaMode":"MASK"}],"buffers":[{"uri":"fir_sapling.bin","byteLength":10}],"images":[{"uri":"textures/fir%5Fbark_diff_1k.jpg"},{"uri":"data:image/png;base64,AAAA"}]}"#;
 const BIN: &[u8] = b"\x00\x01\x02\x03binary";
 const TEX: &[u8] = b"jpeg bytes";
 
@@ -70,15 +70,22 @@ fn entry(url: &str, body: &[u8]) -> Value {
 /// A fake Poly Haven with one model, `fir_sapling`, whose 1k glTF includes
 /// `include` (path → body) — by default a .bin and a texture.
 fn fake(include: &[(&str, &[u8])]) -> FakeHttp {
-    let gltf_url = "https://dl.test/fir_sapling_1k.gltf";
+    fake_with(GLTF, "https://dl.polyhaven.org/", include)
+}
+
+/// `fake` with a given glTF document, served (with its includes) from
+/// `base`.
+fn fake_with(gltf_doc: &str, base: &str, include: &[(&str, &[u8])]) -> FakeHttp {
+    let gltf_url = format!("{base}fir_sapling_1k.gltf");
+    let gltf_url = gltf_url.as_str();
     let mut inc = serde_json::Map::new();
-    let mut http = FakeHttp::default().with(gltf_url, GLTF);
+    let mut http = FakeHttp::default().with(gltf_url, gltf_doc);
     for (i, (path, body)) in include.iter().enumerate() {
-        let url = format!("https://dl.test/f{i}");
+        let url = format!("{base}f{i}");
         inc.insert((*path).to_owned(), entry(&url, body));
         http = http.with(&url, *body);
     }
-    let mut gltf = entry(gltf_url, GLTF.as_bytes());
+    let mut gltf = entry(gltf_url, gltf_doc.as_bytes());
     gltf["include"] = Value::Object(inc);
     http.json(
         &format!("{API}/info/fir_sapling"),
@@ -171,7 +178,7 @@ async fn fetch_writes_the_model_licence_and_provenance() {
         .await
         .unwrap();
     assert!(again.already_present);
-    assert!(!ph2.http().requested("https://dl.test/f0"));
+    assert!(!ph2.http().requested("https://dl.polyhaven.org/f0"));
 }
 
 #[tokio::test]
@@ -189,7 +196,7 @@ async fn include_paths_cannot_escape_the_model_directory() {
             .unwrap_err();
         assert!(matches!(err, AssetError::UnsafePath { .. }), "{bad}: {err}");
         assert!(
-            !ph.http().requested("https://dl.test/f0"),
+            !ph.http().requested("https://dl.polyhaven.org/f0"),
             "nothing downloaded"
         );
         assert!(
@@ -198,6 +205,120 @@ async fn include_paths_cannot_escape_the_model_directory() {
         );
         assert!(!root.path().join("evil.bin").exists());
     }
+}
+
+#[tokio::test]
+async fn download_urls_must_be_https_on_an_allowed_host() {
+    for base in [
+        "http://dl.polyhaven.org/",       // plain http
+        "https://127.0.0.1:7878/",        // a loopback service (the engine's endpoint)
+        "https://evil.example/",          // another host
+        "https://user@dl.polyhaven.org/", // credentials
+        "ftp://dl.polyhaven.org/",
+    ] {
+        let root = project();
+        let ph = PolyHaven::new(fake_with(GLTF, base, &[("fir_sapling.bin", BIN)]), API);
+        let err = fetch(&ph, root.path(), "fir_sapling", &opts())
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(err, AssetError::Http(HttpError::Refused { .. })),
+            "{base}: {err}"
+        );
+        let requests = ph.http().requests.lock().unwrap().clone();
+        assert!(
+            requests.iter().all(|r| r.starts_with(API)),
+            "{base}: nothing but the API was requested: {requests:?}"
+        );
+        assert!(
+            !root
+                .path()
+                .join("assets/meshes/polyhaven/fir_sapling")
+                .exists()
+        );
+    }
+    // The configured API's own origin is allowed (a local mirror).
+    let root = project();
+    let ph = PolyHaven::new(
+        fake_with(
+            GLTF,
+            &format!("{API}/dl/"),
+            &[
+                ("fir_sapling.bin", BIN),
+                ("textures/fir_bark_diff_1k.jpg", TEX),
+            ],
+        ),
+        API,
+    );
+    fetch(&ph, root.path(), "fir_sapling", &opts())
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn gltf_uris_must_name_the_downloaded_files() {
+    for uri in [
+        "../../../secret.bin",
+        "/etc/passwd",
+        "%2E%2E/%2E%2E/secret.bin",
+        "other.bin",
+        "file:///etc/passwd",
+    ] {
+        let doc = json!({"asset": {"version": "2.0"}, "buffers": [{"uri": uri}]}).to_string();
+        let root = project();
+        let ph = PolyHaven::new(
+            fake_with(
+                &doc,
+                "https://dl.polyhaven.org/",
+                &[("fir_sapling.bin", BIN)],
+            ),
+            API,
+        );
+        let err = fetch(&ph, root.path(), "fir_sapling", &opts())
+            .await
+            .unwrap_err();
+        assert!(matches!(err, AssetError::UnsafePath { .. }), "{uri}: {err}");
+        assert!(
+            !ph.http().requested("https://dl.polyhaven.org/f0"),
+            "{uri}: includes are not fetched"
+        );
+        let polyhaven = root.path().join("assets/meshes/polyhaven");
+        assert_eq!(
+            std::fs::read_dir(&polyhaven).map_or(0, Iterator::count),
+            0,
+            "{uri}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn concurrent_fetches_of_one_model_do_not_collide() {
+    let root = project();
+    let ph = PolyHaven::new(default_fake(), API);
+    let again = FetchOptions {
+        overwrite: true,
+        ..opts()
+    };
+    let (a, b) = tokio::join!(
+        fetch(&ph, root.path(), "fir_sapling", &again),
+        fetch(&ph, root.path(), "fir_sapling", &again)
+    );
+    // Each request stages privately; both may finish, or the second rename
+    // may lose to the first, but the model ends up complete either way.
+    assert!(a.is_ok() || b.is_ok(), "{a:?} {b:?}");
+    let dir = model_dir(root.path());
+    assert_eq!(std::fs::read(dir.join("fir_sapling.bin")).unwrap(), BIN);
+    assert_eq!(
+        std::fs::read(dir.join("textures/fir_bark_diff_1k.jpg")).unwrap(),
+        TEX
+    );
+    assert!(dir.join("LICENSE.md").is_file());
+    let leftovers: Vec<_> = std::fs::read_dir(root.path().join("assets/meshes/polyhaven"))
+        .unwrap()
+        .filter_map(Result::ok)
+        .map(|e| e.file_name())
+        .collect();
+    assert_eq!(leftovers, vec![std::ffi::OsString::from("fir_sapling")]);
 }
 
 #[tokio::test]
@@ -213,7 +334,10 @@ async fn the_size_cap_applies_before_downloading() {
         .unwrap_err();
     assert!(matches!(err, AssetError::TooLarge { .. }), "{err}");
     assert!(err.to_string().contains("lower resolution"), "{err}");
-    assert!(!ph.http().requested("https://dl.test/fir_sapling_1k.gltf"));
+    assert!(
+        !ph.http()
+            .requested("https://dl.polyhaven.org/fir_sapling_1k.gltf")
+    );
 }
 
 #[tokio::test]
@@ -221,8 +345,10 @@ async fn corrupt_downloads_leave_nothing_behind() {
     let root = project();
     // The API promises the texture's checksum; the server sends other bytes.
     let mut http = default_fake();
-    http.bodies
-        .insert("https://dl.test/f1".to_owned(), b"jpeg byteZ".to_vec());
+    http.bodies.insert(
+        "https://dl.polyhaven.org/f1".to_owned(),
+        b"jpeg byteZ".to_vec(),
+    );
     let ph = PolyHaven::new(http, API);
     let err = fetch(&ph, root.path(), "fir_sapling", &opts())
         .await

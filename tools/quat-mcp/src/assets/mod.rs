@@ -16,7 +16,7 @@ pub mod polyhaven;
 mod tests;
 
 pub use fetch::{FetchOptions, FetchReport, fetch};
-pub use http::{Http, HttpError, ReqwestHttp};
+pub use http::{Http, HttpError, ReqwestHttp, UrlPolicy};
 pub use polyhaven::{AssetError, PolyHaven, SearchResult};
 
 /// The public API.

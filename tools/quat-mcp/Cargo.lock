@@ -971,6 +971,7 @@ dependencies = [
  "humantime",
  "md-5",
  "minijinja",
+ "percent-encoding",
  "reqwest",
  "rmcp",
  "schemars",

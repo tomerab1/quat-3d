@@ -100,8 +100,9 @@ struct TerrainRef {
 };
 [[nodiscard]] std::optional<TerrainRef> find_terrain(const entt::registry& registry);
 
-// World-space terrain height at (x, z), nullopt where no tile is loaded (or
-// the terrain is regenerating). Needs services.terrain_height.
+// World-space terrain height at (x, z), nullopt where no tile is loaded, or
+// while the terrain regenerates (a pending shape edit, or a single tile whose
+// generation job is running). Needs services.terrain_height.
 [[nodiscard]] std::optional<float> terrain_height_at(const Context& ctx, const TerrainRef& terrain,
                                                      float x, float z);
 

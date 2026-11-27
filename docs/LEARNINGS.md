@@ -50,6 +50,12 @@ into CLAUDE.md or the brief template in [`CYCLE.md`](CYCLE.md).
 
 ## Build and CI
 
+- **The container disk is shared by every worktree agent and fills up.**
+  During the A9 review fixes the volume hit 0 bytes free (command output was
+  lost); quat-mcp's `target/` alone had grown to 11 GB, mostly
+  `target/debug/incremental`. → Build Rust with `CARGO_INCREMENTAL=0` in
+  agent worktrees, delete scratch build trees when done, and check
+  `df -h /` before long builds.
 - **Ad-hoc local test builds: cap parallel compiles at `nproc`.** Starting
   ~45 clang processes at once on a 4-core container crashed one with
   SIGBUS (exit 135), and a file edited while its object was compiling left

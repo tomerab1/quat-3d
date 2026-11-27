@@ -14,7 +14,7 @@ use rmcp::{tool, tool_router};
 use super::QuatServer;
 use super::results::invalid_input;
 use crate::assets::{
-    AssetError, FetchOptions, HttpError, POLYHAVEN_API, PolyHaven, ReqwestHttp, fetch,
+    AssetError, FetchOptions, HttpError, POLYHAVEN_API, PolyHaven, ReqwestHttp, UrlPolicy, fetch,
 };
 use crate::params::{AssetFetchParams, AssetSearchParams};
 
@@ -51,7 +51,7 @@ pub(super) struct AssetService {
 
 impl AssetService {
     pub(super) fn new(config: AssetConfig) -> Arc<Self> {
-        let client = ReqwestHttp::new(config.timeout)
+        let client = ReqwestHttp::new(config.timeout, UrlPolicy::new(&config.api))
             .map(|http| PolyHaven::new(http, config.api.clone()))
             .map_err(|e| format!("the HTTP client could not start: {e}"));
         Arc::new(Self { config, client })
