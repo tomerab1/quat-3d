@@ -81,10 +81,15 @@ jobs:
         if: steps.configure.outcome == 'success'
         run: cmake --build --preset release
 
+      # Mesa's software Vulkan driver. The manifest's file name differs between
+      # distro releases (lvp_icd.json on Ubuntu 24.04, lvp_icd.<arch>.json
+      # elsewhere), so find it instead of hard-coding it.
       - name: Tests (CPU + GPU on lavapipe)
-        env:
-          VK_ICD_FILENAMES: /usr/share/vulkan/icd.d/lvp_icd.x86_64.json
-        run: ctest --test-dir build/release --output-on-failure --timeout 900
+        run: |
+          icd=$(ls /usr/share/vulkan/icd.d/lvp_icd*.json | head -n1)
+          echo "Using Vulkan ICD: $icd"
+          export VK_ICD_FILENAMES="$icd"
+          ctest --test-dir build/release --output-on-failure --timeout 900
 
       - name: Upload logs on failure
         if: failure()

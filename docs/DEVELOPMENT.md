@@ -47,7 +47,7 @@ ctest --test-dir build/release --output-on-failure
 Without a GPU, point the Vulkan loader at Mesa's software driver:
 
 ```sh
-VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.x86_64.json ./build/release/engine_tests
+VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.json ./build/release/engine_tests
 ```
 
 Test layout:

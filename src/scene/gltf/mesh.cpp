@@ -38,6 +38,41 @@ namespace engine::scene {
 
 namespace gltf_detail {
 
+namespace {
+
+// Appends a primitive's triangle indices (offset by base_vertex). Primitives
+// without an index accessor get the implicit sequential list 0..n-1 — built
+// here, after validate_asset(), rather than by fastgltf's
+// Options::GenerateMeshIndices, which runs during parsing and dereferences the
+// POSITION accessor index before anything has range-checked it (an
+// out-of-bounds read on malformed files, found by valgrind).
+[[nodiscard]] std::expected<void, core::Error>
+append_indices(const fastgltf::Asset& asset, const fastgltf::Primitive& prim,
+               std::size_t vertex_count, std::uint32_t base_vertex,
+               std::vector<std::uint32_t>& out) {
+    if (!prim.indicesAccessor.has_value()) {
+        if (vertex_count % 3 != 0) return fail("glTF: non-indexed triangle list size not a multiple of 3");
+        out.reserve(out.size() + vertex_count);
+        for (std::size_t i = 0; i < vertex_count; ++i) {
+            out.push_back(base_vertex + static_cast<std::uint32_t>(i));
+        }
+        return {};
+    }
+    const fastgltf::Accessor& idx_acc = asset.accessors[prim.indicesAccessor.value()];
+    out.reserve(out.size() + idx_acc.count);
+    bool index_out_of_range = false;
+    fastgltf::iterateAccessor<std::uint32_t>(asset, idx_acc, [&](std::uint32_t idx) {
+        index_out_of_range = index_out_of_range || idx >= vertex_count;
+        out.push_back(base_vertex + idx);
+    });
+    // An index past the vertex count makes the GPU fetch out of bounds.
+    if (index_out_of_range) return fail("glTF: vertex index out of range");
+    return {};
+}
+
+} // namespace
+
+
 // Merge every triangle primitive of every mesh into one vertex/index stream.
 // Indices are rebased per primitive so the merged index buffer is self-contained.
 [[nodiscard]] std::expected<MeshData, core::Error> extract(const fastgltf::Asset& asset) {
@@ -88,25 +123,15 @@ namespace gltf_detail {
                     });
             }
 
-            // GenerateMeshIndices guarantees an index accessor even for
-            // originally non-indexed primitives.
-            if (!prim.indicesAccessor.has_value()) {
-                return fail("glTF primitive has no index accessor after generation");
-            }
-            const fastgltf::Accessor& idx_acc = asset.accessors[prim.indicesAccessor.value()];
             const auto index_offset = static_cast<std::uint32_t>(out.indices.size());
-            out.indices.reserve(out.indices.size() + idx_acc.count);
-            bool index_out_of_range = false;
-            fastgltf::iterateAccessor<std::uint32_t>(asset, idx_acc, [&](std::uint32_t idx) {
-                index_out_of_range = index_out_of_range || idx >= pos_acc.count;
-                out.indices.push_back(base_vertex + idx);
-            });
-            // An index past the vertex count makes the GPU fetch out of bounds.
-            if (index_out_of_range) return fail("glTF: vertex index out of range");
+            if (auto ok = append_indices(asset, prim, pos_acc.count, base_vertex, out.indices);
+                !ok) {
+                return std::unexpected(ok.error());
+            }
 
             asset::SubMesh sub;
             sub.index_offset = index_offset;
-            sub.index_count = static_cast<std::uint32_t>(idx_acc.count);
+            sub.index_count = static_cast<std::uint32_t>(out.indices.size() - index_offset);
             sub.material = prim.materialIndex.has_value()
                                ? static_cast<std::uint32_t>(prim.materialIndex.value())
                                : 0U;
@@ -179,18 +204,9 @@ extract_primitive(const fastgltf::Asset& asset, const fastgltf::Primitive& prim)
             [&](fastgltf::math::fvec4 v, std::size_t i) { out.skin[i].weights = to_glm(v); });
     }
 
-    if (!prim.indicesAccessor.has_value()) {
-        return fail("glTF primitive has no index accessor after generation");
+    if (auto ok = append_indices(asset, prim, pos_acc.count, 0, out.indices); !ok) {
+        return std::unexpected(ok.error());
     }
-    const fastgltf::Accessor& idx_acc = asset.accessors[prim.indicesAccessor.value()];
-    out.indices.reserve(idx_acc.count);
-    bool index_out_of_range = false;
-    fastgltf::iterateAccessor<std::uint32_t>(asset, idx_acc, [&](std::uint32_t idx) {
-        index_out_of_range = index_out_of_range || idx >= pos_acc.count;
-        out.indices.push_back(idx);
-    });
-    // An index past the vertex count makes the GPU fetch out of bounds.
-    if (index_out_of_range) return fail("glTF: vertex index out of range");
 
     if (out.vertices.empty() || out.indices.empty()) {
         return fail("glTF primitive contained no triangle geometry");

@@ -26,6 +26,16 @@ into CLAUDE.md or the brief template in [`CYCLE.md`](CYCLE.md).
 
 ## Build and CI
 
+- **Lavapipe's ICD file is `lvp_icd.json` on Ubuntu 24.04** (not
+  `lvp_icd.x86_64.json`) — a wrong `VK_ICD_FILENAMES` gives
+  `VK_ERROR_INCOMPATIBLE_DRIVER` from vkCreateInstance. CI globs for it.
+  Lavapipe also runs in the cloud container (`apt install mesa-vulkan-drivers`
+  or `/opt/lavapipe/lvp_icd.json`), so GPU tests can run locally.
+- **Order-dependent / layout-dependent failures are memory bugs.** A test
+  that fails only after another one, or passes under gdb (no ASLR), is
+  reading invalid memory: run it under valgrind, which also instruments
+  third-party static libraries that ASan builds don't (it found an OOB read
+  inside fastgltf).
 - **CI triggered on both `push` to `claude/**` and `pull_request` ran every
   commit twice.** Branch pushes now only build `master`; cycle branches build
   through their PR.
@@ -63,6 +73,11 @@ into CLAUDE.md or the brief template in [`CYCLE.md`](CYCLE.md).
 
 ## C++ in this codebase
 
+- **Don't let a parser touch untrusted indices before validation.**
+  fastgltf's `Options::GenerateMeshIndices` dereferences accessor indices
+  during parsing; the loader now validates first and generates sequential
+  indices itself. Same for `fastgltf::validate`: it is stricter than real
+  exporter files — validate exactly what the loader dereferences.
 - **No exceptions means nlohmann's `get<T>()` / `value()` abort on bad
   input.** Read any external JSON through `core::JsonFields`; dump with
   `error_handler_t::replace` (invalid UTF-8 also throws).

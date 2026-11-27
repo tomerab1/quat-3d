@@ -43,9 +43,11 @@ namespace engine::scene::gltf_detail {
     return std::unexpected(core::Error{std::move(what)});
 }
 
+// No Options::GenerateMeshIndices: fastgltf runs it during parsing, before
+// validate_asset() can range-check the accessor indices it dereferences.
+// Non-indexed primitives get sequential indices in mesh.cpp instead.
 inline constexpr auto kLoadOptions = fastgltf::Options::LoadExternalBuffers |
-                                     fastgltf::Options::LoadExternalImages |
-                                     fastgltf::Options::GenerateMeshIndices;
+                                     fastgltf::Options::LoadExternalImages;
 
 // glTF material extensions the loader understands.
 inline constexpr auto kParserExtensions = fastgltf::Extensions::KHR_materials_transmission |
