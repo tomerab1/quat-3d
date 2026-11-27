@@ -34,30 +34,36 @@ Decisions already made (do not re-litigate without the owner):
 Cycle 1 is merged into `master` (PR #2, merge `c6acf19`, CI green: full Linux
 build, CPU + lavapipe GPU tests, quat-mcp checks).
 
-**Cycle 2** — eight worktree agents started from 473ec53; each pushes
-`feat/<id>`. They merge into `claude/nifty-hopper-nb68qe` and land through the cycle-2 PR (#3).
+**Cycle 2** (PR #3) — worktree agents push `feat/<id>`; results merge into
+`claude/nifty-hopper-nb68qe`.
+
+Merged: A5 (`e6d514d`), G2 (`bece029`), R2 (`f75b86f`), R9.2 (`fcecf84`),
+S1 batch 2 (`b73d0a1`), R10.2 (`43ca3d2`). CI on `fcecf84` was green (full
+Linux build, CPU + GPU tests); `c0e2604` (adds S1 batch 2 + R10.2) is running.
+
+Still claimed (in progress):
 
 | Item | Branch | Scope |
 |---|---|---|
-| S7.3 | `feat/s7-app-layer` | main.cpp → app layer (Application, FrameRenderer, EditorBridge, WorldRuntime, FlyCamera); fixes the ENGINE_EDITOR=OFF build. **Sole main.cpp restructurer** |
-| G2 | `feat/g2-bt-editor` | Behaviour-tree node editor on imgui-node-editor; JSON ↔ graph model |
-| A5 | `feat/a5-debug-tools` | `debug.*` remote methods (log ring, stats, pause/step/time scale, watch, raycast, nav path) + quat-mcp tools |
-| R9.2 | `feat/r9-scatter` | `InstancedMesh` + seeded `Scatter` on terrain |
-| R10.2 | `feat/r10-gpu-terrain` | Compute-shader heightmap synthesis, CPU reference kept |
-| R2 | `feat/r2-shader-reload` | Shader hot reload (watcher, slangc service, deferred pipeline swap) |
-| S1 batch 2 | `feat/s1-batch2` | B14, C5 joints, C11, C12, C14, C15, C16, A10, A15 |
-| S4/P1 | `feat/s4-platform-ci` | Windows + macOS CI jobs and portability fixes |
+| S7.3 | `feat/s7-app-layer` | main.cpp → app layer; porting the A5/R2/R9.2/R10.2 hooks. **Sole main.cpp restructurer** |
+| R10.2 follow-up | `feat/r10-gpu-terrain` | old scenes keep droplet erosion; reflection-derived bindings in terrain_synth + light_cull |
+| S4/P1 | `feat/s4-platform-ci` | Windows + macOS CI and portability fixes |
+| S3.3 | `feat/s3-legacy-migration` | legacy self-tests → GoogleTest: physics, net, nav, renderer passes |
+| A7 | `feat/a7-bt-authoring` | behaviour authoring via MCP (`bt.*` + tools) |
+| A6 | `feat/a6-shader-authoring` | material shader authoring via MCP |
+| R9.3 | `feat/r9-grass` | GPU grass (compute + indirect draw) |
+| Audit | — | fresh review of everything merged in cycle 2 → `docs/audit/` |
 
 ## Work in flight
 
 | Item | State | Verified? |
 |---|---|---|
 | S1 bug audit | 46 findings recorded in [`audit/S1-findings.md`](audit/S1-findings.md) with severity and status. Fixed so far: B7, B11/C4, B13 (`[S1.1]`); C1–C3 + C5 index part — glTF structural validation (`[S1.2]`); B6/C8 orphaned Jolt bodies/characters swept (`[S1.3]`); B10/C7 behaviour-tree parsing hardened (`[S1.4]`); C6, B12/C9, parts of C11/C16 via the component codec + scene_io rewrite (`[S2.1]`, `[S2.2]`); A5 transient-pool eviction (`[S1.5]`); A3/A4/A7 render-graph synchronisation (`[S1.6]`) | Animation fix verified locally; physics/scene fixes await CI |
-| S3 GoogleTest | Step 1 done: `tests/` (gtest via vcpkg), legacy self-tests wrapped (`tests/legacy/`), GPU fixture, CTest CPU/GPU split. Step 2 (move test bodies out of engine sources) not started | Harness built and run locally against a source-built gtest (RPC tests pass); full suite awaits CI |
-| S4 CI | Linux job in `.github/workflows/ci.yml` | First runs in progress on GitHub — check the Actions tab |
-| S7 thin `main.cpp` | S7.1 + S7.2 done: tests, mesh generators and demo-scene construction (`src/app/demo_scenes.*`) moved out, `QUAT_SELFTEST` removed — 3,723 → ~2,010 lines. Next: the frame loop (`Application` / `FrameRenderer` / `EditorBridge`), and move the remote setup out of `main.cpp` | Compile-checked locally |
+| S3 GoogleTest | Steps 1–2 partly done: harness, GPU fixture, CTest split; animation/terrain/asset/remote/rhi bodies migrated (S3.2). S3.3 in progress for physics/net/nav/renderer; glTF/scene remain | CI runs CPU + GPU (lavapipe) suites |
+| S4 CI | Linux (clang + libc++, vcpkg cache, lavapipe GPU tests) + Rust job green; Windows/macOS in progress (S4/P1) | CI |
+| S7 thin `main.cpp` | S7.1/S7.2 done; S7.3 (app layer, `main.cpp` → 34 lines, ENGINE_EDITOR=OFF fixed) done on `feat/s7-app-layer`, porting cycle-2 hooks before merge | Compile-checked both configs |
 | S8 split oversized files | S8.1 done: `gltf_loader.cpp` (1,770 lines) → `src/scene/gltf/` (validate, mesh, material, skin_animation, scene_assembly, self_tests; largest 400 lines + 540 of legacy tests) with a private `internal.hpp` | Every file compile-checked locally; link verified by CI |
-| A4 Rust MCP server | **Merged** (`tools/quat-mcp`): 27 tools, prompts, scene resource; 31 tests + fmt + clippy pass locally; Rust CI job added. Not yet tried against the real engine (A2/A3 in progress) | Verified locally |
+| A4 Rust MCP server | Merged; A4.1 idiom pass: model text in `tools/quat-mcp/content/*.md`, modules split, pedantic clippy, toolchain pinned. A5 debug tools added | CI Rust job |
 | CI | Run 3: all vcpkg dependencies built + cached; engine build failed on a pre-existing `std::jthread` (libc++ 18) — fixed in `219b406`, next run in progress | — |
 | A1 remote transport | `src/remote/`, `include/engine/remote/rpc_server.hpp`, wired in `main.cpp` (`QUAT_REMOTE`) | Library compiled warning-free + self-test passed standalone; `main.cpp` wiring not yet compiled |
 | A2 world commands | Component codec done (`component_json.*`, 10 gtest cases pass locally); `Primitive` serialized but `resolve_primitives()` (mesh/material build) and the RPC commands not written | Codec verified locally |

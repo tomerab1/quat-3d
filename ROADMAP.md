@@ -94,7 +94,7 @@ JSON-RPC over loopback TCP to the engine.
 
 - [ ] **R1 — Async asset loading.** Thread-pool loads, `is_ready()` handles,
   fallback assets while loading, upload queue budgeted per frame.
-- [ ] **R2 — Shader hot reload.** File watcher → `slangc` → pipeline recreation
+- [x] **R2 — Shader hot reload.** File watcher → `slangc` → pipeline recreation
   on the next frame; compile errors surfaced, old pipeline kept on failure.
 - [ ] **R3 — Asset hot reload.** Meshes/textures re-imported on change.
 - [ ] **R4 — Profiling.** Tracy CPU zones on every system/pass, GPU zones via
@@ -110,7 +110,7 @@ JSON-RPC over loopback TCP to the engine.
     through a buffer device address (GBuffer + shadow passes), deriving the
     normal matrix per instance (fixes audit A13). Existing per-entity
     MeshRenderers are batched automatically.
-  - **R9.2 `InstancedMesh` + `Scatter`.** One entity carries thousands of
+  - ✅ **R9.2 `InstancedMesh` + `Scatter`.** (cycle 2) One entity carries thousands of
     placements; seeded procedural scattering on terrain (density, slope /
     height limits, scale/rotation jitter) for trees and rocks. Serialized,
     inspector + remote/MCP editable.
@@ -155,7 +155,7 @@ JSON-RPC over loopback TCP to the engine.
 - [x] **G1 — Audio (miniaudio).** `AudioSource` / `AudioListener` components,
   3D spatialisation and attenuation, mixer buses, streaming music, editor
   preview, scene serialization.
-- [ ] **G2 — Behaviour node graph.** Visual node editor built on
+- [x] **G2 — Behaviour node graph.** Visual node editor built on
   `imgui-node-editor` (thedmd, vcpkg port) over the existing data-driven
   behaviour trees (JSON stays the asset format); blackboard; more leaves
   (perception, animation parameters).
