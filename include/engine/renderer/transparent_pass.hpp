@@ -81,12 +81,15 @@ public:
     // depth; transmissive draws also write it), in the list's draw order.
     // `ibl` supplies the environment maps glass reflects — a black fallback is
     // bound when empty. `lights` is this frame's LightCullPass output (none
-    // when default). No-op (but still valid) when there are no draws.
+    // when default). `ibl_intensity` scales the environment reflection and
+    // irradiance (RenderSettings::ibl). No-op (but still valid) when there are
+    // no draws.
     [[nodiscard]] std::expected<void, core::Error>
     add_to_graph(rhi::RenderGraph& graph, rhi::ResourceHandle hdr, rhi::ResourceHandle depth,
                  VkExtent2D extent, const glm::mat4& view_proj, const DirectionalLightParams& light,
                  const glm::vec3& camera_pos, const InstancedDrawList& list,
-                 IblViewSet ibl = {}, const ClusteredLights& lights = {});
+                 IblViewSet ibl = {}, const ClusteredLights& lights = {},
+                 float ibl_intensity = 1.0F);
 
     // Convenience: draws `draws` (supplied back-to-front) one object per draw,
     // preserving their order (unbatched_draws()).
@@ -94,7 +97,8 @@ public:
     add_to_graph(rhi::RenderGraph& graph, rhi::ResourceHandle hdr, rhi::ResourceHandle depth,
                  VkExtent2D extent, const glm::mat4& view_proj, const DirectionalLightParams& light,
                  const glm::vec3& camera_pos, std::span<const DrawItem> draws,
-                 IblViewSet ibl = {}, const ClusteredLights& lights = {});
+                 IblViewSet ibl = {}, const ClusteredLights& lights = {},
+                 float ibl_intensity = 1.0F);
 
 private:
     // Mip levels of the scene-colour snapshot — how far rough transmission can

@@ -4,6 +4,7 @@ A JSON object keyed by component name. Updates merge: omitted fields keep their 
 
 - **transform**: `position` [x,y,z] (local, relative to the parent); `rotation` [x,y,z] Euler degrees applied in YXZ order (x = pitch, y = yaw/heading, z = roll); `scale` number or [x,y,z]; `look_at` [x,y,z] world point to face (an entity's forward is -Z). `world_position` is read-only.
 - **primitive**: `shape` cube|sphere|plane|cylinder|cone|capsule (about unit size, centred on the position — size it with transform.scale; a cube scaled [w,h,d] rests on y=0 at position y=h/2); `color` `"#rrggbb"` / `"#rrggbbaa"` sRGB hex or linear [r,g,b,a] (alpha < 1 = see-through); `metallic` 0..1; `roughness` 0..1; `emissive` linear [r,g,b] (HDR, > 1 glows).
+- **material**: per-entity overrides of the PBR factors the entity's material is drawn with (primitive or glTF mesh; the shared asset is untouched): `base_color`, `emissive`, `metallic`, `roughness`, `occlusion_strength`, `normal_scale`, `alpha_cutoff`, `transmission` (> 0 = glass), `ior`, `attenuation_color`, `attenuation_distance`, `thickness`, `clearcoat`, `clearcoat_roughness`; `null` drops an override. Prefer `material_set`, which also edits a primitive's own colour/metallic/roughness/emissive.
 - **`point_light`**: `color` linear [r,g,b]; `radius` (range, m); `intensity` >= 0.
 - **`dir_light`**: `direction` [x,y,z] (the light's travel direction); `color` linear [r,g,b]; `intensity`. Prefer `environment_set` for the sun.
 - **camera**: `fov_deg` 1..179; `near`; `far` (> near); `active`.
