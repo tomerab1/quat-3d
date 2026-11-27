@@ -17,8 +17,8 @@
 # any scene failed.
 #
 # Environment: VK_ICD_FILENAMES (default: the first lavapipe manifest found),
-# SCENE_TIMEOUT (seconds per scene, default 300), SCENES (space-separated
-# subset of the scene names below).
+# SCENE_TIMEOUT (seconds per scene, default 300; a scene row may raise its
+# own), SCENES (space-separated subset of the scene names below).
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -27,14 +27,18 @@ OUT="$(realpath -m "${2:-$ROOT/screenshots}")"
 TIMEOUT="${SCENE_TIMEOUT:-300}"
 
 # name | frames | environment (space-separated VAR=value) | description
+#      [| timeout in seconds, when the scene needs more than SCENE_TIMEOUT]
 # Frame counts: TAA history and auto-exposure settle within ~30 frames; the
 # GPU terrain tile (513^2, 200 erosion steps, async readback) needs a few
 # frames to arrive, and the physics scene needs simulated seconds to fall.
+# mountain-forest: its tile (300 erosion steps) lands by frame ~6, then ~12k
+# scattered instances + grass draw at ~3 s per frame on lavapipe (4 cores).
 SCENE_TABLE=(
   "showcase-editor|30||Showcase scene with the editor UI"
   "showcase|30|QUAT_NO_UI=1|Showcase scene, no UI"
   "terrain|90|QUAT_NO_UI=1 QUAT_TERRAIN=1|Showcase + GPU-generated terrain tile"
   "physics|90|QUAT_NO_UI=1 QUAT_PHYSICS=1|Physics demo (Jolt) after 90 frames"
+  "mountain-forest|30|QUAT_NO_UI=1 QUAT_DEMO=mountain|Mountain + forest showcase: terrain, scattered trees and rocks, GPU grass|600"
 )
 
 die() { echo "ci-screenshots: $*" >&2; exit 2; }
@@ -76,7 +80,7 @@ summary="$OUT/summary.md"
 {
   echo "## Screenshots"
   echo
-  echo "Rendered on lavapipe under Xvfb (\`scripts/ci-screenshots.sh\`, ${TIMEOUT} s timeout per scene)."
+  echo "Rendered on lavapipe under Xvfb (\`scripts/ci-screenshots.sh\`, ${TIMEOUT} s timeout per scene unless a scene sets more)."
   echo
   echo "| Scene | Result | Time | Setup |"
   echo "|---|---|---|---|"
@@ -85,8 +89,10 @@ failures=""
 failed=0
 
 for row in "${SCENE_TABLE[@]}"; do
-  IFS='|' read -r name frames scene_env description <<<"$row"
+  IFS='|' read -r name frames scene_env description scene_timeout <<<"$row"
   selected "$name" || continue
+  timeout_s="$TIMEOUT"
+  [ -n "$scene_timeout" ] && [ "$scene_timeout" -gt "$timeout_s" ] && timeout_s="$scene_timeout"
   ppm="$OUT/$name.ppm"
   png="$OUT/$name.png"
   log="$OUT/$name.log"
@@ -97,7 +103,7 @@ for row in "${SCENE_TABLE[@]}"; do
   xvfb-run -a -s "-screen 0 1920x1080x24" \
     env SDL_VIDEO_DRIVER=x11 QUAT_NO_AUDIO=1 QUAT_NO_VSYNC=1 \
         QUAT_MAX_FRAMES="$frames" QUAT_SCREENSHOT="$ppm" $scene_env \
-    timeout --kill-after=15 "$TIMEOUT" "$GAME" >"$log" 2>&1
+    timeout --kill-after=15 "$timeout_s" "$GAME" >"$log" 2>&1
   code=$?
   elapsed=$((SECONDS - start))
   log_tail "$log" 20

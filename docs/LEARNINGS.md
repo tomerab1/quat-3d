@@ -26,6 +26,14 @@ into CLAUDE.md or the brief template in [`CYCLE.md`](CYCLE.md).
 
 ## Build and CI
 
+- **Budget landscape renders on lavapipe before art-directing them.** The
+  mountain showcase at 720p costs ~2.5 s per frame for terrain + lighting +
+  post alone; ~11k flat-shaded instances add under a second only because
+  distant forest uses low-poly models (full models everywhere doubled it),
+  and grass (radius 60 m) adds ~0.8 s. Iterate composition on a CPU
+  heightmap preview (the generator is the reference) and a few 12-frame
+  renders; render 30 frames only for the keepers. Frame timings vary ±30 %
+  while other agents share the machine.
 - **The real `game` runs locally under Xvfb + lavapipe.** Without vcpkg, a
   non-editor build links from the `~/deps` clones: build SDL3
   (`~/deps/sdl`, cmake, shared) and link libJolt / libfastgltf / GNS /
@@ -113,6 +121,11 @@ into CLAUDE.md or the brief template in [`CYCLE.md`](CYCLE.md).
 
 ## C++ in this codebase
 
+- **Grid erosion's default talus (tan 0.5, ~27°) flattens mountains.**
+  Thermal weathering relaxes every steeper slope, so eroded peaks came out
+  as smooth mounds while the un-eroded tile border stayed rugged. Mountain
+  scenes set `erosion_talus` ~1.0 (45°) and a higher octave `gain` (~0.55);
+  both are now in the terrain codec.
 - **slangc 2025.6.1 segfaults after reporting a compile error** when
   `-reflection-json` is passed (exit by SIGSEGV, diagnostics already
   printed). Treat any non-zero exit *or* signal as a failed compile and keep

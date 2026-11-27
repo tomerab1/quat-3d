@@ -20,6 +20,12 @@ Real engine output, rendered headless on a software Vulkan driver (lavapipe) by
 the CI screenshot pipeline — no ambient occlusion or cascaded shadows yet (in
 progress, ROADMAP R12).
 
+![mountain forest](docs/screenshots/mountain-forest.png)
+
+*Mountain forest (`QUAT_DEMO=mountain`): GPU-synthesised, eroded terrain,
+~11k GPU-instanced trees, rocks and bushes scattered by slope and height
+(procedurally generated models), GPU grass, golden-hour sun.*
+
 | Showcase (PBR materials, glass) | Terrain (GPU synthesis + GPU grass) | Physics |
 |---|---|---|
 | ![showcase](docs/screenshots/showcase.png) | ![terrain](docs/screenshots/terrain.png) | ![physics](docs/screenshots/physics.png) |
@@ -149,6 +155,7 @@ Environment variables switch on extra modes:
 
 | Variable | Effect |
 |---|---|
+| `QUAT_DEMO=mountain` | Open the mountain-forest showcase (`assets/scenes/mountain_forest.json`) instead of the material showcase |
 | `QUAT_GLTF=<file>` | Load a glTF/GLB model instead of the showcase scene |
 | `QUAT_TERRAIN=1` | Add a procedural terrain tile (with a grass field) |
 | `QUAT_PHYSICS=1` / `QUAT_CHARACTER=1` | Physics / character-controller demo scenes |
@@ -265,6 +272,8 @@ src/                Implementation, mirroring include/ (rhi, renderer, scene, ph
 src/editor/         The editor (only in builds with ENGINE_EDITOR=ON, the default)
 src/remote/         Remote-control endpoint used by AI tooling
 tools/quat-mcp/     MCP server for AI assistants (Rust, standalone Cargo crate)
+tools/asset-gen/    quat-asset-gen: procedural nature models -> assets/meshes/nature/
+assets/scenes/      Showcase scene files (scene JSON v2)
 tests/              GoogleTest suite (engine_tests): tests/<module>/, shared helpers in tests/support/
 docs/               Project documentation
 ports/, triplets/   vcpkg customisations

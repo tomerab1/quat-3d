@@ -3,6 +3,7 @@
 // Demo / startup scenes for the `game` executable (app layer, not engine).
 //
 // Selected by environment variables:
+//   QUAT_DEMO=<name>   a showcase scene file from assets/scenes/ (k_demo_scenes)
 //   QUAT_GLTF=<file>   instantiate a glTF scene graph
 //   QUAT_PHYSICS=1     a pile of boxes dropped on a floor (owns a physics world)
 //   QUAT_CHARACTER=1   a WASD capsule character on a floor (owns a physics world)
@@ -49,6 +50,20 @@ struct DemoScene {
     entt::entity root = entt::null;
     entt::entity pedestal = entt::null;
     glm::vec2    footprint_half{0.0F};
+    // Metres of the view the shadow map covers; 0 keeps the fixed box around
+    // the origin that the small demos fit in.
+    float shadow_view_distance = 0.0F;
+};
+
+// QUAT_DEMO scenes: a name, its scene file (relative to the project root) and
+// the view distance its shadows cover.
+struct DemoSceneFile {
+    const char* name;
+    const char* path;
+    float       shadow_view_distance;
+};
+inline constexpr DemoSceneFile k_demo_scenes[] = {
+    {"mountain", "assets/scenes/mountain_forest.json", 400.0F},
 };
 
 // Half the height of the pedestal mesh (a box) as built; its Transform scales
@@ -64,7 +79,8 @@ build_demo_scene(engine::scene::Scene& scene, engine::asset::AssetManager& asset
 
 // The sun, plus two coloured point lights unless the scene came from a glTF
 // file (a model is shown under just its own lighting setup). The point lights
-// hang under `root` when given, so they move with the demo content.
+// hang under `root` when given, so they move with the demo content. A scene
+// that brings its own sun (a scene file) keeps its lighting as authored.
 void add_default_lighting(engine::scene::Scene& scene, bool fill_lights,
                           entt::entity root = entt::null);
 

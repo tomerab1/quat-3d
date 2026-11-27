@@ -201,6 +201,7 @@ bool Application::init_subsystems() {
     // ---- Per-frame command + sync resources --------------------------------
     renderer_.create_frame_sync();
     renderer_.set_screenshot_path(config_.screenshot_path);
+    renderer_.set_shadow_view_distance(world_.shadow_view_distance());
 
     last_ticks_ = SDL_GetTicksNS();
     connect_remote();

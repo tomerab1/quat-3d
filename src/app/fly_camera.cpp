@@ -62,6 +62,30 @@ float axis(const bool* keys, bool ok, SDL_Scancode pos, SDL_Scancode neg) {
 
 FlyCamera FlyCamera::create(engine::scene::Scene& scene, const Start& start) {
     FlyCamera cam;
+    const engine::scene::Camera default_camera{};
+    cam.fov_y = default_camera.fov_y;
+    cam.near_z_ = default_camera.near_z;
+    cam.far_z_ = default_camera.far_z;
+
+    // An authored camera: start where it looks from.
+    scene.tick(); // world transforms of the loaded scene
+    if (const entt::entity authored = engine::scene::find_active_camera(scene.registry());
+        authored != entt::null) {
+        const auto& c = scene.registry().get<engine::scene::Camera>(authored);
+        const glm::mat4& world = scene.registry().get<engine::scene::Transform>(authored).world;
+        const glm::vec3 fwd = -glm::normalize(glm::vec3(world[2]));
+        cam.pos = glm::vec3(world[3]);
+        cam.yaw = std::atan2(fwd.z, fwd.x);
+        cam.pitch = std::asin(glm::clamp(fwd.y, -0.999F, 0.999F));
+        cam.fov_y = c.fov_y;
+        cam.near_z_ = c.near_z;
+        cam.far_z_ = c.far_z;
+        cam.move_speed_ = 10.0F;
+#ifndef ENGINE_EDITOR
+        cam.camera_entity_ = authored;
+#endif
+        return cam;
+    }
     // Non-editor builds keep a scene camera entity driven by the fly input
     // (camera_system is their only view path). Editor builds own the fly
     // camera as editor state instead — scene Camera entities are the user's.
@@ -69,8 +93,6 @@ FlyCamera FlyCamera::create(engine::scene::Scene& scene, const Start& start) {
     cam.camera_entity_ = scene.create_entity("camera");
     scene.registry().emplace<engine::scene::Camera>(cam.camera_entity_);
 #endif
-    const engine::scene::Camera default_camera{};
-    cam.fov_y = default_camera.fov_y;
     if (start.physics_mode) {
         // The physics demo's huge floor would push the framing far away; use
         // a fixed view of the drop zone instead.
@@ -83,7 +105,6 @@ FlyCamera FlyCamera::create(engine::scene::Scene& scene, const Start& start) {
         return cam;
     }
 
-    scene.tick(); // resolve world transforms before measuring the scene bounds
     glm::vec3 bmin{};
     glm::vec3 bmax{};
     const bool has_geo = scene_world_bounds(scene, start.exclude, bmin, bmax);
@@ -214,11 +235,10 @@ glm::vec3 FlyCamera::forward() const {
 // view only in play mode. Conventions mirror camera_system (Vulkan Y flip).
 engine::scene::CameraMatrices FlyCamera::matrices(float aspect) const {
     const glm::vec3 fwd = forward();
-    const engine::scene::Camera defaults{};
     engine::scene::CameraMatrices out;
     out.position = pos;
     out.view = glm::lookAt(pos, pos + fwd, glm::vec3(0.0F, 1.0F, 0.0F));
-    out.projection = glm::perspective(fov_y, aspect, defaults.near_z, defaults.far_z);
+    out.projection = glm::perspective(fov_y, aspect, near_z_, far_z_);
     out.projection[1][1] *= -1.0F; // Vulkan clip space: Y points down
     out.view_proj = out.projection * out.view;
     return out;

@@ -101,9 +101,11 @@ build. Logs are uploaded as an artifact when a run fails.
 After the tests (also when they fail), the `linux` job renders a fixed set of
 scenes with the real `game` binary on lavapipe under Xvfb —
 `scripts/ci-screenshots.sh`: the showcase with and without the editor UI,
-`QUAT_TERRAIN=1` and `QUAT_PHYSICS=1`, each with a frame budget, muted audio
-and a per-scene timeout (`SCENE_TIMEOUT`, default 300 s) so a hang fails that
-scene instead of the job. Each final frame is converted to PNG
+`QUAT_TERRAIN=1`, `QUAT_PHYSICS=1` and the mountain-forest showcase
+(`QUAT_DEMO=mountain`), each with a frame budget, muted audio and a
+per-scene timeout (`SCENE_TIMEOUT`, default 300 s; a scene row can raise its
+own — the mountain scene allows 600 s for ~3 s frames on lavapipe) so a hang
+fails that scene instead of the job. Each final frame is converted to PNG
 (`scripts/ppm_to_png.py`, halved when 1280 px or wider). A crash, timeout or
 missing image is listed in the step summary with the log tail and an
 `::error` annotation. The step is `continue-on-error` for now (temporary,
@@ -123,6 +125,23 @@ Where the images land:
 Run locally: `scripts/ci-screenshots.sh build/release/game /tmp/shots`
 (`SCENES="showcase physics"` picks a subset; needs `xvfb` and
 `mesa-vulkan-drivers`).
+
+## Generated assets
+
+The nature models in `assets/meshes/nature/` (conifers and their
+distant-forest variants, broadleaf trees, rocks, a bush) are generated, not
+authored: `tools/asset-gen` builds them procedurally from a seed and writes
+glTF 2.0 binaries. After changing the generator, rebuild and regenerate:
+
+```sh
+cmake --build --preset release --target quat-asset-gen
+./build/release/tools/asset-gen/quat-asset-gen assets/meshes/nature   # --seed N (default 1)
+```
+
+`AssetGen.CommittedAssetsAreCurrent` fails while the committed files are
+stale. The mountain showcase (`assets/scenes/mountain_forest.json`) scatters
+them; `MountainScene.*` checks its instance counts and that every placement
+respects its layer's slope / height limits.
 
 ## Building in a cloud container
 

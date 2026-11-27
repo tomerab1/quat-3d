@@ -102,6 +102,7 @@ public:
     [[nodiscard]] entt::entity character_entity() const { return demo_.character_entity; }
     // The showcase's root entity (point lights hang under it); null otherwise.
     [[nodiscard]] entt::entity demo_root() const { return demo_.root; }
+    [[nodiscard]] float shadow_view_distance() const { return demo_.shadow_view_distance; }
     // What the opening camera framing leaves out (the showcase's pedestal).
     [[nodiscard]] entt::entity framing_exclude() const { return demo_.pedestal; }
     // The loop drops the demo's entity references when a scene file replaces

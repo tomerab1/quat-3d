@@ -1,0 +1,139 @@
+{
+  "version": 2,
+  "entities": [
+    {
+      "name": "terrain",
+      "parent": -1,
+      "transform": {"position": [0, 0, 0]},
+      "terrain": {"seed": 29, "resolution": 513, "tile_size": 2000, "height": 900, "octaves": 7, "frequency": 1.6, "gain": 0.55, "warp": 0.3, "erosion": "grid", "erosion_steps": 300, "erosion_talus": 1.0, "snowline": 540, "streaming": false, "gpu": true}
+    },
+    {
+      "name": "sun",
+      "parent": -1,
+      "dir_light": {"direction": [0.95, -0.096, 0.296], "color": [1.0, 0.88, 0.72], "intensity": 7.0}
+    },
+    {
+      "name": "camera",
+      "parent": -1,
+      "transform": {"position": [-650, 276.0, 300], "look_at": [-135.7, 447.1, -540.1]},
+      "camera": {"fov_deg": 55, "near": 0.3, "far": 6000, "active": true}
+    },
+    {
+      "name": "meadow_grass",
+      "parent": -1,
+      "grass": {"seed": 7, "density": 40, "radius": 60, "blade_height": [0.2, 0.5], "base_color": [0.035, 0.07, 0.018], "tip_color": [0.11, 0.18, 0.05], "wind_strength": 0.3, "wind_direction": [0.8, 0.6], "slope": [0, 30], "height": [-10000, 520]}
+    },
+    {
+      "name": "forest_spruce",
+      "parent": -1,
+      "transform": {"position": [-550, 0, -50]},
+      "instanced_mesh": {"gltf": "assets/meshes/nature/conifer_spruce.glb"},
+      "scatter": {"size": [800, 400], "seed": 101, "density": 0.008, "min_spacing": 3.5, "scale": [0.7, 1.3], "slope": [0, 38], "height": [268, 520], "max_instances": 40000}
+    },
+    {
+      "name": "forest_spruce_far_e",
+      "parent": -1,
+      "transform": {"position": [350, 0, -250]},
+      "instanced_mesh": {"gltf": "assets/meshes/nature/conifer_spruce_far.glb"},
+      "scatter": {"size": [1100, 1400], "seed": 111, "density": 0.008, "min_spacing": 3.5, "scale": [0.7, 1.3], "slope": [0, 38], "height": [268, 520], "max_instances": 40000}
+    },
+    {
+      "name": "forest_spruce_far_n",
+      "parent": -1,
+      "transform": {"position": [-550, 0, -575]},
+      "instanced_mesh": {"gltf": "assets/meshes/nature/conifer_spruce_far.glb"},
+      "scatter": {"size": [700, 750], "seed": 121, "density": 0.008, "min_spacing": 3.5, "scale": [0.7, 1.3], "slope": [0, 38], "height": [268, 520], "max_instances": 40000}
+    },
+    {
+      "name": "forest_fir",
+      "parent": -1,
+      "transform": {"position": [-550, 0, -50]},
+      "instanced_mesh": {"gltf": "assets/meshes/nature/conifer_fir.glb"},
+      "scatter": {"size": [800, 400], "seed": 102, "density": 0.005, "min_spacing": 3.5, "scale": [0.7, 1.25], "slope": [0, 36], "height": [266, 480], "max_instances": 40000}
+    },
+    {
+      "name": "forest_fir_far_e",
+      "parent": -1,
+      "transform": {"position": [350, 0, -250]},
+      "instanced_mesh": {"gltf": "assets/meshes/nature/conifer_fir_far.glb"},
+      "scatter": {"size": [1100, 1400], "seed": 112, "density": 0.005, "min_spacing": 3.5, "scale": [0.7, 1.25], "slope": [0, 36], "height": [266, 480], "max_instances": 40000}
+    },
+    {
+      "name": "forest_fir_far_n",
+      "parent": -1,
+      "transform": {"position": [-550, 0, -575]},
+      "instanced_mesh": {"gltf": "assets/meshes/nature/conifer_fir_far.glb"},
+      "scatter": {"size": [700, 750], "seed": 122, "density": 0.005, "min_spacing": 3.5, "scale": [0.7, 1.25], "slope": [0, 36], "height": [266, 480], "max_instances": 40000}
+    },
+    {
+      "name": "forest_pine_far_e",
+      "parent": -1,
+      "transform": {"position": [350, 0, -250]},
+      "instanced_mesh": {"gltf": "assets/meshes/nature/conifer_pine_far.glb"},
+      "scatter": {"size": [1100, 1400], "seed": 113, "density": 0.004, "min_spacing": 4.0, "scale": [0.75, 1.2], "slope": [0, 40], "height": [320, 530], "max_instances": 40000}
+    },
+    {
+      "name": "forest_pine_far_n",
+      "parent": -1,
+      "transform": {"position": [-550, 0, -575]},
+      "instanced_mesh": {"gltf": "assets/meshes/nature/conifer_pine_far.glb"},
+      "scatter": {"size": [700, 750], "seed": 123, "density": 0.004, "min_spacing": 4.0, "scale": [0.75, 1.2], "slope": [0, 40], "height": [320, 530], "max_instances": 40000}
+    },
+    {
+      "name": "valley_oak",
+      "parent": -1,
+      "transform": {"position": [-550, 0, -65]},
+      "instanced_mesh": {"gltf": "assets/meshes/nature/broadleaf_oak.glb"},
+      "scatter": {"size": [900, 570], "seed": 201, "density": 0.0009, "min_spacing": 8, "scale": [0.8, 1.25], "slope": [0, 12], "height": [240, 285], "max_instances": 5000}
+    },
+    {
+      "name": "valley_birch",
+      "parent": -1,
+      "transform": {"position": [-550, 0, -65]},
+      "instanced_mesh": {"gltf": "assets/meshes/nature/broadleaf_birch.glb"},
+      "scatter": {"size": [900, 570], "seed": 202, "density": 0.0004, "min_spacing": 6, "scale": [0.8, 1.2], "slope": [0, 15], "height": [242, 290], "max_instances": 5000}
+    },
+    {
+      "name": "rocks_boulders",
+      "parent": -1,
+      "transform": {"position": [-100, 0, -250]},
+      "instanced_mesh": {"gltf": "assets/meshes/nature/rock_boulder.glb"},
+      "scatter": {"size": [1600, 1400], "seed": 301, "density": 0.0007, "min_spacing": 5, "scale": [0.8, 3.0], "align_to_normal": 0.7, "slope": [30, 70], "height": [250, 480], "max_instances": 20000}
+    },
+    {
+      "name": "rocks_scree",
+      "parent": -1,
+      "transform": {"position": [-100, 0, -250]},
+      "instanced_mesh": {"gltf": "assets/meshes/nature/rock_slab.glb"},
+      "scatter": {"size": [1600, 1400], "seed": 302, "density": 0.002, "min_spacing": 4, "scale": [0.5, 2.0], "align_to_normal": 0.9, "slope": [15, 48], "height": [470, 650], "max_instances": 20000}
+    },
+    {
+      "name": "rocks_spires",
+      "parent": -1,
+      "transform": {"position": [-100, 0, -250]},
+      "instanced_mesh": {"gltf": "assets/meshes/nature/rock_spire.glb"},
+      "scatter": {"size": [1600, 1400], "seed": 303, "density": 0.0004, "min_spacing": 8, "scale": [1.0, 3.5], "align_to_normal": 0.4, "slope": [38, 75], "height": [260, 520], "max_instances": 5000}
+    },
+    {
+      "name": "forest_edge_bushes",
+      "parent": -1,
+      "transform": {"position": [-550, 0, -65]},
+      "instanced_mesh": {"gltf": "assets/meshes/nature/bush.glb"},
+      "scatter": {"size": [900, 570], "seed": 401, "density": 0.003, "min_spacing": 2.5, "scale": [0.7, 1.4], "align_to_normal": 0.3, "slope": [0, 26], "height": [266, 292], "max_instances": 20000}
+    },
+    {
+      "name": "meadow_copse",
+      "parent": -1,
+      "transform": {"position": [-625, 0, 180]},
+      "instanced_mesh": {"gltf": "assets/meshes/nature/conifer_spruce.glb"},
+      "scatter": {"seed": 501, "area": "circle", "radius": 28, "density": 0.008, "min_spacing": 5, "scale": [0.8, 1.3], "slope": [0, 30], "max_instances": 50}
+    },
+    {
+      "name": "meadow_rocks",
+      "parent": -1,
+      "transform": {"position": [-560, 0, 230]},
+      "instanced_mesh": {"gltf": "assets/meshes/nature/rock_boulder.glb"},
+      "scatter": {"seed": 502, "area": "circle", "radius": 30, "density": 0.005, "min_spacing": 4, "scale": [0.5, 1.6], "align_to_normal": 0.7, "slope": [0, 40], "max_instances": 50}
+    }
+  ]
+}

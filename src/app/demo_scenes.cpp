@@ -4,6 +4,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <string>
+#include <string_view>
 
 #include <entt/entity/registry.hpp>
 #include <glm/gtc/matrix_transform.hpp>
@@ -16,6 +17,7 @@
 #include "engine/scene/gltf_loader.hpp"
 #include "engine/scene/primitives.hpp"
 #include "engine/scene/scene.hpp"
+#include "engine/scene/scene_io.hpp"
 
 namespace quat::app {
 
@@ -38,8 +40,27 @@ build_demo_scene(engine::scene::Scene& scene, engine::asset::AssetManager& asset
     bool character_mode = false;
     entt::entity character_entity = entt::null;
     bool scene_ok = true;
+    float shadow_view_distance = 0.0F;
 
-    if (const char* gltf_path = std::getenv("QUAT_GLTF"); gltf_path != nullptr) {
+    if (const char* demo = std::getenv("QUAT_DEMO"); demo != nullptr) {
+        const DemoSceneFile* file = nullptr;
+        for (const DemoSceneFile& d : k_demo_scenes) {
+            if (std::string_view(demo) == d.name) file = &d;
+        }
+        if (file == nullptr) {
+            std::fprintf(stderr, "[fatal] QUAT_DEMO=%s: unknown demo (try 'mountain')\n", demo);
+            scene_ok = false;
+        } else if (auto loaded = engine::scene::load_scene(
+                       scene, std::filesystem::path(QUAT_PROJECT_ROOT) / file->path, allocator,
+                       setup_transfer, assets);
+                   !loaded) {
+            std::fprintf(stderr, "[fatal] QUAT_DEMO=%s: %s\n", demo, loaded.error().message.c_str());
+            scene_ok = false;
+        } else {
+            shadow_view_distance = file->shadow_view_distance;
+            std::fprintf(stderr, "[info] demo '%s' loaded from %s\n", demo, file->path);
+        }
+    } else if (const char* gltf_path = std::getenv("QUAT_GLTF"); gltf_path != nullptr) {
         auto roots = engine::scene::GltfLoader::instantiate(gltf_path, allocator, setup_transfer,
                                                             assets, scene);
         if (!roots) {
@@ -339,10 +360,12 @@ build_demo_scene(engine::scene::Scene& scene, engine::asset::AssetManager& asset
     out.root = demo_root;
     out.pedestal = pedestal;
     out.footprint_half = footprint_half;
+    out.shadow_view_distance = shadow_view_distance;
     return out;
 }
 
 void add_default_lighting(engine::scene::Scene& scene, bool fill_lights, entt::entity root) {
+if (!scene.registry().view<engine::scene::DirectionalLight>().empty()) return;
 // A sun light, and a camera that auto-frames whatever was loaded.
 const entt::entity sun_entity = scene.create_entity("sun");
 scene.registry().emplace<engine::scene::DirectionalLight>(

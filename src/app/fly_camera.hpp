@@ -42,8 +42,10 @@ public:
     // transforms are current) from a fixed heading, looking down 25 degrees,
     // as close as fits them with a 10% margin (scene::frame_box) — the same
     // view every run. The physics demo gets a fixed view of its drop zone
-    // instead. Builds without the editor also create the scene camera entity
-    // here.
+    // instead. A scene with an active Camera entity (a scene file) opens
+    // looking through it: its pose, field of view and clip range. Builds
+    // without the editor drive that entity, or create the scene camera
+    // entity here when there is none.
     [[nodiscard]] static FlyCamera create(engine::scene::Scene& scene, const Start& start);
 
     // Per frame, before the event pump: clears the accumulated mouse look.
@@ -74,6 +76,8 @@ public:
     float     fov_y = 0.0F; // remote camera.set can change it
 
 private:
+    float near_z_ = 0.1F;
+    float far_z_ = 1000.0F;
     float move_speed_ = 3.0F;
     bool  looking_ = false; // right mouse button held -> mouse-look active
     float look_dx_ = 0.0F;  // per-frame accumulated mouse-look delta
