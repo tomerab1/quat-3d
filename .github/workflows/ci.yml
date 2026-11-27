@@ -1,8 +1,10 @@
 name: CI
 
+# Pushes to master, and pull requests. Cycle branches (claude/**) are built
+# through their PR; building them on push too ran every commit twice.
 on:
   push:
-    branches: [main, master, "claude/**"]
+    branches: [main, master]
   pull_request:
 
 concurrency:

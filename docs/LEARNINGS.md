@@ -26,6 +26,13 @@ into CLAUDE.md or the brief template in [`CYCLE.md`](CYCLE.md).
 
 ## Build and CI
 
+- **CI triggered on both `push` to `claude/**` and `pull_request` ran every
+  commit twice.** Branch pushes now only build `master`; cycle branches build
+  through their PR.
+- **The owner may merge a cycle PR before CI finishes.** After a merge, merge
+  `master` back into the cycle branch (no rewriting), open the next cycle's
+  draft PR, and watch `master`'s CI — a red `master` is the next cycle's
+  first item.
 - **Compile-check the whole tree once, not only changed files.** The first
   full CI build failed on a pre-existing `std::jthread` use that no
   per-file check had touched; one `scripts/check-compile.sh $(git ls-files

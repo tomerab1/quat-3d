@@ -32,7 +32,7 @@ Decisions already made (do not re-litigate without the owner):
 ## Claimed by the live session (do not pick up)
 
 Worktree agents running in the orchestrating session on 2026-11-27; their
-branches merge into `claude/nifty-hopper-nb68qe` (PR #1):
+branches merge into `claude/nifty-hopper-nb68qe` (cycle 1, PR #2; cycle 0 = PR #1, merged into master 2026-11-27):
 
 | Item | Branch |
 |---|---|
