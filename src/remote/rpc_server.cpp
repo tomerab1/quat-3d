@@ -1,0 +1,625 @@
+// RpcServer — loopback JSON-RPC 2.0 endpoint (Phase 15, Slice 15.1).
+// See include/engine/remote/rpc_server.hpp for the protocol contract.
+
+#include "engine/remote/rpc_server.hpp"
+
+#include <algorithm>
+#include <chrono>
+#include <cstring>
+#include <string_view>
+#include <thread>
+#include <unordered_map>
+#include <utility>
+
+#include "socket.hpp"
+
+namespace engine::remote {
+
+namespace {
+
+constexpr int k_protocol_version = 1;
+
+[[nodiscard]] std::string dump_compact(const Json& j) {
+    // Replace invalid UTF-8 instead of throwing (which aborts without
+    // exceptions): entity names from glTF files are not guaranteed valid.
+    return j.dump(-1, ' ', false, Json::error_handler_t::replace);
+}
+
+[[nodiscard]] Json error_object(const RpcError& e) {
+    Json err = {{"code", e.code}, {"message", e.message}};
+    if (!e.data.is_null()) err["data"] = e.data;
+    return err;
+}
+
+[[nodiscard]] Json make_response(const Json& id, const RpcResult& result) {
+    Json msg = {{"jsonrpc", "2.0"}, {"id", id}};
+    if (result) {
+        msg["result"] = *result;
+    } else {
+        msg["error"] = error_object(result.error());
+    }
+    return msg;
+}
+
+// Constant-time comparison: the token check must not leak a prefix match
+// through timing.
+[[nodiscard]] bool token_equal(std::string_view a, std::string_view b) {
+    unsigned diff = a.size() == b.size() ? 0U : 1U;
+    const std::size_t n = std::max(a.size(), b.size());
+    for (std::size_t i = 0; i < n; ++i) {
+        const auto ca = static_cast<unsigned char>(i < a.size() ? a[i] : 0);
+        const auto cb = static_cast<unsigned char>(i < b.size() ? b[i] : 0);
+        diff |= static_cast<unsigned>(ca ^ cb);
+    }
+    return diff == 0;
+}
+
+struct Method {
+    MethodInfo                   info;
+    RpcServer::SyncHandler       sync;
+    RpcServer::DeferredHandler   deferred;
+};
+
+struct Client {
+    std::uint32_t id = 0;
+    detail::Socket sock;
+    std::string    inbuf;
+    std::string    outbuf;
+    std::size_t    out_offset = 0;
+    bool           authed = false;
+    bool           closing = false; // flush pending output, then drop
+    bool           dead = false;    // drop immediately
+};
+
+} // namespace
+
+// Shared between the server and its outstanding Responders: lets a Responder
+// reach the client's outbox while the server lives, and become a no-op once
+// it is gone.
+struct Responder::Target {
+    RpcServer::Impl* impl = nullptr;
+};
+
+struct RpcServer::Impl {
+    RpcServerConfig                          config;
+    detail::Socket                           listener;
+    std::uint16_t                            port = 0;
+    std::vector<Client>                      clients;
+    std::uint32_t                            next_client = 1;
+    std::unordered_map<std::string, Method>  methods;
+    std::shared_ptr<Responder::Target>       target = std::make_shared<Responder::Target>();
+
+    Impl() { target->impl = this; }
+    ~Impl() { target->impl = nullptr; }
+    Impl(const Impl&) = delete;
+    Impl& operator=(const Impl&) = delete;
+
+    Client* find_client(std::uint32_t id) {
+        for (Client& c : clients) {
+            if (c.id == id && !c.dead) return &c;
+        }
+        return nullptr;
+    }
+
+    void queue(Client& c, const Json& msg) {
+        if (c.dead) return;
+        c.outbuf += dump_compact(msg);
+        c.outbuf += '\n';
+        if (c.outbuf.size() - c.out_offset > config.max_pending_output) {
+            c.dead = true; // a client that stops reading must not grow us unbounded
+        }
+    }
+
+    void deliver(std::uint32_t client, const Json& id, const RpcResult& result) {
+        if (Client* c = find_client(client)) queue(*c, make_response(id, result));
+    }
+
+    void register_builtins();
+    void handle_line(Client& c, std::string_view line);
+    void read_client(Client& c);
+    void flush_client(Client& c);
+};
+
+// ---------------------------------------------------------------------------
+// Responder
+// ---------------------------------------------------------------------------
+
+Responder::Responder(std::shared_ptr<Target> state, std::uint32_t client, Json id)
+    : state_(std::move(state)), client_(client), id_(std::move(id)) {}
+
+Responder::Responder(Responder&& other) noexcept
+    : state_(std::move(other.state_)),
+      client_(other.client_),
+      id_(std::move(other.id_)),
+      done_(std::exchange(other.done_, true)) {}
+
+Responder& Responder::operator=(Responder&& other) noexcept {
+    if (this != &other) {
+        if (pending()) reply(rpc_fail(rpc_code::internal_error, "request dropped"));
+        state_ = std::move(other.state_);
+        client_ = other.client_;
+        id_ = std::move(other.id_);
+        done_ = std::exchange(other.done_, true);
+    }
+    return *this;
+}
+
+Responder::~Responder() {
+    if (pending()) reply(rpc_fail(rpc_code::internal_error, "request dropped"));
+}
+
+void Responder::reply(RpcResult result) {
+    if (!pending()) return;
+    done_ = true;
+    if (state_->impl != nullptr) state_->impl->deliver(client_, id_, result);
+}
+
+// ---------------------------------------------------------------------------
+// RpcServer
+// ---------------------------------------------------------------------------
+
+RpcServer::RpcServer() : impl_(std::make_unique<Impl>()) { impl_->register_builtins(); }
+RpcServer::RpcServer(RpcServer&&) noexcept = default;
+RpcServer& RpcServer::operator=(RpcServer&&) noexcept = default;
+RpcServer::~RpcServer() = default;
+
+std::expected<RpcServer, core::Error> RpcServer::listen(RpcServerConfig config) {
+    RpcServer server;
+    auto sock = detail::listen_loopback(config.port);
+    if (!sock) return std::unexpected(sock.error());
+    server.impl_->port = detail::local_port(*sock);
+    server.impl_->listener = std::move(*sock);
+    server.impl_->config = std::move(config);
+    return server;
+}
+
+bool RpcServer::listening() const { return impl_ && impl_->listener.valid(); }
+std::uint16_t RpcServer::port() const { return impl_ ? impl_->port : 0; }
+std::size_t RpcServer::client_count() const { return impl_ ? impl_->clients.size() : 0; }
+
+void RpcServer::add_method(std::string name, std::string summary, SyncHandler handler) {
+    Method m;
+    m.info = {name, std::move(summary), false};
+    m.sync = std::move(handler);
+    impl_->methods.insert_or_assign(std::move(name), std::move(m));
+}
+
+void RpcServer::add_deferred_method(std::string name, std::string summary,
+                                    DeferredHandler handler) {
+    Method m;
+    m.info = {name, std::move(summary), true};
+    m.deferred = std::move(handler);
+    impl_->methods.insert_or_assign(std::move(name), std::move(m));
+}
+
+std::vector<MethodInfo> RpcServer::methods() const {
+    std::vector<MethodInfo> out;
+    out.reserve(impl_->methods.size());
+    for (const auto& [name, m] : impl_->methods) out.push_back(m.info);
+    std::sort(out.begin(), out.end(),
+              [](const MethodInfo& a, const MethodInfo& b) { return a.name < b.name; });
+    return out;
+}
+
+RpcResult RpcServer::call(const std::string& method, const Json& params) {
+    const auto it = impl_->methods.find(method);
+    if (it == impl_->methods.end()) {
+        return rpc_fail(rpc_code::method_not_found, "unknown method '" + method + "'");
+    }
+    if (!it->second.sync) {
+        return rpc_fail(rpc_code::unavailable,
+                        "'" + method + "' completes asynchronously and cannot be nested");
+    }
+    // Copy the handler: it may register/unregister methods while running.
+    const SyncHandler handler = it->second.sync;
+    return handler(params);
+}
+
+void RpcServer::Impl::register_builtins() {
+    // session.hello is answered inline by handle_line (it needs the client);
+    // registering it here lists it in rpc.methods.
+    Method hello;
+    hello.info = {"session.hello",
+                  "Authenticate ({token}) and get the protocol version. Required first call "
+                  "when the engine runs with a token.",
+                  false};
+    hello.sync = [](const Json&) -> RpcResult { return Json::object(); };
+    methods.insert_or_assign("session.hello", std::move(hello));
+
+    Method list;
+    list.info = {"rpc.methods", "List every method with a one-line summary.", false};
+    list.sync = [this](const Json&) -> RpcResult {
+        std::vector<const Method*> sorted;
+        for (const auto& [name, m] : methods) sorted.push_back(&m);
+        std::sort(sorted.begin(), sorted.end(), [](const Method* a, const Method* b) {
+            return a->info.name < b->info.name;
+        });
+        Json out = Json::array();
+        for (const Method* m : sorted) {
+            out.push_back({{"name", m->info.name},
+                           {"summary", m->info.summary},
+                           {"deferred", m->info.deferred}});
+        }
+        return out;
+    };
+    methods.insert_or_assign("rpc.methods", std::move(list));
+}
+
+void RpcServer::Impl::handle_line(Client& c, std::string_view line) {
+    while (!line.empty() && (line.back() == '\r' || line.back() == ' ')) line.remove_suffix(1);
+    if (line.empty()) return;
+
+    const Json msg = Json::parse(line, nullptr, /*allow_exceptions=*/false);
+    if (msg.is_discarded()) {
+        queue(c, make_response(nullptr, rpc_fail(rpc_code::parse_error, "invalid JSON")));
+        return;
+    }
+    if (!msg.is_object()) {
+        queue(c, make_response(nullptr, rpc_fail(rpc_code::invalid_request,
+                                                 "expected a JSON-RPC request object "
+                                                 "(batch arrays are not supported)")));
+        return;
+    }
+    const bool is_notification = !msg.contains("id");
+    Json id = nullptr;
+    if (!is_notification) {
+        const Json& raw_id = msg["id"];
+        if (raw_id.is_string() || raw_id.is_number_integer() || raw_id.is_null()) id = raw_id;
+    }
+    const auto reply = [&](const RpcResult& r) {
+        if (!is_notification) queue(c, make_response(id, r));
+    };
+
+    const auto jsonrpc = msg.find("jsonrpc");
+    const auto method_it = msg.find("method");
+    if (jsonrpc == msg.end() || !jsonrpc->is_string() || *jsonrpc != "2.0" ||
+        method_it == msg.end() || !method_it->is_string()) {
+        reply(rpc_fail(rpc_code::invalid_request,
+                       "a request needs \"jsonrpc\": \"2.0\" and a string \"method\""));
+        return;
+    }
+    const std::string& method = method_it->get_ref<const std::string&>();
+    Json params = Json::object();
+    if (const auto p = msg.find("params"); p != msg.end() && !p->is_null()) {
+        if (!p->is_object()) {
+            reply(rpc_fail(rpc_code::invalid_params, "params must be an object"));
+            return;
+        }
+        params = *p;
+    }
+
+    if (method == "session.hello") {
+        if (!config.token.empty()) {
+            const auto tok = params.find("token");
+            if (tok == params.end() || !tok->is_string() ||
+                !token_equal(tok->get_ref<const std::string&>(), config.token)) {
+                reply(rpc_fail(rpc_code::unauthorized, "invalid session token"));
+                c.closing = true;
+                return;
+            }
+        }
+        c.authed = true;
+        reply(Json{{"protocol", k_protocol_version},
+                   {"server", "quat-3d"},
+                   {"methods", methods.size()}});
+        return;
+    }
+    if (!c.authed) {
+        reply(rpc_fail(rpc_code::unauthorized,
+                       "this engine requires session.hello with a token before other calls"));
+        c.closing = true;
+        return;
+    }
+
+    const auto it = methods.find(method);
+    if (it == methods.end()) {
+        reply(rpc_fail(rpc_code::method_not_found,
+                       "unknown method '" + method + "' (rpc.methods lists them)"));
+        return;
+    }
+    if (it->second.deferred) {
+        // Notifications get a responder bound to no client: replies vanish.
+        const DeferredHandler handler = it->second.deferred;
+        handler(params, Responder(target, is_notification ? 0U : c.id, id));
+        return;
+    }
+    const SyncHandler handler = it->second.sync;
+    reply(handler(params));
+}
+
+void RpcServer::Impl::read_client(Client& c) {
+    char buf[64 * 1024];
+    for (;;) {
+        const detail::IoResult r = detail::recv_some(c.sock, buf, sizeof(buf));
+        if (r.status == detail::IoStatus::would_block) break;
+        if (r.status != detail::IoStatus::ok) {
+            c.dead = true; // closed by peer or error
+            return;
+        }
+        c.inbuf.append(buf, r.bytes);
+        if (c.inbuf.size() > config.max_message_bytes + sizeof(buf)) break; // checked below
+    }
+}
+
+void RpcServer::Impl::flush_client(Client& c) {
+    while (!c.dead && c.out_offset < c.outbuf.size()) {
+        const detail::IoResult r = detail::send_some(c.sock, c.outbuf.data() + c.out_offset,
+                                                     c.outbuf.size() - c.out_offset);
+        if (r.status == detail::IoStatus::would_block) break;
+        if (r.status != detail::IoStatus::ok) {
+            c.dead = true;
+            return;
+        }
+        c.out_offset += r.bytes;
+    }
+    if (c.out_offset == c.outbuf.size()) {
+        c.outbuf.clear();
+        c.out_offset = 0;
+        if (c.closing) c.dead = true;
+    } else if (c.out_offset > (1U << 20)) {
+        c.outbuf.erase(0, c.out_offset); // compact occasionally
+        c.out_offset = 0;
+    }
+}
+
+void RpcServer::poll() {
+    Impl& s = *impl_;
+    if (!s.listener.valid()) return;
+
+    // Accept everything pending; refuse beyond the client cap.
+    for (;;) {
+        auto accepted = detail::accept_client(s.listener);
+        if (!accepted) break;
+        if (s.clients.size() >= s.config.max_clients) {
+            Client refused;
+            refused.sock = std::move(*accepted);
+            refused.closing = true;
+            s.queue(refused, make_response(nullptr, rpc_fail(rpc_code::unavailable,
+                                                             "too many remote clients")));
+            s.flush_client(refused);
+            continue;
+        }
+        Client c;
+        c.id = s.next_client++;
+        if (s.next_client == 0) s.next_client = 1; // 0 means "no client"
+        c.sock = std::move(*accepted);
+        c.authed = s.config.token.empty();
+        s.clients.push_back(std::move(c));
+    }
+
+    int budget = s.config.max_requests_per_poll;
+    // Index loop: handlers may complete deferred replies to other clients,
+    // but never add or remove clients, so indices stay valid.
+    for (std::size_t i = 0; i < s.clients.size(); ++i) {
+        if (s.clients[i].dead || s.clients[i].closing) continue;
+        s.read_client(s.clients[i]);
+        std::size_t start = 0;
+        for (;;) {
+            Client& c = s.clients[i];
+            if (c.dead || c.closing) break;
+            const std::size_t nl = c.inbuf.find('\n', start);
+            const std::size_t line_len =
+                (nl == std::string::npos ? c.inbuf.size() : nl) - start;
+            if (nl == std::string::npos || line_len > s.config.max_message_bytes) {
+                if (line_len > s.config.max_message_bytes) {
+                    s.queue(c, make_response(nullptr,
+                                             rpc_fail(rpc_code::invalid_request,
+                                                      "message exceeds " +
+                                                          std::to_string(s.config.max_message_bytes) +
+                                                          " bytes")));
+                    c.closing = true;
+                }
+                break;
+            }
+            if (budget <= 0) break; // resume next frame
+            --budget;
+            const std::string line = c.inbuf.substr(start, nl - start);
+            start = nl + 1;
+            s.handle_line(c, line);
+        }
+        Client& c = s.clients[i];
+        if (start > 0) c.inbuf.erase(0, std::min(start, c.inbuf.size()));
+    }
+
+    for (Client& c : s.clients) s.flush_client(c);
+    std::erase_if(s.clients, [](const Client& c) { return c.dead; });
+}
+
+// ---------------------------------------------------------------------------
+// Self-test
+// ---------------------------------------------------------------------------
+
+namespace {
+
+[[nodiscard]] std::unexpected<core::Error> test_fail(std::string what) {
+    return std::unexpected(core::Error{"rpc self-test: " + std::move(what)});
+}
+
+// Minimal blocking-ish line client over the shared socket helpers: pumps the
+// server between reads so a single thread can drive both ends.
+struct TestClient {
+    detail::Socket sock;
+    std::string    inbuf;
+
+    bool send_line(const std::string& line) {
+        const std::string data = line + "\n";
+        std::size_t off = 0;
+        for (int spins = 0; off < data.size() && spins < 1000; ++spins) {
+            const detail::IoResult r = detail::send_some(sock, data.data() + off, data.size() - off);
+            if (r.status == detail::IoStatus::ok) {
+                off += r.bytes;
+            } else if (r.status != detail::IoStatus::would_block) {
+                return false;
+            }
+        }
+        return off == data.size();
+    }
+
+    // Next line from the server, pumping `server` meanwhile. Empty on timeout
+    // or disconnect.
+    std::string read_line(RpcServer& server, bool* closed = nullptr) {
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+        while (std::chrono::steady_clock::now() < deadline) {
+            if (const std::size_t nl = inbuf.find('\n'); nl != std::string::npos) {
+                std::string line = inbuf.substr(0, nl);
+                inbuf.erase(0, nl + 1);
+                return line;
+            }
+            server.poll();
+            char buf[4096];
+            const detail::IoResult r = detail::recv_some(sock, buf, sizeof(buf));
+            if (r.status == detail::IoStatus::ok) {
+                inbuf.append(buf, r.bytes);
+            } else if (r.status == detail::IoStatus::would_block) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            } else {
+                if (closed != nullptr) *closed = true;
+                return {};
+            }
+        }
+        return {};
+    }
+
+    Json request(RpcServer& server, const Json& msg) {
+        if (!send_line(dump_compact(msg))) return nullptr;
+        const std::string line = read_line(server);
+        if (line.empty()) return nullptr;
+        return Json::parse(line, nullptr, false);
+    }
+};
+
+[[nodiscard]] std::expected<TestClient, core::Error> connect_test_client(std::uint16_t port) {
+    auto sock = detail::connect_loopback(port);
+    if (!sock) return std::unexpected(sock.error());
+    TestClient c;
+    c.sock = std::move(*sock);
+    return c;
+}
+
+[[nodiscard]] int error_code_of(const Json& reply) {
+    if (!reply.is_object() || !reply.contains("error") || !reply["error"].is_object()) return 0;
+    const Json& code = reply["error"]["code"];
+    return code.is_number_integer() ? code.get<int>() : 0;
+}
+
+} // namespace
+
+std::expected<void, core::Error> run_rpc_server_self_test() {
+    RpcServerConfig config;
+    config.port = 0; // ephemeral
+    config.token = "s3cret";
+    config.max_message_bytes = 4096;
+    auto listened = RpcServer::listen(config);
+    if (!listened) return test_fail("listen: " + listened.error().message);
+    RpcServer& server = *listened;
+    if (!server.listening() || server.port() == 0) return test_fail("no port bound");
+
+    int notified = 0;
+    server.add_method("test.add", "a + b", [](const Json& p) -> RpcResult {
+        if (!p.contains("a") || !p.contains("b") || !p["a"].is_number() || !p["b"].is_number()) {
+            return rpc_fail(rpc_code::invalid_params, "need numbers a and b");
+        }
+        return Json(p["a"].get<double>() + p["b"].get<double>());
+    });
+    server.add_method("test.notify", "count", [&](const Json&) -> RpcResult {
+        ++notified;
+        return Json::object();
+    });
+    std::vector<Responder> parked;
+    server.add_deferred_method("test.later", "replies when released",
+                               [&](const Json&, Responder r) { parked.push_back(std::move(r)); });
+
+    // In-process call path (used by batches).
+    if (auto r = server.call("test.add", Json{{"a", 2}, {"b", 3}}); !r || *r != Json(5.0)) {
+        return test_fail("in-process call");
+    }
+    if (auto r = server.call("test.later", Json::object());
+        r || r.error().code != rpc_code::unavailable) {
+        return test_fail("in-process call must reject deferred methods");
+    }
+
+    // 1) A connection that skips the hello is rejected and dropped.
+    {
+        auto c = connect_test_client(server.port());
+        if (!c) return test_fail("connect: " + c.error().message);
+        const Json reply = c->request(server, {{"jsonrpc", "2.0"}, {"id", 1}, {"method", "test.add"},
+                                               {"params", {{"a", 1}, {"b", 1}}}});
+        if (error_code_of(reply) != rpc_code::unauthorized) return test_fail("unauthenticated call");
+        bool closed = false;
+        (void)c->read_line(server, &closed);
+        if (!closed) return test_fail("unauthenticated connection was not closed");
+    }
+    // 2) A wrong token is rejected too.
+    {
+        auto c = connect_test_client(server.port());
+        if (!c) return test_fail("connect: " + c.error().message);
+        const Json reply = c->request(server, {{"jsonrpc", "2.0"}, {"id", 1},
+                                               {"method", "session.hello"},
+                                               {"params", {{"token", "s3creT"}}}});
+        if (error_code_of(reply) != rpc_code::unauthorized) return test_fail("wrong token accepted");
+    }
+    // 3) The authenticated session.
+    auto c = connect_test_client(server.port());
+    if (!c) return test_fail("connect: " + c.error().message);
+    Json reply = c->request(server, {{"jsonrpc", "2.0"}, {"id", "h"}, {"method", "session.hello"},
+                                     {"params", {{"token", "s3cret"}}}});
+    if (!reply.is_object() || !reply.contains("result") || reply["id"] != "h") {
+        return test_fail("hello failed: " + dump_compact(reply));
+    }
+    reply = c->request(server, {{"jsonrpc", "2.0"}, {"id", 7}, {"method", "test.add"},
+                                {"params", {{"a", 20}, {"b", 22}}}});
+    if (!reply.contains("result") || reply["result"] != Json(42.0) || reply["id"] != 7) {
+        return test_fail("sync call: " + dump_compact(reply));
+    }
+    reply = c->request(server, {{"jsonrpc", "2.0"}, {"id", 8}, {"method", "test.add"},
+                                {"params", {{"a", "x"}}}});
+    if (error_code_of(reply) != rpc_code::invalid_params) return test_fail("invalid params");
+    reply = c->request(server, {{"jsonrpc", "2.0"}, {"id", 9}, {"method", "nope"}});
+    if (error_code_of(reply) != rpc_code::method_not_found) return test_fail("unknown method");
+    if (!c->send_line("{not json")) return test_fail("send");
+    reply = Json::parse(c->read_line(server), nullptr, false);
+    if (error_code_of(reply) != rpc_code::parse_error) return test_fail("parse error");
+
+    // Notification: runs, no reply. The following request's reply must be the
+    // next line on the wire.
+    if (!c->send_line(R"({"jsonrpc":"2.0","method":"test.notify"})")) return test_fail("send");
+    reply = c->request(server, {{"jsonrpc", "2.0"}, {"id", 10}, {"method", "rpc.methods"}});
+    if (notified != 1 || reply["id"] != 10 || !reply["result"].is_array()) {
+        return test_fail("notification produced a reply or did not run");
+    }
+
+    // Deferred: no reply until the responder fires on a later "frame".
+    if (!c->send_line(R"({"jsonrpc":"2.0","id":11,"method":"test.later"})")) return test_fail("send");
+    for (int i = 0; i < 20 && parked.empty(); ++i) {
+        server.poll();
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    if (parked.size() != 1) return test_fail("deferred handler not invoked");
+    if (!c->inbuf.empty()) return test_fail("deferred method replied early");
+    parked.front().reply(Json("done"));
+    parked.clear();
+    reply = Json::parse(c->read_line(server), nullptr, false);
+    if (reply["id"] != 11 || reply["result"] != "done") return test_fail("deferred reply");
+
+    // A dropped responder still answers.
+    if (!c->send_line(R"({"jsonrpc":"2.0","id":12,"method":"test.later"})")) return test_fail("send");
+    for (int i = 0; i < 20 && parked.empty(); ++i) server.poll();
+    parked.clear(); // destroyed without replying
+    reply = Json::parse(c->read_line(server), nullptr, false);
+    if (reply["id"] != 12 || error_code_of(reply) != rpc_code::internal_error) {
+        return test_fail("dropped responder did not answer");
+    }
+
+    // Oversized line: error + disconnect.
+    if (!c->send_line(std::string(8000, 'x'))) return test_fail("send oversize");
+    reply = Json::parse(c->read_line(server), nullptr, false);
+    if (error_code_of(reply) != rpc_code::invalid_request) return test_fail("oversize guard");
+    bool closed = false;
+    (void)c->read_line(server, &closed);
+    if (!closed) return test_fail("oversize connection not closed");
+    for (int i = 0; i < 10; ++i) server.poll();
+    if (server.client_count() != 0) return test_fail("dead clients not reaped");
+    return {};
+}
+
+} // namespace engine::remote

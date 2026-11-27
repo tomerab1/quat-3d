@@ -301,7 +301,10 @@ Heightmap generate(const TerrainParams& params) {
     const std::uint32_t workers =
         glm::clamp(std::thread::hardware_concurrency(), 1U, 16U);
     {
-        std::vector<std::jthread> threads;
+        // std::thread + explicit join rather than std::jthread: libc++ 18
+        // (Ubuntu 24.04's clang, our CI) still gates jthread behind
+        // -fexperimental-library.
+        std::vector<std::thread> threads;
         threads.reserve(workers);
         for (std::uint32_t w = 0; w < workers; ++w) {
             threads.emplace_back([&, w] {
@@ -315,7 +318,8 @@ Heightmap generate(const TerrainParams& params) {
                 }
             });
         }
-    } // jthreads join
+        for (std::thread& t : threads) t.join();
+    }
 
     // Erosion runs on the normalised field (parameters are resolution-relative).
     erode(map.heights, res, params);

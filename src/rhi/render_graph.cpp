@@ -91,6 +91,10 @@ struct UsageState {
         return {VK_IMAGE_LAYOUT_GENERAL,
                 VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
                 VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT};
+    case ResourceUsage::storage_read_write:
+        return {VK_IMAGE_LAYOUT_GENERAL,
+                VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                VK_ACCESS_2_SHADER_STORAGE_READ_BIT | VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT};
     case ResourceUsage::transfer_src:
         return {VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
                 VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_READ_BIT};
@@ -222,8 +226,18 @@ TransientImagePool::acquire(VkFormat format, VkExtent2D extent, VkImageUsageFlag
 
 void TransientImagePool::reset() {
     for (Entry& e : entries_) {
+        e.idle_resets = e.in_use ? 0U : e.idle_resets + 1U;
         e.in_use = false;
     }
+    // Evict long-idle images (audit A5). Safe: an entry idle for at least one
+    // reset was not used by the frame that just completed.
+    std::erase_if(entries_, [this](Entry& e) {
+        if (e.idle_resets <= max_idle_resets) return false;
+        if (e.view != VK_NULL_HANDLE && device_ != nullptr) {
+            vkDestroyImageView(device_->handle(), e.view, nullptr);
+        }
+        return true; // GpuImage's destructor releases the allocation
+    });
 }
 
 // ===========================================================================
@@ -239,8 +253,12 @@ ResourceBinding PassContext::resolve(ResourceHandle handle) const {
 ResourceHandle RenderGraph::import_image(const char* name, VkImage image, VkImageView view,
                                          VkFormat format, VkExtent2D extent,
                                          VkImageLayout current_layout,
-                                         VkImageLayout final_layout) {
+                                         VkImageLayout final_layout,
+                                         VkPipelineStageFlags2 available_stage,
+                                         VkAccessFlags2 available_access) {
     Resource r;
+    r.available_stage = available_stage;
+    r.available_access = available_access;
     r.name = name;
     r.imported = true;
     r.image = image;
@@ -314,9 +332,12 @@ std::expected<void, core::Error> RenderGraph::compile() {
             r.view = img->view;
         }
         r.cur_layout = r.initial_layout;
-        r.last_stage = VK_PIPELINE_STAGE_2_NONE;
-        r.last_access = 0;
-        r.last_was_write = false;
+        // Whatever made an imported image available acts as its last "write".
+        r.write_stage = r.available_stage;
+        r.write_access = r.available_access;
+        r.read_stages = VK_PIPELINE_STAGE_2_NONE;
+        r.visible_stages = VK_PIPELINE_STAGE_2_NONE;
+        r.visible_access = 0;
     }
 
     // 2. Topological sort by resource dependencies (Kahn, smallest-index first
@@ -385,20 +406,43 @@ std::expected<void, core::Error> RenderGraph::compile() {
         for (const Access& a : pass.accesses) {
             Resource& r = resources_[a.resource];
             const UsageState s = usage_state(a.usage);
-            const bool need = (r.cur_layout != s.layout) || r.last_was_write || a.is_write;
-            if (need) {
-                bs.push_back(make_barrier(r.image, aspect_for_format(r.format),
-                                          r.cur_layout, s.layout,
-                                          r.last_stage, r.last_access, s.stage, s.access));
+            const bool layout_change = r.cur_layout != s.layout;
+            if (layout_change || a.is_write) {
+                // Write-after-{write,read} or a transition: wait for the last
+                // write and every read since, make the write visible to us.
+                bs.push_back(make_barrier(r.image, aspect_for_format(r.format), r.cur_layout,
+                                          s.layout, r.write_stage | r.read_stages,
+                                          r.write_access, s.stage, s.access));
                 r.cur_layout = s.layout;
-                r.last_stage = s.stage;
-                r.last_access = s.access;
-                r.last_was_write = a.is_write;
+                if (a.is_write) {
+                    r.write_stage = s.stage;
+                    r.write_access = s.access;
+                    r.read_stages = VK_PIPELINE_STAGE_2_NONE;
+                    r.visible_stages = VK_PIPELINE_STAGE_2_NONE;
+                    r.visible_access = 0;
+                } else {
+                    r.read_stages = s.stage;
+                    r.visible_stages = s.stage;
+                    r.visible_access = s.access;
+                }
             } else {
-                // Read-after-read in the same layout: widen visibility so the
-                // producer's write reaches this stage too.
-                r.last_stage |= s.stage;
-                r.last_access |= s.access;
+                // Read in the current layout. Earlier barriers made the last
+                // write visible only to the stages/accesses they named; a
+                // reader outside them (e.g. a fragment-shader read after a
+                // compute-only barrier) needs its own dependency on the write
+                // (audit A4).
+                const bool covered = (s.stage & ~r.visible_stages) == 0 &&
+                                     (s.access & ~r.visible_access) == 0;
+                const bool has_write = r.write_stage != VK_PIPELINE_STAGE_2_NONE ||
+                                       r.write_access != 0;
+                if (!covered && has_write) {
+                    bs.push_back(make_barrier(r.image, aspect_for_format(r.format),
+                                              r.cur_layout, r.cur_layout, r.write_stage,
+                                              r.write_access, s.stage, s.access));
+                    r.visible_stages |= s.stage;
+                    r.visible_access |= s.access;
+                }
+                r.read_stages |= s.stage;
             }
         }
     }
@@ -410,11 +454,18 @@ std::expected<void, core::Error> RenderGraph::compile() {
             && r.final_layout != r.cur_layout) {
             final_barriers_.push_back(make_barrier(
                 r.image, aspect_for_format(r.format), r.cur_layout, r.final_layout,
-                r.last_stage, r.last_access, VK_PIPELINE_STAGE_2_NONE, 0));
+                r.write_stage | r.read_stages, r.write_access, VK_PIPELINE_STAGE_2_NONE, 0));
             r.cur_layout = r.final_layout;
         }
     }
 
+    return {};
+}
+
+std::vector<VkImageMemoryBarrier2> RenderGraph::planned_barriers(std::string_view pass_name) const {
+    for (std::size_t pos = 0; pos < order_.size() && pos < pass_barriers_.size(); ++pos) {
+        if (passes_[order_[pos]].name == pass_name) return pass_barriers_[pos];
+    }
     return {};
 }
 

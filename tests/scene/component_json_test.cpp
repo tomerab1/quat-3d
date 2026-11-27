@@ -1,0 +1,180 @@
+// Component JSON codec (scene files + remote API).
+
+#include <cmath>
+
+#include <entt/entity/registry.hpp>
+#include <glm/glm.hpp>
+#include <gtest/gtest.h>
+#include <nlohmann/json.hpp>
+
+#include "engine/physics/physics_world.hpp"
+#include "engine/scene/component_json.hpp"
+#include "engine/scene/components.hpp"
+#include "support/expect_ok.hpp"
+
+namespace {
+
+using engine::scene::apply_component;
+using engine::scene::encode_components;
+using json = nlohmann::json;
+namespace s = engine::scene;
+
+class ComponentJson : public ::testing::Test {
+protected:
+    entt::registry r;
+    entt::entity   e = r.create();
+
+    [[nodiscard]] auto apply(std::string_view name, const json& v, bool strict = true) {
+        return apply_component(r, e, name, v, strict);
+    }
+};
+
+void expect_vec3_near(const glm::vec3& a, const glm::vec3& b, float tol = 1e-4F) {
+    EXPECT_NEAR(a.x, b.x, tol);
+    EXPECT_NEAR(a.y, b.y, tol);
+    EXPECT_NEAR(a.z, b.z, tol);
+}
+
+TEST_F(ComponentJson, RoundTripsEveryWritableComponent) {
+    r.emplace<s::Transform>(e);
+    const json authored = {
+        {"transform", {{"position", {1, 2, 3}}, {"rotation", {10, 20, 30}}, {"scale", {1, 2, 3}}}},
+        {"primitive", {{"shape", "cylinder"}, {"color", {0.1, 0.2, 0.3, 0.5}}, {"metallic", 1.0},
+                       {"roughness", 0.25}, {"emissive", {2, 0, 0}}}},
+        {"point_light", {{"color", {1, 0.5, 0}}, {"radius", 7}, {"intensity", 3}}},
+        {"dir_light", {{"direction", {0, -1, 0}}, {"color", {1, 1, 1}}, {"intensity", 2}}},
+        {"camera", {{"fov_deg", 70}, {"near", 0.2}, {"far", 500}, {"active", false}}},
+        {"collider", {{"shape", "capsule"}, {"half_extents", {0.4, 0.9, 0.4}},
+                      {"offset", {0, 0.1, 0}}, {"sensor", true}}},
+        {"rigidbody", {{"motion", "kinematic"}, {"mass", 4}}},
+        {"character", {{"radius", 0.35}, {"half_height", 0.7}, {"speed", 5}}},
+        {"nav_agent", {{"target", {4, 0, 4}}, {"speed", 2}, {"ground_offset", 0.5}, {"active", true}}},
+        {"behavior", {{"source", R"({"type":"leaf","name":"wait"})"}, {"enabled", false}}},
+        {"patrol", {{"points", {{0, 0, 0}, {5, 0, 5}}}, {"loop", false}}},
+        {"terrain", {{"seed", 42}, {"resolution", 257}, {"tile_size", 500}, {"height", 60},
+                     {"octaves", 5}, {"warp", 0.2}, {"droplets", 1000}, {"snowline", 40},
+                     {"streaming", true}, {"stream_radius", 2}}},
+        {"net_replicated", {{"net_id", 1234}}},
+    };
+    for (const auto& [name, value] : authored.items()) {
+        ASSERT_OK(apply(name, value)) << "while applying " << name;
+    }
+
+    const json first = encode_components(r, e, {.transform_as_matrix = true});
+    const entt::entity copy = r.create();
+    for (const auto& [name, value] : first.items()) {
+        ASSERT_OK(apply_component(r, copy, name, value, true)) << "while re-applying " << name;
+    }
+    EXPECT_EQ(encode_components(r, copy, {.transform_as_matrix = true}), first);
+    for (const auto& [name, value] : authored.items()) {
+        EXPECT_TRUE(first.contains(name)) << name << " missing from the encoding";
+    }
+}
+
+TEST_F(ComponentJson, MergeKeepsFieldsNotMentioned) {
+    ASSERT_OK(apply("point_light", {{"color", {1, 0, 0}}, {"radius", 3}, {"intensity", 9}}));
+    ASSERT_OK(apply("point_light", {{"radius", 12}}));
+    const auto& l = r.get<s::PointLight>(e);
+    EXPECT_FLOAT_EQ(l.radius, 12.0F);
+    EXPECT_FLOAT_EQ(l.intensity, 9.0F);
+    expect_vec3_near(l.color, {1, 0, 0});
+}
+
+TEST_F(ComponentJson, StrictModeRejectsUnknownFieldsAndNamesKnownOnes) {
+    const auto bad = apply("point_light", {{"colour", {1, 0, 0}}});
+    ASSERT_FALSE(bad);
+    EXPECT_NE(bad.error().message.find("colour"), std::string::npos);
+    EXPECT_NE(bad.error().message.find("color"), std::string::npos) << bad.error().message;
+    EXPECT_OK(apply("point_light", {{"colour", {1, 0, 0}}}, /*strict=*/false));
+}
+
+TEST_F(ComponentJson, ReadsLegacyIntegerEnumsAndRadianFov) {
+    ASSERT_OK(apply("collider", {{"shape", 2}}, false));
+    EXPECT_EQ(r.get<s::Collider>(e).shape, s::ColliderShape::capsule);
+    ASSERT_OK(apply("rigidbody", {{"motion", 0}}, false));
+    EXPECT_EQ(r.get<s::RigidBody>(e).motion, s::BodyMotion::static_body);
+    ASSERT_OK(apply("camera", {{"fov_y", 1.0}}, false));
+    EXPECT_NEAR(r.get<s::Camera>(e).fov_y, 1.0F, 1e-5F);
+}
+
+TEST_F(ComponentJson, RejectsMalformedValuesWithoutAborting) {
+    const struct {
+        const char* name;
+        json        value;
+    } cases[] = {
+        {"point_light", {{"radius", "big"}}},
+        {"point_light", {{"radius", -1}}},
+        {"point_light", {{"color", {1, 2}}}},
+        {"point_light", json::array({1, 2, 3})},
+        {"dir_light", {{"direction", {0, 0, 0}}}},
+        {"camera", {{"near", 10}, {"far", 1}}},
+        {"camera", {{"fov_deg", 0}}},
+        {"collider", {{"shape", "cone"}}},
+        {"collider", {{"half_extents", {1, 0, 1}}}},
+        {"rigidbody", {{"motion", true}}},
+        {"primitive", {{"color", "#12345"}}},
+        {"primitive", {{"roughness", 2}}},
+        {"terrain", {{"octaves", 1.5}}},
+        {"patrol", {{"points", {{1, 2}}}}},
+        {"behavior", {{"source", 7}}},
+        {"transform", {{"scale", 0}}},
+        {"transform", {{"position", {1, 2, "3"}}}},
+        {"transform", json::array({1, 2, 3})},
+    };
+    for (const auto& c : cases) {
+        EXPECT_FALSE(apply(c.name, c.value)) << c.name << " accepted " << c.value.dump();
+    }
+}
+
+TEST_F(ComponentJson, TransformTrsRoundTripsAndLookAtFacesTarget) {
+    ASSERT_OK(apply("transform",
+                    {{"position", {1, 2, 3}}, {"rotation", {15, -40, 5}}, {"scale", 2}}));
+    const json enc = encode_components(r, e)["transform"];
+    expect_vec3_near({enc["position"][0], enc["position"][1], enc["position"][2]}, {1, 2, 3});
+    expect_vec3_near({enc["rotation"][0], enc["rotation"][1], enc["rotation"][2]}, {15, -40, 5},
+                     1e-3F);
+    expect_vec3_near({enc["scale"][0], enc["scale"][1], enc["scale"][2]}, {2, 2, 2});
+
+    ASSERT_OK(apply("transform", {{"position", {0, 0, 0}}, {"look_at", {3, 4, 0}}, {"scale", 1}}));
+    const glm::mat4& m = r.get<s::Transform>(e).local;
+    const glm::vec3 forward = -glm::normalize(glm::vec3(m[2])); // local -Z
+    expect_vec3_near(forward, glm::normalize(glm::vec3(3, 4, 0)));
+}
+
+TEST_F(ComponentJson, HexColoursAreSrgbConvertedToLinear) {
+    ASSERT_OK(apply("primitive", {{"color", "#ff8000"}}));
+    const glm::vec4 c = r.get<s::Primitive>(e).color;
+    EXPECT_FLOAT_EQ(c.r, 1.0F);
+    EXPECT_NEAR(c.g, 0.2158F, 1e-3F); // sRGB 128/255 -> linear
+    EXPECT_FLOAT_EQ(c.b, 0.0F);
+    EXPECT_FLOAT_EQ(c.a, 1.0F);
+}
+
+TEST_F(ComponentJson, PrimitiveOwnsTheMeshAndRemovingItClearsIt) {
+    r.emplace<s::MeshSource>(e, "k", "", "model.gltf");
+    r.emplace<s::MeshRenderer>(e);
+    ASSERT_OK(apply("primitive", {{"shape", "sphere"}}));
+    EXPECT_FALSE(r.all_of<s::MeshSource>(e));
+    EXPECT_EQ(r.get<s::Primitive>(e).resolved, 0U);
+    EXPECT_TRUE(s::remove_component(r, e, "primitive"));
+    EXPECT_FALSE((r.any_of<s::Primitive, s::MeshRenderer>(e)));
+}
+
+TEST_F(ComponentJson, PhysicsEditsInvalidateTheBodySoItIsRebuilt) {
+    ASSERT_OK(apply("collider", {{"shape", "box"}}));
+    ASSERT_OK(apply("rigidbody", {{"motion", "dynamic"}}));
+    r.get<s::RigidBody>(e).body = 17; // as if the physics system had built it
+    ASSERT_OK(apply("collider", {{"half_extents", {1, 1, 1}}}));
+    EXPECT_EQ(r.get<s::RigidBody>(e).body, engine::physics::PhysicsWorld::invalid_body);
+}
+
+TEST_F(ComponentJson, RefusesReadOnlyEditOnlyAndUnknownComponents) {
+    EXPECT_FALSE(apply("mesh", json::object()));
+    EXPECT_FALSE(apply("animator", {{"speed", 2}})); // no clip to animate
+    const auto unknown = apply("lazer", json::object());
+    ASSERT_FALSE(unknown);
+    EXPECT_NE(unknown.error().message.find("point_light"), std::string::npos);
+    EXPECT_FALSE(s::remove_component(r, e, "transform"));
+}
+
+} // namespace

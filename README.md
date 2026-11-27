@@ -1,91 +1,82 @@
 # quat-3d
 
-A modular, data-driven C++23 game engine with a Vulkan 1.3 renderer, Slang shaders,
-glTF 2.0 skeletal animation, Jolt physics, and an ImGui-based editor.
+[![CI](https://github.com/tomerab1/quat-3d/actions/workflows/ci.yml/badge.svg)](https://github.com/tomerab1/quat-3d/actions/workflows/ci.yml)
 
-## Features
+quat-3d is a game engine and editor written in modern C++ (C++23). It renders
+with Vulkan, loads standard glTF 2.0 models, simulates physics with Jolt, and
+ships with an editor for building scenes. The long-term goal is an engine you
+can ship real games with — including on Steam — and that AI assistants can
+drive directly to build and debug worlds from a prompt.
 
-**Rendering** (Vulkan 1.3, dynamic rendering + descriptor buffers)
-- Deferred shading with cascaded shadow maps
-- Physically-based sky (Hillaire LUTs) with volumetric clouds
-- Image-based lighting with an incrementally refreshed dynamic probe
-- TAA, bloom, histogram auto-exposure, filmic tonemapping
-- Frame-graph driven: passes declare reads/writes, barriers are derived
+> **Project status:** the core engine (rendering, animation, physics, terrain,
+> NPCs, basic multiplayer, editor) works. Current work is a stability pass
+> (bug audit, automated tests, CI), followed by AI tooling over the Model
+> Context Protocol, macOS support, and audio. See [Roadmap](#roadmap) and
+> [`docs/STATUS.md`](docs/STATUS.md) for what is in progress right now.
+
+## What it can do today
+
+**Rendering**
+- Deferred physically based shading with cascaded shadow maps and clustered point lights
+- Glass and transparency (refraction, absorption, IOR), clearcoat car paint
+- Physically based sky with volumetric clouds and a moving sun
+- Image-based lighting that keeps up with the sky in real time
+- Anti-aliasing (TAA), bloom, auto-exposure, filmic tonemapping
 
 **Animation**
-- glTF 2.0 skeletal animation via fastgltf
-- GPU skinning (compute pass, not vertex-shader skinning)
-- Blend trees (1D blends, additive layers) and a state machine with crossfades
+- Skeletal animation from glTF files, skinned on the GPU
+- Blending between clips, additive layers, and a state machine with crossfades
 
-**Physics**
-- Jolt Physics integration (fixed 1/120 s step), collider shapes honour entity scale
-- Editor debug-draw overlay
+**World**
+- Procedural terrain: seeded generation with erosion, level of detail, and
+  seamless streaming for kilometre-scale worlds
+- Jolt physics: rigid bodies, character controller, triggers, terrain collision
 
-**Scene / ECS**
-- EnTT-based scene with parent/child hierarchy
-- glTF import (meshes, materials, skins, clips) through a ref-counted asset manager
-- Scene save/load to JSON
+**Gameplay**
+- NPC navigation (Recast/Detour navmesh), path following, patrol routes
+- Data-driven behaviour trees (JSON)
+- Multiplayer foundations: client/server transport, state replication,
+  client-side prediction
 
-**Editor** (ImGui docking)
-- Scene hierarchy, inspector, asset browser, animation preview, physics debug
-- ImGuizmo transform gizmos, play/stop with scene snapshot restore
+**Editor**
+- Docked editor with viewport, scene hierarchy, inspector, asset browser,
+  animation preview and physics debug view
+- Move/rotate/scale gizmos, click-to-select, play/stop with automatic scene restore
+- Save and load scenes as JSON
+- Click-to-walk and patrol authoring for NPCs
 
-## Tech stack
+## Platforms
 
-| Domain      | Library                                   |
-|-------------|-------------------------------------------|
-| Graphics    | Vulkan 1.3 (dynamic rendering, descriptor buffer, sync2) |
-| Shaders     | Slang, cooked offline to SPIR-V + reflection JSON |
-| Windowing   | SDL3                                      |
-| Physics     | Jolt Physics                              |
-| ECS         | EnTT                                      |
-| glTF        | fastgltf                                  |
-| Math        | glm (depth 0..1, radians)                 |
-| UI          | Dear ImGui (docking) + ImGuizmo           |
-| Allocation  | Vulkan Memory Allocator                   |
-| Build       | CMake + vcpkg (manifest mode)             |
-
-## Requirements
-
-To **run** the engine you need a Vulkan 1.3 driver with `dynamicRendering`,
-`synchronization2`, and `bufferDeviceAddress`, plus either:
-
-- `VK_EXT_descriptor_buffer` (any recent NVIDIA / AMD / Intel driver, or Mesa
-  RADV/ANV/lavapipe), **or**
-- a build with `ENGINE_DESCRIPTOR_SETS_FALLBACK=ON` (required on macOS — MoltenVK
-  does not implement descriptor buffers)
-
-To **build** it you need, on every OS:
-
-| Tool | Notes |
+| Platform | Status |
 |---|---|
-| CMake ≥ 3.22 + Ninja | |
-| C++23 compiler | clang 17+/libc++, MSVC 19.38+, or Apple clang 17+ (`<expected>` is required) |
-| [Vulkan SDK](https://vulkan.lunarg.com/) | provides headers, loader, validation layers, and **`slangc`** (must be on `PATH` — shaders are cooked at build time) |
-| [vcpkg](https://github.com/microsoft/vcpkg) | manifest mode; all C++ libraries (SDL3, Jolt, EnTT, fastgltf, ImGui, glm, VMA, …) are downloaded and built automatically on first configure |
+| Linux | Supported (primary development platform, built in CI) |
+| Windows | Supported |
+| macOS | Runs through MoltenVK (Vulkan on Metal) with a compatibility flag; full support is on the roadmap |
 
-Set up vcpkg once (expected at `~/vcpkg`, or `%USERPROFILE%\vcpkg` on Windows):
+## Building
+
+You need CMake 3.22+, Ninja, a C++23 compiler, the
+[Vulkan SDK](https://vulkan.lunarg.com/) (for `slangc`, the shader compiler),
+and [vcpkg](https://github.com/microsoft/vcpkg). vcpkg downloads and builds
+every C++ library the engine uses the first time you configure — expect that
+first configure to take a while; later ones are fast.
+
+Set up vcpkg once (the build expects it at `~/vcpkg`, or `%USERPROFILE%\vcpkg`
+on Windows):
 
 ```sh
 git clone https://github.com/microsoft/vcpkg.git ~/vcpkg
 ~/vcpkg/bootstrap-vcpkg.sh -disableMetrics      # bootstrap-vcpkg.bat on Windows
 ```
 
-The first configure compiles all vcpkg dependencies (a few minutes); subsequent
-configures hit the binary cache.
-
-## Building
-
 ### Linux
 
-Install the toolchain (Debian/Ubuntu example) and the Vulkan SDK, then use the
-preset — it pins clang + libc++ and the vcpkg toolchain:
-
 ```sh
-sudo apt install clang libc++-dev libc++abi-dev cmake ninja-build \
-     libx11-dev libxft-dev libxext-dev libwayland-dev libxkbcommon-dev \
-     libegl1-mesa-dev pkg-config           # X11/Wayland headers for SDL3
-# install the Vulkan SDK (tarball or LunarG apt repo) and put slangc on PATH
+sudo apt install clang libc++-dev libc++abi-dev cmake ninja-build pkg-config \
+     libx11-dev libxext-dev libxft-dev libxcursor-dev libxrandr-dev libxi-dev \
+     libxss-dev libxtst-dev libxfixes-dev libxkbcommon-dev \
+     libwayland-dev wayland-protocols libegl-dev libdecor-0-dev   # SDL3 X11/Wayland
+# install the Vulkan SDK (or just slangc) and make sure `slangc` is on PATH
 
 cmake --preset release
 cmake --build --preset release
@@ -94,26 +85,22 @@ cmake --build --preset release
 
 ### Windows
 
-Install Visual Studio 2022 (Desktop C++ workload), the Vulkan SDK, CMake, and
-Ninja; vcpkg is expected at `%USERPROFILE%\vcpkg`. Then:
+Install Visual Studio 2022 (Desktop C++ workload), the Vulkan SDK, CMake and
+Ninja, then run:
 
 ```bat
 scripts\build-windows-release.bat
 ```
 
-or use the `windows-release` CMake preset from a VS developer prompt.
+or use the `windows-release` CMake preset from a Visual Studio developer prompt.
 
-### macOS (Apple Silicon, MoltenVK)
+### macOS (Apple Silicon)
 
-Install Xcode command-line tools, Homebrew `cmake` + `ninja`, and the macOS
-Vulkan SDK (bundles MoltenVK). MoltenVK lacks `VK_EXT_descriptor_buffer`, so the
-build must opt into the classic descriptor-set compatibility path — on platforms
-with native descriptor-buffer support the fallback is never taken:
+Install the Xcode command-line tools, `brew install cmake ninja`, and the macOS
+Vulkan SDK (it includes MoltenVK). MoltenVK lacks one Vulkan feature the engine
+normally uses, so the build turns on a compatibility path:
 
 ```sh
-xcode-select --install
-brew install cmake ninja
-
 export VULKAN_SDK=$HOME/VulkanSDK/<version>/macOS
 export PATH="$VULKAN_SDK/bin:$PATH"
 
@@ -125,21 +112,37 @@ cmake --build build/macos
 ./build/macos/game
 ```
 
-### Running
+### Graphics driver requirements
 
-`game` opens the editor (dock layout: hierarchy, inspector, viewport, asset
-browser, animation preview, physics debug). `anim_smoke` in the same build
-directory runs the windowless animation self-tests. Shaders are cooked into
-`cooked/shaders/` automatically as part of the build; touch a `.slang` file and
-rebuild to re-cook.
+A Vulkan 1.3 driver with dynamic rendering, synchronization2 and buffer device
+addresses, plus `VK_EXT_descriptor_buffer` (any recent NVIDIA, AMD or Intel
+driver, or Mesa) — or a build with `ENGINE_DESCRIPTOR_SETS_FALLBACK=ON`.
 
-## Sample assets
+## Running
 
-Drop glTF models under `sample-assets/` (gitignored) and they appear in the editor's
-asset browser; double-click or drag into the viewport to instantiate. The
-[Khronos glTF sample assets](https://github.com/KhronosGroup/glTF-Sample-Assets)
-work well — e.g. `ToyCar`, `CarConcept`, `DamagedHelmet`, and the animated
-`Fox` / `CesiumMan` / `BrainStem`:
+`./build/release/game` opens the editor with a showcase scene. Hold the right
+mouse button in the viewport and use WASD to fly; W/E/R switch the gizmo
+between move, rotate and scale.
+
+Environment variables switch on extra modes:
+
+| Variable | Effect |
+|---|---|
+| `QUAT_GLTF=<file>` | Load a glTF/GLB model instead of the showcase scene |
+| `QUAT_TERRAIN=1` | Add a procedural terrain tile |
+| `QUAT_PHYSICS=1` / `QUAT_CHARACTER=1` | Physics / character-controller demo scenes |
+| `QUAT_HOST=<port>` / `QUAT_JOIN=<ip:port>` | Host or join a networked session |
+| `QUAT_REMOTE=<port>` | Open the remote-control endpoint for AI tools (`1` = port 7878); add `QUAT_REMOTE_TOKEN=<secret>` to require a token — see [`docs/remote-control.md`](docs/remote-control.md) |
+| `QUAT_NO_UI=1` | Run without the editor UI |
+| `QUAT_NO_VSYNC=1` | Disable vsync |
+| `QUAT_MAX_FRAMES=<n>` + `QUAT_SCREENSHOT=<file.ppm>` | Render n frames, save the last one, exit (headless checks) |
+
+### Sample models
+
+Put glTF models under `sample-assets/` (not committed) and they show up in the
+editor's asset browser — double-click one, or drag it into the viewport. The
+[Khronos glTF sample models](https://github.com/KhronosGroup/glTF-Sample-Assets)
+work well, e.g. `DamagedHelmet`, `CarConcept`, and the animated `Fox`:
 
 ```sh
 git clone --filter=blob:none --sparse --depth 1 \
@@ -148,15 +151,79 @@ cd /tmp/gltf-samples && git sparse-checkout set Models/Fox Models/ToyCar
 cp -R Models/Fox/glTF ~/quat-3d/sample-assets/Fox
 ```
 
+## AI tools (MCP)
+
+[`tools/quat-mcp`](tools/quat-mcp/README.md) is an MCP server that lets AI
+assistants such as Claude Code and Claude Desktop build and inspect worlds in
+the running engine — create entities, set the sky and camera, take
+screenshots, spawn models. Start the engine with `QUAT_REMOTE=7878`, build the
+server with `cargo build --release` in `tools/quat-mcp`, and register it with
+your client:
+
+```sh
+claude mcp add quat-3d --env QUAT_REMOTE_PORT=7878 -- "$PWD/tools/quat-mcp/target/release/quat-mcp"
+```
+
+See [`tools/quat-mcp/README.md`](tools/quat-mcp/README.md) for Claude Desktop
+setup, tokens and the full tool list.
+
+## Testing
+
+Tests use [GoogleTest](https://github.com/google/googletest) and run without
+a window through `engine_tests`:
+
+```sh
+ctest --test-dir build/release --output-on-failure      # everything
+./build/release/engine_tests --gtest_filter='-Gpu*'     # only tests that need no GPU
+./build/release/engine_tests --gtest_filter='Physics.*' # one suite
+./build/release/engine_tests --gtest_list_tests         # list all tests
+```
+
+GPU tests run on any Vulkan device; without a GPU, Mesa's software driver
+(lavapipe) works — that is what CI uses. Every push is built and tested on
+Linux by [GitHub Actions](.github/workflows/ci.yml).
+
+## Roadmap
+
+The plan lives in [`ROADMAP.md`](ROADMAP.md), grouped into tracks:
+
+1. **Stability** *(now)* — bug audit, hardened file/network input, automated tests, CI on all platforms
+2. **AI tooling** — a Rust [MCP](https://modelcontextprotocol.io) server so AI
+   assistants can build worlds, write shaders, author behaviours and debug the
+   running engine
+3. **Rendering & performance** — async loading, hot reload, GPU-driven rendering, profiling
+4. **Platforms & shipping** — macOS, a path to a native Metal backend, Steamworks, game packaging
+5. **Gameplay** — audio (miniaudio), visual node editors for behaviour and shaders, more networking
+6. **Editor** — undo/redo, prefabs, project and asset management
+
+## Documentation
+
+| Document | What it covers |
+|---|---|
+| [`docs/STATUS.md`](docs/STATUS.md) | What is in progress, what is blocked, what comes next |
+| [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md) | Building, testing, CI, and conventions for contributors |
+| [`docs/remote-control.md`](docs/remote-control.md) | The remote-control protocol AI tools use to drive the engine |
+| [`docs/CYCLE.md`](docs/CYCLE.md) | How development runs: the repeating plan → parallel agents → merge → CI → audit → learn cycle |
+| [`docs/LEARNINGS.md`](docs/LEARNINGS.md) | Lessons recorded by past cycles |
+| [`ROADMAP.md`](ROADMAP.md) | The full plan, with completed history |
+| [`CLAUDE.md`](CLAUDE.md) | Architecture rules and coding conventions |
+
 ## Repository layout
 
 ```
-assets/shaders/   Slang sources (cooked to cooked/shaders/ at build time)
-include/engine/   Public headers (core, rhi, renderer, animation, physics, scene, asset)
-src/              Implementation, mirrored by module
-src/editor/       ImGui editor layer (ENGINE_EDITOR builds only)
-tests/            Windowless self-test harnesses (e.g. anim_smoke)
+assets/shaders/     Slang shader sources (compiled into cooked/shaders/ during the build)
+include/engine/     Public headers, one folder per module
+src/                Implementation, mirroring include/ (rhi, renderer, scene, physics, ...)
+src/editor/         The editor (only in builds with ENGINE_EDITOR=ON, the default)
+src/remote/         Remote-control endpoint used by AI tooling
+tools/quat-mcp/     MCP server for AI assistants (Rust, standalone Cargo crate)
+tests/              GoogleTest suite (engine_tests): tests/<module>/, shared helpers in tests/support/
+docs/               Project documentation
+ports/, triplets/   vcpkg customisations
 ```
 
-Development follows the phased plan in [`PHASES.md`](PHASES.md); engine conventions
-live in [`CLAUDE.md`](CLAUDE.md).
+## Tech stack
+
+Vulkan 1.3 · Slang · SDL3 · Jolt Physics · EnTT · fastgltf · glm · Dear ImGui +
+ImGuizmo · Vulkan Memory Allocator · Recast/Detour · GameNetworkingSockets ·
+nlohmann/json · CMake + vcpkg

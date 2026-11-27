@@ -164,14 +164,21 @@ target_include_directories(engine_physics PUBLIC ${ENGINE_PUBLIC_INCLUDE})
 # fastgltf is an implementation detail of the loader (PRIVATE).
 # ---------------------------------------------------------------------------
 add_library(engine_scene STATIC
-    src/scene/gltf_loader.cpp
+    src/scene/gltf/validate.cpp
+    src/scene/gltf/mesh.cpp
+    src/scene/gltf/material.cpp
+    src/scene/gltf/skin_animation.cpp
+    src/scene/gltf/scene_assembly.cpp
+    src/scene/gltf/self_tests.cpp
     src/scene/stb_image_impl.cpp
     src/scene/components.cpp
     src/scene/scene.cpp
     src/scene/physics_system.cpp
     src/scene/nav_agent_system.cpp
     src/scene/behavior.cpp
-    src/scene/scene_io.cpp)
+    src/scene/scene_io.cpp
+    src/scene/component_json.cpp
+    src/scene/primitives.cpp)
 # EnTT is PUBLIC: components.hpp exposes entt types (Parent/Children) to consumers.
 # engine_renderer is PUBLIC: scene.hpp's RenderCollectSystem fills a renderer
 # DrawItem list (no cycle — the renderer does not depend on the scene).
@@ -180,10 +187,12 @@ add_library(engine_scene STATIC
 target_link_libraries(engine_scene PUBLIC
     engine_flags engine_asset engine_rhi engine_renderer engine_animation engine_physics
     engine_terrain engine_nav EnTT::EnTT)
-# fastgltf and stb (image decode) are implementation details of the loader;
-# nlohmann_json of the scene serializer.
-target_link_libraries(engine_scene PRIVATE fastgltf::fastgltf nlohmann_json::nlohmann_json)
-target_include_directories(engine_scene PRIVATE ${Stb_INCLUDE_DIR})
+# fastgltf and stb (image decode) are implementation details of the loader.
+# nlohmann_json is PUBLIC: component_json.hpp exposes JSON values (the codec
+# shared by scene files and the remote-control API).
+target_link_libraries(engine_scene PUBLIC nlohmann_json::nlohmann_json)
+target_link_libraries(engine_scene PRIVATE fastgltf::fastgltf)
+target_include_directories(engine_scene PRIVATE ${Stb_INCLUDE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_include_directories(engine_scene PUBLIC ${ENGINE_PUBLIC_INCLUDE})
 
 # stb's implementation TU is not warning-clean under our strict flags.
@@ -227,6 +236,21 @@ else()
 endif()
 target_link_libraries(engine_net PRIVATE engine_scene)
 target_include_directories(engine_net PUBLIC ${ENGINE_PUBLIC_INCLUDE})
+
+# ---------------------------------------------------------------------------
+# engine_remote — remote-control endpoint (Phase 15): loopback JSON-RPC 2.0
+# over TCP, poll-driven on the main thread. Out-of-process tools (the quat-mcp
+# Model Context Protocol bridge in tools/quat-mcp) drive the engine through it.
+# nlohmann_json is PUBLIC: the handler API traffics in JSON values.
+# ---------------------------------------------------------------------------
+add_library(engine_remote STATIC
+    src/remote/rpc_server.cpp
+    src/remote/socket.cpp)
+target_link_libraries(engine_remote PUBLIC engine_flags nlohmann_json::nlohmann_json)
+target_include_directories(engine_remote PUBLIC ${ENGINE_PUBLIC_INCLUDE})
+if(WIN32)
+    target_link_libraries(engine_remote PRIVATE ws2_32)
+endif()
 
 # ---------------------------------------------------------------------------
 # engine_renderer — high-level passes built on the RHI. Starts with the deferred
@@ -292,10 +316,14 @@ endif()
 # game — executable entry point. The full target graph (engine_core /
 # engine_renderer / engine_editor) grows phase by phase as modules gain sources.
 # ---------------------------------------------------------------------------
-add_executable(game src/main.cpp)
+# src/app/ is the application layer (startup scenes, and - per ROADMAP S7 -
+# the frame loop pieces moving out of main.cpp); it is not an engine library.
+add_executable(game
+    src/main.cpp
+    src/app/demo_scenes.cpp)
 target_link_libraries(game PRIVATE
     engine_flags engine_rhi engine_asset engine_scene engine_renderer engine_physics
-    engine_terrain engine_nav engine_net SDL3::SDL3)
+    engine_terrain engine_nav engine_net engine_remote SDL3::SDL3)
 if(ENGINE_EDITOR)
     target_link_libraries(game PRIVATE engine_editor)
 endif()
@@ -309,12 +337,10 @@ target_compile_definitions(game PRIVATE
     QUAT_PROJECT_ROOT="${CMAKE_CURRENT_SOURCE_DIR}")
 
 # ---------------------------------------------------------------------------
-# anim_smoke — windowless CPU harness for the animation self-tests (no SDL /
-# Vulkan), so the animation runtime can be verified without a display.
+# Tests (GoogleTest) — see tests/CMakeLists.txt. `ctest --test-dir build/<preset>`.
 # ---------------------------------------------------------------------------
-add_executable(anim_smoke tests/anim_smoke.cpp)
-target_link_libraries(anim_smoke PRIVATE engine_flags engine_animation)
-target_include_directories(anim_smoke PRIVATE ${ENGINE_PUBLIC_INCLUDE})
+enable_testing()
+add_subdirectory(tests)
 
 # ---------------------------------------------------------------------------
 # Offline shader cooking: assets/shaders/*.slang -> cooked/shaders/*.{spv,json}

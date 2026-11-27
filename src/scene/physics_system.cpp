@@ -76,6 +76,20 @@ namespace {
 void physics_system(entt::registry& registry, physics::PhysicsWorld& world, float dt) {
     const std::uint32_t invalid = physics::PhysicsWorld::invalid_body;
 
+    // 0. Remove bodies whose owner is gone: the entity was destroyed, or it
+    // lost its RigidBody / Collider (editor delete or remove-component during
+    // Play, scene restore). A surviving RigidBody is reset so re-adding the
+    // Collider creates a fresh body instead of leaking a second one.
+    for (const physics::PhysicsWorld::OwnedBody& ob : world.owned_bodies()) {
+        const auto e = static_cast<entt::entity>(ob.owner);
+        auto* rb = registry.valid(e) ? registry.try_get<RigidBody>(e) : nullptr;
+        const bool live = rb != nullptr && rb->body == ob.body &&
+                          registry.all_of<Collider, Transform>(e);
+        if (live) continue;
+        world.remove_body(ob.body);
+        if (rb != nullptr && rb->body == ob.body) rb->body = invalid;
+    }
+
     // 1. Create a body for each entity that has a Collider but no body yet.
     for (auto [e, rb, col, t] : registry.view<RigidBody, Collider, Transform>().each()) {
         if (rb.body != invalid) continue;
@@ -89,6 +103,7 @@ void physics_system(entt::registry& registry, physics::PhysicsWorld& world, floa
                        : rb.motion == BodyMotion::static_body ? physics::Layer::static_body
                                                               : physics::Layer::dynamic;
         params.mass = rb.mass;
+        params.owner = static_cast<std::uint32_t>(entt::to_integral(e));
         rb.body = world.add_body(params);
     }
 
@@ -136,9 +151,19 @@ void character_system(entt::registry& registry, physics::PhysicsWorld& world, fl
     const std::uint32_t invalid = physics::PhysicsWorld::invalid_body;
     constexpr float gravity = -9.81F;
 
+    // Remove characters whose entity or CharacterController is gone (see
+    // physics_system step 0).
+    for (const physics::PhysicsWorld::OwnedBody& oc : world.owned_characters()) {
+        const auto e = static_cast<entt::entity>(oc.owner);
+        auto* cc = registry.valid(e) ? registry.try_get<CharacterController>(e) : nullptr;
+        if (cc != nullptr && cc->character == oc.body) continue;
+        world.remove_character(oc.body);
+    }
+
     for (auto [e, cc, t] : registry.view<CharacterController, Transform>().each()) {
         if (cc.character == invalid) {
-            cc.character = world.create_character(cc.half_height, cc.radius, position_of(t));
+            cc.character = world.create_character(cc.half_height, cc.radius, position_of(t),
+                                                  static_cast<std::uint32_t>(entt::to_integral(e)));
         }
 
         glm::vec3 velocity = cc.velocity;
@@ -203,6 +228,12 @@ std::expected<void, core::Error> run_character_self_test() {
     const float end_x = registry.get<Transform>(e).local[3].x;
     if (end_x - start_x < 1.0F) {
         return std::unexpected(core::Error{"character self-test: did not walk forward"});
+    }
+    // Destroying the entity removes its character on the next tick (B6).
+    registry.destroy(e);
+    character_system(registry, *world, 1.0F / 60.0F);
+    if (!world->owned_characters().empty()) {
+        return std::unexpected(core::Error{"character self-test: orphaned character kept"});
     }
     return {};
 }
@@ -296,6 +327,33 @@ std::expected<void, core::Error> run_physics_body_self_test() {
     if (std::abs(recomposed[3].y - child_world.y) > 0.01F) {
         return std::unexpected(
             core::Error{"physics body self-test: parented local/world out of sync"});
+    }
+
+    // Orphaned bodies are swept (S1 audit B6): destroying an entity, or
+    // removing its Collider, removes its Jolt body on the next tick; re-adding
+    // the Collider creates exactly one fresh body.
+    const auto owners_of = [&](entt::entity who) {
+        std::size_t n = 0;
+        for (const auto& ob : world->owned_bodies()) {
+            n += ob.owner == static_cast<std::uint32_t>(entt::to_integral(who)) ? 1U : 0U;
+        }
+        return n;
+    };
+    const std::size_t before = world->owned_bodies().size();
+    registry.destroy(sphere);
+    registry.remove<Collider>(child);
+    physics_system(registry, *world, 1.0F / 60.0F);
+    if (world->owned_bodies().size() != before - 2 || owners_of(child) != 0 ||
+        registry.get<RigidBody>(child).body != physics::PhysicsWorld::invalid_body) {
+        return std::unexpected(
+            core::Error{"physics body self-test: orphaned bodies not removed"});
+    }
+    registry.emplace<Collider>(child, ColliderShape::sphere, glm::vec3(0.5F), glm::vec3(0.0F));
+    physics_system(registry, *world, 1.0F / 60.0F);
+    physics_system(registry, *world, 1.0F / 60.0F);
+    if (owners_of(child) != 1) {
+        return std::unexpected(
+            core::Error{"physics body self-test: re-added collider did not get one body"});
     }
     return {};
 }

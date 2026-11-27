@@ -47,6 +47,8 @@ struct SceneSnapshot {
     Stored<scene::NavAgent>            nav_agents;
     Stored<scene::BehaviorTree>        behavior_trees;
     Stored<scene::PatrolRoute>         patrol_routes;
+    Stored<scene::Primitive>           primitives;
+    Stored<scene::NetReplicated>       net_replicated;
 };
 
 // Copies the whole scene (all engine components) into a snapshot.

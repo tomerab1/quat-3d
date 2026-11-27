@@ -1,6 +1,8 @@
 #include "engine/scene/scene_io.hpp"
 
+#include <cstdio>
 #include <fstream>
+#include <optional>
 #include <set>
 #include <string>
 #include <unordered_map>
@@ -11,6 +13,8 @@
 #include <nlohmann/json.hpp>
 
 #include "engine/asset/asset_manager.hpp"
+#include "engine/core/json_fields.hpp"
+#include "engine/scene/component_json.hpp"
 #include "engine/scene/components.hpp"
 #include "engine/scene/gltf_loader.hpp"
 #include "engine/scene/scene.hpp"
@@ -21,34 +25,67 @@ namespace {
 
 using nlohmann::json;
 
+constexpr int k_scene_version = 2;
+
 [[nodiscard]] std::unexpected<core::Error> fail(std::string what) {
     return std::unexpected(core::Error{std::move(what)});
 }
 
-[[nodiscard]] json mat4_to_json(const glm::mat4& m) {
-    json out = json::array();
-    for (int c = 0; c < 4; ++c) {
-        for (int r = 0; r < 4; ++r) out.push_back(m[c][r]);
+// Entity-level keys handled by scene_io itself; every other key is a
+// component decoded by the shared codec.
+[[nodiscard]] bool is_entity_key(std::string_view key) {
+    return key == "name" || key == "parent" || key == "mesh";
+}
+
+struct MeshRef {
+    std::string mesh_key;
+    std::string material_key;
+    std::string gltf;
+};
+
+// Validated view of one file entity (before anything touches a scene).
+struct FileEntity {
+    std::string            name;
+    int                    parent = -1;
+    std::optional<MeshRef> mesh;
+    const json*            object = nullptr;
+};
+
+[[nodiscard]] std::expected<std::vector<FileEntity>, core::Error> read_entities(const json& root) {
+    core::JsonFields top(root, "scene", /*strict=*/false);
+    int version = 1;
+    top.integer("version", version, 1, 1000);
+    const json* list = top.raw("entities");
+    if (auto ok = top.finish(); !ok) return std::unexpected(ok.error());
+    if (version > k_scene_version) {
+        std::fprintf(stderr, "[scene] file version %d is newer than %d; loading what is known\n",
+                     version, k_scene_version);
+    }
+    if (list == nullptr || !list->is_array()) return fail("scene: missing \"entities\" array");
+
+    std::vector<FileEntity> out;
+    out.reserve(list->size());
+    for (std::size_t i = 0; i < list->size(); ++i) {
+        const json& je = (*list)[i];
+        const std::string where = "entities[" + std::to_string(i) + "]";
+        core::JsonFields f(je, where, /*strict=*/false);
+        FileEntity fe;
+        fe.object = &je;
+        f.string("name", fe.name, 1024);
+        f.integer("parent", fe.parent, -1, static_cast<std::int64_t>(list->size()) - 1);
+        if (const json* m = f.raw("mesh")) {
+            core::JsonFields mf(*m, where + ".mesh", /*strict=*/false);
+            MeshRef ref;
+            mf.string("mesh_key", ref.mesh_key, 4096).string("material_key", ref.material_key, 4096);
+            mf.string("gltf", ref.gltf, 4096);
+            if (auto ok = mf.finish(); !ok) return std::unexpected(ok.error());
+            fe.mesh = std::move(ref);
+        }
+        if (auto ok = f.finish(); !ok) return std::unexpected(ok.error());
+        if (fe.parent == static_cast<int>(i)) return fail(where + ".parent: an entity cannot parent itself");
+        out.push_back(std::move(fe));
     }
     return out;
-}
-
-[[nodiscard]] glm::mat4 mat4_from_json(const json& a) {
-    glm::mat4 m(1.0F);
-    if (a.is_array() && a.size() == 16) {
-        for (int c = 0; c < 4; ++c) {
-            for (int r = 0; r < 4; ++r) m[c][r] = a[std::size_t(c * 4 + r)].get<float>();
-        }
-    }
-    return m;
-}
-
-[[nodiscard]] json vec3_to_json(const glm::vec3& v) { return json::array({v.x, v.y, v.z}); }
-[[nodiscard]] glm::vec3 vec3_from_json(const json& a, glm::vec3 fallback = glm::vec3(0.0F)) {
-    if (a.is_array() && a.size() == 3) {
-        return {a[0].get<float>(), a[1].get<float>(), a[2].get<float>()};
-    }
-    return fallback;
 }
 
 } // namespace
@@ -67,84 +104,35 @@ std::expected<void, core::Error> save_scene(const Scene& scene,
 
     json entities = json::array();
     for (const entt::entity e : order) {
-        json je;
+        // Components via the shared codec (exact matrix for the transform),
+        // plus the entity-level name / parent / mesh provenance.
+        json je = encode_components(r, e, {.transform_as_matrix = true, .include_read_only = false});
         if (const auto* name = r.try_get<Name>(e)) je["name"] = name->value;
-        if (const auto* t = r.try_get<Transform>(e)) je["transform"] = mat4_to_json(t->local);
         int parent = -1;
         if (const auto* p = r.try_get<Parent>(e);
             p != nullptr && p->entity != entt::null && index_of.contains(p->entity)) {
             parent = index_of.at(p->entity);
         }
         je["parent"] = parent;
-
-        if (const auto* src = r.try_get<MeshSource>(e)) {
+        // Primitives rebuild their own mesh; only glTF/code meshes need keys.
+        if (const auto* src = r.try_get<MeshSource>(e); src != nullptr && !r.all_of<Primitive>(e)) {
             je["mesh"] = {{"mesh_key", src->mesh_key},
                           {"material_key", src->material_key},
                           {"gltf", src->gltf_path}};
-        }
-        if (const auto* c = r.try_get<Collider>(e)) {
-            je["collider"] = {{"shape", static_cast<int>(c->shape)},
-                              {"half_extents", vec3_to_json(c->half_extents)},
-                              {"offset", vec3_to_json(c->offset)},
-                              {"sensor", c->is_sensor}};
-        }
-        if (const auto* b = r.try_get<RigidBody>(e)) {
-            je["rigidbody"] = {{"motion", static_cast<int>(b->motion)}, {"mass", b->mass}};
-        }
-        if (const auto* l = r.try_get<DirectionalLight>(e)) {
-            je["dir_light"] = {{"direction", vec3_to_json(l->direction)},
-                               {"color", vec3_to_json(l->color)},
-                               {"intensity", l->intensity}};
-        }
-        if (const auto* l = r.try_get<PointLight>(e)) {
-            je["point_light"] = {{"color", vec3_to_json(l->color)},
-                                 {"radius", l->radius},
-                                 {"intensity", l->intensity}};
-        }
-        if (const auto* c = r.try_get<Camera>(e)) {
-            je["camera"] = {{"fov_y", c->fov_y},
-                            {"near", c->near_z},
-                            {"far", c->far_z},
-                            {"active", c->is_active}};
-        }
-        if (const auto* t = r.try_get<Terrain>(e)) {
-            je["terrain"] = {{"seed", t->params.seed},
-                             {"resolution", t->params.resolution},
-                             {"tile_size", t->params.tile_size_m},
-                             {"height", t->params.height_m},
-                             {"octaves", t->params.octaves},
-                             {"warp", t->params.warp_strength},
-                             {"droplets", t->params.erosion_droplets},
-                             {"snowline", t->snowline_m},
-                             {"streaming", t->streaming},
-                             {"stream_radius", t->stream_radius}};
-        }
-        if (const auto* a = r.try_get<NavAgent>(e)) {
-            je["nav_agent"] = {{"target", vec3_to_json(a->target)},
-                               {"speed", a->speed},
-                               {"ground_offset", a->ground_offset},
-                               {"active", a->active}};
-        }
-        if (const auto* b = r.try_get<BehaviorTree>(e)) {
-            je["behavior"] = {{"source", b->source}, {"enabled", b->enabled}};
-        }
-        if (const auto* pr = r.try_get<PatrolRoute>(e)) {
-            json pts = json::array();
-            for (const glm::vec3& pt : pr->points) pts.push_back(vec3_to_json(pt));
-            je["patrol"] = {{"points", std::move(pts)}, {"loop", pr->loop}};
         }
         entities.push_back(std::move(je));
     }
 
     json root;
-    root["version"] = 1;
+    root["version"] = k_scene_version;
     root["entities"] = std::move(entities);
 
     std::error_code ec;
     if (path.has_parent_path()) std::filesystem::create_directories(path.parent_path(), ec);
     std::ofstream out(path);
     if (!out) return fail("save_scene: cannot open '" + path.string() + "' for writing");
-    out << root.dump(2);
+    // Replace (not throw on) invalid UTF-8: names from glTF files are untrusted.
+    out << root.dump(2, ' ', false, json::error_handler_t::replace);
     if (!out.good()) return fail("save_scene: write failed for '" + path.string() + "'");
     return {};
 }
@@ -154,20 +142,19 @@ load_scene(Scene& scene, const std::filesystem::path& path, rhi::GpuAllocator& a
            const rhi::TransferContext& transfer, asset::AssetManager& assets) {
     std::ifstream in(path);
     if (!in) return fail("load_scene: cannot open '" + path.string() + "'");
-    json root = json::parse(in, nullptr, /*allow_exceptions=*/false);
-    if (root.is_discarded() || !root.contains("entities") || !root["entities"].is_array()) {
-        return fail("load_scene: '" + path.string() + "' is not a scene file");
+    const json root = json::parse(in, nullptr, /*allow_exceptions=*/false);
+    if (root.is_discarded()) return fail("load_scene: '" + path.string() + "' is not valid JSON");
+    auto file_entities = read_entities(root);
+    if (!file_entities) {
+        return fail("load_scene: '" + path.string() + "': " + file_entities.error().message);
     }
 
     // Pre-load every referenced glTF: instantiating into a scratch scene fills
     // the AssetManager cache with the exact keys the entities reference; the
     // scratch entities are discarded with the scratch scene.
     std::set<std::string> gltf_paths;
-    for (const json& je : root["entities"]) {
-        if (je.contains("mesh") && je["mesh"].contains("gltf")) {
-            const std::string p = je["mesh"]["gltf"].get<std::string>();
-            if (!p.empty()) gltf_paths.insert(p);
-        }
+    for (const FileEntity& fe : *file_entities) {
+        if (fe.mesh && !fe.mesh->gltf.empty()) gltf_paths.insert(fe.mesh->gltf);
     }
     // The scene file does not persist SkinnedMesh/Animator (asset handles are
     // not serializable); harvest them from the scratch instantiation instead,
@@ -192,44 +179,44 @@ load_scene(Scene& scene, const std::filesystem::path& path, rhi::GpuAllocator& a
             }
         }
     }
-    // Cache-hit-only loaders: the asset must already exist under the key.
-    const auto cached_mesh = [&](const std::string& key) {
-        return assets.load<asset::MeshAsset>(
-            key, [](const std::filesystem::path&) -> std::expected<asset::MeshAsset, core::Error> {
-                return std::unexpected(core::Error{"asset key not in cache"});
-            });
-    };
-    const auto cached_material = [&](const std::string& key) {
-        return assets.load<asset::MaterialAsset>(
-            key,
-            [](const std::filesystem::path&) -> std::expected<asset::MaterialAsset, core::Error> {
-                return std::unexpected(core::Error{"asset key not in cache"});
-            });
-    };
 
-    entt::registry& r = scene.registry();
-    r.clear();
-
-    const json& jents = root["entities"];
+    // Build into a staging scene; the live scene is replaced only once the
+    // whole file decoded, so a bad file leaves the current scene intact.
+    Scene staging;
+    entt::registry& r = staging.registry();
     std::vector<entt::entity> created;
-    created.reserve(jents.size());
-    for (const json& je : jents) {
-        const entt::entity e =
-            scene.create_entity(je.contains("name") ? je["name"].get<std::string>() : "");
+    created.reserve(file_entities->size());
+    for (std::size_t i = 0; i < file_entities->size(); ++i) {
+        const FileEntity& fe = (*file_entities)[i];
+        const entt::entity e = staging.create_entity(fe.name);
         created.push_back(e);
-        if (je.contains("transform")) {
-            r.get<Transform>(e).local = mat4_from_json(je["transform"]);
+        for (const auto& [key, value] : fe.object->items()) {
+            // Animator settings apply after the glTF re-attaches the Animator.
+            if (is_entity_key(key) || key == "animator") continue;
+            if (find_component_info(key) == nullptr) {
+                std::fprintf(stderr, "[scene] entities[%zu]: ignoring unknown key '%s'\n", i,
+                             key.c_str());
+                continue;
+            }
+            if (auto ok = apply_component(r, e, key, value, /*strict=*/false); !ok) {
+                return fail("load_scene: '" + path.string() + "': entities[" + std::to_string(i) +
+                            "]: " + ok.error().message);
+            }
         }
-        if (je.contains("mesh")) {
-            const json& jm = je["mesh"];
-            MeshSource src;
-            src.mesh_key = jm.value("mesh_key", "");
-            src.material_key = jm.value("material_key", "");
-            src.gltf_path = jm.value("gltf", "");
+        if (auto* t = r.try_get<Terrain>(e)) t->regenerate = true; // rebuild on load
+        if (fe.mesh) {
+            MeshSource src{fe.mesh->mesh_key, fe.mesh->material_key, fe.mesh->gltf};
+            // Cache-only lookups: get() never creates a slot, so a missing key
+            // cannot leave a permanently failed entry behind (audit C16).
             MeshRenderer mr;
-            if (!src.mesh_key.empty()) mr.mesh = cached_mesh(src.mesh_key);
-            if (!src.material_key.empty()) mr.material = cached_material(src.material_key);
-            if (!mr.mesh.is_loaded()) {
+            if (!src.mesh_key.empty()) {
+                mr.mesh = assets.get<asset::MeshAsset>(asset::asset_id_from_path(src.mesh_key));
+            }
+            if (!src.material_key.empty()) {
+                mr.material =
+                    assets.get<asset::MaterialAsset>(asset::asset_id_from_path(src.material_key));
+            }
+            if (!mr.mesh.valid() || !mr.mesh.is_loaded()) {
                 std::fprintf(stderr, "[scene] mesh key '%s' not resolvable; entity is mesh-less\n",
                              src.mesh_key.c_str());
             }
@@ -245,94 +232,28 @@ load_scene(Scene& scene, const std::filesystem::path& path, rhi::GpuAllocator& a
             }
             r.emplace<MeshSource>(e, std::move(src));
         }
-        if (je.contains("collider")) {
-            const json& jc = je["collider"];
-            Collider c;
-            c.shape = static_cast<ColliderShape>(jc.value("shape", 0));
-            c.half_extents = vec3_from_json(jc["half_extents"], glm::vec3(0.5F));
-            c.offset = vec3_from_json(jc["offset"]);
-            c.is_sensor = jc.value("sensor", false);
-            r.emplace<Collider>(e, c);
-        }
-        if (je.contains("rigidbody")) {
-            const json& jb = je["rigidbody"];
-            r.emplace<RigidBody>(e, static_cast<BodyMotion>(jb.value("motion", 2)),
-                                 jb.value("mass", 1.0F));
-        }
-        if (je.contains("dir_light")) {
-            const json& jl = je["dir_light"];
-            r.emplace<DirectionalLight>(e, vec3_from_json(jl["direction"], {0, -1, 0}),
-                                        vec3_from_json(jl["color"], glm::vec3(1.0F)),
-                                        jl.value("intensity", 1.0F));
-        }
-        if (je.contains("point_light")) {
-            const json& jl = je["point_light"];
-            r.emplace<PointLight>(e, vec3_from_json(jl["color"], glm::vec3(1.0F)),
-                                  jl.value("radius", 10.0F), jl.value("intensity", 1.0F));
-        }
-        if (je.contains("camera")) {
-            const json& jc = je["camera"];
-            Camera c;
-            c.fov_y = jc.value("fov_y", 1.0F);
-            c.near_z = jc.value("near", 0.1F);
-            c.far_z = jc.value("far", 1000.0F);
-            c.is_active = jc.value("active", true);
-            r.emplace<Camera>(e, c);
-        }
-        if (je.contains("terrain")) {
-            const json& jt = je["terrain"];
-            Terrain t;
-            t.params.seed = jt.value("seed", 1337U);
-            t.params.resolution = jt.value("resolution", 1025U);
-            t.params.tile_size_m = jt.value("tile_size", 2000.0F);
-            t.params.height_m = jt.value("height", 180.0F);
-            t.params.octaves = jt.value("octaves", 7);
-            t.params.warp_strength = jt.value("warp", 0.30F);
-            t.params.erosion_droplets = jt.value("droplets", 120'000U);
-            t.snowline_m = jt.value("snowline", 110.0F);
-            t.streaming = jt.value("streaming", false);
-            t.stream_radius = jt.value("stream_radius", 1);
-            t.regenerate = true; // rebuild on load
-            r.emplace<Terrain>(e, t);
-        }
-        if (je.contains("nav_agent")) {
-            const json& ja = je["nav_agent"];
-            NavAgent a;
-            a.target = vec3_from_json(ja["target"]);
-            a.speed = ja.value("speed", 3.0F);
-            a.ground_offset = ja.value("ground_offset", 0.0F);
-            a.active = ja.value("active", false);
-            r.emplace<NavAgent>(e, a);
-        }
-        if (je.contains("behavior")) {
-            const json& jb = je["behavior"];
-            BehaviorTree b;
-            b.source = jb.value("source", std::string{});
-            b.enabled = jb.value("enabled", true);
-            r.emplace<BehaviorTree>(e, b);
-        }
-        if (je.contains("patrol")) {
-            const json& jp = je["patrol"];
-            PatrolRoute route;
-            if (jp.contains("points") && jp["points"].is_array()) {
-                for (const json& pt : jp["points"]) {
-                    route.points.push_back(vec3_from_json(pt));
-                }
+        if (const auto it = fe.object->find("animator");
+            it != fe.object->end() && r.all_of<Animator>(e)) {
+            if (auto ok = apply_component(r, e, "animator", *it, /*strict=*/false); !ok) {
+                return fail("load_scene: '" + path.string() + "': entities[" +
+                            std::to_string(i) + "]: " + ok.error().message);
             }
-            route.loop = jp.value("loop", true);
-            r.emplace<PatrolRoute>(e, route);
         }
     }
 
-    // Hierarchy second pass (set_parent maintains the Children lists).
+    // Hierarchy second pass (set_parent maintains the Children lists and
+    // refuses cycles, which an edited file can contain).
     for (std::size_t i = 0; i < created.size(); ++i) {
-        const int parent = jents[i].value("parent", -1);
-        if (parent >= 0 && static_cast<std::size_t>(parent) < created.size()) {
-            scene.set_parent(created[i], created[static_cast<std::size_t>(parent)]);
+        const int parent = (*file_entities)[i].parent;
+        if (parent >= 0 &&
+            !staging.set_parent(created[i], created[static_cast<std::size_t>(parent)])) {
+            return fail("load_scene: '" + path.string() + "': entities[" + std::to_string(i) +
+                        "].parent creates a cycle");
         }
     }
 
-    scene.tick(0.0F); // world transforms valid on return
+    staging.tick(0.0F); // world transforms valid on return
+    scene = std::move(staging);
     return {};
 }
 

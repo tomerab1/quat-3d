@@ -1,0 +1,125 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master, "claude/**"]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Pinned to vcpkg.json's builtin-baseline.
+  VCPKG_COMMIT: 10ceb139a610ebf3c6aa49cdc4a4b7f3db5d3f2b
+  SLANG_VERSION: 2025.6.1
+  VCPKG_BINARY_SOURCES: clear;files,${{ github.workspace }}/.vcpkg-archives,readwrite
+
+jobs:
+  linux:
+    name: Linux (clang + libc++, lavapipe)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: System packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            clang libc++-dev libc++abi-dev ninja-build cmake pkg-config \
+            libx11-dev libxext-dev libxft-dev libxcursor-dev libxrandr-dev libxi-dev \
+            libxss-dev libxtst-dev libxfixes-dev libxkbcommon-dev \
+            libwayland-dev wayland-protocols libegl-dev libdecor-0-dev \
+            libvulkan-dev mesa-vulkan-drivers autoconf automake libtool
+
+      - name: Slang compiler
+        run: |
+          mkdir -p "$HOME/slang"
+          curl -sSL -o slang.tgz \
+            "https://github.com/shader-slang/slang/releases/download/v${SLANG_VERSION}/slang-${SLANG_VERSION}-linux-x86_64.tar.gz"
+          tar -xzf slang.tgz -C "$HOME/slang"
+          echo "$HOME/slang/bin" >> "$GITHUB_PATH"
+
+      - name: vcpkg
+        run: |
+          git clone https://github.com/microsoft/vcpkg.git "$HOME/vcpkg"
+          git -C "$HOME/vcpkg" checkout "$VCPKG_COMMIT"
+          "$HOME/vcpkg/bootstrap-vcpkg.sh" -disableMetrics
+          mkdir -p "${{ github.workspace }}/.vcpkg-archives"
+
+      - name: Restore vcpkg binary cache
+        id: vcpkg-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ github.workspace }}/.vcpkg-archives
+          # Cache entries are immutable, so every run saves under its own key
+          # and restores the newest one with the same prefix: a partial
+          # dependency build (a failed run) is kept and completed next time.
+          key: vcpkg-linux-${{ env.VCPKG_COMMIT }}-${{ hashFiles('vcpkg.json', 'triplets/**', 'ports/**') }}-${{ github.run_id }}
+          restore-keys: |
+            vcpkg-linux-${{ env.VCPKG_COMMIT }}-${{ hashFiles('vcpkg.json', 'triplets/**', 'ports/**') }}-
+            vcpkg-linux-${{ env.VCPKG_COMMIT }}-
+
+      - name: Configure
+        id: configure
+        run: cmake --preset release -DENGINE_PROFILE=OFF
+
+      # Saved right after configure (where vcpkg builds the dependencies) and
+      # even when configure fails, so neither a dependency failure nor a later
+      # engine compile/test failure discards the dependencies already built.
+      - name: Save vcpkg binary cache
+        if: always() && steps.vcpkg-cache.outcome == 'success'
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ github.workspace }}/.vcpkg-archives
+          key: ${{ steps.vcpkg-cache.outputs.cache-primary-key }}
+
+      - name: Build
+        if: steps.configure.outcome == 'success'
+        run: cmake --build --preset release
+
+      - name: Tests (CPU + GPU on lavapipe)
+        env:
+          VK_ICD_FILENAMES: /usr/share/vulkan/icd.d/lvp_icd.x86_64.json
+        run: ctest --test-dir build/release --output-on-failure --timeout 900
+
+      - name: Upload logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-logs
+          path: |
+            build/release/vcpkg-manifest-install.log
+            build/release/Testing/Temporary/LastTest.log
+            build/release/CMakeFiles/CMakeConfigureLog.yaml
+          if-no-files-found: ignore
+
+  rust:
+    name: quat-mcp (Rust fmt, clippy, tests)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: tools/quat-mcp
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cargo cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: tools/quat-mcp
+
+      - name: Format
+        run: cargo fmt --check
+
+      - name: Clippy
+        run: cargo clippy --locked --all-targets -- -D warnings
+
+      - name: Tests
+        run: cargo test --locked

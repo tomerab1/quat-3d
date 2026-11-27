@@ -172,6 +172,13 @@ run_texture_loader_self_test(rhi::GpuAllocator& allocator, const rhi::TransferCo
 [[nodiscard]] std::expected<void, core::Error>
 run_material_extract_self_test();
 
+// Feeds structurally malformed glTF documents (node cycles, a node that is its
+// own child, a node with two parents, out-of-range mesh/material/accessor
+// references, attribute counts that disagree with POSITION) through the parse
+// path and verifies each is rejected with an error instead of crashing, while
+// a well-formed document still parses. No device needed.
+[[nodiscard]] std::expected<void, core::Error> run_gltf_validation_self_test();
+
 // Instantiates a small two-node glTF hierarchy (a parent translated in X with a
 // translated child, each carrying a mesh) and verifies the produced ECS entities:
 // node count, Parent/Children links, local transforms, and that the child's world

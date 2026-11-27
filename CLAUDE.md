@@ -14,15 +14,33 @@ When there is a "proper" way and a "cheap" way to do something, default to the p
 
 ## Development Process
 
-See **`PHASES.md`** for the full phased plan. Work is divided into phases and slices.
-**Each slice ends with a git commit** using the format `[PhaseN/SliceM] <description>`.
+**Start every session by reading `docs/STATUS.md` and `docs/LEARNINGS.md`** (what is in flight,
+blockers, next steps) and **update it before ending a session**. Build/test
+instructions — including setting up a cloud container — are in
+`docs/DEVELOPMENT.md`. Keep `README.md` current and readable for humans
+whenever user-visible features, build steps or env vars change.
+
+Development runs as a repeating improvement cycle (plan → parallel worktree
+agents → merge → CI → audit → record lessons) described in
+**`docs/CYCLE.md`**; follow it when asked to "run a cycle" or when started by
+the scheduled task. Record anything that went wrong, with the rule that
+prevents it, in `docs/LEARNINGS.md`.
+
+See **`ROADMAP.md`** for the plan. Work is organised into tracks (S stability,
+A AI tooling/MCP, R rendering, P platforms, G gameplay, E editor); each item
+has an ID and ends in commits titled `[<ID>] <description>` (`[<ID>.<n>]` for
+multi-commit items).
 
 Rules:
-- Complete and commit one slice before starting the next.
-- Build must be warning-free before committing.
-- Update the checkbox in `PHASES.md` for the completed slice as part of its commit.
-- Never implement functionality that belongs to a later phase.
-- If blocked, stop and report — do not skip ahead.
+- Follow the priority order stated in `ROADMAP.md`; finish an item before
+  starting work that depends on it.
+- Build must be warning-free and the headless tests green before committing.
+- New behaviour comes with a test the headless runner executes.
+- Tick the item's checkbox in `ROADMAP.md` in the commit that completes it.
+- If an item's scope is wrong, update `ROADMAP.md` first — do not drift silently.
+- All external data (files, network, remote requests) is untrusted: the engine
+  builds without exceptions, so never call `nlohmann::json::get`/`value` on it
+  directly — read it through `engine/core/json_fields.hpp`.
 
 ---
 
@@ -94,6 +112,7 @@ engine/
 │   │   ├── mesh_asset.cpp/.hpp
 │   │   ├── texture_asset.cpp/.hpp
 │   │   └── material_asset.cpp/.hpp
+│   ├── remote/                    # Remote-control JSON-RPC endpoint (MCP bridge target)
 │   ├── editor/                    # ImGui-based editor tools
 │   │   ├── editor.cpp/.hpp
 │   │   ├── scene_hierarchy.cpp/.hpp
@@ -101,6 +120,8 @@ engine/
 │   │   ├── asset_browser.cpp/.hpp
 │   │   └── animation_preview.cpp/.hpp
 │   └── main.cpp
+├── tools/
+│   └── quat-mcp/                  # Rust MCP server bridging models to engine_remote
 └── include/                       # Public headers mirroring src/ structure
     └── engine/
         ├── core/
@@ -124,6 +145,25 @@ engine/
 - Forward-declare in headers; include in `.cpp` files.
 - Mark all implementation-private functions `static` or put them in anonymous namespaces.
 - Prefer `[[nodiscard]]` on any function returning a status or resource.
+
+### File size and structure
+- Keep files focused and small: aim for **under ~600 lines per `.cpp`**; past
+  ~1000 lines a file must be split by responsibility (vendored third-party
+  code excepted). Prefer several cohesive files over one large one.
+- **`src/main.cpp` stays thin**: process entry, argument/env parsing, and
+  handing off to the application layer. New features never go into
+  `main.cpp`; they get their own module and are wired in through it.
+- Test code does not live in engine sources: tests go under `tests/`
+  (see Testing).
+
+### Testing
+- Tests use **GoogleTest** (vcpkg `gtest`), under `tests/<module>/*_test.cpp`,
+  built into the `engine_tests` executable and run by CTest.
+- GPU tests use the shared fixture in `tests/` that creates a surface-less
+  Vulkan device; they skip (not fail) when no device exists unless
+  `--require-gpu` / `QUAT_REQUIRE_GPU=1` is given.
+- Legacy `run_*_self_test()` functions in engine sources are being migrated
+  into GoogleTest cases; do not add new ones.
 
 ### Headers
 - Every public header in `include/engine/<module>/` — no implementation details leak.
@@ -214,6 +254,24 @@ struct Children     { std::vector<entt::entity> entities; };
 
 ---
 
+## Platforms
+
+- Linux and Windows run Vulkan natively. macOS runs Vulkan-on-Metal
+  (MoltenVK / KosmicKrisp); `ENGINE_DESCRIPTOR_SETS_FALLBACK` exists only for
+  drivers without `VK_EXT_descriptor_buffer`.
+- A native Metal backend is planned (ROADMAP P2/P5): keep new Vulkan types out
+  of renderer-facing APIs so the RHI can grow a second backend.
+
+## Remote control & MCP
+
+- `engine_remote` serves JSON-RPC 2.0 on 127.0.0.1 only (`QUAT_REMOTE=<port>`,
+  optional `QUAT_REMOTE_TOKEN`), polled once per frame on the main thread —
+  handlers may touch the ECS directly; no locks.
+- Handlers validate every parameter and return precise errors (models
+  self-correct from them). Paths from requests are confined to the project root.
+- `tools/quat-mcp` (Rust, rmcp) is the only MCP surface; the engine never
+  speaks MCP itself.
+
 ## Physics (Jolt)
 
 - `PhysicsWorld` owns a `JPH::PhysicsSystem` with a fixed timestep of `1/120s`, accumulated.
@@ -286,7 +344,7 @@ collider_convex(positions)     → JPH::ConvexHullShape
 ## Threading Model
 
 - **Main thread**: SDL event loop, ECS tick, render graph submission.
-- **Thread pool** (`std::jthread` × N-1 cores): asset loading, physics step (Jolt has its own job system — hand it the thread pool).
+- **Thread pool** (`std::thread` × N-1 cores — not `std::jthread`, which libc++ 18 still gates behind `-fexperimental-library`): asset loading, physics step (Jolt has its own job system — hand it the thread pool).
 - **No engine-level mutexes on hot paths.** Systems run single-threaded in declared order; parallelism is within Jolt and the asset loader.
 - Tracy zones on all systems and passes. GPU zones on all render/compute passes.
 

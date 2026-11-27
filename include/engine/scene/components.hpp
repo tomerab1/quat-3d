@@ -54,6 +54,24 @@ struct MeshSource {
     std::string gltf_path;    // empty -> code-created assets
 };
 
+// A procedural shape with a flat PBR material (Phase 15) — the data-driven way
+// to make geometry without a glTF file (remote/AI world building, blockouts).
+// Shapes are unit-sized and centred on the entity origin (cube 1 m, sphere /
+// cylinder / cone / capsule 1 m diameter, cylinder and cone 1 m tall, capsule
+// 2 m tall, plane 1x1 m facing +Y); size them with the Transform scale.
+// resolve_primitives() (primitives.hpp) builds the MeshRenderer from this —
+// meshes and materials are shared through the AssetManager by content — and
+// rebuilds it whenever the fields change. `resolved` is system-managed.
+enum class PrimitiveShape : std::uint8_t { cube, sphere, plane, cylinder, cone, capsule };
+struct Primitive {
+    PrimitiveShape shape = PrimitiveShape::cube;
+    glm::vec4      color{0.8F, 0.8F, 0.8F, 1.0F}; // linear base colour; alpha < 1 blends
+    float          metallic = 0.0F;
+    float          roughness = 0.5F;
+    glm::vec3      emissive{0.0F};                // linear emitted radiance (HDR)
+    std::uint64_t  resolved = 0;                  // hash the MeshRenderer was built from
+};
+
 // Marks an entity (alongside its MeshRenderer) as skinned: its mesh deforms with
 // `skeleton`. `joint_matrices` holds the per-joint skinning matrices the
 // animation system writes each frame (joint_world * inverse_bind); the GPU

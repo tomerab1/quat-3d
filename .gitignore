@@ -14,6 +14,9 @@
 /vcpkg_installed/
 /vcpkg/
 
+# Rust build output (tools/quat-mcp)
+/tools/quat-mcp/target/
+
 # IDE / editor
 /.vscode/
 /.idea/
@@ -24,3 +27,6 @@ compile_commands.json
 .DS_Store
 Thumbs.db
 imgui.ini
+
+# Claude Code agent worktrees (local, never committed)
+/.claude/worktrees/
