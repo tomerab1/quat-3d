@@ -209,6 +209,8 @@ add_library(engine_scene STATIC
     src/scene/nav_agent_system.cpp
     src/scene/navigation.cpp
     src/scene/behavior.cpp
+    src/scene/bt_graph.cpp
+    src/scene/bt_graph_edit.cpp
     src/scene/scene_io.cpp
     src/scene/component_json.cpp
     src/scene/audio_system.cpp
@@ -242,6 +244,7 @@ set_source_files_properties(src/scene/stb_image_impl.cpp PROPERTIES COMPILE_OPTI
 # ---------------------------------------------------------------------------
 add_library(engine_terrain STATIC
     src/terrain/generator.cpp
+    src/terrain/grid_erosion.cpp
     src/terrain/streamer.cpp)
 target_link_libraries(engine_terrain PUBLIC engine_flags glm::glm)
 target_include_directories(engine_terrain PUBLIC ${ENGINE_PUBLIC_INCLUDE})
@@ -309,8 +312,9 @@ endif()
 
 # ---------------------------------------------------------------------------
 # engine_remote_world — the world commands (ROADMAP A2/A3): scene.*,
-# environment.*, camera.*, render.screenshot, asset.*, sim.*, nav.bake, on top
-# of engine_remote + the scene codec. Application-only capabilities come in
+# environment.*, camera.*, render.screenshot, asset.*, sim.*, nav.bake, debug.*
+# and bt.* (behaviour-tree authoring), on top of engine_remote + the scene
+# codec and the behaviour-tree graph model. Application-only capabilities come in
 # through WorldServices callbacks (src/app/remote_bridge.cpp wires them), so
 # the commands are testable on a bare Scene.
 # ---------------------------------------------------------------------------
@@ -323,6 +327,8 @@ add_library(engine_remote_world STATIC
     src/remote/world/app_commands.cpp
     src/remote/world/debug_commands.cpp
     src/remote/world/debug_query_commands.cpp
+    src/remote/world/behavior_commands.cpp
+    src/remote/world/behavior_edit_commands.cpp
     src/remote/world/image_encode.cpp
     src/remote/world/stb_image_write_impl.cpp)
 target_link_libraries(engine_remote_world PUBLIC
@@ -356,7 +362,9 @@ add_library(engine_renderer STATIC
     src/renderer/exposure_pass.cpp
     src/renderer/taa_pass.cpp
     src/renderer/atmosphere_pass.cpp
-    src/renderer/terrain_pass.cpp)
+    src/renderer/terrain_pass.cpp
+    src/renderer/terrain_gpu_tiles.cpp
+    src/renderer/terrain_synth_pass.cpp)
 target_link_libraries(engine_renderer PUBLIC
     engine_flags engine_rhi engine_asset engine_terrain glm::glm)
 target_include_directories(engine_renderer PUBLIC ${ENGINE_PUBLIC_INCLUDE})
@@ -386,10 +394,10 @@ if(ENGINE_EDITOR)
         src/editor/asset_browser.cpp
         src/editor/animation_preview.cpp
         src/editor/physics_debug.cpp
+        src/editor/picking.cpp
         src/editor/scene_snapshot.cpp
         src/editor/audio_inspector.cpp
         src/editor/grass_inspector.cpp
-        src/editor/bt_graph.cpp
         src/editor/behavior_panel.cpp
         src/editor/behavior_canvas.cpp
         src/editor/vendor/imgui_impl_sdl3.cpp)
@@ -412,10 +420,17 @@ endif()
 # game — executable entry point. The full target graph (engine_core /
 # engine_renderer / engine_editor) grows phase by phase as modules gain sources.
 # ---------------------------------------------------------------------------
-# src/app/ is the application layer (startup scenes, and - per ROADMAP S7 -
-# the frame loop pieces moving out of main.cpp); it is not an engine library.
+# src/app/ is the application layer (Application owns the window, device and
+# frame loop; FrameRenderer, WorldRuntime, FlyCamera, EditorBridge, the remote
+# bridge and the startup scenes run inside it); it is not an engine library.
+# main.cpp only parses the environment and hands off to Application.
 add_executable(game
     src/main.cpp
+    src/app/application.cpp
+    src/app/fly_camera.cpp
+    src/app/frame_graph.cpp
+    src/app/frame_renderer.cpp
+    src/app/world_runtime.cpp
     src/app/demo_scenes.cpp
     src/app/audio_runtime.cpp
     src/app/grass_runtime.cpp
@@ -426,6 +441,7 @@ target_link_libraries(game PRIVATE
     engine_terrain engine_nav engine_net engine_remote engine_remote_world engine_audio
     SDL3::SDL3)
 if(ENGINE_EDITOR)
+    target_sources(game PRIVATE src/app/editor_bridge.cpp)
     target_link_libraries(game PRIVATE engine_editor)
 endif()
 target_include_directories(game PRIVATE

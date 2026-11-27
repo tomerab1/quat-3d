@@ -9,6 +9,10 @@
 // events each frame and own the GPU/physics side. Tiles share one seed — the
 // generator samples noise in world-tile coordinates and fades erosion at tile
 // borders, so neighbours continue each other exactly (seam-free).
+//
+// Generation runs on the CPU, or on a TileGenerator backend (the GPU
+// synthesis pass, R10.2) set with set_generator(): tiles it supports go to
+// it, the rest — and every blocking update — stay on the CPU.
 
 #include <cstdint>
 #include <future>
@@ -19,6 +23,7 @@
 #include <glm/glm.hpp>
 
 #include "engine/terrain/generator.hpp"
+#include "engine/terrain/tile_generator.hpp"
 
 namespace engine::terrain {
 
@@ -35,6 +40,15 @@ public:
     TerrainStreamer() = default;
     TerrainStreamer(TerrainParams base, int radius)
         : base_(base), radius_(glm::max(radius, 0)) {}
+    // Cancels a running CPU job (it stops at its next erosion step) so
+    // dropping the streamer never waits out a long generation.
+    ~TerrainStreamer() {
+        if (cancel_) cancel_->store(true);
+    }
+    TerrainStreamer(TerrainStreamer&&) noexcept = default;
+    TerrainStreamer& operator=(TerrainStreamer&&) noexcept = default;
+    TerrainStreamer(const TerrainStreamer&) = delete;
+    TerrainStreamer& operator=(const TerrainStreamer&) = delete;
 
     struct Events {
         std::vector<glm::ivec2> ready;   // freshly loaded tiles (maps() has them)
@@ -50,6 +64,12 @@ public:
         return maps_;
     }
     [[nodiscard]] const TerrainParams& base() const { return base_; }
+
+    // Non-owning; null = CPU only. The backend must outlive the streamer (or
+    // be reset to null first). A backend job still running when update() is
+    // asked to block is abandoned and the tile regenerated on the CPU, since a
+    // frame-driven backend cannot finish while the frame loop waits on it.
+    void set_generator(TileGenerator* generator) { generator_ = generator; }
     [[nodiscard]] int radius() const { return radius_; }
 
     // World-space minimum corner of a tile, given the anchor's world position.
@@ -67,6 +87,9 @@ private:
     std::future<Heightmap> job_;
     glm::ivec2             job_coord_{0, 0};
     bool                   job_active_ = false;
+    bool                   job_external_ = false; // job_ runs on generator_
+    TileGenerator*         generator_ = nullptr;
+    CancelToken            cancel_; // the CPU job's (null for backend jobs)
 };
 
 } // namespace engine::terrain

@@ -1,0 +1,3 @@
+Move a node (with its subtree) in an entity's behaviour tree: to another composite, or to a different position among its siblings. Order matters — composites tick their children first to last, so moving a condition earlier gives it priority. Example: `{"entity": "Guard", "node": 8, "parent": 6, "index": 0}` makes node 8 the first child of node 6. `index` counts the parent's children without the moved node; omit it to append. Returns the tree like `bt_get`.
+
+Refused (with the reason) when the parent is a leaf, an inverter that already has its child, inside the moved node's own subtree, or when the move would leave a composite empty. The root cannot be moved; put a new root above it with `bt_add_node` (`parent` null, the root among its `children`).

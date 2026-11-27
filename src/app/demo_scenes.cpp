@@ -354,7 +354,6 @@ if (std::getenv("QUAT_TERRAIN") != nullptr) {
     t.params.resolution = 513;
     t.params.tile_size_m = 800.0F;
     t.params.height_m = 90.0F;
-    t.params.erosion_droplets = 40'000;
     t.snowline_m = 30.0F;
     scene.registry().get<engine::scene::Transform>(te).local =
         glm::translate(glm::mat4(1.0F), glm::vec3(0.0F, -40.0F, 0.0F));

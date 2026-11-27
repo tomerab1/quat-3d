@@ -21,6 +21,10 @@ struct Heightmap {
     std::vector<float> heights;            // resolution * resolution, metres
     float              min_height = 0.0F;  // tracked by the generator
     float              max_height = 0.0F;
+    // Non-zero when the GPU synthesised this map (R10.2): the id of its tile
+    // image, already on the GPU, which renderer::TerrainPass::set_tile adopts
+    // instead of uploading `heights` again.
+    std::uint64_t      gpu_tile = 0;
 
     [[nodiscard]] bool valid() const {
         return resolution > 1 &&

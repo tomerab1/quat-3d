@@ -21,11 +21,11 @@ import clustered_lights;
 
 static const uint CULL_GROUP_SIZE = 64;
 
-[[vk::binding(0)]] ConstantBuffer<ClusterParams> g_params;
-[[vk::binding(1)]] StructuredBuffer<GpuLight>    g_lights;
-[[vk::binding(2)]] RWStructuredBuffer<uint2>     g_grid;    // per cluster: offset, count
-[[vk::binding(3)]] RWStructuredBuffer<uint>      g_indices; // light indices
-[[vk::binding(4)]] RWStructuredBuffer<uint>      g_counter; // [0] = indices requested
+ConstantBuffer<ClusterParams> g_params;
+StructuredBuffer<GpuLight>    g_lights;
+RWStructuredBuffer<uint2>     g_grid;    // per cluster: offset, count
+RWStructuredBuffer<uint>      g_indices; // light indices
+RWStructuredBuffer<uint>      g_counter; // [0] = indices requested
 
 groupshared float4 s_spheres[CULL_GROUP_SIZE]; // view-space centre, radius
 

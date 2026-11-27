@@ -75,6 +75,27 @@ TEST(GpuRenderGraph, WriteAfterReadWaitsForTheReaders) {
     EXPECT_TRUE(b[0].srcStageMask & VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT);
 }
 
+// R10.2: sampled_graphics (vertex texture fetch) transitions to
+// SHADER_READ_ONLY and makes the prior write visible to the vertex stage too.
+TEST(GpuRenderGraph, SampledGraphicsReadCoversTheVertexStage) {
+    QUAT_REQUIRE_GPU(g);
+    TransientImagePool pool(g->device, g->allocator);
+    RenderGraph graph(pool);
+    const auto img = graph.create_transient_image(
+        "heights", VK_FORMAT_R32_SFLOAT, k_extent,
+        VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT);
+    (void)graph.add_pass("upload", PassType::transfer).writes(img, ResourceUsage::transfer_dst);
+    (void)graph.add_pass("draw", PassType::graphics).reads(img, ResourceUsage::sampled_graphics);
+    ASSERT_OK(graph.compile());
+    const auto b = graph.planned_barriers("draw");
+    ASSERT_EQ(b.size(), 1U);
+    EXPECT_EQ(b[0].newLayout, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    EXPECT_TRUE(b[0].srcAccessMask & VK_ACCESS_2_TRANSFER_WRITE_BIT);
+    EXPECT_TRUE(b[0].dstStageMask & VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT);
+    EXPECT_TRUE(b[0].dstStageMask & VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT);
+    EXPECT_TRUE(b[0].dstAccessMask & VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
+}
+
 // A3: an imported image's first barrier waits on the stage it was made
 // available at (the swapchain's acquire semaphore wait stage).
 TEST(GpuRenderGraph, ImportedImageFirstBarrierWaitsOnItsAvailableStage) {

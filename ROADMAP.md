@@ -92,9 +92,13 @@ JSON-RPC over loopback TCP to the engine.
 
 ## R — Rendering & performance
 
+- [ ] **A8 — Live tuning.** Every renderer / post-process / material
+  parameter readable and writable over the remote API and MCP from one
+  settings model the editor also edits (schema with ranges and units),
+  saved with the scene; a `tune_look` workflow prompt.
 - [ ] **R1 — Async asset loading.** Thread-pool loads, `is_ready()` handles,
   fallback assets while loading, upload queue budgeted per frame.
-- [ ] **R2 — Shader hot reload.** File watcher → `slangc` → pipeline recreation
+- [x] **R2 — Shader hot reload.** File watcher → `slangc` → pipeline recreation
   on the next frame; compile errors surfaced, old pipeline kept on failure.
 - [ ] **R3 — Asset hot reload.** Meshes/textures re-imported on change.
 - [ ] **R4 — Profiling.** Tracy CPU zones on every system/pass, GPU zones via
@@ -110,7 +114,7 @@ JSON-RPC over loopback TCP to the engine.
     through a buffer device address (GBuffer + shadow passes), deriving the
     normal matrix per instance (fixes audit A13). Existing per-entity
     MeshRenderers are batched automatically.
-  - **R9.2 `InstancedMesh` + `Scatter`.** One entity carries thousands of
+  - ✅ **R9.2 `InstancedMesh` + `Scatter`.** (cycle 2) One entity carries thousands of
     placements; seeded procedural scattering on terrain (density, slope /
     height limits, scale/rotation jitter) for trees and rocks. Serialized,
     inspector + remote/MCP editable.
@@ -146,6 +150,9 @@ JSON-RPC over loopback TCP to the engine.
   the SDK): init/overlay, achievements, stats, cloud saves, rich presence,
   Steam networking (GameNetworkingSockets already matches its API). The SDK
   must be added to the repo by hand (Valve's partner download).
+- [ ] **P6 — Release builds.** Tag-driven GitHub Releases with Linux,
+  Windows and macOS (Vulkan-on-Metal) archives the owner can download and
+  run; runtime asset-root resolution; smoke-tested in CI.
 - [ ] **P4 — Game packaging.** Engine-as-library + game project template,
   editor vs runtime builds, cooked asset bundles, shipping config, depot layout.
 - [ ] **P5 — Native Metal backend.** On top of P2.
@@ -155,7 +162,7 @@ JSON-RPC over loopback TCP to the engine.
 - [x] **G1 — Audio (miniaudio).** `AudioSource` / `AudioListener` components,
   3D spatialisation and attenuation, mixer buses, streaming music, editor
   preview, scene serialization.
-- [ ] **G2 — Behaviour node graph.** Visual node editor built on
+- [x] **G2 — Behaviour node graph.** Visual node editor built on
   `imgui-node-editor` (thedmd, vcpkg port) over the existing data-driven
   behaviour trees (JSON stays the asset format); blackboard; more leaves
   (perception, animation parameters).
@@ -165,6 +172,11 @@ JSON-RPC over loopback TCP to the engine.
   interest management, RPCs, lag compensation, dedicated-server build.
 - [ ] **G5 — Input actions.** Action maps over keyboard/mouse/gamepad,
   rebinding, saved per user.
+- [ ] **G7 — Game scripting (Lua 5.4 + sol2).** `Script` component with
+  lifecycle callbacks, a sandboxed per-scene Lua state with instruction and
+  memory limits, an API over entities/components (via the codec), input,
+  physics, audio, navigation; hot reload; remote `script.*` + MCP tools so
+  assistants can write gameplay; a small playable example.
 - [ ] **G6 — In-game UI.** A runtime UI system for games (not ImGui).
 
 ## E — Editor (production readiness)

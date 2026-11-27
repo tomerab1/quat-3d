@@ -2,7 +2,11 @@
 
 #ifdef ENGINE_EDITOR
 
+#include <algorithm>
+#include <type_traits>
+
 #include <entt/entity/registry.hpp>
+#include <glm/glm.hpp>
 #include <gtest/gtest.h>
 
 #include "editor/scene_snapshot.hpp"
@@ -109,6 +113,77 @@ TEST(PlayModeSnapshot, RestoresGrass) {
 
     ASSERT_TRUE(scene.registry().all_of<s::Grass>(e));
     EXPECT_EQ(scene.registry().get<s::Grass>(e).settings.density, 63.0F);
+}
+
+template <typename... Ts, typename F>
+void for_each_listed(engine::editor::ComponentList<Ts...> /*list*/, F&& f) {
+    (f.template operator()<Ts>(), ...);
+}
+
+// Audit C11: the hierarchy's Duplicate copied only MeshRenderer, lights and
+// Camera. It now copies every component the snapshot covers, minus the
+// runtime state a copy must not share.
+TEST(EditorDuplicate, CopiesEverySnapshotComponent) {
+    s::Scene scene;
+    entt::registry& r = scene.registry();
+    const entt::entity parent = scene.create_entity("group");
+    const entt::entity e = scene.create_entity("crate");
+    ASSERT_TRUE(scene.set_parent(e, parent));
+    // Every listed component (hierarchy links aside) with its defaults...
+    for_each_listed(engine::editor::SnapshotComponents{}, [&]<typename T>() {
+        if constexpr (!std::is_same_v<T, s::Parent> && !std::is_same_v<T, s::Children>) {
+            (void)r.get_or_emplace<T>(e);
+        }
+    });
+    // ...plus authored values and session state to tell copied from reset.
+    r.get<s::Transform>(e).local[3] = glm::vec4(1.0F, 2.0F, 3.0F, 1.0F);
+    r.get<s::Collider>(e).half_extents = glm::vec3(2.0F);
+    r.get<s::RigidBody>(e) = {s::BodyMotion::kinematic, 3.0F, 17U};
+    r.get<s::CharacterController>(e).speed = 9.0F;
+    r.get<s::CharacterController>(e).character = 5U;
+    r.get<s::AudioSource>(e).clip = "assets/audio/hum.wav";
+    r.get<s::AudioSource>(e).sound = 42;
+    r.get<s::AudioSource>(e).started = true;
+    r.get<s::NetReplicated>(e).net_id = 99U;
+    r.get<s::PatrolRoute>(e).points = {glm::vec3(1.0F), glm::vec3(2.0F)};
+    r.get<s::BehaviorTree>(e).source = "{}";
+    r.get<s::MeshSource>(e).mesh_key = "a.gltf#mesh0.prim0";
+
+    const entt::entity copy = engine::editor::duplicate_entity(scene, e);
+    ASSERT_TRUE(r.valid(copy));
+    ASSERT_NE(copy, e);
+
+    for_each_listed(engine::editor::SnapshotComponents{}, [&]<typename T>() {
+        if constexpr (!std::is_same_v<T, s::Children>) {
+            EXPECT_TRUE(r.all_of<T>(copy)) << "component not duplicated";
+        }
+    });
+    EXPECT_EQ(r.get<s::Name>(copy).value, "crate copy");
+    EXPECT_EQ(r.get<s::Transform>(copy).local[3], glm::vec4(1.0F, 2.0F, 3.0F, 1.0F));
+    EXPECT_EQ(r.get<s::Collider>(copy).half_extents, glm::vec3(2.0F));
+    EXPECT_EQ(r.get<s::RigidBody>(copy).motion, s::BodyMotion::kinematic);
+    EXPECT_FLOAT_EQ(r.get<s::RigidBody>(copy).mass, 3.0F);
+    EXPECT_FLOAT_EQ(r.get<s::CharacterController>(copy).speed, 9.0F);
+    EXPECT_EQ(r.get<s::AudioSource>(copy).clip, "assets/audio/hum.wav");
+    EXPECT_EQ(r.get<s::PatrolRoute>(copy).points.size(), 2U);
+    EXPECT_EQ(r.get<s::BehaviorTree>(copy).source, "{}");
+    EXPECT_EQ(r.get<s::MeshSource>(copy).mesh_key, "a.gltf#mesh0.prim0");
+
+    // Session state is the copy's own.
+    EXPECT_EQ(r.get<s::RigidBody>(copy).body, s::RigidBody{}.body);
+    EXPECT_EQ(r.get<s::CharacterController>(copy).character, s::CharacterController{}.character);
+    EXPECT_EQ(r.get<s::AudioSource>(copy).sound, engine::audio::invalid_sound);
+    EXPECT_FALSE(r.get<s::AudioSource>(copy).started);
+    EXPECT_EQ(r.get<s::NetReplicated>(copy).net_id, 0U);
+    // The source is untouched.
+    EXPECT_EQ(r.get<s::RigidBody>(e).body, 17U);
+    EXPECT_EQ(r.get<s::AudioSource>(e).sound, engine::audio::SoundHandle{42});
+
+    // A sibling under the same parent, without the source's children.
+    EXPECT_EQ(r.get<s::Parent>(copy).entity, parent);
+    const auto& kids = r.get<s::Children>(parent).entities;
+    EXPECT_NE(std::find(kids.begin(), kids.end(), copy), kids.end());
+    EXPECT_FALSE(r.all_of<s::Children>(copy));
 }
 
 } // namespace

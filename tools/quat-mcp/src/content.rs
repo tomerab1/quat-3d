@@ -24,6 +24,10 @@ const PROMPTS: &[(&str, &str)] = &[
         "debug_session",
         include_str!("../content/prompts/debug_session.md"),
     ),
+    (
+        "design_behavior",
+        include_str!("../content/prompts/design_behavior.md"),
+    ),
 ];
 
 static TEMPLATES: LazyLock<Environment<'static>> = LazyLock::new(|| {

@@ -102,9 +102,24 @@ struct ComponentInspector<scene::Terrain> {
         ImGui::DragFloat("height", &p.height_m, 1.0F, 1.0F, 2000.0F, "%.0f m");
         ImGui::SliderInt("octaves", &p.octaves, 1, 10);
         ImGui::SliderFloat("warp", &p.warp_strength, 0.0F, 1.0F, "%.2f");
-        int droplets = static_cast<int>(p.erosion_droplets);
-        if (ImGui::DragInt("erosion droplets", &droplets, 1000.0F, 0, 1'000'000)) {
-            p.erosion_droplets = static_cast<std::uint32_t>(glm::max(droplets, 0));
+        int model = p.erosion_model == terrain::ErosionModel::grid ? 1 : 0;
+        if (ImGui::Combo("erosion", &model, "droplets (CPU)\0grid (GPU)\0")) {
+            p.erosion_model =
+                model == 1 ? terrain::ErosionModel::grid : terrain::ErosionModel::droplets;
+        }
+        if (p.erosion_model == terrain::ErosionModel::grid) {
+            int steps = static_cast<int>(p.grid.iterations);
+            if (ImGui::DragInt("erosion steps", &steps, 5.0F, 0, 5'000)) {
+                p.grid.iterations = static_cast<std::uint32_t>(glm::max(steps, 0));
+            }
+        } else {
+            int droplets = static_cast<int>(p.erosion_droplets);
+            if (ImGui::DragInt("erosion droplets", &droplets, 1000.0F, 0, 1'000'000)) {
+                p.erosion_droplets = static_cast<std::uint32_t>(glm::max(droplets, 0));
+            }
+        }
+        if (ImGui::Checkbox("generate on GPU", &terrain.gpu_generate)) {
+            terrain.regenerate = true;
         }
         ImGui::DragFloat("snowline", &terrain.snowline_m, 1.0F, -1000.0F, 5000.0F, "%.0f m");
         ImGui::Separator();
@@ -120,7 +135,11 @@ struct ComponentInspector<scene::Terrain> {
         if (ImGui::Button("Regenerate", ImVec2(-1.0F, 0.0F))) {
             terrain.regenerate = true;
         }
-        ImGui::TextWrapped("Generation runs on a worker thread; tiles pop in when ready.");
+        ImGui::TextWrapped("%s", terrain.gpu_generate
+                                     ? "Tiles synthesise on the GPU (droplet erosion stays on a "
+                                       "CPU worker); they pop in when ready."
+                                     : "Generation runs on a worker thread; tiles pop in when "
+                                       "ready.");
     }
 };
 
@@ -574,7 +593,11 @@ void draw_renderer_panel(RendererSettings& settings, scene::Scene* scene) {
         return;
     }
 
+    // Collapsing headers don't scope IDs: each section pushes its own, so
+    // equally labelled widgets (the sun's and bloom's "intensity") stay
+    // distinct.
     if (ImGui::CollapsingHeader("Sun", ImGuiTreeNodeFlags_DefaultOpen)) {
+        ImGui::PushID("sun");
         scene::DirectionalLight* sun = nullptr;
         if (scene != nullptr) {
             for (const entt::entity e : scene->registry().view<scene::DirectionalLight>()) {
@@ -602,9 +625,11 @@ void draw_renderer_panel(RendererSettings& settings, scene::Scene* scene) {
             ImGui::ColorEdit3("colour", &sun->color.x);
             ImGui::DragFloat("intensity", &sun->intensity, 0.05F, 0.0F, 100.0F);
         }
+        ImGui::PopID();
     }
 
     if (ImGui::CollapsingHeader("Clouds", ImGuiTreeNodeFlags_DefaultOpen)) {
+        ImGui::PushID("clouds");
         renderer::CloudSettings& c = settings.clouds;
         ImGui::Checkbox("enabled", &c.enabled);
         ImGui::BeginDisabled(!c.enabled);
@@ -617,13 +642,16 @@ void draw_renderer_panel(RendererSettings& settings, scene::Scene* scene) {
         ImGui::SliderFloat("wind speed", &c.wind_speed, 0.0F, 80.0F, "%.0f m/s");
         ImGui::SliderFloat("wind direction", &c.wind_dir_deg, -180.0F, 180.0F, "%.0f deg");
         ImGui::EndDisabled();
+        ImGui::PopID();
     }
 
     if (ImGui::CollapsingHeader("Bloom", ImGuiTreeNodeFlags_DefaultOpen)) {
+        ImGui::PushID("bloom");
         ImGui::SliderFloat("threshold", &settings.bloom_threshold, 0.0F, 8.0F);
         ImGui::SliderFloat("knee", &settings.bloom_knee, 0.0F, 1.0F);
         ImGui::SliderFloat("intensity", &settings.bloom_intensity, 0.0F, 0.5F);
         ImGui::SliderFloat("radius", &settings.bloom_radius, 0.2F, 2.0F);
+        ImGui::PopID();
     }
     if (ImGui::CollapsingHeader("Environment", ImGuiTreeNodeFlags_DefaultOpen)) {
         ImGui::TextWrapped("The IBL environment (ambient + reflections) re-renders continuously "

@@ -51,10 +51,14 @@ struct MeshRenderer {
 // load): the AssetManager cache keys, plus the glTF file that produces them.
 // An empty gltf_path means engine code creates the keyed assets at startup
 // (e.g. the showcase primitives), so a loaded scene resolves them by cache hit.
+// `gltf_node` is the glTF node that instanced the mesh: one mesh can be
+// instanced by several nodes with different skins (and armature offsets), so
+// a loaded scene re-attaches skins by (mesh_key, node), not by mesh alone.
 struct MeshSource {
     std::string mesh_key;
-    std::string material_key; // empty -> default material
-    std::string gltf_path;    // empty -> code-created assets
+    std::string material_key;   // empty -> default material
+    std::string gltf_path;      // empty -> code-created assets
+    int         gltf_node = -1; // -1: not instanced from a glTF node (or unknown)
 };
 
 // A procedural shape with a flat PBR material (Phase 15) — the data-driven way
@@ -270,16 +274,22 @@ struct BtNodeState {
     bool          running = false; // returned running on that tick
 };
 
+// What a compiled node returned on its tree's last tick (idle: not reached).
+// Unlike BtNodeState it survives the resets that end a tick, so tools can
+// show which branch failed (the remote bt.status method).
+enum class BtNodeResult : std::uint8_t { idle, success, failure, running };
+
 // A data-driven behaviour tree (13.3): `source` is the tree JSON (composed of
 // sequence/selector/reactive_*/inverter nodes over named C++ leaves — see
 // behavior.hpp). The system compiles it lazily; a parse error logs once and
-// disables the tree. compiled/node_state/tick_count/parse_failed are
-// system-managed.
+// disables the tree. compiled/node_state/last_result/tick_count/parse_failed
+// are system-managed.
 struct BehaviorTree {
     std::string source;
     bool        enabled = true;
     std::shared_ptr<const class BehaviorTreeAsset> compiled;
-    std::vector<BtNodeState> node_state; // one per compiled node
+    std::vector<BtNodeState>  node_state;  // one per compiled node
+    std::vector<BtNodeResult> last_result; // one per compiled node
     std::uint32_t            tick_count = 0;
     bool parse_failed = false;
 };
@@ -305,13 +315,23 @@ struct PointLight {
 // rebuild whenever `regenerate` is set (the inspector's button / fresh
 // component) and uploads the result to the terrain pass.
 struct Terrain {
-    terrain::TerrainParams params{};
+    // New terrains erode with the grid model, which the GPU can synthesise
+    // (TerrainParams itself defaults to the CPU-only droplet model).
+    terrain::TerrainParams params = [] {
+        terrain::TerrainParams p;
+        p.erosion_model = terrain::ErosionModel::grid;
+        return p;
+    }();
     float snowline_m = 110.0F; // world height where snow takes over
     bool  regenerate = true;   // consumed by the frame loop
     // Streaming (12.4): keep a (2*radius+1)² window of seamless tiles loaded
     // around the camera instead of one fixed tile.
     bool streaming = false;
     int  stream_radius = 1;
+    // R10.2: synthesise tiles on the GPU (milliseconds) when a device can —
+    // noise and grid erosion; droplet erosion and oversized tiles fall back
+    // to the CPU generator. Physics/navmesh use the read-back heights.
+    bool gpu_generate = true;
 };
 
 // Dense, wind-animated grass around the camera (R9.3), generated and drawn

@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <expected>
 #include <span>
+#include <string_view>
 
 #include <vulkan/vulkan.h>
 
@@ -69,6 +70,16 @@ public:
     [[nodiscard]] bool uses_descriptor_buffer() const {
         return descriptor_backend_ == DescriptorBackend::ext_descriptor_buffer;
     }
+
+    // Checks that shader storage images with these declared formats (see
+    // LoadedShader::storage_image_formats) can be used on this device: each
+    // format must support VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT with optimal
+    // tiling, and a storage image without a declared format
+    // (VK_FORMAT_UNDEFINED) is refused — the engine does not rely on the
+    // optional shaderStorageImage{Read,Write}WithoutFormat features. Called
+    // at pipeline creation; `what` names the shader in the error.
+    [[nodiscard]] std::expected<void, core::Error>
+    check_storage_image_formats(std::span<const VkFormat> formats, std::string_view what) const;
 
 private:
     void destroy() noexcept;

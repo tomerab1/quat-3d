@@ -119,8 +119,4 @@ private:
 // changed. Call once after joining (after assign_net_ids).
 std::uint32_t make_replicas_kinematic(entt::registry& registry);
 
-// Loopback self-test: a moving server entity replicates to a client registry
-// over real GNS loopback; the client copy converges on the server transform.
-[[nodiscard]] std::expected<void, core::Error> run_replication_self_test();
-
 } // namespace engine::net

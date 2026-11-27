@@ -93,8 +93,4 @@ private:
     std::unique_ptr<Impl> impl_;
 };
 
-// Loopback self-test: server on 127.0.0.1, client connects, both exchange
-// reliable and unreliable messages, clean disconnect events on teardown.
-[[nodiscard]] std::expected<void, core::Error> run_transport_self_test();
-
 } // namespace engine::net

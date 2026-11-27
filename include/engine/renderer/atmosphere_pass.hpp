@@ -33,6 +33,10 @@ namespace engine::renderer {
 
 class AtmospherePass {
 public:
+    // LUT resolutions (RGBA16F), for readback in tests and debug tooling.
+    static constexpr VkExtent2D transmittance_extent{256, 64};
+    static constexpr VkExtent2D skyview_extent{192, 108};
+
     // Builds pipelines + LUT images and computes the static LUTs (blocking).
     [[nodiscard]] static std::expected<AtmospherePass, core::Error>
     create(const rhi::Device& device, rhi::GpuAllocator& allocator, rhi::PipelineCache& cache,
@@ -46,7 +50,7 @@ public:
 
     // Recomputes the sky-view LUT when `sun_to` (unit, toward the sun) moved
     // since the last call. Blocking compute submit on the graphics queue —
-    // startup/self-test only; the frame loop uses the graph variant below.
+    // startup and tests only; the frame loop uses the graph variant below.
     [[nodiscard]] std::expected<void, core::Error> ensure_skyview(const glm::vec3& sun_to);
 
     // Graph variant: when the sun moved, records the LUT recompute as a
@@ -59,7 +63,7 @@ public:
     [[nodiscard]] bool valid() const { return skyview_view_.handle() != VK_NULL_HANDLE; }
     [[nodiscard]] VkImageView skyview_view() const { return skyview_view_.handle(); }
     [[nodiscard]] VkImageView transmittance_view() const { return transmittance_view_.handle(); }
-    // Raw images for the self-test's readback.
+    // Raw LUT images (SHADER_READ_ONLY_OPTIMAL between uses), for readback.
     [[nodiscard]] VkImage skyview_image() const { return skyview_.handle(); }
     [[nodiscard]] VkImage transmittance_image() const { return transmittance_.handle(); }
 
@@ -85,11 +89,5 @@ private:
     std::array<rhi::DescriptorBuffer, 3> db_ring_;
     std::size_t                          ring_ = 0;
 };
-
-// Readback sanity checks on the LUTs: transmittance is reddened at the
-// horizon vs the zenith, and the noon sky-view is non-black and blue-dominant.
-[[nodiscard]] std::expected<void, core::Error>
-run_atmosphere_self_test(const rhi::Device& device, rhi::GpuAllocator& allocator,
-                         rhi::PipelineCache& cache, const std::string& cooked_shader_dir);
 
 } // namespace engine::renderer

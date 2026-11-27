@@ -72,6 +72,8 @@ constexpr EnumName<audio::AudioBus> k_audio_buses[] = {
     {"master", audio::AudioBus::master}, {"music", audio::AudioBus::music},
     {"sfx", audio::AudioBus::sfx},       {"ui", audio::AudioBus::ui},
     {"ambience", audio::AudioBus::ambience}};
+constexpr EnumName<terrain::ErosionModel> k_erosion_models[] = {
+    {"droplets", terrain::ErosionModel::droplets}, {"grid", terrain::ErosionModel::grid}};
 constexpr EnumName<AudioCommand> k_audio_commands[] = {
     {"none", AudioCommand::none}, {"play", AudioCommand::play}, {"stop", AudioCommand::stop},
     {"pause", AudioCommand::pause}, {"resume", AudioCommand::resume}};
@@ -524,10 +526,13 @@ json encode_components(const entt::registry& r, entt::entity e, const EncodeOpti
                           {"height", t->params.height_m},
                           {"octaves", t->params.octaves},
                           {"warp", t->params.warp_strength},
+                          {"erosion", enum_name(k_erosion_models, t->params.erosion_model)},
                           {"droplets", t->params.erosion_droplets},
+                          {"erosion_steps", t->params.grid.iterations},
                           {"snowline", t->snowline_m},
                           {"streaming", t->streaming},
-                          {"stream_radius", t->stream_radius}};
+                          {"stream_radius", t->stream_radius},
+                          {"gpu", t->gpu_generate}};
     }
     if (const auto* g = r.try_get<Grass>(e)) out["grass"] = encode_grass(g->settings);
     if (const auto* n = r.try_get<NetReplicated>(e)) out["net_replicated"] = {{"net_id", n->net_id}};
@@ -553,6 +558,7 @@ json encode_components(const entt::registry& r, entt::entity e, const EncodeOpti
             out["mesh"] = {{"mesh_key", m->mesh_key},
                            {"material_key", m->material_key},
                            {"gltf", m->gltf_path}};
+            if (m->gltf_node >= 0) out["mesh"]["node"] = m->gltf_node;
         }
     }
     return out;
@@ -766,6 +772,7 @@ std::expected<void, core::Error> apply_component(entt::registry& r, entt::entity
                 }
                 b.compiled.reset(); // recompile lazily
                 b.node_state.clear();
+                b.last_result.clear();
                 b.parse_failed = false;
             }
             f.boolean("enabled", b.enabled);
@@ -789,10 +796,23 @@ std::expected<void, core::Error> apply_component(entt::registry& r, entt::entity
             f.number("height", p.height_m, 0.0F, 100000.0F);
             f.integer("octaves", p.octaves, 1, 16);
             f.number("warp", p.warp_strength, 0.0F, 4.0F);
+            f.enumeration("erosion", p.erosion_model, k_erosion_models);
             f.integer("droplets", p.erosion_droplets, 0, 50'000'000);
+            f.integer("erosion_steps", p.grid.iterations, 0, terrain::max_grid_erosion_steps);
             f.number("snowline", t.snowline_m);
             f.boolean("streaming", t.streaming);
             f.integer("stream_radius", t.stream_radius, 0, 8);
+            f.boolean("gpu", t.gpu_generate);
+            // Grid erosion's cost grows with resolution² x steps and has no
+            // droplet-style cap on its own: bound it (audit D3).
+            if (!terrain::grid_erosion_within_limits(p)) {
+                f.fail(f.has("erosion_steps") ? "erosion_steps" : "resolution",
+                       "grid erosion is limited to resolution " +
+                           std::to_string(terrain::max_grid_erosion_resolution) +
+                           " and resolution^2 x erosion_steps <= " +
+                           std::to_string(terrain::max_grid_erosion_texel_steps) +
+                           " (e.g. 1025 at 5000 steps)");
+            }
             t.regenerate = true; // rebuild with the new parameters
         });
     }

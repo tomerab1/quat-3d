@@ -14,7 +14,7 @@ struct LutParams {
 }
 [[vk::push_constant]] LutParams pc;
 
-[[vk::binding(0)]] RWTexture2D<float4> g_out;
+[[vk::binding(0)]] [format("rgba16f")] RWTexture2D<float4> g_out;
 
 static const uint LUT_SAMPLES = 1024u;
 

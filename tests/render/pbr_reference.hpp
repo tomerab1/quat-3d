@@ -1,18 +1,19 @@
 #pragma once
 
-// CPU reference for the direct PBR BRDF in lighting.slang (Phase 4, Slice 4.5).
+// CPU references for the render tests: the direct PBR BRDF in lighting.slang
+// (Phase 4, Slice 4.5) and the ACES + sRGB curve in tonemap.slang.
 //
-// Private renderer header (not in include/): the single source of truth for the
-// Cook-Torrance math, used by the lighting and tonemap full-chain self-tests so
-// their expected pixel stays in lock-step with the shader. Mirrors lighting.slang
-// exactly — keep the two in sync.
+// The single source of truth for that math on the test side, used by the
+// lighting, tonemap and clustered-lighting tests so their expected pixels stay
+// in lock-step with the shaders. Mirrors the shaders exactly — keep them in
+// sync.
 
 #include <algorithm>
 #include <cmath>
 
 #include <glm/glm.hpp>
 
-namespace engine::renderer::pbr_ref {
+namespace quat::test::pbr_ref {
 
 inline constexpr float k_pi = 3.14159265358979F;
 
@@ -57,4 +58,18 @@ inline glm::vec3 direct(glm::vec3 albedo, float metallic, float roughness, glm::
     return (diffuse + spec) * light_color * intensity * ndotl;
 }
 
-} // namespace engine::renderer::pbr_ref
+// ACES filmic fit (Narkowicz), as tonemap.slang applies it.
+inline glm::vec3 aces(glm::vec3 x) {
+    const float a = 2.51F, b = 0.03F, c = 2.43F, d = 0.59F, e = 0.14F;
+    const glm::vec3 num = x * (a * x + b);
+    const glm::vec3 den = x * (c * x + d) + e;
+    return glm::clamp(num / den, glm::vec3(0.0F), glm::vec3(1.0F));
+}
+
+// Linear -> sRGB transfer function.
+inline float linear_to_srgb(float c) {
+    return c <= 0.0031308F ? c * 12.92F
+                           : 1.055F * std::pow(std::max(c, 0.0F), 1.0F / 2.4F) - 0.055F;
+}
+
+} // namespace quat::test::pbr_ref

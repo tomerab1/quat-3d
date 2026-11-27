@@ -11,6 +11,7 @@
 #include <cstring>
 #include <functional>
 #include <limits>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -42,6 +43,36 @@ namespace gltf_detail {
 // Scene instantiation
 // ---------------------------------------------------------------------------
 
+std::expected<void, core::Error> validate_skin_bindings(const fastgltf::Asset& a) {
+    // Per mesh: the largest weighted joint index over its triangle primitives
+    // (computed on first use; most meshes are not skinned by any node).
+    std::vector<std::optional<std::optional<std::uint32_t>>> mesh_max(a.meshes.size());
+    for (std::size_t ni = 0; ni < a.nodes.size(); ++ni) {
+        const fastgltf::Node& n = a.nodes[ni];
+        if (!n.meshIndex.has_value() || !n.skinIndex.has_value()) continue;
+        const std::size_t m = n.meshIndex.value();
+        if (!mesh_max[m].has_value()) {
+            std::optional<std::uint32_t> max_joint;
+            for (const fastgltf::Primitive& prim : a.meshes[m].primitives) {
+                if (prim.type != fastgltf::PrimitiveType::Triangles) continue;
+                if (const auto pm = max_weighted_joint(a, prim)) {
+                    max_joint = max_joint ? std::max(*max_joint, *pm) : *pm;
+                }
+            }
+            mesh_max[m] = max_joint;
+        }
+        const std::size_t joint_count = a.skins[n.skinIndex.value()].joints.size();
+        if (const std::optional<std::uint32_t> used = *mesh_max[m];
+            used.has_value() && *used >= joint_count) {
+            return fail("glTF: node " + std::to_string(ni) + " skins mesh " + std::to_string(m) +
+                        " whose JOINTS_0 uses joint " + std::to_string(*used) + " but skin " +
+                        std::to_string(n.skinIndex.value()) + " has " +
+                        std::to_string(joint_count) + " joints");
+        }
+    }
+    return {};
+}
+
 // Build ECS entities from a parsed glTF asset. File-local so both the path-based
 // public entry and the in-memory self-test share it. `key_prefix` namespaces the
 // AssetManager cache keys (so two files' meshes/materials don't collide).
@@ -49,6 +80,9 @@ std::expected<std::vector<entt::entity>, core::Error>
 assemble_scene(const fastgltf::Asset& a, const std::string& key_prefix,
                rhi::GpuAllocator& allocator, const rhi::TransferContext& transfer,
                asset::AssetManager& assets, Scene& scene) {
+    // Checked before anything is uploaded or cached.
+    if (auto ok = validate_skin_bindings(a); !ok) return std::unexpected(ok.error());
+
     // Textures: decode + upload each image once, cached by "<path>#img<i>".
     auto tex_datas = extract_textures(a);
     if (!tex_datas) return std::unexpected(tex_datas.error());
@@ -205,7 +239,7 @@ assemble_scene(const fastgltf::Asset& a, const std::string& key_prefix,
                 if (prims.size() == 1) {
                     reg.emplace<MeshRenderer>(e, prims[0].mesh, prims[0].material);
                     reg.emplace<MeshSource>(e, prims[0].mesh_key, prims[0].material_key,
-                                            key_prefix);
+                                            key_prefix, static_cast<int>(node_index));
                     attach_skin(e);
                 } else {
                     for (std::size_t p = 0; p < prims.size(); ++p) {
@@ -215,7 +249,7 @@ assemble_scene(const fastgltf::Asset& a, const std::string& key_prefix,
                         scene.set_parent(pe, e);
                         reg.emplace<MeshRenderer>(pe, prims[p].mesh, prims[p].material);
                         reg.emplace<MeshSource>(pe, prims[p].mesh_key, prims[p].material_key,
-                                                key_prefix);
+                                                key_prefix, static_cast<int>(node_index));
                         attach_skin(pe);
                     }
                 }
