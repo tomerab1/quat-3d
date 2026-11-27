@@ -29,6 +29,22 @@ Decisions already made (do not re-litigate without the owner):
 - Steam: Steamworks behind an engine interface; the owner must add the SDK
   manually (Valve partner download).
 
+## Claimed by the live session (do not pick up)
+
+Worktree agents running in the orchestrating session on 2026-11-27; their
+branches merge into `claude/nifty-hopper-nb68qe` (PR #1):
+
+| Item | Branch |
+|---|---|
+| R9.1 instanced draws | `feat/r9-instancing` |
+| A2/A3 remote world commands, Primitive resolve, screenshots | `feat/a2-world-commands` |
+| A4 Rust MCP server | `feat/a4-quat-mcp` |
+| G1 audio (miniaudio) | `feat/g1-audio` |
+| S1 nav/NPC fixes N1–N6, N8, N10, N12, N13 | `feat/s1-nav-fixes` |
+
+If this table is still here and those branches are not on the remote, the
+live session ended before merging them: treat the items as unclaimed.
+
 ## Work in flight
 
 | Item | State | Verified? |
