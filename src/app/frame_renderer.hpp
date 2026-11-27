@@ -40,12 +40,15 @@
 #include "engine/renderer/draw_batching.hpp"
 #include "engine/renderer/dynamic_ibl.hpp"
 #include "engine/renderer/exposure_pass.hpp"
+#include "engine/renderer/gtao_pass.hpp"
+#include "engine/renderer/hiz_pass.hpp"
 #include "engine/renderer/light_clusters.hpp"
 #include "engine/renderer/light_cull_pass.hpp"
 #include "engine/renderer/jitter.hpp"
 #include "engine/renderer/lighting_pass.hpp"
 #include "engine/renderer/mesh_pass.hpp"
 #include "engine/renderer/motion_history.hpp"
+#include "engine/renderer/shadow_ao_settings.hpp"
 #include "engine/renderer/render_settings.hpp"
 #include "engine/renderer/shadow_pass.hpp"
 #include "engine/renderer/skinning_pass.hpp"
@@ -122,6 +125,8 @@ struct DeferredFrame {
     engine::renderer::TonemapPass    tonemap;
     engine::renderer::SkinningPass   skinning;
     engine::renderer::ShadowPass     shadow;
+    engine::renderer::HiZPass        hiz;
+    engine::renderer::GtaoPass       gtao;
     engine::renderer::TransparentPass transparent;
     engine::renderer::BloomPass      bloom;
     engine::renderer::ExposurePass   exposure;
@@ -155,7 +160,11 @@ struct FrameScene {
     std::vector<engine::renderer::DrawItem>        transparent_draws; // back-to-front
     std::vector<engine::renderer::DrawItem>        shadow_draws;
     std::vector<engine::renderer::SkinDispatch>    dispatches;
-    glm::mat4 light_view_proj{1.0F};
+    // Sun shadows (R12): the camera + sun the cascades are fitted to, and the
+    // light-space volume casters are culled against on the CPU.
+    engine::renderer::CsmView csm_view{};
+    glm::mat4                 shadow_cull_view_proj{1.0F};
+    std::uint64_t             frame_number = 0;
 };
 
 // Everything record() draws besides the gathered scene.
@@ -272,6 +281,10 @@ private:
     add_upscale(engine::rhi::RenderGraph& graph, const FrameScene& scene,
                 engine::rhi::ResourceHandle hdr, const engine::renderer::GBufferTargets& gbuffer,
                 VkExtent2D display);
+    // The editor's R12 settings (defaults in headless builds).
+    [[nodiscard]] engine::renderer::CsmSettings current_csm() const;
+    [[nodiscard]] engine::renderer::GtaoSettings current_gtao() const;
+    [[nodiscard]] engine::renderer::ContactShadowSettings current_contact_shadows() const;
     void recreate_render_finished();
     [[nodiscard]] bool record_screenshot_copy(VkCommandBuffer cmd);
     void write_screenshot() const;
@@ -299,6 +312,8 @@ private:
     engine::renderer::VelocityPass                   velocity_;
     engine::renderer::TemporalView                   temporal_;
     std::shared_ptr<engine::renderer::ExposureState> exposure_state_;
+    // The cascaded shadow map + GPU fit state, shared by both slots (R12).
+    std::shared_ptr<engine::renderer::CsmShared>     csm_shared_;
     std::array<DeferredFrame, k_frames_in_flight>    frames_;
 
     std::optional<engine::renderer::AtmospherePass> atmosphere_;

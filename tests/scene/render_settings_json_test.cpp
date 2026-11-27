@@ -73,9 +73,16 @@ TEST(RenderSettingsJson, SetMergesAndKeepsOtherFields) {
     EXPECT_TRUE(st.exposure.auto_exposure);
     // Integers accept a whole float; null means "leave as is".
     ASSERT_OK(s::apply_render_settings_json(
-        st, json{{"shadows", {{"pcf_radius", 2.0}, {"extent_m", nullptr}}}}, true));
-    EXPECT_EQ(st.shadows.pcf_radius, 2);
-    EXPECT_FLOAT_EQ(st.shadows.extent_m, r::ShadowSettings{}.extent_m);
+        st, json{{"shadows", {{"cascades", 2.0}, {"max_distance", nullptr}}}}, true));
+    EXPECT_EQ(st.shadows.cascade_count, 2);
+    EXPECT_FLOAT_EQ(st.shadows.max_distance, r::CsmSettings{}.max_distance);
+    // Retired pre-cascade keys are accepted (even strictly) and ignored.
+    const r::RenderSettings before = st;
+    ASSERT_OK(s::apply_render_settings_json(
+        st, json{{"shadows", {{"extent_m", 20.0}, {"depth_bias", 0.001}, {"slope_bias", 0.002}}}},
+        true));
+    EXPECT_EQ(s::encode_render_settings(st), s::encode_render_settings(before));
+    EXPECT_FALSE(s::encode_render_settings(st)["shadows"].contains("extent_m"));
 }
 
 TEST(RenderSettingsJson, StrictErrorsArePreciseAndAtomic) {
@@ -100,9 +107,9 @@ TEST(RenderSettingsJson, StrictErrorsArePreciseAndAtomic) {
     ASSERT_FALSE(e);
     EXPECT_TRUE(contains(e.error().message, "taa.enabled: expected true or false"));
 
-    e = s::apply_render_settings_json(st, json{{"shadows", {{"pcf_radius", 1.5}}}}, true);
+    e = s::apply_render_settings_json(st, json{{"shadows", {{"cascades", 1.5}}}}, true);
     ASSERT_FALSE(e);
-    EXPECT_TRUE(contains(e.error().message, "an integer in [0, 3]")) << e.error().message;
+    EXPECT_TRUE(contains(e.error().message, "an integer in [1, 4]")) << e.error().message;
 
     e = s::apply_render_settings_json(st, json{{"bloom", 3}}, true);
     ASSERT_FALSE(e);

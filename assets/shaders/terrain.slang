@@ -14,6 +14,7 @@
 // gbuffer.slang; the deferred lighting pass shades terrain like any mesh.
 
 import velocity;
+import terrain_grid;
 
 struct PushConstants {
     float4x4 view_proj;      // jittered
@@ -37,25 +38,9 @@ struct VsOut {
     float4 prev_clip : PREV_CLIP;
 }
 
-// Vertex id -> chunk grid coordinate. Ids [0, (n+1)²) are the grid; the next
-// 4n ids walk the perimeter ring once more for the skirt.
+// Vertex id -> chunk grid coordinate (lib/terrain_grid.slang).
 void decode_vertex(uint id, out float2 g, out bool skirt) {
-    const uint n = uint(pc.shade.x);
-    const uint grid_count = (n + 1) * (n + 1);
-    if (id < grid_count) {
-        g = float2(float(id % (n + 1)), float(id / (n + 1)));
-        skirt = false;
-        return;
-    }
-    skirt = true;
-    uint r = id - grid_count;
-    const uint side = r / n;
-    const float t = float(r % n);
-    const float fn = float(n);
-    if (side == 0)      g = float2(t, 0.0);        // -z edge, left to right
-    else if (side == 1) g = float2(fn, t);          // +x edge
-    else if (side == 2) g = float2(fn - t, fn);     // +z edge, right to left
-    else                g = float2(0.0, fn - t);    // -x edge
+    terrain_decode_vertex(id, uint(pc.shade.x), g, skirt);
 }
 
 [shader("vertex")]
