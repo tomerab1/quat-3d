@@ -12,6 +12,9 @@
 // Component names (the JSON keys):
 //   transform        position / rotation (Euler degrees, YXZ) / scale, or a 16-float matrix
 //   primitive        procedural shape + flat PBR material
+//   instanced_mesh   glTF (or primitive) model + placements (omitted when a
+//                    scatter generates them; instance_count is read-only)
+//   scatter          seeded procedural placement of the instanced mesh
 //   point_light, dir_light, camera
 //   collider, rigidbody, character
 //   nav_agent, behavior, patrol

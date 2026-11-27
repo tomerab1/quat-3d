@@ -35,7 +35,9 @@
 #include "engine/rhi/gpu_allocator.hpp"
 #include "engine/scene/components.hpp"
 #include "engine/scene/gltf_loader.hpp"
+#include "engine/scene/instanced_mesh.hpp"
 #include "engine/scene/primitives.hpp"
+#include "engine/scene/scatter.hpp"
 #include "engine/scene/scene_io.hpp"
 #include "engine/terrain/heightmap.hpp"
 #include "engine/terrain/streamer.hpp"
@@ -121,6 +123,7 @@ struct RemoteBridge::Impl {
     std::vector<Slot>                slots;
     std::vector<Encoding>            encodings;
     bool                             warned_primitives = false;
+    std::string                      last_instanced_warning;
 
     // ---- Debugging (A5) -----------------------------------------------------
     engine::core::SimClock clock;
@@ -390,6 +393,58 @@ struct RemoteBridge::Impl {
         }
     }
 
+    // The ground scatters stand on: the streamed tiles or the single editing
+    // tile of the (first) Terrain entity; none (flat ground) without terrain.
+    // While a tile is still generating the ground is known to exist but not
+    // where, so placements wait for it.
+    [[nodiscard]] engine::scene::ScatterGround scatter_ground() const {
+        const entt::registry& r = t.scene->registry();
+        const auto terrains = r.view<const engine::scene::Terrain>();
+        if (terrains.begin() == terrains.end()) return {};
+        const engine::scene::Terrain& terrain = terrains.get<const engine::scene::Terrain>(
+            *terrains.begin());
+        const glm::vec3 anchor = t.terrain_anchor != nullptr ? *t.terrain_anchor : glm::vec3(0.0F);
+        std::vector<engine::scene::GroundTile> tiles;
+        if (terrain.streaming) {
+            if (t.terrain_streamer != nullptr && t.terrain_streamer->has_value()) {
+                const engine::terrain::TerrainStreamer& s = **t.terrain_streamer;
+                for (const auto& [coord, map] : s.maps()) {
+                    tiles.push_back({&map, s.tile_origin(coord, anchor)});
+                }
+            }
+        } else if (t.terrain_heightmap != nullptr && t.terrain_heightmap->valid()) {
+            const float half = t.terrain_heightmap->tile_size_m * 0.5F;
+            tiles.push_back({t.terrain_heightmap, anchor - glm::vec3(half, 0.0F, half)});
+        }
+        return engine::scene::make_tile_ground(std::move(tiles));
+    }
+
+    // R9.2: regenerate changed scatters, then (re)build the models of
+    // instanced meshes whose source changed — opening an upload context
+    // only when one did.
+    void update_instanced_meshes() {
+        entt::registry& r = t.scene->registry();
+        const auto scatters = r.view<engine::scene::Scatter>();
+        if (scatters.begin() != scatters.end()) {
+            (void)engine::scene::scatter_system(r, scatter_ground());
+        }
+        if (!engine::scene::instanced_meshes_need_resolve(r)) return;
+        std::expected<std::size_t, Error> result = fail("not run");
+        auto ctx = with_upload([&](const engine::rhi::TransferContext& transfer) {
+            result = engine::scene::resolve_instanced_meshes(r, *t.allocator, transfer, *t.assets,
+                                                             t.project_root);
+        });
+        if (!ctx || !result) {
+            // Once per failure message: a failed source is not retried until
+            // it changes, but a different failure is worth reporting.
+            const std::string& msg = (!ctx ? ctx.error() : result.error()).message;
+            if (msg != last_instanced_warning) {
+                std::fprintf(stderr, "[warn] %s\n", msg.c_str());
+                last_instanced_warning = msg;
+            }
+        }
+    }
+
     void finish_encodings() {
         for (auto it = encodings.begin(); it != encodings.end();) {
             if (it->result.wait_for(std::chrono::seconds(0)) != std::future_status::ready) {
@@ -545,6 +600,7 @@ void RemoteBridge::poll() {
     impl_->finish_steps(); // steps run last frame: reply before new requests
     if (impl_->server) impl_->server->poll();
     impl_->resolve_primitives();
+    impl_->update_instanced_meshes();
     impl_->finish_encodings();
 }
 

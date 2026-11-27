@@ -70,6 +70,7 @@
 #include "engine/rhi/descriptor_buffer.hpp"
 #include "engine/scene/components.hpp"
 #include "engine/scene/gltf_loader.hpp"
+#include "engine/scene/instanced_mesh.hpp"
 #include "engine/scene/scene.hpp"
 #include "engine/scene/scene_io.hpp"
 #include "engine/rhi/device.hpp"
@@ -1370,6 +1371,9 @@ int main() {
             (is_transparent ? transparent_draws : draws).push_back(item);
         }
 
+        // R9.2: blended / transmissive InstancedMesh parts, one item per instance.
+        engine::scene::append_instanced_transparent_items(scene.registry(), cam.view_proj,
+                                                          transparent_draws);
         // Sort transparent draws back-to-front (farthest from the camera first).
         std::sort(transparent_draws.begin(), transparent_draws.end(),
                   [&](const engine::renderer::DrawItem& a, const engine::renderer::DrawItem& b) {
@@ -1591,10 +1595,15 @@ int main() {
 
         remote_bridge.note_draws(draws.size() + transparent_draws.size());
         // R9.1: draws sharing mesh + material collapse into instanced draws.
-        const engine::renderer::InstancedDrawList shadow_batches =
+        engine::renderer::InstancedDrawList shadow_batches =
             engine::renderer::batch_draws(shadow_draws);
-        const engine::renderer::InstancedDrawList opaque_batches =
+        engine::renderer::InstancedDrawList opaque_batches =
             engine::renderer::batch_draws(draws);
+        // R9.2: InstancedMesh placements, one draw per (mesh, material), culled per instance.
+        engine::scene::append_instanced_draws(scene.registry(), light_view_proj,
+                                              engine::scene::InstancedPass::shadow, shadow_batches);
+        engine::scene::append_instanced_draws(scene.registry(), cam.view_proj,
+                                              engine::scene::InstancedPass::opaque, opaque_batches);
         auto shadow = fr.shadow.add_to_graph(graph, light_view_proj, shadow_batches);
         if (!shadow) {
             std::fprintf(stderr, "[fatal] shadow pass: %s\n", shadow.error().message.c_str());

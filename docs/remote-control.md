@@ -123,6 +123,20 @@ codec (`engine/scene/component_json.hpp`): `transform` (`position`,
 `rotation` in Euler degrees YXZ, `scale` number or `[x,y,z]`, `look_at`),
 `primitive` (`shape`: cube/sphere/plane/cylinder/cone/capsule, `color`
 `"#rrggbb"` or linear `[r,g,b,a]`, `metallic`, `roughness`, `emissive`),
+`instanced_mesh` (many copies of one model in one entity, drawn instanced:
+`gltf` path relative to the project root + optional `node`, or — with `gltf`
+empty — the `primitive` fields `shape` / `color` / `metallic` / `roughness` /
+`emissive`; `cast_shadows`; `instances`: `[{position, rotation (Euler degrees
+YXZ), scale (number or [x,y,z])}, ...]` or bare `[x,y,z]` positions, at most
+100000, entity-local; read-only `instance_count`. `instances` is omitted —
+and cannot be written — while a `scatter` generates them),
+`scatter` (seeded placement of the instanced mesh on the terrain around the
+entity: `seed`, `area` rect/circle, `size` [x,z] m, `radius` m, `density`
+per m², `min_spacing` m, `pattern` poisson/jittered_grid, `scale` [min,max],
+`random_yaw`, `align_to_normal` 0..1, `base_offset` (× scale, 0.5 seats a
+unit primitive), `slope` [min,max] degrees, `height` [min,max] m,
+`max_instances`; regenerates when these, the entity position or the terrain
+change; removing it keeps the placements),
 `point_light`, `dir_light`, `camera`, `collider`, `rigidbody`, `character`,
 `nav_agent`, `behavior`, `patrol`, `terrain`, `net_replicated`,
 `audio_source` (`clip`, `bus`: master/music/sfx/ui/ambience, `volume`,

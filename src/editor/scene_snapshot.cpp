@@ -59,6 +59,9 @@ SceneSnapshot capture_scene(const scene::Scene& scene) {
     capture_type(r, snap.behavior_trees);
     capture_type(r, snap.patrol_routes);
     capture_type(r, snap.primitives);
+    capture_type(r, snap.instanced_meshes);
+    capture_type(r, snap.instanced_mesh_parts);
+    capture_type(r, snap.scatters);
     capture_type(r, snap.net_replicated);
     capture_type(r, snap.audio_sources);
     capture_type(r, snap.audio_listeners);
@@ -105,6 +108,9 @@ void restore_scene(scene::Scene& scene, const SceneSnapshot& snapshot) {
     restore_type(r, snapshot.behavior_trees);
     restore_type(r, snapshot.patrol_routes);
     restore_type(r, snapshot.primitives);
+    restore_type(r, snapshot.instanced_meshes);
+    restore_type(r, snapshot.instanced_mesh_parts);
+    restore_type(r, snapshot.scatters);
     restore_type(r, snapshot.net_replicated);
     restore_type(r, snapshot.audio_sources);
     restore_type(r, snapshot.audio_listeners);

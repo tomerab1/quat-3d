@@ -9,14 +9,17 @@
 //
 // It also resolves Primitive components every frame (independent of the
 // endpoint — scene files carry primitives too), opening an upload context
-// only when some primitive changed.
+// only when some primitive changed. Likewise for R9.2 instancing: it runs
+// scatter_system against the terrain the frame loop holds (streamed tiles or
+// the editing tile) and resolves InstancedMesh models.
 //
 // It owns the simulation clock (ROADMAP A5: debug.pause / step / time_scale)
 // and the frame statistics debug.stats reports.
 //
 // Frame-loop hooks (main thread):
 //   poll()               once per frame before the scene updates: RPC
-//                        requests, primitive resolution, finished screenshots,
+//                        requests, primitive + instanced-mesh resolution,
+//                        scatter regeneration, finished screenshots,
 //                        completed debug.step requests
 //   advance_sim(dt)      once per frame with the real frame time: records it
 //                        and returns the simulation dt (0 while paused)

@@ -17,6 +17,7 @@
 #include <entt/entity/entity.hpp>
 #include <entt/entity/fwd.hpp>
 #include <glm/glm.hpp>
+#include <glm/gtc/quaternion.hpp>
 
 #include "engine/audio/audio_types.hpp"
 #include "engine/animation/clip.hpp"
@@ -71,6 +72,90 @@ struct Primitive {
     float          roughness = 0.5F;
     glm::vec3      emissive{0.0F};                // linear emitted radiance (HDR)
     std::uint64_t  resolved = 0;                  // hash the MeshRenderer was built from
+};
+
+// One placement of an InstancedMesh, relative to the entity (R9.2): the
+// instance's model matrix is entity.world * T(position) * R(rotation) *
+// S(scale).
+struct InstanceTransform {
+    glm::vec3 position{0.0F};
+    glm::quat rotation{1.0F, 0.0F, 0.0F, 0.0F}; // (w, x, y, z): identity
+    glm::vec3 scale{1.0F};
+};
+
+// Many placements of one model on a single entity (R9.2) — forests, rocks,
+// props — drawn as one instanced draw per (mesh, material) instead of one
+// entity per copy. The model is a glTF file (`gltf_path`, relative to the
+// project root; the whole scene, or only the subtree of the node named
+// `gltf_node`) or, when `gltf_path` is empty, `primitive`'s shape and flat
+// material (its `resolved` field is unused here). `instances` are authored
+// placements, or the output of a Scatter on the same entity (which rewrites
+// them whenever it regenerates). resolve_instanced_meshes()
+// (instanced_mesh.hpp) builds the InstancedMeshParts the renderer draws.
+struct InstancedMesh {
+    std::string                    gltf_path;
+    std::string                    gltf_node;
+    Primitive                      primitive{};
+    std::vector<InstanceTransform> instances;
+    bool                           cast_shadows = true;
+};
+
+// One (mesh, material) of an InstancedMesh's model; `local` places it in the
+// instance's frame (the glTF node hierarchy below the chosen root).
+struct InstancedMeshPart {
+    asset::AssetHandle<asset::MeshAsset>     mesh;
+    asset::AssetHandle<asset::MaterialAsset> material;
+    glm::mat4                                local{1.0F};
+};
+
+// System-managed: the resolved model of an InstancedMesh (like the
+// MeshRenderer a Primitive resolves into). `bounds` is the bounding sphere of
+// all parts in the instance's frame (xyz centre, w radius) for culling;
+// `resolved` is the source hash the parts were built from.
+struct InstancedMeshParts {
+    std::vector<InstancedMeshPart> parts;
+    glm::vec4                      bounds{0.0F};
+    std::uint64_t                  resolved = 0;
+};
+
+// Seeded procedural placement on the ground (R9.2): generates the entity's
+// InstancedMesh::instances (adding a default InstancedMesh if it has none).
+// The area is centred on the entity's world position and axis-aligned in
+// world XZ: a `size` rectangle (metres) or a `radius` circle. Candidates are
+// Poisson-disc samples (blue noise; Bridson) or a jittered grid at `density`
+// instances per m², never closer than `min_spacing`; each one samples the
+// terrain (streamed tiles too; flat ground at the entity's height without
+// terrain) and is kept only when the ground slope (degrees) and height
+// (metres) fall within the limits. Each placement gets a uniform scale in
+// `scale_range`, an optional random yaw, tilts `align_to_normal` (0 upright
+// .. 1 along the ground normal) and is lifted `base_offset` * scale along
+// its up axis (0.5 seats a unit primitive on the ground). Generation is
+// deterministic per seed, and a candidate's fate depends only on its own
+// ground sample, so terrain streaming in or out never reshuffles the rest.
+// scatter_system (scatter.hpp) regenerates whenever the parameters, the
+// entity's transform or the terrain under the area change; `generated` (key
+// of the last generation) and `generation` (count) are system-managed.
+// Removing the Scatter keeps the current instances (baked).
+enum class ScatterArea : std::uint8_t { rect, circle };
+enum class ScatterPattern : std::uint8_t { poisson, jittered_grid };
+struct Scatter {
+    std::uint32_t  seed = 1;
+    ScatterArea    area = ScatterArea::rect;
+    glm::vec2      size{40.0F, 40.0F}; // rect: extent along world X and Z, metres
+    float          radius = 20.0F;     // circle
+    float          density = 0.05F;    // instances per m^2
+    float          min_spacing = 2.0F; // metres
+    ScatterPattern pattern = ScatterPattern::poisson;
+    glm::vec2      scale_range{0.8F, 1.2F};
+    bool           random_yaw = true;
+    float          align_to_normal = 0.0F;
+    float          base_offset = 0.0F;
+    glm::vec2      slope_deg{0.0F, 35.0F};       // keep ground slopes in [x, y]
+    glm::vec2      height_m{-10000.0F, 10000.0F}; // keep ground heights in [x, y]
+    std::uint32_t  max_instances = 20000;
+    // System-managed.
+    std::uint64_t  generated = 0;
+    std::uint32_t  generation = 0;
 };
 
 // Marks an entity (alongside its MeshRenderer) as skinned: its mesh deforms with
