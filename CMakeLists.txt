@@ -303,7 +303,9 @@ add_library(engine_scene STATIC
     src/scene/instanced_mesh.cpp
     src/scene/instanced_mesh_resolve.cpp
     src/scene/ground_placement.cpp
-    src/scene/camera_framing.cpp)
+    src/scene/camera_framing.cpp
+    src/scene/bounds.cpp
+    src/scene/view_clip.cpp)
 # EnTT is PUBLIC: components.hpp exposes entt types (Parent/Children) to consumers.
 # engine_renderer is PUBLIC: scene.hpp's RenderCollectSystem fills a renderer
 # DrawItem list (no cycle — the renderer does not depend on the scene).
@@ -476,6 +478,9 @@ add_library(engine_remote_world STATIC
     src/remote/world/scene_commands.cpp
     src/remote/world/batch_command.cpp
     src/remote/world/environment_commands.cpp
+    src/remote/world/terrain_commands.cpp
+    src/remote/world/surface_query.cpp
+    src/remote/world/placement_commands.cpp
     src/remote/world/camera_commands.cpp
     src/remote/world/app_commands.cpp
     src/remote/world/debug_commands.cpp

@@ -3,7 +3,8 @@
 // World commands (ROADMAP A2/A3) — the remote-control methods that let an
 // out-of-process tool (the quat-mcp bridge, i.e. a language model) inspect and
 // build the world: scene.*, environment.*, world.ground_height, camera.*,
-// render.screenshot, asset.*, sim.*, scene.save/load, nav.bake — the
+// render.screenshot, asset.*, sim.*, scene.save/load, nav.bake,
+// terrain.status, world.place_on_ground — the
 // debugging commands (ROADMAP A5): debug.log, debug.stats, debug.pause /
 // resume / step / time_scale, debug.watch, debug.raycast, debug.nav_path —
 // look tuning (ROADMAP A8): render.settings.get / set / reset / schema,
@@ -62,11 +63,24 @@ namespace engine::remote {
 // The view camera (the editor's fly camera). yaw_deg is the heading in the XZ
 // plane measured from +X toward +Z (forward = (cos pitch cos yaw, sin pitch,
 // cos pitch sin yaw)); pitch_deg is positive looking up.
+//
+// Clip planes: near_m / far_m are the planes in effect (camera_get). They are
+// derived from the scene (drawables + terrain, engine/scene/view_clip.hpp)
+// unless overridden: near_override / far_override (nullopt = derived) are
+// what camera_set stores.
+//
+// `cut` (camera_set only): the move is a teleport, so temporal history (TAA)
+// must restart; false for continuous motion driven by repeated calls.
 struct CameraPose {
     glm::vec3 position{0.0F};
     float     yaw_deg = 0.0F;
     float     pitch_deg = 0.0F;
     float     fov_deg = 60.0F; // vertical field of view
+    float     near_m = 0.1F;
+    float     far_m = 1000.0F;
+    std::optional<float> near_override{};
+    std::optional<float> far_override{};
+    bool      cut = false;
 };
 
 // Frame timing over the last `samples` frames and renderer counters, for
@@ -81,6 +95,26 @@ struct FrameStats {
     std::optional<std::uint64_t> resident_bytes;   // process resident memory
 };
 
+// Terrain generation state (terrain.status). Tile counts and bounds are those
+// of the runtime's terrain (the first Terrain entity's); bounds are relative
+// to its anchor (the entity's world position), like terrain_height.
+struct TerrainStatus {
+    bool          generating = false;  // a tile is being generated / uploaded
+    std::uint32_t tiles_loaded = 0;
+    std::uint32_t tiles_wanted = 0;    // 1, or the streaming window's (2r+1)²
+    bool          has_bounds = false;  // some tile is loaded
+    glm::vec3     bounds_min{0.0F};    // loaded tiles, anchor-relative
+    glm::vec3     bounds_max{0.0F};
+};
+
+// A render.screenshot request. With `camera`, the application renders one
+// frame from that view (instead of the viewport camera, which it leaves
+// untouched) and captures that frame.
+struct ScreenshotRequest {
+    std::uint32_t             max_size = 1024; // longer side of the reply, pixels
+    std::optional<CameraPose> camera;
+};
+
 struct WorldServices {
     // Project root that scene.save/load, asset.list_models and
     // asset.spawn_model paths are confined to.
@@ -93,8 +127,12 @@ struct WorldServices {
     // of environment.* read and write them; the next frame renders with them.
     renderer::RenderSettings* render_settings = nullptr;
 
-    // Terrain surface height at world (x, z); nullopt where no terrain is.
-    std::function<std::optional<float>(float x, float z)> ground_height;
+    // Height of the loaded terrain above its anchor at anchor-relative (x, z)
+    // (tile (0,0) is centred on the anchor); nullopt where no tile is loaded.
+    // The world commands place the anchor from the Terrain entity's current
+    // transform, so edits earlier in a batch apply at once (issue #39).
+    std::function<std::optional<float>(float local_x, float local_z)> terrain_height;
+    std::function<TerrainStatus()>                                    terrain_status;
 
     // Instantiate a glTF/GLB (absolute path, already confined to the project
     // root) into the scene; returns the root entities created.
@@ -102,9 +140,10 @@ struct WorldServices {
         const std::filesystem::path& absolute)>
         spawn_model;
 
-    // Capture the next rendered frame, downscaled so its longer side is at
-    // most `max_size`, and reply {mime, width, height, data} later.
-    std::function<void(std::uint32_t max_size, Responder responder)> screenshot;
+    // Capture the next rendered frame (from request.camera when given),
+    // downscaled so its longer side is at most request.max_size, and reply
+    // {mime, width, height, data} later.
+    std::function<void(const ScreenshotRequest& request, Responder responder)> screenshot;
 
     std::function<bool()>                                    playing;
     std::function<std::expected<bool, core::Error>(bool play)> set_playing;

@@ -49,6 +49,9 @@ Every option is a flag or an environment variable:
 | `--timeout-secs` | `QUAT_MCP_TIMEOUT_SECS` | `15` | Per-request timeout |
 | `--long-timeout-secs` | `QUAT_MCP_LONG_TIMEOUT_SECS` | `120` | Timeout for screenshots, batches, model spawn, scene load/save/clear, nav bake |
 | `--max-reply-mb` | `QUAT_MCP_MAX_REPLY_MB` | `64` | Largest reply accepted from the engine |
+| `--project-root` | `QUAT_MCP_PROJECT_ROOT` | current directory | The quat-3d checkout `asset_fetch` downloads into (`assets/meshes/polyhaven/`) |
+| `--polyhaven-api` | `QUAT_MCP_POLYHAVEN_API` | `https://api.polyhaven.com` | Poly Haven API base URL |
+| `--asset-max-mb` | `QUAT_MCP_ASSET_MAX_MB` | `512` | Largest model download `asset_fetch` accepts |
 | — | `QUAT_MCP_LOG` | `info` | Log filter (`debug`, `quat_mcp=trace`, …) |
 
 Logs go to stderr; stdout carries the MCP protocol.
@@ -107,9 +110,12 @@ command ends in `quat-mcp.exe`.
 | `scene_batch` | `scene.batch` | Many commands in one frame, with `"@N"` back-references |
 | `environment_get` / `environment_set` | `environment.*` | Sun angles and colour, volumetric clouds |
 | `world_ground_height` | `world.ground_height` | Terrain height under `[x, z]` points |
+| `terrain_status` | `terrain.status` | Whether terrain tiles are still generating; loaded tiles and bounds |
+| `world_place_on_ground` | `world.place_on_ground` | Rest an entity's bounds on the terrain or colliders below it, optionally tilted to the slope |
 | `camera_get` / `camera_set` / `camera_frame` | `camera.*` | Read, place or auto-frame the viewport camera |
-| `screenshot` | `render.screenshot` | The viewport as an MCP **image** (PNG) plus a caption |
+| `screenshot` | `render.screenshot` | The viewport (or an explicit camera, leaving the viewport alone) as an MCP **image** (PNG) plus a caption |
 | `asset_list_models` / `asset_spawn_model` | `asset.*` | Find and spawn glTF models |
+| `asset_search` / `asset_fetch` | — (Poly Haven API) | Search CC0 models on Poly Haven; download one (glTF + includes, size-capped, checksummed, with `LICENSE.md` / `polyhaven.json`) into `assets/meshes/polyhaven/<id>/`, cooked with `quat-cook` when it is on PATH |
 | `sim_play` / `sim_stop` | `sim.*` | Enter / leave play mode |
 | `scene_save` / `scene_load` | `scene.save` / `scene.load` | Project-relative JSON scene files |
 | `nav_bake` | `nav.bake` | Bake the navmesh for NPC agents |

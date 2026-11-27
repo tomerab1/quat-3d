@@ -92,11 +92,42 @@ Details the contract leaves open, as implemented:
   yaw/pitch. `camera.frame` keeps the heading, looks down at least 20° and
   backs off until the bounding sphere of what the entity (and its children)
   draws fits the vertical field of view.
+- **Clip planes** (issue #37). The view camera's planes are derived from the
+  scene every frame (`engine/scene/view_clip.hpp`): the far plane reaches the
+  farthest corner of the drawables' bounds (refreshed twice a second) and of
+  the terrain — the whole streaming window around the camera, or the single
+  tile — plus 10%, within [500 m, 200 km]; the near plane is far / 50000
+  within [0.1, 2] m, which bounds the far/near ratio of the standard-Z D32F
+  depth buffer. `camera.set` `near` (0.001..10000) / `far` (1..1000000)
+  override either plane; `null` returns it to the derived value; `near_auto` /
+  `far_auto` report which are derived. Builds without the editor apply them
+  to the camera entity the fly camera drives.
+- **Cuts.** `camera.set` `cut: true` marks the move as a teleport: the frame
+  restarts temporal history (TAA) instead of blending across the jump;
+  `false` is continuous motion (a fly-through of many small calls). Without
+  `cut`, a move is a cut when the camera jumps more than 10% of the far plane,
+  turns more than 30° or changes its field of view by more than 30°.
+  `camera.frame` is always a cut. The flag reaches the frame loop as
+  `FrameInputs::camera_cut`, which invalidates the TAA history.
 - **`render.screenshot`** captures the scene view (the editor viewport
   without UI, else the window), copied on the GPU into a per-frame readback
   buffer that is read after that frame's fence — no stall — then downscaled
   (area filter in linear light) and PNG-encoded off the main thread. At most
   8 may be in flight.
+- **Screenshots from an explicit camera** (issue #41). `render.screenshot
+  {camera:{...}}` takes the `camera.set` placement fields (`position`,
+  `look_at` | `yaw_deg`/`pitch_deg`, `fov_deg`, `near`, `far`; omitted ones
+  keep the viewport camera's values) or `frame` (an entity to fit in view, as
+  `camera.frame` does). The application renders the next frame from that
+  camera (`RemoteBridge::screenshot_view()`), captures exactly that frame and
+  goes back to the viewport camera: the viewport camera's state is never
+  written, so `camera.get` is unchanged. The renderer has one view, so this
+  is a one-frame camera swap rather than a second view: the viewport shows
+  the shot for one frame, TAA history restarts on the shot frame and the
+  frame after it (both are cuts), auto-exposure keeps adapting to the
+  viewport, and terrain keeps streaming around the viewport camera (a shot
+  far from it may show missing tiles). Shots with different cameras take a
+  frame each; the oldest goes first.
 - **Paths** (`scene.save/load`, `asset.spawn_model`) must be relative to the
   project root; absolute paths, `..` escapes and symlinks leading out are
   refused. `scene.save` writes only `.json` and refuses to overwrite a file
@@ -110,6 +141,48 @@ Details the contract leaves open, as implemented:
   playing for a `QUAT_SCENE` / `QUAT_PLAY` run); `unavailable` in the physics
   / character demo modes, which own their physics world. `scene.save` /
   `scene.load` are refused (`failed`) while playing.
+- **Terrain queries** (issue #39) use the terrain the runtime drives: the
+  first entity with a `terrain` component. The runtime samples its tiles
+  relative to the terrain's anchor; `world.ground_height` places the anchor
+  from the entity's current world transform, so a command later in a
+  `scene.batch` sees an earlier move of the terrain (or of a parent). A shape
+  edit not yet picked up by the runtime (`regenerate` pending) answers null
+  heights with `generating: true` rather than stale ones. Without a terrain
+  entity it is `not_found`. **`terrain.status`** tells a client when it can
+  place objects or take screenshots: `generating` is true while a tile is
+  being generated or uploaded, or the streaming window (`tiles_wanted` =
+  (2·`stream_radius`+1)²) is not full; `bounds` covers the loaded tiles.
+- **Bounds** (issue #40). `world_bounds` (`{min, max}` or null) is the
+  world-space AABB around what the entity and its descendants draw: mesh
+  bounds (skinned meshes through their armature), primitives (their unit
+  shape before the mesh resolves), every instance of an instanced mesh, and
+  the loaded tiles for the terrain entity — each box transformed exactly
+  (`engine/scene/bounds.hpp`) through world matrices composed from the local
+  transforms, so batch edits count. `local_bounds` (scene.get) is the same
+  box in the entity's own frame, terrain excluded: a model's size and where
+  its origin sits. Null while nothing draws (lights, empties, a model whose
+  mesh is still loading).
+- **`world.place_on_ground`** moves the entity (with its subtree) to `at`
+  if given, then — with `align_to_normal` — rotates it about its origin so
+  its up axis turns toward the surface normal under its bounds' centre (at
+  most `max_tilt_deg`; idempotent, the heading is kept), then translates it
+  vertically: upright, the bounds' bottom rests on the surfaces sampled at a
+  3×3 grid over the footprint (the lowest ground sample or the highest object
+  sample, whichever is higher); aligned, the bottom centre of `local_bounds`
+  rests on the surface under it. `offset` is added along world up. Surfaces:
+  the terrain (analytic heights, normal by central differences) and, below
+  the top of the entity's bounds, other entities' non-sensor colliders —
+  analytically in edit mode (box, sphere, capsule, with world scale baked in
+  as the physics system builds them), or the running physics world's bodies
+  and characters in play mode (ownerless bodies such as streamed terrain
+  count as ground). The entity's own colliders are skipped. Nothing below is
+  `failed`; placing the terrain (or an ancestor of it) is `invalid_params`.
+  A failure restores the entity's transform (`at` and the tilt included).
+  While a single terrain tile regenerates its old heights are not used
+  (`world.ground_height` answers null, placement on it fails). Known gaps
+  while a physics world runs: colliders created earlier in the same batch
+  are not bodies yet (only the physics world is consulted), and a placed
+  dynamic body is pulled back by the simulation.
 
 ## Methods (v1 contract, ROADMAP A2/A3)
 
@@ -153,7 +226,11 @@ also flat ground at `ground_y` where no terrain is loaded), `lod_start`
 0..1 × radius where blades start thinning, `far_density` 0..1 kept at the
 radius),
 `point_light`, `dir_light`, `camera`, `collider`, `rigidbody`, `character`,
-`nav_agent`, `behavior`, `patrol`, `terrain`, `net_replicated`,
+`nav_agent`, `behavior`, `patrol`, `terrain` (only an edit that changes the
+generated heights — `seed`, `resolution`, `tile_size`, `height`, `octaves`,
+`warp`, `erosion`, `droplets`, `erosion_steps` — regenerates it; `snowline` is
+shading, `stream_radius` resizes the streaming window keeping loaded tiles,
+`gpu` picks the generator of the next tile), `net_replicated`,
 `audio_source` (`clip`, `bus`: master/music/sfx/ui/ambience, `volume`,
 `pitch`, `loop`, `play_on_start`, `spatial`, `min_distance`, `max_distance`,
 `rolloff`, `doppler`, plus write-only `command`: play/stop/pause/resume),
@@ -170,8 +247,8 @@ values. Unknown fields are errors (they name the known fields).
 | Method | Params | Result |
 |---|---|---|
 | `scene.components` | — | `[{name, summary, addable, writable}]` |
-| `scene.list` | `{name_contains?, component?, limit?=100, offset?=0}` | `{total, entities:[{id, name, parent, components:[names], world_position}]}` |
-| `scene.get` | `{entity}` | `{id, name, parent, children:[ids], components:{...}}` |
+| `scene.list` | `{name_contains?, component?, limit?=100, offset?=0}` | `{total, entities:[{id, name, parent, components:[names], world_position, world_bounds}]}` |
+| `scene.get` | `{entity}` | `{id, name, parent, children:[ids], world_bounds, local_bounds, components:{...}}` |
 | `scene.create` | `{name?, parent?, components?:{...}}` | `{id, name}` |
 | `scene.update` | `{entity, name?, components?:{...}}` | `{id}` |
 | `scene.remove_components` | `{entity, components:[names]}` | `{removed:[names]}` |
@@ -181,11 +258,13 @@ values. Unknown fields are errors (they name the known fields).
 | `scene.batch` | `{commands:[{method, params}], stop_on_error?=true}` | `{results:[{ok:true, result} \| {ok:false, error:{code,message}}]}` — a string `"@N"` in an `entity`/`parent` field means the `id` returned by command N of this batch. Deferred methods cannot be batched. |
 | `environment.get` | — | `{sun:{azimuth_deg, elevation_deg, intensity, color}, clouds:{enabled, coverage, density, bottom_km, thickness_km, size_km, detail, wind_speed, wind_dir_deg}}` |
 | `environment.set` | same shape, every field optional | `environment.get` result |
-| `world.ground_height` | `{points:[[x,z],...]}` (≤ 1024) | `{heights:[y \| null]}` — null where no terrain covers the point |
-| `camera.get` | — | `{position, yaw_deg, pitch_deg, fov_deg}` |
-| `camera.set` | `{position?, look_at?, yaw_deg?, pitch_deg?, fov_deg?}` | `camera.get` result |
+| `world.ground_height` | `{points:[[x,z],...]}` (≤ 1024) | `{heights:[y \| null], generating}` — null where no tile is loaded; `not_found` without terrain |
+| `terrain.status` | — | `{present, entity, streaming, generating, tiles_loaded, tiles_wanted, anchor, tile_size, bounds:{min,max} \| null}` (`{present:false}` without terrain) |
+| `world.place_on_ground` | `{entity, at?:[x,z], align_to_normal?=false, max_tilt_deg?=30, offset?=0}` | `{id, position, world_bounds, moved_y, tilt_deg, surface:{kind, entity, y, normal} \| null}` |
+| `camera.get` | — | `{position, yaw_deg, pitch_deg, fov_deg, near, far, near_auto, far_auto}` |
+| `camera.set` | `{position?, look_at?, yaw_deg?, pitch_deg?, fov_deg?, near?, far?, cut?}` | `camera.get` result |
 | `camera.frame` | `{entity?}` (whole scene when omitted) | `camera.get` result |
-| `render.screenshot` *(deferred)* | `{max_size?=1024}` | `{mime:"image/png", width, height, data:<base64>}` |
+| `render.screenshot` *(deferred)* | `{max_size?=1024, camera?:{position?, look_at? \| yaw_deg?/pitch_deg?, frame?, fov_deg?, near?, far?}}` | `{mime:"image/png", width, height, data:<base64>}` |
 | `asset.list_models` | — | `{models:[project-relative paths of .gltf/.glb]}` |
 | `asset.spawn_model` | `{path, name?, parent?, components?}` | `{roots:[ids]}` |
 | `sim.play` / `sim.stop` | — | `{playing}` |
@@ -476,6 +555,28 @@ session runs scripts.
   callbacks are in `debug.log` (category `script`) and in `status`.
 - `script.delete` does not detach the file from entities; running instances
   keep their loaded code until the session ends.
+
+## Asset downloads (quat-mcp only, ROADMAP A9)
+
+The engine never downloads anything. quat-mcp's `asset_search` /
+`asset_fetch` talk to the public Poly Haven API themselves
+(`tools/quat-mcp/src/assets/`): search filters `/assets?t=models` by keyword
+and category and reports per-resolution download sizes from `/files/<id>`;
+fetch downloads the glTF and its `include` files into
+`<project>/assets/meshes/polyhaven/<id>/` (`--project-root`, default the
+current directory). Ids must be Poly Haven slugs and every path from the API
+must be a plain relative path (no `..`, absolute, hidden or backslash
+components); every URL (and redirect, at most 3) must be https on
+`dl.polyhaven.org` or the API's host, or share the configured API's exact
+origin; every non-`data:` `buffers[].uri` / `images[].uri` of the glTF
+(percent-decoded) must name one of the downloaded files; the declared total is capped (`--asset-max-mb`, default 512)
+before anything is downloaded, and each file must match its declared size
+and MD5. Files land in a staging directory private to the request (concurrent
+fetches of one model never share it) that is moved into place only
+when everything verified, next to `LICENSE.md` (CC0, authors, source) and
+`polyhaven.json` (provenance). With `quat-cook` on PATH the model is also
+cooked to `<id>.glb`. The folder is gitignored. The engine then loads the
+files through `asset.spawn_model` / `instanced_mesh` like any other model.
 
 ## Errors
 

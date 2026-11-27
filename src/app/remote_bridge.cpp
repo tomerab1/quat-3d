@@ -87,6 +87,8 @@ struct RemoteBridge::Impl {
     std::optional<remote::RpcServer> server;
     ScreenshotCapture                shots;
     bool                             warned_primitives = false;
+    bool                             camera_cut = false; // take_camera_cut()
+    bool                             shot_frame_last = false; // last frame used a shot camera
     std::string                      last_instanced_warning;
     std::string                      last_material_warning;
 
@@ -138,6 +140,14 @@ struct RemoteBridge::Impl {
         p.yaw_deg = glm::degrees(*t.cam_yaw);
         p.pitch_deg = glm::degrees(*t.cam_pitch);
         p.fov_deg = glm::degrees(*t.cam_fov_y);
+        if (t.cam_near_override != nullptr) p.near_override = *t.cam_near_override;
+        if (t.cam_far_override != nullptr) p.far_override = *t.cam_far_override;
+        const engine::scene::ClipRange derived =
+            t.cam_derived_clip != nullptr ? *t.cam_derived_clip : engine::scene::ClipRange{};
+        const engine::scene::ClipRange planes =
+            engine::scene::apply_clip_overrides(derived, p.near_override, p.far_override);
+        p.near_m = planes.near_z;
+        p.far_m = planes.far_z;
         return p;
     }
 
@@ -146,7 +156,12 @@ struct RemoteBridge::Impl {
         *t.cam_yaw = glm::radians(p.yaw_deg);
         *t.cam_pitch = glm::radians(glm::clamp(p.pitch_deg, -89.0F, 89.0F));
         *t.cam_fov_y = glm::radians(p.fov_deg);
-        if (t.reset_temporal) t.reset_temporal(); // a teleport, not a camera move
+        if (t.cam_near_override != nullptr) *t.cam_near_override = p.near_override;
+        if (t.cam_far_override != nullptr) *t.cam_far_override = p.far_override;
+        // A teleport (`cut`, explicit or judged from the jump) restarts the
+        // renderer's temporal history (R11): the frame loop takes the cut
+        // (take_camera_cut) and resets it before the next gather.
+        camera_cut = camera_cut || p.cut;
 #ifndef ENGINE_EDITOR
         // Without the editor the view renders through the scene camera.
         entt::registry& r = t.scene->registry();
@@ -251,12 +266,11 @@ struct RemoteBridge::Impl {
                 return play;
             };
         }
-        if (t.ground_height != nullptr) {
-            s.ground_height = [this](float x, float z) { return (*t.ground_height)(x, z); };
-        }
+        s.terrain_height = t.terrain_height;
+        s.terrain_status = t.terrain_status;
         s.spawn_model = [this](const std::filesystem::path& p) { return spawn_model(p); };
-        s.screenshot = [this](std::uint32_t max_size, remote::Responder r) {
-            shots.request(max_size, std::move(r));
+        s.screenshot = [this](const remote::ScreenshotRequest& req, remote::Responder r) {
+            shots.request(req, std::move(r));
         };
         s.save_scene = [this](const std::filesystem::path& p) -> std::expected<void, Error> {
             if (is_playing()) return fail("stop play mode first (sim.stop)");
@@ -448,6 +462,18 @@ RemoteBridge::spawn_model(const std::filesystem::path& absolute) {
 }
 
 float RemoteBridge::advance_sim_unrendered() { return impl_->clock.advance(0.0F); }
+
+bool RemoteBridge::take_camera_cut() { return std::exchange(impl_->camera_cut, false); }
+
+std::optional<engine::remote::CameraPose> RemoteBridge::screenshot_view() {
+    Impl& m = *impl_;
+    std::optional<engine::remote::CameraPose> view = m.shots.begin_frame();
+    // The shot frame and the one returning to the viewport are both cuts:
+    // neither may blend with the other view's temporal history.
+    if (view || m.shot_frame_last) m.camera_cut = true;
+    m.shot_frame_last = view.has_value();
+    return view;
+}
 
 void RemoteBridge::note_draws(std::size_t draws) {
     impl_->draws = static_cast<std::uint32_t>(std::min<std::size_t>(draws, UINT32_MAX));

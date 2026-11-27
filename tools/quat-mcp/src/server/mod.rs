@@ -6,6 +6,8 @@
 // rustdoc lints would police that Markdown. It is text for the model, not API
 // documentation: `doc_markdown` (backticks around identifiers) is off there.
 #[allow(clippy::doc_markdown)]
+mod asset_tools;
+#[allow(clippy::doc_markdown)]
 mod behavior_tools;
 mod bt_outline;
 #[allow(clippy::doc_markdown)]
@@ -40,6 +42,7 @@ use serde_json::{Value, json};
 use crate::client::{EngineClient, EngineError};
 use crate::content;
 
+pub use asset_tools::AssetConfig;
 pub use prompts::{
     BuildWorldArgs, DebugSessionArgs, DesignBehaviorArgs, InspectSceneArgs, TuneLookArgs,
     WriteGameScriptArgs,
@@ -57,6 +60,7 @@ pub const SCRIPTING_REFERENCE_URI: &str = "quat://docs/scripting";
 pub struct QuatServer {
     engine: Arc<EngineClient>,
     long_timeout: Duration,
+    assets: Arc<asset_tools::AssetService>,
     tool_router: ToolRouter<Self>,
     prompt_router: PromptRouter<Self>,
 }
@@ -76,9 +80,18 @@ impl QuatServer {
         Self {
             engine,
             long_timeout,
+            assets: asset_tools::AssetService::new(AssetConfig::default()),
             tool_router: Self::tools(),
             prompt_router: Self::prompt_router(),
         }
+    }
+
+    /// Where the asset tools download from and to (default: Poly Haven into
+    /// the current directory's `assets/`).
+    #[must_use]
+    pub fn with_assets(mut self, config: AssetConfig) -> Self {
+        self.assets = asset_tools::AssetService::new(config);
+        self
     }
 
     /// Every tool this server offers, across all tool groups.
@@ -91,6 +104,7 @@ impl QuatServer {
             + Self::tuning_tools()
             + Self::behavior_tools()
             + Self::script_tools()
+            + Self::asset_tools()
     }
 
     /// Timeout for slow engine work (loading, baking, screenshots).

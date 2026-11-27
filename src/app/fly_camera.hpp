@@ -9,13 +9,21 @@
 // the editor keep a scene "camera" entity that this camera drives, since
 // camera_system is their only view path.
 //
-// The remote bridge's camera commands write pos / yaw / pitch / fov_y
-// directly; all angles are radians.
+// The remote bridge's camera commands write pos / yaw / pitch / fov_y and
+// the clip overrides directly; all angles are radians.
+//
+// Clip planes (issue #37): the frame loop derives near / far from the scene
+// every frame (engine/scene/view_clip.hpp: drawables + terrain streaming
+// window) and hands them to set_derived_clip(); near_override / far_override
+// (remote camera.set) replace either plane.
+
+#include <optional>
 
 #include <entt/entity/entity.hpp>
 #include <glm/glm.hpp>
 
-#include "engine/scene/scene.hpp" // CameraMatrices
+#include "engine/scene/scene.hpp"     // CameraMatrices
+#include "engine/scene/view_clip.hpp" // ClipRange
 
 struct SDL_Window;
 union SDL_Event;
@@ -28,6 +36,14 @@ struct FlyInputGate {
     bool wasd = true;
     bool arrows = true;
 };
+
+// View / projection of a camera at `pos` looking along (yaw, pitch) radians
+// (Vulkan Y flip, like camera_system). FlyCamera::matrices() and screenshot
+// cameras share it.
+[[nodiscard]] engine::scene::CameraMatrices view_matrices(const glm::vec3& pos, float yaw,
+                                                          float pitch, float fov_y,
+                                                          const engine::scene::ClipRange& clip,
+                                                          float aspect);
 
 class FlyCamera {
 public:
@@ -63,6 +79,12 @@ public:
     void follow(engine::scene::Scene& scene, entt::entity target);
 
     [[nodiscard]] glm::vec3 forward() const;
+    // This frame's derived clip planes (before matrices()). Builds without
+    // the editor also write the effective planes into the camera entity.
+    void set_derived_clip(engine::scene::Scene& scene, const engine::scene::ClipRange& derived);
+    // The planes matrices() uses: derived, with the overrides applied.
+    [[nodiscard]] engine::scene::ClipRange clip() const;
+    [[nodiscard]] const engine::scene::ClipRange& derived_clip() const { return auto_clip_; }
     // View / projection for this camera (Vulkan Y flip, like camera_system).
     [[nodiscard]] engine::scene::CameraMatrices matrices(float aspect) const;
 
@@ -72,8 +94,12 @@ public:
     float     yaw = 0.0F;
     float     pitch = 0.0F;
     float     fov_y = 0.0F; // remote camera.set can change it
+    // Explicit clip planes (remote camera.set); nullopt = derived.
+    std::optional<float> near_override;
+    std::optional<float> far_override;
 
 private:
+    engine::scene::ClipRange auto_clip_{};
     float move_speed_ = 3.0F;
     bool  looking_ = false; // right mouse button held -> mouse-look active
     float look_dx_ = 0.0F;  // per-frame accumulated mouse-look delta

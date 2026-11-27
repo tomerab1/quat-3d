@@ -866,6 +866,7 @@ std::expected<void, core::Error> apply_component(entt::registry& r, entt::entity
     if (name == "terrain") {
         return merge<Terrain>(r, e, v, name, strict, [](JsonFields& f, Terrain& t) {
             terrain::TerrainParams& p = t.params;
+            const terrain::TerrainParams before = p;
             f.integer("seed", p.seed, 0, 0xFFFFFFFFLL);
             f.integer("resolution", p.resolution, 17, 8193);
             f.number("tile_size", p.tile_size_m, 1.0F, 100000.0F);
@@ -889,7 +890,11 @@ std::expected<void, core::Error> apply_component(entt::registry& r, entt::entity
                            std::to_string(terrain::max_grid_erosion_texel_steps) +
                            " (e.g. 1025 at 5000 steps)");
             }
-            t.regenerate = true; // rebuild with the new parameters
+            // Only a new shape regenerates (issue #38): `snowline` is
+            // shading, and the runtime applies `stream_radius` (resizing the
+            // window, keeping loaded tiles), `gpu` (the next tile's
+            // generator) and `streaming` (a mode switch) itself.
+            if (!terrain::same_shape(before, p)) t.regenerate = true;
         });
     }
     if (name == "grass") {
