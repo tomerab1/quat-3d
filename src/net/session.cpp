@@ -7,6 +7,7 @@
 
 #include <entt/entity/registry.hpp>
 
+#include "engine/net/character_step.hpp"
 #include "engine/net/net_ids.hpp"
 #include "engine/physics/physics_world.hpp"
 #include "engine/scene/components.hpp"
@@ -35,16 +36,18 @@ namespace {
            registry.all_of<scene::CharacterController, scene::Transform>(character);
 }
 
-// Toy locomotion matching CharacterController.speed's default (14.3); the
-// host runs the full character controller.
-[[nodiscard]] glm::vec3 predict_step(const glm::vec3& p, const PlayerInput& in) {
-    constexpr float walk_speed = 4.0F;
-    return p + in.move * (walk_speed * in.dt);
+// Host and client step the character with the same rule; see character_step.hpp.
+[[nodiscard]] CharacterPredictor::StepFn character_stepper(entt::registry& registry,
+                                                           physics::PhysicsWorld& world,
+                                                           entt::entity character) {
+    return [&registry, &world, character](const CharacterState& s, const PlayerInput& in) {
+        return step_character_input(registry, world, character, s, in);
+    };
 }
 
 } // namespace
 
-NetSession::NetSession() : predictor_(CharacterPredictor::StepFn(predict_step)) {}
+NetSession::NetSession() = default;
 NetSession::NetSession(NetSession&&) noexcept = default;
 NetSession& NetSession::operator=(NetSession&&) noexcept = default;
 NetSession::~NetSession() = default;
@@ -78,29 +81,32 @@ NetSession NetSession::from_environment(entt::registry& registry) {
     return session;
 }
 
-void NetSession::drive_character(entt::registry& registry, physics::PhysicsWorld* /*world*/,
+void NetSession::drive_character(entt::registry& registry, physics::PhysicsWorld* world,
                                  entt::entity character, const glm::vec3& move, float dt) {
     if (!controllable(registry, character)) return;
     auto& cc = registry.get<scene::CharacterController>(character);
 
     if (server_ && owner_ != invalid_client) return; // the remote player drives it
     if (!client_ || !client_->connected()) {
-        cc.move = move; // offline / host's own character
+        cc.move = move; // offline / host's own character / not connected yet
         return;
     }
 
-    // Joined: ship the input and predict it locally; the host is authoritative.
+    // Joined: ship the input and predict it locally with the host's step; the
+    // host is authoritative. The character is stepped here (and replayed in
+    // reconciliation), never by character_system.
+    if (!registry.all_of<scene::NetDriven>(character)) {
+        registry.emplace<scene::NetDriven>(character);
+    }
     const std::optional<PlayerInput> input = make_input(next_sequence_ + 1, move, dt);
     if (!input) return;
     next_sequence_ = input->sequence;
     if (!client_->send(encode_input(*input), /*reliable=*/true)) {
         std::fprintf(stderr, "[net] input %u refused by the transport\n", input->sequence);
     }
-    auto& tf = registry.get<scene::Transform>(character);
-    const glm::vec3 predicted = predictor_.predict(glm::vec3(tf.world[3]), *input);
-    tf.local[3] = glm::vec4(predicted, 1.0F);
-    tf.world[3] = glm::vec4(predicted, 1.0F);
-    cc.move = glm::vec3(0.0F); // the local sim must not double-apply
+    if (world == nullptr) return; // no physics: the host's states place the character
+    (void)predictor_.predict(character_state(registry, character), *input,
+                             character_stepper(registry, *world, character));
 }
 
 void NetSession::update(entt::registry& registry, physics::PhysicsWorld* world,
@@ -173,21 +179,22 @@ void NetSession::host_update(entt::registry& registry, physics::PhysicsWorld* wo
     // same step the client predicts with), then acknowledge what ran.
     inputs_.credit(dt);
     if (world == nullptr) return;
-    bool stepped = false;
+    const CharacterPredictor::StepFn step = character_stepper(registry, *world, character);
+    std::optional<CharacterState> state;
     while (const std::optional<PlayerInput> input = inputs_.take()) {
-        registry.get<scene::CharacterController>(character).move = input->move;
-        scene::step_character(registry, *world, character, input->dt);
-        stepped = true;
+        state = step(character_state(registry, character), *input);
     }
-    if (!stepped) return;
-    const auto& tf = registry.get<scene::Transform>(character);
+    if (!state) return;
+    // Acknowledge exactly what was simulated, with the state it produced.
     // Unreliable latest-wins: a refused state is superseded by the next one.
-    (void)server_->send(owner_, encode_character_state(inputs_.acked(), glm::vec3(tf.world[3])),
+    (void)server_->send(owner_, encode_character_state(inputs_.acked(), *state),
                         /*reliable=*/false);
 }
 
-void NetSession::client_update(entt::registry& registry, physics::PhysicsWorld* /*world*/,
+void NetSession::client_update(entt::registry& registry, physics::PhysicsWorld* world,
                                entt::entity character, float dt) {
+    // Only the newest authoritative state of this poll matters.
+    std::optional<std::pair<std::uint32_t, CharacterState>> latest;
     for (const NetEvent& ev : client_->poll()) {
         if (ev.type == NetEvent::Type::connected) {
             std::fprintf(stderr, "[net] connected to host\n");
@@ -196,19 +203,32 @@ void NetSession::client_update(entt::registry& registry, physics::PhysicsWorld* 
         if (ev.type == NetEvent::Type::disconnected) {
             std::fprintf(stderr, "[net] disconnected from host\n");
             predictor_.reset();
+            if (character != entt::null && registry.valid(character)) {
+                registry.remove<scene::NetDriven>(character); // local simulation resumes
+            }
             continue;
         }
         std::uint32_t acked = 0;
-        glm::vec3 server_pos(0.0F);
-        if (decode_character_state(ev.payload, acked, server_pos)) {
-            if (controllable(registry, character)) {
-                auto& tf = registry.get<scene::Transform>(character);
-                const glm::vec3 corrected = predictor_.reconcile(acked, server_pos);
-                tf.local[3] = glm::vec4(corrected, 1.0F);
-                tf.world[3] = glm::vec4(corrected, 1.0F);
-            }
+        CharacterState server;
+        if (decode_character_state(ev.payload, acked, server)) {
+            if (!latest || acked > latest->first) latest.emplace(acked, server);
         } else {
             receiver_.receive(ev.payload);
+        }
+    }
+
+    if (latest && controllable(registry, character)) {
+        if (world == nullptr) {
+            // No local physics to predict with: show the host's state.
+            auto& tf = registry.get<scene::Transform>(character);
+            tf.local[3] = glm::vec4(latest->second.position, 1.0F);
+            tf.world[3] = glm::vec4(latest->second.position, 1.0F);
+        } else if (const std::optional<CharacterState> corrected = predictor_.reconcile(
+                       latest->first, latest->second,
+                       character_stepper(registry, *world, character))) {
+            // Rewound + replayed through the CharacterVirtual; with nothing
+            // left to replay it still has to be moved onto the server state.
+            restore_character(registry, *world, character, *corrected);
         }
     }
     receiver_.apply(registry, dt);

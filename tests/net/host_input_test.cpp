@@ -107,16 +107,21 @@ TEST(NetHostInput, ResetForgetsTheOldOwner) {
 }
 
 TEST(NetClientInput, PendingQueueIsBounded) {
-    CharacterPredictor predictor{CharacterPredictor::StepFn(
-        [](const glm::vec3& p, const PlayerInput& in) { return p + in.move * in.dt; })};
-    glm::vec3 pos(0.0F);
+    const CharacterPredictor::StepFn step = [](const engine::net::CharacterState& s,
+                                               const PlayerInput& in) {
+        engine::net::CharacterState next = s;
+        next.position += in.move * in.dt;
+        return next;
+    };
+    CharacterPredictor predictor;
+    engine::net::CharacterState state;
     // The host stops acknowledging (stall / packet loss): memory stays bounded.
     for (std::uint32_t s = 1; s <= 1000; ++s) {
-        pos = predictor.predict(pos, {s, glm::vec3(1.0F, 0.0F, 0.0F), k_frame});
+        state = predictor.predict(state, {s, glm::vec3(1.0F, 0.0F, 0.0F), k_frame}, step);
     }
     EXPECT_EQ(predictor.pending(), CharacterPredictor::max_pending);
     EXPECT_EQ(predictor.dropped(), 1000U - CharacterPredictor::max_pending);
-    (void)predictor.reconcile(1000U, pos);
+    (void)predictor.reconcile(1000U, state, step);
     EXPECT_EQ(predictor.pending(), 0U);
 }
 
