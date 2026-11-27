@@ -152,14 +152,9 @@ extract_skeletons(const fastgltf::Asset& asset) {
 [[nodiscard]] std::expected<std::vector<animation::SkeletonAsset>, core::Error>
 parse_and_extract_skeletons(fastgltf::GltfDataBuffer& data,
                             const std::filesystem::path& base_dir) {
-    fastgltf::Parser parser(kParserExtensions);
-    fastgltf::Expected<fastgltf::Asset> asset = parser.loadGltf(data, base_dir, kLoadOptions);
-    if (asset.error() != fastgltf::Error::None) {
-        return fail(std::string("fastgltf parse failed: ") +
-                    std::string(fastgltf::getErrorMessage(asset.error())));
-    }
-    if (auto valid = validate_asset(asset.get()); !valid) return std::unexpected(valid.error());
-    return extract_skeletons(asset.get());
+    auto asset = parse_gltf(data, base_dir);
+    if (!asset) return std::unexpected(asset.error());
+    return extract_skeletons(*asset);
 }
 
 namespace {
@@ -263,14 +258,9 @@ extract_animations(const fastgltf::Asset& asset) {
 [[nodiscard]] std::expected<std::vector<animation::AnimClipAsset>, core::Error>
 parse_and_extract_animations(fastgltf::GltfDataBuffer& data,
                              const std::filesystem::path& base_dir) {
-    fastgltf::Parser parser(kParserExtensions);
-    fastgltf::Expected<fastgltf::Asset> asset = parser.loadGltf(data, base_dir, kLoadOptions);
-    if (asset.error() != fastgltf::Error::None) {
-        return fail(std::string("fastgltf parse failed: ") +
-                    std::string(fastgltf::getErrorMessage(asset.error())));
-    }
-    if (auto valid = validate_asset(asset.get()); !valid) return std::unexpected(valid.error());
-    return extract_animations(asset.get());
+    auto asset = parse_gltf(data, base_dir);
+    if (!asset) return std::unexpected(asset.error());
+    return extract_animations(*asset);
 }
 
 

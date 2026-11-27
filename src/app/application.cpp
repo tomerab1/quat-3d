@@ -156,7 +156,8 @@ bool Application::init_subsystems() {
     }
     const engine::rhi::TransferContext setup_transfer{vk_device, setup_pool,
                                                       device_.graphics_queue(),
-                                                      device_.max_sampler_anisotropy()};
+                                                      device_.max_sampler_anisotropy(),
+                                                      device_.texture_caps()};
 
     bool with_ui = false;
 #ifdef ENGINE_EDITOR

@@ -84,10 +84,13 @@ assemble_scene(const fastgltf::Asset& a, const std::string& key_prefix,
     if (auto ok = validate_skin_bindings(a); !ok) return std::unexpected(ok.error());
 
     // Textures: decode + upload each image once, cached by "<path>#img<i>".
-    auto tex_datas = extract_textures(a);
+    // CPU decode / KTX2 transcode runs on worker threads inside
+    // extract_textures; only the uploads below touch the device.
+    auto tex_datas = extract_textures(a, transfer.texture_caps);
     if (!tex_datas) return std::unexpected(tex_datas.error());
     std::vector<asset::AssetHandle<asset::TextureAsset>> tex_handles(a.images.size());
     for (std::size_t i = 0; i < a.images.size(); ++i) {
+        if ((*tex_datas)[i].pixels.empty()) continue; // KHR_texture_basisu fallback only
         const std::string k = key_prefix + "#img" + std::to_string(i);
         tex_handles[i] = assets.load<asset::TextureAsset>(
             k, [&](const std::filesystem::path&) {
@@ -300,15 +303,9 @@ GltfLoader::instantiate(const std::filesystem::path& path, rhi::GpuAllocator& al
         return fail("fastgltf: could not read '" + path.string() + "': " +
                     std::string(fastgltf::getErrorMessage(data.error())));
     }
-    fastgltf::Parser parser(kParserExtensions);
-    fastgltf::Expected<fastgltf::Asset> parsed =
-        parser.loadGltf(data.get(), path.parent_path(), kLoadOptions);
-    if (parsed.error() != fastgltf::Error::None) {
-        return fail(std::string("fastgltf parse failed: ") +
-                    std::string(fastgltf::getErrorMessage(parsed.error())));
-    }
-    if (auto valid = validate_asset(parsed.get()); !valid) return std::unexpected(valid.error());
-    return assemble_scene(parsed.get(), path.generic_string(), allocator, transfer, assets, scene);
+    auto parsed = parse_gltf(data.get(), path.parent_path());
+    if (!parsed) return std::unexpected(parsed.error());
+    return assemble_scene(*parsed, path.generic_string(), allocator, transfer, assets, scene);
 }
 
 // ---------------------------------------------------------------------------
