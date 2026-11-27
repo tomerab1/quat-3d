@@ -7,16 +7,15 @@
 // unloaded handle. The image is left in SHADER_READ_ONLY_OPTIMAL after upload.
 
 #include <cstdint>
+#include <expected>
 
 #include <vulkan/vulkan.h>
 
+#include "engine/asset/texture_data.hpp"
+#include "engine/core/error.hpp"
 #include "engine/rhi/gpu_allocator.hpp"
 
 namespace engine::asset {
-
-// How a glTF texture's bytes should be interpreted. Base colour and emissive are
-// authored in sRGB; normal, metallic-roughness and occlusion are linear data.
-enum class TextureColorSpace : std::uint8_t { srgb, linear };
 
 struct TextureAsset {
     rhi::GpuImage  image;
@@ -31,5 +30,17 @@ struct TextureAsset {
                && sampler.handle() != VK_NULL_HANDLE;
     }
 };
+
+// Vulkan format for `format` in `color_space` (bc5/bc4 have no sRGB variant
+// and are always UNORM).
+[[nodiscard]] VkFormat texel_vk_format(TexelFormat format, TextureColorSpace color_space) noexcept;
+
+// Uploads `data` to a device-local image with its view (swizzled as
+// requested) and a repeat sampler. RGBA8 without levels gets its mip chain
+// generated; otherwise the given levels are uploaded as they are. The device
+// must support the format (see rhi::TextureCompressionSupport).
+[[nodiscard]] std::expected<TextureAsset, core::Error>
+upload_texture_data(const TextureData& data, rhi::GpuAllocator& allocator,
+                    const rhi::TransferContext& transfer);
 
 } // namespace engine::asset

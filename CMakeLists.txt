@@ -88,6 +88,8 @@ find_package(VulkanMemoryAllocator CONFIG REQUIRED)
 find_package(nlohmann_json CONFIG REQUIRED)
 find_package(glm CONFIG REQUIRED)
 find_package(fastgltf CONFIG REQUIRED)
+find_package(Ktx CONFIG REQUIRED)            # KTX2 + Basis Universal (R17)
+find_package(meshoptimizer CONFIG REQUIRED)  # mesh codecs / optimisation (R17)
 find_package(Stb REQUIRED)
 find_package(EnTT CONFIG REQUIRED)
 find_package(Jolt CONFIG REQUIRED)
@@ -133,6 +135,7 @@ add_library(engine_rhi STATIC
     src/rhi/device.cpp
     src/rhi/swapchain.cpp
     src/rhi/gpu_allocator.cpp
+    src/rhi/image_upload.cpp
     src/rhi/vma_impl.cpp
     src/rhi/shader_reflection.cpp
     src/rhi/pipeline_cache.cpp
@@ -162,10 +165,16 @@ set_source_files_properties(src/rhi/vma_impl.cpp PROPERTIES COMPILE_OPTIONS "-w"
 # and asset types (MeshAsset). MeshAsset owns GpuBuffers, so engine_rhi and glm
 # are PUBLIC: any consumer of the asset headers needs them transitively.
 # ---------------------------------------------------------------------------
+# libktx (KTX2 parsing, Zstd, Basis Universal transcoding) is an
+# implementation detail of the KTX2 texture loader (PRIVATE).
 add_library(engine_asset STATIC
     src/asset/asset_manager.cpp
-    src/asset/material_asset.cpp)
+    src/asset/material_asset.cpp
+    src/asset/ktx2_validate.cpp
+    src/asset/ktx2_transcode.cpp
+    src/asset/texture_upload.cpp)
 target_link_libraries(engine_asset PUBLIC engine_flags engine_rhi glm::glm)
+target_link_libraries(engine_asset PRIVATE KTX::ktx)
 target_include_directories(engine_asset PUBLIC ${ENGINE_PUBLIC_INCLUDE})
 
 # ---------------------------------------------------------------------------
@@ -203,7 +212,8 @@ add_library(engine_scene STATIC
     src/scene/gltf/skin_animation.cpp
     src/scene/gltf/scene_assembly.cpp
     src/scene/gltf/self_tests.cpp
-    src/scene/stb_image_impl.cpp
+    src/scene/gltf/texture.cpp
+    src/scene/gltf/meshopt_decode.cpp
     src/scene/components.cpp
     src/scene/scene.cpp
     src/scene/physics_system.cpp
@@ -232,11 +242,16 @@ target_link_libraries(engine_scene PUBLIC
 # nlohmann_json is PUBLIC: component_json.hpp exposes JSON values (the codec
 # shared by scene files and the remote-control API).
 target_link_libraries(engine_scene PUBLIC nlohmann_json::nlohmann_json)
-target_link_libraries(engine_scene PRIVATE fastgltf::fastgltf)
+target_link_libraries(engine_scene PRIVATE fastgltf::fastgltf meshoptimizer::meshoptimizer
+    engine_stb_image)
 target_include_directories(engine_scene PRIVATE ${Stb_INCLUDE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_include_directories(engine_scene PUBLIC ${ENGINE_PUBLIC_INCLUDE})
 
-# stb's implementation TU is not warning-clean under our strict flags.
+# stb_image's implementation, shared by the glTF loader and the cooker. Its TU
+# is not warning-clean under our strict flags.
+add_library(engine_stb_image STATIC src/scene/stb_image_impl.cpp)
+target_link_libraries(engine_stb_image PRIVATE engine_flags)
+target_include_directories(engine_stb_image PRIVATE ${Stb_INCLUDE_DIR})
 set_source_files_properties(src/scene/stb_image_impl.cpp PROPERTIES COMPILE_OPTIONS "-w")
 
 # ---------------------------------------------------------------------------

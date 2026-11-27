@@ -8,6 +8,7 @@
 #include <vulkan/vulkan.h>
 
 #include "engine/core/error.hpp"
+#include "engine/rhi/texture_compression.hpp"
 
 namespace engine::rhi {
 
@@ -66,6 +67,10 @@ public:
     // Device limit for anisotropic filtering; 0 when samplerAnisotropy is
     // unsupported (the feature is enabled whenever the device offers it).
     [[nodiscard]] float max_sampler_anisotropy() const { return max_sampler_anisotropy_; }
+    // Compressed texture families enabled on this device (see TransferContext).
+    [[nodiscard]] const TextureCompressionSupport& texture_compression() const {
+        return texture_compression_;
+    }
     [[nodiscard]] DescriptorBackend descriptor_backend() const { return descriptor_backend_; }
     [[nodiscard]] bool uses_descriptor_buffer() const {
         return descriptor_backend_ == DescriptorBackend::ext_descriptor_buffer;
@@ -95,6 +100,7 @@ private:
     VkPhysicalDeviceProperties properties_{};
     VkPhysicalDeviceDescriptorBufferPropertiesEXT descriptor_buffer_props_{};
     float                    max_sampler_anisotropy_ = 0.0F;
+    TextureCompressionSupport texture_compression_{};
     DescriptorBackend        descriptor_backend_ = DescriptorBackend::ext_descriptor_buffer;
 };
 

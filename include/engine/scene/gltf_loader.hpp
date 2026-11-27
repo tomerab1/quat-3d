@@ -46,15 +46,11 @@ struct MeshData {
     std::vector<asset::SkinVertex> skin;
 };
 
-// CPU-side decoded texture (always RGBA8, tightly packed), before GPU upload.
-// `color_space` is resolved from how the source image is referenced in glTF
+// CPU-side decoded texture, before GPU upload: RGBA8 for PNG/JPEG sources (mips
+// generated on upload), or the transcoded mip chain of a KTX2 image. The
+// colour space and role are resolved from how the image is referenced in glTF
 // materials (base colour / emissive are sRGB, everything else is linear data).
-struct TextureData {
-    std::vector<std::byte>   pixels;
-    std::uint32_t            width  = 0;
-    std::uint32_t            height = 0;
-    asset::TextureColorSpace color_space = asset::TextureColorSpace::linear;
-};
+using TextureData = asset::TextureData;
 
 // CPU-side material extracted from glTF: scalar PBR parameters (factors + flags)
 // plus the glTF image index backing each texture slot (`no_texture` if absent).
@@ -87,8 +83,9 @@ public:
     load(const std::filesystem::path& path, rhi::GpuAllocator& allocator,
          const rhi::TransferContext& transfer);
 
-    // Decode every glTF image into RGBA8 CPU pixels, tagging each with the colour
-    // space implied by its material usage. No device needed.
+    // Decode every glTF image a material samples into CPU texture data, tagging
+    // each with the colour space implied by its material usage. No device
+    // needed: KTX2 images are transcoded to RGBA8.
     [[nodiscard]] static std::expected<std::vector<TextureData>, core::Error>
     load_texture_data(const std::filesystem::path& path);
 
@@ -141,12 +138,16 @@ public:
                 const rhi::TransferContext& transfer, asset::AssetManager& assets, Scene& scene);
 };
 
-// Decode a single encoded image (PNG/JPEG/etc.) into RGBA8 pixels via stb_image.
+// Decode a single encoded image: PNG/JPEG/etc. into RGBA8 via stb_image, KTX2
+// via asset::decode_ktx2 (transcoded for `caps` according to `role`).
 [[nodiscard]] std::expected<TextureData, core::Error>
 decode_image(std::span<const std::byte> encoded,
-             asset::TextureColorSpace color_space = asset::TextureColorSpace::linear);
+             asset::TextureColorSpace color_space = asset::TextureColorSpace::linear,
+             asset::TextureRole role = asset::TextureRole::color,
+             const rhi::TextureCompressionSupport& caps = {});
 
-// Upload decoded pixels to a device-local image and build its view + sampler.
+// Upload decoded texture data to a device-local image and build its view +
+// sampler (asset::upload_texture_data).
 [[nodiscard]] std::expected<asset::TextureAsset, core::Error>
 upload_texture(const TextureData& data, rhi::GpuAllocator& allocator,
                const rhi::TransferContext& transfer);

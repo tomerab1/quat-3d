@@ -159,6 +159,9 @@ struct Candidate {
     bool has_descriptor_buffer = false;
 };
 
+// PCI vendor id Apple GPUs report through MoltenVK / KosmicKrisp.
+constexpr std::uint32_t k_vendor_apple = 0x106B;
+
 // Require Vulkan 1.3 + dynamicRendering + synchronization2 + swapchain, then
 // rank by device type (prefer discrete). In this WSL2 box only llvmpipe
 // qualifies; on real hardware this picks the discrete GPU. See CLAUDE.md.
@@ -340,6 +343,14 @@ std::expected<Device, core::Error> Device::create(const CreateInfo& info) {
     if (supported_core.samplerAnisotropy == VK_TRUE) {
         dev.max_sampler_anisotropy_ = candidate.properties.limits.maxSamplerAnisotropy;
     }
+    // Block-compressed texture families, likewise enabled whenever offered;
+    // asset loads pick their transcode targets from what is enabled here.
+    core_features.textureCompressionBC = supported_core.textureCompressionBC;
+    core_features.textureCompressionASTC_LDR = supported_core.textureCompressionASTC_LDR;
+    dev.texture_compression_.bc = supported_core.textureCompressionBC == VK_TRUE;
+    dev.texture_compression_.astc_ldr = supported_core.textureCompressionASTC_LDR == VK_TRUE;
+    dev.texture_compression_.prefer_astc =
+        dev.texture_compression_.astc_ldr && candidate.properties.vendorID == k_vendor_apple;
 
     VkPhysicalDeviceVulkan12Features features12{};
     features12.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES;
@@ -466,6 +477,7 @@ Device& Device::operator=(Device&& other) noexcept {
         properties_      = other.properties_;
         descriptor_buffer_props_ = other.descriptor_buffer_props_;
         max_sampler_anisotropy_  = other.max_sampler_anisotropy_;
+        texture_compression_     = other.texture_compression_;
         descriptor_backend_      = other.descriptor_backend_;
     }
     return *this;
