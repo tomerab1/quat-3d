@@ -209,7 +209,7 @@ JSON-RPC over loopback TCP to the engine.
   ocean, clouds), wetness/snow layers, rain with an occlusion map, cloud
   shadows; then froxel volumetric fog + local fog volumes (on R10.1's
   clusters) and a 2.5D volumetric cloud layer. *(quick win → medium)*
-  - [ ] **R13.1 Weather + wind foundation.** One `WeatherState` singleton
+  - [x] **R13.1 Weather + wind foundation.** One `WeatherState` singleton
     component (wind direction / speed / gustiness / turbulence, cloud
     cover, precipitation intensity + type, surface wetness, snow
     accumulation, temperature) with an A8-style field table driving the
