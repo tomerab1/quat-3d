@@ -78,9 +78,10 @@ default environment blocks it), then:
 ```sh
 # toolchain + SDL3 system headers
 apt-get update
-apt-get install -y libc++-18-dev libc++abi-18-dev libx11-dev libxft-dev libxext-dev \
-  libwayland-dev libxkbcommon-dev libegl-dev pkg-config libvulkan-dev \
-  autoconf automake libtool
+apt-get install -y libc++-18-dev libc++abi-18-dev pkg-config libvulkan-dev \
+  libx11-dev libxext-dev libxft-dev libxcursor-dev libxrandr-dev libxi-dev \
+  libxss-dev libxtst-dev libxfixes-dev libxkbcommon-dev \
+  libwayland-dev wayland-protocols libegl-dev libdecor-0-dev autoconf automake libtool
 
 # vcpkg at the manifest baseline
 git clone https://github.com/microsoft/vcpkg.git ~/vcpkg

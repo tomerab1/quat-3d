@@ -73,7 +73,9 @@ git clone https://github.com/microsoft/vcpkg.git ~/vcpkg
 
 ```sh
 sudo apt install clang libc++-dev libc++abi-dev cmake ninja-build pkg-config \
-     libx11-dev libxft-dev libxext-dev libwayland-dev libxkbcommon-dev libegl-dev
+     libx11-dev libxext-dev libxft-dev libxcursor-dev libxrandr-dev libxi-dev \
+     libxss-dev libxtst-dev libxfixes-dev libxkbcommon-dev \
+     libwayland-dev wayland-protocols libegl-dev libdecor-0-dev   # SDL3 X11/Wayland
 # install the Vulkan SDK (or just slangc) and make sure `slangc` is on PATH
 
 cmake --preset release

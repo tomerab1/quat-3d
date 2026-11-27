@@ -28,7 +28,9 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             clang libc++-dev libc++abi-dev ninja-build cmake pkg-config \
-            libx11-dev libxft-dev libxext-dev libwayland-dev libxkbcommon-dev libegl-dev \
+            libx11-dev libxext-dev libxft-dev libxcursor-dev libxrandr-dev libxi-dev \
+            libxss-dev libxtst-dev libxfixes-dev libxkbcommon-dev \
+            libwayland-dev wayland-protocols libegl-dev libdecor-0-dev \
             libvulkan-dev mesa-vulkan-drivers autoconf automake libtool
 
       - name: Slang compiler
@@ -51,23 +53,30 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: ${{ github.workspace }}/.vcpkg-archives
-          key: vcpkg-linux-${{ env.VCPKG_COMMIT }}-${{ hashFiles('vcpkg.json', 'triplets/**', 'ports/**') }}
-          restore-keys: vcpkg-linux-${{ env.VCPKG_COMMIT }}-
+          # Cache entries are immutable, so every run saves under its own key
+          # and restores the newest one with the same prefix: a partial
+          # dependency build (a failed run) is kept and completed next time.
+          key: vcpkg-linux-${{ env.VCPKG_COMMIT }}-${{ hashFiles('vcpkg.json', 'triplets/**', 'ports/**') }}-${{ github.run_id }}
+          restore-keys: |
+            vcpkg-linux-${{ env.VCPKG_COMMIT }}-${{ hashFiles('vcpkg.json', 'triplets/**', 'ports/**') }}-
+            vcpkg-linux-${{ env.VCPKG_COMMIT }}-
 
       - name: Configure
+        id: configure
         run: cmake --preset release -DENGINE_PROFILE=OFF
 
-      # Saved right after configure (where vcpkg builds the dependencies), so
-      # an engine compile or test failure later does not discard the hour-long
-      # dependency build.
+      # Saved right after configure (where vcpkg builds the dependencies) and
+      # even when configure fails, so neither a dependency failure nor a later
+      # engine compile/test failure discards the dependencies already built.
       - name: Save vcpkg binary cache
-        if: steps.vcpkg-cache.outputs.cache-hit != 'true'
+        if: always() && steps.vcpkg-cache.outcome == 'success'
         uses: actions/cache/save@v4
         with:
           path: ${{ github.workspace }}/.vcpkg-archives
           key: ${{ steps.vcpkg-cache.outputs.cache-primary-key }}
 
       - name: Build
+        if: steps.configure.outcome == 'success'
         run: cmake --build --preset release
 
       - name: Tests (CPU + GPU on lavapipe)
