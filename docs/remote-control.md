@@ -60,7 +60,7 @@ wired into the game by `src/app/remote_bridge.cpp`), plus:
 |---|---|---|
 | `session.hello` | `{token?}` | `{protocol, server, methods}` |
 | `rpc.methods` | — | `[{name, summary, deferred}]` |
-| `engine.info` | — | `{engine, frame, entities, playing, editor}` |
+| `engine.info` | — | `{engine, frame, entities, playing, paused, editor}` |
 
 `rpc.methods` lists every registered method with a one-line summary.
 Details the contract leaves open, as implemented:
@@ -161,8 +161,83 @@ direction `d` gives `azimuth_deg = atan2(d.z, d.x)` and `elevation_deg =
 asin(-d.y)`.
 
 Methods that need something only the full application has (camera,
-screenshot, clouds, glTF spawn, play/stop, save/load, nav bake) return
+screenshot, clouds, glTF spawn, play/stop, save/load, nav bake, and the
+debugging services: log, clock, physics world, navmesh) return
 `unavailable` when the engine runs without it (e.g. in tests).
+
+## Debugging methods (ROADMAP A5)
+
+Methods that let a model diagnose a running game. Contract first: the
+engine (`src/remote/world/debug_*.cpp`, services wired by
+`src/app/remote_bridge.cpp`) and quat-mcp's `debug_*` tools follow this table.
+
+| Method | Params | Result |
+|---|---|---|
+| `debug.log` | `{since_seq?, level?, category?, contains?, limit?=100}` (limit 1..1000) | `{lines:[{seq, t, level, category, message}], cursor, more, missed, oldest_seq, capacity}` |
+| `debug.stats` | — | `{frame, frame_time_ms:{last, avg, worst, samples}, fps, draws, memory:{resident_bytes}, entities, physics:{bodies, active_bodies, characters}, nav:{agents, moving, failed, navmesh_polygons}, sim:<clock>, log:{last_seq, warnings, errors, last_error_seq}}` |
+| `debug.pause` / `debug.resume` | — | `<clock>` |
+| `debug.step` *(deferred)* | `{frames?=1, dt?=1/60}` (frames 1..10000, dt in [0.0001, 0.1] s) | `<clock>` once the steps have run |
+| `debug.time_scale` | `{scale}` in [0.01, 10] | `<clock>` |
+| `debug.watch` | `{entity}` or `{entities:[...]}` (≤ 64), `components?:[names]` | `{entities:[{id, name, world_position, components:{...}, missing?:[names], nav_agent_state?}], frame?, sim_time_s?}` |
+| `debug.raycast` | `{origin, direction, max_distance?=1000, include_sensors?=false}` | `{hit:false}` or `{hit:true, entity, name, kind, point, normal, distance, sensor}` |
+| `debug.nav_path` | `{from, to}` | `{points:[[x,y,z]...], partial, length}` |
+
+`<clock>` is `{paused, time_scale, pending_steps, steps_run, sim_frames,
+sim_time_s}`. `engine.info` also reports `paused`.
+
+- **Log.** The engine keeps the most recent 4096 log lines in a ring
+  (`engine/core/log.hpp`): lines written through `core::log()` (category as
+  given; Vulkan validation messages arrive as category `vulkan`) and — when
+  the endpoint is enabled — everything the process writes to stderr, tee'd
+  through a pipe (`QUAT_LOG_CAPTURE=0` disables the capture). Captured lines
+  are parsed for leading tags: `[warn] x` is level `warn`, category `stderr`;
+  `[nav] x` is level `info`, category `nav`; `[vulkan][ERROR] x` is `error` /
+  `vulkan`. `level` is the minimum level (`trace` < `debug` < `info` <
+  `warn` < `error`), `category` an exact match, `contains` a case-sensitive
+  substring. Without `since_seq` the call returns the newest `limit`
+  matching lines (oldest first); with it, the lines after `since_seq`.
+  Either way pass `cursor` back as the next `since_seq` to tail the log;
+  `more` means `limit` cut the read short, `missed` counts lines after
+  `since_seq` that the ring overwrote before they were read. A `since_seq`
+  beyond the newest line (a cursor from before an engine restart) reads from
+  the oldest retained line. `t` is seconds since the log started.
+- **Stats.** Frame times are real (wall-clock) frame times over the last 240
+  frames; `draws` is the previous frame's draw-item count; `memory` is the
+  process resident set (Linux; `null` elsewhere); `physics` is `null` while
+  no physics world runs (edit mode). `nav.moving` counts active agents that
+  have not arrived, `nav.failed` agents that gave up on their target. Fields
+  the running engine cannot provide are `null`.
+- **Simulation clock.** The frame loop feeds the simulation (physics,
+  characters, behaviour trees, navigation agents, animation) a clock dt:
+  real dt × `time_scale` while running, 0 while paused. The camera, editor,
+  audio, networking and rendering keep running in real time, so a paused
+  scene can still be inspected, screenshotted and flown around.
+  `debug.step` pauses (if running) and queues `frames` single steps, each
+  advancing the simulation by exactly `dt` (unscaled) on one rendered frame;
+  the reply comes after the last step ran, so a following `debug.watch`
+  sees the result. `debug.resume` drops pending steps (their `debug.step`
+  replies then complete). Physics itself still integrates in fixed 1/120 s
+  substeps, at most 8 per frame, so very high time scales are capped by
+  that catch-up limit. The clock state survives play/stop: a paused clock
+  stays paused when play starts.
+- **Watch** reuses the component codec (same shapes as `scene.get`);
+  `components` restricts the snapshot (unknown names are `invalid_params`,
+  names the entity lacks are listed in `missing`). Entities with a nav agent
+  also get `nav_agent_state` — the system-managed state the codec does not
+  expose: `active, paused, arrived, failed, commanded, plan_failures,
+  path_partial, waypoint, path, retry_s, stuck_s`.
+- **Raycast** runs against the physics world being simulated — it exists
+  only in play mode (or the physics/character demo modes); otherwise
+  `unavailable`. It hits rigid bodies, static colliders, terrain height
+  fields and character capsules; sensors only with `include_sensors`.
+  `direction` need not be normalized (zero is `invalid_params`). `kind` is
+  `body` (owned by `entity`), `character`, or `static_world` (a body no
+  entity owns: streamed terrain, demo floors — `entity` is null).
+- **Nav path** snaps both ends to the baked navmesh (within ±4 m
+  horizontally, ±16 m vertically) and returns the string-pulled path from
+  the snapped start; `partial` means the target is unreachable and the path
+  ends at the closest reachable point. No baked navmesh is `unavailable`
+  (call `nav.bake`); an end off the mesh is `failed`.
 
 ## Errors
 

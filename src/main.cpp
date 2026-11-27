@@ -278,6 +278,8 @@ glm::mat4 frame_camera_world(const glm::vec3& bmin, const glm::vec3& bmax, float
 } // namespace
 
 int main() {
+    // A5: stderr -> engine log ring for debug.log (QUAT_REMOTE runs only).
+    const engine::core::StderrCapture stderr_capture = quat::app::capture_stderr_for_remote();
     if (!SDL_Init(SDL_INIT_VIDEO)) {
         SDL_Log("SDL_Init failed: %s", SDL_GetError());
         return 1;
@@ -827,7 +829,9 @@ int main() {
     remote_targets.terrain_anchor = &terrain_anchor;
     remote_targets.navmesh = &navmesh;
     remote_targets.spin_entity = &spin_entity;
+    remote_targets.demo_physics = &physics_world;
 #ifdef ENGINE_EDITOR
+    remote_targets.play_physics = &play_physics;
     remote_targets.editor = &editor;
     remote_targets.render_settings = &render_settings;
     remote_targets.play = physics_world ? nullptr : &editor_play; // demo modes own physics
@@ -1107,6 +1111,7 @@ int main() {
         const float dt = static_cast<float>(now_ticks - last_ticks) * 1e-9F;
         last_ticks = now_ticks;
         cloud_time_s += dt;
+        const float sim_dt = remote_bridge.advance_sim(dt); // A5: pause / step / time scale
 
         constexpr float look_sensitivity = 0.0025F;
         cam_yaw += look_dx * look_sensitivity;
@@ -1199,9 +1204,9 @@ int main() {
                    character_entity, dt);
         if (physics_world) {
             if (character_mode) {
-                engine::scene::character_system(scene.registry(), *physics_world, dt);
+                engine::scene::character_system(scene.registry(), *physics_world, sim_dt);
             } else {
-                engine::scene::physics_system(scene.registry(), *physics_world, dt);
+                engine::scene::physics_system(scene.registry(), *physics_world, sim_dt);
             }
         }
 #ifdef ENGINE_EDITOR
@@ -1213,7 +1218,7 @@ int main() {
                 play_use_scene_camera &&
                 engine::scene::find_active_camera(scene.registry()) != entt::null;
             engine::scene::bt_system(
-                scene.registry(), dt,
+                scene.registry(), sim_dt,
                 {.navmesh = &navmesh,
                  .ground_height = ground_height_at,
                  .viewer = viewing_scene_camera ? std::nullopt : std::optional(cam_pos)});
@@ -1222,12 +1227,12 @@ int main() {
                 navmesh_request = true; // baked below, this frame
                 std::fprintf(stderr, "[nav] no navmesh for the agents: baking one\n");
             }
-            engine::scene::nav_agent_system(scene.registry(), navmesh, dt, ground_height_at);
-            engine::scene::character_system(scene.registry(), *play_physics, dt);
-            engine::scene::physics_system(scene.registry(), *play_physics, dt);
+            engine::scene::nav_agent_system(scene.registry(), navmesh, sim_dt, ground_height_at);
+            engine::scene::character_system(scene.registry(), *play_physics, sim_dt);
+            engine::scene::physics_system(scene.registry(), *play_physics, sim_dt);
         }
 #endif
-        scene.tick(dt); // advances any Animators by real elapsed time
+        scene.tick(sim_dt); // advances any Animators by simulated time
 
         // Replication: the host broadcasts moved entities (fresh world poses).
         net.publish(scene.registry(), dt);
@@ -1580,6 +1585,7 @@ int main() {
         const engine::renderer::IblViewSet ibl_views =
             dynamic_ibl ? dynamic_ibl->views() : engine::renderer::IblViewSet{};
 
+        remote_bridge.note_draws(draws.size() + transparent_draws.size());
         // R9.1: draws sharing mesh + material collapse into instanced draws.
         const engine::renderer::InstancedDrawList shadow_batches =
             engine::renderer::batch_draws(shadow_draws);

@@ -11,9 +11,16 @@
 // endpoint — scene files carry primitives too), opening an upload context
 // only when some primitive changed.
 //
+// It owns the simulation clock (ROADMAP A5: debug.pause / step / time_scale)
+// and the frame statistics debug.stats reports.
+//
 // Frame-loop hooks (main thread):
 //   poll()               once per frame before the scene updates: RPC
-//                        requests, primitive resolution, finished screenshots
+//                        requests, primitive resolution, finished screenshots,
+//                        completed debug.step requests
+//   advance_sim(dt)      once per frame with the real frame time: records it
+//                        and returns the simulation dt (0 while paused)
+//   note_draws(n)        the frame's submitted draw count (debug.stats)
 //   record_capture()     after the frame's graph is recorded: copies the
 //                        final scene image for pending screenshots
 //   on_frame_complete()  right after the frame slot's fence wait: hands the
@@ -32,6 +39,7 @@
 #include <glm/glm.hpp>
 #include <vulkan/vulkan.h>
 
+#include "engine/core/stderr_capture.hpp"
 #include "engine/scene/scene.hpp" // GroundHeightFn
 
 namespace engine::asset {
@@ -39,6 +47,9 @@ class AssetManager;
 }
 namespace engine::nav {
 class NavMesh;
+}
+namespace engine::physics {
+class PhysicsWorld;
 }
 namespace engine::rhi {
 class Device;
@@ -80,6 +91,11 @@ struct RemoteBridgeTargets {
     const glm::vec3*                  terrain_anchor = nullptr;
     engine::nav::NavMesh*             navmesh = nullptr;
 
+    // Physics worlds debug.raycast / debug.stats read: the demo modes' world
+    // and the editor's play-mode world (whichever is engaged).
+    const std::optional<engine::physics::PhysicsWorld>* demo_physics = nullptr;
+    const std::optional<engine::physics::PhysicsWorld>* play_physics = nullptr;
+
     // Loop-cached entity dropped when a scene file replaces the scene.
     entt::entity* spin_entity = nullptr;
 
@@ -118,11 +134,20 @@ public:
     void record_capture(VkCommandBuffer cmd, std::uint32_t frame_slot, const CaptureSource& source);
     void on_frame_complete(std::uint32_t frame_slot);
 
+    // Simulation dt for this frame given the real frame time `real_dt`.
+    [[nodiscard]] float advance_sim(float real_dt);
+    void note_draws(std::size_t draws);
+
     [[nodiscard]] bool listening() const;
 
 private:
     struct Impl;
     std::unique_ptr<Impl> impl_;
 };
+
+// Tees the process's stderr into the engine log ring (debug.log) when the
+// remote-control endpoint is requested (QUAT_REMOTE set) unless
+// QUAT_LOG_CAPTURE=0. Keep the returned object alive for the whole run.
+[[nodiscard]] engine::core::StderrCapture capture_stderr_for_remote();
 
 } // namespace quat::app
