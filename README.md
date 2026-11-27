@@ -338,6 +338,7 @@ The plan lives in [`ROADMAP.md`](ROADMAP.md), grouped into tracks:
 |---|---|
 | [`docs/STATUS.md`](docs/STATUS.md) | What is in progress, what is blocked, what comes next |
 | [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md) | Building, testing, CI, and conventions for contributors |
+| [`docs/reading/README.md`](docs/reading/README.md) | Reading list: the papers and talks behind the engine's techniques, with where each lives in the code |
 | [`docs/remote-control.md`](docs/remote-control.md) | The remote-control protocol AI tools use to drive the engine |
 | [`docs/CYCLE.md`](docs/CYCLE.md) | How development runs: the repeating plan → parallel agents → merge → CI → audit → learn cycle |
 | [`docs/LEARNINGS.md`](docs/LEARNINGS.md) | Lessons recorded by past cycles |
