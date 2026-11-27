@@ -7,6 +7,19 @@
 
 namespace engine::core {
 
+SimSlices slice_sim_dt(float dt, float max_slice) {
+    if (!std::isfinite(dt) || dt <= 0.0F) return {};
+    if (!std::isfinite(max_slice) || max_slice <= 0.0F || dt <= max_slice) return {1, dt};
+    const float needed = std::ceil(dt / max_slice);
+    if (!(needed < static_cast<float>(SimSlices::max_count))) {
+        return {SimSlices::max_count, dt / static_cast<float>(SimSlices::max_count)};
+    }
+    auto count = static_cast<std::uint32_t>(needed);
+    // Rounding must never leave a slice above the budget.
+    while (dt / static_cast<float>(count) > max_slice) ++count;
+    return {count, dt / static_cast<float>(count)};
+}
+
 float SimClock::advance(float real_dt) {
     float dt = 0.0F;
     if (pending_steps_ > 0) {
@@ -14,7 +27,7 @@ float SimClock::advance(float real_dt) {
         ++steps_run_;
         dt = step_dt_;
     } else if (!paused_ && std::isfinite(real_dt) && real_dt > 0.0F) {
-        dt = real_dt * time_scale_;
+        dt = std::min(real_dt, max_frame_dt) * time_scale_;
     }
     if (dt > 0.0F) {
         ++sim_frames_;

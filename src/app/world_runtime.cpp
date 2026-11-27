@@ -9,6 +9,7 @@
 
 #include "app/nav_bake.hpp"
 #include "app/remote_bridge.hpp"
+#include "engine/core/sim_clock.hpp"
 #include "engine/rhi/device.hpp"
 #include "engine/rhi/pipeline_cache.hpp"
 #include "engine/scene/behavior.hpp"
@@ -16,6 +17,10 @@
 #include "engine/scene/scene.hpp"
 
 namespace quat::app {
+
+// A single debug step, and a frame at time scale 1, fit one physics update.
+static_assert(engine::core::SimClock::max_step_dt <= engine::physics::PhysicsWorld::max_update_dt);
+static_assert(engine::core::SimClock::max_frame_dt <= engine::physics::PhysicsWorld::max_update_dt);
 
 WorldRuntime::WorldRuntime() {
     // Authoritative ground height at world (x, z): streamed tiles first,
@@ -150,6 +155,28 @@ void WorldRuntime::simulate(engine::scene::Scene& scene, std::uint64_t frame_num
     // this frame's physics and draw list see them).
     net_.update(scene.registry(), demo_.physics_world ? &*demo_.physics_world : nullptr,
                 demo_.character_entity, dt);
+
+    // Audit D2: every simulation system advances by the same sim_dt. A scaled
+    // dt above the physics budget runs in equal slices (systems in the same
+    // order per slice, transforms refreshed in between as across frames);
+    // animation samples the whole sim_dt in the scene tick. A paused frame
+    // still runs the systems once with dt 0 (bodies for new entities, swept
+    // bodies, kinematic poses).
+    engine::core::SimSlices slices =
+        engine::core::slice_sim_dt(sim_dt, engine::physics::PhysicsWorld::max_update_dt);
+    if (slices.count == 0) slices = {.count = 1, .dt = 0.0F};
+    for (std::uint32_t i = 0; i < slices.count; ++i) {
+        if (i > 0) engine::scene::transform_system(scene.registry());
+        simulate_slice(scene, slices.dt, play);
+    }
+    scene.tick(sim_dt); // advances any Animators by simulated time
+
+    // Replication: the host broadcasts moved entities (fresh world poses).
+    net_.publish(scene.registry(), dt);
+}
+
+void WorldRuntime::simulate_slice(engine::scene::Scene& scene, float sim_dt,
+                                  const PlayStep* play) {
     if (demo_.physics_world) {
         if (demo_.character_mode) {
             engine::scene::character_system(scene.registry(), *demo_.physics_world, sim_dt);
@@ -178,10 +205,6 @@ void WorldRuntime::simulate(engine::scene::Scene& scene, std::uint64_t frame_num
         engine::scene::character_system(scene.registry(), *play_physics_, sim_dt);
         engine::scene::physics_system(scene.registry(), *play_physics_, sim_dt);
     }
-    scene.tick(sim_dt); // advances any Animators by simulated time
-
-    // Replication: the host broadcasts moved entities (fresh world poses).
-    net_.publish(scene.registry(), dt);
 }
 
 void WorldRuntime::update_audio(engine::scene::Scene& scene, const glm::mat4& view, bool live,

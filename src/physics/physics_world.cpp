@@ -227,11 +227,14 @@ void PhysicsWorld::update(float dt) {
         impl_->accumulator -= fixed_timestep;
         ++steps;
     }
-    // Hitting the cap means the simulation fell behind real time (a hitch, a
-    // blocking load, a slow machine). Drop the backlog, keeping only the
-    // sub-step remainder: otherwise every following frame keeps stepping at
-    // the cap and the world runs several times too fast until it drains.
-    if (steps == max_steps_per_update) {
+    // A dt over the budget means the simulation fell behind real time (a
+    // hitch, a blocking load, a slow machine). Drop the backlog, keeping only
+    // the sub-step remainder: otherwise every following frame keeps stepping
+    // at the cap and the world runs several times too fast until it drains.
+    // Within the budget nothing is dropped — the carried remainder plus a
+    // full-budget dt can leave just over one tick (float rounding), which the
+    // next call runs (audit D2: sliced debug time must be simulated exactly).
+    if (dt > max_update_dt) {
         impl_->accumulator = std::fmod(impl_->accumulator, fixed_timestep);
     }
 }

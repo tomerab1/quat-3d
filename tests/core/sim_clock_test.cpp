@@ -1,5 +1,7 @@
 // SimClock: running / paused / scaled time and fixed-size single steps.
 
+#include <cmath>
+#include <cstdint>
 #include <limits>
 
 #include <gtest/gtest.h>
@@ -73,6 +75,41 @@ TEST(SimClock, IgnoresBadFrameTimes) {
     EXPECT_EQ(c.state().sim_frames, 0U);
     (void)c.step(1, 5.0F); // clamped
     EXPECT_FLOAT_EQ(c.advance(0.0F), SimClock::max_step_dt);
+}
+
+// Audit D2: real time beyond max_frame_dt is a hitch, dropped before scaling,
+// so every simulation system sees the same bounded dt.
+TEST(SimClock, DropsHitchBacklogBeforeScaling) {
+    SimClock c;
+    EXPECT_FLOAT_EQ(c.advance(0.5F), SimClock::max_frame_dt);
+    c.set_time_scale(10.0F);
+    EXPECT_FLOAT_EQ(c.advance(0.5F), SimClock::max_frame_dt * 10.0F);
+    EXPECT_FLOAT_EQ(c.advance(1.0F / 60.0F), 10.0F / 60.0F); // below the cap: unchanged
+}
+
+TEST(SimClock, SlicesCoverTheDtWithinTheBudget) {
+    using engine::core::slice_sim_dt;
+    constexpr float budget = 8.0F / 120.0F;
+
+    const auto one = slice_sim_dt(0.016F, budget);
+    EXPECT_EQ(one.count, 1U);
+    EXPECT_FLOAT_EQ(one.dt, 0.016F);
+    const auto exact = slice_sim_dt(budget, budget);
+    EXPECT_EQ(exact.count, 1U);
+
+    for (const float dt : {0.0667F, 0.1F, 10.0F / 60.0F, 0.5F, 2.0F / 3.0F, 1.0F}) {
+        const auto s = slice_sim_dt(dt, budget);
+        EXPECT_EQ(s.count, static_cast<std::uint32_t>(std::ceil(dt / budget))) << dt;
+        EXPECT_LE(s.dt, budget) << dt;
+        EXPECT_NEAR(s.dt * static_cast<float>(s.count), dt, 1e-6F) << dt;
+    }
+
+    EXPECT_EQ(slice_sim_dt(0.0F, budget).count, 0U);
+    EXPECT_EQ(slice_sim_dt(-1.0F, budget).count, 0U);
+    EXPECT_EQ(slice_sim_dt(std::numeric_limits<float>::infinity(), budget).count, 0U);
+    EXPECT_EQ(slice_sim_dt(0.5F, 0.0F).count, 1U); // no budget: one slice
+    const auto many = slice_sim_dt(1.0e9F, 1.0e-6F);
+    EXPECT_EQ(many.count, engine::core::SimSlices::max_count);
 }
 
 } // namespace

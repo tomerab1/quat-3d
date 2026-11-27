@@ -108,7 +108,8 @@ public:
     // or editor play mode when `play` is set), ticks the scene and publishes
     // replication. Networking runs on the real frame time `dt`; the
     // simulation systems and the scene tick on `sim_dt` (the remote debug
-    // clock: 0 while paused, scaled by debug.time_scale).
+    // clock: 0 while paused, scaled by debug.time_scale), in slices of at
+    // most PhysicsWorld::max_update_dt so physics advances it exactly.
     void simulate(engine::scene::Scene& scene, std::uint64_t frame_number, float dt,
                   float sim_dt, const PlayStep* play);
     void update_audio(engine::scene::Scene& scene, const glm::mat4& view, bool live, float dt);
@@ -143,6 +144,10 @@ public:
     [[nodiscard]] float terrain_snowline() const { return terrain_snowline_; }
 
 private:
+    // One slice of simulate(): physics, characters, behaviour trees and
+    // navigation advanced by `sim_dt` (at most PhysicsWorld::max_update_dt).
+    void simulate_slice(engine::scene::Scene& scene, float sim_dt, const PlayStep* play);
+
     std::optional<engine::physics::PhysicsWorld> play_physics_; // editor play session's world
     DemoScene                                    demo_;
 
