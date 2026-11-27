@@ -18,9 +18,12 @@
 // Every buffer is imported into the render graph, so the compute -> indirect
 // / vertex hazards are synchronised by its buffer barriers.
 //
-// Blades do not cast into the shadow map (the shadow pass draws vertex-buffer
-// meshes only); they receive shadows, IBL and clustered lights through the
-// deferred lighting pass like any GBuffer surface.
+// Blades receive shadows, IBL and clustered lights through the deferred
+// lighting pass like any GBuffer surface, and darken toward their roots
+// (occlusion in the GBuffer) instead of casting into the shadow map: the
+// lists are culled to the camera frustum, so casting correctly needs a
+// second generation against the light's frustum (or the union of both) to
+// avoid shadows popping at the screen edges — left for cascaded shadows.
 //
 // Pipelines are shared; buffers and descriptors exist per frame in flight:
 // the caller passes the slot index and must have waited for that slot's
