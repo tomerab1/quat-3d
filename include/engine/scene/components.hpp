@@ -184,16 +184,22 @@ struct BtNodeState {
     bool          running = false; // returned running on that tick
 };
 
+// What a compiled node returned on its tree's last tick (idle: not reached).
+// Unlike BtNodeState it survives the resets that end a tick, so tools can
+// show which branch failed (the remote bt.status method).
+enum class BtNodeResult : std::uint8_t { idle, success, failure, running };
+
 // A data-driven behaviour tree (13.3): `source` is the tree JSON (composed of
 // sequence/selector/reactive_*/inverter nodes over named C++ leaves — see
 // behavior.hpp). The system compiles it lazily; a parse error logs once and
-// disables the tree. compiled/node_state/tick_count/parse_failed are
-// system-managed.
+// disables the tree. compiled/node_state/last_result/tick_count/parse_failed
+// are system-managed.
 struct BehaviorTree {
     std::string source;
     bool        enabled = true;
     std::shared_ptr<const class BehaviorTreeAsset> compiled;
-    std::vector<BtNodeState> node_state; // one per compiled node
+    std::vector<BtNodeState>  node_state;  // one per compiled node
+    std::vector<BtNodeResult> last_result; // one per compiled node
     std::uint32_t            tick_count = 0;
     bool parse_failed = false;
 };

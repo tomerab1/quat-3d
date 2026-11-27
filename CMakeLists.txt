@@ -203,6 +203,8 @@ add_library(engine_scene STATIC
     src/scene/nav_agent_system.cpp
     src/scene/navigation.cpp
     src/scene/behavior.cpp
+    src/scene/bt_graph.cpp
+    src/scene/bt_graph_edit.cpp
     src/scene/scene_io.cpp
     src/scene/component_json.cpp
     src/scene/audio_system.cpp
@@ -377,7 +379,6 @@ if(ENGINE_EDITOR)
         src/editor/physics_debug.cpp
         src/editor/scene_snapshot.cpp
         src/editor/audio_inspector.cpp
-        src/editor/bt_graph.cpp
         src/editor/behavior_panel.cpp
         src/editor/behavior_canvas.cpp
         src/editor/vendor/imgui_impl_sdl3.cpp)

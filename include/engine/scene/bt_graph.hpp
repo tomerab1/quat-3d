@@ -1,9 +1,9 @@
 #pragma once
 
-// Behaviour-tree graph model for the visual editor (ROADMAP G2). Private
-// editor header; no ImGui — the Behaviour panel draws and edits a BtGraph, and
-// this layer converts it to and from the tree JSON the runtime compiles
-// (BehaviorTree::source, see engine/scene/behavior.hpp).
+// Behaviour-tree graph model (ROADMAP G2, A7): the editable form of a tree
+// that the editor's Behaviour panel draws and the remote bt.* methods edit.
+// No ImGui; this layer converts a BtGraph to and from the tree JSON the
+// runtime compiles (BehaviorTree::source, see engine/scene/behavior.hpp).
 //
 // The graph is a flat list of nodes with stable ids; a link is a parent's
 // entry in `children` (ordered: the runtime ticks children in that order).
@@ -21,6 +21,7 @@
 // count matches the tree; a tree edited by hand into a different shape gets
 // fresh ids and an automatic layout instead.
 
+#include <cstddef>
 #include <cstdint>
 #include <expected>
 #include <span>
@@ -33,9 +34,9 @@
 #include "engine/core/error.hpp"
 #include "engine/scene/behavior.hpp"
 
-namespace engine::editor {
+namespace engine::scene {
 
-using BtKind = scene::BehaviorTreeAsset::Kind;
+using BtKind = BehaviorTreeAsset::Kind;
 
 // A leaf parameter present in the JSON (absent ones take the leaf's default).
 // Nodes list them in the leaf's declared order, unknown names last.
@@ -69,7 +70,7 @@ struct BtGraph {
 
 // Leaf catalogue used for validation and new nodes (defaults to the built-in
 // leaves' reflection table).
-using BtLeafCatalog = std::span<const scene::BtLeafInfo>;
+using BtLeafCatalog = std::span<const BtLeafInfo>;
 
 // --- JSON <-> graph --------------------------------------------------------
 
@@ -78,19 +79,19 @@ using BtLeafCatalog = std::span<const scene::BtLeafInfo>;
 // semantic problems (unknown leaf, out-of-range value, wrong child count) are
 // kept so the editor can show and fix them — see bt_graph_validate.
 [[nodiscard]] std::expected<BtGraph, core::Error>
-bt_graph_from_json(std::string_view json_text, BtLeafCatalog leaves = scene::bt_builtin_leaf_info());
+bt_graph_from_json(std::string_view json_text, BtLeafCatalog leaves = bt_builtin_leaf_info());
 
 // Serialises a valid graph (pretty-printed tree + one-line "editor" layout).
 // Fails with the first validation issue otherwise.
 [[nodiscard]] std::expected<std::string, core::Error>
-bt_graph_to_json(const BtGraph& graph, BtLeafCatalog leaves = scene::bt_builtin_leaf_info());
+bt_graph_to_json(const BtGraph& graph, BtLeafCatalog leaves = bt_builtin_leaf_info());
 
 // Everything that keeps the graph from being a runtime-valid tree: exactly
 // one root, one parent per node, no cycles, every node connected, child
 // counts (composites >= 1, inverter exactly 1, leaves none), known leaves,
 // known and in-range parameters, nesting depth.
 [[nodiscard]] std::vector<BtGraphIssue>
-bt_graph_validate(const BtGraph& graph, BtLeafCatalog leaves = scene::bt_builtin_leaf_info());
+bt_graph_validate(const BtGraph& graph, BtLeafCatalog leaves = bt_builtin_leaf_info());
 
 // --- queries -----------------------------------------------------------------
 
@@ -102,6 +103,12 @@ bt_graph_validate(const BtGraph& graph, BtLeafCatalog leaves = scene::bt_builtin
 // compiled node order for a valid graph). Empty without a single root; stops
 // at nodes already visited, so cycles terminate.
 [[nodiscard]] std::vector<std::uint32_t> bt_graph_preorder(const BtGraph& graph);
+// `id` and its descendants, depth-first pre-order (cycle-safe); empty for an
+// unknown id.
+[[nodiscard]] std::vector<std::uint32_t> bt_graph_subtree(const BtGraph& graph, std::uint32_t id);
+// Where `id` sits in the tree JSON, spelled like runtime parse errors:
+// "root", "root.children[1].children[0]". Empty when it is not under the root.
+[[nodiscard]] std::string bt_graph_path(const BtGraph& graph, std::uint32_t id);
 
 // --- edits (keep one parent per node and no cycles) --------------------------
 
@@ -109,7 +116,7 @@ bt_graph_validate(const BtGraph& graph, BtLeafCatalog leaves = scene::bt_builtin
 // defaults. Returns its id.
 std::uint32_t bt_graph_add_node(BtGraph& graph, BtKind kind, std::string_view leaf,
                                 glm::vec2 pos,
-                                BtLeafCatalog leaves = scene::bt_builtin_leaf_info());
+                                BtLeafCatalog leaves = bt_builtin_leaf_info());
 
 // Removes a node and its links; its children become parentless.
 void bt_graph_remove_node(BtGraph& graph, std::uint32_t id);
@@ -124,6 +131,14 @@ void bt_graph_remove_node(BtGraph& graph, std::uint32_t id);
 // parent), or reports why it cannot.
 std::expected<void, core::Error> bt_graph_link(BtGraph& graph, std::uint32_t parent,
                                                std::uint32_t child);
+// Makes `child` the `index`-th child of `parent`, detaching it from its
+// current parent first (which may be `parent` itself: a re-order), so `index`
+// counts the parent's children without `child`; it must be at most their
+// number (bt_graph_append: the end). Refuses what bt_graph_can_link refuses.
+inline constexpr std::size_t bt_graph_append = static_cast<std::size_t>(-1);
+std::expected<void, core::Error> bt_graph_attach(BtGraph& graph, std::uint32_t parent,
+                                                 std::uint32_t child,
+                                                 std::size_t index = bt_graph_append);
 // Removes the parent -> child link. Returns whether one existed.
 bool bt_graph_unlink(BtGraph& graph, std::uint32_t parent, std::uint32_t child);
 
@@ -140,4 +155,17 @@ bool bt_graph_sort_children_by_x(BtGraph& graph);
 // children); nodes outside the tree keep their positions.
 void bt_graph_auto_layout(BtGraph& graph);
 
-} // namespace engine::editor
+// Whether every node already sits where bt_graph_auto_layout would put it
+// (within the rounding of the saved layout).
+[[nodiscard]] bool bt_graph_has_auto_layout(const BtGraph& graph);
+
+// Places `id` one row below its parent, between its neighbouring siblings on
+// screen, and moves its subtree along (a parentless node stays put). Keeps
+// the rest of the layout; does not make room, so subtrees may overlap.
+void bt_graph_place_subtree(BtGraph& graph, std::uint32_t id);
+
+// Whether every node's children are ordered left to right on screen, i.e.
+// bt_graph_sort_children_by_x would change nothing.
+[[nodiscard]] bool bt_graph_children_follow_x(const BtGraph& graph);
+
+} // namespace engine::scene

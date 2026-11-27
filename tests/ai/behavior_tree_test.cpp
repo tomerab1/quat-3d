@@ -226,4 +226,28 @@ TEST(Ai, NearCameraPerceivesTheViewer) {
         << "the viewer input wins over the camera entity";
 }
 
+// What each node returned on the last tick survives the resets that end it
+// (tools show which branch failed: the remote bt.status method).
+TEST(Ai, LastResultRecordsEachNodesStatus) {
+    Harness h;
+    using R = s::BtNodeResult;
+    // Pre-order: 0 selector, 1 sequence, 2 flag, 3 probe, 4 probe.
+    ASSERT_TRUE(h.load(R"({"type":"selector","children":[
+        {"type":"sequence","children":[
+            {"type":"leaf","name":"flag","id":"armed"},
+            {"type":"leaf","name":"probe","id":"never"}]},
+        {"type":"leaf","name":"probe","id":"idle","run":2}]})"));
+    EXPECT_EQ(h.tick(), s::BtStatus::running);
+    EXPECT_EQ(h.bt.last_result,
+              (std::vector<R>{R::running, R::failure, R::failure, R::idle, R::running}));
+    EXPECT_EQ(h.tick(), s::BtStatus::running);
+    // The selector resumes at its running child: the sequence is not reached.
+    EXPECT_EQ(h.bt.last_result,
+              (std::vector<R>{R::running, R::idle, R::idle, R::idle, R::running}));
+    EXPECT_EQ(h.tick(), s::BtStatus::success);
+    EXPECT_EQ(h.bt.last_result,
+              (std::vector<R>{R::success, R::idle, R::idle, R::idle, R::success}))
+        << "kept after the finished tree reset its memory";
+}
+
 } // namespace
