@@ -34,11 +34,20 @@ struct Segment {
     return {i0, i1, f};
 }
 
+// Keyframe indices come from `input`; a malformed asset can carry fewer
+// output values than input keys, so clamp them to the output array.
+[[nodiscard]] Segment clamp_to_output(Segment s, std::size_t output_size) {
+    const std::size_t last = output_size - 1;
+    if (s.i0 > last) s.i0 = last;
+    if (s.i1 > last) s.i1 = last;
+    return s;
+}
+
 } // namespace
 
 glm::vec3 AnimSampler::sample_vec3(float t) const {
     if (output.empty()) return glm::vec3(0.0F);
-    const Segment s = locate(input, t);
+    const Segment s = clamp_to_output(locate(input, t), output.size());
     const glm::vec3 a(output[s.i0]);
     if (interpolation == Interpolation::step || s.i0 == s.i1) {
         return a;
@@ -48,7 +57,7 @@ glm::vec3 AnimSampler::sample_vec3(float t) const {
 
 glm::quat AnimSampler::sample_quat(float t) const {
     if (output.empty()) return glm::quat(1.0F, 0.0F, 0.0F, 0.0F);
-    const Segment s = locate(input, t);
+    const Segment s = clamp_to_output(locate(input, t), output.size());
     // glTF stores quaternions as (x, y, z, w); glm::quat ctor is (w, x, y, z).
     const glm::quat a(output[s.i0].w, output[s.i0].x, output[s.i0].y, output[s.i0].z);
     if (interpolation == Interpolation::step || s.i0 == s.i1) {
@@ -103,6 +112,21 @@ std::expected<void, core::Error> run_clip_self_test() {
     const glm::quat expected(0.92387953F, 0.0F, 0.38268343F, 0.0F); // (w,x,y,z), 45 deg Y
     if (glm::abs(glm::dot(mid, expected)) < 0.9999F) {
         return std::unexpected(core::Error{"clip self-test: rotation slerp midpoint wrong"});
+    }
+
+    // Malformed sampler (S1 audit B11): more input keys than output values
+    // must clamp to the last value instead of reading past the array.
+    AnimSampler short_sampler;
+    short_sampler.input = {0.0F, 1.0F, 2.0F, 3.0F};
+    short_sampler.output = {{1, 2, 3, 0}, {4, 5, 6, 0}};
+    short_sampler.interpolation = Interpolation::linear;
+    if (glm::distance(short_sampler.sample_vec3(2.5F), glm::vec3(4, 5, 6)) > 1e-5F ||
+        glm::distance(short_sampler.sample_vec3(9.0F), glm::vec3(4, 5, 6)) > 1e-5F) {
+        return std::unexpected(core::Error{"clip self-test: short output not clamped"});
+    }
+    short_sampler.output = {{0, 0, 0, 1}};
+    if (glm::abs(glm::dot(short_sampler.sample_quat(2.5F), glm::quat(1, 0, 0, 0))) < 0.9999F) {
+        return std::unexpected(core::Error{"clip self-test: short quat output not clamped"});
     }
 
     return {};

@@ -42,6 +42,12 @@ public:
 
     // Fixed simulation timestep.
     static constexpr float fixed_timestep = 1.0F / 120.0F;
+    // Catch-up limit per update(); time beyond it is dropped, not carried.
+    static constexpr int max_steps_per_update = 8;
+
+    // Accumulated time not yet simulated (always < fixed_timestep after a
+    // capped update). Render interpolation and debugging read it.
+    [[nodiscard]] float pending_time() const;
 
     // Sentinel for "no body".
     static constexpr std::uint32_t invalid_body = 0xFFFFFFFFU;

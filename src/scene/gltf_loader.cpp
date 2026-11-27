@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstdio>
 #include <cstring>
 #include <functional>
 #include <limits>
@@ -377,6 +378,18 @@ parse_and_extract_skeletons(fastgltf::GltfDataBuffer& data,
             out.output = std::move(raw);
         }
 
+        // A sampler's output must hold one value per input key. Malformed
+        // files can disagree; keep only the keys that have a value (the
+        // sampler also clamps, but the duration must not outrun the data).
+        if (out.output.size() != out.input.size()) {
+            std::fprintf(stderr,
+                         "[gltf] animation '%s': sampler has %zu keys but %zu values; "
+                         "truncating\n",
+                         clip.name.c_str(), out.input.size(), out.output.size());
+            const std::size_t n = std::min(out.input.size(), out.output.size());
+            out.input.resize(n);
+            out.output.resize(n);
+        }
         if (!out.input.empty()) {
             clip.duration = std::max(clip.duration, out.input.back());
         }

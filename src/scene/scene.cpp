@@ -37,7 +37,20 @@ entt::entity Scene::create_entity(std::string name) {
     return e;
 }
 
-void Scene::set_parent(entt::entity child, entt::entity parent) {
+bool Scene::set_parent(entt::entity child, entt::entity parent) {
+    if (!registry_.valid(child) || child == parent) return false;
+    if (parent != entt::null) {
+        if (!registry_.valid(parent)) return false;
+        // Walk up from the new parent: reaching `child` means a cycle. The
+        // walk is bounded so a pre-existing corrupt chain cannot loop forever.
+        std::size_t guard = 0;
+        for (entt::entity a = parent; a != entt::null && guard < 1'000'000; ++guard) {
+            if (a == child) return false;
+            const auto* up = registry_.try_get<Parent>(a);
+            a = up != nullptr && registry_.valid(up->entity) ? up->entity : entt::null;
+        }
+    }
+
     // Detach from the current parent's child list, if any.
     if (auto* cur = registry_.try_get<Parent>(child);
         cur != nullptr && cur->entity != entt::null) {
@@ -49,10 +62,11 @@ void Scene::set_parent(entt::entity child, entt::entity parent) {
 
     if (parent == entt::null) {
         registry_.remove<Parent>(child);
-        return;
+        return true;
     }
     registry_.emplace_or_replace<Parent>(child, parent);
     registry_.get_or_emplace<Children>(parent).entities.push_back(child);
+    return true;
 }
 
 void Scene::tick(float dt) {
@@ -214,6 +228,33 @@ std::expected<void, core::Error> run_scene_self_test() {
     const glm::vec3 detached_world = glm::vec3(scene.registry().get<Transform>(child).world[3]);
     if (glm::distance(detached_world, glm::vec3(0.0F, 2.0F, 0.0F)) > 1e-4F) {
         return std::unexpected(core::Error{"scene self-test: detached child did not become a root"});
+    }
+
+    // Cycles are refused (S1 audit B13): self-parenting, parenting under a
+    // descendant, and invalid entities leave the hierarchy untouched.
+    {
+        const entt::entity a = scene.create_entity("a");
+        const entt::entity b = scene.create_entity("b");
+        const entt::entity c = scene.create_entity("c");
+        if (!scene.set_parent(b, a) || !scene.set_parent(c, b)) {
+            return std::unexpected(core::Error{"scene self-test: valid re-parent refused"});
+        }
+        if (scene.set_parent(a, a) || scene.set_parent(a, c) || scene.set_parent(a, b)) {
+            return std::unexpected(core::Error{"scene self-test: cyclic re-parent accepted"});
+        }
+        const entt::entity gone = scene.create_entity("gone");
+        scene.registry().destroy(gone);
+        if (scene.set_parent(a, gone) || scene.set_parent(gone, a)) {
+            return std::unexpected(core::Error{"scene self-test: invalid entity re-parent accepted"});
+        }
+        if (scene.registry().all_of<Parent>(a) ||
+            scene.registry().get<Parent>(c).entity != b ||
+            scene.registry().get<Children>(a).entities.size() != 1) {
+            return std::unexpected(core::Error{"scene self-test: refused re-parent changed links"});
+        }
+        scene.registry().destroy(a);
+        scene.registry().destroy(b);
+        scene.registry().destroy(c);
     }
 
     // Camera at +5 Z, identity orientation: the view matrix is the inverse of its

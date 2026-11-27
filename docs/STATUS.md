@@ -27,7 +27,7 @@ Decisions already made (do not re-litigate without the owner):
 
 | Item | State | Verified? |
 |---|---|---|
-| S1 bug audit | Three module reviews were run (RHI/renderer, scene/physics/net, editor/assets/IO); findings still to be triaged and fixed | — |
+| S1 bug audit | 46 findings recorded in [`audit/S1-findings.md`](audit/S1-findings.md) with severity and status. Fixed so far: B7, B11/C4, B13 (commit `[S1.1]`) | Animation fix verified locally; physics/scene fixes await CI |
 | S3 `engine_tests` | Written (`tests/engine_tests.cpp`, CTest entries in `CMakeLists.txt`) | Not yet compiled |
 | S4 CI | Linux job in `.github/workflows/ci.yml` | First runs in progress on GitHub — check the Actions tab |
 | A1 remote transport | `src/remote/`, `include/engine/remote/rpc_server.hpp`, wired in `main.cpp` (`QUAT_REMOTE`) | Library compiled warning-free + self-test passed standalone; `main.cpp` wiring not yet compiled |
@@ -72,8 +72,13 @@ top.
 ## Next steps
 
 1. Check CI for the latest commit; fix compile errors in the WIP code.
-2. Triage S1 findings: verify each against the code, fix the confirmed ones
-   with regression tests, one commit per coherent fix (`[S1.<n>]`).
+2. Continue S1 from [`audit/S1-findings.md`](audit/S1-findings.md): re-verify
+   each finding against the code, fix with a regression test, update its
+   status. Suggested order — highest risk first: C1–C3/C5 (glTF validation:
+   call `fastgltf::validate`, bounds/cycle checks), B6/C8 (Jolt body cleanup
+   via `on_destroy` hooks), A3–A5 + A7 (render-graph sync and pool eviction),
+   then A1+A2+A14 **together** (TAA jitter/history — fixing A1 alone makes the
+   image shimmer), B1–B5 (networking/prediction), the rest.
 3. S2: move `scene_io.cpp` and `behavior.cpp` JSON reads onto `JsonFields`.
 4. S3/S4 done → tick them in `ROADMAP.md`; add Windows/macOS CI jobs.
 5. Then A2 → A3 → A4 (Rust server) → A5 (debugging tools).

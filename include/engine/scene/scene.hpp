@@ -42,8 +42,12 @@ public:
 
     // Re-parent `child` under `parent` (entt::null detaches to a root),
     // maintaining the Parent component on the child and the Children list on both
-    // the old and new parent.
-    void set_parent(entt::entity child, entt::entity parent);
+    // the old and new parent. Refused (returns false, hierarchy unchanged) when
+    // either entity is invalid, when child == parent, or when `parent` is a
+    // descendant of `child` — any of those would create a cycle that drops the
+    // subtree out of transform propagation and makes subtree walks recurse
+    // forever (scene files and remote requests are untrusted).
+    bool set_parent(entt::entity child, entt::entity parent);
 
     // Run the fixed system sequence for one tick (`dt` seconds since the last):
     //   1. AnimationSystem     — advance Animators, write skinning matrices.

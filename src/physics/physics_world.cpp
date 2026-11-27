@@ -215,13 +215,22 @@ void PhysicsWorld::update(float dt) {
     impl_->accumulator += dt;
     int steps = 0;
     // Clamp the number of catch-up steps so a long frame can't spiral.
-    while (impl_->accumulator >= fixed_timestep && steps < 8) {
+    while (impl_->accumulator >= fixed_timestep && steps < max_steps_per_update) {
         impl_->system.Update(fixed_timestep, 1, impl_->temp_allocator.get(),
                              impl_->job_system.get());
         impl_->accumulator -= fixed_timestep;
         ++steps;
     }
+    // Hitting the cap means the simulation fell behind real time (a hitch, a
+    // blocking load, a slow machine). Drop the backlog, keeping only the
+    // sub-step remainder: otherwise every following frame keeps stepping at
+    // the cap and the world runs several times too fast until it drains.
+    if (steps == max_steps_per_update) {
+        impl_->accumulator = std::fmod(impl_->accumulator, fixed_timestep);
+    }
 }
+
+float PhysicsWorld::pending_time() const { return impl_ ? impl_->accumulator : 0.0F; }
 
 std::uint32_t PhysicsWorld::create_box(const glm::vec3& half_extents) {
     impl_->shapes.emplace_back(new JPH::BoxShape(to_jph(half_extents)));
@@ -415,6 +424,13 @@ std::expected<void, core::Error> run_physics_self_test() {
     const JPH::BodyID sphere = bodies.CreateAndAddBody(sphere_settings, JPH::EActivation::Activate);
 
     system.OptimizeBroadPhase();
+
+    // A hitch longer than the catch-up cap must not leave a backlog that
+    // makes later frames run fast (S1 audit B7).
+    world->update(3.0F);
+    if (world->pending_time() >= PhysicsWorld::fixed_timestep) {
+        return std::unexpected(core::Error{"physics self-test: backlog kept after a hitch"});
+    }
 
     // Simulate ~2 seconds at 60 fps; the sphere should land and settle.
     for (int i = 0; i < 120; ++i) {
