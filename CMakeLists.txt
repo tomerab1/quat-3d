@@ -353,6 +353,10 @@ add_library(engine_renderer STATIC
     src/renderer/lighting_pass.cpp
     src/renderer/light_clusters.cpp
     src/renderer/light_cull_pass.cpp
+    src/renderer/particles.cpp
+    src/renderer/particle_pass.cpp
+    src/renderer/particle_sort.cpp
+    src/renderer/particle_draw.cpp
     src/renderer/tonemap_pass.cpp
     src/renderer/skinning_pass.cpp
     src/renderer/shadow_pass.cpp

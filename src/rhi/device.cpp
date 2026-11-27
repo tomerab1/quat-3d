@@ -340,6 +340,8 @@ std::expected<Device, core::Error> Device::create(const CreateInfo& info) {
     if (supported_core.samplerAnisotropy == VK_TRUE) {
         dev.max_sampler_anisotropy_ = candidate.properties.limits.maxSamplerAnisotropy;
     }
+    core_features.independentBlend = supported_core.independentBlend;
+    dev.independent_blend_ = supported_core.independentBlend == VK_TRUE;
 
     VkPhysicalDeviceVulkan12Features features12{};
     features12.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES;
@@ -466,6 +468,7 @@ Device& Device::operator=(Device&& other) noexcept {
         properties_      = other.properties_;
         descriptor_buffer_props_ = other.descriptor_buffer_props_;
         max_sampler_anisotropy_  = other.max_sampler_anisotropy_;
+        independent_blend_       = other.independent_blend_;
         descriptor_backend_      = other.descriptor_backend_;
     }
     return *this;

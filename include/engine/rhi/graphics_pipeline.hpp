@@ -37,6 +37,11 @@ public:
         VkCompareOp               depth_compare_op = VK_COMPARE_OP_GREATER_OR_EQUAL;
         bool                      depth_write = true;  // false for read-only depth (transparent)
         bool                      alpha_blend = false; // SRC_ALPHA / ONE_MINUS_SRC_ALPHA
+        // Per-attachment blend state (one entry per colour format). When
+        // non-empty it replaces the uniform state `alpha_blend` selects — for
+        // passes whose targets blend differently (additive light, weighted
+        // blended OIT's accumulation + revealage).
+        std::span<const VkPipelineColorBlendAttachmentState> blend_attachments{};
         VkCullModeFlags           cull_mode  = VK_CULL_MODE_NONE;
         VkFrontFace               front_face = VK_FRONT_FACE_COUNTER_CLOCKWISE;
         // When true the cull mode is a dynamic state (vkCmdSetCullMode, core in

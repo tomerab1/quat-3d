@@ -89,6 +89,7 @@ struct PipelineSlot {
     std::vector<VkDescriptorSetLayout>             set_layouts;
     std::vector<VkPushConstantRange>               push_constants;
     std::vector<VkFormat>                          color_formats;
+    std::vector<VkPipelineColorBlendAttachmentState> blend_attachments;
     std::vector<VkVertexInputBindingDescription>   vertex_bindings;
     std::vector<VkVertexInputAttributeDescription> vertex_attributes;
     ComputePipeline::CreateInfo                    compute_info{};  // shader set per build
@@ -243,6 +244,7 @@ PipelineCache::create_graphics_pipeline(const GraphicsPipeline::CreateInfo& info
         slot->push_constants.assign(info.push_constants.begin(), info.push_constants.end());
     }
     slot->color_formats.assign(info.color_formats.begin(), info.color_formats.end());
+    slot->blend_attachments.assign(info.blend_attachments.begin(), info.blend_attachments.end());
     slot->vertex_bindings.assign(info.vertex_bindings.begin(), info.vertex_bindings.end());
     slot->vertex_attributes.assign(info.vertex_attributes.begin(), info.vertex_attributes.end());
 
@@ -253,6 +255,7 @@ PipelineCache::create_graphics_pipeline(const GraphicsPipeline::CreateInfo& info
     g.vertex_entry = slot->entry_a.c_str();
     g.fragment_entry = slot->entry_b.c_str();
     g.color_formats = slot->color_formats;
+    g.blend_attachments = slot->blend_attachments;
     g.vertex_bindings = slot->vertex_bindings;
     g.vertex_attributes = slot->vertex_attributes;
     g.set_layouts = slot->set_layouts;
