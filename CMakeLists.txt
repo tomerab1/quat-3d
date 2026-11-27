@@ -229,6 +229,21 @@ target_link_libraries(engine_net PRIVATE engine_scene)
 target_include_directories(engine_net PUBLIC ${ENGINE_PUBLIC_INCLUDE})
 
 # ---------------------------------------------------------------------------
+# engine_remote — remote-control endpoint (Phase 15): loopback JSON-RPC 2.0
+# over TCP, poll-driven on the main thread. Out-of-process tools (the quat-mcp
+# Model Context Protocol bridge in tools/quat-mcp) drive the engine through it.
+# nlohmann_json is PUBLIC: the handler API traffics in JSON values.
+# ---------------------------------------------------------------------------
+add_library(engine_remote STATIC
+    src/remote/rpc_server.cpp
+    src/remote/socket.cpp)
+target_link_libraries(engine_remote PUBLIC engine_flags nlohmann_json::nlohmann_json)
+target_include_directories(engine_remote PUBLIC ${ENGINE_PUBLIC_INCLUDE})
+if(WIN32)
+    target_link_libraries(engine_remote PRIVATE ws2_32)
+endif()
+
+# ---------------------------------------------------------------------------
 # engine_renderer — high-level passes built on the RHI. Starts with the deferred
 # GBuffer pass (mesh_pass); lighting/tonemap/imgui passes follow in later slices.
 # ---------------------------------------------------------------------------
@@ -295,7 +310,7 @@ endif()
 add_executable(game src/main.cpp)
 target_link_libraries(game PRIVATE
     engine_flags engine_rhi engine_asset engine_scene engine_renderer engine_physics
-    engine_terrain engine_nav engine_net SDL3::SDL3)
+    engine_terrain engine_nav engine_net engine_remote SDL3::SDL3)
 if(ENGINE_EDITOR)
     target_link_libraries(game PRIVATE engine_editor)
 endif()
@@ -315,6 +330,28 @@ target_compile_definitions(game PRIVATE
 add_executable(anim_smoke tests/anim_smoke.cpp)
 target_link_libraries(anim_smoke PRIVATE engine_flags engine_animation)
 target_include_directories(anim_smoke PRIVATE ${ENGINE_PUBLIC_INCLUDE})
+
+# ---------------------------------------------------------------------------
+# engine_tests — the headless test runner (ROADMAP S3): every library
+# self-test, CPU ones always and GPU ones on a surface-less Vulkan device
+# (lavapipe on CI). Registered with CTest: `ctest --test-dir build/<preset>`.
+# ---------------------------------------------------------------------------
+add_executable(engine_tests tests/engine_tests.cpp)
+target_link_libraries(engine_tests PRIVATE
+    engine_flags engine_rhi engine_asset engine_scene engine_renderer engine_physics
+    engine_animation engine_terrain engine_nav engine_net engine_remote)
+if(ENGINE_EDITOR)
+    target_link_libraries(engine_tests PRIVATE engine_editor)
+endif()
+target_include_directories(engine_tests PRIVATE ${ENGINE_PUBLIC_INCLUDE})
+target_compile_definitions(engine_tests PRIVATE
+    QUAT_COOKED_SHADER_DIR="${CMAKE_CURRENT_SOURCE_DIR}/cooked/shaders")
+add_dependencies(engine_tests shaders)
+
+enable_testing()
+add_test(NAME engine_tests_cpu COMMAND engine_tests --cpu)
+add_test(NAME engine_tests_gpu COMMAND engine_tests --require-gpu)
+add_test(NAME anim_smoke COMMAND anim_smoke)
 
 # ---------------------------------------------------------------------------
 # Offline shader cooking: assets/shaders/*.slang -> cooked/shaders/*.{spv,json}

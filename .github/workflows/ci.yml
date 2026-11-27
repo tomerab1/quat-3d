@@ -47,7 +47,8 @@ jobs:
           mkdir -p "${{ github.workspace }}/.vcpkg-archives"
 
       - name: Restore vcpkg binary cache
-        uses: actions/cache@v4
+        id: vcpkg-cache
+        uses: actions/cache/restore@v4
         with:
           path: ${{ github.workspace }}/.vcpkg-archives
           key: vcpkg-linux-${{ env.VCPKG_COMMIT }}-${{ hashFiles('vcpkg.json', 'triplets/**', 'ports/**') }}
@@ -55,6 +56,16 @@ jobs:
 
       - name: Configure
         run: cmake --preset release -DENGINE_PROFILE=OFF
+
+      # Saved right after configure (where vcpkg builds the dependencies), so
+      # an engine compile or test failure later does not discard the hour-long
+      # dependency build.
+      - name: Save vcpkg binary cache
+        if: steps.vcpkg-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ github.workspace }}/.vcpkg-archives
+          key: ${{ steps.vcpkg-cache.outputs.cache-primary-key }}
 
       - name: Build
         run: cmake --build --preset release

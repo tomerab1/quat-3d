@@ -50,6 +50,7 @@
 #include "engine/net/prediction.hpp"
 #include "engine/net/replication.hpp"
 #include "engine/net/transport.hpp"
+#include "engine/remote/rpc_server.hpp"
 #include "engine/scene/behavior.hpp"
 #include "engine/renderer/terrain_pass.hpp"
 #include "engine/terrain/streamer.hpp"
@@ -88,6 +89,16 @@ constexpr bool k_enable_validation = true;
 #else
 constexpr bool k_enable_validation = false;
 #endif
+
+// Whether this binary was built with the editor layer (reported to remote
+// clients so they know which editor-only services exist).
+constexpr bool editor_enabled_build() {
+#ifdef ENGINE_EDITOR
+    return true;
+#else
+    return false;
+#endif
+}
 
 VkExtent2D window_pixel_extent(SDL_Window* window) {
     int w = 0;
@@ -1478,6 +1489,12 @@ int main() {
                         std::fprintf(stderr, "[selftest] transport FAILED: %s\n",
                                      r.error().message.c_str());
                     }
+                    if (auto r = engine::remote::run_rpc_server_self_test(); r) {
+                        std::fprintf(stderr, "[selftest] remote RPC server OK (loopback)\n");
+                    } else {
+                        std::fprintf(stderr, "[selftest] remote RPC server FAILED: %s\n",
+                                     r.error().message.c_str());
+                    }
                     if (auto r = engine::scene::run_patrol_self_test(); r) {
                         std::fprintf(stderr, "[selftest] patrol route OK (loop + advance)\n");
                     } else {
@@ -2503,6 +2520,49 @@ int main() {
     glm::mat4 prev_jittered_vp(1.0F); // previous frame's jittered view-proj, for TAA
     bool taa_history_valid = false;
 
+    // Remote control (Phase 15): QUAT_REMOTE=<port> opens the loopback
+    // JSON-RPC endpoint the quat-mcp bridge (tools/quat-mcp) talks to
+    // ("1" = the default port 7878). QUAT_REMOTE_TOKEN, when set, requires
+    // clients to authenticate with session.hello first. Polled once per frame
+    // on this thread, before the scene ticks, so handlers mutate the ECS
+    // between frames exactly like editor actions do.
+    std::optional<engine::remote::RpcServer> remote;
+    if (const char* env = std::getenv("QUAT_REMOTE"); env != nullptr) {
+        engine::remote::RpcServerConfig remote_config;
+        const unsigned long requested = std::strtoul(env, nullptr, 10);
+        remote_config.port = (requested > 1 && requested <= 65535)
+                                 ? static_cast<std::uint16_t>(requested)
+                                 : std::uint16_t{7878};
+        if (const char* token = std::getenv("QUAT_REMOTE_TOKEN"); token != nullptr) {
+            remote_config.token = token;
+        }
+        const bool has_token = !remote_config.token.empty();
+        if (auto server = engine::remote::RpcServer::listen(std::move(remote_config)); server) {
+            remote = std::move(*server);
+            std::fprintf(stderr, "[remote] listening on 127.0.0.1:%u (%s)\n", remote->port(),
+                         has_token ? "token required" : "no token");
+        } else {
+            std::fprintf(stderr, "[warn] remote control disabled: %s\n",
+                         server.error().message.c_str());
+        }
+    }
+    if (remote) {
+        remote->add_method(
+            "engine.info", "Engine name, frame counter, entity count and play state.",
+            [&](const engine::remote::Json&) -> engine::remote::RpcResult {
+                bool playing = false;
+#ifdef ENGINE_EDITOR
+                playing = editor_play;
+#endif
+                return engine::remote::Json{
+                    {"engine", "quat-3d"},
+                    {"frame", presented},
+                    {"entities", scene.registry().view<engine::scene::Transform>().size()},
+                    {"playing", playing},
+                    {"editor", editor_enabled_build()}};
+            });
+    }
+
     while (running) {
         // Per-frame accumulated mouse-look delta.
         float look_dx = 0.0F;
@@ -2551,6 +2611,10 @@ int main() {
             }
         }
         if (!running) break;
+
+        // Remote-control requests run here: after input, before play-mode
+        // transitions, scene file requests and the scene tick.
+        if (remote) remote->poll();
 
 #ifdef ENGINE_EDITOR
         editor.begin_frame();
