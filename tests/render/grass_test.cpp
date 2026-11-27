@@ -88,8 +88,10 @@ struct Generated {
     const std::uint32_t near = gen.args.near.instanceCount;
     const std::uint32_t far = gen.args.far.instanceCount;
     gen.blades.assign(all, all + near);
-    gen.blades.insert(gen.blades.end(), all + gen.args.far.firstInstance,
-                      all + gen.args.far.firstInstance + far);
+    // Far blades start at the near region's capacity; the indirect commands
+    // keep firstInstance = 0 (drawIndirectFirstInstance is not required) and
+    // the draw pass passes the region base as a push constant.
+    gen.blades.insert(gen.blades.end(), all + gen.capacity.near, all + gen.capacity.near + far);
     return gen;
 }
 
@@ -152,6 +154,12 @@ TEST(GpuGrass, GeneratedCountMatchesDensityTimesArea) {
     auto gen = generate(*g, *pass, frame);
     ASSERT_OK(gen);
 
+    // Both indirect commands draw from instance 0: a non-zero firstInstance
+    // would need drawIndirectFirstInstance, which the engine doesn't enable
+    // (PR #3 review). The far region's base is a push constant instead.
+    EXPECT_EQ(gen->args.near.firstInstance, 0U);
+    EXPECT_EQ(gen->args.far.firstInstance, 0U);
+
     // Every cell within the radius is a candidate; all placed blades are visible.
     const float area = 3.14159265F * s.radius * s.radius;
     EXPECT_NEAR(static_cast<float>(gen->args.candidates), s.density * area, s.density * area * 0.01F);
@@ -182,6 +190,16 @@ TEST(GpuGrass, GeneratedCountMatchesDensityTimesArea) {
     EXPECT_LT(thinned->args.placed, gen->args.placed * 3 / 4);
     EXPECT_GT(thinned->args.near_count, 0U);
     EXPECT_GT(thinned->args.far_count, 0U);
+    // The far LOD path is exercised here: its command still starts at
+    // instance 0, and the far blades read from the near capacity onwards
+    // are real, placed blades (finite root, non-zero packed shape/fade).
+    EXPECT_EQ(thinned->args.far.firstInstance, 0U);
+    ASSERT_GT(thinned->args.far.instanceCount, 0U);
+    ASSERT_EQ(thinned->blades.size(),
+              std::size_t{thinned->args.near.instanceCount} + thinned->args.far.instanceCount);
+    const r::GrassBladeGpu& first_far = thinned->blades[thinned->args.near.instanceCount];
+    EXPECT_TRUE(std::isfinite(first_far.root.x) && std::isfinite(first_far.root.z));
+    EXPECT_NE(first_far.packed, 0U);
 }
 
 TEST(GpuGrass, BladesStayFixedInTheWorldAsTheCameraMoves) {

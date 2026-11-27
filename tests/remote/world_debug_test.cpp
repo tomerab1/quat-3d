@@ -425,4 +425,47 @@ TEST_F(DebugStep, DroppedWaitStillAnswers) {
     EXPECT_TRUE(reply.contains("error")) << reply.dump();
 }
 
+TEST_F(DebugStep, LaterRequestsKeepQueuedStepsDt) {
+    send({{"jsonrpc", "2.0"}, {"id", 4}, {"method", "debug.step"},
+          {"params", {{"frames", 2}, {"dt", 0.1}}}});
+    send({{"jsonrpc", "2.0"}, {"id", 5}, {"method", "debug.step"},
+          {"params", {{"frames", 1}, {"dt", 0.02}}}});
+    EXPECT_TRUE(pump(100).is_null());
+    ASSERT_EQ(waiters.size(), 2U);
+    EXPECT_EQ(waiters[0].first, 2U);
+    EXPECT_EQ(waiters[1].first, 3U);
+    EXPECT_FLOAT_EQ(clock.advance(0.5F), 0.1F);
+    EXPECT_FLOAT_EQ(clock.advance(0.5F), 0.1F);
+    EXPECT_FLOAT_EQ(clock.advance(0.5F), 0.02F);
+}
+
+TEST_F(DebugStep, WaitingRequestsAreCapped) {
+    constexpr int k_cap = 64;
+    for (int i = 0; i < k_cap; ++i) {
+        send({{"jsonrpc", "2.0"}, {"id", 100 + i}, {"method", "debug.step"},
+              {"params", Json::object()}});
+    }
+    EXPECT_TRUE(pump(200).is_null()) << "all within the cap wait";
+    ASSERT_EQ(waiters.size(), static_cast<std::size_t>(k_cap));
+
+    send({{"jsonrpc", "2.0"}, {"id", 1}, {"method", "debug.step"}, {"params", Json::object()}});
+    Json reply = pump(2000);
+    ASSERT_TRUE(reply.is_object()) << "no reply";
+    EXPECT_EQ(reply["id"], 1);
+    ASSERT_TRUE(reply.contains("error")) << reply.dump();
+    EXPECT_TRUE(contains(reply["error"]["message"].get<std::string>(), "busy"));
+    EXPECT_EQ(clock.state().pending_steps, static_cast<std::uint32_t>(k_cap))
+        << "a refused request queues no step";
+
+    // Once one completes there is room again.
+    waiters[0].second();
+    reply = pump(2000);
+    ASSERT_TRUE(reply.is_object());
+    EXPECT_EQ(reply["id"], 100);
+    send({{"jsonrpc", "2.0"}, {"id", 2}, {"method", "debug.step"}, {"params", Json::object()}});
+    EXPECT_TRUE(pump(100).is_null());
+    EXPECT_EQ(waiters.size(), static_cast<std::size_t>(k_cap) + 1);
+}
+
 } // namespace
+

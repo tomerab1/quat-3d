@@ -20,12 +20,9 @@ import instancing; // instance_index(): InstanceIndex including firstInstance
 
 // Mirrors engine::renderer GrassDrawPush (16 bytes).
 struct PushConstants {
-    uint segments; // levels of this LOD's strip
-    // Scalars, not a uint3: a uint3 is 16-byte aligned (offset 16), which made
-    // the block 28 bytes against the 16-byte range the pipeline declares.
-    uint pad0;
-    uint pad1;
-    uint pad2;
+    uint  segments; // levels of this LOD's strip
+    uint  base;     // first blade of this LOD's region (firstInstance is always 0)
+    uint2 pad;
 }
 [[vk::push_constant]] PushConstants pc;
 
@@ -70,7 +67,7 @@ float2 wind_offset(float3 root, float phase, float variation) {
 
 [shader("vertex")]
 VsOut vertex_main(uint vertex_id : SV_VertexID) {
-    const GrassBlade blade = g_blades[instance_index()];
+    const GrassBlade blade = g_blades[pc.base + instance_index()];
     const BladeShape shape = blade_shape(g_params, blade.packed & 0xFFFFu);
     const float height = shape.height * blade_fade(blade.packed);
     const float width = shape.width * blade_width_scale(blade.packed, g_params.lod.w);

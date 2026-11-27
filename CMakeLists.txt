@@ -450,7 +450,8 @@ add_executable(game
     src/app/fly_camera.cpp
     src/app/frame_graph.cpp
     src/app/frame_renderer.cpp
-    src/app/remote_bridge.cpp)
+    src/app/remote_bridge.cpp
+    src/app/screenshot_capture.cpp)
 target_link_libraries(game PRIVATE
     game_world
     engine_flags engine_core engine_rhi engine_asset engine_scene engine_renderer engine_physics
