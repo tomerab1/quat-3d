@@ -246,6 +246,7 @@ void register_world_commands(RpcServer& server, scene::Scene& scene, WorldServic
     world::register_scene_commands(server, ctx);
     world::register_batch_command(server, ctx);
     world::register_environment_commands(server, ctx);
+    world::register_terrain_commands(server, ctx);
     world::register_camera_commands(server, ctx);
     world::register_app_commands(server, ctx);
     world::register_debug_commands(server, ctx);

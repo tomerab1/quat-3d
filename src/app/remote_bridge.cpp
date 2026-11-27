@@ -269,9 +269,8 @@ struct RemoteBridge::Impl {
             };
         }
 #endif
-        if (t.ground_height != nullptr) {
-            s.ground_height = [this](float x, float z) { return (*t.ground_height)(x, z); };
-        }
+        s.terrain_height = t.terrain_height;
+        s.terrain_status = t.terrain_status;
         s.spawn_model = [this](const std::filesystem::path& p) { return spawn_model(p); };
         s.screenshot = [this](std::uint32_t max_size, remote::Responder r) {
             shots.request(max_size, std::move(r));

@@ -98,6 +98,12 @@ impl QuatServer {
             .await
     }
 
+    #[doc = include_str!("../../content/tools/terrain_status.md")]
+    #[tool(annotations(read_only_hint = true))]
+    async fn terrain_status(&self) -> CallToolResult {
+        self.run("terrain.status", None).await
+    }
+
     // ---- camera / screenshot ----------------------------------------------
 
     #[doc = include_str!("../../content/tools/camera_get.md")]

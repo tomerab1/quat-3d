@@ -98,7 +98,9 @@ struct RemoteBridgeTargets {
     std::optional<float>*           cam_far_override = nullptr;
     const engine::scene::ClipRange* cam_derived_clip = nullptr;
 
-    const engine::scene::GroundHeightFn* ground_height = nullptr;
+    // Terrain heights above the anchor and generation state (world runtime).
+    std::function<std::optional<float>(float local_x, float local_z)> terrain_height;
+    std::function<engine::remote::TerrainStatus()>                    terrain_status;
 
     // Navmesh bake inputs and output.
     const std::optional<engine::terrain::TerrainStreamer>* terrain_streamer = nullptr;

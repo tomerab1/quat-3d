@@ -3,7 +3,8 @@
 // World commands (ROADMAP A2/A3) — the remote-control methods that let an
 // out-of-process tool (the quat-mcp bridge, i.e. a language model) inspect and
 // build the world: scene.*, environment.*, world.ground_height, camera.*,
-// render.screenshot, asset.*, sim.*, scene.save/load, nav.bake — and the
+// render.screenshot, asset.*, sim.*, scene.save/load, nav.bake,
+// terrain.status — and the
 // debugging commands (ROADMAP A5): debug.log, debug.stats, debug.pause /
 // resume / step / time_scale, debug.watch, debug.raycast, debug.nav_path — and
 // behaviour-tree authoring (ROADMAP A7): bt.leaves, bt.get, bt.set,
@@ -86,6 +87,18 @@ struct FrameStats {
     std::optional<std::uint64_t> resident_bytes;   // process resident memory
 };
 
+// Terrain generation state (terrain.status). Tile counts and bounds are those
+// of the runtime's terrain (the first Terrain entity's); bounds are relative
+// to its anchor (the entity's world position), like terrain_height.
+struct TerrainStatus {
+    bool          generating = false;  // a tile is being generated / uploaded
+    std::uint32_t tiles_loaded = 0;
+    std::uint32_t tiles_wanted = 0;    // 1, or the streaming window's (2r+1)²
+    bool          has_bounds = false;  // some tile is loaded
+    glm::vec3     bounds_min{0.0F};    // loaded tiles, anchor-relative
+    glm::vec3     bounds_max{0.0F};
+};
+
 struct WorldServices {
     // Project root that scene.save/load, asset.list_models and
     // asset.spawn_model paths are confined to.
@@ -97,8 +110,12 @@ struct WorldServices {
     std::function<renderer::CloudSettings()>                     clouds_get;
     std::function<void(const renderer::CloudSettings& clouds)>   clouds_set;
 
-    // Terrain surface height at world (x, z); nullopt where no terrain is.
-    std::function<std::optional<float>(float x, float z)> ground_height;
+    // Height of the loaded terrain above its anchor at anchor-relative (x, z)
+    // (tile (0,0) is centred on the anchor); nullopt where no tile is loaded.
+    // The world commands place the anchor from the Terrain entity's current
+    // transform, so edits earlier in a batch apply at once (issue #39).
+    std::function<std::optional<float>(float local_x, float local_z)> terrain_height;
+    std::function<TerrainStatus()>                                    terrain_status;
 
     // Instantiate a glTF/GLB (absolute path, already confined to the project
     // root) into the scene; returns the root entities created.

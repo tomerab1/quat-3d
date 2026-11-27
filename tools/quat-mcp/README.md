@@ -107,6 +107,7 @@ command ends in `quat-mcp.exe`.
 | `scene_batch` | `scene.batch` | Many commands in one frame, with `"@N"` back-references |
 | `environment_get` / `environment_set` | `environment.*` | Sun angles and colour, volumetric clouds |
 | `world_ground_height` | `world.ground_height` | Terrain height under `[x, z]` points |
+| `terrain_status` | `terrain.status` | Whether terrain tiles are still generating; loaded tiles and bounds |
 | `camera_get` / `camera_set` / `camera_frame` | `camera.*` | Read, place or auto-frame the viewport camera |
 | `screenshot` | `render.screenshot` | The viewport as an MCP **image** (PNG) plus a caption |
 | `asset_list_models` / `asset_spawn_model` | `asset.*` | Find and spawn glTF models |

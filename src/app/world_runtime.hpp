@@ -138,6 +138,12 @@ public:
     [[nodiscard]] const engine::scene::GroundHeightFn& ground_height() const {
         return ground_height_at_;
     }
+    // Terrain height above the anchor at anchor-relative (lx, lz); nullopt
+    // where no tile is loaded.
+    [[nodiscard]] std::optional<float> local_ground_height(float lx, float lz) const;
+    // Tiles loaded / wanted, generation in flight, loaded extent (remote
+    // terrain.status, issue #39).
+    [[nodiscard]] engine::remote::TerrainStatus terrain_status() const;
     [[nodiscard]] bool terrain_drawable() const {
         return terrain_present_ && terrain_pass_.has_tiles();
     }

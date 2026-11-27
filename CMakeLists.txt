@@ -327,6 +327,7 @@ add_library(engine_remote_world STATIC
     src/remote/world/scene_commands.cpp
     src/remote/world/batch_command.cpp
     src/remote/world/environment_commands.cpp
+    src/remote/world/terrain_commands.cpp
     src/remote/world/camera_commands.cpp
     src/remote/world/app_commands.cpp
     src/remote/world/debug_commands.cpp

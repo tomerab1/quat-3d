@@ -123,6 +123,17 @@ Details the contract leaves open, as implemented:
 - **`sim.play` / `sim.stop`** toggle the editor's play mode (the transition
   runs later that frame); `unavailable` without the editor or in the physics
   / character demo modes, which own their physics world.
+- **Terrain queries** (issue #39) use the terrain the runtime drives: the
+  first entity with a `terrain` component. The runtime samples its tiles
+  relative to the terrain's anchor; `world.ground_height` places the anchor
+  from the entity's current world transform, so a command later in a
+  `scene.batch` sees an earlier move of the terrain (or of a parent). A shape
+  edit not yet picked up by the runtime (`regenerate` pending) answers null
+  heights with `generating: true` rather than stale ones. Without a terrain
+  entity it is `not_found`. **`terrain.status`** tells a client when it can
+  place objects or take screenshots: `generating` is true while a tile is
+  being generated or uploaded, or the streaming window (`tiles_wanted` =
+  (2·`stream_radius`+1)²) is not full; `bounds` covers the loaded tiles.
 
 ## Methods (v1 contract, ROADMAP A2/A3)
 
@@ -189,7 +200,8 @@ values. Unknown fields are errors (they name the known fields).
 | `scene.batch` | `{commands:[{method, params}], stop_on_error?=true}` | `{results:[{ok:true, result} \| {ok:false, error:{code,message}}]}` — a string `"@N"` in an `entity`/`parent` field means the `id` returned by command N of this batch. Deferred methods cannot be batched. |
 | `environment.get` | — | `{sun:{azimuth_deg, elevation_deg, intensity, color}, clouds:{enabled, coverage, density, bottom_km, thickness_km, size_km, detail, wind_speed, wind_dir_deg}}` |
 | `environment.set` | same shape, every field optional | `environment.get` result |
-| `world.ground_height` | `{points:[[x,z],...]}` (≤ 1024) | `{heights:[y \| null]}` — null where no terrain covers the point |
+| `world.ground_height` | `{points:[[x,z],...]}` (≤ 1024) | `{heights:[y \| null], generating}` — null where no tile is loaded; `not_found` without terrain |
+| `terrain.status` | — | `{present, entity, streaming, generating, tiles_loaded, tiles_wanted, anchor, tile_size, bounds:{min,max} \| null}` (`{present:false}` without terrain) |
 | `camera.get` | — | `{position, yaw_deg, pitch_deg, fov_deg, near, far, near_auto, far_auto}` |
 | `camera.set` | `{position?, look_at?, yaw_deg?, pitch_deg?, fov_deg?, near?, far?, cut?}` | `camera.get` result |
 | `camera.frame` | `{entity?}` (whole scene when omitted) | `camera.get` result |

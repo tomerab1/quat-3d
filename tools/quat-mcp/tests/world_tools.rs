@@ -69,3 +69,22 @@ async fn camera_set_sends_clip_planes_and_cut() {
     assert_eq!(r.is_error, Some(true));
     client.cancel().await.unwrap();
 }
+
+#[tokio::test]
+async fn terrain_status_reports_generation() {
+    let engine = MockEngine::start(None, |method, _| match method {
+        "terrain.status" => Action::Reply(json!({
+            "present": true, "entity": 7, "streaming": true, "generating": true,
+            "tiles_loaded": 4, "tiles_wanted": 9, "anchor": [0, 0, 0], "tile_size": 3000,
+            "bounds": null})),
+        _ => Action::Error(-32601, "unknown".into()),
+    })
+    .await;
+    let client = connect(&engine.addr_string()).await;
+    let r = call(&client, "terrain_status", json!({})).await;
+    assert_eq!(r.is_error, Some(false), "{}", text(&r));
+    let v: Value = serde_json::from_str(&text(&r)).unwrap();
+    assert_eq!(v["generating"], true);
+    assert_eq!(v["tiles_wanted"], 9);
+    client.cancel().await.unwrap();
+}

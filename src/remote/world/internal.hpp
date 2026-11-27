@@ -4,6 +4,7 @@
 // (src/remote/world/*.cpp). See include/engine/remote/world_commands.hpp.
 
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 
@@ -83,6 +84,25 @@ void refresh_world(entt::registry& registry, entt::entity e);
 [[nodiscard]] std::expected<void, RpcError>
 apply_components_atomic(entt::registry& registry, entt::entity target, const Json& components);
 
+// ---- Terrain -----------------------------------------------------------------------
+
+// The terrain the runtime drives: the first entity with a Terrain component
+// (the one the frame loop generates), anchored at its current world position.
+struct TerrainRef {
+    entt::entity entity = entt::null;
+    glm::vec3    anchor{0.0F};
+    bool         streaming = false;
+    // A shape edit not yet picked up by the runtime: the loaded tiles are
+    // stale until it regenerates them.
+    bool         regenerating = false;
+};
+[[nodiscard]] std::optional<TerrainRef> find_terrain(const entt::registry& registry);
+
+// World-space terrain height at (x, z), nullopt where no tile is loaded (or
+// the terrain is regenerating). Needs services.terrain_height.
+[[nodiscard]] std::optional<float> terrain_height_at(const Context& ctx, const TerrainRef& terrain,
+                                                     float x, float z);
+
 // ---- Misc ----------------------------------------------------------------------
 
 [[nodiscard]] inline Json vec3_json(const glm::vec3& v) { return Json::array({v.x, v.y, v.z}); }
@@ -98,6 +118,7 @@ project_path(const Context& ctx, core::JsonFields& fields, std::string_view key,
 void register_scene_commands(RpcServer& server, const ContextPtr& ctx);
 void register_batch_command(RpcServer& server, const ContextPtr& ctx);
 void register_environment_commands(RpcServer& server, const ContextPtr& ctx);
+void register_terrain_commands(RpcServer& server, const ContextPtr& ctx);
 void register_camera_commands(RpcServer& server, const ContextPtr& ctx);
 void register_app_commands(RpcServer& server, const ContextPtr& ctx);
 void register_debug_commands(RpcServer& server, const ContextPtr& ctx);
