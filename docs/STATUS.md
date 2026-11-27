@@ -31,11 +31,11 @@ Decisions already made (do not re-litigate without the owner):
 
 ## Claimed by the live session (do not pick up)
 
-Cycle 1's eight worker branches are merged into `claude/nifty-hopper-nb68qe`
-(PR #2) and await a green CI run there (run 8 on 473ec53).
+Cycle 1 is merged into `master` (PR #2, merge `c6acf19`, CI green: full Linux
+build, CPU + lavapipe GPU tests, quat-mcp checks).
 
 **Cycle 2** — eight worktree agents started from 473ec53; each pushes
-`feat/<id>`. Merges wait until PR #2 is merged (merged as soon as its CI is green), then go into a new cycle PR.
+`feat/<id>`. They merge into `claude/nifty-hopper-nb68qe` and land through the cycle-2 PR (#3).
 
 | Item | Branch | Scope |
 |---|---|---|
