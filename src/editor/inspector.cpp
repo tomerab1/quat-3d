@@ -12,9 +12,11 @@
 #include <imgui.h>
 #include <imgui_stdlib.h>
 
+#include "animation_inspector.hpp"
 #include "audio_inspector.hpp"
 #include "behavior_panel.hpp"
 #include "grass_inspector.hpp"
+#include "tuning_panels.hpp"
 #include "engine/editor/editor.hpp"
 #include "engine/scene/behavior.hpp"
 #include "engine/scene/components.hpp"
@@ -353,12 +355,19 @@ struct ComponentInspector<scene::Animator> {
     static constexpr const char* icon = icon::clapperboard;
     static constexpr bool property_grid = true;
     static void draw(entt::registry&, entt::entity, scene::Animator& animator) {
-        char buf[32];
-        std::snprintf(buf, sizeof(buf), "%.2f s", static_cast<double>(animator.time));
-        ui::prop_value("Time", buf, nullptr, true);
-        (void)ui::prop_float("Speed", animator.speed, {.speed = 0.05F, .min = -4.0F, .max = 4.0F},
-                             {.reset = 1.0F});
-        (void)ui::prop_bool("Looping", animator.looping);
+        draw_animator(animator);
+    }
+};
+
+template <>
+struct ComponentInspector<scene::FootIK> {
+    static constexpr const char* title = "Foot IK";
+    static constexpr const char* codec = "foot_ik";
+    static constexpr const char* icon = icon::footprints;
+    static constexpr bool property_grid = true;
+    static bool* enabled(scene::FootIK& k) { return &k.enabled; }
+    static void draw(entt::registry& r, entt::entity e, scene::FootIK& foot_ik) {
+        draw_foot_ik(r, e, foot_ik);
     }
 };
 
@@ -501,10 +510,12 @@ void draw_inspector(scene::Scene& scene, entt::entity selected) {
     inspect<scene::Transform>(r, selected);
     inspect<scene::Primitive>(r, selected, true);
     if (!r.all_of<scene::Primitive>(selected)) inspect<scene::MeshRenderer>(r, selected);
+    draw_material_inspector(r, selected);
     inspect<scene::DirectionalLight>(r, selected, true);
     inspect<scene::PointLight>(r, selected, true);
     inspect<scene::Camera>(r, selected, true);
     inspect<scene::Animator>(r, selected);
+    inspect<scene::FootIK>(r, selected, true);
     inspect<scene::Terrain>(r, selected, true);
     inspect<scene::Grass>(r, selected, true);
     if (!inspect<scene::InstancedMesh>(r, selected, true)) {

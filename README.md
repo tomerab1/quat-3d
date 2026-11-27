@@ -17,8 +17,7 @@ drive directly to build and debug worlds from a prompt.
 ## Screenshots
 
 Real engine output, rendered headless on a software Vulkan driver (lavapipe) by
-the CI screenshot pipeline — no ambient occlusion or cascaded shadows yet (in
-progress, ROADMAP R12).
+the CI screenshot pipeline.
 
 | Showcase (PBR materials, glass) | Terrain (GPU synthesis + GPU grass) | Physics |
 |---|---|---|
@@ -31,8 +30,13 @@ The editor (dark theme; a light theme is one click away in View > Theme):
 ## What it can do today
 
 **Rendering**
-- Deferred physically based shading with cascaded shadow maps and clustered point lights
-  (GPU light culling into view-space froxels, up to 4096 lights per frame)
+- Deferred physically based shading with clustered point lights (GPU light
+  culling into view-space froxels, up to 4096 lights per frame)
+- Sun shadows from four cascades fitted on the GPU to what the camera sees,
+  stable under camera motion, with soft PCF / PCSS edges and screen-space
+  contact shadows for small detail; meshes, instanced objects and terrain cast
+- Ambient occlusion (GTAO) with bent normals that also darkens reflections in
+  crevices; every shadow / AO setting is tunable in the editor's Renderer panel
 - Glass and transparency (refraction, absorption, IOR), clearcoat car paint
 - Physically based sky with volumetric clouds and a moving sun
 - Image-based lighting that keeps up with the sky in real time
@@ -42,7 +46,14 @@ The editor (dark theme; a light theme is one click away in View > Theme):
 
 **Animation**
 - Skeletal animation from glTF files, skinned on the GPU
-- Blending between clips, additive layers, and a state machine with crossfades
+- Blending between clips, additive layers, and a state machine
+- Inertialized transitions (Gears of War style): switching clips evaluates
+  only the new clip while the old pose's offset decays smoothly; crossfades
+  remain available
+- Foot IK: feet plant on uneven ground and slopes (physics raycasts or the
+  terrain height) with the pelvis lowered to the lower foot
+- Clips are compressed on load with ACL (the codec Unreal uses), within
+  0.1 mm of the source animation
 
 **World**
 - Procedural terrain: seeded generation with erosion, level of detail, and
@@ -218,9 +229,12 @@ the running engine — create entities, set the sky and camera, take
 screenshots, spawn models — and debug it: read the engine log and Vulkan
 validation messages, frame statistics, pause / single-step / slow down the
 simulation, watch entities, cast physics rays and query navmesh paths — and
-author NPC behaviour trees: build, inspect and edit the same graph the editor's
-Behaviour panel shows, with per-node validation errors, and see what each node
-did on the last tick. Start the engine with `QUAT_REMOTE=7878`, build the
+tune the look: exposure, bloom, anti-aliasing, shadows, sky light, clouds and
+per-entity materials, with the same values the editor's Renderer panel and
+Material inspector show — and author NPC behaviour trees: build, inspect and
+edit the same graph the editor's Behaviour panel shows, with per-node
+validation errors, and see what each node did on the last tick. Start the
+engine with `QUAT_REMOTE=7878`, build the
 server with `cargo build --release` in `tools/quat-mcp`, and register it with
 your client:
 

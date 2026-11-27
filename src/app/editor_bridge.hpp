@@ -1,9 +1,8 @@
 #pragma once
 
 // EditorBridge — the editor layer's side of the `game` frame loop (app layer,
-// editor builds only). Owns the EditorLayer (ImGui shell), the Renderer panel
-// settings and the requests the UI raises, and applies them at fixed points of
-// the frame:
+// editor builds only). Owns the EditorLayer (ImGui shell) and the requests the
+// UI raises, and applies them at fixed points of the frame:
 //
 //   begin_frame()          after remote requests: starts the UI frame, then
 //                          applies Play/Stop (scene snapshot + the world's
@@ -34,6 +33,9 @@ union SDL_Event;
 namespace engine::asset {
 class AssetManager;
 }
+namespace engine::renderer {
+struct RenderSettings;
+}
 namespace engine::rhi {
 class Device;
 class GpuAllocator;
@@ -59,6 +61,9 @@ struct EditorBridgeTargets {
     FlyCamera*                   camera = nullptr;
     // Shader hot-reload state for the Stats panel (R2); null when off.
     const engine::rhi::ShaderHotReload* shader_reload = nullptr;
+    // The renderer's settings: the Renderer panel edits them and scene files
+    // save / load them (A8).
+    engine::renderer::RenderSettings* render_settings = nullptr;
     // Simulation clock (Pause / Step) and endpoint state for the status bar.
     RemoteBridge* remote = nullptr;
 };
@@ -76,17 +81,14 @@ public:
     // false (QUAT_NO_UI=1) the editor stays inactive.
     void create(SDL_Window* window, bool enabled);
     void bind(const EditorBridgeTargets& targets) { t_ = targets; }
-    // Points the remote bridge at the editor, its renderer settings and (when
-    // the scene has no demo physics world) the play flag.
+    // Points the remote bridge at the editor and (when the scene has no demo
+    // physics world) the play flag.
     void fill_remote_targets(RemoteBridgeTargets& targets, bool demo_physics);
 
     [[nodiscard]] bool active() const { return editor_.active(); }
     // True once after the editor rebuilt its font atlas (display scale
     // change); the frame renderer must re-upload it.
     [[nodiscard]] bool take_font_atlas_changed() { return editor_.take_font_atlas_changed(); }
-    [[nodiscard]] const engine::editor::RendererSettings& render_settings() const {
-        return render_settings_;
-    }
 
     // ---- Input -------------------------------------------------------------
     void process_event(const SDL_Event& event);
@@ -124,7 +126,6 @@ private:
 
     EditorBridgeTargets              t_;
     engine::editor::EditorLayer      editor_;
-    engine::editor::RendererSettings render_settings_;
     std::string startup_select_;      // QUAT_EDITOR_SELECT, applied on the first frame
     std::string pending_instantiate_; // set by the asset browser, consumed below
     bool        new_scene_ = false;   // File > New

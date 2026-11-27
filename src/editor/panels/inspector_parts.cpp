@@ -41,6 +41,7 @@ constexpr CodecIcon k_codec_icons[] = {
     {"grass", icon::sprout},             {"net_replicated", icon::network},
     {"audio_source", icon::volume_2},    {"audio_listener", icon::ear},
     {"animator", icon::clapperboard},    {"mesh", icon::box},
+    {"material", icon::palette},         {"foot_ik", icon::footprints},
 };
 
 void apply_action(entt::registry& r, entt::entity e, InspectorState& state, const char* codec,
@@ -102,6 +103,8 @@ std::string component_title(std::string_view codec) {
     if (codec == "behavior") return "Behavior Tree";
     if (codec == "patrol") return "Patrol Route";
     if (codec == "character") return "Character Controller";
+    if (codec == "foot_ik") return "Foot IK";
+    if (codec == "material") return "Material Override";
     std::string out;
     bool upper = true;
     for (const char c : codec) {
@@ -192,6 +195,8 @@ void add_component_button(entt::registry& registry, entt::entity entity, Inspect
     for (const scene::ComponentInfo& c : scene::component_infos()) {
         if (!c.addable) continue;
         if (std::find(present.begin(), present.end(), c.name) != present.end()) continue;
+        // Foot IK drives a skinned, animated rig; it does nothing elsewhere.
+        if (c.name == "foot_ik" && !registry.all_of<scene::SkinnedMesh>(entity)) continue;
         const std::string title = component_title(c.name);
         if (!ui::matches_filter(title, state.add_filter) &&
             !ui::matches_filter(c.summary, state.add_filter)) {

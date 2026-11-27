@@ -190,7 +190,7 @@ std::expected<Frame, Error> render(quat::test::GpuContext& g, Passes& passes, co
     auto clustered = passes.cull.add_to_graph(graph, cam.view, cam.proj, spec.lights);
     if (!clustered) return std::unexpected(clustered.error());
     auto hdr = passes.lighting.add_to_graph(graph, *gbuffer, extent, sun, glm::inverse(view_proj),
-                                            cam.eye, rhi::ResourceHandle{}, glm::mat4(1.0F),
+                                            cam.eye, {},
                                             *clustered);
     if (!hdr) return std::unexpected(hdr.error());
     if (!spec.transparent.empty()) {

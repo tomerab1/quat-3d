@@ -297,11 +297,15 @@ there, Shift+click adds a patrol waypoint.
 - **Entity enable toggle** at the top of the Inspector: same reason, there is
   no entity-level enabled flag. Component toggles appear where a component
   has one (Behavior Tree).
-- **Feature panels** still drawn with plain ImGui, to migrate once their
-  branches land: Physics, Animation (beyond its empty state), Behaviour
-  (toolbar and node styling), the Grass and Audio inspector sections, and
-  the tuning / shadows / AO / upscaler / particles / scripts panels from the
-  open PRs.
+- **Feature panels** still drawn with plain ImGui: Physics, the Animation
+  preview (beyond its empty state), the behaviour editor (toolbar and node
+  styling), the Grass and Audio inspector sections, and the upscaler /
+  particles / scripts panels of the PRs still open. Already on the kit after
+  the merge with master: the Renderer panel (sun plus every
+  `RenderSettings` group of A8 / R12, with per-field reset arrows against
+  the table defaults and a group reset), the Inspector's Material section
+  (per-factor revert arrows, revert-all in its ⋮ menu) and the Animator /
+  Foot IK sections (G8; Foot IK's enable toggle in its header).
 - **Undo / redo** (E1): the commands exist, disabled.
 - **Dynamic font atlas**: the renderer uploads the atlas once
   (`ImGuiBackendFlags_RendererHasTextures` is not implemented), so fonts are

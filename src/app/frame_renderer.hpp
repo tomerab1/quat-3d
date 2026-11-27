@@ -40,10 +40,14 @@
 #include "engine/renderer/draw_batching.hpp"
 #include "engine/renderer/dynamic_ibl.hpp"
 #include "engine/renderer/exposure_pass.hpp"
+#include "engine/renderer/gtao_pass.hpp"
+#include "engine/renderer/hiz_pass.hpp"
 #include "engine/renderer/light_clusters.hpp"
 #include "engine/renderer/light_cull_pass.hpp"
 #include "engine/renderer/lighting_pass.hpp"
 #include "engine/renderer/mesh_pass.hpp"
+#include "engine/renderer/shadow_ao_settings.hpp"
+#include "engine/renderer/render_settings.hpp"
 #include "engine/renderer/shadow_pass.hpp"
 #include "engine/renderer/skinning_pass.hpp"
 #include "engine/renderer/taa_pass.hpp"
@@ -51,6 +55,7 @@
 #include "engine/renderer/transparent_pass.hpp"
 #include "engine/rhi/gpu_allocator.hpp"
 #include "engine/rhi/render_graph.hpp"
+#include "engine/scene/material_override.hpp"
 #ifdef ENGINE_EDITOR
 #include "engine/renderer/imgui_pass.hpp"
 #endif
@@ -69,12 +74,6 @@ namespace engine::scene {
 class Scene;
 struct CameraMatrices;
 } // namespace engine::scene
-#ifdef ENGINE_EDITOR
-namespace engine::editor {
-struct RendererSettings;
-}
-#endif
-
 namespace quat::app {
 
 class GrassRuntime;
@@ -116,6 +115,8 @@ struct DeferredFrame {
     engine::renderer::TonemapPass    tonemap;
     engine::renderer::SkinningPass   skinning;
     engine::renderer::ShadowPass     shadow;
+    engine::renderer::HiZPass        hiz;
+    engine::renderer::GtaoPass       gtao;
     engine::renderer::TransparentPass transparent;
     engine::renderer::BloomPass      bloom;
     engine::renderer::ExposurePass   exposure;
@@ -144,7 +145,11 @@ struct FrameScene {
     std::vector<engine::renderer::DrawItem>        transparent_draws; // back-to-front
     std::vector<engine::renderer::DrawItem>        shadow_draws;
     std::vector<engine::renderer::SkinDispatch>    dispatches;
-    glm::mat4 light_view_proj{1.0F};
+    // Sun shadows (R12): the camera + sun the cascades are fitted to, and the
+    // light-space volume casters are culled against on the CPU.
+    engine::renderer::CsmView csm_view{};
+    glm::mat4                 shadow_cull_view_proj{1.0F};
+    std::uint64_t             frame_number = 0;
 };
 
 // Everything record() draws besides the gathered scene.
@@ -189,11 +194,15 @@ public:
                                      const engine::rhi::TransferContext& setup_transfer,
                                      const std::string& shader_dir,
                                      engine::rhi::Swapchain& swapchain, bool with_ui);
-#ifdef ENGINE_EDITOR
-    // The editor's Renderer panel settings (clouds, bloom); null = defaults.
-    void set_render_settings(const engine::editor::RendererSettings* settings) {
-        render_settings_ = settings;
+    // Every tunable renderer parameter (A8). Read by the passes each frame;
+    // the editor's Renderer panel, the remote API and scene files edit it.
+    [[nodiscard]] engine::renderer::RenderSettings& render_settings() { return settings_; }
+    // Per-entity derived materials of MaterialOverride components (A8): the
+    // remote bridge resolves them each frame, gather() draws them.
+    [[nodiscard]] engine::scene::MaterialOverrideStore& material_overrides() {
+        return material_overrides_;
     }
+#ifdef ENGINE_EDITOR
     // Re-uploads the editor's font atlas into every frame slot's UI pass
     // after the editor rebuilt it (display scale change). Waits for the
     // device to idle first; rare, so the stall does not matter.
@@ -241,6 +250,10 @@ public:
 
 private:
     [[nodiscard]] engine::renderer::CloudSettings current_clouds() const;
+    // The editor's R12 settings (defaults in headless builds).
+    [[nodiscard]] engine::renderer::CsmSettings current_csm() const;
+    [[nodiscard]] engine::renderer::GtaoSettings current_gtao() const;
+    [[nodiscard]] engine::renderer::ContactShadowSettings current_contact_shadows() const;
     void recreate_render_finished();
     [[nodiscard]] bool record_screenshot_copy(VkCommandBuffer cmd);
     void write_screenshot() const;
@@ -250,14 +263,13 @@ private:
     engine::rhi::Swapchain*    swapchain_ = nullptr;
     VkFormat                   ldr_format_ = VK_FORMAT_UNDEFINED;
     bool                       editor_active_ = false;
-#ifdef ENGINE_EDITOR
-    const engine::editor::RendererSettings* render_settings_ = nullptr;
-#endif
+    engine::renderer::RenderSettings settings_;
+    // Destroyed (cleared) with the frame sync, after the device went idle.
+    engine::scene::MaterialOverrideStore material_overrides_{k_frames_in_flight};
 
-    // Cloud parameters for the lighting background + IBL bake: the editor's
-    // Renderer panel edits them; headless builds use the defaults. The frame
-    // loop accumulates cloud_time_s_ to drive the wind drift (always, like the
-    // animated sky in other engines — not gated on play mode).
+    // Drives the clouds' wind drift (settings_.clouds.time_s is ignored). The
+    // frame loop accumulates it always, like the animated sky in other engines
+    // — not gated on play mode.
     float cloud_time_s_ = 0.0F;
 
     // Temporal state shared by both slots (audit A2 / A11): one TAA history and
@@ -265,6 +277,8 @@ private:
     // before `frames_` so it outlives every pass that references it.
     std::shared_ptr<engine::renderer::TaaHistory>    taa_history_;
     std::shared_ptr<engine::renderer::ExposureState> exposure_state_;
+    // The cascaded shadow map + GPU fit state, shared by both slots (R12).
+    std::shared_ptr<engine::renderer::CsmShared>     csm_shared_;
     std::array<DeferredFrame, k_frames_in_flight>    frames_;
 
     std::optional<engine::renderer::AtmospherePass> atmosphere_;

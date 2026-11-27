@@ -23,7 +23,6 @@
 #include <glm/glm.hpp>
 
 #include "engine/core/error.hpp"
-#include "engine/renderer/cloud_settings.hpp"
 #include "engine/rhi/shader_status.hpp"
 
 struct SDL_Window;
@@ -33,6 +32,9 @@ struct ImVec2;
 
 namespace engine::core {
 class SimClock;
+}
+namespace engine::renderer {
+struct RenderSettings;
 }
 namespace engine::scene {
 class Scene;
@@ -62,18 +64,6 @@ struct PhysicsDebugState {
     bool show_navmesh = true; // overlay the baked navmesh polygons (13.1)
 };
 
-// Renderer parameters the editor edits and the frame loop applies. Owned by
-// the loop (initialised to the engine defaults), pointed to by EditorContext.
-struct RendererSettings {
-    float bloom_threshold = 1.0F;
-    float bloom_knee      = 0.6F;
-    float bloom_intensity = 0.06F;
-    float bloom_radius    = 1.0F;
-    // Volumetric cloud layer. The background follows edits live and the
-    // dynamic IBL probe re-renders continuously, so no rebake plumbing.
-    renderer::CloudSettings clouds;
-};
-
 // Toast severity for EditorLayer::notify.
 enum class NoticeKind : std::uint8_t { info, success, warning, error };
 
@@ -95,8 +85,9 @@ struct EditorContext {
     const std::vector<rhi::ShaderStatus>* shader_statuses = nullptr;
     // Scene access for the hierarchy/inspector panels (may be null).
     scene::Scene* scene = nullptr;
-    // Renderer settings the panel edits (may be null).
-    RendererSettings* renderer = nullptr;
+    // Renderer settings the Renderer panel edits (owned by the frame
+    // renderer; may be null).
+    renderer::RenderSettings* renderer = nullptr;
     // Project root for the asset browser (empty disables the panel).
     std::string project_root;
     // Out: glTF path the user asked to instantiate (double-click or viewport

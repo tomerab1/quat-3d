@@ -6,6 +6,7 @@
 #include <glm/glm.hpp>
 #include <gtest/gtest.h>
 
+#include "engine/asset/asset_manager.hpp"
 #include "remote/world_fixture.hpp"
 
 namespace {
@@ -147,6 +148,34 @@ TEST_F(SceneCommands, StrictUnknownFieldsAndAtomicEdits) {
     // Animators can be edited but never added.
     err("scene.update", {{"entity", box["id"]}, {"components", {{"animator", {{"speed", 2}}}}}},
         code::invalid_params);
+}
+
+TEST_F(SceneCommands, AnimatorSwitchesClipsByName) {
+    engine::asset::AssetManager assets;
+    const auto clip = [&](const char* name) {
+        return assets.load<engine::animation::AnimClipAsset>(name, [&](const auto&) {
+            engine::animation::AnimClipAsset c;
+            c.name = name;
+            c.duration = 1.0F;
+            c.channels = {engine::animation::AnimChannel{}};
+            return c;
+        });
+    };
+    const Json a = ok("scene.create", {{"name", "hero"}});
+    const entt::entity e = entity(a["id"]);
+    s::Animator& anim = reg().emplace<s::Animator>(e);
+    anim.clips = {clip("idle"), clip("walk")};
+    anim.clip = anim.clips[0];
+
+    ok("scene.update", {{"entity", "hero"},
+                        {"components", {{"animator", {{"clip", "walk"}, {"blend_time", 0.3}}}}}});
+    EXPECT_EQ(reg().get<s::Animator>(e).clip.id(), reg().get<s::Animator>(e).clips[1].id());
+    const Json got = ok("scene.get", {{"entity", "hero"}});
+    EXPECT_EQ(got["components"]["animator"]["clip"], "walk") << got.dump();
+    const std::string msg =
+        err("scene.update", {{"entity", "hero"}, {"components", {{"animator", {{"clip", "run"}}}}}},
+            code::invalid_params);
+    EXPECT_TRUE(contains(msg, "available: idle, walk")) << msg;
 }
 
 TEST_F(SceneCommands, SetParentKeepsWorldAndRefusesCycles) {

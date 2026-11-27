@@ -169,6 +169,9 @@ bool prop_vec4(const char* label, glm::vec4& v, const DragSpec& spec = {},
 // A [min, max] pair (one drag with two handles).
 bool prop_range(const char* label, glm::vec2& v, const DragSpec& spec = {},
                 const PropOpts<glm::vec2>& opts = {});
+// A full-width colour swatch showing its values; click opens a picker.
+// `rgba` holds 3 floats (4 with `alpha`).
+bool color_field(const char* id, float* rgba, bool alpha, bool hdr = false);
 bool prop_color3(const char* label, glm::vec3& v, const PropOpts<glm::vec3>& opts = {},
                  bool hdr = false);
 bool prop_color4(const char* label, glm::vec4& v, const PropOpts<glm::vec4>& opts = {},

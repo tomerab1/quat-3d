@@ -11,6 +11,7 @@
 #include <glm/gtc/matrix_transform.hpp>
 
 #include "app/remote_bridge.hpp"
+#include "engine/renderer/render_settings.hpp"
 #include "engine/rhi/device.hpp"
 #include "engine/rhi/gpu_allocator.hpp"
 #include "engine/rhi/shader_hot_reload.hpp"
@@ -72,7 +73,6 @@ void EditorBridge::create(SDL_Window* window, bool enabled) {
 
 void EditorBridge::fill_remote_targets(RemoteBridgeTargets& targets, bool demo_physics) {
     targets.editor = &editor_;
-    targets.render_settings = &render_settings_;
     targets.play = demo_physics ? nullptr : &play_; // demo modes own physics
 }
 
@@ -171,6 +171,9 @@ void EditorBridge::apply_scene_file_requests() {
         const entt::entity sun = scene.create_entity("sun");
         scene.registry().emplace<engine::scene::DirectionalLight>(
             sun, glm::normalize(glm::vec3(-0.4F, -1.0F, -0.3F)), glm::vec3(1.0F), 3.0F);
+        if (t_.render_settings != nullptr) {
+            (void)engine::renderer::reset_render_settings(*t_.render_settings);
+        }
         t_.world->invalidate_navmesh("new scene");
         t_.world->clear_spin_entity();
         editor_.set_selected(entt::null);
@@ -178,7 +181,7 @@ void EditorBridge::apply_scene_file_requests() {
     }
     if (!pending_save_.empty()) {
         const std::string path = std::exchange(pending_save_, {});
-        if (auto r = engine::scene::save_scene(scene, path); r) {
+        if (auto r = engine::scene::save_scene(scene, path, t_.render_settings); r) {
             std::fprintf(stderr, "[editor] saved scene: %s\n", path.c_str());
             editor_.notify(NoticeKind::success, "Saved " + path);
         } else {
@@ -190,7 +193,7 @@ void EditorBridge::apply_scene_file_requests() {
         const std::string path = std::exchange(pending_load_, {});
         with_load_transfer(*t_.device, [&](const engine::rhi::TransferContext& load_transfer) {
             if (auto r = engine::scene::load_scene(scene, path, *t_.allocator, load_transfer,
-                                                   *t_.assets);
+                                                   *t_.assets, t_.render_settings);
                 r) {
                 std::fprintf(stderr, "[editor] loaded scene: %s\n", path.c_str());
                 editor_.notify(NoticeKind::success, "Loaded " + path);
@@ -300,7 +303,7 @@ const ImDrawData* EditorBridge::build_ui(float dt, int draw_count,
         static_cast<int>(scene.registry().view<engine::scene::Transform>().size());
     ui_ctx.shader_statuses = t_.shader_reload != nullptr ? &t_.shader_reload->statuses() : nullptr;
     ui_ctx.scene = &scene;
-    ui_ctx.renderer = &render_settings_;
+    ui_ctx.renderer = t_.render_settings;
     ui_ctx.project_root = QUAT_PROJECT_ROOT;
     ui_ctx.instantiate_request = &pending_instantiate_;
     ui_ctx.save_request = &pending_save_;

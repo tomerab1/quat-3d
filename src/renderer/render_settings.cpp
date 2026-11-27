@@ -1,0 +1,338 @@
+#include "engine/renderer/render_settings.hpp"
+
+#include <algorithm>
+#include <array>
+#include <cmath>
+#include <type_traits>
+
+namespace engine::renderer {
+
+namespace {
+
+// Typed reference to member `Field` of group `Group` of a RenderSettings.
+template <auto Group, auto Field>
+RenderSettingRef field_ref(RenderSettings& s) {
+    auto& v = (s.*Group).*Field;
+    using V = std::remove_cvref_t<decltype(v)>;
+    if constexpr (std::is_same_v<V, bool>) {
+        return {.b = &v};
+    } else if constexpr (std::is_same_v<V, int>) {
+        return {.i = &v};
+    } else {
+        static_assert(std::is_same_v<V, float>, "settings fields are bool, int or float");
+        return {.f = &v};
+    }
+}
+
+using T = RenderSettingType;
+using S = RenderSettings;
+using Csm = CsmSettings;
+using Gtao = GtaoSettings;
+using Contact = ContactShadowSettings;
+
+constexpr std::array k_groups = {
+    RenderSettingGroup{"exposure", "Exposure", "Auto exposure and exposure compensation"},
+    RenderSettingGroup{"bloom", "Bloom", "Glow around bright highlights"},
+    RenderSettingGroup{"taa", "Anti-aliasing", "Temporal anti-aliasing"},
+    RenderSettingGroup{"shadows", "Shadows", "Cascaded sun shadow maps"},
+    RenderSettingGroup{"ao", "Ambient occlusion", "GTAO with bent normals"},
+    RenderSettingGroup{"contact_shadows", "Contact shadows",
+                       "Screen-space sun shadows for small detail"},
+    RenderSettingGroup{"ibl", "Environment light", "Image-based ambient light and reflections"},
+    RenderSettingGroup{"clouds", "Clouds", "Volumetric cloud layer of the sky"},
+};
+
+constexpr std::array k_fields = {
+    // ---- exposure ----
+    RenderSettingDesc{"exposure", "auto", "auto exposure", T::boolean, 0.0F, 1.0F, 1.0F, "",
+                      "Adapt to the scene's measured brightness; off = fixed exposure",
+                      &field_ref<&S::exposure, &ExposureSettings::auto_exposure>},
+    RenderSettingDesc{"exposure", "compensation_ev", "compensation", T::number, -10.0F, 10.0F,
+                      0.0F, "EV", "Exposure bias in stops; with auto off, exposure = 2^EV",
+                      &field_ref<&S::exposure, &ExposureSettings::compensation_ev>},
+    RenderSettingDesc{"exposure", "key", "key (mid-grey)", T::number, 0.01F, 1.0F, 0.18F, "",
+                      "Brightness the average scene luminance is mapped to",
+                      &field_ref<&S::exposure, &ExposureSettings::key>},
+    RenderSettingDesc{"exposure", "min_exposure", "min exposure", T::number, 0.001F, 64.0F, 0.05F,
+                      "x", "Lowest auto exposure multiplier (how far bright scenes darken)",
+                      &field_ref<&S::exposure, &ExposureSettings::min_exposure>},
+    RenderSettingDesc{"exposure", "max_exposure", "max exposure", T::number, 0.001F, 64.0F, 16.0F,
+                      "x", "Highest auto exposure multiplier (how far dark scenes brighten)",
+                      &field_ref<&S::exposure, &ExposureSettings::max_exposure>},
+    RenderSettingDesc{"exposure", "adaptation_s", "adaptation time", T::number, 0.05F, 10.0F, 1.1F,
+                      "s", "Time constant of the eye adaptation",
+                      &field_ref<&S::exposure, &ExposureSettings::adaptation_s>},
+    // ---- bloom ----
+    RenderSettingDesc{"bloom", "enabled", "enabled", T::boolean, 0.0F, 1.0F, 1.0F, "",
+                      "Run the bloom pass",
+                      &field_ref<&S::bloom, &BloomSettings::enabled>},
+    RenderSettingDesc{"bloom", "threshold", "threshold", T::number, 0.0F, 8.0F, 1.0F, "",
+                      "HDR luminance above which highlights bloom",
+                      &field_ref<&S::bloom, &BloomSettings::threshold>},
+    RenderSettingDesc{"bloom", "knee", "knee", T::number, 0.0F, 1.0F, 0.6F, "",
+                      "Soft transition width around the threshold",
+                      &field_ref<&S::bloom, &BloomSettings::knee>},
+    RenderSettingDesc{"bloom", "intensity", "intensity", T::number, 0.0F, 1.0F, 0.06F, "",
+                      "Strength of the glow added back to the image",
+                      &field_ref<&S::bloom, &BloomSettings::intensity>},
+    RenderSettingDesc{"bloom", "radius", "radius", T::number, 0.2F, 2.0F, 1.0F, "",
+                      "Spread of the glow",
+                      &field_ref<&S::bloom, &BloomSettings::radius>},
+    // ---- taa ----
+    RenderSettingDesc{"taa", "enabled", "enabled", T::boolean, 0.0F, 1.0F, 1.0F, "",
+                      "Jitter frames and resolve them against the history",
+                      &field_ref<&S::taa, &TaaSettings::enabled>},
+    RenderSettingDesc{"taa", "feedback", "feedback", T::number, 0.0F, 0.98F, 0.9F, "",
+                      "History weight: higher is smoother but ghosts more",
+                      &field_ref<&S::taa, &TaaSettings::feedback>},
+    // ---- shadows (cascaded sun shadow maps) ----
+    RenderSettingDesc{"shadows", "enabled", "enabled", T::boolean, 0.0F, 1.0F, 1.0F,
+                      "", "Render the sun's cascaded shadow maps; off skips the shadow passes",
+                      &field_ref<&S::shadows, &Csm::enabled>},
+    RenderSettingDesc{"shadows", "max_distance", "distance", T::number, Csm::k_max_distance.min,
+                      Csm::k_max_distance.max, Csm{}.max_distance, "m",
+                      "Shadows end this far from the camera",
+                      &field_ref<&S::shadows, &Csm::max_distance>},
+    RenderSettingDesc{"shadows", "cascades", "cascades", T::integer,
+                      static_cast<float>(Csm::k_cascade_count.min),
+                      static_cast<float>(Csm::k_cascade_count.max),
+                      static_cast<float>(Csm{}.cascade_count), "",
+                      "Number of shadow cascades",
+                      &field_ref<&S::shadows, &Csm::cascade_count>},
+    RenderSettingDesc{"shadows", "split_lambda", "split lambda", T::number, Csm::k_split_lambda.min,
+                      Csm::k_split_lambda.max, Csm{}.split_lambda, "",
+                      "Cascade split spacing: 0 linear, 1 logarithmic",
+                      &field_ref<&S::shadows, &Csm::split_lambda>},
+    RenderSettingDesc{"shadows", "fit_to_depth", "fit to depth", T::boolean, 0.0F, 1.0F, 1.0F,
+                      "", "Fit the cascades to this frame's depth range on the GPU (SDSM)",
+                      &field_ref<&S::shadows, &Csm::gpu_depth_bounds>},
+    RenderSettingDesc{"shadows", "blend_band", "blend band", T::number, Csm::k_blend_band.min,
+                      Csm::k_blend_band.max, Csm{}.blend_band, "",
+                      "Fraction of each cascade cross-faded into the next",
+                      &field_ref<&S::shadows, &Csm::blend_band>},
+    RenderSettingDesc{"shadows", "pcf_radius", "filter radius", T::number, Csm::k_pcf_radius.min,
+                      Csm::k_pcf_radius.max, Csm{}.pcf_radius, "texels",
+                      "PCF filter radius: softer edges",
+                      &field_ref<&S::shadows, &Csm::pcf_radius>},
+    RenderSettingDesc{"shadows", "sun_size_deg", "sun size", T::number, Csm::k_light_size_deg.min,
+                      Csm::k_light_size_deg.max, Csm{}.light_size_deg, "deg",
+                      "Sun angular diameter for contact-hardening penumbrae; 0 = fixed filter",
+                      &field_ref<&S::shadows, &Csm::light_size_deg>},
+    RenderSettingDesc{"shadows", "normal_bias_texels", "normal bias",
+                      T::number, Csm::k_normal_bias.min,
+                      Csm::k_normal_bias.max, Csm{}.normal_bias, "texels",
+                      "Receiver offset along the surface normal (against acne)",
+                      &field_ref<&S::shadows, &Csm::normal_bias>},
+    RenderSettingDesc{"shadows", "depth_bias_texels", "depth bias",
+                      T::number, Csm::k_depth_bias.min,
+                      Csm::k_depth_bias.max, Csm{}.depth_bias, "texels",
+                      "Receiver offset toward the sun (against acne)",
+                      &field_ref<&S::shadows, &Csm::depth_bias>},
+    RenderSettingDesc{"shadows", "caster_distance", "caster reach",
+                      T::number, Csm::k_caster_distance.min,
+                      Csm::k_caster_distance.max, Csm{}.caster_distance, "m",
+                      "How far toward the sun shadow casters are captured",
+                      &field_ref<&S::shadows, &Csm::caster_distance>},
+    RenderSettingDesc{"shadows", "debug_cascades", "show cascades", T::boolean, 0.0F, 1.0F, 0.0F,
+                      "", "Tint each pixel by the cascade that shadows it",
+                      &field_ref<&S::shadows, &Csm::debug_cascades>},
+    // ---- ao (GTAO) ----
+    RenderSettingDesc{"ao", "enabled", "enabled", T::boolean, 0.0F, 1.0F, 1.0F,
+                      "", "Ground-truth ambient occlusion (GTAO) on the ambient light",
+                      &field_ref<&S::ao, &Gtao::enabled>},
+    RenderSettingDesc{"ao", "radius", "radius", T::number, Gtao::k_radius.min,
+                      Gtao::k_radius.max, Gtao{}.radius, "m",
+                      "World-space reach of the occlusion search",
+                      &field_ref<&S::ao, &Gtao::radius>},
+    RenderSettingDesc{"ao", "strength", "strength", T::number, Gtao::k_final_value_power.min,
+                      Gtao::k_final_value_power.max, Gtao{}.final_value_power, "",
+                      "Exponent on the visibility: higher darkens more",
+                      &field_ref<&S::ao, &Gtao::final_value_power>},
+    RenderSettingDesc{"ao", "falloff_range", "falloff", T::number, Gtao::k_falloff_range.min,
+                      Gtao::k_falloff_range.max, Gtao{}.falloff_range, "",
+                      "Fraction of the radius over which occluders fade out",
+                      &field_ref<&S::ao, &Gtao::falloff_range>},
+    RenderSettingDesc{"ao", "sample_distribution_power", "sample distribution",
+                      T::number, Gtao::k_sample_distribution_power.min,
+                      Gtao::k_sample_distribution_power.max, Gtao{}.sample_distribution_power, "",
+                      "Above 1 packs samples near the pixel",
+                      &field_ref<&S::ao, &Gtao::sample_distribution_power>},
+    RenderSettingDesc{"ao", "thin_occluder_compensation", "thin occluders",
+                      T::number, Gtao::k_thin_occluder_compensation.min,
+                      Gtao::k_thin_occluder_compensation.max, Gtao{}.thin_occluder_compensation, "",
+                      "Lets light pass behind thin objects",
+                      &field_ref<&S::ao, &Gtao::thin_occluder_compensation>},
+    RenderSettingDesc{"ao", "depth_mip_offset", "depth mip offset",
+                      T::number, Gtao::k_depth_mip_offset.min,
+                      Gtao::k_depth_mip_offset.max, Gtao{}.depth_mip_offset, "",
+                      "Hi-Z mip bias for distant samples (lower = sharper)",
+                      &field_ref<&S::ao, &Gtao::depth_mip_offset>},
+    RenderSettingDesc{"ao", "slices", "slices", T::integer,
+                      static_cast<float>(Gtao::k_slice_count.min),
+                      static_cast<float>(Gtao::k_slice_count.max),
+                      static_cast<float>(Gtao{}.slice_count), "",
+                      "Search directions per pixel (quality vs cost)",
+                      &field_ref<&S::ao, &Gtao::slice_count>},
+    RenderSettingDesc{"ao", "steps_per_slice", "steps per slice", T::integer,
+                      static_cast<float>(Gtao::k_steps_per_slice.min),
+                      static_cast<float>(Gtao::k_steps_per_slice.max),
+                      static_cast<float>(Gtao{}.steps_per_slice), "",
+                      "Depth samples per direction and side",
+                      &field_ref<&S::ao, &Gtao::steps_per_slice>},
+    RenderSettingDesc{"ao", "denoise_passes", "denoise passes", T::integer,
+                      static_cast<float>(Gtao::k_denoise_passes.min),
+                      static_cast<float>(Gtao::k_denoise_passes.max),
+                      static_cast<float>(Gtao{}.denoise_passes), "",
+                      "Edge-aware blur passes (0 = raw; TAA still accumulates)",
+                      &field_ref<&S::ao, &Gtao::denoise_passes>},
+    RenderSettingDesc{"ao", "denoise_blur_beta", "denoise blur",
+                      T::number, Gtao::k_denoise_blur_beta.min,
+                      Gtao::k_denoise_blur_beta.max, Gtao{}.denoise_blur_beta, "",
+                      "Centre weight of the denoiser: higher keeps more detail",
+                      &field_ref<&S::ao, &Gtao::denoise_blur_beta>},
+    RenderSettingDesc{"ao", "bent_normals", "bent normals", T::boolean, 0.0F, 1.0F, 1.0F,
+                      "", "Look up ambient light along the least-occluded direction",
+                      &field_ref<&S::ao, &Gtao::bent_normals>},
+    RenderSettingDesc{"ao", "specular_occlusion", "specular occlusion",
+                      T::boolean, 0.0F, 1.0F, 1.0F,
+                      "", "Occlude environment reflections in crevices",
+                      &field_ref<&S::ao, &Gtao::specular_occlusion>},
+    RenderSettingDesc{"ao", "multi_bounce", "multi-bounce", T::boolean, 0.0F, 1.0F, 1.0F,
+                      "", "Brighten occlusion on light surfaces (interreflection)",
+                      &field_ref<&S::ao, &Gtao::multi_bounce>},
+    // ---- contact_shadows ----
+    RenderSettingDesc{"contact_shadows", "enabled", "enabled", T::boolean, 0.0F, 1.0F, 1.0F,
+                      "", "Short screen-space shadow rays toward the sun for small detail",
+                      &field_ref<&S::contact_shadows, &Contact::enabled>},
+    RenderSettingDesc{"contact_shadows", "length", "length", T::number, Contact::k_length.min,
+                      Contact::k_length.max, Contact{}.length, "m",
+                      "Ray length toward the sun",
+                      &field_ref<&S::contact_shadows, &Contact::length>},
+    RenderSettingDesc{"contact_shadows", "steps", "steps", T::integer,
+                      static_cast<float>(Contact::k_steps.min),
+                      static_cast<float>(Contact::k_steps.max),
+                      static_cast<float>(Contact{}.steps), "",
+                      "Depth samples along the ray",
+                      &field_ref<&S::contact_shadows, &Contact::steps>},
+    RenderSettingDesc{"contact_shadows", "thickness", "thickness",
+                      T::number, Contact::k_thickness.min,
+                      Contact::k_thickness.max, Contact{}.thickness, "m",
+                      "How far behind the depth buffer a hit still counts",
+                      &field_ref<&S::contact_shadows, &Contact::thickness>},
+    RenderSettingDesc{"contact_shadows", "intensity", "intensity",
+                      T::number, Contact::k_intensity.min,
+                      Contact::k_intensity.max, Contact{}.intensity, "",
+                      "0 = no effect, 1 = full shadow on a hit",
+                      &field_ref<&S::contact_shadows, &Contact::intensity>},
+    // ---- ibl ----
+    RenderSettingDesc{"ibl", "intensity", "intensity", T::number, 0.0F, 4.0F, 1.0F, "",
+                      "Scales image-based ambient light and reflections",
+                      &field_ref<&S::ibl, &IblSettings::intensity>},
+    // ---- clouds ----
+    RenderSettingDesc{"clouds", "enabled", "enabled", T::boolean, 0.0F, 1.0F, 1.0F, "",
+                      "Draw the volumetric cloud layer",
+                      &field_ref<&S::clouds, &CloudSettings::enabled>},
+    RenderSettingDesc{"clouds", "coverage", "coverage", T::number, 0.0F, 1.0F, 0.42F, "",
+                      "Fraction of the sky covered",
+                      &field_ref<&S::clouds, &CloudSettings::coverage>},
+    RenderSettingDesc{"clouds", "density", "density", T::number, 0.0F, 128.0F, 24.0F, "/km",
+                      "Extinction at full density",
+                      &field_ref<&S::clouds, &CloudSettings::density>},
+    RenderSettingDesc{"clouds", "bottom_km", "altitude", T::number, 0.2F, 15.0F, 1.5F, "km",
+                      "Cloud base above the ground",
+                      &field_ref<&S::clouds, &CloudSettings::bottom_km>},
+    RenderSettingDesc{"clouds", "thickness_km", "thickness", T::number, 0.2F, 10.0F, 2.5F, "km",
+                      "Thickness of the cloud layer",
+                      &field_ref<&S::clouds, &CloudSettings::thickness_km>},
+    RenderSettingDesc{"clouds", "size_km", "puff size", T::number, 1.0F, 80.0F, 10.0F, "km",
+                      "Base size of the cloud shapes",
+                      &field_ref<&S::clouds, &CloudSettings::size_km>},
+    RenderSettingDesc{"clouds", "detail", "detail", T::number, 0.0F, 1.0F, 0.4F, "",
+                      "Edge erosion strength",
+                      &field_ref<&S::clouds, &CloudSettings::detail>},
+    RenderSettingDesc{"clouds", "wind_speed", "wind speed", T::number, 0.0F, 100.0F, 12.0F, "m/s",
+                      "Drift speed",
+                      &field_ref<&S::clouds, &CloudSettings::wind_speed>},
+    RenderSettingDesc{"clouds", "wind_dir_deg", "wind direction", T::number, -180.0F, 180.0F,
+                      35.0F, "deg", "Heading the clouds drift toward (from +X toward +Z)",
+                      &field_ref<&S::clouds, &CloudSettings::wind_dir_deg>},
+};
+
+// Keys of the pre-R12 single shadow map (one orthographic box), still
+// accepted from older scene files and clients.
+constexpr std::array k_deprecated = {
+    DeprecatedRenderSetting{"shadows", "extent_m",
+                            "replaced by max_distance (the cascades follow the camera)"},
+    DeprecatedRenderSetting{"shadows", "depth_bias", "replaced by depth_bias_texels"},
+    DeprecatedRenderSetting{"shadows", "slope_bias",
+                            "replaced by the per-tap receiver-plane bias and normal_bias_texels"},
+};
+
+} // namespace
+
+std::span<const RenderSettingGroup> render_setting_groups() { return k_groups; }
+
+std::span<const DeprecatedRenderSetting> deprecated_render_settings() { return k_deprecated; }
+
+const DeprecatedRenderSetting* find_deprecated_render_setting(std::string_view group,
+                                                             std::string_view name) {
+    for (const DeprecatedRenderSetting& d : k_deprecated) {
+        if (d.group == group && d.name == name) return &d;
+    }
+    return nullptr;
+}
+
+std::span<const RenderSettingDesc> render_setting_fields() { return k_fields; }
+
+const RenderSettingGroup* find_render_setting_group(std::string_view group) {
+    for (const RenderSettingGroup& g : k_groups) {
+        if (g.name == group) return &g;
+    }
+    return nullptr;
+}
+
+const RenderSettingDesc* find_render_setting(std::string_view group, std::string_view name) {
+    for (const RenderSettingDesc& d : k_fields) {
+        if (d.group == group && d.name == name) return &d;
+    }
+    return nullptr;
+}
+
+float render_setting_value(const RenderSettings& settings, const RenderSettingDesc& field) {
+    // ref() only forms pointers into the copy; reading through them is const.
+    RenderSettings copy = settings;
+    const RenderSettingRef ref = field.ref(copy);
+    if (ref.b != nullptr) return *ref.b ? 1.0F : 0.0F;
+    if (ref.i != nullptr) return static_cast<float>(*ref.i);
+    return *ref.f;
+}
+
+void set_render_setting(RenderSettings& settings, const RenderSettingDesc& field, float value) {
+    const RenderSettingRef ref = field.ref(settings);
+    if (ref.b != nullptr) {
+        *ref.b = value != 0.0F;
+        return;
+    }
+    const float v = std::isfinite(value) ? std::clamp(value, field.min, field.max) : field.default_value;
+    if (ref.i != nullptr) {
+        *ref.i = static_cast<int>(std::lround(v));
+    } else {
+        *ref.f = v;
+    }
+}
+
+bool reset_render_settings(RenderSettings& settings, std::string_view group) {
+    if (group.empty()) {
+        const float time = settings.clouds.time_s;
+        settings = RenderSettings{};
+        settings.clouds.time_s = time;
+        return true;
+    }
+    if (find_render_setting_group(group) == nullptr) return false;
+    for (const RenderSettingDesc& d : k_fields) {
+        if (d.group == group) set_render_setting(settings, d, d.default_value);
+    }
+    return true;
+}
+
+} // namespace engine::renderer

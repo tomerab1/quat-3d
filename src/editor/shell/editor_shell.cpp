@@ -16,6 +16,7 @@
 #include "../physics_debug.hpp"
 #include "../scene_hierarchy.hpp"
 #include "../scene_snapshot.hpp"
+#include "../tuning_panels.hpp"
 #include "../ui/icons.hpp"
 #include "../ui/toasts.hpp"
 #include "engine/core/sim_clock.hpp"

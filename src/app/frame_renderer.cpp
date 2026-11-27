@@ -11,9 +11,6 @@
 #include "engine/rhi/swapchain.hpp"
 #include "engine/scene/components.hpp"
 #include "engine/scene/scene.hpp"
-#ifdef ENGINE_EDITOR
-#include "engine/editor/editor.hpp"
-#endif
 
 namespace quat::app {
 namespace {
@@ -73,6 +70,15 @@ bool FrameRenderer::create_passes(const engine::rhi::Device& device,
     } else {
         exposure_state_ = *exposure_state;
     }
+    if (frames_ok) {
+        if (auto csm = engine::renderer::CsmShared::create(device, allocator)) {
+            csm_shared_ = std::move(*csm);
+        } else {
+            frames_ok = false;
+            std::fprintf(stderr, "[fatal] shadow map creation failed: %s\n",
+                         csm.error().message.c_str());
+        }
+    }
     for (auto& f : frames_) {
         if (!frames_ok) break;
         auto mesh = engine::renderer::MeshPass::create(device, allocator, pipeline_cache,
@@ -84,7 +90,7 @@ bool FrameRenderer::create_passes(const engine::rhi::Device& device,
         auto skin = engine::renderer::SkinningPass::create(device, allocator, pipeline_cache,
                                                            shader_dir);
         auto shadow = engine::renderer::ShadowPass::create(device, allocator, pipeline_cache,
-                                                           shader_dir);
+                                                           shader_dir, csm_shared_);
         auto transp = engine::renderer::TransparentPass::create(device, allocator, pipeline_cache,
                                                                 setup_transfer, shader_dir);
         auto bloom = engine::renderer::BloomPass::create(device, allocator, pipeline_cache,
@@ -141,6 +147,22 @@ bool FrameRenderer::create_passes(const engine::rhi::Device& device,
             break;
         }
         f.light_cull = std::move(*cull);
+        // Hi-Z and GTAO are optional (they need extended storage formats):
+        // without them the cascades are fitted on the CPU and there is no AO.
+        if (auto hiz = engine::renderer::HiZPass::create(device, allocator, pipeline_cache,
+                                                         shader_dir)) {
+            f.hiz = std::move(*hiz);
+        } else if (&f == &frames_[0]) {
+            std::fprintf(stderr, "[warn] hi-z pass unavailable (CPU cascade fit): %s\n",
+                         hiz.error().message.c_str());
+        }
+        if (auto gtao = engine::renderer::GtaoPass::create(device, allocator, pipeline_cache,
+                                                           shader_dir)) {
+            f.gtao = std::move(*gtao);
+        } else if (&f == &frames_[0]) {
+            std::fprintf(stderr, "[warn] gtao pass unavailable (no AO): %s\n",
+                         gtao.error().message.c_str());
+        }
     }
     return frames_ok;
 }
@@ -263,6 +285,7 @@ void FrameRenderer::create_frame_sync() {
 }
 
 void FrameRenderer::destroy_frame_sync() {
+    material_overrides_.clear(); // the device is idle: no frame reads them
     if (device_ == nullptr || command_pool_ == VK_NULL_HANDLE) return;
     const VkDevice vk_device = device_->handle();
     for (VkSemaphore s : render_finished_) {

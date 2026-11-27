@@ -27,6 +27,7 @@
 #include <vulkan/vulkan.h>
 
 #include "engine/core/error.hpp"
+#include "engine/renderer/render_settings.hpp"
 #include "engine/rhi/descriptor_buffer.hpp"
 #include "engine/rhi/gpu_allocator.hpp"
 #include "engine/rhi/managed_pipeline.hpp"
@@ -130,9 +131,13 @@ public:
     // shared history, using `depth` for reprojection, and copy the result to
     // `target`. `view_proj` is this frame's UNjittered view-projection; the
     // history remembers it for the next frame. Advances the history.
+    // `settings.feedback` is the history weight; with `settings.enabled` off the
+    // resolve passes the current frame through (the caller stops jittering)
+    // while still recording it as the next frame's history.
     [[nodiscard]] std::expected<void, core::Error>
     add_to_graph(rhi::RenderGraph& graph, rhi::ResourceHandle current, rhi::ResourceHandle depth,
-                 rhi::ResourceHandle target, VkExtent2D extent, const glm::mat4& view_proj);
+                 rhi::ResourceHandle target, VkExtent2D extent, const glm::mat4& view_proj,
+                 const TaaSettings& settings = {});
 
     [[nodiscard]] TaaHistory& history() { return *history_; }
 

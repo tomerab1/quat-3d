@@ -1,8 +1,9 @@
 // FrameRenderer, per frame: gathers the ticked scene into draw lists and builds
 // the render graph. Pass order (graph declaration order):
-//   sky-view LUT update, dynamic IBL step, shadow, GBuffer, terrain, light
-//   culling, lighting, transparent, bloom, exposure, tonemap, TAA, editor UI;
-//   GPU skinning is recorded before the graph executes.
+//   sky-view LUT update, dynamic IBL step, GBuffer, terrain, grass, Hi-Z,
+//   cascaded shadows (GPU fit + cascades), GTAO, light culling, lighting,
+//   transparent, bloom, exposure, tonemap, TAA, editor UI; GPU skinning is
+//   recorded before the graph executes.
 
 #include "app/frame_renderer.hpp"
 #include "app/grass_runtime.hpp"
@@ -10,6 +11,8 @@
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
+#include <utility>
+#include <vector>
 
 #include <glm/gtc/matrix_transform.hpp>
 
@@ -22,9 +25,7 @@
 #include "engine/scene/components.hpp"
 #include "engine/scene/instanced_mesh.hpp"
 #include "engine/scene/scene.hpp"
-#ifdef ENGINE_EDITOR
-#include "engine/editor/editor.hpp"
-#endif
+#include "engine/scene/material_override.hpp"
 
 namespace quat::app {
 namespace {
@@ -99,12 +100,21 @@ SkinnedEntityGpu* ensure_skin_gpu(DeferredFrame& frame, entt::entity entity,
 } // namespace
 
 engine::renderer::CloudSettings FrameRenderer::current_clouds() const {
-    engine::renderer::CloudSettings c{};
-#ifdef ENGINE_EDITOR
-    if (render_settings_ != nullptr) c = render_settings_->clouds;
-#endif
+    engine::renderer::CloudSettings c = settings_.clouds;
     c.time_s = cloud_time_s_;
     return c;
+}
+
+engine::renderer::CsmSettings FrameRenderer::current_csm() const {
+    return settings_.shadows.sanitized();
+}
+
+engine::renderer::GtaoSettings FrameRenderer::current_gtao() const {
+    return settings_.ao.sanitized();
+}
+
+engine::renderer::ContactShadowSettings FrameRenderer::current_contact_shadows() const {
+    return settings_.contact_shadows.sanitized();
 }
 
 FrameScene FrameRenderer::gather(engine::scene::Scene& scene,
@@ -118,9 +128,11 @@ FrameScene FrameRenderer::gather(engine::scene::Scene& scene,
     // TAA: jitter the projection sub-pixel each frame (Halton). The whole
     // frame renders with the jittered view-proj; the resolve accumulates
     // into the shared history, reprojecting with the UNjittered
-    // cam.view_proj (audit A14).
+    // cam.view_proj (audit A14). No jitter while TAA is off.
     const glm::vec2 jitter =
-        engine::renderer::taa_jitter(frame_number, draw_extent.width, draw_extent.height);
+        settings_.taa.enabled
+            ? engine::renderer::taa_jitter(frame_number, draw_extent.width, draw_extent.height)
+            : glm::vec2(0.0F);
     glm::mat4 jitter_mat(1.0F);
     jitter_mat[3][0] = jitter.x;
     jitter_mat[3][1] = jitter.y;
@@ -155,7 +167,7 @@ FrameScene FrameRenderer::gather(engine::scene::Scene& scene,
          scene.registry().view<engine::scene::Transform, engine::scene::MeshRenderer>().each()) {
         engine::renderer::DrawItem item;
         item.mesh = mr.mesh.valid() ? &*mr.mesh : nullptr;
-        item.material = mr.material.valid() ? &*mr.material : nullptr;
+        item.material = material_overrides_.drawn(scene.registry(), e, mr);
         item.model = t.world;
 
         const auto* sm = scene.registry().try_get<engine::scene::SkinnedMesh>(e);
@@ -222,17 +234,13 @@ FrameScene FrameRenderer::gather(engine::scene::Scene& scene,
         }
     }
 
-    // Directional shadow: an orthographic light view fit to a fixed box
-    // around the scene (the demos all sit near the origin).
-    const glm::vec3 sun_dir = -glm::normalize(glm::vec3(light.direction)); // travel direction
-    const glm::vec3 shadow_center(0.0F, 1.5F, 0.0F);
-    constexpr float shadow_radius = 14.0F;
-    const glm::vec3 light_eye = shadow_center - sun_dir * (shadow_radius * 1.5F);
-    const glm::mat4 shadow_view =
-        glm::lookAt(light_eye, shadow_center, glm::vec3(0.0F, 1.0F, 0.0F));
-    const glm::mat4 shadow_proj = glm::ortho(-shadow_radius, shadow_radius, -shadow_radius,
-                                             shadow_radius, 0.1F, shadow_radius * 3.5F);
-    out.light_view_proj = shadow_proj * shadow_view;
+    // Sun shadows: cascades are fitted to the unjittered camera (on the GPU,
+    // from this frame's depth bounds); casters are culled against the volume
+    // every possible cascade fits in.
+    out.csm_view = {cam.view, cam.projection, glm::vec3(light.direction)};
+    out.shadow_cull_view_proj = engine::renderer::caster_cull_view_proj(
+        out.csm_view, current_csm(), engine::renderer::shadow_map_size);
+    out.frame_number = frame_number;
     return out;
 }
 
@@ -287,15 +295,11 @@ bool FrameRenderer::record(const FrameInputs& in) {
     engine::renderer::InstancedDrawList opaque_batches =
         engine::renderer::batch_draws(fs.draws);
     // R9.2: InstancedMesh placements, one draw per (mesh, material), culled per instance.
-    engine::scene::append_instanced_draws(*in.registry, fs.light_view_proj,
+    engine::scene::append_instanced_draws(*in.registry, fs.shadow_cull_view_proj,
                                           engine::scene::InstancedPass::shadow, shadow_batches);
     engine::scene::append_instanced_draws(*in.registry, cam.view_proj,
                                           engine::scene::InstancedPass::opaque, opaque_batches);
-    auto shadow = fr.shadow.add_to_graph(graph, fs.light_view_proj, shadow_batches);
-    if (!shadow) {
-        std::fprintf(stderr, "[fatal] shadow pass: %s\n", shadow.error().message.c_str());
-        return false;
-    }
+    const engine::renderer::RenderSettings& settings = settings_;
     auto gbuffer = fr.mesh.add_to_graph(graph, draw_extent, fs.jittered_vp, opaque_batches);
     if (!gbuffer) {
         std::fprintf(stderr, "[fatal] gbuffer pass: %s\n", gbuffer.error().message.c_str());
@@ -309,6 +313,47 @@ bool FrameRenderer::record(const FrameInputs& in) {
         in.grass->add_to_graph(graph, frame_, *in.registry, *gbuffer, draw_extent, fs.jittered_vp,
                                cam, in.terrain, in.terrain_anchor, in.sim_dt);
     }
+    // R12: Hi-Z pyramid of the final depth (after terrain / grass), then the
+    // sun's cascades fitted to its depth bounds and rendered (shadows.enabled
+    // off: no shadow passes, the lighting is unshadowed).
+    const engine::renderer::CsmSettings csm = current_csm();
+    engine::renderer::HiZTargets hiz{};
+    if (fr.hiz.valid()) {
+        if (auto h = fr.hiz.add_to_graph(graph, gbuffer->depth, draw_extent)) {
+            hiz = *h;
+        } else {
+            std::fprintf(stderr, "[warn] hi-z pass: %s\n", h.error().message.c_str());
+        }
+    }
+    std::vector<engine::renderer::ShadowCasterFn> extra_casters;
+    if (in.terrain != nullptr && csm.enabled) {
+        if (auto fn = in.terrain->shadow_casters(fs.shadow_cull_view_proj, cam.position,
+                                                 in.terrain_anchor)) {
+            extra_casters.push_back(std::move(fn));
+        }
+    }
+    auto shadows = fr.shadow.add_to_graph(graph, fs.csm_view, csm, hiz.valid() ? &hiz : nullptr,
+                                          shadow_batches, extra_casters);
+    if (!shadows) {
+        std::fprintf(stderr, "[fatal] shadow pass: %s\n", shadows.error().message.c_str());
+        return false;
+    }
+    engine::renderer::LightingOcclusion occlusion;
+    occlusion.shadows = *shadows;
+    occlusion.csm = csm;
+    occlusion.gtao = current_gtao();
+    if (hiz.valid() && fr.gtao.valid()) {
+        if (auto ao = fr.gtao.add_to_graph(graph, hiz, gbuffer->normal, draw_extent, cam.view,
+                                           cam.projection, occlusion.gtao,
+                                           static_cast<std::uint32_t>(fs.frame_number))) {
+            occlusion.ao = *ao;
+        } else {
+            std::fprintf(stderr, "[warn] gtao pass: %s\n", ao.error().message.c_str());
+        }
+    }
+    occlusion.contact = current_contact_shadows();
+    occlusion.projection = cam.projection;
+    occlusion.frame_index = static_cast<std::uint32_t>(fs.frame_number);
     // Clustered light culling (R10.1). A camera the clusters cannot
     // represent (non-perspective / no finite far plane) renders unlit by
     // point lights rather than stopping the frame loop.
@@ -319,10 +364,11 @@ bool FrameRenderer::record(const FrameInputs& in) {
         std::fprintf(stderr, "[warn] light cull: %s\n", c.error().message.c_str());
     }
     auto hdr = fr.lighting.add_to_graph(graph, *gbuffer, draw_extent, fs.light,
-                                        fs.jittered_inv_vp, cam.position, *shadow,
-                                        fs.light_view_proj, clustered,
+                                        fs.jittered_inv_vp, cam.position, occlusion, clustered,
                                         /*enable_sky=*/true, ibl_views, atmos_skyview(),
-                                        atmos_transmittance(), current_clouds());
+                                        atmos_transmittance(), current_clouds(),
+                                        engine::renderer::LightingTuning{
+                                            .ibl_intensity = settings.ibl.intensity});
     if (!hdr) {
         std::fprintf(stderr, "[fatal] lighting pass: %s\n", hdr.error().message.c_str());
         return false;
@@ -332,28 +378,31 @@ bool FrameRenderer::record(const FrameInputs& in) {
     if (!fs.transparent_draws.empty()) {
         if (auto r = fr.transparent.add_to_graph(graph, *hdr, gbuffer->depth, draw_extent,
                                                  fs.jittered_vp, fs.light, cam.position,
-                                                 fs.transparent_draws, ibl_views, clustered);
+                                                 fs.transparent_draws, ibl_views, clustered,
+                                                 settings.ibl.intensity);
             !r) {
             std::fprintf(stderr, "[fatal] transparent pass: %s\n", r.error().message.c_str());
             return false;
         }
     }
     // Bloom: blur the bright parts of the HDR and add them back before tonemap.
-    engine::renderer::BloomParams bloom_params{};
-#ifdef ENGINE_EDITOR
-    if (render_settings_ != nullptr) {
-        bloom_params.threshold = render_settings_->bloom_threshold;
-        bloom_params.knee = render_settings_->bloom_knee;
-        bloom_params.intensity = render_settings_->bloom_intensity;
-        bloom_params.radius = render_settings_->bloom_radius;
+    if (settings.bloom.enabled) {
+        const engine::renderer::BloomParams bloom_params{
+            .threshold = settings.bloom.threshold,
+            .knee = settings.bloom.knee,
+            .intensity = settings.bloom.intensity,
+            .radius = settings.bloom.radius};
+        if (auto r = fr.bloom.add_to_graph(graph, *hdr, draw_extent, bloom_params); !r) {
+            std::fprintf(stderr, "[fatal] bloom pass: %s\n", r.error().message.c_str());
+            return false;
+        }
     }
-#endif
-    if (auto r = fr.bloom.add_to_graph(graph, *hdr, draw_extent, bloom_params); !r) {
-        std::fprintf(stderr, "[fatal] bloom pass: %s\n", r.error().message.c_str());
-        return false;
-    }
-    // Auto-exposure: measure the (post-bloom) HDR luminance and adapt over time.
-    if (auto r = fr.exposure.add_to_graph(graph, *hdr, draw_extent, in.dt); !r) {
+    // Auto-exposure: measure the (post-bloom) HDR luminance and adapt over
+    // time. It keeps measuring in manual mode, so switching back to auto
+    // starts from the current scene instead of a stale value.
+    if (auto r = fr.exposure.add_to_graph(graph, *hdr, draw_extent, in.dt,
+                                          settings.exposure.adaptation_s);
+        !r) {
         std::fprintf(stderr, "[fatal] exposure pass: %s\n", r.error().message.c_str());
         return false;
     }
@@ -395,14 +444,15 @@ bool FrameRenderer::record(const FrameInputs& in) {
         "ldr_current", ldr_format_, draw_extent,
         VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT);
     if (auto r = fr.tonemap.add_to_graph(graph, *hdr, ldr_current, draw_extent,
-                                         fr.exposure.exposure_buffer_address());
+                                         fr.exposure.exposure_buffer_address(),
+                                         settings.exposure);
         !r) {
         std::fprintf(stderr, "[fatal] tonemap pass: %s\n", r.error().message.c_str());
         return false;
     }
     // Temporal anti-aliasing: resolve the jittered frame against history.
     if (auto r = fr.taa.add_to_graph(graph, ldr_current, gbuffer->depth, scene_target,
-                                     draw_extent, cam.view_proj);
+                                     draw_extent, cam.view_proj, settings.taa);
         !r) {
         std::fprintf(stderr, "[fatal] taa pass: %s\n", r.error().message.c_str());
         return false;

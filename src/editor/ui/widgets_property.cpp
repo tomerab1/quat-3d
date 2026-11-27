@@ -225,22 +225,52 @@ bool prop_range(const char* text, glm::vec2& v, const DragSpec& spec,
     });
 }
 
+bool color_field(const char* id, float* rgba, bool alpha, bool hdr) {
+    ImGui::PushID(id);
+    ImGuiColorEditFlags flags = ImGuiColorEditFlags_Float | ImGuiColorEditFlags_AlphaPreviewHalf;
+    if (!alpha) flags |= ImGuiColorEditFlags_NoAlpha;
+    if (hdr) flags |= ImGuiColorEditFlags_HDR;
+    const ImVec4 col(rgba[0], rgba[1], rgba[2], alpha ? rgba[3] : 1.0F);
+    const float w = ImGui::CalcItemWidth();
+    if (ImGui::ColorButton("##swatch", col, flags, ImVec2(w, ImGui::GetFrameHeight()))) {
+        ImGui::OpenPopup("##picker");
+    }
+    // Values on the swatch, in a contrasting colour.
+    const ImVec2 min = ImGui::GetItemRectMin();
+    const ImVec2 max = ImGui::GetItemRectMax();
+    char text[64];
+    if (alpha) {
+        std::snprintf(text, sizeof(text), "%.2f  %.2f  %.2f  %.2f", static_cast<double>(rgba[0]),
+                      static_cast<double>(rgba[1]), static_cast<double>(rgba[2]),
+                      static_cast<double>(rgba[3]));
+    } else {
+        std::snprintf(text, sizeof(text), "%.2f  %.2f  %.2f", static_cast<double>(rgba[0]),
+                      static_cast<double>(rgba[1]), static_cast<double>(rgba[2]));
+    }
+    const float luma = 0.2126F * col.x + 0.7152F * col.y + 0.0722F * col.z;
+    const ImU32 fg = luma > 0.5F ? IM_COL32(20, 22, 26, 255) : IM_COL32(240, 242, 245, 255);
+    const ImVec2 ts = ImGui::CalcTextSize(text);
+    if (ts.x + scaled(Spacing::xs) * 2.0F < max.x - min.x) {
+        ImGui::GetWindowDrawList()->AddText(
+            ImVec2(min.x + scaled(Spacing::xs), min.y + (max.y - min.y - ts.y) * 0.5F), fg, text);
+    }
+    item_tooltip("Click to edit");
+    bool changed = false;
+    if (ImGui::BeginPopup("##picker")) {
+        changed = alpha ? ImGui::ColorPicker4("##pick", rgba, flags | ImGuiColorEditFlags_AlphaBar)
+                        : ImGui::ColorPicker3("##pick", rgba, flags);
+        ImGui::EndPopup();
+    }
+    ImGui::PopID();
+    return changed;
+}
+
 bool prop_color3(const char* text, glm::vec3& v, const PropOpts<glm::vec3>& opts, bool hdr) {
-    return prop_row(text, v, opts, [&] {
-        ImGuiColorEditFlags flags = ImGuiColorEditFlags_Float;
-        if (hdr) flags |= ImGuiColorEditFlags_HDR;
-        return ImGui::ColorEdit3("##v", &v.x, flags);
-    });
+    return prop_row(text, v, opts, [&] { return color_field("##v", &v.x, false, hdr); });
 }
 
 bool prop_color4(const char* text, glm::vec4& v, const PropOpts<glm::vec4>& opts, bool hdr) {
-    return prop_row(text, v, opts, [&] {
-        ImGuiColorEditFlags flags = ImGuiColorEditFlags_Float |
-                                    ImGuiColorEditFlags_AlphaPreviewHalf |
-                                    ImGuiColorEditFlags_AlphaBar;
-        if (hdr) flags |= ImGuiColorEditFlags_HDR;
-        return ImGui::ColorEdit4("##v", &v.x, flags);
-    });
+    return prop_row(text, v, opts, [&] { return color_field("##v", &v.x, true, hdr); });
 }
 
 bool prop_text(const char* text, std::string& v, const PropOpts<std::string>& opts,
