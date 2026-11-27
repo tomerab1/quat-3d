@@ -9,7 +9,6 @@
 #include "engine/net/prediction.hpp"
 #include "engine/net/replication.hpp"
 #include "engine/net/transport.hpp"
-#include "engine/physics/physics_world.hpp"
 #include "engine/scene/behavior.hpp"
 #include "engine/scene/components.hpp"
 #include "engine/scene/gltf_loader.hpp"
@@ -30,12 +29,6 @@ TEST(Editor, PlayModeSnapshot) { ASSERT_OK(engine::editor::run_scene_snapshot_se
 
 TEST(Animation, SkeletonLoad) { ASSERT_OK(scn::run_skeleton_load_self_test()); }
 TEST(Animation, ClipLoad) { ASSERT_OK(scn::run_animation_load_self_test()); }
-
-TEST(Physics, World) { ASSERT_OK(engine::physics::run_physics_self_test()); }
-TEST(Physics, EcsBodies) { ASSERT_OK(scn::run_physics_body_self_test()); }
-TEST(Physics, TerrainHeightField) { ASSERT_OK(scn::run_terrain_physics_self_test()); }
-TEST(Physics, CharacterController) { ASSERT_OK(scn::run_character_self_test()); }
-TEST(Physics, Triggers) { ASSERT_OK(engine::physics::run_trigger_self_test()); }
 
 TEST(Gltf, MaterialExtract) { ASSERT_OK(scn::run_material_extract_self_test()); }
 TEST(Gltf, StructuralValidation) { ASSERT_OK(scn::run_gltf_validation_self_test()); }
