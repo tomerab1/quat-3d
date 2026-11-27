@@ -13,6 +13,7 @@
 
 struct PushConstants {
     uint vertex_count;
+    uint joint_count; // matrices in g_joints; always >= 1 (the pass skips empty skins)
 }
 [[vk::push_constant]] PushConstants pc;
 
@@ -46,7 +47,9 @@ void compute_main(uint3 tid : SV_DispatchThreadID) {
     float4 c3 = c0;
     [unroll]
     for (int k = 0; k < 4; ++k) {
-        uint  j = joints[k];
+        // Clamped: an index past the skin's joints would read out of bounds
+        // (the loader rejects weighted ones; zero-weight ones still load).
+        uint  j = min(joints[k], pc.joint_count - 1);
         float w = weights[k];
         uint  mbase = j * MAT_STRIDE;
         c0 += w * g_joints.Load<float4>(mbase + 0);

@@ -28,7 +28,10 @@ constexpr VkShaderStageFlags kComputeStage = VK_SHADER_STAGE_COMPUTE_BIT;
 
 struct SkinningPushConstants {
     std::uint32_t vertex_count = 0;
+    std::uint32_t joint_count = 0; // the shader clamps JOINTS_0 indices to this
 };
+
+constexpr VkDeviceSize kJointMatrixSize = sizeof(glm::mat4);
 
 // Set 0: vertices-in, skin, joints (read) and vertices-out (write), all storage
 // buffers. Matches skinning.slang.
@@ -85,6 +88,10 @@ SkinningPass::record(VkCommandBuffer cmd, std::span<const SkinDispatch> dispatch
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline_.handle());
 
     for (const SkinDispatch& d : dispatches) {
+        // No joint matrices: nothing valid to blend with (and the shader's
+        // clamp needs at least one).
+        const VkDeviceSize joint_count = d.joints_size / kJointMatrixSize;
+        if (joint_count == 0 || d.vertex_count == 0) continue;
         auto db = rhi::DescriptorBuffer::create(*device_, *allocator_, db_fns_, layout_);
         if (!db) return std::unexpected(db.error());
         db->write_storage_buffer(0, d.vertices_in, d.vertices_in_size);
@@ -94,7 +101,7 @@ SkinningPass::record(VkCommandBuffer cmd, std::span<const SkinDispatch> dispatch
         frame_descriptors_.push_back(std::move(*db));
 
         frame_descriptors_.back().bind(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline_.layout(), 0);
-        SkinningPushConstants push{d.vertex_count};
+        SkinningPushConstants push{d.vertex_count, static_cast<std::uint32_t>(joint_count)};
         vkCmdPushConstants(cmd, pipeline_.layout(), kComputeStage, 0, sizeof(push), &push);
         vkCmdDispatch(cmd, (d.vertex_count + 63) / 64, 1, 1);
     }
