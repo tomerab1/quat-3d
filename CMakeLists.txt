@@ -178,7 +178,9 @@ add_library(engine_animation STATIC
     src/animation/clip.cpp
     src/animation/animator.cpp
     src/animation/state_machine.cpp
-    src/animation/inertialization.cpp)
+    src/animation/inertialization.cpp
+    src/animation/ik/two_bone_ik.cpp
+    src/animation/ik/foot_placement.cpp)
 target_link_libraries(engine_animation PUBLIC engine_flags glm::glm)
 target_include_directories(engine_animation PUBLIC ${ENGINE_PUBLIC_INCLUDE})
 

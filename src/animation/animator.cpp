@@ -10,11 +10,6 @@ namespace engine::animation {
 
 namespace {
 
-[[nodiscard]] glm::mat4 compose(const JointPose& p) {
-    return glm::translate(glm::mat4(1.0F), p.translation) * glm::mat4_cast(p.rotation) *
-           glm::scale(glm::mat4(1.0F), p.scale);
-}
-
 [[nodiscard]] bool mask_enabled(std::span<const std::uint32_t> mask, std::size_t joint) {
     if (mask.empty()) return true;
     const std::size_t word = joint / 32;
@@ -22,6 +17,21 @@ namespace {
 }
 
 } // namespace
+
+glm::mat4 joint_matrix(const JointPose& p) {
+    return glm::translate(glm::mat4(1.0F), p.translation) * glm::mat4_cast(p.rotation) *
+           glm::scale(glm::mat4(1.0F), p.scale);
+}
+
+std::vector<glm::mat4> pose_world_matrices(const SkeletonAsset& skeleton,
+                                           std::span<const JointPose> pose,
+                                           const glm::mat4& root_transform) {
+    std::vector<glm::mat4> local(pose.size());
+    for (std::size_t i = 0; i < pose.size(); ++i) {
+        local[i] = joint_matrix(pose[i]);
+    }
+    return compute_world_matrices(skeleton, local, root_transform);
+}
 
 std::vector<JointPose> bind_pose(const SkeletonAsset& skeleton) {
     std::vector<JointPose> pose(skeleton.joints.size());
@@ -102,11 +112,7 @@ std::vector<JointPose> apply_additive(const std::vector<JointPose>& base,
 std::vector<glm::mat4> pose_skinning_matrices(const SkeletonAsset& skeleton,
                                               const std::vector<JointPose>& pose,
                                               const glm::mat4& root_transform) {
-    std::vector<glm::mat4> local(pose.size());
-    for (std::size_t i = 0; i < pose.size(); ++i) {
-        local[i] = compose(pose[i]);
-    }
-    const std::vector<glm::mat4> world = compute_world_matrices(skeleton, local, root_transform);
+    const std::vector<glm::mat4> world = pose_world_matrices(skeleton, pose, root_transform);
     std::vector<glm::mat4> out(skeleton.joints.size());
     for (std::size_t i = 0; i < skeleton.joints.size(); ++i) {
         out[i] = world[i] * skeleton.joints[i].inverse_bind;
