@@ -202,6 +202,9 @@ void WorldRuntime::update_terrain(engine::scene::Scene& scene, const glm::vec3& 
     // Terrain upkeep: single-tile mode generates async on demand; streaming
     // mode keeps a seamless tile window centred on the camera (12.4). Both
     // upload before this frame's graph builds, without pipeline stalls.
+    // The pass's upkeep runs every frame, terrain or not: it frees retired
+    // tiles and finished GPU jobs, and stops GPU work nobody wants any more.
+    terrain_pass_.tick();
     terrain_anchor_ = glm::vec3(0.0F);
     terrain_snowline_ = 110.0F;
     terrain_present_ = false;
@@ -237,6 +240,12 @@ void WorldRuntime::update_terrain(engine::scene::Scene& scene, const glm::vec3& 
                 }
                 terrain_streamer_.reset();
                 tcomp.regenerate = true; // rebuild the fixed tile
+            }
+            // A regenerate supersedes a job still running (slider drags):
+            // cancel it so the new parameters do not queue behind it; the
+            // cancelled result arrives invalid and is skipped below.
+            if (tcomp.regenerate && terrain_job_.valid() && terrain_cancel_) {
+                terrain_cancel_->store(true);
             }
             if (tcomp.regenerate && !terrain_job_.valid()) {
                 tcomp.regenerate = false;

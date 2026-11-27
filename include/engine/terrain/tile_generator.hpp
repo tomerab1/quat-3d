@@ -32,15 +32,21 @@ public:
     // Starts generating the tile `params` describes (params.world_tile). The
     // future becomes ready once its CPU Heightmap exists. A backend may make
     // progress only from its owner's frame loop (the GPU one does), so never
-    // block on the future from that thread.
-    [[nodiscard]] virtual std::future<Heightmap> generate(const TerrainParams& params) = 0;
+    // block on the future from that thread. Setting `cancel` (may be null)
+    // abandons the request: the backend stops its work and the future becomes
+    // ready with an invalid Heightmap (for a frame-driven backend, at its
+    // next frame).
+    [[nodiscard]] virtual std::future<Heightmap> generate(const TerrainParams& params,
+                                                          CancelToken cancel) = 0;
 };
 
 // Generates a tile on `backend` when it supports `params`, else on a CPU
 // worker (generate_async) that `cancel` can stop. A null backend means CPU.
 [[nodiscard]] inline std::future<Heightmap>
 generate_tile_async(TileGenerator* backend, const TerrainParams& params, CancelToken cancel = {}) {
-    if (backend != nullptr && backend->supports(params)) return backend->generate(params);
+    if (backend != nullptr && backend->supports(params)) {
+        return backend->generate(params, std::move(cancel));
+    }
     return generate_async(params, std::move(cancel));
 }
 

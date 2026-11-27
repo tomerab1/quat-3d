@@ -24,12 +24,15 @@ class ManualGenerator final : public t::TileGenerator {
 public:
     bool accept = true;
     std::vector<t::TerrainParams> requests;
+    std::vector<t::CancelToken>   tokens;
     std::map<std::pair<int, int>, std::promise<t::Heightmap>> pending;
 
     [[nodiscard]] bool supports(const t::TerrainParams&) const override { return accept; }
 
-    [[nodiscard]] std::future<t::Heightmap> generate(const t::TerrainParams& params) override {
+    [[nodiscard]] std::future<t::Heightmap> generate(const t::TerrainParams& params,
+                                                     t::CancelToken cancel) override {
         requests.push_back(params);
+        tokens.push_back(std::move(cancel));
         auto& p = pending[{params.world_tile.x, params.world_tile.y}];
         p = std::promise<t::Heightmap>();
         return p.get_future();
@@ -100,6 +103,29 @@ TEST(TerrainStreamingBackend, BlockingUpdatesNeverWaitOnTheBackend) {
         EXPECT_EQ(map.gpu_tile, 0U) << "tile " << coord.x << "," << coord.y;
     }
     EXPECT_EQ(gen.requests.size(), 1U);
+}
+
+// PR #3 review: a job the streamer drops is cancelled on the backend too —
+// when the streamer is replaced/destroyed and when a blocking update takes
+// over on the CPU — so it never keeps the backend's queue busy.
+TEST(TerrainStreamingBackend, DroppedJobsAreCancelledOnTheBackend) {
+    ManualGenerator gen;
+    {
+        t::TerrainStreamer streamer(tiny(), 0);
+        streamer.set_generator(&gen);
+        (void)streamer.update(glm::vec2(0.0F));
+        ASSERT_EQ(gen.tokens.size(), 1U);
+        ASSERT_NE(gen.tokens[0], nullptr);
+        EXPECT_FALSE(gen.tokens[0]->load());
+    } // destroyed, e.g. a streaming regenerate replacing it
+    EXPECT_TRUE(gen.tokens[0]->load());
+
+    t::TerrainStreamer streamer(tiny(), 0);
+    streamer.set_generator(&gen);
+    (void)streamer.update(glm::vec2(0.0F));
+    ASSERT_EQ(gen.tokens.size(), 2U);
+    (void)streamer.update(glm::vec2(0.0F), /*block=*/true); // CPU takes over
+    EXPECT_TRUE(gen.tokens[1]->load());
 }
 
 TEST(TerrainStreamingBackend, AnInvalidDeliveryIsRetried) {

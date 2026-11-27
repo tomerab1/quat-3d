@@ -214,6 +214,19 @@ std::expected<void, core::Error> TerrainPass::set_tile(const glm::ivec2& coord,
     return {};
 }
 
+void TerrainPass::tick() {
+    // Destroy retired tiles once every frame that could have referenced them
+    // has left the GPU.
+    for (auto it = retired_.begin(); it != retired_.end();) {
+        if (--it->first <= 0) {
+            it = retired_.erase(it);
+        } else {
+            ++it;
+        }
+    }
+    if (gpu_tiles_) gpu_tiles_->tick();
+}
+
 void TerrainPass::remove_tile(const glm::ivec2& coord) {
     if (auto it = tiles_.find(coord); it != tiles_.end()) {
         retired_.emplace_back(3, std::move(it->second));
@@ -228,16 +241,6 @@ void TerrainPass::add_to_graph(rhi::RenderGraph& graph, const renderer::GBufferT
     // GPU tile synthesis records its compute work into this frame (it is
     // independent of the draws below and of the GBuffer).
     if (gpu_tiles_) gpu_tiles_->add_to_graph(graph);
-
-    // Age the retire queue (called once per frame): destroy tiles once every
-    // frame that could have referenced them has left the GPU.
-    for (auto it = retired_.begin(); it != retired_.end();) {
-        if (--it->first <= 0) {
-            it = retired_.erase(it);
-        } else {
-            ++it;
-        }
-    }
     if (tiles_.empty()) return;
 
     const auto planes = frustum_planes(view_proj);

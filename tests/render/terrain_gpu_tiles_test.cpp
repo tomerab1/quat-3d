@@ -18,6 +18,7 @@
 #include <vulkan/vulkan.h>
 
 #include "engine/renderer/mesh_pass.hpp"
+#include "engine/renderer/terrain_gpu_tiles.hpp"
 #include "engine/renderer/terrain_pass.hpp"
 #include "engine/rhi/device.hpp"
 #include "engine/rhi/gpu_allocator.hpp"
@@ -61,6 +62,7 @@ struct Frame {
         proj[1][1] *= -1.0F;
         const glm::mat4 vp = proj * view;
 
+        terrain.tick(); // per-frame upkeep: deliveries, cancellations, aging
         rhi::TransientImagePool pool(g.device, g.allocator);
         rhi::RenderGraph graph(pool);
         auto targets = mesh.add_to_graph(graph, extent, vp, r::InstancedDrawList{});
@@ -176,6 +178,113 @@ TEST(GpuTerrainTiles, DropletTilesAndBlockingUpdatesFallBackToTheCpu) {
     const auto ev = streamer.update(glm::vec2(0.0F), /*block=*/true);
     ASSERT_EQ(ev.ready.size(), 1U);
     EXPECT_EQ(streamer.maps().at(glm::ivec2(0, 0)).gpu_tile, 0U);
+}
+
+// Runs GpuTileSource frames without any drawing: tick + synthesis graph.
+void source_frame(quat::test::GpuContext& g, r::GpuTileSource& source) {
+    source.tick();
+    rhi::RenderGraph graph;
+    source.add_to_graph(graph);
+    ASSERT_OK(graph.compile());
+    ASSERT_OK(quat::test::submit_and_wait(g.device, [&](VkCommandBuffer cmd) {
+        graph.execute(cmd);
+    }));
+}
+
+// PR #3 review (1): a dropped request must not keep the one-at-a-time
+// synthesis queue busy. Cancelling its token stops the job (queued or part
+// way through) at the next tick and resolves its future invalid.
+TEST(GpuTerrainTiles, CancelledRequestFreesTheSynthesisQueue) {
+    QUAT_REQUIRE_GPU(g);
+    auto source = r::GpuTileSource::create(g->device, g->allocator, g->cache, g->shader_dir);
+    ASSERT_OK(source);
+    r::GpuTileSource& src = **source;
+    using namespace std::chrono_literals;
+
+    t::TerrainParams huge = tile_params(); // ~300 frames at the default budget
+    huge.resolution = 1025;
+    huge.tile_size_m = 2000.0F;
+    huge.grid.iterations = t::max_grid_erosion_steps;
+    t::CancelToken huge_token = t::make_cancel_token();
+    auto huge_job = src.generate(huge, huge_token);
+    t::CancelToken queued_token = t::make_cancel_token();
+    auto queued_job = src.generate(tile_params(), queued_token);
+    source_frame(*g, src); // the huge job starts
+    ASSERT_EQ(huge_job.wait_for(0s), std::future_status::timeout);
+
+    huge_token->store(true);
+    queued_token->store(true);
+    src.tick();
+    ASSERT_EQ(huge_job.wait_for(0s), std::future_status::ready);
+    EXPECT_FALSE(huge_job.get().valid());
+    ASSERT_EQ(queued_job.wait_for(0s), std::future_status::ready);
+    EXPECT_FALSE(queued_job.get().valid());
+    EXPECT_FALSE(src.busy()) << "cancelled work still occupies the queue";
+
+    auto wanted = src.generate(tile_params(), t::make_cancel_token());
+    int frames = 0;
+    for (; frames < 10 && wanted.wait_for(0s) != std::future_status::ready; ++frames) {
+        source_frame(*g, src);
+    }
+    src.tick();
+    ASSERT_EQ(wanted.wait_for(0s), std::future_status::ready) << "waited behind cancelled work";
+    EXPECT_TRUE(wanted.get().valid());
+}
+
+// The same through the streamer: replacing it (every streaming regenerate)
+// cancels its GPU job, so the new streamer's tile is not stuck behind it.
+TEST(GpuTerrainTiles, ReplacedStreamerCancelsItsGpuJob) {
+    QUAT_REQUIRE_GPU(g);
+    auto source = r::GpuTileSource::create(g->device, g->allocator, g->cache, g->shader_dir);
+    ASSERT_OK(source);
+    r::GpuTileSource& src = **source;
+
+    t::TerrainParams huge = tile_params();
+    huge.resolution = 1025;
+    huge.tile_size_m = 2000.0F;
+    huge.grid.iterations = t::max_grid_erosion_steps;
+    std::optional<t::TerrainStreamer> streamer;
+    streamer.emplace(huge, 0);
+    streamer->set_generator(&src);
+    (void)streamer->update(glm::vec2(0.0F));
+    source_frame(*g, src); // the huge tile is being synthesised
+
+    t::TerrainParams fresh = tile_params();
+    fresh.seed = 99;
+    streamer.emplace(fresh, 0); // regenerate: the old streamer is destroyed
+    streamer->set_generator(&src);
+    bool ready = false;
+    for (int frame = 0; frame < 10 && !ready; ++frame) {
+        ready = !streamer->update(glm::vec2(0.0F)).ready.empty();
+        if (!ready) source_frame(*g, src);
+    }
+    EXPECT_TRUE(ready) << "the new tile queued behind the replaced streamer's job";
+}
+
+// PR #3 review (2): freeing finished jobs and expiring unclaimed tile images
+// runs in tick(), so it happens even when terrain no longer draws (the
+// Terrain entity was deleted after the job finished).
+TEST(GpuTerrainTiles, FinishedWorkIsFreedWithoutDrawing) {
+    QUAT_REQUIRE_GPU(g);
+    auto source = r::GpuTileSource::create(g->device, g->allocator, g->cache, g->shader_dir);
+    ASSERT_OK(source);
+    r::GpuTileSource& src = **source;
+    using namespace std::chrono_literals;
+
+    auto job = src.generate(tile_params(), t::make_cancel_token());
+    for (int i = 0; i < 10 && job.wait_for(0s) != std::future_status::ready; ++i) {
+        source_frame(*g, src);
+    }
+    src.tick();
+    ASSERT_EQ(job.wait_for(0s), std::future_status::ready);
+    ASSERT_TRUE(job.get().valid()); // delivered, never adopted
+    EXPECT_EQ(src.parked_count(), 1U);
+    EXPECT_GE(src.retired_count(), 1U);
+
+    // No add_to_graph from here on: only the per-frame tick.
+    for (int i = 0; i < r::GpuTileSource::unclaimed_frames + 4; ++i) src.tick();
+    EXPECT_EQ(src.parked_count(), 0U) << "unclaimed tile image never expired";
+    EXPECT_EQ(src.retired_count(), 0U) << "finished job's scratch never freed";
 }
 
 // Audit D1: a GPU tile's future only progresses while frames run, so

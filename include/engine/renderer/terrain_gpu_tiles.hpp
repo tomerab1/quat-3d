@@ -17,6 +17,7 @@
 // and a job that fails on the GPU (out of memory) is regenerated on a CPU
 // worker and delivered through the same future.
 
+#include <cstddef>
 #include <cstdint>
 #include <expected>
 #include <future>
@@ -54,10 +55,15 @@ public:
 
     [[nodiscard]] bool supports(const terrain::TerrainParams& params) const override;
     [[nodiscard]] std::future<terrain::Heightmap>
-    generate(const terrain::TerrainParams& params) override;
+    generate(const terrain::TerrainParams& params, terrain::CancelToken cancel) override;
 
-    // Records this frame's synthesis work, delivers finished tiles to their
-    // futures and ages unclaimed images. Call once per frame.
+    // Per-frame upkeep, whether or not terrain draws this frame: applies
+    // cancelled requests (their futures resolve invalid and their GPU jobs
+    // stop), delivers finished tiles, ages unclaimed images and frees the
+    // GPU resources of finished jobs. Call once per frame.
+    void tick();
+
+    // Records this frame's synthesis work. Call at most once per frame.
     void add_to_graph(rhi::RenderGraph& graph);
 
     // Hands over the image of a delivered tile (R32F metres,
@@ -71,9 +77,13 @@ public:
     // when nothing wants the tiles any more (the Terrain entity is gone).
     void abandon();
 
-    // Tiles queued or in flight, or abandoned GPU work still draining (frames
-    // must keep calling add_to_graph so its resources are released).
+    // Tiles queued or in flight (frames must keep calling add_to_graph).
     [[nodiscard]] bool busy() const { return !pending_.empty() || !synth_.idle(); }
+
+    // Delivered images awaiting adoption, and jobs whose resources await
+    // release (tests / diagnostics).
+    [[nodiscard]] std::size_t parked_count() const { return parked_.size(); }
+    [[nodiscard]] std::size_t retired_count() const { return synth_.retired_count(); }
 
 private:
     // Passkey: only create() can name Key, so construction goes through it.
@@ -91,6 +101,7 @@ private:
     struct Pending {
         std::promise<terrain::Heightmap> promise;
         terrain::TerrainParams           params;
+        terrain::CancelToken             cancel; // may be null
     };
     struct Parked {
         rhi::GpuImage image;

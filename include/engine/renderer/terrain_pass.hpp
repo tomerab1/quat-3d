@@ -91,6 +91,12 @@ public:
     // Retire a tile (streaming unload). No-op for unknown coordinates.
     void remove_tile(const glm::ivec2& coord);
 
+    // Per-frame upkeep, whether or not terrain draws this frame (call once
+    // per frame, before add_to_graph): retires replaced / removed tiles once
+    // in-flight frames are done with them, and runs the GPU tile backend's
+    // upkeep (cancellations, deliveries, freeing finished jobs' memory).
+    void tick();
+
     // Cancels GPU tiles not yet delivered (GpuTileSource::abandon): their
     // futures resolve to an invalid Heightmap without further frames.
     void abandon_pending_tiles() {
@@ -104,8 +110,8 @@ public:
 
     // Record every loaded tile into the frame. `anchor` is the world position
     // tile (0,0) is centred on (anchor.y offsets all heights); `snowline_m` is
-    // the world height where snow takes over. Call once per frame (it also
-    // ages the retire queue and records GPU tile synthesis) and declare AFTER
+    // the world height where snow takes over. Call at most once per frame,
+    // after tick() (it also records GPU tile synthesis), and declare AFTER
     // the mesh pass — the chunks render into its GBuffer attachments.
     void add_to_graph(rhi::RenderGraph& graph, const renderer::GBufferTargets& gbuffer,
                       VkExtent2D extent, const glm::mat4& view_proj, const glm::vec3& camera_pos,

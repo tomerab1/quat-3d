@@ -29,6 +29,7 @@ TerrainStreamer::Events TerrainStreamer::update(glm::vec2 local_xz, bool block) 
             job_active_ && job_.wait_for(std::chrono::seconds(0)) == std::future_status::ready;
         if (block && job_active_ && job_external_ && !ready) {
             // The backend only progresses between frames: regenerate on the CPU.
+            if (cancel_) cancel_->store(true);
             job_ = {};
             job_active_ = false;
         }
@@ -63,8 +64,9 @@ TerrainStreamer::Events TerrainStreamer::update(glm::vec2 local_xz, bool block) 
             params.world_tile = best;
             job_coord_ = best;
             job_external_ = !block && generator_ != nullptr && generator_->supports(params);
-            cancel_ = job_external_ ? CancelToken{} : make_cancel_token();
-            job_ = job_external_ ? generator_->generate(params) : generate_async(params, cancel_);
+            cancel_ = make_cancel_token();
+            job_ = job_external_ ? generator_->generate(params, cancel_)
+                                 : generate_async(params, cancel_);
             job_active_ = true;
         }
     } while (block); // blocking mode drains the whole window synchronously

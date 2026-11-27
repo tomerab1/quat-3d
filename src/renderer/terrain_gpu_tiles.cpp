@@ -37,31 +37,46 @@ bool GpuTileSource::supports(const terrain::TerrainParams& params) const {
     return synth_.supports(params);
 }
 
-std::future<terrain::Heightmap> GpuTileSource::generate(const terrain::TerrainParams& params) {
+std::future<terrain::Heightmap> GpuTileSource::generate(const terrain::TerrainParams& params,
+                                                        terrain::CancelToken cancel) {
     const std::uint64_t id = synth_.enqueue(params);
-    if (id == 0) return terrain::generate_async(params); // unsupported: CPU
+    if (id == 0) return terrain::generate_async(params, std::move(cancel)); // unsupported: CPU
     Pending& p = pending_[id];
     p.params = params;
+    p.cancel = std::move(cancel);
     return p.promise.get_future();
 }
 
-void GpuTileSource::add_to_graph(rhi::RenderGraph& graph) {
+void GpuTileSource::tick() {
+    // Requests their owner dropped (a replaced streamer, a superseded tile):
+    // free the synthesis queue for the tiles that are still wanted.
+    for (auto it = pending_.begin(); it != pending_.end();) {
+        if (it->second.cancel && it->second.cancel->load(std::memory_order_relaxed)) {
+            synth_.cancel(it->first);
+            it->second.promise.set_value(terrain::Heightmap{});
+            it = pending_.erase(it);
+        } else {
+            ++it;
+        }
+    }
+    for (TerrainSynthPass::Result& result : synth_.collect()) deliver(std::move(result));
     for (auto it = parked_.begin(); it != parked_.end();) {
         it = --it->second.frames_left <= 0 ? parked_.erase(it) : std::next(it);
     }
     std::erase_if(cpu_fallbacks_, [](const std::future<void>& f) {
         return f.wait_for(std::chrono::seconds(0)) == std::future_status::ready;
     });
+    synth_.tick();
+}
 
+void GpuTileSource::add_to_graph(rhi::RenderGraph& graph) {
     if (auto r = synth_.add_to_graph(graph); !r) {
         // Only an uncreated pass fails here; hand everything to the CPU.
         std::fprintf(stderr, "[terrain] GPU synthesis failed: %s\n", r.error().message.c_str());
         std::vector<std::uint64_t> ids;
         for (const auto& [id, p] : pending_) ids.push_back(id);
         for (const std::uint64_t id : ids) fall_back_to_cpu(id);
-        return;
     }
-    for (TerrainSynthPass::Result& result : synth_.collect()) deliver(std::move(result));
 }
 
 void GpuTileSource::deliver(TerrainSynthPass::Result result) {

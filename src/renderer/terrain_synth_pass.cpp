@@ -340,7 +340,24 @@ std::uint64_t TerrainSynthPass::enqueue(const terrain::TerrainParams& params) {
 
 void TerrainSynthPass::cancel(std::uint64_t id) {
     if (!state_) return;
-    std::erase_if(state_->queued, [id](const std::unique_ptr<Job>& job) { return job->id == id; });
+    State& s = *state_;
+    std::erase_if(s.queued, [id](const std::unique_ptr<Job>& job) { return job->id == id; });
+    if (s.active && s.active->id == id) {
+        // Earlier frames' slices may still be executing: retire, don't free.
+        s.retired.emplace_back(kRetireFrames, std::move(s.active));
+    }
+}
+
+void TerrainSynthPass::tick() {
+    if (!state_) return;
+    auto& retired = state_->retired;
+    for (auto it = retired.begin(); it != retired.end();) {
+        it = --it->first <= 0 ? retired.erase(it) : it + 1;
+    }
+}
+
+std::size_t TerrainSynthPass::retired_count() const {
+    return state_ ? state_->retired.size() : 0;
 }
 
 void TerrainSynthPass::set_cell_budget(std::uint64_t cells_per_frame) {
@@ -355,10 +372,6 @@ bool TerrainSynthPass::idle() const {
 std::expected<void, core::Error> TerrainSynthPass::add_to_graph(rhi::RenderGraph& graph) {
     if (!state_) return fail("terrain synth: not created");
     State& s = *state_;
-
-    for (auto it = s.retired.begin(); it != s.retired.end();) {
-        it = --it->first <= 0 ? s.retired.erase(it) : it + 1;
-    }
 
     // Start the next job; one that cannot get its resources fails alone.
     while (!s.active && !s.queued.empty()) {
