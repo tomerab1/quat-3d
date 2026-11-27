@@ -1,6 +1,6 @@
 // Triangle mesh cooking: primitives that share one vertex stream set are
-// optimised together (vertex cache, overdraw, vertex fetch), optionally get
-// then are re-emitted quantised.
+// optionally simplified (mesh_simplify.cpp), optimised together (vertex
+// cache, overdraw, vertex fetch), then re-emitted quantised.
 
 #include <algorithm>
 #include <map>
@@ -123,8 +123,12 @@ cook_group(fastgltf::Asset& asset, const Group& g, const MeshCookOptions& o, Geo
         out.bytes_before += acc.count * fastgltf::getElementByteSize(acc.type, acc.componentType);
         streams.push_back(std::move(s));
     }
-    const Stream& positions = *std::find_if(streams.begin(), streams.end(),
-                                            [](const Stream& s) { return s.name == "POSITION"; });
+    const auto find_stream = [&](std::string_view name) -> const Stream* {
+        const auto it = std::find_if(streams.begin(), streams.end(),
+                                     [&](const Stream& s) { return s.name == name; });
+        return it == streams.end() ? nullptr : &*it;
+    };
+    const Stream& positions = *find_stream("POSITION");
 
     std::vector<std::vector<std::uint32_t>> indices(g.primitives.size());
     for (std::size_t k = 0; k < g.primitives.size(); ++k) {
@@ -144,6 +148,8 @@ cook_group(fastgltf::Asset& asset, const Group& g, const MeshCookOptions& o, Geo
             std::any_of(idx.begin(), idx.end(), [&](std::uint32_t i) { return i >= vertex_count; })) {
             return fail("mesh " + std::to_string(g.mesh) + " has invalid triangle indices");
         }
+        simplify_triangles(idx, positions, find_stream("NORMAL"), find_stream("TEXCOORD_0"),
+                           vertex_count, o);
         if (o.optimize && !idx.empty()) {
             meshopt_optimizeVertexCache(idx.data(), idx.data(), idx.size(), vertex_count);
             meshopt_optimizeOverdraw(idx.data(), idx.data(), idx.size(), positions.values.data(),

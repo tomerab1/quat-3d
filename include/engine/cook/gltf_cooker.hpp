@@ -9,13 +9,16 @@
 //   * triangle meshes -> meshoptimizer vertex-cache / overdraw / vertex-fetch
 //     optimisation,
 //     quantised attributes (KHR_mesh_quantization) and the meshopt codecs
-//     (EXT_meshopt_compression);
+//     (EXT_meshopt_compression), optionally simplified to a lower level of
+//     detail first;
+//   * materials: BLEND foliage optionally rewritten as alpha-tested MASK;
 //   * buffers compacted to what the output still references.
 
 #include <cstddef>
 #include <cstdint>
 #include <expected>
 #include <filesystem>
+#include <optional>
 #include <span>
 #include <vector>
 
@@ -50,11 +53,28 @@ struct MeshCookOptions {
     int   position_bits      = 16;    // exponent-filter mantissa bits (1..24)
     int   normal_bits        = 8;     // octahedral bits: 8 or 16 (also tangents)
     bool  compress           = true;  // EXT_meshopt_compression
+    // Level-of-detail reduction: in (0, 1), each cooked primitive keeps about
+    // this fraction of its triangles (attribute-aware meshopt_simplify within
+    // `simplify_error`, relative to the model's extent; disconnected foliage
+    // that cannot get within twice the target falls back to sloppy vertex
+    // clustering). 1 = off.
+    float simplify_ratio     = 1.0F;
+    float simplify_error     = 0.01F;
+};
+
+// Material rewrites applied before anything is cooked.
+struct MaterialCookOptions {
+    // Turn every glTF BLEND material into MASK with this alpha cutoff:
+    // scanned foliage is often exported as BLEND, which the engine renders
+    // in the (sorted, costlier) forward pass and which casts no cut-out
+    // shadows. Unset keeps every alpha mode.
+    std::optional<float> blend_to_mask_cutoff;
 };
 
 struct CookOptions {
-    TextureCookOptions textures;
-    MeshCookOptions    meshes;
+    TextureCookOptions  textures;
+    MeshCookOptions     meshes;
+    MaterialCookOptions materials;
 };
 
 struct CookStats {

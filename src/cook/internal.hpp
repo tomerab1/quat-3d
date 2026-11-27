@@ -4,6 +4,7 @@
 //
 //   texture_encode.cpp  RGBA8 -> mip chain -> KTX2 / Basis Universal
 //   mesh_cook.cpp       primitive grouping, meshoptimizer passes
+//   mesh_simplify.cpp   optional level-of-detail reduction (--simplify)
 //   mesh_streams.cpp    attribute quantisation into new buffer views
 //   gltf_access.cpp     buffer view bytes
 //   gltf_cooker.cpp     parse (runtime parse_gltf), textures, buffer compaction,
@@ -81,6 +82,14 @@ void emit_stream(fastgltf::Asset& asset, const Stream& stream, std::size_t verte
 void emit_indices(fastgltf::Asset& asset, std::size_t accessor,
                   std::span<const std::uint32_t> indices, std::size_t vertex_count,
                   const MeshCookOptions& options, GeometryResult& out);
+
+// mesh_simplify.cpp: reduces `indices` (one primitive over `vertex_count`
+// shared vertices) to about options.simplify_ratio of its triangles; returns
+// the new index count (unchanged when simplification is off or would remove
+// every triangle). `normals` / `uvs` may be null.
+std::size_t simplify_triangles(std::vector<std::uint32_t>& indices, const Stream& positions,
+                               const Stream* normals, const Stream* uvs,
+                               std::size_t vertex_count, const MeshCookOptions& options);
 
 // texture_encode.cpp: an RGBA8 image's mip chain encoded to KTX2.
 [[nodiscard]] std::expected<std::vector<std::byte>, core::Error>

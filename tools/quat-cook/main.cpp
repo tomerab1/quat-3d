@@ -25,7 +25,11 @@ constexpr std::string_view k_usage =
     "  --no-optimize  --no-quantize  --no-compress\n"
     "  --position-bits N            1..24 (default 16)\n"
     "  --normal-bits 8|16           (default 8)\n"
-    "  --threads N                  encoder threads (default: all cores)\n";
+    "  --threads N                  encoder threads (default: all cores)\n"
+    "  --simplify R                 keep about R (0..1) of each mesh's triangles (default 1)\n"
+    "  --simplify-error E           simplifier error bound, relative to the model size\n"
+    "                               (default 0.01)\n"
+    "  --blend-to-mask C            BLEND materials become MASK with alpha cutoff C\n";
 
 [[nodiscard]] bool parse_codec(std::string_view s, engine::cook::BasisCodec& out) {
     if (s == "etc1s") out = engine::cook::BasisCodec::etc1s;
@@ -90,6 +94,15 @@ int main(int argc, char** argv) {
             o.meshes.position_bits = static_cast<int>(n);
         } else if (arg == "--normal-bits") {
             o.meshes.normal_bits = static_cast<int>(n);
+        } else if (arg == "--simplify") {
+            if (n <= 0 || n > 1) return usage_error("--simplify expects a ratio in (0, 1]");
+            o.meshes.simplify_ratio = static_cast<float>(n);
+        } else if (arg == "--simplify-error") {
+            if (n > 1) return usage_error("--simplify-error expects a value in [0, 1]");
+            o.meshes.simplify_error = static_cast<float>(n);
+        } else if (arg == "--blend-to-mask") {
+            if (n > 1) return usage_error("--blend-to-mask expects a cutoff in [0, 1]");
+            o.materials.blend_to_mask_cutoff = static_cast<float>(n);
         } else {
             return usage_error("unknown option: " + std::string(arg));
         }
