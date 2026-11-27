@@ -12,7 +12,7 @@ path = "src/main.rs"
 
 [dependencies]
 rmcp = { version = "3.12", default-features = false, features = ["server", "macros", "transport-io", "schemars", "base64"] }
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "io-std", "sync", "time"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "io-std", "sync", "time", "fs", "process"] }
 tokio-util = { version = "0.7", features = ["codec"] }
 futures = "0.3"
 serde = { version = "1", features = ["derive"] }
@@ -24,9 +24,14 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 clap = { version = "4", features = ["derive", "env"] }
 minijinja = { version = "2", default-features = false, features = ["builtins", "serde"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls-native-roots"] }
+md-5 = "0.10"
+humantime = "2"
+which = "8"
 
 [dev-dependencies]
 rmcp = { version = "3.12", default-features = false, features = ["server", "client", "macros", "transport-io", "schemars", "base64"] }
+tempfile = "3"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "sync", "time"] }
 
 [lints.rust]

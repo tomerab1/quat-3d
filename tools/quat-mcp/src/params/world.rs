@@ -85,6 +85,64 @@ pub struct ShotCamera {
     pub far: Option<ClipPlane>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct AssetSearchParams {
+    /// Words to look for in model ids, names, tags and categories (all must
+    /// match; case-insensitive), e.g. "pine tree" or "rock moss". Empty lists
+    /// the most downloaded models.
+    pub query: String,
+    /// Only this Poly Haven category, e.g. "nature", "rocks", "furniture".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub category: Option<String>,
+    /// Most results to return (1..25, default 10).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limit: Option<u32>,
+}
+
+/// Texture resolution of a downloaded model.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub enum Resolution {
+    /// 1024 px textures (default; enough for most props).
+    #[default]
+    #[serde(rename = "1k")]
+    R1k,
+    /// 2048 px textures.
+    #[serde(rename = "2k")]
+    R2k,
+    /// 4096 px textures (large downloads).
+    #[serde(rename = "4k")]
+    R4k,
+}
+
+impl Resolution {
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::R1k => "1k",
+            Self::R2k => "2k",
+            Self::R4k => "4k",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct AssetFetchParams {
+    /// Poly Haven model id from `asset_search`, e.g. "`fir_sapling`".
+    pub id: String,
+    /// Texture resolution: "1k" (default), "2k" or "4k".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resolution: Option<Resolution>,
+    /// Download again even if the model is already in the project.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub overwrite: Option<bool>,
+    /// Cook it with quat-cook into a GLB when the cooker is installed
+    /// (default true; skipped silently otherwise).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cook: Option<bool>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

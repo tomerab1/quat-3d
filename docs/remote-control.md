@@ -418,6 +418,24 @@ the stored tree from running (empty for a valid tree).
   playing they are undone when Play stops and the editor restores the scene
   it started from.
 
+## Asset downloads (quat-mcp only, ROADMAP A9)
+
+The engine never downloads anything. quat-mcp's `asset_search` /
+`asset_fetch` talk to the public Poly Haven API themselves
+(`tools/quat-mcp/src/assets/`): search filters `/assets?t=models` by keyword
+and category and reports per-resolution download sizes from `/files/<id>`;
+fetch downloads the glTF and its `include` files into
+`<project>/assets/meshes/polyhaven/<id>/` (`--project-root`, default the
+current directory). Ids must be Poly Haven slugs and every path from the API
+must be a plain relative path (no `..`, absolute, hidden or backslash
+components); the declared total is capped (`--asset-max-mb`, default 512)
+before anything is downloaded, and each file must match its declared size
+and MD5. Files land in a staging directory that is moved into place only
+when everything verified, next to `LICENSE.md` (CC0, authors, source) and
+`polyhaven.json` (provenance). With `quat-cook` on PATH the model is also
+cooked to `<id>.glb`. The folder is gitignored. The engine then loads the
+files through `asset.spawn_model` / `instanced_mesh` like any other model.
+
 ## Errors
 
 | Code | Meaning |

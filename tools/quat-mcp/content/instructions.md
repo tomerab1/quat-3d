@@ -1,6 +1,12 @@
 quat-mcp drives a running quat-3d game engine (Vulkan renderer, Jolt physics, editor). Use it to build and inspect 3D worlds: create entities from primitive shapes, lights, physics bodies, terrain and glTF models; set the sun, clouds and camera; take screenshots to see the result.
 
-Good workflow: `scene_components` and `scene_list` to inspect, plan with coordinates in metres (Y up), build with `scene_batch` (`"@N"` refers to the id created by command N of the batch), then `camera_frame` + `screenshot` and iterate with `scene_update`.
+Good workflow: `scene_components` and `scene_list` to inspect, plan with coordinates in metres (Y up), build with `scene_batch` (`"@N"` refers to the id created by command N of the batch), then `screenshot` (with a `camera` to frame what you built) and iterate with `scene_update`.
+
+World building:
+- Terrain: after creating or reshaping a terrain (new `seed`, `height`, `tile_size`, ...), wait until `terrain_status` reports `generating: false` before placing things or taking screenshots. Shading edits such as `snowline` apply at once and need no wait.
+- Models: `asset_list_models` lists what the project has; `asset_search` + `asset_fetch` download free CC0 models from Poly Haven (trees, rocks, props) into the project. Mind `polycount` when you need many copies; use an `instanced_mesh` (plus `scatter`) for forests and rock fields instead of one entity per copy.
+- Placement: `scene_get` reports `world_bounds` / `local_bounds` (size and origin of any model); `world_place_on_ground` sets an entity down on the terrain or on colliders below it, optionally tilted to the slope. Do not guess sink depths.
+- Looking: the user may be using the viewport. Prefer `screenshot` with a `camera` (a position and `look_at`, or `frame` an entity) for verification shots, which leaves their view alone; use `camera_set` only to change what they see. The camera's clip planes follow the scene (distant streamed terrain stays visible), so leave `near` / `far` alone unless a shot needs them.
 
 NPC behaviour is a behaviour tree per entity: `bt_leaves` lists the node kinds and leaves, `bt_set` writes a whole tree, `bt_get` shows it with stable node ids for the incremental `bt_add_node` / `bt_move_node` / `bt_remove_node` / `bt_set_params`, and `bt_status` shows what each node did on the last tick during Play.
 
