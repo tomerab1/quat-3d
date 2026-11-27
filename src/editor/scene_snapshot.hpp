@@ -36,7 +36,7 @@ using SnapshotComponents =
                   scene::MeshRenderer, scene::MeshSource, scene::SkinnedMesh, scene::Animator,
                   scene::Camera, scene::DirectionalLight, scene::PointLight, scene::Collider,
                   scene::RigidBody, scene::CharacterController, scene::Terrain,
-                  scene::Grass,
+                  scene::Grass, scene::ParticleEmitter,
                   scene::NavAgent, scene::BehaviorTree, scene::PatrolRoute, scene::Primitive,
                   scene::InstancedMesh, scene::InstancedMeshParts, scene::Scatter,
                   scene::NetReplicated, scene::AudioSource, scene::AudioListener>;

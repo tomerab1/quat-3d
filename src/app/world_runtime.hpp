@@ -23,6 +23,7 @@
 #include "app/audio_runtime.hpp"
 #include "app/demo_scenes.hpp"
 #include "app/grass_runtime.hpp"
+#include "app/particle_runtime.hpp"
 #include "engine/core/error.hpp"
 #include "engine/nav/navmesh.hpp"
 #include "engine/net/session.hpp"
@@ -142,6 +143,8 @@ public:
     [[nodiscard]] engine::renderer::TerrainPass& terrain_pass() { return terrain_pass_; }
     // GPU grass (R9.3); null before init().
     [[nodiscard]] GrassRuntime* grass() { return grass_ ? &*grass_ : nullptr; }
+    // GPU particles (R10.3); null before init().
+    [[nodiscard]] ParticleRuntime* particles() { return particles_ ? &*particles_ : nullptr; }
     [[nodiscard]] const glm::vec3& terrain_anchor() const { return terrain_anchor_; }
     [[nodiscard]] float terrain_snowline() const { return terrain_snowline_; }
 
@@ -160,6 +163,7 @@ private:
     engine::rhi::TransferContext             terrain_transfer_{};
     engine::renderer::TerrainPass            terrain_pass_;
     std::optional<GrassRuntime>              grass_; // samples terrain_pass_'s tiles
+    std::optional<ParticleRuntime>           particles_; // uploads flipbooks via terrain_transfer_
     std::future<engine::terrain::Heightmap>  terrain_job_;
     engine::terrain::CancelToken             terrain_cancel_; // stops terrain_job_ on the CPU
     engine::terrain::Heightmap               terrain_heightmap_; // CPU copy retained for physics (12.3)

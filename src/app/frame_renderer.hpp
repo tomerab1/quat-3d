@@ -78,6 +78,7 @@ struct RendererSettings;
 namespace quat::app {
 
 class GrassRuntime;
+class ParticleRuntime;
 
 inline constexpr std::uint32_t k_frames_in_flight = 2;
 // Stage the image-acquire semaphore is waited at; the swapchain image's first
@@ -154,6 +155,8 @@ struct FrameInputs {
     // GPU grass around the camera (null: none); `sim_dt` drives its wind.
     GrassRuntime* grass = nullptr;
     float         sim_dt = 0.0F;
+    // GPU particles (null: none); simulated on `sim_dt` (frozen while paused).
+    ParticleRuntime* particles = nullptr;
 #ifdef ENGINE_EDITOR
     // Builds the editor UI (after the scene passes are declared) and returns
     // its draw data, drawn over the swapchain as the last pass.

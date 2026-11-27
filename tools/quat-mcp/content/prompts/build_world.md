@@ -14,6 +14,8 @@ Work in this order:
 
 4. **Set the mood.** `environment_set` for the sun (elevation_deg 5..10 for golden hour, 45..70 for daylight) and clouds; point_light entities for lamps, fires and windows (warm linear colours such as [1.0, 0.6, 0.3]).
 
+   **VFX.** Fire, sparks, smoke, steam, dust and falling leaves are one entity each with a `particle_emitter`, placed where the effect starts: `blend` additive with `emissive` > 1 for anything that glows, `blend` alpha with `lighting` lit and a slight upward `gravity` for smoke. Pair a fire with a warm point_light. Keep `max_particles` to what the effect needs (hundreds, not tens of thousands).
+
 5. **Look.** `camera_frame` (whole scene or one entity) or `camera_set` with position + look_at, then `screenshot`. Compare the image with the goal: proportions, gaps, objects floating or buried, overlaps, colours, lighting, composition. Take a second screenshot from another angle for anything large.
 
 6. **Iterate.** Fix problems with `scene_update` (it merges: give only the fields that change) or another `scene_batch`, then screenshot again. Repeat until the result matches the description.

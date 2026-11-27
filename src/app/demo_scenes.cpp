@@ -23,6 +23,67 @@ using engine::scene::make_box_data;
 using engine::scene::make_cube_data;
 using engine::scene::make_sphere_data;
 
+namespace {
+
+// R10.3 demo effects beside the physics pile: additive sparks that bounce on
+// the floor (depth-buffer collision) and lit smoke (weighted blended OIT).
+// Fixed seeds: the same simulation steps give the same particles.
+void add_demo_particles(engine::scene::Scene& scene) {
+    namespace r = engine::renderer;
+    using engine::scene::ParticleEmitter;
+    using engine::scene::Transform;
+
+    const entt::entity sparks = scene.create_entity("sparks");
+    scene.registry().get<Transform>(sparks).local =
+        glm::translate(glm::mat4(1.0F), glm::vec3(-3.0F, 0.2F, 1.5F));
+    r::ParticleEmitterSettings& s = scene.registry().emplace<ParticleEmitter>(sparks).settings;
+    s.seed = 7;
+    s.max_particles = 2048;
+    s.rate = 220.0F;
+    s.lifetime = {0.8F, 1.6F};
+    s.shape = r::ParticleShape::cone;
+    s.radius = 0.05F;
+    s.cone_angle_deg = 30.0F;
+    s.speed = {3.0F, 6.0F};
+    s.size = {0.03F, 0.06F};
+    s.color_keys = 3;
+    s.color_curve = {{{0.0F, {1.0F, 0.85F, 0.4F, 1.0F}},
+                      {0.5F, {1.0F, 0.35F, 0.05F, 1.0F}},
+                      {1.0F, {0.6F, 0.1F, 0.0F, 0.0F}}}};
+    s.emissive = 12.0F;
+    s.collide = true;
+    s.bounce = 0.4F;
+    s.friction = 0.3F;
+    s.soft_distance = 0.0F;
+
+    const entt::entity smoke = scene.create_entity("smoke");
+    scene.registry().get<Transform>(smoke).local =
+        glm::translate(glm::mat4(1.0F), glm::vec3(3.0F, 0.1F, 1.0F));
+    r::ParticleEmitterSettings& m = scene.registry().emplace<ParticleEmitter>(smoke).settings;
+    m.seed = 11;
+    m.max_particles = 512;
+    m.rate = 24.0F;
+    m.lifetime = {4.0F, 6.0F};
+    m.shape = r::ParticleShape::sphere;
+    m.radius = 0.3F;
+    m.speed = {0.1F, 0.4F};
+    m.gravity = {0.15F, 0.6F, 0.0F}; // buoyant, drifting with a light breeze
+    m.drag = 0.4F;
+    m.size = {0.6F, 1.0F};
+    m.size_keys = 2;
+    m.size_curve = {{{0.0F, 0.6F}, {1.0F, 2.5F}}};
+    m.color_keys = 3;
+    m.color_curve = {{{0.0F, {0.35F, 0.35F, 0.37F, 0.0F}},
+                      {0.15F, {0.35F, 0.35F, 0.37F, 0.55F}},
+                      {1.0F, {0.5F, 0.5F, 0.52F, 0.0F}}}};
+    m.spin_deg = {-20.0F, 20.0F};
+    m.blend = r::ParticleBlend::alpha;
+    m.lighting = r::ParticleLighting::lit;
+    m.soft_distance = 0.5F;
+}
+
+} // namespace
+
 std::expected<DemoScene, engine::core::Error>
 build_demo_scene(engine::scene::Scene& scene, engine::asset::AssetManager& assets,
                  engine::rhi::GpuAllocator& allocator,
@@ -142,6 +203,7 @@ build_demo_scene(engine::scene::Scene& scene, engine::asset::AssetManager& asset
                     glm::translate(glm::mat4(1.0F), glm::vec3(0.0F, 2.2F, 3.0F));
                 scene.registry().emplace<MeshRenderer>(glass, glass_mesh, glass_mat);
             }
+            add_demo_particles(scene);
         }
     } else if (std::getenv("QUAT_CHARACTER") != nullptr) {
         // Character demo: walk a capsule around a floor with WASD (third-person).

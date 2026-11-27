@@ -101,6 +101,17 @@ into CLAUDE.md or the brief template in [`CYCLE.md`](CYCLE.md).
 
 ## C++ in this codebase
 
+- **A new member of a class with a hand-written move must be added to the
+  move too.** R10.3 added `Device::independent_blend_` and set it in
+  `create()`, but `Device::operator=(Device&&)` copies members one by one:
+  the moved-into device (the one everyone uses) reported the feature
+  missing. → grep for the class's move constructor / assignment whenever a
+  member is added; prefer `= default` moves where the class allows it.
+- **Slang's `SV_InstanceID` needs the DrawParameters capability** (it lowers
+  to InstanceIndex - BaseInstance), which the device does not enable — the
+  validation layer flags every pipeline. Use `instancing.slang`'s
+  `instance_index()` (plain InstanceIndex) in vertex shaders.
+
 - **slangc 2025.6.1 segfaults after reporting a compile error** when
   `-reflection-json` is passed (exit by SIGSEGV, diagnostics already
   printed). Treat any non-zero exit *or* signal as a failed compile and keep

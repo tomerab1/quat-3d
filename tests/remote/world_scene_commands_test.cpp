@@ -219,6 +219,33 @@ TEST_F(SceneCommands, ComponentsCatalogue) {
     EXPECT_TRUE(saw_mesh);
 }
 
+// R10.3: emitters are plain components — created, edited and checked over
+// scene.create / scene.update like any other, with precise errors.
+TEST_F(SceneCommands, ParticleEmittersAreScriptable) {
+    const Json created = ok("scene.create",
+                            {{"name", "campfire_sparks"},
+                             {"components",
+                              {{"transform", {{"position", {0, 0.2, 0}}}},
+                               {"particle_emitter",
+                                {{"rate", 150}, {"shape", "cone"}, {"blend", "additive"},
+                                 {"emissive", 8}, {"collide", true}}}}}});
+    const entt::entity e = entity(created["id"]);
+    ASSERT_TRUE(reg().all_of<s::ParticleEmitter>(e));
+    EXPECT_FLOAT_EQ(reg().get<s::ParticleEmitter>(e).settings.rate, 150.0F);
+    ok("scene.update", {{"entity", "campfire_sparks"},
+                        {"components", {{"particle_emitter", {{"max_particles", 4096}}}}}});
+    EXPECT_EQ(reg().get<s::ParticleEmitter>(e).settings.max_particles, 4096U);
+    EXPECT_TRUE(reg().get<s::ParticleEmitter>(e).settings.collide); // kept
+    const std::string why =
+        err("scene.update",
+            {{"entity", "campfire_sparks"},
+             {"components", {{"particle_emitter", {{"texture", "../../etc/passwd"}}}}}},
+            code::invalid_params);
+    EXPECT_NE(why.find("particle_emitter.texture"), std::string::npos) << why;
+    const Json got = ok("scene.get", {{"entity", created["id"]}});
+    EXPECT_EQ(got["components"]["particle_emitter"]["shape"], "cone");
+}
+
 TEST_F(SceneCommands, BatchWithBackReferences) {
     const Json result = ok(
         "scene.batch",

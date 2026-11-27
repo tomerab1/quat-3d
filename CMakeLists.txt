@@ -214,6 +214,7 @@ add_library(engine_scene STATIC
     src/scene/bt_graph_edit.cpp
     src/scene/scene_io.cpp
     src/scene/component_json.cpp
+    src/scene/particle_json.cpp
     src/scene/audio_system.cpp
     src/scene/primitives.cpp
     src/scene/primitive_resolve.cpp
@@ -403,6 +404,7 @@ if(ENGINE_EDITOR)
         src/editor/scene_snapshot.cpp
         src/editor/audio_inspector.cpp
         src/editor/grass_inspector.cpp
+        src/editor/particle_inspector.cpp
         src/editor/behavior_panel.cpp
         src/editor/behavior_canvas.cpp
         src/editor/vendor/imgui_impl_sdl3.cpp)
@@ -439,6 +441,7 @@ add_executable(game
     src/app/demo_scenes.cpp
     src/app/audio_runtime.cpp
     src/app/grass_runtime.cpp
+    src/app/particle_runtime.cpp
     src/app/nav_bake.cpp
     src/app/remote_bridge.cpp
     src/app/screenshot_capture.cpp)

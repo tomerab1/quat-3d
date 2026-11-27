@@ -28,6 +28,7 @@
 #include "engine/asset/mesh_asset.hpp"
 #include "engine/core/error.hpp"
 #include "engine/renderer/grass.hpp"
+#include "engine/renderer/particles.hpp"
 
 namespace engine::scene {
 
@@ -342,6 +343,16 @@ struct Terrain {
 // is not used.
 struct Grass {
     renderer::GrassSettings settings{};
+};
+
+// A GPU particle emitter (R10.3) at the entity's world transform:
+// renderer/particles.hpp has the settings (emission, shape, forces, curves,
+// flipbook, blending, lighting, collision), particle_pass.hpp the passes.
+// Each emitter reserves `settings.max_particles` of the renderer's global
+// particle pool; particles advance on the simulation clock (they freeze
+// while it is paused).
+struct ParticleEmitter {
+    renderer::ParticleEmitterSettings settings{};
 };
 
 // An authored walk route (editor: Shift+click the ground to append points).

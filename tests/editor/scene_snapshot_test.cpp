@@ -115,6 +115,24 @@ TEST(PlayModeSnapshot, RestoresGrass) {
     EXPECT_EQ(scene.registry().get<s::Grass>(e).settings.density, 63.0F);
 }
 
+// R10.3: particle emitters survive Play/Stop.
+TEST(PlayModeSnapshot, RestoresParticleEmitter) {
+    s::Scene scene;
+    const entt::entity e = scene.create_entity("sparks");
+    auto& emitter = scene.registry().emplace<s::ParticleEmitter>(e);
+    emitter.settings.rate = 321.0F;
+    emitter.settings.texture = "assets/textures/spark.png";
+
+    const auto snapshot = engine::editor::capture_scene(scene);
+    scene.registry().remove<s::ParticleEmitter>(e);
+    engine::editor::restore_scene(scene, snapshot);
+
+    ASSERT_TRUE(scene.registry().all_of<s::ParticleEmitter>(e));
+    EXPECT_EQ(scene.registry().get<s::ParticleEmitter>(e).settings.rate, 321.0F);
+    EXPECT_EQ(scene.registry().get<s::ParticleEmitter>(e).settings.texture,
+              "assets/textures/spark.png");
+}
+
 template <typename... Ts, typename F>
 void for_each_listed(engine::editor::ComponentList<Ts...> /*list*/, F&& f) {
     (f.template operator()<Ts>(), ...);

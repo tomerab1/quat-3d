@@ -187,4 +187,40 @@ TEST(GpuParticleDraw, LitParticlesTakeTheSceneLight) {
     EXPECT_NEAR(centre[1], 0.5F * (0.03F + 1.0F / 3.14159265F), 0.01F);
 }
 
+// A 2-frame flipbook (red | green) played once over the lifetime: early in
+// life the particle shows frame 0, late in life frame 1.
+TEST(GpuParticleDraw, FlipbookAdvancesOverTheLifetime) {
+    QUAT_REQUIRE_GPU(g);
+    const std::uint8_t texels[8] = {255, 0, 0, 255, 0, 255, 0, 255};
+    auto atlas = rhi::upload_device_image(g->allocator, g->transfer, texels, sizeof(texels), {2, 1},
+                                          VK_FORMAT_R8G8B8A8_SRGB);
+    ASSERT_OK(atlas);
+    auto view = rhi::create_image_view(g->device.handle(), atlas->handle(), VK_FORMAT_R8G8B8A8_SRGB);
+    ASSERT_OK(view);
+    auto pass = make_pass(*g);
+    ASSERT_OK(pass);
+    TestEmitter e = still_particle(0, 0, 5.0F, glm::vec4(1.0F), r::ParticleBlend::additive);
+    e.settings.lifetime = {1.0F, 1.0F};
+    e.settings.flipbook_grid = {2, 1};
+    e.settings.flipbook_frames = 2;
+    e.settings.soft_distance = 0.0F;
+    e.settings = r::sanitize(e.settings);
+    glm::vec4 colour[2]{};
+    for (int k = 0; k < 2; ++k) {
+        // First image after one step (age 1/60), second after 45 (age 0.75).
+        const int steps = k == 0 ? 1 : 44;
+        for (int f = 0; f < steps; ++f) {
+            r::ParticleEmitterInput in = e.input(k_dt);
+            in.texture = view->handle();
+            auto img = render(*g, *pass, {&in, 1}, k_dt, 1.0F);
+            ASSERT_OK(img);
+            colour[k] = img->rgba16f(32, 32);
+        }
+    }
+    EXPECT_GT(colour[0].r, 0.9F);
+    EXPECT_LT(colour[0].g, 0.1F);
+    EXPECT_LT(colour[1].r, 0.1F);
+    EXPECT_GT(colour[1].g, 0.9F);
+}
+
 } // namespace
