@@ -101,7 +101,7 @@ The owner reported NPCs "don't work". Ranked by user impact. N2 re-verified
 | N7 | M | Coarse single-tile bake on large terrain (≈2 m cells, raised step height) disagrees with physics; vertex limit; should be a tiled navmesh with fixed cell size | `navmesh.cpp`, `physics_system.cpp` | open |
 | N8 | M | `near_camera` always fails in editor Play (no Camera entity) | `behavior.cpp` | open |
 | N9 | M | Nav + behaviour trees only tick in editor Play; never in the game build or demo modes | `main.cpp` | open |
-| N10 | L | Separation re-normalised (can't slow agents; stacking); kinematic agents pushed off the mesh | `nav_agent_system.cpp` | open |
+| N10 | L | Separation re-normalised (can't slow agents; stacking); kinematic agents pushed off the mesh | `nav_agent_system.cpp` | fixed (S1.N10) |
 | N11 | L | Ground click ignores boxes/meshes; 2 m march skips thin ridges | `main.cpp` | open |
 | N12 | L | NavAgent entity with a Collider and no RigidBody is baked as a hole and promoted to a static wall | `physics_system.cpp`, `main.cpp` | fixed (S1.N12) |
 | N13 | L | Leftover retry cooldown delays new targets; failed re-bake keeps the old mesh silently | `nav_agent_system.cpp`, `main.cpp` | open |

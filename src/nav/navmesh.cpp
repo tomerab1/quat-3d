@@ -265,6 +265,36 @@ std::expected<glm::vec3, core::Error> NavMesh::nearest_point(const glm::vec3& po
     return glm::vec3(nearest[0], nearest[1], nearest[2]);
 }
 
+std::expected<glm::vec3, core::Error> NavMesh::move_along_surface(const glm::vec3& from,
+                                                                  const glm::vec3& to) const {
+    if (!valid()) return fail("navmesh: not built");
+    const dtQueryFilter filter;
+    dtPolyRef start_ref = 0;
+    float start[3]{};
+    if (dtStatusFailed(impl_->query->findNearestPoly(&from.x, &query_extents.x, &filter,
+                                                     &start_ref, start)) ||
+        start_ref == 0) {
+        return fail("navmesh: position is off the mesh");
+    }
+    // Detour moves in the polygon plane; the goal's height only needs to be
+    // near the start.
+    const float goal[3] = {to.x, start[1], to.z};
+    constexpr int max_visited = 16;
+    dtPolyRef visited[max_visited];
+    int nvisited = 0;
+    float result[3]{};
+    if (dtStatusFailed(impl_->query->moveAlongSurface(start_ref, start, goal, &filter, result,
+                                                      visited, &nvisited, max_visited)) ||
+        nvisited == 0) {
+        return fail("navmesh: move along surface failed");
+    }
+    float h = result[1];
+    if (dtStatusSucceed(impl_->query->getPolyHeight(visited[nvisited - 1], result, &h))) {
+        result[1] = h;
+    }
+    return glm::vec3(result[0], result[1], result[2]);
+}
+
 std::expected<float, core::Error> NavMesh::surface_height(float x, float z,
                                                           float reference_y) const {
     if (!valid()) return fail("navmesh: not built");

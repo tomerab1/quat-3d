@@ -77,6 +77,13 @@ public:
     [[nodiscard]] std::expected<glm::vec3, core::Error>
     nearest_point(const glm::vec3& pos) const;
 
+    // Moves from `from` toward `to` along the mesh surface (Detour
+    // moveAlongSurface), stopping at walls / mesh edges; the result sits on
+    // the surface (y = polygon height). For small per-frame steps. Errors
+    // when `from` is off the mesh.
+    [[nodiscard]] std::expected<glm::vec3, core::Error>
+    move_along_surface(const glm::vec3& from, const glm::vec3& to) const;
+
     // Height of the walkable surface at (x, z), searching the whole vertical
     // extent of the mesh: of several stacked surfaces (a bridge over a
     // valley) the one closest to `reference_y` wins. Off the mesh in xz, the

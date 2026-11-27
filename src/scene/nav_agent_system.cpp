@@ -244,34 +244,48 @@ void nav_agent_system(entt::registry& registry, const nav::NavMesh& navmesh, flo
         if (len > 1e-5F) dir /= len;
 
         // Separation: ease away from nearby fellow agents (avoidance-lite; a
-        // DetourCrowd upgrade slots in here later).
+        // DetourCrowd upgrade slots in here later). The push keeps its
+        // magnitude: an agent crowding up behind another slows down instead
+        // of only turning (the sum is capped at full speed, never stretched
+        // up to it).
+        glm::vec2 steer = dir;
         for (auto [other, other_t, other_a] : view.each()) {
             if (other == e) continue;
             const glm::vec2 away = xz(pos) - xz(glm::vec3(other_t.world[3]));
             const float d = glm::length(away);
             if (d > 1e-4F && d < kSeparation) {
-                dir += (away / d) * (1.0F - d / kSeparation);
+                steer += (away / d) * (1.0F - d / kSeparation);
             }
         }
-        if (glm::length(dir) > 1e-5F) dir = glm::normalize(dir);
+        if (const float m = glm::length(steer); m > 1.0F) steer /= m;
 
         if (controller != nullptr) {
             // The character system applies move * speed with collisions/gravity.
-            controller->move = glm::vec3(dir.x, 0.0F, dir.y);
+            controller->move = glm::vec3(steer.x, 0.0F, steer.y);
             controller->speed = agent.speed;
         } else {
-            // Kinematic fallback: slide along the path. Heights come from the
-            // real ground when a sampler is provided — coarse terrain bakes
-            // put the navmesh metres off the surface — falling back to the
-            // path's own (navmesh) heights.
-            const float step = glm::min(agent.speed * dt, glm::max(len, 0.0F));
-            glm::vec3 new_pos = pos + glm::vec3(dir.x, 0.0F, dir.y) * step;
+            // Kinematic fallback: slide along the path, clamped to the navmesh
+            // (separation must not push an agent off it or through a wall).
+            // Heights come from the real ground when a sampler is provided —
+            // coarse terrain bakes put the navmesh metres off the surface —
+            // else from the navmesh surface under the new position.
+            glm::vec2 disp = steer * (agent.speed * dt);
+            if (const float m = glm::length(disp); m > len && m > 1e-6F) disp *= len / m;
+            glm::vec3 new_pos = pos + glm::vec3(disp.x, 0.0F, disp.y);
+            std::optional<float> nav_y;
+            const glm::vec3 goal = feet + glm::vec3(disp.x, 0.0F, disp.y);
+            if (auto moved = navmesh.move_along_surface(feet, goal)) {
+                new_pos.x = moved->x;
+                new_pos.z = moved->z;
+                nav_y = moved->y;
+            }
             std::optional<float> ground;
             if (ground_height) ground = ground_height(new_pos.x, new_pos.z);
+            if (!ground) ground = nav_y;
             const float ground_y =
                 ground ? *ground
-                       : glm::mix(pos.y - agent.ground_offset, next.y,
-                                  len > 1e-4F ? step / len : 1.0F);
+                       : glm::mix(feet.y, next.y,
+                                  len > 1e-4F ? glm::length(disp) / len : 1.0F);
             new_pos.y = ground_y + agent.ground_offset;
             // Entities driven kinematically are treated as roots (like physics).
             transform.local[3] = glm::vec4(new_pos, 1.0F);
