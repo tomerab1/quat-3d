@@ -93,6 +93,22 @@ public:
         return *this;
     }
 
+    // Finite double within [lo, hi], for values a float cannot carry
+    // exactly (calendar time, geographic coordinates).
+    JsonFields& number(std::string_view key, double& out,
+                       double lo = std::numeric_limits<double>::lowest(),
+                       double hi = std::numeric_limits<double>::max()) {
+        if (const Json* v = take(key)) {
+            if (v->is_number() && std::isfinite(v->get<double>()) && v->get<double>() >= lo &&
+                v->get<double>() <= hi) {
+                out = v->get<double>();
+            } else {
+                fail(key, range_message(static_cast<float>(lo), static_cast<float>(hi)));
+            }
+        }
+        return *this;
+    }
+
     // Integer within [lo, hi] (a float with no fractional part is accepted).
     template <typename I>
     JsonFields& integer(std::string_view key, I& out,

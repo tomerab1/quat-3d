@@ -105,6 +105,7 @@ void register_debug_query_commands(RpcServer& server, const ContextPtr& ctx);
 void register_tuning_commands(RpcServer& server, const ContextPtr& ctx);
 void register_behavior_commands(RpcServer& server, const ContextPtr& ctx);
 void register_behavior_edit_commands(RpcServer& server, const ContextPtr& ctx);
+void register_time_commands(RpcServer& server, const ContextPtr& ctx);
 
 // {paused, time_scale, pending_steps, steps_run, sim_frames, sim_time_s}.
 [[nodiscard]] Json sim_clock_json(const core::SimClock& clock);

@@ -225,6 +225,24 @@ target_link_libraries(engine_animation PRIVATE acl_headers)
 target_include_directories(engine_animation PUBLIC ${ENGINE_PUBLIC_INCLUDE})
 
 # ---------------------------------------------------------------------------
+# engine_astro — astronomy for the time of day (R22.1): calendar / Julian
+# dates, sidereal time, precession, the Meeus Sun and Moon, rise / set,
+# and the renderer-facing SkyState. Pure, deterministic double-precision CPU
+# code; glm only.
+# ---------------------------------------------------------------------------
+add_library(engine_astro STATIC
+    src/astro/time.cpp
+    src/astro/coords.cpp
+    src/astro/sun.cpp
+    src/astro/moon.cpp
+    src/astro/moon_terms.cpp
+    src/astro/ephemeris.cpp
+    src/astro/events.cpp
+    src/astro/sky_state.cpp)
+target_link_libraries(engine_astro PUBLIC engine_flags glm::glm)
+target_include_directories(engine_astro PUBLIC ${ENGINE_PUBLIC_INCLUDE})
+
+# ---------------------------------------------------------------------------
 # engine_physics — Jolt Physics wrapper (PhysicsWorld). Jolt is an
 # implementation detail (PRIVATE); the public header is Jolt-free (PIMPL).
 # ---------------------------------------------------------------------------
@@ -268,7 +286,9 @@ add_library(engine_scene STATIC
     src/scene/instanced_mesh.cpp
     src/scene/instanced_mesh_resolve.cpp
     src/scene/ground_placement.cpp
-    src/scene/camera_framing.cpp)
+    src/scene/camera_framing.cpp
+    src/scene/world_clock.cpp
+    src/scene/world_clock_json.cpp)
 # EnTT is PUBLIC: components.hpp exposes entt types (Parent/Children) to consumers.
 # engine_renderer is PUBLIC: scene.hpp's RenderCollectSystem fills a renderer
 # DrawItem list (no cycle — the renderer does not depend on the scene).
@@ -276,7 +296,7 @@ add_library(engine_scene STATIC
 # handle and the glTF loader extracts skins.
 target_link_libraries(engine_scene PUBLIC
     engine_flags engine_asset engine_rhi engine_renderer engine_animation engine_physics
-    engine_terrain engine_nav engine_audio EnTT::EnTT)
+    engine_terrain engine_nav engine_audio engine_astro EnTT::EnTT)
 # fastgltf and stb (image decode) are implementation details of the loader.
 # nlohmann_json is PUBLIC: component_json.hpp exposes JSON values (the codec
 # shared by scene files and the remote-control API).
@@ -428,6 +448,7 @@ add_library(engine_remote_world STATIC
     src/remote/world/tuning_commands.cpp
     src/remote/world/behavior_commands.cpp
     src/remote/world/behavior_edit_commands.cpp
+    src/remote/world/time_commands.cpp
     src/remote/world/image_encode.cpp
     src/remote/world/stb_image_write_impl.cpp)
 target_link_libraries(engine_remote_world PUBLIC

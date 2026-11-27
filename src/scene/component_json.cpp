@@ -22,6 +22,8 @@
 #include "engine/physics/physics_world.hpp"
 #include "engine/scene/components.hpp"
 #include "engine/scene/material_override.hpp"
+#include "engine/scene/world_clock.hpp"
+#include "engine/scene/world_clock_json.hpp"
 
 #include "component_json_animation.hpp"
 
@@ -50,6 +52,7 @@ constexpr std::array k_components = {
     ComponentInfo{"patrol", "Patrol route the nav agent walks", true, true},
     ComponentInfo{"terrain", "Procedural terrain tile / streamed world", true, true},
     ComponentInfo{"grass", "GPU-generated, wind-animated grass around the camera", true, true},
+    ComponentInfo{"world_clock", "The scene's date, time and place (one per scene): drives the sun, moon and sky", true, true},
     ComponentInfo{"net_replicated", "Replicate this entity's transform to network clients", true, true},
     ComponentInfo{"audio_source", "Sound emitter: wav/flac/mp3 clip on a bus, optionally 3D", true, true},
     ComponentInfo{"audio_listener", "The audio listener follows this entity (else the camera)", true, true},
@@ -578,6 +581,7 @@ json encode_components(const entt::registry& r, entt::entity e, const EncodeOpti
                           {"gpu", t->gpu_generate}};
     }
     if (const auto* g = pick.get<Grass>("grass")) out["grass"] = encode_grass(g->settings);
+    if (const auto* c = pick.get<WorldClock>("world_clock")) out["world_clock"] = encode_world_clock(*c);
     if (const auto* n = pick.get<NetReplicated>("net_replicated")) {
         out["net_replicated"] = {{"net_id", n->net_id}};
     }
@@ -634,6 +638,7 @@ std::vector<std::string_view> component_names(const entt::registry& r, entt::ent
     add(r.all_of<PatrolRoute>(e), "patrol");
     add(r.all_of<Terrain>(e), "terrain");
     add(r.all_of<Grass>(e), "grass");
+    add(r.all_of<WorldClock>(e), "world_clock");
     add(r.all_of<NetReplicated>(e), "net_replicated");
     add(r.all_of<AudioSource>(e), "audio_source");
     add(r.all_of<AudioListener>(e), "audio_listener");
@@ -880,6 +885,15 @@ std::expected<void, core::Error> apply_component(entt::registry& r, entt::entity
         return merge<Grass>(r, e, v, name, strict,
                             [](JsonFields& f, Grass& g) { decode_grass(f, g.settings); });
     }
+    if (name == "world_clock") {
+        // One clock per scene: a second entity cannot take the component.
+        if (const entt::entity owner = find_world_clock(r); owner != entt::null && owner != e) {
+            return std::unexpected(core::Error{
+                "world_clock: the scene already has its clock on entity " +
+                std::to_string(entt::to_integral(owner)) + " (edit that one, or remove it first)"});
+        }
+        return merge<WorldClock>(r, e, v, name, strict, decode_world_clock);
+    }
     if (name == "net_replicated") {
         return merge<NetReplicated>(r, e, v, name, strict, [](JsonFields& f, NetReplicated& n) {
             f.integer("net_id", n.net_id, 0, 0xFFFFFFFFLL);
@@ -948,6 +962,7 @@ bool remove_component(entt::registry& r, entt::entity e, std::string_view name) 
     if (name == "patrol") return r.remove<PatrolRoute>(e) > 0;
     if (name == "terrain") return r.remove<Terrain>(e) > 0;
     if (name == "grass") return r.remove<Grass>(e) > 0;
+    if (name == "world_clock") return r.remove<WorldClock>(e) > 0;
     if (name == "net_replicated") return r.remove<NetReplicated>(e) > 0;
     if (name == "audio_source") return r.remove<AudioSource>(e) > 0;
     if (name == "audio_listener") return r.remove<AudioListener>(e) > 0;

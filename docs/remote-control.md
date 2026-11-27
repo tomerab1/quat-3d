@@ -502,6 +502,40 @@ the stored tree from running (empty for a valid tree).
   playing they are undone when Play stops and the editor restores the scene
   it started from.
 
+## World clock (ROADMAP R22.1)
+
+The scene's date, time and place: one `world_clock` component per scene
+(`engine/scene/world_clock.hpp`). It advances with the simulation clock
+(`debug.pause` / `step` / `time_scale` apply) × its own `time_scale`, and
+while `enabled` and `drive_sun` it writes the scene's first `dir_light`:
+direction toward the apparent Sun, intensity `sun_intensity` × the fraction
+of the solar disc above the horizon. Disabled, nothing is touched.
+`environment.set` refuses sun angles / intensity while the clock drives the
+sun.
+
+Clock fields (also the `world_clock` component of the scene codec):
+`enabled`, `datetime` (ISO-8601 `YYYY-MM-DDThh:mm[:ss[.fff]][Z|±hh:mm]`,
+years 1800..2200; without a zone it is local time at `utc_offset_h`; a zone
+also becomes the display zone unless `utc_offset_h` is given),
+`utc_offset_h` (−14..14), `latitude_deg` (−90..90, north),
+`longitude_deg` (−180..180, east), `north_offset_deg` (world rotation of
+compass north; 0 = north is −Z, east +X), `time_scale` (clock seconds per
+simulated second, 0..1e6; 0 freezes it), `fixed_day` (the time of day wraps
+at local midnight), `drive_sun`, `sun_intensity` (0..1e5).
+
+| Method | Params | Result |
+|---|---|---|
+| `time.get` | — | clock fields + `in_scene`, `entity`, `utc`, `julian_date`, `local_sidereal_time_deg`, `sun:{azimuth_deg, elevation_deg, direction, illuminance_lux, visible_fraction, sunrise, sunset, solar_noon, civil_dawn, civil_dusk, day_length_h?, polar}`, `moon:{azimuth_deg, elevation_deg, direction, illuminated_fraction, phase_angle_deg, phase, illuminance_lux, distance_km, moonrise, moonset}` |
+| `time.set` | any clock field, plus `local_time` (`hh:mm[:ss]`, keeps the date) | `time.get` result; creates the clock (and a sun light when it drives one and the scene has none) |
+| `time.skip` | `{hours}` (−87600..87600) | `time.get` result; `not_found` without a clock |
+
+Azimuths are compass bearings (0 = north, 90 = east); elevations are
+apparent (refracted), topocentric. Event times are local ISO-8601 strings
+(null when the event does not happen that local day; `polar` is `"day"` /
+`"night"` when the Sun stays up / down). Illuminances are outside the
+atmosphere, at normal incidence (Sun: 133 334 lx / R²; Moon: Krisciunas &
+Schaefer 1991).
+
 ## Errors
 
 | Code | Meaning |

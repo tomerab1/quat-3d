@@ -22,6 +22,7 @@
 //   nav_agent, behavior, patrol
 //   terrain
 //   grass            GPU grass around the camera (density, blades, colours, wind, limits, LOD)
+//   world_clock      date / time / place, one per scene (world_clock_json.hpp)
 //   net_replicated
 //   audio_source     clip / bus / volume / pitch / loop / 3D falloff (+ write-only command)
 //   audio_listener

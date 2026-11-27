@@ -9,7 +9,8 @@
 // look tuning (ROADMAP A8): render.settings.get / set / reset / schema,
 // material.get / set — and behaviour-tree authoring (ROADMAP A7): bt.leaves,
 // bt.get, bt.set, bt.add_node, bt.remove_node, bt.move_node, bt.set_params,
-// bt.status. The method contract is docs/remote-control.md.
+// bt.status — and the world clock (ROADMAP R22.1): time.get, time.set,
+// time.skip. The method contract is docs/remote-control.md.
 //
 // Scene editing works on any Scene. Everything that only the running
 // application has — the view camera, the renderer's settings, terrain heights,

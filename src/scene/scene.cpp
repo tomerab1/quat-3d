@@ -1,6 +1,7 @@
 // Scene + system scheduler (Phase 4, Slice 4.2).
 
 #include "engine/scene/scene.hpp"
+#include "engine/scene/world_clock.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -74,6 +75,7 @@ void Scene::tick(float dt, const FootGroundProbe& ground) {
     // up to date before sampling (animation writes no transforms itself).
     transform_system(registry_);
     animation_system(registry_, dt, ground);
+    world_clock_system(registry_, dt); // date / time, sun and sky (R22.1)
     render_collect_system(registry_, draw_list_);
 }
 
