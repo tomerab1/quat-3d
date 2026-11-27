@@ -5,7 +5,7 @@ flight, what is verified, what is blocked, and what to do next. Whoever ends a
 work session updates it (keep it short — history belongs in git and
 `ROADMAP.md`).
 
-_Last updated: 2026-11-27 (factory running)._
+_Last updated: 2026-11-27 16:10 UTC (factory running; CI blocked by billing)._
 
 ## How work runs
 
@@ -34,33 +34,48 @@ Decisions already made (do not re-litigate without the owner):
 
 ## Claimed by the live session (do not pick up)
 
-Cycles 1 and 2 are merged into `master` (PR #2 `c6acf19`, PR #3
-`4294812`, both with all CI jobs green). Item PRs now target `master`
-directly; `claude/nifty-hopper-nb68qe` carries only orchestrator docs between
-merges.
+Item PRs target `master` directly; `claude/nifty-hopper-nb68qe` carries only
+orchestrator docs between merges.
+
+Merged on 2026-11-27 after cycle 2:
+- #18 (S1 RHI)
+- #17 (A8 live tuning)
+- #28 (G8 animation)
+- #25 (R12 shadows + AO, fixes #16 #36)
+- #57 (CI skips docs-only changes)
+- docs PRs #33, #44, #50 (A10–A12 design), #51 (S9, G11–G15, R18, R19)
 
 | PR | Item | Branch | State |
 |---|---|---|---|
-| #17 | A8 live tuning | `feat/a8-tuning` | review blocking (derived-material leak, shadow tests, base conflict) — worker fixing; merges before #19 |
-| #19 | A6 shader authoring | `feat/a6-shader-authoring` | fixes pushed (`0a7c123`), re-review requested; last blocker (copy/hash `shader` in A8's derived material) lands after #17 |
-| #20 | CI screenshots + D2/D7, fixes #7 #8 #21 | `feat/ci-screenshots` | #21 fixed; CI red on `DebugStep.LaterRequestsKeepQueuedStepsDt`, editor capture is a placeholder — worker fixing |
-| #22 | G7 Lua scripting | `feat/g7-scripting` | review blocking (sandbox `__tostring`/`__gc`/`rawset`, non-editor play flag) — worker fixing |
-| #24 | S4/P1 Win + macOS CI, P6 release | `feat/s4-platform-ci` | review blocking (Windows UTF-8 paths, action SHA pins, base conflict) — worker fixing; tag `v0.1.0` after merge |
-| #25 | R12 shadows + AO (fixes #16, #36) | `feat/r12-shadows-ao` | 5/5 review items resolved; new blocker D16 precision → pancaking — worker fixing |
-| #26 | R10.3 GPU particles | `feat/r10-particles` | review blocking (Play/Stop reset, pool accounting tests) — worker fixing + master merge |
-| #28 | G8 animation quick wins | `feat/g8-animation` | worker running |
-| #34 | R11 velocity + upscaler (TAAU) | `feat/r11-velocity-upscale` | master merged; review blocking (temporal reset on camera cut) — worker fixing |
-| #43 | R17 KTX2/Basis + meshopt cooker (fixes #31) | `feat/r17-cooker` | review blocking (ktx_read only, stb budgets, ETC1S fuzzing) — worker fixing + master merge |
-| — | E8 editor UI/UX redesign (owner request) | `feat/e8-editor-ux` | worker running (design system, shell, core panels; before/after screenshots) |
-| — | A9 world-building ergonomics (#37–#42, owner's Mac session) | `feat/a9-worldbuilding` | worker running; draft PR on first push |
-| — | Mountain forest showcase | `feat/showcase-mountain` | worker running |
+| #19 | A6 shader authoring | `feat/a6-shader-authoring` | review clear; R12 re-merge in progress (lighting.slang / lighting_pass.cpp) |
+| #20 | CI screenshots + D2/D7, fixes #7 #8 #21 #45 #46 | `feat/ci-screenshots` | worker fixing 8 review items + master merge; blocker: a clean CI render of every scene |
+| #22 | G7 Lua scripting | `feat/g7-scripting` | worker merging master (registration-list conflicts) |
+| #24 | S4/P1 Win + macOS CI, P6 release | `feat/s4-platform-ci` | review clear; `b6e81b2` waits on CI (billing); tag `v0.1.0` after merge |
+| #26 | R10.3 GPU particles | `feat/r10-particles` | review clear; R12 re-merge in progress |
+| #34 | R11 velocity + TAAU | `feat/r11-velocity-upscale` | review clear; R12 re-merged `1f14ad6`; CI blocked (billing) |
+| #43 | R17 KTX2/Basis + meshopt cooker (fixes #31) | `feat/r17-cooker` | review clear; CI on `cee5d48` |
+| #49 | R14 mountain forest showcase | `feat/mountain-scene` | worker moving shadows onto R12's CSM + master merge |
+| #52 | E8 editor UI/UX redesign | `feat/e8-editor-ux` | draft; worker running |
+| #53 | A9 world-building (fixes #37–#42) | `feat/a9-worldbuilding` | draft; worker running |
+| #54 | A10.1 physics control (fixes #47 #48) | `feat/a10-physics-control` | draft; worker running |
+| #55 | P4 game packaging + E7 export | `feat/p4-game-packaging` | draft; worker running |
 
-Merged since cycle 2: #18 (S1 RHI: #4 #5 #9), #33 (docs).
-
-Triaged issues queued for the next free agents: #10 + #11, #14 + #23
-(glass), #13 (aerial perspective → R13), #15 + #27 (terrain/grass look →
-R14), #30 (Lua patterns), #29 (more screenshot scenes, after #20), **#35 + #23**
-(alpha MASK + transmission in depth/shadow passes — first after #25 merges).
+Queued for the next free agents, in order:
+1. R13 weather.
+2. **#35 + #23**: alpha MASK and transmission in the depth/shadow passes.
+3. Settings polish:
+   - sharpness 0 when TAA is off;
+   - lenient unknown choice names;
+   - strict `render.settings.set` rejects retired keys;
+   - transmission on a shader primitive.
+4. G5 input, then G15 camera.
+5. Then:
+   - #10 + #11;
+   - #14;
+   - #13 (aerial perspective, goes with R13);
+   - #15 + #27 (R14 look);
+   - #30;
+   - #29 (after #20).
 
 ### A2 design notes (agreed, not yet implemented)
 
@@ -98,28 +113,27 @@ R14), #30 (Lua patterns), #29 (more screenshot scenes, after #20), **#35 + #23**
 
 ## Blockers
 
-- **Local builds in cloud sessions:** even on the `quat-3d` environment (which
-  allows `codeload.github.com`), the proxy kept answering 403 for over 90
-  minutes on 2026-11-27 — if it still does, ask the owner to check the
-  environment's network settings. Details: vcpkg downloads sources from
-  `codeload.github.com`. The default cloud environment blocks it; a personal
-  environment named `quat-3d` allowing that host was created on 2026-11-27,
-  but the proxy had not picked it up by the end of that session. In a new
-  session select the `quat-3d` environment, then follow the cloud-container
-  steps in [`DEVELOPMENT.md`](DEVELOPMENT.md#building-in-a-cloud-container).
-  Until local builds work, CI is the source of truth for linking and tests.
-  Meanwhile individual files can be **syntax/warning-checked locally**
-  against header-only clones of the dependencies (plain `git clone` from
-  GitHub works) — see "Compile-checking without vcpkg" in
-  [`DEVELOPMENT.md`](DEVELOPMENT.md).
+- **GitHub Actions spending limit (since 2026-11-27 15:52 UTC).** The repo is
+  private and hit its Actions spending limit. GitHub now refuses every new
+  job ("recent account payments have failed or your spending limit needs to
+  be increased"), so no PR can go green. Only the owner can fix this: raise
+  the limit or fix the payment method under GitHub Settings → Billing &
+  plans, or make the repo public. Usage cuts are in "Next steps" below and in
+  LEARNINGS.md.
+- **Local builds in cloud sessions:** vcpkg needs `codeload.github.com`, and
+  the cloud proxy has refused it. Until local builds work, CI is the source of
+  truth for linking and tests. Single files can still be compile-checked
+  locally against header-only dependency clones; see "Compile-checking
+  without vcpkg" in [`DEVELOPMENT.md`](DEVELOPMENT.md).
 
 ## Next steps
 
-1. Check CI for the latest commit; fix compile errors in the WIP code.
-2. Continue S1 from [`audit/S1-findings.md`](audit/S1-findings.md): re-verify
-   each finding against the code, fix with a regression test, update its
-   status. Suggested order — highest risk first: C5 joints part, then A1+A2+A14 **together** (TAA jitter/history — fixing A1 alone makes the
-   image shimmer), B1–B5 (networking/prediction), the rest.
-3. S2 remaining: bounds-check untrusted network packets (B2 input validation).
-4. S3/S4 done → tick them in `ROADMAP.md`; add Windows/macOS CI jobs.
-5. Then A2 → A3 → A4 (Rust server) → A5 (debugging tools).
+1. When Actions runs again, merge one PR at a time as each goes green:
+   #43, #24 (then tag `v0.1.0`), #34, #26, #19. Re-merge `master` into a PR
+   only when GitHub reports a conflict.
+2. After #24 merges, cut CI usage:
+   - cancel superseded PR runs;
+   - with the owner's OK, run Windows/macOS on `master`, releases and
+     manual runs only, not on every PR push.
+3. Tick R10.3 in `ROADMAP.md` when #26 merges.
+4. Start the queued items above as agents free up (8 at most).

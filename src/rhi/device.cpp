@@ -141,6 +141,9 @@ struct Candidate {
     bool has_descriptor_buffer = false;
 };
 
+// PCI vendor id Apple GPUs report through MoltenVK / KosmicKrisp.
+constexpr std::uint32_t k_vendor_apple = 0x106B;
+
 // Require Vulkan 1.3 + dynamicRendering + synchronization2 (and, with a
 // surface, VK_KHR_swapchain plus a queue family that can present to it), then
 // rank by device type (prefer discrete). On a multi-GPU machine whose display
@@ -402,6 +405,15 @@ std::expected<Device, core::Error> Device::create(const CreateInfo& info) {
     }
     core_features.independentBlend = supported_core.independentBlend;
     dev.independent_blend_ = supported_core.independentBlend == VK_TRUE;
+    // Block-compressed texture families, likewise enabled whenever offered;
+    // asset loads pick their transcode targets from what is enabled here.
+    core_features.textureCompressionBC = supported_core.textureCompressionBC;
+    core_features.textureCompressionASTC_LDR = supported_core.textureCompressionASTC_LDR;
+    dev.texture_caps_.bc = supported_core.textureCompressionBC == VK_TRUE;
+    dev.texture_caps_.astc_ldr = supported_core.textureCompressionASTC_LDR == VK_TRUE;
+    dev.texture_caps_.prefer_astc =
+        dev.texture_caps_.astc_ldr && candidate.properties.vendorID == k_vendor_apple;
+    dev.texture_caps_.max_dimension_2d = candidate.properties.limits.maxImageDimension2D;
 
     VkPhysicalDeviceVulkan12Features features12{};
     features12.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES;
@@ -565,6 +577,7 @@ Device& Device::operator=(Device&& other) noexcept {
         descriptor_buffer_props_ = other.descriptor_buffer_props_;
         max_sampler_anisotropy_  = other.max_sampler_anisotropy_;
         independent_blend_       = other.independent_blend_;
+        texture_caps_            = other.texture_caps_;
         descriptor_backend_      = other.descriptor_backend_;
         storage_image_extended_formats_ = other.storage_image_extended_formats_;
         simulate_missing_extended_formats_ = other.simulate_missing_extended_formats_;

@@ -10,6 +10,7 @@
 
 #include "engine/core/error.hpp"
 #include "engine/rhi/queue_selection.hpp"
+#include "engine/rhi/texture_caps.hpp"
 
 namespace engine::rhi {
 
@@ -84,6 +85,10 @@ public:
     // and MoltenVK offer it; enabled whenever offered). Weighted blended OIT
     // needs it.
     [[nodiscard]] bool independent_blend() const { return independent_blend_; }
+    // Sampled-texture capabilities of this device (see TransferContext).
+    [[nodiscard]] const TextureCaps& texture_caps() const {
+        return texture_caps_;
+    }
     [[nodiscard]] DescriptorBackend descriptor_backend() const { return descriptor_backend_; }
     [[nodiscard]] bool uses_descriptor_buffer() const {
         return descriptor_backend_ == DescriptorBackend::ext_descriptor_buffer;
@@ -139,6 +144,7 @@ private:
     VkPhysicalDeviceDescriptorBufferPropertiesEXT descriptor_buffer_props_{};
     float                    max_sampler_anisotropy_ = 0.0F;
     bool                     independent_blend_ = false;
+    TextureCaps              texture_caps_{};
     DescriptorBackend        descriptor_backend_ = DescriptorBackend::ext_descriptor_buffer;
     bool                     storage_image_extended_formats_ = false;
     bool                     simulate_missing_extended_formats_ = false;

@@ -34,7 +34,8 @@ void with_load_transfer(const engine::rhi::Device& device, Fn&& fn) {
     pool_info.queueFamilyIndex = device.queue_families().graphics;
     if (vkCreateCommandPool(vk_device, &pool_info, nullptr, &load_pool) == VK_SUCCESS) {
         const engine::rhi::TransferContext load_transfer{
-            vk_device, load_pool, device.graphics_queue(), device.max_sampler_anisotropy()};
+            vk_device, load_pool, device.graphics_queue(), device.max_sampler_anisotropy(),
+            device.texture_caps()};
         std::forward<Fn>(fn)(load_transfer);
         vkDestroyCommandPool(vk_device, load_pool, nullptr);
     }
