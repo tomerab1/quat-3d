@@ -110,6 +110,46 @@ JSON-RPC over loopback TCP to the engine.
   entity world bounds + `world.place_on_ground`; screenshots from an
   explicit offscreen camera; `asset_search` / `asset_fetch` for CC0 Poly
   Haven models (licence recorded, cooked with R17).
+- [ ] **A10 — Gameplay control** (design:
+  [`docs/research/mcp-gameplay-control.md`](docs/research/mcp-gameplay-control.md)).
+  Runtime control of a playing game over remote + MCP, all mutations
+  reverted by Stop:
+  - **A10.1 Physics** *(L)*: engine event ring (`events.poll`: contacts,
+    triggers, script errors, sim state, scene changes); body velocities,
+    impulses / forces, one gravity setting (Jolt + characters, saved with the
+    scene), overlap / shape-cast / all-hits queries, current contacts;
+    rigidbody friction / restitution / damping / CCD / axis locks; a `joint`
+    component on Jolt constraints (motors, limits, break force);
+    `character.move`.
+  - **A10.2 Behaviour runtime** *(M)*: a blackboard (component, `bb_*`
+    leaves, Lua access); `bt.blackboard.*`, per-tick trace, breakpoints that
+    pause the sim clock, forced leaf results.
+  - **A10.3 Script runtime** *(M, needs G7/#22)*: list instances with
+    errors and timings, inspect `self`, call exported functions, sandboxed
+    `eval` (same limits, captured output), restart, binding reflection.
+  - **A10.4 Play-mode control** *(M–L)*: checkpoints (ECS + Jolt
+    `StateRecorder`) with a determinism test, `sim.state`, `sim.run_until`
+    (event / watch / log conditions), `input.inject` into the G7 input
+    sampler, `camera.view`.
+  - **A10.5** *(S each)*: animation state-machine params, audio bus mix,
+    particle bursts, editor selection.
+- [ ] **A11 — MCP protocol upgrades** *(M–L)*: annotation audit (rule
+  test, `anthropic/maxResultSizeChars`); structured output (`outputSchema`)
+  for stable tools; resources, templates, resource links and completions;
+  subscriptions over the A10.1 event ring (legacy + `subscriptions/listen`);
+  engine jobs (`jobs.*`, progress, cancel) mapped to MCP tasks (SEP-2663)
+  and progress notifications; elicitation confirms for destructive tools
+  (MRTR + legacy, `confirm: true` fallback); icons; the test suite on
+  protocol 2025-11-25 and 2026-07-28. Roots / sampling / logging stay
+  unused (deprecated).
+- [ ] **A12 — Skills** *(M)*: quat-3d workflows as Agent Skills in
+  `tools/quat-mcp/content/skills/` (build-level, tune-look,
+  debug-physics-glitch, write-gameplay-script, design-npc-behaviour,
+  author-material-shader, playtest), served over MCP (SEP-2640 skills
+  extension), packaged as a Claude Code plugin + marketplace entry, and
+  rendered as the MCP prompts for clients without skills; tests keep
+  skills, tool names and resources in sync. Each skill ships with the tools
+  it needs (A10.x, A6, G7, A9).
 
 ## R — Rendering & performance
 
