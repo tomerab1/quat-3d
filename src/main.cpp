@@ -30,7 +30,10 @@
 #include <glm/gtc/constants.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 
+#include "app/audio_runtime.hpp"
 #include "app/demo_scenes.hpp"
+#include "app/nav_bake.hpp"
+#include "app/remote_bridge.hpp"
 #include "engine/animation/animator.hpp"
 #include "engine/animation/clip.hpp"
 #include "engine/animation/skeleton.hpp"
@@ -45,13 +48,11 @@
 #include "engine/renderer/dynamic_ibl.hpp"
 #include "engine/terrain/generator.hpp"
 #include "engine/renderer/ibl_pass.hpp"
+#include "engine/renderer/light_cull_pass.hpp"
 #include "engine/renderer/lighting_pass.hpp"
 #include "engine/renderer/taa_pass.hpp"
 #include "engine/nav/navmesh.hpp"
-#include "engine/net/prediction.hpp"
-#include "engine/net/replication.hpp"
-#include "engine/net/transport.hpp"
-#include "engine/remote/rpc_server.hpp"
+#include "engine/net/session.hpp"
 #include "engine/scene/behavior.hpp"
 #include "engine/renderer/terrain_pass.hpp"
 #include "engine/terrain/streamer.hpp"
@@ -95,16 +96,6 @@ constexpr bool k_enable_validation = true;
 constexpr bool k_enable_validation = false;
 #endif
 
-// Whether this binary was built with the editor layer (reported to remote
-// clients so they know which editor-only services exist).
-constexpr bool editor_enabled_build() {
-#ifdef ENGINE_EDITOR
-    return true;
-#else
-    return false;
-#endif
-}
-
 VkExtent2D window_pixel_extent(SDL_Window* window) {
     int w = 0;
     int h = 0;
@@ -132,6 +123,7 @@ struct SkinnedEntityGpu {
 
 struct DeferredFrame {
     engine::renderer::MeshPass       mesh;
+    engine::renderer::LightCullPass  light_cull;
     engine::renderer::LightingPass   lighting;
     engine::renderer::TonemapPass    tonemap;
     engine::renderer::SkinningPass   skinning;
@@ -167,8 +159,10 @@ bool ensure_viewport_target(DeferredFrame& frame, const engine::rhi::Device& dev
         frame.viewport_extent.height == extent.height) {
         return true;
     }
+    // TRANSFER_SRC: remote screenshots copy the scene view out of it.
     auto image = allocator.create_image(format, extent,
                                         VK_IMAGE_USAGE_TRANSFER_DST_BIT |
+                                            VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
                                             VK_IMAGE_USAGE_SAMPLED_BIT);
     if (!image) return false;
     auto view = engine::rhi::create_image_view(device.handle(), image->handle(), format);
@@ -254,14 +248,14 @@ bool scene_world_bounds(engine::scene::Scene& scene, glm::vec3& out_min, glm::ve
 // belong to the user's scene, keep their authored transforms, and take over the
 // view only in play mode. Conventions mirror camera_system (Vulkan Y flip).
 [[maybe_unused]] engine::scene::CameraMatrices
-fly_camera_matrices(const glm::vec3& pos, float yaw, float pitch, float aspect) {
+fly_camera_matrices(const glm::vec3& pos, float yaw, float pitch, float fov_y, float aspect) {
     const glm::vec3 fwd(std::cos(pitch) * std::cos(yaw), std::sin(pitch),
                         std::cos(pitch) * std::sin(yaw));
     const engine::scene::Camera defaults{};
     engine::scene::CameraMatrices out;
     out.position = pos;
     out.view = glm::lookAt(pos, pos + fwd, glm::vec3(0.0F, 1.0F, 0.0F));
-    out.projection = glm::perspective(defaults.fov_y, aspect, defaults.near_z, defaults.far_z);
+    out.projection = glm::perspective(fov_y, aspect, defaults.near_z, defaults.far_z);
     out.projection[1][1] *= -1.0F; // Vulkan clip space: Y points down
     out.view_proj = out.projection * out.view;
     return out;
@@ -439,12 +433,23 @@ int main() {
         return c;
     };
 
+    // Temporal state shared by both slots (audit A2 / A11): one TAA history and
+    // one adapted luminance, each advanced exactly once per frame. Declared
+    // before `frames` so it outlives every pass that references it.
+    const auto taa_history =
+        std::make_shared<engine::renderer::TaaHistory>(device, allocator, k_frames_in_flight);
+    auto exposure_state = engine::renderer::ExposureState::create(device, allocator);
     // Per-frame-in-flight deferred chains (GBuffer -> lighting -> tonemap). Each
     // slot owns its passes' descriptor buffers and a transient image pool, so
     // building one frame's graph never disturbs the other in-flight frame.
     std::array<DeferredFrame, k_frames_in_flight> frames;
-    bool frames_ok = true;
+    bool frames_ok = exposure_state.has_value();
+    if (!exposure_state) {
+        std::fprintf(stderr, "[fatal] exposure state creation failed: %s\n",
+                     exposure_state.error().message.c_str());
+    }
     for (auto& f : frames) {
+        if (!frames_ok) break;
         auto mesh = engine::renderer::MeshPass::create(device, allocator, *pipeline_cache,
                                                        setup_transfer, shader_dir);
         auto light = engine::renderer::LightingPass::create(device, allocator, *pipeline_cache,
@@ -453,15 +458,16 @@ int main() {
                                                           shader_dir, ldr_format);
         auto skin = engine::renderer::SkinningPass::create(device, allocator, *pipeline_cache,
                                                            shader_dir);
-        auto shadow = engine::renderer::ShadowPass::create(device, *pipeline_cache, shader_dir);
+        auto shadow = engine::renderer::ShadowPass::create(device, allocator, *pipeline_cache,
+                                                           shader_dir);
         auto transp = engine::renderer::TransparentPass::create(device, allocator, *pipeline_cache,
                                                                 setup_transfer, shader_dir);
         auto bloom = engine::renderer::BloomPass::create(device, allocator, *pipeline_cache,
                                                          shader_dir);
         auto expo = engine::renderer::ExposurePass::create(device, allocator, *pipeline_cache,
-                                                           shader_dir);
+                                                           shader_dir, *exposure_state);
         auto taa = engine::renderer::TaaPass::create(device, allocator, *pipeline_cache, shader_dir,
-                                                     ldr_format);
+                                                     ldr_format, taa_history);
 #ifdef ENGINE_EDITOR
         if (editor.active()) {
             auto ui = engine::renderer::ImGuiPass::create(device, allocator, *pipeline_cache,
@@ -501,6 +507,15 @@ int main() {
         f.exposure = std::move(*expo);
         f.taa = std::move(*taa);
         f.pool = engine::rhi::TransientImagePool(device, allocator);
+        auto cull = engine::renderer::LightCullPass::create(device, allocator, *pipeline_cache,
+                                                            shader_dir);
+        if (!cull) {
+            frames_ok = false;
+            std::fprintf(stderr, "[fatal] light cull pass creation failed: %s\n",
+                         cull.error().message.c_str());
+            break;
+        }
+        f.light_cull = std::move(*cull);
     }
 
     // Scene assets live in an AssetManager so MeshRenderer handles keep them
@@ -626,70 +641,23 @@ int main() {
     bool terrain_stream_mode = false;
     engine::nav::NavMesh navmesh;        // baked on request from the Physics panel (13.1)
     bool navmesh_request = false;
+    bool navmesh_auto_bake = false;      // armed: bake once if Play has agents and no mesh
+    std::string navmesh_status;          // last bake / invalidation, for the Physics panel
+    // A navmesh describes the geometry it was baked from: drop it when that
+    // changes (scene load, terrain regeneration) and re-arm the auto-bake.
+    const auto invalidate_navmesh = [&](const char* why) {
+        navmesh_auto_bake = true;
+        if (!navmesh.valid()) return;
+        navmesh = {};
+        navmesh_status = std::string("cleared: ") + why + " (rebake)";
+        std::fprintf(stderr, "[nav] navmesh cleared: %s\n", why);
+    };
     std::optional<engine::editor::EditorContext::GroundClick> ground_click; // 13.4
 
-    // Networking (14.1/14.2): QUAT_HOST=<port> serves this scene's replicated
-    // entities; QUAT_JOIN=<ip:port> mirrors them. net_ids hash entity names, so
-    // both ends must run the same scene.
-    std::optional<engine::net::NetServer> net_server;
-    std::optional<engine::net::NetClient> net_client;
-    engine::net::ReplicationServer net_replication;
-    engine::net::ReplicationClient net_receiver;
-    // Prediction (14.3): the joined client owns the "player" character — it
-    // applies inputs immediately and reconciles against the host's acked
-    // state; the host applies remote inputs authoritatively.
-    engine::net::CharacterPredictor net_predictor{
-        engine::net::CharacterPredictor::StepFn([](const glm::vec3& p,
-                                                   const engine::net::PlayerInput& in) {
-            constexpr float walk_speed = 4.0F; // matches CharacterController.speed default
-            return p + in.move * (walk_speed * in.dt);
-        })};
-    std::uint32_t net_input_seq = 0;
-    std::uint32_t net_last_input_seq = 0;   // host: last remote input applied
-    engine::net::ClientId net_player_owner = engine::net::invalid_client;
-    const auto assign_net_ids = [&]() {
-        std::uint32_t tagged = 0;
-        for (auto [e, name] : scene.registry().view<engine::scene::Name>().each()) {
-            if (scene.registry().any_of<engine::scene::NetReplicated>(e)) continue;
-            if (!scene.registry().any_of<engine::scene::Transform>(e)) continue;
-            // The predicted player character is owned by its client (14.3),
-            // not by the replication stream.
-            if (scene.registry().any_of<engine::scene::CharacterController>(e)) continue;
-            // FNV-1a of the name: deterministic across runs and both ends.
-            std::uint32_t h = 2166136261U;
-            for (const char c : name.value) h = (h ^ static_cast<unsigned char>(c)) * 16777619U;
-            if (h == 0) h = 1;
-            scene.registry().emplace<engine::scene::NetReplicated>(e, h);
-            ++tagged;
-        }
-        std::fprintf(stderr, "[net] %u entities tagged for replication\n", tagged);
-    };
-    if (const char* host_port = std::getenv("QUAT_HOST"); host_port != nullptr) {
-        if (auto s2 = engine::net::NetServer::listen(
-                static_cast<std::uint16_t>(std::atoi(host_port)));
-            s2) {
-            net_server = std::move(*s2);
-            assign_net_ids();
-            std::fprintf(stderr, "[net] hosting on port %s\n", host_port);
-        } else {
-            std::fprintf(stderr, "[net] host failed: %s\n", s2.error().message.c_str());
-        }
-    } else if (const char* join_addr = std::getenv("QUAT_JOIN"); join_addr != nullptr) {
-        const std::string addr(join_addr);
-        const std::size_t colon = addr.rfind(':');
-        if (colon != std::string::npos) {
-            if (auto c = engine::net::NetClient::connect(
-                    addr.substr(0, colon),
-                    static_cast<std::uint16_t>(std::atoi(addr.c_str() + colon + 1)));
-                c) {
-                net_client = std::move(*c);
-                assign_net_ids();
-                std::fprintf(stderr, "[net] joining %s\n", join_addr);
-            } else {
-                std::fprintf(stderr, "[net] join failed: %s\n", c.error().message.c_str());
-            }
-        }
-    }
+    // Networking (Phase 14; S1 B1-B5): QUAT_HOST=<port> hosts this scene,
+    // QUAT_JOIN=<ip:port> joins a host running the same scene. See
+    // engine/net/session.hpp for the per-frame protocol.
+    engine::net::NetSession net = engine::net::NetSession::from_environment(scene.registry());
     std::map<glm::ivec2, std::uint32_t, engine::terrain::TileCoordLess>
         terrain_bodies; // streamed tiles' play-mode physics bodies
 
@@ -728,6 +696,7 @@ int main() {
     const glm::vec3 cam_fwd0 = -glm::normalize(glm::vec3(framed_view[2])); // camera looks down -Z
     float cam_yaw = std::atan2(cam_fwd0.z, cam_fwd0.x);
     float cam_pitch = std::asin(glm::clamp(cam_fwd0.y, -0.999F, 0.999F));
+    float cam_fov_y = default_camera.fov_y; // remote camera.set can change it
     const float move_speed = physics_mode ? 6.0F
                              : has_geo    ? glm::max(1.0F, 0.5F * glm::length(bmax - bmin))
                                           : 3.0F;
@@ -809,51 +778,64 @@ int main() {
     bool needs_recreate = false;
     bool looking = false; // right mouse button held -> mouse-look active
     std::uint64_t last_ticks = SDL_GetTicksNS();
-    glm::mat4 prev_jittered_vp(1.0F); // previous frame's jittered view-proj, for TAA
-    bool taa_history_valid = false;
 
-    // Remote control (Phase 15): QUAT_REMOTE=<port> opens the loopback
-    // JSON-RPC endpoint the quat-mcp bridge (tools/quat-mcp) talks to
-    // ("1" = the default port 7878). QUAT_REMOTE_TOKEN, when set, requires
-    // clients to authenticate with session.hello first. Polled once per frame
-    // on this thread, before the scene ticks, so handlers mutate the ECS
-    // between frames exactly like editor actions do.
-    std::optional<engine::remote::RpcServer> remote;
-    if (const char* env = std::getenv("QUAT_REMOTE"); env != nullptr) {
-        engine::remote::RpcServerConfig remote_config;
-        const unsigned long requested = std::strtoul(env, nullptr, 10);
-        remote_config.port = (requested > 1 && requested <= 65535)
-                                 ? static_cast<std::uint16_t>(requested)
-                                 : std::uint16_t{7878};
-        if (const char* token = std::getenv("QUAT_REMOTE_TOKEN"); token != nullptr) {
-            remote_config.token = token;
+    // Authoritative ground height at world (x, z): streamed tiles first,
+    // then the single editing tile. Shared by kinematic nav agents (the
+    // coarse navmesh floats off the real surface) and ground clicks.
+    const engine::scene::GroundHeightFn ground_height_at =
+        [&](float x, float z) -> std::optional<float> {
+        if (terrain_streamer) {
+            const float tile = terrain_streamer->base().tile_size_m;
+            const glm::ivec2 coord(
+                static_cast<int>(std::floor((x - terrain_anchor.x) / tile + 0.5F)),
+                static_cast<int>(std::floor((z - terrain_anchor.z) / tile + 0.5F)));
+            const auto it = terrain_streamer->maps().find(coord);
+            if (it == terrain_streamer->maps().end()) return std::nullopt;
+            const glm::vec3 org = terrain_streamer->tile_origin(coord, terrain_anchor);
+            return org.y + it->second.sample(x - org.x, z - org.z);
         }
-        const bool has_token = !remote_config.token.empty();
-        if (auto server = engine::remote::RpcServer::listen(std::move(remote_config)); server) {
-            remote = std::move(*server);
-            std::fprintf(stderr, "[remote] listening on 127.0.0.1:%u (%s)\n", remote->port(),
-                         has_token ? "token required" : "no token");
-        } else {
-            std::fprintf(stderr, "[warn] remote control disabled: %s\n",
-                         server.error().message.c_str());
+        if (terrain_present && terrain_heightmap.valid()) {
+            const float half = terrain_heightmap.tile_size_m * 0.5F;
+            const float lx = x - (terrain_anchor.x - half);
+            const float lz = z - (terrain_anchor.z - half);
+            if (lx < 0.0F || lz < 0.0F || lx > terrain_heightmap.tile_size_m ||
+                lz > terrain_heightmap.tile_size_m) {
+                return std::nullopt;
+            }
+            return terrain_anchor.y + terrain_heightmap.sample(lx, lz);
         }
-    }
-    if (remote) {
-        remote->add_method(
-            "engine.info", "Engine name, frame counter, entity count and play state.",
-            [&](const engine::remote::Json&) -> engine::remote::RpcResult {
-                bool playing = false;
+        return std::nullopt;
+    };
+
+    // Remote control (ROADMAP A2/A3): QUAT_REMOTE=<port> opens the loopback
+    // JSON-RPC endpoint the quat-mcp bridge talks to (QUAT_REMOTE_TOKEN
+    // requires session.hello). The bridge also resolves Primitive components
+    // every frame, endpoint or not. See src/app/remote_bridge.hpp.
+    quat::app::RemoteBridgeTargets remote_targets;
+    remote_targets.device = &device;
+    remote_targets.allocator = &allocator;
+    remote_targets.assets = &assets;
+    remote_targets.scene = &scene;
+    remote_targets.frame_counter = &presented;
+    remote_targets.cam_pos = &cam_pos;
+    remote_targets.cam_yaw = &cam_yaw;
+    remote_targets.cam_pitch = &cam_pitch;
+    remote_targets.cam_fov_y = &cam_fov_y;
+    remote_targets.ground_height = &ground_height_at;
+    remote_targets.terrain_streamer = &terrain_streamer;
+    remote_targets.terrain_heightmap = &terrain_heightmap;
+    remote_targets.terrain_anchor = &terrain_anchor;
+    remote_targets.navmesh = &navmesh;
+    remote_targets.spin_entity = &spin_entity;
 #ifdef ENGINE_EDITOR
-                playing = editor_play;
+    remote_targets.editor = &editor;
+    remote_targets.render_settings = &render_settings;
+    remote_targets.play = physics_world ? nullptr : &editor_play; // demo modes own physics
 #endif
-                return engine::remote::Json{
-                    {"engine", "quat-3d"},
-                    {"frame", presented},
-                    {"entities", scene.registry().view<engine::scene::Transform>().size()},
-                    {"playing", playing},
-                    {"editor", editor_enabled_build()}};
-            });
-    }
+    remote_targets.project_root = QUAT_PROJECT_ROOT;
+    quat::app::RemoteBridge remote_bridge(std::move(remote_targets), k_frames_in_flight);
+
+    quat::app::AudioRuntime audio_runtime = quat::app::AudioRuntime::create(QUAT_PROJECT_ROOT);
 
     while (running) {
         // Per-frame accumulated mouse-look delta.
@@ -904,9 +886,10 @@ int main() {
         }
         if (!running) break;
 
-        // Remote-control requests run here: after input, before play-mode
-        // transitions, scene file requests and the scene tick.
-        if (remote) remote->poll();
+        // Remote-control requests (and primitive resolution) run here: after
+        // input, before play-mode transitions, scene file requests and the
+        // scene tick.
+        remote_bridge.poll();
 
 #ifdef ENGINE_EDITOR
         editor.begin_frame();
@@ -918,19 +901,9 @@ int main() {
             if (editor_play) {
                 play_snapshot = engine::editor::capture_scene(scene);
                 // Unity convention: a Collider without a RigidBody simulates as
-                // a static body. Added AFTER the snapshot, so Stop removes it.
-                {
-                    std::vector<entt::entity> static_only;
-                    for (const entt::entity e :
-                         scene.registry().view<engine::scene::Collider>(
-                             entt::exclude<engine::scene::RigidBody>)) {
-                        static_only.push_back(e);
-                    }
-                    for (const entt::entity e : static_only) {
-                        scene.registry().emplace<engine::scene::RigidBody>(
-                            e, engine::scene::BodyMotion::static_body, 0.0F);
-                    }
-                }
+                // a static body (kinematic on nav agents, none on characters).
+                // Added AFTER the snapshot, so Stop removes it.
+                (void)engine::scene::promote_collider_only_bodies(scene.registry());
                 if (auto world = engine::physics::PhysicsWorld::create(); world) {
                     play_physics = std::move(*world);
                     // Terrain joins the simulation as static Jolt height
@@ -960,6 +933,7 @@ int main() {
                             std::fprintf(stderr, "[terrain] height-field body added\n");
                         }
                     }
+                    navmesh_auto_bake = true; // bake now if agents have no mesh
                     std::fprintf(stderr, "[editor] play (%zu colliders, %zu bodies)\n",
                                  scene.registry().view<engine::scene::Collider>().size(),
                                  scene.registry().view<engine::scene::RigidBody>().size());
@@ -1007,6 +981,7 @@ int main() {
                                                        assets);
                     r) {
                     std::fprintf(stderr, "[editor] loaded scene: %s\n", path.c_str());
+                    invalidate_navmesh("scene loaded");
                     // Rebind the loop's cached entities to the loaded scene.
                     // (The view camera is editor state — nothing to rebind.)
                     spin_entity = entt::null;
@@ -1078,6 +1053,7 @@ int main() {
         }
 
         vkWaitForFences(vk_device, 1, &in_flight[frame], VK_TRUE, UINT64_MAX);
+        remote_bridge.on_frame_complete(frame); // the slot's screenshot readback landed
 
         std::uint32_t image_index = 0;
         VkResult acquire = vkAcquireNextImageKHR(
@@ -1166,28 +1142,12 @@ int main() {
                          axis(arrows_ok, SDL_SCANCODE_UP, SDL_SCANCODE_DOWN)) +
                 right_h * (axis(wasd_ok, SDL_SCANCODE_D, SDL_SCANCODE_A) +
                            axis(arrows_ok, SDL_SCANCODE_RIGHT, SDL_SCANCODE_LEFT));
-            // try_get: the editor can delete any entity, including this one.
-            if (auto* cc = scene.registry().valid(character_entity)
-                               ? scene.registry().try_get<engine::scene::CharacterController>(
-                                     character_entity)
-                               : nullptr) {
-                cc->move = wish != glm::vec3(0.0F) ? glm::normalize(wish) : glm::vec3(0.0F);
-                // Networked: the joined client predicts its character locally
-                // and ships the input; the host's simulation is authoritative.
-                if (net_client && net_client->connected()) {
-                    engine::net::PlayerInput input;
-                    input.sequence = ++net_input_seq;
-                    input.move = cc->move;
-                    input.dt = dt;
-                    net_client->send(engine::net::encode_input(input), /*reliable=*/true);
-                    auto& tf = scene.registry().get<engine::scene::Transform>(character_entity);
-                    const glm::vec3 predicted =
-                        net_predictor.predict(glm::vec3(tf.world[3]), input);
-                    tf.local[3] = glm::vec4(predicted, 1.0F);
-                    tf.world[3] = glm::vec4(predicted, 1.0F);
-                    cc->move = glm::vec3(0.0F); // the local sim must not double-apply
-                }
-            }
+            // Offline this sets the controller's move; networked, NetSession
+            // predicts it (client) or leaves it to the remote player (host).
+            net.drive_character(scene.registry(), physics_world ? &*physics_world : nullptr,
+                                character_entity,
+                                wish != glm::vec3(0.0F) ? glm::normalize(wish) : glm::vec3(0.0F),
+                                dt);
         } else {
             // Free-fly camera: right-drag looks, WASD moves, Q/E down/up, Shift fast.
             const glm::vec3 cam_fwd(std::cos(cam_pitch) * std::cos(cam_yaw), std::sin(cam_pitch),
@@ -1231,34 +1191,12 @@ int main() {
                     glm::scale(glm::mat4(1.0F), glm::vec3(spin_scale));
             }
         }
-        // Authoritative ground height at world (x, z): streamed tiles first,
-        // then the single editing tile. Shared by kinematic nav agents (the
-        // coarse navmesh floats off the real surface) and ground clicks.
-        [[maybe_unused]] const engine::scene::GroundHeightFn ground_height_at =
-            [&](float x, float z) -> std::optional<float> {
-            if (terrain_streamer) {
-                const float tile = terrain_streamer->base().tile_size_m;
-                const glm::ivec2 coord(
-                    static_cast<int>(std::floor((x - terrain_anchor.x) / tile + 0.5F)),
-                    static_cast<int>(std::floor((z - terrain_anchor.z) / tile + 0.5F)));
-                const auto it = terrain_streamer->maps().find(coord);
-                if (it == terrain_streamer->maps().end()) return std::nullopt;
-                const glm::vec3 org = terrain_streamer->tile_origin(coord, terrain_anchor);
-                return org.y + it->second.sample(x - org.x, z - org.z);
-            }
-            if (terrain_present && terrain_heightmap.valid()) {
-                const float half = terrain_heightmap.tile_size_m * 0.5F;
-                const float lx = x - (terrain_anchor.x - half);
-                const float lz = z - (terrain_anchor.z - half);
-                if (lx < 0.0F || lz < 0.0F || lx > terrain_heightmap.tile_size_m ||
-                    lz > terrain_heightmap.tile_size_m) {
-                    return std::nullopt;
-                }
-                return terrain_anchor.y + terrain_heightmap.sample(lx, lz);
-            }
-            return std::nullopt;
-        };
 
+        // Networking before the simulation: the host steps the remote player's
+        // inputs, a joined client reconciles and applies replicated poses (so
+        // this frame's physics and draw list see them).
+        net.update(scene.registry(), physics_world ? &*physics_world : nullptr,
+                   character_entity, dt);
         if (physics_world) {
             if (character_mode) {
                 engine::scene::character_system(scene.registry(), *physics_world, dt);
@@ -1268,86 +1206,31 @@ int main() {
         }
 #ifdef ENGINE_EDITOR
         else if (editor_play && play_physics) {
-            engine::scene::bt_system(scene.registry(), dt);
-            if (navmesh.valid()) {
-                engine::scene::nav_agent_system(scene.registry(), navmesh, dt,
-                                                ground_height_at);
+            // Perception: the trees see the user's view — the fly camera,
+            // unless Play looks through the scene's active Camera entity
+            // (then near_camera falls back to that entity).
+            const bool viewing_scene_camera =
+                play_use_scene_camera &&
+                engine::scene::find_active_camera(scene.registry()) != entt::null;
+            engine::scene::bt_system(
+                scene.registry(), dt,
+                {.navmesh = &navmesh,
+                 .ground_height = ground_height_at,
+                 .viewer = viewing_scene_camera ? std::nullopt : std::optional(cam_pos)});
+            if (std::exchange(navmesh_auto_bake, false) && !navmesh.valid() &&
+                !scene.registry().view<engine::scene::NavAgent>().empty()) {
+                navmesh_request = true; // baked below, this frame
+                std::fprintf(stderr, "[nav] no navmesh for the agents: baking one\n");
             }
+            engine::scene::nav_agent_system(scene.registry(), navmesh, dt, ground_height_at);
             engine::scene::character_system(scene.registry(), *play_physics, dt);
             engine::scene::physics_system(scene.registry(), *play_physics, dt);
         }
 #endif
         scene.tick(dt); // advances any Animators by real elapsed time
 
-        // Replication: the host broadcasts moved entities; a joined client
-        // smooths its copies toward the latest snapshot (after tick so the
-        // interpolated pose wins the frame).
-        if (net_server) {
-            for (const engine::net::NetEvent& ev : net_server->poll()) {
-                if (ev.type == engine::net::NetEvent::Type::connected) {
-                    std::fprintf(stderr, "[net] client %u connected\n", ev.client);
-                } else if (ev.type == engine::net::NetEvent::Type::disconnected) {
-                    std::fprintf(stderr, "[net] client %u left\n", ev.client);
-                    if (ev.client == net_player_owner) {
-                        net_player_owner = engine::net::invalid_client;
-                    }
-                } else if (ev.type == engine::net::NetEvent::Type::message) {
-                    engine::net::PlayerInput input;
-                    if (engine::net::decode_input(ev.payload, input)) {
-                        // First sender claims the player character (v1: one
-                        // remote player). Apply authoritatively.
-                        if (net_player_owner == engine::net::invalid_client) {
-                            net_player_owner = ev.client;
-                        }
-                        if (ev.client == net_player_owner &&
-                            scene.registry().valid(character_entity)) {
-                            if (auto* cc =
-                                    scene.registry()
-                                        .try_get<engine::scene::CharacterController>(
-                                            character_entity)) {
-                                cc->move = input.move;
-                                net_last_input_seq = input.sequence;
-                            }
-                        }
-                    }
-                }
-            }
-            // Acked character state for the predicting client (after physics).
-            if (net_player_owner != engine::net::invalid_client &&
-                scene.registry().valid(character_entity)) {
-                const auto* tf =
-                    scene.registry().try_get<engine::scene::Transform>(character_entity);
-                if (tf != nullptr) {
-                    net_server->send(net_player_owner,
-                                     engine::net::encode_character_state(
-                                         net_last_input_seq, glm::vec3(tf->world[3])),
-                                     /*reliable=*/false);
-                }
-            }
-            net_replication.tick(scene.registry(), *net_server, dt);
-        } else if (net_client) {
-            for (const engine::net::NetEvent& ev : net_client->poll()) {
-                if (ev.type == engine::net::NetEvent::Type::message) {
-                    std::uint32_t acked = 0;
-                    glm::vec3 server_pos(0.0F);
-                    if (engine::net::decode_character_state(ev.payload, acked, server_pos)) {
-                        if (scene.registry().valid(character_entity)) {
-                            auto& tf =
-                                scene.registry().get<engine::scene::Transform>(character_entity);
-                            const glm::vec3 corrected =
-                                net_predictor.reconcile(acked, server_pos);
-                            tf.local[3] = glm::vec4(corrected, 1.0F);
-                            tf.world[3] = glm::vec4(corrected, 1.0F);
-                        }
-                    } else {
-                        net_receiver.receive(ev.payload);
-                    }
-                } else if (ev.type == engine::net::NetEvent::Type::connected) {
-                    std::fprintf(stderr, "[net] connected to host\n");
-                }
-            }
-            net_receiver.apply(scene.registry(), dt);
-        }
+        // Replication: the host broadcasts moved entities (fresh world poses).
+        net.publish(scene.registry(), dt);
 
         // Third-person follow camera, placed after the character has moved.
         // try_get: the editor can delete the character entity.
@@ -1387,15 +1270,18 @@ int main() {
         const engine::scene::CameraMatrices cam =
             through_scene_camera
                 ? engine::scene::camera_system(scene.registry(), aspect)
-                : fly_camera_matrices(cam_pos, cam_yaw, cam_pitch, aspect);
+                : fly_camera_matrices(cam_pos, cam_yaw, cam_pitch, cam_fov_y, aspect);
+        audio_runtime.update(scene.registry(), cam.view, editor_play, dt);
 #else
         const engine::scene::CameraMatrices cam =
             engine::scene::camera_system(scene.registry(), aspect);
+        audio_runtime.update(scene.registry(), cam.view, /*live=*/true, dt);
 #endif
 
         // TAA: jitter the projection sub-pixel each frame (Halton). The whole
-        // frame renders with the jittered view-proj; the resolve reprojects and
-        // accumulates, and prev_jittered_vp drives the reprojection.
+        // frame renders with the jittered view-proj; the resolve accumulates
+        // into the shared history, reprojecting with the UNjittered
+        // cam.view_proj (audit A14).
         const glm::vec2 jitter =
             engine::renderer::taa_jitter(presented, draw_extent.width, draw_extent.height);
         glm::mat4 jitter_mat(1.0F);
@@ -1413,16 +1299,15 @@ int main() {
             break;
         }
 
-        // Gather point lights from the ECS (world position from Transform).
-        std::vector<engine::renderer::PointLightGpu> point_lights;
+        // Gather point lights from the ECS (world position from Transform); the
+        // light-cull compute pass bins them into view clusters on the GPU.
+        std::vector<engine::renderer::GpuLight> point_lights;
         for (auto [e, t, pl] :
              scene.registry()
                  .view<const engine::scene::Transform, const engine::scene::PointLight>()
                  .each()) {
-            engine::renderer::PointLightGpu g;
-            g.position_radius = glm::vec4(glm::vec3(t.world[3]), pl.radius);
-            g.color_intensity = glm::vec4(pl.color, pl.intensity);
-            point_lights.push_back(g);
+            point_lights.push_back(engine::renderer::make_point_light(
+                glm::vec3(t.world[3]), pl.radius, pl.color, pl.intensity));
         }
 
         // Build the draw list, collecting per-skinned-entity skinning work. A
@@ -1531,6 +1416,7 @@ int main() {
                     }
                     terrain_pass.remove_tile(glm::ivec2(0, 0));
                     terrain_streamer.emplace(tcomp.params, tcomp.stream_radius);
+                    invalidate_navmesh("terrain regenerated");
                     std::fprintf(stderr, "[terrain] streaming world (seed %u, radius %d)\n",
                                  tcomp.params.seed, tcomp.stream_radius);
                 }
@@ -1586,6 +1472,7 @@ int main() {
         if (terrain_job.valid() &&
             terrain_job.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
             terrain_heightmap = terrain_job.get();
+            invalidate_navmesh("terrain regenerated");
             if (auto r = terrain_pass.set_tile(glm::ivec2(0, 0), terrain_heightmap,
                                                terrain_transfer);
                 r) {
@@ -1639,10 +1526,7 @@ int main() {
                     std::fprintf(stderr, "[nav] waypoint %zu at (%.1f, %.1f, %.1f)\n",
                                  route.points.size(), hit->x, hit->y, hit->z);
                 } else {
-                    agent.target = *hit;
-                    agent.active = true;
-                    agent.arrived = false;
-                    agent.path.clear();
+                    engine::scene::nav_agent_command(agent, *hit);
                     std::fprintf(stderr, "[nav] go to (%.1f, %.1f, %.1f)\n", hit->x, hit->y,
                                  hit->z);
                 }
@@ -1654,34 +1538,19 @@ int main() {
         // Blocking, but explicit and logged (editor tooling).
         if (navmesh_request) {
             navmesh_request = false;
-            std::vector<glm::vec3> nav_verts;
-            std::vector<std::uint32_t> nav_indices;
-            if (terrain_streamer) {
-                // Streamed world: bake every loaded tile (colliders once).
-                bool first = true;
-                for (const auto& [coord, map] : terrain_streamer->maps()) {
-                    const glm::vec3 origin = terrain_streamer->tile_origin(coord, terrain_anchor);
-                    const glm::vec3 centre(origin.x + map.tile_size_m * 0.5F, terrain_anchor.y,
-                                           origin.z + map.tile_size_m * 0.5F);
-                    engine::scene::collect_nav_geometry(scene.registry(), &map, centre, nav_verts,
-                                                        nav_indices, first);
-                    first = false;
-                }
-                if (first) { // no tiles loaded yet: at least the colliders
-                    engine::scene::collect_nav_geometry(scene.registry(), nullptr, terrain_anchor,
-                                                        nav_verts, nav_indices, true);
-                }
-            } else {
-                engine::scene::collect_nav_geometry(
-                    scene.registry(), terrain_heightmap.valid() ? &terrain_heightmap : nullptr,
-                    terrain_anchor, nav_verts, nav_indices);
-            }
-            if (auto built = engine::nav::NavMesh::build(nav_verts, nav_indices); built) {
+            if (auto built = quat::app::bake_navmesh(
+                    scene.registry(), terrain_streamer ? &*terrain_streamer : nullptr,
+                    &terrain_heightmap, terrain_anchor);
+                built) {
                 navmesh = std::move(*built);
-                std::fprintf(stderr, "[nav] navmesh baked: %zu tris in, %zu edges out\n",
-                             nav_indices.size() / 3, navmesh.debug_edges().size());
+                const std::size_t edges = navmesh.debug_edges().size();
+                navmesh_status = "baked: " + std::to_string(edges) + " edges";
             } else {
-                std::fprintf(stderr, "[nav] bake failed: %s\n", built.error().message.c_str());
+                // Never keep the old mesh silently: it no longer matches the scene.
+                navmesh = {};
+                navmesh_status = "bake failed: " + built.error().message;
+                std::fprintf(stderr, "[nav] bake failed (navmesh cleared): %s\n",
+                             built.error().message.c_str());
             }
         }
 
@@ -1711,12 +1580,17 @@ int main() {
         const engine::renderer::IblViewSet ibl_views =
             dynamic_ibl ? dynamic_ibl->views() : engine::renderer::IblViewSet{};
 
-        auto shadow = fr.shadow.add_to_graph(graph, light_view_proj, shadow_draws);
+        // R9.1: draws sharing mesh + material collapse into instanced draws.
+        const engine::renderer::InstancedDrawList shadow_batches =
+            engine::renderer::batch_draws(shadow_draws);
+        const engine::renderer::InstancedDrawList opaque_batches =
+            engine::renderer::batch_draws(draws);
+        auto shadow = fr.shadow.add_to_graph(graph, light_view_proj, shadow_batches);
         if (!shadow) {
             std::fprintf(stderr, "[fatal] shadow pass: %s\n", shadow.error().message.c_str());
             break;
         }
-        auto gbuffer = fr.mesh.add_to_graph(graph, draw_extent, jittered_vp, draws);
+        auto gbuffer = fr.mesh.add_to_graph(graph, draw_extent, jittered_vp, opaque_batches);
         if (!gbuffer) {
             std::fprintf(stderr, "[fatal] gbuffer pass: %s\n", gbuffer.error().message.c_str());
             break;
@@ -1725,8 +1599,17 @@ int main() {
             terrain_pass.add_to_graph(graph, *gbuffer, draw_extent, jittered_vp, cam.position,
                                       terrain_anchor, terrain_snowline);
         }
+        // Clustered light culling (R10.1). A camera the clusters cannot
+        // represent (non-perspective / no finite far plane) renders unlit by
+        // point lights rather than stopping the frame loop.
+        engine::renderer::ClusteredLights clustered{};
+        if (auto c = fr.light_cull.add_to_graph(graph, cam.view, cam.projection, point_lights)) {
+            clustered = *c;
+        } else {
+            std::fprintf(stderr, "[warn] light cull: %s\n", c.error().message.c_str());
+        }
         auto hdr = fr.lighting.add_to_graph(graph, *gbuffer, draw_extent, light, jittered_inv_vp,
-                                            cam.position, *shadow, light_view_proj, point_lights,
+                                            cam.position, *shadow, light_view_proj, clustered,
                                             /*enable_sky=*/true, ibl_views, atmos_skyview(),
                                             atmos_transmittance(), current_clouds());
         if (!hdr) {
@@ -1738,7 +1621,7 @@ int main() {
         if (!transparent_draws.empty()) {
             if (auto r = fr.transparent.add_to_graph(graph, *hdr, gbuffer->depth, draw_extent,
                                                      jittered_vp, light, cam.position,
-                                                     transparent_draws, ibl_views);
+                                                     transparent_draws, ibl_views, clustered);
                 !r) {
                 std::fprintf(stderr, "[fatal] transparent pass: %s\n", r.error().message.c_str());
                 break;
@@ -1799,14 +1682,11 @@ int main() {
         }
         // Temporal anti-aliasing: resolve the jittered frame against history.
         if (auto r = fr.taa.add_to_graph(graph, ldr_current, gbuffer->depth, scene_target,
-                                         draw_extent, jittered_inv_vp, prev_jittered_vp, presented,
-                                         taa_history_valid);
+                                         draw_extent, cam.view_proj);
             !r) {
             std::fprintf(stderr, "[fatal] taa pass: %s\n", r.error().message.c_str());
             break;
         }
-        prev_jittered_vp = jittered_vp;
-        taa_history_valid = true;
 #ifdef ENGINE_EDITOR
         // Editor UI: build the dockspace + panels (the Viewport panel samples
         // the offscreen scene image), then draw the UI into the swapchain as
@@ -1829,6 +1709,7 @@ int main() {
             ui_ctx.build_navmesh_request = &navmesh_request;
             ui_ctx.ground_click = &ground_click;
             ui_ctx.nav_edges = navmesh.valid() ? &navmesh.debug_edges() : nullptr;
+            ui_ctx.nav_status = &navmesh_status;
             ui_ctx.view_proj = cam.view_proj; // unjittered, for overlays
             ui_ctx.view = cam.view;
             ui_ctx.proj_no_flip = cam.projection;
@@ -1857,6 +1738,17 @@ int main() {
             }
         }
         graph.execute(cmd);
+
+        // Remote screenshots copy the final scene image (no editor UI).
+        quat::app::CaptureSource capture{swapchain.images()[image_index], swapchain.format(),
+                                         present_extent, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR};
+#ifdef ENGINE_EDITOR
+        if (editor.active()) {
+            capture = {fr.viewport_image.handle(), swapchain.format(), draw_extent,
+                       VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+        }
+#endif
+        remote_bridge.record_capture(cmd, frame, capture);
 
         // Screenshot capture on the final frame: the graph leaves the swapchain
         // image in PRESENT_SRC — round-trip it through TRANSFER_SRC and copy to
@@ -1987,7 +1879,10 @@ int main() {
         }
 
         frame = (frame + 1) % k_frames_in_flight;
-        if (max_frames != 0 && ++presented >= max_frames) {
+        // Advances every frame (audit A1): drives TAA jitter, the demo cube,
+        // frame stats and engine.info — not only QUAT_MAX_FRAMES runs.
+        ++presented;
+        if (max_frames != 0 && presented >= max_frames) {
             running = false;
         }
     }

@@ -4,7 +4,9 @@
 #include <cstddef>
 #include <cstdlib>
 #include <cstring>
+#include <limits>
 #include <string>
+#include <unordered_map>
 #include <utility>
 
 #include <glm/gtc/matrix_transform.hpp>
@@ -130,10 +132,19 @@ VkImageView MeshPass::texture_view_or_fallback(
 std::expected<GBufferTargets, core::Error>
 MeshPass::add_to_graph(rhi::RenderGraph& graph, VkExtent2D extent, const glm::mat4& view_proj,
                        std::span<const DrawItem> draws) {
+    return add_to_graph(graph, extent, view_proj, batch_draws(draws));
+}
+
+std::expected<GBufferTargets, core::Error>
+MeshPass::add_to_graph(rhi::RenderGraph& graph, VkExtent2D extent, const glm::mat4& view_proj,
+                       const InstancedDrawList& list) {
     frame_descriptors_.clear();
     frame_draws_.clear();
-    frame_descriptors_.reserve(draws.size());
-    frame_draws_.reserve(draws.size());
+    frame_draws_.reserve(list.draws.size());
+
+    auto instances = instances_.upload(*device_, *allocator_, list.instances);
+    if (!instances) return std::unexpected(instances.error());
+    frame_instances_ = *instances;
 
     // GBuffer targets. SAMPLED is added so the lighting pass (3.6) can read them;
     // TRANSFER_SRC lets the self-test (and debug tooling) read them back.
@@ -153,30 +164,44 @@ MeshPass::add_to_graph(rhi::RenderGraph& graph, VkExtent2D extent, const glm::ma
         "gbuffer_depth", gbuffer_depth_format, extent,
         VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT);
 
-    for (const DrawItem& d : draws) {
-        if (d.mesh == nullptr || !d.mesh->valid()) continue;
+    // One descriptor buffer per distinct material this frame (batches already
+    // merged identical mesh+material draws; meshes sharing a material share it).
+    std::unordered_map<const asset::MaterialAsset*, std::uint32_t> descriptor_of;
+    for (const InstancedDraw& d : list.draws) {
+        if (d.mesh == nullptr || !d.mesh->valid() || d.instance_count == 0) continue;
+        if (static_cast<std::size_t>(d.first_instance) + d.instance_count >
+            list.instances.size()) {
+            return fail("gbuffer pass: draw instance range exceeds the instance array");
+        }
         const asset::MaterialAsset& mat =
             (d.material != nullptr && d.material->valid()) ? *d.material : default_material_;
 
-        auto db = rhi::DescriptorBuffer::create(*device_, *allocator_, db_fns_, material_layout_);
-        if (!db) return std::unexpected(db.error());
-        db->write_uniform_buffer(0, mat.param_address, sizeof(asset::PbrMaterialParams));
-        constexpr VkImageLayout ro = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-        db->write_sampled_image(1, texture_view_or_fallback(mat.textures.base_color), ro);
-        db->write_sampled_image(2, texture_view_or_fallback(mat.textures.normal), ro);
-        db->write_sampled_image(3, texture_view_or_fallback(mat.textures.metallic_roughness), ro);
-        db->write_sampled_image(4, texture_view_or_fallback(mat.textures.emissive), ro);
-        db->write_sampled_image(5, texture_view_or_fallback(mat.textures.occlusion), ro);
-        db->write_sampler(6, sampler_.handle());
+        auto [slot, inserted] = descriptor_of.try_emplace(
+            &mat, static_cast<std::uint32_t>(frame_descriptors_.size()));
+        if (inserted) {
+            auto db =
+                rhi::DescriptorBuffer::create(*device_, *allocator_, db_fns_, material_layout_);
+            if (!db) return std::unexpected(db.error());
+            db->write_uniform_buffer(0, mat.param_address, sizeof(asset::PbrMaterialParams));
+            constexpr VkImageLayout ro = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+            db->write_sampled_image(1, texture_view_or_fallback(mat.textures.base_color), ro);
+            db->write_sampled_image(2, texture_view_or_fallback(mat.textures.normal), ro);
+            db->write_sampled_image(3, texture_view_or_fallback(mat.textures.metallic_roughness),
+                                    ro);
+            db->write_sampled_image(4, texture_view_or_fallback(mat.textures.emissive), ro);
+            db->write_sampled_image(5, texture_view_or_fallback(mat.textures.occlusion), ro);
+            db->write_sampler(6, sampler_.handle());
+            frame_descriptors_.push_back(std::move(*db));
+        }
 
         FrameDraw fd;
         fd.vertex_buffer = d.skinned_vertices != VK_NULL_HANDLE ? d.skinned_vertices
                                                                 : d.mesh->vertex_buffer.handle();
         fd.index_buffer = d.mesh->index_buffer.handle();
         fd.submeshes = d.mesh->submeshes;
-        fd.model = d.model;
-        fd.descriptor_index = static_cast<std::uint32_t>(frame_descriptors_.size());
-        frame_descriptors_.push_back(std::move(*db));
+        fd.first_instance = d.first_instance;
+        fd.instance_count = d.instance_count;
+        fd.descriptor_index = slot->second;
         frame_draws_.push_back(fd);
     }
 
@@ -239,23 +264,31 @@ MeshPass::add_to_graph(rhi::RenderGraph& graph, VkExtent2D extent, const glm::ma
 
             vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_.handle());
 
-            for (const FrameDraw& fd : frame_draws_) {
-                frame_descriptors_[fd.descriptor_index].bind(
-                    cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_.layout(), 0);
+            // The instance array is shared by every draw: push it once.
+            GBufferPushConstants push{};
+            push.view_proj = vp;
+            push.instances = frame_instances_;
+            vkCmdPushConstants(cmd, pipeline_.layout(),
+                               VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
+                               sizeof(push), &push);
 
-                GBufferPushConstants push{};
-                push.view_proj = vp;
-                push.model = fd.model;
-                vkCmdPushConstants(cmd, pipeline_.layout(),
-                                   VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
-                                   sizeof(push), &push);
+            std::uint32_t bound_descriptor = std::numeric_limits<std::uint32_t>::max();
+            for (const FrameDraw& fd : frame_draws_) {
+                if (fd.descriptor_index != bound_descriptor) {
+                    frame_descriptors_[fd.descriptor_index].bind(
+                        cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_.layout(), 0);
+                    bound_descriptor = fd.descriptor_index;
+                }
 
                 const VkDeviceSize offset = 0;
                 vkCmdBindVertexBuffers(cmd, 0, 1, &fd.vertex_buffer, &offset);
                 vkCmdBindIndexBuffer(cmd, fd.index_buffer, 0, VK_INDEX_TYPE_UINT32);
 
+                // firstInstance selects the draw's instance range; the shader
+                // indexes the array with InstanceIndex (which includes it).
                 for (const asset::SubMesh& sm : fd.submeshes) {
-                    vkCmdDrawIndexed(cmd, sm.index_count, 1, sm.index_offset, 0, 0);
+                    vkCmdDrawIndexed(cmd, sm.index_count, fd.instance_count, sm.index_offset, 0,
+                                     fd.first_instance);
                 }
             }
 

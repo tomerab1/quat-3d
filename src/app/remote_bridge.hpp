@@ -1,0 +1,128 @@
+#pragma once
+
+// RemoteBridge — the `game` executable's side of remote control (ROADMAP
+// A2/A3, app layer). It owns the JSON-RPC endpoint (QUAT_REMOTE=<port>,
+// QUAT_REMOTE_TOKEN), registers engine.info plus the world commands, and
+// implements their WorldServices against the frame loop's state: the fly
+// camera, clouds, terrain heights, glTF spawning, play mode, scene files,
+// navmesh baking and screenshots.
+//
+// It also resolves Primitive components every frame (independent of the
+// endpoint — scene files carry primitives too), opening an upload context
+// only when some primitive changed.
+//
+// Frame-loop hooks (main thread):
+//   poll()               once per frame before the scene updates: RPC
+//                        requests, primitive resolution, finished screenshots
+//   record_capture()     after the frame's graph is recorded: copies the
+//                        final scene image for pending screenshots
+//   on_frame_complete()  right after the frame slot's fence wait: hands the
+//                        slot's readback to a background PNG encoder
+//
+// Screenshots never stall the GPU: the copy lands in a per-slot host-visible
+// buffer that is read only once that slot's fence has signalled anyway, and
+// PNG encoding runs on a worker thread; the reply goes out from poll().
+
+#include <cstdint>
+#include <filesystem>
+#include <memory>
+#include <optional>
+
+#include <entt/entity/fwd.hpp>
+#include <glm/glm.hpp>
+#include <vulkan/vulkan.h>
+
+#include "engine/scene/scene.hpp" // GroundHeightFn
+
+namespace engine::asset {
+class AssetManager;
+}
+namespace engine::nav {
+class NavMesh;
+}
+namespace engine::rhi {
+class Device;
+class GpuAllocator;
+} // namespace engine::rhi
+namespace engine::terrain {
+class TerrainStreamer;
+struct Heightmap;
+} // namespace engine::terrain
+#ifdef ENGINE_EDITOR
+namespace engine::editor {
+class EditorLayer;
+struct RendererSettings;
+} // namespace engine::editor
+#endif
+
+namespace quat::app {
+
+// Frame-loop state the bridge reads and drives. Non-owning: main() owns all of
+// it and keeps it alive for the bridge's lifetime.
+struct RemoteBridgeTargets {
+    engine::rhi::Device*        device = nullptr;
+    engine::rhi::GpuAllocator*  allocator = nullptr;
+    engine::asset::AssetManager* assets = nullptr;
+    engine::scene::Scene*       scene = nullptr;
+    const std::uint64_t*        frame_counter = nullptr; // presented frames
+
+    // The view (free-fly) camera; yaw/pitch/fov in radians.
+    glm::vec3* cam_pos = nullptr;
+    float*     cam_yaw = nullptr;
+    float*     cam_pitch = nullptr;
+    float*     cam_fov_y = nullptr;
+
+    const engine::scene::GroundHeightFn* ground_height = nullptr;
+
+    // Navmesh bake inputs and output.
+    const std::optional<engine::terrain::TerrainStreamer>* terrain_streamer = nullptr;
+    const engine::terrain::Heightmap* terrain_heightmap = nullptr;
+    const glm::vec3*                  terrain_anchor = nullptr;
+    engine::nav::NavMesh*             navmesh = nullptr;
+
+    // Loop-cached entity dropped when a scene file replaces the scene.
+    entt::entity* spin_entity = nullptr;
+
+#ifdef ENGINE_EDITOR
+    engine::editor::EditorLayer*      editor = nullptr;
+    engine::editor::RendererSettings* render_settings = nullptr; // clouds
+    bool* play = nullptr; // editor play flag; null where play mode is unavailable
+#endif
+
+    std::filesystem::path project_root;
+};
+
+// The image a screenshot copies: the final scene colour (the editor's
+// offscreen viewport, else the swapchain image) as the recorded frame leaves
+// it. Needs TRANSFER_SRC usage.
+struct CaptureSource {
+    VkImage       image = VK_NULL_HANDLE;
+    VkFormat      format = VK_FORMAT_UNDEFINED;
+    VkExtent2D    extent{0, 0};
+    VkImageLayout layout = VK_IMAGE_LAYOUT_UNDEFINED; // before and after the copy
+};
+
+class RemoteBridge {
+public:
+    // Opens the endpoint when QUAT_REMOTE is set (failure is logged, the
+    // bridge still resolves primitives). `frames_in_flight` sizes the
+    // per-slot readback buffers.
+    RemoteBridge(RemoteBridgeTargets targets, std::uint32_t frames_in_flight);
+    RemoteBridge(RemoteBridge&&) noexcept;
+    RemoteBridge& operator=(RemoteBridge&&) noexcept;
+    RemoteBridge(const RemoteBridge&) = delete;
+    RemoteBridge& operator=(const RemoteBridge&) = delete;
+    ~RemoteBridge();
+
+    void poll();
+    void record_capture(VkCommandBuffer cmd, std::uint32_t frame_slot, const CaptureSource& source);
+    void on_frame_complete(std::uint32_t frame_slot);
+
+    [[nodiscard]] bool listening() const;
+
+private:
+    struct Impl;
+    std::unique_ptr<Impl> impl_;
+};
+
+} // namespace quat::app

@@ -2,13 +2,14 @@
 
 // MeshPass — deferred GBuffer pass (Phase 3, Slice 3.5).
 //
-// Rasterises a list of (mesh, material, transform) draw items into the GBuffer
-// (albedo, octahedral world normal, packed metallic/roughness/occlusion, depth)
-// using gbuffer.slang. Materials are bound through a per-draw descriptor buffer
-// (the IMaterial parameter block from Slice 3.4). There is no ECS yet, so the
-// caller supplies an explicit draw list; the lighting pass (3.6) consumes the
-// GBuffer this pass produces.
+// Rasterises instanced (mesh, material) draws into the GBuffer (albedo,
+// octahedral world normal, packed metallic/roughness/occlusion, depth) using
+// gbuffer.slang. Materials are bound through a descriptor buffer per distinct
+// material (the IMaterial parameter block from Slice 3.4); per-instance
+// transforms come from the pass's instance buffer (R9.1, draw_batching.hpp).
+// The lighting pass (3.6) consumes the GBuffer this pass produces.
 
+#include <cstddef>
 #include <cstdint>
 #include <expected>
 #include <span>
@@ -22,6 +23,8 @@
 #include "engine/asset/mesh_asset.hpp"
 #include "engine/asset/texture_asset.hpp"
 #include "engine/core/error.hpp"
+#include "engine/renderer/draw_batching.hpp"
+#include "engine/renderer/instance_buffer.hpp"
 #include "engine/rhi/descriptor_buffer.hpp"
 #include "engine/rhi/graphics_pipeline.hpp"
 #include "engine/rhi/render_graph.hpp"
@@ -51,23 +54,15 @@ struct GBufferTargets {
     rhi::ResourceHandle depth;
 };
 
-// One thing to draw. `material` may be null — the pass then uses its built-in
-// default (white, untextured) material. `skinned_vertices`, when set, overrides
-// the mesh's bind-pose vertex buffer with a skinned buffer produced by the
-// skinning pass this frame (same asset::Vertex layout).
-struct DrawItem {
-    const asset::MeshAsset*     mesh     = nullptr;
-    const asset::MaterialAsset* material = nullptr;
-    glm::mat4                   model{1.0F};
-    VkBuffer                    skinned_vertices = VK_NULL_HANDLE;
-};
-
-// Push-constant block, mirrors PushConstants in gbuffer.slang (128 bytes).
+// Push-constant block, mirrors PushConstants in gbuffer.slang (72 bytes):
+// the view-projection and the device address of the InstanceData array.
 struct GBufferPushConstants {
-    glm::mat4 view_proj{1.0F};
-    glm::mat4 model{1.0F};
+    glm::mat4       view_proj{1.0F};
+    VkDeviceAddress instances = 0;
 };
-static_assert(sizeof(GBufferPushConstants) == 128, "must match gbuffer.slang PushConstants");
+static_assert(sizeof(GBufferPushConstants) == 72, "must match gbuffer.slang PushConstants");
+static_assert(offsetof(GBufferPushConstants, instances) == 64,
+              "must match gbuffer.slang PushConstants");
 
 class MeshPass {
 public:
@@ -83,9 +78,16 @@ public:
     MeshPass& operator=(const MeshPass&) = delete;
 
     // Declare the GBuffer transient targets and the gbuffer pass into `graph`,
-    // building one descriptor buffer per draw. The descriptor buffers (and the
-    // per-frame draw record) are owned by the pass and live until the next call,
-    // so `graph` must be compiled + executed before add_to_graph is called again.
+    // drawing each InstancedDraw of `list` with one instanced draw per submesh.
+    // Uploads `list.instances` into the pass's instance buffer and builds one
+    // descriptor buffer per distinct material. Those (and the per-frame draw
+    // record) are owned by the pass and live until the next call, so `graph`
+    // must be compiled + executed before add_to_graph is called again.
+    [[nodiscard]] std::expected<GBufferTargets, core::Error>
+    add_to_graph(rhi::RenderGraph& graph, VkExtent2D extent, const glm::mat4& view_proj,
+                 const InstancedDrawList& list);
+
+    // Convenience: batches `draws` with batch_draws() and draws the result.
     [[nodiscard]] std::expected<GBufferTargets, core::Error>
     add_to_graph(rhi::RenderGraph& graph, VkExtent2D extent, const glm::mat4& view_proj,
                  std::span<const DrawItem> draws);
@@ -95,7 +97,8 @@ private:
         VkBuffer                 vertex_buffer = VK_NULL_HANDLE;
         VkBuffer                 index_buffer  = VK_NULL_HANDLE;
         std::span<const asset::SubMesh> submeshes{};
-        glm::mat4                model{1.0F};
+        std::uint32_t            first_instance = 0;
+        std::uint32_t            instance_count = 0;
         std::uint32_t            descriptor_index = 0;
     };
 
@@ -114,6 +117,8 @@ private:
     asset::MaterialAsset default_material_;   // white, untextured
 
     // Per-frame, rebuilt each add_to_graph call.
+    InstanceBuffer                     instances_;
+    VkDeviceAddress                    frame_instances_ = 0;
     std::vector<rhi::DescriptorBuffer> frame_descriptors_;
     std::vector<FrameDraw>             frame_draws_;
 };

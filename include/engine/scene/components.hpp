@@ -18,6 +18,7 @@
 #include <entt/entity/fwd.hpp>
 #include <glm/glm.hpp>
 
+#include "engine/audio/audio_types.hpp"
 #include "engine/animation/clip.hpp"
 #include "engine/animation/skeleton.hpp"
 #include "engine/asset/asset_manager.hpp"
@@ -147,30 +148,53 @@ struct CharacterController {
 // CharacterController on the entity it steers the controller (collisions,
 // gravity); otherwise it moves the Transform kinematically, snapped to the
 // ground + `ground_offset` (set it to the entity's half-height when the pivot
-// sits at the centre). `arrived` flips when the last waypoint is reached —
-// or at the closest reachable point when the target itself is unreachable.
-// path/waypoint/planned_target/retry_s are system-managed.
+// sits at the centre). A walk ends either `arrived` (reached the target, or
+// the closest on-mesh point to it) or `failed` (the target is unreachable,
+// plans kept failing, or the agent made no progress) — both clear `active`.
+// `paused` (the inspector's Stop) holds the agent: patrol routes do not
+// restart it until it is resumed. `commanded` marks a one-off order (Ctrl+
+// click, Go): a PatrolRoute waits for it to end, then resumes its route.
+// Everything below `paused` is system-managed (not serialized); start walks
+// through the helpers in navigation.hpp, which reset it.
 struct NavAgent {
     glm::vec3 target{0.0F};
     float     speed = 3.0F;
     float     ground_offset = 0.0F; // entity origin height above the ground
     bool      active = false;
+    bool      paused = false;
     bool      arrived = false;
+    bool      commanded = false;       // the target is a one-off order, not a route point
+    bool      failed = false;          // gave up on the current target
+    std::uint8_t           plan_failures = 0; // failed attempts since the last progress
+    bool                   path_partial = false; // path ends short of the target
     std::vector<glm::vec3> path;
     std::size_t            waypoint = 0;
     glm::vec3              planned_target{1e30F, 1e30F, 1e30F}; // path's target
+    std::uint64_t          planned_generation = 0; // NavMesh::generation() of the path
     float                  retry_s = 0.0F; // cooldown after a failed plan
+    float                  progress_best = 1e30F; // closest approach to the current waypoint
+    float                  progress_timer = 0.0F; // time since progress_best improved
+};
+
+// Per-entity, per-node behaviour-tree memory (system-managed).
+struct BtNodeState {
+    float         scratch = 0.0F; // leaf memory (wait timer, move_to phase)
+    std::uint32_t child = 0;      // composites: the child that was running
+    std::uint32_t ticked = 0;     // tick stamp of the last tick that reached it
+    bool          running = false; // returned running on that tick
 };
 
 // A data-driven behaviour tree (13.3): `source` is the tree JSON (composed of
-// sequence/selector/inverter nodes over named C++ leaves — see behavior.hpp).
-// The system compiles it lazily; a parse error logs once and disables the
-// tree. compiled/node_state/parse_failed are system-managed.
+// sequence/selector/reactive_*/inverter nodes over named C++ leaves — see
+// behavior.hpp). The system compiles it lazily; a parse error logs once and
+// disables the tree. compiled/node_state/tick_count/parse_failed are
+// system-managed.
 struct BehaviorTree {
     std::string source;
     bool        enabled = true;
     std::shared_ptr<const class BehaviorTreeAsset> compiled;
-    std::vector<float> node_state; // per-node scratch (e.g. wait timers)
+    std::vector<BtNodeState> node_state; // one per compiled node
+    std::uint32_t            tick_count = 0;
     bool parse_failed = false;
 };
 
@@ -205,13 +229,16 @@ struct Terrain {
 };
 
 // An authored walk route (editor: Shift+click the ground to append points).
-// The nav system feeds the points to the entity's NavAgent in order; `loop`
-// wraps back to the first point, otherwise the agent stops at the last.
-// `next` is system-managed.
+// The nav system feeds the points to the entity's idle NavAgent in order;
+// `loop` wraps back to the first point, otherwise the agent stops at the
+// last (`finished`; appending points continues the route). Commanded moves
+// interrupt the route, which resumes at `next` afterwards; unreachable
+// points are skipped. `next`/`finished` are system-managed.
 struct PatrolRoute {
     std::vector<glm::vec3> points;
     bool        loop = true;
     std::size_t next = 0;
+    bool        finished = false;
 };
 
 // Marks an entity for network replication (14.2): the server broadcasts its
@@ -220,6 +247,49 @@ struct PatrolRoute {
 struct NetReplicated {
     std::uint32_t net_id = 0;
 };
+
+// A sound emitter (G1), driven by audio_system (audio_system.hpp). `clip` is
+// a wav / flac / mp3 path, relative to the project root unless absolute;
+// music and ambience clips stream from disk, sfx / ui clips decode into
+// memory. Spatial sources sit at the entity's world position and fade with
+// the inverse-distance model: full volume within min_distance, rolloff
+// beyond it, clamped at max_distance. `doppler` 0 (the default) disables
+// the doppler shift. In play mode `play_on_start` starts the source once.
+// Scripts / tools steer playback through `command`, which the system
+// consumes; sound/state/started/resolved/last_position are system-managed.
+enum class AudioCommand : std::uint8_t { none, play, stop, pause, resume };
+struct AudioSource {
+    std::string     clip;
+    audio::AudioBus bus = audio::AudioBus::sfx;
+    float           volume = 1.0F; // linear gain
+    float           pitch = 1.0F;  // playback-rate multiplier
+    bool            loop = false;
+    bool            play_on_start = true;
+    bool            spatial = true;
+    float           min_distance = 1.0F;
+    float           max_distance = 50.0F;
+    float           rolloff = 1.0F;
+    float           doppler = 0.0F;
+    AudioCommand    command = AudioCommand::none;
+    // System-managed.
+    audio::Playback    state = audio::Playback::stopped;
+    bool               started = false; // play_on_start consumed this play session
+    audio::SoundHandle sound = audio::invalid_sound;
+    std::uint64_t      resolved = 0;    // hash of (clip, bus, spatial) the sound was made from
+    glm::vec3          last_position{0.0F};
+};
+
+// Marks the entity whose world pose the audio listener follows (the "ears").
+// The first active one wins; with none, the listener follows the camera the
+// frame renders from.
+struct AudioListener {
+    bool active = true;
+};
+
+// Tag: this CharacterController is stepped by the network layer, once per
+// player input (host: a remote player's inputs; client: prediction and
+// reconciliation), so character_system leaves it alone. Runtime-only.
+struct NetDriven {};
 
 // Human-readable label. Editor-only metadata, not on any hot path.
 struct Name {

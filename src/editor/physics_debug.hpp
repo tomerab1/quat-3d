@@ -8,6 +8,7 @@
 // Jolt interface against a library that cannot service it; contact points are
 // deferred until a Jolt build with the debug renderer is used.
 
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -26,6 +27,7 @@ namespace engine::editor {
 void draw_physics_debug(scene::Scene& scene, const glm::mat4& view_proj,
                         const float viewport_rect[4], PhysicsDebugState& state,
                         bool* build_navmesh_request,
-                        const std::vector<std::pair<glm::vec3, glm::vec3>>* nav_edges);
+                        const std::vector<std::pair<glm::vec3, glm::vec3>>* nav_edges,
+                        const std::string* nav_status);
 
 } // namespace engine::editor

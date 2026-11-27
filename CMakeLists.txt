@@ -93,6 +93,17 @@ find_package(EnTT CONFIG REQUIRED)
 find_package(Jolt CONFIG REQUIRED)
 find_package(recastnavigation CONFIG REQUIRED)
 find_package(GameNetworkingSockets CONFIG REQUIRED)
+# miniaudio: vcpkg's port is header-only (it installs miniaudio.h and nothing
+# else), so it is wrapped in an imported target here and engine_audio compiles
+# the implementation (src/audio/miniaudio_impl.cpp). Linux needs pthread, libm
+# and libdl (playback backends are dlopen'ed at runtime).
+find_package(Threads REQUIRED)
+find_path(MINIAUDIO_INCLUDE_DIR miniaudio.h REQUIRED)
+add_library(miniaudio_headers INTERFACE IMPORTED)
+set_target_properties(miniaudio_headers PROPERTIES
+    INTERFACE_INCLUDE_DIRECTORIES "${MINIAUDIO_INCLUDE_DIR}")
+target_link_libraries(miniaudio_headers INTERFACE
+    Threads::Threads ${CMAKE_DL_LIBS} $<$<PLATFORM_ID:Linux,FreeBSD>:m>)
 if(ENGINE_EDITOR)
     find_package(imgui CONFIG REQUIRED)
     find_package(imguizmo CONFIG REQUIRED)
@@ -175,10 +186,13 @@ add_library(engine_scene STATIC
     src/scene/scene.cpp
     src/scene/physics_system.cpp
     src/scene/nav_agent_system.cpp
+    src/scene/navigation.cpp
     src/scene/behavior.cpp
     src/scene/scene_io.cpp
     src/scene/component_json.cpp
-    src/scene/primitives.cpp)
+    src/scene/audio_system.cpp
+    src/scene/primitives.cpp
+    src/scene/primitive_resolve.cpp)
 # EnTT is PUBLIC: components.hpp exposes entt types (Parent/Children) to consumers.
 # engine_renderer is PUBLIC: scene.hpp's RenderCollectSystem fills a renderer
 # DrawItem list (no cycle — the renderer does not depend on the scene).
@@ -186,7 +200,7 @@ add_library(engine_scene STATIC
 # handle and the glTF loader extracts skins.
 target_link_libraries(engine_scene PUBLIC
     engine_flags engine_asset engine_rhi engine_renderer engine_animation engine_physics
-    engine_terrain engine_nav EnTT::EnTT)
+    engine_terrain engine_nav engine_audio EnTT::EnTT)
 # fastgltf and stb (image decode) are implementation details of the loader.
 # nlohmann_json is PUBLIC: component_json.hpp exposes JSON values (the codec
 # shared by scene files and the remote-control API).
@@ -224,9 +238,13 @@ target_include_directories(engine_nav PUBLIC ${ENGINE_PUBLIC_INCLUDE})
 # implementation detail (PRIVATE); the public header is GNS-free (PIMPL).
 # ---------------------------------------------------------------------------
 add_library(engine_net STATIC
+    src/net/character_step.cpp
+    src/net/net_ids.cpp
     src/net/transport.cpp
     src/net/replication.cpp
-    src/net/prediction.cpp)
+    src/net/replication_transport.cpp
+    src/net/prediction.cpp
+    src/net/session.cpp)
 target_link_libraries(engine_net PUBLIC engine_flags glm::glm EnTT::EnTT)
 # Linux (static triplet) exports ::static; Windows (dynamic) exports ::shared.
 if(TARGET GameNetworkingSockets::static)
@@ -236,6 +254,19 @@ else()
 endif()
 target_link_libraries(engine_net PRIVATE engine_scene)
 target_include_directories(engine_net PUBLIC ${ENGINE_PUBLIC_INCLUDE})
+
+# ---------------------------------------------------------------------------
+# engine_audio — miniaudio mixer, buses and 3D sound (G1). miniaudio is an
+# implementation detail (PRIVATE); the public header is miniaudio-free (PIMPL).
+# ---------------------------------------------------------------------------
+add_library(engine_audio STATIC
+    src/audio/audio_engine.cpp
+    src/audio/miniaudio_impl.cpp)
+target_link_libraries(engine_audio PUBLIC engine_flags glm::glm)
+target_link_libraries(engine_audio PRIVATE miniaudio_headers)
+target_include_directories(engine_audio PUBLIC ${ENGINE_PUBLIC_INCLUDE})
+# miniaudio's implementation is not warning-clean under our strict flags.
+set_source_files_properties(src/audio/miniaudio_impl.cpp PROPERTIES COMPILE_OPTIONS "-w")
 
 # ---------------------------------------------------------------------------
 # engine_remote — remote-control endpoint (Phase 15): loopback JSON-RPC 2.0
@@ -253,12 +284,39 @@ if(WIN32)
 endif()
 
 # ---------------------------------------------------------------------------
+# engine_remote_world — the world commands (ROADMAP A2/A3): scene.*,
+# environment.*, camera.*, render.screenshot, asset.*, sim.*, nav.bake, on top
+# of engine_remote + the scene codec. Application-only capabilities come in
+# through WorldServices callbacks (src/app/remote_bridge.cpp wires them), so
+# the commands are testable on a bare Scene.
+# ---------------------------------------------------------------------------
+add_library(engine_remote_world STATIC
+    src/remote/world/common.cpp
+    src/remote/world/scene_commands.cpp
+    src/remote/world/batch_command.cpp
+    src/remote/world/environment_commands.cpp
+    src/remote/world/camera_commands.cpp
+    src/remote/world/app_commands.cpp
+    src/remote/world/image_encode.cpp
+    src/remote/world/stb_image_write_impl.cpp)
+target_link_libraries(engine_remote_world PUBLIC engine_flags engine_remote engine_scene)
+target_include_directories(engine_remote_world PUBLIC ${ENGINE_PUBLIC_INCLUDE})
+target_include_directories(engine_remote_world PRIVATE ${Stb_INCLUDE_DIR})
+# stb's implementation TU is not warning-clean under our strict flags.
+set_source_files_properties(src/remote/world/stb_image_write_impl.cpp
+    PROPERTIES COMPILE_OPTIONS "-w")
+
+# ---------------------------------------------------------------------------
 # engine_renderer — high-level passes built on the RHI. Starts with the deferred
 # GBuffer pass (mesh_pass); lighting/tonemap/imgui passes follow in later slices.
 # ---------------------------------------------------------------------------
 add_library(engine_renderer STATIC
+    src/renderer/draw_batching.cpp
+    src/renderer/instance_buffer.cpp
     src/renderer/mesh_pass.cpp
     src/renderer/lighting_pass.cpp
+    src/renderer/light_clusters.cpp
+    src/renderer/light_cull_pass.cpp
     src/renderer/tonemap_pass.cpp
     src/renderer/skinning_pass.cpp
     src/renderer/shadow_pass.cpp
@@ -300,6 +358,7 @@ if(ENGINE_EDITOR)
         src/editor/animation_preview.cpp
         src/editor/physics_debug.cpp
         src/editor/scene_snapshot.cpp
+        src/editor/audio_inspector.cpp
         src/editor/vendor/imgui_impl_sdl3.cpp)
     # engine_scene is PUBLIC: editor.hpp exposes entt entity types (selection)
     # and the hierarchy/inspector panels reflect scene components.
@@ -320,10 +379,14 @@ endif()
 # the frame loop pieces moving out of main.cpp); it is not an engine library.
 add_executable(game
     src/main.cpp
-    src/app/demo_scenes.cpp)
+    src/app/demo_scenes.cpp
+    src/app/audio_runtime.cpp
+    src/app/nav_bake.cpp
+    src/app/remote_bridge.cpp)
 target_link_libraries(game PRIVATE
     engine_flags engine_rhi engine_asset engine_scene engine_renderer engine_physics
-    engine_terrain engine_nav engine_net engine_remote SDL3::SDL3)
+    engine_terrain engine_nav engine_net engine_remote engine_remote_world engine_audio
+    SDL3::SDL3)
 if(ENGINE_EDITOR)
     target_link_libraries(game PRIVATE engine_editor)
 endif()

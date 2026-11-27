@@ -49,6 +49,8 @@ struct SceneSnapshot {
     Stored<scene::PatrolRoute>         patrol_routes;
     Stored<scene::Primitive>           primitives;
     Stored<scene::NetReplicated>       net_replicated;
+    Stored<scene::AudioSource>         audio_sources; // runtime state cleared at capture
+    Stored<scene::AudioListener>       audio_listeners;
 };
 
 // Copies the whole scene (all engine components) into a snapshot.

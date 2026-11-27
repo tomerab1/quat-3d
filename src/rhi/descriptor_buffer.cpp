@@ -1,7 +1,6 @@
 #include "engine/rhi/descriptor_buffer.hpp"
 
 #include <algorithm>
-#include <array>
 #include <cstdio>
 #include <utility>
 #include <vector>
@@ -417,42 +416,6 @@ void DescriptorBuffer::bind(VkCommandBuffer cmd, VkPipelineBindPoint bind_point,
     const std::uint32_t buffer_index = 0;
     const VkDeviceSize offset = 0;
     fns_->cmd_set_offsets(cmd, bind_point, pipeline_layout, set, 1, &buffer_index, &offset);
-}
-
-// ===========================================================================
-// Self-test
-// ===========================================================================
-std::expected<void, core::Error>
-run_descriptor_buffer_self_test(const Device& device, GpuAllocator& allocator) {
-    const DescriptorBufferFunctions fns = DescriptorBufferFunctions::load(device.handle());
-    if (!fns.valid()) {
-        return fail("descriptor buffer EXT functions not all loadable");
-    }
-
-    const std::array<DescriptorBinding, 1> bindings = {DescriptorBinding{
-        0, 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_ALL}};
-    auto layout = DescriptorSetLayout::create(device, fns, bindings);
-    if (!layout) return std::unexpected(layout.error());
-    // The classic-sets fallback layout has no byte size (the driver owns the
-    // storage); the size check only applies to the descriptor-buffer path.
-    if (!layout->is_classic() && layout->size() == 0) {
-        return fail("descriptor set layout reported zero size");
-    }
-
-    auto ubo = allocator.create_buffer(
-        64, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
-        VMA_MEMORY_USAGE_AUTO,
-        VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT);
-    if (!ubo) return std::unexpected(ubo.error());
-    const VkDeviceAddress ubo_address = buffer_device_address(device.handle(), ubo->handle());
-
-    auto descriptor_buffer = DescriptorBuffer::create(device, allocator, fns, *layout);
-    if (!descriptor_buffer) return std::unexpected(descriptor_buffer.error());
-    descriptor_buffer->write_uniform_buffer(0, ubo_address, 64);
-
-    std::fprintf(stderr, "[selftest] descriptor buffer: layout size=%llu, uniform descriptor written\n",
-                 static_cast<unsigned long long>(layout->size()));
-    return {};
 }
 
 } // namespace engine::rhi

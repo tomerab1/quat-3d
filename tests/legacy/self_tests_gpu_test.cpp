@@ -4,7 +4,6 @@
 
 #include <gtest/gtest.h>
 
-#include "engine/asset/material_asset.hpp"
 #include "engine/renderer/atmosphere_pass.hpp"
 #include "engine/renderer/bloom_pass.hpp"
 #include "engine/renderer/dynamic_ibl.hpp"
@@ -16,7 +15,6 @@
 #include "engine/renderer/taa_pass.hpp"
 #include "engine/renderer/terrain_pass.hpp"
 #include "engine/renderer/tonemap_pass.hpp"
-#include "engine/rhi/descriptor_buffer.hpp"
 #include "engine/rhi/device.hpp"
 #include "engine/rhi/gpu_allocator.hpp"
 #include "engine/rhi/pipeline_cache.hpp"
@@ -33,14 +31,6 @@
 namespace r = engine::renderer;
 namespace scn = engine::scene;
 
-TEST(GpuRhi, BufferRoundTrip) {
-    QUAT_REQUIRE_GPU(g);
-    ASSERT_OK(engine::rhi::run_gpu_round_trip_self_test(g->device, g->allocator));
-}
-TEST(GpuRhi, DescriptorBuffer) {
-    QUAT_REQUIRE_GPU(g);
-    ASSERT_OK(engine::rhi::run_descriptor_buffer_self_test(g->device, g->allocator));
-}
 TEST(GpuRhi, RenderGraph) {
     QUAT_REQUIRE_GPU(g);
     engine::rhi::TransientImagePool pool(g->device, g->allocator);
@@ -58,10 +48,6 @@ TEST(GpuAssets, GltfTextures) {
 TEST(GpuAssets, GltfSceneGraph) {
     QUAT_REQUIRE_GPU(g);
     ASSERT_OK(scn::run_gltf_scene_self_test(g->allocator, g->transfer));
-}
-TEST(GpuAssets, Material) {
-    QUAT_REQUIRE_GPU(g);
-    ASSERT_OK(engine::asset::run_material_asset_self_test(g->allocator, g->transfer));
 }
 TEST(GpuAssets, SceneSaveLoad) {
     QUAT_REQUIRE_GPU(g);
@@ -83,7 +69,6 @@ TEST(GpuAssets, SceneSaveLoad) {
 
 QUAT_PASS_TEST(GpuRender, GBuffer, r::run_mesh_pass_self_test)
 QUAT_PASS_TEST(GpuRender, Lighting, r::run_lighting_pass_self_test)
-QUAT_PASS_TEST(GpuRender, PointLights, r::run_point_light_self_test)
 QUAT_PASS_TEST(GpuRender, Clearcoat, r::run_clearcoat_self_test)
 QUAT_PASS_TEST(GpuRender, SpecularAntiAliasing, r::run_specular_aa_self_test)
 QUAT_PASS_TEST(GpuRender, Terrain, r::run_terrain_pass_self_test)

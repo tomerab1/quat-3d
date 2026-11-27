@@ -40,6 +40,8 @@ constexpr std::array k_components = {
     ComponentInfo{"patrol", "Patrol route the nav agent walks", true, true},
     ComponentInfo{"terrain", "Procedural terrain tile / streamed world", true, true},
     ComponentInfo{"net_replicated", "Replicate this entity's transform to network clients", true, true},
+    ComponentInfo{"audio_source", "Sound emitter: wav/flac/mp3 clip on a bus, optionally 3D", true, true},
+    ComponentInfo{"audio_listener", "The audio listener follows this entity (else the camera)", true, true},
     ComponentInfo{"animator", "Animation playback of a glTF clip (time, speed, looping)", false, true},
     ComponentInfo{"mesh", "glTF mesh provenance (read-only)", false, false},
 };
@@ -54,6 +56,15 @@ constexpr EnumName<PrimitiveShape> k_primitive_shapes[] = {
     {"cube", PrimitiveShape::cube},         {"sphere", PrimitiveShape::sphere},
     {"plane", PrimitiveShape::plane},       {"cylinder", PrimitiveShape::cylinder},
     {"cone", PrimitiveShape::cone},         {"capsule", PrimitiveShape::capsule}};
+
+constexpr EnumName<audio::AudioBus> k_audio_buses[] = {
+    {"master", audio::AudioBus::master}, {"music", audio::AudioBus::music},
+    {"sfx", audio::AudioBus::sfx},       {"ui", audio::AudioBus::ui},
+    {"ambience", audio::AudioBus::ambience}};
+constexpr EnumName<AudioCommand> k_audio_commands[] = {
+    {"none", AudioCommand::none}, {"play", AudioCommand::play}, {"stop", AudioCommand::stop},
+    {"pause", AudioCommand::pause}, {"resume", AudioCommand::resume}};
+constexpr std::size_t k_max_clip_path = 4096;
 
 template <typename E, std::size_t N>
 [[nodiscard]] std::string enum_name(const EnumName<E> (&names)[N], E value) {
@@ -170,42 +181,15 @@ struct Trs {
     return c <= 0.04045F ? c / 12.92F : std::pow((c + 0.055F) / 1.055F, 2.4F);
 }
 
-// "#rrggbb" / "#rrggbbaa" (sRGB, as people and models write colours) or a
-// linear [r, g, b(, a)] array.
 void read_color(JsonFields& f, std::string_view key, glm::vec4& out) {
     if (!f.has(key)) return;
     const json* v = f.raw(key);
-    if (v->is_string()) {
-        const std::string& s = v->get_ref<const std::string&>();
-        const bool shape_ok = (s.size() == 7 || s.size() == 9) && s[0] == '#';
-        std::array<float, 4> c{0.0F, 0.0F, 0.0F, 1.0F};
-        bool ok = shape_ok;
-        for (std::size_t i = 0; ok && i + 1 < s.size(); i += 2) {
-            unsigned value = 0;
-            for (std::size_t k = 1 + i; k < 3 + i && ok; ++k) {
-                const char ch = s[k];
-                const int digit = ch >= '0' && ch <= '9'   ? ch - '0'
-                                  : ch >= 'a' && ch <= 'f' ? ch - 'a' + 10
-                                  : ch >= 'A' && ch <= 'F' ? ch - 'A' + 10
-                                                           : -1;
-                ok = digit >= 0;
-                value = value * 16U + static_cast<unsigned>(digit < 0 ? 0 : digit);
-            }
-            c[i / 2] = static_cast<float>(value) / 255.0F;
-        }
-        if (!ok) {
-            f.fail(key, "expected \"#rrggbb\", \"#rrggbbaa\" or [r, g, b(, a)] in 0..1 (linear)");
-            return;
-        }
-        out = {srgb_to_linear(c[0]), srgb_to_linear(c[1]), srgb_to_linear(c[2]), c[3]};
+    glm::vec4 c = out;
+    if (auto ok = decode_color(*v, c); !ok) {
+        f.fail(key, ok.error().message);
         return;
     }
-    // Re-read through the checked array path.
-    json wrapper = json::object();
-    wrapper[std::string(key)] = *v;
-    JsonFields inner(wrapper, "");
-    inner.color4(key, out);
-    if (auto ok = inner.finish(); !ok) f.fail(key, "expected \"#rrggbb\" or [r, g, b(, a)] in 0..1");
+    out = c;
 }
 
 // ---- Merge helper --------------------------------------------------------
@@ -233,6 +217,42 @@ void invalidate_physics(entt::registry& r, entt::entity e) {
 }
 
 } // namespace
+
+std::expected<void, core::Error> decode_color(const json& v, glm::vec4& out) {
+    constexpr const char* expected_msg =
+        "expected \"#rrggbb\", \"#rrggbbaa\" (sRGB) or [r, g, b(, a)] in 0..1 (linear)";
+    if (v.is_string()) {
+        const std::string& s = v.get_ref<const std::string&>();
+        const bool shape_ok = (s.size() == 7 || s.size() == 9) && s[0] == '#';
+        std::array<float, 4> c{0.0F, 0.0F, 0.0F, 1.0F};
+        bool ok = shape_ok;
+        for (std::size_t i = 0; ok && i + 1 < s.size(); i += 2) {
+            unsigned value = 0;
+            for (std::size_t k = 1 + i; k < 3 + i && ok; ++k) {
+                const char ch = s[k];
+                const int digit = ch >= '0' && ch <= '9'   ? ch - '0'
+                                  : ch >= 'a' && ch <= 'f' ? ch - 'a' + 10
+                                  : ch >= 'A' && ch <= 'F' ? ch - 'A' + 10
+                                                           : -1;
+                ok = digit >= 0;
+                value = value * 16U + static_cast<unsigned>(digit < 0 ? 0 : digit);
+            }
+            c[i / 2] = static_cast<float>(value) / 255.0F;
+        }
+        if (!ok) return std::unexpected(core::Error{expected_msg});
+        out = {srgb_to_linear(c[0]), srgb_to_linear(c[1]), srgb_to_linear(c[2]), c[3]};
+        return {};
+    }
+    // Re-read through the checked array path.
+    json wrapper = json::object();
+    wrapper["c"] = v;
+    JsonFields inner(wrapper, "");
+    glm::vec4 c = out;
+    inner.color4("c", c);
+    if (auto ok = inner.finish(); !ok) return std::unexpected(core::Error{expected_msg});
+    out = c;
+    return {};
+}
 
 std::span<const ComponentInfo> component_infos() { return k_components; }
 
@@ -289,7 +309,8 @@ json encode_components(const entt::registry& r, entt::entity e, const EncodeOpti
         out["nav_agent"] = {{"target", vec3_json(a->target)},
                             {"speed", a->speed},
                             {"ground_offset", a->ground_offset},
-                            {"active", a->active}};
+                            {"active", a->active},
+                            {"paused", a->paused}};
     }
     if (const auto* b = r.try_get<BehaviorTree>(e)) {
         out["behavior"] = {{"source", b->source}, {"enabled", b->enabled}};
@@ -312,6 +333,20 @@ json encode_components(const entt::registry& r, entt::entity e, const EncodeOpti
                           {"stream_radius", t->stream_radius}};
     }
     if (const auto* n = r.try_get<NetReplicated>(e)) out["net_replicated"] = {{"net_id", n->net_id}};
+    if (const auto* a = r.try_get<AudioSource>(e)) {
+        out["audio_source"] = {{"clip", a->clip},
+                               {"bus", enum_name(k_audio_buses, a->bus)},
+                               {"volume", a->volume},
+                               {"pitch", a->pitch},
+                               {"loop", a->loop},
+                               {"play_on_start", a->play_on_start},
+                               {"spatial", a->spatial},
+                               {"min_distance", a->min_distance},
+                               {"max_distance", a->max_distance},
+                               {"rolloff", a->rolloff},
+                               {"doppler", a->doppler}};
+    }
+    if (const auto* l = r.try_get<AudioListener>(e)) out["audio_listener"] = {{"active", l->active}};
     if (const auto* a = r.try_get<Animator>(e)) {
         out["animator"] = {{"time", a->time}, {"speed", a->speed}, {"looping", a->looping}};
     }
@@ -322,6 +357,31 @@ json encode_components(const entt::registry& r, entt::entity e, const EncodeOpti
                            {"gltf", m->gltf_path}};
         }
     }
+    return out;
+}
+
+std::vector<std::string_view> component_names(const entt::registry& r, entt::entity e,
+                                              bool include_read_only) {
+    std::vector<std::string_view> out;
+    if (!r.valid(e)) return out;
+    const auto add = [&](bool present, std::string_view name) {
+        if (present) out.push_back(name);
+    };
+    add(r.all_of<Transform>(e), "transform");
+    add(r.all_of<Primitive>(e), "primitive");
+    add(r.all_of<PointLight>(e), "point_light");
+    add(r.all_of<DirectionalLight>(e), "dir_light");
+    add(r.all_of<Camera>(e), "camera");
+    add(r.all_of<Collider>(e), "collider");
+    add(r.all_of<RigidBody>(e), "rigidbody");
+    add(r.all_of<CharacterController>(e), "character");
+    add(r.all_of<NavAgent>(e), "nav_agent");
+    add(r.all_of<BehaviorTree>(e), "behavior");
+    add(r.all_of<PatrolRoute>(e), "patrol");
+    add(r.all_of<Terrain>(e), "terrain");
+    add(r.all_of<NetReplicated>(e), "net_replicated");
+    add(r.all_of<Animator>(e), "animator");
+    add(include_read_only && r.all_of<MeshSource>(e), "mesh");
     return out;
 }
 
@@ -419,7 +479,15 @@ std::expected<void, core::Error> apply_component(entt::registry& r, entt::entity
             const glm::vec3 old_target = a.target;
             f.vec3("target", a.target).number("speed", a.speed, 0.0F);
             f.number("ground_offset", a.ground_offset).boolean("active", a.active);
-            if (a.target != old_target) a.arrived = false; // the system repaths
+            f.boolean("paused", a.paused);
+            if (a.target != old_target) { // a new walk: the system repaths
+                a.commanded = true;          // ...and a route resumes after it
+                a.arrived = false;
+                a.failed = false;
+                a.plan_failures = 0;
+                a.retry_s = 0.0F;
+                a.path.clear();
+            }
         });
     }
     if (name == "behavior") {
@@ -441,7 +509,10 @@ std::expected<void, core::Error> apply_component(entt::registry& r, entt::entity
     }
     if (name == "patrol") {
         return merge<PatrolRoute>(r, e, v, name, strict, [](JsonFields& f, PatrolRoute& p) {
-            if (f.has("points")) p.next = 0;
+            if (f.has("points")) {
+                p.next = 0;
+                p.finished = false;
+            }
             f.vec3_list("points", p.points).boolean("loop", p.loop);
         });
     }
@@ -465,6 +536,26 @@ std::expected<void, core::Error> apply_component(entt::registry& r, entt::entity
         return merge<NetReplicated>(r, e, v, name, strict, [](JsonFields& f, NetReplicated& n) {
             f.integer("net_id", n.net_id, 0, 0xFFFFFFFFLL);
         });
+    }
+    if (name == "audio_source") {
+        // `command` is write-only: the audio system consumes it (play, stop,
+        // pause, resume) — how remote tools trigger a sound.
+        return merge<AudioSource>(r, e, v, name, strict, [](JsonFields& f, AudioSource& a) {
+            f.string("clip", a.clip, k_max_clip_path).enumeration("bus", a.bus, k_audio_buses);
+            if (a.clip.find('\0') != std::string::npos) f.fail("clip", "must not contain NUL");
+            f.number("volume", a.volume, 0.0F, 16.0F).number("pitch", a.pitch, 0.01F, 16.0F);
+            f.boolean("loop", a.loop).boolean("play_on_start", a.play_on_start);
+            f.boolean("spatial", a.spatial);
+            f.number("min_distance", a.min_distance, 0.01F, 1.0e6F);
+            f.number("max_distance", a.max_distance, 0.01F, 1.0e6F);
+            f.number("rolloff", a.rolloff, 0.0F, 100.0F).number("doppler", a.doppler, 0.0F, 10.0F);
+            f.enumeration("command", a.command, k_audio_commands);
+            if (a.max_distance < a.min_distance) f.fail("max_distance", "must be >= min_distance");
+        });
+    }
+    if (name == "audio_listener") {
+        return merge<AudioListener>(r, e, v, name, strict,
+                                    [](JsonFields& f, AudioListener& l) { f.boolean("active", l.active); });
     }
     if (name == "animator") {
         if (!r.all_of<Animator>(e)) {
@@ -502,6 +593,8 @@ bool remove_component(entt::registry& r, entt::entity e, std::string_view name) 
     if (name == "patrol") return r.remove<PatrolRoute>(e) > 0;
     if (name == "terrain") return r.remove<Terrain>(e) > 0;
     if (name == "net_replicated") return r.remove<NetReplicated>(e) > 0;
+    if (name == "audio_source") return r.remove<AudioSource>(e) > 0;
+    if (name == "audio_listener") return r.remove<AudioListener>(e) > 0;
     if (name == "animator") return r.remove<Animator>(e) > 0;
     return false; // transform (not removable) or unknown
 }

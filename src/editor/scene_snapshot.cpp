@@ -60,6 +60,18 @@ SceneSnapshot capture_scene(const scene::Scene& scene) {
     capture_type(r, snap.patrol_routes);
     capture_type(r, snap.primitives);
     capture_type(r, snap.net_replicated);
+    capture_type(r, snap.audio_sources);
+    capture_type(r, snap.audio_listeners);
+    // Sounds belong to the session that made them: restored sources start
+    // without one (the audio system's sweep frees the play session's sounds)
+    // and play_on_start fires again on the next Play.
+    for (auto& [e, src] : snap.audio_sources) {
+        src.command = scene::AudioCommand::none;
+        src.state = audio::Playback::stopped;
+        src.started = false;
+        src.sound = audio::invalid_sound;
+        src.resolved = 0;
+    }
     return snap;
 }
 
@@ -94,6 +106,8 @@ void restore_scene(scene::Scene& scene, const SceneSnapshot& snapshot) {
     restore_type(r, snapshot.patrol_routes);
     restore_type(r, snapshot.primitives);
     restore_type(r, snapshot.net_replicated);
+    restore_type(r, snapshot.audio_sources);
+    restore_type(r, snapshot.audio_listeners);
 }
 
 std::expected<void, core::Error> run_scene_snapshot_self_test() {

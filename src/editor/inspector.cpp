@@ -10,6 +10,7 @@
 #include <glm/gtx/matrix_decompose.hpp>
 #include <imgui.h>
 
+#include "audio_inspector.hpp"
 #include "engine/editor/editor.hpp"
 #include "engine/scene/behavior.hpp"
 #include "engine/scene/components.hpp"
@@ -121,19 +122,32 @@ struct ComponentInspector<scene::Terrain> {
 template <>
 struct ComponentInspector<scene::NavAgent> {
     static constexpr const char* title = "Nav Agent";
-    static void draw(entt::registry&, entt::entity, scene::NavAgent& agent) {
-        ImGui::DragFloat3("target", &agent.target.x, 0.1F);
+    static void draw(entt::registry& r, entt::entity e, scene::NavAgent& agent) {
+        // Editing the target mid-walk is an order: a patrol route waits for it.
+        if (ImGui::DragFloat3("target", &agent.target.x, 0.1F) && agent.active) {
+            agent.commanded = true;
+        }
         ImGui::DragFloat("speed", &agent.speed, 0.1F, 0.1F, 50.0F, "%.1f m/s");
         ImGui::DragFloat("ground offset", &agent.ground_offset, 0.05F, 0.0F, 10.0F, "%.2f m");
         if (ImGui::IsItemHovered()) {
             ImGui::SetTooltip("Entity origin height above the ground while walking\n"
                               "(half-height for a centre-pivot mesh, e.g. 0.5 for the unit cube)");
         }
-        if (ImGui::Button(agent.active ? "Stop" : "Go", ImVec2(-1.0F, 0.0F))) {
-            agent.active = !agent.active;
-            agent.path.clear();
+        const auto* route = r.try_get<scene::PatrolRoute>(e);
+        const bool patrolling = route != nullptr && !route->points.empty();
+        const bool running = !agent.paused && (agent.active || patrolling);
+        if (ImGui::Button(running ? "Stop" : "Go", ImVec2(-1.0F, 0.0F))) {
+            if (running) {
+                scene::nav_agent_stop(agent);
+            } else {
+                scene::nav_agent_resume(r, e);
+            }
         }
-        ImGui::Text(agent.arrived ? "arrived" : (agent.active ? "moving" : "idle"));
+        ImGui::Text("%s", agent.paused   ? "stopped"
+                          : agent.active ? "moving"
+                          : agent.arrived ? "arrived"
+                          : agent.failed ? "failed (unreachable or stuck)"
+                                         : "idle");
         ImGui::TextWrapped("Bake a navmesh (Physics panel) and press Play; the agent "
                            "paths to the target.");
     }
@@ -155,10 +169,12 @@ struct ComponentInspector<scene::PatrolRoute> {
         if (remove >= 0) {
             route.points.erase(route.points.begin() + remove);
             route.next = 0;
+            route.finished = false;
         }
         if (!route.points.empty() && ImGui::Button("Clear", ImVec2(-1.0F, 0.0F))) {
             route.points.clear();
             route.next = 0;
+            route.finished = false;
         }
         ImGui::TextWrapped("Shift+click the ground in the viewport to add points; "
                            "Ctrl+click sends the agent somewhere once.");
@@ -186,8 +202,10 @@ struct ComponentInspector<scene::BehaviorTree> {
         } else if (bt.compiled != nullptr) {
             ImGui::Text("compiled: %zu nodes", bt.compiled->nodes().size());
         }
-        ImGui::TextWrapped("JSON: sequence/selector/inverter over leaves "
-                           "move_to, wait, near_point, near_camera.");
+        ImGui::TextWrapped("JSON: sequence/selector (resume the running child), "
+                           "reactive_sequence/reactive_selector (re-check every tick, "
+                           "pre-empting), inverter; leaves move_to, wait, near_point, "
+                           "near_camera.");
     }
 };
 
@@ -293,6 +311,22 @@ struct ComponentInspector<scene::RigidBody> {
     }
 };
 
+template <>
+struct ComponentInspector<scene::AudioSource> {
+    static constexpr const char* title = "Audio Source";
+    static void draw(entt::registry&, entt::entity, scene::AudioSource& source) {
+        draw_audio_source(source);
+    }
+};
+
+template <>
+struct ComponentInspector<scene::AudioListener> {
+    static constexpr const char* title = "Audio Listener";
+    static void draw(entt::registry& r, entt::entity e, scene::AudioListener& listener) {
+        draw_audio_listener(r, e, listener);
+    }
+};
+
 // Draws the component's collapsing header + editor. `removable` adds a
 // right-click "Remove component" to the header; returns false if removed.
 template <typename T>
@@ -356,6 +390,8 @@ void draw_inspector(scene::Scene& scene, entt::entity selected) {
     inspect<scene::PatrolRoute>(r, selected, true);
     inspect<scene::Collider>(r, selected, true);
     inspect<scene::RigidBody>(r, selected, true);
+    inspect<scene::AudioSource>(r, selected, true);
+    inspect<scene::AudioListener>(r, selected, true);
 
     ImGui::Separator();
     if (ImGui::Button("Add component", ImVec2(-1.0F, 0.0F))) {
@@ -372,6 +408,8 @@ void draw_inspector(scene::Scene& scene, entt::entity selected) {
         add_component_item<scene::DirectionalLight>(
             r, selected, glm::vec3(-0.4F, -1.0F, -0.3F), glm::vec3(1.0F), 3.0F);
         add_component_item<scene::Camera>(r, selected);
+        add_component_item<scene::AudioSource>(r, selected);
+        add_component_item<scene::AudioListener>(r, selected);
         ImGui::EndPopup();
     }
     ImGui::End();

@@ -1,7 +1,6 @@
 #include "engine/rhi/gpu_allocator.hpp"
 
 #include <algorithm>
-#include <array>
 #include <cmath>
 #include <cstring>
 #include <format>
@@ -120,7 +119,24 @@ void GpuBuffer::destroy() noexcept {
     mapped_ = nullptr;
 }
 
+std::expected<void, core::Error> GpuBuffer::invalidate_mapped() const {
+    if (buffer_ == VK_NULL_HANDLE || allocator_ == nullptr) return fail("invalidate: no buffer");
+    if (const VkResult r = vmaInvalidateAllocation(allocator_, allocation_, 0, VK_WHOLE_SIZE);
+        r != VK_SUCCESS) {
+        return fail(std::format("vmaInvalidateAllocation failed ({})", static_cast<int>(r)));
+    }
+    return {};
+}
+
 GpuBuffer::~GpuBuffer() { destroy(); }
+
+std::expected<void, core::Error> GpuBuffer::flush(VkDeviceSize offset, VkDeviceSize size) const {
+    if (allocation_ == nullptr) return {};
+    if (VkResult r = vmaFlushAllocation(allocator_, allocation_, offset, size); r != VK_SUCCESS) {
+        return fail(std::format("vmaFlushAllocation failed ({})", static_cast<int>(r)));
+    }
+    return {};
+}
 
 GpuBuffer::GpuBuffer(GpuBuffer&& other) noexcept { *this = std::move(other); }
 
@@ -333,7 +349,7 @@ GpuAllocator::create_image(VkFormat format, VkExtent2D extent, VkImageUsageFlags
 }
 
 // ===========================================================================
-// Staging upload + self-test
+// Staging upload
 // ===========================================================================
 std::expected<GpuBuffer, core::Error>
 upload_device_buffer(GpuAllocator& allocator, const TransferContext& transfer,
@@ -531,54 +547,6 @@ create_sampler(VkDevice device, SamplerAddress address, std::uint32_t mip_levels
         return fail("create_sampler: vkCreateSampler failed");
     }
     return Sampler{device, sampler};
-}
-
-std::expected<void, core::Error>
-run_gpu_round_trip_self_test(const Device& device, GpuAllocator& allocator) {
-    VkCommandPool pool = VK_NULL_HANDLE;
-    VkCommandPoolCreateInfo pool_info{};
-    pool_info.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
-    pool_info.flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT;
-    pool_info.queueFamilyIndex = device.queue_families().transfer;
-    if (vkCreateCommandPool(device.handle(), &pool_info, nullptr, &pool) != VK_SUCCESS) {
-        return fail("self-test: vkCreateCommandPool failed");
-    }
-    const TransferContext transfer{device.handle(), pool, device.transfer_queue()};
-
-    std::array<std::uint8_t, 256> source{};
-    for (std::size_t i = 0; i < source.size(); ++i) {
-        source[i] = static_cast<std::uint8_t>(i * 7 + 3);
-    }
-    const VkDeviceSize size = source.size();
-
-    std::expected<void, core::Error> result{};
-    auto device_buffer = upload_device_buffer(
-        allocator, transfer, source.data(), size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
-    if (!device_buffer) {
-        result = std::unexpected(device_buffer.error());
-    } else {
-        auto readback = allocator.create_buffer(
-            size, VK_BUFFER_USAGE_TRANSFER_DST_BIT, VMA_MEMORY_USAGE_AUTO,
-            VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT);
-        if (!readback) {
-            result = std::unexpected(readback.error());
-        } else {
-            const VkBuffer src = device_buffer->handle();
-            const VkBuffer dst = readback->handle();
-            auto copied = run_one_time_commands(transfer, [&](VkCommandBuffer cmd) {
-                VkBufferCopy region{0, 0, size};
-                vkCmdCopyBuffer(cmd, src, dst, 1, &region);
-            });
-            if (!copied) {
-                result = std::unexpected(copied.error());
-            } else if (std::memcmp(readback->mapped(), source.data(), size) != 0) {
-                result = fail("self-test: GPU round-trip data mismatch");
-            }
-        }
-    }
-
-    vkDestroyCommandPool(device.handle(), pool, nullptr);
-    return result;
 }
 
 } // namespace engine::rhi

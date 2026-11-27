@@ -32,6 +32,17 @@ public:
     // Non-null only when the buffer was created persistently mapped.
     [[nodiscard]] void* mapped() const { return mapped_; }
 
+    // Makes host writes to [offset, offset + size) of a mapped buffer visible to
+    // the device. Required when VMA placed it in non-HOST_COHERENT memory; a
+    // no-op (no Vulkan call) when the memory is coherent.
+    [[nodiscard]] std::expected<void, core::Error>
+    flush(VkDeviceSize offset = 0, VkDeviceSize size = VK_WHOLE_SIZE) const;
+
+    // Makes device writes visible to host reads through mapped() (a no-op on
+    // host-coherent memory). Call after the GPU work that wrote the buffer
+    // has completed (fence waited) and before reading it.
+    [[nodiscard]] std::expected<void, core::Error> invalidate_mapped() const;
+
 private:
     friend class GpuAllocator;
     void destroy() noexcept;
@@ -218,10 +229,5 @@ enum class SamplerAddress : std::uint8_t { repeat, clamp_to_edge, mirrored_repea
 [[nodiscard]] std::expected<Sampler, core::Error>
 create_sampler(VkDevice device, SamplerAddress address = SamplerAddress::repeat,
                std::uint32_t mip_levels = 1, float max_anisotropy = 0.0F);
-
-// Debug round-trip self-test: upload bytes to a device-local buffer, copy them
-// back to a host buffer, and verify they match. Returns an error on mismatch.
-[[nodiscard]] std::expected<void, core::Error>
-run_gpu_round_trip_self_test(const Device& device, GpuAllocator& allocator);
 
 } // namespace engine::rhi

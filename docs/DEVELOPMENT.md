@@ -30,7 +30,7 @@ CMake options: `ENGINE_EDITOR` (default ON), `ENGINE_PROFILE`,
 
 Targets: the engine libraries (`engine_rhi`, `engine_renderer`,
 `engine_scene`, `engine_physics`, `engine_animation`, `engine_terrain`,
-`engine_nav`, `engine_net`, `engine_remote`, `engine_editor`), the `game`
+`engine_nav`, `engine_net`, `engine_remote`, `engine_audio`, `engine_editor`), the `game`
 executable, and the GoogleTest suite `engine_tests` (`tests/`).
 
 ## Testing
@@ -47,7 +47,7 @@ ctest --test-dir build/release --output-on-failure
 Without a GPU, point the Vulkan loader at Mesa's software driver:
 
 ```sh
-VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.x86_64.json ./build/release/engine_tests
+VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.json ./build/release/engine_tests
 ```
 
 Test layout:
@@ -109,6 +109,7 @@ git clone --depth 1 --branch v5.5.0  https://github.com/jrouwe/JoltPhysics.git j
 git clone --depth 1 --branch v0.9.0  https://github.com/spnda/fastgltf.git
 git clone --depth 1 https://github.com/nothings/stb.git
 git clone --depth 1 --branch release-3.4.10 https://github.com/libsdl-org/SDL.git sdl
+git clone --depth 1 --branch 0.11.25 https://github.com/mackron/miniaudio.git
 apt-get install -y nlohmann-json3-dev libglm-dev libvulkan-dev
 
 D=~/deps; cd ~/quat-3d
@@ -123,12 +124,18 @@ This catches compile errors and warnings, not link errors or test failures.
 `scripts/check-compile.sh <files...>` wraps exactly this (set `DEPS` if the
 clones live elsewhere than `~/deps`).
 
-Quick check without vcpkg (the remote-control library only needs
-nlohmann-json and glm headers — `apt-get install nlohmann-json3-dev libglm-dev`):
+Modules whose dependencies are header-only (animation and terrain need glm;
+remote needs nlohmann-json and glm — `apt-get install nlohmann-json3-dev
+libglm-dev`) can also be linked and their tests run, against a GoogleTest built
+with libc++ in `~/deps/googletest/build`:
 
 ```sh
+G=~/deps/googletest
 clang++ -std=c++23 -stdlib=libc++ -Wall -Wextra -Wshadow -fno-exceptions -fno-rtti \
-  -Iinclude -Isrc/remote src/remote/*.cpp <a main() calling run_rpc_server_self_test()>
+  -DGLM_FORCE_DEPTH_ZERO_TO_ONE -DGLM_FORCE_RADIANS -Iinclude -Isrc -Itests \
+  -isystem $G/googletest/include src/remote/*.cpp tests/remote/*_test.cpp \
+  $G/build/lib/libgtest_main.a $G/build/lib/libgtest.a -lpthread -o /tmp/remote_tests
+/tmp/remote_tests
 ```
 
 ## Pitfalls

@@ -8,7 +8,6 @@
 // a 1D blend of two clips plus an optional masked additive layer.
 
 #include <cstdint>
-#include <expected>
 #include <span>
 #include <vector>
 
@@ -17,7 +16,6 @@
 
 #include "engine/animation/clip.hpp"
 #include "engine/animation/skeleton.hpp"
-#include "engine/core/error.hpp"
 
 namespace engine::animation {
 
@@ -80,9 +78,5 @@ bind_skinning_matrices(const SkeletonAsset& skeleton,
 [[nodiscard]] std::vector<glm::mat4>
 sample_skinning_matrices(const SkeletonAsset& skeleton, const AnimClipAsset& clip, float time,
                          const glm::mat4& root_transform = glm::mat4(1.0F));
-
-// Self-tests: single-clip posing (5.3) and blend/additive layering (5.5).
-[[nodiscard]] std::expected<void, core::Error> run_animator_self_test();
-[[nodiscard]] std::expected<void, core::Error> run_blend_self_test();
 
 } // namespace engine::animation

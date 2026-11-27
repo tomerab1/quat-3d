@@ -26,6 +26,32 @@ into CLAUDE.md or the brief template in [`CYCLE.md`](CYCLE.md).
 
 ## Build and CI
 
+- **Lavapipe's ICD file is `lvp_icd.json` on Ubuntu 24.04** (not
+  `lvp_icd.x86_64.json`) — a wrong `VK_ICD_FILENAMES` gives
+  `VK_ERROR_INCOMPATIBLE_DRIVER` from vkCreateInstance. CI globs for it.
+  Lavapipe also runs in the cloud container (`apt install mesa-vulkan-drivers`
+  or `/opt/lavapipe/lvp_icd.json`), so GPU tests can run locally.
+- **Order-dependent / layout-dependent failures are memory bugs.** A test
+  that fails only after another one, or passes under gdb (no ASLR), is
+  reading invalid memory: run it under valgrind, which also instruments
+  third-party static libraries that ASan builds don't (it found an OOB read
+  inside fastgltf).
+- **CI triggered on both `push` to `claude/**` and `pull_request` ran every
+  commit twice.** Branch pushes now only build `master`; cycle branches build
+  through their PR.
+- **The owner may merge a cycle PR before CI finishes.** After a merge, merge
+  `master` back into the cycle branch (no rewriting), open the next cycle's
+  draft PR, and watch `master`'s CI — a red `master` is the next cycle's
+  first item.
+- **GPU tests can run locally without vcpkg.** The container has lavapipe
+  (`VK_ICD_FILENAMES=/opt/lavapipe/lvp_icd.json`) and `libvulkan`; the RHI,
+  asset and most renderer TUs only need the `~/deps` header clones (VMA,
+  googletest) + `/usr/include` glm/nlohmann. Compile just the TUs a test
+  needs (rhi/*.cpp incl. `vma_impl.cpp` with `-w`, the passes under test,
+  `tests/support/gpu_context.cpp`, `tests/test_main.cpp`), link
+  `libgtest.a -lvulkan`, and cook shaders with slangc into a scratch dir
+  passed as `QUAT_COOKED_SHADER_DIR` (R10.1 ran its `Gpu*` suites this way).
+  Avoid `scene::upload_mesh` (fastgltf) in tests that should run locally.
 - **Compile-check the whole tree once, not only changed files.** The first
   full CI build failed on a pre-existing `std::jthread` use that no
   per-file check had touched; one `scripts/check-compile.sh $(git ls-files
@@ -56,6 +82,11 @@ into CLAUDE.md or the brief template in [`CYCLE.md`](CYCLE.md).
 
 ## C++ in this codebase
 
+- **Don't let a parser touch untrusted indices before validation.**
+  fastgltf's `Options::GenerateMeshIndices` dereferences accessor indices
+  during parsing; the loader now validates first and generates sequential
+  indices itself. Same for `fastgltf::validate`: it is stricter than real
+  exporter files — validate exactly what the loader dereferences.
 - **No exceptions means nlohmann's `get<T>()` / `value()` abort on bad
   input.** Read any external JSON through `core::JsonFields`; dump with
   `error_handler_t::replace` (invalid UTF-8 also throws).
@@ -72,3 +103,27 @@ into CLAUDE.md or the brief template in [`CYCLE.md`](CYCLE.md).
   defined exactly once — faster and safer than retyping.
 - **Load into a staging object, swap on success.** Loaders that clear live
   state before validating input lose user data on a bad file (scene files).
+
+## Scheduled fresh sessions start without repository access (cycle 1)
+
+The first scheduled cycle (fresh session per run) cloned the public repo
+read-only and stopped: pushes were refused ("not in this session's authorized
+repository set") and the GitHub API was blocked. Scheduled tasks don't carry
+the creating session's repository grant.
+**Rule:** bind recurring cycles to the live session (it already has push + PR
+access), or attach the repository to the environment before relying on
+fresh-session runs. Check the first scheduled run's transcript, never assume.
+
+## Prose was embedded as Rust string literals (A4, caught by the owner)
+
+The A4 worker put the MCP server instructions, every tool description (some
+with JSON examples), the component reference and two long prompt bodies into
+`server.rs` as escaped string literals and `concat!` macros — 836 lines,
+unreadable and uneditable as documentation. The brief said "idiomatic Rust"
+but not where text belongs, the orchestrator's review checked behaviour and
+tests, not structure, and the owner had to point it out.
+**Rule:** text for models or people lives in Markdown (`content/`), embedded
+with `include_str!`; code holds only error messages (CLAUDE.md "No prose in
+source"). Every worker brief that adds tools, prompts or help text states this,
+and merge review includes a structure pass (file sizes, inline prose, lint
+level), not just a compile + test pass.

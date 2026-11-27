@@ -1,6 +1,8 @@
 #include "engine/renderer/shadow_pass.hpp"
 
 #include <array>
+#include <cstddef>
+#include <string>
 #include <utility>
 
 #include "engine/asset/mesh_asset.hpp"
@@ -10,9 +12,11 @@
 namespace engine::renderer {
 
 std::expected<ShadowPass, core::Error>
-ShadowPass::create(const rhi::Device& device, rhi::PipelineCache& cache,
-                   const std::string& cooked_shader_dir) {
+ShadowPass::create(const rhi::Device& device, rhi::GpuAllocator& allocator,
+                   rhi::PipelineCache& cache, const std::string& cooked_shader_dir) {
     ShadowPass out;
+    out.device_ = &device;
+    out.allocator_ = &allocator;
 
     auto shader = cache.load(cooked_shader_dir + "/shadow.spv");
     if (!shader) return std::unexpected(shader.error());
@@ -44,16 +48,32 @@ ShadowPass::create(const rhi::Device& device, rhi::PipelineCache& cache,
 std::expected<rhi::ResourceHandle, core::Error>
 ShadowPass::add_to_graph(rhi::RenderGraph& graph, const glm::mat4& light_view_proj,
                          std::span<const DrawItem> draws) {
+    return add_to_graph(graph, light_view_proj, batch_draws(draws));
+}
+
+std::expected<rhi::ResourceHandle, core::Error>
+ShadowPass::add_to_graph(rhi::RenderGraph& graph, const glm::mat4& light_view_proj,
+                         const InstancedDrawList& list) {
+    auto instances = instances_.upload(*device_, *allocator_, list.instances);
+    if (!instances) return std::unexpected(instances.error());
+    frame_instances_ = *instances;
+
     frame_draws_.clear();
-    frame_draws_.reserve(draws.size());
-    for (const DrawItem& d : draws) {
-        if (d.mesh == nullptr || !d.mesh->valid()) continue;
+    frame_draws_.reserve(list.draws.size());
+    for (const InstancedDraw& d : list.draws) {
+        if (d.mesh == nullptr || !d.mesh->valid() || d.instance_count == 0) continue;
+        if (static_cast<std::size_t>(d.first_instance) + d.instance_count >
+            list.instances.size()) {
+            return std::unexpected(
+                core::Error{"shadow pass: draw instance range exceeds the instance array"});
+        }
         FrameDraw fd;
         fd.vertex_buffer = d.skinned_vertices != VK_NULL_HANDLE ? d.skinned_vertices
                                                                 : d.mesh->vertex_buffer.handle();
         fd.index_buffer = d.mesh->index_buffer.handle();
         fd.submeshes = d.mesh->submeshes;
-        fd.model = d.model;
+        fd.first_instance = d.first_instance;
+        fd.instance_count = d.instance_count;
         frame_draws_.push_back(fd);
     }
 
@@ -97,17 +117,20 @@ ShadowPass::add_to_graph(rhi::RenderGraph& graph, const glm::mat4& light_view_pr
 
             vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_.handle());
 
+            ShadowPushConstants push{};
+            push.light_view_proj = vp;
+            push.instances = frame_instances_;
+            vkCmdPushConstants(cmd, pipeline_.layout(), VK_SHADER_STAGE_VERTEX_BIT, 0,
+                               sizeof(push), &push);
+
             for (const FrameDraw& fd : frame_draws_) {
-                ShadowPushConstants push{};
-                push.light_view_proj = vp;
-                push.model = fd.model;
-                vkCmdPushConstants(cmd, pipeline_.layout(), VK_SHADER_STAGE_VERTEX_BIT, 0,
-                                   sizeof(push), &push);
                 const VkDeviceSize offset = 0;
                 vkCmdBindVertexBuffers(cmd, 0, 1, &fd.vertex_buffer, &offset);
                 vkCmdBindIndexBuffer(cmd, fd.index_buffer, 0, VK_INDEX_TYPE_UINT32);
+                // firstInstance selects the instance range (see instancing.slang).
                 for (const asset::SubMesh& sm : fd.submeshes) {
-                    vkCmdDrawIndexed(cmd, sm.index_count, 1, sm.index_offset, 0, 0);
+                    vkCmdDrawIndexed(cmd, sm.index_count, fd.instance_count, sm.index_offset, 0,
+                                     fd.first_instance);
                 }
             }
 

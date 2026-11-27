@@ -48,13 +48,17 @@ TEST_F(ComponentJson, RoundTripsEveryWritableComponent) {
                       {"offset", {0, 0.1, 0}}, {"sensor", true}}},
         {"rigidbody", {{"motion", "kinematic"}, {"mass", 4}}},
         {"character", {{"radius", 0.35}, {"half_height", 0.7}, {"speed", 5}}},
-        {"nav_agent", {{"target", {4, 0, 4}}, {"speed", 2}, {"ground_offset", 0.5}, {"active", true}}},
+        {"nav_agent", {{"target", {4, 0, 4}}, {"speed", 2}, {"ground_offset", 0.5}, {"active", true},
+                       {"paused", true}}},
         {"behavior", {{"source", R"({"type":"leaf","name":"wait"})"}, {"enabled", false}}},
         {"patrol", {{"points", {{0, 0, 0}, {5, 0, 5}}}, {"loop", false}}},
         {"terrain", {{"seed", 42}, {"resolution", 257}, {"tile_size", 500}, {"height", 60},
                      {"octaves", 5}, {"warp", 0.2}, {"droplets", 1000}, {"snowline", 40},
                      {"streaming", true}, {"stream_radius", 2}}},
         {"net_replicated", {{"net_id", 1234}}},
+        {"audio_source", {{"clip", "assets/audio/hum.wav"}, {"bus", "sfx"}, {"volume", 0.5},
+                          {"pitch", 2}, {"loop", true}, {"spatial", false}}},
+        {"audio_listener", {{"active", true}}},
     };
     for (const auto& [name, value] : authored.items()) {
         ASSERT_OK(apply(name, value)) << "while applying " << name;

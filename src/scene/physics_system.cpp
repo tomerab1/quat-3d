@@ -3,7 +3,9 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
+#include <utility>
 #include <vector>
 
 #include <glm/glm.hpp>
@@ -147,10 +149,37 @@ void physics_system(entt::registry& registry, physics::PhysicsWorld& world, floa
     }
 }
 
-void character_system(entt::registry& registry, physics::PhysicsWorld& world, float dt) {
-    const std::uint32_t invalid = physics::PhysicsWorld::invalid_body;
-    constexpr float gravity = -9.81F;
+namespace {
 
+void advance_character(entt::entity e, CharacterController& cc, Transform& t,
+                       physics::PhysicsWorld& world, float dt) {
+    constexpr float gravity = -9.81F;
+    if (cc.character == physics::PhysicsWorld::invalid_body) {
+        cc.character = world.create_character(cc.half_height, cc.radius, position_of(t),
+                                              static_cast<std::uint32_t>(entt::to_integral(e)));
+    }
+
+    glm::vec3 velocity = cc.velocity;
+    if (cc.on_ground && velocity.y < 0.0F) {
+        velocity.y = 0.0F; // grounded: stop accumulating downward speed
+    }
+    velocity.y += gravity * dt;
+    velocity.x = cc.move.x * cc.speed;
+    velocity.z = cc.move.z * cc.speed;
+
+    world.character_set_velocity(cc.character, velocity);
+    world.character_update(cc.character, dt);
+
+    cc.velocity = world.character_velocity(cc.character);
+    cc.on_ground = world.character_on_ground(cc.character);
+    const glm::vec3 pos = world.character_position(cc.character);
+    t.local = glm::translate(glm::mat4(1.0F), pos);
+    t.world = t.local;
+}
+
+} // namespace
+
+void character_system(entt::registry& registry, physics::PhysicsWorld& world, float dt) {
     // Remove characters whose entity or CharacterController is gone (see
     // physics_system step 0).
     for (const physics::PhysicsWorld::OwnedBody& oc : world.owned_characters()) {
@@ -160,29 +189,19 @@ void character_system(entt::registry& registry, physics::PhysicsWorld& world, fl
         world.remove_character(oc.body);
     }
 
-    for (auto [e, cc, t] : registry.view<CharacterController, Transform>().each()) {
-        if (cc.character == invalid) {
-            cc.character = world.create_character(cc.half_height, cc.radius, position_of(t),
-                                                  static_cast<std::uint32_t>(entt::to_integral(e)));
-        }
-
-        glm::vec3 velocity = cc.velocity;
-        if (cc.on_ground && velocity.y < 0.0F) {
-            velocity.y = 0.0F; // grounded: stop accumulating downward speed
-        }
-        velocity.y += gravity * dt;
-        velocity.x = cc.move.x * cc.speed;
-        velocity.z = cc.move.z * cc.speed;
-
-        world.character_set_velocity(cc.character, velocity);
-        world.character_update(cc.character, dt);
-
-        cc.velocity = world.character_velocity(cc.character);
-        cc.on_ground = world.character_on_ground(cc.character);
-        const glm::vec3 pos = world.character_position(cc.character);
-        t.local = glm::translate(glm::mat4(1.0F), pos);
-        t.world = t.local;
+    for (auto [e, cc, t] :
+         registry.view<CharacterController, Transform>(entt::exclude<NetDriven>).each()) {
+        advance_character(e, cc, t, world, dt);
     }
+}
+
+void step_character(entt::registry& registry, physics::PhysicsWorld& world, entt::entity e,
+                    float dt) {
+    if (!registry.valid(e)) return;
+    auto* cc = registry.try_get<CharacterController>(e);
+    auto* t = registry.try_get<Transform>(e);
+    if (cc == nullptr || t == nullptr) return;
+    advance_character(e, *cc, *t, world, dt);
 }
 
 std::expected<void, core::Error> run_character_self_test() {
@@ -426,8 +445,15 @@ void collect_nav_geometry(entt::registry& registry, const terrain::Heightmap* ma
     if (!include_colliders) return;
     // Static box colliders become 12 triangles each (the world matrix carries
     // scale/rotation, matching the simulated shape closely enough for nav).
+    // Triangles are wound counter-clockwise seen from outside, so every
+    // face's (v1 - v0) x (v2 - v0) normal points away from the box (the same
+    // convention as the terrain grid above): Recast's slope filter keeps the
+    // top faces walkable and rejects the bottoms.
     for (auto [e, t, col] : registry.view<const Transform, const Collider>().each()) {
         if (col.shape != ColliderShape::box || col.is_sensor) continue;
+        // Agents and characters move: their own collider is not level
+        // geometry (baking it would punch a hole where the agent stands).
+        if (registry.any_of<NavAgent, CharacterController>(e)) continue;
         const auto* body = registry.try_get<RigidBody>(e);
         if (body != nullptr && body->motion != BodyMotion::static_body) continue;
         const auto base = static_cast<std::uint32_t>(verts.size());
@@ -438,11 +464,33 @@ void collect_nav_geometry(entt::registry& registry, const terrain::Heightmap* ma
             verts.emplace_back(
                 glm::vec3(t.world * glm::vec4(col.offset + col.half_extents * sign, 1.0F)));
         }
+        // Corner bits: 1 = +x, 2 = +y, 4 = +z.
         constexpr std::array<std::uint32_t, 36> box_idx{
-            0, 1, 3, 0, 3, 2, 4, 6, 7, 4, 7, 5, 0, 2, 6, 0, 6, 4,
-            1, 5, 7, 1, 7, 3, 0, 4, 5, 0, 5, 1, 2, 3, 7, 2, 7, 6};
+            0, 3, 1, 0, 2, 3,  // -z
+            4, 7, 6, 4, 5, 7,  // +z
+            0, 6, 2, 0, 4, 6,  // -x
+            1, 7, 5, 1, 3, 7,  // +x
+            0, 5, 4, 0, 1, 5,  // -y (bottom)
+            2, 7, 3, 2, 6, 7}; // +y (top)
         for (const std::uint32_t i : box_idx) indices.push_back(base + i);
     }
+}
+
+std::size_t promote_collider_only_bodies(entt::registry& registry) {
+    std::vector<std::pair<entt::entity, BodyMotion>> promote;
+    for (const entt::entity e : registry.view<Collider>(entt::exclude<RigidBody>)) {
+        // A character's capsule controller is its physics presence; a static
+        // body on it would be a wall the character is stuck inside.
+        if (registry.all_of<CharacterController>(e)) continue;
+        // A kinematic nav agent moves through the ECS: it gets a kinematic
+        // body (pushed from its Transform each step), never a static wall.
+        promote.emplace_back(e, registry.all_of<NavAgent>(e) ? BodyMotion::kinematic
+                                                             : BodyMotion::static_body);
+    }
+    for (const auto& [e, motion] : promote) {
+        registry.emplace<RigidBody>(e, motion, 0.0F);
+    }
+    return promote.size();
 }
 
 std::uint32_t add_terrain_body(entt::registry& registry, physics::PhysicsWorld& world,

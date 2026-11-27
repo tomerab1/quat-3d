@@ -271,6 +271,19 @@ struct Children     { std::vector<entt::entity> entities; };
   self-correct from them). Paths from requests are confined to the project root.
 - `tools/quat-mcp` (Rust, rmcp) is the only MCP surface; the engine never
   speaks MCP itself.
+- Rust code is idiomatic and built on well-known crates — rmcp (tools via its
+  macros), serde/serde_json with typed structs, schemars, thiserror (library
+  errors) / anyhow (binary), tokio + tokio-util codecs, tracing, clap. Never
+  hand-roll what a standard crate does. `cargo fmt`, `cargo clippy
+  --all-targets -- -D warnings` (with `clippy::pedantic`, enabled in
+  `Cargo.toml`) and `cargo test`
+  must pass; no `unwrap`/`expect` outside tests; files follow the same size
+  rule as C++.
+- **No prose in source.** Text written for a model or a person (MCP server
+  instructions, tool and resource descriptions, prompts, long help text) lives
+  in Markdown files (`tools/quat-mcp/content/`) embedded with `include_str!`
+  — tool descriptions via `#[doc = include_str!(..)]` on the tool function,
+  templates rendered with MiniJinja. Only error messages stay in code.
 
 ## Physics (Jolt)
 
@@ -340,6 +353,17 @@ collider_convex(positions)     → JPH::ConvexHullShape
 - Gizmos: ImGuizmo for translate/rotate/scale handles in the viewport.
 
 ---
+
+## GPU compute first
+
+Data-parallel work belongs on the GPU as a compute pass in the render graph:
+culling (lights, instances, occlusion), skinning, particles, grass, terrain
+synthesis, histogram/reduction passes. CPU-side per-element loops over
+thousands of items per frame are a smell — move them to compute unless the
+result is needed on the CPU the same frame (then justify it, or read back
+asynchronously a frame later). Keep a CPU reference implementation where
+determinism matters (terrain seams, physics, networking) and test the GPU
+path against it.
 
 ## Threading Model
 

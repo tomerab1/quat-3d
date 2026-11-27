@@ -3,7 +3,6 @@
 #include <cstdio>
 #include <functional>
 #include <string>
-#include <unordered_map>
 #include <utility>
 
 #include <entt/entity/registry.hpp>
@@ -20,12 +19,13 @@ namespace engine::scene {
 namespace {
 
 using nlohmann::json;
+using Kind = BehaviorTreeAsset::Kind;
 
 [[nodiscard]] std::unexpected<core::Error> fail(std::string what) {
     return std::unexpected(core::Error{std::move(what)});
 }
 
-[[nodiscard]] glm::vec3 entity_pos(entt::registry& r, entt::entity e) {
+[[nodiscard]] glm::vec3 entity_pos(const entt::registry& r, entt::entity e) {
     const auto* t = r.try_get<Transform>(e);
     return t != nullptr ? glm::vec3(t->world[3]) : glm::vec3(0.0F);
 }
@@ -34,82 +34,125 @@ using nlohmann::json;
     return glm::length(glm::vec2(a.x, a.z) - glm::vec2(b.x, b.z));
 }
 
-// Leaf factories: name -> (node fields -> leaf instance). Parameters bind at
-// parse time through checked reads (tree JSON is user-authored, and the engine
-// has no exceptions — a mistyped field must fail the asset, never abort), so a
-// bad leaf name, a wrong type or an out-of-range value fails the asset, not a
-// tick. The caller rejects fields a leaf did not read (typo detection).
-using LeafFactory = std::expected<BtLeafFn, core::Error> (*)(core::JsonFields&);
+// ---------------------------------------------------------------------------
+// Built-in leaves. Parameters bind at parse time through checked reads (tree
+// JSON is user-authored, and the engine has no exceptions — a mistyped field
+// must fail the asset, never abort), so a bad leaf name, a wrong type or an
+// out-of-range value fails the asset, not a tick. The caller rejects fields a
+// leaf did not read (typo detection).
+// ---------------------------------------------------------------------------
 
-std::expected<BtLeafFn, core::Error> make_move_to(core::JsonFields& f) {
+// move_to phases (BtNodeState::scratch).
+constexpr float kMoveIdle = 0.0F;
+constexpr float kMoveRunning = 1.0F;
+constexpr float kMoveDone = 2.0F;
+
+// The agent still heads where this leaf sent it (another system — a click, a
+// different leaf — may have retargeted it since).
+[[nodiscard]] bool aimed_at(const NavAgent& agent, const glm::vec3& target) {
+    return xz_distance(agent.target, target) < 1e-3F;
+}
+
+// Ground height at (x, z) for a move_to target authored without y: the
+// navmesh surface (closest layer to the ground sampler / the agent's feet),
+// else the ground sampler, else the agent's current feet height.
+[[nodiscard]] float ground_y_at(const BtLeafContext& c, float x, float z) {
+    float reference = nav_agent_feet(c.registry, c.entity).y;
+    if (c.world.ground_height) {
+        if (const auto h = c.world.ground_height(x, z)) reference = *h;
+    }
+    if (c.world.navmesh != nullptr) {
+        if (const auto h = c.world.navmesh->surface_height(x, z, reference)) return *h;
+    }
+    return reference;
+}
+
+std::expected<BtLeaf, core::Error> make_move_to(core::JsonFields& f) {
     glm::vec3 target(0.0F);
     float speed = 3.0F;
+    const bool has_y = f.has("y");
     f.number("x", target.x).number("y", target.y).number("z", target.z);
     f.number("speed", speed, 0.0F, 1000.0F);
-    return BtLeafFn([target, speed](entt::registry& r, entt::entity e, float, float& state) {
-        auto* agent = r.try_get<NavAgent>(e);
+    BtLeaf leaf;
+    leaf.tick = [target, speed, has_y](BtLeafContext& c) {
+        auto* agent = c.registry.try_get<NavAgent>(c.entity);
         if (agent == nullptr) return BtStatus::failure;
-        if (state < 0.5F) { // not started: aim the agent
-            agent->target = target;
+        if (c.state == kMoveDone) return BtStatus::success; // held: never re-aim
+        if (agent->paused) return BtStatus::running; // held by the user (Stop)
+        if (c.state == kMoveIdle) {
+            glm::vec3 goal = target;
+            if (!has_y) goal.y = ground_y_at(c, goal.x, goal.z);
+            nav_agent_set_target(*agent, goal);
             agent->speed = speed;
-            agent->active = true;
-            agent->arrived = false;
-            agent->path.clear();
-            state = 1.0F;
+            c.state = kMoveRunning;
             return BtStatus::running;
         }
+        if (!aimed_at(*agent, target)) return BtStatus::failure; // overridden
         if (agent->arrived) {
-            state = 0.0F;
+            c.state = kMoveDone;
             return BtStatus::success;
         }
-        if (!agent->active) { // the nav system gave up (no route)
-            state = 0.0F;
-            return BtStatus::failure;
-        }
+        if (agent->failed || !agent->active) return BtStatus::failure; // gave up / stopped
         return BtStatus::running;
-    });
+    };
+    leaf.halt = [target](BtLeafContext& c) {
+        // Pre-empted: stop the walk this leaf started, unless the agent has
+        // been sent somewhere else meanwhile.
+        auto* agent = c.registry.try_get<NavAgent>(c.entity);
+        if (agent == nullptr || !agent->active || !aimed_at(*agent, target)) return;
+        agent->active = false;
+        agent->arrived = false;
+        agent->path.clear();
+    };
+    return leaf;
 }
 
-std::expected<BtLeafFn, core::Error> make_wait(core::JsonFields& f) {
+std::expected<BtLeaf, core::Error> make_wait(core::JsonFields& f) {
     float seconds = 1.0F;
     f.number("seconds", seconds, 0.0F, 1.0e6F);
-    return BtLeafFn([seconds](entt::registry&, entt::entity, float dt, float& state) {
-        state += dt;
-        if (state >= seconds) {
-            state = 0.0F;
-            return BtStatus::success;
-        }
-        return BtStatus::running;
-    });
+    BtLeaf leaf;
+    leaf.tick = [seconds](BtLeafContext& c) {
+        if (c.state >= seconds) return BtStatus::success; // held until reset
+        c.state += c.dt;
+        return c.state >= seconds ? BtStatus::success : BtStatus::running;
+    };
+    return leaf;
 }
 
-std::expected<BtLeafFn, core::Error> make_near_point(core::JsonFields& f) {
+std::expected<BtLeaf, core::Error> make_near_point(core::JsonFields& f) {
     glm::vec3 point(0.0F);
     float range = 2.0F;
     f.number("x", point.x).number("y", point.y).number("z", point.z);
     f.number("range", range, 0.0F);
-    return BtLeafFn([point, range](entt::registry& r, entt::entity e, float, float&) {
-        return xz_distance(entity_pos(r, e), point) <= range ? BtStatus::success
-                                                             : BtStatus::failure;
-    });
+    BtLeaf leaf;
+    leaf.tick = [point, range](BtLeafContext& c) {
+        return xz_distance(entity_pos(c.registry, c.entity), point) <= range
+                   ? BtStatus::success
+                   : BtStatus::failure;
+    };
+    return leaf;
 }
 
-std::expected<BtLeafFn, core::Error> make_near_camera(core::JsonFields& f) {
+std::expected<BtLeaf, core::Error> make_near_camera(core::JsonFields& f) {
     float range = 5.0F;
     f.number("range", range, 0.0F);
-    return BtLeafFn([range](entt::registry& r, entt::entity e, float, float&) {
-        for (auto [ce, cam, ct] : r.view<const Camera, const Transform>().each()) {
-            if (!cam.is_active) continue;
-            return xz_distance(entity_pos(r, e), glm::vec3(ct.world[3])) <= range
-                       ? BtStatus::success
-                       : BtStatus::failure;
+    BtLeaf leaf;
+    leaf.tick = [range](BtLeafContext& c) {
+        std::optional<glm::vec3> viewer = c.world.viewer;
+        if (!viewer) {
+            const entt::entity cam = find_active_camera(c.registry);
+            if (cam == entt::null) return BtStatus::failure; // nothing to perceive
+            viewer = entity_pos(c.registry, cam);
         }
-        return BtStatus::failure; // no perceivable camera
-    });
+        return xz_distance(entity_pos(c.registry, c.entity), *viewer) <= range
+                   ? BtStatus::success
+                   : BtStatus::failure;
+    };
+    return leaf;
 }
 
-[[nodiscard]] const std::unordered_map<std::string, LeafFactory>& leaf_factories() {
-    static const std::unordered_map<std::string, LeafFactory> factories{
+[[nodiscard]] const BtLeafFactories& builtin_leaves() {
+    static const BtLeafFactories factories{
         {"move_to", &make_move_to},
         {"wait", &make_wait},
         {"near_point", &make_near_point},
@@ -118,12 +161,31 @@ std::expected<BtLeafFn, core::Error> make_near_camera(core::JsonFields& f) {
     return factories;
 }
 
+[[nodiscard]] std::optional<Kind> composite_kind(const std::string& type) {
+    if (type == "sequence") return Kind::sequence;
+    if (type == "selector") return Kind::selector;
+    if (type == "reactive_sequence") return Kind::reactive_sequence;
+    if (type == "reactive_selector") return Kind::reactive_selector;
+    if (type == "inverter") return Kind::inverter;
+    return std::nullopt;
+}
+
 } // namespace
 
 std::expected<std::shared_ptr<const BehaviorTreeAsset>, core::Error>
-BehaviorTreeAsset::parse(std::string_view json_text) {
+BehaviorTreeAsset::parse(std::string_view json_text, const BtLeafFactories* extra_leaves) {
     const json root = json::parse(json_text, nullptr, /*allow_exceptions=*/false);
     if (root.is_discarded()) return fail("behavior tree: invalid JSON");
+
+    const auto find_factory = [&](const std::string& name) -> const BtLeafFactory* {
+        if (extra_leaves != nullptr) {
+            if (const auto it = extra_leaves->find(name); it != extra_leaves->end()) {
+                return &it->second;
+            }
+        }
+        const auto it = builtin_leaves().find(name);
+        return it != builtin_leaves().end() ? &it->second : nullptr;
+    };
 
     auto asset = std::make_shared<BehaviorTreeAsset>();
     // Depth-first flatten; returns the node's index or an error. Depth is
@@ -147,37 +209,36 @@ BehaviorTreeAsset::parse(std::string_view json_text) {
         if (type == "leaf") {
             std::string name;
             f.string("name", name, 64);
-            const auto it = leaf_factories().find(name);
-            if (it == leaf_factories().end()) {
+            const BtLeafFactory* factory = find_factory(name);
+            if (factory == nullptr) {
                 std::string known;
-                for (const auto& [k, v] : leaf_factories()) known += (known.empty() ? "" : ", ") + k;
+                for (const auto& [k, v] : builtin_leaves()) known += (known.empty() ? "" : ", ") + k;
                 return fail("behavior tree: " + where + ": unknown leaf '" + name +
                             "' (known: " + known + ")");
             }
-            auto leaf = it->second(f);
+            auto leaf = (*factory)(f);
             if (!leaf) return std::unexpected(leaf.error());
             if (auto ok = f.finish(); !ok) return fail("behavior tree: " + ok.error().message);
+            if (!leaf->tick) return fail("behavior tree: " + where + ": leaf has no tick");
             asset->nodes_[index].kind = Kind::leaf;
             asset->nodes_[index].leaf = std::move(*leaf);
             return index;
         }
 
-        Kind kind{};
-        if (type == "sequence") kind = Kind::sequence;
-        else if (type == "selector") kind = Kind::selector;
-        else if (type == "inverter") kind = Kind::inverter;
-        else {
+        const std::optional<Kind> kind = composite_kind(type);
+        if (!kind) {
             return fail("behavior tree: " + where + ": unknown node type '" + type +
-                        "' (known: leaf, sequence, selector, inverter)");
+                        "' (known: leaf, sequence, selector, reactive_sequence, "
+                        "reactive_selector, inverter)");
         }
-        asset->nodes_[index].kind = kind;
+        asset->nodes_[index].kind = *kind;
 
         const json* children = f.raw("children");
         if (auto ok = f.finish(); !ok) return fail("behavior tree: " + ok.error().message);
         if (children == nullptr || !children->is_array() || children->empty()) {
             return fail("behavior tree: " + where + ": '" + type + "' needs a children array");
         }
-        if (kind == Kind::inverter && children->size() != 1) {
+        if (*kind == Kind::inverter && children->size() != 1) {
             return fail("behavior tree: " + where + ": inverter takes exactly one child");
         }
         for (std::size_t i = 0; i < children->size(); ++i) {
@@ -194,37 +255,131 @@ BehaviorTreeAsset::parse(std::string_view json_text) {
 
 namespace {
 
-BtStatus tick_node(const BehaviorTreeAsset& tree, std::uint32_t index, entt::registry& r,
-                   entt::entity e, float dt, std::vector<float>& state) {
-    const BehaviorTreeAsset::Node& node = tree.nodes()[index];
-    switch (node.kind) {
-    case BehaviorTreeAsset::Kind::leaf:
-        return node.leaf(r, e, dt, state[index]);
-    case BehaviorTreeAsset::Kind::sequence:
-        for (const std::uint32_t c : node.children) {
-            const BtStatus s = tick_node(tree, c, r, e, dt, state);
-            if (s != BtStatus::success) return s;
+// One evaluation of one entity's tree. Nodes record the tick stamp when
+// reached; after the pass, nodes that ran last tick but were not reached are
+// aborted (pre-emption).
+struct Ticker {
+    const BehaviorTreeAsset&  tree;
+    std::vector<BtNodeState>& st;
+    entt::registry&           registry;
+    entt::entity              entity;
+    const BtWorld&            world;
+    float                     dt;
+    std::uint32_t             stamp;
+
+    void halt_and_reset(std::uint32_t i) {
+        BtNodeState& ns = st[i];
+        const BehaviorTreeAsset::Node& node = tree.nodes()[i];
+        if (ns.running && node.kind == Kind::leaf && node.leaf.halt) {
+            BtLeafContext c{registry, entity, world, dt, ns.scratch};
+            node.leaf.halt(c);
         }
-        return BtStatus::success;
-    case BehaviorTreeAsset::Kind::selector:
-        for (const std::uint32_t c : node.children) {
-            const BtStatus s = tick_node(tree, c, r, e, dt, state);
-            if (s != BtStatus::failure) return s;
+        ns = BtNodeState{};
+    }
+
+    void reset_subtree(std::uint32_t i) {
+        for (const std::uint32_t c : tree.nodes()[i].children) {
+            halt_and_reset(c);
+            reset_subtree(c);
         }
-        return BtStatus::failure;
-    case BehaviorTreeAsset::Kind::inverter: {
-        const BtStatus s = tick_node(tree, node.children[0], r, e, dt, state);
-        if (s == BtStatus::success) return BtStatus::failure;
-        if (s == BtStatus::failure) return BtStatus::success;
+    }
+
+    BtStatus tick(std::uint32_t i) {
+        const BehaviorTreeAsset::Node& node = tree.nodes()[i];
+        st[i].ticked = stamp;
+        BtStatus s = BtStatus::failure;
+        switch (node.kind) {
+        case Kind::leaf: {
+            BtLeafContext c{registry, entity, world, dt, st[i].scratch};
+            s = node.leaf.tick(c);
+            break;
+        }
+        case Kind::sequence:
+        case Kind::selector: {
+            // Memory composites: resume at the child that was running.
+            const BtStatus stop_on =
+                node.kind == Kind::sequence ? BtStatus::failure : BtStatus::success;
+            const BtStatus all_done =
+                node.kind == Kind::sequence ? BtStatus::success : BtStatus::failure;
+            s = all_done;
+            for (std::uint32_t k = st[i].child; k < node.children.size(); ++k) {
+                const BtStatus cs = tick(node.children[k]);
+                if (cs == BtStatus::running) {
+                    st[i].child = k;
+                    s = BtStatus::running;
+                    break;
+                }
+                if (cs == stop_on) {
+                    s = stop_on;
+                    break;
+                }
+            }
+            break;
+        }
+        case Kind::reactive_sequence:
+        case Kind::reactive_selector: {
+            // Re-evaluated from the first child every tick; whichever child
+            // was running before and is not reached now gets aborted.
+            const BtStatus stop_on =
+                node.kind == Kind::reactive_sequence ? BtStatus::failure : BtStatus::success;
+            s = node.kind == Kind::reactive_sequence ? BtStatus::success : BtStatus::failure;
+            for (std::uint32_t k = 0; k < node.children.size(); ++k) {
+                const BtStatus cs = tick(node.children[k]);
+                if (cs == BtStatus::running || cs == stop_on) {
+                    st[i].child = k;
+                    s = cs;
+                    break;
+                }
+            }
+            break;
+        }
+        case Kind::inverter: {
+            s = tick(node.children[0]);
+            if (s == BtStatus::success) s = BtStatus::failure;
+            else if (s == BtStatus::failure) s = BtStatus::success;
+            break;
+        }
+        }
+        if (s != BtStatus::running && node.kind != Kind::leaf) {
+            // A finished composite starts over next time: reset its subtree
+            // (halting anything a reactive branch left running).
+            reset_subtree(i);
+            st[i].child = 0;
+        }
+        st[i].running = s == BtStatus::running;
         return s;
     }
-    }
-    return BtStatus::failure;
-}
+};
 
 } // namespace
 
-void bt_system(entt::registry& registry, float dt) {
+BtStatus bt_tick(BehaviorTree& bt, entt::registry& registry, entt::entity entity,
+                 const BtWorld& world, float dt) {
+    if (bt.compiled == nullptr || bt.compiled->nodes().empty()) return BtStatus::failure;
+    const BehaviorTreeAsset& tree = *bt.compiled;
+    if (bt.node_state.size() != tree.nodes().size()) {
+        bt.node_state.assign(tree.nodes().size(), BtNodeState{});
+    }
+    // Stamps start at 1 (0 = never ticked); on wrap-around everything resets.
+    if (++bt.tick_count == 0) {
+        bt.node_state.assign(tree.nodes().size(), BtNodeState{});
+        bt.tick_count = 1;
+    }
+    Ticker t{tree, bt.node_state, registry, entity, world, dt, bt.tick_count};
+    const BtStatus status = t.tick(tree.root());
+
+    // Pre-emption: whatever was not reached this tick is aborted.
+    for (std::uint32_t i = 0; i < tree.nodes().size(); ++i) {
+        if (bt.node_state[i].ticked != bt.tick_count) t.halt_and_reset(i);
+    }
+    // A finished tree starts over next tick.
+    if (status != BtStatus::running) {
+        bt.node_state.assign(tree.nodes().size(), BtNodeState{});
+    }
+    return status;
+}
+
+void bt_system(entt::registry& registry, float dt, const BtWorld& world) {
     for (auto [e, bt] : registry.view<BehaviorTree>().each()) {
         if (!bt.enabled || bt.source.empty()) continue;
         if (bt.compiled == nullptr) {
@@ -236,102 +391,10 @@ void bt_system(entt::registry& registry, float dt) {
                 continue;
             }
             bt.compiled = std::move(*parsed);
-            bt.node_state.assign(bt.compiled->nodes().size(), 0.0F);
+            bt.node_state.assign(bt.compiled->nodes().size(), BtNodeState{});
         }
-        tick_node(*bt.compiled, bt.compiled->root(), registry, e, dt, bt.node_state);
+        (void)bt_tick(bt, registry, e, world, dt);
     }
-}
-
-// ---------------------------------------------------------------------------
-// Self-test
-// ---------------------------------------------------------------------------
-std::expected<void, core::Error> run_behavior_self_test() {
-    // Malformed trees fail to parse with an error — they used to abort the
-    // process through nlohmann's throwing accessors (S1 audit B10/C7).
-    {
-        std::string deep;
-        for (int i = 0; i < 200; ++i) deep += R"({"type":"inverter","children":[)";
-        deep += R"({"type":"leaf","name":"wait"})";
-        for (int i = 0; i < 200; ++i) deep += "]}";
-        const char* const bad[] = {
-            R"({"type":1})",
-            R"({"type":"leaf","name":"wait","seconds":"2"})",
-            R"({"type":"leaf","name":"wait","second":2})",
-            R"({"type":"leaf","name":"wait","seconds":-1})",
-            R"({"type":"leaf","name":7})",
-            R"({"type":"leaf","name":"move_to","x":[1]})",
-            R"({"type":"sequence","children":{}})",
-            R"({"type":"sequence","children":[5]})",
-            R"([1,2,3])",
-            deep.c_str(),
-        };
-        for (const char* text : bad) {
-            if (BehaviorTreeAsset::parse(text)) {
-                return fail(std::string("behavior self-test: accepted malformed tree ") +
-                            std::string(text).substr(0, 60));
-            }
-        }
-        if (!BehaviorTreeAsset::parse(R"({"type":"leaf","name":"wait","seconds":2})")) {
-            return fail("behavior self-test: rejected a valid leaf");
-        }
-    }
-
-    // The walled plate from the nav tests; the tree patrols to the far side.
-    std::vector<glm::vec3> verts;
-    std::vector<std::uint32_t> idx;
-    const auto quad = [&](glm::vec3 a, glm::vec3 b, glm::vec3 c, glm::vec3 d) {
-        const auto base = static_cast<std::uint32_t>(verts.size());
-        verts.insert(verts.end(), {a, b, c, d});
-        idx.insert(idx.end(), {base, base + 1, base + 2, base, base + 2, base + 3});
-    };
-    quad({-20.0F, 0.0F, -20.0F}, {-20.0F, 0.0F, 20.0F}, {20.0F, 0.0F, 20.0F},
-         {20.0F, 0.0F, -20.0F});
-    const float x0 = -20.0F, x1 = 12.0F, z0 = -0.5F, z1 = 0.5F, h = 3.0F;
-    quad({x0, h, z0}, {x0, h, z1}, {x1, h, z1}, {x1, h, z0});
-    quad({x0, 0.0F, z0}, {x0, h, z0}, {x1, h, z0}, {x1, 0.0F, z0});
-    quad({x1, 0.0F, z1}, {x1, h, z1}, {x0, h, z1}, {x0, 0.0F, z1});
-    quad({x1, 0.0F, z0}, {x1, h, z0}, {x1, h, z1}, {x1, 0.0F, z1});
-    auto navmesh = nav::NavMesh::build(verts, idx);
-    if (!navmesh) return std::unexpected(navmesh.error());
-
-    entt::registry registry;
-    const entt::entity e = registry.create();
-    auto& t = registry.emplace<Transform>(e);
-    t.local = glm::mat4(1.0F);
-    t.local[3] = glm::vec4(-10.0F, 0.0F, -10.0F, 1.0F);
-    t.world = t.local;
-    registry.emplace<NavAgent>(e);
-    auto& bt = registry.emplace<BehaviorTree>(e);
-    bt.source = R"({"type":"selector","children":[
-        {"type":"sequence","children":[
-            {"type":"leaf","name":"near_point","x":-10,"z":10,"range":1.5},
-            {"type":"leaf","name":"wait","seconds":0.5}]},
-        {"type":"leaf","name":"move_to","x":-10,"z":10,"speed":4}]})";
-
-    for (int i = 0; i < 60 * 60; ++i) {
-        bt_system(registry, 1.0F / 60.0F);
-        nav_agent_system(registry, *navmesh, 1.0F / 60.0F);
-    }
-    if (bt.parse_failed || bt.compiled == nullptr) {
-        return std::unexpected(core::Error{"behavior self-test: tree failed to compile"});
-    }
-    const glm::vec3 final_pos(registry.get<Transform>(e).world[3]);
-    if (xz_distance(final_pos, glm::vec3(-10.0F, 0.0F, 10.0F)) > 2.0F) {
-        return std::unexpected(
-            core::Error{"behavior self-test: move_to leaf did not reach the patrol point"});
-    }
-    // After arrival the selector's first branch runs: the wait timer must tick.
-    bool wait_ticked = false;
-    for (int i = 0; i < 20 && !wait_ticked; ++i) {
-        bt_system(registry, 1.0F / 60.0F);
-        // Node order (DFS): 0 selector, 1 sequence, 2 near_point, 3 wait, 4 move_to.
-        wait_ticked = bt.node_state.size() > 3 && bt.node_state[3] > 0.0F;
-    }
-    if (!wait_ticked) {
-        return std::unexpected(
-            core::Error{"behavior self-test: wait leaf never ran after arrival"});
-    }
-    return {};
 }
 
 } // namespace engine::scene

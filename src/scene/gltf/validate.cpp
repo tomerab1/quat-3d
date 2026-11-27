@@ -44,12 +44,11 @@ namespace gltf_detail {
 // (they are written by index into arrays sized from it), and the node graph
 // must be a forest (each node has at most one parent, no cycles) because
 // scene assembly, skin extraction and world-matrix resolution recurse over
-// it. fastgltf::validate covers the spec's general rules on top.
+// it. fastgltf::validate is deliberately NOT used: it enforces the whole
+// spec (e.g. POSITION min/max) and rejects files real exporters produce and
+// the loader handles fine — these checks cover exactly what the loader
+// dereferences.
 [[nodiscard]] std::expected<void, core::Error> validate_asset(const fastgltf::Asset& asset) {
-    if (const fastgltf::Error e = fastgltf::validate(asset); e != fastgltf::Error::None) {
-        return fail(std::string("glTF failed validation: ") +
-                    std::string(fastgltf::getErrorMessage(e)));
-    }
     const std::size_t n_acc = asset.accessors.size();
     const std::size_t n_nodes = asset.nodes.size();
 

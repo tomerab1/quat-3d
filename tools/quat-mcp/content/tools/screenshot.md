@@ -1,0 +1,1 @@
+Capture the engine viewport as a PNG image so you can see the world. Returns the image plus its size. Position the camera first (`camera_frame` or `camera_set`). Use after building to check proportions, placement (floating or buried objects), colours and lighting, then fix and look again.

@@ -428,6 +428,19 @@ glm::vec3 PhysicsWorld::character_position(std::uint32_t character) const {
     return c != nullptr ? to_glm(c->GetPosition()) : glm::vec3(0.0F);
 }
 
+void PhysicsWorld::character_set_position(std::uint32_t character, const glm::vec3& position) {
+    JPH::CharacterVirtual* c = impl_->character(character);
+    if (c == nullptr) return;
+    c->SetPosition(to_jph_r(position));
+    // SetPosition keeps the contacts of the old location; re-detect them so
+    // the ground state and the next update start from the new one.
+    const JPH::ObjectLayer layer = object_layer_of(Layer::character);
+    const JPH::DefaultBroadPhaseLayerFilter bp_filter(impl_->obj_vs_bp, layer);
+    const JPH::DefaultObjectLayerFilter obj_filter(impl_->obj_pair, layer);
+    c->RefreshContacts(bp_filter, obj_filter, JPH::BodyFilter{}, JPH::ShapeFilter{},
+                       *impl_->temp_allocator);
+}
+
 bool PhysicsWorld::character_on_ground(std::uint32_t character) const {
     const JPH::CharacterVirtual* c = impl_->character(character);
     return c != nullptr && c->GetGroundState() == JPH::CharacterBase::EGroundState::OnGround;

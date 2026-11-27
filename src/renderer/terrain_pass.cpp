@@ -414,7 +414,7 @@ run_terrain_pass_self_test(const rhi::Device& device, rhi::GpuAllocator& allocat
 
     rhi::TransientImagePool pool(device, allocator);
     rhi::RenderGraph graph(pool);
-    auto targets = mesh_pass->add_to_graph(graph, extent, vp, {}); // clears only
+    auto targets = mesh_pass->add_to_graph(graph, extent, vp, InstancedDrawList{}); // clears only
     if (!targets) return std::unexpected(targets.error());
     pass->add_to_graph(graph, *targets, extent, vp, eye, glm::vec3(128.0F, 0.0F, 128.0F),
                        /*snowline=*/1000.0F);

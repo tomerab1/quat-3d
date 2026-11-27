@@ -1,0 +1,1 @@
+Spawn a glTF model (path from `asset_list_models`) into the scene, optionally named, parented and with extra components on its root (e.g. a transform to place and scale it). Returns `{roots: [ids]}` — the model's top-level entities. Animated models get an animator component.

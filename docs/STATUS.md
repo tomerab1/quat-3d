@@ -10,8 +10,8 @@ _Last updated: 2026-11-27._
 ## How work runs
 
 As repeated improvement cycles — see [`CYCLE.md`](CYCLE.md) (up to 8 parallel
-worktree agents per cycle, a scheduled cloud session every 2 hours, one PR per
-cycle) and [`LEARNINGS.md`](LEARNINGS.md).
+worktree agents per cycle, a scheduled task every 2 hours that resumes the
+live session, one PR per cycle, merged once its CI is green) and [`LEARNINGS.md`](LEARNINGS.md).
 
 ## Current focus
 
@@ -31,21 +31,22 @@ Decisions already made (do not re-litigate without the owner):
 
 ## Claimed by the live session (do not pick up)
 
-Worktree agents running in the orchestrating session on 2026-11-27; their
-branches merge into `claude/nifty-hopper-nb68qe` (PR #1):
+Cycle 1's eight worker branches are merged into `claude/nifty-hopper-nb68qe`
+(PR #2) and await a green CI run there (run 8 on 473ec53).
 
-| Item | Branch |
-|---|---|
-| R9.1 instanced draws | `feat/r9-instancing` |
-| A2/A3 remote world commands, Primitive resolve, screenshots | `feat/a2-world-commands` |
-| G1 audio (miniaudio) | `feat/g1-audio` |
-| S1 nav/NPC fixes N1–N6, N8, N10, N12, N13 | `feat/s1-nav-fixes` |
-| S3.2 legacy self-tests → GoogleTest (animation, terrain, asset, remote, rhi) | `feat/s3-test-migration` |
-| S1 networking fixes B1–B5, B15 | `feat/s1-net-fixes` |
-| S1 TAA + exposure fixes A1, A2, A14, A11 | `feat/s1-taa` |
+**Cycle 2** — eight worktree agents started from 473ec53; each pushes
+`feat/<id>`. Merges wait until PR #2 is merged (merged as soon as its CI is green), then go into a new cycle PR.
 
-If this table is still here and those branches are not on the remote, the
-live session ended before merging them: treat the items as unclaimed.
+| Item | Branch | Scope |
+|---|---|---|
+| S7.3 | `feat/s7-app-layer` | main.cpp → app layer (Application, FrameRenderer, EditorBridge, WorldRuntime, FlyCamera); fixes the ENGINE_EDITOR=OFF build. **Sole main.cpp restructurer** |
+| G2 | `feat/g2-bt-editor` | Behaviour-tree node editor on imgui-node-editor; JSON ↔ graph model |
+| A5 | `feat/a5-debug-tools` | `debug.*` remote methods (log ring, stats, pause/step/time scale, watch, raycast, nav path) + quat-mcp tools |
+| R9.2 | `feat/r9-scatter` | `InstancedMesh` + seeded `Scatter` on terrain |
+| R10.2 | `feat/r10-gpu-terrain` | Compute-shader heightmap synthesis, CPU reference kept |
+| R2 | `feat/r2-shader-reload` | Shader hot reload (watcher, slangc service, deferred pipeline swap) |
+| S1 batch 2 | `feat/s1-batch2` | B14, C5 joints, C11, C12, C14, C15, C16, A10, A15 |
+| S4/P1 | `feat/s4-platform-ci` | Windows + macOS CI jobs and portability fixes |
 
 ## Work in flight
 
@@ -93,8 +94,11 @@ top.
 - No very long files: aim under ~600 lines per `.cpp`, split past ~1000 (S8).
 - Tests in GoogleTest under `tests/`; no new `run_*_self_test()` functions.
 - Behaviour/shader node editors use `imgui-node-editor` (thedmd, vcpkg port).
+- Use compute shaders wherever data-parallel work can move to the GPU (CLAUDE.md "GPU compute first", ROADMAP R10).
 - Instancing for trees/grass is wanted (R9); the owner recalls navmesh/NPC bugs — a dedicated nav audit is part of S1.
 - Keep `README.md` human-readable and current; keep this file current.
+- Merge a cycle PR once its CI is fully green (CYCLE.md "Merge rule").
+- `tools/quat-mcp`: idiomatic Rust built on well-known crates (rmcp, serde, schemars, thiserror/anyhow, tokio-util codecs, tracing, clap) — never hand-roll what a standard crate does.
 
 ## Blockers
 

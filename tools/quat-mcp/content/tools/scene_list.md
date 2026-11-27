@@ -1,0 +1,1 @@
+List entities: `{total, entities:[{id, name, parent, components, world_position}]}`. Filter by name substring or by component; page with `limit` (default 100) and `offset`. Use the returned ids to reference entities.

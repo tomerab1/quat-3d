@@ -9,14 +9,11 @@
 // time and maps the target node onto a skeleton joint.
 
 #include <cstdint>
-#include <expected>
 #include <string>
 #include <vector>
 
 #include <glm/glm.hpp>
 #include <glm/gtc/quaternion.hpp>
-
-#include "engine/core/error.hpp"
 
 namespace engine::animation {
 
@@ -54,9 +51,5 @@ struct AnimClipAsset {
 
     [[nodiscard]] bool valid() const noexcept { return !channels.empty(); }
 };
-
-// Builds a clip in code (translation LINEAR, scale STEP, rotation slerp) and
-// verifies sampling at several times, including clamping past the ends.
-[[nodiscard]] std::expected<void, core::Error> run_clip_self_test();
 
 } // namespace engine::animation

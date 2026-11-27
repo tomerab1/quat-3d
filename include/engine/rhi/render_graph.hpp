@@ -17,7 +17,10 @@ class Device;
 
 // How a pass touches a resource. Determines the image layout the resource must
 // be in for that pass, plus the pipeline-stage / access masks used to build the
-// VkImageMemoryBarrier2 that synchronises it with prior accesses.
+// VkImageMemoryBarrier2 / VkBufferMemoryBarrier2 that synchronises it with prior
+// accesses. Image resources take the image usages (and transfer_src/dst);
+// buffer resources take the buffer_* usages (and transfer_src/dst) — compile()
+// rejects any other pairing.
 enum class ResourceUsage : std::uint8_t {
     color_attachment,
     depth_attachment,
@@ -26,9 +29,12 @@ enum class ResourceUsage : std::uint8_t {
     storage_read,     // read in a shader as a storage image
     storage_write,    // written in a shader as a storage image
     storage_read_write, // read-modify-write of a storage image (e.g. bloom composite)
-    transfer_src,
-    transfer_dst,
+    transfer_src,     // image or buffer copy source
+    transfer_dst,     // image or buffer copy/fill destination
     present,
+    buffer_read_compute,   // storage/uniform buffer read in a compute shader
+    buffer_write_compute,  // storage buffer written (incl. atomics / read-back) in compute
+    buffer_read_fragment,  // storage/uniform buffer read in a fragment shader
 };
 
 // Coarse pass category. Only affects nothing in barrier planning today (stages
@@ -44,11 +50,15 @@ struct ResourceHandle {
 };
 
 // Concrete Vulkan objects backing a graph resource, resolved at compile time.
+// Image resources fill image/view/format/extent; buffer resources fill
+// buffer/size.
 struct ResourceBinding {
-    VkImage     image  = VK_NULL_HANDLE;
-    VkImageView view   = VK_NULL_HANDLE;
-    VkFormat    format = VK_FORMAT_UNDEFINED;
-    VkExtent2D  extent{};
+    VkImage      image  = VK_NULL_HANDLE;
+    VkImageView  view   = VK_NULL_HANDLE;
+    VkFormat     format = VK_FORMAT_UNDEFINED;
+    VkExtent2D   extent{};
+    VkBuffer     buffer = VK_NULL_HANDLE;
+    VkDeviceSize size   = 0;
 };
 
 // Pools transient (graph-owned) images keyed by (format, extent, usage) so the
@@ -151,6 +161,18 @@ public:
                                 VkPipelineStageFlags2 available_stage = VK_PIPELINE_STAGE_2_NONE,
                                 VkAccessFlags2 available_access = 0);
 
+    // Import an externally-owned buffer (whole range). Buffers have no layout;
+    // the graph orders passes by their buffer reads/writes and plans
+    // VkBufferMemoryBarrier2s for the hazards between them (RAW, WAR, WAW).
+    // `available_stage` / `available_access` work as for import_image: what
+    // the first access must wait for (NONE when the buffer is idle — e.g. a
+    // per-frame-slot buffer whose previous use was fence-waited, or one only
+    // written by the host before submission, which vkQueueSubmit already makes
+    // visible).
+    ResourceHandle import_buffer(const char* name, VkBuffer buffer, VkDeviceSize size,
+                                 VkPipelineStageFlags2 available_stage = VK_PIPELINE_STAGE_2_NONE,
+                                 VkAccessFlags2 available_access = 0);
+
     // Declare a graph-managed transient image. Backed by the transient pool at
     // compile time. `usage` must cover every way passes touch it.
     ResourceHandle create_transient_image(const char* name, VkFormat format,
@@ -173,13 +195,17 @@ public:
     [[nodiscard]] PassBuilder add_pass(const char* name, PassType type);
 
     // Allocate transient images, topologically order passes by their resource
-    // dependencies, and plan every barrier. Errors on a dependency cycle or a
-    // failed transient allocation.
+    // dependencies, and plan every barrier. Errors on a dependency cycle, a
+    // failed transient allocation, or a usage that does not fit the resource
+    // kind (an image usage on a buffer or vice versa).
     [[nodiscard]] std::expected<void, core::Error> compile();
 
     // Barriers compile() planned to run before the pass named `pass_name`
     // (empty if none or unknown). For tests and debugging tools.
     [[nodiscard]] std::vector<VkImageMemoryBarrier2> planned_barriers(std::string_view pass_name) const;
+    // Buffer barriers compile() planned to run before `pass_name`.
+    [[nodiscard]] std::vector<VkBufferMemoryBarrier2>
+    planned_buffer_barriers(std::string_view pass_name) const;
 
     // Replay the compiled plan into `cmd`: barriers then execute lambda, per
     // pass in dependency order, followed by trailing import final-layout barriers.
@@ -204,6 +230,9 @@ private:
     struct Resource {
         std::string       name;
         bool              imported = false;
+        bool              is_buffer = false;              // imported buffer (no layout)
+        VkBuffer          buffer = VK_NULL_HANDLE;
+        VkDeviceSize      buffer_size = 0;
         VkImage           image  = VK_NULL_HANDLE;
         VkImageView       view   = VK_NULL_HANDLE;
         VkFormat          format = VK_FORMAT_UNDEFINED;
@@ -234,6 +263,7 @@ private:
     // Filled by compile():
     std::vector<std::uint32_t>                      order_;          // pass indices
     std::vector<std::vector<VkImageMemoryBarrier2>> pass_barriers_;  // per order_ slot
+    std::vector<std::vector<VkBufferMemoryBarrier2>> pass_buffer_barriers_; // per order_ slot
     std::vector<VkImageMemoryBarrier2>              final_barriers_;
 };
 

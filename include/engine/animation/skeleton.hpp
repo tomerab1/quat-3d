@@ -9,15 +9,12 @@
 // this hierarchy to produce skinning matrices (joint_world * inverse_bind).
 
 #include <cstdint>
-#include <expected>
 #include <span>
 #include <string>
 #include <vector>
 
 #include <glm/glm.hpp>
 #include <glm/gtc/quaternion.hpp>
-
-#include "engine/core/error.hpp"
 
 namespace engine::animation {
 
@@ -56,9 +53,5 @@ compute_world_matrices(const SkeletonAsset& skeleton, std::span<const glm::mat4>
 
 // World-space joint matrices for the bind pose (every joint at its bind TRS).
 [[nodiscard]] std::vector<glm::mat4> compute_bind_world(const SkeletonAsset& skeleton);
-
-// Builds a small two-joint skeleton in code and verifies local_bind, the
-// hierarchy walk, and that inverse-bind round-trips the bind pose to identity.
-[[nodiscard]] std::expected<void, core::Error> run_skeleton_self_test();
 
 } // namespace engine::animation
