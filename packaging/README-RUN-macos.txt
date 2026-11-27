@@ -3,15 +3,20 @@ quat-3d - macOS (Apple Silicon)
 
 Run
 ---
-The first time: right-click (or Control-click) Quat3D.app -> Open, then
-confirm with Open. The app is ad-hoc signed but not notarized, so a plain
-double-click is refused by Gatekeeper ("cannot be opened because the
-developer cannot be verified"); after the first right-click -> Open it
-starts normally. (On recent macOS versions you may instead have to allow it
-under System Settings -> Privacy & Security -> "Open Anyway".) If macOS says
-the app "is damaged", remove the download quarantine flag:
+The app is ad-hoc signed but not notarized, so the first launch of a
+downloaded copy is blocked by Gatekeeper ("Apple could not verify ..." /
+"cannot be opened"). Allow it once, either way:
 
-    xattr -dr com.apple.quarantine Quat3D.app
+  - Double-click Quat3D.app, dismiss the dialog, then open
+    System Settings -> Privacy & Security, scroll to Security and click
+    "Open Anyway" next to Quat3D, and confirm (macOS 15 and later; on
+    macOS 14, right-click the app -> Open -> Open also works).
+  - Or, in Terminal, remove the download quarantine flag (also fixes an
+    "is damaged and can't be opened" message):
+
+        xattr -dr com.apple.quarantine Quat3D.app
+
+After that it opens normally with a double-click.
 
 The editor opens with a showcase scene. Hold the right mouse button in the
 viewport and use WASD to fly; W/E/R switch the gizmo between move, rotate

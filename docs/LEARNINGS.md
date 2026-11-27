@@ -26,6 +26,14 @@ into CLAUDE.md or the brief template in [`CYCLE.md`](CYCLE.md).
 
 ## Build and CI
 
+- **Paths in `std::string` are UTF-8; convert at the boundary.** On MSVC
+  `fs::path(std::string)` and `.string()` use the ANSI code page, so a
+  release unpacked under a non-ASCII directory broke (and `.string()` aborts
+  on unrepresentable characters without exceptions). Build paths with
+  `engine::core::path_from_utf8`, read them back with `path_to_utf8` /
+  `path_to_generic_utf8` (`engine/core/utf8_path.hpp`); SDL (`SDL_getenv`,
+  `SDL_GetBasePath`), ImGui, JSON and child-process arguments are UTF-8. The
+  release smoke test unpacks into `smoke dir ü` to keep it honest.
 - **Release packaging (P4) gotchas.** Explicit `shell: bash` steps run with
   `-eo pipefail` (the default macOS/Linux shell does not), so `ls a b | head`
   lookups and early-exiting `awk` readers fail scripts there; Git Bash on

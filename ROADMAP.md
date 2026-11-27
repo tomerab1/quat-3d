@@ -184,6 +184,12 @@ JSON-RPC over loopback TCP to the engine.
 - [ ] **P6 — Release builds.** Tag-driven GitHub Releases with Linux,
   Windows and macOS (Vulkan-on-Metal) archives the owner can download and
   run; runtime asset-root resolution; smoke-tested in CI.
+- [ ] **P7 — Signed releases.** Follow-up to P6: Developer ID signing +
+  notarization (stapled) of the macOS .app so it opens with a plain
+  double-click, Authenticode signing of the Windows build (SmartScreen);
+  credentials as CI secrets, signing skipped on forks. Bundle a MoltenVK /
+  Vulkan loader built for the engine's macOS 14 minimum (Homebrew bottles
+  raise it to the runner's OS).
 - [ ] **P4 — Game packaging.** Engine-as-library + game project template,
   editor vs runtime builds, cooked asset bundles, shipping config, depot layout.
 - [ ] **P5 — Native Metal backend.** On top of P2.

@@ -15,6 +15,9 @@ Requirements
   driver, or Mesa for AMD/Intel (Debian/Ubuntu: mesa-vulkan-drivers) - and
   the Vulkan loader (libvulkan1). Check with `vulkaninfo --summary`
   (package vulkan-tools).
+- glibc 2.39 or newer (built on Ubuntu 24.04): Ubuntu 24.04+, Debian 13+,
+  Fedora 40+, or any distribution of that age. Older systems fail at start
+  with "version `GLIBC_2.39' not found". Check with `ldd --version`.
 - X11 or Wayland. The C++ runtime (libc++) ships in lib/ and is found through
   the game's RUNPATH ($ORIGIN/lib): keep the folder together.
 

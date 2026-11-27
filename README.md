@@ -87,9 +87,9 @@ and troubleshooting.
 
 | Download | Run |
 |---|---|
-| `quat-3d-<version>-linux-x64.tar.gz` | `tar xzf quat-3d-*-linux-x64.tar.gz && ./quat-3d-*/game`. Needs the system Vulkan loader and a Vulkan 1.3 driver (Mesa or NVIDIA; `sudo apt install libvulkan1 mesa-vulkan-drivers`); the C++ runtime ships in `lib/`. |
+| `quat-3d-<version>-linux-x64.tar.gz` | `tar xzf quat-3d-*-linux-x64.tar.gz && ./quat-3d-*/game`. Needs the system Vulkan loader and a Vulkan 1.3 driver (Mesa or NVIDIA; `sudo apt install libvulkan1 mesa-vulkan-drivers`); the C++ runtime ships in `lib/`. Built on Ubuntu 24.04: needs glibc 2.39+ (Ubuntu 24.04, Debian 13, Fedora 40 or newer). |
 | `quat-3d-<version>-windows-x64.zip` | Unzip, run `game.exe`. Needs a current GPU driver (it provides `vulkan-1.dll`); the libraries and MSVC runtime are in the folder. The build is not code-signed: SmartScreen → *More info* → *Run anyway*. |
-| `quat-3d-<version>-macos-arm64.zip` | Unzip, then **right-click `Quat3D.app` → Open → Open** the first time: the app is ad-hoc signed but not notarized, so Gatekeeper refuses a plain double-click (on newer macOS: System Settings → Privacy & Security → *Open Anyway*). MoltenVK and the Vulkan loader are inside the app. Apple Silicon, macOS 15 or later today (the bundled Vulkan libraries come from Homebrew; the engine itself targets macOS 14). |
+| `quat-3d-<version>-macos-arm64.zip` | Unzip and double-click `Quat3D.app`. The app is ad-hoc signed but not notarized (signing is ROADMAP P7), so Gatekeeper blocks the first launch: dismiss the dialog, then **System Settings → Privacy & Security → *Open Anyway*** (macOS 15+; on macOS 14 right-click → Open also works) — or run `xattr -dr com.apple.quarantine Quat3D.app` once. MoltenVK and the Vulkan loader are inside the app. Apple Silicon, macOS 15 or later today (the bundled Vulkan libraries come from Homebrew; the engine itself targets macOS 14). |
 
 Environment variables (see [Running](#running)) work with the packaged game
 too; on macOS launch `Quat3D.app/Contents/MacOS/game` from Terminal to set
