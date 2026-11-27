@@ -196,6 +196,10 @@ public:
                             const std::string& shader_dir);
     // Command buffers and frame synchronisation.
     void create_frame_sync();
+    // Shadow coverage: 0 keeps the fixed box around the origin the small
+    // demos sit in; > 0 fits the map to that many metres of the camera's view
+    // (large outdoor scenes, renderer/shadow_fit.hpp).
+    void set_shadow_view_distance(float metres) { shadow_view_distance_ = metres; }
     // QUAT_SCREENSHOT: the final frame is written to `path` as binary PPM.
     void set_screenshot_path(std::optional<std::string> path) {
         screenshot_path_ = std::move(path);
@@ -254,6 +258,7 @@ private:
     // loop accumulates cloud_time_s_ to drive the wind drift (always, like the
     // animated sky in other engines — not gated on play mode).
     float cloud_time_s_ = 0.0F;
+    float shadow_view_distance_ = 0.0F; // see set_shadow_view_distance
 
     // Temporal state shared by both slots (audit A2 / A11): one TAA history and
     // one adapted luminance, each advanced exactly once per frame. Declared

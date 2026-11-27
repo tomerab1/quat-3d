@@ -358,6 +358,7 @@ add_library(engine_renderer STATIC
     src/renderer/tonemap_pass.cpp
     src/renderer/skinning_pass.cpp
     src/renderer/shadow_pass.cpp
+    src/renderer/shadow_fit.cpp
     src/renderer/transparent_pass.cpp
     src/renderer/ibl_pass.cpp
     src/renderer/dynamic_ibl.cpp

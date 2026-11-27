@@ -8,6 +8,7 @@
 #include "app/grass_runtime.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 
@@ -16,6 +17,7 @@
 #include "engine/asset/material_asset.hpp"
 #include "engine/asset/mesh_asset.hpp"
 #include "engine/renderer/ibl_pass.hpp"
+#include "engine/renderer/shadow_fit.hpp"
 #include "engine/renderer/terrain_pass.hpp"
 #include "engine/rhi/device.hpp"
 #include "engine/rhi/swapchain.hpp"
@@ -222,9 +224,19 @@ FrameScene FrameRenderer::gather(engine::scene::Scene& scene,
         }
     }
 
-    // Directional shadow: an orthographic light view fit to a fixed box
-    // around the scene (the demos all sit near the origin).
+    // Directional shadow: an orthographic light view fit to the camera's
+    // view, or to a fixed box around the origin (the small demos sit there).
     const glm::vec3 sun_dir = -glm::normalize(glm::vec3(light.direction)); // travel direction
+    if (shadow_view_distance_ > 0.0F) {
+        const float fov_y = 2.0F * std::atan(1.0F / std::abs(cam.projection[1][1]));
+        const float aspect = std::abs(cam.projection[1][1] / cam.projection[0][0]);
+        out.light_view_proj = engine::renderer::fit_shadow_to_view(
+            glm::inverse(cam.view), fov_y, aspect, sun_dir,
+            {.distance = shadow_view_distance_,
+             .caster_reach = shadow_view_distance_,
+             .map_size = engine::renderer::shadow_map_size});
+        return out;
+    }
     const glm::vec3 shadow_center(0.0F, 1.5F, 0.0F);
     constexpr float shadow_radius = 14.0F;
     const glm::vec3 light_eye = shadow_center - sun_dir * (shadow_radius * 1.5F);
