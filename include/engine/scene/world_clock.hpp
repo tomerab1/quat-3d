@@ -45,6 +45,8 @@ struct WorldClock {
     // DirectionalLight.intensity with the whole Sun above the horizon
     // (renderer units, as dir_light.intensity).
     float sun_intensity = 3.0F;
+
+    friend bool operator==(const WorldClock&, const WorldClock&) = default;
 };
 
 inline constexpr double k_max_clock_time_scale = 1.0e6;

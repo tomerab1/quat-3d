@@ -43,6 +43,7 @@ constexpr CodecIcon k_codec_icons[] = {
     {"audio_source", icon::volume_2},    {"audio_listener", icon::ear},
     {"animator", icon::clapperboard},    {"mesh", icon::box},
     {"material", icon::palette},         {"foot_ik", icon::footprints},
+    {"world_clock", icon::clock_3},
 };
 
 [[nodiscard]] std::optional<nlohmann::json> encode_one(const entt::registry& r, entt::entity e,

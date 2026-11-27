@@ -16,12 +16,14 @@
 #include "audio_inspector.hpp"
 #include "behavior_panel.hpp"
 #include "grass_inspector.hpp"
+#include "time_of_day_panel.hpp"
 #include "tuning_panels.hpp"
 #include "engine/editor/editor.hpp"
 #include "engine/scene/behavior.hpp"
 #include "engine/scene/components.hpp"
 #include "engine/scene/scatter.hpp"
 #include "engine/scene/scene.hpp"
+#include "engine/scene/world_clock.hpp"
 #include "inspector_world.hpp"
 #include "panels/inspector_parts.hpp"
 #include "shell/panels.hpp"
@@ -130,6 +132,17 @@ struct ComponentInspector<scene::Grass> {
     static constexpr const char* codec = "grass";
     static constexpr const char* icon = icon::sprout;
     static void draw(entt::registry&, entt::entity, scene::Grass& grass) { draw_grass(grass); }
+};
+
+template <>
+struct ComponentInspector<scene::WorldClock> {
+    static constexpr const char* title = "World Clock";
+    static constexpr const char* codec = "world_clock";
+    static constexpr const char* icon = icon::clock_3;
+    static constexpr bool property_grid = true;
+    static void draw(entt::registry& r, entt::entity e, scene::WorldClock& clock) {
+        draw_world_clock(r, e, clock);
+    }
 };
 
 template <>
@@ -530,6 +543,7 @@ void draw_inspector(scene::Scene& scene, entt::entity selected, panels::Inspecto
     inspect<scene::FootIK>(state, r, selected, true);
     inspect<scene::Terrain>(state, r, selected, true);
     inspect<scene::Grass>(state, r, selected, true);
+    inspect<scene::WorldClock>(state, r, selected, true);
     inspect<scene::InstancedMesh>(state, r, selected, true); // removal takes parts + scatter
     inspect<scene::Scatter>(state, r, selected, true);
     inspect<scene::NavAgent>(state, r, selected, true);

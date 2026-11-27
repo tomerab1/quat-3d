@@ -7,15 +7,19 @@
 
 #include <entt/entity/registry.hpp>
 #include <glm/gtc/matrix_transform.hpp>
+#include <nlohmann/json.hpp>
 
 #include "engine/asset/asset_manager.hpp"
 #include "engine/asset/material_asset.hpp"
 #include "engine/asset/mesh_asset.hpp"
 #include "engine/rhi/gpu_allocator.hpp"
+#include "engine/scene/component_json.hpp"
 #include "engine/scene/components.hpp"
 #include "engine/scene/gltf_loader.hpp"
 #include "engine/scene/primitives.hpp"
 #include "engine/scene/scene.hpp"
+#include "engine/scene/world_clock.hpp"
+#include "engine/scene/world_clock_json.hpp"
 
 namespace quat::app {
 
@@ -389,6 +393,45 @@ if (std::getenv("QUAT_TERRAIN") != nullptr) {
     grass.settings.height_m = glm::vec2(-10000.0F, t.snowline_m - 5.0F); // none on the snow
     std::fprintf(stderr, "[terrain] QUAT_TERRAIN tile requested\n");
 }
+}
+
+void add_env_world_clock(engine::scene::Scene& scene) {
+    const char* when = std::getenv("QUAT_TIME");
+    if (when == nullptr) return;
+    nlohmann::json clock = {{"datetime", when}};
+    if (const char* where = std::getenv("QUAT_LATLON"); where != nullptr) {
+        char*        end = nullptr;
+        const double lat = std::strtod(where, &end);
+        const bool   comma = end != where && *end == ',';
+        const double lon = comma ? std::strtod(end + 1, &end) : 0.0;
+        if (!comma || *end != '\0') {
+            std::fprintf(stderr, "[time] QUAT_LATLON='%s': expected <latitude>,<longitude> in degrees\n",
+                         where);
+            return;
+        }
+        clock["latitude_deg"] = lat;
+        clock["longitude_deg"] = lon;
+    }
+    if (const char* scale = std::getenv("QUAT_TIME_SCALE"); scale != nullptr) {
+        char*        end = nullptr;
+        const double v = std::strtod(scale, &end);
+        if (end == scale || *end != '\0') {
+            std::fprintf(stderr, "[time] QUAT_TIME_SCALE='%s': expected a number\n", scale);
+            return;
+        }
+        clock["time_scale"] = v;
+    }
+    // The scene codec validates every field (the same rules as time.set).
+    const entt::entity e = scene.create_entity("world_clock");
+    if (auto ok = engine::scene::apply_component(scene.registry(), e, "world_clock", clock, true); !ok) {
+        std::fprintf(stderr, "[time] QUAT_TIME ignored: %s\n", ok.error().message.c_str());
+        scene.registry().destroy(e);
+        return;
+    }
+    engine::scene::apply_world_clock(scene.registry());
+    const auto& c = scene.registry().get<engine::scene::WorldClock>(e);
+    std::fprintf(stderr, "[time] world clock at %s (%.4f, %.4f)\n",
+                 engine::scene::world_clock_datetime(c).c_str(), c.latitude_deg, c.longitude_deg);
 }
 
 } // namespace quat::app

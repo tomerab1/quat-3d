@@ -184,6 +184,8 @@ bool Application::init_subsystems() {
     }
 
     add_default_lighting(scene_, !world_.from_gltf(), world_.demo_root());
+    // QUAT_TIME: a world clock places the sun before the sky is first baked.
+    add_env_world_clock(scene_);
     // Atmosphere LUTs + dynamic IBL probe, lit by the scene's sun.
     renderer_.create_environment(scene_, pipeline_cache_, shader_dir_);
     // Terrain, networking (QUAT_HOST / QUAT_JOIN) and the QUAT_TERRAIN tile.

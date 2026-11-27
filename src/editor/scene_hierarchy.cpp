@@ -12,6 +12,7 @@
 
 #include "engine/scene/components.hpp"
 #include "engine/scene/scene.hpp"
+#include "engine/scene/world_clock.hpp"
 #include "scene_snapshot.hpp"
 #include "shell/scene_actions.hpp"
 #include "ui/fonts.hpp"
@@ -198,6 +199,7 @@ const char* entity_type_icon(const entt::registry& r, entt::entity e) {
     if (r.all_of<scene::PointLight>(e)) return icon::lightbulb;
     if (r.all_of<scene::Terrain>(e)) return icon::mountain;
     if (r.all_of<scene::Grass>(e)) return icon::sprout;
+    if (r.all_of<scene::WorldClock>(e)) return icon::clock_3;
     if (r.all_of<scene::AudioSource>(e)) return icon::volume_2;
     if (r.all_of<scene::AudioListener>(e)) return icon::ear;
     if (r.all_of<scene::CharacterController>(e)) return icon::person_standing;

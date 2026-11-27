@@ -71,4 +71,11 @@ void add_default_lighting(engine::scene::Scene& scene, bool fill_lights,
 // QUAT_TERRAIN=1: a procedural terrain tile sunk under the scene.
 void add_env_terrain(engine::scene::Scene& scene);
 
+// QUAT_TIME=<ISO-8601 date-time>: a world clock (R22.1) that drives the sun,
+// with QUAT_LATLON=<lat>,<lon> (degrees; default Paris) and
+// QUAT_TIME_SCALE=<clock seconds per second> (default 1; 0 freezes it, as
+// the CI sunrise / noon / sunset screenshots do). Invalid values are
+// reported on stderr and ignored.
+void add_env_world_clock(engine::scene::Scene& scene);
+
 } // namespace quat::app

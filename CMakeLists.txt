@@ -519,6 +519,7 @@ if(ENGINE_EDITOR)
         src/editor/scene_hierarchy.cpp
         src/editor/inspector.cpp
         src/editor/tuning_panels.cpp
+        src/editor/time_of_day_panel.cpp
         src/editor/asset_browser.cpp
         src/editor/animation_preview.cpp
         src/editor/physics_debug.cpp

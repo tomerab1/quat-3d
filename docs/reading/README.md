@@ -132,6 +132,24 @@ If you read only a few things, read these. They underpin most of the engine.
 | 🗺 | **Volumetric Fog: Unified Compute Shader-Based Solution to Atmospheric Scattering** — Wronski, SIGGRAPH 2014. [PDF](https://www.advances.realtimerendering.com/s2014/wronski/bwronski_volumetric_fog_siggraph2014.pdf) | R13 froxel fog |
 | 🗺 | **Physically Based and Unified Volumetric Rendering in Frostbite** — Hillaire, SIGGRAPH 2015. [EA](https://www.ea.com/news/physically-based-unified-volumetric-rendering-in-frostbite) | R13 froxel fog |
 
+## Time of day, Sun, Moon & night sky
+
+| | Reading | In quat-3d |
+|---|---|---|
+| 🔧 | **Astronomical Algorithms, 2nd ed.** — Meeus, Willmann-Bell, 1998. Julian day (ch. 7), sidereal time (12), coordinate transforms (13), refraction (16), precession (21), nutation (22), the low-accuracy Sun and equation of time (25, 28), the Moon's position (47), phase and bright limb (48), libration (53); the worked examples are our test cases | `src/astro/`, `tests/astro/` (#87) |
+| 🔧 | **NOAA Solar Calculator** — NOAA Global Monitoring Laboratory; the same low-accuracy solar algorithm (after Meeus). [calculator](https://gml.noaa.gov/grad/solcalc/) | `src/astro/sun.cpp` (#87) |
+| 🔧 | **Astronomy on the Personal Computer, 4th ed.** — Montenbruck & Pfleger, Springer, 2000. Rise / set / twilight by scanning the altitude and refining each crossing | `src/astro/events.cpp` (#87) |
+| 🔧 | **Five Millennium Canon of Solar Eclipses** (ΔT polynomials) — Espenak & Meeus, NASA/TP-2006-214141. [ΔT expressions](https://eclipse.gsfc.nasa.gov/SEcat5/deltatpoly.html) | `delta_t_seconds`, `src/astro/time.cpp` (#87) |
+| 🔧 | **chrono-Compatible Low-Level Date Algorithms** — Hinnant. [article](https://howardhinnant.github.io/date_algorithms.html) | `days_from_civil` / `civil_from_days` (#87) |
+| 🔧 | **A model of the brightness of moonlight** — Krisciunas & Schaefer, PASP 103, 1991 | Moon illuminance, `src/astro/moon.cpp` (#87) |
+| 🔧 | **Revised optical air mass tables and approximation formula** — Kasten & Young, Applied Optics 28(22), 1989 | `airmass`, `src/astro/coords.cpp` (#87) |
+| 🔧 | **Reference luminous solar constant and solar luminance for illuminance calculations** — Darula, Kittler & Gueymard, Solar Energy 79, 2005 | Sun illuminance (133 334 lx), `src/astro/sun.cpp` (#87) |
+| 🗺 | **A Physically-Based Night Sky Model** — Jensen, Durand, Stark, Premože, Dorsey & Shirley, SIGGRAPH 2001. The canonical reference for R22.2: stars, moonlight, airglow, zodiacal light, scotopic viewing | R22.2 night sky |
+| 🗺 | **Model for artificial night-sky illumination** — Garstang, PASP 98, 1986 | R22.2 light-pollution skyglow |
+| 🗺 | **Theory of Reflectance and Emittance Spectroscopy** — Hapke, Cambridge University Press (2nd ed. 2012). Lunar BRDF and the opposition surge | R22.2 Moon shading |
+| 🗺 | **A Spatial Post-Processing Algorithm for Images of Night Scenes** — Thompson, Shirley & Ferwerda, Journal of Graphics Tools 7(1), 2002 | R22.2 night perception (blue shift, acuity loss, noise) |
+| 🗺 | **Perceptually Based Tone Mapping for Low-Light Conditions** — Kirk & O'Brien, SIGGRAPH 2011 | R22.2 scotopic / mesopic tone mapping |
+
 ## Anti-aliasing, post-processing & camera
 
 | | Reading | In quat-3d |
