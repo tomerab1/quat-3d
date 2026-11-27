@@ -64,7 +64,7 @@ public:
     // Flipbook paths resolve against `project_root`.
     ParticleRuntime(const engine::rhi::Device& device, engine::rhi::GpuAllocator& allocator,
                     engine::rhi::PipelineCache& cache, const engine::rhi::TransferContext& transfer,
-                    std::string shader_dir, std::string project_root,
+                    std::string shader_dir, std::filesystem::path project_root,
                     std::uint32_t frames_in_flight);
 
     // Once per frame, after the transparent pass: simulates and draws every
@@ -105,7 +105,7 @@ private:
     engine::rhi::PipelineCache&         cache_;
     const engine::rhi::TransferContext& transfer_;
     std::string                         shader_dir_;
-    std::string                         project_root_;
+    std::filesystem::path               project_root_;
     std::uint32_t                       frames_in_flight_;
 
     std::optional<engine::renderer::ParticlePass> pass_;

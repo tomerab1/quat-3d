@@ -100,7 +100,7 @@ bool WorldRuntime::build_scene(engine::scene::Scene& scene, engine::asset::Asset
 
 void WorldRuntime::init(const engine::rhi::Device& device, engine::rhi::GpuAllocator& allocator,
                         engine::rhi::PipelineCache& pipeline_cache, const std::string& shader_dir,
-                        engine::scene::Scene& scene) {
+                        const std::filesystem::path& project_root, engine::scene::Scene& scene) {
     // Terrain (Phase 12): the pass owns the heightmap texture + LOD index
     // buffers; the frame loop generates async whenever a Terrain component
     // asks and uploads the result here. Uploads need a transfer pool that
@@ -127,7 +127,7 @@ void WorldRuntime::init(const engine::rhi::Device& device, engine::rhi::GpuAlloc
     grass_.emplace(device, allocator, pipeline_cache, terrain_transfer_, shader_dir,
                    k_frames_in_flight);
     particles_.emplace(device, allocator, pipeline_cache, terrain_transfer_, shader_dir,
-                       QUAT_PROJECT_ROOT, k_frames_in_flight);
+                       project_root, k_frames_in_flight);
 
     net_ = engine::net::NetSession::from_environment(scene.registry());
 

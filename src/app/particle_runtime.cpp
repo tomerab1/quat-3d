@@ -68,7 +68,7 @@ ParticleRuntime::ParticleRuntime(const engine::rhi::Device& device,
                                  engine::rhi::GpuAllocator& allocator,
                                  engine::rhi::PipelineCache& cache,
                                  const engine::rhi::TransferContext& transfer,
-                                 std::string shader_dir, std::string project_root,
+                                 std::string shader_dir, std::filesystem::path project_root,
                                  std::uint32_t frames_in_flight)
     : device_(device), allocator_(allocator), cache_(cache), transfer_(transfer),
       shader_dir_(std::move(shader_dir)), project_root_(std::move(project_root)),
@@ -95,7 +95,7 @@ bool ParticleRuntime::ensure_pass() {
 }
 
 void ParticleRuntime::start_load(const std::string& path, Flipbook& book) {
-    const std::filesystem::path file = std::filesystem::path(project_root_) / path;
+    const std::filesystem::path file = project_root_ / path;
     book.failed = false;
     book.stamp = stamp_of(file);
     book.pending = std::async(std::launch::async,
@@ -143,7 +143,7 @@ VkImageView ParticleRuntime::flipbook(const std::string& path, Clock::time_point
     if (book.failed && now >= book.next_poll) {
         book.next_poll = now + k_poll_interval;
         const bool changed =
-            stamp_of(std::filesystem::path(project_root_) / path) != book.stamp;
+            stamp_of(project_root_ / path) != book.stamp;
         if (changed) book.backoff = std::chrono::seconds(1);
         if (changed || now >= book.retry_at) start_load(path, book);
     }

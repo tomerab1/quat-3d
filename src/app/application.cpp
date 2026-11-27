@@ -192,7 +192,7 @@ bool Application::init_subsystems() {
     // Atmosphere LUTs + dynamic IBL probe, lit by the scene's sun.
     renderer_.create_environment(scene_, pipeline_cache_, shader_dir_);
     // Terrain, networking (QUAT_HOST / QUAT_JOIN) and the QUAT_TERRAIN tile.
-    world_.init(device_, allocator_, pipeline_cache_, shader_dir_, scene_);
+    world_.init(device_, allocator_, pipeline_cache_, shader_dir_, project_root(), scene_);
 
     // Free-fly view camera, seeded by framing the scene.
     // Issue #8: frame the demo content (not its ground plate) for the view it

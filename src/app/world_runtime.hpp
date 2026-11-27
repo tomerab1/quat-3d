@@ -87,9 +87,10 @@ public:
                                    const engine::rhi::TransferContext& setup_transfer);
     // Terrain pass + its upload context, the network session and the
     // QUAT_TERRAIN tile. After the renderer's environment exists.
+    // `project_root` holds assets/ (particle flipbooks resolve against it).
     void init(const engine::rhi::Device& device, engine::rhi::GpuAllocator& allocator,
               engine::rhi::PipelineCache& pipeline_cache, const std::string& shader_dir,
-              engine::scene::Scene& scene);
+              const std::filesystem::path& project_root, engine::scene::Scene& scene);
     void init_audio(const std::filesystem::path& asset_root);
     // Points the remote bridge at the terrain, navmesh and demo state.
     void fill_remote_targets(RemoteBridgeTargets& targets);
