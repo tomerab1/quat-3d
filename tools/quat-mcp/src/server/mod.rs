@@ -14,6 +14,8 @@ mod scene_tools;
 #[allow(clippy::doc_markdown)]
 mod sim_tools;
 #[allow(clippy::doc_markdown)]
+mod tuning_tools;
+#[allow(clippy::doc_markdown)]
 mod world_tools;
 
 use std::sync::Arc;
@@ -33,7 +35,7 @@ use serde_json::{Value, json};
 use crate::client::{EngineClient, EngineError};
 use crate::content;
 
-pub use prompts::{BuildWorldArgs, DebugSessionArgs, InspectSceneArgs};
+pub use prompts::{BuildWorldArgs, DebugSessionArgs, InspectSceneArgs, TuneLookArgs};
 pub use results::{error_result, normalize_method};
 pub use world_tools::MAX_GROUND_POINTS;
 
@@ -72,7 +74,11 @@ impl QuatServer {
     /// Every tool this server offers, across all tool groups.
     #[must_use]
     pub fn tools() -> ToolRouter<Self> {
-        Self::scene_tools() + Self::world_tools() + Self::sim_tools() + Self::debug_tools()
+        Self::scene_tools()
+            + Self::world_tools()
+            + Self::sim_tools()
+            + Self::debug_tools()
+            + Self::tuning_tools()
     }
 
     /// Timeout for slow engine work (loading, baking, screenshots).
