@@ -99,6 +99,7 @@ TonemapPass::create(const rhi::Device& device, rhi::GpuAllocator& allocator,
     if (!buf) return std::unexpected(buf.error());
     const float one = 1.0F;
     std::memcpy(buf->mapped(), &one, sizeof(one));
+    if (auto flushed = buf->flush(); !flushed) return std::unexpected(flushed.error());
     out.fallback_exposure_buffer_ = std::move(*buf);
     out.fallback_exposure_address_ =
         rhi::buffer_device_address(device.handle(), out.fallback_exposure_buffer_);
