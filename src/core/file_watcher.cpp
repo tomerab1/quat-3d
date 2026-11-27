@@ -1,4 +1,5 @@
 #include "engine/core/file_watcher.hpp"
+#include "engine/core/utf8_path.hpp"
 
 #include <algorithm>
 #include <cerrno>
@@ -32,19 +33,21 @@ namespace {
 // with the same size (NTFS and FAT tick in 10-16 ms / 2 s steps, HFS+ in 1 s).
 // As in git's "racy" index entries, a file whose mtime is within
 // k_racy_window of the scan is also content-hashed, and while its stored
-// stamp carries a hash an unchanged mtime/size is confirmed by re-hashing.
+// stamp is racy an unchanged mtime/size is confirmed by re-hashing. A racy
+// file that cannot be read has an unknown hash: nothing is concluded from it.
 struct FileStamp {
-    fs::file_time_type mtime{};
-    std::uintmax_t     size = 0;
-    std::uint64_t      content_hash = 0; // 0: not racy, no hash taken
+    fs::file_time_type           mtime{};
+    std::uintmax_t               size = 0;
+    bool                         racy = false;
+    std::optional<std::uint64_t> content_hash; // racy only; nullopt: unreadable
 };
 
 constexpr std::chrono::seconds k_racy_window{2};
 
-// FNV-1a over the file's bytes; never 0 (0 means "no hash"). 0 on read error.
-[[nodiscard]] std::uint64_t hash_file(const fs::path& path) {
+// FNV-1a over the file's bytes; nullopt when the file cannot be read.
+[[nodiscard]] std::optional<std::uint64_t> hash_file(const fs::path& path) {
     std::ifstream file(path, std::ios::binary);
-    if (!file) return 0;
+    if (!file) return std::nullopt;
     std::uint64_t h = 1469598103934665603ULL;
     char buf[4096];
     while (file.read(buf, static_cast<std::streamsize>(sizeof(buf))) || file.gcount() > 0) {
@@ -54,12 +57,15 @@ constexpr std::chrono::seconds k_racy_window{2};
             h *= 1099511628211ULL;
         }
     }
-    return h == 0 ? 1 : h;
+    if (file.bad()) return std::nullopt;
+    return h;
 }
 
-// Takes the content hash when `stamp` is racy relative to `now`.
+// Marks `stamp` racy relative to `now` and takes its content hash.
 void hash_if_racy(const fs::path& path, FileStamp& stamp, fs::file_time_type now) {
-    if (stamp.mtime + k_racy_window >= now) stamp.content_hash = hash_file(path);
+    if (stamp.mtime + k_racy_window < now) return;
+    stamp.racy = true;
+    stamp.content_hash = hash_file(path);
 }
 
 } // namespace
@@ -98,7 +104,7 @@ struct FileWatcher::Impl {
 
     [[nodiscard]] bool matches(const fs::path& path) const {
         if (extensions.empty()) return true;
-        const std::string ext = path.extension().string();
+        const std::string ext = core::path_to_utf8(path.extension());
         return std::find(extensions.begin(), extensions.end(), ext) != extensions.end();
     }
 
@@ -149,15 +155,20 @@ struct FileWatcher::Impl {
             }
             const FileStamp& old = it->second;
             bool changed = old.mtime != stamp.mtime || old.size != stamp.size;
-            if (!changed && old.content_hash != 0) {
+            if (!changed && old.racy) {
                 // Racy: the same tick may hide a rewrite; compare contents.
-                const std::uint64_t now_hash =
-                    stamp.content_hash != 0 ? stamp.content_hash : hash_file(path);
-                changed = now_hash != old.content_hash;
+                const std::optional<std::uint64_t> now_hash =
+                    stamp.racy ? stamp.content_hash : hash_file(path);
+                // Unreadable now: unknown — report nothing and keep the old
+                // stamp, so the comparison happens once the file is readable.
+                if (!now_hash) continue;
+                // Unknown before (unreadable when racy): cannot prove it
+                // unchanged, so report it.
+                changed = !old.content_hash || *now_hash != *old.content_hash;
             }
             if (changed) record(path, FileChange::Kind::modified);
-            // Refresh even when unchanged: a racy stamp turns non-racy (hash
-            // dropped) once its mtime falls out of the window.
+            // Refresh even when unchanged: a racy stamp turns non-racy once its
+            // mtime falls out of the window.
             it->second = stamp;
         }
         for (auto it = snapshot.begin(); it != snapshot.end();) {
@@ -305,7 +316,7 @@ std::expected<FileWatcher, Error> FileWatcher::create(Options options) {
     for (fs::path& dir : options.directories) {
         std::error_code ec;
         if (!fs::is_directory(dir, ec)) {
-            return fail("FileWatcher: not a directory: " + dir.string());
+            return fail("FileWatcher: not a directory: " + path_to_utf8(dir));
         }
         impl->directories.push_back(dir.lexically_normal());
     }

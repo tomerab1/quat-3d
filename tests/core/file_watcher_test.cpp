@@ -15,6 +15,10 @@
 
 #include <gtest/gtest.h>
 
+#if !defined(_WIN32)
+#include <unistd.h>
+#endif
+
 #include "engine/core/file_watcher.hpp"
 #include "support/expect_ok.hpp"
 #include "support/temp_dir.hpp"
@@ -110,6 +114,42 @@ TEST(FileWatcherPolling, ReportsSameSizeRewriteWithinOneTimestampTick) {
     ASSERT_FALSE(ec) << ec.message();
     EXPECT_TRUE(has(watcher->poll(), file, FileChange::Kind::modified));
     EXPECT_TRUE(watcher->poll().empty()) << "reported once";
+}
+
+// A racy file that cannot be read is "unknown": nothing is reported and the
+// old stamp is kept, so the same-tick rewrite is still caught once the file
+// is readable again. POSIX permissions only; root reads mode-000 files.
+TEST(FileWatcherPolling, UnreadableRacyFileIsUnknownUntilReadable) {
+#if defined(_WIN32)
+    GTEST_SKIP() << "POSIX permission bits";
+#else
+    if (::geteuid() == 0) GTEST_SKIP() << "root ignores file permissions";
+    quat::test::TempDir dir{"file_watcher_unreadable"};
+    const fs::path file = dir.path() / "u.slang";
+    write_file(file, "value 1");
+    std::error_code ec;
+    const fs::file_time_type stamp = fs::last_write_time(file, ec);
+    ASSERT_FALSE(ec) << ec.message();
+
+    FileWatcher::Options options;
+    options.directories = {dir.path()};
+    options.extensions = {".slang"};
+    options.backend = FileWatchBackend::polling;
+    options.poll_interval = std::chrono::milliseconds(0);
+    auto watcher = FileWatcher::create(options);
+    ASSERT_OK(watcher);
+
+    write_file(file, "value 5"); // same size, same tick (mtime restored)
+    fs::last_write_time(file, stamp, ec);
+    ASSERT_FALSE(ec) << ec.message();
+    fs::permissions(file, fs::perms::none, ec);
+    ASSERT_FALSE(ec) << ec.message();
+    EXPECT_TRUE(watcher->poll().empty()) << "unreadable: unknown, not reported";
+
+    fs::permissions(file, fs::perms::owner_read | fs::perms::owner_write, ec);
+    ASSERT_FALSE(ec) << ec.message();
+    EXPECT_TRUE(has(watcher->poll(), file, FileChange::Kind::modified));
+#endif
 }
 
 TEST_P(FileWatcherTest, ReportsRenameIntoPlace) {
