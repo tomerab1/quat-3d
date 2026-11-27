@@ -9,11 +9,14 @@
 //
 // It also resolves Primitive components every frame (independent of the
 // endpoint — scene files carry primitives too), opening an upload context
-// only when some primitive changed.
+// only when some primitive changed. Likewise for R9.2 instancing: it runs
+// scatter_system against the terrain the frame loop holds (streamed tiles or
+// the editing tile) and resolves InstancedMesh models.
 //
 // Frame-loop hooks (main thread):
 //   poll()               once per frame before the scene updates: RPC
-//                        requests, primitive resolution, finished screenshots
+//                        requests, primitive + instanced-mesh resolution,
+//                        scatter regeneration, finished screenshots
 //   record_capture()     after the frame's graph is recorded: copies the
 //                        final scene image for pending screenshots
 //   on_frame_complete()  right after the frame slot's fence wait: hands the
