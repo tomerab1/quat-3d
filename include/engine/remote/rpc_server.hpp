@@ -144,9 +144,4 @@ private:
     std::unique_ptr<Impl> impl_;
 };
 
-// Loopback self-test: listens on an ephemeral port with a token, connects a
-// raw TCP client, and verifies auth rejection, hello, sync + deferred calls,
-// notifications, parse/unknown-method errors, and the oversize-line guard.
-[[nodiscard]] std::expected<void, core::Error> run_rpc_server_self_test();
-
 } // namespace engine::remote

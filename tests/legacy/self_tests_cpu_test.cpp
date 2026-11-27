@@ -11,7 +11,6 @@
 #include "engine/net/replication.hpp"
 #include "engine/net/transport.hpp"
 #include "engine/physics/physics_world.hpp"
-#include "engine/remote/rpc_server.hpp"
 #include "engine/scene/behavior.hpp"
 #include "engine/scene/components.hpp"
 #include "engine/scene/gltf_loader.hpp"
@@ -54,4 +53,3 @@ TEST(Net, Transport) { ASSERT_OK(engine::net::run_transport_self_test()); }
 TEST(Net, Replication) { ASSERT_OK(engine::net::run_replication_self_test()); }
 TEST(Net, Prediction) { ASSERT_OK(engine::net::run_prediction_self_test()); }
 
-TEST(Remote, RpcServer) { ASSERT_OK(engine::remote::run_rpc_server_self_test()); }

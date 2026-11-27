@@ -3,7 +3,7 @@
 // Minimal non-blocking loopback TCP sockets for the remote-control server
 // (private to engine_remote). POSIX sockets on Linux/macOS, Winsock on
 // Windows. Only what RpcServer needs: listen/accept on 127.0.0.1, connect (for
-// the self-test client), and non-blocking send/recv.
+// test clients), and non-blocking send/recv.
 
 #include <cstddef>
 #include <cstdint>
