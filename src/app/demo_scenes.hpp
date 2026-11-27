@@ -3,6 +3,8 @@
 // Demo / startup scenes for the `game` executable (app layer, not engine).
 //
 // Selected by environment variables:
+//   QUAT_SCENE=<file>  load a scene file (project-relative unless absolute),
+//                      e.g. a scripted game; it brings its own lights
 //   QUAT_GLTF=<file>   instantiate a glTF scene graph
 //   QUAT_PHYSICS=1     a pile of boxes dropped on a floor (owns a physics world)
 //   QUAT_CHARACTER=1   a WASD capsule character on a floor (owns a physics world)
@@ -36,6 +38,7 @@ struct DemoScene {
     bool physics_mode = false;   // QUAT_PHYSICS: physics_world steps rigid bodies
     bool character_mode = false; // QUAT_CHARACTER: physics_world steps the character
     bool from_gltf = false;      // QUAT_GLTF: show the model under its own lighting
+    bool from_scene_file = false; // QUAT_SCENE: no default lights / camera added
     std::optional<engine::physics::PhysicsWorld> physics_world;
     entt::entity character_entity = entt::null;
     // An object the loop slowly spins (the demo cube / glass sphere).

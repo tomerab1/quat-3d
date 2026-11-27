@@ -356,6 +356,7 @@ add_library(engine_remote_world STATIC
     src/remote/world/app_commands.cpp
     src/remote/world/debug_commands.cpp
     src/remote/world/debug_query_commands.cpp
+    src/remote/world/script_commands.cpp
     src/remote/world/image_encode.cpp
     src/remote/world/stb_image_write_impl.cpp)
 target_link_libraries(engine_remote_world PUBLIC
@@ -422,6 +423,7 @@ if(ENGINE_EDITOR)
         src/editor/picking.cpp
         src/editor/scene_snapshot.cpp
         src/editor/audio_inspector.cpp
+        src/editor/script_inspector.cpp
         src/editor/bt_graph.cpp
         src/editor/behavior_panel.cpp
         src/editor/behavior_canvas.cpp
@@ -458,6 +460,7 @@ add_executable(game
     src/app/world_runtime.cpp
     src/app/demo_scenes.cpp
     src/app/audio_runtime.cpp
+    src/app/input_sampler.cpp
     src/app/nav_bake.cpp
     src/app/remote_bridge.cpp)
 target_link_libraries(game PRIVATE

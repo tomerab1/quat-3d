@@ -34,9 +34,11 @@
 // PNG encoding runs on a worker thread; the reply goes out from poll().
 
 #include <cstdint>
+#include <expected>
 #include <filesystem>
 #include <memory>
 #include <optional>
+#include <vector>
 
 #include <entt/entity/fwd.hpp>
 #include <glm/glm.hpp>
@@ -58,6 +60,9 @@ namespace engine::rhi {
 class Device;
 class GpuAllocator;
 } // namespace engine::rhi
+namespace engine::script {
+class ScriptRuntime;
+}
 namespace engine::terrain {
 class TerrainStreamer;
 struct Heightmap;
@@ -102,6 +107,9 @@ struct RemoteBridgeTargets {
     // Loop-cached entity dropped when a scene file replaces the scene.
     entt::entity* spin_entity = nullptr;
 
+    // Gameplay scripts (G7): script.* statuses and reloads (may be null).
+    engine::script::ScriptRuntime* scripts = nullptr;
+
 #ifdef ENGINE_EDITOR
     engine::editor::EditorLayer*      editor = nullptr;
     engine::editor::RendererSettings* render_settings = nullptr; // clouds
@@ -140,6 +148,11 @@ public:
     // Simulation dt for this frame given the real frame time `real_dt`.
     [[nodiscard]] float advance_sim(float real_dt);
     void note_draws(std::size_t draws);
+
+    // Instantiates a glTF/GLB file into the scene (blocking upload), as
+    // asset.spawn_model does; gameplay scripts reuse it.
+    [[nodiscard]] std::expected<std::vector<entt::entity>, engine::core::Error>
+    spawn_model(const std::filesystem::path& absolute);
 
     [[nodiscard]] bool listening() const;
 

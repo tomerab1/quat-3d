@@ -3,8 +3,8 @@
 // WorldRuntime — the simulated world around the scene (app layer): the
 // startup demo state, procedural terrain (async single-tile generation and
 // seamless streaming, plus the tiles' play-mode height-field bodies),
-// play-mode physics, behaviour trees and nav agents, the navmesh, the network
-// session (QUAT_HOST / QUAT_JOIN) and audio.
+// play-mode physics, behaviour trees and nav agents, gameplay scripts (G7),
+// the navmesh, the network session (QUAT_HOST / QUAT_JOIN) and audio.
 //
 // Main-thread only. Not movable: the ground-height sampler and the remote
 // bridge hold pointers into it.
@@ -29,6 +29,7 @@
 #include "engine/renderer/terrain_pass.hpp"
 #include "engine/rhi/gpu_allocator.hpp"
 #include "engine/scene/navigation.hpp"
+#include "engine/script/script_runtime.hpp"
 #include "engine/terrain/generator.hpp"
 #include "engine/terrain/streamer.hpp"
 
@@ -85,6 +86,14 @@ public:
               engine::rhi::PipelineCache& pipeline_cache, const std::string& shader_dir,
               engine::scene::Scene& scene);
     void init_audio(const std::string& asset_root);
+    // Gameplay scripts under <project_root>/assets/scripts. Hot reload is on
+    // in editor builds (QUAT_SCRIPT_HOT_RELOAD=0 turns it off, =1 on in
+    // non-editor builds). `services` (input, glTF spawning) are completed
+    // with the play physics world when play starts.
+    void init_scripts(const std::string& project_root, engine::script::ScriptServices services);
+    [[nodiscard]] engine::script::ScriptRuntime* scripts() {
+        return scripts_ ? &*scripts_ : nullptr;
+    }
     // Points the remote bridge at the terrain, navmesh and demo state.
     void fill_remote_targets(RemoteBridgeTargets& targets);
     // Teardown, after the device went idle: waits for a running terrain job
@@ -95,6 +104,7 @@ public:
     [[nodiscard]] bool physics_mode() const { return demo_.physics_mode; }
     [[nodiscard]] bool character_mode() const { return demo_.character_mode; }
     [[nodiscard]] bool from_gltf() const { return demo_.from_gltf; }
+    [[nodiscard]] bool from_scene_file() const { return demo_.from_scene_file; }
     // Demo modes own their physics world (and so have no editor Play mode).
     [[nodiscard]] bool has_demo_physics() const { return demo_.physics_world.has_value(); }
     [[nodiscard]] entt::entity character_entity() const { return demo_.character_entity; }
@@ -173,6 +183,8 @@ private:
 
     engine::scene::GroundHeightFn ground_height_at_;
     std::optional<AudioRuntime>   audio_;
+    std::optional<engine::script::ScriptRuntime> scripts_;
+    engine::script::ScriptServices               script_services_;
 };
 
 } // namespace quat::app

@@ -3,6 +3,9 @@
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <filesystem>
 #include <utility>
 
 #include <glm/gtc/matrix_transform.hpp>
@@ -97,6 +100,22 @@ void WorldRuntime::init_audio(const std::string& asset_root) {
     audio_.emplace(AudioRuntime::create(asset_root));
 }
 
+void WorldRuntime::init_scripts(const std::string& project_root,
+                                engine::script::ScriptServices services) {
+    engine::script::ScriptRuntime::Options options;
+    options.scripts_root = std::filesystem::path(project_root) / "assets" / "scripts";
+#ifdef ENGINE_EDITOR
+    options.watch = true;
+#endif
+    if (const char* env = std::getenv("QUAT_SCRIPT_HOT_RELOAD"); env != nullptr) {
+        options.watch = std::strcmp(env, "0") != 0;
+    }
+    services.project_root = project_root;
+    script_services_ = std::move(services);
+    scripts_.emplace(std::move(options));
+    scripts_->set_services(script_services_);
+}
+
 void WorldRuntime::fill_remote_targets(RemoteBridgeTargets& targets) {
     targets.ground_height = &ground_height_at_;
     targets.terrain_streamer = &terrain_streamer_;
@@ -105,6 +124,7 @@ void WorldRuntime::fill_remote_targets(RemoteBridgeTargets& targets) {
     targets.navmesh = &nav_.mesh;
     targets.spin_entity = &demo_.spin_entity;
     targets.demo_physics = &demo_.physics_world;
+    targets.scripts = scripts();
 #ifdef ENGINE_EDITOR
     targets.play_physics = &play_physics_;
 #endif
@@ -150,6 +170,7 @@ void WorldRuntime::simulate(engine::scene::Scene& scene, std::uint64_t frame_num
     // this frame's physics and draw list see them).
     net_.update(scene.registry(), demo_.physics_world ? &*demo_.physics_world : nullptr,
                 demo_.character_entity, dt);
+    if (scripts_) scripts_->poll_changes(); // hot reload (G7)
     if (demo_.physics_world) {
         if (demo_.character_mode) {
             engine::scene::character_system(scene.registry(), *demo_.physics_world, sim_dt);
@@ -177,6 +198,12 @@ void WorldRuntime::simulate(engine::scene::Scene& scene, std::uint64_t frame_num
         engine::scene::nav_agent_system(scene.registry(), nav_.mesh, sim_dt, ground_height_at_);
         engine::scene::character_system(scene.registry(), *play_physics_, sim_dt);
         engine::scene::physics_system(scene.registry(), *play_physics_, sim_dt);
+        // Scripts see this step's trigger events, then update (G7); their
+        // moves and impulses apply on the next physics step.
+        if (scripts_ && scripts_->running()) {
+            scripts_->dispatch_triggers(*play_physics_);
+            scripts_->update(sim_dt);
+        }
     }
     scene.tick(sim_dt); // advances any Animators by simulated time
 
@@ -335,10 +362,23 @@ std::expected<void, engine::core::Error> WorldRuntime::begin_play(engine::scene:
         }
     }
     nav_.auto_bake = true; // bake now if agents have no mesh
+    if (scripts_) {
+        engine::script::ScriptServices services = script_services_;
+        services.physics = &*play_physics_;
+        scripts_->set_services(std::move(services));
+        if (auto started = scripts_->start(scene); !started) {
+            std::fprintf(stderr, "[script][warn] scripts disabled: %s\n",
+                         started.error().message.c_str());
+        }
+    }
     return {};
 }
 
 void WorldRuntime::end_play() {
+    if (scripts_) { // before the physics world the scripts point at
+        scripts_->stop();
+        scripts_->set_services(script_services_);
+    }
     play_physics_.reset();
     terrain_bodies_.clear(); // died with the play world
 }

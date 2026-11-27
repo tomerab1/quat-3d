@@ -507,12 +507,19 @@ std::span<const PhysicsWorld::TriggerEvent> PhysicsWorld::trigger_events() const
     return {impl_->trigger_events.data(), impl_->trigger_events.size()};
 }
 
+// Characters' inner bodies are part of the characters (character_count),
+// not bodies of their own; they never sleep, so they are always active.
 std::uint32_t PhysicsWorld::body_count() const {
-    return impl_ ? impl_->system.GetNumBodies() : 0;
+    if (!impl_) return 0;
+    return impl_->system.GetNumBodies() -
+           static_cast<std::uint32_t>(impl_->inner_body_character.size());
 }
 
 std::uint32_t PhysicsWorld::active_body_count() const {
-    return impl_ ? impl_->system.GetNumActiveBodies(JPH::EBodyType::RigidBody) : 0;
+    if (!impl_) return 0;
+    const std::uint32_t active = impl_->system.GetNumActiveBodies(JPH::EBodyType::RigidBody);
+    const auto inner = static_cast<std::uint32_t>(impl_->inner_body_character.size());
+    return active > inner ? active - inner : 0;
 }
 
 std::uint32_t PhysicsWorld::character_count() const {

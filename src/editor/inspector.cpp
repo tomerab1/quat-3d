@@ -13,6 +13,7 @@
 #include <imgui_stdlib.h>
 
 #include "audio_inspector.hpp"
+#include "script_inspector.hpp"
 #include "behavior_panel.hpp"
 #include "engine/editor/editor.hpp"
 #include "engine/scene/behavior.hpp"
@@ -520,7 +521,7 @@ void add_component_item(entt::registry& registry, entt::entity entity, Args&&...
 
 } // namespace
 
-void draw_inspector(scene::Scene& scene, entt::entity selected) {
+void draw_inspector(scene::Scene& scene, entt::entity selected, script::ScriptRuntime* scripts) {
     if (!ImGui::Begin("Inspector")) {
         ImGui::End();
         return;
@@ -549,6 +550,9 @@ void draw_inspector(scene::Scene& scene, entt::entity selected) {
     inspect<scene::NavAgent>(r, selected, true);
     inspect<scene::BehaviorTree>(r, selected, true);
     inspect<scene::PatrolRoute>(r, selected, true);
+    if (auto* sc = r.try_get<scene::Script>(selected)) {
+        (void)draw_script_component(r, selected, *sc, scripts);
+    }
     inspect<scene::Collider>(r, selected, true);
     inspect<scene::RigidBody>(r, selected, true);
     inspect<scene::AudioSource>(r, selected, true);
@@ -567,6 +571,9 @@ void draw_inspector(scene::Scene& scene, entt::entity selected) {
         add_component_item<scene::NavAgent>(r, selected);
         add_component_item<scene::BehaviorTree>(r, selected);
         add_component_item<scene::PatrolRoute>(r, selected);
+        if (!r.all_of<scene::Script>(selected) && ImGui::MenuItem("Script")) {
+            r.emplace<scene::Script>(selected); // the path is picked in its inspector
+        }
         add_component_item<scene::PointLight>(r, selected, glm::vec3(1.0F), 10.0F, 5.0F);
         add_component_item<scene::DirectionalLight>(
             r, selected, glm::vec3(-0.4F, -1.0F, -0.3F), glm::vec3(1.0F), 3.0F);

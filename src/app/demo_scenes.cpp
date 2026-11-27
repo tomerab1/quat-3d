@@ -16,6 +16,7 @@
 #include "engine/scene/gltf_loader.hpp"
 #include "engine/scene/primitives.hpp"
 #include "engine/scene/scene.hpp"
+#include "engine/scene/scene_io.hpp"
 
 namespace quat::app {
 
@@ -36,6 +37,20 @@ build_demo_scene(engine::scene::Scene& scene, engine::asset::AssetManager& asset
     entt::entity character_entity = entt::null;
     bool scene_ok = true;
 
+    if (const char* scene_path = std::getenv("QUAT_SCENE"); scene_path != nullptr) {
+        std::filesystem::path path(scene_path);
+        if (path.is_relative()) path = std::filesystem::path(QUAT_PROJECT_ROOT) / path;
+        if (auto loaded = engine::scene::load_scene(scene, path, allocator, setup_transfer, assets);
+            !loaded) {
+            std::fprintf(stderr, "[fatal] QUAT_SCENE load failed: %s\n",
+                         loaded.error().message.c_str());
+            return std::unexpected(engine::core::Error{"scene file load failed"});
+        }
+        std::fprintf(stderr, "[info] loaded scene %s\n", path.string().c_str());
+        DemoScene out;
+        out.from_scene_file = true;
+        return out;
+    }
     if (const char* gltf_path = std::getenv("QUAT_GLTF"); gltf_path != nullptr) {
         auto roots = engine::scene::GltfLoader::instantiate(gltf_path, allocator, setup_transfer,
                                                             assets, scene);

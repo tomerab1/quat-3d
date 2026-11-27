@@ -151,8 +151,9 @@ public:
     [[nodiscard]] glm::vec3 linear_velocity(std::uint32_t body) const;
 
     // ---- Queries (debugging, gameplay) -------------------------------------
-    // Bodies in the simulation (all kinds, terrain included) and how many of
-    // them are awake (active rigid bodies).
+    // Bodies in the simulation (all kinds, terrain included; not the
+    // characters' inner bodies) and how many of them are awake (active rigid
+    // bodies).
     [[nodiscard]] std::uint32_t body_count() const;
     [[nodiscard]] std::uint32_t active_body_count() const;
     // Live character controllers.

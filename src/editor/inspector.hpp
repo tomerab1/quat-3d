@@ -7,14 +7,18 @@
 namespace engine::scene {
 class Scene;
 }
+namespace engine::script {
+class ScriptRuntime;
+}
 
 namespace engine::editor {
 
 struct RendererSettings;
 
 // Draws the "Inspector" window for `selected` (component editors via
-// ComponentInspector<T> specialisations in the .cpp).
-void draw_inspector(scene::Scene& scene, entt::entity selected);
+// ComponentInspector<T> specialisations in the .cpp). `scripts` (may be
+// null) describes the properties a Script component's file declares.
+void draw_inspector(scene::Scene& scene, entt::entity selected, script::ScriptRuntime* scripts);
 
 // Draws the "Renderer" window: sun direction (azimuth/elevation, applied to
 // the scene's DirectionalLight live; IBL rebakes automatically on slider

@@ -93,6 +93,8 @@ public:
     // gizmo otherwise); the ARROW keys fly whenever the cursor is over the
     // viewport (they conflict with nothing). Text input freezes both.
     [[nodiscard]] FlyInputGate input_gate(bool looking, bool character_mode) const;
+    // A UI text field owns the keyboard (scripts read keys as released).
+    [[nodiscard]] bool keyboard_captured() const;
     // The scene's render size: the Viewport panel (sized by last frame's UI)
     // when the editor is up, else the whole window.
     [[nodiscard]] VkExtent2D scene_extent(VkExtent2D present_extent) const;
@@ -127,6 +129,7 @@ private:
     bool play_ = false;
     bool play_use_scene_camera_ = false; // menu-bar "Game camera" checkbox
     bool play_prev_ = false;
+    bool play_on_start_ = false; // QUAT_PLAY=1: enter play mode on the first frame
     std::optional<engine::editor::SceneSnapshot> play_snapshot_;
     std::optional<engine::editor::EditorContext::GroundClick> ground_click_; // 13.4
 };

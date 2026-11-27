@@ -33,6 +33,9 @@ struct ImVec2;
 namespace engine::scene {
 class Scene;
 }
+namespace engine::script {
+class ScriptRuntime;
+}
 
 namespace engine::editor {
 
@@ -76,6 +79,9 @@ struct EditorContext {
     // Shader hot-reload state (R2), listed in the Stats panel; null when hot
     // reload is off.
     const std::vector<rhi::ShaderStatus>* shader_statuses = nullptr;
+    // Gameplay scripts (G7): the Stats panel lists their status and the
+    // inspector describes Script components (may be null).
+    script::ScriptRuntime* scripts = nullptr;
     // Scene access for the hierarchy/inspector panels (may be null).
     scene::Scene* scene = nullptr;
     // Renderer settings the panel edits (may be null).

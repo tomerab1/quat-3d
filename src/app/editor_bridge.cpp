@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <cstdlib>
 #include <utility>
 
 #include <glm/gtc/matrix_transform.hpp>
@@ -43,6 +44,7 @@ void with_load_transfer(const engine::rhi::Device& device, Fn&& fn) {
 } // namespace
 
 void EditorBridge::create(SDL_Window* window, bool enabled) {
+    play_on_start_ = std::getenv("QUAT_PLAY") != nullptr; // e.g. a QUAT_SCENE game, headless
     if (!enabled) return;
     if (auto e = engine::editor::EditorLayer::create(
             window, std::string(QUAT_PROJECT_ROOT) + "/assets/fonts/Roboto-Medium.ttf");
@@ -71,6 +73,10 @@ FlyInputGate EditorBridge::input_gate(bool looking, bool character_mode) const {
     return gate;
 }
 
+bool EditorBridge::keyboard_captured() const {
+    return editor_.wants_text_input();
+}
+
 VkExtent2D EditorBridge::scene_extent(VkExtent2D present_extent) const {
     VkExtent2D draw_extent = present_extent;
     if (editor_.active() && editor_.viewport_width() > 0 && editor_.viewport_height() > 0) {
@@ -95,6 +101,7 @@ bool EditorBridge::through_scene_camera() const {
 
 void EditorBridge::begin_frame() {
     editor_.begin_frame();
+    if (std::exchange(play_on_start_, false) && !t_.world->has_demo_physics()) play_ = true;
     apply_play_transition();
     apply_scene_file_requests();
     apply_instantiate_request();
@@ -254,6 +261,7 @@ const ImDrawData* EditorBridge::build_ui(float dt, int draw_count,
     ui_ctx.entity_count =
         static_cast<int>(scene.registry().view<engine::scene::Transform>().size());
     ui_ctx.shader_statuses = t_.shader_reload != nullptr ? &t_.shader_reload->statuses() : nullptr;
+    ui_ctx.scripts = world.scripts();
     ui_ctx.scene = &scene;
     ui_ctx.renderer = &render_settings_;
     ui_ctx.project_root = QUAT_PROJECT_ROOT;

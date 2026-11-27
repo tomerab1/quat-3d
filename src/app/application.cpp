@@ -1,6 +1,7 @@
 #include "app/application.hpp"
 
 #include <cstdio>
+#include <filesystem>
 #include <utility>
 
 #include <SDL3/SDL.h>
@@ -176,7 +177,7 @@ bool Application::init_subsystems() {
         return false;
     }
 
-    add_default_lighting(scene_, !world_.from_gltf());
+    if (!world_.from_scene_file()) add_default_lighting(scene_, !world_.from_gltf());
     // Atmosphere LUTs + dynamic IBL probe, lit by the scene's sun.
     renderer_.create_environment(scene_, pipeline_cache_, shader_dir_);
     // Terrain, networking (QUAT_HOST / QUAT_JOIN) and the QUAT_TERRAIN tile.
@@ -190,6 +191,7 @@ bool Application::init_subsystems() {
     renderer_.set_screenshot_path(config_.screenshot_path);
 
     last_ticks_ = SDL_GetTicksNS();
+    init_scripts();
     connect_remote();
     world_.init_audio(QUAT_PROJECT_ROOT);
 #ifdef ENGINE_EDITOR
@@ -202,6 +204,28 @@ bool Application::init_subsystems() {
                   .shader_reload = shader_reload_.get()});
 #endif
     return true;
+}
+
+void Application::init_scripts() {
+    input_.init();
+    engine::script::ScriptServices services;
+    services.input = &input_.state();
+    services.spawn_model = [this](const std::filesystem::path& absolute) {
+        return remote_->spawn_model(absolute);
+    };
+    world_.init_scripts(QUAT_PROJECT_ROOT, std::move(services));
+#ifndef ENGINE_EDITOR
+    // Without the editor there is no Play button: the game simulates
+    // (physics, AI, scripts) from the first frame.
+    if (!world_.has_demo_physics()) {
+        (void)engine::scene::promote_collider_only_bodies(scene_.registry());
+        if (auto started = world_.begin_play(scene_); started) {
+            playing_ = true;
+        } else {
+            std::fprintf(stderr, "[warn] play failed: %s\n", started.error().message.c_str());
+        }
+    }
+#endif
 }
 
 void Application::connect_remote() {
@@ -229,12 +253,14 @@ void Application::connect_remote() {
 
 bool Application::pump_events() {
     camera_.begin_input(); // per-frame accumulated mouse-look delta
+    input_.begin_frame();
     bool running = true;
     SDL_Event event;
     while (SDL_PollEvent(&event)) {
 #ifdef ENGINE_EDITOR
         editor_.process_event(event);
 #endif
+        input_.process_event(event);
         switch (event.type) {
         case SDL_EVENT_QUIT:
             running = false;
@@ -259,6 +285,11 @@ bool Application::pump_events() {
             break;
         }
     }
+    bool keyboard_blocked = false;
+#ifdef ENGINE_EDITOR
+    keyboard_blocked = editor_.keyboard_captured();
+#endif
+    input_.sample(keyboard_blocked);
     return running;
 }
 
@@ -375,6 +406,8 @@ engine::scene::CameraMatrices Application::update_world(float dt, float sim_dt, 
     std::optional<PlayStep> play;
 #ifdef ENGINE_EDITOR
     play = editor_.play_step(camera_.pos);
+#else
+    if (playing_) play = PlayStep{.use_scene_camera = true, .fly_camera_pos = camera_.pos};
 #endif
     world_.simulate(scene_, presented_, dt, sim_dt, play ? &*play : nullptr);
 

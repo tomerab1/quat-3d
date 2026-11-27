@@ -6,7 +6,8 @@
 //
 //   FrameRenderer  per-frame rendering (frame slots, graph build, submission)
 //   WorldRuntime   terrain, play-mode physics, nav / behaviour trees,
-//                  networking, audio
+//                  gameplay scripts, networking, audio
+//   InputSampler   keyboard / mouse / gamepad state for scripts
 //   FlyCamera      the view camera
 //   EditorBridge   the editor layer and its requests (editor builds)
 //   RemoteBridge   remote control (QUAT_REMOTE) and primitive resolution
@@ -25,6 +26,7 @@
 
 #include "app/fly_camera.hpp"
 #include "app/frame_renderer.hpp"
+#include "app/input_sampler.hpp"
 #include "app/remote_bridge.hpp"
 #include "app/world_runtime.hpp"
 #include "engine/asset/asset_manager.hpp"
@@ -80,6 +82,8 @@ private:
     [[nodiscard]] bool init_platform();
     [[nodiscard]] bool init_subsystems();
     void connect_remote();
+    // Gameplay scripts (G7); the non-editor game starts playing right away.
+    void init_scripts();
     // Polls SDL events; false when the app should quit.
     [[nodiscard]] bool pump_events();
     // One frame; false when the loop ends (fatal error or QUAT_MAX_FRAMES).
@@ -111,12 +115,16 @@ private:
     engine::scene::Scene        scene_;
     WorldRuntime                world_;
     FlyCamera                   camera_;
+    InputSampler                input_;
     std::optional<RemoteBridge> remote_;
 
     std::uint64_t presented_ = 0;
     double        frame_time_sum_ = 0.0; // avg-frame-time report at exit
     std::uint64_t frame_time_samples_ = 0;
     std::uint64_t last_ticks_ = 0;
+#ifndef ENGINE_EDITOR
+    bool playing_ = false; // the non-editor game is always in play mode
+#endif
 };
 
 } // namespace quat::app
