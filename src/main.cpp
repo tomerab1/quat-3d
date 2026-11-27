@@ -652,7 +652,9 @@ int main() {
         navmesh_status = std::string("cleared: ") + why + " (rebake)";
         std::fprintf(stderr, "[nav] navmesh cleared: %s\n", why);
     };
+#ifdef ENGINE_EDITOR
     std::optional<engine::editor::EditorContext::GroundClick> ground_click; // 13.4
+#endif
 
     // Networking (Phase 14; S1 B1-B5): QUAT_HOST=<port> hosts this scene,
     // QUAT_JOIN=<ip:port> joins a host running the same scene. See
@@ -1484,6 +1486,7 @@ int main() {
             }
         }
 
+#ifdef ENGINE_EDITOR
         // Ctrl/Shift+click in the viewport (13.4): resolve the ray against the
         // terrain (bisected raymarch) or the ground plane, then command the
         // selected entity: Ctrl = walk here now, Shift = append a patrol point.
@@ -1532,6 +1535,7 @@ int main() {
                 }
             }
         }
+#endif
 
         // Navmesh bake requested from the Physics panel: gather the static
         // walkable geometry (terrain + static box colliders) and run Recast.
