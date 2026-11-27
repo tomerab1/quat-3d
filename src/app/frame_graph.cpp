@@ -5,6 +5,7 @@
 //   GPU skinning is recorded before the graph executes.
 
 #include "app/frame_renderer.hpp"
+#include "app/grass_runtime.hpp"
 
 #include <algorithm>
 #include <cstdio>
@@ -297,6 +298,10 @@ bool FrameRenderer::record(const FrameInputs& in) {
     if (in.terrain != nullptr) {
         in.terrain->add_to_graph(graph, *gbuffer, draw_extent, fs.jittered_vp, cam.position,
                                  in.terrain_anchor, in.terrain_snowline);
+    }
+    if (in.grass != nullptr) {
+        in.grass->add_to_graph(graph, frame_, *in.registry, *gbuffer, draw_extent, fs.jittered_vp,
+                               cam, in.terrain, in.terrain_anchor, in.sim_dt);
     }
     // Clustered light culling (R10.1). A camera the clusters cannot
     // represent (non-perspective / no finite far plane) renders unlit by

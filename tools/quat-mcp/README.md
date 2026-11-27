@@ -121,6 +121,10 @@ command ends in `quat-mcp.exe`.
 | `debug_watch` | `debug.watch` | Live component snapshot of up to 64 entities (+ nav agent state) |
 | `debug_raycast` | `debug.raycast` | Physics ray: hit entity, point, normal (play mode) |
 | `debug_nav_path` | `debug.nav_path` | Navmesh path between two points, partial or not |
+| `bt_leaves` | `bt.leaves` | Behaviour-tree node kinds and leaves with their parameters, defaults and ranges |
+| `bt_get` / `bt_set` | `bt.get` / `bt.set` | Read an entity's tree (outline with stable node ids, issues, tree JSON); replace it (validated) |
+| `bt_add_node` / `bt_remove_node` / `bt_move_node` / `bt_set_params` | `bt.*` | Edit the tree by node id; invalid results are refused with per-node errors |
+| `bt_status` | `bt.status` | What each node returned on the last tick (Play) |
 
 Tool descriptions spell out units and conventions (metres, Y up, Euler degrees
 in YXZ order, `"#rrggbb"` sRGB colours for primitives and linear `[r,g,b]` for
@@ -132,8 +136,10 @@ short hint, so the model can correct itself.
 
 **Prompts** — `build_world` (inspect → plan → build with `scene_batch` →
 screenshot → iterate), `inspect_scene` (survey and review the current
-scene) and `debug_session` (diagnose a problem: stats → logs → watch →
-pause / step → raycast / nav path → conclude). In Claude Code they appear as `/mcp__quat-3d__build_world`.
+scene), `debug_session` (diagnose a problem: stats → logs → watch →
+pause / step → raycast / nav path → conclude) and `design_behavior` (an NPC
+behaviour tree: leaves → plan → `bt_set` or edits → play → `bt_status` /
+`debug_watch` → iterate). In Claude Code they appear as `/mcp__quat-3d__build_world`.
 
 **Resource** — `quat://scene/summary`: engine info, the first 500 entities,
 the environment and the camera as JSON.
@@ -171,8 +177,8 @@ Layout:
 |---|---|
 | `content/` | **Everything the model reads**, as Markdown: server instructions, one file per tool description, the component reference, prompt templates ([MiniJinja](https://docs.rs/minijinja)). See `content/README.md`. |
 | `src/client/` | Engine JSON-RPC client: `mod.rs` (calls, reconnects, handshake), `connection.rs` (socket, reader task, in-flight calls), `error.rs` (error codes, `EngineError`) |
-| `src/server/` | MCP server: `mod.rs` (handler, resource), tools grouped by area (`scene_tools.rs`, `world_tools.rs`, `sim_tools.rs`, each its own rmcp router), `prompts.rs`, `results.rs` |
-| `src/params.rs` | Typed tool inputs — their doc comments are the JSON schemas the model reads |
+| `src/server/` | MCP server: `mod.rs` (handler, resource), tools grouped by area (`scene_tools.rs`, `world_tools.rs`, `sim_tools.rs`, `debug_tools.rs`, `behavior_tools.rs`, each its own rmcp router), `bt_outline.rs` (behaviour-tree outlines), `prompts.rs`, `results.rs` |
+| `src/params.rs`, `src/params/` | Typed tool inputs — their doc comments are the JSON schemas the model reads (`debug.rs`, `behavior.rs` per area) |
 | `src/content.rs` | Embeds `content/` and renders prompt templates |
 | `src/config.rs` | Flags / environment |
 

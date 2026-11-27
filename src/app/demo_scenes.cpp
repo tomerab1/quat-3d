@@ -357,6 +357,8 @@ if (std::getenv("QUAT_TERRAIN") != nullptr) {
     t.snowline_m = 30.0F;
     scene.registry().get<engine::scene::Transform>(te).local =
         glm::translate(glm::mat4(1.0F), glm::vec3(0.0F, -40.0F, 0.0F));
+    auto& grass = scene.registry().emplace<engine::scene::Grass>(scene.create_entity("grass"));
+    grass.settings.height_m = glm::vec2(-10000.0F, t.snowline_m - 5.0F); // none on the snow
     std::fprintf(stderr, "[terrain] QUAT_TERRAIN tile requested\n");
 }
 }

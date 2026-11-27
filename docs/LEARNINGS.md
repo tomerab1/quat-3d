@@ -189,3 +189,36 @@ followed by the full trio `cargo fmt --check && cargo clippy --locked
 --all-targets -- -D warnings && cargo test --locked` before pushing.
 (`doc_markdown` is now allowed on the tool modules: their docs are model
 text, not rustdoc — but the trio still applies.)
+
+## A merge was committed before its compile check finished (cycle 2)
+
+To unblock the owner, the S3.3 merge was committed and pushed while its
+compile check ran in the background; the check then found merge damage
+(`skinning_pass.cpp` lost the include its new `glm::mat4` use needed).
+**Rule:** a merge commit is pushed only after its compile check has finished
+clean. Run the check in the background if it is slow, and push when it
+reports — never before.
+
+## Docs-only pushes kept cancelling CI (cycle 2)
+
+`concurrency: cancel-in-progress` cancels the running build on every push,
+and several STATUS/ROADMAP-only pushes in a row meant no build of the merged
+code finished for ~40 minutes. **Rule:** batch documentation commits with the
+next code push; push docs alone only when no build of new code is running.
+
+## CI kept getting cancelled before finishing (cycle 2)
+
+With `concurrency: cancel-in-progress: true`, every push to the cycle branch
+killed the running build; merges, docs and the hook-required pushes came
+often enough that no Linux build of the merged code finished for over an
+hour. **Rule:** CI runs with `cancel-in-progress: false` — a running build
+always completes and GitHub keeps only the newest pending run, so each push
+is eventually verified without starvation.
+
+## Config keys added without checking for existing ones (cycle 2)
+
+`timeout-minutes` was added to CI jobs that already had it, producing
+duplicate YAML keys; a combined `git revert -q ...; git commit --amend` then
+amended the already-pushed commit instead of reverting. **Rule:** grep for a
+key before adding it; never chain revert + amend — make one plain new commit
+and check `git status -sb` before pushing.

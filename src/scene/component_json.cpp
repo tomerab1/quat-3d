@@ -43,6 +43,7 @@ constexpr std::array k_components = {
     ComponentInfo{"behavior", "Behaviour tree (JSON source)", true, true},
     ComponentInfo{"patrol", "Patrol route the nav agent walks", true, true},
     ComponentInfo{"terrain", "Procedural terrain tile / streamed world", true, true},
+    ComponentInfo{"grass", "GPU-generated, wind-animated grass around the camera", true, true},
     ComponentInfo{"net_replicated", "Replicate this entity's transform to network clients", true, true},
     ComponentInfo{"audio_source", "Sound emitter: wav/flac/mp3 clip on a bus, optionally 3D", true, true},
     ComponentInfo{"audio_listener", "The audio listener follows this entity (else the camera)", true, true},
@@ -306,6 +307,64 @@ void read_primitive_fields(JsonFields& f, Primitive& p) {
             {"emissive", vec3_json(p.emissive)}};
 }
 
+// ---- Grass ---------------------------------------------------------------
+
+[[nodiscard]] json range_json(const glm::vec2& r) { return json::array({r.x, r.y}); }
+
+[[nodiscard]] json encode_grass(const renderer::GrassSettings& g) {
+    return {{"seed", g.seed},
+            {"density", g.density},
+            {"radius", g.radius},
+            {"blade_height", range_json(g.height_range)},
+            {"blade_width", range_json(g.width_range)},
+            {"base_color", vec3_json(g.base_color)},
+            {"tip_color", vec3_json(g.tip_color)},
+            {"wind_strength", g.wind_strength},
+            {"wind_direction", range_json(g.wind_direction)},
+            {"wind_frequency", g.wind_frequency},
+            {"slope", range_json(g.slope_deg)},
+            {"height", range_json(g.height_m)},
+            {"terrain_only", g.terrain_only},
+            {"ground_y", g.ground_y},
+            {"lod_start", g.lod_start},
+            {"far_density", g.far_density}};
+}
+
+// "#rrggbb" (sRGB) or linear [r, g, b] in 0..1.
+void read_color3(JsonFields& f, std::string_view key, glm::vec3& out) {
+    f.known({key});
+    glm::vec4 c(out, 1.0F);
+    read_color(f, key, c);
+    out = glm::vec3(c);
+}
+
+void decode_grass(JsonFields& f, renderer::GrassSettings& g) {
+    f.integer("seed", g.seed, 0, 0xFFFFFFFFLL);
+    f.number("density", g.density, 0.0F, 1000.0F).number("radius", g.radius, 0.0F, 500.0F);
+    read_range(f, "blade_height", g.height_range, 0.01F, 5.0F);
+    read_range(f, "blade_width", g.width_range, 0.001F, 0.5F);
+    read_color3(f, "base_color", g.base_color);
+    read_color3(f, "tip_color", g.tip_color);
+    f.number("wind_strength", g.wind_strength, 0.0F, 4.0F);
+    f.number("wind_frequency", g.wind_frequency, 0.0F, 10.0F);
+    f.known({"wind_direction"});
+    if (const json* w = f.raw("wind_direction"); w != nullptr && !w->is_null()) {
+        glm::vec2 d{};
+        if (w->is_array() && w->size() == 2 && JsonFields::read_float((*w)[0], d.x) &&
+            JsonFields::read_float((*w)[1], d.y) && glm::length(d) > 1e-6F) {
+            const float len = glm::length(d); // already-unit input round-trips exactly
+            g.wind_direction = std::abs(len - 1.0F) < 1e-6F ? d : d / len;
+        } else {
+            f.fail("wind_direction", "expected a non-zero [x, z] direction");
+        }
+    }
+    read_range(f, "slope", g.slope_deg, 0.0F, 90.0F);
+    read_range(f, "height", g.height_m, -100000.0F, 100000.0F);
+    f.boolean("terrain_only", g.terrain_only);
+    f.number("ground_y", g.ground_y, -100000.0F, 100000.0F);
+    f.number("lod_start", g.lod_start, 0.0F, 1.0F).number("far_density", g.far_density, 0.0F, 1.0F);
+}
+
 // ---- Merge helper --------------------------------------------------------
 
 template <typename T, typename Decode>
@@ -475,6 +534,7 @@ json encode_components(const entt::registry& r, entt::entity e, const EncodeOpti
                           {"stream_radius", t->stream_radius},
                           {"gpu", t->gpu_generate}};
     }
+    if (const auto* g = r.try_get<Grass>(e)) out["grass"] = encode_grass(g->settings);
     if (const auto* n = r.try_get<NetReplicated>(e)) out["net_replicated"] = {{"net_id", n->net_id}};
     if (const auto* a = r.try_get<AudioSource>(e)) {
         out["audio_source"] = {{"clip", a->clip},
@@ -525,6 +585,7 @@ std::vector<std::string_view> component_names(const entt::registry& r, entt::ent
     add(r.all_of<BehaviorTree>(e), "behavior");
     add(r.all_of<PatrolRoute>(e), "patrol");
     add(r.all_of<Terrain>(e), "terrain");
+    add(r.all_of<Grass>(e), "grass");
     add(r.all_of<NetReplicated>(e), "net_replicated");
     add(r.all_of<AudioSource>(e), "audio_source");
     add(r.all_of<AudioListener>(e), "audio_listener");
@@ -711,6 +772,7 @@ std::expected<void, core::Error> apply_component(entt::registry& r, entt::entity
                 }
                 b.compiled.reset(); // recompile lazily
                 b.node_state.clear();
+                b.last_result.clear();
                 b.parse_failed = false;
             }
             f.boolean("enabled", b.enabled);
@@ -736,13 +798,27 @@ std::expected<void, core::Error> apply_component(entt::registry& r, entt::entity
             f.number("warp", p.warp_strength, 0.0F, 4.0F);
             f.enumeration("erosion", p.erosion_model, k_erosion_models);
             f.integer("droplets", p.erosion_droplets, 0, 50'000'000);
-            f.integer("erosion_steps", p.grid.iterations, 0, 100'000);
+            f.integer("erosion_steps", p.grid.iterations, 0, terrain::max_grid_erosion_steps);
             f.number("snowline", t.snowline_m);
             f.boolean("streaming", t.streaming);
             f.integer("stream_radius", t.stream_radius, 0, 8);
             f.boolean("gpu", t.gpu_generate);
+            // Grid erosion's cost grows with resolution² x steps and has no
+            // droplet-style cap on its own: bound it (audit D3).
+            if (!terrain::grid_erosion_within_limits(p)) {
+                f.fail(f.has("erosion_steps") ? "erosion_steps" : "resolution",
+                       "grid erosion is limited to resolution " +
+                           std::to_string(terrain::max_grid_erosion_resolution) +
+                           " and resolution^2 x erosion_steps <= " +
+                           std::to_string(terrain::max_grid_erosion_texel_steps) +
+                           " (e.g. 1025 at 5000 steps)");
+            }
             t.regenerate = true; // rebuild with the new parameters
         });
+    }
+    if (name == "grass") {
+        return merge<Grass>(r, e, v, name, strict,
+                            [](JsonFields& f, Grass& g) { decode_grass(f, g.settings); });
     }
     if (name == "net_replicated") {
         return merge<NetReplicated>(r, e, v, name, strict, [](JsonFields& f, NetReplicated& n) {
@@ -811,6 +887,7 @@ bool remove_component(entt::registry& r, entt::entity e, std::string_view name) 
     if (name == "behavior") return r.remove<BehaviorTree>(e) > 0;
     if (name == "patrol") return r.remove<PatrolRoute>(e) > 0;
     if (name == "terrain") return r.remove<Terrain>(e) > 0;
+    if (name == "grass") return r.remove<Grass>(e) > 0;
     if (name == "net_replicated") return r.remove<NetReplicated>(e) > 0;
     if (name == "audio_source") return r.remove<AudioSource>(e) > 0;
     if (name == "audio_listener") return r.remove<AudioListener>(e) > 0;

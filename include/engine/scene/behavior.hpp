@@ -176,6 +176,20 @@ private:
     std::vector<Node> nodes_;
 };
 
+// Node kinds for tools (the visual editor, the remote bt.leaves method): the
+// JSON "type" spelling, how many children each takes, and what it does.
+struct BtKindInfo {
+    BehaviorTreeAsset::Kind kind = BehaviorTreeAsset::Kind::leaf;
+    std::string_view        name;
+    int                     min_children = 0;
+    int                     max_children = 0; // -1: no limit
+    std::string_view        help;
+};
+
+// Every kind: the composites in a stable display order, then "leaf".
+[[nodiscard]] std::span<const BtKindInfo> bt_kind_info();
+[[nodiscard]] const BtKindInfo& bt_find_kind_info(BehaviorTreeAsset::Kind kind);
+
 // Tick one tree once: `bt.compiled` must be set (node_state is sized to it on
 // first use). Returns the root's status. Exposed for tests and tools;
 // bt_system is the per-frame entry point.

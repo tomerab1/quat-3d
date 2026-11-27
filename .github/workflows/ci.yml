@@ -7,9 +7,12 @@ on:
     branches: [main, master]
   pull_request:
 
+# A running build is never cancelled: a new push waits for it (GitHub keeps
+# only the newest pending run per group), so every build finishes even while
+# commits land frequently.
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 env:
   # Pinned to vcpkg.json's builtin-baseline.

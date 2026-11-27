@@ -10,7 +10,7 @@ Work in this order:
 
 2. **Plan before creating anything.** Write a short plan: the layout with coordinates in metres (Y is up; flat ground is y = 0 unless there is terrain), and for each object its name, shape, position, rotation, scale and colour; the lights; the time of day and clouds. Give entities unique descriptive names and group parts under a parent (e.g. "House_1" with children "House_1_Walls", "House_1_Roof") so they can be moved together.
 
-3. **Build in few round trips.** Use `scene_batch` with many scene.create commands; refer to an entity created earlier in the same batch with `"@N"` (its 0-based command index) in parent or entity fields. Primitives are about unit size and centred on their position: size them with transform.scale, and set position y to half the height so they rest on the ground. Add collider + rigidbody only where physics matters.
+3. **Build in few round trips.** Use `scene_batch` with many scene.create commands; refer to an entity created earlier in the same batch with `"@N"` (its 0-based command index) in parent or entity fields. Primitives are about unit size and centred on their position: size them with transform.scale, and set position y to half the height so they rest on the ground. Add collider + rigidbody only where physics matters. Ground cover (lawns, meadows, fields) is one entity with a `grass` component, never individual blades; repeated objects (forests, rocks) are one `instanced_mesh` + `scatter`.
 
 4. **Set the mood.** `environment_set` for the sun (elevation_deg 5..10 for golden hour, 45..70 for daylight) and clouds; point_light entities for lamps, fires and windows (warm linear colours such as [1.0, 0.6, 0.3]).
 

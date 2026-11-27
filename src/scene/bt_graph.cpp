@@ -1,4 +1,4 @@
-#include "bt_graph.hpp"
+#include "engine/scene/bt_graph.hpp"
 
 #include <algorithm>
 #include <charconv>
@@ -15,24 +15,22 @@
 
 #include "engine/core/json_fields.hpp"
 
-namespace engine::editor {
+namespace engine::scene {
 
 namespace {
 
 using nlohmann::json;
-using Asset = scene::BehaviorTreeAsset;
+using Asset = BehaviorTreeAsset;
 
 constexpr int           kLayoutVersion = 1;
 constexpr std::uint32_t kMaxNodeId = 1U << 30; // keeps editor widget ids in range
-constexpr float         kLayoutSpacingX = 250.0F;
-constexpr float         kLayoutSpacingY = 190.0F;
 
 [[nodiscard]] std::unexpected<core::Error> fail(std::string what) {
     return std::unexpected(core::Error{std::move(what)});
 }
 
-[[nodiscard]] const scene::BtLeafInfo* find_leaf(BtLeafCatalog leaves, std::string_view name) {
-    for (const scene::BtLeafInfo& info : leaves) {
+[[nodiscard]] const BtLeafInfo* find_leaf(BtLeafCatalog leaves, std::string_view name) {
+    for (const BtLeafInfo& info : leaves) {
         if (info.name == name) return &info;
     }
     return nullptr;
@@ -50,7 +48,7 @@ constexpr float         kLayoutSpacingY = 190.0F;
     return std::string(buf, r.ptr);
 }
 
-[[nodiscard]] std::string range_text(const scene::BtParamInfo& p) {
+[[nodiscard]] std::string range_text(const BtParamInfo& p) {
     const bool lo = p.min > std::numeric_limits<float>::lowest();
     const bool hi = p.max < std::numeric_limits<float>::max();
     if (lo && hi) return "expected a number in [" + trim_float(p.min) + ", " + trim_float(p.max) + "]";
@@ -76,19 +74,24 @@ struct Reader {
 
     std::expected<std::uint32_t, core::Error> read(const json& n, int depth,
                                                    const std::string& where) {
-        if (depth > scene::bt_max_depth) {
+        if (depth > bt_max_depth) {
             return fail("behavior tree: nesting deeper than " +
-                        std::to_string(scene::bt_max_depth));
+                        std::to_string(bt_max_depth));
         }
         core::JsonFields f(n, where);
-        if (depth == 0) (void)f.raw(scene::bt_editor_field);
+        if (depth == 0) (void)f.raw(bt_editor_field);
         std::string type;
         f.string("type", type, 64);
         if (!f.ok()) return std::unexpected(f.finish().error());
         if (type.empty()) return fail("behavior tree: " + where + " has no \"type\"");
         const std::optional<BtKind> kind = Asset::kind_from_name(type);
         if (!kind) {
-            return fail("behavior tree: " + where + ": unknown node type '" + type + "'");
+            std::string known;
+            for (const BtKindInfo& k : bt_kind_info()) {
+                known += (known.empty() ? "" : ", ") + std::string(k.name);
+            }
+            return fail("behavior tree: " + where + ": unknown node type '" + type +
+                        "' (known: " + known + ")");
         }
 
         const std::size_t index = graph.nodes.size();
@@ -105,7 +108,7 @@ struct Reader {
             // validation question, but each must be a number to be shown.
             for (const auto& [key, value] : n.items()) {
                 if (key == "type" || key == "name") continue;
-                if (depth == 0 && key == scene::bt_editor_field) continue;
+                if (depth == 0 && key == bt_editor_field) continue;
                 if (key == "children") {
                     return fail("behavior tree: " + where + ": a leaf cannot have children");
                 }
@@ -116,7 +119,7 @@ struct Reader {
                 graph.nodes[index].params.push_back({key, v});
             }
             // Parameters in the leaf's declared order (unknown ones last).
-            if (const scene::BtLeafInfo* info = find_leaf(leaves, graph.nodes[index].leaf)) {
+            if (const BtLeafInfo* info = find_leaf(leaves, graph.nodes[index].leaf)) {
                 const auto rank = [info](const BtGraphParam& p) {
                     std::size_t i = 0;
                     while (i < info->params.size() && info->params[i].name != p.name) ++i;
@@ -148,7 +151,7 @@ struct Reader {
 // read in pre-order, which is the order the layout lists them in.
 [[nodiscard]] bool apply_layout(BtGraph& graph, const json& root) {
     if (!root.is_object()) return false;
-    const auto editor = root.find(scene::bt_editor_field);
+    const auto editor = root.find(bt_editor_field);
     if (editor == root.end() || !editor->is_object()) return false;
     const auto version = editor->find("version");
     std::int64_t v = 0;
@@ -245,10 +248,10 @@ struct CycleCheck {
     void visit(std::uint32_t id, int depth) {
         const BtGraphNode* n = graph.find(id);
         if (n == nullptr) return;
-        if (depth > scene::bt_max_depth && !depth_reported) {
+        if (depth > bt_max_depth && !depth_reported) {
             depth_reported = true;
             issues.push_back({id, label(*n) + ": nested deeper than " +
-                                      std::to_string(scene::bt_max_depth) + " levels"});
+                                      std::to_string(bt_max_depth) + " levels"});
         }
         state[id] = 1;
         for (const std::uint32_t c : n->children) {
@@ -275,10 +278,10 @@ void validate_node(const BtGraphNode& n, BtLeafCatalog leaves, std::vector<BtGra
         return;
     }
     if (!n.children.empty()) out.push_back({n.id, who + ": a leaf cannot have children"});
-    const scene::BtLeafInfo* info = find_leaf(leaves, n.leaf);
+    const BtLeafInfo* info = find_leaf(leaves, n.leaf);
     if (info == nullptr) {
         std::string known;
-        for (const scene::BtLeafInfo& l : leaves) {
+        for (const BtLeafInfo& l : leaves) {
             known += (known.empty() ? "" : ", ") + std::string(l.name);
         }
         out.push_back({n.id, "unknown leaf '" + n.leaf + "' (known: " + known + ")"});
@@ -291,10 +294,10 @@ void validate_node(const BtGraphNode& n, BtLeafCatalog leaves, std::vector<BtGra
                 out.push_back({n.id, who + ": parameter '" + p.name + "' set twice"});
             }
         }
-        const scene::BtParamInfo* pi = info->find_param(p.name);
+        const BtParamInfo* pi = info->find_param(p.name);
         if (pi == nullptr) {
             std::string known;
-            for (const scene::BtParamInfo& k : info->params) {
+            for (const BtParamInfo& k : info->params) {
                 known += (known.empty() ? "" : ", ") + std::string(k.name);
             }
             out.push_back({n.id, who + ": unknown parameter '" + p.name + "'" +
@@ -307,9 +310,20 @@ void validate_node(const BtGraphNode& n, BtLeafCatalog leaves, std::vector<BtGra
     }
 }
 
-// Translates `id` and its subtree by dx.
-void shift_subtree(BtGraph& graph, std::uint32_t id, float dx) {
-    for (const std::uint32_t n : reachable(graph, id)) graph.find(n)->pos.x += dx;
+// The parentless node heading the largest tree (other parentless nodes are
+// stray), or 0 when every node has a parent.
+[[nodiscard]] std::uint32_t main_root(const BtGraph& graph,
+                                      const std::vector<std::uint32_t>& parentless) {
+    std::uint32_t root = 0;
+    std::size_t   best = 0;
+    for (const std::uint32_t r : parentless) {
+        const std::size_t size = reachable(graph, r).size();
+        if (size > best) {
+            best = size;
+            root = r;
+        }
+    }
+    return root;
 }
 
 } // namespace
@@ -361,7 +375,7 @@ std::expected<std::string, core::Error> bt_graph_to_json(const BtGraph& graph,
     const json editor = {{"version", kLayoutVersion}, {"nodes", std::move(layout)}};
     // The pretty-printed object ends in "\n}".
     text.resize(text.size() - 2);
-    text += ",\n  \"" + std::string(scene::bt_editor_field) + "\": " + editor.dump() + "\n}";
+    text += ",\n  \"" + std::string(bt_editor_field) + "\": " + editor.dump() + "\n}";
     return text;
 }
 
@@ -395,17 +409,7 @@ std::vector<BtGraphIssue> bt_graph_validate(const BtGraph& graph, BtLeafCatalog 
                                         " parents (a node has exactly one)"});
         }
     }
-    // The root is the parentless node heading the largest tree; other
-    // parentless nodes are stray.
-    std::uint32_t root = 0;
-    std::size_t   best = 0;
-    for (const std::uint32_t r : roots) {
-        const std::size_t size = reachable(graph, r).size();
-        if (size > best) {
-            best = size;
-            root = r;
-        }
-    }
+    const std::uint32_t root = main_root(graph, roots);
     if (root == 0) {
         issues.push_back({0, "no root: every node has a parent, so the links form a cycle"});
     } else {
@@ -448,117 +452,35 @@ std::vector<std::uint32_t> bt_graph_preorder(const BtGraph& graph) {
     return root != 0 ? reachable(graph, root) : std::vector<std::uint32_t>{};
 }
 
-std::uint32_t bt_graph_add_node(BtGraph& graph, BtKind kind, std::string_view leaf,
-                                glm::vec2 pos, BtLeafCatalog leaves) {
-    BtGraphNode n;
-    n.id = graph.next_id++;
-    n.kind = kind;
-    n.pos = pos;
-    if (kind == BtKind::leaf) {
-        n.leaf = std::string(leaf);
-        if (const scene::BtLeafInfo* info = find_leaf(leaves, leaf)) {
-            for (const scene::BtParamInfo& p : info->params) {
-                if (!p.optional) n.params.push_back({std::string(p.name), p.default_value});
-            }
+std::vector<std::uint32_t> bt_graph_subtree(const BtGraph& graph, std::uint32_t id) {
+    return reachable(graph, id);
+}
+
+std::unordered_map<std::uint32_t, std::string> bt_graph_paths(const BtGraph& graph) {
+    std::unordered_map<std::uint32_t, std::string> paths;
+    std::vector<std::uint32_t> parentless;
+    for (const auto& [id, count] : parent_counts(graph)) {
+        if (count == 0) parentless.push_back(id);
+    }
+    std::ranges::sort(parentless); // deterministic choice between equal trees
+    const std::uint32_t root = main_root(graph, parentless);
+    if (root == 0) return paths;
+    // Depth-first; a node already named keeps its first path (cycles end).
+    std::vector<std::uint32_t> stack{root};
+    paths.emplace(root, "root");
+    while (!stack.empty()) {
+        const std::uint32_t id = stack.back();
+        stack.pop_back();
+        const BtGraphNode* n = graph.find(id);
+        if (n == nullptr) continue;
+        const std::string prefix = paths.at(id) + ".children[";
+        for (std::size_t i = 0; i < n->children.size(); ++i) {
+            const std::uint32_t c = n->children[i];
+            if (graph.find(c) == nullptr) continue;
+            if (paths.emplace(c, prefix + std::to_string(i) + "]").second) stack.push_back(c);
         }
     }
-    graph.nodes.push_back(std::move(n));
-    return graph.nodes.back().id;
+    return paths;
 }
 
-void bt_graph_remove_node(BtGraph& graph, std::uint32_t id) {
-    std::erase_if(graph.nodes, [id](const BtGraphNode& n) { return n.id == id; });
-    for (BtGraphNode& n : graph.nodes) std::erase(n.children, id);
-}
-
-std::expected<void, core::Error> bt_graph_can_link(const BtGraph& graph, std::uint32_t parent,
-                                                   std::uint32_t child) {
-    const BtGraphNode* p = graph.find(parent);
-    const BtGraphNode* c = graph.find(child);
-    if (p == nullptr || c == nullptr) return fail("no such node");
-    if (parent == child) return fail("a node cannot be its own child");
-    if (p->kind == BtKind::leaf) return fail("a leaf cannot have children");
-    if (std::ranges::find(p->children, child) != p->children.end()) return fail("already linked");
-    if (p->kind == BtKind::inverter && !p->children.empty()) {
-        return fail("an inverter takes exactly one child");
-    }
-    // Linking under one of child's own descendants would close a cycle.
-    for (const std::uint32_t d : reachable(graph, child)) {
-        if (d == parent) return fail("would create a cycle");
-    }
-    return {};
-}
-
-std::expected<void, core::Error> bt_graph_link(BtGraph& graph, std::uint32_t parent,
-                                               std::uint32_t child) {
-    if (auto ok = bt_graph_can_link(graph, parent, child); !ok) return ok;
-    for (BtGraphNode& n : graph.nodes) std::erase(n.children, child);
-    graph.find(parent)->children.push_back(child);
-    return {};
-}
-
-bool bt_graph_unlink(BtGraph& graph, std::uint32_t parent, std::uint32_t child) {
-    BtGraphNode* p = graph.find(parent);
-    return p != nullptr && std::erase(p->children, child) > 0;
-}
-
-bool bt_graph_move_child(BtGraph& graph, std::uint32_t child, int delta) {
-    BtGraphNode* p = graph.find(bt_graph_parent(graph, child));
-    if (p == nullptr || delta == 0) return false;
-    const auto it = std::ranges::find(p->children, child);
-    const auto i = static_cast<std::ptrdiff_t>(it - p->children.begin());
-    const std::ptrdiff_t j = i + (delta < 0 ? -1 : 1);
-    if (j < 0 || j >= static_cast<std::ptrdiff_t>(p->children.size())) return false;
-    const std::uint32_t other = p->children[static_cast<std::size_t>(j)];
-    std::swap(p->children[static_cast<std::size_t>(i)], p->children[static_cast<std::size_t>(j)]);
-    // Swap the two subtrees on screen too, so sorting by x keeps this order.
-    const float dx = graph.find(other)->pos.x - graph.find(child)->pos.x;
-    shift_subtree(graph, child, dx);
-    shift_subtree(graph, other, -dx);
-    return true;
-}
-
-bool bt_graph_sort_children_by_x(BtGraph& graph) {
-    bool changed = false;
-    for (BtGraphNode& n : graph.nodes) {
-        if (n.children.size() < 2) continue;
-        std::vector<std::uint32_t> sorted = n.children;
-        std::ranges::stable_sort(sorted, [&](std::uint32_t a, std::uint32_t b) {
-            const BtGraphNode* na = graph.find(a);
-            const BtGraphNode* nb = graph.find(b);
-            return na != nullptr && nb != nullptr && na->pos.x < nb->pos.x;
-        });
-        if (sorted != n.children) {
-            n.children = std::move(sorted);
-            changed = true;
-        }
-    }
-    return changed;
-}
-
-void bt_graph_auto_layout(BtGraph& graph) {
-    std::uint32_t root = bt_graph_root(graph);
-    if (root == 0 && !graph.nodes.empty()) root = graph.nodes.front().id;
-    std::unordered_set<std::uint32_t> placed;
-    float next_x = 0.0F;
-    // Leaves take consecutive columns; parents centre over their children.
-    const auto place = [&](const auto& self, std::uint32_t id, int depth) -> float {
-        BtGraphNode* n = graph.find(id);
-        if (n == nullptr || !placed.insert(id).second) return next_x;
-        std::vector<float> xs;
-        for (const std::uint32_t c : n->children) {
-            if (!placed.contains(c) && graph.find(c) != nullptr) xs.push_back(self(self, c, depth + 1));
-        }
-        if (xs.empty()) {
-            n->pos.x = next_x;
-            next_x += kLayoutSpacingX;
-        } else {
-            n->pos.x = 0.5F * (xs.front() + xs.back());
-        }
-        n->pos.y = static_cast<float>(depth) * kLayoutSpacingY;
-        return n->pos.x;
-    };
-    if (root != 0) place(place, root, 0);
-}
-
-} // namespace engine::editor
+} // namespace engine::scene

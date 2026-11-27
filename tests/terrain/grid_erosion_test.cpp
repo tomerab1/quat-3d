@@ -2,9 +2,12 @@
 // synthesis pass (R10.2): determinism, the untouched border band (streaming
 // seams), that it actually erodes, and the shared world-lattice sampling.
 
+#include <atomic>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
+#include <future>
 
 #include <gtest/gtest.h>
 
@@ -98,6 +101,43 @@ TEST(TerrainGridErosion, StreamedGridTilesShareBitIdenticalEdges) {
         const float hb = b.heights[x];
         ASSERT_EQ(std::memcmp(&ha, &hb, sizeof(float)), 0) << "column " << x;
     }
+}
+
+// Audit D3: a CPU generation stops at its next erosion step once cancelled
+// (streamer teardown / app exit never waits out a long simulation).
+TEST(TerrainGridErosion, CancelStopsTheSimulation) {
+    t::TerrainParams p = grid_params();
+    p.grid.iterations = 1'000'000; // hours if it ran
+    std::atomic<bool> cancel{true};
+    const auto t0 = std::chrono::steady_clock::now();
+    const t::Heightmap map = t::generate(p, &cancel);
+    EXPECT_FALSE(map.valid());
+    EXPECT_LT(std::chrono::steady_clock::now() - t0, std::chrono::seconds(10));
+
+    t::CancelToken token = t::make_cancel_token();
+    auto job = t::generate_async(p, token);
+    token->store(true);
+    ASSERT_EQ(job.wait_for(std::chrono::seconds(30)), std::future_status::ready);
+    EXPECT_FALSE(job.get().valid());
+
+    t::TerrainParams droplets = grid_params();
+    droplets.erosion_model = t::ErosionModel::droplets;
+    droplets.erosion_droplets = 50'000'000;
+    EXPECT_FALSE(t::generate(droplets, &cancel).valid());
+}
+
+TEST(TerrainGridErosion, LimitsBoundResolutionAndSteps) {
+    t::TerrainParams p = grid_params();
+    p.resolution = 1025;
+    p.grid.iterations = t::max_grid_erosion_steps;
+    EXPECT_TRUE(t::grid_erosion_within_limits(p));
+    p.grid.iterations += 1;
+    EXPECT_FALSE(t::grid_erosion_within_limits(p));
+    p.grid.iterations = 10;
+    p.resolution = t::max_grid_erosion_resolution + 2;
+    EXPECT_FALSE(t::grid_erosion_within_limits(p));
+    p.erosion_model = t::ErosionModel::droplets;
+    EXPECT_TRUE(t::grid_erosion_within_limits(p));
 }
 
 TEST(TerrainGridErosion, NoiseIsSampledOnTheWorldTexelLattice) {

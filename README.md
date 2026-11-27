@@ -35,6 +35,8 @@ drive directly to build and debug worlds from a prompt.
   seamless streaming for kilometre-scale worlds; tiles (noise + hydraulic /
   thermal erosion) are synthesised on the GPU in milliseconds, with the
   deterministic CPU generator as fallback and reference
+- Dense, wind-animated grass generated on the GPU every frame around the
+  camera (slope / height limits, distance level of detail, no popping)
 - Jolt physics: rigid bodies, character controller, triggers, terrain collision
 
 **Audio**
@@ -138,7 +140,7 @@ Environment variables switch on extra modes:
 | Variable | Effect |
 |---|---|
 | `QUAT_GLTF=<file>` | Load a glTF/GLB model instead of the showcase scene |
-| `QUAT_TERRAIN=1` | Add a procedural terrain tile |
+| `QUAT_TERRAIN=1` | Add a procedural terrain tile (with a grass field) |
 | `QUAT_PHYSICS=1` / `QUAT_CHARACTER=1` | Physics / character-controller demo scenes |
 | `QUAT_HOST=<port>` / `QUAT_JOIN=<ip:port>` | Host or join a networked session |
 | `QUAT_REMOTE=<port>` | Open the remote-control endpoint for AI tools (`1` = port 7878); add `QUAT_REMOTE_TOKEN=<secret>` to require a token — see [`docs/remote-control.md`](docs/remote-control.md) |
@@ -183,7 +185,10 @@ assistants such as Claude Code and Claude Desktop build and inspect worlds in
 the running engine — create entities, set the sky and camera, take
 screenshots, spawn models — and debug it: read the engine log and Vulkan
 validation messages, frame statistics, pause / single-step / slow down the
-simulation, watch entities, cast physics rays and query navmesh paths. Start the engine with `QUAT_REMOTE=7878`, build the
+simulation, watch entities, cast physics rays and query navmesh paths — and
+author NPC behaviour trees: build, inspect and edit the same graph the editor's
+Behaviour panel shows, with per-node validation errors, and see what each node
+did on the last tick. Start the engine with `QUAT_REMOTE=7878`, build the
 server with `cargo build --release` in `tools/quat-mcp`, and register it with
 your client:
 

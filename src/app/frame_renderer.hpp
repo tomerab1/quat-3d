@@ -78,6 +78,8 @@ struct RendererSettings;
 
 namespace quat::app {
 
+class GrassRuntime;
+
 inline constexpr std::uint32_t k_frames_in_flight = 2;
 // Stage the image-acquire semaphore is waited at; the swapchain image's first
 // render-graph barrier is chained to it.
@@ -150,6 +152,9 @@ struct FrameInputs {
     engine::renderer::TerrainPass* terrain = nullptr;
     glm::vec3                      terrain_anchor{0.0F};
     float                          terrain_snowline = 0.0F;
+    // GPU grass around the camera (null: none); `sim_dt` drives its wind.
+    GrassRuntime* grass = nullptr;
+    float         sim_dt = 0.0F;
 #ifdef ENGINE_EDITOR
     // Builds the editor UI (after the scene passes are declared) and returns
     // its draw data, drawn over the swapchain as the last pass.

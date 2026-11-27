@@ -6,7 +6,11 @@
 // Backends:
 //   * native  — Linux inotify (IN_CLOSE_WRITE / IN_MOVED_TO / IN_ATTRIB for
 //               writes and renames into place, IN_DELETE / IN_MOVED_FROM for
-//               removals). A queue overflow triggers a full rescan.
+//               removals). It keeps a snapshot of the files it has reported,
+//               so a queue overflow rescans and reports both changes and
+//               removals. A watched directory that is deleted or moved away
+//               reports its files as removed and is watched again (with a
+//               rescan) as soon as a directory exists at its path again.
 //   * polling — a periodic std::filesystem scan comparing modification time
 //               and size. Works everywhere; used on platforms without a native
 //               backend (Windows, macOS) and when the native backend fails.

@@ -4,6 +4,7 @@
 #include <cstring>
 #include <string>
 #include <utility>
+#include <vector>
 
 #include "engine/rhi/device.hpp"
 #include "engine/rhi/pipeline_cache.hpp"
@@ -29,16 +30,15 @@ constexpr VkDeviceSize kIndicesBytes =
     static_cast<VkDeviceSize>(max_cluster_light_indices) * sizeof(std::uint32_t);
 constexpr VkDeviceSize kCounterBytes = sizeof(std::uint32_t);
 
-// light_cull.slang set 0: params, lights, grid, indices, counter.
-[[nodiscard]] std::array<rhi::DescriptorBinding, 5> cull_bindings() {
-    return {{
-        {0, 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, kComputeStage},
-        {0, 1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kComputeStage},
-        {0, 2, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kComputeStage},
-        {0, 3, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kComputeStage},
-        {0, 4, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kComputeStage},
-    }};
-}
+// light_cull.slang's resources, by name; their binding slots come from the
+// shader's reflection at pipeline creation, in this order.
+constexpr std::array<rhi::BindingRequest, 5> kCullResources{{
+    {"g_params", VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER},
+    {"g_lights", VK_DESCRIPTOR_TYPE_STORAGE_BUFFER},
+    {"g_grid", VK_DESCRIPTOR_TYPE_STORAGE_BUFFER},
+    {"g_indices", VK_DESCRIPTOR_TYPE_STORAGE_BUFFER},
+    {"g_counter", VK_DESCRIPTOR_TYPE_STORAGE_BUFFER},
+}};
 
 [[nodiscard]] std::expected<rhi::GpuBuffer, core::Error>
 host_buffer(rhi::GpuAllocator& allocator, VkDeviceSize size, VkBufferUsageFlags usage) {
@@ -130,13 +130,16 @@ LightCullPass::create(const rhi::Device& device, rhi::GpuAllocator& allocator,
     s.fns = rhi::DescriptorBufferFunctions::load(device.handle());
     if (!s.fns.valid()) return fail("light cull pass: descriptor buffer functions unavailable");
 
-    const auto bindings = cull_bindings();
-    auto layout = rhi::DescriptorSetLayout::create(device, s.fns, bindings);
+    auto shader = cache.load(cooked_shader_dir + "/light_cull.spv");
+    if (!shader) return std::unexpected(shader.error());
+    // The set layout and every descriptor slot come from the shader's reflection.
+    auto bindings = rhi::reflected_bindings((*shader)->reflection, kCullResources, kComputeStage);
+    if (!bindings) return fail("light cull pass: " + bindings.error().message);
+    const std::vector<rhi::DescriptorBinding>& slots = *bindings;
+    auto layout = rhi::DescriptorSetLayout::create(device, s.fns, slots);
     if (!layout) return std::unexpected(layout.error());
     s.layout = std::move(*layout);
 
-    auto shader = cache.load(cooked_shader_dir + "/light_cull.spv");
-    if (!shader) return std::unexpected(shader.error());
     const VkDescriptorSetLayout set_layout = s.layout.handle();
     rhi::ComputePipeline::CreateInfo info{};
     info.shader = *shader;
@@ -183,12 +186,12 @@ LightCullPass::create(const rhi::Device& device, rhi::GpuAllocator& allocator,
     auto descriptor = rhi::DescriptorBuffer::create(device, allocator, s.fns, s.layout);
     if (!descriptor) return std::unexpected(descriptor.error());
     s.descriptor = std::move(*descriptor);
-    s.descriptor.write_uniform_buffer(0, s.addresses.params, kParamsBytes);
-    s.descriptor.write_storage_buffer(1, s.addresses.lights, kLightsBytes);
-    s.descriptor.write_storage_buffer(2, s.addresses.grid, kGridBytes);
-    s.descriptor.write_storage_buffer(3, s.addresses.indices, kIndicesBytes);
-    s.descriptor.write_storage_buffer(4, rhi::buffer_device_address(vk, s.counter),
-                                      kCounterBytes);
+    s.descriptor.write_uniform_buffer(slots[0].binding, s.addresses.params, kParamsBytes);
+    s.descriptor.write_storage_buffer(slots[1].binding, s.addresses.lights, kLightsBytes);
+    s.descriptor.write_storage_buffer(slots[2].binding, s.addresses.grid, kGridBytes);
+    s.descriptor.write_storage_buffer(slots[3].binding, s.addresses.indices, kIndicesBytes);
+    s.descriptor.write_storage_buffer(slots[4].binding,
+                                      rhi::buffer_device_address(vk, s.counter), kCounterBytes);
     return out;
 }
 
