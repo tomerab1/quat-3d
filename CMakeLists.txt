@@ -192,7 +192,8 @@ add_library(engine_physics STATIC
     src/physics/physics_character.cpp
     src/physics/physics_queries.cpp
     src/physics/physics_events.cpp
-    src/physics/physics_body_control.cpp)
+    src/physics/physics_body_control.cpp
+    src/physics/physics_shape_queries.cpp)
 target_link_libraries(engine_physics PUBLIC engine_flags)
 target_link_libraries(engine_physics PRIVATE Jolt::Jolt)
 target_include_directories(engine_physics PUBLIC ${ENGINE_PUBLIC_INCLUDE})
@@ -342,6 +343,7 @@ add_library(engine_remote_world STATIC
     src/remote/world/behavior_edit_commands.cpp
     src/remote/world/physics_commands.cpp
     src/remote/world/physics_body_commands.cpp
+    src/remote/world/physics_query_commands.cpp
     src/remote/world/image_encode.cpp
     src/remote/world/stb_image_write_impl.cpp)
 target_link_libraries(engine_remote_world PUBLIC

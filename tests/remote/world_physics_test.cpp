@@ -245,6 +245,79 @@ TEST_F(BodyCommands, AnUnbuiltBodyIsReportedAsPending) {
               std::string::npos);
 }
 
+// ---- queries ----------------------------------------------------------------
+
+TEST_F(BodyCommands, RaycastAllReportsEveryEntityAlongTheRay) {
+    spawn("Floor", {{"transform", {{"position", {0, -1, 0}}}},
+                    {"collider", {{"shape", "box"}, {"half_extents", {20, 1, 20}}}},
+                    {"rigidbody", {{"motion", "static"}}}});
+    const Json crate_id = crate(); // at y = 5
+    const Json r = ok("physics.raycast_all",
+                      {{"origin", {0, 10, 0}}, {"direction", {0, -1, 0}}, {"max_distance", 50}});
+    ASSERT_EQ(r["count"], 2);
+    EXPECT_EQ(r["hits"][0]["entity"], crate_id);
+    EXPECT_EQ(r["hits"][0]["name"], "Crate");
+    EXPECT_EQ(r["hits"][0]["kind"], "body");
+    EXPECT_EQ(r["hits"][0]["layer"], "dynamic");
+    EXPECT_NEAR(r["hits"][0]["distance"].get<float>(), 4.5F, 1e-3F);
+    EXPECT_EQ(r["hits"][1]["name"], "Floor");
+    // Only the static layer.
+    const Json s = ok("physics.raycast_all",
+                      {{"origin", {0, 10, 0}}, {"direction", {0, -1, 0}}, {"layers", {"static"}}});
+    ASSERT_EQ(s["count"], 1);
+    EXPECT_EQ(s["hits"][0]["name"], "Floor");
+}
+
+TEST_F(BodyCommands, OverlapAndShapeCastFindTheCrate) {
+    crate(); // a 1 m box centred at y = 5
+    Json o = ok("physics.overlap", {{"shape", "sphere"}, {"radius", 1}, {"position", {0, 6.2, 0}}});
+    ASSERT_EQ(o["count"], 1);
+    EXPECT_EQ(o["hits"][0]["name"], "Crate");
+    EXPECT_GT(o["hits"][0]["penetration"].get<float>(), 0.0F);
+    o = ok("physics.overlap", {{"shape", "box"}, {"half_extents", {0.2, 0.2, 0.2}},
+                               {"position", {3, 5, 0}}, {"rotation", {0, 45, 0}}});
+    EXPECT_EQ(o["count"], 0);
+
+    const Json c = ok("physics.shape_cast", {{"shape", "capsule"},
+                                             {"radius", 0.25},
+                                             {"half_height", 0.25},
+                                             {"from", {-5, 5, 0}},
+                                             {"to", {5, 5, 0}}});
+    ASSERT_EQ(c["count"], 1);
+    EXPECT_EQ(c["hits"][0]["name"], "Crate");
+    EXPECT_NEAR(c["hits"][0]["distance"].get<float>(), 4.25F, 0.02F);
+    EXPECT_NEAR(c["hits"][0]["normal"][0].get<float>(), -1.0F, 0.01F);
+}
+
+TEST_F(BodyCommands, QueryParametersAreValidated) {
+    const auto code = rpc_code::invalid_params;
+    err("physics.raycast_all", {{"origin", {0, 0, 0}}, {"direction", {0, 0, 0}}}, code);
+    err("physics.raycast_all", {{"direction", {0, -1, 0}}}, code);
+    EXPECT_NE(err("physics.raycast_all",
+                  {{"origin", {0, 0, 0}}, {"direction", {0, -1, 0}}, {"layers", {"water"}}}, code)
+                  .find("static, dynamic, character"),
+              std::string::npos);
+    err("physics.raycast_all", {{"origin", {0, 0, 0}}, {"direction", {0, -1, 0}}, {"max_hits", 0}},
+        code);
+    EXPECT_NE(err("physics.overlap", {{"shape", "box"}, {"radius", 1}, {"position", {0, 0, 0}}},
+                  code)
+                  .find("half_extents"),
+              std::string::npos);
+    err("physics.overlap", {{"shape", "cone"}, {"position", {0, 0, 0}}}, code);
+    err("physics.overlap", {{"shape", "sphere"}}, code);
+    err("physics.overlap", {{"shape", "sphere"}, {"radius", -1}, {"position", {0, 0, 0}}}, code);
+    err("physics.overlap",
+        {{"shape", "sphere"}, {"half_height", 1}, {"position", {0, 0, 0}}}, code);
+    EXPECT_NE(err("physics.shape_cast",
+                  {{"shape", "sphere"}, {"from", {1, 1, 1}}, {"to", {1, 1, 1}}}, code)
+                  .find("physics.overlap"),
+              std::string::npos);
+    err("physics.shape_cast", {{"shape", "sphere"}, {"from", {1, 1, 1}}}, code);
+    physics.reset();
+    err("physics.raycast_all", {{"origin", {0, 0, 0}}, {"direction", {0, -1, 0}}},
+        rpc_code::unavailable);
+}
+
 // ---- gravity ----------------------------------------------------------------
 
 TEST_F(PhysicsCommands, GravityIsASceneSettingEditableWithoutPlaying) {

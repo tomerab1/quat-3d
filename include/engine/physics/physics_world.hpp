@@ -290,6 +290,48 @@ public:
                                                  float max_distance,
                                                  bool include_sensors = false) const;
 
+    // ---- Multi-hit queries (A10.1) ------------------------------------------
+    // Filtered by object layer (LayerMask; characters are on Layer::character
+    // through their inner bodies). At most `max_hits` (capped at
+    // max_query_hits) results, one per body or character.
+    static constexpr std::size_t max_query_hits = 256;
+    enum class QueryShape : std::uint8_t { sphere, box, capsule };
+    struct ShapeDesc {
+        QueryShape type = QueryShape::sphere;
+        float      radius = 0.5F;          // sphere, capsule
+        glm::vec3  half_extents{0.5F};     // box
+        float      half_height = 0.5F;     // capsule: half the cylinder length (along Y)
+    };
+    struct QueryHit {
+        std::uint32_t body = invalid_body;      // the body (a character's inner body for characters)
+        std::uint32_t character = invalid_body; // set when a character was hit
+        std::uint32_t owner = no_owner;
+        Layer         layer = Layer::static_body;
+        bool          sensor = false;
+        glm::vec3     point{0.0F};  // world-space contact point
+        glm::vec3     normal{0.0F}; // world-space surface normal of the hit body, facing the query
+        float         fraction = 0.0F;    // casts: along the cast, 0..1
+        float         distance = 0.0F;    // casts: metres travelled before the hit
+        float         penetration = 0.0F; // overlaps: how deep the shapes overlap, metres
+    };
+    // Every hit along a ray, nearest first.
+    [[nodiscard]] std::vector<QueryHit> cast_ray_all(const glm::vec3& origin,
+                                                     const glm::vec3& direction,
+                                                     float max_distance,
+                                                     LayerMask layers = solid_layers,
+                                                     std::size_t max_hits = 64) const;
+    // Bodies a shape at `position` / `rotation` overlaps, deepest first.
+    [[nodiscard]] std::vector<QueryHit> overlap(const ShapeDesc& shape, const glm::vec3& position,
+                                                const glm::quat& rotation,
+                                                LayerMask layers = solid_layers,
+                                                std::size_t max_hits = 64) const;
+    // Bodies a shape swept from `from` to `to` (fixed rotation) touches,
+    // nearest first (fraction 0: already overlapping at `from`).
+    [[nodiscard]] std::vector<QueryHit> cast_shape(const ShapeDesc& shape, const glm::vec3& from,
+                                                   const glm::vec3& to, const glm::quat& rotation,
+                                                   LayerMask layers = solid_layers,
+                                                   std::size_t max_hits = 64) const;
+
 private:
     PhysicsWorld() = default;
 

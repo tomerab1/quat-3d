@@ -235,6 +235,9 @@ struct PhysicsWorld::Impl {
         });
     }
 
+    // Fills a query hit's body / character / owner / layer (main thread).
+    void describe_hit(const PhysicsWorld& world, JPH::BodyID id, QueryHit& hit) const;
+
     [[nodiscard]] JPH::CharacterVirtual* character(std::uint32_t id) const {
         const detail::CharacterRecord* c = characters.get(id);
         return c != nullptr ? c->character.GetPtr() : nullptr;
