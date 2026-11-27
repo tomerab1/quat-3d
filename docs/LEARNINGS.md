@@ -26,6 +26,20 @@ into CLAUDE.md or the brief template in [`CYCLE.md`](CYCLE.md).
 
 ## Build and CI
 
+- **Parallel subagents share one scratchpad directory.** On 2026-11-27 two
+  workers wrote `cc.sh` / `cook.sh` / `shaders/` at the scratchpad root and
+  overwrote each other's build scripts (one script `cd`s into its own
+  worktree, so the other would have compiled the wrong tree). → Each worker
+  keeps its files in its own subdirectory (`scratchpad/<branch-or-agent>/`).
+- **Jolt, Recast and GNS tests can run locally.** Jolt: build
+  `~/deps/jolt/Build` with clang + `-stdlib=libc++`, `CPP_RTTI_ENABLED=OFF`,
+  `CPP_EXCEPTIONS_ENABLED=OFF`, and compile the engine TUs with the same
+  `JPH_*` defines and `-mavx2 -mbmi -mpopcnt -mlzcnt -mf16c -mfma` (read them
+  from the generated `build.ninja`) plus `-DNDEBUG` (else `JPH::AssertFailed`
+  is unresolved). Recast/Detour: compile `~/deps/recast/*/Source/*.cpp`
+  directly. GNS: `apt install libprotobuf-dev protobuf-compiler libssl-dev`,
+  build v1.4.1 as a shared library (default libstdc++ is fine — its API has
+  no std types) and link the libc++ tests against it with an rpath.
 - **Lavapipe's ICD file is `lvp_icd.json` on Ubuntu 24.04** (not
   `lvp_icd.x86_64.json`) — a wrong `VK_ICD_FILENAMES` gives
   `VK_ERROR_INCOMPATIBLE_DRIVER` from vkCreateInstance. CI globs for it.

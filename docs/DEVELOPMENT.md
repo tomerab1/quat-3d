@@ -57,6 +57,7 @@ Test layout:
 | `tests/<module>/*_test.cpp` | Test cases (new tests go here) |
 | `tests/support/expect_ok.hpp` | `ASSERT_OK` / `EXPECT_OK` / `ASSERT_ERR` for `std::expected` results |
 | `tests/support/gpu_context.hpp` | Shared surface-less Vulkan device; start GPU tests with `QUAT_REQUIRE_GPU(ctx)` and name the suite `Gpu*` |
+| `tests/support/render_readback.hpp` | GPU pass tests: `upload_mesh`, `render_to_host` (appends a read-back pass to a graph, runs it, returns the pixels), `read_rgba16f` (baked LUTs / probes) |
 | `tests/legacy/` | Wrappers around the old `run_*_self_test()` functions, removed as their bodies migrate into `tests/<module>/` |
 
 
