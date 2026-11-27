@@ -313,7 +313,9 @@ struct PointLight {
 // minimum XZ corner sits at translation - tile_size/2 on each axis, heights
 // offset by translation.y). The frame loop owns generation: it kicks an async
 // rebuild whenever `regenerate` is set (the inspector's button / fresh
-// component) and uploads the result to the terrain pass.
+// component / a codec edit that changes the shape — terrain::same_shape) and
+// uploads the result to the terrain pass. Shading (`snowline_m`), the stream
+// radius and the GPU flag apply without regenerating.
 struct Terrain {
     // New terrains erode with the grid model, which the GPU can synthesise
     // (TerrainParams itself defaults to the CPU-only droplet model).

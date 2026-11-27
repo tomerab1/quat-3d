@@ -121,6 +121,37 @@ TEST_F(ComponentJson, TerrainCarriesErosionModelAndGpuFlag) {
     EXPECT_FALSE(apply("terrain", {{"erosion", "rivers"}}));
 }
 
+// Issue #38: only edits that change the generated heights regenerate the
+// terrain; shading (snowline), the stream radius, the GPU flag, the mode and
+// unchanged values leave the loaded tiles alone.
+TEST_F(ComponentJson, TerrainRegeneratesOnlyWhenTheShapeChanges) {
+    ASSERT_OK(apply("terrain", {{"seed", 7}, {"streaming", true}, {"stream_radius", 2}}));
+    s::Terrain& t = r.get<s::Terrain>(e);
+    EXPECT_TRUE(t.regenerate) << "a new terrain generates";
+    t.regenerate = false; // the frame loop consumed it
+
+    ASSERT_OK(apply("terrain", {{"snowline", 60}}));
+    EXPECT_FALSE(r.get<s::Terrain>(e).regenerate) << "snowline is shading only";
+    EXPECT_FLOAT_EQ(r.get<s::Terrain>(e).snowline_m, 60.0F);
+    ASSERT_OK(apply("terrain", {{"stream_radius", 3}, {"gpu", false}}));
+    EXPECT_FALSE(r.get<s::Terrain>(e).regenerate) << "the runtime resizes the window";
+    ASSERT_OK(apply("terrain", {{"seed", 7}, {"height", 180}, {"tile_size", 2000}}));
+    EXPECT_FALSE(r.get<s::Terrain>(e).regenerate) << "unchanged values";
+
+    for (const json& shape :
+         {json{{"seed", 8}}, json{{"resolution", 513}}, json{{"tile_size", 3000}},
+          json{{"height", 700}}, json{{"octaves", 5}}, json{{"warp", 0.5}},
+          json{{"erosion", "droplets"}}, json{{"droplets", 1000}}, json{{"erosion_steps", 10}}}) {
+        r.get<s::Terrain>(e).regenerate = false;
+        ASSERT_OK(apply("terrain", shape));
+        EXPECT_TRUE(r.get<s::Terrain>(e).regenerate) << shape.dump();
+    }
+    // A failed edit changes nothing.
+    r.get<s::Terrain>(e).regenerate = false;
+    EXPECT_FALSE(apply("terrain", {{"seed", 9}, {"octaves", 99}}));
+    EXPECT_FALSE(r.get<s::Terrain>(e).regenerate);
+}
+
 // Audit D3: grid erosion cost (resolution² x steps) is bounded at the codec,
 // so a remote request cannot start hours of CPU work or a multi-GB
 // allocation; droplet terrains keep their own (droplet-count) bound.

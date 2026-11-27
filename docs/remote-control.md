@@ -164,7 +164,11 @@ also flat ground at `ground_y` where no terrain is loaded), `lod_start`
 0..1 × radius where blades start thinning, `far_density` 0..1 kept at the
 radius),
 `point_light`, `dir_light`, `camera`, `collider`, `rigidbody`, `character`,
-`nav_agent`, `behavior`, `patrol`, `terrain`, `net_replicated`,
+`nav_agent`, `behavior`, `patrol`, `terrain` (only an edit that changes the
+generated heights — `seed`, `resolution`, `tile_size`, `height`, `octaves`,
+`warp`, `erosion`, `droplets`, `erosion_steps` — regenerates it; `snowline` is
+shading, `stream_radius` resizes the streaming window keeping loaded tiles,
+`gpu` picks the generator of the next tile), `net_replicated`,
 `audio_source` (`clip`, `bus`: master/music/sfx/ui/ambience, `volume`,
 `pitch`, `loop`, `play_on_start`, `spatial`, `min_distance`, `max_distance`,
 `rolloff`, `doppler`, plus write-only `command`: play/stop/pause/resume),

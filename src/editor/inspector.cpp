@@ -118,18 +118,17 @@ struct ComponentInspector<scene::Terrain> {
                 p.erosion_droplets = static_cast<std::uint32_t>(glm::max(droplets, 0));
             }
         }
-        if (ImGui::Checkbox("generate on GPU", &terrain.gpu_generate)) {
-            terrain.regenerate = true;
-        }
+        // CPU and GPU synthesis produce the same heights: the choice applies
+        // to the next tile generated (no regeneration).
+        ImGui::Checkbox("generate on GPU", &terrain.gpu_generate);
         ImGui::DragFloat("snowline", &terrain.snowline_m, 1.0F, -1000.0F, 5000.0F, "%.0f m");
         ImGui::Separator();
         if (ImGui::Checkbox("streaming", &terrain.streaming)) {
             terrain.regenerate = true; // rebuild in the new mode
         }
         if (terrain.streaming) {
-            if (ImGui::SliderInt("radius (tiles)", &terrain.stream_radius, 1, 4)) {
-                terrain.regenerate = true;
-            }
+            // The runtime resizes the window and keeps the loaded tiles.
+            ImGui::SliderInt("radius (tiles)", &terrain.stream_radius, 1, 4);
             ImGui::TextWrapped("An endless seeded world streams in around the camera.");
         }
         if (ImGui::Button("Regenerate", ImVec2(-1.0F, 0.0F))) {

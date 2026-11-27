@@ -238,6 +238,16 @@ void WorldRuntime::update_terrain(engine::scene::Scene& scene, const glm::vec3& 
                 invalidate_navmesh("terrain regenerated");
                 std::fprintf(stderr, "[terrain] streaming world (seed %u, radius %d)\n",
                              tcomp.params.seed, tcomp.stream_radius);
+            } else {
+                // Edits that keep the shape (issue #38): a new radius resizes
+                // the window around the tiles already loaded; the generator
+                // choice applies to the next tile.
+                if (terrain_streamer_->radius() != tcomp.stream_radius) {
+                    terrain_streamer_->set_radius(tcomp.stream_radius);
+                    std::fprintf(stderr, "[terrain] stream radius %d\n", tcomp.stream_radius);
+                }
+                terrain_streamer_->set_generator(
+                    tcomp.gpu_generate ? terrain_pass_.tile_generator() : nullptr);
             }
         } else {
             if (terrain_streamer_) {
