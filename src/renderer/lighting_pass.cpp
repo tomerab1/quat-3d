@@ -23,6 +23,8 @@ namespace {
 }
 
 constexpr VkShaderStageFlags kComputeStage = VK_SHADER_STAGE_COMPUTE_BIT;
+// Bound when the frame has no sun shadows (never sampled then).
+constexpr VkFormat kFallbackShadowFormat = VK_FORMAT_D16_UNORM;
 
 // Mirrors LightingConstants in lighting.slang (std140, 288 bytes).
 struct LightingConstants {
@@ -170,11 +172,11 @@ LightingPass::create(const rhi::Device& device, rhi::GpuAllocator& allocator,
     out.fallback_ibl_ = std::move(*fallback);
 
     // Unshadowed frames bind a 1x1 depth array + zero cascades (never read).
-    auto shadow = allocator.create_image(shadow_map_format, {1, 1}, VK_IMAGE_USAGE_SAMPLED_BIT);
+    auto shadow = allocator.create_image(kFallbackShadowFormat, {1, 1}, VK_IMAGE_USAGE_SAMPLED_BIT);
     if (!shadow) return std::unexpected(shadow.error());
     out.fallback_shadow_ = std::move(*shadow);
     auto shadow_view = rhi::create_image_view(vk, out.fallback_shadow_.handle(),
-                                              shadow_map_format, VK_IMAGE_ASPECT_DEPTH_BIT, 1,
+                                              kFallbackShadowFormat, VK_IMAGE_ASPECT_DEPTH_BIT, 1,
                                               VK_IMAGE_VIEW_TYPE_2D_ARRAY, 0, 0, 1);
     if (!shadow_view) return std::unexpected(shadow_view.error());
     out.fallback_shadow_view_ = std::move(*shadow_view);
@@ -225,7 +227,7 @@ LightingPass::add_to_graph(rhi::RenderGraph& graph, const GBufferTargets& gbuffe
     const rhi::ResourceHandle shadow_map =
         has_shadow ? occlusion.shadows.shadow_map
                    : graph.import_image("csm_fallback", fallback_shadow_.handle(),
-                                        fallback_shadow_view_.handle(), shadow_map_format, {1, 1},
+                                        fallback_shadow_view_.handle(), kFallbackShadowFormat, {1, 1},
                                         VK_IMAGE_LAYOUT_UNDEFINED,
                                         VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
     const VkDeviceAddress cascades =

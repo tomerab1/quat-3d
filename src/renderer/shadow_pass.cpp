@@ -58,36 +58,45 @@ mapped_buffer(rhi::GpuAllocator& allocator, VkDeviceSize size, VkBufferUsageFlag
 
 } // namespace
 
+bool shadow_pancaking(const rhi::Device& device) { return device.depth_clamp(); }
+
+VkFormat shadow_map_format(const rhi::Device& device) {
+    return shadow_pancaking(device) ? shadow_map_format_pancaked : shadow_map_format_padded;
+}
+
 std::expected<std::shared_ptr<CsmShared>, core::Error>
 CsmShared::create(const rhi::Device& device, rhi::GpuAllocator& allocator) {
+    const VkFormat format = shadow_map_format(device);
     // Hardware PCF bilinearly filters comparison results.
     VkFormatProperties props{};
-    vkGetPhysicalDeviceFormatProperties(device.physical_device(), shadow_map_format, &props);
+    vkGetPhysicalDeviceFormatProperties(device.physical_device(), format, &props);
     constexpr VkFormatFeatureFlags needed = VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT |
                                             VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT |
                                             VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT;
     if ((props.optimalTilingFeatures & needed) != needed) {
-        return fail("shadow map: D16 depth lacks attachment / linear-filtered sampling");
+        return fail("shadow map: the depth format lacks attachment / linear-filtered sampling");
     }
     auto out = std::make_shared<CsmShared>();
+    out->format_ = format;
+    out->pancaked_ = shadow_pancaking(device);
     const VkDevice vk = device.handle();
     // The cascaded map: a layered depth image, a 2D-array view for sampling
     // and one single-layer view per cascade to render into (TRANSFER_SRC:
     // tests and tools can read a cascade back).
     auto image = allocator.create_image(
-        shadow_map_format, {shadow_map_size, shadow_map_size},
+        format, {shadow_map_size, shadow_map_size},
         VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT |
             VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
         1, max_cascades);
     if (!image) return std::unexpected(image.error());
     out->map_ = std::move(*image);
-    auto array_view = rhi::create_image_view(vk, out->map_.handle(), shadow_map_format,
+    auto array_view = rhi::create_image_view(vk, out->map_.handle(), format,
                                              VK_IMAGE_ASPECT_DEPTH_BIT, 1,
                                              VK_IMAGE_VIEW_TYPE_2D_ARRAY, 0, 0, max_cascades);
     if (!array_view) return std::unexpected(array_view.error());
     out->array_view_ = std::move(*array_view);
     for (std::uint32_t c = 0; c < max_cascades; ++c) {
-        auto view = rhi::create_image_view(vk, out->map_.handle(), shadow_map_format,
+        auto view = rhi::create_image_view(vk, out->map_.handle(), format,
                                            VK_IMAGE_ASPECT_DEPTH_BIT, 1, VK_IMAGE_VIEW_TYPE_2D, 0,
                                            c, 1);
         if (!view) return std::unexpected(view.error());
@@ -137,7 +146,8 @@ ShadowPass::create(const rhi::Device& device, rhi::GpuAllocator& allocator,
     info.vertex = *shader;
     info.fragment = *shader;
     info.color_formats = {};                  // depth-only
-    info.depth_format = shadow_map_format;
+    info.depth_format = out.shared_->format_;
+    info.depth_clamp = out.shared_->pancaked_; // pancake casters onto the near plane
     info.depth_compare_op = VK_COMPARE_OP_LESS_OR_EQUAL;
     info.cull_mode = VK_CULL_MODE_NONE;
     info.vertex_bindings = {&vbind, 1};
@@ -226,7 +236,7 @@ ShadowPass::add_to_graph(rhi::RenderGraph& graph, const CsmView& view,
     // No final transition — the next frame discards whatever layout is left.
     out.shadow_map = graph.import_image(
         "csm_shadow_map", shared_->map_.handle(), shared_->array_view_.handle(),
-        shadow_map_format, {shadow_map_size, shadow_map_size}, VK_IMAGE_LAYOUT_UNDEFINED,
+        shared_->format_, {shadow_map_size, shadow_map_size}, VK_IMAGE_LAYOUT_UNDEFINED,
         VK_IMAGE_LAYOUT_UNDEFINED, kMapPrevStages, kMapPrevAccess);
 
     const bool gpu_fit = s.gpu_depth_bounds && hiz != nullptr && hiz->depth_bounds.valid();
@@ -237,7 +247,11 @@ ShadowPass::add_to_graph(rhi::RenderGraph& graph, const CsmView& view,
         p.to_light = glm::vec4(glm::normalize(view.to_light), 0.0F);
         p.split = {static_cast<float>(s.cascade_count), s.split_lambda, s.max_distance,
                    s.blend_band};
-        p.fit = {s.caster_distance, static_cast<float>(shadow_map_size), 1.0F, 0.0F};
+        // x: depth-range padding toward the sun (none when pancaked), w: how
+        // far toward the sun casters reach beyond depth 0 (PCSS search).
+        const float padding = shared_->pancaked_ ? 0.0F : s.caster_distance;
+        p.fit = {padding, static_cast<float>(shadow_map_size), 1.0F,
+                 s.caster_distance - padding};
         std::memcpy(setup_params_.mapped(), &p, sizeof(p));
         if (auto f = setup_params_.flush(0, sizeof(p)); !f) return std::unexpected(f.error());
         if (setup_descriptor_.device_address() == 0) {
@@ -273,7 +287,8 @@ ShadowPass::add_to_graph(rhi::RenderGraph& graph, const CsmView& view,
     } else {
         // CPU fallback: the reference fit over camera near .. max_distance.
         const glm::vec2 range = shadow_range(view.projection, s, false, 0.0F, 0.0F).range;
-        const GpuCascades cpu = fit_cascades(view, s, range, shadow_map_size);
+        const GpuCascades cpu =
+            fit_cascades(view, s, range, shadow_map_size, shared_->pancaked_);
         std::memcpy(cascades_.mapped(), &cpu, sizeof(cpu));
         if (auto f = cascades_.flush(0, sizeof(cpu)); !f) return std::unexpected(f.error());
     }

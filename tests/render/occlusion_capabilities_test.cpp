@@ -119,3 +119,72 @@ TEST(GpuR12Capabilities, FrameWithoutHiZFitsCascadesOnTheCpuAndStillShadows) {
     EXPECT_GT(lit, 0.2F);
     EXPECT_LT(dark, 0.35F * lit);
 }
+
+// Without depthClamp casters cannot be pancaked: the shadow map falls back to
+// D32 with each cascade's depth range padded by the caster distance (fitted
+// on the GPU here), and shadows still land.
+TEST(GpuR12Capabilities, NoDepthClampFallsBackToPaddedD32Cascades) {
+    QUAT_REQUIRE_GPU(g);
+    ASSERT_TRUE(g->device.depth_clamp());
+    struct Restore {
+        rhi::Device& d;
+        ~Restore() { d.simulate_missing_depth_clamp(false); }
+    } restore{g->device};
+    g->device.simulate_missing_depth_clamp(true);
+    EXPECT_FALSE(r::shadow_pancaking(g->device));
+    EXPECT_EQ(r::shadow_map_format(g->device), r::shadow_map_format_padded);
+
+    auto floor = occ::upload_box(*g, {-10.0F, -0.5F, -10.0F}, {10.0F, 0.0F, 10.0F});
+    auto blocker = occ::upload_box(*g, {-0.5F, 1.5F, -0.5F}, {0.5F, 2.5F, 0.5F});
+    auto grey = occ::upload_grey(*g);
+    ASSERT_OK(floor);
+    ASSERT_OK(blocker);
+    ASSERT_OK(grey);
+    auto mesh = r::MeshPass::create(g->device, g->allocator, g->cache, g->transfer, g->shader_dir);
+    auto hiz = r::HiZPass::create(g->device, g->allocator, g->cache, g->shader_dir);
+    auto shadow = r::ShadowPass::create(g->device, g->allocator, g->cache, g->shader_dir);
+    auto lighting = r::LightingPass::create(g->device, g->allocator, g->cache, g->shader_dir);
+    ASSERT_OK(mesh);
+    ASSERT_OK(hiz);
+    ASSERT_OK(shadow);
+    ASSERT_OK(lighting);
+    EXPECT_EQ(shadow->shared().format(), r::shadow_map_format_padded);
+    EXPECT_FALSE(shadow->shared().pancaked());
+
+    const occ::Camera cam = occ::look_at({0.0F, 7.0F, 7.0F}, {0.0F, 0.0F, 0.0F});
+    const glm::vec3 to_light(0.0F, 1.0F, 0.0F);
+    const std::vector<r::DrawItem> draws{{&*floor, &*grey, glm::mat4(1.0F)},
+                                         {&*blocker, &*grey, glm::mat4(1.0F)}};
+    rhi::TransientImagePool pool(g->device, g->allocator);
+    rhi::RenderGraph graph(pool);
+    auto gbuffer = mesh->add_to_graph(graph, k_extent, cam.view_proj, draws);
+    ASSERT_OK(gbuffer);
+    auto pyramid = hiz->add_to_graph(graph, gbuffer->depth, k_extent);
+    ASSERT_OK(pyramid);
+    r::CsmSettings csm;
+    auto shadows = shadow->add_to_graph(graph, {cam.view, cam.proj, to_light}, csm, &*pyramid,
+                                        draws);
+    ASSERT_OK(shadows);
+    r::DirectionalLightParams sun;
+    sun.direction = glm::vec4(to_light, 0.0F);
+    sun.color = {1.0F, 1.0F, 1.0F, 3.0F};
+    r::LightingOcclusion occlusion;
+    occlusion.shadows = *shadows;
+    occlusion.csm = csm;
+    occlusion.projection = cam.proj;
+    auto hdr = lighting->add_to_graph(graph, *gbuffer, k_extent, sun,
+                                      glm::inverse(cam.view_proj), cam.position, occlusion);
+    ASSERT_OK(hdr);
+    auto img = quat::test::render_to_host(*g, graph, *hdr, k_extent, 8);
+    ASSERT_OK(img);
+
+    r::GpuCascades fitted{};
+    ASSERT_OK(shadow->cascade_buffer().invalidate_mapped());
+    std::memcpy(&fitted, shadow->cascade_buffer().mapped(), sizeof(fitted));
+    EXPECT_EQ(fitted.params.w, 1.0F);  // GPU fit
+    EXPECT_EQ(fitted.limits.y, 0.0F);  // nothing reaches past depth 0
+    EXPECT_GT(fitted.depth_range[0], csm.caster_distance); // padded range
+    const glm::uvec2 under = occ::project(cam.view_proj, {0.0F, 0.0F, 0.0F}, k_extent);
+    const glm::uvec2 open = occ::project(cam.view_proj, {3.0F, 0.0F, 2.0F}, k_extent);
+    EXPECT_LT(img->rgba16f(under.x, under.y).r, 0.35F * img->rgba16f(open.x, open.y).r);
+}

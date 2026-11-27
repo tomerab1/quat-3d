@@ -105,6 +105,13 @@ into CLAUDE.md or the brief template in [`CYCLE.md`](CYCLE.md).
 
 ## C++ in this codebase
 
+- **Shadow acne has more than one cause; test it with an image test first.**
+  R12.9: D16 over a caster-padded range gave 0.83 of the unshadowed value on
+  a sloped lit floor; pancaking (depth clamp, tight range) alone still gave
+  0.84. Per-tap receiver-plane depth plus a one-texel slope-scaled bias fixed
+  it (≥ 0.97). Wide PCF / PCSS kernels need the receiver plane, not just a
+  constant bias.
+
 - **A graphics pipeline with no descriptor sets cannot draw after a pass
   that bound descriptor buffers** (validation VUID-vkCmdDrawIndexed-None-08117,
   R12): the bound buffers stay on the bind point and the pipeline lacks the

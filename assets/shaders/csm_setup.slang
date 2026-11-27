@@ -17,7 +17,8 @@ struct CsmSetupParams {
     float4 inv_proj[4]; // clip -> view (columns)
     float4 to_light;    // xyz: unit direction toward the sun
     float4 split;       // x count, y lambda, z max distance, w blend band
-    float4 fit;         // x caster distance, y map size, z use depth bounds (0/1)
+    float4 fit;         // x depth padding toward the sun (0 when pancaked), y map size,
+                        // z use depth bounds (0/1), w caster reach beyond depth 0
 }
 
 ConstantBuffer<CsmSetupParams>   g_params;
@@ -84,7 +85,7 @@ void compute_main(uint3 tid : SV_DispatchThreadID) {
         g_cascades[0].texel_world = float4(gs_texel[0], gs_texel[1], gs_texel[2], gs_texel[3]);
         g_cascades[0].depth_range = float4(gs_depth[0], gs_depth[1], gs_depth[2], gs_depth[3]);
         g_cascades[0].params = float4(float(count), lo, band, fitted ? 1.0 : 0.0);
-        g_cascades[0].limits = float4(full_far, 0.0, 0.0, 0.0);
+        g_cascades[0].limits = float4(full_far, g_params.fit.w, 0.0, 0.0);
         g_range_state[0] = kept; // every thread has read it before the barrier
     }
 }

@@ -349,3 +349,57 @@ TEST(GpuCsm, FrameSlotsShareOneMap) {
         EXPECT_LT(dark, 0.35F * lit) << "frame " << frame_index;
     }
 }
+
+// Shadow acne: a sloped, fully lit floor close to the camera (cascade 0) at
+// default settings stays as bright as without shadows everywhere in a patch.
+// Depth precision of the near cascades (D16 with pancaking) must not eat the
+// receiver offsets.
+TEST(GpuCsm, SlopedLitFloorHasNoAcneInTheNearCascade) {
+    QUAT_REQUIRE_GPU(g);
+    auto floor = occ::upload_box(*g, {-6.0F, -0.2F, -6.0F}, {6.0F, 0.0F, 6.0F});
+    auto grey = occ::upload_grey(*g);
+    ASSERT_OK(floor);
+    ASSERT_OK(grey);
+    const glm::mat4 slope =
+        glm::rotate(glm::mat4(1.0F), glm::radians(25.0F), glm::vec3(0.0F, 0.0F, 1.0F));
+    const std::vector<r::DrawItem> draws{{&*floor, &*grey, slope}};
+    const occ::Camera cam =
+        occ::look_at({0.0F, 1.6F, 2.0F}, {0.0F, 0.0F, 0.0F}, 60.0F, 1.0F, 0.1F, 200.0F);
+    // Lit at a fairly shallow angle (N.L about 0.45): the acne-prone case.
+    const glm::vec3 to_light = glm::normalize(glm::vec3(0.9F, 0.55F, 0.4F));
+    auto passes = make_passes(*g);
+    ASSERT_OK(passes);
+    r::CsmSettings with;
+    r::CsmSettings without;
+    without.enabled = false;
+    auto shadowed = render(*g, *passes, cam, with, draws, to_light);
+    auto reference = render(*g, *passes, cam, without, draws, to_light);
+    ASSERT_OK(shadowed);
+    ASSERT_OK(reference);
+    // Every pixel whose floor point lies inside cascade 0 (ray / plane
+    // intersection with the sloped top face).
+    const glm::vec3 n = glm::vec3(slope * glm::vec4(0.0F, 1.0F, 0.0F, 0.0F));
+    const glm::vec3 fwd = glm::normalize(glm::vec3(0.0F) - cam.position);
+    const glm::mat4 inv_vp = glm::inverse(cam.view_proj);
+    const float cascade0_end = shadowed->gpu.split_far[0];
+    int counted = 0;
+    float worst = 1.0F;
+    for (std::uint32_t y = 0; y < k_extent.height; ++y) {
+        for (std::uint32_t x = 0; x < k_extent.width; ++x) {
+            const glm::vec2 ndc((static_cast<float>(x) + 0.5F) / k_extent.width * 2.0F - 1.0F,
+                                (static_cast<float>(y) + 0.5F) / k_extent.height * 2.0F - 1.0F);
+            const glm::vec4 far_p = inv_vp * glm::vec4(ndc, 1.0F, 1.0F);
+            const glm::vec3 dir = glm::normalize(glm::vec3(far_p) / far_p.w - cam.position);
+            const float t = -glm::dot(cam.position, n) / glm::dot(dir, n);
+            const glm::vec3 p = cam.position + dir * t;
+            if (t <= 0.0F || glm::length(glm::vec2(p.x, p.z)) > 4.0F) continue;
+            if (glm::dot(p - cam.position, fwd) > 0.9F * cascade0_end) continue;
+            const float ref = luma(reference->hdr, {x, y});
+            ASSERT_GT(ref, 0.1F) << x << "," << y;
+            worst = std::min(worst, luma(shadowed->hdr, {x, y}) / ref);
+            ++counted;
+        }
+    }
+    ASSERT_GT(counted, 500) << "cascade 0 ends at " << cascade0_end;
+    EXPECT_GE(worst, 0.95F);
+}

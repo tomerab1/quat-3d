@@ -172,11 +172,14 @@ TEST(CsmFit, EachSliceFitsInsideItsCascade) {
     }
 }
 
-TEST(CsmFit, CastersTowardTheSunStayInDepthRange) {
+// Without depth clamp the depth range is padded so casters toward the sun
+// stay inside it.
+TEST(CsmFit, PaddedRangeHoldsCastersTowardTheSun) {
     const r::CsmView v = make_view(glm::vec3(0.0F, 2.0F, 0.0F), glm::vec3(0.0F, 0.0F, -1.0F));
     r::CsmSettings s;
     s.caster_distance = 100.0F;
-    const r::GpuCascades cs = r::fit_cascades(v, s, glm::vec2(0.1F, 60.0F), k_map);
+    const r::GpuCascades cs =
+        r::fit_cascades(v, s, glm::vec2(0.1F, 60.0F), k_map, /*pancaked=*/false);
     // A point inside cascade 0, and a caster 80 m toward the sun from it.
     const glm::vec3 receiver(0.0F, 0.0F, -2.0F);
     const glm::vec3 caster = receiver + v.to_light * 80.0F;
@@ -186,6 +189,39 @@ TEST(CsmFit, CastersTowardTheSunStayInDepthRange) {
     EXPECT_LT(cc.z, rc.z);                 // nearer the light
     EXPECT_NEAR(cc.x, rc.x, 1e-4F);        // same texel column / row
     EXPECT_NEAR(cc.y, rc.y, 1e-4F);
+    EXPECT_EQ(cs.limits.y, 0.0F);          // nothing reaches past depth 0
+    EXPECT_GT(cs.depth_range[0], 100.0F);
+}
+
+// Pancaked (the default): each cascade's depth spans only its bounding
+// sphere — far finer depth steps — and casters toward the sun fall before
+// depth 0, where the shadow pipeline's depth clamp pins them.
+TEST(CsmFit, PancakedRangeIsTightAndClampsCasters) {
+    const r::CsmView v = make_view(glm::vec3(0.0F, 2.0F, 0.0F), glm::vec3(0.0F, 0.0F, -1.0F));
+    r::CsmSettings s;
+    s.caster_distance = 100.0F;
+    const r::GpuCascades tight = r::fit_cascades(v, s, glm::vec2(0.1F, 60.0F), k_map);
+    const r::GpuCascades padded =
+        r::fit_cascades(v, s, glm::vec2(0.1F, 60.0F), k_map, /*pancaked=*/false);
+    for (int c = 0; c < 4; ++c) {
+        // Depth spans the sphere's diameter: 2 * texel * map / 2.
+        EXPECT_NEAR(tight.depth_range[c], tight.texel_world[c] * static_cast<float>(k_map),
+                    1e-3F * tight.depth_range[c]);
+        EXPECT_NEAR(padded.depth_range[c] - tight.depth_range[c], 100.0F, 1e-2F);
+        for (int col = 0; col < 4; ++col) { // same x / y mapping (rows 0 and 1)
+            const auto cs = static_cast<std::size_t>(c);
+            EXPECT_EQ(tight.view_proj[cs][col][0], padded.view_proj[cs][col][0]);
+            EXPECT_EQ(tight.view_proj[cs][col][1], padded.view_proj[cs][col][1]);
+        }
+    }
+    EXPECT_EQ(tight.limits.y, 100.0F);
+    const glm::vec3 receiver(0.0F, 0.0F, -2.0F);
+    const glm::vec4 rc = tight.view_proj[0] * glm::vec4(receiver, 1.0F);
+    const glm::vec4 cc = tight.view_proj[0] * glm::vec4(receiver + v.to_light * 80.0F, 1.0F);
+    EXPECT_GE(rc.z, 0.0F);
+    EXPECT_LE(rc.z, 1.0F);
+    EXPECT_LT(cc.z, 0.0F); // clamped to 0 by the rasteriser
+    EXPECT_NEAR(cc.x, rc.x, 1e-4F);
 }
 
 // Rotating the camera in place keeps every cascade's size (texel world size),

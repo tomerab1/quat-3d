@@ -53,6 +53,8 @@ struct GpuCascades {
     // x = the real shadow limit min(max_distance, camera far): the last
     // cascade fades out only when it reaches it (a depth-fitted range that
     // ends earlier ends at the farthest geometry, which must stay shadowed).
+    // y = how far toward the sun casters reach beyond depth 0 (the caster
+    // distance when pancaked, 0 when the depth range is padded by it).
     glm::vec4 limits{0.0F};
 };
 static_assert(sizeof(GpuCascades) == 336, "must match lib/csm.slang CascadeData");
@@ -103,8 +105,12 @@ cascade_splits(float near_dist, float far_dist, std::uint32_t count, float lambd
 
 // Fits `settings.cascade_count` cascades over view distances
 // [range.x, range.y] for a `map_size`-texel square shadow map per cascade.
+// `pancaked`: each cascade's depth spans only its bounding sphere (casters
+// toward the sun clamp to depth 0 — the pipeline enables depth clamp);
+// otherwise the near plane is pushed back by settings.caster_distance.
 [[nodiscard]] GpuCascades fit_cascades(const CsmView& view, const CsmSettings& settings,
-                                       glm::vec2 range, std::uint32_t map_size);
+                                       glm::vec2 range, std::uint32_t map_size,
+                                       bool pancaked = true);
 
 // A light-space orthographic volume holding every caster that can shadow a
 // visible receiver in any cascade this frame could fit (the whole range

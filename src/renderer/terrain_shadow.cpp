@@ -56,7 +56,9 @@ TerrainPass::create_shadow_pipeline(rhi::PipelineCache& cache,
     rhi::GraphicsPipeline::CreateInfo info{};
     info.vertex = *shader;
     info.fragment = *shader;
-    info.depth_format = shadow_map_format;
+    // Same format and pancaking as the ShadowPass map (both follow the device).
+    info.depth_format = shadow_map_format(*device_);
+    info.depth_clamp = shadow_pancaking(*device_);
     info.depth_compare_op = VK_COMPARE_OP_LESS_OR_EQUAL;
     info.cull_mode = VK_CULL_MODE_NONE; // top faces + skirts
     info.set_layouts = {&set_layout, 1};

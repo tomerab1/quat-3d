@@ -111,6 +111,12 @@ public:
     void simulate_missing_extended_storage_formats(bool missing) {
         simulate_missing_extended_formats_ = missing;
     }
+    // Whether the depthClamp feature is enabled (it is whenever offered).
+    [[nodiscard]] bool depth_clamp() const {
+        return depth_clamp_ && !simulate_missing_depth_clamp_;
+    }
+    // Tests: behave as a device without depthClamp.
+    void simulate_missing_depth_clamp(bool missing) { simulate_missing_depth_clamp_ = missing; }
 
 private:
     void destroy() noexcept;
@@ -131,6 +137,8 @@ private:
     DescriptorBackend        descriptor_backend_ = DescriptorBackend::ext_descriptor_buffer;
     bool                     storage_image_extended_formats_ = false;
     bool                     simulate_missing_extended_formats_ = false;
+    bool                     depth_clamp_ = false;
+    bool                     simulate_missing_depth_clamp_ = false;
 };
 
 } // namespace engine::rhi

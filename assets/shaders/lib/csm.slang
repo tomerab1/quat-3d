@@ -23,7 +23,8 @@ public struct CascadeData {
     public float4 texel_world;   // world size of one shadow texel
     public float4 depth_range;   // world distance spanned by depth 0..1
     public float4 params;        // x count, y first split, z blend band, w fitted to bounds
-    public float4 limits;        // x shadow limit min(max distance, camera far)
+    public float4 limits;        // x shadow limit min(max distance, camera far),
+                                 // y caster reach toward the sun beyond depth 0
 }
 
 public float4 csm_mul(CascadeData d, uint c, float4 v) {
@@ -198,6 +199,29 @@ float2 vogel(uint k, uint n, float phi) {
     return r * float2(cos(theta), sin(theta));
 }
 
+// Receiver-plane depth gradient (Isidoro, "Shadow Mapping: GPU-based Tips
+// and Techniques", GDC 2006), from the surface normal instead of screen
+// derivatives (the lighting pass is compute): how the receiver's own depth
+// changes per unit of shadow-map uv, so each filter tap compares against the
+// receiver plane at that tap rather than at the centre. Without it a wide
+// PCF / PCSS kernel on a surface sloped toward the light shadows itself
+// (acne). The cascade's rows are orthogonal (side / r, up / r, travel / D);
+// the slope is capped at grazing angles, where the normal offset takes over.
+float2 receiver_depth_gradient(CascadeData d, uint c, float3 n) {
+    uint b = c * 4;
+    float3 r0 = float3(d.view_proj[b].x, d.view_proj[b + 1].x, d.view_proj[b + 2].x);
+    float3 r1 = float3(d.view_proj[b].y, d.view_proj[b + 1].y, d.view_proj[b + 2].y);
+    float3 r2 = float3(d.view_proj[b].z, d.view_proj[b + 1].z, d.view_proj[b + 2].z);
+    float a = length(r0);
+    float e = length(r2);
+    float ns = dot(n, r0) / a;
+    float nu = dot(n, r1) / length(r1);
+    float nf = dot(n, r2) / e;
+    nf = nf < 0.0 ? min(nf, -0.2) : max(nf, 0.2);
+    // dz = -2 e / nf * (ns du / a + nu dv / b), with a = b (square cascades).
+    return (-2.0 * e / (nf * a)) * float2(ns, nu);
+}
+
 // Fraction of the sun reaching `world_pos` through cascade `c`.
 float sample_cascade(CascadeData d, uint c, Texture2DArray map, SamplerComparisonState cmp,
                      SamplerState point, float3 world_pos, float3 normal, float3 to_light,
@@ -218,19 +242,25 @@ float sample_cascade(CascadeData d, uint c, Texture2DArray map, SamplerCompariso
     map.GetDimensions(w, h, layers);
     float texel_uv = 1.0 / float(w);
     float phi = noise * 6.28318531;
+    float2 dz_duv = receiver_depth_gradient(d, c, normal);
+    // Slope-scaled bias: a hardware comparison tap filters a 2x2 texel
+    // footprint against one reference, so allow the receiver plane's rise
+    // over one texel.
+    z -= dot(abs(dz_duv), float2(texel_uv, texel_uv));
 
     float radius = f.pcf_radius;
     if (f.light_tan > 0.0) {
-        // Blocker search over the widest penumbra a blocker between the
-        // light-side end of the cascade and this receiver could cast.
-        float search = clamp(f.light_tan * z * d.depth_range[c] / texel, f.pcf_radius,
-                             CSM_MAX_FILTER_TEXELS);
+        // Blocker search over the widest penumbra the farthest possible
+        // caster could cast: the receiver's distance to the caster bound
+        // (depth 0 plus the pancaked reach beyond it).
+        float reach = z * d.depth_range[c] + d.limits.y;
+        float search = clamp(f.light_tan * reach / texel, f.pcf_radius, CSM_MAX_FILTER_TEXELS);
         float blocker_sum = 0.0;
         float blockers = 0.0;
         for (uint k = 0; k < CSM_BLOCKER_TAPS; ++k) {
             float2 o = vogel(k, CSM_BLOCKER_TAPS, phi) * (search * texel_uv);
             float bd = map.SampleLevel(point, float3(uv + o, float(c)), 0.0).r;
-            if (bd < z) {
+            if (bd < z + dot(dz_duv, o)) {
                 blocker_sum += bd;
                 blockers += 1.0;
             }
@@ -238,6 +268,8 @@ float sample_cascade(CascadeData d, uint c, Texture2DArray map, SamplerCompariso
         if (blockers < 0.5) {
             return 1.0;
         }
+        // Pancaked casters read depth 0, so this distance can only
+        // underestimate theirs: the penumbra errs small, then is clamped.
         float blocker = blocker_sum / blockers;
         float penumbra = (z - blocker) * d.depth_range[c] * f.light_tan / texel;
         radius = clamp(penumbra, f.pcf_radius, CSM_MAX_FILTER_TEXELS);
@@ -248,7 +280,7 @@ float sample_cascade(CascadeData d, uint c, Texture2DArray map, SamplerCompariso
     float sum = 0.0;
     for (uint k = 0; k < CSM_PCF_TAPS; ++k) {
         float2 o = vogel(k, CSM_PCF_TAPS, phi) * (radius * texel_uv);
-        sum += map.SampleCmpLevelZero(cmp, float3(uv + o, float(c)), z);
+        sum += map.SampleCmpLevelZero(cmp, float3(uv + o, float(c)), z + dot(dz_duv, o));
     }
     return sum / float(CSM_PCF_TAPS);
 }

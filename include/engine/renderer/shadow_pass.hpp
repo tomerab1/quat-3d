@@ -53,10 +53,18 @@ namespace engine::renderer {
 
 struct HiZTargets;
 
-// D16 is the standard precision for orthographic cascades (depth is linear
-// in light space): 4 x 2048² x 2 bytes = 32 MB, shared by every frame slot.
-inline constexpr VkFormat      shadow_map_format = VK_FORMAT_D16_UNORM;
 inline constexpr std::uint32_t shadow_map_size = 2048; // per cascade
+
+// Shadow pancaking (as in UE / Unity): with depthClamp, casters in front of
+// a cascade's near plane clamp to depth 0 instead of being clipped, so each
+// cascade's depth range spans only its bounding sphere and D16 is ample
+// (sub-millimetre steps in the near cascades; 4 x 2048² x 2 B = 32 MB shared
+// by every frame slot). Without depthClamp the range must be padded by the
+// caster distance toward the sun, which needs D32.
+inline constexpr VkFormat shadow_map_format_pancaked = VK_FORMAT_D16_UNORM;
+inline constexpr VkFormat shadow_map_format_padded = VK_FORMAT_D32_SFLOAT;
+[[nodiscard]] bool shadow_pancaking(const rhi::Device& device);
+[[nodiscard]] VkFormat shadow_map_format(const rhi::Device& device);
 
 // Push-constant block, mirrors PushConstants in shadow.slang (24 bytes).
 struct ShadowPushConstants {
@@ -99,6 +107,9 @@ public:
     CsmShared& operator=(const CsmShared&) = delete;
 
     [[nodiscard]] VkImage map() const { return map_.handle(); }
+    [[nodiscard]] VkFormat format() const { return format_; }
+    // True when casters are pancaked (depth clamp, tight depth range).
+    [[nodiscard]] bool pancaked() const { return pancaked_; }
     // Host-visible CsmRangeState (x lo, y hi, z valid) the GPU fit keeps.
     [[nodiscard]] const rhi::GpuBuffer& range_state() const { return range_state_; }
 
@@ -106,6 +117,8 @@ private:
     friend class ShadowPass;
 
     rhi::GpuImage               map_;
+    VkFormat                    format_ = shadow_map_format_pancaked;
+    bool                        pancaked_ = true;
     rhi::ImageView              array_view_;
     std::vector<rhi::ImageView> layer_views_;
     rhi::GpuBuffer              range_state_;

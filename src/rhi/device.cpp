@@ -393,6 +393,10 @@ std::expected<Device, core::Error> Device::create(const CreateInfo& info) {
         supported_core.shaderStorageImageExtendedFormats;
     dev.storage_image_extended_formats_ =
         supported_core.shaderStorageImageExtendedFormats == VK_TRUE;
+    // Shadow pancaking (casters before a cascade's near plane clamp to depth
+    // 0) keeps cascade depth ranges tight.
+    core_features.depthClamp = supported_core.depthClamp;
+    dev.depth_clamp_ = supported_core.depthClamp == VK_TRUE;
     if (supported_core.samplerAnisotropy == VK_TRUE) {
         dev.max_sampler_anisotropy_ = candidate.properties.limits.maxSamplerAnisotropy;
     }
@@ -561,6 +565,8 @@ Device& Device::operator=(Device&& other) noexcept {
         descriptor_backend_      = other.descriptor_backend_;
         storage_image_extended_formats_ = other.storage_image_extended_formats_;
         simulate_missing_extended_formats_ = other.simulate_missing_extended_formats_;
+        depth_clamp_ = other.depth_clamp_;
+        simulate_missing_depth_clamp_ = other.simulate_missing_depth_clamp_;
     }
     return *this;
 }

@@ -194,12 +194,13 @@ ShadowRange shadow_range(const glm::mat4& projection, const CsmSettings& setting
 }
 
 GpuCascades fit_cascades(const CsmView& view, const CsmSettings& settings, glm::vec2 range,
-                         std::uint32_t map_size) {
+                         std::uint32_t map_size, bool pancaked) {
     const CsmSettings s = settings.sanitized();
     const std::array<CornerRay, 4> rays = corner_rays(view.projection);
     const glm::mat4 inv_view = glm::inverse(view.view);
     const LightBasis light = light_basis(view.to_light);
     const auto splits = cascade_splits(range.x, range.y, s.cascade_count, s.split_lambda);
+    const float padding = pancaked ? 0.0F : s.caster_distance;
 
     GpuCascades out;
     for (std::uint32_t i = 0; i < max_cascades; ++i) {
@@ -207,7 +208,7 @@ GpuCascades fit_cascades(const CsmView& view, const CsmSettings& settings, glm::
         float start = splits[c];
         if (c > 0) start -= s.blend_band * (splits[c] - splits[c - 1]);
         const Slice slice = fit_slice(inv_view, rays, light, start, splits[c + 1], map_size,
-                                      s.caster_distance);
+                                      padding);
         out.view_proj[i] = slice.view_proj;
         out.split_far[static_cast<int>(i)] = splits[c + 1];
         out.texel_world[static_cast<int>(i)] = slice.texel;
@@ -215,8 +216,8 @@ GpuCascades fit_cascades(const CsmView& view, const CsmSettings& settings, glm::
     }
     out.params = glm::vec4(static_cast<float>(s.cascade_count), range.x, s.blend_band, 0.0F);
     out.limits = glm::vec4(
-        std::min(s.max_distance, view_distance_at_depth(view.projection, 1.0F)), 0.0F, 0.0F,
-        0.0F);
+        std::min(s.max_distance, view_distance_at_depth(view.projection, 1.0F)),
+        s.caster_distance - padding, 0.0F, 0.0F);
     return out;
 }
 
