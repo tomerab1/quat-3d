@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <limits>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -23,6 +24,7 @@
 #include "engine/scene/components.hpp"
 #include "engine/scene/ground_placement.hpp"
 #include "engine/scene/scene.hpp"
+#include "engine/scene/view_clip.hpp"
 
 namespace quat::app {
 
@@ -34,27 +36,10 @@ WorldRuntime::WorldRuntime() {
     // then the single editing tile. Shared by kinematic nav agents (the
     // coarse navmesh floats off the real surface) and ground clicks.
     ground_height_at_ = [this](float x, float z) -> std::optional<float> {
-        if (terrain_streamer_) {
-            const float tile = terrain_streamer_->base().tile_size_m;
-            const glm::ivec2 coord(
-                static_cast<int>(std::floor((x - terrain_anchor_.x) / tile + 0.5F)),
-                static_cast<int>(std::floor((z - terrain_anchor_.z) / tile + 0.5F)));
-            const auto it = terrain_streamer_->maps().find(coord);
-            if (it == terrain_streamer_->maps().end()) return std::nullopt;
-            const glm::vec3 org = terrain_streamer_->tile_origin(coord, terrain_anchor_);
-            return org.y + it->second.sample(x - org.x, z - org.z);
-        }
-        if (terrain_present_ && terrain_heightmap_.valid()) {
-            const float half = terrain_heightmap_.tile_size_m * 0.5F;
-            const float lx = x - (terrain_anchor_.x - half);
-            const float lz = z - (terrain_anchor_.z - half);
-            if (lx < 0.0F || lz < 0.0F || lx > terrain_heightmap_.tile_size_m ||
-                lz > terrain_heightmap_.tile_size_m) {
-                return std::nullopt;
-            }
-            return terrain_anchor_.y + terrain_heightmap_.sample(lx, lz);
-        }
-        return std::nullopt;
+        const std::optional<float> h =
+            local_ground_height(x - terrain_anchor_.x, z - terrain_anchor_.z);
+        if (!h) return std::nullopt;
+        return terrain_anchor_.y + *h;
     };
 
     // Ground under a foot (FootIK): a physics raycast in the running world
@@ -86,6 +71,59 @@ WorldRuntime::WorldRuntime() {
                       at(origin.x, origin.z - e) - at(origin.x, origin.z + e)));
         return engine::animation::GroundHit{glm::vec3(origin.x, *h, origin.z), normal};
     };
+}
+
+std::optional<float> WorldRuntime::local_ground_height(float lx, float lz) const {
+    if (terrain_streamer_) {
+        const float tile = terrain_streamer_->base().tile_size_m;
+        const glm::ivec2 coord(static_cast<int>(std::floor(lx / tile + 0.5F)),
+                               static_cast<int>(std::floor(lz / tile + 0.5F)));
+        const auto it = terrain_streamer_->maps().find(coord);
+        if (it == terrain_streamer_->maps().end()) return std::nullopt;
+        const glm::vec3 org = terrain_streamer_->tile_origin(coord, glm::vec3(0.0F));
+        return it->second.sample(lx - org.x, lz - org.z);
+    }
+    // While a regeneration job runs, the kept heightmap is the previous shape
+    // (the job cleared Terrain::regenerate when it started): no heights.
+    if (terrain_present_ && terrain_heightmap_.valid() && !terrain_job_.valid()) {
+        const float size = terrain_heightmap_.tile_size_m;
+        const float x = lx + size * 0.5F;
+        const float z = lz + size * 0.5F;
+        if (x < 0.0F || z < 0.0F || x > size || z > size) return std::nullopt;
+        return terrain_heightmap_.sample(x, z);
+    }
+    return std::nullopt;
+}
+
+engine::remote::TerrainStatus WorldRuntime::terrain_status() const {
+    engine::remote::TerrainStatus s;
+    const auto grow = [&s](const glm::vec3& lo, const glm::vec3& hi) {
+        s.bounds_min = s.has_bounds ? glm::min(s.bounds_min, lo) : lo;
+        s.bounds_max = s.has_bounds ? glm::max(s.bounds_max, hi) : hi;
+        s.has_bounds = true;
+    };
+    if (terrain_streamer_) {
+        const int side = 2 * terrain_streamer_->radius() + 1;
+        s.tiles_wanted = static_cast<std::uint32_t>(side * side);
+        s.tiles_loaded = static_cast<std::uint32_t>(terrain_streamer_->maps().size());
+        s.generating = s.tiles_loaded < s.tiles_wanted;
+        const float t = terrain_streamer_->base().tile_size_m;
+        for (const auto& [coord, map] : terrain_streamer_->maps()) {
+            const glm::vec3 org = terrain_streamer_->tile_origin(coord, glm::vec3(0.0F));
+            grow(glm::vec3(org.x, map.min_height, org.z),
+                 glm::vec3(org.x + t, map.max_height, org.z + t));
+        }
+        return s;
+    }
+    s.tiles_wanted = terrain_present_ ? 1U : 0U;
+    s.generating = terrain_job_.valid();
+    if (terrain_present_ && terrain_heightmap_.valid()) {
+        s.tiles_loaded = 1;
+        const float half = terrain_heightmap_.tile_size_m * 0.5F;
+        grow(glm::vec3(-half, terrain_heightmap_.min_height, -half),
+             glm::vec3(half, terrain_heightmap_.max_height, half));
+    }
+    return s;
 }
 
 WorldRuntime::~WorldRuntime() {
@@ -162,7 +200,8 @@ void WorldRuntime::init_scripts(const std::filesystem::path& project_root,
 }
 
 void WorldRuntime::fill_remote_targets(RemoteBridgeTargets& targets) {
-    targets.ground_height = &ground_height_at_;
+    targets.terrain_height = [this](float lx, float lz) { return local_ground_height(lx, lz); };
+    targets.terrain_status = [this] { return terrain_status(); };
     targets.terrain_streamer = &terrain_streamer_;
     targets.terrain_heightmap = &terrain_heightmap_;
     targets.terrain_anchor = &terrain_anchor_;
@@ -335,6 +374,16 @@ void WorldRuntime::update_terrain(engine::scene::Scene& scene, const glm::vec3& 
                 invalidate_navmesh("terrain regenerated");
                 std::fprintf(stderr, "[terrain] streaming world (seed %u, radius %d)\n",
                              tcomp.params.seed, tcomp.stream_radius);
+            } else {
+                // Edits that keep the shape (issue #38): a new radius resizes
+                // the window around the tiles already loaded; the generator
+                // choice applies to the next tile.
+                if (terrain_streamer_->radius() != tcomp.stream_radius) {
+                    terrain_streamer_->set_radius(tcomp.stream_radius);
+                    std::fprintf(stderr, "[terrain] stream radius %d\n", tcomp.stream_radius);
+                }
+                terrain_streamer_->set_generator(
+                    tcomp.gpu_generate ? terrain_pass_.tile_generator() : nullptr);
             }
         } else {
             if (terrain_streamer_) {
@@ -458,6 +507,31 @@ void WorldRuntime::settle_demo_on_terrain(engine::scene::Scene& scene) {
                  "[terrain] showcase settled on the terrain: plate top %.2f m (ground %.2f..%.2f m "
                  "under it)\n",
                  pedestal.top_y, span->min_y, span->max_y);
+}
+
+std::optional<engine::asset::Aabb> WorldRuntime::terrain_view_bounds(const glm::vec3& eye) const {
+    if (!terrain_present_) return std::nullopt;
+    if (terrain_stream_mode_ && terrain_streamer_) {
+        // Heights of the loaded tiles; before any loads, the nominal range.
+        const engine::terrain::TerrainParams& base = terrain_streamer_->base();
+        float lo = 0.0F;
+        float hi = base.height_m;
+        if (!terrain_streamer_->maps().empty()) {
+            lo = std::numeric_limits<float>::max();
+            hi = std::numeric_limits<float>::lowest();
+            for (const auto& [coord, map] : terrain_streamer_->maps()) {
+                lo = std::min(lo, map.min_height);
+                hi = std::max(hi, map.max_height);
+            }
+        }
+        return engine::scene::streaming_window_bounds(eye, terrain_anchor_, base.tile_size_m,
+                                                      terrain_streamer_->radius(), lo, hi);
+    }
+    if (!terrain_heightmap_.valid()) return std::nullopt;
+    const float half = terrain_heightmap_.tile_size_m * 0.5F;
+    return engine::asset::Aabb{
+        terrain_anchor_ + glm::vec3(-half, terrain_heightmap_.min_height, -half),
+        terrain_anchor_ + glm::vec3(half, terrain_heightmap_.max_height, half)};
 }
 
 void WorldRuntime::service_navmesh_request(engine::scene::Scene& scene) {

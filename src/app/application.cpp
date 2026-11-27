@@ -14,7 +14,9 @@
 #include "app/asset_root.hpp"
 #include "app/demo_scenes.hpp"
 #include "engine/core/utf8_path.hpp"
+#include "engine/scene/bounds.hpp"
 #include "engine/scene/components.hpp"
+#include "engine/scene/view_clip.hpp"
 
 namespace quat::app {
 namespace {
@@ -271,6 +273,9 @@ void Application::connect_remote() {
     remote_targets.cam_pitch = &camera_.pitch;
     remote_targets.cam_fov_y = &camera_.fov_y;
     remote_targets.cam_lens = &camera_.lens;
+    remote_targets.cam_near_override = &camera_.near_override;
+    remote_targets.cam_far_override = &camera_.far_override;
+    remote_targets.cam_derived_clip = &camera_.derived_clip();
     remote_targets.render_settings = &renderer_.render_settings();
     remote_targets.material_overrides = &renderer_.material_overrides();
     remote_targets.reset_temporal = [this] { renderer_.reset_temporal(); };
@@ -279,6 +284,7 @@ void Application::connect_remote() {
 #ifdef ENGINE_EDITOR
     editor_.fill_remote_targets(remote_targets);
 #endif
+    remote_targets.shader_reload = shader_reload_.get(); // A6: shader.create / update compile
     remote_targets.project_root = project_root();
     remote_.emplace(std::move(remote_targets), k_frames_in_flight);
 }
@@ -375,7 +381,15 @@ bool Application::run_frame() {
     const float sim_dt = remote_->advance_sim(dt); // A5: pause / step / time scale
 
     const engine::scene::CameraMatrices cam = update_world(dt, sim_dt, aspect);
-    const FrameScene frame_scene = renderer_.gather(scene_, cam, draw_extent, presented_);
+    // A screenshot with its own camera renders this frame from there (issue
+    // #41); terrain streaming, audio and the editor UI stay with the user's view.
+    const std::optional<engine::remote::CameraPose> shot = remote_->screenshot_view();
+    const engine::scene::CameraMatrices view = shot ? shot_view(*shot, aspect) : cam;
+    // A camera cut (a remote teleport, or a screenshot's own camera and the
+    // frame returning from it): the temporal history restarts instead of
+    // blending across the jump (R11).
+    if (remote_->take_camera_cut()) renderer_.reset_temporal();
+    const FrameScene frame_scene = renderer_.gather(scene_, view, draw_extent, presented_);
 
     world_.update_terrain(scene_, cam.position);
     camera_.pos.y += world_.take_demo_shift(); // the content moved onto the terrain (#7)
@@ -387,7 +401,7 @@ bool Application::run_frame() {
     FrameInputs frame_inputs;
     frame_inputs.scene = &frame_scene;
     frame_inputs.registry = &scene_.registry();
-    frame_inputs.cam = &cam;
+    frame_inputs.cam = &view;
     frame_inputs.draw_extent = draw_extent;
     frame_inputs.dt = dt;
 #ifdef ENGINE_EDITOR
@@ -471,6 +485,7 @@ engine::scene::CameraMatrices Application::update_world(float dt, float sim_dt, 
 
     // Third-person follow camera, placed after the character has moved.
     if (character_mode) camera_.follow(scene_, world_.character_entity());
+    update_view_clip();
 
 #ifdef ENGINE_EDITOR
     // The editor's fly camera is the default view in BOTH modes — Play
@@ -502,6 +517,32 @@ engine::scene::CameraMatrices Application::update_world(float dt, float sim_dt, 
         renderer_.reset_temporal();
     }
     return cam;
+}
+
+engine::scene::CameraMatrices Application::shot_view(const engine::remote::CameraPose& pose,
+                                                     float aspect) const {
+    // Clip planes derived for the shot's own position, with its overrides.
+    const engine::scene::ViewExtent extent{.drawables = scene_bounds_,
+                                           .terrain = world_.terrain_view_bounds(pose.position)};
+    const engine::scene::ClipRange clip = engine::scene::apply_clip_overrides(
+        engine::scene::derive_clip_range(pose.position, extent), pose.near_override,
+        pose.far_override);
+    return view_matrices(pose.position, glm::radians(pose.yaw_deg),
+                         glm::radians(glm::clamp(pose.pitch_deg, -89.0F, 89.0F)),
+                         glm::radians(pose.fov_deg), clip, aspect);
+}
+
+void Application::update_view_clip() {
+    // Scanning every drawable is cheap but not free: refresh the bounds a few
+    // times a second (the far plane keeps a margin for what moved meanwhile).
+    if (!scene_bounds_valid_ || presented_ - scene_bounds_frame_ >= k_bounds_refresh_frames) {
+        scene_bounds_ = engine::scene::scene_draw_bounds(scene_.registry());
+        scene_bounds_frame_ = presented_;
+        scene_bounds_valid_ = true;
+    }
+    const engine::scene::ViewExtent extent{.drawables = scene_bounds_,
+                                           .terrain = world_.terrain_view_bounds(camera_.pos)};
+    camera_.set_derived_clip(scene_, engine::scene::derive_clip_range(camera_.pos, extent));
 }
 
 void Application::report_stats() const {

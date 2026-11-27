@@ -92,6 +92,23 @@ Details the contract leaves open, as implemented:
   yaw/pitch. `camera.frame` keeps the heading, looks down at least 20° and
   backs off until the bounding sphere of what the entity (and its children)
   draws fits the vertical field of view.
+- **Clip planes** (issue #37). The view camera's planes are derived from the
+  scene every frame (`engine/scene/view_clip.hpp`): the far plane reaches the
+  farthest corner of the drawables' bounds (refreshed twice a second) and of
+  the terrain — the whole streaming window around the camera, or the single
+  tile — plus 10%, within [500 m, 200 km]; the near plane is far / 50000
+  within [0.1, 2] m, which bounds the far/near ratio of the standard-Z D32F
+  depth buffer. `camera.set` `near` (0.001..10000) / `far` (1..1000000)
+  override either plane; `null` returns it to the derived value; `near_auto` /
+  `far_auto` report which are derived. Builds without the editor apply them
+  to the camera entity the fly camera drives.
+- **Cuts.** `camera.set` `cut: true` marks the move as a teleport: the frame
+  restarts temporal history (TAA) instead of blending across the jump;
+  `false` is continuous motion (a fly-through of many small calls). Without
+  `cut`, a move is a cut when the camera jumps more than 10% of the far plane,
+  turns more than 30° or changes its field of view by more than 30°.
+  `camera.frame` is always a cut. The flag reaches the frame loop as
+  `FrameInputs::camera_cut`, which invalidates the TAA history.
 - **Camera lens** (R20): the view's physical lens — `aperture_f` [0.7, 64],
   `shutter_s` [1/16000, 30] s, `iso` [25, 409600], `sensor_height_mm`
   [1, 100], `focal_length_mm` [0, 2000] (0 = `fov_deg` applies; otherwise it
@@ -106,6 +123,20 @@ Details the contract leaves open, as implemented:
   buffer that is read after that frame's fence — no stall — then downscaled
   (area filter in linear light) and PNG-encoded off the main thread. At most
   8 may be in flight.
+- **Screenshots from an explicit camera** (issue #41). `render.screenshot
+  {camera:{...}}` takes the `camera.set` placement fields (`position`,
+  `look_at` | `yaw_deg`/`pitch_deg`, `fov_deg`, `near`, `far`; omitted ones
+  keep the viewport camera's values) or `frame` (an entity to fit in view, as
+  `camera.frame` does). The application renders the next frame from that
+  camera (`RemoteBridge::screenshot_view()`), captures exactly that frame and
+  goes back to the viewport camera: the viewport camera's state is never
+  written, so `camera.get` is unchanged. The renderer has one view, so this
+  is a one-frame camera swap rather than a second view: the viewport shows
+  the shot for one frame, TAA history restarts on the shot frame and the
+  frame after it (both are cuts), auto-exposure keeps adapting to the
+  viewport, and terrain keeps streaming around the viewport camera (a shot
+  far from it may show missing tiles). Shots with different cameras take a
+  frame each; the oldest goes first.
 - **Paths** (`scene.save/load`, `asset.spawn_model`) must be relative to the
   project root; absolute paths, `..` escapes and symlinks leading out are
   refused. `scene.save` writes only `.json` and refuses to overwrite a file
@@ -119,6 +150,48 @@ Details the contract leaves open, as implemented:
   playing for a `QUAT_SCENE` / `QUAT_PLAY` run); `unavailable` in the physics
   / character demo modes, which own their physics world. `scene.save` /
   `scene.load` are refused (`failed`) while playing.
+- **Terrain queries** (issue #39) use the terrain the runtime drives: the
+  first entity with a `terrain` component. The runtime samples its tiles
+  relative to the terrain's anchor; `world.ground_height` places the anchor
+  from the entity's current world transform, so a command later in a
+  `scene.batch` sees an earlier move of the terrain (or of a parent). A shape
+  edit not yet picked up by the runtime (`regenerate` pending) answers null
+  heights with `generating: true` rather than stale ones. Without a terrain
+  entity it is `not_found`. **`terrain.status`** tells a client when it can
+  place objects or take screenshots: `generating` is true while a tile is
+  being generated or uploaded, or the streaming window (`tiles_wanted` =
+  (2·`stream_radius`+1)²) is not full; `bounds` covers the loaded tiles.
+- **Bounds** (issue #40). `world_bounds` (`{min, max}` or null) is the
+  world-space AABB around what the entity and its descendants draw: mesh
+  bounds (skinned meshes through their armature), primitives (their unit
+  shape before the mesh resolves), every instance of an instanced mesh, and
+  the loaded tiles for the terrain entity — each box transformed exactly
+  (`engine/scene/bounds.hpp`) through world matrices composed from the local
+  transforms, so batch edits count. `local_bounds` (scene.get) is the same
+  box in the entity's own frame, terrain excluded: a model's size and where
+  its origin sits. Null while nothing draws (lights, empties, a model whose
+  mesh is still loading).
+- **`world.place_on_ground`** moves the entity (with its subtree) to `at`
+  if given, then — with `align_to_normal` — rotates it about its origin so
+  its up axis turns toward the surface normal under its bounds' centre (at
+  most `max_tilt_deg`; idempotent, the heading is kept), then translates it
+  vertically: upright, the bounds' bottom rests on the surfaces sampled at a
+  3×3 grid over the footprint (the lowest ground sample or the highest object
+  sample, whichever is higher); aligned, the bottom centre of `local_bounds`
+  rests on the surface under it. `offset` is added along world up. Surfaces:
+  the terrain (analytic heights, normal by central differences) and, below
+  the top of the entity's bounds, other entities' non-sensor colliders —
+  analytically in edit mode (box, sphere, capsule, with world scale baked in
+  as the physics system builds them), or the running physics world's bodies
+  and characters in play mode (ownerless bodies such as streamed terrain
+  count as ground). The entity's own colliders are skipped. Nothing below is
+  `failed`; placing the terrain (or an ancestor of it) is `invalid_params`.
+  A failure restores the entity's transform (`at` and the tilt included).
+  While a single terrain tile regenerates its old heights are not used
+  (`world.ground_height` answers null, placement on it fails). Known gaps
+  while a physics world runs: colliders created earlier in the same batch
+  are not bodies yet (only the physics world is consulted), and a placed
+  dynamic body is pulled back by the simulation.
 
 ## Methods (v1 contract, ROADMAP A2/A3)
 
@@ -135,7 +208,9 @@ name, which must match exactly one entity (otherwise `not_found` or
 codec (`engine/scene/component_json.hpp`): `transform` (`position`,
 `rotation` in Euler degrees YXZ, `scale` number or `[x,y,z]`, `look_at`),
 `primitive` (`shape`: cube/sphere/plane/cylinder/cone/capsule, `color`
-`"#rrggbb"` or linear `[r,g,b,a]`, `metallic`, `roughness`, `emissive`),
+`"#rrggbb"` or linear `[r,g,b,a]`, `metallic`, `roughness`, `emissive`,
+`shader`: a material shader name or `"standard"`, `shader_params`: up to 8
+numbers — see [Material shaders](#material-shaders-roadmap-a6)),
 `instanced_mesh` (many copies of one model in one entity, drawn instanced:
 `gltf` path relative to the project root + optional `node`, or — with `gltf`
 empty — the `primitive` fields `shape` / `color` / `metallic` / `roughness` /
@@ -162,7 +237,11 @@ also flat ground at `ground_y` where no terrain is loaded), `lod_start`
 0..1 × radius where blades start thinning, `far_density` 0..1 kept at the
 radius),
 `point_light`, `dir_light`, `camera`, `collider`, `rigidbody`, `character`,
-`nav_agent`, `behavior`, `patrol`, `terrain`, `net_replicated`,
+`nav_agent`, `behavior`, `patrol`, `terrain` (only an edit that changes the
+generated heights — `seed`, `resolution`, `tile_size`, `height`, `octaves`,
+`warp`, `erosion`, `droplets`, `erosion_steps` — regenerates it; `snowline` is
+shading, `stream_radius` resizes the streaming window keeping loaded tiles,
+`gpu` picks the generator of the next tile), `net_replicated`,
 `audio_source` (`clip`, `bus`: master/music/sfx/ui/ambience, `volume`,
 `pitch`, `loop`, `play_on_start`, `spatial`, `min_distance`, `max_distance`,
 `rolloff`, `doppler`, plus write-only `command`: play/stop/pause/resume),
@@ -179,8 +258,8 @@ values. Unknown fields are errors (they name the known fields).
 | Method | Params | Result |
 |---|---|---|
 | `scene.components` | — | `[{name, summary, addable, writable}]` |
-| `scene.list` | `{name_contains?, component?, limit?=100, offset?=0}` | `{total, entities:[{id, name, parent, components:[names], world_position}]}` |
-| `scene.get` | `{entity}` | `{id, name, parent, children:[ids], components:{...}}` |
+| `scene.list` | `{name_contains?, component?, limit?=100, offset?=0}` | `{total, entities:[{id, name, parent, components:[names], world_position, world_bounds}]}` |
+| `scene.get` | `{entity}` | `{id, name, parent, children:[ids], world_bounds, local_bounds, components:{...}}` |
 | `scene.create` | `{name?, parent?, components?:{...}}` | `{id, name}` |
 | `scene.update` | `{entity, name?, components?:{...}}` | `{id}` |
 | `scene.remove_components` | `{entity, components:[names]}` | `{removed:[names]}` |
@@ -190,11 +269,13 @@ values. Unknown fields are errors (they name the known fields).
 | `scene.batch` | `{commands:[{method, params}], stop_on_error?=true}` | `{results:[{ok:true, result} \| {ok:false, error:{code,message}}]}` — a string `"@N"` in an `entity`/`parent` field means the `id` returned by command N of this batch. Deferred methods cannot be batched. |
 | `environment.get` | — | `{sun:{azimuth_deg, elevation_deg, intensity, color}, clouds:{enabled, coverage, density, bottom_km, thickness_km, size_km, detail, wind_speed, wind_dir_deg}}` |
 | `environment.set` | same shape, every field optional | `environment.get` result |
-| `world.ground_height` | `{points:[[x,z],...]}` (≤ 1024) | `{heights:[y \| null]}` — null where no terrain covers the point |
-| `camera.get` | — | `{position, yaw_deg, pitch_deg, fov_deg, lens: {aperture_f, shutter_s, iso, sensor_height_mm, focal_length_mm, focus_distance_m}}` |
-| `camera.set` | `{position?, look_at?, yaw_deg?, pitch_deg?, fov_deg?, lens?}` (`lens` merges: omitted fields keep their values) | `camera.get` result |
+| `world.ground_height` | `{points:[[x,z],...]}` (≤ 1024) | `{heights:[y \| null], generating}` — null where no tile is loaded; `not_found` without terrain |
+| `terrain.status` | — | `{present, entity, streaming, generating, tiles_loaded, tiles_wanted, anchor, tile_size, bounds:{min,max} \| null}` (`{present:false}` without terrain) |
+| `world.place_on_ground` | `{entity, at?:[x,z], align_to_normal?=false, max_tilt_deg?=30, offset?=0}` | `{id, position, world_bounds, moved_y, tilt_deg, surface:{kind, entity, y, normal} \| null}` |
+| `camera.get` | — | `{position, yaw_deg, pitch_deg, fov_deg, near, far, near_auto, far_auto, lens: {aperture_f, shutter_s, iso, sensor_height_mm, focal_length_mm, focus_distance_m}}` |
+| `camera.set` | `{position?, look_at?, yaw_deg?, pitch_deg?, fov_deg?, near?, far?, cut?, lens?}` (`lens` merges: omitted fields keep their values) | `camera.get` result |
 | `camera.frame` | `{entity?}` (whole scene when omitted) | `camera.get` result |
-| `render.screenshot` *(deferred)* | `{max_size?=1024}` | `{mime:"image/png", width, height, data:<base64>}` |
+| `render.screenshot` *(deferred)* | `{max_size?=1024, camera?:{position?, look_at? \| yaw_deg?/pitch_deg?, frame?, fov_deg?, near?, far?}}` | `{mime:"image/png", width, height, data:<base64>}` |
 | `asset.list_models` | — | `{models:[project-relative paths of .gltf/.glb]}` |
 | `asset.spawn_model` | `{path, name?, parent?, components?}` | `{roots:[ids]}` |
 | `sim.play` / `sim.stop` | — | `{playing}` |
@@ -452,6 +533,138 @@ the stored tree from running (empty for a valid tree).
   too (the tree restarts from its root), but like every edit made while
   playing they are undone when Play stops and the editor restores the scene
   it started from.
+## Material shaders (ROADMAP A6)
+
+A model (or a person) can author **material shaders**: Slang modules that
+compute a surface — albedo, normal, metallic, roughness, occlusion, emission,
+alpha — from the shading point, the entity's material parameters and time.
+They are compiled by the running engine (shader hot reload, R2), assigned to
+entities through the `primitive` component, and swapped into the running
+renderer without a restart.
+
+### How a material shader plugs in
+
+```
+assets/shaders/lib/material.slang          IMaterial, MaterialInput, SurfaceSample, StandardMaterial
+assets/shaders/lib/gbuffer_common.slang    the GBuffer pass, generic over M : IMaterial
+assets/shaders/gbuffer.slang               built-in program: gbuffer_evaluate<StandardMaterial>
+assets/shaders/lib/material_pass_gbuffer.slang
+                                           driver: entry points + `extern struct SurfaceMaterial : IMaterial`
+assets/shaders/materials/<name>.slang      a material: `struct X : IMaterial {...}`
+                                           and `export struct SurfaceMaterial : IMaterial = X;`
+assets/shaders/templates/material.slang    the starter module (shader.template)
+cooked/shaders/materials/<name>.gbuffer.spv (+ .json reflection)
+```
+
+- **Interface.** `IMaterial` has one static function,
+  `SurfaceSample evaluate(MaterialInput input)`. `MaterialInput` carries `uv`,
+  `world_pos`, `normal` (world, unit), `view_dir` (toward the camera), `time`
+  (seconds), `params` (the entity's `PbrMaterialParams`, including two free
+  `shader_params` vec4s) and `standard` — the built-in glTF PBR result at that
+  point, textures applied, so a material can start from it and change only what
+  it is about (unused parts are compiled out). The built-in material is
+  `StandardMaterial`, which returns `standard` unchanged: the built-in and the
+  authored programs run the same pass code.
+- **Link-time specialisation, one program per material.** A material is
+  compiled with one slangc run per pass variant: the material source plus the
+  variant's cooked driver module
+  (`slangc <name>.slang cooked/material_pass_gbuffer.slang-module -I lib -I cooked ...`).
+  The driver declares `extern struct SurfaceMaterial : IMaterial` and the
+  material exports it, so the program is linked and specialised by Slang — no
+  source splicing, no `#ifdef`s, and the generated code is what a hand-written
+  pass for that material would be. Errors point into the material's own file
+  with line and column. Every program has exactly the built-in program's
+  pipeline layout (the parameters live in `gbuffer_common.slang`); a material
+  cannot declare resources of its own — the registry and the renderer both
+  check the reflection against the built-in program and reject a misfit.
+- **Trade-off.** This is "one pipeline per material shader": each authored
+  material costs one SPIR-V program and one graphics pipeline per pass variant,
+  and the GBuffer pass binds one pipeline per material shader in use each frame
+  (draws are grouped by program; the material descriptor set and push constants
+  are shared). The alternative — one über-pipeline that branches on a material
+  id, or dynamic dispatch through an existential `IMaterial` — keeps a single
+  pipeline but makes every pixel pay for the union of all materials (registers,
+  divergence) and forces a full pass recompile for any edit. Authored materials
+  are few and edited often, so per-material programs win: compile ~0.3–1 s per
+  edit on a worker thread, pipeline creation once, zero cost to other
+  materials.
+- **Deferred only (v1).** Material shaders run in the GBuffer pass, so they are
+  lit, shadowed, reflected, bloomed and exposed like everything else; emission
+  goes to a new GBuffer target the lighting pass adds. Their `alpha` is a
+  cutout (below 0.5 discards the pixel); a `primitive` with a material shader
+  never routes to the blended forward pass, and shadow casting ignores the
+  cutout (a cut-out hole still casts the mesh's shadow). Shadow and forward
+  (blended) variants are a follow-up (ROADMAP A6): the variant table
+  (`include/engine/rhi/material_shader_names.hpp`) and the compile path already
+  handle several drivers per material.
+- **Selection.** `primitive.shader` (also on `instanced_mesh`'s primitive
+  fields) names the material shader; `"standard"` / `""` is the built-in.
+  `primitive.shader_params` is up to 8 numbers filling
+  `params.shader_params[0..1]` in order. Entities that name a shader that is
+  not (yet) compiled render with the built-in program; the renderer retries
+  every 30 frames, so a shader created after the assignment appears on its own.
+  `MaterialInput::time` is seconds since the renderer started. A per-entity
+  `material` override (A8) draws a derived copy that keeps the shader and its
+  `shader_params` (they are not override fields — edit them on the
+  `primitive`); the overridden factors reach the shader through
+  `MaterialInput::params` and `standard`.
+- **Transactional edits.** `shader.create` / `shader.update` write the file,
+  have the hot reload service compile it, and reply when the compile finished.
+  A failed create deletes the file again; a failed update restores the previous
+  text (which recompiles, so the status returns to it). The cooked programs are
+  only replaced by a successful compile, so the previous version keeps
+  rendering throughout. Operations run one at a time, in request order.
+
+### Methods
+
+| Method | Params | Result |
+|---|---|---|
+| `shader.list` | — | `{shaders:[{name, builtin, path, state, reloads, errors}], can_compile}` |
+| `shader.get` | `{name}` | `{name, builtin, path, state, reloads, errors, source, diagnostics, log}` |
+| `shader.template` | — | `{source, save_as}` |
+| `shader.create` *(deferred)* | `{name, source}` | `{name, path, ok, errors, diagnostics, log}` (+ `kept_previous:false` when not ok) |
+| `shader.update` *(deferred)* | `{name, source}` | same; `kept_previous:true` when the old version was restored |
+| `shader.delete` | `{name}` | `{deleted, entities_reset}` |
+
+- **Names** are lowercase identifiers (`[a-z][a-z0-9_]*`, at most 48
+  characters): the file stem under `assets/shaders/materials/`, so a name can
+  never address a path elsewhere. `standard` and the names of shader library
+  modules (`material`, `pbr`, ...) are reserved. `source` is at most 256 KiB.
+- **Source confinement.** slangc would read any file a source names, and its
+  diagnostics would echo the lines back, so the source is checked before it is
+  written: outside comments and string literals it may contain no `#`
+  (preprocessor directives), no `__include`, no backslash, and every
+  `import` must be `import <name>;` with `<name>` a shader library module.
+  Anything else is `invalid_params` naming the line (`source line N: ...`);
+  nothing is written.
+- **`state`**: `builtin`, `cooked` (as built offline, not recompiled this
+  run), `compiling`, `ok`, `error` (the last compile failed; the previous
+  version is what runs), or `not_compiled` (no cooked program and no compiler
+  in this run).
+- **A compile failure is a result, not an RPC error**: `ok:false` with the
+  diagnostics. Each diagnostic is `{severity, message, file?, line?, column?,
+  code?, source_line?}` — `file` project-relative, `line`/`column` 1-based from
+  slangc's caret line, `code` slang's diagnostic id; link errors have no
+  location. A misfit layout (the material declared its own resources) is an
+  error diagnostic without a location. `log` is slangc's full output with
+  project paths shortened. A compile that does not finish in time (slangc is
+  killed after the compiler's timeout; the registry waits a little longer from
+  when the compile started) is reported the same way, `ok:false` with an error
+  diagnostic, and undone like any failed compile.
+- **Errors**: `invalid_params` (bad name / source, reserved name),
+  `not_found` (`shader.get` / `update` / `delete` of an unknown name),
+  `failed` (`shader.create` of an existing name — use `shader.update`; a
+  delete while that shader is compiling; file system errors), `unavailable`
+  (no registry in this engine, or
+  `create` / `update` while shader hot reload is off — run with
+  `QUAT_SHADER_HOT_RELOAD=1`, the default in editor builds).
+- **`shader.delete`** removes the source and its cooked programs and resets
+  every `primitive.shader` (and `instanced_mesh` primitive) that named it to
+  the built-in, reporting how many.
+
+Typical loop: `shader.template` → edit → `shader.create` → read `diagnostics`,
+fix, `shader.update` → `scene.update {entity, components:{primitive:{shader,
+shader_params}}}` → `render.screenshot` → iterate.
 
 ## Gameplay scripts (ROADMAP G7)
 
@@ -492,6 +705,28 @@ session runs scripts.
   callbacks are in `debug.log` (category `script`) and in `status`.
 - `script.delete` does not detach the file from entities; running instances
   keep their loaded code until the session ends.
+
+## Asset downloads (quat-mcp only, ROADMAP A9)
+
+The engine never downloads anything. quat-mcp's `asset_search` /
+`asset_fetch` talk to the public Poly Haven API themselves
+(`tools/quat-mcp/src/assets/`): search filters `/assets?t=models` by keyword
+and category and reports per-resolution download sizes from `/files/<id>`;
+fetch downloads the glTF and its `include` files into
+`<project>/assets/meshes/polyhaven/<id>/` (`--project-root`, default the
+current directory). Ids must be Poly Haven slugs and every path from the API
+must be a plain relative path (no `..`, absolute, hidden or backslash
+components); every URL (and redirect, at most 3) must be https on
+`dl.polyhaven.org` or the API's host, or share the configured API's exact
+origin; every non-`data:` `buffers[].uri` / `images[].uri` of the glTF
+(percent-decoded) must name one of the downloaded files; the declared total is capped (`--asset-max-mb`, default 512)
+before anything is downloaded, and each file must match its declared size
+and MD5. Files land in a staging directory private to the request (concurrent
+fetches of one model never share it) that is moved into place only
+when everything verified, next to `LICENSE.md` (CC0, authors, source) and
+`polyhaven.json` (provenance). With `quat-cook` on PATH the model is also
+cooked to `<id>.glb`. The folder is gitignored. The engine then loads the
+files through `asset.spawn_model` / `instanced_mesh` like any other model.
 
 ## Errors
 

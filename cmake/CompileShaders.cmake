@@ -9,6 +9,12 @@
 #     compiled to cooked/shaders/<name>.spv + <name>.json, with lib/ on the
 #     import search path. Passes depend on the modules so a module edit rebuilds
 #     its consumers.
+#   * Material shaders in assets/shaders/materials/*.slang (ROADMAP A6) — each
+#     implements IMaterial and exports `SurfaceMaterial`; it is linked against
+#     every pass-variant driver module (lib/material_pass_<variant>.slang, see
+#     include/engine/rhi/material_shader_names.hpp) into
+#     cooked/shaders/materials/<name>.<variant>.spv + .json. The cooked
+#     modules are on the search path so the link sees one copy of each.
 # A single custom target gathers all outputs so it can be a build dependency of
 # the executable.
 #
@@ -24,6 +30,9 @@ function(add_shader_compilation TARGET_NAME)
 
     file(GLOB shader_sources CONFIGURE_DEPENDS ${shader_src_dir}/*.slang)
     file(GLOB shader_modules CONFIGURE_DEPENDS ${shader_lib_dir}/*.slang)
+    file(GLOB material_sources CONFIGURE_DEPENDS ${shader_src_dir}/materials/*.slang)
+    set(material_out_dir ${shader_out_dir}/materials)
+    set(material_variants gbuffer) # driver: lib/material_pass_<variant>.slang
 
     set(outputs)
     set(module_outputs)
@@ -58,6 +67,28 @@ function(add_shader_compilation TARGET_NAME)
             COMMENT "slangc ${name}.slang -> SPIR-V + reflection"
             VERBATIM)
         list(APPEND outputs ${spv} ${json})
+    endforeach()
+
+    # Material shaders: one SPIR-V program per pass variant, linked against the
+    # variant's cooked driver module.
+    foreach(src ${material_sources})
+        get_filename_component(name ${src} NAME_WE)
+        foreach(variant ${material_variants})
+            set(driver ${shader_out_dir}/material_pass_${variant}.slang-module)
+            set(spv  ${material_out_dir}/${name}.${variant}.spv)
+            set(json ${material_out_dir}/${name}.${variant}.json)
+            add_custom_command(
+                OUTPUT ${spv} ${json}
+                COMMAND ${CMAKE_COMMAND} -E make_directory ${material_out_dir}
+                COMMAND ${SLANGC_EXECUTABLE} ${src} ${driver} -I ${shader_lib_dir}
+                        -I ${shader_out_dir}
+                        -target spirv -emit-spirv-directly -fvk-use-entrypoint-name
+                        -o ${spv} -reflection-json ${json}
+                DEPENDS ${src} ${module_outputs}
+                COMMENT "slangc material ${name}.slang (${variant}) -> SPIR-V + reflection"
+                VERBATIM)
+            list(APPEND outputs ${spv} ${json})
+        endforeach()
     endforeach()
 
     add_custom_target(${TARGET_NAME} ALL DEPENDS ${outputs})

@@ -100,6 +100,12 @@ private:
     // This frame's play-mode input (editor Play, or always in the non-editor
     // game); none outside play.
     [[nodiscard]] std::optional<PlayStep> play_step() const;
+    // Derives the fly camera's clip planes from the scene's drawables (bounds
+    // refreshed every k_bounds_refresh_frames) and the terrain (issue #37).
+    void update_view_clip();
+    // View / projection for a screenshot's own camera (issue #41).
+    [[nodiscard]] engine::scene::CameraMatrices shot_view(const engine::remote::CameraPose& pose,
+                                                          float aspect) const;
     void report_stats() const;
 
     AppConfig config_;
@@ -130,6 +136,12 @@ private:
     // The scene Camera entity the view renders through (null: the fly
     // camera); a change is a camera cut for the renderer's temporal state.
     entt::entity view_camera_ = entt::null;
+
+    // Drawable bounds the clip planes are derived from (update_view_clip).
+    static constexpr std::uint64_t     k_bounds_refresh_frames = 30;
+    std::optional<engine::asset::Aabb> scene_bounds_;
+    std::uint64_t                      scene_bounds_frame_ = 0;
+    bool                               scene_bounds_valid_ = false;
 
     std::uint64_t presented_ = 0;
     double        frame_time_sum_ = 0.0; // avg-frame-time report at exit

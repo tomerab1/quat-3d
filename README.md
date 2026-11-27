@@ -316,10 +316,16 @@ validation messages, frame statistics, pause / single-step / slow down the
 simulation, watch entities, cast physics rays and query navmesh paths — and
 tune the look: exposure, bloom, anti-aliasing, shadows, sky light, clouds and
 per-entity materials, with the same values the editor's Renderer panel and
-Material inspector show — and author NPC behaviour trees: build, inspect and
+Material inspector show — author NPC behaviour trees: build, inspect and
 edit the same graph the editor's Behaviour panel shows, with per-node
-validation errors, and see what each node did on the last tick. Start the
-engine with `QUAT_REMOTE=7878`, build the
+validation errors, and see what each node did on the last tick — and write
+material shaders: Slang modules the engine compiles (returning the compiler
+errors with line numbers), assigns to entities and hot-swaps while it runs.
+For world building it reports entity bounds, sets models down on terrain or
+colliders (`world_place_on_ground`), takes screenshots from any camera without
+moving yours, and searches and downloads CC0 models from Poly Haven
+(`asset_search` / `asset_fetch`, into the gitignored `assets/meshes/polyhaven/`).
+Start the engine with `QUAT_REMOTE=7878`, build the
 server with `cargo build --release` in `tools/quat-mcp`, and register it with
 your client:
 
@@ -379,7 +385,8 @@ The plan lives in [`ROADMAP.md`](ROADMAP.md), grouped into tracks:
 ## Repository layout
 
 ```
-assets/shaders/     Slang shader sources (compiled into cooked/shaders/ during the build)
+assets/shaders/     Slang shader sources (compiled into cooked/shaders/ during the build);
+                    materials/ holds material shaders, templates/ the starter module
 assets/scripts/     Lua gameplay scripts; assets/scenes/ holds scene files (the Coin Collector demo)
 include/engine/     Public headers, one folder per module
 src/                Implementation, mirroring include/ (rhi, renderer, scene, physics, ...)

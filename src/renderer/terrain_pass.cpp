@@ -335,6 +335,7 @@ void TerrainPass::add_to_graph(rhi::RenderGraph& graph, const renderer::GBufferT
         .writes(t.normal, rhi::ResourceUsage::color_attachment)
         .writes(t.material, rhi::ResourceUsage::color_attachment)
         .writes(t.clearcoat, rhi::ResourceUsage::color_attachment)
+        .writes(t.emissive, rhi::ResourceUsage::color_attachment)
         .writes(t.velocity, rhi::ResourceUsage::color_attachment)
         .writes(t.depth, rhi::ResourceUsage::depth_attachment)
         .execute([this, t, extent, vp, origin_y, snowline_m](rhi::PassContext& ctx) {
@@ -353,6 +354,7 @@ void TerrainPass::add_to_graph(rhi::RenderGraph& graph, const renderer::GBufferT
                 color_attachment(ctx.resolve(t.normal).view),
                 color_attachment(ctx.resolve(t.material).view),
                 color_attachment(ctx.resolve(t.clearcoat).view),
+                color_attachment(ctx.resolve(t.emissive).view),
                 color_attachment(ctx.resolve(t.velocity).view)};
 
             VkRenderingAttachmentInfo depth{};

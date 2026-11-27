@@ -4,6 +4,7 @@
 //! AI client ──MCP (stdio)──▶ quat-mcp ──JSON-RPC 2.0 (loopback TCP)──▶ engine
 //! ```
 //!
+//! - [`assets`]: CC0 model search and download from Poly Haven.
 //! - [`client`]: the engine's line-delimited JSON-RPC client (lazy connect,
 //!   `session.hello`, id matching, timeouts, reconnect).
 //! - [`server`]: the MCP tools, prompts and resources.
@@ -13,6 +14,7 @@
 //!   model reads).
 //! - [`config`]: command line / environment configuration.
 
+pub mod assets;
 pub mod client;
 pub mod config;
 pub mod content;

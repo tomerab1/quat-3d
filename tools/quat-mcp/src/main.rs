@@ -36,6 +36,7 @@ async fn main() -> anyhow::Result<()> {
     // MCP client can start quat-mcp before the engine is running.
     let engine = Arc::new(EngineClient::new(config));
     let service = QuatServer::new(engine, cli.long_timeout())
+        .with_assets(cli.asset_config())
         .serve(rmcp::transport::stdio())
         .await
         .context("starting the MCP server on stdio")?;

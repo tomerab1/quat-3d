@@ -121,7 +121,8 @@ struct GBufferOut {
     float2 normal    : SV_Target1;
     float4 material  : SV_Target2; // r metallic, g roughness, b occlusion, a mask
     float2 clearcoat : SV_Target3;
-    float2 velocity  : SV_Target4;
+    float4 emissive  : SV_Target4; // terrain emits nothing
+    float2 velocity  : SV_Target5;
 }
 
 [shader("fragment")]
@@ -161,6 +162,7 @@ GBufferOut fragment_main(VsOut input) {
     o.normal = oct_encode(n);
     o.material = float4(0.0, roughness, 1.0, 1.0);
     o.clearcoat = float2(0.0, 0.0);
+    o.emissive = float4(0.0, 0.0, 0.0, 0.0);
     o.velocity = surface_velocity(input.cur_clip, input.prev_clip, pc.motion.xy);
     return o;
 }

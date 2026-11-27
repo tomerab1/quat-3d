@@ -10,6 +10,12 @@
 //       slangc <src> -I <module_dir> -target spirv -emit-spirv-directly
 //              -fvk-use-entrypoint-name -o <out>/<name>.spv
 //              -reflection-json <out>/<name>.json
+//   * material shaders (material_dir/*.slang, ROADMAP A6), once per variant
+//     of material_shader_names.hpp, linked against the variant's cooked driver:
+//       slangc <src> <out>/<driver>.slang-module -I <module_dir> -I <out>
+//              -target spirv -emit-spirv-directly -fvk-use-entrypoint-name
+//              -o <out>/materials/<name>.<variant>.spv
+//              -reflection-json <out>/materials/<name>.<variant>.json
 // It compiles into a staging directory under the output directory and only
 // moves the outputs into place when slangc succeeds, so a failed compile never
 // clobbers the last good cooked shader. The .spv/.json pair is installed as a
@@ -40,15 +46,17 @@ class ProcessCanceller;
 namespace engine::rhi {
 
 enum class ShaderSourceKind : std::uint8_t {
-    pass,   // has entry points: compiled to .spv + reflection .json
-    module, // library module: compiled to .slang-module
+    pass,     // has entry points: compiled to .spv + reflection .json
+    module,   // library module: compiled to .slang-module
+    material, // material shader: one .spv + .json per pass variant
 };
 
 struct ShaderCompilerConfig {
-    std::filesystem::path slangc;     // empty: find_slangc()
-    std::filesystem::path source_dir; // assets/shaders (pass shaders)
-    std::filesystem::path module_dir; // empty: source_dir / "lib"
-    std::filesystem::path output_dir; // cooked/shaders
+    std::filesystem::path slangc;       // empty: find_slangc()
+    std::filesystem::path source_dir;   // assets/shaders (pass shaders)
+    std::filesystem::path module_dir;   // empty: source_dir / "lib"
+    std::filesystem::path output_dir;   // cooked/shaders
+    std::filesystem::path material_dir; // empty: source_dir / "materials"
     // A slangc run taking longer is killed and reported as a failed compile
     // (a hung compiler must not stall every later reload).
     std::chrono::milliseconds timeout{60'000};
@@ -59,7 +67,8 @@ struct ShaderCompileResult {
     ShaderSourceKind      kind = ShaderSourceKind::pass;
     bool                  ok   = false;
     std::string           diagnostics; // slangc output (+ a note when it crashed)
-    // On success, the installed outputs (.spv then .json, or the .slang-module).
+    // On success, the installed outputs (.spv then .json — per variant for a
+    // material — or the .slang-module).
     std::vector<std::filesystem::path> outputs;
 };
 
@@ -77,16 +86,21 @@ public:
 
     [[nodiscard]] const ShaderCompilerConfig& config() const { return config_; }
 
-    // module when `source` lives in the module directory, pass otherwise.
+    // module when `source` lives in the module directory, material in the
+    // material directory, pass otherwise.
     [[nodiscard]] ShaderSourceKind kind_of(const std::filesystem::path& source) const;
 
-    // Cooked output paths for `source` (.spv + .json, or the .slang-module).
+    // Cooked output paths for `source` (.spv + .json — one pair per variant
+    // for a material — or the .slang-module).
     [[nodiscard]] std::vector<std::filesystem::path>
     outputs_for(const std::filesystem::path& source) const;
 
-    // slangc arguments (argv[1..]) compiling `source` into `out_dir`.
+    // slangc arguments (argv[1..]) compiling `source` into `out_dir` (for a
+    // material: its variant number `variant`, outputs named as in the
+    // materials subdirectory).
     [[nodiscard]] std::vector<std::string>
-    arguments(const std::filesystem::path& source, const std::filesystem::path& out_dir) const;
+    arguments(const std::filesystem::path& source, const std::filesystem::path& out_dir,
+              std::size_t variant = 0) const;
 
     // Compiles `source` synchronously. Thread-safe with respect to other
     // sources; concurrent compiles of the same source are not supported.
@@ -101,14 +115,18 @@ private:
 class ShaderDependencyGraph {
 public:
     ShaderDependencyGraph() = default;
-    // Pass shaders live in `source_dir`, library modules in `module_dir`.
-    ShaderDependencyGraph(std::filesystem::path source_dir, std::filesystem::path module_dir);
+    // Pass shaders live in `source_dir`, library modules in `module_dir`,
+    // material shaders in `material_dir` (optional). A material also depends
+    // on the variant driver modules it is linked against.
+    ShaderDependencyGraph(std::filesystem::path source_dir, std::filesystem::path module_dir,
+                          std::filesystem::path material_dir = {});
 
     // Module names imported by Slang source text: `import a;`, `import a.b;`
-    // (-> a/b) and `import "file.slang";`. Comments are ignored.
+    // (-> a/b) and `import "file.slang";`. Comments are ignored, and so are
+    // string imports of absolute paths or paths climbing out with `..`.
     [[nodiscard]] static std::vector<std::string> parse_imports(std::string_view source_text);
 
-    // Scans every .slang file in the two directories (non-recursive).
+    // Scans every .slang file in the directories (non-recursive).
     void scan();
 
     // Re-reads one source's imports (after an edit), or drops it.
@@ -130,6 +148,7 @@ public:
     imports_of(const std::filesystem::path& source) const;
 
     [[nodiscard]] bool is_module(const std::filesystem::path& source) const;
+    [[nodiscard]] bool is_material(const std::filesystem::path& source) const;
     [[nodiscard]] bool contains(const std::filesystem::path& source) const;
     [[nodiscard]] std::vector<std::filesystem::path> sources() const;
 
@@ -139,6 +158,7 @@ private:
 
     std::filesystem::path source_dir_;
     std::filesystem::path module_dir_;
+    std::filesystem::path material_dir_;
     // Every known source -> the module names it imports (unresolved).
     std::map<std::filesystem::path, std::vector<std::string>> imports_;
 };

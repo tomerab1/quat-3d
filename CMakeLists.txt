@@ -183,7 +183,10 @@ add_library(engine_rhi STATIC
     src/rhi/graphics_pipeline.cpp
     src/rhi/compute_pipeline.cpp
     src/rhi/shader_compiler.cpp
-    src/rhi/shader_hot_reload.cpp)
+    src/rhi/shader_diagnostics.cpp
+    src/rhi/shader_hot_reload.cpp
+    src/rhi/material_shader_registry.cpp
+    src/rhi/material_shader_source.cpp)
 target_link_libraries(engine_rhi PUBLIC
     engine_flags engine_core Vulkan::Vulkan GPUOpen::VulkanMemoryAllocator)
 # engine_core is public: shader hot reload's headers use its watcher/process
@@ -304,7 +307,9 @@ add_library(engine_scene STATIC
     src/scene/instanced_mesh.cpp
     src/scene/instanced_mesh_resolve.cpp
     src/scene/ground_placement.cpp
-    src/scene/camera_framing.cpp)
+    src/scene/camera_framing.cpp
+    src/scene/bounds.cpp
+    src/scene/view_clip.cpp)
 # EnTT is PUBLIC: components.hpp exposes entt types (Parent/Children) to consumers.
 # engine_renderer is PUBLIC: scene.hpp's RenderCollectSystem fills a renderer
 # DrawItem list (no cycle — the renderer does not depend on the scene).
@@ -477,10 +482,14 @@ add_library(engine_remote_world STATIC
     src/remote/world/scene_commands.cpp
     src/remote/world/batch_command.cpp
     src/remote/world/environment_commands.cpp
+    src/remote/world/terrain_commands.cpp
+    src/remote/world/surface_query.cpp
+    src/remote/world/placement_commands.cpp
     src/remote/world/camera_commands.cpp
     src/remote/world/app_commands.cpp
     src/remote/world/debug_commands.cpp
     src/remote/world/debug_query_commands.cpp
+    src/remote/world/shader_commands.cpp
     src/remote/world/tuning_commands.cpp
     src/remote/world/behavior_commands.cpp
     src/remote/world/behavior_edit_commands.cpp
@@ -510,6 +519,7 @@ add_library(engine_renderer STATIC
     src/renderer/instance_buffer.cpp
     src/renderer/non_finite_counters.cpp
     src/renderer/mesh_pass.cpp
+    src/renderer/material_pipelines.cpp
     src/renderer/lighting_pass.cpp
     src/renderer/light_clusters.cpp
     src/renderer/light_cull_pass.cpp
@@ -576,6 +586,7 @@ if(ENGINE_EDITOR)
         src/editor/picking.cpp
         src/editor/audio_inspector.cpp
         src/editor/script_inspector.cpp
+        src/editor/material_inspector.cpp
         src/editor/animation_inspector.cpp
         src/editor/grass_inspector.cpp
         src/editor/particle_inspector.cpp

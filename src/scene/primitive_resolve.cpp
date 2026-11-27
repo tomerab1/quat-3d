@@ -3,6 +3,7 @@
 #include <cstdio>
 #include <filesystem>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include <entt/entity/registry.hpp>
@@ -17,13 +18,20 @@ namespace engine::scene {
 
 namespace {
 
-[[nodiscard]] std::uint64_t material_hash(const asset::PbrMaterialParams& p) {
+[[nodiscard]] std::uint64_t material_hash(const asset::PbrMaterialParams& p,
+                                          std::string_view shader) {
     Fnv64 h;
     for (int i = 0; i < 4; ++i) h.f32(p.base_color_factor[i]);
     for (int i = 0; i < 3; ++i) h.f32(p.emissive_factor[i]);
     h.f32(p.metallic_factor);
     h.f32(p.roughness_factor);
     h.u32(p.flags);
+    if (!shader.empty()) { // keeps the keys of shader-less materials unchanged
+        h.str(shader);
+        for (const glm::vec4& v : p.shader_params) {
+            for (int i = 0; i < 4; ++i) h.f32(v[i]);
+        }
+    }
     return h.value();
 }
 
@@ -53,7 +61,10 @@ asset::PbrMaterialParams primitive_material_params(const Primitive& primitive) {
     p.metallic_factor = primitive.metallic;
     p.roughness_factor = primitive.roughness;
     p.flags = 0;
-    if (primitive.color.a < 1.0F) p.flags |= asset::material_blend;
+    // Authored material shaders run in the deferred pass only: their alpha is
+    // a cutout there, so the material never routes to the blended pass.
+    if (primitive.color.a < 1.0F && primitive.shader.empty()) p.flags |= asset::material_blend;
+    p.shader_params = primitive.shader_params;
     // A plane has one face: render its back too, or it vanishes when the
     // camera dips below it (and casts no shadow from below).
     if (primitive.shape == PrimitiveShape::plane) p.flags |= asset::material_double_sided;
@@ -63,7 +74,7 @@ asset::PbrMaterialParams primitive_material_params(const Primitive& primitive) {
 std::uint64_t primitive_hash(const Primitive& primitive) {
     Fnv64 h;
     h.u32(static_cast<std::uint32_t>(primitive.shape));
-    h.u64(material_hash(primitive_material_params(primitive)));
+    h.u64(material_hash(primitive_material_params(primitive), primitive.shader));
     return h.nonzero();
 }
 
@@ -86,11 +97,14 @@ PrimitiveAssets load_primitive_assets(const Primitive& primitive, rhi::GpuAlloca
     const asset::PbrMaterialParams params = primitive_material_params(primitive);
     char hex[17];
     std::snprintf(hex, sizeof hex, "%016llx",
-                  static_cast<unsigned long long>(material_hash(params)));
+                  static_cast<unsigned long long>(material_hash(params, primitive.shader)));
     out.material_key = std::string("primitive/material/") + hex;
     out.material =
         assets.load<asset::MaterialAsset>(out.material_key, [&](const std::filesystem::path&) {
-            return asset::upload_material(params, asset::MaterialTextures{}, allocator, transfer);
+            auto material =
+                asset::upload_material(params, asset::MaterialTextures{}, allocator, transfer);
+            if (material) material->shader = primitive.shader;
+            return material;
         });
     return out;
 }

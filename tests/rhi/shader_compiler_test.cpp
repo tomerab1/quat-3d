@@ -79,7 +79,7 @@ TEST(ShaderCompiler, ArgumentsMatchTheCMakeFlags) {
         // of our own keeps the test portable (no /bin/sh on Windows).
         const fs::path fake_slangc = t.root.path() / "fake-slangc";
         write_file(fake_slangc, "");
-        auto c = ShaderCompiler::create({fake_slangc, t.src, {}, t.out});
+        auto c = ShaderCompiler::create({fake_slangc, t.src, {}, t.out, {}});
         ASSERT_OK(c);
         compiler = std::move(*c);
     }
@@ -105,7 +105,7 @@ TEST(ShaderCompiler, ArgumentsMatchTheCMakeFlags) {
 TEST(ShaderCompiler, CompilesAValidShader) {
     REQUIRE_SLANGC();
     ShaderTree t;
-    auto compiler = ShaderCompiler::create({{}, t.src, {}, t.out});
+    auto compiler = ShaderCompiler::create({{}, t.src, {}, t.out, {}});
     ASSERT_OK(compiler);
 
     const ShaderCompileResult r = compiler->compile(t.src / "pass.slang");
@@ -123,7 +123,7 @@ TEST(ShaderCompiler, CompilesAValidShader) {
 TEST(ShaderCompiler, CompilesALibraryModule) {
     REQUIRE_SLANGC();
     ShaderTree t;
-    auto compiler = ShaderCompiler::create({{}, t.src, {}, t.out});
+    auto compiler = ShaderCompiler::create({{}, t.src, {}, t.out, {}});
     ASSERT_OK(compiler);
     const ShaderCompileResult r = compiler->compile(t.lib / "scale.slang");
     ASSERT_TRUE(r.ok) << r.diagnostics;
@@ -134,7 +134,7 @@ TEST(ShaderCompiler, CompilesALibraryModule) {
 TEST(ShaderCompiler, ReturnsDiagnosticsAndKeepsTheLastGoodOutput) {
     REQUIRE_SLANGC();
     ShaderTree t;
-    auto compiler = ShaderCompiler::create({{}, t.src, {}, t.out});
+    auto compiler = ShaderCompiler::create({{}, t.src, {}, t.out, {}});
     ASSERT_OK(compiler);
     ASSERT_TRUE(compiler->compile(t.src / "pass.slang").ok);
     const std::string good_spv = read_file(t.out / "pass.spv");
@@ -155,7 +155,7 @@ TEST(ShaderCompiler, ReturnsDiagnosticsAndKeepsTheLastGoodOutput) {
 TEST(ShaderCompiler, FailedInstallRestoresThePreviousPair) {
     REQUIRE_SLANGC();
     ShaderTree t;
-    auto compiler = ShaderCompiler::create({{}, t.src, {}, t.out});
+    auto compiler = ShaderCompiler::create({{}, t.src, {}, t.out, {}});
     ASSERT_OK(compiler);
     ASSERT_TRUE(compiler->compile(t.src / "pass.slang").ok);
     const std::string good_json = read_file(t.out / "pass.json");
@@ -191,7 +191,7 @@ TEST(ShaderCompiler, FailedInstallRestoresThePreviousPair) {
 
 TEST(ShaderCompiler, FailsWithoutSlangc) {
     ShaderTree t;
-    EXPECT_FALSE(ShaderCompiler::create({"/nonexistent/slangc", t.src, {}, t.out}).has_value());
+    EXPECT_FALSE(ShaderCompiler::create({"/nonexistent/slangc", t.src, {}, t.out, {}}).has_value());
 }
 
 // --- dependency tracking ----------------------------------------------------

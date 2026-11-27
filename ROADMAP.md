@@ -98,18 +98,25 @@ JSON-RPC over loopback TCP to the engine.
 - [ ] **A6 — Shader authoring.** Create/edit material shaders (Slang modules
   implementing the material interface), compile with diagnostics returned to
   the model, hot-swap (needs R2).
+  - [ ] A6 follow-up: `shadow` and `forward` variants in
+    `material_shaders::variants` — shadow casting that evaluates the material
+    and honours its alpha cutout (today shadows use the mesh's silhouette),
+    and alpha-blended material shaders in the transparent pass.
 - [ ] **A7 — Behaviour authoring.** Build and edit behaviour graphs (G2) by
   tool call, with validation errors returned as data.
 - [ ] **A8 — Live tuning.** Every renderer / post-process / material
   parameter readable and writable over the remote API and MCP from one
   settings model the editor also edits (schema with ranges and units),
   saved with the scene; a `tune_look` workflow prompt.
-- [ ] **A9 — World-building ergonomics** (from MCP world-building sessions,
-  issues #37–#42): scene-derived camera far plane; shading-only terrain
-  edits without regeneration; batch-consistent `world.ground_height`;
-  entity world bounds + `world.place_on_ground`; screenshots from an
-  explicit offscreen camera; `asset_search` / `asset_fetch` for CC0 Poly
-  Haven models (licence recorded, cooked with R17).
+- [x] **A9 — World-building ergonomics** (from MCP world-building sessions,
+  issues #37–#42): scene-derived camera clip planes (+ `camera.set`
+  near/far/cut); shading-only terrain edits without regeneration;
+  batch-consistent `world.ground_height` + `terrain.status`; entity world
+  bounds + `world.place_on_ground`; screenshots from an explicit camera
+  (a one-frame camera swap that leaves the viewport camera untouched — the
+  renderer has a single view); `asset_search` / `asset_fetch` for CC0 Poly
+  Haven models (licence recorded, cooked with R17's `quat-cook` when
+  installed).
 - [ ] **A10 — Gameplay control** (design:
   [`docs/research/mcp-gameplay-control.md`](docs/research/mcp-gameplay-control.md)).
   Runtime control of a playing game over remote + MCP, all mutations

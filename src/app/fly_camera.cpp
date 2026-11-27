@@ -1,13 +1,14 @@
 #include "app/fly_camera.hpp"
 
 #include <cmath>
-#include <limits>
+#include <optional>
 
 #include <SDL3/SDL.h>
 
 #include <glm/gtc/matrix_transform.hpp>
 
 #include "engine/asset/mesh_asset.hpp"
+#include "engine/scene/bounds.hpp"
 #include "engine/scene/camera_framing.hpp"
 #include "engine/scene/components.hpp"
 
@@ -16,34 +17,22 @@ namespace {
 
 const glm::vec3 k_world_up(0.0F, 1.0F, 0.0F);
 
-// World-space AABB over every loaded renderable (mesh local bounds transformed by
-// its world matrix). Returns false if the scene has no loaded geometry. Tick the
+// World-space bounds of everything that draws (engine/scene/bounds.hpp:
+// meshes, skinned meshes through their armature, unresolved primitives,
+// instanced placements), minus `exclude`. nullopt when nothing draws. Tick the
 // scene first so world transforms are current.
-bool scene_world_bounds(engine::scene::Scene& scene, entt::entity exclude, glm::vec3& out_min,
-                        glm::vec3& out_max) {
-    out_min = glm::vec3(std::numeric_limits<float>::max());
-    out_max = glm::vec3(std::numeric_limits<float>::lowest());
-    bool any = false;
-    for (auto [e, t, mr] :
-         scene.registry().view<engine::scene::Transform, engine::scene::MeshRenderer>().each()) {
-        if (e == exclude || !mr.mesh.valid() || !mr.mesh.is_loaded()) continue;
-        // Skinned meshes render with an identity model (their skinning matrices
-        // already place the vertices), so frame their bind bounds through the
-        // same armature world the animation system uses: entity world times the
-        // entity-relative armature offset.
-        const auto* sm = scene.registry().try_get<engine::scene::SkinnedMesh>(e);
-        const glm::mat4 model = sm != nullptr ? t.world * sm->root_transform : t.world;
-        const engine::asset::Aabb& ab = mr.mesh->bounds;
-        for (int i = 0; i < 8; ++i) {
-            const glm::vec3 corner((i & 1) ? ab.max.x : ab.min.x, (i & 2) ? ab.max.y : ab.min.y,
-                                   (i & 4) ? ab.max.z : ab.min.z);
-            const glm::vec3 w = glm::vec3(model * glm::vec4(corner, 1.0F));
-            out_min = glm::min(out_min, w);
-            out_max = glm::max(out_max, w);
-            any = true;
+std::optional<engine::asset::Aabb> framing_bounds(const engine::scene::Scene& scene,
+                                                  entt::entity exclude) {
+    const entt::registry& r = scene.registry();
+    engine::asset::Aabb box = engine::scene::empty_bounds();
+    for (const auto [e, t] : r.view<const engine::scene::Transform>().each()) {
+        if (e == exclude) continue;
+        if (const auto local = engine::scene::local_draw_bounds(r, e)) {
+            engine::scene::merge_bounds(box, engine::scene::transform_bounds(*local, t.world));
         }
     }
-    return any;
+    if (engine::scene::bounds_empty(box)) return std::nullopt;
+    return box;
 }
 
 // The opening view's heading and pitch: from the front-right (+Z, +X) of the
@@ -84,13 +73,11 @@ FlyCamera FlyCamera::create(engine::scene::Scene& scene, const Start& start) {
     }
 
     scene.tick(); // resolve world transforms before measuring the scene bounds
-    glm::vec3 bmin{};
-    glm::vec3 bmax{};
-    const bool has_geo = scene_world_bounds(scene, start.exclude, bmin, bmax);
-    if (!has_geo) { // nothing to frame: look at the origin
-        bmin = glm::vec3(-1.0F);
-        bmax = glm::vec3(1.0F);
-    }
+    const std::optional<engine::asset::Aabb> bounds = framing_bounds(scene, start.exclude);
+    const bool has_geo = bounds.has_value();
+    // Nothing to frame: look at the origin.
+    const glm::vec3 bmin = has_geo ? bounds->min : glm::vec3(-1.0F);
+    const glm::vec3 bmax = has_geo ? bounds->max : glm::vec3(1.0F);
     engine::scene::FramingParams framing;
     framing.yaw = k_frame_yaw;
     framing.pitch = k_frame_pitch;
@@ -203,6 +190,25 @@ void FlyCamera::follow(engine::scene::Scene& scene, entt::entity target_entity) 
 #endif
 }
 
+engine::scene::ClipRange FlyCamera::clip() const {
+    return engine::scene::apply_clip_overrides(auto_clip_, near_override, far_override);
+}
+
+void FlyCamera::set_derived_clip([[maybe_unused]] engine::scene::Scene& scene,
+                                 const engine::scene::ClipRange& derived) {
+    auto_clip_ = derived;
+#ifndef ENGINE_EDITOR
+    // Without the editor the view renders through this camera's entity.
+    entt::registry& r = scene.registry();
+    if (auto* c = r.valid(camera_entity_) ? r.try_get<engine::scene::Camera>(camera_entity_)
+                                          : nullptr) {
+        const engine::scene::ClipRange planes = clip();
+        c->near_z = planes.near_z;
+        c->far_z = planes.far_z;
+    }
+#endif
+}
+
 glm::vec3 FlyCamera::forward() const {
     return glm::vec3(std::cos(pitch) * std::cos(yaw), std::sin(pitch),
                      std::cos(pitch) * std::sin(yaw));
@@ -213,13 +219,20 @@ glm::vec3 FlyCamera::forward() const {
 // belong to the user's scene, keep their authored transforms, and take over the
 // view only in play mode. Conventions mirror camera_system (Vulkan Y flip).
 engine::scene::CameraMatrices FlyCamera::matrices(float aspect) const {
-    const glm::vec3 fwd = forward();
-    const engine::scene::Camera defaults{};
+    // R20: a focal length on the lens sets the field of view.
+    return view_matrices(pos, yaw, pitch, engine::renderer::effective_fov_y(lens, fov_y), clip(),
+                         aspect);
+}
+
+engine::scene::CameraMatrices view_matrices(const glm::vec3& pos, float yaw, float pitch,
+                                            float fov_y, const engine::scene::ClipRange& clip,
+                                            float aspect) {
+    const glm::vec3 fwd(std::cos(pitch) * std::cos(yaw), std::sin(pitch),
+                        std::cos(pitch) * std::sin(yaw));
     engine::scene::CameraMatrices out;
     out.position = pos;
-    out.view = glm::lookAt(pos, pos + fwd, glm::vec3(0.0F, 1.0F, 0.0F));
-    out.projection = glm::perspective(engine::renderer::effective_fov_y(lens, fov_y), aspect,
-                                      defaults.near_z, defaults.far_z);
+    out.view = glm::lookAt(pos, pos + fwd, k_world_up);
+    out.projection = glm::perspective(fov_y, aspect, clip.near_z, clip.far_z);
     out.projection[1][1] *= -1.0F; // Vulkan clip space: Y points down
     out.view_proj = out.projection * out.view;
     return out;

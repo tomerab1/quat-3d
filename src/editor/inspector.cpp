@@ -16,6 +16,7 @@
 #include "audio_inspector.hpp"
 #include "script_inspector.hpp"
 #include "behavior_panel.hpp"
+#include "material_inspector.hpp"
 #include "tuning_panels.hpp"
 #include "grass_inspector.hpp"
 #include "particle_inspector.hpp"
@@ -122,18 +123,17 @@ struct ComponentInspector<scene::Terrain> {
                 p.erosion_droplets = static_cast<std::uint32_t>(glm::max(droplets, 0));
             }
         }
-        if (ImGui::Checkbox("generate on GPU", &terrain.gpu_generate)) {
-            terrain.regenerate = true;
-        }
+        // CPU and GPU synthesis produce the same heights: the choice applies
+        // to the next tile generated (no regeneration).
+        ImGui::Checkbox("generate on GPU", &terrain.gpu_generate);
         ImGui::DragFloat("snowline", &terrain.snowline_m, 1.0F, -1000.0F, 5000.0F, "%.0f m");
         ImGui::Separator();
         if (ImGui::Checkbox("streaming", &terrain.streaming)) {
             terrain.regenerate = true; // rebuild in the new mode
         }
         if (terrain.streaming) {
-            if (ImGui::SliderInt("radius (tiles)", &terrain.stream_radius, 1, 4)) {
-                terrain.regenerate = true;
-            }
+            // The runtime resizes the window and keeps the loaded tiles.
+            ImGui::SliderInt("radius (tiles)", &terrain.stream_radius, 1, 4);
             ImGui::TextWrapped("An endless seeded world streams in around the camera.");
         }
         if (ImGui::Button("Regenerate", ImVec2(-1.0F, 0.0F))) {
@@ -144,6 +144,14 @@ struct ComponentInspector<scene::Terrain> {
                                        "CPU worker); they pop in when ready."
                                      : "Generation runs on a worker thread; tiles pop in when "
                                        "ready.");
+    }
+};
+
+template <>
+struct ComponentInspector<scene::Primitive> {
+    static constexpr const char* title = "Primitive";
+    static void draw(entt::registry&, entt::entity, scene::Primitive& primitive) {
+        draw_primitive_fields(primitive); // resolve_primitives rebuilds on change
     }
 };
 
@@ -183,16 +191,7 @@ struct ComponentInspector<scene::InstancedMesh> {
             }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Only this node's subtree (empty = all)");
         } else {
-            scene::Primitive& p = mesh.primitive;
-            const char* shapes[] = {"cube", "sphere", "plane", "cylinder", "cone", "capsule"};
-            int shape = static_cast<int>(p.shape);
-            if (ImGui::Combo("shape", &shape, shapes, 6)) {
-                p.shape = static_cast<scene::PrimitiveShape>(shape);
-            }
-            ImGui::ColorEdit4("color", &p.color.x);
-            ImGui::SliderFloat("metallic", &p.metallic, 0.0F, 1.0F);
-            ImGui::SliderFloat("roughness", &p.roughness, 0.0F, 1.0F);
-            ImGui::ColorEdit3("emissive", &p.emissive.x, ImGuiColorEditFlags_HDR);
+            draw_primitive_fields(mesh.primitive);
         }
         ImGui::Checkbox("cast shadows", &mesh.cast_shadows);
 
@@ -566,6 +565,7 @@ void draw_inspector(scene::Scene& scene, entt::entity selected, script::ScriptRu
     ImGui::Separator();
     inspect<scene::Name>(r, selected);
     inspect<scene::Transform>(r, selected);
+    inspect<scene::Primitive>(r, selected);
     inspect<scene::MeshRenderer>(r, selected);
     draw_material_inspector(r, selected);
     inspect<scene::DirectionalLight>(r, selected, true);

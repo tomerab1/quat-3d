@@ -19,6 +19,7 @@
 
 #include "engine/core/json_fields.hpp"
 #include "engine/physics/physics_world.hpp"
+#include "engine/rhi/material_shader_names.hpp"
 #include "engine/scene/components.hpp"
 #include "engine/scene/material_override.hpp"
 #include "engine/scene/script_component.hpp"
@@ -33,10 +34,11 @@ namespace {
 using json = nlohmann::json;
 using core::EnumName;
 using core::JsonFields;
+namespace material_shaders = rhi::material_shaders;
 
 constexpr std::array k_components = {
     ComponentInfo{"transform", "Local position / rotation (Euler degrees, YXZ) / scale", false, true},
-    ComponentInfo{"primitive", "Procedural shape (cube, sphere, plane, cylinder, cone, capsule) with a PBR colour", true, true},
+    ComponentInfo{"primitive", "Procedural shape (cube, sphere, plane, cylinder, cone, capsule) with a PBR colour or a material shader", true, true},
     ComponentInfo{"material", "Per-entity overrides of the drawn material's PBR factors (null clears one)", true, true},
     ComponentInfo{"instanced_mesh", "Many placements of one model (glTF or primitive shape), drawn instanced", true, true},
     ComponentInfo{"scatter", "Seeded procedural placement of the entity's instanced mesh on the terrain", true, true},
@@ -311,6 +313,35 @@ namespace {
 using detail::check_project_path;
 using detail::read_range;
 
+// `shader` (a material shader name; "standard" or "" = built-in) and
+// `shader_params` (up to 8 numbers filling the two parameter vec4s in order;
+// missing ones are 0).
+void read_material_shader(JsonFields& f, Primitive& p) {
+    std::string shader = p.shader;
+    f.string("shader", shader, material_shaders::max_name_length);
+    if (shader == material_shaders::builtin_name) shader.clear();
+    if (!shader.empty() && !material_shaders::valid_name(shader)) {
+        f.fail("shader", "expected a material shader name (lowercase letters, digits and '_', "
+                         "starting with a letter) or \"standard\"");
+    } else {
+        p.shader = std::move(shader);
+    }
+
+    f.known({"shader_params"});
+    const json* v = f.raw("shader_params");
+    if (v == nullptr || v->is_null()) return;
+    std::array<glm::vec4, 2> params{};
+    bool ok = v->is_array() && v->size() <= 8;
+    for (std::size_t i = 0; ok && i < v->size(); ++i) {
+        ok = JsonFields::read_float((*v)[i], params[i / 4][static_cast<glm::length_t>(i % 4)]);
+    }
+    if (ok) {
+        p.shader_params = params;
+    } else {
+        f.fail("shader_params", "expected an array of at most 8 finite numbers");
+    }
+}
+
 // The shape + flat material fields shared by `primitive` and `instanced_mesh`.
 void read_primitive_fields(JsonFields& f, Primitive& p) {
     f.enumeration("shape", p.shape, k_primitive_shapes);
@@ -318,14 +349,21 @@ void read_primitive_fields(JsonFields& f, Primitive& p) {
     read_color(f, "color", p.color);
     f.number("metallic", p.metallic, 0.0F, 1.0F).number("roughness", p.roughness, 0.0F, 1.0F);
     f.color3("emissive", p.emissive);
+    read_material_shader(f, p);
 }
 
 [[nodiscard]] json primitive_fields_json(const Primitive& p) {
+    json params = json::array();
+    for (const glm::vec4& v : p.shader_params) {
+        for (int i = 0; i < 4; ++i) params.push_back(v[i]);
+    }
     return {{"shape", enum_name(k_primitive_shapes, p.shape)},
             {"color", vec4_json(p.color)},
             {"metallic", p.metallic},
             {"roughness", p.roughness},
-            {"emissive", vec3_json(p.emissive)}};
+            {"emissive", vec3_json(p.emissive)},
+            {"shader", p.shader.empty() ? std::string(material_shaders::builtin_name) : p.shader},
+            {"shader_params", std::move(params)}};
 }
 
 // ---- Grass ---------------------------------------------------------------
@@ -881,6 +919,7 @@ std::expected<void, core::Error> apply_component(entt::registry& r, entt::entity
     if (name == "terrain") {
         return merge<Terrain>(r, e, v, name, strict, [](JsonFields& f, Terrain& t) {
             terrain::TerrainParams& p = t.params;
+            const terrain::TerrainParams before = p;
             f.integer("seed", p.seed, 0, 0xFFFFFFFFLL);
             f.integer("resolution", p.resolution, 17, 8193);
             f.number("tile_size", p.tile_size_m, 1.0F, 100000.0F);
@@ -904,7 +943,11 @@ std::expected<void, core::Error> apply_component(entt::registry& r, entt::entity
                            std::to_string(terrain::max_grid_erosion_texel_steps) +
                            " (e.g. 1025 at 5000 steps)");
             }
-            t.regenerate = true; // rebuild with the new parameters
+            // Only a new shape regenerates (issue #38): `snowline` is
+            // shading, and the runtime applies `stream_radius` (resizing the
+            // window, keeping loaded tiles), `gpu` (the next tile's
+            // generator) and `streaming` (a mode switch) itself.
+            if (!terrain::same_shape(before, p)) t.regenerate = true;
         });
     }
     if (name == "grass") {
