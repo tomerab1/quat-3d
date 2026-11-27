@@ -18,9 +18,10 @@ ID (`S3`, `A2`, …) and ends in one or more commits titled `[<ID>] <description
 - If an item turns out to be wrongly scoped, edit this file first (in its own
   commit) rather than silently drifting.
 
-**Current priority order:** S1 audit fixes → S3 GoogleTest → S7/S8 (thin
-`main.cpp`, split oversized files) → rest of S → A (AI tooling / MCP) → P1/P2
-(Mac) → G1 (audio) → the rest by need.
+**Current priority order:** S1 audit fixes (incl. the navmesh / NPC bugs) →
+S3 GoogleTest → S7/S8 (thin `main.cpp`, split oversized files) → R9
+instancing → rest of S → A (AI tooling / MCP) → P1/P2 (Mac) → G1 (audio) →
+the rest by need.
 
 ---
 
@@ -99,6 +100,20 @@ JSON-RPC over loopback TCP to the engine.
 - [ ] **R6 — GPU culling.** Frustum + Hi-Z occlusion culling in compute.
 - [ ] **R7 — Shader graph runtime.** Node graph → generated Slang module
   implementing the material interface (no `#ifdef` variants).
+- [ ] **R9 — Instanced rendering (trees, rocks, grass).**
+  - **R9.1 Instanced draws.** The renderer batches identical mesh+material
+    draws into one instanced draw; shaders read per-instance transforms
+    through a buffer device address (GBuffer + shadow passes), deriving the
+    normal matrix per instance (fixes audit A13). Existing per-entity
+    MeshRenderers are batched automatically.
+  - **R9.2 `InstancedMesh` + `Scatter`.** One entity carries thousands of
+    placements; seeded procedural scattering on terrain (density, slope /
+    height limits, scale/rotation jitter) for trees and rocks. Serialized,
+    inspector + remote/MCP editable.
+  - **R9.3 GPU grass.** Compute-generated, wind-animated grass blades around
+    the camera (the standard approach for dense ground cover).
+  - **R9.4 Instance culling + LOD.** GPU frustum/occlusion culling per
+    instance (with R6) and distance fade / LOD selection.
 - [ ] **R8 — Image quality.** GTAO, screen-space reflections, contact shadows,
   optional ray-traced shadows/AO, CUBICSPLINE animation interpolation.
 

@@ -67,6 +67,7 @@ top.
 - No very long files: aim under ~600 lines per `.cpp`, split past ~1000 (S8).
 - Tests in GoogleTest under `tests/`; no new `run_*_self_test()` functions.
 - Behaviour/shader node editors use `imgui-node-editor` (thedmd, vcpkg port).
+- Instancing for trees/grass is wanted (R9); the owner recalls navmesh/NPC bugs — a dedicated nav audit is part of S1.
 - Keep `README.md` human-readable and current; keep this file current.
 
 ## Blockers
