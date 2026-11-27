@@ -6,6 +6,9 @@ use serde::de::Error as _;
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::{Map, Value};
 
+mod debug;
+pub use debug::*;
+
 /// A JSON object keyed by component name (see the tool description).
 pub type Components = Map<String, Value>;
 

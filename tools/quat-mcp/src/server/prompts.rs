@@ -25,6 +25,16 @@ pub struct InspectSceneArgs {
     pub focus: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct DebugSessionArgs {
+    /// The symptom to diagnose, e.g. "the crate falls through the floor" or "NPCs stand still".
+    #[serde(default)]
+    pub problem: Option<String>,
+    /// An entity (id or name) to start from, if one is involved.
+    #[serde(default)]
+    pub entity: Option<String>,
+}
+
 /// `Some(trimmed)` for non-blank text.
 fn non_blank(text: Option<String>) -> Option<String> {
     text.map(|t| t.trim().to_owned()).filter(|t| !t.is_empty())
@@ -67,6 +77,22 @@ impl QuatServer {
             "inspect_scene",
             InspectSceneArgs {
                 focus: non_blank(args.0.focus),
+            },
+        )
+    }
+
+    /// Diagnose a problem in the running quat-3d game like a debugger: stats, logs, watch entities, pause and single-step the simulation, raycast, query navmesh paths.
+    #[prompt]
+    async fn debug_session(
+        &self,
+        args: Parameters<DebugSessionArgs>,
+    ) -> Result<Vec<PromptMessage>, ErrorData> {
+        let DebugSessionArgs { problem, entity } = args.0;
+        user_prompt(
+            "debug_session",
+            DebugSessionArgs {
+                problem: non_blank(problem),
+                entity: non_blank(entity),
             },
         )
     }
