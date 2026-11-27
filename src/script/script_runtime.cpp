@@ -287,13 +287,20 @@ void ScriptRuntime::Impl::sync_instances() {
     }
     for (const entt::entity e : stale) end_instance(e, true);
 
-    // New instances.
+    // New instances. Collected first: loading a module runs its top-level
+    // code, which may spawn scripted entities into the view.
+    std::vector<entt::entity> fresh;
     for (const auto [e, sc] : r.view<scene::Script>().each()) {
-        if (!sc.enabled || sc.path.empty() || s.find(e) != nullptr) continue;
+        if (sc.enabled && !sc.path.empty() && s.find(e) == nullptr) fresh.push_back(e);
+    }
+    for (const entt::entity e : fresh) {
+        const auto* sc = r.valid(e) ? r.try_get<scene::Script>(e) : nullptr;
+        if (sc == nullptr || s.find(e) != nullptr) continue;
+        const scene::Script script = *sc; // a copy: module code may touch the registry
         detail::Instance inst;
         inst.entity = e;
-        inst.path = sc.path;
-        if (!make_self(inst, sc)) inst.failed = true; // the load error is in the status
+        inst.path = script.path;
+        if (!make_self(inst, script)) inst.failed = true; // the load error is in the status
         s.instances.push_back(std::move(inst));
     }
     // Start them (new instances, and those restarted by a hot reload).

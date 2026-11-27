@@ -146,6 +146,21 @@ TEST_F(ScriptTest, DisablingEndsTheInstanceAndStopResetsState) {
     EXPECT_TRUE(has_line(log, "starts\t1")) << ::testing::PrintToString(log);
 }
 
+TEST_F(ScriptTest, TopLevelCodeMaySpawnScriptedEntities) {
+    write("child.lua", "function on_start(self) print('child started') end");
+    write("spawner.lua", R"(
+        for i = 1, 50 do scene.spawn({ name = "kid", script = { path = "child.lua" } }) end
+        function on_start(self) print("spawner started") end
+    )");
+    for (int i = 0; i < 3; ++i) scripted("spawner", "spawner.lua");
+    start();
+    frames(2);
+    const auto log = script_log();
+    EXPECT_TRUE(has_line(log, "spawner started")) << ::testing::PrintToString(log);
+    EXPECT_TRUE(has_line(log, "child started"));
+    EXPECT_EQ(status("child.lua")->instances, 50U) << "the module ran once";
+}
+
 TEST_F(ScriptTest, ErrorsCarryTheScriptLine) {
     write("broken.lua", "function on_start(self)\n  local x = nil\n  print(x.field)\nend");
     scripted("broken", "broken.lua");
