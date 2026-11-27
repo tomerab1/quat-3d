@@ -23,6 +23,13 @@ into CLAUDE.md or the brief template in [`CYCLE.md`](CYCLE.md).
   the method table in `remote-control.md`; write the contract first.
 - **Agents must not edit STATUS.md / ROADMAP.md** — the orchestrator owns
   them; parallel edits always conflict.
+- **The worktree-isolation guard refuses compound shell commands it cannot
+  parse.** A10.1 lost many round trips: heredocs piped to `python3`, and
+  `git` chained with `&&`, `$(...)` or redirects, were refused as "too
+  complex to verify". → Write edit scripts and commit messages to the
+  scratchpad with the file-writing tool, then run `python3 <script>` /
+  `git commit -F <file>` as plain commands. Keep `git` calls simple and
+  one per command.
 
 ## Build and CI
 
@@ -126,6 +133,29 @@ into CLAUDE.md or the brief template in [`CYCLE.md`](CYCLE.md).
   wayland-protocols, libdecor. The first CI run failed on xcursor.
 
 ## C++ in this codebase
+
+- **Jolt reports a sleeping body's contacts as removed.** `OnContactRemoved`
+  fires when a body falls asleep, although it still touches. Per-sub-shape
+  callbacks also arrive many times per body pair (height fields, meshes).
+  A10.1's ContactTracker therefore counts sub-shape contacts per body pair
+  (adds before removals within a step) and parks the pairs of sleeping
+  bodies until they wake. → Never forward raw Jolt contact callbacks as
+  gameplay events.
+- **Jolt measures constraints as body 2 relative to body 1.** A slider
+  built as (this body, world) reported -0.5 while its body moved +0.5 along
+  the axis, and a [0, 1] limit locked it in place. → Create constraints as
+  (target or world, this body) so angles and positions describe the joint's
+  own body.
+- **Dry runs on a scratch registry cannot resolve references to other
+  entities.** `apply_components_atomic` validates components on a
+  one-entity scratch registry, so a joint `target` by name or id was "not
+  found". → Resolve cross-entity fields against the live registry before
+  the dry run, and dry run the rest without them.
+- **A test must fail without the fix.** The first #48 test (a box dropped
+  on a character) passed without the inner body, because a CharacterVirtual
+  that is updated pushes dynamic bodies itself. Only an idle (NetDriven)
+  character showed the bug. → Revert the fix locally once and watch the
+  test fail.
 
 - **Fuzz every payload variant, not just one.** R17's KTX2 fuzz test first
   mutated only UASTC files; the review asked for ETC1S too, and the first

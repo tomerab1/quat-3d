@@ -121,6 +121,14 @@ JSON-RPC over loopback TCP to the engine.
     rigidbody friction / restitution / damping / CCD / axis locks; a `joint`
     component on Jolt constraints (motors, limits, break force);
     `character.move`.
+    Landed (`feat/a10-physics-control`, fixes #47 #48): the event ring with
+    contact / trigger events (`events.poll`), `physics.get/set/apply`,
+    gravity, `raycast_all` / `overlap` / `shape_cast`, friction /
+    restitution / gravity factor / damping, the `joint` component (fixed,
+    point, hinge, slider, distance; limits, motors), `character.move`, the
+    quat-mcp tools. Still open: script-error / sim-state / scene-change
+    events, `physics.contacts` (current contacts), CCD and axis locks, joint
+    break force.
   - **A10.2 Behaviour runtime** *(M)*: a blackboard (component, `bb_*`
     leaves, Lua access); `bt.blackboard.*`, per-tick trace, breakpoints that
     pause the sim clock, forced leaf results.

@@ -315,6 +315,52 @@ TEST(SceneIo, SavesThePhysicsSettingsBlock) {
     EXPECT_NEAR(root["physics_settings"]["gravity"][2].get<float>(), 0.5F, 1e-6F);
 }
 
+// A joint's target is saved as a file index and re-linked on load.
+TEST(GpuSceneIo, JointTargetsRoundTrip) {
+    QUAT_REQUIRE_GPU(g);
+    engine::asset::AssetManager assets;
+    s::Scene scene;
+    const entt::entity frame = scene.create_entity("frame");
+    const entt::entity door = scene.create_entity("door");
+    auto& j = scene.registry().emplace<s::Joint>(door);
+    j.type = s::JointType::hinge;
+    j.target = frame;
+    j.limits_enabled = true;
+    j.limits = glm::vec2(-90.0F, 0.0F);
+    scene.registry().emplace<s::Joint>(frame).type = s::JointType::point; // to the world
+    const auto path = std::filesystem::temp_directory_path() / "quat_joint_rt.json";
+    ASSERT_OK(s::save_scene(scene, path));
+    {
+        std::ifstream in(path);
+        const nlohmann::json root = nlohmann::json::parse(in, nullptr, false);
+        ASSERT_FALSE(root.is_discarded());
+        const nlohmann::json& list = root["entities"];
+        ASSERT_EQ(list.size(), 2U);
+        const std::size_t door_index = list[0]["name"] == "door" ? 0 : 1;
+        const std::size_t frame_index = 1 - door_index;
+        EXPECT_EQ(list[door_index]["joint"]["target"], frame_index) << "stored as an index";
+        EXPECT_TRUE(list[frame_index]["joint"]["target"].is_null());
+        EXPECT_FALSE(list[door_index]["joint"].contains("active")) << "runtime state saved";
+    }
+    s::Scene loaded;
+    ASSERT_OK(s::load_scene(loaded, path, g->allocator, g->transfer, assets));
+    std::filesystem::remove(path);
+    const entt::entity lframe = find_named(loaded, "frame");
+    const entt::entity ldoor = find_named(loaded, "door");
+    ASSERT_TRUE(loaded.registry().all_of<s::Joint>(ldoor));
+    const s::Joint& lj = loaded.registry().get<s::Joint>(ldoor);
+    EXPECT_EQ(lj.target, lframe);
+    EXPECT_EQ(lj.type, s::JointType::hinge);
+    EXPECT_FLOAT_EQ(lj.limits.x, -90.0F);
+    EXPECT_EQ(loaded.registry().get<s::Joint>(lframe).target, k_none);
+
+    // A target index out of range fails the load.
+    const auto bad = write_temp("quat_joint_bad.json", R"({"entities": [
+        {"name": "a", "joint": {"type": "point", "target": 5}}]})");
+    EXPECT_ERR(s::load_scene(loaded, bad, g->allocator, g->transfer, assets));
+    std::filesystem::remove(bad);
+}
+
 TEST(GpuSceneIo, PhysicsSettingsRoundTrip) {
     QUAT_REQUIRE_GPU(g);
     engine::asset::AssetManager assets;
