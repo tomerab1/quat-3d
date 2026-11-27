@@ -14,6 +14,9 @@
 /vcpkg_installed/
 /vcpkg/
 
+# Rust build output (tools/quat-mcp)
+/tools/quat-mcp/target/
+
 # IDE / editor
 /.vscode/
 /.idea/
