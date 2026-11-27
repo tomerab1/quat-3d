@@ -38,9 +38,11 @@ struct AudioEngineConfig {
     // stay inside it (issue #66: clips come from scene files and remote
     // requests).
     std::string asset_root{};
-    // Largest clip file load() decodes into memory (non-streamed sounds); a
-    // bigger one is refused before any decoding. Streamed sounds read
-    // incrementally and have no cap.
+    // Most memory a non-streamed sound may decode into: its length at the
+    // engine's sample rate × channels × sizeof(float), read from the file's
+    // headers before anything is decoded (a file larger than this is refused
+    // without being opened). A clip of unknown length can only be streamed.
+    // Streamed sounds read incrementally and have no cap.
     std::uint64_t max_decoded_clip_bytes = 64ULL << 20U;
 };
 
@@ -96,7 +98,7 @@ public:
     // Load a sound (stopped, cursor at the start). The path is confined to
     // the asset root (core::confine_to_root: no absolute paths, no `..` or
     // symlink escapes) and must name a regular file — never a FIFO or device,
-    // which would block the main thread — no larger than
+    // which would block the main thread — whose decoded size is within
     // max_decoded_clip_bytes unless streamed. Errors name the clip as given
     // (never the resolved absolute path) and the reason (outside the root,
     // not a file, too large, missing, unsupported format, ...).

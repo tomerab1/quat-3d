@@ -38,11 +38,57 @@ constexpr std::size_t max_sounds = 0xFFFFU;
     return std::unexpected(core::Error{"audio: clip '" + clip + "': " + std::move(why)});
 }
 
+[[nodiscard]] std::string bytes_text(std::uint64_t n) { return std::to_string(n) + " bytes"; }
+
+// The memory MA_SOUND_FLAG_DECODE would allocate for `path`, refused above
+// `max_bytes` (issue #66: a compressed clip's file size says nothing about
+// it — hours of FLAC silence are a few hundred KiB). miniaudio decodes to f32
+// at the engine's sample rate in the clip's own channel count; the bound uses
+// the larger of that and the engine's channel count. Opening a decoder reads
+// only headers (an MP3 is scanned for its frame count, bounded by the
+// file-size gate before it). An unknown length is refused: such a clip can
+// only be streamed.
+[[nodiscard]] std::expected<void, core::Error>
+check_decoded_size(const std::filesystem::path& path, const std::string& clip,
+                   ma_uint32 sample_rate, ma_uint32 engine_channels, std::uint64_t max_bytes) {
+    const ma_decoder_config cfg = ma_decoder_config_init(ma_format_f32, 0, sample_rate);
+    ma_decoder decoder;
+#ifdef _WIN32
+    ma_result r = ma_decoder_init_file_w(path.c_str(), &cfg, &decoder);
+#else
+    ma_result r = ma_decoder_init_file(path.c_str(), &cfg, &decoder);
+#endif
+    if (r != MA_SUCCESS) {
+        return clip_error(clip, std::string("cannot decode: ") + ma_result_description(r));
+    }
+    ma_uint64 frames = 0;
+    r = ma_decoder_get_length_in_pcm_frames(&decoder, &frames);
+    const std::uint64_t channels = std::max<std::uint64_t>(
+        std::max<ma_uint32>(decoder.outputChannels, engine_channels), 1U);
+    ma_decoder_uninit(&decoder);
+    if (r != MA_SUCCESS || frames == 0) {
+        return clip_error(clip, "its decoded length is unknown; play it on a streaming bus "
+                                "(music, ambience)");
+    }
+    const std::uint64_t per_frame = channels * sizeof(float);
+    if (frames > max_bytes / per_frame) {
+        const std::uint64_t decoded = frames > UINT64_MAX / per_frame
+                                          ? UINT64_MAX
+                                          : static_cast<std::uint64_t>(frames) * per_frame;
+        return clip_error(clip, "decodes to " + bytes_text(decoded) + ", over the " +
+                                    bytes_text(max_bytes) +
+                                    " limit for clips decoded into memory; use a streaming bus "
+                                    "(music, ambience)");
+    }
+    return {};
+}
+
 // The file a clip names (issue #66): inside `root`, an existing regular file,
-// and small enough to decode into memory unless streamed. Checked before
-// miniaudio opens anything, so a FIFO, device or /proc path can't block the
-// main thread and a huge file is never decoded. Messages carry the clip as
-// given, not the resolved path.
+// and small enough to decode into memory unless streamed. The path, type and
+// file size are checked before miniaudio opens anything, so a FIFO, device or
+// /proc path can't block the main thread and a huge file is never read; the
+// decoded size is checked next (check_decoded_size). Messages carry the clip
+// as given, not the resolved path.
 [[nodiscard]] std::expected<std::filesystem::path, core::Error>
 resolve_clip(const std::filesystem::path& asset_root, const std::string& clip, bool stream,
              std::uint64_t max_decoded_bytes) {
@@ -57,11 +103,12 @@ resolve_clip(const std::filesystem::path& asset_root, const std::string& clip, b
     if (!fs::is_regular_file(st)) return clip_error(clip, "not a regular file");
     const std::uintmax_t size = fs::file_size(*path, ec);
     if (ec) return clip_error(clip, "cannot read its size: " + ec.message());
+    // Cheap first gate: no decoder even opens a file over the cap.
     if (!stream && size > max_decoded_bytes) {
-        return clip_error(clip, std::to_string(size >> 20U) + " MiB is over the " +
-                                    std::to_string(max_decoded_bytes >> 20U) +
-                                    " MiB limit for clips decoded into memory; use a streaming "
-                                    "bus (music, ambience)");
+        return clip_error(clip, "the file is " + bytes_text(size) + ", over the " +
+                                    bytes_text(max_decoded_bytes) +
+                                    " limit for clips decoded into memory; use a streaming bus "
+                                    "(music, ambience)");
     }
     return std::move(*path);
 }
@@ -207,6 +254,12 @@ std::expected<SoundHandle, core::Error> AudioEngine::load(const SoundDesc& desc)
                                  impl.max_decoded_clip_bytes);
     if (!resolved) return std::unexpected(resolved.error());
     const std::filesystem::path& path = *resolved;
+    if (!desc.stream) {
+        auto fits = check_decoded_size(path, desc.path, ma_engine_get_sample_rate(&impl.engine),
+                                       ma_engine_get_channels(&impl.engine),
+                                       impl.max_decoded_clip_bytes);
+        if (!fits) return std::unexpected(fits.error());
+    }
 
     std::size_t index = impl.slots.size();
     if (!impl.free_slots.empty()) {

@@ -277,14 +277,46 @@ TEST_F(AudioEngineTest, RefusesNonRegularFiles) {
     EXPECT_NE(load_error(*engine, "no_such_clip.wav").find("no such file"), std::string::npos);
 }
 
-TEST_F(AudioEngineTest, CapsClipsDecodedIntoMemory) {
+// The cheap first gate: a file larger than the cap is refused unopened.
+TEST_F(AudioEngineTest, CapsClipFilesLargerThanTheDecodeLimit) {
     auto small = a::AudioEngine::create(
         {.no_device = true, .asset_root = ::testing::TempDir(), .max_decoded_clip_bytes = 1024});
     ASSERT_OK(small);
-    const std::string err = load_error(*small, clip); // ~94 KiB
-    EXPECT_NE(err.find("limit"), std::string::npos) << err;
+    const std::string err = load_error(*small, clip); // 96044-byte file
+    EXPECT_NE(err.find("the file is 96044 bytes, over the 1024 bytes limit"), std::string::npos)
+        << err;
     EXPECT_EQ(small->sound_count(), 0U);
     EXPECT_EQ(load_error(*small, clip, /*stream=*/true), "") << "streamed clips are not capped";
+}
+
+// The cap is on the decoded size (issue #66 review): a 1 s 8 kHz mono 16-bit
+// WAV is a 16044-byte file but decodes to 48000 frames × 2 channels × 4 bytes
+// = 384000 bytes on a 48 kHz stereo engine — refused under a 100000-byte cap
+// its file passes. Compressed clips (MP3 / FLAC) diverge far more.
+TEST_F(AudioEngineTest, CapsTheDecodedSizeNotTheFileSize) {
+    ASSERT_FALSE(
+        quat::test::write_test_wav("audio_engine_test_8k.wav", 1.0F, 0.5F, 8000).empty());
+    auto capped = a::AudioEngine::create(
+        {.no_device = true, .asset_root = ::testing::TempDir(), .max_decoded_clip_bytes = 100000});
+    ASSERT_OK(capped);
+    const std::string err = load_error(*capped, "audio_engine_test_8k.wav");
+    EXPECT_NE(err.find("decodes to 384000 bytes, over the 100000 bytes limit"), std::string::npos)
+        << err;
+    EXPECT_EQ(capped->sound_count(), 0U);
+    EXPECT_EQ(load_error(*capped, "audio_engine_test_8k.wav", /*stream=*/true), "")
+        << "streamed clips are not capped";
+
+    auto roomy = a::AudioEngine::create(
+        {.no_device = true, .asset_root = ::testing::TempDir(), .max_decoded_clip_bytes = 384000});
+    ASSERT_OK(roomy);
+    EXPECT_EQ(load_error(*roomy, "audio_engine_test_8k.wav"), "") << "exactly at the cap fits";
+}
+
+// A WAV with no sample frames has no length to bound: only streaming may play it.
+TEST_F(AudioEngineTest, RefusesAnUnknownDecodedLengthUnlessStreamed) {
+    ASSERT_FALSE(quat::test::write_test_wav("audio_engine_test_empty.wav", 0.0F).empty());
+    const std::string err = load_error(*engine, "audio_engine_test_empty.wav");
+    EXPECT_NE(err.find("decoded length is unknown"), std::string::npos) << err;
 }
 
 } // namespace
