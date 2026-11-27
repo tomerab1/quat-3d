@@ -136,7 +136,6 @@ Environment variables switch on extra modes:
 | `QUAT_NO_UI=1` | Run without the editor UI |
 | `QUAT_NO_VSYNC=1` | Disable vsync |
 | `QUAT_MAX_FRAMES=<n>` + `QUAT_SCREENSHOT=<file.ppm>` | Render n frames, save the last one, exit (headless checks) |
-| `QUAT_SELFTEST=1` | Run the built-in self-tests at startup |
 
 ### Sample models
 

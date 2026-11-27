@@ -59,8 +59,6 @@ Test layout:
 | `tests/support/gpu_context.hpp` | Shared surface-less Vulkan device; start GPU tests with `QUAT_REQUIRE_GPU(ctx)` and name the suite `Gpu*` |
 | `tests/legacy/` | Wrappers around the old `run_*_self_test()` functions, removed as their bodies migrate into `tests/<module>/` |
 
-A few self-tests still live in `src/main.cpp` (they need frame-loop helpers)
-and run with `QUAT_SELFTEST=1 ./build/release/game` until S7 moves them.
 
 ## CI
 

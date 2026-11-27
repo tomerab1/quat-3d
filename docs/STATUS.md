@@ -30,6 +30,7 @@ Decisions already made (do not re-litigate without the owner):
 | S1 bug audit | 46 findings recorded in [`audit/S1-findings.md`](audit/S1-findings.md) with severity and status. Fixed so far: B7, B11/C4, B13 (`[S1.1]`); C1–C3 + C5 index part — glTF structural validation (`[S1.2]`); B6/C8 orphaned Jolt bodies/characters swept (`[S1.3]`); B10/C7 behaviour-tree parsing hardened (`[S1.4]`); C6, B12/C9, parts of C11/C16 via the component codec + scene_io rewrite (`[S2.1]`, `[S2.2]`) | Animation fix verified locally; physics/scene fixes await CI |
 | S3 GoogleTest | Step 1 done: `tests/` (gtest via vcpkg), legacy self-tests wrapped (`tests/legacy/`), GPU fixture, CTest CPU/GPU split. Step 2 (move test bodies out of engine sources) not started | Harness built and run locally against a source-built gtest (RPC tests pass); full suite awaits CI |
 | S4 CI | Linux job in `.github/workflows/ci.yml` | First runs in progress on GitHub — check the Actions tab |
+| S7 thin `main.cpp` | S7.1 done: tests + mesh generators moved out, `QUAT_SELFTEST` removed — 3,723 → 2,317 lines. Next: demo scenes → `src/app/`, then the frame loop (`Application` / `FrameRenderer` / `EditorBridge`), and move the remote setup out of `main.cpp` | Compile-checked locally |
 | A1 remote transport | `src/remote/`, `include/engine/remote/rpc_server.hpp`, wired in `main.cpp` (`QUAT_REMOTE`) | Library compiled warning-free + self-test passed standalone; `main.cpp` wiring not yet compiled |
 | A2 world commands | Component codec done (`component_json.*`, 10 gtest cases pass locally); `Primitive` serialized but `resolve_primitives()` (mesh/material build) and the RPC commands not written | Codec verified locally |
 
@@ -69,7 +70,10 @@ top.
 
 ## Blockers
 
-- **Local builds in cloud sessions:** vcpkg downloads sources from
+- **Local builds in cloud sessions:** even on the `quat-3d` environment (which
+  allows `codeload.github.com`), the proxy kept answering 403 for over 90
+  minutes on 2026-11-27 — if it still does, ask the owner to check the
+  environment's network settings. Details: vcpkg downloads sources from
   `codeload.github.com`. The default cloud environment blocks it; a personal
   environment named `quat-3d` allowing that host was created on 2026-11-27,
   but the proxy had not picked it up by the end of that session. In a new

@@ -172,7 +172,8 @@ add_library(engine_scene STATIC
     src/scene/nav_agent_system.cpp
     src/scene/behavior.cpp
     src/scene/scene_io.cpp
-    src/scene/component_json.cpp)
+    src/scene/component_json.cpp
+    src/scene/primitives.cpp)
 # EnTT is PUBLIC: components.hpp exposes entt types (Parent/Children) to consumers.
 # engine_renderer is PUBLIC: scene.hpp's RenderCollectSystem fills a renderer
 # DrawItem list (no cycle — the renderer does not depend on the scene).
