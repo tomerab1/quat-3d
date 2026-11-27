@@ -28,8 +28,10 @@ struct TaaPushConstants {
     float     pad0 = 0.0F;
     float     alpha = 0.9F;
     float     valid = 0.0F;
+    VkDeviceAddress non_finite = 0; // debug counter (NonFiniteCounters), 0 = off
+    std::uint64_t   pad1 = 0;       // the block rounds up to 16-byte alignment
 };
-static_assert(sizeof(TaaPushConstants) == 144, "must match taa.slang Params");
+static_assert(sizeof(TaaPushConstants) == 160, "must match taa.slang Params");
 
 [[nodiscard]] float halton(std::uint64_t i, std::uint32_t base) {
     float f = 1.0F;
@@ -210,6 +212,7 @@ TaaPass::add_to_graph(rhi::RenderGraph& graph, rhi::ResourceHandle current,
     push.swap_rb = swap_rb_ ? 1.0F : 0.0F;
     push.alpha = std::clamp(settings.feedback, 0.0F, 0.98F);
     push.valid = hist.valid_ && settings.enabled ? 1.0F : 0.0F;
+    push.non_finite = non_finite_counter_;
 
     graph.add_pass("taa_resolve", rhi::PassType::compute)
         .reads(current, rhi::ResourceUsage::sampled_compute)

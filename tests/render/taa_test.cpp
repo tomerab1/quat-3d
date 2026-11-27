@@ -12,6 +12,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <expected>
+#include <limits>
 #include <memory>
 #include <string>
 #include <vector>
@@ -21,6 +22,7 @@
 #include <gtest/gtest.h>
 #include <vulkan/vulkan.h>
 
+#include "engine/renderer/non_finite_counters.hpp"
 #include "engine/renderer/taa_pass.hpp"
 #include "engine/rhi/device.hpp"
 #include "engine/rhi/gpu_allocator.hpp"
@@ -451,4 +453,39 @@ TEST(GpuTaa, ClampRejectsStaleHistoryInFlatRegions) {
     auto centres = resolve_uniform_frames(*g, {128, 128, k_hi});
     ASSERT_OK(centres);
     EXPECT_GE((*centres)[2], 188);
+}
+
+// Issue #45: a degenerate camera (a non-finite view-projection, e.g. a NaN
+// from a broken camera matrix) for one frame must not leave NaN in the
+// persistent history. The reprojection is rejected (and counted), the frame
+// shows the current image, and the following frames resolve normally: the
+// output never turns black (where NaN history would land in an 8-bit target)
+// and keeps resolving the uniform input.
+TEST(GpuTaa, NonFiniteCameraNeverReachesTheHistory) {
+    QUAT_REQUIRE_GPU(g);
+    constexpr VkFormat fmt = VK_FORMAT_R8G8B8A8_UNORM;
+    constexpr VkExtent2D extent{16, 16};
+    auto rig = Rig::create(*g, fmt, extent);
+    ASSERT_OK(rig);
+    auto taa = r::TaaPass::create(g->device, g->allocator, g->cache, g->shader_dir, fmt);
+    ASSERT_OK(taa);
+    auto counters = r::NonFiniteCounters::create(g->device, g->allocator, 1);
+    ASSERT_OK(counters);
+    taa->set_non_finite_counter(counters->address(0, r::NonFiniteSource::taa_history));
+
+    const glm::mat4 vp = camera_view_proj();
+    glm::mat4 broken = vp;
+    broken[0][0] = std::numeric_limits<float>::quiet_NaN();
+    constexpr std::uint8_t k_grey = 128;
+    constexpr int k_frames = 12;
+    for (int i = 0; i < k_frames; ++i) {
+        auto o = rig->frame(*taa, uniform(extent, k_grey), i == 3 ? broken : vp);
+        ASSERT_OK(o) << "frame " << i;
+        for (std::size_t p = 0; p < o->size(); p += 4) {
+            ASSERT_NEAR((*o)[p], k_grey, 2) << "frame " << i << " pixel " << p / 4;
+        }
+    }
+    const auto counts = counters->collect(0);
+    EXPECT_GE(counts[static_cast<std::size_t>(r::NonFiniteSource::taa_history)], 1U)
+        << "the rejected reprojection was not counted";
 }

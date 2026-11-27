@@ -356,6 +356,7 @@ add_library(engine_renderer STATIC
     src/renderer/grass.cpp
     src/renderer/grass_pass.cpp
     src/renderer/instance_buffer.cpp
+    src/renderer/non_finite_counters.cpp
     src/renderer/mesh_pass.cpp
     src/renderer/lighting_pass.cpp
     src/renderer/light_clusters.cpp

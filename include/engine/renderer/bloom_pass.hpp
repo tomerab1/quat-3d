@@ -53,6 +53,10 @@ public:
     add_to_graph(rhi::RenderGraph& graph, rhi::ResourceHandle hdr, VkExtent2D extent,
                  const BloomParams& params);
 
+    // Debug: device address of a uint32 the prefilter increments for every
+    // non-finite texel group it drops (NonFiniteCounters); 0 turns it off.
+    void set_non_finite_counter(VkDeviceAddress counter) { non_finite_counter_ = counter; }
+
 private:
     const rhi::Device* device_    = nullptr;
     rhi::GpuAllocator* allocator_ = nullptr;
@@ -66,6 +70,7 @@ private:
     rhi::Sampler                   sampler_;
 
     std::vector<rhi::DescriptorBuffer> frame_descriptors_; // rebuilt each add_to_graph
+    VkDeviceAddress                    non_finite_counter_ = 0;
 };
 
 } // namespace engine::renderer

@@ -45,6 +45,7 @@
 #include "engine/renderer/light_cull_pass.hpp"
 #include "engine/renderer/lighting_pass.hpp"
 #include "engine/renderer/mesh_pass.hpp"
+#include "engine/renderer/non_finite_counters.hpp"
 #include "engine/renderer/render_settings.hpp"
 #include "engine/renderer/shadow_pass.hpp"
 #include "engine/renderer/skinning_pass.hpp"
@@ -213,6 +214,8 @@ public:
     // Recreates the swapchain if requested. False on failure (logged).
     [[nodiscard]] bool ensure_swapchain(VkExtent2D pixel_extent);
     // Waits for the next slot's previous submission; returns the slot index.
+    // With NaN/Inf counting on (debug builds, or QUAT_NON_FINITE_CHECK=1),
+    // also logs once when that frame's guards replaced non-finite values.
     std::uint32_t wait_for_slot();
     [[nodiscard]] Acquire acquire_and_begin();
     // Accumulates the time that drives the clouds' wind drift.
@@ -268,6 +271,9 @@ private:
 
     std::optional<engine::renderer::AtmospherePass> atmosphere_;
     std::optional<engine::renderer::DynamicIbl>     dynamic_ibl_;
+    // Debug NaN/Inf counters of the bloom / TAA guards (issue #45); empty
+    // unless enabled (see wait_for_slot).
+    std::optional<engine::renderer::NonFiniteCounters> non_finite_;
 
     // image_available + in-flight fence are per frame-in-flight; render_finished
     // is per swapchain image (it is signalled by the submit that targets that

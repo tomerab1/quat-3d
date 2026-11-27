@@ -33,6 +33,7 @@ struct Params {
     float    pad0;
     float    alpha;             // history weight (e.g. 0.9)
     float    valid;             // 0 on the first frame / after a resize
+    uint*    non_finite;        // debug counter of rejected non-finite values; null = off
 };
 [[vk::push_constant]] Params pc;
 
@@ -45,8 +46,17 @@ float3 clip_to_aabb(float3 cmin, float3 cmax, float3 hist) {
     return ma > 1.0 ? center + v / ma : hist;
 }
 
+void count_non_finite() {
+    if (pc.non_finite != nullptr) {
+        uint previous;
+        InterlockedAdd(*pc.non_finite, 1u, previous);
+    }
+}
+
 float3 finite_or_zero(float3 c) {
-    return all(isfinite(c)) ? c : float3(0.0, 0.0, 0.0);
+    if (all(isfinite(c))) return c;
+    count_non_finite();
+    return float3(0.0, 0.0, 0.0);
 }
 
 [shader("compute")]
@@ -83,12 +93,22 @@ void compute_main(uint3 tid : SV_DispatchThreadID) {
     float2 puv = (pclip.xy / pclip.w) * 0.5 + 0.5;
 
     float3 result;
-    if (pc.valid < 0.5 || pclip.w <= 0.0 || any(puv < 0.0) || any(puv > 1.0)) {
+    // A non-finite reprojection (a degenerate camera matrix) has no usable
+    // history either: NaN fails every comparison below, so test it first.
+    bool reprojected = all(isfinite(puv)) && isfinite(pclip.w);
+    if (pc.valid > 0.5 && !reprojected) count_non_finite();
+    if (pc.valid < 0.5 || !reprojected || pclip.w <= 0.0 || any(puv < 0.0) ||
+        any(puv > 1.0)) {
         result = cur; // no usable history -> show the current frame
     } else {
         float3 hist = g_history.SampleLevel(g_samp, puv, 0).rgb;
         hist = clip_to_aabb(nmin, nmax, hist);
-        result = all(isfinite(hist)) ? lerp(cur, hist, pc.alpha) : cur;
+        if (all(isfinite(hist))) {
+            result = lerp(cur, hist, pc.alpha);
+        } else {
+            count_non_finite();
+            result = cur;
+        }
     }
     g_history_out[c] = float4(result, 1.0);
     g_out[c] = pc.swap_rb > 0.5 ? float4(result.bgr, 1.0) : float4(result, 1.0);

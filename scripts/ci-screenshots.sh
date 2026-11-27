@@ -95,7 +95,7 @@ for row in "${SCENE_TABLE[@]}"; do
   start=$SECONDS
   # shellcheck disable=SC2086 # scene_env is a list of VAR=value words
   xvfb-run -a -s "-screen 0 1920x1080x24" \
-    env SDL_VIDEO_DRIVER=x11 QUAT_NO_AUDIO=1 QUAT_NO_VSYNC=1 \
+    env SDL_VIDEO_DRIVER=x11 QUAT_NO_AUDIO=1 QUAT_NO_VSYNC=1 QUAT_NON_FINITE_CHECK=1 \
         QUAT_MAX_FRAMES="$frames" QUAT_SCREENSHOT="$ppm" $scene_env \
     timeout --kill-after=15 "$TIMEOUT" "$GAME" >"$log" 2>&1
   code=$?
@@ -128,6 +128,11 @@ for row in "${SCENE_TABLE[@]}"; do
     rm -f "$ppm"
   fi
 
+  # QUAT_NON_FINITE_CHECK=1: the engine logs when its bloom / TAA guards had
+  # to replace NaN/Inf values (a source upstream to fix, issue #45).
+  if grep -q '^\[warn\] non-finite' "$log"; then
+    echo "::warning title=Non-finite values in $name::$(grep -m1 '^\[warn\] non-finite' "$log")"
+  fi
   printf '%s\t%s\t%s\t%s\n' "$name" "$status" "$elapsed" "$description" >>"$results"
   if [ "$status" != "ok" ]; then
     failed=1

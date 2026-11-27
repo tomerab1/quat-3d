@@ -14,13 +14,19 @@ struct Params {
     float knee;
     float prefilter; // 1 on the first level, else 0
     float pad;
+    uint* non_finite; // debug counter of dropped non-finite groups; null = off
 };
 [[vk::push_constant]] Params pc;
 
 // Zero for a non-finite value: one Inf/NaN texel would otherwise spread
 // through every mip as a NaN block (Karis weighting turns Inf into Inf * 0).
 float3 finite_or_zero(float3 c) {
-    return all(isfinite(c)) ? c : float3(0.0, 0.0, 0.0);
+    if (all(isfinite(c))) return c;
+    if (pc.non_finite != nullptr) {
+        uint previous;
+        InterlockedAdd(*pc.non_finite, 1u, previous);
+    }
+    return float3(0.0, 0.0, 0.0);
 }
 
 float karis_weight(float3 c) {
