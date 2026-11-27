@@ -162,8 +162,4 @@ private:
     std::uint64_t       corrections_ = 0;
 };
 
-// Pure-CPU self-test of the replay math: a deliberate server correction mid-
-// stream must land the client exactly on server-state + unacked inputs.
-[[nodiscard]] std::expected<void, core::Error> run_prediction_self_test();
-
 } // namespace engine::net

@@ -31,6 +31,20 @@ into CLAUDE.md or the brief template in [`CYCLE.md`](CYCLE.md).
   `apt-get install -y vulkan-validationlayers` adds it (R10.2 ran its GPU
   tests under it, plus `VK_LAYER_ENABLES=VK_VALIDATION_FEATURE_ENABLE_SYNCHRONIZATION_VALIDATION_EXT`
   for sync validation).
+- **Parallel subagents share one scratchpad directory.** On 2026-11-27 two
+  workers wrote `cc.sh` / `cook.sh` / `shaders/` at the scratchpad root and
+  overwrote each other's build scripts (one script `cd`s into its own
+  worktree, so the other would have compiled the wrong tree). → Each worker
+  keeps its files in its own subdirectory (`scratchpad/<branch-or-agent>/`).
+- **Jolt, Recast and GNS tests can run locally.** Jolt: build
+  `~/deps/jolt/Build` with clang + `-stdlib=libc++`, `CPP_RTTI_ENABLED=OFF`,
+  `CPP_EXCEPTIONS_ENABLED=OFF`, and compile the engine TUs with the same
+  `JPH_*` defines and `-mavx2 -mbmi -mpopcnt -mlzcnt -mf16c -mfma` (read them
+  from the generated `build.ninja`) plus `-DNDEBUG` (else `JPH::AssertFailed`
+  is unresolved). Recast/Detour: compile `~/deps/recast/*/Source/*.cpp`
+  directly. GNS: `apt install libprotobuf-dev protobuf-compiler libssl-dev`,
+  build v1.4.1 as a shared library (default libstdc++ is fine — its API has
+  no std types) and link the libc++ tests against it with an rpath.
 - **Lavapipe's ICD file is `lvp_icd.json` on Ubuntu 24.04** (not
   `lvp_icd.x86_64.json`) — a wrong `VK_ICD_FILENAMES` gives
   `VK_ERROR_INCOMPATIBLE_DRIVER` from vkCreateInstance. CI globs for it.
@@ -151,3 +165,15 @@ with `include_str!`; code holds only error messages (CLAUDE.md "No prose in
 source"). Every worker brief that adds tools, prompts or help text states this,
 and merge review includes a structure pass (file sizes, inline prose, lint
 level), not just a compile + test pass.
+
+## Merge edits to quat-mcp content broke clippy (cycle 2)
+
+Resolving merges, the orchestrator added component docs to
+`tools/quat-mcp/content/components.md` and ran only `cargo test`. The content
+files are attached as `#[doc = include_str!]`, so clippy's pedantic
+`doc_markdown` lint checks them, and CI's Rust job failed.
+**Rule:** any edit under `tools/quat-mcp/` — `content/` included — is
+followed by the full trio `cargo fmt --check && cargo clippy --locked
+--all-targets -- -D warnings && cargo test --locked` before pushing.
+(`doc_markdown` is now allowed on the tool modules: their docs are model
+text, not rustdoc — but the trio still applies.)

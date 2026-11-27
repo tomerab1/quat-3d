@@ -150,12 +150,4 @@ private:
     rhi::DescriptorBuffer       frame_descriptor_;
 };
 
-// Self-test: a uniform frame resolves to itself (history clamped to the current
-// neighbourhood). After history fills with value A, switching to a uniform value
-// B must resolve to B — proving the neighbourhood clamp rejects stale history
-// (no ghosting on flat regions).
-[[nodiscard]] std::expected<void, core::Error>
-run_taa_self_test(const rhi::Device& device, rhi::GpuAllocator& allocator,
-                  rhi::PipelineCache& cache, const std::string& cooked_shader_dir);
-
 } // namespace engine::renderer

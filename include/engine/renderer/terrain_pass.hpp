@@ -149,12 +149,4 @@ private:
     std::vector<TileDraws> frame_draws_; // rebuilt each add_to_graph, consumed same frame
 };
 
-// Offscreen self-test: generate a small tile, upload it, render it over a
-// cleared GBuffer from a top-down camera, and verify the centre albedo texel
-// is terrain-coloured (the geometry pipeline + VTF + splat actually ran).
-[[nodiscard]] std::expected<void, core::Error>
-run_terrain_pass_self_test(const rhi::Device& device, rhi::GpuAllocator& allocator,
-                           rhi::PipelineCache& cache, const rhi::TransferContext& transfer,
-                           const std::string& cooked_shader_dir);
-
 } // namespace engine::renderer

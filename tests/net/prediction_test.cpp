@@ -160,4 +160,64 @@ TEST(NetPrediction, StateWireRoundTrip) {
     EXPECT_FALSE(engine::net::decode_character_state(wire, acked, out));
 }
 
+TEST(NetPrediction, InputWireRoundTrip) {
+    const PlayerInput probe{41U, glm::vec3(0.6F, 0.0F, -0.8F), 1.0F / 60.0F}; // |xz| <= 1
+    PlayerInput decoded;
+    ASSERT_TRUE(engine::net::decode_input(engine::net::encode_input(probe), decoded));
+    EXPECT_EQ(decoded.sequence, 41U);
+    EXPECT_EQ(decoded.move, probe.move);
+    EXPECT_EQ(decoded.dt, probe.dt);
+}
+
+// Gravity-free toy locomotion (position += move * 2 m/s * dt): the host
+// processed inputs 1..5 but ended 0.4 m off the prediction (it collided with
+// something the client did not predict).
+class NetPredictionReplay : public ::testing::Test {
+protected:
+    static CharacterState glide(const CharacterState& s, const PlayerInput& in) {
+        CharacterState next = s;
+        next.velocity = in.move * 2.0F;
+        next.position += next.velocity * in.dt;
+        return next;
+    }
+
+    void SetUp() override {
+        CharacterState client;
+        for (std::uint32_t seq = 1; seq <= 10; ++seq) {
+            inputs.push_back(PlayerInput{seq, glm::vec3(1.0F, 0.0F, 0.0F), 0.1F});
+            client = predictor.predict(client, inputs.back(), step);
+        }
+        for (std::uint32_t i = 0; i < 5; ++i) server = glide(server, inputs[i]);
+        server.position += glm::vec3(0.0F, 0.0F, 0.4F); // authoritative divergence
+        // Expected: the server state + a replay of the unacked inputs 6..10.
+        expected = server;
+        for (std::uint32_t i = 5; i < 10; ++i) expected = glide(expected, inputs[i]);
+    }
+
+    const CharacterPredictor::StepFn step = glide;
+    CharacterPredictor               predictor;
+    std::vector<PlayerInput>         inputs;
+    CharacterState                   server;
+    CharacterState                   expected;
+};
+
+TEST_F(NetPredictionReplay, CorrectionLandsOnServerPlusUnackedInputs) {
+    const std::optional<CharacterState> corrected = predictor.reconcile(5U, server, step);
+    ASSERT_TRUE(corrected.has_value());
+    EXPECT_LE(glm::distance(corrected->position, expected.position), 1e-5F);
+}
+
+TEST_F(NetPredictionReplay, AckedInputsAreDropped) {
+    (void)predictor.reconcile(5U, server, step);
+    EXPECT_EQ(predictor.pending(), 5U);
+}
+
+// A matching state for the final sequence clears the queue without a
+// correction.
+TEST_F(NetPredictionReplay, MatchingFullAckEmptiesTheQueue) {
+    (void)predictor.reconcile(5U, server, step);
+    EXPECT_FALSE(predictor.reconcile(10U, expected, step).has_value());
+    EXPECT_EQ(predictor.pending(), 0U);
+}
+
 } // namespace

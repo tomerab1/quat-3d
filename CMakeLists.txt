@@ -413,10 +413,17 @@ endif()
 # game — executable entry point. The full target graph (engine_core /
 # engine_renderer / engine_editor) grows phase by phase as modules gain sources.
 # ---------------------------------------------------------------------------
-# src/app/ is the application layer (startup scenes, and - per ROADMAP S7 -
-# the frame loop pieces moving out of main.cpp); it is not an engine library.
+# src/app/ is the application layer (Application owns the window, device and
+# frame loop; FrameRenderer, WorldRuntime, FlyCamera, EditorBridge, the remote
+# bridge and the startup scenes run inside it); it is not an engine library.
+# main.cpp only parses the environment and hands off to Application.
 add_executable(game
     src/main.cpp
+    src/app/application.cpp
+    src/app/fly_camera.cpp
+    src/app/frame_graph.cpp
+    src/app/frame_renderer.cpp
+    src/app/world_runtime.cpp
     src/app/demo_scenes.cpp
     src/app/audio_runtime.cpp
     src/app/nav_bake.cpp
@@ -426,6 +433,7 @@ target_link_libraries(game PRIVATE
     engine_terrain engine_nav engine_net engine_remote engine_remote_world engine_audio
     SDL3::SDL3)
 if(ENGINE_EDITOR)
+    target_sources(game PRIVATE src/app/editor_bridge.cpp)
     target_link_libraries(game PRIVATE engine_editor)
 endif()
 target_include_directories(game PRIVATE

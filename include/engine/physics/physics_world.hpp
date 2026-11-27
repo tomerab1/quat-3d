@@ -165,16 +165,6 @@ private:
 
     struct Impl;
     std::unique_ptr<Impl> impl_;
-
-    friend std::expected<void, core::Error> run_physics_self_test();
 };
-
-// Creates a world with a static floor and a dynamic sphere dropped from above,
-// steps ~2 s, and verifies the sphere fell and came to rest on the floor.
-[[nodiscard]] std::expected<void, core::Error> run_physics_self_test();
-
-// Drops a dynamic sphere through a static sensor volume and verifies the contact
-// listener reports both an enter and an exit trigger event.
-[[nodiscard]] std::expected<void, core::Error> run_trigger_self_test();
 
 } // namespace engine::physics

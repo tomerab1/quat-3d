@@ -21,7 +21,8 @@ target_link_libraries(engine_tests PRIVATE
     engine_audio
     GTest::gtest)
 if(ENGINE_EDITOR)
-    target_link_libraries(engine_tests PRIVATE engine_editor)
+    # imgui: the ImGui pass test builds its draw data in a private context.
+    target_link_libraries(engine_tests PRIVATE engine_editor imgui::imgui)
 endif()
 target_include_directories(engine_tests PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
