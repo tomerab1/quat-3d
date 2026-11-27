@@ -88,6 +88,18 @@ if(ENGINE_DESCRIPTOR_SETS_FALLBACK)
     target_compile_definitions(engine_flags INTERFACE ENGINE_DESCRIPTOR_SETS_FALLBACK)
 endif()
 
+# Apple's linker (ld-prime, Xcode 15+) warns about every static library CMake
+# repeats on the link line — repetition CMake emits on purpose to resolve the
+# engine libraries' mutual dependencies. Silence just that diagnostic where
+# the linker understands the flag (older ld64 does not, and never warned).
+if(APPLE)
+    include(CheckLinkerFlag)
+    check_linker_flag(CXX "LINKER:-no_warn_duplicate_libraries" ENGINE_LD_NO_WARN_DUPLICATE_LIBS)
+    if(ENGINE_LD_NO_WARN_DUPLICATE_LIBS)
+        target_link_options(engine_flags INTERFACE "LINKER:-no_warn_duplicate_libraries")
+    endif()
+endif()
+
 # ---------------------------------------------------------------------------
 # Third-party dependencies.
 #   - SDL3 from vcpkg (manifest mode; grown per phase).

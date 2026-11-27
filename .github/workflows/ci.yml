@@ -187,11 +187,18 @@ jobs:
         run: cmake --build --preset windows-release -- -k 0
 
       - name: Tests (CPU)
-        run: ctest --test-dir build/windows-release -R engine_tests_cpu --output-on-failure --timeout 900
+        # -V + GTEST_BRIEF: per-binary summary (passed / skipped counts) in the log.
+        env:
+          GTEST_BRIEF: 1
+        run: ctest --test-dir build/windows-release -R engine_tests_cpu -V --timeout 900
 
       - name: Tests (GPU on lavapipe)
         if: always() && steps.build.outcome == 'success'
-        run: ctest --test-dir build/windows-release -R engine_tests_gpu --output-on-failure --timeout 900
+        env:
+          GTEST_BRIEF: 1
+        run: |
+          vulkaninfoSDK --summary
+          ctest --test-dir build/windows-release -R engine_tests_gpu -V --timeout 900
 
       - name: Upload logs on failure
         if: failure()
@@ -260,7 +267,9 @@ jobs:
         run: cmake --build --preset macos-release -- -k 0
 
       - name: Tests (CPU)
-        run: ctest --test-dir build/macos-release -R engine_tests_cpu --output-on-failure --timeout 900
+        env:
+          GTEST_BRIEF: 1
+        run: ctest --test-dir build/macos-release -R engine_tests_cpu -V --timeout 900
 
       # Apple Silicon runners expose a paravirtualised Metal device, so the GPU
       # suites are attempted through MoltenVK — informational for now (not a
@@ -268,13 +277,15 @@ jobs:
       - name: Tests (GPU on MoltenVK, informational)
         if: always() && steps.build.outcome == 'success'
         continue-on-error: true
+        env:
+          GTEST_BRIEF: 1
         run: |
           prefix="$(brew --prefix molten-vk)"
           icd=$(ls "$prefix"/etc/vulkan/icd.d/MoltenVK_icd.json "$prefix"/share/vulkan/icd.d/MoltenVK_icd.json 2>/dev/null | head -n1)
           echo "Using Vulkan ICD: $icd"
           export VK_ICD_FILENAMES="$icd"
           vulkaninfo --summary || true
-          ctest --test-dir build/macos-release -R engine_tests_gpu --output-on-failure --timeout 900
+          ctest --test-dir build/macos-release -R engine_tests_gpu -V --timeout 900
 
       - name: Upload logs on failure
         if: failure()
