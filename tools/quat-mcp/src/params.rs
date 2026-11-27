@@ -8,11 +8,13 @@ use serde_json::{Map, Value};
 
 mod behavior;
 mod debug;
+mod profile;
 mod script;
 mod tuning;
 mod world;
 pub use behavior::*;
 pub use debug::*;
+pub use profile::*;
 pub use script::*;
 pub use tuning::*;
 pub use world::*;

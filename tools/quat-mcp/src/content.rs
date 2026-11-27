@@ -37,6 +37,10 @@ const PROMPTS: &[(&str, &str)] = &[
         "write_game_script",
         include_str!("../content/prompts/write_game_script.md"),
     ),
+    (
+        "find_performance_problem",
+        include_str!("../content/prompts/find_performance_problem.md"),
+    ),
 ];
 
 /// Templates for files the server writes (rendered with the same engine).

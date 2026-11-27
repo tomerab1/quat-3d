@@ -66,6 +66,31 @@ pub struct WriteGameScriptArgs {
     pub path: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct FindPerformanceProblemArgs {
+    /// What is slow, e.g. "stutters when the forest streams in" or "30 fps in the editor".
+    #[serde(default)]
+    pub symptom: Option<String>,
+    /// The frame rate to reach, e.g. 60 (sets the spike budget to 1000 / fps ms).
+    #[serde(default)]
+    pub target_fps: Option<u32>,
+}
+
+/// What the `find_performance_problem` template is rendered with: the
+/// arguments plus the frame budget derived from `target_fps`.
+#[derive(Serialize)]
+struct PerformanceContext {
+    symptom: Option<String>,
+    target_fps: Option<u32>,
+    budget_ms: Option<f64>,
+}
+
+/// The frame budget in milliseconds for `fps` (two decimals), if positive.
+fn budget_ms(fps: Option<u32>) -> Option<f64> {
+    fps.filter(|f| *f > 0)
+        .map(|f| (100_000.0 / f64::from(f)).round() / 100.0)
+}
+
 /// `Some(trimmed)` for non-blank text.
 fn non_blank(text: Option<String>) -> Option<String> {
     text.map(|t| t.trim().to_owned()).filter(|t| !t.is_empty())
@@ -156,6 +181,27 @@ impl QuatServer {
             DesignBehaviorArgs {
                 goal: goal.trim().to_owned(),
                 entity: non_blank(entity),
+            },
+        )
+    }
+
+    /// Find why the running quat-3d engine is slow with the profiler: capture a baseline, classify CPU- or GPU-bound, locate the costly passes or systems, test one fix at a time.
+    #[prompt]
+    async fn find_performance_problem(
+        &self,
+        args: Parameters<FindPerformanceProblemArgs>,
+    ) -> Result<Vec<PromptMessage>, ErrorData> {
+        let FindPerformanceProblemArgs {
+            symptom,
+            target_fps,
+        } = args.0;
+        let target_fps = target_fps.filter(|f| *f > 0);
+        user_prompt(
+            "find_performance_problem",
+            PerformanceContext {
+                symptom: non_blank(symptom),
+                target_fps,
+                budget_ms: budget_ms(target_fps),
             },
         )
     }

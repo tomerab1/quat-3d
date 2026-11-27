@@ -12,6 +12,8 @@ mod behavior_tools;
 mod bt_outline;
 #[allow(clippy::doc_markdown)]
 mod debug_tools;
+#[allow(clippy::doc_markdown)]
+mod profile_tools;
 mod prompts;
 mod results;
 #[allow(clippy::doc_markdown)]
@@ -44,8 +46,8 @@ use crate::content;
 
 pub use asset_tools::AssetConfig;
 pub use prompts::{
-    BuildWorldArgs, DebugSessionArgs, DesignBehaviorArgs, InspectSceneArgs, TuneLookArgs,
-    WriteGameScriptArgs,
+    BuildWorldArgs, DebugSessionArgs, DesignBehaviorArgs, FindPerformanceProblemArgs,
+    InspectSceneArgs, TuneLookArgs, WriteGameScriptArgs,
 };
 pub use results::{error_result, normalize_method};
 pub use world_tools::MAX_GROUND_POINTS;
@@ -101,6 +103,7 @@ impl QuatServer {
             + Self::world_tools()
             + Self::sim_tools()
             + Self::debug_tools()
+            + Self::profile_tools()
             + Self::tuning_tools()
             + Self::behavior_tools()
             + Self::script_tools()

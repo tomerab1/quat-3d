@@ -14,4 +14,6 @@ NPC behaviour is a behaviour tree per entity: `bt_leaves` lists the node kinds a
 
 Gameplay is written as Lua scripts: read the `quat://docs/scripting` resource, write files with `script_create` / `script_update` (compiled first; errors name the line), attach them with the `script` component, run with `sim_play` and read `debug_log` (category `script`). The `write_game_script` prompt walks through it.
 
-Engine errors name the offending field and what was expected — fix the call instead of repeating it. The `build_world`, `inspect_scene`, `debug_session`, `design_behavior` and `tune_look` prompts describe the workflows in detail.
+Performance: `profile_frame` shows where the frame time goes (CPU and GPU per render pass and scene system), `profile_capture` records a number of frames and reports the costliest zones and the spikes over a frame budget, `profile_counters` the workload behind them (draws, triangles, GPU memory, entities). Measure before and after every change; the `find_performance_problem` prompt walks through it.
+
+Engine errors name the offending field and what was expected — fix the call instead of repeating it. The `build_world`, `inspect_scene`, `debug_session`, `design_behavior`, `tune_look` and `find_performance_problem` prompts describe the workflows in detail.
