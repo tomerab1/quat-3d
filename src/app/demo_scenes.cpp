@@ -122,11 +122,13 @@ build_demo_scene(engine::scene::Scene& scene, engine::asset::AssetManager& asset
                 scene.registry().emplace<RigidBody>(b, BodyMotion::dynamic, 1.0F, no_body);
             }
 
-            // A transparent glass panel in front of the pile (visual only).
+            // A transparent glass panel in front of the pile: a static body
+            // matching its mesh, so boxes bounce off it (issue #46).
+            const glm::vec3 glass_half(3.0F, 2.2F, 0.08F);
             auto glass_mesh = assets.load<engine::asset::MeshAsset>(
                 "demo/glass", [&](const std::filesystem::path&) {
-                    return engine::scene::upload_mesh(make_box_data(glm::vec3(3.0F, 2.2F, 0.08F)),
-                                                      allocator, setup_transfer);
+                    return engine::scene::upload_mesh(make_box_data(glass_half), allocator,
+                                                      setup_transfer);
                 });
             auto glass_mat = assets.load<engine::asset::MaterialAsset>(
                 "demo/glass_mat", [&](const std::filesystem::path&) {
@@ -144,6 +146,9 @@ build_demo_scene(engine::scene::Scene& scene, engine::asset::AssetManager& asset
                 scene.registry().get<Transform>(glass).local =
                     glm::translate(glm::mat4(1.0F), glm::vec3(0.0F, 2.2F, 3.0F));
                 scene.registry().emplace<MeshRenderer>(glass, glass_mesh, glass_mat);
+                scene.registry().emplace<Collider>(glass, ColliderShape::box, glass_half,
+                                                   glm::vec3(0.0F));
+                scene.registry().emplace<RigidBody>(glass, BodyMotion::static_body, 1.0F, no_body);
             }
         }
     } else if (std::getenv("QUAT_CHARACTER") != nullptr) {
