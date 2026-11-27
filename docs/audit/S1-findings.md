@@ -24,7 +24,7 @@ Severity: **H** crash, corruption, exploit or broken core feature ·
 | B9 | M | Height-field padding duplicates edge heights → flat collision shelf over the neighbouring streamed tile | `physics_system.cpp` padding | open |
 | B10 | H | Behaviour-tree JSON with wrong types aborts the process (throwing accessors, `-fno-exceptions`) | `behavior.cpp` | fixed (S1.4) |
 | B11 | H | Clip samplers index `output` with indices derived from `input` — out-of-bounds read on malformed glTF | `clip.cpp` | fixed (S1.1; anim tests pass locally) |
-| B12 | M | Play/Stop drops `NetReplicated` (snapshot doesn't capture it) | `scene_snapshot.cpp` | open |
+| B12 | M | Play/Stop drops `NetReplicated` (snapshot doesn't capture it) | `scene_snapshot.cpp` | fixed (S2.2) |
 | B13 | M | `Scene::set_parent` accepts self-parenting and cycles → entity drops out of transform propagation; delete recurses forever | `scene.cpp` | fixed (S1.1, pending CI) |
 | B14 | L | `character_system` / kinematic nav agents discard rotation, scale and parent space | `physics_system.cpp`, `nav_agent_system.cpp` | open |
 | B15 | L | Replication snapshot `uint16` count wraps; large keyframes exceed GNS send limit silently; send accumulator drift | `replication.cpp` | open |
@@ -67,17 +67,17 @@ screenshot readback barriers, AssetManager-owned mesh lifetime.
 | C3 | H | Cyclic glTF node graphs / joint hierarchies recurse forever (stack overflow) | `gltf_loader.cpp` `build`, `node_global_of`; `skeleton.cpp` | fixed (S1.2, pending CI) — node graph must be a forest |
 | C4 | H | Animation sampler output count never checked against input count (same defect as B11, loader side) | `gltf_loader.cpp` `extract_animation` | fixed (S1.1, pending CI) |
 | C5 | M | Index values and JOINTS_0 values never range-checked → GPU out-of-bounds reads (possible device loss) | `gltf_loader.cpp`, `skinning.slang` | partly fixed (S1.2): vertex indices checked; JOINTS_0 vs skin joint count still open |
-| C6 | H | `load_scene` aborts / UB on malformed scene JSON — after the live scene was already cleared | `scene_io.cpp` | open (S2) |
+| C6 | H | `load_scene` aborts / UB on malformed scene JSON — after the live scene was already cleared | `scene_io.cpp` | fixed (S2.2) — codec reads + staging scene swapped in only on success |
 | C7 | H | = B10 (behaviour-tree JSON aborts) | `behavior.cpp` | fixed (S1.4) |
 | C8 | H | = B6 (deleting entities / removing Collider or RigidBody in Play leaves live Jolt bodies) | `physics_system.cpp`, editor | fixed with B6 (S1.3) |
-| C9 | M | = B12, plus `load_scene` also drops `NetReplicated` | `scene_snapshot.*`, `scene_io.cpp` | open |
+| C9 | M | = B12, plus `load_scene` also drops `NetReplicated` | `scene_snapshot.*`, `scene_io.cpp` | fixed (S2.2): snapshot + scene files both keep it |
 | C10 | M | If Play fails to create the physics world, the auto-added static RigidBodies stay in the edit scene | `main.cpp` play transition | open |
-| C11 | M | Save/load loses CharacterController, NetReplicated, Animator speed/looping, and meshes without MeshSource (editor Duplicate copies too little; demo meshes untagged) | `scene_io.cpp`, `scene_hierarchy.cpp`, `main.cpp` | open |
+| C11 | M | Save/load loses CharacterController, NetReplicated, Animator speed/looping, and meshes without MeshSource (editor Duplicate copies too little; demo meshes untagged) | `scene_io.cpp`, `scene_hierarchy.cpp`, `main.cpp` | partly fixed (S2.2): CharacterController, NetReplicated, Animator speed/looping now saved; Duplicate + untagged demo meshes still open |
 | C12 | M | On load, skin/animator re-attached by mesh key — instanced skinned meshes get the first node's skin/root transform | `scene_io.cpp` | open |
 | C13 | M | Save allowed during Play writes simulated state + auto-added bodies as authored data | `main.cpp` save handling | open |
 | C14 | M | Picking: ray origin inside an AABB returns t=0, so an enclosing mesh (rooms, buildings) always wins the click | `editor.cpp` `ray_aabb` | open |
 | C15 | L | Renderer panel: sun "intensity" and bloom "intensity" widgets share an ImGui ID | `inspector.cpp` | open |
-| C16 | M | Failed asset loads are cached forever; cache-only lookups in `load_scene` create such permanent failed slots | `asset_manager.hpp`, `scene_io.cpp` | open (plausible) |
+| C16 | M | Failed asset loads are cached forever; cache-only lookups in `load_scene` create such permanent failed slots | `asset_manager.hpp`, `scene_io.cpp` | partly fixed (S2.2): load_scene uses cache-only get(); load() still never retries failed slots |
 
 Coverage notes: the play snapshot covers every component except
 `NetReplicated` (and the new `Primitive`); every selection consumer checks

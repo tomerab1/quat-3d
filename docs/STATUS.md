@@ -27,11 +27,11 @@ Decisions already made (do not re-litigate without the owner):
 
 | Item | State | Verified? |
 |---|---|---|
-| S1 bug audit | 46 findings recorded in [`audit/S1-findings.md`](audit/S1-findings.md) with severity and status. Fixed so far: B7, B11/C4, B13 (`[S1.1]`); C1–C3 + C5 index part — glTF structural validation (`[S1.2]`); B6/C8 orphaned Jolt bodies/characters swept (`[S1.3]`); B10/C7 behaviour-tree parsing hardened (`[S1.4]`) | Animation fix verified locally; physics/scene fixes await CI |
+| S1 bug audit | 46 findings recorded in [`audit/S1-findings.md`](audit/S1-findings.md) with severity and status. Fixed so far: B7, B11/C4, B13 (`[S1.1]`); C1–C3 + C5 index part — glTF structural validation (`[S1.2]`); B6/C8 orphaned Jolt bodies/characters swept (`[S1.3]`); B10/C7 behaviour-tree parsing hardened (`[S1.4]`); C6, B12/C9, parts of C11/C16 via the component codec + scene_io rewrite (`[S2.1]`, `[S2.2]`) | Animation fix verified locally; physics/scene fixes await CI |
 | S3 GoogleTest | Step 1 done: `tests/` (gtest via vcpkg), legacy self-tests wrapped (`tests/legacy/`), GPU fixture, CTest CPU/GPU split. Step 2 (move test bodies out of engine sources) not started | Harness built and run locally against a source-built gtest (RPC tests pass); full suite awaits CI |
 | S4 CI | Linux job in `.github/workflows/ci.yml` | First runs in progress on GitHub — check the Actions tab |
 | A1 remote transport | `src/remote/`, `include/engine/remote/rpc_server.hpp`, wired in `main.cpp` (`QUAT_REMOTE`) | Library compiled warning-free + self-test passed standalone; `main.cpp` wiring not yet compiled |
-| A2 world commands | `Primitive` component declared in `components.hpp`; codec, resolver and commands not written | — |
+| A2 world commands | Component codec done (`component_json.*`, 10 gtest cases pass locally); `Primitive` serialized but `resolve_primitives()` (mesh/material build) and the RPC commands not written | Codec verified locally |
 
 Commit `1adbed7` is a WIP commit made before full-build verification; the
 next session must confirm CI is green for it (or fix it) before building on
@@ -89,6 +89,6 @@ top.
    status. Suggested order — highest risk first: C5 joints part, A3–A5 + A7 (render-graph sync and pool eviction),
    then A1+A2+A14 **together** (TAA jitter/history — fixing A1 alone makes the
    image shimmer), B1–B5 (networking/prediction), the rest.
-3. S2: move `scene_io.cpp` JSON reads onto `JsonFields` (`behavior.cpp` done in S1.4).
+3. S2 remaining: bounds-check untrusted network packets (B2 input validation).
 4. S3/S4 done → tick them in `ROADMAP.md`; add Windows/macOS CI jobs.
 5. Then A2 → A3 → A4 (Rust server) → A5 (debugging tools).
