@@ -71,6 +71,38 @@ async fn camera_set_sends_clip_planes_and_cut() {
 }
 
 #[tokio::test]
+async fn place_on_ground_passes_placement_options() {
+    let engine = echo_engine().await;
+    let client = connect(&engine.addr_string()).await;
+    let r = call(
+        &client,
+        "world_place_on_ground",
+        json!({"entity": "Rock_1", "at": [4, -2], "align_to_normal": true, "offset": -0.1}),
+    )
+    .await;
+    assert_eq!(r.is_error, Some(false), "{}", text(&r));
+    assert_eq!(
+        engine.last_params("world.place_on_ground"),
+        Some(
+            json!({"entity": "Rock_1", "at": [4.0, -2.0], "align_to_normal": true,
+                    "offset": -0.1})
+        )
+    );
+    // The entity is required; unknown fields are refused locally.
+    let r = call(&client, "world_place_on_ground", json!({"at": [0, 0]})).await;
+    assert_eq!(r.is_error, Some(true));
+    let r = call(
+        &client,
+        "world_place_on_ground",
+        json!({"entity": 3, "sink": 0.2}),
+    )
+    .await;
+    assert_eq!(r.is_error, Some(true));
+    assert!(text(&r).contains("offset"), "{}", text(&r));
+    client.cancel().await.unwrap();
+}
+
+#[tokio::test]
 async fn terrain_status_reports_generation() {
     let engine = MockEngine::start(None, |method, _| match method {
         "terrain.status" => Action::Reply(json!({

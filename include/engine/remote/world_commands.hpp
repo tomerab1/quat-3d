@@ -4,7 +4,7 @@
 // out-of-process tool (the quat-mcp bridge, i.e. a language model) inspect and
 // build the world: scene.*, environment.*, world.ground_height, camera.*,
 // render.screenshot, asset.*, sim.*, scene.save/load, nav.bake,
-// terrain.status — and the
+// terrain.status, world.place_on_ground — and the
 // debugging commands (ROADMAP A5): debug.log, debug.stats, debug.pause /
 // resume / step / time_scale, debug.watch, debug.raycast, debug.nav_path — and
 // behaviour-tree authoring (ROADMAP A7): bt.leaves, bt.get, bt.set,

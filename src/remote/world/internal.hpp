@@ -7,10 +7,12 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <unordered_set>
 
 #include <entt/entity/registry.hpp>
 #include <glm/glm.hpp>
 
+#include "engine/asset/mesh_asset.hpp" // Aabb
 #include "engine/core/json_fields.hpp"
 #include "engine/remote/rpc_server.hpp"
 #include "engine/remote/world_commands.hpp"
@@ -103,6 +105,40 @@ struct TerrainRef {
 [[nodiscard]] std::optional<float> terrain_height_at(const Context& ctx, const TerrainRef& terrain,
                                                      float x, float z);
 
+// ---- Bounds and surfaces (issue #40) ----------------------------------------------
+
+// World-space bounds of what `e` and its descendants draw, through exact world
+// matrices (world_matrix). With `include_terrain`, the loaded terrain tiles
+// count for the Terrain entity. nullopt when nothing draws.
+[[nodiscard]] std::optional<asset::Aabb> subtree_world_bounds(const Context& ctx, entt::entity e,
+                                                              bool include_terrain);
+// The same drawables in `e`'s own frame (its model space; terrain excluded).
+[[nodiscard]] std::optional<asset::Aabb> subtree_local_bounds(const Context& ctx, entt::entity e);
+// {min, max}, or null.
+[[nodiscard]] Json bounds_json(const std::optional<asset::Aabb>& box);
+
+// A surface found below a point: its height and normal, what it is
+// ("terrain", "collider", "body", "character", "static_world") and the
+// entity it belongs to (entt::null for ownerless physics bodies).
+struct Surface {
+    float        y = 0.0F;
+    glm::vec3    normal{0.0F, 1.0F, 0.0F};
+    const char*  kind = "";
+    entt::entity entity = entt::null;
+};
+// What lies below (x, z): the ground (terrain, ownerless static bodies) and
+// the highest object surface (other entities' colliders, physics bodies)
+// whose top is below `top_y`. Entities in `ignore` (the one being placed)
+// are skipped. surface_query.cpp has the rules.
+struct SurfaceSample {
+    std::optional<Surface> ground;
+    std::optional<Surface> object;
+};
+[[nodiscard]] SurfaceSample sample_surfaces(const Context& ctx,
+                                            const std::optional<TerrainRef>& terrain,
+                                            const std::unordered_set<entt::entity>& ignore,
+                                            float x, float z, float top_y);
+
 // ---- Misc ----------------------------------------------------------------------
 
 [[nodiscard]] inline Json vec3_json(const glm::vec3& v) { return Json::array({v.x, v.y, v.z}); }
@@ -119,6 +155,7 @@ void register_scene_commands(RpcServer& server, const ContextPtr& ctx);
 void register_batch_command(RpcServer& server, const ContextPtr& ctx);
 void register_environment_commands(RpcServer& server, const ContextPtr& ctx);
 void register_terrain_commands(RpcServer& server, const ContextPtr& ctx);
+void register_placement_commands(RpcServer& server, const ContextPtr& ctx);
 void register_camera_commands(RpcServer& server, const ContextPtr& ctx);
 void register_app_commands(RpcServer& server, const ContextPtr& ctx);
 void register_debug_commands(RpcServer& server, const ContextPtr& ctx);

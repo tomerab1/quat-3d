@@ -134,6 +134,31 @@ Details the contract leaves open, as implemented:
   place objects or take screenshots: `generating` is true while a tile is
   being generated or uploaded, or the streaming window (`tiles_wanted` =
   (2·`stream_radius`+1)²) is not full; `bounds` covers the loaded tiles.
+- **Bounds** (issue #40). `world_bounds` (`{min, max}` or null) is the
+  world-space AABB around what the entity and its descendants draw: mesh
+  bounds (skinned meshes through their armature), primitives (their unit
+  shape before the mesh resolves), every instance of an instanced mesh, and
+  the loaded tiles for the terrain entity — each box transformed exactly
+  (`engine/scene/bounds.hpp`) through world matrices composed from the local
+  transforms, so batch edits count. `local_bounds` (scene.get) is the same
+  box in the entity's own frame, terrain excluded: a model's size and where
+  its origin sits. Null while nothing draws (lights, empties, a model whose
+  mesh is still loading).
+- **`world.place_on_ground`** moves the entity (with its subtree) to `at`
+  if given, then — with `align_to_normal` — rotates it about its origin so
+  its up axis turns toward the surface normal under its bounds' centre (at
+  most `max_tilt_deg`; idempotent, the heading is kept), then translates it
+  vertically: upright, the bounds' bottom rests on the surfaces sampled at a
+  3×3 grid over the footprint (the lowest ground sample or the highest object
+  sample, whichever is higher); aligned, the bottom centre of `local_bounds`
+  rests on the surface under it. `offset` is added along world up. Surfaces:
+  the terrain (analytic heights, normal by central differences) and, below
+  the top of the entity's bounds, other entities' non-sensor colliders —
+  analytically in edit mode (box, sphere, capsule, with world scale baked in
+  as the physics system builds them), or the running physics world's bodies
+  and characters in play mode (ownerless bodies such as streamed terrain
+  count as ground). The entity's own colliders are skipped. Nothing below is
+  `failed`; placing the terrain (or an ancestor of it) is `invalid_params`.
 
 ## Methods (v1 contract, ROADMAP A2/A3)
 
@@ -189,8 +214,8 @@ values. Unknown fields are errors (they name the known fields).
 | Method | Params | Result |
 |---|---|---|
 | `scene.components` | — | `[{name, summary, addable, writable}]` |
-| `scene.list` | `{name_contains?, component?, limit?=100, offset?=0}` | `{total, entities:[{id, name, parent, components:[names], world_position}]}` |
-| `scene.get` | `{entity}` | `{id, name, parent, children:[ids], components:{...}}` |
+| `scene.list` | `{name_contains?, component?, limit?=100, offset?=0}` | `{total, entities:[{id, name, parent, components:[names], world_position, world_bounds}]}` |
+| `scene.get` | `{entity}` | `{id, name, parent, children:[ids], world_bounds, local_bounds, components:{...}}` |
 | `scene.create` | `{name?, parent?, components?:{...}}` | `{id, name}` |
 | `scene.update` | `{entity, name?, components?:{...}}` | `{id}` |
 | `scene.remove_components` | `{entity, components:[names]}` | `{removed:[names]}` |
@@ -202,6 +227,7 @@ values. Unknown fields are errors (they name the known fields).
 | `environment.set` | same shape, every field optional | `environment.get` result |
 | `world.ground_height` | `{points:[[x,z],...]}` (≤ 1024) | `{heights:[y \| null], generating}` — null where no tile is loaded; `not_found` without terrain |
 | `terrain.status` | — | `{present, entity, streaming, generating, tiles_loaded, tiles_wanted, anchor, tile_size, bounds:{min,max} \| null}` (`{present:false}` without terrain) |
+| `world.place_on_ground` | `{entity, at?:[x,z], align_to_normal?=false, max_tilt_deg?=30, offset?=0}` | `{id, position, world_bounds, moved_y, tilt_deg, surface:{kind, entity, y, normal} \| null}` |
 | `camera.get` | — | `{position, yaw_deg, pitch_deg, fov_deg, near, far, near_auto, far_auto}` |
 | `camera.set` | `{position?, look_at?, yaw_deg?, pitch_deg?, fov_deg?, near?, far?, cut?}` | `camera.get` result |
 | `camera.frame` | `{entity?}` (whole scene when omitted) | `camera.get` result |

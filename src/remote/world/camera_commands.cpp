@@ -1,14 +1,13 @@
 // camera.* (the view camera) and render.screenshot.
 
 #include <cmath>
-#include <limits>
+#include <optional>
 #include <string>
 
 #include <glm/gtc/constants.hpp>
 #include <nlohmann/json.hpp>
 
 #include "engine/scene/components.hpp"
-#include "engine/scene/primitives.hpp"
 #include "engine/scene/scene.hpp"
 #include "internal.hpp"
 
@@ -125,31 +124,6 @@ RpcResult camera_set(Context& ctx, const Json& params) {
     return pose_json(ctx.services.camera_get());
 }
 
-// World-space bounds of what an entity draws (mesh bounds, primitive shape),
-// grown into `lo`/`hi`. Returns false when the entity draws nothing.
-bool grow_bounds(const entt::registry& r, entt::entity e, glm::vec3& lo, glm::vec3& hi) {
-    asset::Aabb box{};
-    glm::mat4 model = world_matrix(r, e);
-    if (const auto* mr = r.try_get<scene::MeshRenderer>(e);
-        mr != nullptr && mr->mesh.valid() && mr->mesh.is_loaded() && mr->mesh->valid()) {
-        box = mr->mesh->bounds;
-        // Skinned meshes are placed through their armature (as the renderer does).
-        if (const auto* sm = r.try_get<scene::SkinnedMesh>(e)) model = model * sm->root_transform;
-    } else if (const auto* p = r.try_get<scene::Primitive>(e)) {
-        box = scene::primitive_bounds(p->shape);
-    } else {
-        return false;
-    }
-    for (int i = 0; i < 8; ++i) {
-        const glm::vec3 corner((i & 1) ? box.max.x : box.min.x, (i & 2) ? box.max.y : box.min.y,
-                               (i & 4) ? box.max.z : box.min.z);
-        const glm::vec3 w(model * glm::vec4(corner, 1.0F));
-        lo = glm::min(lo, w);
-        hi = glm::max(hi, w);
-    }
-    return true;
-}
-
 RpcResult camera_frame(Context& ctx, const Json& params) {
     const entt::registry& r = ctx.scene->registry();
     core::JsonFields f(params, "");
@@ -157,28 +131,29 @@ RpcResult camera_frame(Context& ctx, const Json& params) {
     if (auto ok = finish(f); !ok) return std::unexpected(ok.error());
     if (!camera_available(ctx)) return unavailable("the view camera");
 
-    glm::vec3 lo(std::numeric_limits<float>::max());
-    glm::vec3 hi(std::numeric_limits<float>::lowest());
-    bool any = false;
+    // The entity's subtree, or every root's (terrain excluded: framing the
+    // whole scene should not back off to kilometres of streamed tiles).
+    std::optional<asset::Aabb> box;
     if (ref != nullptr && !ref->is_null()) {
         auto e = resolve_entity(r, *ref, "entity");
         if (!e) return std::unexpected(e.error());
-        for (const entt::entity c : subtree(r, *e)) any = grow_bounds(r, c, lo, hi) || any;
-        if (!any) { // draws nothing (a light, an empty): frame its position
+        box = subtree_world_bounds(ctx, *e, false);
+        if (!box) { // draws nothing (a light, an empty): frame its position
             const glm::vec3 p(world_matrix(r, *e)[3]);
-            lo = p - glm::vec3(1.0F);
-            hi = p + glm::vec3(1.0F);
-            any = true;
+            box = asset::Aabb{p - glm::vec3(1.0F), p + glm::vec3(1.0F)};
         }
     } else {
         for (const entt::entity e : r.view<const scene::Transform>()) {
-            any = grow_bounds(r, e, lo, hi) || any;
+            if (parent_of(r, e) != entt::null) continue;
+            if (const auto b = subtree_world_bounds(ctx, e, false)) {
+                box = box ? asset::Aabb{glm::min(box->min, b->min), glm::max(box->max, b->max)}
+                          : *b;
+            }
         }
     }
-    if (!any) { // empty scene: look at the origin
-        lo = glm::vec3(-2.0F);
-        hi = glm::vec3(2.0F);
-    }
+    if (!box) box = asset::Aabb{glm::vec3(-2.0F), glm::vec3(2.0F)}; // empty scene: the origin
+    const glm::vec3 lo = box->min;
+    const glm::vec3 hi = box->max;
 
     // Keep the heading, look down at least 20 degrees, and back off until the
     // bounding sphere fits the vertical field of view (with a margin).
