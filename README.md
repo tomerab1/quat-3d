@@ -151,6 +151,22 @@ cd /tmp/gltf-samples && git sparse-checkout set Models/Fox Models/ToyCar
 cp -R Models/Fox/glTF ~/quat-3d/sample-assets/Fox
 ```
 
+## AI tools (MCP)
+
+[`tools/quat-mcp`](tools/quat-mcp/README.md) is an MCP server that lets AI
+assistants such as Claude Code and Claude Desktop build and inspect worlds in
+the running engine — create entities, set the sky and camera, take
+screenshots, spawn models. Start the engine with `QUAT_REMOTE=7878`, build the
+server with `cargo build --release` in `tools/quat-mcp`, and register it with
+your client:
+
+```sh
+claude mcp add quat-3d --env QUAT_REMOTE_PORT=7878 -- "$PWD/tools/quat-mcp/target/release/quat-mcp"
+```
+
+See [`tools/quat-mcp/README.md`](tools/quat-mcp/README.md) for Claude Desktop
+setup, tokens and the full tool list.
+
 ## Testing
 
 Tests use [GoogleTest](https://github.com/google/googletest) and run without
@@ -198,6 +214,7 @@ include/engine/     Public headers, one folder per module
 src/                Implementation, mirroring include/ (rhi, renderer, scene, physics, ...)
 src/editor/         The editor (only in builds with ENGINE_EDITOR=ON, the default)
 src/remote/         Remote-control endpoint used by AI tooling
+tools/quat-mcp/     MCP server for AI assistants (Rust, standalone Cargo crate)
 tests/              GoogleTest suite (engine_tests): tests/<module>/, shared helpers in tests/support/
 docs/               Project documentation
 ports/, triplets/   vcpkg customisations
