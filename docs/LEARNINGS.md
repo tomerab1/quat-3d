@@ -210,3 +210,18 @@ duplicate YAML keys; a combined `git revert -q ...; git commit --amend` then
 amended the already-pushed commit instead of reverting. **Rule:** grep for a
 key before adding it; never chain revert + amend — make one plain new commit
 and check `git status -sb` before pushing.
+
+## Issue label update dropped the other labels (factory)
+
+Setting `labels: ["in-review"]` through the GitHub issue update replaced the
+whole label set on #16, stripping `factory`/`visual`/severity/area. **Rule:**
+a label update sends the complete set — read the issue's labels first and
+send them back with the status label swapped (`triaged` → `in-progress` →
+`in-review`).
+
+## Docs pushes restart the cycle PR's CI gate (factory)
+
+A STATUS-only commit pushed to the cycle branch while its CI was queued moved
+PR #3's merge gate to the new head. **Rule:** while a cycle PR waits on CI,
+keep docs edits local and push them together with the next code change or
+right after the merge.
