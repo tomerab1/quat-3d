@@ -16,7 +16,7 @@ struct PushConstants {
 [[vk::binding(0)]] Texture2D           g_transmittance;
 [[vk::binding(1)]] Texture2D           g_multiscatter;
 [[vk::binding(2)]] SamplerState        g_samp;
-[[vk::binding(3)]] RWTexture2D<float4> g_out;
+[[vk::binding(3)]] [format("rgba16f")] RWTexture2D<float4> g_out;
 
 static const int STEPS = 32;
 

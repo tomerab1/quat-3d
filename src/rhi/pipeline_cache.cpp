@@ -100,7 +100,8 @@ PipelineCache::load(const std::string& spv_path) {
     }
 
     auto [it, inserted] = modules_.emplace(
-        key, LoadedShader{module, std::move(*reflection)});
+        key, LoadedShader{module, std::move(*reflection), spirv_storage_image_formats(*words),
+                          spv_path});
     return &it->second;
 }
 

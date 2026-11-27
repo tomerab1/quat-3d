@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <format>
+#include <initializer_list>
 #include <utility>
 #include <vector>
 
@@ -51,6 +52,13 @@ GraphicsPipeline::create(const Device& device, VkPipelineCache cache, const Crea
     }
 
     const VkDevice vk_device = device.handle();
+    for (const LoadedShader* shader : {info.vertex, info.fragment}) {
+        if (auto ok = device.check_storage_image_formats(shader->storage_image_formats,
+                                                         shader->path);
+            !ok) {
+            return std::unexpected(ok.error());
+        }
+    }
 
     // ---- Pipeline layout (descriptor set layouts + push constants) ----------
     // Explicit push-constant ranges (info.push_constants) win; otherwise derive

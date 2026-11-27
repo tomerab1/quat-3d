@@ -4,6 +4,7 @@
 #include <expected>
 #include <string>
 #include <unordered_map>
+#include <vector>
 
 #include <vulkan/vulkan.h>
 
@@ -18,6 +19,11 @@ class Device;
 struct LoadedShader {
     VkShaderModule   module = VK_NULL_HANDLE;
     ShaderReflection reflection;
+    // Declared format of each storage image (spirv_storage_image_formats);
+    // pipeline creation checks the device supports them (Device::
+    // check_storage_image_formats).
+    std::vector<VkFormat> storage_image_formats;
+    std::string           path; // the .spv it was loaded from (error messages)
 };
 
 // Loads and caches SPIR-V shader modules by source path, and owns the Vulkan

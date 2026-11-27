@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <expected>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -43,5 +44,14 @@ struct ShaderReflection {
 
 [[nodiscard]] std::expected<ShaderReflection, core::Error>
 parse_reflection_json(std::string_view json_text);
+
+// The image format of every storage image (OpTypeImage with Sampled = 2,
+// texel buffers and subpass inputs excluded) a SPIR-V module declares, as a
+// VkFormat; VK_FORMAT_UNDEFINED marks one declared without a format (Slang:
+// RWTexture without [format(...)]), which needs the optional
+// shaderStorageImage{Read,Write}WithoutFormat features. The Slang JSON
+// reflection does not carry image formats, hence the SPIR-V walk. A
+// malformed module yields an empty list (vkCreateShaderModule rejects it).
+[[nodiscard]] std::vector<VkFormat> spirv_storage_image_formats(std::span<const std::uint32_t> spirv);
 
 } // namespace engine::rhi

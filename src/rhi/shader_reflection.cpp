@@ -9,6 +9,7 @@
 #include "engine/rhi/shader_reflection.hpp"
 
 #include <algorithm>
+#include <array>
 
 #include <nlohmann/json.hpp>
 
@@ -73,7 +74,85 @@ using json = nlohmann::json;
     return end;
 }
 
+// SPIR-V ImageFormat (spec 3.11) -> VkFormat; index = enum value.
+constexpr std::array<VkFormat, 42> kSpirvImageFormats{
+    VK_FORMAT_UNDEFINED,                // Unknown
+    VK_FORMAT_R32G32B32A32_SFLOAT,      // Rgba32f
+    VK_FORMAT_R16G16B16A16_SFLOAT,      // Rgba16f
+    VK_FORMAT_R32_SFLOAT,               // R32f
+    VK_FORMAT_R8G8B8A8_UNORM,           // Rgba8
+    VK_FORMAT_R8G8B8A8_SNORM,           // Rgba8Snorm
+    VK_FORMAT_R32G32_SFLOAT,            // Rg32f
+    VK_FORMAT_R16G16_SFLOAT,            // Rg16f
+    VK_FORMAT_B10G11R11_UFLOAT_PACK32,  // R11fG11fB10f
+    VK_FORMAT_R16_SFLOAT,               // R16f
+    VK_FORMAT_R16G16B16A16_UNORM,       // Rgba16
+    VK_FORMAT_A2B10G10R10_UNORM_PACK32, // Rgb10A2
+    VK_FORMAT_R16G16_UNORM,             // Rg16
+    VK_FORMAT_R8G8_UNORM,               // Rg8
+    VK_FORMAT_R16_UNORM,                // R16
+    VK_FORMAT_R8_UNORM,                 // R8
+    VK_FORMAT_R16G16B16A16_SNORM,       // Rgba16Snorm
+    VK_FORMAT_R16G16_SNORM,             // Rg16Snorm
+    VK_FORMAT_R8G8_SNORM,               // Rg8Snorm
+    VK_FORMAT_R16_SNORM,                // R16Snorm
+    VK_FORMAT_R8_SNORM,                 // R8Snorm
+    VK_FORMAT_R32G32B32A32_SINT,        // Rgba32i
+    VK_FORMAT_R16G16B16A16_SINT,        // Rgba16i
+    VK_FORMAT_R8G8B8A8_SINT,            // Rgba8i
+    VK_FORMAT_R32_SINT,                 // R32i
+    VK_FORMAT_R32G32_SINT,              // Rg32i
+    VK_FORMAT_R16G16_SINT,              // Rg16i
+    VK_FORMAT_R8G8_SINT,                // Rg8i
+    VK_FORMAT_R16_SINT,                 // R16i
+    VK_FORMAT_R8_SINT,                  // R8i
+    VK_FORMAT_R32G32B32A32_UINT,        // Rgba32ui
+    VK_FORMAT_R16G16B16A16_UINT,        // Rgba16ui
+    VK_FORMAT_R8G8B8A8_UINT,            // Rgba8ui
+    VK_FORMAT_R32_UINT,                 // R32ui
+    VK_FORMAT_A2B10G10R10_UINT_PACK32,  // Rgb10a2ui
+    VK_FORMAT_R32G32_UINT,              // Rg32ui
+    VK_FORMAT_R16G16_UINT,              // Rg16ui
+    VK_FORMAT_R8G8_UINT,                // Rg8ui
+    VK_FORMAT_R16_UINT,                 // R16ui
+    VK_FORMAT_R8_UINT,                  // R8ui
+    VK_FORMAT_R64_UINT,                 // R64ui
+    VK_FORMAT_R64_SINT,                 // R64i
+};
+
 } // namespace
+
+std::vector<VkFormat> spirv_storage_image_formats(std::span<const std::uint32_t> spirv) {
+    constexpr std::uint32_t kMagic = 0x07230203U;
+    constexpr std::uint32_t kOpTypeImage = 25U;
+    constexpr std::uint32_t kDimBuffer = 5U;
+    constexpr std::uint32_t kDimSubpassData = 6U;
+    constexpr std::uint32_t kSampledStorage = 2U;
+    constexpr std::size_t kHeaderWords = 5;
+
+    std::vector<VkFormat> out;
+    if (spirv.size() < kHeaderWords || spirv[0] != kMagic) return out;
+    for (std::size_t i = kHeaderWords; i < spirv.size();) {
+        const std::uint32_t word_count = spirv[i] >> 16U;
+        const std::uint32_t opcode = spirv[i] & 0xFFFFU;
+        if (word_count == 0 || i + word_count > spirv.size()) return {}; // malformed
+        // OpTypeImage: result, sampled type, Dim, Depth, Arrayed, MS, Sampled,
+        // Image Format [, access qualifier].
+        if (opcode == kOpTypeImage && word_count >= 9) {
+            const std::uint32_t dim = spirv[i + 3];
+            const std::uint32_t sampled = spirv[i + 7];
+            const std::uint32_t format = spirv[i + 8];
+            if (sampled == kSampledStorage && dim != kDimBuffer && dim != kDimSubpassData) {
+                // An unmapped (future) format is reported as undefined: the
+                // caller then refuses it rather than guessing.
+                out.push_back(format < kSpirvImageFormats.size() ? kSpirvImageFormats[format]
+                                                                  : VK_FORMAT_UNDEFINED);
+            }
+        }
+        i += word_count;
+    }
+    return out;
+}
 
 std::expected<ShaderReflection, core::Error>
 parse_reflection_json(std::string_view json_text) {
