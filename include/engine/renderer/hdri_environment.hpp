@@ -14,7 +14,7 @@
 //   3. env_prefilter     the prefiltered specular cube, one mip per
 //                        roughness step, GGX importance sampling with
 //                        filtered importance sampling (Křivánek & Colbert
-//                        2008) over the mip chain — noise-free with 64
+//                        2008) over the mip chain — noise-free with 128
 //                        samples even around a bright sun;
 //   4. sh_project +      diffuse irradiance as SH9 (Ramamoorthi & Hanrahan
 //      sh_irradiance     2001), exact texel solid angles, evaluated into the
@@ -82,7 +82,7 @@ public:
     static constexpr std::uint32_t k_min_face = 32;
     static constexpr std::uint32_t k_max_prefilter_face = 512; // prefiltered mip 0 cap
     static constexpr std::uint32_t k_sh_face = 32;             // SH9 source mip edge (max)
-    static constexpr std::uint32_t k_prefilter_samples = 64;
+    static constexpr std::uint32_t k_prefilter_samples = 128;
 
     // Environment face edge for a panorama `width` texels wide: about one
     // panorama texel per cube texel at the equator, a power of two in

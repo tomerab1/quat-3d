@@ -37,7 +37,19 @@ void stb_free(void* p) { stbi_image_free(p); }
 struct Extent {
     std::uint32_t width = 0;
     std::uint32_t height = 0;
+    std::size_t   data_offset = 0; // first byte after the resolution line
 };
+
+// The fewest pixel-data bytes a valid file of `e` can hold: run-length
+// encoded scanlines (widths 8..32767) need a 4-byte marker plus at least one
+// 2-byte run per 128 texels for each of the four components; flat ones 4
+// bytes per texel. stb_image reads past the end as zeros instead of failing,
+// so a truncated file is refused here.
+[[nodiscard]] std::uint64_t min_data_bytes(const Extent& e) {
+    const std::uint64_t w = e.width;
+    const std::uint64_t per_line = (w >= 8 && w < 32768) ? 4 + 4 * 2 * ((w + 127) / 128) : 4 * w;
+    return per_line * e.height;
+}
 
 [[nodiscard]] bool starts_with(std::span<const std::byte> b, std::string_view s) {
     return b.size() >= s.size() && std::memcmp(b.data(), s.data(), s.size()) == 0;
@@ -90,7 +102,7 @@ struct Extent {
     res.remove_prefix(3);
     const std::optional<std::uint32_t> w = parse_dimension(res);
     if (!w || *w == 0 || *h == 0) return fail("corrupt resolution line");
-    return Extent{*w, *h};
+    return Extent{*w, *h, end + 1};
 }
 
 } // namespace
@@ -116,6 +128,10 @@ std::expected<HdrImage, core::Error> decode_radiance_hdr(std::span<const std::by
         return fail("image is " + std::to_string(uw) + "x" + std::to_string(uh) +
                     ", larger than the limit of " + std::to_string(limits.max_dimension) +
                     " per side");
+    }
+    if (encoded.size() - extent->data_offset < min_data_bytes(*extent)) {
+        return fail("truncated pixel data (" + std::to_string(encoded.size() - extent->data_offset) +
+                    " bytes for " + std::to_string(uw) + "x" + std::to_string(uh) + ")");
     }
     const std::uint64_t decoded = hdr_decoded_bytes(uw, uh);
     if (decoded > limits.max_decoded_bytes) {

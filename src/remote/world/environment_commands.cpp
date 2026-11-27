@@ -178,7 +178,8 @@ RpcResult environment_set(Context& ctx, const Json& params) {
     if (hdri_in != nullptr && !hdri_in->is_null()) {
         if (!hdri_in->is_object()) return bad_params("hdri: expected an object");
         core::JsonFields h(*hdri_in, "hdri");
-        h.known({"intensity", "rotation_deg", "sun"});
+        // Checked below as the `environment` settings group's fields.
+        for (const char* key : {"intensity", "rotation_deg", "sun"}) (void)h.raw(key);
         if (const Json* p = h.raw("path"); p != nullptr) {
             if (p->is_null() || (p->is_string() && p->get_ref<const std::string&>().empty())) {
                 hdri_path = std::string();

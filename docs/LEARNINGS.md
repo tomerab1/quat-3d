@@ -41,6 +41,13 @@ into CLAUDE.md or the brief template in [`CYCLE.md`](CYCLE.md).
 
 ## Build and CI
 
+- **Editing a file while ninja compiles it leaves a stale object that looks
+  fresh (R21).** The compile reads the old text, but the object's mtime is
+  newer than the edit, so the next build skips it. `game` then failed to link
+  against the new `save_scene` signature. → Do not edit sources during a
+  long local build. Otherwise, `touch` every file edited while it ran
+  before you build again.
+
 - **Don't tie the hitch clamp to the physics budget.** D2 first capped the
   sim frame dt at 1/15 s (8 physics substeps), so on slow machines (CI's
   lavapipe at 1-3 fps) the whole world ran several times slower than real

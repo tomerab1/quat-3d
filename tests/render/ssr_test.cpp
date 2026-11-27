@@ -168,11 +168,6 @@ std::expected<quat::test::HostImage, Error> render(quat::test::GpuContext& g, Sc
     return image;
 }
 
-std::expected<Scene, Error>& scene(quat::test::GpuContext& g) {
-    static std::expected<Scene, Error> s = make_scene(g);
-    return s;
-}
-
 glm::vec3 at(const quat::test::HostImage& img, glm::uvec2 p) {
     return glm::vec3(img.rgba16f(p.x, p.y));
 }
@@ -181,7 +176,7 @@ glm::vec3 at(const quat::test::HostImage& img, glm::uvec2 p) {
 
 TEST(GpuSsr, MirrorFloorReflectsThePanel) {
     QUAT_REQUIRE_GPU(g);
-    auto& s = scene(*g);
+    auto s = make_scene(*g); // per test: GPU objects die before the shared device
     ASSERT_OK(s);
     // The panel's mid-height point mirrored below the floor, seen from the
     // camera, crosses the floor at z = 4 - 5 * (1.5 / 2.25).
@@ -208,7 +203,7 @@ TEST(GpuSsr, MirrorFloorReflectsThePanel) {
 // the bottom corners reflects the sky behind the camera.
 TEST(GpuSsr, MissesFallBackToTheEnvironment) {
     QUAT_REQUIRE_GPU(g);
-    auto& s = scene(*g);
+    auto s = make_scene(*g); // per test: GPU objects die before the shared device
     ASSERT_OK(s);
     auto with = render(*g, *s, true, 3);
     ASSERT_OK(with);

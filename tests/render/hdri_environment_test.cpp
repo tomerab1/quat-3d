@@ -101,9 +101,14 @@ glm::vec3 irradiance_reference(const asset::HdrImage& img, const glm::vec3& n) {
 
 const glm::vec3 k_lobe_dir = glm::normalize(glm::vec3(0.5F, 0.6F, -0.6F));
 
+// A sky gradient plus a soft bright lobe, smooth everywhere: filtered
+// importance sampling blurs each sample over a footprint (by design), which
+// biases the result only where the radiance has kinks (a hard horizon), so
+// the reference comparison uses a smooth environment.
 glm::vec3 smooth_sky(const glm::vec3& d) {
     const float lobe = std::pow(std::max(glm::dot(d, k_lobe_dir), 0.0F), 16.0F);
-    return (0.2F + 0.8F * std::max(d.y, 0.0F)) * glm::vec3(1.0F, 0.9F, 0.8F) +
+    const float up = 0.5F + 0.5F * d.y;
+    return (0.2F + 0.8F * up * up) * glm::vec3(1.0F, 0.9F, 0.8F) +
            3.0F * lobe * glm::vec3(1.0F, 0.8F, 0.6F);
 }
 

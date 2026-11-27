@@ -9,7 +9,10 @@
 // needs thousands of samples before an HDRI's bright sun stops sparkling),
 // each sample reads the environment's mip chain at the level whose texel
 // matches the sample's solid angle, Omega_s = 1 / (N pdf), against a mip-0
-// texel's Omega_p = 4 pi / (6 size^2): lod = 0.5 log2(Omega_s / Omega_p) + 1.
+// texel's Omega_p = 4 pi / (6 size^2): lod = 0.5 log2(Omega_s / Omega_p). (GPU Gems
+// adds a +1 bias; at high roughness that blurs over whole faces and biases
+// the result next to kinks such as a horizon, so it is left out: 128
+// samples keep the estimate noise-free without it.)
 // With N = V the GGX pdf of L reduces to D / 4.
 
 import ibl_common;
@@ -56,7 +59,7 @@ void compute_main(uint3 tid : SV_DispatchThreadID) {
         if (ndotl > 0.0) {
             float pdf = ibl_d_ggx(ndoth, pc.roughness) * 0.25;
             float omega_s = 1.0 / (float(pc.samples) * max(pdf, 1e-6));
-            float lod = max(0.5 * log2(omega_s / omega_p) + 1.0, footprint_lod);
+            float lod = max(0.5 * log2(omega_s / omega_p), footprint_lod);
             color += g_env.SampleLevel(g_env_sampler, L, lod).rgb * ndotl;
             total += ndotl;
         }

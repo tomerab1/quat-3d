@@ -70,11 +70,6 @@ std::expected<Furnace, Error> make_furnace(quat::test::GpuContext& g) {
     return f;
 }
 
-std::expected<Furnace, Error>& furnace(quat::test::GpuContext& g) {
-    static std::expected<Furnace, Error> f = make_furnace(g);
-    return f;
-}
-
 // A camera-facing quad (identity view-projection, camera at +Z) whose
 // shading normal is tilted `tilt_deg` off the view direction, so the centre
 // pixel is shaded at NdotV = cos(tilt).
@@ -130,7 +125,8 @@ constexpr std::array<float, 6> k_roughness{0.05F, 0.2F, 0.4F, 0.6F, 0.8F, 1.0F};
 // White metal (F0 = 1): every unit of light that reaches it leaves it.
 TEST(GpuSpecularEnergy, WhiteFurnaceMetalKeepsItsEnergy) {
     QUAT_REQUIRE_GPU(g);
-    auto& f = furnace(*g);
+    // Per test, not static: GPU objects must die before the shared device.
+    auto f = make_furnace(*g);
     ASSERT_OK(f);
     for (const float tilt : {0.0F, 45.0F, 70.0F}) {
         for (const float rough : k_roughness) {
@@ -144,7 +140,8 @@ TEST(GpuSpecularEnergy, WhiteFurnaceMetalKeepsItsEnergy) {
 // White dielectric: what the specular lobes do not reflect, diffuse does.
 TEST(GpuSpecularEnergy, WhiteFurnaceDielectricKeepsItsEnergy) {
     QUAT_REQUIRE_GPU(g);
-    auto& f = furnace(*g);
+    // Per test, not static: GPU objects must die before the shared device.
+    auto f = make_furnace(*g);
     ASSERT_OK(f);
     for (const float tilt : {0.0F, 60.0F}) {
         for (const float rough : k_roughness) {
@@ -159,7 +156,8 @@ TEST(GpuSpecularEnergy, WhiteFurnaceDielectricKeepsItsEnergy) {
 // (the defect the multiple-scattering term fixes), a smooth one almost none.
 TEST(GpuSpecularEnergy, SingleScatteringLosesEnergyOnRoughMetal) {
     QUAT_REQUIRE_GPU(g);
-    auto& f = furnace(*g);
+    // Per test, not static: GPU objects must die before the shared device.
+    auto f = make_furnace(*g);
     ASSERT_OK(f);
     auto smooth = furnace_pixel(*g, *f, 1.0F, 0.05F, 0.0F, false);
     ASSERT_OK(smooth);
