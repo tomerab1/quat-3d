@@ -341,6 +341,8 @@ std::expected<Device, core::Error> Device::create(const CreateInfo& info) {
     // extended storage formats; universally offered on desktop and MoltenVK.
     core_features.shaderStorageImageExtendedFormats =
         supported_core.shaderStorageImageExtendedFormats;
+    dev.storage_image_extended_formats_ =
+        supported_core.shaderStorageImageExtendedFormats == VK_TRUE;
     if (supported_core.samplerAnisotropy == VK_TRUE) {
         dev.max_sampler_anisotropy_ = candidate.properties.limits.maxSamplerAnisotropy;
     }
@@ -427,6 +429,27 @@ Device::check_storage_image_formats(std::span<const VkFormat> formats,
     return {};
 }
 
+std::expected<void, core::Error>
+Device::require_extended_storage_formats(std::span<const VkFormat> formats,
+                                         std::string_view what) const {
+    if (!storage_image_extended_formats()) {
+        return std::unexpected(core::Error{
+            std::string(what) +
+            ": the device lacks shaderStorageImageExtendedFormats (needed for its storage "
+            "image formats)"});
+    }
+    for (const VkFormat format : formats) {
+        VkFormatProperties props{};
+        vkGetPhysicalDeviceFormatProperties(physical_device_, format, &props);
+        if ((props.optimalTilingFeatures & VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT) == 0) {
+            return std::unexpected(core::Error{std::string(what) + ": storage image format " +
+                                               std::to_string(static_cast<int>(format)) +
+                                               " is not supported for storage on this device"});
+        }
+    }
+    return {};
+}
+
 void Device::destroy() noexcept {
     if (device_ != VK_NULL_HANDLE) {
         vkDestroyDevice(device_, nullptr);
@@ -471,6 +494,8 @@ Device& Device::operator=(Device&& other) noexcept {
         descriptor_buffer_props_ = other.descriptor_buffer_props_;
         max_sampler_anisotropy_  = other.max_sampler_anisotropy_;
         descriptor_backend_      = other.descriptor_backend_;
+        storage_image_extended_formats_ = other.storage_image_extended_formats_;
+        simulate_missing_extended_formats_ = other.simulate_missing_extended_formats_;
     }
     return *this;
 }

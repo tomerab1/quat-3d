@@ -68,6 +68,9 @@ public:
     HiZPass(const HiZPass&) = delete;
     HiZPass& operator=(const HiZPass&) = delete;
 
+    // False when default-constructed (creation failed or was skipped).
+    [[nodiscard]] bool valid() const { return device_ != nullptr; }
+
     // Declares the bounds reset and the pyramid build reading `depth`
     // (a D32 depth image of `extent`). Declare after every pass that writes
     // the depth buffer. The returned handles are valid in `graph` only.

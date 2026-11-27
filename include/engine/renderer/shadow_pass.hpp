@@ -25,6 +25,7 @@
 #include <cstdint>
 #include <expected>
 #include <functional>
+#include <memory>
 #include <span>
 #include <string>
 #include <vector>
@@ -52,7 +53,9 @@ namespace engine::renderer {
 
 struct HiZTargets;
 
-inline constexpr VkFormat      shadow_map_format = VK_FORMAT_D32_SFLOAT;
+// D16 is the standard precision for orthographic cascades (depth is linear
+// in light space): 4 x 2048² x 2 bytes = 32 MB, shared by every frame slot.
+inline constexpr VkFormat      shadow_map_format = VK_FORMAT_D16_UNORM;
 inline constexpr std::uint32_t shadow_map_size = 2048; // per cascade
 
 // Push-constant block, mirrors PushConstants in shadow.slang (24 bytes).
@@ -66,7 +69,7 @@ static_assert(sizeof(ShadowPushConstants) == 24, "must match shadow.slang PushCo
 
 // This frame's sun shadows as graph resources.
 struct CascadedShadows {
-    // D32 2D array, one layer per cascade: read with sampled_compute.
+    // Depth 2D array, one layer per cascade: read with sampled_compute.
     rhi::ResourceHandle shadow_map;
     // GpuCascades: read with buffer_read_compute (lighting) / _vertex.
     rhi::ResourceHandle cascades;
@@ -81,11 +84,41 @@ struct CascadedShadows {
 using ShadowCasterFn =
     std::function<void(VkCommandBuffer cmd, std::uint32_t cascade, VkDeviceAddress cascades)>;
 
+// Sun-shadow state shared by every frame slot of one view (like TaaHistory):
+// the cascaded shadow map and the GPU fit's range-hysteresis state. Frames
+// run in submission order on one queue, so each frame's import waits for
+// the previous frame's accesses (the map's lighting reads and cascade
+// writes, the state's compute write) instead of keeping one copy per slot.
+class CsmShared {
+public:
+    [[nodiscard]] static std::expected<std::shared_ptr<CsmShared>, core::Error>
+    create(const rhi::Device& device, rhi::GpuAllocator& allocator);
+
+    CsmShared() = default; // empty; use create()
+    CsmShared(const CsmShared&) = delete;
+    CsmShared& operator=(const CsmShared&) = delete;
+
+    [[nodiscard]] VkImage map() const { return map_.handle(); }
+    // Host-visible CsmRangeState (x lo, y hi, z valid) the GPU fit keeps.
+    [[nodiscard]] const rhi::GpuBuffer& range_state() const { return range_state_; }
+
+private:
+    friend class ShadowPass;
+
+    rhi::GpuImage               map_;
+    rhi::ImageView              array_view_;
+    std::vector<rhi::ImageView> layer_views_;
+    rhi::GpuBuffer              range_state_;
+    VkDeviceAddress             range_state_address_ = 0;
+};
+
 class ShadowPass {
 public:
+    // `shared` is the map + fit state shared by every frame slot; null
+    // creates a private one (single-slot use, tests).
     [[nodiscard]] static std::expected<ShadowPass, core::Error>
     create(const rhi::Device& device, rhi::GpuAllocator& allocator, rhi::PipelineCache& cache,
-           const std::string& cooked_shader_dir);
+           const std::string& cooked_shader_dir, std::shared_ptr<CsmShared> shared = nullptr);
 
     ShadowPass() = default;
     ShadowPass(ShadowPass&&) noexcept = default;
@@ -110,7 +143,8 @@ public:
 
     // The cascade buffer (host-visible: tests read what the GPU fitted).
     [[nodiscard]] const rhi::GpuBuffer& cascade_buffer() const { return cascades_; }
-    [[nodiscard]] VkImage shadow_image() const { return map_.handle(); }
+    [[nodiscard]] VkImage shadow_image() const { return shared_->map(); }
+    [[nodiscard]] const CsmShared& shared() const { return *shared_; }
 
 private:
     struct FrameDraw {
@@ -124,6 +158,7 @@ private:
         std::uint32_t params = 0;
         std::uint32_t bounds = 0;
         std::uint32_t cascades = 0;
+        std::uint32_t range_state = 0;
     };
 
     void record_cascades(VkCommandBuffer cmd, std::uint32_t count) const;
@@ -149,10 +184,7 @@ private:
     rhi::GpuBuffer                 cascades_;
     VkDeviceAddress                cascades_address_ = 0;
 
-    // The cascaded map: one D32 layer per cascade.
-    rhi::GpuImage               map_;
-    rhi::ImageView              array_view_;
-    std::vector<rhi::ImageView> layer_views_;
+    std::shared_ptr<CsmShared>     shared_;
 };
 
 } // namespace engine::renderer

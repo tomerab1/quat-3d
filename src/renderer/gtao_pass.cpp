@@ -121,6 +121,11 @@ std::expected<GtaoPass, core::Error> GtaoPass::create(const rhi::Device& device,
                                                       rhi::GpuAllocator& allocator,
                                                       rhi::PipelineCache& cache,
                                                       const std::string& cooked_shader_dir) {
+    // The R8 edge target needs the extended storage formats (Device).
+    const std::array<VkFormat, 1> formats{gtao_edges_format};
+    if (auto ok = device.require_extended_storage_formats(formats, "gtao pass"); !ok) {
+        return std::unexpected(ok.error());
+    }
     GtaoPass out;
     out.device_ = &device;
     out.allocator_ = &allocator;

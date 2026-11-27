@@ -3,6 +3,7 @@
 #include <array>
 #include <cstddef>
 #include <cstring>
+#include <memory>
 #include <string>
 #include <utility>
 
@@ -32,11 +33,21 @@ struct CsmSetupParams {
 };
 static_assert(sizeof(CsmSetupParams) == 176, "must match csm_setup.slang CsmSetupParams");
 
-constexpr std::array<rhi::BindingRequest, 3> kSetupResources{{
+constexpr std::array<rhi::BindingRequest, 4> kSetupResources{{
     {"g_params", VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER},
     {"g_bounds", VK_DESCRIPTOR_TYPE_STORAGE_BUFFER},
     {"g_cascades", VK_DESCRIPTOR_TYPE_STORAGE_BUFFER},
+    {"g_range_state", VK_DESCRIPTOR_TYPE_STORAGE_BUFFER},
 }};
+constexpr VkDeviceSize kRangeStateBytes = 4 * sizeof(float);
+
+// What the previous frame (either slot) may still be doing with the shared
+// map when this frame's first access to it runs: rendering cascades (depth
+// attachment writes) and sampling them in the lighting pass (compute).
+constexpr VkPipelineStageFlags2 kMapPrevStages = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT |
+                                                 VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT |
+                                                 VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT;
+constexpr VkAccessFlags2 kMapPrevAccess = VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
 
 [[nodiscard]] std::expected<rhi::GpuBuffer, core::Error>
 mapped_buffer(rhi::GpuAllocator& allocator, VkDeviceSize size, VkBufferUsageFlags usage) {
@@ -47,12 +58,63 @@ mapped_buffer(rhi::GpuAllocator& allocator, VkDeviceSize size, VkBufferUsageFlag
 
 } // namespace
 
+std::expected<std::shared_ptr<CsmShared>, core::Error>
+CsmShared::create(const rhi::Device& device, rhi::GpuAllocator& allocator) {
+    // Hardware PCF bilinearly filters comparison results.
+    VkFormatProperties props{};
+    vkGetPhysicalDeviceFormatProperties(device.physical_device(), shadow_map_format, &props);
+    constexpr VkFormatFeatureFlags needed = VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT |
+                                            VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT |
+                                            VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT;
+    if ((props.optimalTilingFeatures & needed) != needed) {
+        return fail("shadow map: D16 depth lacks attachment / linear-filtered sampling");
+    }
+    auto out = std::make_shared<CsmShared>();
+    const VkDevice vk = device.handle();
+    // The cascaded map: a layered depth image, a 2D-array view for sampling
+    // and one single-layer view per cascade to render into (TRANSFER_SRC:
+    // tests and tools can read a cascade back).
+    auto image = allocator.create_image(
+        shadow_map_format, {shadow_map_size, shadow_map_size},
+        VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT |
+            VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
+        1, max_cascades);
+    if (!image) return std::unexpected(image.error());
+    out->map_ = std::move(*image);
+    auto array_view = rhi::create_image_view(vk, out->map_.handle(), shadow_map_format,
+                                             VK_IMAGE_ASPECT_DEPTH_BIT, 1,
+                                             VK_IMAGE_VIEW_TYPE_2D_ARRAY, 0, 0, max_cascades);
+    if (!array_view) return std::unexpected(array_view.error());
+    out->array_view_ = std::move(*array_view);
+    for (std::uint32_t c = 0; c < max_cascades; ++c) {
+        auto view = rhi::create_image_view(vk, out->map_.handle(), shadow_map_format,
+                                           VK_IMAGE_ASPECT_DEPTH_BIT, 1, VK_IMAGE_VIEW_TYPE_2D, 0,
+                                           c, 1);
+        if (!view) return std::unexpected(view.error());
+        out->layer_views_.push_back(std::move(*view));
+    }
+    auto state = mapped_buffer(allocator, kRangeStateBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+    if (!state) return std::unexpected(state.error());
+    out->range_state_ = std::move(*state);
+    std::memset(out->range_state_.mapped(), 0, kRangeStateBytes); // no history yet
+    if (auto f = out->range_state_.flush(); !f) return std::unexpected(f.error());
+    out->range_state_address_ = rhi::buffer_device_address(vk, out->range_state_);
+    return out;
+}
+
 std::expected<ShadowPass, core::Error>
 ShadowPass::create(const rhi::Device& device, rhi::GpuAllocator& allocator,
-                   rhi::PipelineCache& cache, const std::string& cooked_shader_dir) {
+                   rhi::PipelineCache& cache, const std::string& cooked_shader_dir,
+                   std::shared_ptr<CsmShared> shared) {
     ShadowPass out;
     out.device_ = &device;
     out.allocator_ = &allocator;
+    if (!shared) {
+        auto own = CsmShared::create(device, allocator);
+        if (!own) return std::unexpected(own.error());
+        shared = std::move(*own);
+    }
+    out.shared_ = std::move(shared);
 
     out.db_fns_ = rhi::DescriptorBufferFunctions::load(device.handle());
     if (!out.db_fns_.valid()) return fail("shadow pass: descriptor buffer functions unavailable");
@@ -91,7 +153,8 @@ ShadowPass::create(const rhi::Device& device, rhi::GpuAllocator& allocator,
     if (!setup) return std::unexpected(setup.error());
     auto bindings = rhi::reflected_bindings((*setup)->reflection, kSetupResources, kComputeStage);
     if (!bindings) return fail("shadow pass: " + bindings.error().message);
-    out.setup_slots_ = {(*bindings)[0].binding, (*bindings)[1].binding, (*bindings)[2].binding};
+    const auto& b = *bindings;
+    out.setup_slots_ = {b[0].binding, b[1].binding, b[2].binding, b[3].binding};
     auto layout = rhi::DescriptorSetLayout::create(device, out.db_fns_, *bindings);
     if (!layout) return std::unexpected(layout.error());
     out.setup_layout_ = std::move(*layout);
@@ -114,29 +177,6 @@ ShadowPass::create(const rhi::Device& device, rhi::GpuAllocator& allocator,
     out.cascades_address_ = rhi::buffer_device_address(vk, out.cascades_);
     std::memset(out.cascades_.mapped(), 0, kCascadeBytes);
 
-    // The cascaded map: a layered depth image, a 2D-array view for sampling
-    // and one single-layer view per cascade to render into (TRANSFER_SRC:
-    // tests and tools can read a cascade back).
-    auto image = allocator.create_image(
-        shadow_map_format, {shadow_map_size, shadow_map_size},
-        VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT |
-            VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
-        1,
-        max_cascades);
-    if (!image) return std::unexpected(image.error());
-    out.map_ = std::move(*image);
-    auto array_view = rhi::create_image_view(vk, out.map_.handle(), shadow_map_format,
-                                             VK_IMAGE_ASPECT_DEPTH_BIT, 1,
-                                             VK_IMAGE_VIEW_TYPE_2D_ARRAY, 0, 0, max_cascades);
-    if (!array_view) return std::unexpected(array_view.error());
-    out.array_view_ = std::move(*array_view);
-    for (std::uint32_t c = 0; c < max_cascades; ++c) {
-        auto view = rhi::create_image_view(vk, out.map_.handle(), shadow_map_format,
-                                           VK_IMAGE_ASPECT_DEPTH_BIT, 1, VK_IMAGE_VIEW_TYPE_2D, 0,
-                                           c, 1);
-        if (!view) return std::unexpected(view.error());
-        out.layer_views_.push_back(std::move(*view));
-    }
     return out;
 }
 
@@ -181,10 +221,13 @@ ShadowPass::add_to_graph(rhi::RenderGraph& graph, const CsmView& view,
     CascadedShadows out;
     out.cascades_address = cascades_address_;
     out.cascades = graph.import_buffer("csm_cascades", cascades_.handle(), kCascadeBytes);
+    // Shared by the frame slots: discard the old contents (UNDEFINED), but
+    // only after the previous frame's cascade writes and lighting reads.
+    // No final transition — the next frame discards whatever layout is left.
     out.shadow_map = graph.import_image(
-        "csm_shadow_map", map_.handle(), array_view_.handle(), shadow_map_format,
-        {shadow_map_size, shadow_map_size}, VK_IMAGE_LAYOUT_UNDEFINED,
-        VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+        "csm_shadow_map", shared_->map_.handle(), shared_->array_view_.handle(),
+        shadow_map_format, {shadow_map_size, shadow_map_size}, VK_IMAGE_LAYOUT_UNDEFINED,
+        VK_IMAGE_LAYOUT_UNDEFINED, kMapPrevStages, kMapPrevAccess);
 
     const bool gpu_fit = s.gpu_depth_bounds && hiz != nullptr && hiz->depth_bounds.valid();
     if (gpu_fit) {
@@ -206,11 +249,19 @@ ShadowPass::add_to_graph(rhi::RenderGraph& graph, const CsmView& view,
                 sizeof(CsmSetupParams));
             setup_descriptor_.write_storage_buffer(setup_slots_.cascades, cascades_address_,
                                                    kCascadeBytes);
+            setup_descriptor_.write_storage_buffer(setup_slots_.range_state,
+                                                   shared_->range_state_address_,
+                                                   kRangeStateBytes);
         }
         setup_descriptor_.write_storage_buffer(setup_slots_.bounds, hiz->depth_bounds_address,
                                                HiZPass::k_bounds_bytes);
+        // The hysteresis state carries over from the previous frame's fit.
+        const rhi::ResourceHandle state = graph.import_buffer(
+            "csm_range_state", shared_->range_state_.handle(), kRangeStateBytes,
+            VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT);
         (void)graph.add_pass("csm_setup", rhi::PassType::compute)
             .reads(hiz->depth_bounds, rhi::ResourceUsage::buffer_read_compute)
+            .writes(state, rhi::ResourceUsage::buffer_write_compute)
             .writes(out.cascades, rhi::ResourceUsage::buffer_write_compute)
             .execute([this](rhi::PassContext& ctx) {
                 const VkCommandBuffer cmd = ctx.cmd();
@@ -221,7 +272,7 @@ ShadowPass::add_to_graph(rhi::RenderGraph& graph, const CsmView& view,
             });
     } else {
         // CPU fallback: the reference fit over camera near .. max_distance.
-        const glm::vec2 range = shadow_range(view.projection, s, false, 0.0F, 0.0F);
+        const glm::vec2 range = shadow_range(view.projection, s, false, 0.0F, 0.0F).range;
         const GpuCascades cpu = fit_cascades(view, s, range, shadow_map_size);
         std::memcpy(cascades_.mapped(), &cpu, sizeof(cpu));
         if (auto f = cascades_.flush(0, sizeof(cpu)); !f) return std::unexpected(f.error());
@@ -240,7 +291,7 @@ void ShadowPass::record_cascades(VkCommandBuffer cmd, std::uint32_t count) const
     for (std::uint32_t c = 0; c < count; ++c) {
         VkRenderingAttachmentInfo depth_attachment{};
         depth_attachment.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
-        depth_attachment.imageView = layer_views_[c].handle();
+        depth_attachment.imageView = shared_->layer_views_[c].handle();
         depth_attachment.imageLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL;
         depth_attachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
         depth_attachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;

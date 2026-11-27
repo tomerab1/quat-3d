@@ -16,13 +16,14 @@
 
 public static const uint CSM_MAX_CASCADES = 4;
 
-// Mirrors engine::renderer::GpuCascades (320 bytes).
+// Mirrors engine::renderer::GpuCascades (336 bytes).
 public struct CascadeData {
     public float4 view_proj[16]; // cascade c: columns [4c, 4c + 3]
     public float4 split_far;     // view distance where each cascade ends
     public float4 texel_world;   // world size of one shadow texel
     public float4 depth_range;   // world distance spanned by depth 0..1
     public float4 params;        // x count, y first split, z blend band, w fitted to bounds
+    public float4 limits;        // x shadow limit min(max distance, camera far)
 }
 
 public float4 csm_mul(CascadeData d, uint c, float4 v) {
@@ -51,6 +52,25 @@ public float csm_quantize(float v, int bits, bool up) {
     }
     float units = v * octave_step_rcp(v, bits);
     return (up ? ceil(units) : floor(units)) * octave_step(v, bits);
+}
+
+// Hysteresis on the quantised fitted range (csm.cpp stabilized_range): grow
+// at once, move inward only past a quarter step beyond the kept step.
+// `prev` = (lo, hi, valid, unused).
+public float2 csm_stabilized_range(float raw_lo, float raw_hi, float4 prev) {
+    float lo = csm_quantize(raw_lo, 3, false);
+    float hi = csm_quantize(raw_hi, 3, true);
+    if (prev.z > 0.5) {
+        if (prev.x > 0.0 && raw_lo >= prev.x &&
+            raw_lo <= prev.x + 1.25 * octave_step(prev.x, 3)) {
+            lo = prev.x;
+        }
+        if (prev.y > 0.0 && raw_hi <= prev.y &&
+            raw_hi >= prev.y - 1.25 * octave_step(prev.y, 3)) {
+            hi = prev.y;
+        }
+    }
+    return float2(lo, hi);
 }
 
 public float4 mul_cols(float4 cols[4], float4 v) {
@@ -201,8 +221,10 @@ float sample_cascade(CascadeData d, uint c, Texture2DArray map, SamplerCompariso
 
     float radius = f.pcf_radius;
     if (f.light_tan > 0.0) {
-        // Blocker search over the widest penumbra this cascade allows.
-        float search = CSM_MAX_FILTER_TEXELS * 0.5;
+        // Blocker search over the widest penumbra a blocker between the
+        // light-side end of the cascade and this receiver could cast.
+        float search = clamp(f.light_tan * z * d.depth_range[c] / texel, f.pcf_radius,
+                             CSM_MAX_FILTER_TEXELS);
         float blocker_sum = 0.0;
         float blockers = 0.0;
         for (uint k = 0; k < CSM_BLOCKER_TAPS; ++k) {
@@ -253,12 +275,16 @@ public float csm_visibility(CascadeData d, Texture2DArray map, SamplerComparison
     float band_start = d.split_far[c] - d.params.z * (d.split_far[c] - start);
     if (view_dist > band_start) {
         float t = saturate((view_dist - band_start) / max(d.split_far[c] - band_start, 1e-4));
-        // The last cascade fades out to unshadowed instead of into a next one.
-        float next = c + 1 < count
-                         ? sample_cascade(d, c + 1, map, cmp, point, world_pos, normal, to_light,
-                                          f, noise)
-                         : 1.0;
-        vis = lerp(vis, next, t);
+        if (c + 1 < count) {
+            vis = lerp(vis, sample_cascade(d, c + 1, map, cmp, point, world_pos, normal,
+                                           to_light, f, noise),
+                       t);
+        } else if (d.split_far[c] >= d.limits.x * 0.999) {
+            // The last cascade fades out only at the real shadow limit; a
+            // depth-fitted range ends at the farthest geometry, which keeps
+            // its shadow.
+            vis = lerp(vis, 1.0, t);
+        }
     }
     return vis;
 }

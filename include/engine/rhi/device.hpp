@@ -81,6 +81,23 @@ public:
     [[nodiscard]] std::expected<void, core::Error>
     check_storage_image_formats(std::span<const VkFormat> formats, std::string_view what) const;
 
+    // Whether shaderStorageImageExtendedFormats is enabled (it is whenever the
+    // device offers it): storage images in the extended formats (RG32F, R8,
+    // ...) are only defined with it.
+    [[nodiscard]] bool storage_image_extended_formats() const {
+        return storage_image_extended_formats_ && !simulate_missing_extended_formats_;
+    }
+    // For passes whose shaders write storage images in extended `formats`:
+    // the feature above plus VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT for each.
+    // The error names `what` and the missing piece.
+    [[nodiscard]] std::expected<void, core::Error>
+    require_extended_storage_formats(std::span<const VkFormat> formats,
+                                     std::string_view what) const;
+    // Tests: behave as a device without the extended storage formats.
+    void simulate_missing_extended_storage_formats(bool missing) {
+        simulate_missing_extended_formats_ = missing;
+    }
+
 private:
     void destroy() noexcept;
 
@@ -96,6 +113,8 @@ private:
     VkPhysicalDeviceDescriptorBufferPropertiesEXT descriptor_buffer_props_{};
     float                    max_sampler_anisotropy_ = 0.0F;
     DescriptorBackend        descriptor_backend_ = DescriptorBackend::ext_descriptor_buffer;
+    bool                     storage_image_extended_formats_ = false;
+    bool                     simulate_missing_extended_formats_ = false;
 };
 
 } // namespace engine::rhi

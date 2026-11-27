@@ -2,10 +2,12 @@
 //
 // One workgroup of four threads, one per cascade: reads this frame's
 // geometry depth bounds (hiz_build.slang), turns them into the shadowed
-// view-distance range (quantised for stability, clamped to camera near ..
-// max distance) and fits each cascade exactly as engine/renderer/csm.cpp
-// does, writing the CascadeData the shadow and lighting passes read. No CPU
-// read-back: the cascades follow the depth buffer within the same frame.
+// view-distance range (quantised, with hysteresis against the range the
+// previous frame kept — g_range_state, shared by every frame slot — and
+// clamped to camera near .. max distance) and fits each cascade exactly as
+// engine/renderer/csm.cpp does, writing the CascadeData the shadow and
+// lighting passes read. No CPU read-back: the cascades follow the depth
+// buffer within the same frame.
 
 import csm;
 
@@ -21,6 +23,7 @@ struct CsmSetupParams {
 ConstantBuffer<CsmSetupParams>   g_params;
 StructuredBuffer<uint>           g_bounds; // depth min / max bits (hiz_build.slang)
 RWStructuredBuffer<CascadeData>  g_cascades;
+RWStructuredBuffer<float4>       g_range_state; // [0] = kept lo, hi, valid (csm.hpp CsmRangeState)
 
 groupshared float gs_texel[CSM_MAX_CASCADES];
 groupshared float gs_depth[CSM_MAX_CASCADES];
@@ -41,14 +44,17 @@ void compute_main(uint3 tid : SV_DispatchThreadID) {
     float lo = cam_near;
     float hi = full_far;
     bool fitted = false;
+    float4 kept = float4(0.0, 0.0, 0.0, 0.0);
     if (g_params.fit.z > 0.5) {
         uint min_bits = g_bounds[0];
         uint max_bits = g_bounds[1];
         if (min_bits <= max_bits) {
-            float tight_lo = max(cam_near, csm_quantize(
-                csm_view_distance(g_params.inv_proj, asfloat(min_bits)), 3, false));
-            float tight_hi = min(full_far, csm_quantize(
-                csm_view_distance(g_params.inv_proj, asfloat(max_bits)), 3, true));
+            float2 q = csm_stabilized_range(
+                csm_view_distance(g_params.inv_proj, asfloat(min_bits)),
+                csm_view_distance(g_params.inv_proj, asfloat(max_bits)), g_range_state[0]);
+            kept = float4(q, 1.0, 0.0);
+            float tight_lo = max(cam_near, q.x);
+            float tight_hi = min(full_far, q.y);
             if (tight_hi > tight_lo) {
                 lo = tight_lo;
                 hi = tight_hi;
@@ -78,5 +84,7 @@ void compute_main(uint3 tid : SV_DispatchThreadID) {
         g_cascades[0].texel_world = float4(gs_texel[0], gs_texel[1], gs_texel[2], gs_texel[3]);
         g_cascades[0].depth_range = float4(gs_depth[0], gs_depth[1], gs_depth[2], gs_depth[3]);
         g_cascades[0].params = float4(float(count), lo, band, fitted ? 1.0 : 0.0);
+        g_cascades[0].limits = float4(full_far, 0.0, 0.0, 0.0);
+        g_range_state[0] = kept; // every thread has read it before the barrier
     }
 }

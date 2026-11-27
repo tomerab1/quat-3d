@@ -151,23 +151,46 @@ std::array<float, max_cascades + 1> cascade_splits(float near_dist, float far_di
 float quantize_down(float v) { return quantize(v, kRangeBits, /*up=*/false); }
 float quantize_up(float v) { return quantize(v, kRangeBits, /*up=*/true); }
 
-glm::vec2 shadow_range(const glm::mat4& projection, const CsmSettings& settings,
-                       bool bounds_valid, float depth_min, float depth_max) {
-    const CsmSettings s = settings.sanitized();
-    const float cam_near = view_distance_at_depth(projection, 0.0F);
-    const float cam_far = view_distance_at_depth(projection, 1.0F);
-    const float full_far = std::min(s.max_distance, cam_far);
-    float lo = cam_near;
-    float hi = full_far;
-    if (s.gpu_depth_bounds && bounds_valid && depth_min <= depth_max) {
-        lo = std::max(cam_near, quantize_down(view_distance_at_depth(projection, depth_min)));
-        hi = std::min(full_far, quantize_up(view_distance_at_depth(projection, depth_max)));
-        if (!(hi > lo)) {
-            lo = cam_near;
-            hi = full_far;
+glm::vec2 stabilized_range(float raw_lo, float raw_hi, const CsmRangeState& prev) {
+    float lo = quantize_down(raw_lo);
+    float hi = quantize_up(raw_hi);
+    if (prev.valid) {
+        // Keep the old step while the raw value is still covered by it and
+        // has not moved inward past it by more than a quarter step.
+        if (prev.lo > 0.0F && raw_lo >= prev.lo &&
+            raw_lo <= prev.lo + 1.25F * octave_step(prev.lo, kRangeBits)) {
+            lo = prev.lo;
+        }
+        if (prev.hi > 0.0F && raw_hi <= prev.hi &&
+            raw_hi >= prev.hi - 1.25F * octave_step(prev.hi, kRangeBits)) {
+            hi = prev.hi;
         }
     }
     return {lo, hi};
+}
+
+ShadowRange shadow_range(const glm::mat4& projection, const CsmSettings& settings,
+                         bool bounds_valid, float depth_min, float depth_max,
+                         const CsmRangeState& prev) {
+    const CsmSettings s = settings.sanitized();
+    const float cam_near = view_distance_at_depth(projection, 0.0F);
+    const float cam_far = view_distance_at_depth(projection, 1.0F);
+    ShadowRange out;
+    out.full_far = std::min(s.max_distance, cam_far);
+    out.range = {cam_near, out.full_far};
+    if (s.gpu_depth_bounds && bounds_valid && depth_min <= depth_max) {
+        const glm::vec2 q =
+            stabilized_range(view_distance_at_depth(projection, depth_min),
+                             view_distance_at_depth(projection, depth_max), prev);
+        out.state = {q.x, q.y, true};
+        const float lo = std::max(cam_near, q.x);
+        const float hi = std::min(out.full_far, q.y);
+        if (hi > lo) {
+            out.range = {lo, hi};
+            out.fitted = true;
+        }
+    }
+    return out;
 }
 
 GpuCascades fit_cascades(const CsmView& view, const CsmSettings& settings, glm::vec2 range,
@@ -191,6 +214,9 @@ GpuCascades fit_cascades(const CsmView& view, const CsmSettings& settings, glm::
         out.depth_range[static_cast<int>(i)] = slice.depth_range;
     }
     out.params = glm::vec4(static_cast<float>(s.cascade_count), range.x, s.blend_band, 0.0F);
+    out.limits = glm::vec4(
+        std::min(s.max_distance, view_distance_at_depth(view.projection, 1.0F)), 0.0F, 0.0F,
+        0.0F);
     return out;
 }
 

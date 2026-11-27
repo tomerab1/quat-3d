@@ -328,10 +328,12 @@ bool FrameRenderer::record(const FrameInputs& in) {
     // sun's cascades fitted to its depth bounds and rendered.
     const engine::renderer::CsmSettings csm = current_csm();
     engine::renderer::HiZTargets hiz{};
-    if (auto h = fr.hiz.add_to_graph(graph, gbuffer->depth, draw_extent)) {
-        hiz = *h;
-    } else {
-        std::fprintf(stderr, "[warn] hi-z pass: %s\n", h.error().message.c_str());
+    if (fr.hiz.valid()) {
+        if (auto h = fr.hiz.add_to_graph(graph, gbuffer->depth, draw_extent)) {
+            hiz = *h;
+        } else {
+            std::fprintf(stderr, "[warn] hi-z pass: %s\n", h.error().message.c_str());
+        }
     }
     std::vector<engine::renderer::ShadowCasterFn> extra_casters;
     if (in.terrain != nullptr && csm.enabled) {
@@ -350,7 +352,7 @@ bool FrameRenderer::record(const FrameInputs& in) {
     occlusion.shadows = *shadows;
     occlusion.csm = csm;
     occlusion.gtao = current_gtao();
-    if (hiz.valid()) {
+    if (hiz.valid() && fr.gtao.valid()) {
         if (auto ao = fr.gtao.add_to_graph(graph, hiz, gbuffer->normal, draw_extent, cam.view,
                                            cam.projection, occlusion.gtao,
                                            static_cast<std::uint32_t>(fs.frame_number))) {

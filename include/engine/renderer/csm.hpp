@@ -40,7 +40,7 @@ struct CsmView {
 };
 
 // The cascade set as the GPU reads it; mirrors CascadeData in
-// lib/csm.slang (scalar layout, 320 bytes).
+// lib/csm.slang (scalar layout, 336 bytes).
 struct GpuCascades {
     std::array<glm::mat4, max_cascades> view_proj{}; // world -> cascade clip
     glm::vec4 split_far{0.0F};   // view distance where each cascade ends
@@ -50,8 +50,29 @@ struct GpuCascades {
     // z = blend band, w = 1 when the GPU fitted it to this frame's depth
     // bounds (0 from fit_cascades)
     glm::vec4 params{0.0F};
+    // x = the real shadow limit min(max_distance, camera far): the last
+    // cascade fades out only when it reaches it (a depth-fitted range that
+    // ends earlier ends at the farthest geometry, which must stay shadowed).
+    glm::vec4 limits{0.0F};
 };
-static_assert(sizeof(GpuCascades) == 320, "must match lib/csm.slang CascadeData");
+static_assert(sizeof(GpuCascades) == 336, "must match lib/csm.slang CascadeData");
+
+// The depth-fitted range a frame kept, fed back into the next frame's fit for
+// hysteresis; mirrors the state buffer csm_setup.slang reads and writes
+// (x = lo, y = hi, z = 1 when valid).
+struct CsmRangeState {
+    float lo = 0.0F;
+    float hi = 0.0F;
+    bool  valid = false;
+};
+
+// A frame's shadowed view-distance range.
+struct ShadowRange {
+    glm::vec2     range{0.0F};   // [near, far] the cascades cover
+    float         full_far = 0.0F; // min(max_distance, camera far)
+    bool          fitted = false;  // range came from the depth bounds
+    CsmRangeState state;           // what to feed the next frame
+};
 
 // View distance (positive, along -Z of view space) of NDC depth `depth`.
 [[nodiscard]] float view_distance_at_depth(const glm::mat4& projection, float depth);
@@ -64,11 +85,21 @@ cascade_splits(float near_dist, float far_dist, std::uint32_t count, float lambd
 [[nodiscard]] float quantize_down(float v);
 [[nodiscard]] float quantize_up(float v);
 
+// The quantised fitted range [lo, hi] for raw geometry view distances, with
+// hysteresis against the previous frame's `prev`: the range grows at once
+// (it always covers [raw_lo, raw_hi]) but only moves inward when the raw
+// value has left the kept step by more than a quarter step, so depth bounds
+// jittering across a quantisation boundary (TAA) do not flip the cascades
+// between two sizes every frame.
+[[nodiscard]] glm::vec2 stabilized_range(float raw_lo, float raw_hi, const CsmRangeState& prev);
+
 // The shadowed view-distance range for a frame: with valid depth bounds
-// (geometry depth min <= max, NDC) the quantised geometry range, otherwise
-// camera near .. max_distance. Always within [camera near, max_distance].
-[[nodiscard]] glm::vec2 shadow_range(const glm::mat4& projection, const CsmSettings& settings,
-                                     bool bounds_valid, float depth_min, float depth_max);
+// (geometry depth min <= max, NDC) the quantised, hysteresis-stabilised
+// geometry range, otherwise camera near .. max_distance. Always within
+// [camera near, max_distance].
+[[nodiscard]] ShadowRange shadow_range(const glm::mat4& projection, const CsmSettings& settings,
+                                       bool bounds_valid, float depth_min, float depth_max,
+                                       const CsmRangeState& prev = {});
 
 // Fits `settings.cascade_count` cascades over view distances
 // [range.x, range.y] for a `map_size`-texel square shadow map per cascade.

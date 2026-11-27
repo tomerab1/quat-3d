@@ -267,6 +267,8 @@ private:
     // before `frames_` so it outlives every pass that references it.
     std::shared_ptr<engine::renderer::TaaHistory>    taa_history_;
     std::shared_ptr<engine::renderer::ExposureState> exposure_state_;
+    // The cascaded shadow map + GPU fit state, shared by both slots (R12).
+    std::shared_ptr<engine::renderer::CsmShared>     csm_shared_;
     std::array<DeferredFrame, k_frames_in_flight>    frames_;
 
     std::optional<engine::renderer::AtmospherePass> atmosphere_;

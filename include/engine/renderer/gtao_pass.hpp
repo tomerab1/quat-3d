@@ -60,6 +60,9 @@ public:
     GtaoPass(const GtaoPass&) = delete;
     GtaoPass& operator=(const GtaoPass&) = delete;
 
+    // False when default-constructed (creation failed or was skipped).
+    [[nodiscard]] bool valid() const { return device_ != nullptr; }
+
     // Declares the GTAO main pass and its denoise passes. `view` and
     // `projection` are the camera's (unjittered; perspective only), `normal`
     // the GBuffer's octahedral normal target, `hiz` this frame's pyramid

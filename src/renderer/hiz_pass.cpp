@@ -57,6 +57,11 @@ std::expected<HiZPass, core::Error> HiZPass::create(const rhi::Device& device,
                                                     rhi::GpuAllocator& allocator,
                                                     rhi::PipelineCache& cache,
                                                     const std::string& cooked_shader_dir) {
+    // RG32F storage images need the extended storage formats (Device).
+    const std::array<VkFormat, 1> formats{hiz_format};
+    if (auto ok = device.require_extended_storage_formats(formats, "hi-z pass"); !ok) {
+        return std::unexpected(ok.error());
+    }
     HiZPass out;
     out.device_ = &device;
     out.allocator_ = &allocator;

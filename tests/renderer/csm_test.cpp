@@ -5,6 +5,7 @@
 #include <array>
 #include <cmath>
 #include <cstdint>
+#include <vector>
 
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
@@ -103,7 +104,7 @@ TEST(CsmRange, DepthBoundsTightenTheRange) {
     const glm::mat4 proj = projection();
     r::CsmSettings s;
     s.max_distance = 150.0F;
-    const glm::vec2 fixed = r::shadow_range(proj, s, false, 0.0F, 0.0F);
+    const glm::vec2 fixed = r::shadow_range(proj, s, false, 0.0F, 0.0F).range;
     EXPECT_NEAR(fixed.x, 0.1F, 1e-4F);
     EXPECT_NEAR(fixed.y, 150.0F, 1e-3F);
 
@@ -112,17 +113,18 @@ TEST(CsmRange, DepthBoundsTightenTheRange) {
         const glm::vec4 c = proj * glm::vec4(0.0F, 0.0F, -dist, 1.0F);
         return c.z / c.w;
     };
-    const glm::vec2 tight = r::shadow_range(proj, s, true, depth_at(5.0F), depth_at(30.0F));
+    const glm::vec2 tight =
+        r::shadow_range(proj, s, true, depth_at(5.0F), depth_at(30.0F)).range;
     EXPECT_LE(tight.x, 5.0F);
     EXPECT_GE(tight.x, 4.0F);
     EXPECT_GE(tight.y, 30.0F);
     EXPECT_LE(tight.y, 32.0F);
 
     s.gpu_depth_bounds = false; // the CPU fallback ignores the bounds
-    EXPECT_EQ(r::shadow_range(proj, s, true, depth_at(5.0F), depth_at(30.0F)), fixed);
+    EXPECT_EQ(r::shadow_range(proj, s, true, depth_at(5.0F), depth_at(30.0F)).range, fixed);
     // Invalid bounds (no geometry: min > max) fall back to the full range.
     s.gpu_depth_bounds = true;
-    EXPECT_EQ(r::shadow_range(proj, s, true, 1.0F, 0.0F), fixed);
+    EXPECT_EQ(r::shadow_range(proj, s, true, 1.0F, 0.0F).range, fixed);
 }
 
 TEST(CsmFit, MatchesGlmOrthoTimesLookAt) {
@@ -154,8 +156,8 @@ TEST(CsmFit, EachSliceFitsInsideItsCascade) {
         EXPECT_FLOAT_EQ(cs.split_far[c], splits[static_cast<std::size_t>(c + 1)]);
         float start = splits[static_cast<std::size_t>(c)];
         if (c > 0) {
-            start -= s.blend_band *
-                     (splits[static_cast<std::size_t>(c)] - splits[static_cast<std::size_t>(c - 1)]);
+            const auto i = static_cast<std::size_t>(c);
+            start -= s.blend_band * (splits[i] - splits[i - 1]);
         }
         for (const glm::vec3& p :
              slice_corners(v, start, splits[static_cast<std::size_t>(c + 1)])) {
@@ -230,7 +232,7 @@ TEST(CsmCulling, CasterVolumeHoldsEveryCascade) {
     const r::CsmView v = make_view(glm::vec3(0.0F, 3.0F, 0.0F), glm::vec3(0.3F, -0.2F, -1.0F));
     r::CsmSettings s;
     const glm::mat4 cull = r::caster_cull_view_proj(v, s, k_map);
-    const glm::vec2 range = r::shadow_range(v.projection, s, false, 0.0F, 0.0F);
+    const glm::vec2 range = r::shadow_range(v.projection, s, false, 0.0F, 0.0F).range;
     for (const glm::vec3& p : slice_corners(v, range.x, range.y)) {
         for (float lift : {0.0F, 50.0F, 150.0F}) {
             const glm::vec4 clip = cull * glm::vec4(p + v.to_light * lift, 1.0F);
@@ -240,4 +242,56 @@ TEST(CsmCulling, CasterVolumeHoldsEveryCascade) {
             EXPECT_LE(clip.z, 1.0F);
         }
     }
+}
+
+// Depth bounds jittering across a quantisation boundary (TAA) do not flip the
+// fitted range between steps; the range grows at once (it always covers the
+// raw bounds) and shrinks only once the raw value is a quarter step past.
+TEST(CsmRange, HysteresisKeepsTheStepUnderJitter) {
+    r::CsmRangeState state;
+    // Far bound oscillating around 32 (steps: 2 below 32, 4 above).
+    const float his[] = {31.9F, 32.1F, 31.8F, 32.2F, 31.95F, 32.05F};
+    std::vector<float> kept;
+    for (float raw_hi : his) {
+        const glm::vec2 q = r::stabilized_range(10.0F, raw_hi, state);
+        EXPECT_GE(q.y, raw_hi);
+        EXPECT_LE(q.x, 10.0F);
+        state = {q.x, q.y, true};
+        kept.push_back(q.y);
+    }
+    EXPECT_FLOAT_EQ(kept[0], 32.0F);
+    for (std::size_t i = 1; i < kept.size(); ++i) EXPECT_FLOAT_EQ(kept[i], 36.0F) << i;
+
+    // Moving inward by more than a quarter step below the kept step shrinks it.
+    const glm::vec2 shrunk = r::stabilized_range(10.0F, 30.5F, state);
+    EXPECT_FLOAT_EQ(shrunk.y, 32.0F);
+    // A small inward move does not.
+    EXPECT_FLOAT_EQ(r::stabilized_range(10.0F, 31.5F, state).y, 36.0F);
+
+    // Near bound: same rules mirrored (grows outward at once, inward lazily).
+    r::CsmRangeState near_state{10.0F, 40.0F, true};
+    EXPECT_FLOAT_EQ(r::stabilized_range(9.9F, 39.0F, near_state).x, 9.0F); // closer: at once
+    EXPECT_FLOAT_EQ(r::stabilized_range(10.9F, 39.0F, near_state).x, 10.0F); // kept
+    EXPECT_FLOAT_EQ(r::stabilized_range(11.4F, 39.0F, near_state).x, 11.0F); // > 1.25 steps
+    // Without history the plain quantisation applies.
+    EXPECT_FLOAT_EQ(r::stabilized_range(10.9F, 31.9F, {}).x, 10.0F);
+    EXPECT_FLOAT_EQ(r::stabilized_range(10.9F, 31.9F, {}).y, 32.0F);
+}
+
+TEST(CsmRange, FittedRangeReportsTheShadowLimit) {
+    const glm::mat4 proj = projection();
+    r::CsmSettings s;
+    s.max_distance = 150.0F;
+    const auto depth_at = [&](float dist) {
+        const glm::vec4 c = proj * glm::vec4(0.0F, 0.0F, -dist, 1.0F);
+        return c.z / c.w;
+    };
+    const r::ShadowRange fit = r::shadow_range(proj, s, true, depth_at(5.0F), depth_at(19.5F));
+    EXPECT_TRUE(fit.fitted);
+    EXPECT_NEAR(fit.full_far, 150.0F, 1e-2F);
+    EXPECT_LT(fit.range.y, fit.full_far);
+    EXPECT_TRUE(fit.state.valid);
+    const r::GpuCascades cs = r::fit_cascades(make_view(glm::vec3(0.0F), glm::vec3(0, 0, -1)), s,
+                                              fit.range, k_map);
+    EXPECT_NEAR(cs.limits.x, 150.0F, 1e-2F);
 }
