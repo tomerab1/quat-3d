@@ -10,8 +10,9 @@
 // look tuning (ROADMAP A8): render.settings.get / set / reset / schema,
 // material.get / set — behaviour-tree authoring (ROADMAP A7): bt.leaves,
 // bt.get, bt.set, bt.add_node, bt.remove_node, bt.move_node, bt.set_params,
-// bt.status — and the gameplay script files (ROADMAP G7): script.list / get /
-// create / update / delete / check. The method contract is
+// bt.status — the gameplay script files (ROADMAP G7): script.list / get /
+// create / update / delete / check — and profiling (ROADMAP R4):
+// profile.frame / capture / result / counters / reset. The method contract is
 // docs/remote-control.md.
 //
 // Scene editing works on any Scene. Everything that only the running
@@ -39,6 +40,7 @@
 #include "engine/remote/rpc_server.hpp"
 
 namespace engine::core {
+class FrameProfiler;
 class LogRing;
 class SimClock;
 } // namespace engine::core
@@ -115,6 +117,18 @@ struct ScreenshotRequest {
     std::optional<CameraPose> camera;
 };
 
+// One GPU memory heap for profile.counters (bytes; see rhi::GpuHeapStats).
+struct GpuMemoryHeap {
+    std::uint32_t heap = 0;
+    bool          device_local = false;
+    std::uint64_t size = 0;
+    std::uint64_t budget = 0;
+    std::uint64_t usage = 0;
+    std::uint64_t allocated = 0; // memory blocks the engine's allocator holds
+    std::uint64_t used = 0;      // of which bound to resources
+    std::uint32_t allocations = 0;
+};
+
 struct WorldServices {
     // Project root that scene.save/load, asset.list_models and
     // asset.spawn_model paths are confined to.
@@ -186,6 +200,14 @@ struct WorldServices {
     // hot-reload files they write. Without it the file commands still work
     // (on <project_root>/assets/scripts).
     std::function<script::ScriptRuntime*()> scripts;
+
+    // ---- Profiling (ROADMAP R4) -------------------------------------------------
+
+    // The frame profiler (non-owning; normally core::profiler()): profile.*
+    // read its statistics and run captures on it. Null: unavailable.
+    core::FrameProfiler* profiler = nullptr;
+    // Per-heap GPU memory for profile.counters (empty: reported as null).
+    std::function<std::vector<GpuMemoryHeap>()> gpu_memory;
 };
 
 // Registers every world command on `server`. `scene` must outlive the server's

@@ -24,6 +24,7 @@
 #include "app/nav_bake.hpp"
 #include "engine/asset/asset_manager.hpp"
 #include "engine/core/log.hpp"
+#include "engine/core/profile.hpp"
 #include "engine/core/sim_clock.hpp"
 #include "engine/nav/navmesh.hpp"
 #include "engine/physics/physics_world.hpp"
@@ -229,6 +230,25 @@ struct RemoteBridge::Impl {
         return fs;
     }
 
+    // GPU memory per heap (profile.counters).
+    [[nodiscard]] std::vector<remote::GpuMemoryHeap> gpu_memory() const {
+        std::vector<engine::rhi::GpuHeapStats> stats;
+        t.allocator->heap_stats(stats);
+        std::vector<remote::GpuMemoryHeap> heaps;
+        heaps.reserve(stats.size());
+        for (const engine::rhi::GpuHeapStats& h : stats) {
+            heaps.push_back({.heap = h.heap,
+                             .device_local = h.device_local,
+                             .size = h.size,
+                             .budget = h.budget,
+                             .usage = h.usage,
+                             .allocated = h.block_bytes,
+                             .used = h.allocation_bytes,
+                             .allocations = h.allocations});
+        }
+        return heaps;
+    }
+
     [[nodiscard]] const engine::physics::PhysicsWorld* physics_world() const {
         for (const auto* w : {t.demo_physics, t.play_physics}) {
             if (w != nullptr && w->has_value()) return &**w;
@@ -289,6 +309,8 @@ struct RemoteBridge::Impl {
         s.frame_stats = [this] { return frame_stats(); };
         s.physics_world = [this] { return physics_world(); };
         if (t.scripts != nullptr) s.scripts = [this] { return t.scripts; };
+        s.profiler = &engine::core::profiler();
+        s.gpu_memory = [this] { return gpu_memory(); };
         return s;
     }
 
@@ -438,6 +460,7 @@ RemoteBridge& RemoteBridge::operator=(RemoteBridge&&) noexcept = default;
 RemoteBridge::~RemoteBridge() = default;
 
 void RemoteBridge::poll() {
+    QUAT_ZONE_N("remote_poll");
     impl_->finish_steps(); // steps run last frame: reply before new requests
     if (impl_->server) impl_->server->poll();
     impl_->resolve_primitives();

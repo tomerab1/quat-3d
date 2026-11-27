@@ -517,6 +517,7 @@ add_library(engine_remote_world STATIC
     src/remote/world/behavior_commands.cpp
     src/remote/world/behavior_edit_commands.cpp
     src/remote/world/script_commands.cpp
+    src/remote/world/profile_commands.cpp
     src/remote/world/image_encode.cpp
     src/remote/world/stb_image_write_impl.cpp)
 target_link_libraries(engine_remote_world PUBLIC
