@@ -35,6 +35,15 @@ pub struct DebugSessionArgs {
     pub entity: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct WriteMaterialShaderArgs {
+    /// The look to create, e.g. "glowing lava with slowly flowing cracks" or "brushed metal".
+    pub goal: String,
+    /// An entity (id or name) to put the material on, if any.
+    #[serde(default)]
+    pub entity: Option<String>,
+}
+
 /// `Some(trimmed)` for non-blank text.
 fn non_blank(text: Option<String>) -> Option<String> {
     text.map(|t| t.trim().to_owned()).filter(|t| !t.is_empty())
@@ -92,6 +101,22 @@ impl QuatServer {
             "debug_session",
             DebugSessionArgs {
                 problem: non_blank(problem),
+                entity: non_blank(entity),
+            },
+        )
+    }
+
+    /// Write a material shader (a Slang module the engine compiles and hot-swaps) for a look, put it on an entity, and iterate from compiler errors and screenshots.
+    #[prompt]
+    async fn write_material_shader(
+        &self,
+        args: Parameters<WriteMaterialShaderArgs>,
+    ) -> Result<Vec<PromptMessage>, ErrorData> {
+        let WriteMaterialShaderArgs { goal, entity } = args.0;
+        user_prompt(
+            "write_material_shader",
+            WriteMaterialShaderArgs {
+                goal: goal.trim().to_owned(),
                 entity: non_blank(entity),
             },
         )

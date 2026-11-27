@@ -6,6 +6,7 @@ mod debug_tools;
 mod prompts;
 mod results;
 mod scene_tools;
+mod shader_tools;
 mod sim_tools;
 mod world_tools;
 
@@ -26,7 +27,7 @@ use serde_json::{Value, json};
 use crate::client::{EngineClient, EngineError};
 use crate::content;
 
-pub use prompts::{BuildWorldArgs, DebugSessionArgs, InspectSceneArgs};
+pub use prompts::{BuildWorldArgs, DebugSessionArgs, InspectSceneArgs, WriteMaterialShaderArgs};
 pub use results::{error_result, normalize_method};
 pub use world_tools::MAX_GROUND_POINTS;
 
@@ -65,7 +66,11 @@ impl QuatServer {
     /// Every tool this server offers, across all tool groups.
     #[must_use]
     pub fn tools() -> ToolRouter<Self> {
-        Self::scene_tools() + Self::world_tools() + Self::sim_tools() + Self::debug_tools()
+        Self::scene_tools()
+            + Self::world_tools()
+            + Self::sim_tools()
+            + Self::debug_tools()
+            + Self::shader_tools()
     }
 
     /// Timeout for slow engine work (loading, baking, screenshots).

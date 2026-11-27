@@ -121,6 +121,11 @@ command ends in `quat-mcp.exe`.
 | `debug_watch` | `debug.watch` | Live component snapshot of up to 64 entities (+ nav agent state) |
 | `debug_raycast` | `debug.raycast` | Physics ray: hit entity, point, normal (play mode) |
 | `debug_nav_path` | `debug.nav_path` | Navmesh path between two points, partial or not |
+| `shader_list` | `shader.list` | Material shaders (built-in + authored) and their compile state |
+| `shader_get` | `shader.get` | One material shader's source, state and last diagnostics |
+| `shader_template` | `shader.template` | The starter material shader module |
+| `shader_create` / `shader_update` | `shader.create` / `shader.update` | Write + compile a material shader; errors as `file:line:column` with a caret; a failed update keeps the old version |
+| `shader_delete` | `shader.delete` | Delete a material shader; entities using it fall back to the built-in |
 
 Tool descriptions spell out units and conventions (metres, Y up, Euler degrees
 in YXZ order, `"#rrggbb"` sRGB colours for primitives and linear `[r,g,b]` for
@@ -132,8 +137,10 @@ short hint, so the model can correct itself.
 
 **Prompts** — `build_world` (inspect → plan → build with `scene_batch` →
 screenshot → iterate), `inspect_scene` (survey and review the current
-scene) and `debug_session` (diagnose a problem: stats → logs → watch →
-pause / step → raycast / nav path → conclude). In Claude Code they appear as `/mcp__quat-3d__build_world`.
+scene), `debug_session` (diagnose a problem: stats → logs → watch →
+pause / step → raycast / nav path → conclude) and `write_material_shader`
+(template → write → `shader_create` → fix from the diagnostics → assign to an
+entity → screenshot → iterate). In Claude Code they appear as `/mcp__quat-3d__build_world`.
 
 **Resource** — `quat://scene/summary`: engine info, the first 500 entities,
 the environment and the camera as JSON.
@@ -171,8 +178,8 @@ Layout:
 |---|---|
 | `content/` | **Everything the model reads**, as Markdown: server instructions, one file per tool description, the component reference, prompt templates ([MiniJinja](https://docs.rs/minijinja)). See `content/README.md`. |
 | `src/client/` | Engine JSON-RPC client: `mod.rs` (calls, reconnects, handshake), `connection.rs` (socket, reader task, in-flight calls), `error.rs` (error codes, `EngineError`) |
-| `src/server/` | MCP server: `mod.rs` (handler, resource), tools grouped by area (`scene_tools.rs`, `world_tools.rs`, `sim_tools.rs`, each its own rmcp router), `prompts.rs`, `results.rs` |
-| `src/params.rs` | Typed tool inputs — their doc comments are the JSON schemas the model reads |
+| `src/server/` | MCP server: `mod.rs` (handler, resource), tools grouped by area (`scene_tools.rs`, `world_tools.rs`, `sim_tools.rs`, `debug_tools.rs`, `shader_tools.rs`, each its own rmcp router), `prompts.rs`, `results.rs` |
+| `src/params.rs`, `src/params/` | Typed tool inputs — their doc comments are the JSON schemas the model reads |
 | `src/content.rs` | Embeds `content/` and renders prompt templates |
 | `src/config.rs` | Flags / environment |
 
