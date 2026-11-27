@@ -351,6 +351,7 @@ bool Application::run_frame() {
     frame_inputs.draw_extent = draw_extent;
     frame_inputs.dt = dt;
     frame_inputs.grass = world_.grass();
+    frame_inputs.particles = world_.particles();
     frame_inputs.sim_dt = sim_dt;
     if (world_.terrain_drawable()) {
         frame_inputs.terrain = &world_.terrain_pass();

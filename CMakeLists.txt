@@ -286,6 +286,7 @@ add_library(engine_scene STATIC
     src/scene/bt_graph_edit.cpp
     src/scene/scene_io.cpp
     src/scene/component_json.cpp
+    src/scene/particle_json.cpp
     src/scene/component_json_animation.cpp
     src/scene/material_override.cpp
     src/scene/render_settings_json.cpp
@@ -475,6 +476,11 @@ add_library(engine_renderer STATIC
     src/renderer/lighting_pass.cpp
     src/renderer/light_clusters.cpp
     src/renderer/light_cull_pass.cpp
+    src/renderer/particles.cpp
+    src/renderer/particle_emitters.cpp
+    src/renderer/particle_pass.cpp
+    src/renderer/particle_sort.cpp
+    src/renderer/particle_draw.cpp
     src/renderer/tonemap_pass.cpp
     src/renderer/skinning_pass.cpp
     src/renderer/shadow_pass.cpp
@@ -524,6 +530,7 @@ if(ENGINE_EDITOR)
         src/editor/audio_inspector.cpp
         src/editor/animation_inspector.cpp
         src/editor/grass_inspector.cpp
+        src/editor/particle_inspector.cpp
         src/editor/behavior_panel.cpp
         src/editor/behavior_canvas.cpp
         src/editor/vendor/imgui_impl_sdl3.cpp)
@@ -559,6 +566,7 @@ add_library(game_world STATIC
     src/app/demo_scenes.cpp
     src/app/audio_runtime.cpp
     src/app/grass_runtime.cpp
+    src/app/particle_runtime.cpp
     src/app/nav_bake.cpp)
 target_link_libraries(game_world PUBLIC
     engine_flags engine_core engine_rhi engine_asset engine_scene engine_renderer engine_physics

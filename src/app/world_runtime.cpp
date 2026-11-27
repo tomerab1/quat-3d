@@ -126,6 +126,8 @@ void WorldRuntime::init(const engine::rhi::Device& device, engine::rhi::GpuAlloc
     }
     grass_.emplace(device, allocator, pipeline_cache, terrain_transfer_, shader_dir,
                    k_frames_in_flight);
+    particles_.emplace(device, allocator, pipeline_cache, terrain_transfer_, shader_dir,
+                       QUAT_PROJECT_ROOT, k_frames_in_flight);
 
     net_ = engine::net::NetSession::from_environment(scene.registry());
 

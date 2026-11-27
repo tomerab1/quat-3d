@@ -110,6 +110,9 @@ void EditorBridge::apply_play_transition() {
     if (play_ == play_prev_) return;
     if (play_) {
         play_snapshot_ = engine::editor::capture_scene(scene);
+        // Emitters start over in play (one-shot bursts fire again), as
+        // audio sources do (the snapshot clears their runtime state).
+        t_.world->reset_particles();
         // Unity convention: a Collider without a RigidBody simulates as
         // a static body (kinematic on nav agents, none on characters).
         // Added AFTER the snapshot, so Stop removes it.
@@ -129,6 +132,7 @@ void EditorBridge::apply_play_transition() {
             engine::editor::restore_scene(scene, *play_snapshot_);
             play_snapshot_.reset();
         }
+        t_.world->reset_particles(); // play's particles vanish with play's scene
         std::fprintf(stderr, "[editor] stop\n");
     }
     play_prev_ = play_;

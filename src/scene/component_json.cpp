@@ -21,6 +21,7 @@
 #include "engine/physics/physics_world.hpp"
 #include "engine/scene/components.hpp"
 #include "engine/scene/material_override.hpp"
+#include "component_json_internal.hpp"
 
 #include "component_json_animation.hpp"
 
@@ -49,6 +50,7 @@ constexpr std::array k_components = {
     ComponentInfo{"patrol", "Patrol route the nav agent walks", true, true},
     ComponentInfo{"terrain", "Procedural terrain tile / streamed world", true, true},
     ComponentInfo{"grass", "GPU-generated, wind-animated grass around the camera", true, true},
+    ComponentInfo{"particle_emitter", "GPU particle emitter (sparks, smoke, dust): emission, shape, forces, curves, flipbook, blending, collision", true, true},
     ComponentInfo{"net_replicated", "Replicate this entity's transform to network clients", true, true},
     ComponentInfo{"audio_source", "Sound emitter: wav/flac/mp3 clip on a bus, optionally 3D", true, true},
     ComponentInfo{"audio_listener", "The audio listener follows this entity (else the camera)", true, true},
@@ -262,6 +264,10 @@ decode_instance(const json& v, const std::string& where, bool strict) {
     return t;
 }
 
+} // namespace
+
+namespace detail {
+
 // Asset paths in components are relative to the project root and may not
 // climb out of it (remote clients write them).
 void check_project_path(JsonFields& f, std::string_view key, const std::string& path) {
@@ -295,6 +301,13 @@ void read_range(JsonFields& f, std::string_view key, glm::vec2& out, float lo, f
     }
     out = r;
 }
+
+} // namespace detail
+
+namespace {
+
+using detail::check_project_path;
+using detail::read_range;
 
 // The shape + flat material fields shared by `primitive` and `instanced_mesh`.
 void read_primitive_fields(JsonFields& f, Primitive& p) {
@@ -564,6 +577,9 @@ json encode_components(const entt::registry& r, entt::entity e, const EncodeOpti
                           {"gpu", t->gpu_generate}};
     }
     if (const auto* g = pick.get<Grass>("grass")) out["grass"] = encode_grass(g->settings);
+    if (const auto* p = pick.get<ParticleEmitter>("particle_emitter")) {
+        out["particle_emitter"] = detail::encode_particle_emitter(p->settings);
+    }
     if (const auto* n = pick.get<NetReplicated>("net_replicated")) {
         out["net_replicated"] = {{"net_id", n->net_id}};
     }
@@ -620,6 +636,7 @@ std::vector<std::string_view> component_names(const entt::registry& r, entt::ent
     add(r.all_of<PatrolRoute>(e), "patrol");
     add(r.all_of<Terrain>(e), "terrain");
     add(r.all_of<Grass>(e), "grass");
+    add(r.all_of<ParticleEmitter>(e), "particle_emitter");
     add(r.all_of<NetReplicated>(e), "net_replicated");
     add(r.all_of<AudioSource>(e), "audio_source");
     add(r.all_of<AudioListener>(e), "audio_listener");
@@ -866,6 +883,11 @@ std::expected<void, core::Error> apply_component(entt::registry& r, entt::entity
         return merge<Grass>(r, e, v, name, strict,
                             [](JsonFields& f, Grass& g) { decode_grass(f, g.settings); });
     }
+    if (name == "particle_emitter") {
+        return merge<ParticleEmitter>(r, e, v, name, strict, [](JsonFields& f, ParticleEmitter& p) {
+            detail::decode_particle_emitter(f, p.settings);
+        });
+    }
     if (name == "net_replicated") {
         return merge<NetReplicated>(r, e, v, name, strict, [](JsonFields& f, NetReplicated& n) {
             f.integer("net_id", n.net_id, 0, 0xFFFFFFFFLL);
@@ -933,6 +955,7 @@ bool remove_component(entt::registry& r, entt::entity e, std::string_view name) 
     if (name == "patrol") return r.remove<PatrolRoute>(e) > 0;
     if (name == "terrain") return r.remove<Terrain>(e) > 0;
     if (name == "grass") return r.remove<Grass>(e) > 0;
+    if (name == "particle_emitter") return r.remove<ParticleEmitter>(e) > 0;
     if (name == "net_replicated") return r.remove<NetReplicated>(e) > 0;
     if (name == "audio_source") return r.remove<AudioSource>(e) > 0;
     if (name == "audio_listener") return r.remove<AudioListener>(e) > 0;

@@ -39,6 +39,10 @@ the CI screenshot pipeline.
 - Anti-aliasing (TAA), bloom, auto-exposure, filmic tonemapping
 - Automatic instancing: objects sharing a mesh and material (trees, rocks,
   crates) are drawn together in one instanced draw
+- GPU particles for sparks, fire, smoke and dust: simulated in compute
+  shaders (collisions with what the camera sees), soft edges, flipbook
+  animation, lit by the sun and point lights, order-independent transparency
+  for smoke; emitters are plain components, so AI tools can author them
 - GPU-compressed textures: KTX2 / Basis Universal textures (glTF
   `KHR_texture_basisu` or loose `.ktx2`) are transcoded at load to BC7 / BC5 /
   BC4 on desktop GPUs, ASTC on Apple GPUs, or plain RGBA8 elsewhere
@@ -212,7 +216,7 @@ Environment variables switch on extra modes:
 |---|---|
 | `QUAT_GLTF=<file>` | Load a glTF/GLB model instead of the showcase scene |
 | `QUAT_TERRAIN=1` | Add a procedural terrain tile (with a grass field) |
-| `QUAT_PHYSICS=1` / `QUAT_CHARACTER=1` | Physics / character-controller demo scenes |
+| `QUAT_PHYSICS=1` / `QUAT_CHARACTER=1` | Physics (with sparks and smoke) / character-controller demo scenes |
 | `QUAT_HOST=<port>` / `QUAT_JOIN=<ip:port>` | Host or join a networked session |
 | `QUAT_REMOTE=<port>` | Open the remote-control endpoint for AI tools (`1` = port 7878); add `QUAT_REMOTE_TOKEN=<secret>` to require a token — see [`docs/remote-control.md`](docs/remote-control.md) |
 | `QUAT_LOG_CAPTURE=0` | With `QUAT_REMOTE`: do not tee stderr into the engine log the AI debugging tools read (`debug.log`) |

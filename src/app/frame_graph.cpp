@@ -2,11 +2,12 @@
 // the render graph. Pass order (graph declaration order):
 //   sky-view LUT update, dynamic IBL step, GBuffer, terrain, grass, Hi-Z,
 //   cascaded shadows (GPU fit + cascades), GTAO, light culling, lighting,
-//   transparent, bloom, exposure, tonemap, TAA, editor UI; GPU skinning is
-//   recorded before the graph executes.
+//   transparent, particles, bloom, exposure, tonemap, TAA, editor UI; GPU
+//   skinning is recorded before the graph executes.
 
 #include "app/frame_renderer.hpp"
 #include "app/grass_runtime.hpp"
+#include "app/particle_runtime.hpp"
 
 #include <algorithm>
 #include <cstdio>
@@ -386,6 +387,13 @@ bool FrameRenderer::record(const FrameInputs& in) {
             std::fprintf(stderr, "[fatal] transparent pass: %s\n", r.error().message.c_str());
             return false;
         }
+    }
+    // GPU particles (R10.3): simulated on the sim clock, drawn over the lit
+    // HDR and the transparent geometry, depth-tested against the GBuffer.
+    if (in.particles != nullptr) {
+        in.particles->add_to_graph(graph, *in.registry,
+                                   {frame_, &*gbuffer, *hdr, &clustered, &cam, fs.jittered_vp,
+                                    fs.light, draw_extent, in.sim_dt});
     }
     // Bloom: blur the bright parts of the HDR and add them back before tonemap.
     if (settings.bloom.enabled) {
