@@ -32,6 +32,18 @@ into CLAUDE.md or the brief template in [`CYCLE.md`](CYCLE.md).
 
 ## Build and CI
 
+- **`timeout … xvfb-run game` leaks the game when the timeout fires.**
+  `timeout` kills `xvfb-run`, not the game it started; the orphaned games
+  (and their Xvfb servers) keep rendering on lavapipe. On 2026-11-27 a dozen
+  of them from earlier render scripts held the container's load average near
+  60 for hours, and every later build crawled. → Render scripts run the game
+  under `timeout` *inside* `xvfb-run` (`xvfb-run … timeout N game`), kill it
+  by PID when done, and check `ps` for leftovers before reporting.
+- **libc++ 18 has no floating-point `std::from_chars`** (the overload is
+  deleted). Parse untrusted decimal text (the R20 `.cube` parser) with
+  `std::strtof` on a bounded, NUL-terminated copy of the token after
+  checking its characters, and require the whole token to be consumed.
+
 - **Don't tie the hitch clamp to the physics budget.** D2 first capped the
   sim frame dt at 1/15 s (8 physics substeps), so on slow machines (CI's
   lavapipe at 1-3 fps) the whole world ran several times slower than real

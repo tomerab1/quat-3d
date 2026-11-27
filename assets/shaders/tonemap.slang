@@ -32,7 +32,7 @@ VsOut vertex_main(uint id : SV_VertexID) {
     return o;
 }
 
-// Mirrors TonemapPass's PostParams (tonemap_pass.cpp, 320 bytes).
+// Mirrors PostParams in tonemap_pass.cpp (240 bytes).
 struct PostParams {
     float4  exposure;     // x 1 = read g_exposure, y key, z min, w max
     float4  exposure2;    // x scale (2^compensation, x physical EV100 exposure)
