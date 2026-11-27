@@ -176,6 +176,47 @@ later step.
 so only the first run (or a dependency change) pays for the full dependency
 build. Logs are uploaded as an artifact when a run fails.
 
+### Screenshots
+
+After the tests (also when they fail), the `linux` job renders a fixed set of
+scenes with the real `game` binary on lavapipe under Xvfb —
+`scripts/ci-screenshots.sh`: the showcase with and without the editor UI,
+`QUAT_TERRAIN=1` and `QUAT_PHYSICS=1`, each with a frame budget, muted audio
+and a per-scene timeout (`SCENE_TIMEOUT`, default 300 s) so a hang fails that
+scene instead of the job. Each final frame is converted to PNG
+(`scripts/ppm_to_png.py`, halved when 1280 px or wider, except the editor capture, kept full size so its UI stays readable). A crash, timeout or
+missing image is listed in the step summary with the log tail and an
+`::error` annotation. The step is `continue-on-error` for now (temporary,
+until the headless scenes have proven stable). Rendered captures are
+checked by `scripts/check_capture.py`: no large exact-black rectangle in any
+scene (a NaN/Inf spreading through the HDR chain), and the editor scene must
+show the docked editor UI; a failed check fails the job (`Capture checks`
+step).
+
+Where the images land:
+
+- the `linux-screenshots` artifact (PNGs, per-scene logs, `results.tsv`);
+- for pushes and same-repository PRs, `scripts/ci-publish-screenshots.sh`
+  commits them to the **`ci-screenshots` branch** under
+  `runs/<pr-N or branch>/<short-sha>/` and rebuilds `index.md` there (newest
+  first, images inline), then shows them inline in the step summary. Commits
+  are append-only (no force-push; a lost push race re-applies on the new
+  tip). Fork PRs never publish. Publishing runs in its own
+  `publish-screenshots` job (the only one with a write token; the build job
+  is read-only), from the uploaded artifact. Retention: each publish keeps
+  the newest 10 runs per PR/branch and the newest 20 of `master`
+  (`KEEP_RUNS`, `KEEP_DEFAULT_RUNS`) at the branch tip; older run
+  directories are deleted there but stay in the branch history. When the
+  branch grows too large, re-root it by hand — the only force-push allowed,
+  on this machine-owned branch only: check out `ci-screenshots`, `git
+  checkout --orphan tmp && git commit -m "Re-root ci-screenshots"`, then
+  `git push --force origin tmp:ci-screenshots`. To read them without the browser:
+  `git fetch origin ci-screenshots && git show origin/ci-screenshots:index.md`.
+
+Run locally: `scripts/ci-screenshots.sh build/release/game /tmp/shots`
+(`SCENES="showcase physics"` picks a subset; needs `xvfb` and
+`mesa-vulkan-drivers`).
+
 ## Building in a cloud container
 
 Claude Code cloud sessions start without the toolchain. Use the `quat-3d`

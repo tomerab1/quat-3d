@@ -216,4 +216,19 @@ std::size_t append_instanced_transparent_items(const entt::registry& registry,
     return out.size() - before;
 }
 
+FrameDrawLists build_frame_draw_lists(const entt::registry& registry,
+                                      std::span<const renderer::DrawItem> opaque_items,
+                                      std::span<const renderer::DrawItem> shadow_items,
+                                      const glm::mat4& camera_view_proj,
+                                      const glm::mat4& light_view_proj) {
+    FrameDrawLists lists{renderer::batch_draws(opaque_items), renderer::batch_draws(shadow_items)};
+    append_instanced_draws(registry, light_view_proj, InstancedPass::shadow, lists.shadow);
+    append_instanced_draws(registry, camera_view_proj, InstancedPass::opaque, lists.opaque);
+    return lists;
+}
+
+std::size_t frame_draw_count(const FrameDrawLists& lists, std::size_t transparent_items) {
+    return lists.opaque.draws.size() + lists.shadow.draws.size() + transparent_items;
+}
+
 } // namespace engine::scene

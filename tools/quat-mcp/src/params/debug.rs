@@ -44,7 +44,7 @@ pub struct DebugStepParams {
     /// Frames to advance, 1..10000 (default 1).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub frames: Option<u32>,
-    /// Seconds each step advances the simulation, 0.0001..0.1 (default 1/60).
+    /// Seconds each step advances the simulation, 0.0001..1/15 (default 1/60).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dt: Option<f64>,
 }
