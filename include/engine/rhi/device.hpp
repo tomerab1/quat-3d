@@ -10,6 +10,7 @@
 
 #include "engine/core/error.hpp"
 #include "engine/rhi/queue_selection.hpp"
+#include "engine/rhi/texture_caps.hpp"
 
 namespace engine::rhi {
 
@@ -80,6 +81,10 @@ public:
     // Device limit for anisotropic filtering; 0 when samplerAnisotropy is
     // unsupported (the feature is enabled whenever the device offers it).
     [[nodiscard]] float max_sampler_anisotropy() const { return max_sampler_anisotropy_; }
+    // Sampled-texture capabilities of this device (see TransferContext).
+    [[nodiscard]] const TextureCaps& texture_caps() const {
+        return texture_caps_;
+    }
     [[nodiscard]] DescriptorBackend descriptor_backend() const { return descriptor_backend_; }
     [[nodiscard]] bool uses_descriptor_buffer() const {
         return descriptor_backend_ == DescriptorBackend::ext_descriptor_buffer;
@@ -134,6 +139,7 @@ private:
     VkPhysicalDeviceProperties properties_{};
     VkPhysicalDeviceDescriptorBufferPropertiesEXT descriptor_buffer_props_{};
     float                    max_sampler_anisotropy_ = 0.0F;
+    TextureCaps              texture_caps_{};
     DescriptorBackend        descriptor_backend_ = DescriptorBackend::ext_descriptor_buffer;
     bool                     storage_image_extended_formats_ = false;
     bool                     simulate_missing_extended_formats_ = false;

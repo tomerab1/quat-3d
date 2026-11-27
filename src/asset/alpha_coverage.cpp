@@ -6,8 +6,10 @@
 #include <array>
 #include <cmath>
 #include <cstddef>
+#include <cstring>
 #include <cstdint>
 #include <span>
+#include <utility>
 #include <vector>
 
 namespace engine::asset {
@@ -253,6 +255,33 @@ std::vector<MipLevelRgba8> build_alpha_tested_mips(std::span<const std::uint8_t>
                                                    std::uint32_t width, std::uint32_t height,
                                                    bool srgb, float cutoff) {
     return build_chain(rgba, width, height, srgb, &cutoff);
+}
+
+bool apply_alpha_tested_mips(TextureData& data, float cutoff, DecodeBudget* budget) {
+    if (data.format != TexelFormat::rgba8 || !data.levels.empty() || data.pixels.empty()) {
+        return false;
+    }
+    const std::span<const std::uint8_t> rgba(
+        reinterpret_cast<const std::uint8_t*>(data.pixels.data()), data.pixels.size());
+    const std::vector<MipLevelRgba8> chain = build_alpha_tested_mips(
+        rgba, data.width, data.height, data.color_space == TextureColorSpace::srgb, cutoff);
+    if (chain.empty()) return false;
+    std::uint64_t total = 0;
+    for (const MipLevelRgba8& level : chain) total += level.pixels.size();
+    if (budget != nullptr && !budget->reserve(total)) return false;
+    PixelBuffer pixels = PixelBuffer::allocate(static_cast<std::size_t>(total));
+    if (pixels.empty()) return false;
+    std::vector<TextureLevel> levels;
+    levels.reserve(chain.size());
+    std::uint64_t offset = 0;
+    for (const MipLevelRgba8& level : chain) {
+        std::memcpy(pixels.data() + offset, level.pixels.data(), level.pixels.size());
+        levels.push_back({offset, level.pixels.size(), level.width, level.height});
+        offset += level.pixels.size();
+    }
+    data.pixels = std::move(pixels);
+    data.levels = std::move(levels);
+    return true;
 }
 
 std::vector<MipLevelRgba8> build_box_filtered_mips(std::span<const std::uint8_t> rgba,

@@ -26,6 +26,16 @@ into CLAUDE.md or the brief template in [`CYCLE.md`](CYCLE.md).
 
 ## Build and CI
 
+- **Link the game executable locally after any merge that touches library
+  targets.** R17 linked libktx into `game` directly while engine_asset only
+  compiled against its headers; the tests (linking the full libktx) passed,
+  but after the G8 merge engine_asset was re-emitted after `libktx_read.a`
+  on the game's link line and GNU ld's single pass left the KTX2 symbols
+  undefined (CI run 46028587322). A library now owns its archive dependency
+  (engine_asset links libktx through a per-executable `QUAT_KTX_FULL`
+  switch), and without vcpkg a stub prefix (`find_package` configs over the
+  `~/deps` builds) is enough to configure and link `game` / `engine_tests`.
+
 - **Local test builds must track header dependencies.** A scratch build that
   rebuilt only changed .cpp files linked objects compiled against an old
   class layout and crashed (R12). Compile with `-MMD -MF` and rebuild when
@@ -140,6 +150,29 @@ into CLAUDE.md or the brief template in [`CYCLE.md`](CYCLE.md).
   (+9 % coverage). Evaluate the stored coverage at a few 8-bit steps around
   the analytic threshold and keep the closest.
 
+- **Fuzz every payload variant, not just one.** R17's KTX2 fuzz test first
+  mutated only UASTC files; the review asked for ETC1S too, and the first
+  ETC1S run crashed inside libktx (it ignores `decode_palettes` failures and
+  transcodes with half-built codebooks; fixed in the `ktx` overlay port) and
+  ASan then found a wrapped allocation from out-of-order level offsets. →
+  Fuzz tests cover each codec / format branch, biased into each structure
+  the parser trusts, and get one run under ASan + valgrind before merging.
+- **libktx's `ktx` and `ktx_read` archives cannot share a program** (same
+  objects, duplicate symbols). engine_asset compiles against the headers and
+  each executable links one: the game `KTX::ktx_read`, tests / cooker
+  `KTX::ktx`.
+- **meshoptimizer 1.x encodes vertex codec v1 by default, which
+  `EXT_meshopt_compression` does not allow** (v1 is for the newer
+  `KHR_meshopt_compression`). The cooker calls
+  `meshopt_encodeVertexBufferLevel(..., version 0)` explicitly (R17).
+- **Basis UASTC -> BC5 reads R and A, not R and G.** BC5 is only correct for
+  normal maps stored X-in-RGB / Y-in-alpha (libktx `normalMap`); RGB normal
+  maps go to BC7, and non-BC5 targets of the X/Y layout get an RA view
+  swizzle (R17).
+- **libktx initialises the Basis transcoder behind an unguarded static
+  flag.** Parallel transcodes are serialised until the first one succeeds
+  (`ktx2_transcode.cpp`); the encoder has the same pattern, so the cooker
+  encodes one image at a time with libktx's own worker threads.
 - **Shadow acne has more than one cause; test it with an image test first.**
   R12.9: D16 over a caster-padded range gave 0.83 of the unshadowed value on
   a sloped lit floor; pancaking (depth clamp, tight range) alone still gave

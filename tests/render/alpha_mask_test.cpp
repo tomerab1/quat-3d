@@ -14,6 +14,7 @@
 #include <glm/gtc/packing.hpp>
 #include <gtest/gtest.h>
 
+#include "engine/asset/alpha_coverage.hpp"
 #include "engine/asset/asset_manager.hpp"
 #include "engine/asset/material_asset.hpp"
 #include "engine/scene/gltf_loader.hpp"
@@ -32,20 +33,22 @@ constexpr std::uint32_t k_tex = 64;
 
 // White texture whose alpha is opaque in the (u < .5, v < .5) and
 // (u >= .5, v >= .5) blocks and zero in the other two.
-engine::scene::TextureData checker_alpha() {
-    engine::scene::TextureData t;
+a::TextureData checker_alpha() {
+    a::TextureData t;
     t.width = k_tex;
     t.height = k_tex;
     t.color_space = a::TextureColorSpace::srgb;
-    t.alpha_test_cutoff = 0.5F; // coverage-preserving mips (uploaded level by level)
-    t.pixels.resize(static_cast<std::size_t>(k_tex) * k_tex * 4, std::byte{255});
+    t.pixels = a::PixelBuffer::allocate(static_cast<std::size_t>(k_tex) * k_tex * 4);
     for (std::uint32_t y = 0; y < k_tex; ++y) {
         for (std::uint32_t x = 0; x < k_tex; ++x) {
             const bool opaque = (x < k_tex / 2) == (y < k_tex / 2);
-            t.pixels[(static_cast<std::size_t>(y) * k_tex + x) * 4 + 3] =
-                opaque ? std::byte{255} : std::byte{0};
+            std::byte* p = t.pixels.data() + (static_cast<std::size_t>(y) * k_tex + x) * 4;
+            p[0] = p[1] = p[2] = std::byte{255};
+            p[3] = opaque ? std::byte{255} : std::byte{0};
         }
     }
+    // The coverage-preserving chain, uploaded level by level.
+    EXPECT_TRUE(a::apply_alpha_tested_mips(t, 0.5F));
     return t;
 }
 

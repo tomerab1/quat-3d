@@ -1,7 +1,6 @@
 // glTF alphaMode (R12.11, issue #35): MASK sets material_alpha_mask (BLEND
 // stays on the forward path, OPAQUE ignores alphaCutoff), and the base-colour
-// image of a MASK material is tagged for coverage-preserving mips at its
-// cutoff.
+// image of a MASK material gets coverage-preserving mips at its cutoff.
 
 #include <cstddef>
 #include <span>
@@ -55,15 +54,20 @@ TEST(GltfAlphaMode, MaskSetsTheAlphaMaskFlag) {
     EXPECT_EQ(opaque.flags & (a::material_blend | a::material_alpha_mask), 0U);
 }
 
+// A MASK material's base colour arrives with its coverage-preserving mip
+// chain built on the CPU; other images leave their mips to the upload.
 TEST(GltfAlphaMode, MaskBaseColourGetsCoverageMips) {
     const std::string text = gltf();
     auto images = s::GltfLoader::load_texture_data_from_memory(bytes(text), ".");
     ASSERT_OK(images);
     ASSERT_EQ(images->size(), 2U);
-    ASSERT_TRUE((*images)[0].alpha_test_cutoff.has_value());
-    EXPECT_FLOAT_EQ(*(*images)[0].alpha_test_cutoff, 0.3F);
-    // Only a MASK material's cutoff counts (image 1 is OPAQUE's).
-    EXPECT_FALSE((*images)[1].alpha_test_cutoff.has_value());
+    const a::TextureData& mask = (*images)[0];
+    ASSERT_EQ(mask.levels.size(), 2U); // 2x2 -> 1x1
+    EXPECT_EQ(mask.levels[1].width, 1U);
+    EXPECT_EQ(mask.levels[1].height, 1U);
+    EXPECT_EQ(mask.levels[0].size, 16U);
+    EXPECT_EQ(mask.pixels.size(), 20U);
+    EXPECT_TRUE((*images)[1].levels.empty()); // OPAQUE's image: blitted on upload
 }
 
 } // namespace

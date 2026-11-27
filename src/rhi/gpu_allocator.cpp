@@ -5,7 +5,6 @@
 #include <cstring>
 #include <format>
 #include <utility>
-#include <vector>
 #ifdef ENGINE_DESCRIPTOR_SETS_FALLBACK
 #include <map>
 #include <mutex>
@@ -13,6 +12,7 @@
 #endif
 
 #include "engine/rhi/device.hpp"
+#include "one_time_commands.hpp"
 
 namespace engine::rhi {
 
@@ -57,49 +57,6 @@ void unregister_buffer_address(VkBuffer buffer) {
     }
 }
 #endif
-
-// Records `record` into a one-time command buffer from the transfer pool,
-// submits it via synchronization2, and blocks until the queue is idle.
-template <typename Record>
-[[nodiscard]] std::expected<void, core::Error>
-run_one_time_commands(const TransferContext& transfer, Record&& record) {
-    VkCommandBufferAllocateInfo alloc{};
-    alloc.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
-    alloc.commandPool = transfer.pool;
-    alloc.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-    alloc.commandBufferCount = 1;
-
-    VkCommandBuffer cmd = VK_NULL_HANDLE;
-    if (vkAllocateCommandBuffers(transfer.device, &alloc, &cmd) != VK_SUCCESS) {
-        return fail("vkAllocateCommandBuffers (one-time) failed");
-    }
-
-    VkCommandBufferBeginInfo begin{};
-    begin.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-    begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-    vkBeginCommandBuffer(cmd, &begin);
-    record(cmd);
-    vkEndCommandBuffer(cmd);
-
-    VkCommandBufferSubmitInfo cmd_info{};
-    cmd_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO;
-    cmd_info.commandBuffer = cmd;
-
-    VkSubmitInfo2 submit{};
-    submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO_2;
-    submit.commandBufferInfoCount = 1;
-    submit.pCommandBufferInfos = &cmd_info;
-
-    const VkResult r = vkQueueSubmit2(transfer.queue, 1, &submit, VK_NULL_HANDLE);
-    if (r == VK_SUCCESS) {
-        vkQueueWaitIdle(transfer.queue);
-    }
-    vkFreeCommandBuffers(transfer.device, transfer.pool, 1, &cmd);
-    if (r != VK_SUCCESS) {
-        return fail("vkQueueSubmit2 (one-time) failed");
-    }
-    return {};
-}
 
 } // namespace
 
@@ -366,7 +323,7 @@ upload_device_buffer(GpuAllocator& allocator, const TransferContext& transfer,
 
     const VkBuffer src = staging->handle();
     const VkBuffer dst = device_buffer->handle();
-    auto copied = run_one_time_commands(transfer, [&](VkCommandBuffer cmd) {
+    auto copied = detail::run_one_time_commands(transfer, [&](VkCommandBuffer cmd) {
         VkBufferCopy region{0, 0, size};
         vkCmdCopyBuffer(cmd, src, dst, 1, &region);
     });
@@ -420,7 +377,7 @@ upload_device_image(GpuAllocator& allocator, const TransferContext& transfer,
 
     const VkBuffer src = staging->handle();
     const VkImage  dst = image->handle();
-    auto uploaded = run_one_time_commands(transfer, [&](VkCommandBuffer cmd) {
+    auto uploaded = detail::run_one_time_commands(transfer, [&](VkCommandBuffer cmd) {
         const auto barrier = [&](std::uint32_t base_mip, std::uint32_t count,
                                  VkPipelineStageFlags2 src_stage, VkAccessFlags2 src_access,
                                  VkPipelineStageFlags2 dst_stage, VkAccessFlags2 dst_access,
@@ -499,99 +456,18 @@ upload_device_image(GpuAllocator& allocator, const TransferContext& transfer,
     return std::move(*image);
 }
 
-std::expected<GpuImage, core::Error>
-upload_device_mip_chain(GpuAllocator& allocator, const TransferContext& transfer,
-                        std::span<const MipLevelData> levels, VkFormat format,
-                        VkImageUsageFlags usage) {
-    if (levels.empty()) return fail("upload_device_mip_chain: no levels");
-    const VkExtent2D extent = levels[0].extent;
-    const auto count = static_cast<std::uint32_t>(levels.size());
-    if (count > full_mip_levels(extent)) {
-        return fail("upload_device_mip_chain: more levels than the extent allows");
-    }
-    // Level offsets in the staging buffer (16-byte aligned: a multiple of
-    // every texel size, as vkCmdCopyBufferToImage requires).
-    std::vector<VkDeviceSize> offsets;
-    offsets.reserve(levels.size());
-    VkDeviceSize total = 0;
-    for (std::uint32_t i = 0; i < count; ++i) {
-        const VkExtent2D want{std::max(extent.width >> i, 1U), std::max(extent.height >> i, 1U)};
-        const MipLevelData& l = levels[i];
-        if (l.data == nullptr || l.size == 0 || l.extent.width != want.width ||
-            l.extent.height != want.height) {
-            return fail(std::format("upload_device_mip_chain: level {} is not {}x{}", i,
-                                    want.width, want.height));
-        }
-        total = (total + 15) & ~VkDeviceSize{15};
-        offsets.push_back(total);
-        total += l.size;
-    }
-
-    auto staging = allocator.create_staging_buffer(total);
-    if (!staging) return std::unexpected(staging.error());
-    auto* bytes = static_cast<std::uint8_t*>(staging->mapped());
-    for (std::uint32_t i = 0; i < count; ++i) {
-        std::memcpy(bytes + offsets[i], levels[i].data, levels[i].size);
-    }
-    if (auto flushed = staging->flush(); !flushed) return std::unexpected(flushed.error());
-
-    auto image = allocator.create_image(
-        format, extent, usage | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
-        count);
-    if (!image) return std::unexpected(image.error());
-
-    const VkBuffer src = staging->handle();
-    const VkImage  dst = image->handle();
-    auto uploaded = run_one_time_commands(transfer, [&](VkCommandBuffer cmd) {
-        VkImageMemoryBarrier2 b{};
-        b.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2;
-        b.srcStageMask = VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT;
-        b.dstStageMask = VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT;
-        b.dstAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT;
-        b.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-        b.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-        b.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        b.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        b.image = dst;
-        b.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, count, 0, 1};
-        VkDependencyInfo dep{};
-        dep.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO;
-        dep.imageMemoryBarrierCount = 1;
-        dep.pImageMemoryBarriers = &b;
-        vkCmdPipelineBarrier2(cmd, &dep);
-
-        std::vector<VkBufferImageCopy> regions(count);
-        for (std::uint32_t i = 0; i < count; ++i) {
-            VkBufferImageCopy& r = regions[i];
-            r.bufferOffset = offsets[i];
-            r.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, i, 0, 1};
-            r.imageExtent = {levels[i].extent.width, levels[i].extent.height, 1};
-        }
-        vkCmdCopyBufferToImage(cmd, src, dst, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, count,
-                               regions.data());
-
-        b.srcStageMask = VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT;
-        b.srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT;
-        b.dstStageMask = VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT;
-        b.dstAccessMask = VK_ACCESS_2_SHADER_SAMPLED_READ_BIT;
-        b.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-        b.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-        vkCmdPipelineBarrier2(cmd, &dep);
-    });
-    if (!uploaded) return std::unexpected(uploaded.error());
-    return std::move(*image);
-}
-
 std::expected<ImageView, core::Error>
 create_image_view(VkDevice device, VkImage image, VkFormat format,
                   VkImageAspectFlags aspect, std::uint32_t mip_levels,
                   VkImageViewType view_type, std::uint32_t base_mip,
-                  std::uint32_t base_layer, std::uint32_t layer_count) {
+                  std::uint32_t base_layer, std::uint32_t layer_count,
+                  VkComponentMapping components) {
     VkImageViewCreateInfo info{};
     info.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
     info.image = image;
     info.viewType = view_type;
     info.format = format;
+    info.components = components;
     info.subresourceRange.aspectMask = aspect;
     info.subresourceRange.baseMipLevel = base_mip;
     info.subresourceRange.levelCount = mip_levels;
