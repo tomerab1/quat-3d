@@ -65,9 +65,28 @@ InputQueue::Push InputQueue::push(PlayerInput input) {
     return Push::queued;
 }
 
+void InputQueue::credit(float dt) {
+    if (!std::isfinite(dt) || dt <= 0.0F) return;
+    budget_ = std::min(budget_ + dt, max_time_budget);
+}
+
+std::optional<PlayerInput> InputQueue::take() {
+    // A little tolerance so a client running at exactly the host's rate is
+    // not held back a frame by float rounding.
+    constexpr float tolerance = 1e-5F;
+    if (queue_.empty() || queue_.front().dt > budget_ + tolerance) return std::nullopt;
+    const PlayerInput input = queue_.front();
+    queue_.pop_front();
+    budget_ = std::max(budget_ - input.dt, 0.0F);
+    acked_ = input.sequence;
+    return input;
+}
+
 void InputQueue::reset() {
     queue_.clear();
     last_received_ = 0;
+    acked_ = 0;
+    budget_ = 0.0F;
 }
 
 std::vector<std::uint8_t> encode_character_state(std::uint32_t acked_sequence,
@@ -88,6 +107,10 @@ bool decode_character_state(const std::vector<std::uint8_t>& payload,
 }
 
 glm::vec3 CharacterPredictor::predict(const glm::vec3& current, const PlayerInput& input) {
+    if (pending_.size() >= max_pending) {
+        pending_.pop_front();
+        ++dropped_;
+    }
     pending_.push_back(input);
     return step_ ? step_(current, input) : current;
 }
@@ -121,7 +144,7 @@ std::expected<void, core::Error> run_prediction_self_test() {
     CharacterPredictor predictor{CharacterPredictor::StepFn(step)};
 
     // Wire round trip.
-    PlayerInput probe{41U, glm::vec3(0.5F, 0.0F, -1.0F), 1.0F / 60.0F};
+    PlayerInput probe{41U, glm::vec3(0.6F, 0.0F, -0.8F), 1.0F / 60.0F}; // |xz| <= 1
     PlayerInput decoded;
     if (!decode_input(encode_input(probe), decoded) || decoded.sequence != 41U ||
         decoded.move != probe.move || decoded.dt != probe.dt) {

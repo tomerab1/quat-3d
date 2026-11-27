@@ -221,6 +221,11 @@ struct NetReplicated {
     std::uint32_t net_id = 0;
 };
 
+// Tag: this CharacterController is stepped by the network layer, once per
+// player input (host: a remote player's inputs; client: prediction and
+// reconciliation), so character_system leaves it alone. Runtime-only.
+struct NetDriven {};
+
 // Human-readable label. Editor-only metadata, not on any hot path.
 struct Name {
     std::string value;

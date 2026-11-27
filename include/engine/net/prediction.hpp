@@ -61,8 +61,24 @@ public:
         full,      // capacity reached
     };
 
+    // Simulation-time budget: the host simulates a client's inputs no faster
+    // than its own wall clock (plus this much slack for network jitter), so a
+    // client cannot speed-hack by sending many inputs or inflated dt.
+    static constexpr float max_time_budget = 0.25F;
+
     // Sanitize, enforce strictly increasing sequences, enqueue.
     [[nodiscard]] Push push(PlayerInput input);
+
+    // Host frame of `dt` seconds elapsed: grants that much simulation time.
+    void credit(float dt);
+
+    // The next input to simulate now, if any fits the time budget. The caller
+    // must simulate every input it takes; acked() then reports it.
+    [[nodiscard]] std::optional<PlayerInput> take();
+
+    // Last sequence taken for simulation (0 = none) — the only sequence the
+    // host may acknowledge.
+    [[nodiscard]] std::uint32_t acked() const { return acked_; }
 
     [[nodiscard]] std::size_t size() const { return queue_.size(); }
     [[nodiscard]] std::uint32_t last_received() const { return last_received_; }
@@ -73,6 +89,8 @@ public:
 private:
     std::deque<PlayerInput> queue_;
     std::uint32_t           last_received_ = 0;
+    std::uint32_t           acked_ = 0;
+    float                   budget_ = 0.0F;
 };
 
 // Wire helpers (kind 2 = input, kind 3 = authoritative character state).
@@ -89,6 +107,11 @@ public:
     // `step` advances a position by one input (the same rule the server runs).
     using StepFn = std::function<glm::vec3(const glm::vec3& position, const PlayerInput&)>;
 
+    // Unacknowledged inputs kept for replay (~2 s at 60 Hz). If the host
+    // stops acknowledging, the oldest are dropped (counted in dropped()); the
+    // next authoritative state then simply corrects the position.
+    static constexpr std::size_t max_pending = 128;
+
     explicit CharacterPredictor(StepFn step) : step_(std::move(step)) {}
     CharacterPredictor() = default;
 
@@ -102,10 +125,15 @@ public:
     glm::vec3 reconcile(std::uint32_t acked_sequence, const glm::vec3& server_position);
 
     [[nodiscard]] std::size_t pending() const { return pending_.size(); }
+    [[nodiscard]] std::uint64_t dropped() const { return dropped_; }
+
+    // Forget pending inputs (disconnect).
+    void reset() { pending_.clear(); }
 
 private:
     StepFn                  step_;
     std::deque<PlayerInput> pending_;
+    std::uint64_t           dropped_ = 0;
 };
 
 // Pure-CPU self-test of the replay math: a deliberate server correction mid-
