@@ -1,6 +1,8 @@
 #include "scene_snapshot.hpp"
 
+#include <cstdint>
 #include <string>
+#include <type_traits>
 
 #include <entt/entity/registry.hpp>
 #include <glm/gtc/matrix_transform.hpp>
@@ -15,18 +17,19 @@ namespace {
     return std::unexpected(core::Error{std::move(what)});
 }
 
-template <typename T>
-void capture_type(const entt::registry& registry, SceneSnapshot::Stored<T>& out) {
-    for (const auto [e, component] : registry.view<const T>().each()) {
-        out.emplace_back(e, component);
-    }
+template <typename... Ts, typename F>
+void for_each_component(ComponentList<Ts...> /*list*/, F&& f) {
+    (f.template operator()<Ts>(), ...);
 }
 
-template <typename T>
-void restore_type(entt::registry& registry, const SceneSnapshot::Stored<T>& in) {
-    for (const auto& [e, component] : in) {
-        registry.emplace<T>(e, component);
-    }
+// Clears what belongs to the session that created it, not to the authored
+// scene (see capture_scene / duplicate_entity).
+void clear_audio_runtime(scene::AudioSource& src) {
+    src.command = scene::AudioCommand::none;
+    src.state = audio::Playback::stopped;
+    src.started = false;
+    src.sound = audio::invalid_sound;
+    src.resolved = 0;
 }
 
 } // namespace
@@ -40,38 +43,16 @@ SceneSnapshot capture_scene(const scene::Scene& scene) {
         snap.entities.push_back(e);
     }
 
-    capture_type(r, snap.names);
-    capture_type(r, snap.transforms);
-    capture_type(r, snap.parents);
-    capture_type(r, snap.children);
-    capture_type(r, snap.mesh_renderers);
-    capture_type(r, snap.mesh_sources);
-    capture_type(r, snap.skinned_meshes);
-    capture_type(r, snap.animators);
-    capture_type(r, snap.cameras);
-    capture_type(r, snap.directional_lights);
-    capture_type(r, snap.point_lights);
-    capture_type(r, snap.colliders);
-    capture_type(r, snap.rigid_bodies);
-    capture_type(r, snap.characters);
-    capture_type(r, snap.terrains);
-    capture_type(r, snap.nav_agents);
-    capture_type(r, snap.behavior_trees);
-    capture_type(r, snap.patrol_routes);
-    capture_type(r, snap.primitives);
-    capture_type(r, snap.net_replicated);
-    capture_type(r, snap.audio_sources);
-    capture_type(r, snap.audio_listeners);
+    for_each_component(SnapshotComponents{}, [&]<typename T>() {
+        auto& out = snap.stored<T>();
+        for (const auto [e, component] : r.view<const T>().each()) {
+            out.emplace_back(e, component);
+        }
+    });
     // Sounds belong to the session that made them: restored sources start
     // without one (the audio system's sweep frees the play session's sounds)
     // and play_on_start fires again on the next Play.
-    for (auto& [e, src] : snap.audio_sources) {
-        src.command = scene::AudioCommand::none;
-        src.state = audio::Playback::stopped;
-        src.started = false;
-        src.sound = audio::invalid_sound;
-        src.resolved = 0;
-    }
+    for (auto& [e, src] : snap.stored<scene::AudioSource>()) clear_audio_runtime(src);
     return snap;
 }
 
@@ -86,28 +67,51 @@ void restore_scene(scene::Scene& scene, const SceneSnapshot& snapshot) {
         (void)r.create(e);
     }
 
-    restore_type(r, snapshot.names);
-    restore_type(r, snapshot.transforms);
-    restore_type(r, snapshot.parents);
-    restore_type(r, snapshot.children);
-    restore_type(r, snapshot.mesh_renderers);
-    restore_type(r, snapshot.mesh_sources);
-    restore_type(r, snapshot.skinned_meshes);
-    restore_type(r, snapshot.animators);
-    restore_type(r, snapshot.cameras);
-    restore_type(r, snapshot.directional_lights);
-    restore_type(r, snapshot.point_lights);
-    restore_type(r, snapshot.colliders);
-    restore_type(r, snapshot.rigid_bodies);
-    restore_type(r, snapshot.characters);
-    restore_type(r, snapshot.terrains);
-    restore_type(r, snapshot.nav_agents);
-    restore_type(r, snapshot.behavior_trees);
-    restore_type(r, snapshot.patrol_routes);
-    restore_type(r, snapshot.primitives);
-    restore_type(r, snapshot.net_replicated);
-    restore_type(r, snapshot.audio_sources);
-    restore_type(r, snapshot.audio_listeners);
+    for_each_component(SnapshotComponents{}, [&]<typename T>() {
+        for (const auto& [e, component] : snapshot.stored<T>()) {
+            r.emplace<T>(e, component);
+        }
+    });
+}
+
+entt::entity duplicate_entity(scene::Scene& scene, entt::entity source) {
+    entt::registry& r = scene.registry();
+    if (!r.valid(source)) return entt::null;
+    std::string label;
+    if (const auto* name = r.try_get<scene::Name>(source); name != nullptr && !name->value.empty()) {
+        label = name->value;
+    } else {
+        label = "entity " + std::to_string(static_cast<std::uint32_t>(source));
+    }
+    const entt::entity copy = scene.create_entity(label + " copy");
+
+    for_each_component(SnapshotComponents{}, [&]<typename T>() {
+        // Name is set above; hierarchy links are rebuilt through set_parent
+        // (the copy has no children of its own).
+        if constexpr (!std::is_same_v<T, scene::Name> && !std::is_same_v<T, scene::Parent> &&
+                      !std::is_same_v<T, scene::Children>) {
+            if (const T* c = r.try_get<T>(source)) {
+                const T value = *c; // copy first: emplacing may reallocate the pool
+                r.emplace_or_replace<T>(copy, value);
+            }
+        }
+    });
+
+    // Runtime state the copy must not share with its source.
+    if (auto* rb = r.try_get<scene::RigidBody>(copy)) rb->body = scene::RigidBody{}.body;
+    if (auto* cc = r.try_get<scene::CharacterController>(copy)) {
+        const scene::CharacterController fresh;
+        cc->character = fresh.character;
+        cc->velocity = fresh.velocity;
+        cc->on_ground = fresh.on_ground;
+    }
+    if (auto* src = r.try_get<scene::AudioSource>(copy)) clear_audio_runtime(*src);
+    if (auto* net = r.try_get<scene::NetReplicated>(copy)) net->net_id = 0;
+
+    if (const auto* p = r.try_get<scene::Parent>(source); p != nullptr && p->entity != entt::null) {
+        scene.set_parent(copy, p->entity);
+    }
+    return copy;
 }
 
 std::expected<void, core::Error> run_scene_snapshot_self_test() {
