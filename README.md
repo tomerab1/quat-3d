@@ -32,6 +32,10 @@ drive directly to build and debug worlds from a prompt.
   seamless streaming for kilometre-scale worlds
 - Jolt physics: rigid bodies, character controller, triggers, terrain collision
 
+**Audio**
+- miniaudio-based mixer with music / sfx / ui / ambience buses, 3D positional
+  sound with distance falloff, streamed music (wav, flac, mp3)
+
 **Gameplay**
 - NPC navigation (Recast/Detour navmesh), path following, patrol routes
 - Data-driven behaviour trees (JSON)
@@ -135,7 +139,22 @@ Environment variables switch on extra modes:
 | `QUAT_REMOTE=<port>` | Open the remote-control endpoint for AI tools (`1` = port 7878); add `QUAT_REMOTE_TOKEN=<secret>` to require a token — see [`docs/remote-control.md`](docs/remote-control.md) |
 | `QUAT_NO_UI=1` | Run without the editor UI |
 | `QUAT_NO_VSYNC=1` | Disable vsync |
+| `QUAT_NO_AUDIO=1` | Mute: run audio without opening a playback device |
 | `QUAT_MAX_FRAMES=<n>` + `QUAT_SCREENSHOT=<file.ppm>` | Render n frames, save the last one, exit (headless checks) |
+
+### Audio
+
+Give an entity an **Audio Source** (Inspector → Add component) and set its
+`clip` to a `.wav`, `.flac` or `.mp3` path relative to the project root (e.g.
+`assets/audio/fire.wav`). Pick a bus (`music` and `ambience` stream from disk;
+`sfx` and `ui` load into memory), then volume, pitch and looping. A **3D**
+source plays from the entity's position: full volume within `min distance`,
+fading with distance (`rolloff`) until `max distance`. Sources with
+`play on start` begin when you press Play; the inspector's Play / Pause / Stop
+buttons audition a clip without entering Play mode. Sound is heard from the
+camera, or from the entity carrying an active **Audio Listener** (e.g. the
+player). From scripts and AI tools, set `audio_source.command` to `play`,
+`stop`, `pause` or `resume`.
 
 ### Sample models
 

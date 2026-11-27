@@ -10,6 +10,7 @@
 #include <glm/gtx/matrix_decompose.hpp>
 #include <imgui.h>
 
+#include "audio_inspector.hpp"
 #include "engine/editor/editor.hpp"
 #include "engine/scene/behavior.hpp"
 #include "engine/scene/components.hpp"
@@ -293,6 +294,22 @@ struct ComponentInspector<scene::RigidBody> {
     }
 };
 
+template <>
+struct ComponentInspector<scene::AudioSource> {
+    static constexpr const char* title = "Audio Source";
+    static void draw(entt::registry&, entt::entity, scene::AudioSource& source) {
+        draw_audio_source(source);
+    }
+};
+
+template <>
+struct ComponentInspector<scene::AudioListener> {
+    static constexpr const char* title = "Audio Listener";
+    static void draw(entt::registry& r, entt::entity e, scene::AudioListener& listener) {
+        draw_audio_listener(r, e, listener);
+    }
+};
+
 // Draws the component's collapsing header + editor. `removable` adds a
 // right-click "Remove component" to the header; returns false if removed.
 template <typename T>
@@ -356,6 +373,8 @@ void draw_inspector(scene::Scene& scene, entt::entity selected) {
     inspect<scene::PatrolRoute>(r, selected, true);
     inspect<scene::Collider>(r, selected, true);
     inspect<scene::RigidBody>(r, selected, true);
+    inspect<scene::AudioSource>(r, selected, true);
+    inspect<scene::AudioListener>(r, selected, true);
 
     ImGui::Separator();
     if (ImGui::Button("Add component", ImVec2(-1.0F, 0.0F))) {
@@ -372,6 +391,8 @@ void draw_inspector(scene::Scene& scene, entt::entity selected) {
         add_component_item<scene::DirectionalLight>(
             r, selected, glm::vec3(-0.4F, -1.0F, -0.3F), glm::vec3(1.0F), 3.0F);
         add_component_item<scene::Camera>(r, selected);
+        add_component_item<scene::AudioSource>(r, selected);
+        add_component_item<scene::AudioListener>(r, selected);
         ImGui::EndPopup();
     }
     ImGui::End();

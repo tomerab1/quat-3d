@@ -76,8 +76,11 @@ codec (`engine/scene/component_json.hpp`): `transform` (`position`,
 `primitive` (`shape`: cube/sphere/plane/cylinder/cone/capsule, `color`
 `"#rrggbb"` or linear `[r,g,b,a]`, `metallic`, `roughness`, `emissive`),
 `point_light`, `dir_light`, `camera`, `collider`, `rigidbody`, `character`,
-`nav_agent`, `behavior`, `patrol`, `terrain`, `net_replicated`, `animator`
-(edit only), `mesh` (read only). Updates merge: omitted fields keep their
+`nav_agent`, `behavior`, `patrol`, `terrain`, `net_replicated`,
+`audio_source` (`clip`, `bus`: master/music/sfx/ui/ambience, `volume`,
+`pitch`, `loop`, `play_on_start`, `spatial`, `min_distance`, `max_distance`,
+`rolloff`, `doppler`, plus write-only `command`: play/stop/pause/resume),
+`audio_listener` (`active`), `animator` (edit only), `mesh` (read only). Updates merge: omitted fields keep their
 values. Unknown fields are errors (they name the known fields).
 
 | Method | Params | Result |

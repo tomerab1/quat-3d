@@ -17,6 +17,8 @@
 //   nav_agent, behavior, patrol
 //   terrain
 //   net_replicated
+//   audio_source     clip / bus / volume / pitch / loop / 3D falloff (+ write-only command)
+//   audio_listener
 //   animator         edit-only (needs a clip from a glTF; cannot be added)
 //   mesh             read-only (glTF provenance; scene_io resolves it)
 //

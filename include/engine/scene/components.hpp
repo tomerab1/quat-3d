@@ -18,6 +18,7 @@
 #include <entt/entity/fwd.hpp>
 #include <glm/glm.hpp>
 
+#include "engine/audio/audio_types.hpp"
 #include "engine/animation/clip.hpp"
 #include "engine/animation/skeleton.hpp"
 #include "engine/asset/asset_manager.hpp"
@@ -219,6 +220,44 @@ struct PatrolRoute {
 // load the same scene). 0 is unassigned.
 struct NetReplicated {
     std::uint32_t net_id = 0;
+};
+
+// A sound emitter (G1), driven by audio_system (audio_system.hpp). `clip` is
+// a wav / flac / mp3 path, relative to the project root unless absolute;
+// music and ambience clips stream from disk, sfx / ui clips decode into
+// memory. Spatial sources sit at the entity's world position and fade with
+// the inverse-distance model: full volume within min_distance, rolloff
+// beyond it, clamped at max_distance. `doppler` 0 (the default) disables
+// the doppler shift. In play mode `play_on_start` starts the source once.
+// Scripts / tools steer playback through `command`, which the system
+// consumes; sound/state/started/resolved/last_position are system-managed.
+enum class AudioCommand : std::uint8_t { none, play, stop, pause, resume };
+struct AudioSource {
+    std::string     clip;
+    audio::AudioBus bus = audio::AudioBus::sfx;
+    float           volume = 1.0F; // linear gain
+    float           pitch = 1.0F;  // playback-rate multiplier
+    bool            loop = false;
+    bool            play_on_start = true;
+    bool            spatial = true;
+    float           min_distance = 1.0F;
+    float           max_distance = 50.0F;
+    float           rolloff = 1.0F;
+    float           doppler = 0.0F;
+    AudioCommand    command = AudioCommand::none;
+    // System-managed.
+    audio::Playback    state = audio::Playback::stopped;
+    bool               started = false; // play_on_start consumed this play session
+    audio::SoundHandle sound = audio::invalid_sound;
+    std::uint64_t      resolved = 0;    // hash of (clip, bus, spatial) the sound was made from
+    glm::vec3          last_position{0.0F};
+};
+
+// Marks the entity whose world pose the audio listener follows (the "ears").
+// The first active one wins; with none, the listener follows the camera the
+// frame renders from.
+struct AudioListener {
+    bool active = true;
 };
 
 // Human-readable label. Editor-only metadata, not on any hot path.

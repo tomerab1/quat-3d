@@ -30,7 +30,7 @@ CMake options: `ENGINE_EDITOR` (default ON), `ENGINE_PROFILE`,
 
 Targets: the engine libraries (`engine_rhi`, `engine_renderer`,
 `engine_scene`, `engine_physics`, `engine_animation`, `engine_terrain`,
-`engine_nav`, `engine_net`, `engine_remote`, `engine_editor`), the `game`
+`engine_nav`, `engine_net`, `engine_remote`, `engine_audio`, `engine_editor`), the `game`
 executable, and the GoogleTest suite `engine_tests` (`tests/`).
 
 ## Testing
@@ -109,6 +109,7 @@ git clone --depth 1 --branch v5.5.0  https://github.com/jrouwe/JoltPhysics.git j
 git clone --depth 1 --branch v0.9.0  https://github.com/spnda/fastgltf.git
 git clone --depth 1 https://github.com/nothings/stb.git
 git clone --depth 1 --branch release-3.4.10 https://github.com/libsdl-org/SDL.git sdl
+git clone --depth 1 --branch 0.11.25 https://github.com/mackron/miniaudio.git
 apt-get install -y nlohmann-json3-dev libglm-dev libvulkan-dev
 
 D=~/deps; cd ~/quat-3d
