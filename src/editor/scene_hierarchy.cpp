@@ -7,7 +7,7 @@
 
 #include "engine/scene/components.hpp"
 #include "engine/scene/scene.hpp"
-#include "scene_snapshot.hpp"
+#include "engine/scene/scene_snapshot.hpp"
 
 namespace engine::editor {
 
@@ -72,7 +72,7 @@ void delete_subtree(scene::Scene& scene, entt::entity root, entt::entity& select
             scene.set_parent(child, e);
         }
         if (ImGui::MenuItem("Duplicate")) {
-            (void)duplicate_entity(scene, e);
+            (void)scene::duplicate_entity(scene, e);
         }
         if (ImGui::MenuItem("Delete")) {
             delete_subtree(scene, e, selected);

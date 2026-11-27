@@ -127,11 +127,7 @@ struct RemoteBridge::Impl {
     }
 
     [[nodiscard]] bool is_playing() const {
-#ifdef ENGINE_EDITOR
         return t.play != nullptr && *t.play;
-#else
-        return false;
-#endif
     }
 
     // ---- WorldServices ----------------------------------------------------------
@@ -248,7 +244,6 @@ struct RemoteBridge::Impl {
         s.camera_get = [this] { return camera_get(); };
         s.camera_set = [this](const remote::CameraPose& p) { camera_set(p); };
         s.render_settings = t.render_settings;
-#ifdef ENGINE_EDITOR
         if (t.play != nullptr) {
             s.playing = [this] { return *t.play; };
             s.set_playing = [this](bool play) -> std::expected<bool, Error> {
@@ -256,7 +251,6 @@ struct RemoteBridge::Impl {
                 return play;
             };
         }
-#endif
         if (t.ground_height != nullptr) {
             s.ground_height = [this](float x, float z) { return (*t.ground_height)(x, z); };
         }
@@ -280,6 +274,7 @@ struct RemoteBridge::Impl {
         };
         s.frame_stats = [this] { return frame_stats(); };
         s.physics_world = [this] { return physics_world(); };
+        if (t.scripts != nullptr) s.scripts = [this] { return t.scripts; };
         return s;
     }
 
@@ -445,6 +440,11 @@ float RemoteBridge::advance_sim(float real_dt) {
     m.frame_next = (m.frame_next + 1) % Impl::k_frame_window;
     m.frame_count = std::min(m.frame_count + 1, Impl::k_frame_window);
     return m.clock.advance(real_dt);
+}
+
+std::expected<std::vector<entt::entity>, engine::core::Error>
+RemoteBridge::spawn_model(const std::filesystem::path& absolute) {
+    return impl_->spawn_model(absolute);
 }
 
 float RemoteBridge::advance_sim_unrendered() { return impl_->clock.advance(0.0F); }

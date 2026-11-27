@@ -54,6 +54,18 @@ pub struct DesignBehaviorArgs {
     pub entity: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct WriteGameScriptArgs {
+    /// What the script should do, e.g. "coins that spin and add to a score when the player touches them".
+    pub goal: String,
+    /// The entity (id or name) to attach the script to, if it exists already.
+    #[serde(default)]
+    pub entity: Option<String>,
+    /// File to write, relative to assets/scripts/, e.g. "coins/coin.lua".
+    #[serde(default)]
+    pub path: Option<String>,
+}
+
 /// `Some(trimmed)` for non-blank text.
 fn non_blank(text: Option<String>) -> Option<String> {
     text.map(|t| t.trim().to_owned()).filter(|t| !t.is_empty())
@@ -144,6 +156,23 @@ impl QuatServer {
             DesignBehaviorArgs {
                 goal: goal.trim().to_owned(),
                 entity: non_blank(entity),
+            },
+        )
+    }
+
+    /// Write gameplay as a Lua script in the running quat-3d game: read the scripting reference, write and compile, attach, play, read the log, iterate.
+    #[prompt]
+    async fn write_game_script(
+        &self,
+        args: Parameters<WriteGameScriptArgs>,
+    ) -> Result<Vec<PromptMessage>, ErrorData> {
+        let WriteGameScriptArgs { goal, entity, path } = args.0;
+        user_prompt(
+            "write_game_script",
+            WriteGameScriptArgs {
+                goal: goal.trim().to_owned(),
+                entity: non_blank(entity),
+                path: non_blank(path),
             },
         )
     }

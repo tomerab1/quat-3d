@@ -18,6 +18,7 @@
 #include "engine/scene/gltf_loader.hpp"
 #include "engine/scene/primitives.hpp"
 #include "engine/scene/scene.hpp"
+#include "engine/scene/scene_io.hpp"
 
 namespace quat::app {
 
@@ -89,7 +90,8 @@ void add_demo_particles(engine::scene::Scene& scene) {
 std::expected<DemoScene, engine::core::Error>
 build_demo_scene(engine::scene::Scene& scene, engine::asset::AssetManager& assets,
                  engine::rhi::GpuAllocator& allocator,
-                 const engine::rhi::TransferContext& setup_transfer) {
+                 const engine::rhi::TransferContext& setup_transfer,
+                 const std::filesystem::path& project_root) {
     entt::entity spin_entity = entt::null;
     entt::entity demo_root = entt::null;
     entt::entity pedestal = entt::null;
@@ -102,6 +104,20 @@ build_demo_scene(engine::scene::Scene& scene, engine::asset::AssetManager& asset
     entt::entity character_entity = entt::null;
     bool scene_ok = true;
 
+    if (auto scene_path = engine::core::env_path("QUAT_SCENE")) {
+        std::filesystem::path path = std::move(*scene_path);
+        if (path.is_relative()) path = project_root / path;
+        if (auto loaded = engine::scene::load_scene(scene, path, allocator, setup_transfer, assets);
+            !loaded) {
+            std::fprintf(stderr, "[fatal] QUAT_SCENE load failed: %s\n",
+                         loaded.error().message.c_str());
+            return std::unexpected(engine::core::Error{"scene file load failed"});
+        }
+        std::fprintf(stderr, "[info] loaded scene %s\n", engine::core::path_to_utf8(path).c_str());
+        DemoScene out;
+        out.from_scene_file = true;
+        return out;
+    }
     if (const auto gltf_path = engine::core::env_path("QUAT_GLTF")) {
         auto roots = engine::scene::GltfLoader::instantiate(*gltf_path, allocator, setup_transfer,
                                                             assets, scene);

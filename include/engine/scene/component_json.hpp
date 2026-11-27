@@ -20,6 +20,7 @@
 //   point_light, dir_light, camera
 //   collider, rigidbody, character
 //   nav_agent, behavior, patrol
+//   script           Lua gameplay script path + property overrides (G7)
 //   terrain
 //   grass            GPU grass around the camera (density, blades, colours, wind, limits, LOD)
 //   particle_emitter GPU particles: emission, shape, forces, size / colour curves,

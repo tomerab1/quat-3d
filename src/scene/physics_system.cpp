@@ -74,6 +74,29 @@ namespace {
 
 } // namespace
 
+std::uint32_t ensure_rigid_body(entt::registry& registry, physics::PhysicsWorld& world,
+                                entt::entity e) {
+    if (!registry.valid(e)) return physics::PhysicsWorld::invalid_body;
+    auto* rb = registry.try_get<RigidBody>(e);
+    const auto* col = registry.try_get<Collider>(e);
+    const auto* t = registry.try_get<Transform>(e);
+    if (rb == nullptr || col == nullptr || t == nullptr) return physics::PhysicsWorld::invalid_body;
+    if (rb->body != physics::PhysicsWorld::invalid_body) return rb->body;
+    physics::PhysicsWorld::BodyParams params;
+    params.shape = make_shape(world, *col, scale_of(*t));
+    params.position = position_of(*t) + world_offset(*t, *col);
+    params.rotation = rotation_of(*t);
+    params.motion = to_motion(rb->motion);
+    params.sensor = col->is_sensor;
+    params.layer = col->is_sensor ? physics::Layer::sensor
+                   : rb->motion == BodyMotion::static_body ? physics::Layer::static_body
+                                                           : physics::Layer::dynamic;
+    params.mass = rb->mass;
+    params.owner = static_cast<std::uint32_t>(entt::to_integral(e));
+    rb->body = world.add_body(params);
+    return rb->body;
+}
+
 void physics_system(entt::registry& registry, physics::PhysicsWorld& world, float dt) {
     const std::uint32_t invalid = physics::PhysicsWorld::invalid_body;
 
@@ -93,19 +116,7 @@ void physics_system(entt::registry& registry, physics::PhysicsWorld& world, floa
 
     // 1. Create a body for each entity that has a Collider but no body yet.
     for (auto [e, rb, col, t] : registry.view<RigidBody, Collider, Transform>().each()) {
-        if (rb.body != invalid) continue;
-        physics::PhysicsWorld::BodyParams params;
-        params.shape = make_shape(world, col, scale_of(t));
-        params.position = position_of(t) + world_offset(t, col);
-        params.rotation = rotation_of(t);
-        params.motion = to_motion(rb.motion);
-        params.sensor = col.is_sensor;
-        params.layer = col.is_sensor ? physics::Layer::sensor
-                       : rb.motion == BodyMotion::static_body ? physics::Layer::static_body
-                                                              : physics::Layer::dynamic;
-        params.mass = rb.mass;
-        params.owner = static_cast<std::uint32_t>(entt::to_integral(e));
-        rb.body = world.add_body(params);
+        if (rb.body == invalid) (void)ensure_rigid_body(registry, world, e);
     }
 
     // 2. Push kinematic bodies' transforms into the simulation.

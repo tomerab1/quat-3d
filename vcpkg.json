@@ -40,6 +40,14 @@
     "recastnavigation",
     "gamenetworkingsockets",
     "miniaudio",
+    "lua",
+    "sol2",
     "gtest"
+  ],
+  "overrides": [
+    {
+      "name": "lua",
+      "version": "5.4.8"
+    }
   ]
 }

@@ -1,6 +1,5 @@
 #include "engine/physics/physics_world.hpp"
 
-#include <algorithm>
 #include <cfloat>
 #include <cmath>
 #include <mutex>
@@ -9,123 +8,13 @@
 #include <unordered_set>
 #include <vector>
 
-// Jolt headers are not clean under our strict warning flags; quiet them here
-// (our own code in this TU stays under the project's warnings).
-#if defined(__clang__)
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wshadow"
-#pragma clang diagnostic ignored "-Wsuggest-override"
-#endif
-#include <Jolt/Jolt.h>
-
-#include <Jolt/Core/Factory.h>
-#include <Jolt/Core/JobSystemThreadPool.h>
-#include <Jolt/Core/TempAllocator.h>
-#include <Jolt/Physics/Body/Body.h>
-#include <Jolt/Physics/Body/BodyFilter.h>
-#include <Jolt/Physics/Body/BodyLock.h>
-#include <Jolt/Physics/Body/BodyCreationSettings.h>
-#include <Jolt/Physics/Character/CharacterVirtual.h>
-#include <Jolt/Physics/Collision/CastResult.h>
-#include <Jolt/Physics/Collision/ContactListener.h>
-#include <Jolt/Physics/Collision/RayCast.h>
-#include <Jolt/Physics/Collision/ObjectLayer.h>
-#include <Jolt/Physics/Collision/Shape/BoxShape.h>
-#include <Jolt/Physics/Collision/Shape/CapsuleShape.h>
-#include <Jolt/Physics/Collision/Shape/ConvexHullShape.h>
-#include <Jolt/Physics/Collision/Shape/HeightFieldShape.h>
-#include <Jolt/Physics/Collision/Shape/MeshShape.h>
-#include <Jolt/Physics/Collision/Shape/SphereShape.h>
-#include <Jolt/Physics/PhysicsSettings.h>
-#include <Jolt/Physics/PhysicsSystem.h>
-#include <Jolt/RegisterTypes.h>
-#if defined(__clang__)
-#pragma clang diagnostic pop
-#endif
+#include "physics_world_impl.hpp"
 
 namespace engine::physics {
 
+using namespace detail;
+
 namespace {
-
-// Object layers (must match the Layer enum in the header).
-namespace obj_layers {
-[[maybe_unused]] constexpr JPH::ObjectLayer k_static = 0;
-constexpr JPH::ObjectLayer k_dynamic = 1;
-constexpr JPH::ObjectLayer k_character = 2;
-[[maybe_unused]] constexpr JPH::ObjectLayer k_trigger = 3; // used from 6.2
-[[maybe_unused]] constexpr JPH::ObjectLayer k_sensor = 4;  // used from 6.2
-} // namespace obj_layers
-
-namespace bp_layers {
-constexpr JPH::BroadPhaseLayer k_non_moving{0};
-constexpr JPH::BroadPhaseLayer k_moving{1};
-constexpr JPH::uint k_count = 2;
-} // namespace bp_layers
-
-[[nodiscard]] bool is_moving(JPH::ObjectLayer layer) {
-    return layer == obj_layers::k_dynamic || layer == obj_layers::k_character;
-}
-
-class BroadPhaseLayerImpl final : public JPH::BroadPhaseLayerInterface {
-public:
-    JPH::uint GetNumBroadPhaseLayers() const override { return bp_layers::k_count; }
-    JPH::BroadPhaseLayer GetBroadPhaseLayer(JPH::ObjectLayer layer) const override {
-        return is_moving(layer) ? bp_layers::k_moving : bp_layers::k_non_moving;
-    }
-#if defined(JPH_EXTERNAL_PROFILE) || defined(JPH_PROFILE_ENABLED)
-    const char* GetBroadPhaseLayerName(JPH::BroadPhaseLayer layer) const override {
-        return layer == bp_layers::k_moving ? "moving" : "non_moving";
-    }
-#endif
-};
-
-class ObjectVsBroadPhaseFilterImpl final : public JPH::ObjectVsBroadPhaseLayerFilter {
-public:
-    bool ShouldCollide(JPH::ObjectLayer layer, JPH::BroadPhaseLayer bp) const override {
-        // Moving broad-phase: everything tests against it. Non-moving broad-phase:
-        // only moving objects need to test against it.
-        return bp == bp_layers::k_moving || is_moving(layer);
-    }
-};
-
-class ObjectLayerPairFilterImpl final : public JPH::ObjectLayerPairFilter {
-public:
-    bool ShouldCollide(JPH::ObjectLayer a, JPH::ObjectLayer b) const override {
-        return is_moving(a) || is_moving(b); // at least one body must be moving
-    }
-};
-
-// Records trigger (sensor) overlaps into a shared queue. Jolt calls these from
-// worker threads during Update, so the queue is guarded by a mutex.
-class ContactListenerImpl final : public JPH::ContactListener {
-public:
-    std::vector<PhysicsWorld::TriggerEvent>* events = nullptr;
-    std::mutex*                              mutex = nullptr;
-    std::unordered_set<std::uint32_t>*       sensors = nullptr;
-
-    void OnContactAdded(const JPH::Body& b1, const JPH::Body& b2, const JPH::ContactManifold&,
-                        JPH::ContactSettings&) override {
-        const bool s1 = b1.IsSensor();
-        const bool s2 = b2.IsSensor();
-        if (!s1 && !s2) return;
-        const std::uint32_t id1 = b1.GetID().GetIndexAndSequenceNumber();
-        const std::uint32_t id2 = b2.GetID().GetIndexAndSequenceNumber();
-        const std::scoped_lock lock(*mutex);
-        events->push_back(s1 ? PhysicsWorld::TriggerEvent{id1, id2, true}
-                             : PhysicsWorld::TriggerEvent{id2, id1, true});
-    }
-
-    void OnContactRemoved(const JPH::SubShapeIDPair& pair) override {
-        const std::uint32_t id1 = pair.GetBody1ID().GetIndexAndSequenceNumber();
-        const std::uint32_t id2 = pair.GetBody2ID().GetIndexAndSequenceNumber();
-        const std::scoped_lock lock(*mutex);
-        if (sensors->contains(id1)) {
-            events->push_back({id1, id2, false});
-        } else if (sensors->contains(id2)) {
-            events->push_back({id2, id1, false});
-        }
-    }
-};
 
 // Jolt's global state (allocator, factory, type registration) initialised once
 // for the process. Never torn down — it lives for the program's lifetime.
@@ -139,47 +28,7 @@ void ensure_jolt_initialized() {
     (void)done;
 }
 
-[[nodiscard]] JPH::Vec3 to_jph(const glm::vec3& v) { return JPH::Vec3(v.x, v.y, v.z); }
-[[nodiscard]] JPH::RVec3 to_jph_r(const glm::vec3& v) {
-    return JPH::RVec3(static_cast<JPH::Real>(v.x), static_cast<JPH::Real>(v.y),
-                      static_cast<JPH::Real>(v.z));
-}
-[[nodiscard]] JPH::Quat to_jph(const glm::quat& q) { return JPH::Quat(q.x, q.y, q.z, q.w); }
-[[nodiscard]] glm::vec3 to_glm(JPH::RVec3Arg v) {
-    return {static_cast<float>(v.GetX()), static_cast<float>(v.GetY()),
-            static_cast<float>(v.GetZ())};
-}
-[[nodiscard]] glm::quat to_glm(JPH::QuatArg q) {
-    return {q.GetW(), q.GetX(), q.GetY(), q.GetZ()}; // glm::quat is (w, x, y, z)
-}
-
-[[nodiscard]] JPH::ObjectLayer object_layer_of(Layer layer) {
-    return static_cast<JPH::ObjectLayer>(layer);
-}
-
 } // namespace
-
-struct PhysicsWorld::Impl {
-    std::unique_ptr<JPH::TempAllocatorImpl>   temp_allocator;
-    std::unique_ptr<JPH::JobSystemThreadPool> job_system;
-    BroadPhaseLayerImpl                       bp_layer;
-    ObjectVsBroadPhaseFilterImpl              obj_vs_bp;
-    ObjectLayerPairFilterImpl                 obj_pair;
-    JPH::PhysicsSystem                        system;
-    std::vector<JPH::ShapeRefC>               shapes;
-    std::vector<JPH::Ref<JPH::CharacterVirtual>> characters;
-    ContactListenerImpl                       contact_listener;
-    std::vector<PhysicsWorld::TriggerEvent>   trigger_events;
-    std::mutex                                trigger_mutex;
-    std::unordered_set<std::uint32_t>         sensor_bodies;
-    std::unordered_map<std::uint32_t, std::uint32_t> body_owner;       // body -> owner
-    std::vector<std::uint32_t>                character_owner;           // parallel to characters
-    float                                     accumulator = 0.0F;
-
-    [[nodiscard]] JPH::CharacterVirtual* character(std::uint32_t id) const {
-        return id < characters.size() ? characters[id].GetPtr() : nullptr;
-    }
-};
 
 std::expected<PhysicsWorld, core::Error> PhysicsWorld::create() {
     ensure_jolt_initialized();
@@ -381,16 +230,27 @@ std::uint32_t PhysicsWorld::create_character(float half_height, float radius,
     settings->mShape = new JPH::CapsuleShape(half_height, radius);
     // Accept ground contacts within the bottom hemisphere as "supporting".
     settings->mSupportingVolume = JPH::Plane(JPH::Vec3::sAxisY(), -radius);
+    // Inner body: a kinematic capsule that follows the character so sensors
+    // report it (trigger events name it; body_owner() maps it back).
+    settings->mInnerBodyShape = settings->mShape;
+    settings->mInnerBodyLayer = obj_layers::k_character_presence;
     JPH::Ref<JPH::CharacterVirtual> character = new JPH::CharacterVirtual(
         settings, to_jph_r(position), JPH::Quat::sIdentity(), 0, &impl_->system);
+    const auto index = static_cast<std::uint32_t>(impl_->characters.size());
+    if (const JPH::BodyID inner = character->GetInnerBodyID(); !inner.IsInvalid()) {
+        impl_->inner_body_character[inner.GetIndexAndSequenceNumber()] = index;
+    }
     impl_->characters.push_back(character);
     impl_->character_owner.push_back(owner);
-    return static_cast<std::uint32_t>(impl_->characters.size() - 1);
+    return index;
 }
 
 void PhysicsWorld::remove_character(std::uint32_t character) {
     if (character >= impl_->characters.size()) return;
-    impl_->characters[character] = nullptr; // releases the CharacterVirtual
+    if (const JPH::CharacterVirtual* c = impl_->characters[character].GetPtr()) {
+        impl_->inner_body_character.erase(c->GetInnerBodyID().GetIndexAndSequenceNumber());
+    }
+    impl_->characters[character] = nullptr; // releases the CharacterVirtual (and its inner body)
     impl_->character_owner[character] = no_owner;
 }
 
@@ -447,122 +307,6 @@ void PhysicsWorld::character_set_position(std::uint32_t character, const glm::ve
 bool PhysicsWorld::character_on_ground(std::uint32_t character) const {
     const JPH::CharacterVirtual* c = impl_->character(character);
     return c != nullptr && c->GetGroundState() == JPH::CharacterBase::EGroundState::OnGround;
-}
-
-std::span<const PhysicsWorld::TriggerEvent> PhysicsWorld::trigger_events() const {
-    return {impl_->trigger_events.data(), impl_->trigger_events.size()};
-}
-
-std::uint32_t PhysicsWorld::body_count() const {
-    return impl_ ? impl_->system.GetNumBodies() : 0;
-}
-
-std::uint32_t PhysicsWorld::active_body_count() const {
-    return impl_ ? impl_->system.GetNumActiveBodies(JPH::EBodyType::RigidBody) : 0;
-}
-
-std::uint32_t PhysicsWorld::character_count() const {
-    if (!impl_) return 0;
-    std::uint32_t n = 0;
-    for (const auto& c : impl_->characters) n += c != nullptr ? 1U : 0U;
-    return n;
-}
-
-namespace {
-// Skips sensor (trigger) bodies unless asked to include them, and bodies
-// whose owner is ignored.
-class RayBodyFilter final : public JPH::BodyFilter {
-public:
-    RayBodyFilter(bool include_sensors, std::span<const std::uint32_t> ignore_owners,
-                  const std::unordered_map<std::uint32_t, std::uint32_t>& body_owner)
-        : include_sensors_(include_sensors), ignore_owners_(ignore_owners),
-          body_owner_(body_owner) {}
-    [[nodiscard]] bool ShouldCollideLocked(const JPH::Body& body) const override {
-        if (!include_sensors_ && body.IsSensor()) return false;
-        if (ignore_owners_.empty()) return true;
-        const auto it = body_owner_.find(body.GetID().GetIndexAndSequenceNumber());
-        return it == body_owner_.end() || !is_ignored(ignore_owners_, it->second);
-    }
-
-    [[nodiscard]] static bool is_ignored(std::span<const std::uint32_t> ignore,
-                                         std::uint32_t owner) {
-        return std::find(ignore.begin(), ignore.end(), owner) != ignore.end();
-    }
-
-private:
-    bool                                                     include_sensors_;
-    std::span<const std::uint32_t>                           ignore_owners_;
-    const std::unordered_map<std::uint32_t, std::uint32_t>& body_owner_;
-};
-} // namespace
-
-std::optional<PhysicsWorld::RayHit> PhysicsWorld::cast_ray(const glm::vec3& origin,
-                                                           const glm::vec3& direction,
-                                                           float max_distance,
-                                                           bool include_sensors,
-                                                           std::span<const std::uint32_t> ignore_owners)
-    const {
-    const float len = glm::length(direction);
-    if (!impl_ || !(len > 1e-6F) || !(max_distance > 0.0F) || !std::isfinite(max_distance)) {
-        return std::nullopt;
-    }
-    const glm::vec3 dir = direction / len;
-    const JPH::RRayCast ray(to_jph_r(origin), to_jph(dir * max_distance));
-    std::optional<RayHit> best;
-    float best_fraction = 1.0F + FLT_EPSILON;
-
-    JPH::RayCastResult result;
-    const RayBodyFilter filter(include_sensors, ignore_owners, impl_->body_owner);
-    if (impl_->system.GetNarrowPhaseQuery().CastRay(ray, result, JPH::BroadPhaseLayerFilter{},
-                                                    JPH::ObjectLayerFilter{}, filter)) {
-        RayHit hit;
-        hit.body = result.mBodyID.GetIndexAndSequenceNumber();
-        const JPH::RVec3 point = ray.GetPointOnRay(result.mFraction);
-        hit.point = to_glm(point);
-        hit.distance = result.mFraction * max_distance;
-        const JPH::BodyLockRead lock(impl_->system.GetBodyLockInterface(), result.mBodyID);
-        if (lock.Succeeded()) {
-            const JPH::Body& body = lock.GetBody();
-            const JPH::Vec3 n = body.GetWorldSpaceSurfaceNormal(result.mSubShapeID2, point);
-            hit.normal = glm::vec3(n.GetX(), n.GetY(), n.GetZ());
-            hit.sensor = body.IsSensor();
-        }
-        if (const auto it = impl_->body_owner.find(hit.body); it != impl_->body_owner.end()) {
-            hit.owner = it->second;
-        }
-        best_fraction = result.mFraction;
-        best = hit;
-    }
-
-    // Character controllers are not bodies: test their shapes directly, in
-    // each character's centre-of-mass space.
-    for (std::size_t i = 0; i < impl_->characters.size(); ++i) {
-        const JPH::CharacterVirtual* c = impl_->characters[i].GetPtr();
-        if (c == nullptr ||
-            RayBodyFilter::is_ignored(ignore_owners, impl_->character_owner[i])) {
-            continue;
-        }
-        const JPH::RMat44 com = c->GetCenterOfMassTransform();
-        const JPH::RRayCast local_r = ray.Transformed(com.InversedRotationTranslation());
-        const JPH::RayCast local(JPH::Vec3(local_r.mOrigin), local_r.mDirection);
-        JPH::RayCastResult ch;
-        ch.mFraction = best_fraction;
-        if (!c->GetShape()->CastRay(local, JPH::SubShapeIDCreator(), ch) ||
-            ch.mFraction >= best_fraction) {
-            continue;
-        }
-        RayHit hit;
-        hit.character = static_cast<std::uint32_t>(i);
-        hit.owner = impl_->character_owner[i];
-        hit.point = to_glm(ray.GetPointOnRay(ch.mFraction));
-        hit.distance = ch.mFraction * max_distance;
-        const JPH::Vec3 n = com.Multiply3x3(
-            c->GetShape()->GetSurfaceNormal(ch.mSubShapeID2, local.GetPointOnRay(ch.mFraction)));
-        hit.normal = glm::vec3(n.GetX(), n.GetY(), n.GetZ());
-        best_fraction = ch.mFraction;
-        best = hit;
-    }
-    return best;
 }
 
 } // namespace engine::physics

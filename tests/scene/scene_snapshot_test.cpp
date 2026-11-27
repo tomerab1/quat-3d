@@ -1,7 +1,5 @@
 // Play-mode snapshot (capture on Play, restore on Stop).
 
-#ifdef ENGINE_EDITOR
-
 #include <algorithm>
 #include <type_traits>
 
@@ -9,7 +7,7 @@
 #include <glm/glm.hpp>
 #include <gtest/gtest.h>
 
-#include "editor/scene_snapshot.hpp"
+#include "engine/scene/scene_snapshot.hpp"
 #include "engine/scene/components.hpp"
 #include "engine/scene/scene.hpp"
 
@@ -25,9 +23,9 @@ TEST(PlayModeSnapshot, RestoresNetReplicatedAndPrimitive) {
     scene.registry().emplace<s::NetReplicated>(e, 7U);
     scene.registry().emplace<s::Primitive>(e).shape = s::PrimitiveShape::cone;
 
-    const auto snapshot = engine::editor::capture_scene(scene);
+    const auto snapshot = engine::scene::capture_scene(scene);
     scene.registry().remove<s::NetReplicated, s::Primitive>(e);
-    engine::editor::restore_scene(scene, snapshot);
+    engine::scene::restore_scene(scene, snapshot);
 
     ASSERT_TRUE(scene.registry().valid(e));
     ASSERT_TRUE(scene.registry().all_of<s::NetReplicated>(e));
@@ -49,13 +47,13 @@ TEST(PlayModeSnapshot, RestoresAudioComponentsWithoutRuntimeState) {
     scene.registry().emplace<s::AudioSource>(e, src);
     scene.registry().emplace<s::AudioListener>(e).active = false;
 
-    const auto snapshot = engine::editor::capture_scene(scene);
+    const auto snapshot = engine::scene::capture_scene(scene);
     auto& live = scene.registry().get<s::AudioSource>(e);
     live.sound = 42;
     live.started = true;
     live.state = engine::audio::Playback::playing;
     live.volume = 1.0F;
-    engine::editor::restore_scene(scene, snapshot);
+    engine::scene::restore_scene(scene, snapshot);
 
     ASSERT_TRUE(scene.registry().all_of<s::AudioSource>(e));
     const auto& restored = scene.registry().get<s::AudioSource>(e);
@@ -84,10 +82,10 @@ TEST(PlayModeSnapshot, RestoresInstancedMeshAndScatter) {
     scatter.generated = 99;
     scatter.generation = 3;
 
-    const auto snapshot = engine::editor::capture_scene(scene);
+    const auto snapshot = engine::scene::capture_scene(scene);
     scene.registry().get<s::InstancedMesh>(e).instances.clear();
     scene.registry().remove<s::Scatter, s::InstancedMeshParts>(e);
-    engine::editor::restore_scene(scene, snapshot);
+    engine::scene::restore_scene(scene, snapshot);
 
     auto& r = scene.registry();
     ASSERT_TRUE(r.all_of<s::InstancedMesh>(e));
@@ -107,9 +105,9 @@ TEST(PlayModeSnapshot, RestoresGrass) {
     const entt::entity e = scene.create_entity("meadow");
     scene.registry().emplace<s::Grass>(e).settings.density = 63.0F;
 
-    const auto snapshot = engine::editor::capture_scene(scene);
+    const auto snapshot = engine::scene::capture_scene(scene);
     scene.registry().remove<s::Grass>(e);
-    engine::editor::restore_scene(scene, snapshot);
+    engine::scene::restore_scene(scene, snapshot);
 
     ASSERT_TRUE(scene.registry().all_of<s::Grass>(e));
     EXPECT_EQ(scene.registry().get<s::Grass>(e).settings.density, 63.0F);
@@ -123,9 +121,9 @@ TEST(PlayModeSnapshot, RestoresParticleEmitter) {
     emitter.settings.rate = 321.0F;
     emitter.settings.texture = "assets/textures/spark.png";
 
-    const auto snapshot = engine::editor::capture_scene(scene);
+    const auto snapshot = s::capture_scene(scene);
     scene.registry().remove<s::ParticleEmitter>(e);
-    engine::editor::restore_scene(scene, snapshot);
+    s::restore_scene(scene, snapshot);
 
     ASSERT_TRUE(scene.registry().all_of<s::ParticleEmitter>(e));
     EXPECT_EQ(scene.registry().get<s::ParticleEmitter>(e).settings.rate, 321.0F);
@@ -134,7 +132,7 @@ TEST(PlayModeSnapshot, RestoresParticleEmitter) {
 }
 
 template <typename... Ts, typename F>
-void for_each_listed(engine::editor::ComponentList<Ts...> /*list*/, F&& f) {
+void for_each_listed(engine::scene::ComponentList<Ts...> /*list*/, F&& f) {
     (f.template operator()<Ts>(), ...);
 }
 
@@ -148,7 +146,7 @@ TEST(EditorDuplicate, CopiesEverySnapshotComponent) {
     const entt::entity e = scene.create_entity("crate");
     ASSERT_TRUE(scene.set_parent(e, parent));
     // Every listed component (hierarchy links aside) with its defaults...
-    for_each_listed(engine::editor::SnapshotComponents{}, [&]<typename T>() {
+    for_each_listed(engine::scene::SnapshotComponents{}, [&]<typename T>() {
         if constexpr (!std::is_same_v<T, s::Parent> && !std::is_same_v<T, s::Children>) {
             (void)r.get_or_emplace<T>(e);
         }
@@ -167,11 +165,11 @@ TEST(EditorDuplicate, CopiesEverySnapshotComponent) {
     r.get<s::BehaviorTree>(e).source = "{}";
     r.get<s::MeshSource>(e).mesh_key = "a.gltf#mesh0.prim0";
 
-    const entt::entity copy = engine::editor::duplicate_entity(scene, e);
+    const entt::entity copy = engine::scene::duplicate_entity(scene, e);
     ASSERT_TRUE(r.valid(copy));
     ASSERT_NE(copy, e);
 
-    for_each_listed(engine::editor::SnapshotComponents{}, [&]<typename T>() {
+    for_each_listed(engine::scene::SnapshotComponents{}, [&]<typename T>() {
         if constexpr (!std::is_same_v<T, s::Children>) {
             EXPECT_TRUE(r.all_of<T>(copy)) << "component not duplicated";
         }
@@ -206,4 +204,3 @@ TEST(EditorDuplicate, CopiesEverySnapshotComponent) {
 
 } // namespace
 
-#endif // ENGINE_EDITOR

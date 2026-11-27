@@ -105,9 +105,11 @@ Details the contract leaves open, as implemented:
   **`asset.spawn_model`**: a model with several root nodes is grouped under a
   new entity (named `name`, else the file stem) when `name`, `parent` or
   `components` are given, so they apply to the model as a whole.
-- **`sim.play` / `sim.stop`** toggle the editor's play mode (the transition
-  runs later that frame); `unavailable` without the editor or in the physics
-  / character demo modes, which own their physics world.
+- **`sim.play` / `sim.stop`** toggle play mode (the transition runs later
+  that frame), in the editor and in the non-editor game alike (which starts
+  playing for a `QUAT_SCENE` / `QUAT_PLAY` run); `unavailable` in the physics
+  / character demo modes, which own their physics world. `scene.save` /
+  `scene.load` are refused (`failed`) while playing.
 
 ## Methods (v1 contract, ROADMAP A2/A3)
 
@@ -155,11 +157,14 @@ radius),
 `audio_source` (`clip`, `bus`: master/music/sfx/ui/ambience, `volume`,
 `pitch`, `loop`, `play_on_start`, `spatial`, `min_distance`, `max_distance`,
 `rolloff`, `doppler`, plus write-only `command`: play/stop/pause/resume),
-`audio_listener` (`active`), `animator` (edit only: `clip` switches by name
-among read-only `clips`, `blend` inertialize/crossfade, `blend_time`, `time`,
-`speed`, `looping`), `foot_ik` (`enabled`, `pelvis` / `left_foot` /
-`right_foot` joint names, empty = auto, `ray_up`, `ray_down`, `max_adjust`,
-`max_foot_angle`, `smoothing`), `mesh` (read only). Updates merge: omitted fields keep their
+`audio_listener` (`active`), `script` (`path` relative to `assets/scripts/`,
+`enabled`, `properties`: `{name: number | bool | string | [x,y,z]}`, merged
+per name, `null` removes one; see [scripting.md](scripting.md)), `animator`
+(edit only: `clip` switches by name among read-only `clips`, `blend`
+inertialize/crossfade, `blend_time`, `time`, `speed`, `looping`), `foot_ik`
+(`enabled`, `pelvis` / `left_foot` / `right_foot` joint names, empty = auto,
+`ray_up`, `ray_down`, `max_adjust`, `max_foot_angle`, `smoothing`), `mesh`
+(read only). Updates merge: omitted fields keep their
 values. Unknown fields are errors (they name the known fields).
 
 | Method | Params | Result |
@@ -431,6 +436,46 @@ the stored tree from running (empty for a valid tree).
   too (the tree restarts from its root), but like every edit made while
   playing they are undone when Play stops and the editor restores the scene
   it started from.
+
+## Gameplay scripts (ROADMAP G7)
+
+Lua script files under `assets/scripts/` (the language reference is
+[scripting.md](scripting.md)); entities run them through the `script`
+component (`scene.create` / `scene.update`). Contract for the engine
+(`src/remote/world/script_commands.cpp`) and quat-mcp's `script_*` tools:
+
+| Method | Params | Result |
+|---|---|---|
+| `script.list` | — | `{scripts:[{path, bytes, entities, status?}], running}` |
+| `script.get` | `{path}` | `{path, source, entities, status}` |
+| `script.create` | `{path, source}` | `{path, bytes, entities, running?, status?}` |
+| `script.update` | `{path, source}` | same as `script.create` |
+| `script.delete` | `{path}` | `{path, deleted, entities_still_using}` |
+| `script.check` | `{source, path?}` | `{ok, line?, message?}` |
+
+`status` is `{state: "ok" \| "error", message?, instances, failed, reloads}`
+(null before the runtime has seen the file); `entities` counts the entities
+whose `script` component uses the file; `running` is true while a play
+session runs scripts.
+
+- **Paths** are relative to `assets/scripts/`, end in `.lua` and use only
+  `[A-Za-z0-9_.-]` segments separated by `/` (no `.` / `..` segments); a
+  path whose existing prefix resolves outside the directory (a symlink) is
+  refused. Parent directories are created.
+- **Sources** are at most 256 KiB of text. `script.create` / `script.update`
+  compile the source first: a syntax error is `invalid_params` with the
+  message `syntax error at line N: <path>:N: <Lua's message>` and `data:
+  {path, line}`, and nothing is written. Writes go through a temporary file
+  and a rename.
+- `script.create` refuses an existing file (`failed`), `script.update` a
+  missing one (`not_found`).
+- `script.update` (and `script.create`) hot-reload the file at once: while
+  playing, every instance restarts with the new code; a file that fails to
+  load at run time (an error in its top-level code) keeps the previous
+  version running and its `status` carries the error. Runtime errors from
+  callbacks are in `debug.log` (category `script`) and in `status`.
+- `script.delete` does not detach the file from entities; running instances
+  keep their loaded code until the session ends.
 
 ## Errors
 

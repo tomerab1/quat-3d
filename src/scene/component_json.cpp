@@ -21,6 +21,7 @@
 #include "engine/physics/physics_world.hpp"
 #include "engine/scene/components.hpp"
 #include "engine/scene/material_override.hpp"
+#include "engine/scene/script_component.hpp"
 #include "component_json_internal.hpp"
 
 #include "component_json_animation.hpp"
@@ -48,6 +49,7 @@ constexpr std::array k_components = {
     ComponentInfo{"nav_agent", "Navmesh path-following agent", true, true},
     ComponentInfo{"behavior", "Behaviour tree (JSON source)", true, true},
     ComponentInfo{"patrol", "Patrol route the nav agent walks", true, true},
+    ComponentInfo{"script", "Lua gameplay script (assets/scripts/) with property overrides", true, true},
     ComponentInfo{"terrain", "Procedural terrain tile / streamed world", true, true},
     ComponentInfo{"grass", "GPU-generated, wind-animated grass around the camera", true, true},
     ComponentInfo{"particle_emitter", "GPU particle emitter (sparks, smoke, dust): emission, shape, forces, curves, flipbook, blending, collision", true, true},
@@ -556,6 +558,7 @@ json encode_components(const entt::registry& r, entt::entity e, const EncodeOpti
     if (const auto* b = pick.get<BehaviorTree>("behavior")) {
         out["behavior"] = {{"source", b->source}, {"enabled", b->enabled}};
     }
+    if (const auto* sc = pick.get<Script>("script")) out["script"] = encode_script(*sc);
     if (const auto* p = pick.get<PatrolRoute>("patrol")) {
         json pts = json::array();
         for (const glm::vec3& pt : p->points) pts.push_back(vec3_json(pt));
@@ -634,6 +637,7 @@ std::vector<std::string_view> component_names(const entt::registry& r, entt::ent
     add(r.all_of<NavAgent>(e), "nav_agent");
     add(r.all_of<BehaviorTree>(e), "behavior");
     add(r.all_of<PatrolRoute>(e), "patrol");
+    add(r.all_of<Script>(e), "script");
     add(r.all_of<Terrain>(e), "terrain");
     add(r.all_of<Grass>(e), "grass");
     add(r.all_of<ParticleEmitter>(e), "particle_emitter");
@@ -850,6 +854,15 @@ std::expected<void, core::Error> apply_component(entt::registry& r, entt::entity
             f.vec3_list("points", p.points).boolean("loop", p.loop);
         });
     }
+    if (name == "script") {
+        const bool adding = !r.all_of<Script>(e);
+        return merge<Script>(r, e, v, name, strict, [adding](JsonFields& f, Script& sc) {
+            if (adding && !f.has("path")) {
+                f.fail("path", "required when adding a script (relative to assets/scripts/)");
+            }
+            decode_script_fields(f, sc);
+        });
+    }
     if (name == "terrain") {
         return merge<Terrain>(r, e, v, name, strict, [](JsonFields& f, Terrain& t) {
             terrain::TerrainParams& p = t.params;
@@ -953,6 +966,7 @@ bool remove_component(entt::registry& r, entt::entity e, std::string_view name) 
     if (name == "nav_agent") return r.remove<NavAgent>(e) > 0;
     if (name == "behavior") return r.remove<BehaviorTree>(e) > 0;
     if (name == "patrol") return r.remove<PatrolRoute>(e) > 0;
+    if (name == "script") return r.remove<Script>(e) > 0;
     if (name == "terrain") return r.remove<Terrain>(e) > 0;
     if (name == "grass") return r.remove<Grass>(e) > 0;
     if (name == "particle_emitter") return r.remove<ParticleEmitter>(e) > 0;

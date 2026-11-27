@@ -126,6 +126,9 @@ find_package(EnTT CONFIG REQUIRED)
 find_package(Jolt CONFIG REQUIRED)
 find_package(recastnavigation CONFIG REQUIRED)
 find_package(GameNetworkingSockets CONFIG REQUIRED)
+# Lua 5.4 (C library, longjmp error handling) + sol2 (header-only bindings).
+find_package(Lua REQUIRED)
+find_package(sol2 CONFIG REQUIRED)
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/FetchAcl.cmake) # ACL + RTM (header-only)
 # miniaudio: vcpkg's port is header-only (it installs miniaudio.h and nothing
 # else), so it is wrapped in an imported target here and engine_audio compiles
@@ -257,7 +260,8 @@ target_include_directories(engine_animation PUBLIC ${ENGINE_PUBLIC_INCLUDE})
 # implementation detail (PRIVATE); the public header is Jolt-free (PIMPL).
 # ---------------------------------------------------------------------------
 add_library(engine_physics STATIC
-    src/physics/physics_world.cpp)
+    src/physics/physics_world.cpp
+    src/physics/physics_queries.cpp)
 target_link_libraries(engine_physics PUBLIC engine_flags)
 target_link_libraries(engine_physics PRIVATE Jolt::Jolt)
 target_include_directories(engine_physics PUBLIC ${ENGINE_PUBLIC_INCLUDE})
@@ -287,6 +291,8 @@ add_library(engine_scene STATIC
     src/scene/scene_io.cpp
     src/scene/component_json.cpp
     src/scene/particle_json.cpp
+    src/scene/script_component.cpp
+    src/scene/scene_snapshot.cpp
     src/scene/component_json_animation.cpp
     src/scene/material_override.cpp
     src/scene/render_settings_json.cpp
@@ -333,6 +339,35 @@ add_library(engine_stb_image STATIC src/scene/stb_image_impl.cpp)
 target_link_libraries(engine_stb_image PRIVATE engine_flags)
 target_include_directories(engine_stb_image SYSTEM PRIVATE ${Stb_INCLUDE_DIR})
 set_source_files_properties(src/scene/stb_image_impl.cpp PROPERTIES COMPILE_OPTIONS "${ENGINE_THIRD_PARTY_TU_FLAGS}")
+
+# ---------------------------------------------------------------------------
+# engine_script — Lua gameplay scripting (G7): one sandboxed Lua 5.4 state
+# per play session with per-call instruction / memory limits, the Script
+# component's runtime, hot reload, and the engine API scripts call (entities,
+# components through the codec, physics, input, audio, navigation). Lua and
+# sol2 are implementation details (PRIVATE); the public headers are Lua-free.
+# sol2 runs without exceptions (the engine builds with -fno-exceptions) and
+# with every safety check on.
+# ---------------------------------------------------------------------------
+add_library(engine_script STATIC
+    src/script/lua_vm.cpp
+    src/script/lua_bind.cpp
+    src/script/lua_json.cpp
+    src/script/script_api_math.cpp
+    src/script/script_api_entity.cpp
+    src/script/script_api_scene.cpp
+    src/script/script_api_services.cpp
+    src/script/script_api_input.cpp
+    src/script/script_input.cpp
+    src/script/script_source.cpp
+    src/script/script_runtime.cpp
+    src/script/script_files.cpp)
+target_link_libraries(engine_script PUBLIC engine_flags engine_core engine_scene engine_physics)
+target_link_libraries(engine_script PRIVATE sol2::sol2 ${LUA_LIBRARIES})
+# SYSTEM: the vcpkg include directory holds every dependency's headers.
+target_include_directories(engine_script SYSTEM PRIVATE ${LUA_INCLUDE_DIR})
+target_include_directories(engine_script PUBLIC ${ENGINE_PUBLIC_INCLUDE})
+target_compile_definitions(engine_script PRIVATE SOL_NO_EXCEPTIONS=1 SOL_ALL_SAFETIES_ON=1)
 
 # ---------------------------------------------------------------------------
 # engine_cook — offline asset cooker (R17): glTF textures -> KTX2/Basis,
@@ -448,10 +483,11 @@ add_library(engine_remote_world STATIC
     src/remote/world/tuning_commands.cpp
     src/remote/world/behavior_commands.cpp
     src/remote/world/behavior_edit_commands.cpp
+    src/remote/world/script_commands.cpp
     src/remote/world/image_encode.cpp
     src/remote/world/stb_image_write_impl.cpp)
 target_link_libraries(engine_remote_world PUBLIC
-    engine_flags engine_core engine_remote engine_scene engine_physics engine_nav)
+    engine_flags engine_core engine_remote engine_scene engine_physics engine_nav engine_script)
 target_include_directories(engine_remote_world PUBLIC ${ENGINE_PUBLIC_INCLUDE})
 target_include_directories(engine_remote_world SYSTEM PRIVATE ${Stb_INCLUDE_DIR})
 # stb's implementation TU is not warning-clean under our strict flags.
@@ -531,8 +567,8 @@ if(ENGINE_EDITOR)
         src/editor/animation_preview.cpp
         src/editor/physics_debug.cpp
         src/editor/picking.cpp
-        src/editor/scene_snapshot.cpp
         src/editor/audio_inspector.cpp
+        src/editor/script_inspector.cpp
         src/editor/animation_inspector.cpp
         src/editor/grass_inspector.cpp
         src/editor/particle_inspector.cpp
@@ -545,7 +581,7 @@ if(ENGINE_EDITOR)
     # vcpkg target does not declare the imgui dependency, so a single-pass
     # linker must see it first to resolve its ImGui references.
     target_link_libraries(engine_editor
-        PUBLIC engine_flags engine_scene
+        PUBLIC engine_flags engine_scene engine_script
         PRIVATE unofficial::imgui-node-editor::imgui-node-editor
                 imgui::imgui imguizmo::imguizmo SDL3::SDL3)
     target_include_directories(engine_editor PUBLIC ${ENGINE_PUBLIC_INCLUDE})
@@ -564,18 +600,20 @@ endif()
 # main.cpp only parses the environment and hands off to Application.
 #
 # game_world holds the window-free part of the app layer — WorldRuntime (the
-# simulated world: demo scenes, terrain, grass, navmesh, audio) — so tests
-# can drive the exact frame-loop simulation path (tests/app/) without SDL.
+# simulated world: demo scenes, terrain, grass, particles, navmesh, audio,
+# play mode and gameplay scripts) — so tests can drive the exact frame-loop
+# simulation path (tests/app/, including the play state machine) without SDL.
 add_library(game_world STATIC
     src/app/world_runtime.cpp
     src/app/demo_scenes.cpp
     src/app/audio_runtime.cpp
+    src/app/play_mode.cpp
     src/app/grass_runtime.cpp
     src/app/particle_runtime.cpp
     src/app/nav_bake.cpp)
 target_link_libraries(game_world PUBLIC
     engine_flags engine_core engine_rhi engine_asset engine_scene engine_renderer engine_physics
-    engine_terrain engine_nav engine_net engine_audio)
+    engine_terrain engine_nav engine_net engine_audio engine_script)
 target_include_directories(game_world PUBLIC
     ${ENGINE_PUBLIC_INCLUDE}
     ${CMAKE_CURRENT_SOURCE_DIR}/src)
@@ -587,6 +625,7 @@ add_executable(game
     src/app/frame_graph.cpp
     src/app/frame_temporal.cpp
     src/app/frame_renderer.cpp
+    src/app/input_sampler.cpp
     src/app/remote_bridge.cpp
     src/app/screenshot_capture.cpp
     src/app/asset_root.cpp)
@@ -594,7 +633,7 @@ target_link_libraries(game PRIVATE
     game_world
     engine_flags engine_core engine_rhi engine_asset engine_scene engine_renderer engine_physics
     engine_terrain engine_nav engine_net engine_remote engine_remote_world engine_audio
-    SDL3::SDL3)
+    engine_script SDL3::SDL3)
 if(MSVC)
     # Linker map for the game_has_no_texture_encoder test.
     target_link_options(game PRIVATE "/MAP:$<TARGET_FILE_DIR:game>/game.map")

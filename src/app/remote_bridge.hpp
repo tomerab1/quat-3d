@@ -37,10 +37,12 @@
 // (screenshot_capture.hpp).
 
 #include <cstdint>
+#include <expected>
 #include <filesystem>
 #include <functional>
 #include <memory>
 #include <optional>
+#include <vector>
 
 #include <entt/entity/fwd.hpp>
 #include <glm/glm.hpp>
@@ -68,6 +70,9 @@ class GpuAllocator;
 } // namespace engine::rhi
 namespace engine::scene {
 class MaterialOverrideStore;
+}
+namespace engine::script {
+class ScriptRuntime;
 }
 namespace engine::terrain {
 class TerrainStreamer;
@@ -120,11 +125,15 @@ struct RemoteBridgeTargets {
     // Camera cut for the renderer's temporal state (R11): called after
     // scene.load and camera.set (a teleport). May be empty.
     std::function<void()> reset_temporal;
+    // Gameplay scripts (G7): script.* statuses and reloads (may be null).
+    engine::script::ScriptRuntime* scripts = nullptr;
 
 #ifdef ENGINE_EDITOR
     engine::editor::EditorLayer* editor = nullptr;
-    bool* play = nullptr; // editor play flag; null where play mode is unavailable
 #endif
+    // Requested play state (PlayMode); null where play mode is unavailable
+    // (the physics / character demos own their world).
+    bool* play = nullptr;
 
     std::filesystem::path project_root;
 };
@@ -152,6 +161,11 @@ public:
     // stays frozen, but stepping callers still get their reply.
     [[nodiscard]] float advance_sim_unrendered();
     void note_draws(std::size_t draws);
+
+    // Instantiates a glTF/GLB file into the scene (blocking upload), as
+    // asset.spawn_model does; gameplay scripts reuse it.
+    [[nodiscard]] std::expected<std::vector<entt::entity>, engine::core::Error>
+    spawn_model(const std::filesystem::path& absolute);
 
     [[nodiscard]] bool listening() const;
 

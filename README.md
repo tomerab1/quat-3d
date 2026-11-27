@@ -77,6 +77,11 @@ the CI screenshot pipeline.
   sound with distance falloff, streamed music (wav, flac, mp3)
 
 **Gameplay**
+- Lua 5.4 gameplay scripting: per-entity scripts with start / update /
+  trigger / destroy callbacks, an API for entities, components, physics,
+  input (keyboard, mouse, gamepad), audio and navigation, sandboxed with
+  per-call time and memory limits, hot-reloaded on save — see
+  [`docs/scripting.md`](docs/scripting.md)
 - NPC navigation (Recast/Detour navmesh), path following, patrol routes
 - Data-driven behaviour trees (JSON)
 - Multiplayer foundations: client/server transport, state replication,
@@ -218,6 +223,9 @@ Environment variables switch on extra modes:
 
 | Variable | Effect |
 |---|---|
+| `QUAT_SCENE=<file>` | Load a scene file (project-relative) instead of the showcase scene |
+| `QUAT_PLAY=1` | Enter Play mode on the first frame (a non-editor build also plays a `QUAT_SCENE` game) |
+| `QUAT_SCRIPT_HOT_RELOAD=0` / `=1` | Turn script hot reload off (editor) / on (non-editor builds) |
 | `QUAT_GLTF=<file>` | Load a glTF/GLB model instead of the showcase scene |
 | `QUAT_TERRAIN=1` | Add a procedural terrain tile (with a grass field) |
 | `QUAT_PHYSICS=1` / `QUAT_CHARACTER=1` | Physics (with sparks and smoke) / character-controller demo scenes |
@@ -246,6 +254,22 @@ buttons audition a clip without entering Play mode. Sound is heard from the
 camera, or from the entity carrying an active **Audio Listener** (e.g. the
 player). From scripts and AI tools, set `audio_source.command` to `play`,
 `stop`, `pause` or `resume`.
+
+### Scripting
+
+Gameplay is written in Lua: put a script under `assets/scripts/`, give an
+entity a **Script** component (Inspector → Add component) and pick the file;
+it runs when you press Play and reloads whenever you save it. The inspector
+lists the script's declared properties so each entity can tune them, and
+*Stats → Scripts* shows errors with their line. Try the bundled demo:
+
+```sh
+QUAT_SCENE=assets/scenes/coin_collector.json QUAT_PLAY=1 ./build/release/game
+```
+
+The language reference, callbacks and the whole engine API are in
+[`docs/scripting.md`](docs/scripting.md). AI assistants can write and debug
+scripts through MCP (`script_*` tools and the `write_game_script` prompt).
 
 ### Sample models
 
@@ -340,6 +364,7 @@ The plan lives in [`ROADMAP.md`](ROADMAP.md), grouped into tracks:
 |---|---|
 | [`docs/STATUS.md`](docs/STATUS.md) | What is in progress, what is blocked, what comes next |
 | [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md) | Building, testing, CI, and conventions for contributors |
+| [`docs/scripting.md`](docs/scripting.md) | Lua gameplay scripting: callbacks, the engine API, limits, hot reload |
 | [`docs/remote-control.md`](docs/remote-control.md) | The remote-control protocol AI tools use to drive the engine |
 | [`docs/CYCLE.md`](docs/CYCLE.md) | How development runs: the repeating plan → parallel agents → merge → CI → audit → learn cycle |
 | [`docs/LEARNINGS.md`](docs/LEARNINGS.md) | Lessons recorded by past cycles |
@@ -350,6 +375,7 @@ The plan lives in [`ROADMAP.md`](ROADMAP.md), grouped into tracks:
 
 ```
 assets/shaders/     Slang shader sources (compiled into cooked/shaders/ during the build)
+assets/scripts/     Lua gameplay scripts; assets/scenes/ holds scene files (the Coin Collector demo)
 include/engine/     Public headers, one folder per module
 src/                Implementation, mirroring include/ (rhi, renderer, scene, physics, ...)
 src/editor/         The editor (only in builds with ENGINE_EDITOR=ON, the default)
@@ -365,4 +391,4 @@ ports/, triplets/   vcpkg customisations
 
 Vulkan 1.3 · Slang · SDL3 · Jolt Physics · EnTT · fastgltf · glm · Dear ImGui +
 ImGuizmo · Vulkan Memory Allocator · Recast/Detour · GameNetworkingSockets ·
-KTX-Software (Basis Universal) · meshoptimizer · nlohmann/json · CMake + vcpkg
+Lua 5.4 + sol2 · KTX-Software (Basis Universal) · meshoptimizer · nlohmann/json · CMake + vcpkg

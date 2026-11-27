@@ -3,8 +3,8 @@
 // WorldRuntime — the simulated world around the scene (app layer): the
 // startup demo state, procedural terrain (async single-tile generation and
 // seamless streaming, plus the tiles' play-mode height-field bodies),
-// play-mode physics, behaviour trees and nav agents, the navmesh, the network
-// session (QUAT_HOST / QUAT_JOIN) and audio.
+// play-mode physics, behaviour trees and nav agents, gameplay scripts (G7),
+// the navmesh, the network session (QUAT_HOST / QUAT_JOIN) and audio.
 //
 // Main-thread only. Not movable: the ground-height sampler and the remote
 // bridge hold pointers into it.
@@ -25,6 +25,7 @@
 
 #include "app/audio_runtime.hpp"
 #include "app/demo_scenes.hpp"
+#include "app/play_mode.hpp"
 #include "app/grass_runtime.hpp"
 #include "app/particle_runtime.hpp"
 #include "engine/core/error.hpp"
@@ -35,6 +36,7 @@
 #include "engine/rhi/gpu_allocator.hpp"
 #include "engine/scene/animation_system.hpp"
 #include "engine/scene/navigation.hpp"
+#include "engine/script/script_runtime.hpp"
 #include "engine/terrain/generator.hpp"
 #include "engine/terrain/streamer.hpp"
 
@@ -84,7 +86,8 @@ public:
     [[nodiscard]] bool build_scene(engine::scene::Scene& scene,
                                    engine::asset::AssetManager& assets,
                                    engine::rhi::GpuAllocator& allocator,
-                                   const engine::rhi::TransferContext& setup_transfer);
+                                   const engine::rhi::TransferContext& setup_transfer,
+                                   const std::filesystem::path& project_root);
     // Terrain pass + its upload context, the network session and the
     // QUAT_TERRAIN tile. After the renderer's environment exists.
     // `project_root` holds assets/ (particle flipbooks resolve against it).
@@ -92,6 +95,15 @@ public:
               engine::rhi::PipelineCache& pipeline_cache, const std::string& shader_dir,
               const std::filesystem::path& project_root, engine::scene::Scene& scene);
     void init_audio(const std::filesystem::path& asset_root);
+    // Gameplay scripts under <project_root>/assets/scripts. Hot reload is on
+    // in editor builds (QUAT_SCRIPT_HOT_RELOAD=0 turns it off, =1 on in
+    // non-editor builds). `services` (input, glTF spawning) are completed
+    // with the play physics world when play starts.
+    void init_scripts(const std::filesystem::path& project_root,
+                      engine::script::ScriptServices services);
+    [[nodiscard]] engine::script::ScriptRuntime* scripts() {
+        return scripts_ ? &*scripts_ : nullptr;
+    }
     // Points the remote bridge at the terrain, navmesh and demo state.
     void fill_remote_targets(RemoteBridgeTargets& targets);
     // Teardown, after the device went idle: waits for a running terrain job
@@ -102,6 +114,7 @@ public:
     [[nodiscard]] bool physics_mode() const { return demo_.physics_mode; }
     [[nodiscard]] bool character_mode() const { return demo_.character_mode; }
     [[nodiscard]] bool from_gltf() const { return demo_.from_gltf; }
+    [[nodiscard]] bool from_scene_file() const { return demo_.from_scene_file; }
     // Demo modes own their physics world (and so have no editor Play mode).
     [[nodiscard]] bool has_demo_physics() const { return demo_.physics_world.has_value(); }
     [[nodiscard]] entt::entity character_entity() const { return demo_.character_entity; }
@@ -143,6 +156,13 @@ public:
     // fields, and arms the navmesh auto-bake.
     [[nodiscard]] std::expected<void, engine::core::Error> begin_play(engine::scene::Scene& scene);
     void end_play();
+    // Performs `mode`'s requested Play/Stop transition with begin_play /
+    // end_play (the editor's and the non-editor game's shared path). Emitters
+    // start over on both transitions (one-shot bursts fire again in play;
+    // play's particles vanish with play's scene). Returns true when the scene
+    // switched between edit and play (the caller resets its temporal
+    // history); false when nothing changed or a Play failed to start.
+    bool apply_play(PlayMode& mode, engine::scene::Scene& scene);
     [[nodiscard]] bool play_physics_active() const { return play_physics_.has_value(); }
 
     // ---- Navmesh / terrain -------------------------------------------------
@@ -221,6 +241,8 @@ private:
     engine::scene::FootGroundProbe foot_probe_;
     std::vector<std::uint32_t>     probe_owners_; // foot_probe_ scratch: owners to skip
     std::optional<AudioRuntime>   audio_;
+    std::optional<engine::script::ScriptRuntime> scripts_;
+    engine::script::ScriptServices               script_services_;
 };
 
 } // namespace quat::app

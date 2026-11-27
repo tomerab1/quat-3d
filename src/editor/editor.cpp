@@ -25,6 +25,7 @@
 #include "inspector.hpp"
 #include "tuning_panels.hpp"
 #include "scene_hierarchy.hpp"
+#include "script_inspector.hpp"
 #include "vendor/imgui_impl_sdl3.h"
 
 namespace engine::editor {
@@ -363,6 +364,7 @@ void EditorLayer::build_stats_panel(const EditorContext& ctx) {
         ImGui::Text("entities: %d", ctx.entity_count);
         ImGui::Text("viewport: %ux%u", viewport_width_, viewport_height_);
         build_shader_status(ctx);
+        draw_script_status(ctx.scripts);
     }
     ImGui::End();
 }
@@ -503,7 +505,7 @@ void EditorLayer::build_ui(const EditorContext& ctx) {
     build_stats_panel(ctx);
     if (ctx.scene != nullptr) {
         draw_scene_hierarchy(*ctx.scene, selected_);
-        draw_inspector(*ctx.scene, selected_);
+        draw_inspector(*ctx.scene, selected_, ctx.scripts);
         draw_animation_preview(*ctx.scene, selected_, ctx.view_proj, viewport_rect_,
                                anim_state_);
         draw_physics_debug(*ctx.scene, ctx.view_proj, viewport_rect_, physics_state_,

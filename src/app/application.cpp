@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <cstdlib>
 #include <expected>
 #include <filesystem>
 #include <string>
@@ -178,7 +179,8 @@ bool Application::init_subsystems() {
 
     // QUAT_GLTF=<path> instantiates a real glTF scene graph; otherwise a
     // spinning demo cube stands in (see demo_scenes.hpp).
-    const bool scene_ok = world_.build_scene(scene_, assets_, allocator_, setup_transfer);
+    const bool scene_ok = world_.build_scene(scene_, assets_, allocator_, setup_transfer,
+                                             project_root());
 
     vkDestroyCommandPool(vk_device, setup_pool, nullptr);
 
@@ -188,7 +190,9 @@ bool Application::init_subsystems() {
         return false;
     }
 
-    add_default_lighting(scene_, !world_.from_gltf(), world_.demo_root());
+    if (!world_.from_scene_file()) {
+        add_default_lighting(scene_, !world_.from_gltf(), world_.demo_root());
+    }
     // Atmosphere LUTs + dynamic IBL probe, lit by the scene's sun.
     renderer_.create_environment(scene_, pipeline_cache_, shader_dir_);
     // Terrain, networking (QUAT_HOST / QUAT_JOIN) and the QUAT_TERRAIN tile.
@@ -214,6 +218,7 @@ bool Application::init_subsystems() {
     renderer_.set_screenshot_path(config_.screenshot_path);
 
     last_ticks_ = SDL_GetTicksNS();
+    init_scripts();
     connect_remote();
     world_.init_audio(project_root());
 #ifdef ENGINE_EDITOR
@@ -223,11 +228,31 @@ bool Application::init_subsystems() {
                   .scene = &scene_,
                   .world = &world_,
                   .camera = &camera_,
+                  .play_mode = &play_mode_,
                   .shader_reload = shader_reload_.get(),
                   .render_settings = &renderer_.render_settings(),
                   .reset_temporal = [this] { renderer_.reset_temporal(); }});
 #endif
     return true;
+}
+
+void Application::init_scripts() {
+    input_.init();
+    engine::script::ScriptServices services;
+    services.input = &input_.state();
+    services.spawn_model = [this](const std::filesystem::path& absolute) {
+        return remote_->spawn_model(absolute);
+    };
+    world_.init_scripts(project_root(), std::move(services));
+    // Start in Play (the transition runs on the first frame) for QUAT_PLAY=1
+    // and, without the editor, for a QUAT_SCENE game. The showcase, glTF and
+    // screenshot runs stay static; the physics / character demos own their
+    // world and have no play mode.
+    bool play_on_start = std::getenv("QUAT_PLAY") != nullptr;
+#ifndef ENGINE_EDITOR
+    play_on_start = play_on_start || world_.from_scene_file();
+#endif
+    if (play_on_start && !world_.has_demo_physics()) *play_mode_.request() = true;
 }
 
 void Application::connect_remote() {
@@ -249,8 +274,9 @@ void Application::connect_remote() {
     remote_targets.material_overrides = &renderer_.material_overrides();
     remote_targets.reset_temporal = [this] { renderer_.reset_temporal(); };
     world_.fill_remote_targets(remote_targets);
+    remote_targets.play = world_.has_demo_physics() ? nullptr : play_mode_.request();
 #ifdef ENGINE_EDITOR
-    editor_.fill_remote_targets(remote_targets, world_.has_demo_physics());
+    editor_.fill_remote_targets(remote_targets);
 #endif
     remote_targets.project_root = project_root();
     remote_.emplace(std::move(remote_targets), k_frames_in_flight);
@@ -258,12 +284,14 @@ void Application::connect_remote() {
 
 bool Application::pump_events() {
     camera_.begin_input(); // per-frame accumulated mouse-look delta
+    input_.begin_frame();
     bool running = true;
     SDL_Event event;
     while (SDL_PollEvent(&event)) {
 #ifdef ENGINE_EDITOR
         editor_.process_event(event);
 #endif
+        input_.process_event(event);
         switch (event.type) {
         case SDL_EVENT_QUIT:
             running = false;
@@ -288,6 +316,11 @@ bool Application::pump_events() {
             break;
         }
     }
+    bool keyboard_blocked = false;
+#ifdef ENGINE_EDITOR
+    keyboard_blocked = editor_.keyboard_captured();
+#endif
+    input_.sample(keyboard_blocked);
     return running;
 }
 
@@ -298,6 +331,10 @@ bool Application::run_frame() {
     remote_->poll();
 #ifdef ENGINE_EDITOR
     editor_.begin_frame(); // UI frame + Play/Stop, save/load, instantiate
+#else
+    // Play/Stop requested by sim.play / sim.stop; a transition swaps worlds,
+    // so no temporal history carries across.
+    if (world_.apply_play(play_mode_, scene_)) renderer_.reset_temporal();
 #endif
 
     const VkExtent2D pixel_extent = window_pixel_extent(platform_.window);
@@ -396,11 +433,17 @@ void Application::run_unrendered_step() {
     // still gets its reply. No camera input or audio: nothing is shown.
     const float sim_dt = remote_->advance_sim_unrendered();
     if (sim_dt <= 0.0F) return;
-    std::optional<PlayStep> play;
-#ifdef ENGINE_EDITOR
-    play = editor_.play_step(camera_.pos);
-#endif
+    const std::optional<PlayStep> play = play_step();
     world_.simulate(scene_, presented_, 0.0F, sim_dt, play ? &*play : nullptr);
+}
+
+std::optional<PlayStep> Application::play_step() const {
+#ifdef ENGINE_EDITOR
+    return editor_.play_step(camera_.pos);
+#else
+    if (!play_mode_.active()) return std::nullopt;
+    return PlayStep{.use_scene_camera = true, .fly_camera_pos = camera_.pos};
+#endif
 }
 
 engine::scene::CameraMatrices Application::update_world(float dt, float sim_dt, float aspect) {
@@ -418,10 +461,7 @@ engine::scene::CameraMatrices Application::update_world(float dt, float sim_dt, 
         camera_.fly(scene_, gate, dt);
     }
 
-    std::optional<PlayStep> play;
-#ifdef ENGINE_EDITOR
-    play = editor_.play_step(camera_.pos);
-#endif
+    const std::optional<PlayStep> play = play_step();
     world_.simulate(scene_, presented_, dt, sim_dt, play ? &*play : nullptr);
 
     // Third-person follow camera, placed after the character has moved.

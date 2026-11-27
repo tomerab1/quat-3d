@@ -5,11 +5,13 @@
 // build the world: scene.*, environment.*, world.ground_height, camera.*,
 // render.screenshot, asset.*, sim.*, scene.save/load, nav.bake — the
 // debugging commands (ROADMAP A5): debug.log, debug.stats, debug.pause /
-// resume / step / time_scale, debug.watch, debug.raycast, debug.nav_path — and
+// resume / step / time_scale, debug.watch, debug.raycast, debug.nav_path —
 // look tuning (ROADMAP A8): render.settings.get / set / reset / schema,
-// material.get / set — and behaviour-tree authoring (ROADMAP A7): bt.leaves,
+// material.get / set — behaviour-tree authoring (ROADMAP A7): bt.leaves,
 // bt.get, bt.set, bt.add_node, bt.remove_node, bt.move_node, bt.set_params,
-// bt.status. The method contract is docs/remote-control.md.
+// bt.status — and the gameplay script files (ROADMAP G7): script.list / get /
+// create / update / delete / check. The method contract is
+// docs/remote-control.md.
 //
 // Scene editing works on any Scene. Everything that only the running
 // application has — the view camera, the renderer's settings, terrain heights,
@@ -50,6 +52,9 @@ struct RenderSettings;
 }
 namespace engine::scene {
 class Scene;
+}
+namespace engine::script {
+class ScriptRuntime;
 }
 
 namespace engine::remote {
@@ -135,6 +140,13 @@ struct WorldServices {
 
     // The current navmesh, or null / invalid when none is baked.
     std::function<const nav::NavMesh*()> navmesh;
+
+    // ---- Gameplay scripts (ROADMAP G7) ------------------------------------------
+
+    // The scene's script runtime: script.* report its per-file status and
+    // hot-reload files they write. Without it the file commands still work
+    // (on <project_root>/assets/scripts).
+    std::function<script::ScriptRuntime*()> scripts;
 };
 
 // Registers every world command on `server`. `scene` must outlive the server's
