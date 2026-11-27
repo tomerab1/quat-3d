@@ -38,6 +38,7 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <memory>
 #include <optional>
 
@@ -105,6 +106,10 @@ struct RemoteBridgeTargets {
 
     // Loop-cached entity dropped when a scene file replaces the scene.
     entt::entity* spin_entity = nullptr;
+
+    // Camera cut for the renderer's temporal state (R11): called after
+    // scene.load and camera.set (a teleport). May be empty.
+    std::function<void()> reset_temporal;
 
 #ifdef ENGINE_EDITOR
     engine::editor::EditorLayer*      editor = nullptr;

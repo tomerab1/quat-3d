@@ -24,6 +24,8 @@
 
 #include <glm/glm.hpp>
 
+#include "engine/renderer/velocity.hpp"
+
 namespace engine::renderer {
 
 class MotionHistory {
@@ -49,6 +51,32 @@ private:
     std::unordered_map<std::uint64_t, glm::mat4>              current_;
     std::unordered_map<std::uint64_t, std::vector<glm::mat4>> previous_palettes_;
     std::unordered_map<std::uint64_t, std::vector<glm::mat4>> current_palettes_;
+};
+
+// The temporal state of one view, shared by the frames in flight: the object
+// MotionHistory, last frame's unjittered view-projection and a pending
+// history reset. reset() is the camera cut (scene load, play enter / exit,
+// active-camera change, teleport): the next frame has no previous view or
+// object poses (all velocity 0 — previous equals current) and its upscale
+// starts from an empty history (take_history_reset() returns true once).
+class TemporalView {
+public:
+    // Starts a frame rendered with `view_proj` (unjittered) and `jitter_ndc`:
+    // begins the motion-history frame and returns this frame's ViewMotion.
+    [[nodiscard]] ViewMotion begin_frame(const glm::mat4& view_proj, glm::vec2 jitter_ndc);
+
+    void reset();
+
+    // True once after each reset(): the frame's upscale must drop its history.
+    [[nodiscard]] bool take_history_reset();
+
+    [[nodiscard]] MotionHistory& motion() { return motion_; }
+
+private:
+    MotionHistory motion_;
+    glm::mat4     prev_view_proj_{1.0F};
+    bool          has_prev_view_ = false;
+    bool          reset_pending_ = false;
 };
 
 } // namespace engine::renderer

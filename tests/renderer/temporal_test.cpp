@@ -202,3 +202,34 @@ TEST(DrawBatching, MotionRecordsFollowTheirInstances) {
     ASSERT_EQ(flat.motion.size(), 3U);
     EXPECT_TRUE(same(flat.motion[2].prev_model, *items[2].prev_model));
 }
+
+// A camera cut: the frame after reset() sees no previous view or object pose
+// (camera-only velocity, and with the previous view equal to the current
+// one, zero) and reports the history reset exactly once.
+TEST(TemporalView, ResetDropsThePreviousViewAndPosesOnce) {
+    r::TemporalView view;
+    const glm::mat4 vp0 = translation(0.1F, 0.0F, 0.0F);
+    const glm::mat4 vp1 = translation(0.3F, 0.0F, 0.0F);
+    const glm::mat4 vp2 = translation(0.7F, 0.0F, 0.0F);
+
+    r::ViewMotion m = view.begin_frame(vp0, glm::vec2(0.001F, 0.0F));
+    EXPECT_TRUE(same(m.prev_view_proj, vp0)) << "the first frame has no previous view";
+    EXPECT_EQ(m.jitter_ndc, glm::vec2(0.001F, 0.0F));
+    (void)view.motion().advance(1, translation(1, 0, 0));
+    EXPECT_FALSE(view.take_history_reset());
+
+    m = view.begin_frame(vp1, glm::vec2(0.0F));
+    EXPECT_TRUE(same(m.prev_view_proj, vp0));
+    EXPECT_TRUE(same(view.motion().advance(1, translation(2, 0, 0)), translation(1, 0, 0)));
+
+    view.reset();
+    m = view.begin_frame(vp2, glm::vec2(0.0F));
+    EXPECT_TRUE(same(m.prev_view_proj, vp2)) << "a cut must not reproject from the old view";
+    EXPECT_TRUE(same(view.motion().advance(1, translation(5, 0, 0)), translation(5, 0, 0)))
+        << "a cut must not keep object poses";
+    EXPECT_TRUE(view.take_history_reset());
+    EXPECT_FALSE(view.take_history_reset()) << "the history reset is reported once";
+
+    m = view.begin_frame(vp0, glm::vec2(0.0F));
+    EXPECT_TRUE(same(m.prev_view_proj, vp2)) << "history resumes after the cut";
+}

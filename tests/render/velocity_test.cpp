@@ -2,11 +2,13 @@
 // writer stores the unjittered UV motion of its surface, which must equal the
 // CPU reference for the surface point each pixel shows — for moving meshes,
 // instances, skinned meshes, a moving camera over static geometry, the
-// background, and wind-animated grass.
+// background, terrain under a moving camera, and wind-animated grass (both
+// LOD regions).
 
 #include <array>
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
 #include <expected>
 #include <span>
@@ -25,12 +27,15 @@
 #include "engine/renderer/jitter.hpp"
 #include "engine/renderer/mesh_pass.hpp"
 #include "engine/renderer/skinning_pass.hpp"
+#include "engine/renderer/terrain_pass.hpp"
 #include "engine/renderer/velocity.hpp"
 #include "engine/renderer/velocity_pass.hpp"
 #include "engine/rhi/device.hpp"
 #include "engine/rhi/render_graph.hpp"
+#include "engine/terrain/heightmap.hpp"
 #include "support/expect_ok.hpp"
 #include "support/gpu_context.hpp"
+#include "render/velocity_rig.hpp"
 #include "support/render_readback.hpp"
 
 namespace {
@@ -41,103 +46,7 @@ namespace asset = engine::asset;
 using engine::core::Error;
 using quat::test::HostImage;
 
-constexpr VkExtent2D k_extent{64, 64};
-
-glm::mat4 perspective() {
-    glm::mat4 p = glm::perspective(glm::radians(60.0F), 1.0F, 0.1F, 100.0F);
-    p[1][1] *= -1.0F; // Vulkan y down
-    return p;
-}
-
-glm::mat4 camera(const glm::vec3& eye) {
-    return perspective() * glm::lookAt(eye, glm::vec3(0.0F), glm::vec3(0.0F, 1.0F, 0.0F));
-}
-
-glm::vec2 velocity_at(const HostImage& img, std::uint32_t x, std::uint32_t y) {
-    std::uint16_t h[2];
-    std::memcpy(h, img.at(x, y), sizeof(h));
-    return {glm::unpackHalf1x16(h[0]), glm::unpackHalf1x16(h[1])};
-}
-
-// Unjittered NDC of the scene point pixel (x, y) shows (jitter.hpp).
-glm::vec2 pixel_ndc(std::uint32_t x, std::uint32_t y, glm::vec2 jitter_ndc) {
-    const glm::vec2 uv((static_cast<float>(x) + 0.5F) / static_cast<float>(k_extent.width),
-                       (static_cast<float>(y) + 0.5F) / static_cast<float>(k_extent.height));
-    return uv * 2.0F - 1.0F - jitter_ndc;
-}
-
-// Reference velocity of pixel (x, y) on a mesh lying in its object's z = 0
-// plane, posed by `model` now and `prev_model` last frame. The pixel's ray is
-// intersected with the plane in object space; that object point is then
-// projected through both frames.
-glm::vec2 plane_reference(std::uint32_t x, std::uint32_t y, const glm::mat4& model,
-                          const glm::mat4& prev_model, const glm::mat4& vp,
-                          const glm::mat4& prev_vp, glm::vec2 jitter_ndc = glm::vec2(0.0F)) {
-    const glm::mat4 inv = glm::inverse(vp * model);
-    const glm::vec2 ndc = pixel_ndc(x, y, jitter_ndc);
-    glm::vec4 a = inv * glm::vec4(ndc, 0.0F, 1.0F);
-    glm::vec4 b = inv * glm::vec4(ndc, 1.0F, 1.0F);
-    a /= a.w;
-    b /= b.w;
-    const float t = a.z / (a.z - b.z);
-    const glm::vec4 p(glm::vec3(a) + t * (glm::vec3(b) - glm::vec3(a)), 1.0F);
-    return r::surface_velocity(glm::vec3(model * p), glm::vec3(prev_model * p), vp, prev_vp);
-}
-
-// Pixel containing the projection of `world`.
-glm::uvec2 pixel_of(const glm::vec3& world, const glm::mat4& vp) {
-    const glm::vec2 uv = r::project_to_uv(world, vp);
-    return {static_cast<std::uint32_t>(uv.x * static_cast<float>(k_extent.width)),
-            static_cast<std::uint32_t>(uv.y * static_cast<float>(k_extent.height))};
-}
-
-// A unit quad in the z = 0 plane, centred on the origin, facing +z.
-std::expected<asset::MeshAsset, Error> quad(quat::test::GpuContext& g) {
-    std::array<asset::Vertex, 4> v{};
-    v[0].position = {-0.5F, -0.5F, 0.0F};
-    v[1].position = {0.5F, -0.5F, 0.0F};
-    v[2].position = {0.5F, 0.5F, 0.0F};
-    v[3].position = {-0.5F, 0.5F, 0.0F};
-    for (asset::Vertex& vert : v) vert.normal = {0.0F, 0.0F, 1.0F};
-    const std::array<std::uint32_t, 6> indices{0, 1, 2, 0, 2, 3};
-    return quat::test::upload_mesh(g, v, indices);
-}
-
-// Draws `list` into a GBuffer (rasterising with `raster_vp`), completes the
-// background with VelocityPass (`vp` = unjittered view-projection) and returns
-// the velocity target. `before` records into the command buffer first.
-template <typename Before>
-std::expected<HostImage, Error> render_velocity(quat::test::GpuContext& g,
-                                                const r::InstancedDrawList& list,
-                                                const glm::mat4& raster_vp, const glm::mat4& vp,
-                                                const r::ViewMotion& motion, Before&& before) {
-    auto pass = r::MeshPass::create(g.device, g.allocator, g.cache, g.transfer, g.shader_dir);
-    if (!pass) return std::unexpected(pass.error());
-    auto background = r::VelocityPass::create(g.device, g.cache, g.shader_dir);
-    if (!background) return std::unexpected(background.error());
-    rhi::TransientImagePool pool(g.device, g.allocator);
-    rhi::RenderGraph graph(pool);
-    auto targets = pass->add_to_graph(graph, k_extent, raster_vp, list, motion);
-    if (!targets) return std::unexpected(targets.error());
-    background->add_background_to_graph(graph, *targets, k_extent, vp);
-    return quat::test::render_to_host(g, graph, targets->velocity, k_extent, 4,
-                                      std::forward<Before>(before));
-}
-
-std::expected<HostImage, Error> render_velocity(quat::test::GpuContext& g,
-                                                const r::InstancedDrawList& list,
-                                                const glm::mat4& raster_vp, const glm::mat4& vp,
-                                                const r::ViewMotion& motion) {
-    return render_velocity(g, list, raster_vp, vp, motion, [](VkCommandBuffer) {});
-}
-
-// Half-float storage plus the rasteriser's interpolation: an absolute floor
-// and a small relative part.
-void expect_velocity(const glm::vec2& got, const glm::vec2& want, const char* what) {
-    const float tol = 2e-4F + 2e-3F * glm::length(want);
-    EXPECT_NEAR(got.x, want.x, tol) << what;
-    EXPECT_NEAR(got.y, want.y, tol) << what;
-}
+using namespace quat::test::velocity; // shared velocity-test helpers
 
 } // namespace
 
@@ -375,4 +284,118 @@ TEST(GpuVelocity, GrassWindProducesMotion) {
     ASSERT_OK(windy);
     EXPECT_GT(*windy, static_cast<std::size_t>(extent.width) * (extent.height / 4) / 4)
         << "wind-animated blades wrote no motion";
+}
+
+// Terrain is static: under a moving camera each ground pixel stores the camera
+// motion of the point it shows.
+TEST(GpuVelocity, TerrainUnderAMovingCameraIsCameraMotion) {
+    QUAT_REQUIRE_GPU(g);
+    auto mesh = r::MeshPass::create(g->device, g->allocator, g->cache, g->transfer, g->shader_dir);
+    ASSERT_OK(mesh);
+    auto terrain =
+        r::TerrainPass::create(g->device, g->allocator, g->cache, g->transfer, g->shader_dir);
+    ASSERT_OK(terrain);
+    engine::terrain::Heightmap flat;
+    flat.resolution = 65;
+    flat.tile_size_m = 64.0F;
+    flat.heights.assign(static_cast<std::size_t>(65) * 65, 0.0F);
+    ASSERT_OK(terrain->set_tile(glm::ivec2(0, 0), flat, g->transfer));
+
+    const glm::vec3 eye(0.0F, 10.0F, 12.0F);
+    const glm::mat4 vp = camera(eye);
+    const glm::mat4 prev_vp = camera(glm::vec3(1.0F, 10.5F, 12.0F));
+    rhi::TransientImagePool pool(g->device, g->allocator);
+    rhi::RenderGraph graph(pool);
+    auto gbuffer = mesh->add_to_graph(graph, k_extent, vp, r::InstancedDrawList{},
+                                      r::ViewMotion{prev_vp, glm::vec2(0.0F)});
+    ASSERT_OK(gbuffer);
+    terrain->add_to_graph(graph, *gbuffer, k_extent, vp, eye, glm::vec3(0.0F),
+                          /*snowline_m=*/1000.0F);
+    auto vel = quat::test::render_to_host(*g, graph, gbuffer->velocity, k_extent, 4);
+    ASSERT_OK(vel);
+
+    // The ground (world y = 0) as an object z = 0 plane: rotate -90 degrees about x.
+    const glm::mat4 ground =
+        glm::rotate(glm::mat4(1.0F), glm::radians(-90.0F), glm::vec3(1.0F, 0.0F, 0.0F));
+    for (const glm::uvec2 p : {glm::uvec2(32, 32), glm::uvec2(10, 50), glm::uvec2(50, 40)}) {
+        const glm::vec2 want = plane_reference(p.x, p.y, ground, ground, vp, prev_vp);
+        EXPECT_GT(glm::length(want), 1e-3F);
+        expect_velocity(velocity_at(*vel, p.x, p.y), want, "terrain pixel");
+    }
+}
+
+// The far LOD list starts at the near region's capacity (push constant
+// `base`; the indirect draws keep firstInstance = 0). Short blades keep the
+// near disc (within 16 m) below the screen band showing ground 20-36 m away,
+// so only far blades can write motion there; and the near region's capacity
+// exceeds the far count, so a draw that ignored `base` would read only near
+// slots (empty, never written by this fresh pass) and leave the band still.
+TEST(GpuVelocity, FarLodGrassWritesMotionInItsOwnRegion) {
+    QUAT_REQUIRE_GPU(g);
+    auto pass = r::GrassPass::create(g->device, g->allocator, g->cache, g->transfer, g->shader_dir,
+                                     1);
+    ASSERT_OK(pass);
+    auto mesh = r::MeshPass::create(g->device, g->allocator, g->cache, g->transfer, g->shader_dir);
+    ASSERT_OK(mesh);
+    constexpr VkExtent2D extent{128, 128};
+    r::GrassFrame frame;
+    frame.settings.terrain_only = false;
+    frame.settings.radius = 40.0F;
+    frame.settings.lod_start = 0.4F; // near disc: 16 m
+    frame.settings.height_range = glm::vec2(0.1F, 0.15F);
+    frame.settings.wind_strength = 1.0F;
+    // A raised, narrow view spreads the 20-36 m ground over many rows.
+    frame.camera = glm::vec3(0.0F, 3.0F, 0.0F);
+    const glm::mat4 view =
+        glm::lookAt(frame.camera, glm::vec3(12.0F, 0.0F, 0.0F), glm::vec3(0.0F, 1.0F, 0.0F));
+    glm::mat4 proj = glm::perspective(glm::radians(30.0F), 1.0F, 0.1F, 200.0F);
+    proj[1][1] *= -1.0F;
+    frame.cull_view_proj = frame.draw_view_proj = proj * view;
+    frame.time_s = 2.0F;
+    frame.prev_time_s = 1.75F;
+
+    rhi::TransientImagePool pool(g->device, g->allocator);
+    rhi::RenderGraph graph(pool);
+    auto gbuffer =
+        mesh->add_to_graph(graph, extent, frame.draw_view_proj, r::InstancedDrawList{});
+    ASSERT_OK(gbuffer);
+    auto grass = pass->add_to_graph(graph, 0, frame, &*gbuffer, extent);
+    ASSERT_OK(grass);
+    ASSERT_TRUE(grass->valid());
+    auto args_host = quat::test::host_readback_buffer(g->allocator, sizeof(r::GrassArgsGpu));
+    ASSERT_OK(args_host);
+    const VkBuffer args_dst = args_host->handle();
+    const rhi::ResourceHandle args = grass->args;
+    (void)graph.add_pass("args_readback", rhi::PassType::transfer)
+        .reads(args, rhi::ResourceUsage::transfer_src)
+        .execute([=](rhi::PassContext& ctx) {
+            const VkBufferCopy copy{0, 0, sizeof(r::GrassArgsGpu)};
+            vkCmdCopyBuffer(ctx.cmd(), ctx.resolve(args).buffer, args_dst, 1, &copy);
+        });
+    auto vel = quat::test::render_to_host(*g, graph, gbuffer->velocity, extent, 4);
+    ASSERT_OK(vel);
+    ASSERT_OK(args_host->invalidate_mapped());
+    r::GrassArgsGpu counts{};
+    std::memcpy(&counts, args_host->mapped(), sizeof(counts));
+    ASSERT_GT(grass->capacity.near, 0U) << "the far region must start past 0";
+    ASSERT_GT(counts.far.instanceCount, 1000U);
+    ASSERT_LT(counts.far.instanceCount, grass->capacity.near)
+        << "precondition: a base-less draw would read only the near region";
+
+    // Rows showing the ground 20 m .. 36 m ahead (far LOD only).
+    const glm::uvec2 top = pixel_of(glm::vec3(36.0F, 0.0F, 0.0F), frame.draw_view_proj, extent);
+    const glm::uvec2 bottom = pixel_of(glm::vec3(20.0F, 0.0F, 0.0F), frame.draw_view_proj, extent);
+    ASSERT_LT(top.y + 2, bottom.y);
+    std::size_t moving = 0;
+    std::size_t band = 0;
+    for (std::uint32_t y = top.y; y < bottom.y; ++y) {
+        for (std::uint32_t x = 0; x < extent.width; ++x) {
+            ++band;
+            const glm::vec2 v = velocity_at(*vel, x, y);
+            if (glm::length(v) * static_cast<float>(extent.width) > 0.02F) ++moving;
+        }
+    }
+    std::printf("[grass] far band: %zu of %zu pixels moving (far blades %u, near capacity %u)\n",
+                moving, band, counts.far.instanceCount, grass->capacity.near);
+    EXPECT_GT(moving, band / 10) << "far LOD blades wrote no motion in their band";
 }

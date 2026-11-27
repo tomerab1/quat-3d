@@ -116,6 +116,10 @@ private:
     FlyCamera                   camera_;
     std::optional<RemoteBridge> remote_;
 
+    // The scene Camera entity the view renders through (null: the fly
+    // camera); a change is a camera cut for the renderer's temporal state.
+    entt::entity view_camera_ = entt::null;
+
     std::uint64_t presented_ = 0;
     double        frame_time_sum_ = 0.0; // avg-frame-time report at exit
     std::uint64_t frame_time_samples_ = 0;

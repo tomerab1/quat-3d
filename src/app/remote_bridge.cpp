@@ -146,6 +146,7 @@ struct RemoteBridge::Impl {
         *t.cam_yaw = glm::radians(p.yaw_deg);
         *t.cam_pitch = glm::radians(glm::clamp(p.pitch_deg, -89.0F, 89.0F));
         *t.cam_fov_y = glm::radians(p.fov_deg);
+        if (t.reset_temporal) t.reset_temporal(); // a teleport, not a camera move
 #ifndef ENGINE_EDITOR
         // Without the editor the view renders through the scene camera.
         entt::registry& r = t.scene->registry();
@@ -179,6 +180,7 @@ struct RemoteBridge::Impl {
 #ifdef ENGINE_EDITOR
         if (t.editor != nullptr) t.editor->set_selected(entt::null);
 #endif
+        if (t.reset_temporal) t.reset_temporal();
         std::fprintf(stderr, "[remote] loaded scene %s\n", path.string().c_str());
         return {};
     }

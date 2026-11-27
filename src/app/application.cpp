@@ -199,7 +199,8 @@ bool Application::init_subsystems() {
                   .scene = &scene_,
                   .world = &world_,
                   .camera = &camera_,
-                  .shader_reload = shader_reload_.get()});
+                  .shader_reload = shader_reload_.get(),
+                  .reset_temporal = [this] { renderer_.reset_temporal(); }});
 #endif
     return true;
 }
@@ -219,6 +220,7 @@ void Application::connect_remote() {
     remote_targets.cam_yaw = &camera_.yaw;
     remote_targets.cam_pitch = &camera_.pitch;
     remote_targets.cam_fov_y = &camera_.fov_y;
+    remote_targets.reset_temporal = [this] { renderer_.reset_temporal(); };
     world_.fill_remote_targets(remote_targets);
 #ifdef ENGINE_EDITOR
     editor_.fill_remote_targets(remote_targets, world_.has_demo_physics());
@@ -413,6 +415,19 @@ engine::scene::CameraMatrices Application::update_world(float dt, float sim_dt, 
         engine::scene::camera_system(scene_.registry(), aspect);
     world_.update_audio(scene_, cam.view, /*live=*/true, dt);
 #endif
+    // Switching the view to another camera is a cut: TAA / velocity must not
+    // blend or reproject across it (R11).
+#ifdef ENGINE_EDITOR
+    const entt::entity view_camera = editor_.through_scene_camera()
+                                         ? engine::scene::find_active_camera(scene_.registry())
+                                         : entt::entity{entt::null};
+#else
+    const entt::entity view_camera = engine::scene::find_active_camera(scene_.registry());
+#endif
+    if (view_camera != view_camera_) {
+        view_camera_ = view_camera;
+        renderer_.reset_temporal();
+    }
     return cam;
 }
 

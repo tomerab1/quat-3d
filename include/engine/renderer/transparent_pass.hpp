@@ -96,6 +96,11 @@ public:
                  const glm::vec3& camera_pos, std::span<const DrawItem> draws,
                  IblViewSet ibl = {}, const ClusteredLights& lights = {});
 
+    // Texture LOD bias of the material sampler, as MeshPass::set_texture_lod_bias
+    // (R11: negative below display resolution). Call between frames of this
+    // pass's slot; the scene-colour sampler (transmission blur) is unaffected.
+    [[nodiscard]] std::expected<void, core::Error> set_texture_lod_bias(float bias);
+
 private:
     // Mip levels of the scene-colour snapshot — how far rough transmission can
     // blur. Must cover the LOD range transparent.slang computes from roughness.
@@ -126,6 +131,7 @@ private:
     rhi::ManagedPipeline           blend_pipeline_;        // alpha blend, no depth write
     rhi::ManagedPipeline           transmission_pipeline_; // depth write, dynamic cull
     rhi::Sampler                   sampler_;
+    float                          lod_bias_ = 0.0F; // the material sampler's mipLodBias
     rhi::Sampler                   scene_sampler_; // samples the scene-colour mip chain
     asset::TextureAsset            fallback_texture_;
     asset::MaterialAsset           default_material_;

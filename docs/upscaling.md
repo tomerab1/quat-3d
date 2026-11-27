@@ -74,9 +74,12 @@ filter, clip it toward the current neighbourhood (variance clipping inside the
 min/max box) and blend with weight `confidence / accumulated` — a running
 average over the samples that landed on the pixel, capped at 10, whose weight
 drops when clipping moves the history. All of it in exposed,
-Reinhard-compressed YCoCg. The history is RGBA32F: half floats stall under
-the small per-sample weights of the average (measured: a 50% upscale's error
-rose from 0.0017 to 0.0047). At native resolution this is TAA.
+Reinhard-compressed YCoCg. The history is RGBA16F written with explicit
+stochastic rounding onto the half-float grid: plain conversion loses the tiny
+per-sample updates of the average and, where the driver truncates (lavapipe),
+drifts dark (a 50% upscale's error rose from 0.0017 to 0.0047; with the
+rounding it matches an RGBA32F history at half the bandwidth). At native
+resolution this is TAA.
 
 Verified by `tests/render/taa_test.cpp` (history across frame slots, exact
 static reprojection, reset on resize, clamping, ghosting of a moving object

@@ -23,9 +23,14 @@
 // blending happen in exposed, Reinhard-compressed YCoCg (Karis 2014), which
 // keeps bright HDR samples from dominating; colours are stored linear.
 //
-// Two storage outputs with explicit formats: the next frame's history
-// (rgba32f: half floats stall under the small blend weights of the running
-// average) and the displayed result (rgba16f; post-processing may modify it).
+// Two rgba16f storage outputs with explicit formats: the next frame's history
+// and the displayed result (post-processing may modify it). The running
+// average blends far-away samples in with weights well below 1/1000, which
+// plain half-float rounding drops (the history stalls and drifts); the
+// history write therefore rounds stochastically onto the half-float grid
+// (per-pixel, per-frame dither), so every update survives on average. The
+// rounding is explicit: the storage conversion's own mode is
+// implementation-defined (lavapipe truncates, which drifted the history dark).
 
 Texture2D               g_color;    // render extent, linear HDR
 Texture2D               g_depth;    // render extent, [0, 1], 1 = far
@@ -33,7 +38,7 @@ Texture2D<float2>       g_velocity; // render extent, uv_current - uv_previous
 Texture2D               g_history;  // display extent, rgb last result, a accumulated weight
 SamplerState            g_linear;   // bilinear, clamp to edge
 StructuredBuffer<float> g_exposure; // [0] = adapted average luminance
-[format("rgba32f")] RWTexture2D<float4> g_history_out;
+[format("rgba16f")] RWTexture2D<float4> g_history_out;
 [format("rgba16f")] RWTexture2D<float4> g_out;
 
 // Mirrors TaaPushConstants in taa_pass.cpp (80 bytes).
@@ -43,11 +48,32 @@ struct Params {
     float4 jitter;       // xy jitter (render pixels), z sharpness, w history valid
     float4 exposure;     // x read g_exposure, y key, z min, w max exposure
     float4 blend;        // x max accumulated weight, y sample falloff (per display px^2),
-                         // z clip rejection (weight lost per unit of clipping), w unused
+                         // z clip rejection (weight lost per unit of clipping),
+                         // w frame index (dither seed)
 }
 [[vk::push_constant]] Params pc;
 
 static const float CLIP_GAMMA = 1.25;
+
+// Interleaved gradient noise (Jimenez 2014), shifted by the golden ratio
+// each frame: a well-distributed uniform in [0, 1) per pixel and frame.
+float dither_noise(uint2 pixel, float frame) {
+    const float ign = frac(52.9829189 * frac(dot(float2(pixel), float2(0.06711056, 0.00583715))));
+    return frac(ign + 0.618034 * frame);
+}
+
+// Rounds non-negative values onto the half-float grid stochastically: down or
+// up to the neighbouring representable value with probabilities that make the
+// result unbiased (u uniform in [0, 1)). The result is exactly representable,
+// so the storage conversion's own rounding mode (implementation-defined)
+// cannot reintroduce a bias.
+float4 stochastic_round_half(float4 v, float4 u) {
+    v = max(v, 0.0);
+    // Binade exponent from the float bits; half floats go subnormal below 2^-14.
+    const int4 e = max(int4((asuint(v) >> 23u) & 0xFFu) - 127, int4(-14));
+    const float4 step = ldexp(float4(1.0), float4(e - 10)); // 10 mantissa bits
+    return floor(v / step + u) * step;
+}
 
 float max3(float3 c) {
     return max(c.x, max(c.y, c.z));
@@ -181,6 +207,7 @@ void compute_main(uint3 tid : SV_DispatchThreadID) {
     }
 
     const float3 linear = from_resolve(result, exposure);
-    g_history_out[p] = float4(linear, accumulated);
+    const float u = dither_noise(tid.xy, pc.blend.w);
+    g_history_out[p] = stochastic_round_half(float4(linear, accumulated), float4(u));
     g_out[p] = float4(linear, 1.0);
 }

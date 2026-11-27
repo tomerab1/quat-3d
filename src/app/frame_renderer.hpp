@@ -143,6 +143,7 @@ struct FrameScene {
     VkExtent2D                     render_extent{0, 0};
     engine::renderer::ViewJitter   jitter{};
     engine::renderer::ViewMotion   motion{};      // velocity: previous view, jitter
+    bool                           reset_history = false; // first frame after reset_temporal()
     glm::mat4 jittered_vp{1.0F};     // jittered view-projection
     glm::mat4 jittered_inv_vp{1.0F};
     engine::renderer::DirectionalLightParams       light;
@@ -208,6 +209,10 @@ public:
     void set_upscaler_settings(const engine::renderer::UpscalerSettings& settings) {
         upscaler_settings_ = settings;
     }
+    // Camera cut (scene load, play enter / exit, active-camera change,
+    // teleport): the next frame drops the motion history and previous view
+    // (velocity 0) and resolves without the TAA / upscaler history.
+    void reset_temporal() { temporal_.reset(); }
     // Atmosphere LUTs + dynamic IBL probe, lit by the scene's sun. Optional:
     // failures are logged and fall back to the procedural sky / flat ambient.
     void create_environment(engine::scene::Scene& scene,
@@ -278,9 +283,7 @@ private:
     bool                                             backend_warned_ = false;
     engine::renderer::UpscalerSettings               upscaler_settings_{};
     engine::renderer::VelocityPass                   velocity_;
-    engine::renderer::MotionHistory                  motion_;
-    glm::mat4                                        prev_view_proj_{1.0F};
-    bool                                             has_prev_view_ = false;
+    engine::renderer::TemporalView                   temporal_;
     std::shared_ptr<engine::renderer::ExposureState> exposure_state_;
     std::array<DeferredFrame, k_frames_in_flight>    frames_;
 

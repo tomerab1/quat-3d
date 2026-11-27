@@ -29,7 +29,7 @@ struct TaaPushConstants {
     glm::vec4 display_size{0.0F}; // xy extent, zw 1 / extent
     glm::vec4 jitter{0.0F};       // xy jitter (render px), z sharpness, w history valid
     glm::vec4 exposure{0.0F};     // x read the exposure buffer, y key, z min, w max
-    glm::vec4 blend{0.0F};        // x max weight, y sample falloff, z clip rejection
+    glm::vec4 blend{0.0F};        // x max weight, y sample falloff, z clip rejection, w frame
 };
 static_assert(sizeof(TaaPushConstants) == 80, "must match taa.slang Params");
 
@@ -230,7 +230,8 @@ TaaPass::add_to_graph(rhi::RenderGraph& graph, const UpscalerInputs& in) {
                             hist.valid_ ? 1.0F : 0.0F);
     push.exposure = glm::vec4(in.exposure != 0 ? 1.0F : 0.0F, k_exposure_key, k_min_exposure,
                               k_max_exposure);
-    push.blend = glm::vec4(k_max_weight, k_sample_falloff, k_clip_rejection, 0.0F);
+    push.blend = glm::vec4(k_max_weight, k_sample_falloff, k_clip_rejection,
+                           static_cast<float>(hist.frame_ % (1U << 24))); // dither seed
     const VkDeviceAddress exposure = in.exposure != 0 ? in.exposure : unit_exposure_address_;
     const bool exposure_from_gpu = in.exposure != 0;
 

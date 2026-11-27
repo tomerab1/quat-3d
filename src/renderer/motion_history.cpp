@@ -27,6 +27,26 @@ glm::mat4 MotionHistory::advance(std::uint64_t key, const glm::mat4& current) {
     return it != previous_.end() ? it->second : current;
 }
 
+ViewMotion TemporalView::begin_frame(const glm::mat4& view_proj, glm::vec2 jitter_ndc) {
+    ViewMotion motion;
+    motion.prev_view_proj = has_prev_view_ ? prev_view_proj_ : view_proj;
+    motion.jitter_ndc = jitter_ndc;
+    prev_view_proj_ = view_proj;
+    has_prev_view_ = true;
+    motion_.begin_frame();
+    return motion;
+}
+
+void TemporalView::reset() {
+    motion_.reset();
+    has_prev_view_ = false;
+    reset_pending_ = true;
+}
+
+bool TemporalView::take_history_reset() {
+    return std::exchange(reset_pending_, false);
+}
+
 std::span<const glm::mat4> MotionHistory::advance_palette(std::uint64_t key,
                                                           std::span<const glm::mat4> current) {
     std::vector<glm::mat4>& slot = current_palettes_[key];

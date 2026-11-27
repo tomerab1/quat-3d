@@ -23,8 +23,7 @@ namespace {
 
 constexpr VkShaderStageFlags kMaterialStages = VK_SHADER_STAGE_FRAGMENT_BIT;
 
-// Upper bound on material texture mips the sampler may reach (covers 32k).
-constexpr std::uint32_t kMaterialMaxLod = 16;
+constexpr std::uint32_t kMaterialMaxLod = material_sampler_max_lod;
 
 // Material descriptor set 0, matching PbrMaterial in material.slang (verified
 // against the gbuffer.slang SPIR-V): uniform params at 0, the five optional

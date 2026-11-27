@@ -43,23 +43,23 @@ class PipelineCache;
 namespace engine::renderer {
 
 // Temporal history shared by every frame-in-flight slot of one view (audit A2).
-// Owns the ping-pong pair of display-extent RGBA32F images (rgb colour, a the
+// Owns the ping-pong pair of display-extent RGBA16F images (rgb colour, a the
 // accumulated sample weight), the frame counter that picks the ping-pong
 // slot, and history validity. Recreated (and invalidated) when the display
 // extent changes; replaced images stay alive until every frame that may still
 // use them has retired.
 //
-// 32-bit floats, because the running average blends a far-away sample in with
-// weights well below 1/1000, under half-float rounding: an RGBA16F history
-// stalls and drifts (the 50% upscale test's error rose from 0.0017 to 0.0047).
-// RGBA32F storage images are mandatory in Vulkan, so it works everywhere.
+// The running average blends far-away samples in with weights well below
+// 1/1000; plain half-float rounding drops those updates (the 50% upscale
+// test's error rose from 0.0017 to 0.0047), so taa.slang rounds its history
+// writes stochastically instead of doubling the history to RGBA32F.
 //
 // Contract: the caller waits on a slot's fence before recording that slot's
 // frame (the standard frame loop), records one resolve per frame, and compiles
 // and executes every graph the TAA pass was added to.
 class TaaHistory {
 public:
-    static constexpr VkFormat k_format = VK_FORMAT_R32G32B32A32_SFLOAT;
+    static constexpr VkFormat k_format = VK_FORMAT_R16G16B16A16_SFLOAT;
 
     TaaHistory(const rhi::Device& device, rhi::GpuAllocator& allocator,
                std::uint32_t frames_in_flight);

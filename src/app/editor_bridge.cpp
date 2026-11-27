@@ -130,6 +130,8 @@ void EditorBridge::apply_play_transition() {
         std::fprintf(stderr, "[editor] stop\n");
     }
     play_prev_ = play_;
+    // Play swaps worlds (snapshot / restore): no history carries across.
+    if (t_.reset_temporal) t_.reset_temporal();
 }
 
 void EditorBridge::apply_scene_file_requests() {
@@ -157,6 +159,7 @@ void EditorBridge::apply_scene_file_requests() {
                 // (The view camera is editor state — nothing to rebind.)
                 t_.world->clear_spin_entity();
                 editor_.set_selected(entt::null);
+                if (t_.reset_temporal) t_.reset_temporal();
                 // The dynamic IBL probe picks up the loaded scene's sun
                 // within one refresh cycle — no explicit rebake needed.
             } else {

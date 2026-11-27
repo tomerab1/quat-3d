@@ -150,11 +150,8 @@ FrameScene FrameRenderer::gather(engine::scene::Scene& scene,
         engine::renderer::jitter_phase_count(render_extent, draw_extent));
     out.jittered_vp = engine::renderer::jitter_view_proj(cam.view_proj, out.jitter.ndc);
     out.jittered_inv_vp = glm::inverse(out.jittered_vp);
-    out.motion.prev_view_proj = has_prev_view_ ? prev_view_proj_ : cam.view_proj;
-    out.motion.jitter_ndc = out.jitter.ndc;
-    prev_view_proj_ = cam.view_proj;
-    has_prev_view_ = true;
-    motion_.begin_frame();
+    out.motion = temporal_.begin_frame(cam.view_proj, out.jitter.ndc);
+    out.reset_history = temporal_.take_history_reset();
 
     engine::renderer::DirectionalLightParams& light = out.light;
     const auto light_view = scene.registry().view<const engine::scene::DirectionalLight>();
@@ -187,7 +184,7 @@ FrameScene FrameRenderer::gather(engine::scene::Scene& scene,
         item.material = mr.material.valid() ? &*mr.material : nullptr;
         item.model = t.world;
         const auto key = static_cast<std::uint64_t>(entt::to_integral(e));
-        item.prev_model = motion_.advance(key, t.world);
+        item.prev_model = temporal_.motion().advance(key, t.world);
 
         const auto* sm = scene.registry().try_get<engine::scene::SkinnedMesh>(e);
         if (item.mesh != nullptr && item.mesh->skinned() && sm != nullptr &&
@@ -198,7 +195,7 @@ FrameScene FrameRenderer::gather(engine::scene::Scene& scene,
             if (g != nullptr) {
                 const VkDeviceSize joint_bytes = sm->joint_matrices.size() * sizeof(glm::mat4);
                 const std::span<const glm::mat4> prev_palette =
-                    motion_.advance_palette(key, sm->joint_matrices);
+                    temporal_.motion().advance_palette(key, sm->joint_matrices);
                 std::memcpy(g->joints.mapped(), sm->joint_matrices.data(), joint_bytes);
                 std::memcpy(g->prev_joints.mapped(), prev_palette.data(), joint_bytes);
                 // Sequential-write host memory may be non-coherent (S1.A15).
@@ -294,9 +291,11 @@ bool FrameRenderer::record(const FrameInputs& in) {
     // draw_extent, where post-processing and the UI run.
     const VkExtent2D render_extent = fs.render_extent;
     const engine::renderer::UpscalerSettings upscale = current_upscaler();
-    if (auto r = fr.mesh.set_texture_lod_bias(
-            engine::renderer::texture_lod_bias(render_extent, draw_extent));
-        !r) {
+    const float lod_bias = engine::renderer::texture_lod_bias(render_extent, draw_extent);
+    if (auto r = fr.mesh.set_texture_lod_bias(lod_bias); !r) {
+        std::fprintf(stderr, "[warn] texture LOD bias: %s\n", r.error().message.c_str());
+    }
+    if (auto r = fr.transparent.set_texture_lod_bias(lod_bias); !r) {
         std::fprintf(stderr, "[warn] texture LOD bias: %s\n", r.error().message.c_str());
     }
     const auto atmos_skyview = [&]() {
@@ -342,7 +341,7 @@ bool FrameRenderer::record(const FrameInputs& in) {
                                           engine::scene::InstancedPass::shadow, shadow_batches);
     engine::scene::append_instanced_draws(*in.registry, cam.view_proj,
                                           engine::scene::InstancedPass::opaque, opaque_batches,
-                                          &motion_);
+                                          &temporal_.motion());
     auto shadow = fr.shadow.add_to_graph(graph, fs.light_view_proj, shadow_batches);
     if (!shadow) {
         std::fprintf(stderr, "[fatal] shadow pass: %s\n", shadow.error().message.c_str());
@@ -411,6 +410,7 @@ bool FrameRenderer::record(const FrameInputs& in) {
     upscale_in.display_extent = draw_extent;
     upscale_in.jitter = fs.jitter;
     upscale_in.sharpness = upscale.sharpness;
+    upscale_in.reset = fs.reset_history; // camera cut: reset_temporal()
     auto upscaled = upscaler_->add_to_graph(graph, frame_, upscale_in);
     if (!upscaled) {
         std::fprintf(stderr, "[fatal] upscaler: %s\n", upscaled.error().message.c_str());

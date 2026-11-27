@@ -16,6 +16,7 @@
 
 #ifdef ENGINE_EDITOR
 
+#include <functional>
 #include <optional>
 #include <string>
 
@@ -58,6 +59,9 @@ struct EditorBridgeTargets {
     FlyCamera*                   camera = nullptr;
     // Shader hot-reload state for the Stats panel (R2); null when off.
     const engine::rhi::ShaderHotReload* shader_reload = nullptr;
+    // Camera cut for the renderer's temporal state (R11): called after a scene
+    // load and on every Play / Stop transition. May be empty.
+    std::function<void()> reset_temporal;
 };
 
 class EditorBridge {

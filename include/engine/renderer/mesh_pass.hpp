@@ -48,6 +48,10 @@ inline constexpr VkFormat gbuffer_material_format  = VK_FORMAT_R8G8B8A8_UNORM;
 inline constexpr VkFormat gbuffer_clearcoat_format = VK_FORMAT_R8G8_UNORM;
 inline constexpr VkFormat gbuffer_depth_format     = VK_FORMAT_D32_SFLOAT;
 
+// Upper bound on the mips material samplers may reach (covers 32k textures);
+// shared by the GBuffer and transparent passes.
+inline constexpr std::uint32_t material_sampler_max_lod = 16;
+
 // Colour attachments of every GBuffer writer, in SV_Target order.
 inline constexpr std::array<VkFormat, 5> gbuffer_color_formats{
     gbuffer_albedo_format, gbuffer_normal_format, gbuffer_material_format,
