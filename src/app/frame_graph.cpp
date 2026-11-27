@@ -373,7 +373,11 @@ bool FrameRenderer::record(const FrameInputs& in) {
         // The first barrier waits on the acquire semaphore's stage, so
         // every first touch (layout transition, TAA's copy) is ordered
         // after the presentation engine releases the image (audit A3).
-        k_acquire_wait_stage);
+        k_acquire_wait_stage, /*available_access=*/0,
+        // The final PRESENT_SRC transition is ordered before the stage the
+        // render-finished semaphore is signalled at, which present waits
+        // on (issue #9).
+        k_present_signal_stage);
     // In editor mode the frame resolves into the slot's offscreen viewport
     // image (sampled by the Viewport panel); otherwise straight into the
     // swapchain as before.

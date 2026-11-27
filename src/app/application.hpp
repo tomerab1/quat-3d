@@ -97,7 +97,6 @@ private:
     Platform                   platform_;
     engine::rhi::Device        device_;
     engine::rhi::GpuAllocator  allocator_;
-    VkSurfaceKHR               surface_ = VK_NULL_HANDLE;
     engine::rhi::Swapchain     swapchain_;
     engine::rhi::PipelineCache pipeline_cache_;
     std::string                shader_dir_;

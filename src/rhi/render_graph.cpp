@@ -113,7 +113,9 @@ struct UsageState {
         return {VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
                 VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT};
     case ResourceUsage::present:
-        return {VK_IMAGE_LAYOUT_PRESENT_SRC_KHR, VK_PIPELINE_STAGE_2_NONE, 0};
+        // No access, but a real stage: the transition into PRESENT_SRC must be
+        // ordered before the semaphore signal present waits on (issue #9).
+        return {VK_IMAGE_LAYOUT_PRESENT_SRC_KHR, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, 0};
     // Buffers have no layout; UNDEFINED is never used for them.
     case ResourceUsage::buffer_read_compute:
         return {VK_IMAGE_LAYOUT_UNDEFINED, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
@@ -332,10 +334,12 @@ ResourceHandle RenderGraph::import_image(const char* name, VkImage image, VkImag
                                          VkImageLayout current_layout,
                                          VkImageLayout final_layout,
                                          VkPipelineStageFlags2 available_stage,
-                                         VkAccessFlags2 available_access) {
+                                         VkAccessFlags2 available_access,
+                                         VkPipelineStageFlags2 final_stage) {
     Resource r;
     r.available_stage = available_stage;
     r.available_access = available_access;
+    r.final_stage = final_stage;
     r.name = name;
     r.imported = true;
     r.image = image;
@@ -427,9 +431,21 @@ std::expected<void, core::Error> RenderGraph::compile() {
         // Whatever made an imported image available acts as its last "write".
         r.write_stage = r.available_stage;
         r.write_access = r.available_access;
+        r.transition_stage = VK_PIPELINE_STAGE_2_NONE;
         r.read_stages = VK_PIPELINE_STAGE_2_NONE;
         r.visible_stages = VK_PIPELINE_STAGE_2_NONE;
         r.visible_access = 0;
+    }
+
+    // A final layout needs a real second scope for its trailing transition.
+    for (const Resource& r : resources_) {
+        if (r.imported && !r.is_buffer && r.final_layout != VK_IMAGE_LAYOUT_UNDEFINED &&
+            r.final_stage == VK_PIPELINE_STAGE_2_NONE) {
+            return fail(std::format("RenderGraph::compile: image '{}' has a final layout but "
+                                    "final_stage NONE (its final transition would be ordered "
+                                    "before nothing)",
+                                    r.name));
+        }
     }
 
     // Every access must fit its resource kind (a layout-bearing image usage
@@ -556,34 +572,49 @@ std::expected<void, core::Error> RenderGraph::compile() {
             if (layout_change || a.is_write) {
                 // Write-after-{write,read} or a transition: wait for the last
                 // write and every read since, make the write visible to us.
+                // read_stages also holds the destination stage of an earlier
+                // read's transition, so this chains after that transition.
                 bs.push_back(make_barrier(r.image, aspect_for_format(r.format), r.cur_layout,
                                           s.layout, r.write_stage | r.read_stages,
                                           r.write_access, s.stage, s.access));
                 r.cur_layout = s.layout;
                 if (a.is_write) {
+                    // The write runs after this barrier's transition, so later
+                    // readers chain onto the write alone.
                     r.write_stage = s.stage;
                     r.write_access = s.access;
+                    r.transition_stage = VK_PIPELINE_STAGE_2_NONE;
                     r.read_stages = VK_PIPELINE_STAGE_2_NONE;
                     r.visible_stages = VK_PIPELINE_STAGE_2_NONE;
                     r.visible_access = 0;
                 } else {
+                    // The transition is a write that happens before s.stage
+                    // (issue #4): later readers in other stages chain onto it.
+                    r.transition_stage = s.stage;
                     r.read_stages = s.stage;
                     r.visible_stages = s.stage;
                     r.visible_access = s.access;
                 }
             } else {
                 // Read in the current layout. Earlier barriers made the last
-                // write visible only to the stages/accesses they named; a
-                // reader outside them (e.g. a fragment-shader read after a
-                // compute-only barrier) needs its own dependency on the write
-                // (audit A4).
+                // write (and any later transition) visible only to the
+                // stages/accesses they named; a reader outside them (e.g. a
+                // fragment-shader read after a compute-only barrier) needs its
+                // own dependency (audit A4). Its source scope is the last
+                // write's stage plus, when a read transitioned the image since,
+                // that transition's destination stage: the transition happened
+                // after the write's stage, so waiting on the write alone would
+                // not order this read after it (issue #4). Layout transition
+                // writes are made available automatically, so the source
+                // access stays the write's.
                 const bool covered = (s.stage & ~r.visible_stages) == 0 &&
                                      (s.access & ~r.visible_access) == 0;
-                const bool has_write = r.write_stage != VK_PIPELINE_STAGE_2_NONE ||
+                const VkPipelineStageFlags2 src_stage = r.write_stage | r.transition_stage;
+                const bool has_write = src_stage != VK_PIPELINE_STAGE_2_NONE ||
                                        r.write_access != 0;
                 if (!covered && has_write) {
                     bs.push_back(make_barrier(r.image, aspect_for_format(r.format),
-                                              r.cur_layout, r.cur_layout, r.write_stage,
+                                              r.cur_layout, r.cur_layout, src_stage,
                                               r.write_access, s.stage, s.access));
                     r.visible_stages |= s.stage;
                     r.visible_access |= s.access;
@@ -594,13 +625,18 @@ std::expected<void, core::Error> RenderGraph::compile() {
     }
 
     // 4. Trailing transitions for imported resources that must end in a specific
-    //    layout (e.g. swapchain image -> PRESENT_SRC).
+    //    layout (e.g. swapchain image -> PRESENT_SRC). The second scope is the
+    //    stage the next consumer waits at (final_stage), never NONE: the
+    //    transition is a write ordered only before that scope, so the
+    //    consumer's wait (e.g. the render-finished semaphore signal) must
+    //    chain onto it (issue #9). No access: the consumer's own dependency
+    //    makes the image visible to it.
     for (Resource& r : resources_) {
         if (r.imported && !r.is_buffer && r.final_layout != VK_IMAGE_LAYOUT_UNDEFINED
             && r.final_layout != r.cur_layout) {
             final_barriers_.push_back(make_barrier(
                 r.image, aspect_for_format(r.format), r.cur_layout, r.final_layout,
-                r.write_stage | r.read_stages, r.write_access, VK_PIPELINE_STAGE_2_NONE, 0));
+                r.write_stage | r.read_stages, r.write_access, r.final_stage, 0));
             r.cur_layout = r.final_layout;
         }
     }

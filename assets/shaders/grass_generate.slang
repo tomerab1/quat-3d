@@ -179,5 +179,6 @@ void finalize_main() {
     g_args[ARGS_FAR + 1] = far;
     g_args[ARGS_FAR + 2] = g_params.draw.x;  // far indices follow the near ones
     g_args[ARGS_FAR + 3] = 0;
-    g_args[ARGS_FAR + 4] = near_cap;         // far blades follow the near region
+    g_args[ARGS_FAR + 4] = 0;                // firstInstance: the region base is a push constant
+                                             // (drawIndirectFirstInstance is not required)
 }

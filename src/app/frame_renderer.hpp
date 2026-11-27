@@ -85,6 +85,13 @@ inline constexpr std::uint32_t k_frames_in_flight = 2;
 // render-graph barrier is chained to it.
 inline constexpr VkPipelineStageFlags2 k_acquire_wait_stage =
     VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT;
+// Stage the render-finished semaphore (which present waits on) is signalled
+// at. Every transition of the swapchain image into PRESENT_SRC — the graph's
+// final barrier and the screenshot round trip — uses it as its second scope,
+// so the signal chains onto the transition and present cannot race it
+// (issue #9).
+inline constexpr VkPipelineStageFlags2 k_present_signal_stage =
+    VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT;
 
 // Per-skinned-entity GPU buffers for one frame slot: the joint matrices (host
 // visible, re-uploaded each frame) and the skinned vertex output (device local,
