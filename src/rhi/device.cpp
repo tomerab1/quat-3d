@@ -337,6 +337,10 @@ std::expected<Device, core::Error> Device::create(const CreateInfo& info) {
     vkGetPhysicalDeviceFeatures(dev.physical_device_, &supported_core);
     VkPhysicalDeviceFeatures core_features{};
     core_features.samplerAnisotropy = supported_core.samplerAnisotropy;
+    // Storage images in RG32F / R8 (Hi-Z pyramid, GTAO edges) need the
+    // extended storage formats; universally offered on desktop and MoltenVK.
+    core_features.shaderStorageImageExtendedFormats =
+        supported_core.shaderStorageImageExtendedFormats;
     if (supported_core.samplerAnisotropy == VK_TRUE) {
         dev.max_sampler_anisotropy_ = candidate.properties.limits.maxSamplerAnisotropy;
     }

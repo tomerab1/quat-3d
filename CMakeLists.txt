@@ -348,6 +348,7 @@ add_library(engine_renderer STATIC
     src/renderer/draw_batching.cpp
     src/renderer/grass.cpp
     src/renderer/grass_pass.cpp
+    src/renderer/hiz_pass.cpp
     src/renderer/instance_buffer.cpp
     src/renderer/mesh_pass.cpp
     src/renderer/lighting_pass.cpp
