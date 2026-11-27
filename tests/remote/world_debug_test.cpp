@@ -338,6 +338,7 @@ protected:
     void SetUp() override {
         engine::remote::RpcServerConfig config;
         config.port = 0;
+        config.token = "debug-step-test";
         auto listened = engine::remote::RpcServer::listen(config);
         ASSERT_OK(listened);
         server.emplace(std::move(*listened));
@@ -350,6 +351,12 @@ protected:
         auto c = engine::remote::detail::connect_loopback(server->port());
         ASSERT_OK(c);
         sock = std::move(*c);
+        send({{"jsonrpc", "2.0"},
+              {"id", "hello"},
+              {"method", "session.hello"},
+              {"params", {{"token", "debug-step-test"}}}});
+        const Json hello = pump(2000);
+        ASSERT_TRUE(hello.is_object() && hello.contains("result")) << hello.dump();
     }
 
     void send(const Json& msg) {

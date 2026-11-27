@@ -37,6 +37,7 @@
     "imgui-node-editor",
     "recastnavigation",
     "gamenetworkingsockets",
+    "openssl",
     "miniaudio",
     "gtest"
   ]

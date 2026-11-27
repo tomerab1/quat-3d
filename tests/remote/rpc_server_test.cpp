@@ -1,5 +1,6 @@
 // Remote-control JSON-RPC server over loopback TCP: authentication, sync and
-// deferred calls, notifications, protocol errors, and the oversize-line guard.
+// deferred calls, notifications, protocol errors, the oversize-line guard,
+// and the cross-protocol (browser HTTP POST) defences of issue #56.
 
 #include <chrono>
 #include <optional>
@@ -40,8 +41,9 @@ struct TestClient {
     detail::Socket sock;
     std::string    inbuf;
 
-    [[nodiscard]] bool send_line(const std::string& line) {
-        const std::string data = line + "\n";
+    [[nodiscard]] bool send_line(const std::string& line) { return send_raw(line + "\n"); }
+
+    [[nodiscard]] bool send_raw(const std::string& data) {
         std::size_t off = 0;
         for (int spins = 0; off < data.size() && spins < 1000; ++spins) {
             const detail::IoResult r =
@@ -191,6 +193,88 @@ TEST_F(RemoteRpcServer, WrongTokenIsRejected) {
     TestClient c = connect();
     Json reply = c.request(*server, call_msg(1, "session.hello", {{"token", "s3creT"}}));
     EXPECT_EQ(error_code_of(reply), rpc_code::unauthorized) << text(reply);
+    EXPECT_TRUE(c.closed_by(*server)) << "connection with a wrong token was not closed";
+}
+
+TEST_F(RemoteRpcServer, MissingTokenIsRejected) {
+    TestClient c = connect();
+    Json reply = c.request(*server, call_msg(1, "session.hello"));
+    EXPECT_EQ(error_code_of(reply), rpc_code::unauthorized) << text(reply);
+    EXPECT_TRUE(c.closed_by(*server)) << "connection without a token was not closed";
+
+    TestClient d = connect();
+    reply = d.request(*server, call_msg(2, "session.hello", {{"token", 42}}));
+    EXPECT_EQ(error_code_of(reply), rpc_code::unauthorized) << text(reply);
+    EXPECT_TRUE(d.closed_by(*server));
+}
+
+TEST_F(RemoteRpcServer, ListenRefusesAnEmptyToken) {
+    RpcServerConfig config;
+    config.port = 0;
+    ASSERT_ERR(RpcServer::listen(config)) << "an endpoint without a token must not open";
+}
+
+// What a web page's fetch(..., {method: "POST", mode: "no-cors"}) sends: a
+// CORS "simple request", so no preflight. The request line must end the
+// connection, without a reply, before the body is ever read — even a body
+// that would authenticate.
+TEST_F(RemoteRpcServer, BrowserHttpPostNeverRunsAMethod) {
+    const std::string body =
+        std::string(R"({"jsonrpc":"2.0","id":0,"method":"session.hello","params":{"token":")") +
+        k_token + "\"}}\n" + R"({"jsonrpc":"2.0","id":1,"method":"test.notify"})" + "\n";
+    const std::string request = "POST / HTTP/1.1\r\n"
+                                "Host: 127.0.0.1:7878\r\n"
+                                "Origin: https://evil.example\r\n"
+                                "Content-Type: text/plain;charset=UTF-8\r\n"
+                                "Content-Length: " +
+                                std::to_string(body.size()) + "\r\n\r\n" + body;
+    TestClient c = connect();
+    ASSERT_TRUE(c.send_raw(request));
+    EXPECT_TRUE(c.closed_by(*server)) << "HTTP client got a reply or stayed connected";
+    EXPECT_TRUE(c.inbuf.empty()) << "HTTP client got a reply: " << c.inbuf;
+    EXPECT_EQ(notified, 0) << "the HTTP body ran a method";
+    for (int i = 0; i < 10; ++i) server->poll();
+    EXPECT_EQ(server->client_count(), 0U) << "HTTP client not dropped";
+}
+
+// HTTP lines drop even an authenticated session (a header, a GET request
+// line, a status line), again without a reply.
+TEST_F(RemoteRpcServer, HttpLinesDropAnAuthenticatedSession) {
+    for (const char* line : {"Host: 127.0.0.1:7878", "GET /json HTTP/1.0", "HTTP/1.1 200 OK"}) {
+        TestClient c = session();
+        ASSERT_TRUE(c.send_raw(std::string(line) + "\r\n" +
+                               R"({"jsonrpc":"2.0","method":"test.notify"})" + "\n"));
+        EXPECT_TRUE(c.closed_by(*server)) << "'" << line << "' did not close the connection";
+        EXPECT_TRUE(c.inbuf.empty()) << "'" << line << "' got a reply: " << c.inbuf;
+    }
+    EXPECT_EQ(notified, 0) << "a line after HTTP ran";
+}
+
+// The first line that is not a JSON-RPC request is answered once and closes
+// the connection; the line after it never runs.
+TEST_F(RemoteRpcServer, GarbageLineClosesTheConnection) {
+    const std::vector<std::pair<std::string, int>> cases = {
+        {"{not json", rpc_code::parse_error},
+        {"hello engine", rpc_code::parse_error},
+        {"[1,2,3]", rpc_code::invalid_request},
+        {R"({"id":3,"method":"test.notify"})", rpc_code::invalid_request},
+        {R"({"jsonrpc":"1.0","id":3,"method":"test.notify"})", rpc_code::invalid_request},
+    };
+    for (const auto& [line, code] : cases) {
+        TestClient c = session();
+        ASSERT_TRUE(
+            c.send_raw(line + "\n" + R"({"jsonrpc":"2.0","method":"test.notify"})" + "\n"));
+        const Json reply = c.read_reply(*server);
+        EXPECT_EQ(error_code_of(reply), code) << line << " -> " << text(reply);
+        EXPECT_TRUE(c.closed_by(*server)) << "'" << line << "' did not close the connection";
+    }
+    EXPECT_EQ(notified, 0) << "a line after garbage ran";
+
+    // Before authentication too.
+    TestClient c = connect();
+    ASSERT_TRUE(c.send_line("{not json"));
+    EXPECT_EQ(error_code_of(c.read_reply(*server)), rpc_code::parse_error);
+    EXPECT_TRUE(c.closed_by(*server));
 }
 
 TEST_F(RemoteRpcServer, AuthenticatedSyncCallReplies) {

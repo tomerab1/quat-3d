@@ -93,6 +93,9 @@ find_package(EnTT CONFIG REQUIRED)
 find_package(Jolt CONFIG REQUIRED)
 find_package(recastnavigation CONFIG REQUIRED)
 find_package(GameNetworkingSockets CONFIG REQUIRED)
+# OpenSSL's libcrypto: the CSPRNG behind remote-control session tokens
+# (engine_remote). GameNetworkingSockets already depends on it.
+find_package(OpenSSL REQUIRED COMPONENTS Crypto)
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/FetchAcl.cmake) # ACL + RTM (header-only)
 # miniaudio: vcpkg's port is header-only (it installs miniaudio.h and nothing
 # else), so it is wrapped in an imported target here and engine_audio compiles
@@ -122,6 +125,7 @@ add_library(engine_core STATIC
     src/core/log.cpp
     src/core/stderr_capture.cpp
     src/core/sim_clock.cpp
+    src/core/frame_timer.cpp
     src/core/file_watcher.cpp
     src/core/child_process.cpp)
 target_link_libraries(engine_core PUBLIC engine_flags Threads::Threads)
@@ -315,12 +319,15 @@ set_source_files_properties(src/audio/miniaudio_impl.cpp PROPERTIES COMPILE_OPTI
 # engine_remote — remote-control endpoint (Phase 15): loopback JSON-RPC 2.0
 # over TCP, poll-driven on the main thread. Out-of-process tools (the quat-mcp
 # Model Context Protocol bridge in tools/quat-mcp) drive the engine through it.
-# nlohmann_json is PUBLIC: the handler API traffics in JSON values.
+# nlohmann_json is PUBLIC: the handler API traffics in JSON values. OpenSSL's
+# libcrypto (PRIVATE) generates the session tokens (session_token.cpp).
 # ---------------------------------------------------------------------------
 add_library(engine_remote STATIC
     src/remote/rpc_server.cpp
+    src/remote/session_token.cpp
     src/remote/socket.cpp)
 target_link_libraries(engine_remote PUBLIC engine_flags nlohmann_json::nlohmann_json)
+target_link_libraries(engine_remote PRIVATE OpenSSL::Crypto)
 target_include_directories(engine_remote PUBLIC ${ENGINE_PUBLIC_INCLUDE})
 if(WIN32)
     target_link_libraries(engine_remote PRIVATE ws2_32)
