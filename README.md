@@ -14,6 +14,16 @@ drive directly to build and debug worlds from a prompt.
 > Context Protocol, macOS support, and audio. See [Roadmap](#roadmap) and
 > [`docs/STATUS.md`](docs/STATUS.md) for what is in progress right now.
 
+## Screenshots
+
+Real engine output, rendered headless on a software Vulkan driver (lavapipe) by
+the CI screenshot pipeline — no ambient occlusion or cascaded shadows yet (in
+progress, ROADMAP R12).
+
+| Showcase (PBR materials, glass) | Terrain (GPU synthesis + GPU grass) | Physics |
+|---|---|---|
+| ![showcase](docs/screenshots/showcase.png) | ![terrain](docs/screenshots/terrain.png) | ![physics](docs/screenshots/physics.png) |
+
 ## What it can do today
 
 **Rendering**
