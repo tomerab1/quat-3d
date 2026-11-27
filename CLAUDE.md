@@ -341,6 +341,17 @@ collider_convex(positions)     → JPH::ConvexHullShape
 
 ---
 
+## GPU compute first
+
+Data-parallel work belongs on the GPU as a compute pass in the render graph:
+culling (lights, instances, occlusion), skinning, particles, grass, terrain
+synthesis, histogram/reduction passes. CPU-side per-element loops over
+thousands of items per frame are a smell — move them to compute unless the
+result is needed on the CPU the same frame (then justify it, or read back
+asynchronously a frame later). Keep a CPU reference implementation where
+determinism matters (terrain seams, physics, networking) and test the GPU
+path against it.
+
 ## Threading Model
 
 - **Main thread**: SDL event loop, ECS tick, render graph submission.

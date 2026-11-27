@@ -114,6 +114,19 @@ JSON-RPC over loopback TCP to the engine.
     the camera (the standard approach for dense ground cover).
   - **R9.4 Instance culling + LOD.** GPU frustum/occlusion culling per
     instance (with R6) and distance fade / LOD selection.
+- [ ] **R10 — GPU compute migration.** Move data-parallel work to compute
+  passes (CLAUDE.md "GPU compute first"):
+  - **R10.1 Clustered light culling on the GPU.** Phase 7.2 shipped a flat
+    per-pixel loop over every point light (max 64) — no clustering. A
+    compute pass bins lights into view-space clusters (froxels); deferred
+    lighting and the forward transparent pass read only their cluster's
+    list; thousands of lights; spot lights fit the same path.
+  - **R10.2 GPU terrain synthesis.** FBM + domain warp in compute (seconds
+    → milliseconds per tile), GPU erosion; the deterministic CPU generator
+    stays as the reference for seams, physics and tests (read back async).
+  - **R10.3 GPU particles.** Compute-simulated emitters (spawn, integrate,
+    collide with depth, sort) drawn instanced.
+  - **R10.4** GPU instance/occlusion culling — tracked as R6 + R9.4.
 - [ ] **R8 — Image quality.** GTAO, screen-space reflections, contact shadows,
   optional ray-traced shadows/AO, CUBICSPLINE animation interpolation.
 
