@@ -145,11 +145,13 @@ drawn with — see "Look tuning" below; `null` drops one override),
 `grass` entity's: `seed`, `density` blades per m² (0..1000), `radius` m
 (0..500), `blade_height` / `blade_width` [min,max] m, `base_color` /
 `tip_color` `"#rrggbb"` or linear `[r,g,b]`, `wind_strength` 0..4,
-`wind_direction` [x,z] (normalised), `wind_frequency` Hz 0..10, `slope`
+`wind_direction` [x,z] (normalised; superseded by the `weather` wind
+while the scene has weather), `wind_frequency` Hz 0..10, `slope`
 [min,max] degrees, `height` [min,max] ground height m, `terrain_only` (false:
 also flat ground at `ground_y` where no terrain is loaded), `lod_start`
 0..1 × radius where blades start thinning, `far_density` 0..1 kept at the
 radius),
+`weather` (the scene's weather, one entity at most — see "Weather" below),
 `point_light`, `dir_light`, `camera`, `collider`, `rigidbody`, `character`,
 `nav_agent`, `behavior`, `patrol`, `terrain`, `net_replicated`,
 `audio_source` (`clip`, `bus`: master/music/sfx/ui/ambience, `volume`,
@@ -342,6 +344,53 @@ debug views, so neither is listed. The sun is scene data: `environment.*`.
   ignored and out-of-range numbers clamped (in the block and in `material`
   overrides). A block whose `version` is newer than the build reads, or a
   malformed one, fails the load and leaves the scene and settings untouched.
+
+## Weather (ROADMAP R13.1)
+
+The scene's weather is one `weather` component on a single entity (the
+codec refuses a second one). Its fields come from one table
+(`engine/weather/weather_state.hpp`), shared by the component codec,
+these methods, the quat-mcp `weather_*` tools and the editor's Renderer panel.
+
+| Method | Params | Result |
+|---|---|---|
+| `weather.get` | `{schema?: bool, wind_at?: [[x, y, z], ...]}` (≤ 1024 points) | `{present, entity, weather: {<field>: value}, schema?: [{name, group, label, type, min?, max?, default, unit?, hint, values?}], wind_at?: [[vx, vy, vz], ...]}` |
+| `weather.set` | `{reset?: bool, <field>: value, ...}` | `weather.get` result |
+
+Fields:
+
+| Field | Range | Meaning |
+|---|---|---|
+| `wind_dir_deg` | [-180, 180] deg | heading the wind blows toward, from +X toward +Z (the clouds' convention) |
+| `wind_speed` | [0, 60] m/s | mean wind 10 m above the ground |
+| `gustiness` | [0, 1] | gust fronts sweeping downwind |
+| `turbulence` | [0, 1] | small-scale swirl |
+| `cloud_cover` | [0, 1] | sky fraction covered; overrides `clouds.coverage` while the scene has weather |
+| `precipitation` | [0, 1] | 0 dry, 1 downpour or blizzard |
+| `precipitation_type` | `"rain"` \| `"snow"` | what falls |
+| `wetness` | [0, 1] | surface wetness; puddles on flat ground from about 0.55 |
+| `snow` | [0, 1] | snow lying on upward-facing surfaces |
+| `temperature_c` | [-40, 45] C | snow settles at or below 1 C and melts above 0 C |
+| `accumulate` | bool | let rain, snowfall, melt and drying evolve `wetness` / `snow` over simulated time |
+
+- **get** without weather reports `present: false`, `entity: null` and the
+  defaults (what the renderer uses then). `wind_at` evaluates the CPU
+  reference of the wind field (`weather::sample_wind`) at the renderer's wind
+  clock, at the given height above the ground (`y`; the field is defined at
+  10 m and scaled by the logarithmic wind profile). It is what the grass
+  feels this frame, and what physics or audio should query.
+- **set** merges like the component codec: absent fields (and `null`) keep
+  their values; `reset: true` starts from the defaults. Every value is type-
+  and range-checked and the call is all or nothing, e.g.
+  `weather.wind_speed: expected a number in [0, 60] (m/s)`. Unknown fields
+  list the known ones. The first set creates an entity named `Weather`.
+- **Precedence.** While the scene has weather, it overrides the cloud
+  layer's `coverage` and drift (the clouds advect with the weather's wind)
+  and the grass's `wind_direction`. Without it, the clouds and grass keep
+  their own settings, and the wind field runs with the default weather
+  (heading taken from the grass, when the scene has grass).
+- **Scene files** store it as the `weather` component (lenient decode:
+  unknown fields ignored, numbers clamped).
 
 ## Behaviour-tree authoring (ROADMAP A7)
 

@@ -9,9 +9,11 @@ use serde_json::{Map, Value};
 mod behavior;
 mod debug;
 mod tuning;
+mod weather;
 pub use behavior::*;
 pub use debug::*;
 pub use tuning::*;
+pub use weather::*;
 
 /// A JSON object keyed by component name (see the tool description).
 pub type Components = Map<String, Value>;

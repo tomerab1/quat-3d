@@ -1,4 +1,5 @@
 #include "tuning_panels.hpp"
+#include "weather_panel.hpp"
 
 #include <cmath>
 #include <optional>
@@ -147,6 +148,11 @@ void draw_renderer_panel(RenderSettings& settings, scene::Scene* scene) {
     if (ImGui::CollapsingHeader("Sun", ImGuiTreeNodeFlags_DefaultOpen)) {
         ImGui::PushID("sun");
         draw_sun(scene);
+        ImGui::PopID();
+    }
+    if (ImGui::CollapsingHeader("Weather", ImGuiTreeNodeFlags_DefaultOpen)) {
+        ImGui::PushID("weather");
+        draw_weather_section(scene); // R13.1
         ImGui::PopID();
     }
     for (const renderer::RenderSettingGroup& g : renderer::render_setting_groups()) {

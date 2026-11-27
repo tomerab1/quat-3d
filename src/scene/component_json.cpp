@@ -21,6 +21,8 @@
 #include "engine/physics/physics_world.hpp"
 #include "engine/scene/components.hpp"
 #include "engine/scene/material_override.hpp"
+#include "engine/scene/weather_json.hpp"
+#include "engine/weather/weather_state.hpp"
 
 #include "component_json_animation.hpp"
 
@@ -49,6 +51,7 @@ constexpr std::array k_components = {
     ComponentInfo{"patrol", "Patrol route the nav agent walks", true, true},
     ComponentInfo{"terrain", "Procedural terrain tile / streamed world", true, true},
     ComponentInfo{"grass", "GPU-generated, wind-animated grass around the camera", true, true},
+    ComponentInfo{"weather", "The scene's weather (one per scene): wind, clouds, rain/snow, wetness, snow cover, temperature", true, true},
     ComponentInfo{"net_replicated", "Replicate this entity's transform to network clients", true, true},
     ComponentInfo{"audio_source", "Sound emitter: wav/flac/mp3 clip on a bus, optionally 3D", true, true},
     ComponentInfo{"audio_listener", "The audio listener follows this entity (else the camera)", true, true},
@@ -564,6 +567,7 @@ json encode_components(const entt::registry& r, entt::entity e, const EncodeOpti
                           {"gpu", t->gpu_generate}};
     }
     if (const auto* g = pick.get<Grass>("grass")) out["grass"] = encode_grass(g->settings);
+    if (const auto* w = pick.get<weather::WeatherState>("weather")) out["weather"] = encode_weather(*w);
     if (const auto* n = pick.get<NetReplicated>("net_replicated")) {
         out["net_replicated"] = {{"net_id", n->net_id}};
     }
@@ -620,6 +624,7 @@ std::vector<std::string_view> component_names(const entt::registry& r, entt::ent
     add(r.all_of<PatrolRoute>(e), "patrol");
     add(r.all_of<Terrain>(e), "terrain");
     add(r.all_of<Grass>(e), "grass");
+    add(r.all_of<weather::WeatherState>(e), "weather");
     add(r.all_of<NetReplicated>(e), "net_replicated");
     add(r.all_of<AudioSource>(e), "audio_source");
     add(r.all_of<AudioListener>(e), "audio_listener");
@@ -866,6 +871,19 @@ std::expected<void, core::Error> apply_component(entt::registry& r, entt::entity
         return merge<Grass>(r, e, v, name, strict,
                             [](JsonFields& f, Grass& g) { decode_grass(f, g.settings); });
     }
+    if (name == "weather") {
+        // One weather per scene: a second entity cannot take the component.
+        if (const entt::entity owner = weather::find_weather(r); owner != entt::null && owner != e) {
+            return std::unexpected(core::Error{
+                "weather: the scene already has its weather on entity " +
+                std::to_string(entt::to_integral(owner)) + " (edit that one, or remove it first)"});
+        }
+        weather::WeatherState w =
+            r.all_of<weather::WeatherState>(e) ? r.get<weather::WeatherState>(e) : weather::WeatherState{};
+        if (auto ok = apply_weather_json(w, v, strict, "weather"); !ok) return ok;
+        r.emplace_or_replace<weather::WeatherState>(e, w);
+        return {};
+    }
     if (name == "net_replicated") {
         return merge<NetReplicated>(r, e, v, name, strict, [](JsonFields& f, NetReplicated& n) {
             f.integer("net_id", n.net_id, 0, 0xFFFFFFFFLL);
@@ -933,6 +951,7 @@ bool remove_component(entt::registry& r, entt::entity e, std::string_view name) 
     if (name == "patrol") return r.remove<PatrolRoute>(e) > 0;
     if (name == "terrain") return r.remove<Terrain>(e) > 0;
     if (name == "grass") return r.remove<Grass>(e) > 0;
+    if (name == "weather") return r.remove<weather::WeatherState>(e) > 0;
     if (name == "net_replicated") return r.remove<NetReplicated>(e) > 0;
     if (name == "audio_source") return r.remove<AudioSource>(e) > 0;
     if (name == "audio_listener") return r.remove<AudioListener>(e) > 0;

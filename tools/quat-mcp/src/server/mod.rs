@@ -19,6 +19,8 @@ mod sim_tools;
 #[allow(clippy::doc_markdown)]
 mod tuning_tools;
 #[allow(clippy::doc_markdown)]
+mod weather_tools;
+#[allow(clippy::doc_markdown)]
 mod world_tools;
 
 use std::sync::Arc;
@@ -39,7 +41,8 @@ use crate::client::{EngineClient, EngineError};
 use crate::content;
 
 pub use prompts::{
-    BuildWorldArgs, DebugSessionArgs, DesignBehaviorArgs, InspectSceneArgs, TuneLookArgs,
+    BuildWorldArgs, DebugSessionArgs, DesignBehaviorArgs, InspectSceneArgs, SetWeatherArgs,
+    TuneLookArgs,
 };
 pub use results::{error_result, normalize_method};
 pub use world_tools::MAX_GROUND_POINTS;
@@ -85,6 +88,7 @@ impl QuatServer {
             + Self::debug_tools()
             + Self::tuning_tools()
             + Self::behavior_tools()
+            + Self::weather_tools()
     }
 
     /// Timeout for slow engine work (loading, baking, screenshots).
@@ -118,11 +122,13 @@ impl QuatServer {
             .await?;
         // The sky may be unavailable (headless engine); the summary still works.
         let environment = self.engine.call("environment.get", None).await.ok();
+        let weather = self.engine.call("weather.get", None).await.ok();
         let camera = self.engine.call("camera.get", None).await.ok();
         Ok(json!({
             "engine": info,
             "scene": list,
             "environment": environment,
+            "weather": weather,
             "camera": camera,
         }))
     }

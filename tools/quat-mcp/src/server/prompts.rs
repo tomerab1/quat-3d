@@ -54,6 +54,13 @@ pub struct DesignBehaviorArgs {
     pub entity: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct SetWeatherArgs {
+    /// The weather to reach, e.g. "a windy autumn afternoon after rain" or "light snowfall".
+    #[serde(default)]
+    pub description: Option<String>,
+}
+
 /// `Some(trimmed)` for non-blank text.
 fn non_blank(text: Option<String>) -> Option<String> {
     text.map(|t| t.trim().to_owned()).filter(|t| !t.is_empty())
@@ -144,6 +151,20 @@ impl QuatServer {
             DesignBehaviorArgs {
                 goal: goal.trim().to_owned(),
                 entity: non_blank(entity),
+            },
+        )
+    }
+
+    /// Set the weather of the running quat-3d scene: wind, clouds, rain or snow, wet and snowy surfaces, checked with screenshots.
+    #[prompt]
+    async fn set_weather(
+        &self,
+        args: Parameters<SetWeatherArgs>,
+    ) -> Result<Vec<PromptMessage>, ErrorData> {
+        user_prompt(
+            "set_weather",
+            SetWeatherArgs {
+                description: non_blank(args.0.description),
             },
         )
     }
