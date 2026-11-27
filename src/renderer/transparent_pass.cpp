@@ -231,9 +231,10 @@ TransparentPass::add_to_graph(rhi::RenderGraph& graph, rhi::ResourceHandle hdr,
                               rhi::ResourceHandle depth, VkExtent2D extent,
                               const glm::mat4& view_proj, const DirectionalLightParams& light,
                               const glm::vec3& camera_pos, std::span<const DrawItem> draws,
-                              IblViewSet ibl, const ClusteredLights& lights) {
+                              IblViewSet ibl, const ClusteredLights& lights,
+                              float ibl_intensity) {
     return add_to_graph(graph, hdr, depth, extent, view_proj, light, camera_pos,
-                        unbatched_draws(draws), ibl, lights);
+                        unbatched_draws(draws), ibl, lights, ibl_intensity);
 }
 
 std::expected<void, core::Error>
@@ -241,7 +242,8 @@ TransparentPass::add_to_graph(rhi::RenderGraph& graph, rhi::ResourceHandle hdr,
                               rhi::ResourceHandle depth, VkExtent2D extent,
                               const glm::mat4& view_proj, const DirectionalLightParams& light,
                               const glm::vec3& camera_pos, const InstancedDrawList& list,
-                              IblViewSet ibl, const ClusteredLights& lights) {
+                              IblViewSet ibl, const ClusteredLights& lights,
+                              float ibl_intensity) {
     frame_descriptors_.clear();
     frame_draws_.clear();
 
@@ -304,7 +306,7 @@ TransparentPass::add_to_graph(rhi::RenderGraph& graph, rhi::ResourceHandle hdr,
     TransparentPushConstants push{};
     push.view_proj = view_proj;
     push.instances = *instances;
-    push.camera_pos = glm::vec4(camera_pos, 1.0F);
+    push.camera_pos = glm::vec4(camera_pos, std::max(ibl_intensity, 0.0F)); // w: IBL scale
     // light_direction.w / ambient.w carry the render extent (for screen UVs).
     push.light_direction = glm::vec4(glm::vec3(light.direction), static_cast<float>(extent.width));
     push.light_color = light.color;

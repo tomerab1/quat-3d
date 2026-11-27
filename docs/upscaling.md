@@ -14,7 +14,9 @@ upscaler       : render extent → display extent (pre-tonemap HDR)
 display extent : bloom → exposure → tonemap → present copy → editor UI
 ```
 
-`src/app/frame_graph.cpp` builds this. The render extent is the display (draw)
+`src/app/frame_graph.cpp` builds this; the temporal parts it calls (render
+extent, jitter, view motion, camera cuts, the upscale) are in
+`src/app/frame_temporal.cpp`. The render extent is the display (draw)
 extent scaled by the upscaler settings (`upscaler_settings.hpp`): `native_aa`
 1.0, `quality` 1/1.5, `balanced` 1/1.7, `performance` 1/2 per axis, or an
 explicit `render_scale` override. Material textures are sampled with a LOD
@@ -54,6 +56,26 @@ without motion records, a camera cut) uses its current transform as the
 previous one and gets camera-only velocity. Transparent and particle passes do
 not write velocity; the upscaler interface has a reactive-mask input reserved
 for them.
+
+## Settings (A8 `RenderSettings`)
+
+The upscaler settings are the `upscaler` group of A8's settings table
+(`render_settings.hpp`), so the editor's Renderer panel, `render.settings.*`
+(and the MCP `render_settings_*` tools) and scene files all reach them:
+`mode` (by name), `render_scale` (override when > 0), `sharpness` and
+`backend` (by name; `fsr2` falls back to `taau`). The table's `choice` type
+carries the enums: an int index in the struct, a name in JSON.
+
+A8's `taa` group maps onto the resolve as follows (`apply_taa_settings`,
+`src/app/frame_temporal.cpp`):
+
+- `taa.enabled` off: no jitter, every frame resolves without history (the
+  current frame passes through) and the scene renders at native resolution —
+  upscaling needs the temporal resolve, so the upscaler group is inactive.
+- `taa.feedback` f: the running average caps a pixel's accumulated sample
+  weight at 1 / (1 − f). With a sample on the pixel every frame the current
+  frame then settles at weight 1 − f, which is the classic TAA meaning of
+  "history weight" (default 0.9); f = 0 keeps no history.
 
 ## Upscaler interface (`engine/renderer/upscaler.hpp`)
 

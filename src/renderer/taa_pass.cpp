@@ -1,6 +1,8 @@
 #include "engine/renderer/taa_pass.hpp"
 
+#include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstdint>
 #include <cstring>
 #include <memory>
@@ -33,9 +35,15 @@ struct TaaPushConstants {
 };
 static_assert(sizeof(TaaPushConstants) == 80, "must match taa.slang Params");
 
-// Cap on a pixel's accumulated sample weight: with a sample on the pixel every
-// frame the current frame settles at 1/10 of the result (classic TAA's 0.1).
-constexpr float k_max_weight = 10.0F;
+// Cap on a pixel's accumulated sample weight, from the history feedback f
+// (A8's taa.feedback): 1 / (1 - f). With a sample on the pixel every frame the
+// current frame then settles at weight 1 - f; the default 0.9 gives classic
+// TAA's 0.1. f = 0 shows the current frame only.
+constexpr float k_max_feedback = 0.98F;
+[[nodiscard]] float max_weight(float feedback) {
+    const float f = std::isfinite(feedback) ? std::clamp(feedback, 0.0F, k_max_feedback) : 0.9F;
+    return 1.0F / (1.0F - f);
+}
 // Gaussian falloff per squared display pixel of a sample's weight (its
 // confidence and its share of the reconstruction). At 8, a sample one pixel
 // away weighs exp(-8) ~ 3e-4, so native TAA keeps a static image pixel-exact.
@@ -230,7 +238,7 @@ TaaPass::add_to_graph(rhi::RenderGraph& graph, const UpscalerInputs& in) {
                             hist.valid_ ? 1.0F : 0.0F);
     push.exposure = glm::vec4(in.exposure != 0 ? 1.0F : 0.0F, k_exposure_key, k_min_exposure,
                               k_max_exposure);
-    push.blend = glm::vec4(k_max_weight, k_sample_falloff, k_clip_rejection,
+    push.blend = glm::vec4(max_weight(in.feedback), k_sample_falloff, k_clip_rejection,
                            static_cast<float>(hist.frame_ % (1U << 24))); // dither seed
     const VkDeviceAddress exposure = in.exposure != 0 ? in.exposure : unit_exposure_address_;
     const bool exposure_from_gpu = in.exposure != 0;

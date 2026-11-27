@@ -46,6 +46,7 @@
 #include "engine/renderer/lighting_pass.hpp"
 #include "engine/renderer/mesh_pass.hpp"
 #include "engine/renderer/motion_history.hpp"
+#include "engine/renderer/render_settings.hpp"
 #include "engine/renderer/shadow_pass.hpp"
 #include "engine/renderer/skinning_pass.hpp"
 #include "engine/renderer/tonemap_pass.hpp"
@@ -55,6 +56,7 @@
 #include "engine/renderer/velocity_pass.hpp"
 #include "engine/rhi/gpu_allocator.hpp"
 #include "engine/rhi/render_graph.hpp"
+#include "engine/scene/material_override.hpp"
 #ifdef ENGINE_EDITOR
 #include "engine/renderer/imgui_pass.hpp"
 #endif
@@ -73,12 +75,6 @@ namespace engine::scene {
 class Scene;
 struct CameraMatrices;
 } // namespace engine::scene
-#ifdef ENGINE_EDITOR
-namespace engine::editor {
-struct RendererSettings;
-}
-#endif
-
 namespace quat::app {
 
 class GrassRuntime;
@@ -87,6 +83,13 @@ inline constexpr std::uint32_t k_frames_in_flight = 2;
 // Stage the image-acquire semaphore is waited at; the swapchain image's first
 // render-graph barrier is chained to it.
 inline constexpr VkPipelineStageFlags2 k_acquire_wait_stage =
+    VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT;
+// Stage the render-finished semaphore (which present waits on) is signalled
+// at. Every transition of the swapchain image into PRESENT_SRC — the graph's
+// final barrier and the screenshot round trip — uses it as its second scope,
+// so the signal chains onto the transition and present cannot race it
+// (issue #9).
+inline constexpr VkPipelineStageFlags2 k_present_signal_stage =
     VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT;
 
 // Per-skinned-entity GPU buffers for one frame slot: this and last frame's
@@ -197,17 +200,14 @@ public:
                                      const engine::rhi::TransferContext& setup_transfer,
                                      const std::string& shader_dir,
                                      engine::rhi::Swapchain& swapchain, bool with_ui);
-#ifdef ENGINE_EDITOR
-    // The editor's Renderer panel settings (clouds, bloom, upscaler); null =
-    // defaults.
-    void set_render_settings(const engine::editor::RendererSettings* settings) {
-        render_settings_ = settings;
-    }
-#endif
-    // Upscaler mode / scale / sharpness for builds without the editor panel
-    // (editor builds read the panel's settings instead).
-    void set_upscaler_settings(const engine::renderer::UpscalerSettings& settings) {
-        upscaler_settings_ = settings;
+    // Every tunable renderer parameter (A8, including the R11 upscaler
+    // group). Read by the passes each frame; the editor's Renderer panel, the
+    // remote API and scene files edit it.
+    [[nodiscard]] engine::renderer::RenderSettings& render_settings() { return settings_; }
+    // Per-entity derived materials of MaterialOverride components (A8): the
+    // remote bridge resolves them each frame, gather() draws them.
+    [[nodiscard]] engine::scene::MaterialOverrideStore& material_overrides() {
+        return material_overrides_;
     }
     // Camera cut (scene load, play enter / exit, active-camera change,
     // teleport): the next frame drops the motion history and previous view
@@ -255,7 +255,23 @@ public:
 
 private:
     [[nodiscard]] engine::renderer::CloudSettings current_clouds() const;
+
+    // ---- R11 temporal view and upscale (frame_temporal.cpp) -----------------
+    // The upscaler settings in effect: settings_.upscaler, at native scale
+    // while settings_.taa is off (upscaling needs the temporal resolve).
     [[nodiscard]] engine::renderer::UpscalerSettings current_upscaler() const;
+    // Fills `out`'s render extent, jitter (none while TAA is off), jittered
+    // matrices, view motion and camera-cut flag; starts the motion frame.
+    void begin_view(FrameScene& out, const engine::scene::CameraMatrices& cam,
+                    VkExtent2D draw_extent, std::uint64_t frame_number);
+    // Material texture LOD bias for rendering at `render` and showing at `display`.
+    void apply_texture_lod_bias(DeferredFrame& frame, VkExtent2D render, VkExtent2D display);
+    // Declares the upscale of `hdr` (render extent) to `display`; returns the
+    // display-extent HDR image post-processing continues from.
+    [[nodiscard]] std::expected<engine::rhi::ResourceHandle, engine::core::Error>
+    add_upscale(engine::rhi::RenderGraph& graph, const FrameScene& scene,
+                engine::rhi::ResourceHandle hdr, const engine::renderer::GBufferTargets& gbuffer,
+                VkExtent2D display);
     void recreate_render_finished();
     [[nodiscard]] bool record_screenshot_copy(VkCommandBuffer cmd);
     void write_screenshot() const;
@@ -265,14 +281,13 @@ private:
     engine::rhi::Swapchain*    swapchain_ = nullptr;
     VkFormat                   ldr_format_ = VK_FORMAT_UNDEFINED;
     bool                       editor_active_ = false;
-#ifdef ENGINE_EDITOR
-    const engine::editor::RendererSettings* render_settings_ = nullptr;
-#endif
+    engine::renderer::RenderSettings settings_;
+    // Destroyed (cleared) with the frame sync, after the device went idle.
+    engine::scene::MaterialOverrideStore material_overrides_{k_frames_in_flight};
 
-    // Cloud parameters for the lighting background + IBL bake: the editor's
-    // Renderer panel edits them; headless builds use the defaults. The frame
-    // loop accumulates cloud_time_s_ to drive the wind drift (always, like the
-    // animated sky in other engines — not gated on play mode).
+    // Drives the clouds' wind drift (settings_.clouds.time_s is ignored). The
+    // frame loop accumulates it always, like the animated sky in other engines
+    // — not gated on play mode.
     float cloud_time_s_ = 0.0F;
 
     // Temporal state shared by both slots (audit A2 / A11): the upscaler (its
@@ -281,7 +296,6 @@ private:
     // pass that references it.
     std::unique_ptr<engine::renderer::Upscaler>      upscaler_;
     bool                                             backend_warned_ = false;
-    engine::renderer::UpscalerSettings               upscaler_settings_{};
     engine::renderer::VelocityPass                   velocity_;
     engine::renderer::TemporalView                   temporal_;
     std::shared_ptr<engine::renderer::ExposureState> exposure_state_;

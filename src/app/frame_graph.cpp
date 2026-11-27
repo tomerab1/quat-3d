@@ -24,9 +24,7 @@
 #include "engine/scene/components.hpp"
 #include "engine/scene/instanced_mesh.hpp"
 #include "engine/scene/scene.hpp"
-#ifdef ENGINE_EDITOR
-#include "engine/editor/editor.hpp"
-#endif
+#include "engine/scene/material_override.hpp"
 
 namespace quat::app {
 namespace {
@@ -116,19 +114,9 @@ SkinnedEntityGpu* ensure_skin_gpu(DeferredFrame& frame, entt::entity entity,
 } // namespace
 
 engine::renderer::CloudSettings FrameRenderer::current_clouds() const {
-    engine::renderer::CloudSettings c{};
-#ifdef ENGINE_EDITOR
-    if (render_settings_ != nullptr) c = render_settings_->clouds;
-#endif
+    engine::renderer::CloudSettings c = settings_.clouds;
     c.time_s = cloud_time_s_;
     return c;
-}
-
-engine::renderer::UpscalerSettings FrameRenderer::current_upscaler() const {
-#ifdef ENGINE_EDITOR
-    if (render_settings_ != nullptr) return render_settings_->upscaler;
-#endif
-    return upscaler_settings_;
 }
 
 FrameScene FrameRenderer::gather(engine::scene::Scene& scene,
@@ -139,19 +127,8 @@ FrameScene FrameRenderer::gather(engine::scene::Scene& scene,
     DeferredFrame& fr = frames_[frame_];
     FrameScene out;
 
-    // R11: the scene renders at the upscaler's render extent with a sub-pixel
-    // Halton jitter (one source for projection, velocity and the resolve);
-    // velocity compares against last frame's UNjittered view-projection.
-    const VkExtent2D render_extent =
-        engine::renderer::upscaler_render_extent(draw_extent, current_upscaler());
-    out.render_extent = render_extent;
-    out.jitter = engine::renderer::halton_jitter(
-        frame_number, render_extent,
-        engine::renderer::jitter_phase_count(render_extent, draw_extent));
-    out.jittered_vp = engine::renderer::jitter_view_proj(cam.view_proj, out.jitter.ndc);
-    out.jittered_inv_vp = glm::inverse(out.jittered_vp);
-    out.motion = temporal_.begin_frame(cam.view_proj, out.jitter.ndc);
-    out.reset_history = temporal_.take_history_reset();
+    // R11: render extent, jitter, view motion, camera-cut flag (frame_temporal.cpp).
+    begin_view(out, cam, draw_extent, frame_number);
 
     engine::renderer::DirectionalLightParams& light = out.light;
     const auto light_view = scene.registry().view<const engine::scene::DirectionalLight>();
@@ -181,7 +158,7 @@ FrameScene FrameRenderer::gather(engine::scene::Scene& scene,
          scene.registry().view<engine::scene::Transform, engine::scene::MeshRenderer>().each()) {
         engine::renderer::DrawItem item;
         item.mesh = mr.mesh.valid() ? &*mr.mesh : nullptr;
-        item.material = mr.material.valid() ? &*mr.material : nullptr;
+        item.material = material_overrides_.drawn(scene.registry(), e, mr);
         item.model = t.world;
         const auto key = static_cast<std::uint64_t>(entt::to_integral(e));
         item.prev_model = temporal_.motion().advance(key, t.world);
@@ -262,16 +239,11 @@ FrameScene FrameRenderer::gather(engine::scene::Scene& scene,
     }
 
     // Directional shadow: an orthographic light view fit to a fixed box
-    // around the scene (the demos all sit near the origin).
-    const glm::vec3 sun_dir = -glm::normalize(glm::vec3(light.direction)); // travel direction
-    const glm::vec3 shadow_center(0.0F, 1.5F, 0.0F);
-    constexpr float shadow_radius = 14.0F;
-    const glm::vec3 light_eye = shadow_center - sun_dir * (shadow_radius * 1.5F);
-    const glm::mat4 shadow_view =
-        glm::lookAt(light_eye, shadow_center, glm::vec3(0.0F, 1.0F, 0.0F));
-    const glm::mat4 shadow_proj = glm::ortho(-shadow_radius, shadow_radius, -shadow_radius,
-                                             shadow_radius, 0.1F, shadow_radius * 3.5F);
-    out.light_view_proj = shadow_proj * shadow_view;
+    // around the scene origin (the demos all sit near it), its half-size set
+    // by the shadow settings.
+    const glm::vec3 sun_dir = -glm::vec3(light.direction); // travel direction
+    out.light_view_proj = engine::renderer::directional_shadow_view_proj(
+        sun_dir, glm::vec3(0.0F, 1.5F, 0.0F), settings_.shadows.extent_m);
     return out;
 }
 
@@ -290,14 +262,7 @@ bool FrameRenderer::record(const FrameInputs& in) {
     // R11: the scene renders at render_extent; the upscaler resolves to
     // draw_extent, where post-processing and the UI run.
     const VkExtent2D render_extent = fs.render_extent;
-    const engine::renderer::UpscalerSettings upscale = current_upscaler();
-    const float lod_bias = engine::renderer::texture_lod_bias(render_extent, draw_extent);
-    if (auto r = fr.mesh.set_texture_lod_bias(lod_bias); !r) {
-        std::fprintf(stderr, "[warn] texture LOD bias: %s\n", r.error().message.c_str());
-    }
-    if (auto r = fr.transparent.set_texture_lod_bias(lod_bias); !r) {
-        std::fprintf(stderr, "[warn] texture LOD bias: %s\n", r.error().message.c_str());
-    }
+    apply_texture_lod_bias(fr, render_extent, draw_extent);
     const auto atmos_skyview = [&]() {
         return atmosphere_ ? atmosphere_->skyview_view() : VK_NULL_HANDLE;
     };
@@ -342,7 +307,13 @@ bool FrameRenderer::record(const FrameInputs& in) {
     engine::scene::append_instanced_draws(*in.registry, cam.view_proj,
                                           engine::scene::InstancedPass::opaque, opaque_batches,
                                           &temporal_.motion());
-    auto shadow = fr.shadow.add_to_graph(graph, fs.light_view_proj, shadow_batches);
+    const engine::renderer::RenderSettings& settings = settings_;
+    // Shadows off: no shadow pass; an invalid map makes the lighting unshadowed.
+    std::expected<engine::rhi::ResourceHandle, engine::core::Error> shadow =
+        engine::rhi::ResourceHandle{};
+    if (settings.shadows.enabled) {
+        shadow = fr.shadow.add_to_graph(graph, fs.light_view_proj, shadow_batches);
+    }
     if (!shadow) {
         std::fprintf(stderr, "[fatal] shadow pass: %s\n", shadow.error().message.c_str());
         return false;
@@ -377,7 +348,12 @@ bool FrameRenderer::record(const FrameInputs& in) {
                                         fs.jittered_inv_vp, cam.position, *shadow,
                                         fs.light_view_proj, clustered,
                                         /*enable_sky=*/true, ibl_views, atmos_skyview(),
-                                        atmos_transmittance(), current_clouds());
+                                        atmos_transmittance(), current_clouds(),
+                                        engine::renderer::LightingTuning{
+                                            .ibl_intensity = settings.ibl.intensity,
+                                            .shadow_depth_bias = settings.shadows.depth_bias,
+                                            .shadow_slope_bias = settings.shadows.slope_bias,
+                                            .shadow_pcf_radius = settings.shadows.pcf_radius});
     if (!hdr) {
         std::fprintf(stderr, "[fatal] lighting pass: %s\n", hdr.error().message.c_str());
         return false;
@@ -387,52 +363,39 @@ bool FrameRenderer::record(const FrameInputs& in) {
     if (!fs.transparent_draws.empty()) {
         if (auto r = fr.transparent.add_to_graph(graph, *hdr, gbuffer->depth, render_extent,
                                                  fs.jittered_vp, fs.light, cam.position,
-                                                 fs.transparent_draws, ibl_views, clustered);
+                                                 fs.transparent_draws, ibl_views, clustered,
+                                                 settings.ibl.intensity);
             !r) {
             std::fprintf(stderr, "[fatal] transparent pass: %s\n", r.error().message.c_str());
             return false;
         }
     }
     // R11: temporal resolve / upscale of the pre-tonemap HDR to the display
-    // extent (exposure: the adapted luminance the previous frame left).
-    if (upscale.backend != upscaler_->backend() && !backend_warned_) {
-        backend_warned_ = true;
-        std::fprintf(stderr, "[warn] upscaler backend %s unavailable; using %s\n",
-                     std::string(engine::renderer::to_string(upscale.backend)).c_str(),
-                     std::string(engine::renderer::to_string(upscaler_->backend())).c_str());
-    }
-    engine::renderer::UpscalerInputs upscale_in;
-    upscale_in.color = *hdr;
-    upscale_in.depth = gbuffer->depth;
-    upscale_in.velocity = gbuffer->velocity;
-    upscale_in.exposure = exposure_state_->address();
-    upscale_in.render_extent = render_extent;
-    upscale_in.display_extent = draw_extent;
-    upscale_in.jitter = fs.jitter;
-    upscale_in.sharpness = upscale.sharpness;
-    upscale_in.reset = fs.reset_history; // camera cut: reset_temporal()
-    auto upscaled = upscaler_->add_to_graph(graph, frame_, upscale_in);
+    // extent (frame_temporal.cpp); post-processing runs on its output.
+    auto upscaled = add_upscale(graph, fs, *hdr, *gbuffer, draw_extent);
     if (!upscaled) {
         std::fprintf(stderr, "[fatal] upscaler: %s\n", upscaled.error().message.c_str());
         return false;
     }
     hdr = *upscaled;
     // Bloom: blur the bright parts of the HDR and add them back before tonemap.
-    engine::renderer::BloomParams bloom_params{};
-#ifdef ENGINE_EDITOR
-    if (render_settings_ != nullptr) {
-        bloom_params.threshold = render_settings_->bloom_threshold;
-        bloom_params.knee = render_settings_->bloom_knee;
-        bloom_params.intensity = render_settings_->bloom_intensity;
-        bloom_params.radius = render_settings_->bloom_radius;
+    if (settings.bloom.enabled) {
+        const engine::renderer::BloomParams bloom_params{
+            .threshold = settings.bloom.threshold,
+            .knee = settings.bloom.knee,
+            .intensity = settings.bloom.intensity,
+            .radius = settings.bloom.radius};
+        if (auto r = fr.bloom.add_to_graph(graph, *hdr, draw_extent, bloom_params); !r) {
+            std::fprintf(stderr, "[fatal] bloom pass: %s\n", r.error().message.c_str());
+            return false;
+        }
     }
-#endif
-    if (auto r = fr.bloom.add_to_graph(graph, *hdr, draw_extent, bloom_params); !r) {
-        std::fprintf(stderr, "[fatal] bloom pass: %s\n", r.error().message.c_str());
-        return false;
-    }
-    // Auto-exposure: measure the (post-bloom) HDR luminance and adapt over time.
-    if (auto r = fr.exposure.add_to_graph(graph, *hdr, draw_extent, in.dt); !r) {
+    // Auto-exposure: measure the (post-bloom) HDR luminance and adapt over
+    // time. It keeps measuring in manual mode, so switching back to auto
+    // starts from the current scene instead of a stale value.
+    if (auto r = fr.exposure.add_to_graph(graph, *hdr, draw_extent, in.dt,
+                                          settings.exposure.adaptation_s);
+        !r) {
         std::fprintf(stderr, "[fatal] exposure pass: %s\n", r.error().message.c_str());
         return false;
     }
@@ -443,7 +406,11 @@ bool FrameRenderer::record(const FrameInputs& in) {
         // The first barrier waits on the acquire semaphore's stage, so
         // every first touch (layout transition, the present copy) is ordered
         // after the presentation engine releases the image (audit A3).
-        k_acquire_wait_stage);
+        k_acquire_wait_stage, /*available_access=*/0,
+        // The final PRESENT_SRC transition is ordered before the stage the
+        // render-finished semaphore is signalled at, which present waits
+        // on (issue #9).
+        k_present_signal_stage);
     // In editor mode the frame resolves into the slot's offscreen viewport
     // image (sampled by the Viewport panel); otherwise straight into the
     // swapchain as before.
@@ -472,7 +439,8 @@ bool FrameRenderer::record(const FrameInputs& in) {
         VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT |
             VK_IMAGE_USAGE_TRANSFER_SRC_BIT);
     if (auto r = fr.tonemap.add_to_graph(graph, *hdr, ldr_current, draw_extent,
-                                         fr.exposure.exposure_buffer_address());
+                                         fr.exposure.exposure_buffer_address(),
+                                         settings.exposure);
         !r) {
         std::fprintf(stderr, "[fatal] tonemap pass: %s\n", r.error().message.c_str());
         return false;

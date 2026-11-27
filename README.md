@@ -34,7 +34,8 @@ progress, ROADMAP R12).
 - Image-based lighting that keeps up with the sky in real time
 - Temporal anti-aliasing and upscaling (TAAU) with per-object motion vectors for
   moving, skinned, instanced and wind-animated geometry; render scale modes
-  (native, quality, balanced, performance) in the editor's Renderer panel
+  (native, quality, balanced, performance), set like every other render
+  setting from the Renderer panel, `render.settings.*` / MCP or a scene file
 - Bloom, auto-exposure, filmic tonemapping
 - Automatic instancing: objects sharing a mesh and material (trees, rocks,
   crates) are drawn together in one instanced draw
@@ -201,9 +202,12 @@ the running engine — create entities, set the sky and camera, take
 screenshots, spawn models — and debug it: read the engine log and Vulkan
 validation messages, frame statistics, pause / single-step / slow down the
 simulation, watch entities, cast physics rays and query navmesh paths — and
-author NPC behaviour trees: build, inspect and edit the same graph the editor's
-Behaviour panel shows, with per-node validation errors, and see what each node
-did on the last tick. Start the engine with `QUAT_REMOTE=7878`, build the
+tune the look: exposure, bloom, anti-aliasing, shadows, sky light, clouds and
+per-entity materials, with the same values the editor's Renderer panel and
+Material inspector show — and author NPC behaviour trees: build, inspect and
+edit the same graph the editor's Behaviour panel shows, with per-node
+validation errors, and see what each node did on the last tick. Start the
+engine with `QUAT_REMOTE=7878`, build the
 server with `cargo build --release` in `tools/quat-mcp`, and register it with
 your client:
 

@@ -1,5 +1,6 @@
 #include "engine/renderer/lighting_pass.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <string>
@@ -22,10 +23,11 @@ namespace {
 
 constexpr VkShaderStageFlags kComputeStage = VK_SHADER_STAGE_COMPUTE_BIT;
 
-// GPU push-constant block, mirrors LightParams in lighting.slang (224 bytes).
+// GPU push-constant block, mirrors LightParams in lighting.slang (240 bytes).
 // The light fields match DirectionalLightParams; the camera/light matrices let
 // the shader reconstruct world position and sample the shadow map. camera_pos.w
-// is the shadows-enabled flag; cloud_a/cloud_b are CloudSettings::pack_a/b.
+// is the shadows-enabled flag; ambient.w the IBL intensity; cloud_a/cloud_b are
+// CloudSettings::pack_a/b; shadow = (depth bias, slope bias, PCF radius, 0).
 struct LightingPushConstants {
     glm::mat4 inv_view_proj{1.0F};
     glm::mat4 light_view_proj{1.0F};
@@ -35,8 +37,9 @@ struct LightingPushConstants {
     glm::vec4 ambient{0.0F};
     glm::vec4 cloud_a{0.0F};
     glm::vec4 cloud_b{0.0F};
+    glm::vec4 shadow{0.0F};
 };
-static_assert(sizeof(LightingPushConstants) == 224, "must match lighting.slang LightParams");
+static_assert(sizeof(LightingPushConstants) == 240, "must match lighting.slang LightParams");
 
 // First of the four clustered-light bindings (params, lights, grid, indices).
 constexpr std::uint32_t kClusterBinding = 15;
@@ -126,7 +129,8 @@ LightingPass::add_to_graph(rhi::RenderGraph& graph, const GBufferTargets& gbuffe
                            rhi::ResourceHandle shadow_map, const glm::mat4& light_view_proj,
                            const ClusteredLights& lights, bool enable_sky,
                            IblViewSet ibl, VkImageView atmosphere_skyview,
-                           VkImageView atmosphere_transmittance, const CloudSettings& clouds) {
+                           VkImageView atmosphere_transmittance, const CloudSettings& clouds,
+                           const LightingTuning& tuning) {
     const rhi::ResourceHandle hdr = graph.create_transient_image(
         "hdr_color", hdr_color_format, extent,
         VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
@@ -151,9 +155,12 @@ LightingPass::add_to_graph(rhi::RenderGraph& graph, const GBufferTargets& gbuffe
     push.direction = glm::vec4(glm::vec3(light.direction),
                                enable_sky ? (has_atmosphere ? 2.0F : 1.0F) : 0.0F);
     push.color = light.color;
-    push.ambient = glm::vec4(glm::vec3(light.ambient), 0.0F);
+    push.ambient = glm::vec4(glm::vec3(light.ambient), std::max(tuning.ibl_intensity, 0.0F));
     push.cloud_a = clouds.pack_a();
     push.cloud_b = clouds.pack_b();
+    push.shadow = glm::vec4(std::max(tuning.shadow_depth_bias, 0.0F),
+                            std::max(tuning.shadow_slope_bias, 0.0F),
+                            static_cast<float>(std::clamp(tuning.shadow_pcf_radius, 0, 3)), 0.0F);
 
     auto pass = graph.add_pass("lighting", rhi::PassType::compute);
     pass.reads(gbuffer.albedo, rhi::ResourceUsage::sampled_compute)

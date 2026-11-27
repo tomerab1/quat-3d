@@ -89,12 +89,12 @@ TEST(Jitter, TextureLodBiasFollowsTheRenderScale) {
 TEST(UpscalerSettings, ModesMapToRenderExtents) {
     r::UpscalerSettings s;
     EXPECT_EQ(r::upscaler_render_extent({1920, 1080}, s).width, 1920U);
-    s.mode = r::UpscalerMode::quality;
+    s.mode = static_cast<int>(r::UpscalerMode::quality);
     EXPECT_EQ(r::upscaler_render_extent({1920, 1080}, s).width, 1280U);
     EXPECT_EQ(r::upscaler_render_extent({1920, 1080}, s).height, 720U);
-    s.mode = r::UpscalerMode::balanced;
+    s.mode = static_cast<int>(r::UpscalerMode::balanced);
     EXPECT_EQ(r::upscaler_render_extent({1920, 1080}, s).width, 1129U);
-    s.mode = r::UpscalerMode::performance;
+    s.mode = static_cast<int>(r::UpscalerMode::performance);
     EXPECT_EQ(r::upscaler_render_extent({1920, 1080}, s).height, 540U);
     // Override, clamped to [0.25, 1]; never zero for a non-empty display.
     s.render_scale = 0.75F;

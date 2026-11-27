@@ -61,7 +61,7 @@ struct PushConstants {
     float4x4      view_proj;
     InstanceData* instances;  // indexed by instance_index() (includes firstInstance)
     uint2         pad;
-    float4   camera_pos;      // xyz
+    float4   camera_pos;      // xyz, w = IBL intensity
     float4   light_direction; // xyz = to light, w = screen width (unused)
     float4   light_color;     // rgb, w intensity
     float4   ambient;         // rgb, w = screen height (unused)
@@ -257,7 +257,7 @@ float4 fragment_main(VsOut input) : SV_Target0 {
         float3 prefiltered =
             g_prefiltered.SampleLevel(g_ibl_sampler, R, roughness * PREFILTER_MAX_LOD).rgb;
         float2 brdf = g_brdf_lut.SampleLevel(g_ibl_sampler, float2(ndotv, roughness), 0.0).rg;
-        float3 spec_ibl = prefiltered * (F * brdf.x + brdf.y);
+        float3 spec_ibl = prefiltered * (F * brdf.x + brdf.y) * pc.camera_pos.w;
 
         // Sun: specular highlight only — the diffuse fraction is what transmits.
         float3 h = normalize(V + L);
@@ -269,7 +269,8 @@ float4 fragment_main(VsOut input) : SV_Target0 {
                           pc.light_color.rgb * pc.light_color.w;
 
         // The non-transmitted fraction shades as regular dielectric diffuse.
-        float3 irradiance = g_irradiance.SampleLevel(g_ibl_sampler, world_n, 0.0).rgb;
+        float3 irradiance =
+            g_irradiance.SampleLevel(g_ibl_sampler, world_n, 0.0).rgb * pc.camera_pos.w;
         float3 diffuse = irradiance * albedo * occ;
         float3 base_diffuse = lerp(diffuse, transmitted, g_params.transmission_factor);
 

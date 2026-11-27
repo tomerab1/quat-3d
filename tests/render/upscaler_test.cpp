@@ -186,7 +186,7 @@ TEST(GpuUpscaler, HalfResolutionConvergesTowardNativeOnAStaticScene) {
 TEST(GpuUpscaler, ModesSelectTheRenderExtentAndFsrReportsUnavailable) {
     QUAT_REQUIRE_GPU(g);
     r::UpscalerSettings s;
-    s.mode = r::UpscalerMode::performance;
+    s.mode = static_cast<int>(r::UpscalerMode::performance);
     EXPECT_EQ(r::upscaler_render_extent(k_display, s).width, 32U);
     auto fsr = r::create_upscaler(r::UpscalerBackend::fsr2, g->device, g->allocator, g->cache,
                                   g->shader_dir, 2);

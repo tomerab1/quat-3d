@@ -25,6 +25,7 @@
 
 #include "engine/core/error.hpp"
 #include "engine/renderer/jitter.hpp"
+#include "engine/renderer/render_settings.hpp"
 #include "engine/renderer/upscaler_settings.hpp"
 #include "engine/rhi/render_graph.hpp"
 
@@ -54,8 +55,17 @@ struct UpscalerInputs {
     VkExtent2D      display_extent{0, 0};
     ViewJitter      jitter{};
     float           sharpness = 0.0F;
+    // History weight a pixel converges to with a sample on it every frame
+    // (A8's taa.feedback, [0, 0.98]); TAAU caps a pixel's accumulated sample
+    // weight at 1 / (1 - feedback).
+    float           feedback = 0.9F;
     bool            reset = false; // camera cut: ignore the history this frame
 };
+
+// Applies A8's TAA settings to one frame's inputs: off resolves every frame
+// without history (the current frame passes through at native scale), and
+// `feedback` becomes the resolve's history weight.
+void apply_taa_settings(UpscalerInputs& in, const TaaSettings& taa);
 
 class Upscaler {
 public:

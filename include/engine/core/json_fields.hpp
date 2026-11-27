@@ -278,6 +278,11 @@ public:
         }
         return false;
     }
+    [[nodiscard]] static bool read_string(const Json& v, std::string& out) {
+        if (!v.is_string()) return false;
+        out = v.get_ref<const std::string&>();
+        return true;
+    }
     [[nodiscard]] static bool read_vec3(const Json& v, glm::vec3& out) {
         if (!v.is_array() || v.size() != 3) return false;
         glm::vec3 r{};

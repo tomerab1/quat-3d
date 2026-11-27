@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstddef>
 #include <utility>
 
 #include "engine/renderer/taa_pass.hpp"
@@ -12,41 +13,34 @@ namespace engine::renderer {
 
 namespace {
 
-struct ModeName {
-    UpscalerMode     mode;
-    std::string_view name;
-    float            scale;
-};
-constexpr std::array<ModeName, 4> kModes{{
-    {UpscalerMode::native_aa, "native_aa", 1.0F},
-    {UpscalerMode::quality, "quality", 1.0F / 1.5F},
-    {UpscalerMode::balanced, "balanced", 1.0F / 1.7F},
-    {UpscalerMode::performance, "performance", 0.5F},
-}};
-
-struct BackendName {
-    UpscalerBackend  backend;
-    std::string_view name;
-};
-constexpr std::array<BackendName, 2> kBackends{{
-    {UpscalerBackend::taau, "taau"},
-    {UpscalerBackend::fsr2, "fsr2"},
-}};
-
+// Render scale per axis of each mode, in enum order.
+constexpr std::array<float, upscaler_mode_names.size()> kModeScale{1.0F, 1.0F / 1.5F,
+                                                                  1.0F / 1.7F, 0.5F};
 constexpr float kMinScale = 0.25F;
+
+template <typename Enum, std::size_t N>
+[[nodiscard]] Enum clamp_index(int value) {
+    return static_cast<Enum>(std::clamp(value, 0, static_cast<int>(N) - 1));
+}
 
 } // namespace
 
+UpscalerMode upscaler_mode(const UpscalerSettings& settings) {
+    return clamp_index<UpscalerMode, upscaler_mode_names.size()>(settings.mode);
+}
+
+UpscalerBackend upscaler_backend(const UpscalerSettings& settings) {
+    return clamp_index<UpscalerBackend, upscaler_backend_names.size()>(settings.backend);
+}
+
 float upscaler_mode_scale(UpscalerMode mode) {
-    for (const ModeName& m : kModes) {
-        if (m.mode == mode) return m.scale;
-    }
-    return 1.0F;
+    const auto i = static_cast<std::size_t>(mode);
+    return i < kModeScale.size() ? kModeScale[i] : 1.0F;
 }
 
 float upscaler_render_scale(const UpscalerSettings& settings) {
-    const float scale =
-        settings.render_scale > 0.0F ? settings.render_scale : upscaler_mode_scale(settings.mode);
+    const float scale = settings.render_scale > 0.0F ? settings.render_scale
+                                                     : upscaler_mode_scale(upscaler_mode(settings));
     return std::isfinite(scale) ? std::clamp(scale, kMinScale, 1.0F) : 1.0F;
 }
 
@@ -60,31 +54,33 @@ VkExtent2D upscaler_render_extent(VkExtent2D display, const UpscalerSettings& se
 }
 
 std::string_view to_string(UpscalerMode mode) {
-    for (const ModeName& m : kModes) {
-        if (m.mode == mode) return m.name;
-    }
-    return "native_aa";
+    const auto i = static_cast<std::size_t>(mode);
+    return i < upscaler_mode_names.size() ? upscaler_mode_names[i] : upscaler_mode_names[0];
 }
 
 std::string_view to_string(UpscalerBackend backend) {
-    for (const BackendName& b : kBackends) {
-        if (b.backend == backend) return b.name;
-    }
-    return "taau";
+    const auto i = static_cast<std::size_t>(backend);
+    return i < upscaler_backend_names.size() ? upscaler_backend_names[i]
+                                             : upscaler_backend_names[0];
 }
 
 std::optional<UpscalerMode> parse_upscaler_mode(std::string_view name) {
-    for (const ModeName& m : kModes) {
-        if (m.name == name) return m.mode;
+    for (std::size_t i = 0; i < upscaler_mode_names.size(); ++i) {
+        if (upscaler_mode_names[i] == name) return static_cast<UpscalerMode>(i);
     }
     return std::nullopt;
 }
 
 std::optional<UpscalerBackend> parse_upscaler_backend(std::string_view name) {
-    for (const BackendName& b : kBackends) {
-        if (b.name == name) return b.backend;
+    for (std::size_t i = 0; i < upscaler_backend_names.size(); ++i) {
+        if (upscaler_backend_names[i] == name) return static_cast<UpscalerBackend>(i);
     }
     return std::nullopt;
+}
+
+void apply_taa_settings(UpscalerInputs& in, const TaaSettings& taa) {
+    in.feedback = taa.feedback;
+    if (!taa.enabled) in.reset = true;
 }
 
 std::expected<std::unique_ptr<Upscaler>, core::Error>

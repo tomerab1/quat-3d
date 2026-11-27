@@ -34,30 +34,33 @@ Decisions already made (do not re-litigate without the owner):
 
 ## Claimed by the live session (do not pick up)
 
-Cycle 1 is merged into `master` (PR #2, `c6acf19`). **Cycle 2** is PR #3
-(`claude/nifty-hopper-nb68qe` → `master`): A5, G2, R2, R9.2, R9.3, R10.2,
-S1 batch 2, S3.3, S7.3, A7 and the PR #3 review fixes are merged into it;
-review is non-blocking; it merges when CI on its head is green. Item PRs
-below are stacked on it and get retargeted to `master` after it merges.
+Cycles 1 and 2 are merged into `master` (PR #2 `c6acf19`, PR #3
+`4294812`, both with all CI jobs green). Item PRs now target `master`
+directly; `claude/nifty-hopper-nb68qe` carries only orchestrator docs between
+merges.
 
 | PR | Item | Branch | State |
 |---|---|---|---|
-| #17 | A8 live tuning | `feat/a8-tuning` | review blocking (derived-material leak, A6 shader copy, shadow tests, base conflict) — worker fixing; merges before #19 |
-| #18 | S1: issues #4 #5 #9 (RHI) | `feat/issues-4-5` | review clean; merges when CI is green |
-| #19 | A6 shader authoring | `feat/a6-shader-authoring` | review blocking (source path confinement, timeout rollback, A8 composition, base conflict) — worker fixing |
-| #20 | CI screenshots + audit D2/D7, fixes #7 #8 #21 | `feat/ci-screenshots` | #21 fixed (bodies spawned inside the floor); merging base to clear conflicts |
-| #22 | G7 Lua scripting | `feat/g7-lua` | in review |
-| #24 | S4/P1 Win + macOS CI, P6 release | `feat/s4-platform-ci` | review blocking (Windows UTF-8 paths, action SHA pins, base conflict) — worker fixing; tag `v0.1.0` after it merges |
-| #25 | R12 shadows + AO foundation | `feat/r12-shadows-ao` | worker running |
-| #26 | R10.3 GPU particles | `feat/r10-particles` | worker running |
+| #17 | A8 live tuning | `feat/a8-tuning` | review blocking (derived-material leak, shadow tests, base conflict) — worker fixing; merges before #19 |
+| #19 | A6 shader authoring | `feat/a6-shader-authoring` | fixes pushed (`0a7c123`), re-review requested; last blocker (copy/hash `shader` in A8's derived material) lands after #17 |
+| #20 | CI screenshots + D2/D7, fixes #7 #8 #21 | `feat/ci-screenshots` | #21 fixed; CI red on `DebugStep.LaterRequestsKeepQueuedStepsDt`, editor capture is a placeholder — worker fixing |
+| #22 | G7 Lua scripting | `feat/g7-scripting` | review blocking (sandbox `__tostring`/`__gc`/`rawset`, non-editor play flag) — worker fixing |
+| #24 | S4/P1 Win + macOS CI, P6 release | `feat/s4-platform-ci` | review blocking (Windows UTF-8 paths, action SHA pins, base conflict) — worker fixing; tag `v0.1.0` after merge |
+| #25 | R12 shadows + AO (fixes #16, #36) | `feat/r12-shadows-ao` | 5/5 review items resolved; new blocker D16 precision → pancaking — worker fixing |
+| #26 | R10.3 GPU particles | `feat/r10-particles` | review blocking (Play/Stop reset, pool accounting tests) — worker fixing + master merge |
 | #28 | G8 animation quick wins | `feat/g8-animation` | worker running |
-| — | R11 velocity + FSR | `feat/r11-velocity` | worker running (PR opens on first push) |
-| — | R17 KTX2/Basis + meshopt | `feat/r17-cooker` | worker running |
+| #34 | R11 velocity + upscaler (TAAU) | `feat/r11-velocity-upscale` | master merged; review blocking (temporal reset on camera cut) — worker fixing |
+| #43 | R17 KTX2/Basis + meshopt cooker (fixes #31) | `feat/r17-cooker` | review blocking (ktx_read only, stb budgets, ETC1S fuzzing) — worker fixing + master merge |
+| — | E8 editor UI/UX redesign (owner request) | `feat/e8-editor-ux` | worker running (design system, shell, core panels; before/after screenshots) |
+| — | A9 world-building ergonomics (#37–#42, owner's Mac session) | `feat/a9-worldbuilding` | worker running; draft PR on first push |
 | — | Mountain forest showcase | `feat/showcase-mountain` | worker running |
+
+Merged since cycle 2: #18 (S1 RHI: #4 #5 #9), #33 (docs).
 
 Triaged issues queued for the next free agents: #10 + #11, #14 + #23
 (glass), #13 (aerial perspective → R13), #15 + #27 (terrain/grass look →
-R14), #30 (Lua patterns).
+R14), #30 (Lua patterns), #29 (more screenshot scenes, after #20), **#35 + #23**
+(alpha MASK + transmission in depth/shadow passes — first after #25 merges).
 
 ### A2 design notes (agreed, not yet implemented)
 
