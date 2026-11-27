@@ -349,6 +349,15 @@ std::vector<std::string> ShaderDependencyGraph::parse_imports(std::string_view s
             if (end == std::string::npos) continue;
             name = text.substr(i + 1, end - i - 1);
             i = end + 1;
+            // Only paths inside the shader tree are dependencies: an absolute
+            // path or one climbing out with `..` is never tracked (and never
+            // resolved to a file to watch or read).
+            const fs::path p(name);
+            const bool climbs = std::any_of(p.begin(), p.end(),
+                                            [](const fs::path& part) { return part == ".."; });
+            if (p.is_absolute() || p.has_root_name() || p.has_root_directory() || climbs) {
+                continue;
+            }
         } else { // import a.b.c;  -> a/b/c
             while (i < text.size() && (is_ident_char(text[i]) || text[i] == '.')) {
                 name += text[i] == '.' ? '/' : text[i];

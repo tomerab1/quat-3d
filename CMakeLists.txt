@@ -143,7 +143,8 @@ add_library(engine_rhi STATIC
     src/rhi/shader_compiler.cpp
     src/rhi/shader_diagnostics.cpp
     src/rhi/shader_hot_reload.cpp
-    src/rhi/material_shader_registry.cpp)
+    src/rhi/material_shader_registry.cpp
+    src/rhi/material_shader_source.cpp)
 target_link_libraries(engine_rhi PUBLIC
     engine_flags engine_core Vulkan::Vulkan GPUOpen::VulkanMemoryAllocator)
 # engine_core is public: shader hot reload's headers use its watcher/process

@@ -89,6 +89,10 @@ JSON-RPC over loopback TCP to the engine.
 - [ ] **A6 — Shader authoring.** Create/edit material shaders (Slang modules
   implementing the material interface), compile with diagnostics returned to
   the model, hot-swap (needs R2).
+  - [ ] A6 follow-up: `shadow` and `forward` variants in
+    `material_shaders::variants` — shadow casting that evaluates the material
+    and honours its alpha cutout (today shadows use the mesh's silhouette),
+    and alpha-blended material shaders in the transparent pass.
 - [ ] **A7 — Behaviour authoring.** Build and edit behaviour graphs (G2) by
   tool call, with validation errors returned as data.
 

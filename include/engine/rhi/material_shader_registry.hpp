@@ -49,7 +49,9 @@ public:
         // Paths in results and diagnostics are made relative to this.
         std::filesystem::path display_root;
         std::size_t max_source_bytes = 256 * 1024;
-        std::chrono::milliseconds compile_timeout{60'000};
+        // How long an operation may wait for its compile once the service has
+        // picked it up; raised to stay above the compiler's own timeout.
+        std::chrono::milliseconds compile_timeout{90'000};
     };
 
     enum class ErrorKind : std::uint8_t {
@@ -93,6 +95,8 @@ public:
 
     [[nodiscard]] const Config& config() const { return config_; }
     [[nodiscard]] bool can_compile() const { return reload_ != nullptr; }
+    // How long an operation waits for its compile (see Config::compile_timeout).
+    [[nodiscard]] std::chrono::milliseconds timeout() const;
 
     // The built-in material first, then every material shader source by name.
     [[nodiscard]] std::vector<Info> list() const;
@@ -140,10 +144,16 @@ private:
         Done        done;
         std::uint32_t attempts_before = 0;
         std::chrono::steady_clock::time_point started{};
+        bool        dispatched = false; // the service has started compiling it
     };
 
     void start(Op& op);
     void finish_compile(Op& op);
+    // A compile that failed or timed out: undo the write, reply, and (update)
+    // wait for the restored source to recompile.
+    void fail_compile(Op& op, Outcome out);
+    void time_out(Op& op);
+    [[nodiscard]] std::vector<std::string> library_modules() const;
     [[nodiscard]] std::uint32_t attempts_of(const std::filesystem::path& source) const;
     [[nodiscard]] std::vector<ShaderDiagnostic> located(std::string_view output) const;
     [[nodiscard]] std::string display(const std::filesystem::path& path) const;

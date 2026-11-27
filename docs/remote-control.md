@@ -406,7 +406,8 @@ cooked/shaders/materials/<name>.gbuffer.spv (+ .json reflection)
   goes to a new GBuffer target the lighting pass adds. Their `alpha` is a
   cutout (below 0.5 discards the pixel); a `primitive` with a material shader
   never routes to the blended forward pass, and shadow casting ignores the
-  cutout. A forward (blended) variant is a later addition: the variant table
+  cutout (a cut-out hole still casts the mesh's shadow). Shadow and forward
+  (blended) variants are a follow-up (ROADMAP A6): the variant table
   (`include/engine/rhi/material_shader_names.hpp`) and the compile path already
   handle several drivers per material.
 - **Selection.** `primitive.shader` (also on `instanced_mesh`'s primitive
@@ -438,6 +439,13 @@ cooked/shaders/materials/<name>.gbuffer.spv (+ .json reflection)
   characters): the file stem under `assets/shaders/materials/`, so a name can
   never address a path elsewhere. `standard` and the names of shader library
   modules (`material`, `pbr`, ...) are reserved. `source` is at most 256 KiB.
+- **Source confinement.** slangc would read any file a source names, and its
+  diagnostics would echo the lines back, so the source is checked before it is
+  written: outside comments and string literals it may contain no `#`
+  (preprocessor directives), no `__include`, no backslash, and every
+  `import` must be `import <name>;` with `<name>` a shader library module.
+  Anything else is `invalid_params` naming the line (`source line N: ...`);
+  nothing is written.
 - **`state`**: `builtin`, `cooked` (as built offline, not recompiled this
   run), `compiling`, `ok`, `error` (the last compile failed; the previous
   version is what runs), or `not_compiled` (no cooked program and no compiler
@@ -448,12 +456,15 @@ cooked/shaders/materials/<name>.gbuffer.spv (+ .json reflection)
   slangc's caret line, `code` slang's diagnostic id; link errors have no
   location. A misfit layout (the material declared its own resources) is an
   error diagnostic without a location. `log` is slangc's full output with
-  project paths shortened.
+  project paths shortened. A compile that does not finish in time (slangc is
+  killed after the compiler's timeout; the registry waits a little longer from
+  when the compile started) is reported the same way, `ok:false` with an error
+  diagnostic, and undone like any failed compile.
 - **Errors**: `invalid_params` (bad name / source, reserved name),
   `not_found` (`shader.get` / `update` / `delete` of an unknown name),
   `failed` (`shader.create` of an existing name — use `shader.update`; a
-  delete while that shader is compiling; file system errors; a compile that
-  took longer than 60 s), `unavailable` (no registry in this engine, or
+  delete while that shader is compiling; file system errors), `unavailable`
+  (no registry in this engine, or
   `create` / `update` while shader hot reload is off — run with
   `QUAT_SHADER_HOT_RELOAD=1`, the default in editor builds).
 - **`shader.delete`** removes the source and its cooked programs and resets

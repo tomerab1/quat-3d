@@ -8,6 +8,7 @@
 #include <utility>
 
 #include "engine/rhi/material_shader_names.hpp"
+#include "engine/rhi/material_shader_source.hpp"
 #include "engine/rhi/shader_hot_reload.hpp"
 #include "engine/rhi/shader_reflection.hpp"
 
@@ -303,6 +304,10 @@ void MaterialShaderRegistry::start(Op& op) {
     if (op.text.find('\0') != std::string::npos) {
         return fail_now(ErrorKind::invalid, "source: contains a NUL byte");
     }
+    // Nothing that makes slangc read files outside the shader library.
+    if (auto safe = check_material_source(op.text, library_modules()); !safe) {
+        return fail_now(ErrorKind::invalid, "source: " + safe.error().message);
+    }
 
     const fs::path path = source_path(op.name);
     const bool exists = is_file(path);
@@ -336,6 +341,7 @@ void MaterialShaderRegistry::start(Op& op) {
     }
     op.phase = Op::Phase::compiling;
     op.started = Clock::now();
+    op.dispatched = false;
 }
 
 void MaterialShaderRegistry::finish_compile(Op& op) {
@@ -391,9 +397,14 @@ void MaterialShaderRegistry::finish_compile(Op& op) {
         return;
     }
 
-    // Failed: put the previous version back. The cooked programs were not
-    // replaced by a failed compile (a layout misfit did replace them, so the
-    // restored source recompiles over them).
+    fail_compile(op, std::move(out));
+}
+
+void MaterialShaderRegistry::fail_compile(Op& op, Outcome out) {
+    // Put the previous version back. The cooked programs were not replaced
+    // by a failed compile (a layout misfit did replace them, so the restored
+    // source recompiles over them).
+    const fs::path path = source_path(op.name);
     std::error_code ec;
     if (op.kind == Op::Kind::create) {
         fs::remove(path, ec);
@@ -412,6 +423,44 @@ void MaterialShaderRegistry::finish_compile(Op& op) {
     }
     op.phase = Op::Phase::restoring;
     op.started = Clock::now();
+    op.dispatched = false;
+}
+
+void MaterialShaderRegistry::time_out(Op& op) {
+    // Exactly like a failed compile: the new source does not stay on disk.
+    Outcome out;
+    out.name = op.name;
+    out.path = display(source_path(op.name));
+    ShaderDiagnostic d;
+    d.severity = "error";
+    d.message = "compiling \"" + op.name + "\" did not finish within " +
+                std::to_string(timeout().count() / 1000) + " s";
+    out.diagnostics.push_back(std::move(d));
+    out.log = out.diagnostics.front().message;
+    fail_compile(op, std::move(out));
+}
+
+std::chrono::milliseconds MaterialShaderRegistry::timeout() const {
+    // Strictly longer than the compiler's own limit for all of a material's
+    // slangc runs, so a hung slangc is killed (and reported with its output)
+    // before the registry gives up on the operation.
+    std::chrono::milliseconds t = config_.compile_timeout;
+    if (reload_ != nullptr) {
+        const auto runs = static_cast<std::int64_t>(material_shaders::variants.size());
+        t = std::max(t, reload_->compiler_config().timeout * runs + std::chrono::seconds(1));
+    }
+    return t;
+}
+
+std::vector<std::string> MaterialShaderRegistry::library_modules() const {
+    std::vector<std::string> out;
+    std::error_code ec;
+    for (fs::directory_iterator it(config_.module_dir, ec);
+         !ec && it != fs::directory_iterator(); it.increment(ec)) {
+        if (it->path().extension() == ".slang") out.push_back(it->path().stem().string());
+    }
+    std::sort(out.begin(), out.end());
+    return out;
 }
 
 void MaterialShaderRegistry::poll() {
@@ -424,14 +473,21 @@ void MaterialShaderRegistry::poll() {
             continue;
         }
         const ShaderStatus* st = reload_->status_of(source_path(op.name));
+        // The clock runs from when the service picked the compile up (it may
+        // have queued behind other work).
+        if (!op.dispatched && st != nullptr && st->state == ShaderStatus::State::compiling) {
+            op.dispatched = true;
+            op.started = Clock::now();
+        }
         const bool finished = st != nullptr && st->attempts > op.attempts_before &&
                               st->state != ShaderStatus::State::compiling;
         if (!finished) {
-            if (Clock::now() - op.started < config_.compile_timeout) break; // still running
+            if (Clock::now() - op.started < timeout()) break; // still running
             if (op.phase == Op::Phase::compiling) {
-                op.done(err(ErrorKind::failed, "compiling \"" + op.name + "\" timed out"));
+                time_out(op); // pops, or moves on to restoring
+            } else {
+                ops_.pop_front(); // a restore that never finished: give up on it
             }
-            ops_.pop_front();
             continue;
         }
         if (op.phase == Op::Phase::compiling) {

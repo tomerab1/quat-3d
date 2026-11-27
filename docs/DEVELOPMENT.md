@@ -111,9 +111,13 @@ control (`shader.*` methods, see [`remote-control.md`](remote-control.md#materia
   built-in PBR result `standard`). A program whose reflection does not fit the
   pass layout is rejected.
 - They run in the deferred pass only (emission is a GBuffer target the
-  lighting pass adds; alpha below 0.5 cuts out). The variant table in
-  `include/engine/rhi/material_shader_names.hpp` is where a forward variant
-  would go.
+  lighting pass adds; alpha below 0.5 cuts out). Shadows do not run the
+  material: a cut-out hole still casts a shadow (the mesh's silhouette). The
+  variant table in `include/engine/rhi/material_shader_names.hpp` is where
+  `shadow` and `forward` variants go (ROADMAP A6 follow-up).
+- Sources sent over remote control may not read other files: no `#`
+  directives, no `__include`, no `import "<path>"`, and `import` only names a
+  library module (`rhi::check_material_source`).
 - Test material sources live in `tests/data/materials/`;
   `tests/support/material_shader_tree.hpp` builds a scratch project with the
   library modules cooked.

@@ -5,6 +5,7 @@
 // (source and cooked program). Names are validated and confined to the
 // materials directory. Tests that compile skip when slangc is absent.
 
+#include <algorithm>
 #include <chrono>
 #include <cstdint>
 #include <filesystem>
@@ -12,6 +13,7 @@
 #include <string>
 #include <thread>
 #include <utility>
+#include <vector>
 
 #include <gtest/gtest.h>
 
@@ -65,10 +67,25 @@ protected:
         return std::move(*result);
     }
 
+    // Recreates the service and registry with these limits (timeout tests).
+    void reset(std::chrono::milliseconds compile_timeout,
+               std::chrono::milliseconds registry_timeout) {
+        registry_.reset();
+        reload_.reset();
+        auto config = tree_.reload_config();
+        config.compile_timeout = compile_timeout;
+        auto reload = ShaderHotReload::create(cache_, config);
+        ASSERT_OK(reload);
+        reload_ = std::move(*reload);
+        auto rc = tree_.registry_config();
+        rc.compile_timeout = registry_timeout;
+        registry_.emplace(rc, reload_.get());
+    }
+
     template <typename Done>
     void settle(Done done) {
         for (int i = 0; i < 4000 && !done(); ++i) {
-            reload_->update(frame_++);
+            if (pump_compiler_) reload_->update(frame_++);
             registry_->poll();
             std::this_thread::sleep_for(std::chrono::milliseconds(2));
         }
@@ -84,6 +101,7 @@ protected:
     std::unique_ptr<ShaderHotReload>       reload_;
     std::optional<MaterialShaderRegistry>  registry_;
     std::uint64_t                          frame_ = 1;
+    bool                                   pump_compiler_ = true; // false: the compile never runs
 };
 
 TEST_F(MaterialShaderRegistryTest, CreatesAValidShaderAndCooksItsProgram) {
@@ -260,6 +278,94 @@ TEST(MaterialShaderRegistry, TheTemplateCompiles) {
     EXPECT_TRUE(r.ok) << r.diagnostics;
     ASSERT_EQ(r.outputs.size(), 2U);
     EXPECT_EQ(r.outputs[0].filename(), "starter.gbuffer.spv");
+}
+
+// ---- Source confinement ------------------------------------------------------------
+
+// tests/data/materials/unsafe/*.slang, each with its offending line in an
+// "expect-line: N" comment.
+std::vector<std::pair<fs::path, std::string>> unsafe_materials() {
+    std::vector<std::pair<fs::path, std::string>> out;
+    const fs::path dir = quat::test::repo_shader_dir().parent_path().parent_path() / "tests" /
+                         "data" / "materials" / "unsafe";
+    for (const auto& entry : fs::directory_iterator(dir)) {
+        const std::string text = quat::test::read_text_file(entry.path());
+        const std::size_t at = text.find("expect-line: ");
+        const std::string line = text.substr(at + 13, text.find('\n', at) - at - 13);
+        out.emplace_back(entry.path(), "source line " + line + ":");
+    }
+    std::sort(out.begin(), out.end());
+    return out;
+}
+
+TEST_F(MaterialShaderRegistryTest, SourcesThatReadOtherFilesAreRefusedBeforeWriting) {
+    const auto unsafe = unsafe_materials();
+    ASSERT_GE(unsafe.size(), 8U);
+    for (const auto& [file, where] : unsafe) {
+        const Outcome r = run(true, "unsafe", quat::test::read_text_file(file));
+        ASSERT_FALSE(r.has_value()) << file;
+        EXPECT_EQ(r.error().kind, ErrorKind::invalid) << file;
+        EXPECT_TRUE(contains(r.error().message, where)) << file << ": " << r.error().message;
+        EXPECT_FALSE(fs::exists(tree_.materials / "unsafe.slang")) << "written: " << file;
+    }
+
+    // An update is refused the same way and leaves the source alone.
+    const std::string good = quat::test::test_material("flat_glow.slang");
+    ASSERT_TRUE(run(true, "glow", good).value_or(MaterialShaderRegistry::Outcome{}).ok);
+    const Outcome r = run(false, "glow", quat::test::read_text_file(unsafe.front().first));
+    ASSERT_FALSE(r.has_value());
+    EXPECT_EQ(r.error().kind, ErrorKind::invalid);
+    EXPECT_EQ(quat::test::read_text_file(tree_.materials / "glow.slang"), good);
+
+    // Forbidden text inside comments, `__exported import` and identifiers that
+    // merely contain the keywords are fine.
+    const Outcome tricky = run(true, "tricky", quat::test::test_material("tricky_but_safe.slang"));
+    ASSERT_OK(tricky);
+    EXPECT_TRUE(tricky->ok) << tricky->log;
+}
+
+// ---- Timeouts ------------------------------------------------------------------------
+
+TEST_F(MaterialShaderRegistryTest, TimeoutsStayAboveTheCompilersOwn) {
+    reset(std::chrono::milliseconds(5000), std::chrono::milliseconds(10));
+    EXPECT_GT(registry_->timeout(), std::chrono::milliseconds(5000));
+}
+
+TEST_F(MaterialShaderRegistryTest, ATimedOutCreateLeavesNothingBehind) {
+    reset(std::chrono::milliseconds(1), std::chrono::milliseconds(10));
+    pump_compiler_ = false; // the compile is never picked up
+    const Outcome r = run(true, "glow", quat::test::test_material("flat_glow.slang"));
+    ASSERT_OK(r);
+    EXPECT_FALSE(r->ok);
+    ASSERT_FALSE(r->diagnostics.empty());
+    EXPECT_TRUE(contains(r->diagnostics.front().message, "did not finish"))
+        << r->diagnostics.front().message;
+    EXPECT_FALSE(fs::exists(tree_.materials / "glow.slang"));
+}
+
+TEST_F(MaterialShaderRegistryTest, ATimedOutUpdateRestoresThePreviousSource) {
+    reset(std::chrono::milliseconds(1), std::chrono::milliseconds(10));
+    const std::string good = quat::test::test_material("flat_glow.slang");
+    write_file(tree_.materials / "glow.slang", good);
+    pump_compiler_ = false;
+    const Outcome r =
+        run(false, "glow", quat::test::test_material("flat_glow_swapped.slang"));
+    ASSERT_OK(r);
+    EXPECT_FALSE(r->ok);
+    EXPECT_TRUE(r->kept_previous);
+    EXPECT_EQ(quat::test::read_text_file(tree_.materials / "glow.slang"), good);
+    pump_compiler_ = true;
+    drain();
+    EXPECT_EQ(registry_->pending(), 0U);
+}
+
+TEST_F(MaterialShaderRegistryTest, ACompileKilledByItsTimeoutIsAFailedCompile) {
+    reset(std::chrono::milliseconds(1), std::chrono::milliseconds(10));
+    const Outcome r = run(true, "glow", quat::test::test_material("flat_glow.slang"));
+    ASSERT_OK(r);
+    EXPECT_FALSE(r->ok) << "slangc cannot finish within 1 ms";
+    EXPECT_FALSE(fs::exists(tree_.materials / "glow.slang"));
+    for (const fs::path& p : registry_->cooked_paths("glow")) EXPECT_FALSE(fs::exists(p)) << p;
 }
 
 } // namespace

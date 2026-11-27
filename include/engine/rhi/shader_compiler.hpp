@@ -122,7 +122,8 @@ public:
                           std::filesystem::path material_dir = {});
 
     // Module names imported by Slang source text: `import a;`, `import a.b;`
-    // (-> a/b) and `import "file.slang";`. Comments are ignored.
+    // (-> a/b) and `import "file.slang";`. Comments are ignored, and so are
+    // string imports of absolute paths or paths climbing out with `..`.
     [[nodiscard]] static std::vector<std::string> parse_imports(std::string_view source_text);
 
     // Scans every .slang file in the directories (non-recursive).

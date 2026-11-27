@@ -24,7 +24,7 @@
 //   roughness   float   0..1
 //   occlusion   float   0..1 ambient occlusion
 //   emissive    float3  emitted radiance, linear HDR (can exceed 1: glows)
-//   alpha       float   below 0.5 cuts the pixel out
+//   alpha       float   below 0.5 cuts the pixel out (shadows ignore it)
 //   clearcoat, clearcoat_roughness   float  optional varnish layer
 //
 // Keep the last line: it tells the engine which struct is the material.
