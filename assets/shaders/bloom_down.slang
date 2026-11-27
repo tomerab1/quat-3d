@@ -13,8 +13,10 @@ struct Params {
     float threshold;
     float knee;
     float prefilter; // 1 on the first level, else 0
-    float pad;
-    uint* non_finite; // debug counter of dropped non-finite groups; null = off
+    uint  count_non_finite; // 1: count dropped groups into *non_finite
+    // Debug counter (NonFiniteCounters). Guarded by the flag, not compared
+    // with null: a 64-bit comparison needs the optional shaderInt64 feature.
+    uint* non_finite;
 };
 [[vk::push_constant]] Params pc;
 
@@ -22,7 +24,7 @@ struct Params {
 // through every mip as a NaN block (Karis weighting turns Inf into Inf * 0).
 float3 finite_or_zero(float3 c) {
     if (all(isfinite(c))) return c;
-    if (pc.non_finite != nullptr) {
+    if (pc.count_non_finite != 0) {
         uint previous;
         InterlockedAdd(*pc.non_finite, 1u, previous);
     }

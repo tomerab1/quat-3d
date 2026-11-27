@@ -30,10 +30,12 @@ struct Params {
     float4x4 cur_inv_view_proj; // unjittered: reconstruct world from this frame's depth
     float4x4 prev_view_proj;    // unjittered: world -> previous frame clip
     float    swap_rb;           // 1 when g_out's bytes are copied into a BGRA target
-    float    pad0;
+    uint     count_non_finite;  // 1: count rejected values into *non_finite
     float    alpha;             // history weight (e.g. 0.9)
     float    valid;             // 0 on the first frame / after a resize
-    uint*    non_finite;        // debug counter of rejected non-finite values; null = off
+    // Debug counter (NonFiniteCounters). Guarded by the flag, not compared
+    // with null: a 64-bit comparison needs the optional shaderInt64 feature.
+    uint*    non_finite;
 };
 [[vk::push_constant]] Params pc;
 
@@ -47,7 +49,7 @@ float3 clip_to_aabb(float3 cmin, float3 cmax, float3 hist) {
 }
 
 void count_non_finite() {
-    if (pc.non_finite != nullptr) {
+    if (pc.count_non_finite != 0) {
         uint previous;
         InterlockedAdd(*pc.non_finite, 1u, previous);
     }

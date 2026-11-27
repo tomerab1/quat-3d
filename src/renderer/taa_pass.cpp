@@ -25,7 +25,7 @@ struct TaaPushConstants {
     glm::mat4 cur_inv_view_proj{1.0F};
     glm::mat4 prev_view_proj{1.0F};
     float     swap_rb = 0.0F;
-    float     pad0 = 0.0F;
+    std::uint32_t count_non_finite = 0; // 1: the shader counts into non_finite
     float     alpha = 0.9F;
     float     valid = 0.0F;
     VkDeviceAddress non_finite = 0; // debug counter (NonFiniteCounters), 0 = off
@@ -212,6 +212,7 @@ TaaPass::add_to_graph(rhi::RenderGraph& graph, rhi::ResourceHandle current,
     push.swap_rb = swap_rb_ ? 1.0F : 0.0F;
     push.alpha = std::clamp(settings.feedback, 0.0F, 0.98F);
     push.valid = hist.valid_ && settings.enabled ? 1.0F : 0.0F;
+    push.count_non_finite = non_finite_counter_ != 0 ? 1U : 0U;
     push.non_finite = non_finite_counter_;
 
     graph.add_pass("taa_resolve", rhi::PassType::compute)
