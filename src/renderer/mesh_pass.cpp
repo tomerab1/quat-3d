@@ -214,7 +214,8 @@ MeshPass::add_to_graph(rhi::RenderGraph& graph, VkExtent2D extent, const glm::ma
                                                     extent, color_usage);
     targets.depth = graph.create_transient_image(
         "gbuffer_depth", gbuffer_depth_format, extent,
-        VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT);
+        VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT |
+            VK_IMAGE_USAGE_TRANSFER_SRC_BIT); // TRANSFER_SRC: tests / tools read depth back
 
     // One descriptor buffer per distinct material this frame (batches already
     // merged identical mesh+material draws; meshes sharing a material share it).

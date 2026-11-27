@@ -215,7 +215,8 @@ TEST(GpuSceneIo, RenderSettingsAndMaterialOverridesRoundTrip) {
     engine::renderer::RenderSettings saved;
     saved.exposure.compensation_ev = 1.25F;
     saved.bloom.enabled = false;
-    saved.shadows.pcf_radius = 3;
+    saved.shadows.pcf_radius = 3.0F;
+    saved.ao.radius = 1.25F;
     saved.clouds.coverage = 0.9F;
 
     const auto path = std::filesystem::temp_directory_path() / "quat_settings_scene.json";
@@ -227,7 +228,8 @@ TEST(GpuSceneIo, RenderSettingsAndMaterialOverridesRoundTrip) {
     ASSERT_OK(s::load_scene(loaded, path, g->allocator, g->transfer, assets, &settings));
     EXPECT_FLOAT_EQ(settings.exposure.compensation_ev, 1.25F);
     EXPECT_FALSE(settings.bloom.enabled);
-    EXPECT_EQ(settings.shadows.pcf_radius, 3);
+    EXPECT_FLOAT_EQ(settings.shadows.pcf_radius, 3.0F);
+    EXPECT_FLOAT_EQ(settings.ao.radius, 1.25F);
     EXPECT_FLOAT_EQ(settings.clouds.coverage, 0.9F);
     EXPECT_FLOAT_EQ(settings.taa.feedback, engine::renderer::TaaSettings{}.feedback);
     EXPECT_FLOAT_EQ(settings.clouds.time_s, 7.0F);

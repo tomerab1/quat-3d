@@ -165,6 +165,10 @@ TerrainPass::create(const rhi::Device& device, rhi::GpuAllocator& allocator,
         out.lods_.push_back({std::move(*buf), static_cast<std::uint32_t>(indices.size())});
     }
 
+    if (auto shadow = out.create_shadow_pipeline(cache, cooked_shader_dir); !shadow) {
+        return std::unexpected(shadow.error());
+    }
+
     // GPU synthesis is optional: without it tiles generate on the CPU.
     if (auto gpu = GpuTileSource::create(device, allocator, cache, cooked_shader_dir); gpu) {
         out.gpu_tiles_ = std::move(*gpu);
@@ -267,17 +271,10 @@ std::vector<TerrainHeightTile> TerrainPass::height_tiles(const glm::vec2& centre
     return out;
 }
 
-void TerrainPass::add_to_graph(rhi::RenderGraph& graph, const renderer::GBufferTargets& gbuffer,
-                               VkExtent2D extent, const glm::mat4& view_proj,
-                               const glm::vec3& camera_pos, const glm::vec3& anchor,
-                               float snowline_m) {
-    // GPU tile synthesis records its compute work into this frame (it is
-    // independent of the draws below and of the GBuffer).
-    if (gpu_tiles_) gpu_tiles_->add_to_graph(graph);
-    if (tiles_.empty()) return;
-
-    const auto planes = frustum_planes(view_proj);
-    frame_draws_.clear();
+void TerrainPass::collect_chunks(const glm::mat4& cull_view_proj, const glm::vec3& camera_pos,
+                                 const glm::vec3& anchor, std::vector<TileDraws>& out) const {
+    const auto planes = frustum_planes(cull_view_proj);
+    out.clear();
     for (const auto& [coord, tile] : tiles_) {
         // Tile (0,0) is centred on the anchor; neighbours continue the grid.
         const float tsize = tile.tile_size_m;
@@ -315,8 +312,20 @@ void TerrainPass::add_to_graph(rhi::RenderGraph& graph, const renderer::GBufferT
                 draws.chunks.push_back(draw);
             }
         }
-        if (!draws.chunks.empty()) frame_draws_.push_back(std::move(draws));
+        if (!draws.chunks.empty()) out.push_back(std::move(draws));
     }
+}
+
+void TerrainPass::add_to_graph(rhi::RenderGraph& graph, const renderer::GBufferTargets& gbuffer,
+                               VkExtent2D extent, const glm::mat4& view_proj,
+                               const glm::vec3& camera_pos, const glm::vec3& anchor,
+                               float snowline_m) {
+    // GPU tile synthesis records its compute work into this frame (it is
+    // independent of the draws below and of the GBuffer).
+    if (gpu_tiles_) gpu_tiles_->add_to_graph(graph);
+    if (tiles_.empty()) return;
+
+    collect_chunks(view_proj, camera_pos, anchor, frame_draws_);
     if (frame_draws_.empty()) return;
 
     const GBufferTargets t = gbuffer;

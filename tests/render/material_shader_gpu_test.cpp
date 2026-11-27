@@ -110,8 +110,8 @@ std::expected<Sample, engine::core::Error> render(quat::test::GpuContext& g, r::
     dark.color = glm::vec4(0.0F);
     dark.ambient = glm::vec4(0.0F);
     auto hdr = lighting.add_to_graph(graph, *gbuffer, k_extent, dark, glm::mat4(1.0F),
-                                     glm::vec3(0.0F, 0.0F, -1.0F), rhi::ResourceHandle{},
-                                     glm::mat4(1.0F));
+                                     glm::vec3(0.0F, 0.0F, -1.0F),
+                                     r::LightingOcclusion{}); // no shadows / AO
     if (!hdr) return std::unexpected(hdr.error());
 
     const rhi::ResourceHandle a = gbuffer->albedo;
