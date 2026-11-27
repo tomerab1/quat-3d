@@ -46,6 +46,10 @@ ImGuiPass::create(const rhi::Device& device, rhi::GpuAllocator& allocator,
     if (ImGui::GetCurrentContext() == nullptr) {
         return fail("imgui pass: no ImGui context — create the EditorLayer first");
     }
+    // add_to_graph applies ImDrawCmd::VtxOffset, so ImGui may split a draw
+    // list past 65535 vertices into offset commands instead of overflowing
+    // the 16-bit indices (it asserts / wraps without this flag).
+    ImGui::GetIO().BackendFlags |= ImGuiBackendFlags_RendererHasVtxOffset;
 
     ImGuiPass out;
     out.device_ = &device;

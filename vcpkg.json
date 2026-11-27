@@ -24,6 +24,8 @@
     "nlohmann-json",
     "glm",
     "fastgltf",
+    "ktx",
+    "meshoptimizer",
     "stb",
     "entt",
     "joltphysics",

@@ -2,10 +2,25 @@ name: CI
 
 # Pushes to master, and pull requests. Cycle branches (claude/**) are built
 # through their PR; building them on push too ran every commit twice.
+# Docs-only changes skip CI: nothing in the build or tests reads them. The
+# Markdown under tools/quat-mcp/content/ is compiled into quat-mcp
+# (include_str!), so it still triggers a build; later patterns win.
 on:
   push:
     branches: [main, master]
+    paths:
+      - '**'
+      - '!**/*.md'
+      - '!docs/**'
+      - '!.gitattributes'
+      - 'tools/quat-mcp/content/**'
   pull_request:
+    paths:
+      - '**'
+      - '!**/*.md'
+      - '!docs/**'
+      - '!.gitattributes'
+      - 'tools/quat-mcp/content/**'
 
 # A running build is never cancelled: a new push waits for it (GitHub keeps
 # only the newest pending run per group), so every build finishes even while
