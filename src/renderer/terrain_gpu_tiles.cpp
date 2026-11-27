@@ -21,8 +21,16 @@ GpuTileSource::create(const rhi::Device& device, rhi::GpuAllocator& allocator,
 
 GpuTileSource::~GpuTileSource() {
     // Never leave a consumer waiting on a future nobody will fulfil.
-    for (auto& [id, pending] : pending_) pending.promise.set_value(terrain::Heightmap{});
+    abandon();
     // cpu_fallbacks_' futures join their workers as they are destroyed.
+}
+
+void GpuTileSource::abandon() {
+    for (auto& [id, pending] : pending_) {
+        synth_.cancel(id);
+        pending.promise.set_value(terrain::Heightmap{});
+    }
+    pending_.clear();
 }
 
 bool GpuTileSource::supports(const terrain::TerrainParams& params) const {

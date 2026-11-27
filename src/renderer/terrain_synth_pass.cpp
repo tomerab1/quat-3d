@@ -338,6 +338,11 @@ std::uint64_t TerrainSynthPass::enqueue(const terrain::TerrainParams& params) {
     return id;
 }
 
+void TerrainSynthPass::cancel(std::uint64_t id) {
+    if (!state_) return;
+    std::erase_if(state_->queued, [id](const std::unique_ptr<Job>& job) { return job->id == id; });
+}
+
 void TerrainSynthPass::set_cell_budget(std::uint64_t cells_per_frame) {
     if (state_) state_->cell_budget = cells_per_frame;
 }

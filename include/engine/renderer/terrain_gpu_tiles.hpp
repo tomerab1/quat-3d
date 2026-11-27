@@ -64,8 +64,16 @@ public:
     // SHADER_READ_ONLY_OPTIMAL); nullopt when unknown or expired.
     [[nodiscard]] std::optional<rhi::GpuImage> take_image(std::uint64_t gpu_tile);
 
-    // Tiles queued or in flight (their futures are not ready yet).
-    [[nodiscard]] bool busy() const { return !pending_.empty(); }
+    // Gives up every tile not yet delivered: queued jobs are dropped and
+    // each pending future becomes ready with an empty (invalid) Heightmap,
+    // i.e. cancelled. Jobs already on the GPU finish and are discarded. Call
+    // it before blocking on a future once frames stop running (teardown), or
+    // when nothing wants the tiles any more (the Terrain entity is gone).
+    void abandon();
+
+    // Tiles queued or in flight, or abandoned GPU work still draining (frames
+    // must keep calling add_to_graph so its resources are released).
+    [[nodiscard]] bool busy() const { return !pending_.empty() || !synth_.idle(); }
 
 private:
     // Passkey: only create() can name Key, so construction goes through it.

@@ -81,6 +81,10 @@ public:
     // or 0 when !supports(params).
     [[nodiscard]] std::uint64_t enqueue(const terrain::TerrainParams& params);
 
+    // Drops a queued job that has not started; a started one finishes on the
+    // GPU and is reported by collect() as usual. No-op for unknown ids.
+    void cancel(std::uint64_t id);
+
     // Erosion texel-steps recorded per add_to_graph (0 = a whole job per
     // call: tests, offline baking). At least one step always runs.
     void set_cell_budget(std::uint64_t cells_per_frame);

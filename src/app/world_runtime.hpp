@@ -143,6 +143,10 @@ public:
     [[nodiscard]] float terrain_snowline() const { return terrain_snowline_; }
 
 private:
+    // Cancels the single-tile job: GPU tiles are abandoned (their future
+    // resolves at once, invalid) and a CPU job stops at its next step.
+    void abandon_terrain_job();
+
     std::optional<engine::physics::PhysicsWorld> play_physics_; // editor play session's world
     DemoScene                                    demo_;
 
@@ -153,6 +157,7 @@ private:
     engine::rhi::TransferContext             terrain_transfer_{};
     engine::renderer::TerrainPass            terrain_pass_;
     std::future<engine::terrain::Heightmap>  terrain_job_;
+    engine::terrain::CancelToken             terrain_cancel_; // stops terrain_job_ on the CPU
     engine::terrain::Heightmap               terrain_heightmap_; // CPU copy retained for physics (12.3)
     std::optional<engine::terrain::TerrainStreamer> terrain_streamer_; // 12.4
     // Terrain placement, written by the per-frame upkeep and read at the top
