@@ -342,7 +342,7 @@ build_demo_scene(engine::scene::Scene& scene, engine::asset::AssetManager& asset
     return out;
 }
 
-void add_default_lighting(engine::scene::Scene& scene, bool fill_lights) {
+void add_default_lighting(engine::scene::Scene& scene, bool fill_lights, entt::entity root) {
 // A sun light, and a camera that auto-frames whatever was loaded.
 const entt::entity sun_entity = scene.create_entity("sun");
 scene.registry().emplace<engine::scene::DirectionalLight>(
@@ -362,6 +362,10 @@ if (fill_lights) {
         glm::translate(glm::mat4(1.0F), glm::vec3(3.5F, 3.0F, -2.5F));
     scene.registry().emplace<engine::scene::PointLight>(cool, glm::vec3(0.3F, 0.5F, 1.0F),
                                                         14.0F, 12.0F);
+    if (root != entt::null) {
+        scene.set_parent(warm, root);
+        scene.set_parent(cool, root);
+    }
 }
 
 }

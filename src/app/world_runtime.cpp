@@ -1,5 +1,6 @@
 #include "app/world_runtime.hpp"
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -15,6 +16,7 @@
 #include "engine/rhi/pipeline_cache.hpp"
 #include "engine/scene/behavior.hpp"
 #include "engine/scene/components.hpp"
+#include "engine/scene/ground_placement.hpp"
 #include "engine/scene/scene.hpp"
 
 namespace quat::app {
@@ -328,10 +330,59 @@ void WorldRuntime::update_terrain(engine::scene::Scene& scene, const glm::vec3& 
             std::fprintf(stderr, "[terrain] tile ready (%.0f m, heights %.1f..%.1f m)\n",
                          terrain_heightmap_.tile_size_m, terrain_heightmap_.min_height,
                          terrain_heightmap_.max_height);
+            settle_demo_on_terrain(scene);
         } else {
             std::fprintf(stderr, "[terrain] upload failed: %s\n", r.error().message.c_str());
         }
     }
+}
+
+void WorldRuntime::settle_demo_on_terrain(engine::scene::Scene& scene) {
+    entt::registry& r = scene.registry();
+    if (demo_.root == entt::null || demo_.pedestal == entt::null) return;
+    // A replaced scene may have recycled the ids: only the showcase's own
+    // pedestal-under-root pair is moved.
+    const auto* parent = r.valid(demo_.pedestal) ? r.try_get<engine::scene::Parent>(demo_.pedestal)
+                                                 : nullptr;
+    if (!r.valid(demo_.root) || parent == nullptr || parent->entity != demo_.root ||
+        !r.all_of<engine::scene::Transform>(demo_.root) ||
+        !r.all_of<engine::scene::Transform>(demo_.pedestal) || !terrain_heightmap_.valid()) {
+        return;
+    }
+    // Room above the highest ground for the tallest grass blades (0.75 m by
+    // default) so none pokes through the plate; the foot is buried a little.
+    constexpr float k_clearance = 0.8F;
+    constexpr float k_embed = 0.5F;
+    auto& root_tf = r.get<engine::scene::Transform>(demo_.root);
+    const glm::vec2 centre(root_tf.world[3].x, root_tf.world[3].z);
+    const float half = terrain_heightmap_.tile_size_m * 0.5F;
+    const engine::scene::GroundLattice lattice{
+        glm::vec2(terrain_anchor_.x - half, terrain_anchor_.z - half),
+        terrain_heightmap_.metres_per_texel()};
+    const auto span =
+        engine::scene::ground_span(ground_height_at_, centre, demo_.footprint_half, lattice);
+    if (!span) {
+        std::fprintf(stderr, "[terrain] showcase plate is off the terrain tile; left in place\n");
+        return;
+    }
+    const engine::scene::Pedestal pedestal = engine::scene::pedestal_on(*span, k_clearance, k_embed);
+
+    // The root is a scene root (no parent): its local is its world.
+    const float old_y = root_tf.local[3].y;
+    root_tf.local[3].y = pedestal.top_y;
+    root_tf.world = root_tf.local;
+    // The pedestal box hangs below the root's origin, scaled to the depth.
+    const float depth = std::max(pedestal.depth(), 2.0F * k_pedestal_mesh_half_height);
+    r.get<engine::scene::Transform>(demo_.pedestal).local =
+        glm::translate(glm::mat4(1.0F), glm::vec3(0.0F, -0.5F * depth, 0.0F)) *
+        glm::scale(glm::mat4(1.0F),
+                   glm::vec3(1.0F, depth / (2.0F * k_pedestal_mesh_half_height), 1.0F));
+    engine::scene::transform_system(r);
+    demo_shift_ += pedestal.top_y - old_y;
+    std::fprintf(stderr,
+                 "[terrain] showcase settled on the terrain: plate top %.2f m (ground %.2f..%.2f m "
+                 "under it)\n",
+                 pedestal.top_y, span->min_y, span->max_y);
 }
 
 void WorldRuntime::service_navmesh_request(engine::scene::Scene& scene) {

@@ -63,8 +63,10 @@ build_demo_scene(engine::scene::Scene& scene, engine::asset::AssetManager& asset
                  const engine::rhi::TransferContext& setup_transfer);
 
 // The sun, plus two coloured point lights unless the scene came from a glTF
-// file (a model is shown under just its own lighting setup).
-void add_default_lighting(engine::scene::Scene& scene, bool fill_lights);
+// file (a model is shown under just its own lighting setup). The point lights
+// hang under `root` when given, so they move with the demo content.
+void add_default_lighting(engine::scene::Scene& scene, bool fill_lights,
+                          entt::entity root = entt::null);
 
 // QUAT_TERRAIN=1: a procedural terrain tile sunk under the scene.
 void add_env_terrain(engine::scene::Scene& scene);

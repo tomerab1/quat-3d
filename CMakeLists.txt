@@ -220,6 +220,7 @@ add_library(engine_scene STATIC
     src/scene/scatter.cpp
     src/scene/instanced_mesh.cpp
     src/scene/instanced_mesh_resolve.cpp
+    src/scene/ground_placement.cpp
     src/scene/camera_framing.cpp)
 # EnTT is PUBLIC: components.hpp exposes entt types (Parent/Children) to consumers.
 # engine_renderer is PUBLIC: scene.hpp's RenderCollectSystem fills a renderer
