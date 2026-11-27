@@ -183,6 +183,23 @@ JSON-RPC over loopback TCP to the engine.
   shallow-water local sims and rivers from R10.2 erosion flow. *(medium)*
 - [ ] **R17 — Asset cooker formats.** KTX2 + Basis Universal textures,
   meshoptimizer codecs and quantisation. *(quick win)*
+- [ ] **R18 — VFX graph (Niagara-class).** On R10.3's GPU particle core: a
+  modular emitter model (spawn / init / update / render stages), a node
+  graph compiled to Slang compute modules (shares R7's codegen), events
+  between emitters, ribbons/trails, mesh particles, beams, GPU data
+  interfaces (sample skeleton, mesh surface, terrain, depth/SDF, wind
+  field), parameter collections, sub-UV + motion vectors, an editor graph
+  (imgui-node-editor) with live preview, and MCP authoring of emitters.
+  *(large; after R10.3, R7)*
+- [ ] **R19 — Virtualized geometry (Nanite-class).** Cluster DAG built
+  offline with meshoptimizer clusterlod (extends R17's cooker), page
+  streaming, GPU-driven two-pass occlusion culling on R12's Hi-Z, a
+  visibility buffer + material resolve pass, hardware raster through
+  indirect draws (mesh shaders where `VK_EXT_mesh_shader` exists) plus a
+  compute software rasteriser for sub-pixel triangles so every platform
+  (MoltenVK included) has a path; foliage and instanced meshes first, then
+  shadows (virtual shadow maps as a follow-up). *(very large; after R5, R6,
+  R9.4)*
 
 ## P — Platforms & shipping
 
