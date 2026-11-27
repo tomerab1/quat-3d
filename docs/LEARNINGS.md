@@ -7,6 +7,30 @@ into CLAUDE.md or the brief template in [`CYCLE.md`](CYCLE.md).
 
 ## Agents and orchestration
 
+- **Interleaved work on several issues is costly to split into per-issue
+  commits.** A9 built #37–#39 in one working tree; splitting needed
+  hunk-picking (`git apply --cached` of a filtered `git diff`), and one hunk
+  mixed two issues, so the first staged commit did not compile — caught only
+  because the staged tree was exported (`git checkout-index -a
+  --prefix=<dir>/`) and compile-checked on its own. → Commit each issue as
+  soon as it is done; when a split is unavoidable, compile-check the staged
+  tree, not the working tree.
+- **Worktree-isolated agents get compound shell commands refused.** `cd`
+  into a computed path, heredoc scripts, or `sed -i 'a\'` next to a `git`
+  call are rejected as unverifiable. → Write edit scripts to the
+  scratchpad and run them with a plain `python3 <script>`; run `git`
+  commands on their own from the worktree root.
+- **`origin/master` moves under a worktree agent.** Worktrees share the
+  repository's refs, so another session's fetch can advance `origin/master`
+  mid-task: A9 merged one master and then restored two files "from
+  `origin/master`", silently taking them from a newer one. → Resolve merges
+  against the merge's own parent (`HEAD^2`, or a SHA noted when merging),
+  never a moving ref.
+- **Merge `master` into a long-running feature branch before handing it
+  back.** A9's branch base was overtaken by A8 (#17) and G8 during the work;
+  merging `origin/master` at the end (7 conflicts in remote / quat-mcp
+  files) and re-running the checks there saves the orchestrator the same
+  resolution with less context.
 - **Unpushed worktree commits die with the container.** Worker agents push
   their `feat/<id>` branch to origin after every commit (owner's rule,
   2026-11-27). `feat/**` pushes don't trigger CI, so they never cancel a
@@ -26,6 +50,20 @@ into CLAUDE.md or the brief template in [`CYCLE.md`](CYCLE.md).
 
 ## Build and CI
 
+- **Ad-hoc local test builds: cap parallel compiles at `nproc`.** Starting
+  ~45 clang processes at once on a 4-core container crashed one with
+  SIGBUS (exit 135), and a file edited while its object was compiling left
+  an object newer than the source but built from the old text (a test
+  silently missing). → Throttle (`while [ $(jobs -rp | wc -l) -ge 4 ];
+  do wait -n; done`) and delete objects whose sources changed during a
+  build.
+- **The cloud container's proxy blocks api.polyhaven.com** (403 "no rule
+  allows this host"; crates.io works). Network-facing tools are built
+  against the documented API and tested offline: an in-memory fake behind
+  an `Http` trait, plus a loopback HTTP stand-in for the real reqwest path.
+- **reqwest 0.13's default TLS pulls in aws-lc-sys** (a CMake/C build);
+  quat-mcp uses reqwest 0.12 with `rustls-tls-native-roots` (ring, the
+  platform trust store, which also picks up the proxy CA).
 - **Local test builds must track header dependencies.** A scratch build that
   rebuilt only changed .cpp files linked objects compiled against an old
   class layout and crashed (R12). Compile with `-MMD -MF` and rebuild when

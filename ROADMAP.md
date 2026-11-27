@@ -104,12 +104,15 @@ JSON-RPC over loopback TCP to the engine.
   parameter readable and writable over the remote API and MCP from one
   settings model the editor also edits (schema with ranges and units),
   saved with the scene; a `tune_look` workflow prompt.
-- [ ] **A9 — World-building ergonomics** (from MCP world-building sessions,
-  issues #37–#42): scene-derived camera far plane; shading-only terrain
-  edits without regeneration; batch-consistent `world.ground_height`;
-  entity world bounds + `world.place_on_ground`; screenshots from an
-  explicit offscreen camera; `asset_search` / `asset_fetch` for CC0 Poly
-  Haven models (licence recorded, cooked with R17).
+- [x] **A9 — World-building ergonomics** (from MCP world-building sessions,
+  issues #37–#42): scene-derived camera clip planes (+ `camera.set`
+  near/far/cut); shading-only terrain edits without regeneration;
+  batch-consistent `world.ground_height` + `terrain.status`; entity world
+  bounds + `world.place_on_ground`; screenshots from an explicit camera
+  (a one-frame camera swap that leaves the viewport camera untouched — the
+  renderer has a single view); `asset_search` / `asset_fetch` for CC0 Poly
+  Haven models (licence recorded, cooked with R17's `quat-cook` when
+  installed).
 - [ ] **A10 — Gameplay control** (design:
   [`docs/research/mcp-gameplay-control.md`](docs/research/mcp-gameplay-control.md)).
   Runtime control of a playing game over remote + MCP, all mutations
