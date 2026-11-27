@@ -107,7 +107,11 @@ scene instead of the job. Each final frame is converted to PNG
 (`scripts/ppm_to_png.py`, halved when 1280 px or wider). A crash, timeout or
 missing image is listed in the step summary with the log tail and an
 `::error` annotation. The step is `continue-on-error` for now (temporary,
-until the headless scenes have proven stable).
+until the headless scenes have proven stable). Rendered captures are
+checked by `scripts/check_capture.py`: no large exact-black rectangle in any
+scene (a NaN/Inf spreading through the HDR chain), and the editor scene must
+show the docked editor UI; a failed check fails the job (`Capture checks`
+step).
 
 Where the images land:
 

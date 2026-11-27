@@ -262,7 +262,7 @@ float4 fragment_main(VsOut input) : SV_Target0 {
         // Sun: specular highlight only — the diffuse fraction is what transmits.
         float3 h = normalize(V + L);
         float ndotl = max(dot(world_n, L), 0.0);
-        float a = max(roughness * roughness, 1e-3);
+        float a = pbr_punctual_alpha(roughness); // finite highlight (issue #45)
         float3 sun_spec = pbr_d_ggx(max(dot(world_n, h), 0.0), a) *
                           pbr_v_smith(ndotv, ndotl, a) *
                           pbr_f_schlick(max(dot(V, h), 0.0), f0) * ndotl *
@@ -277,7 +277,7 @@ float4 fragment_main(VsOut input) : SV_Target0 {
                                                roughness, f0, true);
 
         float3 color = (1.0 - F) * base_diffuse + spec_ibl + sun_spec + point_spec + emissive;
-        return float4(color, 1.0); // background already composited
+        return float4(pbr_hdr_out(color), 1.0); // background already composited
     }
 
     float3 lit = pbr_surface_brdf(world_n, V, L, albedo, metallic, roughness) *
@@ -285,5 +285,5 @@ float4 fragment_main(VsOut input) : SV_Target0 {
     lit += clustered_lighting(input.world_pos, world_n, V, albedo, metallic, roughness,
                               float3(0.04, 0.04, 0.04), false);
     float3 ambient = pc.ambient.rgb * albedo * occ;
-    return float4(lit + ambient + emissive, alpha);
+    return float4(pbr_hdr_out(lit + ambient + emissive), alpha);
 }

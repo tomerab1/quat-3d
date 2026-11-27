@@ -111,11 +111,13 @@ for row in "${SCENE_TABLE[@]}"; do
     status="no image"
   else
     status="ok"
-    # Editor scenes must show the editor: not blank, uniform or a 3D view
-    # without ImGui (scripts/check_editor_capture.py).
-    if [[ "$name" == *editor* ]] &&
-       ! python3 "$ROOT/scripts/check_editor_capture.py" "$ppm" >>"$log" 2>&1; then
-      status="not the editor UI (see log)"
+    # scripts/check_capture.py: no exact-black block (a NaN/Inf spreading
+    # through the HDR chain) and, for editor scenes, the editor UI really
+    # drawn (not blank, uniform or a 3D view without ImGui).
+    check_args=()
+    [[ "$name" == *editor* ]] && check_args=(--editor)
+    if ! python3 "$ROOT/scripts/check_capture.py" "${check_args[@]}" "$ppm" >>"$log" 2>&1; then
+      status="bad capture: $(grep '^check_capture:' "$log" | tail -n1 | sed 's/^[^:]*: [^:]*: //')"
     fi
     width="$(ppm_width "$ppm")" || width=0
     factor=1

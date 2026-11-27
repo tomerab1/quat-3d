@@ -13,6 +13,7 @@
 import atmosphere;
 import clustered_lights;
 import sky;
+import pbr; // pbr_punctual_alpha, pbr_hdr_out
 
 static const float PI = 3.14159265358979;
 
@@ -139,7 +140,7 @@ float3 surface_brdf(float3 N, float3 V, float3 L, float3 albedo, float metallic,
     float ndoth = max(dot(N, h), 0.0);
     float vdoth = max(dot(V, h), 0.0);
 
-    float  a  = max(roughness * roughness, 1e-3);
+    float  a  = pbr_punctual_alpha(roughness); // finite highlight (issue #45)
     float3 f0 = lerp(float3(0.04), albedo, metallic);
 
     float  D   = d_ggx(ndoth, a);
@@ -171,7 +172,7 @@ float3 layer_clearcoat_direct(float3 base, float3 N, float3 V, float3 L, float c
     float ndotv = max(dot(N, V), 1e-4);
     float ndoth = max(dot(N, h), 0.0);
     float vdoth = max(dot(V, h), 0.0);
-    float ac = max(ccr * ccr, 1e-3);
+    float ac = pbr_punctual_alpha(ccr);
     float coat = d_ggx(ndoth, ac) * v_smith(ndotv, ndotl, ac) * coat_fresnel(vdoth) * ndotl;
     return base * (1.0 - cc * coat_fresnel(ndotv)) + cc * coat;
 }
@@ -265,7 +266,7 @@ void compute_main(uint3 tid : SV_DispatchThreadID) {
                 bg = sky(ray, sun);
             }
         }
-        g_hdr[coord] = float4(bg, 1.0);
+        g_hdr[coord] = float4(pbr_hdr_out(bg), 1.0);
         return;
     }
 
@@ -320,5 +321,5 @@ void compute_main(uint3 tid : SV_DispatchThreadID) {
     } else {
         color += pc.ambient.rgb * albedo.rgb * occlusion;
     }
-    g_hdr[coord] = float4(color, 1.0);
+    g_hdr[coord] = float4(pbr_hdr_out(color), 1.0);
 }

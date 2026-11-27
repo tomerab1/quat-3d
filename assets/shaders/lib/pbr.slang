@@ -5,6 +5,30 @@
 
 static const float PBR_PI = 3.14159265358979;
 
+// Punctual lights (the sun, point and spot lights) have no area, so a
+// mirror-smooth surface would reflect them as an infinitely bright point: the
+// GGX peak 1 / (pi * alpha^2) reaches ~3e5 at alpha 1e-3, beyond the RGBA16F
+// HDR target's range (65504), and an overflow to +Inf there becomes a NaN
+// block downstream (issue #45). Like Filament, punctual lighting uses at
+// least this perceptual roughness (alpha = 0.089^2): the highlight of a
+// light about the sun's size, bright but finite. Image-based lighting keeps
+// the material's own roughness.
+public static const float PBR_MIN_PUNCTUAL_ROUGHNESS = 0.089;
+
+// GGX alpha for a punctual light from perceptual roughness (floored, above).
+public float pbr_punctual_alpha(float perceptual_roughness) {
+    float r = max(perceptual_roughness, PBR_MIN_PUNCTUAL_ROUGHNESS);
+    return r * r;
+}
+
+// Largest finite half float: radiance written to an RGBA16F HDR target is
+// clamped to it so that a sum of bright lobes never rounds to +Inf (bloom's
+// Karis weighting and TAA turn an Inf into NaN). NaN inputs stay NaN — they
+// are bugs to fix at their source, not to hide here.
+public float3 pbr_hdr_out(float3 c) {
+    return min(c, float3(65504.0));
+}
+
 // GGX / Trowbridge-Reitz NDF. `a` = roughness^2.
 public float pbr_d_ggx(float ndoth, float a) {
     float a2 = a * a;
@@ -49,7 +73,7 @@ public float3 pbr_surface_brdf(float3 N, float3 V, float3 L, float3 albedo, floa
     float ndoth = max(dot(N, h), 0.0);
     float vdoth = max(dot(V, h), 0.0);
 
-    float a = max(roughness * roughness, 1e-3);
+    float a = pbr_punctual_alpha(roughness);
     float3 f0 = lerp(float3(0.04), albedo, metallic);
 
     float D = pbr_d_ggx(ndoth, a);

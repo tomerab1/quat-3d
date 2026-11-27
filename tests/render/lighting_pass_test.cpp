@@ -2,6 +2,7 @@
 // target: the direct Cook-Torrance BRDF against the CPU reference, the
 // clearcoat lobe, and image-based lighting from baked IBL maps.
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstdint>
@@ -169,6 +170,49 @@ TEST(GpuLighting, LitPixelMatchesThePbrReference) {
                                     n, view, n, glm::vec3(1.0F), 1.0F);
     const glm::vec3 lit = centre_rgb(*hdr);
     for (int k = 0; k < 3; ++k) EXPECT_NEAR(lit[k], expected[k], 0.02F) << "channel " << k;
+}
+
+// Issue #45: a mirror-smooth metal seen exactly at the sun's reflection has a
+// GGX peak of 1 / (pi * alpha^2) ~ 3e5, beyond half-float range. Writing it
+// to the RGBA16F HDR target gives +Inf on drivers that round overflow to
+// infinity, and bloom / TAA then turn that Inf into a NaN block. Every lit
+// pixel must stay finite and within half range.
+TEST(GpuLighting, MirrorHighlightStaysWithinHalfFloatRange) {
+    QUAT_REQUIRE_GPU(g);
+    Scene scene;
+    scene.material.base_color_factor = {1.0F, 1.0F, 1.0F, 1.0F};
+    scene.material.metallic_factor = 1.0F;
+    scene.material.roughness_factor = 0.0F;
+    scene.light = head_on_light();
+    scene.light.color.w = 3.0F; // the showcase sun's intensity
+    scene.half_size = 0.9F;
+    // Aim the light at the centre pixel's mirror direction (camera at +Z,
+    // identity view_proj, as LitPixelMatchesThePbrReference reconstructs it)
+    // so that pixel sits exactly on the GGX peak: H = N.
+    const float u = (static_cast<float>(k_extent.width / 2) + 0.5F) /
+                    static_cast<float>(k_extent.width);
+    const float v = (static_cast<float>(k_extent.height / 2) + 0.5F) /
+                    static_cast<float>(k_extent.height);
+    const glm::vec3 surface(u * 2.0F - 1.0F, v * 2.0F - 1.0F, 0.0F);
+    const glm::vec3 view = glm::normalize(glm::vec3(0.0F, 0.0F, 1.0F) - surface);
+    const glm::vec3 mirror = glm::reflect(-view, glm::vec3(0.0F, 0.0F, 1.0F));
+    scene.light.direction = glm::vec4(mirror, 0.0F);
+    auto hdr = render_lit(*g, scene);
+    ASSERT_OK(hdr);
+    float peak = 0.0F;
+    for (std::uint32_t y = 0; y < k_extent.height; ++y) {
+        for (std::uint32_t x = 0; x < k_extent.width; ++x) {
+            const glm::vec4 c = hdr->rgba16f(x, y);
+            for (int k = 0; k < 3; ++k) {
+                ASSERT_TRUE(std::isfinite(c[k])) << "pixel " << x << "," << y << " ch " << k;
+                peak = std::max(peak, c[k]);
+            }
+        }
+    }
+    // Strictly below the half-float maximum: drivers that saturate an
+    // overflow (instead of rounding it to +Inf) would otherwise hide it here.
+    EXPECT_LT(peak, 65504.0F) << "the highlight overflowed the HDR target";
+    EXPECT_GT(peak, 100.0F) << "the highlight should still be very bright";
 }
 
 // The metallic highlight is strong (brighter than the albedo), not a dim
