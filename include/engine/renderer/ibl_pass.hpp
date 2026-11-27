@@ -18,9 +18,9 @@
 
 #include "engine/core/error.hpp"
 #include "engine/renderer/cloud_settings.hpp"
-#include "engine/rhi/compute_pipeline.hpp"
 #include "engine/rhi/descriptor_buffer.hpp"
 #include "engine/rhi/gpu_allocator.hpp"
+#include "engine/rhi/managed_pipeline.hpp"
 
 namespace engine::rhi {
 class Device;
@@ -104,10 +104,10 @@ private:
     rhi::DescriptorSetLayout       env_layout_;   // b0 storage, b1-2 LUTs, b3 sampler
     rhi::DescriptorSetLayout       conv_layout_;  // b0 sampled, b1 sampler, b2 storage
     rhi::DescriptorSetLayout       lut_layout_;   // b0 storage
-    rhi::ComputePipeline           env_pipeline_;
-    rhi::ComputePipeline           irradiance_pipeline_;
-    rhi::ComputePipeline           prefilter_pipeline_;
-    rhi::ComputePipeline           lut_pipeline_;
+    rhi::ManagedPipeline           env_pipeline_;
+    rhi::ManagedPipeline           irradiance_pipeline_;
+    rhi::ManagedPipeline           prefilter_pipeline_;
+    rhi::ManagedPipeline           lut_pipeline_;
     rhi::Sampler                   env_sampler_;
     rhi::GpuImage                  fallback_lut_;      // 1x1 black for unused LUT slots
     rhi::ImageView                 fallback_lut_view_;

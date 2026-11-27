@@ -114,13 +114,15 @@ set(ENGINE_PUBLIC_INCLUDE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 
 # ---------------------------------------------------------------------------
 # engine_core — graphics-free foundations: the log ring + log() helper, stderr
-# capture into the ring, and the simulation clock (ROADMAP A5; S6 grows the
-# logging layer here).
+# capture into the ring, the simulation clock (A5; S6 grows the logging layer
+# here), file watching and child processes (shader hot reload, R2).
 # ---------------------------------------------------------------------------
 add_library(engine_core STATIC
     src/core/log.cpp
     src/core/stderr_capture.cpp
-    src/core/sim_clock.cpp)
+    src/core/sim_clock.cpp
+    src/core/file_watcher.cpp
+    src/core/child_process.cpp)
 target_link_libraries(engine_core PUBLIC engine_flags Threads::Threads)
 target_include_directories(engine_core PUBLIC ${ENGINE_PUBLIC_INCLUDE})
 
@@ -137,11 +139,15 @@ add_library(engine_rhi STATIC
     src/rhi/descriptor_buffer.cpp
     src/rhi/render_graph.cpp
     src/rhi/graphics_pipeline.cpp
-    src/rhi/compute_pipeline.cpp)
+    src/rhi/compute_pipeline.cpp
+    src/rhi/shader_compiler.cpp
+    src/rhi/shader_hot_reload.cpp)
 target_link_libraries(engine_rhi PUBLIC
-    engine_flags Vulkan::Vulkan GPUOpen::VulkanMemoryAllocator)
-# The debug messenger routes validation messages into the log ring.
-target_link_libraries(engine_rhi PRIVATE engine_core)
+    engine_flags engine_core Vulkan::Vulkan GPUOpen::VulkanMemoryAllocator)
+# engine_core is public: shader hot reload's headers use its watcher/process
+# types, and the debug messenger routes validation messages into its log ring.
+# The hot-reload compile worker runs on a std::thread.
+target_link_libraries(engine_rhi PRIVATE Threads::Threads)
 # nlohmann_json is an implementation detail of the reflection parser (PRIVATE).
 target_link_libraries(engine_rhi PRIVATE nlohmann_json::nlohmann_json)
 target_include_directories(engine_rhi PUBLIC ${ENGINE_PUBLIC_INCLUDE})
@@ -436,3 +442,5 @@ add_subdirectory(tests)
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/CompileShaders.cmake)
 add_shader_compilation(shaders)
 add_dependencies(game shaders)
+# Shader hot reload (R2) runs the same slangc the build cooks with.
+target_compile_definitions(engine_rhi PRIVATE QUAT_SLANGC_PATH="${SLANGC_EXECUTABLE}")

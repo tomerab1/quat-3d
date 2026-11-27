@@ -21,8 +21,8 @@
 #include "engine/renderer/ibl_pass.hpp"
 #include "engine/renderer/light_cull_pass.hpp"
 #include "engine/renderer/mesh_pass.hpp"
-#include "engine/rhi/compute_pipeline.hpp"
 #include "engine/rhi/descriptor_buffer.hpp"
+#include "engine/rhi/managed_pipeline.hpp"
 #include "engine/rhi/render_graph.hpp"
 
 namespace engine::rhi {
@@ -88,7 +88,7 @@ private:
 
     rhi::DescriptorBufferFunctions db_fns_{};
     rhi::DescriptorSetLayout       layout_;
-    rhi::ComputePipeline           pipeline_;
+    rhi::ManagedPipeline           pipeline_;
     rhi::Sampler                   shadow_sampler_; // samples the shadow map
 
     EmptyLightClusters empty_lights_; // bound when no clustered lights are supplied

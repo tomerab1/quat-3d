@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <expected>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -43,5 +44,16 @@ struct ShaderReflection {
 
 [[nodiscard]] std::expected<ShaderReflection, core::Error>
 parse_reflection_json(std::string_view json_text);
+
+// Whether a recompiled shader (`updated`) still fits the pipeline layout that
+// was built for `baseline` (shader hot reload keeps the layout; ROADMAP R2):
+//   * every entry point in `required_entries` still exists;
+//   * every descriptor binding of `updated` exists in `baseline` with the same
+//     descriptor type and no larger array count (removing bindings is fine);
+//   * the push-constant block did not grow.
+// The error names the first incompatibility found.
+[[nodiscard]] std::expected<void, core::Error>
+check_reflection_compatible(const ShaderReflection& baseline, const ShaderReflection& updated,
+                            std::span<const std::string> required_entries);
 
 } // namespace engine::rhi

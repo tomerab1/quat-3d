@@ -77,6 +77,7 @@
 #include "engine/rhi/graphics_pipeline.hpp"
 #include "engine/rhi/pipeline_cache.hpp"
 #include "engine/rhi/render_graph.hpp"
+#include "engine/rhi/shader_hot_reload.hpp"
 #include "engine/rhi/swapchain.hpp"
 
 namespace {
@@ -364,6 +365,8 @@ int main() {
     }
 
     const std::string shader_dir = QUAT_COOKED_SHADER_DIR;
+    auto shader_reload = engine::rhi::ShaderHotReload::create_from_environment( // R2
+        *pipeline_cache, QUAT_PROJECT_ROOT "/assets/shaders", shader_dir);
     const VkFormat swap_format = swapchain.format();
     // The swapchain is usually sRGB, which cannot be a storage image (TAA writes
     // one) and would double-encode if the tonemap shader's explicit sRGB output
@@ -1057,6 +1060,7 @@ int main() {
         }
 
         vkWaitForFences(vk_device, 1, &in_flight[frame], VK_TRUE, UINT64_MAX);
+        if (shader_reload) shader_reload->update(presented); // R2: swap rebuilt pipelines
         remote_bridge.on_frame_complete(frame); // the slot's screenshot readback landed
 
         std::uint32_t image_index = 0;
@@ -1703,6 +1707,7 @@ int main() {
             ui_ctx.draw_count = static_cast<int>(draws.size() + transparent_draws.size());
             ui_ctx.entity_count = static_cast<int>(
                 scene.registry().view<engine::scene::Transform>().size());
+            ui_ctx.shader_statuses = shader_reload ? &shader_reload->statuses() : nullptr;
             ui_ctx.scene = &scene;
             ui_ctx.renderer = &render_settings;
             ui_ctx.project_root = QUAT_PROJECT_ROOT;

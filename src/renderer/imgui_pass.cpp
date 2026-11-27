@@ -86,7 +86,7 @@ ImGuiPass::create(const rhi::Device& device, rhi::GpuAllocator& allocator,
     info.set_layouts = {&set_layout, 1};
     info.push_constants = {&pc, 1};
 
-    auto pipeline = rhi::GraphicsPipeline::create(device, cache.handle(), info);
+    auto pipeline = cache.create_graphics_pipeline(info);
     if (!pipeline) return std::unexpected(pipeline.error());
     out.pipeline_ = std::move(*pipeline);
 

@@ -19,9 +19,9 @@
 #include <vulkan/vulkan.h>
 
 #include "engine/core/error.hpp"
-#include "engine/rhi/compute_pipeline.hpp"
 #include "engine/rhi/descriptor_buffer.hpp"
 #include "engine/rhi/gpu_allocator.hpp"
+#include "engine/rhi/managed_pipeline.hpp"
 #include "engine/rhi/render_graph.hpp"
 
 namespace engine::rhi {
@@ -69,7 +69,7 @@ private:
 
     rhi::DescriptorBufferFunctions db_fns_{};
     rhi::DescriptorSetLayout       skyview_layout_;
-    rhi::ComputePipeline           skyview_pipeline_;
+    rhi::ManagedPipeline           skyview_pipeline_;
 
     rhi::GpuImage  transmittance_;
     rhi::ImageView transmittance_view_;

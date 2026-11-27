@@ -30,9 +30,9 @@
 #include "engine/core/error.hpp"
 #include "engine/renderer/cloud_settings.hpp"
 #include "engine/renderer/ibl_pass.hpp"
-#include "engine/rhi/compute_pipeline.hpp"
 #include "engine/rhi/descriptor_buffer.hpp"
 #include "engine/rhi/gpu_allocator.hpp"
+#include "engine/rhi/managed_pipeline.hpp"
 #include "engine/rhi/render_graph.hpp"
 
 namespace engine::rhi {
@@ -111,10 +111,10 @@ private:
     rhi::DescriptorBufferFunctions db_fns_{};
     rhi::DescriptorSetLayout       env_layout_;
     rhi::DescriptorSetLayout       conv_layout_;
-    rhi::ComputePipeline           env_pipeline_;
-    rhi::ComputePipeline           irradiance_pipeline_;
-    rhi::ComputePipeline           prefilter_pipeline_;
-    rhi::ComputePipeline           lut_pipeline_;
+    rhi::ManagedPipeline           env_pipeline_;
+    rhi::ManagedPipeline           irradiance_pipeline_;
+    rhi::ManagedPipeline           prefilter_pipeline_;
+    rhi::ManagedPipeline           lut_pipeline_;
     rhi::Sampler                   sampler_;
 
     rhi::GpuImage  env_;       // shared scratch env cube (GENERAL for life)

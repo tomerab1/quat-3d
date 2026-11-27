@@ -397,8 +397,70 @@ void EditorLayer::build_stats_panel(const EditorContext& ctx) {
         ImGui::Text("draws: %d", ctx.draw_count);
         ImGui::Text("entities: %d", ctx.entity_count);
         ImGui::Text("viewport: %ux%u", viewport_width_, viewport_height_);
+        build_shader_status(ctx);
     }
     ImGui::End();
+}
+
+// Shader hot reload (R2): one row per Slang source; failed shaders open by
+// default with the compiler diagnostics (the previous pipeline stays live).
+void EditorLayer::build_shader_status(const EditorContext& ctx) {
+    if (ctx.shader_statuses == nullptr) return;
+    const std::vector<rhi::ShaderStatus>& shaders = *ctx.shader_statuses;
+    std::size_t errors = 0;
+    std::size_t compiling = 0;
+    for (const rhi::ShaderStatus& s : shaders) {
+        if (s.state == rhi::ShaderStatus::State::error) ++errors;
+        if (s.state == rhi::ShaderStatus::State::compiling) ++compiling;
+    }
+    char header[96];
+    std::snprintf(header, sizeof(header), "Shaders (%zu, %zu error%s%s)###shaders", shaders.size(),
+                  errors, errors == 1 ? "" : "s", compiling > 0 ? ", compiling" : "");
+    if (errors > 0) ImGui::SetNextItemOpen(true, ImGuiCond_Always);
+    if (!ImGui::CollapsingHeader(header)) return;
+
+    const ImVec4 colour_error(1.0F, 0.4F, 0.35F, 1.0F);
+    const ImVec4 colour_ok(0.45F, 0.85F, 0.45F, 1.0F);
+    const ImVec4 colour_busy(0.95F, 0.8F, 0.3F, 1.0F);
+    for (const rhi::ShaderStatus& s : shaders) {
+        ImGui::PushID(s.name.c_str());
+        const std::string_view state = rhi::to_string(s.state);
+        switch (s.state) {
+        case rhi::ShaderStatus::State::error:
+            ImGui::TextColored(colour_error, "%-9.*s", static_cast<int>(state.size()), state.data());
+            break;
+        case rhi::ShaderStatus::State::ok:
+            ImGui::TextColored(colour_ok, "%-9.*s", static_cast<int>(state.size()), state.data());
+            break;
+        case rhi::ShaderStatus::State::compiling:
+            ImGui::TextColored(colour_busy, "%-9.*s", static_cast<int>(state.size()), state.data());
+            break;
+        case rhi::ShaderStatus::State::cooked:
+            ImGui::TextDisabled("%-9.*s", static_cast<int>(state.size()), state.data());
+            break;
+        }
+        ImGui::SameLine();
+        if (s.reloads > 0) {
+            ImGui::Text("%s  (x%u, %u pipeline%s)", s.name.c_str(), s.reloads, s.pipelines,
+                        s.pipelines == 1 ? "" : "s");
+        } else {
+            ImGui::TextUnformatted(s.name.c_str());
+        }
+        if (!s.message.empty()) {
+            const bool failed = s.state == rhi::ShaderStatus::State::error;
+            if (failed) ImGui::SetNextItemOpen(true, ImGuiCond_Once);
+            if (ImGui::TreeNode(failed ? "diagnostics" : "warnings")) {
+                ImGui::PushTextWrapPos(0.0F);
+                if (failed) ImGui::PushStyleColor(ImGuiCol_Text, colour_error);
+                ImGui::TextUnformatted(s.message.c_str());
+                if (failed) ImGui::PopStyleColor();
+                ImGui::PopTextWrapPos();
+                if (ImGui::SmallButton("Copy")) ImGui::SetClipboardText(s.message.c_str());
+                ImGui::TreePop();
+            }
+        }
+        ImGui::PopID();
+    }
 }
 
 void EditorLayer::build_ui(const EditorContext& ctx) {

@@ -23,7 +23,7 @@
 #include "engine/core/error.hpp"
 #include "engine/rhi/descriptor_buffer.hpp"
 #include "engine/rhi/gpu_allocator.hpp"
-#include "engine/rhi/graphics_pipeline.hpp"
+#include "engine/rhi/managed_pipeline.hpp"
 #include "engine/rhi/render_graph.hpp"
 
 struct ImDrawData;
@@ -89,7 +89,7 @@ private:
 
     rhi::DescriptorBufferFunctions db_fns_{};
     rhi::DescriptorSetLayout       layout_;
-    rhi::GraphicsPipeline          pipeline_;
+    rhi::ManagedPipeline           pipeline_;
 
     rhi::GpuImage         font_image_;
     rhi::ImageView        font_view_;
