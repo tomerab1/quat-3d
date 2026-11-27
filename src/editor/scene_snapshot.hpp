@@ -17,6 +17,7 @@
 
 #include "engine/core/error.hpp"
 #include "engine/scene/components.hpp"
+#include "engine/scene/physics_settings.hpp"
 
 namespace engine::scene {
 class Scene;
@@ -52,6 +53,8 @@ struct StoredTuple<ComponentList<Ts...>> {
 
 struct SceneSnapshot {
     std::vector<entt::entity> entities;
+    // Scene-level settings kept in the registry context (A10.1 gravity).
+    scene::PhysicsSettings    physics_settings{};
 
     template <typename T>
     using Stored = std::vector<std::pair<entt::entity, T>>;

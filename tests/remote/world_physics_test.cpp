@@ -1,5 +1,5 @@
 // Physics control over remote (A10.1): events.poll, physics.get / set /
-// apply.
+// apply, physics.get_gravity / set_gravity.
 
 #include <cstdint>
 #include <optional>
@@ -11,6 +11,7 @@
 
 #include "engine/core/event_ring.hpp"
 #include "engine/physics/physics_world.hpp"
+#include "engine/scene/physics_settings.hpp"
 #include "engine/scene/scene.hpp"
 #include "remote/world_fixture.hpp"
 #include "support/expect_ok.hpp"
@@ -242,6 +243,37 @@ TEST_F(BodyCommands, AnUnbuiltBodyIsReportedAsPending) {
                         {"components", {{"collider", {{"shape", "sphere"}}}, {"rigidbody", Json::object()}}}});
     EXPECT_NE(err("physics.get", {{"entity", "Late"}}, rpc_code::unavailable).find("next simulated"),
               std::string::npos);
+}
+
+// ---- gravity ----------------------------------------------------------------
+
+TEST_F(PhysicsCommands, GravityIsASceneSettingEditableWithoutPlaying) {
+    Json g = ok("physics.get_gravity");
+    EXPECT_NEAR(g["gravity"][1].get<float>(), -9.81F, 1e-5F);
+    g = ok("physics.set_gravity", {{"gravity", {0, -1.62, 0}}}); // the Moon, in edit mode
+    EXPECT_NEAR(g["magnitude"].get<float>(), 1.62F, 1e-5F);
+    EXPECT_NEAR(engine::scene::physics_settings(reg()).gravity.y, -1.62F, 1e-6F);
+    EXPECT_NEAR(ok("physics.get_gravity")["gravity"][1].get<float>(), -1.62F, 1e-5F);
+}
+
+TEST_F(PhysicsCommands, GravityReachesARunningWorldAtOnce) {
+    auto w = PhysicsWorld::create();
+    ASSERT_OK(w);
+    physics.emplace(std::move(*w));
+    ok("physics.set_gravity", {{"gravity", {0, 3, 0}}});
+    EXPECT_EQ(physics->gravity(), glm::vec3(0.0F, 3.0F, 0.0F));
+}
+
+TEST_F(PhysicsCommands, GravityIsValidated) {
+    const auto code = rpc_code::invalid_params;
+    EXPECT_NE(err("physics.set_gravity", Json::object(), code).find("required"),
+              std::string::npos);
+    EXPECT_NE(err("physics.set_gravity", {{"gravity", {0, -5000, 0}}}, code).find("exceeds"),
+              std::string::npos);
+    err("physics.set_gravity", {{"gravity", {0, -9.81}}}, code);
+    err("physics.set_gravity", {{"x", 0}, {"y", -9.81}, {"z", 0}}, code);
+    err("physics.get_gravity", {{"extra", 1}}, code);
+    EXPECT_NEAR(engine::scene::physics_settings(reg()).gravity.y, -9.81F, 1e-6F);
 }
 
 TEST_F(PhysicsCommands, EventsPollFiltersByEntity) {

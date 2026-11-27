@@ -108,6 +108,27 @@ void PhysicsWorld::update(float dt) {
 
 float PhysicsWorld::pending_time() const { return impl_ ? impl_->accumulator : 0.0F; }
 
+void PhysicsWorld::set_gravity(const glm::vec3& gravity) {
+    if (!impl_) return;
+    const JPH::Vec3 g = to_jph(gravity);
+    if (impl_->system.GetGravity() == g) return;
+    impl_->system.SetGravity(g);
+    // Sleeping bodies would ignore the change until something touched them.
+    JPH::BodyIDVector ids;
+    impl_->system.GetBodies(ids);
+    JPH::BodyInterface& bi = impl_->system.GetBodyInterface();
+    ids.erase(std::remove_if(ids.begin(), ids.end(),
+                             [&](const JPH::BodyID& id) {
+                                 return bi.GetMotionType(id) != JPH::EMotionType::Dynamic;
+                             }),
+              ids.end());
+    if (!ids.empty()) bi.ActivateBodies(ids.data(), static_cast<int>(ids.size()));
+}
+
+glm::vec3 PhysicsWorld::gravity() const {
+    return impl_ ? to_glm(impl_->system.GetGravity()) : glm::vec3(0.0F, -9.81F, 0.0F);
+}
+
 // ---- Shapes -----------------------------------------------------------------
 
 std::uint32_t PhysicsWorld::create_box(const glm::vec3& half_extents) {

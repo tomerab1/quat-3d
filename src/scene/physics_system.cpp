@@ -14,6 +14,7 @@
 #include "engine/core/event_ring.hpp"
 #include "engine/physics/physics_world.hpp"
 #include "engine/scene/components.hpp"
+#include "engine/scene/physics_settings.hpp"
 #include "engine/terrain/generator.hpp"
 #include "engine/scene/scene.hpp"
 
@@ -77,6 +78,7 @@ namespace {
 
 void physics_system(entt::registry& registry, physics::PhysicsWorld& world, float dt) {
     const std::uint32_t invalid = physics::PhysicsWorld::invalid_body;
+    world.set_gravity(physics_settings(registry).gravity); // the scene's one setting
 
     // 0. Remove bodies whose owner is gone: the entity was destroyed, or it
     // lost its RigidBody / Collider (editor delete or remove-component during
@@ -185,15 +187,17 @@ namespace {
 
 void advance_character(entt::registry& registry, entt::entity e, CharacterController& cc,
                        const Transform& t, physics::PhysicsWorld& world, float dt) {
-    constexpr float gravity = -9.81F;
+    // Characters stand along +Y: they fall with the vertical component of the
+    // world gravity (the scene's PhysicsSettings, shared with Jolt).
+    const float gravity = world.gravity().y;
     if (cc.character == physics::PhysicsWorld::invalid_body) {
         cc.character = world.create_character(cc.half_height, cc.radius, position_of(t),
                                               static_cast<std::uint32_t>(entt::to_integral(e)));
     }
 
     glm::vec3 velocity = cc.velocity;
-    if (cc.on_ground && velocity.y < 0.0F) {
-        velocity.y = 0.0F; // grounded: stop accumulating downward speed
+    if (cc.on_ground && velocity.y * gravity > 0.0F) {
+        velocity.y = 0.0F; // grounded: stop accumulating speed along gravity
     }
     velocity.y += gravity * dt;
     velocity.x = cc.move.x * cc.speed;
@@ -214,6 +218,7 @@ void advance_character(entt::registry& registry, entt::entity e, CharacterContro
 } // namespace
 
 void character_system(entt::registry& registry, physics::PhysicsWorld& world, float dt) {
+    world.set_gravity(physics_settings(registry).gravity);
     // Remove characters whose entity or CharacterController is gone (see
     // physics_system step 0).
     for (const physics::PhysicsWorld::OwnedBody& oc : world.owned_characters()) {
@@ -232,6 +237,7 @@ void character_system(entt::registry& registry, physics::PhysicsWorld& world, fl
 void step_character(entt::registry& registry, physics::PhysicsWorld& world, entt::entity e,
                     float dt) {
     if (!registry.valid(e)) return;
+    world.set_gravity(physics_settings(registry).gravity);
     auto* cc = registry.try_get<CharacterController>(e);
     auto* t = registry.try_get<Transform>(e);
     if (cc == nullptr || t == nullptr) return;

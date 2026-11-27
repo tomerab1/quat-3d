@@ -1,7 +1,10 @@
-// Gameplay control of a running simulation (ROADMAP A10.1): events.poll.
+// Gameplay control of a running simulation (ROADMAP A10.1): events.poll,
+// physics.get_gravity / set_gravity, and the physics helpers shared by the
+// physics_*_commands.cpp files.
 // The contract is docs/remote-control.md ("Physics control").
 
 #include <array>
+#include <cmath>
 #include <cstdint>
 #include <limits>
 #include <string>
@@ -14,6 +17,7 @@
 #include "engine/core/event_ring.hpp"
 #include "engine/physics/physics_world.hpp"
 #include "engine/scene/components.hpp"
+#include "engine/scene/physics_settings.hpp"
 #include "engine/scene/scene.hpp"
 #include "internal.hpp"
 
@@ -207,9 +211,48 @@ RpcResult events_poll(Context& ctx, const Json& params) {
                 {"capacity", ring.capacity()}};
 }
 
+[[nodiscard]] Json gravity_json(const glm::vec3& g) {
+    return Json{{"gravity", vec3_json(g)}, {"magnitude", glm::length(g)}};
+}
+
+RpcResult physics_get_gravity(Context& ctx, const Json& params) {
+    core::JsonFields f(params, "");
+    if (auto ok = finish(f); !ok) return std::unexpected(ok.error());
+    return gravity_json(scene::physics_settings(ctx.scene->registry()).gravity);
+}
+
+// The scene's one gravity setting: saved with the scene, reverted by Stop
+// (play snapshot), used by Jolt and the character controllers.
+RpcResult physics_set_gravity(Context& ctx, const Json& params) {
+    core::JsonFields f(params, "");
+    const bool has = f.has("gravity");
+    scene::PhysicsSettings next = scene::physics_settings(ctx.scene->registry());
+    f.vec3("gravity", next.gravity);
+    if (auto ok = finish(f); !ok) return std::unexpected(ok.error());
+    if (!has) return bad_params("gravity: required, [x, y, z] in m/s^2 (Earth: [0, -9.81, 0])");
+    if (glm::length(next.gravity) > scene::k_max_gravity) {
+        return bad_params("gravity: magnitude " + std::to_string(glm::length(next.gravity)) +
+                          " exceeds " + std::to_string(static_cast<int>(scene::k_max_gravity)) +
+                          " m/s^2");
+    }
+    scene::physics_settings_mut(ctx.scene->registry()) = next;
+    // A running world takes it now (the physics systems also sync every tick).
+    if (physics::PhysicsWorld* w = ctx.services.physics_control ? ctx.services.physics_control()
+                                                                : nullptr) {
+        w->set_gravity(next.gravity);
+    }
+    return gravity_json(next.gravity);
+}
+
 } // namespace
 
 void register_physics_commands(RpcServer& server, const ContextPtr& ctx) {
+    server.add_method("physics.get_gravity", "The scene's gravity: {} -> {gravity, magnitude}.",
+                      [ctx](const Json& p) { return physics_get_gravity(*ctx, p); });
+    server.add_method("physics.set_gravity",
+                      "Set the scene's gravity (Jolt + characters, saved with the scene): "
+                      "{gravity:[x,y,z]} -> {gravity, magnitude}.",
+                      [ctx](const Json& p) { return physics_set_gravity(*ctx, p); });
     server.add_method("events.poll",
                       "Gameplay events after a cursor: {since?=0, max?=200, kinds?:[contact_added|"
                       "contact_removed|trigger_enter|trigger_exit], entity?} -> {events:[{seq, kind, "

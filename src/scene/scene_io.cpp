@@ -19,6 +19,7 @@
 #include "engine/scene/component_json.hpp"
 #include "engine/scene/components.hpp"
 #include "engine/scene/gltf_loader.hpp"
+#include "engine/scene/physics_settings.hpp"
 #include "engine/scene/render_settings_json.hpp"
 #include "engine/scene/scene.hpp"
 
@@ -159,6 +160,11 @@ std::expected<void, core::Error> save_scene(const Scene& scene, const std::files
         block["version"] = k_render_settings_version;
         root["render_settings"] = std::move(block);
     }
+    {
+        json block = encode_physics_settings(physics_settings(r));
+        block["version"] = k_physics_settings_version;
+        root["physics_settings"] = std::move(block);
+    }
 
     std::error_code ec;
     if (path.has_parent_path()) std::filesystem::create_directories(path.parent_path(), ec);
@@ -206,6 +212,26 @@ load_scene(Scene& scene, const std::filesystem::path& path, rhi::GpuAllocator& a
         settings->clouds.time_s = render_settings->clouds.time_s;
     }
 
+    // Physics settings (A10.1): optional, versioned, decoded leniently; files
+    // without the block get the defaults.
+    PhysicsSettings physics;
+    if (const auto it = root.find("physics_settings"); it != root.end() && !it->is_null()) {
+        core::JsonFields block(*it, "physics_settings", /*strict=*/false);
+        int version = 1;
+        block.integer("version", version, 1, 1000);
+        if (auto ok = block.finish(); !ok) {
+            return fail("load_scene: '" + path.string() + "': " + ok.error().message);
+        }
+        if (version > k_physics_settings_version) {
+            return fail("load_scene: '" + path.string() + "': physics_settings version " +
+                        std::to_string(version) + " is newer than this build reads (" +
+                        std::to_string(k_physics_settings_version) + ")");
+        }
+        if (auto ok = apply_physics_settings_json(physics, *it, /*strict=*/false); !ok) {
+            return fail("load_scene: '" + path.string() + "': " + ok.error().message);
+        }
+    }
+
     // Pre-load every referenced glTF: instantiating into a scratch scene fills
     // the AssetManager cache with the exact keys the entities reference; the
     // scratch entities are discarded with the scratch scene.
@@ -247,6 +273,7 @@ load_scene(Scene& scene, const std::filesystem::path& path, rhi::GpuAllocator& a
     // whole file decoded, so a bad file leaves the current scene intact.
     Scene staging;
     entt::registry& r = staging.registry();
+    physics_settings_mut(r) = physics;
     std::vector<entt::entity> created;
     created.reserve(file_entities->size());
     for (std::size_t i = 0; i < file_entities->size(); ++i) {

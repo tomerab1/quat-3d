@@ -61,6 +61,11 @@ public:
     // capped update). Render interpolation and debugging read it.
     [[nodiscard]] float pending_time() const;
 
+    // World gravity, m/s^2 (default (0, -9.81, 0)). Changing it wakes every
+    // moving body so resting ones feel it; character_update uses it too.
+    void set_gravity(const glm::vec3& gravity);
+    [[nodiscard]] glm::vec3 gravity() const;
+
     // Sentinel for "no body".
     static constexpr std::uint32_t invalid_body = 0xFFFFFFFFU;
 

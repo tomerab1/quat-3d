@@ -7,7 +7,9 @@
 // their files into a scratch scene (cache-key population), and rebuilds the
 // hierarchy. Skinned meshes/animators are not yet serialized. The renderer's
 // settings (A8) travel in an optional, versioned "render_settings" block
-// (render_settings_json.hpp); files without it load with the defaults.
+// (render_settings_json.hpp); files without it load with the defaults. The
+// scene's physics settings (A10.1 gravity, physics_settings.hpp) are always
+// written as a versioned "physics_settings" block and read back the same way.
 
 #include <expected>
 #include <filesystem>

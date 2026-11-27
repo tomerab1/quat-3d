@@ -222,6 +222,7 @@ add_library(engine_scene STATIC
     src/scene/component_json.cpp
     src/scene/material_override.cpp
     src/scene/render_settings_json.cpp
+    src/scene/physics_settings.cpp
     src/scene/audio_system.cpp
     src/scene/primitives.cpp
     src/scene/primitive_resolve.cpp
