@@ -31,10 +31,22 @@ Decisions already made (do not re-litigate without the owner):
 
 ## Claimed by the live session (do not pick up)
 
-Nothing claimed right now. Cycle 1's eight worker branches (R9.1, A2/A3,
-A4, G1, S1 nav N1–N13, S1 net B1–B5/B15, S1 TAA/exposure A1/A2/A11/A14,
-S3.2, R10.1) are all merged into `claude/nifty-hopper-nb68qe` (PR #2) and
-await a green CI run there.
+Cycle 1's eight worker branches are merged into `claude/nifty-hopper-nb68qe`
+(PR #2) and await a green CI run there (run 8 on 473ec53).
+
+**Cycle 2** — eight worktree agents started from 473ec53; each pushes
+`feat/<id>`. Merges wait until PR #2 is merged, then go into a new cycle PR.
+
+| Item | Branch | Scope |
+|---|---|---|
+| S7.3 | `feat/s7-app-layer` | main.cpp → app layer (Application, FrameRenderer, EditorBridge, WorldRuntime, FlyCamera); fixes the ENGINE_EDITOR=OFF build. **Sole main.cpp restructurer** |
+| G2 | `feat/g2-bt-editor` | Behaviour-tree node editor on imgui-node-editor; JSON ↔ graph model |
+| A5 | `feat/a5-debug-tools` | `debug.*` remote methods (log ring, stats, pause/step/time scale, watch, raycast, nav path) + quat-mcp tools |
+| R9.2 | `feat/r9-scatter` | `InstancedMesh` + seeded `Scatter` on terrain |
+| R10.2 | `feat/r10-gpu-terrain` | Compute-shader heightmap synthesis, CPU reference kept |
+| R2 | `feat/r2-shader-reload` | Shader hot reload (watcher, slangc service, deferred pipeline swap) |
+| S1 batch 2 | `feat/s1-batch2` | B14, C5 joints, C11, C12, C14, C15, C16, A10, A15 |
+| S4/P1 | `feat/s4-platform-ci` | Windows + macOS CI jobs and portability fixes |
 
 ## Work in flight
 
