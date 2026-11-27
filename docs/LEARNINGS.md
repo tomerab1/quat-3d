@@ -297,3 +297,31 @@ G8 compiled every new `.cpp` with `check-compile.sh`, but `compress_clips`'s
 source was not in the target `engine_scene` links, so `game` failed to link
 in CI. **Rule:** before pushing, grep the CMake lists for every new `.cpp`;
 compile checks cover syntax, only a real configure + link covers targets.
+
+## Re-merging master into every open PR burned the Actions budget (factory)
+
+After each merge the orchestrator merged `master` into every other open PR,
+including ones without conflicts. Each push started a full Linux + Rust
+build, plus Windows and macOS once #24's jobs existed, and docs pushes ran
+the same build. On 2026-11-27, 107 runs used about 2,700 billed minutes. The
+private repo's Actions spending limit was hit at 15:52 UTC, after which
+GitHub refused every new job. **Rule:** merge `master` into a PR only when
+GitHub reports it unmergeable; `pull_request` CI already builds the PR merged
+with the current base. Docs-only changes skip CI (#57). When a check fails
+within seconds, read the check run's annotations before the logs: a billing
+refusal leaves no log at all (the log download returns 404).
+
+## A local trial merge said "clean" while GitHub said "conflict" (factory)
+
+`git merge-tree` run from the orchestrator's checkout applied that
+checkout's `.gitattributes` (`docs/LEARNINGS.md merge=union`). #24's branch
+had no such line and GitHub's mergeability check ignores it, so #24 showed
+clean locally and conflicting on GitHub. **Rule:** trust GitHub's
+`mergeable` flag, or trial-merge in a worktree on the PR's own branch.
+
+## Every PR needs a reviewer session, created when it leaves draft (factory)
+
+#20 sat ready for review with no Reviewer session, so nobody looked at it
+until the orchestrator noticed. **Rule:** marking a PR ready and creating
+its Reviewer session are one step; the orchestrator's status sweep checks
+that every non-draft PR has one.
