@@ -163,6 +163,9 @@ public:
     // The entity selected in the hierarchy (entt::null when none).
     [[nodiscard]] entt::entity selected() const { return selected_; }
     void set_selected(entt::entity entity) { selected_ = entity; }
+    // Brings the panel titled `title` to the front of its dock tab bar over
+    // the next few frames (startup state for headless captures).
+    void focus_panel(std::string title) { pending_focus_ = std::move(title); }
 
     // Frame flow: begin_frame() right after event processing, build_ui() once
     // the frame's numbers are known, end_frame() to obtain the draw data for
@@ -204,6 +207,8 @@ private:
     char scene_file_[160] = "scenes/editor.json"; // File menu path (project-relative)
 
     entt::entity selected_ = entt::null;
+    std::string  pending_focus_; // focus_panel()
+    int          focus_frames_ = 0;
 };
 
 } // namespace engine::editor

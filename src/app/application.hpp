@@ -51,6 +51,10 @@ struct AppConfig {
     std::optional<std::string> screenshot_path;
     // False with QUAT_NO_UI=1: no editor shell (deterministic headless renders).
     bool editor_ui = true;
+    // QUAT_WINDOW_SIZE=<w>x<h>: initial window size in screen coordinates
+    // (headless captures of the editor want more than the 1280x720 default).
+    int window_width = 1280;
+    int window_height = 720;
 };
 
 class Application {

@@ -517,6 +517,11 @@ void EditorLayer::build_ui(const EditorContext& ctx) {
     if (show_demo_) {
         ImGui::ShowDemoWindow(&show_demo_);
     }
+    // Docked windows exist after their first frame; keep asking for a few.
+    if (!pending_focus_.empty()) {
+        ImGui::SetWindowFocus(pending_focus_.c_str());
+        if (++focus_frames_ >= 3) pending_focus_.clear();
+    }
 }
 
 const ImDrawData* EditorLayer::end_frame() {

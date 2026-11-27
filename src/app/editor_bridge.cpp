@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <cstdlib>
 #include <utility>
 
 #include <glm/gtc/matrix_transform.hpp>
@@ -48,6 +49,14 @@ void EditorBridge::create(SDL_Window* window, bool enabled) {
             window, std::string(QUAT_PROJECT_ROOT) + "/assets/fonts/Roboto-Medium.ttf");
         e) {
         editor_ = std::move(*e);
+        // Startup editor state (headless captures, scripted demos):
+        // QUAT_EDITOR_SELECT=<entity name>, QUAT_EDITOR_FOCUS=<panel title>.
+        if (const char* sel = std::getenv("QUAT_EDITOR_SELECT"); sel != nullptr) {
+            startup_select_ = sel;
+        }
+        if (const char* focus = std::getenv("QUAT_EDITOR_FOCUS"); focus != nullptr) {
+            editor_.focus_panel(focus);
+        }
     } else {
         std::fprintf(stderr, "[warn] editor disabled: %s\n", e.error().message.c_str());
     }
@@ -95,6 +104,15 @@ bool EditorBridge::through_scene_camera() const {
 
 void EditorBridge::begin_frame() {
     editor_.begin_frame();
+    if (!startup_select_.empty()) {
+        const std::string name = std::exchange(startup_select_, {});
+        for (auto [e, n] : t_.scene->registry().view<const engine::scene::Name>().each()) {
+            if (n.value == name) {
+                editor_.set_selected(e);
+                break;
+            }
+        }
+    }
     apply_play_transition();
     apply_scene_file_requests();
     apply_instantiate_request();
