@@ -9,8 +9,9 @@ A JSON object keyed by component name. Updates merge: omitted fields keep their 
 - **`dir_light`**: `direction` [x,y,z] (the light's travel direction); `color` linear [r,g,b]; `intensity`. Prefer `environment_set` for the sun.
 - **camera**: `fov_deg` 1..179; `near`; `far` (> near); `active`.
 - **collider**: `shape` box|sphere|capsule; `half_extents` [x,y,z] (> 0); `offset` [x,y,z]; `sensor` (trigger volume, no collision response).
-- **rigidbody**: `motion` static|kinematic|dynamic; `mass` (kg). Pair with a collider.
-- **character**: `radius`; `half_height`; `speed` (m/s) — capsule character controller.
+- **rigidbody**: `motion` static|kinematic|dynamic; `mass` (kg); `friction` 0..10 (default 0.2); `restitution` 0..1 (bounciness); `gravity_factor` -10..10 (scales the scene gravity); `linear_damping` / `angular_damping` 0..100 (default 0.05). Pair with a collider.
+- **character**: `radius`; `half_height`; `speed` (m/s) — capsule character controller. Characters collide with each other and with bodies; drive one with `character_move`.
+- **joint**: a physics joint from this entity's rigid body to `target` (entity id or unique name; null = the world). `type` fixed|point|hinge|slider|distance; `anchor` [x,y,z] (pivot, this entity's local space); `axis` [x,y,z] (hinge / slider, local); `target_anchor` [x,y,z] (distance: the other end, in the target's local space or world space); `limits` [min,max] or null (hinge: degrees, min in [-180,0], max in [0,180]; slider: metres, min <= 0 <= max; distance: metres, 0 <= min <= max; none for fixed / point); `motor` null or {`mode` velocity|position, `target` (deg/s or deg for hinges, m/s or m for sliders), `max_force` (N·m / N, 0 = unlimited)} (hinge and slider only). Read-only `active` is true while the constraint exists (in play mode, once both bodies exist and one is dynamic). A fixed joint keeps the current relative pose; angles and positions count from the pose the joint is built in.
 - **nav_agent**: `target` [x,y,z]; `speed` (m/s); `ground_offset`; `active`. Needs a baked navmesh (`nav_bake`).
 - **behavior**: `source` (behaviour-tree JSON object or its text); `enabled`.
 - **patrol**: `points` [[x,y,z],...]; `loop`. Walked by the entity's `nav_agent`.

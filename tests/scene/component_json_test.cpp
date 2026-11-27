@@ -49,6 +49,8 @@ TEST_F(ComponentJson, RoundTripsEveryWritableComponent) {
         {"rigidbody", {{"motion", "kinematic"}, {"mass", 4}, {"friction", 0.6}, {"restitution", 0.4},
                        {"gravity_factor", -1}, {"linear_damping", 0.5}, {"angular_damping", 2}}},
         {"character", {{"radius", 0.35}, {"half_height", 0.7}, {"speed", 5}}},
+        {"joint", {{"type", "slider"}, {"axis", {1, 0, 0}}, {"limits", {-1, 2}},
+                   {"motor", {{"mode", "position"}, {"target", 0.5}, {"max_force", 100}}}}},
         {"nav_agent", {{"target", {4, 0, 4}}, {"speed", 2}, {"ground_offset", 0.5}, {"active", true},
                        {"paused", true}}},
         {"behavior", {{"source", R"({"type":"leaf","name":"wait"})"}, {"enabled", false}}},

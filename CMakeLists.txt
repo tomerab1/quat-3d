@@ -193,7 +193,8 @@ add_library(engine_physics STATIC
     src/physics/physics_queries.cpp
     src/physics/physics_events.cpp
     src/physics/physics_body_control.cpp
-    src/physics/physics_shape_queries.cpp)
+    src/physics/physics_shape_queries.cpp
+    src/physics/physics_joints.cpp)
 target_link_libraries(engine_physics PUBLIC engine_flags)
 target_link_libraries(engine_physics PRIVATE Jolt::Jolt)
 target_include_directories(engine_physics PUBLIC ${ENGINE_PUBLIC_INCLUDE})
@@ -214,6 +215,7 @@ add_library(engine_scene STATIC
     src/scene/components.cpp
     src/scene/scene.cpp
     src/scene/physics_system.cpp
+    src/scene/joint_system.cpp
     src/scene/nav_agent_system.cpp
     src/scene/navigation.cpp
     src/scene/behavior.cpp
@@ -221,6 +223,7 @@ add_library(engine_scene STATIC
     src/scene/bt_graph_edit.cpp
     src/scene/scene_io.cpp
     src/scene/component_json.cpp
+    src/scene/component_json_physics.cpp
     src/scene/material_override.cpp
     src/scene/render_settings_json.cpp
     src/scene/physics_settings.cpp

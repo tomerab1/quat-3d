@@ -241,6 +241,7 @@ void PhysicsWorld::remove_body(std::uint32_t body) {
     if (!impl_ || body == invalid_body) return;
     const auto it = impl_->bodies.find(body);
     if (it == impl_->bodies.end()) return; // never ours, or already removed
+    impl_->remove_joints_of(body); // constraints must not outlive their bodies
     const JPH::BodyID id(body);
     JPH::BodyInterface& bodies = impl_->system.GetBodyInterface();
     bodies.RemoveBody(id);

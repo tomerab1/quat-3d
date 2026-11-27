@@ -482,6 +482,60 @@ struct ComponentInspector<scene::RigidBody> {
 };
 
 template <>
+struct ComponentInspector<scene::Joint> {
+    static constexpr const char* title = "Joint";
+    static void draw(entt::registry& r, entt::entity, scene::Joint& joint) {
+        bool changed = false;
+        const char* types[] = {"fixed", "point", "hinge", "slider", "distance"};
+        int type = static_cast<int>(joint.type);
+        if (ImGui::Combo("type", &type, types, 5)) {
+            joint.type = static_cast<scene::JointType>(type);
+            joint.limits_enabled = false; // limits mean different things per type
+            joint.motor = scene::JointMotorMode::off;
+            changed = true;
+        }
+        const auto* target = joint.target != entt::null && r.valid(joint.target)
+                                 ? r.try_get<scene::Name>(joint.target)
+                                 : nullptr;
+        ImGui::Text("target: %s", joint.target == entt::null ? "(world)"
+                                  : target != nullptr        ? target->value.c_str()
+                                                             : "(unnamed entity)");
+        changed |= ImGui::DragFloat3("anchor", &joint.anchor.x, 0.01F);
+        const bool hinge = joint.type == scene::JointType::hinge;
+        const bool slider = joint.type == scene::JointType::slider;
+        if (hinge || slider) {
+            changed |= ImGui::DragFloat3("axis", &joint.axis.x, 0.01F, -1.0F, 1.0F);
+        }
+        if (joint.type == scene::JointType::distance) {
+            changed |= ImGui::DragFloat3("target anchor", &joint.target_anchor.x, 0.01F);
+        }
+        if (hinge || slider || joint.type == scene::JointType::distance) {
+            changed |= ImGui::Checkbox("limits", &joint.limits_enabled);
+            if (joint.limits_enabled) {
+                changed |= ImGui::DragFloat2(hinge ? "min / max (deg)" : "min / max (m)",
+                                             &joint.limits.x, hinge ? 0.5F : 0.01F);
+            }
+        }
+        if (hinge || slider) {
+            const char* modes[] = {"off", "velocity", "position"};
+            int mode = static_cast<int>(joint.motor);
+            if (ImGui::Combo("motor", &mode, modes, 3)) {
+                joint.motor = static_cast<scene::JointMotorMode>(mode);
+                changed = true;
+            }
+            if (joint.motor != scene::JointMotorMode::off) {
+                changed |= ImGui::DragFloat("motor target", &joint.motor_target, 0.1F);
+                changed |= ImGui::DragFloat("max force (0 = unlimited)", &joint.motor_max_force,
+                                            1.0F, 0.0F, 1.0e9F);
+            }
+        }
+        if (changed) joint.constraint = 0xFFFFFFFFU; // rebuilt from the edit next tick
+        ImGui::TextDisabled(joint.constraint == 0xFFFFFFFFU ? "constraint: not built (Play)"
+                                                            : "constraint: live");
+    }
+};
+
+template <>
 struct ComponentInspector<scene::AudioSource> {
     static constexpr const char* title = "Audio Source";
     static void draw(entt::registry&, entt::entity, scene::AudioSource& source) {
@@ -566,6 +620,7 @@ void draw_inspector(scene::Scene& scene, entt::entity selected) {
     inspect<scene::PatrolRoute>(r, selected, true);
     inspect<scene::Collider>(r, selected, true);
     inspect<scene::RigidBody>(r, selected, true);
+    inspect<scene::Joint>(r, selected, true);
     inspect<scene::AudioSource>(r, selected, true);
     inspect<scene::AudioListener>(r, selected, true);
 
@@ -576,6 +631,7 @@ void draw_inspector(scene::Scene& scene, entt::entity selected) {
     if (ImGui::BeginPopup("add_component")) {
         add_component_item<scene::Collider>(r, selected);
         add_component_item<scene::RigidBody>(r, selected);
+        add_component_item<scene::Joint>(r, selected);
         add_component_item<scene::Terrain>(r, selected);
         add_component_item<scene::Grass>(r, selected);
         add_component_item<scene::InstancedMesh>(r, selected);

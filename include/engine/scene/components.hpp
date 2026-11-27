@@ -237,6 +237,37 @@ struct RigidBody {
     float angular_damping = 0.05F;
 };
 
+// A physics joint (A10.1) between this entity's rigid body and `target`'s (or
+// the world when `target` is null). Authored in this entity's local space:
+// `anchor` is the pivot (a point on this body), `axis` the hinge / slider
+// axis; a distance joint's other end is `target_anchor` (in the target's
+// local space, or world space for the world). joint_system builds the Jolt
+// constraint when both bodies exist (at least one dynamic) and rebuilds it
+// whenever a body is rebuilt; `constraint` is its runtime handle.
+//   fixed     glues the bodies in their current relative pose
+//   point     ball-and-socket at the anchor
+//   hinge     rotation about `axis` through the anchor; limits in degrees
+//             within [-180, 0] / [0, 180]; motor: deg/s or a target angle
+//   slider    translation along `axis`; limits in metres (min <= 0 <= max);
+//             motor: m/s or a target position
+//   distance  keeps anchor and target_anchor apart: [min, max] metres when
+//             limited, else the distance they had when the joint was built
+enum class JointType : std::uint8_t { fixed, point, hinge, slider, distance };
+enum class JointMotorMode : std::uint8_t { off, velocity, position };
+struct Joint {
+    JointType      type = JointType::hinge;
+    entt::entity   target = entt::null;
+    glm::vec3      anchor{0.0F};
+    glm::vec3      target_anchor{0.0F};
+    glm::vec3      axis{0.0F, 1.0F, 0.0F};
+    bool           limits_enabled = false;
+    glm::vec2      limits{0.0F}; // [min, max]
+    JointMotorMode motor = JointMotorMode::off;
+    float          motor_target = 0.0F;    // velocity: deg/s or m/s; position: deg or m
+    float          motor_max_force = 0.0F; // N*m (hinge) or N (slider); 0 = unlimited
+    std::uint32_t  constraint = 0xFFFFFFFFU; // PhysicsWorld joint handle (runtime)
+};
+
 // A capsule character controller (predictive, no rigid body). `move` is the
 // desired horizontal direction (xz, magnitude <= 1) the controller reads each
 // tick; `velocity`/`on_ground`/`character` are system-managed.

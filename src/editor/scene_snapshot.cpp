@@ -101,6 +101,7 @@ entt::entity duplicate_entity(scene::Scene& scene, entt::entity source) {
 
     // Runtime state the copy must not share with its source.
     if (auto* rb = r.try_get<scene::RigidBody>(copy)) rb->body = scene::RigidBody{}.body;
+    if (auto* j = r.try_get<scene::Joint>(copy)) j->constraint = scene::Joint{}.constraint;
     if (auto* cc = r.try_get<scene::CharacterController>(copy)) {
         const scene::CharacterController fresh;
         cc->character = fresh.character;

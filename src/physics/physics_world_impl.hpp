@@ -42,6 +42,7 @@
 #include <Jolt/Physics/Collision/Shape/HeightFieldShape.h>
 #include <Jolt/Physics/Collision/Shape/MeshShape.h>
 #include <Jolt/Physics/Collision/Shape/SphereShape.h>
+#include <Jolt/Physics/Constraints/TwoBodyConstraint.h>
 #include <Jolt/Physics/PhysicsSettings.h>
 #include <Jolt/Physics/PhysicsSystem.h>
 #include <Jolt/RegisterTypes.h>
@@ -161,6 +162,18 @@ struct ForceRecord {
     float       remaining = 0.0F;
 };
 
+// A joint (Jolt constraint) and the bodies it holds. The local points let
+// joint_position() measure a distance joint (Jolt keeps them private).
+struct JointRecord {
+    JPH::Ref<JPH::TwoBodyConstraint> constraint;
+    PhysicsWorld::JointKind          kind = PhysicsWorld::JointKind::fixed;
+    std::uint32_t                    body_a = PhysicsWorld::invalid_body;
+    std::uint32_t                    body_b = PhysicsWorld::invalid_body; // invalid: the world
+    std::uint32_t                    owner = PhysicsWorld::no_owner;
+    JPH::Vec3                        local_a = JPH::Vec3::sZero(); // in body a's COM space
+    JPH::Vec3                        local_b = JPH::Vec3::sZero(); // body b's, or world space
+};
+
 struct CharacterRecord {
     JPH::Ref<JPH::CharacterVirtual> character;
     std::uint32_t                   owner = PhysicsWorld::no_owner;
@@ -214,6 +227,20 @@ struct PhysicsWorld::Impl {
     std::uint64_t                             steps = 0;
     float                                     accumulator = 0.0F;
     std::vector<detail::ForceRecord>          forces; // timed forces / torques
+    // Declared after `system`: constraints go before the bodies they hold.
+    detail::SlotMap<detail::JointRecord>      joints;
+
+    // Removes every joint attached to `body` (before the body is destroyed).
+    void remove_joints_of(std::uint32_t body) {
+        std::vector<std::uint32_t> doomed;
+        joints.for_each([&](std::uint32_t id, const detail::JointRecord& j) {
+            if (j.body_a == body || j.body_b == body) doomed.push_back(id);
+        });
+        for (const std::uint32_t id : doomed) {
+            system.RemoveConstraint(joints.get(id)->constraint);
+            joints.erase(id);
+        }
+    }
 
     // Applies the timed forces for one step of `dt` and retires expired ones
     // (and those of removed or no longer dynamic bodies).

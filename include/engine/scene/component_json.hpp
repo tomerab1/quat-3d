@@ -18,7 +18,7 @@
 //                    scatter generates them; instance_count is read-only)
 //   scatter          seeded procedural placement of the instanced mesh
 //   point_light, dir_light, camera
-//   collider, rigidbody, character
+//   collider, rigidbody, character, joint (component_json_physics.cpp)
 //   nav_agent, behavior, patrol
 //   terrain
 //   grass            GPU grass around the camera (density, blades, colours, wind, limits, LOD)

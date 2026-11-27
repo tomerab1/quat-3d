@@ -265,6 +265,39 @@ public:
     // Wakes a body up, or puts it to sleep.
     void set_awake(std::uint32_t body, bool awake);
 
+    // ---- Joints (A10.1; Jolt two-body constraints) -----------------------------
+    // Geometry is given in world space at creation. body_b invalid_body joins
+    // body_a to the world. Removing either body removes its joints (the
+    // handle goes stale: has_joint() turns false).
+    enum class JointKind : std::uint8_t { fixed, point, hinge, slider, distance };
+    enum class MotorMode : std::uint8_t { off, velocity, position };
+    struct JointParams {
+        JointKind     kind = JointKind::hinge;
+        std::uint32_t body_a = invalid_body;
+        std::uint32_t body_b = invalid_body;
+        glm::vec3     point_a{0.0F};  // the pivot / anchor on body a
+        glm::vec3     point_b{0.0F};  // distance: the other end (others use point_a)
+        glm::vec3     axis{0.0F, 1.0F, 0.0F}; // hinge / slider, normalized
+        bool          limited = false;
+        float         limit_min = 0.0F; // hinge: radians in [-pi, 0]; slider: metres <= 0;
+        float         limit_max = 0.0F; // distance: metres >= 0
+        MotorMode     motor = MotorMode::off;
+        float         motor_target = 0.0F;    // rad/s, rad, m/s or m
+        float         motor_max_force = 0.0F; // N*m / N; 0 = unlimited
+        std::uint32_t owner = no_owner;
+    };
+    // invalid_body when a body is unknown, the bodies are the same, or
+    // neither is dynamic.
+    [[nodiscard]] std::uint32_t add_joint(const JointParams& params);
+    void remove_joint(std::uint32_t joint);
+    [[nodiscard]] bool has_joint(std::uint32_t joint) const;
+    // (joint, owner) for every live joint created with an owner.
+    [[nodiscard]] std::vector<OwnedBody> owned_joints() const;
+    [[nodiscard]] std::uint32_t joint_count() const;
+    // Hinge: angle (radians) from the pose it was built in; slider: position
+    // along the axis (m); distance: current distance (m). nullopt otherwise.
+    [[nodiscard]] std::optional<float> joint_position(std::uint32_t joint) const;
+
     // ---- Queries (debugging, gameplay) -------------------------------------
     // Bodies in the simulation (all kinds, terrain included; not the
     // characters' inner bodies) and how many of them are awake (active rigid

@@ -318,6 +318,36 @@ TEST_F(BodyCommands, QueryParametersAreValidated) {
         rpc_code::unavailable);
 }
 
+// ---- joints through the component codec ----------------------------------------
+
+TEST_F(BodyCommands, JointsAreAuthoredThroughSceneCommands) {
+    crate("Lid");
+    const Json box = spawn("Box", {{"transform", {{"position", {0, 4, 0}}}},
+                                   {"collider", {{"shape", "box"}}},
+                                   {"rigidbody", {{"motion", "static"}}}});
+    ok("scene.update", {{"entity", "Lid"},
+                        {"components",
+                         {{"joint", {{"type", "hinge"},
+                                     {"target", "Box"},
+                                     {"anchor", {0, -0.5, 0}},
+                                     {"axis", {1, 0, 0}},
+                                     {"limits", {-110, 0}}}}}}});
+    simulate(1);
+    EXPECT_EQ(physics->joint_count(), 1U);
+    const Json j = ok("scene.get", {{"entity", "Lid"}})["components"]["joint"];
+    EXPECT_EQ(j["target"], box);
+    EXPECT_TRUE(j["active"].get<bool>());
+    // Bad joints are refused atomically with the codec's precise error.
+    EXPECT_NE(err("scene.update",
+                  {{"entity", "Lid"}, {"components", {{"joint", {{"limits", {10, 20}}}}}}},
+                  rpc_code::invalid_params)
+                  .find("joint.limits"),
+              std::string::npos);
+    ok("scene.remove_components", {{"entity", "Lid"}, {"components", {"joint"}}});
+    simulate(1);
+    EXPECT_EQ(physics->joint_count(), 0U);
+}
+
 // ---- gravity ----------------------------------------------------------------
 
 TEST_F(PhysicsCommands, GravityIsASceneSettingEditableWithoutPlaying) {

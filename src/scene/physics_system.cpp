@@ -118,6 +118,9 @@ void physics_system(entt::registry& registry, physics::PhysicsWorld& world, floa
         if (rb.body == invalid) world.release_shape(params.shape);
     }
 
+    // 1b. Joints between the (possibly just rebuilt) bodies.
+    joint_system(registry, world);
+
     // 2. Push kinematic bodies' transforms into the simulation.
     for (auto [e, rb, col, t] : registry.view<RigidBody, Collider, Transform>().each()) {
         if (rb.motion == BodyMotion::kinematic && rb.body != invalid) {
