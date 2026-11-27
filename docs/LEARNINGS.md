@@ -225,3 +225,12 @@ A STATUS-only commit pushed to the cycle branch while its CI was queued moved
 PR #3's merge gate to the new head. **Rule:** while a cycle PR waits on CI,
 keep docs edits local and push them together with the next code change or
 right after the merge.
+
+## A temporary worktree moved another worktree's branch (factory)
+
+To merge the base into a worker's PR branch, a scratch worktree ran
+`git checkout -B feat/issues-4-5`; that branch was still checked out in the
+finished worker's worktree, whose files then no longer matched its HEAD.
+**Rule:** in scratch worktrees use a unique local branch name and push with
+`git push origin HEAD:feat/<id>`; never create or reset a local branch that
+another worktree has checked out (`git worktree list` shows them).
