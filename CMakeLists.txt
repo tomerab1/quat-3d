@@ -134,7 +134,8 @@ add_library(engine_rhi STATIC
     src/rhi/descriptor_buffer.cpp
     src/rhi/render_graph.cpp
     src/rhi/graphics_pipeline.cpp
-    src/rhi/compute_pipeline.cpp)
+    src/rhi/compute_pipeline.cpp
+    src/rhi/shader_compiler.cpp)
 target_link_libraries(engine_rhi PUBLIC
     engine_flags engine_core Vulkan::Vulkan GPUOpen::VulkanMemoryAllocator)
 # nlohmann_json is an implementation detail of the reflection parser (PRIVATE).
@@ -421,3 +422,5 @@ add_subdirectory(tests)
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/CompileShaders.cmake)
 add_shader_compilation(shaders)
 add_dependencies(game shaders)
+# Shader hot reload (R2) runs the same slangc the build cooks with.
+target_compile_definitions(engine_rhi PRIVATE QUAT_SLANGC_PATH="${SLANGC_EXECUTABLE}")
