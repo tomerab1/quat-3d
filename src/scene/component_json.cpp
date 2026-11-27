@@ -23,6 +23,8 @@
 #include "engine/scene/components.hpp"
 #include "engine/scene/material_override.hpp"
 
+#include "component_json_animation.hpp"
+
 namespace engine::scene {
 
 namespace {
@@ -52,7 +54,8 @@ constexpr std::array k_components = {
     ComponentInfo{"net_replicated", "Replicate this entity's transform to network clients", true, true},
     ComponentInfo{"audio_source", "Sound emitter: wav/flac/mp3 clip on a bus, optionally 3D", true, true},
     ComponentInfo{"audio_listener", "The audio listener follows this entity (else the camera)", true, true},
-    ComponentInfo{"animator", "Animation playback of a glTF clip (time, speed, looping)", false, true},
+    ComponentInfo{"animator", "Animation playback of a glTF clip: clip switching (inertialized or crossfaded), time, speed, looping", false, true},
+    ComponentInfo{"foot_ik", "Foot placement on uneven ground for an animated character (leg IK + pelvis)", true, true},
     ComponentInfo{"mesh", "glTF mesh provenance (read-only)", false, false},
 };
 
@@ -618,9 +621,8 @@ json encode_components(const entt::registry& r, entt::entity e, const EncodeOpti
     if (const auto* l = pick.get<AudioListener>("audio_listener")) {
         out["audio_listener"] = {{"active", l->active}};
     }
-    if (const auto* a = pick.get<Animator>("animator")) {
-        out["animator"] = {{"time", a->time}, {"speed", a->speed}, {"looping", a->looping}};
-    }
+    if (const auto* a = pick.get<Animator>("animator")) out["animator"] = detail::encode_animator(*a);
+    if (const auto* k = pick.get<FootIK>("foot_ik")) out["foot_ik"] = detail::encode_foot_ik(*k);
     if (options.include_read_only) {
         if (const auto* m = pick.get<MeshSource>("mesh")) {
             out["mesh"] = {{"mesh_key", m->mesh_key},
@@ -660,6 +662,7 @@ std::vector<std::string_view> component_names(const entt::registry& r, entt::ent
     add(r.all_of<AudioSource>(e), "audio_source");
     add(r.all_of<AudioListener>(e), "audio_listener");
     add(r.all_of<Animator>(e), "animator");
+    add(r.all_of<FootIK>(e), "foot_ik");
     add(include_read_only && r.all_of<MeshSource>(e), "mesh");
     return out;
 }
@@ -931,11 +934,9 @@ std::expected<void, core::Error> apply_component(entt::registry& r, entt::entity
             return std::unexpected(core::Error{
                 "animator: the entity has no animation (animators come from glTF files)"});
         }
-        return merge<Animator>(r, e, v, name, strict, [](JsonFields& f, Animator& a) {
-            f.number("time", a.time, 0.0F).number("speed", a.speed, -100.0F, 100.0F);
-            f.boolean("looping", a.looping);
-        });
+        return merge<Animator>(r, e, v, name, strict, detail::decode_animator);
     }
+    if (name == "foot_ik") return merge<FootIK>(r, e, v, name, strict, detail::decode_foot_ik);
     return std::unexpected(core::Error{"component '" + std::string(name) + "' has no decoder"});
 }
 
@@ -974,6 +975,7 @@ bool remove_component(entt::registry& r, entt::entity e, std::string_view name) 
     if (name == "audio_source") return r.remove<AudioSource>(e) > 0;
     if (name == "audio_listener") return r.remove<AudioListener>(e) > 0;
     if (name == "animator") return r.remove<Animator>(e) > 0;
+    if (name == "foot_ik") return r.remove<FootIK>(e) > 0;
     return false; // transform (not removable) or unknown
 }
 

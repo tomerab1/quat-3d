@@ -157,7 +157,11 @@ radius),
 `audio_source` (`clip`, `bus`: master/music/sfx/ui/ambience, `volume`,
 `pitch`, `loop`, `play_on_start`, `spatial`, `min_distance`, `max_distance`,
 `rolloff`, `doppler`, plus write-only `command`: play/stop/pause/resume),
-`audio_listener` (`active`), `animator` (edit only), `mesh` (read only). Updates merge: omitted fields keep their
+`audio_listener` (`active`), `animator` (edit only: `clip` switches by name
+among read-only `clips`, `blend` inertialize/crossfade, `blend_time`, `time`,
+`speed`, `looping`), `foot_ik` (`enabled`, `pelvis` / `left_foot` /
+`right_foot` joint names, empty = auto, `ray_up`, `ray_down`, `max_adjust`,
+`max_foot_angle`, `smoothing`), `mesh` (read only). Updates merge: omitted fields keep their
 values. Unknown fields are errors (they name the known fields).
 
 | Method | Params | Result |
