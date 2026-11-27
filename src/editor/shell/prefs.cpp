@@ -8,6 +8,8 @@
 #include <filesystem>
 #include <system_error>
 
+#include "engine/core/utf8_path.hpp"
+
 namespace engine::editor::shell {
 
 namespace {
@@ -54,7 +56,9 @@ const char* scene_path_problem(std::string_view path) {
     if (path.empty()) return "Enter a file name";
     if (path.size() > k_max_path_bytes) return "The path is too long";
     if (path.find('\0') != std::string_view::npos) return "The path contains a NUL byte";
-    const std::filesystem::path p(std::u8string(path.begin(), path.end()));
+    // Checked before building a path: on Windows the conversion throws on it.
+    if (!core::is_valid_utf8(path)) return "The path is not valid UTF-8";
+    const std::filesystem::path p = core::path_from_utf8(path);
     if (p.is_absolute() || p.has_root_name() || p.has_root_directory()) {
         return "Use a path relative to the project root";
     }
@@ -63,6 +67,10 @@ const char* scene_path_problem(std::string_view path) {
     }
     if (p.extension() != ".json") return "Scene files end in .json";
     return nullptr;
+}
+
+bool theme_to_save(const ThemePreference& t, bool showing_light) {
+    return t.forced ? t.saved_light : showing_light;
 }
 
 void push_recent(std::vector<std::string>& recents, std::string path, std::size_t cap) {
