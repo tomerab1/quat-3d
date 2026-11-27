@@ -833,6 +833,7 @@ int main() {
     remote_targets.terrain_anchor = &terrain_anchor;
     remote_targets.navmesh = &navmesh;
     remote_targets.spin_entity = &spin_entity;
+    remote_targets.shader_reload = shader_reload.get(); // A6: shader.create / update compile
     remote_targets.demo_physics = &physics_world;
 #ifdef ENGINE_EDITOR
     remote_targets.play_physics = &play_physics;

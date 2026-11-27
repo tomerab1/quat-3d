@@ -5,8 +5,9 @@
 // build the world: scene.*, environment.*, world.ground_height, camera.*,
 // render.screenshot, asset.*, sim.*, scene.save/load, nav.bake — and the
 // debugging commands (ROADMAP A5): debug.log, debug.stats, debug.pause /
-// resume / step / time_scale, debug.watch, debug.raycast, debug.nav_path. The
-// method contract is docs/remote-control.md.
+// resume / step / time_scale, debug.watch, debug.raycast, debug.nav_path —
+// and material shader authoring (ROADMAP A6): shader.list / get / template /
+// create / update / delete. The method contract is docs/remote-control.md.
 //
 // Scene editing works on any Scene. Everything that only the running
 // application has — the view camera, clouds, terrain heights, glTF uploads,
@@ -42,6 +43,9 @@ class NavMesh;
 }
 namespace engine::physics {
 class PhysicsWorld;
+}
+namespace engine::rhi {
+class MaterialShaderRegistry;
 }
 namespace engine::scene {
 class Scene;
@@ -128,6 +132,12 @@ struct WorldServices {
 
     // The current navmesh, or null / invalid when none is baked.
     std::function<const nav::NavMesh*()> navmesh;
+
+    // ---- Material shaders (ROADMAP A6) -------------------------------------------
+
+    // Authored material shaders (non-owning; its poll() must run every frame
+    // so shader.create / update replies go out). Null: shader.* unavailable.
+    rhi::MaterialShaderRegistry* material_shaders = nullptr;
 };
 
 // Registers every world command on `server`. `scene` must outlive the server's

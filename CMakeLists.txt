@@ -141,7 +141,9 @@ add_library(engine_rhi STATIC
     src/rhi/graphics_pipeline.cpp
     src/rhi/compute_pipeline.cpp
     src/rhi/shader_compiler.cpp
-    src/rhi/shader_hot_reload.cpp)
+    src/rhi/shader_diagnostics.cpp
+    src/rhi/shader_hot_reload.cpp
+    src/rhi/material_shader_registry.cpp)
 target_link_libraries(engine_rhi PUBLIC
     engine_flags engine_core Vulkan::Vulkan GPUOpen::VulkanMemoryAllocator)
 # engine_core is public: shader hot reload's headers use its watcher/process
@@ -323,6 +325,7 @@ add_library(engine_remote_world STATIC
     src/remote/world/app_commands.cpp
     src/remote/world/debug_commands.cpp
     src/remote/world/debug_query_commands.cpp
+    src/remote/world/shader_commands.cpp
     src/remote/world/image_encode.cpp
     src/remote/world/stb_image_write_impl.cpp)
 target_link_libraries(engine_remote_world PUBLIC
@@ -341,6 +344,8 @@ add_library(engine_renderer STATIC
     src/renderer/draw_batching.cpp
     src/renderer/instance_buffer.cpp
     src/renderer/mesh_pass.cpp
+    src/renderer/mesh_pass_self_tests.cpp
+    src/renderer/material_pipelines.cpp
     src/renderer/lighting_pass.cpp
     src/renderer/light_clusters.cpp
     src/renderer/light_cull_pass.cpp
@@ -386,6 +391,7 @@ if(ENGINE_EDITOR)
         src/editor/physics_debug.cpp
         src/editor/scene_snapshot.cpp
         src/editor/audio_inspector.cpp
+        src/editor/material_inspector.cpp
         src/editor/bt_graph.cpp
         src/editor/behavior_panel.cpp
         src/editor/behavior_canvas.cpp

@@ -14,6 +14,7 @@
 
 #include "audio_inspector.hpp"
 #include "behavior_panel.hpp"
+#include "material_inspector.hpp"
 #include "engine/editor/editor.hpp"
 #include "engine/scene/behavior.hpp"
 #include "engine/scene/components.hpp"
@@ -124,6 +125,14 @@ struct ComponentInspector<scene::Terrain> {
 };
 
 template <>
+struct ComponentInspector<scene::Primitive> {
+    static constexpr const char* title = "Primitive";
+    static void draw(entt::registry&, entt::entity, scene::Primitive& primitive) {
+        draw_primitive_fields(primitive); // resolve_primitives rebuilds on change
+    }
+};
+
+template <>
 struct ComponentInspector<scene::InstancedMesh> {
     static constexpr const char* title = "Instanced Mesh";
     static void draw(entt::registry& r, entt::entity e, scene::InstancedMesh& mesh) {
@@ -145,16 +154,7 @@ struct ComponentInspector<scene::InstancedMesh> {
             }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Only this node's subtree (empty = all)");
         } else {
-            scene::Primitive& p = mesh.primitive;
-            const char* shapes[] = {"cube", "sphere", "plane", "cylinder", "cone", "capsule"};
-            int shape = static_cast<int>(p.shape);
-            if (ImGui::Combo("shape", &shape, shapes, 6)) {
-                p.shape = static_cast<scene::PrimitiveShape>(shape);
-            }
-            ImGui::ColorEdit4("color", &p.color.x);
-            ImGui::SliderFloat("metallic", &p.metallic, 0.0F, 1.0F);
-            ImGui::SliderFloat("roughness", &p.roughness, 0.0F, 1.0F);
-            ImGui::ColorEdit3("emissive", &p.emissive.x, ImGuiColorEditFlags_HDR);
+            draw_primitive_fields(mesh.primitive);
         }
         ImGui::Checkbox("cast shadows", &mesh.cast_shadows);
 
@@ -517,6 +517,7 @@ void draw_inspector(scene::Scene& scene, entt::entity selected) {
     ImGui::Separator();
     inspect<scene::Name>(r, selected);
     inspect<scene::Transform>(r, selected);
+    inspect<scene::Primitive>(r, selected);
     inspect<scene::MeshRenderer>(r, selected);
     inspect<scene::DirectionalLight>(r, selected, true);
     inspect<scene::PointLight>(r, selected, true);

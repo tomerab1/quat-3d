@@ -78,7 +78,7 @@ TEST(GpuShaderReload, RebuiltComputePipelineRunsTheEditedShader) {
     const fs::path source = src / "value.slang";
     write_file(source, compute_source(1));
 
-    auto compiler = rhi::ShaderCompiler::create({{}, src, {}, out});
+    auto compiler = rhi::ShaderCompiler::create({{}, src, {}, out, {}});
     ASSERT_OK(compiler);
     const rhi::ShaderCompileResult first = compiler->compile(source);
     ASSERT_TRUE(first.ok) << first.diagnostics;
@@ -193,7 +193,7 @@ TEST(GpuShaderReload, RetiresReplacedPipelinesAfterFramesInFlight) {
     const fs::path out = root.path() / "cooked";
     fs::create_directories(src);
     write_file(src / "value.slang", compute_source(1));
-    auto compiler = rhi::ShaderCompiler::create({{}, src, {}, out});
+    auto compiler = rhi::ShaderCompiler::create({{}, src, {}, out, {}});
     ASSERT_OK(compiler);
     ASSERT_TRUE(compiler->compile(src / "value.slang").ok);
 

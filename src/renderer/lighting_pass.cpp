@@ -50,9 +50,10 @@ constexpr std::uint32_t kClusterBinding = 15;
 // Lighting descriptor set 0: GBuffer albedo/normal/material/depth as sampled
 // images (read via Load — no sampler), the HDR output as a storage image, then
 // the shadow map (sampled) + its sampler, the IBL maps, the clearcoat target,
-// the atmosphere LUTs and the clustered lights at 15..18. Binding 7 (the old
-// flat point-light list) is unused. Matches lighting.slang.
-[[nodiscard]] std::array<rhi::DescriptorBinding, 18> lighting_bindings() {
+// the atmosphere LUTs, the clustered lights at 15..18 and the GBuffer emission
+// at 19. Binding 7 (the old flat point-light list) is unused. Matches
+// lighting.slang.
+[[nodiscard]] std::array<rhi::DescriptorBinding, 19> lighting_bindings() {
     using rhi::DescriptorBinding;
     const auto clusters = clustered_light_bindings(kClusterBinding, kComputeStage);
     return {{
@@ -71,6 +72,7 @@ constexpr std::uint32_t kClusterBinding = 15;
         {0, 13, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, kComputeStage}, // atmosphere sky-view
         {0, 14, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, kComputeStage}, // atmosphere transmittance
         clusters[0], clusters[1], clusters[2], clusters[3],
+        {0, 19, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, kComputeStage}, // GBuffer emission
     }};
 }
 
@@ -166,6 +168,7 @@ LightingPass::add_to_graph(rhi::RenderGraph& graph, const GBufferTargets& gbuffe
         .reads(gbuffer.normal, rhi::ResourceUsage::sampled_compute)
         .reads(gbuffer.material, rhi::ResourceUsage::sampled_compute)
         .reads(gbuffer.clearcoat, rhi::ResourceUsage::sampled_compute)
+        .reads(gbuffer.emissive, rhi::ResourceUsage::sampled_compute)
         .reads(gbuffer.depth, rhi::ResourceUsage::sampled_compute)
         .writes(hdr, rhi::ResourceUsage::storage_write);
     if (has_shadow) {
@@ -204,6 +207,7 @@ LightingPass::add_to_graph(rhi::RenderGraph& graph, const GBufferTargets& gbuffe
         frame_descriptor_.write_sampled_image(
             14, transmittance_view != VK_NULL_HANDLE ? transmittance_view : maps.brdf_lut, ro);
         write_clustered_light_descriptors(frame_descriptor_, kClusterBinding, cluster_buffers);
+        frame_descriptor_.write_sampled_image(19, ctx.resolve(gbuffer.emissive).view, ro);
 
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline_.handle());
         frame_descriptor_.bind(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline_.layout(), 0);

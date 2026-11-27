@@ -26,6 +26,9 @@ struct ShaderStatus {
     std::string   message;
     std::uint32_t reloads = 0;   // successful recompiles this session
     std::uint32_t pipelines = 0; // pipelines rebuilt by the last successful reload
+    // Finished compile attempts (success or failure) this session: a tool
+    // that requested a recompile waits for this to advance (A6).
+    std::uint32_t attempts = 0;
 };
 
 [[nodiscard]] constexpr std::string_view to_string(ShaderStatus::State state) {

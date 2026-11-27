@@ -87,7 +87,8 @@ struct ShaderHotReload::Impl {
 
     Impl(PipelineCache& c, Config cfg, ShaderCompiler comp, core::FileWatcher w)
         : cache(c), config(std::move(cfg)), compiler(std::move(comp)),
-          graph(compiler.config().source_dir, compiler.config().module_dir),
+          graph(compiler.config().source_dir, compiler.config().module_dir,
+                compiler.config().material_dir),
           watcher(std::move(w)) {}
 
     ~Impl() {
@@ -215,6 +216,7 @@ struct ShaderHotReload::Impl {
 
     void apply(const ShaderCompileResult& r) {
         ShaderStatus& status = status_for(r.source);
+        ++status.attempts;
         const std::string diagnostics = trimmed(r.diagnostics);
         if (!r.ok) {
             status.state = ShaderStatus::State::error;
@@ -232,27 +234,32 @@ struct ShaderHotReload::Impl {
             return;
         }
 
-        // Pass shader: outputs[0] is the installed .spv.
-        const std::string spv = r.outputs.empty() ? std::string{} : r.outputs.front().string();
-        auto report = cache.reload(spv);
-        if (!report) {
-            status.state = ShaderStatus::State::error;
-            status.message = "compiled, but loading the new SPIR-V failed: " +
-                             report.error().message;
-        } else if (!report->errors.empty()) {
-            status.state = ShaderStatus::State::error;
-            status.pipelines = static_cast<std::uint32_t>(report->rebuilt);
-            status.message = "compiled, but kept the previous pipeline:";
-            for (const std::string& e : report->errors) status.message += "\n" + e;
-        } else {
+        // Pass or material shader: reload every installed program (.spv).
+        std::size_t rebuilt = 0;
+        std::vector<std::string> errors;
+        for (const fs::path& out : r.outputs) {
+            if (out.extension() != ".spv") continue;
+            auto report = cache.reload(out.string());
+            if (!report) {
+                errors.push_back("compiled, but loading the new SPIR-V failed: " +
+                                 report.error().message);
+                continue;
+            }
+            rebuilt += report->rebuilt;
+            for (const std::string& e : report->errors) errors.push_back(e);
+        }
+        status.pipelines = static_cast<std::uint32_t>(rebuilt);
+        if (errors.empty()) {
             status.state = ShaderStatus::State::ok;
-            status.pipelines = static_cast<std::uint32_t>(report->rebuilt);
             status.message = diagnostics;
             ++status.reloads;
             std::fprintf(stderr, "[shader] %s: reloaded (%u pipeline%s)\n", status.name.c_str(),
                          status.pipelines, status.pipelines == 1 ? "" : "s");
             return;
         }
+        status.state = ShaderStatus::State::error;
+        status.message = "compiled, but kept the previous pipeline:";
+        for (const std::string& e : errors) status.message += "\n" + e;
         if (!diagnostics.empty()) status.message += "\n" + diagnostics;
         std::fprintf(stderr, "[shader] %s: %s\n", status.name.c_str(), status.message.c_str());
     }
@@ -272,8 +279,8 @@ bool ShaderHotReload::enabled_by_environment() {
 
 std::expected<std::unique_ptr<ShaderHotReload>, core::Error>
 ShaderHotReload::create(PipelineCache& cache, Config config) {
-    auto compiler = ShaderCompiler::create(
-        {config.slangc, config.source_dir, config.module_dir, config.output_dir});
+    auto compiler = ShaderCompiler::create({config.slangc, config.source_dir, config.module_dir,
+                                            config.output_dir, config.material_dir});
     if (!compiler) return std::unexpected(compiler.error());
 
     core::FileWatcher::Options watch;
@@ -281,6 +288,12 @@ ShaderHotReload::create(PipelineCache& cache, Config config) {
     std::error_code ec;
     if (fs::is_directory(compiler->config().module_dir, ec)) {
         watch.directories.push_back(compiler->config().module_dir);
+    }
+    // Material shaders (A6): created on demand so materials authored at
+    // runtime are watched from the start.
+    fs::create_directories(compiler->config().material_dir, ec);
+    if (fs::is_directory(compiler->config().material_dir, ec)) {
+        watch.directories.push_back(compiler->config().material_dir);
     }
     watch.extensions = {".slang"};
     watch.backend = config.watch_backend;
@@ -335,15 +348,38 @@ void ShaderHotReload::update(std::uint64_t frame_number) {
     impl_->collect_results();
 }
 
-void ShaderHotReload::request_recompile(const fs::path& source) {
+bool ShaderHotReload::request_recompile(const fs::path& source) {
     const fs::path key = source.lexically_normal();
-    const std::vector<fs::path> known = impl_->graph.sources();
-    if (std::find(known.begin(), known.end(), key) == known.end()) return;
+    if (!impl_->graph.contains(key)) {
+        const ShaderCompilerConfig& c = impl_->compiler.config();
+        const fs::path dir = key.parent_path();
+        std::error_code ec;
+        const bool watched = dir == c.source_dir || dir == c.module_dir || dir == c.material_dir;
+        if (!watched || key.extension() != ".slang" || !fs::is_regular_file(key, ec)) {
+            return false;
+        }
+        impl_->graph.update_file(key);
+        impl_->status_for(key);
+    }
     // Back-date so the next update() dispatches it without waiting to settle.
     impl_->pending[key] = Clock::now() - impl_->config.debounce;
+    return true;
 }
 
 const std::vector<ShaderStatus>& ShaderHotReload::statuses() const { return impl_->statuses; }
+
+const ShaderStatus* ShaderHotReload::status_of(const fs::path& source) const {
+    const std::string name = impl_->display_name(source.lexically_normal());
+    const auto it = std::lower_bound(impl_->statuses.begin(), impl_->statuses.end(), name,
+                                     [](const ShaderStatus& s, const std::string& n) {
+                                         return s.name < n;
+                                     });
+    return it != impl_->statuses.end() && it->name == name ? &*it : nullptr;
+}
+
+const ShaderCompilerConfig& ShaderHotReload::compiler_config() const {
+    return impl_->compiler.config();
+}
 
 std::size_t ShaderHotReload::error_count() const {
     return static_cast<std::size_t>(

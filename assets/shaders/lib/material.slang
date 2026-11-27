@@ -1,11 +1,15 @@
 // material.slang — material model interface + glTF metallic-roughness PBR
-// (Phase 3, Slice 3.4).
+// (Phase 3, Slice 3.4; IMaterial reshaped for authored material shaders, A6).
 //
 // Per CLAUDE.md, material variation is expressed with a Slang `interface` and
-// `struct`s implementing it — never #ifdef soup. The GBuffer pass (Phase 3.5) is
-// written against IMaterial; PbrMaterial is the first implementation. Which
-// optional textures are bound is data-driven via the `flags` bitfield, so a
-// single specialized shader covers every material permutation.
+// `struct`s implementing it — never #ifdef soup. The GBuffer pass is written
+// against IMaterial (lib/gbuffer_common.slang): StandardMaterial is the
+// built-in implementation, and every material shader under
+// assets/shaders/materials/ is another one, linked into the pass at compile
+// time (lib/material_pass_gbuffer.slang). PbrMaterial is the bound parameter
+// block (constants + glTF textures); which optional textures it samples is
+// data-driven via the `flags` bitfield, so one specialized shader covers every
+// texture permutation.
 //
 // This file has no entry point: it is a module, imported by passes via
 // `import material;` and validated at build time into a .slang-module.
@@ -28,7 +32,7 @@ public static const uint MATERIAL_SLOT_OCCLUSION          = 4;
 public static const uint MATERIAL_SLOT_THICKNESS          = 5;
 
 // Scalar material parameters. Layout mirrors engine::asset::PbrMaterialParams
-// (std140, 240 bytes) exactly — keep the two definitions in sync.
+// (std140, 272 bytes) exactly — keep the two definitions in sync.
 public struct PbrMaterialParams {
     public float4 base_color_factor;
     public float4 emissive_factor;     // xyz used; w is padding
@@ -53,6 +57,9 @@ public struct PbrMaterialParams {
     // per float4 (slot 2k -> xy, slot 2k+1 -> zw). Identity when absent.
     public float4 uv_mat[6];
     public float4 uv_offset[3];
+    // Free parameters for material shaders (Primitive::shader_params); the
+    // built-in material ignores them.
+    public float4 shader_params[2];
 }
 
 // Applies the KHR_texture_transform of `slot` to `uv`.
@@ -76,14 +83,35 @@ public struct SurfaceSample {
     public float  clearcoat_roughness; // perceptual coat roughness
 }
 
-public interface IMaterial {
-    SurfaceSample evaluate(float2 uv);
+// Everything a material sees at one shading point.
+public struct MaterialInput {
+    public float2 uv;        // TEXCOORD0 as authored (no texture transform)
+    public float3 world_pos; // world-space position
+    public float3 normal;    // interpolated world-space vertex normal (unit)
+    public float3 view_dir;  // unit vector from the surface toward the camera
+    public float  time;      // seconds on the renderer's material clock
+    public PbrMaterialParams params; // the entity's material, incl. shader_params
+    // The built-in glTF PBR result here (textures applied). Start from it and
+    // change what the material is about; unused parts are compiled out.
+    public SurfaceSample standard;
 }
 
-// glTF metallic-roughness PBR. Parameters live in a constant buffer; the five
-// optional glTF textures share one sampler. Absent textures are skipped via
-// `flags`, so unbound descriptors are never sampled.
-public struct PbrMaterial : IMaterial {
+// A material: turns a shading point into surface attributes. Stateless — all
+// inputs arrive in MaterialInput, so an implementation is a plain struct with
+// one static function.
+public interface IMaterial {
+    static SurfaceSample evaluate(MaterialInput input);
+}
+
+// The built-in material: the glTF metallic-roughness result unchanged.
+public struct StandardMaterial : IMaterial {
+    public static SurfaceSample evaluate(MaterialInput input) { return input.standard; }
+}
+
+// glTF metallic-roughness PBR parameter block. Parameters live in a constant
+// buffer; the five optional glTF textures share one sampler. Absent textures
+// are skipped via `flags`, so unbound descriptors are never sampled.
+public struct PbrMaterial {
     public ConstantBuffer<PbrMaterialParams> params;
     public Texture2D    base_color_tex;
     public Texture2D    normal_tex;

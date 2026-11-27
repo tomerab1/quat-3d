@@ -82,6 +82,36 @@ destroyed once the frames in flight are done.
   `layout()` when recording.
 - `QUAT_SLANGC=<path>` overrides which slangc is used.
 
+## Material shaders
+
+Authored materials (ROADMAP A6) are Slang modules in
+`assets/shaders/materials/<name>.slang` implementing `IMaterial`
+(`assets/shaders/lib/material.slang`) and ending with
+`export struct SurfaceMaterial : IMaterial = <their struct>;` — start from
+`assets/shaders/templates/material.slang`. Select one on an entity with
+`primitive.shader` (+ `shader_params`), in the inspector or over remote
+control (`shader.*` methods, see [`remote-control.md`](remote-control.md#material-shaders-roadmap-a6)).
+
+- Each material is linked against the pass driver module
+  `lib/material_pass_gbuffer.slang` (link-time specialisation: the driver
+  declares `extern struct SurfaceMaterial`) into
+  `cooked/shaders/materials/<name>.gbuffer.spv`, offline by
+  `cmake/CompileShaders.cmake` and at runtime by shader hot reload — one
+  program and pipeline per material, same layout as the built-in GBuffer
+  program. Saving the file hot-swaps it like any other shader.
+- Materials cannot declare resources: everything comes in through
+  `MaterialInput` (uv, world position, normal, view direction, time, the
+  entity's material constants incl. two `shader_params` vec4s, and the
+  built-in PBR result `standard`). A program whose reflection does not fit the
+  pass layout is rejected.
+- They run in the deferred pass only (emission is a GBuffer target the
+  lighting pass adds; alpha below 0.5 cuts out). The variant table in
+  `include/engine/rhi/material_shader_names.hpp` is where a forward variant
+  would go.
+- Test material sources live in `tests/data/materials/`;
+  `tests/support/material_shader_tree.hpp` builds a scratch project with the
+  library modules cooked.
+
 ## CI
 
 `.github/workflows/ci.yml` builds the `release` preset on Ubuntu 24.04 and runs

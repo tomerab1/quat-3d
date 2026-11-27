@@ -181,7 +181,10 @@ assistants such as Claude Code and Claude Desktop build and inspect worlds in
 the running engine — create entities, set the sky and camera, take
 screenshots, spawn models — and debug it: read the engine log and Vulkan
 validation messages, frame statistics, pause / single-step / slow down the
-simulation, watch entities, cast physics rays and query navmesh paths. Start the engine with `QUAT_REMOTE=7878`, build the
+simulation, watch entities, cast physics rays and query navmesh paths — and
+write material shaders: Slang modules the engine compiles (returning the
+compiler errors with line numbers), assigns to entities and hot-swaps while
+it runs. Start the engine with `QUAT_REMOTE=7878`, build the
 server with `cargo build --release` in `tools/quat-mcp`, and register it with
 your client:
 
@@ -236,7 +239,8 @@ The plan lives in [`ROADMAP.md`](ROADMAP.md), grouped into tracks:
 ## Repository layout
 
 ```
-assets/shaders/     Slang shader sources (compiled into cooked/shaders/ during the build)
+assets/shaders/     Slang shader sources (compiled into cooked/shaders/ during the build);
+                    materials/ holds material shaders, templates/ the starter module
 include/engine/     Public headers, one folder per module
 src/                Implementation, mirroring include/ (rhi, renderer, scene, physics, ...)
 src/editor/         The editor (only in builds with ENGINE_EDITOR=ON, the default)

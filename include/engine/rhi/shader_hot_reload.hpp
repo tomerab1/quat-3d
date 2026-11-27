@@ -3,7 +3,9 @@
 // ShaderHotReload — ROADMAP R2. Watches the Slang sources, recompiles edited
 // shaders (and the shaders importing an edited library module) with slangc on
 // a worker thread, and swaps the affected pipelines on the main thread at the
-// start of the next frame. A failed compile keeps the old pipelines and the
+// start of the next frame. Material shaders (assets/shaders/materials, ROADMAP
+// A6) are watched and compiled the same way, into one program per pass
+// variant. A failed compile keeps the old pipelines and the
 // cooked files untouched; the diagnostics are exposed per shader (statuses())
 // for the editor and remote commands.
 //
@@ -25,6 +27,7 @@
 
 #include "engine/core/error.hpp"
 #include "engine/core/file_watcher.hpp"
+#include "engine/rhi/shader_compiler.hpp"
 #include "engine/rhi/shader_status.hpp"
 
 namespace engine::rhi {
@@ -37,6 +40,7 @@ public:
         std::filesystem::path source_dir;  // assets/shaders
         std::filesystem::path output_dir;  // cooked/shaders (the dir passes load from)
         std::filesystem::path module_dir;  // empty: source_dir / "lib"
+        std::filesystem::path material_dir; // empty: source_dir / "materials"
         std::filesystem::path slangc;      // empty: find_slangc()
         core::FileWatchBackend    watch_backend = core::FileWatchBackend::automatic;
         std::chrono::milliseconds poll_interval{250}; // polling watcher only
@@ -77,11 +81,18 @@ public:
     void update(std::uint64_t frame_number);
 
     // Queues a recompile of `source` (and its importers) as if it had changed.
-    // For tools/remote commands; an unknown source is ignored.
-    void request_recompile(const std::filesystem::path& source);
+    // For tools/remote commands. A source the service does not know yet is
+    // picked up when it exists in one of the watched directories (a file just
+    // written); anything else is ignored. Returns whether it was queued.
+    bool request_recompile(const std::filesystem::path& source);
 
     // One entry per known shader source, sorted by name.
     [[nodiscard]] const std::vector<ShaderStatus>& statuses() const;
+    // The status of `source` (an absolute path as in ShaderStatus::source),
+    // or null when the service does not track it.
+    [[nodiscard]] const ShaderStatus* status_of(const std::filesystem::path& source) const;
+    // Directories and slangc the service compiles with (normalised).
+    [[nodiscard]] const ShaderCompilerConfig& compiler_config() const;
     [[nodiscard]] std::size_t error_count() const;
     // No change pending, queued or compiling.
     [[nodiscard]] bool idle() const;

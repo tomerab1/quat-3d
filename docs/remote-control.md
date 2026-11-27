@@ -122,7 +122,9 @@ name, which must match exactly one entity (otherwise `not_found` or
 codec (`engine/scene/component_json.hpp`): `transform` (`position`,
 `rotation` in Euler degrees YXZ, `scale` number or `[x,y,z]`, `look_at`),
 `primitive` (`shape`: cube/sphere/plane/cylinder/cone/capsule, `color`
-`"#rrggbb"` or linear `[r,g,b,a]`, `metallic`, `roughness`, `emissive`),
+`"#rrggbb"` or linear `[r,g,b,a]`, `metallic`, `roughness`, `emissive`,
+`shader`: a material shader name or `"standard"`, `shader_params`: up to 8
+numbers — see [Material shaders](#material-shaders-roadmap-a6)),
 `instanced_mesh` (many copies of one model in one entity, drawn instanced:
 `gltf` path relative to the project root + optional `node`, or — with `gltf`
 empty — the `primitive` fields `shape` / `color` / `metallic` / `roughness` /
@@ -252,6 +254,124 @@ sim_time_s}`. `engine.info` also reports `paused`.
   the snapped start; `partial` means the target is unreachable and the path
   ends at the closest reachable point. No baked navmesh is `unavailable`
   (call `nav.bake`); an end off the mesh is `failed`.
+
+## Material shaders (ROADMAP A6)
+
+A model (or a person) can author **material shaders**: Slang modules that
+compute a surface — albedo, normal, metallic, roughness, occlusion, emission,
+alpha — from the shading point, the entity's material parameters and time.
+They are compiled by the running engine (shader hot reload, R2), assigned to
+entities through the `primitive` component, and swapped into the running
+renderer without a restart.
+
+### How a material shader plugs in
+
+```
+assets/shaders/lib/material.slang          IMaterial, MaterialInput, SurfaceSample, StandardMaterial
+assets/shaders/lib/gbuffer_common.slang    the GBuffer pass, generic over M : IMaterial
+assets/shaders/gbuffer.slang               built-in program: gbuffer_evaluate<StandardMaterial>
+assets/shaders/lib/material_pass_gbuffer.slang
+                                           driver: entry points + `extern struct SurfaceMaterial : IMaterial`
+assets/shaders/materials/<name>.slang      a material: `struct X : IMaterial {...}`
+                                           and `export struct SurfaceMaterial : IMaterial = X;`
+assets/shaders/templates/material.slang    the starter module (shader.template)
+cooked/shaders/materials/<name>.gbuffer.spv (+ .json reflection)
+```
+
+- **Interface.** `IMaterial` has one static function,
+  `SurfaceSample evaluate(MaterialInput input)`. `MaterialInput` carries `uv`,
+  `world_pos`, `normal` (world, unit), `view_dir` (toward the camera), `time`
+  (seconds), `params` (the entity's `PbrMaterialParams`, including two free
+  `shader_params` vec4s) and `standard` — the built-in glTF PBR result at that
+  point, textures applied, so a material can start from it and change only what
+  it is about (unused parts are compiled out). The built-in material is
+  `StandardMaterial`, which returns `standard` unchanged: the built-in and the
+  authored programs run the same pass code.
+- **Link-time specialisation, one program per material.** A material is
+  compiled with one slangc run per pass variant: the material source plus the
+  variant's cooked driver module
+  (`slangc <name>.slang cooked/material_pass_gbuffer.slang-module -I lib -I cooked ...`).
+  The driver declares `extern struct SurfaceMaterial : IMaterial` and the
+  material exports it, so the program is linked and specialised by Slang — no
+  source splicing, no `#ifdef`s, and the generated code is what a hand-written
+  pass for that material would be. Errors point into the material's own file
+  with line and column. Every program has exactly the built-in program's
+  pipeline layout (the parameters live in `gbuffer_common.slang`); a material
+  cannot declare resources of its own — the registry and the renderer both
+  check the reflection against the built-in program and reject a misfit.
+- **Trade-off.** This is "one pipeline per material shader": each authored
+  material costs one SPIR-V program and one graphics pipeline per pass variant,
+  and the GBuffer pass binds one pipeline per material shader in use each frame
+  (draws are grouped by program; the material descriptor set and push constants
+  are shared). The alternative — one über-pipeline that branches on a material
+  id, or dynamic dispatch through an existential `IMaterial` — keeps a single
+  pipeline but makes every pixel pay for the union of all materials (registers,
+  divergence) and forces a full pass recompile for any edit. Authored materials
+  are few and edited often, so per-material programs win: compile ~0.3–1 s per
+  edit on a worker thread, pipeline creation once, zero cost to other
+  materials.
+- **Deferred only (v1).** Material shaders run in the GBuffer pass, so they are
+  lit, shadowed, reflected, bloomed and exposed like everything else; emission
+  goes to a new GBuffer target the lighting pass adds. Their `alpha` is a
+  cutout (below 0.5 discards the pixel); a `primitive` with a material shader
+  never routes to the blended forward pass, and shadow casting ignores the
+  cutout. A forward (blended) variant is a later addition: the variant table
+  (`include/engine/rhi/material_shader_names.hpp`) and the compile path already
+  handle several drivers per material.
+- **Selection.** `primitive.shader` (also on `instanced_mesh`'s primitive
+  fields) names the material shader; `"standard"` / `""` is the built-in.
+  `primitive.shader_params` is up to 8 numbers filling
+  `params.shader_params[0..1]` in order. Entities that name a shader that is
+  not (yet) compiled render with the built-in program; the renderer retries
+  every 30 frames, so a shader created after the assignment appears on its own.
+  `MaterialInput::time` is seconds since the renderer started.
+- **Transactional edits.** `shader.create` / `shader.update` write the file,
+  have the hot reload service compile it, and reply when the compile finished.
+  A failed create deletes the file again; a failed update restores the previous
+  text (which recompiles, so the status returns to it). The cooked programs are
+  only replaced by a successful compile, so the previous version keeps
+  rendering throughout. Operations run one at a time, in request order.
+
+### Methods
+
+| Method | Params | Result |
+|---|---|---|
+| `shader.list` | — | `{shaders:[{name, builtin, path, state, reloads, errors}], can_compile}` |
+| `shader.get` | `{name}` | `{name, builtin, path, state, reloads, errors, source, diagnostics, log}` |
+| `shader.template` | — | `{source, save_as}` |
+| `shader.create` *(deferred)* | `{name, source}` | `{name, path, ok, errors, diagnostics, log}` (+ `kept_previous:false` when not ok) |
+| `shader.update` *(deferred)* | `{name, source}` | same; `kept_previous:true` when the old version was restored |
+| `shader.delete` | `{name}` | `{deleted, entities_reset}` |
+
+- **Names** are lowercase identifiers (`[a-z][a-z0-9_]*`, at most 48
+  characters): the file stem under `assets/shaders/materials/`, so a name can
+  never address a path elsewhere. `standard` and the names of shader library
+  modules (`material`, `pbr`, ...) are reserved. `source` is at most 256 KiB.
+- **`state`**: `builtin`, `cooked` (as built offline, not recompiled this
+  run), `compiling`, `ok`, `error` (the last compile failed; the previous
+  version is what runs), or `not_compiled` (no cooked program and no compiler
+  in this run).
+- **A compile failure is a result, not an RPC error**: `ok:false` with the
+  diagnostics. Each diagnostic is `{severity, message, file?, line?, column?,
+  code?, source_line?}` — `file` project-relative, `line`/`column` 1-based from
+  slangc's caret line, `code` slang's diagnostic id; link errors have no
+  location. A misfit layout (the material declared its own resources) is an
+  error diagnostic without a location. `log` is slangc's full output with
+  project paths shortened.
+- **Errors**: `invalid_params` (bad name / source, reserved name),
+  `not_found` (`shader.get` / `update` / `delete` of an unknown name),
+  `failed` (`shader.create` of an existing name — use `shader.update`; a
+  delete while that shader is compiling; file system errors; a compile that
+  took longer than 60 s), `unavailable` (no registry in this engine, or
+  `create` / `update` while shader hot reload is off — run with
+  `QUAT_SHADER_HOT_RELOAD=1`, the default in editor builds).
+- **`shader.delete`** removes the source and its cooked programs and resets
+  every `primitive.shader` (and `instanced_mesh` primitive) that named it to
+  the built-in, reporting how many.
+
+Typical loop: `shader.template` → edit → `shader.create` → read `diagnostics`,
+fix, `shader.update` → `scene.update {entity, components:{primitive:{shader,
+shader_params}}}` → `render.screenshot` → iterate.
 
 ## Errors
 

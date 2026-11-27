@@ -1,6 +1,10 @@
 #include "engine/renderer/mesh_pass.hpp"
 
+#include <algorithm>
 #include <array>
+#include <chrono>
+#include <functional>
+#include <cmath>
 #include <cstddef>
 #include <cstdlib>
 #include <cstring>
@@ -13,6 +17,7 @@
 
 #include "engine/rhi/device.hpp"
 #include "engine/rhi/gpu_allocator.hpp"
+#include "engine/rhi/material_shader_names.hpp"
 #include "engine/rhi/pipeline_cache.hpp"
 
 namespace engine::renderer {
@@ -41,7 +46,66 @@ constexpr VkShaderStageFlags kMaterialStages = VK_SHADER_STAGE_FRAGMENT_BIT;
     }};
 }
 
+// The GBuffer pipeline for `program` (the built-in gbuffer.spv or an authored
+// material's variant — they share this exact layout).
+[[nodiscard]] std::expected<rhi::ManagedPipeline, core::Error>
+create_gbuffer_pipeline(rhi::PipelineCache& cache, const rhi::LoadedShader& program,
+                        VkDescriptorSetLayout set_layout) {
+    // Vertex input mirrors asset::Vertex.
+    const VkVertexInputBindingDescription vbind{0, sizeof(asset::Vertex),
+                                                VK_VERTEX_INPUT_RATE_VERTEX};
+    const std::array<VkVertexInputAttributeDescription, 4> vattrs{{
+        {0, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(asset::Vertex, position)},
+        {1, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(asset::Vertex, normal)},
+        {2, 0, VK_FORMAT_R32G32_SFLOAT, offsetof(asset::Vertex, uv)},
+        {3, 0, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(asset::Vertex, tangent)},
+    }};
+    const std::array<VkFormat, 5> color_formats{gbuffer_albedo_format, gbuffer_normal_format,
+                                                gbuffer_material_format,
+                                                gbuffer_clearcoat_format,
+                                                gbuffer_emissive_format};
+    const VkPushConstantRange pc{VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
+                                 sizeof(GBufferPushConstants)};
+
+    rhi::GraphicsPipeline::CreateInfo info{};
+    info.vertex = &program;
+    info.fragment = &program;
+    info.color_formats = color_formats;
+    info.depth_format = gbuffer_depth_format;
+    info.depth_compare_op = VK_COMPARE_OP_LESS_OR_EQUAL; // standard [0,1] depth
+    info.cull_mode = VK_CULL_MODE_NONE;                  // double-sided for now
+    info.vertex_bindings = {&vbind, 1};
+    info.vertex_attributes = vattrs;
+    info.set_layouts = {&set_layout, 1};
+    info.push_constants = {&pc, 1};
+    return cache.create_graphics_pipeline(info);
+}
+
+// Camera term of the push constants from the view-projection: the eye is the
+// point the projection sends to w = 0, i.e. inverse(VP) * (0, 0, 1, 0) in
+// homogeneous form. For an orthographic projection that point is at infinity
+// (w = 0) and only the direction toward the camera is meaningful.
+[[nodiscard]] glm::vec4 camera_from_view_proj(const glm::mat4& view_proj) {
+    const glm::vec4 h = glm::inverse(view_proj) * glm::vec4(0.0F, 0.0F, 1.0F, 0.0F);
+    if (std::abs(h.w) > 1e-6F * glm::length(glm::vec3(h))) {
+        return {glm::vec3(h) / h.w, 1.0F};
+    }
+    // Orthographic: the view direction is the near->far direction; the camera
+    // lies against it.
+    const glm::vec4 n = glm::inverse(view_proj) * glm::vec4(0.0F, 0.0F, 0.0F, 1.0F);
+    const glm::vec4 f = glm::inverse(view_proj) * glm::vec4(0.0F, 0.0F, 1.0F, 1.0F);
+    const glm::vec3 toward = glm::vec3(n) / n.w - glm::vec3(f) / f.w;
+    const float len = glm::length(toward);
+    return {len > 0.0F ? toward / len : glm::vec3(0.0F, 0.0F, 1.0F), 0.0F};
+}
+
 } // namespace
+
+float MeshPass::material_time() const {
+    if (fixed_time_) return *fixed_time_;
+    const std::chrono::duration<double> t = std::chrono::steady_clock::now() - epoch_;
+    return static_cast<float>(t.count());
+}
 
 std::expected<MeshPass, core::Error>
 MeshPass::create(const rhi::Device& device, rhi::GpuAllocator& allocator,
@@ -64,37 +128,18 @@ MeshPass::create(const rhi::Device& device, rhi::GpuAllocator& allocator,
     auto shader = cache.load(cooked_shader_dir + "/gbuffer.spv");
     if (!shader) return std::unexpected(shader.error());
 
-    // Vertex input mirrors asset::Vertex.
-    const VkVertexInputBindingDescription vbind{0, sizeof(asset::Vertex),
-                                                VK_VERTEX_INPUT_RATE_VERTEX};
-    const std::array<VkVertexInputAttributeDescription, 4> vattrs{{
-        {0, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(asset::Vertex, position)},
-        {1, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(asset::Vertex, normal)},
-        {2, 0, VK_FORMAT_R32G32_SFLOAT, offsetof(asset::Vertex, uv)},
-        {3, 0, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(asset::Vertex, tangent)},
-    }};
-    const std::array<VkFormat, 4> color_formats{gbuffer_albedo_format, gbuffer_normal_format,
-                                                gbuffer_material_format,
-                                                gbuffer_clearcoat_format};
-    const VkPushConstantRange pc{VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
-                                 sizeof(GBufferPushConstants)};
     const VkDescriptorSetLayout set_layout = out.material_layout_.handle();
-
-    rhi::GraphicsPipeline::CreateInfo info{};
-    info.vertex = *shader;
-    info.fragment = *shader;
-    info.color_formats = color_formats;
-    info.depth_format = gbuffer_depth_format;
-    info.depth_compare_op = VK_COMPARE_OP_LESS_OR_EQUAL; // standard [0,1] depth
-    info.cull_mode = VK_CULL_MODE_NONE;                  // double-sided for now
-    info.vertex_bindings = {&vbind, 1};
-    info.vertex_attributes = vattrs;
-    info.set_layouts = {&set_layout, 1};
-    info.push_constants = {&pc, 1};
-
-    auto pipeline = cache.create_graphics_pipeline(info);
+    auto pipeline = create_gbuffer_pipeline(cache, **shader, set_layout);
     if (!pipeline) return std::unexpected(pipeline.error());
     out.pipeline_ = std::move(*pipeline);
+
+    // Authored material shaders: same layout, their own program (A6).
+    out.materials_ = MaterialPipelines(
+        cache, cooked_shader_dir, std::string(rhi::material_shaders::variants[0].name), *shader,
+        [&cache, set_layout](const rhi::LoadedShader& program) {
+            return create_gbuffer_pipeline(cache, program, set_layout);
+        });
+    out.epoch_ = std::chrono::steady_clock::now();
 
     auto sampler = rhi::create_sampler(device.handle());
     if (!sampler) return std::unexpected(sampler.error());
@@ -145,6 +190,13 @@ MeshPass::add_to_graph(rhi::RenderGraph& graph, VkExtent2D extent, const glm::ma
     auto instances = instances_.upload(*device_, *allocator_, list.instances);
     if (!instances) return std::unexpected(instances.error());
     frame_instances_ = *instances;
+    materials_.begin_frame();
+
+    frame_push_ = GBufferPushConstants{};
+    frame_push_.view_proj = view_proj;
+    frame_push_.instances = frame_instances_;
+    frame_push_.time = material_time();
+    frame_push_.camera = camera_from_view_proj(view_proj);
 
     // GBuffer targets. SAMPLED is added so the lighting pass (3.6) can read them;
     // TRANSFER_SRC lets the self-test (and debug tooling) read them back.
@@ -160,6 +212,8 @@ MeshPass::add_to_graph(rhi::RenderGraph& graph, VkExtent2D extent, const glm::ma
                                                     extent, color_usage);
     targets.clearcoat = graph.create_transient_image("gbuffer_clearcoat",
                                                      gbuffer_clearcoat_format, extent, color_usage);
+    targets.emissive = graph.create_transient_image("gbuffer_emissive", gbuffer_emissive_format,
+                                                    extent, color_usage);
     targets.depth = graph.create_transient_image(
         "gbuffer_depth", gbuffer_depth_format, extent,
         VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT);
@@ -202,23 +256,40 @@ MeshPass::add_to_graph(rhi::RenderGraph& graph, VkExtent2D extent, const glm::ma
         fd.first_instance = d.first_instance;
         fd.instance_count = d.instance_count;
         fd.descriptor_index = slot->second;
+        fd.pipeline = &pipeline_;
+        if (!mat.shader.empty()) {
+            if (const rhi::ManagedPipeline* custom = materials_.find(mat.shader)) {
+                fd.pipeline = custom;
+            }
+        }
         frame_draws_.push_back(fd);
     }
 
+    // Group draws by program so each pipeline is bound once (stable: the
+    // built-in program's draws keep their order).
+    std::stable_sort(frame_draws_.begin(), frame_draws_.end(),
+                     [this](const FrameDraw& a, const FrameDraw& b) {
+                         const bool a_builtin = a.pipeline == &pipeline_;
+                         const bool b_builtin = b.pipeline == &pipeline_;
+                         if (a_builtin != b_builtin) return a_builtin;
+                         return std::less<>{}(a.pipeline, b.pipeline);
+                     });
+
     const GBufferTargets t = targets;
-    const glm::mat4 vp = view_proj;
     graph.add_pass("gbuffer", rhi::PassType::graphics)
         .writes(t.albedo, rhi::ResourceUsage::color_attachment)
         .writes(t.normal, rhi::ResourceUsage::color_attachment)
         .writes(t.material, rhi::ResourceUsage::color_attachment)
         .writes(t.clearcoat, rhi::ResourceUsage::color_attachment)
+        .writes(t.emissive, rhi::ResourceUsage::color_attachment)
         .writes(t.depth, rhi::ResourceUsage::depth_attachment)
-        .execute([this, t, extent, vp](rhi::PassContext& ctx) {
+        .execute([this, t, extent](rhi::PassContext& ctx) {
             const VkCommandBuffer cmd = ctx.cmd();
             const rhi::ResourceBinding a = ctx.resolve(t.albedo);
             const rhi::ResourceBinding n = ctx.resolve(t.normal);
             const rhi::ResourceBinding m = ctx.resolve(t.material);
             const rhi::ResourceBinding cc = ctx.resolve(t.clearcoat);
+            const rhi::ResourceBinding em = ctx.resolve(t.emissive);
             const rhi::ResourceBinding depth = ctx.resolve(t.depth);
 
             const auto color_attachment = [](VkImageView view) {
@@ -231,9 +302,9 @@ MeshPass::add_to_graph(rhi::RenderGraph& graph, VkExtent2D extent, const glm::ma
                 ai.clearValue.color = {{0.0F, 0.0F, 0.0F, 0.0F}};
                 return ai;
             };
-            const std::array<VkRenderingAttachmentInfo, 4> colors{
+            const std::array<VkRenderingAttachmentInfo, 5> colors{
                 color_attachment(a.view), color_attachment(n.view), color_attachment(m.view),
-                color_attachment(cc.view)};
+                color_attachment(cc.view), color_attachment(em.view)};
 
             VkRenderingAttachmentInfo depth_attachment{};
             depth_attachment.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
@@ -262,21 +333,23 @@ MeshPass::add_to_graph(rhi::RenderGraph& graph, VkExtent2D extent, const glm::ma
             const VkRect2D scissor{{0, 0}, extent};
             vkCmdSetScissor(cmd, 0, 1, &scissor);
 
-            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_.handle());
-
-            // The instance array is shared by every draw: push it once.
-            GBufferPushConstants push{};
-            push.view_proj = vp;
-            push.instances = frame_instances_;
-            vkCmdPushConstants(cmd, pipeline_.layout(),
-                               VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
-                               sizeof(push), &push);
-
+            // Every program shares one layout definition; on a program switch
+            // re-push the (shared) constants and re-bind the material set.
+            const rhi::ManagedPipeline* bound_pipeline = nullptr;
             std::uint32_t bound_descriptor = std::numeric_limits<std::uint32_t>::max();
             for (const FrameDraw& fd : frame_draws_) {
+                if (fd.pipeline != bound_pipeline) {
+                    bound_pipeline = fd.pipeline;
+                    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                      bound_pipeline->handle());
+                    vkCmdPushConstants(cmd, bound_pipeline->layout(),
+                                       VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+                                       0, sizeof(frame_push_), &frame_push_);
+                    bound_descriptor = std::numeric_limits<std::uint32_t>::max();
+                }
                 if (fd.descriptor_index != bound_descriptor) {
                     frame_descriptors_[fd.descriptor_index].bind(
-                        cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_.layout(), 0);
+                        cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, bound_pipeline->layout(), 0);
                     bound_descriptor = fd.descriptor_index;
                 }
 
@@ -296,272 +369,6 @@ MeshPass::add_to_graph(rhi::RenderGraph& graph, VkExtent2D extent, const glm::ma
         });
 
     return targets;
-}
-
-// ---------------------------------------------------------------------------
-// Self-test
-// ---------------------------------------------------------------------------
-namespace {
-
-// Records `record` into a one-time primary command buffer on the graphics queue
-// and blocks until it completes. The GBuffer pass issues graphics commands, so
-// (unlike the transfer-only upload path) it must run on a graphics queue.
-template <typename Record>
-[[nodiscard]] std::expected<void, core::Error>
-run_graphics_commands(const rhi::Device& device, Record&& record) {
-    VkCommandPool pool = VK_NULL_HANDLE;
-    VkCommandPoolCreateInfo pool_info{};
-    pool_info.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
-    pool_info.flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT;
-    pool_info.queueFamilyIndex = device.queue_families().graphics;
-    if (vkCreateCommandPool(device.handle(), &pool_info, nullptr, &pool) != VK_SUCCESS) {
-        return fail("mesh pass self-test: vkCreateCommandPool failed");
-    }
-
-    VkCommandBufferAllocateInfo alloc{};
-    alloc.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
-    alloc.commandPool = pool;
-    alloc.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-    alloc.commandBufferCount = 1;
-    VkCommandBuffer cmd = VK_NULL_HANDLE;
-    vkAllocateCommandBuffers(device.handle(), &alloc, &cmd);
-
-    VkCommandBufferBeginInfo begin{};
-    begin.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-    begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-    vkBeginCommandBuffer(cmd, &begin);
-    record(cmd);
-    vkEndCommandBuffer(cmd);
-
-    VkCommandBufferSubmitInfo cmd_info{};
-    cmd_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO;
-    cmd_info.commandBuffer = cmd;
-    VkSubmitInfo2 submit{};
-    submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO_2;
-    submit.commandBufferInfoCount = 1;
-    submit.pCommandBufferInfos = &cmd_info;
-
-    const VkResult r = vkQueueSubmit2(device.graphics_queue(), 1, &submit, VK_NULL_HANDLE);
-    if (r == VK_SUCCESS) vkQueueWaitIdle(device.graphics_queue());
-    vkDestroyCommandPool(device.handle(), pool, nullptr);
-    return r == VK_SUCCESS ? std::expected<void, core::Error>{}
-                           : fail("mesh pass self-test: vkQueueSubmit2 failed");
-}
-
-} // namespace
-
-std::expected<void, core::Error>
-run_mesh_pass_self_test(const rhi::Device& device, rhi::GpuAllocator& allocator,
-                        rhi::PipelineCache& cache, const rhi::TransferContext& transfer,
-                        const std::string& cooked_shader_dir) {
-    constexpr VkExtent2D extent{64, 64};
-    constexpr VkDeviceSize bytes = static_cast<VkDeviceSize>(extent.width) * extent.height * 4;
-
-    // A camera-facing triangle in clip space (identity view_proj + model). The
-    // image centre lands inside it; corners stay at the clear colour.
-    std::array<asset::Vertex, 3> verts{};
-    verts[0].position = {-0.5F, -0.5F, 0.0F};
-    verts[1].position = {0.5F, -0.5F, 0.0F};
-    verts[2].position = {0.0F, 0.5F, 0.0F};
-    const std::array<std::uint32_t, 3> indices{0, 1, 2};
-
-    auto vbuf = rhi::upload_device_buffer(allocator, transfer, verts.data(),
-                                          verts.size() * sizeof(asset::Vertex),
-                                          VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
-    if (!vbuf) return std::unexpected(vbuf.error());
-    auto ibuf = rhi::upload_device_buffer(allocator, transfer, indices.data(),
-                                          indices.size() * sizeof(std::uint32_t),
-                                          VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
-    if (!ibuf) return std::unexpected(ibuf.error());
-
-    asset::MeshAsset mesh;
-    mesh.vertex_buffer = std::move(*vbuf);
-    mesh.index_buffer = std::move(*ibuf);
-    mesh.vertex_count = 3;
-    mesh.index_count = 3;
-    mesh.submeshes = {asset::SubMesh{0, 3, 0}};
-
-    // Material: a known linear base colour, no textures (flags = 0).
-    asset::PbrMaterialParams params;
-    params.base_color_factor = {0.25F, 0.5F, 0.75F, 1.0F};
-    auto material = asset::upload_material(params, asset::MaterialTextures{}, allocator, transfer);
-    if (!material) return std::unexpected(material.error());
-
-    auto pass = MeshPass::create(device, allocator, cache, transfer, cooked_shader_dir);
-    if (!pass) return std::unexpected(pass.error());
-
-    auto readback = allocator.create_buffer(
-        bytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT, VMA_MEMORY_USAGE_AUTO,
-        VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT);
-    if (!readback) return std::unexpected(readback.error());
-    const VkBuffer readback_buffer = readback->handle();
-
-    rhi::TransientImagePool pool(device, allocator);
-    rhi::RenderGraph graph(pool);
-    const DrawItem item{&mesh, &*material, glm::mat4(1.0F)};
-    auto targets = pass->add_to_graph(graph, extent, glm::mat4(1.0F), {&item, 1});
-    if (!targets) return std::unexpected(targets.error());
-    if (auto compiled = graph.compile(); !compiled) return std::unexpected(compiled.error());
-
-    const VkImage albedo_image = graph.binding(targets->albedo).image;
-    auto submitted = run_graphics_commands(device, [&](VkCommandBuffer cmd) {
-        graph.execute(cmd);
-
-        // The GBuffer pass left albedo in COLOR_ATTACHMENT_OPTIMAL; move it to
-        // TRANSFER_SRC for the read-back copy.
-        VkImageMemoryBarrier2 to_src{};
-        to_src.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2;
-        to_src.srcStageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT;
-        to_src.srcAccessMask = VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT;
-        to_src.dstStageMask = VK_PIPELINE_STAGE_2_COPY_BIT;
-        to_src.dstAccessMask = VK_ACCESS_2_TRANSFER_READ_BIT;
-        to_src.oldLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-        to_src.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
-        to_src.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        to_src.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        to_src.image = albedo_image;
-        to_src.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
-        VkDependencyInfo dep{};
-        dep.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO;
-        dep.imageMemoryBarrierCount = 1;
-        dep.pImageMemoryBarriers = &to_src;
-        vkCmdPipelineBarrier2(cmd, &dep);
-
-        VkBufferImageCopy region{};
-        region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-        region.imageSubresource.layerCount = 1;
-        region.imageExtent = {extent.width, extent.height, 1};
-        vkCmdCopyImageToBuffer(cmd, albedo_image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-                               readback_buffer, 1, &region);
-    });
-    if (!submitted) return std::unexpected(submitted.error());
-
-    const auto* px = static_cast<const std::uint8_t*>(readback->mapped());
-    const auto pixel = [&](std::uint32_t x, std::uint32_t y) {
-        return px + (static_cast<std::size_t>(y) * extent.width + x) * 4;
-    };
-    const auto near = [](std::uint8_t v, int target) { return std::abs(int(v) - target) <= 2; };
-
-    // Centre is covered by the triangle: albedo == the material's base colour.
-    const std::uint8_t* c = pixel(extent.width / 2, extent.height / 2);
-    if (!near(c[0], 64) || !near(c[1], 128) || !near(c[2], 191)) {
-        return fail("mesh pass self-test: centre pixel is not the material base colour");
-    }
-    // A corner is outside the triangle: still the clear colour (zero).
-    const std::uint8_t* corner = pixel(1, 1);
-    if (corner[0] != 0 || corner[1] != 0 || corner[2] != 0 || corner[3] != 0) {
-        return fail("mesh pass self-test: corner pixel is not the clear colour");
-    }
-    return {};
-}
-
-std::expected<void, core::Error>
-run_specular_aa_self_test(const rhi::Device& device, rhi::GpuAllocator& allocator,
-                          rhi::PipelineCache& cache, const rhi::TransferContext& transfer,
-                          const std::string& cooked_shader_dir) {
-    constexpr VkExtent2D extent{64, 64};
-    constexpr VkDeviceSize bytes = static_cast<VkDeviceSize>(extent.width) * extent.height * 4;
-
-    auto pass = MeshPass::create(device, allocator, cache, transfer, cooked_shader_dir);
-    if (!pass) return std::unexpected(pass.error());
-
-    // Authored roughness 0: any roughness in the GBuffer material target can only
-    // come from the specular-AA normal-variance widening.
-    asset::PbrMaterialParams params;
-    params.roughness_factor = 0.0F;
-    auto material = asset::upload_material(params, asset::MaterialTextures{}, allocator, transfer);
-    if (!material) return std::unexpected(material.error());
-
-    // Renders a clip-space triangle with the given vertex normals and returns the
-    // centre pixel's stored (widened) roughness from the material target.
-    const auto centre_roughness =
-        [&](const std::array<glm::vec3, 3>& normals) -> std::expected<std::uint8_t, core::Error> {
-        std::array<asset::Vertex, 3> verts{};
-        verts[0].position = {-0.5F, -0.5F, 0.0F};
-        verts[1].position = {0.5F, -0.5F, 0.0F};
-        verts[2].position = {0.0F, 0.5F, 0.0F};
-        for (std::size_t i = 0; i < 3; ++i) verts[i].normal = normals[i];
-
-        const std::array<std::uint32_t, 3> indices{0, 1, 2};
-        auto vbuf = rhi::upload_device_buffer(allocator, transfer, verts.data(), sizeof(verts),
-                                              VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
-        if (!vbuf) return std::unexpected(vbuf.error());
-        auto ibuf = rhi::upload_device_buffer(allocator, transfer, indices.data(), sizeof(indices),
-                                              VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
-        if (!ibuf) return std::unexpected(ibuf.error());
-        asset::MeshAsset mesh;
-        mesh.vertex_buffer = std::move(*vbuf);
-        mesh.index_buffer = std::move(*ibuf);
-        mesh.vertex_count = 3;
-        mesh.index_count = 3;
-        mesh.submeshes = {asset::SubMesh{0, 3, 0}};
-
-        auto readback = allocator.create_buffer(
-            bytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT, VMA_MEMORY_USAGE_AUTO,
-            VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT);
-        if (!readback) return std::unexpected(readback.error());
-        const VkBuffer rb = readback->handle();
-
-        rhi::TransientImagePool pool(device, allocator);
-        rhi::RenderGraph graph(pool);
-        const DrawItem item{&mesh, &*material, glm::mat4(1.0F)};
-        auto targets = pass->add_to_graph(graph, extent, glm::mat4(1.0F), {&item, 1});
-        if (!targets) return std::unexpected(targets.error());
-        if (auto compiled = graph.compile(); !compiled) return std::unexpected(compiled.error());
-
-        const VkImage material_image = graph.binding(targets->material).image;
-        auto submitted = run_graphics_commands(device, [&](VkCommandBuffer cmd) {
-            graph.execute(cmd);
-            VkImageMemoryBarrier2 to_src{};
-            to_src.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2;
-            to_src.srcStageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT;
-            to_src.srcAccessMask = VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT;
-            to_src.dstStageMask = VK_PIPELINE_STAGE_2_COPY_BIT;
-            to_src.dstAccessMask = VK_ACCESS_2_TRANSFER_READ_BIT;
-            to_src.oldLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-            to_src.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
-            to_src.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-            to_src.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-            to_src.image = material_image;
-            to_src.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
-            VkDependencyInfo dep{};
-            dep.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO;
-            dep.imageMemoryBarrierCount = 1;
-            dep.pImageMemoryBarriers = &to_src;
-            vkCmdPipelineBarrier2(cmd, &dep);
-            VkBufferImageCopy region{};
-            region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-            region.imageSubresource.layerCount = 1;
-            region.imageExtent = {extent.width, extent.height, 1};
-            vkCmdCopyImageToBuffer(cmd, material_image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, rb,
-                                   1, &region);
-        });
-        if (!submitted) return std::unexpected(submitted.error());
-
-        const auto* px = static_cast<const std::uint8_t*>(readback->mapped());
-        const std::size_t o = (static_cast<std::size_t>(extent.height / 2) * extent.width +
-                               extent.width / 2) * 4;
-        return px[o + 1]; // material target .g = stored roughness
-    };
-
-    // Constant normals: zero screen-space variance, roughness must stay 0 (this
-    // also guards the pixel-exact lighting/tonemap tests against AA drift).
-    auto flat = centre_roughness({glm::vec3(0.0F, 0.0F, 1.0F), glm::vec3(0.0F, 0.0F, 1.0F),
-                                  glm::vec3(0.0F, 0.0F, 1.0F)});
-    if (!flat) return std::unexpected(flat.error());
-    if (*flat > 2) {
-        return fail("specular AA self-test: flat surface picked up roughness");
-    }
-
-    // Wildly divergent vertex normals: large per-pixel normal derivatives must
-    // widen the stored roughness even though the authored roughness is 0.
-    auto curved = centre_roughness({glm::vec3(1.0F, 0.0F, 0.0F), glm::vec3(-1.0F, 0.0F, 0.0F),
-                                    glm::vec3(0.0F, 1.0F, 0.0F)});
-    if (!curved) return std::unexpected(curved.error());
-    if (*curved < 20) {
-        return fail("specular AA self-test: high-variance normals were not widened");
-    }
-    return {};
 }
 
 } // namespace engine::renderer

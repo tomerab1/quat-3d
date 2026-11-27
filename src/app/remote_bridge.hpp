@@ -20,7 +20,8 @@
 //   poll()               once per frame before the scene updates: RPC
 //                        requests, primitive + instanced-mesh resolution,
 //                        scatter regeneration, finished screenshots,
-//                        completed debug.step requests
+//                        completed debug.step requests, finished
+//                        shader.create / update compiles
 //   advance_sim(dt)      once per frame with the real frame time: records it
 //                        and returns the simulation dt (0 while paused)
 //   note_draws(n)        the frame's submitted draw count (debug.stats)
@@ -57,6 +58,7 @@ class PhysicsWorld;
 namespace engine::rhi {
 class Device;
 class GpuAllocator;
+class ShaderHotReload;
 } // namespace engine::rhi
 namespace engine::terrain {
 class TerrainStreamer;
@@ -101,6 +103,10 @@ struct RemoteBridgeTargets {
 
     // Loop-cached entity dropped when a scene file replaces the scene.
     entt::entity* spin_entity = nullptr;
+
+    // Compiles material shaders for shader.create / update (A6); null when
+    // shader hot reload is off (those methods then answer `unavailable`).
+    engine::rhi::ShaderHotReload* shader_reload = nullptr;
 
 #ifdef ENGINE_EDITOR
     engine::editor::EditorLayer*      editor = nullptr;

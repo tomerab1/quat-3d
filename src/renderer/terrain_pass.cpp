@@ -131,8 +131,9 @@ TerrainPass::create(const rhi::Device& device, rhi::GpuAllocator& allocator,
     auto shader = cache.load(cooked_shader_dir + "/terrain.spv");
     if (!shader) return std::unexpected(shader.error());
 
-    const std::array<VkFormat, 4> color_formats{gbuffer_albedo_format, gbuffer_normal_format,
-                                                gbuffer_material_format, gbuffer_clearcoat_format};
+    const std::array<VkFormat, 5> color_formats{gbuffer_albedo_format, gbuffer_normal_format,
+                                                gbuffer_material_format, gbuffer_clearcoat_format,
+                                                gbuffer_emissive_format};
     const VkPushConstantRange pc{kStages, 0, sizeof(TerrainPushConstants)};
     const VkDescriptorSetLayout set_layout = out.layout_.handle();
 
@@ -272,6 +273,7 @@ void TerrainPass::add_to_graph(rhi::RenderGraph& graph, const renderer::GBufferT
         .writes(t.normal, rhi::ResourceUsage::color_attachment)
         .writes(t.material, rhi::ResourceUsage::color_attachment)
         .writes(t.clearcoat, rhi::ResourceUsage::color_attachment)
+        .writes(t.emissive, rhi::ResourceUsage::color_attachment)
         .writes(t.depth, rhi::ResourceUsage::depth_attachment)
         .execute([this, t, extent, vp, origin_y, snowline_m](rhi::PassContext& ctx) {
             const VkCommandBuffer cmd = ctx.cmd();
@@ -284,11 +286,12 @@ void TerrainPass::add_to_graph(rhi::RenderGraph& graph, const renderer::GBufferT
                 ai.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
                 return ai;
             };
-            const std::array<VkRenderingAttachmentInfo, 4> colors{
+            const std::array<VkRenderingAttachmentInfo, 5> colors{
                 color_attachment(ctx.resolve(t.albedo).view),
                 color_attachment(ctx.resolve(t.normal).view),
                 color_attachment(ctx.resolve(t.material).view),
-                color_attachment(ctx.resolve(t.clearcoat).view)};
+                color_attachment(ctx.resolve(t.clearcoat).view),
+                color_attachment(ctx.resolve(t.emissive).view)};
 
             VkRenderingAttachmentInfo depth{};
             depth.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;

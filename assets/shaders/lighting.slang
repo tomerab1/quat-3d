@@ -1,7 +1,7 @@
 // lighting.slang — deferred PBR lighting pass (Phase 3 Slice 3.6; PBR in 4.5).
 //
 // A fullscreen compute pass: reads the GBuffer (albedo, octahedral world normal,
-// packed metallic/roughness/occlusion, depth) and shades one directional light
+// packed metallic/roughness/occlusion, emission, depth) and shades one directional light
 // with a Cook-Torrance microfacet BRDF (GGX NDF, height-correlated Smith
 // visibility, Schlick Fresnel) plus a flat ambient term, writing linear HDR
 // colour. World position is reconstructed from depth via the inverse view-proj,
@@ -62,6 +62,7 @@ struct LightParams {
 [[vk::binding(16)]] StructuredBuffer<GpuLight>    g_lights;
 [[vk::binding(17)]] StructuredBuffer<uint2>       g_cluster_grid;    // offset, count
 [[vk::binding(18)]] StructuredBuffer<uint>        g_cluster_indices;
+[[vk::binding(19)]] Texture2D                     g_emissive; // rgb emitted radiance
 
 // Schlick Fresnel with a roughness term, for the ambient/environment specular
 // (the view-independent IBL term, unlike the per-light f_schlick).
@@ -320,5 +321,6 @@ void compute_main(uint3 tid : SV_DispatchThreadID) {
     } else {
         color += pc.ambient.rgb * albedo.rgb * occlusion;
     }
+    color += g_emissive.Load(int3(coord, 0)).rgb; // self-emission, unlit
     g_hdr[coord] = float4(color, 1.0);
 }
