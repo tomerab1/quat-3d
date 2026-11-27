@@ -69,8 +69,20 @@ public:
     [[nodiscard]] std::expected<ResourceBinding, core::Error>
     acquire(VkFormat format, VkExtent2D extent, VkImageUsageFlags usage);
 
-    // Mark every acquired image free for reuse on the next frame.
+    // Mark every acquired image free for reuse on the next frame, and free
+    // images that no frame has acquired for `max_idle_resets` resets (a
+    // resize or viewport drag leaves a whole set of images at the old extent
+    // behind; without eviction they would accumulate for the program's life).
+    // Call it only once the GPU has finished the commands that used this
+    // pool's images (the frame loop calls it after the slot's fence wait):
+    // an image not acquired in the previous frame is then referenced by no
+    // pending work and is safe to destroy.
     void reset();
+
+    static constexpr std::uint32_t max_idle_resets = 4;
+
+    // Images currently owned by the pool (in use or cached).
+    [[nodiscard]] std::size_t size() const { return entries_.size(); }
 
 private:
     void destroy() noexcept;
@@ -82,6 +94,7 @@ private:
         VkExtent2D        extent{};
         VkImageUsageFlags usage  = 0;
         bool              in_use = false;
+        std::uint32_t     idle_resets = 0; // consecutive resets without being acquired
     };
 
     const Device*      device_    = nullptr;   // non-owning

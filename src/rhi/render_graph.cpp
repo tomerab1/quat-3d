@@ -222,8 +222,18 @@ TransientImagePool::acquire(VkFormat format, VkExtent2D extent, VkImageUsageFlag
 
 void TransientImagePool::reset() {
     for (Entry& e : entries_) {
+        e.idle_resets = e.in_use ? 0U : e.idle_resets + 1U;
         e.in_use = false;
     }
+    // Evict long-idle images (audit A5). Safe: an entry idle for at least one
+    // reset was not used by the frame that just completed.
+    std::erase_if(entries_, [this](Entry& e) {
+        if (e.idle_resets <= max_idle_resets) return false;
+        if (e.view != VK_NULL_HANDLE && device_ != nullptr) {
+            vkDestroyImageView(device_->handle(), e.view, nullptr);
+        }
+        return true; // GpuImage's destructor releases the allocation
+    });
 }
 
 // ===========================================================================

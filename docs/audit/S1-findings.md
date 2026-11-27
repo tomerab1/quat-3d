@@ -41,7 +41,7 @@ static body emplace; Recast cleanup on failure; Jolt layer filters.
 | A2 | H | TAA history ping-pongs per frame slot, so each slot always reads a never-written (black) history image; validity not reset on resize | `taa_pass.cpp`, `main.cpp` | open |
 | A3 | H | First swapchain write (TAA copy, ALL_TRANSFER) isn't ordered after the acquire semaphore (waits only COLOR_ATTACHMENT_OUTPUT); imported images start at stage NONE | `main.cpp` submit, `render_graph.cpp` import | open |
 | A4 | H | Render graph emits no barrier for a second reader in an uncovered stage (hdr: compute write → exposure barrier covers COMPUTE only → tonemap fragment read unsynchronised) | `render_graph.cpp` | open |
-| A5 | H | Transient image pool never evicts → VRAM grows with every resize / viewport drag | `render_graph.cpp` pool | open |
+| A5 | H | Transient image pool never evicts → VRAM grows with every resize / viewport drag | `render_graph.cpp` pool | fixed (S1.5, pending CI) — images idle for 4 resets are freed |
 | A6 | M | Default `DirectionalLight` (0,-1,0) is parallel to lookAt's up → NaN light view, shadows vanish | `main.cpp` shadow setup | open |
 | A7 | M | Bloom composite does read-modify-write on hdr but declares write-only access | `bloom_pass.cpp`, `bloom_composite.slang` | open |
 | A8 | M | Descriptor buffers allocated per frame and per draw (VMA alloc + rebind per draw) | mesh/transparent/skinning/bloom/lighting/tonemap/taa/exposure passes | open (perf → R5) |
