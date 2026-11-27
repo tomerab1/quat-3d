@@ -7,6 +7,7 @@
 
 #include <glm/gtc/matrix_transform.hpp>
 
+#include "app/frame_renderer.hpp" // k_frames_in_flight
 #include "app/nav_bake.hpp"
 #include "app/remote_bridge.hpp"
 #include "engine/rhi/device.hpp"
@@ -84,6 +85,8 @@ void WorldRuntime::init(const engine::rhi::Device& device, engine::rhi::GpuAlloc
     } else {
         std::fprintf(stderr, "[warn] terrain pass create failed: %s\n", tp.error().message.c_str());
     }
+    grass_.emplace(device, allocator, pipeline_cache, terrain_transfer_, shader_dir,
+                   k_frames_in_flight);
 
     net_ = engine::net::NetSession::from_environment(scene.registry());
 

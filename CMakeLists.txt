@@ -345,6 +345,8 @@ set_source_files_properties(src/remote/world/stb_image_write_impl.cpp
 # ---------------------------------------------------------------------------
 add_library(engine_renderer STATIC
     src/renderer/draw_batching.cpp
+    src/renderer/grass.cpp
+    src/renderer/grass_pass.cpp
     src/renderer/instance_buffer.cpp
     src/renderer/mesh_pass.cpp
     src/renderer/lighting_pass.cpp
@@ -395,6 +397,7 @@ if(ENGINE_EDITOR)
         src/editor/picking.cpp
         src/editor/scene_snapshot.cpp
         src/editor/audio_inspector.cpp
+        src/editor/grass_inspector.cpp
         src/editor/behavior_panel.cpp
         src/editor/behavior_canvas.cpp
         src/editor/vendor/imgui_impl_sdl3.cpp)
@@ -430,6 +433,7 @@ add_executable(game
     src/app/world_runtime.cpp
     src/app/demo_scenes.cpp
     src/app/audio_runtime.cpp
+    src/app/grass_runtime.cpp
     src/app/nav_bake.cpp
     src/app/remote_bridge.cpp)
 target_link_libraries(game PRIVATE
