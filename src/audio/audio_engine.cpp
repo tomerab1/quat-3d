@@ -12,6 +12,8 @@
 
 #include <miniaudio.h>
 
+#include "engine/core/utf8_path.hpp"
+
 namespace engine::audio {
 
 namespace {
@@ -116,7 +118,7 @@ std::expected<AudioEngine, core::Error> AudioEngine::create(const AudioEngineCon
     }
     impl.engine_ready = true;
     impl.has_device = !config.no_device;
-    impl.asset_root = std::filesystem::path(config.asset_root);
+    impl.asset_root = config.asset_root;
 
     // Sub-mix buses, each feeding the engine endpoint (= the master bus).
     for (std::size_t i = 1; i < bus_count; ++i) {
@@ -165,7 +167,7 @@ std::expected<SoundHandle, core::Error> AudioEngine::load(const SoundDesc& desc)
     if (static_cast<std::size_t>(desc.bus) >= bus_count) {
         return std::unexpected(core::Error{"audio: invalid bus"});
     }
-    std::filesystem::path path(desc.path);
+    std::filesystem::path path = core::path_from_utf8(desc.path); // UTF-8 (scene JSON)
     if (path.is_relative() && !impl.asset_root.empty()) path = impl.asset_root / path;
 
     std::size_t index = impl.slots.size();
@@ -186,7 +188,7 @@ std::expected<SoundHandle, core::Error> AudioEngine::load(const SoundDesc& desc)
                                                 impl.group(desc.bus), nullptr, sound.get());
 #endif
     if (r != MA_SUCCESS) {
-        return std::unexpected(ma_error("cannot load '" + path.generic_string() + "'", r));
+        return std::unexpected(ma_error("cannot load '" + core::path_to_generic_utf8(path) + "'", r));
     }
 
     if (index == impl.slots.size()) {

@@ -11,6 +11,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include "engine/core/utf8_path.hpp"
 #include "engine/scene/component_json.hpp"
 #include "engine/scene/components.hpp"
 #include "engine/scene/scene.hpp"
@@ -209,7 +210,7 @@ std::expected<std::filesystem::path, RpcError> project_path(const Context& ctx,
     }
     auto confined = confine_to_root(ctx.services.project_root(), raw);
     if (!confined) return bad_params(std::string(key) + ": " + confined.error().message);
-    relative = std::filesystem::path(raw).lexically_normal().generic_string();
+    relative = core::path_to_generic_utf8(core::path_from_utf8(raw).lexically_normal());
     return *confined;
 }
 
@@ -221,7 +222,7 @@ std::expected<std::filesystem::path, core::Error> confine_to_root(const std::fil
     const auto fail = [](std::string what) { return std::unexpected(core::Error{std::move(what)}); };
     if (relative.empty()) return fail("expected a path relative to the project root");
     if (relative.find('\0') != std::string_view::npos) return fail("path contains a NUL byte");
-    const fs::path p{std::string(relative)};
+    const fs::path p = core::path_from_utf8(relative); // request JSON is UTF-8
     if (p.is_absolute() || p.has_root_name() || p.has_root_directory()) {
         return fail("absolute paths are not allowed; give a path relative to the project root");
     }

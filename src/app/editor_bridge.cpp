@@ -8,7 +8,9 @@
 
 #include <glm/gtc/matrix_transform.hpp>
 
+#include "app/asset_root.hpp"
 #include "app/remote_bridge.hpp"
+#include "engine/core/utf8_path.hpp"
 #include "engine/rhi/device.hpp"
 #include "engine/rhi/gpu_allocator.hpp"
 #include "engine/rhi/shader_hot_reload.hpp"
@@ -46,7 +48,7 @@ void with_load_transfer(const engine::rhi::Device& device, Fn&& fn) {
 void EditorBridge::create(SDL_Window* window, bool enabled) {
     if (!enabled) return;
     if (auto e = engine::editor::EditorLayer::create(
-            window, std::string(QUAT_PROJECT_ROOT) + "/assets/fonts/Roboto-Medium.ttf");
+            window, engine::core::path_to_utf8(project_root() / "assets" / "fonts" / "Roboto-Medium.ttf"));
         e) {
         editor_ = std::move(*e);
     } else {
@@ -139,7 +141,9 @@ void EditorBridge::apply_scene_file_requests() {
     // re-resolution, then the loop's cached entities are rebound.
     if (!pending_save_.empty()) {
         const std::string path = std::exchange(pending_save_, {});
-        if (auto r = engine::scene::save_scene(scene, path, t_.render_settings); r) {
+        if (auto r = engine::scene::save_scene(scene, engine::core::path_from_utf8(path),
+                                               t_.render_settings);
+            r) {
             std::fprintf(stderr, "[editor] saved scene: %s\n", path.c_str());
         } else {
             std::fprintf(stderr, "[editor] save failed: %s\n", r.error().message.c_str());
@@ -148,8 +152,9 @@ void EditorBridge::apply_scene_file_requests() {
     if (!pending_load_.empty() && !play_) {
         const std::string path = std::exchange(pending_load_, {});
         with_load_transfer(*t_.device, [&](const engine::rhi::TransferContext& load_transfer) {
-            if (auto r = engine::scene::load_scene(scene, path, *t_.allocator, load_transfer,
-                                                   *t_.assets, t_.render_settings);
+            if (auto r = engine::scene::load_scene(scene, engine::core::path_from_utf8(path),
+                                                   *t_.allocator, load_transfer, *t_.assets,
+                                                   t_.render_settings);
                 r) {
                 std::fprintf(stderr, "[editor] loaded scene: %s\n", path.c_str());
                 t_.world->invalidate_navmesh("scene loaded");
@@ -174,7 +179,7 @@ void EditorBridge::apply_instantiate_request() {
     if (pending_instantiate_.empty()) return;
     const std::string path = std::exchange(pending_instantiate_, {});
     with_load_transfer(*t_.device, [&](const engine::rhi::TransferContext& load_transfer) {
-        if (auto roots = engine::scene::GltfLoader::instantiate(path, *t_.allocator,
+        if (auto roots = engine::scene::GltfLoader::instantiate(engine::core::path_from_utf8(path), *t_.allocator,
                                                                 load_transfer, *t_.assets, scene);
             roots) {
             // Place the new roots in front of the camera (instead of at
@@ -256,7 +261,7 @@ const ImDrawData* EditorBridge::build_ui(float dt, int draw_count,
     ui_ctx.shader_statuses = t_.shader_reload != nullptr ? &t_.shader_reload->statuses() : nullptr;
     ui_ctx.scene = &scene;
     ui_ctx.renderer = t_.render_settings;
-    ui_ctx.project_root = QUAT_PROJECT_ROOT;
+    ui_ctx.project_root = engine::core::path_to_utf8(project_root()); // UTF-8 for ImGui
     ui_ctx.instantiate_request = &pending_instantiate_;
     ui_ctx.save_request = &pending_save_;
     ui_ctx.load_request = &pending_load_;

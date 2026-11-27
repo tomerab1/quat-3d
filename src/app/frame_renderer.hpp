@@ -22,6 +22,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <filesystem>
 #include <functional>
 #include <memory>
 #include <optional>
@@ -212,7 +213,7 @@ public:
     // Command buffers and frame synchronisation.
     void create_frame_sync();
     // QUAT_SCREENSHOT: the final frame is written to `path` as binary PPM.
-    void set_screenshot_path(std::optional<std::string> path) {
+    void set_screenshot_path(std::optional<std::filesystem::path> path) {
         screenshot_path_ = std::move(path);
     }
     // Teardown, after the device went idle. Idempotent.
@@ -305,7 +306,7 @@ private:
     VkExtent2D    draw_extent_{0, 0};
     std::size_t   draw_count_ = 0;
 
-    std::optional<std::string> screenshot_path_;
+    std::optional<std::filesystem::path> screenshot_path_;
     engine::rhi::GpuBuffer     screenshot_buffer_;
 };
 

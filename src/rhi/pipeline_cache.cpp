@@ -8,6 +8,7 @@
 #include <utility>
 #include <vector>
 
+#include "engine/core/utf8_path.hpp"
 #include "engine/rhi/device.hpp"
 
 namespace engine::rhi {
@@ -20,7 +21,7 @@ namespace {
 
 [[nodiscard]] std::expected<std::vector<std::uint32_t>, core::Error>
 read_spirv(const std::string& path) {
-    std::ifstream file(path, std::ios::binary | std::ios::ate);
+    std::ifstream file(core::path_from_utf8(path), std::ios::binary | std::ios::ate);
     if (!file) {
         return fail("cannot open SPIR-V file: " + path);
     }
@@ -38,7 +39,7 @@ read_spirv(const std::string& path) {
 }
 
 [[nodiscard]] std::expected<std::string, core::Error> read_text(const std::string& path) {
-    std::ifstream file(path, std::ios::binary);
+    std::ifstream file(core::path_from_utf8(path), std::ios::binary);
     if (!file) {
         return fail("cannot open reflection file: " + path);
     }
@@ -58,7 +59,7 @@ read_spirv(const std::string& path) {
 // "a/b.spv" name the same entry (passes and the hot-reload service build their
 // paths independently).
 [[nodiscard]] std::string shader_key(const std::string& spv_path) {
-    return std::filesystem::path(spv_path).lexically_normal().generic_string();
+    return core::path_to_generic_utf8(core::path_from_utf8(spv_path).lexically_normal());
 }
 
 } // namespace

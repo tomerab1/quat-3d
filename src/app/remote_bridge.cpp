@@ -20,6 +20,7 @@
 #include <entt/entity/registry.hpp>
 #include <glm/gtc/constants.hpp>
 
+#include "engine/core/utf8_path.hpp"
 #include "app/nav_bake.hpp"
 #include "engine/asset/asset_manager.hpp"
 #include "engine/core/log.hpp"
@@ -165,7 +166,7 @@ struct RemoteBridge::Impl {
                                                            *t.scene);
         });
         if (!ctx) return std::unexpected(ctx.error());
-        if (roots) std::fprintf(stderr, "[remote] spawned %s\n", path.string().c_str());
+        if (roots) std::fprintf(stderr, "[remote] spawned %s\n", engine::core::path_to_utf8(path).c_str());
         return roots;
     }
 
@@ -183,7 +184,7 @@ struct RemoteBridge::Impl {
 #ifdef ENGINE_EDITOR
         if (t.editor != nullptr) t.editor->set_selected(entt::null);
 #endif
-        std::fprintf(stderr, "[remote] loaded scene %s\n", path.string().c_str());
+        std::fprintf(stderr, "[remote] loaded scene %s\n", engine::core::path_to_utf8(path).c_str());
         return {};
     }
 

@@ -23,12 +23,16 @@ the current state is in [`STATUS.md`](STATUS.md).
 |---|---|
 | `debug` | clang + libc++, validation layers on |
 | `release` | clang + libc++, optimised (Tracy enabled via `ENGINE_PROFILE`) |
-| `windows-release` | MSVC |
+| `windows-release` | MSVC 2022 (run from an x64 developer prompt), `x64-windows` triplet |
+| `macos-release` | Apple clang, `arm64-osx-14` triplet (macOS 14 minimum), MoltenVK — sets `ENGINE_DESCRIPTOR_SETS_FALLBACK=ON` |
 
 CMake options: `ENGINE_EDITOR` (default ON), `ENGINE_PROFILE`,
-`ENGINE_DESCRIPTOR_SETS_FALLBACK` (macOS / drivers without descriptor buffers).
+`ENGINE_DESCRIPTOR_SETS_FALLBACK` (macOS / drivers without descriptor buffers),
+`ENGINE_PACKAGE_BUILD` (release archives: no source-tree paths compiled in —
+the game finds `assets/` + `cooked/shaders/` next to its executable or in
+`QUAT_ASSET_ROOT`; see `src/app/asset_root.hpp`).
 
-Targets: the engine libraries (`engine_rhi`, `engine_renderer`,
+Targets: the engine libraries (`engine_core`, `engine_rhi`, `engine_renderer`,
 `engine_scene`, `engine_physics`, `engine_animation`, `engine_terrain`,
 `engine_nav`, `engine_net`, `engine_remote`, `engine_audio`, `engine_editor`), the `game`
 executable, the offline cooker (`engine_cook` + the `quat-cook` CLI, never
@@ -170,11 +174,43 @@ later step.
 
 ## CI
 
-`.github/workflows/ci.yml` builds the `release` preset on Ubuntu 24.04 and runs
-`ctest` with lavapipe, then builds the `game` target once more with
-`ENGINE_EDITOR=OFF` (sharing the dependency tree). The vcpkg binary cache is saved right after configure,
+`.github/workflows/ci.yml` runs on pushes to `master`, on pull requests and on
+demand (`workflow_dispatch`):
+
+| Job | Runner | Preset | Tests |
+|---|---|---|---|
+| `linux` | ubuntu-24.04 | `release` | CPU + GPU on Mesa lavapipe; then `game` once more with `ENGINE_EDITOR=OFF` (sharing the dependency tree) |
+| `windows` | windows-2022 | `windows-release` | CPU + GPU on Mesa lavapipe (Windows build, from `jakoch/install-vulkan-sdk-action`) |
+| `macos` | macos-15 (Apple Silicon) | `macos-release` | CPU; GPU on MoltenVK over the runner's paravirtual Metal device — informational (`continue-on-error`) until P1 makes it a gate |
+| `rust` | ubuntu-24.04 | — | `tools/quat-mcp` fmt, clippy, tests |
+
+Each C++ job pins vcpkg to the manifest baseline and Slang to the same
+release. The vcpkg binary cache (one per OS) is saved right after configure,
 so only the first run (or a dependency change) pays for the full dependency
-build. Logs are uploaded as an artifact when a run fails.
+build (cold: ~17 min macOS, ~28 min Windows). Logs are uploaded as an artifact when
+a run fails. The Windows and macOS test steps print GoogleTest's brief summary
+(`GTEST_BRIEF=1`), so skipped GPU tests are visible in the log.
+
+## Releases
+
+`.github/workflows/release.yml` builds `game` in Release with
+`ENGINE_PACKAGE_BUILD=ON` on all three OSes (toolchain setup shared with CI
+through `.github/actions/setup-build`), packages it with
+`scripts/package-release.sh`, and smoke-tests each package with
+`scripts/smoke-test-package.sh` (unpack, launch headless for 30 frames, require
+a clean exit, a screenshot, and data resolved next to the executable):
+
+| Package | Contents | Smoke test |
+|---|---|---|
+| `quat-3d-<v>-linux-x64.tar.gz` | `game` (RUNPATH `$ORIGIN/lib`), `lib/` libc++ runtime, data | Xvfb + lavapipe |
+| `quat-3d-<v>-windows-x64.zip` | `game.exe`, vcpkg DLLs (applocal), MSVC runtime DLLs, data | lavapipe |
+| `quat-3d-<v>-macos-arm64.zip` | `Quat3D.app`: Vulkan loader + MoltenVK in `Frameworks/` (ICD manifest in `Resources/vulkan/icd.d`), data in `Resources/`, ad-hoc signed | MoltenVK, with Homebrew's Vulkan uninstalled first |
+
+Each archive carries `packaging/README-RUN-<os>.txt` as `README-RUN.txt`.
+Pushing a `v*` tag publishes a GitHub Release (tags with a `-`, e.g.
+`v0.2.0-rc1`, are prereleases); running the workflow by hand
+(`gh workflow run release.yml --ref <branch>`) only uploads the packages as
+workflow artifacts.
 
 ### Screenshots
 
@@ -310,7 +346,13 @@ clang++ -std=c++23 -stdlib=libc++ -Wall -Wextra -Wshadow -fno-exceptions -fno-rt
   process. Read files and network input through `engine/core/json_fields.hpp`.
   Dump JSON that may contain non-UTF-8 strings with
   `error_handler_t::replace`.
-- **libc++ everywhere:** every vcpkg port with compiled C++ must use the
-  `x64-linux-libcxx` triplet (see `triplets/`), or linking fails.
+- **libc++ everywhere (Linux):** every vcpkg port with compiled C++ must use
+  the `x64-linux-libcxx` triplet (see `triplets/`), or linking fails. macOS
+  uses `arm64-osx-14` only to pin the minimum OS (Apple clang defaults to
+  libc++); Windows uses MSVC's STL throughout.
+- **MSVC builds at `/W4` with no warnings.** Third-party headers must come in
+  through SYSTEM include directories (`/external:I`, warning level 0) — use
+  `target_include_directories(<t> SYSTEM ...)` for any non-imported
+  third-party path (e.g. stb).
 - **Main-thread ECS:** systems, editor actions and remote-control handlers all
   mutate the registry on the main thread; do not add threads that touch it.

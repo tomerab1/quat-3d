@@ -13,6 +13,7 @@
 
 #include <gtest/gtest.h>
 
+#include "engine/core/utf8_path.hpp"
 #include "engine/rhi/shader_compiler.hpp"
 #include "engine/rhi/shader_reflection.hpp"
 #include "support/expect_ok.hpp"
@@ -22,6 +23,7 @@ namespace {
 
 namespace fs = std::filesystem;
 using namespace engine::rhi;
+using engine::core::path_to_utf8;
 
 void write_file(const fs::path& path, const std::string& text) {
     std::ofstream out(path, std::ios::binary | std::ios::trunc);
@@ -73,24 +75,29 @@ TEST(ShaderCompiler, ArgumentsMatchTheCMakeFlags) {
     ShaderTree t;
     ShaderCompiler compiler;
     {
-        auto c = ShaderCompiler::create({"/bin/sh", t.src, {}, t.out}); // any executable
+        // Any existing file passes as slangc here (nothing is run); a file
+        // of our own keeps the test portable (no /bin/sh on Windows).
+        const fs::path fake_slangc = t.root.path() / "fake-slangc";
+        write_file(fake_slangc, "");
+        auto c = ShaderCompiler::create({fake_slangc, t.src, {}, t.out});
         ASSERT_OK(c);
         compiler = std::move(*c);
     }
+    const fs::path stage = "/stage";
     const fs::path pass = t.src / "pass.slang";
-    const std::vector<std::string> pass_args = compiler.arguments(pass, "/stage");
+    const std::vector<std::string> pass_args = compiler.arguments(pass, stage);
     const std::vector<std::string> want_pass = {
-        pass.string(), "-I", t.lib.string(), "-target", "spirv", "-emit-spirv-directly",
-        "-fvk-use-entrypoint-name", "-o", "/stage/pass.spv", "-reflection-json",
-        "/stage/pass.json"};
+        path_to_utf8(pass), "-I", path_to_utf8(t.lib), "-target", "spirv", "-emit-spirv-directly",
+        "-fvk-use-entrypoint-name", "-o", path_to_utf8(stage / "pass.spv"), "-reflection-json",
+        path_to_utf8(stage / "pass.json")};
     EXPECT_EQ(pass_args, want_pass);
     EXPECT_EQ(compiler.kind_of(pass), ShaderSourceKind::pass);
 
     const fs::path mod = t.lib / "scale.slang";
     EXPECT_EQ(compiler.kind_of(mod), ShaderSourceKind::module);
-    const std::vector<std::string> want_mod = {mod.string(), "-I", t.lib.string(), "-o",
-                                               "/stage/scale.slang-module"};
-    EXPECT_EQ(compiler.arguments(mod, "/stage"), want_mod);
+    const std::vector<std::string> want_mod = {path_to_utf8(mod), "-I", path_to_utf8(t.lib), "-o",
+                                               path_to_utf8(stage / "scale.slang-module")};
+    EXPECT_EQ(compiler.arguments(mod, stage), want_mod);
     EXPECT_EQ(compiler.outputs_for(mod),
               (std::vector<fs::path>{t.out / "scale.slang-module"}));
 }

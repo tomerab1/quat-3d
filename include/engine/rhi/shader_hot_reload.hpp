@@ -51,7 +51,7 @@ public:
     };
 
     // QUAT_SHADER_HOT_RELOAD=1/0 when set, else the build default (on with
-    // ENGINE_EDITOR).
+    // ENGINE_EDITOR, off in ENGINE_PACKAGE_BUILD release packages).
     [[nodiscard]] static bool enabled_by_environment();
 
     // Starts watching. Fails when slangc or the directories are missing.

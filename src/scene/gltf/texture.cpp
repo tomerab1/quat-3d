@@ -17,6 +17,7 @@
 #include "engine/asset/image_decode.hpp"
 #include "engine/asset/ktx2_texture.hpp"
 #include "scene/gltf/internal.hpp"
+#include "engine/core/utf8_path.hpp"
 
 namespace engine::scene {
 
@@ -113,7 +114,7 @@ std::expected<std::vector<TextureData>, core::Error>
 GltfLoader::load_texture_data(const std::filesystem::path& path) {
     auto data = fastgltf::GltfDataBuffer::FromPath(path);
     if (data.error() != fastgltf::Error::None) {
-        return fail("fastgltf: could not read '" + path.string() + "': " +
+        return fail("fastgltf: could not read '" + core::path_to_utf8(path) + "': " +
                     std::string(fastgltf::getErrorMessage(data.error())));
     }
     return parse_and_extract_textures(data.get(), path.parent_path());
@@ -135,7 +136,7 @@ GltfLoader::load_textures(const std::filesystem::path& path, rhi::GpuAllocator& 
                           const rhi::TransferContext& transfer) {
     auto file = fastgltf::GltfDataBuffer::FromPath(path);
     if (file.error() != fastgltf::Error::None) {
-        return fail("fastgltf: could not read '" + path.string() + "': " +
+        return fail("fastgltf: could not read '" + core::path_to_utf8(path) + "': " +
                     std::string(fastgltf::getErrorMessage(file.error())));
     }
     auto asset = parse_gltf(file.get(), path.parent_path());

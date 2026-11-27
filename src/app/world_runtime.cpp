@@ -135,7 +135,7 @@ void WorldRuntime::init(const engine::rhi::Device& device, engine::rhi::GpuAlloc
     add_env_terrain(scene);
 }
 
-void WorldRuntime::init_audio(const std::string& asset_root) {
+void WorldRuntime::init_audio(const std::filesystem::path& asset_root) {
     audio_.emplace(AudioRuntime::create(asset_root));
 }
 

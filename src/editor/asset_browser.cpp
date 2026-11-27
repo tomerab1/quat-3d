@@ -7,6 +7,7 @@
 #include <vector>
 
 #include <imgui.h>
+#include "engine/core/utf8_path.hpp"
 
 namespace engine::editor {
 
@@ -15,13 +16,13 @@ namespace {
 namespace fs = std::filesystem;
 
 [[nodiscard]] bool is_gltf(const fs::path& path) {
-    const std::string ext = path.extension().string();
+    const std::string ext = core::path_to_utf8(path.extension());
     return ext == ".gltf" || ext == ".glb";
 }
 
 // Short type tag shown before the file name (thumbnails come later).
 [[nodiscard]] const char* file_tag(const fs::path& path) {
-    const std::string ext = path.extension().string();
+    const std::string ext = core::path_to_utf8(path.extension());
     if (ext == ".gltf" || ext == ".glb") return "[mdl]";
     if (ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".hdr") return "[tex]";
     if (ext == ".slang") return "[shd]";
@@ -45,7 +46,7 @@ void draw_directory(const fs::path& dir, std::string& instantiate_request) {
               });
 
     for (const auto& entry : entries) {
-        const std::string name = entry.path().filename().string();
+        const std::string name = core::path_to_utf8(entry.path().filename()); // ImGui: UTF-8
         if (name.empty() || name.front() == '.') continue;
 
         if (entry.is_directory()) {
@@ -60,7 +61,7 @@ void draw_directory(const fs::path& dir, std::string& instantiate_request) {
         ImGui::Selectable(label.c_str(), false, ImGuiSelectableFlags_AllowDoubleClick);
         if (is_gltf(entry.path())) {
             const auto request = [&]() {
-                instantiate_request = entry.path().string();
+                instantiate_request = core::path_to_utf8(entry.path()); // UTF-8
                 std::fprintf(stderr, "[editor] instantiate requested: %s\n",
                              instantiate_request.c_str());
             };
@@ -68,7 +69,7 @@ void draw_directory(const fs::path& dir, std::string& instantiate_request) {
                 request();
             }
             if (ImGui::BeginDragDropSource()) {
-                const std::string path = entry.path().string();
+                const std::string path = core::path_to_utf8(entry.path());
                 ImGui::SetDragDropPayload(asset_drag_payload, path.c_str(), path.size() + 1);
                 ImGui::Text("instantiate %s", name.c_str());
                 ImGui::EndDragDropSource();
@@ -94,7 +95,7 @@ void draw_asset_browser(const std::string& project_root, std::string& instantiat
     }
     bool any = false;
     for (const char* sub : {"assets", "sample-assets"}) {
-        const fs::path root = fs::path(project_root) / sub;
+        const fs::path root = core::path_from_utf8(project_root) / sub;
         std::error_code ec;
         if (!fs::is_directory(root, ec)) continue;
         any = true;

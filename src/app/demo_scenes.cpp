@@ -9,6 +9,8 @@
 #include <glm/gtc/matrix_transform.hpp>
 
 #include "engine/asset/asset_manager.hpp"
+#include "engine/core/env.hpp"
+#include "engine/core/utf8_path.hpp"
 #include "engine/asset/material_asset.hpp"
 #include "engine/asset/mesh_asset.hpp"
 #include "engine/rhi/gpu_allocator.hpp"
@@ -39,15 +41,16 @@ build_demo_scene(engine::scene::Scene& scene, engine::asset::AssetManager& asset
     entt::entity character_entity = entt::null;
     bool scene_ok = true;
 
-    if (const char* gltf_path = std::getenv("QUAT_GLTF"); gltf_path != nullptr) {
-        auto roots = engine::scene::GltfLoader::instantiate(gltf_path, allocator, setup_transfer,
+    if (const auto gltf_path = engine::core::env_path("QUAT_GLTF")) {
+        auto roots = engine::scene::GltfLoader::instantiate(*gltf_path, allocator, setup_transfer,
                                                             assets, scene);
         if (!roots) {
             std::fprintf(stderr, "[fatal] glTF instantiate failed: %s\n",
                          roots.error().message.c_str());
             scene_ok = false;
         } else {
-            std::fprintf(stderr, "[info] loaded '%s': %zu root node(s), %zu entities\n", gltf_path,
+            std::fprintf(stderr, "[info] loaded '%s': %zu root node(s), %zu entities\n",
+                         engine::core::path_to_utf8(*gltf_path).c_str(),
                          roots->size(),
                          static_cast<std::size_t>(
                              scene.registry().view<engine::scene::Transform>().size()));
@@ -335,7 +338,7 @@ build_demo_scene(engine::scene::Scene& scene, engine::asset::AssetManager& asset
     DemoScene out;
     out.physics_mode = physics_mode;
     out.character_mode = character_mode;
-    out.from_gltf = std::getenv("QUAT_GLTF") != nullptr;
+    out.from_gltf = engine::core::env_path("QUAT_GLTF").has_value();
     out.physics_world = std::move(physics_world);
     out.character_entity = character_entity;
     out.spin_entity = spin_entity;

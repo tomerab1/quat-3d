@@ -12,6 +12,7 @@
 
 #include <ImGuizmo.h> // must follow imgui.h
 
+#include "engine/core/utf8_path.hpp"
 #include "engine/scene/components.hpp"
 #include "engine/scene/scene.hpp"
 
@@ -451,11 +452,12 @@ void EditorLayer::build_ui(const EditorContext& ctx) {
             ImGui::SetNextItemWidth(260.0F);
             ImGui::InputText("scene file", scene_file_, sizeof(scene_file_));
             const auto resolve = [&]() {
-                std::filesystem::path p(scene_file_);
+                // ImGui text and the requests are UTF-8.
+                std::filesystem::path p = core::path_from_utf8(scene_file_);
                 if (p.is_relative() && !ctx.project_root.empty()) {
-                    p = std::filesystem::path(ctx.project_root) / p;
+                    p = core::path_from_utf8(ctx.project_root) / p;
                 }
-                return p.string();
+                return core::path_to_utf8(p);
             };
             if (ctx.save_request != nullptr && ImGui::MenuItem("Save scene")) {
                 *ctx.save_request = resolve();

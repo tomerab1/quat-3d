@@ -3,13 +3,16 @@
 #include <algorithm>
 #include <cstdio>
 #include <expected>
+#include <filesystem>
 #include <string>
 #include <utility>
 
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_vulkan.h>
 
+#include "app/asset_root.hpp"
 #include "app/demo_scenes.hpp"
+#include "engine/core/utf8_path.hpp"
 #include "engine/scene/components.hpp"
 
 namespace quat::app {
@@ -137,9 +140,10 @@ bool Application::init_subsystems() {
         return false;
     }
     pipeline_cache_ = std::move(*pipeline_cache);
-    shader_dir_ = QUAT_COOKED_SHADER_DIR;
+    // Pipeline-cache paths are UTF-8 strings (opened via path_from_utf8).
+    shader_dir_ = engine::core::path_to_utf8(cooked_shader_dir());
     shader_reload_ = engine::rhi::ShaderHotReload::create_from_environment( // R2
-        pipeline_cache_, QUAT_PROJECT_ROOT "/assets/shaders", shader_dir_);
+        pipeline_cache_, project_root() / "assets" / "shaders", cooked_shader_dir());
     const VkDevice vk_device = device_.handle();
 
     // One-time transfer context for setup uploads (demo mesh/material + each
@@ -211,7 +215,7 @@ bool Application::init_subsystems() {
 
     last_ticks_ = SDL_GetTicksNS();
     connect_remote();
-    world_.init_audio(QUAT_PROJECT_ROOT);
+    world_.init_audio(project_root());
 #ifdef ENGINE_EDITOR
     editor_.bind({.device = &device_,
                   .allocator = &allocator_,
@@ -246,7 +250,7 @@ void Application::connect_remote() {
 #ifdef ENGINE_EDITOR
     editor_.fill_remote_targets(remote_targets, world_.has_demo_physics());
 #endif
-    remote_targets.project_root = QUAT_PROJECT_ROOT;
+    remote_targets.project_root = project_root();
     remote_.emplace(std::move(remote_targets), k_frames_in_flight);
 }
 
