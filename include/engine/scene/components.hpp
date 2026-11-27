@@ -47,6 +47,16 @@ struct MeshRenderer {
     asset::AssetHandle<asset::MaterialAsset> material;
 };
 
+// Per-entity overrides of the scalar PBR factors the entity's MeshRenderer
+// material is drawn with (A8 material tuning); the shared material asset is
+// never modified. `mask` holds the MaterialField bits (material_override.hpp)
+// of the fields set in `values`. Plain data: the derived material the renderer
+// draws is owned by a MaterialOverrideStore, not by the component.
+struct MaterialOverride {
+    std::uint32_t            mask = 0;
+    asset::PbrMaterialParams values{};
+};
+
 // Provenance of a MeshRenderer's assets, for scene serialization (editor save/
 // load): the AssetManager cache keys, plus the glTF file that produces them.
 // An empty gltf_path means engine code creates the keyed assets at startup

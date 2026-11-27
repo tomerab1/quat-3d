@@ -28,7 +28,8 @@ using engine::scene::make_sphere_data;
 std::expected<DemoScene, engine::core::Error>
 build_demo_scene(engine::scene::Scene& scene, engine::asset::AssetManager& assets,
                  engine::rhi::GpuAllocator& allocator,
-                 const engine::rhi::TransferContext& setup_transfer) {
+                 const engine::rhi::TransferContext& setup_transfer,
+                 engine::renderer::RenderSettings& render_settings) {
     entt::entity spin_entity = entt::null;
     entt::entity demo_root = entt::null;
     entt::entity pedestal = entt::null;
@@ -40,7 +41,6 @@ build_demo_scene(engine::scene::Scene& scene, engine::asset::AssetManager& asset
     bool character_mode = false;
     entt::entity character_entity = entt::null;
     bool scene_ok = true;
-    float shadow_view_distance = 0.0F;
 
     if (const char* demo = std::getenv("QUAT_DEMO"); demo != nullptr) {
         const DemoSceneFile* file = nullptr;
@@ -52,12 +52,11 @@ build_demo_scene(engine::scene::Scene& scene, engine::asset::AssetManager& asset
             scene_ok = false;
         } else if (auto loaded = engine::scene::load_scene(
                        scene, std::filesystem::path(QUAT_PROJECT_ROOT) / file->path, allocator,
-                       setup_transfer, assets);
+                       setup_transfer, assets, &render_settings);
                    !loaded) {
             std::fprintf(stderr, "[fatal] QUAT_DEMO=%s: %s\n", demo, loaded.error().message.c_str());
             scene_ok = false;
         } else {
-            shadow_view_distance = file->shadow_view_distance;
             std::fprintf(stderr, "[info] demo '%s' loaded from %s\n", demo, file->path);
         }
     } else if (const char* gltf_path = std::getenv("QUAT_GLTF"); gltf_path != nullptr) {
@@ -360,7 +359,6 @@ build_demo_scene(engine::scene::Scene& scene, engine::asset::AssetManager& asset
     out.root = demo_root;
     out.pedestal = pedestal;
     out.footprint_half = footprint_half;
-    out.shadow_view_distance = shadow_view_distance;
     return out;
 }
 

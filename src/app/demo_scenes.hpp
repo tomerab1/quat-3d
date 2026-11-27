@@ -22,6 +22,9 @@
 namespace engine::asset {
 class AssetManager;
 }
+namespace engine::renderer {
+struct RenderSettings;
+}
 namespace engine::rhi {
 class GpuAllocator;
 struct TransferContext;
@@ -50,20 +53,16 @@ struct DemoScene {
     entt::entity root = entt::null;
     entt::entity pedestal = entt::null;
     glm::vec2    footprint_half{0.0F};
-    // Metres of the view the shadow map covers; 0 keeps the fixed box around
-    // the origin that the small demos fit in.
-    float shadow_view_distance = 0.0F;
 };
 
-// QUAT_DEMO scenes: a name, its scene file (relative to the project root) and
-// the view distance its shadows cover.
+// QUAT_DEMO scenes: a name and its scene file (relative to the project root).
+// The file's render_settings block (shadow coverage, clouds, ...) applies.
 struct DemoSceneFile {
     const char* name;
     const char* path;
-    float       shadow_view_distance;
 };
 inline constexpr DemoSceneFile k_demo_scenes[] = {
-    {"mountain", "assets/scenes/mountain_forest.json", 400.0F},
+    {"mountain", "assets/scenes/mountain_forest.json"},
 };
 
 // Half the height of the pedestal mesh (a box) as built; its Transform scales
@@ -71,11 +70,13 @@ inline constexpr DemoSceneFile k_demo_scenes[] = {
 inline constexpr float k_pedestal_mesh_half_height = 0.25F;
 
 // Build the startup scene into `scene` (meshes/materials uploaded through
-// `transfer` and cached in `assets`).
+// `transfer` and cached in `assets`). A QUAT_DEMO scene file also sets
+// `render_settings`.
 [[nodiscard]] std::expected<DemoScene, engine::core::Error>
 build_demo_scene(engine::scene::Scene& scene, engine::asset::AssetManager& assets,
                  engine::rhi::GpuAllocator& allocator,
-                 const engine::rhi::TransferContext& setup_transfer);
+                 const engine::rhi::TransferContext& setup_transfer,
+                 engine::renderer::RenderSettings& render_settings);
 
 // The sun, plus two coloured point lights unless the scene came from a glTF
 // file (a model is shown under just its own lighting setup). The point lights

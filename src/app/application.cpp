@@ -2,6 +2,8 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <expected>
+#include <string>
 #include <utility>
 
 #include <SDL3/SDL.h>
@@ -44,15 +46,13 @@ Application::~Application() {
     // GPU objects are freed by the members' destructors (reverse declaration
     // order: subsystems, then the swapchain, allocator and device, then the
     // window and SDL). Wait for the GPU first and release the frame sync and
-    // the surface explicitly: the surface must go after the swapchain and
-    // before the instance.
+    // the swapchain explicitly; the device owns the surface and destroys it
+    // after the swapchain and before the instance.
     if (device_.handle() != VK_NULL_HANDLE) {
         vkDeviceWaitIdle(device_.handle());
         world_.shutdown(); // waits for a running terrain job, frees its upload pool
         renderer_.destroy_frame_sync();
         swapchain_ = engine::rhi::Swapchain{}; // destroy swapchain before surface
-        if (surface_ != VK_NULL_HANDLE) vkDestroySurfaceKHR(device_.instance(), surface_, nullptr);
-        surface_ = VK_NULL_HANDLE;
     }
 }
 
@@ -85,10 +85,22 @@ bool Application::init_platform() {
         return false;
     }
 
+    // The window surface is created between the instance and the physical
+    // device choice, so only a GPU that can present to this window is picked.
+    SDL_Window* window = platform_.window;
     auto device_result = engine::rhi::Device::create({
         .instance_extensions = {sdl_extensions, sdl_ext_count},
         .enable_validation = k_enable_validation,
         .application_name = k_window_title,
+        .create_surface = [window](VkInstance instance)
+            -> std::expected<VkSurfaceKHR, engine::core::Error> {
+            VkSurfaceKHR surface = VK_NULL_HANDLE;
+            if (!SDL_Vulkan_CreateSurface(window, instance, nullptr, &surface)) {
+                return std::unexpected(engine::core::Error{
+                    std::string("SDL_Vulkan_CreateSurface failed: ") + SDL_GetError()});
+            }
+            return surface;
+        },
     });
     if (!device_result) {
         std::fprintf(stderr, "[fatal] device creation failed: %s\n",
@@ -105,13 +117,8 @@ bool Application::init_platform() {
     }
     allocator_ = std::move(*allocator_result);
 
-    if (!SDL_Vulkan_CreateSurface(platform_.window, device_.instance(), nullptr, &surface_)) {
-        std::fprintf(stderr, "[fatal] SDL_Vulkan_CreateSurface failed: %s\n", SDL_GetError());
-        return false;
-    }
-
-    auto swapchain_result =
-        engine::rhi::Swapchain::create(device_, surface_, window_pixel_extent(platform_.window));
+    auto swapchain_result = engine::rhi::Swapchain::create(
+        device_, device_.surface(), window_pixel_extent(platform_.window));
     if (!swapchain_result) {
         std::fprintf(stderr, "[fatal] swapchain creation failed: %s\n",
                      swapchain_result.error().message.c_str());
@@ -156,7 +163,6 @@ bool Application::init_subsystems() {
     // frame slots: each slot's ImGuiPass uploads the font atlas of this
     // context. QUAT_NO_UI=1 disables it (deterministic headless renders).
     editor_.create(platform_.window, config_.editor_ui);
-    renderer_.set_render_settings(&editor_.render_settings());
     with_ui = editor_.active();
 #endif
 
@@ -167,7 +173,8 @@ bool Application::init_subsystems() {
 
     // QUAT_GLTF=<path> instantiates a real glTF scene graph; otherwise a
     // spinning demo cube stands in (see demo_scenes.hpp).
-    const bool scene_ok = world_.build_scene(scene_, assets_, allocator_, setup_transfer);
+    const bool scene_ok = world_.build_scene(scene_, assets_, allocator_, setup_transfer,
+                                             renderer_.render_settings());
 
     vkDestroyCommandPool(vk_device, setup_pool, nullptr);
 
@@ -201,7 +208,6 @@ bool Application::init_subsystems() {
     // ---- Per-frame command + sync resources --------------------------------
     renderer_.create_frame_sync();
     renderer_.set_screenshot_path(config_.screenshot_path);
-    renderer_.set_shadow_view_distance(world_.shadow_view_distance());
 
     last_ticks_ = SDL_GetTicksNS();
     connect_remote();
@@ -213,7 +219,8 @@ bool Application::init_subsystems() {
                   .scene = &scene_,
                   .world = &world_,
                   .camera = &camera_,
-                  .shader_reload = shader_reload_.get()});
+                  .shader_reload = shader_reload_.get(),
+                  .render_settings = &renderer_.render_settings()});
 #endif
     return true;
 }
@@ -233,6 +240,8 @@ void Application::connect_remote() {
     remote_targets.cam_yaw = &camera_.yaw;
     remote_targets.cam_pitch = &camera_.pitch;
     remote_targets.cam_fov_y = &camera_.fov_y;
+    remote_targets.render_settings = &renderer_.render_settings();
+    remote_targets.material_overrides = &renderer_.material_overrides();
     world_.fill_remote_targets(remote_targets);
 #ifdef ENGINE_EDITOR
     editor_.fill_remote_targets(remote_targets, world_.has_demo_physics());

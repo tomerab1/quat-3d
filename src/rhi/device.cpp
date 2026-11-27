@@ -6,6 +6,7 @@
 #include <cstdio>
 #include <cstring>
 #include <format>
+#include <optional>
 #include <set>
 #include <string>
 #include <vector>
@@ -19,11 +20,11 @@ namespace {
 constexpr const char* k_validation_layer = "VK_LAYER_KHRONOS_validation";
 
 // Device extensions every selected GPU must support. dynamic_rendering and
-// synchronization2 are core in Vulkan 1.3; swapchain is required (and
-// enabled) only for a presentable device — one whose instance has
-// VK_KHR_surface; headless devices must not enable it. descriptor_buffer is the mandated descriptor model (CLAUDE.md);
-// it is hard-required unless ENGINE_DESCRIPTOR_SETS_FALLBACK permits the
-// classic-sets compatibility path on drivers that lack it (MoltenVK on macOS).
+// synchronization2 are core in Vulkan 1.3; swapchain is required (and enabled)
+// when the device presents to a surface. descriptor_buffer is the mandated
+// descriptor model (CLAUDE.md); it is hard-required unless
+// ENGINE_DESCRIPTOR_SETS_FALLBACK permits the classic-sets compatibility path
+// on drivers that lack it (MoltenVK on macOS).
 
 [[nodiscard]] std::string vk_result_string(VkResult result) {
     switch (result) {
@@ -99,45 +100,25 @@ VkDebugUtilsMessengerCreateInfoEXT make_debug_messenger_info() {
     });
 }
 
-// Queue family selection result with a validity flag.
-struct QueueSelection {
-    QueueFamilies families{};
-    bool valid = false;
-};
-
-[[nodiscard]] QueueSelection select_queue_families(VkPhysicalDevice device) {
+[[nodiscard]] std::vector<VkQueueFamilyProperties> queue_family_properties(VkPhysicalDevice device) {
     std::uint32_t count = 0;
     vkGetPhysicalDeviceQueueFamilyProperties(device, &count, nullptr);
     std::vector<VkQueueFamilyProperties> props(count);
     vkGetPhysicalDeviceQueueFamilyProperties(device, &count, props.data());
+    return props;
+}
 
-    constexpr std::uint32_t none = VK_QUEUE_FAMILY_IGNORED;
-    std::uint32_t graphics = none, compute = none, transfer = none;
-    std::uint32_t dedicated_compute = none, dedicated_transfer = none;
-
-    for (std::uint32_t i = 0; i < count; ++i) {
-        const VkQueueFlags flags = props[i].queueFlags;
-        const bool g = flags & VK_QUEUE_GRAPHICS_BIT;
-        const bool c = flags & VK_QUEUE_COMPUTE_BIT;
-        const bool t = flags & VK_QUEUE_TRANSFER_BIT;
-
-        if (g && graphics == none) graphics = i;
-        if (c && compute == none) compute = i;
-        if (t && transfer == none) transfer = i;
-        // Prefer a compute family without graphics (async compute).
-        if (c && !g && dedicated_compute == none) dedicated_compute = i;
-        // Prefer a transfer-only family (dedicated DMA).
-        if (t && !g && !c && dedicated_transfer == none) dedicated_transfer = i;
+// A surface the device can present to must also report at least one format
+// and present mode, or no swapchain can be created for it.
+[[nodiscard]] bool surface_has_formats_and_modes(VkPhysicalDevice device, VkSurfaceKHR surface) {
+    std::uint32_t formats = 0;
+    std::uint32_t modes = 0;
+    if (vkGetPhysicalDeviceSurfaceFormatsKHR(device, surface, &formats, nullptr) != VK_SUCCESS ||
+        vkGetPhysicalDeviceSurfacePresentModesKHR(device, surface, &modes, nullptr) !=
+            VK_SUCCESS) {
+        return false;
     }
-
-    if (graphics == none) return {};
-    if (dedicated_compute != none)  compute = dedicated_compute;
-    if (dedicated_transfer != none) transfer = dedicated_transfer;
-    // Graphics queues always support transfer; ensure a fallback.
-    if (compute == none)  compute = graphics;
-    if (transfer == none) transfer = graphics;
-
-    return QueueSelection{QueueFamilies{graphics, compute, transfer}, true};
+    return formats > 0 && modes > 0;
 }
 
 [[nodiscard]] int device_type_score(VkPhysicalDeviceType type) {
@@ -160,11 +141,13 @@ struct Candidate {
     bool has_descriptor_buffer = false;
 };
 
-// Require Vulkan 1.3 + dynamicRendering + synchronization2 (+ swapchain when
-// `presentable`), then rank by device type (prefer discrete). In this WSL2
-// box only llvmpipe qualifies; on real hardware this picks the discrete GPU.
-// See CLAUDE.md.
-[[nodiscard]] Candidate pick_physical_device(VkInstance instance, bool presentable) {
+// Require Vulkan 1.3 + dynamicRendering + synchronization2 (and, with a
+// surface, VK_KHR_swapchain plus a queue family that can present to it), then
+// rank by device type (prefer discrete). On a multi-GPU machine whose display
+// GPU is not the discrete one, presentation support decides. Each rejected
+// device is noted in `rejected` ("name: reason; ...") for the error message.
+[[nodiscard]] Candidate pick_physical_device(VkInstance instance, VkSurfaceKHR surface,
+                                             std::string& rejected) {
     std::uint32_t count = 0;
     vkEnumeratePhysicalDevices(instance, &count, nullptr);
     std::vector<VkPhysicalDevice> devices(count);
@@ -188,30 +171,72 @@ struct Candidate {
         VkPhysicalDeviceProperties props{};
         vkGetPhysicalDeviceProperties(device, &props);
 
+        const auto reject = [&](const char* why) {
+            rejected += std::format("{}{}: {}", rejected.empty() ? "" : "; ",
+                                    props.deviceName, why);
+        };
+
         if (VK_API_VERSION_MAJOR(props.apiVersion) < 1 ||
             VK_API_VERSION_MINOR(props.apiVersion) < 3) {
+            reject("Vulkan 1.3 not supported");
             continue;
         }
-        if (!features13.dynamicRendering || !features13.synchronization2) continue;
-        if (!features12.bufferDeviceAddress) continue;
+        if (!features13.dynamicRendering || !features13.synchronization2) {
+            reject("no dynamicRendering / synchronization2");
+            continue;
+        }
+        if (!features12.bufferDeviceAddress) {
+            reject("no bufferDeviceAddress");
+            continue;
+        }
 
         const auto exts = device_extensions(device);
-        if (presentable && !has_extension(exts, VK_KHR_SWAPCHAIN_EXTENSION_NAME)) continue;
+        if (surface != VK_NULL_HANDLE && !has_extension(exts, VK_KHR_SWAPCHAIN_EXTENSION_NAME)) {
+            reject("no VK_KHR_swapchain");
+            continue;
+        }
 
         const bool db_ok = db_features.descriptorBuffer == VK_TRUE
             && has_extension(exts, VK_EXT_DESCRIPTOR_BUFFER_EXTENSION_NAME);
 #ifndef ENGINE_DESCRIPTOR_SETS_FALLBACK
-        if (!db_ok) continue;
+        if (!db_ok) {
+            reject("no VK_EXT_descriptor_buffer");
+            continue;
+        }
 #endif
 
-        const QueueSelection queues = select_queue_families(device);
-        if (!queues.valid) continue;
+        const auto family_props = queue_family_properties(device);
+        PresentSupportFn can_present{};
+        if (surface != VK_NULL_HANDLE) {
+            can_present = [device, surface](std::uint32_t family) {
+                VkBool32 supported = VK_FALSE;
+                return vkGetPhysicalDeviceSurfaceSupportKHR(device, family, surface,
+                                                            &supported) == VK_SUCCESS &&
+                       supported == VK_TRUE;
+            };
+        }
+        const std::optional<QueueFamilies> families =
+            select_queue_families(family_props, can_present);
+        if (!families) {
+            reject(surface != VK_NULL_HANDLE ? "no graphics queue, or no queue that can "
+                                               "present to the window surface"
+                                             : "no graphics queue");
+            continue;
+        }
+        if (surface != VK_NULL_HANDLE && !surface_has_formats_and_modes(device, surface)) {
+            reject("the window surface reports no formats or present modes");
+            continue;
+        }
 
-        // +1 tie-breaker: prefer a descriptor-buffer-capable device over an
-        // otherwise equal one that would force the classic-sets fallback.
-        const int score = device_type_score(props.deviceType) + (db_ok ? 1 : 0);
+        // Tie-breakers within a device type: prefer a descriptor-buffer-capable
+        // device over one that would force the classic-sets fallback (+2),
+        // then one whose graphics queue presents itself (+1).
+        const bool presents_from_graphics =
+            families->present != VK_QUEUE_FAMILY_IGNORED && families->present == families->graphics;
+        const int score = device_type_score(props.deviceType) + (db_ok ? 2 : 0) +
+                          (presents_from_graphics ? 1 : 0);
         if (score > best.score) {
-            best = Candidate{device, queues.families, props, score, db_ok};
+            best = Candidate{device, *families, props, score, db_ok};
         }
     }
     return best;
@@ -235,9 +260,6 @@ std::expected<Device, core::Error> Device::create(const CreateInfo& info) {
 
     std::vector<const char*> extensions(info.instance_extensions.begin(),
                                         info.instance_extensions.end());
-    dev.presentable_ = std::any_of(extensions.begin(), extensions.end(), [](const char* e) {
-        return e != nullptr && std::strcmp(e, VK_KHR_SURFACE_EXTENSION_NAME) == 0;
-    });
     std::vector<const char*> layers;
     if (want_validation) {
         extensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
@@ -293,14 +315,28 @@ std::expected<Device, core::Error> Device::create(const CreateInfo& info) {
         }
     }
 
+    // ---- Window surface -------------------------------------------------
+    // Created before the physical device is chosen so selection can require
+    // presentation support (owned by `dev` from here: destroyed on failure).
+    if (info.create_surface) {
+        auto surface = info.create_surface(dev.instance_);
+        if (!surface) return std::unexpected(surface.error());
+        if (*surface == VK_NULL_HANDLE) return fail("create_surface returned a null surface");
+        dev.surface_ = *surface;
+        dev.presentable_ = true; // VK_KHR_swapchain is required and enabled below
+    }
+
     // ---- Physical device ------------------------------------------------
-    const Candidate candidate = pick_physical_device(dev.instance_, dev.presentable_);
+    std::string rejected;
+    const Candidate candidate = pick_physical_device(dev.instance_, dev.surface_, rejected);
     if (candidate.device == VK_NULL_HANDLE) {
-        return fail(dev.presentable_
-                        ? "no Vulkan 1.3 device with dynamic_rendering + synchronization2 "
-                          "+ swapchain + descriptor_buffer found"
-                        : "no Vulkan 1.3 device with dynamic_rendering + synchronization2 "
-                          "+ descriptor_buffer found");
+        return fail(std::format(
+            "no suitable Vulkan device: need Vulkan 1.3 with dynamic_rendering + "
+            "synchronization2 + descriptor_buffer{} ({})",
+            dev.surface_ != VK_NULL_HANDLE
+                ? " + swapchain and a queue that can present to the window surface"
+                : "",
+            rejected.empty() ? "no Vulkan devices found" : rejected));
     }
     dev.physical_device_ = candidate.device;
     dev.queue_families_  = candidate.families;
@@ -309,19 +345,26 @@ std::expected<Device, core::Error> Device::create(const CreateInfo& info) {
         ? DescriptorBackend::ext_descriptor_buffer
         : DescriptorBackend::classic_sets;
 
-    std::fprintf(stderr, "[rhi] selected GPU: %s (Vulkan %u.%u.%u, queues g=%u c=%u t=%u, "
+    const std::string present_family =
+        candidate.families.present == VK_QUEUE_FAMILY_IGNORED
+            ? std::string("none")
+            : std::to_string(candidate.families.present);
+    std::fprintf(stderr, "[rhi] selected GPU: %s (Vulkan %u.%u.%u, queues g=%u c=%u t=%u p=%s, "
                  "descriptors: %s)\n",
                  candidate.properties.deviceName,
                  VK_API_VERSION_MAJOR(candidate.properties.apiVersion),
                  VK_API_VERSION_MINOR(candidate.properties.apiVersion),
                  VK_API_VERSION_PATCH(candidate.properties.apiVersion),
                  candidate.families.graphics, candidate.families.compute,
-                 candidate.families.transfer,
+                 candidate.families.transfer, present_family.c_str(),
                  candidate.has_descriptor_buffer ? "descriptor_buffer" : "classic sets (fallback)");
 
     // ---- Logical device -------------------------------------------------
-    const std::set<std::uint32_t> unique_families = {
+    std::set<std::uint32_t> unique_families = {
         candidate.families.graphics, candidate.families.compute, candidate.families.transfer};
+    if (candidate.families.present != VK_QUEUE_FAMILY_IGNORED) {
+        unique_families.insert(candidate.families.present);
+    }
 
     const float priority = 1.0F;
     std::vector<VkDeviceQueueCreateInfo> queue_infos;
@@ -362,8 +405,12 @@ std::expected<Device, core::Error> Device::create(const CreateInfo& info) {
     features13.synchronization2 = VK_TRUE;
     features13.pNext = &features12;
 
+    // VK_KHR_swapchain requires the instance's VK_KHR_surface, so a
+    // surface-less device (tools, tests) does not enable it.
     std::vector<const char*> device_exts;
-    if (dev.presentable_) device_exts.push_back(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
+    if (dev.surface_ != VK_NULL_HANDLE) {
+        device_exts.push_back(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
+    }
     if (candidate.has_descriptor_buffer) {
         device_exts.push_back(VK_EXT_DESCRIPTOR_BUFFER_EXTENSION_NAME);
     }
@@ -394,6 +441,9 @@ std::expected<Device, core::Error> Device::create(const CreateInfo& info) {
     vkGetDeviceQueue(dev.device_, candidate.families.graphics, 0, &dev.graphics_queue_);
     vkGetDeviceQueue(dev.device_, candidate.families.compute, 0, &dev.compute_queue_);
     vkGetDeviceQueue(dev.device_, candidate.families.transfer, 0, &dev.transfer_queue_);
+    if (candidate.families.present != VK_QUEUE_FAMILY_IGNORED) {
+        vkGetDeviceQueue(dev.device_, candidate.families.present, 0, &dev.present_queue_);
+    }
 
     // Descriptor buffer sizes/alignments, needed when laying out descriptor
     // buffers (Slice 2.3). pNext is cleared so the cached struct is self-contained.
@@ -437,6 +487,11 @@ void Device::destroy() noexcept {
         vkDestroyDevice(device_, nullptr);
         device_ = VK_NULL_HANDLE;
     }
+    // Any swapchain on the surface is gone by now (it needed the device).
+    if (surface_ != VK_NULL_HANDLE && instance_ != VK_NULL_HANDLE) {
+        vkDestroySurfaceKHR(instance_, surface_, nullptr);
+        surface_ = VK_NULL_HANDLE;
+    }
     if (debug_messenger_ != VK_NULL_HANDLE && instance_ != VK_NULL_HANDLE) {
         auto destroy_messenger = reinterpret_cast<PFN_vkDestroyDebugUtilsMessengerEXT>(
             vkGetInstanceProcAddr(instance_, "vkDestroyDebugUtilsMessengerEXT"));
@@ -450,7 +505,7 @@ void Device::destroy() noexcept {
         instance_ = VK_NULL_HANDLE;
     }
     physical_device_ = VK_NULL_HANDLE;
-    graphics_queue_ = compute_queue_ = transfer_queue_ = VK_NULL_HANDLE;
+    graphics_queue_ = compute_queue_ = transfer_queue_ = present_queue_ = VK_NULL_HANDLE;
 }
 
 Device::~Device() {
@@ -466,13 +521,15 @@ Device& Device::operator=(Device&& other) noexcept {
         destroy();
         instance_        = std::exchange(other.instance_, VK_NULL_HANDLE);
         debug_messenger_ = std::exchange(other.debug_messenger_, VK_NULL_HANDLE);
+        surface_         = std::exchange(other.surface_, VK_NULL_HANDLE);
         physical_device_ = std::exchange(other.physical_device_, VK_NULL_HANDLE);
         device_          = std::exchange(other.device_, VK_NULL_HANDLE);
         queue_families_  = other.queue_families_;
         graphics_queue_  = std::exchange(other.graphics_queue_, VK_NULL_HANDLE);
         compute_queue_   = std::exchange(other.compute_queue_, VK_NULL_HANDLE);
         transfer_queue_  = std::exchange(other.transfer_queue_, VK_NULL_HANDLE);
-        properties_      = other.properties_;
+        present_queue_   = std::exchange(other.present_queue_, VK_NULL_HANDLE);
+        properties_     = other.properties_;
         descriptor_buffer_props_ = other.descriptor_buffer_props_;
         max_sampler_anisotropy_  = other.max_sampler_anisotropy_;
         descriptor_backend_      = other.descriptor_backend_;

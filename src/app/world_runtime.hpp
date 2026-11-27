@@ -80,7 +80,8 @@ public:
     [[nodiscard]] bool build_scene(engine::scene::Scene& scene,
                                    engine::asset::AssetManager& assets,
                                    engine::rhi::GpuAllocator& allocator,
-                                   const engine::rhi::TransferContext& setup_transfer);
+                                   const engine::rhi::TransferContext& setup_transfer,
+                                   engine::renderer::RenderSettings& render_settings);
     // Terrain pass + its upload context, the network session and the
     // QUAT_TERRAIN tile. After the renderer's environment exists.
     void init(const engine::rhi::Device& device, engine::rhi::GpuAllocator& allocator,
@@ -102,7 +103,6 @@ public:
     [[nodiscard]] entt::entity character_entity() const { return demo_.character_entity; }
     // The showcase's root entity (point lights hang under it); null otherwise.
     [[nodiscard]] entt::entity demo_root() const { return demo_.root; }
-    [[nodiscard]] float shadow_view_distance() const { return demo_.shadow_view_distance; }
     // What the opening camera framing leaves out (the showcase's pedestal).
     [[nodiscard]] entt::entity framing_exclude() const { return demo_.pedestal; }
     // The loop drops the demo's entity references when a scene file replaces
