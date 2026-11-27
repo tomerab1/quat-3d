@@ -32,7 +32,16 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
 endif()
 
 option(ENGINE_EDITOR "Build the ImGui-based editor layer" ON)
-option(ENGINE_PROFILE "Enable Tracy profiling in non-debug builds" OFF)
+# Tracy profiling (R4): on by default for Debug / RelWithDebInfo, off for
+# Release unless asked for (the `release` preset asks; packaged builds pass
+# OFF). The built-in frame profiler is compiled either way.
+if(CMAKE_BUILD_TYPE MATCHES "^(Debug|RelWithDebInfo)$")
+    set(ENGINE_PROFILE_DEFAULT ON)
+else()
+    set(ENGINE_PROFILE_DEFAULT OFF)
+endif()
+option(ENGINE_PROFILE "Compile in the Tracy profiler client (on demand, loopback only)"
+    ${ENGINE_PROFILE_DEFAULT})
 # Compatibility switch for drivers without VK_EXT_descriptor_buffer (MoltenVK on
 # macOS). When ON, the RHI may fall back to classic descriptor pools/sets and the
 # instance opts into portability (non-conformant) ICD enumeration. Descriptor
@@ -141,6 +150,11 @@ set_target_properties(miniaudio_headers PROPERTIES
     INTERFACE_INCLUDE_DIRECTORIES "${MINIAUDIO_INCLUDE_DIR}")
 target_link_libraries(miniaudio_headers INTERFACE
     Threads::Threads ${CMAKE_DL_LIBS} $<$<PLATFORM_ID:Linux,FreeBSD>:m>)
+# Tracy client (vcpkg overlay port ports/tracy: TRACY_ON_DEMAND, loopback
+# only). Its TRACY_ENABLE / TRACY_ON_DEMAND definitions travel with the target.
+if(ENGINE_PROFILE)
+    find_package(Tracy CONFIG REQUIRED)
+endif()
 if(ENGINE_EDITOR)
     find_package(imgui CONFIG REQUIRED)
     find_package(imguizmo CONFIG REQUIRED)
@@ -162,9 +176,20 @@ add_library(engine_core STATIC
     src/core/file_watcher.cpp
     src/core/child_process.cpp
     src/core/asset_root.cpp
-    src/core/env.cpp)
+    src/core/env.cpp
+    src/core/profile_names.cpp
+    src/core/profile_stats.cpp
+    src/core/profile_capture.cpp
+    src/core/frame_profiler.cpp)
 target_link_libraries(engine_core PUBLIC engine_flags Threads::Threads)
 target_include_directories(engine_core PUBLIC ${ENGINE_PUBLIC_INCLUDE})
+# QUAT_TRACY switches engine/core/profile.hpp's macros (and the GPU zones of
+# rhi::GpuProfiler) to Tracy as well; PUBLIC so every engine target that
+# instruments code sees the same configuration.
+if(ENGINE_PROFILE)
+    target_link_libraries(engine_core PUBLIC Tracy::TracyClient)
+    target_compile_definitions(engine_core PUBLIC QUAT_TRACY)
+endif()
 
 # ---------------------------------------------------------------------------
 # engine_rhi — thin Vulkan abstraction (instance/device, swapchain, ...).

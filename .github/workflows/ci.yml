@@ -59,9 +59,12 @@ jobs:
         with:
           extra-apt-packages: xvfb
 
+      # The release preset compiles the Tracy client in (ENGINE_PROFILE=ON,
+      # on demand: it costs nothing without a viewer), so the tests run with
+      # it; the no-editor game below keeps ENGINE_PROFILE=OFF compiling.
       - name: Configure
         id: configure
-        run: cmake --preset release -DENGINE_PROFILE=OFF
+        run: cmake --preset release
 
       # Saved right after configure (where vcpkg builds the dependencies) and
       # even when configure fails, so neither a dependency failure nor a later
@@ -88,10 +91,10 @@ jobs:
           export VK_ICD_FILENAMES="$icd"
           ctest --test-dir build/release --output-on-failure --timeout 900
 
-      # The game without the editor layer compiles other code paths (it broke
-      # once unnoticed). Shares the release build's vcpkg_installed tree, so
+      # The game without the editor layer (and without Tracy) compiles other
+      # code paths (it broke once unnoticed). Shares the release build's vcpkg_installed tree, so
       # no dependency is rebuilt; only the `game` target is built.
-      - name: Build game without the editor (ENGINE_EDITOR=OFF)
+      - name: Build game without the editor (ENGINE_EDITOR=OFF, ENGINE_PROFILE=OFF)
         if: ${{ !cancelled() && steps.configure.outcome == 'success' }}
         run: |
           cmake --preset release -B build/release-noeditor \

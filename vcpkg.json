@@ -42,6 +42,13 @@
     "miniaudio",
     "lua",
     "sol2",
+    {
+      "name": "tracy",
+      "default-features": false,
+      "features": [
+        "on-demand"
+      ]
+    },
     "gtest"
   ],
   "overrides": [
