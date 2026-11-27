@@ -4,8 +4,8 @@
 //
 // A fullscreen graphics pass that samples the linear HDR colour from the
 // lighting pass, applies ACES + sRGB (tonemap.slang), and writes an LDR colour
-// target — the swapchain image in the live path, or a transient image in the
-// self-test. The pipeline bakes the output colour format, so a pass instance is
+// target — the swapchain image in the live path, or a transient image in
+// tests. The pipeline bakes the output colour format, so a pass instance is
 // tied to the format it was created for.
 
 #include <expected>
@@ -62,14 +62,5 @@ private:
 
     rhi::DescriptorBuffer frame_descriptor_;   // rebuilt each add_to_graph call
 };
-
-// Full-chain self-test: render a lit triangle through GBuffer -> lighting ->
-// tonemap into a transient LDR image, read it back, and verify the tonemapped
-// centre pixel matches the ACES+sRGB of the known lit colour (and corners are
-// black). Proves the whole Phase 3 deferred chain end to end.
-[[nodiscard]] std::expected<void, core::Error>
-run_tonemap_pass_self_test(const rhi::Device& device, rhi::GpuAllocator& allocator,
-                           rhi::PipelineCache& cache, const rhi::TransferContext& transfer,
-                           const std::string& cooked_shader_dir);
 
 } // namespace engine::renderer

@@ -127,10 +127,6 @@ struct CameraMatrices {
 // see set_world_transform).
 void physics_system(entt::registry& registry, physics::PhysicsWorld& world, float dt);
 
-// Drops a dynamic sphere entity onto a static box-floor entity through the ECS
-// physics system and verifies its Transform fell and came to rest on the floor.
-[[nodiscard]] std::expected<void, core::Error> run_physics_body_self_test();
-
 // Create a static Jolt height-field body for the first Terrain entity in the
 // registry, matching the rendered surface: the body sits at the tile's minimum
 // XZ corner (entity translation - tile_size/2, heights offset by translation.y)
@@ -163,10 +159,6 @@ void collect_nav_geometry(entt::registry& registry, const terrain::Heightmap* ma
                                                   const terrain::Heightmap& map,
                                                   const glm::vec3& origin);
 
-// Generates a small tile, adds its height-field body, drops a sphere onto it
-// through the ECS physics system, and verifies it rests on the surface height.
-[[nodiscard]] std::expected<void, core::Error> run_terrain_physics_self_test();
-
 // Advance every CharacterController: integrate gravity, apply `move` * `speed`
 // horizontally, move + resolve collisions via the character controller, and write
 // the result back into Transform: only the world translation changes — the
@@ -179,10 +171,6 @@ void character_system(entt::registry& registry, physics::PhysicsWorld& world, fl
 // first use). No-op unless `e` has a CharacterController and a Transform.
 void step_character(entt::registry& registry, physics::PhysicsWorld& world, entt::entity e,
                     float dt);
-
-// Drops a character onto a floor, then walks it, verifying it lands (on_ground)
-// and moves horizontally.
-[[nodiscard]] std::expected<void, core::Error> run_character_self_test();
 
 // nav_agent_system and the other navigation entry points: navigation.hpp.
 

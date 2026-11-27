@@ -123,20 +123,4 @@ private:
     std::vector<FrameDraw>             frame_draws_;
 };
 
-// Offscreen self-test: render a single triangle with a coloured material into
-// the GBuffer, read back the albedo target, and verify the covered centre pixel
-// holds the material colour while a corner stays at the clear value.
-[[nodiscard]] std::expected<void, core::Error>
-run_mesh_pass_self_test(const rhi::Device& device, rhi::GpuAllocator& allocator,
-                        rhi::PipelineCache& cache, const rhi::TransferContext& transfer,
-                        const std::string& cooked_shader_dir);
-
-// Verifies the geometric specular AA at GBuffer-write time: a flat triangle's
-// stored roughness stays at the authored 0, while one with wildly divergent
-// vertex normals (large screen-space normal variance) is widened.
-[[nodiscard]] std::expected<void, core::Error>
-run_specular_aa_self_test(const rhi::Device& device, rhi::GpuAllocator& allocator,
-                          rhi::PipelineCache& cache, const rhi::TransferContext& transfer,
-                          const std::string& cooked_shader_dir);
-
 } // namespace engine::renderer

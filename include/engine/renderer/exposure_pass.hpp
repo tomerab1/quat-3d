@@ -110,11 +110,4 @@ private:
     rhi::DescriptorBuffer average_descriptor_;
 };
 
-// Self-test: a uniform dim HDR image adapts to ~its luminance; a uniform bright
-// image then pushes the adapted luminance up. Verifies the histogram measures
-// luminance and the temporal adaptation tracks it.
-[[nodiscard]] std::expected<void, core::Error>
-run_exposure_self_test(const rhi::Device& device, rhi::GpuAllocator& allocator,
-                       rhi::PipelineCache& cache, const std::string& cooked_shader_dir);
-
 } // namespace engine::renderer

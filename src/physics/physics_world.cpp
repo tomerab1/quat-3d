@@ -42,15 +42,13 @@
 #pragma clang diagnostic pop
 #endif
 
-using namespace JPH::literals;
-
 namespace engine::physics {
 
 namespace {
 
 // Object layers (must match the Layer enum in the header).
 namespace obj_layers {
-constexpr JPH::ObjectLayer k_static = 0;
+[[maybe_unused]] constexpr JPH::ObjectLayer k_static = 0;
 constexpr JPH::ObjectLayer k_dynamic = 1;
 constexpr JPH::ObjectLayer k_character = 2;
 [[maybe_unused]] constexpr JPH::ObjectLayer k_trigger = 3; // used from 6.2
@@ -138,10 +136,6 @@ void ensure_jolt_initialized() {
         return true;
     }();
     (void)done;
-}
-
-[[nodiscard]] std::unexpected<core::Error> fail(std::string what) {
-    return std::unexpected(core::Error{std::move(what)});
 }
 
 [[nodiscard]] JPH::Vec3 to_jph(const glm::vec3& v) { return JPH::Vec3(v.x, v.y, v.z); }
@@ -546,91 +540,6 @@ std::optional<PhysicsWorld::RayHit> PhysicsWorld::cast_ray(const glm::vec3& orig
         best = hit;
     }
     return best;
-}
-
-std::expected<void, core::Error> run_physics_self_test() {
-    auto world = PhysicsWorld::create();
-    if (!world) return std::unexpected(world.error());
-    JPH::PhysicsSystem& system = world->impl_->system;
-    JPH::BodyInterface& bodies = system.GetBodyInterface();
-
-    // Static floor: a 100x2x100 box centred at y=-1, so its top is at y=0.
-    JPH::BodyCreationSettings floor_settings(new JPH::BoxShape(JPH::Vec3(50.0F, 1.0F, 50.0F)),
-                                             JPH::RVec3(0.0_r, -1.0_r, 0.0_r),
-                                             JPH::Quat::sIdentity(), JPH::EMotionType::Static,
-                                             obj_layers::k_static);
-    const JPH::BodyID floor = bodies.CreateAndAddBody(floor_settings, JPH::EActivation::DontActivate);
-
-    // Dynamic sphere (radius 0.5) dropped from y=5.
-    JPH::BodyCreationSettings sphere_settings(new JPH::SphereShape(0.5F),
-                                              JPH::RVec3(0.0_r, 5.0_r, 0.0_r),
-                                              JPH::Quat::sIdentity(), JPH::EMotionType::Dynamic,
-                                              obj_layers::k_dynamic);
-    const JPH::BodyID sphere = bodies.CreateAndAddBody(sphere_settings, JPH::EActivation::Activate);
-
-    system.OptimizeBroadPhase();
-
-    // A hitch longer than the catch-up cap must not leave a backlog that
-    // makes later frames run fast (S1 audit B7).
-    world->update(3.0F);
-    if (world->pending_time() >= PhysicsWorld::fixed_timestep) {
-        return std::unexpected(core::Error{"physics self-test: backlog kept after a hitch"});
-    }
-
-    // Simulate ~2 seconds at 60 fps; the sphere should land and settle.
-    for (int i = 0; i < 120; ++i) {
-        world->update(1.0F / 60.0F);
-    }
-
-    const float y = static_cast<float>(bodies.GetPosition(sphere).GetY());
-
-    bodies.RemoveBody(sphere);
-    bodies.DestroyBody(sphere);
-    bodies.RemoveBody(floor);
-    bodies.DestroyBody(floor);
-
-    if (y > 4.5F) return fail("physics self-test: sphere did not fall");
-    if (y < 0.0F) return fail("physics self-test: sphere fell through the floor");
-    if (std::abs(y - 0.5F) > 0.25F) {
-        return fail("physics self-test: sphere did not come to rest on the floor");
-    }
-    return {};
-}
-
-std::expected<void, core::Error> run_trigger_self_test() {
-    auto world = PhysicsWorld::create();
-    if (!world) return std::unexpected(world.error());
-
-    // Static sensor box at y=3, half-extents (1,1,1) -> spans y in [2,4].
-    PhysicsWorld::BodyParams trigger;
-    trigger.shape = world->create_box(glm::vec3(1.0F, 1.0F, 1.0F));
-    trigger.position = glm::vec3(0.0F, 3.0F, 0.0F);
-    trigger.motion = Motion::static_body;
-    trigger.layer = Layer::sensor;
-    trigger.sensor = true;
-    const std::uint32_t sensor = world->add_body(trigger);
-
-    // Dynamic sphere dropped from y=6, falling straight through the sensor.
-    PhysicsWorld::BodyParams ball;
-    ball.shape = world->create_sphere(0.5F);
-    ball.position = glm::vec3(0.0F, 6.0F, 0.0F);
-    ball.motion = Motion::dynamic;
-    const std::uint32_t sphere = world->add_body(ball);
-
-    bool entered = false;
-    bool exited = false;
-    for (int i = 0; i < 240; ++i) {
-        world->update(1.0F / 60.0F);
-        for (const PhysicsWorld::TriggerEvent& ev : world->trigger_events()) {
-            if (ev.trigger == sensor && ev.other == sphere) {
-                (ev.entered ? entered : exited) = true;
-            }
-        }
-    }
-
-    if (!entered) return fail("trigger self-test: no enter event for the sensor");
-    if (!exited) return fail("trigger self-test: no exit event for the sensor");
-    return {};
 }
 
 } // namespace engine::physics
