@@ -216,7 +216,11 @@ struct ShaderHotReload::Impl {
             std::lock_guard lock(mutex);
             done.swap(results);
         }
-        for (const ShaderCompileResult& r : done) apply(r);
+        for (const ShaderCompileResult& r : done) {
+            // Removed while it compiled: handle_changes() dropped its status;
+            // don't bring it back.
+            if (graph.contains(r.source)) apply(r);
+        }
     }
 
     void apply(const ShaderCompileResult& r) {
@@ -250,7 +254,15 @@ struct ShaderHotReload::Impl {
             status.pipelines = static_cast<std::uint32_t>(report->rebuilt);
             status.message = "compiled, but kept the previous pipeline:";
             for (const std::string& e : report->errors) status.message += "\n" + e;
+        } else if (report->shader_in_use && report->rebuilt == 0) {
+            // Loaded by work that ran once (a bake pass) and holds no live
+            // pipeline: nothing on screen changes until that work runs again.
+            status.state = ShaderStatus::State::needs_restart;
+            status.pipelines = 0;
+            status.message = "compiled; no live pipeline uses it - restart to apply";
+            ++status.reloads;
         } else {
+            // Not loaded yet (the next load reads the new file) or swapped in.
             status.state = ShaderStatus::State::ok;
             status.pipelines = static_cast<std::uint32_t>(report->rebuilt);
             status.message = diagnostics;

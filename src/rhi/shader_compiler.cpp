@@ -342,6 +342,10 @@ bool ShaderDependencyGraph::is_module(const fs::path& source) const {
     return normal(source).parent_path() == module_dir_;
 }
 
+bool ShaderDependencyGraph::contains(const fs::path& source) const {
+    return imports_.contains(normal(source));
+}
+
 std::vector<fs::path> ShaderDependencyGraph::sources() const {
     std::vector<fs::path> out;
     out.reserve(imports_.size());

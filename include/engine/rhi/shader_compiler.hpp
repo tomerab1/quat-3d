@@ -130,6 +130,7 @@ public:
     imports_of(const std::filesystem::path& source) const;
 
     [[nodiscard]] bool is_module(const std::filesystem::path& source) const;
+    [[nodiscard]] bool contains(const std::filesystem::path& source) const;
     [[nodiscard]] std::vector<std::filesystem::path> sources() const;
 
 private:

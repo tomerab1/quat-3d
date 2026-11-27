@@ -171,20 +171,26 @@ INSTANTIATE_TEST_SUITE_P(Modes, ShaderHotReloadTest, ::testing::Values(false, tr
                          });
 
 #if !defined(_WIN32)
-// A hung slangc (a stand-in script that sleeps): the compile is killed at the
-// timeout and reported as an error, and destroying the service while a
-// compile runs kills it instead of waiting.
-class ShaderHotReloadHungCompiler : public ::testing::Test {
+// A stand-in slangc (a shell script) that is slow or hangs.
+//  * Hung: the compile is killed at the timeout and reported as an error, and
+//    destroying the service while a compile runs kills it instead of waiting.
+//  * Slow: a source deleted while its compile is in flight stays gone.
+class ShaderHotReloadFakeCompiler : public ::testing::Test {
 protected:
     void SetUp() override {
         fs::create_directories(src_);
         fs::create_directories(out_);
         write_file(src_ / "pass.slang", pass_source(1));
-        write_file(slangc_, "#!/bin/sh\necho compiling; sleep 30\n");
+        set_script("echo compiling; sleep 30");
+    }
+
+    void set_script(const std::string& body) {
+        write_file(slangc_, "#!/bin/sh\n" + body + "\n");
         fs::permissions(slangc_, fs::perms::owner_all);
     }
 
-    [[nodiscard]] std::unique_ptr<ShaderHotReload> make(std::chrono::milliseconds timeout) {
+    [[nodiscard]] std::unique_ptr<ShaderHotReload> make(std::chrono::milliseconds timeout,
+                                                        bool async = true) {
         ShaderHotReload::Config config;
         config.source_dir = src_;
         config.output_dir = out_;
@@ -192,6 +198,7 @@ protected:
         config.debounce = std::chrono::milliseconds(0);
         config.poll_interval = std::chrono::milliseconds(0);
         config.compile_timeout = timeout;
+        config.async = async;
         auto reload = ShaderHotReload::create(cache_, config);
         EXPECT_OK(reload);
         return reload ? std::move(*reload) : nullptr;
@@ -204,7 +211,7 @@ protected:
     PipelineCache cache_;
 };
 
-TEST_F(ShaderHotReloadHungCompiler, TimesOutAndReportsIt) {
+TEST_F(ShaderHotReloadFakeCompiler, TimesOutAndReportsIt) {
     auto reload = make(std::chrono::milliseconds(300));
     ASSERT_NE(reload, nullptr);
     reload->request_recompile(src_ / "pass.slang");
@@ -222,7 +229,32 @@ TEST_F(ShaderHotReloadHungCompiler, TimesOutAndReportsIt) {
     EXPECT_FALSE(fs::exists(out_ / "pass.spv"));
 }
 
-TEST_F(ShaderHotReloadHungCompiler, DestructionKillsTheRunningCompile) {
+TEST_F(ShaderHotReloadFakeCompiler, SourceRemovedWhileCompilingIsNotResurrected) {
+    set_script("sleep 0.5; echo 'pass.slang(1): error: fake'; exit 1");
+    auto reload = make(std::chrono::seconds(30));
+    ASSERT_NE(reload, nullptr);
+    reload->request_recompile(src_ / "pass.slang");
+    std::uint64_t frame = 0;
+    reload->update(frame++); // dispatched: the worker is now compiling it
+    ASSERT_NE(find_status(*reload, "pass.slang"), nullptr);
+    std::error_code ec;
+    fs::remove(src_ / "pass.slang", ec);
+    ASSERT_FALSE(ec);
+    const auto start = std::chrono::steady_clock::now();
+    do {
+        reload->update(frame++);
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    } while ((!reload->idle() || find_status(*reload, "pass.slang") != nullptr ||
+              std::chrono::steady_clock::now() - start < std::chrono::milliseconds(800)) &&
+             std::chrono::steady_clock::now() - start < std::chrono::seconds(10));
+    EXPECT_TRUE(reload->idle());
+    EXPECT_EQ(find_status(*reload, "pass.slang"), nullptr)
+        << "the in-flight result brought back a deleted source's status";
+    EXPECT_TRUE(reload->statuses().empty());
+    EXPECT_EQ(reload->error_count(), 0U);
+}
+
+TEST_F(ShaderHotReloadFakeCompiler, DestructionKillsTheRunningCompile) {
     auto reload = make(std::chrono::minutes(5));
     ASSERT_NE(reload, nullptr);
     reload->request_recompile(src_ / "pass.slang");
