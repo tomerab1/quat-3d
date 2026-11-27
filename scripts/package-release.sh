@@ -118,6 +118,9 @@ with open(dst, "w") as f:
 PY
 
   chmod u+w "$contents"/Frameworks/*.dylib
+  # Drop the existing (linker / Homebrew ad-hoc) signatures before rewriting
+  # load commands; everything is re-signed below.
+  codesign --remove-signature "$contents/MacOS/game" "$contents"/Frameworks/*.dylib
   install_name_tool -id @rpath/libvulkan.1.dylib "$contents/Frameworks/libvulkan.1.dylib"
   install_name_tool -id @rpath/libMoltenVK.dylib "$contents/Frameworks/libMoltenVK.dylib"
   old=$(otool -L "$contents/MacOS/game" | awk '/libvulkan/ && !done { print $1; done = 1 }')
@@ -149,7 +152,7 @@ PY
   codesign --force --sign - "$app"
   codesign --verify --deep --strict "$app"
 
-  cp "$root/packaging/README-RUN-macos.txt" "$stage/README-RUN.txt"
+  sed "s/@MINOS@/$minos/g" "$root/packaging/README-RUN-macos.txt" > "$stage/README-RUN.txt"
   archive="$out_dir/$name.zip"
   ditto -c -k --keepParent "$stage" "$archive"
   ;;

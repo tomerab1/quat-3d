@@ -19,7 +19,7 @@ and scale.
 
 Requirements
 ------------
-- An Apple Silicon Mac (arm64), macOS 14 or later. Vulkan runs on Metal
+- An Apple Silicon Mac (arm64), macOS @MINOS@ or later. Vulkan runs on Metal
   through MoltenVK, which ships inside the app together with the Vulkan
   loader - nothing to install.
 
