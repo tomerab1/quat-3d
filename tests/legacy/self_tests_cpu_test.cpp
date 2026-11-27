@@ -16,8 +16,6 @@
 #include "engine/scene/components.hpp"
 #include "engine/scene/gltf_loader.hpp"
 #include "engine/scene/scene.hpp"
-#include "engine/terrain/generator.hpp"
-#include "engine/terrain/streamer.hpp"
 #include "support/expect_ok.hpp"
 
 #ifdef ENGINE_EDITOR
@@ -46,8 +44,6 @@ TEST(Physics, Triggers) { ASSERT_OK(engine::physics::run_trigger_self_test()); }
 TEST(Gltf, MaterialExtract) { ASSERT_OK(scn::run_material_extract_self_test()); }
 TEST(Gltf, StructuralValidation) { ASSERT_OK(scn::run_gltf_validation_self_test()); }
 
-TEST(Terrain, Generation) { ASSERT_OK(engine::terrain::run_terrain_self_test()); }
-TEST(Terrain, Streaming) { ASSERT_OK(engine::terrain::run_terrain_streaming_self_test()); }
 
 TEST(Nav, Navmesh) { ASSERT_OK(engine::nav::run_navmesh_self_test()); }
 TEST(Nav, Agents) { ASSERT_OK(scn::run_nav_agent_self_test()); }

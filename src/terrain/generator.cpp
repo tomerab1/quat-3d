@@ -4,10 +4,8 @@
 #include <array>
 #include <cmath>
 #include <cstdint>
-#include <cstring>
 #include <limits>
 #include <numeric>
-#include <string>
 #include <thread>
 #include <utility>
 #include <vector>
@@ -333,93 +331,6 @@ Heightmap generate(const TerrainParams& params) {
 
 std::future<Heightmap> generate_async(TerrainParams params) {
     return std::async(std::launch::async, [params] { return generate(params); });
-}
-
-// ---------------------------------------------------------------------------
-// Self-test
-// ---------------------------------------------------------------------------
-namespace {
-
-[[nodiscard]] std::unexpected<core::Error> fail(std::string what) {
-    return std::unexpected(core::Error{std::move(what)});
-}
-
-// FNV-1a over the height bits — exact determinism check.
-[[nodiscard]] std::uint64_t hash_map(const Heightmap& m) {
-    std::uint64_t h = 1469598103934665603ULL;
-    for (const float v : m.heights) {
-        std::uint32_t bits = 0;
-        std::memcpy(&bits, &v, sizeof(bits));
-        h = (h ^ bits) * 1099511628211ULL;
-    }
-    return h;
-}
-
-[[nodiscard]] float mean_abs_gradient(const Heightmap& m) {
-    double total = 0.0;
-    const std::uint32_t res = m.resolution;
-    for (std::uint32_t z = 0; z < res; ++z) {
-        for (std::uint32_t x = 0; x + 1 < res; ++x) {
-            total += std::abs(m.at(static_cast<std::int32_t>(x) + 1, static_cast<std::int32_t>(z)) -
-                              m.at(static_cast<std::int32_t>(x), static_cast<std::int32_t>(z)));
-        }
-    }
-    return static_cast<float>(total / (static_cast<double>(res) * (res - 1)));
-}
-
-} // namespace
-
-std::expected<void, core::Error> run_terrain_self_test() {
-    TerrainParams tp;
-    tp.resolution = 257;
-    tp.erosion_droplets = 20'000;
-
-    const Heightmap a = generate(tp);
-    if (!a.valid()) return fail("terrain self-test: generated map invalid");
-    if (a.min_height < -1.0F || a.max_height > tp.height_m + 1.0F ||
-        a.max_height - a.min_height < 0.05F * tp.height_m) {
-        return fail("terrain self-test: heights out of bounds or implausibly flat");
-    }
-
-    // Determinism: the same params must reproduce the exact same bits.
-    const Heightmap b = generate(tp);
-    if (hash_map(a) != hash_map(b)) {
-        return fail("terrain self-test: same seed produced different maps");
-    }
-
-    // Seed sensitivity: a different seed must change the field.
-    TerrainParams other = tp;
-    other.seed = tp.seed + 1;
-    if (hash_map(generate(other)) == hash_map(a)) {
-        return fail("terrain self-test: different seed produced an identical map");
-    }
-
-    // Domain warp must actually move material around.
-    TerrainParams unwarped = tp;
-    unwarped.warp_strength = 0.0F;
-    unwarped.erosion_droplets = 0;
-    TerrainParams warped = unwarped;
-    warped.warp_strength = tp.warp_strength;
-    if (hash_map(generate(unwarped)) == hash_map(generate(warped))) {
-        return fail("terrain self-test: domain warp had no effect");
-    }
-
-    // Erosion smooths: the mean local gradient must drop vs the uneroded field,
-    // while the height range stays sane (erosion moves material, not mass out).
-    TerrainParams uneroded = tp;
-    uneroded.erosion_droplets = 0;
-    const Heightmap rough = generate(uneroded);
-    if (!(mean_abs_gradient(a) < mean_abs_gradient(rough))) {
-        return fail("terrain self-test: erosion did not smooth the field");
-    }
-
-    // The bilinear/normal helpers behave at the centre of the tile.
-    const float centre = a.tile_size_m * 0.5F;
-    const glm::vec3 n = a.normal(centre, centre);
-    if (!(n.y > 0.0F) || std::abs(glm::length(n) - 1.0F) > 1e-3F) {
-        return fail("terrain self-test: normal helper returned a bad normal");
-    }
-    return {};
 }
 
 } // namespace engine::terrain

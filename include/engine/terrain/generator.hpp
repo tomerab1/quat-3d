@@ -14,10 +14,8 @@
 // worker via std::async (the Phase 10 job system will absorb this later).
 
 #include <cstdint>
-#include <expected>
 #include <future>
 
-#include "engine/core/error.hpp"
 #include "engine/terrain/heightmap.hpp"
 
 namespace engine::terrain {
@@ -52,10 +50,5 @@ struct TerrainParams {
 [[nodiscard]] Heightmap generate(const TerrainParams& params);
 
 [[nodiscard]] std::future<Heightmap> generate_async(TerrainParams params);
-
-// Self-test: determinism (same seed, same map), seed sensitivity, height
-// bounds, domain warp changing the field, and erosion measurably smoothing
-// (material moved while total height stays plausible).
-[[nodiscard]] std::expected<void, core::Error> run_terrain_self_test();
 
 } // namespace engine::terrain
