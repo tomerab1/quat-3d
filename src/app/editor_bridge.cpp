@@ -55,7 +55,6 @@ void EditorBridge::create(SDL_Window* window, bool enabled) {
 
 void EditorBridge::fill_remote_targets(RemoteBridgeTargets& targets, bool demo_physics) {
     targets.editor = &editor_;
-    targets.render_settings = &render_settings_;
     targets.play = demo_physics ? nullptr : &play_; // demo modes own physics
 }
 
@@ -143,7 +142,7 @@ void EditorBridge::apply_scene_file_requests() {
     // re-resolution, then the loop's cached entities are rebound.
     if (!pending_save_.empty()) {
         const std::string path = std::exchange(pending_save_, {});
-        if (auto r = engine::scene::save_scene(scene, path); r) {
+        if (auto r = engine::scene::save_scene(scene, path, t_.render_settings); r) {
             std::fprintf(stderr, "[editor] saved scene: %s\n", path.c_str());
         } else {
             std::fprintf(stderr, "[editor] save failed: %s\n", r.error().message.c_str());
@@ -153,7 +152,7 @@ void EditorBridge::apply_scene_file_requests() {
         const std::string path = std::exchange(pending_load_, {});
         with_load_transfer(*t_.device, [&](const engine::rhi::TransferContext& load_transfer) {
             if (auto r = engine::scene::load_scene(scene, path, *t_.allocator, load_transfer,
-                                                   *t_.assets);
+                                                   *t_.assets, t_.render_settings);
                 r) {
                 std::fprintf(stderr, "[editor] loaded scene: %s\n", path.c_str());
                 t_.world->invalidate_navmesh("scene loaded");
@@ -259,7 +258,7 @@ const ImDrawData* EditorBridge::build_ui(float dt, int draw_count,
         static_cast<int>(scene.registry().view<engine::scene::Transform>().size());
     ui_ctx.shader_statuses = t_.shader_reload != nullptr ? &t_.shader_reload->statuses() : nullptr;
     ui_ctx.scene = &scene;
-    ui_ctx.renderer = &render_settings_;
+    ui_ctx.renderer = t_.render_settings;
     ui_ctx.project_root = QUAT_PROJECT_ROOT;
     ui_ctx.instantiate_request = &pending_instantiate_;
     ui_ctx.save_request = &pending_save_;

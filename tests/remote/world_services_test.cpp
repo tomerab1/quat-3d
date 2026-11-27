@@ -12,6 +12,7 @@
 #include <glm/glm.hpp>
 #include <gtest/gtest.h>
 
+#include "engine/renderer/render_settings.hpp"
 #include "remote/world_fixture.hpp"
 #include "support/expect_ok.hpp"
 
@@ -113,7 +114,8 @@ class WorldWithServices : public quat::test::WorldCommands {
 protected:
     TempRoot               root;
     CameraPose             camera{{0, 2, 10}, -90.0F, 0.0F, 60.0F};
-    engine::renderer::CloudSettings clouds;
+    engine::renderer::RenderSettings settings;
+    engine::renderer::CloudSettings& clouds = settings.clouds;
     bool                   playing = false;
     std::vector<fs::path>  saved;
     std::vector<fs::path>  loaded;
@@ -124,8 +126,7 @@ protected:
         services.project_root = [this] { return root.path(); };
         services.camera_get = [this] { return camera; };
         services.camera_set = [this](const CameraPose& p) { camera = p; };
-        services.clouds_get = [this] { return clouds; };
-        services.clouds_set = [this](const engine::renderer::CloudSettings& c) { clouds = c; };
+        services.render_settings = &settings;
         services.ground_height = [](float x, float z) -> std::optional<float> {
             if (x < 0.0F) return std::nullopt;
             return x + 2.0F * z;
