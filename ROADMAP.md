@@ -161,7 +161,7 @@ JSON-RPC over loopback TCP to the engine.
 - [x] **R2 — Shader hot reload.** File watcher → `slangc` → pipeline recreation
   on the next frame; compile errors surfaced, old pipeline kept on failure.
 - [ ] **R3 — Asset hot reload.** Meshes/textures re-imported on change.
-- [ ] **R4 — Profiling.** *(owner request: "no prod engine could be taken
+- [x] **R4 — Profiling.** *(owner request: "no prod engine could be taken
   seriously without it; the MCP should be able to query it")* Instrumentation
   is central (graph executor, system calls, frame loop), not sprinkled.
   - **R4.1 Profiling facade + Tracy.** `tracy` from vcpkg (overlay port:

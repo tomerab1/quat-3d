@@ -56,6 +56,20 @@ into CLAUDE.md or the brief template in [`CYCLE.md`](CYCLE.md).
 
 ## Build and CI
 
+- **Tracy's `TRACY_ON_DEMAND` does not make an idle client free when the
+  process is privileged.** The client starts kernel sampling and
+  context-switch tracing at startup (before any viewer connects) whenever it
+  may — root in cloud containers, administrator on Windows. Run headless
+  tests and benchmarks there with `TRACY_NO_SYS_TRACE=1`. vcpkg's `tracy`
+  port also has no loopback-only option; `ports/tracy` (overlay) builds the
+  client with `TRACY_ONLY_LOCALHOST`, matching the remote endpoint (R4).
+- **The shared container can be 15x oversubscribed** (load average 64 on 4
+  cores with ~5 agents building, R4): a cold CMake build of `game` +
+  `engine_tests` then takes hours at `-j2`. Start the real build in the
+  background first, get fast feedback from `scripts/check-compile.sh` on the
+  changed TUs (both `ENGINE_PROFILE` configurations), and keep working
+  while it runs.
+
 - **Don't tie the hitch clamp to the physics budget.** D2 first capped the
   sim frame dt at 1/15 s (8 physics substeps), so on slow machines (CI's
   lavapipe at 1-3 fps) the whole world ran several times slower than real

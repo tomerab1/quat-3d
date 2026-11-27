@@ -87,9 +87,17 @@ the CI screenshot pipeline.
 - Multiplayer foundations: client/server transport, state replication,
   client-side prediction
 
+**Profiling**
+- Built-in frame profiler: CPU and GPU time of every render pass and scene
+  system (GPU timestamps per pass), with average / p95 / max over the last
+  240 frames, shown in the editor's Profiler panel and queryable by AI tools
+- [Tracy](https://github.com/wolfpld/tracy) integration in profiling builds:
+  CPU zones on every thread, GPU zones, plots for draws, triangles and VRAM —
+  see [`docs/profiling.md`](docs/profiling.md)
+
 **Editor**
 - Docked editor with viewport, scene hierarchy, inspector, asset browser,
-  animation preview and physics debug view
+  animation preview, physics debug view and profiler
 - Move/rotate/scale gizmos, click-to-select, play/stop with automatic scene restore
 - Save and load scenes as JSON
 - Click-to-walk and patrol authoring for NPCs
@@ -144,6 +152,14 @@ git clone https://github.com/microsoft/vcpkg.git ~/vcpkg
 Every preset builds the engine, the `game` executable and the `engine_tests`
 suite; run the tests with `ctest --test-dir build/<preset> --output-on-failure`
 (see [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md#testing)).
+
+CMake options:
+
+| Option | Default | Effect |
+|---|---|---|
+| `ENGINE_EDITOR` | `ON` | Build the editor layer |
+| `ENGINE_PROFILE` | `ON` for Debug / RelWithDebInfo and the `release` preset, else `OFF` | Compile in the [Tracy](https://github.com/wolfpld/tracy) profiler client (on demand: no cost until a viewer connects) — see [Profiling](#profiling) |
+| `ENGINE_PACKAGE_BUILD` | `OFF` | Release archives: no source-tree paths compiled in |
 
 ### Linux
 
@@ -240,6 +256,8 @@ Environment variables switch on extra modes:
 | `QUAT_NON_FINITE_CHECK=1` | Count NaN/Inf values the bloom / TAA guards replace and log them per frame (always on in debug builds) |
 | `QUAT_MAX_FRAMES=<n>` + `QUAT_SCREENSHOT=<file.ppm>` | Render n frames, save the last one, exit (headless checks) |
 | `QUAT_ASSET_ROOT=<dir>` | Data directory holding `assets/` and `cooked/shaders/` (default: next to the executable — inside a macOS app, `Contents/Resources` — then, in development builds, the source tree) |
+| `TRACY_PORT=<port>` | `ENGINE_PROFILE` builds: the port the Tracy client listens on (default 8086, loopback only) |
+| `TRACY_NO_SYS_TRACE=1` | `ENGINE_PROFILE` builds run as root / administrator: do not start Tracy's kernel sampling and context-switch tracing |
 
 ### Audio
 
@@ -301,6 +319,20 @@ layout other glTF viewers do not expect (`--normal-layout rgb` avoids that).
 Options (codecs, quality) are listed in
 [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md#cooking-assets).
 
+### Profiling
+
+The editor's **View → Profiler** panel shows where each frame's time goes:
+frame, CPU, GPU and wait times, a frame-time graph, and a sortable table of
+render passes and scene systems with CPU and GPU average / p95 / max.
+
+For a full timeline, build with `ENGINE_PROFILE=ON` (the default for Debug /
+RelWithDebInfo and the `release` preset), start the game, and connect the
+[Tracy 0.13.1 viewer](https://github.com/wolfpld/tracy/releases/tag/v0.13.1)
+to `127.0.0.1` (the game listens on the loopback interface only; forward
+port 8086 over SSH to profile another machine). Details, including what is
+instrumented and how GPU timing works, are in
+[`docs/profiling.md`](docs/profiling.md).
+
 ## AI tools (MCP)
 
 [`tools/quat-mcp`](tools/quat-mcp/README.md) is an MCP server that lets AI
@@ -313,7 +345,9 @@ tune the look: exposure, bloom, anti-aliasing, shadows, sky light, clouds and
 per-entity materials, with the same values the editor's Renderer panel and
 Material inspector show — and author NPC behaviour trees: build, inspect and
 edit the same graph the editor's Behaviour panel shows, with per-node
-validation errors, and see what each node did on the last tick. For world
+validation errors, and see what each node did on the last tick — and profile
+it: the costliest passes and systems on the CPU and GPU, frame captures with
+spikes and their causes, draw / triangle / memory counters. For world
 building it reports entity bounds, sets models down on terrain or colliders
 (`world_place_on_ground`), takes screenshots from any camera without moving
 yours, and searches and downloads CC0 models from Poly Haven (`asset_search` /
@@ -370,6 +404,7 @@ The plan lives in [`ROADMAP.md`](ROADMAP.md), grouped into tracks:
 | [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md) | Building, testing, CI, and conventions for contributors |
 | [`docs/scripting.md`](docs/scripting.md) | Lua gameplay scripting: callbacks, the engine API, limits, hot reload |
 | [`docs/remote-control.md`](docs/remote-control.md) | The remote-control protocol AI tools use to drive the engine |
+| [`docs/profiling.md`](docs/profiling.md) | Profiling with Tracy, the editor's Profiler panel and the MCP profiling tools |
 | [`docs/CYCLE.md`](docs/CYCLE.md) | How development runs: the repeating plan → parallel agents → merge → CI → audit → learn cycle |
 | [`docs/LEARNINGS.md`](docs/LEARNINGS.md) | Lessons recorded by past cycles |
 | [`ROADMAP.md`](ROADMAP.md) | The full plan, with completed history |
