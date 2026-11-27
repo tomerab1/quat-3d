@@ -39,6 +39,10 @@ the CI screenshot pipeline.
 - Anti-aliasing (TAA), bloom, auto-exposure, filmic tonemapping
 - Automatic instancing: objects sharing a mesh and material (trees, rocks,
   crates) are drawn together in one instanced draw
+- GPU-compressed textures: KTX2 / Basis Universal textures (glTF
+  `KHR_texture_basisu` or loose `.ktx2`) are transcoded at load to BC7 / BC5 /
+  BC4 on desktop GPUs, ASTC on Apple GPUs, or plain RGBA8 elsewhere
+- Compressed meshes: glTF `EXT_meshopt_compression` and `KHR_mesh_quantization`
 
 **Animation**
 - Skeletal animation from glTF files, skinned on the GPU
@@ -201,6 +205,22 @@ cd /tmp/gltf-samples && git sparse-checkout set Models/Fox Models/ToyCar
 cp -R Models/Fox/glTF ~/quat-3d/sample-assets/Fox
 ```
 
+### Cooking assets for shipping
+
+`quat-cook` (built with the engine) rewrites a glTF for release: textures
+become KTX2 / Basis Universal with mip chains, meshes are reordered for the
+GPU caches, quantised and compressed with meshoptimizer. A cooked model loads
+faster and needs about a quarter of the texture memory:
+
+```sh
+./build/release/quat-cook sample-assets/DamagedHelmet.glb sample-assets/DamagedHelmet.cooked.glb
+```
+
+Cooked files are meant for the engine: normal maps are stored in a two-channel
+layout other glTF viewers do not expect (`--normal-layout rgb` avoids that).
+Options (codecs, quality) are listed in
+[`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md#cooking-assets).
+
 ## AI tools (MCP)
 
 [`tools/quat-mcp`](tools/quat-mcp/README.md) is an MCP server that lets AI
@@ -275,6 +295,7 @@ src/                Implementation, mirroring include/ (rhi, renderer, scene, ph
 src/editor/         The editor (only in builds with ENGINE_EDITOR=ON, the default)
 src/remote/         Remote-control endpoint used by AI tooling
 tools/quat-mcp/     MCP server for AI assistants (Rust, standalone Cargo crate)
+tools/quat-cook/    Offline asset cooker CLI (src/cook/ holds the cooking library)
 tests/              GoogleTest suite (engine_tests): tests/<module>/, shared helpers in tests/support/
 docs/               Project documentation
 ports/, triplets/   vcpkg customisations
@@ -284,4 +305,4 @@ ports/, triplets/   vcpkg customisations
 
 Vulkan 1.3 · Slang · SDL3 · Jolt Physics · EnTT · fastgltf · glm · Dear ImGui +
 ImGuizmo · Vulkan Memory Allocator · Recast/Detour · GameNetworkingSockets ·
-nlohmann/json · CMake + vcpkg
+KTX-Software (Basis Universal) · meshoptimizer · nlohmann/json · CMake + vcpkg
