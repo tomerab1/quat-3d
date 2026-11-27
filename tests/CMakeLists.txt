@@ -13,6 +13,7 @@ file(GLOB_RECURSE ENGINE_TEST_SOURCES CONFIGURE_DEPENDS
 
 add_executable(engine_tests
     test_main.cpp
+    support/alloc_probe.cpp
     support/gpu_context.cpp
     ${ENGINE_TEST_SOURCES})
 target_link_libraries(engine_tests PRIVATE
@@ -38,7 +39,8 @@ target_include_directories(engine_tests PRIVATE
     ${ENGINE_PUBLIC_INCLUDE}
     ${Stb_INCLUDE_DIR}) # image round trips (stb_image) in the screenshot tests
 target_compile_definitions(engine_tests PRIVATE
-    QUAT_COOKED_SHADER_DIR="${PROJECT_SOURCE_DIR}/cooked/shaders")
+    QUAT_COOKED_SHADER_DIR="${PROJECT_SOURCE_DIR}/cooked/shaders"
+    QUAT_SHADER_SOURCE_DIR="${PROJECT_SOURCE_DIR}/assets/shaders")
 add_dependencies(engine_tests shaders)
 
 add_test(NAME engine_tests_cpu COMMAND engine_tests "--gtest_filter=-Gpu*")

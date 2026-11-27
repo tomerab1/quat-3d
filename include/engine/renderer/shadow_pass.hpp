@@ -20,7 +20,19 @@
 // (ShadowCasterFn — e.g. terrain) recorded inside each cascade's rendering.
 // The map and the cascade buffer are owned by the pass (one per frame slot)
 // and imported into each frame's graph.
+//
+// Casters are routed by material (R12.11, issues #35 / #23):
+//   * opaque: depth only, no fragment work (shadow.slang);
+//   * alphaMode MASK: depth with the material's alpha test
+//     (shadow_material.slang fragment_masked), so cut-outs let the sun through;
+//   * transmissive (glass) and alpha-blended: not in the depth cascades — they
+//     multiply their transmittance into a per-cascade translucency map
+//     (RGBA16F, rgb = light let through, a = the nearest translucent caster's
+//     depth; fragment_translucent), which the lighting pass applies to
+//     receivers behind that depth (lib/csm.slang csm_transmittance). Clear
+//     glass therefore casts a faint, tinted shadow instead of a black one.
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <expected>
@@ -28,11 +40,13 @@
 #include <memory>
 #include <span>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include <glm/glm.hpp>
 #include <vulkan/vulkan.h>
 
+#include "engine/asset/material_asset.hpp"
 #include "engine/asset/mesh_asset.hpp"
 #include "engine/core/error.hpp"
 #include "engine/renderer/csm.hpp"
@@ -66,6 +80,13 @@ inline constexpr VkFormat shadow_map_format_padded = VK_FORMAT_D32_SFLOAT;
 [[nodiscard]] bool shadow_pancaking(const rhi::Device& device);
 [[nodiscard]] VkFormat shadow_map_format(const rhi::Device& device);
 
+// Translucency map per cascade. Half the depth map's resolution (as UE's
+// translucent shadows): coloured shadows are soft, and 4 x 1024^2 x 8 B =
+// 32 MB, created only once a frame has translucent casters. RGBA16F: the
+// depth in alpha needs more than 8 bits.
+inline constexpr std::uint32_t translucent_shadow_map_size = 1024;
+inline constexpr VkFormat translucent_shadow_format = VK_FORMAT_R16G16B16A16_SFLOAT;
+
 // Push-constant block, mirrors PushConstants in shadow.slang (24 bytes).
 struct ShadowPushConstants {
     VkDeviceAddress cascades = 0;
@@ -75,6 +96,18 @@ struct ShadowPushConstants {
 };
 static_assert(sizeof(ShadowPushConstants) == 24, "must match shadow.slang PushConstants");
 
+// Push-constant block of the casters that read their material, mirrors
+// PushConstants in shadow_material.slang (48 bytes).
+struct ShadowMaterialPushConstants {
+    VkDeviceAddress              cascades = 0;
+    VkDeviceAddress              instances = 0;
+    glm::vec4                    to_light{0.0F}; // xyz = unit direction toward the sun
+    std::uint32_t                cascade = 0;
+    std::array<std::uint32_t, 3> pad{};
+};
+static_assert(sizeof(ShadowMaterialPushConstants) == 48,
+              "must match shadow_material.slang PushConstants");
+
 // This frame's sun shadows as graph resources.
 struct CascadedShadows {
     // Depth 2D array, one layer per cascade: read with sampled_compute.
@@ -82,6 +115,11 @@ struct CascadedShadows {
     // GpuCascades: read with buffer_read_compute (lighting) / _vertex.
     rhi::ResourceHandle cascades;
     VkDeviceAddress     cascades_address = 0;
+    // Translucent casters' transmittance, a 2D array like shadow_map
+    // (translucent_shadow_format; rgb light let through, a nearest
+    // translucent caster depth): read with sampled_compute. Invalid when the
+    // frame has no translucent casters.
+    rhi::ResourceHandle transmittance;
 
     [[nodiscard]] bool valid() const { return shadow_map.valid() && cascades.valid(); }
 };
@@ -112,9 +150,15 @@ public:
     [[nodiscard]] bool pancaked() const { return pancaked_; }
     // Host-visible CsmRangeState (x lo, y hi, z valid) the GPU fit keeps.
     [[nodiscard]] const rhi::GpuBuffer& range_state() const { return range_state_; }
+    // The translucency map (null until a frame had translucent casters).
+    [[nodiscard]] VkImage translucent_map() const { return translucent_map_.handle(); }
 
 private:
     friend class ShadowPass;
+
+    // Creates the translucency map on first use.
+    [[nodiscard]] std::expected<void, core::Error> ensure_translucent(VkDevice device,
+                                                                      rhi::GpuAllocator& allocator);
 
     rhi::GpuImage               map_;
     VkFormat                    format_ = shadow_map_format_pancaked;
@@ -123,6 +167,9 @@ private:
     std::vector<rhi::ImageView> layer_views_;
     rhi::GpuBuffer              range_state_;
     VkDeviceAddress             range_state_address_ = 0;
+    rhi::GpuImage               translucent_map_;
+    rhi::ImageView              translucent_array_view_;
+    std::vector<rhi::ImageView> translucent_layer_views_;
 };
 
 
@@ -167,6 +214,7 @@ private:
         std::span<const asset::SubMesh> submeshes{};
         std::uint32_t                   first_instance = 0;
         std::uint32_t                   instance_count = 0;
+        std::uint32_t                   descriptor = 0; // material casters only
     };
     struct SetupSlots {
         std::uint32_t params = 0;
@@ -176,6 +224,25 @@ private:
     };
 
     void record_cascades(VkCommandBuffer cmd, std::uint32_t count) const;
+
+    // Material casters (shadow_casters.cpp).
+    [[nodiscard]] std::expected<void, core::Error>
+    create_material_casters(rhi::PipelineCache& cache, const std::string& cooked_shader_dir);
+    // Files `d` (already validated) under the opaque, masked or translucent
+    // casters by its material.
+    [[nodiscard]] std::expected<void, core::Error> add_caster(const InstancedDraw& d);
+    // The first frame with material casters clears the fallback texture in
+    // its graph: returns the imported handle the caster passes then read
+    // (invalid on later frames, when it is already initialised).
+    [[nodiscard]] rhi::ResourceHandle add_fallback_clear(rhi::RenderGraph& graph);
+    // Declares the translucency map's rendering (only when there are
+    // translucent casters) and sets out.transmittance.
+    [[nodiscard]] std::expected<void, core::Error>
+    add_translucent_pass(rhi::RenderGraph& graph, CascadedShadows& out, std::uint32_t count,
+                         rhi::ResourceHandle fallback);
+    void draw_material_casters(VkCommandBuffer cmd, const rhi::ManagedPipeline& pipeline,
+                               std::span<const FrameDraw> draws, std::uint32_t cascade) const;
+    void record_translucent(VkCommandBuffer cmd, std::uint32_t count) const;
 
     const rhi::Device*     device_    = nullptr; // non-owning
     rhi::DescriptorBufferFunctions db_fns_{};
@@ -188,6 +255,25 @@ private:
     VkDeviceAddress        frame_instances_ = 0;
     std::vector<FrameDraw> frame_draws_;
     std::vector<ShadowCasterFn> frame_extra_;
+
+    // Casters reading their material (shadow_material.slang): one
+    // descriptor buffer per distinct material per frame, slots from
+    // reflection (g_params, g_base_color, g_samp).
+    rhi::DescriptorSetLayout           material_layout_;
+    std::array<std::uint32_t, 3>       material_slots_{};
+    rhi::ManagedPipeline               masked_pipeline_;
+    rhi::ManagedPipeline               translucent_pipeline_;
+    rhi::Sampler                       material_sampler_;
+    // 1x1 white bound for a material without a base-colour texture (never
+    // sampled then); cleared by the first frame's graph.
+    rhi::GpuImage                      fallback_texture_;
+    rhi::ImageView                     fallback_view_;
+    bool                               fallback_ready_ = false;
+    std::vector<rhi::DescriptorBuffer> frame_descriptors_;
+    std::unordered_map<const asset::MaterialAsset*, std::uint32_t> frame_descriptor_of_;
+    std::vector<FrameDraw>             frame_masked_;
+    std::vector<FrameDraw>             frame_translucent_;
+    glm::vec4                          frame_to_light_{0.0F};
 
     // Cascade fitting (csm_setup.slang).
     rhi::DescriptorSetLayout       setup_layout_;

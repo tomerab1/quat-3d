@@ -32,6 +32,9 @@ enum MaterialTextureFlags : std::uint32_t {
     material_transmission           = 1u << 6, // refractive glass (KHR_materials_transmission)
     material_double_sided           = 1u << 7, // glTF doubleSided -> disable back-face culling
     material_has_thickness          = 1u << 8, // KHR_materials_volume thicknessTexture (G channel)
+    // glTF alphaMode MASK: base-colour alpha x factor is tested against
+    // alpha_cutoff (discard below) in every pass that draws the surface.
+    material_alpha_mask             = 1u << 9,
 };
 
 // Texture slot indices for the per-slot KHR_texture_transform arrays below.

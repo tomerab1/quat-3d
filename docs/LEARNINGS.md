@@ -157,6 +157,57 @@ into CLAUDE.md or the brief template in [`CYCLE.md`](CYCLE.md).
 
 ## C++ in this codebase
 
+- **A render-graph image is one unit: a pass that changes per-mip layouts
+  must hand every mip back in the layout its declared usage implies.** The
+  transparent pass's scene-colour copy blitted its mip chain and left mips
+  1.. in SHADER_READ_ONLY while the graph, whose barriers cover all mips,
+  still believed TRANSFER_DST; its next transition then lied about the old
+  layout (#62, five `VUID-VkImageMemoryBarrier2-oldLayout-01197` per frame).
+  Restore the declared layout at the end of the pass and let the graph do
+  the hand-off.
+- **Slang keeps a dead `if (!A::keep(...)) discard;` after specialising.**
+  An interface method returning a constant `true` still left `OpKill` in the
+  opaque entry point's SPIR-V (R12.11). Put the discard inside the
+  interface implementation (`AlphaMasked::test`) so the opaque
+  specialisation has none, and check entry points' call graphs for
+  OpKill / OpTerminateInvocation / OpDemoteToHelperInvocation in a test.
+- **A material sampler created with `create_sampler(device)` reaches mip 1
+  only** (maxLod = mip_levels = 1): mipmapped material textures were never
+  minified past level 1 on master. Pass `material_sampler_max_lod`.
+- **Coverage-preserving alpha mips must be judged on the stored 8-bit
+  alpha.** A threshold picked from float sub-samples sat within half an
+  8-bit step of whole stems of equal alpha, and rounding flipped them all
+  (+9 % coverage). Evaluate the stored coverage at a few 8-bit steps around
+  the analytic threshold and keep the closest.
+- **`SV_IsFrontFace` is screen winding, not "outside".** A mirrored instance
+  (negative determinant) winds its outside faces clockwise, so a doubleSided
+  normal flip keyed on front_face alone lit mirrored foliage from behind
+  (PR #70 review). Use `front_face != mirrored`, with `sign(det M)` from
+  InstanceData, and test a negatively scaled instance.
+- **Post-decode processing of untrusted textures must be costed before it
+  allocates.** The first coverage-mip pass reserved its budget only after a
+  float copy of level 0 plus a vector chain (> 1 GiB for an 8k image). Size
+  the result and the working set up front, claim them from the DecodeBudget,
+  read level 0 in place, keep two float levels alive, and write straight into
+  the final buffer; prove it with an allocation probe (tests/support).
+- **A shadow term that is filtered apart from the depth PCF draws its own
+  hard edge** (issue #77). Glass shadows were looked up with a 2x2 gather of
+  a half-resolution map, after the PCSS-filtered depth test, so their edge
+  stair-stepped; and the angle-dependent Fresnel at the sphere's grazing
+  silhouette wrote black texels (the dump showed transmittance 0.0 there),
+  a dark ring. Multiply each PCF tap's depth test by that tap's
+  transmittance, let translucent depth join the PCSS blocker search, and use
+  the hemispherical average Fresnel (1 - F_avg is what a sphere transmits
+  over its projected area) because the map cannot model the caustic that
+  balances grazing reflection. Debug by dumping the map (`read_rgba16f` on
+  `CsmShared::translucent_map`) before guessing.
+- **Count volume absorption once per volume, not per face.** A shadow
+  caster sees both faces of closed glass; KHR_materials_volume `thickness` is
+  the whole medium, so Beer-Lambert belongs on the light's entry face only.
+- **Import the shader-side contract instead of copying it.** A third copy of
+  the material flag bits and PbrMaterialParams in transparent.slang would
+  desync silently; passes import `material`, and a test checks the flag bits
+  and every pass's `g_params` reflection offsets against the C++ struct.
 - **A line protocol on a loopback port is reachable from every web page**
   (issue #56). Browsers send cross-origin `POST`s to `127.0.0.1` without a
   CORS preflight, and HTTP is lines: the remote endpoint answered the request

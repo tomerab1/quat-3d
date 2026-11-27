@@ -126,6 +126,7 @@ void apply_uv_transform(asset::PbrMaterialParams& p, std::size_t slot,
         if (md.emissive_image != no_texture) flags |= asset::material_has_emissive;
         if (md.occlusion_image != no_texture) flags |= asset::material_has_occlusion;
         if (mat.alphaMode == fastgltf::AlphaMode::Blend) flags |= asset::material_blend;
+        if (mat.alphaMode == fastgltf::AlphaMode::Mask) flags |= asset::material_alpha_mask;
         if (mat.doubleSided) flags |= asset::material_double_sided;
         // KHR_materials_transmission → see-through glass.
         if (mat.transmission != nullptr && mat.transmission->transmissionFactor > 0.0F) {
