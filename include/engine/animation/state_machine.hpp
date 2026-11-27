@@ -9,7 +9,6 @@
 // pose.
 
 #include <cstdint>
-#include <expected>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -19,7 +18,6 @@
 #include "engine/animation/animator.hpp"
 #include "engine/animation/clip.hpp"
 #include "engine/animation/skeleton.hpp"
-#include "engine/core/error.hpp"
 
 namespace engine::animation {
 
@@ -72,9 +70,5 @@ private:
     float transition_elapsed_ = 0.0F;
     float transition_duration_ = 0.0F;
 };
-
-// Two states (idle/walk) with a parameter-driven crossfade; verifies the current
-// state, the mid-crossfade blended pose, and that the transition completes.
-[[nodiscard]] std::expected<void, core::Error> run_state_machine_self_test();
 
 } // namespace engine::animation

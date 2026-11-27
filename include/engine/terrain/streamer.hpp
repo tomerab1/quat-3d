@@ -11,7 +11,6 @@
 // borders, so neighbours continue each other exactly (seam-free).
 
 #include <cstdint>
-#include <expected>
 #include <future>
 #include <map>
 #include <utility>
@@ -19,7 +18,6 @@
 
 #include <glm/glm.hpp>
 
-#include "engine/core/error.hpp"
 #include "engine/terrain/generator.hpp"
 
 namespace engine::terrain {
@@ -70,10 +68,5 @@ private:
     glm::ivec2             job_coord_{0, 0};
     bool                   job_active_ = false;
 };
-
-// Self-test: a blocking streamer fills its window, follows a camera move
-// (loading the new column, dropping the far one), and adjacent tiles share
-// bit-identical edge heights (the seam guarantee).
-[[nodiscard]] std::expected<void, core::Error> run_terrain_streaming_self_test();
 
 } // namespace engine::terrain

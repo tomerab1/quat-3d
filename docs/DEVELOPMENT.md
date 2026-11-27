@@ -123,12 +123,18 @@ This catches compile errors and warnings, not link errors or test failures.
 `scripts/check-compile.sh <files...>` wraps exactly this (set `DEPS` if the
 clones live elsewhere than `~/deps`).
 
-Quick check without vcpkg (the remote-control library only needs
-nlohmann-json and glm headers — `apt-get install nlohmann-json3-dev libglm-dev`):
+Modules whose dependencies are header-only (animation and terrain need glm;
+remote needs nlohmann-json and glm — `apt-get install nlohmann-json3-dev
+libglm-dev`) can also be linked and their tests run, against a GoogleTest built
+with libc++ in `~/deps/googletest/build`:
 
 ```sh
+G=~/deps/googletest
 clang++ -std=c++23 -stdlib=libc++ -Wall -Wextra -Wshadow -fno-exceptions -fno-rtti \
-  -Iinclude -Isrc/remote src/remote/*.cpp <a main() calling run_rpc_server_self_test()>
+  -DGLM_FORCE_DEPTH_ZERO_TO_ONE -DGLM_FORCE_RADIANS -Iinclude -Isrc -Itests \
+  -isystem $G/googletest/include src/remote/*.cpp tests/remote/*_test.cpp \
+  $G/build/lib/libgtest_main.a $G/build/lib/libgtest.a -lpthread -o /tmp/remote_tests
+/tmp/remote_tests
 ```
 
 ## Pitfalls

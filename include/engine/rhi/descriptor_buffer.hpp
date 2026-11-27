@@ -110,9 +110,4 @@ private:
     VkDescriptorSet                  set_ = VK_NULL_HANDLE;
 };
 
-// Debug self-test: build a one-uniform-buffer layout, allocate a descriptor
-// buffer, and write a descriptor into it. Verifies the EXT plumbing is clean.
-[[nodiscard]] std::expected<void, core::Error>
-run_descriptor_buffer_self_test(const Device& device, GpuAllocator& allocator);
-
 } // namespace engine::rhi
