@@ -20,6 +20,7 @@ for f in "$@"; do
   # tests, so library code that uses them fails here as it does in CI.
   paths=()
   case "$f" in src/app/*|src/main.cpp|tests/*) paths=(-DQUAT_COOKED_SHADER_DIR='"x"' -DQUAT_PROJECT_ROOT='"x"');; esac
+  case "$f" in tests/*) paths+=(-DQUAT_SHADER_SOURCE_DIR='"x"');; esac
   out=$(clang++ -std=c++23 -stdlib=libc++ -Wall -Wextra -Wshadow -fno-exceptions -fno-rtti \
     -fsyntax-only -DGLM_FORCE_DEPTH_ZERO_TO_ONE -DGLM_FORCE_RADIANS -DENGINE_EDITOR \
     "${paths[@]}" \

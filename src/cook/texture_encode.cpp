@@ -8,11 +8,14 @@
 #include <cstdlib>
 #include <cstring>
 #include <memory>
+#include <optional>
+#include <span>
 #include <string>
 #include <thread>
 #include <vector>
 
 #include "cook/internal.hpp"
+#include "engine/asset/alpha_coverage.hpp"
 
 namespace engine::cook::detail {
 
@@ -148,7 +151,7 @@ struct KtxDeleter {
 std::expected<std::vector<std::byte>, core::Error>
 encode_image_ktx2(std::span<const std::byte> rgba, std::uint32_t width, std::uint32_t height,
                   asset::TextureRole role, asset::TextureColorSpace color_space,
-                  const TextureCookOptions& options) {
+                  const TextureCookOptions& options, std::optional<float> alpha_test_cutoff) {
     if (width == 0 || height == 0 ||
         rgba.size() != static_cast<std::size_t>(width) * height * 4) {
         return fail("image data does not match its extent");
@@ -171,9 +174,21 @@ encode_image_ktx2(std::span<const std::byte> rgba, std::uint32_t width, std::uin
         if (opaque) components = 3;
     }
 
-    std::vector<Image> chain{std::move(base)};
-    while (options.mipmaps && (chain.back().width > 1 || chain.back().height > 1)) {
-        chain.push_back(downsample(chain.back(), normal));
+    std::vector<Image> chain;
+    if (options.mipmaps && components == 4 && alpha_test_cutoff.has_value()) {
+        // glTF MASK base colour: alpha-test coverage kept at every level.
+        const std::vector<std::uint8_t> rgba8 = pack(base, 4, srgb);
+        for (const asset::MipLevelRgba8& level : asset::build_alpha_tested_mips(
+                 rgba8, base.width, base.height, srgb, *alpha_test_cutoff)) {
+            chain.push_back(to_linear(std::as_bytes(std::span(level.pixels)), level.width,
+                                      level.height, srgb));
+        }
+    }
+    if (chain.empty()) {
+        chain.push_back(std::move(base));
+        while (options.mipmaps && (chain.back().width > 1 || chain.back().height > 1)) {
+            chain.push_back(downsample(chain.back(), normal));
+        }
     }
 
     ktxTextureCreateInfo ci{};

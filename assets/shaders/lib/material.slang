@@ -10,13 +10,22 @@
 // This file has no entry point: it is a module, imported by passes via
 // `import material;` and validated at build time into a .slang-module.
 
-// Bits marking which optional textures are present. Mirrors
-// engine::asset::MaterialTextureFlags on the C++ side — keep in sync.
-static const uint MATERIAL_HAS_BASE_COLOR         = 1u << 0;
-static const uint MATERIAL_HAS_NORMAL             = 1u << 1;
-static const uint MATERIAL_HAS_METALLIC_ROUGHNESS = 1u << 2;
-static const uint MATERIAL_HAS_EMISSIVE           = 1u << 3;
-static const uint MATERIAL_HAS_OCCLUSION          = 1u << 4;
+// Material flag bits: the one shader-side copy of
+// engine::asset::MaterialTextureFlags (every pass imports these; the
+// material_flags_match test checks them against the C++ enum).
+// Which optional textures are present:
+public static const uint MATERIAL_HAS_BASE_COLOR         = 1u << 0;
+public static const uint MATERIAL_HAS_NORMAL             = 1u << 1;
+public static const uint MATERIAL_HAS_METALLIC_ROUGHNESS = 1u << 2;
+public static const uint MATERIAL_HAS_EMISSIVE           = 1u << 3;
+public static const uint MATERIAL_HAS_OCCLUSION          = 1u << 4;
+public static const uint MATERIAL_HAS_THICKNESS          = 1u << 8; // KHR_materials_volume (G)
+
+// Alpha / transmission mode bits.
+public static const uint MATERIAL_BLEND        = 1u << 5; // glTF BLEND (forward pass)
+public static const uint MATERIAL_TRANSMISSION = 1u << 6; // KHR_materials_transmission
+public static const uint MATERIAL_DOUBLE_SIDED = 1u << 7; // glTF doubleSided
+public static const uint MATERIAL_ALPHA_MASK   = 1u << 9; // glTF MASK (lib/alpha_test.slang)
 
 // Texture slot indices for the per-slot KHR_texture_transform arrays. Mirrors
 // engine::asset::MaterialTextureSlot.
@@ -61,6 +70,19 @@ public float2 material_transform_uv(PbrMaterialParams p, uint slot, float2 uv) {
     float4 packed = p.uv_offset[slot >> 1];
     float2 offset = ((slot & 1u) == 0u) ? packed.xy : packed.zw;
     return float2(m.x * uv.x + m.y * uv.y, m.z * uv.x + m.w * uv.y) + offset;
+}
+
+// Base colour (factor x texture, rgb linear, a = alpha) at `uv`: everything
+// the alpha test and the translucent shadow casters need. Takes the resources
+// directly so passes binding plain globals (shadow_material.slang) and the
+// PbrMaterial parameter block share it.
+public float4 material_base_color(PbrMaterialParams p, Texture2D tex, SamplerState samp,
+                                  float2 uv) {
+    float4 base = p.base_color_factor;
+    if ((p.flags & MATERIAL_HAS_BASE_COLOR) != 0) {
+        base *= tex.Sample(samp, material_transform_uv(p, MATERIAL_SLOT_BASE_COLOR, uv));
+    }
+    return base;
 }
 
 // Surface attributes produced at a shading point, consumed by the GBuffer pass.

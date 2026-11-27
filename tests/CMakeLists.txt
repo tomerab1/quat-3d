@@ -13,6 +13,7 @@ file(GLOB_RECURSE ENGINE_TEST_SOURCES CONFIGURE_DEPENDS
 
 add_executable(engine_tests
     test_main.cpp
+    support/alloc_probe.cpp
     support/gpu_context.cpp
     ${ENGINE_TEST_SOURCES})
 target_link_libraries(engine_tests PRIVATE
@@ -39,6 +40,7 @@ target_include_directories(engine_tests PRIVATE
     ${Stb_INCLUDE_DIR}) # image round trips (stb_image) in the screenshot tests
 target_compile_definitions(engine_tests PRIVATE
     QUAT_COOKED_SHADER_DIR="${PROJECT_SOURCE_DIR}/cooked/shaders"
+    QUAT_SHADER_SOURCE_DIR="${PROJECT_SOURCE_DIR}/assets/shaders"
     QUAT_PROJECT_ROOT="${PROJECT_SOURCE_DIR}") # vendored assets (editor fonts, icon table)
 add_dependencies(engine_tests shaders)
 

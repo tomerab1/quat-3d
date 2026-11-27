@@ -63,7 +63,8 @@ cook_images(const fastgltf::Asset& asset, const TextureCookOptions& o, CookStats
         auto image = asset::decode_png_jpeg(*encoded, uses[i].color_space, {}, &budget);
         if (!image) return fail("image " + std::to_string(i) + ": " + image.error().message);
         auto ktx2 = detail::encode_image_ktx2(image->pixels.span(), image->width, image->height,
-                                              uses[i].role, uses[i].color_space, o);
+                                              uses[i].role, uses[i].color_space, o,
+                                              uses[i].alpha_test_cutoff);
         if (!ktx2) return fail("image " + std::to_string(i) + ": " + ktx2.error().message);
         stats.image_bytes_before += encoded->size();
         stats.image_bytes_after += ktx2->size();

@@ -37,7 +37,12 @@ The editor (dark theme; a light theme is one click away in View > Theme):
   contact shadows for small detail; meshes, instanced objects and terrain cast
 - Ambient occlusion (GTAO) with bent normals that also darkens reflections in
   crevices; every shadow / AO setting is tunable in the editor's Renderer panel
-- Glass and transparency (refraction, absorption, IOR), clearcoat car paint
+- Glass and transparency (refraction, absorption, IOR), clearcoat car paint;
+  glass and see-through materials cast soft, coloured shadows instead of
+  black ones
+- Alpha-cut materials (glTF `MASK`: leaves, grass cards, fences) cut holes in
+  the surface and in its shadow, and keep their shape at a distance
+  (coverage-preserving mipmaps); double-sided leaves are lit on both sides
 - Physically based sky with volumetric clouds and a moving sun
 - Image-based lighting that keeps up with the sky in real time
 - Anti-aliasing (TAA), bloom, auto-exposure, filmic tonemapping
@@ -353,6 +358,7 @@ The plan lives in [`ROADMAP.md`](ROADMAP.md), grouped into tracks:
 |---|---|
 | [`docs/STATUS.md`](docs/STATUS.md) | What is in progress, what is blocked, what comes next |
 | [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md) | Building, testing, CI, and conventions for contributors |
+| [`docs/reading/README.md`](docs/reading/README.md) | Reading list: the papers and talks behind the engine's techniques, with where each lives in the code |
 | [`docs/remote-control.md`](docs/remote-control.md) | The remote-control protocol AI tools use to drive the engine |
 | [`docs/editor-ux.md`](docs/editor-ux.md) | The editor's design system: principles, tokens, widget kit, layout, shortcuts |
 | [`docs/CYCLE.md`](docs/CYCLE.md) | How development runs: the repeating plan → parallel agents → merge → CI → audit → learn cycle |

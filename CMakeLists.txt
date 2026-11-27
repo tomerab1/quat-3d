@@ -175,6 +175,7 @@ set_source_files_properties(src/rhi/vma_impl.cpp PROPERTIES COMPILE_OPTIONS "-w"
 # engine_image — graphics-free texture data, limits and the guarded PNG/JPEG
 # decoder (stb_image), shared by engine_asset and the cooker.
 add_library(engine_image STATIC
+    src/asset/alpha_coverage.cpp
     src/asset/texture_data.cpp
     src/asset/image_decode.cpp)
 target_link_libraries(engine_image PUBLIC engine_flags)
@@ -457,6 +458,7 @@ add_library(engine_renderer STATIC
     src/renderer/light_cull_pass.cpp
     src/renderer/tonemap_pass.cpp
     src/renderer/skinning_pass.cpp
+    src/renderer/shadow_casters.cpp
     src/renderer/shadow_pass.cpp
     src/renderer/transparent_pass.cpp
     src/renderer/ibl_pass.cpp
