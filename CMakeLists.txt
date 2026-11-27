@@ -128,6 +128,7 @@ add_library(engine_core STATIC
     src/core/stderr_capture.cpp
     src/core/sim_clock.cpp
     src/core/frame_timer.cpp
+    src/core/path_confine.cpp
     src/core/file_watcher.cpp
     src/core/child_process.cpp)
 target_link_libraries(engine_core PUBLIC engine_flags Threads::Threads)
@@ -374,7 +375,7 @@ add_library(engine_audio STATIC
     src/audio/audio_engine.cpp
     src/audio/miniaudio_impl.cpp)
 target_link_libraries(engine_audio PUBLIC engine_flags glm::glm)
-target_link_libraries(engine_audio PRIVATE miniaudio_headers)
+target_link_libraries(engine_audio PRIVATE miniaudio_headers engine_core)
 target_include_directories(engine_audio PUBLIC ${ENGINE_PUBLIC_INCLUDE})
 # miniaudio's implementation is not warning-clean under our strict flags.
 set_source_files_properties(src/audio/miniaudio_impl.cpp PROPERTIES COMPILE_OPTIONS "-w")

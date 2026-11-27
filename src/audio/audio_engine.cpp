@@ -8,9 +8,13 @@
 #include <cmath>
 #include <filesystem>
 #include <limits>
+#include <string>
+#include <system_error>
 #include <utility>
 
 #include <miniaudio.h>
+
+#include "engine/core/path_confine.hpp"
 
 namespace engine::audio {
 
@@ -28,6 +32,38 @@ constexpr std::size_t max_sounds = 0xFFFFU;
 
 [[nodiscard]] core::Error ma_error(std::string what, ma_result result) {
     return core::Error{"audio: " + std::move(what) + ": " + ma_result_description(result)};
+}
+
+[[nodiscard]] std::unexpected<core::Error> clip_error(const std::string& clip, std::string why) {
+    return std::unexpected(core::Error{"audio: clip '" + clip + "': " + std::move(why)});
+}
+
+// The file a clip names (issue #66): inside `root`, an existing regular file,
+// and small enough to decode into memory unless streamed. Checked before
+// miniaudio opens anything, so a FIFO, device or /proc path can't block the
+// main thread and a huge file is never decoded. Messages carry the clip as
+// given, not the resolved path.
+[[nodiscard]] std::expected<std::filesystem::path, core::Error>
+resolve_clip(const std::filesystem::path& asset_root, const std::string& clip, bool stream,
+             std::uint64_t max_decoded_bytes) {
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    const fs::path root = asset_root.empty() ? fs::current_path(ec) : asset_root;
+    if (ec) return clip_error(clip, "cannot resolve the asset root: " + ec.message());
+    auto path = core::confine_to_root(root, clip);
+    if (!path) return clip_error(clip, path.error().message);
+    const fs::file_status st = fs::status(*path, ec); // follows symlinks (confined above)
+    if (!fs::exists(st)) return clip_error(clip, "no such file");
+    if (!fs::is_regular_file(st)) return clip_error(clip, "not a regular file");
+    const std::uintmax_t size = fs::file_size(*path, ec);
+    if (ec) return clip_error(clip, "cannot read its size: " + ec.message());
+    if (!stream && size > max_decoded_bytes) {
+        return clip_error(clip, std::to_string(size >> 20U) + " MiB is over the " +
+                                    std::to_string(max_decoded_bytes >> 20U) +
+                                    " MiB limit for clips decoded into memory; use a streaming "
+                                    "bus (music, ambience)");
+    }
+    return std::move(*path);
 }
 
 } // namespace
@@ -48,6 +84,7 @@ struct AudioEngine::Impl {
     std::size_t                           groups_ready = 0; // groups[1..groups_ready] are live
     bool                                  has_device = false;
     std::filesystem::path                 asset_root;
+    std::uint64_t                         max_decoded_clip_bytes = 0;
     std::vector<Slot>                     slots;
     std::vector<std::uint16_t>            free_slots;
     std::size_t                           live = 0;
@@ -117,6 +154,7 @@ std::expected<AudioEngine, core::Error> AudioEngine::create(const AudioEngineCon
     impl.engine_ready = true;
     impl.has_device = !config.no_device;
     impl.asset_root = std::filesystem::path(config.asset_root);
+    impl.max_decoded_clip_bytes = config.max_decoded_clip_bytes;
 
     // Sub-mix buses, each feeding the engine endpoint (= the master bus).
     for (std::size_t i = 1; i < bus_count; ++i) {
@@ -165,8 +203,10 @@ std::expected<SoundHandle, core::Error> AudioEngine::load(const SoundDesc& desc)
     if (static_cast<std::size_t>(desc.bus) >= bus_count) {
         return std::unexpected(core::Error{"audio: invalid bus"});
     }
-    std::filesystem::path path(desc.path);
-    if (path.is_relative() && !impl.asset_root.empty()) path = impl.asset_root / path;
+    auto resolved = resolve_clip(impl.asset_root, desc.path, desc.stream,
+                                 impl.max_decoded_clip_bytes);
+    if (!resolved) return std::unexpected(resolved.error());
+    const std::filesystem::path& path = *resolved;
 
     std::size_t index = impl.slots.size();
     if (!impl.free_slots.empty()) {
@@ -186,7 +226,7 @@ std::expected<SoundHandle, core::Error> AudioEngine::load(const SoundDesc& desc)
                                                 impl.group(desc.bus), nullptr, sound.get());
 #endif
     if (r != MA_SUCCESS) {
-        return std::unexpected(ma_error("cannot load '" + path.generic_string() + "'", r));
+        return std::unexpected(ma_error("cannot load '" + desc.path + "'", r));
     }
 
     if (index == impl.slots.size()) {

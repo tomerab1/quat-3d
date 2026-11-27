@@ -217,7 +217,10 @@ also flat ground at `ground_y` where no terrain is loaded), `lod_start`
 radius),
 `point_light`, `dir_light`, `camera`, `collider`, `rigidbody`, `character`,
 `nav_agent`, `behavior`, `patrol`, `terrain`, `net_replicated`,
-`audio_source` (`clip`, `bus`: master/music/sfx/ui/ambience, `volume`,
+`audio_source` (`clip`: a project-relative file — absolute paths, `..`
+escapes, symlinks leading out of the project and non-regular files are
+refused, and clips decoded into memory (sfx/ui) are capped at 64 MiB;
+`bus`: master/music/sfx/ui/ambience, `volume`,
 `pitch`, `loop`, `play_on_start`, `spatial`, `min_distance`, `max_distance`,
 `rolloff`, `doppler`, plus write-only `command`: play/stop/pause/resume),
 `audio_listener` (`active`), `animator` (edit only: `clip` switches by name

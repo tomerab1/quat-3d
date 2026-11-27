@@ -2,6 +2,7 @@
 // read_frames(), so playback, bus gains and 3D attenuation are measurable.
 
 #include <cmath>
+#include <filesystem>
 #include <optional>
 #include <string>
 #include <utility>
@@ -14,6 +15,10 @@
 #include "engine/audio/audio_engine.hpp"
 #include "support/expect_ok.hpp"
 
+#if !defined(_WIN32)
+#include <sys/stat.h>
+#endif
+
 namespace {
 
 namespace a = engine::audio;
@@ -21,13 +26,15 @@ namespace a = engine::audio;
 class AudioEngineTest : public ::testing::Test {
 protected:
     void SetUp() override {
-        auto created = a::AudioEngine::create({.no_device = true});
+        // Clips are confined to the asset root (issue #66): the fixture's
+        // root is the GoogleTest temp dir, and clips are named relative to it.
+        auto created = a::AudioEngine::create({.no_device = true, .asset_root = ::testing::TempDir()});
         ASSERT_OK(created);
         engine.emplace(std::move(*created));
-        clip = quat::test::write_test_wav("audio_engine_test.wav", 1.0F);
-        short_clip = quat::test::write_test_wav("audio_engine_test_short.wav", 0.05F);
-        ASSERT_FALSE(clip.empty());
-        ASSERT_FALSE(short_clip.empty());
+        ASSERT_FALSE(quat::test::write_test_wav("audio_engine_test.wav", 1.0F).empty());
+        ASSERT_FALSE(quat::test::write_test_wav("audio_engine_test_short.wav", 0.05F).empty());
+        clip = "audio_engine_test.wav";
+        short_clip = "audio_engine_test_short.wav";
     }
 
     // Mixes `seconds` of audio and returns the mean absolute level of the
@@ -208,6 +215,76 @@ TEST_F(AudioEngineTest, ResolvesRelativePathsAgainstTheAssetRoot) {
     auto rooted = a::AudioEngine::create({.no_device = true, .asset_root = ::testing::TempDir()});
     ASSERT_OK(rooted);
     EXPECT_OK(rooted->load({.path = "audio_engine_test.wav"}));
+}
+
+// ---- Untrusted clip paths (issue #66) ---------------------------------------
+
+// The error for `path`, empty when the load unexpectedly succeeded.
+[[nodiscard]] std::string load_error(a::AudioEngine& engine, const std::string& path,
+                                     bool stream = false) {
+    auto sound = engine.load({.path = path, .stream = stream});
+    return sound ? std::string() : sound.error().message;
+}
+
+TEST_F(AudioEngineTest, RefusesPathsOutsideTheAssetRoot) {
+    const std::string root = ::testing::TempDir();
+    const std::string absolute = (std::filesystem::path(root) / clip).string();
+    for (const std::string& bad : {absolute, std::string("../") + clip,
+                                   std::string("sub/../../") + clip, std::string("/dev/zero")}) {
+        const std::string err = load_error(*engine, bad);
+        EXPECT_FALSE(err.empty()) << bad << " loaded";
+        EXPECT_NE(err.find("'" + bad + "'"), std::string::npos) << err;
+    }
+    EXPECT_EQ(engine->sound_count(), 0U);
+}
+
+TEST_F(AudioEngineTest, RefusesASymlinkLeavingTheAssetRoot) {
+    namespace fs = std::filesystem;
+    // Root: <tmp>/audio_engine_root; the link inside it points at a real clip
+    // one level up, outside the root.
+    const fs::path root = fs::path(::testing::TempDir()) / "audio_engine_root";
+    std::error_code ec;
+    fs::remove_all(root, ec);
+    fs::create_directories(root, ec);
+    const fs::path target = fs::path(::testing::TempDir()) / clip;
+    fs::create_symlink(target, root / "escape.wav", ec);
+    if (ec) GTEST_SKIP() << "cannot create symlinks here: " << ec.message();
+    auto rooted = a::AudioEngine::create({.no_device = true, .asset_root = root.string()});
+    ASSERT_OK(rooted);
+    const std::string err = load_error(*rooted, "escape.wav");
+    EXPECT_NE(err.find("escapes"), std::string::npos) << err;
+    EXPECT_EQ(err.find(target.string()), std::string::npos) << "leaks the resolved path: " << err;
+    fs::remove_all(root, ec);
+}
+
+// A FIFO (or device, or /proc file) would block miniaudio's open/read on the
+// main thread until a writer appears; it must be refused before opening.
+TEST_F(AudioEngineTest, RefusesNonRegularFiles) {
+    namespace fs = std::filesystem;
+    const fs::path dir = fs::path(::testing::TempDir()) / "audio_engine_test_dir.wav";
+    std::error_code ec;
+    fs::create_directories(dir, ec);
+    EXPECT_NE(load_error(*engine, "audio_engine_test_dir.wav").find("not a regular file"),
+              std::string::npos);
+#if !defined(_WIN32)
+    const fs::path fifo = fs::path(::testing::TempDir()) / "audio_engine_test_fifo.wav";
+    fs::remove(fifo, ec);
+    ASSERT_EQ(::mkfifo(fifo.c_str(), 0600), 0);
+    EXPECT_NE(load_error(*engine, "audio_engine_test_fifo.wav").find("not a regular file"),
+              std::string::npos);
+    fs::remove(fifo, ec);
+#endif
+    EXPECT_NE(load_error(*engine, "no_such_clip.wav").find("no such file"), std::string::npos);
+}
+
+TEST_F(AudioEngineTest, CapsClipsDecodedIntoMemory) {
+    auto small = a::AudioEngine::create(
+        {.no_device = true, .asset_root = ::testing::TempDir(), .max_decoded_clip_bytes = 1024});
+    ASSERT_OK(small);
+    const std::string err = load_error(*small, clip); // ~94 KiB
+    EXPECT_NE(err.find("limit"), std::string::npos) << err;
+    EXPECT_EQ(small->sound_count(), 0U);
+    EXPECT_EQ(load_error(*small, clip, /*stream=*/true), "") << "streamed clips are not capped";
 }
 
 } // namespace
