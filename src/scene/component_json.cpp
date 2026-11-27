@@ -546,10 +546,13 @@ json encode_components(const entt::registry& r, entt::entity e, const EncodeOpti
                           {"tile_size", t->params.tile_size_m},
                           {"height", t->params.height_m},
                           {"octaves", t->params.octaves},
+                          {"frequency", t->params.base_frequency},
+                          {"gain", t->params.gain},
                           {"warp", t->params.warp_strength},
                           {"erosion", enum_name(k_erosion_models, t->params.erosion_model)},
                           {"droplets", t->params.erosion_droplets},
                           {"erosion_steps", t->params.grid.iterations},
+                          {"erosion_talus", t->params.grid.talus},
                           {"snowline", t->snowline_m},
                           {"streaming", t->streaming},
                           {"stream_radius", t->stream_radius},
@@ -820,10 +823,13 @@ std::expected<void, core::Error> apply_component(entt::registry& r, entt::entity
             f.number("tile_size", p.tile_size_m, 1.0F, 100000.0F);
             f.number("height", p.height_m, 0.0F, 100000.0F);
             f.integer("octaves", p.octaves, 1, 16);
+            f.number("frequency", p.base_frequency, 0.05F, 64.0F);
+            f.number("gain", p.gain, 0.1F, 0.9F);
             f.number("warp", p.warp_strength, 0.0F, 4.0F);
             f.enumeration("erosion", p.erosion_model, k_erosion_models);
             f.integer("droplets", p.erosion_droplets, 0, 50'000'000);
             f.integer("erosion_steps", p.grid.iterations, 0, terrain::max_grid_erosion_steps);
+            f.number("erosion_talus", p.grid.talus, 0.05F, 4.0F);
             f.number("snowline", t.snowline_m);
             f.boolean("streaming", t.streaming);
             f.integer("stream_radius", t.stream_radius, 0, 8);
