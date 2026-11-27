@@ -354,6 +354,15 @@ PipelineCache::reload(const std::string& spv_path) {
                                     ok.error().message);
         }
     }
+    // The A10 check (storage images need a declared, device-supported
+    // format) belongs to the same all-or-nothing decision: a shader that
+    // fails it must not replace the running one.
+    if (device_ptr_ != nullptr) {
+        if (auto ok = device_ptr_->check_storage_image_formats(fresh->storage_image_formats, key);
+            !ok) {
+            report.errors.push_back(ok.error().message);
+        }
+    }
     if (!report.errors.empty()) {
         vkDestroyShaderModule(device_, fresh->module, nullptr); // never used
         return report;
@@ -368,6 +377,7 @@ PipelineCache::reload(const std::string& spv_path) {
     });
     entry->second.module = fresh->module;
     entry->second.reflection = std::move(fresh->reflection);
+    entry->second.storage_image_formats = std::move(fresh->storage_image_formats);
 
     for (std::size_t i = 0; i < live.size(); ++i) {
         if (auto r = rebuild(*live[i]); !r) {
