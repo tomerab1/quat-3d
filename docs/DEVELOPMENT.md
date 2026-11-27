@@ -104,7 +104,7 @@ scenes with the real `game` binary on lavapipe under Xvfb —
 `QUAT_TERRAIN=1` and `QUAT_PHYSICS=1`, each with a frame budget, muted audio
 and a per-scene timeout (`SCENE_TIMEOUT`, default 300 s) so a hang fails that
 scene instead of the job. Each final frame is converted to PNG
-(`scripts/ppm_to_png.py`, halved when 1280 px or wider). A crash, timeout or
+(`scripts/ppm_to_png.py`, halved when 1280 px or wider, except the editor capture, kept full size so its UI stays readable). A crash, timeout or
 missing image is listed in the step summary with the log tail and an
 `::error` annotation. The step is `continue-on-error` for now (temporary,
 until the headless scenes have proven stable). Rendered captures are

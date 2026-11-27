@@ -8,7 +8,8 @@
 # scene runs the game under Xvfb (xvfb-run) on Mesa's lavapipe with audio
 # muted, a frame budget (QUAT_MAX_FRAMES + QUAT_SCREENSHOT) and a timeout, so
 # a hang fails that scene instead of wedging the job. Writes to OUT_DIR:
-#   <scene>.png      the final frame (downscaled 2x when >= 1280 px wide)
+#   <scene>.png      the final frame (downscaled 2x when >= 1280 px wide,
+#                    except editor scenes: their UI text must stay readable)
 #   <scene>.log      the scene's stdout + stderr
 #   results.tsv      scene, status (ok / crashed (exit N) / timed out / no image),
 #                    seconds, description — read by ci-publish-screenshots.sh
@@ -121,7 +122,12 @@ for row in "${SCENE_TABLE[@]}"; do
     fi
     width="$(ppm_width "$ppm")" || width=0
     factor=1
-    [ "$width" -ge 1280 ] && factor=2
+    # Editor captures stay at full size: halved, the panels' text is
+    # unreadable. The window is a fixed 1280x720 for now.
+    # TODO(E8, #52): once it lands, render the editor row with E8's startup
+    # hooks (QUAT_WINDOW_SIZE=1600x900, QUAT_EDITOR_LAYOUT=default, or its
+    # scripts/editor-screenshots.sh) instead of the default window.
+    [[ "$name" != *editor* ]] && [ "$width" -ge 1280 ] && factor=2
     if ! python3 "$ROOT/scripts/ppm_to_png.py" "$ppm" "$png" --downscale "$factor" >>"$log" 2>&1; then
       status="no image (PPM conversion failed)"
     fi
