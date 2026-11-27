@@ -100,6 +100,29 @@ public:
     [[nodiscard]] std::expected<void, core::Error>
     check_storage_image_formats(std::span<const VkFormat> formats, std::string_view what) const;
 
+    // Whether shaderStorageImageExtendedFormats is enabled (it is whenever the
+    // device offers it): storage images in the extended formats (RG32F, R8,
+    // ...) are only defined with it.
+    [[nodiscard]] bool storage_image_extended_formats() const {
+        return storage_image_extended_formats_ && !simulate_missing_extended_formats_;
+    }
+    // For passes whose shaders write storage images in extended `formats`:
+    // the feature above plus VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT for each.
+    // The error names `what` and the missing piece.
+    [[nodiscard]] std::expected<void, core::Error>
+    require_extended_storage_formats(std::span<const VkFormat> formats,
+                                     std::string_view what) const;
+    // Tests: behave as a device without the extended storage formats.
+    void simulate_missing_extended_storage_formats(bool missing) {
+        simulate_missing_extended_formats_ = missing;
+    }
+    // Whether the depthClamp feature is enabled (it is whenever offered).
+    [[nodiscard]] bool depth_clamp() const {
+        return depth_clamp_ && !simulate_missing_depth_clamp_;
+    }
+    // Tests: behave as a device without depthClamp.
+    void simulate_missing_depth_clamp(bool missing) { simulate_missing_depth_clamp_ = missing; }
+
 private:
     void destroy() noexcept;
 
@@ -118,6 +141,10 @@ private:
     float                    max_sampler_anisotropy_ = 0.0F;
     TextureCaps              texture_caps_{};
     DescriptorBackend        descriptor_backend_ = DescriptorBackend::ext_descriptor_buffer;
+    bool                     storage_image_extended_formats_ = false;
+    bool                     simulate_missing_extended_formats_ = false;
+    bool                     depth_clamp_ = false;
+    bool                     simulate_missing_depth_clamp_ = false;
 };
 
 } // namespace engine::rhi

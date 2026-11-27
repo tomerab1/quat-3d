@@ -256,4 +256,20 @@ enum class SamplerAddress : std::uint8_t { repeat, clamp_to_edge, mirrored_repea
 create_sampler(VkDevice device, SamplerAddress address = SamplerAddress::repeat,
                std::uint32_t mip_levels = 1, float max_anisotropy = 0.0F);
 
+// Every sampler parameter the renderer varies: point sampling (depth
+// pyramids), depth-comparison samplers (hardware PCF on shadow maps) and the
+// border colour sampled outside a clamp-to-border image.
+struct SamplerDesc {
+    VkFilter             filter = VK_FILTER_LINEAR;
+    VkSamplerMipmapMode  mip_mode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+    VkSamplerAddressMode address = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    float                max_lod = VK_LOD_CLAMP_NONE;
+    bool                 compare = false;
+    VkCompareOp          compare_op = VK_COMPARE_OP_LESS_OR_EQUAL;
+    VkBorderColor        border = VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE;
+};
+
+[[nodiscard]] std::expected<Sampler, core::Error> create_sampler(VkDevice device,
+                                                                 const SamplerDesc& desc);
+
 } // namespace engine::rhi
