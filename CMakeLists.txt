@@ -38,6 +38,10 @@ option(ENGINE_PROFILE "Enable Tracy profiling in non-debug builds" OFF)
 # instance opts into portability (non-conformant) ICD enumeration. Descriptor
 # buffers remain the mandated model (CLAUDE.md); this exists only so the engine
 # can run on platforms where the extension does not exist.
+# Distribution build (release archives): the game embeds no build-machine
+# paths and finds its data next to the executable (or via QUAT_ASSET_ROOT);
+# see src/app/asset_root.hpp. Development builds also fall back to the tree.
+option(ENGINE_PACKAGE_BUILD "Build for packaging: no source-tree data fallback" OFF)
 option(ENGINE_DESCRIPTOR_SETS_FALLBACK
     "Allow classic descriptor-set fallback on drivers without VK_EXT_descriptor_buffer" OFF)
 
@@ -133,6 +137,15 @@ if(ENGINE_EDITOR)
 endif()
 
 set(ENGINE_PUBLIC_INCLUDE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+
+# ---------------------------------------------------------------------------
+# engine_core — platform-free core utilities (no graphics). Starts with the
+# runtime data-root resolution used by the game and packaged builds.
+# ---------------------------------------------------------------------------
+add_library(engine_core STATIC
+    src/core/asset_root.cpp)
+target_link_libraries(engine_core PUBLIC engine_flags)
+target_include_directories(engine_core PUBLIC ${ENGINE_PUBLIC_INCLUDE})
 
 # ---------------------------------------------------------------------------
 # engine_rhi — thin Vulkan abstraction (instance/device, swapchain, ...).
@@ -406,9 +419,10 @@ add_executable(game
     src/app/demo_scenes.cpp
     src/app/audio_runtime.cpp
     src/app/nav_bake.cpp
-    src/app/remote_bridge.cpp)
+    src/app/remote_bridge.cpp
+    src/app/asset_root.cpp)
 target_link_libraries(game PRIVATE
-    engine_flags engine_rhi engine_asset engine_scene engine_renderer engine_physics
+    engine_flags engine_core engine_rhi engine_asset engine_scene engine_renderer engine_physics
     engine_terrain engine_nav engine_net engine_remote engine_remote_world engine_audio
     SDL3::SDL3)
 if(ENGINE_EDITOR)
@@ -417,11 +431,24 @@ endif()
 target_include_directories(game PRIVATE
     ${ENGINE_PUBLIC_INCLUDE}
     ${CMAKE_CURRENT_SOURCE_DIR}/src)
-# Absolute path to cooked shaders so the binary finds them regardless of CWD.
-# A proper asset-path resolver arrives with the asset manager in Phase 3.
-target_compile_definitions(game PRIVATE
-    QUAT_COOKED_SHADER_DIR="${CMAKE_CURRENT_SOURCE_DIR}/cooked/shaders"
-    QUAT_PROJECT_ROOT="${CMAKE_CURRENT_SOURCE_DIR}")
+# Data root, resolved at runtime (src/app/asset_root.hpp): QUAT_ASSET_ROOT, the
+# executable's directory (packaged builds), then - development builds only -
+# the source tree baked in here.
+if(NOT ENGINE_PACKAGE_BUILD)
+    set_property(SOURCE src/app/asset_root.cpp APPEND PROPERTY COMPILE_DEFINITIONS
+        QUAT_BUILD_TREE_ROOT="${CMAKE_CURRENT_SOURCE_DIR}"
+        QUAT_BUILD_TREE_SHADER_DIR="${CMAKE_CURRENT_SOURCE_DIR}/cooked/shaders")
+endif()
+# Bridge for main.cpp, which still spells the data paths as the old
+# compile-time macros: they now expand to the runtime resolver, whose header
+# is force-included into main.cpp only. Remove both once main.cpp calls
+# quat::app::project_root() / cooked_shader_dir() itself (ROADMAP S7 split).
+set_property(SOURCE src/main.cpp APPEND PROPERTY COMPILE_DEFINITIONS
+    "QUAT_PROJECT_ROOT=quat::app::project_root()"
+    "QUAT_COOKED_SHADER_DIR=quat::app::cooked_shader_dir()")
+set(ENGINE_ASSET_ROOT_HEADER ${CMAKE_CURRENT_SOURCE_DIR}/src/app/asset_root.hpp)
+set_property(SOURCE src/main.cpp APPEND PROPERTY COMPILE_OPTIONS
+    "$<IF:$<CXX_COMPILER_ID:MSVC>,/FI${ENGINE_ASSET_ROOT_HEADER},-include${ENGINE_ASSET_ROOT_HEADER}>")
 
 # ---------------------------------------------------------------------------
 # Tests (GoogleTest) — see tests/CMakeLists.txt. `ctest --test-dir build/<preset>`.

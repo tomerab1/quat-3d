@@ -16,7 +16,7 @@ add_executable(engine_tests
     support/gpu_context.cpp
     ${ENGINE_TEST_SOURCES})
 target_link_libraries(engine_tests PRIVATE
-    engine_flags engine_rhi engine_asset engine_scene engine_renderer engine_physics
+    engine_flags engine_core engine_rhi engine_asset engine_scene engine_renderer engine_physics
     engine_animation engine_terrain engine_nav engine_net engine_remote engine_remote_world
     engine_audio
     GTest::gtest)

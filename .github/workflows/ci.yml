@@ -13,14 +13,8 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
-env:
-  # Pinned to vcpkg.json's builtin-baseline.
-  VCPKG_COMMIT: 10ceb139a610ebf3c6aa49cdc4a4b7f3db5d3f2b
-  SLANG_VERSION: 2025.6.1
-  # Windows only (headers, import library, loader runtime). macOS uses
-  # Homebrew's loader + MoltenVK; Linux the distro packages.
-  VULKAN_SDK_VERSION: 1.4.321.1
-  VCPKG_BINARY_SOURCES: clear;files,${{ github.workspace }}/.vcpkg-archives,readwrite
+# Toolchain pins (vcpkg baseline, Slang, Vulkan SDK) live in the shared
+# .github/actions/setup-build action, also used by release.yml.
 
 jobs:
   linux:
@@ -30,43 +24,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: System packages
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            clang libc++-dev libc++abi-dev ninja-build cmake pkg-config \
-            libx11-dev libxext-dev libxft-dev libxcursor-dev libxrandr-dev libxi-dev \
-            libxss-dev libxtst-dev libxfixes-dev libxkbcommon-dev \
-            libwayland-dev wayland-protocols libegl-dev libdecor-0-dev \
-            libvulkan-dev mesa-vulkan-drivers autoconf automake libtool
-
-      - name: Slang compiler
-        run: |
-          mkdir -p "$HOME/slang"
-          curl -sSL -o slang.tgz \
-            "https://github.com/shader-slang/slang/releases/download/v${SLANG_VERSION}/slang-${SLANG_VERSION}-linux-x86_64.tar.gz"
-          tar -xzf slang.tgz -C "$HOME/slang"
-          echo "$HOME/slang/bin" >> "$GITHUB_PATH"
-
-      - name: vcpkg
-        run: |
-          git clone https://github.com/microsoft/vcpkg.git "$HOME/vcpkg"
-          git -C "$HOME/vcpkg" checkout "$VCPKG_COMMIT"
-          "$HOME/vcpkg/bootstrap-vcpkg.sh" -disableMetrics
-          mkdir -p "${{ github.workspace }}/.vcpkg-archives"
-
-      - name: Restore vcpkg binary cache
-        id: vcpkg-cache
-        uses: actions/cache/restore@v4
-        with:
-          path: ${{ github.workspace }}/.vcpkg-archives
-          # Cache entries are immutable, so every run saves under its own key
-          # and restores the newest one with the same prefix: a partial
-          # dependency build (a failed run) is kept and completed next time.
-          key: vcpkg-linux-${{ env.VCPKG_COMMIT }}-${{ hashFiles('vcpkg.json', 'triplets/**', 'ports/**') }}-${{ github.run_id }}
-          restore-keys: |
-            vcpkg-linux-${{ env.VCPKG_COMMIT }}-${{ hashFiles('vcpkg.json', 'triplets/**', 'ports/**') }}-
-            vcpkg-linux-${{ env.VCPKG_COMMIT }}-
+      - name: Set up build
+        id: setup
+        uses: ./.github/actions/setup-build
 
       - name: Configure
         id: configure
@@ -76,11 +36,11 @@ jobs:
       # even when configure fails, so neither a dependency failure nor a later
       # engine compile/test failure discards the dependencies already built.
       - name: Save vcpkg binary cache
-        if: always() && steps.vcpkg-cache.outcome == 'success'
+        if: always() && steps.setup.outputs.cache-key != ''
         uses: actions/cache/save@v4
         with:
           path: ${{ github.workspace }}/.vcpkg-archives
-          key: ${{ steps.vcpkg-cache.outputs.cache-primary-key }}
+          key: ${{ steps.setup.outputs.cache-key }}
 
       - name: Build
         if: steps.configure.outcome == 'success'
@@ -114,73 +74,21 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Full SDK (headers, vulkan-1.lib) plus the loader runtime: engine_tests
-      # links vulkan-1.dll, so even the CPU tests need it, and the runner image
-      # is not relied on for it. Lavapipe is registered as an ICD for the GPU
-      # suites.
-      - name: Vulkan SDK + lavapipe
-        uses: jakoch/install-vulkan-sdk-action@v1.8.1
-        with:
-          vulkan_version: ${{ env.VULKAN_SDK_VERSION }}
-          install_runtime: true
-          install_lavapipe: true
-          cache: true
-          stripdown: true
-
-      - name: Vulkan runtime on PATH
-        shell: pwsh
-        run: |
-          "$env:VULKAN_SDK\runtime\x64" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
-          "$env:VULKAN_SDK\Bin" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
-
-      # The same Slang release as Linux (the SDK bundles a different slangc);
-      # added to PATH after the SDK so it takes precedence.
-      - name: Slang compiler
-        shell: pwsh
-        run: |
-          $url = "https://github.com/shader-slang/slang/releases/download/v$env:SLANG_VERSION/slang-$env:SLANG_VERSION-windows-x86_64.zip"
-          Invoke-WebRequest -Uri $url -OutFile slang.zip
-          Expand-Archive slang.zip -DestinationPath "$env:USERPROFILE\slang"
-          "$env:USERPROFILE\slang\bin" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
-
-      - name: vcpkg
-        shell: pwsh
-        run: |
-          git clone https://github.com/microsoft/vcpkg.git "$env:USERPROFILE\vcpkg"
-          if ($LASTEXITCODE) { exit 1 }
-          git -C "$env:USERPROFILE\vcpkg" checkout $env:VCPKG_COMMIT
-          if ($LASTEXITCODE) { exit 1 }
-          & "$env:USERPROFILE\vcpkg\bootstrap-vcpkg.bat" -disableMetrics
-          if ($LASTEXITCODE) { exit 1 }
-          New-Item -ItemType Directory -Force "${{ github.workspace }}\.vcpkg-archives" | Out-Null
-
-      - name: Restore vcpkg binary cache
-        id: vcpkg-cache
-        uses: actions/cache/restore@v4
-        with:
-          path: ${{ github.workspace }}/.vcpkg-archives
-          key: vcpkg-windows-${{ env.VCPKG_COMMIT }}-${{ hashFiles('vcpkg.json', 'triplets/**', 'ports/**') }}-${{ github.run_id }}
-          restore-keys: |
-            vcpkg-windows-${{ env.VCPKG_COMMIT }}-${{ hashFiles('vcpkg.json', 'triplets/**', 'ports/**') }}-
-            vcpkg-windows-${{ env.VCPKG_COMMIT }}-
-
-      # Last PATH-changing step: it snapshots PATH (SDK, runtime, slangc) and
-      # puts MSVC's tools ahead of Git's link.exe.
-      - name: MSVC environment
-        uses: ilammy/msvc-dev-cmd@v1.13.0
-        with:
-          arch: x64
+      # Vulkan SDK + runtime + lavapipe, Slang, vcpkg, MSVC developer env.
+      - name: Set up build
+        id: setup
+        uses: ./.github/actions/setup-build
 
       - name: Configure
         id: configure
         run: cmake --preset windows-release
 
       - name: Save vcpkg binary cache
-        if: always() && steps.vcpkg-cache.outcome == 'success'
+        if: always() && steps.setup.outputs.cache-key != ''
         uses: actions/cache/save@v4
         with:
           path: ${{ github.workspace }}/.vcpkg-archives
-          key: ${{ steps.vcpkg-cache.outputs.cache-primary-key }}
+          key: ${{ steps.setup.outputs.cache-key }}
 
       # -k 0: report every failing translation unit in one run.
       - name: Build
@@ -188,8 +96,8 @@ jobs:
         if: steps.configure.outcome == 'success'
         run: cmake --build --preset windows-release -- -k 0
 
+      # -V + GTEST_BRIEF: per-binary summary (passed / skipped counts) in the log.
       - name: Tests (CPU)
-        # -V + GTEST_BRIEF: per-binary summary (passed / skipped counts) in the log.
         env:
           GTEST_BRIEF: 1
         run: ctest --test-dir build/windows-release -R engine_tests_cpu -V --timeout 900
@@ -220,48 +128,21 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Vulkan-on-Metal: Homebrew's loader and MoltenVK. VULKAN_SDK points
-      # CMake's FindVulkan at the Homebrew prefix.
-      - name: Homebrew packages
-        run: |
-          brew install cmake ninja pkgconf molten-vk vulkan-loader vulkan-headers vulkan-tools
-          echo "VULKAN_SDK=$(brew --prefix)" >> "$GITHUB_ENV"
-
-      - name: Slang compiler
-        run: |
-          mkdir -p "$HOME/slang"
-          curl -sSL -o slang.tgz \
-            "https://github.com/shader-slang/slang/releases/download/v${SLANG_VERSION}/slang-${SLANG_VERSION}-macos-aarch64.tar.gz"
-          tar -xzf slang.tgz -C "$HOME/slang"
-          echo "$HOME/slang/bin" >> "$GITHUB_PATH"
-
-      - name: vcpkg
-        run: |
-          git clone https://github.com/microsoft/vcpkg.git "$HOME/vcpkg"
-          git -C "$HOME/vcpkg" checkout "$VCPKG_COMMIT"
-          "$HOME/vcpkg/bootstrap-vcpkg.sh" -disableMetrics
-          mkdir -p "${{ github.workspace }}/.vcpkg-archives"
-
-      - name: Restore vcpkg binary cache
-        id: vcpkg-cache
-        uses: actions/cache/restore@v4
-        with:
-          path: ${{ github.workspace }}/.vcpkg-archives
-          key: vcpkg-macos-${{ env.VCPKG_COMMIT }}-${{ hashFiles('vcpkg.json', 'triplets/**', 'ports/**') }}-${{ github.run_id }}
-          restore-keys: |
-            vcpkg-macos-${{ env.VCPKG_COMMIT }}-${{ hashFiles('vcpkg.json', 'triplets/**', 'ports/**') }}-
-            vcpkg-macos-${{ env.VCPKG_COMMIT }}-
+      # Homebrew Vulkan loader + MoltenVK, Slang, vcpkg.
+      - name: Set up build
+        id: setup
+        uses: ./.github/actions/setup-build
 
       - name: Configure
         id: configure
         run: cmake --preset macos-release
 
       - name: Save vcpkg binary cache
-        if: always() && steps.vcpkg-cache.outcome == 'success'
+        if: always() && steps.setup.outputs.cache-key != ''
         uses: actions/cache/save@v4
         with:
           path: ${{ github.workspace }}/.vcpkg-archives
-          key: ${{ steps.vcpkg-cache.outputs.cache-primary-key }}
+          key: ${{ steps.setup.outputs.cache-key }}
 
       - name: Build
         id: build

@@ -68,7 +68,10 @@
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Release",
         "CMAKE_TOOLCHAIN_FILE": "$env{HOME}/vcpkg/scripts/buildsystems/vcpkg.cmake",
-        "VCPKG_TARGET_TRIPLET": "arm64-osx",
+        "CMAKE_OSX_DEPLOYMENT_TARGET": "14.0",
+        "VCPKG_OVERLAY_TRIPLETS": "${sourceDir}/triplets",
+        "VCPKG_TARGET_TRIPLET": "arm64-osx-14",
+        "VCPKG_HOST_TRIPLET": "arm64-osx-14",
         "ENGINE_DESCRIPTOR_SETS_FALLBACK": "ON"
       }
     }
