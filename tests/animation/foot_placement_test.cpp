@@ -6,6 +6,7 @@
 #include <string>
 #include <vector>
 
+#include <glm/gtc/matrix_transform.hpp>
 #include <gtest/gtest.h>
 
 #include "engine/animation/foot_placement.hpp"
@@ -172,6 +173,24 @@ TEST(FootRig, ResolvesCommonNamingConventions) {
     EXPECT_TRUE(find_foot_rig(ue, "", "", "").valid());
     EXPECT_FALSE(find_foot_rig(ue, "", "missing", "foot_r").valid());
     EXPECT_FALSE(find_foot_rig(ue, "Spine", "", "").valid()) << "pelvis must be above the hips";
+}
+
+TEST(FootRig, RestBendIsInArmatureSpaceWhateverTheRoot) {
+    const SkeletonAsset skel = legs_skeleton();
+    const FootRig plain = find_foot_rig(skel, "", "", "");
+    ASSERT_TRUE(plain.valid());
+    EXPECT_VEC_NEAR(plain.bind_bend[0], glm::vec3(0.0F, 0.0F, 1.0F), 1e-5F) << "knees bend forward";
+
+    // Placed, turned and scaled like a Mixamo armature (centimetres -> metres).
+    const glm::mat4 root = glm::translate(glm::mat4(1.0F), glm::vec3(12.0F, -3.0F, 40.0F)) *
+                           glm::rotate(glm::mat4(1.0F), 2.1F, glm::vec3(0.0F, 1.0F, 0.0F)) *
+                           glm::rotate(glm::mat4(1.0F), 0.4F, glm::vec3(1.0F, 0.0F, 0.0F)) *
+                           glm::scale(glm::mat4(1.0F), glm::vec3(0.01F));
+    const FootRig placed = find_foot_rig(skel, "", "", "", root);
+    ASSERT_TRUE(placed.valid());
+    for (std::size_t i = 0; i < 2; ++i) {
+        EXPECT_VEC_NEAR(placed.bind_bend[i], plain.bind_bend[i], 1e-5F) << "leg " << i;
+    }
 }
 
 } // namespace

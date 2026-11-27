@@ -118,9 +118,11 @@ FootRig find_foot_rig(const SkeletonAsset& skeleton, std::string_view pelvis,
         const glm::vec4 ankle =
             root_transform * bind[static_cast<std::size_t>(rig.legs[i].end)][3];
         rig.ankle_height[i] = ankle.y - root_transform[3].y;
+        // Bend direction in armature space (mapped to world per frame).
         const glm::vec3 hip(bind[static_cast<std::size_t>(rig.legs[i].upper)][3]);
         const glm::vec3 knee(bind[static_cast<std::size_t>(rig.legs[i].lower)][3]);
-        const glm::vec3 bend = knee - 0.5F * (hip + glm::vec3(ankle));
+        const glm::vec3 rest_ankle(bind[static_cast<std::size_t>(rig.legs[i].end)][3]);
+        const glm::vec3 bend = knee - 0.5F * (hip + rest_ankle);
         rig.bind_bend[i] = glm::length(bend) > 1e-5F ? glm::normalize(bend) : glm::vec3(0.0F);
     }
     return rig;
@@ -202,8 +204,8 @@ FootPlacementResult apply_foot_placement(const SkeletonAsset& skeleton, std::spa
 
         // Bend the knee the way the animation does; a straight leg keeps
         // last frame's bend, else the rest pose's, else forward.
-        const glm::vec3 rest_bend =
-            glm::vec3(root_transform * glm::vec4(rig.bind_bend[i], 0.0F));
+        glm::vec3 rest_bend = glm::mat3(root_transform) * rig.bind_bend[i];
+        if (glm::length(rest_bend) > 1e-8F) rest_bend = glm::normalize(rest_bend); // scaled armatures
         glm::vec3 hint = state.knee_bend[i];
         if (glm::length(hint) < 1e-4F) hint = rest_bend;
         if (glm::length(hint) < 1e-4F) hint = forward;
