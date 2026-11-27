@@ -32,7 +32,9 @@ drive directly to build and debug worlds from a prompt.
 
 **World**
 - Procedural terrain: seeded generation with erosion, level of detail, and
-  seamless streaming for kilometre-scale worlds
+  seamless streaming for kilometre-scale worlds; tiles (noise + hydraulic /
+  thermal erosion) are synthesised on the GPU in milliseconds, with the
+  deterministic CPU generator as fallback and reference
 - Jolt physics: rigid bodies, character controller, triggers, terrain collision
 
 **Audio**

@@ -75,6 +75,25 @@ TEST_F(ComponentJson, RoundTripsEveryWritableComponent) {
     }
 }
 
+// R10.2: the erosion model, grid step count and GPU flag round-trip; new
+// terrains default to GPU-capable grid erosion.
+TEST_F(ComponentJson, TerrainCarriesErosionModelAndGpuFlag) {
+    ASSERT_OK(apply("terrain", {{"seed", 7}}));
+    EXPECT_EQ(r.get<s::Terrain>(e).params.erosion_model, engine::terrain::ErosionModel::grid);
+    EXPECT_TRUE(r.get<s::Terrain>(e).gpu_generate);
+
+    ASSERT_OK(apply("terrain", {{"erosion", "droplets"}, {"erosion_steps", 50}, {"gpu", false}}));
+    const s::Terrain& t = r.get<s::Terrain>(e);
+    EXPECT_EQ(t.params.erosion_model, engine::terrain::ErosionModel::droplets);
+    EXPECT_EQ(t.params.grid.iterations, 50U);
+    EXPECT_FALSE(t.gpu_generate);
+    const json out = encode_components(r, e, {});
+    EXPECT_EQ(out["terrain"]["erosion"], "droplets");
+    EXPECT_EQ(out["terrain"]["erosion_steps"], 50);
+    EXPECT_EQ(out["terrain"]["gpu"], false);
+    EXPECT_FALSE(apply("terrain", {{"erosion", "rivers"}}));
+}
+
 TEST_F(ComponentJson, MergeKeepsFieldsNotMentioned) {
     ASSERT_OK(apply("point_light", {{"color", {1, 0, 0}}, {"radius", 3}, {"intensity", 9}}));
     ASSERT_OK(apply("point_light", {{"radius", 12}}));

@@ -172,7 +172,8 @@ TEST(GpuTerrainSynth, GridErosionTracksTheCpuReference) {
     // The border band is the pure noise field on both sides.
     const std::uint32_t res = p.resolution;
     for (std::uint32_t i = 0; i < res; ++i) {
-        for (const std::size_t k : {static_cast<std::size_t>(i), static_cast<std::size_t>(i) * res}) {
+        const std::size_t row_start = static_cast<std::size_t>(i) * res;
+        for (const std::size_t k : {static_cast<std::size_t>(i), row_start}) {
             EXPECT_NEAR(gpu.heights[k], base.heights[k], k_noise_tolerance * p.height_m);
         }
     }

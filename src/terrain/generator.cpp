@@ -123,8 +123,9 @@ private:
 }
 
 // One texel of the composed height field, normalised [0, 1]. `p` is the
-// noise-space position of a texel on the world texel lattice (see world_texel): neighbouring tiles from the
-// same seed evaluate their shared edge at identical positions.
+// noise-space position of a texel on the world texel lattice (world_texel),
+// so neighbouring tiles from the same seed evaluate their shared edge at
+// identical positions.
 //
 // assets/shaders/lib/terrain_noise.slang mirrors this function and the noise
 // above operation for operation (same association order, glm's mix and

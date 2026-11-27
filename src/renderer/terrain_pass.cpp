@@ -3,7 +3,9 @@
 #include <array>
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -162,6 +164,15 @@ TerrainPass::create(const rhi::Device& device, rhi::GpuAllocator& allocator,
         if (!buf) return std::unexpected(buf.error());
         out.lods_.push_back({std::move(*buf), static_cast<std::uint32_t>(indices.size())});
     }
+
+    // GPU synthesis is optional: without it tiles generate on the CPU.
+    if (auto gpu = GpuTileSource::create(device, allocator, cache, cooked_shader_dir); gpu) {
+        out.gpu_tiles_ = std::move(*gpu);
+    } else {
+        std::fprintf(stderr,
+                     "[terrain] GPU synthesis unavailable (%s); tiles generate on the CPU\n",
+                     gpu.error().message.c_str());
+    }
     return out;
 }
 
@@ -171,11 +182,17 @@ std::expected<void, core::Error> TerrainPass::set_tile(const glm::ivec2& coord,
     if (!map.valid()) return fail("terrain pass: invalid heightmap");
 
     Tile tile;
-    auto image = rhi::upload_device_image(
-        *allocator_, transfer, map.heights.data(), map.heights.size() * sizeof(float),
-        {map.resolution, map.resolution}, VK_FORMAT_R32_SFLOAT);
-    if (!image) return std::unexpected(image.error());
-    tile.image = std::move(*image);
+    std::optional<rhi::GpuImage> synthesised;
+    if (map.gpu_tile != 0 && gpu_tiles_) synthesised = gpu_tiles_->take_image(map.gpu_tile);
+    if (synthesised) {
+        tile.image = std::move(*synthesised); // the GPU already wrote these heights
+    } else {
+        auto image = rhi::upload_device_image(
+            *allocator_, transfer, map.heights.data(), map.heights.size() * sizeof(float),
+            {map.resolution, map.resolution}, VK_FORMAT_R32_SFLOAT);
+        if (!image) return std::unexpected(image.error());
+        tile.image = std::move(*image);
+    }
     auto view = rhi::create_image_view(device_->handle(), tile.image.handle(),
                                        VK_FORMAT_R32_SFLOAT);
     if (!view) return std::unexpected(view.error());
@@ -210,6 +227,10 @@ void TerrainPass::add_to_graph(rhi::RenderGraph& graph, const renderer::GBufferT
                                VkExtent2D extent, const glm::mat4& view_proj,
                                const glm::vec3& camera_pos, const glm::vec3& anchor,
                                float snowline_m) {
+    // GPU tile synthesis records its compute work into this frame (it is
+    // independent of the draws below and of the GBuffer).
+    if (gpu_tiles_) gpu_tiles_->add_to_graph(graph);
+
     // Age the retire queue (called once per frame): destroy tiles once every
     // frame that could have referenced them has left the GPU.
     for (auto it = retired_.begin(); it != retired_.end();) {

@@ -55,7 +55,9 @@ intensity. Prefer environment_set for the sun.\n\
 - behavior: source (behaviour-tree JSON object or its text); enabled.\n\
 - patrol: points [[x,y,z],...]; loop. Walked by the entity's nav_agent.\n\
 - terrain: seed; resolution 17..8193; tile_size (m); height (m); octaves 1..16; warp 0..4; \
-droplets (erosion, 0..50000000); snowline (m); streaming; stream_radius 0..8 (tiles).\n\
+erosion droplets|grid (grid: GPU-synthesised); droplets (droplet count, 0..50000000); \
+erosion_steps (grid steps, 0..100000); gpu (synthesise on the GPU); snowline (m); streaming; \
+stream_radius 0..8 (tiles).\n\
 - net_replicated: net_id.\n\
 - animator (edit only, present on animated glTF models): time (s); speed; looping.\n\
 - mesh: read only (glTF provenance).\n\
