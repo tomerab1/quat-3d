@@ -20,8 +20,12 @@ import instancing; // instance_index(): InstanceIndex including firstInstance
 
 // Mirrors engine::renderer GrassDrawPush (16 bytes).
 struct PushConstants {
-    uint  segments; // levels of this LOD's strip
-    uint3 pad;
+    uint segments; // levels of this LOD's strip
+    // Scalars, not a uint3: a uint3 is 16-byte aligned (offset 16), which made
+    // the block 28 bytes against the 16-byte range the pipeline declares.
+    uint pad0;
+    uint pad1;
+    uint pad2;
 }
 [[vk::push_constant]] PushConstants pc;
 
