@@ -48,6 +48,7 @@
 #include "engine/renderer/lighting_pass.hpp"
 #include "engine/renderer/taa_pass.hpp"
 #include "engine/nav/navmesh.hpp"
+#include "engine/net/net_ids.hpp"
 #include "engine/net/prediction.hpp"
 #include "engine/net/replication.hpp"
 #include "engine/net/transport.hpp"
@@ -629,8 +630,9 @@ int main() {
     std::optional<engine::editor::EditorContext::GroundClick> ground_click; // 13.4
 
     // Networking (14.1/14.2): QUAT_HOST=<port> serves this scene's replicated
-    // entities; QUAT_JOIN=<ip:port> mirrors them. net_ids hash entity names, so
-    // both ends must run the same scene.
+    // entities; QUAT_JOIN=<ip:port> mirrors them. net_ids hash each entity's
+    // hierarchy path + occurrence index (net_ids.hpp), so both ends must run
+    // the same scene.
     std::optional<engine::net::NetServer> net_server;
     std::optional<engine::net::NetClient> net_client;
     engine::net::ReplicationServer net_replication;
@@ -647,29 +649,12 @@ int main() {
     std::uint32_t net_input_seq = 0;
     std::uint32_t net_last_input_seq = 0;   // host: last remote input applied
     engine::net::ClientId net_player_owner = engine::net::invalid_client;
-    const auto assign_net_ids = [&]() {
-        std::uint32_t tagged = 0;
-        for (auto [e, name] : scene.registry().view<engine::scene::Name>().each()) {
-            if (scene.registry().any_of<engine::scene::NetReplicated>(e)) continue;
-            if (!scene.registry().any_of<engine::scene::Transform>(e)) continue;
-            // The predicted player character is owned by its client (14.3),
-            // not by the replication stream.
-            if (scene.registry().any_of<engine::scene::CharacterController>(e)) continue;
-            // FNV-1a of the name: deterministic across runs and both ends.
-            std::uint32_t h = 2166136261U;
-            for (const char c : name.value) h = (h ^ static_cast<unsigned char>(c)) * 16777619U;
-            if (h == 0) h = 1;
-            scene.registry().emplace<engine::scene::NetReplicated>(e, h);
-            ++tagged;
-        }
-        std::fprintf(stderr, "[net] %u entities tagged for replication\n", tagged);
-    };
     if (const char* host_port = std::getenv("QUAT_HOST"); host_port != nullptr) {
         if (auto s2 = engine::net::NetServer::listen(
                 static_cast<std::uint16_t>(std::atoi(host_port)));
             s2) {
             net_server = std::move(*s2);
-            assign_net_ids();
+            (void)engine::net::assign_net_ids(scene.registry());
             std::fprintf(stderr, "[net] hosting on port %s\n", host_port);
         } else {
             std::fprintf(stderr, "[net] host failed: %s\n", s2.error().message.c_str());
@@ -683,7 +668,7 @@ int main() {
                     static_cast<std::uint16_t>(std::atoi(addr.c_str() + colon + 1)));
                 c) {
                 net_client = std::move(*c);
-                assign_net_ids();
+                (void)engine::net::assign_net_ids(scene.registry());
                 std::fprintf(stderr, "[net] joining %s\n", join_addr);
             } else {
                 std::fprintf(stderr, "[net] join failed: %s\n", c.error().message.c_str());

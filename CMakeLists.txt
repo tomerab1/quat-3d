@@ -224,6 +224,7 @@ target_include_directories(engine_nav PUBLIC ${ENGINE_PUBLIC_INCLUDE})
 # implementation detail (PRIVATE); the public header is GNS-free (PIMPL).
 # ---------------------------------------------------------------------------
 add_library(engine_net STATIC
+    src/net/net_ids.cpp
     src/net/transport.cpp
     src/net/replication.cpp
     src/net/prediction.cpp)

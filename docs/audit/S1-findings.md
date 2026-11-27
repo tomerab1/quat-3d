@@ -15,7 +15,7 @@ Severity: **H** crash, corruption, exploit or broken core feature ·
 |---|---|---|---|---|
 | B1 | H | Host never simulates the remote player's input but acks it (the local keyboard overwrites `cc->move` before `character_system`; multiple inputs per poll collapse; ack sent before stepping); client `pending_` input queue is unbounded | `main.cpp` net block, `net/prediction.cpp` | open |
 | B2 | H | Untrusted `PlayerInput.move` applied unvalidated — huge values = speed hack, NaN poisons Jolt and replicates | `main.cpp`, `prediction.cpp` `decode_input` | open |
-| B3 | H | `net_id` = FNV(name): duplicate names collide (physics demo's 12 "box" entities converge to one pose) | `main.cpp` assign, `replication.cpp` | open |
+| B3 | H | `net_id` = FNV(name): duplicate names collide (physics demo's 12 "box" entities converge to one pose) | `main.cpp` assign, `replication.cpp` | fixed (S1.B3; tests pass locally) — verified: 12 "box" bodies shared one id; now path + occurrence index |
 | B4 | M | Client runs local physics on replicated bodies (fights snapshots); world pose written into `local` (wrong for children); applied after the draw list is built (one frame stale) | `replication.cpp` `apply`, `main.cpp` | open |
 | B5 | M | Predicted character position overwritten each frame by the local `CharacterVirtual` | `main.cpp`, `physics_system.cpp` | open |
 | B6 | H | Jolt bodies never removed when an entity / RigidBody / Collider is destroyed (ghost colliders, duplicate bodies, leaks across Play/Stop in demo modes) | `physics_system.cpp` | fixed (S1.3, pending CI) — still open: demo-mode Stop doesn't reset dynamic bodies; inspector edits to Collider/RigidBody fields don't rebuild the body |
