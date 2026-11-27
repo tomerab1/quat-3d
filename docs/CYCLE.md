@@ -39,7 +39,8 @@ Every cycle starts by reading, in order: [`STATUS.md`](STATUS.md),
    open a **draft PR** whose description lists the claimed item IDs.
 5. **Brief and spawn.** One worktree agent per item, using the brief
    template below — the brief is all the agent knows.
-6. **Merge.** For each finished branch: read the diff (don't trust the
+6. **Merge.** Merge from the pushed `origin/feat/<id>` branches (fetch
+   first). For each finished branch: read the diff (don't trust the
    summary), re-run `scripts/check-compile.sh` on changed files, run the
    CPU tests that link locally, merge into the cycle branch, resolve
    conflicts. Reject or send back work that breaks a rule in CLAUDE.md.
@@ -78,8 +79,12 @@ Every brief contains:
 6. **Verification** — `scripts/check-compile.sh` on every touched file (zero
    warnings); build and run CPU tests locally where they link; GPU tests
    named `Gpu*` for CI; shaders compiled with `slangc`.
-7. **Git rules** — local branch `feat/<id>`, commit titles `[<ID>] …`, the
-   attribution trailer lines, no pushing, don't edit STATUS.md / ROADMAP.md.
+7. **Git rules** — branch `feat/<id>`, commit titles `[<ID>] …`, the
+   attribution trailer lines, and **push the branch to origin after every
+   commit** (`git push -u origin feat/<id>`, retry with backoff; never
+   force-push, never push to master or the cycle branch). Worktrees live only
+   in the container, so unpushed work is lost if it is reclaimed. Don't edit
+   STATUS.md / ROADMAP.md.
 8. **Report** — branch, commits, verified locally vs CI-only, files touched
    outside the item's module, open issues.
 

@@ -7,6 +7,10 @@ into CLAUDE.md or the brief template in [`CYCLE.md`](CYCLE.md).
 
 ## Agents and orchestration
 
+- **Unpushed worktree commits die with the container.** Worker agents push
+  their `feat/<id>` branch to origin after every commit (owner's rule,
+  2026-11-27). `feat/**` pushes don't trigger CI, so they never cancel a
+  running build.
 - **Worktree agents start from `master`, not the session's branch.** Two of
   six agents on 2026-11-27 began on a commit predating the code they were
   meant to extend. → Every brief states the base commit and makes the agent
