@@ -27,7 +27,9 @@
 //   net_replicated
 //   audio_source     clip / bus / volume / pitch / loop / 3D falloff (+ write-only command)
 //   audio_listener
-//   animator         edit-only (needs a clip from a glTF; cannot be added)
+//   animator         edit-only (needs a clip from a glTF; cannot be added):
+//                    clip (by name, switches with blend / blend_time), time, speed, looping
+//   foot_ik          foot placement (joint names, probe lengths, limits, smoothing)
 //   mesh             read-only (glTF provenance; scene_io resolves it)
 //
 // Decoding merges: fields present in the JSON overwrite the component's

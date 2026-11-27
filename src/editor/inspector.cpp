@@ -12,6 +12,7 @@
 #include <imgui.h>
 #include <imgui_stdlib.h>
 
+#include "animation_inspector.hpp"
 #include "audio_inspector.hpp"
 #include "behavior_panel.hpp"
 #include "tuning_panels.hpp"
@@ -432,9 +433,15 @@ template <>
 struct ComponentInspector<scene::Animator> {
     static constexpr const char* title = "Animator";
     static void draw(entt::registry&, entt::entity, scene::Animator& animator) {
-        ImGui::Text("time: %.2fs", animator.time);
-        ImGui::DragFloat("speed", &animator.speed, 0.05F, -4.0F, 4.0F);
-        ImGui::Checkbox("looping", &animator.looping);
+        draw_animator(animator);
+    }
+};
+
+template <>
+struct ComponentInspector<scene::FootIK> {
+    static constexpr const char* title = "Foot IK";
+    static void draw(entt::registry& r, entt::entity e, scene::FootIK& foot_ik) {
+        draw_foot_ik(r, e, foot_ik);
     }
 };
 
@@ -559,6 +566,7 @@ void draw_inspector(scene::Scene& scene, entt::entity selected) {
     inspect<scene::PointLight>(r, selected, true);
     inspect<scene::Camera>(r, selected, true);
     inspect<scene::Animator>(r, selected);
+    inspect<scene::FootIK>(r, selected, true);
     inspect<scene::Terrain>(r, selected, true);
     inspect<scene::Grass>(r, selected, true);
     inspect<scene::ParticleEmitter>(r, selected, true);
@@ -595,6 +603,7 @@ void draw_inspector(scene::Scene& scene, entt::entity selected) {
         add_component_item<scene::Camera>(r, selected);
         add_component_item<scene::AudioSource>(r, selected);
         add_component_item<scene::AudioListener>(r, selected);
+        if (r.all_of<scene::SkinnedMesh>(selected)) add_component_item<scene::FootIK>(r, selected);
         ImGui::EndPopup();
     }
     ImGui::End();

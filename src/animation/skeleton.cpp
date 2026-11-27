@@ -2,7 +2,6 @@
 
 #include "engine/animation/skeleton.hpp"
 
-#include <functional>
 
 #include <glm/gtc/matrix_transform.hpp>
 
@@ -21,21 +20,24 @@ std::vector<glm::mat4> compute_world_matrices(const SkeletonAsset& skeleton,
     std::vector<glm::mat4> world(n, glm::mat4(1.0F));
     std::vector<char> resolved(n, 0);
 
-    // Recursive resolution so the result is correct regardless of whether the
-    // glTF listed parents before children.
-    std::function<void(std::size_t)> resolve = [&](std::size_t i) {
-        if (resolved[i] != 0) return;
-        const int parent = skeleton.joints[i].parent;
-        if (parent < 0) {
-            world[i] = root_transform * local[i];
-        } else {
-            resolve(static_cast<std::size_t>(parent));
-            world[i] = world[static_cast<std::size_t>(parent)] * local[i];
-        }
-        resolved[i] = 1;
-    };
+    // Resolve each joint after its ancestors, whatever order the glTF listed
+    // them in: walk up to the first resolved ancestor, then compose down.
+    std::vector<std::size_t> chain;
     for (std::size_t i = 0; i < n; ++i) {
-        resolve(i);
+        chain.clear();
+        for (std::size_t j = i; resolved[j] == 0 && chain.size() <= n;) {
+            chain.push_back(j);
+            const int parent = skeleton.joints[j].parent;
+            if (parent < 0) break;
+            j = static_cast<std::size_t>(parent);
+        }
+        for (auto it = chain.rbegin(); it != chain.rend(); ++it) {
+            if (resolved[*it] != 0) continue;
+            const int parent = skeleton.joints[*it].parent;
+            world[*it] = (parent < 0 ? root_transform : world[static_cast<std::size_t>(parent)]) *
+                         local[*it];
+            resolved[*it] = 1;
+        }
     }
     return world;
 }
