@@ -2,7 +2,9 @@
 
 #include <algorithm>
 #include <cerrno>
+#include <cstdint>
 #include <cstring>
+#include <fstream>
 #include <map>
 #include <optional>
 #include <system_error>
@@ -25,12 +27,40 @@ namespace {
 }
 
 // Modification stamp the polling backend compares between scans.
+//
+// mtime + size alone miss a rewrite that lands in the same timestamp tick
+// with the same size (NTFS and FAT tick in 10-16 ms / 2 s steps, HFS+ in 1 s).
+// As in git's "racy" index entries, a file whose mtime is within
+// k_racy_window of the scan is also content-hashed, and while its stored
+// stamp carries a hash an unchanged mtime/size is confirmed by re-hashing.
 struct FileStamp {
     fs::file_time_type mtime{};
     std::uintmax_t     size = 0;
-
-    [[nodiscard]] bool operator==(const FileStamp&) const = default;
+    std::uint64_t      content_hash = 0; // 0: not racy, no hash taken
 };
+
+constexpr std::chrono::seconds k_racy_window{2};
+
+// FNV-1a over the file's bytes; never 0 (0 means "no hash"). 0 on read error.
+[[nodiscard]] std::uint64_t hash_file(const fs::path& path) {
+    std::ifstream file(path, std::ios::binary);
+    if (!file) return 0;
+    std::uint64_t h = 1469598103934665603ULL;
+    char buf[4096];
+    while (file.read(buf, static_cast<std::streamsize>(sizeof(buf))) || file.gcount() > 0) {
+        const std::streamsize n = file.gcount();
+        for (std::streamsize i = 0; i < n; ++i) {
+            h ^= static_cast<unsigned char>(buf[i]);
+            h *= 1099511628211ULL;
+        }
+    }
+    return h == 0 ? 1 : h;
+}
+
+// Takes the content hash when `stamp` is racy relative to `now`.
+void hash_if_racy(const fs::path& path, FileStamp& stamp, fs::file_time_type now) {
+    if (stamp.mtime + k_racy_window >= now) stamp.content_hash = hash_file(path);
+}
 
 } // namespace
 
@@ -79,13 +109,17 @@ struct FileWatcher::Impl {
     // Current stamps of every matching regular file in `dirs`.
     [[nodiscard]] std::map<fs::path, FileStamp> scan(const std::vector<fs::path>& dirs) const {
         std::map<fs::path, FileStamp> out;
+        const fs::file_time_type now = fs::file_time_type::clock::now();
         for (const fs::path& dir : dirs) {
             std::error_code ec;
             fs::directory_iterator it(dir, ec);
             for (; !ec && it != fs::directory_iterator(); it.increment(ec)) {
                 const fs::path path = dir / it->path().filename();
                 if (!matches(path)) continue;
-                if (auto stamp = stamp_of(*it)) out.emplace(path, *stamp);
+                if (auto stamp = stamp_of(*it)) {
+                    hash_if_racy(path, *stamp, now);
+                    out.emplace(path, *stamp);
+                }
             }
         }
         return out;
@@ -108,10 +142,23 @@ struct FileWatcher::Impl {
         const std::map<fs::path, FileStamp> current = scan(dirs);
         for (const auto& [path, stamp] : current) {
             const auto it = snapshot.find(path);
-            if (it == snapshot.end() || !(it->second == stamp)) {
+            if (it == snapshot.end()) {
                 record(path, FileChange::Kind::modified);
                 snapshot[path] = stamp;
+                continue;
             }
+            const FileStamp& old = it->second;
+            bool changed = old.mtime != stamp.mtime || old.size != stamp.size;
+            if (!changed && old.content_hash != 0) {
+                // Racy: the same tick may hide a rewrite; compare contents.
+                const std::uint64_t now_hash =
+                    stamp.content_hash != 0 ? stamp.content_hash : hash_file(path);
+                changed = now_hash != old.content_hash;
+            }
+            if (changed) record(path, FileChange::Kind::modified);
+            // Refresh even when unchanged: a racy stamp turns non-racy (hash
+            // dropped) once its mtime falls out of the window.
+            it->second = stamp;
         }
         for (auto it = snapshot.begin(); it != snapshot.end();) {
             const bool in_dirs = std::find(dirs.begin(), dirs.end(), it->first.parent_path()) !=

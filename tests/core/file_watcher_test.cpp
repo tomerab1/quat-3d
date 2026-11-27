@@ -85,6 +85,33 @@ TEST_P(FileWatcherTest, ReportsInPlaceWrites) {
     EXPECT_TRUE(has(changes, file, FileChange::Kind::modified));
 }
 
+// A same-size rewrite inside one timestamp tick (NTFS/FAT/HFS+ granularity)
+// leaves mtime and size unchanged; the polling backend must still see it.
+// Simulated portably by restoring the old mtime after the rewrite.
+TEST(FileWatcherPolling, ReportsSameSizeRewriteWithinOneTimestampTick) {
+    quat::test::TempDir dir{"file_watcher_racy"};
+    const fs::path file = dir.path() / "r.slang";
+    write_file(file, "value 1");
+    std::error_code ec;
+    const fs::file_time_type stamp = fs::last_write_time(file, ec);
+    ASSERT_FALSE(ec) << ec.message();
+
+    FileWatcher::Options options;
+    options.directories = {dir.path()};
+    options.extensions = {".slang"};
+    options.backend = FileWatchBackend::polling;
+    options.poll_interval = std::chrono::milliseconds(0);
+    auto watcher = FileWatcher::create(options);
+    ASSERT_OK(watcher);
+    EXPECT_TRUE(watcher->poll().empty());
+
+    write_file(file, "value 5"); // same size
+    fs::last_write_time(file, stamp, ec);
+    ASSERT_FALSE(ec) << ec.message();
+    EXPECT_TRUE(has(watcher->poll(), file, FileChange::Kind::modified));
+    EXPECT_TRUE(watcher->poll().empty()) << "reported once";
+}
+
 TEST_P(FileWatcherTest, ReportsRenameIntoPlace) {
     const fs::path file = dir_.path() / "b.slang";
     write_file(file, "old");
