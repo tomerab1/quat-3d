@@ -43,6 +43,15 @@ into CLAUDE.md or the brief template in [`CYCLE.md`](CYCLE.md).
   `master` back into the cycle branch (no rewriting), open the next cycle's
   draft PR, and watch `master`'s CI — a red `master` is the next cycle's
   first item.
+- **GPU tests can run locally without vcpkg.** The container has lavapipe
+  (`VK_ICD_FILENAMES=/opt/lavapipe/lvp_icd.json`) and `libvulkan`; the RHI,
+  asset and most renderer TUs only need the `~/deps` header clones (VMA,
+  googletest) + `/usr/include` glm/nlohmann. Compile just the TUs a test
+  needs (rhi/*.cpp incl. `vma_impl.cpp` with `-w`, the passes under test,
+  `tests/support/gpu_context.cpp`, `tests/test_main.cpp`), link
+  `libgtest.a -lvulkan`, and cook shaders with slangc into a scratch dir
+  passed as `QUAT_COOKED_SHADER_DIR` (R10.1 ran its `Gpu*` suites this way).
+  Avoid `scene::upload_mesh` (fastgltf) in tests that should run locally.
 - **Compile-check the whole tree once, not only changed files.** The first
   full CI build failed on a pre-existing `std::jthread` use that no
   per-file check had touched; one `scripts/check-compile.sh $(git ls-files

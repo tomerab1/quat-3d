@@ -48,6 +48,7 @@
 #include "engine/renderer/dynamic_ibl.hpp"
 #include "engine/terrain/generator.hpp"
 #include "engine/renderer/ibl_pass.hpp"
+#include "engine/renderer/light_cull_pass.hpp"
 #include "engine/renderer/lighting_pass.hpp"
 #include "engine/renderer/taa_pass.hpp"
 #include "engine/nav/navmesh.hpp"
@@ -122,6 +123,7 @@ struct SkinnedEntityGpu {
 
 struct DeferredFrame {
     engine::renderer::MeshPass       mesh;
+    engine::renderer::LightCullPass  light_cull;
     engine::renderer::LightingPass   lighting;
     engine::renderer::TonemapPass    tonemap;
     engine::renderer::SkinningPass   skinning;
@@ -505,6 +507,15 @@ int main() {
         f.exposure = std::move(*expo);
         f.taa = std::move(*taa);
         f.pool = engine::rhi::TransientImagePool(device, allocator);
+        auto cull = engine::renderer::LightCullPass::create(device, allocator, *pipeline_cache,
+                                                            shader_dir);
+        if (!cull) {
+            frames_ok = false;
+            std::fprintf(stderr, "[fatal] light cull pass creation failed: %s\n",
+                         cull.error().message.c_str());
+            break;
+        }
+        f.light_cull = std::move(*cull);
     }
 
     // Scene assets live in an AssetManager so MeshRenderer handles keep them
@@ -1273,16 +1284,15 @@ int main() {
             break;
         }
 
-        // Gather point lights from the ECS (world position from Transform).
-        std::vector<engine::renderer::PointLightGpu> point_lights;
+        // Gather point lights from the ECS (world position from Transform); the
+        // light-cull compute pass bins them into view clusters on the GPU.
+        std::vector<engine::renderer::GpuLight> point_lights;
         for (auto [e, t, pl] :
              scene.registry()
                  .view<const engine::scene::Transform, const engine::scene::PointLight>()
                  .each()) {
-            engine::renderer::PointLightGpu g;
-            g.position_radius = glm::vec4(glm::vec3(t.world[3]), pl.radius);
-            g.color_intensity = glm::vec4(pl.color, pl.intensity);
-            point_lights.push_back(g);
+            point_lights.push_back(engine::renderer::make_point_light(
+                glm::vec3(t.world[3]), pl.radius, pl.color, pl.intensity));
         }
 
         // Build the draw list, collecting per-skinned-entity skinning work. A
@@ -1569,8 +1579,17 @@ int main() {
             terrain_pass.add_to_graph(graph, *gbuffer, draw_extent, jittered_vp, cam.position,
                                       terrain_anchor, terrain_snowline);
         }
+        // Clustered light culling (R10.1). A camera the clusters cannot
+        // represent (non-perspective / no finite far plane) renders unlit by
+        // point lights rather than stopping the frame loop.
+        engine::renderer::ClusteredLights clustered{};
+        if (auto c = fr.light_cull.add_to_graph(graph, cam.view, cam.projection, point_lights)) {
+            clustered = *c;
+        } else {
+            std::fprintf(stderr, "[warn] light cull: %s\n", c.error().message.c_str());
+        }
         auto hdr = fr.lighting.add_to_graph(graph, *gbuffer, draw_extent, light, jittered_inv_vp,
-                                            cam.position, *shadow, light_view_proj, point_lights,
+                                            cam.position, *shadow, light_view_proj, clustered,
                                             /*enable_sky=*/true, ibl_views, atmos_skyview(),
                                             atmos_transmittance(), current_clouds());
         if (!hdr) {
@@ -1582,7 +1601,7 @@ int main() {
         if (!transparent_draws.empty()) {
             if (auto r = fr.transparent.add_to_graph(graph, *hdr, gbuffer->depth, draw_extent,
                                                      jittered_vp, light, cam.position,
-                                                     transparent_draws, ibl_views);
+                                                     transparent_draws, ibl_views, clustered);
                 !r) {
                 std::fprintf(stderr, "[fatal] transparent pass: %s\n", r.error().message.c_str());
                 break;

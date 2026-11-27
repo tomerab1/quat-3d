@@ -69,7 +69,6 @@ TEST(GpuAssets, SceneSaveLoad) {
 
 QUAT_PASS_TEST(GpuRender, GBuffer, r::run_mesh_pass_self_test)
 QUAT_PASS_TEST(GpuRender, Lighting, r::run_lighting_pass_self_test)
-QUAT_PASS_TEST(GpuRender, PointLights, r::run_point_light_self_test)
 QUAT_PASS_TEST(GpuRender, Clearcoat, r::run_clearcoat_self_test)
 QUAT_PASS_TEST(GpuRender, SpecularAntiAliasing, r::run_specular_aa_self_test)
 QUAT_PASS_TEST(GpuRender, Terrain, r::run_terrain_pass_self_test)

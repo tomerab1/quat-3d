@@ -6,10 +6,13 @@
 // space and the opaque scene colour is sampled from a pre-blurred mip chain
 // (mip = f(roughness, ior)), tinted by Beer-Lambert volume attenuation, and
 // combined with split-sum IBL reflection + the sun's specular highlight.
+// Both paths are also lit by the clustered point/spot lights (R10.1): each
+// fragment loops only over its froxel's list from the light_cull pass.
 // Material textures are bound explicitly (b0..6) so the scene-colour snapshot
-// (b7..8) and IBL maps (b9..12) can share set 0.
+// (b7..8), IBL maps (b9..12) and clustered lights (b14..17) can share set 0.
 
 import instancing;
+import clustered_lights;
 import pbr;
 
 static const uint MAT_HAS_BASE_COLOR = 1u << 0;
@@ -79,6 +82,11 @@ struct PushConstants {
 [[vk::binding(11)]] Texture2D    g_brdf_lut;
 [[vk::binding(12)]] SamplerState g_ibl_sampler;
 [[vk::binding(13)]] Texture2D    g_thickness;     // KHR_materials_volume (G channel)
+// Clustered lights (light_cull.slang output; dims.w = 0 when there are none).
+[[vk::binding(14)]] ConstantBuffer<ClusterParams> g_cluster_params;
+[[vk::binding(15)]] StructuredBuffer<GpuLight>    g_lights;
+[[vk::binding(16)]] StructuredBuffer<uint2>       g_cluster_grid;    // offset, count
+[[vk::binding(17)]] StructuredBuffer<uint>        g_cluster_indices;
 
 // Applies the KHR_texture_transform of texture slot `slot` to `uv`.
 float2 transformed_uv(uint slot, float2 uv) {
@@ -127,6 +135,36 @@ VsOut vertex_main(VsIn input) {
 float3 fresnel_schlick_roughness(float ndotv, float3 f0, float roughness) {
     float3 fmax = max(float3(1.0 - roughness, 1.0 - roughness, 1.0 - roughness), f0);
     return f0 + (fmax - f0) * pow(saturate(1.0 - ndotv), 5.0);
+}
+
+// Sum of the clustered lights at `world_pos`: full BRDF (diffuse + specular)
+// or, for glass, the specular lobe only (its diffuse fraction transmits).
+float3 clustered_lighting(float3 world_pos, float3 N, float3 V, float3 albedo, float metallic,
+                          float roughness, float3 f0, bool specular_only) {
+    float3 sum = float3(0.0, 0.0, 0.0);
+    if (g_cluster_params.dims.w == 0) {
+        return sum;
+    }
+    uint2 range = g_cluster_grid[cluster_index_of_world(g_cluster_params, world_pos)];
+    float ndotv = max(dot(N, V), 1e-4);
+    float a = max(roughness * roughness, 1e-3);
+    for (uint k = 0; k < range.y; ++k) {
+        GpuLight light = g_lights[g_cluster_indices[range.x + k]];
+        float3 L;
+        float3 radiance;
+        if (!light_incident(light, world_pos, L, radiance)) {
+            continue;
+        }
+        if (specular_only) {
+            float3 h = normalize(V + L);
+            float ndotl = max(dot(N, L), 0.0);
+            sum += pbr_d_ggx(max(dot(N, h), 0.0), a) * pbr_v_smith(ndotv, ndotl, a) *
+                   pbr_f_schlick(max(dot(V, h), 0.0), f0) * ndotl * radiance;
+        } else {
+            sum += pbr_surface_brdf(N, V, L, albedo, metallic, roughness) * radiance;
+        }
+    }
+    return sum;
 }
 
 [shader("fragment")]
@@ -235,12 +273,17 @@ float4 fragment_main(VsOut input) : SV_Target0 {
         float3 diffuse = irradiance * albedo * occ;
         float3 base_diffuse = lerp(diffuse, transmitted, g_params.transmission_factor);
 
-        float3 color = (1.0 - F) * base_diffuse + spec_ibl + sun_spec + emissive;
+        float3 point_spec = clustered_lighting(input.world_pos, world_n, V, albedo, metallic,
+                                               roughness, f0, true);
+
+        float3 color = (1.0 - F) * base_diffuse + spec_ibl + sun_spec + point_spec + emissive;
         return float4(color, 1.0); // background already composited
     }
 
     float3 lit = pbr_surface_brdf(world_n, V, L, albedo, metallic, roughness) *
                  pc.light_color.rgb * pc.light_color.w;
+    lit += clustered_lighting(input.world_pos, world_n, V, albedo, metallic, roughness,
+                              float3(0.04, 0.04, 0.04), false);
     float3 ambient = pc.ambient.rgb * albedo * occ;
     return float4(lit + ambient + emissive, alpha);
 }

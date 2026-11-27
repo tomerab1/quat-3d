@@ -6,6 +6,8 @@
 // Two pipelines over the deferred HDR result (transparent.slang):
 //  - Blend: glTF BLEND materials, depth-tested read-only, SRC_ALPHA blending,
 //    two-sided. Draws should be supplied back-to-front.
+//  Both are lit by the sun and the clustered point/spot lights (R10.1: each
+//  fragment loops only over its froxel's list from LightCullPass).
 //  - Transmission: KHR_materials_transmission glass. Per the glTF spec this is
 //    NOT alpha blending — surfaces write depth, are back-face culled (unless the
 //    material is doubleSided; cull mode is dynamic state) and replace the pixel
@@ -32,6 +34,7 @@
 #include "engine/renderer/draw_batching.hpp"
 #include "engine/renderer/ibl_pass.hpp"
 #include "engine/renderer/instance_buffer.hpp"
+#include "engine/renderer/light_cull_pass.hpp"
 #include "engine/renderer/lighting_pass.hpp"
 #include "engine/renderer/mesh_pass.hpp"
 #include "engine/rhi/descriptor_buffer.hpp"
@@ -77,12 +80,13 @@ public:
     // Render `list` into `hdr`, depth-tested against `depth` (the opaque GBuffer
     // depth; transmissive draws also write it), in the list's draw order.
     // `ibl` supplies the environment maps glass reflects — a black fallback is
-    // bound when empty. No-op (but still valid) when there are no draws.
+    // bound when empty. `lights` is this frame's LightCullPass output (none
+    // when default). No-op (but still valid) when there are no draws.
     [[nodiscard]] std::expected<void, core::Error>
     add_to_graph(rhi::RenderGraph& graph, rhi::ResourceHandle hdr, rhi::ResourceHandle depth,
                  VkExtent2D extent, const glm::mat4& view_proj, const DirectionalLightParams& light,
                  const glm::vec3& camera_pos, const InstancedDrawList& list,
-                 IblViewSet ibl = {});
+                 IblViewSet ibl = {}, const ClusteredLights& lights = {});
 
     // Convenience: draws `draws` (supplied back-to-front) one object per draw,
     // preserving their order (unbatched_draws()).
@@ -90,7 +94,7 @@ public:
     add_to_graph(rhi::RenderGraph& graph, rhi::ResourceHandle hdr, rhi::ResourceHandle depth,
                  VkExtent2D extent, const glm::mat4& view_proj, const DirectionalLightParams& light,
                  const glm::vec3& camera_pos, std::span<const DrawItem> draws,
-                 IblViewSet ibl = {});
+                 IblViewSet ibl = {}, const ClusteredLights& lights = {});
 
 private:
     // Mip levels of the scene-colour snapshot — how far rough transmission can
@@ -126,6 +130,7 @@ private:
     asset::TextureAsset            fallback_texture_;
     asset::MaterialAsset           default_material_;
     IblMaps                        fallback_ibl_;
+    EmptyLightClusters             empty_lights_; // bound when no culled lights are given
 
     // Persistent scene-colour snapshot with a blurred mip chain (rough glass).
     rhi::GpuImage  scene_color_;

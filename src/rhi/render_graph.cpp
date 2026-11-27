@@ -103,8 +103,61 @@ struct UsageState {
                 VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT};
     case ResourceUsage::present:
         return {VK_IMAGE_LAYOUT_PRESENT_SRC_KHR, VK_PIPELINE_STAGE_2_NONE, 0};
+    // Buffers have no layout; UNDEFINED is never used for them.
+    case ResourceUsage::buffer_read_compute:
+        return {VK_IMAGE_LAYOUT_UNDEFINED, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                VK_ACCESS_2_SHADER_STORAGE_READ_BIT | VK_ACCESS_2_UNIFORM_READ_BIT};
+    case ResourceUsage::buffer_write_compute:
+        return {VK_IMAGE_LAYOUT_UNDEFINED, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                VK_ACCESS_2_SHADER_STORAGE_READ_BIT | VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT};
+    case ResourceUsage::buffer_read_fragment:
+        return {VK_IMAGE_LAYOUT_UNDEFINED, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+                VK_ACCESS_2_SHADER_STORAGE_READ_BIT | VK_ACCESS_2_UNIFORM_READ_BIT};
     }
     return {VK_IMAGE_LAYOUT_UNDEFINED, VK_PIPELINE_STAGE_2_NONE, 0};
+}
+
+// Which resource kinds a usage applies to (transfers apply to both).
+[[nodiscard]] bool usage_fits_buffer(ResourceUsage usage) {
+    switch (usage) {
+    case ResourceUsage::buffer_read_compute:
+    case ResourceUsage::buffer_write_compute:
+    case ResourceUsage::buffer_read_fragment:
+    case ResourceUsage::transfer_src:
+    case ResourceUsage::transfer_dst:
+        return true;
+    default:
+        return false;
+    }
+}
+
+[[nodiscard]] bool usage_fits_image(ResourceUsage usage) {
+    switch (usage) {
+    case ResourceUsage::buffer_read_compute:
+    case ResourceUsage::buffer_write_compute:
+    case ResourceUsage::buffer_read_fragment:
+        return false;
+    default:
+        return true;
+    }
+}
+
+[[nodiscard]] VkBufferMemoryBarrier2
+make_buffer_barrier(VkBuffer buffer, VkDeviceSize size, VkPipelineStageFlags2 src_stage,
+                    VkAccessFlags2 src_access, VkPipelineStageFlags2 dst_stage,
+                    VkAccessFlags2 dst_access) {
+    VkBufferMemoryBarrier2 barrier{};
+    barrier.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2;
+    barrier.srcStageMask = src_stage;
+    barrier.srcAccessMask = src_access;
+    barrier.dstStageMask = dst_stage;
+    barrier.dstAccessMask = dst_access;
+    barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.buffer = buffer;
+    barrier.offset = 0;
+    barrier.size = size;
+    return barrier;
 }
 
 [[nodiscard]] VkImageMemoryBarrier2
@@ -127,12 +180,15 @@ make_barrier(VkImage image, VkImageAspectFlags aspect,
     return barrier;
 }
 
-void submit_barriers(VkCommandBuffer cmd, std::span<const VkImageMemoryBarrier2> barriers) {
-    if (barriers.empty()) return;
+void submit_barriers(VkCommandBuffer cmd, std::span<const VkImageMemoryBarrier2> barriers,
+                     std::span<const VkBufferMemoryBarrier2> buffer_barriers = {}) {
+    if (barriers.empty() && buffer_barriers.empty()) return;
     VkDependencyInfo dep{};
     dep.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO;
     dep.imageMemoryBarrierCount = static_cast<std::uint32_t>(barriers.size());
     dep.pImageMemoryBarriers = barriers.data();
+    dep.bufferMemoryBarrierCount = static_cast<std::uint32_t>(buffer_barriers.size());
+    dep.pBufferMemoryBarriers = buffer_barriers.data();
     vkCmdPipelineBarrier2(cmd, &dep);
 }
 
@@ -271,6 +327,21 @@ ResourceHandle RenderGraph::import_image(const char* name, VkImage image, VkImag
     return ResourceHandle{static_cast<std::uint32_t>(resources_.size() - 1)};
 }
 
+ResourceHandle RenderGraph::import_buffer(const char* name, VkBuffer buffer, VkDeviceSize size,
+                                          VkPipelineStageFlags2 available_stage,
+                                          VkAccessFlags2 available_access) {
+    Resource r;
+    r.name = name;
+    r.imported = true;
+    r.is_buffer = true;
+    r.buffer = buffer;
+    r.buffer_size = size;
+    r.available_stage = available_stage;
+    r.available_access = available_access;
+    resources_.push_back(std::move(r));
+    return ResourceHandle{static_cast<std::uint32_t>(resources_.size() - 1)};
+}
+
 ResourceHandle RenderGraph::create_transient_image(const char* name, VkFormat format,
                                                    VkExtent2D extent, VkImageUsageFlags usage) {
     Resource r;
@@ -310,7 +381,7 @@ RenderGraph::PassBuilder& RenderGraph::PassBuilder::execute(PassExecuteFn fn) {
 
 ResourceBinding RenderGraph::binding(ResourceHandle handle) const {
     const Resource& r = resources_[handle.index];
-    return ResourceBinding{r.image, r.view, r.format, r.extent};
+    return ResourceBinding{r.image, r.view, r.format, r.extent, r.buffer, r.buffer_size};
 }
 
 // ===========================================================================
@@ -338,6 +409,23 @@ std::expected<void, core::Error> RenderGraph::compile() {
         r.read_stages = VK_PIPELINE_STAGE_2_NONE;
         r.visible_stages = VK_PIPELINE_STAGE_2_NONE;
         r.visible_access = 0;
+    }
+
+    // Every access must fit its resource kind (a layout-bearing image usage
+    // on a buffer, or a buffer usage on an image, is a declaration bug).
+    for (const Pass& p : passes_) {
+        for (const Access& a : p.accesses) {
+            if (a.resource >= resources_.size()) {
+                return fail(std::format("RenderGraph::compile: pass '{}' uses an invalid handle",
+                                        p.name));
+            }
+            const Resource& r = resources_[a.resource];
+            if (r.is_buffer ? !usage_fits_buffer(a.usage) : !usage_fits_image(a.usage)) {
+                return fail(std::format(
+                    "RenderGraph::compile: pass '{}' uses {} '{}' with a {} usage", p.name,
+                    r.is_buffer ? "buffer" : "image", r.name, r.is_buffer ? "image" : "buffer"));
+            }
+        }
     }
 
     // 2. Topological sort by resource dependencies (Kahn, smallest-index first
@@ -398,7 +486,40 @@ std::expected<void, core::Error> RenderGraph::compile() {
     // 3. Plan barriers by walking passes in execution order and diffing each
     //    accessed resource's tracked state against what the access demands.
     pass_barriers_.assign(n, {});
+    pass_buffer_barriers_.assign(n, {});
     final_barriers_.clear();
+
+    // Buffer hazards, planned like images minus layouts: a write waits for
+    // the last write (WAW) and every read since (WAR) — nothing when the
+    // buffer is untouched; a read waits for the last write unless an earlier
+    // barrier already made it visible to this stage/access (RAW).
+    const auto plan_buffer_access = [](Resource& r, const UsageState& s, bool is_write,
+                                       std::vector<VkBufferMemoryBarrier2>& out) {
+        const bool has_write =
+            r.write_stage != VK_PIPELINE_STAGE_2_NONE || r.write_access != 0;
+        if (is_write) {
+            if (has_write || r.read_stages != VK_PIPELINE_STAGE_2_NONE) {
+                out.push_back(make_buffer_barrier(r.buffer, r.buffer_size,
+                                                  r.write_stage | r.read_stages, r.write_access,
+                                                  s.stage, s.access));
+            }
+            r.write_stage = s.stage;
+            r.write_access = s.access;
+            r.read_stages = VK_PIPELINE_STAGE_2_NONE;
+            r.visible_stages = VK_PIPELINE_STAGE_2_NONE;
+            r.visible_access = 0;
+            return;
+        }
+        const bool covered =
+            (s.stage & ~r.visible_stages) == 0 && (s.access & ~r.visible_access) == 0;
+        if (!covered && has_write) {
+            out.push_back(make_buffer_barrier(r.buffer, r.buffer_size, r.write_stage,
+                                              r.write_access, s.stage, s.access));
+            r.visible_stages |= s.stage;
+            r.visible_access |= s.access;
+        }
+        r.read_stages |= s.stage;
+    };
 
     for (std::uint32_t pos = 0; pos < n; ++pos) {
         Pass& pass = passes_[order_[pos]];
@@ -406,6 +527,10 @@ std::expected<void, core::Error> RenderGraph::compile() {
         for (const Access& a : pass.accesses) {
             Resource& r = resources_[a.resource];
             const UsageState s = usage_state(a.usage);
+            if (r.is_buffer) {
+                plan_buffer_access(r, s, a.is_write, pass_buffer_barriers_[pos]);
+                continue;
+            }
             const bool layout_change = r.cur_layout != s.layout;
             if (layout_change || a.is_write) {
                 // Write-after-{write,read} or a transition: wait for the last
@@ -450,7 +575,7 @@ std::expected<void, core::Error> RenderGraph::compile() {
     // 4. Trailing transitions for imported resources that must end in a specific
     //    layout (e.g. swapchain image -> PRESENT_SRC).
     for (Resource& r : resources_) {
-        if (r.imported && r.final_layout != VK_IMAGE_LAYOUT_UNDEFINED
+        if (r.imported && !r.is_buffer && r.final_layout != VK_IMAGE_LAYOUT_UNDEFINED
             && r.final_layout != r.cur_layout) {
             final_barriers_.push_back(make_barrier(
                 r.image, aspect_for_format(r.format), r.cur_layout, r.final_layout,
@@ -469,12 +594,21 @@ std::vector<VkImageMemoryBarrier2> RenderGraph::planned_barriers(std::string_vie
     return {};
 }
 
+std::vector<VkBufferMemoryBarrier2>
+RenderGraph::planned_buffer_barriers(std::string_view pass_name) const {
+    for (std::size_t pos = 0; pos < order_.size() && pos < pass_buffer_barriers_.size(); ++pos) {
+        if (passes_[order_[pos]].name == pass_name) return pass_buffer_barriers_[pos];
+    }
+    return {};
+}
+
+
 // ===========================================================================
 // RenderGraph — execute
 // ===========================================================================
 void RenderGraph::execute(VkCommandBuffer cmd) {
     for (std::uint32_t pos = 0; pos < order_.size(); ++pos) {
-        submit_barriers(cmd, pass_barriers_[pos]);
+        submit_barriers(cmd, pass_barriers_[pos], pass_buffer_barriers_[pos]);
         Pass& pass = passes_[order_[pos]];
         if (pass.execute) {
             PassContext ctx(cmd, *this);
