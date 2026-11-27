@@ -361,10 +361,13 @@ set_source_files_properties(src/remote/world/stb_image_write_impl.cpp
 # GBuffer pass (mesh_pass); lighting/tonemap/imgui passes follow in later slices.
 # ---------------------------------------------------------------------------
 add_library(engine_renderer STATIC
+    src/renderer/csm.cpp
     src/renderer/draw_batching.cpp
     src/renderer/render_settings.cpp
     src/renderer/grass.cpp
     src/renderer/grass_pass.cpp
+    src/renderer/gtao_pass.cpp
+    src/renderer/hiz_pass.cpp
     src/renderer/instance_buffer.cpp
     src/renderer/mesh_pass.cpp
     src/renderer/lighting_pass.cpp
@@ -382,7 +385,8 @@ add_library(engine_renderer STATIC
     src/renderer/atmosphere_pass.cpp
     src/renderer/terrain_pass.cpp
     src/renderer/terrain_gpu_tiles.cpp
-    src/renderer/terrain_synth_pass.cpp)
+    src/renderer/terrain_synth_pass.cpp
+    src/renderer/terrain_shadow.cpp)
 target_link_libraries(engine_renderer PUBLIC
     engine_flags engine_rhi engine_asset engine_terrain glm::glm)
 target_include_directories(engine_renderer PUBLIC ${ENGINE_PUBLIC_INCLUDE})

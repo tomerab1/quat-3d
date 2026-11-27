@@ -1,16 +1,20 @@
-// shadow.slang — directional shadow depth pass (Phase 7, Slice 7.1).
+// shadow.slang — cascaded sun shadow depth pass (Phase 7; cascades in R12).
 //
-// Renders scene geometry from the light's point of view into a depth map. Depth
-// only: no color attachment, the fragment shader writes nothing. The lighting
-// pass samples this map to decide whether a surface is lit or shadowed. Draws
-// are instanced (R9.1), reading per-instance transforms like the GBuffer pass.
+// Renders scene geometry into one layer of the cascaded shadow map: depth
+// only, no colour attachment, the fragment shader writes nothing. The
+// cascade's view-projection comes from the CascadeData buffer (fitted on the
+// GPU by csm_setup.slang, or uploaded by the CPU fallback), read through a
+// buffer device address. Draws are instanced (R9.1), reading per-instance
+// transforms like the GBuffer pass.
 
+import csm;
 import instancing;
 
-// Mirrors engine::renderer::ShadowPushConstants (72 bytes).
+// Mirrors engine::renderer::ShadowPushConstants (24 bytes).
 struct PushConstants {
-    float4x4      light_view_proj;
+    CascadeData*  cascades;
     InstanceData* instances; // indexed by instance_index() (includes firstInstance)
+    uint          cascade;
 }
 [[vk::push_constant]] PushConstants pc;
 
@@ -21,7 +25,10 @@ struct VsIn {
 [shader("vertex")]
 float4 vertex_main(VsIn input) : SV_Position {
     InstanceData inst = pc.instances[instance_index()];
-    return mul(pc.light_view_proj, inst.world_position(input.position));
+    float4 p = inst.world_position(input.position);
+    uint b = pc.cascade * 4;
+    return pc.cascades[0].view_proj[b] * p.x + pc.cascades[0].view_proj[b + 1] * p.y +
+           pc.cascades[0].view_proj[b + 2] * p.z + pc.cascades[0].view_proj[b + 3] * p.w;
 }
 
 [shader("fragment")]

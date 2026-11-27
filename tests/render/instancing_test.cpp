@@ -210,8 +210,7 @@ TEST(GpuInstancing, RendersEveryInstanceOfOneInstancedDraw) {
     auto gbuffer = mesh_pass->add_to_graph(graph, kExtent, view_proj, list);
     ASSERT_OK(gbuffer);
     auto hdr = lighting->add_to_graph(graph, *gbuffer, kExtent, light, glm::inverse(view_proj),
-                                      glm::vec3(0.0F, 0.0F, 5.0F), rhi::ResourceHandle{},
-                                      glm::mat4(1.0F));
+                                      glm::vec3(0.0F, 0.0F, 5.0F), {});
     ASSERT_OK(hdr);
     const rhi::ResourceHandle ldr = graph.create_transient_image(
         "instancing_ldr", ldr_format, kExtent,

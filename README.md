@@ -17,8 +17,7 @@ drive directly to build and debug worlds from a prompt.
 ## Screenshots
 
 Real engine output, rendered headless on a software Vulkan driver (lavapipe) by
-the CI screenshot pipeline — no ambient occlusion or cascaded shadows yet (in
-progress, ROADMAP R12).
+the CI screenshot pipeline.
 
 | Showcase (PBR materials, glass) | Terrain (GPU synthesis + GPU grass) | Physics |
 |---|---|---|
@@ -27,8 +26,13 @@ progress, ROADMAP R12).
 ## What it can do today
 
 **Rendering**
-- Deferred physically based shading with cascaded shadow maps and clustered point lights
-  (GPU light culling into view-space froxels, up to 4096 lights per frame)
+- Deferred physically based shading with clustered point lights (GPU light
+  culling into view-space froxels, up to 4096 lights per frame)
+- Sun shadows from four cascades fitted on the GPU to what the camera sees,
+  stable under camera motion, with soft PCF / PCSS edges and screen-space
+  contact shadows for small detail; meshes, instanced objects and terrain cast
+- Ambient occlusion (GTAO) with bent normals that also darkens reflections in
+  crevices; every shadow / AO setting is tunable in the editor's Renderer panel
 - Glass and transparency (refraction, absorption, IOR), clearcoat car paint
 - Physically based sky with volumetric clouds and a moving sun
 - Image-based lighting that keeps up with the sky in real time
