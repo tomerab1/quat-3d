@@ -44,6 +44,7 @@ struct SceneSnapshot {
     Stored<scene::RigidBody>           rigid_bodies;
     Stored<scene::CharacterController> characters;
     Stored<scene::Terrain>             terrains;
+    Stored<scene::Grass>               grasses;
     Stored<scene::NavAgent>            nav_agents;
     Stored<scene::BehaviorTree>        behavior_trees;
     Stored<scene::PatrolRoute>         patrol_routes;

@@ -27,6 +27,7 @@
 #include "engine/asset/material_asset.hpp"
 #include "engine/asset/mesh_asset.hpp"
 #include "engine/core/error.hpp"
+#include "engine/renderer/grass.hpp"
 
 namespace engine::scene {
 
@@ -311,6 +312,16 @@ struct Terrain {
     // around the camera instead of one fixed tile.
     bool streaming = false;
     int  stream_radius = 1;
+};
+
+// Dense, wind-animated grass around the camera (R9.3), generated and drawn
+// on the GPU every frame (renderer/grass.hpp has the placement and LOD
+// rules). It grows on the terrain within `settings.radius` of the camera;
+// with `terrain_only` off it also covers flat ground at `ground_y` where no
+// terrain is loaded. The first Grass entity drives the field; its transform
+// is not used.
+struct Grass {
+    renderer::GrassSettings settings{};
 };
 
 // An authored walk route (editor: Shift+click the ground to append points).

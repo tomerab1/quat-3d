@@ -18,9 +18,11 @@
 #include "engine/renderer/grass.hpp"
 #include "engine/renderer/grass_pass.hpp"
 #include "engine/renderer/mesh_pass.hpp"
+#include "engine/renderer/terrain_pass.hpp"
 #include "engine/rhi/device.hpp"
 #include "engine/rhi/gpu_allocator.hpp"
 #include "engine/rhi/render_graph.hpp"
+#include "engine/terrain/generator.hpp"
 #include "support/expect_ok.hpp"
 #include "support/gpu_context.hpp"
 #include "support/gpu_submit.hpp"
@@ -443,6 +445,67 @@ TEST(GpuGrass, DrawWritesBladesIntoTheGBuffer) {
     EXPECT_GT(ground_covered, ground * 6 / 10);
     EXPECT_EQ(sky_covered, 0U);
     EXPECT_GT(g_sum, r_sum) << "blades are not green";
+}
+
+// The terrain pass's tiles through TerrainHeightTile: blades stand on the
+// surface the terrain pass renders (its uv convention: uv = local / size,
+// bilinear over texel centres), only inside the loaded tiles.
+TEST(GpuGrass, GrowsOnTheTerrainPassSurface) {
+    QUAT_REQUIRE_GPU(g);
+    auto terrain = r::TerrainPass::create(g->device, g->allocator, g->cache, g->transfer, g->shader_dir);
+    ASSERT_OK(terrain);
+    auto pass = r::GrassPass::create(g->device, g->allocator, g->cache, g->transfer, g->shader_dir, 1);
+    ASSERT_OK(pass);
+
+    engine::terrain::TerrainParams tp;
+    tp.resolution = 129;
+    tp.tile_size_m = 128.0F;
+    tp.height_m = 20.0F;
+    tp.octaves = 4;
+    tp.erosion_droplets = 0;
+    const engine::terrain::Heightmap map = engine::terrain::generate(tp);
+    ASSERT_OK(terrain->set_tile(glm::ivec2(0, 0), map, g->transfer));
+    const glm::vec3 anchor(10.0F, -5.0F, -20.0F); // tile (0,0) is centred here
+
+    r::GrassFrame frame;
+    frame.settings = flat_settings();
+    frame.settings.radius = 30.0F;
+    frame.settings.slope_deg = glm::vec2(0.0F, 90.0F);
+    frame.settings.terrain_only = true;
+    frame.camera = anchor + glm::vec3(50.0F, 30.0F, 50.0F); // the disc overhangs the tile corner
+    frame.draw_view_proj = frame.cull_view_proj = overview(frame.camera);
+    const auto tiles = terrain->height_tiles(glm::vec2(frame.camera.x, frame.camera.z),
+                                             frame.settings.radius, anchor,
+                                             r::grass_max_height_tiles);
+    ASSERT_EQ(tiles.size(), 1U);
+    EXPECT_EQ(tiles[0].origin_xz, glm::vec2(anchor.x - 64.0F, anchor.z - 64.0F));
+    EXPECT_TRUE(terrain->height_tiles(glm::vec2(500.0F), 30.0F, anchor, 4).empty());
+    frame.terrain = tiles;
+    auto gen = generate(*g, *pass, frame);
+    ASSERT_OK(gen);
+    ASSERT_GT(gen->blades.size(), 1000U);
+
+    // Bilinear over texel centres at uv = local / size (clamped), as sampled.
+    const auto rendered_height = [&](glm::vec2 xz) {
+        const glm::vec2 uv = (xz - tiles[0].origin_xz) / tiles[0].size_m;
+        const glm::vec2 t = glm::clamp(uv * static_cast<float>(map.resolution) - 0.5F,
+                                       glm::vec2(0.0F),
+                                       glm::vec2(static_cast<float>(map.resolution - 1)));
+        const glm::ivec2 i0(t);
+        const glm::vec2 f = t - glm::vec2(i0);
+        const float h00 = map.at(i0.x, i0.y);
+        const float h10 = map.at(i0.x + 1, i0.y);
+        const float h01 = map.at(i0.x, i0.y + 1);
+        const float h11 = map.at(i0.x + 1, i0.y + 1);
+        return anchor.y + glm::mix(glm::mix(h00, h10, f.x), glm::mix(h01, h11, f.x), f.y);
+    };
+    for (const auto& bl : gen->blades) {
+        const glm::vec2 local = glm::vec2(bl.root.x, bl.root.z) - tiles[0].origin_xz;
+        ASSERT_TRUE(local.x >= 0.0F && local.y >= 0.0F && local.x <= 128.0F && local.y <= 128.0F)
+            << "blade off the tile at " << bl.root.x << ", " << bl.root.z;
+        // Linear filtering runs at reduced (8-bit) sub-texel precision on GPUs.
+        ASSERT_NEAR(bl.root.y, rendered_height(glm::vec2(bl.root.x, bl.root.z)), 0.05F);
+    }
 }
 
 } // namespace

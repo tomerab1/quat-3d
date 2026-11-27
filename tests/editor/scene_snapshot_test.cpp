@@ -97,6 +97,20 @@ TEST(PlayModeSnapshot, RestoresInstancedMeshAndScatter) {
     EXPECT_EQ(r.get<s::Scatter>(e).generated, 99U); // no needless regeneration
 }
 
+// R9.3: the grass field survives Play/Stop.
+TEST(PlayModeSnapshot, RestoresGrass) {
+    s::Scene scene;
+    const entt::entity e = scene.create_entity("meadow");
+    scene.registry().emplace<s::Grass>(e).settings.density = 63.0F;
+
+    const auto snapshot = engine::editor::capture_scene(scene);
+    scene.registry().remove<s::Grass>(e);
+    engine::editor::restore_scene(scene, snapshot);
+
+    ASSERT_TRUE(scene.registry().all_of<s::Grass>(e));
+    EXPECT_EQ(scene.registry().get<s::Grass>(e).settings.density, 63.0F);
+}
+
 } // namespace
 
 #endif // ENGINE_EDITOR

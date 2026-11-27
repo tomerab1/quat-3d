@@ -137,6 +137,15 @@ per m², `min_spacing` m, `pattern` poisson/jittered_grid, `scale` [min,max],
 unit primitive), `slope` [min,max] degrees, `height` [min,max] m,
 `max_instances`; regenerates when these, the entity position or the terrain
 change; removing it keeps the placements),
+`grass` (GPU grass around the camera, one field per scene — the first
+`grass` entity's: `seed`, `density` blades per m² (0..1000), `radius` m
+(0..500), `blade_height` / `blade_width` [min,max] m, `base_color` /
+`tip_color` `"#rrggbb"` or linear `[r,g,b]`, `wind_strength` 0..4,
+`wind_direction` [x,z] (normalised), `wind_frequency` Hz 0..10, `slope`
+[min,max] degrees, `height` [min,max] ground height m, `terrain_only` (false:
+also flat ground at `ground_y` where no terrain is loaded), `lod_start`
+0..1 × radius where blades start thinning, `far_density` 0..1 kept at the
+radius),
 `point_light`, `dir_light`, `camera`, `collider`, `rigidbody`, `character`,
 `nav_agent`, `behavior`, `patrol`, `terrain`, `net_replicated`,
 `audio_source` (`clip`, `bus`: master/music/sfx/ui/ambience, `volume`,

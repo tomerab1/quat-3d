@@ -388,6 +388,7 @@ if(ENGINE_EDITOR)
         src/editor/physics_debug.cpp
         src/editor/scene_snapshot.cpp
         src/editor/audio_inspector.cpp
+        src/editor/grass_inspector.cpp
         src/editor/bt_graph.cpp
         src/editor/behavior_panel.cpp
         src/editor/behavior_canvas.cpp
@@ -417,6 +418,7 @@ add_executable(game
     src/main.cpp
     src/app/demo_scenes.cpp
     src/app/audio_runtime.cpp
+    src/app/grass_runtime.cpp
     src/app/nav_bake.cpp
     src/app/remote_bridge.cpp)
 target_link_libraries(game PRIVATE

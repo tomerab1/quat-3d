@@ -56,6 +56,8 @@ TEST_F(ComponentJson, RoundTripsEveryWritableComponent) {
                      {"octaves", 5}, {"warp", 0.2}, {"droplets", 1000}, {"snowline", 40},
                      {"streaming", true}, {"stream_radius", 2}}},
         {"net_replicated", {{"net_id", 1234}}},
+        {"grass", {{"density", 30}, {"radius", 25}, {"blade_height", {0.2, 0.9}},
+                   {"base_color", "#203010"}, {"wind_direction", {1, 1}}, {"terrain_only", false}}},
         {"audio_source", {{"clip", "assets/audio/hum.wav"}, {"bus", "sfx"}, {"volume", 0.5},
                           {"pitch", 2}, {"loop", true}, {"spatial", false}}},
         {"audio_listener", {{"active", true}}},

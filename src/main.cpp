@@ -32,6 +32,7 @@
 
 #include "app/audio_runtime.hpp"
 #include "app/demo_scenes.hpp"
+#include "app/grass_runtime.hpp"
 #include "app/nav_bake.hpp"
 #include "app/remote_bridge.hpp"
 #include "engine/animation/animator.hpp"
@@ -636,6 +637,8 @@ int main() {
     } else {
         std::fprintf(stderr, "[warn] terrain pass create failed: %s\n", tp.error().message.c_str());
     }
+    quat::app::GrassRuntime grass(device, allocator, *pipeline_cache, terrain_transfer, shader_dir,
+                                  k_frames_in_flight);
     std::future<engine::terrain::Heightmap> terrain_job;
     engine::terrain::Heightmap terrain_heightmap; // CPU copy retained for physics (12.3)
     std::optional<engine::terrain::TerrainStreamer> terrain_streamer; // 12.4
@@ -1618,6 +1621,8 @@ int main() {
             terrain_pass.add_to_graph(graph, *gbuffer, draw_extent, jittered_vp, cam.position,
                                       terrain_anchor, terrain_snowline);
         }
+        grass.add_to_graph(graph, frame, scene.registry(), *gbuffer, draw_extent, jittered_vp, cam,
+                           terrain_present ? &terrain_pass : nullptr, terrain_anchor, sim_dt);
         // Clustered light culling (R10.1). A camera the clusters cannot
         // represent (non-perspective / no finite far plane) renders unlit by
         // point lights rather than stopping the frame loop.
