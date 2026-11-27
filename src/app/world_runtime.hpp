@@ -202,7 +202,8 @@ private:
 
     // Networking (Phase 14; S1 B1-B5): QUAT_HOST=<port> hosts this scene,
     // QUAT_JOIN=<ip:port> joins a host running the same scene. See
-    // engine/net/session.hpp for the per-frame protocol.
+    // engine/net/session.hpp for the per-frame protocol and
+    // engine/net/session_config.hpp for the QUAT_NET_* host options.
     engine::net::NetSession net_;
     std::map<glm::ivec2, std::uint32_t, engine::terrain::TileCoordLess>
         terrain_bodies_; // streamed tiles' play-mode physics bodies

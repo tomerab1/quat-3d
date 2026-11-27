@@ -350,6 +350,9 @@ add_library(engine_net STATIC
     src/net/character_step.cpp
     src/net/net_ids.cpp
     src/net/transport.cpp
+    src/net/transport_common.cpp
+    src/net/host_access.cpp
+    src/net/session_config.cpp
     src/net/replication.cpp
     src/net/replication_transport.cpp
     src/net/prediction.cpp

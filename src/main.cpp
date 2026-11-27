@@ -4,7 +4,7 @@
 // off to the application layer (src/app/application.hpp), which owns the
 // window, device, scene, subsystems and the frame loop. Subsystems read their
 // own environment variables (QUAT_GLTF / QUAT_PHYSICS / QUAT_CHARACTER /
-// QUAT_TERRAIN in demo_scenes, QUAT_HOST / QUAT_JOIN in the net session,
+// QUAT_TERRAIN in demo_scenes, QUAT_HOST / QUAT_JOIN / QUAT_NET_* in the net session,
 // QUAT_REMOTE / QUAT_REMOTE_TOKEN in the remote bridge, QUAT_NO_AUDIO in the
 // audio runtime).
 
