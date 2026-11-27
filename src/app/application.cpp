@@ -1,6 +1,8 @@
 #include "app/application.hpp"
 
 #include <cstdio>
+#include <expected>
+#include <string>
 #include <utility>
 
 #include <SDL3/SDL.h>
@@ -43,15 +45,13 @@ Application::~Application() {
     // GPU objects are freed by the members' destructors (reverse declaration
     // order: subsystems, then the swapchain, allocator and device, then the
     // window and SDL). Wait for the GPU first and release the frame sync and
-    // the surface explicitly: the surface must go after the swapchain and
-    // before the instance.
+    // the swapchain explicitly; the device owns the surface and destroys it
+    // after the swapchain and before the instance.
     if (device_.handle() != VK_NULL_HANDLE) {
         vkDeviceWaitIdle(device_.handle());
         world_.shutdown(); // waits for a running terrain job, frees its upload pool
         renderer_.destroy_frame_sync();
         swapchain_ = engine::rhi::Swapchain{}; // destroy swapchain before surface
-        if (surface_ != VK_NULL_HANDLE) vkDestroySurfaceKHR(device_.instance(), surface_, nullptr);
-        surface_ = VK_NULL_HANDLE;
     }
 }
 
@@ -84,10 +84,22 @@ bool Application::init_platform() {
         return false;
     }
 
+    // The window surface is created between the instance and the physical
+    // device choice, so only a GPU that can present to this window is picked.
+    SDL_Window* window = platform_.window;
     auto device_result = engine::rhi::Device::create({
         .instance_extensions = {sdl_extensions, sdl_ext_count},
         .enable_validation = k_enable_validation,
         .application_name = k_window_title,
+        .create_surface = [window](VkInstance instance)
+            -> std::expected<VkSurfaceKHR, engine::core::Error> {
+            VkSurfaceKHR surface = VK_NULL_HANDLE;
+            if (!SDL_Vulkan_CreateSurface(window, instance, nullptr, &surface)) {
+                return std::unexpected(engine::core::Error{
+                    std::string("SDL_Vulkan_CreateSurface failed: ") + SDL_GetError()});
+            }
+            return surface;
+        },
     });
     if (!device_result) {
         std::fprintf(stderr, "[fatal] device creation failed: %s\n",
@@ -104,13 +116,8 @@ bool Application::init_platform() {
     }
     allocator_ = std::move(*allocator_result);
 
-    if (!SDL_Vulkan_CreateSurface(platform_.window, device_.instance(), nullptr, &surface_)) {
-        std::fprintf(stderr, "[fatal] SDL_Vulkan_CreateSurface failed: %s\n", SDL_GetError());
-        return false;
-    }
-
-    auto swapchain_result =
-        engine::rhi::Swapchain::create(device_, surface_, window_pixel_extent(platform_.window));
+    auto swapchain_result = engine::rhi::Swapchain::create(
+        device_, device_.surface(), window_pixel_extent(platform_.window));
     if (!swapchain_result) {
         std::fprintf(stderr, "[fatal] swapchain creation failed: %s\n",
                      swapchain_result.error().message.c_str());

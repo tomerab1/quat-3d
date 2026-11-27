@@ -450,7 +450,7 @@ bool FrameRenderer::submit_and_present(bool screenshot_frame) {
     present.swapchainCount = 1;
     present.pSwapchains = &sc;
     present.pImageIndices = &image_index_;
-    VkResult present_result = vkQueuePresentKHR(device_->graphics_queue(), &present);
+    VkResult present_result = vkQueuePresentKHR(device_->present_queue(), &present);
     if (present_result == VK_ERROR_OUT_OF_DATE_KHR || present_result == VK_SUBOPTIMAL_KHR) {
         needs_recreate_ = true;
     } else if (present_result != VK_SUCCESS) {
