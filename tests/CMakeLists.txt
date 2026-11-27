@@ -30,7 +30,8 @@ target_include_directories(engine_tests PRIVATE
     ${ENGINE_PUBLIC_INCLUDE}
     ${Stb_INCLUDE_DIR}) # image round trips (stb_image) in the screenshot tests
 target_compile_definitions(engine_tests PRIVATE
-    QUAT_COOKED_SHADER_DIR="${PROJECT_SOURCE_DIR}/cooked/shaders")
+    QUAT_COOKED_SHADER_DIR="${PROJECT_SOURCE_DIR}/cooked/shaders"
+    QUAT_PROJECT_ROOT="${PROJECT_SOURCE_DIR}") # vendored assets (editor fonts, icon table)
 add_dependencies(engine_tests shaders)
 
 add_test(NAME engine_tests_cpu COMMAND engine_tests "--gtest_filter=-Gpu*")

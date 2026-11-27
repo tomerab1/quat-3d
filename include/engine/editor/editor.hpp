@@ -14,6 +14,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -37,6 +38,9 @@ class Scene;
 namespace engine::editor {
 
 class BehaviorPanel;
+namespace ui {
+class Appearance;
+}
 
 // Animation panel state owned by EditorLayer (editor state stays out of the
 // ECS).
@@ -127,10 +131,11 @@ struct EditorContext {
 class EditorLayer {
 public:
     // Creates the ImGui context (docking enabled) and the SDL3 platform
-    // backend for `window`. `font_path` (TTF) replaces the default bitmap font
-    // when it exists. One EditorLayer per process.
+    // backend for `window`, with the editor fonts loaded from
+    // `<project_root>/assets/fonts` (ImGui's built-in font when missing).
+    // One EditorLayer per process.
     [[nodiscard]] static std::expected<EditorLayer, core::Error>
-    create(SDL_Window* window, const std::string& font_path = {});
+    create(SDL_Window* window, const std::string& project_root);
 
     EditorLayer(); // out of line: BehaviorPanel is incomplete here
     ~EditorLayer();
@@ -151,6 +156,12 @@ public:
     // True only while a text field is being edited — gates game movement keys
     // (wants_keyboard also fires for UI navigation, which is too aggressive).
     [[nodiscard]] bool wants_text_input() const;
+
+    // "dark" (default) or "light"; applied from the next frame.
+    void set_theme(std::string_view name);
+    // True once after begin_frame() rebuilt the font atlas for a new display
+    // scale: the renderer must re-upload it before drawing this frame's UI.
+    [[nodiscard]] bool take_font_atlas_changed();
 
     // The Viewport panel's content size (pixels) and hover state from the last
     // built frame — the scene renders at this size, and camera input is only
@@ -185,6 +196,8 @@ private:
                         const ImVec2& rect_max);
 
     bool initialized_  = false;
+    bool font_atlas_changed_ = false;
+    std::unique_ptr<ui::Appearance> appearance_; // theme, DPI scale, fonts
     bool layout_built_ = false;
     bool show_stats_   = true;
     bool show_demo_    = false;

@@ -23,6 +23,7 @@
 #include "engine/renderer/imgui_pass.hpp" // viewport_texture_id
 #include "inspector.hpp"
 #include "scene_hierarchy.hpp"
+#include "ui/appearance.hpp"
 #include "vendor/imgui_impl_sdl3.h"
 
 namespace engine::editor {
@@ -33,72 +34,10 @@ namespace {
     return std::unexpected(core::Error{std::move(what)});
 }
 
-// Polished dark theme: flatter panels, subtle accents, consistent rounding.
-void apply_theme() {
-    ImGuiStyle& style = ImGui::GetStyle();
-    style.WindowRounding = 4.0F;
-    style.ChildRounding = 4.0F;
-    style.FrameRounding = 3.0F;
-    style.GrabRounding = 3.0F;
-    style.TabRounding = 4.0F;
-    style.PopupRounding = 4.0F;
-    style.WindowBorderSize = 0.0F;
-    style.FrameBorderSize = 0.0F;
-    style.WindowPadding = ImVec2(8, 8);
-    style.FramePadding = ImVec2(6, 4);
-    style.ItemSpacing = ImVec2(7, 5);
-    style.IndentSpacing = 16.0F;
-
-    ImVec4* c = style.Colors;
-    const ImVec4 bg(0.106F, 0.113F, 0.125F, 1.0F);
-    const ImVec4 bg_dark(0.082F, 0.086F, 0.094F, 1.0F);
-    const ImVec4 panel(0.149F, 0.157F, 0.173F, 1.0F);
-    const ImVec4 panel_hover(0.21F, 0.22F, 0.24F, 1.0F);
-    const ImVec4 accent(0.20F, 0.47F, 0.84F, 1.0F);
-    const ImVec4 accent_hover(0.26F, 0.55F, 0.93F, 1.0F);
-    const ImVec4 text(0.88F, 0.89F, 0.90F, 1.0F);
-    c[ImGuiCol_Text] = text;
-    c[ImGuiCol_TextDisabled] = ImVec4(0.48F, 0.50F, 0.53F, 1.0F);
-    c[ImGuiCol_WindowBg] = bg;
-    c[ImGuiCol_ChildBg] = bg;
-    c[ImGuiCol_PopupBg] = bg_dark;
-    c[ImGuiCol_Border] = ImVec4(0.0F, 0.0F, 0.0F, 0.35F);
-    c[ImGuiCol_FrameBg] = panel;
-    c[ImGuiCol_FrameBgHovered] = panel_hover;
-    c[ImGuiCol_FrameBgActive] = panel_hover;
-    c[ImGuiCol_TitleBg] = bg_dark;
-    c[ImGuiCol_TitleBgActive] = bg_dark;
-    c[ImGuiCol_MenuBarBg] = bg_dark;
-    c[ImGuiCol_ScrollbarBg] = bg_dark;
-    c[ImGuiCol_ScrollbarGrab] = panel;
-    c[ImGuiCol_ScrollbarGrabHovered] = panel_hover;
-    c[ImGuiCol_CheckMark] = accent;
-    c[ImGuiCol_SliderGrab] = accent;
-    c[ImGuiCol_SliderGrabActive] = accent_hover;
-    c[ImGuiCol_Button] = panel;
-    c[ImGuiCol_ButtonHovered] = panel_hover;
-    c[ImGuiCol_ButtonActive] = accent;
-    c[ImGuiCol_Header] = panel;
-    c[ImGuiCol_HeaderHovered] = panel_hover;
-    c[ImGuiCol_HeaderActive] = accent;
-    c[ImGuiCol_Separator] = ImVec4(0.0F, 0.0F, 0.0F, 0.4F);
-    c[ImGuiCol_ResizeGrip] = panel;
-    c[ImGuiCol_ResizeGripHovered] = accent;
-    c[ImGuiCol_Tab] = bg_dark;
-    c[ImGuiCol_TabHovered] = accent_hover;
-    c[ImGuiCol_TabSelected] = panel;
-    c[ImGuiCol_TabDimmed] = bg_dark;
-    c[ImGuiCol_TabDimmedSelected] = panel;
-    c[ImGuiCol_DockingPreview] = ImVec4(accent.x, accent.y, accent.z, 0.5F);
-    c[ImGuiCol_DockingEmptyBg] = bg_dark;
-    c[ImGuiCol_DragDropTarget] = accent_hover;
-    c[ImGuiCol_NavCursor] = accent;
-}
-
 } // namespace
 
 std::expected<EditorLayer, core::Error> EditorLayer::create(SDL_Window* window,
-                                                            const std::string& font_path) {
+                                                            const std::string& project_root) {
     if (window == nullptr) {
         return fail("editor: null window");
     }
@@ -114,13 +53,6 @@ std::expected<EditorLayer, core::Error> EditorLayer::create(SDL_Window* window,
     io.IniFilename = nullptr; // panel layout persistence arrives with the real layout
     io.BackendRendererName = "quat3d (descriptor buffer)";
 
-    std::error_code ec;
-    if (!font_path.empty() && std::filesystem::is_regular_file(font_path, ec)) {
-        io.Fonts->AddFontFromFileTTF(font_path.c_str(), 16.0F);
-    }
-    ImGui::StyleColorsDark();
-    apply_theme();
-
     if (!ImGui_ImplSDL3_InitForOther(window)) {
         ImGui::DestroyContext();
         return fail("editor: ImGui_ImplSDL3_Init failed");
@@ -128,6 +60,10 @@ std::expected<EditorLayer, core::Error> EditorLayer::create(SDL_Window* window,
 
     EditorLayer out;
     out.initialized_ = true;
+    // Fonts (Inter + JetBrains Mono + Lucide icons) and the theme, sized for
+    // the window's display scale (ROADMAP E8.1).
+    out.appearance_ = std::make_unique<ui::Appearance>();
+    out.appearance_->init(window, std::filesystem::path(project_root), ui::ThemeId::dark);
     return out;
 }
 
@@ -145,6 +81,8 @@ EditorLayer& EditorLayer::operator=(EditorLayer&& other) noexcept {
     if (this != &other) {
         destroy();
         initialized_ = std::exchange(other.initialized_, false);
+        appearance_ = std::move(other.appearance_);
+        font_atlas_changed_ = other.font_atlas_changed_;
         layout_built_ = other.layout_built_;
         show_stats_ = other.show_stats_;
         show_demo_ = other.show_demo_;
@@ -170,6 +108,15 @@ void EditorLayer::process_event(const SDL_Event& event) {
     if (initialized_) ImGui_ImplSDL3_ProcessEvent(&event);
 }
 
+void EditorLayer::set_theme(std::string_view name) {
+    if (appearance_ == nullptr) return;
+    appearance_->set_theme(name == "light" ? ui::ThemeId::light : ui::ThemeId::dark);
+}
+
+bool EditorLayer::take_font_atlas_changed() {
+    return std::exchange(font_atlas_changed_, false);
+}
+
 bool EditorLayer::wants_mouse() const {
     return initialized_ && ImGui::GetIO().WantCaptureMouse;
 }
@@ -184,6 +131,8 @@ bool EditorLayer::wants_text_input() const {
 
 void EditorLayer::begin_frame() {
     if (!initialized_) return;
+    // Display scale changes rebuild fonts + style before the frame starts.
+    if (appearance_ != nullptr && appearance_->update()) font_atlas_changed_ = true;
     ImGui_ImplSDL3_NewFrame();
     ImGui::NewFrame();
     ImGuizmo::BeginFrame();

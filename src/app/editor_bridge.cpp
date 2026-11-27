@@ -45,10 +45,12 @@ void with_load_transfer(const engine::rhi::Device& device, Fn&& fn) {
 
 void EditorBridge::create(SDL_Window* window, bool enabled) {
     if (!enabled) return;
-    if (auto e = engine::editor::EditorLayer::create(
-            window, std::string(QUAT_PROJECT_ROOT) + "/assets/fonts/Roboto-Medium.ttf");
-        e) {
+    if (auto e = engine::editor::EditorLayer::create(window, QUAT_PROJECT_ROOT); e) {
         editor_ = std::move(*e);
+        // QUAT_EDITOR_THEME=light|dark picks the initial theme.
+        if (const char* theme = std::getenv("QUAT_EDITOR_THEME"); theme != nullptr) {
+            editor_.set_theme(theme);
+        }
         // Startup editor state (headless captures, scripted demos):
         // QUAT_EDITOR_SELECT=<entity name>, QUAT_EDITOR_FOCUS=<panel title>.
         if (const char* sel = std::getenv("QUAT_EDITOR_SELECT"); sel != nullptr) {

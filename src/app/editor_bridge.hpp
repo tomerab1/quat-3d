@@ -78,6 +78,9 @@ public:
     void fill_remote_targets(RemoteBridgeTargets& targets, bool demo_physics);
 
     [[nodiscard]] bool active() const { return editor_.active(); }
+    // True once after the editor rebuilt its font atlas (display scale
+    // change); the frame renderer must re-upload it.
+    [[nodiscard]] bool take_font_atlas_changed() { return editor_.take_font_atlas_changed(); }
     [[nodiscard]] const engine::editor::RendererSettings& render_settings() const {
         return render_settings_;
     }

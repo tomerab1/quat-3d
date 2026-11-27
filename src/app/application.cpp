@@ -275,6 +275,7 @@ bool Application::run_frame() {
     remote_->poll();
 #ifdef ENGINE_EDITOR
     editor_.begin_frame(); // UI frame + Play/Stop, save/load, instantiate
+    if (editor_.take_font_atlas_changed()) renderer_.reload_ui_fonts(); // DPI change
 #endif
 
     const VkExtent2D pixel_extent = window_pixel_extent(platform_.window);

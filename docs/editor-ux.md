@@ -94,7 +94,7 @@ disabled text and axis markers >= 3:1.
 | `accent_text` | `#6EA8FE` | `#1D57B3` | accent text / icons / check marks |
 | `on_accent` | `#FFFFFF` | `#FFFFFF` | text on an accent fill |
 | `border` / `separator` | `#2E3036` / `#2A2C31` | `#C9CDD3` / `#D5D8DD` | outlines / hairlines |
-| `success` `warning` `error` `info` | `#4CC38A` `#E8B04B` `#F26D66` `#62AEF5` | `#1B7A4C` `#8F5B00` `#C12F2F` `#1F63B5` | status |
+| `success` `warning` `error` `info` | `#4CC38A` `#E8B04B` `#F26D66` `#62AEF5` | `#176B42` `#825200` `#B42A2A` `#1F63B5` | status |
 | `selection` | accent @ 40 % | accent @ 22 % | selected rows |
 | `axis_x/y/z` | `#E5484D` `#5DBB46` `#3D8CF0` | `#C8323A` `#3A8A1E` `#2466C8` | vector field markers |
 

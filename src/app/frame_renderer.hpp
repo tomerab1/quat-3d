@@ -194,6 +194,10 @@ public:
     void set_render_settings(const engine::editor::RendererSettings* settings) {
         render_settings_ = settings;
     }
+    // Re-uploads the editor's font atlas into every frame slot's UI pass
+    // after the editor rebuilt it (display scale change). Waits for the
+    // device to idle first; rare, so the stall does not matter.
+    void reload_ui_fonts();
 #endif
     // Atmosphere LUTs + dynamic IBL probe, lit by the scene's sun. Optional:
     // failures are logged and fall back to the procedural sky / flat ambient.
