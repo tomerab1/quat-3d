@@ -96,6 +96,7 @@ find_package(GameNetworkingSockets CONFIG REQUIRED)
 # Lua 5.4 (C library, longjmp error handling) + sol2 (header-only bindings).
 find_package(Lua REQUIRED)
 find_package(sol2 CONFIG REQUIRED)
+include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/FetchAcl.cmake) # ACL + RTM (header-only)
 # miniaudio: vcpkg's port is header-only (it installs miniaudio.h and nothing
 # else), so it is wrapped in an imported target here and engine_audio compiles
 # the implementation (src/audio/miniaudio_impl.cpp). Linux needs pthread, libm
@@ -173,16 +174,24 @@ target_link_libraries(engine_asset PUBLIC engine_flags engine_rhi glm::glm)
 target_include_directories(engine_asset PUBLIC ${ENGINE_PUBLIC_INCLUDE})
 
 # ---------------------------------------------------------------------------
-# engine_animation — CPU-side skeletal animation (skeletons, clips, animator).
-# Graphics-free: plain data + math, consumed by engine_scene and the renderer's
-# GPU skinning pass. Starts with SkeletonAsset (5.1).
+# engine_animation — CPU-side skeletal animation (skeletons, clips, animator,
+# inertialization, two-bone / foot IK, ACL clip compression). Graphics-free:
+# plain data + math, consumed by engine_scene and the GPU skinning pass.
 # ---------------------------------------------------------------------------
 add_library(engine_animation STATIC
     src/animation/skeleton.cpp
     src/animation/clip.cpp
     src/animation/animator.cpp
-    src/animation/state_machine.cpp)
+    src/animation/state_machine.cpp
+    src/animation/inertialization.cpp
+    src/animation/clip_resample.cpp
+    src/animation/acl_compress.cpp
+    src/animation/acl_decompress.cpp
+    src/animation/ik/two_bone_ik.cpp
+    src/animation/ik/foot_placement.cpp)
 target_link_libraries(engine_animation PUBLIC engine_flags glm::glm)
+# ACL is an implementation detail of the clip codec (acl_*.cpp).
+target_link_libraries(engine_animation PRIVATE acl_headers)
 target_include_directories(engine_animation PUBLIC ${ENGINE_PUBLIC_INCLUDE})
 
 # ---------------------------------------------------------------------------
@@ -206,11 +215,13 @@ add_library(engine_scene STATIC
     src/scene/gltf/mesh.cpp
     src/scene/gltf/material.cpp
     src/scene/gltf/skin_animation.cpp
+    src/scene/gltf/clip_compression.cpp
     src/scene/gltf/scene_assembly.cpp
     src/scene/gltf/self_tests.cpp
     src/scene/stb_image_impl.cpp
     src/scene/components.cpp
     src/scene/scene.cpp
+    src/scene/animation_system.cpp
     src/scene/physics_system.cpp
     src/scene/nav_agent_system.cpp
     src/scene/navigation.cpp
@@ -221,6 +232,7 @@ add_library(engine_scene STATIC
     src/scene/component_json.cpp
     src/scene/script_component.cpp
     src/scene/scene_snapshot.cpp
+    src/scene/component_json_animation.cpp
     src/scene/material_override.cpp
     src/scene/render_settings_json.cpp
     src/scene/audio_system.cpp
@@ -385,10 +397,13 @@ set_source_files_properties(src/remote/world/stb_image_write_impl.cpp
 # GBuffer pass (mesh_pass); lighting/tonemap/imgui passes follow in later slices.
 # ---------------------------------------------------------------------------
 add_library(engine_renderer STATIC
+    src/renderer/csm.cpp
     src/renderer/draw_batching.cpp
     src/renderer/render_settings.cpp
     src/renderer/grass.cpp
     src/renderer/grass_pass.cpp
+    src/renderer/gtao_pass.cpp
+    src/renderer/hiz_pass.cpp
     src/renderer/instance_buffer.cpp
     src/renderer/mesh_pass.cpp
     src/renderer/lighting_pass.cpp
@@ -406,7 +421,8 @@ add_library(engine_renderer STATIC
     src/renderer/atmosphere_pass.cpp
     src/renderer/terrain_pass.cpp
     src/renderer/terrain_gpu_tiles.cpp
-    src/renderer/terrain_synth_pass.cpp)
+    src/renderer/terrain_synth_pass.cpp
+    src/renderer/terrain_shadow.cpp)
 target_link_libraries(engine_renderer PUBLIC
     engine_flags engine_rhi engine_asset engine_terrain glm::glm)
 target_include_directories(engine_renderer PUBLIC ${ENGINE_PUBLIC_INCLUDE})
@@ -440,6 +456,7 @@ if(ENGINE_EDITOR)
         src/editor/picking.cpp
         src/editor/audio_inspector.cpp
         src/editor/script_inspector.cpp
+        src/editor/animation_inspector.cpp
         src/editor/grass_inspector.cpp
         src/editor/behavior_panel.cpp
         src/editor/behavior_canvas.cpp

@@ -3,6 +3,7 @@
 // include/engine/physics/physics_world.hpp; shared internals in
 // physics_world_impl.hpp.
 
+#include <algorithm>
 #include <cfloat>
 #include <cmath>
 #include <optional>
@@ -74,22 +75,35 @@ std::uint32_t PhysicsWorld::character_count() const {
 }
 
 namespace {
-// Skips sensor (trigger) bodies unless asked to include them, and
-// characters' inner bodies (cast_ray tests character shapes itself).
-class SensorBodyFilter final : public JPH::BodyFilter {
+// Skips sensor (trigger) bodies unless asked to include them, bodies whose
+// owner is ignored, and characters' inner bodies (cast_ray tests character
+// shapes itself).
+class RayBodyFilter final : public JPH::BodyFilter {
 public:
-    SensorBodyFilter(bool include_sensors,
-                     const std::unordered_map<std::uint32_t, std::uint32_t>& inner_bodies)
-        : include_sensors_(include_sensors), inner_bodies_(inner_bodies) {}
+    RayBodyFilter(bool include_sensors, std::span<const std::uint32_t> ignore_owners,
+                  const std::unordered_map<std::uint32_t, std::uint32_t>& body_owner,
+                  const std::unordered_map<std::uint32_t, std::uint32_t>& inner_bodies)
+        : include_sensors_(include_sensors), ignore_owners_(ignore_owners),
+          body_owner_(body_owner), inner_bodies_(inner_bodies) {}
     [[nodiscard]] bool ShouldCollide(const JPH::BodyID& id) const override {
         return !inner_bodies_.contains(id.GetIndexAndSequenceNumber());
     }
     [[nodiscard]] bool ShouldCollideLocked(const JPH::Body& body) const override {
-        return include_sensors_ || !body.IsSensor();
+        if (!include_sensors_ && body.IsSensor()) return false;
+        if (ignore_owners_.empty()) return true;
+        const auto it = body_owner_.find(body.GetID().GetIndexAndSequenceNumber());
+        return it == body_owner_.end() || !is_ignored(ignore_owners_, it->second);
+    }
+
+    [[nodiscard]] static bool is_ignored(std::span<const std::uint32_t> ignore,
+                                         std::uint32_t owner) {
+        return std::find(ignore.begin(), ignore.end(), owner) != ignore.end();
     }
 
 private:
-    bool include_sensors_;
+    bool                                                    include_sensors_;
+    std::span<const std::uint32_t>                          ignore_owners_;
+    const std::unordered_map<std::uint32_t, std::uint32_t>& body_owner_;
     const std::unordered_map<std::uint32_t, std::uint32_t>& inner_bodies_;
 };
 } // namespace
@@ -97,7 +111,9 @@ private:
 std::optional<PhysicsWorld::RayHit> PhysicsWorld::cast_ray(const glm::vec3& origin,
                                                            const glm::vec3& direction,
                                                            float max_distance,
-                                                           bool include_sensors) const {
+                                                           bool include_sensors,
+                                                           std::span<const std::uint32_t> ignore_owners)
+    const {
     const float len = glm::length(direction);
     if (!impl_ || !(len > 1e-6F) || !(max_distance > 0.0F) || !std::isfinite(max_distance)) {
         return std::nullopt;
@@ -108,7 +124,8 @@ std::optional<PhysicsWorld::RayHit> PhysicsWorld::cast_ray(const glm::vec3& orig
     float best_fraction = 1.0F + FLT_EPSILON;
 
     JPH::RayCastResult result;
-    const SensorBodyFilter filter(include_sensors, impl_->inner_body_character);
+    const RayBodyFilter filter(include_sensors, ignore_owners, impl_->body_owner,
+                               impl_->inner_body_character);
     if (impl_->system.GetNarrowPhaseQuery().CastRay(ray, result, JPH::BroadPhaseLayerFilter{},
                                                     JPH::ObjectLayerFilter{}, filter)) {
         RayHit hit;
@@ -134,7 +151,10 @@ std::optional<PhysicsWorld::RayHit> PhysicsWorld::cast_ray(const glm::vec3& orig
     // each character's centre-of-mass space.
     for (std::size_t i = 0; i < impl_->characters.size(); ++i) {
         const JPH::CharacterVirtual* c = impl_->characters[i].GetPtr();
-        if (c == nullptr) continue;
+        if (c == nullptr ||
+            RayBodyFilter::is_ignored(ignore_owners, impl_->character_owner[i])) {
+            continue;
+        }
         const JPH::RMat44 com = c->GetCenterOfMassTransform();
         const JPH::RRayCast local_r = ray.Transformed(com.InversedRotationTranslation());
         const JPH::RayCast local(JPH::Vec3(local_r.mOrigin), local_r.mDirection);
