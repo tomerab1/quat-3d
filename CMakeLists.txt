@@ -155,7 +155,8 @@ add_library(engine_core STATIC
     src/core/sim_clock.cpp
     src/core/file_watcher.cpp
     src/core/child_process.cpp
-    src/core/asset_root.cpp)
+    src/core/asset_root.cpp
+    src/core/env.cpp)
 target_link_libraries(engine_core PUBLIC engine_flags Threads::Threads)
 target_include_directories(engine_core PUBLIC ${ENGINE_PUBLIC_INCLUDE})
 

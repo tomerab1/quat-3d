@@ -100,7 +100,7 @@ jobs:
         shell: bash
         env:
           ARCHIVE: ${{ steps.package.outputs.archive }}
-        run: bash scripts/smoke-test-package.sh "$ARCHIVE" "$RUNNER_TEMP/smoke dir ü"
+        run: bash scripts/smoke-test-package.sh "$ARCHIVE" "$RUNNER_TEMP/smoke dir ü 画"
 
       - name: Upload package
         uses: actions/upload-artifact@v4
@@ -117,8 +117,8 @@ jobs:
         with:
           name: smoke-${{ matrix.name }}
           path: |
-            ${{ runner.temp }}/smoke dir ü/smoke.log
-            ${{ runner.temp }}/smoke dir ü/smoke.ppm
+            ${{ runner.temp }}/smoke dir ü 画/smoke.log
+            ${{ runner.temp }}/smoke dir ü 画/smoke.ppm
             build/${{ matrix.preset }}/vcpkg-manifest-install.log
           if-no-files-found: ignore
 

@@ -14,6 +14,7 @@
 
 #include "app/application.hpp"
 #include "app/remote_bridge.hpp"
+#include "engine/core/env.hpp"
 #include "engine/core/stderr_capture.hpp"
 
 int main() {
@@ -28,9 +29,8 @@ int main() {
     }
     // QUAT_SCREENSHOT, combined with QUAT_MAX_FRAMES, writes the final presented
     // frame to the given path as binary PPM — headless visual verification.
-    if (const char* env = std::getenv("QUAT_SCREENSHOT"); env != nullptr) {
-        config.screenshot_path = std::string(env);
-    }
+    // Read as a path (UTF-16 environment on Windows), not via std::getenv.
+    config.screenshot_path = engine::core::env_path("QUAT_SCREENSHOT");
     // QUAT_NO_UI=1 disables the editor shell (deterministic headless renders).
     config.editor_ui = std::getenv("QUAT_NO_UI") == nullptr;
 

@@ -6,9 +6,9 @@
 #include <utility>
 
 #include <SDL3/SDL_filesystem.h>
-#include <SDL3/SDL_stdinc.h>
 
 #include "engine/core/asset_root.hpp"
+#include "engine/core/env.hpp"
 #include "engine/core/utf8_path.hpp"
 
 namespace quat::app {
@@ -21,11 +21,9 @@ using engine::core::path_to_utf8;
 
 [[nodiscard]] engine::core::AssetRoot resolve_or_exit() {
     engine::core::AssetRootCandidates candidates;
-    // SDL_getenv / SDL_GetBasePath return UTF-8 on every platform (std::getenv
-    // would give the ANSI code page on Windows).
-    if (const char* env = SDL_getenv("QUAT_ASSET_ROOT"); env != nullptr && *env != '\0') {
-        candidates.override_root = path_from_utf8(env);
-    }
+    // env_path reads the UTF-16 environment on Windows (std::getenv would give
+    // the ANSI code page); SDL_GetBasePath returns UTF-8.
+    candidates.override_root = engine::core::env_path("QUAT_ASSET_ROOT");
     // The executable's directory, or a macOS bundle's Contents/Resources
     // (where the packaged .app keeps its data).
     if (const char* base = SDL_GetBasePath(); base != nullptr) {

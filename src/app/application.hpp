@@ -17,6 +17,7 @@
 // render graph, remote capture, submit + present.
 
 #include <cstdint>
+#include <filesystem>
 #include <memory>
 #include <optional>
 #include <string>
@@ -48,7 +49,7 @@ struct AppConfig {
     // until the window closes). Headless smoke tests verify clean teardown.
     std::uint64_t max_frames = 0;
     // QUAT_SCREENSHOT (with QUAT_MAX_FRAMES): the final frame as binary PPM.
-    std::optional<std::string> screenshot_path;
+    std::optional<std::filesystem::path> screenshot_path;
     // False with QUAT_NO_UI=1: no editor shell (deterministic headless renders).
     bool editor_ui = true;
 };

@@ -9,6 +9,7 @@
 #include <system_error>
 #include <utility>
 
+#include "engine/core/env.hpp"
 #include "engine/core/utf8_path.hpp"
 #include "engine/core/child_process.hpp"
 
@@ -132,11 +133,13 @@ namespace {
 // ---------------------------------------------------------------------------
 
 std::optional<fs::path> find_slangc() {
-    if (const char* env = std::getenv("QUAT_SLANGC"); env != nullptr && *env != '\0') {
-        if (is_executable_file(env)) return fs::path(env);
+    if (const auto env = core::env_path("QUAT_SLANGC"); env && is_executable_file(*env)) {
+        return *env;
     }
 #ifdef QUAT_SLANGC_PATH
-    if (is_executable_file(QUAT_SLANGC_PATH)) return fs::path(QUAT_SLANGC_PATH);
+    if (const fs::path built = core::path_from_utf8(QUAT_SLANGC_PATH); is_executable_file(built)) {
+        return built;
+    }
 #endif
     return core::find_on_path("slangc");
 }

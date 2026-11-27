@@ -50,6 +50,7 @@ case "$archive" in
   # Every DLL the game or a bundled DLL imports must be in the package or a
   # Windows system DLL; vulkan-1.dll comes with the GPU driver.
   missing=0
+  # dumpbin gets relative names: it may not take a non-ASCII argument intact.
   for bin in "$dir/game.exe" "$dir"/*.dll; do
     while read -r dll; do
       case "${dll,,}" in
@@ -58,7 +59,7 @@ case "$archive" in
       [ -f "$dir/$dll" ] || [ -f "$sys32/$dll" ] && continue
       echo "$(basename "$bin") imports $dll: not in the package or System32" >&2
       missing=1
-    done < <(dumpbin //nologo //dependents "$(cygpath -w "$bin")" | tr -d '\r' |
+    done < <(cd "$dir" && dumpbin //nologo //dependents "$(basename "$bin")" | tr -d '\r' |
                awk 'NF == 1 && /\.[Dd][Ll][Ll]$/ { print $1 }')
   done
   [ "$missing" = 0 ] || exit 1

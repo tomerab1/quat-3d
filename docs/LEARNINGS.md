@@ -33,7 +33,10 @@ into CLAUDE.md or the brief template in [`CYCLE.md`](CYCLE.md).
   `engine::core::path_from_utf8`, read them back with `path_to_utf8` /
   `path_to_generic_utf8` (`engine/core/utf8_path.hpp`); SDL (`SDL_getenv`,
   `SDL_GetBasePath`), ImGui, JSON and child-process arguments are UTF-8. The
-  release smoke test unpacks into `smoke dir ü` to keep it honest.
+  release smoke test unpacks into `smoke dir ü 画` (Latin-1 + CJK, the
+  latter outside every Western ANSI code page) to keep it honest. Path-valued
+  environment variables are read with `engine::core::env_path` (UTF-16
+  environment on Windows), never `std::getenv`.
 - **Release packaging (P4) gotchas.** Explicit `shell: bash` steps run with
   `-eo pipefail` (the default macOS/Linux shell does not), so `ls a b | head`
   lookups and early-exiting `awk` readers fail scripts there; Git Bash on

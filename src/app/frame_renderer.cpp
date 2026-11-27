@@ -4,8 +4,11 @@
 #include "app/frame_renderer.hpp"
 
 #include <cstdio>
+#include <fstream>
+#include <string>
 #include <utility>
 
+#include "engine/core/utf8_path.hpp"
 #include "engine/rhi/device.hpp"
 #include "engine/rhi/pipeline_cache.hpp"
 #include "engine/rhi/swapchain.hpp"
@@ -388,11 +391,13 @@ bool FrameRenderer::record_screenshot_copy(VkCommandBuffer cmd) {
 
 void FrameRenderer::write_screenshot() const {
     const VkExtent2D present_extent = swapchain_->extent();
-    const char* screenshot_path = screenshot_path_->c_str();
+    // fs::path all the way: a non-ASCII path (e.g. CJK on Windows) must not go
+    // through a narrow fopen.
+    const std::string shown = engine::core::path_to_utf8(*screenshot_path_);
     const bool bgra = swapchain_->format() == VK_FORMAT_B8G8R8A8_SRGB ||
                       swapchain_->format() == VK_FORMAT_B8G8R8A8_UNORM;
-    if (FILE* f = std::fopen(screenshot_path, "wb")) {
-        std::fprintf(f, "P6\n%u %u\n255\n", present_extent.width, present_extent.height);
+    if (std::ofstream out(*screenshot_path_, std::ios::binary | std::ios::trunc); out) {
+        out << "P6\n" << present_extent.width << ' ' << present_extent.height << "\n255\n";
         const auto* px = static_cast<const std::uint8_t*>(screenshot_buffer_.mapped());
         std::vector<std::uint8_t> row(static_cast<std::size_t>(present_extent.width) * 3);
         for (std::uint32_t y = 0; y < present_extent.height; ++y) {
@@ -403,12 +408,17 @@ void FrameRenderer::write_screenshot() const {
                 row[x * 3 + 1] = p[1];
                 row[x * 3 + 2] = bgra ? p[0] : p[2];
             }
-            std::fwrite(row.data(), 1, row.size(), f);
+            out.write(reinterpret_cast<const char*>(row.data()),
+                      static_cast<std::streamsize>(row.size()));
         }
-        std::fclose(f);
-        std::fprintf(stderr, "[screenshot] wrote %s\n", screenshot_path);
+        out.close();
+        if (out) {
+            std::fprintf(stderr, "[screenshot] wrote %s\n", shown.c_str());
+        } else {
+            std::fprintf(stderr, "[screenshot] write failed for %s\n", shown.c_str());
+        }
     } else {
-        std::fprintf(stderr, "[screenshot] could not open %s\n", screenshot_path);
+        std::fprintf(stderr, "[screenshot] could not open %s\n", shown.c_str());
     }
 }
 
