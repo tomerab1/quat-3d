@@ -124,7 +124,10 @@ public:
 
     // ---- Character controller (predictive, JPH::CharacterVirtual). ------------
     // A capsule character: full cylinder half-height + radius, at `position`.
-    // `owner` works as for bodies (see owned_characters()).
+    // `owner` works as for bodies (see owned_characters()). Characters collide
+    // with each other, and carry a kinematic inner body on the CHARACTER layer
+    // that follows them, so dynamic bodies rest on / bounce off them and
+    // sensors detect them (issue #48).
     [[nodiscard]] std::uint32_t create_character(float half_height, float radius,
                                                  const glm::vec3& position,
                                                  std::uint32_t owner = no_owner);
@@ -146,12 +149,18 @@ public:
     [[nodiscard]] bool character_on_ground(std::uint32_t character) const;
 
     // Trigger (sensor) overlap events recorded during the most recent update().
-    // Valid until the next update() call.
+    // Valid until the next update() call. A character takes part through its
+    // inner body; body_owner() maps that to the character's owner.
     [[nodiscard]] std::span<const TriggerEvent> trigger_events() const;
 
+    // The owner a body was created with (a character's owner for its inner
+    // body); no_owner for unowned or unknown bodies.
+    [[nodiscard]] std::uint32_t body_owner(std::uint32_t body) const;
+
     // ---- Queries (debugging, gameplay) -------------------------------------
-    // Bodies in the simulation (all kinds, terrain included) and how many of
-    // them are awake (active rigid bodies).
+    // Bodies in the simulation (all kinds, terrain included; not the
+    // characters' inner bodies) and how many of them are awake (active rigid
+    // bodies).
     [[nodiscard]] std::uint32_t body_count() const;
     [[nodiscard]] std::uint32_t active_body_count() const;
     // Live character controllers.

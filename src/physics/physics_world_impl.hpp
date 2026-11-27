@@ -171,6 +171,25 @@ struct BodyRecord {
 struct CharacterRecord {
     JPH::Ref<JPH::CharacterVirtual> character;
     std::uint32_t                   owner = PhysicsWorld::no_owner;
+    // The character's inner rigid body (a kinematic capsule on the CHARACTER
+    // layer that follows it): how dynamic bodies and sensors see it.
+    std::uint32_t                   inner_body = PhysicsWorld::invalid_body;
+};
+
+// What a character's own sweep collides with: everything its layer pair
+// filter allows except other characters' inner bodies (the CHARACTER layer):
+// characters meet each other through CharacterVsCharacterCollision, which
+// sees their exact, current shapes.
+class CharacterSweepLayerFilter final : public JPH::ObjectLayerFilter {
+public:
+    explicit CharacterSweepLayerFilter(const JPH::ObjectLayerPairFilter& pairs) : pairs_(pairs) {}
+    [[nodiscard]] bool ShouldCollide(JPH::ObjectLayer layer) const override {
+        return layer != obj_layers::k_character &&
+               pairs_.ShouldCollide(obj_layers::k_character, layer);
+    }
+
+private:
+    const JPH::ObjectLayerPairFilter& pairs_;
 };
 
 } // namespace detail
@@ -183,7 +202,11 @@ struct PhysicsWorld::Impl {
     detail::ObjectLayerPairFilterImpl         obj_pair;
     JPH::PhysicsSystem                        system;
     detail::SlotMap<detail::ShapeRecord>      shapes;
+    // Every live character is registered here so characters collide with
+    // each other (issue #48). Declared before `characters`: it outlives them.
+    JPH::CharacterVsCharacterCollisionSimple  character_vs_character;
     detail::SlotMap<detail::CharacterRecord>  characters;
+    std::unordered_map<std::uint32_t, std::uint32_t> inner_bodies; // inner body -> character
     std::unordered_map<std::uint32_t, detail::BodyRecord> bodies; // body id -> record
     detail::ContactListenerImpl               contact_listener;
     std::vector<PhysicsWorld::TriggerEvent>   trigger_events;

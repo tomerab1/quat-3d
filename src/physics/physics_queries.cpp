@@ -16,12 +16,30 @@ std::span<const PhysicsWorld::TriggerEvent> PhysicsWorld::trigger_events() const
     return {impl_->trigger_events.data(), impl_->trigger_events.size()};
 }
 
+std::uint32_t PhysicsWorld::body_owner(std::uint32_t body) const {
+    if (!impl_ || body == invalid_body) return no_owner;
+    if (const auto it = impl_->bodies.find(body); it != impl_->bodies.end()) {
+        return it->second.owner;
+    }
+    if (const auto it = impl_->inner_bodies.find(body); it != impl_->inner_bodies.end()) {
+        const CharacterRecord* c = impl_->characters.get(it->second);
+        return c != nullptr ? c->owner : no_owner;
+    }
+    return no_owner;
+}
+
+// Characters' inner bodies are part of the characters (character_count), not
+// bodies of their own; they never sleep, so they are always active.
 std::uint32_t PhysicsWorld::body_count() const {
-    return impl_ ? impl_->system.GetNumBodies() : 0;
+    if (!impl_) return 0;
+    return impl_->system.GetNumBodies() - static_cast<std::uint32_t>(impl_->inner_bodies.size());
 }
 
 std::uint32_t PhysicsWorld::active_body_count() const {
-    return impl_ ? impl_->system.GetNumActiveBodies(JPH::EBodyType::RigidBody) : 0;
+    if (!impl_) return 0;
+    const std::uint32_t active = impl_->system.GetNumActiveBodies(JPH::EBodyType::RigidBody);
+    const auto inner = static_cast<std::uint32_t>(impl_->inner_bodies.size());
+    return active > inner ? active - inner : 0;
 }
 
 std::uint32_t PhysicsWorld::character_count() const {
@@ -29,16 +47,23 @@ std::uint32_t PhysicsWorld::character_count() const {
 }
 
 namespace {
-// Skips sensor (trigger) bodies unless asked to include them.
+// Skips sensor (trigger) bodies unless asked to include them, and characters'
+// inner bodies (cast_ray tests the character shapes itself).
 class SensorBodyFilter final : public JPH::BodyFilter {
 public:
-    explicit SensorBodyFilter(bool include_sensors) : include_sensors_(include_sensors) {}
+    SensorBodyFilter(bool include_sensors,
+                     const std::unordered_map<std::uint32_t, std::uint32_t>& inner_bodies)
+        : include_sensors_(include_sensors), inner_bodies_(inner_bodies) {}
+    [[nodiscard]] bool ShouldCollide(const JPH::BodyID& id) const override {
+        return !inner_bodies_.contains(id.GetIndexAndSequenceNumber());
+    }
     [[nodiscard]] bool ShouldCollideLocked(const JPH::Body& body) const override {
         return include_sensors_ || !body.IsSensor();
     }
 
 private:
-    bool include_sensors_;
+    bool                                                    include_sensors_;
+    const std::unordered_map<std::uint32_t, std::uint32_t>& inner_bodies_;
 };
 } // namespace
 
@@ -56,7 +81,7 @@ std::optional<PhysicsWorld::RayHit> PhysicsWorld::cast_ray(const glm::vec3& orig
     float best_fraction = 1.0F + FLT_EPSILON;
 
     JPH::RayCastResult result;
-    const SensorBodyFilter filter(include_sensors);
+    const SensorBodyFilter filter(include_sensors, impl_->inner_bodies);
     if (impl_->system.GetNarrowPhaseQuery().CastRay(ray, result, JPH::BroadPhaseLayerFilter{},
                                                     JPH::ObjectLayerFilter{}, filter)) {
         RayHit hit;
