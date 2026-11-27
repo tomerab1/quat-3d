@@ -281,6 +281,7 @@ bool Application::run_frame() {
     const VkExtent2D pixel_extent = window_pixel_extent(platform_.window);
     if (pixel_extent.width == 0 || pixel_extent.height == 0) {
         SDL_Delay(10); // minimized — nothing to draw
+        run_unrendered_step();
         return true;
     }
     if (!renderer_.ensure_swapchain(pixel_extent)) return false;
@@ -364,6 +365,19 @@ bool Application::run_frame() {
     // frame stats and engine.info — not only QUAT_MAX_FRAMES runs.
     ++presented_;
     return max_frames == 0 || presented_ < max_frames;
+}
+
+void Application::run_unrendered_step() {
+    // Only a queued debug.step advances the clock here, so real-time
+    // simulation stays frozen while minimised but a stepping remote caller
+    // still gets its reply. No camera input or audio: nothing is shown.
+    const float sim_dt = remote_->advance_sim_unrendered();
+    if (sim_dt <= 0.0F) return;
+    std::optional<PlayStep> play;
+#ifdef ENGINE_EDITOR
+    play = editor_.play_step(camera_.pos);
+#endif
+    world_.simulate(scene_, presented_, 0.0F, sim_dt, play ? &*play : nullptr);
 }
 
 engine::scene::CameraMatrices Application::update_world(float dt, float sim_dt, float aspect) {

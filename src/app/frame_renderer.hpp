@@ -33,7 +33,7 @@
 #include <glm/glm.hpp>
 #include <vulkan/vulkan.h>
 
-#include "app/remote_bridge.hpp" // CaptureSource
+#include "app/screenshot_capture.hpp" // CaptureSource
 #include "engine/renderer/atmosphere_pass.hpp"
 #include "engine/renderer/bloom_pass.hpp"
 #include "engine/renderer/cloud_settings.hpp"

@@ -437,7 +437,8 @@ add_executable(game
     src/app/audio_runtime.cpp
     src/app/grass_runtime.cpp
     src/app/nav_bake.cpp
-    src/app/remote_bridge.cpp)
+    src/app/remote_bridge.cpp
+    src/app/screenshot_capture.cpp)
 target_link_libraries(game PRIVATE
     engine_flags engine_core engine_rhi engine_asset engine_scene engine_renderer engine_physics
     engine_terrain engine_nav engine_net engine_remote engine_remote_world engine_audio

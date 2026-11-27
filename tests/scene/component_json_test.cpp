@@ -85,6 +85,23 @@ TEST_F(ComponentJson, RoundTripsEveryWritableComponent) {
     }
 }
 
+// debug.watch with a component filter encodes only the named components.
+TEST_F(ComponentJson, EncodesOnlyTheRequestedComponents) {
+    r.emplace<s::Transform>(e);
+    ASSERT_OK(apply("point_light", {{"radius", 7}}));
+    ASSERT_OK(apply("instanced_mesh", {{"shape", "cone"}}));
+    const json full = encode_components(r, e);
+    ASSERT_EQ(full.size(), 3U);
+
+    const std::vector<std::string> only{"point_light", "camera", "transform"};
+    const json some = encode_components(r, e, {.only = only});
+    EXPECT_EQ(some.size(), 2U) << some.dump();
+    EXPECT_EQ(some["point_light"], full["point_light"]);
+    EXPECT_EQ(some["transform"], full["transform"]);
+    EXPECT_FALSE(some.contains("instanced_mesh"));
+    EXPECT_FALSE(some.contains("camera")) << "absent components stay absent";
+}
+
 // R10.2: the erosion model, grid step count and GPU flag round-trip; new
 // terrains default to GPU-capable grid erosion.
 TEST_F(ComponentJson, TerrainCarriesErosionModelAndGpuFlag) {
