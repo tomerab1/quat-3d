@@ -149,8 +149,9 @@ target_link_libraries(engine_rhi PUBLIC
 # types, and the debug messenger routes validation messages into its log ring.
 # The hot-reload compile worker runs on a std::thread.
 target_link_libraries(engine_rhi PRIVATE Threads::Threads)
-# nlohmann_json is an implementation detail of the reflection parser (PRIVATE).
-target_link_libraries(engine_rhi PRIVATE nlohmann_json::nlohmann_json)
+# nlohmann_json is an implementation detail of the reflection parser (PRIVATE);
+# glm because the parser reads slangc's JSON through core::JsonFields.
+target_link_libraries(engine_rhi PRIVATE nlohmann_json::nlohmann_json glm::glm)
 target_include_directories(engine_rhi PUBLIC ${ENGINE_PUBLIC_INCLUDE})
 
 # VMA's implementation is not warning-clean under our strict flags; compile just
