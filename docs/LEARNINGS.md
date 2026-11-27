@@ -101,6 +101,17 @@ into CLAUDE.md or the brief template in [`CYCLE.md`](CYCLE.md).
 
 ## C++ in this codebase
 
+- **vcpkg's `acl` port is POSIX access-control lists, not the animation
+  codec.** ACL + RTM are header-only and fetched by `cmake/FetchAcl.cmake`,
+  pinned to release commits. Check a port's description before adding it.
+- **A compressed clip can match every key and still drift between them.**
+  glTF rotations interpolate with slerp, ACL (like most runtimes) with
+  normalized lerp; on fast clips (the Khronos Fox's Walk / Run) the gap mid-key was
+  orders of magnitude over the error budget, and ACL's keyframe stripping only checks the samples it
+  removes. G8 resamples at a whole multiple of the key rate chosen by
+  measuring the between-sample error, splits the budget half/half, keeps
+  stripping off, and keeps a clip raw when compression does not pay.
+
 - **slangc 2025.6.1 segfaults after reporting a compile error** when
   `-reflection-json` is passed (exit by SIGSEGV, diagnostics already
   printed). Treat any non-zero exit *or* signal as a failed compile and keep

@@ -90,6 +90,13 @@ parse_and_extract_skeletons(fastgltf::GltfDataBuffer& data, const std::filesyste
 [[nodiscard]] std::expected<std::vector<animation::AnimClipAsset>, core::Error>
 parse_and_extract_animations(fastgltf::GltfDataBuffer& data, const std::filesystem::path& base_dir);
 
+// clip_compression.cpp: ACL-compresses each clip against the skin owning most
+// of its channels (skin_roots: each skin's armature global, for its scale).
+// Clips that cannot be compressed stay raw; one summary line goes to stderr.
+void compress_clips(std::vector<animation::AnimClipAsset>& clips,
+                    const std::vector<animation::SkeletonAsset>& skins,
+                    const std::vector<glm::mat4>& skin_roots, const std::string& label);
+
 // material.cpp
 [[nodiscard]] std::expected<std::vector<TextureData>, core::Error>
 extract_textures(const fastgltf::Asset& asset);

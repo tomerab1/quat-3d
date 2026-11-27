@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <utility>
 
 #include <entt/entity/registry.hpp>
 
@@ -167,8 +168,8 @@ void animation_system(entt::registry& registry, float dt, const FootGroundProbe&
         const glm::mat4 root = transform.world * skinned.root_transform;
 
         std::vector<JointPose> pose = animate(skeleton, anim, rt, dt);
-        rt.prev_pose = std::move(rt.last_pose);
-        rt.last_pose = pose;
+        std::swap(rt.prev_pose, rt.last_pose); // reuse both buffers
+        rt.last_pose.assign(pose.begin(), pose.end());
         rt.last_dt = dt;
 
         if (const auto* fik = registry.try_get<FootIK>(e); fik != nullptr && fik->enabled) {

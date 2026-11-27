@@ -93,6 +93,7 @@ find_package(EnTT CONFIG REQUIRED)
 find_package(Jolt CONFIG REQUIRED)
 find_package(recastnavigation CONFIG REQUIRED)
 find_package(GameNetworkingSockets CONFIG REQUIRED)
+include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/FetchAcl.cmake) # ACL + RTM (header-only)
 # miniaudio: vcpkg's port is header-only (it installs miniaudio.h and nothing
 # else), so it is wrapped in an imported target here and engine_audio compiles
 # the implementation (src/audio/miniaudio_impl.cpp). Linux needs pthread, libm
@@ -169,9 +170,9 @@ target_link_libraries(engine_asset PUBLIC engine_flags engine_rhi glm::glm)
 target_include_directories(engine_asset PUBLIC ${ENGINE_PUBLIC_INCLUDE})
 
 # ---------------------------------------------------------------------------
-# engine_animation — CPU-side skeletal animation (skeletons, clips, animator).
-# Graphics-free: plain data + math, consumed by engine_scene and the renderer's
-# GPU skinning pass. Starts with SkeletonAsset (5.1).
+# engine_animation — CPU-side skeletal animation (skeletons, clips, animator,
+# inertialization, two-bone / foot IK, ACL clip compression). Graphics-free:
+# plain data + math, consumed by engine_scene and the GPU skinning pass.
 # ---------------------------------------------------------------------------
 add_library(engine_animation STATIC
     src/animation/skeleton.cpp
@@ -179,9 +180,14 @@ add_library(engine_animation STATIC
     src/animation/animator.cpp
     src/animation/state_machine.cpp
     src/animation/inertialization.cpp
+    src/animation/clip_resample.cpp
+    src/animation/acl_compress.cpp
+    src/animation/acl_decompress.cpp
     src/animation/ik/two_bone_ik.cpp
     src/animation/ik/foot_placement.cpp)
 target_link_libraries(engine_animation PUBLIC engine_flags glm::glm)
+# ACL is an implementation detail of the clip codec (acl_*.cpp).
+target_link_libraries(engine_animation PRIVATE acl_headers)
 target_include_directories(engine_animation PUBLIC ${ENGINE_PUBLIC_INCLUDE})
 
 # ---------------------------------------------------------------------------
@@ -204,6 +210,7 @@ add_library(engine_scene STATIC
     src/scene/gltf/mesh.cpp
     src/scene/gltf/material.cpp
     src/scene/gltf/skin_animation.cpp
+    src/scene/gltf/clip_compression.cpp
     src/scene/gltf/scene_assembly.cpp
     src/scene/gltf/self_tests.cpp
     src/scene/stb_image_impl.cpp
