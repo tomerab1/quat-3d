@@ -10,6 +10,7 @@
 #include <cstddef>
 #include <expected>
 #include <filesystem>
+#include <optional>
 #include <span>
 #include <vector>
 
@@ -49,11 +50,15 @@ struct MeshData {
 // CPU-side decoded texture (always RGBA8, tightly packed), before GPU upload.
 // `color_space` is resolved from how the source image is referenced in glTF
 // materials (base colour / emissive are sRGB, everything else is linear data).
+// `alpha_test_cutoff` is set when an alphaMode MASK material samples the image
+// as its base colour: its mips are then built on the CPU with coverage-
+// preserving alpha at that cutoff (engine/asset/alpha_coverage.hpp).
 struct TextureData {
     std::vector<std::byte>   pixels;
     std::uint32_t            width  = 0;
     std::uint32_t            height = 0;
     asset::TextureColorSpace color_space = asset::TextureColorSpace::linear;
+    std::optional<float>     alpha_test_cutoff;
 };
 
 // CPU-side material extracted from glTF: scalar PBR parameters (factors + flags)

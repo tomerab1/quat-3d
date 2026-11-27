@@ -23,6 +23,8 @@ namespace {
 
 constexpr VkShaderStageFlags kMaterialStages = VK_SHADER_STAGE_FRAGMENT_BIT;
 
+constexpr std::uint32_t kMaterialMaxLod = material_sampler_max_lod;
+
 // Material descriptor set 0, matching PbrMaterial in material.slang (verified
 // against the gbuffer.slang SPIR-V): uniform params at 0, the five optional
 // textures as sampled images at 1..5, and the shared sampler at 6.
@@ -93,8 +95,14 @@ MeshPass::create(const rhi::Device& device, rhi::GpuAllocator& allocator,
     auto pipeline = cache.create_graphics_pipeline(info);
     if (!pipeline) return std::unexpected(pipeline.error());
     out.pipeline_ = std::move(*pipeline);
+    // Same state, alpha-tested fragment shader (glTF MASK).
+    info.fragment_entry = "fragment_masked";
+    auto masked = cache.create_graphics_pipeline(info);
+    if (!masked) return std::unexpected(masked.error());
+    out.masked_pipeline_ = std::move(*masked);
 
-    auto sampler = rhi::create_sampler(device.handle());
+    auto sampler = rhi::create_sampler(device.handle(), rhi::SamplerAddress::repeat,
+                                       kMaterialMaxLod);
     if (!sampler) return std::unexpected(sampler.error());
     out.sampler_ = std::move(*sampler);
 
@@ -138,6 +146,7 @@ MeshPass::add_to_graph(rhi::RenderGraph& graph, VkExtent2D extent, const glm::ma
                        const InstancedDrawList& list) {
     frame_descriptors_.clear();
     frame_draws_.clear();
+    frame_masked_draws_.clear();
     frame_draws_.reserve(list.draws.size());
 
     auto instances = instances_.upload(*device_, *allocator_, list.instances);
@@ -201,7 +210,8 @@ MeshPass::add_to_graph(rhi::RenderGraph& graph, VkExtent2D extent, const glm::ma
         fd.first_instance = d.first_instance;
         fd.instance_count = d.instance_count;
         fd.descriptor_index = slot->second;
-        frame_draws_.push_back(fd);
+        const bool masked = (mat.params.flags & asset::material_alpha_mask) != 0;
+        (masked ? frame_masked_draws_ : frame_draws_).push_back(fd);
     }
 
     const GBufferTargets t = targets;
@@ -261,35 +271,42 @@ MeshPass::add_to_graph(rhi::RenderGraph& graph, VkExtent2D extent, const glm::ma
             const VkRect2D scissor{{0, 0}, extent};
             vkCmdSetScissor(cmd, 0, 1, &scissor);
 
-            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_.handle());
-
-            // The instance array is shared by every draw: push it once.
+            // The instance array is shared by every draw: push it once per
+            // pipeline. Opaque draws first, so the alpha-tested ones (no
+            // early depth test) are rejected by the depth they wrote.
             GBufferPushConstants push{};
             push.view_proj = vp;
             push.instances = frame_instances_;
-            vkCmdPushConstants(cmd, pipeline_.layout(),
-                               VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
-                               sizeof(push), &push);
+            const auto draw_all = [&](const rhi::ManagedPipeline& pipeline,
+                                      std::span<const FrameDraw> draws) {
+                if (draws.empty()) return;
+                vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.handle());
+                vkCmdPushConstants(cmd, pipeline.layout(),
+                                   VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
+                                   sizeof(push), &push);
+                std::uint32_t bound_descriptor = std::numeric_limits<std::uint32_t>::max();
+                for (const FrameDraw& fd : draws) {
+                    if (fd.descriptor_index != bound_descriptor) {
+                        frame_descriptors_[fd.descriptor_index].bind(
+                            cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.layout(), 0);
+                        bound_descriptor = fd.descriptor_index;
+                    }
 
-            std::uint32_t bound_descriptor = std::numeric_limits<std::uint32_t>::max();
-            for (const FrameDraw& fd : frame_draws_) {
-                if (fd.descriptor_index != bound_descriptor) {
-                    frame_descriptors_[fd.descriptor_index].bind(
-                        cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_.layout(), 0);
-                    bound_descriptor = fd.descriptor_index;
+                    const VkDeviceSize offset = 0;
+                    vkCmdBindVertexBuffers(cmd, 0, 1, &fd.vertex_buffer, &offset);
+                    vkCmdBindIndexBuffer(cmd, fd.index_buffer, 0, VK_INDEX_TYPE_UINT32);
+
+                    // firstInstance selects the draw's instance range; the
+                    // shader indexes the array with InstanceIndex (which
+                    // includes it).
+                    for (const asset::SubMesh& sm : fd.submeshes) {
+                        vkCmdDrawIndexed(cmd, sm.index_count, fd.instance_count,
+                                         sm.index_offset, 0, fd.first_instance);
+                    }
                 }
-
-                const VkDeviceSize offset = 0;
-                vkCmdBindVertexBuffers(cmd, 0, 1, &fd.vertex_buffer, &offset);
-                vkCmdBindIndexBuffer(cmd, fd.index_buffer, 0, VK_INDEX_TYPE_UINT32);
-
-                // firstInstance selects the draw's instance range; the shader
-                // indexes the array with InstanceIndex (which includes it).
-                for (const asset::SubMesh& sm : fd.submeshes) {
-                    vkCmdDrawIndexed(cmd, sm.index_count, fd.instance_count, sm.index_offset, 0,
-                                     fd.first_instance);
-                }
-            }
+            };
+            draw_all(pipeline_, frame_draws_);
+            draw_all(masked_pipeline_, frame_masked_draws_);
 
             vkCmdEndRendering(cmd);
         });

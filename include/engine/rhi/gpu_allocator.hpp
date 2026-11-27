@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <expected>
+#include <span>
 #ifdef ENGINE_DESCRIPTOR_SETS_FALLBACK
 #include <optional>
 #endif
@@ -206,6 +207,25 @@ upload_device_image(GpuAllocator& allocator, const TransferContext& transfer,
                     VkFormat format,
                     VkImageUsageFlags usage = VK_IMAGE_USAGE_SAMPLED_BIT,
                     std::uint32_t mip_levels = 1);
+
+// One caller-built mip level for upload_device_mip_chain: tightly packed
+// texels of `format`, `extent` = max(1, level-0 extent >> level).
+struct MipLevelData {
+    const void*  data = nullptr;
+    VkDeviceSize size = 0;
+    VkExtent2D   extent{};
+};
+
+// Like upload_device_image, but every mip level is supplied by the caller
+// (levels[0] is the base level) instead of being blitted on the GPU — for
+// chains filtered on the CPU (coverage-preserving alpha mips). All levels go
+// through one staging buffer and one submission; the image is left in
+// SHADER_READ_ONLY_OPTIMAL. Fails when a level's extent is not the expected
+// halving of the previous one.
+[[nodiscard]] std::expected<GpuImage, core::Error>
+upload_device_mip_chain(GpuAllocator& allocator, const TransferContext& transfer,
+                        std::span<const MipLevelData> levels, VkFormat format,
+                        VkImageUsageFlags usage = VK_IMAGE_USAGE_SAMPLED_BIT);
 
 // Creates a VkImageView over `image` wrapped in an RAII ImageView. Defaults to a
 // 2D colour view of mip 0; the extra parameters cover cube views

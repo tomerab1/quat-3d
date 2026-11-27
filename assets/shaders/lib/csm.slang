@@ -10,6 +10,11 @@
 //     texel units, PCF over a noise-rotated Vogel disk of hardware 2x2
 //     comparison taps, and an optional PCSS penumbra (Fernando 2005: blocker
 //     search, penumbra = receiver-blocker distance * sun angular size).
+//   * Translucent shadows (R12.11, issue #23): transmissive and blended
+//     casters stay out of the depth cascades and multiply their
+//     transmittance into a per-cascade RGBA16F map (rgb = light let through,
+//     a = nearest translucent caster depth). A receiver behind that depth is
+//     tinted by it: sun = depth-PCF visibility x transmittance.
 //
 // Matrices are stored as four glm columns (cluster_mul convention) so the
 // layout never depends on a matrix-layout qualifier.
@@ -285,40 +290,130 @@ float sample_cascade(CascadeData d, uint c, Texture2DArray map, SamplerCompariso
     return sum / float(CSM_PCF_TAPS);
 }
 
+// The cascade covering view distance `view_dist` and its cross-fade: the
+// result is lerp(cascade c, next, t), where next is cascade c + 1, or no
+// shadow (1) when `fade_out` (the last cascade at the real shadow limit).
+// False beyond the last cascade.
+struct CascadePick {
+    uint  c;
+    float t;
+    bool  fade_out;
+}
+bool csm_pick(CascadeData d, float view_dist, out CascadePick pick) {
+    pick.c = CSM_MAX_CASCADES;
+    pick.t = 0.0;
+    pick.fade_out = false;
+    uint count = min(uint(d.params.x), CSM_MAX_CASCADES);
+    if (count == 0 || view_dist >= d.split_far[count - 1]) {
+        return false;
+    }
+    uint c = 0;
+    while (c + 1 < count && view_dist >= d.split_far[c]) {
+        ++c;
+    }
+    pick.c = c;
+    float start = c == 0 ? d.params.y : d.split_far[c - 1];
+    float band_start = d.split_far[c] - d.params.z * (d.split_far[c] - start);
+    if (view_dist > band_start) {
+        float t = saturate((view_dist - band_start) / max(d.split_far[c] - band_start, 1e-4));
+        if (c + 1 < count) {
+            pick.t = t;
+        } else if (d.split_far[c] >= d.limits.x * 0.999) {
+            // The last cascade fades out only at the real shadow limit; a
+            // depth-fitted range ends at the farthest geometry, which keeps
+            // its shadow.
+            pick.t = t;
+            pick.fade_out = true;
+        }
+    }
+    return true;
+}
+
 // The sun's visibility at `world_pos` (view distance `view_dist`), with the
 // cascade it came from in `cascade` (CSM_MAX_CASCADES when beyond the last).
 public float csm_visibility(CascadeData d, Texture2DArray map, SamplerComparisonState cmp,
                             SamplerState point, float3 world_pos, float3 normal,
                             float3 to_light, float view_dist, CsmFilter f, float noise,
                             out uint cascade) {
-    uint count = min(uint(d.params.x), CSM_MAX_CASCADES);
-    cascade = CSM_MAX_CASCADES;
-    if (count == 0 || view_dist >= d.split_far[count - 1]) {
+    CascadePick pick;
+    bool inside = csm_pick(d, view_dist, pick);
+    cascade = pick.c;
+    if (!inside) {
         return 1.0;
     }
-    uint c = 0;
-    while (c + 1 < count && view_dist >= d.split_far[c]) {
-        ++c;
-    }
-    cascade = c;
-    float vis = sample_cascade(d, c, map, cmp, point, world_pos, normal, to_light, f, noise);
-
-    float start = c == 0 ? d.params.y : d.split_far[c - 1];
-    float band_start = d.split_far[c] - d.params.z * (d.split_far[c] - start);
-    if (view_dist > band_start) {
-        float t = saturate((view_dist - band_start) / max(d.split_far[c] - band_start, 1e-4));
-        if (c + 1 < count) {
-            vis = lerp(vis, sample_cascade(d, c + 1, map, cmp, point, world_pos, normal,
-                                           to_light, f, noise),
-                       t);
-        } else if (d.split_far[c] >= d.limits.x * 0.999) {
-            // The last cascade fades out only at the real shadow limit; a
-            // depth-fitted range ends at the farthest geometry, which keeps
-            // its shadow.
-            vis = lerp(vis, 1.0, t);
-        }
+    float vis = sample_cascade(d, pick.c, map, cmp, point, world_pos, normal, to_light, f, noise);
+    if (pick.t > 0.0) {
+        float next = pick.fade_out ? 1.0
+                                   : sample_cascade(d, pick.c + 1, map, cmp, point, world_pos,
+                                                    normal, to_light, f, noise);
+        vis = lerp(vis, next, pick.t);
     }
     return vis;
+}
+
+// Light let through by translucent casters in cascade `c`'s translucency map
+// (rgb, 1 = untouched). The receiver is offset like sample_cascade; each of
+// the 2x2 texels around it tints only when the receiver lies behind that
+// texel's nearest translucent caster (so receivers between the glass and the
+// sun stay clear), and the four results are blended bilinearly.
+float3 sample_transmittance(CascadeData d, uint c, Texture2DArray tmap, SamplerState point,
+                            float3 world_pos, float3 normal, float3 to_light, CsmFilter f) {
+    float texel = d.texel_world[c];
+    float ndotl = saturate(dot(normal, to_light));
+    float3 p = world_pos + normal * (f.normal_bias * texel * (1.0 - 0.5 * ndotl)) +
+               to_light * (f.depth_bias * texel);
+    float4 clip = csm_mul(d, c, float4(p, 1.0));
+    float2 uv = clip.xy * 0.5 + 0.5;
+    if (any(uv < 0.0) || any(uv > 1.0) || clip.z > 1.0) {
+        return float3(1.0, 1.0, 1.0);
+    }
+    uint w = 0;
+    uint h = 0;
+    uint layers = 0;
+    tmap.GetDimensions(w, h, layers);
+    float2 size = float2(float(w), float(h));
+    float2 st = uv * size - 0.5;
+    float2 fr = frac(st);
+    float3 at = float3((floor(st) + 1.0) / size, float(c));
+    // The receiver plane's rise over one translucency texel (as the depth
+    // taps' slope-scaled bias).
+    float z = clip.z - dot(abs(receiver_depth_gradient(d, c, normal)), 1.0 / size);
+    // Gather order: x = (0, 1), y = (1, 1), z = (1, 0), w = (0, 0).
+    float4 r = tmap.GatherRed(point, at);
+    float4 g = tmap.GatherGreen(point, at);
+    float4 b = tmap.GatherBlue(point, at);
+    float4 depth = tmap.GatherAlpha(point, at);
+    float4 behind = float4(z > depth.x ? 1.0 : 0.0, z > depth.y ? 1.0 : 0.0,
+                           z > depth.z ? 1.0 : 0.0, z > depth.w ? 1.0 : 0.0);
+    float4 weight = float4((1.0 - fr.x) * fr.y, fr.x * fr.y, fr.x * (1.0 - fr.y),
+                           (1.0 - fr.x) * (1.0 - fr.y));
+    float3 sum = float3(0.0, 0.0, 0.0);
+    [ForceUnroll]
+    for (uint k = 0; k < 4; ++k) {
+        float3 t = lerp(float3(1.0, 1.0, 1.0), float3(r[k], g[k], b[k]), behind[k]);
+        sum += t * weight[k];
+    }
+    return sum;
+}
+
+// The sun's transmittance through translucent casters at `world_pos`, with
+// the same cascade selection and cross-fade as csm_visibility.
+public float3 csm_transmittance(CascadeData d, Texture2DArray tmap, SamplerState point,
+                                float3 world_pos, float3 normal, float3 to_light,
+                                float view_dist, CsmFilter f) {
+    CascadePick pick;
+    if (!csm_pick(d, view_dist, pick)) {
+        return float3(1.0, 1.0, 1.0);
+    }
+    float3 t = sample_transmittance(d, pick.c, tmap, point, world_pos, normal, to_light, f);
+    if (pick.t > 0.0) {
+        float3 next = pick.fade_out
+                          ? float3(1.0, 1.0, 1.0)
+                          : sample_transmittance(d, pick.c + 1, tmap, point, world_pos, normal,
+                                                 to_light, f);
+        t = lerp(t, next, pick.t);
+    }
+    return t;
 }
 
 // Debug tint per cascade (red, green, blue, yellow).

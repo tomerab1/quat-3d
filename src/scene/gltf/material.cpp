@@ -11,6 +11,7 @@
 #include <cstring>
 #include <functional>
 #include <limits>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -29,6 +30,7 @@
 
 #include "engine/animation/clip.hpp"
 #include "engine/animation/skeleton.hpp"
+#include "engine/asset/alpha_coverage.hpp"
 #include "engine/asset/asset_manager.hpp"
 #include "engine/scene/components.hpp"
 #include "engine/scene/scene.hpp"
@@ -108,11 +110,31 @@ resolve_color_spaces(const fastgltf::Asset& asset) {
     }
     return spaces;
 }
+
+// Per-image alpha-test cutoff: the cutoff of the alphaMode MASK material
+// sampling the image as its base colour (the lowest, if several do: the
+// coverage that cutoff preserves is the largest), else none.
+[[nodiscard]] std::vector<std::optional<float>>
+resolve_alpha_test_cutoffs(const fastgltf::Asset& asset) {
+    std::vector<std::optional<float>> cutoffs(asset.images.size());
+    for (const fastgltf::Material& mat : asset.materials) {
+        if (mat.alphaMode != fastgltf::AlphaMode::Mask) continue;
+        const auto& info = mat.pbrData.baseColorTexture;
+        if (!info.has_value()) continue;
+        const fastgltf::Texture& tex = asset.textures[info->textureIndex];
+        if (!tex.imageIndex.has_value()) continue;
+        std::optional<float>& c = cutoffs[tex.imageIndex.value()];
+        const float cutoff = std::clamp(mat.alphaCutoff, 0.0F, 1.0F);
+        c = c.has_value() ? std::min(*c, cutoff) : cutoff;
+    }
+    return cutoffs;
+}
 } // namespace
 
 [[nodiscard]] std::expected<std::vector<TextureData>, core::Error>
 extract_textures(const fastgltf::Asset& asset) {
     const std::vector<asset::TextureColorSpace> spaces = resolve_color_spaces(asset);
+    const std::vector<std::optional<float>> cutoffs = resolve_alpha_test_cutoffs(asset);
     std::vector<TextureData> out;
     out.reserve(asset.images.size());
     for (std::size_t i = 0; i < asset.images.size(); ++i) {
@@ -120,6 +142,7 @@ extract_textures(const fastgltf::Asset& asset) {
         if (!encoded) return std::unexpected(encoded.error());
         auto decoded = decode_image(*encoded, spaces[i]);
         if (!decoded) return std::unexpected(decoded.error());
+        decoded->alpha_test_cutoff = cutoffs[i];
         out.push_back(std::move(*decoded));
     }
     return out;
@@ -227,6 +250,7 @@ void apply_uv_transform(asset::PbrMaterialParams& p, std::size_t slot,
         if (md.emissive_image != no_texture) flags |= asset::material_has_emissive;
         if (md.occlusion_image != no_texture) flags |= asset::material_has_occlusion;
         if (mat.alphaMode == fastgltf::AlphaMode::Blend) flags |= asset::material_blend;
+        if (mat.alphaMode == fastgltf::AlphaMode::Mask) flags |= asset::material_alpha_mask;
         if (mat.doubleSided) flags |= asset::material_double_sided;
         // KHR_materials_transmission → see-through glass.
         if (mat.transmission != nullptr && mat.transmission->transmissionFactor > 0.0F) {
@@ -304,6 +328,27 @@ decode_image(std::span<const std::byte> encoded, asset::TextureColorSpace color_
     return out;
 }
 
+namespace {
+// An alpha-tested (MASK) base colour: the mip chain is filtered on the CPU
+// with coverage-preserving alpha so cut-outs don't thin out with distance.
+[[nodiscard]] std::expected<rhi::GpuImage, core::Error>
+upload_alpha_tested(const TextureData& data, rhi::GpuAllocator& allocator,
+                    const rhi::TransferContext& transfer, VkFormat format) {
+    const std::span<const std::uint8_t> rgba(
+        reinterpret_cast<const std::uint8_t*>(data.pixels.data()), data.pixels.size());
+    const std::vector<asset::MipLevelRgba8> chain = asset::build_alpha_tested_mips(
+        rgba, data.width, data.height, data.color_space == asset::TextureColorSpace::srgb,
+        data.alpha_test_cutoff.value_or(0.5F));
+    if (chain.empty()) return fail("upload_texture: pixel data does not match the extent");
+    std::vector<rhi::MipLevelData> levels;
+    levels.reserve(chain.size());
+    for (const asset::MipLevelRgba8& l : chain) {
+        levels.push_back({l.pixels.data(), l.pixels.size(), {l.width, l.height}});
+    }
+    return rhi::upload_device_mip_chain(allocator, transfer, levels, format);
+}
+} // namespace
+
 std::expected<asset::TextureAsset, core::Error>
 upload_texture(const TextureData& data, rhi::GpuAllocator& allocator,
                const rhi::TransferContext& transfer) {
@@ -316,9 +361,11 @@ upload_texture(const TextureData& data, rhi::GpuAllocator& allocator,
     const VkExtent2D extent{data.width, data.height};
     const std::uint32_t mips = rhi::full_mip_levels(extent);
 
-    auto image = rhi::upload_device_image(allocator, transfer, data.pixels.data(),
-                                          data.pixels.size(), extent, format,
-                                          VK_IMAGE_USAGE_SAMPLED_BIT, mips);
+    auto image = data.alpha_test_cutoff.has_value()
+                     ? upload_alpha_tested(data, allocator, transfer, format)
+                     : rhi::upload_device_image(allocator, transfer, data.pixels.data(),
+                                                data.pixels.size(), extent, format,
+                                                VK_IMAGE_USAGE_SAMPLED_BIT, mips);
     if (!image) return std::unexpected(image.error());
 
     auto view = rhi::create_image_view(transfer.device, image->handle(), format,

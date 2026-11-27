@@ -8,6 +8,11 @@
 // material (the IMaterial parameter block from Slice 3.4); per-instance
 // transforms come from the pass's instance buffer (R9.1, draw_batching.hpp).
 // The lighting pass (3.6) consumes the GBuffer this pass produces.
+//
+// glTF MASK materials (asset::material_alpha_mask) draw after the opaque
+// ones with a second pipeline whose fragment shader alpha-tests
+// (gbuffer.slang fragment_masked, R12.11); the opaque pipeline has no discard
+// and keeps early depth testing.
 
 #include <cstddef>
 #include <cstdint>
@@ -44,6 +49,10 @@ inline constexpr VkFormat gbuffer_normal_format    = VK_FORMAT_R16G16_SFLOAT;
 inline constexpr VkFormat gbuffer_material_format  = VK_FORMAT_R8G8B8A8_UNORM;
 inline constexpr VkFormat gbuffer_clearcoat_format = VK_FORMAT_R8G8_UNORM;
 inline constexpr VkFormat gbuffer_depth_format     = VK_FORMAT_D32_SFLOAT;
+
+// Upper bound on the mips material samplers may reach (covers 32k textures);
+// shared by the GBuffer and transparent passes.
+inline constexpr std::uint32_t material_sampler_max_lod = 16;
 
 // Resource handles for the GBuffer targets within a compiled RenderGraph frame.
 struct GBufferTargets {
@@ -110,7 +119,8 @@ private:
 
     rhi::DescriptorBufferFunctions db_fns_{};
     rhi::DescriptorSetLayout       material_layout_;
-    rhi::ManagedPipeline           pipeline_;
+    rhi::ManagedPipeline           pipeline_;        // opaque materials
+    rhi::ManagedPipeline           masked_pipeline_; // alphaMode MASK materials
 
     rhi::Sampler         sampler_;            // shared sampler (binding 6)
     asset::TextureAsset  fallback_texture_;   // 1x1 white, for unbound slots
@@ -120,7 +130,8 @@ private:
     InstanceBuffer                     instances_;
     VkDeviceAddress                    frame_instances_ = 0;
     std::vector<rhi::DescriptorBuffer> frame_descriptors_;
-    std::vector<FrameDraw>             frame_draws_;
+    std::vector<FrameDraw>             frame_draws_;        // opaque
+    std::vector<FrameDraw>             frame_masked_draws_; // alpha-tested, drawn last
 };
 
 } // namespace engine::renderer

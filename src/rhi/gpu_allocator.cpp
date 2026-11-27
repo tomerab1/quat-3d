@@ -5,6 +5,7 @@
 #include <cstring>
 #include <format>
 #include <utility>
+#include <vector>
 #ifdef ENGINE_DESCRIPTOR_SETS_FALLBACK
 #include <map>
 #include <mutex>
@@ -495,6 +496,89 @@ upload_device_image(GpuAllocator& allocator, const TransferContext& transfer,
     });
     if (!uploaded) return std::unexpected(uploaded.error());
 
+    return std::move(*image);
+}
+
+std::expected<GpuImage, core::Error>
+upload_device_mip_chain(GpuAllocator& allocator, const TransferContext& transfer,
+                        std::span<const MipLevelData> levels, VkFormat format,
+                        VkImageUsageFlags usage) {
+    if (levels.empty()) return fail("upload_device_mip_chain: no levels");
+    const VkExtent2D extent = levels[0].extent;
+    const auto count = static_cast<std::uint32_t>(levels.size());
+    if (count > full_mip_levels(extent)) {
+        return fail("upload_device_mip_chain: more levels than the extent allows");
+    }
+    // Level offsets in the staging buffer (16-byte aligned: a multiple of
+    // every texel size, as vkCmdCopyBufferToImage requires).
+    std::vector<VkDeviceSize> offsets;
+    offsets.reserve(levels.size());
+    VkDeviceSize total = 0;
+    for (std::uint32_t i = 0; i < count; ++i) {
+        const VkExtent2D want{std::max(extent.width >> i, 1U), std::max(extent.height >> i, 1U)};
+        const MipLevelData& l = levels[i];
+        if (l.data == nullptr || l.size == 0 || l.extent.width != want.width ||
+            l.extent.height != want.height) {
+            return fail(std::format("upload_device_mip_chain: level {} is not {}x{}", i,
+                                    want.width, want.height));
+        }
+        total = (total + 15) & ~VkDeviceSize{15};
+        offsets.push_back(total);
+        total += l.size;
+    }
+
+    auto staging = allocator.create_staging_buffer(total);
+    if (!staging) return std::unexpected(staging.error());
+    auto* bytes = static_cast<std::uint8_t*>(staging->mapped());
+    for (std::uint32_t i = 0; i < count; ++i) {
+        std::memcpy(bytes + offsets[i], levels[i].data, levels[i].size);
+    }
+    if (auto flushed = staging->flush(); !flushed) return std::unexpected(flushed.error());
+
+    auto image = allocator.create_image(
+        format, extent, usage | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+        count);
+    if (!image) return std::unexpected(image.error());
+
+    const VkBuffer src = staging->handle();
+    const VkImage  dst = image->handle();
+    auto uploaded = run_one_time_commands(transfer, [&](VkCommandBuffer cmd) {
+        VkImageMemoryBarrier2 b{};
+        b.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2;
+        b.srcStageMask = VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT;
+        b.dstStageMask = VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT;
+        b.dstAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT;
+        b.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        b.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+        b.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        b.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        b.image = dst;
+        b.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, count, 0, 1};
+        VkDependencyInfo dep{};
+        dep.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO;
+        dep.imageMemoryBarrierCount = 1;
+        dep.pImageMemoryBarriers = &b;
+        vkCmdPipelineBarrier2(cmd, &dep);
+
+        std::vector<VkBufferImageCopy> regions(count);
+        for (std::uint32_t i = 0; i < count; ++i) {
+            VkBufferImageCopy& r = regions[i];
+            r.bufferOffset = offsets[i];
+            r.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, i, 0, 1};
+            r.imageExtent = {levels[i].extent.width, levels[i].extent.height, 1};
+        }
+        vkCmdCopyBufferToImage(cmd, src, dst, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, count,
+                               regions.data());
+
+        b.srcStageMask = VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT;
+        b.srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT;
+        b.dstStageMask = VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT;
+        b.dstAccessMask = VK_ACCESS_2_SHADER_SAMPLED_READ_BIT;
+        b.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+        b.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        vkCmdPipelineBarrier2(cmd, &dep);
+    });
+    if (!uploaded) return std::unexpected(uploaded.error());
     return std::move(*image);
 }
 

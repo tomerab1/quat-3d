@@ -6,7 +6,14 @@
 // IMaterial interface (PbrMaterial), bound as a descriptor-buffer parameter
 // block. Draws are instanced (R9.1): per-instance model + normal matrices are
 // read through a buffer device address (lib/instancing.slang).
+//
+// Two fragment entry points share one body, specialised on the alpha mode
+// (lib/alpha_test.slang): fragment_main for opaque materials (no discard, so
+// the pipeline keeps early depth testing) and fragment_masked for glTF MASK
+// materials (discards below alphaCutoff; R12.11). Back faces of doubleSided
+// materials are shaded with the reversed normal, as glTF requires.
 
+import alpha_test;
 import instancing;
 import material;
 import pbr;
@@ -72,12 +79,17 @@ struct GBufferOut {
     float2 clearcoat : SV_Target3;   // r coat strength, g coat perceptual roughness
 }
 
-[shader("fragment")]
-GBufferOut fragment_main(VsOut input) {
+GBufferOut gbuffer_shade<A : IAlphaMode>(VsOut input, bool front_face) {
     SurfaceSample s = g_material.evaluate(input.uv);
+    A::test(s.alpha, g_material.params.alpha_cutoff);
 
     // Build the world-space normal from the tangent-space material normal.
+    // glTF doubleSided: the back face is lit with the reversed normal (the
+    // tangent frame flips with it, keeping the normal map's handedness).
     float3 n = normalize(input.world_n);
+    if (!front_face && (g_material.params.flags & MATERIAL_DOUBLE_SIDED) != 0) {
+        n = -n;
+    }
     float3 t = normalize(input.world_t.xyz - n * dot(n, input.world_t.xyz));
     float3 b = cross(n, t) * input.world_t.w;
     float3 world_n = normalize(t * s.normal_ts.x + b * s.normal_ts.y + n * s.normal_ts.z);
@@ -93,4 +105,14 @@ GBufferOut fragment_main(VsOut input) {
     o.material  = float4(s.metallic, roughness, s.occlusion, 1.0);
     o.clearcoat = float2(s.clearcoat, coat_roughness);
     return o;
+}
+
+[shader("fragment")]
+GBufferOut fragment_main(VsOut input, bool front_face : SV_IsFrontFace) {
+    return gbuffer_shade<AlphaOpaque>(input, front_face);
+}
+
+[shader("fragment")]
+GBufferOut fragment_masked(VsOut input, bool front_face : SV_IsFrontFace) {
+    return gbuffer_shade<AlphaMasked>(input, front_face);
 }

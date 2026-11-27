@@ -18,6 +18,12 @@ static const uint MATERIAL_HAS_METALLIC_ROUGHNESS = 1u << 2;
 static const uint MATERIAL_HAS_EMISSIVE           = 1u << 3;
 static const uint MATERIAL_HAS_OCCLUSION          = 1u << 4;
 
+// Alpha / transmission mode bits. Mirror engine::asset::MaterialTextureFlags.
+public static const uint MATERIAL_BLEND        = 1u << 5; // glTF BLEND (forward pass)
+public static const uint MATERIAL_TRANSMISSION = 1u << 6; // KHR_materials_transmission
+public static const uint MATERIAL_DOUBLE_SIDED = 1u << 7; // glTF doubleSided
+public static const uint MATERIAL_ALPHA_MASK   = 1u << 9; // glTF MASK (lib/alpha_test.slang)
+
 // Texture slot indices for the per-slot KHR_texture_transform arrays. Mirrors
 // engine::asset::MaterialTextureSlot.
 public static const uint MATERIAL_SLOT_BASE_COLOR         = 0;
@@ -61,6 +67,19 @@ public float2 material_transform_uv(PbrMaterialParams p, uint slot, float2 uv) {
     float4 packed = p.uv_offset[slot >> 1];
     float2 offset = ((slot & 1u) == 0u) ? packed.xy : packed.zw;
     return float2(m.x * uv.x + m.y * uv.y, m.z * uv.x + m.w * uv.y) + offset;
+}
+
+// Base colour (factor x texture, rgb linear, a = alpha) at `uv`: everything
+// the alpha test and the translucent shadow casters need. Takes the resources
+// directly so passes binding plain globals (shadow_material.slang) and the
+// PbrMaterial parameter block share it.
+public float4 material_base_color(PbrMaterialParams p, Texture2D tex, SamplerState samp,
+                                  float2 uv) {
+    float4 base = p.base_color_factor;
+    if ((p.flags & MATERIAL_HAS_BASE_COLOR) != 0) {
+        base *= tex.Sample(samp, material_transform_uv(p, MATERIAL_SLOT_BASE_COLOR, uv));
+    }
+    return base;
 }
 
 // Surface attributes produced at a shading point, consumed by the GBuffer pass.

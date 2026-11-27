@@ -165,6 +165,7 @@ set_source_files_properties(src/rhi/vma_impl.cpp PROPERTIES COMPILE_OPTIONS "-w"
 # are PUBLIC: any consumer of the asset headers needs them transitively.
 # ---------------------------------------------------------------------------
 add_library(engine_asset STATIC
+    src/asset/alpha_coverage.cpp
     src/asset/asset_manager.cpp
     src/asset/material_asset.cpp)
 target_link_libraries(engine_asset PUBLIC engine_flags engine_rhi glm::glm)
@@ -375,6 +376,7 @@ add_library(engine_renderer STATIC
     src/renderer/light_cull_pass.cpp
     src/renderer/tonemap_pass.cpp
     src/renderer/skinning_pass.cpp
+    src/renderer/shadow_casters.cpp
     src/renderer/shadow_pass.cpp
     src/renderer/transparent_pass.cpp
     src/renderer/ibl_pass.cpp

@@ -22,6 +22,7 @@ static const uint MAT_HAS_EMISSIVE   = 1u << 3;
 static const uint MAT_HAS_OCCLUSION  = 1u << 4;
 static const uint MAT_TRANSMISSION   = 1u << 6;
 static const uint MAT_HAS_THICKNESS  = 1u << 8;
+static const uint MAT_ALPHA_MASK     = 1u << 9;
 
 // Prefiltered specular cubemap mip count - 1. Must match ibl_pass.cpp.
 static const float PREFILTER_MAX_LOD = 4.0;
@@ -175,6 +176,14 @@ float4 fragment_main(VsOut input) : SV_Target0 {
     }
     float3 albedo = base.rgb;
     float  alpha = base.a;
+    // glTF MASK on a forward-drawn (transmissive) material: cut out below the
+    // cutoff, fully covering above it.
+    if ((g_params.flags & MAT_ALPHA_MASK) != 0) {
+        if (alpha < g_params.alpha_cutoff) {
+            discard;
+        }
+        alpha = 1.0;
+    }
 
     float metallic = g_params.metallic_factor;
     float roughness = g_params.roughness_factor;

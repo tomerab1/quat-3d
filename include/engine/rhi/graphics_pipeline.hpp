@@ -37,6 +37,10 @@ public:
         VkCompareOp               depth_compare_op = VK_COMPARE_OP_GREATER_OR_EQUAL;
         bool                      depth_write = true;  // false for read-only depth (transparent)
         bool                      alpha_blend = false; // SRC_ALPHA / ONE_MINUS_SRC_ALPHA
+        // Transmittance accumulation (translucent shadow casters): rgb is
+        // multiplied into the target (dst * src), alpha keeps min(dst, src).
+        // Overrides alpha_blend.
+        bool                      transmittance_blend = false;
         // Clamp fragment depth to [0, 1] instead of clipping at the near /
         // far planes (needs the depthClamp feature; shadow pancaking).
         bool                      depth_clamp = false;
