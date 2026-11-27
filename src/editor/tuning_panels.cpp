@@ -9,6 +9,7 @@
 #include <entt/entity/registry.hpp>
 #include <glm/glm.hpp>
 #include <imgui.h>
+#include <imgui_stdlib.h>
 
 #include "engine/renderer/render_settings.hpp"
 #include "engine/scene/components.hpp"
@@ -118,6 +119,24 @@ void draw_sun(scene::Scene* scene) {
     ImGui::DragFloat("intensity", &sun->intensity, 0.05F, 0.0F, 100.0F);
 }
 
+// The HDRI file row of the "Sky & HDRI" section: a project-relative path,
+// Load / Clear, and the load status (resolution and sun, or the error).
+void draw_hdri_file(const HdriPanel& hdri) {
+    if (hdri.request == nullptr) return;
+    static std::string edit; // the field's text between frames (one editor)
+    static std::string shown;
+    if (shown != hdri.path) { // follow loads from elsewhere (scene files, MCP)
+        shown = hdri.path;
+        edit = hdri.path;
+    }
+    ImGui::InputTextWithHint("HDRI file", "assets/hdri/<name>.hdr", &edit);
+    tooltip("Radiance .hdr panorama, relative to the project root");
+    if (ImGui::SmallButton("load")) *hdri.request = edit;
+    ImGui::SameLine();
+    if (ImGui::SmallButton("clear")) *hdri.request = std::string();
+    if (!hdri.status.empty()) ImGui::TextWrapped("%s", hdri.status.c_str());
+}
+
 bool draw_material_field(entt::registry& r, entt::entity e, const scene::MaterialFieldInfo& f,
                          const asset::PbrMaterialParams& params) {
     const std::string label(f.label);
@@ -151,7 +170,7 @@ bool draw_material_field(entt::registry& r, entt::entity e, const scene::Materia
 
 } // namespace
 
-void draw_renderer_panel(RenderSettings& settings, scene::Scene* scene) {
+void draw_renderer_panel(RenderSettings& settings, scene::Scene* scene, const HdriPanel& hdri) {
     if (!ImGui::Begin("Renderer")) {
         ImGui::End();
         return;
@@ -177,6 +196,7 @@ void draw_renderer_panel(RenderSettings& settings, scene::Scene* scene) {
             draw_setting(settings, d);
             ImGui::EndDisabled();
         }
+        if (g.name == "environment") draw_hdri_file(hdri);
         if (ImGui::SmallButton("reset")) (void)renderer::reset_render_settings(settings, g.name);
         ImGui::PopID();
     }

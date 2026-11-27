@@ -72,16 +72,15 @@ void FrameRenderer::create_reflections(engine::rhi::PipelineCache& pipeline_cach
 
 std::expected<void, engine::core::Error>
 FrameRenderer::set_hdri(const std::string& relative, const std::filesystem::path& project_root) {
-    hdri_status_ = {};
-    hdri_status_.path = relative;
     if (relative.empty()) {
         if (hdri_) hdri_->clear();
+        hdri_status_ = {};
         return {};
     }
+    // A failed load keeps the current HDRI; the status records the error.
     const auto failed = [&](std::string why) -> std::expected<void, engine::core::Error> {
-        if (hdri_) hdri_->clear();
-        hdri_status_.error = why;
-        std::fprintf(stderr, "[warn] hdri '%s': %s\n", relative.c_str(), why.c_str());
+        hdri_status_.error = "'" + relative + "': " + why;
+        std::fprintf(stderr, "[warn] hdri %s\n", hdri_status_.error.c_str());
         return std::unexpected(engine::core::Error{std::move(why)});
     };
     if (!hdri_) return failed("the HDRI environment is unavailable (renderer setup failed)");
@@ -94,7 +93,12 @@ FrameRenderer::set_hdri(const std::string& relative, const std::filesystem::path
     auto uploaded = with_upload(*device_, [&](const engine::rhi::TransferContext& transfer) {
         return hdri_->set_image(*image, transfer);
     });
-    if (!uploaded) return failed(uploaded.error().message);
+    if (!uploaded) {
+        hdri_status_ = {}; // set_image dropped the previous maps
+        return failed(uploaded.error().message);
+    }
+    hdri_status_ = {};
+    hdri_status_.path = relative;
     hdri_status_.loaded = true;
     hdri_status_.width = image->width;
     hdri_status_.height = image->height;

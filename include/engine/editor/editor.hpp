@@ -77,6 +77,12 @@ struct EditorContext {
     // Renderer settings the Renderer panel edits (owned by the frame
     // renderer; may be null).
     renderer::RenderSettings* renderer = nullptr;
+    // R21: the environment's HDRI — its path and a one-line status for the
+    // Renderer panel, and the path its Load / Clear buttons request
+    // (consumed by the frame loop; "" clears the HDRI; may be null).
+    std::string                 hdri_path;
+    std::string                 hdri_status;
+    std::optional<std::string>* hdri_request = nullptr;
     // Project root for the asset browser (empty disables the panel).
     std::string project_root;
     // Out: glTF path the user asked to instantiate (double-click or viewport

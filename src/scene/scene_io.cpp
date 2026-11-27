@@ -119,7 +119,8 @@ struct FileEntity {
 } // namespace
 
 std::expected<void, core::Error> save_scene(const Scene& scene, const std::filesystem::path& path,
-                                            const renderer::RenderSettings* render_settings) {
+                                            const renderer::RenderSettings* render_settings,
+                                            const SceneEnvironment* environment) {
     const entt::registry& r = scene.registry();
 
     // Stable index per live entity (file order). Parent links become indices.
@@ -160,6 +161,9 @@ std::expected<void, core::Error> save_scene(const Scene& scene, const std::files
         block["version"] = k_render_settings_version;
         root["render_settings"] = std::move(block);
     }
+    if (environment != nullptr && !environment->hdri.empty()) {
+        root["environment"] = {{"hdri", environment->hdri}};
+    }
 
     std::error_code ec;
     if (path.has_parent_path()) std::filesystem::create_directories(path.parent_path(), ec);
@@ -174,7 +178,7 @@ std::expected<void, core::Error> save_scene(const Scene& scene, const std::files
 std::expected<void, core::Error>
 load_scene(Scene& scene, const std::filesystem::path& path, rhi::GpuAllocator& allocator,
            const rhi::TransferContext& transfer, asset::AssetManager& assets,
-           renderer::RenderSettings* render_settings) {
+           renderer::RenderSettings* render_settings, SceneEnvironment* environment) {
     std::ifstream in(path);
     if (!in) return fail("load_scene: cannot open '" + core::path_to_utf8(path) + "'");
     const json root = json::parse(in, nullptr, /*allow_exceptions=*/false);
@@ -205,6 +209,15 @@ load_scene(Scene& scene, const std::filesystem::path& path, rhi::GpuAllocator& a
             }
         }
         settings->clouds.time_s = render_settings->clouds.time_s;
+    }
+    // Scene-level environment (R21): decoded up front like the settings.
+    SceneEnvironment file_environment;
+    if (const auto it = root.find("environment"); it != root.end() && !it->is_null()) {
+        core::JsonFields block(*it, "environment", /*strict=*/false);
+        block.string("hdri", file_environment.hdri, SceneEnvironment::k_max_path);
+        if (auto ok = block.finish(); !ok) {
+            return fail("load_scene: '" + core::path_to_utf8(path) + "': " + ok.error().message);
+        }
     }
 
     // Pre-load every referenced glTF: instantiating into a scratch scene fills
@@ -329,6 +342,7 @@ load_scene(Scene& scene, const std::filesystem::path& path, rhi::GpuAllocator& a
     staging.tick(0.0F); // world transforms valid on return
     scene = std::move(staging);
     if (settings) *render_settings = *settings;
+    if (environment != nullptr) *environment = std::move(file_environment);
     return {};
 }
 

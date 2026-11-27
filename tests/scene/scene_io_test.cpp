@@ -297,4 +297,42 @@ TEST(GpuSceneIo, RenderSettingsAndMaterialOverridesRoundTrip) {
     std::filesystem::remove(bad);
 }
 
+// R21: the HDRI path is scene-level data saved next to the render settings
+// (whose `environment` group selects it); scenes without one load with none.
+TEST(GpuSceneIo, EnvironmentHdriRoundTrips) {
+    QUAT_REQUIRE_GPU(g);
+    engine::asset::AssetManager assets;
+    s::Scene scene;
+    scene.create_entity("anchor");
+    engine::renderer::RenderSettings saved;
+    saved.environment.source = static_cast<int>(engine::renderer::SkySource::hdri);
+    saved.environment.hdri_rotation_deg = 120.0F;
+    saved.ssr.quality = static_cast<int>(engine::renderer::SsrQuality::high);
+    const s::SceneEnvironment env{"hdri-cache/sky_2k.hdr"};
+    const auto path = std::filesystem::temp_directory_path() / "quat_env_scene.json";
+    ASSERT_OK(s::save_scene(scene, path, &saved, &env));
+
+    s::Scene loaded;
+    engine::renderer::RenderSettings settings;
+    s::SceneEnvironment read{"stale.hdr"};
+    ASSERT_OK(s::load_scene(loaded, path, g->allocator, g->transfer, assets, &settings, &read));
+    EXPECT_EQ(read.hdri, "hdri-cache/sky_2k.hdr");
+    EXPECT_EQ(settings.environment.source, static_cast<int>(engine::renderer::SkySource::hdri));
+    EXPECT_FLOAT_EQ(settings.environment.hdri_rotation_deg, 120.0F);
+    EXPECT_EQ(settings.ssr.quality, static_cast<int>(engine::renderer::SsrQuality::high));
+
+    ASSERT_OK(s::save_scene(scene, path, &saved));
+    ASSERT_OK(s::load_scene(loaded, path, g->allocator, g->transfer, assets, &settings, &read));
+    EXPECT_TRUE(read.hdri.empty());
+
+    const auto bad = write_temp("quat_bad_env.json", R"({"entities": [],
+        "environment": {"hdri": 5}})");
+    read.hdri = "keep.hdr";
+    auto result = s::load_scene(loaded, bad, g->allocator, g->transfer, assets, &settings, &read);
+    ASSERT_FALSE(result);
+    EXPECT_EQ(read.hdri, "keep.hdr");
+    std::filesystem::remove(bad);
+    std::filesystem::remove(path);
+}
+
 } // namespace

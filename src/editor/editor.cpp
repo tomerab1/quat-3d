@@ -514,7 +514,8 @@ void EditorLayer::build_ui(const EditorContext& ctx) {
         behavior_panel_->draw(*ctx.scene, selected_);
     }
     if (ctx.renderer != nullptr) {
-        draw_renderer_panel(*ctx.renderer, ctx.scene);
+        draw_renderer_panel(*ctx.renderer, ctx.scene,
+                            {ctx.hdri_path, ctx.hdri_status, ctx.hdri_request});
     }
     if (!ctx.project_root.empty() && ctx.instantiate_request != nullptr) {
         draw_asset_browser(ctx.project_root, *ctx.instantiate_request);

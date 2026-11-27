@@ -250,6 +250,34 @@ pub struct CloudParams {
     pub wind_dir_deg: Option<f64>,
 }
 
+/// What lights and fills the background.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum SkySource {
+    /// The physically based atmosphere and clouds.
+    Procedural,
+    /// The loaded HDRI panorama (`hdri.path`).
+    Hdri,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct HdriParams {
+    /// Radiance `.hdr` panorama relative to the project root (e.g.
+    /// `assets/hdri/meadow_2k.hdr`); an empty string clears it. Omit to keep the file.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+    /// Brightness multiplier of the HDRI and its sun, 0..100 (default 1).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub intensity: Option<f64>,
+    /// Turn the panorama about the vertical axis, degrees, -360..360 (default 0).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rotation_deg: Option<f64>,
+    /// The HDRI's sun becomes the shadow-casting sun light (default true).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sun: Option<bool>,
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct EnvironmentSetParams {
@@ -259,6 +287,12 @@ pub struct EnvironmentSetParams {
     /// Volumetric clouds. Omitted fields keep their values.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub clouds: Option<CloudParams>,
+    /// Background and lighting source: procedural sky or the HDRI.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sky: Option<SkySource>,
+    /// HDRI panorama file and look. Omitted fields keep their values.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hdri: Option<HdriParams>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -385,6 +419,21 @@ mod tests {
         let err = serde_json::from_value::<EnvironmentSetParams>(json!({"sun": {"elevation": 10}}))
             .unwrap_err();
         assert!(err.to_string().contains("elevation"));
+    }
+
+    #[test]
+    fn hdri_environment_round_trips() {
+        let request = json!({
+            "sky": "hdri",
+            "hdri": {"path": "assets/hdri/meadow_2k.hdr", "rotation_deg": 90.0, "sun": false}
+        });
+        let p: EnvironmentSetParams = serde_json::from_value(request.clone()).unwrap();
+        assert_eq!(p.sky, Some(SkySource::Hdri));
+        assert_eq!(serde_json::to_value(&p).unwrap(), request);
+        let cleared: EnvironmentSetParams =
+            serde_json::from_value(json!({"hdri": {"path": ""}})).unwrap();
+        assert_eq!(cleared.hdri.unwrap().path.as_deref(), Some(""));
+        assert!(serde_json::from_value::<EnvironmentSetParams>(json!({"sky": "space"})).is_err());
     }
 
     #[test]

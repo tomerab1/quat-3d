@@ -253,8 +253,8 @@ public:
                             const std::string& shader_dir);
     // Loads `relative` (a project-relative Radiance .hdr confined to
     // `project_root`; empty clears it) as the environment's HDRI, used while
-    // render_settings().environment.source is hdri. The path is kept even
-    // when loading fails; hdri_status().error says why.
+    // render_settings().environment.source is hdri. A failed load keeps the
+    // current HDRI; hdri_status().error says why.
     [[nodiscard]] std::expected<void, engine::core::Error>
     set_hdri(const std::string& relative, const std::filesystem::path& project_root);
     [[nodiscard]] const HdriStatus& hdri_status() const { return hdri_status_; }

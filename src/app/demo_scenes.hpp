@@ -20,9 +20,13 @@
 
 #include "engine/core/error.hpp"
 #include "engine/physics/physics_world.hpp"
+#include "engine/scene/scene_io.hpp" // SceneEnvironment
 
 namespace engine::asset {
 class AssetManager;
+}
+namespace engine::renderer {
+struct RenderSettings;
 }
 namespace engine::rhi {
 class GpuAllocator;
@@ -53,6 +57,8 @@ struct DemoScene {
     entt::entity root = entt::null;
     entt::entity pedestal = entt::null;
     glm::vec2    footprint_half{0.0F};
+    // QUAT_SCENE: the file's scene-level environment (its HDRI, R21).
+    engine::scene::SceneEnvironment environment;
 };
 
 // Half the height of the pedestal mesh (a box) as built; its Transform scales
@@ -66,7 +72,8 @@ inline constexpr float k_pedestal_mesh_half_height = 0.25F;
 build_demo_scene(engine::scene::Scene& scene, engine::asset::AssetManager& assets,
                  engine::rhi::GpuAllocator& allocator,
                  const engine::rhi::TransferContext& setup_transfer,
-                 const std::filesystem::path& project_root);
+                 const std::filesystem::path& project_root,
+                 engine::renderer::RenderSettings* render_settings = nullptr);
 
 // The sun, plus two coloured point lights unless the scene came from a glTF
 // file (a model is shown under just its own lighting setup). The point lights

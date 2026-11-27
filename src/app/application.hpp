@@ -84,6 +84,11 @@ private:
     [[nodiscard]] bool init_platform();
     [[nodiscard]] bool init_subsystems();
     void connect_remote();
+    // R21: the startup HDRI — QUAT_HDRI=<project-relative .hdr> (also
+    // selects it as the sky), else the QUAT_SCENE file's environment.
+    void load_startup_hdri();
+    // The HDRI's status for environment.get and the editor.
+    [[nodiscard]] engine::remote::HdriInfo hdri_info() const;
     // Gameplay scripts (G7), and the startup play request: QUAT_PLAY=1, or a
     // QUAT_SCENE game in the non-editor build, starts in Play.
     void init_scripts();

@@ -26,6 +26,7 @@
 #include "app/play_mode.hpp"
 #include "app/world_runtime.hpp"
 #include "engine/editor/editor.hpp"
+#include "engine/remote/world_commands.hpp" // HdriInfo
 
 struct ImDrawData;
 struct SDL_Window;
@@ -69,6 +70,10 @@ struct EditorBridgeTargets {
     // Camera cut for the renderer's temporal state (R11): called after a scene
     // load and on every Play / Stop transition. May be empty.
     std::function<void()> reset_temporal;
+    // R21: the lighting environment's HDRI (the Renderer panel's file row,
+    // scene files). May be empty.
+    std::function<engine::remote::HdriInfo()> hdri_info;
+    std::function<std::expected<void, engine::core::Error>(const std::string& relative)> set_hdri;
 };
 
 class EditorBridge {
@@ -124,11 +129,13 @@ public:
 
 private:
     void apply_scene_file_requests();
+    void apply_hdri_request();
     void apply_instantiate_request();
 
     EditorBridgeTargets              t_;
     engine::editor::EditorLayer      editor_;
     std::string pending_instantiate_; // set by the asset browser, consumed below
+    std::optional<std::string> pending_hdri_; // R21: the Renderer panel's HDRI request
     std::string pending_save_;        // scene file requests from the File menu
     std::string pending_load_;
     bool play_use_scene_camera_ = false; // menu-bar "Game camera" checkbox

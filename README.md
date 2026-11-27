@@ -36,6 +36,13 @@ the CI screenshot pipeline.
 - Glass and transparency (refraction, absorption, IOR), clearcoat car paint
 - Physically based sky with volumetric clouds and a moving sun
 - Image-based lighting that keeps up with the sky in real time
+- HDRI environments: light and backdrop a scene with a Radiance `.hdr`
+  panorama (rotation, intensity). Its sun becomes a shadow-casting sun light.
+- Energy-conserving specular: rough metals keep their brightness
+  (multiple-scattering GGX), and normal-mapped surfaces stop reflecting the
+  sky below their horizon
+- Screen-space reflections traced through the depth pyramid, accumulated over
+  frames, falling back to the environment where they miss
 - Temporal anti-aliasing and upscaling (TAAU) with per-object motion vectors for
   moving, skinned, instanced and wind-animated geometry; render scale modes
   (native, quality, balanced, performance), set like every other render
@@ -224,6 +231,7 @@ Environment variables switch on extra modes:
 | Variable | Effect |
 |---|---|
 | `QUAT_SCENE=<file>` | Load a scene file (project-relative) instead of the showcase scene |
+| `QUAT_HDRI=<file>` | Light the scene with a Radiance `.hdr` panorama (project-relative). `scripts/fetch-hdri.sh <id>` downloads a CC0 one from Poly Haven into `hdri-cache/` |
 | `QUAT_PLAY=1` | Enter Play mode on the first frame (a non-editor build also plays a `QUAT_SCENE` game) |
 | `QUAT_SCRIPT_HOT_RELOAD=0` / `=1` | Turn script hot reload off (editor) / on (non-editor builds) |
 | `QUAT_GLTF=<file>` | Load a glTF/GLB model instead of the showcase scene |

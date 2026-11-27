@@ -170,12 +170,15 @@ struct RemoteBridge::Impl {
     std::expected<void, Error> load_scene(const std::filesystem::path& path) {
         if (is_playing()) return fail("stop play mode first (sim.stop)");
         std::expected<void, Error> loaded = fail("not loaded");
+        engine::scene::SceneEnvironment environment;
         auto ctx = with_upload([&](const engine::rhi::TransferContext& transfer) {
             loaded = engine::scene::load_scene(*t.scene, path, *t.allocator, transfer, *t.assets,
-                                               t.render_settings);
+                                               t.render_settings, &environment);
         });
         if (!ctx) return ctx;
         if (!loaded) return loaded;
+        // The file's HDRI (R21); a failed load is reported by environment.get.
+        if (t.set_hdri) (void)t.set_hdri(environment.hdri);
         // Rebind the loop's cached entities to the new scene.
         if (t.spin_entity != nullptr) *t.spin_entity = entt::null;
 #ifdef ENGINE_EDITOR
@@ -260,7 +263,9 @@ struct RemoteBridge::Impl {
         };
         s.save_scene = [this](const std::filesystem::path& p) -> std::expected<void, Error> {
             if (is_playing()) return fail("stop play mode first (sim.stop)");
-            return engine::scene::save_scene(*t.scene, p, t.render_settings);
+            engine::scene::SceneEnvironment environment;
+            if (t.hdri_info) environment.hdri = t.hdri_info().path;
+            return engine::scene::save_scene(*t.scene, p, t.render_settings, &environment);
         };
         s.load_scene = [this](const std::filesystem::path& p) { return load_scene(p); };
         if (t.navmesh != nullptr) {
@@ -275,6 +280,8 @@ struct RemoteBridge::Impl {
         s.frame_stats = [this] { return frame_stats(); };
         s.physics_world = [this] { return physics_world(); };
         if (t.scripts != nullptr) s.scripts = [this] { return t.scripts; };
+        s.hdri_info = t.hdri_info;
+        s.set_hdri = t.set_hdri;
         return s;
     }
 

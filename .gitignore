@@ -11,6 +11,9 @@
 # Downloaded glTF test models (Khronos sample assets — fetched on demand, not committed)
 /sample-assets/
 
+# Downloaded HDRI panoramas (Poly Haven CC0, scripts/fetch-hdri.sh; not committed)
+/hdri-cache/
+
 # vcpkg
 /vcpkg_installed/
 /vcpkg/

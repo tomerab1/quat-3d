@@ -7,7 +7,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
-use super::{CloudParams, Color, EntityRef};
+use super::{CloudParams, Color, EntityRef, SkySource};
 
 /// A render-settings group.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -22,6 +22,8 @@ pub enum SettingsGroup {
     #[serde(rename = "contact_shadows")]
     ContactShadows,
     Ibl,
+    Environment,
+    Ssr,
     Clouds,
 }
 
@@ -242,6 +244,58 @@ pub struct IblParams {
     /// Scale of the sky's ambient light and reflections, 0..4 (default 1).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub intensity: Option<f64>,
+    /// Multiple-scattering energy compensation (rough metals keep their brightness).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub multiscatter: Option<bool>,
+    /// Fade normal-mapped reflections that point below the surface.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub horizon_occlusion: Option<bool>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct EnvironmentSettingsParams {
+    /// Sky source: procedural or hdri (load the file with `environment_set`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<SkySource>,
+    /// HDRI brightness, 0..100 (default 1).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hdri_intensity: Option<f64>,
+    /// HDRI rotation about the vertical axis, degrees, -360..360 (default 0).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hdri_rotation_deg: Option<f64>,
+    /// The HDRI's sun drives the shadowed sun light (default true).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hdri_sun: Option<bool>,
+}
+
+/// Screen-space reflection quality.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum SsrQuality {
+    Low,
+    Medium,
+    High,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SsrParams {
+    /// Trace screen-space reflections (default true).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub enabled: Option<bool>,
+    /// low (32 steps, 1 reused ray), medium (64, 4; default), high (128, 4).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub quality: Option<SsrQuality>,
+    /// Surfaces rougher than this use the environment only, 0..1 (default 0.6).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_roughness: Option<f64>,
+    /// Metres behind the depth buffer a ray still counts as a hit, 0.01..5 (default 0.25).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thickness: Option<f64>,
+    /// Screen-edge fade band, 0..0.5 of the screen height (default 0.1).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub edge_fade: Option<f64>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
@@ -271,6 +325,12 @@ pub struct RenderSettingsSetParams {
     /// Image-based (sky) ambient light and reflections.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ibl: Option<IblParams>,
+    /// Sky source and HDRI look (the HDRI file is set with `environment_set`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub environment: Option<EnvironmentSettingsParams>,
+    /// Screen-space reflections.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ssr: Option<SsrParams>,
     /// Volumetric clouds (same fields as `environment_set`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub clouds: Option<CloudParams>,
@@ -288,6 +348,8 @@ impl RenderSettingsSetParams {
             && self.ao.is_none()
             && self.contact_shadows.is_none()
             && self.ibl.is_none()
+            && self.environment.is_none()
+            && self.ssr.is_none()
             && self.clouds.is_none()
     }
 }
@@ -423,6 +485,21 @@ mod tests {
         assert_eq!(group, SettingsGroup::ContactShadows);
         assert!(!p.is_empty());
         assert!(RenderSettingsSetParams::default().is_empty());
+    }
+
+    #[test]
+    fn reflection_settings_round_trip() {
+        let request = json!({
+            "ibl": {"multiscatter": false},
+            "environment": {"source": "hdri", "hdri_rotation_deg": 45.0},
+            "ssr": {"quality": "high", "max_roughness": 0.7}
+        });
+        let p: RenderSettingsSetParams = serde_json::from_value(request.clone()).unwrap();
+        assert!(!p.is_empty());
+        assert_eq!(serde_json::to_value(&p).unwrap(), request);
+        let group: SettingsGroup = serde_json::from_value(json!("ssr")).unwrap();
+        assert_eq!(group, SettingsGroup::Ssr);
+        assert!(serde_json::from_value::<SsrParams>(json!({"quality": "ultra"})).is_err());
     }
 
     #[test]

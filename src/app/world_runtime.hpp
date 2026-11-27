@@ -87,7 +87,12 @@ public:
                                    engine::asset::AssetManager& assets,
                                    engine::rhi::GpuAllocator& allocator,
                                    const engine::rhi::TransferContext& setup_transfer,
-                                   const std::filesystem::path& project_root);
+                                   const std::filesystem::path& project_root,
+                                   engine::renderer::RenderSettings* render_settings = nullptr);
+    // The startup scene file's environment (empty without QUAT_SCENE).
+    [[nodiscard]] const engine::scene::SceneEnvironment& startup_environment() const {
+        return demo_.environment;
+    }
     // Terrain pass + its upload context, the network session and the
     // QUAT_TERRAIN tile. After the renderer's environment exists.
     // `project_root` holds assets/ (particle flipbooks resolve against it).

@@ -7,6 +7,15 @@ into CLAUDE.md or the brief template in [`CYCLE.md`](CYCLE.md).
 
 ## Agents and orchestration
 
+- **Orphaned renders starve every agent's build (R21, 2026-11-27).**
+  `xvfb-run` sessions whose driving script was killed left about ten `game`
+  processes on lavapipe running for hours, re-parented to PID 1. They kept
+  the shared 4-core container at a load average of 60+, and a full build
+  took over two hours instead of about twenty minutes. → Run the game itself
+  under `timeout`, and launch each render under `setsid` with a `trap` that
+  kills its process group. After a render session, check
+  `ps -eo ppid,etime,args | grep game` and kill only your own leftovers.
+
 - **The worktree isolation guard refuses complex shell commands** (heredocs
   with quotes, `cd` into computed paths, git on paths it cannot verify). A
   worker loses turns retrying them. → Write edit scripts / build scripts as
@@ -162,6 +171,15 @@ into CLAUDE.md or the brief template in [`CYCLE.md`](CYCLE.md).
   wayland-protocols, libdecor. The first CI run failed on xcursor.
 
 ## C++ in this codebase
+
+- **Check BRDF integrals against an independent quadrature before building
+  on them (R21).** The split-sum LUT used a separable Schlick-Smith term with
+  k = alpha^2 / 2, computed from alpha = roughness^2, so it was neither
+  Karis's IBL k nor the punctual lights' height-correlated Smith. Multiple
+  scattering divides by A + B, so a LUT that does not match the lighting
+  breaks energy conservation. Two estimators (importance-sampled and a
+  hemisphere quadrature) now agree on E_ss(mu = 1, alpha = 1) = 0.307, and
+  a GPU white-furnace test checks the shaded result.
 
 - **A new member of a class with a hand-written move must be added to the
   move too.** R10.3 added `Device::independent_blend_` and set it in
