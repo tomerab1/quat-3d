@@ -11,7 +11,13 @@
 // (lib/alpha_test.slang): fragment_main for opaque materials (no discard, so
 // the pipeline keeps early depth testing) and fragment_masked for glTF MASK
 // materials (discards below alphaCutoff; R12.11). Back faces of doubleSided
-// materials are shaded with the reversed normal, as glTF requires.
+// materials are shaded with the reversed normal, as glTF requires; a mirrored
+// instance (negative determinant, glTF 3.7.4) reverses its winding, so its
+// front faces rasterise as back faces and the test compensates for that.
+//
+// Everything a GBuffer writer outputs is computed in gbuffer_shade<A>, so the
+// opaque and masked entry points always write the same targets
+// (alpha_variant_shader_test checks this on the SPIR-V).
 
 import alpha_test;
 import instancing;
@@ -41,6 +47,8 @@ struct VsOut {
     float3 world_n : NORMAL;
     float4 world_t : TANGENT;
     float2 uv      : TEXCOORD0;
+    // 1 when the instance transform mirrors (det < 0): its winding is reversed.
+    nointerpolation float mirrored : TEXCOORD1;
 }
 
 [shader("vertex")]
@@ -54,6 +62,7 @@ VsOut vertex_main(VsIn input) {
     float4 t = inst.world_tangent(input.tangent);
     o.world_t = float4(normalize(t.xyz), t.w);
     o.uv = input.uv;
+    o.mirrored = inst.normal_c0.w < 0.0 ? 1.0 : 0.0; // sign(det M), see InstanceData
     return o;
 }
 
@@ -86,8 +95,11 @@ GBufferOut gbuffer_shade<A : IAlphaMode>(VsOut input, bool front_face) {
     // Build the world-space normal from the tangent-space material normal.
     // glTF doubleSided: the back face is lit with the reversed normal (the
     // tangent frame flips with it, keeping the normal map's handedness).
+    // SV_IsFrontFace follows screen winding; a mirrored instance's outside
+    // faces wind clockwise, so they arrive as back faces.
+    bool outside = front_face != (input.mirrored > 0.5);
     float3 n = normalize(input.world_n);
-    if (!front_face && (g_material.params.flags & MATERIAL_DOUBLE_SIDED) != 0) {
+    if (!outside && (g_material.params.flags & MATERIAL_DOUBLE_SIDED) != 0) {
         n = -n;
     }
     float3 t = normalize(input.world_t.xyz - n * dot(n, input.world_t.xyz));

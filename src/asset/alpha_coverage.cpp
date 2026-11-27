@@ -1,4 +1,11 @@
 // Coverage-preserving alpha mip chains (Castaño 2010). See alpha_coverage.hpp.
+//
+// Memory: level 0 is read in place as RGBA8 (never copied to float); each
+// coarser level is built in float from the previous one, and only those two
+// float levels are alive at a time. Every level is written straight into its
+// destination (the caller's PixelBuffer at load time), so the runtime path's
+// whole footprint is known before anything is allocated (alpha_tested_mips_cost)
+// and is claimed from the load's DecodeBudget first.
 
 #include "engine/asset/alpha_coverage.hpp"
 
@@ -6,8 +13,8 @@
 #include <array>
 #include <cmath>
 #include <cstddef>
-#include <cstring>
 #include <cstdint>
+#include <cstring>
 #include <span>
 #include <utility>
 #include <vector>
@@ -20,18 +27,8 @@ namespace {
 constexpr std::uint32_t k_sub = 4;
 // Histogram resolution of the coverage quantile.
 constexpr std::uint32_t k_bins = 4096;
-
-// A level kept in float while the chain is built: rgb is the alpha-weighted
-// mean colour (linear light for sRGB data), a the box-filtered, unscaled alpha.
-struct FloatLevel {
-    std::uint32_t      width = 0;
-    std::uint32_t      height = 0;
-    std::vector<float> rgba;
-
-    [[nodiscard]] float alpha(std::uint32_t x, std::uint32_t y) const {
-        return rgba[(static_cast<std::size_t>(y) * width + x) * 4 + 3];
-    }
-};
+// Bytes per texel of a float working level.
+constexpr std::uint64_t k_float_texel = 4 * sizeof(float);
 
 [[nodiscard]] float srgb_to_linear(float c) {
     return c <= 0.04045F ? c / 12.92F : std::pow((c + 0.055F) / 1.055F, 2.4F);
@@ -51,19 +48,50 @@ struct FloatLevel {
            rgba.size() == static_cast<std::size_t>(width) * height * 4;
 }
 
-[[nodiscard]] FloatLevel to_float(std::span<const std::uint8_t> rgba, std::uint32_t width,
-                                  std::uint32_t height, bool srgb) {
-    FloatLevel out{width, height, std::vector<float>(rgba.size())};
-    std::array<float, 256> decode{};
-    for (std::size_t i = 0; i < decode.size(); ++i) {
-        const float v = static_cast<float>(i) / 255.0F;
-        decode[i] = srgb ? srgb_to_linear(v) : v;
+[[nodiscard]] std::uint32_t mip_extent(std::uint32_t base, std::uint32_t level) {
+    return std::max(base >> level, 1U);
+}
+
+// Level 0 read in place: RGBA8, colour decoded to linear through a table.
+struct U8Level {
+    const std::uint8_t*          px = nullptr;
+    std::uint32_t                width = 0;
+    std::uint32_t                height = 0;
+    const std::array<float, 256>* decode = nullptr;
+
+    [[nodiscard]] float alpha(std::uint32_t x, std::uint32_t y) const {
+        return static_cast<float>(px[(static_cast<std::size_t>(y) * width + x) * 4 + 3]) / 255.0F;
     }
-    for (std::size_t i = 0; i < rgba.size(); i += 4) {
-        out.rgba[i] = decode[rgba[i]];
-        out.rgba[i + 1] = decode[rgba[i + 1]];
-        out.rgba[i + 2] = decode[rgba[i + 2]];
-        out.rgba[i + 3] = static_cast<float>(rgba[i + 3]) / 255.0F;
+    void texel(std::uint32_t x, std::uint32_t y, float out[4]) const {
+        const std::uint8_t* p = px + (static_cast<std::size_t>(y) * width + x) * 4;
+        out[0] = (*decode)[p[0]];
+        out[1] = (*decode)[p[1]];
+        out[2] = (*decode)[p[2]];
+        out[3] = static_cast<float>(p[3]) / 255.0F;
+    }
+};
+
+// A coarser level kept in float while the chain is built: rgb is the
+// alpha-weighted mean colour (linear light for sRGB data), a the
+// box-filtered, unscaled alpha.
+struct FloatLevel {
+    std::uint32_t      width = 0;
+    std::uint32_t      height = 0;
+    std::vector<float> rgba;
+
+    [[nodiscard]] float alpha(std::uint32_t x, std::uint32_t y) const {
+        return rgba[(static_cast<std::size_t>(y) * width + x) * 4 + 3];
+    }
+    void texel(std::uint32_t x, std::uint32_t y, float out[4]) const {
+        std::memcpy(out, &rgba[(static_cast<std::size_t>(y) * width + x) * 4], 4 * sizeof(float));
+    }
+};
+
+[[nodiscard]] std::array<float, 256> decode_table(bool srgb) {
+    std::array<float, 256> out{};
+    for (std::size_t i = 0; i < out.size(); ++i) {
+        const float v = static_cast<float>(i) / 255.0F;
+        out[i] = srgb ? srgb_to_linear(v) : v;
     }
     return out;
 }
@@ -90,7 +118,8 @@ struct Tap {
     return out;
 }
 
-[[nodiscard]] FloatLevel downsample(const FloatLevel& src) {
+template <typename Src>
+[[nodiscard]] FloatLevel downsample(const Src& src) {
     FloatLevel dst;
     dst.width = std::max(src.width / 2, 1U);
     dst.height = std::max(src.height / 2, 1U);
@@ -106,10 +135,10 @@ struct Tap {
             for (const Tap& vy : ty[y]) {
                 for (const Tap& vx : tx[x]) {
                     const float w = vx.weight * vy.weight;
-                    const float* p =
-                        &src.rgba[(static_cast<std::size_t>(vy.index) * src.width + vx.index) * 4];
+                    float p[4];
+                    src.texel(vx.index, vy.index, p);
                     const float wa = w * p[3];
-                    for (int c = 0; c < 3; ++c) {
+                    for (std::size_t c = 0; c < 3; ++c) {
                         colour[c] += wa * p[c];
                         plain[c] += w * p[c];
                     }
@@ -120,7 +149,7 @@ struct Tap {
             float* o = &dst.rgba[(static_cast<std::size_t>(y) * dst.width + x) * 4];
             // Fully transparent footprint: keep the plain mean (never shown,
             // but keeps the colour continuous for bilinear neighbours).
-            for (int c = 0; c < 3; ++c) {
+            for (std::size_t c = 0; c < 3; ++c) {
                 o[c] = colour_w > 1e-6F ? colour[c] / colour_w : plain[c];
             }
             o[3] = alpha;
@@ -131,8 +160,8 @@ struct Tap {
 
 // Calls `fn(alpha)` for the 4x4 bilinear sub-samples of every texel (NVTT's
 // coverage estimate; edges clamp), each texel's alpha mapped by `texel` first.
-template <typename Texel, typename Fn>
-void for_each_subsample(const FloatLevel& level, Texel&& texel, Fn&& fn) {
+template <typename Level, typename Texel, typename Fn>
+void for_each_subsample(const Level& level, Texel&& texel, Fn&& fn) {
     for (std::uint32_t y = 0; y < level.height; ++y) {
         const std::uint32_t y1 = std::min(y + 1, level.height - 1);
         for (std::uint32_t x = 0; x < level.width; ++x) {
@@ -156,8 +185,8 @@ void for_each_subsample(const FloatLevel& level, Texel&& texel, Fn&& fn) {
 
 // Alpha-test coverage of `level` with its alpha scaled by `scale` and, when
 // `quantize`, rounded to 8 bits per texel as it is stored.
-[[nodiscard]] float coverage_of(const FloatLevel& level, float cutoff, float scale,
-                                bool quantize) {
+template <typename Level>
+[[nodiscard]] float coverage_of(const Level& level, float cutoff, float scale, bool quantize) {
     std::size_t passed = 0;
     std::size_t total = 0;
     const auto texel = [&](float a) {
@@ -181,7 +210,7 @@ void for_each_subsample(const FloatLevel& level, Texel&& texel, Fn&& fn) {
 [[nodiscard]] float coverage_scale(const FloatLevel& level, float cutoff, float target) {
     if (target <= 0.0F) return 1.0F; // nothing passed at level 0: nothing to keep
     const float scale_bins = static_cast<float>(k_bins - 1);
-    std::vector<std::size_t> hist(k_bins, 0);
+    std::array<std::size_t, k_bins> hist{};
     std::size_t total = 0;
     const auto identity = [](float a) { return a; };
     for_each_subsample(level, identity, [&](float a) {
@@ -214,80 +243,130 @@ void for_each_subsample(const FloatLevel& level, Texel&& texel, Fn&& fn) {
     return best_scale;
 }
 
-[[nodiscard]] MipLevelRgba8 to_unorm(const FloatLevel& level, bool srgb, float alpha_scale) {
-    MipLevelRgba8 out{level.width, level.height,
-                      std::vector<std::uint8_t>(level.rgba.size())};
+void write_level(const FloatLevel& level, bool srgb, float alpha_scale, std::uint8_t* out) {
     for (std::size_t i = 0; i < level.rgba.size(); i += 4) {
         for (std::size_t c = 0; c < 3; ++c) {
             const float v = level.rgba[i + c];
-            out.pixels[i + c] = to_unorm8(srgb ? linear_to_srgb(std::clamp(v, 0.0F, 1.0F)) : v);
+            out[i + c] = to_unorm8(srgb ? linear_to_srgb(std::clamp(v, 0.0F, 1.0F)) : v);
         }
-        out.pixels[i + 3] = to_unorm8(level.rgba[i + 3] * alpha_scale);
+        out[i + 3] = to_unorm8(level.rgba[i + 3] * alpha_scale);
     }
-    return out;
 }
 
-[[nodiscard]] std::vector<MipLevelRgba8> build_chain(std::span<const std::uint8_t> rgba,
-                                                     std::uint32_t width, std::uint32_t height,
-                                                     bool srgb, const float* cutoff) {
+// Builds the chain of `rgba` (validated by the caller), asking `dest(level,
+// width, height)` for the RGBA8 destination of each level. Level 0 is copied
+// unless its destination is `rgba` itself; the coverage step runs when
+// `cutoff` is given.
+template <typename Dest>
+void build_chain(std::span<const std::uint8_t> rgba, std::uint32_t width, std::uint32_t height,
+                 bool srgb, const float* cutoff, Dest&& dest) {
+    const std::array<float, 256> decode = decode_table(srgb);
+    const U8Level base{rgba.data(), width, height, &decode};
+    if (std::uint8_t* l0 = dest(0U, width, height); l0 != rgba.data()) {
+        std::memcpy(l0, rgba.data(), rgba.size());
+    }
+    if (width == 1 && height == 1) return;
+    const float target = cutoff != nullptr ? coverage_of(base, *cutoff, 1.0F, true) : 0.0F;
+    FloatLevel level = downsample(base);
+    for (std::uint32_t i = 1;; ++i) {
+        const float scale = cutoff != nullptr ? coverage_scale(level, *cutoff, target) : 1.0F;
+        write_level(level, srgb, scale, dest(i, level.width, level.height));
+        if (level.width == 1 && level.height == 1) break;
+        level = downsample(level); // the previous and the next level are alive here
+    }
+}
+
+[[nodiscard]] std::vector<MipLevelRgba8> build_vectors(std::span<const std::uint8_t> rgba,
+                                                       std::uint32_t width, std::uint32_t height,
+                                                       bool srgb, const float* cutoff) {
     std::vector<MipLevelRgba8> out;
     if (!valid_input(rgba, width, height)) return out;
-    out.push_back({width, height, std::vector<std::uint8_t>(rgba.begin(), rgba.end())});
-    FloatLevel level = to_float(rgba, width, height, srgb);
-    const float target = cutoff != nullptr ? coverage_of(level, *cutoff, 1.0F, true) : 0.0F;
-    while (level.width > 1 || level.height > 1) {
-        level = downsample(level);
-        const float scale = cutoff != nullptr ? coverage_scale(level, *cutoff, target) : 1.0F;
-        out.push_back(to_unorm(level, srgb, scale));
-    }
+    build_chain(rgba, width, height, srgb, cutoff,
+                [&](std::uint32_t, std::uint32_t w, std::uint32_t h) {
+                    out.push_back({w, h, std::vector<std::uint8_t>(std::size_t{w} * h * 4)});
+                    return out.back().pixels.data();
+                });
     return out;
 }
 
 } // namespace
 
+AlphaMipsCost alpha_tested_mips_cost(std::uint32_t width, std::uint32_t height) {
+    AlphaMipsCost cost;
+    if (width == 0 || height == 0) return cost;
+    std::uint64_t previous_float = 0;
+    for (std::uint32_t i = 0;; ++i) {
+        const std::uint64_t texels =
+            std::uint64_t{mip_extent(width, i)} * std::uint64_t{mip_extent(height, i)};
+        cost.chain_bytes += texels * 4;
+        if (i > 0) {
+            // Level i is built while level i - 1 is still alive.
+            cost.working_bytes =
+                std::max(cost.working_bytes, previous_float + texels * k_float_texel);
+            previous_float = texels * k_float_texel;
+        }
+        if (mip_extent(width, i) == 1 && mip_extent(height, i) == 1) break;
+    }
+    return cost;
+}
+
 float alpha_test_coverage(std::span<const std::uint8_t> rgba, std::uint32_t width,
                           std::uint32_t height, float cutoff, float alpha_scale) {
     if (!valid_input(rgba, width, height)) return 0.0F;
-    return coverage_of(to_float(rgba, width, height, false), cutoff, alpha_scale, false);
+    const std::array<float, 256> decode = decode_table(false);
+    return coverage_of(U8Level{rgba.data(), width, height, &decode}, cutoff, alpha_scale, false);
 }
 
 std::vector<MipLevelRgba8> build_alpha_tested_mips(std::span<const std::uint8_t> rgba,
                                                    std::uint32_t width, std::uint32_t height,
                                                    bool srgb, float cutoff) {
-    return build_chain(rgba, width, height, srgb, &cutoff);
-}
-
-bool apply_alpha_tested_mips(TextureData& data, float cutoff, DecodeBudget* budget) {
-    if (data.format != TexelFormat::rgba8 || !data.levels.empty() || data.pixels.empty()) {
-        return false;
-    }
-    const std::span<const std::uint8_t> rgba(
-        reinterpret_cast<const std::uint8_t*>(data.pixels.data()), data.pixels.size());
-    const std::vector<MipLevelRgba8> chain = build_alpha_tested_mips(
-        rgba, data.width, data.height, data.color_space == TextureColorSpace::srgb, cutoff);
-    if (chain.empty()) return false;
-    std::uint64_t total = 0;
-    for (const MipLevelRgba8& level : chain) total += level.pixels.size();
-    if (budget != nullptr && !budget->reserve(total)) return false;
-    PixelBuffer pixels = PixelBuffer::allocate(static_cast<std::size_t>(total));
-    if (pixels.empty()) return false;
-    std::vector<TextureLevel> levels;
-    levels.reserve(chain.size());
-    std::uint64_t offset = 0;
-    for (const MipLevelRgba8& level : chain) {
-        std::memcpy(pixels.data() + offset, level.pixels.data(), level.pixels.size());
-        levels.push_back({offset, level.pixels.size(), level.width, level.height});
-        offset += level.pixels.size();
-    }
-    data.pixels = std::move(pixels);
-    data.levels = std::move(levels);
-    return true;
+    return build_vectors(rgba, width, height, srgb, &cutoff);
 }
 
 std::vector<MipLevelRgba8> build_box_filtered_mips(std::span<const std::uint8_t> rgba,
                                                    std::uint32_t width, std::uint32_t height,
                                                    bool srgb) {
-    return build_chain(rgba, width, height, srgb, nullptr);
+    return build_vectors(rgba, width, height, srgb, nullptr);
+}
+
+bool apply_alpha_tested_mips(TextureData& data, float cutoff, DecodeBudget* budget,
+                             std::uint64_t max_image_bytes) {
+    if (data.format != TexelFormat::rgba8 || !data.levels.empty() || data.pixels.empty()) {
+        return false;
+    }
+    const std::span<const std::uint8_t> rgba(
+        reinterpret_cast<const std::uint8_t*>(data.pixels.data()), data.pixels.size());
+    if (!valid_input(rgba, data.width, data.height)) return false;
+
+    // Everything is sized and claimed before the first allocation: the new
+    // chain (level 0 included: the old image is released only at the end)
+    // and the float working set, which is returned once the chain is built.
+    const AlphaMipsCost cost = alpha_tested_mips_cost(data.width, data.height);
+    if (cost.chain_bytes > max_image_bytes) return false;
+    if (budget != nullptr && !budget->reserve(cost.chain_bytes + cost.working_bytes)) {
+        return false;
+    }
+    PixelBuffer pixels = PixelBuffer::allocate(static_cast<std::size_t>(cost.chain_bytes));
+    if (pixels.empty()) {
+        if (budget != nullptr) budget->release(cost.chain_bytes + cost.working_bytes);
+        return false;
+    }
+    std::vector<TextureLevel> levels;
+    std::uint64_t offset = 0;
+    build_chain(rgba, data.width, data.height, data.color_space == TextureColorSpace::srgb,
+                &cutoff, [&](std::uint32_t, std::uint32_t w, std::uint32_t h) {
+                    const std::uint64_t size = std::uint64_t{w} * h * 4;
+                    levels.push_back({offset, size, w, h});
+                    std::uint8_t* at = reinterpret_cast<std::uint8_t*>(pixels.data()) + offset;
+                    offset += size;
+                    return at;
+                });
+    // The working set is gone, and so is the single-level image the decode
+    // claimed: the load is now charged for the chain alone.
+    if (budget != nullptr) budget->release(cost.working_bytes + data.pixels.size());
+    data.pixels = std::move(pixels);
+    data.levels = std::move(levels);
+    return true;
 }
 
 } // namespace engine::asset

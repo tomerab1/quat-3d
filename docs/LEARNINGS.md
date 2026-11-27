@@ -179,6 +179,24 @@ into CLAUDE.md or the brief template in [`CYCLE.md`](CYCLE.md).
   8-bit step of whole stems of equal alpha, and rounding flipped them all
   (+9 % coverage). Evaluate the stored coverage at a few 8-bit steps around
   the analytic threshold and keep the closest.
+- **`SV_IsFrontFace` is screen winding, not "outside".** A mirrored instance
+  (negative determinant) winds its outside faces clockwise, so a doubleSided
+  normal flip keyed on front_face alone lit mirrored foliage from behind
+  (PR #70 review). Use `front_face != mirrored`, with `sign(det M)` from
+  InstanceData, and test a negatively scaled instance.
+- **Post-decode processing of untrusted textures must be costed before it
+  allocates.** The first coverage-mip pass reserved its budget only after a
+  float copy of level 0 plus a vector chain (> 1 GiB for an 8k image). Size
+  the result and the working set up front, claim them from the DecodeBudget,
+  read level 0 in place, keep two float levels alive, and write straight into
+  the final buffer; prove it with an allocation probe (tests/support).
+- **Count volume absorption once per volume, not per face.** A shadow
+  caster sees both faces of closed glass; KHR_materials_volume `thickness` is
+  the whole medium, so Beer-Lambert belongs on the light's entry face only.
+- **Import the shader-side contract instead of copying it.** A third copy of
+  the material flag bits and PbrMaterialParams in transparent.slang would
+  desync silently; passes import `material`, and a test checks the flag bits
+  and every pass's `g_params` reflection offsets against the C++ struct.
 - **A line protocol on a loopback port is reachable from every web page**
   (issue #56). Browsers send cross-origin `POST`s to `127.0.0.1` without a
   CORS preflight, and HTTP is lines: the remote endpoint answered the request

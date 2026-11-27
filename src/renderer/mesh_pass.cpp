@@ -1,9 +1,11 @@
 #include "engine/renderer/mesh_pass.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <limits>
 #include <string>
+#include <tuple>
 #include <unordered_map>
 #include <utility>
 
@@ -41,7 +43,64 @@ constexpr std::uint32_t kMaterialMaxLod = material_sampler_max_lod;
     }};
 }
 
+// Fragment entry point of each alpha mode in a GBuffer program.
+[[nodiscard]] const char* fragment_entry(GBufferAlphaMode alpha) {
+    return alpha == GBufferAlphaMode::masked ? "fragment_masked" : "fragment_main";
+}
+
+constexpr std::array<GBufferAlphaMode, 2> kAlphaModes{GBufferAlphaMode::opaque,
+                                                      GBufferAlphaMode::masked};
+
+// Vertex input mirrors asset::Vertex.
+constexpr VkVertexInputBindingDescription kVertexBinding{0, sizeof(asset::Vertex),
+                                                         VK_VERTEX_INPUT_RATE_VERTEX};
+constexpr std::array<VkVertexInputAttributeDescription, 4> kVertexAttributes{{
+    {0, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(asset::Vertex, position)},
+    {1, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(asset::Vertex, normal)},
+    {2, 0, VK_FORMAT_R32G32_SFLOAT, offsetof(asset::Vertex, uv)},
+    {3, 0, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(asset::Vertex, tangent)},
+}};
+constexpr std::array<VkFormat, 4> kColorFormats{gbuffer_albedo_format, gbuffer_normal_format,
+                                                gbuffer_material_format,
+                                                gbuffer_clearcoat_format};
+constexpr VkPushConstantRange kPushConstants{
+    VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(GBufferPushConstants)};
+
 } // namespace
+
+GBufferVariant gbuffer_variant(const asset::MaterialAsset& material) {
+    GBufferVariant v;
+    // The built-in program until material shader modules exist (A6: the
+    // module comes from the material).
+    v.alpha = (material.params.flags & asset::material_alpha_mask) != 0
+                  ? GBufferAlphaMode::masked
+                  : GBufferAlphaMode::opaque;
+    return v;
+}
+
+std::expected<void, core::Error> MeshPass::create_variants(rhi::PipelineCache& cache,
+                                                           const std::string& module,
+                                                           const rhi::LoadedShader& shader) {
+    const VkDescriptorSetLayout set_layout = material_layout_.handle();
+    rhi::GraphicsPipeline::CreateInfo info{};
+    info.vertex = &shader;
+    info.fragment = &shader;
+    info.color_formats = kColorFormats; // every variant writes every GBuffer target
+    info.depth_format = gbuffer_depth_format;
+    info.depth_compare_op = VK_COMPARE_OP_LESS_OR_EQUAL; // standard [0,1] depth
+    info.cull_mode = VK_CULL_MODE_NONE;                  // double-sided for now
+    info.vertex_bindings = {&kVertexBinding, 1};
+    info.vertex_attributes = kVertexAttributes;
+    info.set_layouts = {&set_layout, 1};
+    info.push_constants = {&kPushConstants, 1};
+    for (const GBufferAlphaMode alpha : kAlphaModes) {
+        info.fragment_entry = fragment_entry(alpha);
+        auto pipeline = cache.create_graphics_pipeline(info);
+        if (!pipeline) return std::unexpected(pipeline.error());
+        pipelines_.insert_or_assign(GBufferVariant{module, alpha}, std::move(*pipeline));
+    }
+    return {};
+}
 
 std::expected<MeshPass, core::Error>
 MeshPass::create(const rhi::Device& device, rhi::GpuAllocator& allocator,
@@ -64,42 +123,9 @@ MeshPass::create(const rhi::Device& device, rhi::GpuAllocator& allocator,
     auto shader = cache.load(cooked_shader_dir + "/gbuffer.spv");
     if (!shader) return std::unexpected(shader.error());
 
-    // Vertex input mirrors asset::Vertex.
-    const VkVertexInputBindingDescription vbind{0, sizeof(asset::Vertex),
-                                                VK_VERTEX_INPUT_RATE_VERTEX};
-    const std::array<VkVertexInputAttributeDescription, 4> vattrs{{
-        {0, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(asset::Vertex, position)},
-        {1, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(asset::Vertex, normal)},
-        {2, 0, VK_FORMAT_R32G32_SFLOAT, offsetof(asset::Vertex, uv)},
-        {3, 0, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(asset::Vertex, tangent)},
-    }};
-    const std::array<VkFormat, 4> color_formats{gbuffer_albedo_format, gbuffer_normal_format,
-                                                gbuffer_material_format,
-                                                gbuffer_clearcoat_format};
-    const VkPushConstantRange pc{VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
-                                 sizeof(GBufferPushConstants)};
-    const VkDescriptorSetLayout set_layout = out.material_layout_.handle();
-
-    rhi::GraphicsPipeline::CreateInfo info{};
-    info.vertex = *shader;
-    info.fragment = *shader;
-    info.color_formats = color_formats;
-    info.depth_format = gbuffer_depth_format;
-    info.depth_compare_op = VK_COMPARE_OP_LESS_OR_EQUAL; // standard [0,1] depth
-    info.cull_mode = VK_CULL_MODE_NONE;                  // double-sided for now
-    info.vertex_bindings = {&vbind, 1};
-    info.vertex_attributes = vattrs;
-    info.set_layouts = {&set_layout, 1};
-    info.push_constants = {&pc, 1};
-
-    auto pipeline = cache.create_graphics_pipeline(info);
-    if (!pipeline) return std::unexpected(pipeline.error());
-    out.pipeline_ = std::move(*pipeline);
-    // Same state, alpha-tested fragment shader (glTF MASK).
-    info.fragment_entry = "fragment_masked";
-    auto masked = cache.create_graphics_pipeline(info);
-    if (!masked) return std::unexpected(masked.error());
-    out.masked_pipeline_ = std::move(*masked);
+    if (auto r = out.create_variants(cache, std::string{}, **shader); !r) {
+        return std::unexpected(r.error());
+    }
 
     auto sampler = rhi::create_sampler(device.handle(), rhi::SamplerAddress::repeat,
                                        kMaterialMaxLod);
@@ -146,7 +172,6 @@ MeshPass::add_to_graph(rhi::RenderGraph& graph, VkExtent2D extent, const glm::ma
                        const InstancedDrawList& list) {
     frame_descriptors_.clear();
     frame_draws_.clear();
-    frame_masked_draws_.clear();
     frame_draws_.reserve(list.draws.size());
 
     auto instances = instances_.upload(*device_, *allocator_, list.instances);
@@ -210,9 +235,23 @@ MeshPass::add_to_graph(rhi::RenderGraph& graph, VkExtent2D extent, const glm::ma
         fd.first_instance = d.first_instance;
         fd.instance_count = d.instance_count;
         fd.descriptor_index = slot->second;
-        const bool masked = (mat.params.flags & asset::material_alpha_mask) != 0;
-        (masked ? frame_masked_draws_ : frame_draws_).push_back(fd);
+        const GBufferVariant variant = gbuffer_variant(mat);
+        const auto pipeline = pipelines_.find(variant);
+        if (pipeline == pipelines_.end()) {
+            return fail("gbuffer pass: no pipeline for material module '" + variant.module + "'");
+        }
+        fd.pipeline = &pipeline->second;
+        fd.alpha = variant.alpha;
+        frame_draws_.push_back(fd);
     }
+    // Opaque variants first, so the alpha-tested ones (no early depth test)
+    // are rejected by the depth they wrote; then by pipeline and material to
+    // minimise binds.
+    std::stable_sort(frame_draws_.begin(), frame_draws_.end(),
+                     [](const FrameDraw& l, const FrameDraw& r) {
+                         return std::tie(l.alpha, l.pipeline, l.descriptor_index) <
+                                std::tie(r.alpha, r.pipeline, r.descriptor_index);
+                     });
 
     const GBufferTargets t = targets;
     const glm::mat4 vp = view_proj;
@@ -271,42 +310,41 @@ MeshPass::add_to_graph(rhi::RenderGraph& graph, VkExtent2D extent, const glm::ma
             const VkRect2D scissor{{0, 0}, extent};
             vkCmdSetScissor(cmd, 0, 1, &scissor);
 
-            // The instance array is shared by every draw: push it once per
-            // pipeline. Opaque draws first, so the alpha-tested ones (no
-            // early depth test) are rejected by the depth they wrote.
+            // Draws are sorted by alpha mode, pipeline and material
+            // (add_to_graph): bind each only when it changes. The instance
+            // array is shared by every draw: push it with each pipeline.
             GBufferPushConstants push{};
             push.view_proj = vp;
             push.instances = frame_instances_;
-            const auto draw_all = [&](const rhi::ManagedPipeline& pipeline,
-                                      std::span<const FrameDraw> draws) {
-                if (draws.empty()) return;
-                vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.handle());
-                vkCmdPushConstants(cmd, pipeline.layout(),
-                                   VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
-                                   sizeof(push), &push);
-                std::uint32_t bound_descriptor = std::numeric_limits<std::uint32_t>::max();
-                for (const FrameDraw& fd : draws) {
-                    if (fd.descriptor_index != bound_descriptor) {
-                        frame_descriptors_[fd.descriptor_index].bind(
-                            cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.layout(), 0);
-                        bound_descriptor = fd.descriptor_index;
-                    }
-
-                    const VkDeviceSize offset = 0;
-                    vkCmdBindVertexBuffers(cmd, 0, 1, &fd.vertex_buffer, &offset);
-                    vkCmdBindIndexBuffer(cmd, fd.index_buffer, 0, VK_INDEX_TYPE_UINT32);
-
-                    // firstInstance selects the draw's instance range; the
-                    // shader indexes the array with InstanceIndex (which
-                    // includes it).
-                    for (const asset::SubMesh& sm : fd.submeshes) {
-                        vkCmdDrawIndexed(cmd, sm.index_count, fd.instance_count,
-                                         sm.index_offset, 0, fd.first_instance);
-                    }
+            const rhi::ManagedPipeline* bound_pipeline = nullptr;
+            std::uint32_t bound_descriptor = std::numeric_limits<std::uint32_t>::max();
+            for (const FrameDraw& fd : frame_draws_) {
+                const rhi::ManagedPipeline& pipeline = *fd.pipeline;
+                if (fd.pipeline != bound_pipeline) {
+                    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.handle());
+                    vkCmdPushConstants(cmd, pipeline.layout(),
+                                       VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+                                       0, sizeof(push), &push);
+                    bound_pipeline = fd.pipeline;
+                    bound_descriptor = std::numeric_limits<std::uint32_t>::max();
                 }
-            };
-            draw_all(pipeline_, frame_draws_);
-            draw_all(masked_pipeline_, frame_masked_draws_);
+                if (fd.descriptor_index != bound_descriptor) {
+                    frame_descriptors_[fd.descriptor_index].bind(
+                        cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.layout(), 0);
+                    bound_descriptor = fd.descriptor_index;
+                }
+
+                const VkDeviceSize offset = 0;
+                vkCmdBindVertexBuffers(cmd, 0, 1, &fd.vertex_buffer, &offset);
+                vkCmdBindIndexBuffer(cmd, fd.index_buffer, 0, VK_INDEX_TYPE_UINT32);
+
+                // firstInstance selects the draw's instance range; the shader
+                // indexes the array with InstanceIndex (which includes it).
+                for (const asset::SubMesh& sm : fd.submeshes) {
+                    vkCmdDrawIndexed(cmd, sm.index_count, fd.instance_count, sm.index_offset, 0,
+                                     fd.first_instance);
+                }
+            }
 
             vkCmdEndRendering(cmd);
         });

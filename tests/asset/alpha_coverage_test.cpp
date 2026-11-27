@@ -6,11 +6,13 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <cstring>
 #include <vector>
 
 #include <gtest/gtest.h>
 
 #include "engine/asset/alpha_coverage.hpp"
+#include "support/alloc_probe.hpp"
 
 namespace {
 
@@ -147,6 +149,96 @@ TEST(AlphaCoverage, RejectsMisSizedInput) {
     const std::vector<std::uint8_t> img(12, 255);
     EXPECT_TRUE(a::build_alpha_tested_mips(img, 2, 2, false, 0.5F).empty());
     EXPECT_TRUE(a::build_alpha_tested_mips({}, 0, 0, false, 0.5F).empty());
+}
+
+// --- Runtime path: untrusted textures under the load's decode budget --------
+
+// A decoded w x h MASK base colour (blades), as the PNG decoder hands it over,
+// with its bytes claimed from `budget` like the decoder does.
+a::TextureData decoded(std::uint32_t w, std::uint32_t h, a::DecodeBudget& budget) {
+    a::TextureData t;
+    t.width = w;
+    t.height = h;
+    t.color_space = a::TextureColorSpace::srgb;
+    const std::vector<std::uint8_t> img = make_image(w, h, blades);
+    EXPECT_TRUE(budget.reserve(img.size()));
+    t.pixels = a::PixelBuffer::allocate(img.size());
+    std::memcpy(t.pixels.data(), img.data(), img.size());
+    return t;
+}
+
+TEST(AlphaCoverageBudget, CostCountsTheChainAndTwoFloatLevels) {
+    const a::AlphaMipsCost c = a::alpha_tested_mips_cost(8, 4);
+    // Chain 8x4, 4x2, 2x1, 1x1; peak float set = levels 1 + 2.
+    EXPECT_EQ(c.chain_bytes, (32U + 8U + 2U + 1U) * 4U);
+    EXPECT_EQ(c.working_bytes, (8U + 2U) * 16U);
+    const a::AlphaMipsCost big = a::alpha_tested_mips_cost(8192, 8192);
+    // Never a float copy of level 0: the working set stays at 1.25x level 0.
+    EXPECT_LE(big.working_bytes, 8192ULL * 8192ULL * 4ULL * 5ULL / 4ULL);
+}
+
+// The fix for an untrusted 8k MASK texture: an over-budget chain is refused
+// before anything large is allocated, and the image keeps its upload-time
+// (blitted) mips.
+TEST(AlphaCoverageBudget, OverBudgetIsRefusedBeforeAllocating) {
+    constexpr std::uint32_t k = 1024;
+    const a::AlphaMipsCost cost = a::alpha_tested_mips_cost(k, k);
+    const std::uint64_t level0 = std::uint64_t{k} * k * 4;
+    a::DecodeBudget budget(level0 + cost.chain_bytes + cost.working_bytes - 1);
+    a::TextureData t = decoded(k, k, budget);
+    const std::byte* before = t.pixels.data();
+    bool applied = true;
+    std::size_t largest = 0;
+    {
+        quat::test::AllocProbe probe;
+        applied = a::apply_alpha_tested_mips(t, 0.5F, &budget);
+        largest = probe.largest();
+    }
+    EXPECT_FALSE(applied);
+    EXPECT_LT(largest, 64U * 1024U) << "allocated before the budget check";
+    EXPECT_EQ(budget.used(), level0);
+    EXPECT_TRUE(t.levels.empty());
+    EXPECT_EQ(t.pixels.data(), before);
+    // The per-image limit refuses it as well.
+    a::DecodeBudget roomy(1ULL << 40);
+    a::TextureData u = decoded(k, k, roomy);
+    EXPECT_FALSE(a::apply_alpha_tested_mips(u, 0.5F, &roomy, cost.chain_bytes - 1));
+    EXPECT_TRUE(u.levels.empty());
+}
+
+// Within budget: no float copy of level 0 (the largest allocation is one
+// float level 1, the size of level 0 in RGBA8), the chain lands in the
+// texture's own storage, and the load stays charged for the chain alone.
+TEST(AlphaCoverageBudget, ChainIsBuiltInPlaceAndCharged) {
+    constexpr std::uint32_t k = 512;
+    const a::AlphaMipsCost cost = a::alpha_tested_mips_cost(k, k);
+    const std::uint64_t level0 = std::uint64_t{k} * k * 4;
+    a::DecodeBudget budget(level0 + cost.chain_bytes + cost.working_bytes);
+    a::TextureData t = decoded(k, k, budget);
+    const std::vector<std::uint8_t> original(
+        reinterpret_cast<const std::uint8_t*>(t.pixels.data()),
+        reinterpret_cast<const std::uint8_t*>(t.pixels.data()) + level0);
+    std::size_t largest = 0;
+    {
+        quat::test::AllocProbe probe;
+        ASSERT_TRUE(a::apply_alpha_tested_mips(t, 0.5F, &budget));
+        largest = probe.largest();
+    }
+    EXPECT_LE(largest, level0);
+    EXPECT_EQ(budget.used(), cost.chain_bytes);
+    ASSERT_EQ(t.levels.size(), 10U);
+    EXPECT_EQ(t.pixels.size(), cost.chain_bytes);
+    EXPECT_EQ(std::memcmp(t.pixels.data(), original.data(), level0), 0);
+    // Same chain as the reference builder.
+    const auto reference = a::build_alpha_tested_mips(original, k, k, true, 0.5F);
+    ASSERT_EQ(reference.size(), t.levels.size());
+    for (std::size_t i = 0; i < reference.size(); ++i) {
+        EXPECT_EQ(t.levels[i].width, reference[i].width);
+        EXPECT_EQ(std::memcmp(t.pixels.data() + t.levels[i].offset, reference[i].pixels.data(),
+                              reference[i].pixels.size()),
+                  0)
+            << "level " << i;
+    }
 }
 
 } // namespace

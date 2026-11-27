@@ -59,12 +59,25 @@ build_alpha_tested_mips(std::span<const std::uint8_t> rgba, std::uint32_t width,
 build_box_filtered_mips(std::span<const std::uint8_t> rgba, std::uint32_t width,
                         std::uint32_t height, bool srgb);
 
+// What apply_alpha_tested_mips needs for a width x height image: the RGBA8
+// chain, level 0 included, and the peak float working set while building it
+// (two adjacent coarser levels; level 0 is never converted to float).
+struct AlphaMipsCost {
+    std::uint64_t chain_bytes = 0;
+    std::uint64_t working_bytes = 0;
+};
+[[nodiscard]] AlphaMipsCost alpha_tested_mips_cost(std::uint32_t width, std::uint32_t height);
+
 // Replaces `data` — one RGBA8 image whose mips the upload would generate — by
 // its coverage-preserving mip chain at `cutoff` (TextureData::levels filled,
-// level 0 unchanged), claiming the chain's bytes from `budget` when given.
-// False, leaving `data` untouched, when it is not such an image, the budget
-// is exhausted or the storage cannot be allocated.
+// level 0 unchanged). Untrusted input: refused when the chain exceeds
+// `max_image_bytes`, or when `budget` (the one `data` was decoded under)
+// cannot hold the chain plus the working set, before anything is allocated.
+// The budget is then charged for the chain alone: the working set and the
+// single-level image's bytes are given back. False, leaving `data` and the
+// budget untouched, when refused or when `data` is not such an image.
 [[nodiscard]] bool apply_alpha_tested_mips(TextureData& data, float cutoff,
-                                           DecodeBudget* budget = nullptr);
+                                           DecodeBudget* budget = nullptr,
+                                           std::uint64_t max_image_bytes = UINT64_MAX);
 
 } // namespace engine::asset

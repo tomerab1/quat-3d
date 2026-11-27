@@ -1,11 +1,13 @@
 // Translucent shadows (R12.11, issue #23): clear glass (transmission = 1)
 // lets most of the sun through instead of casting a black shadow, tinted
 // glass colours it, an alpha-blended caster lets (1 - alpha) through, and
-// the same quad as an opaque material still shadows fully. The glass quad
+// the same quad as an opaque material still shadows fully, and a closed
+// absorbing glass slab absorbs once per volume (not once per face). The glass
 // floats 1 m above a white floor with the sun at 45 degrees; it is drawn into
 // the shadow pass only (glass renders in the forward pass, not the GBuffer).
 
 #include <array>
+#include <cstdint>
 #include <vector>
 
 #include <glm/glm.hpp>
@@ -32,14 +34,22 @@ struct Result {
     glm::vec3 open{0.0F};
 };
 
-// Renders the floor plus a 1.5 m-half-size quad of material `caster`.
-Result render(quat::test::GpuContext& g, const a::PbrMaterialParams& caster) {
+enum class Caster : std::uint8_t {
+    quad, // a 3 m x 3 m quad at y = 1
+    slab, // a closed 3 m x 0.5 m x 3 m box centred at y = 1
+};
+
+// Renders the floor plus a caster of material `caster`.
+Result render(quat::test::GpuContext& g, const a::PbrMaterialParams& caster,
+              Caster shape = Caster::quad) {
     Result out;
     auto p = ss::make_passes(g);
     EXPECT_OK(p);
     if (!p) return out;
     auto floor = occ::upload_box(g, {-8.0F, -0.5F, -8.0F}, {8.0F, 0.0F, 8.0F});
-    auto quad = ss::upload_quad(g, 1.0F, 1.5F);
+    auto quad = shape == Caster::quad
+                    ? ss::upload_quad(g, 1.0F, 1.5F)
+                    : occ::upload_box(g, {-1.5F, 0.75F, -1.5F}, {1.5F, 1.25F, 1.5F});
     auto white = occ::upload_grey(g, 0.8F);
     auto mat = ss::upload_params(g, caster);
     EXPECT_OK(floor);
@@ -120,6 +130,24 @@ TEST(GpuTranslucentShadow, OpaqueCasterStillShadowsFully) {
     const float open = ss::luma(r.open);
     ASSERT_GT(open, 0.1F);
     EXPECT_LT(ss::luma(r.shadowed), 0.2F * open);
+}
+
+// KHR_materials_volume: light crossing the 0.5 m slab is absorbed over
+// 0.5 m once (attenuation colour (1, .25, .25) at 1 m: green / blue halve),
+// on top of two air-glass interfaces (~0.92 together at 45 degrees).
+// Absorbing on both faces would square it (~0.23 of the open green).
+TEST(GpuTranslucentShadow, VolumeAbsorbsOncePerVolume) {
+    QUAT_REQUIRE_GPU(g);
+    a::PbrMaterialParams p = glass(glm::vec3(1.0F));
+    p.attenuation = {1.0F, 0.25F, 0.25F, 1.0F};
+    p.thickness = 0.5F;
+    const Result r = render(*g, p, Caster::slab);
+    ASSERT_GT(r.open.g, 0.1F);
+    const float red = r.shadowed.r / r.open.r;
+    const float green = r.shadowed.g / r.open.g;
+    EXPECT_GT(red, 0.8F) << "red is not absorbed";
+    EXPECT_GT(green, 0.4F) << "absorbed more than once";
+    EXPECT_LT(green, 0.6F) << "not absorbed";
 }
 
 } // namespace

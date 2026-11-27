@@ -12,11 +12,15 @@
 //     nearest such surface's depth (the pipeline blends rgb multiplicatively
 //     and alpha with MIN). The lighting pass tints receivers behind that depth
 //     (lib/csm.slang csm_transmittance).
-// Per surface, a blended caster of alpha a lets (1 - a) through; a
-// transmissive one transmission x (1 - Fresnel) x base colour x Beer-Lambert
-// volume absorption, the same per-surface terms the forward pass refracts
-// with (transparent.slang), so a thin-walled glass sphere tints twice, as it
-// does in view.
+// Per surface the light crosses, a blended caster of alpha a lets (1 - a)
+// through, and a transmissive one transmission x (1 - Fresnel) x base colour
+// (the interface terms of transparent.slang): a closed glass object has two
+// such interfaces on every light path. Beer-Lambert volume absorption belongs
+// to the volume, not to an interface: KHR_materials_volume `thickness` is the
+// whole medium under the surface, so it is applied once, on the face where
+// the light enters (outward normal toward the sun), and a ray through a
+// closed volume, which crosses one entering and one leaving face, is
+// absorbed exactly once.
 
 import alpha_test;
 import csm;
@@ -96,8 +100,9 @@ void fragment_masked(MaskedVsOut input) {
     AlphaMasked::test(alpha, g_params.alpha_cutoff);
 }
 
-// Light one translucent surface lets through (rgb), given its base colour and
-// |cos| of the angle between its normal and the sun.
+// Light one translucent surface lets through (rgb), given its base colour,
+// |cos| of the angle between its normal and the sun, and the volume thickness
+// to absorb over (0 on faces where the light leaves the volume).
 float3 surface_transmittance(float4 base, float cos_l, float thickness_world) {
     float opacity = (g_params.flags & MATERIAL_BLEND) != 0 ? base.a : 1.0;
     float3 through = float3(0.0, 0.0, 0.0);
@@ -126,7 +131,9 @@ float4 fragment_translucent(VsOut input) : SV_Target0 {
         AlphaMasked::test(base.a, g_params.alpha_cutoff);
     }
     float3 n = normalize(input.world_n);
-    float cos_l = abs(dot(n, pc.to_light.xyz));
-    float thickness_world = g_params.thickness * input.thickness_scale;
+    float n_dot_l = dot(n, pc.to_light.xyz);
+    float cos_l = abs(n_dot_l);
+    // Absorb once per volume: on the light's entry face only.
+    float thickness_world = n_dot_l > 0.0 ? g_params.thickness * input.thickness_scale : 0.0;
     return float4(surface_transmittance(base, cos_l, thickness_world), saturate(input.depth));
 }

@@ -1,9 +1,13 @@
 // Opaque pipelines are unchanged by alpha masking (R12.11, issue #35): the
 // opaque GBuffer and shadow entry points contain no discard anywhere in
 // their call graphs, so drivers keep early depth testing for them; only the
-// MASK variants (and the translucent caster) can discard. Checked on the
-// cooked SPIR-V the pipelines are built from.
+// MASK variants (and the translucent caster) can discard. And both GBuffer
+// entry points write the same colour targets: anything a GBuffer writer
+// outputs (velocity, R11) must come from the shared gbuffer_shade<A> body, or
+// the masked pipeline would leave a target unwritten. Checked on the cooked
+// SPIR-V the pipelines are built from.
 
+#include <cstddef>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
@@ -19,6 +23,10 @@ namespace {
 
 // SPIR-V opcodes the walk needs.
 constexpr std::uint32_t k_op_entry_point = 15;
+constexpr std::uint32_t k_op_variable = 59;
+constexpr std::uint32_t k_op_decorate = 71;
+constexpr std::uint32_t k_storage_output = 3;
+constexpr std::uint32_t k_decoration_location = 30;
 constexpr std::uint32_t k_op_function = 54;
 constexpr std::uint32_t k_op_function_end = 56;
 constexpr std::uint32_t k_op_function_call = 57;
@@ -28,6 +36,9 @@ constexpr std::uint32_t k_op_demote = 5380;
 
 struct Module {
     std::map<std::string, std::uint32_t> entry_points; // name -> function id
+    std::map<std::string, std::vector<std::uint32_t>> interfaces; // name -> interface ids
+    std::set<std::uint32_t> outputs;                   // Output storage-class variables
+    std::map<std::uint32_t, std::uint32_t> locations;  // variable -> Location
     std::map<std::uint32_t, std::set<std::uint32_t>> calls;
     std::set<std::uint32_t> discarding; // functions containing a discard
 };
@@ -68,7 +79,15 @@ Module parse(const std::vector<std::uint32_t>& w) {
         const std::uint32_t op = w[i] & 0xFFFFU;
         if (count == 0 || i + count > w.size()) break;
         if (op == k_op_entry_point && count > 3) {
-            m.entry_points[literal_string(w, i + 3, i + count)] = w[i + 2];
+            const std::string name = literal_string(w, i + 3, i + count);
+            m.entry_points[name] = w[i + 2];
+            const std::size_t first = i + 3 + (name.size() + 4) / 4; // past the padded name
+            m.interfaces[name].assign(w.begin() + static_cast<std::ptrdiff_t>(first),
+                                      w.begin() + static_cast<std::ptrdiff_t>(i + count));
+        } else if (op == k_op_variable && count > 3 && w[i + 3] == k_storage_output) {
+            m.outputs.insert(w[i + 2]);
+        } else if (op == k_op_decorate && count > 3 && w[i + 2] == k_decoration_location) {
+            m.locations[w[i + 1]] = w[i + 3];
         } else if (op == k_op_function && count > 2) {
             current = w[i + 2];
         } else if (op == k_op_function_end) {
@@ -103,6 +122,20 @@ int can_discard(const Module& m, const std::string& name) {
     return 0;
 }
 
+// Locations of the Output variables entry point `name` writes.
+std::set<std::uint32_t> output_locations(const Module& m, const std::string& name) {
+    std::set<std::uint32_t> out;
+    const auto it = m.interfaces.find(name);
+    if (it == m.interfaces.end()) return out;
+    for (const std::uint32_t id : it->second) {
+        if (m.outputs.count(id) == 0) continue;
+        if (const auto loc = m.locations.find(id); loc != m.locations.end()) {
+            out.insert(loc->second);
+        }
+    }
+    return out;
+}
+
 Module load(const char* file) {
     const std::filesystem::path path = std::filesystem::path(QUAT_COOKED_SHADER_DIR) / file;
     std::error_code ec;
@@ -124,6 +157,16 @@ TEST(AlphaVariantShaders, OpaqueEntryPointsNeverDiscard) {
     EXPECT_EQ(can_discard(material, "vertex_masked"), 0);
     EXPECT_EQ(can_discard(material, "fragment_masked"), 1);
     EXPECT_EQ(can_discard(material, "fragment_translucent"), 1);
+}
+
+TEST(AlphaVariantShaders, GBufferEntryPointsWriteTheSameTargets) {
+    if (!std::filesystem::is_directory(QUAT_COOKED_SHADER_DIR)) {
+        GTEST_SKIP() << "no cooked shaders at " << QUAT_COOKED_SHADER_DIR;
+    }
+    const Module gbuffer = load("gbuffer.spv");
+    const std::set<std::uint32_t> opaque = output_locations(gbuffer, "fragment_main");
+    EXPECT_EQ(opaque, (std::set<std::uint32_t>{0, 1, 2, 3})); // albedo, normal, material, coat
+    EXPECT_EQ(output_locations(gbuffer, "fragment_masked"), opaque);
 }
 
 } // namespace

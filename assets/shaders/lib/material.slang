@@ -10,15 +10,18 @@
 // This file has no entry point: it is a module, imported by passes via
 // `import material;` and validated at build time into a .slang-module.
 
-// Bits marking which optional textures are present. Mirrors
-// engine::asset::MaterialTextureFlags on the C++ side — keep in sync.
-static const uint MATERIAL_HAS_BASE_COLOR         = 1u << 0;
-static const uint MATERIAL_HAS_NORMAL             = 1u << 1;
-static const uint MATERIAL_HAS_METALLIC_ROUGHNESS = 1u << 2;
-static const uint MATERIAL_HAS_EMISSIVE           = 1u << 3;
-static const uint MATERIAL_HAS_OCCLUSION          = 1u << 4;
+// Material flag bits: the one shader-side copy of
+// engine::asset::MaterialTextureFlags (every pass imports these; the
+// material_flags_match test checks them against the C++ enum).
+// Which optional textures are present:
+public static const uint MATERIAL_HAS_BASE_COLOR         = 1u << 0;
+public static const uint MATERIAL_HAS_NORMAL             = 1u << 1;
+public static const uint MATERIAL_HAS_METALLIC_ROUGHNESS = 1u << 2;
+public static const uint MATERIAL_HAS_EMISSIVE           = 1u << 3;
+public static const uint MATERIAL_HAS_OCCLUSION          = 1u << 4;
+public static const uint MATERIAL_HAS_THICKNESS          = 1u << 8; // KHR_materials_volume (G)
 
-// Alpha / transmission mode bits. Mirror engine::asset::MaterialTextureFlags.
+// Alpha / transmission mode bits.
 public static const uint MATERIAL_BLEND        = 1u << 5; // glTF BLEND (forward pass)
 public static const uint MATERIAL_TRANSMISSION = 1u << 6; // KHR_materials_transmission
 public static const uint MATERIAL_DOUBLE_SIDED = 1u << 7; // glTF doubleSided

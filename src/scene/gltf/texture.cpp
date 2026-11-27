@@ -56,7 +56,7 @@ extract_textures(const fastgltf::Asset& asset, const rhi::TextureCaps& caps,
             // keeps the blitted mips: thinner at a distance, still correct.
             if (results[i] && uses[i].alpha_test_cutoff.has_value()) {
                 (void)asset::apply_alpha_tested_mips(*results[i], *uses[i].alpha_test_cutoff,
-                                                     &budget);
+                                                     &budget, limits.max_decoded_bytes);
             }
         }
     };

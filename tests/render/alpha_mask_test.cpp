@@ -11,6 +11,7 @@
 #include <vector>
 
 #include <glm/glm.hpp>
+#include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/packing.hpp>
 #include <gtest/gtest.h>
 
@@ -165,47 +166,66 @@ TEST(GpuAlphaMask, CutOutPassesLightInTheShadowMap) {
     }
 }
 
+// The GBuffer normal at the image centre (decodes gbuffer.slang oct_encode).
+glm::vec3 centre_normal(const quat::test::HostImage& img) {
+    const glm::uvec2 c = img.centre();
+    std::uint16_t h[2];
+    std::memcpy(h, img.at(c.x, c.y), sizeof(h));
+    const glm::vec2 e(glm::unpackHalf1x16(h[0]), glm::unpackHalf1x16(h[1]));
+    glm::vec3 n(e.x, e.y, 1.0F - std::abs(e.x) - std::abs(e.y));
+    if (n.z < 0.0F) {
+        const glm::vec2 xy(n.x, n.y);
+        n.x = (1.0F - std::abs(xy.y)) * (xy.x >= 0.0F ? 1.0F : -1.0F);
+        n.y = (1.0F - std::abs(xy.x)) * (xy.y >= 0.0F ? 1.0F : -1.0F);
+    }
+    return glm::normalize(n);
+}
+
 // glTF doubleSided: the back face is shaded with the reversed normal; a
-// single-sided material keeps its geometric normal (unchanged behaviour).
+// single-sided material keeps its geometric normal (unchanged behaviour). A
+// mirrored instance (negative determinant, glTF 3.7.4) reverses its winding,
+// so its outside faces rasterise as back faces: they must still keep their
+// own normal, and only its real back faces flip.
 TEST(GpuAlphaMask, DoubleSidedBackFaceFacesTheViewer) {
     QUAT_REQUIRE_GPU(g);
     auto p = ss::make_passes(*g);
     ASSERT_OK(p);
-    auto quad = ss::upload_quad(*g, 1.0F, 2.0F);
+    auto quad = ss::upload_quad(*g, 1.0F, 2.0F); // y = 1, normal +y
     ASSERT_OK(quad);
-    // Below the quad, looking up at its back face.
-    const occ::Camera cam = occ::look_at({0.0F, -3.0F, 0.5F}, {0.0F, 1.0F, 0.0F});
-    for (const bool double_sided : {true, false}) {
+    const occ::Camera below = occ::look_at({0.0F, -3.0F, 0.5F}, {0.0F, 1.0F, 0.0F});
+    const occ::Camera above = occ::look_at({0.0F, 5.0F, 0.5F}, {0.0F, 1.0F, 0.0F});
+    // x mirror: keeps the quad (and its +y normal) in place, flips winding.
+    const glm::mat4 mirror = glm::scale(glm::mat4(1.0F), glm::vec3(-1.0F, 1.0F, 1.0F));
+    struct Case {
+        const char*      what;
+        bool             double_sided;
+        glm::mat4        model;
+        const occ::Camera* cam;
+        float            expected_y; // sign of the GBuffer normal's y
+    };
+    const std::array<Case, 6> cases{{
+        {"doubleSided back face", true, glm::mat4(1.0F), &below, -1.0F},
+        {"doubleSided front face", true, glm::mat4(1.0F), &above, 1.0F},
+        {"single-sided back face", false, glm::mat4(1.0F), &below, 1.0F},
+        {"mirrored doubleSided front face", true, mirror, &above, 1.0F},
+        {"mirrored doubleSided back face", true, mirror, &below, -1.0F},
+        {"mirrored single-sided front face", false, mirror, &above, 1.0F},
+    }};
+    for (const Case& c : cases) {
         a::PbrMaterialParams params;
         params.roughness_factor = 1.0F;
         params.metallic_factor = 0.0F;
-        params.flags = double_sided ? a::material_double_sided : 0U;
+        params.flags = c.double_sided ? a::material_double_sided : 0U;
         auto mat = ss::upload_params(*g, params);
         ASSERT_OK(mat);
-        const std::array<r::DrawItem, 1> items{{{&*quad, &*mat, glm::mat4(1.0F)}}};
+        const std::array<r::DrawItem, 1> items{{{&*quad, &*mat, c.model}}};
         engine::rhi::TransientImagePool pool(g->device, g->allocator);
         engine::rhi::RenderGraph graph(pool);
-        auto gbuffer = p->mesh.add_to_graph(graph, ss::k_extent, cam.view_proj, items);
+        auto gbuffer = p->mesh.add_to_graph(graph, ss::k_extent, c.cam->view_proj, items);
         ASSERT_OK(gbuffer);
         auto normal = quat::test::render_to_host(*g, graph, gbuffer->normal, ss::k_extent, 4);
         ASSERT_OK(normal);
-        // Decode the RG16F octahedral normal (gbuffer.slang oct_encode).
-        const glm::uvec2 c = normal->centre();
-        std::uint16_t h[2];
-        std::memcpy(h, normal->at(c.x, c.y), sizeof(h));
-        const glm::vec2 e(glm::unpackHalf1x16(h[0]), glm::unpackHalf1x16(h[1]));
-        glm::vec3 n(e.x, e.y, 1.0F - std::abs(e.x) - std::abs(e.y));
-        if (n.z < 0.0F) {
-            const glm::vec2 xy(n.x, n.y);
-            n.x = (1.0F - std::abs(xy.y)) * (xy.x >= 0.0F ? 1.0F : -1.0F);
-            n.y = (1.0F - std::abs(xy.x)) * (xy.y >= 0.0F ? 1.0F : -1.0F);
-        }
-        n = glm::normalize(n);
-        if (double_sided) {
-            EXPECT_LT(n.y, -0.9F) << "back face of a doubleSided quad must face down";
-        } else {
-            EXPECT_GT(n.y, 0.9F) << "single-sided quad keeps its +y normal";
-        }
+        EXPECT_GT(centre_normal(*normal).y * c.expected_y, 0.9F) << c.what;
     }
 }
 
