@@ -164,7 +164,12 @@ target_include_directories(engine_physics PUBLIC ${ENGINE_PUBLIC_INCLUDE})
 # fastgltf is an implementation detail of the loader (PRIVATE).
 # ---------------------------------------------------------------------------
 add_library(engine_scene STATIC
-    src/scene/gltf_loader.cpp
+    src/scene/gltf/validate.cpp
+    src/scene/gltf/mesh.cpp
+    src/scene/gltf/material.cpp
+    src/scene/gltf/skin_animation.cpp
+    src/scene/gltf/scene_assembly.cpp
+    src/scene/gltf/self_tests.cpp
     src/scene/stb_image_impl.cpp
     src/scene/components.cpp
     src/scene/scene.cpp
@@ -187,7 +192,7 @@ target_link_libraries(engine_scene PUBLIC
 # shared by scene files and the remote-control API).
 target_link_libraries(engine_scene PUBLIC nlohmann_json::nlohmann_json)
 target_link_libraries(engine_scene PRIVATE fastgltf::fastgltf)
-target_include_directories(engine_scene PRIVATE ${Stb_INCLUDE_DIR})
+target_include_directories(engine_scene PRIVATE ${Stb_INCLUDE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_include_directories(engine_scene PUBLIC ${ENGINE_PUBLIC_INCLUDE})
 
 # stb's implementation TU is not warning-clean under our strict flags.
