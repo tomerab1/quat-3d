@@ -94,7 +94,7 @@ The owner reported NPCs "don't work". Ranked by user impact. N2 re-verified
 |---|---|---|---|---|
 | N1 | H | Behaviour-tree composites don't remember the running child and leaves aren't reset when pre-empted — `sequence[move_to A, wait, move_to B]` twitches at A forever | `behavior.cpp` | fixed (S1.N1) |
 | N2 | H | Box collider triangles wound downward: box tops unwalkable, bottoms walkable → navmesh under box floors, agents sink / walk through walls | `physics_system.cpp` `box_idx` | fixed (S1.N2) |
-| N3 | H | Navmesh never saved/auto-baked; stale after load/terrain change; phantom terrain in bakes; agents keep old paths after re-bake; nav silently skipped without one | `main.cpp`, `nav_agent_system.cpp` | open |
+| N3 | H | Navmesh never saved/auto-baked; stale after load/terrain change; phantom terrain in bakes; agents keep old paths after re-bake; nav silently skipped without one | `main.cpp`, `nav_agent_system.cpp` | fixed (S1.N3); save/load of baked meshes not added (re-baked instead) |
 | N4 | H | `move_to` without `y` fails on terrain (query extents); `move_to` never reports failure (no failed flag; settle reports success) | `behavior.cpp`, `navmesh.cpp`, `nav_agent_system.cpp` | fixed (S1.N4) |
 | N5 | M | Patrol routes stall after Ctrl+click / point edits / late Shift+click; Stop can't stop a patroller | `nav_agent_system.cpp`, `main.cpp`, `inspector.cpp` | fixed (S1.N5) |
 | N6 | M | CharacterController agents have no stuck detection (push in place forever) | `nav_agent_system.cpp` | fixed (S1.N6) |
@@ -104,7 +104,7 @@ The owner reported NPCs "don't work". Ranked by user impact. N2 re-verified
 | N10 | L | Separation re-normalised (can't slow agents; stacking); kinematic agents pushed off the mesh | `nav_agent_system.cpp` | fixed (S1.N10) |
 | N11 | L | Ground click ignores boxes/meshes; 2 m march skips thin ridges | `main.cpp` | open |
 | N12 | L | NavAgent entity with a Collider and no RigidBody is baked as a hole and promoted to a static wall | `physics_system.cpp`, `main.cpp` | fixed (S1.N12) |
-| N13 | L | Leftover retry cooldown delays new targets; failed re-bake keeps the old mesh silently | `nav_agent_system.cpp`, `main.cpp` | open |
+| N13 | L | Leftover retry cooldown delays new targets; failed re-bake keeps the old mesh silently | `nav_agent_system.cpp`, `main.cpp` | fixed (S1.N6, S1.N3) |
 
 Test gaps: nothing bakes through `collect_nav_geometry`; no CharacterController
 agents, sequences of `move_to`, pre-emption, unreachable targets, patrol +

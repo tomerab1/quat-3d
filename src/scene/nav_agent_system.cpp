@@ -145,7 +145,15 @@ glm::vec3 nav_agent_feet(const entt::registry& registry, entt::entity entity) {
 
 void nav_agent_system(entt::registry& registry, const nav::NavMesh& navmesh, float dt,
                       const GroundHeightFn& ground_height) {
-    if (!navmesh.valid()) return;
+    if (!navmesh.valid()) {
+        // Nothing to walk on (not baked yet, or cleared after the geometry
+        // changed): agents hold still, keeping their orders for the next mesh.
+        for (auto [e, agent, controller] :
+             registry.view<const NavAgent, CharacterController>().each()) {
+            controller.move = glm::vec3(0.0F);
+        }
+        return;
+    }
 
     feed_patrol_routes(registry);
 
@@ -174,6 +182,9 @@ void nav_agent_system(entt::registry& registry, const nav::NavMesh& navmesh, flo
         const glm::vec3 pos(transform.world[3]);
         const glm::vec3 feet = nav_agent_feet(registry, e);
 
+        // A path from an earlier bake may cross geometry that has changed.
+        if (agent.planned_generation != navmesh.generation()) agent.path.clear();
+
         // (Re)plan when the target moved or no plan exists.
         if (agent.path.empty() ||
             glm::distance(agent.target, agent.planned_target) > kRepathDistance) {
@@ -195,6 +206,7 @@ void nav_agent_system(entt::registry& registry, const nav::NavMesh& navmesh, flo
             agent.path_partial = plan->partial;
             agent.waypoint = 0;
             agent.planned_target = agent.target;
+            agent.planned_generation = navmesh.generation();
             agent.arrived = false;
             reset_progress(agent);
         }

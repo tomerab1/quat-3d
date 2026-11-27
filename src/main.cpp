@@ -626,6 +626,17 @@ int main() {
     bool terrain_stream_mode = false;
     engine::nav::NavMesh navmesh;        // baked on request from the Physics panel (13.1)
     bool navmesh_request = false;
+    bool navmesh_auto_bake = false;      // armed: bake once if Play has agents and no mesh
+    std::string navmesh_status;          // last bake / invalidation, for the Physics panel
+    // A navmesh describes the geometry it was baked from: drop it when that
+    // changes (scene load, terrain regeneration) and re-arm the auto-bake.
+    const auto invalidate_navmesh = [&](const char* why) {
+        navmesh_auto_bake = true;
+        if (!navmesh.valid()) return;
+        navmesh = {};
+        navmesh_status = std::string("cleared: ") + why + " (rebake)";
+        std::fprintf(stderr, "[nav] navmesh cleared: %s\n", why);
+    };
     std::optional<engine::editor::EditorContext::GroundClick> ground_click; // 13.4
 
     // Networking (14.1/14.2): QUAT_HOST=<port> serves this scene's replicated
@@ -950,6 +961,7 @@ int main() {
                             std::fprintf(stderr, "[terrain] height-field body added\n");
                         }
                     }
+                    navmesh_auto_bake = true; // bake now if agents have no mesh
                     std::fprintf(stderr, "[editor] play (%zu colliders, %zu bodies)\n",
                                  scene.registry().view<engine::scene::Collider>().size(),
                                  scene.registry().view<engine::scene::RigidBody>().size());
@@ -997,6 +1009,7 @@ int main() {
                                                        assets);
                     r) {
                     std::fprintf(stderr, "[editor] loaded scene: %s\n", path.c_str());
+                    invalidate_navmesh("scene loaded");
                     // Rebind the loop's cached entities to the loaded scene.
                     // (The view camera is editor state — nothing to rebind.)
                     spin_entity = entt::null;
@@ -1269,10 +1282,12 @@ int main() {
                 {.navmesh = &navmesh,
                  .ground_height = ground_height_at,
                  .viewer = viewing_scene_camera ? std::nullopt : std::optional(cam_pos)});
-            if (navmesh.valid()) {
-                engine::scene::nav_agent_system(scene.registry(), navmesh, dt,
-                                                ground_height_at);
+            if (std::exchange(navmesh_auto_bake, false) && !navmesh.valid() &&
+                !scene.registry().view<engine::scene::NavAgent>().empty()) {
+                navmesh_request = true; // baked below, this frame
+                std::fprintf(stderr, "[nav] no navmesh for the agents: baking one\n");
             }
+            engine::scene::nav_agent_system(scene.registry(), navmesh, dt, ground_height_at);
             engine::scene::character_system(scene.registry(), *play_physics, dt);
             engine::scene::physics_system(scene.registry(), *play_physics, dt);
         }
@@ -1531,6 +1546,7 @@ int main() {
                     }
                     terrain_pass.remove_tile(glm::ivec2(0, 0));
                     terrain_streamer.emplace(tcomp.params, tcomp.stream_radius);
+                    invalidate_navmesh("terrain regenerated");
                     std::fprintf(stderr, "[terrain] streaming world (seed %u, radius %d)\n",
                                  tcomp.params.seed, tcomp.stream_radius);
                 }
@@ -1586,6 +1602,7 @@ int main() {
         if (terrain_job.valid() &&
             terrain_job.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
             terrain_heightmap = terrain_job.get();
+            invalidate_navmesh("terrain regenerated");
             if (auto r = terrain_pass.set_tile(glm::ivec2(0, 0), terrain_heightmap,
                                                terrain_transfer);
                 r) {
@@ -1651,34 +1668,31 @@ int main() {
         // Blocking, but explicit and logged (editor tooling).
         if (navmesh_request) {
             navmesh_request = false;
-            std::vector<glm::vec3> nav_verts;
-            std::vector<std::uint32_t> nav_indices;
-            if (terrain_streamer) {
-                // Streamed world: bake every loaded tile (colliders once).
-                bool first = true;
+            // Terrain only while a Terrain entity exists (the heightmap
+            // outlives a deleted terrain); streamed worlds bake every loaded tile.
+            std::vector<engine::scene::NavTerrainTile> nav_tiles;
+            if (terrain_present && terrain_streamer) {
                 for (const auto& [coord, map] : terrain_streamer->maps()) {
                     const glm::vec3 origin = terrain_streamer->tile_origin(coord, terrain_anchor);
-                    const glm::vec3 centre(origin.x + map.tile_size_m * 0.5F, terrain_anchor.y,
-                                           origin.z + map.tile_size_m * 0.5F);
-                    engine::scene::collect_nav_geometry(scene.registry(), &map, centre, nav_verts,
-                                                        nav_indices, first);
-                    first = false;
+                    nav_tiles.push_back({&map, glm::vec3(origin.x + map.tile_size_m * 0.5F,
+                                                         terrain_anchor.y,
+                                                         origin.z + map.tile_size_m * 0.5F)});
                 }
-                if (first) { // no tiles loaded yet: at least the colliders
-                    engine::scene::collect_nav_geometry(scene.registry(), nullptr, terrain_anchor,
-                                                        nav_verts, nav_indices, true);
-                }
-            } else {
-                engine::scene::collect_nav_geometry(
-                    scene.registry(), terrain_heightmap.valid() ? &terrain_heightmap : nullptr,
-                    terrain_anchor, nav_verts, nav_indices);
+            } else if (terrain_present && terrain_heightmap.valid()) {
+                nav_tiles.push_back({&terrain_heightmap, terrain_anchor});
             }
-            if (auto built = engine::nav::NavMesh::build(nav_verts, nav_indices); built) {
+            auto built = engine::scene::bake_scene_navmesh(scene.registry(), nav_tiles);
+            if (built) {
                 navmesh = std::move(*built);
-                std::fprintf(stderr, "[nav] navmesh baked: %zu tris in, %zu edges out\n",
-                             nav_indices.size() / 3, navmesh.debug_edges().size());
+                const std::size_t edges = navmesh.debug_edges().size();
+                navmesh_status = "baked: " + std::to_string(edges) + " edges";
+                std::fprintf(stderr, "[nav] navmesh baked: %zu edges\n", edges);
             } else {
-                std::fprintf(stderr, "[nav] bake failed: %s\n", built.error().message.c_str());
+                // Never keep the old mesh silently: it no longer matches the scene.
+                navmesh = {};
+                navmesh_status = "bake failed: " + built.error().message;
+                std::fprintf(stderr, "[nav] bake failed (navmesh cleared): %s\n",
+                             built.error().message.c_str());
             }
         }
 
@@ -1826,6 +1840,7 @@ int main() {
             ui_ctx.build_navmesh_request = &navmesh_request;
             ui_ctx.ground_click = &ground_click;
             ui_ctx.nav_edges = navmesh.valid() ? &navmesh.debug_edges() : nullptr;
+            ui_ctx.nav_status = &navmesh_status;
             ui_ctx.view_proj = cam.view_proj; // unjittered, for overlays
             ui_ctx.view = cam.view;
             ui_ctx.proj_no_flip = cam.projection;

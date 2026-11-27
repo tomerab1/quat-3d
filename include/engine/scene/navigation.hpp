@@ -7,14 +7,16 @@
 #include <expected>
 #include <functional>
 #include <optional>
+#include <span>
 
 #include <entt/entity/fwd.hpp>
 #include <glm/glm.hpp>
 
 #include "engine/core/error.hpp"
+#include "engine/nav/navmesh.hpp"
 
-namespace engine::nav {
-class NavMesh;
+namespace engine::terrain {
+struct Heightmap;
 }
 
 namespace engine::scene {
@@ -24,6 +26,21 @@ struct NavAgent;
 // Authoritative ground height at world (x, z), or nullopt where unknown (off
 // the terrain). Supplied by the frame loop from the terrain heightmaps.
 using GroundHeightFn = std::function<std::optional<float>(float x, float z)>;
+
+// A loaded terrain tile to bake: its heightmap and world-space centre.
+struct NavTerrainTile {
+    const terrain::Heightmap* map = nullptr;
+    glm::vec3                 centre{0.0F};
+};
+
+// Bakes the scene's static walkable geometry — the given terrain tiles plus
+// every static box collider (collect_nav_geometry) — into a navmesh. Errors
+// when there is nothing to bake or Recast fails. Pass no tiles when the
+// scene has no Terrain entity (a heightmap left over from a deleted terrain
+// must not be baked).
+[[nodiscard]] std::expected<nav::NavMesh, core::Error>
+bake_scene_navmesh(entt::registry& registry, std::span<const NavTerrainTile> terrain,
+                   const nav::NavMeshParams& params = {});
 
 // Send the agent to `target`: activates it and clears the previous walk's
 // plan and arrived/failed state (the nav system plans on its next tick).
@@ -59,6 +76,9 @@ void nav_agent_resume(entt::registry& registry, entt::entity entity);
 // and give up after a few attempts; so does an agent that stops closing in
 // on its waypoint (a controller pushing into an obstacle the navmesh does not
 // know). A PatrolRoute skips points its agent failed to reach.
+//
+// Paths planned against an earlier bake (NavMesh::generation) are dropped and
+// replanned. Without a valid navmesh, controller-driven agents stand still.
 //
 // `ground_height(x, z)` (optional) supplies the authoritative ground height for
 // kinematic agents — coarse terrain navmeshes can float metres off the real

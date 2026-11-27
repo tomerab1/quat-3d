@@ -1,6 +1,7 @@
 #include "engine/nav/navmesh.hpp"
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <cstring>
 #include <limits>
@@ -34,6 +35,7 @@ struct NavMesh::Impl {
     std::vector<std::pair<glm::vec3, glm::vec3>>    edges;
     glm::vec3                                       bmin{0.0F}; // poly mesh bounds
     glm::vec3                                       bmax{0.0F};
+    std::uint64_t                                   generation = 0;
 };
 
 NavMesh::NavMesh() = default;
@@ -42,6 +44,8 @@ NavMesh& NavMesh::operator=(NavMesh&&) noexcept = default;
 NavMesh::~NavMesh() = default;
 
 bool NavMesh::valid() const { return impl_ != nullptr && impl_->mesh != nullptr; }
+
+std::uint64_t NavMesh::generation() const { return valid() ? impl_->generation : 0; }
 
 const std::vector<std::pair<glm::vec3, glm::vec3>>& NavMesh::debug_edges() const {
     static const std::vector<std::pair<glm::vec3, glm::vec3>> empty;
@@ -249,6 +253,8 @@ std::expected<NavMesh, core::Error> NavMesh::build(std::span<const glm::vec3> ve
         return fail("navmesh: query init failed");
     }
     out.impl_->query.reset(query);
+    static std::atomic<std::uint64_t> next_generation{1};
+    out.impl_->generation = next_generation.fetch_add(1, std::memory_order_relaxed);
     return out;
 }
 

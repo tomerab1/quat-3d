@@ -63,6 +63,11 @@ public:
 
     [[nodiscard]] bool valid() const;
 
+    // Identifies this bake: unique per successful build() in the process,
+    // 0 for an empty NavMesh. Agents remember the generation they planned
+    // against and replan when it changes (a re-bake invalidates their paths).
+    [[nodiscard]] std::uint64_t generation() const;
+
     // Straightened (string-pulled) path between two world points, both snapped
     // to the nearest mesh polygon within query_extents. Errors when either
     // end is off-mesh; an unreachable target yields a partial path.

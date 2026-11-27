@@ -169,6 +169,7 @@ struct NavAgent {
     std::vector<glm::vec3> path;
     std::size_t            waypoint = 0;
     glm::vec3              planned_target{1e30F, 1e30F, 1e30F}; // path's target
+    std::uint64_t          planned_generation = 0; // NavMesh::generation() of the path
     float                  retry_s = 0.0F; // cooldown after a failed plan
     float                  progress_best = 1e30F; // closest approach to the current waypoint
     float                  progress_timer = 0.0F; // time since progress_best improved
