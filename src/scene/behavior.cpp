@@ -216,14 +216,26 @@ std::expected<BtLeaf, core::Error> make_near_camera(core::JsonFields& f) {
     return factories;
 }
 
-constexpr std::pair<Kind, std::string_view> kKindNames[] = {
-    {Kind::sequence, "sequence"},
-    {Kind::selector, "selector"},
-    {Kind::reactive_sequence, "reactive_sequence"},
-    {Kind::reactive_selector, "reactive_selector"},
-    {Kind::inverter, "inverter"},
-    {Kind::leaf, "leaf"},
+constexpr BtKindInfo kKindInfo[] = {
+    {Kind::sequence, "sequence", 1, -1,
+     "Runs children in order (left to right) until one fails; resumes at the running child."},
+    {Kind::selector, "selector", 1, -1,
+     "Tries children in order until one does not fail; resumes at the running child."},
+    {Kind::reactive_sequence, "reactive_sequence", 1, -1,
+     "Re-checks every child from the first each tick: a condition that stops holding aborts "
+     "the running child."},
+    {Kind::reactive_selector, "reactive_selector", 1, -1,
+     "Re-evaluates earlier (higher-priority) children each tick; one that succeeds or runs "
+     "pre-empts the running one."},
+    {Kind::inverter, "inverter", 1, 1, "Swaps success and failure of its single child."},
+    {Kind::leaf, "leaf", 0, 0, "An action or condition: one of the named leaves."},
 };
+
+[[nodiscard]] std::string known_kinds() {
+    std::string known;
+    for (const BtKindInfo& k : kKindInfo) known += (known.empty() ? "" : ", ") + std::string(k.name);
+    return known;
+}
 
 } // namespace
 
@@ -238,16 +250,24 @@ const BtLeafInfo* bt_find_leaf_info(std::string_view name) {
     return nullptr;
 }
 
-std::string_view BehaviorTreeAsset::kind_name(Kind kind) {
-    for (const auto& [k, name] : kKindNames) {
-        if (k == kind) return name;
+std::span<const BtKindInfo> bt_kind_info() {
+    return kKindInfo;
+}
+
+const BtKindInfo& bt_find_kind_info(Kind kind) {
+    for (const BtKindInfo& info : kKindInfo) {
+        if (info.kind == kind) return info;
     }
-    return "leaf";
+    return kKindInfo[std::size(kKindInfo) - 1];
+}
+
+std::string_view BehaviorTreeAsset::kind_name(Kind kind) {
+    return bt_find_kind_info(kind).name;
 }
 
 std::optional<BehaviorTreeAsset::Kind> BehaviorTreeAsset::kind_from_name(std::string_view name) {
-    for (const auto& [k, n] : kKindNames) {
-        if (n == name) return k;
+    for (const BtKindInfo& info : kKindInfo) {
+        if (info.name == name) return info.kind;
     }
     return std::nullopt;
 }
@@ -310,8 +330,7 @@ BehaviorTreeAsset::parse(std::string_view json_text, const BtLeafFactories* extr
         const std::optional<Kind> kind = kind_from_name(type);
         if (!kind) {
             return fail("behavior tree: " + where + ": unknown node type '" + type +
-                        "' (known: leaf, sequence, selector, reactive_sequence, "
-                        "reactive_selector, inverter)");
+                        "' (known: " + known_kinds() + ")");
         }
         asset->nodes_[index].kind = *kind;
 
@@ -341,13 +360,14 @@ namespace {
 // reached; after the pass, nodes that ran last tick but were not reached are
 // aborted (pre-emption).
 struct Ticker {
-    const BehaviorTreeAsset&  tree;
-    std::vector<BtNodeState>& st;
-    entt::registry&           registry;
-    entt::entity              entity;
-    const BtWorld&            world;
-    float                     dt;
-    std::uint32_t             stamp;
+    const BehaviorTreeAsset&   tree;
+    std::vector<BtNodeState>&  st;
+    std::vector<BtNodeResult>& results;
+    entt::registry&            registry;
+    entt::entity               entity;
+    const BtWorld&             world;
+    float                      dt;
+    std::uint32_t              stamp;
 
     void halt_and_reset(std::uint32_t i) {
         BtNodeState& ns = st[i];
@@ -429,6 +449,9 @@ struct Ticker {
             st[i].child = 0;
         }
         st[i].running = s == BtStatus::running;
+        results[i] = s == BtStatus::running   ? BtNodeResult::running
+                     : s == BtStatus::success ? BtNodeResult::success
+                                              : BtNodeResult::failure;
         return s;
     }
 };
@@ -447,7 +470,8 @@ BtStatus bt_tick(BehaviorTree& bt, entt::registry& registry, entt::entity entity
         bt.node_state.assign(tree.nodes().size(), BtNodeState{});
         bt.tick_count = 1;
     }
-    Ticker t{tree, bt.node_state, registry, entity, world, dt, bt.tick_count};
+    bt.last_result.assign(tree.nodes().size(), BtNodeResult::idle);
+    Ticker t{tree, bt.node_state, bt.last_result, registry, entity, world, dt, bt.tick_count};
     const BtStatus status = t.tick(tree.root());
 
     // Pre-emption: whatever was not reached this tick is aborted.

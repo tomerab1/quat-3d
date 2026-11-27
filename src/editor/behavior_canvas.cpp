@@ -34,7 +34,7 @@ namespace ned = ax::NodeEditor;
 
 // Widget ids: a node's id shifted left two bits, the low bits telling the
 // node, its top (input) pin, its bottom (output) pin and the link into it
-// apart. Graph ids stay below 2^30 (bt_graph.cpp), so nothing overflows.
+// apart. Graph ids stay below 2^30 (scene/bt_graph.cpp), so nothing overflows.
 enum : std::uintptr_t { kTagNode = 0, kTagIn = 1, kTagOut = 2, kTagLink = 3 };
 
 [[nodiscard]] std::uintptr_t widget_id(std::uint32_t id, std::uintptr_t tag) {
@@ -69,23 +69,8 @@ constexpr BtKind kComposites[] = {BtKind::sequence, BtKind::selector, BtKind::re
     return "Leaf";
 }
 
-[[nodiscard]] const char* kind_help(BtKind kind) {
-    switch (kind) {
-    case BtKind::sequence:
-        return "Runs children left to right until one fails; resumes at the running child.";
-    case BtKind::selector:
-        return "Tries children left to right until one does not fail; resumes at the running "
-               "child.";
-    case BtKind::reactive_sequence:
-        return "Re-checks every child from the left each tick: a condition that stops holding "
-               "aborts the running child.";
-    case BtKind::reactive_selector:
-        return "Re-evaluates higher-priority (left) children each tick; one that succeeds or "
-               "runs pre-empts the running one.";
-    case BtKind::inverter: return "Swaps success and failure of its single child.";
-    case BtKind::leaf: break;
-    }
-    return "";
+[[nodiscard]] std::string kind_help(BtKind kind) {
+    return std::string(scene::bt_find_kind_info(kind).help);
 }
 
 [[nodiscard]] ImVec4 kind_color(BtKind kind) {
@@ -168,7 +153,7 @@ void BehaviorPanel::draw_canvas(const scene::BehaviorTree& bt, float height) {
     // Running nodes: the compiled tree stores nodes in the graph's pre-order.
     std::unordered_set<std::uint32_t> running;
     if (!unapplied_ && bt.compiled != nullptr) {
-        const std::vector<std::uint32_t> order = bt_graph_preorder(graph_);
+        const std::vector<std::uint32_t> order = scene::bt_graph_preorder(graph_);
         if (order.size() == bt.compiled->nodes().size() && order.size() == bt.node_state.size()) {
             for (std::size_t i = 0; i < order.size(); ++i) {
                 const scene::BtNodeState& s = bt.node_state[i];
@@ -356,15 +341,15 @@ void BehaviorPanel::handle_create() {
             } else {
                 const std::uint32_t parent = graph_id(ta == kTagOut ? a.Get() : b.Get());
                 const std::uint32_t child = graph_id(ta == kTagOut ? b.Get() : a.Get());
-                if (auto ok = bt_graph_can_link(graph_, parent, child); !ok) {
+                if (auto ok = scene::bt_graph_can_link(graph_, parent, child); !ok) {
                     ned::RejectNewItem(kErrorColor, 2.0F);
                     tooltip_ = ok.error().message;
                 } else {
-                    if (bt_graph_parent(graph_, child) != 0) {
+                    if (scene::bt_graph_parent(graph_, child) != 0) {
                         tooltip_ = "Moves the node under this parent.";
                     }
                     if (ned::AcceptNewItem(kRunningColor, 3.0F)) {
-                        (void)bt_graph_link(graph_, parent, child);
+                        (void)scene::bt_graph_link(graph_, parent, child);
                         note(Change::structure);
                     }
                 }
@@ -390,7 +375,7 @@ void BehaviorPanel::handle_delete() {
         while (ned::QueryDeletedLink(&link)) {
             if (ned::AcceptDeletedItem()) {
                 const std::uint32_t child = graph_id(link.Get());
-                if (bt_graph_unlink(graph_, bt_graph_parent(graph_, child), child)) {
+                if (scene::bt_graph_unlink(graph_, scene::bt_graph_parent(graph_, child), child)) {
                     note(Change::structure);
                 }
             }
@@ -398,7 +383,7 @@ void BehaviorPanel::handle_delete() {
         ned::NodeId node;
         while (ned::QueryDeletedNode(&node)) {
             if (ned::AcceptDeletedItem()) {
-                bt_graph_remove_node(graph_, graph_id(node.Get()));
+                scene::bt_graph_remove_node(graph_, graph_id(node.Get()));
                 note(Change::structure);
             }
         }
@@ -425,19 +410,19 @@ void BehaviorPanel::draw_context_menus() {
 
     if (ImGui::BeginPopup("bt_node_menu")) {
         if (BtGraphNode* n = graph_.find(context_node_)) {
-            const BtGraphNode* parent = graph_.find(bt_graph_parent(graph_, n->id));
+            const BtGraphNode* parent = graph_.find(scene::bt_graph_parent(graph_, n->id));
             const bool first = parent != nullptr && parent->children.front() == n->id;
             const bool last = parent != nullptr && parent->children.back() == n->id;
             ImGui::TextDisabled("%s", n->kind == BtKind::leaf ? n->leaf.c_str()
                                                               : display_name(n->kind));
             ImGui::Separator();
             if (ImGui::MenuItem("Move left", nullptr, false, parent != nullptr && !first)) {
-                bt_graph_move_child(graph_, n->id, -1);
+                scene::bt_graph_move_child(graph_, n->id, -1);
                 push_all_positions_ = true;
                 note(Change::structure);
             }
             if (ImGui::MenuItem("Move right", nullptr, false, parent != nullptr && !last)) {
-                bt_graph_move_child(graph_, n->id, +1);
+                scene::bt_graph_move_child(graph_, n->id, +1);
                 push_all_positions_ = true;
                 note(Change::structure);
             }
@@ -453,7 +438,7 @@ void BehaviorPanel::draw_context_menus() {
                 ImGui::EndMenu();
             }
             if (ImGui::MenuItem("Detach from parent", nullptr, false, parent != nullptr)) {
-                bt_graph_unlink(graph_, parent->id, n->id);
+                scene::bt_graph_unlink(graph_, parent->id, n->id);
                 note(Change::structure);
             }
             if (ImGui::MenuItem("Delete", "Del")) ned::DeleteNode(node_id(n->id));
@@ -475,16 +460,16 @@ void BehaviorPanel::draw_context_menus() {
         ImGui::TextDisabled("Composites");
         for (const BtKind k : kComposites) {
             if (ImGui::MenuItem(display_name(k))) {
-                created = bt_graph_add_node(graph_, k, "", create_pos_);
+                created = scene::bt_graph_add_node(graph_, k, "", create_pos_);
             }
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", kind_help(k));
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", kind_help(k).c_str());
         }
         ImGui::Separator();
         ImGui::TextDisabled("Leaves");
         for (const scene::BtLeafInfo& info : scene::bt_builtin_leaf_info()) {
             const std::string name(info.name);
             if (ImGui::MenuItem(name.c_str(), nullptr, false, leaves_allowed)) {
-                created = bt_graph_add_node(graph_, BtKind::leaf, info.name, create_pos_);
+                created = scene::bt_graph_add_node(graph_, BtKind::leaf, info.name, create_pos_);
             }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("%.*s", static_cast<int>(info.help.size()),
                                                           info.help.data());
@@ -493,9 +478,9 @@ void BehaviorPanel::draw_context_menus() {
             push_positions_.push_back(created);
             if (create_from_pin_ != 0 && graph_.find(from) != nullptr) {
                 if (from_tag == kTagOut) {
-                    (void)bt_graph_link(graph_, from, created);
+                    (void)scene::bt_graph_link(graph_, from, created);
                 } else {
-                    (void)bt_graph_link(graph_, created, from);
+                    (void)scene::bt_graph_link(graph_, created, from);
                 }
             }
             create_from_pin_ = 0;

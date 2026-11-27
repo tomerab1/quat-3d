@@ -6,6 +6,9 @@
 // rustdoc lints would police that Markdown. It is text for the model, not API
 // documentation: `doc_markdown` (backticks around identifiers) is off there.
 #[allow(clippy::doc_markdown)]
+mod behavior_tools;
+mod bt_outline;
+#[allow(clippy::doc_markdown)]
 mod debug_tools;
 mod prompts;
 mod results;
@@ -35,7 +38,9 @@ use serde_json::{Value, json};
 use crate::client::{EngineClient, EngineError};
 use crate::content;
 
-pub use prompts::{BuildWorldArgs, DebugSessionArgs, InspectSceneArgs, TuneLookArgs};
+pub use prompts::{
+    BuildWorldArgs, DebugSessionArgs, DesignBehaviorArgs, InspectSceneArgs, TuneLookArgs,
+};
 pub use results::{error_result, normalize_method};
 pub use world_tools::MAX_GROUND_POINTS;
 
@@ -79,6 +84,7 @@ impl QuatServer {
             + Self::sim_tools()
             + Self::debug_tools()
             + Self::tuning_tools()
+            + Self::behavior_tools()
     }
 
     /// Timeout for slow engine work (loading, baking, screenshots).

@@ -19,6 +19,7 @@
 #include "engine/renderer/light_cull_pass.hpp"
 #include "engine/rhi/device.hpp"
 #include "engine/rhi/gpu_allocator.hpp"
+#include "engine/rhi/pipeline_cache.hpp"
 #include "engine/rhi/render_graph.hpp"
 #include "support/expect_ok.hpp"
 #include "support/gpu_context.hpp"
@@ -197,6 +198,27 @@ TEST(GpuLightCull, SecondRunReplacesTheLists) {
     for (std::uint32_t c = 0; c < r::cluster_count; ++c) {
         EXPECT_EQ(empty->grid[c * 2 + 1], 0U) << "cluster " << c;
     }
+}
+
+// Bindings come from reflection (by name); a hot reload of the unchanged
+// shader passes the R2 compatibility check and the rebuilt pipeline still
+// culls with the descriptors written at creation.
+TEST(GpuLightCull, HotReloadKeepsTheReflectedBindings) {
+    QUAT_REQUIRE_GPU(g);
+    auto pass = r::LightCullPass::create(g->device, g->allocator, g->cache, g->shader_dir);
+    ASSERT_OK(pass);
+    auto report = g->cache.reload(g->shader_dir + "/light_cull.spv");
+    ASSERT_OK(report);
+    EXPECT_TRUE(report->errors.empty()) << report->errors.front();
+    EXPECT_GE(report->rebuilt, 1U);
+
+    const glm::mat4 view(1.0F);
+    const glm::mat4 proj = vulkan_perspective(glm::radians(60.0F), 1.0F, 0.1F, 100.0F);
+    const std::vector<r::GpuLight> lights{
+        r::make_point_light({0.0F, 0.0F, -10.0F}, 3.0F, glm::vec3(1.0F), 1.0F)};
+    auto got = run_cull(*g, *pass, view, proj, lights);
+    ASSERT_OK(got);
+    EXPECT_GT(got->requested, 0U) << "the reloaded pipeline culled nothing";
 }
 
 // max_lights lights that each cover the whole view: the requested total

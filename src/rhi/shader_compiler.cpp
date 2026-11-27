@@ -64,6 +64,66 @@ namespace {
 
 [[nodiscard]] fs::path normal(const fs::path& p) { return p.lexically_normal(); }
 
+// Moves the `staged` outputs over `finals` as a set: if any move fails, the
+// ones already moved are rolled back from copies kept in `backup_dir`.
+[[nodiscard]] std::expected<void, core::Error> install_outputs(std::span<const fs::path> staged,
+                                                               std::span<const fs::path> finals,
+                                                               const fs::path& backup_dir) {
+    // Back up the current outputs (copies: the installed files never go
+    // missing), so that if any move below fails the previous set can be put
+    // back — the installed .spv and .json always come from one compile.
+    struct Backup {
+        fs::path saved;
+        bool     existed = false;
+    };
+    std::error_code ec;
+    fs::create_directories(backup_dir, ec);
+    if (ec) return fail("cannot create " + backup_dir.string() + ": " + ec.message());
+    std::vector<Backup> backups(finals.size());
+    for (std::size_t i = 0; i < finals.size(); ++i) {
+        backups[i].saved = backup_dir / finals[i].filename();
+        fs::remove(backups[i].saved, ec);
+        if (!fs::is_regular_file(finals[i], ec)) continue; // nothing to restore
+        fs::copy_file(finals[i], backups[i].saved, fs::copy_options::overwrite_existing, ec);
+        if (ec) {
+            return fail("cannot back up " + finals[i].string() + ": " + ec.message() +
+                        " (nothing installed)");
+        }
+        backups[i].existed = true;
+    }
+    const auto discard_backups = [&] {
+        std::error_code ignored;
+        for (const Backup& b : backups) fs::remove(b.saved, ignored);
+    };
+
+    // Reflection first, SPIR-V last (the SPIR-V is what consumers key on).
+    for (std::size_t i = finals.size(); i-- > 0;) {
+        fs::rename(staged[i], finals[i], ec);
+        if (!ec) continue;
+        std::string what = "cannot install " + finals[i].string() + ": " + ec.message();
+        // Roll back the outputs already moved into place.
+        bool restored = true;
+        for (std::size_t j = i + 1; j < finals.size(); ++j) {
+            std::error_code restore_ec;
+            if (backups[j].existed) {
+                fs::rename(backups[j].saved, finals[j], restore_ec);
+            } else {
+                fs::remove(finals[j], restore_ec);
+            }
+            if (restore_ec) {
+                restored = false;
+                what += "; could not restore " + finals[j].string() + " from " +
+                        backups[j].saved.string() + ": " + restore_ec.message();
+            }
+        }
+        if (!restored) return fail(what + " (the cooked outputs may not match: rebuild)");
+        discard_backups();
+        return fail(what + " (previous outputs kept)");
+    }
+    discard_backups();
+    return {};
+}
+
 } // namespace
 
 // ---------------------------------------------------------------------------
@@ -147,7 +207,8 @@ std::vector<std::string> ShaderCompiler::arguments(const fs::path& source,
             (out_dir / (name + ".json")).string()};
 }
 
-ShaderCompileResult ShaderCompiler::compile(const fs::path& source_in) const {
+ShaderCompileResult ShaderCompiler::compile(const fs::path& source_in,
+                                            core::ProcessCanceller* canceller) const {
     ShaderCompileResult result;
     result.source = normal(source_in);
     result.kind = kind_of(result.source);
@@ -169,9 +230,13 @@ ShaderCompileResult ShaderCompiler::compile(const fs::path& source_in) const {
     }
 
     const std::vector<std::string> args = arguments(result.source, staging);
-    auto run = core::run_process(config_.slangc, args);
+    core::ProcessOptions run_options;
+    run_options.timeout = config_.timeout;
+    run_options.canceller = canceller;
+    auto run = core::run_process(config_.slangc, args, run_options);
     if (!run) {
         result.diagnostics = run.error().message;
+        for (const fs::path& out : staged) fs::remove(out, ec); // partial outputs
         return result;
     }
     result.diagnostics = std::move(run->output);
@@ -193,14 +258,11 @@ ShaderCompileResult ShaderCompiler::compile(const fs::path& source_in) const {
         return result;
     }
 
-    // Install: reflection first, SPIR-V last (the SPIR-V is what consumers key on).
     std::vector<fs::path> finals = outputs_for(result.source);
-    for (std::size_t i = finals.size(); i-- > 0;) {
-        fs::rename(staged[i], finals[i], ec);
-        if (ec) {
-            result.diagnostics += "\ncannot install " + finals[i].string() + ": " + ec.message();
-            return result;
-        }
+    if (auto installed = install_outputs(staged, finals, staging / "prev"); !installed) {
+        result.diagnostics += "\n" + installed.error().message;
+        for (const fs::path& out : staged) fs::remove(out, ec);
+        return result;
     }
     result.ok = true;
     result.outputs = std::move(finals);
@@ -278,6 +340,10 @@ void ShaderDependencyGraph::set_imports(const fs::path& source, std::vector<std:
 
 bool ShaderDependencyGraph::is_module(const fs::path& source) const {
     return normal(source).parent_path() == module_dir_;
+}
+
+bool ShaderDependencyGraph::contains(const fs::path& source) const {
+    return imports_.contains(normal(source));
 }
 
 std::vector<fs::path> ShaderDependencyGraph::sources() const {

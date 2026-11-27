@@ -15,6 +15,7 @@
 #include "audio_inspector.hpp"
 #include "behavior_panel.hpp"
 #include "tuning_panels.hpp"
+#include "grass_inspector.hpp"
 #include "engine/editor/editor.hpp"
 #include "engine/scene/behavior.hpp"
 #include "engine/scene/components.hpp"
@@ -141,6 +142,12 @@ struct ComponentInspector<scene::Terrain> {
                                      : "Generation runs on a worker thread; tiles pop in when "
                                        "ready.");
     }
+};
+
+template <>
+struct ComponentInspector<scene::Grass> {
+    static constexpr const char* title = "Grass";
+    static void draw(entt::registry&, entt::entity, scene::Grass& grass) { draw_grass(grass); }
 };
 
 template <>
@@ -544,6 +551,7 @@ void draw_inspector(scene::Scene& scene, entt::entity selected) {
     inspect<scene::Camera>(r, selected, true);
     inspect<scene::Animator>(r, selected);
     inspect<scene::Terrain>(r, selected, true);
+    inspect<scene::Grass>(r, selected, true);
     if (!inspect<scene::InstancedMesh>(r, selected, true)) {
         r.remove<scene::InstancedMeshParts, scene::Scatter>(selected); // as remove_component
     }
@@ -564,6 +572,7 @@ void draw_inspector(scene::Scene& scene, entt::entity selected) {
         add_component_item<scene::Collider>(r, selected);
         add_component_item<scene::RigidBody>(r, selected);
         add_component_item<scene::Terrain>(r, selected);
+        add_component_item<scene::Grass>(r, selected);
         add_component_item<scene::InstancedMesh>(r, selected);
         add_component_item<scene::Scatter>(r, selected); // adds an Instanced Mesh on demand
         add_component_item<scene::NavAgent>(r, selected);

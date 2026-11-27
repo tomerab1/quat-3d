@@ -7,7 +7,9 @@
 // debugging commands (ROADMAP A5): debug.log, debug.stats, debug.pause /
 // resume / step / time_scale, debug.watch, debug.raycast, debug.nav_path — and
 // look tuning (ROADMAP A8): render.settings.get / set / reset / schema,
-// material.get / set. The method contract is docs/remote-control.md.
+// material.get / set — and behaviour-tree authoring (ROADMAP A7): bt.leaves,
+// bt.get, bt.set, bt.add_node, bt.remove_node, bt.move_node, bt.set_params,
+// bt.status. The method contract is docs/remote-control.md.
 //
 // Scene editing works on any Scene. Everything that only the running
 // application has — the view camera, the renderer's settings, terrain heights,

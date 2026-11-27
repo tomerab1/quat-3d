@@ -6,8 +6,10 @@ use serde::de::Error as _;
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::{Map, Value};
 
+mod behavior;
 mod debug;
 mod tuning;
+pub use behavior::*;
 pub use debug::*;
 pub use tuning::*;
 

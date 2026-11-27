@@ -322,6 +322,8 @@ bool Application::run_frame() {
     frame_inputs.cam = &cam;
     frame_inputs.draw_extent = draw_extent;
     frame_inputs.dt = dt;
+    frame_inputs.grass = world_.grass();
+    frame_inputs.sim_dt = sim_dt;
     if (world_.terrain_drawable()) {
         frame_inputs.terrain = &world_.terrain_pass();
         frame_inputs.terrain_anchor = world_.terrain_anchor();

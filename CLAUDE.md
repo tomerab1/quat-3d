@@ -399,6 +399,9 @@ path against it.
 - Never store raw Vulkan handles (`VkImage`, `VkBuffer`) in components or assets — always wrapped types.
 - Never allocate GPU memory with `vkAllocateMemory` directly — always VMA.
 - Never write skinning in the vertex shader — skinning is a compute pass.
+  (Procedural vertex offsets such as foliage wind bending are not skinning and
+  may run in the vertex shader; the depth, shadow and velocity passes must apply
+  the same offset.)
 - Never use `#ifdef` for material/shader variants — use Slang interfaces.
 - Never put system logic inside component structs.
 - Never throw exceptions.

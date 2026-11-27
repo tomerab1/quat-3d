@@ -55,13 +55,14 @@ void BehaviorPanel::load(entt::entity entity, const scene::BehaviorTree& bt) {
     compile_error_.clear();
     graph_ = {};
     if (!bt.source.empty()) {
-        if (auto g = bt_graph_from_json(bt.source)) {
+        if (auto g = scene::bt_graph_from_json(bt.source)) {
             graph_ = std::move(*g);
         } else {
             load_error_ = g.error().message;
         }
     }
-    issues_ = graph_.nodes.empty() ? std::vector<BtGraphIssue>{} : bt_graph_validate(graph_);
+    issues_ = graph_.nodes.empty() ? std::vector<BtGraphIssue>{}
+                                   : scene::bt_graph_validate(graph_);
     unapplied_ = false;
     pending_ = Change::none;
     dragging_layout_ = false;
@@ -130,7 +131,7 @@ void BehaviorPanel::draw_toolbar(scene::BehaviorTree& bt) {
     ImGui::Checkbox("enabled", &bt.enabled);
     ImGui::SameLine();
     if (ImGui::Button("Auto layout") && !graph_.nodes.empty()) {
-        bt_graph_auto_layout(graph_);
+        scene::bt_graph_auto_layout(graph_);
         push_all_positions_ = true;
         navigate_in_frames_ = 1;
         note(Change::layout);
@@ -169,14 +170,14 @@ void BehaviorPanel::commit(scene::BehaviorTree& bt) {
     Change change = pending_;
     pending_ = Change::none;
     // Children always run in their on-screen left-to-right order.
-    if (bt_graph_sort_children_by_x(graph_)) change = Change::structure;
-    issues_ = bt_graph_validate(graph_);
+    if (scene::bt_graph_sort_children_by_x(graph_)) change = Change::structure;
+    issues_ = scene::bt_graph_validate(graph_);
     compile_error_.clear();
     if (!issues_.empty()) {
         unapplied_ = true;
         return;
     }
-    auto text = bt_graph_to_json(graph_);
+    auto text = scene::bt_graph_to_json(graph_);
     if (!text) {
         compile_error_ = text.error().message;
         unapplied_ = true;

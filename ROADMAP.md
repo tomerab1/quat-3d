@@ -18,6 +18,8 @@ ID (`S3`, `A2`, …) and ends in one or more commits titled `[<ID>] <description
 - If an item turns out to be wrongly scoped, edit this file first (in its own
   commit) rather than silently drifting.
 
+Research basis for R11–R17 and G8–G10: [`docs/research/reports/Real time rendering tech radar.md`](docs/research/reports/Real%20time%20rendering%20tech%20radar.md).
+
 **Current priority order:** S1 audit fixes (incl. the navmesh / NPC bugs) →
 S3 GoogleTest → S7/S8 (thin `main.cpp`, split oversized files) → R9
 instancing → rest of S → A (AI tooling / MCP) → P1/P2 (Mac) → G1 (audio) →
@@ -92,6 +94,10 @@ JSON-RPC over loopback TCP to the engine.
 
 ## R — Rendering & performance
 
+- [ ] **A8 — Live tuning.** Every renderer / post-process / material
+  parameter readable and writable over the remote API and MCP from one
+  settings model the editor also edits (schema with ranges and units),
+  saved with the scene; a `tune_look` workflow prompt.
 - [ ] **R1 — Async asset loading.** Thread-pool loads, `is_ready()` handles,
   fallback assets while loading, upload queue budgeted per frame.
 - [x] **R2 — Shader hot reload.** File watcher → `slangc` → pipeline recreation
@@ -134,6 +140,35 @@ JSON-RPC over loopback TCP to the engine.
 - [ ] **R8 — Image quality.** GTAO, screen-space reflections, contact shadows,
   optional ray-traced shadows/AO, CUBICSPLINE animation interpolation.
 
+- [ ] **R11 — Velocity + upscalers.** Complete per-object velocity buffer
+  (skinned previous positions, instances, wind offsets, particles), reactive
+  mask and one jitter contract feeding TAA and a single upscaler interface;
+  FSR 2/3.1 first (MIT, runs on MoltenVK), then DLSS / XeSS / FSR 4.1 plugins
+  on Windows/Linux. *(tech radar: quick win)*
+- [ ] **R12 — Shadows + AO foundation.** Hi-Z depth pyramid (shared with R6),
+  4-cascade CSM with GPU depth bounds and texel snapping, XeGTAO port with
+  bent normals → visibility-bitmask SSILVB, contact shadows, then stochastic
+  SSR. Supersedes the AO/SSR/contact-shadow parts of R8. *(quick win)*
+- [ ] **R13 — Weather + wind.** One `WeatherState` (ECS singleton, Lua + MCP
+  `set_weather`) driving a global wind field (grass, foliage, cloth, particles,
+  ocean, clouds), wetness/snow layers, rain with an occlusion map, cloud
+  shadows; then froxel volumetric fog + local fog volumes (on R10.1's
+  clusters) and a 2.5D volumetric cloud layer. *(quick win → medium)*
+- [ ] **R14 — Foliage.** Main + detail wind bending, two-sided foliage shading
+  model ID in the GBuffer, hashed alpha with coverage-preserving mips, GPU
+  instance cull + LOD cross-fade (with R9.4), octahedral impostors, GPU
+  density placement from R10.2 terrain maps with **biome recipes authored
+  over MCP**. *(quick win → medium)*
+- [ ] **R15 — Global illumination tiers.** One world-space radiance-cache
+  interface with pluggable tracers: probe volume (tier 0), compute SDF tracer
+  à la AMD Brixelizer GI (tier 1, runs on macOS), `VK_KHR_ray_query` tracer +
+  denoiser on RT GPUs (tier 2), ReSTIR / path tracing long-term. Needs R12.
+- [ ] **R16 — Water.** FFT ocean (JONSWAP) with single-layer water shading and
+  Jolt buoyancy from a deterministic CPU height reference; later heightfield /
+  shallow-water local sims and rivers from R10.2 erosion flow. *(medium)*
+- [ ] **R17 — Asset cooker formats.** KTX2 + Basis Universal textures,
+  meshoptimizer codecs and quantisation. *(quick win)*
+
 ## P — Platforms & shipping
 
 - [ ] **P1 — macOS via Vulkan-on-Metal.** MoltenVK/KosmicKrisp, harden the
@@ -146,6 +181,9 @@ JSON-RPC over loopback TCP to the engine.
   the SDK): init/overlay, achievements, stats, cloud saves, rich presence,
   Steam networking (GameNetworkingSockets already matches its API). The SDK
   must be added to the repo by hand (Valve's partner download).
+- [ ] **P6 — Release builds.** Tag-driven GitHub Releases with Linux,
+  Windows and macOS (Vulkan-on-Metal) archives the owner can download and
+  run; runtime asset-root resolution; smoke-tested in CI.
 - [ ] **P4 — Game packaging.** Engine-as-library + game project template,
   editor vs runtime builds, cooked asset bundles, shipping config, depot layout.
 - [ ] **P5 — Native Metal backend.** On top of P2.
@@ -165,7 +203,24 @@ JSON-RPC over loopback TCP to the engine.
   interest management, RPCs, lag compensation, dedicated-server build.
 - [ ] **G5 — Input actions.** Action maps over keyboard/mouse/gamepad,
   rebinding, saved per user.
+- [ ] **G7 — Game scripting (Lua 5.4 + sol2).** `Script` component with
+  lifecycle callbacks, a sandboxed per-scene Lua state with instruction and
+  memory limits, an API over entities/components (via the codec), input,
+  physics, audio, navigation; hot reload; remote `script.*` + MCP tools so
+  assistants can write gameplay; a small playable example.
 - [ ] **G6 — In-game UI.** A runtime UI system for games (not ImGui).
+
+- [ ] **G8 — Animation upgrades.** Inertialization, two-bone foot IK,
+  ACL compression; then Jolt ragdolls / powered hit reactions, Jolt cloth,
+  motion matching. *(quick win → medium)*
+- [ ] **G9 — Hair + fur.** Shell + fin fur and hair cards with a hair shading
+  model now; spike Jolt 5.6 GPU strand-hair simulation (must share the device
+  and VMA); compute-rasterised strands long-term (64-bit atomics, check
+  macOS). *(medium → long)*
+- [ ] **G10 — Destruction.** Offline pre-fracture cooker, Blast-style bond
+  graph on Jolt compound shapes, breakable constraints, debris tiers and a
+  `DEBRIS` layer, bond-delta replication over the net layer, destruction
+  fields over MCP. *(medium)*
 
 ## E — Editor (production readiness)
 

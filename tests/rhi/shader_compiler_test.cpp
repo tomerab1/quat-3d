@@ -142,6 +142,46 @@ TEST(ShaderCompiler, ReturnsDiagnosticsAndKeepsTheLastGoodOutput) {
     EXPECT_EQ(read_file(t.out / "pass.spv"), good_spv) << "failed compile clobbered the output";
 }
 
+// The .spv/.json pair is installed as a unit: when the second move fails
+// (forced here by putting a non-empty directory where pass.spv goes), the
+// reflection already moved into place is rolled back.
+TEST(ShaderCompiler, FailedInstallRestoresThePreviousPair) {
+    REQUIRE_SLANGC();
+    ShaderTree t;
+    auto compiler = ShaderCompiler::create({{}, t.src, {}, t.out});
+    ASSERT_OK(compiler);
+    ASSERT_TRUE(compiler->compile(t.src / "pass.slang").ok);
+    const std::string good_json = read_file(t.out / "pass.json");
+    ASSERT_FALSE(good_json.empty());
+
+    std::error_code ec;
+    fs::remove(t.out / "pass.spv", ec);
+    fs::create_directories(t.out / "pass.spv");
+    write_file(t.out / "pass.spv" / "blocker", "x");
+    // A second binding: the new reflection differs from the installed one.
+    write_file(t.src / "pass.slang", std::string("[[vk::binding(1)]] RWStructuredBuffer<uint> g_more;\n") +
+                                         k_valid_pass);
+    const ShaderCompileResult r = compiler->compile(t.src / "pass.slang");
+    EXPECT_FALSE(r.ok);
+    EXPECT_TRUE(r.outputs.empty());
+    EXPECT_NE(r.diagnostics.find("cannot install"), std::string::npos) << r.diagnostics;
+    EXPECT_NE(r.diagnostics.find("previous outputs kept"), std::string::npos) << r.diagnostics;
+    EXPECT_EQ(read_file(t.out / "pass.json"), good_json) << "reflection not rolled back";
+
+    // Nothing is left behind in the staging area.
+    for (const char* name : {"pass.spv", "pass.json"}) {
+        EXPECT_FALSE(fs::exists(t.out / ".hot_reload" / name)) << name;
+        EXPECT_FALSE(fs::exists(t.out / ".hot_reload" / "prev" / name)) << name;
+    }
+
+    // Unblocked, the same compile installs both.
+    fs::remove_all(t.out / "pass.spv", ec);
+    const ShaderCompileResult again = compiler->compile(t.src / "pass.slang");
+    ASSERT_TRUE(again.ok) << again.diagnostics;
+    EXPECT_NE(read_file(t.out / "pass.json"), good_json);
+    EXPECT_TRUE(fs::is_regular_file(t.out / "pass.spv"));
+}
+
 TEST(ShaderCompiler, FailsWithoutSlangc) {
     ShaderTree t;
     EXPECT_FALSE(ShaderCompiler::create({"/nonexistent/slangc", t.src, {}, t.out}).has_value());
@@ -242,6 +282,119 @@ TEST(ShaderReflectionCompat, RejectsLayoutChanges) {
         base, reflection({{0, 0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1}}, 80), entries)); // push
     const std::string renamed[] = {"main"};
     EXPECT_ERR(check_reflection_compatible(base, base, renamed)); // entry point gone
+}
+
+// Passes bind by name (reflected_bindings), so a reload that moves another
+// parameter of the same type into a slot must be refused.
+TEST(ShaderReflectionCompat, RejectsSwappedParameterNames) {
+    const std::string entries[] = {"compute_main"};
+    const auto base = reflection({{0, 0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, 0, "g_a"},
+                                  {0, 1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, 0, "g_b"}},
+                                 0);
+    EXPECT_OK(check_reflection_compatible(base, base, entries));
+    const auto swapped = reflection({{0, 0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, 0, "g_b"},
+                                     {0, 1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, 0, "g_a"}},
+                                    0);
+    const auto r = check_reflection_compatible(base, swapped, entries);
+    ASSERT_ERR(r);
+    EXPECT_NE(r.error().message.find("g_a"), std::string::npos) << r.error().message;
+}
+
+// --- untrusted reflection JSON (issue #6) ----------------------------------------
+
+// Reflection files are read from disk (and rewritten by hot reload): malformed
+// ones must be rejected with an error naming the field, never abort.
+TEST(ShaderReflectionJson, RejectsMalformedInputWithoutAborting) {
+    const char* bad[] = {
+        R"({"entryPoints": [)",                                           // truncated
+        R"([1, 2])",                                                      // not an object
+        R"({"entryPoints": 5})",
+        R"({"entryPoints": [5]})",
+        R"({"entryPoints": [{"name": "main", "stage": 3}]})",
+        R"({"entryPoints": [{"name": "main", "stage": "warp"}]})",
+        R"({"entryPoints": [{"name": [], "stage": "compute"}]})",
+        R"({"parameters": {}})",
+        R"({"parameters": [7]})",
+        R"({"parameters": [{"binding": 7}]})",
+        R"({"parameters": [{"binding": {"kind": 5}}]})",
+        R"({"parameters": [{"binding": {"kind": "descriptorTableSlot", "index": -1}}]})",
+        R"({"parameters": [{"binding": {"kind": "descriptorTableSlot", "index": "0"}}]})",
+        R"({"parameters": [{"binding": {"kind": "descriptorTableSlot", "space": 4294967296}}]})",
+        R"({"parameters": [{"binding": {"kind": "descriptorTableSlot", "count": 0}}]})",
+        R"({"parameters": [{"name": 7, "binding": {"kind": "descriptorTableSlot"}}]})",
+        R"({"parameters": [{"binding": {"kind": "descriptorTableSlot"}, "type": 1}]})",
+        R"({"parameters": [{"binding": {"kind": "descriptorTableSlot"},
+             "type": {"kind": "resource", "baseShape": 7}}]})",
+        R"({"parameters": [{"binding": {"kind": "pushConstantBuffer"},
+             "type": {"elementType": {"fields": 3}}}]})",
+        R"({"parameters": [{"binding": {"kind": "pushConstantBuffer"},
+             "type": {"elementType": {"fields": [{"binding": {"kind": "uniform", "offset": "x"}}]}}}]})",
+        R"({"parameters": [{"binding": {"kind": "pushConstantBuffer"},
+             "type": {"elementType": {"fields": [{"binding": {"kind": "uniform", "offset": 0, "size": -4}}]}}}]})",
+    };
+    for (const char* text : bad) EXPECT_ERR(parse_reflection_json(text)) << text;
+
+    const auto r = parse_reflection_json(
+        R"({"parameters": [{"binding": {"kind": "descriptorTableSlot", "index": -1}}]})");
+    ASSERT_ERR(r);
+    EXPECT_NE(r.error().message.find("reflection.parameters[0].binding.index"), std::string::npos)
+        << r.error().message;
+}
+
+TEST(ShaderReflectionJson, ParsesPushConstantsAndIgnoresUnknownFields) {
+    const auto r = parse_reflection_json(R"({
+        "entryPoints": [{"name": "main", "stage": "compute", "threadGroupSize": [8, 8, 1]}],
+        "parameters": [
+            {"name": "pc", "binding": {"kind": "pushConstantBuffer", "index": 0},
+             "type": {"kind": "constantBuffer", "elementType": {"kind": "struct", "fields": [
+                 {"name": "a", "binding": {"kind": "uniform", "offset": 0, "size": 16}},
+                 {"name": "b", "binding": {"kind": "uniform", "offset": 16, "size": 8}}]}}},
+            {"name": "g_tex", "binding": {"kind": "descriptorTableSlot", "index": 2, "count": 4},
+             "type": {"kind": "resource", "baseShape": "texture2D", "access": "readWrite"}},
+            {"name": "g_space", "binding": {"kind": "subElementRegisterSpace", "index": 1}}],
+        "hashedStrings": {}})");
+    ASSERT_OK(r);
+    ASSERT_EQ(r->entry_points.size(), 1U);
+    EXPECT_EQ(r->entry_points[0].stage, VK_SHADER_STAGE_COMPUTE_BIT);
+    ASSERT_EQ(r->push_constant_ranges.size(), 1U);
+    EXPECT_EQ(r->push_constant_ranges[0].size, 24U);
+    ASSERT_EQ(r->descriptor_bindings.size(), 1U);
+    EXPECT_EQ(r->descriptor_bindings[0].binding, 2U);
+    EXPECT_EQ(r->descriptor_bindings[0].count, 4U);
+    EXPECT_EQ(r->descriptor_bindings[0].type, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE);
+    EXPECT_EQ(r->descriptor_bindings[0].name, "g_tex");
+}
+
+// --- bindings by name -----------------------------------------------------------
+
+TEST(ShaderReflectionBindings, ParsesNamesAndResolvesRequestsInOrder) {
+    const auto parsed = parse_reflection_json(R"({"parameters": [
+        {"name": "g_params", "binding": {"kind": "descriptorTableSlot", "index": 0},
+         "type": {"kind": "constantBuffer"}},
+        {"name": "g_out", "binding": {"kind": "descriptorTableSlot", "index": 3},
+         "type": {"kind": "resource", "baseShape": "structuredBuffer", "access": "readWrite"}},
+        {"name": "g_other", "binding": {"kind": "descriptorTableSlot", "index": 1, "space": 1},
+         "type": {"kind": "resource", "baseShape": "structuredBuffer"}}]})");
+    ASSERT_OK(parsed);
+    ASSERT_NE(parsed->find_binding("g_out"), nullptr);
+    EXPECT_EQ(parsed->find_binding("g_out")->binding, 3U);
+    EXPECT_EQ(parsed->find_binding("g_missing"), nullptr);
+
+    const BindingRequest ok[] = {{"g_out", VK_DESCRIPTOR_TYPE_STORAGE_BUFFER},
+                                 {"g_params", VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER}};
+    const auto bindings = reflected_bindings(*parsed, ok, VK_SHADER_STAGE_COMPUTE_BIT);
+    ASSERT_OK(bindings);
+    ASSERT_EQ(bindings->size(), 2U);
+    EXPECT_EQ((*bindings)[0].binding, 3U);
+    EXPECT_EQ((*bindings)[0].stages, VK_SHADER_STAGE_COMPUTE_BIT);
+    EXPECT_EQ((*bindings)[1].binding, 0U);
+
+    const BindingRequest missing[] = {{"g_nope", VK_DESCRIPTOR_TYPE_STORAGE_BUFFER}};
+    EXPECT_ERR(reflected_bindings(*parsed, missing, VK_SHADER_STAGE_COMPUTE_BIT));
+    const BindingRequest wrong_type[] = {{"g_params", VK_DESCRIPTOR_TYPE_STORAGE_BUFFER}};
+    EXPECT_ERR(reflected_bindings(*parsed, wrong_type, VK_SHADER_STAGE_COMPUTE_BIT));
+    const BindingRequest other_set[] = {{"g_other", VK_DESCRIPTOR_TYPE_STORAGE_BUFFER}};
+    EXPECT_ERR(reflected_bindings(*parsed, other_set, VK_SHADER_STAGE_COMPUTE_BIT));
 }
 
 } // namespace

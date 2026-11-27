@@ -7,6 +7,7 @@
 
 #include <glm/gtc/matrix_transform.hpp>
 
+#include "app/frame_renderer.hpp" // k_frames_in_flight
 #include "app/nav_bake.hpp"
 #include "app/remote_bridge.hpp"
 #include "engine/rhi/device.hpp"
@@ -84,6 +85,8 @@ void WorldRuntime::init(const engine::rhi::Device& device, engine::rhi::GpuAlloc
     } else {
         std::fprintf(stderr, "[warn] terrain pass create failed: %s\n", tp.error().message.c_str());
     }
+    grass_.emplace(device, allocator, pipeline_cache, terrain_transfer_, shader_dir,
+                   k_frames_in_flight);
 
     net_ = engine::net::NetSession::from_environment(scene.registry());
 
@@ -111,11 +114,20 @@ void WorldRuntime::fill_remote_targets(RemoteBridgeTargets& targets) {
 }
 
 void WorldRuntime::shutdown() {
+    // Frames no longer run, so a GPU tile would never be delivered (audit
+    // D1): abandon it, and stop a CPU job at its next erosion step, before
+    // waiting on the job.
+    abandon_terrain_job();
     if (terrain_job_.valid()) terrain_job_.wait(); // worker may still hold the params
     if (terrain_pool_ != VK_NULL_HANDLE) {
         vkDestroyCommandPool(device_, terrain_pool_, nullptr);
         terrain_pool_ = VK_NULL_HANDLE;
     }
+}
+
+void WorldRuntime::abandon_terrain_job() {
+    terrain_pass_.abandon_pending_tiles();
+    if (terrain_cancel_) terrain_cancel_->store(true);
 }
 
 void WorldRuntime::drive_character(engine::scene::Scene& scene, const glm::vec3& wish, float dt) {
@@ -193,6 +205,9 @@ void WorldRuntime::update_terrain(engine::scene::Scene& scene, const glm::vec3& 
     // Terrain upkeep: single-tile mode generates async on demand; streaming
     // mode keeps a seamless tile window centred on the camera (12.4). Both
     // upload before this frame's graph builds, without pipeline stalls.
+    // The pass's upkeep runs every frame, terrain or not: it frees retired
+    // tiles and finished GPU jobs, and stops GPU work nobody wants any more.
+    terrain_pass_.tick();
     terrain_anchor_ = glm::vec3(0.0F);
     terrain_snowline_ = 110.0F;
     terrain_present_ = false;
@@ -229,11 +244,18 @@ void WorldRuntime::update_terrain(engine::scene::Scene& scene, const glm::vec3& 
                 terrain_streamer_.reset();
                 tcomp.regenerate = true; // rebuild the fixed tile
             }
+            // A regenerate supersedes a job still running (slider drags):
+            // cancel it so the new parameters do not queue behind it; the
+            // cancelled result arrives invalid and is skipped below.
+            if (tcomp.regenerate && terrain_job_.valid() && terrain_cancel_) {
+                terrain_cancel_->store(true);
+            }
             if (tcomp.regenerate && !terrain_job_.valid()) {
                 tcomp.regenerate = false;
+                terrain_cancel_ = engine::terrain::make_cancel_token();
                 terrain_job_ = engine::terrain::generate_tile_async( // R10.2: GPU or CPU
                     tcomp.gpu_generate ? terrain_pass_.tile_generator() : nullptr,
-                    tcomp.params);
+                    tcomp.params, terrain_cancel_);
                 std::fprintf(stderr, "[terrain] generating %ux%u tile (seed %u)...\n",
                              tcomp.params.resolution, tcomp.params.resolution,
                              tcomp.params.seed);
@@ -268,9 +290,14 @@ void WorldRuntime::update_terrain(engine::scene::Scene& scene, const glm::vec3& 
             }
         }
     }
+    // The Terrain entity went away mid-generation: nothing wants the tile,
+    // and a GPU job would not progress without the terrain pass (audit D1).
+    if (!terrain_present_ && terrain_job_.valid()) abandon_terrain_job();
     if (terrain_job_.valid() &&
         terrain_job_.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
-        terrain_heightmap_ = terrain_job_.get();
+        engine::terrain::Heightmap map = terrain_job_.get();
+        if (!map.valid()) return; // cancelled / abandoned
+        terrain_heightmap_ = std::move(map);
         invalidate_navmesh("terrain regenerated");
         if (auto r = terrain_pass_.set_tile(glm::ivec2(0, 0), terrain_heightmap_,
                                             terrain_transfer_);

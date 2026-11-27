@@ -1,6 +1,8 @@
 // FileWatcher (R2): writes, renames into place and removals in a temp
 // directory are reported by the native backend (Linux inotify) and by the
-// portable polling backend; non-matching extensions are ignored.
+// portable polling backend; non-matching extensions are ignored; a watched
+// directory that is deleted and recreated is watched again; an inotify queue
+// overflow still reports removals.
 
 #include <chrono>
 #include <expected>
@@ -140,12 +142,101 @@ TEST_P(FileWatcherTest, CoalescesRepeatedWrites) {
     EXPECT_TRUE(watcher->poll().empty()) << "changes are drained by poll()";
 }
 
+TEST_P(FileWatcherTest, WatchesARecreatedDirectoryAgain) {
+    const fs::path sub = dir_.path() / "sub";
+    fs::create_directories(sub);
+    const fs::path old_file = sub / "old.slang";
+    write_file(old_file, "old");
+    FileWatcher::Options options;
+    options.directories = {sub};
+    options.extensions = {".slang"};
+    options.backend = GetParam();
+    options.poll_interval = std::chrono::milliseconds(0);
+    auto watcher = FileWatcher::create(options);
+    ASSERT_OK(watcher);
+
+    std::error_code ec;
+    fs::remove_all(sub, ec);
+    ASSERT_FALSE(ec) << ec.message();
+    auto changes = poll_until(*watcher, [&](const auto& all) {
+        return has(all, old_file, FileChange::Kind::removed);
+    });
+    EXPECT_TRUE(has(changes, old_file, FileChange::Kind::removed));
+    EXPECT_TRUE(watcher->poll().empty());
+
+    // Recreated: files written before the watch is back are found by the
+    // rescan, and later edits arrive as ordinary events.
+    fs::create_directories(sub);
+    const fs::path file = sub / "new.slang";
+    write_file(file, "first");
+    changes = poll_until(*watcher, [&](const auto& all) {
+        return has(all, file, FileChange::Kind::modified);
+    });
+    EXPECT_TRUE(has(changes, file, FileChange::Kind::modified));
+    EXPECT_FALSE(has(changes, old_file, FileChange::Kind::modified));
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(20)); // distinct mtime
+    write_file(file, "second, longer");
+    changes = poll_until(*watcher, [&](const auto& all) {
+        return has(all, file, FileChange::Kind::modified);
+    });
+    EXPECT_TRUE(has(changes, file, FileChange::Kind::modified)) << "edit after re-watch lost";
+}
+
 INSTANTIATE_TEST_SUITE_P(Backends, FileWatcherTest,
                          ::testing::Values(FileWatchBackend::native, FileWatchBackend::polling),
                          [](const ::testing::TestParamInfo<FileWatchBackend>& info) {
                              return info.param == FileWatchBackend::native ? std::string("Native")
                                                                            : std::string("Polling");
                          });
+
+#if defined(__linux__)
+// Overflows the real inotify queue (more unread events than
+// fs.inotify.max_queued_events), so the deletion and the edit made after it
+// are lost as events; the rescan must still report both.
+TEST(FileWatcher, QueueOverflowReportsRemovalsAndChanges) {
+    long max_events = 0;
+    {
+        std::ifstream in("/proc/sys/fs/inotify/max_queued_events");
+        in >> max_events;
+    }
+    if (max_events <= 0 || max_events > (1L << 20)) {
+        GTEST_SKIP() << "cannot overflow an inotify queue of " << max_events << " events";
+    }
+    quat::test::TempDir dir("file_watcher_overflow");
+    const fs::path gone = dir.path() / "gone.slang";
+    const fs::path kept = dir.path() / "kept.slang";
+    const fs::path flood[] = {dir.path() / "flood_a.tmp", dir.path() / "flood_b.tmp"};
+    write_file(gone, "gone");
+    write_file(kept, "kept");
+    for (const fs::path& f : flood) write_file(f, "");
+
+    FileWatcher::Options options;
+    options.directories = {dir.path()};
+    options.extensions = {".slang"};
+    options.backend = FileWatchBackend::native;
+    auto watcher = FileWatcher::create(options);
+    ASSERT_OK(watcher);
+
+    // chmod queues IN_ATTRIB (watched) on non-matching files; alternating
+    // files so inotify cannot merge consecutive identical events.
+    for (long i = 0; i < max_events + 64; ++i) {
+        std::error_code ec;
+        fs::permissions(flood[i & 1], fs::perms::owner_read | fs::perms::owner_write, ec);
+    }
+    std::error_code ec;
+    fs::remove(gone, ec);
+    ASSERT_FALSE(ec);
+    write_file(kept, "kept, but edited");
+
+    const auto changes = poll_until(*watcher, [&](const auto& all) {
+        return has(all, gone, FileChange::Kind::removed) &&
+               has(all, kept, FileChange::Kind::modified);
+    });
+    EXPECT_TRUE(has(changes, gone, FileChange::Kind::removed));
+    EXPECT_TRUE(has(changes, kept, FileChange::Kind::modified));
+}
+#endif
 
 TEST(FileWatcher, RejectsMissingDirectory) {
     FileWatcher::Options options;

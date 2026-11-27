@@ -15,6 +15,7 @@
 #include <thread>
 #include <utility>
 
+#include "engine/core/child_process.hpp"
 #include "engine/rhi/pipeline_cache.hpp"
 #include "engine/rhi/shader_compiler.hpp"
 
@@ -33,7 +34,8 @@ struct CompileJob {
 };
 
 [[nodiscard]] std::vector<ShaderCompileResult>
-run_batch(const ShaderCompiler& compiler, const std::vector<CompileJob>& jobs) {
+run_batch(const ShaderCompiler& compiler, const std::vector<CompileJob>& jobs,
+          core::ProcessCanceller* canceller) {
     std::vector<ShaderCompileResult> results;
     std::set<fs::path> failed;
     for (const CompileJob& job : jobs) {
@@ -49,7 +51,7 @@ run_batch(const ShaderCompiler& compiler, const std::vector<CompileJob>& jobs) {
             results.push_back(std::move(skipped));
             continue;
         }
-        ShaderCompileResult r = compiler.compile(job.source);
+        ShaderCompileResult r = compiler.compile(job.source, canceller);
         if (!r.ok) failed.insert(job.source);
         results.push_back(std::move(r));
     }
@@ -83,6 +85,9 @@ struct ShaderHotReload::Impl {
     bool                                    stop = false; // guarded by mutex
     std::atomic<bool>                       has_results{false};
     std::atomic<int>                        batches_in_flight{0};
+    // Kills the worker's running slangc at shutdown, so destruction never
+    // waits for a slow or hung compile.
+    core::ProcessCanceller                  canceller;
     std::thread                             worker;
 
     Impl(PipelineCache& c, Config cfg, ShaderCompiler comp, core::FileWatcher w)
@@ -95,6 +100,7 @@ struct ShaderHotReload::Impl {
             std::lock_guard lock(mutex);
             stop = true;
         }
+        canceller.cancel();
         wake.notify_all();
         if (worker.joinable()) worker.join();
     }
@@ -112,7 +118,7 @@ struct ShaderHotReload::Impl {
                 jobs = std::move(queue.front());
                 queue.pop_front();
             }
-            std::vector<ShaderCompileResult> done = run_batch(compiler, jobs);
+            std::vector<ShaderCompileResult> done = run_batch(compiler, jobs, &canceller);
             {
                 std::lock_guard lock(mutex);
                 for (ShaderCompileResult& r : done) results.push_back(std::move(r));
@@ -192,7 +198,7 @@ struct ShaderHotReload::Impl {
         }
 
         if (!config.async) {
-            for (const ShaderCompileResult& r : run_batch(compiler, jobs)) apply(r);
+            for (const ShaderCompileResult& r : run_batch(compiler, jobs, &canceller)) apply(r);
             return;
         }
         batches_in_flight.fetch_add(1, std::memory_order_acq_rel);
@@ -210,7 +216,11 @@ struct ShaderHotReload::Impl {
             std::lock_guard lock(mutex);
             done.swap(results);
         }
-        for (const ShaderCompileResult& r : done) apply(r);
+        for (const ShaderCompileResult& r : done) {
+            // Removed while it compiled: handle_changes() dropped its status;
+            // don't bring it back.
+            if (graph.contains(r.source)) apply(r);
+        }
     }
 
     void apply(const ShaderCompileResult& r) {
@@ -244,7 +254,15 @@ struct ShaderHotReload::Impl {
             status.pipelines = static_cast<std::uint32_t>(report->rebuilt);
             status.message = "compiled, but kept the previous pipeline:";
             for (const std::string& e : report->errors) status.message += "\n" + e;
+        } else if (report->shader_in_use && report->rebuilt == 0) {
+            // Loaded by work that ran once (a bake pass) and holds no live
+            // pipeline: nothing on screen changes until that work runs again.
+            status.state = ShaderStatus::State::needs_restart;
+            status.pipelines = 0;
+            status.message = "compiled; no live pipeline uses it - restart to apply";
+            ++status.reloads;
         } else {
+            // Not loaded yet (the next load reads the new file) or swapped in.
             status.state = ShaderStatus::State::ok;
             status.pipelines = static_cast<std::uint32_t>(report->rebuilt);
             status.message = diagnostics;
@@ -273,7 +291,8 @@ bool ShaderHotReload::enabled_by_environment() {
 std::expected<std::unique_ptr<ShaderHotReload>, core::Error>
 ShaderHotReload::create(PipelineCache& cache, Config config) {
     auto compiler = ShaderCompiler::create(
-        {config.slangc, config.source_dir, config.module_dir, config.output_dir});
+        {config.slangc, config.source_dir, config.module_dir, config.output_dir,
+         config.compile_timeout});
     if (!compiler) return std::unexpected(compiler.error());
 
     core::FileWatcher::Options watch;

@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cmath>
 #include <cstdint>
 #include <limits>
@@ -154,8 +155,10 @@ private:
 // Hydraulic erosion — particle droplets (Beyer). Serial by design: droplets
 // mutate the shared field, and a fixed order keeps the result deterministic.
 // --------------------------------------------------------------------------
-void erode(std::vector<float>& h, std::uint32_t res, const TerrainParams& tp) {
-    if (tp.erosion_droplets == 0) return;
+// Returns false when `cancel` stopped it (checked every 1024 droplets).
+bool erode(std::vector<float>& h, std::uint32_t res, const TerrainParams& tp,
+           const std::atomic<bool>* cancel) {
+    if (tp.erosion_droplets == 0) return true;
     const auto at = [&](std::int32_t x, std::int32_t z) -> float& {
         return h[static_cast<std::size_t>(z) * res + static_cast<std::size_t>(x)];
     };
@@ -182,6 +185,9 @@ void erode(std::vector<float>& h, std::uint32_t res, const TerrainParams& tp) {
     };
 
     for (std::uint32_t d = 0; d < tp.erosion_droplets; ++d) {
+        if ((d & 1023U) == 0 && cancel != nullptr && cancel->load(std::memory_order_relaxed)) {
+            return false;
+        }
         glm::vec2 pos(rng.next_float() * (fres - 2.0F), rng.next_float() * (fres - 2.0F));
         glm::vec2 dir(0.0F);
         float speed = 1.0F;
@@ -281,9 +287,18 @@ void erode(std::vector<float>& h, std::uint32_t res, const TerrainParams& tp) {
             if (water < 0.01F) break;
         }
     }
+    return true;
 }
 
 } // namespace
+
+bool grid_erosion_within_limits(const TerrainParams& params) {
+    if (params.erosion_model != ErosionModel::grid || params.grid.iterations == 0) return true;
+    const std::uint64_t texels = static_cast<std::uint64_t>(params.resolution) * params.resolution;
+    return params.resolution <= max_grid_erosion_resolution &&
+           params.grid.iterations <= max_grid_erosion_steps &&
+           texels * params.grid.iterations <= max_grid_erosion_texel_steps;
+}
 
 bool erosion_enabled(const TerrainParams& params) {
     return params.erosion_model == ErosionModel::grid ? params.grid.iterations > 0
@@ -322,7 +337,7 @@ float grid_erosion_fade(std::uint32_t x, std::uint32_t z, std::uint32_t resoluti
     return glm::clamp(static_cast<float>(edge) / band, 0.0F, 1.0F);
 }
 
-Heightmap generate(const TerrainParams& params) {
+Heightmap generate(const TerrainParams& params, const std::atomic<bool>* cancel) {
     Heightmap map;
     map.resolution = glm::max(params.resolution, 2U);
     map.tile_size_m = params.tile_size_m;
@@ -344,13 +359,15 @@ Heightmap generate(const TerrainParams& params) {
 
     if (params.erosion_model == ErosionModel::droplets) {
         // Droplets run on the normalised field (parameters are resolution-relative).
-        erode(map.heights, res, params);
+        if (!erode(map.heights, res, params, cancel)) return {};
         for (float& v : map.heights) v *= params.height_m;
     } else {
         for (float& v : map.heights) v *= params.height_m;
         if (params.grid.iterations > 0) {
             std::vector<float> eroded = map.heights;
-            erode_grid(eroded, res, map.metres_per_texel(), params.grid);
+            if (!erode_grid(eroded, res, map.metres_per_texel(), params.grid, cancel)) {
+                return {};
+            }
             // Tile-local erosion fades out before the border (streaming seams).
             detail::parallel_rows(res, [&](std::uint32_t z) {
                 for (std::uint32_t x = 0; x < res; ++x) {
@@ -373,8 +390,10 @@ Heightmap generate(const TerrainParams& params) {
     return map;
 }
 
-std::future<Heightmap> generate_async(TerrainParams params) {
-    return std::async(std::launch::async, [params] { return generate(params); });
+std::future<Heightmap> generate_async(TerrainParams params, CancelToken cancel) {
+    return std::async(std::launch::async, [params, cancel = std::move(cancel)] {
+        return generate(params, cancel.get());
+    });
 }
 
 } // namespace engine::terrain

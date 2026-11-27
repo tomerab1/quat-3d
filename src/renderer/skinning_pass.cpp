@@ -4,7 +4,7 @@
 #include <string>
 #include <utility>
 
-#include <glm/glm.hpp>
+#include <glm/mat4x4.hpp>
 
 #include "engine/rhi/device.hpp"
 #include "engine/rhi/gpu_allocator.hpp"

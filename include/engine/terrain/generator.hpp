@@ -24,8 +24,10 @@
 // same pipeline in compute shaders (milliseconds instead of seconds a tile).
 
 #include <array>
+#include <atomic>
 #include <cstdint>
 #include <future>
+#include <memory>
 #include <vector>
 
 #include <glm/glm.hpp>
@@ -33,6 +35,23 @@
 #include "engine/terrain/heightmap.hpp"
 
 namespace engine::terrain {
+
+// Limits on grid erosion, enforced where parameters enter the engine (the
+// component codec): the GPU synthesis pass's largest tile, the editor's step
+// cap, and a total texel-step budget (a default 1025² tile at the step cap —
+// minutes on a CPU fallback) so no request can wedge a worker for hours or
+// allocate gigabytes of simulation state.
+inline constexpr std::uint32_t max_grid_erosion_resolution = 2049;
+inline constexpr std::uint32_t max_grid_erosion_steps = 5000;
+inline constexpr std::uint64_t max_grid_erosion_texel_steps = 1025ULL * 1025ULL * 5000ULL;
+
+// Cooperative cancellation of a CPU generation: once set, generate() stops at
+// its next erosion step (or droplet batch) and returns an empty, invalid
+// Heightmap.
+using CancelToken = std::shared_ptr<std::atomic<bool>>;
+[[nodiscard]] inline CancelToken make_cancel_token() {
+    return std::make_shared<std::atomic<bool>>(false);
+}
 
 enum class ErosionModel : std::uint8_t {
     droplets, // Beyer particle droplets: serial, CPU only
@@ -96,9 +115,16 @@ struct TerrainParams {
 // True when `params` erodes at all (with its selected model).
 [[nodiscard]] bool erosion_enabled(const TerrainParams& params);
 
-[[nodiscard]] Heightmap generate(const TerrainParams& params);
+// Whether `params`' grid erosion is within the limits above (always true for
+// droplet erosion or zero steps).
+[[nodiscard]] bool grid_erosion_within_limits(const TerrainParams& params);
 
-[[nodiscard]] std::future<Heightmap> generate_async(TerrainParams params);
+// `cancel` (optional) aborts the generation: the result is then invalid.
+[[nodiscard]] Heightmap generate(const TerrainParams& params,
+                                 const std::atomic<bool>* cancel = nullptr);
+
+[[nodiscard]] std::future<Heightmap> generate_async(TerrainParams params,
+                                                    CancelToken cancel = {});
 
 // --- Shared with the GPU synthesis pass (renderer::TerrainSynthPass) --------
 
@@ -144,7 +170,8 @@ struct GridErosionStep {
 
 // Grid erosion of `heights_m` (resolution² metres, cells `cell_m` apart) in
 // place, without the border fade.
-void erode_grid(std::vector<float>& heights_m, std::uint32_t resolution, float cell_m,
-                const GridErosionParams& params);
+// Returns false (leaving `heights_m` partly eroded) when `cancel` was set.
+bool erode_grid(std::vector<float>& heights_m, std::uint32_t resolution, float cell_m,
+                const GridErosionParams& params, const std::atomic<bool>* cancel = nullptr);
 
 } // namespace engine::terrain
