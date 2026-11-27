@@ -43,6 +43,7 @@ branches merge into `claude/nifty-hopper-nb68qe` (PR #1):
 | S3.2 legacy self-tests → GoogleTest (animation, terrain, asset, remote, rhi) | `feat/s3-test-migration` |
 | S1 networking fixes B1–B5, B15 | `feat/s1-net-fixes` |
 | S1 TAA + exposure fixes A1, A2, A14, A11 | `feat/s1-taa` |
+| R10.1 GPU clustered light culling | `feat/r10-clustered-lights` |
 
 If this table is still here and those branches are not on the remote, the
 live session ended before merging them: treat the items as unclaimed.
@@ -93,6 +94,7 @@ top.
 - No very long files: aim under ~600 lines per `.cpp`, split past ~1000 (S8).
 - Tests in GoogleTest under `tests/`; no new `run_*_self_test()` functions.
 - Behaviour/shader node editors use `imgui-node-editor` (thedmd, vcpkg port).
+- Use compute shaders wherever data-parallel work can move to the GPU (CLAUDE.md "GPU compute first", ROADMAP R10).
 - Instancing for trees/grass is wanted (R9); the owner recalls navmesh/NPC bugs — a dedicated nav audit is part of S1.
 - Keep `README.md` human-readable and current; keep this file current.
 
