@@ -86,7 +86,8 @@ destroyed once the frames in flight are done.
 ## CI
 
 `.github/workflows/ci.yml` builds the `release` preset on Ubuntu 24.04 and runs
-`ctest` with lavapipe. The vcpkg binary cache is saved right after configure,
+`ctest` with lavapipe, then builds the `game` target once more with
+`ENGINE_EDITOR=OFF` (sharing the dependency tree). The vcpkg binary cache is saved right after configure,
 so only the first run (or a dependency change) pays for the full dependency
 build. Logs are uploaded as an artifact when a run fails.
 
