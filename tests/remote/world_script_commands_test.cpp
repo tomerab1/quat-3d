@@ -106,6 +106,25 @@ TEST_F(WorldScripts, PathsAreConfined) {
     err("script.create", {{"path", "x.lua"}, {"source", "x = 1"}, {"sauce", 1}}, code::invalid_params);
 }
 
+// Review G7 #7: the temporary file of a write is never reached through a
+// symlink planted in assets/scripts (the old name was predictable).
+TEST_F(WorldScripts, WritesIgnorePlantedTemporaryFiles) {
+    const fs::path scripts = root.path() / "assets" / "scripts";
+    fs::create_directories(root.path() / "outside");
+    std::ofstream(root.path() / "outside" / "victim.txt") << "untouched";
+    std::error_code ec;
+    fs::create_symlink(root.path() / "outside" / "victim.txt", scripts / "coin.lua.tmp", ec);
+    if (ec) GTEST_SKIP() << "no symlinks here: " << ec.message();
+    ok("script.create", {{"path", "coin.lua"}, {"source", "x = 1"}});
+    EXPECT_EQ(read("coin.lua"), "x = 1");
+    std::ifstream victim(root.path() / "outside" / "victim.txt");
+    EXPECT_EQ(std::string(std::istreambuf_iterator<char>(victim), {}), "untouched");
+    for (const auto& entry : fs::directory_iterator(scripts)) {
+        const std::string name = entry.path().filename().string();
+        EXPECT_TRUE(name == "coin.lua" || name == "coin.lua.tmp") << "left behind: " << name;
+    }
+}
+
 TEST_F(WorldScripts, UpdateHotReloadsARunningSession) {
     ok("script.create", {{"path", "hello.lua"},
                          {"source", "function on_update(self, dt) self.entity:set_name('v1') end"}});

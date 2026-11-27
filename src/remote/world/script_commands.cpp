@@ -5,8 +5,14 @@
 // syntax error is reported with its line and never reaches the disk.
 
 #include <fstream>
+#include <random>
 #include <string>
 #include <system_error>
+
+#ifndef _WIN32
+#include <fcntl.h>
+#include <unistd.h>
+#endif
 
 #include <entt/entity/registry.hpp>
 #include <nlohmann/json.hpp>
@@ -89,18 +95,49 @@ namespace fs = std::filesystem;
     return std::unexpected(std::move(e));
 }
 
-// Writes through a temporary file + rename, so readers (the hot-reload
-// watcher) never see a half-written script.
-[[nodiscard]] std::expected<void, RpcError> write_file(const fs::path& file, const std::string& source) {
+// Creates `tmp` exclusively (never through an existing file or symlink) and
+// writes `source` to it.
+[[nodiscard]] bool write_new_file(const fs::path& tmp, const std::string& source) {
+#ifndef _WIN32
+    const int fd = ::open(tmp.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0644);
+    if (fd < 0) return false;
+    std::size_t done = 0;
+    while (done < source.size()) {
+        const ::ssize_t n = ::write(fd, source.data() + done, source.size() - done);
+        if (n <= 0) break;
+        done += static_cast<std::size_t>(n);
+    }
+    return ::close(fd) == 0 && done == source.size();
+#else
+    std::error_code ec;
+    if (fs::symlink_status(tmp, ec).type() != fs::file_type::not_found) return false;
+    std::ofstream out(tmp, std::ios::binary | std::ios::trunc);
+    out.write(source.data(), static_cast<std::streamsize>(source.size()));
+    return static_cast<bool>(out);
+#endif
+}
+
+// Writes through a uniquely named temporary file next to the script and a
+// rename, so readers (the hot-reload watcher) never see a half-written
+// script. The temporary is created exclusively without following links, and
+// the destination is confined again right before the rename (a directory
+// swapped for a symlink meanwhile is refused).
+[[nodiscard]] std::expected<void, RpcError> write_file(const fs::path& root, const std::string& relative,
+                                                       const fs::path& file, const std::string& source) {
     std::error_code ec;
     fs::create_directories(file.parent_path(), ec);
     if (ec) return rpc_fail(rpc_code::failed, "cannot create " + file.parent_path().filename().string() + ": " + ec.message());
-    const fs::path tmp = file.string() + ".tmp";
-    {
-        std::ofstream out(tmp, std::ios::binary | std::ios::trunc);
-        if (!out) return rpc_fail(rpc_code::failed, "cannot write the script file");
-        out.write(source.data(), static_cast<std::streamsize>(source.size()));
-        if (!out) return rpc_fail(rpc_code::failed, "cannot write the script file");
+    if (!script::script_file(root, relative)) return bad_params("path: resolves outside assets/scripts/");
+    std::random_device rd;
+    const fs::path tmp = file.parent_path() /
+                         ("." + file.filename().string() + "." + std::to_string(rd()) + ".tmp");
+    if (!write_new_file(tmp, source)) {
+        fs::remove(tmp, ec);
+        return rpc_fail(rpc_code::failed, "cannot write the script file");
+    }
+    if (!script::script_file(root, relative)) {
+        fs::remove(tmp, ec);
+        return bad_params("path: resolves outside assets/scripts/");
     }
     fs::rename(tmp, file, ec);
     if (ec) {
@@ -158,7 +195,9 @@ RpcResult script_write(Context& ctx, const Json& params, bool create) {
         return rpc_fail(rpc_code::not_found, "no script assets/scripts/" + path + " (use script.create)");
     }
     if (auto ok = compile(path, source); !ok) return std::unexpected(ok.error());
-    if (auto ok = write_file(*file, source); !ok) return std::unexpected(ok.error());
+    auto root = scripts_root(ctx);
+    if (!root) return std::unexpected(root.error());
+    if (auto ok = write_file(*root, path, *file, source); !ok) return std::unexpected(ok.error());
     script::ScriptRuntime* rt = runtime(ctx);
     if (rt != nullptr) rt->reload(path); // restarts running instances (hot reload)
     Json out = {{"path", path}, {"bytes", source.size()}, {"entities", users(ctx, path)}};
