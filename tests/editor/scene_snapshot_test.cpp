@@ -65,6 +65,38 @@ TEST(PlayModeSnapshot, RestoresAudioComponentsWithoutRuntimeState) {
     EXPECT_FALSE(scene.registry().get<s::AudioListener>(e).active);
 }
 
+// R9.2: instanced meshes, their resolved parts and scatters survive Play/Stop
+// (placements a play session changed come back as authored).
+TEST(PlayModeSnapshot, RestoresInstancedMeshAndScatter) {
+    s::Scene scene;
+    const entt::entity e = scene.create_entity("forest");
+    auto& mesh = scene.registry().emplace<s::InstancedMesh>(e);
+    mesh.gltf_path = "assets/meshes/tree.glb";
+    mesh.instances.resize(12);
+    mesh.instances[3].position = glm::vec3(1.0F, 2.0F, 3.0F);
+    scene.registry().emplace<s::InstancedMeshParts>(e).resolved = 42;
+    auto& scatter = scene.registry().emplace<s::Scatter>(e);
+    scatter.seed = 17;
+    scatter.generated = 99;
+    scatter.generation = 3;
+
+    const auto snapshot = engine::editor::capture_scene(scene);
+    scene.registry().get<s::InstancedMesh>(e).instances.clear();
+    scene.registry().remove<s::Scatter, s::InstancedMeshParts>(e);
+    engine::editor::restore_scene(scene, snapshot);
+
+    auto& r = scene.registry();
+    ASSERT_TRUE(r.all_of<s::InstancedMesh>(e));
+    EXPECT_EQ(r.get<s::InstancedMesh>(e).gltf_path, "assets/meshes/tree.glb");
+    ASSERT_EQ(r.get<s::InstancedMesh>(e).instances.size(), 12U);
+    EXPECT_EQ(r.get<s::InstancedMesh>(e).instances[3].position, glm::vec3(1.0F, 2.0F, 3.0F));
+    ASSERT_TRUE(r.all_of<s::InstancedMeshParts>(e));
+    EXPECT_EQ(r.get<s::InstancedMeshParts>(e).resolved, 42U);
+    ASSERT_TRUE(r.all_of<s::Scatter>(e));
+    EXPECT_EQ(r.get<s::Scatter>(e).seed, 17U);
+    EXPECT_EQ(r.get<s::Scatter>(e).generated, 99U); // no needless regeneration
+}
+
 } // namespace
 
 #endif // ENGINE_EDITOR

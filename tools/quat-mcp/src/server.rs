@@ -43,6 +43,16 @@ applied in YXZ order (x = pitch, y = yaw/heading, z = roll); scale number or [x,
 position — size it with transform.scale; a cube scaled [w,h,d] rests on y=0 at position y=h/2); \
 color \"#rrggbb\" / \"#rrggbbaa\" sRGB hex or linear [r,g,b,a] (alpha < 1 = see-through); \
 metallic 0..1; roughness 0..1; emissive linear [r,g,b] (HDR, > 1 glows).\n\
+- instanced_mesh: many copies of one model on ONE entity (forests, rocks) — prefer it over \
+many entities. gltf (path relative to the project root; node = only that node's subtree) or, \
+with gltf empty, the primitive fields shape/color/metallic/roughness/emissive; cast_shadows; \
+instances [{position, rotation, scale} or [x,y,z], ...] relative to the entity (omitted while \
+a scatter generates them); instance_count is read-only.\n\
+- scatter: procedural placement of the entity's instanced_mesh on the terrain around the \
+entity: seed; area rect|circle; size [x,z] (m); radius (m); density (per m^2); min_spacing \
+(m); pattern poisson|jittered_grid; scale [min,max]; random_yaw; align_to_normal 0..1; \
+base_offset (x scale; 0.5 seats a unit primitive on the ground); slope [min,max] degrees; \
+height [min,max] m; max_instances. Same seed = same placements.\n\
 - point_light: color linear [r,g,b]; radius (range, m); intensity >= 0.\n\
 - dir_light: direction [x,y,z] (the light's travel direction); color linear [r,g,b]; \
 intensity. Prefer environment_set for the sun.\n\
