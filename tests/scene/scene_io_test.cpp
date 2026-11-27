@@ -109,6 +109,44 @@ TEST(GpuSceneIo, RoundTripsComponentsVersion1DidNotSave) {
     EXPECT_EQ(r.get<s::Parent>(lc).entity, le);
 }
 
+// R10.2 backward compatibility: a terrain saved before the erosion model
+// existed (no "erosion" / "gpu" keys) loads as the droplet-eroded CPU
+// terrain it was — not as a new component's GPU grid default — and keeps
+// that through a save/load round trip.
+TEST(GpuSceneIo, TerrainWithoutErosionKeyLoadsAsDroplets) {
+    QUAT_REQUIRE_GPU(g);
+    engine::asset::AssetManager assets;
+    s::Scene scene;
+    const auto path = write_temp("quat_v2_terrain_scene.json", R"({"version": 2, "entities": [
+        {"name": "terrain", "parent": -1,
+         "terrain": {"seed": 42, "resolution": 257, "tile_size": 500, "height": 60,
+                     "octaves": 5, "warp": 0.2, "droplets": 30000, "snowline": 40,
+                     "streaming": false, "stream_radius": 1}}]})");
+    ASSERT_OK(s::load_scene(scene, path, g->allocator, g->transfer, assets));
+    const entt::entity te = find_named(scene, "terrain");
+    ASSERT_NE(te, k_none);
+    const s::Terrain& t = scene.registry().get<s::Terrain>(te);
+    EXPECT_EQ(t.params.erosion_model, engine::terrain::ErosionModel::droplets);
+    EXPECT_EQ(t.params.erosion_droplets, 30000U);
+    EXPECT_FALSE(t.gpu_generate);
+
+    ASSERT_OK(s::save_scene(scene, path));
+    s::Scene reloaded;
+    ASSERT_OK(s::load_scene(reloaded, path, g->allocator, g->transfer, assets));
+    std::filesystem::remove(path);
+    const entt::entity re = find_named(reloaded, "terrain");
+    ASSERT_NE(re, k_none);
+    const s::Terrain& rt = reloaded.registry().get<s::Terrain>(re);
+    EXPECT_EQ(rt.params.erosion_model, engine::terrain::ErosionModel::droplets);
+    EXPECT_EQ(rt.params.erosion_droplets, 30000U);
+    EXPECT_FALSE(rt.gpu_generate);
+
+    // A newly created terrain still gets the GPU grid default.
+    const s::Terrain fresh{};
+    EXPECT_EQ(fresh.params.erosion_model, engine::terrain::ErosionModel::grid);
+    EXPECT_TRUE(fresh.gpu_generate);
+}
+
 // R9.2: authored placements are saved; a scatter saves its parameters only
 // (its placements regenerate from them).
 TEST(GpuSceneIo, RoundTripsInstancedMeshAndScatter) {
