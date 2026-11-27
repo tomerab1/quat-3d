@@ -97,16 +97,31 @@ check_layout(const fastgltf::CompressedBufferView& c, std::size_t view_index) {
 std::expected<void, core::Error> decode_meshopt_buffers(fastgltf::Asset& asset,
                                                         std::uint64_t max_total_bytes) {
     const std::size_t source_buffers = asset.buffers.size();
+    // Pass 1, before anything is allocated: every compressed view's layout,
+    // and the decoded size of all of them together against the asset limit.
     std::uint64_t total = 0;
+    for (std::size_t vi = 0; vi < asset.bufferViews.size(); ++vi) {
+        const fastgltf::BufferView& view = asset.bufferViews[vi];
+        if (view.meshoptCompression == nullptr) continue;
+        const fastgltf::CompressedBufferView& c = *view.meshoptCompression;
+        if (auto ok = check_layout(c, vi); !ok) return ok;
+        const std::uint64_t decoded_bytes = c.count * c.byteStride;
+        if (decoded_bytes != view.byteLength) {
+            return fail("glTF: EXT_meshopt_compression bufferView " + std::to_string(vi) +
+                        " decoded size differs from its byteLength");
+        }
+        if (decoded_bytes > max_total_bytes - total) {
+            return fail("glTF: EXT_meshopt_compression data decodes past the asset's limit of " +
+                        std::to_string(max_total_bytes) + " bytes");
+        }
+        total += decoded_bytes;
+    }
+
+    // Pass 2: source ranges, plausibility, decode.
     for (std::size_t vi = 0; vi < asset.bufferViews.size(); ++vi) {
         fastgltf::BufferView& view = asset.bufferViews[vi];
         if (view.meshoptCompression == nullptr) continue;
         const fastgltf::CompressedBufferView& c = *view.meshoptCompression;
-        if (auto ok = check_layout(c, vi); !ok) return ok;
-        if (c.count * c.byteStride != view.byteLength) {
-            return fail("glTF: EXT_meshopt_compression bufferView " + std::to_string(vi) +
-                        " decoded size differs from its byteLength");
-        }
         if (c.bufferIndex >= source_buffers) {
             return fail("glTF: EXT_meshopt_compression buffer index out of range");
         }
@@ -121,11 +136,6 @@ std::expected<void, core::Error> decode_meshopt_buffers(fastgltf::Asset& asset,
                         " claims " + std::to_string(decoded_bytes) + " bytes from " +
                         std::to_string(c.byteLength) + " compressed bytes");
         }
-        if (decoded_bytes > max_total_bytes - total) {
-            return fail("glTF: EXT_meshopt_compression data decodes past the asset's limit of " +
-                        std::to_string(max_total_bytes) + " bytes");
-        }
-        total += decoded_bytes;
 
         std::vector<std::byte> decoded(c.count * c.byteStride);
         if (!decode_view(c, buffer->subspan(c.byteOffset, c.byteLength), decoded)) {

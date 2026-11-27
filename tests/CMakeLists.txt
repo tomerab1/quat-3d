@@ -41,8 +41,17 @@ add_test(NAME engine_tests_gpu COMMAND engine_tests "--gtest_filter=Gpu*" --requ
 set_tests_properties(engine_tests_gpu PROPERTIES LABELS gpu)
 
 # The game must link the read-only libktx: no Basis / ASTC encoder code.
-if(NOT MSVC AND CMAKE_NM)
+# GCC/Clang: the symbol table via nm. MSVC: release executables carry no COFF
+# symbols (dumpbin /symbols lists nothing), so the game writes a linker map
+# (see the root CMakeLists) and the check reads that.
+if(MSVC)
+    add_test(NAME game_has_no_texture_encoder
+        COMMAND ${CMAKE_COMMAND} -DMAP=$<TARGET_FILE_DIR:game>/game.map
+                -P ${PROJECT_SOURCE_DIR}/cmake/CheckNoTextureEncoder.cmake)
+elseif(CMAKE_NM)
     add_test(NAME game_has_no_texture_encoder
         COMMAND ${CMAKE_COMMAND} -DNM=${CMAKE_NM} -DBINARY=$<TARGET_FILE:game>
                 -P ${PROJECT_SOURCE_DIR}/cmake/CheckNoTextureEncoder.cmake)
+else()
+    message(WARNING "game_has_no_texture_encoder: no nm found; the check is not registered")
 endif()

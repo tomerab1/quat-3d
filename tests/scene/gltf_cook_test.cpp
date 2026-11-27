@@ -171,6 +171,23 @@ std::string read_text(const fs::path& p) {
     return {std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>()};
 }
 
+// Where the POSITION stream's bufferView starts in a cooked .gltf, and its
+// EXT_meshopt_compression object.
+struct PositionView {
+    std::size_t begin = std::string::npos;
+    std::size_t ext = std::string::npos;
+};
+
+// Replaces the number of the first `"field":` at or after `from`.
+void set_number(std::string& json, std::size_t from, const std::string& field,
+                const std::string& value) {
+    const std::string key = "\"" + field + "\":";
+    const std::size_t at = json.find(key, from);
+    ASSERT_NE(at, std::string::npos) << field;
+    const std::size_t begin = at + key.size();
+    json.replace(begin, json.find_first_not_of("0123456789", begin) - begin, value);
+}
+
 // A triangle as the grid (i, j) of its vertices, rotated so the smallest
 // vertex comes first (winding preserved).
 using Tri = std::array<int, 3>;
@@ -303,32 +320,53 @@ TEST(GltfCook, CorruptCompressedGeometryIsRejected) {
     ASSERT_OK(engine::cook::cook_gltf(src, out, options));
     ASSERT_OK(GltfLoader::load_mesh_data(out));
 
-    // Edits to the POSITION stream's extension object (the only 12-byte
-    // stride): `field`'s number replaced by `value`.
+    // Edits to the POSITION stream's bufferView (the only 12-byte stride).
     const std::string original = read_text(out);
-    const auto with_field = [&](const std::string& field, const std::string& value) {
-        std::string json = original;
-        const std::size_t stride = json.find("\"byteStride\":12,\"count\"");
-        ASSERT_NE(stride, std::string::npos);
-        const std::size_t ext = json.rfind("\"EXT_meshopt_compression\":{", stride);
-        ASSERT_NE(ext, std::string::npos);
-        const std::string key = "\"" + field + "\":";
-        const std::size_t at = json.find(key, ext);
-        ASSERT_LT(at, stride);
-        const std::size_t begin = at + key.size();
-        const std::size_t end = json.find_first_not_of("0123456789", begin);
-        json.replace(begin, end - begin, value);
-        write_file(out, json.data(), json.size());
+    const auto view_of_positions = [](const std::string& json) {
+        PositionView v;
+        v.ext = json.rfind("\"EXT_meshopt_compression\":{",
+                           json.find("\"byteStride\":12,\"count\""));
+        v.begin = json.rfind("{\"buffer\":", v.ext);
+        return v;
     };
+    const auto load_edited = [&](auto edit) {
+        std::string json = original;
+        edit(json, view_of_positions(json));
+        write_file(out, json.data(), json.size());
+        return GltfLoader::load_mesh_data(out);
+    };
+    const auto expect_error = [](const auto& result, const char* text) {
+        ASSERT_ERR(result);
+        EXPECT_NE(result.error().message.find(text), std::string::npos) << result.error().message;
+    };
+
     // A compressed range past the end of its buffer.
-    with_field("byteLength", "999999999");
-    EXPECT_ERR(GltfLoader::load_mesh_data(out));
-    // A decompression bomb: thousands of bytes claimed from one.
-    with_field("byteLength", "1");
-    auto bomb = GltfLoader::load_mesh_data(out);
-    ASSERT_ERR(bomb);
-    EXPECT_NE(bomb.error().message.find("compressed bytes"), std::string::npos)
-        << bomb.error().message;
+    EXPECT_ERR(load_edited([](std::string& json, const PositionView& v) {
+        set_number(json, v.ext, "byteLength", "999999999");
+    }));
+    // Decompression bombs: far more decoded bytes than 1024x the compressed
+    // ones, by shrinking the source or by raising the count (with the view's
+    // byteLength kept consistent so only the expansion bound can object).
+    expect_error(load_edited([](std::string& json, const PositionView& v) {
+                     set_number(json, v.ext, "byteLength", "1");
+                 }),
+                 "compressed bytes");
+    expect_error(load_edited([](std::string& json, const PositionView& v) {
+                     set_number(json, v.ext, "count", "10000000");
+                     set_number(json, v.begin, "byteLength", "120000000");
+                 }),
+                 "compressed bytes");
+    // Two views claiming 900 MB each pass every per-view size check but
+    // exceed the asset's 1 GiB decoded total, which is checked before any
+    // view is allocated or decoded.
+    expect_error(load_edited([](std::string& json, const PositionView& v) {
+                     set_number(json, v.ext, "count", "75000000");
+                     set_number(json, v.begin, "byteLength", "900000000");
+                     // The view object ends where its extension objects close.
+                     const std::size_t end = json.find("}}}", v.begin) + 3;
+                     json.insert(end, "," + json.substr(v.begin, end - v.begin));
+                 }),
+                 "asset's limit");
 
     // Garbage in place of the meshopt streams: decode must fail cleanly.
     write_file(out, original.data(), original.size());

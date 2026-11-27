@@ -504,6 +504,10 @@ target_link_libraries(game PRIVATE
     engine_flags engine_core engine_rhi engine_asset engine_scene engine_renderer engine_physics
     engine_terrain engine_nav engine_net engine_remote engine_remote_world engine_audio
     SDL3::SDL3 KTX::ktx_read)
+if(MSVC)
+    # Linker map for the game_has_no_texture_encoder test.
+    target_link_options(game PRIVATE "/MAP:$<TARGET_FILE_DIR:game>/game.map")
+endif()
 if(ENGINE_EDITOR)
     target_sources(game PRIVATE src/app/editor_bridge.cpp)
     target_link_libraries(game PRIVATE engine_editor)
