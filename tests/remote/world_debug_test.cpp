@@ -425,18 +425,33 @@ TEST_F(DebugStep, DroppedWaitStillAnswers) {
     EXPECT_TRUE(reply.contains("error")) << reply.dump();
 }
 
+// (dt values stay within SimClock::max_step_dt = 1/15 s, audit D2: a larger
+// dt is refused with invalid_params and would queue nothing.)
 TEST_F(DebugStep, LaterRequestsKeepQueuedStepsDt) {
     send({{"jsonrpc", "2.0"}, {"id", 4}, {"method", "debug.step"},
-          {"params", {{"frames", 2}, {"dt", 0.1}}}});
+          {"params", {{"frames", 2}, {"dt", 0.05}}}});
     send({{"jsonrpc", "2.0"}, {"id", 5}, {"method", "debug.step"},
           {"params", {{"frames", 1}, {"dt", 0.02}}}});
     EXPECT_TRUE(pump(100).is_null());
     ASSERT_EQ(waiters.size(), 2U);
     EXPECT_EQ(waiters[0].first, 2U);
     EXPECT_EQ(waiters[1].first, 3U);
-    EXPECT_FLOAT_EQ(clock.advance(0.5F), 0.1F);
-    EXPECT_FLOAT_EQ(clock.advance(0.5F), 0.1F);
+    EXPECT_FLOAT_EQ(clock.advance(0.5F), 0.05F);
+    EXPECT_FLOAT_EQ(clock.advance(0.5F), 0.05F);
     EXPECT_FLOAT_EQ(clock.advance(0.5F), 0.02F);
+}
+
+// A step dt above what one physics update simulates exactly is refused with a
+// precise error, and nothing is queued.
+TEST_F(DebugStep, StepDtAboveThePhysicsBudgetIsRefused) {
+    send({{"jsonrpc", "2.0"}, {"id", 6}, {"method", "debug.step"},
+          {"params", {{"frames", 1}, {"dt", 0.1}}}});
+    const Json reply = pump(2000);
+    ASSERT_TRUE(reply.is_object());
+    EXPECT_EQ(reply["error"]["code"], code::invalid_params);
+    EXPECT_TRUE(contains(reply["error"]["message"].get<std::string>(), "dt"));
+    EXPECT_TRUE(waiters.empty());
+    EXPECT_EQ(clock.state().pending_steps, 0U);
 }
 
 TEST_F(DebugStep, WaitingRequestsAreCapped) {
