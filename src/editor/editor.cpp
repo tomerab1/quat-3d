@@ -19,6 +19,7 @@
 #include "animation_preview.hpp"
 #include "asset_browser.hpp"
 #include "behavior_panel.hpp"
+#include "export_dialog.hpp"
 #include "physics_debug.hpp"
 #include "picking.hpp"
 #include "engine/renderer/imgui_pass.hpp" // viewport_texture_id
@@ -155,12 +156,14 @@ EditorLayer& EditorLayer::operator=(EditorLayer&& other) noexcept {
         viewport_hovered_ = other.viewport_hovered_;
         selected_ = other.selected_;
         behavior_panel_ = std::move(other.behavior_panel_);
+        export_dialog_ = std::move(other.export_dialog_);
     }
     return *this;
 }
 
 void EditorLayer::destroy() noexcept {
     behavior_panel_.reset(); // its node-editor context needs ImGui alive
+    export_dialog_.reset();
     if (initialized_) {
         ImGui_ImplSDL3_Shutdown();
         ImGui::DestroyContext();
@@ -465,6 +468,14 @@ void EditorLayer::build_ui(const EditorContext& ctx) {
             if (ctx.load_request != nullptr && ImGui::MenuItem("Load scene")) {
                 *ctx.load_request = resolve();
             }
+            // TODO(E8): register as a command once the command registry lands.
+            if (ctx.build_job != nullptr && ctx.start_export) {
+                ImGui::Separator();
+                if (ImGui::MenuItem("Build & Export...")) {
+                    if (export_dialog_ == nullptr) export_dialog_ = std::make_unique<ExportDialog>();
+                    export_dialog_->open(ctx);
+                }
+            }
             ImGui::EndMenu();
         }
         if (ImGui::BeginMenu("View")) {
@@ -517,6 +528,7 @@ void EditorLayer::build_ui(const EditorContext& ctx) {
     if (!ctx.project_root.empty() && ctx.instantiate_request != nullptr) {
         draw_asset_browser(ctx.project_root, *ctx.instantiate_request);
     }
+    if (export_dialog_ != nullptr) export_dialog_->draw(ctx);
     if (show_demo_) {
         ImGui::ShowDemoWindow(&show_demo_);
     }

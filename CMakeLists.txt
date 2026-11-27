@@ -463,6 +463,7 @@ if(ENGINE_EDITOR)
         src/editor/grass_inspector.cpp
         src/editor/behavior_panel.cpp
         src/editor/behavior_canvas.cpp
+        src/editor/export_dialog.cpp
         src/editor/vendor/imgui_impl_sdl3.cpp)
     # engine_scene is PUBLIC: editor.hpp exposes entt entity types (selection)
     # and the hierarchy/inspector panels reflect scene components.

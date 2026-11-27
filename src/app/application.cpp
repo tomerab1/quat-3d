@@ -219,7 +219,9 @@ bool Application::init_subsystems() {
                   .world = &world_,
                   .camera = &camera_,
                   .shader_reload = shader_reload_.get(),
-                  .render_settings = &renderer_.render_settings()});
+                  .render_settings = &renderer_.render_settings(),
+                  .game = config_.game ? &*config_.game : nullptr,
+                  .build_job = &build_job_});
 #endif
     return true;
 }

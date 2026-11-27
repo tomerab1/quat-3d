@@ -21,6 +21,7 @@
 #include <glm/glm.hpp>
 #include <vulkan/vulkan.h>
 
+#include "app/app_config.hpp"
 #include "app/fly_camera.hpp"
 #include "app/world_runtime.hpp"
 #include "editor/scene_snapshot.hpp"
@@ -32,6 +33,9 @@ union SDL_Event;
 
 namespace engine::asset {
 class AssetManager;
+}
+namespace engine::project {
+class BuildJob;
 }
 namespace engine::renderer {
 struct RenderSettings;
@@ -63,6 +67,10 @@ struct EditorBridgeTargets {
     // The renderer's settings: the Renderer panel edits them and scene files
     // save / load them (A8).
     engine::renderer::RenderSettings* render_settings = nullptr;
+    // Build & Export (P4/E7): the open game project (null: none) and the
+    // packaging job.
+    const OpenGame*             game = nullptr;
+    engine::project::BuildJob* build_job = nullptr;
 };
 
 class EditorBridge {
@@ -114,6 +122,10 @@ public:
                                              const engine::scene::CameraMatrices& cam);
 
 private:
+    // File > Build & Export...: resolves the project and output folder and
+    // starts quat-pack.
+    [[nodiscard]] std::expected<std::uint64_t, engine::core::Error>
+    start_export(const engine::editor::ExportRequest& request);
     void apply_play_transition();
     void apply_scene_file_requests();
     void apply_instantiate_request();
