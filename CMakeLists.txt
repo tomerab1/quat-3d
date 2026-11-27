@@ -132,6 +132,7 @@ target_include_directories(engine_core PUBLIC ${ENGINE_PUBLIC_INCLUDE})
 # ---------------------------------------------------------------------------
 add_library(engine_rhi STATIC
     src/rhi/device.cpp
+    src/rhi/queue_selection.cpp
     src/rhi/swapchain.cpp
     src/rhi/gpu_allocator.cpp
     src/rhi/vma_impl.cpp
