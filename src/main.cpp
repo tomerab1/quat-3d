@@ -439,12 +439,23 @@ int main() {
         return c;
     };
 
+    // Temporal state shared by both slots (audit A2 / A11): one TAA history and
+    // one adapted luminance, each advanced exactly once per frame. Declared
+    // before `frames` so it outlives every pass that references it.
+    const auto taa_history =
+        std::make_shared<engine::renderer::TaaHistory>(device, allocator, k_frames_in_flight);
+    auto exposure_state = engine::renderer::ExposureState::create(device, allocator);
     // Per-frame-in-flight deferred chains (GBuffer -> lighting -> tonemap). Each
     // slot owns its passes' descriptor buffers and a transient image pool, so
     // building one frame's graph never disturbs the other in-flight frame.
     std::array<DeferredFrame, k_frames_in_flight> frames;
-    bool frames_ok = true;
+    bool frames_ok = exposure_state.has_value();
+    if (!exposure_state) {
+        std::fprintf(stderr, "[fatal] exposure state creation failed: %s\n",
+                     exposure_state.error().message.c_str());
+    }
     for (auto& f : frames) {
+        if (!frames_ok) break;
         auto mesh = engine::renderer::MeshPass::create(device, allocator, *pipeline_cache,
                                                        setup_transfer, shader_dir);
         auto light = engine::renderer::LightingPass::create(device, allocator, *pipeline_cache,
@@ -459,9 +470,9 @@ int main() {
         auto bloom = engine::renderer::BloomPass::create(device, allocator, *pipeline_cache,
                                                          shader_dir);
         auto expo = engine::renderer::ExposurePass::create(device, allocator, *pipeline_cache,
-                                                           shader_dir);
+                                                           shader_dir, *exposure_state);
         auto taa = engine::renderer::TaaPass::create(device, allocator, *pipeline_cache, shader_dir,
-                                                     ldr_format);
+                                                     ldr_format, taa_history);
 #ifdef ENGINE_EDITOR
         if (editor.active()) {
             auto ui = engine::renderer::ImGuiPass::create(device, allocator, *pipeline_cache,
@@ -809,8 +820,6 @@ int main() {
     bool needs_recreate = false;
     bool looking = false; // right mouse button held -> mouse-look active
     std::uint64_t last_ticks = SDL_GetTicksNS();
-    glm::mat4 prev_jittered_vp(1.0F); // previous frame's jittered view-proj, for TAA
-    bool taa_history_valid = false;
 
     // Remote control (Phase 15): QUAT_REMOTE=<port> opens the loopback
     // JSON-RPC endpoint the quat-mcp bridge (tools/quat-mcp) talks to
@@ -1394,8 +1403,9 @@ int main() {
 #endif
 
         // TAA: jitter the projection sub-pixel each frame (Halton). The whole
-        // frame renders with the jittered view-proj; the resolve reprojects and
-        // accumulates, and prev_jittered_vp drives the reprojection.
+        // frame renders with the jittered view-proj; the resolve accumulates
+        // into the shared history, reprojecting with the UNjittered
+        // cam.view_proj (audit A14).
         const glm::vec2 jitter =
             engine::renderer::taa_jitter(presented, draw_extent.width, draw_extent.height);
         glm::mat4 jitter_mat(1.0F);
@@ -1799,14 +1809,11 @@ int main() {
         }
         // Temporal anti-aliasing: resolve the jittered frame against history.
         if (auto r = fr.taa.add_to_graph(graph, ldr_current, gbuffer->depth, scene_target,
-                                         draw_extent, jittered_inv_vp, prev_jittered_vp, presented,
-                                         taa_history_valid);
+                                         draw_extent, cam.view_proj);
             !r) {
             std::fprintf(stderr, "[fatal] taa pass: %s\n", r.error().message.c_str());
             break;
         }
-        prev_jittered_vp = jittered_vp;
-        taa_history_valid = true;
 #ifdef ENGINE_EDITOR
         // Editor UI: build the dockspace + panels (the Viewport panel samples
         // the offscreen scene image), then draw the UI into the swapchain as
@@ -1987,7 +1994,10 @@ int main() {
         }
 
         frame = (frame + 1) % k_frames_in_flight;
-        if (max_frames != 0 && ++presented >= max_frames) {
+        // Advances every frame (audit A1): drives TAA jitter, the demo cube,
+        // frame stats and engine.info — not only QUAT_MAX_FRAMES runs.
+        ++presented;
+        if (max_frames != 0 && presented >= max_frames) {
             running = false;
         }
     }
