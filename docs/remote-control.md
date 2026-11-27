@@ -155,7 +155,11 @@ radius),
 `audio_source` (`clip`, `bus`: master/music/sfx/ui/ambience, `volume`,
 `pitch`, `loop`, `play_on_start`, `spatial`, `min_distance`, `max_distance`,
 `rolloff`, `doppler`, plus write-only `command`: play/stop/pause/resume),
-`audio_listener` (`active`), `animator` (edit only), `mesh` (read only). Updates merge: omitted fields keep their
+`audio_listener` (`active`), `animator` (edit only: `clip` switches by name
+among read-only `clips`, `blend` inertialize/crossfade, `blend_time`, `time`,
+`speed`, `looping`), `foot_ik` (`enabled`, `pelvis` / `left_foot` /
+`right_foot` joint names, empty = auto, `ray_up`, `ray_down`, `max_adjust`,
+`max_foot_angle`, `smoothing`), `mesh` (read only). Updates merge: omitted fields keep their
 values. Unknown fields are errors (they name the known fields).
 
 | Method | Params | Result |
@@ -294,7 +298,7 @@ one descriptor table each (`engine/renderer/render_settings.hpp`,
 | `render.settings.get` | `{group?}` | `{<group>: {<field>: value}}` — every group, or only `group` |
 | `render.settings.set` | `{<group>: {<field>: value}, ...}` | every group's new values |
 | `render.settings.reset` | `{group?}` (every group when omitted) | every group's values |
-| `render.settings.schema` | — | `{groups: [{name, label, hint, fields: [{name, label, type, min, max, default, unit?, hint}]}], material: [{name, label, kind, min, max, hint, primitive_field}]}` |
+| `render.settings.schema` | — | `{groups: [{name, label, hint, fields: [{name, label, type, min, max, default, unit?, hint}], deprecated?: [{name, note}]}], material: [{name, label, kind, min, max, hint, primitive_field}]}` |
 | `material.get` | `{entity}` | `{id, name, source: "primitive"\|"mesh", material: {...}, overridden: [fields], textures: [slots], transparent, shared_by?}` |
 | `material.set` | `{entity, material: {<field>: value \| null}}` | `material.get` result |
 
@@ -305,7 +309,9 @@ Settings groups (the renderer implements exactly these):
 | `exposure` | `auto` (histogram auto exposure; off = fixed exposure 2^EV), `compensation_ev` [-10, 10] EV (applies in both modes), `key` [0.01, 1], `min_exposure` / `max_exposure` [0.001, 64] (auto multiplier clamps), `adaptation_s` [0.05, 10] s |
 | `bloom` | `enabled`, `threshold` [0, 8], `knee` [0, 1], `intensity` [0, 1], `radius` [0.2, 2] |
 | `taa` | `enabled` (off: no jitter, the resolve passes the frame through), `feedback` [0, 0.98] (history weight) |
-| `shadows` | `enabled`, `extent_m` [2, 500] (half-size of the shadowed box around the world origin), `depth_bias` / `slope_bias` [0, 0.05], `pcf_radius` integer [0, 3] texels |
+| `shadows` | cascaded sun shadows: `enabled` (off: no shadow passes), `max_distance` [5, 5000] m (where shadows end), `cascades` integer [1, 4], `split_lambda` [0, 1] (0 linear, 1 logarithmic splits), `fit_to_depth` (fit the cascades to the frame's depth range on the GPU), `blend_band` [0, 0.5], `pcf_radius` [0, 8] texels, `sun_size_deg` [0, 10] (PCSS penumbra; 0 = fixed filter), `normal_bias_texels` / `depth_bias_texels` [0, 8], `caster_distance` [1, 10000] m, `debug_cascades`. Deprecated (accepted, ignored): `extent_m`, `depth_bias`, `slope_bias` |
+| `ao` | GTAO: `enabled`, `radius` [0.05, 10] m, `strength` [0.5, 5], `falloff_range` [0, 1], `sample_distribution_power` [1, 4], `thin_occluder_compensation` [0, 0.7], `depth_mip_offset` [0, 8], `slices` integer [1, 9], `steps_per_slice` integer [1, 8], `denoise_passes` integer [0, 3], `denoise_blur_beta` [0.1, 10], `bent_normals`, `specular_occlusion`, `multi_bounce` |
+| `contact_shadows` | `enabled`, `length` [0.01, 4] m, `steps` integer [2, 64], `thickness` [0.01, 4] m, `intensity` [0, 1] |
 | `ibl` | `intensity` [0, 4] — scales image-based ambient light and reflections |
 | `clouds` | as `environment.*`: `enabled`, `coverage` [0, 1], `density` [0, 128] /km, `bottom_km` [0.2, 15], `thickness_km` [0.2, 10], `size_km` [1, 80], `detail` [0, 1], `wind_speed` [0, 100] m/s, `wind_dir_deg` [-180, 180] |
 

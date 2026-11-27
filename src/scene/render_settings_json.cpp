@@ -109,7 +109,10 @@ using renderer::RenderSettingType;
     for (const auto& [key, value] : fields.items()) {
         const RenderSettingDesc* d = renderer::find_render_setting(g.name, key);
         if (d == nullptr) {
-            if (!strict) continue;
+            // Retired keys (older scene files / clients) are accepted and ignored.
+            if (!strict || renderer::find_deprecated_render_setting(g.name, key) != nullptr) {
+                continue;
+            }
             return fail(where + "." + key + ": unknown field (known: " + known_fields(g) + ")");
         }
         if (value.is_null()) continue; // explicit null == absent, like JsonFields
@@ -187,8 +190,14 @@ json render_settings_schema() {
             if (!d.unit.empty()) f["unit"] = d.unit;
             fields.push_back(std::move(f));
         }
-        groups.push_back(
-            {{"name", g.name}, {"label", g.label}, {"hint", g.hint}, {"fields", std::move(fields)}});
+        json group = {
+            {"name", g.name}, {"label", g.label}, {"hint", g.hint}, {"fields", std::move(fields)}};
+        json deprecated = json::array();
+        for (const renderer::DeprecatedRenderSetting& d : renderer::deprecated_render_settings()) {
+            if (d.group == g.name) deprecated.push_back({{"name", d.name}, {"note", d.note}});
+        }
+        if (!deprecated.empty()) group["deprecated"] = std::move(deprecated);
+        groups.push_back(std::move(group));
     }
     return {{"groups", std::move(groups)}};
 }

@@ -1,12 +1,14 @@
 // The deferred lighting pass on a GBuffer triangle, read back from the HDR
 // target: the direct Cook-Torrance BRDF against the CPU reference, the
 // clearcoat lobe, image-based lighting from baked IBL maps, and the A8 lighting
-// tuning (IBL intensity, shadow filter radius and bias, shadows off).
+// tuning (IBL intensity; on the R12 cascades: shadow filter radius, texel-unit
+// biases, shadows off).
 
 #include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstdint>
+#include <cstring>
 #include <expected>
 #include <utility>
 
@@ -19,7 +21,9 @@
 #include "engine/renderer/ibl_pass.hpp"
 #include "engine/renderer/lighting_pass.hpp"
 #include "engine/renderer/mesh_pass.hpp"
+#include "engine/renderer/csm.hpp"
 #include "engine/renderer/shadow_pass.hpp"
+#include "engine/rhi/gpu_allocator.hpp"
 #include "engine/rhi/render_graph.hpp"
 #include "render/pbr_reference.hpp"
 #include "support/expect_ok.hpp"
@@ -42,7 +46,7 @@ struct Scene {
     float                     half_size = 0.5F; // clip-space triangle extent
     bool                      sky = false;
     r::IblViewSet             ibl{};
-    r::LightingTuning         tuning{}; // A8 render settings (IBL scale, shadow filter)
+    r::LightingTuning         tuning{}; // A8 render settings (IBL scale)
 };
 
 // Head-on directional light along +Z (the triangle's normal), white,
@@ -80,9 +84,8 @@ std::expected<HostImage, Error> render_lit(quat::test::GpuContext& g, const Scen
     auto targets = mesh_pass->add_to_graph(graph, k_extent, glm::mat4(1.0F), {&item, 1});
     if (!targets) return std::unexpected(targets.error());
     auto hdr = lighting->add_to_graph(graph, *targets, k_extent, scene.light, glm::mat4(1.0F),
-                                      glm::vec3(0.0F, 0.0F, 1.0F), rhi::ResourceHandle{},
-                                      glm::mat4(1.0F), {}, scene.sky, scene.ibl, VK_NULL_HANDLE,
-                                      VK_NULL_HANDLE, {}, scene.tuning);
+                                      glm::vec3(0.0F, 0.0F, 1.0F), {}, {}, scene.sky, scene.ibl,
+                                      VK_NULL_HANDLE, VK_NULL_HANDLE, {}, scene.tuning);
     if (!hdr) return std::unexpected(hdr.error());
     return quat::test::render_to_host(g, graph, *hdr, k_extent, 8);
 }
@@ -299,23 +302,77 @@ TEST(GpuIblLighting, IntensityScalesTheReflection) {
     EXPECT_LE(glm::length(centre_rgb(*none)), 1e-4F);
 }
 
-// ---- Shadow tuning (A8) ------------------------------------------------------
+// ---- Shadow tuning (A8 settings on the R12 cascades) --------------------------
 //
-// A screen-filling dielectric receiver at depth 0.5, with identity view and
-// light matrices, so shadow-map texel (x, y) is screen pixel (x, y) and the
-// receiver's light-space depth is 0.5. The shadow map is cleared to
-// `left_depth` for x < k_extent.width / 2 and `right_depth` elsewhere: a
-// depth below 0.5 occludes the receiver, 1 leaves it lit. Ambient is off, so
-// the HDR value is the direct light times the shadow factor.
+// A screen-filling dielectric receiver at depth 0.5 with an identity view, and
+// a hand-built single cascade whose matrix maps world (x, y) straight onto
+// shadow-map uv and world z onto depth 1 - z: shadow-map texel (x, y) is
+// screen pixel (x, y), the receiver's depth is 0.5, and offsets toward +z (the
+// light) lower it. The map is cleared to `left_depth` for x < k_extent.width
+// / 2 and `right_depth` elsewhere: a depth below 0.5 occludes the receiver, 1
+// leaves it lit. Ambient is off, so the HDR value is the direct light times
+// the shadow factor. CsmSettings carries the A8 knobs (PCF radius, texel-unit
+// biases); PCSS is off so the radius alone sets the filter.
 namespace {
 
 struct ShadowScene {
-    float             left_depth = 0.25F;
-    float             right_depth = 1.0F;
-    glm::vec3         light_to{0.0F, 0.0F, 1.0F}; // direction to the light
-    bool              shadow_map = true;            // false: shadows disabled
-    r::LightingTuning tuning{};
+    float          left_depth = 0.25F;
+    float          right_depth = 1.0F;
+    glm::vec3      light_to{0.0F, 0.0F, 1.0F}; // direction to the light (shading)
+    bool           shadow_map = true;            // false: shadows disabled
+    r::CsmSettings csm = [] {
+        r::CsmSettings c;
+        c.light_size_deg = 0.0F; // fixed-radius PCF
+        return c;
+    }();
 };
+
+// The single cascade described above (2 world units span the 64-texel map).
+r::GpuCascades identity_cascade() {
+    r::GpuCascades c{};
+    glm::mat4 m(1.0F);
+    m[2][2] = -1.0F; // depth = 1 - z
+    m[3][2] = 1.0F;
+    c.view_proj.fill(m);
+    c.split_far = glm::vec4(1.0e6F);
+    c.texel_world = glm::vec4(2.0F / static_cast<float>(k_extent.width));
+    c.depth_range = glm::vec4(1.0F);
+    c.params = glm::vec4(1.0F, 0.0F, 0.0F, 0.0F); // one cascade, no blend band
+    c.limits = glm::vec4(1.0e6F, 0.0F, 0.0F, 0.0F);
+    return c;
+}
+
+// The hand-built cascaded map + cascade buffer (persistent, imported).
+struct HandMap {
+    rhi::GpuImage  image;
+    rhi::ImageView view;
+    rhi::GpuBuffer cascades;
+};
+
+std::expected<HandMap, Error> make_hand_map(quat::test::GpuContext& g) {
+    constexpr VkFormat format = r::shadow_map_format_padded;
+    HandMap out;
+    auto image = g.allocator.create_image(
+        format, k_extent, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT);
+    if (!image) return std::unexpected(image.error());
+    out.image = std::move(*image);
+    auto view = rhi::create_image_view(g.device.handle(), out.image.handle(), format,
+                                       VK_IMAGE_ASPECT_DEPTH_BIT, 1, VK_IMAGE_VIEW_TYPE_2D_ARRAY,
+                                       0, 0, 1);
+    if (!view) return std::unexpected(view.error());
+    out.view = std::move(*view);
+    auto buffer = g.allocator.create_buffer(
+        sizeof(r::GpuCascades),
+        VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+        VMA_MEMORY_USAGE_AUTO,
+        VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT);
+    if (!buffer) return std::unexpected(buffer.error());
+    out.cascades = std::move(*buffer);
+    const r::GpuCascades data = identity_cascade();
+    std::memcpy(out.cascades.mapped(), &data, sizeof(data));
+    if (auto f = out.cascades.flush(); !f) return std::unexpected(f.error());
+    return out;
+}
 
 std::expected<HostImage, Error> render_shadowed(quat::test::GpuContext& g, const ShadowScene& sc) {
     constexpr float s = 4.0F; // covers the whole clip square
@@ -337,6 +394,8 @@ std::expected<HostImage, Error> render_shadowed(quat::test::GpuContext& g, const
     if (!mesh_pass) return std::unexpected(mesh_pass.error());
     auto lighting = r::LightingPass::create(g.device, g.allocator, g.cache, g.shader_dir);
     if (!lighting) return std::unexpected(lighting.error());
+    auto hand = make_hand_map(g);
+    if (!hand) return std::unexpected(hand.error());
 
     rhi::TransientImagePool pool(g.device, g.allocator);
     rhi::RenderGraph graph(pool);
@@ -344,11 +403,13 @@ std::expected<HostImage, Error> render_shadowed(quat::test::GpuContext& g, const
     auto targets = mesh_pass->add_to_graph(graph, k_extent, glm::mat4(1.0F), {&item, 1});
     if (!targets) return std::unexpected(targets.error());
 
-    rhi::ResourceHandle map{};
+    r::LightingOcclusion occlusion;
+    occlusion.csm = sc.csm;
     if (sc.shadow_map) {
-        map = graph.create_transient_image(
-            "test_shadow_map", r::shadow_map_format, k_extent,
-            VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT);
+        const rhi::ResourceHandle map = graph.import_image(
+            "test_shadow_map", hand->image.handle(), hand->view.handle(),
+            r::shadow_map_format_padded, k_extent, VK_IMAGE_LAYOUT_UNDEFINED,
+            VK_IMAGE_LAYOUT_UNDEFINED);
         graph.add_pass("test_shadow_fill", rhi::PassType::graphics)
             .writes(map, rhi::ResourceUsage::depth_attachment)
             .execute([map, sc](rhi::PassContext& ctx) {
@@ -372,12 +433,16 @@ std::expected<HostImage, Error> render_shadowed(quat::test::GpuContext& g, const
                 vkCmdClearAttachments(ctx.cmd(), 1, &left, 1, &rect);
                 vkCmdEndRendering(ctx.cmd());
             });
+        occlusion.shadows.shadow_map = map;
+        occlusion.shadows.cascades = graph.import_buffer(
+            "test_cascades", hand->cascades.handle(), sizeof(r::GpuCascades));
+        occlusion.shadows.cascades_address =
+            rhi::buffer_device_address(g.device.handle(), hand->cascades);
     }
     r::DirectionalLightParams light = head_on_light();
     light.direction = glm::vec4(glm::normalize(sc.light_to), 0.0F);
     auto hdr = lighting->add_to_graph(graph, *targets, k_extent, light, glm::mat4(1.0F),
-                                      glm::vec3(0.0F, 0.0F, 1.0F), map, glm::mat4(1.0F), {},
-                                      false, {}, VK_NULL_HANDLE, VK_NULL_HANDLE, {}, sc.tuning);
+                                      glm::vec3(0.0F, 0.0F, 1.0F), occlusion);
     if (!hdr) return std::unexpected(hdr.error());
     return quat::test::render_to_host(g, graph, *hdr, k_extent, 8);
 }
@@ -397,77 +462,89 @@ std::expected<HostImage, Error> render_unshadowed(quat::test::GpuContext& g, Sha
     return render_shadowed(g, sc);
 }
 
+// Pixels of the centre row in the penumbra (neither fully lit nor shadowed).
+[[nodiscard]] int penumbra_width(const HostImage& shadowed, const HostImage& unshadowed) {
+    int n = 0;
+    for (std::uint32_t x = 0; x < k_extent.width; ++x) {
+        const float v = shadow_at(shadowed, unshadowed, x);
+        n += v > 0.02F && v < 0.98F ? 1 : 0;
+    }
+    return n;
+}
+
 } // namespace
 
-// PCF radius: r = 0 gives a hard 0 / 1 edge at the boundary; r = 3 spreads a
-// penumbra over 3 texels each side. Fully lit and deep-shadow pixels stay 1 and
-// 0 for every radius (the (2r+1)^2 divisor is right).
+// PCF radius (CsmSettings::pcf_radius, texels): r = 0 is one hardware 2x2
+// comparison tap, a penumbra about a texel wide at the edge; larger radii
+// widen it (a noise-rotated Vogel disk of comparison taps). Fully lit and
+// deep-shadow pixels stay 1 and 0 for every radius.
 TEST(GpuLighting, PcfRadiusWidensThePenumbra) {
     QUAT_REQUIRE_GPU(g);
-    constexpr std::uint32_t edge = k_extent.width / 2; // first lit texel
     auto reference = render_unshadowed(*g, ShadowScene{});
     ASSERT_OK(reference);
-    ASSERT_GT(reference->rgba16f(edge, k_extent.height / 2).r, 0.05F);
-    for (const int radius : {0, 1, 2, 3}) {
+    ASSERT_GT(reference->rgba16f(k_extent.width / 2, k_extent.height / 2).r, 0.05F);
+    int previous = -1;
+    for (const float radius : {0.0F, 1.5F, 3.0F, 6.0F}) {
         ShadowScene sc;
-        sc.tuning.shadow_pcf_radius = radius;
+        sc.csm.pcf_radius = radius;
         auto hdr = render_shadowed(*g, sc);
         ASSERT_OK(hdr);
         const auto at = [&](std::uint32_t x) { return shadow_at(*hdr, *reference, x); };
         EXPECT_NEAR(at(k_extent.width - 8), 1.0F, 1e-3F) << "r=" << radius;
-        EXPECT_NEAR(at(8), 0.0F, 1e-3F) << "r=" << radius;
-        // Across the edge: a texel `d` left of it sees (r - d + 1) lit columns
-        // of 2r + 1 (in shadow when d > r) ...
-        const float taps = static_cast<float>(2 * radius + 1);
-        for (int d = 1; d <= 4; ++d) {
-            const float expected = static_cast<float>(std::max(radius - d + 1, 0)) / taps;
-            EXPECT_NEAR(at(edge - static_cast<std::uint32_t>(d)), expected, 2e-3F)
-                << "r=" << radius << " d=-" << d;
+        EXPECT_NEAR(at(4), 0.0F, 1e-3F) << "r=" << radius;
+        const int width = penumbra_width(*hdr, *reference);
+        if (radius == 0.0F) {
+            EXPECT_LE(width, 2) << "hard edge";
+        } else {
+            EXPECT_GT(width, previous) << "r=" << radius;
+            EXPECT_LE(width, static_cast<int>(2.0F * radius) + 3) << "r=" << radius;
         }
-        // ... and a texel `d` right of it (r - d) shadowed ones.
-        for (int d = 0; d <= 3; ++d) {
-            const float expected = 1.0F - static_cast<float>(std::max(radius - d, 0)) / taps;
-            EXPECT_NEAR(at(edge + static_cast<std::uint32_t>(d)), expected, 2e-3F)
-                << "r=" << radius << " d=+" << d;
-        }
+        previous = width;
     }
 }
 
 // Bias sweep: an occluder 0.01 in front of the receiver (self-shadowing acne)
-// shadows it at the default bias; a constant or slope bias above 0.01 removes
-// the self-shadowing. Lit at 60 degrees (N.L = 0.5) so the slope term counts.
+// shadows it with no receiver offsets; the default texel-unit offsets (normal
+// and depth bias, 1 texel each of 1/32 world unit) clear it, as does either
+// one alone; offsets of a tenth of a texel do not. Lit at 60 degrees
+// (N.L = 0.5).
 TEST(GpuLighting, BiasRemovesSelfShadowing) {
     QUAT_REQUIRE_GPU(g);
     ShadowScene sc;
     sc.left_depth = 0.49F;
     sc.light_to = glm::vec3(0.0F, std::sqrt(3.0F) / 2.0F, 0.5F);
+    sc.csm.pcf_radius = 0.0F;
     auto reference = render_unshadowed(*g, sc);
     ASSERT_OK(reference);
-    const auto acne = [&](const r::LightingTuning& tuning) -> std::expected<float, Error> {
+    const auto acne = [&](float normal_bias, float depth_bias) -> std::expected<float, Error> {
         ShadowScene t = sc;
-        t.tuning = tuning;
-        t.tuning.shadow_pcf_radius = 0;
+        t.csm.normal_bias = normal_bias;
+        t.csm.depth_bias = depth_bias;
         auto hdr = render_shadowed(*g, t);
         if (!hdr) return std::unexpected(hdr.error());
         return shadow_at(*hdr, *reference, 8);
     };
-    auto base = acne({});
-    ASSERT_OK(base);
-    EXPECT_NEAR(*base, 0.0F, 1e-3F) << "default bias 0.0008 / slope 0.0025 self-shadows";
-    auto depth = acne({.shadow_depth_bias = 0.02F});
+    auto none = acne(0.0F, 0.0F);
+    ASSERT_OK(none);
+    EXPECT_NEAR(*none, 0.0F, 1e-3F) << "no offsets: the receiver shadows itself";
+    const r::CsmSettings defaults;
+    auto both = acne(defaults.normal_bias, defaults.depth_bias);
+    ASSERT_OK(both);
+    EXPECT_NEAR(*both, 1.0F, 1e-3F) << "default offsets";
+    auto normal = acne(1.0F, 0.0F); // 0.75 texel toward the light along N
+    ASSERT_OK(normal);
+    EXPECT_NEAR(*normal, 1.0F, 1e-3F) << "normal bias alone";
+    auto depth = acne(0.0F, 1.0F); // 1/32 * 0.5 = 0.0156 > 0.01 toward the light
     ASSERT_OK(depth);
-    EXPECT_NEAR(*depth, 1.0F, 1e-3F) << "constant bias 0.02 > 0.01";
-    auto slope = acne({.shadow_slope_bias = 0.04F}); // 0.04 * (1 - 0.5) = 0.02
-    ASSERT_OK(slope);
-    EXPECT_NEAR(*slope, 1.0F, 1e-3F) << "slope bias";
-    auto small = acne({.shadow_depth_bias = 0.005F, .shadow_slope_bias = 0.005F});
+    EXPECT_NEAR(*depth, 1.0F, 1e-3F) << "depth bias alone";
+    auto small = acne(0.1F, 0.1F);
     ASSERT_OK(small);
-    EXPECT_NEAR(*small, 0.0F, 1e-3F) << "biases below 0.01 keep the self-shadowing";
+    EXPECT_NEAR(*small, 0.0F, 1e-3F) << "a tenth of a texel keeps the self-shadowing";
 }
 
-// ShadowSettings::enabled = false: the frame graph skips the shadow pass and
-// hands the lighting pass no shadow map — the shadowed half lights up like the
-// lit half (same shading as with an all-lit shadow map).
+// shadows.enabled = false: the frame graph adds no shadow passes and hands
+// the lighting pass no cascades — the shadowed half lights up like the lit
+// half (same shading as with an all-lit shadow map).
 TEST(GpuLighting, NoShadowMapLightsEverything) {
     QUAT_REQUIRE_GPU(g);
     ShadowScene all_lit;

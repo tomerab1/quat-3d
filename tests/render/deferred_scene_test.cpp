@@ -103,7 +103,7 @@ run_scene_render_self_test(const engine::rhi::Device& device, engine::rhi::GpuAl
     if (!gbuffer) return std::unexpected(gbuffer.error());
     auto hdr = lighting_pass->add_to_graph(graph, *gbuffer, extent, light,
                                            glm::inverse(cam.view_proj), cam.position,
-                                           engine::rhi::ResourceHandle{}, glm::mat4(1.0F), {},
+                                           {}, {},
                                            /*enable_sky=*/true);
     if (!hdr) return std::unexpected(hdr.error());
     const rhi::ResourceHandle ldr = graph.create_transient_image(
@@ -234,8 +234,9 @@ run_shadow_self_test(const engine::rhi::Device& device, engine::rhi::GpuAllocato
     const glm::vec3 eye(4.0F, 5.0F, 5.0F);
     glm::mat4 proj = glm::perspective(glm::radians(50.0F), 1.0F, 0.1F, 100.0F);
     proj[1][1] *= -1.0F;
-    const glm::mat4 view_proj = proj * glm::lookAt(eye, glm::vec3(0.0F, 0.5F, 0.0F),
-                                                   glm::vec3(0.0F, 1.0F, 0.0F));
+    const glm::mat4 view =
+        glm::lookAt(eye, glm::vec3(0.0F, 0.5F, 0.0F), glm::vec3(0.0F, 1.0F, 0.0F));
+    const glm::mat4 view_proj = proj * view;
 
     const glm::vec3 travel = glm::normalize(glm::vec3(0.15F, -1.0F, 0.1F));
     renderer::DirectionalLightParams light;
@@ -243,11 +244,10 @@ run_shadow_self_test(const engine::rhi::Device& device, engine::rhi::GpuAllocato
     light.color = glm::vec4(1.0F, 1.0F, 1.0F, 3.0F);
     light.ambient = glm::vec4(0.05F, 0.05F, 0.05F, 0.0F);
 
-    const glm::vec3 lcenter(0.0F, 1.0F, 0.0F);
-    constexpr float lr = 5.0F;
-    const glm::mat4 light_vp =
-        glm::ortho(-lr, lr, -lr, lr, 0.1F, lr * 3.5F) *
-        glm::lookAt(lcenter - travel * (lr * 1.5F), lcenter, glm::vec3(0.0F, 1.0F, 0.0F));
+    // Cascaded shadows fitted on the CPU (no Hi-Z here).
+    const renderer::CsmView csm_view{view, proj, -travel};
+    renderer::CsmSettings csm;
+    csm.max_distance = 30.0F;
 
     const std::array<renderer::DrawItem, 2> draws{
         renderer::DrawItem{&*floor, &*material, glm::mat4(1.0F)},
@@ -263,16 +263,17 @@ run_shadow_self_test(const engine::rhi::Device& device, engine::rhi::GpuAllocato
 
         rhi::TransientImagePool pool(device, allocator);
         rhi::RenderGraph graph(pool);
-        rhi::ResourceHandle shadow_handle{};
+        renderer::LightingOcclusion occlusion;
+        occlusion.csm = csm;
         if (use_shadow) {
-            auto s = shadow_pass->add_to_graph(graph, light_vp, draws);
+            auto s = shadow_pass->add_to_graph(graph, csm_view, csm, nullptr, draws);
             if (!s) return std::unexpected(s.error());
-            shadow_handle = *s;
+            occlusion.shadows = *s;
         }
         auto gbuffer = mesh_pass->add_to_graph(graph, extent, view_proj, draws);
         if (!gbuffer) return std::unexpected(gbuffer.error());
         auto hdr = lighting->add_to_graph(graph, *gbuffer, extent, light, glm::inverse(view_proj),
-                                          eye, shadow_handle, light_vp);
+                                          eye, occlusion);
         if (!hdr) return std::unexpected(hdr.error());
         const rhi::ResourceHandle ldr = graph.create_transient_image(
             "shadow_ldr", ldr_format, extent,

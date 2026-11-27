@@ -163,10 +163,13 @@ public:
     };
     // Closest hit along `direction` (need not be normalized; zero = no hit)
     // within `max_distance`, against bodies (sensors only when
-    // `include_sensors`) and character capsules. nullopt when nothing is hit.
+    // `include_sensors`) and character capsules, skipping bodies and
+    // characters whose owner is in `ignore_owners` (e.g. a character's own
+    // capsule under its feet). nullopt when nothing is hit.
     [[nodiscard]] std::optional<RayHit> cast_ray(const glm::vec3& origin, const glm::vec3& direction,
-                                                 float max_distance,
-                                                 bool include_sensors = false) const;
+                                                 float max_distance, bool include_sensors = false,
+                                                 std::span<const std::uint32_t> ignore_owners = {})
+        const;
 
 private:
     PhysicsWorld() = default;
