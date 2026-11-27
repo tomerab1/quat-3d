@@ -82,6 +82,15 @@ into CLAUDE.md or the brief template in [`CYCLE.md`](CYCLE.md).
 
 ## C++ in this codebase
 
+- **slangc 2025.6.1 segfaults after reporting a compile error** when
+  `-reflection-json` is passed (exit by SIGSEGV, diagnostics already
+  printed). Treat any non-zero exit *or* signal as a failed compile and keep
+  the captured output as the diagnostics (the R2 compiler service does).
+- **A compute pipeline whose shader declares a binding its layout lacks can
+  crash lavapipe inside vkCreateComputePipelines** (no validation layer in
+  the container to catch it first). Hot reload therefore checks reflected
+  bindings against the original layout before rebuilding a pipeline.
+
 - **Don't let a parser touch untrusted indices before validation.**
   fastgltf's `Options::GenerateMeshIndices` dereferences accessor indices
   during parsing; the loader now validates first and generates sequential

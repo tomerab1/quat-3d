@@ -19,8 +19,8 @@
 #include <vulkan/vulkan.h>
 
 #include "engine/core/error.hpp"
-#include "engine/rhi/compute_pipeline.hpp"
 #include "engine/rhi/descriptor_buffer.hpp"
+#include "engine/rhi/managed_pipeline.hpp"
 
 namespace engine::rhi {
 class Device;
@@ -70,7 +70,7 @@ private:
 
     rhi::DescriptorBufferFunctions db_fns_{};
     rhi::DescriptorSetLayout       layout_;
-    rhi::ComputePipeline           pipeline_;
+    rhi::ManagedPipeline           pipeline_;
 
     std::vector<rhi::DescriptorBuffer> frame_descriptors_;
 };

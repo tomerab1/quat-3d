@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <expected>
 #include <span>
+#include <vector>
 
 #include <vulkan/vulkan.h>
 
@@ -77,5 +78,11 @@ private:
     VkPipelineLayout layout_   = VK_NULL_HANDLE;
     VkPipeline       pipeline_ = VK_NULL_HANDLE;
 };
+
+// The push-constant range GraphicsPipeline::create derives when
+// CreateInfo::push_constants is empty: one VERTEX|FRAGMENT range covering the
+// union of both shaders' reflected blocks (empty when neither declares one).
+[[nodiscard]] std::vector<VkPushConstantRange>
+reflected_push_constant_ranges(const LoadedShader& vertex, const LoadedShader& fragment);
 
 } // namespace engine::rhi

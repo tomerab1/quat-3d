@@ -35,8 +35,8 @@ struct CompositeParams {
     float intensity, radius, pad0, pad1;
 };
 
-[[nodiscard]] std::expected<rhi::ComputePipeline, core::Error>
-make_pipeline(const rhi::Device& device, rhi::PipelineCache& cache, const std::string& spv,
+[[nodiscard]] std::expected<rhi::ManagedPipeline, core::Error>
+make_pipeline(rhi::PipelineCache& cache, const std::string& spv,
               const rhi::DescriptorSetLayout& layout, std::uint32_t push_size) {
     auto shader = cache.load(spv);
     if (!shader) return std::unexpected(shader.error());
@@ -46,7 +46,7 @@ make_pipeline(const rhi::Device& device, rhi::PipelineCache& cache, const std::s
     info.shader = *shader;
     info.set_layouts = {&set_layout, 1};
     info.push_constants = {&pc, 1};
-    return rhi::ComputePipeline::create(device, cache.handle(), info);
+    return cache.create_compute_pipeline(info);
 }
 
 [[nodiscard]] std::uint32_t groups(std::uint32_t n) { return (n + 7) / 8; }
@@ -145,15 +145,15 @@ BloomPass::create(const rhi::Device& device, rhi::GpuAllocator& allocator,
     if (!up_layout) return std::unexpected(up_layout.error());
     out.up_layout_ = std::move(*up_layout);
 
-    auto down = make_pipeline(device, cache, cooked_shader_dir + "/bloom_down.spv", out.down_layout_,
+    auto down = make_pipeline(cache, cooked_shader_dir + "/bloom_down.spv", out.down_layout_,
                               sizeof(DownParams));
     if (!down) return std::unexpected(down.error());
     out.down_pipeline_ = std::move(*down);
-    auto up = make_pipeline(device, cache, cooked_shader_dir + "/bloom_up.spv", out.up_layout_,
+    auto up = make_pipeline(cache, cooked_shader_dir + "/bloom_up.spv", out.up_layout_,
                             sizeof(UpParams));
     if (!up) return std::unexpected(up.error());
     out.up_pipeline_ = std::move(*up);
-    auto comp = make_pipeline(device, cache, cooked_shader_dir + "/bloom_composite.spv",
+    auto comp = make_pipeline(cache, cooked_shader_dir + "/bloom_composite.spv",
                               out.down_layout_, sizeof(CompositeParams));
     if (!comp) return std::unexpected(comp.error());
     out.composite_pipeline_ = std::move(*comp);

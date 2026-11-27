@@ -135,9 +135,12 @@ add_library(engine_rhi STATIC
     src/rhi/render_graph.cpp
     src/rhi/graphics_pipeline.cpp
     src/rhi/compute_pipeline.cpp
-    src/rhi/shader_compiler.cpp)
+    src/rhi/shader_compiler.cpp
+    src/rhi/shader_hot_reload.cpp)
 target_link_libraries(engine_rhi PUBLIC
     engine_flags engine_core Vulkan::Vulkan GPUOpen::VulkanMemoryAllocator)
+# The hot-reload compile worker runs on a std::thread.
+target_link_libraries(engine_rhi PRIVATE Threads::Threads)
 # nlohmann_json is an implementation detail of the reflection parser (PRIVATE).
 target_link_libraries(engine_rhi PRIVATE nlohmann_json::nlohmann_json)
 target_include_directories(engine_rhi PUBLIC ${ENGINE_PUBLIC_INCLUDE})

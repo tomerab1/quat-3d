@@ -22,6 +22,7 @@
 
 #include "engine/core/error.hpp"
 #include "engine/renderer/cloud_settings.hpp"
+#include "engine/rhi/shader_status.hpp"
 
 struct SDL_Window;
 union SDL_Event;
@@ -69,6 +70,9 @@ struct EditorContext {
     float frame_ms     = 0.0F;
     int   draw_count   = 0;
     int   entity_count = 0;
+    // Shader hot-reload state (R2), listed in the Stats panel; null when hot
+    // reload is off.
+    const std::vector<rhi::ShaderStatus>* shader_statuses = nullptr;
     // Scene access for the hierarchy/inspector panels (may be null).
     scene::Scene* scene = nullptr;
     // Renderer settings the panel edits (may be null).
@@ -169,6 +173,7 @@ private:
     void build_dock_layout(unsigned int dockspace_id);
     void build_viewport_panel(const EditorContext& ctx);
     void build_stats_panel(const EditorContext& ctx);
+    void build_shader_status(const EditorContext& ctx);
     void build_gizmo(const EditorContext& ctx, const ImVec2& rect_min, const ImVec2& rect_max);
     void handle_picking(const EditorContext& ctx, const ImVec2& rect_min,
                         const ImVec2& rect_max);

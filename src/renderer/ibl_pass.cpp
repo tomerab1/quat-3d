@@ -48,8 +48,8 @@ struct LutParams {
     std::uint32_t pad0 = 0, pad1 = 0, pad2 = 0;
 };
 
-[[nodiscard]] std::expected<rhi::ComputePipeline, core::Error>
-make_pipeline(const rhi::Device& device, rhi::PipelineCache& cache, const std::string& spv,
+[[nodiscard]] std::expected<rhi::ManagedPipeline, core::Error>
+make_pipeline(rhi::PipelineCache& cache, const std::string& spv,
               const rhi::DescriptorSetLayout& layout, std::uint32_t push_size) {
     auto shader = cache.load(spv);
     if (!shader) return std::unexpected(shader.error());
@@ -59,7 +59,7 @@ make_pipeline(const rhi::Device& device, rhi::PipelineCache& cache, const std::s
     info.shader = *shader;
     info.set_layouts = {&set_layout, 1};
     info.push_constants = {&pc, 1};
-    return rhi::ComputePipeline::create(device, cache.handle(), info);
+    return cache.create_compute_pipeline(info);
 }
 
 // Transition `image` (color aspect) between layouts with a full compute barrier.
@@ -165,19 +165,19 @@ IblBaker::create(const rhi::Device& device, rhi::GpuAllocator& allocator,
     if (!lut_layout) return std::unexpected(lut_layout.error());
     out.lut_layout_ = std::move(*lut_layout);
 
-    auto env_pipe = make_pipeline(device, cache, cooked_shader_dir + "/ibl_bake_env.spv",
+    auto env_pipe = make_pipeline(cache, cooked_shader_dir + "/ibl_bake_env.spv",
                                   out.env_layout_, sizeof(BakeParams));
     if (!env_pipe) return std::unexpected(env_pipe.error());
     out.env_pipeline_ = std::move(*env_pipe);
-    auto irr_pipe = make_pipeline(device, cache, cooked_shader_dir + "/ibl_irradiance.spv",
+    auto irr_pipe = make_pipeline(cache, cooked_shader_dir + "/ibl_irradiance.spv",
                                   out.conv_layout_, sizeof(IrradianceParams));
     if (!irr_pipe) return std::unexpected(irr_pipe.error());
     out.irradiance_pipeline_ = std::move(*irr_pipe);
-    auto pre_pipe = make_pipeline(device, cache, cooked_shader_dir + "/ibl_prefilter.spv",
+    auto pre_pipe = make_pipeline(cache, cooked_shader_dir + "/ibl_prefilter.spv",
                                   out.conv_layout_, sizeof(PrefilterParams));
     if (!pre_pipe) return std::unexpected(pre_pipe.error());
     out.prefilter_pipeline_ = std::move(*pre_pipe);
-    auto lut_pipe = make_pipeline(device, cache, cooked_shader_dir + "/ibl_brdf_lut.spv",
+    auto lut_pipe = make_pipeline(cache, cooked_shader_dir + "/ibl_brdf_lut.spv",
                                   out.lut_layout_, sizeof(LutParams));
     if (!lut_pipe) return std::unexpected(lut_pipe.error());
     out.lut_pipeline_ = std::move(*lut_pipe);
@@ -327,7 +327,7 @@ std::expected<IblMaps, core::Error> IblBaker::bake(const glm::vec3& sun_dir,
         constexpr auto cs = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT;
         constexpr auto w = VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT;
         constexpr auto r = VK_ACCESS_2_SHADER_SAMPLED_READ_BIT;
-        const auto dispatch = [&](const rhi::ComputePipeline& pipe, rhi::DescriptorBuffer& db,
+        const auto dispatch = [&](const rhi::ManagedPipeline& pipe, rhi::DescriptorBuffer& db,
                                   const void* push, std::uint32_t push_size, std::uint32_t gx,
                                   std::uint32_t gy, std::uint32_t gz) {
             vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipe.handle());

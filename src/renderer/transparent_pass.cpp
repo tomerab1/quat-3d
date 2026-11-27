@@ -129,7 +129,7 @@ TransparentPass::create(const rhi::Device& device, rhi::GpuAllocator& allocator,
     info.depth_write = false;
     info.alpha_blend = true;
     info.cull_mode = VK_CULL_MODE_NONE;
-    auto blend = rhi::GraphicsPipeline::create(device, cache.handle(), info);
+    auto blend = cache.create_graphics_pipeline(info);
     if (!blend) return std::unexpected(blend.error());
     out.blend_pipeline_ = std::move(*blend);
 
@@ -140,7 +140,7 @@ TransparentPass::create(const rhi::Device& device, rhi::GpuAllocator& allocator,
     info.depth_write = true;
     info.alpha_blend = false;
     info.dynamic_cull_mode = true;
-    auto transmission = rhi::GraphicsPipeline::create(device, cache.handle(), info);
+    auto transmission = cache.create_graphics_pipeline(info);
     if (!transmission) return std::unexpected(transmission.error());
     out.transmission_pipeline_ = std::move(*transmission);
 
@@ -431,7 +431,7 @@ TransparentPass::add_to_graph(rhi::RenderGraph& graph, rhi::ResourceHandle hdr,
         const VkRect2D scissor{{0, 0}, extent};
         vkCmdSetScissor(cmd, 0, 1, &scissor);
 
-        const auto record = [&](const rhi::GraphicsPipeline& pipeline, const FrameDraw& fd) {
+        const auto record = [&](const rhi::ManagedPipeline& pipeline, const FrameDraw& fd) {
             frame_descriptors_[fd.descriptor_index].bind(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
                                                          pipeline.layout(), 0);
             vkCmdPushConstants(cmd, pipeline.layout(),
