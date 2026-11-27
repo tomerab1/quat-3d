@@ -26,6 +26,13 @@ into CLAUDE.md or the brief template in [`CYCLE.md`](CYCLE.md).
 
 ## Build and CI
 
+- **Link local test builds against the prebuilt Release Jolt with
+  `-DNDEBUG`.** Without it `JPH_DEBUG` changes Jolt's class layouts in our
+  TUs and physics tests segfault (the link also misses `JPH::AssertFailed`).
+  With `~/deps/jolt/build-libcxx/libJolt.a`, `~/deps/fastgltf/build/libfastgltf.a`
+  and Recast compiled from `~/deps/recast`, every CPU and GPU suite except
+  net/ (GNS) and editor/ (ImGui) links and runs locally (A6).
+
 - **Lavapipe's ICD file is `lvp_icd.json` on Ubuntu 24.04** (not
   `lvp_icd.x86_64.json`) — a wrong `VK_ICD_FILENAMES` gives
   `VK_ERROR_INCOMPATIBLE_DRIVER` from vkCreateInstance. CI globs for it.
@@ -81,6 +88,17 @@ into CLAUDE.md or the brief template in [`CYCLE.md`](CYCLE.md).
   wayland-protocols, libdecor. The first CI run failed on xcursor.
 
 ## C++ in this codebase
+
+- **slangc puts every `.slang` input of one run into one module** (A6):
+  `extern struct` in one file and `export struct` in another conflict, and
+  `-entry` cannot find a generic entry point for `-specialize`. Link-time
+  specialisation works by passing the *cooked* driver module instead:
+  `slangc material.slang cooked/driver.slang-module -I lib -I cooked`. A
+  serialized module finds its own imports only as `.slang-module`s on an `-I`
+  path, so the cooked directory must be on it.
+- **Adding a field to an aggregate config struct warns at every positional
+  `{a, b, c}` initialisation** (`-Wmissing-field-initializers`, part of
+  `-Wextra`). Grep the call sites (tests included) in the same change.
 
 - **slangc 2025.6.1 segfaults after reporting a compile error** when
   `-reflection-json` is passed (exit by SIGSEGV, diagnostics already
