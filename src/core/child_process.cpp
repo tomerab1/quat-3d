@@ -1,5 +1,6 @@
 #include "engine/core/child_process.hpp"
 
+#include <algorithm>
 #include <cerrno>
 #include <cstdlib>
 #include <cstring>
@@ -17,6 +18,8 @@
 #include <windows.h>
 #else
 #include <fcntl.h>
+#include <poll.h>
+#include <signal.h>
 #include <spawn.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -29,15 +32,100 @@ namespace fs = std::filesystem;
 
 namespace {
 
+using Clock = std::chrono::steady_clock;
+
 [[nodiscard]] std::unexpected<Error> fail(std::string what) {
     return std::unexpected(Error{std::move(what)});
 }
 
+// Longest a wait loop sleeps between checks of the canceller and deadline.
+constexpr std::chrono::milliseconds k_wait_slice{50};
+
+// Why run_process stopped waiting before the child exited on its own.
+enum class Abort : std::uint8_t { none, timed_out, cancelled, failed };
+
+[[nodiscard]] std::unexpected<Error> abort_error(Abort why, const fs::path& program,
+                                                 const ProcessOptions& options,
+                                                 const std::string& output) {
+    std::string what = program.filename().string();
+    if (why == Abort::timed_out) {
+        what += " timed out after " + std::to_string(options.timeout.count()) +
+                " ms and was killed";
+    } else if (why == Abort::cancelled) {
+        what += " was cancelled";
+    } else {
+        what += ": waiting for it failed; it was killed";
+    }
+    if (!output.empty()) what += "; output so far:\n" + output;
+    return fail(std::move(what));
+}
+
+// When `options.timeout` expires (max() when there is none).
+[[nodiscard]] Clock::time_point deadline_for(const ProcessOptions& options) {
+    return options.timeout.count() > 0 ? Clock::now() + options.timeout
+                                       : Clock::time_point::max();
+}
+
+// How long to block before re-checking the canceller / deadline; false once
+// the deadline has passed.
+[[nodiscard]] bool next_wait(Clock::time_point deadline, std::chrono::milliseconds& wait) {
+    const Clock::time_point now = Clock::now();
+    if (now >= deadline) return false;
+    const auto slice = std::min<Clock::duration>(deadline - now, k_wait_slice);
+    wait = std::chrono::ceil<std::chrono::milliseconds>(slice);
+    return true;
+}
+
+void kill_child(std::intptr_t child);
+
 } // namespace
+
+namespace detail {
+
+// run_process's access to a ProcessCanceller.
+struct CancellerAccess {
+    // Registers the running child; false when the canceller was already
+    // cancelled (the caller then kills the child itself).
+    [[nodiscard]] static bool attach(ProcessCanceller* c, std::intptr_t child) {
+        if (c == nullptr) return true;
+        std::lock_guard lock(c->mutex_);
+        if (c->cancelled_) return false;
+        c->child_ = child;
+        c->has_child_ = true;
+        return true;
+    }
+    // Unregisters the child; called before it is reaped / its handle closed.
+    static void detach(ProcessCanceller* c) {
+        if (c == nullptr) return;
+        std::lock_guard lock(c->mutex_);
+        c->has_child_ = false;
+        c->child_ = 0;
+    }
+    static void cancel(ProcessCanceller& c) {
+        std::lock_guard lock(c.mutex_);
+        c.cancelled_ = true;
+        if (c.has_child_) kill_child(c.child_);
+    }
+};
+
+} // namespace detail
+
+void ProcessCanceller::cancel() { detail::CancellerAccess::cancel(*this); }
+
+bool ProcessCanceller::cancelled() const {
+    std::lock_guard lock(mutex_);
+    return cancelled_;
+}
 
 #if defined(_WIN32)
 
 namespace {
+
+void kill_child(std::intptr_t child) {
+    // Terminating a process that already exited fails harmlessly; the handle
+    // stays open until run_process has unregistered it.
+    TerminateProcess(reinterpret_cast<HANDLE>(child), 1);
+}
 
 [[nodiscard]] std::wstring widen(std::string_view s) {
     if (s.empty()) return {};
@@ -77,7 +165,8 @@ void append_quoted(std::wstring& cmd, const std::wstring& arg) {
 } // namespace
 
 std::expected<ProcessResult, Error>
-run_process(const fs::path& program, std::span<const std::string> args) {
+run_process(const fs::path& program, std::span<const std::string> args,
+            const ProcessOptions& options) {
     SECURITY_ATTRIBUTES sa{};
     sa.nLength = sizeof(sa);
     sa.bInheritHandle = TRUE;
@@ -110,27 +199,82 @@ run_process(const fs::path& program, std::span<const std::string> args) {
         CloseHandle(read_end);
         return fail("CreateProcess failed for " + program.string());
     }
+    CloseHandle(pi.hThread);
 
+    Abort abort = detail::CancellerAccess::attach(
+                      options.canceller, reinterpret_cast<std::intptr_t>(pi.hProcess))
+                      ? Abort::none
+                      : Abort::cancelled;
+    const Clock::time_point deadline = deadline_for(options);
+
+    // Anonymous pipes have no overlapped I/O: read what is buffered, then wait
+    // on the process for a slice. Once it has exited, drain what is left (a
+    // grandchild still holding the pipe open is not waited for).
     ProcessResult result;
     char buffer[4096];
-    DWORD got = 0;
-    while (ReadFile(read_end, buffer, sizeof(buffer), &got, nullptr) && got > 0) {
-        result.output.append(buffer, got);
+    const auto drain = [&] {
+        DWORD available = 0;
+        DWORD got = 0;
+        while (PeekNamedPipe(read_end, nullptr, 0, nullptr, &available, nullptr) &&
+               available > 0 &&
+               ReadFile(read_end, buffer, std::min<DWORD>(available, sizeof(buffer)), &got,
+                        nullptr) &&
+               got > 0) {
+            result.output.append(buffer, got);
+        }
+    };
+    while (abort == Abort::none) {
+        drain();
+        if (options.canceller != nullptr && options.canceller->cancelled()) {
+            abort = Abort::cancelled;
+            break;
+        }
+        std::chrono::milliseconds wait{0};
+        if (!next_wait(deadline, wait)) {
+            abort = Abort::timed_out;
+            break;
+        }
+        const DWORD waited = WaitForSingleObject(pi.hProcess, static_cast<DWORD>(wait.count()));
+        if (waited == WAIT_OBJECT_0) {
+            drain();
+            break;
+        }
+        if (waited == WAIT_FAILED) abort = Abort::failed;
     }
+    // cancel() terminates the child, which ends the loop: still a cancel.
+    if (abort == Abort::none && options.canceller != nullptr && options.canceller->cancelled()) {
+        abort = Abort::cancelled;
+    }
+    if (abort != Abort::none) {
+        TerminateProcess(pi.hProcess, 1);
+        WaitForSingleObject(pi.hProcess, INFINITE);
+    }
+    detail::CancellerAccess::detach(options.canceller); // before the handle closes
     CloseHandle(read_end);
-    WaitForSingleObject(pi.hProcess, INFINITE);
     DWORD code = 0;
     GetExitCodeProcess(pi.hProcess, &code);
-    CloseHandle(pi.hThread);
     CloseHandle(pi.hProcess);
+    if (abort != Abort::none) return abort_error(abort, program, options, result.output);
     result.exit_code = static_cast<int>(code);
     return result;
 }
 
 #else // POSIX
 
+namespace {
+
+void kill_child(std::intptr_t child) {
+    // The child leads its own process group: kill it with everything it
+    // started. The group id is the child's pid, which cannot be reused before
+    // run_process reaps it — and it is unregistered before that.
+    ::kill(-static_cast<pid_t>(child), SIGKILL);
+}
+
+} // namespace
+
 std::expected<ProcessResult, Error>
-run_process(const fs::path& program, std::span<const std::string> args) {
+run_process(const fs::path& program, std::span<const std::string> args,
+            const ProcessOptions& options) {
     // posix_spawn reports a failed exec only on some implementations (glibc
     // does; others spawn a child that exits 127), so check up front.
     if (::access(program.c_str(), X_OK) != 0) {
@@ -163,10 +307,17 @@ run_process(const fs::path& program, std::span<const std::string> args) {
     // stdout and stderr both go to the pipe (dup2 clears close-on-exec).
     posix_spawn_file_actions_adddup2(&actions, pipe_fds[1], STDOUT_FILENO);
     posix_spawn_file_actions_adddup2(&actions, pipe_fds[1], STDERR_FILENO);
+    // A process group of its own, so a timeout or cancel also kills whatever
+    // the child started (a grandchild would otherwise keep the pipe open).
+    posix_spawnattr_t attr;
+    posix_spawnattr_init(&attr);
+    posix_spawnattr_setflags(&attr, POSIX_SPAWN_SETPGROUP);
+    posix_spawnattr_setpgroup(&attr, 0);
 
     pid_t pid = -1;
     const int spawn_err =
-        ::posix_spawn(&pid, program_str.c_str(), &actions, nullptr, argv.data(), environ);
+        ::posix_spawn(&pid, program_str.c_str(), &actions, &attr, argv.data(), environ);
+    posix_spawnattr_destroy(&attr);
     posix_spawn_file_actions_destroy(&actions);
     ::close(pipe_fds[1]); // the child holds its own copy
     if (spawn_err != 0) {
@@ -174,19 +325,52 @@ run_process(const fs::path& program, std::span<const std::string> args) {
         return fail("cannot start " + program_str + ": " + std::strerror(spawn_err));
     }
 
+    Abort abort = detail::CancellerAccess::attach(options.canceller, pid) ? Abort::none
+                                                                          : Abort::cancelled;
+    const Clock::time_point deadline = deadline_for(options);
+    const bool sliced = options.canceller != nullptr || deadline != Clock::time_point::max();
+
     ProcessResult result;
     char buffer[4096];
-    for (;;) {
+    while (abort == Abort::none) {
+        if (options.canceller != nullptr && options.canceller->cancelled()) {
+            abort = Abort::cancelled;
+            break;
+        }
+        int wait_ms = -1; // block until output or EOF
+        if (sliced) {
+            std::chrono::milliseconds wait{0};
+            if (!next_wait(deadline, wait)) {
+                abort = Abort::timed_out;
+                break;
+            }
+            wait_ms = static_cast<int>(wait.count());
+        }
+        pollfd pfd{pipe_fds[0], POLLIN, 0};
+        const int ready = ::poll(&pfd, 1, wait_ms);
+        if (ready < 0) {
+            if (errno == EINTR) continue;
+            abort = Abort::failed;
+            break;
+        }
+        if (ready == 0) continue; // slice elapsed
         const ssize_t n = ::read(pipe_fds[0], buffer, sizeof(buffer));
         if (n > 0) {
             result.output.append(buffer, static_cast<std::size_t>(n));
-        } else if (n < 0 && errno == EINTR) {
-            continue;
-        } else {
+        } else if (n == 0) {
             break; // EOF: every writer (the child and its children) closed
+        } else if (errno != EINTR && errno != EAGAIN) {
+            abort = Abort::failed;
+            break;
         }
     }
+    // cancel() kills the child, which ends the loop at EOF: still a cancel.
+    if (abort == Abort::none && options.canceller != nullptr && options.canceller->cancelled()) {
+        abort = Abort::cancelled;
+    }
+    if (abort != Abort::none) kill_child(pid);
     ::close(pipe_fds[0]);
+    detail::CancellerAccess::detach(options.canceller); // before reaping: see kill_child
 
     int status = 0;
     while (::waitpid(pid, &status, 0) < 0) {
@@ -194,6 +378,7 @@ run_process(const fs::path& program, std::span<const std::string> args) {
             return fail(std::string("waitpid failed: ") + std::strerror(errno));
         }
     }
+    if (abort != Abort::none) return abort_error(abort, program, options, result.output);
     if (WIFSIGNALED(status)) {
         result.signaled = true;
         result.signal = WTERMSIG(status);

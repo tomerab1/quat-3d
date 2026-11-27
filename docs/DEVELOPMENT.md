@@ -73,7 +73,9 @@ destroyed once the frames in flight are done.
 
 - A compile error keeps the previous pipeline and cooked files; the
   diagnostics show under **Stats → Shaders** and on stderr
-  (`ShaderHotReload::statuses()` for tools).
+  (`ShaderHotReload::statuses()` for tools). A slangc run that takes longer
+  than `Config::compile_timeout` (60 s) is killed and reported the same way;
+  shutting down kills a compile in flight instead of waiting for it.
 - Edits that change the pipeline layout (a new binding, a changed descriptor
   type, a bigger push-constant block, a renamed entry point) are rejected the
   same way — the C++ side builds the layouts, so they need a restart.

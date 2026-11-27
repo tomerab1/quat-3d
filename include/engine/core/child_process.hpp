@@ -4,8 +4,11 @@
 // shader compiler service runs slangc this way). No shell is involved: the
 // arguments are passed to the program verbatim.
 
+#include <chrono>
+#include <cstdint>
 #include <expected>
 #include <filesystem>
+#include <mutex>
 #include <optional>
 #include <span>
 #include <string>
@@ -24,11 +27,50 @@ struct ProcessResult {
     [[nodiscard]] bool succeeded() const { return !signaled && exit_code == 0; }
 };
 
-// Runs `program` with `args` (argv[1..]), blocking until it exits. Fails only
-// when the process cannot be started; a non-zero exit is a ProcessResult.
+namespace detail {
+struct CancellerAccess;
+} // namespace detail
+
+// Lets one thread stop the child process that run_process() is waiting on in
+// another thread (e.g. a compile worker being shut down). Thread-safe.
+class ProcessCanceller {
+public:
+    ProcessCanceller() = default;
+    ProcessCanceller(const ProcessCanceller&) = delete;
+    ProcessCanceller& operator=(const ProcessCanceller&) = delete;
+
+    // Kills the running child (POSIX: its whole process group), if any, and
+    // makes every later run_process() using this canceller fail at once.
+    // Idempotent.
+    void cancel();
+    [[nodiscard]] bool cancelled() const;
+
+private:
+    friend struct detail::CancellerAccess;
+    mutable std::mutex mutex_;
+    bool               cancelled_ = false;
+    // The registered child while run_process() waits on it: a pid (POSIX) or
+    // a process HANDLE (Windows). Cleared before the child is reaped, so
+    // cancel() never signals a recycled pid.
+    std::intptr_t      child_ = 0;
+    bool               has_child_ = false;
+};
+
+struct ProcessOptions {
+    // Kill the child and fail when it has not exited after this long
+    // (zero: wait indefinitely).
+    std::chrono::milliseconds timeout{0};
+    ProcessCanceller*         canceller = nullptr; // optional
+};
+
+// Runs `program` with `args` (argv[1..]), blocking until it exits. Fails when
+// the process cannot be started, exceeds `options.timeout` or is cancelled (the
+// child is killed in both cases and the error carries its output so far); a
+// non-zero exit is a ProcessResult.
 // Safe to call from any thread.
 [[nodiscard]] std::expected<ProcessResult, Error>
-run_process(const std::filesystem::path& program, std::span<const std::string> args);
+run_process(const std::filesystem::path& program, std::span<const std::string> args,
+            const ProcessOptions& options = {});
 
 // Finds an executable named `name` on PATH (".exe" is appended on Windows).
 [[nodiscard]] std::optional<std::filesystem::path> find_on_path(std::string_view name);

@@ -147,7 +147,8 @@ std::vector<std::string> ShaderCompiler::arguments(const fs::path& source,
             (out_dir / (name + ".json")).string()};
 }
 
-ShaderCompileResult ShaderCompiler::compile(const fs::path& source_in) const {
+ShaderCompileResult ShaderCompiler::compile(const fs::path& source_in,
+                                            core::ProcessCanceller* canceller) const {
     ShaderCompileResult result;
     result.source = normal(source_in);
     result.kind = kind_of(result.source);
@@ -169,9 +170,13 @@ ShaderCompileResult ShaderCompiler::compile(const fs::path& source_in) const {
     }
 
     const std::vector<std::string> args = arguments(result.source, staging);
-    auto run = core::run_process(config_.slangc, args);
+    core::ProcessOptions run_options;
+    run_options.timeout = config_.timeout;
+    run_options.canceller = canceller;
+    auto run = core::run_process(config_.slangc, args, run_options);
     if (!run) {
         result.diagnostics = run.error().message;
+        for (const fs::path& out : staged) fs::remove(out, ec); // partial outputs
         return result;
     }
     result.diagnostics = std::move(run->output);
