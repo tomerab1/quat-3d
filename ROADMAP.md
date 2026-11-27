@@ -83,6 +83,15 @@ JSON-RPC over loopback TCP to the engine.
   under `content/` (tool descriptions via `#[doc = include_str!]`, prompts as
   MiniJinja templates); `server.rs`/`client.rs` split by responsibility (one
   rmcp router per tool group); `clippy::pedantic` enforced.
+- [ ] **S9 — Conflict-resistant registration.** Every feature PR edits the
+  same central lists (top-level `CMakeLists.txt` source lists, the
+  component table in `component_json.cpp`, `remote_bridge` method wiring,
+  quat-mcp `server/mod.rs` tool lists, `inspector.cpp`), so each merge
+  forces the next 3–5 PRs to re-resolve them. Move to per-module
+  `CMakeLists.txt` (`add_subdirectory` per `src/<module>`), a component
+  registry built from per-component registration files, remote method
+  tables registered per module, quat-mcp tools grouped by module with one
+  router merge line each, and per-component inspector files.
 - [ ] **A5 — Debugging tools.** Log tail + filters (S6), Vulkan validation
   messages, frame/GPU timings, pause / single-step / time scale, entity watch,
   physics raycasts and contact queries, navmesh path queries.
@@ -174,6 +183,23 @@ JSON-RPC over loopback TCP to the engine.
   shallow-water local sims and rivers from R10.2 erosion flow. *(medium)*
 - [ ] **R17 — Asset cooker formats.** KTX2 + Basis Universal textures,
   meshoptimizer codecs and quantisation. *(quick win)*
+- [ ] **R18 — VFX graph (Niagara-class).** On R10.3's GPU particle core: a
+  modular emitter model (spawn / init / update / render stages), a node
+  graph compiled to Slang compute modules (shares R7's codegen), events
+  between emitters, ribbons/trails, mesh particles, beams, GPU data
+  interfaces (sample skeleton, mesh surface, terrain, depth/SDF, wind
+  field), parameter collections, sub-UV + motion vectors, an editor graph
+  (imgui-node-editor) with live preview, and MCP authoring of emitters.
+  *(large; after R10.3, R7)*
+- [ ] **R19 — Virtualized geometry (Nanite-class).** Cluster DAG built
+  offline with meshoptimizer clusterlod (extends R17's cooker), page
+  streaming, GPU-driven two-pass occlusion culling on R12's Hi-Z, a
+  visibility buffer + material resolve pass, hardware raster through
+  indirect draws (mesh shaders where `VK_EXT_mesh_shader` exists) plus a
+  compute software rasteriser for sub-pixel triangles so every platform
+  (MoltenVK included) has a path; foliage and instanced meshes first, then
+  shadows (virtual shadow maps as a follow-up). *(very large; after R5, R6,
+  R9.4)*
 
 ## P — Platforms & shipping
 
@@ -227,6 +253,26 @@ JSON-RPC over loopback TCP to the engine.
   graph on Jolt compound shapes, breakable constraints, debris tiers and a
   `DEBRIS` layer, bond-delta replication over the net layer, destruction
   fields over MCP. *(medium)*
+
+**RPG / action-adventure set** (owner: "RPG games will be possible?"). With
+G5 + G6 these make a small third-person RPG shippable via P4; all game data
+is JSON/Lua so it is authorable over MCP.
+
+- [ ] **G11 — Save / load game state.** Versioned save files (player,
+  world deltas, script state via an explicit Lua `save`/`load` contract,
+  quest/inventory state), slots + autosave, migration on version bump.
+- [ ] **G12 — Dialogue + quests.** Data-driven dialogue graphs (choices,
+  conditions, Lua hooks, localisable string tables) and a quest system
+  (objectives, triggers, journal), each with an editor node view (reusing
+  imgui-node-editor) and MCP authoring tools.
+- [ ] **G13 — Gameplay framework.** Stats/attributes with modifiers,
+  abilities with cooldowns/costs, items + inventory + equipment, loot
+  tables — all data (JSON schemas) driven from Lua, validated on load.
+- [ ] **G14 — Combat.** Hitbox/hurtbox shapes on skeleton joints, animation
+  events/notifies and root motion (extends G8), damage pipeline, lock-on
+  targeting, NPC combat behaviour-tree leaves.
+- [ ] **G15 — Third-person camera rig.** Orbit/follow camera with collision
+  (sphere cast), lock-on framing, smoothing, cutscene camera tracks.
 
 ## E — Editor (production readiness)
 
