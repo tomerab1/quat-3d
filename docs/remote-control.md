@@ -311,7 +311,7 @@ Settings groups (the renderer implements exactly these):
 
 | Group | Fields |
 |---|---|
-| `exposure` | `auto` (histogram auto exposure; off = fixed exposure 2^EV), `compensation_ev` [-10, 10] EV (applies in both modes), `key` [0.01, 1], `min_exposure` / `max_exposure` [0.001, 64] (auto multiplier clamps), `adaptation_s` [0.05, 10] s |
+| `exposure` | `auto` (histogram auto exposure; off = fixed exposure 2^EV), `compensation_ev` [-10, 10] EV (applies in every mode), `key` [0.01, 1], `min_exposure` / `max_exposure` [0.001, 64] (auto multiplier clamps), `adaptation_s` [0.05, 10] s, `physical` (exposure from the active camera's aperture / shutter / ISO: 1 / (1.2 · 2^EV100); overrides `auto`) |
 | `bloom` | `enabled`, `threshold` [0, 8], `knee` [0, 1], `intensity` [0, 1], `radius` [0.2, 2] |
 | `taa` | `enabled` (off: no jitter, no history — the frame passes through — and native resolution), `feedback` [0, 0.98] (history weight; the resolve caps a pixel's accumulated sample weight at 1 / (1 − feedback)) |
 | `upscaler` | `mode` `"native_aa"` \| `"quality"` \| `"balanced"` \| `"performance"` (render scale 1, 1/1.5, 1/1.7, 1/2 per axis; needs TAA on), `render_scale` [0, 1] (overrides the mode when > 0, min 0.25), `sharpness` [0, 1], `backend` `"taau"` \| `"fsr2"` (FSR 2 is not built yet: falls back to `taau`) |
@@ -320,9 +320,16 @@ Settings groups (the renderer implements exactly these):
 | `contact_shadows` | `enabled`, `length` [0.01, 4] m, `steps` integer [2, 64], `thickness` [0.01, 4] m, `intensity` [0, 1] |
 | `ibl` | `intensity` [0, 4] — scales image-based ambient light and reflections |
 | `clouds` | as `environment.*`: `enabled`, `coverage` [0, 1], `density` [0, 128] /km, `bottom_km` [0.2, 15], `thickness_km` [0.2, 10], `size_km` [1, 80], `detail` [0, 1], `wind_speed` [0, 100] m/s, `wind_dir_deg` [-180, 180] |
+| `dof` | depth of field from the active camera's lens (`camera` component: `aperture_f`, `focal_length_mm`, `focus_distance_m`, `sensor_height_mm`): `enabled` (default off), `max_radius_px` [4, 64], `rings` integer [2, 6] |
+| `motion_blur` | `enabled`, `max_radius_px` [8, 64] (also the tile size), `samples` integer [4, 32], `scale` [0, 2] × the camera's shutter fraction (`shutter_s` / frame time, at most 1) |
+| `tonemap` | `operator` `"aces"` \| `"agx"` \| `"pbr_neutral"` |
+| `grading` | `temperature_k` [1500, 15000] K and `tint` [-1, 1] (white balance; 6500 / 0 neutral), `contrast` [0, 2], `saturation` [0, 2], `lift_r/g/b` [-0.5, 0.5], `gamma_r/g/b` [0.2, 5], `gain_r/g/b` [0, 4] (in ACEScct), `lut` (project-relative `.cube` path, `""` = none; checked on set — a missing or malformed file is rejected with the parser's error), `lut_contribution` [0, 1] |
+| `film` | `vignette_natural` [0, 1] (cos⁴ falloff of the camera's field of view), `vignette_intensity` [0, 1], `vignette_smoothness` [0.05, 1], `grain_intensity` [0, 1], `grain_size_px` [0.5, 4], `chromatic_aberration` [0, 1] |
 
-The tonemap operator (ACES filmic fit) is fixed; the renderer has no fog or
-debug views, so neither is listed. The sun is scene data: `environment.*`.
+The renderer has no fog or debug views, so neither is listed. The sun is
+scene data: `environment.*`. Field types in the schema: `boolean`, `number`,
+`integer`, `string` with `enum` (a choice) or with `format: "path"` and an
+`extension` (a project file).
 
 - **Set** merges: absent groups and fields (and fields given as `null`) keep
   their values. Every value is type- and range-checked and the call is all or

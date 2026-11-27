@@ -10,6 +10,7 @@
 #include "engine/physics/physics_world.hpp"
 #include "engine/scene/component_json.hpp"
 #include "engine/scene/components.hpp"
+#include "engine/scene/scene.hpp"
 #include "support/expect_ok.hpp"
 
 namespace {
@@ -43,7 +44,9 @@ TEST_F(ComponentJson, RoundTripsEveryWritableComponent) {
                        {"roughness", 0.25}, {"emissive", {2, 0, 0}}}},
         {"point_light", {{"color", {1, 0.5, 0}}, {"radius", 7}, {"intensity", 3}}},
         {"dir_light", {{"direction", {0, -1, 0}}, {"color", {1, 1, 1}}, {"intensity", 2}}},
-        {"camera", {{"fov_deg", 70}, {"near", 0.2}, {"far", 500}, {"active", false}}},
+        {"camera", {{"fov_deg", 70}, {"near", 0.2}, {"far", 500}, {"active", false},
+                    {"aperture_f", 1.4}, {"shutter_s", 0.004}, {"iso", 400},
+                    {"sensor_height_mm", 15.6}, {"focal_length_mm", 85}, {"focus_distance_m", 3}}},
         {"collider", {{"shape", "capsule"}, {"half_extents", {0.4, 0.9, 0.4}},
                       {"offset", {0, 0.1, 0}}, {"sensor", true}}},
         {"rigidbody", {{"motion", "kinematic"}, {"mass", 4}}},
@@ -175,6 +178,11 @@ TEST_F(ComponentJson, RejectsMalformedValuesWithoutAborting) {
         {"dir_light", {{"direction", {0, 0, 0}}}},
         {"camera", {{"near", 10}, {"far", 1}}},
         {"camera", {{"fov_deg", 0}}},
+        {"camera", {{"aperture_f", 0.1}}},
+        {"camera", {{"shutter_s", 0}}},
+        {"camera", {{"iso", "fast"}}},
+        {"camera", {{"focal_length_mm", -1}}},
+        {"camera", {{"focus_distance_m", 0}}},
         {"collider", {{"shape", "cone"}}},
         {"collider", {{"half_extents", {1, 0, 1}}}},
         {"rigidbody", {{"motion", true}}},
@@ -241,6 +249,23 @@ TEST_F(ComponentJson, RefusesReadOnlyEditOnlyAndUnknownComponents) {
     ASSERT_FALSE(unknown);
     EXPECT_NE(unknown.error().message.find("point_light"), std::string::npos);
     EXPECT_FALSE(s::remove_component(r, e, "transform"));
+}
+
+// R20: the camera's physical lens travels with the component, and a focal
+// length sets the projection's field of view.
+TEST_F(ComponentJson, CameraLensRoundTripsAndFocalLengthSetsTheFov) {
+    r.emplace<s::Transform>(e);
+    ASSERT_OK(apply("camera",
+                    {{"aperture_f", 2}, {"focal_length_mm", 50}, {"focus_distance_m", 4}}));
+    const auto& cam = r.get<s::Camera>(e);
+    EXPECT_FLOAT_EQ(cam.lens.aperture_f, 2.0F);
+    EXPECT_FLOAT_EQ(cam.lens.focus_distance_m, 4.0F);
+    EXPECT_FLOAT_EQ(cam.lens.iso, 100.0F); // untouched default
+    const json enc = encode_components(r, e, {});
+    EXPECT_FLOAT_EQ(enc["camera"]["focal_length_mm"].get<float>(), 50.0F);
+    // 50 mm on the default 24 mm sensor: tan(fov / 2) = 12 / 50.
+    const s::CameraMatrices m = s::camera_system(r, 1.0F);
+    EXPECT_NEAR(1.0F / std::abs(m.projection[1][1]), 12.0F / 50.0F, 1e-5F);
 }
 
 } // namespace

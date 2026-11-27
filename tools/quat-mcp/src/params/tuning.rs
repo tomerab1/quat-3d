@@ -7,7 +7,10 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
-use super::{CloudParams, Color, EntityRef};
+use super::{
+    CloudParams, Color, DofParams, EntityRef, FilmParams, GradingParams, MotionBlurParams,
+    TonemapParams,
+};
 
 /// A render-settings group.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -23,6 +26,12 @@ pub enum SettingsGroup {
     ContactShadows,
     Ibl,
     Clouds,
+    Dof,
+    #[serde(rename = "motion_blur")]
+    MotionBlur,
+    Tonemap,
+    Grading,
+    Film,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
@@ -54,6 +63,9 @@ pub struct ExposureParams {
     /// Eye adaptation time constant in seconds, 0.05..10 (default 1.1).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub adaptation_s: Option<f64>,
+    /// Expose from the active camera's aperture, shutter and ISO (EV100); overrides `auto`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub physical: Option<bool>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
@@ -274,6 +286,21 @@ pub struct RenderSettingsSetParams {
     /// Volumetric clouds (same fields as `environment_set`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub clouds: Option<CloudParams>,
+    /// Depth of field from the active camera's lens.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dof: Option<DofParams>,
+    /// Motion blur over the active camera's shutter.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub motion_blur: Option<MotionBlurParams>,
+    /// Tonemap operator.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tonemap: Option<TonemapParams>,
+    /// Colour grading: white balance, contrast, lift / gamma / gain, look LUT.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grading: Option<GradingParams>,
+    /// Lens and film: vignette, grain, chromatic aberration.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub film: Option<FilmParams>,
 }
 
 impl RenderSettingsSetParams {
@@ -289,6 +316,11 @@ impl RenderSettingsSetParams {
             && self.contact_shadows.is_none()
             && self.ibl.is_none()
             && self.clouds.is_none()
+            && self.dof.is_none()
+            && self.motion_blur.is_none()
+            && self.tonemap.is_none()
+            && self.grading.is_none()
+            && self.film.is_none()
     }
 }
 
