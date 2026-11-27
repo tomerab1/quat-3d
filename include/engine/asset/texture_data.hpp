@@ -5,6 +5,8 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <memory>
+#include <span>
 #include <vector>
 
 namespace engine::asset {
@@ -28,6 +30,41 @@ enum class TextureRole : std::uint8_t { color, normal, single_channel };
 // map stored as X in RGB and Y in alpha (the Basis normal-map layout) to RG.
 enum class TextureSwizzle : std::uint8_t { identity, rrr1, ra01 };
 
+// Owned texel storage that can adopt a decoder's own allocation (stb_image's
+// output) without copying. Move-only; empty when default-constructed or when
+// allocate() could not get the memory.
+// Deleter of PixelBuffer storage: the allocator's own free function.
+struct PixelRelease {
+    void (*fn)(void*) = nullptr;
+    void operator()(std::byte* p) const noexcept {
+        if (fn != nullptr) fn(p);
+    }
+};
+
+class PixelBuffer {
+public:
+    using FreeFn = void (*)(void*);
+
+    PixelBuffer() = default;
+    [[nodiscard]] static PixelBuffer allocate(std::size_t size);
+    // Takes ownership of `data` (`size` bytes), released with `free_fn`.
+    [[nodiscard]] static PixelBuffer adopt(void* data, std::size_t size, FreeFn free_fn) noexcept;
+
+    [[nodiscard]] std::byte* data() noexcept { return data_.get(); }
+    [[nodiscard]] const std::byte* data() const noexcept { return data_.get(); }
+    [[nodiscard]] std::size_t size() const noexcept { return size_; }
+    [[nodiscard]] bool empty() const noexcept { return size_ == 0; }
+    [[nodiscard]] std::byte& operator[](std::size_t i) noexcept { return data_.get()[i]; }
+    [[nodiscard]] std::byte operator[](std::size_t i) const noexcept { return data_.get()[i]; }
+    [[nodiscard]] const std::byte* begin() const noexcept { return data(); }
+    [[nodiscard]] const std::byte* end() const noexcept { return data() + size_; }
+    [[nodiscard]] std::span<const std::byte> span() const noexcept { return {data(), size_}; }
+
+private:
+    std::unique_ptr<std::byte, PixelRelease> data_;
+    std::size_t size_ = 0;
+};
+
 // One mip level inside TextureData::pixels.
 struct TextureLevel {
     std::uint64_t offset = 0;
@@ -40,7 +77,7 @@ struct TextureLevel {
 // tightly packed RGBA8 image whose mip chain is generated on upload;
 // otherwise it holds every listed level (level 0 first) in `format`.
 struct TextureData {
-    std::vector<std::byte>    pixels;
+    PixelBuffer               pixels;
     std::uint32_t             width  = 0;
     std::uint32_t             height = 0;
     TextureColorSpace         color_space = TextureColorSpace::linear;

@@ -3,9 +3,11 @@
 // Private to the cooker (src/cook/*.cpp).
 //
 //   texture_encode.cpp  RGBA8 -> mip chain -> KTX2 / Basis Universal
-//   mesh_cook.cpp       primitive grouping, meshoptimizer passes, LODs
+//   mesh_cook.cpp       primitive grouping, meshoptimizer passes
 //   mesh_streams.cpp    attribute quantisation into new buffer views
-//   gltf_cooker.cpp     parse, textures, buffer compaction, export
+//   gltf_access.cpp     buffer view bytes
+//   gltf_cooker.cpp     parse (runtime parse_gltf), textures, buffer compaction,
+//                       export
 
 #include <cstddef>
 #include <cstdint>
@@ -20,6 +22,7 @@
 
 #include "engine/cook/gltf_cooker.hpp"
 #include "engine/core/error.hpp"
+#include "scene/gltf/gltf_io.hpp"
 
 namespace engine::cook::detail {
 
@@ -43,29 +46,19 @@ struct PendingView {
 
 struct GeometryResult {
     std::vector<PendingView> views;
-    // Per accessor (asset.accessors, including appended LOD index accessors):
+    // Per accessor (asset.accessors, including appended index accessors):
     // the pending view it now reads from.
     std::vector<std::optional<std::size_t>> accessor_view;
-    // Per mesh: JSON for the mesh's "extras" (LOD table), empty when none.
-    std::vector<std::string> mesh_extras;
     bool          quantized = false; // any attribute needs KHR_mesh_quantization
     std::uint32_t cooked = 0;
     std::uint32_t skipped = 0;
-    std::uint32_t lods = 0;
     std::uint64_t bytes_before = 0;
     std::uint64_t bytes_after = 0; // raw (pre-codec) bytes of the new views
 };
 
-// Loaded bytes behind a buffer / image data source.
-[[nodiscard]] std::expected<std::span<const std::byte>, core::Error>
-source_bytes(const fastgltf::Asset& asset, const fastgltf::DataSource& source);
-
-// Bytes of a buffer view, range-checked.
+// gltf_access.cpp: bytes of a buffer view, range-checked.
 [[nodiscard]] std::expected<std::span<const std::byte>, core::Error>
 view_bytes(const fastgltf::Asset& asset, std::size_t view);
-
-// Every accessor lies inside its buffer view, every view inside its buffer.
-[[nodiscard]] std::expected<void, core::Error> check_ranges(const fastgltf::Asset& asset);
 
 // mesh_cook.cpp: rewrites the accessors of every cookable triangle primitive
 // group in place (they now point at GeometryResult::views).

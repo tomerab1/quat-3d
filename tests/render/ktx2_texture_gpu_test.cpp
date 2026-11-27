@@ -43,7 +43,7 @@ std::vector<std::byte> solid(std::array<std::uint8_t, 4> rgba) {
 std::expected<asset::TextureData, Error> cooked(const std::vector<std::byte>& rgba,
                                                 asset::TextureRole role,
                                                 asset::TextureColorSpace space,
-                                                rhi::TextureCompressionSupport caps) {
+                                                rhi::TextureCaps caps) {
     engine::cook::TextureCookOptions o;
     o.color_codec = engine::cook::BasisCodec::uastc;
     o.threads = 1;
@@ -105,9 +105,9 @@ int srgb_to_linear8(int c) {
 
 TEST(GpuKtx2Texture, Bc7BaseColourIsSampledWithItsColour) {
     QUAT_REQUIRE_GPU(g);
-    if (!g->transfer.compression.bc) GTEST_SKIP() << "device has no BC formats";
+    if (!g->transfer.texture_caps.bc) GTEST_SKIP() << "device has no BC formats";
     auto tex = cooked(solid({200, 100, 50, 255}), asset::TextureRole::color,
-                      asset::TextureColorSpace::srgb, g->transfer.compression);
+                      asset::TextureColorSpace::srgb, g->transfer.texture_caps);
     ASSERT_OK(tex);
     ASSERT_EQ(tex->format, asset::TexelFormat::bc7);
     EXPECT_EQ(tex->levels.size(), 6U); // 32 -> 1
@@ -120,9 +120,9 @@ TEST(GpuKtx2Texture, Bc7BaseColourIsSampledWithItsColour) {
 
 TEST(GpuKtx2Texture, Bc4SingleChannelReadsAsGrey) {
     QUAT_REQUIRE_GPU(g);
-    if (!g->transfer.compression.bc) GTEST_SKIP() << "device has no BC formats";
+    if (!g->transfer.texture_caps.bc) GTEST_SKIP() << "device has no BC formats";
     auto tex = cooked(solid({180, 20, 20, 255}), asset::TextureRole::single_channel,
-                      asset::TextureColorSpace::linear, g->transfer.compression);
+                      asset::TextureColorSpace::linear, g->transfer.texture_caps);
     ASSERT_OK(tex);
     ASSERT_EQ(tex->format, asset::TexelFormat::bc4);
     auto px = albedo_of(*g, *tex);
@@ -140,7 +140,7 @@ TEST(GpuKtx2Texture, XyNormalLayoutIsSwizzledIntoRedGreen) {
     const float nz = std::sqrt(1.0F - nx * nx - ny * ny);
     const auto unorm = [](float v) { return static_cast<std::uint8_t>(std::lround((v * 0.5F + 0.5F) * 255.0F)); };
     auto tex = cooked(solid({unorm(nx), unorm(ny), unorm(nz), 255}), asset::TextureRole::normal,
-                      asset::TextureColorSpace::linear, rhi::TextureCompressionSupport{});
+                      asset::TextureColorSpace::linear, rhi::TextureCaps{});
     ASSERT_OK(tex);
     ASSERT_EQ(tex->format, asset::TexelFormat::rgba8);
     ASSERT_EQ(tex->swizzle, asset::TextureSwizzle::ra01);
@@ -153,10 +153,10 @@ TEST(GpuKtx2Texture, XyNormalLayoutIsSwizzledIntoRedGreen) {
 
 TEST(GpuKtx2Texture, AstcUploadsWhereSupported) {
     QUAT_REQUIRE_GPU(g);
-    if (!g->transfer.compression.astc_ldr) GTEST_SKIP() << "device has no ASTC LDR (lavapipe)";
+    if (!g->transfer.texture_caps.astc_ldr) GTEST_SKIP() << "device has no ASTC LDR (lavapipe)";
     auto tex = cooked(solid({30, 160, 220, 255}), asset::TextureRole::color,
                       asset::TextureColorSpace::linear,
-                      rhi::TextureCompressionSupport{false, true, true});
+                      rhi::TextureCaps{false, true, true});
     ASSERT_OK(tex);
     ASSERT_EQ(tex->format, asset::TexelFormat::astc_4x4);
     auto px = albedo_of(*g, *tex);

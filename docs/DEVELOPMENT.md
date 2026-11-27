@@ -93,7 +93,11 @@ destroyed once the frames in flight are done.
 
 `quat-cook <input.gltf|glb> <output.gltf|glb> [options]` (target
 `quat-cook`) prepares a glTF for shipping. A `.glb` output is one binary
-file; a `.gltf` output gets a `.bin` next to it.
+file; a `.gltf` output gets a `.bin` next to it. The input goes through the
+runtime's own parse and validation (`parse_gltf`, `asset::decode_png_jpeg`
+and its limits), so anything the cooker accepts the engine loads; already
+cooked files can be cooked again (their meshopt streams are decoded first).
+Cooked files target the engine: see the normal-map note below.
 
 - **Textures** become KTX2 with Basis Universal supercompression
   (`KHR_texture_basisu`, the PNG/JPEG is dropped), full mip chains generated
@@ -101,6 +105,10 @@ file; a `.gltf` output gets a `.bin` next to it.
   the extension requires. Normal maps use UASTC (+ RDO + Zstd) and are stored
   as X in RGB / Y in alpha so they transcode to BC5; everything else uses
   ETC1S. Occlusion-only images are stored single-channel (BC4 at runtime).
+  Third-party viewers read such a normal map's RGB as (X, X, X); textures in
+  that layout carry `extras.quat_normal_xy: true` (the engine itself reads
+  the layout from the KTX2 descriptor). Use `--normal-layout rgb` for files
+  meant for other viewers.
 - **Meshes**: primitives sharing a vertex stream set are optimised together
   (meshoptimizer vertex cache, overdraw, vertex fetch; unused vertices are
   dropped), then quantised — normals / tangents as 8-bit octahedral
@@ -109,9 +117,6 @@ file; a `.gltf` output gets a `.bin` next to it.
   and compressed with the meshopt codecs (`EXT_meshopt_compression`, vertex
   codec v0 as the extension requires). Primitives with morph targets, or
   whose accessors other primitives share differently, are copied unchanged.
-- **LODs** (`--lod 0.5 --lod 0.25`): simplified index buffers per primitive,
-  listed in the mesh's `extras.quat_lods` (`primitive`, `ratio`, `indices`
-  accessor, `error`); the renderer does not select them yet.
 - Buffers are compacted to the data the output still references.
 
 | Option | Default | |
@@ -124,11 +129,10 @@ file; a `.gltf` output gets a `.bin` next to it.
 | `--no-mips`, `--no-textures` | | |
 | `--no-optimize`, `--no-quantize`, `--no-compress` | | skip the mesh passes |
 | `--position-bits N`, `--normal-bits 8\|16` | 16, 8 | quantisation precision |
-| `--lod RATIO` (repeatable), `--lod-error E` | none, 0.01 | simplified LODs |
 | `--threads N` | all cores | texture encoder threads |
 
 At load the engine picks the transcode target from what the device samples
-(`rhi::TextureCompressionSupport`, enabled at device creation):
+(`rhi::TextureCaps`, enabled at device creation):
 
 | Texture | BC (desktop, lavapipe) | ASTC only, or Apple GPU | Neither |
 |---|---|---|---|
@@ -138,10 +142,28 @@ At load the engine picks the transcode target from what the device samples
 | Single channel, linear | BC4 (+ RRR1 swizzle) | ASTC 4x4 | RGBA8 |
 
 KTX2 files that already hold BC7/BC5/BC4/ASTC 4x4/RGBA8 data are uploaded
-as they are when the device supports the format. Untrusted files are
-validated before libktx sees them (header, level index, sizes, dimension
-and decoded-size caps in `asset::Ktx2Limits`). Decoding and transcoding run
+as they are when the device supports the format. Decoding and transcoding run
 on worker threads (`extract_textures`); only the upload uses the device.
+
+Every texture is untrusted input, checked against one configuration,
+`asset::TextureLimits` (default 8192 per side, lowered to the device's
+`maxImageDimension2D`; 512 MiB decoded per image; 2 GiB per load, shared by a
+file's images through `asset::DecodeBudget`) before anything is allocated:
+
+- PNG / JPEG (`asset::decode_png_jpeg`): only those two formats are compiled
+  into stb_image (`STBI_MAX_DIMENSIONS` 16384 as a second guard); the size in
+  the header is checked first and stb's buffer is adopted without a copy.
+- KTX2 (`asset::validate_ktx2`): header, level index (in-file, ordered,
+  sizes matching the extent), BasisLZ global data (codebook lengths, one
+  image descriptor per level, slices inside their level), then libktx loads
+  and transcodes. The `ktx` overlay port also makes libktx fail on corrupt
+  BasisLZ codebooks instead of transcoding with them (a crash found by the
+  fuzz test), and exports `KTX::ktx_read`, which the game links (no Basis /
+  ASTC encoders; the `game_has_no_texture_encoder` CTest checks with `nm`).
+  `QUAT_KTX2_FUZZ_ROUNDS=<n>` lengthens the `Ktx2Decode.CorruptedFilesNeverCrash`
+  fuzz test, e.g. in an ASan build (CI runs it without sanitizers).
+- `EXT_meshopt_compression` views are rejected when they claim more than
+  1024x their compressed size or push the file past 1 GiB decoded.
 Quantised attributes are dequantised to the float vertex layout at load —
 smaller downloads, same VRAM per vertex; a quantised vertex format is a
 later step.

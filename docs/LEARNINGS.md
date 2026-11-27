@@ -101,6 +101,17 @@ into CLAUDE.md or the brief template in [`CYCLE.md`](CYCLE.md).
 
 ## C++ in this codebase
 
+- **Fuzz every payload variant, not just one.** R17's KTX2 fuzz test first
+  mutated only UASTC files; the review asked for ETC1S too, and the first
+  ETC1S run crashed inside libktx (it ignores `decode_palettes` failures and
+  transcodes with half-built codebooks; fixed in the `ktx` overlay port) and
+  ASan then found a wrapped allocation from out-of-order level offsets. →
+  Fuzz tests cover each codec / format branch, biased into each structure
+  the parser trusts, and get one run under ASan + valgrind before merging.
+- **libktx's `ktx` and `ktx_read` archives cannot share a program** (same
+  objects, duplicate symbols). engine_asset compiles against the headers and
+  each executable links one: the game `KTX::ktx_read`, tests / cooker
+  `KTX::ktx`.
 - **meshoptimizer 1.x encodes vertex codec v1 by default, which
   `EXT_meshopt_compression` does not allow** (v1 is for the newer
   `KHR_meshopt_compression`). The cooker calls

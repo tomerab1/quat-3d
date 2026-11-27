@@ -205,7 +205,9 @@ faster and needs about a quarter of the texture memory:
 ./build/release/quat-cook sample-assets/DamagedHelmet.glb sample-assets/DamagedHelmet.cooked.glb
 ```
 
-Options (codecs, quality, LODs) are listed in
+Cooked files are meant for the engine: normal maps are stored in a two-channel
+layout other glTF viewers do not expect (`--normal-layout rgb` avoids that).
+Options (codecs, quality) are listed in
 [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md#cooking-assets).
 
 ## AI tools (MCP)

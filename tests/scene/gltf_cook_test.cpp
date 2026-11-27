@@ -12,6 +12,7 @@
 #include <cstring>
 #include <fstream>
 #include <map>
+#include <span>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -190,7 +191,7 @@ std::vector<Tri> grid_triangles(const MeshData& m) {
     return out;
 }
 
-double rmse(const std::vector<std::uint8_t>& a, const std::vector<std::byte>& b, int c0, int c1) {
+double rmse(const std::vector<std::uint8_t>& a, std::span<const std::byte> b, int c0, int c1) {
     double sum = 0;
     for (std::size_t i = 0; i < a.size() / 4; ++i) {
         for (int c = c0; c <= c1; ++c) {
@@ -209,17 +210,15 @@ TEST(GltfCook, CookedGlbLoadsTheSameGeometryAndTextures) {
     const fs::path out = dir.path() / "grid_cooked.glb";
     engine::cook::CookOptions options;
     options.textures.threads = 1;
-    options.meshes.lod_ratios = {0.5F};
     auto stats = engine::cook::cook_gltf(src, out, options);
     ASSERT_OK(stats);
     EXPECT_EQ(stats->images_encoded, 2U);
     EXPECT_EQ(stats->primitives_cooked, 1U);
-    EXPECT_EQ(stats->lods_written, 1U);
     EXPECT_LT(stats->mesh_bytes_after, stats->mesh_bytes_before / 2);
 
     const std::string glb = read_text(out);
     for (const char* ext : {"KHR_texture_basisu", "EXT_meshopt_compression",
-                            "KHR_mesh_quantization", "quat_lods"}) {
+                            "KHR_mesh_quantization", "quat_normal_xy"}) {
         EXPECT_NE(glb.find(ext), std::string::npos) << ext;
     }
 
@@ -250,12 +249,33 @@ TEST(GltfCook, CookedGlbLoadsTheSameGeometryAndTextures) {
     const auto& normal = (*textures)[(*materials)[0].normal_image];
     ASSERT_EQ(albedo.levels.size(), 6U);
     EXPECT_EQ(albedo.color_space, engine::asset::TextureColorSpace::srgb);
-    EXPECT_LT(rmse(albedo_pixels(), albedo.pixels, 0, 2), 14.0);
+    EXPECT_LT(rmse(albedo_pixels(), albedo.pixels.span(), 0, 2), 14.0);
     ASSERT_EQ(normal.swizzle, engine::asset::TextureSwizzle::ra01);
     std::vector<std::byte> xy(normal.pixels.begin(),
                               normal.pixels.begin() + static_cast<std::ptrdiff_t>(normal.levels[0].size));
     for (std::size_t i = 0; i < xy.size() / 4; ++i) xy[i * 4 + 1] = xy[i * 4 + 3];
     EXPECT_LT(rmse(normal_pixels(), xy, 0, 1), 4.0);
+}
+
+// Cooking a cooked file: the runtime's parse decodes the meshopt streams, the
+// cook re-encodes them and keeps the KTX2 images.
+TEST(GltfCook, CookedOutputCanBeCookedAgain) {
+    quat::test::TempDir dir("gltf-cook-again");
+    const fs::path src = write_source_gltf(dir.path());
+    const fs::path once = dir.path() / "once.glb";
+    const fs::path twice = dir.path() / "twice.glb";
+    engine::cook::CookOptions options;
+    options.textures.threads = 1;
+    ASSERT_OK(engine::cook::cook_gltf(src, once, options));
+    auto again = engine::cook::cook_gltf(once, twice, options);
+    ASSERT_OK(again);
+    EXPECT_EQ(again->images_encoded, 0U); // already KTX2
+    auto before = GltfLoader::load_mesh_data(src);
+    auto after = GltfLoader::load_mesh_data(twice);
+    ASSERT_OK(before);
+    ASSERT_OK(after);
+    EXPECT_EQ(grid_triangles(*before), grid_triangles(*after));
+    ASSERT_OK(GltfLoader::load_texture_data(twice));
 }
 
 TEST(GltfCook, UncompressedOutputStillLoads) {
@@ -283,18 +303,38 @@ TEST(GltfCook, CorruptCompressedGeometryIsRejected) {
     ASSERT_OK(engine::cook::cook_gltf(src, out, options));
     ASSERT_OK(GltfLoader::load_mesh_data(out));
 
+    // Edits to the POSITION stream's extension object (the only 12-byte
+    // stride): `field`'s number replaced by `value`.
+    const std::string original = read_text(out);
+    const auto with_field = [&](const std::string& field, const std::string& value) {
+        std::string json = original;
+        const std::size_t stride = json.find("\"byteStride\":12,\"count\"");
+        ASSERT_NE(stride, std::string::npos);
+        const std::size_t ext = json.rfind("\"EXT_meshopt_compression\":{", stride);
+        ASSERT_NE(ext, std::string::npos);
+        const std::string key = "\"" + field + "\":";
+        const std::size_t at = json.find(key, ext);
+        ASSERT_LT(at, stride);
+        const std::size_t begin = at + key.size();
+        const std::size_t end = json.find_first_not_of("0123456789", begin);
+        json.replace(begin, end - begin, value);
+        write_file(out, json.data(), json.size());
+    };
+    // A compressed range past the end of its buffer.
+    with_field("byteLength", "999999999");
+    EXPECT_ERR(GltfLoader::load_mesh_data(out));
+    // A decompression bomb: thousands of bytes claimed from one.
+    with_field("byteLength", "1");
+    auto bomb = GltfLoader::load_mesh_data(out);
+    ASSERT_ERR(bomb);
+    EXPECT_NE(bomb.error().message.find("compressed bytes"), std::string::npos)
+        << bomb.error().message;
+
     // Garbage in place of the meshopt streams: decode must fail cleanly.
+    write_file(out, original.data(), original.size());
     const fs::path bin = dir.path() / "cooked.bin";
     std::string bytes = read_text(bin);
     for (std::size_t i = 0; i < bytes.size(); ++i) bytes[i] = static_cast<char>(0xA5 ^ (i * 7));
     write_file(bin, bytes.data(), bytes.size());
-    EXPECT_ERR(GltfLoader::load_mesh_data(out));
-
-    // A compressed range past the end of its buffer.
-    std::string json = read_text(out);
-    const std::size_t at = json.find("\"EXT_meshopt_compression\":{\"buffer\":0");
-    ASSERT_NE(at, std::string::npos);
-    json.insert(at + std::string("\"EXT_meshopt_compression\":{").size(), "\"byteOffset\":999999999,");
-    write_file(out, json.data(), json.size());
     EXPECT_ERR(GltfLoader::load_mesh_data(out));
 }

@@ -11,7 +11,7 @@
 #include <vk_mem_alloc.h>
 
 #include "engine/core/error.hpp"
-#include "engine/rhi/texture_compression.hpp"
+#include "engine/rhi/texture_caps.hpp"
 
 namespace engine::rhi {
 
@@ -160,14 +160,15 @@ private:
 // Immutable transfer context (transfer-capable queue + a command pool created on
 // its family) used by the staging upload helper. `max_anisotropy` carries the
 // device's sampler anisotropy limit (0 = feature unavailable) and
-// `compression` the sampleable compressed formats, so asset loads can build
-// properly filtered samplers and pick transcode targets without a Device.
+// `texture_caps` the sampleable formats and size limit, so asset loads can
+// build properly filtered samplers, pick transcode targets and reject
+// oversized images without a Device.
 struct TransferContext {
-    VkDevice                  device         = VK_NULL_HANDLE;
-    VkCommandPool             pool           = VK_NULL_HANDLE;
-    VkQueue                   queue          = VK_NULL_HANDLE;
-    float                     max_anisotropy = 0.0F;
-    TextureCompressionSupport compression{};
+    VkDevice      device         = VK_NULL_HANDLE;
+    VkCommandPool pool           = VK_NULL_HANDLE;
+    VkQueue       queue          = VK_NULL_HANDLE;
+    float         max_anisotropy = 0.0F;
+    TextureCaps   texture_caps{};
 };
 
 // Creates a device-local buffer and uploads `data` into it through a temporary

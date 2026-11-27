@@ -86,7 +86,7 @@ assemble_scene(const fastgltf::Asset& a, const std::string& key_prefix,
     // Textures: decode + upload each image once, cached by "<path>#img<i>".
     // CPU decode / KTX2 transcode runs on worker threads inside
     // extract_textures; only the uploads below touch the device.
-    auto tex_datas = extract_textures(a, transfer.compression);
+    auto tex_datas = extract_textures(a, transfer.texture_caps);
     if (!tex_datas) return std::unexpected(tex_datas.error());
     std::vector<asset::AssetHandle<asset::TextureAsset>> tex_handles(a.images.size());
     for (std::size_t i = 0; i < a.images.size(); ++i) {

@@ -1,5 +1,6 @@
-// glTF cook: parse -> meshes (mesh_cook.cpp) -> images (KTX2) -> one compacted
-// binary buffer plus an EXT_meshopt_compression fallback buffer -> export.
+// glTF cook: parse + validate (the runtime's parse_gltf) -> meshes
+// (mesh_cook.cpp) -> images (KTX2) -> one compacted binary buffer plus an
+// EXT_meshopt_compression fallback buffer -> export.
 
 #include <algorithm>
 #include <cstring>
@@ -10,10 +11,8 @@
 #include <fastgltf/tools.hpp>
 #include <meshoptimizer.h>
 
-// Declarations only; the implementation is compiled once, permissively.
-#include <stb_image.h>
-
 #include "cook/internal.hpp"
+#include "engine/asset/image_decode.hpp"
 
 namespace engine::cook {
 
@@ -21,13 +20,7 @@ namespace {
 
 using detail::fail;
 namespace fs = std::filesystem;
-
-constexpr auto k_extensions =
-    fastgltf::Extensions::KHR_materials_transmission | fastgltf::Extensions::KHR_materials_ior |
-    fastgltf::Extensions::KHR_materials_volume | fastgltf::Extensions::KHR_texture_transform |
-    fastgltf::Extensions::KHR_materials_emissive_strength |
-    fastgltf::Extensions::KHR_materials_clearcoat | fastgltf::Extensions::KHR_texture_basisu |
-    fastgltf::Extensions::EXT_meshopt_compression | fastgltf::Extensions::KHR_mesh_quantization;
+namespace gltf = scene::gltf_detail;
 
 [[nodiscard]] bool uses_extension(const fastgltf::Asset& asset, std::string_view name) {
     return std::any_of(asset.extensionsUsed.begin(), asset.extensionsUsed.end(),
@@ -42,72 +35,41 @@ void require_extension(fastgltf::Asset& asset, std::string_view name) {
     }
 }
 
-struct ImageRoles {
-    std::vector<asset::TextureRole>       role;
-    std::vector<asset::TextureColorSpace> space;
-    std::vector<bool>                     sampled;
-};
-
-// Same usage rules as the runtime loader (scene/gltf/texture.cpp).
-[[nodiscard]] ImageRoles image_roles(const fastgltf::Asset& a) {
-    const std::size_t n = a.images.size();
-    std::vector<std::uint8_t> srgb(n), normal(n), single(n), other(n);
-    ImageRoles r{std::vector<asset::TextureRole>(n, asset::TextureRole::color),
-                 std::vector<asset::TextureColorSpace>(n, asset::TextureColorSpace::linear),
-                 std::vector<bool>(n, false)};
-    const auto mark = [&](const auto& info, std::vector<std::uint8_t>& flag) {
-        if (!info.has_value() || info->textureIndex >= a.textures.size()) return;
-        const auto& img = a.textures[info->textureIndex].imageIndex;
-        if (img && *img < n) flag[*img] = 1;
-    };
-    for (const fastgltf::Material& m : a.materials) {
-        mark(m.pbrData.baseColorTexture, srgb);
-        mark(m.emissiveTexture, srgb);
-        mark(m.normalTexture, normal);
-        mark(m.occlusionTexture, single);
-        mark(m.pbrData.metallicRoughnessTexture, other);
-        if (m.volume != nullptr) mark(m.volume->thicknessTexture, other);
-    }
-    for (const fastgltf::Texture& t : a.textures) {
-        if (t.imageIndex && *t.imageIndex < n && !t.basisuImageIndex) r.sampled[*t.imageIndex] = true;
-    }
-    for (std::size_t i = 0; i < n; ++i) {
-        if (srgb[i] != 0) r.space[i] = asset::TextureColorSpace::srgb;
-        if (srgb[i] == 0 && other[i] == 0) {
-            if (normal[i] != 0 && single[i] == 0) r.role[i] = asset::TextureRole::normal;
-            if (single[i] != 0 && normal[i] == 0) r.role[i] = asset::TextureRole::single_channel;
-        }
-    }
-    return r;
+void drop_extension(fastgltf::Asset& asset, std::string_view name) {
+    const auto is = [&](const auto& e) { return std::string_view(e) == name; };
+    std::erase_if(asset.extensionsUsed, is);
+    std::erase_if(asset.extensionsRequired, is);
 }
 
-// Encodes every sampled PNG/JPEG image to KTX2; nullopt keeps an image as is.
-[[nodiscard]] std::expected<std::vector<std::optional<std::vector<std::byte>>>, core::Error>
+struct CookedImages {
+    std::vector<std::optional<std::vector<std::byte>>> ktx2; // nullopt: kept as is
+    std::vector<bool>                                  normal_xy;
+};
+
+// Encodes every sampled PNG/JPEG image to KTX2 (decoded through the runtime's
+// guarded decoder and limits); other images (KTX2 already) are kept.
+[[nodiscard]] std::expected<CookedImages, core::Error>
 cook_images(const fastgltf::Asset& asset, const TextureCookOptions& o, CookStats& stats) {
-    std::vector<std::optional<std::vector<std::byte>>> out(asset.images.size());
+    CookedImages out{std::vector<std::optional<std::vector<std::byte>>>(asset.images.size()),
+                     std::vector<bool>(asset.images.size(), false)};
     if (!o.enabled) return out;
-    const ImageRoles roles = image_roles(asset);
+    const std::vector<gltf::ImageUsage> uses = gltf::image_usages(asset);
+    asset::DecodeBudget budget(asset::TextureLimits{}.max_total_decoded_bytes);
     for (std::size_t i = 0; i < asset.images.size(); ++i) {
-        if (!roles.sampled[i]) continue;
-        auto encoded = detail::source_bytes(asset, asset.images[i].data);
+        if (!uses[i].sampled) continue;
+        auto encoded = gltf::data_source_bytes(asset, asset.images[i].data);
         if (!encoded) return std::unexpected(encoded.error());
-        int w = 0;
-        int h = 0;
-        int ch = 0;
-        stbi_uc* px = stbi_load_from_memory(reinterpret_cast<const stbi_uc*>(encoded->data()),
-                                            static_cast<int>(encoded->size()), &w, &h, &ch, 4);
-        if (px == nullptr) continue; // not PNG/JPEG (e.g. KTX2 already): keep
-        const std::span<const std::byte> rgba(reinterpret_cast<const std::byte*>(px),
-                                              static_cast<std::size_t>(w) * h * 4);
-        auto ktx2 = detail::encode_image_ktx2(rgba, static_cast<std::uint32_t>(w),
-                                              static_cast<std::uint32_t>(h), roles.role[i],
-                                              roles.space[i], o);
-        stbi_image_free(px);
+        if (!asset::is_png_or_jpeg(*encoded)) continue;
+        auto image = asset::decode_png_jpeg(*encoded, uses[i].color_space, {}, &budget);
+        if (!image) return fail("image " + std::to_string(i) + ": " + image.error().message);
+        auto ktx2 = detail::encode_image_ktx2(image->pixels.span(), image->width, image->height,
+                                              uses[i].role, uses[i].color_space, o);
         if (!ktx2) return fail("image " + std::to_string(i) + ": " + ktx2.error().message);
         stats.image_bytes_before += encoded->size();
         stats.image_bytes_after += ktx2->size();
         ++stats.images_encoded;
-        out[i] = std::move(*ktx2);
+        out.ktx2[i] = std::move(*ktx2);
+        out.normal_xy[i] = uses[i].role == asset::TextureRole::normal && o.normal_xy_layout;
     }
     return out;
 }
@@ -161,8 +123,9 @@ struct Assembly {
 // appended (meshopt-compressed or raw), encoded images embedded.
 [[nodiscard]] std::expected<void, core::Error>
 assemble(fastgltf::Asset& asset, detail::GeometryResult& geo,
-         std::vector<std::optional<std::vector<std::byte>>>& images, const MeshCookOptions& o,
-         CookStats& stats) {
+         const CookedImages& cooked, const MeshCookOptions& o, CookStats& stats,
+         std::vector<std::string>& texture_extras) {
+    const auto& images = cooked.ktx2;
     Assembly out;
     std::vector<std::optional<std::size_t>> old_to_new(asset.bufferViews.size());
     const auto keep_view = [&](std::size_t old) -> std::expected<std::size_t, core::Error> {
@@ -244,7 +207,7 @@ assemble(fastgltf::Asset& asset, detail::GeometryResult& geo,
             append_aligned(out.buffer, *images[i], v.byteOffset);
             v.byteLength = images[i]->size();
         } else {
-            auto bytes = detail::source_bytes(asset, img.data);
+            auto bytes = gltf::data_source_bytes(asset, img.data);
             if (!bytes) return fail("image " + std::to_string(i) + ": " + bytes.error().message);
             std::visit(fastgltf::visitor{[&](const fastgltf::sources::BufferView& s) { mime = s.mimeType; },
                                          [&](const fastgltf::sources::Array& s) { mime = s.mimeType; },
@@ -257,8 +220,14 @@ assemble(fastgltf::Asset& asset, detail::GeometryResult& geo,
         out.views.push_back(std::move(v));
         img.data = fastgltf::sources::BufferView{out.views.size() - 1, mime};
     }
-    for (fastgltf::Texture& tex : asset.textures) {
+    // Cooked images replace the PNG/JPEG source outright (no fallback);
+    // normal maps in the X-in-RGB / Y-in-alpha layout are marked so tools
+    // other than the engine can tell (the engine reads the KTX2 descriptor).
+    texture_extras.assign(asset.textures.size(), std::string{});
+    for (std::size_t t = 0; t < asset.textures.size(); ++t) {
+        fastgltf::Texture& tex = asset.textures[t];
         if (tex.imageIndex && images[*tex.imageIndex]) {
+            if (cooked.normal_xy[*tex.imageIndex]) texture_extras[t] = R"({"quat_normal_xy":true})";
             tex.basisuImageIndex = tex.imageIndex;
             tex.imageIndex.reset();
         }
@@ -277,8 +246,10 @@ assemble(fastgltf::Asset& asset, detail::GeometryResult& geo,
         fallback.byteLength = out.fallback_bytes;
         fallback.data = fastgltf::sources::Fallback{};
         asset.buffers.push_back(std::move(fallback));
-        require_extension(asset, "EXT_meshopt_compression");
     }
+    // Compressed input was decoded at parse; only this cook's views use it now.
+    drop_extension(asset, "EXT_meshopt_compression");
+    if (out.fallback_bytes > 0) require_extension(asset, "EXT_meshopt_compression");
     asset.bufferViews = std::move(out.views);
     if (geo.quantized) require_extension(asset, "KHR_mesh_quantization");
     if (std::any_of(images.begin(), images.end(), [](const auto& i) { return i.has_value(); })) {
@@ -287,10 +258,11 @@ assemble(fastgltf::Asset& asset, detail::GeometryResult& geo,
     return {};
 }
 
-std::optional<std::string> mesh_extras(std::size_t index, fastgltf::Category category,
-                                       void* user) {
+std::optional<std::string> texture_extras(std::size_t index, fastgltf::Category category,
+                                          void* user) {
     const auto& extras = *static_cast<const std::vector<std::string>*>(user);
-    if (category != fastgltf::Category::Meshes || index >= extras.size() || extras[index].empty()) {
+    if (category != fastgltf::Category::Textures || index >= extras.size() ||
+        extras[index].empty()) {
         return std::nullopt;
     }
     return extras[index];
@@ -308,27 +280,23 @@ std::expected<CookStats, core::Error> cook_gltf(const fs::path& input, const fs:
                                                 const CookOptions& options) {
     auto data = fastgltf::GltfDataBuffer::FromPath(input);
     if (data.error() != fastgltf::Error::None) return fail("cannot read '" + input.string() + "'");
-    fastgltf::Parser parser(k_extensions);
-    auto parsed = parser.loadGltf(data.get(), input.parent_path(),
-                                  fastgltf::Options::LoadExternalBuffers |
-                                      fastgltf::Options::LoadExternalImages);
-    if (parsed.error() != fastgltf::Error::None) {
-        return fail(std::string("parse failed: ") +
-                    std::string(fastgltf::getErrorMessage(parsed.error())));
-    }
-    fastgltf::Asset asset = std::move(parsed.get());
-    if (uses_extension(asset, "EXT_meshopt_compression")) {
-        return fail("input already uses EXT_meshopt_compression; cook from the source asset");
-    }
-    if (auto ok = detail::check_ranges(asset); !ok) return std::unexpected(ok.error());
+    // The runtime's own parse: extensions, EXT_meshopt_compression decoding
+    // and validate_asset() (buffer / accessor ranges, references, hierarchy).
+    auto parsed = gltf::parse_gltf(data.get(), input.parent_path());
+    if (!parsed) return fail(parsed.error().message);
+    fastgltf::Asset asset = std::move(*parsed);
 
     CookStats stats;
     stats.input_bytes = file_bytes(input);
     if (input.extension() != ".glb") { // a .gltf's buffers / images are separate or base64
-        for (const fastgltf::Buffer& b : asset.buffers) stats.input_bytes += b.byteLength;
+        for (const fastgltf::Buffer& b : asset.buffers) { // decoded meshopt views are Vectors
+            if (!std::holds_alternative<fastgltf::sources::Vector>(b.data)) {
+                stats.input_bytes += b.byteLength;
+            }
+        }
         for (const fastgltf::Image& img : asset.images) {
             if (!std::holds_alternative<fastgltf::sources::BufferView>(img.data)) {
-                if (auto b = detail::source_bytes(asset, img.data)) stats.input_bytes += b->size();
+                if (auto b = gltf::data_source_bytes(asset, img.data)) stats.input_bytes += b->size();
             }
         }
     }
@@ -339,14 +307,14 @@ std::expected<CookStats, core::Error> cook_gltf(const fs::path& input, const fs:
     if (!geo) return std::unexpected(geo.error());
     stats.primitives_cooked = geo->cooked;
     stats.primitives_skipped = geo->skipped;
-    stats.lods_written = geo->lods;
-    if (auto ok = assemble(asset, *geo, *images, options.meshes, stats); !ok) {
+    std::vector<std::string> extras;
+    if (auto ok = assemble(asset, *geo, *images, options.meshes, stats, extras); !ok) {
         return std::unexpected(ok.error());
     }
 
     fastgltf::FileExporter exporter;
-    exporter.setUserPointer(&geo->mesh_extras);
-    exporter.setExtrasWriteCallback(&mesh_extras);
+    exporter.setUserPointer(&extras);
+    exporter.setExtrasWriteCallback(&texture_extras);
     const bool binary = output.extension() == ".glb";
     if (!binary) asset.buffers[0].name = output.stem().string();
     const fastgltf::Error written = binary ? exporter.writeGltfBinary(asset, output)

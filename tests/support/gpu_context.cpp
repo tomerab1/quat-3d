@@ -82,7 +82,7 @@ GpuContext* gpu_context(std::string& why) {
                 state->transfer.emplace(engine::rhi::TransferContext{
                     state->device.handle(), state->pool, state->device.graphics_queue(),
                     state->device.max_sampler_anisotropy(),
-                    state->device.texture_compression()});
+                    state->device.texture_caps()});
                 state->context.emplace(GpuContext{state->device, *state->allocator,
                                                   *state->cache, *state->transfer,
                                                   QUAT_COOKED_SHADER_DIR});

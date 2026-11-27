@@ -91,7 +91,14 @@ std::atomic<bool> g_transcoder_ready{false};
     return r;
 }
 
-[[nodiscard]] bool device_samples(const rhi::TextureCompressionSupport& caps,
+// Claims `bytes` from the load's budget (no budget: unlimited).
+[[nodiscard]] std::expected<void, core::Error> reserve(DecodeBudget* budget, std::uint64_t bytes) {
+    if (budget == nullptr || budget->reserve(bytes)) return {};
+    return fail("texture would exceed the load's decoded-texture budget of " +
+                std::to_string(budget->total()) + " bytes");
+}
+
+[[nodiscard]] bool device_samples(const rhi::TextureCaps& caps,
                                   TexelFormat f) noexcept {
     switch (f) {
         case TexelFormat::rgba8:    return true;
@@ -105,7 +112,7 @@ std::atomic<bool> g_transcoder_ready{false};
 
 } // namespace
 
-TexelFormat select_transcode_format(const rhi::TextureCompressionSupport& caps,
+TexelFormat select_transcode_format(const rhi::TextureCaps& caps,
                                     TextureRole role, TextureColorSpace color_space,
                                     bool xy_normal_layout) noexcept {
     const bool astc = caps.astc_ldr && (caps.prefer_astc || !caps.bc);
@@ -122,15 +129,16 @@ TexelFormat select_transcode_format(const rhi::TextureCompressionSupport& caps,
 
 std::expected<TextureData, core::Error> decode_ktx2(std::span<const std::byte> bytes,
                                                      const Ktx2DecodeOptions& options) {
-    auto info = validate_ktx2(bytes, options.limits);
+    const TextureLimits limits = clamp_to_device(options.limits, options.caps);
+    auto info = validate_ktx2(bytes, limits);
     if (!info) return std::unexpected(info.error());
 
+    // Header and descriptor only: the level data is loaded (and inflated)
+    // once the output format is known and the budget has been claimed.
     ktxTexture2* raw_tex = nullptr;
     const ktx_error_code_e created = ktxTexture2_CreateFromMemory(
         reinterpret_cast<const ktx_uint8_t*>(bytes.data()), bytes.size(),
-        static_cast<ktxTextureCreateFlags>(KTX_TEXTURE_CREATE_LOAD_IMAGE_DATA_BIT |
-                                           KTX_TEXTURE_CREATE_SKIP_KVDATA_BIT),
-        &raw_tex);
+        KTX_TEXTURE_CREATE_SKIP_KVDATA_BIT, &raw_tex);
     KtxPtr tex(raw_tex);
     if (created != KTX_SUCCESS || !tex) {
         return fail(std::string("libktx rejected the file: ") + ktxErrorString(created));
@@ -148,6 +156,13 @@ std::expected<TextureData, core::Error> decode_ktx2(std::span<const std::byte> b
         out.color_space = options.color_space.value_or(
             info->raw_srgb ? TextureColorSpace::srgb : TextureColorSpace::linear);
         if (out.format == TexelFormat::bc4) out.swizzle = TextureSwizzle::rrr1;
+        if (auto ok = reserve(options.budget, info->stored_bytes * 2); !ok) {
+            return std::unexpected(ok.error());
+        }
+        if (const ktx_error_code_e r = ktxTexture2_LoadImageData(tex.get(), nullptr, 0);
+            r != KTX_SUCCESS) {
+            return fail(std::string("loading level data failed: ") + ktxErrorString(r));
+        }
     } else {
         auto traits = read_dfd(*tex);
         if (!traits) return std::unexpected(traits.error());
@@ -164,8 +179,12 @@ std::expected<TextureData, core::Error> decode_ktx2(std::span<const std::byte> b
             target_bytes += texel_level_size(out.format, std::max(info->width >> level, 1U),
                                              std::max(info->height >> level, 1U));
         }
-        if (target_bytes > options.limits.max_decoded_bytes) {
+        if (target_bytes > limits.max_decoded_bytes) {
             return fail("transcoded size exceeds the configured limit");
+        }
+        // Peak: libktx's loaded levels, its transcoded copy and ours.
+        if (auto ok = reserve(options.budget, info->stored_bytes + 2 * target_bytes); !ok) {
+            return std::unexpected(ok.error());
         }
         if (const ktx_error_code_e r = transcode(tex.get(), ktx_target(out.format));
             r != KTX_SUCCESS) {
@@ -190,7 +209,8 @@ std::expected<TextureData, core::Error> decode_ktx2(std::span<const std::byte> b
         l.size = texel_level_size(out.format, l.width, l.height);
         total += l.size;
     }
-    out.pixels.resize(total);
+    out.pixels = PixelBuffer::allocate(static_cast<std::size_t>(total));
+    if (out.pixels.empty()) return fail("out of memory for " + std::to_string(total) + " bytes");
     for (std::uint32_t level = 0; level < info->levels; ++level) {
         ktx_size_t offset = 0;
         if (ktxTexture2_GetImageOffset(tex.get(), level, 0, 0, &offset) != KTX_SUCCESS ||
@@ -225,7 +245,7 @@ std::expected<TextureData, core::Error> load_ktx2_file(const std::filesystem::pa
 std::expected<TextureAsset, core::Error>
 load_ktx2_texture(const std::filesystem::path& path, rhi::GpuAllocator& allocator,
                   const rhi::TransferContext& transfer, Ktx2DecodeOptions options) {
-    options.caps = transfer.compression;
+    options.caps = transfer.texture_caps;
     auto data = load_ktx2_file(path, options);
     if (!data) return std::unexpected(data.error());
     return upload_texture_data(*data, allocator, transfer);

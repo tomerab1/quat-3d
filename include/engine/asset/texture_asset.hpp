@@ -38,7 +38,7 @@ struct TextureAsset {
 // Uploads `data` to a device-local image with its view (swizzled as
 // requested) and a repeat sampler. RGBA8 without levels gets its mip chain
 // generated; otherwise the given levels are uploaded as they are. The device
-// must support the format (see rhi::TextureCompressionSupport).
+// must support the format (see rhi::TextureCaps).
 [[nodiscard]] std::expected<TextureAsset, core::Error>
 upload_texture_data(const TextureData& data, rhi::GpuAllocator& allocator,
                     const rhi::TransferContext& transfer);

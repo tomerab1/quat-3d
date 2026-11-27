@@ -1,6 +1,7 @@
 // EXT_meshopt_compression: decode compressed buffer views at load.
 
 #include <cstddef>
+#include <cstdint>
 #include <limits>
 #include <string>
 #include <utility>
@@ -9,7 +10,7 @@
 #include <fastgltf/types.hpp>
 #include <meshoptimizer.h>
 
-#include "scene/gltf/internal.hpp"
+#include "scene/gltf/gltf_io.hpp"
 
 namespace engine::scene::gltf_detail {
 
@@ -18,6 +19,13 @@ namespace {
 // Decoded size cap per view: a hostile count * stride must not drive a huge
 // allocation before the decoder looks at a single byte.
 constexpr std::size_t k_max_decoded_view_bytes = std::size_t{1} << 30;
+
+// Densest the meshopt codecs get: a constant attribute stream costs a 2-bit
+// header per 16 bytes (v0) or a control bit pair per byte column of a
+// 256-vertex block (v1), so 1024:1 plus a small fixed tail bounds any
+// legitimate view; a claim beyond it is a decompression bomb.
+constexpr std::uint64_t k_max_expansion = 1024;
+constexpr std::uint64_t k_expansion_slack = 4096;
 
 [[nodiscard]] std::expected<void, core::Error>
 check_layout(const fastgltf::CompressedBufferView& c, std::size_t view_index) {
@@ -86,8 +94,10 @@ check_layout(const fastgltf::CompressedBufferView& c, std::size_t view_index) {
 
 } // namespace
 
-std::expected<void, core::Error> decode_meshopt_buffers(fastgltf::Asset& asset) {
+std::expected<void, core::Error> decode_meshopt_buffers(fastgltf::Asset& asset,
+                                                        std::uint64_t max_total_bytes) {
     const std::size_t source_buffers = asset.buffers.size();
+    std::uint64_t total = 0;
     for (std::size_t vi = 0; vi < asset.bufferViews.size(); ++vi) {
         fastgltf::BufferView& view = asset.bufferViews[vi];
         if (view.meshoptCompression == nullptr) continue;
@@ -105,6 +115,17 @@ std::expected<void, core::Error> decode_meshopt_buffers(fastgltf::Asset& asset) 
         if (c.byteOffset > buffer->size() || c.byteLength > buffer->size() - c.byteOffset) {
             return fail("glTF: EXT_meshopt_compression source range outside its buffer");
         }
+        const std::uint64_t decoded_bytes = c.count * c.byteStride;
+        if (decoded_bytes > c.byteLength * k_max_expansion + k_expansion_slack) {
+            return fail("glTF: EXT_meshopt_compression bufferView " + std::to_string(vi) +
+                        " claims " + std::to_string(decoded_bytes) + " bytes from " +
+                        std::to_string(c.byteLength) + " compressed bytes");
+        }
+        if (decoded_bytes > max_total_bytes - total) {
+            return fail("glTF: EXT_meshopt_compression data decodes past the asset's limit of " +
+                        std::to_string(max_total_bytes) + " bytes");
+        }
+        total += decoded_bytes;
 
         std::vector<std::byte> decoded(c.count * c.byteStride);
         if (!decode_view(c, buffer->subspan(c.byteOffset, c.byteLength), decoded)) {

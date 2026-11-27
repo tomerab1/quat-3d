@@ -20,6 +20,7 @@
 #include "engine/asset/material_asset.hpp"
 #include "engine/asset/mesh_asset.hpp"
 #include "engine/asset/texture_asset.hpp"
+#include "engine/asset/texture_limits.hpp"
 #include "engine/core/error.hpp"
 #include "engine/rhi/gpu_allocator.hpp"
 
@@ -138,13 +139,24 @@ public:
                 const rhi::TransferContext& transfer, asset::AssetManager& assets, Scene& scene);
 };
 
-// Decode a single encoded image: PNG/JPEG/etc. into RGBA8 via stb_image, KTX2
-// via asset::decode_ktx2 (transcoded for `caps` according to `role`).
+struct ImageDecodeOptions {
+    asset::TextureColorSpace color_space = asset::TextureColorSpace::linear;
+    asset::TextureRole       role        = asset::TextureRole::color;
+    rhi::TextureCaps         caps{};
+    // Applied after asset::clamp_to_device(limits, caps).
+    asset::TextureLimits     limits{};
+    asset::DecodeBudget*     budget = nullptr; // the load's running budget, if any
+};
+
+// Decode a single untrusted encoded image: PNG / JPEG to RGBA8
+// (asset::decode_png_jpeg), KTX2 transcoded for `caps` according to `role`
+// (asset::decode_ktx2). Anything else, or anything over the limits, fails.
+[[nodiscard]] std::expected<TextureData, core::Error>
+decode_image(std::span<const std::byte> encoded, const ImageDecodeOptions& options);
+
 [[nodiscard]] std::expected<TextureData, core::Error>
 decode_image(std::span<const std::byte> encoded,
-             asset::TextureColorSpace color_space = asset::TextureColorSpace::linear,
-             asset::TextureRole role = asset::TextureRole::color,
-             const rhi::TextureCompressionSupport& caps = {});
+             asset::TextureColorSpace color_space = asset::TextureColorSpace::linear);
 
 // Upload decoded texture data to a device-local image and build its view +
 // sampler (asset::upload_texture_data).

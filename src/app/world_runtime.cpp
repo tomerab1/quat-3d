@@ -78,7 +78,7 @@ void WorldRuntime::init(const engine::rhi::Device& device, engine::rhi::GpuAlloc
     terrain_transfer_ = engine::rhi::TransferContext{device_, terrain_pool_,
                                                      device.graphics_queue(),
                                                      device.max_sampler_anisotropy(),
-                                                     device.texture_compression()};
+                                                     device.texture_caps()};
     if (auto tp = engine::renderer::TerrainPass::create(device, allocator, pipeline_cache,
                                                         terrain_transfer_, shader_dir);
         tp) {

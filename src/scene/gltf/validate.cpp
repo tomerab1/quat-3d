@@ -1,38 +1,16 @@
 // glTF structural validation (see internal.hpp).
 
-#define GLM_ENABLE_EXPERIMENTAL
-
-#include "engine/scene/gltf_loader.hpp"
-
-#include <algorithm>
-#include <array>
-#include <cmath>
-#include <cstdio>
-#include <cstring>
-#include <functional>
-#include <limits>
 #include <string>
 #include <string_view>
-#include <unordered_map>
 #include <utility>
 #include <variant>
 #include <vector>
 
 #include <fastgltf/core.hpp>
-#include <fastgltf/math.hpp>
 #include <fastgltf/tools.hpp>
 #include <fastgltf/types.hpp>
-#include <glm/glm.hpp>
-#include <glm/gtc/matrix_transform.hpp>
-#include <glm/gtc/quaternion.hpp>
-#include <glm/gtx/matrix_decompose.hpp>
 
-#include "engine/animation/clip.hpp"
-#include "engine/animation/skeleton.hpp"
-#include "engine/asset/asset_manager.hpp"
-#include "engine/scene/components.hpp"
-#include "engine/scene/scene.hpp"
-#include "scene/gltf/internal.hpp"
+#include "scene/gltf/gltf_io.hpp"
 
 namespace engine::scene {
 

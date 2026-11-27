@@ -1,9 +1,8 @@
 // Triangle mesh cooking: primitives that share one vertex stream set are
 // optimised together (vertex cache, overdraw, vertex fetch), optionally get
-// simplified LOD index buffers, then are re-emitted quantised.
+// then are re-emitted quantised.
 
 #include <algorithm>
-#include <cstdio>
 #include <map>
 #include <string>
 #include <string_view>
@@ -98,7 +97,7 @@ struct Group {
     std::vector<std::size_t> primitives; // indices into the mesh's primitives
 };
 
-// Appends a Scalar index accessor for a LOD.
+// Appends a Scalar index accessor (for a primitive that had none).
 [[nodiscard]] std::size_t add_index_accessor(fastgltf::Asset& asset) {
     fastgltf::Accessor acc{};
     acc.type = fastgltf::AccessorType::Scalar;
@@ -174,42 +173,13 @@ cook_group(fastgltf::Asset& asset, const Group& g, const MeshCookOptions& o, Geo
 
     for (const Stream& s : streams) emit_stream(asset, s, new_count, o, out);
 
-    std::string lods;
     for (std::size_t k = 0; k < g.primitives.size(); ++k) {
         fastgltf::Primitive& prim = mesh.primitives[g.primitives[k]];
         if (!prim.indicesAccessor) prim.indicesAccessor = add_index_accessor(asset);
         out.accessor_view.resize(asset.accessors.size());
         emit_indices(asset, *prim.indicesAccessor, indices[k], new_count, o, out);
 
-        const Stream& pos = *std::find_if(streams.begin(), streams.end(),
-                                          [](const Stream& s) { return s.name == "POSITION"; });
-        for (const float ratio : o.lod_ratios) {
-            const std::size_t target =
-                static_cast<std::size_t>(static_cast<float>(indices[k].size()) * ratio) / 3 * 3;
-            std::vector<std::uint32_t> lod(indices[k].size());
-            float error = 0;
-            lod.resize(meshopt_simplify(lod.data(), indices[k].data(), indices[k].size(),
-                                        pos.values.data(), new_count, sizeof(float) * 3, target,
-                                        o.lod_error, 0, &error));
-            if (lod.empty() || lod.size() >= indices[k].size()) continue;
-            meshopt_optimizeVertexCache(lod.data(), lod.data(), lod.size(), new_count);
-            const std::size_t acc = add_index_accessor(asset);
-            out.accessor_view.resize(asset.accessors.size());
-            emit_indices(asset, acc, lod, new_count, o, out);
-            char entry[160];
-            std::snprintf(entry, sizeof(entry),
-                          "%s{\"primitive\":%zu,\"ratio\":%g,\"indices\":%zu,\"error\":%g}",
-                          lods.empty() ? "" : ",", g.primitives[k], static_cast<double>(ratio), acc,
-                          static_cast<double>(error));
-            lods += entry;
-            ++out.lods;
-        }
         ++out.cooked;
-    }
-    if (!lods.empty()) {
-        std::string& extras = out.mesh_extras[g.mesh];
-        extras = extras.empty() ? "{\"quat_lods\":[" + lods + "]}"
-                                : extras.substr(0, extras.size() - 2) + "," + lods + "]}";
     }
     return {};
 }
@@ -220,7 +190,6 @@ std::expected<GeometryResult, core::Error> cook_meshes(fastgltf::Asset& asset,
                                                        const MeshCookOptions& o) {
     GeometryResult out;
     out.accessor_view.resize(asset.accessors.size());
-    out.mesh_extras.resize(asset.meshes.size());
     const std::vector<std::size_t> uses = accessor_uses(asset);
 
     for (std::size_t m = 0; m < asset.meshes.size(); ++m) {

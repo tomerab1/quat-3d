@@ -118,7 +118,7 @@ struct RemoteBridge::Impl {
         }
         fn(engine::rhi::TransferContext{dev, pool, t.device->graphics_queue(),
                                         t.device->max_sampler_anisotropy(),
-                                        t.device->texture_compression()});
+                                        t.device->texture_caps()});
         vkDestroyCommandPool(dev, pool, nullptr);
         return {};
     }

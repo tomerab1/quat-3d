@@ -25,8 +25,6 @@ constexpr std::string_view k_usage =
     "  --no-optimize  --no-quantize  --no-compress\n"
     "  --position-bits N            1..24 (default 16)\n"
     "  --normal-bits 8|16           (default 8)\n"
-    "  --lod RATIO                  add a simplified LOD (repeatable), e.g. --lod 0.5\n"
-    "  --lod-error E                simplification error bound (default 0.01)\n"
     "  --threads N                  encoder threads (default: all cores)\n";
 
 [[nodiscard]] bool parse_codec(std::string_view s, engine::cook::BasisCodec& out) {
@@ -92,11 +90,6 @@ int main(int argc, char** argv) {
             o.meshes.position_bits = static_cast<int>(n);
         } else if (arg == "--normal-bits") {
             o.meshes.normal_bits = static_cast<int>(n);
-        } else if (arg == "--lod") {
-            if (n <= 0 || n >= 1) return usage_error("--lod ratio must be in (0, 1)");
-            o.meshes.lod_ratios.push_back(static_cast<float>(n));
-        } else if (arg == "--lod-error") {
-            o.meshes.lod_error = static_cast<float>(n);
         } else {
             return usage_error("unknown option: " + std::string(arg));
         }
@@ -113,12 +106,12 @@ int main(int argc, char** argv) {
     std::printf("%s -> %s in %.1fs\n"
                 "  total   %llu -> %llu bytes\n"
                 "  images  %u encoded, %llu -> %llu bytes\n"
-                "  meshes  %u primitives cooked (%u skipped), %llu -> %llu bytes, %u LODs\n",
+                "  meshes  %u primitives cooked (%u skipped), %llu -> %llu bytes\n",
                 argv[1], argv[2], secs, static_cast<unsigned long long>(stats->input_bytes),
                 static_cast<unsigned long long>(stats->output_bytes), stats->images_encoded,
                 static_cast<unsigned long long>(stats->image_bytes_before),
                 static_cast<unsigned long long>(stats->image_bytes_after), stats->primitives_cooked,
                 stats->primitives_skipped, static_cast<unsigned long long>(stats->mesh_bytes_before),
-                static_cast<unsigned long long>(stats->mesh_bytes_after), stats->lods_written);
+                static_cast<unsigned long long>(stats->mesh_bytes_after));
     return 0;
 }

@@ -7,7 +7,7 @@
 //   * images -> KTX2 with Basis Universal (KHR_texture_basisu), codec per
 //     texture role, full mip chains, Zstd on UASTC;
 //   * triangle meshes -> meshoptimizer vertex-cache / overdraw / vertex-fetch
-//     optimisation, optional simplified LODs (mesh extras "quat_lods"),
+//     optimisation,
 //     quantised attributes (KHR_mesh_quantization) and the meshopt codecs
 //     (EXT_meshopt_compression);
 //   * buffers compacted to what the output still references.
@@ -50,9 +50,6 @@ struct MeshCookOptions {
     int   position_bits      = 16;    // exponent-filter mantissa bits (1..24)
     int   normal_bits        = 8;     // octahedral bits: 8 or 16 (also tangents)
     bool  compress           = true;  // EXT_meshopt_compression
-    // Simplified LODs: target index-count ratios, e.g. {0.5, 0.25}.
-    std::vector<float> lod_ratios;
-    float lod_error = 0.01F; // relative to the mesh extent
 };
 
 struct CookOptions {
@@ -70,7 +67,6 @@ struct CookStats {
     std::uint32_t images_encoded     = 0;
     std::uint32_t primitives_cooked  = 0;
     std::uint32_t primitives_skipped = 0; // morph targets, shared streams, non-triangles
-    std::uint32_t lods_written       = 0;
 };
 
 // Cooks `input` into `output` (.glb writes a binary glTF, anything else a

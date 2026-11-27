@@ -5,6 +5,9 @@
 
 #include <cmath>
 #include <cstdint>
+#include <algorithm>
+#include <array>
+#include <cstdlib>
 #include <cstring>
 #include <memory>
 #include <random>
@@ -25,7 +28,7 @@ namespace cook = engine::cook;
 using asset::TexelFormat;
 using asset::TextureColorSpace;
 using asset::TextureRole;
-using Caps = engine::rhi::TextureCompressionSupport;
+using Caps = engine::rhi::TextureCaps;
 
 constexpr std::uint32_t k_size = 64;
 
@@ -139,7 +142,8 @@ asset::TextureData decode(const std::vector<std::byte>& file, Caps caps,
     o.role = role;
     auto data = asset::decode_ktx2(file, o);
     EXPECT_TRUE(data.has_value()) << (data ? "" : data.error().message);
-    return data ? std::move(*data) : asset::TextureData{};
+    if (!data) return asset::TextureData{};
+    return std::move(*data);
 }
 
 constexpr Caps k_bc{true, false, false};
@@ -241,8 +245,17 @@ TEST(Ktx2Decode, LooseFileRoleComesFromTheDescriptor) {
 
 namespace {
 
-std::vector<std::byte> valid_file() {
-    return encode(colour_image(), TextureRole::color, TextureColorSpace::srgb, cook::BasisCodec::uastc);
+// One file per Basis payload: ETC1S/BasisLZ (the default colour codec, with
+// supercompression global data) and UASTC + Zstd.
+std::vector<std::byte> valid_file(cook::BasisCodec codec) {
+    return encode(colour_image(), TextureRole::color, TextureColorSpace::srgb, codec);
+}
+
+constexpr std::array<cook::BasisCodec, 2> k_codecs{cook::BasisCodec::etc1s,
+                                                   cook::BasisCodec::uastc};
+
+const char* codec_name(cook::BasisCodec c) {
+    return c == cook::BasisCodec::etc1s ? "ETC1S" : "UASTC";
 }
 
 void put_u32(std::vector<std::byte>& f, std::size_t at, std::uint32_t v) {
@@ -251,62 +264,135 @@ void put_u32(std::vector<std::byte>& f, std::size_t at, std::uint32_t v) {
 void put_u64(std::vector<std::byte>& f, std::size_t at, std::uint64_t v) {
     std::memcpy(f.data() + at, &v, 8);
 }
+std::uint64_t get_u64(const std::vector<std::byte>& f, std::size_t at) {
+    std::uint64_t v = 0;
+    std::memcpy(&v, f.data() + at, 8);
+    return v;
+}
+
+void expect_rejected(const std::vector<std::byte>& good, auto mutate, const char* what,
+                     cook::BasisCodec codec) {
+    std::vector<std::byte> f = good;
+    mutate(f);
+    EXPECT_ERR(asset::decode_ktx2(f, asset::Ktx2DecodeOptions{})) << codec_name(codec) << ": " << what;
+}
 
 } // namespace
 
 TEST(Ktx2Decode, MalformedHeadersAreRejected) {
-    const std::vector<std::byte> good = valid_file();
-    ASSERT_GT(good.size(), 200U);
+    for (const cook::BasisCodec codec : k_codecs) {
+        const std::vector<std::byte> good = valid_file(codec);
+        ASSERT_GT(good.size(), 200U);
+        ASSERT_OK(asset::validate_ktx2(good)) << codec_name(codec);
+        const auto rejects = [&](auto mutate, const char* what) {
+            expect_rejected(good, mutate, what, codec);
+        };
+        rejects([](auto& f) { f.resize(60); }, "truncated header");
+        rejects([](auto& f) { f.resize(f.size() / 2); }, "truncated data");
+        rejects([](auto& f) { f[1] = std::byte{'X'}; }, "bad identifier");
+        rejects([](auto& f) { put_u32(f, 20, 1U << 20); }, "absurd width");
+        rejects([](auto& f) { put_u32(f, 24, 0); }, "1D texture");
+        rejects([](auto& f) { put_u32(f, 28, 4); }, "3D texture");
+        rejects([](auto& f) { put_u32(f, 36, 6); }, "cubemap");
+        rejects([](auto& f) { put_u32(f, 40, 40); }, "too many levels");
+        rejects([](auto& f) { put_u32(f, 44, 3); }, "zlib supercompression");
+        rejects([](auto& f) { put_u32(f, 12, 1000); }, "unknown VkFormat");
+        rejects([](auto& f) { put_u32(f, 48, 0xFFFFFF00U); }, "DFD outside the file");
+        rejects([](auto& f) { put_u64(f, 80, ~0ULL - 4); }, "level offset overflow");
+        rejects([](auto& f) { put_u64(f, 72, ~0ULL - 4); }, "global data length overflow");
+        // A zero-sized descriptor block made libktx's DFD walk loop forever.
+        const auto dfd = static_cast<std::size_t>(get_u64(good, 48) & 0xFFFFFFFFU);
+        rejects([&](auto& f) { put_u32(f, dfd + 8, 2); }, "zero-sized DFD block");
+        rejects([&](auto& f) { put_u32(f, dfd, 12); }, "DFD total size mismatch");
+        if (codec == cook::BasisCodec::uastc) {
+            rejects([](auto& f) { put_u64(f, 96, 1ULL << 40); }, "zstd decompression bomb");
+        }
+    }
+}
+
+// BasisLZ global data: codebook lengths and per-level slices are checked
+// before libktx reads them.
+TEST(Ktx2Decode, MalformedBasisLzGlobalDataIsRejected) {
+    const std::vector<std::byte> good = valid_file(cook::BasisCodec::etc1s);
     ASSERT_OK(asset::validate_ktx2(good));
+    const auto sgd = static_cast<std::size_t>(get_u64(good, 64));
+    const std::uint64_t sgd_length = get_u64(good, 72);
+    const std::uint64_t level0_length = get_u64(good, 88);
+    const std::size_t desc0 = sgd + 20; // first image descriptor
     const auto rejects = [&](auto mutate, const char* what) {
-        std::vector<std::byte> f = good;
-        mutate(f);
-        EXPECT_ERR(asset::decode_ktx2(f, asset::Ktx2DecodeOptions{})) << what;
+        expect_rejected(good, mutate, what, cook::BasisCodec::etc1s);
     };
-    rejects([](auto& f) { f.resize(60); }, "truncated header");
-    rejects([](auto& f) { f.resize(f.size() / 2); }, "truncated data");
-    rejects([](auto& f) { f[1] = std::byte{'X'}; }, "bad identifier");
-    rejects([](auto& f) { put_u32(f, 20, 1U << 20); }, "absurd width");
-    rejects([](auto& f) { put_u32(f, 24, 0); }, "1D texture");
-    rejects([](auto& f) { put_u32(f, 28, 4); }, "3D texture");
-    rejects([](auto& f) { put_u32(f, 36, 6); }, "cubemap");
-    rejects([](auto& f) { put_u32(f, 40, 40); }, "too many levels");
-    rejects([](auto& f) { put_u32(f, 44, 3); }, "zlib supercompression");
-    rejects([](auto& f) { put_u32(f, 12, 1000); }, "unknown VkFormat");
-    rejects([](auto& f) { put_u32(f, 48, 0xFFFFFF00U); }, "DFD outside the file");
-    rejects([](auto& f) { put_u64(f, 80, ~0ULL - 4); }, "level offset overflow");
-    rejects([](auto& f) { put_u64(f, 96, 1ULL << 40); }, "zstd decompression bomb");
+    rejects([&](auto& f) { put_u32(f, sgd, 0); }, "no endpoints / selectors");
+    rejects([&](auto& f) { put_u32(f, sgd + 4, static_cast<std::uint32_t>(sgd_length)); },
+            "endpoint length past the global data");
+    rejects([&](auto& f) { put_u32(f, sgd + 12, 0xFFFFFFF0U); }, "huge table length");
+    rejects([&](auto& f) { put_u32(f, sgd + 16, static_cast<std::uint32_t>(sgd_length)); },
+            "extended length past the global data");
+    rejects([&](auto& f) { put_u32(f, desc0 + 4, static_cast<std::uint32_t>(level0_length)); },
+            "RGB slice starts past its level");
+    rejects([&](auto& f) { put_u32(f, desc0 + 8, static_cast<std::uint32_t>(level0_length) + 1); },
+            "RGB slice longer than its level");
+    rejects([&](auto& f) { put_u32(f, desc0 + 8, 0); }, "empty RGB slice");
+    rejects([&](auto& f) { put_u32(f, desc0 + 16, 0xFFFFFFF0U); }, "alpha slice past its level");
+    rejects([&](auto& f) { put_u64(f, 72, 19); }, "global data shorter than its header");
 }
 
 TEST(Ktx2Decode, RejectsTexturesAboveTheConfiguredLimits) {
-    const std::vector<std::byte> good = valid_file();
-    asset::Ktx2Limits limits;
+    const std::vector<std::byte> good = valid_file(cook::BasisCodec::uastc);
+    asset::TextureLimits limits;
     limits.max_dimension = 32;
     EXPECT_ERR(asset::validate_ktx2(good, limits));
     limits = {};
     limits.max_file_bytes = 100;
     EXPECT_ERR(asset::validate_ktx2(good, limits));
+
+    // The device's maxImageDimension2D caps the engine limit too.
+    asset::Ktx2DecodeOptions small_device;
+    small_device.caps.max_dimension_2d = 32;
+    EXPECT_ERR(asset::decode_ktx2(good, small_device));
+
+    // A load's running budget is shared by every texture it decodes.
+    asset::DecodeBudget budget(100);
+    asset::Ktx2DecodeOptions budgeted;
+    budgeted.budget = &budget;
+    auto over = asset::decode_ktx2(good, budgeted);
+    ASSERT_ERR(over);
+    EXPECT_NE(over.error().message.find("budget"), std::string::npos) << over.error().message;
 }
 
-// Random byte corruption of a valid file must only ever produce an error or a
-// texture, never a crash (run under ASan/valgrind to catch silent reads).
+// Random byte corruption of valid files must only ever produce an error or a
+// texture, never a crash. Run under valgrind or an ASan build for silent
+// out-of-bounds reads (CI runs it plain).
 TEST(Ktx2Decode, CorruptedFilesNeverCrash) {
-    const std::vector<std::byte> good = valid_file();
-    ASSERT_FALSE(good.empty());
-    std::mt19937 rng(1234);
-    std::uniform_int_distribution<std::size_t> pos(0, good.size() - 1);
-    std::uniform_int_distribution<int> byte(0, 255);
-    for (int round = 0; round < 300; ++round) {
-        std::vector<std::byte> f = good;
-        const int flips = 1 + round % 8;
-        for (int i = 0; i < flips; ++i) {
-            // Bias towards the header / index where the structure lives.
-            const std::size_t at = round % 2 == 0 ? pos(rng) % 160 : pos(rng);
-            f[at] = static_cast<std::byte>(byte(rng));
+    // QUAT_KTX2_FUZZ_ROUNDS=<n> runs a longer campaign (e.g. under ASan).
+    const char* env = std::getenv("QUAT_KTX2_FUZZ_ROUNDS");
+    const int rounds = env != nullptr ? std::max(1, std::atoi(env)) : 300;
+    for (const cook::BasisCodec codec : k_codecs) {
+        const std::vector<std::byte> good = valid_file(codec);
+        ASSERT_FALSE(good.empty());
+        // Where the structure lives: the header / level index, and for ETC1S
+        // the BasisLZ global data (codebook lengths, image descriptors).
+        std::size_t hot_begin = 0;
+        std::size_t hot_end = 160;
+        if (codec == cook::BasisCodec::etc1s) {
+            hot_begin = static_cast<std::size_t>(get_u64(good, 64));
+            hot_end = hot_begin + std::min<std::size_t>(get_u64(good, 72), 20 + 20 * 7 + 64);
         }
-        auto r = asset::decode_ktx2(f, asset::Ktx2DecodeOptions{k_bc, {}, {}, {}});
-        if (r) {
-            EXPECT_FALSE(r->levels.empty());
+        std::mt19937 rng(1234);
+        std::uniform_int_distribution<std::size_t> pos(0, good.size() - 1);
+        std::uniform_int_distribution<std::size_t> hot(hot_begin, hot_end - 1);
+        std::uniform_int_distribution<int> byte(0, 255);
+        for (int round = 0; round < rounds; ++round) {
+            std::vector<std::byte> f = good;
+            const int flips = 1 + round % 8;
+            for (int i = 0; i < flips; ++i) {
+                const std::size_t at = round % 3 == 0 ? pos(rng) % 160 : round % 3 == 1 ? hot(rng) : pos(rng);
+                f[at] = static_cast<std::byte>(byte(rng));
+            }
+            auto r = asset::decode_ktx2(f, asset::Ktx2DecodeOptions{k_bc, {}, {}, {}, nullptr});
+            if (r) {
+                EXPECT_FALSE(r->levels.empty()) << codec_name(codec);
+            }
         }
     }
 }

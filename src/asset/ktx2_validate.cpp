@@ -8,6 +8,7 @@
 #include <bit>
 #include <cstring>
 #include <string>
+#include <vector>
 
 namespace engine::asset {
 
@@ -82,21 +83,92 @@ struct RawFormat {
     return static_cast<std::uint32_t>(std::bit_width(std::max(w, h)));
 }
 
-} // namespace
-
-std::uint64_t texel_level_size(TexelFormat format, std::uint32_t width,
-                               std::uint32_t height) noexcept {
-    const std::uint64_t bw = (static_cast<std::uint64_t>(width) + 3) / 4;
-    const std::uint64_t bh = (static_cast<std::uint64_t>(height) + 3) / 4;
-    switch (format) {
-        case TexelFormat::rgba8:    return static_cast<std::uint64_t>(width) * height * 4;
-        case TexelFormat::bc4:      return bw * bh * 8;
-        case TexelFormat::bc5:
-        case TexelFormat::bc7:
-        case TexelFormat::astc_4x4: return bw * bh * 16;
+// Data format descriptor: a total size, then descriptor blocks whose sizes
+// add up to it exactly. libktx walks the blocks by their declared sizes (a
+// zero size loops forever), so each block must be at least a block header
+// and the first one a Khronos basic block (version 1.3) holding whole
+// samples.
+[[nodiscard]] std::expected<void, core::Error>
+validate_dfd(std::span<const std::byte> bytes, std::uint32_t offset, std::uint32_t length) {
+    constexpr std::uint32_t k_block_header = 8;
+    constexpr std::uint32_t k_basic_header = 24;
+    constexpr std::uint32_t k_sample = 16;
+    constexpr std::uint32_t k_version_1_3 = 2;
+    if (length < 4 + k_basic_header || u32_at(bytes, offset) != length) {
+        return fail("malformed data format descriptor");
     }
-    return 0;
+    const std::uint32_t first = offset + 4;
+    if (u32_at(bytes, first) != 0 || (u32_at(bytes, first + 4) & 0xFFFFU) != k_version_1_3) {
+        return fail("data format descriptor is not a Khronos basic descriptor (1.3)");
+    }
+    const std::uint32_t basic = u32_at(bytes, first + 4) >> 16;
+    if (basic < k_basic_header + k_sample || (basic - k_basic_header) % k_sample != 0) {
+        return fail("malformed basic data format descriptor block");
+    }
+    std::uint32_t at = first;
+    std::uint32_t remaining = length - 4;
+    while (remaining > 0) {
+        if (remaining < k_block_header) return fail("truncated data format descriptor block");
+        const std::uint32_t block = u32_at(bytes, at + 4) >> 16;
+        if (block < k_block_header || block % 4 != 0 || block > remaining) {
+            return fail("data format descriptor block sizes do not add up");
+        }
+        at += block;
+        remaining -= block;
+    }
+    return {};
 }
+
+struct LevelRange {
+    std::uint64_t offset = 0;
+    std::uint64_t length = 0;
+};
+
+// BasisLZ (ETC1S) supercompression global data: a 20-byte header (endpoint /
+// selector counts, then endpoints, selectors, tables and extended byte
+// lengths), one 20-byte image descriptor per image (flags, RGB slice
+// offset/length, alpha slice offset/length, offsets relative to the image's
+// level), then the four payloads. A 2D, single-layer, single-face texture has
+// one image per level.
+[[nodiscard]] std::expected<void, core::Error>
+validate_basis_lz(std::span<const std::byte> bytes, std::uint64_t sgd_offset,
+                  std::uint64_t sgd_length, std::span<const LevelRange> levels) {
+    constexpr std::uint64_t k_sgd_header = 20;
+    constexpr std::uint64_t k_image_desc = 20;
+    if (sgd_length < k_sgd_header) return fail("BasisLZ global data is truncated");
+    const auto at = static_cast<std::size_t>(sgd_offset);
+    const std::uint32_t counts = u32_at(bytes, at);
+    const std::uint64_t endpoints = u32_at(bytes, at + 4);
+    const std::uint64_t selectors = u32_at(bytes, at + 8);
+    const std::uint64_t tables = u32_at(bytes, at + 12);
+    const std::uint64_t extended = u32_at(bytes, at + 16);
+    if ((counts & 0xFFFFU) == 0 || (counts >> 16) == 0 || endpoints == 0 || selectors == 0 ||
+        tables == 0) {
+        return fail("BasisLZ global data has no codebooks");
+    }
+    const std::uint64_t needed = k_sgd_header + k_image_desc * levels.size() + endpoints +
+                                 selectors + tables + extended;
+    if (needed > sgd_length) {
+        return fail("BasisLZ global data lengths exceed its " + std::to_string(sgd_length) +
+                    " bytes");
+    }
+    for (std::size_t level = 0; level < levels.size(); ++level) {
+        const std::size_t desc = at + k_sgd_header + level * k_image_desc;
+        const std::uint64_t rgb_offset = u32_at(bytes, desc + 4);
+        const std::uint64_t rgb_length = u32_at(bytes, desc + 8);
+        const std::uint64_t alpha_offset = u32_at(bytes, desc + 12);
+        const std::uint64_t alpha_length = u32_at(bytes, desc + 16);
+        const std::uint64_t level_length = levels[level].length;
+        if (rgb_length == 0 || !in_file(rgb_offset, rgb_length, level_length) ||
+            (alpha_length != 0 && !in_file(alpha_offset, alpha_length, level_length))) {
+            return fail("BasisLZ slice of mip level " + std::to_string(level) +
+                        " lies outside the level");
+        }
+    }
+    return {};
+}
+
+} // namespace
 
 bool is_ktx2(std::span<const std::byte> bytes) noexcept {
     if (bytes.size() < k_identifier.size()) return false;
@@ -104,7 +176,7 @@ bool is_ktx2(std::span<const std::byte> bytes) noexcept {
 }
 
 std::expected<Ktx2Info, core::Error> validate_ktx2(std::span<const std::byte> bytes,
-                                                    const Ktx2Limits& limits) {
+                                                    const TextureLimits& limits) {
     const std::size_t size = bytes.size();
     if (size > limits.max_file_bytes) return fail("file larger than the configured limit");
     if (size < k_header_bytes || !is_ktx2(bytes)) return fail("not a KTX2 file");
@@ -137,9 +209,12 @@ std::expected<Ktx2Info, core::Error> validate_ktx2(std::span<const std::byte> by
     if (k_header_bytes + static_cast<std::uint64_t>(levels) * k_level_entry_bytes > size) {
         return fail("truncated level index");
     }
-    if (!in_file(dfd_offset, dfd_length, size) || dfd_length < 16 ||
-        !in_file(kvd_offset, kvd_length, size) || !in_file(sgd_offset, sgd_length, size)) {
+    if (!in_file(dfd_offset, dfd_length, size) || !in_file(kvd_offset, kvd_length, size) ||
+        !in_file(sgd_offset, sgd_length, size)) {
         return fail("descriptor / metadata ranges lie outside the file");
+    }
+    if (auto ok = validate_dfd(bytes, dfd_offset, dfd_length); !ok) {
+        return std::unexpected(ok.error());
     }
 
     Ktx2Info info;
@@ -169,6 +244,7 @@ std::expected<Ktx2Info, core::Error> validate_ktx2(std::span<const std::byte> by
     }
 
     std::uint64_t inflated_total = 0;
+    std::vector<LevelRange> ranges(levels);
     for (std::uint32_t level = 0; level < levels; ++level) {
         const std::size_t at = k_header_bytes + static_cast<std::size_t>(level) * k_level_entry_bytes;
         const std::uint64_t offset = u64_at(bytes, at);
@@ -177,7 +253,11 @@ std::expected<Ktx2Info, core::Error> validate_ktx2(std::span<const std::byte> by
         if (length == 0 || !in_file(offset, length, size)) {
             return fail("mip level " + std::to_string(level) + " lies outside the file");
         }
-        if (info.payload == Ktx2Payload::etc1s) continue; // sizes live in the global data
+        ranges[level] = {offset, length};
+        if (info.payload == Ktx2Payload::etc1s) { // sizes live in the global data
+            info.stored_bytes += length;
+            continue;
+        }
         const std::uint32_t lw = std::max(width >> level, 1U);
         const std::uint32_t lh = std::max(height >> level, 1U);
         const std::uint64_t expected =
@@ -187,8 +267,24 @@ std::expected<Ktx2Info, core::Error> validate_ktx2(std::span<const std::byte> by
         }
         inflated_total += inflated;
     }
+    if (info.payload != Ktx2Payload::etc1s) info.stored_bytes = inflated_total;
+    // KTX2 stores the smallest level first: each level ends at or before the
+    // start of the next larger one. libktx sizes its data buffer from level 0's
+    // end minus the smallest level's start, so overlapping or reordered
+    // levels would make that size wrap.
+    for (std::uint32_t level = 1; level < levels; ++level) {
+        if (ranges[level].offset + ranges[level].length > ranges[level - 1].offset) {
+            return fail("mip levels " + std::to_string(level - 1) + " and " +
+                        std::to_string(level) + " overlap or are out of order");
+        }
+    }
     if (inflated_total > limits.max_decoded_bytes) {
         return fail("decoded size exceeds the configured limit");
+    }
+    if (info.payload == Ktx2Payload::etc1s) {
+        if (auto ok = validate_basis_lz(bytes, sgd_offset, sgd_length, ranges); !ok) {
+            return std::unexpected(ok.error());
+        }
     }
     return info;
 }
