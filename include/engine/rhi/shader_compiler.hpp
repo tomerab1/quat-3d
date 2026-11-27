@@ -18,12 +18,14 @@
 //              -reflection-json <out>/materials/<name>.<variant>.json
 // It compiles into a staging directory under the output directory and only
 // moves the outputs into place when slangc succeeds, so a failed compile never
-// clobbers the last good cooked shader. The captured stdout/stderr is returned
+// clobbers the last good cooked shader. The .spv/.json pair is installed as a
+// unit: if a move fails, the outputs already replaced are restored. The captured stdout/stderr is returned
 // as the diagnostics (warnings on success, errors on failure).
 //
 // ShaderDependencyGraph tracks `import` declarations between Slang sources so a
 // library-module edit recompiles the modules and passes that import it.
 
+#include <chrono>
 #include <cstdint>
 #include <expected>
 #include <filesystem>
@@ -36,6 +38,10 @@
 #include <vector>
 
 #include "engine/core/error.hpp"
+
+namespace engine::core {
+class ProcessCanceller;
+} // namespace engine::core
 
 namespace engine::rhi {
 
@@ -51,6 +57,9 @@ struct ShaderCompilerConfig {
     std::filesystem::path module_dir;   // empty: source_dir / "lib"
     std::filesystem::path output_dir;   // cooked/shaders
     std::filesystem::path material_dir; // empty: source_dir / "materials"
+    // A slangc run taking longer is killed and reported as a failed compile
+    // (a hung compiler must not stall every later reload).
+    std::chrono::milliseconds timeout{60'000};
 };
 
 struct ShaderCompileResult {
@@ -95,7 +104,9 @@ public:
 
     // Compiles `source` synchronously. Thread-safe with respect to other
     // sources; concurrent compiles of the same source are not supported.
-    [[nodiscard]] ShaderCompileResult compile(const std::filesystem::path& source) const;
+    // `canceller` (optional) lets another thread kill the running slangc.
+    [[nodiscard]] ShaderCompileResult compile(const std::filesystem::path& source,
+                                              core::ProcessCanceller* canceller = nullptr) const;
 
 private:
     ShaderCompilerConfig config_;

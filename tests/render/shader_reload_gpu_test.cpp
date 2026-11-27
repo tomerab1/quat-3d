@@ -184,6 +184,72 @@ TEST(GpuShaderReload, RebuiltComputePipelineRunsTheEditedShader) {
     reload->reset();
 }
 
+// A shader the cache has loaded but no live pipeline uses (a bake pass that
+// built its pipeline, ran once and dropped it) is reported as compiled but
+// not applied, not as "ok, 0 pipelines".
+TEST(GpuShaderReload, ShaderWithoutLivePipelinesNeedsRestart) {
+    QUAT_REQUIRE_GPU(g);
+    if (!rhi::find_slangc()) GTEST_SKIP() << "slangc not found (QUAT_SLANGC / PATH)";
+
+    quat::test::TempDir root("shader_reload_bake");
+    const fs::path src = root.path() / "shaders";
+    const fs::path out = root.path() / "cooked";
+    fs::create_directories(src);
+    write_file(src / "value.slang", compute_source(1));
+    auto compiler = rhi::ShaderCompiler::create({{}, src, {}, out, {}});
+    ASSERT_OK(compiler);
+    ASSERT_TRUE(compiler->compile(src / "value.slang").ok);
+
+    auto cache = rhi::PipelineCache::create(g->device);
+    ASSERT_OK(cache);
+    const rhi::DescriptorBufferFunctions fns =
+        rhi::DescriptorBufferFunctions::load(g->device.handle());
+    const std::array<rhi::DescriptorBinding, 1> bindings = {
+        rhi::DescriptorBinding{0, 0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1,
+                               VK_SHADER_STAGE_COMPUTE_BIT}};
+    auto layout = rhi::DescriptorSetLayout::create(g->device, fns, bindings);
+    ASSERT_OK(layout);
+    const VkDescriptorSetLayout set_layout = layout->handle();
+    const std::string spv = (out / "value.spv").string();
+    auto shader = cache->load(spv);
+    ASSERT_OK(shader);
+    {
+        rhi::ComputePipeline::CreateInfo info{};
+        info.shader = *shader;
+        info.set_layouts = {&set_layout, 1};
+        auto bake = cache->create_compute_pipeline(info); // used once, then dropped
+        ASSERT_OK(bake);
+    }
+    EXPECT_EQ(cache->pipeline_count(spv), 0U);
+
+    rhi::ShaderHotReload::Config config;
+    config.source_dir = src;
+    config.output_dir = out;
+    config.debounce = std::chrono::milliseconds(0);
+    config.poll_interval = std::chrono::milliseconds(0);
+    config.async = false;
+    auto reload = rhi::ShaderHotReload::create(*cache, config);
+    ASSERT_OK(reload);
+    write_file(src / "value.slang", compute_source(2));
+    std::uint64_t frame = 10;
+    using State = rhi::ShaderStatus::State;
+    for (int i = 0; i < 2000; ++i) {
+        (*reload)->update(frame++);
+        const State st = (*reload)->statuses().front().state;
+        if (st != State::cooked && st != State::compiling) break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    const rhi::ShaderStatus& status = (*reload)->statuses().front();
+    EXPECT_EQ(status.state, State::needs_restart) << status.message;
+    EXPECT_EQ(rhi::to_string(status.state), "restart");
+    EXPECT_NE(status.message.find("restart to apply"), std::string::npos) << status.message;
+    EXPECT_EQ(status.pipelines, 0U);
+    EXPECT_EQ((*reload)->error_count(), 0U);
+
+    vkDeviceWaitIdle(g->device.handle());
+    reload->reset();
+}
+
 TEST(GpuShaderReload, RetiresReplacedPipelinesAfterFramesInFlight) {
     QUAT_REQUIRE_GPU(g);
     if (!rhi::find_slangc()) GTEST_SKIP() << "slangc not found (QUAT_SLANGC / PATH)";
