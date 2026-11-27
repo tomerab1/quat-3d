@@ -20,9 +20,6 @@ env:
 jobs:
   linux:
     name: Linux (clang + libc++, lavapipe)
-    # A hang (e.g. a stuck shader compile or test) fails within the hour
-    # instead of holding a runner for GitHub's 6-hour default.
-    timeout-minutes: 60
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     steps:
@@ -107,7 +104,6 @@ jobs:
 
   rust:
     name: quat-mcp (Rust fmt, clippy, tests)
-    timeout-minutes: 20
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     defaults:
