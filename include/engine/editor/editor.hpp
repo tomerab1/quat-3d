@@ -104,6 +104,9 @@ struct EditorContext {
     std::optional<GroundClick>* ground_click = nullptr;
     // In: polygon edges of the baked navmesh for the overlay (may be null).
     const std::vector<std::pair<glm::vec3, glm::vec3>>* nav_edges = nullptr;
+    // In: the last navmesh bake / invalidation, shown in the Physics panel
+    // (failed bakes must not go unnoticed; may be null).
+    const std::string* nav_status = nullptr;
     // The scene camera's (unjittered) view-projection — used by panels that
     // project world-space overlays into the viewport (joints, physics shapes)
     // and to build picking rays. Carries the renderer's Vulkan Y flip.

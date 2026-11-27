@@ -19,6 +19,7 @@
 #include "engine/core/error.hpp"
 #include "engine/renderer/mesh_pass.hpp"
 #include "engine/scene/components.hpp"
+#include "engine/scene/navigation.hpp"
 
 namespace engine::nav {
 class NavMesh;
@@ -132,10 +133,17 @@ void physics_system(entt::registry& registry, physics::PhysicsWorld& world, floa
                                              physics::PhysicsWorld& world,
                                              const terrain::Heightmap& map);
 
+// Play-mode body promotion (Unity convention): give every Collider without a
+// RigidBody a body — static for scenery, kinematic for NavAgent entities
+// (they move through the ECS) — and none for CharacterController entities
+// (the controller is their physics presence). Returns the bodies added.
+std::size_t promote_collider_only_bodies(entt::registry& registry);
+
 // Gather world-space triangles of the static, walkable scene for navmesh
 // baking (13.1): the terrain heightmap (decimated to keep triangle counts
-// sane) plus every static box collider. `map`/`anchor` may describe a terrain
-// tile (map null = no terrain).
+// sane) plus every static box collider — not those on NavAgent or
+// CharacterController entities, which move. `map`/`anchor` may describe a
+// terrain tile (map null = no terrain).
 void collect_nav_geometry(entt::registry& registry, const terrain::Heightmap* map,
                           const glm::vec3& anchor, std::vector<glm::vec3>& verts,
                           std::vector<std::uint32_t>& indices, bool include_colliders = true);
@@ -165,31 +173,7 @@ void step_character(entt::registry& registry, physics::PhysicsWorld& world, entt
 // and moves horizontally.
 [[nodiscard]] std::expected<void, core::Error> run_character_self_test();
 
-// Advance every active NavAgent: repath on the navmesh when the target moved,
-// steer toward the current waypoint with simple agent-agent separation, and
-// either drive the entity's CharacterController (move/speed) or translate the
-// Transform kinematically. Call before character_system each tick.
-//
-// Detour returns best-effort paths (partial when the buffer fills or the target
-// poly is unreachable): when an agent exhausts its path away from the target it
-// replans the next leg, and when it can make no further progress it settles for
-// the closest reachable point (arrived). Failed plans retry on a cooldown; a
-// PatrolRoute skips unreachable points instead of stalling the route.
-//
-// `ground_height(x, z)` (optional) supplies the authoritative ground height for
-// kinematic agents — coarse terrain navmeshes can float metres off the real
-// surface, so path heights are only a fallback. Agents with a
-// CharacterController ignore it (physics owns their height).
-using GroundHeightFn = std::function<std::optional<float>(float x, float z)>;
-void nav_agent_system(entt::registry& registry, const nav::NavMesh& navmesh, float dt,
-                      const GroundHeightFn& ground_height = {});
-
-// A kinematic agent walks from one side of the walled test plate to the other:
-// it must arrive at the target and must have detoured through the gap.
-[[nodiscard]] std::expected<void, core::Error> run_nav_agent_self_test();
-
-// A looping two-point patrol drives the agent A -> B -> A on a flat plate.
-[[nodiscard]] std::expected<void, core::Error> run_patrol_self_test();
+// nav_agent_system and the other navigation entry points: navigation.hpp.
 
 // Builds a small hierarchy, ticks the scene, and verifies world-matrix
 // propagation and draw-list collection. No device needed.

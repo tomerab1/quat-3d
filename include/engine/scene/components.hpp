@@ -148,30 +148,53 @@ struct CharacterController {
 // CharacterController on the entity it steers the controller (collisions,
 // gravity); otherwise it moves the Transform kinematically, snapped to the
 // ground + `ground_offset` (set it to the entity's half-height when the pivot
-// sits at the centre). `arrived` flips when the last waypoint is reached —
-// or at the closest reachable point when the target itself is unreachable.
-// path/waypoint/planned_target/retry_s are system-managed.
+// sits at the centre). A walk ends either `arrived` (reached the target, or
+// the closest on-mesh point to it) or `failed` (the target is unreachable,
+// plans kept failing, or the agent made no progress) — both clear `active`.
+// `paused` (the inspector's Stop) holds the agent: patrol routes do not
+// restart it until it is resumed. `commanded` marks a one-off order (Ctrl+
+// click, Go): a PatrolRoute waits for it to end, then resumes its route.
+// Everything below `paused` is system-managed (not serialized); start walks
+// through the helpers in navigation.hpp, which reset it.
 struct NavAgent {
     glm::vec3 target{0.0F};
     float     speed = 3.0F;
     float     ground_offset = 0.0F; // entity origin height above the ground
     bool      active = false;
+    bool      paused = false;
     bool      arrived = false;
+    bool      commanded = false;       // the target is a one-off order, not a route point
+    bool      failed = false;          // gave up on the current target
+    std::uint8_t           plan_failures = 0; // failed attempts since the last progress
+    bool                   path_partial = false; // path ends short of the target
     std::vector<glm::vec3> path;
     std::size_t            waypoint = 0;
     glm::vec3              planned_target{1e30F, 1e30F, 1e30F}; // path's target
+    std::uint64_t          planned_generation = 0; // NavMesh::generation() of the path
     float                  retry_s = 0.0F; // cooldown after a failed plan
+    float                  progress_best = 1e30F; // closest approach to the current waypoint
+    float                  progress_timer = 0.0F; // time since progress_best improved
+};
+
+// Per-entity, per-node behaviour-tree memory (system-managed).
+struct BtNodeState {
+    float         scratch = 0.0F; // leaf memory (wait timer, move_to phase)
+    std::uint32_t child = 0;      // composites: the child that was running
+    std::uint32_t ticked = 0;     // tick stamp of the last tick that reached it
+    bool          running = false; // returned running on that tick
 };
 
 // A data-driven behaviour tree (13.3): `source` is the tree JSON (composed of
-// sequence/selector/inverter nodes over named C++ leaves — see behavior.hpp).
-// The system compiles it lazily; a parse error logs once and disables the
-// tree. compiled/node_state/parse_failed are system-managed.
+// sequence/selector/reactive_*/inverter nodes over named C++ leaves — see
+// behavior.hpp). The system compiles it lazily; a parse error logs once and
+// disables the tree. compiled/node_state/tick_count/parse_failed are
+// system-managed.
 struct BehaviorTree {
     std::string source;
     bool        enabled = true;
     std::shared_ptr<const class BehaviorTreeAsset> compiled;
-    std::vector<float> node_state; // per-node scratch (e.g. wait timers)
+    std::vector<BtNodeState> node_state; // one per compiled node
+    std::uint32_t            tick_count = 0;
     bool parse_failed = false;
 };
 
@@ -206,13 +229,16 @@ struct Terrain {
 };
 
 // An authored walk route (editor: Shift+click the ground to append points).
-// The nav system feeds the points to the entity's NavAgent in order; `loop`
-// wraps back to the first point, otherwise the agent stops at the last.
-// `next` is system-managed.
+// The nav system feeds the points to the entity's idle NavAgent in order;
+// `loop` wraps back to the first point, otherwise the agent stops at the
+// last (`finished`; appending points continues the route). Commanded moves
+// interrupt the route, which resumes at `next` afterwards; unreachable
+// points are skipped. `next`/`finished` are system-managed.
 struct PatrolRoute {
     std::vector<glm::vec3> points;
     bool        loop = true;
     std::size_t next = 0;
+    bool        finished = false;
 };
 
 // Marks an entity for network replication (14.2): the server broadcasts its

@@ -20,7 +20,7 @@ for f in "$@"; do
     -Iinclude -Isrc -Isrc/remote -Itests \
     -isystem "$D/entt/src" -isystem "$D/vma/include" -isystem "$D/jolt" \
     -isystem "$D/fastgltf/include" -isystem "$D/stb" -isystem "$D/sdl/include" \
-    -isystem "$D/miniaudio" -isystem "$D/imgui" -isystem "$D/imgui/backends" -isystem "$D/googletest/googletest/include" ${EXTRA_FLAGS:-} \
+    -isystem "$D/miniaudio" -isystem "$D/imgui" -isystem "$D/imgui/backends" -isystem "$D/recast-inc" -isystem "$D/googletest/googletest/include" ${EXTRA_FLAGS:-} \
     "$f" 2>&1)
   if [ -n "$out" ]; then echo "== $f"; echo "$out" | head -40; fail=1; else echo "ok $f"; fi
 done

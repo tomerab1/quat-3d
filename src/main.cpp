@@ -641,6 +641,17 @@ int main() {
     bool terrain_stream_mode = false;
     engine::nav::NavMesh navmesh;        // baked on request from the Physics panel (13.1)
     bool navmesh_request = false;
+    bool navmesh_auto_bake = false;      // armed: bake once if Play has agents and no mesh
+    std::string navmesh_status;          // last bake / invalidation, for the Physics panel
+    // A navmesh describes the geometry it was baked from: drop it when that
+    // changes (scene load, terrain regeneration) and re-arm the auto-bake.
+    const auto invalidate_navmesh = [&](const char* why) {
+        navmesh_auto_bake = true;
+        if (!navmesh.valid()) return;
+        navmesh = {};
+        navmesh_status = std::string("cleared: ") + why + " (rebake)";
+        std::fprintf(stderr, "[nav] navmesh cleared: %s\n", why);
+    };
     std::optional<engine::editor::EditorContext::GroundClick> ground_click; // 13.4
 
     // Networking (Phase 14; S1 B1-B5): QUAT_HOST=<port> hosts this scene,
@@ -890,19 +901,9 @@ int main() {
             if (editor_play) {
                 play_snapshot = engine::editor::capture_scene(scene);
                 // Unity convention: a Collider without a RigidBody simulates as
-                // a static body. Added AFTER the snapshot, so Stop removes it.
-                {
-                    std::vector<entt::entity> static_only;
-                    for (const entt::entity e :
-                         scene.registry().view<engine::scene::Collider>(
-                             entt::exclude<engine::scene::RigidBody>)) {
-                        static_only.push_back(e);
-                    }
-                    for (const entt::entity e : static_only) {
-                        scene.registry().emplace<engine::scene::RigidBody>(
-                            e, engine::scene::BodyMotion::static_body, 0.0F);
-                    }
-                }
+                // a static body (kinematic on nav agents, none on characters).
+                // Added AFTER the snapshot, so Stop removes it.
+                (void)engine::scene::promote_collider_only_bodies(scene.registry());
                 if (auto world = engine::physics::PhysicsWorld::create(); world) {
                     play_physics = std::move(*world);
                     // Terrain joins the simulation as static Jolt height
@@ -932,6 +933,7 @@ int main() {
                             std::fprintf(stderr, "[terrain] height-field body added\n");
                         }
                     }
+                    navmesh_auto_bake = true; // bake now if agents have no mesh
                     std::fprintf(stderr, "[editor] play (%zu colliders, %zu bodies)\n",
                                  scene.registry().view<engine::scene::Collider>().size(),
                                  scene.registry().view<engine::scene::RigidBody>().size());
@@ -979,6 +981,7 @@ int main() {
                                                        assets);
                     r) {
                     std::fprintf(stderr, "[editor] loaded scene: %s\n", path.c_str());
+                    invalidate_navmesh("scene loaded");
                     // Rebind the loop's cached entities to the loaded scene.
                     // (The view camera is editor state — nothing to rebind.)
                     spin_entity = entt::null;
@@ -1203,11 +1206,23 @@ int main() {
         }
 #ifdef ENGINE_EDITOR
         else if (editor_play && play_physics) {
-            engine::scene::bt_system(scene.registry(), dt);
-            if (navmesh.valid()) {
-                engine::scene::nav_agent_system(scene.registry(), navmesh, dt,
-                                                ground_height_at);
+            // Perception: the trees see the user's view — the fly camera,
+            // unless Play looks through the scene's active Camera entity
+            // (then near_camera falls back to that entity).
+            const bool viewing_scene_camera =
+                play_use_scene_camera &&
+                engine::scene::find_active_camera(scene.registry()) != entt::null;
+            engine::scene::bt_system(
+                scene.registry(), dt,
+                {.navmesh = &navmesh,
+                 .ground_height = ground_height_at,
+                 .viewer = viewing_scene_camera ? std::nullopt : std::optional(cam_pos)});
+            if (std::exchange(navmesh_auto_bake, false) && !navmesh.valid() &&
+                !scene.registry().view<engine::scene::NavAgent>().empty()) {
+                navmesh_request = true; // baked below, this frame
+                std::fprintf(stderr, "[nav] no navmesh for the agents: baking one\n");
             }
+            engine::scene::nav_agent_system(scene.registry(), navmesh, dt, ground_height_at);
             engine::scene::character_system(scene.registry(), *play_physics, dt);
             engine::scene::physics_system(scene.registry(), *play_physics, dt);
         }
@@ -1401,6 +1416,7 @@ int main() {
                     }
                     terrain_pass.remove_tile(glm::ivec2(0, 0));
                     terrain_streamer.emplace(tcomp.params, tcomp.stream_radius);
+                    invalidate_navmesh("terrain regenerated");
                     std::fprintf(stderr, "[terrain] streaming world (seed %u, radius %d)\n",
                                  tcomp.params.seed, tcomp.stream_radius);
                 }
@@ -1456,6 +1472,7 @@ int main() {
         if (terrain_job.valid() &&
             terrain_job.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
             terrain_heightmap = terrain_job.get();
+            invalidate_navmesh("terrain regenerated");
             if (auto r = terrain_pass.set_tile(glm::ivec2(0, 0), terrain_heightmap,
                                                terrain_transfer);
                 r) {
@@ -1509,10 +1526,7 @@ int main() {
                     std::fprintf(stderr, "[nav] waypoint %zu at (%.1f, %.1f, %.1f)\n",
                                  route.points.size(), hit->x, hit->y, hit->z);
                 } else {
-                    agent.target = *hit;
-                    agent.active = true;
-                    agent.arrived = false;
-                    agent.path.clear();
+                    engine::scene::nav_agent_command(agent, *hit);
                     std::fprintf(stderr, "[nav] go to (%.1f, %.1f, %.1f)\n", hit->x, hit->y,
                                  hit->z);
                 }
@@ -1529,8 +1543,14 @@ int main() {
                     &terrain_heightmap, terrain_anchor);
                 built) {
                 navmesh = std::move(*built);
+                const std::size_t edges = navmesh.debug_edges().size();
+                navmesh_status = "baked: " + std::to_string(edges) + " edges";
             } else {
-                std::fprintf(stderr, "[nav] bake failed: %s\n", built.error().message.c_str());
+                // Never keep the old mesh silently: it no longer matches the scene.
+                navmesh = {};
+                navmesh_status = "bake failed: " + built.error().message;
+                std::fprintf(stderr, "[nav] bake failed (navmesh cleared): %s\n",
+                             built.error().message.c_str());
             }
         }
 
@@ -1689,6 +1709,7 @@ int main() {
             ui_ctx.build_navmesh_request = &navmesh_request;
             ui_ctx.ground_click = &ground_click;
             ui_ctx.nav_edges = navmesh.valid() ? &navmesh.debug_edges() : nullptr;
+            ui_ctx.nav_status = &navmesh_status;
             ui_ctx.view_proj = cam.view_proj; // unjittered, for overlays
             ui_ctx.view = cam.view;
             ui_ctx.proj_no_flip = cam.projection;

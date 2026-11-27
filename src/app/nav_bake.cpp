@@ -6,6 +6,8 @@
 
 #include <entt/entity/registry.hpp>
 
+#include "engine/scene/components.hpp"
+#include "engine/scene/navigation.hpp"
 #include "engine/scene/scene.hpp"
 #include "engine/terrain/heightmap.hpp"
 #include "engine/terrain/streamer.hpp"
@@ -15,30 +17,25 @@ namespace quat::app {
 std::expected<engine::nav::NavMesh, engine::core::Error>
 bake_navmesh(entt::registry& registry, const engine::terrain::TerrainStreamer* streamer,
              const engine::terrain::Heightmap* heightmap, const glm::vec3& anchor) {
-    std::vector<glm::vec3> verts;
-    std::vector<std::uint32_t> indices;
-    if (streamer != nullptr) {
-        // Streamed world: bake every loaded tile (colliders once).
-        bool first = true;
-        for (const auto& [coord, map] : streamer->maps()) {
-            const glm::vec3 origin = streamer->tile_origin(coord, anchor);
-            const glm::vec3 centre(origin.x + map.tile_size_m * 0.5F, anchor.y,
-                                   origin.z + map.tile_size_m * 0.5F);
-            engine::scene::collect_nav_geometry(registry, &map, centre, verts, indices, first);
-            first = false;
+    // Terrain only while a Terrain entity exists: the heightmap / streamer
+    // outlive a deleted terrain, and baking them would add phantom ground
+    // (audit N3). Streamed worlds bake every loaded tile.
+    std::vector<engine::scene::NavTerrainTile> tiles;
+    if (!registry.view<engine::scene::Terrain>().empty()) {
+        if (streamer != nullptr) {
+            for (const auto& [coord, map] : streamer->maps()) {
+                const glm::vec3 origin = streamer->tile_origin(coord, anchor);
+                tiles.push_back({&map, glm::vec3(origin.x + map.tile_size_m * 0.5F, anchor.y,
+                                                 origin.z + map.tile_size_m * 0.5F)});
+            }
+        } else if (heightmap != nullptr && heightmap->valid()) {
+            tiles.push_back({heightmap, anchor});
         }
-        if (first) { // no tiles loaded yet: at least the colliders
-            engine::scene::collect_nav_geometry(registry, nullptr, anchor, verts, indices, true);
-        }
-    } else {
-        engine::scene::collect_nav_geometry(
-            registry, heightmap != nullptr && heightmap->valid() ? heightmap : nullptr, anchor,
-            verts, indices);
     }
-    auto built = engine::nav::NavMesh::build(verts, indices);
+    auto built = engine::scene::bake_scene_navmesh(registry, tiles);
     if (built) {
-        std::fprintf(stderr, "[nav] navmesh baked: %zu tris in, %zu polygons\n",
-                     indices.size() / 3, built->polygon_count());
+        std::fprintf(stderr, "[nav] navmesh baked: %zu terrain tile(s), %zu polygons\n",
+                     tiles.size(), built->polygon_count());
     }
     return built;
 }

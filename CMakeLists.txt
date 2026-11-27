@@ -186,6 +186,7 @@ add_library(engine_scene STATIC
     src/scene/scene.cpp
     src/scene/physics_system.cpp
     src/scene/nav_agent_system.cpp
+    src/scene/navigation.cpp
     src/scene/behavior.cpp
     src/scene/scene_io.cpp
     src/scene/component_json.cpp

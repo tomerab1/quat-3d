@@ -107,7 +107,8 @@ void draw_capsule(const OverlayContext& ctx, const glm::mat4& world, const glm::
 void draw_physics_debug(scene::Scene& scene, const glm::mat4& view_proj,
                         const float viewport_rect[4], PhysicsDebugState& state,
                         bool* build_navmesh_request,
-                        const std::vector<std::pair<glm::vec3, glm::vec3>>* nav_edges) {
+                        const std::vector<std::pair<glm::vec3, glm::vec3>>* nav_edges,
+                        const std::string* nav_status) {
     if (ImGui::Begin("Physics")) {
         ImGui::Checkbox("draw colliders", &state.enabled);
         ImGui::Checkbox("static", &state.show_static);
@@ -121,6 +122,15 @@ void draw_physics_debug(scene::Scene& scene, const glm::mat4& view_proj,
         ImGui::Checkbox("show navmesh", &state.show_navmesh);
         if (nav_edges != nullptr && !nav_edges->empty()) {
             ImGui::Text("navmesh: %zu edges", nav_edges->size());
+        } else {
+            ImGui::TextDisabled("navmesh: none (agents stand still)");
+        }
+        if (nav_status != nullptr && !nav_status->empty()) {
+            const bool failed = nav_status->starts_with("bake failed");
+            ImGui::PushStyleColor(ImGuiCol_Text, failed ? ImVec4(1.0F, 0.4F, 0.3F, 1.0F)
+                                                        : ImGui::GetStyleColorVec4(ImGuiCol_Text));
+            ImGui::TextWrapped("%s", nav_status->c_str());
+            ImGui::PopStyleColor();
         }
     }
     ImGui::End();
