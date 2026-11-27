@@ -136,23 +136,13 @@ RpcResult debug_stats(Context& ctx, const Json& params) {
                                                    : Json(nullptr);
 
     if (ctx.services.log_ring != nullptr) {
-        core::LogQuery warn;
-        warn.since_seq = 0;
-        warn.min_level = core::LogLevel::warn;
-        warn.limit = core::LogRing::default_capacity;
-        const core::LogQueryResult w = ctx.services.log_ring->query(warn);
-        std::size_t errors = 0;
-        std::uint64_t last_error = 0;
-        for (const core::LogLine& l : w.lines) {
-            if (l.level == core::LogLevel::error) {
-                ++errors;
-                last_error = l.seq;
-            }
-        }
-        out["log"] = {{"last_seq", ctx.services.log_ring->last_seq()},
-                      {"warnings", w.lines.size() - errors},
-                      {"errors", errors},
-                      {"last_error_seq", last_error == 0 ? Json(nullptr) : Json(last_error)}};
+        // Counted on push: no copy of the ring (up to its capacity of lines).
+        const core::LogCounts c = ctx.services.log_ring->counts();
+        out["log"] = {
+            {"last_seq", ctx.services.log_ring->last_seq()},
+            {"warnings", c.warnings},
+            {"errors", c.errors},
+            {"last_error_seq", c.last_error_seq == 0 ? Json(nullptr) : Json(c.last_error_seq)}};
     } else {
         out["log"] = nullptr;
     }
