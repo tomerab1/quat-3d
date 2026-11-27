@@ -348,6 +348,66 @@ TEST_F(BodyCommands, JointsAreAuthoredThroughSceneCommands) {
     EXPECT_EQ(physics->joint_count(), 0U);
 }
 
+// ---- character.move ---------------------------------------------------------------
+
+TEST_F(BodyCommands, CharacterMoveDrivesTheController) {
+    spawn("Floor", {{"transform", {{"position", {0, -1, 0}}}},
+                    {"collider", {{"shape", "box"}, {"half_extents", {20, 1, 20}}}},
+                    {"rigidbody", {{"motion", "static"}}}});
+    ok("scene.create", {{"name", "Hero"},
+                        {"components", {{"transform", {{"position", {0, 1, 0}}}},
+                                        {"character", {{"speed", 4}}}}}});
+    const auto frames = [&](int n) {
+        for (int i = 0; i < n; ++i) {
+            engine::scene::character_system(reg(), *physics, 1.0F / 60.0F);
+        }
+    };
+    frames(60);
+    Json r = ok("character.move", {{"entity", "Hero"}, {"velocity", {2, 0, 0}}});
+    EXPECT_EQ(r["move"], Json::array({0.5, 0.0, 0.0}));
+    EXPECT_TRUE(r["on_ground"].get<bool>());
+    frames(60);
+    EXPECT_NEAR(ok("physics.get", {{"entity", "Hero"}})["position"][0].get<float>(), 2.0F, 0.1F);
+
+    r = ok("character.move", {{"entity", "Hero"}, {"target", {2, 0, 3}}, {"jump", true}});
+    EXPECT_EQ(r["target"], Json::array({2.0, 0.0, 3.0}));
+    const auto& cc = reg().get<engine::scene::CharacterController>(entity(r["entity"]));
+    EXPECT_FLOAT_EQ(cc.jump_speed, 5.0F);
+    frames(90);
+    const Json at = ok("physics.get", {{"entity", "Hero"}})["position"];
+    EXPECT_NEAR(at[2].get<float>(), 3.0F, 0.1F);
+    EXPECT_FALSE(cc.has_move_target);
+}
+
+TEST_F(BodyCommands, CharacterMoveIsValidated) {
+    ok("scene.create", {{"name", "Hero"}, {"components", {{"character", {{"speed", 4}}}}}});
+    ok("scene.create", {{"name", "Npc"},
+                        {"components", {{"character", Json::object()},
+                                        {"nav_agent", {{"active", true}}}}}});
+    crate();
+    const auto code = rpc_code::invalid_params;
+    EXPECT_NE(err("character.move", {{"entity", "Hero"}, {"velocity", {9, 0, 0}}}, code)
+                  .find("exceeds the controller's speed 4"),
+              std::string::npos);
+    EXPECT_NE(err("character.move",
+                  {{"entity", "Hero"}, {"velocity", {1, 0, 0}}, {"target", {1, 0, 1}}}, code)
+                  .find("not both"),
+              std::string::npos);
+    err("character.move", {{"entity", "Hero"}}, code);
+    err("character.move", {{"entity", "Hero"}, {"jump", 0}}, code);
+    err("character.move", {{"entity", "Hero"}, {"jump", 99}}, code);
+    err("character.move", {{"entity", "Hero"}, {"jump", true}, {"duration_s", 1}}, code);
+    err("character.move", {{"entity", "Hero"}, {"velocity", {1, 0, 0}}, {"duration_s", 0}}, code);
+    EXPECT_NE(err("character.move", {{"entity", "Crate"}, {"velocity", {1, 0, 0}}}, code)
+                  .find("physics.apply"),
+              std::string::npos);
+    EXPECT_NE(err("character.move", {{"entity", "Npc"}, {"velocity", {1, 0, 0}}}, code)
+                  .find("nav_agent"),
+              std::string::npos);
+    physics.reset();
+    err("character.move", {{"entity", "Hero"}, {"jump", true}}, rpc_code::unavailable);
+}
+
 // ---- gravity ----------------------------------------------------------------
 
 TEST_F(PhysicsCommands, GravityIsASceneSettingEditableWithoutPlaying) {

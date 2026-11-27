@@ -188,6 +188,32 @@ void publish_physics_events(const physics::PhysicsWorld& world, core::EventRing&
 
 namespace {
 
+// Remote driving (character.move): walk towards a target point, stop when a
+// timed walk runs out. Writes `move` like a player's input would.
+void steer_character(CharacterController& cc, const glm::vec3& position, float dt) {
+    if (cc.has_move_target) {
+        const glm::vec2 to(cc.move_target.x - position.x, cc.move_target.z - position.z);
+        const float dist = glm::length(to);
+        const float step = cc.speed * dt;
+        if (dist <= 0.02F || cc.speed <= 0.0F) {
+            cc.move = glm::vec3(0.0F);
+            cc.has_move_target = false; // arrived
+        } else {
+            // Slow down on the last step instead of overshooting.
+            const float scale = step > dist ? dist / step : 1.0F;
+            cc.move = glm::vec3(to.x / dist, 0.0F, to.y / dist) * scale;
+        }
+    }
+    if (cc.move_time_left >= 0.0F) {
+        cc.move_time_left -= dt;
+        if (cc.move_time_left <= 0.0F) {
+            cc.move = glm::vec3(0.0F);
+            cc.has_move_target = false;
+            cc.move_time_left = -1.0F;
+        }
+    }
+}
+
 void advance_character(entt::registry& registry, entt::entity e, CharacterController& cc,
                        const Transform& t, physics::PhysicsWorld& world, float dt) {
     // Characters stand along +Y: they fall with the vertical component of the
@@ -198,9 +224,15 @@ void advance_character(entt::registry& registry, entt::entity e, CharacterContro
                                               static_cast<std::uint32_t>(entt::to_integral(e)));
     }
 
+    steer_character(cc, world.character_position(cc.character), dt);
+
     glm::vec3 velocity = cc.velocity;
     if (cc.on_ground && velocity.y * gravity > 0.0F) {
         velocity.y = 0.0F; // grounded: stop accumulating speed along gravity
+    }
+    if (cc.jump_speed > 0.0F) { // one request, honoured only from the ground
+        if (cc.on_ground) velocity.y = gravity <= 0.0F ? cc.jump_speed : -cc.jump_speed;
+        cc.jump_speed = 0.0F;
     }
     velocity.y += gravity * dt;
     velocity.x = cc.move.x * cc.speed;

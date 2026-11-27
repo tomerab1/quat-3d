@@ -279,6 +279,14 @@ struct CharacterController {
     glm::vec3     velocity{0.0F};
     bool          on_ground = false;
     std::uint32_t character = 0xFFFFFFFFU;
+    // Remote driving (A10.1 character.move), system-managed and not saved:
+    // walk straight to `move_target` while `has_move_target` (overriding
+    // `move`), stop walking once `move_time_left` runs out (< 0: no limit),
+    // and jump at `jump_speed` m/s on the next tick if grounded (consumed).
+    glm::vec3 move_target{0.0F};
+    bool      has_move_target = false;
+    float     move_time_left = -1.0F;
+    float     jump_speed = 0.0F;
 };
 
 // Autonomous navigation: the agent repaths on the baked navmesh whenever
