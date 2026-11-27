@@ -222,9 +222,12 @@ the running engine — create entities, set the sky and camera, take
 screenshots, spawn models — and debug it: read the engine log and Vulkan
 validation messages, frame statistics, pause / single-step / slow down the
 simulation, watch entities, cast physics rays and query navmesh paths — and
-author NPC behaviour trees: build, inspect and edit the same graph the editor's
-Behaviour panel shows, with per-node validation errors, and see what each node
-did on the last tick. Start the engine with `QUAT_REMOTE=7878`, build the
+tune the look: exposure, bloom, anti-aliasing, shadows, sky light, clouds and
+per-entity materials, with the same values the editor's Renderer panel and
+Material inspector show — and author NPC behaviour trees: build, inspect and
+edit the same graph the editor's Behaviour panel shows, with per-node
+validation errors, and see what each node did on the last tick. Start the
+engine with `QUAT_REMOTE=7878`, build the
 server with `cargo build --release` in `tools/quat-mcp`, and register it with
 your client:
 

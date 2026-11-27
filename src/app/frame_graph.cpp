@@ -22,9 +22,7 @@
 #include "engine/scene/components.hpp"
 #include "engine/scene/instanced_mesh.hpp"
 #include "engine/scene/scene.hpp"
-#ifdef ENGINE_EDITOR
-#include "engine/editor/editor.hpp"
-#endif
+#include "engine/scene/material_override.hpp"
 
 namespace quat::app {
 namespace {
@@ -99,10 +97,7 @@ SkinnedEntityGpu* ensure_skin_gpu(DeferredFrame& frame, entt::entity entity,
 } // namespace
 
 engine::renderer::CloudSettings FrameRenderer::current_clouds() const {
-    engine::renderer::CloudSettings c{};
-#ifdef ENGINE_EDITOR
-    if (render_settings_ != nullptr) c = render_settings_->clouds;
-#endif
+    engine::renderer::CloudSettings c = settings_.clouds;
     c.time_s = cloud_time_s_;
     return c;
 }
@@ -118,9 +113,11 @@ FrameScene FrameRenderer::gather(engine::scene::Scene& scene,
     // TAA: jitter the projection sub-pixel each frame (Halton). The whole
     // frame renders with the jittered view-proj; the resolve accumulates
     // into the shared history, reprojecting with the UNjittered
-    // cam.view_proj (audit A14).
+    // cam.view_proj (audit A14). No jitter while TAA is off.
     const glm::vec2 jitter =
-        engine::renderer::taa_jitter(frame_number, draw_extent.width, draw_extent.height);
+        settings_.taa.enabled
+            ? engine::renderer::taa_jitter(frame_number, draw_extent.width, draw_extent.height)
+            : glm::vec2(0.0F);
     glm::mat4 jitter_mat(1.0F);
     jitter_mat[3][0] = jitter.x;
     jitter_mat[3][1] = jitter.y;
@@ -155,7 +152,7 @@ FrameScene FrameRenderer::gather(engine::scene::Scene& scene,
          scene.registry().view<engine::scene::Transform, engine::scene::MeshRenderer>().each()) {
         engine::renderer::DrawItem item;
         item.mesh = mr.mesh.valid() ? &*mr.mesh : nullptr;
-        item.material = mr.material.valid() ? &*mr.material : nullptr;
+        item.material = material_overrides_.drawn(scene.registry(), e, mr);
         item.model = t.world;
 
         const auto* sm = scene.registry().try_get<engine::scene::SkinnedMesh>(e);
@@ -223,16 +220,11 @@ FrameScene FrameRenderer::gather(engine::scene::Scene& scene,
     }
 
     // Directional shadow: an orthographic light view fit to a fixed box
-    // around the scene (the demos all sit near the origin).
-    const glm::vec3 sun_dir = -glm::normalize(glm::vec3(light.direction)); // travel direction
-    const glm::vec3 shadow_center(0.0F, 1.5F, 0.0F);
-    constexpr float shadow_radius = 14.0F;
-    const glm::vec3 light_eye = shadow_center - sun_dir * (shadow_radius * 1.5F);
-    const glm::mat4 shadow_view =
-        glm::lookAt(light_eye, shadow_center, glm::vec3(0.0F, 1.0F, 0.0F));
-    const glm::mat4 shadow_proj = glm::ortho(-shadow_radius, shadow_radius, -shadow_radius,
-                                             shadow_radius, 0.1F, shadow_radius * 3.5F);
-    out.light_view_proj = shadow_proj * shadow_view;
+    // around the scene origin (the demos all sit near it), its half-size set
+    // by the shadow settings.
+    const glm::vec3 sun_dir = -glm::vec3(light.direction); // travel direction
+    out.light_view_proj = engine::renderer::directional_shadow_view_proj(
+        sun_dir, glm::vec3(0.0F, 1.5F, 0.0F), settings_.shadows.extent_m);
     return out;
 }
 
@@ -291,7 +283,13 @@ bool FrameRenderer::record(const FrameInputs& in) {
                                           engine::scene::InstancedPass::shadow, shadow_batches);
     engine::scene::append_instanced_draws(*in.registry, cam.view_proj,
                                           engine::scene::InstancedPass::opaque, opaque_batches);
-    auto shadow = fr.shadow.add_to_graph(graph, fs.light_view_proj, shadow_batches);
+    const engine::renderer::RenderSettings& settings = settings_;
+    // Shadows off: no shadow pass; an invalid map makes the lighting unshadowed.
+    std::expected<engine::rhi::ResourceHandle, engine::core::Error> shadow =
+        engine::rhi::ResourceHandle{};
+    if (settings.shadows.enabled) {
+        shadow = fr.shadow.add_to_graph(graph, fs.light_view_proj, shadow_batches);
+    }
     if (!shadow) {
         std::fprintf(stderr, "[fatal] shadow pass: %s\n", shadow.error().message.c_str());
         return false;
@@ -322,7 +320,12 @@ bool FrameRenderer::record(const FrameInputs& in) {
                                         fs.jittered_inv_vp, cam.position, *shadow,
                                         fs.light_view_proj, clustered,
                                         /*enable_sky=*/true, ibl_views, atmos_skyview(),
-                                        atmos_transmittance(), current_clouds());
+                                        atmos_transmittance(), current_clouds(),
+                                        engine::renderer::LightingTuning{
+                                            .ibl_intensity = settings.ibl.intensity,
+                                            .shadow_depth_bias = settings.shadows.depth_bias,
+                                            .shadow_slope_bias = settings.shadows.slope_bias,
+                                            .shadow_pcf_radius = settings.shadows.pcf_radius});
     if (!hdr) {
         std::fprintf(stderr, "[fatal] lighting pass: %s\n", hdr.error().message.c_str());
         return false;
@@ -332,28 +335,31 @@ bool FrameRenderer::record(const FrameInputs& in) {
     if (!fs.transparent_draws.empty()) {
         if (auto r = fr.transparent.add_to_graph(graph, *hdr, gbuffer->depth, draw_extent,
                                                  fs.jittered_vp, fs.light, cam.position,
-                                                 fs.transparent_draws, ibl_views, clustered);
+                                                 fs.transparent_draws, ibl_views, clustered,
+                                                 settings.ibl.intensity);
             !r) {
             std::fprintf(stderr, "[fatal] transparent pass: %s\n", r.error().message.c_str());
             return false;
         }
     }
     // Bloom: blur the bright parts of the HDR and add them back before tonemap.
-    engine::renderer::BloomParams bloom_params{};
-#ifdef ENGINE_EDITOR
-    if (render_settings_ != nullptr) {
-        bloom_params.threshold = render_settings_->bloom_threshold;
-        bloom_params.knee = render_settings_->bloom_knee;
-        bloom_params.intensity = render_settings_->bloom_intensity;
-        bloom_params.radius = render_settings_->bloom_radius;
+    if (settings.bloom.enabled) {
+        const engine::renderer::BloomParams bloom_params{
+            .threshold = settings.bloom.threshold,
+            .knee = settings.bloom.knee,
+            .intensity = settings.bloom.intensity,
+            .radius = settings.bloom.radius};
+        if (auto r = fr.bloom.add_to_graph(graph, *hdr, draw_extent, bloom_params); !r) {
+            std::fprintf(stderr, "[fatal] bloom pass: %s\n", r.error().message.c_str());
+            return false;
+        }
     }
-#endif
-    if (auto r = fr.bloom.add_to_graph(graph, *hdr, draw_extent, bloom_params); !r) {
-        std::fprintf(stderr, "[fatal] bloom pass: %s\n", r.error().message.c_str());
-        return false;
-    }
-    // Auto-exposure: measure the (post-bloom) HDR luminance and adapt over time.
-    if (auto r = fr.exposure.add_to_graph(graph, *hdr, draw_extent, in.dt); !r) {
+    // Auto-exposure: measure the (post-bloom) HDR luminance and adapt over
+    // time. It keeps measuring in manual mode, so switching back to auto
+    // starts from the current scene instead of a stale value.
+    if (auto r = fr.exposure.add_to_graph(graph, *hdr, draw_extent, in.dt,
+                                          settings.exposure.adaptation_s);
+        !r) {
         std::fprintf(stderr, "[fatal] exposure pass: %s\n", r.error().message.c_str());
         return false;
     }
@@ -364,7 +370,11 @@ bool FrameRenderer::record(const FrameInputs& in) {
         // The first barrier waits on the acquire semaphore's stage, so
         // every first touch (layout transition, TAA's copy) is ordered
         // after the presentation engine releases the image (audit A3).
-        k_acquire_wait_stage);
+        k_acquire_wait_stage, /*available_access=*/0,
+        // The final PRESENT_SRC transition is ordered before the stage the
+        // render-finished semaphore is signalled at, which present waits
+        // on (issue #9).
+        k_present_signal_stage);
     // In editor mode the frame resolves into the slot's offscreen viewport
     // image (sampled by the Viewport panel); otherwise straight into the
     // swapchain as before.
@@ -391,14 +401,15 @@ bool FrameRenderer::record(const FrameInputs& in) {
         "ldr_current", ldr_format_, draw_extent,
         VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT);
     if (auto r = fr.tonemap.add_to_graph(graph, *hdr, ldr_current, draw_extent,
-                                         fr.exposure.exposure_buffer_address());
+                                         fr.exposure.exposure_buffer_address(),
+                                         settings.exposure);
         !r) {
         std::fprintf(stderr, "[fatal] tonemap pass: %s\n", r.error().message.c_str());
         return false;
     }
     // Temporal anti-aliasing: resolve the jittered frame against history.
     if (auto r = fr.taa.add_to_graph(graph, ldr_current, gbuffer->depth, scene_target,
-                                     draw_extent, cam.view_proj);
+                                     draw_extent, cam.view_proj, settings.taa);
         !r) {
         std::fprintf(stderr, "[fatal] taa pass: %s\n", r.error().message.c_str());
         return false;

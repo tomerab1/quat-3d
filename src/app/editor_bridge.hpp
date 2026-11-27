@@ -1,9 +1,8 @@
 #pragma once
 
 // EditorBridge — the editor layer's side of the `game` frame loop (app layer,
-// editor builds only). Owns the EditorLayer (ImGui shell), the Renderer panel
-// settings and the requests the UI raises, and applies them at fixed points of
-// the frame:
+// editor builds only). Owns the EditorLayer (ImGui shell) and the requests the
+// UI raises, and applies them at fixed points of the frame:
 //
 //   begin_frame()          after remote requests: starts the UI frame, then
 //                          applies Play/Stop (scene snapshot + the world's
@@ -34,6 +33,9 @@ union SDL_Event;
 namespace engine::asset {
 class AssetManager;
 }
+namespace engine::renderer {
+struct RenderSettings;
+}
 namespace engine::rhi {
 class Device;
 class GpuAllocator;
@@ -60,6 +62,9 @@ struct EditorBridgeTargets {
     PlayMode*                    play_mode = nullptr;
     // Shader hot-reload state for the Stats panel (R2); null when off.
     const engine::rhi::ShaderHotReload* shader_reload = nullptr;
+    // The renderer's settings: the Renderer panel edits them and scene files
+    // save / load them (A8).
+    engine::renderer::RenderSettings* render_settings = nullptr;
 };
 
 class EditorBridge {
@@ -75,13 +80,10 @@ public:
     // false (QUAT_NO_UI=1) the editor stays inactive.
     void create(SDL_Window* window, bool enabled);
     void bind(const EditorBridgeTargets& targets) { t_ = targets; }
-    // Points the remote bridge at the editor and its renderer settings.
+    // Points the remote bridge at the editor.
     void fill_remote_targets(RemoteBridgeTargets& targets);
 
     [[nodiscard]] bool active() const { return editor_.active(); }
-    [[nodiscard]] const engine::editor::RendererSettings& render_settings() const {
-        return render_settings_;
-    }
 
     // ---- Input -------------------------------------------------------------
     void process_event(const SDL_Event& event);
@@ -122,7 +124,6 @@ private:
 
     EditorBridgeTargets              t_;
     engine::editor::EditorLayer      editor_;
-    engine::editor::RendererSettings render_settings_;
     std::string pending_instantiate_; // set by the asset browser, consumed below
     std::string pending_save_;        // scene file requests from the File menu
     std::string pending_load_;

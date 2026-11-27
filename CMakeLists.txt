@@ -134,6 +134,7 @@ target_include_directories(engine_core PUBLIC ${ENGINE_PUBLIC_INCLUDE})
 # ---------------------------------------------------------------------------
 add_library(engine_rhi STATIC
     src/rhi/device.cpp
+    src/rhi/queue_selection.cpp
     src/rhi/swapchain.cpp
     src/rhi/gpu_allocator.cpp
     src/rhi/vma_impl.cpp
@@ -220,6 +221,8 @@ add_library(engine_scene STATIC
     src/scene/component_json.cpp
     src/scene/script_component.cpp
     src/scene/scene_snapshot.cpp
+    src/scene/material_override.cpp
+    src/scene/render_settings_json.cpp
     src/scene/audio_system.cpp
     src/scene/primitives.cpp
     src/scene/primitive_resolve.cpp
@@ -363,6 +366,7 @@ add_library(engine_remote_world STATIC
     src/remote/world/app_commands.cpp
     src/remote/world/debug_commands.cpp
     src/remote/world/debug_query_commands.cpp
+    src/remote/world/tuning_commands.cpp
     src/remote/world/behavior_commands.cpp
     src/remote/world/behavior_edit_commands.cpp
     src/remote/world/script_commands.cpp
@@ -382,6 +386,7 @@ set_source_files_properties(src/remote/world/stb_image_write_impl.cpp
 # ---------------------------------------------------------------------------
 add_library(engine_renderer STATIC
     src/renderer/draw_batching.cpp
+    src/renderer/render_settings.cpp
     src/renderer/grass.cpp
     src/renderer/grass_pass.cpp
     src/renderer/instance_buffer.cpp
@@ -428,6 +433,7 @@ if(ENGINE_EDITOR)
         src/editor/editor.cpp
         src/editor/scene_hierarchy.cpp
         src/editor/inspector.cpp
+        src/editor/tuning_panels.cpp
         src/editor/asset_browser.cpp
         src/editor/animation_preview.cpp
         src/editor/physics_debug.cpp

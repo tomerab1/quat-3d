@@ -36,6 +36,16 @@ pub struct DebugSessionArgs {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct TuneLookArgs {
+    /// The look to reach, e.g. "warm late-afternoon light, less washed out" or "glossier car paint".
+    #[serde(default)]
+    pub goal: Option<String>,
+    /// An entity (id or name) whose material matters most, if any.
+    #[serde(default)]
+    pub entity: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct DesignBehaviorArgs {
     /// What the NPC should do, e.g. "patrol between the gates and chase the player when near".
     pub goal: String,
@@ -113,6 +123,22 @@ impl QuatServer {
             "debug_session",
             DebugSessionArgs {
                 problem: non_blank(problem),
+                entity: non_blank(entity),
+            },
+        )
+    }
+
+    /// Tune how the running quat-3d scene looks from screenshots: exposure first, then tonemap/bloom, shadows and sky light, then materials, one change at a time.
+    #[prompt]
+    async fn tune_look(
+        &self,
+        args: Parameters<TuneLookArgs>,
+    ) -> Result<Vec<PromptMessage>, ErrorData> {
+        let TuneLookArgs { goal, entity } = args.0;
+        user_prompt(
+            "tune_look",
+            TuneLookArgs {
+                goal: non_blank(goal),
                 entity: non_blank(entity),
             },
         )

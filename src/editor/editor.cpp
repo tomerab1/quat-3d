@@ -22,6 +22,7 @@
 #include "picking.hpp"
 #include "engine/renderer/imgui_pass.hpp" // viewport_texture_id
 #include "inspector.hpp"
+#include "tuning_panels.hpp"
 #include "scene_hierarchy.hpp"
 #include "script_inspector.hpp"
 #include "vendor/imgui_impl_sdl3.h"

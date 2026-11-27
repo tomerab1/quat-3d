@@ -102,6 +102,7 @@ void register_camera_commands(RpcServer& server, const ContextPtr& ctx);
 void register_app_commands(RpcServer& server, const ContextPtr& ctx);
 void register_debug_commands(RpcServer& server, const ContextPtr& ctx);
 void register_debug_query_commands(RpcServer& server, const ContextPtr& ctx);
+void register_tuning_commands(RpcServer& server, const ContextPtr& ctx);
 void register_behavior_commands(RpcServer& server, const ContextPtr& ctx);
 void register_behavior_edit_commands(RpcServer& server, const ContextPtr& ctx);
 void register_script_commands(RpcServer& server, const ContextPtr& ctx);

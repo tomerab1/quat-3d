@@ -9,9 +9,11 @@ use serde_json::{Map, Value};
 mod behavior;
 mod debug;
 mod script;
+mod tuning;
 pub use behavior::*;
 pub use debug::*;
 pub use script::*;
+pub use tuning::*;
 
 /// A JSON object keyed by component name (see the tool description).
 pub type Components = Map<String, Value>;
@@ -225,25 +227,25 @@ pub struct CloudParams {
     /// Fraction of the sky covered, 0..1 (default 0.42).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub coverage: Option<f64>,
-    /// Extinction per km at full density (default 24); higher = darker, more opaque clouds.
+    /// Extinction per km at full density, 0..128 (default 24); higher = darker, more opaque clouds.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub density: Option<f64>,
-    /// Altitude of the cloud layer's base above the ground, km (default 1.5).
+    /// Altitude of the cloud layer's base above the ground, km, 0.2..15 (default 1.5).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bottom_km: Option<f64>,
-    /// Thickness of the cloud layer, km (default 2.5).
+    /// Thickness of the cloud layer, km, 0.2..10 (default 2.5).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub thickness_km: Option<f64>,
-    /// Base size of cloud features, km (default 10).
+    /// Base size of cloud features, km, 1..80 (default 10).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub size_km: Option<f64>,
     /// Edge erosion / wispiness, 0..1 (default 0.4).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub detail: Option<f64>,
-    /// Drift speed, m/s (default 12).
+    /// Drift speed, m/s, 0..100 (default 12).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub wind_speed: Option<f64>,
-    /// World-space heading the clouds drift toward, degrees (default 35).
+    /// World-space heading the clouds drift toward, degrees, -180..180 (default 35).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub wind_dir_deg: Option<f64>,
 }

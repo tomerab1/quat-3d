@@ -12,6 +12,8 @@
 // Component names (the JSON keys):
 //   transform        position / rotation (Euler degrees, YXZ) / scale, or a 16-float matrix
 //   primitive        procedural shape + flat PBR material
+//   material         per-entity overrides of the drawn material's PBR factors
+//                    (material_override.hpp); null clears a field
 //   instanced_mesh   glTF (or primitive) model + placements (omitted when a
 //                    scatter generates them; instance_count is read-only)
 //   scatter          seeded procedural placement of the instanced mesh

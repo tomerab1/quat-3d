@@ -1,0 +1,1 @@
+Restore the default values of one settings `group` (e.g. `{"group": "bloom"}`), or of every group when `group` is omitted. Returns every group's values. Use it to back out of an experiment that made the image worse.
