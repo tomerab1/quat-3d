@@ -23,11 +23,13 @@
 #include "app/audio_runtime.hpp"
 #include "app/demo_scenes.hpp"
 #include "app/grass_runtime.hpp"
+#include "engine/asset/mesh_asset.hpp" // Aabb
 #include "engine/core/error.hpp"
 #include "engine/nav/navmesh.hpp"
 #include "engine/net/session.hpp"
 #include "engine/physics/physics_world.hpp"
 #include "engine/renderer/terrain_pass.hpp"
+#include "engine/remote/world_commands.hpp" // TerrainStatus
 #include "engine/rhi/gpu_allocator.hpp"
 #include "engine/scene/navigation.hpp"
 #include "engine/terrain/generator.hpp"
@@ -143,6 +145,10 @@ public:
     // GPU grass (R9.3); null before init().
     [[nodiscard]] GrassRuntime* grass() { return grass_ ? &*grass_ : nullptr; }
     [[nodiscard]] const glm::vec3& terrain_anchor() const { return terrain_anchor_; }
+    // World-space extent the terrain covers for a camera at `eye`: the
+    // streaming window around it, or the single tile. nullopt without terrain.
+    // The view camera's far plane reaches it (issue #37).
+    [[nodiscard]] std::optional<engine::asset::Aabb> terrain_view_bounds(const glm::vec3& eye) const;
     [[nodiscard]] float terrain_snowline() const { return terrain_snowline_; }
 
 private:

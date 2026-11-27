@@ -1,6 +1,8 @@
 #include "app/world_runtime.hpp"
 
+#include <algorithm>
 #include <chrono>
+#include <limits>
 #include <cmath>
 #include <cstdio>
 #include <utility>
@@ -15,6 +17,7 @@
 #include "engine/scene/behavior.hpp"
 #include "engine/scene/components.hpp"
 #include "engine/scene/scene.hpp"
+#include "engine/scene/view_clip.hpp"
 
 namespace quat::app {
 
@@ -309,6 +312,31 @@ void WorldRuntime::update_terrain(engine::scene::Scene& scene, const glm::vec3& 
             std::fprintf(stderr, "[terrain] upload failed: %s\n", r.error().message.c_str());
         }
     }
+}
+
+std::optional<engine::asset::Aabb> WorldRuntime::terrain_view_bounds(const glm::vec3& eye) const {
+    if (!terrain_present_) return std::nullopt;
+    if (terrain_stream_mode_ && terrain_streamer_) {
+        // Heights of the loaded tiles; before any loads, the nominal range.
+        const engine::terrain::TerrainParams& base = terrain_streamer_->base();
+        float lo = 0.0F;
+        float hi = base.height_m;
+        if (!terrain_streamer_->maps().empty()) {
+            lo = std::numeric_limits<float>::max();
+            hi = std::numeric_limits<float>::lowest();
+            for (const auto& [coord, map] : terrain_streamer_->maps()) {
+                lo = std::min(lo, map.min_height);
+                hi = std::max(hi, map.max_height);
+            }
+        }
+        return engine::scene::streaming_window_bounds(eye, terrain_anchor_, base.tile_size_m,
+                                                      terrain_streamer_->radius(), lo, hi);
+    }
+    if (!terrain_heightmap_.valid()) return std::nullopt;
+    const float half = terrain_heightmap_.tile_size_m * 0.5F;
+    return engine::asset::Aabb{
+        terrain_anchor_ + glm::vec3(-half, terrain_heightmap_.min_height, -half),
+        terrain_anchor_ + glm::vec3(half, terrain_heightmap_.max_height, half)};
 }
 
 void WorldRuntime::service_navmesh_request(engine::scene::Scene& scene) {

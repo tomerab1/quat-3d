@@ -9,7 +9,9 @@
 #include <SDL3/SDL_vulkan.h>
 
 #include "app/demo_scenes.hpp"
+#include "engine/scene/bounds.hpp"
 #include "engine/scene/components.hpp"
+#include "engine/scene/view_clip.hpp"
 
 namespace quat::app {
 namespace {
@@ -226,6 +228,9 @@ void Application::connect_remote() {
     remote_targets.cam_yaw = &camera_.yaw;
     remote_targets.cam_pitch = &camera_.pitch;
     remote_targets.cam_fov_y = &camera_.fov_y;
+    remote_targets.cam_near_override = &camera_.near_override;
+    remote_targets.cam_far_override = &camera_.far_override;
+    remote_targets.cam_derived_clip = &camera_.derived_clip();
     world_.fill_remote_targets(remote_targets);
 #ifdef ENGINE_EDITOR
     editor_.fill_remote_targets(remote_targets, world_.has_demo_physics());
@@ -331,6 +336,7 @@ bool Application::run_frame() {
     frame_inputs.dt = dt;
     frame_inputs.grass = world_.grass();
     frame_inputs.sim_dt = sim_dt;
+    frame_inputs.camera_cut = remote_->take_camera_cut();
     if (world_.terrain_drawable()) {
         frame_inputs.terrain = &world_.terrain_pass();
         frame_inputs.terrain_anchor = world_.terrain_anchor();
@@ -403,6 +409,7 @@ engine::scene::CameraMatrices Application::update_world(float dt, float sim_dt, 
 
     // Third-person follow camera, placed after the character has moved.
     if (character_mode) camera_.follow(scene_, world_.character_entity());
+    update_view_clip();
 
 #ifdef ENGINE_EDITOR
     // The editor's fly camera is the default view in BOTH modes — Play
@@ -421,6 +428,19 @@ engine::scene::CameraMatrices Application::update_world(float dt, float sim_dt, 
     world_.update_audio(scene_, cam.view, /*live=*/true, dt);
 #endif
     return cam;
+}
+
+void Application::update_view_clip() {
+    // Scanning every drawable is cheap but not free: refresh the bounds a few
+    // times a second (the far plane keeps a margin for what moved meanwhile).
+    if (!scene_bounds_valid_ || presented_ - scene_bounds_frame_ >= k_bounds_refresh_frames) {
+        scene_bounds_ = engine::scene::scene_draw_bounds(scene_.registry());
+        scene_bounds_frame_ = presented_;
+        scene_bounds_valid_ = true;
+    }
+    const engine::scene::ViewExtent extent{.drawables = scene_bounds_,
+                                           .terrain = world_.terrain_view_bounds(camera_.pos)};
+    camera_.set_derived_clip(scene_, engine::scene::derive_clip_range(camera_.pos, extent));
 }
 
 void Application::report_stats() const {

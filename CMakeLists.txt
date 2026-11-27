@@ -220,7 +220,9 @@ add_library(engine_scene STATIC
     src/scene/primitive_resolve.cpp
     src/scene/scatter.cpp
     src/scene/instanced_mesh.cpp
-    src/scene/instanced_mesh_resolve.cpp)
+    src/scene/instanced_mesh_resolve.cpp
+    src/scene/bounds.cpp
+    src/scene/view_clip.cpp)
 # EnTT is PUBLIC: components.hpp exposes entt types (Parent/Children) to consumers.
 # engine_renderer is PUBLIC: scene.hpp's RenderCollectSystem fills a renderer
 # DrawItem list (no cycle — the renderer does not depend on the scene).

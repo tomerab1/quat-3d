@@ -54,11 +54,24 @@ namespace engine::remote {
 // The view camera (the editor's fly camera). yaw_deg is the heading in the XZ
 // plane measured from +X toward +Z (forward = (cos pitch cos yaw, sin pitch,
 // cos pitch sin yaw)); pitch_deg is positive looking up.
+//
+// Clip planes: near_m / far_m are the planes in effect (camera_get). They are
+// derived from the scene (drawables + terrain, engine/scene/view_clip.hpp)
+// unless overridden: near_override / far_override (nullopt = derived) are
+// what camera_set stores.
+//
+// `cut` (camera_set only): the move is a teleport, so temporal history (TAA)
+// must restart; false for continuous motion driven by repeated calls.
 struct CameraPose {
     glm::vec3 position{0.0F};
     float     yaw_deg = 0.0F;
     float     pitch_deg = 0.0F;
     float     fov_deg = 60.0F; // vertical field of view
+    float     near_m = 0.1F;
+    float     far_m = 1000.0F;
+    std::optional<float> near_override{};
+    std::optional<float> far_override{};
+    bool      cut = false;
 };
 
 // Frame timing over the last `samples` frames and renderer counters, for

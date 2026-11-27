@@ -210,6 +210,45 @@ TEST_F(WorldWithServices, CameraSetLookAtAndFrame) {
     err("camera.frame", {{"entity", "missing"}}, code::not_found);
 }
 
+TEST_F(WorldWithServices, CameraClipPlanesAndCuts) {
+    // Derived planes by default.
+    Json got = ok("camera.get");
+    EXPECT_EQ(got["near_auto"], true);
+    EXPECT_EQ(got["far_auto"], true);
+    EXPECT_FLOAT_EQ(got["far"].get<float>(), 1000.0F);
+
+    // Explicit planes are stored as overrides; null returns to derived.
+    ok("camera.set", {{"near", 0.5}, {"far", 20000}});
+    ASSERT_TRUE(camera.near_override.has_value());
+    EXPECT_FLOAT_EQ(*camera.near_override, 0.5F);
+    EXPECT_FLOAT_EQ(*camera.far_override, 20000.0F);
+    ok("camera.set", {{"far", nullptr}});
+    EXPECT_FALSE(camera.far_override.has_value());
+    EXPECT_TRUE(camera.near_override.has_value()) << "an omitted plane keeps its override";
+    std::string msg = err("camera.set", {{"near", 10}, {"far", 5}}, code::invalid_params);
+    EXPECT_TRUE(contains(msg, "far: must be greater than near")) << msg;
+    msg = err("camera.set", {{"near", 0}}, code::invalid_params);
+    EXPECT_TRUE(contains(msg, "near: expected a number in [0.001, 10000]")) << msg;
+    err("camera.set", {{"far", "far"}}, code::invalid_params);
+
+    // Without `cut`, small moves are continuous motion and jumps / turns are cuts.
+    camera = CameraPose{{0, 2, 10}, -90.0F, 0.0F, 60.0F};
+    ok("camera.set", {{"position", {0.5, 2, 10}}, {"yaw_deg", -85}});
+    EXPECT_FALSE(camera.cut);
+    ok("camera.set", {{"position", {0, 2, 500}}}); // > 10% of the 1000 m far plane
+    EXPECT_TRUE(camera.cut);
+    ok("camera.set", {{"yaw_deg", 0}}); // 90 degree turn
+    EXPECT_TRUE(camera.cut);
+    // An explicit flag wins either way.
+    ok("camera.set", {{"position", {0, 2, -500}}, {"cut", false}});
+    EXPECT_FALSE(camera.cut);
+    ok("camera.set", {{"position", {0, 2, -500.1}}, {"cut", true}});
+    EXPECT_TRUE(camera.cut);
+    err("camera.set", {{"cut", 1}}, code::invalid_params);
+    ok("camera.frame");
+    EXPECT_TRUE(camera.cut) << "framing is a cut";
+}
+
 TEST_F(WorldWithServices, PathsAreConfinedToTheProjectRoot) {
     for (const char* bad : {"../outside.json", "/etc/passwd.json", "a/../../x.json", "", "."}) {
         const std::string msg = err("scene.save", {{"path", bad}}, code::invalid_params);

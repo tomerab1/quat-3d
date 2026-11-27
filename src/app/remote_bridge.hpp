@@ -38,6 +38,7 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <memory>
 #include <optional>
 
@@ -47,7 +48,9 @@
 
 #include "app/screenshot_capture.hpp" // CaptureSource
 #include "engine/core/stderr_capture.hpp"
-#include "engine/scene/scene.hpp" // GroundHeightFn
+#include "engine/remote/world_commands.hpp" // TerrainStatus
+#include "engine/scene/scene.hpp"     // GroundHeightFn
+#include "engine/scene/view_clip.hpp" // ClipRange
 
 namespace engine::asset {
 class AssetManager;
@@ -89,6 +92,11 @@ struct RemoteBridgeTargets {
     float*     cam_yaw = nullptr;
     float*     cam_pitch = nullptr;
     float*     cam_fov_y = nullptr;
+    // Clip planes (issue #37): overrides camera.set writes (nullopt = derived)
+    // and the planes derived from the scene this frame.
+    std::optional<float>*           cam_near_override = nullptr;
+    std::optional<float>*           cam_far_override = nullptr;
+    const engine::scene::ClipRange* cam_derived_clip = nullptr;
 
     const engine::scene::GroundHeightFn* ground_height = nullptr;
 
@@ -138,6 +146,10 @@ public:
     // stays frozen, but stepping callers still get their reply.
     [[nodiscard]] float advance_sim_unrendered();
     void note_draws(std::size_t draws);
+    // True once after a remote camera move that was a cut (a teleport: camera.set
+    // with `cut`, or a jump / turn past the threshold; camera.frame): the frame
+    // restarts temporal history (TAA) instead of blending across the jump.
+    [[nodiscard]] bool take_camera_cut();
 
     [[nodiscard]] bool listening() const;
 

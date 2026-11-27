@@ -90,6 +90,23 @@ Details the contract leaves open, as implemented:
   yaw/pitch. `camera.frame` keeps the heading, looks down at least 20° and
   backs off until the bounding sphere of what the entity (and its children)
   draws fits the vertical field of view.
+- **Clip planes** (issue #37). The view camera's planes are derived from the
+  scene every frame (`engine/scene/view_clip.hpp`): the far plane reaches the
+  farthest corner of the drawables' bounds (refreshed twice a second) and of
+  the terrain — the whole streaming window around the camera, or the single
+  tile — plus 10%, within [500 m, 200 km]; the near plane is far / 50000
+  within [0.1, 2] m, which bounds the far/near ratio of the standard-Z D32F
+  depth buffer. `camera.set` `near` (0.001..10000) / `far` (1..1000000)
+  override either plane; `null` returns it to the derived value; `near_auto` /
+  `far_auto` report which are derived. Builds without the editor apply them
+  to the camera entity the fly camera drives.
+- **Cuts.** `camera.set` `cut: true` marks the move as a teleport: the frame
+  restarts temporal history (TAA) instead of blending across the jump;
+  `false` is continuous motion (a fly-through of many small calls). Without
+  `cut`, a move is a cut when the camera jumps more than 10% of the far plane,
+  turns more than 30° or changes its field of view by more than 30°.
+  `camera.frame` is always a cut. (The flag reaches the frame loop as
+  `FrameInputs::camera_cut`; the TAA history reset itself lands with R11.)
 - **`render.screenshot`** captures the scene view (the editor viewport
   without UI, else the window), copied on the GPU into a per-frame readback
   buffer that is read after that frame's fence — no stall — then downscaled
@@ -169,8 +186,8 @@ values. Unknown fields are errors (they name the known fields).
 | `environment.get` | — | `{sun:{azimuth_deg, elevation_deg, intensity, color}, clouds:{enabled, coverage, density, bottom_km, thickness_km, size_km, detail, wind_speed, wind_dir_deg}}` |
 | `environment.set` | same shape, every field optional | `environment.get` result |
 | `world.ground_height` | `{points:[[x,z],...]}` (≤ 1024) | `{heights:[y \| null]}` — null where no terrain covers the point |
-| `camera.get` | — | `{position, yaw_deg, pitch_deg, fov_deg}` |
-| `camera.set` | `{position?, look_at?, yaw_deg?, pitch_deg?, fov_deg?}` | `camera.get` result |
+| `camera.get` | — | `{position, yaw_deg, pitch_deg, fov_deg, near, far, near_auto, far_auto}` |
+| `camera.set` | `{position?, look_at?, yaw_deg?, pitch_deg?, fov_deg?, near?, far?, cut?}` | `camera.get` result |
 | `camera.frame` | `{entity?}` (whole scene when omitted) | `camera.get` result |
 | `render.screenshot` *(deferred)* | `{max_size?=1024}` | `{mime:"image/png", width, height, data:<base64>}` |
 | `asset.list_models` | — | `{models:[project-relative paths of .gltf/.glb]}` |

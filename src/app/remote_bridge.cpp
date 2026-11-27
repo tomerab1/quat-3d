@@ -85,6 +85,7 @@ struct RemoteBridge::Impl {
     std::optional<remote::RpcServer> server;
     ScreenshotCapture                shots;
     bool                             warned_primitives = false;
+    bool                             camera_cut = false; // take_camera_cut()
     std::string                      last_instanced_warning;
 
     // ---- Debugging (A5) -----------------------------------------------------
@@ -138,6 +139,14 @@ struct RemoteBridge::Impl {
         p.yaw_deg = glm::degrees(*t.cam_yaw);
         p.pitch_deg = glm::degrees(*t.cam_pitch);
         p.fov_deg = glm::degrees(*t.cam_fov_y);
+        if (t.cam_near_override != nullptr) p.near_override = *t.cam_near_override;
+        if (t.cam_far_override != nullptr) p.far_override = *t.cam_far_override;
+        const engine::scene::ClipRange derived =
+            t.cam_derived_clip != nullptr ? *t.cam_derived_clip : engine::scene::ClipRange{};
+        const engine::scene::ClipRange planes =
+            engine::scene::apply_clip_overrides(derived, p.near_override, p.far_override);
+        p.near_m = planes.near_z;
+        p.far_m = planes.far_z;
         return p;
     }
 
@@ -146,6 +155,9 @@ struct RemoteBridge::Impl {
         *t.cam_yaw = glm::radians(p.yaw_deg);
         *t.cam_pitch = glm::radians(glm::clamp(p.pitch_deg, -89.0F, 89.0F));
         *t.cam_fov_y = glm::radians(p.fov_deg);
+        if (t.cam_near_override != nullptr) *t.cam_near_override = p.near_override;
+        if (t.cam_far_override != nullptr) *t.cam_far_override = p.far_override;
+        camera_cut = camera_cut || p.cut;
 #ifndef ENGINE_EDITOR
         // Without the editor the view renders through the scene camera.
         entt::registry& r = t.scene->registry();
@@ -424,6 +436,8 @@ float RemoteBridge::advance_sim(float real_dt) {
 }
 
 float RemoteBridge::advance_sim_unrendered() { return impl_->clock.advance(0.0F); }
+
+bool RemoteBridge::take_camera_cut() { return std::exchange(impl_->camera_cut, false); }
 
 void RemoteBridge::note_draws(std::size_t draws) {
     impl_->draws = static_cast<std::uint32_t>(std::min<std::size_t>(draws, UINT32_MAX));

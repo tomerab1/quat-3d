@@ -8,8 +8,10 @@ use serde_json::{Map, Value};
 
 mod behavior;
 mod debug;
+mod world;
 pub use behavior::*;
 pub use debug::*;
+pub use world::*;
 
 /// A JSON object keyed by component name (see the tool description).
 pub type Components = Map<String, Value>;
@@ -282,6 +284,20 @@ pub struct CameraSetParams {
     /// Vertical field of view in degrees.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fov_deg: Option<f64>,
+    /// Near clip plane in metres, or "auto" (derived from the scene). Omit to
+    /// keep the current setting.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub near: Option<ClipPlane>,
+    /// Far clip plane in metres, or "auto" (derived from the scene: reaches
+    /// the farthest object and the terrain). Omit to keep the current setting.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub far: Option<ClipPlane>,
+    /// true: this move is a cut (teleport) and temporal anti-aliasing history
+    /// restarts; false: continuous motion (e.g. a fly-through made of many
+    /// small `camera_set` calls). Default: a cut when the camera jumps more
+    /// than 10% of the far plane or turns more than 30 degrees.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cut: Option<bool>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]

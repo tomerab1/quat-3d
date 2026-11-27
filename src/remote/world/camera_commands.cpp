@@ -18,11 +18,46 @@ namespace {
 
 constexpr float k_max_pitch = 89.0F;
 
+struct ClipLimits {
+    float       lo;
+    float       hi;
+    const char* range; // for error messages
+};
+constexpr ClipLimits k_near_limits{1e-3F, 10'000.0F, "[0.001, 10000]"};
+constexpr ClipLimits k_far_limits{1.0F, 1'000'000.0F, "[1, 1000000]"};
+// An implicit cut (camera.set without `cut`): a jump of more than this share
+// of the far plane, or a turn of more than k_cut_turn_deg.
+constexpr float k_cut_far_fraction = 0.1F;
+constexpr float k_cut_turn_deg = 30.0F;
+
 [[nodiscard]] Json pose_json(const CameraPose& p) {
     return Json{{"position", vec3_json(p.position)},
                 {"yaw_deg", p.yaw_deg},
                 {"pitch_deg", p.pitch_deg},
-                {"fov_deg", p.fov_deg}};
+                {"fov_deg", p.fov_deg},
+                {"near", p.near_m},
+                {"far", p.far_m},
+                {"near_auto", !p.near_override.has_value()},
+                {"far_auto", !p.far_override.has_value()}};
+}
+
+// A clip-plane override: absent keeps the current one, null returns to the
+// derived plane, a number sets it.
+void read_clip(core::JsonFields& f, std::string_view key, std::optional<float>& out,
+               const ClipLimits& limits) {
+    const Json* v = f.raw(key);
+    if (v == nullptr) return;
+    if (v->is_null()) {
+        out.reset();
+        return;
+    }
+    float value = 0.0F;
+    if (!core::JsonFields::read_float(*v, value) || !(value >= limits.lo && value <= limits.hi)) {
+        f.fail(key, std::string("expected a number in ") + limits.range +
+                        " metres, or null for the plane derived from the scene");
+        return;
+    }
+    out = value;
 }
 
 [[nodiscard]] glm::vec3 forward_of(const CameraPose& p) {
@@ -36,6 +71,15 @@ void aim(CameraPose& p, const glm::vec3& dir) {
     p.yaw_deg = glm::degrees(std::atan2(d.z, d.x));
     p.pitch_deg = glm::clamp(glm::degrees(std::asin(glm::clamp(d.y, -1.0F, 1.0F))), -k_max_pitch,
                              k_max_pitch);
+}
+
+// Whether moving from `from` to `to` is a teleport rather than continuous
+// motion (camera.set without an explicit `cut`).
+[[nodiscard]] bool is_cut(const CameraPose& from, const CameraPose& to) {
+    if (glm::length(to.position - from.position) > k_cut_far_fraction * from.far_m) return true;
+    const float turn = glm::degrees(
+        std::acos(glm::clamp(glm::dot(forward_of(from), forward_of(to)), -1.0F, 1.0F)));
+    return turn > k_cut_turn_deg || std::abs(to.fov_deg - from.fov_deg) > k_cut_turn_deg;
 }
 
 [[nodiscard]] bool camera_available(const Context& ctx) {
@@ -60,6 +104,13 @@ RpcResult camera_set(Context& ctx, const Json& params) {
     f.number("yaw_deg", pose.yaw_deg, -360.0F, 360.0F);
     f.number("pitch_deg", pose.pitch_deg, -k_max_pitch, k_max_pitch);
     f.number("fov_deg", pose.fov_deg, 1.0F, 179.0F);
+    read_clip(f, "near", pose.near_override, k_near_limits);
+    read_clip(f, "far", pose.far_override, k_far_limits);
+    const bool has_cut = f.has("cut");
+    f.boolean("cut", pose.cut);
+    if (pose.near_override && pose.far_override && *pose.far_override <= *pose.near_override) {
+        f.fail("far", "must be greater than near");
+    }
     if (has_target && has_angles) f.fail("look_at", "give either look_at or yaw_deg/pitch_deg, not both");
     if (has_target && f.ok()) {
         if (glm::length(target - pose.position) < 1e-4F) {
@@ -69,6 +120,7 @@ RpcResult camera_set(Context& ctx, const Json& params) {
         }
     }
     if (auto ok = finish(f); !ok) return std::unexpected(ok.error());
+    if (!has_cut) pose.cut = is_cut(ctx.services.camera_get(), pose);
     ctx.services.camera_set(pose);
     return pose_json(ctx.services.camera_get());
 }
@@ -137,6 +189,7 @@ RpcResult camera_frame(Context& ctx, const Json& params) {
     const float half_fov = glm::radians(glm::clamp(pose.fov_deg, 1.0F, 179.0F)) * 0.5F;
     const float distance = radius / std::sin(half_fov) * 1.1F;
     pose.position = centre - forward_of(pose) * distance;
+    pose.cut = true;
     ctx.services.camera_set(pose);
     return pose_json(ctx.services.camera_get());
 }
@@ -161,11 +214,12 @@ void screenshot(Context& ctx, const Json& params, Responder responder) {
 void register_camera_commands(RpcServer& server, const ContextPtr& ctx) {
     server.add_method("camera.get",
                       "View camera: {position, yaw_deg (0 = +X, 90 = +Z), pitch_deg (up > 0), "
-                      "fov_deg}.",
+                      "fov_deg, near, far, near_auto, far_auto}.",
                       [ctx](const Json& p) { return camera_get(*ctx, p); });
     server.add_method("camera.set",
                       "Move the view camera: {position?, look_at? | yaw_deg?/pitch_deg?, "
-                      "fov_deg?}; returns camera.get.",
+                      "fov_deg?, near?, far? (null = derived from the scene), cut? (default: "
+                      "a jump > 10% of far or a turn > 30 degrees)}; returns camera.get.",
                       [ctx](const Json& p) { return camera_set(*ctx, p); });
     server.add_method("camera.frame",
                       "Point the view camera at an entity (and its children) or, without "
