@@ -88,6 +88,12 @@ std::expected<void, core::Error> check_material_source(std::string_view text,
         if (c == '\\') {
             return at(text, i, "a backslash is only allowed inside a string literal");
         }
+        if (c == '\'') {
+            // Character literals are never needed in a material, and a quote
+            // inside one ('"') would otherwise open a string here that hides
+            // what follows from this check.
+            return at(text, i, "character literals ('x') are not allowed in material shaders");
+        }
         if (c == '"') { // a masked string literal: skip it
             ++i;
             while (i < code.size() && code[i] != '"' && code[i] != '\n') ++i;
@@ -101,8 +107,10 @@ std::expected<void, core::Error> check_material_source(std::string_view text,
         std::size_t end = i;
         while (end < code.size() && ident_char(code[end])) ++end;
         const std::string_view word(code.data() + i, end - i);
-        if (word == "__include") {
-            return at(text, i, "`__include` is not allowed in material shaders");
+        // `__include`, `__import` and any other reserved `__` spelling (Slang
+        // grows new ones); `__exported import` is the one a material may use.
+        if (word.starts_with("__") && word != "__exported") {
+            return at(text, i, "`" + std::string(word) + "` is not allowed in material shaders");
         }
         if (word == "import") {
             std::size_t j = skip_space(code, end);

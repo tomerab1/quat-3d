@@ -9,8 +9,10 @@
 //   * `import <module>;` (optionally `__exported`) where <module> is a plain
 //     identifier naming a shader library module (assets/shaders/lib), and
 //   * contain no preprocessor directives (`#` anywhere outside comments and
-//     string literals), no `__include`, and no backslash line splicing
-//     outside string literals.
+//     string literals), no identifier starting with `__` other than
+//     `__exported` (`__include`, `__import`, ...), no character literals
+//     (a `"` inside `'"'` would open a fake string), and no backslash line
+//     splicing outside string literals.
 // Comments and string literals are ignored when looking for these; a string
 // literal ends at its line's end at the latest, so nothing after a newline is
 // ever hidden from the check.

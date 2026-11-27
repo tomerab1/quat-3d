@@ -70,6 +70,30 @@ TEST(MaterialShaderSource, UnknownModulesNameTheLibrary) {
     EXPECT_NE(r.error().message.find("material"), std::string::npos) << r.error().message;
 }
 
+// The message names what was refused.
+std::string refusal(const char* file) {
+    const auto r = check_material_source(
+        quat::test::read_text_file(data_dir() / "unsafe" / file), library_modules());
+    return r.has_value() ? std::string("accepted") : r.error().message;
+}
+
+TEST(MaterialShaderSource, RefusesCharacterLiteralsThatCouldOpenAFakeString) {
+    // '"' would otherwise start a "string" that hides the import / include after it.
+    for (const char* file :
+         {"char_literal.slang", "char_quote_import.slang", "char_quote_include.slang"}) {
+        const std::string why = refusal(file);
+        EXPECT_NE(why.find("character literals"), std::string::npos) << file << ": " << why;
+    }
+}
+
+TEST(MaterialShaderSource, RefusesLegacyAndReservedDoubleUnderscoreSpellings) {
+    for (const char* file : {"legacy_import.slang", "legacy_import_module.slang"}) {
+        const std::string why = refusal(file);
+        EXPECT_NE(why.find("`__import`"), std::string::npos) << file << ": " << why;
+    }
+    EXPECT_NE(refusal("dunder_include.slang").find("`__include`"), std::string::npos);
+}
+
 TEST(ShaderDependencies, IgnoresStringImportsLeavingTheTree) {
     using engine::rhi::ShaderDependencyGraph;
     for (const char* file : {"import_path.slang", "import_absolute.slang"}) {
