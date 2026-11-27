@@ -249,10 +249,15 @@ private:
         // is what every later reader must see; `visible_*` record which stages
         // and accesses a barrier already made that write visible to, and
         // `read_stages` which stages read it since (a later write or layout
-        // change must wait for them: write-after-read).
+        // change must wait for them: write-after-read). `transition_stage` is
+        // the destination stage of the barrier whose layout transition (done
+        // for a read, since the last write) the image is in: the transition is
+        // itself a write, so a later reader outside that stage must chain onto
+        // it, not only onto the last write (issue #4).
         VkImageLayout         cur_layout = VK_IMAGE_LAYOUT_UNDEFINED;
         VkPipelineStageFlags2 write_stage = VK_PIPELINE_STAGE_2_NONE;
         VkAccessFlags2        write_access = 0;
+        VkPipelineStageFlags2 transition_stage = VK_PIPELINE_STAGE_2_NONE;
         VkPipelineStageFlags2 read_stages = VK_PIPELINE_STAGE_2_NONE;
         VkPipelineStageFlags2 visible_stages = VK_PIPELINE_STAGE_2_NONE;
         VkAccessFlags2        visible_access = 0;

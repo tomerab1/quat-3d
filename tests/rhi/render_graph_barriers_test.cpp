@@ -1,4 +1,4 @@
-// Render-graph barrier planning (audit A3/A4/A7).
+// Render-graph barrier planning (audit A3/A4/A7, issue #4).
 
 #include <bit>
 #include <cstdint>
@@ -114,6 +114,179 @@ TEST(GpuRenderGraph, ImportedImageFirstBarrierWaitsOnItsAvailableStage) {
     const auto b = graph.planned_barriers("copy");
     ASSERT_EQ(b.size(), 1U);
     EXPECT_EQ(b[0].srcStageMask, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT);
+}
+
+// ---------------------------------------------------------------------------
+// Layout transitions done by reads (issue #4). A transition is a write in the
+// synchronization model: it runs after its barrier's source scope and before
+// its destination scope. A later reader in the new layout, outside that
+// destination scope, must chain onto it (its barrier's source stages include
+// the transitioning barrier's destination stages); waiting on the original
+// writer alone does not order it after the transition. Imported images with
+// fake handles need no device: barrier planning is pure bookkeeping.
+// ---------------------------------------------------------------------------
+
+[[nodiscard]] VkImage fake_image(std::uintptr_t id) { return std::bit_cast<VkImage>(id); }
+
+[[nodiscard]] engine::rhi::ResourceHandle
+import_fake_image(RenderGraph& graph, std::uintptr_t id, VkFormat format,
+                  VkImageLayout layout = VK_IMAGE_LAYOUT_UNDEFINED) {
+    return graph.import_image("img", fake_image(id), VK_NULL_HANDLE, format, k_extent, layout,
+                              VK_IMAGE_LAYOUT_UNDEFINED);
+}
+
+// The reported sequence: depth written as an attachment, sampled by compute
+// (DEPTH_ATTACHMENT -> SHADER_READ_ONLY, dst COMPUTE), then sampled by a
+// fragment shader in the same layout. The fragment barrier must wait on the
+// compute stage that the transition happened before, as well as the write.
+TEST(RenderGraphTransitions, SameLayoutReadAfterTransitioningReadWaitsOnTheTransition) {
+    RenderGraph graph;
+    const auto depth = import_fake_image(graph, 0x100, VK_FORMAT_D32_SFLOAT);
+    (void)graph.add_pass("write", PassType::graphics).writes(depth, ResourceUsage::depth_attachment);
+    (void)graph.add_pass("read_compute", PassType::compute)
+        .reads(depth, ResourceUsage::sampled_compute);
+    (void)graph.add_pass("read_fragment", PassType::graphics).reads(depth, ResourceUsage::sampled);
+    (void)graph.add_pass("read_compute_again", PassType::compute)
+        .reads(depth, ResourceUsage::sampled_compute);
+    ASSERT_OK(graph.compile());
+
+    const auto transition = graph.planned_barriers("read_compute");
+    ASSERT_EQ(transition.size(), 1U);
+    EXPECT_EQ(transition[0].oldLayout, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL);
+    EXPECT_EQ(transition[0].newLayout, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    EXPECT_EQ(transition[0].dstStageMask, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT);
+
+    const auto frag = graph.planned_barriers("read_fragment");
+    ASSERT_EQ(frag.size(), 1U);
+    EXPECT_EQ(frag[0].oldLayout, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    EXPECT_EQ(frag[0].newLayout, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    EXPECT_TRUE(frag[0].srcStageMask & VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT)
+        << "fragment read is not ordered after the layout transition";
+    EXPECT_TRUE(frag[0].srcStageMask & VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT);
+    EXPECT_TRUE(frag[0].srcAccessMask & VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT);
+    EXPECT_EQ(frag[0].dstStageMask, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT);
+    EXPECT_EQ(frag[0].dstAccessMask, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
+
+    // Minimal: a reader the transition barrier already covered needs nothing.
+    EXPECT_TRUE(graph.planned_barriers("read_compute_again").empty());
+}
+
+// Several later readers in other stages: each gets one barrier chained onto
+// the transition; once a stage has been covered it needs no further barrier.
+TEST(RenderGraphTransitions, EveryNewStageAfterATransitionChainsOntoIt) {
+    RenderGraph graph;
+    const auto img = import_fake_image(graph, 0x110, VK_FORMAT_R16G16B16A16_SFLOAT);
+    (void)graph.add_pass("write", PassType::compute).writes(img, ResourceUsage::storage_write);
+    (void)graph.add_pass("read_fragment", PassType::graphics).reads(img, ResourceUsage::sampled);
+    (void)graph.add_pass("read_vertex_fragment", PassType::graphics)
+        .reads(img, ResourceUsage::sampled_graphics);
+    (void)graph.add_pass("read_compute", PassType::compute)
+        .reads(img, ResourceUsage::sampled_compute);
+    (void)graph.add_pass("read_fragment_again", PassType::graphics)
+        .reads(img, ResourceUsage::sampled);
+    ASSERT_OK(graph.compile());
+
+    const auto transition = graph.planned_barriers("read_fragment");
+    ASSERT_EQ(transition.size(), 1U);
+    EXPECT_EQ(transition[0].oldLayout, VK_IMAGE_LAYOUT_GENERAL);
+    EXPECT_EQ(transition[0].dstStageMask, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT);
+
+    const auto vf = graph.planned_barriers("read_vertex_fragment");
+    ASSERT_EQ(vf.size(), 1U);
+    EXPECT_TRUE(vf[0].srcStageMask & VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT); // transition
+    EXPECT_TRUE(vf[0].srcStageMask & VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT);  // write
+    EXPECT_TRUE(vf[0].dstStageMask & VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT);
+
+    const auto comp = graph.planned_barriers("read_compute");
+    ASSERT_EQ(comp.size(), 1U);
+    EXPECT_TRUE(comp[0].srcStageMask & VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT);
+    EXPECT_EQ(comp[0].dstStageMask, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT);
+    EXPECT_EQ(comp[0].oldLayout, comp[0].newLayout);
+
+    EXPECT_TRUE(graph.planned_barriers("read_fragment_again").empty());
+}
+
+// A transfer write, then a graphics read that transitions (dst VERTEX |
+// FRAGMENT), then a compute read: the compute read chains onto both stages
+// of the transitioning barrier's destination scope.
+TEST(RenderGraphTransitions, ComputeReadAfterGraphicsTransitionChainsOntoIt) {
+    RenderGraph graph;
+    const auto img = import_fake_image(graph, 0x120, VK_FORMAT_R32_SFLOAT);
+    (void)graph.add_pass("upload", PassType::transfer).writes(img, ResourceUsage::transfer_dst);
+    (void)graph.add_pass("draw", PassType::graphics).reads(img, ResourceUsage::sampled_graphics);
+    (void)graph.add_pass("cull", PassType::compute).reads(img, ResourceUsage::sampled_compute);
+    ASSERT_OK(graph.compile());
+    const auto b = graph.planned_barriers("cull");
+    ASSERT_EQ(b.size(), 1U);
+    EXPECT_TRUE(b[0].srcStageMask & VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT);
+    EXPECT_TRUE(b[0].srcStageMask & VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT);
+    EXPECT_TRUE(b[0].srcStageMask & VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT);
+    EXPECT_TRUE(b[0].srcAccessMask & VK_ACCESS_2_TRANSFER_WRITE_BIT);
+    EXPECT_EQ(b[0].dstStageMask, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT);
+}
+
+// An imported image with nothing to wait for (idle, already in GENERAL) is
+// transitioned by its first reader. That transition is still a write: a
+// reader in another stage must wait on it even though no pass wrote the image.
+TEST(RenderGraphTransitions, TransitionWithoutAPriorWriteStillOrdersLaterReaders) {
+    RenderGraph graph;
+    const auto img =
+        import_fake_image(graph, 0x130, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_LAYOUT_GENERAL);
+    (void)graph.add_pass("read_compute", PassType::compute)
+        .reads(img, ResourceUsage::sampled_compute);
+    (void)graph.add_pass("read_fragment", PassType::graphics).reads(img, ResourceUsage::sampled);
+    ASSERT_OK(graph.compile());
+    const auto transition = graph.planned_barriers("read_compute");
+    ASSERT_EQ(transition.size(), 1U);
+    EXPECT_EQ(transition[0].srcStageMask, VK_PIPELINE_STAGE_2_NONE);
+    const auto frag = graph.planned_barriers("read_fragment");
+    ASSERT_EQ(frag.size(), 1U);
+    EXPECT_EQ(frag[0].srcStageMask, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT);
+    EXPECT_EQ(frag[0].dstStageMask, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT);
+}
+
+// Readers in the old layout complete before the transition (its source scope
+// holds them), and a write after the new-layout readers waits for them and
+// for the transition.
+TEST(RenderGraphTransitions, OldLayoutReadersCompleteBeforeTheTransition) {
+    RenderGraph graph;
+    const auto img = import_fake_image(graph, 0x140, VK_FORMAT_R16G16B16A16_SFLOAT);
+    (void)graph.add_pass("write", PassType::compute).writes(img, ResourceUsage::storage_write);
+    (void)graph.add_pass("read_storage", PassType::compute)
+        .reads(img, ResourceUsage::storage_read);
+    (void)graph.add_pass("read_fragment", PassType::graphics).reads(img, ResourceUsage::sampled);
+    (void)graph.add_pass("rewrite", PassType::compute).writes(img, ResourceUsage::storage_write);
+    ASSERT_OK(graph.compile());
+
+    const auto transition = graph.planned_barriers("read_fragment");
+    ASSERT_EQ(transition.size(), 1U);
+    EXPECT_EQ(transition[0].oldLayout, VK_IMAGE_LAYOUT_GENERAL);
+    EXPECT_EQ(transition[0].newLayout, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    EXPECT_TRUE(transition[0].srcStageMask & VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT);
+
+    const auto rewrite = graph.planned_barriers("rewrite");
+    ASSERT_EQ(rewrite.size(), 1U);
+    EXPECT_EQ(rewrite[0].oldLayout, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    EXPECT_TRUE(rewrite[0].srcStageMask & VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT);
+}
+
+// A write supersedes an earlier transition: a read after it chains onto the
+// write and onto any transition made since, not onto the stale one.
+TEST(RenderGraphTransitions, WriteAfterTransitionResetsTheChain) {
+    RenderGraph graph;
+    const auto img = import_fake_image(graph, 0x150, VK_FORMAT_R16G16B16A16_SFLOAT);
+    (void)graph.add_pass("write", PassType::compute).writes(img, ResourceUsage::storage_write);
+    (void)graph.add_pass("read_fragment", PassType::graphics).reads(img, ResourceUsage::sampled);
+    (void)graph.add_pass("upload", PassType::transfer).writes(img, ResourceUsage::transfer_dst);
+    (void)graph.add_pass("read_compute", PassType::compute)
+        .reads(img, ResourceUsage::sampled_compute);
+    (void)graph.add_pass("read_fragment_2", PassType::graphics).reads(img, ResourceUsage::sampled);
+    ASSERT_OK(graph.compile());
+    const auto frag = graph.planned_barriers("read_fragment_2");
+    ASSERT_EQ(frag.size(), 1U);
+    EXPECT_EQ(frag[0].srcStageMask,
+              VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT | VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT);
+    EXPECT_EQ(frag[0].srcAccessMask, VK_ACCESS_2_TRANSFER_WRITE_BIT);
 }
 
 // ---------------------------------------------------------------------------

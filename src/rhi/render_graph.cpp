@@ -420,6 +420,7 @@ std::expected<void, core::Error> RenderGraph::compile() {
         // Whatever made an imported image available acts as its last "write".
         r.write_stage = r.available_stage;
         r.write_access = r.available_access;
+        r.transition_stage = VK_PIPELINE_STAGE_2_NONE;
         r.read_stages = VK_PIPELINE_STAGE_2_NONE;
         r.visible_stages = VK_PIPELINE_STAGE_2_NONE;
         r.visible_access = 0;
@@ -549,34 +550,49 @@ std::expected<void, core::Error> RenderGraph::compile() {
             if (layout_change || a.is_write) {
                 // Write-after-{write,read} or a transition: wait for the last
                 // write and every read since, make the write visible to us.
+                // read_stages also holds the destination stage of an earlier
+                // read's transition, so this chains after that transition.
                 bs.push_back(make_barrier(r.image, aspect_for_format(r.format), r.cur_layout,
                                           s.layout, r.write_stage | r.read_stages,
                                           r.write_access, s.stage, s.access));
                 r.cur_layout = s.layout;
                 if (a.is_write) {
+                    // The write runs after this barrier's transition, so later
+                    // readers chain onto the write alone.
                     r.write_stage = s.stage;
                     r.write_access = s.access;
+                    r.transition_stage = VK_PIPELINE_STAGE_2_NONE;
                     r.read_stages = VK_PIPELINE_STAGE_2_NONE;
                     r.visible_stages = VK_PIPELINE_STAGE_2_NONE;
                     r.visible_access = 0;
                 } else {
+                    // The transition is a write that happens before s.stage
+                    // (issue #4): later readers in other stages chain onto it.
+                    r.transition_stage = s.stage;
                     r.read_stages = s.stage;
                     r.visible_stages = s.stage;
                     r.visible_access = s.access;
                 }
             } else {
                 // Read in the current layout. Earlier barriers made the last
-                // write visible only to the stages/accesses they named; a
-                // reader outside them (e.g. a fragment-shader read after a
-                // compute-only barrier) needs its own dependency on the write
-                // (audit A4).
+                // write (and any later transition) visible only to the
+                // stages/accesses they named; a reader outside them (e.g. a
+                // fragment-shader read after a compute-only barrier) needs its
+                // own dependency (audit A4). Its source scope is the last
+                // write's stage plus, when a read transitioned the image since,
+                // that transition's destination stage: the transition happened
+                // after the write's stage, so waiting on the write alone would
+                // not order this read after it (issue #4). Layout transition
+                // writes are made available automatically, so the source
+                // access stays the write's.
                 const bool covered = (s.stage & ~r.visible_stages) == 0 &&
                                      (s.access & ~r.visible_access) == 0;
-                const bool has_write = r.write_stage != VK_PIPELINE_STAGE_2_NONE ||
+                const VkPipelineStageFlags2 src_stage = r.write_stage | r.transition_stage;
+                const bool has_write = src_stage != VK_PIPELINE_STAGE_2_NONE ||
                                        r.write_access != 0;
                 if (!covered && has_write) {
                     bs.push_back(make_barrier(r.image, aspect_for_format(r.format),
-                                              r.cur_layout, r.cur_layout, r.write_stage,
+                                              r.cur_layout, r.cur_layout, src_stage,
                                               r.write_access, s.stage, s.access));
                     r.visible_stages |= s.stage;
                     r.visible_access |= s.access;
