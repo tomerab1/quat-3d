@@ -2,11 +2,18 @@
 //! contract) grouped by area, workflow prompts, and a scene-summary resource.
 //! Everything the model reads is Markdown under `content/`.
 
+// Tool modules attach `content/tools/*.md` as doc attributes, so clippy's
+// rustdoc lints would police that Markdown. It is text for the model, not API
+// documentation: `doc_markdown` (backticks around identifiers) is off there.
+#[allow(clippy::doc_markdown)]
 mod debug_tools;
 mod prompts;
 mod results;
+#[allow(clippy::doc_markdown)]
 mod scene_tools;
+#[allow(clippy::doc_markdown)]
 mod sim_tools;
+#[allow(clippy::doc_markdown)]
 mod world_tools;
 
 use std::sync::Arc;

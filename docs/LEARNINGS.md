@@ -151,3 +151,15 @@ with `include_str!`; code holds only error messages (CLAUDE.md "No prose in
 source"). Every worker brief that adds tools, prompts or help text states this,
 and merge review includes a structure pass (file sizes, inline prose, lint
 level), not just a compile + test pass.
+
+## Merge edits to quat-mcp content broke clippy (cycle 2)
+
+Resolving merges, the orchestrator added component docs to
+`tools/quat-mcp/content/components.md` and ran only `cargo test`. The content
+files are attached as `#[doc = include_str!]`, so clippy's pedantic
+`doc_markdown` lint checks them, and CI's Rust job failed.
+**Rule:** any edit under `tools/quat-mcp/` — `content/` included — is
+followed by the full trio `cargo fmt --check && cargo clippy --locked
+--all-targets -- -D warnings && cargo test --locked` before pushing.
+(`doc_markdown` is now allowed on the tool modules: their docs are model
+text, not rustdoc — but the trio still applies.)
