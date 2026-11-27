@@ -10,7 +10,12 @@
 //   erode_water       | one grid-erosion step: the four passes of
 //   erode_apply       | src/terrain/grid_erosion.cpp, op for op
 //   erode_transport  /
-//   synth_finalize   g_out = base + fade * (eroded + settled sediment - base)
+//   relax_load       \  talus relaxation (src/terrain/talus_relax.cpp, op
+//   relax_restrict    | for op): settle the sediment into g_relax, then the
+//   relax_sweep       | multigrid cascade of terrain::talus_schedule, one
+//   relax_prolong    /  dispatch per op over the level it writes
+//   synth_finalize   g_out = base + fade * (eroded + settled sediment - base),
+//                    reading the eroded field from g_relax when relaxation ran
 //
 // Every dispatch writes only its own texel and reads state no texel of the
 // same dispatch writes (sediment advection ping-pongs between the halves of
@@ -37,8 +42,17 @@ struct SynthParams {
     float4 step4; // talus, -, -, -
 };
 
+// Mirrors TerrainSynthPass's SynthPush.
 struct Push {
-    uint cur; // sediment half holding the current state (0 or 1)
+    uint  cur;            // sediment half holding the current state (0 or 1)
+    uint  relaxed;        // synth_finalize: the eroded field is g_relax[src..]
+    uint  res;            // relax_*: texels per side of the grid written
+    uint  src_res;        // relax_*: texels per side of the grid read
+    uint  src;            // relax_*: offsets (floats) into g_relax
+    uint  dst;
+    uint  orig;
+    float limit_axis;     // relax_sweep: talus x spacing, m
+    float limit_diagonal;
 };
 
 ConstantBuffer<SynthParams> g_params;
@@ -49,10 +63,12 @@ RWStructuredBuffer<float>   g_sediment; // 2 x n: suspended sediment, m
 RWStructuredBuffer<float4>  g_flux;     // outflow L (-x), R (+x), T (-z), B (+z)
 RWStructuredBuffer<float4>  g_flow;     // u, v, sin(tilt), thermal delta
 RWStructuredBuffer<float>   g_out;      // base field, then the result, m
+RWStructuredBuffer<float>   g_relax;    // talus relaxation pyramid (terrain::TalusPyramid)
 
 [[vk::push_constant]] Push pc;
 
 static const float k_min_flow_depth = 1e-4; // grid_erosion.cpp k_min_flow_depth
+static const float k_relax_rate = 0.125;    // talus_relax.cpp k_rate (exact)
 
 struct BufferPermutation : IPermutation {
     uint at(uint index) { return g_perm[index]; }
@@ -242,8 +258,93 @@ void erode_transport(uint3 id : SV_DispatchThreadID) {
     g_water[i] *= p.step2.w;
 }
 
+// ---- Talus relaxation (src/terrain/talus_relax.cpp) -------------------------
+
+bool inside_level(uint3 id) { return id.x < pc.res && id.y < pc.res; }
+uint level_texel(uint res, uint x, uint z) { return z * res + x; }
+
+// The sediment still in suspension settles; the result is level 0 of the
+// pyramid (grid_erosion.cpp settle_row, then relax_talus' copy).
+[shader("compute")]
+[numthreads(8, 8, 1)]
+void relax_load(uint3 id : SV_DispatchThreadID) {
+    if (!inside(id)) return;
+    uint i = texel(int(id.x), int(id.y));
+    g_relax[pc.dst + i] = g_height[i] + g_sediment[pc.cur * texel_count() + i];
+}
+
+// Decimation into the next coarser level, also kept as its original.
+[shader("compute")]
+[numthreads(8, 8, 1)]
+void relax_restrict(uint3 id : SV_DispatchThreadID) {
+    if (!inside_level(id)) return;
+    uint last = pc.src_res - 1;
+    float v = g_relax[pc.src + level_texel(pc.src_res, min(2 * id.x, last), min(2 * id.y, last))];
+    uint i = level_texel(pc.res, id.x, id.y);
+    g_relax[pc.dst + i] = v;
+    g_relax[pc.orig + i] = v;
+}
+
+// One Jacobi sweep of the pairwise thermal transfer (src -> dst).
+[shader("compute")]
+[numthreads(8, 8, 1)]
+void relax_sweep(uint3 id : SV_DispatchThreadID) {
+    if (!inside_level(id)) return;
+    int res = int(pc.res);
+    int x = int(id.x);
+    int z = int(id.y);
+    float h = g_relax[pc.src + level_texel(pc.res, id.x, id.y)];
+    float moved = 0.0;
+    for (int dz = -1; dz <= 1; ++dz) {
+        for (int dx = -1; dx <= 1; ++dx) {
+            int nx = x + dx;
+            int nz = z + dz;
+            if ((dx == 0 && dz == 0) || nx < 0 || nz < 0 || nx >= res || nz >= res) continue;
+            float limit = (dx != 0 && dz != 0) ? pc.limit_diagonal : pc.limit_axis;
+            float dh = g_relax[pc.src + level_texel(pc.res, uint(nx), uint(nz))] - h;
+            float excess = abs(dh) - limit;
+            if (excess > 0.0) moved += dh > 0.0 ? excess : -excess;
+        }
+    }
+    g_relax[pc.dst + level_texel(pc.res, id.x, id.y)] = h + k_relax_rate * moved;
+}
+
+// Coarse texels around fine texel f (talus_relax.cpp coarse_span).
+uint2 coarse_span(uint f) {
+    if (f == pc.res - 1) return uint2(pc.src_res - 1, pc.src_res - 1);
+    uint a = f / 2;
+    return uint2(a, a + (f & 1u));
+}
+
+float coarse_delta(uint x, uint z) {
+    uint i = level_texel(pc.src_res, x, z);
+    return g_relax[pc.src + i] - g_relax[pc.orig + i];
+}
+
+// The coarser level's correction, bilinearly interpolated, added to dst.
+[shader("compute")]
+[numthreads(8, 8, 1)]
+void relax_prolong(uint3 id : SV_DispatchThreadID) {
+    if (!inside_level(id)) return;
+    uint2 sx = coarse_span(id.x);
+    uint2 sz = coarse_span(id.y);
+    float d00 = coarse_delta(sx.x, sz.x);
+    float v = d00;
+    if (sx.x != sx.y && sz.x != sz.y) {
+        v = (d00 + coarse_delta(sx.y, sz.x) + coarse_delta(sx.x, sz.y) + coarse_delta(sx.y, sz.y)) *
+            0.25;
+    } else if (sx.x != sx.y) {
+        v = (d00 + coarse_delta(sx.y, sz.x)) * 0.5;
+    } else if (sz.x != sz.y) {
+        v = (d00 + coarse_delta(sx.x, sz.y)) * 0.5;
+    }
+    uint i = pc.dst + level_texel(pc.res, id.x, id.y);
+    g_relax[i] = g_relax[i] + v;
+}
+
 // Blend the eroded field (plus the sediment still in suspension, which
-// settles) over the base with the border fade; border texels keep the base.
+// settles, or the relaxed field, which already holds it) over the base with
+// the border fade; border texels keep the base.
 [shader("compute")]
 [numthreads(8, 8, 1)]
 void synth_finalize(uint3 id : SV_DispatchThreadID) {
@@ -254,6 +355,7 @@ void synth_finalize(uint3 id : SV_DispatchThreadID) {
     float fade = grid_erosion_fade(x, z, resolution());
     if (fade <= 0.0) return;
     float base = g_out[i];
-    float eroded = g_height[i] + g_sediment[pc.cur * texel_count() + i];
+    float eroded = pc.relaxed != 0 ? g_relax[pc.src + i]
+                                   : g_height[i] + g_sediment[pc.cur * texel_count() + i];
     g_out[i] = base + fade * (eroded - base);
 }

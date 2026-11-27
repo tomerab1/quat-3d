@@ -5,7 +5,8 @@
 // Generates terrain tiles in compute (assets/shaders/terrain_synth.slang):
 // the seeded noise field of terrain::generate (FBM, ridged mountains,
 // continental mask, iq domain warp) and the grid erosion model (pipe-model
-// hydraulic + thermal), in milliseconds instead of the CPU's seconds. Each
+// hydraulic + thermal, then the multigrid talus relaxation of
+// terrain/talus_relax.hpp), in milliseconds instead of the CPU's seconds. Each
 // finished tile is copied, on the GPU, into an R32F image left in
 // SHADER_READ_ONLY_OPTIMAL for the terrain pass's vertex texture fetch, and
 // read back asynchronously into a CPU Heightmap (physics, navmesh, queries)
@@ -14,19 +15,20 @@
 //
 // The CPU generator stays the reference: the noise matches it to float
 // rounding (GPU division / sqrt / fused multiply-add differ), the erosion
-// follows src/terrain/grid_erosion.cpp op for op, and tile edges are pure
-// noise evaluated on the world texel lattice, so adjacent GPU tiles share
+// follows src/terrain/grid_erosion.cpp op for op (the talus relaxation
+// gives the CPU's bits for the same input), and tile edges are pure noise
+// evaluated on the world texel lattice, so adjacent GPU tiles share
 // bit-identical edges. Droplet erosion is serial by construction and stays
 // on the CPU: supports() is false for it.
 //
 // Work is queued with enqueue() and recorded by add_to_graph(), once per
 // frame, as render-graph passes: terrain_synth (compute: noise + a budgeted
-// slice of erosion steps — long simulations spread over several frames, so
-// a tile never stalls one frame), then on a job's last slice
-// terrain_synth_upload (buffer -> image) and terrain_synth_publish (image ->
-// shader-read layout for vertex + fragment stages, heights -> host-visible
-// readback buffer, then a VkEvent the host polls). collect() returns the
-// finished jobs. Jobs run one at a time, in order.
+// slice of erosion steps and relaxation dispatches — long simulations spread
+// over several frames, so a tile never stalls one frame), then on a job's
+// last slice terrain_synth_upload (buffer -> image) and terrain_synth_publish
+// (image -> shader-read layout for vertex + fragment stages, heights ->
+// host-visible readback buffer, then a VkEvent the host polls). collect()
+// returns the finished jobs. Jobs run one at a time, in order.
 
 #include <cstddef>
 #include <cstdint>
@@ -54,7 +56,7 @@ namespace engine::renderer {
 
 class TerrainSynthPass {
 public:
-    // Largest tile the GPU path synthesises (scratch is ~52 bytes a texel and
+    // Largest tile the GPU path synthesises (scratch is ~64 bytes a texel and
     // one float4 field must fit the device's storage-buffer range).
     static constexpr std::uint32_t max_resolution = terrain::max_grid_erosion_resolution;
     // Default erosion budget per frame, in texel-steps (≈16 steps of a
@@ -97,6 +99,10 @@ public:
     // Erosion texel-steps recorded per add_to_graph (0 = a whole job per
     // call: tests, offline baking). At least one step always runs.
     void set_cell_budget(std::uint64_t cells_per_frame);
+
+    // Fault injection (tests, diagnostics): while set, every job fails as if
+    // its GPU resources could not be created, so callers' fallbacks run.
+    void simulate_failure(bool fail);
 
     // Records this frame's synthesis work (nothing when idle). Call at most
     // once per frame, before compiling the graph.

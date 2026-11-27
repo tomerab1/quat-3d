@@ -180,6 +180,46 @@ TEST(GpuTerrainSynth, GridErosionTracksTheCpuReference) {
     }
 }
 
+// Issue #69: the talus relaxation's relax_* kernels follow the CPU cascade op
+// for op. With rain and thermal weathering off the simulation steps leave the
+// noise field untouched, so the only GPU/CPU difference going in is the
+// noise's rounding; the relaxation is non-expansive, so it must come out no
+// larger, while the relaxation itself moves metres of material.
+TEST(GpuTerrainSynth, TalusRelaxationMatchesTheCpuReference) {
+    QUAT_REQUIRE_GPU(g);
+    r::TerrainSynthPass pass = make_pass(*g);
+    ASSERT_TRUE(pass.valid());
+
+    t::TerrainParams p = noise_params();
+    p.erosion_model = t::ErosionModel::grid;
+    p.grid.iterations = 1;
+    p.grid.rain = 0.0F;
+    p.grid.thermal_rate = 0.0F;
+    p.grid.talus = 0.25F; // the 60 m relief has plenty steeper than 14°
+    ASSERT_EQ(p.grid.relax_cycles, 3U);
+    t::TerrainParams unrelaxed = p;
+    unrelaxed.grid.relax_cycles = 0;
+
+    const t::Heightmap gpu = synthesize(*g, pass, p);
+    const t::Heightmap gpu_unrelaxed = synthesize(*g, pass, unrelaxed);
+    const t::Heightmap cpu = t::generate(p);
+    const t::Heightmap cpu_unrelaxed = t::generate(unrelaxed);
+    ASSERT_TRUE(gpu.valid());
+    ASSERT_TRUE(gpu_unrelaxed.valid());
+
+    const Diff input = diff(gpu_unrelaxed, cpu_unrelaxed); // the noise's rounding
+    const Diff output = diff(gpu, cpu);
+    const Diff moved = diff(cpu, cpu_unrelaxed);
+    std::printf("[terrain synth] talus relaxation: |gpu-cpu| in %.3g m, out %.3g m (max); "
+                "relaxation moved %.3g m (mean), %.3g m (max)\n",
+                static_cast<double>(input.max_abs), static_cast<double>(output.max_abs),
+                moved.mean_abs, static_cast<double>(moved.max_abs));
+    EXPECT_LE(input.max_abs, k_noise_tolerance * p.height_m);
+    ASSERT_GT(moved.max_abs, 1.0F) << "the relaxation did nothing";
+    EXPECT_LE(output.max_abs, std::max(2.0F * input.max_abs, 1e-5F))
+        << "the GPU cascade diverged from the CPU's";
+}
+
 TEST(GpuTerrainSynth, AdjacentGpuTilesShareBitIdenticalEdges) {
     QUAT_REQUIRE_GPU(g);
     r::TerrainSynthPass pass = make_pass(*g);
@@ -288,9 +328,9 @@ TEST(GpuTerrainSynth, TileImageHoldsTheReadBackHeights) {
         << "the sampled tile image differs from the read-back heights";
 }
 
-// The six kernels are hot-reloadable pipelines whose bindings come from
+// The ten kernels are hot-reloadable pipelines whose bindings come from
 // reflection by name: reloading the unchanged shader passes the R2
-// compatibility check, rebuilds all six, and synthesis still matches.
+// compatibility check, rebuilds all ten, and synthesis still matches.
 TEST(GpuTerrainSynth, HotReloadRebuildsEveryKernel) {
     QUAT_REQUIRE_GPU(g);
     r::TerrainSynthPass pass = make_pass(*g);
@@ -301,7 +341,7 @@ TEST(GpuTerrainSynth, HotReloadRebuildsEveryKernel) {
     auto report = g->cache.reload(g->shader_dir + "/terrain_synth.spv");
     ASSERT_OK(report);
     EXPECT_TRUE(report->errors.empty()) << report->errors.front();
-    EXPECT_GE(report->rebuilt, 6U);
+    EXPECT_GE(report->rebuilt, 10U);
     const t::Heightmap after = synthesize(*g, pass, p);
     ASSERT_TRUE(after.valid());
     EXPECT_TRUE(bit_identical(before, after)) << "the reloaded kernels changed the result";

@@ -11,10 +11,14 @@
 
 #include "engine/rhi/device.hpp"
 #include "engine/rhi/pipeline_cache.hpp"
+#include "engine/terrain/talus_relax.hpp"
+#include "terrain_synth_layout.hpp"
 
 namespace engine::renderer {
 
 namespace {
+
+using namespace terrain_synth; // the shader interface mirror
 
 [[nodiscard]] std::unexpected<core::Error> fail(std::string what) {
     return std::unexpected(core::Error{std::move(what)});
@@ -23,60 +27,6 @@ namespace {
 constexpr VkShaderStageFlags kComputeStage = VK_SHADER_STAGE_COMPUTE_BIT;
 constexpr std::uint32_t kGroupSize = 8; // terrain_synth.slang numthreads(8, 8, 1)
 constexpr int kRetireFrames = 3;        // outlive every frame in flight
-
-// Mirrors SynthParams in terrain_synth.slang (std140, 128 bytes).
-struct SynthUniforms {
-    glm::ivec4 tile{0};  // world tile x, z; resolution; octaves
-    glm::vec4  noise{0}; // noise texel scale, base frequency, lacunarity, gain
-    glm::vec4  shape{0}; // warp strength, height (m)
-    glm::vec4  step0{0}; // dt, rain * dt, pipe, cell area
-    glm::vec4  step1{0}; // 1 / area, cell, 1 / cell, cell * sqrt(2)
-    glm::vec4  step2{0}; // advect, Ks * dt, Kd * dt, 1 - Ke * dt
-    glm::vec4  step3{0}; // thermal / 8, 1 / max depth, capacity, min tilt
-    glm::vec4  step4{0}; // talus
-};
-static_assert(sizeof(SynthUniforms) == 128, "must match terrain_synth.slang SynthParams");
-
-// Mirrors Push in terrain_synth.slang.
-struct SynthPush {
-    std::uint32_t cur = 0;
-};
-
-enum Kernel : std::uint8_t { k_init, k_flux, k_water, k_apply, k_transport, k_finalize, k_count };
-constexpr std::array<const char*, k_count> kEntries{
-    "synth_init", "erode_flux", "erode_water", "erode_apply", "erode_transport", "synth_finalize"};
-
-// terrain_synth.slang's resources, by name; their binding slots come from the
-// shader's reflection (State::slots, indexed by Resource).
-enum Resource : std::uint8_t {
-    r_params, r_perm, r_height, r_water, r_sediment, r_flux, r_flow, r_out, r_count
-};
-constexpr std::array<rhi::BindingRequest, r_count> kResources{{
-    {"g_params", VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER},
-    {"g_perm", VK_DESCRIPTOR_TYPE_STORAGE_BUFFER},
-    {"g_height", VK_DESCRIPTOR_TYPE_STORAGE_BUFFER},
-    {"g_water", VK_DESCRIPTOR_TYPE_STORAGE_BUFFER},
-    {"g_sediment", VK_DESCRIPTOR_TYPE_STORAGE_BUFFER},
-    {"g_flux", VK_DESCRIPTOR_TYPE_STORAGE_BUFFER},
-    {"g_flow", VK_DESCRIPTOR_TYPE_STORAGE_BUFFER},
-    {"g_out", VK_DESCRIPTOR_TYPE_STORAGE_BUFFER},
-}};
-
-[[nodiscard]] SynthUniforms make_uniforms(const terrain::TerrainParams& p, std::uint32_t res) {
-    SynthUniforms u;
-    u.tile = glm::ivec4(p.world_tile.x, p.world_tile.y, static_cast<std::int32_t>(res),
-                        p.octaves);
-    u.noise = glm::vec4(terrain::noise_texel_scale(p), p.base_frequency, p.lacunarity, p.gain);
-    u.shape = glm::vec4(p.warp_strength, p.height_m, 0.0F, 0.0F);
-    const float cell = p.tile_size_m / static_cast<float>(res - 1); // Heightmap::metres_per_texel
-    const terrain::GridErosionStep k = terrain::grid_erosion_step(p.grid, cell);
-    u.step0 = glm::vec4(k.dt, k.rain_dt, k.pipe, k.area);
-    u.step1 = glm::vec4(k.inv_area, k.cell, k.inv_cell, k.diagonal);
-    u.step2 = glm::vec4(k.advect, k.erode_dt, k.deposit_dt, k.keep_water);
-    u.step3 = glm::vec4(k.thermal, k.inv_max_depth, k.capacity, k.min_tilt);
-    u.step4 = glm::vec4(k.talus, 0.0F, 0.0F, 0.0F);
-    return u;
-}
 
 void compute_barrier(VkCommandBuffer cmd) {
     VkMemoryBarrier2 b{};
@@ -97,12 +47,17 @@ void compute_barrier(VkCommandBuffer cmd) {
 // ---------------------------------------------------------------------------
 // Job / State
 // ---------------------------------------------------------------------------
+// A job's erosion is a list of units, recorded in order and sliced across
+// frames: `steps` simulation steps, then (talus relaxation on) relax_load and
+// the ops of terrain::talus_schedule.
 struct TerrainSynthPass::Job {
     std::uint64_t          id = 0;
     terrain::TerrainParams params{};
     std::uint32_t          res = 0;
     std::uint32_t          steps = 0;     // erosion steps in total
-    std::uint32_t          next_step = 0; // first step not yet recorded
+    terrain::TalusPyramid  pyramid;       // talus relaxation layout of g_relax
+    std::vector<terrain::TalusOp> talus;  // its ops; empty: no relaxation
+    std::uint32_t          next_unit = 0; // first unit not yet recorded
     bool                   initialised = false;
 
     VkDevice device = VK_NULL_HANDLE;
@@ -110,7 +65,7 @@ struct TerrainSynthPass::Job {
 
     rhi::GpuBuffer        uniforms; // host-visible SynthUniforms
     rhi::GpuBuffer        perm;     // host-visible uint[512]
-    rhi::GpuBuffer        height, water, sediment, flux, flow, out;
+    rhi::GpuBuffer        height, water, sediment, flux, flow, out, relax;
     rhi::GpuBuffer        readback; // host-visible float[n]
     rhi::GpuImage         image;
     rhi::DescriptorBuffer descriptor;
@@ -123,6 +78,20 @@ struct TerrainSynthPass::Job {
     }
 
     [[nodiscard]] std::size_t texels() const { return static_cast<std::size_t>(res) * res; }
+    [[nodiscard]] bool relaxes() const { return !talus.empty(); }
+    [[nodiscard]] std::uint32_t units() const {
+        return steps + (relaxes() ? 1 + static_cast<std::uint32_t>(talus.size()) : 0);
+    }
+    // Texel-steps a unit costs against the per-frame budget (a relaxation
+    // dispatch counts as a whole step over its level: conservative).
+    [[nodiscard]] std::uint64_t cost(std::uint32_t unit) const {
+        if (unit <= steps) return texels(); // a simulation step, or relax_load
+        const std::uint64_t r = talus[unit - steps - 1].resolution;
+        return r * r;
+    }
+    [[nodiscard]] VkDeviceSize relax_bytes() const {
+        return std::max<VkDeviceSize>(pyramid.floats, 1) * sizeof(float);
+    }
 };
 
 struct TerrainSynthPass::State {
@@ -135,6 +104,7 @@ struct TerrainSynthPass::State {
     VkDeviceSize                          max_storage_range = 0;
 
     std::uint64_t cell_budget = default_cell_budget;
+    bool          simulate_failure = false; // fault injection: jobs fail to start
     std::uint64_t next_id = 1;
 
     std::deque<std::unique_ptr<Job>>  queued;
@@ -144,8 +114,8 @@ struct TerrainSynthPass::State {
     std::vector<std::pair<int, std::unique_ptr<Job>>> retired;
 
     [[nodiscard]] std::expected<void, core::Error> start(Job& job);
-    void record_slice(VkCommandBuffer cmd, Job& job, bool init, std::uint32_t first_step,
-                      std::uint32_t step_count, bool finalize) const;
+    void record_slice(VkCommandBuffer cmd, Job& job, bool init, std::uint32_t first_unit,
+                      std::uint32_t unit_count, bool finalize) const;
 };
 
 std::expected<void, core::Error> TerrainSynthPass::State::start(Job& job) {
@@ -193,6 +163,7 @@ std::expected<void, core::Error> TerrainSynthPass::State::start(Job& job) {
     if (auto r = local(job.flux, vector, 0); !r) return r;
     if (auto r = local(job.flow, vector, 0); !r) return r;
     if (auto r = local(job.out, scalar, VK_BUFFER_USAGE_TRANSFER_SRC_BIT); !r) return r;
+    if (auto r = local(job.relax, job.relax_bytes(), 0); !r) return r; // 1 float when unused
 
     auto readback = allocator->create_buffer(
         scalar, VK_BUFFER_USAGE_TRANSFER_DST_BIT, VMA_MEMORY_USAGE_AUTO,
@@ -225,6 +196,7 @@ std::expected<void, core::Error> TerrainSynthPass::State::start(Job& job) {
     storage(r_flux, job.flux, vector);
     storage(r_flow, job.flow, vector);
     storage(r_out, job.out, scalar);
+    storage(r_relax, job.relax, job.relax_bytes());
 
     VkEventCreateInfo ei{};
     ei.sType = VK_STRUCTURE_TYPE_EVENT_CREATE_INFO;
@@ -235,12 +207,11 @@ std::expected<void, core::Error> TerrainSynthPass::State::start(Job& job) {
 }
 
 void TerrainSynthPass::State::record_slice(VkCommandBuffer cmd, Job& job, bool init,
-                                           std::uint32_t first_step, std::uint32_t step_count,
+                                           std::uint32_t first_unit, std::uint32_t unit_count,
                                            bool finalize) const {
-    const std::uint32_t groups = (job.res + kGroupSize - 1) / kGroupSize;
     bool bound = false;
     bool pending_barrier = false;
-    const auto dispatch = [&](Kernel kernel, std::uint32_t cur) {
+    const auto dispatch = [&](Kernel kernel, const SynthPush& push, std::uint32_t texels_per_side) {
         if (pending_barrier) compute_barrier(cmd);
         const rhi::ManagedPipeline& pipeline = pipelines[kernel];
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline.handle());
@@ -250,21 +221,56 @@ void TerrainSynthPass::State::record_slice(VkCommandBuffer cmd, Job& job, bool i
             job.descriptor.bind(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline.layout(), 0);
             bound = true;
         }
-        const SynthPush push{cur};
         vkCmdPushConstants(cmd, pipeline.layout(), kComputeStage, 0, sizeof(push), &push);
+        const std::uint32_t groups = (texels_per_side + kGroupSize - 1) / kGroupSize;
         vkCmdDispatch(cmd, groups, groups, 1);
         pending_barrier = true;
     };
+    const auto tile = [&](Kernel kernel, std::uint32_t cur) {
+        SynthPush push;
+        push.cur = cur;
+        dispatch(kernel, push, job.res);
+    };
+    const std::uint32_t settled = job.steps & 1U; // sediment half after the last step
+    const auto offset = [](std::size_t floats) { return static_cast<std::uint32_t>(floats); };
 
-    if (init) dispatch(k_init, 0);
-    for (std::uint32_t s = first_step; s < first_step + step_count; ++s) {
-        const std::uint32_t cur = s & 1U; // sediment ping-pong half
-        dispatch(k_flux, cur);
-        dispatch(k_water, cur);
-        dispatch(k_apply, cur);
-        dispatch(k_transport, cur);
+    if (init) tile(k_init, 0);
+    for (std::uint32_t u = first_unit; u < first_unit + unit_count; ++u) {
+        if (u < job.steps) {
+            const std::uint32_t cur = u & 1U; // sediment ping-pong half
+            tile(k_flux, cur);
+            tile(k_water, cur);
+            tile(k_apply, cur);
+            tile(k_transport, cur);
+        } else if (u == job.steps) { // settle into level 0 of the talus pyramid
+            SynthPush push;
+            push.cur = settled;
+            push.dst = offset(job.pyramid.levels[0].work);
+            dispatch(k_relax_load, push, job.res);
+        } else {
+            const terrain::TalusOp& op = job.talus[u - job.steps - 1];
+            SynthPush push;
+            push.res = op.resolution;
+            push.src_res = op.src_resolution;
+            push.src = offset(op.src);
+            push.dst = offset(op.dst);
+            push.orig = offset(op.orig);
+            push.limit_axis = op.limit_axis;
+            push.limit_diagonal = op.limit_diagonal;
+            const Kernel kernel = op.kind == terrain::TalusOpKind::restrict_level
+                                      ? k_relax_restrict
+                                  : op.kind == terrain::TalusOpKind::sweep ? k_relax_sweep
+                                                                           : k_relax_prolong;
+            dispatch(kernel, push, op.resolution);
+        }
     }
-    if (finalize && job.steps > 0) dispatch(k_finalize, job.steps & 1U);
+    if (finalize && job.steps > 0) {
+        SynthPush push;
+        push.cur = settled;
+        push.relaxed = job.relaxes() ? 1U : 0U;
+        push.src = job.relaxes() ? offset(job.pyramid.levels[0].work) : 0U;
+        dispatch(k_finalize, push, job.res);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -333,6 +339,11 @@ std::uint64_t TerrainSynthPass::enqueue(const terrain::TerrainParams& params) {
     // terrain::erode_grid skips grids smaller than 3x3; so do we.
     const bool erodes = params.erosion_model == terrain::ErosionModel::grid && job->res >= 3;
     job->steps = erodes ? params.grid.iterations : 0;
+    if (job->steps > 0 && params.grid.relax_cycles > 0) { // as terrain::relax_talus
+        const float cell = params.tile_size_m / static_cast<float>(job->res - 1);
+        job->pyramid = terrain::talus_pyramid(job->res, cell, params.grid.talus);
+        job->talus = terrain::talus_schedule(job->pyramid, params.grid.relax_cycles);
+    }
     const std::uint64_t id = job->id;
     state_->queued.push_back(std::move(job));
     return id;
@@ -360,6 +371,10 @@ std::size_t TerrainSynthPass::retired_count() const {
     return state_ ? state_->retired.size() : 0;
 }
 
+void TerrainSynthPass::simulate_failure(bool fail) {
+    if (state_) state_->simulate_failure = fail;
+}
+
 void TerrainSynthPass::set_cell_budget(std::uint64_t cells_per_frame) {
     if (state_) state_->cell_budget = cells_per_frame;
 }
@@ -377,6 +392,10 @@ std::expected<void, core::Error> TerrainSynthPass::add_to_graph(rhi::RenderGraph
     while (!s.active && !s.queued.empty()) {
         std::unique_ptr<Job> job = std::move(s.queued.front());
         s.queued.pop_front();
+        if (s.simulate_failure) {
+            s.failed.push_back(std::move(job));
+            continue;
+        }
         if (auto r = s.start(*job); !r) {
             s.failed.push_back(std::move(job));
             continue;
@@ -386,15 +405,19 @@ std::expected<void, core::Error> TerrainSynthPass::add_to_graph(rhi::RenderGraph
     if (!s.active) return {};
 
     Job* job = s.active.get();
-    const std::uint64_t texels = job->texels();
-    const std::uint32_t remaining = job->steps - job->next_step;
-    std::uint32_t slice = remaining;
-    if (s.cell_budget > 0) {
-        const std::uint64_t affordable = std::max<std::uint64_t>(s.cell_budget / texels, 1);
-        slice = static_cast<std::uint32_t>(std::min<std::uint64_t>(remaining, affordable));
+    const std::uint32_t first_unit = job->next_unit;
+    const std::uint32_t units = job->units();
+    std::uint32_t slice = units - first_unit;
+    if (s.cell_budget > 0 && slice > 0) {
+        // Whole units while they fit the budget, at least one.
+        std::uint64_t spent = job->cost(first_unit);
+        slice = 1;
+        while (first_unit + slice < units && spent + job->cost(first_unit + slice) <= s.cell_budget) {
+            spent += job->cost(first_unit + slice);
+            ++slice;
+        }
     }
-    const std::uint32_t first_step = job->next_step;
-    const bool last = first_step + slice == job->steps;
+    const bool last = first_unit + slice == units;
 
     // Previous slices (earlier frames) wrote the scratch; the first access
     // waits for them. Host-written inputs need nothing (vkQueueSubmit).
@@ -408,7 +431,7 @@ std::expected<void, core::Error> TerrainSynthPass::add_to_graph(rhi::RenderGraph
         graph.import_buffer("terrain_synth_params", job->uniforms.handle(), sizeof(SynthUniforms));
     const rhi::ResourceHandle perm =
         graph.import_buffer("terrain_synth_perm", job->perm.handle(), 512 * sizeof(std::uint32_t));
-    const std::array<rhi::ResourceHandle, 6> scratch{
+    const std::array<rhi::ResourceHandle, 7> scratch{
         graph.import_buffer("terrain_synth_height", job->height.handle(), scalar, prior_stage,
                             prior_access),
         graph.import_buffer("terrain_synth_water", job->water.handle(), scalar, prior_stage,
@@ -421,6 +444,8 @@ std::expected<void, core::Error> TerrainSynthPass::add_to_graph(rhi::RenderGraph
                             prior_access),
         graph.import_buffer("terrain_synth_out", job->out.handle(), scalar, prior_stage,
                             prior_access),
+        graph.import_buffer("terrain_synth_relax", job->relax.handle(), job->relax_bytes(),
+                            prior_stage, prior_access),
     };
     const rhi::ResourceHandle out = scratch[5];
 
@@ -431,11 +456,11 @@ std::expected<void, core::Error> TerrainSynthPass::add_to_graph(rhi::RenderGraph
         synth.writes(h, rhi::ResourceUsage::buffer_write_compute);
     }
     const bool init = !job->initialised;
-    synth.execute([state = &s, job, init, first_step, slice, last](rhi::PassContext& ctx) {
-        state->record_slice(ctx.cmd(), *job, init, first_step, slice, last);
+    synth.execute([state = &s, job, init, first_unit, slice, last](rhi::PassContext& ctx) {
+        state->record_slice(ctx.cmd(), *job, init, first_unit, slice, last);
     });
     job->initialised = true;
-    job->next_step = first_step + slice;
+    job->next_unit = first_unit + slice;
     if (!last) return {};
 
     // Last slice: heights -> the tile image (shader-read for the terrain

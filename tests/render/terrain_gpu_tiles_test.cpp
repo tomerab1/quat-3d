@@ -261,6 +261,58 @@ TEST(GpuTerrainTiles, ReplacedStreamerCancelsItsGpuJob) {
     EXPECT_TRUE(ready) << "the new tile queued behind the replaced streamer's job";
 }
 
+// Issue #78: a tile whose GPU job fails is regenerated on a CPU worker that
+// keeps the request's cancel token: cancelling the tile, abandon() and
+// destroying the source all stop that generation instead of waiting out
+// hours of erosion.
+TEST(GpuTerrainTiles, CpuFallbackHonoursCancellation) {
+    QUAT_REQUIRE_GPU(g);
+    using namespace std::chrono_literals;
+    t::TerrainParams endless = tile_params(); // hours on a CPU worker
+    endless.resolution = 1025;
+    endless.tile_size_m = 2000.0F;
+    endless.grid.iterations = t::max_grid_erosion_steps;
+    const auto t0 = std::chrono::steady_clock::now();
+    std::future<t::Heightmap> abandoned;
+    {
+        auto source = r::GpuTileSource::create(g->device, g->allocator, g->cache, g->shader_dir);
+        ASSERT_OK(source);
+        r::GpuTileSource& src = **source;
+        src.simulate_gpu_failure(true);
+
+        // The requester cancels after the job fell back to the CPU.
+        t::CancelToken token = t::make_cancel_token();
+        auto cancelled = src.generate(endless, token);
+        source_frame(*g, src); // the job fails to start ...
+        source_frame(*g, src); // ... and is handed to a CPU worker
+        ASSERT_EQ(src.cpu_fallback_count(), 1U);
+        EXPECT_FALSE(src.busy()) << "the fallback still counts as GPU work";
+        EXPECT_EQ(cancelled.wait_for(50ms), std::future_status::timeout);
+        token->store(true);
+        ASSERT_EQ(cancelled.wait_for(30s), std::future_status::ready)
+            << "the CPU fallback ignored the request's cancel token";
+        EXPECT_FALSE(cancelled.get().valid());
+
+        // abandon() gives up a fallback the requester still wants.
+        auto given_up = src.generate(endless, t::make_cancel_token());
+        source_frame(*g, src);
+        source_frame(*g, src);
+        src.abandon();
+        ASSERT_EQ(given_up.wait_for(30s), std::future_status::ready);
+        EXPECT_FALSE(given_up.get().valid());
+
+        // A fallback still running when the source is destroyed (no token).
+        abandoned = src.generate(endless, nullptr);
+        source_frame(*g, src);
+        source_frame(*g, src);
+        ASSERT_GE(src.cpu_fallback_count(), 1U);
+        EXPECT_EQ(abandoned.wait_for(0s), std::future_status::timeout);
+    } // ~GpuTileSource
+    ASSERT_EQ(abandoned.wait_for(0s), std::future_status::ready);
+    EXPECT_FALSE(abandoned.get().valid());
+    EXPECT_LT(std::chrono::steady_clock::now() - t0, 60s) << "shutdown waited for the fallbacks";
+}
+
 // PR #3 review (2): freeing finished jobs and expiring unclaimed tile images
 // runs in tick(), so it happens even when terrain no longer draws (the
 // Terrain entity was deleted after the job finished).

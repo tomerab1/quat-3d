@@ -22,6 +22,7 @@
 #include "engine/scene/components.hpp"
 #include "engine/scene/scatter.hpp"
 #include "engine/scene/scene.hpp"
+#include "engine/terrain/budget.hpp"
 
 namespace engine::editor {
 
@@ -114,6 +115,13 @@ struct ComponentInspector<scene::Terrain> {
             if (ImGui::DragInt("erosion steps", &steps, 5.0F, 0, 5'000)) {
                 p.grid.iterations = static_cast<std::uint32_t>(glm::max(steps, 0));
             }
+            int relax = static_cast<int>(p.grid.relax_cycles);
+            if (ImGui::SliderInt("talus relax", &relax, 0, 8)) {
+                p.grid.relax_cycles = static_cast<std::uint32_t>(relax);
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Cycles bringing slopes down to the talus angle (0 = off)");
+            }
         } else {
             int droplets = static_cast<int>(p.erosion_droplets);
             if (ImGui::DragInt("erosion droplets", &droplets, 1000.0F, 0, 1'000'000)) {
@@ -133,6 +141,11 @@ struct ComponentInspector<scene::Terrain> {
                 terrain.regenerate = true;
             }
             ImGui::TextWrapped("An endless seeded world streams in around the camera.");
+        }
+        if (const auto over = terrain::terrain_budget_problem(p, terrain.streaming,
+                                                              terrain.stream_radius)) {
+            ImGui::TextColored(ImVec4(1.0F, 0.45F, 0.35F, 1.0F), "Over budget: not generated");
+            ImGui::TextWrapped("%s", over->message.c_str()); // #67
         }
         if (ImGui::Button("Regenerate", ImVec2(-1.0F, 0.0F))) {
             terrain.regenerate = true;

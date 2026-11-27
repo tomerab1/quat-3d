@@ -157,6 +157,22 @@ into CLAUDE.md or the brief template in [`CYCLE.md`](CYCLE.md).
 
 ## C++ in this codebase
 
+- **Explicit thermal erosion is diffusion: a slope N cells long needs ~N²
+  steps** (issue #69). The interior of a uniform ramp gives as much as it
+  receives, so it only relaxes from its crest and toe; 400 steps left 55-75°
+  faces on a 513² tile whatever the rate. Run it to its steady state with
+  multigrid (talus_relax.cpp), and solve the coarsest level to convergence:
+  with only 8 sweeps there, a uniform 60° ramp stayed at 59°, because every
+  level sees the same ramp. Test with a ramp, not just a spike.
+- **A `std::async` future can be ready while its worker is still running.**
+  The promise is fulfilled inside the lambda, so `wait_for(0)` on the
+  task's own `future<void>` may still report "not ready" just after the
+  result arrived. Tests that count finished workers must poll (#78).
+- **A parameter range check per field is not a budget.** Terrain fields were
+  each in range, but tiles x resolution² reached 78 GB (#67). When several
+  untrusted fields multiply into memory or time, check the product, and
+  have the error name the largest values that fit.
+
 - **A render-graph image is one unit: a pass that changes per-mip layouts
   must hand every mip back in the layout its declared usage implies.** The
   transparent pass's scene-colour copy blitted its mip chain and left mips

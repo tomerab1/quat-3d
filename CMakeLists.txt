@@ -331,9 +331,12 @@ set_target_properties(quat-cook PROPERTIES QUAT_KTX_FULL ON)
 # in 12.1; chunked LOD rendering and Jolt height fields layer on in 12.2/12.3.
 # ---------------------------------------------------------------------------
 add_library(engine_terrain STATIC
+    src/terrain/budget.cpp
+    src/terrain/cpu_tile_jobs.cpp
     src/terrain/generator.cpp
     src/terrain/grid_erosion.cpp
-    src/terrain/streamer.cpp)
+    src/terrain/streamer.cpp
+    src/terrain/talus_relax.cpp)
 target_link_libraries(engine_terrain PUBLIC engine_flags glm::glm)
 target_include_directories(engine_terrain PUBLIC ${ENGINE_PUBLIC_INCLUDE})
 
