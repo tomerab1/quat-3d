@@ -13,11 +13,11 @@ Severity: **H** crash, corruption, exploit or broken core feature ·
 
 | # | Sev | Finding | Where | Status |
 |---|---|---|---|---|
-| B1 | H | Host never simulates the remote player's input but acks it (the local keyboard overwrites `cc->move` before `character_system`; multiple inputs per poll collapse; ack sent before stepping); client `pending_` input queue is unbounded | `main.cpp` net block, `net/prediction.cpp` | open |
-| B2 | H | Untrusted `PlayerInput.move` applied unvalidated — huge values = speed hack, NaN poisons Jolt and replicates | `main.cpp`, `prediction.cpp` `decode_input` | open |
-| B3 | H | `net_id` = FNV(name): duplicate names collide (physics demo's 12 "box" entities converge to one pose) | `main.cpp` assign, `replication.cpp` | open |
-| B4 | M | Client runs local physics on replicated bodies (fights snapshots); world pose written into `local` (wrong for children); applied after the draw list is built (one frame stale) | `replication.cpp` `apply`, `main.cpp` | open |
-| B5 | M | Predicted character position overwritten each frame by the local `CharacterVirtual` | `main.cpp`, `physics_system.cpp` | open |
+| B1 | H | Host never simulates the remote player's input but acks it (the local keyboard overwrites `cc->move` before `character_system`; multiple inputs per poll collapse; ack sent before stepping); client `pending_` input queue is unbounded | `main.cpp` net block, `net/prediction.cpp` | fixed (S1.B1; queue tests pass locally, session is CI-only) — verified as described |
+| B2 | H | Untrusted `PlayerInput.move` applied unvalidated — huge values = speed hack, NaN poisons Jolt and replicates | `main.cpp`, `prediction.cpp` `decode_input` | fixed (S1.B2; tests pass locally) — verified: `cc->move = input.move` raw; also dt and sequence were unchecked |
+| B3 | H | `net_id` = FNV(name): duplicate names collide (physics demo's 12 "box" entities converge to one pose) | `main.cpp` assign, `replication.cpp` | fixed (S1.B3; tests pass locally) — verified: 12 "box" bodies shared one id; now path + occurrence index |
+| B4 | M | Client runs local physics on replicated bodies (fights snapshots); world pose written into `local` (wrong for children); applied after the draw list is built (one frame stale) | `replication.cpp` `apply`, `main.cpp` | fixed (S1.B4, apply-before-tick ordering in S1.B1; tests pass locally) — verified: dynamic replicas simulated locally, `t.local = world`, apply ran after `scene.tick` built the draw list |
+| B5 | M | Predicted character position overwritten each frame by the local `CharacterVirtual` | `main.cpp`, `physics_system.cpp` | fixed (S1.B5; prediction + Jolt character tests pass locally) — verified: the client set Transform, then character_system wrote the stale CharacterVirtual position back; the toy step also ignored gravity and collisions |
 | B6 | H | Jolt bodies never removed when an entity / RigidBody / Collider is destroyed (ghost colliders, duplicate bodies, leaks across Play/Stop in demo modes) | `physics_system.cpp` | fixed (S1.3, pending CI) — still open: demo-mode Stop doesn't reset dynamic bodies; inspector edits to Collider/RigidBody fields don't rebuild the body |
 | B7 | M | Fixed-step accumulator keeps the excess after the 8-step cap: after a hitch the sim runs ~4x fast, and never recovers below 15 fps | `physics_world.cpp` `update` | fixed (S1.1, pending CI) |
 | B8 | M | Terrain height-field bodies go stale / leak when terrain regenerates or streaming toggles during Play | `main.cpp` terrain block | open |
@@ -27,7 +27,7 @@ Severity: **H** crash, corruption, exploit or broken core feature ·
 | B12 | M | Play/Stop drops `NetReplicated` (snapshot doesn't capture it) | `scene_snapshot.cpp` | fixed (S2.2) |
 | B13 | M | `Scene::set_parent` accepts self-parenting and cycles → entity drops out of transform propagation; delete recurses forever | `scene.cpp` | fixed (S1.1, pending CI) |
 | B14 | L | `character_system` / kinematic nav agents discard rotation, scale and parent space | `physics_system.cpp`, `nav_agent_system.cpp` | open |
-| B15 | L | Replication snapshot `uint16` count wraps; large keyframes exceed GNS send limit silently; send accumulator drift | `replication.cpp` | open |
+| B15 | L | Replication snapshot `uint16` count wraps; large keyframes exceed GNS send limit silently; send accumulator drift | `replication.cpp` | fixed (S1.B15; snapshot tests pass locally, transport self-test CI-only) — verified: one unbounded packet, send results ignored, `accumulator_ = 0` |
 
 Checked and found sound: packet decoders are bounds-safe; GNS init/refcount;
 `glm::slerp` shortest path; erosion border fade keeps seams exact; Play-start

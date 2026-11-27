@@ -237,9 +237,13 @@ target_include_directories(engine_nav PUBLIC ${ENGINE_PUBLIC_INCLUDE})
 # implementation detail (PRIVATE); the public header is GNS-free (PIMPL).
 # ---------------------------------------------------------------------------
 add_library(engine_net STATIC
+    src/net/character_step.cpp
+    src/net/net_ids.cpp
     src/net/transport.cpp
     src/net/replication.cpp
-    src/net/prediction.cpp)
+    src/net/replication_transport.cpp
+    src/net/prediction.cpp
+    src/net/session.cpp)
 target_link_libraries(engine_net PUBLIC engine_flags glm::glm EnTT::EnTT)
 # Linux (static triplet) exports ::static; Windows (dynamic) exports ::shared.
 if(TARGET GameNetworkingSockets::static)

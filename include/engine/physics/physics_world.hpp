@@ -126,6 +126,9 @@ public:
     [[nodiscard]] glm::vec3 character_velocity(std::uint32_t character) const;
     void character_update(std::uint32_t character, float dt);
     [[nodiscard]] glm::vec3 character_position(std::uint32_t character) const;
+    // Teleport the character (network reconciliation, respawn) and refresh its
+    // contacts so on_ground / the next update see the new surroundings.
+    void character_set_position(std::uint32_t character, const glm::vec3& position);
     [[nodiscard]] bool character_on_ground(std::uint32_t character) const;
 
     // Trigger (sensor) overlap events recorded during the most recent update().

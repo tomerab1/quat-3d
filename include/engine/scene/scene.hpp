@@ -152,8 +152,14 @@ void collect_nav_geometry(entt::registry& registry, const terrain::Heightmap* ma
 
 // Advance every CharacterController: integrate gravity, apply `move` * `speed`
 // horizontally, move + resolve collisions via the character controller, and write
-// the result back into Transform.
+// the result back into Transform. NetDriven characters are skipped (the network
+// layer steps them per input with step_character).
 void character_system(entt::registry& registry, physics::PhysicsWorld& world, float dt);
+
+// One character_system step for one entity (creating its CharacterVirtual on
+// first use). No-op unless `e` has a CharacterController and a Transform.
+void step_character(entt::registry& registry, physics::PhysicsWorld& world, entt::entity e,
+                    float dt);
 
 // Drops a character onto a floor, then walks it, verifying it lands (on_ground)
 // and moves horizontally.

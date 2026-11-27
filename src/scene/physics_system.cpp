@@ -147,10 +147,37 @@ void physics_system(entt::registry& registry, physics::PhysicsWorld& world, floa
     }
 }
 
-void character_system(entt::registry& registry, physics::PhysicsWorld& world, float dt) {
-    const std::uint32_t invalid = physics::PhysicsWorld::invalid_body;
-    constexpr float gravity = -9.81F;
+namespace {
 
+void advance_character(entt::entity e, CharacterController& cc, Transform& t,
+                       physics::PhysicsWorld& world, float dt) {
+    constexpr float gravity = -9.81F;
+    if (cc.character == physics::PhysicsWorld::invalid_body) {
+        cc.character = world.create_character(cc.half_height, cc.radius, position_of(t),
+                                              static_cast<std::uint32_t>(entt::to_integral(e)));
+    }
+
+    glm::vec3 velocity = cc.velocity;
+    if (cc.on_ground && velocity.y < 0.0F) {
+        velocity.y = 0.0F; // grounded: stop accumulating downward speed
+    }
+    velocity.y += gravity * dt;
+    velocity.x = cc.move.x * cc.speed;
+    velocity.z = cc.move.z * cc.speed;
+
+    world.character_set_velocity(cc.character, velocity);
+    world.character_update(cc.character, dt);
+
+    cc.velocity = world.character_velocity(cc.character);
+    cc.on_ground = world.character_on_ground(cc.character);
+    const glm::vec3 pos = world.character_position(cc.character);
+    t.local = glm::translate(glm::mat4(1.0F), pos);
+    t.world = t.local;
+}
+
+} // namespace
+
+void character_system(entt::registry& registry, physics::PhysicsWorld& world, float dt) {
     // Remove characters whose entity or CharacterController is gone (see
     // physics_system step 0).
     for (const physics::PhysicsWorld::OwnedBody& oc : world.owned_characters()) {
@@ -160,29 +187,19 @@ void character_system(entt::registry& registry, physics::PhysicsWorld& world, fl
         world.remove_character(oc.body);
     }
 
-    for (auto [e, cc, t] : registry.view<CharacterController, Transform>().each()) {
-        if (cc.character == invalid) {
-            cc.character = world.create_character(cc.half_height, cc.radius, position_of(t),
-                                                  static_cast<std::uint32_t>(entt::to_integral(e)));
-        }
-
-        glm::vec3 velocity = cc.velocity;
-        if (cc.on_ground && velocity.y < 0.0F) {
-            velocity.y = 0.0F; // grounded: stop accumulating downward speed
-        }
-        velocity.y += gravity * dt;
-        velocity.x = cc.move.x * cc.speed;
-        velocity.z = cc.move.z * cc.speed;
-
-        world.character_set_velocity(cc.character, velocity);
-        world.character_update(cc.character, dt);
-
-        cc.velocity = world.character_velocity(cc.character);
-        cc.on_ground = world.character_on_ground(cc.character);
-        const glm::vec3 pos = world.character_position(cc.character);
-        t.local = glm::translate(glm::mat4(1.0F), pos);
-        t.world = t.local;
+    for (auto [e, cc, t] :
+         registry.view<CharacterController, Transform>(entt::exclude<NetDriven>).each()) {
+        advance_character(e, cc, t, world, dt);
     }
+}
+
+void step_character(entt::registry& registry, physics::PhysicsWorld& world, entt::entity e,
+                    float dt) {
+    if (!registry.valid(e)) return;
+    auto* cc = registry.try_get<CharacterController>(e);
+    auto* t = registry.try_get<Transform>(e);
+    if (cc == nullptr || t == nullptr) return;
+    advance_character(e, *cc, *t, world, dt);
 }
 
 std::expected<void, core::Error> run_character_self_test() {

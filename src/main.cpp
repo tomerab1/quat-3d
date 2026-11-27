@@ -51,9 +51,7 @@
 #include "engine/renderer/lighting_pass.hpp"
 #include "engine/renderer/taa_pass.hpp"
 #include "engine/nav/navmesh.hpp"
-#include "engine/net/prediction.hpp"
-#include "engine/net/replication.hpp"
-#include "engine/net/transport.hpp"
+#include "engine/net/session.hpp"
 #include "engine/scene/behavior.hpp"
 #include "engine/renderer/terrain_pass.hpp"
 #include "engine/terrain/streamer.hpp"
@@ -634,68 +632,10 @@ int main() {
     bool navmesh_request = false;
     std::optional<engine::editor::EditorContext::GroundClick> ground_click; // 13.4
 
-    // Networking (14.1/14.2): QUAT_HOST=<port> serves this scene's replicated
-    // entities; QUAT_JOIN=<ip:port> mirrors them. net_ids hash entity names, so
-    // both ends must run the same scene.
-    std::optional<engine::net::NetServer> net_server;
-    std::optional<engine::net::NetClient> net_client;
-    engine::net::ReplicationServer net_replication;
-    engine::net::ReplicationClient net_receiver;
-    // Prediction (14.3): the joined client owns the "player" character — it
-    // applies inputs immediately and reconciles against the host's acked
-    // state; the host applies remote inputs authoritatively.
-    engine::net::CharacterPredictor net_predictor{
-        engine::net::CharacterPredictor::StepFn([](const glm::vec3& p,
-                                                   const engine::net::PlayerInput& in) {
-            constexpr float walk_speed = 4.0F; // matches CharacterController.speed default
-            return p + in.move * (walk_speed * in.dt);
-        })};
-    std::uint32_t net_input_seq = 0;
-    std::uint32_t net_last_input_seq = 0;   // host: last remote input applied
-    engine::net::ClientId net_player_owner = engine::net::invalid_client;
-    const auto assign_net_ids = [&]() {
-        std::uint32_t tagged = 0;
-        for (auto [e, name] : scene.registry().view<engine::scene::Name>().each()) {
-            if (scene.registry().any_of<engine::scene::NetReplicated>(e)) continue;
-            if (!scene.registry().any_of<engine::scene::Transform>(e)) continue;
-            // The predicted player character is owned by its client (14.3),
-            // not by the replication stream.
-            if (scene.registry().any_of<engine::scene::CharacterController>(e)) continue;
-            // FNV-1a of the name: deterministic across runs and both ends.
-            std::uint32_t h = 2166136261U;
-            for (const char c : name.value) h = (h ^ static_cast<unsigned char>(c)) * 16777619U;
-            if (h == 0) h = 1;
-            scene.registry().emplace<engine::scene::NetReplicated>(e, h);
-            ++tagged;
-        }
-        std::fprintf(stderr, "[net] %u entities tagged for replication\n", tagged);
-    };
-    if (const char* host_port = std::getenv("QUAT_HOST"); host_port != nullptr) {
-        if (auto s2 = engine::net::NetServer::listen(
-                static_cast<std::uint16_t>(std::atoi(host_port)));
-            s2) {
-            net_server = std::move(*s2);
-            assign_net_ids();
-            std::fprintf(stderr, "[net] hosting on port %s\n", host_port);
-        } else {
-            std::fprintf(stderr, "[net] host failed: %s\n", s2.error().message.c_str());
-        }
-    } else if (const char* join_addr = std::getenv("QUAT_JOIN"); join_addr != nullptr) {
-        const std::string addr(join_addr);
-        const std::size_t colon = addr.rfind(':');
-        if (colon != std::string::npos) {
-            if (auto c = engine::net::NetClient::connect(
-                    addr.substr(0, colon),
-                    static_cast<std::uint16_t>(std::atoi(addr.c_str() + colon + 1)));
-                c) {
-                net_client = std::move(*c);
-                assign_net_ids();
-                std::fprintf(stderr, "[net] joining %s\n", join_addr);
-            } else {
-                std::fprintf(stderr, "[net] join failed: %s\n", c.error().message.c_str());
-            }
-        }
-    }
+    // Networking (Phase 14; S1 B1-B5): QUAT_HOST=<port> hosts this scene,
+    // QUAT_JOIN=<ip:port> joins a host running the same scene. See
+    // engine/net/session.hpp for the per-frame protocol.
+    engine::net::NetSession net = engine::net::NetSession::from_environment(scene.registry());
     std::map<glm::ivec2, std::uint32_t, engine::terrain::TileCoordLess>
         terrain_bodies; // streamed tiles' play-mode physics bodies
 
@@ -1188,28 +1128,12 @@ int main() {
                          axis(arrows_ok, SDL_SCANCODE_UP, SDL_SCANCODE_DOWN)) +
                 right_h * (axis(wasd_ok, SDL_SCANCODE_D, SDL_SCANCODE_A) +
                            axis(arrows_ok, SDL_SCANCODE_RIGHT, SDL_SCANCODE_LEFT));
-            // try_get: the editor can delete any entity, including this one.
-            if (auto* cc = scene.registry().valid(character_entity)
-                               ? scene.registry().try_get<engine::scene::CharacterController>(
-                                     character_entity)
-                               : nullptr) {
-                cc->move = wish != glm::vec3(0.0F) ? glm::normalize(wish) : glm::vec3(0.0F);
-                // Networked: the joined client predicts its character locally
-                // and ships the input; the host's simulation is authoritative.
-                if (net_client && net_client->connected()) {
-                    engine::net::PlayerInput input;
-                    input.sequence = ++net_input_seq;
-                    input.move = cc->move;
-                    input.dt = dt;
-                    net_client->send(engine::net::encode_input(input), /*reliable=*/true);
-                    auto& tf = scene.registry().get<engine::scene::Transform>(character_entity);
-                    const glm::vec3 predicted =
-                        net_predictor.predict(glm::vec3(tf.world[3]), input);
-                    tf.local[3] = glm::vec4(predicted, 1.0F);
-                    tf.world[3] = glm::vec4(predicted, 1.0F);
-                    cc->move = glm::vec3(0.0F); // the local sim must not double-apply
-                }
-            }
+            // Offline this sets the controller's move; networked, NetSession
+            // predicts it (client) or leaves it to the remote player (host).
+            net.drive_character(scene.registry(), physics_world ? &*physics_world : nullptr,
+                                character_entity,
+                                wish != glm::vec3(0.0F) ? glm::normalize(wish) : glm::vec3(0.0F),
+                                dt);
         } else {
             // Free-fly camera: right-drag looks, WASD moves, Q/E down/up, Shift fast.
             const glm::vec3 cam_fwd(std::cos(cam_pitch) * std::cos(cam_yaw), std::sin(cam_pitch),
@@ -1254,6 +1178,11 @@ int main() {
             }
         }
 
+        // Networking before the simulation: the host steps the remote player's
+        // inputs, a joined client reconciles and applies replicated poses (so
+        // this frame's physics and draw list see them).
+        net.update(scene.registry(), physics_world ? &*physics_world : nullptr,
+                   character_entity, dt);
         if (physics_world) {
             if (character_mode) {
                 engine::scene::character_system(scene.registry(), *physics_world, dt);
@@ -1274,75 +1203,8 @@ int main() {
 #endif
         scene.tick(dt); // advances any Animators by real elapsed time
 
-        // Replication: the host broadcasts moved entities; a joined client
-        // smooths its copies toward the latest snapshot (after tick so the
-        // interpolated pose wins the frame).
-        if (net_server) {
-            for (const engine::net::NetEvent& ev : net_server->poll()) {
-                if (ev.type == engine::net::NetEvent::Type::connected) {
-                    std::fprintf(stderr, "[net] client %u connected\n", ev.client);
-                } else if (ev.type == engine::net::NetEvent::Type::disconnected) {
-                    std::fprintf(stderr, "[net] client %u left\n", ev.client);
-                    if (ev.client == net_player_owner) {
-                        net_player_owner = engine::net::invalid_client;
-                    }
-                } else if (ev.type == engine::net::NetEvent::Type::message) {
-                    engine::net::PlayerInput input;
-                    if (engine::net::decode_input(ev.payload, input)) {
-                        // First sender claims the player character (v1: one
-                        // remote player). Apply authoritatively.
-                        if (net_player_owner == engine::net::invalid_client) {
-                            net_player_owner = ev.client;
-                        }
-                        if (ev.client == net_player_owner &&
-                            scene.registry().valid(character_entity)) {
-                            if (auto* cc =
-                                    scene.registry()
-                                        .try_get<engine::scene::CharacterController>(
-                                            character_entity)) {
-                                cc->move = input.move;
-                                net_last_input_seq = input.sequence;
-                            }
-                        }
-                    }
-                }
-            }
-            // Acked character state for the predicting client (after physics).
-            if (net_player_owner != engine::net::invalid_client &&
-                scene.registry().valid(character_entity)) {
-                const auto* tf =
-                    scene.registry().try_get<engine::scene::Transform>(character_entity);
-                if (tf != nullptr) {
-                    net_server->send(net_player_owner,
-                                     engine::net::encode_character_state(
-                                         net_last_input_seq, glm::vec3(tf->world[3])),
-                                     /*reliable=*/false);
-                }
-            }
-            net_replication.tick(scene.registry(), *net_server, dt);
-        } else if (net_client) {
-            for (const engine::net::NetEvent& ev : net_client->poll()) {
-                if (ev.type == engine::net::NetEvent::Type::message) {
-                    std::uint32_t acked = 0;
-                    glm::vec3 server_pos(0.0F);
-                    if (engine::net::decode_character_state(ev.payload, acked, server_pos)) {
-                        if (scene.registry().valid(character_entity)) {
-                            auto& tf =
-                                scene.registry().get<engine::scene::Transform>(character_entity);
-                            const glm::vec3 corrected =
-                                net_predictor.reconcile(acked, server_pos);
-                            tf.local[3] = glm::vec4(corrected, 1.0F);
-                            tf.world[3] = glm::vec4(corrected, 1.0F);
-                        }
-                    } else {
-                        net_receiver.receive(ev.payload);
-                    }
-                } else if (ev.type == engine::net::NetEvent::Type::connected) {
-                    std::fprintf(stderr, "[net] connected to host\n");
-                }
-            }
-            net_receiver.apply(scene.registry(), dt);
-        }
+        // Replication: the host broadcasts moved entities (fresh world poses).
+        net.publish(scene.registry(), dt);
 
         // Third-person follow camera, placed after the character has moved.
         // try_get: the editor can delete the character entity.
