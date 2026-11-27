@@ -21,14 +21,6 @@ public float pbr_punctual_alpha(float perceptual_roughness) {
     return r * r;
 }
 
-// Largest finite half float: radiance written to an RGBA16F HDR target is
-// clamped to it so that a sum of bright lobes never rounds to +Inf (bloom's
-// Karis weighting and TAA turn an Inf into NaN). NaN inputs stay NaN — they
-// are bugs to fix at their source, not to hide here.
-public float3 pbr_hdr_out(float3 c) {
-    return min(c, float3(65504.0));
-}
-
 // GGX / Trowbridge-Reitz NDF. `a` = roughness^2.
 public float pbr_d_ggx(float ndoth, float a) {
     float a2 = a * a;

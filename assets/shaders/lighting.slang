@@ -13,7 +13,8 @@
 import atmosphere;
 import clustered_lights;
 import sky;
-import pbr; // pbr_punctual_alpha, pbr_hdr_out
+import pbr; // pbr_punctual_alpha
+import hdr; // hdr_store
 
 static const float PI = 3.14159265358979;
 
@@ -267,7 +268,7 @@ void compute_main(uint3 tid : SV_DispatchThreadID) {
                 bg = sky(ray, sun);
             }
         }
-        g_hdr[coord] = float4(pbr_hdr_out(bg), 1.0);
+        g_hdr[coord] = float4(hdr_store(bg), 1.0);
         return;
     }
 
@@ -322,5 +323,5 @@ void compute_main(uint3 tid : SV_DispatchThreadID) {
     } else {
         color += pc.ambient.rgb * albedo.rgb * occlusion;
     }
-    g_hdr[coord] = float4(pbr_hdr_out(color), 1.0);
+    g_hdr[coord] = float4(hdr_store(color), 1.0);
 }
