@@ -104,6 +104,10 @@ void WorldRuntime::fill_remote_targets(RemoteBridgeTargets& targets) {
     targets.terrain_anchor = &terrain_anchor_;
     targets.navmesh = &nav_.mesh;
     targets.spin_entity = &demo_.spin_entity;
+    targets.demo_physics = &demo_.physics_world;
+#ifdef ENGINE_EDITOR
+    targets.play_physics = &play_physics_;
+#endif
 }
 
 void WorldRuntime::shutdown() {
@@ -123,7 +127,7 @@ void WorldRuntime::drive_character(engine::scene::Scene& scene, const glm::vec3&
 }
 
 void WorldRuntime::simulate(engine::scene::Scene& scene, std::uint64_t frame_number, float dt,
-                            const PlayStep* play) {
+                            float sim_dt, const PlayStep* play) {
     // Spin the demo cube (if present — the editor may have deleted it).
     if (demo_.spin_entity != entt::null) {
         auto* spin_tf =
@@ -148,9 +152,9 @@ void WorldRuntime::simulate(engine::scene::Scene& scene, std::uint64_t frame_num
                 demo_.character_entity, dt);
     if (demo_.physics_world) {
         if (demo_.character_mode) {
-            engine::scene::character_system(scene.registry(), *demo_.physics_world, dt);
+            engine::scene::character_system(scene.registry(), *demo_.physics_world, sim_dt);
         } else {
-            engine::scene::physics_system(scene.registry(), *demo_.physics_world, dt);
+            engine::scene::physics_system(scene.registry(), *demo_.physics_world, sim_dt);
         }
     } else if (play != nullptr && play_physics_) {
         // Perception: the trees see the user's view — the fly camera,
@@ -160,7 +164,7 @@ void WorldRuntime::simulate(engine::scene::Scene& scene, std::uint64_t frame_num
             play->use_scene_camera &&
             engine::scene::find_active_camera(scene.registry()) != entt::null;
         engine::scene::bt_system(
-            scene.registry(), dt,
+            scene.registry(), sim_dt,
             {.navmesh = &nav_.mesh,
              .ground_height = ground_height_at_,
              .viewer = viewing_scene_camera ? std::nullopt
@@ -170,11 +174,11 @@ void WorldRuntime::simulate(engine::scene::Scene& scene, std::uint64_t frame_num
             nav_.request = true; // baked below, this frame
             std::fprintf(stderr, "[nav] no navmesh for the agents: baking one\n");
         }
-        engine::scene::nav_agent_system(scene.registry(), nav_.mesh, dt, ground_height_at_);
-        engine::scene::character_system(scene.registry(), *play_physics_, dt);
-        engine::scene::physics_system(scene.registry(), *play_physics_, dt);
+        engine::scene::nav_agent_system(scene.registry(), nav_.mesh, sim_dt, ground_height_at_);
+        engine::scene::character_system(scene.registry(), *play_physics_, sim_dt);
+        engine::scene::physics_system(scene.registry(), *play_physics_, sim_dt);
     }
-    scene.tick(dt); // advances any Animators by real elapsed time
+    scene.tick(sim_dt); // advances any Animators by simulated time
 
     // Replication: the host broadcasts moved entities (fresh world poses).
     net_.publish(scene.registry(), dt);

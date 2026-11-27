@@ -141,7 +141,7 @@ LightCullPass::create(const rhi::Device& device, rhi::GpuAllocator& allocator,
     rhi::ComputePipeline::CreateInfo info{};
     info.shader = *shader;
     info.set_layouts = {&set_layout, 1};
-    auto pipeline = rhi::ComputePipeline::create(device, cache.handle(), info);
+    auto pipeline = cache.create_compute_pipeline(info);
     if (!pipeline) return std::unexpected(pipeline.error());
     s.pipeline = std::move(*pipeline);
 

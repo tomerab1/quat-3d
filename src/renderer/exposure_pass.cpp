@@ -43,8 +43,8 @@ struct AverageParams {
     float pad0, pad1, pad2;
 };
 
-[[nodiscard]] std::expected<rhi::ComputePipeline, core::Error>
-make_pipeline(const rhi::Device& device, rhi::PipelineCache& cache, const std::string& spv,
+[[nodiscard]] std::expected<rhi::ManagedPipeline, core::Error>
+make_pipeline(rhi::PipelineCache& cache, const std::string& spv,
               const rhi::DescriptorSetLayout& layout, std::uint32_t push_size) {
     auto shader = cache.load(spv);
     if (!shader) return std::unexpected(shader.error());
@@ -54,7 +54,7 @@ make_pipeline(const rhi::Device& device, rhi::PipelineCache& cache, const std::s
     info.shader = *shader;
     info.set_layouts = {&set_layout, 1};
     info.push_constants = {&pc, 1};
-    return rhi::ComputePipeline::create(device, cache.handle(), info);
+    return cache.create_compute_pipeline(info);
 }
 
 template <typename Record>
@@ -167,11 +167,11 @@ ExposurePass::create(const rhi::Device& device, rhi::GpuAllocator& allocator,
     if (!avg_layout) return std::unexpected(avg_layout.error());
     out.average_layout_ = std::move(*avg_layout);
 
-    auto hist = make_pipeline(device, cache, cooked_shader_dir + "/exposure_histogram.spv",
+    auto hist = make_pipeline(cache, cooked_shader_dir + "/exposure_histogram.spv",
                               out.histogram_layout_, sizeof(HistogramParams));
     if (!hist) return std::unexpected(hist.error());
     out.histogram_pipeline_ = std::move(*hist);
-    auto avg = make_pipeline(device, cache, cooked_shader_dir + "/exposure_average.spv",
+    auto avg = make_pipeline(cache, cooked_shader_dir + "/exposure_average.spv",
                              out.average_layout_, sizeof(AverageParams));
     if (!avg) return std::unexpected(avg.error());
     out.average_pipeline_ = std::move(*avg);

@@ -15,8 +15,8 @@
 #include <vulkan/vulkan.h>
 
 #include "engine/core/error.hpp"
-#include "engine/rhi/compute_pipeline.hpp"
 #include "engine/rhi/descriptor_buffer.hpp"
+#include "engine/rhi/managed_pipeline.hpp"
 #include "engine/rhi/render_graph.hpp"
 
 namespace engine::rhi {
@@ -60,9 +60,9 @@ private:
     rhi::DescriptorBufferFunctions db_fns_{};
     rhi::DescriptorSetLayout       down_layout_;  // sampled, sampler, storage
     rhi::DescriptorSetLayout       up_layout_;     // sampled, sampler, sampled, storage
-    rhi::ComputePipeline           down_pipeline_;
-    rhi::ComputePipeline           up_pipeline_;
-    rhi::ComputePipeline           composite_pipeline_;
+    rhi::ManagedPipeline           down_pipeline_;
+    rhi::ManagedPipeline           up_pipeline_;
+    rhi::ManagedPipeline           composite_pipeline_;
     rhi::Sampler                   sampler_;
 
     std::vector<rhi::DescriptorBuffer> frame_descriptors_; // rebuilt each add_to_graph

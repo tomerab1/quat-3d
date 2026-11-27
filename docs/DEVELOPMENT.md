@@ -60,6 +60,28 @@ Test layout:
 | `tests/legacy/` | Wrappers around the old `run_*_self_test()` functions, removed as their bodies migrate into `tests/<module>/` |
 
 
+## Shader hot reload
+
+Editor builds watch `assets/shaders/` and `assets/shaders/lib/` while running
+(`QUAT_SHADER_HOT_RELOAD=0` turns it off, `=1` turns it on in non-editor
+builds). Saving a `.slang` file recompiles it with the build's slangc (same
+flags as `cmake/CompileShaders.cmake`, into `cooked/shaders/`) on a worker
+thread; editing a library module also recompiles every shader importing it.
+The next frame swaps the rebuilt pipelines in; replaced pipelines are
+destroyed once the frames in flight are done.
+
+- A compile error keeps the previous pipeline and cooked files; the
+  diagnostics show under **Stats → Shaders** and on stderr
+  (`ShaderHotReload::statuses()` for tools).
+- Edits that change the pipeline layout (a new binding, a changed descriptor
+  type, a bigger push-constant block, a renamed entry point) are rejected the
+  same way — the C++ side builds the layouts, so they need a restart.
+- Passes opt in by creating pipelines through
+  `PipelineCache::create_compute_pipeline` / `create_graphics_pipeline` and
+  holding the returned `rhi::ManagedPipeline`, reading `handle()` /
+  `layout()` when recording.
+- `QUAT_SLANGC=<path>` overrides which slangc is used.
+
 ## CI
 
 `.github/workflows/ci.yml` builds the `release` preset on Ubuntu 24.04 and runs
@@ -110,6 +132,12 @@ git clone --depth 1 --branch v0.9.0  https://github.com/spnda/fastgltf.git
 git clone --depth 1 https://github.com/nothings/stb.git
 git clone --depth 1 --branch release-3.4.10 https://github.com/libsdl-org/SDL.git sdl
 git clone --depth 1 --branch 0.11.25 https://github.com/mackron/miniaudio.git
+git clone --depth 1 --branch v1.92.8-docking https://github.com/ocornut/imgui.git
+# imgui-node-editor (Behaviour panel): the vcpkg port's tag plus its patches,
+# which make 0.9.3 build against imgui 1.92
+git clone --depth 1 --branch v0.9.3 https://github.com/thedmd/imgui-node-editor.git
+for p in fix-vec2-math-operators remove-getkeyindex fix-imgui-v1.92.5; do
+  patch -d imgui-node-editor -p1 < ~/vcpkg/ports/imgui-node-editor/$p.patch; done
 apt-get install -y nlohmann-json3-dev libglm-dev libvulkan-dev
 
 D=~/deps; cd ~/quat-3d

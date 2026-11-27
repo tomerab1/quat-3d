@@ -17,6 +17,7 @@
 // render graph, remote capture, submit + present.
 
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include <string>
 
@@ -30,6 +31,7 @@
 #include "engine/rhi/device.hpp"
 #include "engine/rhi/gpu_allocator.hpp"
 #include "engine/rhi/pipeline_cache.hpp"
+#include "engine/rhi/shader_hot_reload.hpp"
 #include "engine/rhi/swapchain.hpp"
 #include "engine/scene/scene.hpp"
 #ifdef ENGINE_EDITOR
@@ -82,8 +84,9 @@ private:
     [[nodiscard]] bool pump_events();
     // One frame; false when the loop ends (fatal error or QUAT_MAX_FRAMES).
     [[nodiscard]] bool run_frame();
-    // Camera input, simulation, follow camera, then the view matrices.
-    [[nodiscard]] engine::scene::CameraMatrices update_world(float dt, float aspect);
+    // Camera input, simulation, follow camera, then the view matrices. `dt`
+    // is the real frame time, `sim_dt` the simulation's (remote debug clock).
+    [[nodiscard]] engine::scene::CameraMatrices update_world(float dt, float sim_dt, float aspect);
     void report_stats() const;
 
     AppConfig config_;
@@ -95,6 +98,8 @@ private:
     engine::rhi::Swapchain     swapchain_;
     engine::rhi::PipelineCache pipeline_cache_;
     std::string                shader_dir_;
+    // R2: rebuilds pipelines when assets/shaders changes (null when off).
+    std::unique_ptr<engine::rhi::ShaderHotReload> shader_reload_;
 
 #ifdef ENGINE_EDITOR
     EditorBridge editor_;

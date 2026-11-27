@@ -7,7 +7,8 @@
 #   scripts/check-compile.sh src/scene/scene.cpp tests/scene/*_test.cpp
 #
 # DEPS (default ~/deps) must hold: entt, vma, jolt, fastgltf, stb, sdl,
-# googletest, miniaudio (cloned at the vcpkg-pinned versions).
+# googletest, miniaudio, imgui, imgui-node-editor (cloned at the vcpkg-pinned
+# versions).
 set -u
 D="${DEPS:-$HOME/deps}"
 ROOT="$(git rev-parse --show-toplevel)"
@@ -20,7 +21,7 @@ for f in "$@"; do
     -Iinclude -Isrc -Isrc/remote -Itests \
     -isystem "$D/entt/src" -isystem "$D/vma/include" -isystem "$D/jolt" \
     -isystem "$D/fastgltf/include" -isystem "$D/stb" -isystem "$D/sdl/include" \
-    -isystem "$D/miniaudio" -isystem "$D/imgui" -isystem "$D/imgui/backends" -isystem "$D/recast-inc" -isystem "$D/googletest/googletest/include" ${EXTRA_FLAGS:-} \
+    -isystem "$D/miniaudio" -isystem "$D/imgui" -isystem "$D/imgui/backends" -isystem "$D/imgui/misc/cpp" -isystem "$D/imgui-node-editor" -isystem "$D/recast-inc" -isystem "$D/googletest/googletest/include" ${EXTRA_FLAGS:-} \
     "$f" 2>&1)
   if [ -n "$out" ]; then echo "== $f"; echo "$out" | head -40; fail=1; else echo "ok $f"; fi
 done

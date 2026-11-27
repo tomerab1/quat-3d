@@ -103,7 +103,7 @@ LightingPass::create(const rhi::Device& device, rhi::GpuAllocator& allocator,
     info.shader = *shader;
     info.set_layouts = {&set_layout, 1};
     info.push_constants = {&pc, 1};
-    auto pipeline = rhi::ComputePipeline::create(device, cache.handle(), info);
+    auto pipeline = cache.create_compute_pipeline(info);
     if (!pipeline) return std::unexpected(pipeline.error());
     out.pipeline_ = std::move(*pipeline);
 

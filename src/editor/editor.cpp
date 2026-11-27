@@ -17,6 +17,7 @@
 
 #include "animation_preview.hpp"
 #include "asset_browser.hpp"
+#include "behavior_panel.hpp"
 #include "physics_debug.hpp"
 #include "engine/renderer/imgui_pass.hpp" // viewport_texture_id
 #include "inspector.hpp"
@@ -150,6 +151,8 @@ std::expected<EditorLayer, core::Error> EditorLayer::create(SDL_Window* window,
     return out;
 }
 
+EditorLayer::EditorLayer() = default;
+
 EditorLayer::~EditorLayer() {
     destroy();
 }
@@ -169,11 +172,13 @@ EditorLayer& EditorLayer::operator=(EditorLayer&& other) noexcept {
         viewport_height_ = other.viewport_height_;
         viewport_hovered_ = other.viewport_hovered_;
         selected_ = other.selected_;
+        behavior_panel_ = std::move(other.behavior_panel_);
     }
     return *this;
 }
 
 void EditorLayer::destroy() noexcept {
+    behavior_panel_.reset(); // its node-editor context needs ImGui alive
     if (initialized_) {
         ImGui_ImplSDL3_Shutdown();
         ImGui::DestroyContext();
@@ -232,6 +237,7 @@ void EditorLayer::build_dock_layout(unsigned int dockspace_id) {
     ImGui::DockBuilderDockWindow("Renderer", right);
     ImGui::DockBuilderDockWindow("Assets", bottom);
     ImGui::DockBuilderDockWindow("Animation", bottom);
+    ImGui::DockBuilderDockWindow(behavior_panel_title, bottom);
     ImGui::DockBuilderFinish(dockspace_id);
 }
 
@@ -391,8 +397,70 @@ void EditorLayer::build_stats_panel(const EditorContext& ctx) {
         ImGui::Text("draws: %d", ctx.draw_count);
         ImGui::Text("entities: %d", ctx.entity_count);
         ImGui::Text("viewport: %ux%u", viewport_width_, viewport_height_);
+        build_shader_status(ctx);
     }
     ImGui::End();
+}
+
+// Shader hot reload (R2): one row per Slang source; failed shaders open by
+// default with the compiler diagnostics (the previous pipeline stays live).
+void EditorLayer::build_shader_status(const EditorContext& ctx) {
+    if (ctx.shader_statuses == nullptr) return;
+    const std::vector<rhi::ShaderStatus>& shaders = *ctx.shader_statuses;
+    std::size_t errors = 0;
+    std::size_t compiling = 0;
+    for (const rhi::ShaderStatus& s : shaders) {
+        if (s.state == rhi::ShaderStatus::State::error) ++errors;
+        if (s.state == rhi::ShaderStatus::State::compiling) ++compiling;
+    }
+    char header[96];
+    std::snprintf(header, sizeof(header), "Shaders (%zu, %zu error%s%s)###shaders", shaders.size(),
+                  errors, errors == 1 ? "" : "s", compiling > 0 ? ", compiling" : "");
+    if (errors > 0) ImGui::SetNextItemOpen(true, ImGuiCond_Always);
+    if (!ImGui::CollapsingHeader(header)) return;
+
+    const ImVec4 colour_error(1.0F, 0.4F, 0.35F, 1.0F);
+    const ImVec4 colour_ok(0.45F, 0.85F, 0.45F, 1.0F);
+    const ImVec4 colour_busy(0.95F, 0.8F, 0.3F, 1.0F);
+    for (const rhi::ShaderStatus& s : shaders) {
+        ImGui::PushID(s.name.c_str());
+        const std::string_view state = rhi::to_string(s.state);
+        switch (s.state) {
+        case rhi::ShaderStatus::State::error:
+            ImGui::TextColored(colour_error, "%-9.*s", static_cast<int>(state.size()), state.data());
+            break;
+        case rhi::ShaderStatus::State::ok:
+            ImGui::TextColored(colour_ok, "%-9.*s", static_cast<int>(state.size()), state.data());
+            break;
+        case rhi::ShaderStatus::State::compiling:
+            ImGui::TextColored(colour_busy, "%-9.*s", static_cast<int>(state.size()), state.data());
+            break;
+        case rhi::ShaderStatus::State::cooked:
+            ImGui::TextDisabled("%-9.*s", static_cast<int>(state.size()), state.data());
+            break;
+        }
+        ImGui::SameLine();
+        if (s.reloads > 0) {
+            ImGui::Text("%s  (x%u, %u pipeline%s)", s.name.c_str(), s.reloads, s.pipelines,
+                        s.pipelines == 1 ? "" : "s");
+        } else {
+            ImGui::TextUnformatted(s.name.c_str());
+        }
+        if (!s.message.empty()) {
+            const bool failed = s.state == rhi::ShaderStatus::State::error;
+            if (failed) ImGui::SetNextItemOpen(true, ImGuiCond_Once);
+            if (ImGui::TreeNode(failed ? "diagnostics" : "warnings")) {
+                ImGui::PushTextWrapPos(0.0F);
+                if (failed) ImGui::PushStyleColor(ImGuiCol_Text, colour_error);
+                ImGui::TextUnformatted(s.message.c_str());
+                if (failed) ImGui::PopStyleColor();
+                ImGui::PopTextWrapPos();
+                if (ImGui::SmallButton("Copy")) ImGui::SetClipboardText(s.message.c_str());
+                ImGui::TreePop();
+            }
+        }
+        ImGui::PopID();
+    }
 }
 
 void EditorLayer::build_ui(const EditorContext& ctx) {
@@ -465,6 +533,8 @@ void EditorLayer::build_ui(const EditorContext& ctx) {
                                anim_state_);
         draw_physics_debug(*ctx.scene, ctx.view_proj, viewport_rect_, physics_state_,
                            ctx.build_navmesh_request, ctx.nav_edges, ctx.nav_status);
+        if (behavior_panel_ == nullptr) behavior_panel_ = std::make_unique<BehaviorPanel>();
+        behavior_panel_->draw(*ctx.scene, selected_);
     }
     if (ctx.renderer != nullptr) {
         draw_renderer_panel(*ctx.renderer, ctx.scene);

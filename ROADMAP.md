@@ -62,21 +62,25 @@ Language models drive the engine through the Model Context Protocol: a Rust
 MCP server (`tools/quat-mcp`) speaks MCP over stdio to the client and
 JSON-RPC over loopback TCP to the engine.
 
-- [ ] **A1 — Remote-control transport.** `engine_remote`: loopback JSON-RPC 2.0,
+- [x] **A1 — Remote-control transport.** `engine_remote`: loopback JSON-RPC 2.0,
   newline-delimited, token auth, poll-driven on the main thread, deferred
   replies. `QUAT_REMOTE=<port>`, `QUAT_REMOTE_TOKEN`. *(implemented, awaiting
   full-build verification)*
-- [ ] **A2 — World commands.** Entity create/update/destroy/reparent/list/get,
+- [x] **A2 — World commands.** Entity create/update/destroy/reparent/list/get,
   every component through one shared JSON codec (also used by scene files),
   the data-driven `Primitive` component (shapes + PBR material, serialized),
   sun/sky/clouds, terrain, ground-height queries, batched commands with
   back-references.
-- [ ] **A3 — Frame services.** Viewport screenshots (PNG, non-stalling GPU
+- [x] **A3 — Frame services.** Viewport screenshots (PNG, non-stalling GPU
   readback), camera get/set/frame, glTF spawn, play/stop, save/load (paths
   confined to the project), navmesh bake.
-- [ ] **A4 — `quat-mcp` server.** rmcp-based, typed tool schemas, screenshots
+- [x] **A4 — `quat-mcp` server.** rmcp-based, typed tool schemas, screenshots
   as MCP image content, reconnect handling, tests against a mock engine,
   setup docs for Claude Code / Claude Desktop.
+- [x] **A4.1 — `quat-mcp` idiom pass.** Model-facing text moved to Markdown
+  under `content/` (tool descriptions via `#[doc = include_str!]`, prompts as
+  MiniJinja templates); `server.rs`/`client.rs` split by responsibility (one
+  rmcp router per tool group); `clippy::pedantic` enforced.
 - [ ] **A5 — Debugging tools.** Log tail + filters (S6), Vulkan validation
   messages, frame/GPU timings, pause / single-step / time scale, entity watch,
   physics raycasts and contact queries, navmesh path queries.
@@ -101,7 +105,7 @@ JSON-RPC over loopback TCP to the engine.
 - [ ] **R7 — Shader graph runtime.** Node graph → generated Slang module
   implementing the material interface (no `#ifdef` variants).
 - [ ] **R9 — Instanced rendering (trees, rocks, grass).**
-  - **R9.1 Instanced draws.** The renderer batches identical mesh+material
+  - ✅ **R9.1 Instanced draws.** (cycle 1) The renderer batches identical mesh+material
     draws into one instanced draw; shaders read per-instance transforms
     through a buffer device address (GBuffer + shadow passes), deriving the
     normal matrix per instance (fixes audit A13). Existing per-entity
@@ -116,7 +120,7 @@ JSON-RPC over loopback TCP to the engine.
     instance (with R6) and distance fade / LOD selection.
 - [ ] **R10 — GPU compute migration.** Move data-parallel work to compute
   passes (CLAUDE.md "GPU compute first"):
-  - **R10.1 Clustered light culling on the GPU.** Phase 7.2 shipped a flat
+  - ✅ **R10.1 Clustered light culling on the GPU.** (cycle 1) Phase 7.2 shipped a flat
     per-pixel loop over every point light (max 64) — no clustering. A
     compute pass bins lights into view-space clusters (froxels); deferred
     lighting and the forward transparent pass read only their cluster's
@@ -148,7 +152,7 @@ JSON-RPC over loopback TCP to the engine.
 
 ## G — Gameplay systems
 
-- [ ] **G1 — Audio (miniaudio).** `AudioSource` / `AudioListener` components,
+- [x] **G1 — Audio (miniaudio).** `AudioSource` / `AudioListener` components,
   3D spatialisation and attenuation, mixer buses, streaming music, editor
   preview, scene serialization.
 - [ ] **G2 — Behaviour node graph.** Visual node editor built on

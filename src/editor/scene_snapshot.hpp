@@ -48,6 +48,9 @@ struct SceneSnapshot {
     Stored<scene::BehaviorTree>        behavior_trees;
     Stored<scene::PatrolRoute>         patrol_routes;
     Stored<scene::Primitive>           primitives;
+    Stored<scene::InstancedMesh>       instanced_meshes;
+    Stored<scene::InstancedMeshParts>  instanced_mesh_parts;
+    Stored<scene::Scatter>             scatters;
     Stored<scene::NetReplicated>       net_replicated;
     Stored<scene::AudioSource>         audio_sources; // runtime state cleared at capture
     Stored<scene::AudioListener>       audio_listeners;

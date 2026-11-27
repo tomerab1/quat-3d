@@ -32,9 +32,9 @@
 
 #include "engine/core/error.hpp"
 #include "engine/renderer/light_clusters.hpp"
-#include "engine/rhi/compute_pipeline.hpp"
 #include "engine/rhi/descriptor_buffer.hpp"
 #include "engine/rhi/gpu_allocator.hpp"
+#include "engine/rhi/managed_pipeline.hpp"
 #include "engine/rhi/render_graph.hpp"
 
 namespace engine::rhi {
@@ -129,7 +129,7 @@ private:
     struct State {
         rhi::DescriptorBufferFunctions fns{};
         rhi::DescriptorSetLayout       layout;
-        rhi::ComputePipeline           pipeline;
+        rhi::ManagedPipeline           pipeline;
         rhi::DescriptorBuffer          descriptor; // written once: the buffers never move
         rhi::GpuBuffer                 params;     // host-visible ClusterParams
         rhi::GpuBuffer                 lights;     // host-visible GpuLight[max_lights]

@@ -1,0 +1,5 @@
+# Pinned so formatting and (pedantic) lint results are reproducible; CI uses
+# the same version. Bump deliberately and fix any new lints in the same commit.
+[toolchain]
+channel = "1.97.0"
+components = ["rustfmt", "clippy"]

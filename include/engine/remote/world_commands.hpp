@@ -3,8 +3,10 @@
 // World commands (ROADMAP A2/A3) — the remote-control methods that let an
 // out-of-process tool (the quat-mcp bridge, i.e. a language model) inspect and
 // build the world: scene.*, environment.*, world.ground_height, camera.*,
-// render.screenshot, asset.*, sim.*, scene.save/load, nav.bake. The method
-// contract is docs/remote-control.md ("Methods (v1 contract)").
+// render.screenshot, asset.*, sim.*, scene.save/load, nav.bake — and the
+// debugging commands (ROADMAP A5): debug.log, debug.stats, debug.pause /
+// resume / step / time_scale, debug.watch, debug.raycast, debug.nav_path. The
+// method contract is docs/remote-control.md.
 //
 // Scene editing works on any Scene. Everything that only the running
 // application has — the view camera, clouds, terrain heights, glTF uploads,
@@ -31,6 +33,16 @@
 #include "engine/remote/rpc_server.hpp"
 #include "engine/renderer/cloud_settings.hpp"
 
+namespace engine::core {
+class LogRing;
+class SimClock;
+} // namespace engine::core
+namespace engine::nav {
+class NavMesh;
+}
+namespace engine::physics {
+class PhysicsWorld;
+}
 namespace engine::scene {
 class Scene;
 }
@@ -45,6 +57,18 @@ struct CameraPose {
     float     yaw_deg = 0.0F;
     float     pitch_deg = 0.0F;
     float     fov_deg = 60.0F; // vertical field of view
+};
+
+// Frame timing over the last `samples` frames and renderer counters, for
+// debug.stats. Optional fields are omitted when the application lacks them.
+struct FrameStats {
+    std::uint64_t                frame = 0; // frames presented so far
+    float                        last_ms = 0.0F;
+    float                        avg_ms = 0.0F;
+    float                        worst_ms = 0.0F;
+    std::uint32_t                samples = 0;
+    std::optional<std::uint32_t> draws;            // draw items submitted last frame
+    std::optional<std::uint64_t> resident_bytes;   // process resident memory
 };
 
 struct WorldServices {
@@ -81,6 +105,29 @@ struct WorldServices {
 
     // Bake the navmesh from the current static world; returns its polygon count.
     std::function<std::expected<std::size_t, core::Error>()> nav_bake;
+
+    // ---- Debugging (ROADMAP A5) ------------------------------------------------
+
+    // Log lines debug.log reads (non-owning; normally core::log_ring()).
+    core::LogRing* log_ring = nullptr;
+
+    // The simulation clock the frame loop advances (non-owning): debug.pause,
+    // resume, step and time_scale drive it.
+    core::SimClock* sim_clock = nullptr;
+    // Calls `done` (on the main thread, from a later poll) once the clock's
+    // steps_run reaches `steps_target` or no steps are pending any more
+    // (resume drops them). Without it debug.step replies right after queueing.
+    std::function<void(std::uint64_t steps_target, std::function<void()> done)> when_stepped;
+
+    // Frame timing and renderer counters for debug.stats.
+    std::function<FrameStats()> frame_stats;
+
+    // The physics world being simulated, or null (edit mode: bodies only
+    // exist while playing). debug.raycast and debug.stats read it.
+    std::function<const physics::PhysicsWorld*()> physics_world;
+
+    // The current navmesh, or null / invalid when none is baked.
+    std::function<const nav::NavMesh*()> navmesh;
 };
 
 // Registers every world command on `server`. `scene` must outlive the server's

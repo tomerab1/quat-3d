@@ -1,0 +1,1 @@
+Resume real-time simulation after `debug_pause` or `debug_step` (pending steps are dropped; the time scale is kept). Returns the clock `{paused, time_scale, pending_steps, steps_run, sim_frames, sim_time_s}`.

@@ -107,9 +107,24 @@ target_link_libraries(miniaudio_headers INTERFACE
 if(ENGINE_EDITOR)
     find_package(imgui CONFIG REQUIRED)
     find_package(imguizmo CONFIG REQUIRED)
+    find_package(unofficial-imgui-node-editor CONFIG REQUIRED)
 endif()
 
 set(ENGINE_PUBLIC_INCLUDE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+
+# ---------------------------------------------------------------------------
+# engine_core — graphics-free foundations: the log ring + log() helper, stderr
+# capture into the ring, the simulation clock (A5; S6 grows the logging layer
+# here), file watching and child processes (shader hot reload, R2).
+# ---------------------------------------------------------------------------
+add_library(engine_core STATIC
+    src/core/log.cpp
+    src/core/stderr_capture.cpp
+    src/core/sim_clock.cpp
+    src/core/file_watcher.cpp
+    src/core/child_process.cpp)
+target_link_libraries(engine_core PUBLIC engine_flags Threads::Threads)
+target_include_directories(engine_core PUBLIC ${ENGINE_PUBLIC_INCLUDE})
 
 # ---------------------------------------------------------------------------
 # engine_rhi — thin Vulkan abstraction (instance/device, swapchain, ...).
@@ -124,9 +139,15 @@ add_library(engine_rhi STATIC
     src/rhi/descriptor_buffer.cpp
     src/rhi/render_graph.cpp
     src/rhi/graphics_pipeline.cpp
-    src/rhi/compute_pipeline.cpp)
+    src/rhi/compute_pipeline.cpp
+    src/rhi/shader_compiler.cpp
+    src/rhi/shader_hot_reload.cpp)
 target_link_libraries(engine_rhi PUBLIC
-    engine_flags Vulkan::Vulkan GPUOpen::VulkanMemoryAllocator)
+    engine_flags engine_core Vulkan::Vulkan GPUOpen::VulkanMemoryAllocator)
+# engine_core is public: shader hot reload's headers use its watcher/process
+# types, and the debug messenger routes validation messages into its log ring.
+# The hot-reload compile worker runs on a std::thread.
+target_link_libraries(engine_rhi PRIVATE Threads::Threads)
 # nlohmann_json is an implementation detail of the reflection parser (PRIVATE).
 target_link_libraries(engine_rhi PRIVATE nlohmann_json::nlohmann_json)
 target_include_directories(engine_rhi PUBLIC ${ENGINE_PUBLIC_INCLUDE})
@@ -192,7 +213,10 @@ add_library(engine_scene STATIC
     src/scene/component_json.cpp
     src/scene/audio_system.cpp
     src/scene/primitives.cpp
-    src/scene/primitive_resolve.cpp)
+    src/scene/primitive_resolve.cpp
+    src/scene/scatter.cpp
+    src/scene/instanced_mesh.cpp
+    src/scene/instanced_mesh_resolve.cpp)
 # EnTT is PUBLIC: components.hpp exposes entt types (Parent/Children) to consumers.
 # engine_renderer is PUBLIC: scene.hpp's RenderCollectSystem fills a renderer
 # DrawItem list (no cycle — the renderer does not depend on the scene).
@@ -297,9 +321,12 @@ add_library(engine_remote_world STATIC
     src/remote/world/environment_commands.cpp
     src/remote/world/camera_commands.cpp
     src/remote/world/app_commands.cpp
+    src/remote/world/debug_commands.cpp
+    src/remote/world/debug_query_commands.cpp
     src/remote/world/image_encode.cpp
     src/remote/world/stb_image_write_impl.cpp)
-target_link_libraries(engine_remote_world PUBLIC engine_flags engine_remote engine_scene)
+target_link_libraries(engine_remote_world PUBLIC
+    engine_flags engine_core engine_remote engine_scene engine_physics engine_nav)
 target_include_directories(engine_remote_world PUBLIC ${ENGINE_PUBLIC_INCLUDE})
 target_include_directories(engine_remote_world PRIVATE ${Stb_INCLUDE_DIR})
 # stb's implementation TU is not warning-clean under our strict flags.
@@ -359,12 +386,19 @@ if(ENGINE_EDITOR)
         src/editor/physics_debug.cpp
         src/editor/scene_snapshot.cpp
         src/editor/audio_inspector.cpp
+        src/editor/bt_graph.cpp
+        src/editor/behavior_panel.cpp
+        src/editor/behavior_canvas.cpp
         src/editor/vendor/imgui_impl_sdl3.cpp)
     # engine_scene is PUBLIC: editor.hpp exposes entt entity types (selection)
     # and the hierarchy/inspector panels reflect scene components.
+    # imgui-node-editor (Behaviour panel, G2) comes before imgui::imgui: its
+    # vcpkg target does not declare the imgui dependency, so a single-pass
+    # linker must see it first to resolve its ImGui references.
     target_link_libraries(engine_editor
         PUBLIC engine_flags engine_scene
-        PRIVATE imgui::imgui imguizmo::imguizmo SDL3::SDL3)
+        PRIVATE unofficial::imgui-node-editor::imgui-node-editor
+                imgui::imgui imguizmo::imguizmo SDL3::SDL3)
     target_include_directories(engine_editor PUBLIC ${ENGINE_PUBLIC_INCLUDE})
     # Vendored third-party backend: not warning-clean under our strict flags.
     set_source_files_properties(src/editor/vendor/imgui_impl_sdl3.cpp
@@ -391,7 +425,7 @@ add_executable(game
     src/app/nav_bake.cpp
     src/app/remote_bridge.cpp)
 target_link_libraries(game PRIVATE
-    engine_flags engine_rhi engine_asset engine_scene engine_renderer engine_physics
+    engine_flags engine_core engine_rhi engine_asset engine_scene engine_renderer engine_physics
     engine_terrain engine_nav engine_net engine_remote engine_remote_world engine_audio
     SDL3::SDL3)
 if(ENGINE_EDITOR)
@@ -419,3 +453,5 @@ add_subdirectory(tests)
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/CompileShaders.cmake)
 add_shader_compilation(shaders)
 add_dependencies(game shaders)
+# Shader hot reload (R2) runs the same slangc the build cooks with.
+target_compile_definitions(engine_rhi PRIVATE QUAT_SLANGC_PATH="${SLANGC_EXECUTABLE}")

@@ -38,7 +38,7 @@
 #include "engine/renderer/lighting_pass.hpp"
 #include "engine/renderer/mesh_pass.hpp"
 #include "engine/rhi/descriptor_buffer.hpp"
-#include "engine/rhi/graphics_pipeline.hpp"
+#include "engine/rhi/managed_pipeline.hpp"
 #include "engine/rhi/render_graph.hpp"
 
 namespace engine::rhi {
@@ -123,8 +123,8 @@ private:
 
     rhi::DescriptorBufferFunctions db_fns_{};
     rhi::DescriptorSetLayout       material_layout_;
-    rhi::GraphicsPipeline          blend_pipeline_;        // alpha blend, no depth write
-    rhi::GraphicsPipeline          transmission_pipeline_; // depth write, dynamic cull
+    rhi::ManagedPipeline           blend_pipeline_;        // alpha blend, no depth write
+    rhi::ManagedPipeline           transmission_pipeline_; // depth write, dynamic cull
     rhi::Sampler                   sampler_;
     rhi::Sampler                   scene_sampler_; // samples the scene-colour mip chain
     asset::TextureAsset            fallback_texture_;

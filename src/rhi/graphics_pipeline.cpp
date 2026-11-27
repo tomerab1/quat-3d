@@ -17,12 +17,14 @@ namespace {
     return std::unexpected(core::Error{std::move(what)});
 }
 
+} // namespace
+
 // Union of the reflected push-constant ranges across the supplied shaders. Slang
 // reports a single global range spanning the constant buffer; we collapse it to
 // one VERTEX|FRAGMENT range covering [0, max_end) so it is visible to both
 // stages. Empty when no shader declares push constants (the triangle case).
-[[nodiscard]] std::vector<VkPushConstantRange>
-push_constant_ranges(const LoadedShader& vertex, const LoadedShader& fragment) {
+std::vector<VkPushConstantRange>
+reflected_push_constant_ranges(const LoadedShader& vertex, const LoadedShader& fragment) {
     std::uint32_t max_end = 0;
     for (const LoadedShader* s : {&vertex, &fragment}) {
         for (const auto& pc : s->reflection.push_constant_ranges) {
@@ -36,8 +38,6 @@ push_constant_ranges(const LoadedShader& vertex, const LoadedShader& fragment) {
     range.size = max_end;
     return {range};
 }
-
-} // namespace
 
 std::expected<GraphicsPipeline, core::Error>
 GraphicsPipeline::create(const Device& device, VkPipelineCache cache, const CreateInfo& info) {
@@ -58,7 +58,7 @@ GraphicsPipeline::create(const Device& device, VkPipelineCache cache, const Crea
     std::vector<VkPushConstantRange> reflected;
     std::span<const VkPushConstantRange> pc = info.push_constants;
     if (pc.empty()) {
-        reflected = push_constant_ranges(*info.vertex, *info.fragment);
+        reflected = reflected_push_constant_ranges(*info.vertex, *info.fragment);
         pc = reflected;
     }
     VkPipelineLayoutCreateInfo layout_info{};

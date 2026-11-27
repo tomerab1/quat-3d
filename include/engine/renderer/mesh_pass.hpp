@@ -26,7 +26,7 @@
 #include "engine/renderer/draw_batching.hpp"
 #include "engine/renderer/instance_buffer.hpp"
 #include "engine/rhi/descriptor_buffer.hpp"
-#include "engine/rhi/graphics_pipeline.hpp"
+#include "engine/rhi/managed_pipeline.hpp"
 #include "engine/rhi/render_graph.hpp"
 
 namespace engine::rhi {
@@ -110,7 +110,7 @@ private:
 
     rhi::DescriptorBufferFunctions db_fns_{};
     rhi::DescriptorSetLayout       material_layout_;
-    rhi::GraphicsPipeline          pipeline_;
+    rhi::ManagedPipeline           pipeline_;
 
     rhi::Sampler         sampler_;            // shared sampler (binding 6)
     asset::TextureAsset  fallback_texture_;   // 1x1 white, for unbound slots

@@ -69,8 +69,8 @@ struct LutParams {
     std::uint32_t pad0 = 0, pad1 = 0, pad2 = 0;
 };
 
-[[nodiscard]] std::expected<rhi::ComputePipeline, core::Error>
-make_pipeline(const rhi::Device& device, rhi::PipelineCache& cache, const std::string& spv,
+[[nodiscard]] std::expected<rhi::ManagedPipeline, core::Error>
+make_pipeline(rhi::PipelineCache& cache, const std::string& spv,
               const rhi::DescriptorSetLayout& layout, std::uint32_t push_size) {
     auto shader = cache.load(spv);
     if (!shader) return std::unexpected(shader.error());
@@ -80,7 +80,7 @@ make_pipeline(const rhi::Device& device, rhi::PipelineCache& cache, const std::s
     info.shader = *shader;
     info.set_layouts = {&set_layout, 1};
     info.push_constants = {&pc, 1};
-    return rhi::ComputePipeline::create(device, cache.handle(), info);
+    return cache.create_compute_pipeline(info);
 }
 
 void transition(VkCommandBuffer cmd, VkImage image, VkImageLayout old_layout,
@@ -189,19 +189,19 @@ DynamicIbl::create(const rhi::Device& device, rhi::GpuAllocator& allocator,
     if (!conv_layout) return std::unexpected(conv_layout.error());
     out.conv_layout_ = std::move(*conv_layout);
 
-    auto env_pipe = make_pipeline(device, cache, cooked_shader_dir + "/ibl_bake_env.spv",
+    auto env_pipe = make_pipeline(cache, cooked_shader_dir + "/ibl_bake_env.spv",
                                   out.env_layout_, sizeof(BakeParams));
     if (!env_pipe) return std::unexpected(env_pipe.error());
     out.env_pipeline_ = std::move(*env_pipe);
-    auto irr_pipe = make_pipeline(device, cache, cooked_shader_dir + "/ibl_irradiance.spv",
+    auto irr_pipe = make_pipeline(cache, cooked_shader_dir + "/ibl_irradiance.spv",
                                   out.conv_layout_, sizeof(IrradianceParams));
     if (!irr_pipe) return std::unexpected(irr_pipe.error());
     out.irradiance_pipeline_ = std::move(*irr_pipe);
-    auto pre_pipe = make_pipeline(device, cache, cooked_shader_dir + "/ibl_prefilter.spv",
+    auto pre_pipe = make_pipeline(cache, cooked_shader_dir + "/ibl_prefilter.spv",
                                   out.conv_layout_, sizeof(PrefilterParams));
     if (!pre_pipe) return std::unexpected(pre_pipe.error());
     out.prefilter_pipeline_ = std::move(*pre_pipe);
-    auto lut_pipe = make_pipeline(device, cache, cooked_shader_dir + "/ibl_brdf_lut.spv",
+    auto lut_pipe = make_pipeline(cache, cooked_shader_dir + "/ibl_brdf_lut.spv",
                                   out.env_layout_, sizeof(LutParams));
     if (!lut_pipe) return std::unexpected(lut_pipe.error());
     out.lut_pipeline_ = std::move(*lut_pipe);

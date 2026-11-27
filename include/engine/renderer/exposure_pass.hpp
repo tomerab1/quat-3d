@@ -20,9 +20,9 @@
 #include <vulkan/vulkan.h>
 
 #include "engine/core/error.hpp"
-#include "engine/rhi/compute_pipeline.hpp"
 #include "engine/rhi/descriptor_buffer.hpp"
 #include "engine/rhi/gpu_allocator.hpp"
+#include "engine/rhi/managed_pipeline.hpp"
 #include "engine/rhi/render_graph.hpp"
 
 namespace engine::rhi {
@@ -99,8 +99,8 @@ private:
     rhi::DescriptorBufferFunctions db_fns_{};
     rhi::DescriptorSetLayout       histogram_layout_; // sampled image, storage buffer
     rhi::DescriptorSetLayout       average_layout_;   // storage buffer, storage buffer
-    rhi::ComputePipeline           histogram_pipeline_;
-    rhi::ComputePipeline           average_pipeline_;
+    rhi::ManagedPipeline           histogram_pipeline_;
+    rhi::ManagedPipeline           average_pipeline_;
 
     rhi::GpuBuffer  histogram_buffer_;  // 256 uint bins (per slot, cleared each frame)
     VkDeviceAddress histogram_address_ = 0;

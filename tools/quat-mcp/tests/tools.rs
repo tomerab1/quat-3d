@@ -1,5 +1,5 @@
-//! End to end: an rmcp client talks to QuatServer over an in-process duplex
-//! pipe, and QuatServer talks to the mock engine over TCP.
+//! End to end: an rmcp client talks to `QuatServer` over an in-process duplex
+//! pipe, and `QuatServer` talks to the mock engine over TCP.
 
 mod common;
 

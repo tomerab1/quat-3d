@@ -271,6 +271,22 @@ struct Children     { std::vector<entt::entity> entities; };
   self-correct from them). Paths from requests are confined to the project root.
 - `tools/quat-mcp` (Rust, rmcp) is the only MCP surface; the engine never
   speaks MCP itself.
+- Rust code is idiomatic and built on well-known crates — rmcp (tools via its
+  macros), serde/serde_json with typed structs, schemars, thiserror (library
+  errors) / anyhow (binary), tokio + tokio-util codecs, tracing, clap. Never
+  hand-roll what a standard crate does. `cargo fmt`, `cargo clippy
+  --all-targets -- -D warnings` (with `clippy::pedantic`, enabled in
+  `Cargo.toml`) and `cargo test`
+  must pass; no `unwrap`/`expect` outside tests; files follow the same size
+  rule as C++.
+- **No prose in source.** Text written for a model or a person (MCP server
+  instructions, tool and resource descriptions, prompts, long help text) lives
+  in Markdown files (`tools/quat-mcp/content/`) embedded with `include_str!`
+  — tool descriptions via `#[doc = include_str!(..)]` on the tool function,
+  templates rendered with MiniJinja. What stays in code: error messages and
+  short UI strings (labels, one-sentence tooltips, parameter hints in a
+  reflection table). Anything longer, or anything written for a model, is
+  Markdown.
 
 ## Physics (Jolt)
 

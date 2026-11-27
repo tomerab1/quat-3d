@@ -130,6 +130,8 @@ bool Application::init_subsystems() {
     }
     pipeline_cache_ = std::move(*pipeline_cache);
     shader_dir_ = QUAT_COOKED_SHADER_DIR;
+    shader_reload_ = engine::rhi::ShaderHotReload::create_from_environment( // R2
+        pipeline_cache_, QUAT_PROJECT_ROOT "/assets/shaders", shader_dir_);
     const VkDevice vk_device = device_.handle();
 
     // One-time transfer context for setup uploads (demo mesh/material + each
@@ -196,7 +198,8 @@ bool Application::init_subsystems() {
                   .assets = &assets_,
                   .scene = &scene_,
                   .world = &world_,
-                  .camera = &camera_});
+                  .camera = &camera_,
+                  .shader_reload = shader_reload_.get()});
 #endif
     return true;
 }
@@ -276,6 +279,7 @@ bool Application::run_frame() {
     if (!renderer_.ensure_swapchain(pixel_extent)) return false;
 
     const std::uint32_t slot = renderer_.wait_for_slot();
+    if (shader_reload_) shader_reload_->update(presented_); // R2: swap rebuilt pipelines
     remote_->on_frame_complete(slot); // the slot's screenshot readback landed
     switch (renderer_.acquire_and_begin()) {
     case FrameRenderer::Acquire::retry: return true;
@@ -300,8 +304,9 @@ bool Application::run_frame() {
     const float dt = static_cast<float>(now_ticks - last_ticks_) * 1e-9F;
     last_ticks_ = now_ticks;
     renderer_.advance_time(dt);
+    const float sim_dt = remote_->advance_sim(dt); // A5: pause / step / time scale
 
-    const engine::scene::CameraMatrices cam = update_world(dt, aspect);
+    const engine::scene::CameraMatrices cam = update_world(dt, sim_dt, aspect);
     const FrameScene frame_scene = renderer_.gather(scene_, cam, draw_extent, presented_);
 
     world_.update_terrain(scene_, cam.position);
@@ -312,6 +317,7 @@ bool Application::run_frame() {
 
     FrameInputs frame_inputs;
     frame_inputs.scene = &frame_scene;
+    frame_inputs.registry = &scene_.registry();
     frame_inputs.cam = &cam;
     frame_inputs.draw_extent = draw_extent;
     frame_inputs.dt = dt;
@@ -327,6 +333,8 @@ bool Application::run_frame() {
             cam);
     };
 #endif
+    // A5 debug.stats: the frame's submitted draws (noted before batching).
+    remote_->note_draws(frame_scene.draws.size() + frame_scene.transparent_draws.size());
     if (!renderer_.record(frame_inputs)) return false;
 
     remote_->record_capture(renderer_.command_buffer(), renderer_.frame_slot(),
@@ -349,7 +357,7 @@ bool Application::run_frame() {
     return max_frames == 0 || presented_ < max_frames;
 }
 
-engine::scene::CameraMatrices Application::update_world(float dt, float aspect) {
+engine::scene::CameraMatrices Application::update_world(float dt, float sim_dt, float aspect) {
     const bool character_mode = world_.character_mode();
 
     // Free-fly camera: right-drag looks, WASD moves, Q/E down/up, Shift = fast.
@@ -368,7 +376,7 @@ engine::scene::CameraMatrices Application::update_world(float dt, float aspect) 
 #ifdef ENGINE_EDITOR
     play = editor_.play_step(camera_.pos);
 #endif
-    world_.simulate(scene_, presented_, dt, play ? &*play : nullptr);
+    world_.simulate(scene_, presented_, dt, sim_dt, play ? &*play : nullptr);
 
     // Third-person follow camera, placed after the character has moved.
     if (character_mode) camera_.follow(scene_, world_.character_entity());

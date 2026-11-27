@@ -11,6 +11,7 @@
 #include "app/remote_bridge.hpp"
 #include "engine/rhi/device.hpp"
 #include "engine/rhi/gpu_allocator.hpp"
+#include "engine/rhi/shader_hot_reload.hpp"
 #include "engine/scene/components.hpp"
 #include "engine/scene/gltf_loader.hpp"
 #include "engine/scene/navigation.hpp"
@@ -252,6 +253,7 @@ const ImDrawData* EditorBridge::build_ui(float dt, int draw_count,
     ui_ctx.draw_count = draw_count;
     ui_ctx.entity_count =
         static_cast<int>(scene.registry().view<engine::scene::Transform>().size());
+    ui_ctx.shader_statuses = t_.shader_reload != nullptr ? &t_.shader_reload->statuses() : nullptr;
     ui_ctx.scene = &scene;
     ui_ctx.renderer = &render_settings_;
     ui_ctx.project_root = QUAT_PROJECT_ROOT;

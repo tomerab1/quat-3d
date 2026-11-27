@@ -113,6 +113,14 @@ command ends in `quat-mcp.exe`.
 | `sim_play` / `sim_stop` | `sim.*` | Enter / leave play mode |
 | `scene_save` / `scene_load` | `scene.save` / `scene.load` | Project-relative JSON scene files |
 | `nav_bake` | `nav.bake` | Bake the navmesh for NPC agents |
+| `debug_log` | `debug.log` | Engine log tail (levels, categories, Vulkan validation), incremental via a cursor |
+| `debug_stats` | `debug.stats` | Frame times, draws, entities, physics bodies, nav agents, memory, clock, log error counts |
+| `debug_pause` / `debug_resume` | `debug.pause` / `debug.resume` | Freeze / resume the simulation (rendering continues) |
+| `debug_step` | `debug.step` | Advance N simulation frames of a fixed dt, reply when done |
+| `debug_time_scale` | `debug.time_scale` | Slow motion / fast-forward (0.01–10×) |
+| `debug_watch` | `debug.watch` | Live component snapshot of up to 64 entities (+ nav agent state) |
+| `debug_raycast` | `debug.raycast` | Physics ray: hit entity, point, normal (play mode) |
+| `debug_nav_path` | `debug.nav_path` | Navmesh path between two points, partial or not |
 
 Tool descriptions spell out units and conventions (metres, Y up, Euler degrees
 in YXZ order, `"#rrggbb"` sRGB colours for primitives and linear `[r,g,b]` for
@@ -123,8 +131,9 @@ invalid_params (-32602): point_light.radius: expected a number >= 0`), plus a
 short hint, so the model can correct itself.
 
 **Prompts** — `build_world` (inspect → plan → build with `scene_batch` →
-screenshot → iterate) and `inspect_scene` (survey and review the current
-scene). In Claude Code they appear as `/mcp__quat-3d__build_world`.
+screenshot → iterate), `inspect_scene` (survey and review the current
+scene) and `debug_session` (diagnose a problem: stats → logs → watch →
+pause / step → raycast / nav path → conclude). In Claude Code they appear as `/mcp__quat-3d__build_world`.
 
 **Resource** — `quat://scene/summary`: engine info, the first 500 entities,
 the environment and the camera as JSON.
@@ -156,9 +165,21 @@ tokio TCP server speaking the line protocol) used to test the client
 (handshake and tokens, id matching, timeouts, reconnects, error mapping, size
 limits) and the tools end to end through an in-process MCP client.
 
-Layout: `src/client.rs` (engine JSON-RPC client), `src/server.rs` (tools,
-prompts, resource), `src/params.rs` (typed tool inputs — their doc comments
-are the JSON schemas the model reads), `src/config.rs` (flags / environment).
+Layout:
+
+| Path | What |
+|---|---|
+| `content/` | **Everything the model reads**, as Markdown: server instructions, one file per tool description, the component reference, prompt templates ([MiniJinja](https://docs.rs/minijinja)). See `content/README.md`. |
+| `src/client/` | Engine JSON-RPC client: `mod.rs` (calls, reconnects, handshake), `connection.rs` (socket, reader task, in-flight calls), `error.rs` (error codes, `EngineError`) |
+| `src/server/` | MCP server: `mod.rs` (handler, resource), tools grouped by area (`scene_tools.rs`, `world_tools.rs`, `sim_tools.rs`, each its own rmcp router), `prompts.rs`, `results.rs` |
+| `src/params.rs` | Typed tool inputs — their doc comments are the JSON schemas the model reads |
+| `src/content.rs` | Embeds `content/` and renders prompt templates |
+| `src/config.rs` | Flags / environment |
+
+To change what the model is told, edit the Markdown — no prose lives in Rust
+string literals (error messages excepted). A new tool is a function with
+`#[doc = include_str!("../../content/tools/<name>.md")]` + `#[tool]`; a test
+fails if a tool and its Markdown file don't match one-to-one.
 
 When the engine contract in `docs/remote-control.md` changes, update it there
 first, then the matching tool here.

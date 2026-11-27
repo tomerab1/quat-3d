@@ -9,6 +9,7 @@
 #include "engine/rhi/shader_reflection.hpp"
 
 #include <algorithm>
+#include <string>
 
 #include <nlohmann/json.hpp>
 
@@ -116,6 +117,54 @@ parse_reflection_json(std::string_view json_text) {
     }
 
     return refl;
+}
+
+namespace {
+
+[[nodiscard]] std::uint32_t push_constant_end(const ShaderReflection& r) {
+    std::uint32_t end = 0;
+    for (const PushConstantRange& pc : r.push_constant_ranges) {
+        end = std::max(end, pc.offset + pc.size);
+    }
+    return end;
+}
+
+[[nodiscard]] std::string binding_name(const DescriptorBinding& b) {
+    return "set " + std::to_string(b.set) + " binding " + std::to_string(b.binding);
+}
+
+} // namespace
+
+std::expected<void, core::Error>
+check_reflection_compatible(const ShaderReflection& baseline, const ShaderReflection& updated,
+                            std::span<const std::string> required_entries) {
+    for (const std::string& entry : required_entries) {
+        const bool found = std::any_of(updated.entry_points.begin(), updated.entry_points.end(),
+                                       [&](const EntryPoint& e) { return e.name == entry; });
+        if (!found) return fail("entry point '" + entry + "' no longer exists");
+    }
+    for (const DescriptorBinding& b : updated.descriptor_bindings) {
+        const auto it = std::find_if(
+            baseline.descriptor_bindings.begin(), baseline.descriptor_bindings.end(),
+            [&](const DescriptorBinding& o) { return o.set == b.set && o.binding == b.binding; });
+        if (it == baseline.descriptor_bindings.end()) {
+            return fail(binding_name(b) + " is new (the pipeline layout has no such binding)");
+        }
+        if (it->type != b.type) {
+            return fail(binding_name(b) + " changed descriptor type");
+        }
+        if (b.count > it->count) {
+            return fail(binding_name(b) + " array grew from " + std::to_string(it->count) +
+                        " to " + std::to_string(b.count));
+        }
+    }
+    const std::uint32_t old_pc = push_constant_end(baseline);
+    const std::uint32_t new_pc = push_constant_end(updated);
+    if (new_pc > old_pc) {
+        return fail("push-constant block grew from " + std::to_string(old_pc) + " to " +
+                    std::to_string(new_pc) + " bytes");
+    }
+    return {};
 }
 
 } // namespace engine::rhi

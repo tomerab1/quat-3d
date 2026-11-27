@@ -29,6 +29,7 @@
 #include <vector>
 
 #include <entt/entity/entity.hpp>
+#include <entt/entity/fwd.hpp>
 #include <glm/glm.hpp>
 #include <vulkan/vulkan.h>
 
@@ -140,6 +141,7 @@ struct FrameScene {
 // Everything record() draws besides the gathered scene.
 struct FrameInputs {
     const FrameScene*                    scene = nullptr;
+    const entt::registry*                registry = nullptr; // InstancedMesh placements (R9.2)
     const engine::scene::CameraMatrices* cam = nullptr; // unjittered
     VkExtent2D                           draw_extent{0, 0};
     float                                dt = 0.0F;

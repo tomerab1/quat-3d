@@ -9,6 +9,8 @@
 #include <set>
 #include <vector>
 
+#include "engine/core/log.hpp"
+
 namespace engine::rhi {
 
 namespace {
@@ -48,10 +50,14 @@ VKAPI_ATTR VkBool32 VKAPI_CALL debug_callback(
     VkDebugUtilsMessageTypeFlagsEXT /*types*/,
     const VkDebugUtilsMessengerCallbackDataEXT* data,
     void* /*user*/) {
-    const char* level = "INFO";
-    if (severity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT)        level = "ERROR";
-    else if (severity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT) level = "WARN";
-    std::fprintf(stderr, "[vulkan][%s] %s\n", level, data->pMessage);
+    // Routed into the engine log ring (category "vulkan") so remote debugging
+    // (debug.log) sees validation messages; log() also echoes to stderr.
+    core::LogLevel level = core::LogLevel::info;
+    if (severity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT)        level = core::LogLevel::error;
+    else if (severity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT) level = core::LogLevel::warn;
+    core::log(level, "vulkan", "{}", data != nullptr && data->pMessage != nullptr
+                                         ? data->pMessage
+                                         : "(no message)");
     return VK_FALSE;
 }
 

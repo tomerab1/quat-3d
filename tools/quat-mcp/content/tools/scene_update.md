@@ -1,0 +1,1 @@
+Rename an entity and/or add or merge-update its components; returns `{id}`. Only the fields you give change, e.g. `{"entity": 12, "components": {"transform": {"rotation": [0, 45, 0]}}}` turns entity 12 to a 45° heading and keeps its position and scale. Adding a component the entity lacks creates it with defaults for omitted fields.

@@ -1,0 +1,1 @@
+Set the simulation speed: `scale` 1 = real time, 0.25 = quarter speed (slow motion, to catch fast events), up to 10 (fast-forward; physics catch-up limits very high speeds). Rendering, the camera and audio stay real time. Returns the clock state. Set it back to 1 when done.

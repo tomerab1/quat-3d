@@ -106,9 +106,11 @@ public:
     void drive_character(engine::scene::Scene& scene, const glm::vec3& wish, float dt);
     // Spins the demo object, runs networking and the simulation (demo physics,
     // or editor play mode when `play` is set), ticks the scene and publishes
-    // replication.
+    // replication. Networking runs on the real frame time `dt`; the
+    // simulation systems and the scene tick on `sim_dt` (the remote debug
+    // clock: 0 while paused, scaled by debug.time_scale).
     void simulate(engine::scene::Scene& scene, std::uint64_t frame_number, float dt,
-                  const PlayStep* play);
+                  float sim_dt, const PlayStep* play);
     void update_audio(engine::scene::Scene& scene, const glm::mat4& view, bool live, float dt);
     // Terrain upkeep around the rendered camera; uploads before the frame's
     // graph is built.

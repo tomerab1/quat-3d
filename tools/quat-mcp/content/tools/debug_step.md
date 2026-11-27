@@ -1,0 +1,3 @@
+Advance the simulation a few frames and stop again — the way to watch something happen one frame at a time (an object falling through the floor, an NPC picking a route). Pauses first if the game is running, runs `frames` steps (default 1) of exactly `dt` seconds each (default 1/60, independent of the time scale) and returns the clock once they have run, so a following `debug_watch` already sees the result.
+
+Typical loop: `debug_pause`, `debug_watch` the entity, `debug_step {"frames": 1}`, `debug_watch` again, compare. Physics bodies exist only in play mode (`sim_play`); in edit mode stepping only advances animation. Large step counts take about one rendered frame per step.

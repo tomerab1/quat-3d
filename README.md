@@ -140,6 +140,7 @@ Environment variables switch on extra modes:
 | `QUAT_PHYSICS=1` / `QUAT_CHARACTER=1` | Physics / character-controller demo scenes |
 | `QUAT_HOST=<port>` / `QUAT_JOIN=<ip:port>` | Host or join a networked session |
 | `QUAT_REMOTE=<port>` | Open the remote-control endpoint for AI tools (`1` = port 7878); add `QUAT_REMOTE_TOKEN=<secret>` to require a token — see [`docs/remote-control.md`](docs/remote-control.md) |
+| `QUAT_LOG_CAPTURE=0` | With `QUAT_REMOTE`: do not tee stderr into the engine log the AI debugging tools read (`debug.log`) |
 | `QUAT_NO_UI=1` | Run without the editor UI |
 | `QUAT_NO_VSYNC=1` | Disable vsync |
 | `QUAT_NO_AUDIO=1` | Mute: run audio without opening a playback device |
@@ -178,7 +179,9 @@ cp -R Models/Fox/glTF ~/quat-3d/sample-assets/Fox
 [`tools/quat-mcp`](tools/quat-mcp/README.md) is an MCP server that lets AI
 assistants such as Claude Code and Claude Desktop build and inspect worlds in
 the running engine — create entities, set the sky and camera, take
-screenshots, spawn models. Start the engine with `QUAT_REMOTE=7878`, build the
+screenshots, spawn models — and debug it: read the engine log and Vulkan
+validation messages, frame statistics, pause / single-step / slow down the
+simulation, watch entities, cast physics rays and query navmesh paths. Start the engine with `QUAT_REMOTE=7878`, build the
 server with `cargo build --release` in `tools/quat-mcp`, and register it with
 your client:
 

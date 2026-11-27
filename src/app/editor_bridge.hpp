@@ -37,6 +37,7 @@ class AssetManager;
 namespace engine::rhi {
 class Device;
 class GpuAllocator;
+class ShaderHotReload;
 } // namespace engine::rhi
 namespace engine::scene {
 class Scene;
@@ -55,6 +56,8 @@ struct EditorBridgeTargets {
     engine::scene::Scene*        scene = nullptr;
     WorldRuntime*                world = nullptr;
     FlyCamera*                   camera = nullptr;
+    // Shader hot-reload state for the Stats panel (R2); null when off.
+    const engine::rhi::ShaderHotReload* shader_reload = nullptr;
 };
 
 class EditorBridge {

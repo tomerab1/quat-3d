@@ -13,8 +13,13 @@
 #include <utility>
 
 #include "app/application.hpp"
+#include "app/remote_bridge.hpp"
+#include "engine/core/stderr_capture.hpp"
 
 int main() {
+    // A5: stderr -> engine log ring for debug.log (QUAT_REMOTE runs only).
+    // Created first, destroyed last: it must outlive everything that logs.
+    const engine::core::StderrCapture stderr_capture = quat::app::capture_stderr_for_remote();
     quat::app::AppConfig config;
     // QUAT_MAX_FRAMES, when set, auto-quits after that many presented frames.
     // Used for headless smoke tests so clean teardown can be verified.

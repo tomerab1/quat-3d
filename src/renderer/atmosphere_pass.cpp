@@ -31,8 +31,8 @@ struct SkyViewPush {
     float sun_direction[4];
 };
 
-[[nodiscard]] std::expected<rhi::ComputePipeline, core::Error>
-make_pipeline(const rhi::Device& device, rhi::PipelineCache& cache, const std::string& spv,
+[[nodiscard]] std::expected<rhi::ManagedPipeline, core::Error>
+make_pipeline(rhi::PipelineCache& cache, const std::string& spv,
               const rhi::DescriptorSetLayout& layout, std::uint32_t push_size) {
     auto shader = cache.load(spv);
     if (!shader) return std::unexpected(shader.error());
@@ -42,7 +42,7 @@ make_pipeline(const rhi::Device& device, rhi::PipelineCache& cache, const std::s
     info.shader = *shader;
     info.set_layouts = {&set_layout, 1};
     if (push_size > 0) info.push_constants = {&pc, 1};
-    return rhi::ComputePipeline::create(device, cache.handle(), info);
+    return cache.create_compute_pipeline(info);
 }
 
 void transition(VkCommandBuffer cmd, VkImage image, VkImageLayout old_layout,
@@ -143,13 +143,13 @@ AtmospherePass::create(const rhi::Device& device, rhi::GpuAllocator& allocator,
     auto sky_layout = rhi::DescriptorSetLayout::create(device, out.db_fns_, sky_b);
     if (!sky_layout) return std::unexpected(sky_layout.error());
 
-    auto trans_pipe = make_pipeline(device, cache, cooked_shader_dir + "/atmos_transmittance.spv",
+    auto trans_pipe = make_pipeline(cache, cooked_shader_dir + "/atmos_transmittance.spv",
                                     *trans_layout, 0);
     if (!trans_pipe) return std::unexpected(trans_pipe.error());
-    auto ms_pipe = make_pipeline(device, cache, cooked_shader_dir + "/atmos_multiscatter.spv",
+    auto ms_pipe = make_pipeline(cache, cooked_shader_dir + "/atmos_multiscatter.spv",
                                  *ms_layout, 0);
     if (!ms_pipe) return std::unexpected(ms_pipe.error());
-    auto sky_pipe = make_pipeline(device, cache, cooked_shader_dir + "/atmos_skyview.spv",
+    auto sky_pipe = make_pipeline(cache, cooked_shader_dir + "/atmos_skyview.spv",
                                   *sky_layout, sizeof(SkyViewPush));
     if (!sky_pipe) return std::unexpected(sky_pipe.error());
 
