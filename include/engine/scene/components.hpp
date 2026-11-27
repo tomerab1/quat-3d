@@ -162,15 +162,25 @@ struct NavAgent {
     float                  retry_s = 0.0F; // cooldown after a failed plan
 };
 
+// Per-entity, per-node behaviour-tree memory (system-managed).
+struct BtNodeState {
+    float         scratch = 0.0F; // leaf memory (wait timer, move_to phase)
+    std::uint32_t child = 0;      // composites: the child that was running
+    std::uint32_t ticked = 0;     // tick stamp of the last tick that reached it
+    bool          running = false; // returned running on that tick
+};
+
 // A data-driven behaviour tree (13.3): `source` is the tree JSON (composed of
-// sequence/selector/inverter nodes over named C++ leaves — see behavior.hpp).
-// The system compiles it lazily; a parse error logs once and disables the
-// tree. compiled/node_state/parse_failed are system-managed.
+// sequence/selector/reactive_*/inverter nodes over named C++ leaves — see
+// behavior.hpp). The system compiles it lazily; a parse error logs once and
+// disables the tree. compiled/node_state/tick_count/parse_failed are
+// system-managed.
 struct BehaviorTree {
     std::string source;
     bool        enabled = true;
     std::shared_ptr<const class BehaviorTreeAsset> compiled;
-    std::vector<float> node_state; // per-node scratch (e.g. wait timers)
+    std::vector<BtNodeState> node_state; // one per compiled node
+    std::uint32_t            tick_count = 0;
     bool parse_failed = false;
 };
 

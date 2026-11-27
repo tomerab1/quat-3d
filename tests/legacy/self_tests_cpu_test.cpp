@@ -62,7 +62,6 @@ TEST(Terrain, Streaming) { ASSERT_OK(engine::terrain::run_terrain_streaming_self
 TEST(Nav, Navmesh) { ASSERT_OK(engine::nav::run_navmesh_self_test()); }
 TEST(Nav, Agents) { ASSERT_OK(scn::run_nav_agent_self_test()); }
 TEST(Nav, PatrolRoute) { ASSERT_OK(scn::run_patrol_self_test()); }
-TEST(Ai, BehaviorTree) { ASSERT_OK(scn::run_behavior_self_test()); }
 
 TEST(Net, Transport) { ASSERT_OK(engine::net::run_transport_self_test()); }
 TEST(Net, Replication) { ASSERT_OK(engine::net::run_replication_self_test()); }

@@ -186,8 +186,10 @@ struct ComponentInspector<scene::BehaviorTree> {
         } else if (bt.compiled != nullptr) {
             ImGui::Text("compiled: %zu nodes", bt.compiled->nodes().size());
         }
-        ImGui::TextWrapped("JSON: sequence/selector/inverter over leaves "
-                           "move_to, wait, near_point, near_camera.");
+        ImGui::TextWrapped("JSON: sequence/selector (resume the running child), "
+                           "reactive_sequence/reactive_selector (re-check every tick, "
+                           "pre-empting), inverter; leaves move_to, wait, near_point, "
+                           "near_camera.");
     }
 };
 

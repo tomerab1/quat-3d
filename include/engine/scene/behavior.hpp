@@ -4,50 +4,103 @@
 //
 // Trees are JSON; leaves are C++ callbacks registered by NAME and instantiated
 // per node from the node's JSON parameters (a leaf factory), so designers
-// compose behaviour without recompiling. Composites: sequence, selector,
-// inverter. Trees re-tick from the root every frame (stateless flow control);
-// leaves needing memory (e.g. "wait") get one float of per-node, per-entity
-// scratch.
+// compose behaviour without recompiling. Per-entity, per-node memory lives in
+// the BehaviorTree component (BtNodeState), so one compiled asset serves many
+// entities.
+//
+// Composites (standard semantics, as in BehaviorTree.CPP):
+//   sequence           runs children in order; remembers the running child and
+//                      resumes there next tick (finished steps are not redone).
+//   selector           tries children in order until one does not fail;
+//                      remembers the running child and resumes there.
+//   reactive_sequence  re-checks every child from the first each tick: a
+//                      condition that stops holding aborts the running child.
+//   reactive_selector  re-evaluates higher-priority children each tick: one
+//                      that succeeds or runs pre-empts the running lower one.
+//   inverter           swaps success and failure of its single child.
+// A node that ran last tick but is not reached this tick (pre-empted, or its
+// parent finished) is aborted: running leaves are halted (move_to stops its
+// NavAgent) and its memory resets, so it starts fresh when reached again. A
+// composite that finishes resets its subtree; so does the root.
 //
 // Built-in leaves:
-//   move_to    {x, y, z, speed?}   drive the entity's NavAgent; running until
-//                                  it arrives, failure if it cannot path.
+//   move_to    {x, y, z, speed?}   drive the entity's NavAgent; running until it
+//                                  arrives (success) or the agent stops short
+//                                  (failure). While its parent keeps ticking it
+//                                  after success it stays succeeded (no re-aim).
 //   wait       {seconds}           running until the timer elapses, then success.
 //   near_point {x, y, z, range}    condition: entity within range of the point.
-//   near_camera{range}             condition: within range of the active camera
-//                                  (the perception stub).
+//   near_camera{range}             condition: within range of the viewer (the
+//                                  perception input; see BtWorld).
 
 #include <cstdint>
 #include <expected>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <vector>
 
 #include <entt/entity/fwd.hpp>
+#include <glm/glm.hpp>
 
 #include "engine/core/error.hpp"
+#include "engine/scene/navigation.hpp"
+
+namespace engine::core {
+class JsonFields;
+}
 
 namespace engine::scene {
 
+struct BehaviorTree;
+
 enum class BtStatus : std::uint8_t { success, failure, running };
 
-// A leaf instance: ticked with the owning entity and its per-node scratch.
-using BtLeafFn =
-    std::function<BtStatus(entt::registry&, entt::entity, float dt, float& state)>;
+// What the trees perceive and act through, supplied by the caller per tick.
+struct BtWorld {
+    // Where the player / viewer is (near_camera). Unset: the active Camera
+    // entity's position, if any.
+    std::optional<glm::vec3> viewer;
+};
+
+// Everything a leaf sees when it is ticked or halted.
+struct BtLeafContext {
+    entt::registry& registry;
+    entt::entity    entity;
+    const BtWorld&  world;
+    float           dt;
+    float&          state; // this node's per-entity scratch (BtNodeState::scratch)
+};
+
+// A leaf instance. `halt` (optional) runs when the leaf is aborted while
+// running — undo whatever the tick started (e.g. stop the NavAgent).
+struct BtLeaf {
+    std::function<BtStatus(BtLeafContext&)> tick;
+    std::function<void(BtLeafContext&)>     halt;
+};
+
+// Builds a leaf from its JSON node (parameters are read through `fields`,
+// which rejects unread fields afterwards).
+using BtLeafFactory = std::function<std::expected<BtLeaf, core::Error>(core::JsonFields&)>;
+using BtLeafFactories = std::unordered_map<std::string, BtLeafFactory>;
 
 class BehaviorTreeAsset {
 public:
-    // Parses {"type":"sequence"/"selector"/"inverter"/"leaf", "name":..., ...}.
-    // Unknown leaf names fail here, not at tick time.
+    // Parses {"type": <composite>|"leaf", "name":..., "children":[...], ...}.
+    // Unknown leaf names fail here, not at tick time. `extra_leaves` adds (or
+    // overrides) leaf types beyond the built-ins (game code, tests).
     [[nodiscard]] static std::expected<std::shared_ptr<const BehaviorTreeAsset>, core::Error>
-    parse(std::string_view json_text);
+    parse(std::string_view json_text, const BtLeafFactories* extra_leaves = nullptr);
 
-    enum class Kind : std::uint8_t { sequence, selector, inverter, leaf };
+    enum class Kind : std::uint8_t {
+        sequence, selector, reactive_sequence, reactive_selector, inverter, leaf
+    };
     struct Node {
         Kind                       kind = Kind::leaf;
-        BtLeafFn                   leaf;     // leaf nodes only
+        BtLeaf                     leaf;     // leaf nodes only
         std::vector<std::uint32_t> children; // composite nodes only
     };
 
@@ -58,14 +111,15 @@ private:
     std::vector<Node> nodes_;
 };
 
-// Tick every enabled BehaviorTree component: lazily compile its JSON (a parse
-// error logs once and disables the tree), then evaluate from the root. Call
-// before nav_agent_system so move_to decisions land the same frame.
-void bt_system(entt::registry& registry, float dt);
+// Tick one tree once: `bt.compiled` must be set (node_state is sized to it on
+// first use). Returns the root's status. Exposed for tests and tools;
+// bt_system is the per-frame entry point.
+BtStatus bt_tick(BehaviorTree& bt, entt::registry& registry, entt::entity entity,
+                 const BtWorld& world, float dt);
 
-// Self-test: a patrol tree (selector: [near target -> wait] else move_to)
-// drives a kinematic NavAgent across the walled plate and settles at the
-// point; the wait timer then accumulates.
-[[nodiscard]] std::expected<void, core::Error> run_behavior_self_test();
+// Tick every enabled BehaviorTree component: lazily compile its JSON (a parse
+// error logs once and disables the tree), then evaluate it. Call before
+// nav_agent_system so move_to decisions land the same frame.
+void bt_system(entt::registry& registry, float dt, const BtWorld& world = {});
 
 } // namespace engine::scene
