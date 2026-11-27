@@ -4,9 +4,11 @@
 // GPU wrote, and the tile renders; unsupported params and blocking updates
 // fall back to the CPU.
 
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <future>
 #include <optional>
 #include <vector>
 
@@ -174,6 +176,65 @@ TEST(GpuTerrainTiles, DropletTilesAndBlockingUpdatesFallBackToTheCpu) {
     const auto ev = streamer.update(glm::vec2(0.0F), /*block=*/true);
     ASSERT_EQ(ev.ready.size(), 1U);
     EXPECT_EQ(streamer.maps().at(glm::ivec2(0, 0)).gpu_tile, 0U);
+}
+
+// Audit D1: a GPU tile's future only progresses while frames run, so
+// teardown (or deleting the Terrain entity) abandons it. Its future must then
+// resolve at once — invalid, "cancelled" — whether the job was still queued
+// or already part-way through on the GPU, and later frames and generations
+// must carry on normally.
+TEST(GpuTerrainTiles, PendingGpuTileIsAbandonedCleanly) {
+    QUAT_REQUIRE_GPU(g);
+    auto mesh = r::MeshPass::create(g->device, g->allocator, g->cache, g->transfer, g->shader_dir);
+    ASSERT_OK(mesh);
+    auto terrain =
+        r::TerrainPass::create(g->device, g->allocator, g->cache, g->transfer, g->shader_dir);
+    ASSERT_OK(terrain);
+    t::TileGenerator* gpu = terrain->tile_generator();
+    ASSERT_NE(gpu, nullptr);
+    auto px = g->allocator.create_buffer(
+        4, VK_BUFFER_USAGE_TRANSFER_DST_BIT, VMA_MEMORY_USAGE_AUTO,
+        VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT);
+    ASSERT_OK(px);
+    Frame frame{*mesh, *terrain};
+    using namespace std::chrono_literals;
+
+    // Queued, never started: no frame has run.
+    auto queued = t::generate_tile_async(gpu, tile_params());
+    EXPECT_TRUE(terrain->has_tiles());
+    EXPECT_EQ(queued.wait_for(0s), std::future_status::timeout);
+    terrain->abandon_pending_tiles();
+    ASSERT_EQ(queued.wait_for(0s), std::future_status::ready);
+    EXPECT_FALSE(queued.get().valid());
+    EXPECT_FALSE(terrain->has_tiles()) << "an abandoned job still keeps frames busy";
+
+    // Started: one frame records the first erosion slice (default budget
+    // spreads a big tile over frames), then the tile is abandoned mid-way.
+    t::TerrainParams big = tile_params();
+    big.resolution = 513;
+    big.tile_size_m = 1000.0F;
+    big.grid.iterations = 200; // > one frame's budget (64 steps at 513²)
+    auto started = t::generate_tile_async(gpu, big);
+    ASSERT_TRUE(frame.run(*g, *px).has_value());
+    EXPECT_EQ(started.wait_for(0s), std::future_status::timeout);
+    terrain->abandon_pending_tiles();
+    ASSERT_EQ(started.wait_for(0s), std::future_status::ready);
+    EXPECT_FALSE(started.get().valid());
+    // The in-flight GPU job drains (frames keep driving it) and is discarded.
+    for (int i = 0; i < 40 && terrain->has_tiles(); ++i) {
+        ASSERT_TRUE(frame.run(*g, *px).has_value());
+    }
+    EXPECT_FALSE(terrain->has_tiles()) << "abandoned GPU work never drained";
+
+    // A fresh request after abandoning is delivered as usual.
+    auto again = t::generate_tile_async(gpu, tile_params());
+    for (int i = 0; i < 20 && again.wait_for(0s) != std::future_status::ready; ++i) {
+        ASSERT_TRUE(frame.run(*g, *px).has_value());
+    }
+    ASSERT_EQ(again.wait_for(0s), std::future_status::ready);
+    const t::Heightmap map = again.get();
+    EXPECT_TRUE(map.valid());
+    EXPECT_NE(map.gpu_tile, 0U);
 }
 
 } // namespace

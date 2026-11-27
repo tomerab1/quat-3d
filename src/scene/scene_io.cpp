@@ -32,6 +32,22 @@ constexpr int k_scene_version = 2;
     return std::unexpected(core::Error{std::move(what)});
 }
 
+// Scene-file defaults for component fields newer than the files they may be
+// missing from. The codec's defaults describe a newly created component; a
+// field absent from a file means "whatever the build that saved it did", so
+// the file loads exactly as before:
+//   terrain.erosion — files predating R10.2 eroded with droplets (new
+//                     terrains default to the GPU-capable grid model);
+//   terrain.gpu     — off unless the file says so: GPU synthesis matches the
+//                     CPU generator to float rounding, not bit for bit.
+[[nodiscard]] json with_file_defaults(std::string_view key, const json& value) {
+    if (key != "terrain" || !value.is_object()) return value;
+    json patched = value;
+    if (!patched.contains("erosion")) patched["erosion"] = "droplets";
+    if (!patched.contains("gpu")) patched["gpu"] = false;
+    return patched;
+}
+
 // Entity-level keys handled by scene_io itself; every other key is a
 // component decoded by the shared codec.
 [[nodiscard]] bool is_entity_key(std::string_view key) {
@@ -214,7 +230,9 @@ load_scene(Scene& scene, const std::filesystem::path& path, rhi::GpuAllocator& a
                              key.c_str());
                 continue;
             }
-            if (auto ok = apply_component(r, e, key, value, /*strict=*/false); !ok) {
+            if (auto ok = apply_component(r, e, key, with_file_defaults(key, value),
+                                          /*strict=*/false);
+                !ok) {
                 return fail("load_scene: '" + path.string() + "': entities[" + std::to_string(i) +
                             "]: " + ok.error().message);
             }

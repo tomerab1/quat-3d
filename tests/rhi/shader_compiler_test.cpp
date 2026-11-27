@@ -244,4 +244,52 @@ TEST(ShaderReflectionCompat, RejectsLayoutChanges) {
     EXPECT_ERR(check_reflection_compatible(base, base, renamed)); // entry point gone
 }
 
+// Passes bind by name (reflected_bindings), so a reload that moves another
+// parameter of the same type into a slot must be refused.
+TEST(ShaderReflectionCompat, RejectsSwappedParameterNames) {
+    const std::string entries[] = {"compute_main"};
+    const auto base = reflection({{0, 0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, 0, "g_a"},
+                                  {0, 1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, 0, "g_b"}},
+                                 0);
+    EXPECT_OK(check_reflection_compatible(base, base, entries));
+    const auto swapped = reflection({{0, 0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, 0, "g_b"},
+                                     {0, 1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, 0, "g_a"}},
+                                    0);
+    const auto r = check_reflection_compatible(base, swapped, entries);
+    ASSERT_ERR(r);
+    EXPECT_NE(r.error().message.find("g_a"), std::string::npos) << r.error().message;
+}
+
+// --- bindings by name -----------------------------------------------------------
+
+TEST(ShaderReflectionBindings, ParsesNamesAndResolvesRequestsInOrder) {
+    const auto parsed = parse_reflection_json(R"({"parameters": [
+        {"name": "g_params", "binding": {"kind": "descriptorTableSlot", "index": 0},
+         "type": {"kind": "constantBuffer"}},
+        {"name": "g_out", "binding": {"kind": "descriptorTableSlot", "index": 3},
+         "type": {"kind": "resource", "baseShape": "structuredBuffer", "access": "readWrite"}},
+        {"name": "g_other", "binding": {"kind": "descriptorTableSlot", "index": 1, "space": 1},
+         "type": {"kind": "resource", "baseShape": "structuredBuffer"}}]})");
+    ASSERT_OK(parsed);
+    ASSERT_NE(parsed->find_binding("g_out"), nullptr);
+    EXPECT_EQ(parsed->find_binding("g_out")->binding, 3U);
+    EXPECT_EQ(parsed->find_binding("g_missing"), nullptr);
+
+    const BindingRequest ok[] = {{"g_out", VK_DESCRIPTOR_TYPE_STORAGE_BUFFER},
+                                 {"g_params", VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER}};
+    const auto bindings = reflected_bindings(*parsed, ok, VK_SHADER_STAGE_COMPUTE_BIT);
+    ASSERT_OK(bindings);
+    ASSERT_EQ(bindings->size(), 2U);
+    EXPECT_EQ((*bindings)[0].binding, 3U);
+    EXPECT_EQ((*bindings)[0].stages, VK_SHADER_STAGE_COMPUTE_BIT);
+    EXPECT_EQ((*bindings)[1].binding, 0U);
+
+    const BindingRequest missing[] = {{"g_nope", VK_DESCRIPTOR_TYPE_STORAGE_BUFFER}};
+    EXPECT_ERR(reflected_bindings(*parsed, missing, VK_SHADER_STAGE_COMPUTE_BIT));
+    const BindingRequest wrong_type[] = {{"g_params", VK_DESCRIPTOR_TYPE_STORAGE_BUFFER}};
+    EXPECT_ERR(reflected_bindings(*parsed, wrong_type, VK_SHADER_STAGE_COMPUTE_BIT));
+    const BindingRequest other_set[] = {{"g_other", VK_DESCRIPTOR_TYPE_STORAGE_BUFFER}};
+    EXPECT_ERR(reflected_bindings(*parsed, other_set, VK_SHADER_STAGE_COMPUTE_BIT));
+}
+
 } // namespace

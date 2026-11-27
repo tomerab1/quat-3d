@@ -91,6 +91,12 @@ public:
     // Retire a tile (streaming unload). No-op for unknown coordinates.
     void remove_tile(const glm::ivec2& coord);
 
+    // Cancels GPU tiles not yet delivered (GpuTileSource::abandon): their
+    // futures resolve to an invalid Heightmap without further frames.
+    void abandon_pending_tiles() {
+        if (gpu_tiles_) gpu_tiles_->abandon();
+    }
+
     // Tiles to draw, or GPU tiles being synthesised (add_to_graph drives them).
     [[nodiscard]] bool has_tiles() const {
         return !tiles_.empty() || (gpu_tiles_ && gpu_tiles_->busy());

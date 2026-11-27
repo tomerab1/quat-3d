@@ -111,11 +111,20 @@ void WorldRuntime::fill_remote_targets(RemoteBridgeTargets& targets) {
 }
 
 void WorldRuntime::shutdown() {
+    // Frames no longer run, so a GPU tile would never be delivered (audit
+    // D1): abandon it, and stop a CPU job at its next erosion step, before
+    // waiting on the job.
+    abandon_terrain_job();
     if (terrain_job_.valid()) terrain_job_.wait(); // worker may still hold the params
     if (terrain_pool_ != VK_NULL_HANDLE) {
         vkDestroyCommandPool(device_, terrain_pool_, nullptr);
         terrain_pool_ = VK_NULL_HANDLE;
     }
+}
+
+void WorldRuntime::abandon_terrain_job() {
+    terrain_pass_.abandon_pending_tiles();
+    if (terrain_cancel_) terrain_cancel_->store(true);
 }
 
 void WorldRuntime::drive_character(engine::scene::Scene& scene, const glm::vec3& wish, float dt) {
@@ -231,9 +240,10 @@ void WorldRuntime::update_terrain(engine::scene::Scene& scene, const glm::vec3& 
             }
             if (tcomp.regenerate && !terrain_job_.valid()) {
                 tcomp.regenerate = false;
+                terrain_cancel_ = engine::terrain::make_cancel_token();
                 terrain_job_ = engine::terrain::generate_tile_async( // R10.2: GPU or CPU
                     tcomp.gpu_generate ? terrain_pass_.tile_generator() : nullptr,
-                    tcomp.params);
+                    tcomp.params, terrain_cancel_);
                 std::fprintf(stderr, "[terrain] generating %ux%u tile (seed %u)...\n",
                              tcomp.params.resolution, tcomp.params.resolution,
                              tcomp.params.seed);
@@ -268,9 +278,14 @@ void WorldRuntime::update_terrain(engine::scene::Scene& scene, const glm::vec3& 
             }
         }
     }
+    // The Terrain entity went away mid-generation: nothing wants the tile,
+    // and a GPU job would not progress without the terrain pass (audit D1).
+    if (!terrain_present_ && terrain_job_.valid()) abandon_terrain_job();
     if (terrain_job_.valid() &&
         terrain_job_.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
-        terrain_heightmap_ = terrain_job_.get();
+        engine::terrain::Heightmap map = terrain_job_.get();
+        if (!map.valid()) return; // cancelled / abandoned
+        terrain_heightmap_ = std::move(map);
         invalidate_navmesh("terrain regenerated");
         if (auto r = terrain_pass_.set_tile(glm::ivec2(0, 0), terrain_heightmap_,
                                             terrain_transfer_);

@@ -38,7 +38,6 @@
 #include <vulkan/vulkan.h>
 
 #include "engine/core/error.hpp"
-#include "engine/rhi/compute_pipeline.hpp"
 #include "engine/rhi/descriptor_buffer.hpp"
 #include "engine/rhi/gpu_allocator.hpp"
 #include "engine/rhi/render_graph.hpp"
@@ -56,7 +55,7 @@ class TerrainSynthPass {
 public:
     // Largest tile the GPU path synthesises (scratch is ~52 bytes a texel and
     // one float4 field must fit the device's storage-buffer range).
-    static constexpr std::uint32_t max_resolution = 2049;
+    static constexpr std::uint32_t max_resolution = terrain::max_grid_erosion_resolution;
     // Default erosion budget per frame, in texel-steps (≈16 steps of a
     // 1025² tile): a few milliseconds of compute on a desktop GPU.
     static constexpr std::uint64_t default_cell_budget = 16ULL * 1025 * 1025;
@@ -81,6 +80,10 @@ public:
     // Queues a tile (params.world_tile picks it). Returns the job id (> 0),
     // or 0 when !supports(params).
     [[nodiscard]] std::uint64_t enqueue(const terrain::TerrainParams& params);
+
+    // Drops a queued job that has not started; a started one finishes on the
+    // GPU and is reported by collect() as usual. No-op for unknown ids.
+    void cancel(std::uint64_t id);
 
     // Erosion texel-steps recorded per add_to_graph (0 = a whole job per
     // call: tests, offline baking). At least one step always runs.

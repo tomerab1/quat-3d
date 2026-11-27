@@ -10,6 +10,7 @@
 // against.
 
 #include <future>
+#include <utility>
 
 #include "engine/terrain/generator.hpp"
 #include "engine/terrain/heightmap.hpp"
@@ -36,11 +37,11 @@ public:
 };
 
 // Generates a tile on `backend` when it supports `params`, else on a CPU
-// worker (generate_async). A null backend means CPU.
-[[nodiscard]] inline std::future<Heightmap> generate_tile_async(TileGenerator* backend,
-                                                                const TerrainParams& params) {
+// worker (generate_async) that `cancel` can stop. A null backend means CPU.
+[[nodiscard]] inline std::future<Heightmap>
+generate_tile_async(TileGenerator* backend, const TerrainParams& params, CancelToken cancel = {}) {
     if (backend != nullptr && backend->supports(params)) return backend->generate(params);
-    return generate_async(params);
+    return generate_async(params, std::move(cancel));
 }
 
 } // namespace engine::terrain

@@ -737,11 +737,21 @@ std::expected<void, core::Error> apply_component(entt::registry& r, entt::entity
             f.number("warp", p.warp_strength, 0.0F, 4.0F);
             f.enumeration("erosion", p.erosion_model, k_erosion_models);
             f.integer("droplets", p.erosion_droplets, 0, 50'000'000);
-            f.integer("erosion_steps", p.grid.iterations, 0, 100'000);
+            f.integer("erosion_steps", p.grid.iterations, 0, terrain::max_grid_erosion_steps);
             f.number("snowline", t.snowline_m);
             f.boolean("streaming", t.streaming);
             f.integer("stream_radius", t.stream_radius, 0, 8);
             f.boolean("gpu", t.gpu_generate);
+            // Grid erosion's cost grows with resolution² x steps and has no
+            // droplet-style cap on its own: bound it (audit D3).
+            if (!terrain::grid_erosion_within_limits(p)) {
+                f.fail(f.has("erosion_steps") ? "erosion_steps" : "resolution",
+                       "grid erosion is limited to resolution " +
+                           std::to_string(terrain::max_grid_erosion_resolution) +
+                           " and resolution^2 x erosion_steps <= " +
+                           std::to_string(terrain::max_grid_erosion_texel_steps) +
+                           " (e.g. 1025 at 5000 steps)");
+            }
             t.regenerate = true; // rebuild with the new parameters
         });
     }

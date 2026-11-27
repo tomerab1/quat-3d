@@ -40,6 +40,15 @@ public:
     TerrainStreamer() = default;
     TerrainStreamer(TerrainParams base, int radius)
         : base_(base), radius_(glm::max(radius, 0)) {}
+    // Cancels a running CPU job (it stops at its next erosion step) so
+    // dropping the streamer never waits out a long generation.
+    ~TerrainStreamer() {
+        if (cancel_) cancel_->store(true);
+    }
+    TerrainStreamer(TerrainStreamer&&) noexcept = default;
+    TerrainStreamer& operator=(TerrainStreamer&&) noexcept = default;
+    TerrainStreamer(const TerrainStreamer&) = delete;
+    TerrainStreamer& operator=(const TerrainStreamer&) = delete;
 
     struct Events {
         std::vector<glm::ivec2> ready;   // freshly loaded tiles (maps() has them)
@@ -80,6 +89,7 @@ private:
     bool                   job_active_ = false;
     bool                   job_external_ = false; // job_ runs on generator_
     TileGenerator*         generator_ = nullptr;
+    CancelToken            cancel_; // the CPU job's (null for backend jobs)
 };
 
 } // namespace engine::terrain
