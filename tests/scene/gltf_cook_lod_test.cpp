@@ -1,7 +1,8 @@
 // Cook-time level of detail and material rewrites (quat-cook --simplify,
 // --blend-to-mask): a connected surface is reduced by the topology-preserving
-// simplifier and keeps its shape; foliage made of disconnected cards reaches
-// the target through the sloppy fallback; BLEND materials become MASK.
+// simplifier and keeps its shape; foliage made of disconnected cards is
+// thinned to whole cards that grow to keep its coverage; BLEND materials
+// become MASK.
 
 #include <cmath>
 #include <cstdint>
@@ -144,6 +145,17 @@ nlohmann::json glb_json(const fs::path& path) {
     return nlohmann::json::parse(bytes.begin() + 20, bytes.begin() + 20 + length, nullptr, false);
 }
 
+double total_area(const engine::scene::MeshData& m) {
+    double area = 0.0;
+    for (std::size_t t = 0; t + 2 < m.indices.size(); t += 3) {
+        const glm::vec3 a = m.vertices[m.indices[t]].position;
+        const glm::vec3 b = m.vertices[m.indices[t + 1]].position;
+        const glm::vec3 c = m.vertices[m.indices[t + 2]].position;
+        area += 0.5 * static_cast<double>(glm::length(glm::cross(b - a, c - a)));
+    }
+    return area;
+}
+
 engine::cook::CookOptions options(float ratio) {
     engine::cook::CookOptions o;
     o.textures.enabled = false;
@@ -179,20 +191,30 @@ TEST(GltfCookLod, ConnectedSurfaceIsSimplifiedAndKeepsItsShape) {
     }
 }
 
-TEST(GltfCookLod, DisconnectedFoliageReachesTheTargetThroughTheSloppyFallback) {
+TEST(GltfCookLod, DisconnectedFoliageIsThinnedAndKeepsItsCoverage) {
     quat::test::TempDir dir("gltf-cook-lod-leaves");
     const Geometry g = leaves();
     const fs::path src = write_gltf(dir.path(), g, "MASK");
     const fs::path out = dir.path() / "leaves_lod.glb";
     ASSERT_OK(engine::cook::cook_gltf(src, out, options(0.1F)));
+    auto before = GltfLoader::load_mesh_data(src);
     auto after = GltfLoader::load_mesh_data(out);
+    ASSERT_OK(before);
     ASSERT_OK(after);
-    const std::size_t tris_before = g.indices.size() / 3;
-    const std::size_t tris_after = after->indices.size() / 3;
     // Topology-preserving simplification cannot go below two triangles per
-    // card; the fallback must get close to the 10 % target.
-    EXPECT_GT(tris_after, 0U);
-    EXPECT_LE(tris_after, tris_before / 5);
+    // card; thinning keeps whole cards, about 10 % of them.
+    const std::size_t tris_before = before->indices.size() / 3;
+    const std::size_t tris_after = after->indices.size() / 3;
+    EXPECT_EQ(tris_after % 2, 0U); // whole cards only
+    EXPECT_GT(tris_after, tris_before / 20);
+    EXPECT_LT(tris_after, tris_before / 6);
+    // The kept cards grow so the total leaf area (coverage from afar) stays.
+    const double area_before = total_area(*before);
+    const double area_after = total_area(*after);
+    EXPECT_NEAR(area_after / area_before, 1.0, 0.2);
+    // Cards stay inside the canopy's volume (grown about their own centre).
+    EXPECT_LT(glm::length(after->bounds.max - before->bounds.max), 0.25F);
+    EXPECT_LT(glm::length(after->bounds.min - before->bounds.min), 0.25F);
 }
 
 TEST(GltfCookLod, RatioOneLeavesTheTrianglesAlone) {

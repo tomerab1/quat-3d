@@ -123,12 +123,12 @@ cook_group(fastgltf::Asset& asset, const Group& g, const MeshCookOptions& o, Geo
         out.bytes_before += acc.count * fastgltf::getElementByteSize(acc.type, acc.componentType);
         streams.push_back(std::move(s));
     }
-    const auto find_stream = [&](std::string_view name) -> const Stream* {
+    const auto find_stream = [&](std::string_view name) -> Stream* {
         const auto it = std::find_if(streams.begin(), streams.end(),
                                      [&](const Stream& s) { return s.name == name; });
         return it == streams.end() ? nullptr : &*it;
     };
-    const Stream& positions = *find_stream("POSITION");
+    Stream& positions = *find_stream("POSITION");
 
     std::vector<std::vector<std::uint32_t>> indices(g.primitives.size());
     for (std::size_t k = 0; k < g.primitives.size(); ++k) {
@@ -148,8 +148,26 @@ cook_group(fastgltf::Asset& asset, const Group& g, const MeshCookOptions& o, Geo
             std::any_of(idx.begin(), idx.end(), [&](std::uint32_t i) { return i >= vertex_count; })) {
             return fail("mesh " + std::to_string(g.mesh) + " has invalid triangle indices");
         }
-        simplify_triangles(idx, positions, find_stream("NORMAL"), find_stream("TEXCOORD_0"),
-                           vertex_count, o);
+    }
+
+    // Level of detail first (it may move foliage vertices: shared[v] marks
+    // vertices more than one primitive references, which stay put).
+    if (o.simplify_ratio < 1.0F) {
+        std::vector<std::uint8_t> shared(vertex_count, 0);
+        std::vector<std::uint32_t> owner(vertex_count, ~0U);
+        for (std::size_t k = 0; k < indices.size(); ++k) {
+            for (const std::uint32_t v : indices[k]) {
+                if (owner[v] == ~0U) owner[v] = static_cast<std::uint32_t>(k);
+                else if (owner[v] != k) shared[v] = 1;
+            }
+        }
+        for (auto& idx : indices) {
+            simplify_triangles(idx, positions, find_stream("NORMAL"), find_stream("TEXCOORD_0"),
+                               shared, o);
+        }
+    }
+
+    for (auto& idx : indices) {
         if (o.optimize && !idx.empty()) {
             meshopt_optimizeVertexCache(idx.data(), idx.data(), idx.size(), vertex_count);
             meshopt_optimizeOverdraw(idx.data(), idx.data(), idx.size(), positions.values.data(),

@@ -83,13 +83,16 @@ void emit_indices(fastgltf::Asset& asset, std::size_t accessor,
                   std::span<const std::uint32_t> indices, std::size_t vertex_count,
                   const MeshCookOptions& options, GeometryResult& out);
 
-// mesh_simplify.cpp: reduces `indices` (one primitive over `vertex_count`
-// shared vertices) to about options.simplify_ratio of its triangles; returns
-// the new index count (unchanged when simplification is off or would remove
-// every triangle). `normals` / `uvs` may be null.
-std::size_t simplify_triangles(std::vector<std::uint32_t>& indices, const Stream& positions,
+// mesh_simplify.cpp: reduces `indices` (one primitive over the vertices of
+// `positions`) to about options.simplify_ratio of its triangles; returns the
+// new index count (unchanged when simplification is off or would remove
+// every triangle). Thinning disconnected foliage grows the kept cards, which
+// moves their vertices in `positions` — except vertices flagged in `shared`
+// (used by another primitive too). `normals` / `uvs` may be null.
+std::size_t simplify_triangles(std::vector<std::uint32_t>& indices, Stream& positions,
                                const Stream* normals, const Stream* uvs,
-                               std::size_t vertex_count, const MeshCookOptions& options);
+                               std::span<const std::uint8_t> shared,
+                               const MeshCookOptions& options);
 
 // texture_encode.cpp: an RGBA8 image's mip chain encoded to KTX2.
 [[nodiscard]] std::expected<std::vector<std::byte>, core::Error>
