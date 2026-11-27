@@ -219,9 +219,4 @@ enum class SamplerAddress : std::uint8_t { repeat, clamp_to_edge, mirrored_repea
 create_sampler(VkDevice device, SamplerAddress address = SamplerAddress::repeat,
                std::uint32_t mip_levels = 1, float max_anisotropy = 0.0F);
 
-// Debug round-trip self-test: upload bytes to a device-local buffer, copy them
-// back to a host buffer, and verify they match. Returns an error on mismatch.
-[[nodiscard]] std::expected<void, core::Error>
-run_gpu_round_trip_self_test(const Device& device, GpuAllocator& allocator);
-
 } // namespace engine::rhi

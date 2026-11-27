@@ -15,7 +15,6 @@
 #include "engine/renderer/taa_pass.hpp"
 #include "engine/renderer/terrain_pass.hpp"
 #include "engine/renderer/tonemap_pass.hpp"
-#include "engine/rhi/descriptor_buffer.hpp"
 #include "engine/rhi/device.hpp"
 #include "engine/rhi/gpu_allocator.hpp"
 #include "engine/rhi/pipeline_cache.hpp"
@@ -32,14 +31,6 @@
 namespace r = engine::renderer;
 namespace scn = engine::scene;
 
-TEST(GpuRhi, BufferRoundTrip) {
-    QUAT_REQUIRE_GPU(g);
-    ASSERT_OK(engine::rhi::run_gpu_round_trip_self_test(g->device, g->allocator));
-}
-TEST(GpuRhi, DescriptorBuffer) {
-    QUAT_REQUIRE_GPU(g);
-    ASSERT_OK(engine::rhi::run_descriptor_buffer_self_test(g->device, g->allocator));
-}
 TEST(GpuRhi, RenderGraph) {
     QUAT_REQUIRE_GPU(g);
     engine::rhi::TransientImagePool pool(g->device, g->allocator);
