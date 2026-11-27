@@ -34,6 +34,7 @@
 
 #include "engine/core/error.hpp"
 #include "engine/renderer/mesh_pass.hpp"
+#include "engine/renderer/terrain_height_source.hpp"
 #include "engine/rhi/descriptor_buffer.hpp"
 #include "engine/rhi/gpu_allocator.hpp"
 #include "engine/rhi/managed_pipeline.hpp"
@@ -76,6 +77,15 @@ public:
     void remove_tile(const glm::ivec2& coord);
 
     [[nodiscard]] bool has_tiles() const { return !tiles_.empty(); }
+
+    // The loaded tiles whose XZ footprint overlaps the disc (`centre`,
+    // `radius`), nearest first, at most `max_tiles` — for passes that sample
+    // the terrain on the GPU (grass). `anchor` as for add_to_graph. The views
+    // stay valid until the frame after the tile is removed or replaced.
+    [[nodiscard]] std::vector<TerrainHeightTile> height_tiles(const glm::vec2& centre,
+                                                              float radius,
+                                                              const glm::vec3& anchor,
+                                                              std::size_t max_tiles) const;
 
     // Record every loaded tile into the frame. `anchor` is the world position
     // tile (0,0) is centred on (anchor.y offsets all heights); `snowline_m` is

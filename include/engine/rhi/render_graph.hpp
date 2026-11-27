@@ -35,6 +35,8 @@ enum class ResourceUsage : std::uint8_t {
     buffer_read_compute,   // storage/uniform buffer read in a compute shader
     buffer_write_compute,  // storage buffer written (incl. atomics / read-back) in compute
     buffer_read_fragment,  // storage/uniform buffer read in a fragment shader
+    buffer_read_vertex,    // storage/uniform buffer read in a vertex shader
+    buffer_read_indirect,  // indirect draw/dispatch arguments (vkCmdDraw*Indirect)
 };
 
 // Coarse pass category. Only affects nothing in barrier planning today (stages

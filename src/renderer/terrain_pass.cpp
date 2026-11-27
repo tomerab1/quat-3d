@@ -1,5 +1,6 @@
 #include "engine/renderer/terrain_pass.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstdint>
@@ -204,6 +205,37 @@ void TerrainPass::remove_tile(const glm::ivec2& coord) {
         retired_.emplace_back(3, std::move(it->second));
         tiles_.erase(it);
     }
+}
+
+std::vector<TerrainHeightTile> TerrainPass::height_tiles(const glm::vec2& centre, float radius,
+                                                        const glm::vec3& anchor,
+                                                        std::size_t max_tiles) const {
+    std::vector<std::pair<float, TerrainHeightTile>> found;
+    for (const auto& [coord, tile] : tiles_) {
+        const float tsize = tile.tile_size_m;
+        // Tile (0,0) is centred on the anchor (as add_to_graph places it).
+        const glm::vec2 origin(anchor.x + (static_cast<float>(coord.x) - 0.5F) * tsize,
+                               anchor.z + (static_cast<float>(coord.y) - 0.5F) * tsize);
+        const glm::vec2 nearest = glm::clamp(centre, origin, origin + tsize);
+        const float dist = glm::length(nearest - centre);
+        if (dist > radius) continue;
+        TerrainHeightTile t;
+        t.view = tile.view.handle();
+        t.origin_xz = origin;
+        t.size_m = tsize;
+        t.base_y = anchor.y;
+        t.min_height = tile.min_height;
+        t.max_height = tile.max_height;
+        t.resolution = tile.resolution;
+        found.emplace_back(dist, t);
+    }
+    std::ranges::sort(found, {}, &std::pair<float, TerrainHeightTile>::first);
+    std::vector<TerrainHeightTile> out;
+    for (const auto& [dist, t] : found) {
+        if (out.size() >= max_tiles) break;
+        out.push_back(t);
+    }
+    return out;
 }
 
 void TerrainPass::add_to_graph(rhi::RenderGraph& graph, const renderer::GBufferTargets& gbuffer,
