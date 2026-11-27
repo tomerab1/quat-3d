@@ -92,6 +92,21 @@ Code review can't see what the engine draws. Visual QA looks at real renders.
 - Exactly as in CYCLE.md's brief template; the brief names the issue(s), and
   commits reference them (`[ID] … (#N)`).
 
+## Visibility (owner requirement)
+Work must be visible on GitHub while it happens, not only when it lands:
+- **Every worker branch has a PR from the moment it's pushed**: a draft while
+  in progress, marked ready for review when the worker reports done. While a
+  cycle PR is open, PRs stack on the cycle branch (diff = the item only) and
+  are retargeted to `master` after it merges. Each ready PR gets its **own**
+  Reviewer session.
+- **Every open issue carries a status label** — `triaged` (verified, queued),
+  `in-progress` (a worker owns it), `in-review` (fix in an open PR) — and a
+  comment naming the branch/PR whenever the status changes. Fixes reference
+  `Fixes #N` so the issue closes on merge; rejected issues are closed with a
+  comment saying why.
+- PR descriptions list what is verified (local and CI) and what is open, and
+  are updated when that changes.
+
 ## Issue template (Scanner)
 
 ```markdown
