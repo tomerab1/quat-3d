@@ -18,11 +18,16 @@ add_executable(engine_tests
 target_link_libraries(engine_tests PRIVATE
     engine_flags engine_core engine_rhi engine_asset engine_scene engine_renderer engine_physics
     engine_animation engine_terrain engine_nav engine_net engine_remote engine_remote_world
-    engine_audio engine_cook
-    GTest::gtest
-    # Full libktx: engine_asset's KTX2 loader plus the cooker's encoder and
-    # the ASTC reference decoder the tests use (see the root CMakeLists).
-    KTX::ktx)
+    engine_audio engine_cook engine_gltf_io # gltf_io.hpp internals (fastgltf)
+    GTest::gtest)
+# Full libktx in this program (engine_cook encodes; the tests decode ASTC
+# references through it): engine_asset then links KTX::ktx instead of
+# KTX::ktx_read, see the root CMakeLists. The tests also call libktx directly.
+set_target_properties(engine_tests PROPERTIES QUAT_KTX_FULL ON)
+target_include_directories(engine_tests SYSTEM PRIVATE
+    $<TARGET_PROPERTY:KTX::ktx,INTERFACE_INCLUDE_DIRECTORIES>)
+target_compile_definitions(engine_tests PRIVATE
+    $<TARGET_PROPERTY:KTX::ktx,INTERFACE_COMPILE_DEFINITIONS>)
 if(ENGINE_EDITOR)
     # imgui: the ImGui pass test builds its draw data in a private context.
     target_link_libraries(engine_tests PRIVATE engine_editor imgui::imgui)

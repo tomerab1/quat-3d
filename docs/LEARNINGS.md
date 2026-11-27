@@ -26,6 +26,16 @@ into CLAUDE.md or the brief template in [`CYCLE.md`](CYCLE.md).
 
 ## Build and CI
 
+- **Link the game executable locally after any merge that touches library
+  targets.** R17 linked libktx into `game` directly while engine_asset only
+  compiled against its headers; the tests (linking the full libktx) passed,
+  but after the G8 merge engine_asset was re-emitted after `libktx_read.a`
+  on the game's link line and GNU ld's single pass left the KTX2 symbols
+  undefined (CI run 46028587322). A library now owns its archive dependency
+  (engine_asset links libktx through a per-executable `QUAT_KTX_FULL`
+  switch), and without vcpkg a stub prefix (`find_package` configs over the
+  `~/deps` builds) is enough to configure and link `game` / `engine_tests`.
+
 - **Local test builds must track header dependencies.** A scratch build that
   rebuilt only changed .cpp files linked objects compiled against an old
   class layout and crashed (R12). Compile with `-MMD -MF` and rebuild when

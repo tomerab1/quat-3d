@@ -178,11 +178,14 @@ target_include_directories(engine_image PUBLIC ${ENGINE_PUBLIC_INCLUDE})
 target_include_directories(engine_image PRIVATE ${Stb_INCLUDE_DIR})
 
 # libktx (KTX2 parsing, Zstd, Basis Universal transcoding) backs the KTX2
-# loader. engine_asset compiles against its headers only; each executable
-# links one libktx archive: the game KTX::ktx_read (decoder only, see
-# ports/ktx and the game_has_no_texture_encoder test), the cooker and the
-# tests the full KTX::ktx (a superset; linking both archives into one
-# program gives duplicate symbols).
+# loader. A program can hold only one libktx archive (ktx and ktx_read share
+# objects: duplicate symbols), so engine_asset's link interface picks it for
+# the executable being linked: KTX::ktx_read (decoder only; ports/ktx,
+# game_has_no_texture_encoder) unless the executable sets QUAT_KTX_FULL, as
+# the cooker and the tests do (they need the full KTX::ktx for encoding).
+# The bare $<TARGET_PROPERTY:QUAT_KTX_FULL> is evaluated on the consuming
+# executable, and as engine_asset's own dependency the archive is emitted
+# after every copy of libengine_asset.a on the link line.
 add_library(engine_asset STATIC
     src/asset/asset_manager.cpp
     src/asset/material_asset.cpp
@@ -190,11 +193,9 @@ add_library(engine_asset STATIC
     src/asset/ktx2_transcode.cpp
     src/asset/texture_upload.cpp)
 target_link_libraries(engine_asset PUBLIC engine_flags engine_rhi engine_image glm::glm)
+target_link_libraries(engine_asset PRIVATE
+    $<IF:$<BOOL:$<TARGET_PROPERTY:QUAT_KTX_FULL>>,KTX::ktx,KTX::ktx_read>)
 target_include_directories(engine_asset PUBLIC ${ENGINE_PUBLIC_INCLUDE})
-target_include_directories(engine_asset SYSTEM PRIVATE
-    $<TARGET_PROPERTY:KTX::ktx_read,INTERFACE_INCLUDE_DIRECTORIES>)
-target_compile_definitions(engine_asset PRIVATE
-    $<TARGET_PROPERTY:KTX::ktx_read,INTERFACE_COMPILE_DEFINITIONS>)
 
 # ---------------------------------------------------------------------------
 # engine_animation — CPU-side skeletal animation (skeletons, clips, animator,
@@ -314,6 +315,8 @@ target_include_directories(engine_cook PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 
 add_executable(quat-cook tools/quat-cook/main.cpp)
 target_link_libraries(quat-cook PRIVATE engine_flags engine_cook)
+# Full libktx (engine_cook encodes); see engine_asset.
+set_target_properties(quat-cook PROPERTIES QUAT_KTX_FULL ON)
 
 # ---------------------------------------------------------------------------
 # engine_terrain — procedural terrain (Phase 12). Pure CPU heightmap generation
@@ -525,7 +528,7 @@ add_executable(game
 target_link_libraries(game PRIVATE
     engine_flags engine_core engine_rhi engine_asset engine_scene engine_renderer engine_physics
     engine_terrain engine_nav engine_net engine_remote engine_remote_world engine_audio
-    SDL3::SDL3 KTX::ktx_read)
+    SDL3::SDL3)
 if(MSVC)
     # Linker map for the game_has_no_texture_encoder test.
     target_link_options(game PRIVATE "/MAP:$<TARGET_FILE_DIR:game>/game.map")
