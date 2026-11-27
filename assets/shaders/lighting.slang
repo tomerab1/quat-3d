@@ -19,6 +19,7 @@ import atmosphere;
 import clustered_lights;
 import csm;
 import occlusion;
+import octahedral;
 import sky;
 
 static const float PI = 3.14159265358979;
@@ -108,15 +109,6 @@ float3 ibl_ambient(float3 N, float3 diffuse_n, float3 V, float3 albedo, float me
     float3 specular = prefiltered * (F * brdf.x + brdf.y);
 
     return kd * diffuse * diffuse_occlusion + specular * specular_occlusion;
-}
-
-// Octahedral decode (inverse of gbuffer.slang's oct_encode).
-float3 oct_decode(float2 e) {
-    float3 n = float3(e.x, e.y, 1.0 - abs(e.x) - abs(e.y));
-    float t = max(-n.z, 0.0);
-    n.x += n.x >= 0.0 ? -t : t;
-    n.y += n.y >= 0.0 ? -t : t;
-    return normalize(n);
 }
 
 // Reconstruct world position from the pixel's screen UV + sampled depth. The

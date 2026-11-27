@@ -40,6 +40,7 @@
 #include "engine/renderer/draw_batching.hpp"
 #include "engine/renderer/dynamic_ibl.hpp"
 #include "engine/renderer/exposure_pass.hpp"
+#include "engine/renderer/gtao_pass.hpp"
 #include "engine/renderer/hiz_pass.hpp"
 #include "engine/renderer/light_clusters.hpp"
 #include "engine/renderer/light_cull_pass.hpp"
@@ -112,6 +113,7 @@ struct DeferredFrame {
     engine::renderer::SkinningPass   skinning;
     engine::renderer::ShadowPass     shadow;
     engine::renderer::HiZPass        hiz;
+    engine::renderer::GtaoPass       gtao;
     engine::renderer::TransparentPass transparent;
     engine::renderer::BloomPass      bloom;
     engine::renderer::ExposurePass   exposure;

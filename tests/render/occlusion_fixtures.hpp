@@ -90,12 +90,14 @@ struct Camera {
     return c;
 }
 
-// Pixel of a world point under `view_proj` for an `extent` target.
+// Pixel of a world point under `view_proj` for an `extent` target, clamped
+// to the image (a fixture point off screen then reads an edge pixel rather
+// than out of bounds; tests keep their probes on screen).
 [[nodiscard]] inline glm::uvec2 project(const glm::mat4& view_proj, const glm::vec3& p,
                                         VkExtent2D extent) {
     const glm::vec4 clip = view_proj * glm::vec4(p, 1.0F);
     const glm::vec2 ndc = glm::vec2(clip) / clip.w;
-    const glm::vec2 uv = ndc * 0.5F + 0.5F;
+    const glm::vec2 uv = glm::clamp(ndc * 0.5F + 0.5F, 0.0F, 0.999F);
     return {static_cast<std::uint32_t>(uv.x * static_cast<float>(extent.width)),
             static_cast<std::uint32_t>(uv.y * static_cast<float>(extent.height))};
 }

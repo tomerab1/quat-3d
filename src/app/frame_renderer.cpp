@@ -149,6 +149,15 @@ bool FrameRenderer::create_passes(const engine::rhi::Device& device,
             break;
         }
         f.hiz = std::move(*hiz);
+        auto gtao = engine::renderer::GtaoPass::create(device, allocator, pipeline_cache,
+                                                       shader_dir);
+        if (!gtao) {
+            frames_ok = false;
+            std::fprintf(stderr, "[fatal] gtao pass creation failed: %s\n",
+                         gtao.error().message.c_str());
+            break;
+        }
+        f.gtao = std::move(*gtao);
     }
     return frames_ok;
 }

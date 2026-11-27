@@ -1,7 +1,7 @@
 // FrameRenderer, per frame: gathers the ticked scene into draw lists and builds
 // the render graph. Pass order (graph declaration order):
 //   sky-view LUT update, dynamic IBL step, GBuffer, terrain, grass, Hi-Z,
-//   cascaded shadows (GPU fit + cascades), light culling, lighting,
+//   cascaded shadows (GPU fit + cascades), GTAO, light culling, lighting,
 //   transparent, bloom, exposure, tonemap, TAA, editor UI; GPU skinning is
 //   recorded before the graph executes.
 
@@ -335,6 +335,16 @@ bool FrameRenderer::record(const FrameInputs& in) {
     engine::renderer::LightingOcclusion occlusion;
     occlusion.shadows = *shadows;
     occlusion.csm = csm;
+    occlusion.gtao = current_gtao();
+    if (hiz.valid()) {
+        if (auto ao = fr.gtao.add_to_graph(graph, hiz, gbuffer->normal, draw_extent, cam.view,
+                                           cam.projection, occlusion.gtao,
+                                           static_cast<std::uint32_t>(fs.frame_number))) {
+            occlusion.ao = *ao;
+        } else {
+            std::fprintf(stderr, "[warn] gtao pass: %s\n", ao.error().message.c_str());
+        }
+    }
     occlusion.contact = current_contact_shadows();
     occlusion.projection = cam.projection;
     occlusion.frame_index = static_cast<std::uint32_t>(fs.frame_number);
