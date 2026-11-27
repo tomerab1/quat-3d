@@ -17,10 +17,12 @@ public static const uint SHAPE_BOX    = 2;
 public static const uint SHAPE_CONE   = 3;
 
 // Per-emitter counters (uint4 each, in a uint buffer): dead count, alive
-// count of list 0 / list 1, particles emitted this frame.
+// count of list 0 / list 1, and which alive list holds the live particles.
+// The GPU owns the list index (finalize_main flips it), so a frame that is
+// declared but never executed cannot desynchronise it.
 public static const uint COUNTER_DEAD = 0;
 public static const uint COUNTER_ALIVE0 = 1;
-public static const uint COUNTER_EMITTED = 3;
+public static const uint COUNTER_LIST = 3;
 public static const uint COUNTER_STRIDE = 4;
 // Indirect arguments per emitter: dispatch (uint4), draw-indexed (8 uints).
 public static const uint DISPATCH_STRIDE = 4;
@@ -74,8 +76,7 @@ public struct ParticleFrame {
     public float4 sun_color;        // rgb x intensity
     public float4 ambient;          // rgb
     public float4 screen;           // width, height, 1 / width, 1 / height
-    public uint4  misc;             // x = list simulated, y = pool capacity, z = list drawn,
-                                    // w = emitter count
+    public uint4  misc;             // y = pool capacity, w = emitter count
 }
 
 public float4 particle_mul(float4 cols[4], float4 v) {
@@ -187,6 +188,11 @@ public float particle_size_at(Emitter e, float t) {
         }
     }
     return e.size_value[n - 1];
+}
+
+// Index of the alive list holding emitter `slot`'s live particles.
+public uint particle_live_list(StructuredBuffer<uint> counters, uint slot) {
+    return counters[slot * COUNTER_STRIDE + COUNTER_LIST];
 }
 
 // Simulation-space -> world position of a particle of `e`.

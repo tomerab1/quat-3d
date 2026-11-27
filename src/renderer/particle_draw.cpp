@@ -17,7 +17,8 @@ namespace engine::renderer {
 namespace {
 
 // particle_draw.slang's resources, in ParticlePass's request order.
-enum DrawSlot : std::uint8_t { d_frame, d_emitters, d_particles, d_alive, d_depth, d_texture,
+enum DrawSlot : std::uint8_t { d_frame, d_emitters, d_particles, d_alive, d_counters, d_depth,
+                               d_texture,
                                d_sampler, d_cluster_params, d_lights, d_grid, d_indices };
 enum CompositeSlot : std::uint8_t { c_accum, c_reveal };
 
@@ -107,6 +108,8 @@ declare_particle_draws(ParticlePass::State& s, ParticleSlot& slot, rhi::RenderGr
                                  pool * sizeof(ParticleGpu));
         set.write_storage_buffer(b[d_alive].binding, rhi::buffer_device_address(vk, s.alive),
                                  pool * 8);
+        set.write_storage_buffer(b[d_counters].binding, rhi::buffer_device_address(vk, s.counters),
+                                 VkDeviceSize{particle_max_emitters} * particle_counter_stride * 4);
         set.write_sampler(b[d_sampler].binding, s.sampler.handle());
         set.write_uniform_buffer(b[d_cluster_params].binding, lights.params, lights.params_size);
         set.write_storage_buffer(b[d_lights].binding, lights.lights, lights.lights_size);
@@ -124,6 +127,7 @@ declare_particle_draws(ParticlePass::State& s, ParticleSlot& slot, rhi::RenderGr
     const auto declare_reads = [&](rhi::RenderGraph::PassBuilder& pass) {
         pass.reads(context.particles, U::buffer_read_vertex)
             .reads(context.alive, U::buffer_read_vertex)
+            .reads(context.counters, U::buffer_read_vertex)
             .reads(context.draw_args, U::buffer_read_indirect)
             .reads(targets.depth, U::depth_read);
         read_clustered_lights(pass, targets.lights, U::buffer_read_vertex);

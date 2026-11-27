@@ -23,6 +23,7 @@ ConstantBuffer<ParticleFrame> g_frame;
 StructuredBuffer<Emitter>     g_emitters;
 StructuredBuffer<Particle>    g_particles;
 StructuredBuffer<uint>        g_alive;
+StructuredBuffer<uint>        g_counters; // which alive list is live
 Texture2D<float>              g_depth;   // scene depth (read-only attachment too)
 Texture2D                     g_texture; // flipbook atlas
 SamplerState                  g_sampler;
@@ -76,7 +77,8 @@ float2 flipbook_cell(Emitter e, uint frame) {
 [shader("vertex")]
 VsOut vertex_main(uint vertex_id : SV_VertexID) {
     Emitter e = g_emitters[pc.emitter];
-    uint slot = g_alive[g_frame.misc.z * g_frame.misc.y + e.range.x + instance_index()];
+    uint list = particle_live_list(g_counters, e.ids.z);
+    uint slot = g_alive[list * g_frame.misc.y + e.range.x + instance_index()];
     Particle p = g_particles[slot];
 
     float t = saturate(p.age / p.lifetime);

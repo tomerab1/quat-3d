@@ -13,6 +13,7 @@
 #include <glm/gtc/packing.hpp>
 #include <gtest/gtest.h>
 
+#include "engine/renderer/particle_emitters.hpp"
 #include "engine/renderer/particle_pass.hpp"
 #include "engine/renderer/particles.hpp"
 #include "render/particle_harness.hpp"
@@ -316,6 +317,86 @@ TEST(GpuParticles, SortOrdersTheDrawnListBackToFront) {
         const float prev = -(k_cam.view * glm::vec4(ps[i - 1].position, 1.0F)).z;
         const float cur = -(k_cam.view * glm::vec4(ps[i].position, 1.0F)).z;
         ASSERT_GE(prev + 1e-4F, cur) << "at " << i;
+    }
+}
+
+// A frame declared but never executed (a dropped command buffer) must not
+// desynchronise the alive lists: the GPU owns which list is live.
+TEST(GpuParticles, ADroppedFrameDoesNotDesyncTheLists) {
+    QUAT_REQUIRE_GPU(g);
+    auto pass = make_pass(*g);
+    ASSERT_OK(pass);
+    TestEmitter e = fountain(2, 0);
+    ASSERT_OK(run(*g, *pass, {&e}, k_cam, 5, k_dt));
+    {
+        rhi::RenderGraph dropped;
+        TestEmitter copy = e; // its spawn schedule is not the real one's
+        const std::vector<r::ParticleEmitterInput> in{copy.input(k_dt)};
+        ASSERT_OK(pass->add_to_graph(dropped, 0, quat::test::make_frame(in, k_cam, k_dt), {}));
+    } // never compiled or executed
+    auto snap = run(*g, *pass, {&e}, k_cam, 5, k_dt);
+    ASSERT_OK(snap);
+    EXPECT_EQ(snap->drawn_count(e.slot), e.spawn.spawned);
+    EXPECT_EQ(snap->dead(e.slot) + snap->drawn_count(e.slot), e.settings.max_particles);
+    EXPECT_EQ(snap->drawn_particles(e).size(), e.spawn.spawned);
+}
+
+// Re-placement through the emitter table: A grows into a range overlapping
+// B's old one (B was destroyed with live particles). After A's reset its
+// dead + alive counts cover exactly its new range and every live slot lies
+// inside it.
+TEST(GpuParticles, ReplacedEmitterResetsAnOverlappingRange) {
+    QUAT_REQUIRE_GPU(g);
+    auto pass = make_pass(*g);
+    ASSERT_OK(pass);
+    r::ParticleEmitterTable table(k_pool);
+    r::ParticleEmitterSettings b = fountain(0, 0).settings; // 2048, lifetime 100 s
+    r::ParticleEmitterSettings a = b;
+    a.max_particles = 1024;
+    a.rate = 300.0F;
+    a.seed = 3;
+    const glm::mat4 world = glm::translate(glm::mat4(1.0F), glm::vec3(0.0F, 1.0F, 0.0F));
+    using Live = std::vector<std::pair<std::uint64_t, const r::ParticleEmitterSettings*>>;
+    const auto step = [&](const Live& live) -> std::expected<PoolSnapshot, engine::core::Error> {
+        table.begin_frame();
+        std::vector<r::ParticleEmitterInput> inputs;
+        for (const auto& [key, settings] : live) {
+            const auto info = table.visit(key, *settings, world, k_dt);
+            if (!info) return std::unexpected(engine::core::Error{"not placed"});
+            inputs.push_back({settings, *info, VK_NULL_HANDLE});
+        }
+        table.end_frame();
+        auto snap = quat::test::run_particle_frame(*g, *pass,
+                                                   quat::test::make_frame(inputs, k_cam, k_dt));
+        if (snap) table.commit();
+        return snap;
+    };
+    // B first ([0, 2048)), then A after it; both fill up.
+    for (int f = 0; f < 30; ++f) ASSERT_OK(step({{1, &b}, {2, &a}}));
+    ASSERT_EQ(table.find(1)->base, 0U);
+    ASSERT_EQ(table.find(2)->base, 2048U);
+    // B is destroyed (its range is freed at the end of that frame); then A
+    // grows to 3000, which first-fits over B's old range.
+    ASSERT_OK(step({{2, &a}}));
+    r::ParticleEmitterSettings grown = a;
+    grown.max_particles = 3000;
+    auto snap = step({{2, &grown}});
+    ASSERT_OK(snap);
+    const r::ParticleEmitterTable::Entry& entry = *table.find(2);
+    EXPECT_EQ(entry.base, 0U); // overlaps B's [0, 2048) and A's old [2048, 3072)
+    for (int f = 0; f < 10; ++f) {
+        snap = step({{2, &grown}});
+        ASSERT_OK(snap);
+    }
+    const std::uint32_t alive = snap->drawn_count(entry.slot);
+    EXPECT_EQ(alive, entry.spawn.spawned); // nothing inherited from B or old A
+    EXPECT_EQ(snap->dead(entry.slot) + alive, 3000U);
+    TestEmitter view;
+    view.slot = entry.slot;
+    view.base = entry.base;
+    for (const std::uint32_t s : snap->drawn_slots(view)) {
+        EXPECT_GE(s, entry.base);
+        EXPECT_LT(s, entry.base + 3000U);
     }
 }
 

@@ -145,6 +145,10 @@ public:
     [[nodiscard]] GrassRuntime* grass() { return grass_ ? &*grass_ : nullptr; }
     // GPU particles (R10.3); null before init().
     [[nodiscard]] ParticleRuntime* particles() { return particles_ ? &*particles_ : nullptr; }
+    // Restarts every particle emitter (editor Play / Stop).
+    void reset_particles() {
+        if (particles_) particles_->reset_all();
+    }
     [[nodiscard]] const glm::vec3& terrain_anchor() const { return terrain_anchor_; }
     [[nodiscard]] float terrain_snowline() const { return terrain_snowline_; }
 

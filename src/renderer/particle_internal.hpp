@@ -91,7 +91,6 @@ struct ParticlePass::State {
     rhi::Sampler       sampler;
     EmptyLightClusters empty_lights;
 
-    std::uint32_t             cur_list = 0; // alive list the next simulation reads
     std::vector<ParticleSlot> slots;
 };
 
@@ -110,6 +109,7 @@ void declare_particle_sort(ParticlePass::State& state, ParticleSlot& slot, rhi::
 struct ParticleDrawContext {
     rhi::ResourceHandle particles{};
     rhi::ResourceHandle alive{};
+    rhi::ResourceHandle counters{};
     rhi::ResourceHandle draw_args{};
     VkDeviceAddress     frame_address = 0;
     VkDeviceAddress     emitters_address = 0;

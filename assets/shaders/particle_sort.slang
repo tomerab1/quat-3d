@@ -50,8 +50,12 @@ void exchange_shared(uint i, uint j, uint k, uint global_i) {
     }
 }
 
+// The live (drawn) list of `e` and its length.
+uint drawn_list(Emitter e) {
+    return particle_live_list(g_counters, e.ids.z);
+}
 uint drawn_count(Emitter e) {
-    return g_counters[e.ids.z * COUNTER_STRIDE + COUNTER_ALIVE0 + g_frame.misc.z];
+    return g_counters[e.ids.z * COUNTER_STRIDE + COUNTER_ALIVE0 + drawn_list(e)];
 }
 
 [shader("compute")]
@@ -64,7 +68,7 @@ void keys_main(uint3 tid : SV_DispatchThreadID) {
     }
     uint2 key = uint2(MAX_KEY, MAX_KEY);
     if (i < drawn_count(e)) {
-        uint slot = g_alive[g_frame.misc.z * g_frame.misc.y + e.range.x + i];
+        uint slot = g_alive[drawn_list(e) * g_frame.misc.y + e.range.x + i];
         float3 wp = particle_world_position(e, g_particles[slot].position);
         float depth = max(particle_view_depth(g_frame, wp), 0.0);
         key = uint2(0xFFFFFFFEu - asuint(depth), slot); // farther = smaller key
@@ -135,5 +139,5 @@ void scatter_main(uint3 tid : SV_DispatchThreadID) {
     if (i >= min(drawn_count(e), e.ids.y)) {
         return;
     }
-    g_alive[g_frame.misc.z * g_frame.misc.y + e.range.x + i] = g_keys[e.ids.x + i].y;
+    g_alive[drawn_list(e) * g_frame.misc.y + e.range.x + i] = g_keys[e.ids.x + i].y;
 }

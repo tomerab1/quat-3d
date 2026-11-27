@@ -2,9 +2,9 @@
 //
 // The pool is one particle array shared by every emitter; each emitter owns a
 // contiguous range [base, base + capacity) of it, and of the dead list and
-// the two alive lists (alive list k starts at k * pool capacity). Entry
-// points, in frame order (the pass records one dispatch per emitter unless
-// noted; g_frame.misc.x = the alive list simulated this frame, "cur"):
+// the two alive lists (alive list k starts at k * pool capacity). Each
+// emitter's counters name its live list, "cur". Entry points, in frame order
+// (the pass records one dispatch per emitter unless noted):
 //   reset_main    — fills a new emitter's dead list with its whole range and
 //                   zeroes its counters and indirect arguments;
 //   emit_main     — thread i < min(requested, dead) pops dead[dead - 1 - i]
@@ -16,9 +16,10 @@
 //                   integrates, collides with the depth buffer, and appends
 //                   survivors to the other list / the dead to the dead list;
 //   finalize_main — one thread per emitter: writes the draw-indexed
-//                   arguments (6 indices, one instance per survivor) and
-//                   zeroes cur's count.
-// The CPU flips cur after a simulated frame.
+//                   arguments (6 indices, one instance per survivor), zeroes
+//                   cur's count and makes the survivors' list the live one.
+// The list index lives only on the GPU: nothing on the host has to agree
+// with which recorded frames actually executed.
 
 import particle_common;
 
@@ -56,7 +57,7 @@ void reset_main(uint3 tid : SV_DispatchThreadID) {
         g_counters[c + COUNTER_DEAD] = capacity;
         g_counters[c + COUNTER_ALIVE0] = 0;
         g_counters[c + COUNTER_ALIVE0 + 1] = 0;
-        g_counters[c + COUNTER_EMITTED] = 0;
+        g_counters[c + COUNTER_LIST] = 0;
         uint d = e.ids.z * DRAW_STRIDE;
         g_draw[d + 0] = 6;
         g_draw[d + 1] = 0;
@@ -81,7 +82,7 @@ void emit_main(uint3 tid : SV_DispatchThreadID) {
     if (i >= count) {
         return;
     }
-    uint cur = g_frame.misc.x;
+    uint cur = g_counters[c + COUNTER_LIST];
     uint alive = g_counters[c + COUNTER_ALIVE0 + cur];
     uint base = e.range.x;
     uint slot = g_dead[base + dead - 1 - i];
@@ -98,14 +99,13 @@ void commit_main(uint3 tid : SV_DispatchThreadID) {
     }
     Emitter e = g_emitters[index];
     uint c = e.ids.z * COUNTER_STRIDE;
-    uint cur = g_frame.misc.x;
+    uint cur = g_counters[c + COUNTER_LIST];
     uint dead = g_counters[c + COUNTER_DEAD];
     uint count = min(e.range.z, dead);
     uint alive = g_counters[c + COUNTER_ALIVE0 + cur] + count;
     g_counters[c + COUNTER_DEAD] = dead - count;
     g_counters[c + COUNTER_ALIVE0 + cur] = alive;
     g_counters[c + COUNTER_ALIVE0 + (1 - cur)] = 0;
-    g_counters[c + COUNTER_EMITTED] = count;
     uint g = e.ids.z * DISPATCH_STRIDE;
     g_dispatch[g + 0] = (alive + 63) / 64;
     g_dispatch[g + 1] = 1;
@@ -167,7 +167,7 @@ void collide(inout Particle p, Emitter e) {
 void simulate_main(uint3 tid : SV_DispatchThreadID) {
     Emitter e = g_emitters[pc.emitter];
     uint c = e.ids.z * COUNTER_STRIDE;
-    uint cur = g_frame.misc.x;
+    uint cur = g_counters[c + COUNTER_LIST];
     uint i = tid.x;
     if (i >= g_counters[c + COUNTER_ALIVE0 + cur]) {
         return;
@@ -207,7 +207,7 @@ void finalize_main(uint3 tid : SV_DispatchThreadID) {
     }
     uint slot = g_emitters[index].ids.z;
     uint c = slot * COUNTER_STRIDE;
-    uint cur = g_frame.misc.x;
+    uint cur = g_counters[c + COUNTER_LIST];
     uint d = slot * DRAW_STRIDE;
     g_draw[d + 0] = 6;
     g_draw[d + 1] = g_counters[c + COUNTER_ALIVE0 + (1 - cur)];
@@ -215,4 +215,5 @@ void finalize_main(uint3 tid : SV_DispatchThreadID) {
     g_draw[d + 3] = 0;
     g_draw[d + 4] = 0;
     g_counters[c + COUNTER_ALIVE0 + cur] = 0;
+    g_counters[c + COUNTER_LIST] = 1 - cur;
 }

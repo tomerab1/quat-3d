@@ -42,9 +42,9 @@ constexpr std::array<rhi::BindingRequest, 6> kSortResources{{
     {"g_frame", kUniform}, {"g_emitters", kStorage}, {"g_particles", kStorage},
     {"g_alive", kStorage}, {"g_counters", kStorage}, {"g_keys", kStorage},
 }};
-constexpr std::array<rhi::BindingRequest, 11> kDrawResources{{
+constexpr std::array<rhi::BindingRequest, 12> kDrawResources{{
     {"g_frame", kUniform}, {"g_emitters", kStorage}, {"g_particles", kStorage},
-    {"g_alive", kStorage}, {"g_depth", kImage}, {"g_texture", kImage},
+    {"g_alive", kStorage}, {"g_counters", kStorage}, {"g_depth", kImage}, {"g_texture", kImage},
     {"g_sampler", VK_DESCRIPTOR_TYPE_SAMPLER}, {"g_cluster_params", kUniform},
     {"g_lights", kStorage}, {"g_cluster_grid", kStorage}, {"g_cluster_indices", kStorage},
 }};
@@ -131,8 +131,7 @@ load_with_layout(const rhi::Device& device, ParticlePass::State& s, rhi::Pipelin
     return px;
 }
 
-[[nodiscard]] ParticleFrameGpu make_frame_gpu(const ParticleFrame& f, std::uint32_t cur,
-                                              std::uint32_t drawn, std::uint32_t pool) {
+[[nodiscard]] ParticleFrameGpu make_frame_gpu(const ParticleFrame& f, std::uint32_t pool) {
     ParticleFrameGpu g;
     const glm::mat4 vp = f.proj * f.view;
     const glm::mat4 inv_vp = glm::inverse(vp);
@@ -152,7 +151,7 @@ load_with_layout(const rhi::Device& device, ParticlePass::State& s, rhi::Pipelin
     const float w = static_cast<float>(std::max(f.extent.width, 1U));
     const float h = static_cast<float>(std::max(f.extent.height, 1U));
     g.screen = glm::vec4(w, h, 1.0F / w, 1.0F / h);
-    g.misc = glm::uvec4(cur, pool, drawn, static_cast<std::uint32_t>(f.emitters.size()));
+    g.misc = glm::uvec4(0, pool, 0, static_cast<std::uint32_t>(f.emitters.size()));
     return g;
 }
 
@@ -407,8 +406,6 @@ ParticlePass::add_to_graph(rhi::RenderGraph& graph, std::uint32_t slot_index,
     if (frame.emitters.size() > particle_max_emitters) return fail("too many emitters");
     ParticleSlot& slot = s.slots[slot_index];
     const bool simulate = frame.dt > 0.0F && std::isfinite(frame.dt);
-    const std::uint32_t cur = s.cur_list;
-    const std::uint32_t drawn = simulate ? 1 - cur : cur;
 
     // Emitter records (host writes land before vkQueueSubmit — no barrier).
     std::vector<std::uint32_t> resets;
@@ -448,7 +445,7 @@ ParticlePass::add_to_graph(rhi::RenderGraph& graph, std::uint32_t slot_index,
             return std::unexpected(f.error());
         }
     }
-    const ParticleFrameGpu frame_gpu = make_frame_gpu(frame, cur, drawn, s.pool);
+    const ParticleFrameGpu frame_gpu = make_frame_gpu(frame, s.pool);
     std::memcpy(slot.frame.mapped(), &frame_gpu, sizeof(frame_gpu));
     if (auto f = slot.frame.flush(0, kFrameBytes); !f) return std::unexpected(f.error());
 
@@ -457,7 +454,6 @@ ParticlePass::add_to_graph(rhi::RenderGraph& graph, std::uint32_t slot_index,
     };
     ParticleGraphOutput out;
     out.pool_capacity = s.pool;
-    out.drawn_list = drawn;
     out.particles = import("particles", s.particles, sizeof(ParticleGpu) * VkDeviceSize{s.pool});
     out.alive = import("particle_alive", s.alive, VkDeviceSize{8} * s.pool);
     out.counters = import("particle_counters", s.counters, kCountersBytes);
@@ -558,13 +554,13 @@ ParticlePass::add_to_graph(rhi::RenderGraph& graph, std::uint32_t slot_index,
                               import("particle_sort_keys", s.keys, VkDeviceSize{8} * s.key_capacity),
                               std::move(jobs));
     }
-    if (simulate) s.cur_list = 1 - cur;
 
     if (!targets.hdr.valid()) return out;
     if (!targets.depth.valid()) return fail("drawing needs the scene depth");
     ParticleDrawContext context;
     context.particles = out.particles;
     context.alive = out.alive;
+    context.counters = out.counters;
     context.draw_args = out.draw_args;
     context.frame_address = rhi::buffer_device_address(s.device->handle(), slot.frame);
     context.emitters_address = rhi::buffer_device_address(s.device->handle(), slot.emitters);

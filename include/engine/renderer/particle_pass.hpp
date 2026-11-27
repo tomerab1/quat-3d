@@ -95,7 +95,7 @@ struct ParticleFrameGpu {
     glm::vec4  sun_color{0.0F};
     glm::vec4  ambient{0.0F};
     glm::vec4  screen{0.0F};
-    glm::uvec4 misc{0};             // list simulated, pool capacity, list drawn, emitters
+    glm::uvec4 misc{0};             // y = pool capacity, w = emitter count
 };
 static_assert(sizeof(ParticleFrameGpu) == 384, "must match particle_common.slang ParticleFrame");
 
@@ -103,9 +103,9 @@ static_assert(sizeof(ParticleFrameGpu) == 384, "must match particle_common.slang
 struct ParticleGraphOutput {
     rhi::ResourceHandle particles{}; // ParticleGpu[pool]
     rhi::ResourceHandle alive{};     // uint[2 * pool]
-    rhi::ResourceHandle counters{};  // uint4 per emitter: dead, alive 0, alive 1, emitted
+    // uint4 per emitter slot: dead count, alive count of list 0 / 1, live list
+    rhi::ResourceHandle counters{};
     rhi::ResourceHandle draw_args{}; // 8 uints per emitter (VkDrawIndexedIndirectCommand)
-    std::uint32_t       drawn_list = 0; // alive list the draws read this frame
     std::uint32_t       pool_capacity = 0;
 };
 

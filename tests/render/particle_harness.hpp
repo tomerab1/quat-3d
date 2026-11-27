@@ -71,10 +71,11 @@ struct PoolSnapshot {
     std::vector<pr::ParticleGpu> particles;
     std::vector<std::uint32_t>   alive;    // two lists of `pool`
     std::vector<std::uint32_t>   draw_args;
-    std::uint32_t                drawn = 0;
     std::uint32_t                pool = 0;
 
     [[nodiscard]] std::uint32_t dead(std::uint32_t slot) const { return counters[slot * 4]; }
+    // The emitter's live alive list (the GPU flips it each simulated frame).
+    [[nodiscard]] std::uint32_t live_list(std::uint32_t slot) const { return counters[slot * 4 + 3]; }
     [[nodiscard]] std::uint32_t drawn_count(std::uint32_t slot) const {
         return draw_args[slot * 8 + 1];
     }
@@ -82,14 +83,14 @@ struct PoolSnapshot {
     [[nodiscard]] std::vector<pr::ParticleGpu> drawn_particles(const TestEmitter& e) const {
         std::vector<pr::ParticleGpu> out;
         for (std::uint32_t i = 0; i < drawn_count(e.slot); ++i) {
-            out.push_back(particles[alive[drawn * pool + e.base + i]]);
+            out.push_back(particles[alive[live_list(e.slot) * pool + e.base + i]]);
         }
         return out;
     }
     [[nodiscard]] std::vector<std::uint32_t> drawn_slots(const TestEmitter& e) const {
         std::vector<std::uint32_t> out;
         for (std::uint32_t i = 0; i < drawn_count(e.slot); ++i) {
-            out.push_back(alive[drawn * pool + e.base + i]);
+            out.push_back(alive[live_list(e.slot) * pool + e.base + i]);
         }
         return out;
     }
@@ -144,7 +145,6 @@ run_particle_frame(GpuContext& g, pr::ParticlePass& pass, const pr::ParticleFram
     if (!done) return std::unexpected(done.error());
     PoolSnapshot snap;
     snap.pool = pool;
-    snap.drawn = out->drawn_list;
     const auto copy_out = [](rhi::GpuBuffer& b, auto& vec, std::size_t count) {
         (void)b.invalidate_mapped();
         vec.resize(count);
