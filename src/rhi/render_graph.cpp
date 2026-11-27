@@ -83,6 +83,10 @@ struct UsageState {
         return {VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
                 VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
                 VK_ACCESS_2_SHADER_SAMPLED_READ_BIT};
+    case ResourceUsage::sampled_graphics:
+        return {VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT | VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+                VK_ACCESS_2_SHADER_SAMPLED_READ_BIT};
     case ResourceUsage::storage_read:
         return {VK_IMAGE_LAYOUT_GENERAL,
                 VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
@@ -113,6 +117,12 @@ struct UsageState {
     case ResourceUsage::buffer_read_fragment:
         return {VK_IMAGE_LAYOUT_UNDEFINED, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
                 VK_ACCESS_2_SHADER_STORAGE_READ_BIT | VK_ACCESS_2_UNIFORM_READ_BIT};
+    case ResourceUsage::buffer_read_vertex:
+        return {VK_IMAGE_LAYOUT_UNDEFINED, VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT,
+                VK_ACCESS_2_SHADER_STORAGE_READ_BIT | VK_ACCESS_2_UNIFORM_READ_BIT};
+    case ResourceUsage::buffer_read_indirect:
+        return {VK_IMAGE_LAYOUT_UNDEFINED, VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT,
+                VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT};
     }
     return {VK_IMAGE_LAYOUT_UNDEFINED, VK_PIPELINE_STAGE_2_NONE, 0};
 }
@@ -123,6 +133,8 @@ struct UsageState {
     case ResourceUsage::buffer_read_compute:
     case ResourceUsage::buffer_write_compute:
     case ResourceUsage::buffer_read_fragment:
+    case ResourceUsage::buffer_read_vertex:
+    case ResourceUsage::buffer_read_indirect:
     case ResourceUsage::transfer_src:
     case ResourceUsage::transfer_dst:
         return true;
@@ -136,6 +148,8 @@ struct UsageState {
     case ResourceUsage::buffer_read_compute:
     case ResourceUsage::buffer_write_compute:
     case ResourceUsage::buffer_read_fragment:
+    case ResourceUsage::buffer_read_vertex:
+    case ResourceUsage::buffer_read_indirect:
         return false;
     default:
         return true;

@@ -7,7 +7,7 @@
 
 [[vk::binding(0)]] Texture2D          g_src;
 [[vk::binding(1)]] SamplerState       g_samp;
-[[vk::binding(2)]] RWTexture2D<float4> g_dst;
+[[vk::binding(2)]] [format("rgba16f")] RWTexture2D<float4> g_dst;
 
 struct Params {
     float threshold;

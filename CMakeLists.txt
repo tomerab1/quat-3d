@@ -92,6 +92,10 @@ if(ENGINE_DESCRIPTOR_SETS_FALLBACK)
     target_compile_definitions(engine_flags INTERFACE ENGINE_DESCRIPTOR_SETS_FALLBACK)
 endif()
 
+if(ENGINE_PACKAGE_BUILD)
+    target_compile_definitions(engine_flags INTERFACE ENGINE_PACKAGE_BUILD)
+endif()
+
 # Apple's linker (ld-prime, Xcode 15+) warns about every static library CMake
 # repeats on the link line — repetition CMake emits on purpose to resolve the
 # engine libraries' mutual dependencies. Silence just that diagnostic where
@@ -134,17 +138,25 @@ target_link_libraries(miniaudio_headers INTERFACE
 if(ENGINE_EDITOR)
     find_package(imgui CONFIG REQUIRED)
     find_package(imguizmo CONFIG REQUIRED)
+    find_package(unofficial-imgui-node-editor CONFIG REQUIRED)
 endif()
 
 set(ENGINE_PUBLIC_INCLUDE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 
 # ---------------------------------------------------------------------------
-# engine_core — platform-free core utilities (no graphics). Starts with the
-# runtime data-root resolution used by the game and packaged builds.
+# engine_core — graphics-free foundations: the log ring + log() helper, stderr
+# capture into the ring, the simulation clock (A5; S6 grows the logging layer
+# here), file watching and child processes (shader hot reload, R2), and the
+# runtime data-root resolution used by the game and packaged builds (P4).
 # ---------------------------------------------------------------------------
 add_library(engine_core STATIC
+    src/core/log.cpp
+    src/core/stderr_capture.cpp
+    src/core/sim_clock.cpp
+    src/core/file_watcher.cpp
+    src/core/child_process.cpp
     src/core/asset_root.cpp)
-target_link_libraries(engine_core PUBLIC engine_flags)
+target_link_libraries(engine_core PUBLIC engine_flags Threads::Threads)
 target_include_directories(engine_core PUBLIC ${ENGINE_PUBLIC_INCLUDE})
 
 # ---------------------------------------------------------------------------
@@ -160,11 +172,18 @@ add_library(engine_rhi STATIC
     src/rhi/descriptor_buffer.cpp
     src/rhi/render_graph.cpp
     src/rhi/graphics_pipeline.cpp
-    src/rhi/compute_pipeline.cpp)
+    src/rhi/compute_pipeline.cpp
+    src/rhi/shader_compiler.cpp
+    src/rhi/shader_hot_reload.cpp)
 target_link_libraries(engine_rhi PUBLIC
-    engine_flags Vulkan::Vulkan GPUOpen::VulkanMemoryAllocator)
-# nlohmann_json is an implementation detail of the reflection parser (PRIVATE).
-target_link_libraries(engine_rhi PRIVATE nlohmann_json::nlohmann_json)
+    engine_flags engine_core Vulkan::Vulkan GPUOpen::VulkanMemoryAllocator)
+# engine_core is public: shader hot reload's headers use its watcher/process
+# types, and the debug messenger routes validation messages into its log ring.
+# The hot-reload compile worker runs on a std::thread.
+target_link_libraries(engine_rhi PRIVATE Threads::Threads)
+# nlohmann_json is an implementation detail of the reflection parser (PRIVATE);
+# glm because the parser reads slangc's JSON through core::JsonFields.
+target_link_libraries(engine_rhi PRIVATE nlohmann_json::nlohmann_json glm::glm)
 target_include_directories(engine_rhi PUBLIC ${ENGINE_PUBLIC_INCLUDE})
 
 # VMA's implementation is not warning-clean under our strict flags; compile just
@@ -224,11 +243,16 @@ add_library(engine_scene STATIC
     src/scene/nav_agent_system.cpp
     src/scene/navigation.cpp
     src/scene/behavior.cpp
+    src/scene/bt_graph.cpp
+    src/scene/bt_graph_edit.cpp
     src/scene/scene_io.cpp
     src/scene/component_json.cpp
     src/scene/audio_system.cpp
     src/scene/primitives.cpp
-    src/scene/primitive_resolve.cpp)
+    src/scene/primitive_resolve.cpp
+    src/scene/scatter.cpp
+    src/scene/instanced_mesh.cpp
+    src/scene/instanced_mesh_resolve.cpp)
 # EnTT is PUBLIC: components.hpp exposes entt types (Parent/Children) to consumers.
 # engine_renderer is PUBLIC: scene.hpp's RenderCollectSystem fills a renderer
 # DrawItem list (no cycle — the renderer does not depend on the scene).
@@ -255,6 +279,7 @@ set_source_files_properties(src/scene/stb_image_impl.cpp PROPERTIES COMPILE_OPTI
 # ---------------------------------------------------------------------------
 add_library(engine_terrain STATIC
     src/terrain/generator.cpp
+    src/terrain/grid_erosion.cpp
     src/terrain/streamer.cpp)
 target_link_libraries(engine_terrain PUBLIC engine_flags glm::glm)
 target_include_directories(engine_terrain PUBLIC ${ENGINE_PUBLIC_INCLUDE})
@@ -322,8 +347,9 @@ endif()
 
 # ---------------------------------------------------------------------------
 # engine_remote_world — the world commands (ROADMAP A2/A3): scene.*,
-# environment.*, camera.*, render.screenshot, asset.*, sim.*, nav.bake, on top
-# of engine_remote + the scene codec. Application-only capabilities come in
+# environment.*, camera.*, render.screenshot, asset.*, sim.*, nav.bake, debug.*
+# and bt.* (behaviour-tree authoring), on top of engine_remote + the scene
+# codec and the behaviour-tree graph model. Application-only capabilities come in
 # through WorldServices callbacks (src/app/remote_bridge.cpp wires them), so
 # the commands are testable on a bare Scene.
 # ---------------------------------------------------------------------------
@@ -334,9 +360,14 @@ add_library(engine_remote_world STATIC
     src/remote/world/environment_commands.cpp
     src/remote/world/camera_commands.cpp
     src/remote/world/app_commands.cpp
+    src/remote/world/debug_commands.cpp
+    src/remote/world/debug_query_commands.cpp
+    src/remote/world/behavior_commands.cpp
+    src/remote/world/behavior_edit_commands.cpp
     src/remote/world/image_encode.cpp
     src/remote/world/stb_image_write_impl.cpp)
-target_link_libraries(engine_remote_world PUBLIC engine_flags engine_remote engine_scene)
+target_link_libraries(engine_remote_world PUBLIC
+    engine_flags engine_core engine_remote engine_scene engine_physics engine_nav)
 target_include_directories(engine_remote_world PUBLIC ${ENGINE_PUBLIC_INCLUDE})
 target_include_directories(engine_remote_world SYSTEM PRIVATE ${Stb_INCLUDE_DIR})
 # stb's implementation TU is not warning-clean under our strict flags.
@@ -349,6 +380,8 @@ set_source_files_properties(src/remote/world/stb_image_write_impl.cpp
 # ---------------------------------------------------------------------------
 add_library(engine_renderer STATIC
     src/renderer/draw_batching.cpp
+    src/renderer/grass.cpp
+    src/renderer/grass_pass.cpp
     src/renderer/instance_buffer.cpp
     src/renderer/mesh_pass.cpp
     src/renderer/lighting_pass.cpp
@@ -364,7 +397,9 @@ add_library(engine_renderer STATIC
     src/renderer/exposure_pass.cpp
     src/renderer/taa_pass.cpp
     src/renderer/atmosphere_pass.cpp
-    src/renderer/terrain_pass.cpp)
+    src/renderer/terrain_pass.cpp
+    src/renderer/terrain_gpu_tiles.cpp
+    src/renderer/terrain_synth_pass.cpp)
 target_link_libraries(engine_renderer PUBLIC
     engine_flags engine_rhi engine_asset engine_terrain glm::glm)
 target_include_directories(engine_renderer PUBLIC ${ENGINE_PUBLIC_INCLUDE})
@@ -394,14 +429,22 @@ if(ENGINE_EDITOR)
         src/editor/asset_browser.cpp
         src/editor/animation_preview.cpp
         src/editor/physics_debug.cpp
+        src/editor/picking.cpp
         src/editor/scene_snapshot.cpp
         src/editor/audio_inspector.cpp
+        src/editor/grass_inspector.cpp
+        src/editor/behavior_panel.cpp
+        src/editor/behavior_canvas.cpp
         src/editor/vendor/imgui_impl_sdl3.cpp)
     # engine_scene is PUBLIC: editor.hpp exposes entt entity types (selection)
     # and the hierarchy/inspector panels reflect scene components.
+    # imgui-node-editor (Behaviour panel, G2) comes before imgui::imgui: its
+    # vcpkg target does not declare the imgui dependency, so a single-pass
+    # linker must see it first to resolve its ImGui references.
     target_link_libraries(engine_editor
         PUBLIC engine_flags engine_scene
-        PRIVATE imgui::imgui imguizmo::imguizmo SDL3::SDL3)
+        PRIVATE unofficial::imgui-node-editor::imgui-node-editor
+                imgui::imgui imguizmo::imguizmo SDL3::SDL3)
     target_include_directories(engine_editor PUBLIC ${ENGINE_PUBLIC_INCLUDE})
     # Vendored third-party backend: not warning-clean under our strict flags.
     set_source_files_properties(src/editor/vendor/imgui_impl_sdl3.cpp
@@ -412,12 +455,20 @@ endif()
 # game — executable entry point. The full target graph (engine_core /
 # engine_renderer / engine_editor) grows phase by phase as modules gain sources.
 # ---------------------------------------------------------------------------
-# src/app/ is the application layer (startup scenes, and - per ROADMAP S7 -
-# the frame loop pieces moving out of main.cpp); it is not an engine library.
+# src/app/ is the application layer (Application owns the window, device and
+# frame loop; FrameRenderer, WorldRuntime, FlyCamera, EditorBridge, the remote
+# bridge and the startup scenes run inside it); it is not an engine library.
+# main.cpp only parses the environment and hands off to Application.
 add_executable(game
     src/main.cpp
+    src/app/application.cpp
+    src/app/fly_camera.cpp
+    src/app/frame_graph.cpp
+    src/app/frame_renderer.cpp
+    src/app/world_runtime.cpp
     src/app/demo_scenes.cpp
     src/app/audio_runtime.cpp
+    src/app/grass_runtime.cpp
     src/app/nav_bake.cpp
     src/app/remote_bridge.cpp
     src/app/asset_root.cpp)
@@ -426,6 +477,7 @@ target_link_libraries(game PRIVATE
     engine_terrain engine_nav engine_net engine_remote engine_remote_world engine_audio
     SDL3::SDL3)
 if(ENGINE_EDITOR)
+    target_sources(game PRIVATE src/app/editor_bridge.cpp)
     target_link_libraries(game PRIVATE engine_editor)
 endif()
 target_include_directories(game PRIVATE
@@ -439,16 +491,6 @@ if(NOT ENGINE_PACKAGE_BUILD)
         QUAT_BUILD_TREE_ROOT="${CMAKE_CURRENT_SOURCE_DIR}"
         QUAT_BUILD_TREE_SHADER_DIR="${CMAKE_CURRENT_SOURCE_DIR}/cooked/shaders")
 endif()
-# Bridge for main.cpp, which still spells the data paths as the old
-# compile-time macros: they now expand to the runtime resolver, whose header
-# is force-included into main.cpp only. Remove both once main.cpp calls
-# quat::app::project_root() / cooked_shader_dir() itself (ROADMAP S7 split).
-set_property(SOURCE src/main.cpp APPEND PROPERTY COMPILE_DEFINITIONS
-    "QUAT_PROJECT_ROOT=quat::app::project_root()"
-    "QUAT_COOKED_SHADER_DIR=quat::app::cooked_shader_dir()")
-set(ENGINE_ASSET_ROOT_HEADER ${CMAKE_CURRENT_SOURCE_DIR}/src/app/asset_root.hpp)
-set_property(SOURCE src/main.cpp APPEND PROPERTY COMPILE_OPTIONS
-    "$<IF:$<CXX_COMPILER_ID:MSVC>,/FI${ENGINE_ASSET_ROOT_HEADER},-include${ENGINE_ASSET_ROOT_HEADER}>")
 
 # ---------------------------------------------------------------------------
 # Tests (GoogleTest) — see tests/CMakeLists.txt. `ctest --test-dir build/<preset>`.
@@ -462,3 +504,8 @@ add_subdirectory(tests)
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/CompileShaders.cmake)
 add_shader_compilation(shaders)
 add_dependencies(game shaders)
+# Shader hot reload (R2) runs the same slangc the build cooks with. Not in
+# packaged builds: no build-machine paths there, and hot reload defaults off.
+if(NOT ENGINE_PACKAGE_BUILD)
+    target_compile_definitions(engine_rhi PRIVATE QUAT_SLANGC_PATH="${SLANGC_EXECUTABLE}")
+endif()

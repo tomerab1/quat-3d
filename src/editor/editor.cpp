@@ -17,7 +17,9 @@
 
 #include "animation_preview.hpp"
 #include "asset_browser.hpp"
+#include "behavior_panel.hpp"
 #include "physics_debug.hpp"
+#include "picking.hpp"
 #include "engine/renderer/imgui_pass.hpp" // viewport_texture_id
 #include "inspector.hpp"
 #include "scene_hierarchy.hpp"
@@ -93,27 +95,6 @@ void apply_theme() {
     c[ImGuiCol_NavCursor] = accent;
 }
 
-// Ray/AABB slab test in the mesh's local space. Returns the entry distance
-// along the LOCAL ray (>= 0) or a negative value on miss.
-[[nodiscard]] float ray_aabb(const glm::vec3& origin, const glm::vec3& dir, const glm::vec3& lo,
-                             const glm::vec3& hi) {
-    float tmin = 0.0F;
-    float tmax = std::numeric_limits<float>::max();
-    for (int i = 0; i < 3; ++i) {
-        if (std::abs(dir[i]) < 1e-8F) {
-            if (origin[i] < lo[i] || origin[i] > hi[i]) return -1.0F;
-            continue;
-        }
-        float t1 = (lo[i] - origin[i]) / dir[i];
-        float t2 = (hi[i] - origin[i]) / dir[i];
-        if (t1 > t2) std::swap(t1, t2);
-        tmin = std::max(tmin, t1);
-        tmax = std::min(tmax, t2);
-        if (tmin > tmax) return -1.0F;
-    }
-    return tmin;
-}
-
 } // namespace
 
 std::expected<EditorLayer, core::Error> EditorLayer::create(SDL_Window* window,
@@ -150,6 +131,8 @@ std::expected<EditorLayer, core::Error> EditorLayer::create(SDL_Window* window,
     return out;
 }
 
+EditorLayer::EditorLayer() = default;
+
 EditorLayer::~EditorLayer() {
     destroy();
 }
@@ -169,11 +152,13 @@ EditorLayer& EditorLayer::operator=(EditorLayer&& other) noexcept {
         viewport_height_ = other.viewport_height_;
         viewport_hovered_ = other.viewport_hovered_;
         selected_ = other.selected_;
+        behavior_panel_ = std::move(other.behavior_panel_);
     }
     return *this;
 }
 
 void EditorLayer::destroy() noexcept {
+    behavior_panel_.reset(); // its node-editor context needs ImGui alive
     if (initialized_) {
         ImGui_ImplSDL3_Shutdown();
         ImGui::DestroyContext();
@@ -232,6 +217,7 @@ void EditorLayer::build_dock_layout(unsigned int dockspace_id) {
     ImGui::DockBuilderDockWindow("Renderer", right);
     ImGui::DockBuilderDockWindow("Assets", bottom);
     ImGui::DockBuilderDockWindow("Animation", bottom);
+    ImGui::DockBuilderDockWindow(behavior_panel_title, bottom);
     ImGui::DockBuilderFinish(dockspace_id);
 }
 
@@ -328,7 +314,8 @@ void EditorLayer::build_gizmo(const EditorContext& ctx, const ImVec2& rect_min,
 }
 
 // Left-click picking: ray through the clicked pixel against every mesh's
-// world-space-transformed local AABB; the nearest hit becomes the selection.
+// world-space-transformed local AABB (pick_entity); the nearest hit becomes
+// the selection.
 void EditorLayer::handle_picking(const EditorContext& ctx, const ImVec2& rect_min,
                                  const ImVec2& rect_max) {
     if (!ImGui::IsItemClicked(ImGuiMouseButton_Left)) return;
@@ -359,25 +346,7 @@ void EditorLayer::handle_picking(const EditorContext& ctx, const ImVec2& rect_mi
         return;
     }
 
-    entt::registry& r = ctx.scene->registry();
-    float best = std::numeric_limits<float>::max();
-    entt::entity hit = entt::null;
-    for (auto [e, transform, mr] :
-         r.view<const scene::Transform, const scene::MeshRenderer>().each()) {
-        if (!mr.mesh.valid() || !mr.mesh.is_loaded()) continue;
-        const glm::mat4 inv_world = glm::inverse(transform.world);
-        const glm::vec3 lo = glm::vec3(inv_world * glm::vec4(origin, 1.0F));
-        const glm::vec3 ld = glm::normalize(glm::vec3(inv_world * glm::vec4(dir, 0.0F)));
-        const float t = ray_aabb(lo, ld, mr.mesh->bounds.min, mr.mesh->bounds.max);
-        if (t < 0.0F) continue;
-        const glm::vec3 hit_world =
-            glm::vec3(transform.world * glm::vec4(lo + ld * t, 1.0F));
-        const float dist = glm::length(hit_world - origin);
-        if (dist < best) {
-            best = dist;
-            hit = e;
-        }
-    }
+    const entt::entity hit = pick_entity(ctx.scene->registry(), origin, dir);
     if (hit != entt::null) selected_ = hit;
 }
 
@@ -391,8 +360,79 @@ void EditorLayer::build_stats_panel(const EditorContext& ctx) {
         ImGui::Text("draws: %d", ctx.draw_count);
         ImGui::Text("entities: %d", ctx.entity_count);
         ImGui::Text("viewport: %ux%u", viewport_width_, viewport_height_);
+        build_shader_status(ctx);
     }
     ImGui::End();
+}
+
+// Shader hot reload (R2): one row per Slang source; failed shaders open by
+// default with the compiler diagnostics (the previous pipeline stays live).
+void EditorLayer::build_shader_status(const EditorContext& ctx) {
+    if (ctx.shader_statuses == nullptr) return;
+    const std::vector<rhi::ShaderStatus>& shaders = *ctx.shader_statuses;
+    std::size_t errors = 0;
+    std::size_t compiling = 0;
+    std::size_t restart = 0;
+    for (const rhi::ShaderStatus& s : shaders) {
+        if (s.state == rhi::ShaderStatus::State::error) ++errors;
+        if (s.state == rhi::ShaderStatus::State::compiling) ++compiling;
+        if (s.state == rhi::ShaderStatus::State::needs_restart) ++restart;
+    }
+    char header[128];
+    std::snprintf(header, sizeof(header), "Shaders (%zu, %zu error%s%s%s)###shaders",
+                  shaders.size(), errors, errors == 1 ? "" : "s", compiling > 0 ? ", compiling" : "",
+                  restart > 0 ? ", restart to apply" : "");
+    if (errors > 0) ImGui::SetNextItemOpen(true, ImGuiCond_Always);
+    if (!ImGui::CollapsingHeader(header)) return;
+
+    const ImVec4 colour_error(1.0F, 0.4F, 0.35F, 1.0F);
+    const ImVec4 colour_ok(0.45F, 0.85F, 0.45F, 1.0F);
+    const ImVec4 colour_busy(0.95F, 0.8F, 0.3F, 1.0F);
+    const ImVec4 colour_restart(0.45F, 0.7F, 1.0F, 1.0F);
+    for (const rhi::ShaderStatus& s : shaders) {
+        ImGui::PushID(s.name.c_str());
+        const std::string_view state = rhi::to_string(s.state);
+        switch (s.state) {
+        case rhi::ShaderStatus::State::error:
+            ImGui::TextColored(colour_error, "%-9.*s", static_cast<int>(state.size()), state.data());
+            break;
+        case rhi::ShaderStatus::State::ok:
+            ImGui::TextColored(colour_ok, "%-9.*s", static_cast<int>(state.size()), state.data());
+            break;
+        case rhi::ShaderStatus::State::compiling:
+            ImGui::TextColored(colour_busy, "%-9.*s", static_cast<int>(state.size()), state.data());
+            break;
+        case rhi::ShaderStatus::State::needs_restart:
+            ImGui::TextColored(colour_restart, "%-9.*s", static_cast<int>(state.size()), state.data());
+            break;
+        case rhi::ShaderStatus::State::cooked:
+            ImGui::TextDisabled("%-9.*s", static_cast<int>(state.size()), state.data());
+            break;
+        }
+        ImGui::SameLine();
+        if (s.reloads > 0) {
+            ImGui::Text("%s  (x%u, %u pipeline%s)", s.name.c_str(), s.reloads, s.pipelines,
+                        s.pipelines == 1 ? "" : "s");
+        } else {
+            ImGui::TextUnformatted(s.name.c_str());
+        }
+        if (!s.message.empty()) {
+            const bool failed = s.state == rhi::ShaderStatus::State::error;
+            if (failed) ImGui::SetNextItemOpen(true, ImGuiCond_Once);
+            const bool restart_note = s.state == rhi::ShaderStatus::State::needs_restart;
+            if (restart_note) ImGui::SetNextItemOpen(true, ImGuiCond_Once);
+            if (ImGui::TreeNode(failed ? "diagnostics" : restart_note ? "not applied" : "warnings")) {
+                ImGui::PushTextWrapPos(0.0F);
+                if (failed) ImGui::PushStyleColor(ImGuiCol_Text, colour_error);
+                ImGui::TextUnformatted(s.message.c_str());
+                if (failed) ImGui::PopStyleColor();
+                ImGui::PopTextWrapPos();
+                if (ImGui::SmallButton("Copy")) ImGui::SetClipboardText(s.message.c_str());
+                ImGui::TreePop();
+            }
+        }
+        ImGui::PopID();
+    }
 }
 
 void EditorLayer::build_ui(const EditorContext& ctx) {
@@ -465,6 +505,8 @@ void EditorLayer::build_ui(const EditorContext& ctx) {
                                anim_state_);
         draw_physics_debug(*ctx.scene, ctx.view_proj, viewport_rect_, physics_state_,
                            ctx.build_navmesh_request, ctx.nav_edges, ctx.nav_status);
+        if (behavior_panel_ == nullptr) behavior_panel_ = std::make_unique<BehaviorPanel>();
+        behavior_panel_->draw(*ctx.scene, selected_);
     }
     if (ctx.renderer != nullptr) {
         draw_renderer_panel(*ctx.renderer, ctx.scene);

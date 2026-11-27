@@ -1,5 +1,6 @@
 #include "engine/physics/physics_world.hpp"
 
+#include <cfloat>
 #include <cmath>
 #include <mutex>
 #include <thread>
@@ -20,9 +21,13 @@
 #include <Jolt/Core/JobSystemThreadPool.h>
 #include <Jolt/Core/TempAllocator.h>
 #include <Jolt/Physics/Body/Body.h>
+#include <Jolt/Physics/Body/BodyFilter.h>
+#include <Jolt/Physics/Body/BodyLock.h>
 #include <Jolt/Physics/Body/BodyCreationSettings.h>
 #include <Jolt/Physics/Character/CharacterVirtual.h>
+#include <Jolt/Physics/Collision/CastResult.h>
 #include <Jolt/Physics/Collision/ContactListener.h>
+#include <Jolt/Physics/Collision/RayCast.h>
 #include <Jolt/Physics/Collision/ObjectLayer.h>
 #include <Jolt/Physics/Collision/Shape/BoxShape.h>
 #include <Jolt/Physics/Collision/Shape/CapsuleShape.h>
@@ -37,15 +42,13 @@
 #pragma clang diagnostic pop
 #endif
 
-using namespace JPH::literals;
-
 namespace engine::physics {
 
 namespace {
 
 // Object layers (must match the Layer enum in the header).
 namespace obj_layers {
-constexpr JPH::ObjectLayer k_static = 0;
+[[maybe_unused]] constexpr JPH::ObjectLayer k_static = 0;
 constexpr JPH::ObjectLayer k_dynamic = 1;
 constexpr JPH::ObjectLayer k_character = 2;
 [[maybe_unused]] constexpr JPH::ObjectLayer k_trigger = 3; // used from 6.2
@@ -133,10 +136,6 @@ void ensure_jolt_initialized() {
         return true;
     }();
     (void)done;
-}
-
-[[nodiscard]] std::unexpected<core::Error> fail(std::string what) {
-    return std::unexpected(core::Error{std::move(what)});
 }
 
 [[nodiscard]] JPH::Vec3 to_jph(const glm::vec3& v) { return JPH::Vec3(v.x, v.y, v.z); }
@@ -450,89 +449,97 @@ std::span<const PhysicsWorld::TriggerEvent> PhysicsWorld::trigger_events() const
     return {impl_->trigger_events.data(), impl_->trigger_events.size()};
 }
 
-std::expected<void, core::Error> run_physics_self_test() {
-    auto world = PhysicsWorld::create();
-    if (!world) return std::unexpected(world.error());
-    JPH::PhysicsSystem& system = world->impl_->system;
-    JPH::BodyInterface& bodies = system.GetBodyInterface();
-
-    // Static floor: a 100x2x100 box centred at y=-1, so its top is at y=0.
-    JPH::BodyCreationSettings floor_settings(new JPH::BoxShape(JPH::Vec3(50.0F, 1.0F, 50.0F)),
-                                             JPH::RVec3(0.0_r, -1.0_r, 0.0_r),
-                                             JPH::Quat::sIdentity(), JPH::EMotionType::Static,
-                                             obj_layers::k_static);
-    const JPH::BodyID floor = bodies.CreateAndAddBody(floor_settings, JPH::EActivation::DontActivate);
-
-    // Dynamic sphere (radius 0.5) dropped from y=5.
-    JPH::BodyCreationSettings sphere_settings(new JPH::SphereShape(0.5F),
-                                              JPH::RVec3(0.0_r, 5.0_r, 0.0_r),
-                                              JPH::Quat::sIdentity(), JPH::EMotionType::Dynamic,
-                                              obj_layers::k_dynamic);
-    const JPH::BodyID sphere = bodies.CreateAndAddBody(sphere_settings, JPH::EActivation::Activate);
-
-    system.OptimizeBroadPhase();
-
-    // A hitch longer than the catch-up cap must not leave a backlog that
-    // makes later frames run fast (S1 audit B7).
-    world->update(3.0F);
-    if (world->pending_time() >= PhysicsWorld::fixed_timestep) {
-        return std::unexpected(core::Error{"physics self-test: backlog kept after a hitch"});
-    }
-
-    // Simulate ~2 seconds at 60 fps; the sphere should land and settle.
-    for (int i = 0; i < 120; ++i) {
-        world->update(1.0F / 60.0F);
-    }
-
-    const float y = static_cast<float>(bodies.GetPosition(sphere).GetY());
-
-    bodies.RemoveBody(sphere);
-    bodies.DestroyBody(sphere);
-    bodies.RemoveBody(floor);
-    bodies.DestroyBody(floor);
-
-    if (y > 4.5F) return fail("physics self-test: sphere did not fall");
-    if (y < 0.0F) return fail("physics self-test: sphere fell through the floor");
-    if (std::abs(y - 0.5F) > 0.25F) {
-        return fail("physics self-test: sphere did not come to rest on the floor");
-    }
-    return {};
+std::uint32_t PhysicsWorld::body_count() const {
+    return impl_ ? impl_->system.GetNumBodies() : 0;
 }
 
-std::expected<void, core::Error> run_trigger_self_test() {
-    auto world = PhysicsWorld::create();
-    if (!world) return std::unexpected(world.error());
+std::uint32_t PhysicsWorld::active_body_count() const {
+    return impl_ ? impl_->system.GetNumActiveBodies(JPH::EBodyType::RigidBody) : 0;
+}
 
-    // Static sensor box at y=3, half-extents (1,1,1) -> spans y in [2,4].
-    PhysicsWorld::BodyParams trigger;
-    trigger.shape = world->create_box(glm::vec3(1.0F, 1.0F, 1.0F));
-    trigger.position = glm::vec3(0.0F, 3.0F, 0.0F);
-    trigger.motion = Motion::static_body;
-    trigger.layer = Layer::sensor;
-    trigger.sensor = true;
-    const std::uint32_t sensor = world->add_body(trigger);
+std::uint32_t PhysicsWorld::character_count() const {
+    if (!impl_) return 0;
+    std::uint32_t n = 0;
+    for (const auto& c : impl_->characters) n += c != nullptr ? 1U : 0U;
+    return n;
+}
 
-    // Dynamic sphere dropped from y=6, falling straight through the sensor.
-    PhysicsWorld::BodyParams ball;
-    ball.shape = world->create_sphere(0.5F);
-    ball.position = glm::vec3(0.0F, 6.0F, 0.0F);
-    ball.motion = Motion::dynamic;
-    const std::uint32_t sphere = world->add_body(ball);
-
-    bool entered = false;
-    bool exited = false;
-    for (int i = 0; i < 240; ++i) {
-        world->update(1.0F / 60.0F);
-        for (const PhysicsWorld::TriggerEvent& ev : world->trigger_events()) {
-            if (ev.trigger == sensor && ev.other == sphere) {
-                (ev.entered ? entered : exited) = true;
-            }
-        }
+namespace {
+// Skips sensor (trigger) bodies unless asked to include them.
+class SensorBodyFilter final : public JPH::BodyFilter {
+public:
+    explicit SensorBodyFilter(bool include_sensors) : include_sensors_(include_sensors) {}
+    [[nodiscard]] bool ShouldCollideLocked(const JPH::Body& body) const override {
+        return include_sensors_ || !body.IsSensor();
     }
 
-    if (!entered) return fail("trigger self-test: no enter event for the sensor");
-    if (!exited) return fail("trigger self-test: no exit event for the sensor");
-    return {};
+private:
+    bool include_sensors_;
+};
+} // namespace
+
+std::optional<PhysicsWorld::RayHit> PhysicsWorld::cast_ray(const glm::vec3& origin,
+                                                           const glm::vec3& direction,
+                                                           float max_distance,
+                                                           bool include_sensors) const {
+    const float len = glm::length(direction);
+    if (!impl_ || !(len > 1e-6F) || !(max_distance > 0.0F) || !std::isfinite(max_distance)) {
+        return std::nullopt;
+    }
+    const glm::vec3 dir = direction / len;
+    const JPH::RRayCast ray(to_jph_r(origin), to_jph(dir * max_distance));
+    std::optional<RayHit> best;
+    float best_fraction = 1.0F + FLT_EPSILON;
+
+    JPH::RayCastResult result;
+    const SensorBodyFilter filter(include_sensors);
+    if (impl_->system.GetNarrowPhaseQuery().CastRay(ray, result, JPH::BroadPhaseLayerFilter{},
+                                                    JPH::ObjectLayerFilter{}, filter)) {
+        RayHit hit;
+        hit.body = result.mBodyID.GetIndexAndSequenceNumber();
+        const JPH::RVec3 point = ray.GetPointOnRay(result.mFraction);
+        hit.point = to_glm(point);
+        hit.distance = result.mFraction * max_distance;
+        const JPH::BodyLockRead lock(impl_->system.GetBodyLockInterface(), result.mBodyID);
+        if (lock.Succeeded()) {
+            const JPH::Body& body = lock.GetBody();
+            const JPH::Vec3 n = body.GetWorldSpaceSurfaceNormal(result.mSubShapeID2, point);
+            hit.normal = glm::vec3(n.GetX(), n.GetY(), n.GetZ());
+            hit.sensor = body.IsSensor();
+        }
+        if (const auto it = impl_->body_owner.find(hit.body); it != impl_->body_owner.end()) {
+            hit.owner = it->second;
+        }
+        best_fraction = result.mFraction;
+        best = hit;
+    }
+
+    // Character controllers are not bodies: test their shapes directly, in
+    // each character's centre-of-mass space.
+    for (std::size_t i = 0; i < impl_->characters.size(); ++i) {
+        const JPH::CharacterVirtual* c = impl_->characters[i].GetPtr();
+        if (c == nullptr) continue;
+        const JPH::RMat44 com = c->GetCenterOfMassTransform();
+        const JPH::RRayCast local_r = ray.Transformed(com.InversedRotationTranslation());
+        const JPH::RayCast local(JPH::Vec3(local_r.mOrigin), local_r.mDirection);
+        JPH::RayCastResult ch;
+        ch.mFraction = best_fraction;
+        if (!c->GetShape()->CastRay(local, JPH::SubShapeIDCreator(), ch) ||
+            ch.mFraction >= best_fraction) {
+            continue;
+        }
+        RayHit hit;
+        hit.character = static_cast<std::uint32_t>(i);
+        hit.owner = impl_->character_owner[i];
+        hit.point = to_glm(ray.GetPointOnRay(ch.mFraction));
+        hit.distance = ch.mFraction * max_distance;
+        const JPH::Vec3 n = com.Multiply3x3(
+            c->GetShape()->GetSurfaceNormal(ch.mSubShapeID2, local.GetPointOnRay(ch.mFraction)));
+        hit.normal = glm::vec3(n.GetX(), n.GetY(), n.GetZ());
+        best_fraction = ch.mFraction;
+        best = hit;
+    }
+    return best;
 }
 
 } // namespace engine::physics

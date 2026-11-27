@@ -1,0 +1,1 @@
+Re-parent an entity (`parent: null` makes it a root entity); returns `{id}`. `keep_world` (default true) keeps it where it is in the world; false keeps its local transform, so it jumps to the same offset relative to the new parent.

@@ -18,9 +18,9 @@
 
 #include "engine/core/error.hpp"
 #include "engine/renderer/cloud_settings.hpp"
-#include "engine/rhi/compute_pipeline.hpp"
 #include "engine/rhi/descriptor_buffer.hpp"
 #include "engine/rhi/gpu_allocator.hpp"
+#include "engine/rhi/managed_pipeline.hpp"
 
 namespace engine::rhi {
 class Device;
@@ -32,6 +32,12 @@ namespace engine::renderer {
 // Prefiltered specular cube mip count. The highest roughness samples lod
 // (mip_count - 1); must match PREFILTER_MAX_LOD in lighting.slang (= 4.0).
 inline constexpr std::uint32_t prefilter_mip_count = 5;
+
+// Edge sizes (texels) of the baked maps: irradiance cube face, prefiltered cube
+// face at mip 0, and the BRDF LUT. DynamicIbl uses the same resolutions.
+inline constexpr std::uint32_t ibl_irradiance_size = 16;
+inline constexpr std::uint32_t ibl_prefilter_size = 128;
+inline constexpr std::uint32_t ibl_brdf_lut_size = 256;
 
 // The precomputed IBL maps the lighting pass samples. Cube sample views for the
 // irradiance + prefiltered maps, a 2D view for the BRDF LUT, and one shared
@@ -104,27 +110,13 @@ private:
     rhi::DescriptorSetLayout       env_layout_;   // b0 storage, b1-2 LUTs, b3 sampler
     rhi::DescriptorSetLayout       conv_layout_;  // b0 sampled, b1 sampler, b2 storage
     rhi::DescriptorSetLayout       lut_layout_;   // b0 storage
-    rhi::ComputePipeline           env_pipeline_;
-    rhi::ComputePipeline           irradiance_pipeline_;
-    rhi::ComputePipeline           prefilter_pipeline_;
-    rhi::ComputePipeline           lut_pipeline_;
+    rhi::ManagedPipeline           env_pipeline_;
+    rhi::ManagedPipeline           irradiance_pipeline_;
+    rhi::ManagedPipeline           prefilter_pipeline_;
+    rhi::ManagedPipeline           lut_pipeline_;
     rhi::Sampler                   env_sampler_;
     rhi::GpuImage                  fallback_lut_;      // 1x1 black for unused LUT slots
     rhi::ImageView                 fallback_lut_view_;
 };
-
-// Self-test: bake the IBL set and verify the BRDF LUT, irradiance, and prefiltered
-// maps hold plausible values (LUT scale in [0,1], irradiance positive and sky-
-// tinted, a mirror reflection matching the sky).
-[[nodiscard]] std::expected<void, core::Error>
-run_ibl_self_test(const rhi::Device& device, rhi::GpuAllocator& allocator,
-                  rhi::PipelineCache& cache, const std::string& cooked_shader_dir);
-
-// Test/debug helper shared with the dynamic-IBL self-test: blocking copy of one
-// (mip, layer) subresource of an RGBA16F image (in SHADER_READ_ONLY_OPTIMAL)
-// into host floats, RGBA per texel. Restores the sampled layout afterwards.
-[[nodiscard]] std::expected<std::vector<float>, core::Error>
-read_rgba16f_subresource(const rhi::Device& device, rhi::GpuAllocator& allocator, VkImage image,
-                         std::uint32_t mip, std::uint32_t layer, std::uint32_t w, std::uint32_t h);
 
 } // namespace engine::renderer

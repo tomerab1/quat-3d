@@ -25,7 +25,7 @@ struct BakeParams {
 }
 [[vk::push_constant]] BakeParams pc;
 
-[[vk::binding(0)]] RWTexture2DArray<float4> g_out; // 6-layer cube as a 2D array
+[[vk::binding(0)]] [format("rgba16f")] RWTexture2DArray<float4> g_out; // 6-layer cube as a 2D array
 [[vk::binding(1)]] Texture2D    g_skyview;         // atmosphere LUTs (may be fallbacks)
 [[vk::binding(2)]] Texture2D    g_transmittance;
 [[vk::binding(3)]] SamplerState g_samp;

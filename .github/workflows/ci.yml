@@ -9,9 +9,12 @@ on:
   pull_request:
   workflow_dispatch:
 
+# A running build is never cancelled: a new push waits for it (GitHub keeps
+# only the newest pending run per group), so every build finishes even while
+# commits land frequently.
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 # Toolchain pins (vcpkg baseline, Slang, Vulkan SDK) live in the shared
 # .github/actions/setup-build action, also used by release.yml.
@@ -193,7 +196,8 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        # Same version as tools/quat-mcp/rust-toolchain.toml.
+        uses: dtolnay/rust-toolchain@1.97.0
         with:
           components: rustfmt, clippy
 

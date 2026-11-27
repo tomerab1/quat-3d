@@ -2,6 +2,7 @@
 
 #include <cstdio>
 #include <fstream>
+#include <limits>
 #include <optional>
 #include <set>
 #include <string>
@@ -31,6 +32,22 @@ constexpr int k_scene_version = 2;
     return std::unexpected(core::Error{std::move(what)});
 }
 
+// Scene-file defaults for component fields newer than the files they may be
+// missing from. The codec's defaults describe a newly created component; a
+// field absent from a file means "whatever the build that saved it did", so
+// the file loads exactly as before:
+//   terrain.erosion — files predating R10.2 eroded with droplets (new
+//                     terrains default to the GPU-capable grid model);
+//   terrain.gpu     — off unless the file says so: GPU synthesis matches the
+//                     CPU generator to float rounding, not bit for bit.
+[[nodiscard]] json with_file_defaults(std::string_view key, const json& value) {
+    if (key != "terrain" || !value.is_object()) return value;
+    json patched = value;
+    if (!patched.contains("erosion")) patched["erosion"] = "droplets";
+    if (!patched.contains("gpu")) patched["gpu"] = false;
+    return patched;
+}
+
 // Entity-level keys handled by scene_io itself; every other key is a
 // component decoded by the shared codec.
 [[nodiscard]] bool is_entity_key(std::string_view key) {
@@ -41,7 +58,14 @@ struct MeshRef {
     std::string mesh_key;
     std::string material_key;
     std::string gltf;
+    int         node = -1; // glTF node that instanced the mesh (absent in older files)
 };
+
+// Harvest key for a glTF-instanced primitive's skin: the mesh key alone is
+// shared by every node instancing the mesh (audit C12).
+[[nodiscard]] std::string skin_key(const std::string& mesh_key, int node) {
+    return mesh_key + "@node" + std::to_string(node);
+}
 
 // Validated view of one file entity (before anything touches a scene).
 struct FileEntity {
@@ -78,6 +102,7 @@ struct FileEntity {
             MeshRef ref;
             mf.string("mesh_key", ref.mesh_key, 4096).string("material_key", ref.material_key, 4096);
             mf.string("gltf", ref.gltf, 4096);
+            mf.integer("node", ref.node, -1, std::numeric_limits<int>::max());
             if (auto ok = mf.finish(); !ok) return std::unexpected(ok.error());
             fe.mesh = std::move(ref);
         }
@@ -119,6 +144,7 @@ std::expected<void, core::Error> save_scene(const Scene& scene,
             je["mesh"] = {{"mesh_key", src->mesh_key},
                           {"material_key", src->material_key},
                           {"gltf", src->gltf_path}};
+            if (src->gltf_node >= 0) je["mesh"]["node"] = src->gltf_node;
         }
         entities.push_back(std::move(je));
     }
@@ -158,11 +184,16 @@ load_scene(Scene& scene, const std::filesystem::path& path, rhi::GpuAllocator& a
     }
     // The scene file does not persist SkinnedMesh/Animator (asset handles are
     // not serializable); harvest them from the scratch instantiation instead,
-    // keyed by primitive mesh key, and re-attach below. root_transform is
-    // entity-relative, so the copied value is valid wherever the saved entity
-    // ended up.
-    std::unordered_map<std::string, SkinnedMesh> skin_by_mesh_key;
-    std::unordered_map<std::string, Animator> animator_by_mesh_key;
+    // keyed by (primitive mesh key, instancing node), and re-attach below.
+    // root_transform is entity-relative, so the copied value is valid wherever
+    // the saved entity ended up. Files saved before the node was recorded fall
+    // back to the first node instancing the mesh.
+    struct SkinRef {
+        SkinnedMesh             skin;
+        std::optional<Animator> animator;
+    };
+    std::unordered_map<std::string, SkinRef> skin_by_node;
+    std::unordered_map<std::string, SkinRef> skin_by_mesh_key;
     for (const std::string& p : gltf_paths) {
         Scene scratch;
         if (auto roots = GltfLoader::instantiate(p, allocator, transfer, assets, scratch);
@@ -171,12 +202,13 @@ load_scene(Scene& scene, const std::filesystem::path& path, rhi::GpuAllocator& a
         }
         for (auto [se, ssrc, sskin] :
              scratch.registry().view<MeshSource, SkinnedMesh>().each()) {
-            SkinnedMesh copy = sskin;
-            copy.joint_matrices.clear(); // rewritten by the animation system
-            skin_by_mesh_key.emplace(ssrc.mesh_key, std::move(copy));
+            SkinRef ref{sskin, std::nullopt};
+            ref.skin.joint_matrices.clear(); // rewritten by the animation system
             if (const auto* sanim = scratch.registry().try_get<Animator>(se)) {
-                animator_by_mesh_key.emplace(ssrc.mesh_key, *sanim);
+                ref.animator = *sanim;
             }
+            skin_by_node.emplace(skin_key(ssrc.mesh_key, ssrc.gltf_node), ref);
+            skin_by_mesh_key.emplace(ssrc.mesh_key, std::move(ref));
         }
     }
 
@@ -198,14 +230,17 @@ load_scene(Scene& scene, const std::filesystem::path& path, rhi::GpuAllocator& a
                              key.c_str());
                 continue;
             }
-            if (auto ok = apply_component(r, e, key, value, /*strict=*/false); !ok) {
+            if (auto ok = apply_component(r, e, key, with_file_defaults(key, value),
+                                          /*strict=*/false);
+                !ok) {
                 return fail("load_scene: '" + path.string() + "': entities[" + std::to_string(i) +
                             "]: " + ok.error().message);
             }
         }
         if (auto* t = r.try_get<Terrain>(e)) t->regenerate = true; // rebuild on load
         if (fe.mesh) {
-            MeshSource src{fe.mesh->mesh_key, fe.mesh->material_key, fe.mesh->gltf};
+            MeshSource src{fe.mesh->mesh_key, fe.mesh->material_key, fe.mesh->gltf,
+                           fe.mesh->node};
             // Cache-only lookups: get() never creates a slot, so a missing key
             // cannot leave a permanently failed entry behind (audit C16).
             MeshRenderer mr;
@@ -222,13 +257,20 @@ load_scene(Scene& scene, const std::filesystem::path& path, rhi::GpuAllocator& a
             }
             r.emplace<MeshRenderer>(e, std::move(mr));
             // Re-adopt the skin/animator this primitive carries in its source
-            // glTF (see the scratch harvest above).
-            if (auto it = skin_by_mesh_key.find(src.mesh_key); it != skin_by_mesh_key.end()) {
-                r.emplace<SkinnedMesh>(e, it->second);
-                if (auto ai = animator_by_mesh_key.find(src.mesh_key);
-                    ai != animator_by_mesh_key.end()) {
-                    r.emplace<Animator>(e, ai->second);
+            // glTF (see the scratch harvest above): the instancing node's own.
+            const SkinRef* skin = nullptr;
+            if (src.gltf_node >= 0) {
+                if (auto it = skin_by_node.find(skin_key(src.mesh_key, src.gltf_node));
+                    it != skin_by_node.end()) {
+                    skin = &it->second;
                 }
+            } else if (auto it = skin_by_mesh_key.find(src.mesh_key);
+                       it != skin_by_mesh_key.end()) {
+                skin = &it->second;
+            }
+            if (skin != nullptr) {
+                r.emplace<SkinnedMesh>(e, skin->skin);
+                if (skin->animator) r.emplace<Animator>(e, *skin->animator);
             }
             r.emplace<MeshSource>(e, std::move(src));
         }

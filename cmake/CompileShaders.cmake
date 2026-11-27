@@ -11,6 +11,9 @@
 #     its consumers.
 # A single custom target gathers all outputs so it can be a build dependency of
 # the executable.
+#
+# Shader hot reload (src/rhi/shader_compiler.cpp, ShaderCompiler::arguments)
+# runs slangc with these exact flags at runtime — keep the two in sync.
 
 find_program(SLANGC_EXECUTABLE slangc REQUIRED)
 

@@ -36,12 +36,17 @@
 //   near_point {x, y, z, range}    condition: entity within range of the point.
 //   near_camera{range}             condition: within range of the viewer (the
 //                                  perception input; see BtWorld).
+//
+// The root object may also carry an "editor" field (the visual editor's node
+// ids and layout, see src/editor/bt_graph.hpp); the runtime ignores it.
 
 #include <cstdint>
 #include <expected>
 #include <functional>
+#include <limits>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -95,9 +100,57 @@ struct BtLeaf {
 using BtLeafFactory = std::function<std::expected<BtLeaf, core::Error>(core::JsonFields&)>;
 using BtLeafFactories = std::unordered_map<std::string, BtLeafFactory>;
 
+// Root-level field the runtime ignores (editor metadata: node ids, layout).
+inline constexpr std::string_view bt_editor_field = "editor";
+// Deepest nesting a tree may have (the root is depth 0).
+inline constexpr int bt_max_depth = 64;
+
+// ---------------------------------------------------------------------------
+// Leaf parameter reflection for tools (the visual editor): what each built-in
+// leaf reads from its JSON node, with defaults and accepted ranges. The
+// built-in factories bind their parameters through this table, so it is the
+// single source of truth and tools never hardcode leaf parameters.
+// ---------------------------------------------------------------------------
+
+// JSON type a parameter accepts (the built-in leaves only take numbers).
+enum class BtParamType : std::uint8_t { number };
+
+struct BtParamInfo {
+    std::string_view name;
+    BtParamType      type = BtParamType::number;
+    float            default_value = 0.0F; // used when the field is absent
+    float            min = std::numeric_limits<float>::lowest();
+    float            max = std::numeric_limits<float>::max();
+    // Absence means something other than the default (move_to without `y`
+    // snaps its target to the ground), so tools must be able to omit it.
+    bool             optional = false;
+    std::string_view help;
+};
+
+struct BtLeafInfo {
+    std::string_view             name;
+    std::string_view             help;
+    std::span<const BtParamInfo> params;
+
+    [[nodiscard]] const BtParamInfo* find_param(std::string_view param) const {
+        for (const BtParamInfo& p : params) {
+            if (p.name == param) return &p;
+        }
+        return nullptr;
+    }
+};
+
+// The built-in leaves (move_to, wait, near_point, near_camera) in a stable
+// display order.
+[[nodiscard]] std::span<const BtLeafInfo> bt_builtin_leaf_info();
+// The built-in leaf called `name`, or null.
+[[nodiscard]] const BtLeafInfo* bt_find_leaf_info(std::string_view name);
+
 class BehaviorTreeAsset {
 public:
     // Parses {"type": <composite>|"leaf", "name":..., "children":[...], ...}.
+    // Nodes are stored depth-first pre-order (root, then each child's subtree
+    // in order); tools map their nodes onto node_state by that order.
     // Unknown leaf names fail here, not at tick time. `extra_leaves` adds (or
     // overrides) leaf types beyond the built-ins (game code, tests).
     [[nodiscard]] static std::expected<std::shared_ptr<const BehaviorTreeAsset>, core::Error>
@@ -106,6 +159,10 @@ public:
     enum class Kind : std::uint8_t {
         sequence, selector, reactive_sequence, reactive_selector, inverter, leaf
     };
+    // The JSON "type" spelling of each kind ("leaf" for leaves), and back.
+    [[nodiscard]] static std::string_view kind_name(Kind kind);
+    [[nodiscard]] static std::optional<Kind> kind_from_name(std::string_view name);
+
     struct Node {
         Kind                       kind = Kind::leaf;
         BtLeaf                     leaf;     // leaf nodes only
@@ -118,6 +175,20 @@ public:
 private:
     std::vector<Node> nodes_;
 };
+
+// Node kinds for tools (the visual editor, the remote bt.leaves method): the
+// JSON "type" spelling, how many children each takes, and what it does.
+struct BtKindInfo {
+    BehaviorTreeAsset::Kind kind = BehaviorTreeAsset::Kind::leaf;
+    std::string_view        name;
+    int                     min_children = 0;
+    int                     max_children = 0; // -1: no limit
+    std::string_view        help;
+};
+
+// Every kind: the composites in a stable display order, then "leaf".
+[[nodiscard]] std::span<const BtKindInfo> bt_kind_info();
+[[nodiscard]] const BtKindInfo& bt_find_kind_info(BehaviorTreeAsset::Kind kind);
 
 // Tick one tree once: `bt.compiled` must be set (node_state is sized to it on
 // first use). Returns the root's status. Exposed for tests and tools;

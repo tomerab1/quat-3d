@@ -1,0 +1,1 @@
+Bake the navigation mesh from the current static geometry and terrain (needed before `nav_agent` / patrol entities can walk); returns `{polygons}`. Re-bake after moving static geometry. Can take a few seconds on large terrain.

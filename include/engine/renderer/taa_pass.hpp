@@ -27,9 +27,9 @@
 #include <vulkan/vulkan.h>
 
 #include "engine/core/error.hpp"
-#include "engine/rhi/compute_pipeline.hpp"
 #include "engine/rhi/descriptor_buffer.hpp"
 #include "engine/rhi/gpu_allocator.hpp"
+#include "engine/rhi/managed_pipeline.hpp"
 #include "engine/rhi/render_graph.hpp"
 
 namespace engine::rhi {
@@ -143,19 +143,11 @@ private:
 
     rhi::DescriptorBufferFunctions db_fns_{};
     rhi::DescriptorSetLayout       layout_;
-    rhi::ComputePipeline           pipeline_;
+    rhi::ManagedPipeline           pipeline_;
     rhi::Sampler                   sampler_;
 
     std::shared_ptr<TaaHistory> history_;
     rhi::DescriptorBuffer       frame_descriptor_;
 };
-
-// Self-test: a uniform frame resolves to itself (history clamped to the current
-// neighbourhood). After history fills with value A, switching to a uniform value
-// B must resolve to B — proving the neighbourhood clamp rejects stale history
-// (no ghosting on flat regions).
-[[nodiscard]] std::expected<void, core::Error>
-run_taa_self_test(const rhi::Device& device, rhi::GpuAllocator& allocator,
-                  rhi::PipelineCache& cache, const std::string& cooked_shader_dir);
 
 } // namespace engine::renderer

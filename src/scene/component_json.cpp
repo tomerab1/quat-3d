@@ -5,12 +5,14 @@
 
 #include <array>
 #include <cmath>
+#include <filesystem>
 #include <string>
 #include <utility>
 
 #include <entt/entity/registry.hpp>
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
+#include <glm/gtc/quaternion.hpp>
 #include <glm/gtx/euler_angles.hpp>
 #include <nlohmann/json.hpp>
 
@@ -29,6 +31,8 @@ using core::JsonFields;
 constexpr std::array k_components = {
     ComponentInfo{"transform", "Local position / rotation (Euler degrees, YXZ) / scale", false, true},
     ComponentInfo{"primitive", "Procedural shape (cube, sphere, plane, cylinder, cone, capsule) with a PBR colour", true, true},
+    ComponentInfo{"instanced_mesh", "Many placements of one model (glTF or primitive shape), drawn instanced", true, true},
+    ComponentInfo{"scatter", "Seeded procedural placement of the entity's instanced mesh on the terrain", true, true},
     ComponentInfo{"point_light", "Point light at the entity position", true, true},
     ComponentInfo{"dir_light", "Directional light (the sun)", true, true},
     ComponentInfo{"camera", "Perspective camera", true, true},
@@ -39,6 +43,7 @@ constexpr std::array k_components = {
     ComponentInfo{"behavior", "Behaviour tree (JSON source)", true, true},
     ComponentInfo{"patrol", "Patrol route the nav agent walks", true, true},
     ComponentInfo{"terrain", "Procedural terrain tile / streamed world", true, true},
+    ComponentInfo{"grass", "GPU-generated, wind-animated grass around the camera", true, true},
     ComponentInfo{"net_replicated", "Replicate this entity's transform to network clients", true, true},
     ComponentInfo{"audio_source", "Sound emitter: wav/flac/mp3 clip on a bus, optionally 3D", true, true},
     ComponentInfo{"audio_listener", "The audio listener follows this entity (else the camera)", true, true},
@@ -57,10 +62,18 @@ constexpr EnumName<PrimitiveShape> k_primitive_shapes[] = {
     {"plane", PrimitiveShape::plane},       {"cylinder", PrimitiveShape::cylinder},
     {"cone", PrimitiveShape::cone},         {"capsule", PrimitiveShape::capsule}};
 
+constexpr EnumName<ScatterArea> k_scatter_areas[] = {{"rect", ScatterArea::rect},
+                                                     {"circle", ScatterArea::circle}};
+constexpr EnumName<ScatterPattern> k_scatter_patterns[] = {
+    {"poisson", ScatterPattern::poisson}, {"jittered_grid", ScatterPattern::jittered_grid}};
+constexpr std::size_t k_max_asset_path = 4096;
+
 constexpr EnumName<audio::AudioBus> k_audio_buses[] = {
     {"master", audio::AudioBus::master}, {"music", audio::AudioBus::music},
     {"sfx", audio::AudioBus::sfx},       {"ui", audio::AudioBus::ui},
     {"ambience", audio::AudioBus::ambience}};
+constexpr EnumName<terrain::ErosionModel> k_erosion_models[] = {
+    {"droplets", terrain::ErosionModel::droplets}, {"grid", terrain::ErosionModel::grid}};
 constexpr EnumName<AudioCommand> k_audio_commands[] = {
     {"none", AudioCommand::none}, {"play", AudioCommand::play}, {"stop", AudioCommand::stop},
     {"pause", AudioCommand::pause}, {"resume", AudioCommand::resume}};
@@ -192,6 +205,166 @@ void read_color(JsonFields& f, std::string_view key, glm::vec4& out) {
     out = c;
 }
 
+// ---- Instanced meshes ---------------------------------------------------
+
+constexpr std::size_t k_max_instances = 100'000;
+
+[[nodiscard]] json encode_instance(const InstanceTransform& t) {
+    float yaw = 0.0F;
+    float pitch = 0.0F;
+    float roll = 0.0F;
+    glm::extractEulerAngleYXZ(glm::mat4_cast(t.rotation), yaw, pitch, roll);
+    json out = {{"position", vec3_json(t.position)},
+                {"rotation", vec3_json(glm::degrees(glm::vec3(pitch, yaw, roll)))}};
+    if (t.scale.x == t.scale.y && t.scale.x == t.scale.z) {
+        out["scale"] = t.scale.x;
+    } else {
+        out["scale"] = vec3_json(t.scale);
+    }
+    return out;
+}
+
+// One placement: {position, rotation (Euler degrees, YXZ), scale (number or
+// [x, y, z])} with identity defaults, or a bare [x, y, z] position.
+[[nodiscard]] std::expected<InstanceTransform, core::Error>
+decode_instance(const json& v, const std::string& where, bool strict) {
+    InstanceTransform t;
+    if (v.is_array()) {
+        if (!JsonFields::read_vec3(v, t.position)) {
+            return std::unexpected(core::Error{where + ": expected [x, y, z] or an object"});
+        }
+        return t;
+    }
+    JsonFields f(v, where, strict);
+    glm::vec3 rotation_deg(0.0F);
+    f.vec3("position", t.position).vec3("rotation", rotation_deg);
+    f.known({"scale"});
+    if (const json* sc = f.raw("scale")) {
+        float uniform = 0.0F;
+        if (JsonFields::read_float(*sc, uniform)) {
+            t.scale = glm::vec3(uniform);
+        } else if (!JsonFields::read_vec3(*sc, t.scale)) {
+            f.fail("scale", "expected a number or [x, y, z]");
+        }
+    }
+    if (auto ok = f.finish(); !ok) return std::unexpected(ok.error());
+    if (glm::any(glm::lessThan(glm::abs(t.scale), glm::vec3(1e-6F)))) {
+        return std::unexpected(core::Error{where + ".scale: components must be non-zero"});
+    }
+    const glm::vec3 r = glm::radians(rotation_deg);
+    t.rotation = glm::normalize(glm::quat_cast(glm::eulerAngleYXZ(r.y, r.x, r.z)));
+    return t;
+}
+
+// Asset paths in components are relative to the project root and may not
+// climb out of it (remote clients write them).
+void check_project_path(JsonFields& f, std::string_view key, const std::string& path) {
+    if (path.empty()) return;
+    const std::filesystem::path p(path);
+    bool climbs = false;
+    for (const auto& part : p) climbs = climbs || part == "..";
+    if (path.find('\0') != std::string::npos || p.is_absolute() || p.has_root_name() ||
+        p.has_root_directory() || climbs) {
+        f.fail(key, "expected a path relative to the project root (no '..')");
+    }
+}
+
+// Reads a [min, max] pair within [lo, hi] (min <= max).
+void read_range(JsonFields& f, std::string_view key, glm::vec2& out, float lo, float hi) {
+    f.known({key});
+    const json* v = f.raw(key);
+    if (v == nullptr || v->is_null()) return;
+    glm::vec2 r{};
+    const bool ok = v->is_array() && v->size() == 2 && JsonFields::read_float((*v)[0], r.x) &&
+                    JsonFields::read_float((*v)[1], r.y) && r.x >= lo && r.y <= hi && r.x <= r.y;
+    if (!ok) {
+        const auto trim = [](float x) {
+            std::string t = std::to_string(x);
+            while (t.size() > 1 && t.back() == '0') t.pop_back();
+            if (!t.empty() && t.back() == '.') t.pop_back();
+            return t;
+        };
+        f.fail(key, "expected [min, max] with " + trim(lo) + " <= min <= max <= " + trim(hi));
+        return;
+    }
+    out = r;
+}
+
+// The shape + flat material fields shared by `primitive` and `instanced_mesh`.
+void read_primitive_fields(JsonFields& f, Primitive& p) {
+    f.enumeration("shape", p.shape, k_primitive_shapes);
+    f.known({"color"});
+    read_color(f, "color", p.color);
+    f.number("metallic", p.metallic, 0.0F, 1.0F).number("roughness", p.roughness, 0.0F, 1.0F);
+    f.color3("emissive", p.emissive);
+}
+
+[[nodiscard]] json primitive_fields_json(const Primitive& p) {
+    return {{"shape", enum_name(k_primitive_shapes, p.shape)},
+            {"color", vec4_json(p.color)},
+            {"metallic", p.metallic},
+            {"roughness", p.roughness},
+            {"emissive", vec3_json(p.emissive)}};
+}
+
+// ---- Grass ---------------------------------------------------------------
+
+[[nodiscard]] json range_json(const glm::vec2& r) { return json::array({r.x, r.y}); }
+
+[[nodiscard]] json encode_grass(const renderer::GrassSettings& g) {
+    return {{"seed", g.seed},
+            {"density", g.density},
+            {"radius", g.radius},
+            {"blade_height", range_json(g.height_range)},
+            {"blade_width", range_json(g.width_range)},
+            {"base_color", vec3_json(g.base_color)},
+            {"tip_color", vec3_json(g.tip_color)},
+            {"wind_strength", g.wind_strength},
+            {"wind_direction", range_json(g.wind_direction)},
+            {"wind_frequency", g.wind_frequency},
+            {"slope", range_json(g.slope_deg)},
+            {"height", range_json(g.height_m)},
+            {"terrain_only", g.terrain_only},
+            {"ground_y", g.ground_y},
+            {"lod_start", g.lod_start},
+            {"far_density", g.far_density}};
+}
+
+// "#rrggbb" (sRGB) or linear [r, g, b] in 0..1.
+void read_color3(JsonFields& f, std::string_view key, glm::vec3& out) {
+    f.known({key});
+    glm::vec4 c(out, 1.0F);
+    read_color(f, key, c);
+    out = glm::vec3(c);
+}
+
+void decode_grass(JsonFields& f, renderer::GrassSettings& g) {
+    f.integer("seed", g.seed, 0, 0xFFFFFFFFLL);
+    f.number("density", g.density, 0.0F, 1000.0F).number("radius", g.radius, 0.0F, 500.0F);
+    read_range(f, "blade_height", g.height_range, 0.01F, 5.0F);
+    read_range(f, "blade_width", g.width_range, 0.001F, 0.5F);
+    read_color3(f, "base_color", g.base_color);
+    read_color3(f, "tip_color", g.tip_color);
+    f.number("wind_strength", g.wind_strength, 0.0F, 4.0F);
+    f.number("wind_frequency", g.wind_frequency, 0.0F, 10.0F);
+    f.known({"wind_direction"});
+    if (const json* w = f.raw("wind_direction"); w != nullptr && !w->is_null()) {
+        glm::vec2 d{};
+        if (w->is_array() && w->size() == 2 && JsonFields::read_float((*w)[0], d.x) &&
+            JsonFields::read_float((*w)[1], d.y) && glm::length(d) > 1e-6F) {
+            const float len = glm::length(d); // already-unit input round-trips exactly
+            g.wind_direction = std::abs(len - 1.0F) < 1e-6F ? d : d / len;
+        } else {
+            f.fail("wind_direction", "expected a non-zero [x, z] direction");
+        }
+    }
+    read_range(f, "slope", g.slope_deg, 0.0F, 90.0F);
+    read_range(f, "height", g.height_m, -100000.0F, 100000.0F);
+    f.boolean("terrain_only", g.terrain_only);
+    f.number("ground_y", g.ground_y, -100000.0F, 100000.0F);
+    f.number("lod_start", g.lod_start, 0.0F, 1.0F).number("far_density", g.far_density, 0.0F, 1.0F);
+}
+
 // ---- Merge helper --------------------------------------------------------
 
 template <typename T, typename Decode>
@@ -268,12 +441,38 @@ json encode_components(const entt::registry& r, entt::entity e, const EncodeOpti
     if (const auto* t = r.try_get<Transform>(e)) {
         out["transform"] = encode_transform(*t, options.transform_as_matrix);
     }
-    if (const auto* p = r.try_get<Primitive>(e)) {
-        out["primitive"] = {{"shape", enum_name(k_primitive_shapes, p->shape)},
-                            {"color", vec4_json(p->color)},
-                            {"metallic", p->metallic},
-                            {"roughness", p->roughness},
-                            {"emissive", vec3_json(p->emissive)}};
+    if (const auto* p = r.try_get<Primitive>(e)) out["primitive"] = primitive_fields_json(*p);
+    if (const auto* m = r.try_get<InstancedMesh>(e)) {
+        json j = primitive_fields_json(m->primitive);
+        j["gltf"] = m->gltf_path;
+        j["node"] = m->gltf_node;
+        j["cast_shadows"] = m->cast_shadows;
+        j["instance_count"] = m->instances.size();
+        // A scatter regenerates the placements: they are derived data, not
+        // part of the entity's description (and can number in the tens of
+        // thousands).
+        if (!r.all_of<Scatter>(e)) {
+            json list = json::array();
+            for (const InstanceTransform& t : m->instances) list.push_back(encode_instance(t));
+            j["instances"] = std::move(list);
+        }
+        out["instanced_mesh"] = std::move(j);
+    }
+    if (const auto* sc = r.try_get<Scatter>(e)) {
+        out["scatter"] = {{"seed", sc->seed},
+                          {"area", enum_name(k_scatter_areas, sc->area)},
+                          {"size", json::array({sc->size.x, sc->size.y})},
+                          {"radius", sc->radius},
+                          {"density", sc->density},
+                          {"min_spacing", sc->min_spacing},
+                          {"pattern", enum_name(k_scatter_patterns, sc->pattern)},
+                          {"scale", json::array({sc->scale_range.x, sc->scale_range.y})},
+                          {"random_yaw", sc->random_yaw},
+                          {"align_to_normal", sc->align_to_normal},
+                          {"base_offset", sc->base_offset},
+                          {"slope", json::array({sc->slope_deg.x, sc->slope_deg.y})},
+                          {"height", json::array({sc->height_m.x, sc->height_m.y})},
+                          {"max_instances", sc->max_instances}};
     }
     if (const auto* l = r.try_get<PointLight>(e)) {
         out["point_light"] = {{"color", vec3_json(l->color)},
@@ -327,11 +526,15 @@ json encode_components(const entt::registry& r, entt::entity e, const EncodeOpti
                           {"height", t->params.height_m},
                           {"octaves", t->params.octaves},
                           {"warp", t->params.warp_strength},
+                          {"erosion", enum_name(k_erosion_models, t->params.erosion_model)},
                           {"droplets", t->params.erosion_droplets},
+                          {"erosion_steps", t->params.grid.iterations},
                           {"snowline", t->snowline_m},
                           {"streaming", t->streaming},
-                          {"stream_radius", t->stream_radius}};
+                          {"stream_radius", t->stream_radius},
+                          {"gpu", t->gpu_generate}};
     }
+    if (const auto* g = r.try_get<Grass>(e)) out["grass"] = encode_grass(g->settings);
     if (const auto* n = r.try_get<NetReplicated>(e)) out["net_replicated"] = {{"net_id", n->net_id}};
     if (const auto* a = r.try_get<AudioSource>(e)) {
         out["audio_source"] = {{"clip", a->clip},
@@ -355,6 +558,7 @@ json encode_components(const entt::registry& r, entt::entity e, const EncodeOpti
             out["mesh"] = {{"mesh_key", m->mesh_key},
                            {"material_key", m->material_key},
                            {"gltf", m->gltf_path}};
+            if (m->gltf_node >= 0) out["mesh"]["node"] = m->gltf_node;
         }
     }
     return out;
@@ -369,6 +573,8 @@ std::vector<std::string_view> component_names(const entt::registry& r, entt::ent
     };
     add(r.all_of<Transform>(e), "transform");
     add(r.all_of<Primitive>(e), "primitive");
+    add(r.all_of<InstancedMesh>(e), "instanced_mesh");
+    add(r.all_of<Scatter>(e), "scatter");
     add(r.all_of<PointLight>(e), "point_light");
     add(r.all_of<DirectionalLight>(e), "dir_light");
     add(r.all_of<Camera>(e), "camera");
@@ -379,7 +585,10 @@ std::vector<std::string_view> component_names(const entt::registry& r, entt::ent
     add(r.all_of<BehaviorTree>(e), "behavior");
     add(r.all_of<PatrolRoute>(e), "patrol");
     add(r.all_of<Terrain>(e), "terrain");
+    add(r.all_of<Grass>(e), "grass");
     add(r.all_of<NetReplicated>(e), "net_replicated");
+    add(r.all_of<AudioSource>(e), "audio_source");
+    add(r.all_of<AudioListener>(e), "audio_listener");
     add(r.all_of<Animator>(e), "animator");
     add(include_read_only && r.all_of<MeshSource>(e), "mesh");
     return out;
@@ -410,14 +619,75 @@ std::expected<void, core::Error> apply_component(entt::registry& r, entt::entity
     }
     if (name == "primitive") {
         auto ok = merge<Primitive>(r, e, v, name, strict, [](JsonFields& f, Primitive& p) {
-            f.enumeration("shape", p.shape, k_primitive_shapes);
-            read_color(f, "color", p.color);
-            f.number("metallic", p.metallic, 0.0F, 1.0F).number("roughness", p.roughness, 0.0F, 1.0F);
-            f.color3("emissive", p.emissive);
+            read_primitive_fields(f, p);
             p.resolved = 0; // rebuild the MeshRenderer
         });
         if (ok) r.remove<MeshSource>(e); // the primitive is now the mesh's provenance
         return ok;
+    }
+    if (name == "instanced_mesh") {
+        const bool scattered = r.all_of<Scatter>(e);
+        return merge<InstancedMesh>(r, e, v, name, strict, [&](JsonFields& f, InstancedMesh& m) {
+            read_primitive_fields(f, m.primitive);
+            f.string("gltf", m.gltf_path, k_max_asset_path).string("node", m.gltf_node, 1024);
+            check_project_path(f, "gltf", m.gltf_path);
+            f.boolean("cast_shadows", m.cast_shadows);
+            f.known({"instance_count", "instances"});
+            (void)f.raw("instance_count"); // echoed back by encode; ignored on input
+            const json* list = f.raw("instances");
+            if (list == nullptr || list->is_null()) return;
+            if (scattered) {
+                f.fail("instances", "generated by the entity's scatter (remove the scatter to "
+                                    "place instances by hand)");
+                return;
+            }
+            if (!list->is_array() || list->size() > k_max_instances) {
+                f.fail("instances", "expected an array of at most " +
+                                        std::to_string(k_max_instances) + " placements");
+                return;
+            }
+            std::vector<InstanceTransform> placed;
+            placed.reserve(list->size());
+            for (std::size_t i = 0; i < list->size(); ++i) {
+                auto t = decode_instance((*list)[i],
+                                         "instanced_mesh.instances[" + std::to_string(i) + "]",
+                                         strict);
+                if (!t) {
+                    f.fail("instances", t.error().message);
+                    return;
+                }
+                placed.push_back(*t);
+            }
+            m.instances = std::move(placed);
+        });
+    }
+    if (name == "scatter") {
+        return merge<Scatter>(r, e, v, name, strict, [](JsonFields& f, Scatter& s) {
+            f.integer("seed", s.seed, 0, 0xFFFFFFFFLL);
+            f.enumeration("area", s.area, k_scatter_areas);
+            f.known({"size"});
+            if (const json* sz = f.raw("size"); sz != nullptr && !sz->is_null()) {
+                glm::vec2 size{};
+                if (sz->is_array() && sz->size() == 2 && JsonFields::read_float((*sz)[0], size.x) &&
+                    JsonFields::read_float((*sz)[1], size.y) && size.x >= 0.0F && size.y >= 0.0F &&
+                    size.x <= 20000.0F && size.y <= 20000.0F) {
+                    s.size = size;
+                } else {
+                    f.fail("size", "expected [x, z] in metres, each in [0, 20000]");
+                }
+            }
+            f.number("radius", s.radius, 0.0F, 10000.0F);
+            f.number("density", s.density, 0.0F, 100.0F);
+            f.number("min_spacing", s.min_spacing, 0.0F, 1000.0F);
+            f.enumeration("pattern", s.pattern, k_scatter_patterns);
+            read_range(f, "scale", s.scale_range, 0.001F, 1000.0F);
+            f.boolean("random_yaw", s.random_yaw);
+            f.number("align_to_normal", s.align_to_normal, 0.0F, 1.0F);
+            f.number("base_offset", s.base_offset, -1000.0F, 1000.0F);
+            read_range(f, "slope", s.slope_deg, 0.0F, 90.0F);
+            read_range(f, "height", s.height_m, -100000.0F, 100000.0F);
+            f.integer("max_instances", s.max_instances, 0, static_cast<std::int64_t>(k_max_instances));
+        });
     }
     if (name == "point_light") {
         return merge<PointLight>(r, e, v, name, strict, [](JsonFields& f, PointLight& l) {
@@ -502,6 +772,7 @@ std::expected<void, core::Error> apply_component(entt::registry& r, entt::entity
                 }
                 b.compiled.reset(); // recompile lazily
                 b.node_state.clear();
+                b.last_result.clear();
                 b.parse_failed = false;
             }
             f.boolean("enabled", b.enabled);
@@ -525,12 +796,29 @@ std::expected<void, core::Error> apply_component(entt::registry& r, entt::entity
             f.number("height", p.height_m, 0.0F, 100000.0F);
             f.integer("octaves", p.octaves, 1, 16);
             f.number("warp", p.warp_strength, 0.0F, 4.0F);
+            f.enumeration("erosion", p.erosion_model, k_erosion_models);
             f.integer("droplets", p.erosion_droplets, 0, 50'000'000);
+            f.integer("erosion_steps", p.grid.iterations, 0, terrain::max_grid_erosion_steps);
             f.number("snowline", t.snowline_m);
             f.boolean("streaming", t.streaming);
             f.integer("stream_radius", t.stream_radius, 0, 8);
+            f.boolean("gpu", t.gpu_generate);
+            // Grid erosion's cost grows with resolution² x steps and has no
+            // droplet-style cap on its own: bound it (audit D3).
+            if (!terrain::grid_erosion_within_limits(p)) {
+                f.fail(f.has("erosion_steps") ? "erosion_steps" : "resolution",
+                       "grid erosion is limited to resolution " +
+                           std::to_string(terrain::max_grid_erosion_resolution) +
+                           " and resolution^2 x erosion_steps <= " +
+                           std::to_string(terrain::max_grid_erosion_texel_steps) +
+                           " (e.g. 1025 at 5000 steps)");
+            }
             t.regenerate = true; // rebuild with the new parameters
         });
+    }
+    if (name == "grass") {
+        return merge<Grass>(r, e, v, name, strict,
+                            [](JsonFields& f, Grass& g) { decode_grass(f, g.settings); });
     }
     if (name == "net_replicated") {
         return merge<NetReplicated>(r, e, v, name, strict, [](JsonFields& f, NetReplicated& n) {
@@ -582,6 +870,13 @@ bool remove_component(entt::registry& r, entt::entity e, std::string_view name) 
         r.remove<MeshRenderer, SkinnedMesh, Animator>(e);
         return had;
     }
+    if (name == "instanced_mesh") {
+        // A scatter without a mesh would re-add a default one: it goes too.
+        const bool had = r.remove<InstancedMesh>(e) > 0;
+        if (had) r.remove<InstancedMeshParts, Scatter>(e);
+        return had;
+    }
+    if (name == "scatter") return r.remove<Scatter>(e) > 0; // keeps the placements (baked)
     if (name == "point_light") return r.remove<PointLight>(e) > 0;
     if (name == "dir_light") return r.remove<DirectionalLight>(e) > 0;
     if (name == "camera") return r.remove<Camera>(e) > 0;
@@ -592,6 +887,7 @@ bool remove_component(entt::registry& r, entt::entity e, std::string_view name) 
     if (name == "behavior") return r.remove<BehaviorTree>(e) > 0;
     if (name == "patrol") return r.remove<PatrolRoute>(e) > 0;
     if (name == "terrain") return r.remove<Terrain>(e) > 0;
+    if (name == "grass") return r.remove<Grass>(e) > 0;
     if (name == "net_replicated") return r.remove<NetReplicated>(e) > 0;
     if (name == "audio_source") return r.remove<AudioSource>(e) > 0;
     if (name == "audio_listener") return r.remove<AudioListener>(e) > 0;

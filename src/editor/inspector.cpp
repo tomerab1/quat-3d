@@ -1,6 +1,7 @@
 #include "inspector.hpp"
 
 #define GLM_ENABLE_EXPERIMENTAL
+#include <algorithm>
 #include <cstring>
 #include <string>
 #include <utility>
@@ -9,11 +10,15 @@
 #include <glm/gtc/quaternion.hpp>
 #include <glm/gtx/matrix_decompose.hpp>
 #include <imgui.h>
+#include <imgui_stdlib.h>
 
 #include "audio_inspector.hpp"
+#include "behavior_panel.hpp"
+#include "grass_inspector.hpp"
 #include "engine/editor/editor.hpp"
 #include "engine/scene/behavior.hpp"
 #include "engine/scene/components.hpp"
+#include "engine/scene/scatter.hpp"
 #include "engine/scene/scene.hpp"
 
 namespace engine::editor {
@@ -97,9 +102,24 @@ struct ComponentInspector<scene::Terrain> {
         ImGui::DragFloat("height", &p.height_m, 1.0F, 1.0F, 2000.0F, "%.0f m");
         ImGui::SliderInt("octaves", &p.octaves, 1, 10);
         ImGui::SliderFloat("warp", &p.warp_strength, 0.0F, 1.0F, "%.2f");
-        int droplets = static_cast<int>(p.erosion_droplets);
-        if (ImGui::DragInt("erosion droplets", &droplets, 1000.0F, 0, 1'000'000)) {
-            p.erosion_droplets = static_cast<std::uint32_t>(glm::max(droplets, 0));
+        int model = p.erosion_model == terrain::ErosionModel::grid ? 1 : 0;
+        if (ImGui::Combo("erosion", &model, "droplets (CPU)\0grid (GPU)\0")) {
+            p.erosion_model =
+                model == 1 ? terrain::ErosionModel::grid : terrain::ErosionModel::droplets;
+        }
+        if (p.erosion_model == terrain::ErosionModel::grid) {
+            int steps = static_cast<int>(p.grid.iterations);
+            if (ImGui::DragInt("erosion steps", &steps, 5.0F, 0, 5'000)) {
+                p.grid.iterations = static_cast<std::uint32_t>(glm::max(steps, 0));
+            }
+        } else {
+            int droplets = static_cast<int>(p.erosion_droplets);
+            if (ImGui::DragInt("erosion droplets", &droplets, 1000.0F, 0, 1'000'000)) {
+                p.erosion_droplets = static_cast<std::uint32_t>(glm::max(droplets, 0));
+            }
+        }
+        if (ImGui::Checkbox("generate on GPU", &terrain.gpu_generate)) {
+            terrain.regenerate = true;
         }
         ImGui::DragFloat("snowline", &terrain.snowline_m, 1.0F, -1000.0F, 5000.0F, "%.0f m");
         ImGui::Separator();
@@ -115,7 +135,148 @@ struct ComponentInspector<scene::Terrain> {
         if (ImGui::Button("Regenerate", ImVec2(-1.0F, 0.0F))) {
             terrain.regenerate = true;
         }
-        ImGui::TextWrapped("Generation runs on a worker thread; tiles pop in when ready.");
+        ImGui::TextWrapped("%s", terrain.gpu_generate
+                                     ? "Tiles synthesise on the GPU (droplet erosion stays on a "
+                                       "CPU worker); they pop in when ready."
+                                     : "Generation runs on a worker thread; tiles pop in when "
+                                       "ready.");
+    }
+};
+
+template <>
+struct ComponentInspector<scene::Grass> {
+    static constexpr const char* title = "Grass";
+    static void draw(entt::registry&, entt::entity, scene::Grass& grass) { draw_grass(grass); }
+};
+
+template <>
+struct ComponentInspector<scene::InstancedMesh> {
+    static constexpr const char* title = "Instanced Mesh";
+    static void draw(entt::registry& r, entt::entity e, scene::InstancedMesh& mesh) {
+        // Paths commit on Enter: every edit re-resolves the model.
+        char path[512]{};
+        std::strncpy(path, mesh.gltf_path.c_str(), sizeof(path) - 1);
+        if (ImGui::InputText("glTF", path, sizeof(path), ImGuiInputTextFlags_EnterReturnsTrue)) {
+            mesh.gltf_path = path;
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Model file relative to the project root (Enter to apply);\n"
+                              "empty = the primitive shape below");
+        }
+        if (!mesh.gltf_path.empty()) {
+            char node[256]{};
+            std::strncpy(node, mesh.gltf_node.c_str(), sizeof(node) - 1);
+            if (ImGui::InputText("node", node, sizeof(node), ImGuiInputTextFlags_EnterReturnsTrue)) {
+                mesh.gltf_node = node;
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Only this node's subtree (empty = all)");
+        } else {
+            scene::Primitive& p = mesh.primitive;
+            const char* shapes[] = {"cube", "sphere", "plane", "cylinder", "cone", "capsule"};
+            int shape = static_cast<int>(p.shape);
+            if (ImGui::Combo("shape", &shape, shapes, 6)) {
+                p.shape = static_cast<scene::PrimitiveShape>(shape);
+            }
+            ImGui::ColorEdit4("color", &p.color.x);
+            ImGui::SliderFloat("metallic", &p.metallic, 0.0F, 1.0F);
+            ImGui::SliderFloat("roughness", &p.roughness, 0.0F, 1.0F);
+            ImGui::ColorEdit3("emissive", &p.emissive.x, ImGuiColorEditFlags_HDR);
+        }
+        ImGui::Checkbox("cast shadows", &mesh.cast_shadows);
+
+        if (const auto* parts = r.try_get<scene::InstancedMeshParts>(e)) {
+            ImGui::Text("model: %zu part(s), radius %.2f m", parts->parts.size(), parts->bounds.w);
+        } else {
+            ImGui::TextDisabled("model: resolving...");
+        }
+        ImGui::Separator();
+        if (const auto* scatter = r.try_get<scene::Scatter>(e)) {
+            ImGui::Text("%zu placements (scatter generation %u)", mesh.instances.size(),
+                        scatter->generation);
+            ImGui::TextDisabled("generated by the Scatter; remove it to edit by hand");
+            return;
+        }
+        ImGui::Text("%zu placements", mesh.instances.size());
+        constexpr int k_listed = 64; // a long list is edited through scene files / remote API
+        int remove = -1;
+        const int shown = std::min(static_cast<int>(mesh.instances.size()), k_listed);
+        for (int i = 0; i < shown; ++i) {
+            scene::InstanceTransform& t = mesh.instances[static_cast<std::size_t>(i)];
+            ImGui::PushID(i);
+            ImGui::DragFloat3("##pos", &t.position.x, 0.05F);
+            ImGui::SameLine();
+            if (ImGui::SmallButton("x")) remove = i;
+            glm::vec3 euler = glm::degrees(glm::eulerAngles(t.rotation));
+            if (ImGui::DragFloat3("##rot", &euler.x, 0.5F)) {
+                t.rotation = glm::quat(glm::radians(euler));
+            }
+            float uniform = t.scale.x;
+            if (ImGui::DragFloat("##scale", &uniform, 0.01F, 0.01F, 1000.0F, "scale %.2f")) {
+                t.scale = glm::vec3(uniform);
+            }
+            ImGui::PopID();
+        }
+        if (static_cast<int>(mesh.instances.size()) > shown) {
+            ImGui::TextDisabled("(%zu more not listed)", mesh.instances.size() - shown);
+        }
+        if (remove >= 0) mesh.instances.erase(mesh.instances.begin() + remove);
+        if (ImGui::Button("Add placement")) {
+            scene::InstanceTransform t;
+            if (!mesh.instances.empty()) {
+                t.position = mesh.instances.back().position + glm::vec3(2.0F, 0.0F, 0.0F);
+            }
+            mesh.instances.push_back(t);
+        }
+        ImGui::SameLine();
+        if (!mesh.instances.empty() && ImGui::Button("Clear")) mesh.instances.clear();
+    }
+};
+
+template <>
+struct ComponentInspector<scene::Scatter> {
+    static constexpr const char* title = "Scatter";
+    static void draw(entt::registry& r, entt::entity e, scene::Scatter& s) {
+        int seed = static_cast<int>(s.seed & 0x7FFFFFFFU);
+        if (ImGui::DragInt("seed", &seed, 1.0F, 0, 0x7FFFFFFF)) {
+            s.seed = static_cast<std::uint32_t>(seed);
+        }
+        const char* areas[] = {"rectangle", "circle"};
+        int area = static_cast<int>(s.area);
+        if (ImGui::Combo("area", &area, areas, 2)) s.area = static_cast<scene::ScatterArea>(area);
+        if (s.area == scene::ScatterArea::rect) {
+            ImGui::DragFloat2("size (x, z)", &s.size.x, 0.5F, 0.0F, 20000.0F, "%.1f m");
+        } else {
+            ImGui::DragFloat("radius", &s.radius, 0.25F, 0.0F, 10000.0F, "%.1f m");
+        }
+        ImGui::DragFloat("density", &s.density, 0.001F, 0.0F, 100.0F, "%.3f / m2");
+        ImGui::DragFloat("min spacing", &s.min_spacing, 0.05F, 0.0F, 1000.0F, "%.2f m");
+        const char* patterns[] = {"poisson disc", "jittered grid"};
+        int pattern = static_cast<int>(s.pattern);
+        if (ImGui::Combo("pattern", &pattern, patterns, 2)) {
+            s.pattern = static_cast<scene::ScatterPattern>(pattern);
+        }
+        ImGui::DragFloatRange2("scale", &s.scale_range.x, &s.scale_range.y, 0.01F, 0.01F, 100.0F);
+        ImGui::Checkbox("random yaw", &s.random_yaw);
+        ImGui::SliderFloat("align to ground", &s.align_to_normal, 0.0F, 1.0F);
+        ImGui::DragFloat("base offset", &s.base_offset, 0.01F, -100.0F, 100.0F, "%.2f x scale");
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Lift along the placement's up axis, times its scale\n"
+                              "(0.5 seats a unit primitive on the ground)");
+        }
+        ImGui::DragFloatRange2("slope", &s.slope_deg.x, &s.slope_deg.y, 0.5F, 0.0F, 90.0F,
+                               "%.0f deg");
+        ImGui::DragFloatRange2("height", &s.height_m.x, &s.height_m.y, 1.0F, -100000.0F,
+                               100000.0F, "%.0f m");
+        int max_instances = static_cast<int>(s.max_instances);
+        if (ImGui::DragInt("max instances", &max_instances, 100.0F, 0,
+                           static_cast<int>(scene::k_scatter_instance_limit))) {
+            s.max_instances = static_cast<std::uint32_t>(std::max(max_instances, 0));
+        }
+        const auto* mesh = r.try_get<scene::InstancedMesh>(e);
+        ImGui::Text("%zu placements (generation %u)", mesh != nullptr ? mesh->instances.size() : 0,
+                    s.generation);
+        ImGui::TextWrapped("Regenerates when these settings, the entity's position or the "
+                           "terrain change. Removing the Scatter keeps the placements.");
     }
 };
 
@@ -186,13 +347,12 @@ struct ComponentInspector<scene::BehaviorTree> {
     static constexpr const char* title = "Behavior Tree";
     static void draw(entt::registry&, entt::entity, scene::BehaviorTree& bt) {
         ImGui::Checkbox("enabled", &bt.enabled);
-        static char buffer[4096];
-        std::strncpy(buffer, bt.source.c_str(), sizeof(buffer) - 1);
-        buffer[sizeof(buffer) - 1] = 0;
-        if (ImGui::InputTextMultiline("##bt_json", buffer, sizeof(buffer),
-                                      ImVec2(-1.0F, ImGui::GetTextLineHeight() * 8.0F))) {
-            bt.source = buffer;
+        if (ImGui::Button("Edit graph", ImVec2(-1.0F, 0.0F))) {
+            ImGui::SetWindowFocus(behavior_panel_title);
         }
+        // Resizable: trees with saved editor layout outgrow any fixed buffer.
+        ImGui::InputTextMultiline("##bt_json", &bt.source,
+                                  ImVec2(-1.0F, ImGui::GetTextLineHeight() * 8.0F));
         if (ImGui::Button("Recompile", ImVec2(-1.0F, 0.0F))) {
             bt.compiled.reset();
             bt.parse_failed = false;
@@ -202,10 +362,14 @@ struct ComponentInspector<scene::BehaviorTree> {
         } else if (bt.compiled != nullptr) {
             ImGui::Text("compiled: %zu nodes", bt.compiled->nodes().size());
         }
+        std::string leaves;
+        for (const scene::BtLeafInfo& leaf : scene::bt_builtin_leaf_info()) {
+            leaves += (leaves.empty() ? "" : ", ") + std::string(leaf.name);
+        }
         ImGui::TextWrapped("JSON: sequence/selector (resume the running child), "
                            "reactive_sequence/reactive_selector (re-check every tick, "
-                           "pre-empting), inverter; leaves move_to, wait, near_point, "
-                           "near_camera.");
+                           "pre-empting), inverter; leaves %s.",
+                           leaves.c_str());
     }
 };
 
@@ -385,6 +549,11 @@ void draw_inspector(scene::Scene& scene, entt::entity selected) {
     inspect<scene::Camera>(r, selected, true);
     inspect<scene::Animator>(r, selected);
     inspect<scene::Terrain>(r, selected, true);
+    inspect<scene::Grass>(r, selected, true);
+    if (!inspect<scene::InstancedMesh>(r, selected, true)) {
+        r.remove<scene::InstancedMeshParts, scene::Scatter>(selected); // as remove_component
+    }
+    inspect<scene::Scatter>(r, selected, true);
     inspect<scene::NavAgent>(r, selected, true);
     inspect<scene::BehaviorTree>(r, selected, true);
     inspect<scene::PatrolRoute>(r, selected, true);
@@ -401,6 +570,9 @@ void draw_inspector(scene::Scene& scene, entt::entity selected) {
         add_component_item<scene::Collider>(r, selected);
         add_component_item<scene::RigidBody>(r, selected);
         add_component_item<scene::Terrain>(r, selected);
+        add_component_item<scene::Grass>(r, selected);
+        add_component_item<scene::InstancedMesh>(r, selected);
+        add_component_item<scene::Scatter>(r, selected); // adds an Instanced Mesh on demand
         add_component_item<scene::NavAgent>(r, selected);
         add_component_item<scene::BehaviorTree>(r, selected);
         add_component_item<scene::PatrolRoute>(r, selected);
@@ -421,7 +593,11 @@ void draw_renderer_panel(RendererSettings& settings, scene::Scene* scene) {
         return;
     }
 
+    // Collapsing headers don't scope IDs: each section pushes its own, so
+    // equally labelled widgets (the sun's and bloom's "intensity") stay
+    // distinct.
     if (ImGui::CollapsingHeader("Sun", ImGuiTreeNodeFlags_DefaultOpen)) {
+        ImGui::PushID("sun");
         scene::DirectionalLight* sun = nullptr;
         if (scene != nullptr) {
             for (const entt::entity e : scene->registry().view<scene::DirectionalLight>()) {
@@ -449,9 +625,11 @@ void draw_renderer_panel(RendererSettings& settings, scene::Scene* scene) {
             ImGui::ColorEdit3("colour", &sun->color.x);
             ImGui::DragFloat("intensity", &sun->intensity, 0.05F, 0.0F, 100.0F);
         }
+        ImGui::PopID();
     }
 
     if (ImGui::CollapsingHeader("Clouds", ImGuiTreeNodeFlags_DefaultOpen)) {
+        ImGui::PushID("clouds");
         renderer::CloudSettings& c = settings.clouds;
         ImGui::Checkbox("enabled", &c.enabled);
         ImGui::BeginDisabled(!c.enabled);
@@ -464,13 +642,16 @@ void draw_renderer_panel(RendererSettings& settings, scene::Scene* scene) {
         ImGui::SliderFloat("wind speed", &c.wind_speed, 0.0F, 80.0F, "%.0f m/s");
         ImGui::SliderFloat("wind direction", &c.wind_dir_deg, -180.0F, 180.0F, "%.0f deg");
         ImGui::EndDisabled();
+        ImGui::PopID();
     }
 
     if (ImGui::CollapsingHeader("Bloom", ImGuiTreeNodeFlags_DefaultOpen)) {
+        ImGui::PushID("bloom");
         ImGui::SliderFloat("threshold", &settings.bloom_threshold, 0.0F, 8.0F);
         ImGui::SliderFloat("knee", &settings.bloom_knee, 0.0F, 1.0F);
         ImGui::SliderFloat("intensity", &settings.bloom_intensity, 0.0F, 0.5F);
         ImGui::SliderFloat("radius", &settings.bloom_radius, 0.2F, 2.0F);
+        ImGui::PopID();
     }
     if (ImGui::CollapsingHeader("Environment", ImGuiTreeNodeFlags_DefaultOpen)) {
         ImGui::TextWrapped("The IBL environment (ambient + reflections) re-renders continuously "

@@ -22,9 +22,9 @@ constexpr VkFormat           kCubeFormat   = VK_FORMAT_R16G16B16A16_SFLOAT;
 
 // Resolutions of the precomputed maps (see ibl_pass.hpp for the mip count).
 constexpr std::uint32_t kEnvSize        = 256; // environment cube face
-constexpr std::uint32_t kIrradianceSize = 16;  // diffuse irradiance cube face
-constexpr std::uint32_t kPrefilterSize  = 128; // prefiltered specular base face
-constexpr std::uint32_t kBrdfSize       = 256; // BRDF LUT edge
+constexpr std::uint32_t kIrradianceSize = ibl_irradiance_size; // diffuse irradiance cube face
+constexpr std::uint32_t kPrefilterSize  = ibl_prefilter_size;  // prefiltered specular base face
+constexpr std::uint32_t kBrdfSize       = ibl_brdf_lut_size;   // BRDF LUT edge
 
 // Push-constant blocks mirroring the IBL shaders.
 struct BakeParams {
@@ -48,8 +48,8 @@ struct LutParams {
     std::uint32_t pad0 = 0, pad1 = 0, pad2 = 0;
 };
 
-[[nodiscard]] std::expected<rhi::ComputePipeline, core::Error>
-make_pipeline(const rhi::Device& device, rhi::PipelineCache& cache, const std::string& spv,
+[[nodiscard]] std::expected<rhi::ManagedPipeline, core::Error>
+make_pipeline(rhi::PipelineCache& cache, const std::string& spv,
               const rhi::DescriptorSetLayout& layout, std::uint32_t push_size) {
     auto shader = cache.load(spv);
     if (!shader) return std::unexpected(shader.error());
@@ -59,7 +59,7 @@ make_pipeline(const rhi::Device& device, rhi::PipelineCache& cache, const std::s
     info.shader = *shader;
     info.set_layouts = {&set_layout, 1};
     info.push_constants = {&pc, 1};
-    return rhi::ComputePipeline::create(device, cache.handle(), info);
+    return cache.create_compute_pipeline(info);
 }
 
 // Transition `image` (color aspect) between layouts with a full compute barrier.
@@ -165,19 +165,19 @@ IblBaker::create(const rhi::Device& device, rhi::GpuAllocator& allocator,
     if (!lut_layout) return std::unexpected(lut_layout.error());
     out.lut_layout_ = std::move(*lut_layout);
 
-    auto env_pipe = make_pipeline(device, cache, cooked_shader_dir + "/ibl_bake_env.spv",
+    auto env_pipe = make_pipeline(cache, cooked_shader_dir + "/ibl_bake_env.spv",
                                   out.env_layout_, sizeof(BakeParams));
     if (!env_pipe) return std::unexpected(env_pipe.error());
     out.env_pipeline_ = std::move(*env_pipe);
-    auto irr_pipe = make_pipeline(device, cache, cooked_shader_dir + "/ibl_irradiance.spv",
+    auto irr_pipe = make_pipeline(cache, cooked_shader_dir + "/ibl_irradiance.spv",
                                   out.conv_layout_, sizeof(IrradianceParams));
     if (!irr_pipe) return std::unexpected(irr_pipe.error());
     out.irradiance_pipeline_ = std::move(*irr_pipe);
-    auto pre_pipe = make_pipeline(device, cache, cooked_shader_dir + "/ibl_prefilter.spv",
+    auto pre_pipe = make_pipeline(cache, cooked_shader_dir + "/ibl_prefilter.spv",
                                   out.conv_layout_, sizeof(PrefilterParams));
     if (!pre_pipe) return std::unexpected(pre_pipe.error());
     out.prefilter_pipeline_ = std::move(*pre_pipe);
-    auto lut_pipe = make_pipeline(device, cache, cooked_shader_dir + "/ibl_brdf_lut.spv",
+    auto lut_pipe = make_pipeline(cache, cooked_shader_dir + "/ibl_brdf_lut.spv",
                                   out.lut_layout_, sizeof(LutParams));
     if (!lut_pipe) return std::unexpected(lut_pipe.error());
     out.lut_pipeline_ = std::move(*lut_pipe);
@@ -221,7 +221,7 @@ std::expected<IblMaps, core::Error> IblBaker::bake(const glm::vec3& sun_dir,
     const bool has_atmosphere =
         atmosphere_skyview != VK_NULL_HANDLE && atmosphere_transmittance != VK_NULL_HANDLE;
     const VkDevice dev = device_->handle();
-    // TRANSFER_SRC enables debug readback (the self-test) and future mip blits.
+    // TRANSFER_SRC enables debug readback (tests) and future mip blits.
     constexpr VkImageUsageFlags map_usage =
         VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
     constexpr VkImageCreateFlags cube_flags = VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT;
@@ -327,7 +327,7 @@ std::expected<IblMaps, core::Error> IblBaker::bake(const glm::vec3& sun_dir,
         constexpr auto cs = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT;
         constexpr auto w = VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT;
         constexpr auto r = VK_ACCESS_2_SHADER_SAMPLED_READ_BIT;
-        const auto dispatch = [&](const rhi::ComputePipeline& pipe, rhi::DescriptorBuffer& db,
+        const auto dispatch = [&](const rhi::ManagedPipeline& pipe, rhi::DescriptorBuffer& db,
                                   const void* push, std::uint32_t push_size, std::uint32_t gx,
                                   std::uint32_t gy, std::uint32_t gz) {
             vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipe.handle());
@@ -451,135 +451,6 @@ IblMaps::create_fallback(const rhi::Device& device, rhi::GpuAllocator& allocator
     if (!samp) return std::unexpected(samp.error());
     maps.sampler = std::move(*samp);
     return maps;
-}
-
-// ---------------------------------------------------------------------------
-// Self-test
-// ---------------------------------------------------------------------------
-namespace {
-
-[[nodiscard]] float half_to_float(std::uint16_t h) {
-    const std::uint32_t sign = static_cast<std::uint32_t>(h & 0x8000U) << 16;
-    const std::uint32_t exp = (h >> 10) & 0x1FU;
-    const std::uint32_t mant = h & 0x3FFU;
-    std::uint32_t bits = 0;
-    if (exp == 0) {
-        if (mant != 0) {
-            std::uint32_t e = 127 - 15 + 1;
-            std::uint32_t m = mant;
-            while ((m & 0x400U) == 0) { m <<= 1; --e; }
-            m &= 0x3FFU;
-            bits = sign | (e << 23) | (m << 13);
-        } else {
-            bits = sign;
-        }
-    } else if (exp == 0x1FU) {
-        bits = sign | 0x7F800000U | (mant << 13);
-    } else {
-        bits = sign | ((exp - 15 + 127) << 23) | (mant << 13);
-    }
-    float out = 0.0F;
-    std::memcpy(&out, &bits, sizeof(out));
-    return out;
-}
-
-} // namespace
-
-std::expected<std::vector<float>, core::Error>
-read_rgba16f_subresource(const rhi::Device& device, rhi::GpuAllocator& allocator, VkImage image,
-                         std::uint32_t mip, std::uint32_t layer, std::uint32_t w,
-                         std::uint32_t h) {
-    const VkDeviceSize bytes = static_cast<VkDeviceSize>(w) * h * 8;
-    auto readback = allocator.create_buffer(
-        bytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT, VMA_MEMORY_USAGE_AUTO,
-        VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT);
-    if (!readback) return std::unexpected(readback.error());
-    const VkBuffer rb = readback->handle();
-    auto done = submit_blocking(device, [&](VkCommandBuffer cmd) {
-        VkImageMemoryBarrier2 b{};
-        b.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2;
-        b.srcStageMask = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT;
-        b.srcAccessMask = VK_ACCESS_2_SHADER_SAMPLED_READ_BIT;
-        b.dstStageMask = VK_PIPELINE_STAGE_2_COPY_BIT;
-        b.dstAccessMask = VK_ACCESS_2_TRANSFER_READ_BIT;
-        b.oldLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-        b.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
-        b.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        b.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        b.image = image;
-        b.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, mip, 1, layer, 1};
-        VkDependencyInfo dep{};
-        dep.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO;
-        dep.imageMemoryBarrierCount = 1;
-        dep.pImageMemoryBarriers = &b;
-        vkCmdPipelineBarrier2(cmd, &dep);
-
-        VkBufferImageCopy region{};
-        region.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, mip, layer, 1};
-        region.imageExtent = {w, h, 1};
-        vkCmdCopyImageToBuffer(cmd, image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, rb, 1, &region);
-
-        // Restore the sampled layout for any later use.
-        std::swap(b.oldLayout, b.newLayout);
-        std::swap(b.srcStageMask, b.dstStageMask);
-        b.srcAccessMask = VK_ACCESS_2_TRANSFER_READ_BIT;
-        b.dstAccessMask = VK_ACCESS_2_SHADER_SAMPLED_READ_BIT;
-        dep.pImageMemoryBarriers = &b;
-        vkCmdPipelineBarrier2(cmd, &dep);
-    });
-    if (!done) return std::unexpected(done.error());
-
-    const auto* halfs = static_cast<const std::uint16_t*>(readback->mapped());
-    std::vector<float> out(static_cast<std::size_t>(w) * h * 4);
-    for (std::size_t i = 0; i < out.size(); ++i) out[i] = half_to_float(halfs[i]);
-    return out;
-}
-
-std::expected<void, core::Error>
-run_ibl_self_test(const rhi::Device& device, rhi::GpuAllocator& allocator,
-                  rhi::PipelineCache& cache, const std::string& cooked_shader_dir) {
-    auto baker = IblBaker::create(device, allocator, cache, cooked_shader_dir);
-    if (!baker) return std::unexpected(baker.error());
-    auto maps = baker->bake(glm::normalize(glm::vec3(0.3F, 1.0F, 0.3F)));
-    if (!maps) return std::unexpected(maps.error());
-
-    // BRDF LUT: at high NdotV + low roughness the scale -> ~1, bias -> ~0; every
-    // texel must be finite and in [0, ~1].
-    auto lut = read_rgba16f_subresource(device, allocator, maps->brdf_lut.handle(), 0, 0, kBrdfSize,
-                                kBrdfSize);
-    if (!lut) return std::unexpected(lut.error());
-    const auto lut_at = [&](std::uint32_t x, std::uint32_t y, int c) {
-        return (*lut)[(static_cast<std::size_t>(y) * kBrdfSize + x) * 4 + c];
-    };
-    const float scale = lut_at(kBrdfSize - 4, 4, 0);
-    const float bias = lut_at(kBrdfSize - 4, 4, 1);
-    if (!(scale > 0.8F && scale <= 1.05F) || !(bias >= -0.01F && bias < 0.3F)) {
-        return fail("ibl self-test: BRDF LUT scale/bias out of range");
-    }
-
-    // Irradiance, +Y (up) face centre: positive and blue-dominant (the sky zenith).
-    constexpr std::uint32_t up_face = 2;
-    auto irr = read_rgba16f_subresource(device, allocator, maps->irradiance.handle(), 0, up_face,
-                                kIrradianceSize, kIrradianceSize);
-    if (!irr) return std::unexpected(irr.error());
-    const std::size_t ic = (static_cast<std::size_t>(kIrradianceSize / 2) * kIrradianceSize +
-                            kIrradianceSize / 2) * 4;
-    if ((*irr)[ic] <= 0.0F || (*irr)[ic + 2] <= 0.0F || (*irr)[ic + 2] <= (*irr)[ic]) {
-        return fail("ibl self-test: irradiance is not positive sky-blue");
-    }
-
-    // Prefiltered mip 0 (mirror), +Y face centre: a near-mirror sky sample, also
-    // positive and blue-dominant.
-    auto pre = read_rgba16f_subresource(device, allocator, maps->prefiltered.handle(), 0, up_face,
-                                kPrefilterSize, kPrefilterSize);
-    if (!pre) return std::unexpected(pre.error());
-    const std::size_t pc = (static_cast<std::size_t>(kPrefilterSize / 2) * kPrefilterSize +
-                            kPrefilterSize / 2) * 4;
-    // b >= r (the exact +Y texel may land on a white cloud, where b == r).
-    if ((*pre)[pc] <= 0.0F || (*pre)[pc + 2] < (*pre)[pc]) {
-        return fail("ibl self-test: prefiltered mirror is not positive sky-blue");
-    }
-    return {};
 }
 
 } // namespace engine::renderer

@@ -26,7 +26,7 @@
 #include "engine/renderer/draw_batching.hpp"
 #include "engine/renderer/instance_buffer.hpp"
 #include "engine/rhi/descriptor_buffer.hpp"
-#include "engine/rhi/graphics_pipeline.hpp"
+#include "engine/rhi/managed_pipeline.hpp"
 #include "engine/rhi/render_graph.hpp"
 
 namespace engine::rhi {
@@ -110,7 +110,7 @@ private:
 
     rhi::DescriptorBufferFunctions db_fns_{};
     rhi::DescriptorSetLayout       material_layout_;
-    rhi::GraphicsPipeline          pipeline_;
+    rhi::ManagedPipeline           pipeline_;
 
     rhi::Sampler         sampler_;            // shared sampler (binding 6)
     asset::TextureAsset  fallback_texture_;   // 1x1 white, for unbound slots
@@ -122,21 +122,5 @@ private:
     std::vector<rhi::DescriptorBuffer> frame_descriptors_;
     std::vector<FrameDraw>             frame_draws_;
 };
-
-// Offscreen self-test: render a single triangle with a coloured material into
-// the GBuffer, read back the albedo target, and verify the covered centre pixel
-// holds the material colour while a corner stays at the clear value.
-[[nodiscard]] std::expected<void, core::Error>
-run_mesh_pass_self_test(const rhi::Device& device, rhi::GpuAllocator& allocator,
-                        rhi::PipelineCache& cache, const rhi::TransferContext& transfer,
-                        const std::string& cooked_shader_dir);
-
-// Verifies the geometric specular AA at GBuffer-write time: a flat triangle's
-// stored roughness stays at the authored 0, while one with wildly divergent
-// vertex normals (large screen-space normal variance) is widened.
-[[nodiscard]] std::expected<void, core::Error>
-run_specular_aa_self_test(const rhi::Device& device, rhi::GpuAllocator& allocator,
-                          rhi::PipelineCache& cache, const rhi::TransferContext& transfer,
-                          const std::string& cooked_shader_dir);
 
 } // namespace engine::renderer

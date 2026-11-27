@@ -1,0 +1,1 @@
+Terrain height (world y, metres) under world-space `[x, z]` points: `{heights: [y | null]}` in input order, null where no terrain covers the point. Use it to place objects on uneven ground (set position y = height + half the object's height). At most 1024 points per call.

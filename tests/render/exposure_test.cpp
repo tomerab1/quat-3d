@@ -1,10 +1,12 @@
-// Auto-exposure adaptation across frames (audit S1 A11).
+// Auto-exposure: the luminance histogram measures uniform scenes, and the
+// adapted value moves between frames at the configured rate (audit S1 A11).
 //
-// Frames alternate between two ExposurePass instances (the engine's two
-// frame-in-flight slots) sharing one ExposureState. The adapted luminance must
-// follow a single exponential with the configured time constant, advanced by
-// each frame's dt — with per-slot state each slot adapted on its own (half the
-// rate) and consecutive frames alternated between the two values.
+// For the latter, frames alternate between two ExposurePass instances (the
+// engine's two frame-in-flight slots) sharing one ExposureState. The adapted
+// luminance must follow a single exponential with the configured time
+// constant, advanced by each frame's dt — with per-slot state each slot adapted
+// on its own (half the rate) and consecutive frames alternated between the two
+// values.
 
 #include <cmath>
 #include <cstdint>
@@ -148,4 +150,32 @@ TEST(GpuExposure, SharedStateAdaptsWithConfiguredTimeConstant) {
         EXPECT_NEAR(*adapted, expected, expected * 0.01F) << "frame " << n;
         EXPECT_FLOAT_EQ(slot_a->adapted_luminance(), slot_b->adapted_luminance());
     }
+}
+
+// A uniform grey 0.25 scene (luminance 0.25), fully adapted in one frame: the
+// histogram measures it and the adapted luminance tracks it.
+TEST(GpuExposure, AdaptsToADimScenesLuminance) {
+    QUAT_REQUIRE_GPU(g);
+    auto hdr = HdrImage::create(*g);
+    ASSERT_OK(hdr);
+    auto pass = r::ExposurePass::create(g->device, g->allocator, g->cache, g->shader_dir);
+    ASSERT_OK(pass);
+    auto dim = hdr->frame(*pass, 0.25F, 1000.0F);
+    ASSERT_OK(dim);
+    EXPECT_GE(*dim, 0.15F);
+    EXPECT_LE(*dim, 0.45F);
+}
+
+// A bright scene (2.0) after the dim one pulls the adapted luminance well up.
+TEST(GpuExposure, BrightSceneRaisesTheAdaptedLuminance) {
+    QUAT_REQUIRE_GPU(g);
+    auto hdr = HdrImage::create(*g);
+    ASSERT_OK(hdr);
+    auto pass = r::ExposurePass::create(g->device, g->allocator, g->cache, g->shader_dir);
+    ASSERT_OK(pass);
+    auto dim = hdr->frame(*pass, 0.25F, 1000.0F);
+    ASSERT_OK(dim);
+    auto bright = hdr->frame(*pass, 2.0F, 1000.0F);
+    ASSERT_OK(bright);
+    EXPECT_GT(*bright, *dim + 0.5F);
 }

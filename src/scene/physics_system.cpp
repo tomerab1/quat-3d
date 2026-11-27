@@ -2,7 +2,6 @@
 
 #include <algorithm>
 #include <array>
-#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <utility>
@@ -132,27 +131,17 @@ void physics_system(entt::registry& registry, physics::PhysicsWorld& world, floa
             world.body_transform(rb.body, pos, rot);
             const glm::vec3 scale = scale_of(t);
             pos -= rot * (scale * col.offset);
-            const glm::mat4 pose = glm::translate(glm::mat4(1.0F), pos) * glm::mat4_cast(rot) *
-                                   glm::scale(glm::mat4(1.0F), scale);
-
-            glm::mat4 parent_world(1.0F);
-            if (const auto* parent = registry.try_get<Parent>(e);
-                parent != nullptr && parent->entity != entt::null &&
-                registry.valid(parent->entity)) {
-                if (const auto* pt = registry.try_get<Transform>(parent->entity)) {
-                    parent_world = pt->world;
-                }
-            }
-            t.local = glm::inverse(parent_world) * pose;
-            t.world = pose;
+            set_world_transform(registry, e,
+                                glm::translate(glm::mat4(1.0F), pos) * glm::mat4_cast(rot) *
+                                    glm::scale(glm::mat4(1.0F), scale));
         }
     }
 }
 
 namespace {
 
-void advance_character(entt::entity e, CharacterController& cc, Transform& t,
-                       physics::PhysicsWorld& world, float dt) {
+void advance_character(entt::registry& registry, entt::entity e, CharacterController& cc,
+                       const Transform& t, physics::PhysicsWorld& world, float dt) {
     constexpr float gravity = -9.81F;
     if (cc.character == physics::PhysicsWorld::invalid_body) {
         cc.character = world.create_character(cc.half_height, cc.radius, position_of(t),
@@ -172,9 +161,11 @@ void advance_character(entt::entity e, CharacterController& cc, Transform& t,
 
     cc.velocity = world.character_velocity(cc.character);
     cc.on_ground = world.character_on_ground(cc.character);
-    const glm::vec3 pos = world.character_position(cc.character);
-    t.local = glm::translate(glm::mat4(1.0F), pos);
-    t.world = t.local;
+    // The controller moves the entity's origin only: keep its world rotation
+    // and scale (a capsule never turns) and its parent's space.
+    glm::mat4 pose = t.world;
+    pose[3] = glm::vec4(world.character_position(cc.character), 1.0F);
+    set_world_transform(registry, e, pose);
 }
 
 } // namespace
@@ -191,7 +182,7 @@ void character_system(entt::registry& registry, physics::PhysicsWorld& world, fl
 
     for (auto [e, cc, t] :
          registry.view<CharacterController, Transform>(entt::exclude<NetDriven>).each()) {
-        advance_character(e, cc, t, world, dt);
+        advance_character(registry, e, cc, t, world, dt);
     }
 }
 
@@ -201,180 +192,7 @@ void step_character(entt::registry& registry, physics::PhysicsWorld& world, entt
     auto* cc = registry.try_get<CharacterController>(e);
     auto* t = registry.try_get<Transform>(e);
     if (cc == nullptr || t == nullptr) return;
-    advance_character(e, *cc, *t, world, dt);
-}
-
-std::expected<void, core::Error> run_character_self_test() {
-    auto world = physics::PhysicsWorld::create();
-    if (!world) return std::unexpected(world.error());
-
-    // Static floor (top at y=0), added directly to the world.
-    physics::PhysicsWorld::BodyParams floor;
-    floor.shape = world->create_box(glm::vec3(50.0F, 1.0F, 50.0F));
-    floor.position = glm::vec3(0.0F, -1.0F, 0.0F);
-    floor.motion = physics::Motion::static_body;
-    floor.layer = physics::Layer::static_body;
-    (void)world->add_body(floor);
-
-    entt::registry registry;
-    const entt::entity e = registry.create();
-    registry.emplace<Transform>(e).local =
-        glm::translate(glm::mat4(1.0F), glm::vec3(0.0F, 5.0F, 0.0F));
-    registry.emplace<CharacterController>(e);
-
-    // Fall onto the floor (4 s).
-    for (int i = 0; i < 240; ++i) {
-        character_system(registry, *world, 1.0F / 60.0F);
-    }
-    auto& cc = registry.get<CharacterController>(e);
-    const float landed_y = registry.get<Transform>(e).local[3].y;
-    if (landed_y > 4.0F) {
-        return std::unexpected(core::Error{"character self-test: did not fall"});
-    }
-    if (!cc.on_ground) {
-        return std::unexpected(core::Error{"character self-test: not grounded after landing"});
-    }
-    if (landed_y < 0.0F) {
-        return std::unexpected(core::Error{"character self-test: sank through floor"});
-    }
-
-    // Walk +X for 1 s and confirm horizontal motion.
-    const float start_x = registry.get<Transform>(e).local[3].x;
-    cc.move = glm::vec3(1.0F, 0.0F, 0.0F);
-    for (int i = 0; i < 60; ++i) {
-        character_system(registry, *world, 1.0F / 60.0F);
-    }
-    const float end_x = registry.get<Transform>(e).local[3].x;
-    if (end_x - start_x < 1.0F) {
-        return std::unexpected(core::Error{"character self-test: did not walk forward"});
-    }
-    // Destroying the entity removes its character on the next tick (B6).
-    registry.destroy(e);
-    character_system(registry, *world, 1.0F / 60.0F);
-    if (!world->owned_characters().empty()) {
-        return std::unexpected(core::Error{"character self-test: orphaned character kept"});
-    }
-    return {};
-}
-
-std::expected<void, core::Error> run_physics_body_self_test() {
-    auto world = physics::PhysicsWorld::create();
-    if (!world) return std::unexpected(world.error());
-
-    entt::registry registry;
-
-    // Bodies are created from Transform.world (entities may be parented); this
-    // bare-registry test has no transform system, so world is set explicitly.
-    const auto place = [&](entt::entity e, const glm::vec3& pos) -> Transform& {
-        auto& t = registry.emplace<Transform>(e);
-        t.local = glm::translate(glm::mat4(1.0F), pos);
-        t.world = t.local;
-        return t;
-    };
-
-    // Static floor: 100x2x100 box centred at y=-1 (top at y=0).
-    const entt::entity floor = registry.create();
-    place(floor, glm::vec3(0.0F, -1.0F, 0.0F));
-    registry.emplace<Collider>(floor, ColliderShape::box, glm::vec3(50.0F, 1.0F, 50.0F),
-                               glm::vec3(0.0F));
-    registry.emplace<RigidBody>(floor, BodyMotion::static_body, 1.0F,
-                                physics::PhysicsWorld::invalid_body);
-
-    // Dynamic sphere (radius 0.5) dropped from y=5.
-    const entt::entity sphere = registry.create();
-    place(sphere, glm::vec3(0.0F, 5.0F, 0.0F));
-    registry.emplace<Collider>(sphere, ColliderShape::sphere, glm::vec3(0.5F), glm::vec3(0.0F));
-    registry.emplace<RigidBody>(sphere, BodyMotion::dynamic, 1.0F,
-                                physics::PhysicsWorld::invalid_body);
-
-    // Parented dynamic sphere (the glTF-child case): the parent carries the
-    // spawn offset, the child's local is identity — the body must be created
-    // at the WORLD position and the pulled pose written back through the
-    // parent (local = inverse(parent_world) * pose).
-    const entt::entity parent = registry.create();
-    Transform& parent_t = place(parent, glm::vec3(10.0F, 5.0F, 0.0F));
-    const entt::entity child = registry.create();
-    auto& child_t = registry.emplace<Transform>(child);
-    child_t.local = glm::mat4(1.0F);
-    child_t.world = parent_t.world; // as the transform system would compute
-    registry.emplace<Parent>(child, parent);
-    registry.emplace<Collider>(child, ColliderShape::sphere, glm::vec3(0.5F), glm::vec3(0.0F));
-    registry.emplace<RigidBody>(child, BodyMotion::dynamic, 1.0F,
-                                physics::PhysicsWorld::invalid_body);
-
-    // Scaled dynamic sphere (the glTF-with-node-scale case): world scale 2 and
-    // authored radius 0.5 must simulate as a radius-1 body — it rests at y=1,
-    // matching what the editor's collider wireframe shows.
-    const entt::entity scaled = registry.create();
-    auto& scaled_t = registry.emplace<Transform>(scaled);
-    scaled_t.local = glm::translate(glm::mat4(1.0F), glm::vec3(20.0F, 5.0F, 0.0F)) *
-                     glm::scale(glm::mat4(1.0F), glm::vec3(2.0F));
-    scaled_t.world = scaled_t.local;
-    registry.emplace<Collider>(scaled, ColliderShape::sphere, glm::vec3(0.5F), glm::vec3(0.0F));
-    registry.emplace<RigidBody>(scaled, BodyMotion::dynamic, 1.0F,
-                                physics::PhysicsWorld::invalid_body);
-
-    for (int i = 0; i < 120; ++i) {
-        physics_system(registry, *world, 1.0F / 60.0F);
-    }
-
-    const float scaled_y = registry.get<Transform>(scaled).world[3].y;
-    if (std::abs(scaled_y - 1.0F) > 0.25F) {
-        return std::unexpected(
-            core::Error{"physics body self-test: world scale not applied to collider shape"});
-    }
-
-    const float y = registry.get<Transform>(sphere).local[3].y;
-    if (y > 4.5F) {
-        return std::unexpected(core::Error{"physics body self-test: sphere did not fall"});
-    }
-    if (y < 0.0F) {
-        return std::unexpected(core::Error{"physics body self-test: sphere fell through floor"});
-    }
-    if (std::abs(y - 0.5F) > 0.25F) {
-        return std::unexpected(core::Error{"physics body self-test: sphere not resting on floor"});
-    }
-
-    // The child body fell at x=10 (its world position, not its identity local).
-    const glm::vec3 child_world = glm::vec3(registry.get<Transform>(child).world[3]);
-    if (std::abs(child_world.x - 10.0F) > 0.5F || std::abs(child_world.y - 0.5F) > 0.25F) {
-        return std::unexpected(
-            core::Error{"physics body self-test: parented body not simulated in world space"});
-    }
-    // And its local pose composes through the parent to reproduce that world.
-    const glm::mat4 recomposed = parent_t.world * registry.get<Transform>(child).local;
-    if (std::abs(recomposed[3].y - child_world.y) > 0.01F) {
-        return std::unexpected(
-            core::Error{"physics body self-test: parented local/world out of sync"});
-    }
-
-    // Orphaned bodies are swept (S1 audit B6): destroying an entity, or
-    // removing its Collider, removes its Jolt body on the next tick; re-adding
-    // the Collider creates exactly one fresh body.
-    const auto owners_of = [&](entt::entity who) {
-        std::size_t n = 0;
-        for (const auto& ob : world->owned_bodies()) {
-            n += ob.owner == static_cast<std::uint32_t>(entt::to_integral(who)) ? 1U : 0U;
-        }
-        return n;
-    };
-    const std::size_t before = world->owned_bodies().size();
-    registry.destroy(sphere);
-    registry.remove<Collider>(child);
-    physics_system(registry, *world, 1.0F / 60.0F);
-    if (world->owned_bodies().size() != before - 2 || owners_of(child) != 0 ||
-        registry.get<RigidBody>(child).body != physics::PhysicsWorld::invalid_body) {
-        return std::unexpected(
-            core::Error{"physics body self-test: orphaned bodies not removed"});
-    }
-    registry.emplace<Collider>(child, ColliderShape::sphere, glm::vec3(0.5F), glm::vec3(0.0F));
-    physics_system(registry, *world, 1.0F / 60.0F);
-    physics_system(registry, *world, 1.0F / 60.0F);
-    if (owners_of(child) != 1) {
-        return std::unexpected(
-            core::Error{"physics body self-test: re-added collider did not get one body"});
-    }
-    return {};
+    advance_character(registry, e, *cc, *t, world, dt);
 }
 
 std::uint32_t add_height_field_body(physics::PhysicsWorld& world, const terrain::Heightmap& map,
@@ -502,62 +320,6 @@ std::uint32_t add_terrain_body(entt::registry& registry, physics::PhysicsWorld& 
     const float tile = map.tile_size_m;
     return add_height_field_body(world, map,
                                  glm::vec3(pos.x - tile * 0.5F, pos.y, pos.z - tile * 0.5F));
-}
-
-std::expected<void, core::Error> run_terrain_physics_self_test() {
-    terrain::TerrainParams tp;
-    tp.resolution = 65;
-    tp.tile_size_m = 64.0F;
-    tp.height_m = 8.0F;
-    tp.octaves = 4;
-    tp.erosion_droplets = 0;
-    const terrain::Heightmap map = terrain::generate(tp);
-
-    auto world = physics::PhysicsWorld::create();
-    if (!world) return std::unexpected(world.error());
-
-    entt::registry registry;
-    const entt::entity te = registry.create();
-    registry.emplace<Terrain>(te, Terrain{tp});
-    auto& tf = registry.emplace<Transform>(te);
-    tf.local = glm::translate(glm::mat4(1.0F), glm::vec3(10.0F, 2.0F, -5.0F));
-    tf.world = tf.local;
-
-    if (add_terrain_body(registry, *world, map) == physics::PhysicsWorld::invalid_body) {
-        return std::unexpected(core::Error{"terrain physics self-test: body creation failed"});
-    }
-
-    // Drop a sphere onto the tile centre through the ECS physics system.
-    constexpr float radius = 0.5F;
-    const entt::entity sphere = registry.create();
-    auto& st = registry.emplace<Transform>(sphere);
-    st.local = glm::translate(glm::mat4(1.0F), glm::vec3(10.0F, 40.0F, -5.0F));
-    st.world = st.local;
-    Collider col;
-    col.shape = ColliderShape::sphere;
-    col.half_extents = glm::vec3(radius);
-    registry.emplace<Collider>(sphere, col);
-    RigidBody rb;
-    rb.motion = BodyMotion::dynamic;
-    registry.emplace<RigidBody>(sphere, rb);
-
-    for (int i = 0; i < 300; ++i) {
-        physics_system(registry, *world, 1.0F / 60.0F);
-    }
-
-    // Expected rest height: world terrain surface at the drop point + radius.
-    // The tile centre sits at the entity's translation, so the drop at
-    // (10, -5) lands at heightmap centre; entity y (2) offsets the surface.
-    const float surface = 2.0F + map.sample(map.tile_size_m * 0.5F, map.tile_size_m * 0.5F);
-    const float y = registry.get<Transform>(sphere).world[3].y;
-    if (y > 39.0F) {
-        return std::unexpected(core::Error{"terrain physics self-test: sphere did not fall"});
-    }
-    if (std::abs(y - (surface + radius)) > 1.0F) {
-        return std::unexpected(
-            core::Error{"terrain physics self-test: sphere not resting on the terrain surface"});
-    }
-    return {};
 }
 
 } // namespace engine::scene

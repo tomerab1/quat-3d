@@ -6,6 +6,11 @@ use serde::de::Error as _;
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::{Map, Value};
 
+mod behavior;
+mod debug;
+pub use behavior::*;
+pub use debug::*;
+
 /// A JSON object keyed by component name (see the tool description).
 pub type Components = Map<String, Value>;
 
@@ -15,7 +20,7 @@ pub type Components = Map<String, Value>;
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(untagged)]
 pub enum EntityRef {
-    /// Entity id, as returned by scene_create / scene_list.
+    /// Entity id, as returned by `scene_create` / `scene_list`.
     Id(u64),
     /// Exact entity name, or "@N" (batch back-reference).
     Name(String),
@@ -60,7 +65,7 @@ pub struct SceneListParams {
     /// Only entities whose name contains this substring (case-sensitive).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name_contains: Option<String>,
-    /// Only entities that have this component (e.g. "point_light", "primitive").
+    /// Only entities that have this component (e.g. "`point_light`", "primitive").
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub component: Option<String>,
     /// Page size (default 100).
@@ -82,7 +87,7 @@ pub struct EntityParams {
 #[serde(deny_unknown_fields)]
 pub struct SceneCreateParams {
     /// Display name (shown in the editor hierarchy; usable as a reference later,
-    /// so prefer unique, descriptive names like "Tower_Left").
+    /// so prefer unique, descriptive names like "`Tower_Left`").
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
     /// Parent entity (id or unique name). Omit or null for a root entity. The
@@ -124,7 +129,7 @@ pub struct SceneUpdateParams {
 pub struct RemoveComponentsParams {
     /// The entity: integer id (preferred) or exact unique name.
     pub entity: EntityRef,
-    /// Component names to remove, e.g. ["rigidbody", "collider"]. `transform`
+    /// Component names to remove, e.g. `["rigidbody", "collider"]`. `transform`
     /// cannot be removed.
     pub components: Vec<String>,
 }
@@ -155,8 +160,8 @@ pub struct SceneClearParams {
 #[serde(deny_unknown_fields)]
 pub struct BatchCommand {
     /// Engine method name, e.g. "scene.create", "scene.update",
-    /// "scene.set_parent", "environment.set", "camera.set". (Tool-style names
-    /// such as "scene_create" are converted automatically.)
+    /// "`scene.set_parent`", "environment.set", "camera.set". (Tool-style names
+    /// such as "`scene_create`" are converted automatically.)
     pub method: String,
     /// That method's parameters, exactly as for the matching tool. In `entity`
     /// and `parent` fields, "@N" refers to the id returned by command N
@@ -201,10 +206,10 @@ pub struct SunParams {
     /// negative = below the horizon (night).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub elevation_deg: Option<f64>,
-    /// Sun light intensity (same units as dir_light.intensity).
+    /// Sun light intensity (same units as `dir_light.intensity`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub intensity: Option<f64>,
-    /// Sun colour, in the format environment_get returns (linear [r,g,b]).
+    /// Sun colour, in the format `environment_get` returns (linear [r,g,b]).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub color: Option<Color>,
 }
@@ -299,7 +304,7 @@ pub struct ScreenshotParams {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SpawnModelParams {
-    /// Project-relative path of a .gltf/.glb file, exactly as asset_list_models
+    /// Project-relative path of a .gltf/.glb file, exactly as `asset_list_models`
     /// returns it.
     pub path: String,
     /// Name for the spawned root entity.
@@ -328,7 +333,7 @@ pub struct ScenePathParams {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct EngineCallParams {
-    /// Engine method name, e.g. "engine.info" (see engine_methods).
+    /// Engine method name, e.g. "engine.info" (see `engine_methods`).
     pub method: String,
     /// Parameters object for the method; omit for none.
     #[serde(

@@ -9,10 +9,8 @@
 //      (QUAT_BUILD_TREE_ROOT). Packaged builds (ENGINE_PACKAGE_BUILD=ON) embed
 //      no build-machine paths.
 // If nothing matches, the process prints what it tried and exits.
-//
-// main.cpp still spells these as QUAT_PROJECT_ROOT / QUAT_COOKED_SHADER_DIR;
-// CMake maps those macros onto the functions below until main.cpp calls them
-// directly (see CMakeLists.txt, `game`).
+// Every game-side data path (fonts, audio clips, scene files, shader sources
+// for hot reload, the remote API's project root) goes through these.
 
 namespace quat::app {
 

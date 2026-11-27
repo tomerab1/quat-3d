@@ -109,4 +109,91 @@ TEST(GpuSceneIo, RoundTripsComponentsVersion1DidNotSave) {
     EXPECT_EQ(r.get<s::Parent>(lc).entity, le);
 }
 
+// R10.2 backward compatibility: a terrain saved before the erosion model
+// existed (no "erosion" / "gpu" keys) loads as the droplet-eroded CPU
+// terrain it was — not as a new component's GPU grid default — and keeps
+// that through a save/load round trip.
+TEST(GpuSceneIo, TerrainWithoutErosionKeyLoadsAsDroplets) {
+    QUAT_REQUIRE_GPU(g);
+    engine::asset::AssetManager assets;
+    s::Scene scene;
+    const auto path = write_temp("quat_v2_terrain_scene.json", R"({"version": 2, "entities": [
+        {"name": "terrain", "parent": -1,
+         "terrain": {"seed": 42, "resolution": 257, "tile_size": 500, "height": 60,
+                     "octaves": 5, "warp": 0.2, "droplets": 30000, "snowline": 40,
+                     "streaming": false, "stream_radius": 1}}]})");
+    ASSERT_OK(s::load_scene(scene, path, g->allocator, g->transfer, assets));
+    const entt::entity te = find_named(scene, "terrain");
+    ASSERT_NE(te, k_none);
+    const s::Terrain& t = scene.registry().get<s::Terrain>(te);
+    EXPECT_EQ(t.params.erosion_model, engine::terrain::ErosionModel::droplets);
+    EXPECT_EQ(t.params.erosion_droplets, 30000U);
+    EXPECT_FALSE(t.gpu_generate);
+
+    ASSERT_OK(s::save_scene(scene, path));
+    s::Scene reloaded;
+    ASSERT_OK(s::load_scene(reloaded, path, g->allocator, g->transfer, assets));
+    std::filesystem::remove(path);
+    const entt::entity re = find_named(reloaded, "terrain");
+    ASSERT_NE(re, k_none);
+    const s::Terrain& rt = reloaded.registry().get<s::Terrain>(re);
+    EXPECT_EQ(rt.params.erosion_model, engine::terrain::ErosionModel::droplets);
+    EXPECT_EQ(rt.params.erosion_droplets, 30000U);
+    EXPECT_FALSE(rt.gpu_generate);
+
+    // A newly created terrain still gets the GPU grid default.
+    const s::Terrain fresh{};
+    EXPECT_EQ(fresh.params.erosion_model, engine::terrain::ErosionModel::grid);
+    EXPECT_TRUE(fresh.gpu_generate);
+}
+
+// R9.2: authored placements are saved; a scatter saves its parameters only
+// (its placements regenerate from them).
+TEST(GpuSceneIo, RoundTripsInstancedMeshAndScatter) {
+    QUAT_REQUIRE_GPU(g);
+    engine::asset::AssetManager assets;
+    s::Scene scene;
+    const entt::entity rocks = scene.create_entity("rocks");
+    auto& mesh = scene.registry().emplace<s::InstancedMesh>(rocks);
+    mesh.primitive.shape = s::PrimitiveShape::sphere;
+    mesh.cast_shadows = false;
+    for (int i = 0; i < 3; ++i) {
+        s::InstanceTransform t;
+        t.position = glm::vec3(static_cast<float>(i), 0.5F, -2.0F);
+        t.scale = glm::vec3(0.5F + static_cast<float>(i));
+        mesh.instances.push_back(t);
+    }
+    const entt::entity forest = scene.create_entity("forest");
+    scene.registry().emplace<s::InstancedMesh>(forest).gltf_path = "assets/meshes/tree.glb";
+    auto& scatter = scene.registry().emplace<s::Scatter>(forest);
+    scatter.seed = 1234;
+    scatter.area = s::ScatterArea::circle;
+    scatter.slope_deg = {0.0F, 25.0F};
+    scene.registry().get<s::InstancedMesh>(forest).instances.resize(500); // generated
+
+    const auto path = std::filesystem::temp_directory_path() / "quat_instanced_scene.json";
+    ASSERT_OK(s::save_scene(scene, path));
+    s::Scene loaded;
+    ASSERT_OK(s::load_scene(loaded, path, g->allocator, g->transfer, assets));
+    std::filesystem::remove(path);
+
+    auto& r = loaded.registry();
+    const entt::entity lr = find_named(loaded, "rocks");
+    const entt::entity lf = find_named(loaded, "forest");
+    ASSERT_NE(lr, k_none);
+    ASSERT_NE(lf, k_none);
+    const auto& lmesh = r.get<s::InstancedMesh>(lr);
+    EXPECT_EQ(lmesh.primitive.shape, s::PrimitiveShape::sphere);
+    EXPECT_FALSE(lmesh.cast_shadows);
+    ASSERT_EQ(lmesh.instances.size(), 3U);
+    EXPECT_EQ(lmesh.instances[2].position, glm::vec3(2.0F, 0.5F, -2.0F));
+    EXPECT_FLOAT_EQ(lmesh.instances[2].scale.x, 2.5F);
+    EXPECT_EQ(r.get<s::InstancedMesh>(lf).gltf_path, "assets/meshes/tree.glb");
+    EXPECT_TRUE(r.get<s::InstancedMesh>(lf).instances.empty()); // regenerated, not stored
+    EXPECT_EQ(r.get<s::Scatter>(lf).seed, 1234U);
+    EXPECT_EQ(r.get<s::Scatter>(lf).area, s::ScatterArea::circle);
+    EXPECT_EQ(r.get<s::Scatter>(lf).slope_deg, glm::vec2(0.0F, 25.0F));
+    EXPECT_EQ(r.get<s::Scatter>(lf).generated, 0U);
+}
+
 } // namespace
