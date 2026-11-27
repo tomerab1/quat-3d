@@ -918,19 +918,9 @@ int main() {
             if (editor_play) {
                 play_snapshot = engine::editor::capture_scene(scene);
                 // Unity convention: a Collider without a RigidBody simulates as
-                // a static body. Added AFTER the snapshot, so Stop removes it.
-                {
-                    std::vector<entt::entity> static_only;
-                    for (const entt::entity e :
-                         scene.registry().view<engine::scene::Collider>(
-                             entt::exclude<engine::scene::RigidBody>)) {
-                        static_only.push_back(e);
-                    }
-                    for (const entt::entity e : static_only) {
-                        scene.registry().emplace<engine::scene::RigidBody>(
-                            e, engine::scene::BodyMotion::static_body, 0.0F);
-                    }
-                }
+                // a static body (kinematic on nav agents, none on characters).
+                // Added AFTER the snapshot, so Stop removes it.
+                (void)engine::scene::promote_collider_only_bodies(scene.registry());
                 if (auto world = engine::physics::PhysicsWorld::create(); world) {
                     play_physics = std::move(*world);
                     // Terrain joins the simulation as static Jolt height

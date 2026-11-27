@@ -132,10 +132,17 @@ void physics_system(entt::registry& registry, physics::PhysicsWorld& world, floa
                                              physics::PhysicsWorld& world,
                                              const terrain::Heightmap& map);
 
+// Play-mode body promotion (Unity convention): give every Collider without a
+// RigidBody a body — static for scenery, kinematic for NavAgent entities
+// (they move through the ECS) — and none for CharacterController entities
+// (the controller is their physics presence). Returns the bodies added.
+std::size_t promote_collider_only_bodies(entt::registry& registry);
+
 // Gather world-space triangles of the static, walkable scene for navmesh
 // baking (13.1): the terrain heightmap (decimated to keep triangle counts
-// sane) plus every static box collider. `map`/`anchor` may describe a terrain
-// tile (map null = no terrain).
+// sane) plus every static box collider — not those on NavAgent or
+// CharacterController entities, which move. `map`/`anchor` may describe a
+// terrain tile (map null = no terrain).
 void collect_nav_geometry(entt::registry& registry, const terrain::Heightmap* map,
                           const glm::vec3& anchor, std::vector<glm::vec3>& verts,
                           std::vector<std::uint32_t>& indices, bool include_colliders = true);

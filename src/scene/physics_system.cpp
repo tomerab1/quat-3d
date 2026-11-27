@@ -3,7 +3,9 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
+#include <utility>
 #include <vector>
 
 #include <glm/glm.hpp>
@@ -432,6 +434,9 @@ void collect_nav_geometry(entt::registry& registry, const terrain::Heightmap* ma
     // top faces walkable and rejects the bottoms.
     for (auto [e, t, col] : registry.view<const Transform, const Collider>().each()) {
         if (col.shape != ColliderShape::box || col.is_sensor) continue;
+        // Agents and characters move: their own collider is not level
+        // geometry (baking it would punch a hole where the agent stands).
+        if (registry.any_of<NavAgent, CharacterController>(e)) continue;
         const auto* body = registry.try_get<RigidBody>(e);
         if (body != nullptr && body->motion != BodyMotion::static_body) continue;
         const auto base = static_cast<std::uint32_t>(verts.size());
@@ -452,6 +457,23 @@ void collect_nav_geometry(entt::registry& registry, const terrain::Heightmap* ma
             2, 7, 3, 2, 6, 7}; // +y (top)
         for (const std::uint32_t i : box_idx) indices.push_back(base + i);
     }
+}
+
+std::size_t promote_collider_only_bodies(entt::registry& registry) {
+    std::vector<std::pair<entt::entity, BodyMotion>> promote;
+    for (const entt::entity e : registry.view<Collider>(entt::exclude<RigidBody>)) {
+        // A character's capsule controller is its physics presence; a static
+        // body on it would be a wall the character is stuck inside.
+        if (registry.all_of<CharacterController>(e)) continue;
+        // A kinematic nav agent moves through the ECS: it gets a kinematic
+        // body (pushed from its Transform each step), never a static wall.
+        promote.emplace_back(e, registry.all_of<NavAgent>(e) ? BodyMotion::kinematic
+                                                             : BodyMotion::static_body);
+    }
+    for (const auto& [e, motion] : promote) {
+        registry.emplace<RigidBody>(e, motion, 0.0F);
+    }
+    return promote.size();
 }
 
 std::uint32_t add_terrain_body(entt::registry& registry, physics::PhysicsWorld& world,

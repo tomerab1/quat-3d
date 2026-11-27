@@ -77,4 +77,47 @@ TEST(Nav, BakeBoxFloorRoutesAroundBoxObstacle) {
     EXPECT_NEAR(under->y, floor_top, 0.35F);
 }
 
+// Regression (S1 N12): an agent's own collider is not level geometry — it
+// used to be baked as an obstacle (a hole under the agent).
+TEST(Nav, BakeSkipsAgentAndCharacterColliders) {
+    entt::registry r;
+    add_box(r, glm::vec3(0.0F, -0.5F, 0.0F), glm::vec3(10.0F, 0.5F, 10.0F));
+    const entt::entity agent = add_box(r, glm::vec3(2.0F, 0.5F, 0.0F), glm::vec3(0.5F));
+    r.emplace<s::NavAgent>(agent);
+    const entt::entity character = add_box(r, glm::vec3(-2.0F, 0.5F, 0.0F), glm::vec3(0.5F));
+    r.emplace<s::CharacterController>(character);
+
+    std::vector<glm::vec3> verts;
+    std::vector<std::uint32_t> idx;
+    s::collect_nav_geometry(r, nullptr, glm::vec3(0.0F), verts, idx);
+    EXPECT_EQ(idx.size(), 36U) << "only the floor box is level geometry";
+
+    auto mesh = bake(r);
+    ASSERT_OK(mesh);
+    auto under_agent = mesh->nearest_point({2.0F, 0.0F, 0.0F});
+    ASSERT_OK(under_agent);
+    EXPECT_LT(quat::test::xz_distance(*under_agent, {2.0F, 0.0F, 0.0F}), 0.05F)
+        << "the agent's footprint must stay walkable";
+}
+
+// Regression (S1 N12): Play's collider-only promotion made agents static walls.
+TEST(Nav, PlayPromotionKeepsAgentsMoving) {
+    entt::registry r;
+    const entt::entity wall = add_box(r, glm::vec3(0.0F), glm::vec3(1.0F));
+    const entt::entity agent = add_box(r, glm::vec3(3.0F, 0.0F, 0.0F), glm::vec3(0.4F));
+    r.emplace<s::NavAgent>(agent);
+    const entt::entity character = add_box(r, glm::vec3(-3.0F, 0.0F, 0.0F), glm::vec3(0.4F));
+    r.emplace<s::CharacterController>(character);
+    const entt::entity dynamic = add_box(r, glm::vec3(0.0F, 5.0F, 0.0F), glm::vec3(0.5F));
+    r.emplace<s::RigidBody>(dynamic, s::BodyMotion::dynamic, 2.0F);
+
+    EXPECT_EQ(s::promote_collider_only_bodies(r), 2U);
+    ASSERT_TRUE(r.all_of<s::RigidBody>(wall));
+    EXPECT_EQ(r.get<s::RigidBody>(wall).motion, s::BodyMotion::static_body);
+    ASSERT_TRUE(r.all_of<s::RigidBody>(agent));
+    EXPECT_EQ(r.get<s::RigidBody>(agent).motion, s::BodyMotion::kinematic);
+    EXPECT_FALSE(r.all_of<s::RigidBody>(character));
+    EXPECT_EQ(r.get<s::RigidBody>(dynamic).motion, s::BodyMotion::dynamic);
+}
+
 } // namespace
