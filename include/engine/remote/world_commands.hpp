@@ -99,6 +99,14 @@ struct TerrainStatus {
     glm::vec3     bounds_max{0.0F};
 };
 
+// A render.screenshot request. With `camera`, the application renders one
+// frame from that view (instead of the viewport camera, which it leaves
+// untouched) and captures that frame.
+struct ScreenshotRequest {
+    std::uint32_t             max_size = 1024; // longer side of the reply, pixels
+    std::optional<CameraPose> camera;
+};
+
 struct WorldServices {
     // Project root that scene.save/load, asset.list_models and
     // asset.spawn_model paths are confined to.
@@ -123,9 +131,10 @@ struct WorldServices {
         const std::filesystem::path& absolute)>
         spawn_model;
 
-    // Capture the next rendered frame, downscaled so its longer side is at
-    // most `max_size`, and reply {mime, width, height, data} later.
-    std::function<void(std::uint32_t max_size, Responder responder)> screenshot;
+    // Capture the next rendered frame (from request.camera when given),
+    // downscaled so its longer side is at most request.max_size, and reply
+    // {mime, width, height, data} later.
+    std::function<void(const ScreenshotRequest& request, Responder responder)> screenshot;
 
     std::function<bool()>                                    playing;
     std::function<std::expected<bool, core::Error>(bool play)> set_playing;

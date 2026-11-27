@@ -315,6 +315,10 @@ pub struct ScreenshotParams {
     /// images are cheaper to look at; use 512 for quick checks.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_size: Option<u32>,
+    /// Render from this camera instead of the viewport camera, without moving
+    /// the user's view. Omitted fields keep the viewport camera's values.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub camera: Option<ShotCamera>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]

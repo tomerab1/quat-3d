@@ -202,12 +202,18 @@ glm::vec3 FlyCamera::forward() const {
 // belong to the user's scene, keep their authored transforms, and take over the
 // view only in play mode. Conventions mirror camera_system (Vulkan Y flip).
 engine::scene::CameraMatrices FlyCamera::matrices(float aspect) const {
-    const glm::vec3 fwd = forward();
-    const engine::scene::ClipRange planes = clip();
+    return view_matrices(pos, yaw, pitch, fov_y, clip(), aspect);
+}
+
+engine::scene::CameraMatrices view_matrices(const glm::vec3& pos, float yaw, float pitch,
+                                            float fov_y, const engine::scene::ClipRange& clip,
+                                            float aspect) {
+    const glm::vec3 fwd(std::cos(pitch) * std::cos(yaw), std::sin(pitch),
+                        std::cos(pitch) * std::sin(yaw));
     engine::scene::CameraMatrices out;
     out.position = pos;
-    out.view = glm::lookAt(pos, pos + fwd, glm::vec3(0.0F, 1.0F, 0.0F));
-    out.projection = glm::perspective(fov_y, aspect, planes.near_z, planes.far_z);
+    out.view = glm::lookAt(pos, pos + fwd, k_world_up);
+    out.projection = glm::perspective(fov_y, aspect, clip.near_z, clip.far_z);
     out.projection[1][1] *= -1.0F; // Vulkan clip space: Y points down
     out.view_proj = out.projection * out.view;
     return out;

@@ -110,7 +110,7 @@ command ends in `quat-mcp.exe`.
 | `terrain_status` | `terrain.status` | Whether terrain tiles are still generating; loaded tiles and bounds |
 | `world_place_on_ground` | `world.place_on_ground` | Rest an entity's bounds on the terrain or colliders below it, optionally tilted to the slope |
 | `camera_get` / `camera_set` / `camera_frame` | `camera.*` | Read, place or auto-frame the viewport camera |
-| `screenshot` | `render.screenshot` | The viewport as an MCP **image** (PNG) plus a caption |
+| `screenshot` | `render.screenshot` | The viewport (or an explicit camera, leaving the viewport alone) as an MCP **image** (PNG) plus a caption |
 | `asset_list_models` / `asset_spawn_model` | `asset.*` | Find and spawn glTF models |
 | `sim_play` / `sim_stop` | `sim.*` | Enter / leave play mode |
 | `scene_save` / `scene_load` | `scene.save` / `scene.load` | Project-relative JSON scene files |

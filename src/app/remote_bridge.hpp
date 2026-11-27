@@ -26,6 +26,8 @@
 //                        advance_sim_unrendered() instead on iterations that
 //                        draw nothing (minimised)
 //   note_draws(n)        the frame's submitted draw count (debug.stats)
+//   screenshot_view()    before the frame's view: a screenshot's own camera
+//                        to render this frame from, if one is pending
 //   record_capture()     after the frame's graph is recorded: copies the
 //                        final scene image for pending screenshots
 //   on_frame_complete()  right after the frame slot's fence wait: hands the
@@ -152,6 +154,10 @@ public:
     // with `cut`, or a jump / turn past the threshold; camera.frame): the frame
     // restarts temporal history (TAA) instead of blending across the jump.
     [[nodiscard]] bool take_camera_cut();
+    // Once per frame, before the view is computed: the camera a pending
+    // screenshot needs this frame rendered from (issue #41), or nullopt for
+    // the viewport camera. The viewport camera is not modified.
+    [[nodiscard]] std::optional<engine::remote::CameraPose> screenshot_view();
 
     [[nodiscard]] bool listening() const;
 

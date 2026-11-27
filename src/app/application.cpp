@@ -320,7 +320,11 @@ bool Application::run_frame() {
     const float sim_dt = remote_->advance_sim(dt); // A5: pause / step / time scale
 
     const engine::scene::CameraMatrices cam = update_world(dt, sim_dt, aspect);
-    const FrameScene frame_scene = renderer_.gather(scene_, cam, draw_extent, presented_);
+    // A screenshot with its own camera renders this frame from there (issue
+    // #41); terrain streaming, audio and the editor UI stay with the user's view.
+    const std::optional<engine::remote::CameraPose> shot = remote_->screenshot_view();
+    const engine::scene::CameraMatrices view = shot ? shot_view(*shot, aspect) : cam;
+    const FrameScene frame_scene = renderer_.gather(scene_, view, draw_extent, presented_);
 
     world_.update_terrain(scene_, cam.position);
 #ifdef ENGINE_EDITOR
@@ -331,7 +335,7 @@ bool Application::run_frame() {
     FrameInputs frame_inputs;
     frame_inputs.scene = &frame_scene;
     frame_inputs.registry = &scene_.registry();
-    frame_inputs.cam = &cam;
+    frame_inputs.cam = &view;
     frame_inputs.draw_extent = draw_extent;
     frame_inputs.dt = dt;
     frame_inputs.grass = world_.grass();
@@ -428,6 +432,19 @@ engine::scene::CameraMatrices Application::update_world(float dt, float sim_dt, 
     world_.update_audio(scene_, cam.view, /*live=*/true, dt);
 #endif
     return cam;
+}
+
+engine::scene::CameraMatrices Application::shot_view(const engine::remote::CameraPose& pose,
+                                                     float aspect) const {
+    // Clip planes derived for the shot's own position, with its overrides.
+    const engine::scene::ViewExtent extent{.drawables = scene_bounds_,
+                                           .terrain = world_.terrain_view_bounds(pose.position)};
+    const engine::scene::ClipRange clip = engine::scene::apply_clip_overrides(
+        engine::scene::derive_clip_range(pose.position, extent), pose.near_override,
+        pose.far_override);
+    return view_matrices(pose.position, glm::radians(pose.yaw_deg),
+                         glm::radians(glm::clamp(pose.pitch_deg, -89.0F, 89.0F)),
+                         glm::radians(pose.fov_deg), clip, aspect);
 }
 
 void Application::update_view_clip() {

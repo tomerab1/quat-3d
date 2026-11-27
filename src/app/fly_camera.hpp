@@ -37,6 +37,14 @@ struct FlyInputGate {
     bool arrows = true;
 };
 
+// View / projection of a camera at `pos` looking along (yaw, pitch) radians
+// (Vulkan Y flip, like camera_system). FlyCamera::matrices() and screenshot
+// cameras share it.
+[[nodiscard]] engine::scene::CameraMatrices view_matrices(const glm::vec3& pos, float yaw,
+                                                          float pitch, float fov_y,
+                                                          const engine::scene::ClipRange& clip,
+                                                          float aspect);
+
 class FlyCamera {
 public:
     // Frames the scene's renderables (ticks the scene first so world

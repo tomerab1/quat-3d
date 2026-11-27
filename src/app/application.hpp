@@ -93,6 +93,9 @@ private:
     // Derives the fly camera's clip planes from the scene's drawables (bounds
     // refreshed every k_bounds_refresh_frames) and the terrain (issue #37).
     void update_view_clip();
+    // View / projection for a screenshot's own camera (issue #41).
+    [[nodiscard]] engine::scene::CameraMatrices shot_view(const engine::remote::CameraPose& pose,
+                                                          float aspect) const;
     void report_stats() const;
 
     AppConfig config_;

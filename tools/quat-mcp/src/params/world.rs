@@ -55,6 +55,36 @@ pub struct PlaceOnGroundParams {
     pub offset: Option<f64>,
 }
 
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ShotCamera {
+    /// Camera position [x, y, z] in metres.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub position: Option<[f64; 3]>,
+    /// World point [x, y, z] to aim at (instead of yaw/pitch).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub look_at: Option<[f64; 3]>,
+    /// Heading in degrees: 0 looks along +X, 90 along +Z.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub yaw_deg: Option<f64>,
+    /// Elevation in degrees: positive looks up (-89..89).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pitch_deg: Option<f64>,
+    /// Entity (id or unique name) to fit in view, like `camera_frame`
+    /// (instead of position / `look_at`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub frame: Option<EntityRef>,
+    /// Vertical field of view in degrees.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fov_deg: Option<f64>,
+    /// Near clip plane in metres, or "auto".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub near: Option<ClipPlane>,
+    /// Far clip plane in metres, or "auto".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub far: Option<ClipPlane>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

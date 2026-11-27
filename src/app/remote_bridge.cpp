@@ -86,6 +86,7 @@ struct RemoteBridge::Impl {
     ScreenshotCapture                shots;
     bool                             warned_primitives = false;
     bool                             camera_cut = false; // take_camera_cut()
+    bool                             shot_frame_last = false; // last frame used a shot camera
     std::string                      last_instanced_warning;
 
     // ---- Debugging (A5) -----------------------------------------------------
@@ -272,8 +273,8 @@ struct RemoteBridge::Impl {
         s.terrain_height = t.terrain_height;
         s.terrain_status = t.terrain_status;
         s.spawn_model = [this](const std::filesystem::path& p) { return spawn_model(p); };
-        s.screenshot = [this](std::uint32_t max_size, remote::Responder r) {
-            shots.request(max_size, std::move(r));
+        s.screenshot = [this](const remote::ScreenshotRequest& req, remote::Responder r) {
+            shots.request(req, std::move(r));
         };
         s.save_scene = [this](const std::filesystem::path& p) -> std::expected<void, Error> {
             if (is_playing()) return fail("stop play mode first (sim.stop)");
@@ -437,6 +438,16 @@ float RemoteBridge::advance_sim(float real_dt) {
 float RemoteBridge::advance_sim_unrendered() { return impl_->clock.advance(0.0F); }
 
 bool RemoteBridge::take_camera_cut() { return std::exchange(impl_->camera_cut, false); }
+
+std::optional<engine::remote::CameraPose> RemoteBridge::screenshot_view() {
+    Impl& m = *impl_;
+    std::optional<engine::remote::CameraPose> view = m.shots.begin_frame();
+    // The shot frame and the one returning to the viewport are both cuts:
+    // neither may blend with the other view's temporal history.
+    if (view || m.shot_frame_last) m.camera_cut = true;
+    m.shot_frame_last = view.has_value();
+    return view;
+}
 
 void RemoteBridge::note_draws(std::size_t draws) {
     impl_->draws = static_cast<std::uint32_t>(std::min<std::size_t>(draws, UINT32_MAX));

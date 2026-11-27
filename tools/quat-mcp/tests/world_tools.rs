@@ -103,6 +103,37 @@ async fn place_on_ground_passes_placement_options() {
 }
 
 #[tokio::test]
+async fn screenshot_from_an_explicit_camera() {
+    let engine = MockEngine::start(None, |method, _| match method {
+        "render.screenshot" => Action::Reply(json!({
+            "mime": "image/png", "width": 2, "height": 1, "data": "iVBORw0KGgo="})),
+        _ => Action::Error(-32601, "unknown".into()),
+    })
+    .await;
+    let client = connect(&engine.addr_string()).await;
+    let r = call(
+        &client,
+        "screenshot",
+        json!({"max_size": 512, "camera": {"frame": "Tower", "fov_deg": 35, "far": "auto"}}),
+    )
+    .await;
+    assert_eq!(r.is_error, Some(false), "{}", text(&r));
+    assert!(
+        text(&r).contains("viewport camera was not moved"),
+        "{}",
+        text(&r)
+    );
+    assert_eq!(
+        engine.last_params("render.screenshot"),
+        Some(json!({"max_size": 512,
+                    "camera": {"frame": "Tower", "fov_deg": 35.0, "far": null}}))
+    );
+    let r = call(&client, "screenshot", json!({"camera": {"zoom": 2}})).await;
+    assert_eq!(r.is_error, Some(true));
+    client.cancel().await.unwrap();
+}
+
+#[tokio::test]
 async fn terrain_status_reports_generation() {
     let engine = MockEngine::start(None, |method, _| match method {
         "terrain.status" => Action::Reply(json!({

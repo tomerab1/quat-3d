@@ -161,8 +161,9 @@ struct FrameInputs {
     // GPU grass around the camera (null: none); `sim_dt` drives its wind.
     GrassRuntime* grass = nullptr;
     float         sim_dt = 0.0F;
-    // The view jumped (remote camera cut): temporal history should restart.
-    // Hook for the TAA history reset (R11); the renderer does not read it yet.
+    // The view jumped (a remote camera cut, or a screenshot's own camera and
+    // the frame returning from it): TAA history restarts instead of blending
+    // across the jump.
     bool camera_cut = false;
 #ifdef ENGINE_EDITOR
     // Builds the editor UI (after the scene passes are declared) and returns

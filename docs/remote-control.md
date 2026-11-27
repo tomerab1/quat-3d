@@ -105,13 +105,27 @@ Details the contract leaves open, as implemented:
   `false` is continuous motion (a fly-through of many small calls). Without
   `cut`, a move is a cut when the camera jumps more than 10% of the far plane,
   turns more than 30° or changes its field of view by more than 30°.
-  `camera.frame` is always a cut. (The flag reaches the frame loop as
-  `FrameInputs::camera_cut`; the TAA history reset itself lands with R11.)
+  `camera.frame` is always a cut. The flag reaches the frame loop as
+  `FrameInputs::camera_cut`, which invalidates the TAA history.
 - **`render.screenshot`** captures the scene view (the editor viewport
   without UI, else the window), copied on the GPU into a per-frame readback
   buffer that is read after that frame's fence — no stall — then downscaled
   (area filter in linear light) and PNG-encoded off the main thread. At most
   8 may be in flight.
+- **Screenshots from an explicit camera** (issue #41). `render.screenshot
+  {camera:{...}}` takes the `camera.set` placement fields (`position`,
+  `look_at` | `yaw_deg`/`pitch_deg`, `fov_deg`, `near`, `far`; omitted ones
+  keep the viewport camera's values) or `frame` (an entity to fit in view, as
+  `camera.frame` does). The application renders the next frame from that
+  camera (`RemoteBridge::screenshot_view()`), captures exactly that frame and
+  goes back to the viewport camera: the viewport camera's state is never
+  written, so `camera.get` is unchanged. The renderer has one view, so this
+  is a one-frame camera swap rather than a second view: the viewport shows
+  the shot for one frame, TAA history restarts on the shot frame and the
+  frame after it (both are cuts), auto-exposure keeps adapting to the
+  viewport, and terrain keeps streaming around the viewport camera (a shot
+  far from it may show missing tiles). Shots with different cameras take a
+  frame each; the oldest goes first.
 - **Paths** (`scene.save/load`, `asset.spawn_model`) must be relative to the
   project root; absolute paths, `..` escapes and symlinks leading out are
   refused. `scene.save` writes only `.json` and refuses to overwrite a file
@@ -231,7 +245,7 @@ values. Unknown fields are errors (they name the known fields).
 | `camera.get` | — | `{position, yaw_deg, pitch_deg, fov_deg, near, far, near_auto, far_auto}` |
 | `camera.set` | `{position?, look_at?, yaw_deg?, pitch_deg?, fov_deg?, near?, far?, cut?}` | `camera.get` result |
 | `camera.frame` | `{entity?}` (whole scene when omitted) | `camera.get` result |
-| `render.screenshot` *(deferred)* | `{max_size?=1024}` | `{mime:"image/png", width, height, data:<base64>}` |
+| `render.screenshot` *(deferred)* | `{max_size?=1024, camera?:{position?, look_at? \| yaw_deg?/pitch_deg?, frame?, fov_deg?, near?, far?}}` | `{mime:"image/png", width, height, data:<base64>}` |
 | `asset.list_models` | — | `{models:[project-relative paths of .gltf/.glb]}` |
 | `asset.spawn_model` | `{path, name?, parent?, components?}` | `{roots:[ids]}` |
 | `sim.play` / `sim.stop` | — | `{playing}` |

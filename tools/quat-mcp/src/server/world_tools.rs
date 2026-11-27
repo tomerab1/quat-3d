@@ -53,8 +53,13 @@ impl QuatServer {
                  an engine bug.",
             );
         };
+        let source = if params.camera.is_some() {
+            "Screenshot from the requested camera (the viewport camera was not moved)"
+        } else {
+            "Viewport screenshot"
+        };
         let caption = format!(
-            "Viewport screenshot, {}x{} px ({}).",
+            "{source}, {}x{} px ({}).",
             shot.width, shot.height, shot.mime
         );
         CallToolResult::success(vec![

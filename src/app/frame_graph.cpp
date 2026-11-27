@@ -248,6 +248,8 @@ bool FrameRenderer::record(const FrameInputs& in) {
     const std::uint32_t image_index = image_index_;
     DeferredFrame& fr = frames_[frame_];
     draw_extent_ = draw_extent;
+    // A camera cut: the resolve must not blend with the other view's history.
+    if (in.camera_cut && taa_history_) taa_history_->invalidate();
     const auto atmos_skyview = [&]() {
         return atmosphere_ ? atmosphere_->skyview_view() : VK_NULL_HANDLE;
     };
