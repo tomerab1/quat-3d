@@ -1,13 +1,14 @@
 // RenderSettings descriptor table (A8): every entry points at the field it
 // names, its default is the struct's default, and the setters clamp; the
-// shadow extent sizes the light-space box.
+// shadow distance sizes the cascades; retired keys are listed as deprecated.
 //
 // What these CPU tests do not cover: the frame graph's per-frame decisions
 // (src/app/frame_graph.cpp) — bloom.enabled = false skipping the bloom pass,
 // shadows.enabled = false skipping the shadow pass, the TAA jitter switch —
 // live in the app layer, which engine_tests does not link. Each pass's side is
 // covered by Gpu* tests (render_settings_gpu_test.cpp: exposure, TAA off;
-// lighting_pass_test.cpp: no shadow map, PCF radius, bias, IBL intensity) and
+// lighting_pass_test.cpp: no shadow map, PCF radius, bias, IBL intensity;
+// csm_gpu_test.cpp / gtao_test.cpp / contact_shadow_test.cpp: R12 groups) and
 // the wiring by CI's demo render.
 
 #include <cmath>
@@ -15,9 +16,11 @@
 #include <string>
 
 #include <glm/glm.hpp>
+#include <glm/gtc/matrix_transform.hpp>
 #include <gtest/gtest.h>
 
 #include "engine/renderer/render_settings.hpp"
+#include "engine/renderer/csm.hpp"
 #include "engine/renderer/shadow_pass.hpp"
 
 namespace {
@@ -83,8 +86,16 @@ TEST(RenderSettings, SetClampsAndRounds) {
     EXPECT_FLOAT_EQ(s.exposure.compensation_ev, ev->max);
     const r::RenderSettingDesc* pcf = r::find_render_setting("shadows", "pcf_radius");
     ASSERT_NE(pcf, nullptr);
-    r::set_render_setting(s, *pcf, 2.6F);
-    EXPECT_EQ(s.shadows.pcf_radius, 3);
+    r::set_render_setting(s, *pcf, 100.0F);
+    EXPECT_FLOAT_EQ(s.shadows.pcf_radius, r::CsmSettings::k_pcf_radius.max);
+    const r::RenderSettingDesc* cascades = r::find_render_setting("shadows", "cascades");
+    ASSERT_NE(cascades, nullptr);
+    r::set_render_setting(s, *cascades, 2.6F);
+    EXPECT_EQ(s.shadows.cascade_count, 3);
+    const r::RenderSettingDesc* slices = r::find_render_setting("ao", "slices");
+    ASSERT_NE(slices, nullptr);
+    r::set_render_setting(s, *slices, 0.0F);
+    EXPECT_EQ(s.ao.slice_count, r::GtaoSettings::k_slice_count.min);
     const r::RenderSettingDesc* taa = r::find_render_setting("taa", "enabled");
     ASSERT_NE(taa, nullptr);
     r::set_render_setting(s, *taa, 0.0F);
@@ -106,23 +117,42 @@ TEST(RenderSettings, ResetRestoresOneGroupOrAll) {
     EXPECT_FLOAT_EQ(s.clouds.time_s, 42.0F);
 }
 
-// shadows.extent_m is the half-size of the shadowed box: a point inside it
-// projects into the shadow map's clip square, one beyond it does not.
-TEST(RenderSettings, ShadowExtentSizesTheLightBox) {
-    const glm::vec3 travel = glm::normalize(glm::vec3(0.3F, -1.0F, 0.2F));
-    const glm::vec3 centre(0.0F, 1.5F, 0.0F);
-    const auto inside = [&](float extent, const glm::vec3& p) {
-        const glm::vec4 c = r::directional_shadow_view_proj(travel, centre, extent) *
-                            glm::vec4(p, 1.0F);
-        const glm::vec3 ndc = glm::vec3(c) / c.w;
-        return std::abs(ndc.x) <= 1.0F && std::abs(ndc.y) <= 1.0F && ndc.z >= 0.0F &&
-               ndc.z <= 1.0F;
+// shadows.max_distance (which replaced the fixed box's extent_m) is where the
+// cascades end: a receiver nearer than it lands inside the last cascade's
+// clip square, one beyond it is past the last split and unshadowed.
+TEST(RenderSettings, ShadowDistanceSizesTheCascades) {
+    r::CsmView view;
+    view.view = glm::lookAt(glm::vec3(0.0F, 2.0F, 0.0F), glm::vec3(0.0F, 2.0F, -1.0F),
+                            glm::vec3(0.0F, 1.0F, 0.0F));
+    view.projection = glm::perspective(glm::radians(60.0F), 1.0F, 0.1F, 1000.0F);
+    view.projection[1][1] *= -1.0F;
+    view.to_light = glm::normalize(glm::vec3(0.3F, 1.0F, 0.2F));
+    const auto covered = [&](float distance, float at) {
+        r::RenderSettings s;
+        s.shadows.max_distance = distance;
+        s.shadows.gpu_depth_bounds = false; // the CPU fit over near .. max_distance
+        const glm::vec2 range = r::shadow_range(view.projection, s.shadows, false, 0, 0).range;
+        const r::GpuCascades cs = r::fit_cascades(view, s.shadows, range, r::shadow_map_size);
+        if (at >= cs.split_far[3]) return false;
+        const glm::vec4 c = cs.view_proj[3] * glm::vec4(0.0F, 0.0F, -at, 1.0F);
+        return std::abs(c.x) <= 1.0F && std::abs(c.y) <= 1.0F && c.z >= 0.0F && c.z <= 1.0F;
     };
-    const float extent = r::ShadowSettings{}.extent_m;
-    EXPECT_TRUE(inside(extent, centre));
-    EXPECT_TRUE(inside(extent, centre + glm::vec3(0.7F * extent, 0.0F, 0.0F)));
-    EXPECT_FALSE(inside(extent, centre + glm::vec3(2.0F * extent, 0.0F, 0.0F)));
-    EXPECT_TRUE(inside(3.0F * extent, centre + glm::vec3(2.0F * extent, 0.0F, 0.0F)));
+    const float distance = r::CsmSettings{}.max_distance;
+    EXPECT_TRUE(covered(distance, 0.7F * distance));
+    EXPECT_FALSE(covered(distance, 1.2F * distance));
+    EXPECT_TRUE(covered(3.0F * distance, 1.2F * distance));
+}
+
+// The pre-cascade shadow keys are retired, not forgotten: listed as
+// deprecated, not as fields.
+TEST(RenderSettings, RetiredShadowKeysAreDeprecated) {
+    for (const char* key : {"extent_m", "depth_bias", "slope_bias"}) {
+        EXPECT_EQ(r::find_render_setting("shadows", key), nullptr) << key;
+        const r::DeprecatedRenderSetting* d = r::find_deprecated_render_setting("shadows", key);
+        ASSERT_NE(d, nullptr) << key;
+        EXPECT_FALSE(d->note.empty());
+    }
+    EXPECT_EQ(r::find_deprecated_render_setting("shadows", "pcf_radius"), nullptr);
 }
 
 } // namespace

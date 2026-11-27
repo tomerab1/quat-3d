@@ -551,4 +551,25 @@ create_sampler(VkDevice device, SamplerAddress address, std::uint32_t mip_levels
     return Sampler{device, sampler};
 }
 
+std::expected<Sampler, core::Error> create_sampler(VkDevice device, const SamplerDesc& desc) {
+    VkSamplerCreateInfo info{};
+    info.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+    info.magFilter = desc.filter;
+    info.minFilter = desc.filter;
+    info.mipmapMode = desc.mip_mode;
+    info.addressModeU = desc.address;
+    info.addressModeV = desc.address;
+    info.addressModeW = desc.address;
+    info.maxLod = desc.max_lod;
+    info.compareEnable = desc.compare ? VK_TRUE : VK_FALSE;
+    info.compareOp = desc.compare_op;
+    info.borderColor = desc.border;
+
+    VkSampler sampler = VK_NULL_HANDLE;
+    if (vkCreateSampler(device, &info, nullptr, &sampler) != VK_SUCCESS) {
+        return fail("create_sampler: vkCreateSampler failed");
+    }
+    return Sampler{device, sampler};
+}
+
 } // namespace engine::rhi

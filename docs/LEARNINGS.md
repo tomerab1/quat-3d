@@ -26,6 +26,10 @@ into CLAUDE.md or the brief template in [`CYCLE.md`](CYCLE.md).
 
 ## Build and CI
 
+- **Local test builds must track header dependencies.** A scratch build that
+  rebuilt only changed .cpp files linked objects compiled against an old
+  class layout and crashed (R12). Compile with `-MMD -MF` and rebuild when
+  any listed dependency is newer than the object.
 - **Hand-compiling translation units proves neither that they are in a CMake
   target nor that they link.** G8.4 passed every `-fsyntax-only` check, but
   `game` failed to link: `compress_clips` was declared in
@@ -123,6 +127,25 @@ into CLAUDE.md or the brief template in [`CYCLE.md`](CYCLE.md).
   to InstanceIndex - BaseInstance), which the device does not enable — the
   validation layer flags every pipeline. Use `instancing.slang`'s
   `instance_index()` (plain InstanceIndex) in vertex shaders.
+- **Shadow acne has more than one cause; test it with an image test first.**
+  R12.9: D16 over a caster-padded range gave 0.83 of the unshadowed value on
+  a sloped lit floor; pancaking (depth clamp, tight range) alone still gave
+  0.84. Per-tap receiver-plane depth plus a one-texel slope-scaled bias fixed
+  it (≥ 0.97). Wide PCF / PCSS kernels need the receiver plane, not just a
+  constant bias.
+
+- **A graphics pipeline with no descriptor sets cannot draw after a pass
+  that bound descriptor buffers** (validation VUID-vkCmdDrawIndexed-None-08117,
+  R12): the bound buffers stay on the bind point and the pipeline lacks the
+  descriptor-buffer bit. Give such a pipeline an empty set layout (the
+  shadow caster pipeline does) — pass order in the graph is not fixed.
+- **Screen-space marches self-intersect at grazing angles with nearest-texel
+  depth** (R12 contact shadows): one pixel can span metres of depth. Sample
+  the depth bilinearly (one GatherRed; NDC depth is affine over a plane) so a
+  planar receiver is reconstructed exactly, and keep a grazing-floor test.
+- **Far-field image tests need footprints of several pixels.** A probe on a
+  floor 70 m away under a camera 3 m up covers ~7 m per pixel row; elongate
+  occluders along the view axis and test a small window, not one pixel.
 - **vcpkg's `acl` port is POSIX access-control lists, not the animation
   codec.** ACL + RTM are header-only and fetched by `cmake/FetchAcl.cmake`,
   pinned to release commits. Check a port's description before adding it.
@@ -267,3 +290,20 @@ finished worker's worktree, whose files then no longer matched its HEAD.
 **Rule:** in scratch worktrees use a unique local branch name and push with
 `git push origin HEAD:feat/<id>`; never create or reset a local branch that
 another worktree has checked out (`git worktree list` shows them).
+
+## Central registration lists turn every merge into N conflicts (factory)
+
+Merging A8 (#17) made #19, #22, #25, #26 and #34 conflict at once — mostly
+in the same lists every feature appends to (CMake source lists,
+`component_json.cpp`'s component table, `remote_bridge`, quat-mcp
+`server/mod.rs`, `inspector.cpp`). **Rule:** a feature adds its own files
+and registers itself in one line; central lists are split per module (S9).
+Until S9 lands, merge PRs that touch registration lists one at a time and
+re-run CI on each merged head.
+
+## Hand-compiled translation units are not proof of a CMake target (G8)
+
+G8 compiled every new `.cpp` with `check-compile.sh`, but `compress_clips`'s
+source was not in the target `engine_scene` links, so `game` failed to link
+in CI. **Rule:** before pushing, grep the CMake lists for every new `.cpp`;
+compile checks cover syntax, only a real configure + link covers targets.
