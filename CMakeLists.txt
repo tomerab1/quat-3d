@@ -259,6 +259,7 @@ endif()
 add_library(engine_renderer STATIC
     src/renderer/mesh_pass.cpp
     src/renderer/lighting_pass.cpp
+    src/renderer/light_clusters.cpp
     src/renderer/tonemap_pass.cpp
     src/renderer/skinning_pass.cpp
     src/renderer/shadow_pass.cpp
