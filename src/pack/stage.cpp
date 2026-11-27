@@ -16,7 +16,7 @@
 #include "engine/core/child_process.hpp"
 #include "engine/core/utf8_path.hpp"
 #include "engine/pack/gltf_refs.hpp"
-#include "engine/pack/sha256.hpp"
+#include "engine/pack/digest.hpp"
 
 namespace engine::pack {
 

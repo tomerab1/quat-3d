@@ -74,6 +74,16 @@ load_game_project(const std::filesystem::path& project_root);
 // "1.2.0"), as macOS CFBundleVersion wants it.
 [[nodiscard]] std::string numeric_version(std::string_view version);
 
+// A package output folder (absolute, or relative to `project_root`) must not
+// overlap what the game ships: it may not equal, lie inside, or contain a
+// content root or the start scene's folder (packages would otherwise be
+// collected into the next package, or a rebuild would delete game files).
+// Folders outside the project are fine. The error names both, e.g.
+// "output: 'assets/dist' is inside the content root 'assets'".
+[[nodiscard]] std::expected<void, core::Error>
+check_output_folder(const GameProject& project, const std::filesystem::path& project_root,
+                    const std::filesystem::path& output);
+
 // Individual validators (also used by quat-pack's command line).
 [[nodiscard]] std::expected<void, core::Error> validate_game_id(std::string_view id);
 [[nodiscard]] std::expected<void, core::Error> validate_game_version(std::string_view version);

@@ -433,9 +433,12 @@ table.
 - `target` is `linux-x64`, `windows-x64` or `macos-arm64`; anything but the
   engine's own OS fails (`failed`): a package needs that OS's player build
   and tools.
-- `output` is relative to the game project and confined to it.
-- `config` `development` lets the packaged game accept `QUAT_REMOTE`;
-  `shipping` keeps remote control off in it.
+- `output` is relative to the game project and confined to it, and may not
+  equal, lie inside or contain a content root or the start scene's folder
+  (`invalid_params`, e.g. `output: 'assets/dist' is inside the content root
+  'assets'`).
+- `config` `development` packages `quat-player` (accepts `QUAT_REMOTE`);
+  `shipping` packages `quat-player-shipping`, which has no remote control.
 - `state` is `idle`, `running`, `succeeded`, `failed` or `cancelled`;
   `package` / `folder` are relative to the game project. A build while one
   runs fails (`failed`, naming the running job).

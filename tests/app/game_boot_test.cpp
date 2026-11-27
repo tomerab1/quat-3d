@@ -129,10 +129,99 @@ TEST(GameBoot, ErrorsSayWhereAndWhat) {
     ASSERT_ERR(e);
     EXPECT_TRUE(contains(e.error().message, "mixed up")) << e.error().message;
 
+}
+
+// ---- Remote-control policy: fail closed ------------------------------------
+
+bool remote_allowed(const quat::app::GameBoot& boot) {
+    quat::app::AppConfig config;
+    quat::app::apply_game_boot(boot, config);
+    return config.remote_allowed;
+}
+
+TEST(GameBootPolicy, PackagedRootWithoutManifestIsShipping) {
+    quat::test::TempProject data("quat_boot_policy");
+    write_game(data); // game.json next to the executable, manifest deleted
+    auto boot = resolve_game_boot({.game_override = std::nullopt, .data_root = data.path()});
+    ASSERT_OK(boot);
+    EXPECT_EQ(boot->config, project::PackageConfig::shipping);
+    EXPECT_TRUE(boot->packaged);
+    EXPECT_FALSE(remote_allowed(*boot));
+    ASSERT_FALSE(boot->warnings.empty());
+    EXPECT_TRUE(contains(boot->warnings[0], "no manifest.json")) << boot->warnings[0];
+}
+
+TEST(GameBootPolicy, InvalidManifestIsShipping) {
+    quat::test::TempProject data("quat_boot_policy");
+    write_game(data);
     data.write("manifest.json", "{broken");
-    e = resolve_game_boot({.game_override = std::nullopt, .data_root = data.path()});
-    ASSERT_ERR(e);
-    EXPECT_TRUE(contains(e.error().message, "manifest.json")) << e.error().message;
+    auto boot = resolve_game_boot({.game_override = std::nullopt, .data_root = data.path()});
+    ASSERT_OK(boot);
+    EXPECT_EQ(boot->config, project::PackageConfig::shipping);
+    ASSERT_FALSE(boot->warnings.empty());
+    EXPECT_TRUE(contains(boot->warnings[0], "manifest.json")) << boot->warnings[0];
+
+    // A manifest that is valid JSON but not a manifest: shipping too.
+    data.write("manifest.json", R"({"format": 1, "config": "development"})");
+    boot = resolve_game_boot({.game_override = std::nullopt, .data_root = data.path()});
+    ASSERT_OK(boot);
+    EXPECT_EQ(boot->config, project::PackageConfig::shipping);
+}
+
+TEST(GameBootPolicy, QuatGameCannotUnlockAShippingPackage) {
+    quat::test::TempProject package("quat_boot_shipping_pkg");
+    write_game(package);
+    write_manifest(package, project::PackageConfig::shipping);
+    quat::test::TempProject project_dir("quat_boot_dev_project");
+    write_game(project_dir); // a project folder: no manifest, "development" on its own
+
+    auto boot = resolve_game_boot({.game_override = project_dir.path(), .data_root = package.path()});
+    ASSERT_OK(boot);
+    EXPECT_EQ(boot->game.root, project_dir.path().lexically_normal());
+    EXPECT_EQ(boot->config, project::PackageConfig::shipping);
+    EXPECT_FALSE(remote_allowed(*boot));
+
+    // Deleting the package's manifest does not help either.
+    std::filesystem::remove(package.path() / "manifest.json");
+    boot = resolve_game_boot({.game_override = project_dir.path(), .data_root = package.path()});
+    ASSERT_OK(boot);
+    EXPECT_FALSE(remote_allowed(*boot));
+
+    // Nor a QUAT_GAME project whose own manifest claims development.
+    write_manifest(project_dir, project::PackageConfig::development);
+    boot = resolve_game_boot({.game_override = project_dir.path(), .data_root = package.path()});
+    ASSERT_OK(boot);
+    EXPECT_FALSE(remote_allowed(*boot));
+}
+
+TEST(GameBootPolicy, QuatGameCanLowerButNotRaise) {
+    // A development package running a QUAT_GAME project that ships: shipping.
+    quat::test::TempProject package("quat_boot_dev_pkg");
+    write_game(package);
+    write_manifest(package, project::PackageConfig::development);
+    quat::test::TempProject other("quat_boot_other");
+    write_game(other);
+    write_manifest(other, project::PackageConfig::shipping);
+    auto boot = resolve_game_boot({.game_override = other.path(), .data_root = package.path()});
+    ASSERT_OK(boot);
+    EXPECT_EQ(boot->config, project::PackageConfig::shipping);
+}
+
+TEST(GameBootPolicy, ShippingBuildIgnoresQuatGameAndManifest) {
+    quat::test::TempProject package("quat_boot_ship_build");
+    write_game(package);
+    write_manifest(package, project::PackageConfig::development);
+    quat::test::TempProject project_dir("quat_boot_dev_project");
+    write_game(project_dir, "x/");
+    auto boot = resolve_game_boot({.game_override = project_dir.path() / "x",
+                                   .data_root = package.path(),
+                                   .shipping_build = true});
+    ASSERT_OK(boot);
+    EXPECT_EQ(boot->game.root, package.path().lexically_normal()); // QUAT_GAME ignored
+    EXPECT_EQ(boot->config, project::PackageConfig::shipping);    // manifest ignored
+    EXPECT_FALSE(remote_allowed(*boot));
+    ASSERT_FALSE(boot->warnings.empty());
+    EXPECT_TRUE(contains(boot->warnings[0], "QUAT_GAME is ignored")) << boot->warnings[0];
 }
 
 } // namespace

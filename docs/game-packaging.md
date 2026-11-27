@@ -51,16 +51,25 @@ included).
 
 ## Runtime player vs editor build
 
-One build tree produces both executables from the same engine libraries and
-the same application layer (`src/app/`):
+One build tree produces all three executables from the same engine libraries
+and the same application layer (`src/app/`):
 
-| | `game` (editor build) | `quat-player` |
-|---|---|---|
-| Editor UI (ImGui, `ENGINE_EDITOR`) | yes | no |
-| Starts in | the editor, a demo scene | `game.json`'s start scene, playing |
-| Shader hot reload | on | off |
-| Remote control / MCP | `QUAT_REMOTE=<port>` | `QUAT_REMOTE` honoured only in `development` packages and dev runs; ignored in `shipping` packages |
-| Finds its data | source tree, or next to the executable | next to the executable (`game.json` there), or `QUAT_GAME=<project dir>` in development |
+| | `game` (editor build) | `quat-player` | `quat-player-shipping` |
+|---|---|---|---|
+| Editor UI (ImGui, `ENGINE_EDITOR`) | yes | no | no |
+| Starts in | the editor, a demo scene | `game.json`'s start scene, playing | the same |
+| Shader hot reload | on | off | off |
+| Remote control / MCP | `QUAT_REMOTE=<port>` | `QUAT_REMOTE`, unless the policy below says shipping | compiled out (`QUAT_SHIPPING`): no endpoint, no remote screenshots, not linked against `engine_remote` |
+| Finds its data | source tree, or next to the executable | next to the executable (`game.json` there), or `QUAT_GAME=<project dir>` | next to the executable only (`QUAT_GAME` ignored) |
+| Packaged by | — | `quat-pack --config development` | `quat-pack --config shipping` (the default) |
+
+Shipping is a property of the binary: a shipping package contains
+`quat-player-shipping`, which has no remote-control code at all (the
+`quat_player_shipping_has_no_remote` test checks its symbol table).
+`quat-player` itself fails closed too: a data root holding `game.json` is a
+package, and only its `manifest.json` saying `development` allows remote
+control — a missing or invalid manifest means shipping — and `QUAT_GAME` can
+lower that policy but never raise it.
 
 `ENGINE_EDITOR` is defined per target, not for the whole build: the editor
 build still compiles `quat-player` without it. The player's entry point

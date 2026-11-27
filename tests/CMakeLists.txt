@@ -42,3 +42,19 @@ add_dependencies(engine_tests shaders)
 add_test(NAME engine_tests_cpu COMMAND engine_tests "--gtest_filter=-Gpu*")
 add_test(NAME engine_tests_gpu COMMAND engine_tests "--gtest_filter=Gpu*" --require-gpu)
 set_tests_properties(engine_tests_gpu PROPERTIES LABELS gpu)
+
+# The shipping player must contain no remote-control code (P4). GCC/Clang:
+# the symbol table via nm. MSVC: release executables carry no COFF symbols,
+# so quat-player-shipping writes a linker map (root CMakeLists) instead.
+if(MSVC)
+    add_test(NAME quat_player_shipping_has_no_remote
+        COMMAND ${CMAKE_COMMAND}
+                -DMAP=$<TARGET_FILE_DIR:quat-player-shipping>/quat-player-shipping.map
+                -P ${PROJECT_SOURCE_DIR}/cmake/CheckNoRemoteControl.cmake)
+elseif(CMAKE_NM)
+    add_test(NAME quat_player_shipping_has_no_remote
+        COMMAND ${CMAKE_COMMAND} -DNM=${CMAKE_NM} -DBINARY=$<TARGET_FILE:quat-player-shipping>
+                -P ${PROJECT_SOURCE_DIR}/cmake/CheckNoRemoteControl.cmake)
+else()
+    message(WARNING "quat_player_shipping_has_no_remote: no nm found; the check is not registered")
+endif()

@@ -367,6 +367,37 @@ json game_project_json(const GameProject& p) {
     return out;
 }
 
+std::expected<void, core::Error> check_output_folder(const GameProject& project,
+                                                    const fs::path& project_root,
+                                                    const fs::path& output) {
+    std::error_code ec;
+    const fs::path root = fs::absolute(project_root, ec).lexically_normal();
+    const fs::path out =
+        fs::absolute(output.is_relative() ? root / output : output, ec).lexically_normal();
+    std::string rel = core::path_to_generic_utf8(out.lexically_relative(root));
+    while (rel.size() > 1 && rel.back() == '/') rel.pop_back();
+    if (rel.empty() || rel == ".." || rel.starts_with("../")) return {}; // outside the project
+    if (rel == ".") return fail("output: the project root itself holds the game's files");
+
+    struct Guarded {
+        std::string path;
+        std::string what;
+    };
+    std::vector<Guarded> guarded;
+    for (const std::string& c : project.content) guarded.push_back({c, "content root"});
+    if (const std::size_t slash = project.start_scene.rfind('/'); slash != std::string::npos) {
+        guarded.push_back({project.start_scene.substr(0, slash), "start scene's folder"});
+    }
+    for (const Guarded& g : guarded) {
+        const std::string head = "output: '" + rel + "' ";
+        const std::string tail = " '" + g.path + "'";
+        if (rel == g.path) return fail(head + "is the " + g.what + tail);
+        if (rel.starts_with(g.path + "/")) return fail(head + "is inside the " + g.what + tail);
+        if (g.path.starts_with(rel + "/")) return fail(head + "contains the " + g.what + tail);
+    }
+    return {};
+}
+
 std::string window_title(const GameProject& project) {
     return project.window.title.empty() ? project.name : project.window.title;
 }

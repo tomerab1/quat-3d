@@ -37,7 +37,8 @@ Targets: the engine libraries (`engine_core`, `engine_rhi`, `engine_renderer`,
 `engine_nav`, `engine_net`, `engine_remote`, `engine_audio`, `engine_project`,
 `engine_editor`), the `game` executable (the editor when `ENGINE_EDITOR` is
 on), `quat-player` (the runtime player games ship with — always without the
-editor), the game packager `quat-pack` (`engine_pack`), and the GoogleTest
+editor) and `quat-player-shipping` (the same with remote control compiled out,
+`QUAT_SHIPPING`; what shipping packages contain), the game packager `quat-pack` (`engine_pack`), and the GoogleTest
 suite `engine_tests` (`tests/`). `ENGINE_EDITOR` is a per-target definition
 (the `engine_editor_build` interface target), not a global one, so one
 editor build produces both executables from the same application sources.
@@ -165,8 +166,13 @@ Git Bash (`QUAT_BASH` overrides where it is).
 
 The player resolves its game from `QUAT_GAME`, else `game.json` in the data
 root next to the executable; it changes the working directory to the game
-project so scene-relative paths resolve the same everywhere. In a shipping
-package (`manifest.json` `"config": "shipping"`) it ignores `QUAT_REMOTE`.
+project so scene-relative paths resolve the same everywhere. Shipping
+packages contain `quat-player-shipping`, which has no remote control at all;
+`quat-player` honours `QUAT_REMOTE` only outside a package or in a package
+whose `manifest.json` says `development` (missing or invalid: shipping), and
+`QUAT_GAME` cannot raise that. `quat-pack --out` / `project.build` `output`
+may not equal, lie inside or contain a content root or the start scene's
+folder.
 
 ## Building in a cloud container
 

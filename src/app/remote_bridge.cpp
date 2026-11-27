@@ -59,6 +59,7 @@ using remote::Json;
     return std::unexpected(Error{std::move(what)});
 }
 
+#if !defined(QUAT_SHIPPING)
 // Process resident set size, where cheaply available.
 [[nodiscard]] std::optional<std::uint64_t> resident_bytes() {
 #if defined(__linux__)
@@ -75,19 +76,27 @@ using remote::Json;
     return std::nullopt;
 #endif
 }
+#endif // !QUAT_SHIPPING
 
 } // namespace
 
 struct RemoteBridge::Impl {
+#if defined(QUAT_SHIPPING)
+    Impl(RemoteBridgeTargets targets, std::uint32_t /*frames_in_flight*/)
+        : t(std::move(targets)) {}
+#else
     Impl(RemoteBridgeTargets targets, std::uint32_t frames_in_flight)
         : t(std::move(targets)), shots(frames_in_flight) {}
+#endif
 
     RemoteBridgeTargets t;
 
     // Declared first so responders below are destroyed (answering "dropped")
     // while the server still exists.
+#if !defined(QUAT_SHIPPING)
     std::optional<remote::RpcServer> server;
     ScreenshotCapture                shots;
+#endif
     bool                             warned_primitives = false;
     std::string                      last_instanced_warning;
     std::string                      last_material_warning;
@@ -135,6 +144,7 @@ struct RemoteBridge::Impl {
 #endif
     }
 
+#if !defined(QUAT_SHIPPING)
     // ---- WorldServices ----------------------------------------------------------
 
     [[nodiscard]] remote::CameraPose camera_get() const {
@@ -346,6 +356,8 @@ struct RemoteBridge::Impl {
         remote::register_world_commands(*server, *t.scene, services());
     }
 
+#endif // !QUAT_SHIPPING
+
     // ---- Per-frame work -----------------------------------------------------------
 
     void resolve_primitives() {
@@ -442,19 +454,30 @@ struct RemoteBridge::Impl {
 
 RemoteBridge::RemoteBridge(RemoteBridgeTargets targets, std::uint32_t frames_in_flight)
     : impl_(std::make_unique<Impl>(std::move(targets), frames_in_flight)) {
+#if defined(QUAT_SHIPPING)
+    if (std::getenv("QUAT_REMOTE") != nullptr) {
+        std::fprintf(stderr, "[remote] QUAT_REMOTE ignored: a shipping player has no remote "
+                             "control\n");
+    }
+#else
     impl_->open_endpoint();
+#endif
 }
 RemoteBridge::RemoteBridge(RemoteBridge&&) noexcept = default;
 RemoteBridge& RemoteBridge::operator=(RemoteBridge&&) noexcept = default;
 RemoteBridge::~RemoteBridge() = default;
 
 void RemoteBridge::poll() {
+#if !defined(QUAT_SHIPPING)
     impl_->finish_steps(); // steps run last frame: reply before new requests
     if (impl_->server) impl_->server->poll();
+#endif
     impl_->resolve_primitives();
     impl_->resolve_material_overrides();
     impl_->update_instanced_meshes();
+#if !defined(QUAT_SHIPPING)
     impl_->shots.finish_encodings();
+#endif
 }
 
 float RemoteBridge::advance_sim(float real_dt) {
@@ -474,6 +497,9 @@ void RemoteBridge::note_draws(std::size_t draws) {
 }
 
 engine::core::StderrCapture capture_stderr_for_remote() {
+#if defined(QUAT_SHIPPING)
+    return {}; // no remote control, no debug.log
+#else
     if (std::getenv("QUAT_REMOTE") == nullptr) return {};
     if (const char* opt = std::getenv("QUAT_LOG_CAPTURE"); opt != nullptr && std::string(opt) == "0") {
         return {};
@@ -485,8 +511,16 @@ engine::core::StderrCapture capture_stderr_for_remote() {
         return {};
     }
     return std::move(*capture);
+#endif
 }
 
+#if defined(QUAT_SHIPPING)
+// No remote screenshots without remote control.
+void RemoteBridge::record_capture(VkCommandBuffer /*cmd*/, std::uint32_t /*frame_slot*/,
+                                  const CaptureSource& /*source*/) {}
+void RemoteBridge::on_frame_complete(std::uint32_t /*frame_slot*/) {}
+bool RemoteBridge::listening() const { return false; }
+#else
 void RemoteBridge::record_capture(VkCommandBuffer cmd, std::uint32_t frame_slot,
                                   const CaptureSource& source) {
     impl_->shots.record(cmd, frame_slot, source, *impl_->t.allocator);
@@ -497,5 +531,6 @@ void RemoteBridge::on_frame_complete(std::uint32_t frame_slot) {
 }
 
 bool RemoteBridge::listening() const { return impl_->server.has_value(); }
+#endif
 
 } // namespace quat::app

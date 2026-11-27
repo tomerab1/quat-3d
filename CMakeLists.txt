@@ -128,6 +128,9 @@ find_package(EnTT CONFIG REQUIRED)
 find_package(Jolt CONFIG REQUIRED)
 find_package(recastnavigation CONFIG REQUIRED)
 find_package(GameNetworkingSockets CONFIG REQUIRED)
+# OpenSSL (already in the tree through GameNetworkingSockets): SHA-256 for
+# game package manifests (engine_pack).
+find_package(OpenSSL REQUIRED)
 # miniaudio: vcpkg's port is header-only (it installs miniaudio.h and nothing
 # else), so it is wrapped in an imported target here and engine_audio compiles
 # the implementation (src/audio/miniaudio_impl.cpp). Linux needs pthread, libm
@@ -525,10 +528,32 @@ endif()
 
 add_executable(quat-player src/player/main.cpp ${QUAT_APP_SOURCES})
 target_link_libraries(quat-player PRIVATE ${QUAT_APP_LIBRARIES})
-# A game double-clicked on Windows opens no console window (wWinMain entry).
-set_target_properties(quat-player PROPERTIES WIN32_EXECUTABLE TRUE)
 
-foreach(app_target game quat-player)
+# quat-player-shipping: what `quat-pack --config shipping` ships. Built with
+# QUAT_SHIPPING, which compiles remote control out (no endpoint, no remote
+# screenshots, no QUAT_GAME override): it does not link engine_remote /
+# engine_remote_world at all, so any remote reference left in the shipping
+# path fails the link, and the quat_player_shipping_has_no_remote test checks
+# the symbol table.
+set(QUAT_SHIPPING_APP_SOURCES ${QUAT_APP_SOURCES})
+list(REMOVE_ITEM QUAT_SHIPPING_APP_SOURCES
+    src/app/screenshot_capture.cpp # remote render.screenshot only
+    src/app/build_service.cpp)     # project.build / the editor's export only
+set(QUAT_SHIPPING_APP_LIBRARIES ${QUAT_APP_LIBRARIES})
+list(REMOVE_ITEM QUAT_SHIPPING_APP_LIBRARIES engine_remote engine_remote_world)
+add_executable(quat-player-shipping src/player/main.cpp ${QUAT_SHIPPING_APP_SOURCES})
+target_link_libraries(quat-player-shipping PRIVATE ${QUAT_SHIPPING_APP_LIBRARIES})
+target_compile_definitions(quat-player-shipping PRIVATE QUAT_SHIPPING)
+if(MSVC)
+    # Linker map for the quat_player_shipping_has_no_remote test.
+    target_link_options(quat-player-shipping PRIVATE
+        "/MAP:$<TARGET_FILE_DIR:quat-player-shipping>/quat-player-shipping.map")
+endif()
+
+# A game double-clicked on Windows opens no console window (wWinMain entry).
+set_target_properties(quat-player quat-player-shipping PROPERTIES WIN32_EXECUTABLE TRUE)
+
+foreach(app_target game quat-player quat-player-shipping)
     target_include_directories(${app_target} PRIVATE
         ${ENGINE_PUBLIC_INCLUDE}
         ${CMAKE_CURRENT_SOURCE_DIR}/src)
@@ -552,13 +577,14 @@ endif()
 # never linked into the game or the player.
 # ---------------------------------------------------------------------------
 add_library(engine_pack STATIC
-    src/pack/sha256.cpp
+    src/pack/digest.cpp
     src/pack/lua_refs.cpp
     src/pack/gltf_refs.cpp
     src/pack/dependencies.cpp
     src/pack/stage.cpp
     src/pack/pack_cli.cpp)
 target_link_libraries(engine_pack PUBLIC engine_flags engine_core engine_project engine_scene)
+target_link_libraries(engine_pack PRIVATE OpenSSL::Crypto)
 target_include_directories(engine_pack PUBLIC ${ENGINE_PUBLIC_INCLUDE})
 
 add_executable(quat-pack tools/quat-pack/main.cpp)
@@ -585,6 +611,7 @@ include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/CompileShaders.cmake)
 add_shader_compilation(shaders)
 add_dependencies(game shaders)
 add_dependencies(quat-player shaders)
+add_dependencies(quat-player-shipping shaders)
 # Shader hot reload (R2) runs the same slangc the build cooks with. Not in
 # packaged builds: no build-machine paths there, and hot reload defaults off.
 if(NOT ENGINE_PACKAGE_BUILD)

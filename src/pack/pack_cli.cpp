@@ -66,6 +66,35 @@ constexpr std::chrono::minutes k_smoke_timeout{10};
 #endif
 }
 
+constexpr std::string_view k_shipping_player = "quat-player-shipping";
+
+} // namespace
+
+std::expected<fs::path, core::Error> player_for_config(const fs::path& player,
+                                                       project::PackageConfig config) {
+    const bool is_shipping = path_to_utf8(player.stem()) == k_shipping_player;
+    if (config == project::PackageConfig::development) {
+        if (is_shipping) {
+            return fail("--player: '" + path_to_utf8(player) +
+                        "' is the shipping player, which has no remote control; a development "
+                        "package needs quat-player");
+        }
+        return player;
+    }
+    if (is_shipping) return player;
+    fs::path shipping = player.parent_path() / std::string(k_shipping_player);
+    shipping += player.extension(); // ".exe" on Windows
+    std::error_code ec;
+    if (!fs::is_regular_file(shipping, ec)) {
+        return fail("--config shipping packages quat-player-shipping (remote control compiled "
+                    "out), but there is none at '" +
+                    path_to_utf8(shipping) + "'; build the quat-player-shipping target");
+    }
+    return shipping;
+}
+
+namespace {
+
 [[nodiscard]] std::optional<fs::path> find_quat_cook(const PackOptions& o, const PackDefaults& d) {
     if (o.cook == CookMode::off) return std::nullopt;
     if (o.quat_cook) return o.quat_cook;
@@ -119,6 +148,10 @@ private:
         if (!project) return std::unexpected(project.error());
         const std::string slug = project::executable_slug(*project);
         const std::string target(project::host_target());
+        // --out is relative to the working directory, not the project.
+        if (auto ok = project::check_output_folder(*project, root, fs::absolute(o_.out, ec)); !ok) {
+            return fail("--out: " + ok.error().message.substr(std::string("output: ").size()));
+        }
         line("game: " + project->name + " " + project->version + " (" + project->id + ") from " +
              path_to_utf8(root));
 
@@ -132,6 +165,10 @@ private:
                 return fail("--player: no quat-player at '" + path_to_utf8(o_.player) + "'");
             }
             player = fs::absolute(player, ec);
+            auto chosen = player_for_config(player, o_.config);
+            if (!chosen) return std::unexpected(chosen.error());
+            player = *chosen;
+            line("player: " + path_to_utf8(player));
         }
         const fs::path shaders = o_.shaders ? *o_.shaders
                                  : d_.shader_dir ? *d_.shader_dir

@@ -64,7 +64,7 @@ jobs:
 
       - name: Build
         if: steps.configure.outcome == 'success'
-        run: cmake --build --preset ${{ matrix.preset }} --target game quat-player quat-pack
+        run: cmake --build --preset ${{ matrix.preset }} --target game quat-player quat-player-shipping quat-pack
 
       # Tags must look like v1.2.3 or v1.2.3-rc.1: the version ends up in file
       # names, Info.plist and the release title.

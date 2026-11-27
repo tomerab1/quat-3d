@@ -229,4 +229,33 @@ TEST(GameProject, JsonRoundTrip) {
     EXPECT_EQ(project::game_project_json(*again), project::game_project_json(*p));
 }
 
+TEST(GameProject, OutputFolderMayNotOverlapTheGame) {
+    auto p = project::parse_game_project(valid()); // content: assets/scripts, assets/audio/music.ogg
+    ASSERT_OK(p);
+    const std::filesystem::path root = std::filesystem::absolute("game_root_for_test");
+    const auto err = [&](const std::filesystem::path& out) {
+        auto r = project::check_output_folder(*p, root, out);
+        return r ? std::string() : r.error().message;
+    };
+    EXPECT_EQ(err("dist"), "");
+    EXPECT_EQ(err("build/packages"), "");
+    EXPECT_EQ(err(root / "dist"), "");
+    EXPECT_EQ(err(root.parent_path() / "elsewhere"), ""); // outside the project
+    EXPECT_EQ(err("assets/dist"), ""); // assets/ itself is not shipped whole here
+    EXPECT_EQ(err("assets/scripts/dist"),
+              "output: 'assets/scripts/dist' is inside the content root 'assets/scripts'");
+    EXPECT_EQ(err("assets/scripts"), "output: 'assets/scripts' is the content root 'assets/scripts'");
+    EXPECT_EQ(err("assets/audio"), "output: 'assets/audio' contains the content root 'assets/audio/music.ogg'");
+    EXPECT_EQ(err(root / "assets" / "scenes" / "out"),
+              "output: 'assets/scenes/out' is inside the start scene's folder 'assets/scenes'");
+    EXPECT_EQ(err("assets/scenes/"), "output: 'assets/scenes' is the start scene's folder 'assets/scenes'");
+    EXPECT_EQ(err("assets"), "output: 'assets' contains the content root 'assets/scripts'");
+    EXPECT_EQ(err("."), "output: the project root itself holds the game's files");
+    EXPECT_EQ(err("x/../assets/scripts/y"),
+              "output: 'assets/scripts/y' is inside the content root 'assets/scripts'");
+
+    p->content = {"assets"};
+    EXPECT_EQ(err("assets/dist"), "output: 'assets/dist' is inside the content root 'assets'");
+}
+
 } // namespace

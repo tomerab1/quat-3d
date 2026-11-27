@@ -4,6 +4,7 @@
 // (tools/quat-pack/main.cpp) only gathers its defaults and calls run_pack.
 //
 //   quat-pack <project dir | game.json> --player <quat-player> --out <dir>
+//   (shipping packages lay out quat-player-shipping from the same folder)
 //             [--config shipping|development] [--build-id <id>]
 //             [--cook auto|off] [--quat-cook <exe>] [--shaders <dir>]
 //             [--engine-root <dir>] [--stage-only] [--smoke-test]
@@ -61,6 +62,13 @@ parse_pack_args(std::span<const std::string> args);
 
 // A build id may name packages: 1-64 of [A-Za-z0-9.-], starting alphanumeric.
 [[nodiscard]] std::expected<void, core::Error> validate_build_id(std::string_view id);
+
+// The player binary a package of `config` ships, given --player (the
+// development quat-player, or quat-player-shipping): shipping packages use
+// quat-player-shipping next to it (remote control compiled out), development
+// packages quat-player itself. The error says what to build.
+[[nodiscard]] std::expected<std::filesystem::path, core::Error>
+player_for_config(const std::filesystem::path& player, project::PackageConfig config);
 
 // Runs every step; `out` receives the log (progress lines included). Returns
 // the process exit code.

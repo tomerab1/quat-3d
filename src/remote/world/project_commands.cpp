@@ -113,6 +113,10 @@ RpcResult project_build(Context& ctx, const Json& params) {
     }
     auto out = core::confine_to_root(game->root, output);
     if (!out) return bad_params("output: " + out.error().message);
+    // Packages must not land in (or swallow) what the game ships.
+    if (auto ok = project::check_output_folder(game->project, game->root, *out); !ok) {
+        return bad_params(ok.error().message);
+    }
     p.output = *out;
     auto job = ctx.services.project_build(p);
     if (!job) return rpc_fail(rpc_code::failed, job.error().message);

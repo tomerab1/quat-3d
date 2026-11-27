@@ -12,7 +12,7 @@
 
 #include "engine/core/utf8_path.hpp"
 #include "engine/pack/pack_cli.hpp"
-#include "engine/pack/sha256.hpp"
+#include "engine/pack/digest.hpp"
 #include "engine/pack/stage.hpp"
 #include "engine/project/build_job.hpp"
 #include "engine/project/game_project.hpp"
@@ -220,6 +220,47 @@ TEST_F(Stage, StageOnlyRunReportsStepsAndFolder) {
     log.clear();
     EXPECT_EQ(engine::pack::run_pack(o, {}, [&](std::string_view s) { log += s; }), 1);
     EXPECT_TRUE(contains(log, "[pack] error: game.json: format: required")) << log;
+}
+
+TEST_F(Stage, OutputMayNotOverlapTheGame) {
+    engine::pack::PackOptions o;
+    o.project = game.path();
+    o.out = game.path() / "assets" / "scenes" / "dist";
+    o.stage_only = true;
+    o.shaders = out.path() / "shaders";
+    std::string log;
+    EXPECT_EQ(engine::pack::run_pack(o, {}, [&](std::string_view s) { log += s; }), 1);
+    EXPECT_TRUE(contains(log, "[pack] error: --out: 'assets/scenes/dist' is inside the start "
+                              "scene's folder 'assets/scenes'"))
+        << log;
+    EXPECT_FALSE(game.exists("assets/scenes/dist"));
+}
+
+TEST(PackCli, ShippingPackagesUseTheShippingPlayer) {
+    quat::test::TempProject bin("quat_pack_players");
+#if defined(_WIN32)
+    const std::string ext = ".exe";
+#else
+    const std::string ext;
+#endif
+    bin.write("quat-player" + ext, "dev");
+    const fs::path dev = bin.path() / ("quat-player" + ext);
+    const fs::path ship = bin.path() / ("quat-player-shipping" + ext);
+    using engine::pack::player_for_config;
+
+    auto missing = player_for_config(dev, project::PackageConfig::shipping);
+    ASSERT_ERR(missing);
+    EXPECT_TRUE(contains(missing.error().message, "build the quat-player-shipping target"));
+
+    bin.write("quat-player-shipping" + ext, "ship");
+    auto shipping = player_for_config(dev, project::PackageConfig::shipping);
+    ASSERT_OK(shipping);
+    EXPECT_EQ(*shipping, ship);
+    EXPECT_EQ(*player_for_config(ship, project::PackageConfig::shipping), ship);
+    EXPECT_EQ(*player_for_config(dev, project::PackageConfig::development), dev);
+    auto wrong = player_for_config(ship, project::PackageConfig::development);
+    ASSERT_ERR(wrong);
+    EXPECT_TRUE(contains(wrong.error().message, "no remote control"));
 }
 
 } // namespace

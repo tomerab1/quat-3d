@@ -37,6 +37,7 @@ protected:
             p.id = "dev.quat3d.coin-collector";
             p.version = "0.1.0";
             p.start_scene = "assets/scenes/main.json";
+            p.content = {"assets/scripts"};
             return engine::remote::GameProjectInfo{root.path(), p};
         };
         services.project_build = [this](const engine::remote::ProjectBuildParams& p)
@@ -85,6 +86,13 @@ TEST_F(WorldProject, BuildValidatesAndConfinesItsParameters) {
 
     EXPECT_TRUE(contains(err("project.build", {{"output", "../escape"}}, code::invalid_params),
                          "output:"));
+    // Packages may not land in, or swallow, what the game ships.
+    EXPECT_EQ(err("project.build", {{"output", "assets/scripts/dist"}}, code::invalid_params),
+              "output: 'assets/scripts/dist' is inside the content root 'assets/scripts'");
+    EXPECT_EQ(err("project.build", {{"output", "assets"}}, code::invalid_params),
+              "output: 'assets' contains the content root 'assets/scripts'");
+    EXPECT_TRUE(contains(err("project.build", {{"output", "assets/scenes"}}, code::invalid_params),
+                         "is the start scene's folder"));
     EXPECT_TRUE(contains(err("project.build", {{"output", "/abs"}}, code::invalid_params), "output:"));
     EXPECT_TRUE(contains(err("project.build", {{"target", "amiga"}}, code::invalid_params),
                          "target:"));
