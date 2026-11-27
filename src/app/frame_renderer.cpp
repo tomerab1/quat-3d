@@ -141,6 +141,14 @@ bool FrameRenderer::create_passes(const engine::rhi::Device& device,
             break;
         }
         f.light_cull = std::move(*cull);
+        auto hiz = engine::renderer::HiZPass::create(device, allocator, pipeline_cache, shader_dir);
+        if (!hiz) {
+            frames_ok = false;
+            std::fprintf(stderr, "[fatal] hi-z pass creation failed: %s\n",
+                         hiz.error().message.c_str());
+            break;
+        }
+        f.hiz = std::move(*hiz);
     }
     return frames_ok;
 }

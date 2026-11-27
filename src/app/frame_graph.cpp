@@ -1,8 +1,9 @@
 // FrameRenderer, per frame: gathers the ticked scene into draw lists and builds
 // the render graph. Pass order (graph declaration order):
-//   sky-view LUT update, dynamic IBL step, shadow, GBuffer, terrain, light
-//   culling, lighting, transparent, bloom, exposure, tonemap, TAA, editor UI;
-//   GPU skinning is recorded before the graph executes.
+//   sky-view LUT update, dynamic IBL step, GBuffer, terrain, grass, Hi-Z,
+//   cascaded shadows (GPU fit + cascades), light culling, lighting,
+//   transparent, bloom, exposure, tonemap, TAA, editor UI; GPU skinning is
+//   recorded before the graph executes.
 
 #include "app/frame_renderer.hpp"
 #include "app/grass_runtime.hpp"
@@ -105,6 +106,27 @@ engine::renderer::CloudSettings FrameRenderer::current_clouds() const {
 #endif
     c.time_s = cloud_time_s_;
     return c;
+}
+
+engine::renderer::CsmSettings FrameRenderer::current_csm() const {
+#ifdef ENGINE_EDITOR
+    if (render_settings_ != nullptr) return render_settings_->csm.sanitized();
+#endif
+    return engine::renderer::CsmSettings{};
+}
+
+engine::renderer::GtaoSettings FrameRenderer::current_gtao() const {
+#ifdef ENGINE_EDITOR
+    if (render_settings_ != nullptr) return render_settings_->gtao.sanitized();
+#endif
+    return engine::renderer::GtaoSettings{};
+}
+
+engine::renderer::ContactShadowSettings FrameRenderer::current_contact_shadows() const {
+#ifdef ENGINE_EDITOR
+    if (render_settings_ != nullptr) return render_settings_->contact_shadows.sanitized();
+#endif
+    return engine::renderer::ContactShadowSettings{};
 }
 
 FrameScene FrameRenderer::gather(engine::scene::Scene& scene,
@@ -217,17 +239,13 @@ FrameScene FrameRenderer::gather(engine::scene::Scene& scene,
         }
     }
 
-    // Directional shadow: an orthographic light view fit to a fixed box
-    // around the scene (the demos all sit near the origin).
-    const glm::vec3 sun_dir = -glm::normalize(glm::vec3(light.direction)); // travel direction
-    const glm::vec3 shadow_center(0.0F, 1.5F, 0.0F);
-    constexpr float shadow_radius = 14.0F;
-    const glm::vec3 light_eye = shadow_center - sun_dir * (shadow_radius * 1.5F);
-    const glm::mat4 shadow_view =
-        glm::lookAt(light_eye, shadow_center, glm::vec3(0.0F, 1.0F, 0.0F));
-    const glm::mat4 shadow_proj = glm::ortho(-shadow_radius, shadow_radius, -shadow_radius,
-                                             shadow_radius, 0.1F, shadow_radius * 3.5F);
-    out.light_view_proj = shadow_proj * shadow_view;
+    // Sun shadows: cascades are fitted to the unjittered camera (on the GPU,
+    // from this frame's depth bounds); casters are culled against the volume
+    // every possible cascade fits in.
+    out.csm_view = {cam.view, cam.projection, glm::vec3(light.direction)};
+    out.shadow_cull_view_proj = engine::renderer::caster_cull_view_proj(
+        out.csm_view, current_csm(), engine::renderer::shadow_map_size);
+    out.frame_number = frame_number;
     return out;
 }
 
@@ -282,15 +300,10 @@ bool FrameRenderer::record(const FrameInputs& in) {
     engine::renderer::InstancedDrawList opaque_batches =
         engine::renderer::batch_draws(fs.draws);
     // R9.2: InstancedMesh placements, one draw per (mesh, material), culled per instance.
-    engine::scene::append_instanced_draws(*in.registry, fs.light_view_proj,
+    engine::scene::append_instanced_draws(*in.registry, fs.shadow_cull_view_proj,
                                           engine::scene::InstancedPass::shadow, shadow_batches);
     engine::scene::append_instanced_draws(*in.registry, cam.view_proj,
                                           engine::scene::InstancedPass::opaque, opaque_batches);
-    auto shadow = fr.shadow.add_to_graph(graph, fs.light_view_proj, shadow_batches);
-    if (!shadow) {
-        std::fprintf(stderr, "[fatal] shadow pass: %s\n", shadow.error().message.c_str());
-        return false;
-    }
     auto gbuffer = fr.mesh.add_to_graph(graph, draw_extent, fs.jittered_vp, opaque_batches);
     if (!gbuffer) {
         std::fprintf(stderr, "[fatal] gbuffer pass: %s\n", gbuffer.error().message.c_str());
@@ -304,6 +317,27 @@ bool FrameRenderer::record(const FrameInputs& in) {
         in.grass->add_to_graph(graph, frame_, *in.registry, *gbuffer, draw_extent, fs.jittered_vp,
                                cam, in.terrain, in.terrain_anchor, in.sim_dt);
     }
+    // R12: Hi-Z pyramid of the final depth (after terrain / grass), then the
+    // sun's cascades fitted to its depth bounds and rendered.
+    const engine::renderer::CsmSettings csm = current_csm();
+    engine::renderer::HiZTargets hiz{};
+    if (auto h = fr.hiz.add_to_graph(graph, gbuffer->depth, draw_extent)) {
+        hiz = *h;
+    } else {
+        std::fprintf(stderr, "[warn] hi-z pass: %s\n", h.error().message.c_str());
+    }
+    auto shadows = fr.shadow.add_to_graph(graph, fs.csm_view, csm, hiz.valid() ? &hiz : nullptr,
+                                          shadow_batches);
+    if (!shadows) {
+        std::fprintf(stderr, "[fatal] shadow pass: %s\n", shadows.error().message.c_str());
+        return false;
+    }
+    engine::renderer::LightingOcclusion occlusion;
+    occlusion.shadows = *shadows;
+    occlusion.csm = csm;
+    occlusion.contact = current_contact_shadows();
+    occlusion.projection = cam.projection;
+    occlusion.frame_index = static_cast<std::uint32_t>(fs.frame_number);
     // Clustered light culling (R10.1). A camera the clusters cannot
     // represent (non-perspective / no finite far plane) renders unlit by
     // point lights rather than stopping the frame loop.
@@ -314,8 +348,7 @@ bool FrameRenderer::record(const FrameInputs& in) {
         std::fprintf(stderr, "[warn] light cull: %s\n", c.error().message.c_str());
     }
     auto hdr = fr.lighting.add_to_graph(graph, *gbuffer, draw_extent, fs.light,
-                                        fs.jittered_inv_vp, cam.position, *shadow,
-                                        fs.light_view_proj, clustered,
+                                        fs.jittered_inv_vp, cam.position, occlusion, clustered,
                                         /*enable_sky=*/true, ibl_views, atmos_skyview(),
                                         atmos_transmittance(), current_clouds());
     if (!hdr) {

@@ -104,7 +104,7 @@ run_transparent_self_test(const engine::rhi::Device& device, engine::rhi::GpuAll
     auto gbuffer = mesh_pass->add_to_graph(graph, extent, view_proj, {&wall_item, 1});
     if (!gbuffer) return std::unexpected(gbuffer.error());
     auto hdr = lighting->add_to_graph(graph, *gbuffer, extent, light, glm::inverse(view_proj), eye,
-                                      rhi::ResourceHandle{}, glm::mat4(1.0F));
+                                      {});
     if (!hdr) return std::unexpected(hdr.error());
     if (auto r = transparent->add_to_graph(graph, *hdr, gbuffer->depth, extent, view_proj, light,
                                            eye, {&panel_item, 1});
@@ -259,7 +259,7 @@ run_glass_self_test(const engine::rhi::Device& device, engine::rhi::GpuAllocator
     auto gbuffer = mesh_pass->add_to_graph(graph, extent, view_proj, {&wall_item, 1});
     if (!gbuffer) return std::unexpected(gbuffer.error());
     auto hdr = lighting->add_to_graph(graph, *gbuffer, extent, light, glm::inverse(view_proj), eye,
-                                      rhi::ResourceHandle{}, glm::mat4(1.0F));
+                                      {});
     if (!hdr) return std::unexpected(hdr.error());
     if (auto r = transparent->add_to_graph(graph, *hdr, gbuffer->depth, extent, view_proj, light,
                                            eye, {&panel_item, 1});

@@ -76,8 +76,7 @@ std::expected<HostImage, Error> render_lit(quat::test::GpuContext& g, const Scen
     auto targets = mesh_pass->add_to_graph(graph, k_extent, glm::mat4(1.0F), {&item, 1});
     if (!targets) return std::unexpected(targets.error());
     auto hdr = lighting->add_to_graph(graph, *targets, k_extent, scene.light, glm::mat4(1.0F),
-                                      glm::vec3(0.0F, 0.0F, 1.0F), rhi::ResourceHandle{},
-                                      glm::mat4(1.0F), {}, scene.sky, scene.ibl);
+                                      glm::vec3(0.0F, 0.0F, 1.0F), {}, {}, scene.sky, scene.ibl);
     if (!hdr) return std::unexpected(hdr.error());
     return quat::test::render_to_host(g, graph, *hdr, k_extent, 8);
 }

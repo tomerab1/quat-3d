@@ -47,7 +47,8 @@ struct GpuCascades {
     glm::vec4 texel_world{0.0F}; // world size of one shadow texel
     glm::vec4 depth_range{0.0F}; // world distance spanned by depth 0..1
     // x = cascade count, y = view distance where cascade 0 starts,
-    // z = blend band, w = 1 when fitted to depth bounds
+    // z = blend band, w = 1 when the GPU fitted it to this frame's depth
+    // bounds (0 from fit_cascades)
     glm::vec4 params{0.0F};
 };
 static_assert(sizeof(GpuCascades) == 320, "must match lib/csm.slang CascadeData");

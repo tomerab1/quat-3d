@@ -189,8 +189,7 @@ GpuCascades fit_cascades(const CsmView& view, const CsmSettings& settings, glm::
         out.texel_world[static_cast<int>(i)] = slice.texel;
         out.depth_range[static_cast<int>(i)] = slice.depth_range;
     }
-    out.params = glm::vec4(static_cast<float>(s.cascade_count), range.x, s.blend_band,
-                           s.gpu_depth_bounds ? 1.0F : 0.0F);
+    out.params = glm::vec4(static_cast<float>(s.cascade_count), range.x, s.blend_band, 0.0F);
     return out;
 }
 

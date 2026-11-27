@@ -9,9 +9,16 @@
 // the coverage mask (1 where geometry was rasterised, 0 for background).
 // Point/spot lights are clustered (R10.1): each pixel loops only over the light
 // list of the froxel it falls in, built by the light_cull compute pass.
+// R12: the sun is shadowed by the cascaded shadow map (lib/csm.slang) times a
+// contact-shadow march; GTAO (gtao.slang) occludes the ambient term — bent
+// normals for the diffuse irradiance lookup, multi-bounce, and cone-based
+// specular occlusion (lib/occlusion.slang). Resource bindings come from
+// reflection (no explicit indices); per-frame values are in g_frame.
 
 import atmosphere;
 import clustered_lights;
+import csm;
+import occlusion;
 import sky;
 
 static const float PI = 3.14159265358979;
@@ -24,44 +31,54 @@ static const float SKY_LUT_BRIGHTNESS = 8.0;
 // match prefilter_mip_count in ibl_pass.cpp.
 static const float PREFILTER_MAX_LOD = 4.0;
 
-// Light + camera parameters, pushed as a 224-byte block (matches
-// LightingPushConstants in lighting_pass.cpp).
-struct LightParams {
-    float4x4 inv_view_proj;   // reconstruct world pos from depth
-    float4x4 light_view_proj; // world -> shadow-map clip space
-    float4   camera_pos;      // xyz = world-space camera position, w = shadows enabled
-    float4   direction;       // xyz = direction TO the light (normalised)
-    float4   color;           // rgb = colour, w = intensity
-    float4   ambient;         // rgb = ambient colour, w unused
-    float4   cloud_a;         // coverage, extinction /km, bottom km, thickness km
-    float4   cloud_b;         // 1/size km, detail erosion, unused, unused
+// Per-frame values (std140, 288 bytes; LightingConstants in lighting_pass.cpp).
+// Matrices are glm columns (applied with mul_cols).
+struct LightingConstants {
+    float4 inv_view_proj[4]; // clip -> world (jittered), reconstructs positions
+    float4 view_proj[4];     // world -> clip (jittered); clip.w = view distance
+    float4 camera_pos;       // xyz = world-space camera position, w = sun shadows (CSM) on
+    float4 direction;        // xyz = direction TO the light (normalised), w = sky mode
+    float4 color;            // rgb = colour, w = intensity
+    float4 ambient;          // rgb = ambient colour, w unused
+    float4 cloud_a;          // coverage, extinction /km, bottom km, thickness km
+    float4 cloud_b;          // 1/size km, detail erosion, drift x km, drift z km
+    float4 csm_filter;       // PCF radius, tan(sun size), normal bias, depth bias
+    float4 csm_misc;         // x debug cascades, y noise offset (frame), zw depth -> view (A, B)
+    float4 contact;          // x intensity (0 = off), y length m, z steps, w thickness m
+    float4 ao;               // x GTAO on, y bent normals, z specular occlusion, w multi-bounce
 }
-[[vk::push_constant]] LightParams pc;
+ConstantBuffer<LightingConstants> g_frame;
 
-[[vk::binding(0)]] Texture2D                  g_albedo;
-[[vk::binding(1)]] Texture2D                  g_normal;
-[[vk::binding(2)]] Texture2D                  g_material;
-[[vk::binding(3)]] Texture2D                  g_depth;
-[[vk::binding(4)]] [format("rgba16f")] RWTexture2D<float4>        g_hdr;
-[[vk::binding(5)]] Texture2D                  g_shadow;
-[[vk::binding(6)]] SamplerState               g_shadow_sampler;
-// Binding 7 is unused (it held the pre-R10.1 flat point-light list).
+Texture2D                               g_albedo;
+Texture2D                               g_normal;
+Texture2D                               g_material;
+Texture2D                               g_depth;
+[format("rgba16f")] RWTexture2D<float4> g_hdr;
+Texture2D                               g_clearcoat; // r = coat strength, g = coat roughness
+
+// Cascaded sun shadows (bound to fallbacks when camera_pos.w < 0.5).
+Texture2DArray                g_shadow_map;
+SamplerComparisonState        g_shadow_cmp;
+SamplerState                  g_point_sampler;
+StructuredBuffer<CascadeData> g_cascades;
+
+// GTAO: rgb = world bent normal * 0.5 + 0.5, a = visibility (used when ao.x > 0.5).
+Texture2D                     g_ao;
 
 // Split-sum IBL maps (precomputed once in ibl_pass.cpp): diffuse irradiance cube,
 // prefiltered specular cube (roughness -> mip), and the BRDF integration LUT.
-[[vk::binding(8)]]  TextureCube  g_irradiance;
-[[vk::binding(9)]]  TextureCube  g_prefiltered;
-[[vk::binding(10)]] Texture2D    g_brdf_lut;
-[[vk::binding(11)]] SamplerState g_ibl_sampler;
-[[vk::binding(12)]] Texture2D    g_clearcoat; // r = coat strength, g = coat roughness
-// Atmosphere LUTs (Phase 11.1; bound to fallbacks when pc.direction.w < 2).
-[[vk::binding(13)]] Texture2D    g_skyview;
-[[vk::binding(14)]] Texture2D    g_transmittance_lut;
+TextureCube  g_irradiance;
+TextureCube  g_prefiltered;
+Texture2D    g_brdf_lut;
+SamplerState g_ibl_sampler;
+// Atmosphere LUTs (Phase 11.1; bound to fallbacks when direction.w < 2).
+Texture2D    g_skyview;
+Texture2D    g_transmittance_lut;
 // Clustered lights (light_cull.slang output; dims.w = 0 when there are none).
-[[vk::binding(15)]] ConstantBuffer<ClusterParams> g_cluster_params;
-[[vk::binding(16)]] StructuredBuffer<GpuLight>    g_lights;
-[[vk::binding(17)]] StructuredBuffer<uint2>       g_cluster_grid;    // offset, count
-[[vk::binding(18)]] StructuredBuffer<uint>        g_cluster_indices;
+ConstantBuffer<ClusterParams> g_cluster_params;
+StructuredBuffer<GpuLight>    g_lights;
+StructuredBuffer<uint2>       g_cluster_grid;    // offset, count
+StructuredBuffer<uint>        g_cluster_indices;
 
 // Schlick Fresnel with a roughness term, for the ambient/environment specular
 // (the view-independent IBL term, unlike the per-light f_schlick).
@@ -72,14 +89,16 @@ float3 fresnel_schlick_roughness(float ndotv, float3 f0, float roughness) {
 
 // Image-based ambient: diffuse irradiance + prefiltered specular reflection,
 // combined through the split-sum BRDF LUT. Replaces the flat constant ambient.
-float3 ibl_ambient(float3 N, float3 V, float3 albedo, float metallic, float roughness,
-                   float occlusion) {
+// `diffuse_n` is the irradiance lookup direction (the GTAO bent normal when
+// available); the occlusion terms apply per lobe.
+float3 ibl_ambient(float3 N, float3 diffuse_n, float3 V, float3 albedo, float metallic,
+                   float roughness, float3 diffuse_occlusion, float specular_occlusion) {
     float ndotv = max(dot(N, V), 1e-4);
     float3 f0 = lerp(float3(0.04, 0.04, 0.04), albedo, metallic);
     float3 F = fresnel_schlick_roughness(ndotv, f0, roughness);
     float3 kd = (1.0 - F) * (1.0 - metallic);
 
-    float3 irradiance = g_irradiance.SampleLevel(g_ibl_sampler, N, 0.0).rgb;
+    float3 irradiance = g_irradiance.SampleLevel(g_ibl_sampler, diffuse_n, 0.0).rgb;
     float3 diffuse = irradiance * albedo;
 
     float3 R = reflect(-V, N);
@@ -88,7 +107,7 @@ float3 ibl_ambient(float3 N, float3 V, float3 albedo, float metallic, float roug
     float2 brdf = g_brdf_lut.SampleLevel(g_ibl_sampler, float2(ndotv, roughness), 0.0).rg;
     float3 specular = prefiltered * (F * brdf.x + brdf.y);
 
-    return (kd * diffuse + specular) * occlusion;
+    return kd * diffuse * diffuse_occlusion + specular * specular_occlusion;
 }
 
 // Octahedral decode (inverse of gbuffer.slang's oct_encode).
@@ -107,7 +126,7 @@ float3 world_from_depth(int2 coord, uint width, uint height, float depth) {
     float2 uv  = (float2(coord) + 0.5) / float2(width, height);
     float2 ndc = uv * 2.0 - 1.0;
     float4 clip = float4(ndc, depth, 1.0);
-    float4 world = mul(pc.inv_view_proj, clip);
+    float4 world = mul_cols(g_frame.inv_view_proj, clip);
     return world.xyz / world.w;
 }
 
@@ -188,37 +207,34 @@ float3 layer_clearcoat_ibl(float3 base, float3 N, float3 V, float cc, float ccr)
     return base * (1.0 - cc * coat_fresnel(ndotv)) + cc * coat;
 }
 
-// Fraction of the directional light reaching `world_pos` (1 = lit, 0 = shadowed),
-// 3x3 PCF over the shadow map. Returns 1 when shadows are disabled or the point
-// falls outside the map.
-float shadow_factor(float3 world_pos, float ndotl) {
-    if (pc.camera_pos.w < 0.5) {
-        return 1.0;
+// The sun's visibility at `world_pos`: cascaded shadow map times the
+// contact-shadow march. `cascade` receives the cascade used (debug view).
+float sun_visibility(int2 coord, uint2 size, float3 world_pos, float3 n, float3 ldir,
+                     out uint cascade) {
+    cascade = CSM_MAX_CASCADES;
+    float noise = interleaved_gradient_noise(float2(coord) + g_frame.csm_misc.y);
+    float4 clip = mul_cols(g_frame.view_proj, float4(world_pos, 1.0));
+    float vis = 1.0;
+    if (g_frame.camera_pos.w > 0.5) {
+        CsmFilter f;
+        f.pcf_radius = g_frame.csm_filter.x;
+        f.light_tan = g_frame.csm_filter.y;
+        f.normal_bias = g_frame.csm_filter.z;
+        f.depth_bias = g_frame.csm_filter.w;
+        vis = csm_visibility(g_cascades[0], g_shadow_map, g_shadow_cmp, g_point_sampler,
+                             world_pos, n, ldir, clip.w, f, noise, cascade);
     }
-    float4 light_clip = mul(pc.light_view_proj, float4(world_pos, 1.0));
-    float3 ndc = light_clip.xyz / light_clip.w;
-    float2 uv = ndc.xy * 0.5 + 0.5;
-    if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0 || ndc.z > 1.0) {
-        return 1.0;
+    if (g_frame.contact.x > 0.0 && vis > 0.0 && dot(n, ldir) > 0.0) {
+        // Start just off the surface so the march does not re-hit its own pixel.
+        float3 start = world_pos + n * (clip.w * 0.002);
+        float4 clip0 = mul_cols(g_frame.view_proj, float4(start, 1.0));
+        float4 clip1 =
+            mul_cols(g_frame.view_proj, float4(start + ldir * g_frame.contact.y, 1.0));
+        float hit = contact_shadow(g_depth, size, clip0, clip1, g_frame.csm_misc.zw,
+                                   uint(g_frame.contact.z), g_frame.contact.w, noise);
+        vis *= lerp(1.0, hit, g_frame.contact.x);
     }
-
-    uint width = 0;
-    uint height = 0;
-    g_shadow.GetDimensions(width, height);
-    float2 texel = 1.0 / float2(width, height);
-    float bias = max(0.0025 * (1.0 - ndotl), 0.0008);
-
-    float sum = 0.0;
-    [unroll]
-    for (int dy = -1; dy <= 1; ++dy) {
-        [unroll]
-        for (int dx = -1; dx <= 1; ++dx) {
-            float closest =
-                g_shadow.SampleLevel(g_shadow_sampler, uv + float2(dx, dy) * texel, 0).r;
-            sum += (ndc.z - bias) > closest ? 0.0 : 1.0;
-        }
-    }
-    return sum / 9.0;
+    return vis;
 }
 
 [shader("compute")]
@@ -233,14 +249,14 @@ void compute_main(uint3 tid : SV_DispatchThreadID) {
     int2 coord = int2(tid.xy);
 
     float4 mat = g_material.Load(int3(coord, 0));
-    if (mat.a < 0.5) { // background: sky (pc.direction.w: 0 off, 1 procedural, 2 LUT)
+    if (mat.a < 0.5) { // background: sky (g_frame.direction.w: 0 off, 1 procedural, 2 LUT)
         float3 bg = float3(0.0, 0.0, 0.0);
-        if (pc.direction.w > 0.5) {
+        if (g_frame.direction.w > 0.5) {
             float bg_depth = g_depth.Load(int3(coord, 0)).r;
             float3 far_pos = world_from_depth(coord, width, height, bg_depth);
-            float3 ray = normalize(far_pos - pc.camera_pos.xyz);
-            float3 sun = normalize(pc.direction.xyz);
-            if (pc.direction.w > 1.5) {
+            float3 ray = normalize(far_pos - g_frame.camera_pos.xyz);
+            float3 sun = normalize(g_frame.direction.xyz);
+            if (g_frame.direction.w > 1.5) {
                 // Physically-based sky: atmosphere from the sky-view LUT,
                 // volumetric clouds marched per pixel (sharp shapes — the LUT
                 // is too coarse for them), analytic sun disc tinted by the
@@ -250,7 +266,7 @@ void compute_main(uint3 tid : SV_DispatchThreadID) {
                     sample_skyview(g_skyview, g_ibl_sampler, float3(0.2, 0.97, 0.0), sun).rgb *
                         0.8 +
                     float3(0.008, 0.011, 0.016);
-                CloudParams cp = unpack_cloud_params(pc.cloud_a, pc.cloud_b);
+                CloudParams cp = unpack_cloud_params(g_frame.cloud_a, g_frame.cloud_b);
                 float jitter = interleaved_gradient_noise(float2(coord));
                 float4 clouds = march_clouds(ray, sun, g_transmittance_lut, g_ibl_sampler,
                                              cloud_ambient, cp, jitter);
@@ -282,18 +298,19 @@ void compute_main(uint3 tid : SV_DispatchThreadID) {
 
     float3 n = oct_decode(enc);
     float3 world_pos = world_from_depth(coord, width, height, depth);
-    float3 v = normalize(pc.camera_pos.xyz - world_pos);
+    float3 v = normalize(g_frame.camera_pos.xyz - world_pos);
 
     // Directional light (shadowed). With the atmosphere active, the sun's
     // light is tinted by its transmittance through the air mass — low sun
     // reddens the direct lighting, matching the LUT sky.
-    float3 ldir   = normalize(pc.direction.xyz);
-    float3 sun_radiance = pc.color.rgb * pc.color.w;
-    if (pc.direction.w > 1.5) {
+    float3 ldir   = normalize(g_frame.direction.xyz);
+    float3 sun_radiance = g_frame.color.rgb * g_frame.color.w;
+    if (g_frame.direction.w > 1.5) {
         sun_radiance *= sample_transmittance(g_transmittance_lut, g_ibl_sampler,
                                              ATMOS_VIEW_HEIGHT, ldir.y);
     }
-    float  shadow = shadow_factor(world_pos, max(dot(n, ldir), 0.0));
+    uint   cascade = CSM_MAX_CASCADES;
+    float  shadow = sun_visibility(coord, uint2(width, height), world_pos, n, ldir, cascade);
     float3 sun    = surface_brdf(n, v, ldir, albedo.rgb, metallic, roughness);
     float3 color  = layer_clearcoat_direct(sun, n, v, ldir, cc, ccr) * sun_radiance * shadow;
 
@@ -314,11 +331,33 @@ void compute_main(uint3 tid : SV_DispatchThreadID) {
 
     // Ambient: image-based lighting when the environment is enabled (same flag as
     // the sky background, since the IBL reflects that sky), else a flat constant.
-    if (pc.direction.w > 0.5) {
-        float3 ambient = ibl_ambient(n, v, albedo.rgb, metallic, roughness, occlusion);
+    // GTAO combines with the material's baked occlusion (the darker wins);
+    // without it the material occlusion applies to both lobes as before.
+    float3 diffuse_n = n;
+    float3 diffuse_occ = float3(occlusion, occlusion, occlusion);
+    float  specular_occ = occlusion;
+    if (g_frame.ao.x > 0.5) {
+        float4 ao = g_ao.Load(int3(coord, 0));
+        float visibility = min(ao.a, occlusion);
+        float3 bent = g_frame.ao.y > 0.5 ? normalize(ao.rgb * 2.0 - 1.0) : n;
+        diffuse_n = bent;
+        diffuse_occ = g_frame.ao.w > 0.5 ? gtao_multi_bounce(visibility, albedo.rgb)
+                                         : float3(visibility, visibility, visibility);
+        specular_occ = visibility;
+        if (g_frame.ao.z > 0.5) {
+            float3 r = reflect(-v, n);
+            specular_occ = min(occlusion, gtao_specular_occlusion(bent, ao.a, r, roughness));
+        }
+    }
+    if (g_frame.direction.w > 0.5) {
+        float3 ambient = ibl_ambient(n, diffuse_n, v, albedo.rgb, metallic, roughness,
+                                     diffuse_occ, specular_occ);
         color += layer_clearcoat_ibl(ambient, n, v, cc, ccr);
     } else {
-        color += pc.ambient.rgb * albedo.rgb * occlusion;
+        color += g_frame.ambient.rgb * albedo.rgb * diffuse_occ;
+    }
+    if (g_frame.csm_misc.x > 0.5) {
+        color *= csm_debug_color(cascade);
     }
     g_hdr[coord] = float4(color, 1.0);
 }

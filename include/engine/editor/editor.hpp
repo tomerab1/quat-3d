@@ -23,6 +23,7 @@
 
 #include "engine/core/error.hpp"
 #include "engine/renderer/cloud_settings.hpp"
+#include "engine/renderer/shadow_ao_settings.hpp"
 #include "engine/rhi/shader_status.hpp"
 
 struct SDL_Window;
@@ -65,6 +66,10 @@ struct RendererSettings {
     // Volumetric cloud layer. The background follows edits live and the
     // dynamic IBL probe re-renders continuously, so no rebake plumbing.
     renderer::CloudSettings clouds;
+    // R12 shadows + ambient occlusion (ranges on each struct).
+    renderer::CsmSettings           csm;
+    renderer::GtaoSettings          gtao;
+    renderer::ContactShadowSettings contact_shadows;
 };
 
 // Everything the UI needs from (and feeds back to) the engine for one frame.
