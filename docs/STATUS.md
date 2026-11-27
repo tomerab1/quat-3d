@@ -31,22 +31,10 @@ Decisions already made (do not re-litigate without the owner):
 
 ## Claimed by the live session (do not pick up)
 
-Worktree agents running in the orchestrating session on 2026-11-27; their
-branches merge into `claude/nifty-hopper-nb68qe` (cycle 1, PR #2; cycle 0 = PR #1, merged into master 2026-11-27):
-
-| Item | Branch |
-|---|---|
-| R9.1 instanced draws | `feat/r9-instancing` |
-| A2/A3 remote world commands, Primitive resolve, screenshots | `feat/a2-world-commands` |
-| G1 audio (miniaudio) | `feat/g1-audio` |
-| S1 nav/NPC fixes N1–N6, N8, N10, N12, N13 | `feat/s1-nav-fixes` |
-| S3.2 legacy self-tests → GoogleTest (animation, terrain, asset, remote, rhi) | `feat/s3-test-migration` |
-| S1 networking fixes B1–B5, B15 | `feat/s1-net-fixes` |
-| S1 TAA + exposure fixes A1, A2, A14, A11 | `feat/s1-taa` |
-| R10.1 GPU clustered light culling | `feat/r10-clustered-lights` |
-
-If this table is still here and those branches are not on the remote, the
-live session ended before merging them: treat the items as unclaimed.
+Nothing claimed right now. Cycle 1's eight worker branches (R9.1, A2/A3,
+A4, G1, S1 nav N1–N13, S1 net B1–B5/B15, S1 TAA/exposure A1/A2/A11/A14,
+S3.2, R10.1) are all merged into `claude/nifty-hopper-nb68qe` (PR #2) and
+await a green CI run there.
 
 ## Work in flight
 
