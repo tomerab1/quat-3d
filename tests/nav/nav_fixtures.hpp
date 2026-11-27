@@ -12,11 +12,13 @@
 #include <entt/entity/registry.hpp>
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
+#include <gtest/gtest.h>
 
 #include "engine/core/error.hpp"
 #include "engine/nav/navmesh.hpp"
 #include "engine/scene/components.hpp"
 #include "engine/scene/scene.hpp"
+#include "support/expect_ok.hpp"
 
 namespace quat::test {
 
@@ -53,5 +55,38 @@ bake(entt::registry& r) {
 [[nodiscard]] inline float xz_distance(const glm::vec3& a, const glm::vec3& b) {
     return glm::length(glm::vec2(a.x - b.x, a.z - b.z));
 }
+
+constexpr float kNavDt = 1.0F / 60.0F;
+
+// A registry + its baked navmesh, stepped through nav_agent_system.
+struct NavWorld {
+    entt::registry registry;
+    engine::nav::NavMesh navmesh;
+
+    void bake() {
+        auto baked = quat::test::bake(registry);
+        ASSERT_OK(baked);
+        navmesh = std::move(*baked);
+    }
+    entt::entity agent(const glm::vec3& at, float speed = 4.0F) {
+        const entt::entity e = place(registry, at);
+        registry.emplace<engine::scene::NavAgent>(e).speed = speed;
+        return e;
+    }
+    engine::scene::NavAgent& nav(entt::entity e) {
+        return registry.get<engine::scene::NavAgent>(e);
+    }
+    [[nodiscard]] glm::vec3 pos(entt::entity e) const { return position_of(registry, e); }
+    // Steps until `done()` holds or the frame budget runs out; returns the
+    // frames stepped.
+    template <typename Done>
+    int run(int max_frames, Done done) {
+        for (int i = 0; i < max_frames; ++i) {
+            if (done()) return i;
+            engine::scene::nav_agent_system(registry, navmesh, kNavDt);
+        }
+        return max_frames;
+    }
+};
 
 } // namespace quat::test

@@ -1630,10 +1630,7 @@ int main() {
                     std::fprintf(stderr, "[nav] waypoint %zu at (%.1f, %.1f, %.1f)\n",
                                  route.points.size(), hit->x, hit->y, hit->z);
                 } else {
-                    agent.target = *hit;
-                    agent.active = true;
-                    agent.arrived = false;
-                    agent.path.clear();
+                    engine::scene::nav_agent_command(agent, *hit);
                     std::fprintf(stderr, "[nav] go to (%.1f, %.1f, %.1f)\n", hit->x, hit->y,
                                  hit->z);
                 }

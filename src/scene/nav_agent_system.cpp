@@ -47,28 +47,33 @@ void attempt_failed(NavAgent& agent) {
     }
 }
 
-// Patrol routes feed the agent target point by point: advance once the agent
-// arrived at (or failed to reach) the current point, wrap when looping, stop
-// at the end otherwise.
+// Patrol routes feed their idle agent point by point: once the agent arrived
+// at (or gave up on) the current point the route advances, wrapping when
+// looping and finishing at the end otherwise. Whenever the agent is idle and
+// not paused — after a commanded move, a failed walk, a late first point —
+// the route (re)sends it to the current point.
 void feed_patrol_routes(entt::registry& registry) {
     for (auto [e, route, agent] : registry.view<PatrolRoute, NavAgent>().each()) {
-        if (route.points.empty()) continue;
+        if (route.points.empty() || agent.paused || agent.active) continue;
         route.next = route.next % route.points.size();
         const bool at_point = glm::distance(agent.target, route.points[route.next]) < 0.01F;
-        if ((agent.arrived || agent.failed) && at_point) {
+        const bool done_here = !agent.commanded && at_point && (agent.arrived || agent.failed);
+        if (done_here || route.finished) {
             if (route.next + 1 < route.points.size()) {
                 ++route.next;
             } else if (route.loop) {
                 route.next = 0;
             } else {
-                continue; // finished a one-way route
+                route.finished = true; // one-way route done (appending points resumes)
+                continue;
             }
-            agent.arrived = false;
-            agent.failed = false;
+            route.finished = false;
+            // A one-point loop stays put instead of replanning every frame.
+            if (done_here && glm::distance(agent.target, route.points[route.next]) < 0.01F) {
+                continue;
+            }
         }
-        if (!agent.active && !agent.arrived) {
-            nav_agent_set_target(agent, route.points[route.next]);
-        }
+        nav_agent_set_target(agent, route.points[route.next]);
     }
 }
 
@@ -77,6 +82,7 @@ void feed_patrol_routes(entt::registry& registry) {
 void nav_agent_set_target(NavAgent& agent, const glm::vec3& target) {
     agent.target = target;
     agent.active = true;
+    agent.commanded = false;
     agent.arrived = false;
     agent.failed = false;
     agent.plan_failures = 0;
@@ -84,6 +90,32 @@ void nav_agent_set_target(NavAgent& agent, const glm::vec3& target) {
     agent.path.clear();
     agent.waypoint = 0;
     agent.retry_s = 0.0F;
+}
+
+void nav_agent_command(NavAgent& agent, const glm::vec3& target) {
+    nav_agent_set_target(agent, target);
+    agent.commanded = true;
+    agent.paused = false;
+}
+
+void nav_agent_stop(NavAgent& agent) {
+    agent.paused = true;
+    agent.active = false;
+    agent.arrived = false;
+    agent.failed = false;
+    agent.path.clear();
+    agent.retry_s = 0.0F;
+}
+
+void nav_agent_resume(entt::registry& registry, entt::entity entity) {
+    auto* agent = registry.try_get<NavAgent>(entity);
+    if (agent == nullptr) return;
+    agent->paused = false;
+    const auto* route = registry.try_get<PatrolRoute>(entity);
+    if (route == nullptr || route->points.empty()) {
+        nav_agent_command(*agent, agent->target);
+    }
+    // With a route, the patrol feed sends the agent on next tick.
 }
 
 glm::vec3 nav_agent_feet(const entt::registry& registry, entt::entity entity) {

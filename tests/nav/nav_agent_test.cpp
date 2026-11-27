@@ -7,43 +7,15 @@
 #include <gtest/gtest.h>
 
 #include "nav/nav_fixtures.hpp"
-#include "support/expect_ok.hpp"
 
 namespace {
 
 namespace s = engine::scene;
 using quat::test::add_box;
-using quat::test::place;
 using quat::test::position_of;
 using quat::test::xz_distance;
+using World = quat::test::NavWorld;
 
-constexpr float kDt = 1.0F / 60.0F;
-
-struct World {
-    entt::registry registry;
-    engine::nav::NavMesh navmesh;
-
-    void bake() {
-        auto baked = quat::test::bake(registry);
-        ASSERT_OK(baked);
-        navmesh = std::move(*baked);
-    }
-    entt::entity agent(const glm::vec3& at, float speed = 4.0F) {
-        const entt::entity e = place(registry, at);
-        registry.emplace<s::NavAgent>(e).speed = speed;
-        return e;
-    }
-    s::NavAgent& nav(entt::entity e) { return registry.get<s::NavAgent>(e); }
-    // Steps until `done` or the frame budget runs out; returns frames used.
-    template <typename Done>
-    int run(int max_frames, Done done) {
-        for (int i = 0; i < max_frames; ++i) {
-            if (done()) return i;
-            s::nav_agent_system(registry, navmesh, kDt);
-        }
-        return max_frames;
-    }
-};
 
 // 40 x 40 floor (top y = 0) with a wall across z = 0 leaving a gap at +x.
 void walled_plate(World& w) {

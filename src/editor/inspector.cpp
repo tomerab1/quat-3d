@@ -121,21 +121,31 @@ struct ComponentInspector<scene::Terrain> {
 template <>
 struct ComponentInspector<scene::NavAgent> {
     static constexpr const char* title = "Nav Agent";
-    static void draw(entt::registry&, entt::entity, scene::NavAgent& agent) {
-        ImGui::DragFloat3("target", &agent.target.x, 0.1F);
+    static void draw(entt::registry& r, entt::entity e, scene::NavAgent& agent) {
+        // Editing the target mid-walk is an order: a patrol route waits for it.
+        if (ImGui::DragFloat3("target", &agent.target.x, 0.1F) && agent.active) {
+            agent.commanded = true;
+        }
         ImGui::DragFloat("speed", &agent.speed, 0.1F, 0.1F, 50.0F, "%.1f m/s");
         ImGui::DragFloat("ground offset", &agent.ground_offset, 0.05F, 0.0F, 10.0F, "%.2f m");
         if (ImGui::IsItemHovered()) {
             ImGui::SetTooltip("Entity origin height above the ground while walking\n"
                               "(half-height for a centre-pivot mesh, e.g. 0.5 for the unit cube)");
         }
-        if (ImGui::Button(agent.active ? "Stop" : "Go", ImVec2(-1.0F, 0.0F))) {
-            agent.active = !agent.active;
-            agent.path.clear();
+        const auto* route = r.try_get<scene::PatrolRoute>(e);
+        const bool patrolling = route != nullptr && !route->points.empty();
+        const bool running = !agent.paused && (agent.active || patrolling);
+        if (ImGui::Button(running ? "Stop" : "Go", ImVec2(-1.0F, 0.0F))) {
+            if (running) {
+                scene::nav_agent_stop(agent);
+            } else {
+                scene::nav_agent_resume(r, e);
+            }
         }
-        ImGui::Text("%s", agent.arrived  ? "arrived"
-                          : agent.failed ? "failed (unreachable or stuck)"
+        ImGui::Text("%s", agent.paused   ? "stopped"
                           : agent.active ? "moving"
+                          : agent.arrived ? "arrived"
+                          : agent.failed ? "failed (unreachable or stuck)"
                                          : "idle");
         ImGui::TextWrapped("Bake a navmesh (Physics panel) and press Play; the agent "
                            "paths to the target.");
@@ -158,10 +168,12 @@ struct ComponentInspector<scene::PatrolRoute> {
         if (remove >= 0) {
             route.points.erase(route.points.begin() + remove);
             route.next = 0;
+            route.finished = false;
         }
         if (!route.points.empty() && ImGui::Button("Clear", ImVec2(-1.0F, 0.0F))) {
             route.points.clear();
             route.next = 0;
+            route.finished = false;
         }
         ImGui::TextWrapped("Shift+click the ground in the viewport to add points; "
                            "Ctrl+click sends the agent somewhere once.");

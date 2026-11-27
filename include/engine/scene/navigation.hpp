@@ -27,7 +27,20 @@ using GroundHeightFn = std::function<std::optional<float>(float x, float z)>;
 
 // Send the agent to `target`: activates it and clears the previous walk's
 // plan and arrived/failed state (the nav system plans on its next tick).
+// Used by systems (patrol routes, behaviour trees).
 void nav_agent_set_target(NavAgent& agent, const glm::vec3& target);
+
+// A one-off order from the user (Ctrl+click, inspector Go, remote control):
+// unpauses the agent and sends it to `target`; a patrol route resumes after.
+void nav_agent_command(NavAgent& agent, const glm::vec3& target);
+
+// The inspector's Stop: halts the agent where it stands and holds it there
+// (patrol routes do not restart it) until nav_agent_resume.
+void nav_agent_stop(NavAgent& agent);
+
+// The inspector's Go: unpauses the agent. With a patrol route the route
+// carries on; without one the agent walks to its current target.
+void nav_agent_resume(entt::registry& registry, entt::entity entity);
 
 // World position of the agent's feet: the entity origin minus ground_offset,
 // or the bottom of its CharacterController capsule.

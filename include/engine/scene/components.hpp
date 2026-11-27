@@ -150,14 +150,19 @@ struct CharacterController {
 // sits at the centre). A walk ends either `arrived` (reached the target, or
 // the closest on-mesh point to it) or `failed` (the target is unreachable,
 // plans kept failing, or the agent made no progress) — both clear `active`.
-// Everything below `arrived` is system-managed (not serialized); set targets
-// through nav_agent_set_target (navigation.hpp) to reset it.
+// `paused` (the inspector's Stop) holds the agent: patrol routes do not
+// restart it until it is resumed. `commanded` marks a one-off order (Ctrl+
+// click, Go): a PatrolRoute waits for it to end, then resumes its route.
+// Everything below `paused` is system-managed (not serialized); start walks
+// through the helpers in navigation.hpp, which reset it.
 struct NavAgent {
     glm::vec3 target{0.0F};
     float     speed = 3.0F;
     float     ground_offset = 0.0F; // entity origin height above the ground
     bool      active = false;
+    bool      paused = false;
     bool      arrived = false;
+    bool      commanded = false;       // the target is a one-off order, not a route point
     bool      failed = false;          // gave up on the current target
     std::uint8_t           plan_failures = 0; // failed attempts since the last progress
     bool                   path_partial = false; // path ends short of the target
@@ -220,13 +225,16 @@ struct Terrain {
 };
 
 // An authored walk route (editor: Shift+click the ground to append points).
-// The nav system feeds the points to the entity's NavAgent in order; `loop`
-// wraps back to the first point, otherwise the agent stops at the last.
-// `next` is system-managed.
+// The nav system feeds the points to the entity's idle NavAgent in order;
+// `loop` wraps back to the first point, otherwise the agent stops at the
+// last (`finished`; appending points continues the route). Commanded moves
+// interrupt the route, which resumes at `next` afterwards; unreachable
+// points are skipped. `next`/`finished` are system-managed.
 struct PatrolRoute {
     std::vector<glm::vec3> points;
     bool        loop = true;
     std::size_t next = 0;
+    bool        finished = false;
 };
 
 // Marks an entity for network replication (14.2): the server broadcasts its

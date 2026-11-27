@@ -78,6 +78,7 @@ std::expected<BtLeaf, core::Error> make_move_to(core::JsonFields& f) {
         auto* agent = c.registry.try_get<NavAgent>(c.entity);
         if (agent == nullptr) return BtStatus::failure;
         if (c.state == kMoveDone) return BtStatus::success; // held: never re-aim
+        if (agent->paused) return BtStatus::running; // held by the user (Stop)
         if (c.state == kMoveIdle) {
             glm::vec3 goal = target;
             if (!has_y) goal.y = ground_y_at(c, goal.x, goal.z);

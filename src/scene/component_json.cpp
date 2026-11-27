@@ -289,7 +289,8 @@ json encode_components(const entt::registry& r, entt::entity e, const EncodeOpti
         out["nav_agent"] = {{"target", vec3_json(a->target)},
                             {"speed", a->speed},
                             {"ground_offset", a->ground_offset},
-                            {"active", a->active}};
+                            {"active", a->active},
+                            {"paused", a->paused}};
     }
     if (const auto* b = r.try_get<BehaviorTree>(e)) {
         out["behavior"] = {{"source", b->source}, {"enabled", b->enabled}};
@@ -419,7 +420,9 @@ std::expected<void, core::Error> apply_component(entt::registry& r, entt::entity
             const glm::vec3 old_target = a.target;
             f.vec3("target", a.target).number("speed", a.speed, 0.0F);
             f.number("ground_offset", a.ground_offset).boolean("active", a.active);
+            f.boolean("paused", a.paused);
             if (a.target != old_target) { // a new walk: the system repaths
+                a.commanded = true;          // ...and a route resumes after it
                 a.arrived = false;
                 a.failed = false;
                 a.plan_failures = 0;
@@ -447,7 +450,10 @@ std::expected<void, core::Error> apply_component(entt::registry& r, entt::entity
     }
     if (name == "patrol") {
         return merge<PatrolRoute>(r, e, v, name, strict, [](JsonFields& f, PatrolRoute& p) {
-            if (f.has("points")) p.next = 0;
+            if (f.has("points")) {
+                p.next = 0;
+                p.finished = false;
+            }
             f.vec3_list("points", p.points).boolean("loop", p.loop);
         });
     }
