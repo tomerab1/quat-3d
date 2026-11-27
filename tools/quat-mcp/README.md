@@ -129,6 +129,12 @@ command ends in `quat-mcp.exe`.
 | `render_settings_reset` | `render.settings.reset` | Restore one group's (or every group's) defaults |
 | `render_settings_schema` | `render.settings.schema` | Every tunable field with type, range, default, unit and hint (settings and material factors) |
 | `material_get` / `material_set` | `material.get` / `material.set` | An entity's PBR factors (colour, roughness, metallic, clearcoat, glass, emission …); per-entity edits and reverts |
+| `physics_get` / `physics_set` | `physics.get` / `physics.set` | A body's live state (velocities, mass, sleeping, motion type, layer, tuning); change velocities, motion type, gravity factor, friction, restitution, damping, wake / sleep (play mode) |
+| `physics_apply` | `physics.apply` | Impulse, force, angular impulse or torque on a dynamic body, optionally at a point |
+| `physics_get_gravity` / `physics_set_gravity` | `physics.get_gravity` / `physics.set_gravity` | The scene's one gravity setting (bodies + characters, saved with the scene) |
+| `physics_raycast_all` / `physics_overlap` / `physics_shape_cast` | `physics.raycast_all` / `.overlap` / `.shape_cast` | Every hit along a ray, bodies a sphere / box / capsule overlaps, a swept shape's hits — with layer masks |
+| `events_poll` | `events.poll` | Contact and trigger events (who hit whom, where, how hard), incremental via a cursor |
+| `character_move` | `character.move` | Walk a character controller at a velocity or to a point, jump |
 
 Tool descriptions spell out units and conventions (metres, Y up, Euler degrees
 in YXZ order, `"#rrggbb"` sRGB colours for primitives and linear `[r,g,b]` for

@@ -202,7 +202,12 @@ tune the look: exposure, bloom, anti-aliasing, shadows, sky light, clouds and
 per-entity materials, with the same values the editor's Renderer panel and
 Material inspector show — and author NPC behaviour trees: build, inspect and
 edit the same graph the editor's Behaviour panel shows, with per-node
-validation errors, and see what each node did on the last tick. Start the
+validation errors, and see what each node did on the last tick — and control
+physics in a running game: read and set body velocities, push bodies with
+impulses and forces, change the scene's gravity, query every hit along a ray,
+overlaps and shape casts, follow a feed of contact and trigger events, author
+joints (hinges, sliders, distance ropes …) and walk character controllers.
+Start the
 engine with `QUAT_REMOTE=7878`, build the
 server with `cargo build --release` in `tools/quat-mcp`, and register it with
 your client:
