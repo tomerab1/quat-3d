@@ -112,6 +112,16 @@ endif()
 set(ENGINE_PUBLIC_INCLUDE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 
 # ---------------------------------------------------------------------------
+# engine_core — platform services with no graphics: file watching and child
+# processes (shader hot reload, R2).
+# ---------------------------------------------------------------------------
+add_library(engine_core STATIC
+    src/core/file_watcher.cpp
+    src/core/child_process.cpp)
+target_link_libraries(engine_core PUBLIC engine_flags)
+target_include_directories(engine_core PUBLIC ${ENGINE_PUBLIC_INCLUDE})
+
+# ---------------------------------------------------------------------------
 # engine_rhi — thin Vulkan abstraction (instance/device, swapchain, ...).
 # ---------------------------------------------------------------------------
 add_library(engine_rhi STATIC
@@ -126,7 +136,7 @@ add_library(engine_rhi STATIC
     src/rhi/graphics_pipeline.cpp
     src/rhi/compute_pipeline.cpp)
 target_link_libraries(engine_rhi PUBLIC
-    engine_flags Vulkan::Vulkan GPUOpen::VulkanMemoryAllocator)
+    engine_flags engine_core Vulkan::Vulkan GPUOpen::VulkanMemoryAllocator)
 # nlohmann_json is an implementation detail of the reflection parser (PRIVATE).
 target_link_libraries(engine_rhi PRIVATE nlohmann_json::nlohmann_json)
 target_include_directories(engine_rhi PUBLIC ${ENGINE_PUBLIC_INCLUDE})
