@@ -14,6 +14,12 @@ When there is a "proper" way and a "cheap" way to do something, default to the p
 
 ## Development Process
 
+**Start every session by reading `docs/STATUS.md`** (what is in flight,
+blockers, next steps) and **update it before ending a session**. Build/test
+instructions — including setting up a cloud container — are in
+`docs/DEVELOPMENT.md`. Keep `README.md` current and readable for humans
+whenever user-visible features, build steps or env vars change.
+
 See **`ROADMAP.md`** for the plan. Work is organised into tracks (S stability,
 A AI tooling/MCP, R rendering, P platforms, G gameplay, E editor); each item
 has an ID and ends in commits titled `[<ID>] <description>` (`[<ID>.<n>]` for
