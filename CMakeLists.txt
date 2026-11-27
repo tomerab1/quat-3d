@@ -255,6 +255,27 @@ target_include_directories(engine_stb_image PRIVATE ${Stb_INCLUDE_DIR})
 set_source_files_properties(src/scene/stb_image_impl.cpp PROPERTIES COMPILE_OPTIONS "-w")
 
 # ---------------------------------------------------------------------------
+# engine_cook — offline asset cooker (R17): glTF textures -> KTX2/Basis,
+# meshes -> meshoptimizer passes, quantisation and EXT_meshopt_compression.
+# Used by tools/quat-cook and the tests; never linked into the game.
+# ---------------------------------------------------------------------------
+add_library(engine_cook STATIC
+    src/cook/gltf_access.cpp
+    src/cook/gltf_cooker.cpp
+    src/cook/mesh_cook.cpp
+    src/cook/mesh_streams.cpp
+    src/cook/texture_encode.cpp)
+target_link_libraries(engine_cook PUBLIC engine_flags)
+target_link_libraries(engine_cook PRIVATE
+    fastgltf::fastgltf KTX::ktx meshoptimizer::meshoptimizer engine_stb_image)
+target_include_directories(engine_cook PUBLIC ${ENGINE_PUBLIC_INCLUDE})
+target_include_directories(engine_cook PRIVATE
+    ${Stb_INCLUDE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/src)
+
+add_executable(quat-cook tools/quat-cook/main.cpp)
+target_link_libraries(quat-cook PRIVATE engine_flags engine_cook)
+
+# ---------------------------------------------------------------------------
 # engine_terrain — procedural terrain (Phase 12). Pure CPU heightmap generation
 # in 12.1; chunked LOD rendering and Jolt height fields layer on in 12.2/12.3.
 # ---------------------------------------------------------------------------

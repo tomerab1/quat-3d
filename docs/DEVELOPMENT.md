@@ -31,7 +31,8 @@ CMake options: `ENGINE_EDITOR` (default ON), `ENGINE_PROFILE`,
 Targets: the engine libraries (`engine_rhi`, `engine_renderer`,
 `engine_scene`, `engine_physics`, `engine_animation`, `engine_terrain`,
 `engine_nav`, `engine_net`, `engine_remote`, `engine_audio`, `engine_editor`), the `game`
-executable, and the GoogleTest suite `engine_tests` (`tests/`).
+executable, the offline cooker (`engine_cook` + the `quat-cook` CLI, never
+linked into the game) and the GoogleTest suite `engine_tests` (`tests/`).
 
 ## Testing
 
@@ -88,6 +89,63 @@ destroyed once the frames in flight are done.
   `layout()` when recording.
 - `QUAT_SLANGC=<path>` overrides which slangc is used.
 
+## Cooking assets
+
+`quat-cook <input.gltf|glb> <output.gltf|glb> [options]` (target
+`quat-cook`) prepares a glTF for shipping. A `.glb` output is one binary
+file; a `.gltf` output gets a `.bin` next to it.
+
+- **Textures** become KTX2 with Basis Universal supercompression
+  (`KHR_texture_basisu`, the PNG/JPEG is dropped), full mip chains generated
+  in linear light (normal maps renormalised), resized to multiples of 4 as
+  the extension requires. Normal maps use UASTC (+ RDO + Zstd) and are stored
+  as X in RGB / Y in alpha so they transcode to BC5; everything else uses
+  ETC1S. Occlusion-only images are stored single-channel (BC4 at runtime).
+- **Meshes**: primitives sharing a vertex stream set are optimised together
+  (meshoptimizer vertex cache, overdraw, vertex fetch; unused vertices are
+  dropped), then quantised — normals / tangents as 8-bit octahedral
+  (`KHR_mesh_quantization`), UVs and colours in [0, 1] as 16-bit unorm,
+  positions as floats through the exponent filter, skin weights as bytes —
+  and compressed with the meshopt codecs (`EXT_meshopt_compression`, vertex
+  codec v0 as the extension requires). Primitives with morph targets, or
+  whose accessors other primitives share differently, are copied unchanged.
+- **LODs** (`--lod 0.5 --lod 0.25`): simplified index buffers per primitive,
+  listed in the mesh's `extras.quat_lods` (`primitive`, `ratio`, `indices`
+  accessor, `error`); the renderer does not select them yet.
+- Buffers are compacted to the data the output still references.
+
+| Option | Default | |
+|---|---|---|
+| `--color-codec etc1s\|uastc` | `etc1s` | codec for every non-normal texture |
+| `--normal-codec etc1s\|uastc` | `uastc` | codec for normal maps |
+| `--normal-layout xy\|rgb` | `xy` | `rgb` keeps normals readable by other glTF viewers (BC7 instead of BC5) |
+| `--etc1s-quality N` | 128 | 1..255 |
+| `--uastc-level N` / `--uastc-rdo Q` / `--zstd N` | 2 / 1.0 / 18 | UASTC effort, RDO strength (0 = off), Zstd level (0 = off) |
+| `--no-mips`, `--no-textures` | | |
+| `--no-optimize`, `--no-quantize`, `--no-compress` | | skip the mesh passes |
+| `--position-bits N`, `--normal-bits 8\|16` | 16, 8 | quantisation precision |
+| `--lod RATIO` (repeatable), `--lod-error E` | none, 0.01 | simplified LODs |
+| `--threads N` | all cores | texture encoder threads |
+
+At load the engine picks the transcode target from what the device samples
+(`rhi::TextureCompressionSupport`, enabled at device creation):
+
+| Texture | BC (desktop, lavapipe) | ASTC only, or Apple GPU | Neither |
+|---|---|---|---|
+| Colour, sRGB or linear | BC7 | ASTC 4x4 | RGBA8 |
+| Normal map, X/Y layout | BC5 | ASTC 4x4 + RA swizzle | RGBA8 + RA swizzle |
+| Normal map, RGB layout | BC7 | ASTC 4x4 | RGBA8 |
+| Single channel, linear | BC4 (+ RRR1 swizzle) | ASTC 4x4 | RGBA8 |
+
+KTX2 files that already hold BC7/BC5/BC4/ASTC 4x4/RGBA8 data are uploaded
+as they are when the device supports the format. Untrusted files are
+validated before libktx sees them (header, level index, sizes, dimension
+and decoded-size caps in `asset::Ktx2Limits`). Decoding and transcoding run
+on worker threads (`extract_textures`); only the upload uses the device.
+Quantised attributes are dequantised to the float vertex layout at load —
+smaller downloads, same VRAM per vertex; a quantised vertex format is a
+later step.
+
 ## CI
 
 `.github/workflows/ci.yml` builds the `release` preset on Ubuntu 24.04 and runs
@@ -143,6 +201,8 @@ git clone --depth 1 --branch v1.92.8-docking https://github.com/ocornut/imgui.gi
 # imgui-node-editor (Behaviour panel): the vcpkg port's tag plus its patches,
 # which make 0.9.3 build against imgui 1.92
 git clone --depth 1 --branch v0.9.3 https://github.com/thedmd/imgui-node-editor.git
+GIT_LFS_SKIP_SMUDGE=1 git clone --depth 1 --branch v4.4.2 https://github.com/KhronosGroup/KTX-Software.git ktx
+git clone --depth 1 --branch v1.1.1 https://github.com/zeux/meshoptimizer.git
 for p in fix-vec2-math-operators remove-getkeyindex fix-imgui-v1.92.5; do
   patch -d imgui-node-editor -p1 < ~/vcpkg/ports/imgui-node-editor/$p.patch; done
 apt-get install -y nlohmann-json3-dev libglm-dev libvulkan-dev

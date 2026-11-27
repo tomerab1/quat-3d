@@ -101,6 +101,18 @@ into CLAUDE.md or the brief template in [`CYCLE.md`](CYCLE.md).
 
 ## C++ in this codebase
 
+- **meshoptimizer 1.x encodes vertex codec v1 by default, which
+  `EXT_meshopt_compression` does not allow** (v1 is for the newer
+  `KHR_meshopt_compression`). The cooker calls
+  `meshopt_encodeVertexBufferLevel(..., version 0)` explicitly (R17).
+- **Basis UASTC -> BC5 reads R and A, not R and G.** BC5 is only correct for
+  normal maps stored X-in-RGB / Y-in-alpha (libktx `normalMap`); RGB normal
+  maps go to BC7, and non-BC5 targets of the X/Y layout get an RA view
+  swizzle (R17).
+- **libktx initialises the Basis transcoder behind an unguarded static
+  flag.** Parallel transcodes are serialised until the first one succeeds
+  (`ktx2_transcode.cpp`); the encoder has the same pattern, so the cooker
+  encodes one image at a time with libktx's own worker threads.
 - **slangc 2025.6.1 segfaults after reporting a compile error** when
   `-reflection-json` is passed (exit by SIGSEGV, diagnostics already
   printed). Treat any non-zero exit *or* signal as a failed compile and keep
