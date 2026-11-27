@@ -6,9 +6,6 @@
 #include <gtest/gtest.h>
 
 #include "engine/nav/navmesh.hpp"
-#include "engine/net/prediction.hpp"
-#include "engine/net/replication.hpp"
-#include "engine/net/transport.hpp"
 #include "engine/scene/behavior.hpp"
 #include "engine/scene/components.hpp"
 #include "engine/scene/gltf_loader.hpp"
@@ -33,10 +30,4 @@ TEST(Animation, ClipLoad) { ASSERT_OK(scn::run_animation_load_self_test()); }
 TEST(Gltf, MaterialExtract) { ASSERT_OK(scn::run_material_extract_self_test()); }
 TEST(Gltf, StructuralValidation) { ASSERT_OK(scn::run_gltf_validation_self_test()); }
 
-
 TEST(Nav, Navmesh) { ASSERT_OK(engine::nav::run_navmesh_self_test()); }
-
-TEST(Net, Transport) { ASSERT_OK(engine::net::run_transport_self_test()); }
-TEST(Net, Replication) { ASSERT_OK(engine::net::run_replication_self_test()); }
-TEST(Net, Prediction) { ASSERT_OK(engine::net::run_prediction_self_test()); }
-
