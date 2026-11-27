@@ -12,6 +12,7 @@
 #include "engine/scene/components.hpp"
 #include "engine/scene/render_settings_json.hpp"
 #include "engine/scene/scene.hpp"
+#include "engine/scene/world_clock.hpp"
 #include "internal.hpp"
 
 namespace engine::remote::world {
@@ -87,6 +88,19 @@ RpcResult environment_set(Context& ctx, const Json& params) {
     bool set_sun = false;
     if (sun_json != nullptr && !sun_json->is_null()) {
         core::JsonFields s(*sun_json, "sun");
+        // The world clock (R22.1) owns the sun's position and strength
+        // while it drives the light; a write here would be undone next tick.
+        if (const entt::entity c = scene::find_world_clock(r); c != entt::null) {
+            const scene::WorldClock& clock = r.get<scene::WorldClock>(c);
+            for (const char* key : {"azimuth_deg", "elevation_deg", "intensity"}) {
+                if (clock.enabled && clock.drive_sun && s.has(key)) {
+                    return bad_params(std::string("sun.") + key +
+                                      ": the world clock drives the sun; change the time with "
+                                      "time.set / time.skip (sun_intensity for the strength), or "
+                                      "time.set {drive_sun:false} first");
+                }
+            }
+        }
         SunAngles a = existing != entt::null ? angles_of(light.direction) : SunAngles{};
         s.number("azimuth_deg", a.azimuth_deg, -360.0F, 360.0F);
         s.number("elevation_deg", a.elevation_deg, -90.0F, 90.0F);

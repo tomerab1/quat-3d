@@ -4,6 +4,8 @@ Good workflow: `scene_components` and `scene_list` to inspect, plan with coordin
 
 To change how the scene looks, tune the renderer (`render_settings_get` / `render_settings_set` / `render_settings_schema`: exposure, bloom, anti-aliasing, shadows, sky light, clouds) and per-entity materials (`material_get` / `material_set`), checking each change with `screenshot`; the `tune_look` prompt walks through it.
 
+Time of day: `time_set` gives the scene a date, time and place (latitude / longitude); the sun then follows the real Sun (sunrise, sunset, night) and the clock runs with the simulation (`time_scale` speeds it up, 0 freezes it). `time_get` reports the Sun and Moon positions, sunrise / sunset and the Moon's phase; `time_skip` jumps forward or back.
+
 NPC behaviour is a behaviour tree per entity: `bt_leaves` lists the node kinds and leaves, `bt_set` writes a whole tree, `bt_get` shows it with stable node ids for the incremental `bt_add_node` / `bt_move_node` / `bt_remove_node` / `bt_set_params`, and `bt_status` shows what each node did on the last tick during Play.
 
 If a tool says quat-mcp cannot connect to the engine or that the engine rejected the session, the engine is not running with remote control on that port, or its session token does not match: pass the error's advice on to the user instead of retrying. Never ask the user to paste the session token into the conversation.

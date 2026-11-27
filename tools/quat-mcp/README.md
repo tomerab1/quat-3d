@@ -130,6 +130,7 @@ Windows the command ends in `quat-mcp.exe`.
 | `scene_set_parent` | `scene.set_parent` | Re-parent (keeping the world transform by default) |
 | `scene_batch` | `scene.batch` | Many commands in one frame, with `"@N"` back-references |
 | `environment_get` / `environment_set` | `environment.*` | Sun angles and colour, volumetric clouds |
+| `time_get` / `time_set` / `time_skip` | `time.*` | World clock: date, time, place and speed; the real Sun and Moon, sunrise / sunset, Moon phase |
 | `world_ground_height` | `world.ground_height` | Terrain height under `[x, z]` points |
 | `camera_get` / `camera_set` / `camera_frame` | `camera.*` | Read, place or auto-frame the viewport camera |
 | `screenshot` | `render.screenshot` | The viewport as an MCP **image** (PNG) plus a caption |
