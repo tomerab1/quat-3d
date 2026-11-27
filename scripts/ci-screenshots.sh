@@ -111,6 +111,12 @@ for row in "${SCENE_TABLE[@]}"; do
     status="no image"
   else
     status="ok"
+    # Editor scenes must show the editor: not blank, uniform or a 3D view
+    # without ImGui (scripts/check_editor_capture.py).
+    if [[ "$name" == *editor* ]] &&
+       ! python3 "$ROOT/scripts/check_editor_capture.py" "$ppm" >>"$log" 2>&1; then
+      status="not the editor UI (see log)"
+    fi
     width="$(ppm_width "$ppm")" || width=0
     factor=1
     [ "$width" -ge 1280 ] && factor=2

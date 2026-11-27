@@ -146,6 +146,19 @@ jobs:
           HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
         run: scripts/ci-publish-screenshots.sh screenshots
 
+      # Not covered by the Screenshots step's continue-on-error: the editor
+      # capture must show the docked editor with ImGui drawn, not a blank,
+      # uniform or synthetic image (scripts/check_editor_capture.py, run by
+      # ci-screenshots.sh).
+      - name: Editor capture check
+        if: ${{ !cancelled() && steps.shots.outcome != 'skipped' }}
+        run: |
+          if grep -q $'^showcase-editor\tnot the editor' screenshots/results.tsv; then
+            echo "::error title=Editor capture::showcase-editor does not show the editor UI"
+            grep -A3 check_editor_capture screenshots/showcase-editor.log || true
+            exit 1
+          fi
+
       - name: Upload logs on failure
         if: failure()
         uses: actions/upload-artifact@v4
