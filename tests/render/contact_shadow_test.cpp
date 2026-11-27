@@ -1,13 +1,17 @@
 // Contact shadows (R12): a small box on the floor that the cascaded shadow
 // map misses (it is not in the caster list) still shadows the floor beside
 // it through the screen-space march, while open floor stays as lit as
-// without the march.
+// without the march, also beside a silhouette with a depth gap (#86).
 
+#include <algorithm>
+#include <cstddef>
 #include <cstdint>
 #include <expected>
+#include <string>
 #include <vector>
 
 #include <glm/glm.hpp>
+#include <glm/gtc/matrix_transform.hpp>
 #include <gtest/gtest.h>
 #include <vulkan/vulkan.h>
 
@@ -17,6 +21,8 @@
 #include "engine/renderer/mesh_pass.hpp"
 #include "engine/renderer/shadow_pass.hpp"
 #include "engine/rhi/render_graph.hpp"
+#include "engine/scene/gltf_loader.hpp"
+#include "engine/scene/primitives.hpp"
 #include "render/occlusion_fixtures.hpp"
 #include "support/expect_ok.hpp"
 #include "support/gpu_context.hpp"
@@ -181,4 +187,109 @@ TEST(GpuContactShadows, GrazingFloorIsNotSelfShadowed) {
             ASSERT_NEAR(with, without, 0.03F * without) << "pixel " << x << "," << y;
         }
     }
+}
+
+// Issue #86: a sphere floating over the floor (out of the march's reach), the
+// sun low and grazing past its silhouette. Floor rays on the side away from
+// the sun cross the silhouette in screen space; reconstructing the depth by
+// interpolating across that edge made a phantom surface between the sphere
+// and the floor, and the jittered march hit it in a dotted halo. No floor
+// pixel may darken by more than 2 % against the same frame without contact
+// shadows (the cascaded shadow map is in both).
+TEST(GpuContactShadows, NoHaloBesideSilhouettes) {
+    QUAT_REQUIRE_GPU(g);
+    constexpr VkExtent2D extent{256, 256};
+    constexpr float radius = 0.5F;
+    const glm::vec3 centre(0.0F, 1.0F, 0.0F); // 0.5 m above the floor: the 0.35 m ray cannot reach
+    auto floor = occ::upload_box(*g, {-20.0F, -0.5F, -20.0F}, {20.0F, 0.0F, 20.0F});
+    auto sphere = engine::scene::upload_mesh(engine::scene::make_sphere_data(radius, 48, 64),
+                                             g->allocator, g->transfer);
+    auto grey = occ::upload_grey(*g);
+    ASSERT_OK(floor);
+    ASSERT_OK(sphere);
+    ASSERT_OK(grey);
+    auto mesh = r::MeshPass::create(g->device, g->allocator, g->cache, g->transfer, g->shader_dir);
+    auto shadow = r::ShadowPass::create(g->device, g->allocator, g->cache, g->shader_dir);
+    auto lighting = r::LightingPass::create(g->device, g->allocator, g->cache, g->shader_dir);
+    ASSERT_OK(mesh);
+    ASSERT_OK(shadow);
+    ASSERT_OK(lighting);
+
+    // Looking down at the sphere: the floor behind its silhouette is ~1 m
+    // further away, the depth gap the phantom surface spanned.
+    const occ::Camera cam = occ::look_at({0.0F, 6.0F, 3.0F}, centre, 50.0F, 1.0F, 0.1F, 100.0F);
+    const glm::vec3 to_light = glm::normalize(glm::vec3(1.0F, 0.25F, 0.3F));
+    const std::vector<r::DrawItem> draws{
+        {&*floor, &*grey, glm::mat4(1.0F)},
+        {&*sphere, &*grey, glm::translate(glm::mat4(1.0F), centre)}};
+    r::CsmSettings csm;
+    csm.gpu_depth_bounds = false;
+    csm.max_distance = 30.0F;
+
+    // Floor pixels: the camera ray misses the sphere (inflated by a few
+    // pixels' worth for the tessellated silhouette) and hits the floor.
+    const glm::mat4 inv_view_proj = glm::inverse(cam.view_proj);
+    const auto floor_pixel = [&](std::uint32_t x, std::uint32_t y) {
+        const glm::vec2 ndc((static_cast<float>(x) + 0.5F) / static_cast<float>(extent.width),
+                            (static_cast<float>(y) + 0.5F) / static_cast<float>(extent.height));
+        const glm::vec4 far = inv_view_proj * glm::vec4(ndc * 2.0F - 1.0F, 1.0F, 1.0F);
+        const glm::vec3 dir = glm::normalize(glm::vec3(far) / far.w - cam.position);
+        const glm::vec3 oc = cam.position - centre;
+        const float b = glm::dot(oc, dir);
+        const float inflated = radius * 1.06F;
+        if (b * b - (glm::dot(oc, oc) - inflated * inflated) >= 0.0F) return false;
+        return dir.y < 0.0F;
+    };
+
+    std::size_t floor_pixels = 0;
+    std::size_t darkened = 0;
+    float worst = 1.0F;
+    for (std::uint32_t frame = 0; frame < 2; ++frame) {
+        std::vector<quat::test::HostImage> images;
+        for (bool with : {true, false}) {
+            rhi::TransientImagePool pool(g->device, g->allocator);
+            rhi::RenderGraph graph(pool);
+            auto gbuffer = mesh->add_to_graph(graph, extent, cam.view_proj, draws);
+            ASSERT_OK(gbuffer);
+            auto shadows =
+                shadow->add_to_graph(graph, {cam.view, cam.proj, to_light}, csm, nullptr, draws);
+            ASSERT_OK(shadows);
+            r::DirectionalLightParams sun;
+            sun.direction = glm::vec4(to_light, 0.0F);
+            sun.color = {1.0F, 1.0F, 1.0F, 3.0F};
+            sun.ambient = {0.02F, 0.02F, 0.02F, 0.0F};
+            r::LightingOcclusion occlusion;
+            occlusion.shadows = *shadows;
+            occlusion.csm = csm;
+            occlusion.projection = cam.proj;
+            occlusion.frame_index = frame;
+            if (with) {
+                occlusion.contact = r::ContactShadowSettings{};
+                occlusion.contact.intensity = 1.0F;
+            }
+            auto hdr = lighting->add_to_graph(graph, *gbuffer, extent, sun, inv_view_proj,
+                                              cam.position, occlusion);
+            ASSERT_OK(hdr);
+            auto img = quat::test::render_to_host(*g, graph, *hdr, extent, 8);
+            ASSERT_OK(img);
+            images.push_back(std::move(*img));
+        }
+        for (std::uint32_t y = 0; y < extent.height; ++y) {
+            for (std::uint32_t x = 0; x < extent.width; ++x) {
+                if (!floor_pixel(x, y)) continue;
+                ++floor_pixels;
+                const float with = images[0].rgba16f(x, y).r;
+                const float without = images[1].rgba16f(x, y).r;
+                if (with < 0.98F * without) {
+                    ++darkened;
+                    worst = std::min(worst, with / without);
+                    ADD_FAILURE() << "floor pixel " << x << "," << y << " (frame " << frame
+                                  << ") darkened to " << with / without;
+                    if (darkened > 12) return; // enough to see the pattern
+                }
+            }
+        }
+    }
+    EXPECT_GT(floor_pixels, 50000U); // the camera sees the floor around the sphere
+    RecordProperty("worst_ratio", std::to_string(worst));
 }
