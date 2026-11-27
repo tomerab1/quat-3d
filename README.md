@@ -33,7 +33,12 @@ the CI screenshot pipeline.
   contact shadows for small detail; meshes, instanced objects and terrain cast
 - Ambient occlusion (GTAO) with bent normals that also darkens reflections in
   crevices; every shadow / AO setting is tunable in the editor's Renderer panel
-- Glass and transparency (refraction, absorption, IOR), clearcoat car paint
+- Glass and transparency (refraction, absorption, IOR), clearcoat car paint;
+  glass and see-through materials cast soft, coloured shadows instead of
+  black ones
+- Alpha-cut materials (glTF `MASK`: leaves, grass cards, fences) cut holes in
+  the surface and in its shadow, and keep their shape at a distance
+  (coverage-preserving mipmaps); double-sided leaves are lit on both sides
 - Physically based sky with volumetric clouds and a moving sun
 - Image-based lighting that keeps up with the sky in real time
 - Anti-aliasing (TAA), bloom, auto-exposure, filmic tonemapping

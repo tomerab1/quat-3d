@@ -117,6 +117,29 @@ into CLAUDE.md or the brief template in [`CYCLE.md`](CYCLE.md).
 
 ## C++ in this codebase
 
+- **A render-graph image is one unit: a pass that changes per-mip layouts
+  must hand every mip back in the layout its declared usage implies.** The
+  transparent pass's scene-colour copy blitted its mip chain and left mips
+  1.. in SHADER_READ_ONLY while the graph, whose barriers cover all mips,
+  still believed TRANSFER_DST; its next transition then lied about the old
+  layout (#62, five `VUID-VkImageMemoryBarrier2-oldLayout-01197` per frame).
+  Restore the declared layout at the end of the pass and let the graph do
+  the hand-off.
+- **Slang keeps a dead `if (!A::keep(...)) discard;` after specialising.**
+  An interface method returning a constant `true` still left `OpKill` in the
+  opaque entry point's SPIR-V (R12.11). Put the discard inside the
+  interface implementation (`AlphaMasked::test`) so the opaque
+  specialisation has none, and check entry points' call graphs for
+  OpKill / OpTerminateInvocation / OpDemoteToHelperInvocation in a test.
+- **A material sampler created with `create_sampler(device)` reaches mip 1
+  only** (maxLod = mip_levels = 1): mipmapped material textures were never
+  minified past level 1 on master. Pass `material_sampler_max_lod`.
+- **Coverage-preserving alpha mips must be judged on the stored 8-bit
+  alpha.** A threshold picked from float sub-samples sat within half an
+  8-bit step of whole stems of equal alpha, and rounding flipped them all
+  (+9 % coverage). Evaluate the stored coverage at a few 8-bit steps around
+  the analytic threshold and keep the closest.
+
 - **Shadow acne has more than one cause; test it with an image test first.**
   R12.9: D16 over a caster-padded range gave 0.83 of the unshadowed value on
   a sloped lit floor; pancaking (depth clamp, tight range) alone still gave
