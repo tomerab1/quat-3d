@@ -8,6 +8,7 @@
 // QUAT_REMOTE / QUAT_REMOTE_TOKEN in the remote bridge, QUAT_NO_AUDIO in the
 // audio runtime).
 
+#include <cstdio>
 #include <cstdlib>
 #include <string>
 #include <utility>
@@ -33,6 +34,17 @@ int main() {
     config.screenshot_path = engine::core::env_path("QUAT_SCREENSHOT");
     // QUAT_NO_UI=1 disables the editor shell (deterministic headless renders).
     config.editor_ui = std::getenv("QUAT_NO_UI") == nullptr;
+    // QUAT_WINDOW_SIZE=<w>x<h> sets the initial window size (e.g. 1600x900 for
+    // editor screenshots); malformed or out-of-range values keep the default.
+    if (const char* env = std::getenv("QUAT_WINDOW_SIZE"); env != nullptr) {
+        int w = 0;
+        int h = 0;
+        if (std::sscanf(env, "%dx%d", &w, &h) == 2 && w >= 320 && h >= 240 && w <= 16384 &&
+            h <= 16384) {
+            config.window_width = w;
+            config.window_height = h;
+        }
+    }
 
     quat::app::Application app(std::move(config));
     return app.run();
