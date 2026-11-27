@@ -50,6 +50,11 @@ add_library(engine_flags INTERFACE)
 target_compile_features(engine_flags INTERFACE cxx_std_23)
 
 if(MSVC)
+    # CMake's default MSVC flags enable exceptions and RTTI (/EHsc /GR); drop
+    # them so engine_flags' /EHs-c- /GR- don't trip D9025 ("overriding")
+    # on every translation unit. vcpkg ports are built separately.
+    string(REPLACE "/EHsc" "" CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}")
+    string(REPLACE "/GR" "" CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}")
     target_compile_options(engine_flags INTERFACE /W4 /permissive- /EHs-c- /GR-)
     # getenv/fopen are used deliberately (portable C, bounds-checked call
     # sites); _HAS_EXCEPTIONS=0 matches /EHs-c- so the STL stops emitting
@@ -62,6 +67,12 @@ else()
         -Wall -Wextra -Wshadow
         -fno-exceptions -fno-rtti)
 endif()
+
+# Third-party implementation TUs (VMA, stb, miniaudio, vendored backends) are
+# compiled with warnings off: -w on clang/gcc. Nothing on MSVC — /w would
+# collide with engine_flags' /W4 (D9025), and the third-party headers already
+# arrive through SYSTEM include dirs, i.e. /external:I at /external:W0.
+set(ENGINE_THIRD_PARTY_TU_FLAGS "$<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-w>")
 
 # Per CLAUDE.md: column-major, reverse-Z friendly depth range [0, 1].
 target_compile_definitions(engine_flags INTERFACE
@@ -133,7 +144,7 @@ target_include_directories(engine_rhi PUBLIC ${ENGINE_PUBLIC_INCLUDE})
 
 # VMA's implementation is not warning-clean under our strict flags; compile just
 # that TU permissively (our code using VMA stays strict).
-set_source_files_properties(src/rhi/vma_impl.cpp PROPERTIES COMPILE_OPTIONS "-w")
+set_source_files_properties(src/rhi/vma_impl.cpp PROPERTIES COMPILE_OPTIONS "${ENGINE_THIRD_PARTY_TU_FLAGS}")
 
 # ---------------------------------------------------------------------------
 # engine_asset — asset identity, ref-counted handles, synchronous load path,
@@ -206,11 +217,12 @@ target_link_libraries(engine_scene PUBLIC
 # shared by scene files and the remote-control API).
 target_link_libraries(engine_scene PUBLIC nlohmann_json::nlohmann_json)
 target_link_libraries(engine_scene PRIVATE fastgltf::fastgltf)
-target_include_directories(engine_scene PRIVATE ${Stb_INCLUDE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_include_directories(engine_scene SYSTEM PRIVATE ${Stb_INCLUDE_DIR})
+target_include_directories(engine_scene PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_include_directories(engine_scene PUBLIC ${ENGINE_PUBLIC_INCLUDE})
 
 # stb's implementation TU is not warning-clean under our strict flags.
-set_source_files_properties(src/scene/stb_image_impl.cpp PROPERTIES COMPILE_OPTIONS "-w")
+set_source_files_properties(src/scene/stb_image_impl.cpp PROPERTIES COMPILE_OPTIONS "${ENGINE_THIRD_PARTY_TU_FLAGS}")
 
 # ---------------------------------------------------------------------------
 # engine_terrain — procedural terrain (Phase 12). Pure CPU heightmap generation
@@ -266,7 +278,7 @@ target_link_libraries(engine_audio PUBLIC engine_flags glm::glm)
 target_link_libraries(engine_audio PRIVATE miniaudio_headers)
 target_include_directories(engine_audio PUBLIC ${ENGINE_PUBLIC_INCLUDE})
 # miniaudio's implementation is not warning-clean under our strict flags.
-set_source_files_properties(src/audio/miniaudio_impl.cpp PROPERTIES COMPILE_OPTIONS "-w")
+set_source_files_properties(src/audio/miniaudio_impl.cpp PROPERTIES COMPILE_OPTIONS "${ENGINE_THIRD_PARTY_TU_FLAGS}")
 
 # ---------------------------------------------------------------------------
 # engine_remote — remote-control endpoint (Phase 15): loopback JSON-RPC 2.0
@@ -301,10 +313,10 @@ add_library(engine_remote_world STATIC
     src/remote/world/stb_image_write_impl.cpp)
 target_link_libraries(engine_remote_world PUBLIC engine_flags engine_remote engine_scene)
 target_include_directories(engine_remote_world PUBLIC ${ENGINE_PUBLIC_INCLUDE})
-target_include_directories(engine_remote_world PRIVATE ${Stb_INCLUDE_DIR})
+target_include_directories(engine_remote_world SYSTEM PRIVATE ${Stb_INCLUDE_DIR})
 # stb's implementation TU is not warning-clean under our strict flags.
 set_source_files_properties(src/remote/world/stb_image_write_impl.cpp
-    PROPERTIES COMPILE_OPTIONS "-w")
+    PROPERTIES COMPILE_OPTIONS "${ENGINE_THIRD_PARTY_TU_FLAGS}")
 
 # ---------------------------------------------------------------------------
 # engine_renderer — high-level passes built on the RHI. Starts with the deferred
@@ -368,7 +380,7 @@ if(ENGINE_EDITOR)
     target_include_directories(engine_editor PUBLIC ${ENGINE_PUBLIC_INCLUDE})
     # Vendored third-party backend: not warning-clean under our strict flags.
     set_source_files_properties(src/editor/vendor/imgui_impl_sdl3.cpp
-        PROPERTIES COMPILE_OPTIONS "-w")
+        PROPERTIES COMPILE_OPTIONS "${ENGINE_THIRD_PARTY_TU_FLAGS}")
 endif()
 
 # ---------------------------------------------------------------------------

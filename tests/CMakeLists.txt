@@ -26,8 +26,10 @@ endif()
 target_include_directories(engine_tests PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${PROJECT_SOURCE_DIR}/src
-    ${ENGINE_PUBLIC_INCLUDE}
-    ${Stb_INCLUDE_DIR}) # image round trips (stb_image) in the screenshot tests
+    ${ENGINE_PUBLIC_INCLUDE})
+# Image round trips (stb_image) in the screenshot tests; SYSTEM so MSVC /W4
+# does not warn inside stb.
+target_include_directories(engine_tests SYSTEM PRIVATE ${Stb_INCLUDE_DIR})
 target_compile_definitions(engine_tests PRIVATE
     QUAT_COOKED_SHADER_DIR="${PROJECT_SOURCE_DIR}/cooked/shaders")
 add_dependencies(engine_tests shaders)

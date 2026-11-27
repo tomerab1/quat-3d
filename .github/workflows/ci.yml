@@ -4,8 +4,9 @@ name: CI
 # through their PR; building them on push too ran every commit twice.
 on:
   push:
-    branches: [main, master]
+    branches: [main, master, feat/s4-platform-ci]  # TEMP while iterating S4
   pull_request:
+  workflow_dispatch:
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -15,6 +16,9 @@ env:
   # Pinned to vcpkg.json's builtin-baseline.
   VCPKG_COMMIT: 10ceb139a610ebf3c6aa49cdc4a4b7f3db5d3f2b
   SLANG_VERSION: 2025.6.1
+  # Windows only (headers, import library, loader runtime). macOS uses
+  # Homebrew's loader + MoltenVK; Linux the distro packages.
+  VULKAN_SDK_VERSION: 1.4.321.1
   VCPKG_BINARY_SOURCES: clear;files,${{ github.workspace }}/.vcpkg-archives,readwrite
 
 jobs:
@@ -100,6 +104,187 @@ jobs:
             build/release/vcpkg-manifest-install.log
             build/release/Testing/Temporary/LastTest.log
             build/release/CMakeFiles/CMakeConfigureLog.yaml
+          if-no-files-found: ignore
+
+  windows:
+    name: Windows (MSVC, lavapipe)
+    runs-on: windows-2022
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+
+      # Full SDK (headers, vulkan-1.lib) plus the loader runtime: the runner
+      # image ships no vulkan-1.dll and engine_tests links it, so even the CPU
+      # tests need it. Lavapipe is registered as an ICD for the GPU suites.
+      - name: Vulkan SDK + lavapipe
+        uses: jakoch/install-vulkan-sdk-action@v1.8.1
+        with:
+          vulkan_version: ${{ env.VULKAN_SDK_VERSION }}
+          install_runtime: true
+          install_lavapipe: true
+          cache: true
+          stripdown: true
+
+      - name: Vulkan runtime on PATH
+        shell: pwsh
+        run: |
+          "$env:VULKAN_SDK\runtime\x64" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+          "$env:VULKAN_SDK\Bin" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+
+      # The same Slang release as Linux (the SDK bundles a different slangc);
+      # added to PATH after the SDK so it takes precedence.
+      - name: Slang compiler
+        shell: pwsh
+        run: |
+          $url = "https://github.com/shader-slang/slang/releases/download/v$env:SLANG_VERSION/slang-$env:SLANG_VERSION-windows-x86_64.zip"
+          Invoke-WebRequest -Uri $url -OutFile slang.zip
+          Expand-Archive slang.zip -DestinationPath "$env:USERPROFILE\slang"
+          "$env:USERPROFILE\slang\bin" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+
+      - name: vcpkg
+        shell: pwsh
+        run: |
+          git clone https://github.com/microsoft/vcpkg.git "$env:USERPROFILE\vcpkg"
+          if ($LASTEXITCODE) { exit 1 }
+          git -C "$env:USERPROFILE\vcpkg" checkout $env:VCPKG_COMMIT
+          if ($LASTEXITCODE) { exit 1 }
+          & "$env:USERPROFILE\vcpkg\bootstrap-vcpkg.bat" -disableMetrics
+          if ($LASTEXITCODE) { exit 1 }
+          New-Item -ItemType Directory -Force "${{ github.workspace }}\.vcpkg-archives" | Out-Null
+
+      - name: Restore vcpkg binary cache
+        id: vcpkg-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ github.workspace }}/.vcpkg-archives
+          key: vcpkg-windows-${{ env.VCPKG_COMMIT }}-${{ hashFiles('vcpkg.json', 'triplets/**', 'ports/**') }}-${{ github.run_id }}
+          restore-keys: |
+            vcpkg-windows-${{ env.VCPKG_COMMIT }}-${{ hashFiles('vcpkg.json', 'triplets/**', 'ports/**') }}-
+            vcpkg-windows-${{ env.VCPKG_COMMIT }}-
+
+      # Last PATH-changing step: it snapshots PATH (SDK, runtime, slangc) and
+      # puts MSVC's tools ahead of Git's link.exe.
+      - name: MSVC environment
+        uses: ilammy/msvc-dev-cmd@v1.13.0
+        with:
+          arch: x64
+
+      - name: Configure
+        id: configure
+        run: cmake --preset windows-release
+
+      - name: Save vcpkg binary cache
+        if: always() && steps.vcpkg-cache.outcome == 'success'
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ github.workspace }}/.vcpkg-archives
+          key: ${{ steps.vcpkg-cache.outputs.cache-primary-key }}
+
+      # -k 0: report every failing translation unit in one run.
+      - name: Build
+        id: build
+        if: steps.configure.outcome == 'success'
+        run: cmake --build --preset windows-release -- -k 0
+
+      - name: Tests (CPU)
+        run: ctest --test-dir build/windows-release -R engine_tests_cpu --output-on-failure --timeout 900
+
+      - name: Tests (GPU on lavapipe)
+        if: always() && steps.build.outcome == 'success'
+        run: ctest --test-dir build/windows-release -R engine_tests_gpu --output-on-failure --timeout 900
+
+      - name: Upload logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-logs
+          path: |
+            build/windows-release/vcpkg-manifest-install.log
+            build/windows-release/Testing/Temporary/LastTest.log
+            build/windows-release/CMakeFiles/CMakeConfigureLog.yaml
+          if-no-files-found: ignore
+
+  macos:
+    name: macOS (Apple clang, MoltenVK)
+    runs-on: macos-15
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+
+      # Vulkan-on-Metal: Homebrew's loader and MoltenVK. VULKAN_SDK points
+      # CMake's FindVulkan at the Homebrew prefix.
+      - name: Homebrew packages
+        run: |
+          brew install cmake ninja pkgconf molten-vk vulkan-loader vulkan-headers vulkan-tools
+          echo "VULKAN_SDK=$(brew --prefix)" >> "$GITHUB_ENV"
+
+      - name: Slang compiler
+        run: |
+          mkdir -p "$HOME/slang"
+          curl -sSL -o slang.tgz \
+            "https://github.com/shader-slang/slang/releases/download/v${SLANG_VERSION}/slang-${SLANG_VERSION}-macos-aarch64.tar.gz"
+          tar -xzf slang.tgz -C "$HOME/slang"
+          echo "$HOME/slang/bin" >> "$GITHUB_PATH"
+
+      - name: vcpkg
+        run: |
+          git clone https://github.com/microsoft/vcpkg.git "$HOME/vcpkg"
+          git -C "$HOME/vcpkg" checkout "$VCPKG_COMMIT"
+          "$HOME/vcpkg/bootstrap-vcpkg.sh" -disableMetrics
+          mkdir -p "${{ github.workspace }}/.vcpkg-archives"
+
+      - name: Restore vcpkg binary cache
+        id: vcpkg-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ github.workspace }}/.vcpkg-archives
+          key: vcpkg-macos-${{ env.VCPKG_COMMIT }}-${{ hashFiles('vcpkg.json', 'triplets/**', 'ports/**') }}-${{ github.run_id }}
+          restore-keys: |
+            vcpkg-macos-${{ env.VCPKG_COMMIT }}-${{ hashFiles('vcpkg.json', 'triplets/**', 'ports/**') }}-
+            vcpkg-macos-${{ env.VCPKG_COMMIT }}-
+
+      - name: Configure
+        id: configure
+        run: cmake --preset macos-release
+
+      - name: Save vcpkg binary cache
+        if: always() && steps.vcpkg-cache.outcome == 'success'
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ github.workspace }}/.vcpkg-archives
+          key: ${{ steps.vcpkg-cache.outputs.cache-primary-key }}
+
+      - name: Build
+        id: build
+        if: steps.configure.outcome == 'success'
+        run: cmake --build --preset macos-release -- -k 0
+
+      - name: Tests (CPU)
+        run: ctest --test-dir build/macos-release -R engine_tests_cpu --output-on-failure --timeout 900
+
+      # Apple Silicon runners expose a paravirtualised Metal device, so the GPU
+      # suites are attempted through MoltenVK — informational for now (not a
+      # gate) until MoltenVK on the runner's virtual GPU is proven (ROADMAP P1).
+      - name: Tests (GPU on MoltenVK, informational)
+        if: always() && steps.build.outcome == 'success'
+        continue-on-error: true
+        run: |
+          prefix="$(brew --prefix molten-vk)"
+          icd=$(ls "$prefix"/etc/vulkan/icd.d/MoltenVK_icd.json "$prefix"/share/vulkan/icd.d/MoltenVK_icd.json 2>/dev/null | head -n1)
+          echo "Using Vulkan ICD: $icd"
+          export VK_ICD_FILENAMES="$icd"
+          vulkaninfo --summary || true
+          ctest --test-dir build/macos-release -R engine_tests_gpu --output-on-failure --timeout 900
+
+      - name: Upload logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-logs
+          path: |
+            build/macos-release/vcpkg-manifest-install.log
+            build/macos-release/Testing/Temporary/LastTest.log
+            build/macos-release/CMakeFiles/CMakeConfigureLog.yaml
           if-no-files-found: ignore
 
   rust:
