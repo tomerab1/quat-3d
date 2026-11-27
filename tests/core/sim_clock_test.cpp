@@ -115,6 +115,8 @@ TEST(SimClock, SlicesCoverTheDtWithinTheBudget) {
 }
 
 // A second step request must not change the dt of steps already queued.
+// (The dt values sit below SimClock::max_step_dt so no request is clamped;
+// QueuedStepsKeepTheirDtAtTheCap covers the cap.)
 TEST(SimClock, QueuedStepsKeepTheirOwnDt) {
     SimClock c;
     ASSERT_OK(c.step(3, 0.05F));
@@ -129,6 +131,23 @@ TEST(SimClock, QueuedStepsKeepTheirOwnDt) {
     EXPECT_EQ(c.advance(0.5F), 0.0F);
     EXPECT_EQ(c.state().steps_run, 6U);
     EXPECT_NEAR(c.state().sim_time_s, 0.21, 1e-6);
+}
+
+// At the step cap (one physics update, 1/15 s): a step of exactly
+// max_step_dt keeps it, a larger request is clamped to it on entry — so it
+// joins a queued run of max_step_dt — and later requests with another dt
+// still leave both runs' dt alone.
+TEST(SimClock, QueuedStepsKeepTheirDtAtTheCap) {
+    SimClock c;
+    ASSERT_OK(c.step(2, SimClock::max_step_dt));
+    ASSERT_OK(c.step(1, 0.5F)); // clamped: same dt as the run before, joins it
+    ASSERT_OK(c.step(2, 0.01F));
+    ASSERT_OK(c.step(1, 1.0F)); // clamped again: a new run after the 0.01 run
+    for (int i = 0; i < 3; ++i) EXPECT_FLOAT_EQ(c.advance(1.0F), SimClock::max_step_dt) << i;
+    for (int i = 0; i < 2; ++i) EXPECT_FLOAT_EQ(c.advance(1.0F), 0.01F) << i;
+    EXPECT_FLOAT_EQ(c.advance(1.0F), SimClock::max_step_dt);
+    EXPECT_EQ(c.advance(1.0F), 0.0F);
+    EXPECT_EQ(c.state().steps_run, 6U);
 }
 
 TEST(SimClock, RejectsStepsBeyondItsQueueLimits) {

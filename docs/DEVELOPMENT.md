@@ -104,8 +104,7 @@ scenes with the real `game` binary on lavapipe under Xvfb —
 `QUAT_TERRAIN=1`, `QUAT_PHYSICS=1` and the mountain-forest showcase
 (`QUAT_DEMO=mountain`), each with a frame budget, muted audio and a
 per-scene timeout (`SCENE_TIMEOUT`, default 300 s; a scene row can raise its
-own — the mountain scene allows 600 s for ~3 s frames on lavapipe) so a hang
-fails that scene instead of the job. Each final frame is converted to PNG
+own) so a hang fails that scene instead of the job. Each final frame is converted to PNG
 (`scripts/ppm_to_png.py`, halved when 1280 px or wider). A crash, timeout or
 missing image is listed in the step summary with the log tail and an
 `::error` annotation. The step is `continue-on-error` for now (temporary,
@@ -131,7 +130,9 @@ Run locally: `scripts/ci-screenshots.sh build/release/game /tmp/shots`
 The nature models in `assets/meshes/nature/` (conifers and their
 distant-forest variants, broadleaf trees, rocks, a bush) are generated, not
 authored: `tools/asset-gen` builds them procedurally from a seed and writes
-glTF 2.0 binaries. After changing the generator, rebuild and regenerate:
+glTF 2.0 binaries. The `quat-asset-gen` tool is not part of the default
+build (`EXCLUDE_FROM_ALL`; its library is built for `engine_tests`); after
+changing the generator, build it explicitly and regenerate:
 
 ```sh
 cmake --build --preset release --target quat-asset-gen

@@ -439,6 +439,23 @@ TEST_F(DebugStep, LaterRequestsKeepQueuedStepsDt) {
     EXPECT_FLOAT_EQ(clock.advance(0.5F), 0.02F);
 }
 
+// A step of exactly the cap (one physics update) queues with that dt; one
+// above it is refused and leaves the queued run alone.
+TEST_F(DebugStep, StepDtAtTheCapIsKeptAboveItRefused) {
+    const double cap = static_cast<double>(core::SimClock::max_step_dt);
+    send({{"jsonrpc", "2.0"}, {"id", 6}, {"method", "debug.step"},
+          {"params", {{"frames", 1}, {"dt", cap}}}});
+    EXPECT_TRUE(pump(100).is_null());
+    send({{"jsonrpc", "2.0"}, {"id", 7}, {"method", "debug.step"},
+          {"params", {{"frames", 1}, {"dt", 0.1}}}});
+    const Json reply = pump(2000);
+    ASSERT_TRUE(reply.is_object()) << "no reply";
+    EXPECT_EQ(reply["id"], 7);
+    EXPECT_TRUE(reply.contains("error")) << reply.dump();
+    EXPECT_EQ(clock.state().pending_steps, 1U);
+    EXPECT_FLOAT_EQ(clock.advance(0.5F), core::SimClock::max_step_dt);
+}
+
 TEST_F(DebugStep, WaitingRequestsAreCapped) {
     constexpr int k_cap = 64;
     for (int i = 0; i < k_cap; ++i) {

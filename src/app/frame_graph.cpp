@@ -228,16 +228,22 @@ FrameScene FrameRenderer::gather(engine::scene::Scene& scene,
     const glm::vec3 sun_dir = -glm::vec3(light.direction); // travel direction
     const engine::renderer::ShadowSettings& shadows = settings_.shadows;
     if (shadows.view_distance_m > 0.0F) {
+        // Biases sized in shadow texels of world distance (the depth range is
+        // hundreds of metres); the bias settings scale them, 1x at default.
         const float fov_y = 2.0F * std::atan(1.0F / std::abs(cam.projection[1][1]));
         const float aspect = std::abs(cam.projection[1][1] / cam.projection[0][0]);
-        out.light_view_proj = engine::renderer::fit_shadow_to_view(
+        const engine::renderer::ShadowViewFitResult fit = engine::renderer::fit_shadow_to_view(
             glm::inverse(cam.view), fov_y, aspect, sun_dir,
-            {.distance = shadows.view_distance_m,
-             .caster_reach = shadows.view_distance_m,
-             .map_size = engine::renderer::shadow_map_size});
+            {.distance = shadows.view_distance_m, .map_size = engine::renderer::shadow_map_size});
+        const engine::renderer::ShadowSettings defaults{};
+        out.light_view_proj = fit.view_proj;
+        out.shadow_depth_bias = fit.depth_bias * shadows.depth_bias / defaults.depth_bias;
+        out.shadow_slope_bias = fit.slope_bias * shadows.slope_bias / defaults.slope_bias;
     } else {
         out.light_view_proj = engine::renderer::directional_shadow_view_proj(
             sun_dir, glm::vec3(0.0F, 1.5F, 0.0F), shadows.extent_m);
+        out.shadow_depth_bias = shadows.depth_bias;
+        out.shadow_slope_bias = shadows.slope_bias;
     }
     return out;
 }
@@ -336,8 +342,8 @@ bool FrameRenderer::record(const FrameInputs& in) {
                                         atmos_transmittance(), current_clouds(),
                                         engine::renderer::LightingTuning{
                                             .ibl_intensity = settings.ibl.intensity,
-                                            .shadow_depth_bias = settings.shadows.depth_bias,
-                                            .shadow_slope_bias = settings.shadows.slope_bias,
+                                            .shadow_depth_bias = fs.shadow_depth_bias,
+                                            .shadow_slope_bias = fs.shadow_slope_bias,
                                             .shadow_pcf_radius = settings.shadows.pcf_radius});
     if (!hdr) {
         std::fprintf(stderr, "[fatal] lighting pass: %s\n", hdr.error().message.c_str());

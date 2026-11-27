@@ -142,6 +142,9 @@ struct FrameScene {
     std::vector<engine::renderer::DrawItem>        shadow_draws;
     std::vector<engine::renderer::SkinDispatch>    dispatches;
     glm::mat4 light_view_proj{1.0F};
+    // Depth biases the lighting pass applies (shadow-map depth units).
+    float shadow_depth_bias = 0.0F;
+    float shadow_slope_bias = 0.0F;
 };
 
 // Everything record() draws besides the gathered scene.

@@ -92,10 +92,12 @@ constexpr std::array k_fields = {
                       "(landscapes); 0: the box around the origin",
                       &field_ref<&S::shadows, &ShadowSettings::view_distance_m>},
     RenderSettingDesc{"shadows", "depth_bias", "depth bias", T::number, 0.0F, 0.05F, 0.0008F, "",
-                      "Constant depth bias against shadow acne",
+                      "Constant depth bias against shadow acne (with view_distance_m: "
+                      "scales a 1.5-texel world-space bias, 1x at the default)",
                       &field_ref<&S::shadows, &ShadowSettings::depth_bias>},
     RenderSettingDesc{"shadows", "slope_bias", "slope bias", T::number, 0.0F, 0.05F, 0.0025F, "",
-                      "Extra bias on surfaces facing away from the sun",
+                      "Extra bias on surfaces facing away from the sun (with "
+                      "view_distance_m: scales a 2-texel bias, 1x at the default)",
                       &field_ref<&S::shadows, &ShadowSettings::slope_bias>},
     RenderSettingDesc{"shadows", "pcf_radius", "filter radius", T::integer, 0.0F, 3.0F, 1.0F,
                       "texels", "PCF kernel radius: softer edges, (2r+1)^2 samples",

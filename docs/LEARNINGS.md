@@ -129,6 +129,12 @@ into CLAUDE.md or the brief template in [`CYCLE.md`](CYCLE.md).
 
 ## C++ in this codebase
 
+- **A shadow bias in depth units is a world distance proportional to the
+  light's depth range.** The 0.0008 bias tuned for the 14 m demo box became
+  1-3 m once the map was fit to 400 m of a landscape view (PR #49 review):
+  small casters lost their shadows. Size biases in shadow texels of world
+  distance (`fit_shadow_to_view` returns them) whenever the light volume
+  changes size.
 - **Grid erosion's default talus (tan 0.5, ~27°) flattens mountains.**
   Thermal weathering relaxes every steeper slope, so eroded peaks came out
   as smooth mounds while the un-eroded tile border stayed rugged. Mountain

@@ -73,16 +73,16 @@ FlyCamera FlyCamera::create(engine::scene::Scene& scene, const Start& start) {
         authored != entt::null) {
         const auto& c = scene.registry().get<engine::scene::Camera>(authored);
         const glm::mat4& world = scene.registry().get<engine::scene::Transform>(authored).world;
-        const glm::vec3 fwd = -glm::normalize(glm::vec3(world[2]));
+        const engine::scene::FlyAngles angles = engine::scene::fly_angles_from_world(world);
         cam.pos = glm::vec3(world[3]);
-        cam.yaw = std::atan2(fwd.z, fwd.x);
-        cam.pitch = std::asin(glm::clamp(fwd.y, -0.999F, 0.999F));
+        cam.yaw = angles.yaw;
+        cam.pitch = glm::clamp(angles.pitch, glm::radians(-89.0F), glm::radians(89.0F));
         cam.fov_y = c.fov_y;
         cam.near_z_ = c.near_z;
         cam.far_z_ = c.far_z;
         cam.move_speed_ = 10.0F;
 #ifndef ENGINE_EDITOR
-        cam.camera_entity_ = authored;
+        cam.camera_entity_ = authored; // driven in world space (it may have a parent)
 #endif
         return cam;
     }
@@ -197,10 +197,11 @@ void FlyCamera::fly([[maybe_unused]] engine::scene::Scene& scene, FlyInputGate g
     }
 #ifndef ENGINE_EDITOR
     // try_get: the editor can delete any entity, including the camera.
-    if (auto* cam_tf = scene.registry().valid(camera_entity_)
-                           ? scene.registry().try_get<engine::scene::Transform>(camera_entity_)
-                           : nullptr) {
-        cam_tf->local = glm::inverse(glm::lookAt(pos, pos + cam_fwd, k_world_up));
+    // set_world_transform: an authored camera may hang under a parent.
+    if (scene.registry().valid(camera_entity_)) {
+        engine::scene::set_world_transform(
+            scene.registry(), camera_entity_,
+            glm::inverse(glm::lookAt(pos, pos + cam_fwd, k_world_up)));
     }
 #endif
 }
@@ -214,12 +215,9 @@ void FlyCamera::follow(engine::scene::Scene& scene, entt::entity target_entity) 
     const glm::vec3 target = glm::vec3(char_tf->world[3]) + glm::vec3(0.0F, 0.8F, 0.0F);
     pos = target - forward() * 5.0F;
 #ifndef ENGINE_EDITOR
-    if (auto* camera_tf = scene.registry().valid(camera_entity_)
-                              ? scene.registry().try_get<engine::scene::Transform>(camera_entity_)
-                              : nullptr) {
-        const glm::mat4 view_inv = glm::inverse(glm::lookAt(pos, target, k_world_up));
-        camera_tf->local = view_inv;
-        camera_tf->world = view_inv;
+    if (scene.registry().valid(camera_entity_)) {
+        engine::scene::set_world_transform(scene.registry(), camera_entity_,
+                                           glm::inverse(glm::lookAt(pos, target, k_world_up)));
     }
 #endif
 }

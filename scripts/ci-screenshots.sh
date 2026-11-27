@@ -31,14 +31,15 @@ TIMEOUT="${SCENE_TIMEOUT:-300}"
 # Frame counts: TAA history and auto-exposure settle within ~30 frames; the
 # GPU terrain tile (513^2, 200 erosion steps, async readback) needs a few
 # frames to arrive, and the physics scene needs simulated seconds to fall.
-# mountain-forest: its tile (300 erosion steps) lands by frame ~6, then ~12k
-# scattered instances + grass draw at ~3 s per frame on lavapipe (4 cores).
+# mountain-forest: its tile (300 erosion steps) lands by frame ~6, then ~11k
+# scattered instances + grass draw at ~2-3 s per frame on lavapipe (4 cores):
+# 60-100 s, inside the default timeout.
 SCENE_TABLE=(
   "showcase-editor|30||Showcase scene with the editor UI"
   "showcase|30|QUAT_NO_UI=1|Showcase scene, no UI"
   "terrain|90|QUAT_NO_UI=1 QUAT_TERRAIN=1|Showcase + GPU-generated terrain tile"
   "physics|90|QUAT_NO_UI=1 QUAT_PHYSICS=1|Physics demo (Jolt) after 90 frames"
-  "mountain-forest|30|QUAT_NO_UI=1 QUAT_DEMO=mountain|Mountain + forest showcase: terrain, scattered trees and rocks, GPU grass|600"
+  "mountain-forest|30|QUAT_NO_UI=1 QUAT_DEMO=mountain|Mountain + forest showcase: terrain, scattered trees and rocks, GPU grass"
 )
 
 die() { echo "ci-screenshots: $*" >&2; exit 2; }

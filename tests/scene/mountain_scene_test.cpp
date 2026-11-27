@@ -20,9 +20,11 @@
 #include <nlohmann/json.hpp>
 
 #include "engine/asset/asset_manager.hpp"
+#include "engine/renderer/render_settings.hpp"
 #include "engine/scene/component_json.hpp"
 #include "engine/scene/components.hpp"
 #include "engine/scene/instanced_mesh.hpp"
+#include "engine/scene/render_settings_json.hpp"
 #include "engine/scene/scatter.hpp"
 #include "engine/scene/scene.hpp"
 #include "engine/scene/scene_io.hpp"
@@ -75,7 +77,9 @@ struct SceneData {
     s::Terrain                terrain;
     glm::vec3                 terrain_origin{0.0F};
     glm::vec3                 camera{0.0F};
-    bool                      has_sun = false;
+    int                       suns = 0;
+    bool                      has_render_settings = false;
+    engine::renderer::RenderSettings render_settings;
     engine::terrain::Heightmap map;
 
     // World-space ground height under (x, z).
@@ -102,6 +106,15 @@ const SceneData& scene_data() {
             return d;
         }
         d.parsed = true;
+        if (const auto it = doc.find("render_settings"); it != doc.end() && it->is_object()) {
+            nlohmann::json block = *it;
+            block.erase("version");
+            if (auto ok = s::apply_render_settings_json(d.render_settings, block, true); !ok) {
+                d.errors.push_back("render_settings: " + ok.error().message);
+            } else {
+                d.has_render_settings = true;
+            }
+        }
         entt::registry r;
         for (const nlohmann::json& je : doc["entities"]) {
             const entt::entity e = r.create();
@@ -123,7 +136,7 @@ const SceneData& scene_data() {
                 d.terrain_origin = glm::vec3(local[3]);
             }
             if (const auto* sc = r.try_get<s::Scatter>(e)) d.layers.push_back({name, *sc, local});
-            if (r.all_of<s::DirectionalLight>(e)) d.has_sun = true;
+            if (r.all_of<s::DirectionalLight>(e)) ++d.suns;
             if (const auto* c = r.try_get<s::Camera>(e); c != nullptr && c->is_active) {
                 d.camera = glm::vec3(local[3]);
             }
@@ -139,7 +152,13 @@ TEST(MountainScene, FileDecodesStrictly) {
     ASSERT_TRUE(d.parsed) << k_scene_file << " is missing or not a scene file";
     EXPECT_TRUE(d.errors.empty()) << (d.errors.empty() ? "" : d.errors.front());
     EXPECT_EQ(d.layers.size(), k_expected.size());
-    EXPECT_TRUE(d.has_sun);
+    // Exactly one sun: the app adds its default sun only to scenes without
+    // one, and the renderer lights with a single directional light.
+    EXPECT_EQ(d.suns, 1);
+    // Its render_settings block: shadows follow the view far enough for the
+    // copse's long shadows across the meadow.
+    ASSERT_TRUE(d.has_render_settings);
+    EXPECT_GE(d.render_settings.shadows.view_distance_m, 200.0F);
     ASSERT_TRUE(d.map.valid());
     EXPECT_GT(d.terrain.snowline_m, k_treeline);
     EXPECT_LT(d.terrain.snowline_m, d.map.max_height) << "the peaks should carry snow";
@@ -203,10 +222,14 @@ TEST(GpuMountainScene, LoadsAndResolvesItsModels) {
     QUAT_REQUIRE_GPU(g);
     engine::asset::AssetManager assets;
     s::Scene scene;
-    ASSERT_OK(s::load_scene(scene, k_scene_file, g->allocator, g->transfer, assets));
+    engine::renderer::RenderSettings settings;
+    ASSERT_OK(s::load_scene(scene, k_scene_file, g->allocator, g->transfer, assets, &settings));
     entt::registry& r = scene.registry();
     EXPECT_EQ(r.view<s::Terrain>().size(), 1U);
     EXPECT_EQ(r.view<s::Grass>().size(), 1U);
+    EXPECT_EQ(r.view<s::DirectionalLight>().size(), 1U);
+    // The file's render_settings block reaches the renderer settings.
+    EXPECT_GT(settings.shadows.view_distance_m, 0.0F);
     EXPECT_EQ(r.view<s::Scatter>().size(), k_expected.size());
     const auto resolved = s::resolve_instanced_meshes(r, g->allocator, g->transfer, assets,
                                                       QUAT_PROJECT_ROOT);

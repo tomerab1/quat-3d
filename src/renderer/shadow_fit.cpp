@@ -21,8 +21,8 @@ FrustumSphere frustum_slice_sphere(float fov_y, float aspect, float distance) {
     return {d, d * std::sqrt(k2)};
 }
 
-glm::mat4 fit_shadow_to_view(const glm::mat4& camera_world, float fov_y, float aspect,
-                             const glm::vec3& sun_travel, const ShadowViewFit& fit) {
+ShadowViewFitResult fit_shadow_to_view(const glm::mat4& camera_world, float fov_y, float aspect,
+                                       const glm::vec3& sun_travel, const ShadowViewFit& fit) {
     const glm::vec3 eye(camera_world[3]);
     const glm::vec3 forward = -glm::normalize(glm::vec3(camera_world[2]));
     const FrustumSphere sphere = frustum_slice_sphere(fov_y, aspect, fit.distance);
@@ -44,10 +44,18 @@ glm::mat4 fit_shadow_to_view(const glm::mat4& camera_world, float fov_y, float a
 
     // The light "eye" sits r + reach before the centre along the light, so
     // casters up to `reach` outside the sphere still render into the map.
+    const float depth_range = 2.0F * r + reach;
     const glm::mat4 view =
         glm::translate(glm::mat4(1.0F), glm::vec3(-c.x, -c.y, -(c.z + r + reach))) * rotation;
-    const glm::mat4 proj = glm::ortho(-r, r, -r, r, 0.0F, 2.0F * r + reach);
-    return proj * view;
+    const glm::mat4 proj = glm::ortho(-r, r, -r, r, 0.0F, depth_range);
+
+    ShadowViewFitResult out;
+    out.view_proj = proj * view;
+    out.depth_range_m = depth_range;
+    out.texel_m = texel;
+    out.depth_bias = fit.bias_texels * texel / depth_range;
+    out.slope_bias = fit.slope_bias_texels * texel / depth_range;
+    return out;
 }
 
 } // namespace engine::renderer
