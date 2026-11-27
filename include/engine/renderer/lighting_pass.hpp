@@ -25,6 +25,7 @@
 
 #include "engine/core/error.hpp"
 #include "engine/renderer/cloud_settings.hpp"
+#include "engine/renderer/weather_surfaces.hpp"
 #include "engine/renderer/ibl_pass.hpp"
 #include "engine/renderer/light_cull_pass.hpp"
 #include "engine/renderer/mesh_pass.hpp"
@@ -78,6 +79,7 @@ struct LightingOcclusion {
 // sun-shadow filter and biases are CsmSettings (LightingOcclusion::csm).
 struct LightingTuning {
     float ibl_intensity = 1.0F; // scales image-based ambient + reflections
+    WeatherSurfaces weather{};  // wet / snowy surfaces (R13.1); default: dry
 };
 
 class LightingPass {

@@ -224,7 +224,7 @@ pub struct CloudParams {
     /// Turn the volumetric cloud layer on or off.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub enabled: Option<bool>,
-    /// Fraction of the sky covered, 0..1 (default 0.42).
+    /// Fraction of the sky covered, 0..1 (default 0.42). The weather's `cloud_cover` replaces it while the scene has a weather.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub coverage: Option<f64>,
     /// Extinction per km at full density, 0..128 (default 24); higher = darker, more opaque clouds.
@@ -242,12 +242,15 @@ pub struct CloudParams {
     /// Edge erosion / wispiness, 0..1 (default 0.4).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub detail: Option<f64>,
-    /// Drift speed, m/s, 0..100 (default 12).
+    /// Drift speed, m/s, 0..100 (default 12). Ignored while the scene has a weather (its wind drives the clouds).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub wind_speed: Option<f64>,
-    /// World-space heading the clouds drift toward, degrees, -180..180 (default 35).
+    /// World-space heading the clouds drift toward, degrees, -180..180 (default 35). Ignored while the scene has a weather.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub wind_dir_deg: Option<f64>,
+    /// Clouds shadow the sun on the ground (default true).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shadows: Option<bool>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]

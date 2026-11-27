@@ -14,6 +14,10 @@
 // normals for the diffuse irradiance lookup, multi-bounce, and cone-based
 // specular occlusion (lib/occlusion.slang). Resource bindings come from
 // reflection (no explicit indices); per-frame values are in g_frame.
+// R13.1: each pixel's surface passes through the weather's layers
+// (lib/weather_surface.slang: wet surfaces + puddles, then snow) before it is
+// shaded, and the sun is also shadowed by the cloud layer above the point
+// (cloud_sun_transmittance), composed with the CSM and contact shadows.
 
 import atmosphere;
 import clustered_lights;
@@ -21,6 +25,7 @@ import csm;
 import occlusion;
 import octahedral;
 import sky;
+import weather_surface;
 
 static const float PI = 3.14159265358979;
 
@@ -32,7 +37,7 @@ static const float SKY_LUT_BRIGHTNESS = 8.0;
 // match prefilter_mip_count in ibl_pass.cpp.
 static const float PREFILTER_MAX_LOD = 4.0;
 
-// Per-frame values (std140, 288 bytes; LightingConstants in lighting_pass.cpp).
+// Per-frame values (std140, 320 bytes; LightingConstants in lighting_pass.cpp).
 // Matrices are glm columns (applied with mul_cols).
 struct LightingConstants {
     float4 inv_view_proj[4]; // clip -> world (jittered), reconstructs positions
@@ -47,6 +52,8 @@ struct LightingConstants {
     float4 csm_misc;         // x debug cascades, y noise offset (frame), zw depth -> view (A, B)
     float4 contact;          // x intensity (0 = off), y length m, z steps, w thickness m
     float4 ao;               // x GTAO on, y bent normals, z specular occlusion, w multi-bounce
+    float4 weather;          // x wetness, y puddle water level, z snow amount, w snowline m
+    float4 weather_b;        // x cloud shadows on, yzw unused
 }
 ConstantBuffer<LightingConstants> g_frame;
 
@@ -93,9 +100,10 @@ float3 fresnel_schlick_roughness(float ndotv, float3 f0, float roughness) {
 // `diffuse_n` is the irradiance lookup direction (the GTAO bent normal when
 // available); the occlusion terms apply per lobe.
 float3 ibl_ambient(float3 N, float3 diffuse_n, float3 V, float3 albedo, float metallic,
-                   float roughness, float3 diffuse_occlusion, float specular_occlusion) {
+                   float roughness, float dielectric_f0, float3 diffuse_occlusion,
+                   float specular_occlusion) {
     float ndotv = max(dot(N, V), 1e-4);
-    float3 f0 = lerp(float3(0.04, 0.04, 0.04), albedo, metallic);
+    float3 f0 = lerp(float3(dielectric_f0), albedo, metallic);
     float3 F = fresnel_schlick_roughness(ndotv, f0, roughness);
     float3 kd = (1.0 - F) * (1.0 - metallic);
 
@@ -142,8 +150,10 @@ float3 f_schlick(float vdoth, float3 f0) {
 }
 
 // Cook-Torrance response for one light direction L (unit), without the light's
-// radiance — returns (diffuse + specular) * NdotL.
-float3 surface_brdf(float3 N, float3 V, float3 L, float3 albedo, float metallic, float roughness) {
+// radiance — returns (diffuse + specular) * NdotL. `dielectric_f0` is the
+// non-metal reflectance (0.04; still water 0.02).
+float3 surface_brdf(float3 N, float3 V, float3 L, float3 albedo, float metallic, float roughness,
+                    float dielectric_f0) {
     float3 h = normalize(V + L);
     float ndotl = max(dot(N, L), 0.0);
     float ndotv = max(dot(N, V), 1e-4);
@@ -151,7 +161,7 @@ float3 surface_brdf(float3 N, float3 V, float3 L, float3 albedo, float metallic,
     float vdoth = max(dot(V, h), 0.0);
 
     float  a  = max(roughness * roughness, 1e-3);
-    float3 f0 = lerp(float3(0.04), albedo, metallic);
+    float3 f0 = lerp(float3(dielectric_f0), albedo, metallic);
 
     float  D   = d_ggx(ndoth, a);
     float  Vis = v_smith(ndotv, ndotl, a);
@@ -282,16 +292,34 @@ void compute_main(uint3 tid : SV_DispatchThreadID) {
     float2 enc    = g_normal.Load(int3(coord, 0)).xy;
     float  depth  = g_depth.Load(int3(coord, 0)).r;
 
-    float metallic  = mat.r;
-    float roughness = mat.g;
     float occlusion = mat.b;
     float2 coat     = g_clearcoat.Load(int3(coord, 0)).rg;
     float  cc       = coat.r;
     float  ccr      = max(coat.g, 0.03); // floor keeps the smooth-coat GGX finite
 
-    float3 n = oct_decode(enc);
     float3 world_pos = world_from_depth(coord, width, height, depth);
     float3 v = normalize(g_frame.camera_pos.xyz - world_pos);
+
+    // Weather layers over the GBuffer surface (R13.1): wet, then snow.
+    ShadingSurface surface;
+    surface.albedo = albedo.rgb;
+    surface.normal = oct_decode(enc);
+    surface.metallic = mat.r;
+    surface.roughness = mat.g;
+    surface.dielectric_f0 = 0.04;
+    WetLayer wet;
+    wet.wetness = g_frame.weather.x;
+    wet.water = g_frame.weather.y;
+    apply_surface_layer(wet, surface, world_pos);
+    SnowLayer snow;
+    snow.amount = g_frame.weather.z;
+    snow.snowline = g_frame.weather.w;
+    apply_surface_layer(snow, surface, world_pos);
+    float3 n = surface.normal;
+    float3 base_color = surface.albedo;
+    float metallic = surface.metallic;
+    float roughness = surface.roughness;
+    float f0 = surface.dielectric_f0;
 
     // Directional light (shadowed). With the atmosphere active, the sun's
     // light is tinted by its transmittance through the air mass — low sun
@@ -304,7 +332,14 @@ void compute_main(uint3 tid : SV_DispatchThreadID) {
     }
     uint   cascade = CSM_MAX_CASCADES;
     float  shadow = sun_visibility(coord, uint2(width, height), world_pos, n, ldir, cascade);
-    float3 sun    = surface_brdf(n, v, ldir, albedo.rgb, metallic, roughness);
+    if (g_frame.direction.w > 1.5 && g_frame.weather_b.x > 0.5 && shadow > 0.0) {
+        // Cloud shadows: the sun through the cloud layer above this point.
+        CloudParams cp = unpack_cloud_params(g_frame.cloud_a, g_frame.cloud_b);
+        float jitter = interleaved_gradient_noise(float2(coord) + g_frame.csm_misc.y);
+        shadow *= cloud_sun_transmittance((world_pos - g_frame.camera_pos.xyz) * 0.001, ldir, cp,
+                                          jitter);
+    }
+    float3 sun    = surface_brdf(n, v, ldir, base_color, metallic, roughness, f0);
     float3 color  = layer_clearcoat_direct(sun, n, v, ldir, cc, ccr) * sun_radiance * shadow;
 
     // Clustered point/spot lights (no shadows): only this pixel's froxel list.
@@ -317,7 +352,7 @@ void compute_main(uint3 tid : SV_DispatchThreadID) {
             if (!light_incident(light, world_pos, lp, radiance)) {
                 continue;
             }
-            float3 base = surface_brdf(n, v, lp, albedo.rgb, metallic, roughness);
+            float3 base = surface_brdf(n, v, lp, base_color, metallic, roughness, f0);
             color += layer_clearcoat_direct(base, n, v, lp, cc, ccr) * radiance;
         }
     }
@@ -334,7 +369,7 @@ void compute_main(uint3 tid : SV_DispatchThreadID) {
         float visibility = min(ao.a, occlusion);
         float3 bent = g_frame.ao.y > 0.5 ? normalize(ao.rgb * 2.0 - 1.0) : n;
         diffuse_n = bent;
-        diffuse_occ = g_frame.ao.w > 0.5 ? gtao_multi_bounce(visibility, albedo.rgb)
+        diffuse_occ = g_frame.ao.w > 0.5 ? gtao_multi_bounce(visibility, base_color)
                                          : float3(visibility, visibility, visibility);
         specular_occ = visibility;
         if (g_frame.ao.z > 0.5) {
@@ -343,11 +378,11 @@ void compute_main(uint3 tid : SV_DispatchThreadID) {
         }
     }
     if (g_frame.direction.w > 0.5) {
-        float3 ambient = ibl_ambient(n, diffuse_n, v, albedo.rgb, metallic, roughness,
+        float3 ambient = ibl_ambient(n, diffuse_n, v, base_color, metallic, roughness, f0,
                                      diffuse_occ, specular_occ);
         color += layer_clearcoat_ibl(ambient, n, v, cc, ccr) * g_frame.ambient.w;
     } else {
-        color += g_frame.ambient.rgb * albedo.rgb * diffuse_occ;
+        color += g_frame.ambient.rgb * base_color * diffuse_occ;
     }
     if (g_frame.csm_misc.x > 0.5) {
         color *= csm_debug_color(cascade);

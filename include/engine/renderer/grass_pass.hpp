@@ -43,6 +43,7 @@
 #include "engine/renderer/grass.hpp"
 #include "engine/renderer/mesh_pass.hpp"
 #include "engine/renderer/terrain_height_source.hpp"
+#include "engine/renderer/wind_field_pass.hpp"
 #include "engine/rhi/descriptor_buffer.hpp"
 #include "engine/rhi/gpu_allocator.hpp"
 #include "engine/rhi/managed_pipeline.hpp"
@@ -61,8 +62,10 @@ struct GrassFrame {
     glm::mat4     draw_view_proj{1.0F}; // the frame's (jittered) view-projection
     glm::mat4     cull_view_proj{1.0F}; // unjittered, for frustum culling
     glm::vec3     camera{0.0F};
-    float         time_s = 0.0F;        // wind clock
+    float         time_s = 0.0F;        // flutter clock
     std::span<const TerrainHeightTile> terrain{}; // nearest first; the first 4 are used
+    // The global wind field the blades bend in (R13.1). Invalid: no wind.
+    WindFieldOutput wind{};
 };
 
 // GPU-side records, for read-back.
@@ -138,6 +141,8 @@ private:
         rhi::GpuBuffer                 indices; // near strip, then far strip
         rhi::GpuImage                  flat_height; // 1x1 R32F stand-in for unused tile slots
         rhi::ImageView                 flat_height_view;
+        rhi::GpuImage                  calm_wind; // 1x1 zero wind for frames without a field
+        rhi::ImageView                 calm_wind_view;
         rhi::Sampler                   sampler;
         std::vector<Slot>              slots;
     };

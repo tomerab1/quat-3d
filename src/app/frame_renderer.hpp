@@ -53,9 +53,12 @@
 #include "engine/renderer/taa_pass.hpp"
 #include "engine/renderer/tonemap_pass.hpp"
 #include "engine/renderer/transparent_pass.hpp"
+#include "engine/renderer/wind_field_pass.hpp"
 #include "engine/rhi/gpu_allocator.hpp"
 #include "engine/rhi/render_graph.hpp"
 #include "engine/scene/material_override.hpp"
+#include "engine/weather/weather_state.hpp"
+#include "engine/weather/wind_field.hpp"
 #ifdef ENGINE_EDITOR
 #include "engine/renderer/imgui_pass.hpp"
 #endif
@@ -121,6 +124,7 @@ struct DeferredFrame {
     engine::renderer::BloomPass      bloom;
     engine::renderer::ExposurePass   exposure;
     engine::renderer::TaaPass        taa;
+    engine::renderer::WindFieldPass  wind; // R13.1 global wind field
 #ifdef ENGINE_EDITOR
     engine::renderer::ImGuiPass      imgui;
     // Offscreen scene target for the editor's Viewport panel: TAA resolves the
@@ -150,6 +154,10 @@ struct FrameScene {
     engine::renderer::CsmView csm_view{};
     glm::mat4                 shadow_cull_view_proj{1.0F};
     std::uint64_t             frame_number = 0;
+    // The weather the frame renders (R13.1): the scene's, or the defaults
+    // (wind heading from the grass, when it has some) without one.
+    engine::weather::WeatherState weather{};
+    bool                          has_weather = false;
 };
 
 // Everything record() draws besides the gathered scene.
@@ -223,8 +231,12 @@ public:
     // Waits for the next slot's previous submission; returns the slot index.
     std::uint32_t wait_for_slot();
     [[nodiscard]] Acquire acquire_and_begin();
-    // Accumulates the time that drives the clouds' wind drift.
-    void advance_time(float dt) { cloud_time_s_ += dt; }
+    // Accumulates the time that drives the clouds' drift (with the scene's
+    // weather: integrates its wind at cloud height, R13.1).
+    void advance_time(float dt);
+    // The global wind field's clock (advanced by simulated time in record()):
+    // CPU wind queries use it to match what the frame draws.
+    [[nodiscard]] const engine::weather::WindAdvection& wind_clock() const { return wind_clock_; }
 
     [[nodiscard]] VkExtent2D present_extent() const;
     [[nodiscard]] FrameScene gather(engine::scene::Scene& scene,
@@ -265,6 +277,13 @@ private:
     // frame loop accumulates it always, like the animated sky in other engines
     // — not gated on play mode.
     float cloud_time_s_ = 0.0F;
+    // R13.1: while the scene has weather, the clouds' drift integrated from
+    // its wind (km), and the weather / camera of the last gathered frame.
+    glm::vec2                     cloud_drift_km_{0.0F};
+    engine::weather::WeatherState weather_{};
+    bool                          has_weather_ = false;
+    glm::vec3                     camera_pos_{0.0F};
+    engine::weather::WindAdvection wind_clock_{};
 
     // Temporal state shared by both slots (audit A2 / A11): one TAA history and
     // one adapted luminance, each advanced exactly once per frame. Declared

@@ -230,6 +230,7 @@ add_library(engine_scene STATIC
     src/scene/material_override.cpp
     src/scene/render_settings_json.cpp
     src/scene/weather_json.cpp
+    src/scene/weather_frame.cpp
     src/scene/audio_system.cpp
     src/scene/primitives.cpp
     src/scene/primitive_resolve.cpp
@@ -399,7 +400,8 @@ add_library(engine_renderer STATIC
     src/renderer/terrain_pass.cpp
     src/renderer/terrain_gpu_tiles.cpp
     src/renderer/terrain_synth_pass.cpp
-    src/renderer/terrain_shadow.cpp)
+    src/renderer/terrain_shadow.cpp
+    src/renderer/wind_field_pass.cpp)
 target_link_libraries(engine_renderer PUBLIC
     engine_flags engine_rhi engine_asset engine_terrain engine_weather glm::glm)
 target_include_directories(engine_renderer PUBLIC ${ENGINE_PUBLIC_INCLUDE})

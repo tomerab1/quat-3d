@@ -34,7 +34,14 @@ the CI screenshot pipeline.
 - Ambient occlusion (GTAO) with bent normals that also darkens reflections in
   crevices; every shadow / AO setting is tunable in the editor's Renderer panel
 - Glass and transparency (refraction, absorption, IOR), clearcoat car paint
-- Physically based sky with volumetric clouds and a moving sun
+- Physically based sky with volumetric clouds and a moving sun; the clouds
+  cast moving shadows on the ground
+- Weather: wind, cloud cover, rain or snow, wet ground and snow cover, set
+  in the editor's Renderer panel, saved with the scene, and scriptable over
+  MCP. Wet surfaces darken and turn glossy, with puddles on flat ground; snow
+  settles on upward-facing surfaces and lowers the terrain's snowline. With
+  accumulation on, rain soaks the ground, snow settles in the cold and melts
+  in the warm, and the ground slowly dries.
 - Image-based lighting that keeps up with the sky in real time
 - Anti-aliasing (TAA), bloom, auto-exposure, filmic tonemapping
 - Automatic instancing: objects sharing a mesh and material (trees, rocks,
@@ -56,8 +63,10 @@ the CI screenshot pipeline.
   seamless streaming for kilometre-scale worlds; tiles (noise + hydraulic /
   thermal erosion) are synthesised on the GPU in milliseconds, with the
   deterministic CPU generator as fallback and reference
-- Dense, wind-animated grass generated on the GPU every frame around the
-  camera (slope / height limits, distance level of detail, no popping)
+- Dense grass generated on the GPU every frame around the camera (slope /
+  height limits, distance level of detail, no popping), bending in a global
+  wind field computed on the GPU: gust fronts sweep across the field and
+  eddies swirl through it, following the weather
 - Jolt physics: rigid bodies, character controller, triggers, terrain collision
 
 **Audio**
@@ -211,7 +220,8 @@ validation messages, frame statistics, pause / single-step / slow down the
 simulation, watch entities, cast physics rays and query navmesh paths — and
 tune the look: exposure, bloom, anti-aliasing, shadows, sky light, clouds and
 per-entity materials, with the same values the editor's Renderer panel and
-Material inspector show — and author NPC behaviour trees: build, inspect and
+Material inspector show — and set the weather (wind, clouds, rain or snow,
+wetness, snow cover) — and author NPC behaviour trees: build, inspect and
 edit the same graph the editor's Behaviour panel shows, with per-node
 validation errors, and see what each node did on the last tick. Start the
 engine with `QUAT_REMOTE=7878`, build the

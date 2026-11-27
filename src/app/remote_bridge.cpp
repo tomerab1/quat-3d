@@ -244,6 +244,7 @@ struct RemoteBridge::Impl {
         s.camera_get = [this] { return camera_get(); };
         s.camera_set = [this](const remote::CameraPose& p) { camera_set(p); };
         s.render_settings = t.render_settings;
+        s.wind_clock = t.wind_clock;
 #ifdef ENGINE_EDITOR
         if (t.play != nullptr) {
             s.playing = [this] { return *t.play; };

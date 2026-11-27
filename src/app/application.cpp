@@ -227,6 +227,7 @@ void Application::connect_remote() {
     remote_targets.cam_pitch = &camera_.pitch;
     remote_targets.cam_fov_y = &camera_.fov_y;
     remote_targets.render_settings = &renderer_.render_settings();
+    remote_targets.wind_clock = [this] { return renderer_.wind_clock(); };
     remote_targets.material_overrides = &renderer_.material_overrides();
     world_.fill_remote_targets(remote_targets);
 #ifdef ENGINE_EDITOR

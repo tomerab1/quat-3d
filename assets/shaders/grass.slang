@@ -4,8 +4,9 @@
 // list (drawn with vkCmdDrawIndexedIndirect, firstInstance = the list's
 // offset), and the vertex id walks the blade strip: a vertex pair per level
 // (left / right edge) and one tip vertex. The blade is a quadratic Bezier
-// from the root to a tip bent by the blade's static lean plus the wind (a
-// scrolling gust field along the wind direction and a per-blade flutter),
+// from the root to a tip bent by the blade's static lean plus the wind (the
+// global wind field texture, R13.1: drag grows with the square of the wind
+// speed at blade height and saturates, plus a per-blade flutter),
 // with a tapering width. Blades seen edge-on turn slightly toward the
 // camera so the field does not thin out at grazing angles. Normals are
 // rounded across the blade's width and pulled toward the ground's up
@@ -14,9 +15,12 @@
 
 import grass_common;
 import instancing; // instance_index(): InstanceIndex including firstInstance
+import wind_common;
 
 [[vk::binding(0)]] ConstantBuffer<GrassParams>  g_params;
 [[vk::binding(1)]] StructuredBuffer<GrassBlade> g_blades;
+[[vk::binding(2)]] Texture2D                    g_wind;         // WindFieldPass output
+[[vk::binding(3)]] SamplerState                 g_wind_sampler; // linear clamp
 
 // Mirrors engine::renderer GrassDrawPush (16 bytes).
 struct PushConstants {
@@ -35,34 +39,30 @@ struct VsOut {
     nointerpolation float variation : TEXCOORD1;
 }
 
-float wind_hash(float2 p) {
-    float3 q = frac(float3(p.x, p.y, p.x) * 0.1031);
-    q += dot(q, float3(q.y, q.z, q.x) + 33.33);
-    return frac((q.x + q.y) * q.z);
-}
-
-float wind_noise(float2 p) {
-    float2 i = floor(p);
-    float2 f = frac(p);
-    float2 w = f * f * (3.0 - 2.0 * f);
-    return lerp(lerp(wind_hash(i), wind_hash(i + float2(1, 0)), w.x),
-                lerp(wind_hash(i + float2(0, 1)), wind_hash(i + float2(1, 1)), w.x), w.y);
-}
+// Blade response to the wind: (wind speed at blade height / this)^2 is the
+// drag-to-stiffness ratio q; the tip offset per metre is strength * 2.2 *
+// q / (1 + q) (drag grows with the square of the speed, bending saturates).
+static const float BLADE_STIFF_SPEED = 3.0; // m/s at blade height
 
 // Horizontal tip displacement per metre of blade height from the wind.
 float2 wind_offset(float3 root, float phase, float variation) {
-    const float2 dir = g_params.wind.xy;
     const float strength = g_params.wind.z;
     const float freq = g_params.wind.w;
     const float time = g_params.camera.w;
-    // Gusts: two octaves of value noise scrolling downwind (~16 m and ~6 m waves).
-    const float2 q = root.xz * 0.06 - dir * time * freq;
-    const float gust = 0.65 * wind_noise(q) + 0.35 * wind_noise(q * 2.7 + 13.1);
-    // Flutter: each blade oscillates around the gust-bent pose.
+    // The global wind field at the root, scaled from its 10 m reference
+    // height down to the blades (log profile).
+    const float4 field = wind_texture_sample(g_wind, g_wind_sampler, g_params.wind_rect, root.xz);
+    const float2 v = field.xy * g_params.wind_rect.w;
+    const float speed = length(v);
+    if (speed < 1e-4) return float2(0.0, 0.0);
+    const float2 dir = v / speed;
+    const float q = (speed * speed) / (BLADE_STIFF_SPEED * BLADE_STIFF_SPEED);
+    const float bend = strength * 2.2 * q / (1.0 + q);
+    // Flutter: each blade oscillates around the bent pose, harder in gusts.
     const float flutter =
         sin(time * freq * 6.28318531 * (2.2 + 0.6 * variation) + phase + dot(root.xz, dir) * 0.8);
-    const float bend = strength * (0.15 + 1.1 * gust * gust) + strength * 0.12 * flutter;
-    return dir * bend;
+    const float gust = saturate(field.w - 0.6);
+    return dir * (bend + strength * 0.22 * saturate(q) * (0.5 + gust) * flutter);
 }
 
 [shader("vertex")]

@@ -27,7 +27,7 @@ constexpr VkShaderStageFlags kComputeStage = VK_SHADER_STAGE_COMPUTE_BIT;
 // Bound when the frame has no sun shadows (never sampled then).
 constexpr VkFormat kFallbackShadowFormat = VK_FORMAT_D16_UNORM;
 
-// Mirrors LightingConstants in lighting.slang (std140, 288 bytes).
+// Mirrors LightingConstants in lighting.slang (std140, 320 bytes).
 struct LightingConstants {
     glm::mat4 inv_view_proj{1.0F};
     glm::mat4 view_proj{1.0F};
@@ -41,8 +41,10 @@ struct LightingConstants {
     glm::vec4 csm_misc{0.0F};   // debug cascades, noise offset, depth -> view (A, B)
     glm::vec4 contact{0.0F};    // intensity (0 = off), length, steps, thickness
     glm::vec4 ao{0.0F};         // on, bent normals, specular occlusion, multi-bounce
+    glm::vec4 weather{0.0F};    // wetness, puddle water level, snow amount, snowline m
+    glm::vec4 weather_b{0.0F};  // cloud shadows on
 };
-static_assert(sizeof(LightingConstants) == 288, "must match lighting.slang LightingConstants");
+static_assert(sizeof(LightingConstants) == 320, "must match lighting.slang LightingConstants");
 
 // lighting.slang's resources by name; slots_ holds their reflected bindings
 // in this order.
@@ -221,6 +223,9 @@ LightingPass::add_to_graph(rhi::RenderGraph& graph, const GBufferTargets& gbuffe
     c.cloud_a = clouds.pack_a();
     c.cloud_b = clouds.pack_b();
     fill_occlusion(c, occlusion);
+    const WeatherSurfaces w = tuning.weather.sanitized();
+    c.weather = {w.wetness, w.puddle_level(), w.snow, w.snowline_m};
+    c.weather_b = {flag(clouds.enabled && clouds.shadows), 0.0F, 0.0F, 0.0F};
     // Host writes land before vkQueueSubmit, which makes them visible.
     std::memcpy(constants_.mapped(), &c, sizeof(c));
     if (auto f = constants_.flush(0, sizeof(c)); !f) return std::unexpected(f.error());

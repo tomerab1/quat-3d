@@ -38,6 +38,7 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <memory>
 #include <optional>
 
@@ -48,6 +49,7 @@
 #include "app/screenshot_capture.hpp" // CaptureSource
 #include "engine/core/stderr_capture.hpp"
 #include "engine/scene/scene.hpp" // GroundHeightFn
+#include "engine/weather/wind_field.hpp"
 
 namespace engine::asset {
 class AssetManager;
@@ -116,6 +118,9 @@ struct RemoteBridgeTargets {
     engine::renderer::RenderSettings* render_settings = nullptr;
     // The renderer's per-entity derived materials (A8), resolved in poll().
     engine::scene::MaterialOverrideStore* material_overrides = nullptr;
+    // The renderer's wind clock (R13.1): weather.get wind queries match the
+    // field the frame draws.
+    std::function<engine::weather::WindAdvection()> wind_clock;
 
 #ifdef ENGINE_EDITOR
     engine::editor::EditorLayer* editor = nullptr;

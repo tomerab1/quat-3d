@@ -129,6 +129,7 @@ command ends in `quat-mcp.exe`.
 | `render_settings_reset` | `render.settings.reset` | Restore one group's (or every group's) defaults |
 | `render_settings_schema` | `render.settings.schema` | Every tunable field with type, range, default, unit and hint (settings and material factors) |
 | `material_get` / `material_set` | `material.get` / `material.set` | An entity's PBR factors (colour, roughness, metallic, clearcoat, glass, emission …); per-entity edits and reverts |
+| `weather_get` / `weather_set` | `weather.get` / `weather.set` | The scene's weather: wind, cloud cover, rain / snow, wetness, snow cover, temperature; wind velocity at points |
 
 Tool descriptions spell out units and conventions (metres, Y up, Euler degrees
 in YXZ order, `"#rrggbb"` sRGB colours for primitives and linear `[r,g,b]` for
@@ -143,9 +144,10 @@ screenshot → iterate), `inspect_scene` (survey and review the current
 scene), `debug_session` (diagnose a problem: stats → logs → watch →
 pause / step → raycast / nav path → conclude), `design_behavior` (an NPC
 behaviour tree: leaves → plan → `bt_set` or edits → play → `bt_status` /
-`debug_watch` → iterate) and `tune_look` (screenshot → read settings and
+`debug_watch` → iterate), `tune_look` (screenshot → read settings and
 schema → exposure first, then bloom, shadows, sky light and materials, one
-change and one screenshot at a time). In Claude Code they appear as
+change and one screenshot at a time) and `set_weather` (screenshot → wind and
+clouds → precipitation and surfaces → check). In Claude Code they appear as
 `/mcp__quat-3d__build_world`.
 
 **Resource** — `quat://scene/summary`: engine info, the first 500 entities,

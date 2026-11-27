@@ -256,6 +256,9 @@ constexpr std::array k_fields = {
     RenderSettingDesc{"clouds", "wind_dir_deg", "wind direction", T::number, -180.0F, 180.0F,
                       35.0F, "deg", "Heading the clouds drift toward (from +X toward +Z)",
                       &field_ref<&S::clouds, &CloudSettings::wind_dir_deg>},
+    RenderSettingDesc{"clouds", "shadows", "shadows", T::boolean, 0.0F, 1.0F, 1.0F, "",
+                      "Clouds shadow the sun on the ground",
+                      &field_ref<&S::clouds, &CloudSettings::shadows>},
 };
 
 // Keys of the pre-R12 single shadow map (one orthographic box), still
@@ -324,8 +327,10 @@ void set_render_setting(RenderSettings& settings, const RenderSettingDesc& field
 bool reset_render_settings(RenderSettings& settings, std::string_view group) {
     if (group.empty()) {
         const float time = settings.clouds.time_s;
+        const glm::vec2 offset = settings.clouds.offset_km;
         settings = RenderSettings{};
         settings.clouds.time_s = time;
+        settings.clouds.offset_km = offset;
         return true;
     }
     if (find_render_setting_group(group) == nullptr) return false;

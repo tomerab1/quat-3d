@@ -1,6 +1,6 @@
 // FrameRenderer, per frame: gathers the ticked scene into draw lists and builds
 // the render graph. Pass order (graph declaration order):
-//   sky-view LUT update, dynamic IBL step, GBuffer, terrain, grass, Hi-Z,
+//   sky-view LUT update, dynamic IBL step, wind field, GBuffer, terrain, grass, Hi-Z,
 //   cascaded shadows (GPU fit + cascades), GTAO, light culling, lighting,
 //   transparent, bloom, exposure, tonemap, TAA, editor UI; GPU skinning is
 //   recorded before the graph executes.
@@ -26,6 +26,8 @@
 #include "engine/scene/instanced_mesh.hpp"
 #include "engine/scene/scene.hpp"
 #include "engine/scene/material_override.hpp"
+#include "engine/renderer/weather_surfaces.hpp"
+#include "engine/scene/weather_frame.hpp"
 
 namespace quat::app {
 namespace {
@@ -101,8 +103,29 @@ SkinnedEntityGpu* ensure_skin_gpu(DeferredFrame& frame, entt::entity entity,
 
 engine::renderer::CloudSettings FrameRenderer::current_clouds() const {
     engine::renderer::CloudSettings c = settings_.clouds;
-    c.time_s = cloud_time_s_;
+    // Anchor the clouds (and their shadows) to the world: the shaders work
+    // relative to the camera.
+    const glm::vec2 camera_km = glm::vec2(camera_pos_.x, camera_pos_.z) * 0.001F;
+    if (has_weather_) {
+        // R13.1: the weather's cover; its wind's integrated drift (no
+        // settings-driven drift); rain / snow clouds are denser.
+        const engine::weather::WeatherState w = engine::weather::sanitized(weather_);
+        c.coverage = w.cloud_cover;
+        c.density *= 1.0F + w.precipitation;
+        c.time_s = 0.0F;
+        c.offset_km = cloud_drift_km_ + camera_km;
+    } else {
+        c.time_s = cloud_time_s_;
+        c.offset_km = camera_km;
+    }
     return c;
+}
+
+void FrameRenderer::advance_time(float dt) {
+    cloud_time_s_ += dt;
+    if (has_weather_) {
+        cloud_drift_km_ += engine::scene::cloud_wind(weather_, settings_.clouds) * (dt * 0.001F);
+    }
 }
 
 engine::renderer::CsmSettings FrameRenderer::current_csm() const {
@@ -241,6 +264,12 @@ FrameScene FrameRenderer::gather(engine::scene::Scene& scene,
     out.shadow_cull_view_proj = engine::renderer::caster_cull_view_proj(
         out.csm_view, current_csm(), engine::renderer::shadow_map_size);
     out.frame_number = frame_number;
+
+    // R13.1: the weather this frame renders.
+    out.has_weather = engine::scene::frame_weather(scene.registry(), out.weather);
+    weather_ = out.weather;
+    has_weather_ = out.has_weather;
+    camera_pos_ = cam.position;
     return out;
 }
 
@@ -289,6 +318,20 @@ bool FrameRenderer::record(const FrameInputs& in) {
     const engine::renderer::IblViewSet ibl_views =
         dynamic_ibl_ ? dynamic_ibl_->views() : engine::renderer::IblViewSet{};
 
+    // R13.1: the global wind field around the camera (grass samples it),
+    // advanced by simulated time so pausing freezes the wind with the world.
+    wind_clock_.advance(engine::weather::sanitized(fs.weather).wind_speed, in.sim_dt);
+    engine::renderer::WindFieldOutput wind{};
+    if (fr.wind.valid()) {
+        if (auto w = fr.wind.add_to_graph(
+                graph, engine::weather::wind_field_params(fs.weather, wind_clock_),
+                glm::vec2(cam.position.x, cam.position.z))) {
+            wind = *w;
+        } else {
+            std::fprintf(stderr, "[warn] wind field: %s\n", w.error().message.c_str());
+        }
+    }
+
     // R9.1: draws sharing mesh + material collapse into instanced draws.
     engine::renderer::InstancedDrawList shadow_batches =
         engine::renderer::batch_draws(fs.shadow_draws);
@@ -311,7 +354,7 @@ bool FrameRenderer::record(const FrameInputs& in) {
     }
     if (in.grass != nullptr) {
         in.grass->add_to_graph(graph, frame_, *in.registry, *gbuffer, draw_extent, fs.jittered_vp,
-                               cam, in.terrain, in.terrain_anchor, in.sim_dt);
+                               cam, in.terrain, in.terrain_anchor, in.sim_dt, wind);
     }
     // R12: Hi-Z pyramid of the final depth (after terrain / grass), then the
     // sun's cascades fitted to its depth bounds and rendered (shadows.enabled
@@ -368,7 +411,12 @@ bool FrameRenderer::record(const FrameInputs& in) {
                                         /*enable_sky=*/true, ibl_views, atmos_skyview(),
                                         atmos_transmittance(), current_clouds(),
                                         engine::renderer::LightingTuning{
-                                            .ibl_intensity = settings.ibl.intensity});
+                                            .ibl_intensity = settings.ibl.intensity,
+                                            .weather = engine::renderer::WeatherSurfaces::from(
+                                                fs.weather,
+                                                in.terrain != nullptr
+                                                    ? in.terrain_snowline
+                                                    : engine::renderer::k_no_snowline_m)});
     if (!hdr) {
         std::fprintf(stderr, "[fatal] lighting pass: %s\n", hdr.error().message.c_str());
         return false;

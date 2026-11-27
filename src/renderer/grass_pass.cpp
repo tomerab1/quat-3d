@@ -20,7 +20,7 @@ namespace {
     return std::unexpected(core::Error{std::move(what)});
 }
 
-// Mirrors GrassParams in lib/grass_common.slang (std140, 480 bytes).
+// Mirrors GrassParams in lib/grass_common.slang (std140, 496 bytes).
 struct GrassParamsGpu {
     glm::mat4  view_proj{1.0F};
     glm::vec4  planes[6]{};
@@ -38,8 +38,9 @@ struct GrassParamsGpu {
     glm::vec4  tile_rect[grass_max_height_tiles]{};
     glm::vec4  tile_info[grass_max_height_tiles]{};
     glm::vec4  ground{0.0F};
+    glm::vec4  wind_rect{0.0F}; // wind texture corner XZ, 1 / size, profile at blade height
 };
-static_assert(sizeof(GrassParamsGpu) == 480, "must match grass_common.slang GrassParams");
+static_assert(sizeof(GrassParamsGpu) == 496, "must match grass_common.slang GrassParams");
 
 // Mirrors PushConstants in grass.slang.
 struct GrassDrawPush {
@@ -74,13 +75,19 @@ constexpr std::uint32_t kFarIndices = grass_index_count(grass_far_segments);
     }};
 }
 
-// grass.slang set 0: params, blades.
-[[nodiscard]] std::array<rhi::DescriptorBinding, 2> draw_bindings() {
+// grass.slang set 0: params, blades, wind field texture + its sampler.
+[[nodiscard]] std::array<rhi::DescriptorBinding, 4> draw_bindings() {
     return {{
         {0, 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, kDrawStages},
         {0, 1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT},
+        {0, 2, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, VK_SHADER_STAGE_VERTEX_BIT},
+        {0, 3, VK_DESCRIPTOR_TYPE_SAMPLER, 1, VK_SHADER_STAGE_VERTEX_BIT},
     }};
 }
+
+// Blades are ~0.5 m tall: the log-profile factor from the field's 10 m
+// reference height down to them.
+constexpr float kBladeWindHeightM = 0.5F;
 
 // Strip of `segments` levels (2 * segments + 1 vertices) as a triangle list.
 void append_strip(std::vector<std::uint32_t>& out, std::uint32_t segments) {
@@ -131,6 +138,8 @@ void append_strip(std::vector<std::uint32_t>& out, std::uint32_t segments) {
         hi = std::max(hi, s.ground_y);
     }
     p.ground = glm::vec4(lo, hi, 0.0F, 0.0F);
+    p.wind_rect = frame.wind.valid() ? frame.wind.rect : glm::vec4(0.0F, 0.0F, 1.0F, 0.0F);
+    p.wind_rect.w = weather::wind_profile(kBladeWindHeightM);
     return p;
 }
 
@@ -210,6 +219,15 @@ GrassPass::create(const rhi::Device& device, rhi::GpuAllocator& allocator,
                                             VK_FORMAT_R32_SFLOAT);
     if (!flat_view) return std::unexpected(flat_view.error());
     s.flat_height_view = std::move(*flat_view);
+    const std::uint16_t k_calm[4] = {0, 0, 0, 0x3C00}; // rgba16f (0, 0, 0, gust 1)
+    auto calm = rhi::upload_device_image(allocator, transfer, k_calm, sizeof(k_calm), {1, 1},
+                                         wind_field_format);
+    if (!calm) return std::unexpected(calm.error());
+    s.calm_wind = std::move(*calm);
+    auto calm_view = rhi::create_image_view(device.handle(), s.calm_wind.handle(),
+                                            wind_field_format);
+    if (!calm_view) return std::unexpected(calm_view.error());
+    s.calm_wind_view = std::move(*calm_view);
     auto sampler = rhi::create_sampler(device.handle(), rhi::SamplerAddress::clamp_to_edge);
     if (!sampler) return std::unexpected(sampler.error());
     s.sampler = std::move(*sampler);
@@ -305,6 +323,11 @@ GrassPass::add_to_graph(rhi::RenderGraph& graph, std::uint32_t slot_index,
     }
     slot.draw_set.write_uniform_buffer(0, params_addr, kParamsBytes);
     slot.draw_set.write_storage_buffer(1, blades_addr, blades_bytes);
+    slot.draw_set.write_sampler(3, s.sampler.handle());
+    if (!frame.wind.valid()) {
+        slot.draw_set.write_sampled_image(2, s.calm_wind_view.handle(),
+                                          VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    }
 
     GrassOutput out;
     out.capacity = capacity;
@@ -343,17 +366,23 @@ GrassPass::add_to_graph(rhi::RenderGraph& graph, std::uint32_t slot_index,
     if (gbuffer == nullptr) return out;
 
     const GBufferTargets t = *gbuffer;
-    graph.add_pass("grass_draw", rhi::PassType::graphics)
-        .reads(args, rhi::ResourceUsage::buffer_read_indirect)
+    const rhi::ResourceHandle wind = frame.wind.texture;
+    auto draw = graph.add_pass("grass_draw", rhi::PassType::graphics);
+    if (wind.valid()) draw.reads(wind, rhi::ResourceUsage::sampled_graphics);
+    draw.reads(args, rhi::ResourceUsage::buffer_read_indirect)
         .reads(blades, rhi::ResourceUsage::buffer_read_vertex)
         .writes(t.albedo, rhi::ResourceUsage::color_attachment)
         .writes(t.normal, rhi::ResourceUsage::color_attachment)
         .writes(t.material, rhi::ResourceUsage::color_attachment)
         .writes(t.clearcoat, rhi::ResourceUsage::color_attachment)
         .writes(t.depth, rhi::ResourceUsage::depth_attachment)
-        .execute([state = &s, set = &slot.draw_set, t, args, extent,
+        .execute([state = &s, set = &slot.draw_set, t, args, extent, wind,
                   far_base = capacity.near](rhi::PassContext& ctx) {
             const VkCommandBuffer cmd = ctx.cmd();
+            if (wind.valid()) { // the transient view exists once the graph compiled
+                set->write_sampled_image(2, ctx.resolve(wind).view,
+                                         VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+            }
             const auto color_attachment = [](VkImageView view) {
                 VkRenderingAttachmentInfo ai{};
                 ai.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
