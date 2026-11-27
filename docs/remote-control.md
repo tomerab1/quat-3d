@@ -97,14 +97,17 @@ the port, so quat-mcp finds it whatever directory the MCP client starts it in.
 `$XDG_RUNTIME_DIR` is a per-user `0700` tmpfs on systemd systems, cleared at
 logout.
 
-How the file is written (`src/remote/session_token.cpp`): on POSIX the
+How the file is written (`src/remote/private_file_*.cpp`): on POSIX the
 `quat-3d` directory is created `0700`; an existing directory must belong to
 the user (or root) and must not be writable by others unless sticky. The token
 goes to a temporary file opened `O_CREAT | O_EXCL | O_NOFOLLOW` with mode
 `0600` (re-applied with `fchmod`, whatever the umask) that is then renamed over
 the target, so a stale file with looser permissions, or a symlink planted at
-the path, is replaced and never written through. On Windows the file inherits
-`%LOCALAPPDATA%`'s user-only ACL. If a generated token can't be published, the
+the path, is replaced and never written through. On Windows the temporary
+file is created with `CREATE_NEW` and `FILE_FLAG_OPEN_REPARSE_POINT` under an
+explicit protected DACL granting only the current user's SID — so an explicit
+`QUAT_REMOTE_TOKEN_FILE` in a shared directory is still user-only — then moved
+over the target with `MoveFileExW(MOVEFILE_REPLACE_EXISTING)`. If a generated token can't be published, the
 endpoint is not opened (nobody could use it); with `QUAT_REMOTE_TOKEN` it opens
 and warns.
 

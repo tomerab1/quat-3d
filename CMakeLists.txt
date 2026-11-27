@@ -394,8 +394,12 @@ add_library(engine_remote STATIC
 target_link_libraries(engine_remote PUBLIC engine_flags nlohmann_json::nlohmann_json)
 target_link_libraries(engine_remote PRIVATE OpenSSL::Crypto)
 target_include_directories(engine_remote PUBLIC ${ENGINE_PUBLIC_INCLUDE})
+# The user-only token file: one implementation per platform (private_file.hpp).
 if(WIN32)
-    target_link_libraries(engine_remote PRIVATE ws2_32)
+    target_sources(engine_remote PRIVATE src/remote/private_file_win32.cpp)
+    target_link_libraries(engine_remote PRIVATE ws2_32 advapi32)
+else()
+    target_sources(engine_remote PRIVATE src/remote/private_file_posix.cpp)
 endif()
 
 # ---------------------------------------------------------------------------

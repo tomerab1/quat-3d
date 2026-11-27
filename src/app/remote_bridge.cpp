@@ -24,6 +24,7 @@
 #include "engine/asset/asset_manager.hpp"
 #include "engine/core/log.hpp"
 #include "engine/core/sim_clock.hpp"
+#include "engine/core/utf8_path.hpp"
 #include "engine/nav/navmesh.hpp"
 #include "engine/physics/physics_world.hpp"
 #include "engine/remote/rpc_server.hpp"
@@ -167,7 +168,9 @@ struct RemoteBridge::Impl {
                                                            *t.scene);
         });
         if (!ctx) return std::unexpected(ctx.error());
-        if (roots) std::fprintf(stderr, "[remote] spawned %s\n", path.string().c_str());
+        if (roots) {
+            std::fprintf(stderr, "[remote] spawned %s\n", engine::core::path_to_utf8(path).c_str());
+        }
         return roots;
     }
 
@@ -185,7 +188,7 @@ struct RemoteBridge::Impl {
 #ifdef ENGINE_EDITOR
         if (t.editor != nullptr) t.editor->set_selected(entt::null);
 #endif
-        std::fprintf(stderr, "[remote] loaded scene %s\n", path.string().c_str());
+        std::fprintf(stderr, "[remote] loaded scene %s\n", engine::core::path_to_utf8(path).c_str());
         return {};
     }
 
@@ -332,7 +335,7 @@ struct RemoteBridge::Impl {
         if (published) {
             token_file = std::move(*published);
             std::fprintf(stderr, "[remote] listening on 127.0.0.1:%u; session token in %s\n",
-                         server->port(), token_file.path().string().c_str());
+                         server->port(), engine::core::path_to_utf8(token_file.path()).c_str());
         } else {
             std::fprintf(stderr,
                          "[remote] listening on 127.0.0.1:%u with QUAT_REMOTE_TOKEN (token file "

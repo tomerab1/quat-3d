@@ -208,6 +208,32 @@ TEST_F(RemoteRpcServer, MissingTokenIsRejected) {
     EXPECT_TRUE(d.closed_by(*server));
 }
 
+// A rejected first line followed by privileged calls in the same write: the
+// lines already buffered behind the rejection must never run, whatever comes
+// after (here even a correct hello).
+TEST_F(RemoteRpcServer, PipelinedCallsAfterARejectedFirstLineNeverRun) {
+    const std::string notify = R"({"jsonrpc":"2.0","id":2,"method":"test.notify"})";
+    const std::string good_hello =
+        std::string(R"({"jsonrpc":"2.0","id":"h","method":"session.hello","params":{"token":")") +
+        k_token + "\"}}";
+    const std::vector<std::string> pipelines = {
+        // wrong token, then a call
+        R"({"jsonrpc":"2.0","id":1,"method":"session.hello","params":{"token":"wrong"}})"
+        "\n" + notify + "\n",
+        // a call before hello, then a correct hello, then a call
+        notify + "\n" + good_hello + "\n" + notify + "\n",
+    };
+    for (const std::string& pipeline : pipelines) {
+        TestClient c = connect();
+        ASSERT_TRUE(c.send_raw(pipeline));
+        const Json reply = c.read_reply(*server);
+        EXPECT_EQ(error_code_of(reply), rpc_code::unauthorized) << text(reply);
+        EXPECT_TRUE(c.closed_by(*server)) << "more than one reply, or not closed: " << c.inbuf;
+        EXPECT_TRUE(c.inbuf.empty()) << "a second reply: " << c.inbuf;
+    }
+    EXPECT_EQ(notified, 0) << "a pipelined call ran after the rejection";
+}
+
 TEST_F(RemoteRpcServer, ListenRefusesAnEmptyToken) {
     RpcServerConfig config;
     config.port = 0;

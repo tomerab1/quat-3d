@@ -51,9 +51,11 @@ struct TokenPathEnv {
 token_file_path(std::uint16_t port, const TokenPathEnv& env);
 
 // A published token file. publish() writes the token atomically (temporary
-// file + rename) with user-only permissions, creating the parent directory
-// user-only when missing; on POSIX it refuses a parent directory owned by
-// another user. The file is removed when the object is destroyed. Move-only.
+// file + rename) with user-only permissions (0600 on POSIX, a DACL granting
+// only the current user on Windows), creating the parent directory user-only
+// when missing; on POSIX it refuses a parent directory another user could
+// swap the file in (src/remote/private_file.hpp). The file is removed when
+// the object is destroyed. Move-only.
 class SessionTokenFile {
 public:
     [[nodiscard]] static std::expected<SessionTokenFile, core::Error>
