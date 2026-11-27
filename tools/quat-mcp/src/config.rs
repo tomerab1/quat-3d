@@ -6,7 +6,7 @@ use std::time::Duration;
 use clap::Parser;
 
 use crate::assets::POLYHAVEN_API;
-use crate::client::{ENGINE_MAX_MESSAGE_BYTES, EngineConfig};
+use crate::client::{ENGINE_MAX_MESSAGE_BYTES, EngineConfig, token_file};
 use crate::server::AssetConfig;
 
 /// MCP server for the quat-3d engine. Speaks MCP over stdio; connects to the
@@ -23,8 +23,14 @@ pub struct Cli {
     pub port: u16,
 
     /// Session token, if the engine was started with `QUAT_REMOTE_TOKEN`.
+    /// Without it, the token is read from the engine's token file.
     #[arg(long, env = "QUAT_REMOTE_TOKEN", hide_env_values = true)]
     pub token: Option<String>,
+
+    /// The engine's session token file (default: the per-user file for
+    /// `--port`; the engine honours the same `QUAT_REMOTE_TOKEN_FILE`).
+    #[arg(long, env = "QUAT_REMOTE_TOKEN_FILE")]
+    pub token_file: Option<PathBuf>,
 
     /// Per-request timeout in seconds (also bounds connecting).
     #[arg(long, env = "QUAT_MCP_TIMEOUT_SECS", default_value_t = 15.0)]
@@ -58,6 +64,10 @@ impl Cli {
     pub fn engine_config(&self) -> EngineConfig {
         let mut c = EngineConfig::new(format!("{}:{}", self.host, self.port));
         c.token = self.token.clone().filter(|t| !t.is_empty());
+        c.token_file = self
+            .token_file
+            .clone()
+            .or_else(|| token_file::default_path(self.port));
         c.timeout = secs(self.timeout_secs, 15.0);
         c.max_request_bytes = ENGINE_MAX_MESSAGE_BYTES;
         c.max_reply_bytes = self.max_reply_mb.clamp(1, 4096) * 1024 * 1024;
@@ -119,5 +129,19 @@ mod tests {
         assert_eq!(c.addr, "localhost:9000");
         assert_eq!(c.token, None, "empty token means none");
         assert_eq!(c.timeout, Duration::from_millis(2500));
+    }
+
+    #[test]
+    fn token_file_defaults_to_the_ports_file_and_can_be_overridden() {
+        let cli = Cli::try_parse_from(["quat-mcp", "--port", "9100"]).unwrap();
+        assert!(
+            cli.engine_config().token_file == token_file::default_path(9100)
+                || std::env::var("QUAT_REMOTE_TOKEN_FILE").is_ok()
+        );
+        let cli = Cli::try_parse_from(["quat-mcp", "--token-file", "/tmp/engine.token"]).unwrap();
+        assert_eq!(
+            cli.engine_config().token_file,
+            Some(PathBuf::from("/tmp/engine.token"))
+        );
     }
 }

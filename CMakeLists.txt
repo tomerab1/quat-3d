@@ -129,6 +129,9 @@ find_package(GameNetworkingSockets CONFIG REQUIRED)
 # Lua 5.4 (C library, longjmp error handling) + sol2 (header-only bindings).
 find_package(Lua REQUIRED)
 find_package(sol2 CONFIG REQUIRED)
+# OpenSSL's libcrypto: the CSPRNG behind remote-control session tokens
+# (engine_remote). GameNetworkingSockets already depends on it.
+find_package(OpenSSL REQUIRED COMPONENTS Crypto)
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/FetchAcl.cmake) # ACL + RTM (header-only)
 # miniaudio: vcpkg's port is header-only (it installs miniaudio.h and nothing
 # else), so it is wrapped in an imported target here and engine_audio compiles
@@ -159,6 +162,8 @@ add_library(engine_core STATIC
     src/core/log.cpp
     src/core/stderr_capture.cpp
     src/core/sim_clock.cpp
+    src/core/frame_timer.cpp
+    src/core/path_confine.cpp
     src/core/file_watcher.cpp
     src/core/child_process.cpp
     src/core/asset_root.cpp
@@ -210,6 +215,7 @@ set_source_files_properties(src/rhi/vma_impl.cpp PROPERTIES COMPILE_OPTIONS "${E
 # engine_image — graphics-free texture data, limits and the guarded PNG/JPEG
 # decoder (stb_image), shared by engine_asset and the cooker.
 add_library(engine_image STATIC
+    src/asset/alpha_coverage.cpp
     src/asset/texture_data.cpp
     src/asset/image_decode.cpp)
 target_link_libraries(engine_image PUBLIC engine_flags)
@@ -426,6 +432,9 @@ add_library(engine_net STATIC
     src/net/character_step.cpp
     src/net/net_ids.cpp
     src/net/transport.cpp
+    src/net/transport_common.cpp
+    src/net/host_access.cpp
+    src/net/session_config.cpp
     src/net/replication.cpp
     src/net/replication_transport.cpp
     src/net/prediction.cpp
@@ -448,7 +457,7 @@ add_library(engine_audio STATIC
     src/audio/audio_engine.cpp
     src/audio/miniaudio_impl.cpp)
 target_link_libraries(engine_audio PUBLIC engine_flags glm::glm)
-target_link_libraries(engine_audio PRIVATE miniaudio_headers)
+target_link_libraries(engine_audio PRIVATE miniaudio_headers engine_core)
 target_include_directories(engine_audio PUBLIC ${ENGINE_PUBLIC_INCLUDE})
 # miniaudio's implementation is not warning-clean under our strict flags.
 set_source_files_properties(src/audio/miniaudio_impl.cpp PROPERTIES COMPILE_OPTIONS "${ENGINE_THIRD_PARTY_TU_FLAGS}")
@@ -457,15 +466,22 @@ set_source_files_properties(src/audio/miniaudio_impl.cpp PROPERTIES COMPILE_OPTI
 # engine_remote — remote-control endpoint (Phase 15): loopback JSON-RPC 2.0
 # over TCP, poll-driven on the main thread. Out-of-process tools (the quat-mcp
 # Model Context Protocol bridge in tools/quat-mcp) drive the engine through it.
-# nlohmann_json is PUBLIC: the handler API traffics in JSON values.
+# nlohmann_json is PUBLIC: the handler API traffics in JSON values. OpenSSL's
+# libcrypto (PRIVATE) generates the session tokens (session_token.cpp).
 # ---------------------------------------------------------------------------
 add_library(engine_remote STATIC
     src/remote/rpc_server.cpp
+    src/remote/session_token.cpp
     src/remote/socket.cpp)
 target_link_libraries(engine_remote PUBLIC engine_flags nlohmann_json::nlohmann_json)
+target_link_libraries(engine_remote PRIVATE OpenSSL::Crypto)
 target_include_directories(engine_remote PUBLIC ${ENGINE_PUBLIC_INCLUDE})
+# The user-only token file: one implementation per platform (private_file.hpp).
 if(WIN32)
-    target_link_libraries(engine_remote PRIVATE ws2_32)
+    target_sources(engine_remote PRIVATE src/remote/private_file_win32.cpp)
+    target_link_libraries(engine_remote PRIVATE ws2_32 advapi32)
+else()
+    target_sources(engine_remote PRIVATE src/remote/private_file_posix.cpp)
 endif()
 
 # ---------------------------------------------------------------------------
@@ -529,6 +545,7 @@ add_library(engine_renderer STATIC
     src/renderer/particle_draw.cpp
     src/renderer/tonemap_pass.cpp
     src/renderer/skinning_pass.cpp
+    src/renderer/shadow_casters.cpp
     src/renderer/shadow_pass.cpp
     src/renderer/transparent_pass.cpp
     src/renderer/ibl_pass.cpp

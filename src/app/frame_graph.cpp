@@ -244,15 +244,13 @@ FrameScene FrameRenderer::gather(engine::scene::Scene& scene,
                   return da > db;
               });
 
-    // Shadow casters: all opaques plus transmissive glass (solid surfaces —
-    // they block the sun like opaque geometry; alpha-blended items do not cast).
+    // Shadow casters: everything drawn. The shadow pass routes them by
+    // material — opaque and alpha-tested (MASK) casters into the depth
+    // cascades, transmissive (glass) and alpha-blended ones into the
+    // translucency map, so they cast tinted / partial shadows (R12.11).
     out.shadow_draws = draws;
-    for (const engine::renderer::DrawItem& d : transparent_draws) {
-        if (d.material != nullptr &&
-            (d.material->params.flags & engine::asset::material_transmission) != 0) {
-            out.shadow_draws.push_back(d);
-        }
-    }
+    out.shadow_draws.insert(out.shadow_draws.end(), transparent_draws.begin(),
+                            transparent_draws.end());
 
     // Sun shadows: cascades are fitted to the unjittered camera (on the GPU,
     // from this frame's depth bounds); casters are culled against the volume

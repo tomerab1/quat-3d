@@ -22,8 +22,8 @@ GBufferVsOut vertex_main(GBufferVsIn input) {
 
 // Authored materials may cut holes: alpha below 0.5 discards the fragment.
 [shader("fragment")]
-GBufferOut fragment_main(GBufferVsOut input) {
+GBufferOut fragment_main(GBufferVsOut input, bool front_face : SV_IsFrontFace) {
     SurfaceSample s = gbuffer_evaluate<SurfaceMaterial>(input);
     if (s.alpha < 0.5) discard;
-    return gbuffer_pack(input, s);
+    return gbuffer_pack(input, s, front_face);
 }

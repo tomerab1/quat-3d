@@ -211,13 +211,17 @@ JSON-RPC over loopback TCP to the engine.
   4-cascade CSM with GPU depth bounds and texel snapping, XeGTAO port with
   bent normals → visibility-bitmask SSILVB, contact shadows, then stochastic
   SSR. Supersedes the AO/SSR/contact-shadow parts of R8. *(quick win)*
+  - [x] R12.11 Materials in the depth / shadow passes: glTF `MASK` alpha test
+    (GBuffer + CSM casters, separate pipelines so opaque keeps early-Z,
+    coverage-preserving alpha mips), translucent (coloured) shadows for
+    transmissive / blended casters (#35, #23, #62).
 - [ ] **R13 — Weather + wind.** One `WeatherState` (ECS singleton, Lua + MCP
   `set_weather`) driving a global wind field (grass, foliage, cloth, particles,
   ocean, clouds), wetness/snow layers, rain with an occlusion map, cloud
   shadows; then froxel volumetric fog + local fog volumes (on R10.1's
   clusters) and a 2.5D volumetric cloud layer. *(quick win → medium)*
 - [ ] **R14 — Foliage.** Main + detail wind bending, two-sided foliage shading
-  model ID in the GBuffer, hashed alpha with coverage-preserving mips, GPU
+  model ID in the GBuffer, hashed alpha (coverage-preserving mips: R12.11), GPU
   instance cull + LOD cross-fade (with R9.4), octahedral impostors, GPU
   density placement from R10.2 terrain maps with **biome recipes authored
   over MCP**. *(quick win → medium)*

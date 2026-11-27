@@ -33,7 +33,12 @@ the CI screenshot pipeline.
   contact shadows for small detail; meshes, instanced objects and terrain cast
 - Ambient occlusion (GTAO) with bent normals that also darkens reflections in
   crevices; every shadow / AO setting is tunable in the editor's Renderer panel
-- Glass and transparency (refraction, absorption, IOR), clearcoat car paint
+- Glass and transparency (refraction, absorption, IOR), clearcoat car paint;
+  glass and see-through materials cast soft, coloured shadows instead of
+  black ones
+- Alpha-cut materials (glTF `MASK`: leaves, grass cards, fences) cut holes in
+  the surface and in its shadow, and keep their shape at a distance
+  (coverage-preserving mipmaps); double-sided leaves are lit on both sides
 - Physically based sky with volumetric clouds and a moving sun
 - Image-based lighting that keeps up with the sky in real time
 - Temporal anti-aliasing and upscaling (TAAU) with per-object motion vectors for
@@ -229,8 +234,13 @@ Environment variables switch on extra modes:
 | `QUAT_GLTF=<file>` | Load a glTF/GLB model instead of the showcase scene |
 | `QUAT_TERRAIN=1` | Add a procedural terrain tile (with a grass field) |
 | `QUAT_PHYSICS=1` / `QUAT_CHARACTER=1` | Physics (with sparks and smoke) / character-controller demo scenes |
-| `QUAT_HOST=<port>` / `QUAT_JOIN=<ip:port>` | Host or join a networked session |
-| `QUAT_REMOTE=<port>` | Open the remote-control endpoint for AI tools (`1` = port 7878); add `QUAT_REMOTE_TOKEN=<secret>` to require a token — see [`docs/remote-control.md`](docs/remote-control.md) |
+| `QUAT_HOST=<port>` / `QUAT_JOIN=<ip:port>` | Host or join a networked session (host listens on 127.0.0.1 only unless `QUAT_NET_BIND` says otherwise) — see [Networking](#networking) |
+| `QUAT_NET_BIND=<ipv4>` | Host: interface to listen on (default `127.0.0.1`; `0.0.0.0` = every interface, for LAN/internet play) |
+| `QUAT_NET_MAX_CLIENTS=<n>` | Host: connections held at once (default 8, max 1024); more are refused as "server full" |
+| `QUAT_NET_TOKEN=<secret>` | Host: join token every client must present; client: the token it presents |
+| `QUAT_NET_OWNER_TOKEN=<secret>` | Host: only a client presenting this token (as its `QUAT_NET_TOKEN`) controls the player character |
+| `QUAT_REMOTE=<port>` | Open the remote-control endpoint for AI tools (`1` = port 7878). It always requires a session token: a random one per run, written to a file only you can read, where quat-mcp finds it — see [`docs/remote-control.md`](docs/remote-control.md#session-token) |
+| `QUAT_REMOTE_TOKEN=<secret>` / `QUAT_REMOTE_TOKEN_FILE=<path>` | With `QUAT_REMOTE`: use this token instead of a generated one / publish the token at this path instead of the per-user default |
 | `QUAT_LOG_CAPTURE=0` | With `QUAT_REMOTE`: do not tee stderr into the engine log the AI debugging tools read (`debug.log`) |
 | `QUAT_SHADER_HOT_RELOAD=0` / `=1` | Turn shader hot reload off (on by default in editor builds) or on (in non-editor builds): saving a `.slang` file under `assets/shaders/` recompiles it and swaps the pipelines in — see [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md#shader-hot-reload) |
 | `QUAT_SLANGC=<path>` | The `slangc` hot reload compiles with (default: the one the build used, else `PATH`) |
@@ -240,6 +250,45 @@ Environment variables switch on extra modes:
 | `QUAT_NON_FINITE_CHECK=1` | Count NaN/Inf values the bloom / TAA guards replace and log them per frame (always on in debug builds) |
 | `QUAT_MAX_FRAMES=<n>` + `QUAT_SCREENSHOT=<file.ppm>` | Render n frames, save the last one, exit (headless checks) |
 | `QUAT_ASSET_ROOT=<dir>` | Data directory holding `assets/` and `cooked/shaders/` (default: next to the executable — inside a macOS app, `Contents/Resources` — then, in development builds, the source tree) |
+
+### Networking
+
+One machine hosts, others join it with the same scene; the host simulates and
+replicates, and the joined player's character is predicted locally.
+
+```sh
+# Same machine (the host only listens on 127.0.0.1 by default)
+QUAT_HOST=27015 ./build/release/game
+QUAT_JOIN=127.0.0.1:27015 ./build/release/game
+
+# Over a LAN / the internet: opt in to every interface and set a token
+QUAT_HOST=27015 QUAT_NET_BIND=0.0.0.0 QUAT_NET_TOKEN=letmein ./build/release/game
+QUAT_JOIN=192.168.1.20:27015 QUAT_NET_TOKEN=letmein ./build/release/game
+```
+
+What the host enforces:
+
+- **Bind address:** loopback unless `QUAT_NET_BIND` names another IPv4
+  interface. A host bound beyond loopback without a token logs a warning.
+- **Connection cap:** at most `QUAT_NET_MAX_CLIENTS` connections (default 8),
+  counting ones still handshaking; extra ones are refused as "server full".
+- **Join handshake:** a client's first message is a hello carrying the
+  protocol version and `QUAT_NET_TOKEN`. Until it arrives the client gets no
+  snapshots and cannot control anything. A wrong token, a version mismatch or
+  any other first message disconnects it, and so does staying silent for 5 s.
+- **Player control:** the player character goes to the first client to
+  authenticate (not to whoever sends input first). With
+  `QUAT_NET_OWNER_TOKEN` set, only a client presenting that token gets it;
+  others watch. When the controlling client leaves, the next eligible client
+  that authenticated takes over.
+- **Rate limits:** each client may send 1000 messages and 64 KiB per second
+  (2 s of burst); a client above either is disconnected. Clients send one
+  input per frame, so this also caps a joined client's useful frame rate.
+
+A refused or dropped client logs the reason (`server full`, `authentication
+failed`, `authentication timed out`, `rate limited`). The limits are fields of
+`engine::net::HostConfig` (`include/engine/net/session_config.hpp`,
+`host_access.hpp`) for code that hosts through `NetSession::host`.
 
 ### Audio
 
@@ -328,8 +377,12 @@ your client:
 claude mcp add quat-3d --env QUAT_REMOTE_PORT=7878 -- "$PWD/tools/quat-mcp/target/release/quat-mcp"
 ```
 
-See [`tools/quat-mcp/README.md`](tools/quat-mcp/README.md) for Claude Desktop
-setup, tokens and the full tool list.
+No token setup is needed: the engine writes a fresh session token for each run
+to a file only your user can read, and quat-mcp reads it from there. The
+endpoint listens on `127.0.0.1` only and refuses connections without the
+token, so other users on the machine and web pages in your browser cannot
+drive the engine. See [`tools/quat-mcp/README.md`](tools/quat-mcp/README.md)
+for Claude Desktop setup, explicit tokens and the full tool list.
 
 ## Testing
 
@@ -371,6 +424,7 @@ The plan lives in [`ROADMAP.md`](ROADMAP.md), grouped into tracks:
 | [`docs/STATUS.md`](docs/STATUS.md) | What is in progress, what is blocked, what comes next |
 | [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md) | Building, testing, CI, and conventions for contributors |
 | [`docs/scripting.md`](docs/scripting.md) | Lua gameplay scripting: callbacks, the engine API, limits, hot reload |
+| [`docs/reading/README.md`](docs/reading/README.md) | Reading list: the papers and talks behind the engine's techniques, with where each lives in the code |
 | [`docs/remote-control.md`](docs/remote-control.md) | The remote-control protocol AI tools use to drive the engine |
 | [`docs/CYCLE.md`](docs/CYCLE.md) | How development runs: the repeating plan → parallel agents → merge → CI → audit → learn cycle |
 | [`docs/LEARNINGS.md`](docs/LEARNINGS.md) | Lessons recorded by past cycles |

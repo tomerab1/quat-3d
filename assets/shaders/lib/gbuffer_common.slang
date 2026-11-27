@@ -59,6 +59,8 @@ public struct GBufferVsOut {
     public float2 uv        : TEXCOORD0;
     public float4 cur_clip  : CUR_CLIP;  // = clip, interpolated as a plain varying
     public float4 prev_clip : PREV_CLIP; // last frame's clip position (unjittered)
+    // 1 when the instance transform mirrors (det < 0): its winding is reversed.
+    public nointerpolation float mirrored : TEXCOORD1;
 }
 
 public struct GBufferOut {
@@ -93,6 +95,7 @@ public GBufferVsOut gbuffer_vertex(GBufferVsIn input) {
     float4 t = inst.world_tangent(input.tangent);
     o.world_t = float4(normalize(t.xyz), t.w);
     o.uv = input.uv;
+    o.mirrored = inst.normal_c0.w < 0.0 ? 1.0 : 0.0; // sign(det M), see InstanceData
     return o;
 }
 
@@ -131,10 +134,19 @@ public SurfaceSample gbuffer_evaluate<M : IMaterial>(GBufferVsOut input) {
     return M::evaluate(gbuffer_material_input(input));
 }
 
-// Packs surface attributes into the GBuffer targets.
-public GBufferOut gbuffer_pack(GBufferVsOut input, SurfaceSample s) {
+// Packs surface attributes into the GBuffer targets. `front_face` is
+// SV_IsFrontFace.
+public GBufferOut gbuffer_pack(GBufferVsOut input, SurfaceSample s, bool front_face) {
     // Build the world-space normal from the tangent-space material normal.
+    // glTF doubleSided: the back face is lit with the reversed normal (the
+    // tangent frame flips with it, keeping the normal map's handedness).
+    // SV_IsFrontFace follows screen winding; a mirrored instance's outside
+    // faces wind clockwise, so they arrive as back faces.
+    bool outside = front_face != (input.mirrored > 0.5);
     float3 n = normalize(input.world_n);
+    if (!outside && (g_material.params.flags & MATERIAL_DOUBLE_SIDED) != 0) {
+        n = -n;
+    }
     float3 t = normalize(input.world_t.xyz - n * dot(n, input.world_t.xyz));
     float3 b = cross(n, t) * input.world_t.w;
     float3 world_n = normalize(t * s.normal_ts.x + b * s.normal_ts.y + n * s.normal_ts.z);

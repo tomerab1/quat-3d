@@ -8,17 +8,26 @@
 // a descriptor buffer per distinct material (the PbrMaterial parameter block
 // from Slice 3.4); per-instance transforms come from the pass's instance
 // buffer (R9.1, draw_batching.hpp) and their previous-frame poses from a
-// parallel motion buffer (R11, velocity.hpp). A material whose `shader` names
-// an authored material shader (ROADMAP A6) draws with that shader's program
-// (cooked/shaders/materials/<name>.gbuffer.spv, same pipeline layout); until
-// it is compiled the built-in program draws it. The lighting pass (3.6)
+// parallel motion buffer (R11, velocity.hpp). The lighting pass (3.6)
 // consumes the GBuffer this pass produces.
+//
+// Pipelines are keyed by GBufferVariant: the material's shader module and its
+// alpha mode. glTF MASK materials (asset::material_alpha_mask) use the
+// alpha-tested fragment entry point of the built-in program (gbuffer.slang
+// fragment_masked, R12.11) and draw after every opaque variant; opaque
+// pipelines have no discard and keep early depth testing. A material whose
+// `shader` names an authored material shader (ROADMAP A6) draws with that
+// shader's program (cooked/shaders/materials/<name>.gbuffer.spv, same
+// pipeline layout; it cuts out below alpha 0.5 itself, so it draws with the
+// alpha-tested group); until it is compiled the built-in program draws it.
 
 #include <array>
 #include <chrono>
+#include <compare>
 #include <cstddef>
 #include <cstdint>
 #include <expected>
+#include <map>
 #include <optional>
 #include <span>
 #include <string>
@@ -43,6 +52,7 @@ namespace engine::rhi {
 class Device;
 class GpuAllocator;
 class PipelineCache;
+struct LoadedShader;
 }
 
 namespace engine::renderer {
@@ -79,6 +89,19 @@ struct GBufferTargets {
     rhi::ResourceHandle depth;
     ViewMotion          motion{};
 };
+
+// How a material is drawn into the GBuffer. `module` names its material
+// shader module (empty = the built-in gbuffer.slang program; an authored
+// material shader, ROADMAP A6, otherwise); `alpha` picks the opaque or the
+// alpha-tested (glTF MASK) entry point of the built-in program.
+enum class GBufferAlphaMode : std::uint8_t { opaque, masked };
+struct GBufferVariant {
+    std::string      module;
+    GBufferAlphaMode alpha = GBufferAlphaMode::opaque;
+
+    [[nodiscard]] auto operator<=>(const GBufferVariant&) const = default;
+};
+[[nodiscard]] GBufferVariant gbuffer_variant(const asset::MaterialAsset& material);
 
 // Push-constant block, mirrors GBufferPushConstants in lib/gbuffer_common.slang
 // (192 bytes): the jittered view-projection, last frame's unjittered one, the
@@ -164,7 +187,14 @@ private:
         std::uint32_t            instance_count = 0;
         std::uint32_t            descriptor_index = 0;
         const rhi::ManagedPipeline* pipeline = nullptr; // built-in or material shader
+        GBufferAlphaMode         alpha = GBufferAlphaMode::opaque;
     };
+
+    // Creates the pipelines of every alpha mode of material module `module`
+    // (its program `shader`), from the pass's shared pipeline state.
+    [[nodiscard]] std::expected<void, core::Error>
+    create_variants(rhi::PipelineCache& cache, const std::string& module,
+                    const rhi::LoadedShader& shader);
 
     [[nodiscard]] VkImageView texture_view_or_fallback(
         const asset::AssetHandle<asset::TextureAsset>& handle) const;
@@ -174,7 +204,7 @@ private:
 
     rhi::DescriptorBufferFunctions db_fns_{};
     rhi::DescriptorSetLayout       material_layout_;
-    rhi::ManagedPipeline           pipeline_;
+    std::map<GBufferVariant, rhi::ManagedPipeline> pipelines_;
     MaterialPipelines              materials_; // authored material shaders, by name
 
     std::chrono::steady_clock::time_point epoch_{};
@@ -192,7 +222,7 @@ private:
     VkDeviceAddress                    frame_motion_ = 0;
     GBufferPushConstants               frame_push_{};
     std::vector<rhi::DescriptorBuffer> frame_descriptors_;
-    std::vector<FrameDraw>             frame_draws_;
+    std::vector<FrameDraw>             frame_draws_; // opaque variants first, then masked
 };
 
 } // namespace engine::renderer

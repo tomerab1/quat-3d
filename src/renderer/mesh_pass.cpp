@@ -8,6 +8,7 @@
 #include <cstddef>
 #include <limits>
 #include <string>
+#include <tuple>
 #include <unordered_map>
 #include <utility>
 
@@ -46,11 +47,21 @@ constexpr std::uint32_t kMaterialMaxLod = material_sampler_max_lod;
     }};
 }
 
-// The GBuffer pipeline for `program` (the built-in gbuffer.spv or an authored
-// material's variant — they share this exact layout).
+// Fragment entry point of each alpha mode in a GBuffer program.
+[[nodiscard]] const char* fragment_entry(GBufferAlphaMode alpha) {
+    return alpha == GBufferAlphaMode::masked ? "fragment_masked" : "fragment_main";
+}
+
+constexpr std::array<GBufferAlphaMode, 2> kAlphaModes{GBufferAlphaMode::opaque,
+                                                      GBufferAlphaMode::masked};
+
+// The GBuffer pipeline for `program` (the built-in gbuffer.spv, one per alpha
+// mode, or an authored material's variant, whose only fragment entry point is
+// fragment_main — they share this exact layout).
 [[nodiscard]] std::expected<rhi::ManagedPipeline, core::Error>
 create_gbuffer_pipeline(rhi::PipelineCache& cache, const rhi::LoadedShader& program,
-                        VkDescriptorSetLayout set_layout) {
+                        VkDescriptorSetLayout set_layout,
+                        GBufferAlphaMode alpha = GBufferAlphaMode::opaque) {
     // Vertex input mirrors asset::Vertex.
     const VkVertexInputBindingDescription vbind{0, sizeof(asset::Vertex),
                                                 VK_VERTEX_INPUT_RATE_VERTEX};
@@ -66,7 +77,8 @@ create_gbuffer_pipeline(rhi::PipelineCache& cache, const rhi::LoadedShader& prog
     rhi::GraphicsPipeline::CreateInfo info{};
     info.vertex = &program;
     info.fragment = &program;
-    info.color_formats = gbuffer_color_formats;
+    info.fragment_entry = fragment_entry(alpha);
+    info.color_formats = gbuffer_color_formats; // every variant writes every GBuffer target
     info.depth_format = gbuffer_depth_format;
     info.depth_compare_op = VK_COMPARE_OP_LESS_OR_EQUAL; // standard [0,1] depth
     info.cull_mode = VK_CULL_MODE_NONE;                  // double-sided for now
@@ -97,6 +109,26 @@ create_gbuffer_pipeline(rhi::PipelineCache& cache, const rhi::LoadedShader& prog
 
 } // namespace
 
+GBufferVariant gbuffer_variant(const asset::MaterialAsset& material) {
+    GBufferVariant v;
+    v.module = material.shader; // empty: the built-in program
+    v.alpha = (material.params.flags & asset::material_alpha_mask) != 0
+                  ? GBufferAlphaMode::masked
+                  : GBufferAlphaMode::opaque;
+    return v;
+}
+
+std::expected<void, core::Error> MeshPass::create_variants(rhi::PipelineCache& cache,
+                                                           const std::string& module,
+                                                           const rhi::LoadedShader& shader) {
+    for (const GBufferAlphaMode alpha : kAlphaModes) {
+        auto pipeline = create_gbuffer_pipeline(cache, shader, material_layout_.handle(), alpha);
+        if (!pipeline) return std::unexpected(pipeline.error());
+        pipelines_.insert_or_assign(GBufferVariant{module, alpha}, std::move(*pipeline));
+    }
+    return {};
+}
+
 float MeshPass::material_time() const {
     if (fixed_time_) return *fixed_time_;
     const std::chrono::duration<double> t = std::chrono::steady_clock::now() - epoch_;
@@ -124,12 +156,12 @@ MeshPass::create(const rhi::Device& device, rhi::GpuAllocator& allocator,
     auto shader = cache.load(cooked_shader_dir + "/gbuffer.spv");
     if (!shader) return std::unexpected(shader.error());
 
-    const VkDescriptorSetLayout set_layout = out.material_layout_.handle();
-    auto pipeline = create_gbuffer_pipeline(cache, **shader, set_layout);
-    if (!pipeline) return std::unexpected(pipeline.error());
-    out.pipeline_ = std::move(*pipeline);
+    if (auto r = out.create_variants(cache, std::string{}, **shader); !r) {
+        return std::unexpected(r.error());
+    }
 
     // Authored material shaders: same layout, their own program (A6).
+    const VkDescriptorSetLayout set_layout = out.material_layout_.handle();
     out.materials_ = MaterialPipelines(
         cache, cooked_shader_dir, std::string(rhi::material_shaders::variants[0].name), *shader,
         [&cache, set_layout](const rhi::LoadedShader& program) {
@@ -285,23 +317,32 @@ MeshPass::add_to_graph(rhi::RenderGraph& graph, VkExtent2D extent, const glm::ma
         fd.first_instance = d.first_instance;
         fd.instance_count = d.instance_count;
         fd.descriptor_index = slot->second;
-        fd.pipeline = &pipeline_;
-        if (!mat.shader.empty()) {
-            if (const rhi::ManagedPipeline* custom = materials_.find(mat.shader)) {
-                fd.pipeline = custom;
+        const GBufferVariant variant = gbuffer_variant(mat);
+        const rhi::ManagedPipeline* custom =
+            variant.module.empty() ? nullptr : materials_.find(variant.module);
+        if (custom != nullptr) {
+            // Authored programs cut out below alpha 0.5 themselves (discard):
+            // they draw with the alpha-tested group.
+            fd.pipeline = custom;
+            fd.alpha = GBufferAlphaMode::masked;
+        } else {
+            // The built-in program (also for a material shader not compiled yet).
+            const auto pipeline = pipelines_.find(GBufferVariant{{}, variant.alpha});
+            if (pipeline == pipelines_.end()) {
+                return fail("gbuffer pass: no built-in pipeline for the material's alpha mode");
             }
+            fd.pipeline = &pipeline->second;
+            fd.alpha = variant.alpha;
         }
         frame_draws_.push_back(fd);
     }
-
-    // Group draws by program so each pipeline is bound once (stable: the
-    // built-in program's draws keep their order).
+    // Opaque variants first, so the alpha-tested ones (no early depth test)
+    // are rejected by the depth they wrote; then by pipeline and material to
+    // minimise binds.
     std::stable_sort(frame_draws_.begin(), frame_draws_.end(),
-                     [this](const FrameDraw& a, const FrameDraw& b) {
-                         const bool a_builtin = a.pipeline == &pipeline_;
-                         const bool b_builtin = b.pipeline == &pipeline_;
-                         if (a_builtin != b_builtin) return a_builtin;
-                         return std::less<>{}(a.pipeline, b.pipeline);
+                     [](const FrameDraw& l, const FrameDraw& r) {
+                         return std::tie(l.alpha, l.pipeline, l.descriptor_index) <
+                                std::tie(r.alpha, r.pipeline, r.descriptor_index);
                      });
 
     const GBufferTargets t = targets;
