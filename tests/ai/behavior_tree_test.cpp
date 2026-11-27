@@ -204,4 +204,26 @@ TEST(Ai, InverterAndCompositeCompletionReset) {
     EXPECT_EQ(h.trace, (std::vector<std::string>{"x"}));
 }
 
+// Regression (S1 N8): near_camera needed a Camera entity, which editor Play
+// does not have (the fly camera is editor state).
+TEST(Ai, NearCameraPerceivesTheViewer) {
+    Harness h;
+    h.registry.emplace<s::Transform>(h.entity).world[3] = glm::vec4(10.0F, 0.0F, 0.0F, 1.0F);
+    ASSERT_TRUE(h.load(R"({"type":"leaf","name":"near_camera","range":5})"));
+    const auto tick = [&](const s::BtWorld& world) {
+        return s::bt_tick(h.bt, h.registry, h.entity, world, 0.0F);
+    };
+    EXPECT_EQ(tick({}), s::BtStatus::failure) << "nothing to perceive";
+    EXPECT_EQ(tick({.viewer = glm::vec3(12.0F, 3.0F, 1.0F)}), s::BtStatus::success);
+    EXPECT_EQ(tick({.viewer = glm::vec3(30.0F, 0.0F, 0.0F)}), s::BtStatus::failure);
+
+    // Without a viewer input, the active Camera entity is the fallback.
+    const entt::entity cam = h.registry.create();
+    h.registry.emplace<s::Camera>(cam);
+    h.registry.emplace<s::Transform>(cam).world[3] = glm::vec4(8.0F, 2.0F, 0.0F, 1.0F);
+    EXPECT_EQ(tick({}), s::BtStatus::success);
+    EXPECT_EQ(tick({.viewer = glm::vec3(30.0F, 0.0F, 0.0F)}), s::BtStatus::failure)
+        << "the viewer input wins over the camera entity";
+}
+
 } // namespace

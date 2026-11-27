@@ -1258,8 +1258,17 @@ int main() {
         }
 #ifdef ENGINE_EDITOR
         else if (editor_play && play_physics) {
-            engine::scene::bt_system(scene.registry(), dt,
-                                     {.navmesh = &navmesh, .ground_height = ground_height_at});
+            // Perception: the trees see the user's view — the fly camera,
+            // unless Play looks through the scene's active Camera entity
+            // (then near_camera falls back to that entity).
+            const bool viewing_scene_camera =
+                play_use_scene_camera &&
+                engine::scene::find_active_camera(scene.registry()) != entt::null;
+            engine::scene::bt_system(
+                scene.registry(), dt,
+                {.navmesh = &navmesh,
+                 .ground_height = ground_height_at,
+                 .viewer = viewing_scene_camera ? std::nullopt : std::optional(cam_pos)});
             if (navmesh.valid()) {
                 engine::scene::nav_agent_system(scene.registry(), navmesh, dt,
                                                 ground_height_at);
