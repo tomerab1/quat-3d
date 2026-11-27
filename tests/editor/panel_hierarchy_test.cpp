@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <filesystem>
+#include <fstream>
 #include <string>
 #include <system_error>
 #include <vector>
@@ -212,9 +213,9 @@ TEST(EditorAssetBrowser, ListsFoldersFirstAndStaysInsideTheProject) {
     std::filesystem::create_directories(outside, ec);
     for (const auto& f : {root / "assets/b.png", root / "assets/a.glb", root / "assets/.hidden",
                           root / "assets/models/tree.gltf", outside / "secret.json"}) {
-        std::FILE* fp = std::fopen(f.c_str(), "wb");
-        ASSERT_NE(fp, nullptr) << f;
-        std::fclose(fp);
+        // std::ofstream takes the path itself (path::c_str() is wchar_t on Windows).
+        std::ofstream out(f, std::ios::binary);
+        ASSERT_TRUE(out.is_open()) << f;
     }
     std::filesystem::create_directory_symlink(outside, root / "assets/escape", ec);
     const bool have_link = !ec;
