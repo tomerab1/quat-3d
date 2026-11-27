@@ -3,11 +3,11 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
-use clap::Parser;
+use clap::{ArgAction, Parser};
 
 use crate::assets::POLYHAVEN_API;
 use crate::client::{ENGINE_MAX_MESSAGE_BYTES, EngineConfig};
-use crate::server::AssetConfig;
+use crate::server::{AssetConfig, Workflows};
 
 /// MCP server for the quat-3d engine. Speaks MCP over stdio; connects to the
 /// engine's remote-control endpoint (start the engine with `QUAT_REMOTE`=<port>).
@@ -51,6 +51,15 @@ pub struct Cli {
     /// Largest model download `asset_fetch` accepts, in MiB.
     #[arg(long, env = "QUAT_MCP_ASSET_MAX_MB", default_value_t = 512)]
     pub asset_max_mb: u64,
+
+    /// Serve the workflow skills over the MCP skills extension
+    /// (`skills/list`, `skills/get`, `skill://` resources).
+    #[arg(long, env = "QUAT_MCP_SKILLS", default_value_t = true, action = ArgAction::Set)]
+    pub skills: bool,
+
+    /// Serve the workflows as MCP prompts.
+    #[arg(long, env = "QUAT_MCP_PROMPTS", default_value_t = true, action = ArgAction::Set)]
+    pub prompts: bool,
 }
 
 impl Cli {
@@ -73,6 +82,14 @@ impl Cli {
         c.api.clone_from(&self.polyhaven_api);
         c.max_bytes = self.asset_max_mb.clamp(1, 16 * 1024) * 1024 * 1024;
         c
+    }
+
+    #[must_use]
+    pub fn workflows(&self) -> Workflows {
+        Workflows {
+            skills: self.skills,
+            prompts: self.prompts,
+        }
     }
 
     #[must_use]
@@ -119,5 +136,26 @@ mod tests {
         assert_eq!(c.addr, "localhost:9000");
         assert_eq!(c.token, None, "empty token means none");
         assert_eq!(c.timeout, Duration::from_millis(2500));
+    }
+
+    #[test]
+    fn workflows_can_be_turned_off() {
+        let all = Cli::try_parse_from(["quat-mcp"]).unwrap().workflows();
+        if std::env::var_os("QUAT_MCP_SKILLS").is_none()
+            && std::env::var_os("QUAT_MCP_PROMPTS").is_none()
+        {
+            assert_eq!(all, Workflows::default());
+        }
+        let none = Cli::try_parse_from(["quat-mcp", "--skills", "false", "--prompts=false"])
+            .unwrap()
+            .workflows();
+        assert_eq!(
+            none,
+            Workflows {
+                skills: false,
+                prompts: false
+            }
+        );
+        assert!(Cli::try_parse_from(["quat-mcp", "--skills", "maybe"]).is_err());
     }
 }

@@ -1,4 +1,4 @@
-//! The behaviour-tree tools (`bt_*`) and the `design_behavior` prompt, end to
+//! The behaviour-tree tools (`bt_*`) and the `design-npc-behaviour` prompt, end to
 //! end against the mock engine.
 
 mod common;
@@ -142,7 +142,7 @@ async fn bt_tools_and_prompt_are_listed() {
     let schema = serde_json::to_string(&add.input_schema).unwrap();
     assert!(schema.contains("children") && schema.contains("index"));
     let prompts = client.list_all_prompts().await.unwrap();
-    assert!(prompts.iter().any(|p| p.name == "design_behavior"));
+    assert!(prompts.iter().any(|p| p.name == "design-npc-behaviour"));
     client.cancel().await.unwrap();
 }
 
@@ -306,13 +306,13 @@ async fn status_names_the_nodes_and_leaves_pass_through() {
 }
 
 #[tokio::test]
-async fn design_behavior_prompt_walks_the_workflow() {
+async fn design_npc_behaviour_prompt_walks_the_workflow() {
     let engine = MockEngine::start(None, bt_handler).await;
     let client = connect(&engine.addr_string()).await;
     let args = json!({"goal": "patrol the gate and chase the player when near", "entity": "Guard"});
     let prompt = client
         .get_prompt(
-            GetPromptRequestParams::new("design_behavior")
+            GetPromptRequestParams::new("design-npc-behaviour")
                 .with_arguments(args.as_object().unwrap().clone()),
         )
         .await

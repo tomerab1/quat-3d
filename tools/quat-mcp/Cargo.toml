@@ -30,6 +30,7 @@ humantime = "2"
 which = "8"
 percent-encoding = "2"
 tempfile = "3"
+yaml_serde = "0.10"
 
 [dev-dependencies]
 rmcp = { version = "3.12", default-features = false, features = ["server", "client", "macros", "transport-io", "schemars", "base64"] }

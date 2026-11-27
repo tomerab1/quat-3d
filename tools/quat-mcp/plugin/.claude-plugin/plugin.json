@@ -1,0 +1,24 @@
+{
+  "name": "quat-3d",
+  "version": "0.1.0",
+  "description": "Build, tune, script, debug and playtest worlds in a running quat-3d engine: the quat-mcp MCP server plus workflow skills (build-level, tune-look, debug-physics-glitch, write-gameplay-script, design-npc-behaviour, author-material-shader, playtest, inspect-scene, debug-session).",
+  "author": {
+    "name": "quat-3d"
+  },
+  "repository": "https://github.com/tomerab1/quat-3d",
+  "keywords": ["game-engine", "mcp", "vulkan", "level-design", "gameplay", "lua", "quat-3d"],
+  "userConfig": {
+    "quat_mcp_command": {
+      "type": "string",
+      "title": "quat-mcp binary",
+      "description": "The quat-mcp server to run: \"quat-mcp\" when it is on your PATH (cargo install --path tools/quat-mcp), or the absolute path of tools/quat-mcp/target/release/quat-mcp.",
+      "default": "quat-mcp"
+    },
+    "engine_port": {
+      "type": "string",
+      "title": "Engine port",
+      "description": "The port the engine's remote-control endpoint listens on (the engine's QUAT_REMOTE value).",
+      "default": "7878"
+    }
+  }
+}
