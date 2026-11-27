@@ -22,6 +22,8 @@ drive directly to build and debug worlds from a prompt.
 - Physically based sky with volumetric clouds and a moving sun
 - Image-based lighting that keeps up with the sky in real time
 - Anti-aliasing (TAA), bloom, auto-exposure, filmic tonemapping
+- Automatic instancing: objects sharing a mesh and material (trees, rocks,
+  crates) are drawn together in one instanced draw
 
 **Animation**
 - Skeletal animation from glTF files, skinned on the GPU

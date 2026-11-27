@@ -2,11 +2,15 @@
 //
 // Renders scene geometry from the light's point of view into a depth map. Depth
 // only: no color attachment, the fragment shader writes nothing. The lighting
-// pass samples this map to decide whether a surface is lit or shadowed.
+// pass samples this map to decide whether a surface is lit or shadowed. Draws
+// are instanced (R9.1), reading per-instance transforms like the GBuffer pass.
 
+import instancing;
+
+// Mirrors engine::renderer::ShadowPushConstants (72 bytes).
 struct PushConstants {
-    float4x4 light_view_proj;
-    float4x4 model;
+    float4x4      light_view_proj;
+    InstanceData* instances; // indexed by instance_index() (includes firstInstance)
 }
 [[vk::push_constant]] PushConstants pc;
 
@@ -16,8 +20,8 @@ struct VsIn {
 
 [shader("vertex")]
 float4 vertex_main(VsIn input) : SV_Position {
-    float4 world = mul(pc.model, float4(input.position, 1.0));
-    return mul(pc.light_view_proj, world);
+    InstanceData inst = pc.instances[instance_index()];
+    return mul(pc.light_view_proj, inst.world_position(input.position));
 }
 
 [shader("fragment")]

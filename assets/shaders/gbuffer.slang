@@ -4,15 +4,17 @@
 // deferred GBuffer: albedo, octahedral-encoded world normal, and packed
 // metallic/roughness/occlusion. Shading inputs come from the material via the
 // IMaterial interface (PbrMaterial), bound as a descriptor-buffer parameter
-// block. Per-draw transforms arrive as push constants.
+// block. Draws are instanced (R9.1): per-instance model + normal matrices are
+// read through a buffer device address (lib/instancing.slang).
 
+import instancing;
 import material;
 import pbr;
 
-// Per-draw transforms. 128 bytes (two 4x4 matrices).
+// Mirrors engine::renderer::GBufferPushConstants (72 bytes).
 struct PushConstants {
-    float4x4 view_proj;
-    float4x4 model;
+    float4x4      view_proj;
+    InstanceData* instances; // indexed by instance_index() (includes firstInstance)
 }
 [[vk::push_constant]] PushConstants pc;
 
@@ -36,14 +38,14 @@ struct VsOut {
 
 [shader("vertex")]
 VsOut vertex_main(VsIn input) {
+    InstanceData inst = pc.instances[instance_index()];
     VsOut o;
-    float4 world_pos = mul(pc.model, float4(input.position, 1.0));
-    o.clip = mul(pc.view_proj, world_pos);
+    o.clip = mul(pc.view_proj, inst.world_position(input.position));
 
-    // Normal matrix: assumes uniform scale, so the model's upper-left 3x3 works.
-    float3x3 nm = (float3x3)pc.model;
-    o.world_n = normalize(mul(nm, input.normal));
-    o.world_t = float4(normalize(mul(nm, input.tangent.xyz)), input.tangent.w);
+    // Cofactor normal matrix (non-uniform scale) + mirrored tangent handedness.
+    o.world_n = normalize(inst.world_normal(input.normal));
+    float4 t = inst.world_tangent(input.tangent);
+    o.world_t = float4(normalize(t.xyz), t.w);
     o.uv = input.uv;
     return o;
 }

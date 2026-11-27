@@ -464,7 +464,8 @@ int main() {
                                                           shader_dir, ldr_format);
         auto skin = engine::renderer::SkinningPass::create(device, allocator, *pipeline_cache,
                                                            shader_dir);
-        auto shadow = engine::renderer::ShadowPass::create(device, *pipeline_cache, shader_dir);
+        auto shadow = engine::renderer::ShadowPass::create(device, allocator, *pipeline_cache,
+                                                           shader_dir);
         auto transp = engine::renderer::TransparentPass::create(device, allocator, *pipeline_cache,
                                                                 setup_transfer, shader_dir);
         auto bloom = engine::renderer::BloomPass::create(device, allocator, *pipeline_cache,
@@ -1721,12 +1722,17 @@ int main() {
         const engine::renderer::IblViewSet ibl_views =
             dynamic_ibl ? dynamic_ibl->views() : engine::renderer::IblViewSet{};
 
-        auto shadow = fr.shadow.add_to_graph(graph, light_view_proj, shadow_draws);
+        // R9.1: draws sharing mesh + material collapse into instanced draws.
+        const engine::renderer::InstancedDrawList shadow_batches =
+            engine::renderer::batch_draws(shadow_draws);
+        const engine::renderer::InstancedDrawList opaque_batches =
+            engine::renderer::batch_draws(draws);
+        auto shadow = fr.shadow.add_to_graph(graph, light_view_proj, shadow_batches);
         if (!shadow) {
             std::fprintf(stderr, "[fatal] shadow pass: %s\n", shadow.error().message.c_str());
             break;
         }
-        auto gbuffer = fr.mesh.add_to_graph(graph, draw_extent, jittered_vp, draws);
+        auto gbuffer = fr.mesh.add_to_graph(graph, draw_extent, jittered_vp, opaque_batches);
         if (!gbuffer) {
             std::fprintf(stderr, "[fatal] gbuffer pass: %s\n", gbuffer.error().message.c_str());
             break;

@@ -224,7 +224,7 @@ run_shadow_self_test(const engine::rhi::Device& device, engine::rhi::GpuAllocato
 
     auto mesh_pass = renderer::MeshPass::create(device, allocator, cache, transfer, shader_dir);
     auto lighting = renderer::LightingPass::create(device, allocator, cache, shader_dir);
-    auto shadow_pass = renderer::ShadowPass::create(device, cache, shader_dir);
+    auto shadow_pass = renderer::ShadowPass::create(device, allocator, cache, shader_dir);
     auto tonemap = renderer::TonemapPass::create(device, allocator, cache, shader_dir, ldr_format);
     if (!mesh_pass || !lighting || !shadow_pass || !tonemap) {
         return std::unexpected(core::Error{"shadow self-test: pass creation failed"});

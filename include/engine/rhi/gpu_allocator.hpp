@@ -32,6 +32,12 @@ public:
     // Non-null only when the buffer was created persistently mapped.
     [[nodiscard]] void* mapped() const { return mapped_; }
 
+    // Makes host writes to [offset, offset + size) of a mapped buffer visible to
+    // the device. Required when VMA placed it in non-HOST_COHERENT memory; a
+    // no-op (no Vulkan call) when the memory is coherent.
+    [[nodiscard]] std::expected<void, core::Error>
+    flush(VkDeviceSize offset = 0, VkDeviceSize size = VK_WHOLE_SIZE) const;
+
 private:
     friend class GpuAllocator;
     void destroy() noexcept;

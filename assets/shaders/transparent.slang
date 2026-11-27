@@ -9,6 +9,7 @@
 // Material textures are bound explicitly (b0..6) so the scene-colour snapshot
 // (b7..8) and IBL maps (b9..12) can share set 0.
 
+import instancing;
 import pbr;
 
 static const uint MAT_HAS_BASE_COLOR = 1u << 0;
@@ -50,9 +51,13 @@ struct MaterialParams {
     float4 uv_offset[3];
 }
 
+// Mirrors engine::renderer::TransparentPushConstants (144 bytes). Each
+// back-to-front sorted object is a single-instance draw reading its transform
+// through the instance buffer, like the GBuffer pass (R9.1).
 struct PushConstants {
-    float4x4 view_proj;
-    float4x4 model;
+    float4x4      view_proj;
+    InstanceData* instances;  // indexed by instance_index() (includes firstInstance)
+    uint2         pad;
     float4   camera_pos;      // xyz
     float4   light_direction; // xyz = to light, w = screen width (unused)
     float4   light_color;     // rgb, w intensity
@@ -96,18 +101,25 @@ struct VsOut {
     float3 world_n   : NORMAL;
     float4 world_t   : TANGENT;
     float2 uv        : TEXCOORD0;
+    // Volume thickness scale of the node transform (KHR_materials_volume
+    // thickness is in local units): length of M applied to a unit diagonal.
+    nointerpolation float thickness_scale : TEXCOORD1;
 }
 
 [shader("vertex")]
 VsOut vertex_main(VsIn input) {
+    InstanceData inst = pc.instances[instance_index()];
     VsOut o;
-    float4 world = mul(pc.model, float4(input.position, 1.0));
+    float4 world = inst.world_position(input.position);
     o.world_pos = world.xyz;
     o.clip = mul(pc.view_proj, world);
-    float3x3 nm = (float3x3)pc.model;
-    o.world_n = normalize(mul(nm, input.normal));
-    o.world_t = float4(normalize(mul(nm, input.tangent.xyz)), input.tangent.w);
+    // Cofactor normal matrix (non-uniform scale) + mirrored tangent handedness.
+    o.world_n = normalize(inst.world_normal(input.normal));
+    float4 t = inst.world_tangent(input.tangent);
+    o.world_t = float4(normalize(t.xyz), t.w);
     o.uv = input.uv;
+    o.thickness_scale =
+        length(mul((float3x3)inst.model, float3(0.577350, 0.577350, 0.577350)));
     return o;
 }
 
@@ -178,8 +190,7 @@ float4 fragment_main(VsOut input) : SV_Target0 {
         // (scaled by the node transform) and project the exit point back to
         // screen space. thickness = 0 (thin surface) degenerates to the
         // current pixel — tint and blur with no spatial offset.
-        float scale = length(mul((float3x3)pc.model, float3(0.577350, 0.577350, 0.577350)));
-        float thickness_world = g_params.thickness * scale;
+        float thickness_world = g_params.thickness * input.thickness_scale;
         if ((g_params.flags & MAT_HAS_THICKNESS) != 0) {
             thickness_world *= g_thickness.Sample(g_samp, transformed_uv(5, input.uv)).g;
         }
