@@ -26,6 +26,11 @@ into CLAUDE.md or the brief template in [`CYCLE.md`](CYCLE.md).
 
 ## Build and CI
 
+- **`--validation` silently runs without the layer when it isn't
+  installed.** The container lacks the Khronos layer;
+  `apt-get install -y vulkan-validationlayers` adds it (R10.2 ran its GPU
+  tests under it, plus `VK_LAYER_ENABLES=VK_VALIDATION_FEATURE_ENABLE_SYNCHRONIZATION_VALIDATION_EXT`
+  for sync validation).
 - **Lavapipe's ICD file is `lvp_icd.json` on Ubuntu 24.04** (not
   `lvp_icd.x86_64.json`) — a wrong `VK_ICD_FILENAMES` gives
   `VK_ERROR_INCOMPATIBLE_DRIVER` from vkCreateInstance. CI globs for it.
@@ -82,6 +87,16 @@ into CLAUDE.md or the brief template in [`CYCLE.md`](CYCLE.md).
 
 ## C++ in this codebase
 
+- **A GPU port that must match a CPU reference: never divide on the GPU.**
+  Vulkan's division and sqrt are not correctly rounded and drivers fuse
+  multiply-adds; compute quotients / reciprocals once on the CPU, feed both
+  sides the same constants, and mirror the operation order (glm's
+  `mix` is `x*(1-a)+y*a`). For bit-identical seams derive positions from
+  integer lattice indices (int->float conversion and one multiply are
+  exact / correctly rounded). R10.2's terrain noise lands within 1 ULP.
+- **Async GPU readback without owning the submit:** a transfer->host
+  barrier, then `vkCmdSetEvent2`; the host polls `vkGetEventStatus` and
+  invalidates the mapped range (TerrainSynthPass). No frame counting.
 - **Don't let a parser touch untrusted indices before validation.**
   fastgltf's `Options::GenerateMeshIndices` dereferences accessor indices
   during parsing; the loader now validates first and generates sequential

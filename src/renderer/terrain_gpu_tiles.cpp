@@ -2,6 +2,7 @@
 
 #include <chrono>
 #include <cstdio>
+#include <iterator>
 #include <utility>
 
 #include "engine/terrain/generator.hpp"

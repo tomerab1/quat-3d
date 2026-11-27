@@ -67,8 +67,6 @@ public:
     // Tiles queued or in flight (their futures are not ready yet).
     [[nodiscard]] bool busy() const { return !pending_.empty(); }
 
-    [[nodiscard]] TerrainSynthPass& synth() { return synth_; }
-
 private:
     // Passkey: only create() can name Key, so construction goes through it.
     struct Key {

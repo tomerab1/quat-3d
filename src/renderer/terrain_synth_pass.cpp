@@ -319,7 +319,9 @@ std::uint64_t TerrainSynthPass::enqueue(const terrain::TerrainParams& params) {
     job->id = state_->next_id++;
     job->params = params;
     job->res = params.resolution;
-    job->steps = params.erosion_model == terrain::ErosionModel::grid ? params.grid.iterations : 0;
+    // terrain::erode_grid skips grids smaller than 3x3; so do we.
+    const bool erodes = params.erosion_model == terrain::ErosionModel::grid && job->res >= 3;
+    job->steps = erodes ? params.grid.iterations : 0;
     const std::uint64_t id = job->id;
     state_->queued.push_back(std::move(job));
     return id;
