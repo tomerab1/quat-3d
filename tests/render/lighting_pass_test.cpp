@@ -39,6 +39,7 @@ struct Scene {
     float                     half_size = 0.5F; // clip-space triangle extent
     bool                      sky = false;
     r::IblViewSet             ibl{};
+    r::LightingTuning         tuning{}; // A8 render settings (IBL scale, shadow filter)
 };
 
 // Head-on directional light along +Z (the triangle's normal), white,
@@ -77,7 +78,8 @@ std::expected<HostImage, Error> render_lit(quat::test::GpuContext& g, const Scen
     if (!targets) return std::unexpected(targets.error());
     auto hdr = lighting->add_to_graph(graph, *targets, k_extent, scene.light, glm::mat4(1.0F),
                                       glm::vec3(0.0F, 0.0F, 1.0F), rhi::ResourceHandle{},
-                                      glm::mat4(1.0F), {}, scene.sky, scene.ibl);
+                                      glm::mat4(1.0F), {}, scene.sky, scene.ibl, VK_NULL_HANDLE,
+                                      VK_NULL_HANDLE, {}, scene.tuning);
     if (!hdr) return std::unexpected(hdr.error());
     return quat::test::render_to_host(g, graph, *hdr, k_extent, 8);
 }
@@ -224,6 +226,31 @@ TEST(GpuIblLighting, MetalReflectsTheEnvironment) {
     const glm::vec3 lit = centre_rgb(*hdr);
     EXPECT_GT(lit.r + lit.g + lit.b, 0.02F);
     EXPECT_GE(lit.b, lit.r) << "the reflection is not sky-tinted";
+}
+
+// A8: ibl.intensity scales the image-based term linearly (0 removes it).
+TEST(GpuIblLighting, IntensityScalesTheReflection) {
+    QUAT_REQUIRE_GPU(g);
+    auto baker = r::IblBaker::create(g->device, g->allocator, g->cache, g->shader_dir);
+    ASSERT_OK(baker);
+    auto maps = baker->bake(glm::normalize(glm::vec3(0.3F, 1.0F, 0.3F)));
+    ASSERT_OK(maps);
+    Scene scene = environment_only_metal();
+    scene.sky = true;
+    scene.ibl = maps->views();
+    auto base = render_lit(*g, scene);
+    ASSERT_OK(base);
+    scene.tuning.ibl_intensity = 2.0F;
+    auto doubled = render_lit(*g, scene);
+    ASSERT_OK(doubled);
+    scene.tuning.ibl_intensity = 0.0F;
+    auto none = render_lit(*g, scene);
+    ASSERT_OK(none);
+    const glm::vec3 b = centre_rgb(*base);
+    const glm::vec3 d = centre_rgb(*doubled);
+    ASSERT_GT(b.b, 0.01F);
+    for (int k = 0; k < 3; ++k) EXPECT_NEAR(d[k], 2.0F * b[k], 0.01F * d[k] + 1e-3F) << k;
+    EXPECT_LE(glm::length(centre_rgb(*none)), 1e-4F);
 }
 
 // With the environment disabled (and no direct light) the metal is black.

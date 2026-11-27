@@ -10,6 +10,7 @@
 #include <glm/gtc/matrix_transform.hpp>
 
 #include "engine/animation/animator.hpp"
+#include "engine/scene/material_override.hpp"
 
 namespace engine::scene {
 
@@ -152,7 +153,7 @@ void render_collect_system(const entt::registry& registry,
         renderer::DrawItem item;
         item.model = t.world;
         item.mesh = mr.mesh.valid() ? &*mr.mesh : nullptr;
-        item.material = mr.material.valid() ? &*mr.material : nullptr;
+        item.material = drawn_material(registry, e, mr); // with its MaterialOverride (A8)
         out.push_back(item);
     }
 }

@@ -11,9 +11,6 @@
 #include "engine/rhi/swapchain.hpp"
 #include "engine/scene/components.hpp"
 #include "engine/scene/scene.hpp"
-#ifdef ENGINE_EDITOR
-#include "engine/editor/editor.hpp"
-#endif
 
 namespace quat::app {
 namespace {

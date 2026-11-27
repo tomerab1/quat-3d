@@ -183,7 +183,10 @@ assistants such as Claude Code and Claude Desktop build and inspect worlds in
 the running engine — create entities, set the sky and camera, take
 screenshots, spawn models — and debug it: read the engine log and Vulkan
 validation messages, frame statistics, pause / single-step / slow down the
-simulation, watch entities, cast physics rays and query navmesh paths. Start the engine with `QUAT_REMOTE=7878`, build the
+simulation, watch entities, cast physics rays and query navmesh paths — and
+tune the look: exposure, bloom, anti-aliasing, shadows, sky light, clouds and
+per-entity materials, with the same values the editor's Renderer panel and
+Material inspector show. Start the engine with `QUAT_REMOTE=7878`, build the
 server with `cargo build --release` in `tools/quat-mcp`, and register it with
 your client:
 

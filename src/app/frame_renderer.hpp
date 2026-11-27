@@ -44,6 +44,7 @@
 #include "engine/renderer/light_cull_pass.hpp"
 #include "engine/renderer/lighting_pass.hpp"
 #include "engine/renderer/mesh_pass.hpp"
+#include "engine/renderer/render_settings.hpp"
 #include "engine/renderer/shadow_pass.hpp"
 #include "engine/renderer/skinning_pass.hpp"
 #include "engine/renderer/taa_pass.hpp"
@@ -69,12 +70,6 @@ namespace engine::scene {
 class Scene;
 struct CameraMatrices;
 } // namespace engine::scene
-#ifdef ENGINE_EDITOR
-namespace engine::editor {
-struct RendererSettings;
-}
-#endif
-
 namespace quat::app {
 
 inline constexpr std::uint32_t k_frames_in_flight = 2;
@@ -177,12 +172,9 @@ public:
                                      const engine::rhi::TransferContext& setup_transfer,
                                      const std::string& shader_dir,
                                      engine::rhi::Swapchain& swapchain, bool with_ui);
-#ifdef ENGINE_EDITOR
-    // The editor's Renderer panel settings (clouds, bloom); null = defaults.
-    void set_render_settings(const engine::editor::RendererSettings* settings) {
-        render_settings_ = settings;
-    }
-#endif
+    // Every tunable renderer parameter (A8). Read by the passes each frame;
+    // the editor's Renderer panel, the remote API and scene files edit it.
+    [[nodiscard]] engine::renderer::RenderSettings& render_settings() { return settings_; }
     // Atmosphere LUTs + dynamic IBL probe, lit by the scene's sun. Optional:
     // failures are logged and fall back to the procedural sky / flat ambient.
     void create_environment(engine::scene::Scene& scene,
@@ -234,14 +226,11 @@ private:
     engine::rhi::Swapchain*    swapchain_ = nullptr;
     VkFormat                   ldr_format_ = VK_FORMAT_UNDEFINED;
     bool                       editor_active_ = false;
-#ifdef ENGINE_EDITOR
-    const engine::editor::RendererSettings* render_settings_ = nullptr;
-#endif
+    engine::renderer::RenderSettings settings_;
 
-    // Cloud parameters for the lighting background + IBL bake: the editor's
-    // Renderer panel edits them; headless builds use the defaults. The frame
-    // loop accumulates cloud_time_s_ to drive the wind drift (always, like the
-    // animated sky in other engines — not gated on play mode).
+    // Drives the clouds' wind drift (settings_.clouds.time_s is ignored). The
+    // frame loop accumulates it always, like the animated sky in other engines
+    // — not gated on play mode.
     float cloud_time_s_ = 0.0F;
 
     // Temporal state shared by both slots (audit A2 / A11): one TAA history and
