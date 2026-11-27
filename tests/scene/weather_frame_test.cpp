@@ -61,10 +61,10 @@ TEST(WeatherSurfaces, PuddlesStartOnceSoaked) {
     ws.wetness = 0.5F;
     EXPECT_EQ(ws.puddle_level(), 0.0F);
     ws.wetness = 1.0F;
-    EXPECT_NEAR(ws.puddle_level(), 0.75F, 1e-6F);
+    EXPECT_NEAR(ws.puddle_level(), 0.45F, 1e-6F);
     ws.wetness = 0.8F;
     EXPECT_GT(ws.puddle_level(), 0.0F);
-    EXPECT_LT(ws.puddle_level(), 0.75F);
+    EXPECT_LT(ws.puddle_level(), 0.45F);
     ws.wetness = std::nanf("");
     ws.snow = 3.0F;
     const r::WeatherSurfaces clean = ws.sanitized();

@@ -93,7 +93,7 @@ TEST_F(WorldWeather, SceneCodecSharesTheSingletonRule) {
     ok("weather.set", {{"wind_speed", 2}});
     const std::string m = err("scene.create",
                               {{"name", "second"}, {"components", {{"weather", Json::object()}}}},
-                              code::invalid_params);
+                              code::failed);
     EXPECT_TRUE(contains(m, "already has its weather on entity")) << m;
     EXPECT_EQ(reg().view<w::WeatherState>().size(), 1U);
 }

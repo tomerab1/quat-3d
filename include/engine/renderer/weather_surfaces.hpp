@@ -28,10 +28,10 @@ struct WeatherSurfaces {
 
     // Water level of the puddle height field (0..1): puddles start once the
     // surfaces are soaked (Lagarde's accumulation follows wetting) and cover
-    // up to ~3/4 of flat ground when flooded.
+    // a little under half of flat ground when flooded.
     [[nodiscard]] float puddle_level() const {
         const float t = std::clamp((wetness - 0.55F) / 0.45F, 0.0F, 1.0F);
-        return 0.75F * t * t * (3.0F - 2.0F * t);
+        return 0.45F * t * t * (3.0F - 2.0F * t);
     }
 
     [[nodiscard]] WeatherSurfaces sanitized() const {

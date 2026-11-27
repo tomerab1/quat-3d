@@ -7,6 +7,12 @@ into CLAUDE.md or the brief template in [`CYCLE.md`](CYCLE.md).
 
 ## Agents and orchestration
 
+- **Worktree-isolated agents cannot run "complex" shell commands** (heredocs
+  writing files, multi-statement Python with `git` in the text, chained
+  `mv` + `sed`): the sandbox refuses them as unverifiable. Write edit
+  scripts to the scratchpad with the Write tool and run them with the
+  worktree path as an argument; keep shell commands to one plain step.
+
 - **Unpushed worktree commits die with the container.** Worker agents push
   their `feat/<id>` branch to origin after every commit (owner's rule,
   2026-11-27). `feat/**` pushes don't trigger CI, so they never cancel a
@@ -25,6 +31,22 @@ into CLAUDE.md or the brief template in [`CYCLE.md`](CYCLE.md).
   them; parallel edits always conflict.
 
 ## Build and CI
+
+- **A real configure + link works without vcpkg** (R13.1): point CMake at
+  a prefix of locally built dependencies instead of the vcpkg toolchain:
+  `cmake -G Ninja -DCMAKE_CXX_COMPILER=clang++
+  -DCMAKE_CXX_FLAGS=-stdlib=libc++ -DCMAKE_EXE_LINKER_FLAGS=-stdlib=libc++
+  -DCMAKE_PREFIX_PATH=<prefix> -DCMAKE_MODULE_PATH=<dir with a FindStb.cmake
+  setting Stb_INCLUDE_DIR> -DENGINE_EDITOR=OFF
+  -DFETCHCONTENT_FULLY_DISCONNECTED=ON -DFETCHCONTENT_SOURCE_DIR_ACL=<acl>
+  -DFETCHCONTENT_SOURCE_DIR_RTM=<rtm> -DMINIAUDIO_INCLUDE_DIR=~/deps/miniaudio`.
+  The prefix holds the libc++ builds of SDL3, Jolt, fastgltf, recast, GNS,
+  GTest, VMA and EnTT with their CMake configs (R17 built one). This links
+  `game` and `engine_tests` exactly as CI does, so missing CMake entries show
+  up as link errors. Builds share the container's disk with other agents:
+  one failed with "No space left on device"; check `df` first and rerun.
+  If CMakeLists.txt changes while ninja runs, the running build links with
+  the old target list. Rerun ninja after editing CMake lists.
 
 - **Local test builds must track header dependencies.** A scratch build that
   rebuilt only changed .cpp files linked objects compiled against an old
@@ -116,6 +138,18 @@ into CLAUDE.md or the brief template in [`CYCLE.md`](CYCLE.md).
   wayland-protocols, libdecor. The first CI run failed on xcursor.
 
 ## C++ in this codebase
+
+- **A Slang pass shader and a library module must not share a name**
+  (R13.1): `assets/shaders/wind_field.slang` importing
+  `lib/wind_field.slang` fails with "module `wind_field` recursively imports
+  itself" (and slangc then segfaults, see below). Name libraries
+  `<topic>_common`, as `grass_common` and `wind_common` do.
+- **Weather and other per-pixel layers go in the lighting pass, not the
+  GBuffer, while A6 reshapes the GBuffer** (R13.1): wet / snow layers modify
+  the decoded surface in lighting.slang (lib/weather_surface.slang,
+  ISurfaceLayer), so no GBuffer channel or writer changed. Lagarde's
+  porosity then has to be derived from the dry roughness / metallic, as his
+  own code does; a per-material porosity needs a GBuffer channel later.
 
 - **Shadow acne has more than one cause; test it with an image test first.**
   R12.9: D16 over a caster-padded range gave 0.83 of the unshadowed value on

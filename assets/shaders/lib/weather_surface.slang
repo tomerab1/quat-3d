@@ -65,11 +65,12 @@ float weather_noise(float2 p) {
 }
 
 // Puddle height field in [0, 1]: lower values fill first. Metre-scale
-// puddles grouped in ~10 m patches.
+// puddles grouped in ~10 m patches; the contrast is stretched so a water
+// level of 0.5 floods about half the ground and the patches stay distinct.
 float puddle_height(float2 xz) {
     float macro = weather_noise(xz * 0.09 + float2(31.7, 11.3));
     float local = weather_noise(xz * 0.45) * 0.6 + weather_noise(xz * 1.3 + 7.1) * 0.4;
-    return saturate(local * 0.65 + macro * 0.35);
+    return saturate(0.5 + (local * 0.65 + macro * 0.35 - 0.5) * 2.0);
 }
 
 public struct WetLayer : ISurfaceLayer {
