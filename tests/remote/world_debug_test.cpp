@@ -204,7 +204,7 @@ TEST_F(DebugCommands, WatchSnapshotsSelectedComponents) {
            {"primitive", {{"shape", "cube"}}},
            {"nav_agent", {{"target", {4, 0, 4}}, {"speed", 2}}}}}});
     reg().get<engine::scene::NavAgent>(e).failed = true;
-    (void)clock.advance(0.5F);
+    (void)clock.advance(0.05F);
     frame.frame = 42;
 
     Json r = ok("debug.watch", {{"entity", "crate"}, {"components", {"transform", "rigidbody"}}});
@@ -217,7 +217,7 @@ TEST_F(DebugCommands, WatchSnapshotsSelectedComponents) {
     EXPECT_EQ(w["missing"], Json({"rigidbody"}));
     EXPECT_FALSE(w.contains("nav_agent_state")) << "nav_agent was not asked for";
     EXPECT_EQ(r["frame"], 42);
-    EXPECT_NEAR(r["sim_time_s"].get<double>(), 0.5, 1e-6);
+    EXPECT_NEAR(r["sim_time_s"].get<double>(), 0.05, 1e-6);
 
     r = ok("debug.watch", {{"entities", {entt::to_integral(e)}}});
     const Json& all = r["entities"][0];
