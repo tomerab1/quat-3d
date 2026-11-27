@@ -54,9 +54,13 @@ struct VmState {
 };
 
 class LuaVm {
+    struct Token {}; // create() is the only way to make one
+
 public:
     [[nodiscard]] static std::expected<std::unique_ptr<LuaVm>, core::Error>
     create(const std::filesystem::path& scripts_root, const VmLimits& limits);
+
+    explicit LuaVm(Token /*token*/) {}
 
     LuaVm(const LuaVm&) = delete;
     LuaVm& operator=(const LuaVm&) = delete;
@@ -96,7 +100,6 @@ public:
     [[nodiscard]] const VmLimits& limits() const { return vm_->limits; }
 
 private:
-    LuaVm() = default;
     void build_sandbox();
     // Runs the function + `nargs` arguments above `base` (results left on the
     // stack above `base` on success; the stack is reset to `base` on error).

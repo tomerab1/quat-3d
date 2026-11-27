@@ -68,6 +68,17 @@ TEST(ScriptComponent, CodecRoundTripsTypedProperties) {
     EXPECT_EQ(encode_components(r, copy)["script"], encode_components(r, e)["script"]);
 }
 
+TEST(ScriptComponent, AnEditorAddedScriptWithoutAFileRoundTrips) {
+    Scene scene;
+    entt::registry& r = scene.registry();
+    const entt::entity e = scene.create_entity("blank");
+    r.emplace<Script>(e); // the inspector's Add component: no path picked yet
+    const json saved = encode_components(r, e)["script"];
+    const entt::entity loaded = scene.create_entity("loaded");
+    ASSERT_OK(apply_component(r, loaded, "script", saved, false)) << "a saved scene must load";
+    EXPECT_TRUE(r.get<Script>(loaded).path.empty());
+}
+
 TEST(ScriptComponent, BadValuesAreRejectedWithPreciseErrors) {
     Scene scene;
     entt::registry& r = scene.registry();

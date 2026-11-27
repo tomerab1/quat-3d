@@ -51,7 +51,8 @@ inline constexpr std::size_t      k_max_property_text = 4096;
 // The codec's "script" object: {path, enabled, properties:{name: value}}.
 [[nodiscard]] nlohmann::json encode_script(const Script& script);
 
-// Merge-decodes the codec's "script" fields: `properties` merges per name
+// Merge-decodes the codec's "script" fields: an empty `path` means "no file yet"
+// (it runs nothing); `properties` merges per name
 // (null removes one); any accepted properties change bumps `revision`.
 void decode_script_fields(core::JsonFields& fields, Script& script);
 

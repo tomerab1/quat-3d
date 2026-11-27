@@ -117,7 +117,8 @@ void decode_script_fields(core::JsonFields& f, Script& s) {
     if (f.has("path")) {
         std::string path;
         f.string("path", path, k_max_script_path);
-        if (auto ok = validate_script_path(path); f.ok() && !ok) {
+        // Empty: no file picked yet (an editor-added component); it runs nothing.
+        if (auto ok = validate_script_path(path); f.ok() && !path.empty() && !ok) {
             f.fail("path", ok.error().message);
         } else if (f.ok()) {
             s.path = std::move(path);

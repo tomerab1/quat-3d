@@ -188,7 +188,8 @@ target_include_directories(engine_animation PUBLIC ${ENGINE_PUBLIC_INCLUDE})
 # implementation detail (PRIVATE); the public header is Jolt-free (PIMPL).
 # ---------------------------------------------------------------------------
 add_library(engine_physics STATIC
-    src/physics/physics_world.cpp)
+    src/physics/physics_world.cpp
+    src/physics/physics_queries.cpp)
 target_link_libraries(engine_physics PUBLIC engine_flags)
 target_link_libraries(engine_physics PRIVATE Jolt::Jolt)
 target_include_directories(engine_physics PUBLIC ${ENGINE_PUBLIC_INCLUDE})

@@ -224,7 +224,7 @@ int sandbox_require(lua_State* L) {
 
 std::expected<std::unique_ptr<LuaVm>, core::Error> LuaVm::create(const std::filesystem::path& scripts_root,
                                                                  const VmLimits& limits) {
-    std::unique_ptr<LuaVm> vm(new LuaVm());
+    auto vm = std::make_unique<LuaVm>(Token{});
     vm->vm_ = std::make_unique<VmState>();
     vm->vm_->limits = limits;
     vm->vm_->scripts_root = scripts_root;
