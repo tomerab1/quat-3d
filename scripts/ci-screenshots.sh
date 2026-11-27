@@ -28,14 +28,19 @@ OUT="$(realpath -m "${2:-$ROOT/screenshots}")"
 TIMEOUT="${SCENE_TIMEOUT:-300}"
 
 # name | frames | environment (space-separated VAR=value) | description
+#      | asset manifest (optional)
 # Frame counts: TAA history and auto-exposure settle within ~30 frames; the
 # GPU terrain tile (513^2, 200 erosion steps, async readback) needs a few
 # frames to arrive, and the physics scene needs simulated seconds to fall.
+# A scene built from downloaded assets names its manifest: the row is
+# skipped (not failed) when scripts/fetch-polyhaven.py --check finds the
+# assets missing, e.g. because Poly Haven was unreachable.
 SCENE_TABLE=(
   "showcase-editor|30||Showcase scene with the editor UI"
   "showcase|30|QUAT_NO_UI=1|Showcase scene, no UI"
   "terrain|90|QUAT_NO_UI=1 QUAT_TERRAIN=1|Showcase + GPU-generated terrain tile"
   "physics|90|QUAT_NO_UI=1 QUAT_PHYSICS=1|Physics demo (Jolt) after 90 frames"
+  "cinematic|40|QUAT_NO_UI=1 QUAT_PLAY=1 QUAT_WINDOW_SIZE=1920x1080 QUAT_SCENE=assets/scenes/cinematic_forest.json|Cinematic forest clearing at golden hour (CC0 Poly Haven assets), hero camera|assets/showcase/cinematic/assets.json"
 )
 
 die() { echo "ci-screenshots: $*" >&2; exit 2; }
@@ -86,8 +91,15 @@ failures=""
 failed=0
 
 for row in "${SCENE_TABLE[@]}"; do
-  IFS='|' read -r name frames scene_env description <<<"$row"
+  IFS='|' read -r name frames scene_env description manifest <<<"$row"
   selected "$name" || continue
+  if [ -n "$manifest" ] &&
+     ! python3 "$ROOT/scripts/fetch-polyhaven.py" --check "$ROOT/$manifest" >"$OUT/$name.log" 2>&1; then
+    echo "::warning title=Screenshot $name skipped::assets of $manifest not fetched (scripts/fetch-polyhaven.py)"
+    printf '%s\t%s\t%s\t%s\n' "$name" "skipped (assets not fetched)" 0 "$description" >>"$results"
+    echo "| \`$name\` | skipped: assets not fetched | 0 s | \`$scene_env\` |" >>"$summary"
+    continue
+  fi
   ppm="$OUT/$name.ppm"
   png="$OUT/$name.png"
   log="$OUT/$name.log"

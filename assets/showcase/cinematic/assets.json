@@ -1,0 +1,222 @@
+{
+  "name": "Cinematic forest clearing",
+  "description": "CC0 assets of assets/scenes/cinematic_forest.json: a pine-forest clearing at golden hour. Every asset is from Poly Haven and CC0; attribution is recorded although the licence does not require it.",
+  "license": "CC0-1.0",
+  "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+  "fetch": "python3 scripts/fetch-polyhaven.py assets/showcase/cinematic/assets.json --cook-with build/release/quat-cook",
+  "assets": [
+    {
+      "id": "fir_tree_01",
+      "type": "model",
+      "resolution": "1k",
+      "license": "CC0-1.0",
+      "source_url": "https://polyhaven.com/a/fir_tree_01",
+      "authors": {
+        "Rob Tuytel": "photography",
+        "Rico Cilliers": "modeling"
+      },
+      "use": "Hero trees of the forest edge around the clearing (three variants, 18 m). Cooked to a 2.5 % level of detail: the 7 M-triangle needle geometry is far beyond a software rasteriser, and the BLEND twig cards become alpha-tested.",
+      "cook": [
+        {
+          "args": [
+            "--simplify",
+            "0.025",
+            "--blend-to-mask",
+            "0.5"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "fir_sapling",
+      "type": "model",
+      "resolution": "1k",
+      "license": "CC0-1.0",
+      "source_url": "https://polyhaven.com/a/fir_sapling",
+      "authors": {
+        "Rob Tuytel": "photography",
+        "Rico Cilliers": "modeling"
+      },
+      "use": "Young firs inside the clearing (three variants, 0.7-1.3 m).",
+      "cook": [
+        {
+          "args": [
+            "--simplify",
+            "0.06"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "pine_sapling_small",
+      "type": "model",
+      "resolution": "1k",
+      "license": "CC0-1.0",
+      "source_url": "https://polyhaven.com/a/pine_sapling_small",
+      "authors": {
+        "Rob Tuytel": "photography",
+        "Rico Cilliers": "modeling"
+      },
+      "use": "Young pines inside the clearing (three variants).",
+      "cook": [
+        {
+          "args": [
+            "--simplify",
+            "0.06"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "fern_02",
+      "type": "model",
+      "resolution": "1k",
+      "license": "CC0-1.0",
+      "source_url": "https://polyhaven.com/a/fern_02",
+      "authors": {
+        "Rob Tuytel": "scanning",
+        "Rico Cilliers": "modeling"
+      },
+      "use": "Foreground framing and forest-floor ferns (four variants, alpha-tested).",
+      "cook": [
+        {
+          "args": []
+        }
+      ]
+    },
+    {
+      "id": "dead_tree_trunk",
+      "type": "model",
+      "resolution": "1k",
+      "license": "CC0-1.0",
+      "source_url": "https://polyhaven.com/a/dead_tree_trunk",
+      "authors": {
+        "Rob Tuytel": "All"
+      },
+      "use": "The hero fallen log in the middle ground.",
+      "cook": [
+        {
+          "args": []
+        }
+      ]
+    },
+    {
+      "id": "tree_stump_01",
+      "type": "model",
+      "resolution": "1k",
+      "license": "CC0-1.0",
+      "source_url": "https://polyhaven.com/a/tree_stump_01",
+      "authors": {
+        "Rob Tuytel": "All"
+      },
+      "use": "Stump beside the log.",
+      "cook": [
+        {
+          "args": []
+        }
+      ]
+    },
+    {
+      "id": "tree_stump_02",
+      "type": "model",
+      "resolution": "1k",
+      "license": "CC0-1.0",
+      "source_url": "https://polyhaven.com/a/tree_stump_02",
+      "authors": {
+        "Rob Tuytel": "All"
+      },
+      "use": "Stump at the far side of the clearing.",
+      "cook": [
+        {
+          "args": []
+        }
+      ]
+    },
+    {
+      "id": "rock_moss_set_01",
+      "type": "model",
+      "resolution": "1k",
+      "license": "CC0-1.0",
+      "source_url": "https://polyhaven.com/a/rock_moss_set_01",
+      "authors": {
+        "Kless Gyzen": "All"
+      },
+      "use": "Large mossy boulders.",
+      "cook": [
+        {
+          "args": []
+        }
+      ]
+    },
+    {
+      "id": "rock_moss_set_02",
+      "type": "model",
+      "resolution": "1k",
+      "license": "CC0-1.0",
+      "source_url": "https://polyhaven.com/a/rock_moss_set_02",
+      "authors": {
+        "Kless Gyzen": "All"
+      },
+      "use": "Mossy rocks scattered over the clearing.",
+      "cook": [
+        {
+          "args": []
+        }
+      ]
+    },
+    {
+      "id": "dry_branches_medium_01",
+      "type": "model",
+      "resolution": "1k",
+      "license": "CC0-1.0",
+      "source_url": "https://polyhaven.com/a/dry_branches_medium_01",
+      "authors": {
+        "Rico Cilliers": "All"
+      },
+      "use": "Fallen branches in the foreground.",
+      "cook": [
+        {
+          "args": []
+        }
+      ]
+    },
+    {
+      "id": "forest_leaves_04",
+      "type": "texture",
+      "resolution": "1k",
+      "license": "CC0-1.0",
+      "source_url": "https://polyhaven.com/a/forest_leaves_04",
+      "authors": {
+        "Rob Tuytel": "All"
+      },
+      "maps": [
+        "Diffuse",
+        "nor_gl",
+        "arm"
+      ],
+      "use": "Forest-floor ground plane (generated ground.gltf, 160 m, the texture repeating every 2.5 m).",
+      "ground": {
+        "file": "ground.gltf",
+        "size": 160,
+        "tile": 2.5,
+        "segments": 32
+      }
+    },
+    {
+      "id": "spaichingen_hill",
+      "type": "hdri",
+      "resolution": "2k",
+      "license": "CC0-1.0",
+      "source_url": "https://polyhaven.com/a/spaichingen_hill",
+      "authors": {
+        "Andreas Mischok": "All"
+      },
+      "use": "Sky and image-based light once HDRI environments land; its sun (13 deg elevation, warm) is what the scene's sun matches.",
+      "sun": {
+        "elevation_deg": 12.9,
+        "longitude_deg": 36.0,
+        "note": "measured from the 1k .hdr: luminance-weighted centroid of the brightest pixels; longitude is measured from the image centre, positive to the right"
+      }
+    }
+  ]
+}
