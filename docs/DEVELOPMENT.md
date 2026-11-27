@@ -61,6 +61,16 @@ Test layout:
 | `tests/legacy/` | Wrappers around the old `run_*_self_test()` functions, removed as their bodies migrate into `tests/<module>/` |
 
 
+## Script hot reload
+
+Editor builds watch `assets/scripts/` (and its subdirectories present at
+startup) while running (`QUAT_SCRIPT_HOT_RELOAD=0` turns it off, `=1` turns
+it on in non-editor builds). Saving a `.lua` file recompiles it; while
+playing, its instances restart with the new code, and a compile or load
+error keeps the previous version running (the error shows under **Stats →
+Scripts**, in the log, and in `script.list`). Outside Play the file is only
+syntax-checked. See [`scripting.md`](scripting.md).
+
 ## Shader hot reload
 
 Editor builds watch `assets/shaders/` and `assets/shaders/lib/` while running
@@ -147,6 +157,19 @@ clang++ -std=c++23 -stdlib=libc++ -Wall -Wextra -Wshadow -fno-exceptions -fno-rt
   -DQUAT_COOKED_SHADER_DIR='"x"' -DQUAT_PROJECT_ROOT='"x"' -Iinclude -Isrc -Isrc/remote \
   -isystem $D/entt/src -isystem $D/vma/include -isystem $D/jolt -isystem $D/fastgltf/include \
   -isystem $D/stb -isystem $D/sdl/include  src/scene/scene.cpp
+```
+
+Lua and sol2 (engine_script, G7) are not in that list: clone sol2 v3.5.0
+(header-only) and Lua v5.4.8 into a scratch directory and pass both through
+`EXTRA_FLAGS`. Lua builds into a static library with one compiler call per
+file, so the script tests can be linked and run locally:
+
+```sh
+git clone --depth 1 --branch v3.5.0 https://github.com/ThePhD/sol2.git $S/sol2
+git clone --depth 1 --branch v5.4.8 https://github.com/lua/lua.git $S/lua
+(cd $S/lua && for f in l*.c; do case $f in lua.c|ltests.c) continue;; esac
+   cc -O2 -DLUA_USE_POSIX -c $f; done && ar rcs liblua.a l*.o)
+EXTRA_FLAGS="-isystem $S/sol2/include -isystem $S/lua" scripts/check-compile.sh src/script/*.cpp
 ```
 
 This catches compile errors and warnings, not link errors or test failures.

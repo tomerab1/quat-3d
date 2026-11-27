@@ -142,7 +142,10 @@ change; removing it keeps the placements),
 `audio_source` (`clip`, `bus`: master/music/sfx/ui/ambience, `volume`,
 `pitch`, `loop`, `play_on_start`, `spatial`, `min_distance`, `max_distance`,
 `rolloff`, `doppler`, plus write-only `command`: play/stop/pause/resume),
-`audio_listener` (`active`), `animator` (edit only), `mesh` (read only). Updates merge: omitted fields keep their
+`audio_listener` (`active`), `script` (`path` relative to `assets/scripts/`,
+`enabled`, `properties`: `{name: number | bool | string | [x,y,z]}`, merged
+per name, `null` removes one; see [scripting.md](scripting.md)), `animator`
+(edit only), `mesh` (read only). Updates merge: omitted fields keep their
 values. Unknown fields are errors (they name the known fields).
 
 | Method | Params | Result |
@@ -252,6 +255,46 @@ sim_time_s}`. `engine.info` also reports `paused`.
   the snapped start; `partial` means the target is unreachable and the path
   ends at the closest reachable point. No baked navmesh is `unavailable`
   (call `nav.bake`); an end off the mesh is `failed`.
+
+## Gameplay scripts (ROADMAP G7)
+
+Lua script files under `assets/scripts/` (the language reference is
+[scripting.md](scripting.md)); entities run them through the `script`
+component (`scene.create` / `scene.update`). Contract for the engine
+(`src/remote/world/script_commands.cpp`) and quat-mcp's `script_*` tools:
+
+| Method | Params | Result |
+|---|---|---|
+| `script.list` | — | `{scripts:[{path, bytes, entities, status?}], running}` |
+| `script.get` | `{path}` | `{path, source, entities, status}` |
+| `script.create` | `{path, source}` | `{path, bytes, entities, running?, status?}` |
+| `script.update` | `{path, source}` | same as `script.create` |
+| `script.delete` | `{path}` | `{path, deleted, entities_still_using}` |
+| `script.check` | `{source, path?}` | `{ok, line?, message?}` |
+
+`status` is `{state: "ok" \| "error", message?, instances, failed, reloads}`
+(null before the runtime has seen the file); `entities` counts the entities
+whose `script` component uses the file; `running` is true while a play
+session runs scripts.
+
+- **Paths** are relative to `assets/scripts/`, end in `.lua` and use only
+  `[A-Za-z0-9_.-]` segments separated by `/` (no `.` / `..` segments); a
+  path whose existing prefix resolves outside the directory (a symlink) is
+  refused. Parent directories are created.
+- **Sources** are at most 256 KiB of text. `script.create` / `script.update`
+  compile the source first: a syntax error is `invalid_params` with the
+  message `syntax error at line N: <path>:N: <Lua's message>` and `data:
+  {path, line}`, and nothing is written. Writes go through a temporary file
+  and a rename.
+- `script.create` refuses an existing file (`failed`), `script.update` a
+  missing one (`not_found`).
+- `script.update` (and `script.create`) hot-reload the file at once: while
+  playing, every instance restarts with the new code; a file that fails to
+  load at run time (an error in its top-level code) keeps the previous
+  version running and its `status` carries the error. Runtime errors from
+  callbacks are in `debug.log` (category `script`) and in `status`.
+- `script.delete` does not detach the file from entities; running instances
+  keep their loaded code until the session ends.
 
 ## Errors
 

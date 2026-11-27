@@ -100,7 +100,7 @@ constexpr std::array k_actions = {
     ActionBinding{"aim", ScriptInput::key_count, ScriptInput::key_count, 2, -1, 4},
     ActionBinding{"interact", k_e, k_e, -1, 2, -1},
     ActionBinding{"sprint", k_lshift, k_rshift, -1, 7, -1},
-    ActionBinding{"pause", 41, 41, -1, 6, -1},
+    ActionBinding{"pause", 19, 19, -1, 6, -1}, // P (Escape quits the game)
 };
 
 [[nodiscard]] bool action_state(const ScriptInput& in, const ActionBinding& b, bool prev) {

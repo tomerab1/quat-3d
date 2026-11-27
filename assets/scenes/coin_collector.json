@@ -1,0 +1,53 @@
+{
+  "version": 2,
+  "entities": [
+    {
+      "name": "Sun",
+      "parent": -1,
+      "transform": { "position": [0, 10, 0] },
+      "dir_light": { "direction": [-0.4, -1.0, -0.3], "color": [1.0, 0.95, 0.88], "intensity": 3.0 }
+    },
+    {
+      "name": "Ground",
+      "parent": -1,
+      "transform": { "position": [0, -0.5, 0], "scale": [40, 1, 40] },
+      "primitive": { "shape": "cube", "color": "#4f7d3c", "roughness": 0.9 },
+      "collider": { "shape": "box", "half_extents": [0.5, 0.5, 0.5] }
+    },
+    {
+      "name": "Pillar",
+      "parent": -1,
+      "transform": { "position": [4, 1, -3], "scale": [1, 2, 1] },
+      "primitive": { "shape": "cube", "color": "#8a8f99", "roughness": 0.7 },
+      "collider": { "shape": "box", "half_extents": [0.5, 0.5, 0.5] }
+    },
+    {
+      "name": "Pillar",
+      "parent": -1,
+      "transform": { "position": [-5, 1, 2], "scale": [1, 2, 1] },
+      "primitive": { "shape": "cube", "color": "#8a8f99", "roughness": 0.7 },
+      "collider": { "shape": "box", "half_extents": [0.5, 0.5, 0.5] }
+    },
+    {
+      "name": "Player",
+      "parent": -1,
+      "transform": { "position": [0, 1, 0], "scale": [0.6, 0.9, 0.6] },
+      "primitive": { "shape": "capsule", "color": "#3d7fd9", "roughness": 0.4 },
+      "character": { "radius": 0.3, "half_height": 0.6, "speed": 5.0 },
+      "script": { "path": "coin_collector/player.lua", "enabled": true, "properties": {} }
+    },
+    {
+      "name": "Camera",
+      "parent": -1,
+      "transform": { "position": [0, 5, 8], "rotation": [-25, 0, 0] },
+      "camera": { "fov_deg": 60, "near": 0.1, "far": 500 },
+      "script": { "path": "coin_collector/follow_camera.lua", "enabled": true, "properties": {} }
+    },
+    {
+      "name": "Game",
+      "parent": -1,
+      "transform": { "position": [0, 0, 0] },
+      "script": { "path": "coin_collector/game.lua", "enabled": true, "properties": { "coins": 8 } }
+    }
+  ]
+}
