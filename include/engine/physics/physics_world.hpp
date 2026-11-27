@@ -157,6 +157,39 @@ public:
     // body); no_owner for unowned or unknown bodies.
     [[nodiscard]] std::uint32_t body_owner(std::uint32_t body) const;
 
+    // ---- Contact events (A10.1) ------------------------------------------------
+    // One event per body pair, not per touching sub-shape: contact_added when
+    // two bodies start touching, contact_removed when they stop or one of them
+    // is removed. A body falling asleep does not end its contacts (Jolt drops
+    // them; the world waits until the body wakes up and shows whether it still
+    // touches). trigger_enter / trigger_exit are the same for a sensor and a
+    // body, with the sensor as `body_a`. Collected lock-free on Jolt's worker
+    // threads into per-step buffers (at most max_contacts_per_step callbacks a
+    // step; the rest are counted as dropped) and resolved on the calling thread
+    // after each step.
+    struct ContactEvent {
+        enum class Kind : std::uint8_t { contact_added, contact_removed, trigger_enter, trigger_exit };
+        Kind          kind = Kind::contact_added;
+        std::uint32_t body_a = invalid_body;
+        std::uint32_t body_b = invalid_body;
+        std::uint32_t owner_a = no_owner; // body_owner() of each, cached when they met
+        std::uint32_t owner_b = no_owner;
+        glm::vec3     point{0.0F};    // world space (contact_added, trigger_enter)
+        glm::vec3     normal{0.0F};   // from a towards b (contact_added)
+        float         impulse = 0.0F; // estimated impact impulse, N*s (contact_added)
+        std::uint64_t step = 0;       // step_count() when it happened
+    };
+    static constexpr std::uint32_t max_contacts_per_step = 4096;
+
+    // Events of the most recent update() (plus contacts ended by remove_body
+    // since), in order. Valid until the next update().
+    [[nodiscard]] std::span<const ContactEvent> contact_events() const;
+    // Contact callbacks the most recent update() could not record.
+    [[nodiscard]] std::uint32_t dropped_contact_events() const;
+    // Fixed steps simulated since create(), and the simulated seconds they make.
+    [[nodiscard]] std::uint64_t step_count() const;
+    [[nodiscard]] double        simulated_time() const;
+
     // ---- Queries (debugging, gameplay) -------------------------------------
     // Bodies in the simulation (all kinds, terrain included; not the
     // characters' inner bodies) and how many of them are awake (active rigid

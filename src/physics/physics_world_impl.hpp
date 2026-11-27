@@ -7,12 +7,12 @@
 
 #include <cstdint>
 #include <memory>
-#include <mutex>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
 #include "engine/physics/physics_world.hpp"
+#include "physics_events.hpp"
 #include "slot_map.hpp"
 
 // Jolt headers are not clean under our strict warning flags; quiet them here
@@ -101,36 +101,19 @@ public:
     }
 };
 
-// Records trigger (sensor) overlaps into a shared queue. Jolt calls these from
-// worker threads during Update, so the queue is guarded by a mutex.
+// Records every contact / trigger callback into the current step's buffer
+// (physics_events.hpp). Jolt calls these from its worker threads during
+// Update; recording is one atomic increment, no lock. `sensors` is only
+// modified on the main thread between updates.
 class ContactListenerImpl final : public JPH::ContactListener {
 public:
-    std::vector<PhysicsWorld::TriggerEvent>* events = nullptr;
-    std::mutex*                              mutex = nullptr;
-    std::unordered_set<std::uint32_t>*       sensors = nullptr;
+    ContactBuffers*                          buffers = nullptr;
+    const std::unordered_set<std::uint32_t>* sensors = nullptr;
 
-    void OnContactAdded(const JPH::Body& b1, const JPH::Body& b2, const JPH::ContactManifold&,
-                        JPH::ContactSettings&) override {
-        const bool s1 = b1.IsSensor();
-        const bool s2 = b2.IsSensor();
-        if (!s1 && !s2) return;
-        const std::uint32_t id1 = b1.GetID().GetIndexAndSequenceNumber();
-        const std::uint32_t id2 = b2.GetID().GetIndexAndSequenceNumber();
-        const std::scoped_lock lock(*mutex);
-        events->push_back(s1 ? PhysicsWorld::TriggerEvent{id1, id2, true}
-                             : PhysicsWorld::TriggerEvent{id2, id1, true});
-    }
-
-    void OnContactRemoved(const JPH::SubShapeIDPair& pair) override {
-        const std::uint32_t id1 = pair.GetBody1ID().GetIndexAndSequenceNumber();
-        const std::uint32_t id2 = pair.GetBody2ID().GetIndexAndSequenceNumber();
-        const std::scoped_lock lock(*mutex);
-        if (sensors->contains(id1)) {
-            events->push_back({id1, id2, false});
-        } else if (sensors->contains(id2)) {
-            events->push_back({id2, id1, false});
-        }
-    }
+    void OnContactAdded(const JPH::Body& b1, const JPH::Body& b2,
+                        const JPH::ContactManifold& manifold,
+                        JPH::ContactSettings& settings) override;
+    void OnContactRemoved(const JPH::SubShapeIDPair& pair) override;
 };
 
 [[nodiscard]] inline JPH::Vec3 to_jph(const glm::vec3& v) { return JPH::Vec3(v.x, v.y, v.z); }
@@ -208,10 +191,17 @@ struct PhysicsWorld::Impl {
     detail::SlotMap<detail::CharacterRecord>  characters;
     std::unordered_map<std::uint32_t, std::uint32_t> inner_bodies; // inner body -> character
     std::unordered_map<std::uint32_t, detail::BodyRecord> bodies; // body id -> record
+    // Contact events: collected per step on Jolt's workers, tracked per body
+    // pair on the main thread (physics_events.hpp).
+    detail::ContactBuffers                    contact_buffers;
     detail::ContactListenerImpl               contact_listener;
+    detail::ContactTracker                    contact_tracker;
+    std::vector<PhysicsWorld::ContactEvent>   contact_events;   // the last update()'s
+    std::vector<PhysicsWorld::ContactEvent>   pending_events;   // ended by remove_body
+    std::uint32_t                             dropped_contacts = 0;
     std::vector<PhysicsWorld::TriggerEvent>   trigger_events;
-    std::mutex                                trigger_mutex;
     std::unordered_set<std::uint32_t>         sensor_bodies;
+    std::uint64_t                             steps = 0;
     float                                     accumulator = 0.0F;
 
     [[nodiscard]] JPH::CharacterVirtual* character(std::uint32_t id) const {

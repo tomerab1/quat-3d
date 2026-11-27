@@ -36,6 +36,7 @@
 #include "engine/remote/rpc_server.hpp"
 
 namespace engine::core {
+class EventRing;
 class LogRing;
 class SimClock;
 } // namespace engine::core
@@ -132,6 +133,13 @@ struct WorldServices {
     // The physics world being simulated, or null (edit mode: bodies only
     // exist while playing). debug.raycast and debug.stats read it.
     std::function<const physics::PhysicsWorld*()> physics_world;
+    // The same world, writable: the physics.* and character.move methods
+    // (A10.1) read and drive it. Unset or null: they answer `unavailable`.
+    std::function<physics::PhysicsWorld*()> physics_control;
+
+    // Gameplay events events.poll reads (non-owning; normally
+    // core::event_ring(), fed by the frame loop after each physics update).
+    core::EventRing* event_ring = nullptr;
 
     // The current navmesh, or null / invalid when none is baked.
     std::function<const nav::NavMesh*()> navmesh;

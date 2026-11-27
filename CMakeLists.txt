@@ -121,6 +121,7 @@ add_library(engine_core STATIC
     src/core/log.cpp
     src/core/stderr_capture.cpp
     src/core/sim_clock.cpp
+    src/core/event_ring.cpp
     src/core/file_watcher.cpp
     src/core/child_process.cpp)
 target_link_libraries(engine_core PUBLIC engine_flags Threads::Threads)
@@ -189,7 +190,8 @@ target_include_directories(engine_animation PUBLIC ${ENGINE_PUBLIC_INCLUDE})
 add_library(engine_physics STATIC
     src/physics/physics_world.cpp
     src/physics/physics_character.cpp
-    src/physics/physics_queries.cpp)
+    src/physics/physics_queries.cpp
+    src/physics/physics_events.cpp)
 target_link_libraries(engine_physics PUBLIC engine_flags)
 target_link_libraries(engine_physics PRIVATE Jolt::Jolt)
 target_include_directories(engine_physics PUBLIC ${ENGINE_PUBLIC_INCLUDE})
@@ -336,6 +338,7 @@ add_library(engine_remote_world STATIC
     src/remote/world/tuning_commands.cpp
     src/remote/world/behavior_commands.cpp
     src/remote/world/behavior_edit_commands.cpp
+    src/remote/world/physics_commands.cpp
     src/remote/world/image_encode.cpp
     src/remote/world/stb_image_write_impl.cpp)
 target_link_libraries(engine_remote_world PUBLIC

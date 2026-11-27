@@ -47,6 +47,7 @@ void PhysicsWorld::remove_character(std::uint32_t character) {
     if (rec == nullptr) return;
     impl_->character_vs_character.Remove(rec->character.GetPtr());
     impl_->inner_bodies.erase(rec->inner_body);
+    impl_->contact_tracker.body_removed(rec->inner_body, impl_->steps, impl_->pending_events);
     impl_->characters.erase(character); // releases the CharacterVirtual (+ inner body)
 }
 

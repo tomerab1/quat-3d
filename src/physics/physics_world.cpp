@@ -56,8 +56,7 @@ std::expected<PhysicsWorld, core::Error> PhysicsWorld::create() {
                   m.obj_vs_bp, m.obj_pair);
     m.system.SetGravity(JPH::Vec3(0.0F, -9.81F, 0.0F));
 
-    m.contact_listener.events = &m.trigger_events;
-    m.contact_listener.mutex = &m.trigger_mutex;
+    m.contact_listener.buffers = &m.contact_buffers;
     m.contact_listener.sensors = &m.sensor_bodies;
     m.system.SetContactListener(&m.contact_listener);
     return world;
@@ -69,18 +68,33 @@ PhysicsWorld::~PhysicsWorld() = default;
 
 void PhysicsWorld::update(float dt) {
     if (!impl_) return;
-    {
-        const std::scoped_lock lock(impl_->trigger_mutex);
-        impl_->trigger_events.clear();
-    }
-    impl_->accumulator += dt;
+    Impl& m = *impl_;
+    // Contacts ended by remove_body() since the last update open the list.
+    m.contact_events.clear();
+    m.contact_events.swap(m.pending_events);
+    m.dropped_contacts = 0;
+    m.accumulator += dt;
     int steps = 0;
     // Clamp the number of catch-up steps so a long frame can't spiral.
-    while (impl_->accumulator >= fixed_timestep && steps < max_steps_per_update) {
-        impl_->system.Update(fixed_timestep, 1, impl_->temp_allocator.get(),
-                             impl_->job_system.get());
-        impl_->accumulator -= fixed_timestep;
+    while (m.accumulator >= fixed_timestep && steps < max_steps_per_update) {
+        m.system.Update(fixed_timestep, 1, m.temp_allocator.get(), m.job_system.get());
+        m.accumulator -= fixed_timestep;
         ++steps;
+        ++m.steps;
+        // The step's workers are done: take their buffer (the next step
+        // writes into the other one) and resolve it into body-pair events.
+        const ContactBuffer& done = m.contact_buffers.swap();
+        m.contact_tracker.process(done.contacts(), m.steps, *this,
+                                  m.system.GetBodyInterfaceNoLock(), m.contact_events);
+        m.dropped_contacts += done.dropped();
+    }
+    m.trigger_events.clear();
+    for (const ContactEvent& ev : m.contact_events) {
+        if (ev.kind == ContactEvent::Kind::trigger_enter ||
+            ev.kind == ContactEvent::Kind::trigger_exit) {
+            m.trigger_events.push_back(
+                {ev.body_a, ev.body_b, ev.kind == ContactEvent::Kind::trigger_enter});
+        }
     }
     // Hitting the cap means the simulation fell behind real time (a hitch, a
     // blocking load, a slow machine). Drop the backlog, keeping only the
@@ -203,6 +217,9 @@ void PhysicsWorld::remove_body(std::uint32_t body) {
     bodies.DestroyBody(id);
     const std::uint32_t shape = it->second.shape;
     impl_->bodies.erase(it);
+    // Jolt reports the end of the body's awake contacts in the next update;
+    // the sleeping ones it no longer tracks end here.
+    impl_->contact_tracker.body_removed(body, impl_->steps, impl_->pending_events);
     impl_->sensor_bodies.erase(body);
     impl_->unref_shape(shape); // after DestroyBody: Jolt's own reference is gone too
 }

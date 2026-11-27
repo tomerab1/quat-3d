@@ -16,6 +16,20 @@ std::span<const PhysicsWorld::TriggerEvent> PhysicsWorld::trigger_events() const
     return {impl_->trigger_events.data(), impl_->trigger_events.size()};
 }
 
+std::span<const PhysicsWorld::ContactEvent> PhysicsWorld::contact_events() const {
+    return {impl_->contact_events.data(), impl_->contact_events.size()};
+}
+
+std::uint32_t PhysicsWorld::dropped_contact_events() const {
+    return impl_ ? impl_->dropped_contacts : 0;
+}
+
+std::uint64_t PhysicsWorld::step_count() const { return impl_ ? impl_->steps : 0; }
+
+double PhysicsWorld::simulated_time() const {
+    return static_cast<double>(step_count()) * static_cast<double>(fixed_timestep);
+}
+
 std::uint32_t PhysicsWorld::body_owner(std::uint32_t body) const {
     if (!impl_ || body == invalid_body) return no_owner;
     if (const auto it = impl_->bodies.find(body); it != impl_->bodies.end()) {

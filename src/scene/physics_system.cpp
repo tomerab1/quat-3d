@@ -11,6 +11,7 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/quaternion.hpp>
 
+#include "engine/core/event_ring.hpp"
 #include "engine/physics/physics_world.hpp"
 #include "engine/scene/components.hpp"
 #include "engine/terrain/generator.hpp"
@@ -138,6 +139,41 @@ void physics_system(entt::registry& registry, physics::PhysicsWorld& world, floa
                                     glm::scale(glm::mat4(1.0F), scale));
         }
     }
+}
+
+void publish_physics_events(const physics::PhysicsWorld& world, core::EventRing& ring) {
+    using Kind = physics::PhysicsWorld::ContactEvent::Kind;
+    const auto entity_of = [](std::uint32_t owner) {
+        // Owners are entity ids (physics_system / character_system pass
+        // entt::to_integral); unowned bodies are terrain or demo floors.
+        return owner == physics::PhysicsWorld::no_owner ? core::Event::no_entity : owner;
+    };
+    const double dt = physics::PhysicsWorld::fixed_timestep;
+    for (const physics::PhysicsWorld::ContactEvent& c : world.contact_events()) {
+        core::Event ev;
+        switch (c.kind) {
+        case Kind::contact_added:
+            ev.kind = core::EventKind::contact_added;
+            break;
+        case Kind::contact_removed:
+            ev.kind = core::EventKind::contact_removed;
+            break;
+        case Kind::trigger_enter:
+            ev.kind = core::EventKind::trigger_enter;
+            break;
+        case Kind::trigger_exit:
+            ev.kind = core::EventKind::trigger_exit;
+            break;
+        }
+        ev.time_s = static_cast<double>(c.step) * dt;
+        ev.entity_a = entity_of(c.owner_a);
+        ev.entity_b = entity_of(c.owner_b);
+        ev.point = {c.point.x, c.point.y, c.point.z};
+        ev.normal = {c.normal.x, c.normal.y, c.normal.z};
+        ev.impulse = c.impulse;
+        ring.push(ev);
+    }
+    if (const std::uint32_t lost = world.dropped_contact_events(); lost > 0) ring.drop(lost);
 }
 
 namespace {

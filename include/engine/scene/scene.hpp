@@ -21,6 +21,9 @@
 #include "engine/scene/components.hpp"
 #include "engine/scene/navigation.hpp"
 
+namespace engine::core {
+class EventRing;
+}
 namespace engine::nav {
 class NavMesh;
 }
@@ -126,6 +129,12 @@ struct CameraMatrices {
 // dynamic bodies' transforms back into Transform (through the parent's space,
 // see set_world_transform).
 void physics_system(entt::registry& registry, physics::PhysicsWorld& world, float dt);
+
+// Pushes the contact / trigger events of the world's last update() into
+// `ring` (A10.1 events.poll), body owners as entity ids, and records the
+// contacts the world had to drop as a gap. Call once after each
+// physics_system / PhysicsWorld::update.
+void publish_physics_events(const physics::PhysicsWorld& world, core::EventRing& ring);
 
 // Create a static Jolt height-field body for the first Terrain entity in the
 // registry, matching the rendered surface: the body sits at the tile's minimum
