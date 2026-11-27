@@ -157,12 +157,28 @@ public:
     // swapchain image pass the stage the acquire semaphore is waited at, so
     // the first write (layout transition, copy, …) is chained after the
     // presentation engine releases the image. NONE means "nothing to wait for".
+    //
+    // `final_stage` is the mirror image: the stage at which whatever consumes
+    // the image after the graph waits for it — the stage of the semaphore
+    // signal that present waits on, or the source scope of the next
+    // command's barrier. It becomes the second synchronization scope of the
+    // trailing final-layout barrier. A layout transition is a write that is
+    // ordered only before its barrier's second scope, so that scope must be a
+    // real stage the consumer's wait chains onto: with NONE (as before issue
+    // #9) a semaphore signal does not wait for the transition and present
+    // races it (SYNC-HAZARD-PRESENT-AFTER-WRITE). The default, ALL_COMMANDS,
+    // chains onto any consumer; pass a narrower stage (e.g. the frame's
+    // render-finished signal stage for a swapchain image) only together with
+    // a consumer that waits at that stage. NONE is rejected by compile() when
+    // a final layout is requested.
     ResourceHandle import_image(const char* name, VkImage image, VkImageView view,
                                 VkFormat format, VkExtent2D extent,
                                 VkImageLayout current_layout,
                                 VkImageLayout final_layout,
                                 VkPipelineStageFlags2 available_stage = VK_PIPELINE_STAGE_2_NONE,
-                                VkAccessFlags2 available_access = 0);
+                                VkAccessFlags2 available_access = 0,
+                                VkPipelineStageFlags2 final_stage =
+                                    VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT);
 
     // Import an externally-owned buffer (whole range). Buffers have no layout;
     // the graph orders passes by their buffer reads/writes and plans
@@ -209,6 +225,10 @@ public:
     // Buffer barriers compile() planned to run before `pass_name`.
     [[nodiscard]] std::vector<VkBufferMemoryBarrier2>
     planned_buffer_barriers(std::string_view pass_name) const;
+    // Trailing final-layout barriers compile() planned after the last pass.
+    [[nodiscard]] const std::vector<VkImageMemoryBarrier2>& planned_final_barriers() const {
+        return final_barriers_;
+    }
 
     // Replay the compiled plan into `cmd`: barriers then execute lambda, per
     // pass in dependency order, followed by trailing import final-layout barriers.
@@ -245,14 +265,20 @@ private:
         VkImageLayout     final_layout   = VK_IMAGE_LAYOUT_UNDEFINED;
         VkPipelineStageFlags2 available_stage = VK_PIPELINE_STAGE_2_NONE; // imported only
         VkAccessFlags2        available_access = 0;
+        VkPipelineStageFlags2 final_stage = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT; // imported only
         // Tracked while planning barriers. The last write (its stage/access)
         // is what every later reader must see; `visible_*` record which stages
         // and accesses a barrier already made that write visible to, and
         // `read_stages` which stages read it since (a later write or layout
-        // change must wait for them: write-after-read).
+        // change must wait for them: write-after-read). `transition_stage` is
+        // the destination stage of the barrier whose layout transition (done
+        // for a read, since the last write) the image is in: the transition is
+        // itself a write, so a later reader outside that stage must chain onto
+        // it, not only onto the last write (issue #4).
         VkImageLayout         cur_layout = VK_IMAGE_LAYOUT_UNDEFINED;
         VkPipelineStageFlags2 write_stage = VK_PIPELINE_STAGE_2_NONE;
         VkAccessFlags2        write_access = 0;
+        VkPipelineStageFlags2 transition_stage = VK_PIPELINE_STAGE_2_NONE;
         VkPipelineStageFlags2 read_stages = VK_PIPELINE_STAGE_2_NONE;
         VkPipelineStageFlags2 visible_stages = VK_PIPELINE_STAGE_2_NONE;
         VkAccessFlags2        visible_access = 0;
