@@ -34,8 +34,16 @@ struct AudioEngineConfig {
     bool          no_device = false;
     std::uint32_t sample_rate = 0; // 0: the device's native rate (48 kHz without a device)
     std::uint32_t channels = 0;    // 0: the device's native layout (stereo without a device)
-    // Relative clip paths resolve against this directory (empty: the CWD).
+    // Clip paths are relative to this directory (empty: the CWD) and must
+    // stay inside it (issue #66: clips come from scene files and remote
+    // requests).
     std::string asset_root{};
+    // Most memory a non-streamed sound may decode into: its length at the
+    // engine's sample rate × channels × sizeof(float), read from the file's
+    // headers before anything is decoded (a file larger than this is refused
+    // without being opened). A clip of unknown length can only be streamed.
+    // Streamed sounds read incrementally and have no cap.
+    std::uint64_t max_decoded_clip_bytes = 64ULL << 20U;
 };
 
 // How a sound is created. Everything else (volume, pitch, looping, spatial
@@ -87,8 +95,13 @@ public:
     [[nodiscard]] float bus_volume(AudioBus bus) const;
 
     // ---- Sounds ------------------------------------------------------------
-    // Load a sound (stopped, cursor at the start). Errors name the file and
-    // miniaudio's reason (missing file, unsupported format, ...).
+    // Load a sound (stopped, cursor at the start). The path is confined to
+    // the asset root (core::confine_to_root: no absolute paths, no `..` or
+    // symlink escapes) and must name a regular file — never a FIFO or device,
+    // which would block the main thread — whose decoded size is within
+    // max_decoded_clip_bytes unless streamed. Errors name the clip as given
+    // (never the resolved absolute path) and the reason (outside the root,
+    // not a file, too large, missing, unsupported format, ...).
     [[nodiscard]] std::expected<SoundHandle, core::Error> load(const SoundDesc& desc);
     void destroy(SoundHandle sound);
     // Stops and destroys every sound (the buses and their volumes remain).

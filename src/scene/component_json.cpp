@@ -18,6 +18,7 @@
 #include <nlohmann/json.hpp>
 
 #include "engine/core/json_fields.hpp"
+#include "engine/core/utf8_path.hpp"
 #include "engine/physics/physics_world.hpp"
 #include "engine/scene/components.hpp"
 #include "engine/scene/material_override.hpp"
@@ -84,6 +85,19 @@ constexpr EnumName<AudioCommand> k_audio_commands[] = {
     {"none", AudioCommand::none}, {"play", AudioCommand::play}, {"stop", AudioCommand::stop},
     {"pause", AudioCommand::pause}, {"resume", AudioCommand::resume}};
 constexpr std::size_t k_max_clip_path = 4096;
+
+// Clips are project-relative (issue #66); AudioEngine::load re-checks against
+// the real root, symlinks included. Null when `clip` is acceptable.
+[[nodiscard]] const char* clip_path_problem(const std::string& clip) {
+    if (clip.empty()) return nullptr;
+    const std::filesystem::path p = core::path_from_utf8(clip);
+    if (p.is_absolute() || p.has_root_name() || p.has_root_directory()) {
+        return "must be a path relative to the project root, not an absolute path";
+    }
+    const std::filesystem::path norm = p.lexically_normal();
+    if (!norm.empty() && *norm.begin() == "..") return "must stay inside the project root";
+    return nullptr;
+}
 
 template <typename E, std::size_t N>
 [[nodiscard]] std::string enum_name(const EnumName<E> (&names)[N], E value) {
@@ -877,6 +891,7 @@ std::expected<void, core::Error> apply_component(entt::registry& r, entt::entity
         return merge<AudioSource>(r, e, v, name, strict, [](JsonFields& f, AudioSource& a) {
             f.string("clip", a.clip, k_max_clip_path).enumeration("bus", a.bus, k_audio_buses);
             if (a.clip.find('\0') != std::string::npos) f.fail("clip", "must not contain NUL");
+            if (const char* why = clip_path_problem(a.clip); why != nullptr) f.fail("clip", why);
             f.number("volume", a.volume, 0.0F, 16.0F).number("pitch", a.pitch, 0.01F, 16.0F);
             f.boolean("loop", a.loop).boolean("play_on_start", a.play_on_start);
             f.boolean("spatial", a.spatial);

@@ -20,12 +20,18 @@ protocol so either side can be built and tested independently.
 
 ```sh
 QUAT_REMOTE=7878 ./build/release/game                          # or QUAT_REMOTE=1 for port 7878
-QUAT_REMOTE=7878 QUAT_REMOTE_TOKEN=secret ./build/release/game  # require a token
+QUAT_REMOTE=7878 QUAT_REMOTE_TOKEN=secret ./build/release/game  # choose the token yourself
 ```
 
-The endpoint listens on `127.0.0.1` only. Requests are processed once per
-frame on the engine's main thread, before the scene updates, so a command sees
-and changes the same state the editor does.
+The endpoint listens on `127.0.0.1` only and always requires a session token
+(see [Session token](#session-token)); the engine prints where it wrote it:
+
+```
+[remote] listening on 127.0.0.1:7878; session token in /run/user/1000/quat-3d/remote-7878.token
+```
+
+Requests are processed once per frame on the engine's main thread, before the
+scene updates, so a command sees and changes the same state the editor does.
 
 ## Wire format
 
@@ -35,6 +41,14 @@ must be objects with `"jsonrpc": "2.0"`, a string `method`, optional object
 notification: it runs, and no reply is sent. Batch arrays are not supported —
 use the engine's own batch command (A2) instead.
 
+The first line that is not such a request — invalid JSON, a JSON value that is
+not an object, an object without `"jsonrpc": "2.0"` and a string `method` —
+gets one error reply (`-32700` or `-32600`) and the engine closes the
+connection; nothing after it is read. A line of an HTTP message (a request
+line such as `POST / HTTP/1.1`, a status line, or a header such as `Host: …`)
+closes the connection at once, without a reply. Bad *parameters* (`-32602`)
+on an authenticated connection do not close it.
+
 ```json
 → {"jsonrpc":"2.0","id":1,"method":"session.hello","params":{"token":"secret"}}
 ← {"jsonrpc":"2.0","id":1,"result":{"protocol":1,"server":"quat-3d","methods":4}}
@@ -42,14 +56,68 @@ use the engine's own batch command (A2) instead.
 ← {"jsonrpc":"2.0","id":2,"result":{"engine":"quat-3d","frame":812,"entities":14,"playing":false,"editor":true}}
 ```
 
-Try it by hand: `nc 127.0.0.1 7878`, then type a request line.
+Try it by hand: `nc 127.0.0.1 7878`, then type a `session.hello` line with
+the token from the token file (`cat` the path the engine printed), then
+requests.
 
 ## Authentication
 
-With `QUAT_REMOTE_TOKEN` set, the first call on a connection must be
-`session.hello` with the matching `token`; any other first call, or a wrong
-token, gets an `unauthorized` error and the connection is closed. Without a
-token, `session.hello` is optional (it still reports the protocol version).
+The first call on every connection must be `session.hello` with the session
+token; any other first call, a missing token or a wrong one gets an
+`unauthorized` error (`-32001`) and the connection is closed. The comparison
+is constant-time.
+
+### Session token
+
+There is no unauthenticated mode. The engine's token is, in order:
+
+1. `QUAT_REMOTE_TOKEN`, when set and non-empty;
+2. otherwise a fresh random token for this run: 256 bits from OpenSSL's
+   CSPRNG (`RAND_bytes`), written as 64 hex digits.
+
+Either way the engine publishes the token in a **token file** that only the
+user running the engine can read, and deletes it on exit. quat-mcp reads the
+same file when it has no explicit token, so `QUAT_REMOTE=1` plus an MCP client
+needs no configuration. The file is read again on every new connection, so
+restarting the engine (new token) needs no quat-mcp restart.
+
+| Platform | Token file |
+|---|---|
+| Linux / other POSIX | `$XDG_RUNTIME_DIR/quat-3d/remote-<port>.token`; without `XDG_RUNTIME_DIR`, `$XDG_STATE_HOME/quat-3d/…` (default `~/.local/state/quat-3d/…`) |
+| macOS | `~/Library/Application Support/quat-3d/remote-<port>.token` |
+| Windows | `%LOCALAPPDATA%\quat-3d\remote-<port>.token` |
+
+`QUAT_REMOTE_TOKEN_FILE=<path>` overrides the location; set it to the same
+value for the engine and quat-mcp. The file holds the token on one line.
+
+Why a per-user directory and not the project directory: the token belongs to
+the user, not the repository (it can't be committed by accident, and a project
+on a shared or network drive doesn't expose it), and the path depends only on
+the port, so quat-mcp finds it whatever directory the MCP client starts it in.
+`$XDG_RUNTIME_DIR` is a per-user `0700` tmpfs on systemd systems, cleared at
+logout.
+
+How the file is written (`src/remote/private_file_*.cpp`): on POSIX the
+`quat-3d` directory is created `0700`; an existing directory must belong to
+the user (or root) and must not be writable by others unless sticky. The token
+goes to a temporary file opened `O_CREAT | O_EXCL | O_NOFOLLOW` with mode
+`0600` (re-applied with `fchmod`, whatever the umask) that is then renamed over
+the target, so a stale file with looser permissions, or a symlink planted at
+the path, is replaced and never written through. On Windows the temporary
+file is created with `CREATE_NEW` and `FILE_FLAG_OPEN_REPARSE_POINT` under an
+explicit protected DACL granting only the current user's SID — so an explicit
+`QUAT_REMOTE_TOKEN_FILE` in a shared directory is still user-only — then moved
+over the target with `MoveFileExW(MOVEFILE_REPLACE_EXISTING)`. If a generated token can't be published, the
+endpoint is not opened (nobody could use it); with `QUAT_REMOTE_TOKEN` it opens
+and warns.
+
+**Why this matters (issue #56).** A browser may send a cross-origin `POST`
+to `127.0.0.1` without a CORS preflight (`fetch(..., {mode: "no-cors"})` with a
+`text/plain` body), and an HTTP request is a sequence of lines. Before this
+was fixed, the request line and headers each got a parse error and the body
+line ran as an RPC call on an unauthenticated connection — any web page could
+clear and overwrite scenes. Now the request line closes the connection before
+the body is read, and the body could not authenticate anyway.
 
 ## Methods (implemented)
 
@@ -58,7 +126,7 @@ wired into the game by `src/app/remote_bridge.cpp`), plus:
 
 | Method | Params | Result |
 |---|---|---|
-| `session.hello` | `{token?}` | `{protocol, server, methods}` |
+| `session.hello` | `{token}` — required first call on every connection | `{protocol, server, methods}` |
 | `rpc.methods` | — | `[{name, summary, deferred}]` |
 | `engine.info` | — | `{engine, frame, entities, playing, paused, editor}` |
 
@@ -152,7 +220,10 @@ also flat ground at `ground_y` where no terrain is loaded), `lod_start`
 radius),
 `point_light`, `dir_light`, `camera`, `collider`, `rigidbody`, `character`,
 `nav_agent`, `behavior`, `patrol`, `terrain`, `net_replicated`,
-`audio_source` (`clip`, `bus`: master/music/sfx/ui/ambience, `volume`,
+`audio_source` (`clip`: a project-relative file — absolute paths, `..`
+escapes, symlinks leading out of the project and non-regular files are
+refused, and clips decoded into memory (sfx/ui) are capped at 64 MiB;
+`bus`: master/music/sfx/ui/ambience, `volume`,
 `pitch`, `loop`, `play_on_start`, `spatial`, `min_distance`, `max_distance`,
 `rolloff`, `doppler`, plus write-only `command`: play/stop/pause/resume),
 `audio_listener` (`active`), `animator` (edit only: `clip` switches by name
@@ -435,12 +506,12 @@ the stored tree from running (empty for a valid tree).
 
 | Code | Meaning |
 |---|---|
-| -32700 | Invalid JSON |
-| -32600 | Not a valid request (also: message larger than the limit, 16 MiB) |
+| -32700 | Invalid JSON (the connection is then closed) |
+| -32600 | Not a valid request (the connection is then closed; also: message larger than the limit, 16 MiB) |
 | -32601 | Unknown method |
 | -32602 | Bad parameters — the message names the field and what was expected |
 | -32603 | Internal error (also: a deferred request was dropped) |
-| -32001 | Unauthorized (missing or wrong token) |
+| -32001 | Unauthorized: first call not `session.hello`, or a missing or wrong token (the connection is then closed) |
 | -32002 | Unavailable in this build or state |
 | -32003 | Referenced entity/asset not found |
 | -32004 | The operation itself failed |

@@ -5,6 +5,8 @@ use std::time::Duration;
 
 use serde_json::Value;
 
+use super::token_file::TokenFileError;
+
 /// JSON-RPC error codes used by the engine (`docs/remote-control.md`, Errors).
 pub mod code {
     pub const PARSE_ERROR: i64 = -32700;
@@ -51,11 +53,18 @@ pub enum EngineError {
         reason: String,
     },
 
+    #[error("the engine at {addr} rejected the session ({message}). {hint}")]
+    Unauthorized {
+        addr: String,
+        message: String,
+        hint: String,
+    },
+
     #[error(
-        "the engine at {addr} rejected the session ({message}). Set QUAT_REMOTE_TOKEN for \
-         quat-mcp to the same value the engine was started with."
+        "cannot use the engine's session token file: {0}. Restart the engine to rewrite it, or \
+         set QUAT_REMOTE_TOKEN (or QUAT_REMOTE_TOKEN_FILE) for quat-mcp."
     )]
-    Unauthorized { addr: String, message: String },
+    TokenFile(#[from] TokenFileError),
 
     #[error(
         "{method}: no reply from the engine within {:.1}s. The engine may be busy (loading, \
