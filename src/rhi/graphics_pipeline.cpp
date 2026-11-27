@@ -117,6 +117,7 @@ GraphicsPipeline::create(const Device& device, VkPipelineCache cache, const Crea
     VkPipelineRasterizationStateCreateInfo raster{};
     raster.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
     raster.polygonMode = VK_POLYGON_MODE_FILL;
+    raster.depthClampEnable = info.depth_clamp ? VK_TRUE : VK_FALSE;
     raster.cullMode = info.cull_mode;
     raster.frontFace = info.front_face;
     raster.lineWidth = 1.0F;
