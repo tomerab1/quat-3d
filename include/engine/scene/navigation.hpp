@@ -19,9 +19,19 @@ class NavMesh;
 
 namespace engine::scene {
 
+struct NavAgent;
+
 // Authoritative ground height at world (x, z), or nullopt where unknown (off
 // the terrain). Supplied by the frame loop from the terrain heightmaps.
 using GroundHeightFn = std::function<std::optional<float>(float x, float z)>;
+
+// Send the agent to `target`: activates it and clears the previous walk's
+// plan and arrived/failed state (the nav system plans on its next tick).
+void nav_agent_set_target(NavAgent& agent, const glm::vec3& target);
+
+// World position of the agent's feet: the entity origin minus ground_offset,
+// or the bottom of its CharacterController capsule.
+[[nodiscard]] glm::vec3 nav_agent_feet(const entt::registry& registry, entt::entity entity);
 
 // Advance every active NavAgent: repath on the navmesh when the target moved,
 // steer toward the current waypoint with simple agent-agent separation, and
@@ -29,10 +39,12 @@ using GroundHeightFn = std::function<std::optional<float>(float x, float z)>;
 // Transform kinematically. Call before character_system each tick.
 //
 // Detour returns best-effort paths (partial when the buffer fills or the target
-// poly is unreachable): when an agent exhausts its path away from the target it
-// replans the next leg, and when it can make no further progress it settles for
-// the closest reachable point (arrived). Failed plans retry on a cooldown; a
-// PatrolRoute skips unreachable points instead of stalling the route.
+// poly is unreachable): when an agent exhausts a partial path it replans the
+// next leg from there, and when no further progress is possible it gives up
+// (failed). A target off the mesh within NavMesh::query_extents snaps to its
+// nearest polygon (arriving there counts). Failed plans retry on a cooldown
+// and give up after a few attempts; a PatrolRoute skips points its agent
+// failed to reach.
 //
 // `ground_height(x, z)` (optional) supplies the authoritative ground height for
 // kinematic agents — coarse terrain navmeshes can float metres off the real
@@ -40,12 +52,5 @@ using GroundHeightFn = std::function<std::optional<float>(float x, float z)>;
 // CharacterController ignore it (physics owns their height).
 void nav_agent_system(entt::registry& registry, const nav::NavMesh& navmesh, float dt,
                       const GroundHeightFn& ground_height = {});
-
-// A kinematic agent walks from one side of the walled test plate to the other:
-// it must arrive at the target and must have detoured through the gap.
-[[nodiscard]] std::expected<void, core::Error> run_nav_agent_self_test();
-
-// A looping two-point patrol drives the agent A -> B -> A on a flat plate.
-[[nodiscard]] std::expected<void, core::Error> run_patrol_self_test();
 
 } // namespace engine::scene

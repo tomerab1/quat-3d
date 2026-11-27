@@ -419,7 +419,13 @@ std::expected<void, core::Error> apply_component(entt::registry& r, entt::entity
             const glm::vec3 old_target = a.target;
             f.vec3("target", a.target).number("speed", a.speed, 0.0F);
             f.number("ground_offset", a.ground_offset).boolean("active", a.active);
-            if (a.target != old_target) a.arrived = false; // the system repaths
+            if (a.target != old_target) { // a new walk: the system repaths
+                a.arrived = false;
+                a.failed = false;
+                a.plan_failures = 0;
+                a.retry_s = 0.0F;
+                a.path.clear();
+            }
         });
     }
     if (name == "behavior") {

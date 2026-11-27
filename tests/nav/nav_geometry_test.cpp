@@ -77,6 +77,27 @@ TEST(Nav, BakeBoxFloorRoutesAroundBoxObstacle) {
     EXPECT_NEAR(under->y, floor_top, 0.35F);
 }
 
+// Stacked walkable layers: surface_height picks the one nearest the
+// reference height, and works far outside the endpoint snapping box.
+TEST(Nav, SurfaceHeightPicksTheNearestLayer) {
+    entt::registry r;
+    add_box(r, glm::vec3(0.0F, -0.5F, 0.0F), glm::vec3(10.0F, 0.5F, 10.0F));  // ground, y = 0
+    add_box(r, glm::vec3(0.0F, 39.5F, 0.0F), glm::vec3(10.0F, 0.5F, 10.0F));  // deck, y = 40
+    auto mesh = bake(r);
+    ASSERT_OK(mesh);
+    auto low = mesh->surface_height(2.0F, 3.0F, -5.0F);
+    ASSERT_OK(low);
+    EXPECT_NEAR(*low, 0.0F, 0.3F);
+    auto high = mesh->surface_height(2.0F, 3.0F, 100.0F);
+    ASSERT_OK(high);
+    EXPECT_NEAR(*high, 40.0F, 0.3F);
+    // Past the edge: the nearest polygon's height.
+    auto edge = mesh->surface_height(11.0F, 0.0F, 0.0F);
+    ASSERT_OK(edge);
+    EXPECT_NEAR(*edge, 0.0F, 0.3F);
+    EXPECT_ERR(mesh->surface_height(80.0F, 80.0F, 0.0F));
+}
+
 // Regression (S1 N12): an agent's own collider is not level geometry — it
 // used to be baked as an obstacle (a hole under the agent).
 TEST(Nav, BakeSkipsAgentAndCharacterColliders) {

@@ -148,4 +148,50 @@ TEST(Ai, MoveToDoesNotReaimWhileHeld) {
     EXPECT_GT(arrived_frames, 60);
 }
 
+// Regression (S1 N4): move_to never reported failure, so a selector could
+// not fall back from an unreachable destination.
+TEST(Ai, UnreachableMoveToFallsBackInASelector) {
+    WalledPlate w;
+    w.tree(R"({"type":"selector","children":[
+        {"type":"leaf","name":"move_to","x":0,"y":40,"z":-10,"speed":6},
+        {"type":"leaf","name":"move_to","x":5,"y":0,"z":-10,"speed":6}]})");
+    std::optional<s::BtStatus> result;
+    for (int i = 0; i < 60 * 30 && !result; ++i) {
+        const s::BtStatus st = w.step();
+        if (st != s::BtStatus::running) result = st;
+    }
+    ASSERT_TRUE(result.has_value());
+    EXPECT_EQ(*result, s::BtStatus::success) << "the fallback branch must run";
+    EXPECT_LT(xz_distance(w.pos(), {5.0F, 0.0F, -10.0F}), 1.0F);
+}
+
+// Regression (S1 N4): a move_to without y aimed at y = 0, which is off the
+// mesh on raised ground (beyond the endpoint snapping box).
+TEST(Ai, MoveToWithoutYSnapsToRaisedGround) {
+    entt::registry r;
+    constexpr float top = 30.0F;
+    quat::test::add_box(r, glm::vec3(0.0F, top - 0.5F, 0.0F), glm::vec3(15.0F, 0.5F, 15.0F));
+    auto mesh = quat::test::bake(r);
+    ASSERT_OK(mesh);
+    const entt::entity e = quat::test::place(r, glm::vec3(-8.0F, top, -8.0F));
+    r.emplace<s::NavAgent>(e);
+    auto& bt = r.emplace<s::BehaviorTree>(e);
+    auto parsed = s::BehaviorTreeAsset::parse(
+        R"({"type":"leaf","name":"move_to","x":8,"z":8,"speed":6})");
+    ASSERT_OK(parsed);
+    bt.compiled = *parsed;
+
+    const s::BtWorld world{.navmesh = &*mesh};
+    std::optional<s::BtStatus> result;
+    for (int i = 0; i < 60 * 20 && !result; ++i) {
+        const s::BtStatus st = s::bt_tick(bt, r, e, world, kDt);
+        s::nav_agent_system(r, *mesh, kDt);
+        if (st != s::BtStatus::running) result = st;
+    }
+    ASSERT_TRUE(result.has_value());
+    EXPECT_EQ(*result, s::BtStatus::success);
+    EXPECT_NEAR(r.get<s::NavAgent>(e).target.y, top, 0.5F);
+    EXPECT_LT(xz_distance(position_of(r, e), {8.0F, top, 8.0F}), 1.0F);
+}
+
 } // namespace

@@ -32,6 +32,8 @@ struct NavMesh::Impl {
     std::unique_ptr<dtNavMesh, NavMeshDeleter>      mesh;
     std::unique_ptr<dtNavMeshQuery, QueryDeleter>   query;
     std::vector<std::pair<glm::vec3, glm::vec3>>    edges;
+    glm::vec3                                       bmin{0.0F}; // poly mesh bounds
+    glm::vec3                                       bmax{0.0F};
 };
 
 NavMesh::NavMesh() = default;
@@ -208,6 +210,8 @@ std::expected<NavMesh, core::Error> NavMesh::build(std::span<const glm::vec3> ve
 
     NavMesh out;
     out.impl_ = std::make_unique<Impl>();
+    out.impl_->bmin = glm::vec3(pmesh->bmin[0], pmesh->bmin[1], pmesh->bmin[2]);
+    out.impl_->bmax = glm::vec3(pmesh->bmax[0], pmesh->bmax[1], pmesh->bmax[2]);
 
     // Editor overlay: polygon edges in world space (quantized verts -> world).
     const glm::vec3 pb(pmesh->bmin[0], pmesh->bmin[1], pmesh->bmin[2]);
@@ -251,29 +255,68 @@ std::expected<NavMesh, core::Error> NavMesh::build(std::span<const glm::vec3> ve
 std::expected<glm::vec3, core::Error> NavMesh::nearest_point(const glm::vec3& pos) const {
     if (!valid()) return fail("navmesh: not built");
     const dtQueryFilter filter;
-    const float extents[3] = {4.0F, 8.0F, 4.0F};
     dtPolyRef ref = 0;
     float nearest[3]{};
-    if (dtStatusFailed(
-            impl_->query->findNearestPoly(&pos.x, extents, &filter, &ref, nearest)) ||
+    if (dtStatusFailed(impl_->query->findNearestPoly(&pos.x, &query_extents.x, &filter, &ref,
+                                                     nearest)) ||
         ref == 0) {
         return fail("navmesh: position is off the mesh");
     }
     return glm::vec3(nearest[0], nearest[1], nearest[2]);
 }
 
-std::expected<std::vector<glm::vec3>, core::Error>
-NavMesh::find_path(const glm::vec3& start, const glm::vec3& end) const {
+std::expected<float, core::Error> NavMesh::surface_height(float x, float z,
+                                                          float reference_y) const {
     if (!valid()) return fail("navmesh: not built");
     const dtQueryFilter filter;
-    const float extents[3] = {4.0F, 8.0F, 4.0F};
+    // A thin column through the whole mesh: every polygon whose footprint
+    // contains (x, z) reports its height there.
+    const float mid_y = 0.5F * (impl_->bmin.y + impl_->bmax.y);
+    const float half_y = 0.5F * (impl_->bmax.y - impl_->bmin.y) + 1.0F;
+    const float centre[3] = {x, mid_y, z};
+    const float column[3] = {0.01F, half_y, 0.01F};
+    constexpr int max_polys = 64;
+    dtPolyRef polys[max_polys];
+    int npolys = 0;
+    impl_->query->queryPolygons(centre, column, &filter, polys, &npolys, max_polys);
+    bool found = false;
+    float best = 0.0F;
+    for (int i = 0; i < npolys; ++i) {
+        const float probe[3] = {x, mid_y, z};
+        float h = 0.0F;
+        if (dtStatusFailed(impl_->query->getPolyHeight(polys[i], probe, &h))) continue;
+        if (!found || std::abs(h - reference_y) < std::abs(best - reference_y)) best = h;
+        found = true;
+    }
+    if (found) return best;
+
+    // (x, z) is not inside any polygon (beside a wall, past an edge): take
+    // the nearest polygon around the reference height.
+    const float near_centre[3] = {x, reference_y, z};
+    const float extents[3] = {query_extents.x, half_y + std::abs(reference_y - mid_y),
+                              query_extents.z};
+    dtPolyRef ref = 0;
+    float nearest[3]{};
+    if (dtStatusFailed(
+            impl_->query->findNearestPoly(near_centre, extents, &filter, &ref, nearest)) ||
+        ref == 0) {
+        return fail("navmesh: no surface near that position");
+    }
+    return nearest[1];
+}
+
+std::expected<NavPath, core::Error> NavMesh::plan_path(const glm::vec3& start,
+                                                       const glm::vec3& end) const {
+    if (!valid()) return fail("navmesh: not built");
+    const dtQueryFilter filter;
 
     dtPolyRef start_ref = 0;
     dtPolyRef end_ref = 0;
     float snapped_start[3]{};
     float snapped_end[3]{};
-    impl_->query->findNearestPoly(&start.x, extents, &filter, &start_ref, snapped_start);
-    impl_->query->findNearestPoly(&end.x, extents, &filter, &end_ref, snapped_end);
+    impl_->query->findNearestPoly(&start.x, &query_extents.x, &filter, &start_ref,
+                                  snapped_start);
+    impl_->query->findNearestPoly(&end.x, &query_extents.x, &filter, &end_ref, snapped_end);
     if (start_ref == 0 || end_ref == 0) {
         return fail("navmesh: endpoint is off the mesh");
     }
@@ -283,27 +326,42 @@ NavMesh::find_path(const glm::vec3& start, const glm::vec3& end) const {
     constexpr int max_polys = 1024;
     dtPolyRef polys[max_polys];
     int npolys = 0;
-    if (dtStatusFailed(impl_->query->findPath(start_ref, end_ref, snapped_start, snapped_end,
-                                              &filter, polys, &npolys, max_polys)) ||
-        npolys == 0) {
+    const dtStatus status = impl_->query->findPath(start_ref, end_ref, snapped_start,
+                                                   snapped_end, &filter, polys, &npolys,
+                                                   max_polys);
+    if (dtStatusFailed(status) || npolys == 0) {
         return fail("navmesh: no route between the endpoints");
+    }
+    NavPath out;
+    out.partial = dtStatusDetail(status, DT_PARTIAL_RESULT) || polys[npolys - 1] != end_ref;
+
+    // A partial corridor ends on the polygon closest to the target: aim the
+    // string-pull at the closest point on it, not at the unreachable target.
+    float goal[3] = {snapped_end[0], snapped_end[1], snapped_end[2]};
+    if (out.partial) {
+        impl_->query->closestPointOnPoly(polys[npolys - 1], snapped_end, goal, nullptr);
     }
 
     float straight[max_polys * 3];
     int nstraight = 0;
-    if (dtStatusFailed(impl_->query->findStraightPath(snapped_start, snapped_end, polys, npolys,
+    if (dtStatusFailed(impl_->query->findStraightPath(snapped_start, goal, polys, npolys,
                                                       straight, nullptr, nullptr, &nstraight,
                                                       max_polys)) ||
         nstraight == 0) {
         return fail("navmesh: string-pull failed");
     }
-
-    std::vector<glm::vec3> path;
-    path.reserve(static_cast<std::size_t>(nstraight));
+    out.points.reserve(static_cast<std::size_t>(nstraight));
     for (int i = 0; i < nstraight; ++i) {
-        path.emplace_back(straight[i * 3], straight[i * 3 + 1], straight[i * 3 + 2]);
+        out.points.emplace_back(straight[i * 3], straight[i * 3 + 1], straight[i * 3 + 2]);
     }
-    return path;
+    return out;
+}
+
+std::expected<std::vector<glm::vec3>, core::Error>
+NavMesh::find_path(const glm::vec3& start, const glm::vec3& end) const {
+    auto plan = plan_path(start, end);
+    if (!plan) return std::unexpected(plan.error());
+    return std::move(plan->points);
 }
 
 // ---------------------------------------------------------------------------

@@ -10,6 +10,7 @@
 #include <nlohmann/json.hpp>
 
 #include "engine/core/json_fields.hpp"
+#include "engine/nav/navmesh.hpp"
 #include "engine/scene/components.hpp"
 #include "engine/scene/scene.hpp"
 
@@ -52,22 +53,36 @@ constexpr float kMoveDone = 2.0F;
     return xz_distance(agent.target, target) < 1e-3F;
 }
 
+// Ground height at (x, z) for a move_to target authored without y: the
+// navmesh surface (closest layer to the ground sampler / the agent's feet),
+// else the ground sampler, else the agent's current feet height.
+[[nodiscard]] float ground_y_at(const BtLeafContext& c, float x, float z) {
+    float reference = nav_agent_feet(c.registry, c.entity).y;
+    if (c.world.ground_height) {
+        if (const auto h = c.world.ground_height(x, z)) reference = *h;
+    }
+    if (c.world.navmesh != nullptr) {
+        if (const auto h = c.world.navmesh->surface_height(x, z, reference)) return *h;
+    }
+    return reference;
+}
+
 std::expected<BtLeaf, core::Error> make_move_to(core::JsonFields& f) {
     glm::vec3 target(0.0F);
     float speed = 3.0F;
+    const bool has_y = f.has("y");
     f.number("x", target.x).number("y", target.y).number("z", target.z);
     f.number("speed", speed, 0.0F, 1000.0F);
     BtLeaf leaf;
-    leaf.tick = [target, speed](BtLeafContext& c) {
+    leaf.tick = [target, speed, has_y](BtLeafContext& c) {
         auto* agent = c.registry.try_get<NavAgent>(c.entity);
         if (agent == nullptr) return BtStatus::failure;
         if (c.state == kMoveDone) return BtStatus::success; // held: never re-aim
         if (c.state == kMoveIdle) {
-            agent->target = target;
+            glm::vec3 goal = target;
+            if (!has_y) goal.y = ground_y_at(c, goal.x, goal.z);
+            nav_agent_set_target(*agent, goal);
             agent->speed = speed;
-            agent->active = true;
-            agent->arrived = false;
-            agent->path.clear();
             c.state = kMoveRunning;
             return BtStatus::running;
         }
@@ -76,7 +91,7 @@ std::expected<BtLeaf, core::Error> make_move_to(core::JsonFields& f) {
             c.state = kMoveDone;
             return BtStatus::success;
         }
-        if (!agent->active) return BtStatus::failure; // stopped short
+        if (agent->failed || !agent->active) return BtStatus::failure; // gave up / stopped
         return BtStatus::running;
     };
     leaf.halt = [target](BtLeafContext& c) {

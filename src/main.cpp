@@ -1258,7 +1258,8 @@ int main() {
         }
 #ifdef ENGINE_EDITOR
         else if (editor_play && play_physics) {
-            engine::scene::bt_system(scene.registry(), dt);
+            engine::scene::bt_system(scene.registry(), dt,
+                                     {.navmesh = &navmesh, .ground_height = ground_height_at});
             if (navmesh.valid()) {
                 engine::scene::nav_agent_system(scene.registry(), navmesh, dt,
                                                 ground_height_at);

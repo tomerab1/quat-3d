@@ -147,15 +147,20 @@ struct CharacterController {
 // CharacterController on the entity it steers the controller (collisions,
 // gravity); otherwise it moves the Transform kinematically, snapped to the
 // ground + `ground_offset` (set it to the entity's half-height when the pivot
-// sits at the centre). `arrived` flips when the last waypoint is reached —
-// or at the closest reachable point when the target itself is unreachable.
-// path/waypoint/planned_target/retry_s are system-managed.
+// sits at the centre). A walk ends either `arrived` (reached the target, or
+// the closest on-mesh point to it) or `failed` (the target is unreachable,
+// plans kept failing, or the agent made no progress) — both clear `active`.
+// Everything below `arrived` is system-managed (not serialized); set targets
+// through nav_agent_set_target (navigation.hpp) to reset it.
 struct NavAgent {
     glm::vec3 target{0.0F};
     float     speed = 3.0F;
     float     ground_offset = 0.0F; // entity origin height above the ground
     bool      active = false;
     bool      arrived = false;
+    bool      failed = false;          // gave up on the current target
+    std::uint8_t           plan_failures = 0; // failed attempts since the last progress
+    bool                   path_partial = false; // path ends short of the target
     std::vector<glm::vec3> path;
     std::size_t            waypoint = 0;
     glm::vec3              planned_target{1e30F, 1e30F, 1e30F}; // path's target

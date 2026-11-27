@@ -133,7 +133,10 @@ struct ComponentInspector<scene::NavAgent> {
             agent.active = !agent.active;
             agent.path.clear();
         }
-        ImGui::Text(agent.arrived ? "arrived" : (agent.active ? "moving" : "idle"));
+        ImGui::Text("%s", agent.arrived  ? "arrived"
+                          : agent.failed ? "failed (unreachable or stuck)"
+                          : agent.active ? "moving"
+                                         : "idle");
         ImGui::TextWrapped("Bake a navmesh (Physics panel) and press Play; the agent "
                            "paths to the target.");
     }

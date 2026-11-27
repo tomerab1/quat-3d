@@ -24,10 +24,14 @@
 // composite that finishes resets its subtree; so does the root.
 //
 // Built-in leaves:
-//   move_to    {x, y, z, speed?}   drive the entity's NavAgent; running until it
-//                                  arrives (success) or the agent stops short
-//                                  (failure). While its parent keeps ticking it
-//                                  after success it stays succeeded (no re-aim).
+//   move_to    {x, y?, z, speed?}  drive the entity's NavAgent; running until it
+//                                  arrives (success) or gives up (failure:
+//                                  unreachable target, repeated failed plans,
+//                                  no progress) or is stopped. Without `y` the
+//                                  target snaps to the ground at (x, z) (the
+//                                  navmesh surface, else BtWorld::ground_height).
+//                                  While its parent keeps ticking it after
+//                                  success it stays succeeded (no re-aim).
 //   wait       {seconds}           running until the timer elapses, then success.
 //   near_point {x, y, z, range}    condition: entity within range of the point.
 //   near_camera{range}             condition: within range of the viewer (the
@@ -61,9 +65,13 @@ enum class BtStatus : std::uint8_t { success, failure, running };
 
 // What the trees perceive and act through, supplied by the caller per tick.
 struct BtWorld {
+    // The baked navmesh (move_to snaps y-less targets to its surface).
+    const nav::NavMesh* navmesh = nullptr;
+    // Authoritative ground height (fallback for y-less move_to targets).
+    GroundHeightFn ground_height{};
     // Where the player / viewer is (near_camera). Unset: the active Camera
     // entity's position, if any.
-    std::optional<glm::vec3> viewer;
+    std::optional<glm::vec3> viewer{};
 };
 
 // Everything a leaf sees when it is ticked or halted.
