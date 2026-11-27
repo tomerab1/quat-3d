@@ -14,6 +14,7 @@
 
 #include "audio_inspector.hpp"
 #include "behavior_panel.hpp"
+#include "tuning_panels.hpp"
 #include "grass_inspector.hpp"
 #include "engine/editor/editor.hpp"
 #include "engine/scene/behavior.hpp"
@@ -544,6 +545,7 @@ void draw_inspector(scene::Scene& scene, entt::entity selected) {
     inspect<scene::Name>(r, selected);
     inspect<scene::Transform>(r, selected);
     inspect<scene::MeshRenderer>(r, selected);
+    draw_material_inspector(r, selected);
     inspect<scene::DirectionalLight>(r, selected, true);
     inspect<scene::PointLight>(r, selected, true);
     inspect<scene::Camera>(r, selected, true);
@@ -583,79 +585,6 @@ void draw_inspector(scene::Scene& scene, entt::entity selected) {
         add_component_item<scene::AudioSource>(r, selected);
         add_component_item<scene::AudioListener>(r, selected);
         ImGui::EndPopup();
-    }
-    ImGui::End();
-}
-
-void draw_renderer_panel(RendererSettings& settings, scene::Scene* scene) {
-    if (!ImGui::Begin("Renderer")) {
-        ImGui::End();
-        return;
-    }
-
-    // Collapsing headers don't scope IDs: each section pushes its own, so
-    // equally labelled widgets (the sun's and bloom's "intensity") stay
-    // distinct.
-    if (ImGui::CollapsingHeader("Sun", ImGuiTreeNodeFlags_DefaultOpen)) {
-        ImGui::PushID("sun");
-        scene::DirectionalLight* sun = nullptr;
-        if (scene != nullptr) {
-            for (const entt::entity e : scene->registry().view<scene::DirectionalLight>()) {
-                sun = &scene->registry().get<scene::DirectionalLight>(e);
-                break;
-            }
-        }
-        if (sun == nullptr) {
-            ImGui::TextUnformatted("(no DirectionalLight in the scene)");
-        } else {
-            // direction = travel direction (sun -> scene), unit length.
-            const glm::vec3 dir = glm::normalize(sun->direction);
-            float azimuth = glm::degrees(std::atan2(dir.z, dir.x));
-            float elevation = glm::degrees(std::asin(glm::clamp(-dir.y, -1.0F, 1.0F)));
-
-            bool changed = false;
-            changed |= ImGui::SliderFloat("azimuth", &azimuth, -180.0F, 180.0F, "%.0f deg");
-            changed |= ImGui::SliderFloat("elevation", &elevation, 2.0F, 89.0F, "%.0f deg");
-            if (changed) {
-                const float az = glm::radians(azimuth);
-                const float el = glm::radians(glm::clamp(elevation, 2.0F, 89.0F));
-                sun->direction = glm::vec3(std::cos(el) * std::cos(az), -std::sin(el),
-                                           std::cos(el) * std::sin(az));
-            }
-            ImGui::ColorEdit3("colour", &sun->color.x);
-            ImGui::DragFloat("intensity", &sun->intensity, 0.05F, 0.0F, 100.0F);
-        }
-        ImGui::PopID();
-    }
-
-    if (ImGui::CollapsingHeader("Clouds", ImGuiTreeNodeFlags_DefaultOpen)) {
-        ImGui::PushID("clouds");
-        renderer::CloudSettings& c = settings.clouds;
-        ImGui::Checkbox("enabled", &c.enabled);
-        ImGui::BeginDisabled(!c.enabled);
-        ImGui::SliderFloat("coverage", &c.coverage, 0.0F, 1.0F, "%.2f");
-        ImGui::SliderFloat("density", &c.density, 2.0F, 64.0F, "%.0f /km");
-        ImGui::SliderFloat("altitude", &c.bottom_km, 0.5F, 10.0F, "%.1f km");
-        ImGui::SliderFloat("thickness", &c.thickness_km, 0.5F, 8.0F, "%.1f km");
-        ImGui::SliderFloat("puff size", &c.size_km, 2.0F, 40.0F, "%.0f km");
-        ImGui::SliderFloat("detail", &c.detail, 0.0F, 1.0F, "%.2f");
-        ImGui::SliderFloat("wind speed", &c.wind_speed, 0.0F, 80.0F, "%.0f m/s");
-        ImGui::SliderFloat("wind direction", &c.wind_dir_deg, -180.0F, 180.0F, "%.0f deg");
-        ImGui::EndDisabled();
-        ImGui::PopID();
-    }
-
-    if (ImGui::CollapsingHeader("Bloom", ImGuiTreeNodeFlags_DefaultOpen)) {
-        ImGui::PushID("bloom");
-        ImGui::SliderFloat("threshold", &settings.bloom_threshold, 0.0F, 8.0F);
-        ImGui::SliderFloat("knee", &settings.bloom_knee, 0.0F, 1.0F);
-        ImGui::SliderFloat("intensity", &settings.bloom_intensity, 0.0F, 0.5F);
-        ImGui::SliderFloat("radius", &settings.bloom_radius, 0.2F, 2.0F);
-        ImGui::PopID();
-    }
-    if (ImGui::CollapsingHeader("Environment", ImGuiTreeNodeFlags_DefaultOpen)) {
-        ImGui::TextWrapped("The IBL environment (ambient + reflections) re-renders continuously "
-                           "(one step per frame), so it tracks the sun and clouds by itself.");
     }
     ImGui::End();
 }
