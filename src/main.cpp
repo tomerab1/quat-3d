@@ -32,6 +32,8 @@
 
 #include "app/audio_runtime.hpp"
 #include "app/demo_scenes.hpp"
+#include "app/nav_bake.hpp"
+#include "app/remote_bridge.hpp"
 #include "engine/animation/animator.hpp"
 #include "engine/animation/clip.hpp"
 #include "engine/animation/skeleton.hpp"
@@ -52,7 +54,6 @@
 #include "engine/net/prediction.hpp"
 #include "engine/net/replication.hpp"
 #include "engine/net/transport.hpp"
-#include "engine/remote/rpc_server.hpp"
 #include "engine/scene/behavior.hpp"
 #include "engine/renderer/terrain_pass.hpp"
 #include "engine/terrain/streamer.hpp"
@@ -95,16 +96,6 @@ constexpr bool k_enable_validation = true;
 #else
 constexpr bool k_enable_validation = false;
 #endif
-
-// Whether this binary was built with the editor layer (reported to remote
-// clients so they know which editor-only services exist).
-constexpr bool editor_enabled_build() {
-#ifdef ENGINE_EDITOR
-    return true;
-#else
-    return false;
-#endif
-}
 
 VkExtent2D window_pixel_extent(SDL_Window* window) {
     int w = 0;
@@ -168,8 +159,10 @@ bool ensure_viewport_target(DeferredFrame& frame, const engine::rhi::Device& dev
         frame.viewport_extent.height == extent.height) {
         return true;
     }
+    // TRANSFER_SRC: remote screenshots copy the scene view out of it.
     auto image = allocator.create_image(format, extent,
                                         VK_IMAGE_USAGE_TRANSFER_DST_BIT |
+                                            VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
                                             VK_IMAGE_USAGE_SAMPLED_BIT);
     if (!image) return false;
     auto view = engine::rhi::create_image_view(device.handle(), image->handle(), format);
@@ -255,14 +248,14 @@ bool scene_world_bounds(engine::scene::Scene& scene, glm::vec3& out_min, glm::ve
 // belong to the user's scene, keep their authored transforms, and take over the
 // view only in play mode. Conventions mirror camera_system (Vulkan Y flip).
 [[maybe_unused]] engine::scene::CameraMatrices
-fly_camera_matrices(const glm::vec3& pos, float yaw, float pitch, float aspect) {
+fly_camera_matrices(const glm::vec3& pos, float yaw, float pitch, float fov_y, float aspect) {
     const glm::vec3 fwd(std::cos(pitch) * std::cos(yaw), std::sin(pitch),
                         std::cos(pitch) * std::sin(yaw));
     const engine::scene::Camera defaults{};
     engine::scene::CameraMatrices out;
     out.position = pos;
     out.view = glm::lookAt(pos, pos + fwd, glm::vec3(0.0F, 1.0F, 0.0F));
-    out.projection = glm::perspective(defaults.fov_y, aspect, defaults.near_z, defaults.far_z);
+    out.projection = glm::perspective(fov_y, aspect, defaults.near_z, defaults.far_z);
     out.projection[1][1] *= -1.0F; // Vulkan clip space: Y points down
     out.view_proj = out.projection * out.view;
     return out;
@@ -741,6 +734,7 @@ int main() {
     const glm::vec3 cam_fwd0 = -glm::normalize(glm::vec3(framed_view[2])); // camera looks down -Z
     float cam_yaw = std::atan2(cam_fwd0.z, cam_fwd0.x);
     float cam_pitch = std::asin(glm::clamp(cam_fwd0.y, -0.999F, 0.999F));
+    float cam_fov_y = default_camera.fov_y; // remote camera.set can change it
     const float move_speed = physics_mode ? 6.0F
                              : has_geo    ? glm::max(1.0F, 0.5F * glm::length(bmax - bmin))
                                           : 3.0F;
@@ -823,48 +817,61 @@ int main() {
     bool looking = false; // right mouse button held -> mouse-look active
     std::uint64_t last_ticks = SDL_GetTicksNS();
 
-    // Remote control (Phase 15): QUAT_REMOTE=<port> opens the loopback
-    // JSON-RPC endpoint the quat-mcp bridge (tools/quat-mcp) talks to
-    // ("1" = the default port 7878). QUAT_REMOTE_TOKEN, when set, requires
-    // clients to authenticate with session.hello first. Polled once per frame
-    // on this thread, before the scene ticks, so handlers mutate the ECS
-    // between frames exactly like editor actions do.
-    std::optional<engine::remote::RpcServer> remote;
-    if (const char* env = std::getenv("QUAT_REMOTE"); env != nullptr) {
-        engine::remote::RpcServerConfig remote_config;
-        const unsigned long requested = std::strtoul(env, nullptr, 10);
-        remote_config.port = (requested > 1 && requested <= 65535)
-                                 ? static_cast<std::uint16_t>(requested)
-                                 : std::uint16_t{7878};
-        if (const char* token = std::getenv("QUAT_REMOTE_TOKEN"); token != nullptr) {
-            remote_config.token = token;
+    // Authoritative ground height at world (x, z): streamed tiles first,
+    // then the single editing tile. Shared by kinematic nav agents (the
+    // coarse navmesh floats off the real surface) and ground clicks.
+    const engine::scene::GroundHeightFn ground_height_at =
+        [&](float x, float z) -> std::optional<float> {
+        if (terrain_streamer) {
+            const float tile = terrain_streamer->base().tile_size_m;
+            const glm::ivec2 coord(
+                static_cast<int>(std::floor((x - terrain_anchor.x) / tile + 0.5F)),
+                static_cast<int>(std::floor((z - terrain_anchor.z) / tile + 0.5F)));
+            const auto it = terrain_streamer->maps().find(coord);
+            if (it == terrain_streamer->maps().end()) return std::nullopt;
+            const glm::vec3 org = terrain_streamer->tile_origin(coord, terrain_anchor);
+            return org.y + it->second.sample(x - org.x, z - org.z);
         }
-        const bool has_token = !remote_config.token.empty();
-        if (auto server = engine::remote::RpcServer::listen(std::move(remote_config)); server) {
-            remote = std::move(*server);
-            std::fprintf(stderr, "[remote] listening on 127.0.0.1:%u (%s)\n", remote->port(),
-                         has_token ? "token required" : "no token");
-        } else {
-            std::fprintf(stderr, "[warn] remote control disabled: %s\n",
-                         server.error().message.c_str());
+        if (terrain_present && terrain_heightmap.valid()) {
+            const float half = terrain_heightmap.tile_size_m * 0.5F;
+            const float lx = x - (terrain_anchor.x - half);
+            const float lz = z - (terrain_anchor.z - half);
+            if (lx < 0.0F || lz < 0.0F || lx > terrain_heightmap.tile_size_m ||
+                lz > terrain_heightmap.tile_size_m) {
+                return std::nullopt;
+            }
+            return terrain_anchor.y + terrain_heightmap.sample(lx, lz);
         }
-    }
-    if (remote) {
-        remote->add_method(
-            "engine.info", "Engine name, frame counter, entity count and play state.",
-            [&](const engine::remote::Json&) -> engine::remote::RpcResult {
-                bool playing = false;
+        return std::nullopt;
+    };
+
+    // Remote control (ROADMAP A2/A3): QUAT_REMOTE=<port> opens the loopback
+    // JSON-RPC endpoint the quat-mcp bridge talks to (QUAT_REMOTE_TOKEN
+    // requires session.hello). The bridge also resolves Primitive components
+    // every frame, endpoint or not. See src/app/remote_bridge.hpp.
+    quat::app::RemoteBridgeTargets remote_targets;
+    remote_targets.device = &device;
+    remote_targets.allocator = &allocator;
+    remote_targets.assets = &assets;
+    remote_targets.scene = &scene;
+    remote_targets.frame_counter = &presented;
+    remote_targets.cam_pos = &cam_pos;
+    remote_targets.cam_yaw = &cam_yaw;
+    remote_targets.cam_pitch = &cam_pitch;
+    remote_targets.cam_fov_y = &cam_fov_y;
+    remote_targets.ground_height = &ground_height_at;
+    remote_targets.terrain_streamer = &terrain_streamer;
+    remote_targets.terrain_heightmap = &terrain_heightmap;
+    remote_targets.terrain_anchor = &terrain_anchor;
+    remote_targets.navmesh = &navmesh;
+    remote_targets.spin_entity = &spin_entity;
 #ifdef ENGINE_EDITOR
-                playing = editor_play;
+    remote_targets.editor = &editor;
+    remote_targets.render_settings = &render_settings;
+    remote_targets.play = physics_world ? nullptr : &editor_play; // demo modes own physics
 #endif
-                return engine::remote::Json{
-                    {"engine", "quat-3d"},
-                    {"frame", presented},
-                    {"entities", scene.registry().view<engine::scene::Transform>().size()},
-                    {"playing", playing},
-                    {"editor", editor_enabled_build()}};
-            });
-    }
+    remote_targets.project_root = QUAT_PROJECT_ROOT;
+    quat::app::RemoteBridge remote_bridge(std::move(remote_targets), k_frames_in_flight);
 
     quat::app::AudioRuntime audio_runtime = quat::app::AudioRuntime::create(QUAT_PROJECT_ROOT);
 
@@ -917,9 +924,10 @@ int main() {
         }
         if (!running) break;
 
-        // Remote-control requests run here: after input, before play-mode
-        // transitions, scene file requests and the scene tick.
-        if (remote) remote->poll();
+        // Remote-control requests (and primitive resolution) run here: after
+        // input, before play-mode transitions, scene file requests and the
+        // scene tick.
+        remote_bridge.poll();
 
 #ifdef ENGINE_EDITOR
         editor.begin_frame();
@@ -1091,6 +1099,7 @@ int main() {
         }
 
         vkWaitForFences(vk_device, 1, &in_flight[frame], VK_TRUE, UINT64_MAX);
+        remote_bridge.on_frame_complete(frame); // the slot's screenshot readback landed
 
         std::uint32_t image_index = 0;
         VkResult acquire = vkAcquireNextImageKHR(
@@ -1244,33 +1253,6 @@ int main() {
                     glm::scale(glm::mat4(1.0F), glm::vec3(spin_scale));
             }
         }
-        // Authoritative ground height at world (x, z): streamed tiles first,
-        // then the single editing tile. Shared by kinematic nav agents (the
-        // coarse navmesh floats off the real surface) and ground clicks.
-        [[maybe_unused]] const engine::scene::GroundHeightFn ground_height_at =
-            [&](float x, float z) -> std::optional<float> {
-            if (terrain_streamer) {
-                const float tile = terrain_streamer->base().tile_size_m;
-                const glm::ivec2 coord(
-                    static_cast<int>(std::floor((x - terrain_anchor.x) / tile + 0.5F)),
-                    static_cast<int>(std::floor((z - terrain_anchor.z) / tile + 0.5F)));
-                const auto it = terrain_streamer->maps().find(coord);
-                if (it == terrain_streamer->maps().end()) return std::nullopt;
-                const glm::vec3 org = terrain_streamer->tile_origin(coord, terrain_anchor);
-                return org.y + it->second.sample(x - org.x, z - org.z);
-            }
-            if (terrain_present && terrain_heightmap.valid()) {
-                const float half = terrain_heightmap.tile_size_m * 0.5F;
-                const float lx = x - (terrain_anchor.x - half);
-                const float lz = z - (terrain_anchor.z - half);
-                if (lx < 0.0F || lz < 0.0F || lx > terrain_heightmap.tile_size_m ||
-                    lz > terrain_heightmap.tile_size_m) {
-                    return std::nullopt;
-                }
-                return terrain_anchor.y + terrain_heightmap.sample(lx, lz);
-            }
-            return std::nullopt;
-        };
 
         if (physics_world) {
             if (character_mode) {
@@ -1400,7 +1382,7 @@ int main() {
         const engine::scene::CameraMatrices cam =
             through_scene_camera
                 ? engine::scene::camera_system(scene.registry(), aspect)
-                : fly_camera_matrices(cam_pos, cam_yaw, cam_pitch, aspect);
+                : fly_camera_matrices(cam_pos, cam_yaw, cam_pitch, cam_fov_y, aspect);
         audio_runtime.update(scene.registry(), cam.view, editor_play, dt);
 #else
         const engine::scene::CameraMatrices cam =
@@ -1670,32 +1652,11 @@ int main() {
         // Blocking, but explicit and logged (editor tooling).
         if (navmesh_request) {
             navmesh_request = false;
-            std::vector<glm::vec3> nav_verts;
-            std::vector<std::uint32_t> nav_indices;
-            if (terrain_streamer) {
-                // Streamed world: bake every loaded tile (colliders once).
-                bool first = true;
-                for (const auto& [coord, map] : terrain_streamer->maps()) {
-                    const glm::vec3 origin = terrain_streamer->tile_origin(coord, terrain_anchor);
-                    const glm::vec3 centre(origin.x + map.tile_size_m * 0.5F, terrain_anchor.y,
-                                           origin.z + map.tile_size_m * 0.5F);
-                    engine::scene::collect_nav_geometry(scene.registry(), &map, centre, nav_verts,
-                                                        nav_indices, first);
-                    first = false;
-                }
-                if (first) { // no tiles loaded yet: at least the colliders
-                    engine::scene::collect_nav_geometry(scene.registry(), nullptr, terrain_anchor,
-                                                        nav_verts, nav_indices, true);
-                }
-            } else {
-                engine::scene::collect_nav_geometry(
-                    scene.registry(), terrain_heightmap.valid() ? &terrain_heightmap : nullptr,
-                    terrain_anchor, nav_verts, nav_indices);
-            }
-            if (auto built = engine::nav::NavMesh::build(nav_verts, nav_indices); built) {
+            if (auto built = quat::app::bake_navmesh(
+                    scene.registry(), terrain_streamer ? &*terrain_streamer : nullptr,
+                    &terrain_heightmap, terrain_anchor);
+                built) {
                 navmesh = std::move(*built);
-                std::fprintf(stderr, "[nav] navmesh baked: %zu tris in, %zu edges out\n",
-                             nav_indices.size() / 3, navmesh.debug_edges().size());
             } else {
                 std::fprintf(stderr, "[nav] bake failed: %s\n", built.error().message.c_str());
             }
@@ -1875,6 +1836,17 @@ int main() {
             }
         }
         graph.execute(cmd);
+
+        // Remote screenshots copy the final scene image (no editor UI).
+        quat::app::CaptureSource capture{swapchain.images()[image_index], swapchain.format(),
+                                         present_extent, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR};
+#ifdef ENGINE_EDITOR
+        if (editor.active()) {
+            capture = {fr.viewport_image.handle(), swapchain.format(), draw_extent,
+                       VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+        }
+#endif
+        remote_bridge.record_capture(cmd, frame, capture);
 
         // Screenshot capture on the final frame: the graph leaves the swapchain
         // image in PRESENT_SRC — round-trip it through TRANSFER_SRC and copy to

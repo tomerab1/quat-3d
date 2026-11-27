@@ -46,6 +46,9 @@ public:
 
     [[nodiscard]] bool valid() const;
 
+    // Number of walkable polygons in the baked mesh (0 when invalid).
+    [[nodiscard]] std::size_t polygon_count() const;
+
     // Straightened (string-pulled) path between two world points, both snapped
     // to the nearest mesh polygon within a few metres. Errors when either end
     // is off-mesh or no route exists.

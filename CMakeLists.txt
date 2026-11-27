@@ -190,7 +190,8 @@ add_library(engine_scene STATIC
     src/scene/scene_io.cpp
     src/scene/component_json.cpp
     src/scene/audio_system.cpp
-    src/scene/primitives.cpp)
+    src/scene/primitives.cpp
+    src/scene/primitive_resolve.cpp)
 # EnTT is PUBLIC: components.hpp exposes entt types (Parent/Children) to consumers.
 # engine_renderer is PUBLIC: scene.hpp's RenderCollectSystem fills a renderer
 # DrawItem list (no cycle — the renderer does not depend on the scene).
@@ -278,6 +279,29 @@ if(WIN32)
 endif()
 
 # ---------------------------------------------------------------------------
+# engine_remote_world — the world commands (ROADMAP A2/A3): scene.*,
+# environment.*, camera.*, render.screenshot, asset.*, sim.*, nav.bake, on top
+# of engine_remote + the scene codec. Application-only capabilities come in
+# through WorldServices callbacks (src/app/remote_bridge.cpp wires them), so
+# the commands are testable on a bare Scene.
+# ---------------------------------------------------------------------------
+add_library(engine_remote_world STATIC
+    src/remote/world/common.cpp
+    src/remote/world/scene_commands.cpp
+    src/remote/world/batch_command.cpp
+    src/remote/world/environment_commands.cpp
+    src/remote/world/camera_commands.cpp
+    src/remote/world/app_commands.cpp
+    src/remote/world/image_encode.cpp
+    src/remote/world/stb_image_write_impl.cpp)
+target_link_libraries(engine_remote_world PUBLIC engine_flags engine_remote engine_scene)
+target_include_directories(engine_remote_world PUBLIC ${ENGINE_PUBLIC_INCLUDE})
+target_include_directories(engine_remote_world PRIVATE ${Stb_INCLUDE_DIR})
+# stb's implementation TU is not warning-clean under our strict flags.
+set_source_files_properties(src/remote/world/stb_image_write_impl.cpp
+    PROPERTIES COMPILE_OPTIONS "-w")
+
+# ---------------------------------------------------------------------------
 # engine_renderer — high-level passes built on the RHI. Starts with the deferred
 # GBuffer pass (mesh_pass); lighting/tonemap/imgui passes follow in later slices.
 # ---------------------------------------------------------------------------
@@ -349,10 +373,13 @@ endif()
 add_executable(game
     src/main.cpp
     src/app/demo_scenes.cpp
-    src/app/audio_runtime.cpp)
+    src/app/audio_runtime.cpp
+    src/app/nav_bake.cpp
+    src/app/remote_bridge.cpp)
 target_link_libraries(game PRIVATE
     engine_flags engine_rhi engine_asset engine_scene engine_renderer engine_physics
-    engine_terrain engine_nav engine_net engine_remote engine_audio SDL3::SDL3)
+    engine_terrain engine_nav engine_net engine_remote engine_remote_world engine_audio
+    SDL3::SDL3)
 if(ENGINE_EDITOR)
     target_link_libraries(game PRIVATE engine_editor)
 endif()

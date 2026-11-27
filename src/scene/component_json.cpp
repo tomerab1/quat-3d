@@ -181,42 +181,15 @@ struct Trs {
     return c <= 0.04045F ? c / 12.92F : std::pow((c + 0.055F) / 1.055F, 2.4F);
 }
 
-// "#rrggbb" / "#rrggbbaa" (sRGB, as people and models write colours) or a
-// linear [r, g, b(, a)] array.
 void read_color(JsonFields& f, std::string_view key, glm::vec4& out) {
     if (!f.has(key)) return;
     const json* v = f.raw(key);
-    if (v->is_string()) {
-        const std::string& s = v->get_ref<const std::string&>();
-        const bool shape_ok = (s.size() == 7 || s.size() == 9) && s[0] == '#';
-        std::array<float, 4> c{0.0F, 0.0F, 0.0F, 1.0F};
-        bool ok = shape_ok;
-        for (std::size_t i = 0; ok && i + 1 < s.size(); i += 2) {
-            unsigned value = 0;
-            for (std::size_t k = 1 + i; k < 3 + i && ok; ++k) {
-                const char ch = s[k];
-                const int digit = ch >= '0' && ch <= '9'   ? ch - '0'
-                                  : ch >= 'a' && ch <= 'f' ? ch - 'a' + 10
-                                  : ch >= 'A' && ch <= 'F' ? ch - 'A' + 10
-                                                           : -1;
-                ok = digit >= 0;
-                value = value * 16U + static_cast<unsigned>(digit < 0 ? 0 : digit);
-            }
-            c[i / 2] = static_cast<float>(value) / 255.0F;
-        }
-        if (!ok) {
-            f.fail(key, "expected \"#rrggbb\", \"#rrggbbaa\" or [r, g, b(, a)] in 0..1 (linear)");
-            return;
-        }
-        out = {srgb_to_linear(c[0]), srgb_to_linear(c[1]), srgb_to_linear(c[2]), c[3]};
+    glm::vec4 c = out;
+    if (auto ok = decode_color(*v, c); !ok) {
+        f.fail(key, ok.error().message);
         return;
     }
-    // Re-read through the checked array path.
-    json wrapper = json::object();
-    wrapper[std::string(key)] = *v;
-    JsonFields inner(wrapper, "");
-    inner.color4(key, out);
-    if (auto ok = inner.finish(); !ok) f.fail(key, "expected \"#rrggbb\" or [r, g, b(, a)] in 0..1");
+    out = c;
 }
 
 // ---- Merge helper --------------------------------------------------------
@@ -244,6 +217,42 @@ void invalidate_physics(entt::registry& r, entt::entity e) {
 }
 
 } // namespace
+
+std::expected<void, core::Error> decode_color(const json& v, glm::vec4& out) {
+    constexpr const char* expected_msg =
+        "expected \"#rrggbb\", \"#rrggbbaa\" (sRGB) or [r, g, b(, a)] in 0..1 (linear)";
+    if (v.is_string()) {
+        const std::string& s = v.get_ref<const std::string&>();
+        const bool shape_ok = (s.size() == 7 || s.size() == 9) && s[0] == '#';
+        std::array<float, 4> c{0.0F, 0.0F, 0.0F, 1.0F};
+        bool ok = shape_ok;
+        for (std::size_t i = 0; ok && i + 1 < s.size(); i += 2) {
+            unsigned value = 0;
+            for (std::size_t k = 1 + i; k < 3 + i && ok; ++k) {
+                const char ch = s[k];
+                const int digit = ch >= '0' && ch <= '9'   ? ch - '0'
+                                  : ch >= 'a' && ch <= 'f' ? ch - 'a' + 10
+                                  : ch >= 'A' && ch <= 'F' ? ch - 'A' + 10
+                                                           : -1;
+                ok = digit >= 0;
+                value = value * 16U + static_cast<unsigned>(digit < 0 ? 0 : digit);
+            }
+            c[i / 2] = static_cast<float>(value) / 255.0F;
+        }
+        if (!ok) return std::unexpected(core::Error{expected_msg});
+        out = {srgb_to_linear(c[0]), srgb_to_linear(c[1]), srgb_to_linear(c[2]), c[3]};
+        return {};
+    }
+    // Re-read through the checked array path.
+    json wrapper = json::object();
+    wrapper["c"] = v;
+    JsonFields inner(wrapper, "");
+    glm::vec4 c = out;
+    inner.color4("c", c);
+    if (auto ok = inner.finish(); !ok) return std::unexpected(core::Error{expected_msg});
+    out = c;
+    return {};
+}
 
 std::span<const ComponentInfo> component_infos() { return k_components; }
 
@@ -347,6 +356,31 @@ json encode_components(const entt::registry& r, entt::entity e, const EncodeOpti
                            {"gltf", m->gltf_path}};
         }
     }
+    return out;
+}
+
+std::vector<std::string_view> component_names(const entt::registry& r, entt::entity e,
+                                              bool include_read_only) {
+    std::vector<std::string_view> out;
+    if (!r.valid(e)) return out;
+    const auto add = [&](bool present, std::string_view name) {
+        if (present) out.push_back(name);
+    };
+    add(r.all_of<Transform>(e), "transform");
+    add(r.all_of<Primitive>(e), "primitive");
+    add(r.all_of<PointLight>(e), "point_light");
+    add(r.all_of<DirectionalLight>(e), "dir_light");
+    add(r.all_of<Camera>(e), "camera");
+    add(r.all_of<Collider>(e), "collider");
+    add(r.all_of<RigidBody>(e), "rigidbody");
+    add(r.all_of<CharacterController>(e), "character");
+    add(r.all_of<NavAgent>(e), "nav_agent");
+    add(r.all_of<BehaviorTree>(e), "behavior");
+    add(r.all_of<PatrolRoute>(e), "patrol");
+    add(r.all_of<Terrain>(e), "terrain");
+    add(r.all_of<NetReplicated>(e), "net_replicated");
+    add(r.all_of<Animator>(e), "animator");
+    add(include_read_only && r.all_of<MeshSource>(e), "mesh");
     return out;
 }
 
