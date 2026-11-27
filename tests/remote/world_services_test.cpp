@@ -121,16 +121,35 @@ protected:
     std::vector<fs::path>  loaded;
     std::vector<fs::path>  spawned;
     int                    spawn_roots = 1;
+    engine::remote::TerrainStatus terrain{.generating = false,
+                                          .tiles_loaded = 1,
+                                          .tiles_wanted = 1,
+                                          .has_bounds = true,
+                                          .bounds_min = {-50.0F, -2.0F, -50.0F},
+                                          .bounds_max = {50.0F, 30.0F, 50.0F}};
+
+    // A terrain entity the runtime has generated (regenerate consumed).
+    entt::entity add_terrain(const Json& position) {
+        const Json made = ok("scene.create", {{"name", "ground"},
+                                              {"components",
+                                               {{"transform", {{"position", position}}},
+                                                {"terrain", {{"tile_size", 100}}}}}});
+        const entt::entity e = entity(made["id"]);
+        reg().get<s::Terrain>(e).regenerate = false;
+        return e;
+    }
 
     void SetUp() override {
         services.project_root = [this] { return root.path(); };
         services.camera_get = [this] { return camera; };
         services.camera_set = [this](const CameraPose& p) { camera = p; };
         services.render_settings = &settings;
-        services.ground_height = [](float x, float z) -> std::optional<float> {
+        // Terrain tiles: height lx + 2 lz above the anchor where lx >= 0.
+        services.terrain_height = [](float x, float z) -> std::optional<float> {
             if (x < 0.0F) return std::nullopt;
             return x + 2.0F * z;
         };
+        services.terrain_status = [this] { return terrain; };
         services.set_playing = [this](bool play) -> std::expected<bool, engine::core::Error> {
             playing = play;
             return playing;
@@ -170,12 +189,82 @@ TEST_F(WorldWithServices, CloudsAndGroundHeight) {
     EXPECT_FLOAT_EQ(clouds.coverage, 0.8F);
     err("environment.set", {{"clouds", {{"coverage", 2}}}}, code::invalid_params);
 
+    // Without terrain the query says so (instead of answering nulls).
+    std::string msg = err("world.ground_height", {{"points", {{1, 2}}}}, code::not_found);
+    EXPECT_TRUE(contains(msg, "no terrain")) << msg;
+
+    add_terrain({0, 0, 0});
     const Json h = ok("world.ground_height", {{"points", {{1, 2}, {-5, 0}}}});
     EXPECT_FLOAT_EQ(h["heights"][0].get<float>(), 5.0F);
     EXPECT_TRUE(h["heights"][1].is_null());
+    EXPECT_EQ(h["generating"], false);
     Json many = Json::array();
     for (int i = 0; i < 1025; ++i) many.push_back({0, 0});
     err("world.ground_height", {{"points", many}}, code::invalid_params);
+}
+
+// Issue #39: commands later in a batch see an earlier terrain move, and a
+// shape edit reports the terrain as regenerating instead of stale heights.
+TEST_F(WorldWithServices, GroundHeightSeesTerrainMovesInTheSameBatch) {
+    add_terrain({0, 0, 0});
+    const Json r = ok("scene.batch",
+                      {{"commands",
+                        {{{"method", "world.ground_height"}, {"params", {{"points", {{11, 0}}}}}},
+                         {{"method", "scene.update"},
+                          {"params",
+                           {{"entity", "ground"},
+                            {"components", {{"transform", {{"position", {10, 5, 0}}}}}}}}},
+                         {{"method", "world.ground_height"},
+                          {"params", {{"points", {{11, 0}, {9, 0}}}}}}}}});
+    ASSERT_EQ(r["results"].size(), 3U) << r.dump();
+    EXPECT_FLOAT_EQ(r["results"][0]["result"]["heights"][0].get<float>(), 11.0F);
+    const Json& moved = r["results"][2]["result"]["heights"];
+    EXPECT_FLOAT_EQ(moved[0].get<float>(), 6.0F) << "local x 1 above the new anchor (y 5)";
+    EXPECT_TRUE(moved[1].is_null()) << "x 9 is now outside the tiles";
+
+    // A parented terrain is anchored at its world position.
+    const Json parent = ok("scene.create", {{"name", "island"},
+                                            {"components", {{"transform", {{"position", {0, 100, 0}}}}}}});
+    ok("scene.set_parent", {{"entity", "ground"}, {"parent", parent["id"]}, {"keep_world", false}});
+    EXPECT_FLOAT_EQ(ok("world.ground_height", {{"points", {{11, 0}}}})["heights"][0].get<float>(),
+                    106.0F);
+
+    // A shape edit: the loaded tiles are stale until the runtime regenerates.
+    ok("scene.update", {{"entity", "ground"}, {"components", {{"terrain", {{"seed", 99}}}}}});
+    const Json pending = ok("world.ground_height", {{"points", {{11, 0}}}});
+    EXPECT_TRUE(pending["heights"][0].is_null());
+    EXPECT_EQ(pending["generating"], true);
+    // ...a shading edit is not.
+    reg().get<s::Terrain>(entity(ok("scene.get", {{"entity", "ground"}})["id"])).regenerate = false;
+    ok("scene.update", {{"entity", "ground"}, {"components", {{"terrain", {{"snowline", 40}}}}}});
+    EXPECT_EQ(ok("world.ground_height", {{"points", {{11, 0}}}})["generating"], false);
+}
+
+TEST_F(WorldWithServices, TerrainStatusReportsTilesAndBounds) {
+    EXPECT_EQ(ok("terrain.status")["present"], false);
+    add_terrain({10, 5, 0});
+    Json st = ok("terrain.status");
+    EXPECT_EQ(st["present"], true);
+    EXPECT_EQ(st["streaming"], false);
+    EXPECT_EQ(st["generating"], false);
+    EXPECT_EQ(st["tiles_loaded"], 1);
+    EXPECT_EQ(st["tiles_wanted"], 1);
+    EXPECT_FLOAT_EQ(st["anchor"][1].get<float>(), 5.0F);
+    EXPECT_FLOAT_EQ(st["bounds"]["min"][0].get<float>(), -40.0F) << "anchor-relative bounds";
+    EXPECT_FLOAT_EQ(st["bounds"]["max"][1].get<float>(), 35.0F);
+
+    // A streaming window still filling in.
+    ok("scene.update", {{"entity", "ground"},
+                        {"components", {{"terrain", {{"streaming", true}, {"stream_radius", 1}}}}}});
+    terrain.tiles_wanted = 9;
+    terrain.tiles_loaded = 4;
+    terrain.generating = true;
+    st = ok("terrain.status");
+    EXPECT_EQ(st["streaming"], true);
+    EXPECT_EQ(st["generating"], true);
+    EXPECT_EQ(st["tiles_loaded"], 4);
+    EXPECT_EQ(st["tiles_wanted"], 9);
+    err("terrain.status", {{"x", 1}}, code::invalid_params);
 }
 
 TEST_F(WorldWithServices, CameraSetLookAtAndFrame) {
@@ -209,6 +298,45 @@ TEST_F(WorldWithServices, CameraSetLookAtAndFrame) {
     EXPECT_LT(dist, 10.0F);
     ok("camera.frame"); // whole scene
     err("camera.frame", {{"entity", "missing"}}, code::not_found);
+}
+
+TEST_F(WorldWithServices, CameraClipPlanesAndCuts) {
+    // Derived planes by default.
+    Json got = ok("camera.get");
+    EXPECT_EQ(got["near_auto"], true);
+    EXPECT_EQ(got["far_auto"], true);
+    EXPECT_FLOAT_EQ(got["far"].get<float>(), 1000.0F);
+
+    // Explicit planes are stored as overrides; null returns to derived.
+    ok("camera.set", {{"near", 0.5}, {"far", 20000}});
+    ASSERT_TRUE(camera.near_override.has_value());
+    EXPECT_FLOAT_EQ(*camera.near_override, 0.5F);
+    EXPECT_FLOAT_EQ(*camera.far_override, 20000.0F);
+    ok("camera.set", {{"far", nullptr}});
+    EXPECT_FALSE(camera.far_override.has_value());
+    EXPECT_TRUE(camera.near_override.has_value()) << "an omitted plane keeps its override";
+    std::string msg = err("camera.set", {{"near", 10}, {"far", 5}}, code::invalid_params);
+    EXPECT_TRUE(contains(msg, "far: must be greater than near")) << msg;
+    msg = err("camera.set", {{"near", 0}}, code::invalid_params);
+    EXPECT_TRUE(contains(msg, "near: expected a number in [0.001, 10000]")) << msg;
+    err("camera.set", {{"far", "far"}}, code::invalid_params);
+
+    // Without `cut`, small moves are continuous motion and jumps / turns are cuts.
+    camera = CameraPose{{0, 2, 10}, -90.0F, 0.0F, 60.0F};
+    ok("camera.set", {{"position", {0.5, 2, 10}}, {"yaw_deg", -85}});
+    EXPECT_FALSE(camera.cut);
+    ok("camera.set", {{"position", {0, 2, 500}}}); // > 10% of the 1000 m far plane
+    EXPECT_TRUE(camera.cut);
+    ok("camera.set", {{"yaw_deg", 0}}); // 90 degree turn
+    EXPECT_TRUE(camera.cut);
+    // An explicit flag wins either way.
+    ok("camera.set", {{"position", {0, 2, -500}}, {"cut", false}});
+    EXPECT_FALSE(camera.cut);
+    ok("camera.set", {{"position", {0, 2, -500.1}}, {"cut", true}});
+    EXPECT_TRUE(camera.cut);
+    err("camera.set", {{"cut", 1}}, code::invalid_params);
+    ok("camera.frame");
+    EXPECT_TRUE(camera.cut) << "framing is a cut";
 }
 
 TEST_F(WorldWithServices, PathsAreConfinedToTheProjectRoot) {

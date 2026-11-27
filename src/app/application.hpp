@@ -32,6 +32,7 @@
 #include "app/remote_bridge.hpp"
 #include "app/world_runtime.hpp"
 #include "engine/asset/asset_manager.hpp"
+#include "engine/core/frame_timer.hpp"
 #include "engine/rhi/device.hpp"
 #include "engine/rhi/gpu_allocator.hpp"
 #include "engine/rhi/pipeline_cache.hpp"
@@ -104,6 +105,12 @@ private:
     // This frame's play-mode input (editor Play, or always in the non-editor
     // game); none outside play.
     [[nodiscard]] std::optional<PlayStep> play_step() const;
+    // Derives the fly camera's clip planes from the scene's drawables (bounds
+    // refreshed every k_bounds_refresh_frames) and the terrain (issue #37).
+    void update_view_clip();
+    // View / projection for a screenshot's own camera (issue #41).
+    [[nodiscard]] engine::scene::CameraMatrices shot_view(const engine::remote::CameraPose& pose,
+                                                          float aspect) const;
     void report_stats() const;
 
     AppConfig config_;
@@ -135,10 +142,16 @@ private:
     // camera); a change is a camera cut for the renderer's temporal state.
     entt::entity view_camera_ = entt::null;
 
+    // Drawable bounds the clip planes are derived from (update_view_clip).
+    static constexpr std::uint64_t     k_bounds_refresh_frames = 30;
+    std::optional<engine::asset::Aabb> scene_bounds_;
+    std::uint64_t                      scene_bounds_frame_ = 0;
+    bool                               scene_bounds_valid_ = false;
+
     std::uint64_t presented_ = 0;
     double        frame_time_sum_ = 0.0; // avg-frame-time report at exit
     std::uint64_t frame_time_samples_ = 0;
-    std::uint64_t last_ticks_ = 0;
+    engine::core::FrameTimer frame_timer_; // real frame dt; skips minimised gaps (#61)
 };
 
 } // namespace quat::app

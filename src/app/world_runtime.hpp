@@ -28,11 +28,13 @@
 #include "app/play_mode.hpp"
 #include "app/grass_runtime.hpp"
 #include "app/particle_runtime.hpp"
+#include "engine/asset/mesh_asset.hpp" // Aabb
 #include "engine/core/error.hpp"
 #include "engine/nav/navmesh.hpp"
 #include "engine/net/session.hpp"
 #include "engine/physics/physics_world.hpp"
 #include "engine/renderer/terrain_pass.hpp"
+#include "engine/remote/world_commands.hpp" // TerrainStatus
 #include "engine/rhi/gpu_allocator.hpp"
 #include "engine/scene/animation_system.hpp"
 #include "engine/scene/navigation.hpp"
@@ -175,6 +177,13 @@ public:
     [[nodiscard]] const engine::scene::GroundHeightFn& ground_height() const {
         return ground_height_at_;
     }
+    // Terrain height above the anchor at anchor-relative (lx, lz); nullopt
+    // where no tile is loaded, and everywhere while the single tile
+    // regenerates (its old heightmap is stale).
+    [[nodiscard]] std::optional<float> local_ground_height(float lx, float lz) const;
+    // Tiles loaded / wanted, generation in flight, loaded extent (remote
+    // terrain.status, issue #39).
+    [[nodiscard]] engine::remote::TerrainStatus terrain_status() const;
     [[nodiscard]] bool terrain_drawable() const {
         return terrain_present_ && terrain_pass_.has_tiles();
     }
@@ -188,6 +197,10 @@ public:
         if (particles_) particles_->reset_all();
     }
     [[nodiscard]] const glm::vec3& terrain_anchor() const { return terrain_anchor_; }
+    // World-space extent the terrain covers for a camera at `eye`: the
+    // streaming window around it, or the single tile. nullopt without terrain.
+    // The view camera's far plane reaches it (issue #37).
+    [[nodiscard]] std::optional<engine::asset::Aabb> terrain_view_bounds(const glm::vec3& eye) const;
     [[nodiscard]] float terrain_snowline() const { return terrain_snowline_; }
 
 private:
@@ -232,7 +245,8 @@ private:
 
     // Networking (Phase 14; S1 B1-B5): QUAT_HOST=<port> hosts this scene,
     // QUAT_JOIN=<ip:port> joins a host running the same scene. See
-    // engine/net/session.hpp for the per-frame protocol.
+    // engine/net/session.hpp for the per-frame protocol and
+    // engine/net/session_config.hpp for the QUAT_NET_* host options.
     engine::net::NetSession net_;
     std::map<glm::ivec2, std::uint32_t, engine::terrain::TileCoordLess>
         terrain_bodies_; // streamed tiles' play-mode physics bodies

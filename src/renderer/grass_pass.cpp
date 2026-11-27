@@ -355,6 +355,7 @@ GrassPass::add_to_graph(rhi::RenderGraph& graph, std::uint32_t slot_index,
         .writes(t.normal, rhi::ResourceUsage::color_attachment)
         .writes(t.material, rhi::ResourceUsage::color_attachment)
         .writes(t.clearcoat, rhi::ResourceUsage::color_attachment)
+        .writes(t.emissive, rhi::ResourceUsage::color_attachment)
         .writes(t.velocity, rhi::ResourceUsage::color_attachment)
         .writes(t.depth, rhi::ResourceUsage::depth_attachment)
         .execute([state = &s, set = &slot.draw_set, t, args, extent,
@@ -374,6 +375,7 @@ GrassPass::add_to_graph(rhi::RenderGraph& graph, std::uint32_t slot_index,
                 color_attachment(ctx.resolve(t.normal).view),
                 color_attachment(ctx.resolve(t.material).view),
                 color_attachment(ctx.resolve(t.clearcoat).view),
+                color_attachment(ctx.resolve(t.emissive).view),
                 color_attachment(ctx.resolve(t.velocity).view)};
             VkRenderingAttachmentInfo depth{};
             depth.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;

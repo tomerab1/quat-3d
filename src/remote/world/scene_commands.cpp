@@ -93,7 +93,8 @@ RpcResult scene_list(Context& ctx, const Json& params) {
                             {"name", name_of(r, e)},
                             {"parent", parent_json(r, e)},
                             {"components", names_json(scene::component_names(r, e))},
-                            {"world_position", vec3_json(glm::vec3(world_matrix(r, e)[3]))}});
+                            {"world_position", vec3_json(glm::vec3(world_matrix(r, e)[3]))},
+                            {"world_bounds", bounds_json(subtree_world_bounds(ctx, e, true))}});
     }
     return Json{{"total", matches.size()}, {"entities", std::move(entities)}};
 }
@@ -115,6 +116,8 @@ RpcResult scene_get(Context& ctx, const Json& params) {
                 {"name", name_of(r, *e)},
                 {"parent", parent_json(r, *e)},
                 {"children", std::move(children)},
+                {"world_bounds", bounds_json(subtree_world_bounds(ctx, *e, true))},
+                {"local_bounds", bounds_json(subtree_local_bounds(ctx, *e))},
                 {"components", scene::encode_components(r, *e)}};
 }
 

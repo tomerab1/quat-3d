@@ -13,6 +13,30 @@ into CLAUDE.md or the brief template in [`CYCLE.md`](CYCLE.md).
   files in the worker's scratch subdirectory and run them with one plain
   command; run git only as simple commands inside the worktree.
 
+- **Interleaved work on several issues is costly to split into per-issue
+  commits.** A9 built #37–#39 in one working tree; splitting needed
+  hunk-picking (`git apply --cached` of a filtered `git diff`), and one hunk
+  mixed two issues, so the first staged commit did not compile — caught only
+  because the staged tree was exported (`git checkout-index -a
+  --prefix=<dir>/`) and compile-checked on its own. → Commit each issue as
+  soon as it is done; when a split is unavoidable, compile-check the staged
+  tree, not the working tree.
+- **Worktree-isolated agents get compound shell commands refused.** `cd`
+  into a computed path, heredoc scripts, or `sed -i 'a\'` next to a `git`
+  call are rejected as unverifiable. → Write edit scripts to the
+  scratchpad and run them with a plain `python3 <script>`; run `git`
+  commands on their own from the worktree root.
+- **`origin/master` moves under a worktree agent.** Worktrees share the
+  repository's refs, so another session's fetch can advance `origin/master`
+  mid-task: A9 merged one master and then restored two files "from
+  `origin/master`", silently taking them from a newer one. → Resolve merges
+  against the merge's own parent (`HEAD^2`, or a SHA noted when merging),
+  never a moving ref.
+- **Merge `master` into a long-running feature branch before handing it
+  back.** A9's branch base was overtaken by A8 (#17) and G8 during the work;
+  merging `origin/master` at the end (7 conflicts in remote / quat-mcp
+  files) and re-running the checks there saves the orchestrator the same
+  resolution with less context.
 - **Unpushed worktree commits die with the container.** Worker agents push
   their `feat/<id>` branch to origin after every commit (owner's rule,
   2026-11-27). `feat/**` pushes don't trigger CI, so they never cancel a
@@ -32,6 +56,33 @@ into CLAUDE.md or the brief template in [`CYCLE.md`](CYCLE.md).
 
 ## Build and CI
 
+- **A clean auto-merge can still break the build.** Merging master (#20)
+  into the E8 branch raised no conflict, but master had renamed
+  `WorldRuntime::clear_spin_entity` while the branch added a new call to it;
+  the 40-minute forced rebuild failed late. → After any merge, compile-check
+  the TUs both sides touched (`scripts/check-compile.sh` on the merge's file
+  list) before starting a long build.
+- **Hand-rolled local builds must rebuild dependents of changed headers.**
+  The E8 worker's scratch build script recompiled a `.cpp` only when it was
+  newer than its object; after a member was added to `EditorShell`, stale
+  objects disagreed on its size and the game aborted in `free()` at exit
+  (heap corruption, not a logic bug). → Scratch scripts rebuild every TU of a
+  module when any of its headers is newer than the object (or use `FORCE=1`);
+  a crash right after a header change is a stale-object suspect first.
+- **The editor can be seen headless.** `QUAT_SCREENSHOT` copies the presented
+  swapchain image, UI included; `scripts/editor-screenshots.sh` runs the
+  game under Xvfb + lavapipe at 1600x900 with `QUAT_EDITOR_SELECT` /
+  `QUAT_EDITOR_FOCUS` / `QUAT_EDITOR_LAYOUT=default` to pose it. CI's
+  `showcase-editor` image was never broken, only useless: 1280x720 halved to
+  640x360. Editor captures are taken at 1600x900 or larger without
+  downscaling; the remote `view.screenshot` deliberately returns only the
+  viewport image.
+- **A full game build without vcpkg works in the container**: header clones
+  in `~/deps` plus prebuilt `libJolt.a` / `libfastgltf.a` / SDL3 / GNS, and
+  ImGui, ImGuizmo (tag 1.10), imgui-node-editor and Recast compiled from
+  source, linked with `-lSDL3 -lGameNetworkingSockets -lvulkan`. It takes
+  20-40 minutes of shared CPU from scratch; captures are then
+  `scripts/editor-screenshots.sh <game> <dir> <prefix>`.
 - **Don't tie the hitch clamp to the physics budget.** D2 first capped the
   sim frame dt at 1/15 s (8 physics substeps), so on slow machines (CI's
   lavapipe at 1-3 fps) the whole world ran several times slower than real
@@ -62,6 +113,26 @@ into CLAUDE.md or the brief template in [`CYCLE.md`](CYCLE.md).
 - **`git ls-files` + `check-compile.sh` catches includes lost in merges.**
   `skinning_pass.cpp` used `glm::mat4` with no glm include after S3.3
   removed the self-test that pulled it in.
+- **The container disk is shared by every worktree agent and fills up.**
+  During the A9 review fixes the volume hit 0 bytes free (command output was
+  lost); quat-mcp's `target/` alone had grown to 11 GB, mostly
+  `target/debug/incremental`. → Build Rust with `CARGO_INCREMENTAL=0` in
+  agent worktrees, delete scratch build trees when done, and check
+  `df -h /` before long builds.
+- **Ad-hoc local test builds: cap parallel compiles at `nproc`.** Starting
+  ~45 clang processes at once on a 4-core container crashed one with
+  SIGBUS (exit 135), and a file edited while its object was compiling left
+  an object newer than the source but built from the old text (a test
+  silently missing). → Throttle (`while [ $(jobs -rp | wc -l) -ge 4 ];
+  do wait -n; done`) and delete objects whose sources changed during a
+  build.
+- **The cloud container's proxy blocks api.polyhaven.com** (403 "no rule
+  allows this host"; crates.io works). Network-facing tools are built
+  against the documented API and tested offline: an in-memory fake behind
+  an `Http` trait, plus a loopback HTTP stand-in for the real reqwest path.
+- **reqwest 0.13's default TLS pulls in aws-lc-sys** (a CMake/C build);
+  quat-mcp uses reqwest 0.12 with `rustls-tls-native-roots` (ring, the
+  platform trust store, which also picks up the proxy CA).
 - **Link the game executable locally after any merge that touches library
   targets.** R17 linked libktx into `game` directly while engine_asset only
   compiled against its headers; the tests (linking the full libktx) passed,
@@ -203,6 +274,97 @@ into CLAUDE.md or the brief template in [`CYCLE.md`](CYCLE.md).
 - **A script's own pcall must not swallow a resource limit.** The sandbox's
   pcall/xpcall re-raise once the instruction or memory budget is exhausted;
   otherwise `while true do pcall(f) end` hangs the engine despite the hook.
+- **slangc puts every `.slang` input of one run into one module** (A6):
+  `extern struct` in one file and `export struct` in another conflict, and
+  `-entry` cannot find a generic entry point for `-specialize`. Link-time
+  specialisation works by passing the *cooked* driver module instead:
+  `slangc material.slang cooked/driver.slang-module -I lib -I cooked`. A
+  serialized module finds its own imports only as `.slang-module`s on an `-I`
+  path, so the cooked directory must be on it.
+- **Adding a field to an aggregate config struct warns at every positional
+  `{a, b, c}` initialisation** (`-Wmissing-field-initializers`, part of
+  `-Wextra`). Grep the call sites (tests included) in the same change.
+- **Designated initializers + `-Wextra` warn for every omitted field that
+  has no default member initializer** (clang's
+  `-Wmissing-field-initializers`). Option structs meant for `{.a = 1}` call
+  sites (the editor's `PropOpts`, `Command`, `DragSpec`) give every member a
+  default (`std::string id{};`), or each call site warns.
+- **Inter (and other UI faces) put stylistic alternates in the Unicode
+  Private Use Area**, where icon fonts live. Merging an icon font into it
+  without `ImFontConfig::GlyphExcludeRanges = {0xE000, 0xF8FF}` on the text
+  face makes some icons render as alternate digits / letters (E8: Inspector's
+  icon showed "3", Stats' showed "ǒ").
+- **ImGui docking: the focused window's tab stays in front.** New windows take
+  focus as they appear, so the last panel submitted wins its tab group no
+  matter what the DockBuilder said. Select tabs through the dock node's tab
+  bar and move focus elsewhere (the viewport) for the first frames after
+  building a layout.
+- **An ImGui settings handler's `UserData` must outlive the context, or the
+  ini must be written first.** `DestroyContext` saves the ini through every
+  handler; the editor saves explicitly, clears `IniFilename`, then destroys
+  the shell the handler points at.
+- **A render-graph image is one unit: a pass that changes per-mip layouts
+  must hand every mip back in the layout its declared usage implies.** The
+  transparent pass's scene-colour copy blitted its mip chain and left mips
+  1.. in SHADER_READ_ONLY while the graph, whose barriers cover all mips,
+  still believed TRANSFER_DST; its next transition then lied about the old
+  layout (#62, five `VUID-VkImageMemoryBarrier2-oldLayout-01197` per frame).
+  Restore the declared layout at the end of the pass and let the graph do
+  the hand-off.
+- **Slang keeps a dead `if (!A::keep(...)) discard;` after specialising.**
+  An interface method returning a constant `true` still left `OpKill` in the
+  opaque entry point's SPIR-V (R12.11). Put the discard inside the
+  interface implementation (`AlphaMasked::test`) so the opaque
+  specialisation has none, and check entry points' call graphs for
+  OpKill / OpTerminateInvocation / OpDemoteToHelperInvocation in a test.
+- **A material sampler created with `create_sampler(device)` reaches mip 1
+  only** (maxLod = mip_levels = 1): mipmapped material textures were never
+  minified past level 1 on master. Pass `material_sampler_max_lod`.
+- **Coverage-preserving alpha mips must be judged on the stored 8-bit
+  alpha.** A threshold picked from float sub-samples sat within half an
+  8-bit step of whole stems of equal alpha, and rounding flipped them all
+  (+9 % coverage). Evaluate the stored coverage at a few 8-bit steps around
+  the analytic threshold and keep the closest.
+- **`SV_IsFrontFace` is screen winding, not "outside".** A mirrored instance
+  (negative determinant) winds its outside faces clockwise, so a doubleSided
+  normal flip keyed on front_face alone lit mirrored foliage from behind
+  (PR #70 review). Use `front_face != mirrored`, with `sign(det M)` from
+  InstanceData, and test a negatively scaled instance.
+- **Post-decode processing of untrusted textures must be costed before it
+  allocates.** The first coverage-mip pass reserved its budget only after a
+  float copy of level 0 plus a vector chain (> 1 GiB for an 8k image). Size
+  the result and the working set up front, claim them from the DecodeBudget,
+  read level 0 in place, keep two float levels alive, and write straight into
+  the final buffer; prove it with an allocation probe (tests/support).
+- **A shadow term that is filtered apart from the depth PCF draws its own
+  hard edge** (issue #77). Glass shadows were looked up with a 2x2 gather of
+  a half-resolution map, after the PCSS-filtered depth test, so their edge
+  stair-stepped; and the angle-dependent Fresnel at the sphere's grazing
+  silhouette wrote black texels (the dump showed transmittance 0.0 there),
+  a dark ring. Multiply each PCF tap's depth test by that tap's
+  transmittance, let translucent depth join the PCSS blocker search, and use
+  the hemispherical average Fresnel (1 - F_avg is what a sphere transmits
+  over its projected area) because the map cannot model the caustic that
+  balances grazing reflection. Debug by dumping the map (`read_rgba16f` on
+  `CsmShared::translucent_map`) before guessing.
+- **Count volume absorption once per volume, not per face.** A shadow
+  caster sees both faces of closed glass; KHR_materials_volume `thickness` is
+  the whole medium, so Beer-Lambert belongs on the light's entry face only.
+- **Import the shader-side contract instead of copying it.** A third copy of
+  the material flag bits and PbrMaterialParams in transparent.slang would
+  desync silently; passes import `material`, and a test checks the flag bits
+  and every pass's `g_params` reflection offsets against the C++ struct.
+- **A line protocol on a loopback port is reachable from every web page**
+  (issue #56). Browsers send cross-origin `POST`s to `127.0.0.1` without a
+  CORS preflight, and HTTP is lines: the remote endpoint answered the request
+  line and headers with parse errors, kept reading, and ran the body as an
+  RPC call — unauthenticated, because the token was optional and off by
+  default. Loopback is not a trust boundary (other local users, browsers,
+  DNS rebinding). → A loopback service drops a connection on the first HTTP
+  line and on the first line that isn't its protocol, never defaults to
+  unauthenticated (generate a CSPRNG token and publish it in a user-only
+  file, as Jupyter does), and has a test replaying a browser-style request.
+
 - **Fuzz every payload variant, not just one.** R17's KTX2 fuzz test first
   mutated only UASTC files; the review asked for ETC1S too, and the first
   ETC1S run crashed inside libktx (it ignores `decode_palettes` failures and
@@ -226,6 +388,7 @@ into CLAUDE.md or the brief template in [`CYCLE.md`](CYCLE.md).
   flag.** Parallel transcodes are serialised until the first one succeeds
   (`ktx2_transcode.cpp`); the encoder has the same pattern, so the cooker
   encodes one image at a time with libktx's own worker threads.
+
 - **Shadow acne has more than one cause; test it with an image test first.**
   R12.9: D16 over a caster-padded range gave 0.83 of the unshadowed value on
   a sloped lit floor; pancaking (depth clamp, tight range) alone still gave
@@ -434,3 +597,24 @@ clean locally and conflicting on GitHub. **Rule:** trust GitHub's
 until the orchestrator noticed. **Rule:** marking a PR ready and creating
 its Reviewer session are one step; the orchestrator's status sweep checks
 that every non-draft PR has one.
+
+## A hand-tuned local define compiled what CI could not (E8)
+
+The local editor build passed `-DQUAT_PROJECT_ROOT` to every translation
+unit, while CMake defines it only for the `game` target and `engine_tests`.
+`inspector_world.cpp` (in `engine_editor`) used the macro, compiled locally
+and failed in CI with an undeclared identifier. **Rule:** build with CI's
+exact preset and defines, not a hand-tuned local set; per-target
+definitions in the scratch build must mirror the CMake targets. Library
+code takes the project root at runtime (from `EditorLayer::create`), never
+from a compile-time path.
+
+## Review found state bugs a smoke test cannot (E8)
+
+The first E8 review found Reset removing and re-adding components (which
+cascaded through the codec's removal rules and deleted an Animator), Remove
+bypassing the codec, a recent-files loop passing a reference into the vector
+it reordered, and an unvalidated ini file. Each lived in code only reachable
+through an ImGui frame. **Rule:** UI actions are plain functions over the
+registry or the state struct, called by the widget and by GoogleTest;
+anything read from disk goes through a pure, tested parser.

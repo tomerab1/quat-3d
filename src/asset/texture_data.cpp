@@ -53,4 +53,11 @@ bool DecodeBudget::reserve(std::uint64_t bytes) noexcept {
     return true;
 }
 
+void DecodeBudget::release(std::uint64_t bytes) noexcept {
+    std::uint64_t used = used_.load(std::memory_order_relaxed);
+    while (!used_.compare_exchange_weak(used, used - std::min(used, bytes),
+                                        std::memory_order_relaxed)) {
+    }
+}
+
 } // namespace engine::asset

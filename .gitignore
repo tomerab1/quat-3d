@@ -39,3 +39,7 @@ imgui.ini
 
 # Claude Code agent worktrees (local, never committed)
 /.claude/worktrees/
+
+# Editor layout + preferences (per project, per user)
+.quat/
+__pycache__/

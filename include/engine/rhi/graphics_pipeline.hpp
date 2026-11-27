@@ -42,6 +42,10 @@ public:
         // passes whose targets blend differently (additive light, weighted
         // blended OIT's accumulation + revealage).
         std::span<const VkPipelineColorBlendAttachmentState> blend_attachments{};
+        // Transmittance accumulation (translucent shadow casters): rgb is
+        // multiplied into the target (dst * src), alpha keeps min(dst, src).
+        // Overrides alpha_blend.
+        bool                      transmittance_blend = false;
         // Clamp fragment depth to [0, 1] instead of clipping at the near /
         // far planes (needs the depthClamp feature; shadow pancaking).
         bool                      depth_clamp = false;

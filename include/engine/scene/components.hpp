@@ -8,6 +8,7 @@
 // DirectionalLight, Name, Parent, Children); skinning/physics/light components
 // arrive with their respective phases.
 
+#include <array>
 #include <cstdint>
 #include <expected>
 #include <memory>
@@ -82,12 +83,20 @@ struct MeshSource {
 // meshes and materials are shared through the AssetManager by content — and
 // rebuilds it whenever the fields change. `resolved` is system-managed.
 enum class PrimitiveShape : std::uint8_t { cube, sphere, plane, cylinder, cone, capsule };
+//
+// `shader` selects an authored material shader (ROADMAP A6) by name — the stem
+// of assets/shaders/materials/<shader>.slang — which then computes the
+// surface from these fields (MaterialInput::params) and `shader_params` (two
+// free vec4s). Empty = the built-in PBR material. With a shader the material
+// stays opaque (the shader's alpha cuts out below 0.5 instead of blending).
 struct Primitive {
     PrimitiveShape shape = PrimitiveShape::cube;
     glm::vec4      color{0.8F, 0.8F, 0.8F, 1.0F}; // linear base colour; alpha < 1 blends
     float          metallic = 0.0F;
     float          roughness = 0.5F;
     glm::vec3      emissive{0.0F};                // linear emitted radiance (HDR)
+    std::string    shader;                        // material shader name; empty = built-in
+    std::array<glm::vec4, 2> shader_params{};     // the shader's free parameters
     std::uint64_t  resolved = 0;                  // hash the MeshRenderer was built from
 };
 
@@ -374,7 +383,9 @@ struct PointLight {
 // minimum XZ corner sits at translation - tile_size/2 on each axis, heights
 // offset by translation.y). The frame loop owns generation: it kicks an async
 // rebuild whenever `regenerate` is set (the inspector's button / fresh
-// component) and uploads the result to the terrain pass.
+// component / a codec edit that changes the shape — terrain::same_shape) and
+// uploads the result to the terrain pass. Shading (`snowline_m`), the stream
+// radius and the GPU flag apply without regenerating.
 struct Terrain {
     // New terrains erode with the grid model, which the GPU can synthesise
     // (TerrainParams itself defaults to the CPU-only droplet model).
