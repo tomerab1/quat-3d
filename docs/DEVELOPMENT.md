@@ -204,6 +204,10 @@ cmake --build --preset release
 VK_ICD_FILENAMES=/opt/lavapipe/lvp_icd.json ctest --test-dir build/release --output-on-failure
 ```
 
+Configure also fetches ACL v2.1.0 and RTM v2.2.0 (header-only animation
+compression, `cmake/FetchAcl.cmake`) with git from GitHub. Offline, pass
+`-DFETCHCONTENT_SOURCE_DIR_ACL=<acl clone> -DFETCHCONTENT_SOURCE_DIR_RTM=<rtm clone>`.
+
 ### Compile-checking without vcpkg
 
 When vcpkg can't download (blocked network), clone the dependency headers at
@@ -227,6 +231,9 @@ GIT_LFS_SKIP_SMUDGE=1 git clone --depth 1 --branch v4.4.2 https://github.com/Khr
 git clone --depth 1 --branch v1.1.1 https://github.com/zeux/meshoptimizer.git
 for p in fix-vec2-math-operators remove-getkeyindex fix-imgui-v1.92.5; do
   patch -d imgui-node-editor -p1 < ~/vcpkg/ports/imgui-node-editor/$p.patch; done
+# ACL + RTM (animation compression; not in vcpkg — cmake/FetchAcl.cmake pins them)
+git clone --depth 1 --branch v2.1.0 https://github.com/nfrechette/acl.git
+git clone --depth 1 --branch v2.2.0 https://github.com/nfrechette/rtm.git
 apt-get install -y nlohmann-json3-dev libglm-dev libvulkan-dev
 
 D=~/deps; cd ~/quat-3d

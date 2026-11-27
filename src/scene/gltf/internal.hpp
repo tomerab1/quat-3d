@@ -32,6 +32,8 @@
 #include "engine/animation/clip.hpp"
 #include "engine/animation/skeleton.hpp"
 #include "engine/core/error.hpp"
+
+#include "clip_compression.hpp"
 #include "engine/scene/gltf_loader.hpp"
 #include "scene/gltf/gltf_io.hpp"
 

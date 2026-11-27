@@ -3,13 +3,18 @@
 
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <string>
 
 #include <entt/entity/registry.hpp>
 #include <gtest/gtest.h>
+#include <nlohmann/json.hpp>
 
 #include "engine/asset/asset_manager.hpp"
+#include "engine/renderer/render_settings.hpp"
+#include "engine/scene/component_json.hpp"
 #include "engine/scene/components.hpp"
+#include "engine/scene/material_override.hpp"
 #include "engine/scene/scene.hpp"
 #include "engine/scene/scene_io.hpp"
 #include "support/expect_ok.hpp"
@@ -194,6 +199,100 @@ TEST(GpuSceneIo, RoundTripsInstancedMeshAndScatter) {
     EXPECT_EQ(r.get<s::Scatter>(lf).area, s::ScatterArea::circle);
     EXPECT_EQ(r.get<s::Scatter>(lf).slope_deg, glm::vec2(0.0F, 25.0F));
     EXPECT_EQ(r.get<s::Scatter>(lf).generated, 0U);
+}
+
+// A8: the renderer's settings and per-entity material overrides travel with
+// the scene; files without the block load with default settings, and a
+// malformed block fails the load without touching the live scene or settings.
+TEST(GpuSceneIo, RenderSettingsAndMaterialOverridesRoundTrip) {
+    QUAT_REQUIRE_GPU(g);
+    engine::asset::AssetManager assets;
+    s::Scene scene;
+    const entt::entity ball = scene.create_entity("ball");
+    scene.registry().emplace<s::Primitive>(ball).roughness = 0.2F;
+    ASSERT_OK(s::apply_component(scene.registry(), ball, "material",
+                                 {{"clearcoat", 1.0}, {"ior", 1.33}}, true));
+    engine::renderer::RenderSettings saved;
+    saved.exposure.compensation_ev = 1.25F;
+    saved.bloom.enabled = false;
+    saved.shadows.pcf_radius = 3;
+    saved.clouds.coverage = 0.9F;
+
+    const auto path = std::filesystem::temp_directory_path() / "quat_settings_scene.json";
+    ASSERT_OK(s::save_scene(scene, path, &saved));
+    s::Scene loaded;
+    engine::renderer::RenderSettings settings;
+    settings.taa.feedback = 0.5F;  // the file has the default: restored
+    settings.clouds.time_s = 7.0F; // frame-loop state is kept
+    ASSERT_OK(s::load_scene(loaded, path, g->allocator, g->transfer, assets, &settings));
+    EXPECT_FLOAT_EQ(settings.exposure.compensation_ev, 1.25F);
+    EXPECT_FALSE(settings.bloom.enabled);
+    EXPECT_EQ(settings.shadows.pcf_radius, 3);
+    EXPECT_FLOAT_EQ(settings.clouds.coverage, 0.9F);
+    EXPECT_FLOAT_EQ(settings.taa.feedback, engine::renderer::TaaSettings{}.feedback);
+    EXPECT_FLOAT_EQ(settings.clouds.time_s, 7.0F);
+    const entt::entity lb = find_named(loaded, "ball");
+    ASSERT_NE(lb, k_none);
+    const auto params = s::effective_material_params(loaded.registry(), lb);
+    ASSERT_TRUE(params.has_value());
+    EXPECT_FLOAT_EQ(params->roughness_factor, 0.2F);
+    EXPECT_FLOAT_EQ(params->clearcoat_factor, 1.0F);
+    EXPECT_NEAR(params->ior, 1.33F, 1e-6F);
+
+    // Saving without settings writes no block; loading such a (pre-A8) file
+    // resets the settings to the defaults.
+    ASSERT_OK(s::save_scene(scene, path));
+    {
+        std::ifstream in(path);
+        const std::string text((std::istreambuf_iterator<char>(in)), {});
+        EXPECT_EQ(text.find("render_settings"), std::string::npos);
+    }
+    ASSERT_OK(s::load_scene(loaded, path, g->allocator, g->transfer, assets, &settings));
+    EXPECT_FLOAT_EQ(settings.exposure.compensation_ev, 0.0F);
+    EXPECT_TRUE(settings.bloom.enabled);
+    std::filesystem::remove(path);
+
+    // Lenient decoding: unknown groups / fields ignored, out-of-range values
+    // clamped — render settings and material overrides alike.
+    const auto loose = write_temp("quat_loose_settings.json", R"({"version": 2, "entities": [
+        {"name": "orb", "primitive": {"shape": "sphere"},
+         "material": {"clearcoat": 3, "ior": 0.5, "sheen": 1}}],
+        "render_settings": {"version": 1, "bloom": {"intensity": 9, "flare": true},
+                            "lens": {"dirt": 1}}})");
+    ASSERT_OK(s::load_scene(loaded, loose, g->allocator, g->transfer, assets, &settings));
+    EXPECT_FLOAT_EQ(settings.bloom.intensity, 1.0F);
+    const entt::entity orb = find_named(loaded, "orb");
+    ASSERT_NE(orb, k_none);
+    const auto orb_params = s::effective_material_params(loaded.registry(), orb);
+    ASSERT_TRUE(orb_params.has_value());
+    EXPECT_FLOAT_EQ(orb_params->clearcoat_factor, 1.0F); // clamped into [0, 1]
+    EXPECT_FLOAT_EQ(orb_params->ior, 1.0F);              // clamped into [1, 3]
+    std::filesystem::remove(loose);
+
+    // A block newer than this build reads fails the load with a clear error.
+    const auto newer = write_temp("quat_newer_settings.json", R"({"entities": [],
+        "render_settings": {"version": 99, "bloom": {"intensity": 0.5}}})");
+    auto too_new = s::load_scene(loaded, newer, g->allocator, g->transfer, assets, &settings);
+    ASSERT_FALSE(too_new);
+    EXPECT_NE(too_new.error().message.find("render_settings version 99 is newer"),
+              std::string::npos)
+        << too_new.error().message;
+    EXPECT_NE(find_named(loaded, "orb"), k_none); // the live scene is kept
+    std::filesystem::remove(newer);
+
+    // A malformed block fails the load and changes nothing.
+    loaded.create_entity("keep_me");
+    settings.exposure.key = 0.3F;
+    const auto bad = write_temp("quat_bad_settings.json", R"({"entities": [{"name": "x"}],
+        "render_settings": {"taa": {"enabled": "yes"}}})");
+    auto result = s::load_scene(loaded, bad, g->allocator, g->transfer, assets, &settings);
+    ASSERT_FALSE(result);
+    EXPECT_NE(result.error().message.find("render_settings: taa.enabled"), std::string::npos)
+        << result.error().message;
+    EXPECT_FLOAT_EQ(settings.exposure.key, 0.3F);
+    EXPECT_NE(find_named(loaded, "keep_me"), k_none);
+    EXPECT_EQ(find_named(loaded, "x"), k_none);
+    std::filesystem::remove(bad);
 }
 
 } // namespace

@@ -91,13 +91,19 @@ JSON-RPC over loopback TCP to the engine.
   the model, hot-swap (needs R2).
 - [ ] **A7 — Behaviour authoring.** Build and edit behaviour graphs (G2) by
   tool call, with validation errors returned as data.
-
-## R — Rendering & performance
-
 - [ ] **A8 — Live tuning.** Every renderer / post-process / material
   parameter readable and writable over the remote API and MCP from one
   settings model the editor also edits (schema with ranges and units),
   saved with the scene; a `tune_look` workflow prompt.
+- [ ] **A9 — World-building ergonomics** (from MCP world-building sessions,
+  issues #37–#42): scene-derived camera far plane; shading-only terrain
+  edits without regeneration; batch-consistent `world.ground_height`;
+  entity world bounds + `world.place_on_ground`; screenshots from an
+  explicit offscreen camera; `asset_search` / `asset_fetch` for CC0 Poly
+  Haven models (licence recorded, cooked with R17).
+
+## R — Rendering & performance
+
 - [ ] **R1 — Async asset loading.** Thread-pool loads, `is_ready()` handles,
   fallback assets while loading, upload queue budgeted per frame.
 - [x] **R2 — Shader hot reload.** File watcher → `slangc` → pipeline recreation
@@ -237,6 +243,27 @@ JSON-RPC over loopback TCP to the engine.
 - [ ] **E5 — Preferences + layouts.** Persisted settings, key bindings.
 - [ ] **E6 — Asset thumbnails + previews.**
 - [ ] **E7 — Build & export dialog** (drives P4).
+- [ ] **E8 — Editor UI/UX redesign** *(owner request, top editor priority)*.
+  A coherent, modern editor on par with Unreal 5 / Godot 4 / Blender:
+  - **E8.1 Design system** (`src/editor/ui/`): theme tokens (dark + light,
+    one accent, semantic colours), Inter + JetBrains Mono + an icon font,
+    DPI-aware sizing and spacing scale, and a widget kit — property grid
+    rows (label column, reset-to-default, tooltips), XYZ-coloured vector
+    fields, component headers (icon, enable toggle, ⋮ menu), search fields,
+    icon buttons/toolbars, toasts, empty states.
+  - **E8.2 Shell**: main menu, main toolbar (play/pause/step, gizmo mode +
+    space, snapping, camera speed), status bar (FPS/frame time, sim state,
+    selection, remote/MCP connection), viewport as a dock panel with an
+    overlay toolbar (view modes, stats), default layout + reset, layout
+    persistence, a command palette (Ctrl+P) and consistent shortcuts.
+  - **E8.3 Core panels** on the kit: Hierarchy (search, type icons,
+    visibility, F2 rename, drag re-parent, context menu), Inspector
+    (property grid, searchable Add Component), Asset browser (breadcrumbs,
+    grid/list, search, type icons), Console (A5 log ring, filters).
+  - **E8.4 Feature panels** migrated once their PRs land (tuning, shadows/AO,
+    upscaler, particles, scripts, behaviour editor, audio, grass).
+  - **Verification:** real editor screenshots in CI (headless capture of the
+    docked editor) with before/after images for every slice.
 
 ---
 

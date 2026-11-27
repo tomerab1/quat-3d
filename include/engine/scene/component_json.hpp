@@ -12,6 +12,8 @@
 // Component names (the JSON keys):
 //   transform        position / rotation (Euler degrees, YXZ) / scale, or a 16-float matrix
 //   primitive        procedural shape + flat PBR material
+//   material         per-entity overrides of the drawn material's PBR factors
+//                    (material_override.hpp); null clears a field
 //   instanced_mesh   glTF (or primitive) model + placements (omitted when a
 //                    scatter generates them; instance_count is read-only)
 //   scatter          seeded procedural placement of the instanced mesh
@@ -23,7 +25,9 @@
 //   net_replicated
 //   audio_source     clip / bus / volume / pitch / loop / 3D falloff (+ write-only command)
 //   audio_listener
-//   animator         edit-only (needs a clip from a glTF; cannot be added)
+//   animator         edit-only (needs a clip from a glTF; cannot be added):
+//                    clip (by name, switches with blend / blend_time), time, speed, looping
+//   foot_ik          foot placement (joint names, probe lengths, limits, smoothing)
 //   mesh             read-only (glTF provenance; scene_io resolves it)
 //
 // Decoding merges: fields present in the JSON overwrite the component's

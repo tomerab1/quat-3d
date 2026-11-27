@@ -47,6 +47,14 @@ apply_additive(const std::vector<JointPose>& base, const std::vector<JointPose>&
                const std::vector<JointPose>& reference, float weight,
                std::span<const std::uint32_t> mask);
 
+// Local matrix of one joint (T * R * S).
+[[nodiscard]] glm::mat4 joint_matrix(const JointPose& pose);
+
+// World matrices of a pose, the skeleton resolved under `root_transform`.
+[[nodiscard]] std::vector<glm::mat4>
+pose_world_matrices(const SkeletonAsset& skeleton, std::span<const JointPose> pose,
+                    const glm::mat4& root_transform = glm::mat4(1.0F));
+
 // Compose a pose into skinning matrices (joint_world * inverse_bind), with the
 // skeleton resolved under `root_transform` (its armature/ancestor world transform).
 [[nodiscard]] std::vector<glm::mat4>

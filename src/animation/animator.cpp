@@ -2,18 +2,16 @@
 
 #include "engine/animation/animator.hpp"
 
-#include <unordered_map>
+#include <algorithm>
+#include <utility>
 
 #include <glm/gtc/matrix_transform.hpp>
+
+#include "engine/animation/compression.hpp"
 
 namespace engine::animation {
 
 namespace {
-
-[[nodiscard]] glm::mat4 compose(const JointPose& p) {
-    return glm::translate(glm::mat4(1.0F), p.translation) * glm::mat4_cast(p.rotation) *
-           glm::scale(glm::mat4(1.0F), p.scale);
-}
 
 [[nodiscard]] bool mask_enabled(std::span<const std::uint32_t> mask, std::size_t joint) {
     if (mask.empty()) return true;
@@ -22,6 +20,21 @@ namespace {
 }
 
 } // namespace
+
+glm::mat4 joint_matrix(const JointPose& p) {
+    return glm::translate(glm::mat4(1.0F), p.translation) * glm::mat4_cast(p.rotation) *
+           glm::scale(glm::mat4(1.0F), p.scale);
+}
+
+std::vector<glm::mat4> pose_world_matrices(const SkeletonAsset& skeleton,
+                                           std::span<const JointPose> pose,
+                                           const glm::mat4& root_transform) {
+    std::vector<glm::mat4> local(pose.size());
+    for (std::size_t i = 0; i < pose.size(); ++i) {
+        local[i] = joint_matrix(pose[i]);
+    }
+    return compute_world_matrices(skeleton, local, root_transform);
+}
 
 std::vector<JointPose> bind_pose(const SkeletonAsset& skeleton) {
     std::vector<JointPose> pose(skeleton.joints.size());
@@ -36,16 +49,27 @@ std::vector<JointPose> bind_pose(const SkeletonAsset& skeleton) {
 std::vector<JointPose> sample_local_pose(const SkeletonAsset& skeleton, const AnimClipAsset& clip,
                                          float time) {
     std::vector<JointPose> pose = bind_pose(skeleton);
-
-    std::unordered_map<int, std::size_t> node_to_joint;
-    node_to_joint.reserve(skeleton.joints.size());
-    for (std::size_t i = 0; i < skeleton.joints.size(); ++i) {
-        node_to_joint[skeleton.joints[i].node] = i;
+    // Compressed tracks serve any skin over the clip's nodes. With the raw
+    // keys dropped every animated node has a track (joints without one are
+    // unanimated); with them kept, a skin the tracks do not cover reads them.
+    if (clip.compressed != nullptr &&
+        (clip.channels.empty() || clip.compressed->covers(skeleton))) {
+        decompress_pose(*clip.compressed, skeleton, time, pose);
+        return pose;
     }
 
+    // node -> joint, sorted for binary search (cheaper than hashing here).
+    std::vector<std::pair<int, std::size_t>> node_to_joint(skeleton.joints.size());
+    for (std::size_t i = 0; i < skeleton.joints.size(); ++i) {
+        node_to_joint[i] = {skeleton.joints[i].node, i};
+    }
+    std::sort(node_to_joint.begin(), node_to_joint.end());
+
     for (const AnimChannel& ch : clip.channels) {
-        const auto it = node_to_joint.find(ch.target_node);
-        if (it == node_to_joint.end() || ch.sampler >= clip.samplers.size()) {
+        const auto it = std::lower_bound(node_to_joint.begin(), node_to_joint.end(),
+                                         std::pair<int, std::size_t>{ch.target_node, 0});
+        if (it == node_to_joint.end() || it->first != ch.target_node ||
+            ch.sampler >= clip.samplers.size()) {
             continue;
         }
         const std::size_t j = it->second;
@@ -102,11 +126,7 @@ std::vector<JointPose> apply_additive(const std::vector<JointPose>& base,
 std::vector<glm::mat4> pose_skinning_matrices(const SkeletonAsset& skeleton,
                                               const std::vector<JointPose>& pose,
                                               const glm::mat4& root_transform) {
-    std::vector<glm::mat4> local(pose.size());
-    for (std::size_t i = 0; i < pose.size(); ++i) {
-        local[i] = compose(pose[i]);
-    }
-    const std::vector<glm::mat4> world = compute_world_matrices(skeleton, local, root_transform);
+    const std::vector<glm::mat4> world = pose_world_matrices(skeleton, pose, root_transform);
     std::vector<glm::mat4> out(skeleton.joints.size());
     for (std::size_t i = 0; i < skeleton.joints.size(); ++i) {
         out[i] = world[i] * skeleton.joints[i].inverse_bind;

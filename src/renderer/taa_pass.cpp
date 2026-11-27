@@ -1,5 +1,6 @@
 #include "engine/renderer/taa_pass.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <memory>
@@ -169,7 +170,7 @@ TaaPass::create(const rhi::Device& device, rhi::GpuAllocator& allocator, rhi::Pi
 std::expected<void, core::Error>
 TaaPass::add_to_graph(rhi::RenderGraph& graph, rhi::ResourceHandle current,
                       rhi::ResourceHandle depth, rhi::ResourceHandle target, VkExtent2D extent,
-                      const glm::mat4& view_proj) {
+                      const glm::mat4& view_proj, const TaaSettings& settings) {
     TaaHistory& hist = *history_;
     if (auto r = hist.ensure(extent); !r) return std::unexpected(r.error());
     hist.collect_retired();
@@ -207,8 +208,8 @@ TaaPass::add_to_graph(rhi::RenderGraph& graph, rhi::ResourceHandle current,
     push.cur_inv_view_proj = glm::inverse(view_proj);
     push.prev_view_proj = hist.valid_ ? hist.prev_view_proj_ : view_proj;
     push.swap_rb = swap_rb_ ? 1.0F : 0.0F;
-    push.alpha = 0.9F;
-    push.valid = hist.valid_ ? 1.0F : 0.0F;
+    push.alpha = std::clamp(settings.feedback, 0.0F, 0.98F);
+    push.valid = hist.valid_ && settings.enabled ? 1.0F : 0.0F;
 
     graph.add_pass("taa_resolve", rhi::PassType::compute)
         .reads(current, rhi::ResourceUsage::sampled_compute)
