@@ -8,8 +8,11 @@ changed, and records what it learned so the next cycle does better.
 It runs in two places:
 
 - **In a live session** (self-paced loop) while the owner is around.
-- **As a scheduled cloud session every 2 hours**, one cycle per run, each
-  opening a pull request. The owner reviews and merges.
+- **As a scheduled task every 2 hours that resumes the live session**
+  (`quat-3d improvement cycle (this session)`), so the loop survives the
+  container being reclaimed. Each cycle opens one pull request, which the
+  cycle merges once its CI is green. (A fresh-session-per-run variant was
+  tried first and disabled: fresh sessions had no repository access.)
 
 Every cycle starts by reading, in order: [`STATUS.md`](STATUS.md),
 [`LEARNINGS.md`](LEARNINGS.md), [`../ROADMAP.md`](../ROADMAP.md),
@@ -21,7 +24,7 @@ Every cycle starts by reading, in order: [`STATUS.md`](STATUS.md),
 |---|---|
 | Parallel worker agents per cycle | up to **8** (aggressive) |
 | Scheduled cadence | every **2 hours** |
-| How work lands | **one pull request per cycle**; the owner merges |
+| How work lands | **one pull request per cycle**, merged into `master` by the cycle as soon as its CI is fully green (owner instruction) |
 
 ## The cycle
 
@@ -44,6 +47,9 @@ Every cycle starts by reading, in order: [`STATUS.md`](STATUS.md),
    summary), re-run `scripts/check-compile.sh` on changed files, run the
    CPU tests that link locally, merge into the cycle branch, resolve
    conflicts. Reject or send back work that breaks a rule in CLAUDE.md.
+   Review **structure**, not only behaviour: file sizes, prose embedded in
+   source (CLAUDE.md "No prose in source"), lint level, reuse of standard
+   libraries/crates instead of hand-rolled code, `main.cpp` growth.
 7. **Verify.** Push; wait for CI (subscribe to the PR rather than polling);
    fix failures. Mark the PR ready for review only when CI is green.
 8. **Audit.** Spawn 1–2 fresh reviewers on the cycle's diff (give them the
@@ -62,7 +68,12 @@ Every cycle starts by reading, in order: [`STATUS.md`](STATUS.md),
 - **Base:** `master`, unless an earlier cycle PR is still unmerged — then
   base on the newest unmerged cycle branch so work stacks instead of
   conflicting, and target the PR at that branch. Say so in the PR.
-- Never merge PRs, force-push, or rewrite published history.
+- **Merge rule:** merge a cycle PR into `master` only when every CI job on
+  its head commit is green (no skipped required jobs, no pending runs) and
+  the PR is not a draft. Use a merge commit (no squash/rebase — workers'
+  branches reference the commits). Never merge a red, pending or partly
+  cancelled run, and never merge anything other than cycle PRs.
+- Never force-push or rewrite published history.
 
 ## Worker brief template
 
@@ -75,7 +86,9 @@ Every brief contains:
 3. **Read first** — CLAUDE.md, DEVELOPMENT.md, LEARNINGS.md, and the
    specific files/findings for the item.
 4. **What exists** — APIs to reuse (so the agent doesn't rebuild them).
-5. **What to build** — scope boundaries, including what NOT to touch.
+5. **What to build** — scope boundaries, including what NOT to touch, and
+   the quality rules that apply (CLAUDE.md file sizes, "No prose in source",
+   standard libraries/crates over hand-rolled code).
 6. **Verification** — `scripts/check-compile.sh` on every touched file (zero
    warnings); build and run CPU tests locally where they link; GPU tests
    named `Gpu*` for CI; shaders compiled with `slangc`.

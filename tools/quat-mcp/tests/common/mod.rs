@@ -158,7 +158,7 @@ async fn serve_connection(sock: TcpStream, state: Arc<State>) {
         let Ok(req) = serde_json::from_str::<Value>(&line) else {
             send(
                 &tx,
-                json!({"jsonrpc":"2.0","id":null,"error":{"code":-32700,"message":"invalid JSON"}}),
+                &json!({"jsonrpc":"2.0","id":null,"error":{"code":-32700,"message":"invalid JSON"}}),
             );
             continue;
         };
@@ -174,36 +174,36 @@ async fn serve_connection(sock: TcpStream, state: Arc<State>) {
         if method == "session.hello" {
             let given = params.get("token").and_then(Value::as_str);
             if state.token.is_some() && given != state.token.as_deref() {
-                send(&tx, error(&id, -32001, "invalid token"));
+                send(&tx, &error(&id, -32001, "invalid token"));
                 break;
             }
             authed = true;
             send(
                 &tx,
-                json!({"jsonrpc":"2.0","id":id,"result":{"protocol":1,"server":"quat-3d","methods":30}}),
+                &json!({"jsonrpc":"2.0","id":id,"result":{"protocol":1,"server":"quat-3d","methods":30}}),
             );
             continue;
         }
         if !authed {
             send(
                 &tx,
-                error(&id, -32001, "session.hello with a token required first"),
+                &error(&id, -32001, "session.hello with a token required first"),
             );
             break;
         }
 
         match (state.handler)(&method, &params) {
-            Action::Reply(result) => send(&tx, json!({"jsonrpc":"2.0","id":id,"result":result})),
-            Action::Error(code, msg) => send(&tx, error(&id, code, &msg)),
+            Action::Reply(result) => send(&tx, &json!({"jsonrpc":"2.0","id":id,"result":result})),
+            Action::Error(code, msg) => send(&tx, &error(&id, code, &msg)),
             Action::ErrorWithData(code, msg, data) => send(
                 &tx,
-                json!({"jsonrpc":"2.0","id":id,"error":{"code":code,"message":msg,"data":data}}),
+                &json!({"jsonrpc":"2.0","id":id,"error":{"code":code,"message":msg,"data":data}}),
             ),
             Action::Delayed(delay, result) => {
                 let tx = tx.clone();
                 tokio::spawn(async move {
                     tokio::time::sleep(delay).await;
-                    send(&tx, json!({"jsonrpc":"2.0","id":id,"result":result}));
+                    send(&tx, &json!({"jsonrpc":"2.0","id":id,"result":result}));
                 });
             }
             Action::Silent => {}
@@ -222,7 +222,7 @@ fn error(id: &Value, code: i64, message: &str) -> Value {
     json!({"jsonrpc":"2.0","id":id,"error":{"code":code,"message":message}})
 }
 
-fn send(tx: &mpsc::UnboundedSender<String>, msg: Value) {
+fn send(tx: &mpsc::UnboundedSender<String>, msg: &Value) {
     let _ = tx.send(format!("{msg}\n"));
 }
 

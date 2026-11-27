@@ -77,6 +77,10 @@ JSON-RPC over loopback TCP to the engine.
 - [ ] **A4 — `quat-mcp` server.** rmcp-based, typed tool schemas, screenshots
   as MCP image content, reconnect handling, tests against a mock engine,
   setup docs for Claude Code / Claude Desktop.
+- [x] **A4.1 — `quat-mcp` idiom pass.** Model-facing text moved to Markdown
+  under `content/` (tool descriptions via `#[doc = include_str!]`, prompts as
+  MiniJinja templates); `server.rs`/`client.rs` split by responsibility (one
+  rmcp router per tool group); `clippy::pedantic` enforced.
 - [ ] **A5 — Debugging tools.** Log tail + filters (S6), Vulkan validation
   messages, frame/GPU timings, pause / single-step / time scale, entity watch,
   physics raycasts and contact queries, navmesh path queries.

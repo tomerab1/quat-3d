@@ -1,0 +1,1 @@
+Move the viewport camera; returns the new camera (as `camera_get`). Usually give position plus `look_at`, e.g. `{"position": [12, 8, 12], "look_at": [0, 1, 0]}`. Alternatively set `yaw_deg` (0 = +X, 90 = +Z) and `pitch_deg` (positive = up). `fov_deg` is the vertical field of view.

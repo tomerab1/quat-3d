@@ -27,7 +27,9 @@ fn echo(method: &str, params: &Value) -> Action {
         ),
         "hang" => Action::Silent,
         "drop" => Action::Disconnect,
-        "big" => Action::Reply(json!("x".repeat(params["len"].as_u64().unwrap() as usize))),
+        "big" => Action::Reply(json!(
+            "x".repeat(usize::try_from(params["len"].as_u64().unwrap()).unwrap())
+        )),
         "fail" => Action::ErrorWithData(
             code::INVALID_PARAMS,
             "point_light.radius: expected a number >= 0".into(),

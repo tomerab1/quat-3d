@@ -103,3 +103,27 @@ into CLAUDE.md or the brief template in [`CYCLE.md`](CYCLE.md).
   defined exactly once — faster and safer than retyping.
 - **Load into a staging object, swap on success.** Loaders that clear live
   state before validating input lose user data on a bad file (scene files).
+
+## Scheduled fresh sessions start without repository access (cycle 1)
+
+The first scheduled cycle (fresh session per run) cloned the public repo
+read-only and stopped: pushes were refused ("not in this session's authorized
+repository set") and the GitHub API was blocked. Scheduled tasks don't carry
+the creating session's repository grant.
+**Rule:** bind recurring cycles to the live session (it already has push + PR
+access), or attach the repository to the environment before relying on
+fresh-session runs. Check the first scheduled run's transcript, never assume.
+
+## Prose was embedded as Rust string literals (A4, caught by the owner)
+
+The A4 worker put the MCP server instructions, every tool description (some
+with JSON examples), the component reference and two long prompt bodies into
+`server.rs` as escaped string literals and `concat!` macros — 836 lines,
+unreadable and uneditable as documentation. The brief said "idiomatic Rust"
+but not where text belongs, the orchestrator's review checked behaviour and
+tests, not structure, and the owner had to point it out.
+**Rule:** text for models or people lives in Markdown (`content/`), embedded
+with `include_str!`; code holds only error messages (CLAUDE.md "No prose in
+source"). Every worker brief that adds tools, prompts or help text states this,
+and merge review includes a structure pass (file sizes, inline prose, lint
+level), not just a compile + test pass.
