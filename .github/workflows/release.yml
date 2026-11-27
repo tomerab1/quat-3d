@@ -8,7 +8,6 @@ name: Release
 on:
   push:
     tags: ["v*"]
-    branches: [feat/s4-platform-ci]  # TEMP while iterating P4
   workflow_dispatch:
 
 concurrency:
