@@ -117,6 +117,17 @@ into CLAUDE.md or the brief template in [`CYCLE.md`](CYCLE.md).
 
 ## C++ in this codebase
 
+- **A line protocol on a loopback port is reachable from every web page**
+  (issue #56). Browsers send cross-origin `POST`s to `127.0.0.1` without a
+  CORS preflight, and HTTP is lines: the remote endpoint answered the request
+  line and headers with parse errors, kept reading, and ran the body as an
+  RPC call — unauthenticated, because the token was optional and off by
+  default. Loopback is not a trust boundary (other local users, browsers,
+  DNS rebinding). → A loopback service drops a connection on the first HTTP
+  line and on the first line that isn't its protocol, never defaults to
+  unauthenticated (generate a CSPRNG token and publish it in a user-only
+  file, as Jupyter does), and has a test replaying a browser-style request.
+
 - **Shadow acne has more than one cause; test it with an image test first.**
   R12.9: D16 over a caster-padded range gave 0.83 of the unshadowed value on
   a sloped lit floor; pancaking (depth clamp, tight range) alone still gave
