@@ -18,6 +18,7 @@
 #include "animation_preview.hpp"
 #include "asset_browser.hpp"
 #include "physics_debug.hpp"
+#include "picking.hpp"
 #include "engine/renderer/imgui_pass.hpp" // viewport_texture_id
 #include "inspector.hpp"
 #include "scene_hierarchy.hpp"
@@ -91,27 +92,6 @@ void apply_theme() {
     c[ImGuiCol_DockingEmptyBg] = bg_dark;
     c[ImGuiCol_DragDropTarget] = accent_hover;
     c[ImGuiCol_NavCursor] = accent;
-}
-
-// Ray/AABB slab test in the mesh's local space. Returns the entry distance
-// along the LOCAL ray (>= 0) or a negative value on miss.
-[[nodiscard]] float ray_aabb(const glm::vec3& origin, const glm::vec3& dir, const glm::vec3& lo,
-                             const glm::vec3& hi) {
-    float tmin = 0.0F;
-    float tmax = std::numeric_limits<float>::max();
-    for (int i = 0; i < 3; ++i) {
-        if (std::abs(dir[i]) < 1e-8F) {
-            if (origin[i] < lo[i] || origin[i] > hi[i]) return -1.0F;
-            continue;
-        }
-        float t1 = (lo[i] - origin[i]) / dir[i];
-        float t2 = (hi[i] - origin[i]) / dir[i];
-        if (t1 > t2) std::swap(t1, t2);
-        tmin = std::max(tmin, t1);
-        tmax = std::min(tmax, t2);
-        if (tmin > tmax) return -1.0F;
-    }
-    return tmin;
 }
 
 } // namespace
@@ -328,7 +308,8 @@ void EditorLayer::build_gizmo(const EditorContext& ctx, const ImVec2& rect_min,
 }
 
 // Left-click picking: ray through the clicked pixel against every mesh's
-// world-space-transformed local AABB; the nearest hit becomes the selection.
+// world-space-transformed local AABB (pick_entity); the nearest hit becomes
+// the selection.
 void EditorLayer::handle_picking(const EditorContext& ctx, const ImVec2& rect_min,
                                  const ImVec2& rect_max) {
     if (!ImGui::IsItemClicked(ImGuiMouseButton_Left)) return;
@@ -359,25 +340,7 @@ void EditorLayer::handle_picking(const EditorContext& ctx, const ImVec2& rect_mi
         return;
     }
 
-    entt::registry& r = ctx.scene->registry();
-    float best = std::numeric_limits<float>::max();
-    entt::entity hit = entt::null;
-    for (auto [e, transform, mr] :
-         r.view<const scene::Transform, const scene::MeshRenderer>().each()) {
-        if (!mr.mesh.valid() || !mr.mesh.is_loaded()) continue;
-        const glm::mat4 inv_world = glm::inverse(transform.world);
-        const glm::vec3 lo = glm::vec3(inv_world * glm::vec4(origin, 1.0F));
-        const glm::vec3 ld = glm::normalize(glm::vec3(inv_world * glm::vec4(dir, 0.0F)));
-        const float t = ray_aabb(lo, ld, mr.mesh->bounds.min, mr.mesh->bounds.max);
-        if (t < 0.0F) continue;
-        const glm::vec3 hit_world =
-            glm::vec3(transform.world * glm::vec4(lo + ld * t, 1.0F));
-        const float dist = glm::length(hit_world - origin);
-        if (dist < best) {
-            best = dist;
-            hit = e;
-        }
-    }
+    const entt::entity hit = pick_entity(ctx.scene->registry(), origin, dir);
     if (hit != entt::null) selected_ = hit;
 }
 
