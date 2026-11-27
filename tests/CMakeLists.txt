@@ -11,14 +11,17 @@ find_package(GTest CONFIG REQUIRED)
 file(GLOB_RECURSE ENGINE_TEST_SOURCES CONFIGURE_DEPENDS
     ${CMAKE_CURRENT_SOURCE_DIR}/*_test.cpp)
 
+# GameBoot (P4) is graphics-free application-layer logic: compiled in directly.
 add_executable(engine_tests
     test_main.cpp
     support/gpu_context.cpp
+    ${PROJECT_SOURCE_DIR}/src/app/game_boot.cpp
+    ${PROJECT_SOURCE_DIR}/src/app/app_config.cpp
     ${ENGINE_TEST_SOURCES})
 target_link_libraries(engine_tests PRIVATE
-    engine_flags engine_core engine_rhi engine_asset engine_scene engine_renderer engine_physics
-    engine_animation engine_terrain engine_nav engine_net engine_remote engine_remote_world
-    engine_audio
+    engine_flags engine_editor_build engine_core engine_rhi engine_asset engine_scene
+    engine_renderer engine_physics engine_animation engine_terrain engine_nav engine_net
+    engine_remote engine_remote_world engine_audio engine_project engine_pack
     GTest::gtest)
 if(ENGINE_EDITOR)
     # imgui: the ImGui pass test builds its draw data in a private context.
@@ -32,7 +35,8 @@ target_include_directories(engine_tests PRIVATE
 # does not warn inside stb.
 target_include_directories(engine_tests SYSTEM PRIVATE ${Stb_INCLUDE_DIR})
 target_compile_definitions(engine_tests PRIVATE
-    QUAT_COOKED_SHADER_DIR="${PROJECT_SOURCE_DIR}/cooked/shaders")
+    QUAT_COOKED_SHADER_DIR="${PROJECT_SOURCE_DIR}/cooked/shaders"
+    QUAT_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_dependencies(engine_tests shaders)
 
 add_test(NAME engine_tests_cpu COMMAND engine_tests "--gtest_filter=-Gpu*")

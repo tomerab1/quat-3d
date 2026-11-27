@@ -24,11 +24,13 @@
 
 #include <vulkan/vulkan.h>
 
+#include "app/app_config.hpp"
 #include "app/fly_camera.hpp"
 #include "app/frame_renderer.hpp"
 #include "app/remote_bridge.hpp"
 #include "app/world_runtime.hpp"
 #include "engine/asset/asset_manager.hpp"
+#include "engine/project/build_job.hpp"
 #include "engine/rhi/device.hpp"
 #include "engine/rhi/gpu_allocator.hpp"
 #include "engine/rhi/pipeline_cache.hpp"
@@ -42,17 +44,6 @@
 struct SDL_Window;
 
 namespace quat::app {
-
-// Process-level options, parsed from the environment by main().
-struct AppConfig {
-    // QUAT_MAX_FRAMES: auto-quit after this many presented frames (0 = run
-    // until the window closes). Headless smoke tests verify clean teardown.
-    std::uint64_t max_frames = 0;
-    // QUAT_SCREENSHOT (with QUAT_MAX_FRAMES): the final frame as binary PPM.
-    std::optional<std::filesystem::path> screenshot_path;
-    // False with QUAT_NO_UI=1: no editor shell (deterministic headless renders).
-    bool editor_ui = true;
-};
 
 class Application {
 public:
@@ -94,6 +85,10 @@ private:
     void report_stats() const;
 
     AppConfig config_;
+    // Game packaging (P4/E7): quat-pack runs here for the editor's Build &
+    // Export dialog and the remote project.build. Declared early so it
+    // outlives the editor and the remote bridge that use it.
+    engine::project::BuildJob build_job_;
 
     Platform                   platform_;
     engine::rhi::Device        device_;

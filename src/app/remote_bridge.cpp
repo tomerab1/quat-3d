@@ -285,6 +285,11 @@ struct RemoteBridge::Impl {
     void open_endpoint() {
         const char* env = std::getenv("QUAT_REMOTE");
         if (env == nullptr) return;
+        if (!t.allow_endpoint) {
+            std::fprintf(stderr, "[remote] QUAT_REMOTE ignored: remote control is off in "
+                                 "shipping game packages\n");
+            return;
+        }
         remote::RpcServerConfig config;
         const unsigned long requested = std::strtoul(env, nullptr, 10);
         config.port = (requested > 1 && requested <= 65535) ? static_cast<std::uint16_t>(requested)

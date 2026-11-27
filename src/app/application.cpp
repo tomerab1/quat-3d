@@ -11,15 +11,12 @@
 
 #include "app/asset_root.hpp"
 #include "app/demo_scenes.hpp"
+#include "app/window_icon.hpp"
 #include "engine/core/utf8_path.hpp"
 #include "engine/scene/components.hpp"
 
 namespace quat::app {
 namespace {
-
-constexpr int  k_window_width  = 1280;
-constexpr int  k_window_height = 720;
-constexpr char k_window_title[] = "quat-3d";
 
 #ifndef NDEBUG
 constexpr bool k_enable_validation = true;
@@ -73,11 +70,18 @@ bool Application::init_platform() {
     }
     platform_.sdl_initialized = true;
 
-    platform_.window = SDL_CreateWindow(k_window_title, k_window_width, k_window_height,
-                                        SDL_WINDOW_RESIZABLE | SDL_WINDOW_VULKAN);
+    SDL_WindowFlags flags = SDL_WINDOW_RESIZABLE | SDL_WINDOW_VULKAN;
+    if (config_.fullscreen) flags |= SDL_WINDOW_FULLSCREEN;
+    platform_.window = SDL_CreateWindow(config_.window_title.c_str(), config_.window_width,
+                                        config_.window_height, flags);
     if (platform_.window == nullptr) {
         SDL_Log("SDL_CreateWindow failed: %s", SDL_GetError());
         return false;
+    }
+    if (config_.window_icon) {
+        if (auto icon = set_window_icon(platform_.window, *config_.window_icon); !icon) {
+            std::fprintf(stderr, "[warn] %s\n", icon.error().message.c_str());
+        }
     }
 
     Uint32 sdl_ext_count = 0;
@@ -93,7 +97,7 @@ bool Application::init_platform() {
     auto device_result = engine::rhi::Device::create({
         .instance_extensions = {sdl_extensions, sdl_ext_count},
         .enable_validation = k_enable_validation,
-        .application_name = k_window_title,
+        .application_name = config_.window_title.c_str(),
         .create_surface = [window](VkInstance instance)
             -> std::expected<VkSurfaceKHR, engine::core::Error> {
             VkSurfaceKHR surface = VK_NULL_HANDLE;
@@ -141,8 +145,10 @@ bool Application::init_subsystems() {
     pipeline_cache_ = std::move(*pipeline_cache);
     // Pipeline-cache paths are UTF-8 strings (opened via path_from_utf8).
     shader_dir_ = engine::core::path_to_utf8(cooked_shader_dir());
-    shader_reload_ = engine::rhi::ShaderHotReload::create_from_environment( // R2
-        pipeline_cache_, project_root() / "assets" / "shaders", cooked_shader_dir());
+    if (config_.shader_hot_reload) { // R2; never in the game player
+        shader_reload_ = engine::rhi::ShaderHotReload::create_from_environment(
+            pipeline_cache_, data_root() / "assets" / "shaders", cooked_shader_dir());
+    }
     const VkDevice vk_device = device_.handle();
 
     // One-time transfer context for setup uploads (demo mesh/material + each
@@ -176,7 +182,10 @@ bool Application::init_subsystems() {
 
     // QUAT_GLTF=<path> instantiates a real glTF scene graph; otherwise a
     // spinning demo cube stands in (see demo_scenes.hpp).
-    const bool scene_ok = world_.build_scene(scene_, assets_, allocator_, setup_transfer);
+    // A game's start scene (quat-player) replaces the demo scenes and
+    // brings its own look (render settings).
+    const bool scene_ok = world_.build_scene(scene_, assets_, allocator_, setup_transfer,
+                                             config_.start_scene, &renderer_.render_settings());
 
     vkDestroyCommandPool(vk_device, setup_pool, nullptr);
 
@@ -186,7 +195,7 @@ bool Application::init_subsystems() {
         return false;
     }
 
-    add_default_lighting(scene_, !world_.from_gltf());
+    if (!world_.from_scene_file()) add_default_lighting(scene_, !world_.from_gltf());
     // Atmosphere LUTs + dynamic IBL probe, lit by the scene's sun.
     renderer_.create_environment(scene_, pipeline_cache_, shader_dir_);
     // Terrain, networking (QUAT_HOST / QUAT_JOIN) and the QUAT_TERRAIN tile.
@@ -237,6 +246,11 @@ void Application::connect_remote() {
     editor_.fill_remote_targets(remote_targets, world_.has_demo_physics());
 #endif
     remote_targets.project_root = project_root();
+    // Game projects (P4): project.info / project.build; shipping packages
+    // keep the endpoint closed whatever QUAT_REMOTE says.
+    remote_targets.allow_endpoint = config_.remote_allowed;
+    remote_targets.game = config_.game ? &*config_.game : nullptr;
+    remote_targets.build_job = &build_job_;
     remote_.emplace(std::move(remote_targets), k_frames_in_flight);
 }
 

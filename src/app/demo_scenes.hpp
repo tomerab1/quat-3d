@@ -2,7 +2,8 @@
 
 // Demo / startup scenes for the `game` executable (app layer, not engine).
 //
-// Selected by environment variables:
+// A game's start scene (quat-player, P4) wins; otherwise selected by
+// environment variables:
 //   QUAT_GLTF=<file>   instantiate a glTF scene graph
 //   QUAT_PHYSICS=1     a pile of boxes dropped on a floor (owns a physics world)
 //   QUAT_CHARACTER=1   a WASD capsule character on a floor (owns a physics world)
@@ -10,6 +11,7 @@
 // plus QUAT_TERRAIN=1 for a procedural terrain tile under any of them.
 
 #include <expected>
+#include <filesystem>
 #include <optional>
 
 #include <entt/entity/entity.hpp>
@@ -20,6 +22,9 @@
 
 namespace engine::asset {
 class AssetManager;
+}
+namespace engine::renderer {
+struct RenderSettings;
 }
 namespace engine::rhi {
 class GpuAllocator;
@@ -36,6 +41,7 @@ struct DemoScene {
     bool physics_mode = false;   // QUAT_PHYSICS: physics_world steps rigid bodies
     bool character_mode = false; // QUAT_CHARACTER: physics_world steps the character
     bool from_gltf = false;      // QUAT_GLTF: show the model under its own lighting
+    bool from_scene_file = false; // a start scene: no default lights / camera added
     std::optional<engine::physics::PhysicsWorld> physics_world;
     entt::entity character_entity = entt::null;
     // An object the loop slowly spins (the demo cube / glass sphere).
@@ -45,11 +51,14 @@ struct DemoScene {
 };
 
 // Build the startup scene into `scene` (meshes/materials uploaded through
-// `transfer` and cached in `assets`).
+// `transfer` and cached in `assets`): `start_scene` when given (its render
+// settings replace `*render_settings`), else a demo scene.
 [[nodiscard]] std::expected<DemoScene, engine::core::Error>
 build_demo_scene(engine::scene::Scene& scene, engine::asset::AssetManager& assets,
                  engine::rhi::GpuAllocator& allocator,
-                 const engine::rhi::TransferContext& setup_transfer);
+                 const engine::rhi::TransferContext& setup_transfer,
+                 const std::optional<std::filesystem::path>& start_scene = std::nullopt,
+                 engine::renderer::RenderSettings* render_settings = nullptr);
 
 // The sun, plus two coloured point lights unless the scene came from a glTF
 // file (a model is shown under just its own lighting setup).

@@ -77,10 +77,14 @@ public:
 
     // ---- Setup -------------------------------------------------------------
     // Builds the startup scene (see demo_scenes.hpp). False on failure.
+    // `start_scene` (a game's, P4) is loaded instead of a demo scene; its
+    // render settings replace `*render_settings`.
     [[nodiscard]] bool build_scene(engine::scene::Scene& scene,
                                    engine::asset::AssetManager& assets,
                                    engine::rhi::GpuAllocator& allocator,
-                                   const engine::rhi::TransferContext& setup_transfer);
+                                   const engine::rhi::TransferContext& setup_transfer,
+                                   const std::optional<std::filesystem::path>& start_scene,
+                                   engine::renderer::RenderSettings* render_settings);
     // Terrain pass + its upload context, the network session and the
     // QUAT_TERRAIN tile. After the renderer's environment exists.
     void init(const engine::rhi::Device& device, engine::rhi::GpuAllocator& allocator,
@@ -97,6 +101,9 @@ public:
     [[nodiscard]] bool physics_mode() const { return demo_.physics_mode; }
     [[nodiscard]] bool character_mode() const { return demo_.character_mode; }
     [[nodiscard]] bool from_gltf() const { return demo_.from_gltf; }
+    // The scene came from a scene file (a game's start scene): it brings its
+    // own lights and camera.
+    [[nodiscard]] bool from_scene_file() const { return demo_.from_scene_file; }
     // Demo modes own their physics world (and so have no editor Play mode).
     [[nodiscard]] bool has_demo_physics() const { return demo_.physics_world.has_value(); }
     [[nodiscard]] entt::entity character_entity() const { return demo_.character_entity; }
