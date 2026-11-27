@@ -5,10 +5,6 @@
 
 #include <gtest/gtest.h>
 
-#include "engine/animation/animator.hpp"
-#include "engine/animation/clip.hpp"
-#include "engine/animation/skeleton.hpp"
-#include "engine/animation/state_machine.hpp"
 #include "engine/asset/asset_manager.hpp"
 #include "engine/nav/navmesh.hpp"
 #include "engine/net/prediction.hpp"
@@ -28,7 +24,6 @@
 #include "editor/scene_snapshot.hpp"
 #endif
 
-namespace anim = engine::animation;
 namespace scn = engine::scene;
 
 TEST(Asset, Manager) { ASSERT_OK(engine::asset::run_asset_manager_self_test()); }
@@ -39,11 +34,6 @@ TEST(Scene, Systems) { ASSERT_OK(scn::run_scene_self_test()); }
 TEST(Editor, PlayModeSnapshot) { ASSERT_OK(engine::editor::run_scene_snapshot_self_test()); }
 #endif
 
-TEST(Animation, Skeleton) { ASSERT_OK(anim::run_skeleton_self_test()); }
-TEST(Animation, ClipSampling) { ASSERT_OK(anim::run_clip_self_test()); }
-TEST(Animation, Animator) { ASSERT_OK(anim::run_animator_self_test()); }
-TEST(Animation, BlendAndAdditive) { ASSERT_OK(anim::run_blend_self_test()); }
-TEST(Animation, StateMachine) { ASSERT_OK(anim::run_state_machine_self_test()); }
 TEST(Animation, SkeletonLoad) { ASSERT_OK(scn::run_skeleton_load_self_test()); }
 TEST(Animation, ClipLoad) { ASSERT_OK(scn::run_animation_load_self_test()); }
 

@@ -48,38 +48,4 @@ std::vector<glm::mat4> compute_bind_world(const SkeletonAsset& skeleton) {
     return compute_world_matrices(skeleton, local);
 }
 
-std::expected<void, core::Error> run_skeleton_self_test() {
-    // Root at the origin; child translated +2 on X, parented under the root.
-    SkeletonAsset s;
-    s.joints.resize(2);
-    s.joints[0].name = "root";
-    s.joints[0].parent = -1;
-    s.joints[1].name = "child";
-    s.joints[1].parent = 0;
-    s.joints[1].translation = {2.0F, 0.0F, 0.0F};
-
-    // Bind-pose world matrices compose through the hierarchy.
-    const std::vector<glm::mat4> world = compute_bind_world(s);
-    if (world.size() != 2) {
-        return std::unexpected(core::Error{"skeleton self-test: wrong world matrix count"});
-    }
-    if (glm::distance(glm::vec3(world[1][3]), glm::vec3(2.0F, 0.0F, 0.0F)) > 1e-5F) {
-        return std::unexpected(core::Error{"skeleton self-test: child world translation wrong"});
-    }
-
-    // With inverse-bind = inverse(world_bind), the skinning matrix in bind pose is
-    // identity (a bind-pose vertex is unmoved) — the defining property.
-    for (std::size_t i = 0; i < s.joints.size(); ++i) {
-        s.joints[i].inverse_bind = glm::inverse(world[i]);
-    }
-    for (std::size_t i = 0; i < s.joints.size(); ++i) {
-        const glm::mat4 skinning = world[i] * s.joints[i].inverse_bind;
-        if (glm::distance(skinning[3], glm::vec4(0.0F, 0.0F, 0.0F, 1.0F)) > 1e-5F) {
-            return std::unexpected(
-                core::Error{"skeleton self-test: bind-pose skinning matrix is not identity"});
-        }
-    }
-    return {};
-}
-
 } // namespace engine::animation
