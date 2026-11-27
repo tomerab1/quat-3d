@@ -69,7 +69,7 @@ TEST_F(WorldTuning, SetMergesRangeChecksAndReturnsEverything) {
            {{"exposure", {{"compensation_ev", 1.5}, {"auto", false}}}, {"shadows", {{"pcf_radius", 2}}}});
     EXPECT_FLOAT_EQ(settings.exposure.compensation_ev, 1.5F);
     EXPECT_FALSE(settings.exposure.auto_exposure);
-    EXPECT_EQ(settings.shadows.pcf_radius, 2);
+    EXPECT_FLOAT_EQ(settings.shadows.pcf_radius, 2.0F);
     EXPECT_FLOAT_EQ(settings.exposure.key, 0.18F); // merged, not replaced
     EXPECT_EQ(out["shadows"]["pcf_radius"], 2);
     EXPECT_TRUE(out.contains("clouds"));

@@ -1,6 +1,6 @@
 {
   "version": 2,
-  "render_settings": {"version": 1, "shadows": {"view_distance_m": 400}, "clouds": {"coverage": 0.55}},
+  "render_settings": {"version": 1, "shadows": {"max_distance": 600, "caster_distance": 250}, "clouds": {"coverage": 0.55}},
   "entities": [
     {
       "name": "terrain",

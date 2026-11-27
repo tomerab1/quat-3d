@@ -95,7 +95,8 @@ std::size_t append_instanced_transparent_items(const entt::registry& registry,
 // The frame's batched opaque (GBuffer) and shadow-caster draw lists: the
 // gathered draw items grouped by (mesh, material) (renderer::batch_draws),
 // followed by every visible InstancedMesh placement (append_instanced_draws,
-// culled against the camera and the light respectively).
+// culled against the camera and the shadow casters' volume respectively,
+// e.g. renderer::caster_cull_view_proj).
 struct FrameDrawLists {
     renderer::InstancedDrawList opaque;
     renderer::InstancedDrawList shadow;
@@ -104,7 +105,7 @@ struct FrameDrawLists {
                                                     std::span<const renderer::DrawItem> opaque_items,
                                                     std::span<const renderer::DrawItem> shadow_items,
                                                     const glm::mat4& camera_view_proj,
-                                                    const glm::mat4& light_view_proj);
+                                                    const glm::mat4& shadow_cull_view_proj);
 
 // Draws the frame submits for its scene geometry (debug.stats, the editor's
 // Stats panel): one per batched opaque and shadow draw — instanced batches

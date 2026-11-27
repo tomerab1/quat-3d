@@ -16,6 +16,7 @@
 #include <optional>
 #include <string>
 #include <utility>
+#include <vector>
 
 #include <entt/entity/entity.hpp>
 #include <glm/glm.hpp>
@@ -30,6 +31,7 @@
 #include "engine/physics/physics_world.hpp"
 #include "engine/renderer/terrain_pass.hpp"
 #include "engine/rhi/gpu_allocator.hpp"
+#include "engine/scene/animation_system.hpp"
 #include "engine/scene/navigation.hpp"
 #include "engine/terrain/generator.hpp"
 #include "engine/terrain/streamer.hpp"
@@ -206,7 +208,9 @@ private:
     std::map<glm::ivec2, std::uint32_t, engine::terrain::TileCoordLess>
         terrain_bodies_; // streamed tiles' play-mode physics bodies
 
-    engine::scene::GroundHeightFn ground_height_at_;
+    engine::scene::GroundHeightFn  ground_height_at_;
+    engine::scene::FootGroundProbe foot_probe_;
+    std::vector<std::uint32_t>     probe_owners_; // foot_probe_ scratch: owners to skip
     std::optional<AudioRuntime>   audio_;
 };
 

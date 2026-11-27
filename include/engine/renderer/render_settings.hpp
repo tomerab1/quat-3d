@@ -16,6 +16,7 @@
 #include <string_view>
 
 #include "engine/renderer/cloud_settings.hpp"
+#include "engine/renderer/shadow_ao_settings.hpp"
 
 namespace engine::renderer {
 
@@ -42,18 +43,6 @@ struct TaaSettings {
     float feedback = 0.9F; // history weight of the resolve
 };
 
-// Directional shadow map: an orthographic box around the scene centre, or
-// (view_distance_m > 0) fit to the first metres of the camera's view
-// (renderer/shadow_fit.hpp), for large outdoor scenes.
-struct ShadowSettings {
-    bool  enabled    = true;
-    float extent_m   = 14.0F;   // half-size of the light-space box
-    float view_distance_m = 0.0F; // > 0: follow the camera over this much view
-    float depth_bias = 0.0008F; // constant depth bias (shadow-map depth units)
-    float slope_bias = 0.0025F; // extra bias scaled by (1 - N.L)
-    int   pcf_radius = 1;       // (2r+1)^2 filter taps
-};
-
 // Image-based ambient + reflections (dynamic IBL probe).
 struct IblSettings {
     float intensity = 1.0F;
@@ -63,7 +52,9 @@ struct RenderSettings {
     ExposureSettings exposure;
     BloomSettings    bloom;
     TaaSettings      taa;
-    ShadowSettings   shadows;
+    CsmSettings      shadows;         // cascaded sun shadows (R12)
+    GtaoSettings     ao;              // ground-truth ambient occlusion (R12)
+    ContactShadowSettings contact_shadows; // screen-space contact shadows (R12)
     IblSettings      ibl;
     // CloudSettings::time_s is frame-loop state, not a setting: the renderer
     // overwrites it each frame and the table does not list it.
@@ -101,12 +92,24 @@ struct RenderSettingDesc {
     RenderSettingRef (*ref)(RenderSettings&) = nullptr;
 };
 
+// A key the table no longer lists but older scene files and clients may
+// still send: accepted and ignored (never written; listed in the schema as
+// deprecated with `note`).
+struct DeprecatedRenderSetting {
+    std::string_view group;
+    std::string_view name;
+    std::string_view note;
+};
+
 // Groups in display order, and every field grouped in that order.
 [[nodiscard]] std::span<const RenderSettingGroup> render_setting_groups();
 [[nodiscard]] std::span<const RenderSettingDesc>  render_setting_fields();
 [[nodiscard]] const RenderSettingGroup* find_render_setting_group(std::string_view group);
 [[nodiscard]] const RenderSettingDesc*  find_render_setting(std::string_view group,
                                                             std::string_view name);
+[[nodiscard]] std::span<const DeprecatedRenderSetting> deprecated_render_settings();
+[[nodiscard]] const DeprecatedRenderSetting* find_deprecated_render_setting(
+    std::string_view group, std::string_view name);
 
 // Value as a float (booleans 0 / 1).
 [[nodiscard]] float render_setting_value(const RenderSettings& settings,

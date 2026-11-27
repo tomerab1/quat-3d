@@ -155,10 +155,10 @@ TEST(MountainScene, FileDecodesStrictly) {
     // Exactly one sun: the app adds its default sun only to scenes without
     // one, and the renderer lights with a single directional light.
     EXPECT_EQ(d.suns, 1);
-    // Its render_settings block: shadows follow the view far enough for the
-    // copse's long shadows across the meadow.
+    // Its render_settings block: the cascaded shadows reach past the copse
+    // and the forest edge (the default 150 m ends before them).
     ASSERT_TRUE(d.has_render_settings);
-    EXPECT_GE(d.render_settings.shadows.view_distance_m, 200.0F);
+    EXPECT_GE(d.render_settings.shadows.max_distance, 400.0F);
     ASSERT_TRUE(d.map.valid());
     EXPECT_GT(d.terrain.snowline_m, k_treeline);
     EXPECT_LT(d.terrain.snowline_m, d.map.max_height) << "the peaks should carry snow";
@@ -229,7 +229,7 @@ TEST(GpuMountainScene, LoadsAndResolvesItsModels) {
     EXPECT_EQ(r.view<s::Grass>().size(), 1U);
     EXPECT_EQ(r.view<s::DirectionalLight>().size(), 1U);
     // The file's render_settings block reaches the renderer settings.
-    EXPECT_GT(settings.shadows.view_distance_m, 0.0F);
+    EXPECT_GE(settings.shadows.max_distance, 400.0F);
     EXPECT_EQ(r.view<s::Scatter>().size(), k_expected.size());
     const auto resolved = s::resolve_instanced_meshes(r, g->allocator, g->transfer, assets,
                                                       QUAT_PROJECT_ROOT);
