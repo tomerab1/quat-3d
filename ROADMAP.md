@@ -237,6 +237,26 @@ JSON-RPC over loopback TCP to the engine.
   `DEBRIS` layer, bond-delta replication over the net layer, destruction
   fields over MCP. *(medium)*
 
+**RPG / action-adventure set** (owner: "RPG games will be possible?"). With
+G5 + G6 these make a small third-person RPG shippable via P4; all game data
+is JSON/Lua so it is authorable over MCP.
+
+- [ ] **G11 — Save / load game state.** Versioned save files (player,
+  world deltas, script state via an explicit Lua `save`/`load` contract,
+  quest/inventory state), slots + autosave, migration on version bump.
+- [ ] **G12 — Dialogue + quests.** Data-driven dialogue graphs (choices,
+  conditions, Lua hooks, localisable string tables) and a quest system
+  (objectives, triggers, journal), each with an editor node view (reusing
+  imgui-node-editor) and MCP authoring tools.
+- [ ] **G13 — Gameplay framework.** Stats/attributes with modifiers,
+  abilities with cooldowns/costs, items + inventory + equipment, loot
+  tables — all data (JSON schemas) driven from Lua, validated on load.
+- [ ] **G14 — Combat.** Hitbox/hurtbox shapes on skeleton joints, animation
+  events/notifies and root motion (extends G8), damage pipeline, lock-on
+  targeting, NPC combat behaviour-tree leaves.
+- [ ] **G15 — Third-person camera rig.** Orbit/follow camera with collision
+  (sphere cast), lock-on framing, smoothing, cutscene camera tracks.
+
 ## E — Editor (production readiness)
 
 - [ ] **E1 — Undo/redo.** Command stack covering every editor and remote edit.
