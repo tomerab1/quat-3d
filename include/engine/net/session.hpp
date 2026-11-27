@@ -93,6 +93,14 @@ public:
     [[nodiscard]] ClientId owner() const { return owner_; }
     [[nodiscard]] const HostAccess& access() const { return access_; }
 
+    // Joined: connected to the host and its hello queued (inputs flow), and
+    // why the last connection ended (a CloseReason / GNS end code; 0 while
+    // connected or before the first disconnect).
+    [[nodiscard]] bool in_session() const {
+        return client_.has_value() && client_->connected() && hello_sent_;
+    }
+    [[nodiscard]] std::int32_t end_reason() const { return end_reason_; }
+
 private:
     void host_update(entt::registry& registry, physics::PhysicsWorld* world,
                      entt::entity character, float dt);
@@ -100,6 +108,7 @@ private:
     void drop_peer(ClientId client, CloseReason reason);
     void client_update(entt::registry& registry, physics::PhysicsWorld* world,
                        entt::entity character, float dt);
+    void try_send_hello();
     void sync_owner(entt::registry& registry, entt::entity character);
     void release_character(entt::registry& registry, entt::entity character);
 
@@ -115,10 +124,12 @@ private:
     InputQueue    inputs_;
     std::uint32_t rejected_inputs_ = 0;
 
-    // Client: the hello (sent once connected; inputs only follow it) and
-    // prediction state.
+    // Client: the hello (sent once connected, retried while the transport
+    // refuses it; inputs only follow it) and prediction state.
     std::string        join_token_;
     bool               hello_sent_ = false;
+    std::uint32_t      hello_refusals_ = 0;
+    std::int32_t       end_reason_ = 0;
     CharacterPredictor predictor_;
     std::uint32_t      next_sequence_ = 0;
 };

@@ -59,6 +59,7 @@ struct NetEvent {
     Type                      type = Type::message;
     ClientId                  client = invalid_client; // server side: who
     std::vector<std::uint8_t> payload;                 // message events only
+    bool                      reliable = false;        // message events: sent reliably
     // Client side, disconnected events: why the connection ended (a
     // CloseReason when the host closed it, else a GNS end code; 0 = unknown).
     std::int32_t end_reason = 0;

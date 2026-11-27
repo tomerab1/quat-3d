@@ -90,9 +90,13 @@ std::expected<NetSession, core::Error> NetSession::host(entt::registry& registry
                  config.server.max_clients,
                  config.access.join_token.empty() ? "no join token" : "join token required",
                  config.access.owner_token.empty() ? "" : ", owner token designates the player");
-    if (!loopback && config.access.join_token.empty() && config.access.owner_token.empty()) {
-        std::fprintf(stderr, "[net] warning: anyone who can reach this port can join and take "
-                             "the player character; set QUAT_NET_TOKEN\n");
+    // Without a join token anyone who reaches the port receives every
+    // snapshot; an owner token alone only protects the character.
+    if (!loopback && config.access.join_token.empty()) {
+        std::fprintf(stderr, "[net] warning: anyone who can reach this port can join and %s; "
+                             "set QUAT_NET_TOKEN\n",
+                     config.access.owner_token.empty() ? "take the player character"
+                                                       : "watch the session");
     }
     return session;
 }
@@ -268,25 +272,42 @@ void NetSession::host_update(entt::registry& registry, physics::PhysicsWorld* wo
                         /*reliable=*/false);
 }
 
+// The hello must be the first message the host sees; inputs
+// (drive_character) only follow once it is queued, and reliable messages
+// arrive in order.
+void NetSession::try_send_hello() {
+    if (hello_sent_ || !client_ || !client_->connected()) return;
+    const auto hello = encode_hello(join_token_); // length checked in join()
+    hello_sent_ = hello && client_->send(*hello, /*reliable=*/true);
+    if (hello_sent_) {
+        if (hello_refusals_ > 0) {
+            std::fprintf(stderr, "[net] hello sent after %u refusals\n", hello_refusals_);
+        }
+        return;
+    }
+    if (hello_refusals_++ % 60 == 0) {
+        std::fprintf(stderr, "[net] hello refused by the transport; retrying each frame "
+                             "(inputs wait for it)\n");
+    }
+}
+
 void NetSession::client_update(entt::registry& registry, physics::PhysicsWorld* world,
                                entt::entity character, float dt) {
     // Only the newest authoritative state of this poll matters.
     std::optional<std::pair<std::uint32_t, CharacterState>> latest;
     for (const NetEvent& ev : client_->poll()) {
         if (ev.type == NetEvent::Type::connected) {
-            // The hello must be the first message the host sees; inputs
-            // (drive_character) only follow once it is queued. Reliable
-            // messages arrive in order.
-            const auto hello = encode_hello(join_token_); // length checked in join()
-            hello_sent_ = hello && client_->send(*hello, /*reliable=*/true);
-            std::fprintf(stderr, "[net] connected to host%s\n",
-                         hello_sent_ ? "" : " (hello refused by the transport)");
+            std::fprintf(stderr, "[net] connected to host\n");
+            end_reason_ = 0;
+            try_send_hello(); // first, before any input
             continue;
         }
         if (ev.type == NetEvent::Type::disconnected) {
             std::fprintf(stderr, "[net] disconnected from host: %s\n",
                          close_reason_name(ev.end_reason).c_str());
+            end_reason_ = ev.end_reason;
             hello_sent_ = false;
+            hello_refusals_ = 0;
             predictor_.reset();
             if (character != entt::null && registry.valid(character)) {
                 registry.remove<scene::NetDriven>(character); // local simulation resumes
@@ -301,6 +322,9 @@ void NetSession::client_update(entt::registry& registry, physics::PhysicsWorld* 
             receiver_.receive(ev.payload);
         }
     }
+    // A hello the transport refused is retried every frame until it goes out
+    // (the host's auth deadline bounds how long that may take).
+    if (!hello_sent_ && client_->connected()) try_send_hello();
 
     if (latest && controllable(registry, character)) {
         if (world == nullptr) {

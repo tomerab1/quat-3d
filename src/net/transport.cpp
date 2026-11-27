@@ -263,6 +263,7 @@ std::vector<NetEvent> NetServer::poll() {
             ev.client = it->second;
             const auto* data = static_cast<const std::uint8_t*>(msgs[i]->m_pData);
             ev.payload.assign(data, data + msgs[i]->m_cbSize);
+            ev.reliable = (msgs[i]->m_nFlags & k_nSteamNetworkingSend_Reliable) != 0;
             events.push_back(std::move(ev));
             msgs[i]->Release();
         }
@@ -394,6 +395,7 @@ std::vector<NetEvent> NetClient::poll() {
             ev.type = NetEvent::Type::message;
             const auto* data = static_cast<const std::uint8_t*>(msgs[i]->m_pData);
             ev.payload.assign(data, data + msgs[i]->m_cbSize);
+            ev.reliable = (msgs[i]->m_nFlags & k_nSteamNetworkingSend_Reliable) != 0;
             events.push_back(std::move(ev));
             msgs[i]->Release();
         }
