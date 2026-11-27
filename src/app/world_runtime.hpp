@@ -11,6 +11,7 @@
 
 #include <cstdint>
 #include <expected>
+#include <filesystem>
 #include <future>
 #include <map>
 #include <optional>
@@ -85,7 +86,7 @@ public:
     void init(const engine::rhi::Device& device, engine::rhi::GpuAllocator& allocator,
               engine::rhi::PipelineCache& pipeline_cache, const std::string& shader_dir,
               engine::scene::Scene& scene);
-    void init_audio(const std::string& asset_root);
+    void init_audio(const std::filesystem::path& asset_root);
     // Points the remote bridge at the terrain, navmesh and demo state.
     void fill_remote_targets(RemoteBridgeTargets& targets);
     // Teardown, after the device went idle: waits for a running terrain job

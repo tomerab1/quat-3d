@@ -9,15 +9,21 @@
 //      (QUAT_BUILD_TREE_ROOT). Packaged builds (ENGINE_PACKAGE_BUILD=ON) embed
 //      no build-machine paths.
 // If nothing matches, the process prints what it tried and exits.
+//
 // Every game-side data path (fonts, audio clips, scene files, shader sources
-// for hot reload, the remote API's project root) goes through these.
+// for hot reload, the remote API's project root) goes through these. They are
+// std::filesystem::path so non-ASCII install directories survive on Windows;
+// convert with engine/core/utf8_path.hpp where a UTF-8 string is needed (SDL,
+// ImGui, pipeline-cache keys) — never with .string().
+
+#include <filesystem>
 
 namespace quat::app {
 
-// Directory holding assets/ (UTF-8/native narrow path, no trailing slash).
-[[nodiscard]] const char* project_root();
+// Directory holding assets/.
+[[nodiscard]] const std::filesystem::path& project_root();
 
 // Directory holding the cooked shaders (.spv + reflection .json).
-[[nodiscard]] const char* cooked_shader_dir();
+[[nodiscard]] const std::filesystem::path& cooked_shader_dir();
 
 } // namespace quat::app

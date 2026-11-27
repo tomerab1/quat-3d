@@ -12,6 +12,7 @@
 #include <nlohmann/json.hpp>
 
 #include "engine/scene/components.hpp"
+#include "engine/core/utf8_path.hpp"
 #include "engine/scene/scene.hpp"
 #include "internal.hpp"
 
@@ -25,7 +26,7 @@ constexpr std::size_t k_max_models = 10'000;
 constexpr std::uintmax_t k_max_scene_bytes = 256ULL << 20;
 
 [[nodiscard]] std::string lower_extension(const fs::path& p) {
-    std::string ext = p.extension().string();
+    std::string ext = core::path_to_utf8(p.extension());
     std::transform(ext.begin(), ext.end(), ext.begin(),
                    [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
     return ext;
@@ -68,7 +69,7 @@ RpcResult list_models(Context& ctx, const Json& params) {
             truncated = true;
             break;
         }
-        models.push_back(it->path().lexically_relative(root).generic_string());
+        models.push_back(core::path_to_generic_utf8(it->path().lexically_relative(root)));
     }
     std::sort(models.begin(), models.end());
     Json out{{"models", models}};
@@ -116,7 +117,7 @@ RpcResult spawn_model(Context& ctx, const Json& params) {
     std::vector<entt::entity> top = *roots;
     if (top.size() > 1 && (has_name || parent != entt::null || has_components)) {
         const entt::entity group =
-            sc.create_entity(has_name ? name : path->stem().string());
+            sc.create_entity(has_name ? name : core::path_to_utf8(path->stem()));
         for (const entt::entity e : top) (void)sc.set_parent(e, group);
         top = {group};
     }

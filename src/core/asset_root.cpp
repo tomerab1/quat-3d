@@ -2,6 +2,8 @@
 
 #include <system_error>
 
+#include "engine/core/utf8_path.hpp"
+
 namespace engine::core {
 
 namespace {
@@ -28,7 +30,7 @@ std::expected<AssetRoot, Error> resolve_asset_root(const AssetRootCandidates& ca
         const fs::path& root = *candidates.override_root;
         if (!is_asset_root(root)) {
             return std::unexpected(make_error(
-                "QUAT_ASSET_ROOT='" + root.string() +
+                "QUAT_ASSET_ROOT='" + path_to_utf8(root) +
                 "' is not a data root (expected assets/ and cooked/shaders/ inside it)"));
         }
         return AssetRoot{root, root / cooked_shader_subdir(), "QUAT_ASSET_ROOT"};
@@ -39,7 +41,7 @@ std::expected<AssetRoot, Error> resolve_asset_root(const AssetRootCandidates& ca
         if (is_asset_root(dir)) {
             return AssetRoot{dir, dir / cooked_shader_subdir(), "install directory"};
         }
-        tried += "\n  " + dir.string();
+        tried += "\n  " + path_to_utf8(dir);
     }
 
     if (candidates.build_tree_root) {
@@ -50,7 +52,7 @@ std::expected<AssetRoot, Error> resolve_asset_root(const AssetRootCandidates& ca
         if (is_dir(root / "assets") && is_dir(shaders)) {
             return AssetRoot{root, shaders, "build tree"};
         }
-        tried += "\n  " + root.string() + " (build tree)";
+        tried += "\n  " + path_to_utf8(root) + " (build tree)";
     }
 
     return std::unexpected(make_error(

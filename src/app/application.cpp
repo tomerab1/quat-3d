@@ -9,6 +9,7 @@
 
 #include "app/asset_root.hpp"
 #include "app/demo_scenes.hpp"
+#include "engine/core/utf8_path.hpp"
 #include "engine/scene/components.hpp"
 
 namespace quat::app {
@@ -131,10 +132,10 @@ bool Application::init_subsystems() {
         return false;
     }
     pipeline_cache_ = std::move(*pipeline_cache);
-    shader_dir_ = cooked_shader_dir();
+    // Pipeline-cache paths are UTF-8 strings (opened via path_from_utf8).
+    shader_dir_ = engine::core::path_to_utf8(cooked_shader_dir());
     shader_reload_ = engine::rhi::ShaderHotReload::create_from_environment( // R2
-        pipeline_cache_, std::filesystem::path(project_root()) / "assets" / "shaders",
-        shader_dir_);
+        pipeline_cache_, project_root() / "assets" / "shaders", cooked_shader_dir());
     const VkDevice vk_device = device_.handle();
 
     // One-time transfer context for setup uploads (demo mesh/material + each

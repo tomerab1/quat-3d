@@ -9,6 +9,7 @@
 #include <system_error>
 #include <utility>
 
+#include "engine/core/utf8_path.hpp"
 #include "engine/core/child_process.hpp"
 
 namespace engine::rhi {
@@ -78,7 +79,7 @@ namespace {
     };
     std::error_code ec;
     fs::create_directories(backup_dir, ec);
-    if (ec) return fail("cannot create " + backup_dir.string() + ": " + ec.message());
+    if (ec) return fail("cannot create " + core::path_to_utf8(backup_dir) + ": " + ec.message());
     std::vector<Backup> backups(finals.size());
     for (std::size_t i = 0; i < finals.size(); ++i) {
         backups[i].saved = backup_dir / finals[i].filename();
@@ -86,7 +87,7 @@ namespace {
         if (!fs::is_regular_file(finals[i], ec)) continue; // nothing to restore
         fs::copy_file(finals[i], backups[i].saved, fs::copy_options::overwrite_existing, ec);
         if (ec) {
-            return fail("cannot back up " + finals[i].string() + ": " + ec.message() +
+            return fail("cannot back up " + core::path_to_utf8(finals[i]) + ": " + ec.message() +
                         " (nothing installed)");
         }
         backups[i].existed = true;
@@ -100,7 +101,7 @@ namespace {
     for (std::size_t i = finals.size(); i-- > 0;) {
         fs::rename(staged[i], finals[i], ec);
         if (!ec) continue;
-        std::string what = "cannot install " + finals[i].string() + ": " + ec.message();
+        std::string what = "cannot install " + core::path_to_utf8(finals[i]) + ": " + ec.message();
         // Roll back the outputs already moved into place.
         bool restored = true;
         for (std::size_t j = i + 1; j < finals.size(); ++j) {
@@ -112,8 +113,8 @@ namespace {
             }
             if (restore_ec) {
                 restored = false;
-                what += "; could not restore " + finals[j].string() + " from " +
-                        backups[j].saved.string() + ": " + restore_ec.message();
+                what += "; could not restore " + core::path_to_utf8(finals[j]) + " from " +
+                        core::path_to_utf8(backups[j].saved) + ": " + restore_ec.message();
             }
         }
         if (!restored) return fail(what + " (the cooked outputs may not match: rebuild)");
@@ -152,7 +153,7 @@ std::expected<ShaderCompiler, core::Error> ShaderCompiler::create(ShaderCompiler
         }
         config.slangc = *found;
     } else if (!is_executable_file(config.slangc)) {
-        return fail("shader compiler: slangc not found at " + config.slangc.string());
+        return fail("shader compiler: slangc not found at " + core::path_to_utf8(config.slangc));
     }
     if (config.module_dir.empty()) config.module_dir = config.source_dir / "lib";
     config.source_dir = normal(config.source_dir);
@@ -161,11 +162,11 @@ std::expected<ShaderCompiler, core::Error> ShaderCompiler::create(ShaderCompiler
 
     std::error_code ec;
     if (!fs::is_directory(config.source_dir, ec)) {
-        return fail("shader compiler: source directory missing: " + config.source_dir.string());
+        return fail("shader compiler: source directory missing: " + core::path_to_utf8(config.source_dir));
     }
     fs::create_directories(config.output_dir, ec);
     if (ec) {
-        return fail("shader compiler: cannot create " + config.output_dir.string() + ": " +
+        return fail("shader compiler: cannot create " + core::path_to_utf8(config.output_dir) + ": " +
                     ec.message());
     }
     ShaderCompiler out;
@@ -179,7 +180,7 @@ ShaderSourceKind ShaderCompiler::kind_of(const fs::path& source) const {
 }
 
 std::vector<fs::path> ShaderCompiler::outputs_for(const fs::path& source) const {
-    const std::string name = source.stem().string();
+    const std::string name = core::path_to_utf8(source.stem());
     if (kind_of(source) == ShaderSourceKind::module) {
         return {config_.output_dir / (name + ".slang-module")};
     }
@@ -188,23 +189,23 @@ std::vector<fs::path> ShaderCompiler::outputs_for(const fs::path& source) const 
 
 std::vector<std::string> ShaderCompiler::arguments(const fs::path& source,
                                                    const fs::path& out_dir) const {
-    const std::string name = source.stem().string();
+    const std::string name = core::path_to_utf8(source.stem());
     // Keep in sync with cmake/CompileShaders.cmake.
     if (kind_of(source) == ShaderSourceKind::module) {
-        return {source.string(), "-I", config_.module_dir.string(), "-o",
-                (out_dir / (name + ".slang-module")).string()};
+        return {core::path_to_utf8(source), "-I", core::path_to_utf8(config_.module_dir), "-o",
+                core::path_to_utf8(out_dir / (name + ".slang-module"))};
     }
-    return {source.string(),
+    return {core::path_to_utf8(source),
             "-I",
-            config_.module_dir.string(),
+            core::path_to_utf8(config_.module_dir),
             "-target",
             "spirv",
             "-emit-spirv-directly",
             "-fvk-use-entrypoint-name",
             "-o",
-            (out_dir / (name + ".spv")).string(),
+            core::path_to_utf8(out_dir / (name + ".spv")),
             "-reflection-json",
-            (out_dir / (name + ".json")).string()};
+            core::path_to_utf8(out_dir / (name + ".json"))};
 }
 
 ShaderCompileResult ShaderCompiler::compile(const fs::path& source_in,
@@ -219,7 +220,7 @@ ShaderCompileResult ShaderCompiler::compile(const fs::path& source_in,
     std::error_code ec;
     fs::create_directories(staging, ec);
     if (ec) {
-        result.diagnostics = "cannot create staging directory " + staging.string() + ": " +
+        result.diagnostics = "cannot create staging directory " + core::path_to_utf8(staging) + ": " +
                              ec.message();
         return result;
     }
@@ -250,7 +251,7 @@ ShaderCompileResult ShaderCompiler::compile(const fs::path& source_in,
     for (const fs::path& out : staged) {
         if (ok && !fs::is_regular_file(out, ec)) {
             ok = false;
-            result.diagnostics += "\nslangc produced no " + out.filename().string();
+            result.diagnostics += "\nslangc produced no " + core::path_to_utf8(out.filename());
         }
     }
     if (!ok) {

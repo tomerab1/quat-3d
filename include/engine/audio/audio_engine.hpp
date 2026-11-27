@@ -18,6 +18,7 @@
 
 #include <cstdint>
 #include <expected>
+#include <filesystem>
 #include <memory>
 #include <span>
 #include <string>
@@ -35,7 +36,7 @@ struct AudioEngineConfig {
     std::uint32_t sample_rate = 0; // 0: the device's native rate (48 kHz without a device)
     std::uint32_t channels = 0;    // 0: the device's native layout (stereo without a device)
     // Relative clip paths resolve against this directory (empty: the CWD).
-    std::string asset_root{};
+    std::filesystem::path asset_root{};
 };
 
 // How a sound is created. Everything else (volume, pitch, looping, spatial

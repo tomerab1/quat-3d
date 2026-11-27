@@ -13,6 +13,7 @@
 
 #include <gtest/gtest.h>
 
+#include "engine/core/utf8_path.hpp"
 #include "engine/rhi/shader_compiler.hpp"
 #include "engine/rhi/shader_reflection.hpp"
 #include "support/expect_ok.hpp"
@@ -22,6 +23,7 @@ namespace {
 
 namespace fs = std::filesystem;
 using namespace engine::rhi;
+using engine::core::path_to_utf8;
 
 void write_file(const fs::path& path, const std::string& text) {
     std::ofstream out(path, std::ios::binary | std::ios::trunc);
@@ -85,16 +87,16 @@ TEST(ShaderCompiler, ArgumentsMatchTheCMakeFlags) {
     const fs::path pass = t.src / "pass.slang";
     const std::vector<std::string> pass_args = compiler.arguments(pass, stage);
     const std::vector<std::string> want_pass = {
-        pass.string(), "-I", t.lib.string(), "-target", "spirv", "-emit-spirv-directly",
-        "-fvk-use-entrypoint-name", "-o", (stage / "pass.spv").string(), "-reflection-json",
-        (stage / "pass.json").string()};
+        path_to_utf8(pass), "-I", path_to_utf8(t.lib), "-target", "spirv", "-emit-spirv-directly",
+        "-fvk-use-entrypoint-name", "-o", path_to_utf8(stage / "pass.spv"), "-reflection-json",
+        path_to_utf8(stage / "pass.json")};
     EXPECT_EQ(pass_args, want_pass);
     EXPECT_EQ(compiler.kind_of(pass), ShaderSourceKind::pass);
 
     const fs::path mod = t.lib / "scale.slang";
     EXPECT_EQ(compiler.kind_of(mod), ShaderSourceKind::module);
-    const std::vector<std::string> want_mod = {mod.string(), "-I", t.lib.string(), "-o",
-                                               (stage / "scale.slang-module").string()};
+    const std::vector<std::string> want_mod = {path_to_utf8(mod), "-I", path_to_utf8(t.lib), "-o",
+                                               path_to_utf8(stage / "scale.slang-module")};
     EXPECT_EQ(compiler.arguments(mod, stage), want_mod);
     EXPECT_EQ(compiler.outputs_for(mod),
               (std::vector<fs::path>{t.out / "scale.slang-module"}));

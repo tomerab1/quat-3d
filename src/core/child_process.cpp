@@ -1,4 +1,5 @@
 #include "engine/core/child_process.hpp"
+#include "engine/core/utf8_path.hpp"
 
 #include <algorithm>
 #include <cerrno>
@@ -47,7 +48,7 @@ enum class Abort : std::uint8_t { none, timed_out, cancelled, failed };
 [[nodiscard]] std::unexpected<Error> abort_error(Abort why, const fs::path& program,
                                                  const ProcessOptions& options,
                                                  const std::string& output) {
-    std::string what = program.filename().string();
+    std::string what = core::path_to_utf8(program.filename());
     if (why == Abort::timed_out) {
         what += " timed out after " + std::to_string(options.timeout.count()) +
                 " ms and was killed";
@@ -240,7 +241,7 @@ run_process(const fs::path& program, std::span<const std::string> args,
     null_in = INVALID_HANDLE_VALUE;
     if (!started) {
         CloseHandle(read_end);
-        return fail("CreateProcess failed for " + program.string() + " (error " +
+        return fail("CreateProcess failed for " + core::path_to_utf8(program) + " (error " +
                     std::to_string(create_error) + ")");
     }
     CloseHandle(pi.hThread);

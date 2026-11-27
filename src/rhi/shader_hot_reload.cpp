@@ -15,6 +15,7 @@
 #include <thread>
 #include <utility>
 
+#include "engine/core/utf8_path.hpp"
 #include "engine/core/child_process.hpp"
 #include "engine/rhi/pipeline_cache.hpp"
 #include "engine/rhi/shader_compiler.hpp"
@@ -46,7 +47,7 @@ run_batch(const ShaderCompiler& compiler, const std::vector<CompileJob>& jobs,
             skipped.source = job.source;
             skipped.kind = compiler.kind_of(job.source);
             skipped.diagnostics = "not recompiled: imported module " +
-                                  bad->filename().string() + " failed to compile";
+                                  core::path_to_utf8(bad->filename()) + " failed to compile";
             failed.insert(job.source);
             results.push_back(std::move(skipped));
             continue;
@@ -130,7 +131,7 @@ struct ShaderHotReload::Impl {
 
     [[nodiscard]] std::string display_name(const fs::path& source) const {
         const fs::path rel = source.lexically_relative(compiler.config().source_dir);
-        return rel.empty() ? source.filename().generic_string() : rel.generic_string();
+        return rel.empty() ? core::path_to_generic_utf8(source.filename()) : core::path_to_generic_utf8(rel);
     }
 
     ShaderStatus& status_for(const fs::path& source) {
@@ -142,7 +143,7 @@ struct ShaderHotReload::Impl {
         if (it == statuses.end() || it->name != name) {
             ShaderStatus s;
             s.name = name;
-            s.source = source.string();
+            s.source = core::path_to_utf8(source);
             it = statuses.insert(it, std::move(s));
         }
         return *it;
@@ -243,7 +244,7 @@ struct ShaderHotReload::Impl {
         }
 
         // Pass shader: outputs[0] is the installed .spv.
-        const std::string spv = r.outputs.empty() ? std::string{} : r.outputs.front().string();
+        const std::string spv = r.outputs.empty() ? std::string{} : core::path_to_utf8(r.outputs.front());
         auto report = cache.reload(spv);
         if (!report) {
             status.state = ShaderStatus::State::error;
@@ -331,7 +332,7 @@ std::unique_ptr<ShaderHotReload> ShaderHotReload::create_from_environment(Pipeli
     std::fprintf(stderr, "[shader] hot reload on (%s watcher, %s)\n",
                  (*reload)->watch_backend() == core::FileWatchBackend::native ? "native"
                                                                               : "polling",
-                 (*reload)->impl_->compiler.config().slangc.string().c_str());
+                 core::path_to_utf8((*reload)->impl_->compiler.config().slangc).c_str());
     return std::move(*reload);
 }
 
