@@ -401,6 +401,11 @@ std::expected<void, engine::core::Error> WorldRuntime::begin_play(engine::scene:
     return {};
 }
 
+bool WorldRuntime::apply_play(PlayMode& mode, engine::scene::Scene& scene) {
+    return mode.apply(scene, {.begin = [this](engine::scene::Scene& s) { return begin_play(s); },
+                              .end = [this] { end_play(); }});
+}
+
 void WorldRuntime::end_play() {
     if (scripts_) { // before the physics world the scripts point at
         scripts_->stop();

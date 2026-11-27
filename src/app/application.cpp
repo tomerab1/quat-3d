@@ -1,6 +1,7 @@
 #include "app/application.hpp"
 
 #include <cstdio>
+#include <cstdlib>
 #include <filesystem>
 #include <utility>
 
@@ -201,6 +202,7 @@ bool Application::init_subsystems() {
                   .scene = &scene_,
                   .world = &world_,
                   .camera = &camera_,
+                  .play_mode = &play_mode_,
                   .shader_reload = shader_reload_.get()});
 #endif
     return true;
@@ -214,18 +216,15 @@ void Application::init_scripts() {
         return remote_->spawn_model(absolute);
     };
     world_.init_scripts(QUAT_PROJECT_ROOT, std::move(services));
+    // Start in Play (the transition runs on the first frame) for QUAT_PLAY=1
+    // and, without the editor, for a QUAT_SCENE game. The showcase, glTF and
+    // screenshot runs stay static; the physics / character demos own their
+    // world and have no play mode.
+    bool play_on_start = std::getenv("QUAT_PLAY") != nullptr;
 #ifndef ENGINE_EDITOR
-    // Without the editor there is no Play button: the game simulates
-    // (physics, AI, scripts) from the first frame.
-    if (!world_.has_demo_physics()) {
-        (void)engine::scene::promote_collider_only_bodies(scene_.registry());
-        if (auto started = world_.begin_play(scene_); started) {
-            playing_ = true;
-        } else {
-            std::fprintf(stderr, "[warn] play failed: %s\n", started.error().message.c_str());
-        }
-    }
+    play_on_start = play_on_start || world_.from_scene_file();
 #endif
+    if (play_on_start && !world_.has_demo_physics()) *play_mode_.request() = true;
 }
 
 void Application::connect_remote() {
@@ -244,8 +243,9 @@ void Application::connect_remote() {
     remote_targets.cam_pitch = &camera_.pitch;
     remote_targets.cam_fov_y = &camera_.fov_y;
     world_.fill_remote_targets(remote_targets);
+    remote_targets.play = world_.has_demo_physics() ? nullptr : play_mode_.request();
 #ifdef ENGINE_EDITOR
-    editor_.fill_remote_targets(remote_targets, world_.has_demo_physics());
+    editor_.fill_remote_targets(remote_targets);
 #endif
     remote_targets.project_root = QUAT_PROJECT_ROOT;
     remote_.emplace(std::move(remote_targets), k_frames_in_flight);
@@ -300,6 +300,8 @@ bool Application::run_frame() {
     remote_->poll();
 #ifdef ENGINE_EDITOR
     editor_.begin_frame(); // UI frame + Play/Stop, save/load, instantiate
+#else
+    world_.apply_play(play_mode_, scene_); // Play/Stop requested by sim.play / sim.stop
 #endif
 
     const VkExtent2D pixel_extent = window_pixel_extent(platform_.window);
@@ -405,7 +407,7 @@ std::optional<PlayStep> Application::play_step() const {
 #ifdef ENGINE_EDITOR
     return editor_.play_step(camera_.pos);
 #else
-    if (!playing_) return std::nullopt;
+    if (!play_mode_.active()) return std::nullopt;
     return PlayStep{.use_scene_camera = true, .fly_camera_pos = camera_.pos};
 #endif
 }

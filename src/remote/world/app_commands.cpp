@@ -149,6 +149,16 @@ RpcResult set_playing(Context& ctx, const Json& params, bool play) {
     return Json{{"playing", *playing}};
 }
 
+// Scene files hold the authored scene: while a play session runs, the
+// registry holds simulated state (and the session's physics bodies and
+// script instances point into it), so saving or loading must wait for Stop.
+[[nodiscard]] std::expected<void, RpcError> require_stopped(const Context& ctx) {
+    if (ctx.services.playing && ctx.services.playing()) {
+        return rpc_fail(rpc_code::failed, "stop play mode first (sim.stop)");
+    }
+    return {};
+}
+
 RpcResult save_scene(Context& ctx, const Json& params) {
     core::JsonFields f(params, "");
     std::string relative;
@@ -162,6 +172,7 @@ RpcResult save_scene(Context& ctx, const Json& params) {
                           "' exists and is not a scene file; refusing to overwrite it");
     }
     if (!ctx.services.save_scene) return unavailable("scene saving");
+    if (auto ok = require_stopped(ctx); !ok) return std::unexpected(ok.error());
     if (auto ok = ctx.services.save_scene(*path); !ok) {
         return rpc_fail(rpc_code::failed, "save failed: " + ok.error().message);
     }
@@ -179,6 +190,7 @@ RpcResult load_scene(Context& ctx, const Json& params) {
         return rpc_fail(rpc_code::not_found, "path: no such file '" + relative + "'");
     }
     if (!ctx.services.load_scene) return unavailable("scene loading");
+    if (auto ok = require_stopped(ctx); !ok) return std::unexpected(ok.error());
     if (auto ok = ctx.services.load_scene(*path); !ok) {
         return rpc_fail(rpc_code::failed, "load failed: " + ok.error().message);
     }

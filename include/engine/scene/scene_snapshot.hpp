@@ -1,6 +1,7 @@
 #pragma once
 
-// Scene snapshot for the editor's play mode (Phase 9.9). Private editor header.
+// Scene snapshot for play mode (Phase 9.9): the editor's Play/Stop and the
+// non-editor game's play sessions (app PlayMode), and the editor's Duplicate.
 //
 // capture() copies every entity and every engine component into plain vectors;
 // restore() clears the registry and rebuilds it with the EXACT same entity
@@ -19,10 +20,8 @@
 #include "engine/scene/components.hpp"
 
 namespace engine::scene {
-class Scene;
-}
 
-namespace engine::editor {
+class Scene;
 
 template <typename... Ts>
 struct ComponentList {};
@@ -42,14 +41,14 @@ using SnapshotComponents =
                   scene::NetReplicated, scene::AudioSource, scene::AudioListener,
                   scene::Script>;
 
-namespace detail {
+namespace snapshot_detail {
 template <typename List>
 struct StoredTuple;
 template <typename... Ts>
 struct StoredTuple<ComponentList<Ts...>> {
     using type = std::tuple<std::vector<std::pair<entt::entity, Ts>>...>;
 };
-} // namespace detail
+} // namespace snapshot_detail
 
 struct SceneSnapshot {
     std::vector<entt::entity> entities;
@@ -58,7 +57,7 @@ struct SceneSnapshot {
     using Stored = std::vector<std::pair<entt::entity, T>>;
 
     // One Stored<T> per SnapshotComponents type.
-    detail::StoredTuple<SnapshotComponents>::type components;
+    snapshot_detail::StoredTuple<SnapshotComponents>::type components;
 
     template <typename T>
     [[nodiscard]] Stored<T>& stored() {
@@ -90,4 +89,4 @@ entt::entity duplicate_entity(scene::Scene& scene, entt::entity source);
 // original entities (ids included) and component values are back.
 [[nodiscard]] std::expected<void, core::Error> run_scene_snapshot_self_test();
 
-} // namespace engine::editor
+} // namespace engine::scene

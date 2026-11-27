@@ -14,6 +14,8 @@ file(GLOB_RECURSE ENGINE_TEST_SOURCES CONFIGURE_DEPENDS
 add_executable(engine_tests
     test_main.cpp
     support/gpu_context.cpp
+    # App-layer logic with a test of its own (the play state machine).
+    ${PROJECT_SOURCE_DIR}/src/app/play_mode.cpp
     ${ENGINE_TEST_SOURCES})
 target_link_libraries(engine_tests PRIVATE
     engine_flags engine_core engine_rhi engine_asset engine_scene engine_renderer engine_physics

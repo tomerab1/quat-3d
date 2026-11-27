@@ -103,9 +103,11 @@ Details the contract leaves open, as implemented:
   **`asset.spawn_model`**: a model with several root nodes is grouped under a
   new entity (named `name`, else the file stem) when `name`, `parent` or
   `components` are given, so they apply to the model as a whole.
-- **`sim.play` / `sim.stop`** toggle the editor's play mode (the transition
-  runs later that frame); `unavailable` without the editor or in the physics
-  / character demo modes, which own their physics world.
+- **`sim.play` / `sim.stop`** toggle play mode (the transition runs later
+  that frame), in the editor and in the non-editor game alike (which starts
+  playing for a `QUAT_SCENE` / `QUAT_PLAY` run); `unavailable` in the physics
+  / character demo modes, which own their physics world. `scene.save` /
+  `scene.load` are refused (`failed`) while playing.
 
 ## Methods (v1 contract, ROADMAP A2/A3)
 

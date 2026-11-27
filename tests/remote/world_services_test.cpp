@@ -303,6 +303,22 @@ TEST_F(WorldWithServices, PlayStopAndNavBake) {
     err("sim.play", {{"now", true}}, code::invalid_params);
 }
 
+// G7 review: the non-editor game plays a QUAT_SCENE from the first frame; a
+// scene file read or written mid-play would mix simulated state, the play
+// session's bodies and script instances with the authored scene.
+TEST_F(WorldWithServices, SceneFilesWaitForStop) {
+    root.write("scenes/a.json", R"({"version": 2, "entities": []})");
+    ok("sim.play");
+    EXPECT_TRUE(contains(err("scene.load", {{"path", "scenes/a.json"}}, code::failed), "sim.stop"));
+    EXPECT_TRUE(contains(err("scene.save", {{"path", "scenes/a.json"}}, code::failed), "sim.stop"));
+    EXPECT_TRUE(loaded.empty() && saved.empty()) << "nothing reached the application";
+    ok("sim.stop");
+    ok("scene.load", {{"path", "scenes/a.json"}});
+    ok("scene.save", {{"path", "scenes/a.json"}});
+    EXPECT_EQ(loaded.size(), 1U);
+    EXPECT_EQ(saved.size(), 1U);
+}
+
 TEST_F(WorldWithServices, ServiceFailuresAreReported) {
     services = {}; // re-register with failing services
     services.project_root = [this] { return root.path(); };

@@ -117,8 +117,10 @@ struct RemoteBridgeTargets {
 #ifdef ENGINE_EDITOR
     engine::editor::EditorLayer*      editor = nullptr;
     engine::editor::RendererSettings* render_settings = nullptr; // clouds
-    bool* play = nullptr; // editor play flag; null where play mode is unavailable
 #endif
+    // Requested play state (PlayMode); null where play mode is unavailable
+    // (the physics / character demos own their world).
+    bool* play = nullptr;
 
     std::filesystem::path project_root;
 };

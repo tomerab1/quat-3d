@@ -44,7 +44,6 @@ void with_load_transfer(const engine::rhi::Device& device, Fn&& fn) {
 } // namespace
 
 void EditorBridge::create(SDL_Window* window, bool enabled) {
-    play_on_start_ = std::getenv("QUAT_PLAY") != nullptr; // e.g. a QUAT_SCENE game, headless
     if (!enabled) return;
     if (auto e = engine::editor::EditorLayer::create(
             window, std::string(QUAT_PROJECT_ROOT) + "/assets/fonts/Roboto-Medium.ttf");
@@ -55,10 +54,9 @@ void EditorBridge::create(SDL_Window* window, bool enabled) {
     }
 }
 
-void EditorBridge::fill_remote_targets(RemoteBridgeTargets& targets, bool demo_physics) {
+void EditorBridge::fill_remote_targets(RemoteBridgeTargets& targets) {
     targets.editor = &editor_;
     targets.render_settings = &render_settings_;
-    targets.play = demo_physics ? nullptr : &play_; // demo modes own physics
 }
 
 void EditorBridge::process_event(const SDL_Event& event) {
@@ -87,7 +85,7 @@ VkExtent2D EditorBridge::scene_extent(VkExtent2D present_extent) const {
 }
 
 std::optional<PlayStep> EditorBridge::play_step(const glm::vec3& fly_camera_pos) const {
-    if (!play_) return std::nullopt;
+    if (!playing()) return std::nullopt;
     PlayStep step;
     step.use_scene_camera = play_use_scene_camera_;
     step.fly_camera_pos = fly_camera_pos;
@@ -95,48 +93,15 @@ std::optional<PlayStep> EditorBridge::play_step(const glm::vec3& fly_camera_pos)
 }
 
 bool EditorBridge::through_scene_camera() const {
-    return play_ && play_use_scene_camera_ &&
+    return playing() && play_use_scene_camera_ &&
            engine::scene::find_active_camera(t_.scene->registry()) != entt::null;
 }
 
 void EditorBridge::begin_frame() {
     editor_.begin_frame();
-    if (std::exchange(play_on_start_, false) && !t_.world->has_demo_physics()) play_ = true;
-    apply_play_transition();
+    t_.world->apply_play(*t_.play_mode, *t_.scene); // Play/Stop requested by the UI / remote
     apply_scene_file_requests();
     apply_instantiate_request();
-}
-
-void EditorBridge::apply_play_transition() {
-    engine::scene::Scene& scene = *t_.scene;
-    // Play/Stop transition: Play snapshots the scene and brings up a
-    // dedicated physics world; Stop tears the world down and restores the
-    // snapshot (exact entity ids — selection and hierarchy stay valid).
-    if (play_ == play_prev_) return;
-    if (play_) {
-        play_snapshot_ = engine::editor::capture_scene(scene);
-        // Unity convention: a Collider without a RigidBody simulates as
-        // a static body (kinematic on nav agents, none on characters).
-        // Added AFTER the snapshot, so Stop removes it.
-        (void)engine::scene::promote_collider_only_bodies(scene.registry());
-        if (auto started = t_.world->begin_play(scene); started) {
-            std::fprintf(stderr, "[editor] play (%zu colliders, %zu bodies)\n",
-                         scene.registry().view<engine::scene::Collider>().size(),
-                         scene.registry().view<engine::scene::RigidBody>().size());
-        } else {
-            std::fprintf(stderr, "[editor] play failed: %s\n", started.error().message.c_str());
-            play_ = false;
-            play_snapshot_.reset();
-        }
-    } else {
-        t_.world->end_play();
-        if (play_snapshot_) {
-            engine::editor::restore_scene(scene, *play_snapshot_);
-            play_snapshot_.reset();
-        }
-        std::fprintf(stderr, "[editor] stop\n");
-    }
-    play_prev_ = play_;
 }
 
 void EditorBridge::apply_scene_file_requests() {
@@ -152,7 +117,7 @@ void EditorBridge::apply_scene_file_requests() {
             std::fprintf(stderr, "[editor] save failed: %s\n", r.error().message.c_str());
         }
     }
-    if (!pending_load_.empty() && !play_) {
+    if (!pending_load_.empty() && !playing()) {
         const std::string path = std::exchange(pending_load_, {});
         with_load_transfer(*t_.device, [&](const engine::rhi::TransferContext& load_transfer) {
             if (auto r = engine::scene::load_scene(scene, path, *t_.allocator, load_transfer,
@@ -269,7 +234,7 @@ const ImDrawData* EditorBridge::build_ui(float dt, int draw_count,
     ui_ctx.save_request = &pending_save_;
     ui_ctx.load_request = &pending_load_;
     // Demo modes own their physics world — hide the Play button there.
-    ui_ctx.play_mode = world.has_demo_physics() ? nullptr : &play_;
+    ui_ctx.play_mode = world.has_demo_physics() ? nullptr : t_.play_mode->request();
     ui_ctx.play_use_scene_camera = world.has_demo_physics() ? nullptr : &play_use_scene_camera_;
     ui_ctx.build_navmesh_request = &world.navmesh().request;
     ui_ctx.ground_click = &ground_click_;

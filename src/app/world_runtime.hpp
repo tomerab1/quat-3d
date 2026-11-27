@@ -22,6 +22,7 @@
 
 #include "app/audio_runtime.hpp"
 #include "app/demo_scenes.hpp"
+#include "app/play_mode.hpp"
 #include "app/grass_runtime.hpp"
 #include "engine/core/error.hpp"
 #include "engine/nav/navmesh.hpp"
@@ -134,6 +135,9 @@ public:
     // fields, and arms the navmesh auto-bake.
     [[nodiscard]] std::expected<void, engine::core::Error> begin_play(engine::scene::Scene& scene);
     void end_play();
+    // Performs `mode`'s requested Play/Stop transition with begin_play /
+    // end_play (the editor's and the non-editor game's shared path).
+    bool apply_play(PlayMode& mode, engine::scene::Scene& scene);
     [[nodiscard]] bool play_physics_active() const { return play_physics_.has_value(); }
 
     // ---- Navmesh / terrain -------------------------------------------------

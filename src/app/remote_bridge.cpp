@@ -123,11 +123,7 @@ struct RemoteBridge::Impl {
     }
 
     [[nodiscard]] bool is_playing() const {
-#ifdef ENGINE_EDITOR
         return t.play != nullptr && *t.play;
-#else
-        return false;
-#endif
     }
 
     // ---- WorldServices ----------------------------------------------------------
@@ -249,6 +245,7 @@ struct RemoteBridge::Impl {
                 t.render_settings->clouds.time_s = time;
             };
         }
+#endif
         if (t.play != nullptr) {
             s.playing = [this] { return *t.play; };
             s.set_playing = [this](bool play) -> std::expected<bool, Error> {
@@ -256,7 +253,6 @@ struct RemoteBridge::Impl {
                 return play;
             };
         }
-#endif
         if (t.ground_height != nullptr) {
             s.ground_height = [this](float x, float z) { return (*t.ground_height)(x, z); };
         }

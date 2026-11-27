@@ -219,6 +219,7 @@ add_library(engine_scene STATIC
     src/scene/scene_io.cpp
     src/scene/component_json.cpp
     src/scene/script_component.cpp
+    src/scene/scene_snapshot.cpp
     src/scene/audio_system.cpp
     src/scene/primitives.cpp
     src/scene/primitive_resolve.cpp
@@ -431,7 +432,6 @@ if(ENGINE_EDITOR)
         src/editor/animation_preview.cpp
         src/editor/physics_debug.cpp
         src/editor/picking.cpp
-        src/editor/scene_snapshot.cpp
         src/editor/audio_inspector.cpp
         src/editor/script_inspector.cpp
         src/editor/grass_inspector.cpp
@@ -471,6 +471,7 @@ add_executable(game
     src/app/demo_scenes.cpp
     src/app/audio_runtime.cpp
     src/app/input_sampler.cpp
+    src/app/play_mode.cpp
     src/app/grass_runtime.cpp
     src/app/nav_bake.cpp
     src/app/remote_bridge.cpp

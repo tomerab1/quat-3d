@@ -155,7 +155,7 @@ Environment variables switch on extra modes:
 | Variable | Effect |
 |---|---|
 | `QUAT_SCENE=<file>` | Load a scene file (project-relative) instead of the showcase scene |
-| `QUAT_PLAY=1` | Enter Play mode on the first frame (the non-editor game always plays) |
+| `QUAT_PLAY=1` | Enter Play mode on the first frame (a non-editor build also plays a `QUAT_SCENE` game) |
 | `QUAT_SCRIPT_HOT_RELOAD=0` / `=1` | Turn script hot reload off (editor) / on (non-editor builds) |
 | `QUAT_GLTF=<file>` | Load a glTF/GLB model instead of the showcase scene |
 | `QUAT_TERRAIN=1` | Add a procedural terrain tile (with a grass field) |
