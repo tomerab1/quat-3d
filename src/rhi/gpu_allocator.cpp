@@ -122,6 +122,14 @@ void GpuBuffer::destroy() noexcept {
 
 GpuBuffer::~GpuBuffer() { destroy(); }
 
+std::expected<void, core::Error> GpuBuffer::flush(VkDeviceSize offset, VkDeviceSize size) const {
+    if (allocation_ == nullptr) return {};
+    if (VkResult r = vmaFlushAllocation(allocator_, allocation_, offset, size); r != VK_SUCCESS) {
+        return fail(std::format("vmaFlushAllocation failed ({})", static_cast<int>(r)));
+    }
+    return {};
+}
+
 GpuBuffer::GpuBuffer(GpuBuffer&& other) noexcept { *this = std::move(other); }
 
 GpuBuffer& GpuBuffer::operator=(GpuBuffer&& other) noexcept {

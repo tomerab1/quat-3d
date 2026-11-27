@@ -211,17 +211,34 @@ TransparentPass::add_to_graph(rhi::RenderGraph& graph, rhi::ResourceHandle hdr,
                               const glm::mat4& view_proj, const DirectionalLightParams& light,
                               const glm::vec3& camera_pos, std::span<const DrawItem> draws,
                               IblViewSet ibl) {
+    return add_to_graph(graph, hdr, depth, extent, view_proj, light, camera_pos,
+                        unbatched_draws(draws), ibl);
+}
+
+std::expected<void, core::Error>
+TransparentPass::add_to_graph(rhi::RenderGraph& graph, rhi::ResourceHandle hdr,
+                              rhi::ResourceHandle depth, VkExtent2D extent,
+                              const glm::mat4& view_proj, const DirectionalLightParams& light,
+                              const glm::vec3& camera_pos, const InstancedDrawList& list,
+                              IblViewSet ibl) {
     frame_descriptors_.clear();
     frame_draws_.clear();
 
     if (auto r = ensure_scene_color(extent); !r) return r;
 
+    auto instances = instances_.upload(*device_, *allocator_, list.instances);
+    if (!instances) return std::unexpected(instances.error());
+
     // Non-owning view set; falls back to the member black maps when empty.
     const IblViewSet maps = ibl.valid() ? ibl : fallback_ibl_.views();
 
     bool any_transmissive = false;
-    for (const DrawItem& d : draws) {
-        if (d.mesh == nullptr || !d.mesh->valid()) continue;
+    for (const InstancedDraw& d : list.draws) {
+        if (d.mesh == nullptr || !d.mesh->valid() || d.instance_count == 0) continue;
+        if (static_cast<std::size_t>(d.first_instance) + d.instance_count >
+            list.instances.size()) {
+            return fail("transparent pass: draw instance range exceeds the instance array");
+        }
         const asset::MaterialAsset& mat =
             (d.material != nullptr && d.material->valid()) ? *d.material : default_material_;
 
@@ -248,7 +265,8 @@ TransparentPass::add_to_graph(rhi::RenderGraph& graph, rhi::ResourceHandle hdr,
                                                                 : d.mesh->vertex_buffer.handle();
         fd.index_buffer = d.mesh->index_buffer.handle();
         fd.submeshes = d.mesh->submeshes;
-        fd.model = d.model;
+        fd.first_instance = d.first_instance;
+        fd.instance_count = d.instance_count;
         fd.descriptor_index = static_cast<std::uint32_t>(frame_descriptors_.size());
         fd.transmissive = (mat.params.flags & asset::material_transmission) != 0;
         fd.cull_mode = (mat.params.flags & asset::material_double_sided) != 0
@@ -261,6 +279,7 @@ TransparentPass::add_to_graph(rhi::RenderGraph& graph, rhi::ResourceHandle hdr,
 
     TransparentPushConstants push{};
     push.view_proj = view_proj;
+    push.instances = *instances;
     push.camera_pos = glm::vec4(camera_pos, 1.0F);
     // light_direction.w / ambient.w carry the render extent (for screen UVs).
     push.light_direction = glm::vec4(glm::vec3(light.direction), static_cast<float>(extent.width));
@@ -402,16 +421,16 @@ TransparentPass::add_to_graph(rhi::RenderGraph& graph, rhi::ResourceHandle hdr,
         const auto record = [&](const rhi::GraphicsPipeline& pipeline, const FrameDraw& fd) {
             frame_descriptors_[fd.descriptor_index].bind(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
                                                          pipeline.layout(), 0);
-            TransparentPushConstants p = push;
-            p.model = fd.model;
             vkCmdPushConstants(cmd, pipeline.layout(),
                                VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
-                               sizeof(p), &p);
+                               sizeof(push), &push);
             const VkDeviceSize offset = 0;
             vkCmdBindVertexBuffers(cmd, 0, 1, &fd.vertex_buffer, &offset);
             vkCmdBindIndexBuffer(cmd, fd.index_buffer, 0, VK_INDEX_TYPE_UINT32);
+            // firstInstance selects the instance range (see instancing.slang).
             for (const asset::SubMesh& sm : fd.submeshes) {
-                vkCmdDrawIndexed(cmd, sm.index_count, 1, sm.index_offset, 0, 0);
+                vkCmdDrawIndexed(cmd, sm.index_count, fd.instance_count, sm.index_offset, 0,
+                                 fd.first_instance);
             }
         };
 
