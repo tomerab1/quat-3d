@@ -8,6 +8,7 @@
 
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 
 #include "engine/core/log.hpp"
 #include "engine/scene/script_component.hpp"
@@ -27,6 +28,20 @@ constexpr char k_loaded_key[] = "quat.loaded"; // registry: path -> module
     return static_cast<VmState*>(ud);
 }
 
+// True (and the abort armed) when `bytes` would break the state's or the
+// current call's memory budget.
+bool over_memory_budget(VmState* vm, std::size_t bytes) {
+    const std::size_t call_cap = vm->call_start_bytes + vm->limits.call_memory_bytes;
+    if (bytes <= vm->limits.memory_bytes && bytes <= call_cap) return false;
+    if (!vm->aborting) {
+        vm->aborting = true;
+        std::snprintf(vm->abort_message, sizeof(vm->abort_message),
+                      "memory limit exceeded (%zu MiB per script state, %zu MiB per call)",
+                      vm->limits.memory_bytes >> 20, vm->limits.call_memory_bytes >> 20);
+    }
+    return true;
+}
+
 void* vm_alloc(void* ud, void* ptr, std::size_t osize, std::size_t nsize) {
     auto* vm = static_cast<VmState*>(ud);
     const std::size_t old = ptr != nullptr ? osize : 0;
@@ -35,18 +50,9 @@ void* vm_alloc(void* ud, void* ptr, std::size_t osize, std::size_t nsize) {
         vm->bytes -= old;
         return nullptr;
     }
-    if (nsize > old && vm->call_depth > 0 && !vm->unlimited) {
-        const std::size_t after = vm->bytes - old + nsize;
-        const std::size_t call_cap = vm->call_start_bytes + vm->limits.call_memory_bytes;
-        if (after > vm->limits.memory_bytes || after > call_cap) {
-            if (!vm->aborting) {
-                vm->aborting = true;
-                std::snprintf(vm->abort_message, sizeof(vm->abort_message),
-                              "memory limit exceeded (%zu MiB per script state, %zu MiB per call)",
-                              vm->limits.memory_bytes >> 20, vm->limits.call_memory_bytes >> 20);
-            }
-            return nullptr; // Lua collects garbage and retries, then raises LUA_ERRMEM
-        }
+    if (nsize > old && vm->call_depth > 0 && vm->in_native == 0 && !vm->unlimited &&
+        over_memory_budget(vm, vm->bytes - old + nsize)) {
+        return nullptr; // Lua collects garbage and retries, then raises LUA_ERRMEM
     }
     void* p = std::realloc(ptr, nsize);
     if (p == nullptr) return nullptr;
@@ -76,34 +82,78 @@ int vm_panic(lua_State* L) {
 }
 
 // Message handler for protected calls: the error plus a short traceback.
+// It runs C code only — never a script's __tostring: the handler allocates
+// without limits, so script code here could loop or grow forever.
 int message_handler(lua_State* L) {
     VmState* vm = vm_of(L);
     vm->unlimited = true;
-    const char* msg = lua_tostring(L, 1);
-    if (msg == nullptr) {
-        if (luaL_callmeta(L, 1, "__tostring") != 0 && lua_type(L, -1) == LUA_TSTRING) {
-            msg = lua_tostring(L, -1);
-        } else {
-            msg = lua_pushfstring(L, "(error object is a %s value)", luaL_typename(L, 1));
-        }
-    }
+    const char* msg = lua_type(L, 1) == LUA_TSTRING || lua_type(L, 1) == LUA_TNUMBER
+                          ? lua_tostring(L, 1)
+                          : lua_pushfstring(L, "(error object is a %s value)", luaL_typename(L, 1));
     luaL_traceback(L, L, msg, 1);
     vm->unlimited = false;
     return 1;
 }
 
 // pcall / xpcall for scripts: a limit error is re-raised instead of caught.
-int protected_k(lua_State* L, int /*status*/, lua_KContext /*ctx*/) {
-    const VmState* vm = vm_of(L);
+// An error raised inside an engine binding skipped its native_leave(): the
+// binding depth from before the call (the continuation context) comes back.
+int protected_k(lua_State* L, int /*status*/, lua_KContext ctx) {
+    VmState* vm = vm_of(L);
+    vm->in_native = static_cast<int>(ctx);
     if (vm->aborting) return luaL_error(L, "%s", vm->abort_message);
     return lua_gettop(L);
 }
 
 int sandbox_pcall(lua_State* L) {
+    const lua_KContext depth = vm_of(L)->in_native;
     lua_pushvalue(L, lua_upvalueindex(1)); // the real pcall / xpcall
     lua_insert(L, 1);
-    lua_callk(L, lua_gettop(L) - 1, LUA_MULTRET, 0, protected_k);
-    return protected_k(L, LUA_OK, 0);
+    lua_callk(L, lua_gettop(L) - 1, LUA_MULTRET, depth, protected_k);
+    return protected_k(L, LUA_OK, depth);
+}
+
+// setmetatable for scripts: no __gc. Finalizers run whenever the collector
+// gets to them (between callbacks, or at Stop / quit in lua_close) — outside
+// any budget, so a looping __gc would hang the engine. Lua 5.4 marks an
+// object for finalization only if __gc is present at setmetatable time.
+int sandbox_setmetatable(lua_State* L) {
+    if (lua_type(L, 2) == LUA_TTABLE) {
+        lua_pushliteral(L, "__gc");
+        if (lua_rawget(L, 2) != LUA_TNIL) {
+            return luaL_error(L, "setmetatable: __gc finalizers are not available to scripts "
+                                 "(use on_destroy for cleanup)");
+        }
+        lua_pop(L, 1);
+    }
+    lua_pushvalue(L, lua_upvalueindex(1)); // the real setmetatable
+    lua_insert(L, 1);
+    lua_call(L, lua_gettop(L) - 1, 1);
+    return 1;
+}
+
+int readonly_newindex(lua_State* L);
+
+// True for the read-only proxies of engine and library tables.
+bool is_readonly_proxy(lua_State* L, int index) {
+    if (lua_type(L, index) != LUA_TTABLE || lua_getmetatable(L, index) == 0) return false;
+    lua_pushliteral(L, "__newindex");
+    lua_rawget(L, -2);
+    const bool proxy = lua_tocfunction(L, -1) == &readonly_newindex;
+    lua_pop(L, 2);
+    return proxy;
+}
+
+// rawset for scripts: refuses the read-only proxies (rawset bypasses their
+// __newindex, and they are shared by every script).
+int sandbox_rawset(lua_State* L) {
+    if (is_readonly_proxy(L, 1)) {
+        return luaL_error(L, "rawset: engine and library tables are read-only");
+    }
+    lua_pushvalue(L, lua_upvalueindex(1)); // the real rawset
+    lua_insert(L, 1);
+    lua_call(L, lua_gettop(L) - 1, 1);
+    return 1;
 }
 
 // getmetatable for scripts: plain tables only.
@@ -166,27 +216,30 @@ void set_environment(lua_State* L, int fn_index, int sandbox_index) {
 // run once per state in its own environment; the result is cached.
 int sandbox_require(lua_State* L) {
     const char* name = luaL_checkstring(L, 1);
-    char error[512] = {};
+    lua_settop(L, 1); // extra arguments would shift the indices below
+    // The file name, built without C++ objects: the Lua calls up to the
+    // compile may raise (out of memory), which must not skip destructors.
     char chunk[256] = {};
+    const std::size_t len = std::strlen(name);
+    const bool has_ext = len >= 4 && std::strcmp(name + len - 4, ".lua") == 0;
+    if (len + 5 > sizeof(chunk)) return luaL_error(L, "require: module name too long");
+    for (std::size_t i = 0; i < len; ++i) chunk[i] = !has_ext && name[i] == '.' ? '/' : name[i];
+    if (!has_ext) std::memcpy(chunk + len, ".lua", 5);
+    lua_getfield(L, LUA_REGISTRYINDEX, k_loaded_key); // 2: loaded
+    if (lua_getfield(L, 2, chunk) != LUA_TNIL) {      // 3: cached entry
+        if (lua_type(L, 3) == LUA_TBOOLEAN && lua_toboolean(L, 3) == 0) {
+            return luaL_error(L, "require '%s': circular require", name);
+        }
+        return 1;
+    }
+    char error[512] = {};
     bool compiled = false;
     {
-        std::string rel(name);
-        if (!rel.ends_with(".lua")) {
-            for (char& c : rel) c = c == '.' ? '/' : c;
-            rel += ".lua";
-        }
-        std::snprintf(chunk, sizeof(chunk), "%s", rel.c_str());
+        const std::string rel(chunk);
         auto file = script_file(vm_of(L)->scripts_root, rel);
         if (!file) {
             std::snprintf(error, sizeof(error), "require '%s': %s", name,
                           file.error().message.c_str());
-        } else if (lua_getfield(L, LUA_REGISTRYINDEX, k_loaded_key) == LUA_TTABLE &&
-                   lua_getfield(L, -1, rel.c_str()) != LUA_TNIL) {
-            if (lua_type(L, -1) == LUA_TBOOLEAN && lua_toboolean(L, -1) == 0) {
-                std::snprintf(error, sizeof(error), "require '%s': circular require", name);
-            } else {
-                return 1; // cached module (no C++ object left to destroy here)
-            }
         } else if (auto source = read_script(*file); !source) {
             std::snprintf(error, sizeof(error), "require '%s': %s", name,
                           source.error().message.c_str());
@@ -202,7 +255,7 @@ int sandbox_require(lua_State* L) {
         }
     }
     if (!compiled) return luaL_error(L, "%s", error);
-    // Stack: name, loaded, (nil), fn
+    // Stack: name, loaded, nil, fn
     const int fn = lua_gettop(L);
     lua_getfield(L, LUA_REGISTRYINDEX, "quat.sandbox");
     set_environment(L, fn, -1);
@@ -221,6 +274,17 @@ int sandbox_require(lua_State* L) {
 }
 
 } // namespace
+
+void native_enter(lua_State* L) { ++vm_of(L)->in_native; }
+
+bool native_leave(lua_State* L) {
+    VmState* vm = vm_of(L);
+    if (vm->in_native > 0) --vm->in_native;
+    if (vm->in_native > 0 || vm->call_depth == 0 || vm->unlimited) return true;
+    return !over_memory_budget(vm, vm->bytes);
+}
+
+const char* abort_message(lua_State* L) { return vm_of(L)->abort_message; }
 
 std::expected<std::unique_ptr<LuaVm>, core::Error> LuaVm::create(const std::filesystem::path& scripts_root,
                                                                  const VmLimits& limits) {
@@ -249,9 +313,8 @@ void LuaVm::build_sandbox() {
     lua_newtable(L);
     const int box = lua_gettop(L);
     static constexpr const char* k_safe_base[] = {
-        "assert", "error",  "ipairs", "next",     "pairs",  "select",       "tonumber",
-        "tostring", "type", "rawequal", "rawget", "rawset", "rawlen",       "setmetatable",
-        "_VERSION"};
+        "assert", "error", "ipairs", "next",     "pairs",  "select",
+        "tonumber", "tostring", "type", "rawequal", "rawget", "rawlen", "_VERSION"};
     for (const char* name : k_safe_base) {
         lua_getglobal(L, name);
         lua_setfield(L, box, name);
@@ -261,6 +324,12 @@ void LuaVm::build_sandbox() {
         lua_pushcclosure(L, &sandbox_pcall, 1);
         lua_setfield(L, box, name);
     }
+    lua_getglobal(L, "setmetatable");
+    lua_pushcclosure(L, &sandbox_setmetatable, 1);
+    lua_setfield(L, box, "setmetatable");
+    lua_getglobal(L, "rawset");
+    lua_pushcclosure(L, &sandbox_rawset, 1);
+    lua_setfield(L, box, "rawset");
     lua_pushcfunction(L, &sandbox_getmetatable);
     lua_setfield(L, box, "getmetatable");
     lua_pushcfunction(L, &sandbox_require);
@@ -333,10 +402,11 @@ std::expected<void, std::string> LuaVm::finish_call(int base, int nargs, int nre
     if (vm.call_depth++ == 0) {
         vm.instructions = 0;
         vm.aborting = false;
+        vm.in_native = 0;
         vm.call_start_bytes = vm.bytes;
     }
     const int status = lua_pcall(L, nargs, nresults, base + 1);
-    --vm.call_depth;
+    if (--vm.call_depth == 0) vm.in_native = 0; // a binding that raised skipped its leave
     if (status == LUA_OK) {
         lua_remove(L, base + 1);
         return {};

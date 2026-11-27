@@ -48,10 +48,21 @@ struct VmState {
     std::size_t           call_start_bytes = 0;
     std::uint64_t         instructions = 0;
     int                   call_depth = 0;   // > 0 inside a protected call
-    bool                  unlimited = false; // the error handler runs without limits
+    // > 0 while an engine binding (C++) runs: its allocations are not capped,
+    // because a failed allocation would longjmp over its live C++ objects;
+    // the budget is checked when it returns (native_leave).
+    int                   in_native = 0;
+    bool                  unlimited = false; // the error handler (C only) allocates freely
     bool                  aborting = false; // a limit was hit in the current call
     char                  abort_message[160] = {};
 };
+
+// Brackets an engine binding called from a script (checked_call).
+void native_enter(lua_State* L);
+// False when the call's heap went over budget meanwhile; the abort is armed
+// and abort_message() says why.
+[[nodiscard]] bool native_leave(lua_State* L);
+[[nodiscard]] const char* abort_message(lua_State* L);
 
 class LuaVm {
     struct Token {}; // create() is the only way to make one

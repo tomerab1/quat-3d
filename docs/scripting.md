@@ -2,8 +2,9 @@
 
 quat-3d runs gameplay code written in **Lua 5.4**. A script is a `.lua` file
 under `assets/scripts/`; an entity runs it through its `script` component.
-Scripts run while the game plays (the editor's Play mode, or always in the
-non-editor game) and reload when their file changes. This page is the full
+Scripts run while the game plays (Play mode: the editor's Play button,
+`sim.play`, `QUAT_PLAY=1`, or a `QUAT_SCENE` game in the non-editor build)
+and reload when their file changes. This page is the full
 reference of what a script can do; AI assistants read it through quat-mcp
 (`quat://docs/scripting`).
 
@@ -95,7 +96,11 @@ error yourself.
   require print _VERSION` and the `string`, `table`, `math`, `utf8`,
   `coroutine` libraries. **Not available:** `io`, `os`, `package`, `debug`,
   `load`, `loadfile`, `dofile`, `collectgarbage`. Engine and library tables are
-  read-only; `getmetatable` returns nothing for engine values.
+  read-only (`rawset` on them fails too); `getmetatable` returns nothing for
+  engine values; `setmetatable` refuses a metatable with `__gc` (finalizers
+  would run outside the limits — clean up in `on_destroy`). An error object
+  that is not a string or number is reported by its type, without calling its
+  `__tostring`.
 - Use `time` instead of `os.clock`, and the log instead of `io.write`.
 
 ## Math: `vec3`, `quat`

@@ -90,5 +90,46 @@ TEST_F(ScriptTest, ScriptsHaveSeparateGlobals) {
     EXPECT_TRUE(has_line(log, "b.lua: b\tnil"));
 }
 
+// Review G7 #3: rawset bypasses __newindex, and the library / engine tables
+// are shared by every script.
+TEST_F(ScriptTest, RawsetCannotReplaceSharedTables) {
+    write("vandal.lua", R"(
+        function on_start(self)
+            print("math", pcall(rawset, math, "floor", function() return 42 end))
+            print("scene", pcall(rawset, scene, "find", nil))
+            local own = {}
+            rawset(own, "k", 1)
+            print("own", own.k)
+        end
+    )");
+    write("victim.lua", "function on_update(self, dt) print('floor', math.floor(2.5), scene.find ~= nil) end");
+    scripted("vandal", "vandal.lua");
+    scripted("victim", "victim.lua");
+    start();
+    frames();
+    const auto log = script_log();
+    EXPECT_TRUE(has_line(log, "math\tfalse")) << ::testing::PrintToString(log);
+    EXPECT_TRUE(has_line(log, "scene\tfalse"));
+    EXPECT_TRUE(has_line(log, "read-only"));
+    EXPECT_TRUE(has_line(log, "own\t1"));
+    EXPECT_TRUE(has_line(log, "floor\t2\ttrue")) << "the other script sees the originals";
+}
+
+// Review G7 #6: extra arguments to require must not shift its stack slots.
+TEST_F(ScriptTest, RequireWithExtraArgumentsIsCached) {
+    write("lib/counter.lua", "count = (count or 0) + 1 return { loads = count }");
+    write("user.lua", R"(
+        function on_start(self)
+            local a = require("lib.counter", "extra", 42)
+            local b = require("lib.counter", {})
+            print("cached", a == b, a.loads)
+        end
+    )");
+    scripted("u", "user.lua");
+    start();
+    frames();
+    EXPECT_TRUE(has_line(script_log(), "cached\ttrue\t1"));
+}
+
 } // namespace
 } // namespace quat::test
