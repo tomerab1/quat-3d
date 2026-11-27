@@ -40,8 +40,14 @@ jobs:
     name: Linux (clang + libc++, lavapipe)
     runs-on: ubuntu-24.04
     timeout-minutes: 120
+    # Builds and runs code from the PR: read-only token, not persisted in the
+    # checkout. Publishing screenshots happens in publish-screenshots below.
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: System packages
         run: |
@@ -51,7 +57,7 @@ jobs:
             libx11-dev libxext-dev libxft-dev libxcursor-dev libxrandr-dev libxi-dev \
             libxss-dev libxtst-dev libxfixes-dev libxkbcommon-dev \
             libwayland-dev wayland-protocols libegl-dev libdecor-0-dev \
-            libvulkan-dev mesa-vulkan-drivers autoconf automake libtool
+            libvulkan-dev mesa-vulkan-drivers autoconf automake libtool xvfb
 
       - name: Slang compiler
         run: |
@@ -96,6 +102,7 @@ jobs:
           key: ${{ steps.vcpkg-cache.outputs.cache-primary-key }}
 
       - name: Build
+        id: build
         if: steps.configure.outcome == 'success'
         run: cmake --build --preset release
 
@@ -120,6 +127,45 @@ jobs:
             -DVCPKG_INSTALLED_DIR="${{ github.workspace }}/build/release/vcpkg_installed"
           cmake --build build/release-noeditor --target game
 
+      # Real engine frames on lavapipe under Xvfb (scripts/ci-screenshots.sh),
+      # also when the tests failed. continue-on-error is TEMPORARY, until the
+      # headless scenes have proven stable in CI: a crashed or hung scene is
+      # reported (step summary + ::error annotation) without failing the job.
+      - name: Screenshots
+        id: shots
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        continue-on-error: true
+        run: scripts/ci-screenshots.sh build/release/game screenshots
+
+      - name: Upload screenshots
+        if: ${{ !cancelled() && steps.shots.outcome != 'skipped' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-screenshots
+          path: screenshots/
+          retention-days: 14
+          if-no-files-found: ignore
+
+      # Not covered by the Screenshots step's continue-on-error: a capture that
+      # rendered but is wrong fails the job — an exact-black block (a NaN/Inf
+      # spreading through the HDR chain, issue #45) in any scene, or an editor
+      # capture without the docked editor UI (scripts/check_capture.py, run by
+      # ci-screenshots.sh).
+      - name: Capture checks
+        if: ${{ !cancelled() && steps.shots.outcome != 'skipped' }}
+        run: |
+          if [ ! -f screenshots/results.tsv ]; then
+            echo "::warning title=Capture checks::no screenshots/results.tsv (the Screenshots step did not get as far as rendering)"
+            exit 0
+          fi
+          bad=$(awk -F'\t' '$2 ~ /^bad capture/ {print $1 ": " $2}' screenshots/results.tsv)
+          if [ -n "$bad" ]; then
+            while IFS= read -r line; do
+              echo "::error title=Bad capture::$line"
+            done <<<"$bad"
+            exit 1
+          fi
+
       - name: Upload logs on failure
         if: failure()
         uses: actions/upload-artifact@v4
@@ -130,6 +176,46 @@ jobs:
             build/release/Testing/Temporary/LastTest.log
             build/release/CMakeFiles/CMakeConfigureLog.yaml
           if-no-files-found: ignore
+
+  # Commits the linux job's screenshots to the ci-screenshots branch
+  # (runs/<pr-N|branch>/<sha>/, index.md newest first) and shows them inline
+  # in the step summary, so they can be viewed without downloading the
+  # artifact. The only job with a write token; it runs no build output, and
+  # never for fork PRs. Runs also when the linux job failed (a bad capture is
+  # exactly what needs looking at).
+  publish-screenshots:
+    name: Publish screenshots
+    needs: linux
+    if: >-
+      ${{ !cancelled() &&
+      (github.event_name == 'push' ||
+      github.event.pull_request.head.repo.full_name == github.repository) }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    concurrency:
+      group: ci-screenshots
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download screenshots
+        id: download
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: linux-screenshots
+          path: screenshots
+
+      - name: Publish screenshots
+        if: ${{ steps.download.outcome == 'success' && hashFiles('screenshots/results.tsv') != '' }}
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          HEAD_REF: ${{ github.head_ref }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+        run: scripts/ci-publish-screenshots.sh screenshots
 
   rust:
     name: quat-mcp (Rust fmt, clippy, tests)

@@ -6,11 +6,22 @@
 //
 // The frame loop calls advance(real_dt) once per frame and feeds the returned
 // dt to the simulation systems (physics, characters, AI, navigation,
-// animation). Running, that is real_dt * time_scale; paused, it is 0 — except
-// for frames consumed by step(), which each advance by exactly the dt that
-// step() was given (unscaled, so a stepped trace is reproducible regardless
-// of frame rate). Steps queued by successive step() calls run in order, each
-// with its own dt.
+// animation). Running, that is min(real_dt, max_frame_dt) * time_scale;
+// paused, it is 0 — except for frames consumed by step(), which each advance
+// by exactly the dt that step() was given (unscaled, so a stepped trace is
+// reproducible regardless of frame rate). Steps queued by successive step()
+// calls run in order, each with its own dt.
+//
+// Every simulation system advances by the same dt (audit D2). Real time
+// beyond max_frame_dt (0.25 s) is a hitch (a blocking load, a breakpoint)
+// and is dropped for all of them alike: the world runs slower than real time
+// instead of taking ever larger steps. Up to that, a slow frame is simulated
+// in full: the frame loop runs the simulation systems in slice_sim_dt()
+// slices of at most the physics budget per update (PhysicsWorld::
+// max_update_dt, 8 x 1/120 s), the same way it runs a scaled dt (up to
+// max_time_scale x max_frame_dt), so physics simulates the requested time
+// exactly rather than dropping it. max_step_dt (1/15 s, one physics update)
+// bounds only debug.step's single steps.
 
 #include <array>
 #include <cstdint>
@@ -19,6 +30,22 @@
 #include "engine/core/error.hpp"
 
 namespace engine::core {
+
+// A frame's simulation dt split into `count` equal slices of `dt` seconds.
+struct SimSlices {
+    // Upper bound on `count`: past it the slices grow beyond `max_slice`
+    // (no frame-loop dt comes near it: max_time_scale x max_frame_dt is 38
+    // physics budgets).
+    static constexpr std::uint32_t max_count = 1U << 16U;
+
+    std::uint32_t count = 0;
+    float         dt = 0.0F;
+};
+
+// The fewest equal slices of at most `max_slice` seconds covering `dt`
+// (count 0 for a zero, negative or non-finite dt; a non-positive or
+// non-finite `max_slice` gives one slice; at most SimSlices::max_count).
+[[nodiscard]] SimSlices slice_sim_dt(float dt, float max_slice);
 
 struct SimClockState {
     bool          paused = false;
@@ -33,8 +60,13 @@ class SimClock {
 public:
     static constexpr float min_time_scale = 0.01F;
     static constexpr float max_time_scale = 10.0F;
+    // Real frame time the simulation follows at most per frame; beyond it
+    // is a hitch (see above). Independent of the physics budget.
+    static constexpr float max_frame_dt = 0.25F;
     static constexpr float default_step_dt = 1.0F / 60.0F;
-    static constexpr float max_step_dt = 0.1F;
+    // The largest debug single step: what one physics update simulates
+    // exactly (8 x 1/120 s).
+    static constexpr float max_step_dt = 8.0F / 120.0F;
     static constexpr std::uint32_t max_pending_steps = 100'000;
     // Queued runs of steps with differing dt (consecutive requests with the
     // same dt share one run).

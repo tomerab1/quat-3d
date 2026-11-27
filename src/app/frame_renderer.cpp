@@ -4,6 +4,7 @@
 #include "app/frame_renderer.hpp"
 
 #include <cstdio>
+#include <cstdlib>
 #include <utility>
 
 #include "engine/rhi/device.hpp"
@@ -173,6 +174,32 @@ bool FrameRenderer::create_passes(const engine::rhi::Device& device,
                          gtao.error().message.c_str());
         }
     }
+
+    // Debug NaN/Inf accounting at the bloom / TAA guards (issue #45): on in
+    // debug builds, or with QUAT_NON_FINITE_CHECK=1 (CI screenshots).
+#ifndef NDEBUG
+    const bool count_non_finite = true;
+#else
+    const char* check_env = std::getenv("QUAT_NON_FINITE_CHECK");
+    const bool count_non_finite = check_env != nullptr && check_env[0] == '1';
+#endif
+    if (frames_ok && count_non_finite) {
+        if (auto counters =
+                engine::renderer::NonFiniteCounters::create(device, allocator, k_frames_in_flight);
+            counters) {
+            non_finite_ = std::move(*counters);
+            for (std::uint32_t i = 0; i < k_frames_in_flight; ++i) {
+                using engine::renderer::NonFiniteSource;
+                frames_[i].bloom.set_non_finite_counter(
+                    non_finite_->address(i, NonFiniteSource::bloom_prefilter));
+                frames_[i].taa.set_non_finite_counter(
+                    non_finite_->address(i, NonFiniteSource::taa_history));
+            }
+        } else {
+            std::fprintf(stderr, "[warn] non-finite counters unavailable: %s\n",
+                         counters.error().message.c_str());
+        }
+    }
     return frames_ok;
 }
 
@@ -311,6 +338,21 @@ bool FrameRenderer::ensure_swapchain(VkExtent2D pixel_extent) {
 
 std::uint32_t FrameRenderer::wait_for_slot() {
     vkWaitForFences(device_->handle(), 1, &in_flight_[frame_], VK_TRUE, UINT64_MAX);
+    if (non_finite_) {
+        const auto counts = non_finite_->collect(frame_);
+        bool any = false;
+        for (const std::uint32_t c : counts) any = any || c != 0;
+        if (any) {
+            using engine::renderer::NonFiniteSource;
+            std::fprintf(stderr,
+                         "[warn] non-finite HDR values replaced last frame: %s %u, %s %u "
+                         "(a NaN/Inf source upstream, issue #45)\n",
+                         engine::renderer::non_finite_source_name(NonFiniteSource::bloom_prefilter),
+                         counts[0],
+                         engine::renderer::non_finite_source_name(NonFiniteSource::taa_history),
+                         counts[1]);
+        }
+    }
     return frame_;
 }
 

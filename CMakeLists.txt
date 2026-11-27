@@ -95,6 +95,9 @@ find_package(EnTT CONFIG REQUIRED)
 find_package(Jolt CONFIG REQUIRED)
 find_package(recastnavigation CONFIG REQUIRED)
 find_package(GameNetworkingSockets CONFIG REQUIRED)
+# OpenSSL's libcrypto: the CSPRNG behind remote-control session tokens
+# (engine_remote). GameNetworkingSockets already depends on it.
+find_package(OpenSSL REQUIRED COMPONENTS Crypto)
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/FetchAcl.cmake) # ACL + RTM (header-only)
 # miniaudio: vcpkg's port is header-only (it installs miniaudio.h and nothing
 # else), so it is wrapped in an imported target here and engine_audio compiles
@@ -124,6 +127,8 @@ add_library(engine_core STATIC
     src/core/log.cpp
     src/core/stderr_capture.cpp
     src/core/sim_clock.cpp
+    src/core/frame_timer.cpp
+    src/core/path_confine.cpp
     src/core/file_watcher.cpp
     src/core/child_process.cpp)
 target_link_libraries(engine_core PUBLIC engine_flags Threads::Threads)
@@ -262,7 +267,9 @@ add_library(engine_scene STATIC
     src/scene/primitive_resolve.cpp
     src/scene/scatter.cpp
     src/scene/instanced_mesh.cpp
-    src/scene/instanced_mesh_resolve.cpp)
+    src/scene/instanced_mesh_resolve.cpp
+    src/scene/ground_placement.cpp
+    src/scene/camera_framing.cpp)
 # EnTT is PUBLIC: components.hpp exposes entt types (Parent/Children) to consumers.
 # engine_renderer is PUBLIC: scene.hpp's RenderCollectSystem fills a renderer
 # DrawItem list (no cycle — the renderer does not depend on the scene).
@@ -383,7 +390,7 @@ add_library(engine_audio STATIC
     src/audio/audio_engine.cpp
     src/audio/miniaudio_impl.cpp)
 target_link_libraries(engine_audio PUBLIC engine_flags glm::glm)
-target_link_libraries(engine_audio PRIVATE miniaudio_headers)
+target_link_libraries(engine_audio PRIVATE miniaudio_headers engine_core)
 target_include_directories(engine_audio PUBLIC ${ENGINE_PUBLIC_INCLUDE})
 # miniaudio's implementation is not warning-clean under our strict flags.
 set_source_files_properties(src/audio/miniaudio_impl.cpp PROPERTIES COMPILE_OPTIONS "-w")
@@ -392,15 +399,22 @@ set_source_files_properties(src/audio/miniaudio_impl.cpp PROPERTIES COMPILE_OPTI
 # engine_remote — remote-control endpoint (Phase 15): loopback JSON-RPC 2.0
 # over TCP, poll-driven on the main thread. Out-of-process tools (the quat-mcp
 # Model Context Protocol bridge in tools/quat-mcp) drive the engine through it.
-# nlohmann_json is PUBLIC: the handler API traffics in JSON values.
+# nlohmann_json is PUBLIC: the handler API traffics in JSON values. OpenSSL's
+# libcrypto (PRIVATE) generates the session tokens (session_token.cpp).
 # ---------------------------------------------------------------------------
 add_library(engine_remote STATIC
     src/remote/rpc_server.cpp
+    src/remote/session_token.cpp
     src/remote/socket.cpp)
 target_link_libraries(engine_remote PUBLIC engine_flags nlohmann_json::nlohmann_json)
+target_link_libraries(engine_remote PRIVATE OpenSSL::Crypto)
 target_include_directories(engine_remote PUBLIC ${ENGINE_PUBLIC_INCLUDE})
+# The user-only token file: one implementation per platform (private_file.hpp).
 if(WIN32)
-    target_link_libraries(engine_remote PRIVATE ws2_32)
+    target_sources(engine_remote PRIVATE src/remote/private_file_win32.cpp)
+    target_link_libraries(engine_remote PRIVATE ws2_32 advapi32)
+else()
+    target_sources(engine_remote PRIVATE src/remote/private_file_posix.cpp)
 endif()
 
 # ---------------------------------------------------------------------------
@@ -447,6 +461,7 @@ add_library(engine_renderer STATIC
     src/renderer/gtao_pass.cpp
     src/renderer/hiz_pass.cpp
     src/renderer/instance_buffer.cpp
+    src/renderer/non_finite_counters.cpp
     src/renderer/mesh_pass.cpp
     src/renderer/lighting_pass.cpp
     src/renderer/light_clusters.cpp
@@ -528,20 +543,33 @@ endif()
 # frame loop; FrameRenderer, WorldRuntime, FlyCamera, EditorBridge, the remote
 # bridge and the startup scenes run inside it); it is not an engine library.
 # main.cpp only parses the environment and hands off to Application.
+#
+# game_world holds the window-free part of the app layer — WorldRuntime (the
+# simulated world: demo scenes, terrain, grass, navmesh, audio) — so tests
+# can drive the exact frame-loop simulation path (tests/app/) without SDL.
+add_library(game_world STATIC
+    src/app/world_runtime.cpp
+    src/app/demo_scenes.cpp
+    src/app/audio_runtime.cpp
+    src/app/grass_runtime.cpp
+    src/app/nav_bake.cpp)
+target_link_libraries(game_world PUBLIC
+    engine_flags engine_core engine_rhi engine_asset engine_scene engine_renderer engine_physics
+    engine_terrain engine_nav engine_net engine_audio)
+target_include_directories(game_world PUBLIC
+    ${ENGINE_PUBLIC_INCLUDE}
+    ${CMAKE_CURRENT_SOURCE_DIR}/src)
+
 add_executable(game
     src/main.cpp
     src/app/application.cpp
     src/app/fly_camera.cpp
     src/app/frame_graph.cpp
     src/app/frame_renderer.cpp
-    src/app/world_runtime.cpp
-    src/app/demo_scenes.cpp
-    src/app/audio_runtime.cpp
-    src/app/grass_runtime.cpp
-    src/app/nav_bake.cpp
     src/app/remote_bridge.cpp
     src/app/screenshot_capture.cpp)
 target_link_libraries(game PRIVATE
+    game_world
     engine_flags engine_core engine_rhi engine_asset engine_scene engine_renderer engine_physics
     engine_terrain engine_nav engine_net engine_remote engine_remote_world engine_audio
     SDL3::SDL3)

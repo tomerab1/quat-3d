@@ -8,6 +8,7 @@
 #include <glm/gtc/matrix_transform.hpp>
 
 #include "engine/asset/mesh_asset.hpp"
+#include "engine/scene/camera_framing.hpp"
 #include "engine/scene/components.hpp"
 
 namespace quat::app {
@@ -18,13 +19,14 @@ const glm::vec3 k_world_up(0.0F, 1.0F, 0.0F);
 // World-space AABB over every loaded renderable (mesh local bounds transformed by
 // its world matrix). Returns false if the scene has no loaded geometry. Tick the
 // scene first so world transforms are current.
-bool scene_world_bounds(engine::scene::Scene& scene, glm::vec3& out_min, glm::vec3& out_max) {
+bool scene_world_bounds(engine::scene::Scene& scene, entt::entity exclude, glm::vec3& out_min,
+                        glm::vec3& out_max) {
     out_min = glm::vec3(std::numeric_limits<float>::max());
     out_max = glm::vec3(std::numeric_limits<float>::lowest());
     bool any = false;
     for (auto [e, t, mr] :
          scene.registry().view<engine::scene::Transform, engine::scene::MeshRenderer>().each()) {
-        if (!mr.mesh.valid() || !mr.mesh.is_loaded()) continue;
+        if (e == exclude || !mr.mesh.valid() || !mr.mesh.is_loaded()) continue;
         // Skinned meshes render with an identity model (their skinning matrices
         // already place the vertices), so frame their bind bounds through the
         // same armature world the animation system uses: entity world times the
@@ -44,15 +46,11 @@ bool scene_world_bounds(engine::scene::Scene& scene, glm::vec3& out_min, glm::ve
     return any;
 }
 
-// Camera world transform that frames the given AABB: looks at its centre from a
-// distance sized so the bounding sphere fits the vertical field of view.
-glm::mat4 frame_camera_world(const glm::vec3& bmin, const glm::vec3& bmax, float fov_y) {
-    const glm::vec3 center = 0.5F * (bmin + bmax);
-    const float radius = glm::max(0.001F, 0.5F * glm::length(bmax - bmin));
-    const float dist = radius / std::tan(fov_y * 0.5F) * 1.6F;
-    const glm::vec3 eye = center + glm::normalize(glm::vec3(0.6F, 0.45F, 1.0F)) * dist;
-    return glm::inverse(glm::lookAt(eye, center, glm::vec3(0.0F, 1.0F, 0.0F)));
-}
+// The opening view's heading and pitch: from the front-right (+Z, +X) of the
+// content, looking down 25 degrees.
+const float k_frame_yaw = std::atan2(-1.0F, -0.5F);
+const float k_frame_pitch = glm::radians(-25.0F);
+constexpr float k_frame_margin = 0.1F;
 
 // One movement axis from a key pair: +1, -1 or 0 (both or neither held).
 float axis(const bool* keys, bool ok, SDL_Scancode pos, SDL_Scancode neg) {
@@ -62,7 +60,7 @@ float axis(const bool* keys, bool ok, SDL_Scancode pos, SDL_Scancode neg) {
 
 } // namespace
 
-FlyCamera FlyCamera::create(engine::scene::Scene& scene, bool physics_mode) {
+FlyCamera FlyCamera::create(engine::scene::Scene& scene, const Start& start) {
     FlyCamera cam;
     // Non-editor builds keep a scene camera entity driven by the fly input
     // (camera_system is their only view path). Editor builds own the fly
@@ -72,32 +70,38 @@ FlyCamera FlyCamera::create(engine::scene::Scene& scene, bool physics_mode) {
     scene.registry().emplace<engine::scene::Camera>(cam.camera_entity_);
 #endif
     const engine::scene::Camera default_camera{};
+    cam.fov_y = default_camera.fov_y;
+    if (start.physics_mode) {
+        // The physics demo's huge floor would push the framing far away; use
+        // a fixed view of the drop zone instead.
+        const glm::vec3 eye(8.0F, 5.0F, 10.0F);
+        const glm::vec3 fwd = glm::normalize(glm::vec3(0.0F, 1.5F, 0.0F) - eye);
+        cam.pos = eye;
+        cam.yaw = std::atan2(fwd.z, fwd.x);
+        cam.pitch = std::asin(glm::clamp(fwd.y, -0.999F, 0.999F));
+        cam.move_speed_ = 6.0F;
+        return cam;
+    }
+
     scene.tick(); // resolve world transforms before measuring the scene bounds
     glm::vec3 bmin{};
     glm::vec3 bmax{};
-    const bool has_geo = scene_world_bounds(scene, bmin, bmax);
-    const glm::mat4 framed =
-        has_geo ? frame_camera_world(bmin, bmax, default_camera.fov_y)
-                : glm::inverse(glm::lookAt(glm::vec3(3.0F, 2.5F, 4.0F), glm::vec3(0.0F),
-                                           glm::vec3(0.0F, 1.0F, 0.0F)));
-
-    // Free-fly camera state, seeded from the framed transform so the opening view
-    // matches the auto-frame. Updated each frame from input (WASD + right-drag).
-    // The physics demo's huge floor would push the auto-frame far away; use a
-    // fixed view of the drop zone instead.
-    const glm::mat4 framed_view =
-        physics_mode ? glm::inverse(glm::lookAt(glm::vec3(8.0F, 5.0F, 10.0F),
-                                                glm::vec3(0.0F, 1.5F, 0.0F),
-                                                glm::vec3(0.0F, 1.0F, 0.0F)))
-                     : framed;
-    cam.pos = glm::vec3(framed_view[3]);
-    const glm::vec3 cam_fwd0 = -glm::normalize(glm::vec3(framed_view[2])); // camera looks down -Z
-    cam.yaw = std::atan2(cam_fwd0.z, cam_fwd0.x);
-    cam.pitch = std::asin(glm::clamp(cam_fwd0.y, -0.999F, 0.999F));
-    cam.fov_y = default_camera.fov_y;
-    cam.move_speed_ = physics_mode ? 6.0F
-                      : has_geo    ? glm::max(1.0F, 0.5F * glm::length(bmax - bmin))
-                                   : 3.0F;
+    const bool has_geo = scene_world_bounds(scene, start.exclude, bmin, bmax);
+    if (!has_geo) { // nothing to frame: look at the origin
+        bmin = glm::vec3(-1.0F);
+        bmax = glm::vec3(1.0F);
+    }
+    engine::scene::FramingParams framing;
+    framing.yaw = k_frame_yaw;
+    framing.pitch = k_frame_pitch;
+    framing.fov_y = default_camera.fov_y;
+    framing.aspect = start.aspect;
+    framing.margin = k_frame_margin;
+    framing.near_z = default_camera.near_z;
+    cam.pos = engine::scene::frame_box(bmin, bmax, framing);
+    cam.yaw = k_frame_yaw;
+    cam.pitch = k_frame_pitch;
+    cam.move_speed_ = has_geo ? glm::max(1.0F, 0.5F * glm::length(bmax - bmin)) : 3.0F;
     return cam;
 }
 

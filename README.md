@@ -177,13 +177,15 @@ Environment variables switch on extra modes:
 | `QUAT_TERRAIN=1` | Add a procedural terrain tile (with a grass field) |
 | `QUAT_PHYSICS=1` / `QUAT_CHARACTER=1` | Physics / character-controller demo scenes |
 | `QUAT_HOST=<port>` / `QUAT_JOIN=<ip:port>` | Host or join a networked session |
-| `QUAT_REMOTE=<port>` | Open the remote-control endpoint for AI tools (`1` = port 7878); add `QUAT_REMOTE_TOKEN=<secret>` to require a token — see [`docs/remote-control.md`](docs/remote-control.md) |
+| `QUAT_REMOTE=<port>` | Open the remote-control endpoint for AI tools (`1` = port 7878). It always requires a session token: a random one per run, written to a file only you can read, where quat-mcp finds it — see [`docs/remote-control.md`](docs/remote-control.md#session-token) |
+| `QUAT_REMOTE_TOKEN=<secret>` / `QUAT_REMOTE_TOKEN_FILE=<path>` | With `QUAT_REMOTE`: use this token instead of a generated one / publish the token at this path instead of the per-user default |
 | `QUAT_LOG_CAPTURE=0` | With `QUAT_REMOTE`: do not tee stderr into the engine log the AI debugging tools read (`debug.log`) |
 | `QUAT_SHADER_HOT_RELOAD=0` / `=1` | Turn shader hot reload off (on by default in editor builds) or on (in non-editor builds): saving a `.slang` file under `assets/shaders/` recompiles it and swaps the pipelines in — see [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md#shader-hot-reload) |
 | `QUAT_SLANGC=<path>` | The `slangc` hot reload compiles with (default: the one the build used, else `PATH`) |
 | `QUAT_NO_UI=1` | Run without the editor UI |
 | `QUAT_NO_VSYNC=1` | Disable vsync |
 | `QUAT_NO_AUDIO=1` | Mute: run audio without opening a playback device |
+| `QUAT_NON_FINITE_CHECK=1` | Count NaN/Inf values the bloom / TAA guards replace and log them per frame (always on in debug builds) |
 | `QUAT_MAX_FRAMES=<n>` + `QUAT_SCREENSHOT=<file.ppm>` | Render n frames, save the last one, exit (headless checks) |
 
 ### Audio
@@ -252,8 +254,12 @@ your client:
 claude mcp add quat-3d --env QUAT_REMOTE_PORT=7878 -- "$PWD/tools/quat-mcp/target/release/quat-mcp"
 ```
 
-See [`tools/quat-mcp/README.md`](tools/quat-mcp/README.md) for Claude Desktop
-setup, tokens and the full tool list.
+No token setup is needed: the engine writes a fresh session token for each run
+to a file only your user can read, and quat-mcp reads it from there. The
+endpoint listens on `127.0.0.1` only and refuses connections without the
+token, so other users on the machine and web pages in your browser cannot
+drive the engine. See [`tools/quat-mcp/README.md`](tools/quat-mcp/README.md)
+for Claude Desktop setup, explicit tokens and the full tool list.
 
 ## Testing
 
@@ -269,7 +275,11 @@ ctest --test-dir build/release --output-on-failure      # everything
 
 GPU tests run on any Vulkan device; without a GPU, Mesa's software driver
 (lavapipe) works — that is what CI uses. Every push is built and tested on
-Linux by [GitHub Actions](.github/workflows/ci.yml).
+Linux by [GitHub Actions](.github/workflows/ci.yml), which also renders a few
+scenes headlessly and publishes the screenshots on the run page and on the
+[`ci-screenshots`](https://github.com/tomerab1/quat-3d/blob/ci-screenshots/index.md)
+branch. `scripts/ci-screenshots.sh build/release/game` renders the same set
+locally (needs `xvfb`).
 
 ## Roadmap
 

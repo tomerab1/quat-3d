@@ -4,6 +4,7 @@
 #include "engine/remote/rpc_server.hpp"
 
 #include <algorithm>
+#include <cctype>
 #include <string_view>
 #include <unordered_map>
 #include <utility>
@@ -49,6 +50,31 @@ constexpr int k_protocol_version = 1;
         diff |= static_cast<unsigned>(ca ^ cb);
     }
     return diff == 0;
+}
+
+// RFC 9110 token characters (HTTP methods and header names).
+[[nodiscard]] bool is_tchar(char ch) {
+    const auto c = static_cast<unsigned char>(ch);
+    if (std::isalnum(c) != 0) return true;
+    return std::string_view("!#$%&'*+-.^_`|~").find(ch) != std::string_view::npos;
+}
+
+// True for a line of an HTTP message: a request line (`POST / HTTP/1.1`), a
+// status line (`HTTP/1.1 200 OK`) or a header (`Host: 127.0.0.1`). A browser
+// can POST to the loopback port without a CORS preflight, so the request line
+// must end the connection before any later line — the body — is read
+// (issue #56). JSON-RPC requests start with '{' and never match.
+[[nodiscard]] bool looks_like_http(std::string_view line) {
+    if (line.starts_with("HTTP/")) return true;
+    std::size_t i = 0;
+    while (i < line.size() && is_tchar(line[i])) ++i;
+    if (i == 0 || i == line.size()) return false;
+    if (line[i] == ':') return true; // header field
+    if (line[i] != ' ') return false;
+    // Request line: method SP target SP HTTP-version.
+    const std::size_t target_end = line.find(' ', i + 1);
+    return target_end != std::string_view::npos && target_end > i + 1 &&
+           line.substr(target_end + 1).starts_with("HTTP/");
 }
 
 struct Method {
@@ -161,6 +187,10 @@ RpcServer& RpcServer::operator=(RpcServer&&) noexcept = default;
 RpcServer::~RpcServer() = default;
 
 std::expected<RpcServer, core::Error> RpcServer::listen(RpcServerConfig config) {
+    if (config.token.empty()) {
+        return std::unexpected(core::Error{
+            "the remote-control endpoint needs a session token (RpcServerConfig::token)"});
+    }
     RpcServer server;
     auto sock = detail::listen_loopback(config.port);
     if (!sock) return std::unexpected(sock.error());
@@ -217,8 +247,8 @@ void RpcServer::Impl::register_builtins() {
     // registering it here lists it in rpc.methods.
     Method hello;
     hello.info = {"session.hello",
-                  "Authenticate ({token}) and get the protocol version. Required first call "
-                  "when the engine runs with a token.",
+                  "Authenticate ({token}) and get the protocol version. Required as the first "
+                  "call on every connection.",
                   false};
     hello.sync = [](const Json&) -> RpcResult { return Json::object(); };
     methods.insert_or_assign("session.hello", std::move(hello));
@@ -246,15 +276,24 @@ void RpcServer::Impl::handle_line(Client& c, std::string_view line) {
     while (!line.empty() && (line.back() == '\r' || line.back() == ' ')) line.remove_suffix(1);
     if (line.empty()) return;
 
+    // Protocol hygiene (issue #56): HTTP is dropped without a reply, and the
+    // first line that is not a JSON-RPC 2.0 request object gets an error and
+    // ends the connection — a cross-protocol client never reaches a later line.
+    if (looks_like_http(line)) {
+        c.dead = true;
+        return;
+    }
     const Json msg = Json::parse(line, nullptr, /*allow_exceptions=*/false);
     if (msg.is_discarded()) {
         queue(c, make_response(nullptr, rpc_fail(rpc_code::parse_error, "invalid JSON")));
+        c.closing = true;
         return;
     }
     if (!msg.is_object()) {
         queue(c, make_response(nullptr, rpc_fail(rpc_code::invalid_request,
                                                  "expected a JSON-RPC request object "
                                                  "(batch arrays are not supported)")));
+        c.closing = true;
         return;
     }
     const bool is_notification = !msg.contains("id");
@@ -271,29 +310,39 @@ void RpcServer::Impl::handle_line(Client& c, std::string_view line) {
     const auto method_it = msg.find("method");
     if (jsonrpc == msg.end() || !jsonrpc->is_string() || *jsonrpc != "2.0" ||
         method_it == msg.end() || !method_it->is_string()) {
-        reply(rpc_fail(rpc_code::invalid_request,
-                       "a request needs \"jsonrpc\": \"2.0\" and a string \"method\""));
+        queue(c, make_response(id, rpc_fail(rpc_code::invalid_request,
+                                            "a request needs \"jsonrpc\": \"2.0\" and a "
+                                            "string \"method\"")));
+        c.closing = true;
         return;
     }
     const std::string& method = method_it->get_ref<const std::string&>();
+    if (!c.authed && method != "session.hello") {
+        queue(c, make_response(id, rpc_fail(rpc_code::unauthorized,
+                                            "the first call must be session.hello with the "
+                                            "session token")));
+        c.closing = true;
+        return;
+    }
     Json params = Json::object();
     if (const auto p = msg.find("params"); p != msg.end() && !p->is_null()) {
         if (!p->is_object()) {
             reply(rpc_fail(rpc_code::invalid_params, "params must be an object"));
+            if (!c.authed) c.closing = true;
             return;
         }
         params = *p;
     }
 
     if (method == "session.hello") {
-        if (!config.token.empty()) {
-            const auto tok = params.find("token");
-            if (tok == params.end() || !tok->is_string() ||
-                !token_equal(tok->get_ref<const std::string&>(), config.token)) {
-                reply(rpc_fail(rpc_code::unauthorized, "invalid session token"));
-                c.closing = true;
-                return;
-            }
+        const auto tok = params.find("token");
+        if (tok == params.end() || !tok->is_string() ||
+            !token_equal(tok->get_ref<const std::string&>(), config.token)) {
+            queue(c, make_response(id, rpc_fail(rpc_code::unauthorized,
+                                                tok == params.end() ? "missing session token"
+                                                                    : "invalid session token")));
+            c.closing = true;
+            return;
         }
         c.authed = true;
         reply(Json{{"protocol", k_protocol_version},
@@ -301,13 +350,6 @@ void RpcServer::Impl::handle_line(Client& c, std::string_view line) {
                    {"methods", methods.size()}});
         return;
     }
-    if (!c.authed) {
-        reply(rpc_fail(rpc_code::unauthorized,
-                       "this engine requires session.hello with a token before other calls"));
-        c.closing = true;
-        return;
-    }
-
     const auto it = methods.find(method);
     if (it == methods.end()) {
         reply(rpc_fail(rpc_code::method_not_found,
@@ -380,7 +422,6 @@ void RpcServer::poll() {
         c.id = s.next_client++;
         if (s.next_client == 0) s.next_client = 1; // 0 means "no client"
         c.sock = std::move(*accepted);
-        c.authed = s.config.token.empty();
         s.clients.push_back(std::move(c));
     }
 

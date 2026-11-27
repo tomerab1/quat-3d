@@ -30,9 +30,12 @@ struct Params {
     float4x4 cur_inv_view_proj; // unjittered: reconstruct world from this frame's depth
     float4x4 prev_view_proj;    // unjittered: world -> previous frame clip
     float    swap_rb;           // 1 when g_out's bytes are copied into a BGRA target
-    float    pad0;
+    uint     count_non_finite;  // 1: count rejected values into *non_finite
     float    alpha;             // history weight (e.g. 0.9)
     float    valid;             // 0 on the first frame / after a resize
+    // Debug counter (NonFiniteCounters). Guarded by the flag, not compared
+    // with null: a 64-bit comparison needs the optional shaderInt64 feature.
+    uint*    non_finite;
 };
 [[vk::push_constant]] Params pc;
 
@@ -45,6 +48,19 @@ float3 clip_to_aabb(float3 cmin, float3 cmax, float3 hist) {
     return ma > 1.0 ? center + v / ma : hist;
 }
 
+void count_non_finite() {
+    if (pc.count_non_finite != 0) {
+        uint previous;
+        InterlockedAdd(*pc.non_finite, 1u, previous);
+    }
+}
+
+float3 finite_or_zero(float3 c) {
+    if (all(isfinite(c))) return c;
+    count_non_finite();
+    return float3(0.0, 0.0, 0.0);
+}
+
 [shader("compute")]
 [numthreads(8, 8, 1)]
 void compute_main(uint3 tid : SV_DispatchThreadID) {
@@ -54,7 +70,9 @@ void compute_main(uint3 tid : SV_DispatchThreadID) {
     int2 c = int2(tid.xy);
     float2 uv = (float2(c) + 0.5) / float2(w, h);
 
-    float3 cur = g_current.Load(int3(c, 0)).rgb;
+    // Non-finite input never enters the persistent history (it would stay
+    // there and spread through the neighbourhood clamp every frame).
+    float3 cur = finite_or_zero(g_current.Load(int3(c, 0)).rgb);
 
     // 3x3 colour neighbourhood AABB of the current frame.
     float3 nmin = cur;
@@ -62,7 +80,7 @@ void compute_main(uint3 tid : SV_DispatchThreadID) {
     for (int dy = -1; dy <= 1; ++dy) {
         for (int dx = -1; dx <= 1; ++dx) {
             int2 sc = clamp(c + int2(dx, dy), int2(0, 0), int2(int(w) - 1, int(h) - 1));
-            float3 s = g_current.Load(int3(sc, 0)).rgb;
+            float3 s = finite_or_zero(g_current.Load(int3(sc, 0)).rgb);
             nmin = min(nmin, s);
             nmax = max(nmax, s);
         }
@@ -77,12 +95,22 @@ void compute_main(uint3 tid : SV_DispatchThreadID) {
     float2 puv = (pclip.xy / pclip.w) * 0.5 + 0.5;
 
     float3 result;
-    if (pc.valid < 0.5 || pclip.w <= 0.0 || any(puv < 0.0) || any(puv > 1.0)) {
+    // A non-finite reprojection (a degenerate camera matrix) has no usable
+    // history either: NaN fails every comparison below, so test it first.
+    bool reprojected = all(isfinite(puv)) && isfinite(pclip.w);
+    if (pc.valid > 0.5 && !reprojected) count_non_finite();
+    if (pc.valid < 0.5 || !reprojected || pclip.w <= 0.0 || any(puv < 0.0) ||
+        any(puv > 1.0)) {
         result = cur; // no usable history -> show the current frame
     } else {
         float3 hist = g_history.SampleLevel(g_samp, puv, 0).rgb;
         hist = clip_to_aabb(nmin, nmax, hist);
-        result = lerp(cur, hist, pc.alpha);
+        if (all(isfinite(hist))) {
+            result = lerp(cur, hist, pc.alpha);
+        } else {
+            count_non_finite();
+            result = cur;
+        }
     }
     g_history_out[c] = float4(result, 1.0);
     g_out[c] = pc.swap_rb > 0.5 ? float4(result.bgr, 1.0) : float4(result, 1.0);

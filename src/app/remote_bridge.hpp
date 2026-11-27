@@ -1,8 +1,10 @@
 #pragma once
 
 // RemoteBridge — the `game` executable's side of remote control (ROADMAP
-// A2/A3, app layer). It owns the JSON-RPC endpoint (QUAT_REMOTE=<port>,
-// QUAT_REMOTE_TOKEN), registers engine.info plus the world commands, and
+// A2/A3, app layer). It owns the JSON-RPC endpoint (QUAT_REMOTE=<port>;
+// QUAT_REMOTE_TOKEN or a generated session token, published in a user-only
+// token file for quat-mcp — engine/remote/session_token.hpp), registers
+// engine.info plus the world commands, and
 // implements their WorldServices against the frame loop's state: the fly
 // camera, clouds, terrain heights, glTF spawning, play mode, scene files,
 // navmesh baking and screenshots.

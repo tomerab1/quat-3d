@@ -74,7 +74,7 @@ struct FrameStats {
     float                        avg_ms = 0.0F;
     float                        worst_ms = 0.0F;
     std::uint32_t                samples = 0;
-    std::optional<std::uint32_t> draws;            // draw items submitted last frame
+    std::optional<std::uint32_t> draws;            // scene draws last frame, after batching
     std::optional<std::uint64_t> resident_bytes;   // process resident memory
 };
 

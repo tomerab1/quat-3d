@@ -332,16 +332,14 @@ bool FrameRenderer::record(const FrameInputs& in) {
         }
     }
 
-    // R9.1: draws sharing mesh + material collapse into instanced draws.
-    engine::renderer::InstancedDrawList shadow_batches =
-        engine::renderer::batch_draws(fs.shadow_draws);
-    engine::renderer::InstancedDrawList opaque_batches =
-        engine::renderer::batch_draws(fs.draws);
-    // R9.2: InstancedMesh placements, one draw per (mesh, material), culled per instance.
-    engine::scene::append_instanced_draws(*in.registry, fs.shadow_cull_view_proj,
-                                          engine::scene::InstancedPass::shadow, shadow_batches);
-    engine::scene::append_instanced_draws(*in.registry, cam.view_proj,
-                                          engine::scene::InstancedPass::opaque, opaque_batches);
+    // R9.1: draws sharing mesh + material collapse into instanced draws;
+    // R9.2: InstancedMesh placements join them, one draw per (mesh,
+    // material), culled per instance (shadow casters against the cascades'
+    // cull volume).
+    const engine::scene::FrameDrawLists batches = engine::scene::build_frame_draw_lists(
+        *in.registry, fs.draws, fs.shadow_draws, cam.view_proj, fs.shadow_cull_view_proj);
+    const engine::renderer::InstancedDrawList& shadow_batches = batches.shadow;
+    const engine::renderer::InstancedDrawList& opaque_batches = batches.opaque;
     const engine::renderer::RenderSettings& settings = settings_;
     auto gbuffer = fr.mesh.add_to_graph(graph, draw_extent, fs.jittered_vp, opaque_batches);
     if (!gbuffer) {
@@ -360,6 +358,10 @@ bool FrameRenderer::record(const FrameInputs& in) {
     // sun's cascades fitted to its depth bounds and rendered (shadows.enabled
     // off: no shadow passes, the lighting is unshadowed).
     const engine::renderer::CsmSettings csm = current_csm();
+    // A5 debug.stats + the editor's Stats panel: draws after batching (the
+    // shadow casters only when the cascades are rendered).
+    draw_count_ = engine::scene::frame_draw_count(batches, fs.transparent_draws.size()) -
+                  (csm.enabled ? 0 : shadow_batches.draws.size());
     engine::renderer::HiZTargets hiz{};
     if (fr.hiz.valid()) {
         if (auto h = fr.hiz.add_to_graph(graph, gbuffer->depth, draw_extent)) {

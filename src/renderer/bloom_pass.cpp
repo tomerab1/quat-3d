@@ -25,8 +25,11 @@ constexpr std::uint32_t      kMaxMips      = 6;
 constexpr std::uint32_t      kMinMipSize   = 8;
 
 struct DownParams {
-    float threshold, knee, prefilter, pad;
+    float           threshold, knee, prefilter;
+    std::uint32_t   count_non_finite; // 1: the shader counts into non_finite
+    VkDeviceAddress non_finite;       // bloom_down.slang Params.non_finite
 };
+static_assert(sizeof(DownParams) == 24, "must match bloom_down.slang Params");
 struct UpParams {
     float radius, pad0, pad1, pad2;
 };
@@ -154,7 +157,9 @@ BloomPass::add_to_graph(rhi::RenderGraph& graph, rhi::ResourceHandle hdr, VkExte
                 const VkCommandBuffer cmd = ctx.cmd();
                 vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, down_pipeline_.handle());
                 db.bind(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, down_pipeline_.layout(), 0);
-                DownParams p{params.threshold, params.knee, prefilter ? 1.0F : 0.0F, 0.0F};
+                const bool count = prefilter && non_finite_counter_ != 0;
+                DownParams p{params.threshold, params.knee, prefilter ? 1.0F : 0.0F,
+                             count ? 1U : 0U, count ? non_finite_counter_ : 0};
                 vkCmdPushConstants(cmd, down_pipeline_.layout(), kComputeStage, 0, sizeof(p), &p);
                 vkCmdDispatch(cmd, groups(ds.width), groups(ds.height), 1);
             });

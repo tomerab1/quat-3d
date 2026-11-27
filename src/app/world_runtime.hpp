@@ -15,6 +15,7 @@
 #include <map>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include <entt/entity/entity.hpp>
@@ -101,8 +102,20 @@ public:
     // Demo modes own their physics world (and so have no editor Play mode).
     [[nodiscard]] bool has_demo_physics() const { return demo_.physics_world.has_value(); }
     [[nodiscard]] entt::entity character_entity() const { return demo_.character_entity; }
-    // The loop drops this when a scene file replaces the scene.
-    void clear_spin_entity() { demo_.spin_entity = entt::null; }
+    // The showcase's root entity (point lights hang under it); null otherwise.
+    [[nodiscard]] entt::entity demo_root() const { return demo_.root; }
+    // What the opening camera framing leaves out (the showcase's pedestal).
+    [[nodiscard]] entt::entity framing_exclude() const { return demo_.pedestal; }
+    // The loop drops the demo's entity references when a scene file replaces
+    // the scene.
+    void clear_demo_entities() {
+        demo_.spin_entity = entt::null;
+        demo_.root = entt::null;
+        demo_.pedestal = entt::null;
+    }
+    // Vertical distance the demo content moved since the last call (settled
+    // onto a freshly generated terrain tile); the view camera follows it.
+    [[nodiscard]] float take_demo_shift() { return std::exchange(demo_shift_, 0.0F); }
 
     // ---- Per frame ---------------------------------------------------------
     // Character-mode input (heading-relative, normalised or zero).
@@ -111,7 +124,8 @@ public:
     // or editor play mode when `play` is set), ticks the scene and publishes
     // replication. Networking runs on the real frame time `dt`; the
     // simulation systems and the scene tick on `sim_dt` (the remote debug
-    // clock: 0 while paused, scaled by debug.time_scale).
+    // clock: 0 while paused, scaled by debug.time_scale), in slices of at
+    // most PhysicsWorld::max_update_dt so physics advances it exactly.
     void simulate(engine::scene::Scene& scene, std::uint64_t frame_number, float dt,
                   float sim_dt, const PlayStep* play);
     void update_audio(engine::scene::Scene& scene, const glm::mat4& view, bool live, float dt);
@@ -148,12 +162,23 @@ public:
     [[nodiscard]] float terrain_snowline() const { return terrain_snowline_; }
 
 private:
+    // One slice of simulate(): physics, characters, behaviour trees and
+    // navigation advanced by `sim_dt` (at most PhysicsWorld::max_update_dt).
+    void simulate_slice(engine::scene::Scene& scene, float sim_dt, const PlayStep* play);
+
+    // Issue #7: sets the showcase on the terrain — its root at the top of a
+    // pedestal over the highest ground under the plate (+ room for grass),
+    // the pedestal reaching below the lowest — so it neither floats nor is
+    // pierced. Called whenever the single terrain tile arrives.
+    void settle_demo_on_terrain(engine::scene::Scene& scene);
+
     // Cancels the single-tile job: GPU tiles are abandoned (their future
     // resolves at once, invalid) and a CPU job stops at its next step.
     void abandon_terrain_job();
 
     std::optional<engine::physics::PhysicsWorld> play_physics_; // editor play session's world
     DemoScene                                    demo_;
+    float                                        demo_shift_ = 0.0F; // see take_demo_shift
 
     // Terrain (Phase 12): the pass owns the heightmap texture + LOD index
     // buffers; uploads go through a transfer pool that outlives setup.

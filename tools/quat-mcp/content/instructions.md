@@ -8,4 +8,6 @@ The weather (`weather_get` / `weather_set`) drives the wind the grass bends in, 
 
 NPC behaviour is a behaviour tree per entity: `bt_leaves` lists the node kinds and leaves, `bt_set` writes a whole tree, `bt_get` shows it with stable node ids for the incremental `bt_add_node` / `bt_move_node` / `bt_remove_node` / `bt_set_params`, and `bt_status` shows what each node did on the last tick during Play.
 
+If a tool says quat-mcp cannot connect to the engine or that the engine rejected the session, the engine is not running with remote control on that port, or its session token does not match: pass the error's advice on to the user instead of retrying. Never ask the user to paste the session token into the conversation.
+
 Engine errors name the offending field and what was expected — fix the call instead of repeating it. The `build_world`, `inspect_scene`, `debug_session`, `design_behavior`, `tune_look` and `set_weather` prompts describe the workflows in detail.
