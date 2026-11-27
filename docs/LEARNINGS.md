@@ -7,6 +7,12 @@ into CLAUDE.md or the brief template in [`CYCLE.md`](CYCLE.md).
 
 ## Agents and orchestration
 
+- **The worktree isolation guard refuses complex shell commands** (heredocs
+  with quotes, `cd` into computed paths, git on paths it cannot verify). A
+  worker loses turns retrying them. → Write edit scripts / build scripts as
+  files in the worker's scratch subdirectory and run them with one plain
+  command; run git only as simple commands inside the worktree.
+
 - **Unpushed worktree commits die with the container.** Worker agents push
   their `feat/<id>` branch to origin after every commit (owner's rule,
   2026-11-27). `feat/**` pushes don't trigger CI, so they never cancel a
@@ -100,6 +106,20 @@ into CLAUDE.md or the brief template in [`CYCLE.md`](CYCLE.md).
   wayland-protocols, libdecor. The first CI run failed on xcursor.
 
 ## C++ in this codebase
+
+- **Never raise a Lua error from a C++ frame.** The engine builds without
+  exceptions, so Lua (compiled as C) unwinds errors with longjmp, which skips
+  the destructors of every C++ frame in between. Script bindings return
+  `Result<T>` and a plain C trampoline (`checked_call`, src/script/lua_bind)
+  raises after the C++ function returned; C callbacks that raise (allocator,
+  count hook, require) hold no C++ objects at that point. Look up callbacks
+  with raw gets so no script metamethod runs outside a protected call (G7).
+- **sol2 3.5.0 member-variable pointers do not compile with clang 18**
+  (`address of overloaded function 'call' does not match required type`):
+  bind fields with `sol::property(getter, setter)` lambdas instead.
+- **A script's own pcall must not swallow a resource limit.** The sandbox's
+  pcall/xpcall re-raise once the instruction or memory budget is exhausted;
+  otherwise `while true do pcall(f) end` hangs the engine despite the hook.
 
 - **slangc 2025.6.1 segfaults after reporting a compile error** when
   `-reflection-json` is passed (exit by SIGSEGV, diagnostics already

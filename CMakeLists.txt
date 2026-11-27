@@ -265,7 +265,8 @@ add_library(engine_script STATIC
     src/script/script_files.cpp)
 target_link_libraries(engine_script PUBLIC engine_flags engine_core engine_scene engine_physics)
 target_link_libraries(engine_script PRIVATE sol2::sol2 ${LUA_LIBRARIES})
-target_include_directories(engine_script PRIVATE ${LUA_INCLUDE_DIR})
+# SYSTEM: the vcpkg include directory holds every dependency's headers.
+target_include_directories(engine_script SYSTEM PRIVATE ${LUA_INCLUDE_DIR})
 target_include_directories(engine_script PUBLIC ${ENGINE_PUBLIC_INCLUDE})
 target_compile_definitions(engine_script PRIVATE SOL_NO_EXCEPTIONS=1 SOL_ALL_SAFETIES_ON=1)
 
