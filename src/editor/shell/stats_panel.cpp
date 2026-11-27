@@ -83,7 +83,7 @@ void shader_status(const std::vector<rhi::ShaderStatus>& shaders) {
 void draw_stats_panel(EditorShell& shell) {
     bool& open = shell.panel_open[static_cast<std::size_t>(Panel::stats)];
     if (!open) return;
-    if (!ImGui::Begin(panel_window_name(Panel::stats), &open)) {
+    if (!ImGui::Begin(panel_window_name(Panel::stats).c_str(), &open)) {
         ImGui::End();
         return;
     }

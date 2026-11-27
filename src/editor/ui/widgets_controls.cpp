@@ -21,14 +21,74 @@ namespace engine::editor::ui {
 namespace {
 
 // Centre `text` of the current font in [min, max].
-void draw_centered(ImDrawList* dl, ImVec2 min, ImVec2 max, ImU32 col, const char* text) {
-    const ImVec2 size = ImGui::CalcTextSize(text);
-    dl->AddText(ImVec2(std::floor(min.x + (max.x - min.x - size.x) * 0.5F),
-                       std::floor(min.y + (max.y - min.y - size.y) * 0.5F)),
-                col, text);
+struct IconButtonColors {
+    Rgba   bg, bg_hovered, bg_held;
+    ImVec4 fg;              // the caller's text colour
+    bool   on_accent = false; // fg is the theme's on-accent colour instead
+};
+
+// A square button whose icon is centred on its ink box (ImGui::Button
+// centres the label by advance width and line height, which leaves icon
+// glyphs visibly off-centre). Colours go through GetColorU32 so a disabled
+// scope dims them.
+bool square_icon_button(const char* str_id, const char* glyph, float side,
+                        const IconButtonColors& c) {
+    const ImVec2 min = ImGui::GetCursorScreenPos();
+    const ImVec2 max(min.x + side, min.y + side);
+    const bool   clicked = ImGui::InvisibleButton(str_id, ImVec2(side, side));
+    const bool   held = ImGui::IsItemActive();
+    const bool   hovered = ImGui::IsItemHovered();
+    const Rgba   bg = held ? c.bg_held : hovered ? c.bg_hovered : c.bg;
+    ImDrawList*  dl = ImGui::GetWindowDrawList();
+    if (bg.a > 0.0F) {
+        dl->AddRectFilled(min, max, ImGui::GetColorU32(to_imvec4(bg)),
+                          ImGui::GetStyle().FrameRounding);
+    }
+    const ImVec4 fg = c.on_accent ? to_imvec4(tokens().on_accent) : c.fg;
+    draw_icon(dl, glyph, ImVec2((min.x + max.x) * 0.5F, (min.y + max.y) * 0.5F),
+              ImGui::GetColorU32(fg));
+    ImGui::RenderNavCursor(ImRect(min, max), ImGui::GetItemID());
+    return clicked;
+}
+
+// An icon glyph centred (on its ink) in the box [min, max].
+void draw_centered(ImDrawList* dl, ImVec2 min, ImVec2 max, ImU32 col, const char* glyph) {
+    draw_icon(dl, glyph, ImVec2((min.x + max.x) * 0.5F, (min.y + max.y) * 0.5F), col);
 }
 
 } // namespace
+
+// ---- Icons -----------------------------------------------------------------
+
+ImVec2 icon_origin(const char* glyph, ImVec2 centre, ImVec2* ink_min, ImVec2* ink_max) {
+    ImFont*     font = ImGui::GetFont();
+    const float size = ImGui::GetFontSize();
+    const char* end = glyph + std::strlen(glyph);
+    unsigned int c = 0;
+    if (glyph[0] != '\0') (void)ImTextCharFromUtf8(&c, glyph, end);
+    ImVec2 lo(0.0F, 0.0F);
+    ImVec2 hi = ImGui::CalcTextSize(glyph, end);
+    ImFontBaked* baked = font != nullptr ? font->GetFontBaked(size) : nullptr;
+    const ImFontGlyph* g = (baked != nullptr && c != 0 && c <= IM_UNICODE_CODEPOINT_MAX)
+                               ? baked->FindGlyphNoFallback(static_cast<ImWchar>(c))
+                               : nullptr;
+    // A single glyph: centre its ink (as RenderChar places it: origin + X0..X1).
+    if (g != nullptr && g->Visible && glyph + ImTextCountUtf8BytesFromChar(glyph, end) == end) {
+        const float scale = size / baked->Size;
+        lo = ImVec2(g->X0 * scale, g->Y0 * scale);
+        hi = ImVec2(g->X1 * scale, g->Y1 * scale);
+    }
+    const ImVec2 origin(std::round(centre.x - (lo.x + hi.x) * 0.5F),
+                        std::round(centre.y - (lo.y + hi.y) * 0.5F));
+    if (ink_min != nullptr) *ink_min = ImVec2(origin.x + lo.x, origin.y + lo.y);
+    if (ink_max != nullptr) *ink_max = ImVec2(origin.x + hi.x, origin.y + hi.y);
+    return origin;
+}
+
+void draw_icon(ImDrawList* dl, const char* glyph, ImVec2 centre, ImU32 col) {
+    if (glyph == nullptr || glyph[0] == '\0') return;
+    dl->AddText(ImGui::GetFont(), ImGui::GetFontSize(), icon_origin(glyph, centre), col, glyph);
+}
 
 // ---- Text ------------------------------------------------------------------
 
@@ -108,27 +168,19 @@ bool toggle_button(const char* id, const char* icon, bool active, const char* to
     const float side = std::round(ImGui::GetFrameHeight());
     ImGui::PushID(id);
     ImGui::BeginDisabled(!enabled);
-    ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 0.0F);
-    if (active) {
-        ImGui::PushStyleColor(ImGuiCol_Button, to_imvec4(t.accent));
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, to_imvec4(t.accent_hover));
-        ImGui::PushStyleColor(ImGuiCol_ButtonActive, to_imvec4(t.accent_active));
-        ImGui::PushStyleColor(ImGuiCol_Text, to_imvec4(t.on_accent));
-    } else {
-        // Inactive buttons keep the caller's text colour (status-coloured
-        // icons such as Play / Stop).
-        ImGui::PushStyleColor(ImGuiCol_Button, to_imvec4(with_alpha(t.bg2, 0.0F)));
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, to_imvec4(t.bg3));
-        ImGui::PushStyleColor(ImGuiCol_ButtonActive, to_imvec4(with_alpha(t.accent, 0.45F)));
-        ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_Text));
-    }
     const char* glyph = ic(icon);
     // Without the icon font, fall back to the id's first letter so the
     // button is still usable.
     char fallback[2] = {id[0] != '\0' ? static_cast<char>(std::toupper(id[0])) : '?', '\0'};
-    const bool clicked = ImGui::Button(glyph[0] != '\0' ? glyph : fallback, ImVec2(side, side));
-    ImGui::PopStyleColor(4);
-    ImGui::PopStyleVar();
+    // Active: accent fill. Inactive buttons keep the caller's text colour
+    // (status-coloured icons such as Play / Stop).
+    const IconButtonColors colors =
+        active ? IconButtonColors{t.accent, t.accent_hover, t.accent_active,
+                                  ImGui::GetStyleColorVec4(ImGuiCol_Text), true}
+               : IconButtonColors{with_alpha(t.bg2, 0.0F), t.bg3, with_alpha(t.accent, 0.45F),
+                                  ImGui::GetStyleColorVec4(ImGuiCol_Text), false};
+    const bool clicked = square_icon_button("##button", glyph[0] != '\0' ? glyph : fallback,
+                                            side, colors);
     ImGui::EndDisabled();
     if (tooltip != nullptr) {
         // Tooltips also explain why a disabled control is disabled.
@@ -155,9 +207,15 @@ void toolbar_separator() {
     ImGui::SameLine(0.0F, scaled(Spacing::xs));
     const ImVec2 p = ImGui::GetCursorScreenPos();
     const float h = ImGui::GetFrameHeight();
-    ImGui::GetWindowDrawList()->AddLine(ImVec2(p.x, p.y + h * 0.2F), ImVec2(p.x, p.y + h * 0.8F),
-                                        to_u32(tokens().separator), scaled(1.0F));
-    ImGui::Dummy(ImVec2(scaled(1.0F), h));
+    // A whole-pixel rect (an antialiased 1 px line at an integer x smears
+    // over two columns), 60 % of the row, centred on it.
+    const float w = std::max(1.0F, std::round(scaled(1.0F)));
+    const float x = std::round(p.x);
+    const float y0 = std::round(p.y + h * 0.2F);
+    const float y1 = std::round(p.y + h * 0.8F);
+    ImGui::GetWindowDrawList()->AddRectFilled(ImVec2(x, y0), ImVec2(x + w, y1),
+                                              to_u32(tokens().separator));
+    ImGui::Dummy(ImVec2(w, h));
     ImGui::SameLine(0.0F, scaled(Spacing::xs));
 }
 
@@ -313,14 +371,10 @@ ComponentHeader component_header(const ComponentHeaderSpec& spec) {
 
     // ⋮ menu.
     ImGui::SetCursorScreenPos(ImVec2(menu_x, bb.Min.y + (h - btn) * 0.5F));
-    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0));
-    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, to_imvec4(t.bg3));
-    ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 0.0F);
-    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(0.0F, 0.0F));
     const char* dots = ic(icon::ellipsis_vertical);
-    const bool menu_clicked = ImGui::Button(dots[0] != '\0' ? dots : "...", ImVec2(btn, btn));
-    ImGui::PopStyleVar(2);
-    ImGui::PopStyleColor(2);
+    const bool  menu_clicked = square_icon_button(
+        "##menu", dots[0] != '\0' ? dots : "...", btn,
+        {with_alpha(t.bg3, 0.0F), t.bg3, t.bg3, ImGui::GetStyleColorVec4(ImGuiCol_Text)});
     item_tooltip("Component actions");
     if (menu_clicked || menu_requested) ImGui::OpenPopup("##component_menu");
     if (ImGui::BeginPopup("##component_menu")) {

@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cstdio>
+#include <optional>
 #include <string>
 #include <system_error>
 #include <vector>
@@ -39,18 +40,29 @@ constexpr const char* k_roots[] = {"assets", "sample-assets", "scenes"};
     return e;
 }
 
+// The engine builds without exceptions: iterate with increment(ec), never
+// the range-for operator++ (which throws on a mid-listing error).
 void list_dir(const fs::path& dir, std::vector<Entry>& out) {
     std::error_code ec;
-    for (const auto& entry : fs::directory_iterator(dir, ec)) {
-        const std::string name = utf8(entry.path().filename());
+    fs::directory_iterator it(dir, fs::directory_options::skip_permission_denied, ec);
+    for (; !ec && it != fs::directory_iterator(); it.increment(ec)) {
+        if (out.size() >= k_max_search_results) return;
+        const std::string name = utf8(it->path().filename());
         if (name.empty() || name.front() == '.') continue;
+        std::error_code entry_ec;
         Entry e;
-        e.path = entry.path();
+        e.path = it->path();
         e.name = name;
-        e.is_dir = entry.is_directory(ec);
-        e.size = e.is_dir ? 0 : entry.file_size(ec);
+        e.is_dir = it->is_directory(entry_ec);
+        e.size = e.is_dir ? 0 : it->file_size(entry_ec);
+        if (entry_ec) e.size = 0;
         out.push_back(std::move(e));
     }
+}
+
+// True when `p` is `root` or inside it (both already canonical).
+[[nodiscard]] bool within(const fs::path& root, const fs::path& p) {
+    return std::mismatch(root.begin(), root.end(), p.begin(), p.end()).first == root.end();
 }
 
 void search_dir(const fs::path& root, const fs::path& dir, const std::string& filter,
@@ -68,8 +80,10 @@ void search_dir(const fs::path& root, const fs::path& dir, const std::string& fi
         Entry e;
         e.path = it->path();
         e.name = utf8(it->path().lexically_relative(root));
-        e.is_dir = it->is_directory(ec);
-        e.size = e.is_dir ? 0 : it->file_size(ec);
+        std::error_code entry_ec;
+        e.is_dir = it->is_directory(entry_ec);
+        e.size = e.is_dir ? 0 : it->file_size(entry_ec);
+        if (entry_ec) e.size = 0;
         out.push_back(std::move(e));
     }
 }
@@ -81,27 +95,10 @@ void refresh(AssetBrowserState& s, const fs::path& root) {
         now - s.cached_at < k_refresh_interval) {
         return;
     }
-    s.entries.clear();
-    if (s.dir.empty()) {
-        // Top level: the project's asset roots that exist.
-        for (const char* sub : k_roots) {
-            std::error_code ec;
-            if (fs::is_directory(root / sub, ec)) s.entries.push_back({root / sub, sub, true, 0});
-        }
-        if (!s.filter.empty()) {
-            std::vector<Entry> found;
-            for (const char* sub : k_roots) search_dir(root, root / sub, s.filter, found);
-            s.entries = std::move(found);
-        }
-    } else if (s.filter.empty()) {
-        list_dir(root / s.dir, s.entries);
-    } else {
-        search_dir(root, root / s.dir, s.filter, s.entries);
-    }
-    std::sort(s.entries.begin(), s.entries.end(), [](const Entry& a, const Entry& b) {
-        if (a.is_dir != b.is_dir) return a.is_dir;
-        return a.name < b.name;
-    });
+    // A folder outside the project (a stale or hostile path) falls back to
+    // the top level.
+    if (!s.dir.empty() && !confined_dir(root, s.dir)) s.dir.clear();
+    s.entries = list_assets(root, s.dir, s.filter);
     s.cached_dir = s.dir;
     s.cached_filter = s.filter;
     s.cached_at = now;
@@ -300,6 +297,56 @@ void breadcrumbs(AssetBrowserState& s) {
 }
 
 } // namespace
+
+std::optional<std::filesystem::path> confined_dir(const std::filesystem::path& root,
+                                                  const std::filesystem::path& dir) {
+    if (dir.is_absolute() || dir.has_root_name() || dir.has_root_directory()) return std::nullopt;
+    for (const fs::path& part : dir) {
+        if (part == "..") return std::nullopt;
+    }
+    const fs::path full = dir.empty() ? root : root / dir;
+    // Symlinks may still lead out: compare the resolved paths.
+    std::error_code ec;
+    fs::path canon_root = fs::weakly_canonical(root, ec);
+    if (ec) return std::nullopt;
+    if (!canon_root.has_filename()) canon_root = canon_root.parent_path(); // "root/" form
+    const fs::path canon = fs::weakly_canonical(full, ec);
+    if (ec || !within(canon_root, canon)) return std::nullopt;
+    return full;
+}
+
+std::vector<AssetBrowserState::Entry> list_assets(const std::filesystem::path& root,
+                                                  const std::filesystem::path& dir,
+                                                  std::string_view filter) {
+    std::vector<Entry> out;
+    const std::string filter_text(filter);
+    if (dir.empty()) {
+        if (filter.empty()) {
+            // Top level: the project's asset roots that exist.
+            for (const char* sub : k_roots) {
+                std::error_code ec;
+                if (confined_dir(root, sub) && fs::is_directory(root / sub, ec)) {
+                    out.push_back({root / sub, sub, true, 0});
+                }
+            }
+        } else {
+            for (const char* sub : k_roots) {
+                if (confined_dir(root, sub)) search_dir(root, root / sub, filter_text, out);
+            }
+        }
+    } else if (const std::optional<fs::path> full = confined_dir(root, dir)) {
+        if (filter.empty()) {
+            list_dir(*full, out);
+        } else {
+            search_dir(root, *full, filter_text, out);
+        }
+    }
+    std::sort(out.begin(), out.end(), [](const Entry& a, const Entry& b) {
+        if (a.is_dir != b.is_dir) return a.is_dir;
+        return a.name < b.name;
+    });
+    return out;
+}
 
 AssetTypeInfo asset_type(const fs::path& path, bool is_directory) {
     if (is_directory) return {AssetKind::folder, icon::folder, "Folder"};

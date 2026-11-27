@@ -73,7 +73,7 @@ void draw_joint_overlay(const scene::SkinnedMesh& skinned, const glm::mat4& view
 void draw_animation_preview(scene::Scene& scene, entt::entity selected,
                             const glm::mat4& view_proj, const float viewport_rect[4],
                             AnimationPreviewState& state) {
-    if (!ImGui::Begin(shell::panel_window_name(shell::Panel::animation))) {
+    if (!ImGui::Begin(shell::panel_window_name(shell::Panel::animation).c_str())) {
         ImGui::End();
         return;
     }

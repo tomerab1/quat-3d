@@ -7,6 +7,7 @@
 #include <cstdlib>
 #include <utility>
 
+#include "app/load_transfer.hpp"
 #include "engine/rhi/device.hpp"
 #include "engine/rhi/pipeline_cache.hpp"
 #include "engine/rhi/swapchain.hpp"
@@ -197,25 +198,20 @@ bool FrameRenderer::create_passes(const engine::rhi::Device& device,
 #ifdef ENGINE_EDITOR
 void FrameRenderer::reload_ui_fonts() {
     if (!editor_active_ || device_ == nullptr) return;
-    const VkDevice vk_device = device_->handle();
-    vkDeviceWaitIdle(vk_device);
-    VkCommandPool pool = VK_NULL_HANDLE;
-    VkCommandPoolCreateInfo pool_info{};
-    pool_info.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
-    pool_info.flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT;
-    pool_info.queueFamilyIndex = device_->queue_families().graphics;
-    if (vkCreateCommandPool(vk_device, &pool_info, nullptr, &pool) != VK_SUCCESS) {
-        std::fprintf(stderr, "[warn] UI font reload: no command pool\n");
+    // Both frames' atlases are replaced: no submitted frame may still read them.
+    if (const VkResult r = vkDeviceWaitIdle(device_->handle()); r != VK_SUCCESS) {
+        std::fprintf(stderr, "[warn] UI font reload skipped: vkDeviceWaitIdle failed (%d)\n",
+                     static_cast<int>(r));
         return;
     }
-    const engine::rhi::TransferContext transfer{vk_device, pool, device_->graphics_queue(),
-                                                device_->max_sampler_anisotropy()};
-    for (auto& f : frames_) {
-        if (auto r = f.imgui.upload_font_atlas(transfer); !r) {
-            std::fprintf(stderr, "[warn] UI font reload failed: %s\n", r.error().message.c_str());
+    (void)with_load_transfer(*device_, [&](const engine::rhi::TransferContext& transfer) {
+        for (auto& f : frames_) {
+            if (auto r = f.imgui.upload_font_atlas(transfer); !r) {
+                std::fprintf(stderr, "[warn] UI font reload failed: %s\n",
+                             r.error().message.c_str());
+            }
         }
-    }
-    vkDestroyCommandPool(vk_device, pool, nullptr);
+    });
 }
 #endif
 

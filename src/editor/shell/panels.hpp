@@ -9,6 +9,7 @@
 #include <array>
 #include <cstdint>
 #include <optional>
+#include <string>
 #include <string_view>
 
 namespace engine::editor::shell {
@@ -36,16 +37,10 @@ struct PanelInfo {
 
 [[nodiscard]] const std::array<PanelInfo, k_panel_count>& panel_infos();
 [[nodiscard]] const PanelInfo& panel_info(Panel p);
-// "<icon>  <Title>###<Title>" (without the icon when the font is missing);
-// stable pointer, rebuilt when the icon font availability changes.
-[[nodiscard]] const char* panel_window_name(Panel p);
+// "<icon>  <Title>###<Title>" (without the icon when the font is missing).
+[[nodiscard]] std::string panel_window_name(Panel p);
 // "###<Title>": the window's ID string (DockBuilder, SetWindowFocus).
-[[nodiscard]] const char* panel_window_id(Panel p);
-// The shell's open flag for a closable panel (null for the others, or before
-// the shell registered its flags) — for panels whose draw function does not
-// take one, so their tab still gets a close button.
-[[nodiscard]] bool* panel_open_flag(Panel p);
-void set_panel_open_flags(std::array<bool, k_panel_count>* flags);
+[[nodiscard]] std::string panel_window_id(Panel p);
 // Case-insensitive lookup by title ("assets" -> Panel::assets).
 [[nodiscard]] std::optional<Panel> find_panel(std::string_view title);
 

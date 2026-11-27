@@ -8,6 +8,7 @@
 #include <string_view>
 
 #include <entt/entity/entity.hpp>
+#include <entt/entity/fwd.hpp>
 #include <glm/glm.hpp>
 
 namespace engine::scene {
@@ -38,6 +39,15 @@ entt::entity create_entity_of(scene::Scene& scene, const CreateKind& kind, entt:
 
 // Deletes `root` and its descendants; clears `selected` if it was among them.
 void delete_entity_tree(scene::Scene& scene, entt::entity root, entt::entity& selected);
+
+// `e`'s world matrix from the local transforms up its parent chain (not the
+// cached Transform.world, which is only refreshed when the scene ticks).
+[[nodiscard]] glm::mat4 current_world(const entt::registry& registry, entt::entity e);
+
+// Re-parents `child` under `parent` (entt::null = root) without moving it:
+// its local transform is rewritten so its world pose stays put. False (and
+// nothing changes) when Scene::set_parent refuses (cycle, invalid entity).
+bool reparent_keep_world(scene::Scene& scene, entt::entity child, entt::entity parent);
 
 // Where new entities appear: `distance` in front of the camera of `view`.
 [[nodiscard]] glm::vec3 spawn_point(const glm::mat4& view, float distance = 5.0F);

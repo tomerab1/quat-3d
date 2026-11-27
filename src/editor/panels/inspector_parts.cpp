@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -44,44 +45,41 @@ constexpr CodecIcon k_codec_icons[] = {
     {"material", icon::palette},         {"foot_ik", icon::footprints},
 };
 
+[[nodiscard]] std::optional<nlohmann::json> encode_one(const entt::registry& r, entt::entity e,
+                                                     std::string_view codec) {
+    const std::string only[] = {std::string(codec)};
+    scene::EncodeOptions opts;
+    opts.only = only;
+    nlohmann::json j = scene::encode_components(r, e, opts);
+    const auto it = j.find(only[0]);
+    if (it == j.end()) return std::nullopt;
+    return std::move(*it);
+}
+
 void apply_action(entt::registry& r, entt::entity e, InspectorState& state, const char* codec,
                   ui::HeaderAction action) {
     using ui::HeaderAction;
-    if (action == HeaderAction::none || action == HeaderAction::remove || codec == nullptr) return;
+    if (codec == nullptr) return;
     const std::string name(codec);
     switch (action) {
     case HeaderAction::reset:
-        if (name == "transform") {
-            r.get<scene::Transform>(e).local = glm::mat4(1.0F);
-        } else {
-            (void)scene::remove_component(r, e, name);
-            if (auto ok = scene::apply_component(r, e, name, nlohmann::json::object(), false); !ok) {
-                ui::notify(ui::ToastKind::error, "Reset failed: " + ok.error().message);
-            }
+        if (auto ok = reset_component(r, e, name); !ok) {
+            ui::notify(ui::ToastKind::error, "Reset failed: " + ok.error().message);
         }
         break;
-    case HeaderAction::copy: {
-        const std::string only[] = {name};
-        scene::EncodeOptions opts;
-        opts.only = only;
-        const nlohmann::json j = scene::encode_components(r, e, opts);
-        if (const auto it = j.find(name); it != j.end()) {
+    case HeaderAction::copy:
+        if (auto text = copy_component(r, e, name)) {
             state.clipboard_type = name;
-            state.clipboard_json = it->dump(2, ' ', false, nlohmann::json::error_handler_t::replace);
+            state.clipboard_json = std::move(*text);
             ImGui::SetClipboardText(state.clipboard_json.c_str());
             ui::notify(ui::ToastKind::info, "Copied " + component_title(name) + " values", 2.0F);
         }
         break;
-    }
-    case HeaderAction::paste: {
-        const nlohmann::json j =
-            nlohmann::json::parse(state.clipboard_json, nullptr, /*allow_exceptions=*/false);
-        if (j.is_discarded()) break;
-        if (auto ok = scene::apply_component(r, e, name, j, /*strict=*/false); !ok) {
+    case HeaderAction::paste:
+        if (auto ok = paste_component(r, e, state, name); !ok) {
             ui::notify(ui::ToastKind::error, "Paste failed: " + ok.error().message);
         }
         break;
-    }
     case HeaderAction::none:
     case HeaderAction::remove:
         break;
@@ -89,6 +87,101 @@ void apply_action(entt::registry& r, entt::entity e, InspectorState& state, cons
 }
 
 } // namespace
+
+bool can_reset(std::string_view codec) {
+    if (codec == "transform") return true;
+    const scene::ComponentInfo* info = scene::find_component_info(codec);
+    // Not addable (animator, mesh): its values come from an asset, not from
+    // codec defaults, so there is nothing to reset to.
+    return info != nullptr && info->addable && info->writable;
+}
+
+std::expected<void, core::Error> reset_component(entt::registry& r, entt::entity e,
+                                                 std::string_view codec) {
+    if (!r.valid(e)) return std::unexpected(core::make_error("invalid entity"));
+    if (!can_reset(codec)) {
+        return std::unexpected(core::make_error(std::string(codec) + " has no defaults to reset to"));
+    }
+    if (codec == "transform") {
+        auto* t = r.try_get<scene::Transform>(e);
+        if (t == nullptr) return std::unexpected(core::make_error("the entity has no transform"));
+        t->local = glm::mat4(1.0F);
+        return {};
+    }
+    const std::optional<nlohmann::json> current = encode_one(r, e, codec);
+    if (!current) {
+        return std::unexpected(core::make_error("the entity has no " + std::string(codec)));
+    }
+    // The codec's defaults: decode `{}` on a scratch entity and encode it back.
+    entt::registry     scratch;
+    const entt::entity tmp = scratch.create();
+    if (auto ok = scene::apply_component(scratch, tmp, codec, nlohmann::json::object(), false); !ok) {
+        return std::unexpected(ok.error());
+    }
+    const nlohmann::json defaults =
+        encode_one(scratch, tmp, codec).value_or(nlohmann::json::object());
+    // One value per field the entity has: the default, or null where the
+    // defaults leave the field out (an optional override: null clears it).
+    // An instanced mesh's placements are its content, not a setting (and a
+    // scatter owns them): Reset keeps them, Remove clears them.
+    nlohmann::json reset = nlohmann::json::object();
+    if (current->is_object() && defaults.is_object()) {
+        for (const auto& [key, value] : current->items()) {
+            if (codec == "instanced_mesh" && key == "instances") continue;
+            const auto it = defaults.find(key);
+            reset[key] = it != defaults.end() ? *it : nlohmann::json(nullptr);
+        }
+    }
+    // Merge-update in place: the component, and what depends on it (a
+    // Primitive's MeshRenderer, an InstancedMesh's parts and scatter, a
+    // physics body), stays on the entity.
+    return scene::apply_component(r, e, codec, reset, /*strict=*/false);
+}
+
+std::optional<std::string> copy_component(const entt::registry& r, entt::entity e,
+                                          std::string_view codec) {
+    if (!r.valid(e)) return std::nullopt;
+    const std::optional<nlohmann::json> j = encode_one(r, e, codec);
+    if (!j) return std::nullopt;
+    return j->dump(2, ' ', false, nlohmann::json::error_handler_t::replace);
+}
+
+std::expected<void, core::Error> paste_component(entt::registry& r, entt::entity e,
+                                                 const InspectorState& state,
+                                                 std::string_view codec) {
+    if (!r.valid(e)) return std::unexpected(core::make_error("invalid entity"));
+    if (state.clipboard_type != codec) {
+        return std::unexpected(
+            core::make_error("the copied values are not a " + std::string(codec)));
+    }
+    const nlohmann::json j =
+        nlohmann::json::parse(state.clipboard_json, nullptr, /*allow_exceptions=*/false);
+    if (j.is_discarded()) return std::unexpected(core::make_error("the copied values are not JSON"));
+    return scene::apply_component(r, e, codec, j, /*strict=*/false);
+}
+
+bool remove_section(entt::registry& r, entt::entity e, const char* codec) {
+    return codec != nullptr && r.valid(e) && scene::remove_component(r, e, codec);
+}
+
+std::vector<std::string_view> addable_components(const entt::registry& r, entt::entity e,
+                                                 std::string_view filter) {
+    std::vector<std::string_view> out;
+    if (!r.valid(e)) return out;
+    const std::vector<std::string_view> present = scene::component_names(r, e);
+    for (const scene::ComponentInfo& c : scene::component_infos()) {
+        if (!c.addable) continue;
+        if (std::find(present.begin(), present.end(), c.name) != present.end()) continue;
+        // Foot IK drives a skinned, animated rig; it does nothing elsewhere.
+        if (c.name == "foot_ik" && !r.all_of<scene::SkinnedMesh>(e)) continue;
+        if (!ui::matches_filter(component_title(c.name), filter) &&
+            !ui::matches_filter(c.summary, filter)) {
+            continue;
+        }
+        out.push_back(c.name);
+    }
+    return out;
+}
 
 const char* component_icon(std::string_view codec) {
     for (const CodecIcon& c : k_codec_icons) {
@@ -129,7 +222,7 @@ SectionResult component_section(entt::registry& registry, entt::entity entity,
         .icon = icon_glyph,
         .title = title,
         .enabled = enabled,
-        .can_reset = codec != nullptr && (info == nullptr || info->writable),
+        .can_reset = codec != nullptr && can_reset(codec),
         .can_copy = codec != nullptr,
         .can_paste = codec != nullptr && state.clipboard_type == codec &&
                      (info == nullptr || info->writable),
@@ -189,19 +282,11 @@ void add_component_button(entt::registry& registry, entt::entity entity, Inspect
     if (!ImGui::BeginPopup("##add_component")) return;
     if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere();
     (void)ui::search_field("add_filter", state.add_filter, "Search components");
-    const std::vector<std::string_view> present = scene::component_names(registry, entity);
     int shown = 0;
     ImGui::BeginChild("##components", ImVec2(0.0F, ui::scaled(300.0F)));
-    for (const scene::ComponentInfo& c : scene::component_infos()) {
-        if (!c.addable) continue;
-        if (std::find(present.begin(), present.end(), c.name) != present.end()) continue;
-        // Foot IK drives a skinned, animated rig; it does nothing elsewhere.
-        if (c.name == "foot_ik" && !registry.all_of<scene::SkinnedMesh>(entity)) continue;
+    for (const std::string_view name : addable_components(registry, entity, state.add_filter)) {
+        const scene::ComponentInfo& c = *scene::find_component_info(name);
         const std::string title = component_title(c.name);
-        if (!ui::matches_filter(title, state.add_filter) &&
-            !ui::matches_filter(c.summary, state.add_filter)) {
-            continue;
-        }
         ++shown;
         ImGui::PushID(c.name.data(), c.name.data() + c.name.size());
         const ImVec2 p = ImGui::GetCursorScreenPos();

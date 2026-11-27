@@ -144,6 +144,8 @@ protected:
         io.ConfigErrorRecoveryEnableAssert = false;
         io.ConfigErrorRecoveryEnableDebugLog = false;
         io.ConfigErrorRecoveryEnableTooltip = false;
+        // On by default only in debug builds of ImGui: the sweep relies on it.
+        io.ConfigDebugHighlightIdConflicts = true;
         ctx_->ErrorCallback = [](ImGuiContext*, void*, const char* msg) {
             ++g_errors;
             g_last_error = msg != nullptr ? msg : "";

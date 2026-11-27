@@ -517,6 +517,7 @@ if(ENGINE_EDITOR)
         src/editor/shell/layout.cpp
         src/editor/shell/menu.cpp
         src/editor/shell/panels.cpp
+        src/editor/shell/prefs.cpp
         src/editor/shell/scene_actions.cpp
         src/editor/shell/stats_panel.cpp
         src/editor/shell/status_bar.cpp

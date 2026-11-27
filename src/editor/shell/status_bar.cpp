@@ -46,6 +46,23 @@ void separator_dot() {
     return "entity " + std::to_string(static_cast<std::uint32_t>(e));
 }
 
+// "Simulation state (F5 play, F6 pause, ...)" from the registered shortcuts.
+[[nodiscard]] std::string sim_state_tooltip(const EditorShell& shell) {
+    struct Verb {
+        const char* command;
+        const char* verb;
+    };
+    constexpr Verb verbs[] = {
+        {"play.play", "play"}, {"play.pause", "pause"}, {"play.step", "step"}, {"play.stop", "stop"}};
+    std::string keys;
+    for (const Verb& v : verbs) {
+        const std::string k = shell.shortcut_text(v.command);
+        if (k.empty()) continue;
+        keys.append(keys.empty() ? "" : ", ").append(k).append(" ").append(v.verb);
+    }
+    return keys.empty() ? std::string("Simulation state") : "Simulation state (" + keys + ")";
+}
+
 } // namespace
 
 void draw_status_bar(EditorShell& shell) {
@@ -72,7 +89,7 @@ void draw_status_bar(EditorShell& shell) {
         case SimState::playing: pill(icon::play, "Playing", t.success); break;
         case SimState::paused: pill(icon::pause, "Paused", t.warning); break;
         }
-        ui::item_tooltip("Simulation state (F5 play, F6 pause, F10 step, Shift+F5 stop)");
+        ui::item_tooltip(sim_state_tooltip(shell).c_str());
 
         // Selection + entity count.
         if (ctx != nullptr && ctx->scene != nullptr) {

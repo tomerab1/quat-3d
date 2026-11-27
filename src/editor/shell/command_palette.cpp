@@ -21,13 +21,6 @@ namespace engine::editor::shell {
 
 namespace {
 
-struct PaletteState {
-    std::string query;
-    int         cursor = 0;
-    bool        focus_input = false;
-};
-PaletteState g_palette;
-
 constexpr int k_visible_rows = 12;
 
 // Commands in palette order for `query`: recent first when empty, else by
@@ -58,8 +51,8 @@ void draw_command_palette(EditorShell& shell) {
     const ui::Theme& t = ui::tokens();
     if (shell.palette_open && !ImGui::IsPopupOpen("##command_palette")) {
         ImGui::OpenPopup("##command_palette");
-        g_palette = {};
-        g_palette.focus_input = true;
+        shell.palette = {};
+        shell.palette.focus_input = true;
     }
     const ImGuiViewport* vp = ImGui::GetMainViewport();
     const float width =
@@ -77,25 +70,25 @@ void draw_command_palette(EditorShell& shell) {
         return;
     }
 
-    if (g_palette.focus_input) {
+    if (shell.palette.focus_input) {
         ImGui::SetKeyboardFocusHere();
-        g_palette.focus_input = false;
+        shell.palette.focus_input = false;
     }
-    if (ui::search_field("palette_query", g_palette.query, "Type a command (fuzzy)")) {
-        g_palette.cursor = 0;
+    if (ui::search_field("palette_query", shell.palette.query, "Type a command (fuzzy)")) {
+        shell.palette.cursor = 0;
     }
-    const std::vector<const Command*> items = ranked(shell.commands, g_palette.query);
+    const std::vector<const Command*> items = ranked(shell.commands, shell.palette.query);
     const int count = static_cast<int>(items.size());
     bool keyboard_moved = false;
     if (ImGui::IsKeyPressed(ImGuiKey_DownArrow)) {
-        g_palette.cursor = std::min(g_palette.cursor + 1, count - 1);
+        shell.palette.cursor = std::min(shell.palette.cursor + 1, count - 1);
         keyboard_moved = true;
     }
     if (ImGui::IsKeyPressed(ImGuiKey_UpArrow)) {
-        g_palette.cursor = std::max(g_palette.cursor - 1, 0);
+        shell.palette.cursor = std::max(shell.palette.cursor - 1, 0);
         keyboard_moved = true;
     }
-    g_palette.cursor = std::clamp(g_palette.cursor, 0, std::max(count - 1, 0));
+    shell.palette.cursor = std::clamp(shell.palette.cursor, 0, std::max(count - 1, 0));
 
     std::string run_id;
     const float row_h = ImGui::GetFrameHeight();
@@ -109,13 +102,13 @@ void draw_command_palette(EditorShell& shell) {
         const Command& c = *items[static_cast<std::size_t>(i)];
         const bool enabled = shell.commands.is_enabled(c);
         ImGui::PushID(c.id.c_str());
-        const bool is_cursor = i == g_palette.cursor;
+        const bool is_cursor = i == shell.palette.cursor;
         const ImVec2 p = ImGui::GetCursorScreenPos();
         const float w = ImGui::GetContentRegionAvail().x;
         if (ImGui::Selectable("##row", is_cursor, ImGuiSelectableFlags_None, ImVec2(w, row_h))) {
             if (enabled) run_id = c.id;
         }
-        if (ImGui::IsItemHovered() && ImGui::GetIO().MouseDelta.x != 0.0F) g_palette.cursor = i;
+        if (ImGui::IsItemHovered() && ImGui::GetIO().MouseDelta.x != 0.0F) shell.palette.cursor = i;
         if (is_cursor && keyboard_moved) ImGui::SetScrollHereY(0.5F);
         ImDrawList* dl = ImGui::GetWindowDrawList();
         const float ty = p.y + (row_h - ImGui::GetTextLineHeight()) * 0.5F;
@@ -147,7 +140,7 @@ void draw_command_palette(EditorShell& shell) {
 
     if (ImGui::IsKeyPressed(ImGuiKey_Enter) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter)) {
         if (count > 0) {
-            const Command& c = *items[static_cast<std::size_t>(g_palette.cursor)];
+            const Command& c = *items[static_cast<std::size_t>(shell.palette.cursor)];
             if (shell.commands.is_enabled(c)) run_id = c.id;
         }
     }

@@ -149,8 +149,9 @@ struct ComponentInspector<scene::InstancedMesh> {
     static constexpr const char* codec = "instanced_mesh";
     static constexpr const char* icon = icon::boxes;
     static constexpr bool property_grid = true;
-    static void draw(entt::registry& r, entt::entity e, scene::InstancedMesh& mesh) {
-        draw_instanced_mesh(r, e, mesh);
+    static void draw(entt::registry& r, entt::entity e, scene::InstancedMesh& mesh,
+                     const panels::InspectorState& state) {
+        draw_instanced_mesh(r, e, mesh, state.project_root);
     }
 };
 
@@ -447,13 +448,12 @@ struct ComponentInspector<scene::AudioListener> {
     }
 };
 
-panels::InspectorState g_state; // Add Component search, copied values
-
 // Draws the component's section (ui::component_header with codec-backed
 // reset / copy / paste) and its editor. `removable` offers Remove; returns
 // false if the component was removed.
 template <typename T>
-bool inspect(entt::registry& registry, entt::entity entity, bool removable = false) {
+bool inspect(panels::InspectorState& state, entt::registry& registry, entt::entity entity,
+             bool removable = false) {
     using I = ComponentInspector<T>;
     auto* component = registry.try_get<T>(entity);
     if (component == nullptr) return true;
@@ -466,9 +466,12 @@ bool inspect(entt::registry& registry, entt::entity entity, bool removable = fal
     if constexpr (requires { I::enabled(*component); }) enabled_flag = I::enabled(*component);
 
     const panels::SectionResult s = panels::component_section(
-        registry, entity, g_state, codec_name, glyph, I::title, enabled_flag, removable);
+        registry, entity, state, codec_name, glyph, I::title, enabled_flag, removable);
     if (s.removed) {
-        registry.remove<T>(entity);
+        // Through the codec when there is one: it also removes what the
+        // component implies (a Primitive's generated MeshRenderer, an
+        // InstancedMesh's parts and scatter), as the remote API does.
+        if (!panels::remove_section(registry, entity, codec_name)) registry.remove<T>(entity);
         return false;
     }
     // A reset / paste may have replaced the component.
@@ -478,11 +481,19 @@ bool inspect(entt::registry& registry, entt::entity entity, bool removable = fal
     ImGui::Indent(ui::scaled(ui::Spacing::xxs));
     bool grid = false;
     if constexpr (requires { I::property_grid; }) grid = I::property_grid;
+    // Editors that need the inspector's context (the project root) take it.
+    const auto draw_fields = [&] {
+        if constexpr (requires { I::draw(registry, entity, *component, state); }) {
+            I::draw(registry, entity, *component, state);
+        } else {
+            I::draw(registry, entity, *component);
+        }
+    };
     if (grid && ui::begin_property_grid("##grid")) {
-        I::draw(registry, entity, *component);
+        draw_fields();
         ui::end_property_grid();
     } else if (!grid) {
-        I::draw(registry, entity, *component);
+        draw_fields();
     }
     ImGui::Unindent(ui::scaled(ui::Spacing::xxs));
     ImGui::Dummy(ImVec2(0.0F, ui::scaled(ui::Spacing::xxs)));
@@ -492,9 +503,10 @@ bool inspect(entt::registry& registry, entt::entity entity, bool removable = fal
 
 } // namespace
 
-void draw_inspector(scene::Scene& scene, entt::entity selected) {
-    if (!ImGui::Begin(shell::panel_window_name(shell::Panel::inspector),
-                      shell::panel_open_flag(shell::Panel::inspector))) {
+void draw_inspector(scene::Scene& scene, entt::entity selected, panels::InspectorState& state,
+                    bool* open) {
+    if (open != nullptr && !*open) return;
+    if (!ImGui::Begin(shell::panel_window_name(shell::Panel::inspector).c_str(), open)) {
         ImGui::End();
         return;
     }
@@ -507,30 +519,28 @@ void draw_inspector(scene::Scene& scene, entt::entity selected) {
     }
 
     panels::entity_header(scene, selected);
-    inspect<scene::Transform>(r, selected);
-    inspect<scene::Primitive>(r, selected, true);
-    if (!r.all_of<scene::Primitive>(selected)) inspect<scene::MeshRenderer>(r, selected);
+    inspect<scene::Transform>(state, r, selected);
+    inspect<scene::Primitive>(state, r, selected, true);
+    if (!r.all_of<scene::Primitive>(selected)) inspect<scene::MeshRenderer>(state, r, selected);
     draw_material_inspector(r, selected);
-    inspect<scene::DirectionalLight>(r, selected, true);
-    inspect<scene::PointLight>(r, selected, true);
-    inspect<scene::Camera>(r, selected, true);
-    inspect<scene::Animator>(r, selected);
-    inspect<scene::FootIK>(r, selected, true);
-    inspect<scene::Terrain>(r, selected, true);
-    inspect<scene::Grass>(r, selected, true);
-    if (!inspect<scene::InstancedMesh>(r, selected, true)) {
-        r.remove<scene::InstancedMeshParts, scene::Scatter>(selected); // as remove_component
-    }
-    inspect<scene::Scatter>(r, selected, true);
-    inspect<scene::NavAgent>(r, selected, true);
-    inspect<scene::BehaviorTree>(r, selected, true);
-    inspect<scene::PatrolRoute>(r, selected, true);
-    inspect<scene::Collider>(r, selected, true);
-    inspect<scene::RigidBody>(r, selected, true);
-    inspect<scene::AudioSource>(r, selected, true);
-    inspect<scene::AudioListener>(r, selected, true);
+    inspect<scene::DirectionalLight>(state, r, selected, true);
+    inspect<scene::PointLight>(state, r, selected, true);
+    inspect<scene::Camera>(state, r, selected, true);
+    inspect<scene::Animator>(state, r, selected);
+    inspect<scene::FootIK>(state, r, selected, true);
+    inspect<scene::Terrain>(state, r, selected, true);
+    inspect<scene::Grass>(state, r, selected, true);
+    inspect<scene::InstancedMesh>(state, r, selected, true); // removal takes parts + scatter
+    inspect<scene::Scatter>(state, r, selected, true);
+    inspect<scene::NavAgent>(state, r, selected, true);
+    inspect<scene::BehaviorTree>(state, r, selected, true);
+    inspect<scene::PatrolRoute>(state, r, selected, true);
+    inspect<scene::Collider>(state, r, selected, true);
+    inspect<scene::RigidBody>(state, r, selected, true);
+    inspect<scene::AudioSource>(state, r, selected, true);
+    inspect<scene::AudioListener>(state, r, selected, true);
 
-    panels::add_component_button(r, selected, g_state);
+    panels::add_component_button(r, selected, state);
     ImGui::End();
 }
 

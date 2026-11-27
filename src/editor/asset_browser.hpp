@@ -9,6 +9,7 @@
 #include <chrono>
 #include <cstdint>
 #include <filesystem>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -48,6 +49,18 @@ struct AssetBrowserState {
     std::chrono::steady_clock::time_point cached_at{};
     bool                                  dirty = true;
 };
+
+// `root / dir` when project-relative `dir` stays inside the project (no
+// absolute path, no "..", no symlink out of it); nullopt otherwise.
+[[nodiscard]] std::optional<std::filesystem::path> confined_dir(const std::filesystem::path& root,
+                                                                const std::filesystem::path& dir);
+// The panel's listing of project-relative `dir` ("" = the asset roots):
+// folders first, then files, by name; hidden (dot) entries skipped. A
+// non-empty `filter` searches recursively (names relative to `root`).
+// Empty when `dir` leaves the project.
+[[nodiscard]] std::vector<AssetBrowserState::Entry>
+list_assets(const std::filesystem::path& root, const std::filesystem::path& dir,
+            std::string_view filter);
 
 // Draws the "Assets" window (`window_name`, closable through `open`).
 // Double-clicking a glTF/GLB writes its absolute path into

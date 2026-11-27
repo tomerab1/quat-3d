@@ -8,7 +8,6 @@
 // snapping and recent scenes.
 
 #include <cstdio>
-#include <cstdlib>
 #include <cstring>
 #include <string>
 #include <system_error>
@@ -17,64 +16,29 @@
 #include <imgui_internal.h> // DockBuilder, ImGuiSettingsHandler
 
 #include "editor_shell.hpp"
+#include "prefs.hpp"
 
 namespace engine::editor::shell {
 
 namespace {
 
-std::string g_ini_path; // ImGui keeps the pointer; lives for the process
-
 void* settings_open(ImGuiContext*, ImGuiSettingsHandler* handler, const char* name) {
     return std::strcmp(name, "Prefs") == 0 ? handler->UserData : nullptr;
 }
 
+// The ini file is external data: every line goes through the validating
+// parser (prefs.cpp) before it reaches the shell.
 void settings_read_line(ImGuiContext*, ImGuiSettingsHandler*, void* entry, const char* line) {
     auto* shell = static_cast<EditorShell*>(entry);
-    char text[512];
-    int value = 0;
-    float f = 0.0F;
-    if (std::sscanf(line, "Theme=%15s", text) == 1) {
-        shell->appearance().set_theme(std::strcmp(text, "light") == 0 ? ui::ThemeId::light
-                                                                      : ui::ThemeId::dark);
-    } else if (std::sscanf(line, "Panel=%63[^,],%d", text, &value) == 2) {
-        if (const auto p = find_panel(text); p && panel_info(*p).closable) {
-            shell->panel_open[static_cast<std::size_t>(*p)] = value != 0;
-        }
-    } else if (std::sscanf(line, "SnapEnabled=%d", &value) == 1) {
-        shell->snap.enabled = value != 0;
-    } else if (std::sscanf(line, "SnapMove=%f", &f) == 1 && f > 0.0F) {
-        shell->snap.translate = f;
-    } else if (std::sscanf(line, "SnapRotate=%f", &f) == 1 && f > 0.0F) {
-        shell->snap.rotate_deg = f;
-    } else if (std::sscanf(line, "SnapScale=%f", &f) == 1 && f > 0.0F) {
-        shell->snap.scale = f;
-    } else if (std::sscanf(line, "ViewportStats=%d", &value) == 1) {
-        shell->show_viewport_stats = value != 0;
-    } else if (std::strncmp(line, "Recent=", 7) == 0 && line[7] != '\0') {
-        shell->recent_scenes.emplace_back(line + 7);
-    } else if (std::strncmp(line, "Scene=", 6) == 0 && line[6] != '\0') {
-        shell->scene_path = line + 6;
-    }
+    EditorPrefs prefs = shell->prefs();
+    if (parse_pref_line(line, prefs)) shell->apply_prefs(prefs);
 }
 
 void settings_write_all(ImGuiContext*, ImGuiSettingsHandler* handler, ImGuiTextBuffer* buf) {
-    auto* shell = static_cast<EditorShell*>(handler->UserData);
+    const auto* shell = static_cast<const EditorShell*>(handler->UserData);
     buf->appendf("[%s][Prefs]\n", handler->TypeName);
-    const bool light = shell->appearance().theme_id() == ui::ThemeId::light;
-    buf->appendf("Theme=%s\n", light ? "light" : "dark");
-    for (const PanelInfo& p : panel_infos()) {
-        if (p.closable) {
-            buf->appendf("Panel=%s,%d\n", p.title,
-                         shell->panel_open[static_cast<std::size_t>(p.id)] ? 1 : 0);
-        }
-    }
-    buf->appendf("SnapEnabled=%d\nSnapMove=%g\nSnapRotate=%g\nSnapScale=%g\n",
-                 shell->snap.enabled ? 1 : 0, static_cast<double>(shell->snap.translate),
-                 static_cast<double>(shell->snap.rotate_deg),
-                 static_cast<double>(shell->snap.scale));
-    buf->appendf("ViewportStats=%d\n", shell->show_viewport_stats ? 1 : 0);
-    buf->appendf("Scene=%s\n", shell->scene_path.c_str());
-    for (const std::string& r : shell->recent_scenes) buf->appendf("Recent=%s\n", r.c_str());
+    const std::string body = write_prefs(shell->prefs());
+    buf->append(body.c_str(), body.c_str() + body.size());
     buf->append("\n");
 }
 
@@ -100,8 +64,8 @@ void install_settings(EditorShell& shell, bool use_saved_layout) {
         return;
     }
     const std::u8string p = (dir / "editor.ini").u8string();
-    g_ini_path.assign(p.begin(), p.end());
-    ImGui::GetIO().IniFilename = g_ini_path.c_str();
+    shell.ini_path.assign(p.begin(), p.end());
+    ImGui::GetIO().IniFilename = shell.ini_path.c_str();
 }
 
 void build_default_layout(unsigned int dockspace_id) {
@@ -115,14 +79,14 @@ void build_default_layout(unsigned int dockspace_id) {
     ImGuiID centre = 0;
     const ImGuiID left = ImGui::DockBuilderSplitNode(rest, ImGuiDir_Left, 0.22F, nullptr, &centre);
 
-    ImGui::DockBuilderDockWindow(panel_window_id(Panel::viewport), centre);
-    ImGui::DockBuilderDockWindow(panel_window_id(Panel::hierarchy), left);
+    ImGui::DockBuilderDockWindow(panel_window_id(Panel::viewport).c_str(), centre);
+    ImGui::DockBuilderDockWindow(panel_window_id(Panel::hierarchy).c_str(), left);
     for (const Panel p : {Panel::inspector, Panel::renderer}) {
-        ImGui::DockBuilderDockWindow(panel_window_id(p), right);
+        ImGui::DockBuilderDockWindow(panel_window_id(p).c_str(), right);
     }
     for (const Panel p : {Panel::assets, Panel::console, Panel::animation, Panel::behaviour,
                           Panel::physics, Panel::stats}) {
-        ImGui::DockBuilderDockWindow(panel_window_id(p), bottom);
+        ImGui::DockBuilderDockWindow(panel_window_id(p).c_str(), bottom);
     }
     // The viewport has no tab bar: it is the document, not a tool.
     if (ImGuiDockNode* node = ImGui::DockBuilderGetNode(centre)) {
@@ -130,10 +94,10 @@ void build_default_layout(unsigned int dockspace_id) {
     }
     // First tab of each group in front.
     if (ImGuiDockNode* node = ImGui::DockBuilderGetNode(right)) {
-        node->SelectedTabId = ImHashStr(panel_window_id(Panel::inspector));
+        node->SelectedTabId = ImHashStr(panel_window_id(Panel::inspector).c_str());
     }
     if (ImGuiDockNode* node = ImGui::DockBuilderGetNode(bottom)) {
-        node->SelectedTabId = ImHashStr(panel_window_id(Panel::assets));
+        node->SelectedTabId = ImHashStr(panel_window_id(Panel::assets).c_str());
     }
     ImGui::DockBuilderFinish(dockspace_id);
 }

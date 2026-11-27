@@ -10,6 +10,7 @@
 
 #include <glm/gtc/matrix_transform.hpp>
 
+#include "app/load_transfer.hpp"
 #include "app/remote_bridge.hpp"
 #include "engine/renderer/render_settings.hpp"
 #include "engine/rhi/device.hpp"
@@ -22,35 +23,13 @@
 #include "engine/scene/scene_io.hpp"
 
 namespace quat::app {
-namespace {
-
-// Runs `fn` with a transient upload context on the graphics queue (mip
-// blits need a graphics-capable queue), like the startup path. Skipped if the
-// command pool cannot be created.
-template <typename Fn>
-void with_load_transfer(const engine::rhi::Device& device, Fn&& fn) {
-    const VkDevice vk_device = device.handle();
-    VkCommandPool load_pool = VK_NULL_HANDLE;
-    VkCommandPoolCreateInfo pool_info{};
-    pool_info.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
-    pool_info.flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT;
-    pool_info.queueFamilyIndex = device.queue_families().graphics;
-    if (vkCreateCommandPool(vk_device, &pool_info, nullptr, &load_pool) == VK_SUCCESS) {
-        const engine::rhi::TransferContext load_transfer{
-            vk_device, load_pool, device.graphics_queue(), device.max_sampler_anisotropy(),
-            device.texture_caps()};
-        std::forward<Fn>(fn)(load_transfer);
-        vkDestroyCommandPool(vk_device, load_pool, nullptr);
-    }
-}
-
-} // namespace
 
 void EditorBridge::create(SDL_Window* window, bool enabled) {
     if (!enabled) return;
     if (auto e = engine::editor::EditorLayer::create(window, QUAT_PROJECT_ROOT); e) {
         editor_ = std::move(*e);
-        // QUAT_EDITOR_THEME=light|dark picks the initial theme.
+        // QUAT_EDITOR_THEME=light|dark picks the theme (over the one saved in
+        // .quat/editor.ini).
         if (const char* theme = std::getenv("QUAT_EDITOR_THEME"); theme != nullptr) {
             editor_.set_theme(theme);
         }
@@ -192,7 +171,7 @@ void EditorBridge::apply_scene_file_requests() {
     }
     if (!pending_load_.empty() && !play_) {
         const std::string path = std::exchange(pending_load_, {});
-        with_load_transfer(*t_.device, [&](const engine::rhi::TransferContext& load_transfer) {
+        (void)with_load_transfer(*t_.device, [&](const engine::rhi::TransferContext& load_transfer) {
             if (auto r = engine::scene::load_scene(scene, path, *t_.allocator, load_transfer,
                                                    *t_.assets, t_.render_settings);
                 r) {
@@ -220,7 +199,7 @@ void EditorBridge::apply_instantiate_request() {
     // the graphics queue (mip blits), like the startup path.
     if (pending_instantiate_.empty()) return;
     const std::string path = std::exchange(pending_instantiate_, {});
-    with_load_transfer(*t_.device, [&](const engine::rhi::TransferContext& load_transfer) {
+    (void)with_load_transfer(*t_.device, [&](const engine::rhi::TransferContext& load_transfer) {
         if (auto roots = engine::scene::GltfLoader::instantiate(path, *t_.allocator,
                                                                 load_transfer, *t_.assets, scene);
             roots) {

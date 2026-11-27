@@ -25,14 +25,6 @@ namespace {
 
 constexpr const char* k_entity_payload = "QUAT_ENTITY";
 
-[[nodiscard]] std::string entity_label(const entt::registry& registry, entt::entity e) {
-    if (const auto* name = registry.try_get<scene::Name>(e); name != nullptr &&
-                                                            !name->value.empty()) {
-        return name->value;
-    }
-    return "entity " + std::to_string(static_cast<std::uint32_t>(e));
-}
-
 // Icon tint by category: lights warm, cameras info, audio accent, AI and
 // physics success, everything else secondary.
 [[nodiscard]] ui::Rgba icon_tint(const entt::registry& r, entt::entity e) {
@@ -72,7 +64,7 @@ struct RowContext {
 };
 
 // Inline rename field in place of the label; Enter / focus loss commit,
-// Esc cancels.
+// Esc cancels (InputText deactivates on Esc, so the key is checked then).
 void rename_field(RowContext& ctx, entt::entity e) {
     if (ctx.state.focus_rename) {
         ImGui::SetKeyboardFocusHere();
@@ -82,15 +74,11 @@ void rename_field(RowContext& ctx, entt::entity e) {
     const bool enter = ImGui::InputText("##rename", &ctx.state.rename_text,
                                         ImGuiInputTextFlags_EnterReturnsTrue |
                                             ImGuiInputTextFlags_AutoSelectAll);
-    const bool cancel = ImGui::IsItemActive() && ImGui::IsKeyPressed(ImGuiKey_Escape);
-    if (cancel) {
-        ctx.state.renaming = entt::null;
-    } else if (enter || ImGui::IsItemDeactivated()) {
-        if (auto* name = ctx.scene.registry().try_get<scene::Name>(e)) {
-            name->value = ctx.state.rename_text;
-        }
-        ctx.state.renaming = entt::null;
+    if (!enter && !ImGui::IsItemDeactivated()) return;
+    if (enter || !ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
+        commit_rename(ctx.scene.registry(), e, ctx.state.rename_text);
     }
+    ctx.state.renaming = entt::null;
 }
 
 void row_context_menu(RowContext& ctx, entt::entity e) {
@@ -115,7 +103,7 @@ void row_context_menu(RowContext& ctx, entt::entity e) {
     }
     if (ctx.scene.registry().all_of<scene::Parent>(e) &&
         ImGui::MenuItem(ui::label(icon::arrow_up, "Unparent").c_str())) {
-        ctx.scene.set_parent(e, entt::null);
+        (void)shell::reparent_keep_world(ctx.scene, e, entt::null);
         ctx.mutated = true;
     }
     ImGui::Separator();
@@ -128,8 +116,8 @@ void row_context_menu(RowContext& ctx, entt::entity e) {
     ImGui::EndPopup();
 }
 
-// Drag a row onto another to re-parent it (refused when it would create a
-// cycle: Scene::set_parent checks).
+// Drag a row onto another to re-parent it, keeping its world pose (refused
+// when it would create a cycle: Scene::set_parent checks).
 void drag_and_drop(RowContext& ctx, entt::entity e, const std::string& label) {
     if (ImGui::BeginDragDropSource()) {
         const auto id = static_cast<std::uint32_t>(e);
@@ -143,7 +131,7 @@ void drag_and_drop(RowContext& ctx, entt::entity e, const std::string& label) {
             std::memcpy(&id, p->Data, sizeof(id));
             const auto dragged = static_cast<entt::entity>(id);
             if (ctx.scene.registry().valid(dragged) && dragged != e) {
-                ctx.scene.set_parent(dragged, e);
+                (void)shell::reparent_keep_world(ctx.scene, dragged, e);
                 ctx.mutated = true;
             }
         }
@@ -227,6 +215,27 @@ const char* entity_type_icon(const entt::registry& r, entt::entity e) {
     return icon::circle_dot;
 }
 
+std::string entity_label(const entt::registry& registry, entt::entity e) {
+    if (const auto* name = registry.try_get<scene::Name>(e); name != nullptr &&
+                                                            !name->value.empty()) {
+        return name->value;
+    }
+    return "entity " + std::to_string(static_cast<std::uint32_t>(e));
+}
+
+void commit_rename(entt::registry& registry, entt::entity e, std::string_view text) {
+    if (!registry.valid(e)) return;
+    registry.get_or_emplace<scene::Name>(e).value = std::string(text);
+}
+
+std::vector<entt::entity> filter_entities(const entt::registry& registry, std::string_view filter) {
+    std::vector<entt::entity> out;
+    for (const entt::entity e : registry.view<scene::Transform>()) {
+        if (ui::matches_filter(entity_label(registry, e), filter)) out.push_back(e);
+    }
+    return out;
+}
+
 void begin_rename(HierarchyState& state, const scene::Scene& scene, entt::entity e) {
     if (!scene.registry().valid(e)) return;
     state.renaming = e;
@@ -286,14 +295,12 @@ void draw_scene_hierarchy(scene::Scene& scene, entt::entity& selected, Hierarchy
         ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(0.0F, 0.0F));
     } else if (!state.filter.empty()) {
         // Filtered: a flat list of every matching entity.
-        int shown = 0;
-        for (const entt::entity e : r.view<scene::Transform>()) {
+        const std::vector<entt::entity> matches = filter_entities(r, state.filter);
+        for (const entt::entity e : matches) {
             if (ctx.mutated) break;
-            if (!ui::matches_filter(entity_label(r, e), state.filter)) continue;
             draw_row(ctx, e, /*flat=*/true);
-            ++shown;
         }
-        if (shown == 0) {
+        if (matches.empty()) {
             ImGui::PopStyleVar(2);
             (void)ui::empty_state(icon::search, "No matching entities",
                                   "Names are matched case-insensitively.");
@@ -318,7 +325,7 @@ void draw_scene_hierarchy(scene::Scene& scene, entt::entity& selected, Hierarchy
                 std::uint32_t id = 0;
                 std::memcpy(&id, p->Data, sizeof(id));
                 const auto dragged = static_cast<entt::entity>(id);
-                if (r.valid(dragged)) scene.set_parent(dragged, entt::null);
+                if (r.valid(dragged)) (void)shell::reparent_keep_world(scene, dragged, entt::null);
             }
             ImGui::EndDragDropTarget();
         }

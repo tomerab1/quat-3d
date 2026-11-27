@@ -173,7 +173,8 @@ public:
     // (wants_keyboard also fires for UI navigation, which is too aggressive).
     [[nodiscard]] bool wants_text_input() const;
 
-    // "dark" (default) or "light"; applied from the next frame.
+    // "dark" (default) or "light"; applied from the next frame. Wins over the
+    // theme saved in .quat/editor.ini (QUAT_EDITOR_THEME sets it at startup).
     void set_theme(std::string_view name);
     // True once after begin_frame() rebuilt the font atlas for a new display
     // scale: the renderer must re-upload it before drawing this frame's UI.

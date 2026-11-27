@@ -87,11 +87,12 @@ void draw_primitive(scene::Primitive& p) {
     (void)ui::prop_color3("Emissive", p.emissive, {.reset = glm::vec3(0.0F)}, /*hdr=*/true);
 }
 
-void draw_instanced_mesh(entt::registry& r, entt::entity e, scene::InstancedMesh& mesh) {
+void draw_instanced_mesh(entt::registry& r, entt::entity e, scene::InstancedMesh& mesh,
+                         const std::filesystem::path& project_root) {
     // Paths commit on Enter: every edit re-resolves the model.
     static constexpr std::string_view exts[] = {".gltf", ".glb"};
     (void)ui::prop_asset("Model", mesh.gltf_path,
-                         {.root = std::filesystem::path(QUAT_PROJECT_ROOT), .extensions = exts},
+                         {.root = project_root, .extensions = exts},
                          {.tooltip = "glTF relative to the project root; empty = the "
                                      "primitive shape below"});
     if (!mesh.gltf_path.empty()) {

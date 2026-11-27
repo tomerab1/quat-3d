@@ -28,8 +28,6 @@ namespace engine::editor::shell {
 
 namespace {
 
-constexpr std::size_t k_max_recent_scenes = 8;
-
 [[nodiscard]] ui::ToastKind toast_kind(NoticeKind k) {
     switch (k) {
     case NoticeKind::info: return ui::ToastKind::info;
@@ -56,13 +54,49 @@ void select_docked_tab(const char* id) {
 EditorShell::EditorShell(SDL_Window* window, std::filesystem::path root)
     : project_root(std::move(root)) {
     panel_open.fill(true);
-    set_panel_open_flags(&panel_open);
+    inspector.project_root = project_root;
     appearance_.init(window, project_root, ui::ThemeId::dark);
     console = std::make_unique<panels::ConsoleState>();
     register_commands();
 }
 
-EditorShell::~EditorShell() { set_panel_open_flags(nullptr); }
+EditorShell::~EditorShell() = default;
+
+void EditorShell::force_theme(ui::ThemeId theme) {
+    appearance_.set_theme(theme);
+    theme_forced_ = true;
+}
+
+EditorPrefs EditorShell::prefs() const {
+    EditorPrefs p;
+    p.light_theme = appearance_.theme_id() == ui::ThemeId::light;
+    p.panel_open = panel_open;
+    p.snap_enabled = snap.enabled;
+    p.snap_move = snap.translate;
+    p.snap_rotate_deg = snap.rotate_deg;
+    p.snap_scale = snap.scale;
+    p.viewport_stats = show_viewport_stats;
+    p.scene_path = scene_path;
+    p.recent_scenes = recent_scenes;
+    return p;
+}
+
+void EditorShell::apply_prefs(const EditorPrefs& p) {
+    if (!theme_forced_) {
+        appearance_.set_theme(p.light_theme ? ui::ThemeId::light : ui::ThemeId::dark);
+    }
+    panel_open = p.panel_open;
+    for (const PanelInfo& info : panel_infos()) {
+        if (!info.closable) panel_open[static_cast<std::size_t>(info.id)] = true;
+    }
+    snap.enabled = p.snap_enabled;
+    snap.translate = p.snap_move;
+    snap.rotate_deg = p.snap_rotate_deg;
+    snap.scale = p.snap_scale;
+    show_viewport_stats = p.viewport_stats;
+    scene_path = p.scene_path;
+    recent_scenes = p.recent_scenes;
+}
 
 bool EditorShell::before_new_frame() {
     if (!settings_installed_) {
@@ -94,24 +128,27 @@ std::string EditorShell::resolve_scene_path(const std::string& relative) const {
     return {s.begin(), s.end()};
 }
 
-void EditorShell::add_recent(const std::string& relative) {
-    std::erase(recent_scenes, relative);
-    recent_scenes.insert(recent_scenes.begin(), relative);
-    if (recent_scenes.size() > k_max_recent_scenes) recent_scenes.resize(k_max_recent_scenes);
-}
-
-void EditorShell::open_scene(const std::string& relative) {
-    if (ctx == nullptr || ctx->load_request == nullptr || relative.empty()) return;
+void EditorShell::open_scene(std::string relative) {
+    if (ctx == nullptr || ctx->load_request == nullptr || scene_path_problem(relative) != nullptr) {
+        return;
+    }
     *ctx->load_request = resolve_scene_path(relative);
     scene_path = relative;
-    add_recent(relative);
+    push_recent(recent_scenes, std::move(relative));
 }
 
-void EditorShell::save_scene_as(const std::string& relative) {
-    if (ctx == nullptr || ctx->save_request == nullptr || relative.empty()) return;
+void EditorShell::save_scene_as(std::string relative) {
+    if (ctx == nullptr || ctx->save_request == nullptr || scene_path_problem(relative) != nullptr) {
+        return;
+    }
     *ctx->save_request = resolve_scene_path(relative);
     scene_path = relative;
-    add_recent(relative);
+    push_recent(recent_scenes, std::move(relative));
+}
+
+std::string EditorShell::shortcut_text(std::string_view command_id) const {
+    const Command* c = commands.find(command_id);
+    return c != nullptr ? format_chord(c->shortcut) : std::string();
 }
 
 void EditorShell::show_panel(Panel p) {
@@ -322,10 +359,13 @@ void EditorShell::dispatch_shortcuts() {
     const ImGuiWindow* nav = GImGui->NavWindow;
     const auto focused = [&](Panel p) {
         return nav != nullptr && nav->RootWindow != nullptr &&
-               nav->RootWindow->ID == ImHashStr(panel_window_id(p));
+               nav->RootWindow->ID == ImHashStr(panel_window_id(p).c_str());
     };
     sc.selection_focus = viewport_hovered || focused(Panel::hierarchy) || focused(Panel::viewport);
     if (palette_open) return; // the palette owns the keyboard while open
+    // A modal (Open / Save As / Preferences ...) owns the keyboard too: Ctrl+S
+    // or Delete must not act on the scene behind it.
+    if (ImGui::GetTopMostPopupModal() != nullptr) return;
     (void)commands.dispatch_shortcuts(sc);
 }
 
@@ -354,7 +394,7 @@ void EditorShell::draw_panels() {
     const EditorContext& c = *ctx;
     const auto open = [this](Panel p) { return &panel_open[static_cast<std::size_t>(p)]; };
     draw_viewport(*this);
-    if (c.scene != nullptr && *open(Panel::inspector)) draw_inspector(*c.scene, selected);
+    if (c.scene != nullptr) draw_inspector(*c.scene, selected, inspector, open(Panel::inspector));
     if (c.renderer != nullptr) draw_renderer_panel(*c.renderer, c.scene);
     if (c.scene != nullptr) {
         if (rename_pending) {
@@ -362,13 +402,13 @@ void EditorShell::draw_panels() {
             rename_pending = false;
         }
         draw_scene_hierarchy(*c.scene, selected, hierarchy, spawn_point(c.view),
-                             panel_window_name(Panel::hierarchy), open(Panel::hierarchy));
+                             panel_window_name(Panel::hierarchy).c_str(), open(Panel::hierarchy));
     }
     if (!c.project_root.empty() && c.instantiate_request != nullptr) {
         draw_asset_browser(c.project_root, *c.instantiate_request, assets,
-                           panel_window_name(Panel::assets), open(Panel::assets));
+                           panel_window_name(Panel::assets).c_str(), open(Panel::assets));
     }
-    panels::draw_console(*console, panel_window_name(Panel::console), open(Panel::console));
+    panels::draw_console(*console, panel_window_name(Panel::console).c_str(), open(Panel::console));
     if (c.scene != nullptr) {
         draw_animation_preview(*c.scene, selected, c.view_proj, viewport_rect, anim_state);
         if (behavior_panel == nullptr) behavior_panel = std::make_unique<BehaviorPanel>();
@@ -404,17 +444,17 @@ void EditorShell::draw(const EditorContext& context) {
         --layout_focus_frames_;
         // Newly created windows take focus as they appear, and a focused
         // docked window keeps its tab in front: hand focus to the viewport.
-        ImGui::SetWindowFocus(panel_window_id(Panel::viewport));
-        select_docked_tab(panel_window_id(Panel::assets));
-        select_docked_tab(panel_window_id(Panel::inspector));
+        ImGui::SetWindowFocus(panel_window_id(Panel::viewport).c_str());
+        select_docked_tab(panel_window_id(Panel::assets).c_str());
+        select_docked_tab(panel_window_id(Panel::inspector).c_str());
         if (const std::optional<Panel> p = find_panel(pending_focus_)) {
-            select_docked_tab(panel_window_id(*p)); // a requested panel wins
+            select_docked_tab(panel_window_id(*p).c_str()); // a requested panel wins
         }
     }
     // Docked windows exist after their first frame; keep asking for a few.
     if (!pending_focus_.empty()) {
         const std::optional<Panel> p = find_panel(pending_focus_);
-        ImGui::SetWindowFocus(p ? panel_window_id(*p) : pending_focus_.c_str());
+        ImGui::SetWindowFocus(p ? panel_window_id(*p).c_str() : pending_focus_.c_str());
         if (++focus_frames_ >= 3 && layout_focus_frames_ == 0) {
             pending_focus_.clear();
             focus_frames_ = 0;

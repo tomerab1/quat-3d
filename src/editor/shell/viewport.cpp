@@ -193,7 +193,7 @@ void stats_overlay(EditorShell& shell, const ImVec2& min, const ImVec2& max) {
 void draw_viewport(EditorShell& shell) {
     const EditorContext& ctx = *shell.ctx;
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
-    const bool visible = ImGui::Begin(panel_window_name(Panel::viewport), nullptr,
+    const bool visible = ImGui::Begin(panel_window_name(Panel::viewport).c_str(), nullptr,
                                       ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
     ImGui::PopStyleVar();
     if (!visible) {

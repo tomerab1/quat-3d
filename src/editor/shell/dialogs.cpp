@@ -24,13 +24,6 @@ namespace {
 
 namespace fs = std::filesystem;
 
-struct DialogState {
-    std::string              path;   // Save As / Open path field
-    std::string              filter; // Open: file filter
-    std::vector<std::string> files;  // Open: scene files found under the project
-};
-DialogState g_dialog;
-
 [[nodiscard]] std::string utf8(const fs::path& p) {
     const std::u8string s = p.generic_u8string();
     return {s.begin(), s.end()};
@@ -53,18 +46,6 @@ std::vector<std::string> find_scene_files(const fs::path& root) {
     return out;
 }
 
-// Project-relative and ending in .json; otherwise the reason it is not.
-[[nodiscard]] const char* scene_path_problem(const std::string& path) {
-    if (path.empty()) return "Enter a file name";
-    const fs::path p(std::u8string(path.begin(), path.end()));
-    if (p.is_absolute()) return "Use a path relative to the project root";
-    for (const fs::path& part : p) {
-        if (part == "..") return "The path must stay inside the project";
-    }
-    if (p.extension() != ".json") return "Scene files end in .json";
-    return nullptr;
-}
-
 void centre_next_window(float width) {
     const ImGuiViewport* vp = ImGui::GetMainViewport();
     ImGui::SetNextWindowPos(vp->GetWorkCenter(), ImGuiCond_Appearing, ImVec2(0.5F, 0.5F));
@@ -75,22 +56,22 @@ void open_dialog(EditorShell& shell) {
     const char* id = "Open Scene###open_scene";
     if (shell.open_dialog) {
         ImGui::OpenPopup(id);
-        g_dialog = {};
-        g_dialog.path = shell.scene_path;
-        g_dialog.files = find_scene_files(shell.project_root);
+        shell.dialog = {};
+        shell.dialog.path = shell.scene_path;
+        shell.dialog.files = find_scene_files(shell.project_root);
         shell.open_dialog = false;
     }
     centre_next_window(520.0F);
     if (!ImGui::BeginPopupModal(id, nullptr, ImGuiWindowFlags_NoSavedSettings)) return;
-    (void)ui::search_field("filter", g_dialog.filter, "Filter scene files");
+    (void)ui::search_field("filter", shell.dialog.filter, "Filter scene files");
     ImGui::BeginChild("##scenes", ImVec2(0.0F, ui::scaled(220.0F)), ImGuiChildFlags_Borders);
     int shown = 0;
-    for (const std::string& f : g_dialog.files) {
-        if (!ui::matches_filter(f, g_dialog.filter)) continue;
+    for (const std::string& f : shell.dialog.files) {
+        if (!ui::matches_filter(f, shell.dialog.filter)) continue;
         ++shown;
-        if (ImGui::Selectable(ui::label(icon::file_json, f).c_str(), f == g_dialog.path,
+        if (ImGui::Selectable(ui::label(icon::file_json, f).c_str(), f == shell.dialog.path,
                               ImGuiSelectableFlags_AllowDoubleClick)) {
-            g_dialog.path = f;
+            shell.dialog.path = f;
             if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
                 shell.open_scene(f);
                 ImGui::CloseCurrentPopup();
@@ -103,8 +84,8 @@ void open_dialog(EditorShell& shell) {
     }
     ImGui::EndChild();
     ImGui::SetNextItemWidth(-1.0F);
-    ImGui::InputTextWithHint("##path", "scenes/my_scene.json", &g_dialog.path);
-    const char* problem = scene_path_problem(g_dialog.path);
+    ImGui::InputTextWithHint("##path", "scenes/my_scene.json", &shell.dialog.path);
+    const char* problem = scene_path_problem(shell.dialog.path);
     if (problem != nullptr) ui::text_colored(ui::tokens().warning, problem);
     ImGui::Spacing();
     const float bw = ui::scaled(96.0F);
@@ -116,7 +97,7 @@ void open_dialog(EditorShell& shell) {
     ImGui::SameLine();
     ImGui::BeginDisabled(problem != nullptr);
     if (ui::button("Open", ui::ButtonKind::primary, ImVec2(bw, 0.0F))) {
-        shell.open_scene(g_dialog.path);
+        shell.open_scene(shell.dialog.path);
         ImGui::CloseCurrentPopup();
     }
     ImGui::EndDisabled();
@@ -127,8 +108,8 @@ void save_as_dialog(EditorShell& shell) {
     const char* id = "Save Scene As###save_scene_as";
     if (shell.save_as_dialog) {
         ImGui::OpenPopup(id);
-        g_dialog = {};
-        g_dialog.path = shell.scene_path;
+        shell.dialog = {};
+        shell.dialog.path = shell.scene_path;
         shell.save_as_dialog = false;
     }
     centre_next_window(460.0F);
@@ -136,12 +117,12 @@ void save_as_dialog(EditorShell& shell) {
     ui::text_secondary("Project-relative path of the scene file:");
     if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere();
     ImGui::SetNextItemWidth(-1.0F);
-    const bool enter = ImGui::InputTextWithHint("##path", "scenes/my_scene.json", &g_dialog.path,
+    const bool enter = ImGui::InputTextWithHint("##path", "scenes/my_scene.json", &shell.dialog.path,
                                                 ImGuiInputTextFlags_EnterReturnsTrue);
-    const char* problem = scene_path_problem(g_dialog.path);
+    const char* problem = scene_path_problem(shell.dialog.path);
     std::error_code ec;
     const bool exists =
-        problem == nullptr && fs::exists(fs::path(shell.resolve_scene_path(g_dialog.path)), ec);
+        problem == nullptr && fs::exists(fs::path(shell.resolve_scene_path(shell.dialog.path)), ec);
     if (problem != nullptr) {
         ui::text_colored(ui::tokens().warning, problem);
     } else if (exists) {
@@ -157,7 +138,7 @@ void save_as_dialog(EditorShell& shell) {
     ImGui::SameLine();
     ImGui::BeginDisabled(problem != nullptr);
     if (ui::button("Save", ui::ButtonKind::primary, ImVec2(bw, 0.0F)) || (enter && problem == nullptr)) {
-        shell.save_scene_as(g_dialog.path);
+        shell.save_scene_as(shell.dialog.path);
         ImGui::CloseCurrentPopup();
     }
     ImGui::EndDisabled();
@@ -246,13 +227,13 @@ void preferences_window(EditorShell& shell) {
             }
             ui::prop_separator("Snapping");
             (void)ui::prop_float("Move step", shell.snap.translate,
-                                 {.speed = 0.01F, .min = 0.001F, .max = 100.0F, .format = "%.3f m"},
+                                 {.speed = 0.01F, .min = SnapLimits::move_min, .max = SnapLimits::move_max, .format = "%.3f m"},
                                  {.reset = 0.5F});
             (void)ui::prop_float("Rotate step", shell.snap.rotate_deg,
-                                 {.speed = 0.5F, .min = 0.1F, .max = 180.0F, .format = "%.1f°"},
+                                 {.speed = 0.5F, .min = SnapLimits::rotate_min, .max = SnapLimits::rotate_max, .format = "%.1f°"},
                                  {.reset = 15.0F});
             (void)ui::prop_float("Scale step", shell.snap.scale,
-                                 {.speed = 0.01F, .min = 0.001F, .max = 10.0F, .format = "%.3f"},
+                                 {.speed = 0.01F, .min = SnapLimits::scale_min, .max = SnapLimits::scale_max, .format = "%.3f"},
                                  {.reset = 0.1F});
             ui::end_property_grid();
         }

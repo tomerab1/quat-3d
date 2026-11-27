@@ -1,6 +1,7 @@
 #include "scene_actions.hpp"
 
 #include <array>
+#include <cstddef>
 #include <cstdio>
 #include <string>
 #include <vector>
@@ -92,6 +93,31 @@ glm::vec3 spawn_point(const glm::mat4& view, float distance) {
     const glm::vec3 pos(cam[3]);
     const glm::vec3 forward = -glm::normalize(glm::vec3(cam[2]));
     return pos + forward * distance;
+}
+
+glm::mat4 current_world(const entt::registry& registry, entt::entity e) {
+    glm::mat4 world(1.0F);
+    // Bounded walk: a corrupt chain (a cycle loaded from a file) cannot hang.
+    for (std::size_t depth = 0; e != entt::null && registry.valid(e) && depth < 4096; ++depth) {
+        if (const auto* t = registry.try_get<scene::Transform>(e)) world = t->local * world;
+        const auto* up = registry.try_get<scene::Parent>(e);
+        e = up != nullptr ? up->entity : entt::null;
+    }
+    return world;
+}
+
+bool reparent_keep_world(scene::Scene& scene, entt::entity child, entt::entity parent) {
+    entt::registry& r = scene.registry();
+    if (!r.valid(child)) return false;
+    const glm::mat4 world = current_world(r, child);
+    if (!scene.set_parent(child, parent)) return false;
+    if (auto* t = r.try_get<scene::Transform>(child)) {
+        const glm::mat4 parent_world =
+            parent != entt::null ? current_world(r, parent) : glm::mat4(1.0F);
+        t->local = glm::inverse(parent_world) * world;
+        t->world = world;
+    }
+    return true;
 }
 
 } // namespace engine::editor::shell

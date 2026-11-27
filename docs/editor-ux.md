@@ -152,7 +152,7 @@ these and take colours and sizes from the tokens.
 | `component_header` | Full-width header: chevron, optional enable checkbox, icon, SemiBold title, and a ⋮ button (also right-click) with Reset to defaults / Copy values / Paste values / Remove component. |
 | `section_header` | Plain collapsing section for panels such as Renderer and Stats. |
 | `search_field` | Magnifier, hint, clear button, Esc clears; `matches_filter` is the shared case-insensitive match. |
-| `icon_button`, `toggle_button`, `button` | Square frameless icon buttons (accent fill when toggled on, tooltip with shortcut, tooltips on disabled buttons too); text buttons in primary / secondary / danger / ghost. |
+| `icon_button`, `toggle_button`, `button` | Square frameless icon buttons (accent fill when toggled on, tooltip with shortcut, tooltips on disabled buttons too); text buttons in primary / secondary / danger / ghost. Icons are drawn centred on their ink box (`icon_origin` / `draw_icon`: the glyph's rasterised bounds, snapped to whole pixels), not passed as a button label, which ImGui centres by advance width and line height. |
 | `begin_toolbar` / `toolbar_separator` | Tight uniform spacing and hairline separators. |
 | `notify` / `draw_toasts` | Bottom-right toasts with a severity stripe and icon; auto-dismiss with a fade, click to dismiss, repeats restart instead of stacking. |
 | `empty_state` | Centred large icon, title, wrapped hint (each line centred) and an optional primary action. |
@@ -204,7 +204,12 @@ these and take colours and sizes from the tokens.
 - **Layout**: `layout.cpp` builds the default dock tree; View > Reset Layout
   rebuilds it. ImGui's ini goes to `<project>/.quat/editor.ini` (git-ignored)
   with a `[QuatEditor][Prefs]` section for the theme, closed panels,
-  snapping, viewport statistics, the current scene and recent scenes.
+  snapping, viewport statistics, the current scene and recent scenes. The
+  file is external data: `shell/prefs.cpp` parses each line on its own
+  (numbers must be plain, finite decimals and are clamped to the UI's
+  ranges; scene paths must be project-relative `.json` paths without `..`;
+  recent scenes are de-duplicated and capped at eight) and ignores anything
+  else. `QUAT_EDITOR_THEME` wins over the saved theme.
 - **Dialogs**: File > Open lists the project's scene files with a filter;
   Save As validates the path (project-relative, `.json`, warns before
   replacing); Help > Keyboard Shortcuts is generated from the registry;
@@ -236,14 +241,20 @@ there, Shift+click adds a patrol waypoint.
 
 - **Hierarchy**: search (flat result list), type icons tinted by category
   (lights warm, cameras info, audio accent, AI success), inline rename (F2,
-  double-click; Enter / focus loss commit, Esc cancels), drag onto a row to
-  re-parent and onto empty space to un-parent (cycles refused by
-  `Scene::set_parent`), a context menu with Create Child, Rename, Duplicate,
+  double-click; Enter / focus loss commit, Esc cancels; an entity without
+  a Name gets one), drag onto a row to
+  re-parent and onto empty space to un-parent, keeping the entity's world
+  pose (cycles refused by `Scene::set_parent`), a context menu with Create Child, Rename, Duplicate,
   Unparent and Delete, a + button with the Create menu, and an empty state
   with a Create Entity action.
 - **Inspector**: entity header (type icon, name field, id), then one
   component header per component with codec-backed Reset / Copy / Paste
-  (`scene::encode_components` / `apply_component`) and Remove; fields in the
+  (`scene::encode_components` / `apply_component`) and Remove. Reset writes
+  the codec's defaults over the component in place, so what depends on it
+  (a primitive's mesh, an instanced mesh's parts, scatter and placements)
+  stays; components whose values come from an asset (animator, mesh) have
+  no Reset. Remove goes through `scene::remove_component`, which also
+  removes what the component implies, as the remote API does; fields in the
   property grid; a searchable Add Component popup built from
   `scene::component_infos()` with icons and one-line summaries. The existing
   `ComponentInspector<T>` specialisations keep their shape; optional members
@@ -257,7 +268,9 @@ there, Shift+click adds a patrol waypoint.
   or place a model, a context menu with Place in Scene / Copy Path / Show in
   File Manager (`SDL_OpenURL`), and empty states for an empty folder, no
   results and no asset folders. Listings are cached and refreshed on
-  navigation, search or every two seconds instead of every frame.
+  navigation, search or every two seconds instead of every frame, and
+  confined to the project: a folder path that is absolute, contains `..` or
+  resolves through a symlink to outside the project lists nothing.
 - **Console**: tails the engine log ring (`core::LogRing`, A5)
   incrementally; error / warning / info / debug toggles with counts, text
   filter, auto-scroll (stops when you scroll up), copy visible lines, copy

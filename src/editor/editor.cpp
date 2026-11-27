@@ -92,7 +92,7 @@ void EditorLayer::process_event(const SDL_Event& event) {
 
 void EditorLayer::set_theme(std::string_view name) {
     if (shell_ == nullptr) return;
-    shell_->appearance().set_theme(name == "light" ? ui::ThemeId::light : ui::ThemeId::dark);
+    shell_->force_theme(name == "light" ? ui::ThemeId::light : ui::ThemeId::dark);
 }
 
 bool EditorLayer::take_font_atlas_changed() {

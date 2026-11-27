@@ -19,6 +19,52 @@ namespace engine::editor::ui {
 
 namespace {
 
+// A slider whose grab is replaced by a fill bar under the value text: the
+// frame and the fill go to draw channel 0, ImGui's slider (transparent frame
+// and grab, so only its text and border show) to channel 1 above them.
+template <typename Fn>
+bool fill_slider(float fraction, Fn&& slider) {
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    ImDrawListSplitter splitter;
+    splitter.Split(dl, 2);
+    splitter.SetCurrentChannel(dl, 1);
+    ImGui::PushStyleColor(ImGuiCol_FrameBg, IM_COL32(0, 0, 0, 0));
+    ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, IM_COL32(0, 0, 0, 0));
+    ImGui::PushStyleColor(ImGuiCol_FrameBgActive, IM_COL32(0, 0, 0, 0));
+    ImGui::PushStyleColor(ImGuiCol_SliderGrab, IM_COL32(0, 0, 0, 0));
+    ImGui::PushStyleColor(ImGuiCol_SliderGrabActive, IM_COL32(0, 0, 0, 0));
+    const bool changed = slider();
+    ImGui::PopStyleColor(5);
+    splitter.SetCurrentChannel(dl, 0);
+    const ImVec2 min = ImGui::GetItemRectMin();
+    const ImVec2 max = ImGui::GetItemRectMax();
+    const float rounding = ImGui::GetStyle().FrameRounding;
+    const ImGuiCol bg = ImGui::IsItemActive()    ? ImGuiCol_FrameBgActive
+                        : ImGui::IsItemHovered() ? ImGuiCol_FrameBgHovered
+                                                 : ImGuiCol_FrameBg;
+    dl->AddRectFilled(min, max, ImGui::GetColorU32(bg), rounding);
+    const float t = std::isfinite(fraction) ? std::clamp(fraction, 0.0F, 1.0F) : 0.0F;
+    if (t > 0.0F) {
+        const ImVec2 fill_max(min.x + (max.x - min.x) * t, max.y);
+        const Theme& tk = tokens();
+        dl->AddRectFilled(min, fill_max,
+                          to_u32(with_alpha(tk.accent, ImGui::IsItemActive() ? 0.55F : 0.40F)),
+                          rounding,
+                          t >= 1.0F ? ImDrawFlags_RoundCornersAll : ImDrawFlags_RoundCornersLeft);
+    }
+    splitter.Merge(dl);
+    return changed;
+}
+
+// Where `v` sits in [min, max], on the slider's own (linear or log) scale.
+[[nodiscard]] float slider_fraction(float v, float min, float max, bool logarithmic) {
+    if (!(max > min)) return 0.0F;
+    if (logarithmic && min > 0.0F && v > 0.0F) {
+        return std::log(v / min) / std::log(max / min);
+    }
+    return (v - min) / (max - min);
+}
+
 // Width of the reset arrow (square, row height).
 [[nodiscard]] float reset_width() { return ImGui::GetFrameHeight(); }
 
@@ -123,17 +169,10 @@ bool prop_end(bool has_reset, bool modified) {
     bool clicked = false;
     if (has_reset && modified) {
         ImGui::SameLine(0.0F, ImGui::GetStyle().ItemInnerSpacing.x);
-        const char* glyph = ic(icon::rotate_ccw);
-        const float side = reset_width();
-        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0));
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, to_imvec4(tokens().bg3));
+        // Same square, ink-centred icon button as the toolbars.
         ImGui::PushStyleColor(ImGuiCol_Text, to_imvec4(tokens().accent_text));
-        ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 0.0F);
-        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(0.0F, 0.0F));
-        clicked = ImGui::Button(glyph[0] != '\0' ? glyph : "R", ImVec2(side, side));
-        ImGui::PopStyleVar(2);
-        ImGui::PopStyleColor(3);
-        item_tooltip("Reset to default");
+        clicked = icon_button("reset", icon::rotate_ccw, "Reset to default");
+        ImGui::PopStyleColor();
     }
     ImGui::PopID();
     return clicked;
@@ -160,7 +199,7 @@ bool prop_row(const char* text, T& v, const PropOpts<T>& opts, Fn&& fn) {
 bool prop_float(const char* text, float& v, const DragSpec& spec, const PropOpts<float>& opts) {
     return prop_row(text, v, opts, [&] {
         if (spec.slider && spec.min < spec.max) {
-            return ImGui::SliderFloat("##v", &v, spec.min, spec.max, spec.format);
+            return slider_float("##v", &v, spec.min, spec.max, spec.format);
         }
         return ImGui::DragFloat("##v", &v, spec.speed, spec.min, spec.max, spec.format);
     });
@@ -181,7 +220,7 @@ bool prop_angle(const char* text, float& radians, const DragSpec& spec,
 bool prop_int(const char* text, int& v, const IntSpec& spec, const PropOpts<int>& opts) {
     return prop_row(text, v, opts, [&] {
         if (spec.slider && spec.min < spec.max) {
-            return ImGui::SliderInt("##v", &v, spec.min, spec.max, spec.format);
+            return slider_int("##v", &v, spec.min, spec.max, spec.format);
         }
         return ImGui::DragInt("##v", &v, spec.speed, spec.min, spec.max, spec.format);
     });
@@ -225,6 +264,21 @@ bool prop_range(const char* text, glm::vec2& v, const DragSpec& spec,
     });
 }
 
+bool slider_float(const char* id, float* v, float min, float max, const char* format,
+                  ImGuiSliderFlags flags) {
+    const bool log = (flags & ImGuiSliderFlags_Logarithmic) != 0;
+    return fill_slider(slider_fraction(*v, min, max, log),
+                       [&] { return ImGui::SliderFloat(id, v, min, max, format, flags); });
+}
+
+bool slider_int(const char* id, int* v, int min, int max, const char* format,
+                ImGuiSliderFlags flags) {
+    const bool log = (flags & ImGuiSliderFlags_Logarithmic) != 0;
+    return fill_slider(slider_fraction(static_cast<float>(*v), static_cast<float>(min),
+                                       static_cast<float>(max), log),
+                       [&] { return ImGui::SliderInt(id, v, min, max, format, flags); });
+}
+
 bool color_field(const char* id, float* rgba, bool alpha, bool hdr) {
     ImGui::PushID(id);
     ImGuiColorEditFlags flags = ImGuiColorEditFlags_Float | ImGuiColorEditFlags_AlphaPreviewHalf;
@@ -247,12 +301,25 @@ bool color_field(const char* id, float* rgba, bool alpha, bool hdr) {
         std::snprintf(text, sizeof(text), "%.2f  %.2f  %.2f", static_cast<double>(rgba[0]),
                       static_cast<double>(rgba[1]), static_cast<double>(rgba[2]));
     }
-    const float luma = 0.2126F * col.x + 0.7152F * col.y + 0.0722F * col.z;
-    const ImU32 fg = luma > 0.5F ? IM_COL32(20, 22, 26, 255) : IM_COL32(240, 242, 245, 255);
+    // The swatch shows the colour as stored (clamped, over the half
+    // checkerboard when translucent): pick black or white text by WCAG
+    // contrast against it, on a translucent backing of the other so the
+    // values stay readable over any colour and the checkerboard.
+    const Rgba shown{std::clamp(col.x, 0.0F, 1.0F), std::clamp(col.y, 0.0F, 1.0F),
+                     std::clamp(col.z, 0.0F, 1.0F), 1.0F};
+    constexpr Rgba black{0.06F, 0.07F, 0.08F, 1.0F};
+    constexpr Rgba white{0.96F, 0.97F, 0.98F, 1.0F};
+    const bool dark_text = contrast_ratio(black, shown) >= contrast_ratio(white, shown);
     const ImVec2 ts = ImGui::CalcTextSize(text);
-    if (ts.x + scaled(Spacing::xs) * 2.0F < max.x - min.x) {
-        ImGui::GetWindowDrawList()->AddText(
-            ImVec2(min.x + scaled(Spacing::xs), min.y + (max.y - min.y - ts.y) * 0.5F), fg, text);
+    const float pad = scaled(Spacing::xs);
+    if (ts.x + pad * 3.0F < max.x - min.x) {
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        const ImVec2 tp(min.x + pad * 1.5F, min.y + (max.y - min.y - ts.y) * 0.5F);
+        dl->AddRectFilled(ImVec2(tp.x - pad * 0.5F, tp.y - scaled(1.0F)),
+                          ImVec2(tp.x + ts.x + pad * 0.5F, tp.y + ts.y + scaled(1.0F)),
+                          to_u32(with_alpha(dark_text ? white : black, 0.55F)),
+                          scaled(Radius::sm));
+        dl->AddText(tp, to_u32(dark_text ? black : white), text);
     }
     item_tooltip("Click to edit");
     bool changed = false;

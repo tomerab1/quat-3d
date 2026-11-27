@@ -48,6 +48,18 @@ void text_colored(Rgba color, std::string_view text);
 // be null) is drawn dimmed after the text.
 void item_tooltip(const char* text, const char* shortcut = nullptr);
 
+// ---- Icons -----------------------------------------------------------------
+
+// Draw origin for the single-codepoint `glyph` in the current font and size
+// so that its ink box (the rasterised glyph bounds, not its advance or line
+// height) is centred on `centre`, snapped to whole pixels. `ink_min` /
+// `ink_max` receive that ink box. Text without an icon glyph centres its
+// CalcTextSize box instead.
+[[nodiscard]] ImVec2 icon_origin(const char* glyph, ImVec2 centre, ImVec2* ink_min = nullptr,
+                                 ImVec2* ink_max = nullptr);
+// Draws `glyph` centred on its ink at `centre`.
+void draw_icon(ImDrawList* dl, const char* glyph, ImVec2 centre, ImU32 col);
+
 // ---- Buttons ---------------------------------------------------------------
 
 enum class ButtonKind : std::uint8_t { secondary, primary, danger, ghost };
@@ -172,6 +184,12 @@ bool prop_range(const char* label, glm::vec2& v, const DragSpec& spec = {},
 // A full-width colour swatch showing its values; click opens a picker.
 // `rgba` holds 3 floats (4 with `alpha`).
 bool color_field(const char* id, float* rgba, bool alpha, bool hdr = false);
+// Sliders drawn as a fill bar from the left edge to the value, with the value
+// text on top: no grab handle for the text to collide with.
+bool slider_float(const char* id, float* v, float min, float max, const char* format,
+                  ImGuiSliderFlags flags = 0);
+bool slider_int(const char* id, int* v, int min, int max, const char* format,
+                ImGuiSliderFlags flags = 0);
 bool prop_color3(const char* label, glm::vec3& v, const PropOpts<glm::vec3>& opts = {},
                  bool hdr = false);
 bool prop_color4(const char* label, glm::vec4& v, const PropOpts<glm::vec4>& opts = {},

@@ -23,11 +23,13 @@
 #include <imgui.h>
 
 #include "../asset_browser.hpp"
+#include "../panels/inspector_parts.hpp"
 #include "../scene_hierarchy.hpp"
 #include "../ui/appearance.hpp"
 #include "commands.hpp"
 #include "engine/editor/editor.hpp"
 #include "panels.hpp"
+#include "prefs.hpp"
 
 struct SDL_Window;
 
@@ -49,6 +51,20 @@ struct SnapSettings {
     float translate = 0.5F;   // metres
     float rotate_deg = 15.0F; // degrees
     float scale = 0.1F;       // scale units
+};
+
+// File > Open / Save As fields (reset when a dialog opens).
+struct DialogState {
+    std::string              path;   // Save As / Open path field
+    std::string              filter; // Open: file filter
+    std::vector<std::string> files;  // Open: scene files found under the project
+};
+
+// Command palette input (reset when it opens).
+struct PaletteState {
+    std::string query;
+    int         cursor = 0;
+    bool        focus_input = false;
 };
 
 // Simulation state shown in the toolbar / status bar.
@@ -74,6 +90,8 @@ public:
     float         viewport_rect[4]{0.0F, 0.0F, 0.0F, 0.0F}; // screen min x/y, max x/y
 
     ui::Appearance& appearance() { return appearance_; }
+    // A theme chosen at startup (QUAT_EDITOR_THEME): wins over the saved one.
+    void force_theme(ui::ThemeId theme);
     void focus_panel(std::string title) { pending_focus_ = std::move(title); }
     void notify(NoticeKind kind, std::string text);
     // Loads the saved layout (QUAT_EDITOR_LAYOUT=default ignores and does not
@@ -106,15 +124,26 @@ public:
     AssetBrowserState                     assets;
     std::unique_ptr<BehaviorPanel>        behavior_panel;
     std::unique_ptr<panels::ConsoleState> console;
+    panels::InspectorState                inspector; // Add Component search, copied values
+    DialogState                           dialog;
+    PaletteState                          palette;
+    std::string ini_path; // <project>/.quat/editor.ini; ImGui keeps a pointer to it
+
+    // The persisted preferences (layout.cpp reads / writes them through
+    // parse_pref_line / write_prefs).
+    [[nodiscard]] EditorPrefs prefs() const;
+    void apply_prefs(const EditorPrefs& p);
 
     [[nodiscard]] SimState sim_state() const;
     [[nodiscard]] bool     has_scene() const { return ctx != nullptr && ctx->scene != nullptr; }
     [[nodiscard]] bool     has_selection() const;
     [[nodiscard]] std::string resolve_scene_path(const std::string& relative) const;
-    void open_scene(const std::string& relative);
-    void save_scene_as(const std::string& relative);
-    void add_recent(const std::string& relative);
+    // By value: callers pass elements of recent_scenes, which these reorder.
+    void open_scene(std::string relative);
+    void save_scene_as(std::string relative);
     void show_panel(Panel p); // opens (if closable) and focuses
+    // The command's shortcut as shown in hints ("Ctrl+S"; "" when it has none).
+    [[nodiscard]] std::string shortcut_text(std::string_view command_id) const;
 
 private:
     void register_commands();
@@ -130,6 +159,7 @@ private:
     bool           settings_installed_ = false;
     int            layout_focus_frames_ = 0;
     bool           use_saved_layout_ = true;
+    bool           theme_forced_ = false;
     float          last_dt_ = 0.0F;
 };
 

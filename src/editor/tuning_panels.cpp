@@ -66,10 +66,10 @@ void draw_setting(RenderSettings& s, const RenderSettingDesc& d) {
     } else if (ref.i != nullptr) {
         // Integers print as integers (a float format would read garbage).
         const std::string int_format = d.unit.empty() ? "%d" : "%d " + std::string(d.unit);
-        ImGui::SliderInt("##v", ref.i, static_cast<int>(d.min), static_cast<int>(d.max),
-                         int_format.c_str(), flags);
+        (void)ui::slider_int("##v", ref.i, static_cast<int>(d.min), static_cast<int>(d.max),
+                             int_format.c_str(), flags);
     } else {
-        ImGui::SliderFloat("##v", ref.f, d.min, d.max, format.c_str(), flags);
+        (void)ui::slider_float("##v", ref.f, d.min, d.max, format.c_str(), flags);
     }
     if (ui::prop_end(true, modified)) renderer::set_render_setting(s, d, d.default_value);
 }
@@ -141,9 +141,9 @@ void draw_material_field(entt::registry& r, entt::entity e, const scene::Materia
             changed = ImGui::DragFloat("##v", &v.x, 0.01F, f.min, f.max, "%.3f",
                                        ImGuiSliderFlags_AlwaysClamp);
         } else {
-            changed = ImGui::SliderFloat("##v", &v.x, f.min, f.max,
-                                         slider_format(f.min, f.max, {}).c_str(),
-                                         ImGuiSliderFlags_AlwaysClamp);
+            changed = ui::slider_float("##v", &v.x, f.min, f.max,
+                                       slider_format(f.min, f.max, {}).c_str(),
+                                       ImGuiSliderFlags_AlwaysClamp);
         }
         break;
     }
@@ -155,7 +155,7 @@ void draw_material_field(entt::registry& r, entt::entity e, const scene::Materia
 } // namespace
 
 void draw_renderer_panel(RenderSettings& settings, scene::Scene* scene) {
-    if (!ImGui::Begin(shell::panel_window_name(shell::Panel::renderer))) {
+    if (!ImGui::Begin(shell::panel_window_name(shell::Panel::renderer).c_str())) {
         ImGui::End();
         return;
     }

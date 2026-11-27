@@ -446,3 +446,24 @@ clean locally and conflicting on GitHub. **Rule:** trust GitHub's
 until the orchestrator noticed. **Rule:** marking a PR ready and creating
 its Reviewer session are one step; the orchestrator's status sweep checks
 that every non-draft PR has one.
+
+## A hand-tuned local define compiled what CI could not (E8)
+
+The local editor build passed `-DQUAT_PROJECT_ROOT` to every translation
+unit, while CMake defines it only for the `game` target and `engine_tests`.
+`inspector_world.cpp` (in `engine_editor`) used the macro, compiled locally
+and failed in CI with an undeclared identifier. **Rule:** build with CI's
+exact preset and defines, not a hand-tuned local set; per-target
+definitions in the scratch build must mirror the CMake targets. Library
+code takes the project root at runtime (from `EditorLayer::create`), never
+from a compile-time path.
+
+## Review found state bugs a smoke test cannot (E8)
+
+The first E8 review found Reset removing and re-adding components (which
+cascaded through the codec's removal rules and deleted an Animator), Remove
+bypassing the codec, a recent-files loop passing a reference into the vector
+it reordered, and an unvalidated ini file. Each lived in code only reachable
+through an ImGui frame. **Rule:** UI actions are plain functions over the
+registry or the state struct, called by the widget and by GoogleTest;
+anything read from disk goes through a pure, tested parser.

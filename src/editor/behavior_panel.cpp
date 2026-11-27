@@ -79,7 +79,7 @@ void BehaviorPanel::load(entt::entity entity, const scene::BehaviorTree& bt) {
 }
 
 void BehaviorPanel::draw(scene::Scene& scene, entt::entity selected) {
-    const bool visible = ImGui::Begin(shell::panel_window_name(shell::Panel::behaviour), nullptr,
+    const bool visible = ImGui::Begin(shell::panel_window_name(shell::Panel::behaviour).c_str(), nullptr,
                                       ImGuiWindowFlags_NoScrollbar |
                                           ImGuiWindowFlags_NoScrollWithMouse);
     if (!visible) {

@@ -3,6 +3,7 @@
 // states match the toolbar, palette and keyboard exactly.
 
 #include <string>
+#include <utility>
 
 #include <imgui.h>
 
@@ -39,9 +40,12 @@ void file_menu(EditorShell& shell) {
     item(shell, "file.open");
     if (ImGui::BeginMenu(ui::label(icon::clock_3, "Open Recent").c_str(),
                          !shell.recent_scenes.empty())) {
+        // Opening reorders recent_scenes: pick inside the loop, open after.
+        std::string chosen;
         for (const std::string& path : shell.recent_scenes) {
-            if (ImGui::MenuItem(path.c_str())) shell.open_scene(path);
+            if (ImGui::MenuItem(path.c_str())) chosen = path;
         }
+        if (!chosen.empty()) shell.open_scene(std::move(chosen));
         ImGui::Separator();
         if (ImGui::MenuItem("Clear Recent")) shell.recent_scenes.clear();
         ImGui::EndMenu();
@@ -145,7 +149,9 @@ void draw_main_menu(EditorShell& shell) {
     const float w = ImGui::CalcTextSize(scene.c_str()).x;
     ImGui::SameLine(ImGui::GetWindowWidth() - w - ui::scaled(ui::Spacing::md));
     ui::text_secondary(scene);
-    ui::item_tooltip("Current scene file (Ctrl+S saves it)");
+    const std::string save_keys = shell.shortcut_text("file.save");
+    ui::item_tooltip(save_keys.empty() ? "Current scene file"
+                                       : ("Current scene file (" + save_keys + " saves it)").c_str());
     ImGui::EndMainMenuBar();
     ImGui::PopStyleVar();
 }

@@ -2,6 +2,8 @@
 // tool + space, snapping, camera speed, and a search box that opens the
 // command palette. Every button runs a registered command.
 
+#include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <string>
 
@@ -44,8 +46,10 @@ void play_controls(EditorShell& shell) {
         const bool running = state == SimState::playing;
         ImGui::PushStyleColor(ImGuiCol_Text,
                               ui::to_imvec4(running || can_play ? t.success : t.text_disabled));
+        const std::string keys = shell.shortcut_text("play.play");
         if (ui::toggle_button("play.play", icon::play, running,
-                              state == SimState::paused ? "Resume" : "Play", "F5", can_play)) {
+                              state == SimState::paused ? "Resume" : "Play",
+                              keys.empty() ? nullptr : keys.c_str(), can_play)) {
             (void)shell.commands.run("play.play");
         }
         ImGui::PopStyleColor();
@@ -74,9 +78,9 @@ void snap_controls(EditorShell& shell) {
     ImGui::BeginDisabled(!shell.snap.enabled);
     if (ImGui::BeginCombo("##snap", preview, ImGuiComboFlags_HeightLargest)) {
         ImGui::PushItemWidth(ui::scaled(120.0F));
-        ImGui::DragFloat("Move (m)", &shell.snap.translate, 0.01F, 0.001F, 100.0F, "%.3f");
-        ImGui::DragFloat("Rotate (°)", &shell.snap.rotate_deg, 0.5F, 0.1F, 180.0F, "%.1f");
-        ImGui::DragFloat("Scale", &shell.snap.scale, 0.01F, 0.001F, 10.0F, "%.3f");
+        ImGui::DragFloat("Move (m)", &shell.snap.translate, 0.01F, SnapLimits::move_min, SnapLimits::move_max, "%.3f");
+        ImGui::DragFloat("Rotate (°)", &shell.snap.rotate_deg, 0.5F, SnapLimits::rotate_min, SnapLimits::rotate_max, "%.1f");
+        ImGui::DragFloat("Scale", &shell.snap.scale, 0.01F, SnapLimits::scale_min, SnapLimits::scale_max, "%.3f");
         ImGui::PopItemWidth();
         ImGui::EndCombo();
     }
@@ -114,9 +118,9 @@ void palette_button(EditorShell& shell, float width) {
     const float ty = p.y + (size.y - ImGui::GetTextLineHeight()) * 0.5F;
     const std::string text = ui::label(icon::search, "Search commands");
     dl->AddText(ImVec2(p.x + pad, ty), ui::to_u32(t.text_secondary), text.c_str());
-    const char* keys = "Ctrl+P";
-    const float kw = ImGui::CalcTextSize(keys).x;
-    dl->AddText(ImVec2(p.x + size.x - pad - kw, ty), ui::to_u32(t.text_disabled), keys);
+    const std::string keys = shell.shortcut_text("view.palette");
+    const float kw = ImGui::CalcTextSize(keys.c_str()).x;
+    dl->AddText(ImVec2(p.x + size.x - pad - kw, ty), ui::to_u32(t.text_disabled), keys.c_str());
     ui::item_tooltip("Command palette: every menu action, panel and tool");
 }
 
@@ -124,10 +128,15 @@ void palette_button(EditorShell& shell, float width) {
 
 void draw_main_toolbar(EditorShell& shell) {
     const ui::Theme& t = ui::tokens();
-    const float height = ui::scaled(ui::Sizes::toolbar_height);
+    const float height = std::round(ui::scaled(ui::Sizes::toolbar_height));
+    // The row is centred in the bar above its bottom hairline, on a whole
+    // pixel (icon buttons are round(frame height) squares).
+    const float hairline = std::max(1.0F, std::round(ui::scaled(1.0F)));
+    const float row = std::round(ImGui::GetFrameHeight());
     ImGui::PushStyleColor(ImGuiCol_WindowBg, ui::to_imvec4(t.bg0));
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,
-                        ImVec2(ui::scaled(ui::Spacing::xs), (height - ImGui::GetFrameHeight()) * 0.5F));
+                        ImVec2(ui::scaled(ui::Spacing::xs),
+                               std::floor((height - hairline - row) * 0.5F)));
     ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0F);
     const ImGuiWindowFlags flags = ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoSavedSettings |
                                    ImGuiWindowFlags_NoScrollWithMouse;
@@ -136,9 +145,9 @@ void draw_main_toolbar(EditorShell& shell) {
         // Hairline under the bar separates it from the dock area.
         const ImVec2 wp = ImGui::GetWindowPos();
         const ImVec2 ws = ImGui::GetWindowSize();
-        ImGui::GetWindowDrawList()->AddLine(ImVec2(wp.x, wp.y + ws.y - 1.0F),
-                                            ImVec2(wp.x + ws.x, wp.y + ws.y - 1.0F),
-                                            ui::to_u32(t.border));
+        ImGui::GetWindowDrawList()->AddRectFilled(ImVec2(wp.x, wp.y + ws.y - hairline),
+                                                  ImVec2(wp.x + ws.x, wp.y + ws.y),
+                                                  ui::to_u32(t.border));
         ui::begin_toolbar();
         play_controls(shell);
         ui::toolbar_separator();
@@ -151,7 +160,9 @@ void draw_main_toolbar(EditorShell& shell) {
             const std::string text =
                 ui::label(local ? icon::box : icon::globe, local ? "Local" : "World");
             if (ui::button(text.c_str(), ui::ButtonKind::ghost)) (void)shell.commands.run("gizmo.space");
-            ui::item_tooltip("Transform space: world axes or the object's own", "X");
+            const std::string keys = shell.shortcut_text("gizmo.space");
+            ui::item_tooltip("Transform space: world axes or the object's own",
+                             keys.empty() ? nullptr : keys.c_str());
             ImGui::SameLine();
         }
         snap_controls(shell);
