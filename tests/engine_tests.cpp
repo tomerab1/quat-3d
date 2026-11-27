@@ -123,6 +123,7 @@ std::vector<TestCase> make_tests() {
     cpu("physics/character", [] { return s::run_character_self_test(); });
     cpu("physics/triggers", [] { return engine::physics::run_trigger_self_test(); });
     cpu("gltf/material_extract", [] { return s::run_material_extract_self_test(); });
+    cpu("gltf/validation", [] { return s::run_gltf_validation_self_test(); });
     cpu("terrain/generate", [] { return engine::terrain::run_terrain_self_test(); });
     cpu("terrain/streaming", [] { return engine::terrain::run_terrain_streaming_self_test(); });
     cpu("nav/navmesh", [] { return engine::nav::run_navmesh_self_test(); });

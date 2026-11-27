@@ -62,11 +62,11 @@ screenshot readback barriers, AssetManager-owned mesh lifetime.
 
 | # | Sev | Finding | Where | Status |
 |---|---|---|---|---|
-| C1 | H | glTF attribute accessors (NORMAL/UV/TANGENT/JOINTS/WEIGHTS) written by index into arrays sized from POSITION's count — heap overflow on a malformed file; `fastgltf::validate` never called | `gltf_loader.cpp` `extract_primitive` | open |
-| C2 | H | glTF cross-references (accessor, node child, joint, texture, image, material, mesh indices) used without range checks | `gltf_loader.cpp` | open |
-| C3 | H | Cyclic glTF node graphs / joint hierarchies recurse forever (stack overflow) | `gltf_loader.cpp` `build`, `node_global_of`; `skeleton.cpp` | open |
+| C1 | H | glTF attribute accessors (NORMAL/UV/TANGENT/JOINTS/WEIGHTS) written by index into arrays sized from POSITION's count — heap overflow on a malformed file; `fastgltf::validate` never called | `gltf_loader.cpp` `extract_primitive` | fixed (S1.2, pending CI) |
+| C2 | H | glTF cross-references (accessor, node child, joint, texture, image, material, mesh indices) used without range checks | `gltf_loader.cpp` | fixed (S1.2, pending CI) |
+| C3 | H | Cyclic glTF node graphs / joint hierarchies recurse forever (stack overflow) | `gltf_loader.cpp` `build`, `node_global_of`; `skeleton.cpp` | fixed (S1.2, pending CI) — node graph must be a forest |
 | C4 | H | Animation sampler output count never checked against input count (same defect as B11, loader side) | `gltf_loader.cpp` `extract_animation` | fixed (S1.1, pending CI) |
-| C5 | M | Index values and JOINTS_0 values never range-checked → GPU out-of-bounds reads (possible device loss) | `gltf_loader.cpp`, `skinning.slang` | open (plausible) |
+| C5 | M | Index values and JOINTS_0 values never range-checked → GPU out-of-bounds reads (possible device loss) | `gltf_loader.cpp`, `skinning.slang` | partly fixed (S1.2): vertex indices checked; JOINTS_0 vs skin joint count still open |
 | C6 | H | `load_scene` aborts / UB on malformed scene JSON — after the live scene was already cleared | `scene_io.cpp` | open (S2) |
 | C7 | H | = B10 (behaviour-tree JSON aborts) | `behavior.cpp` | open (S2) |
 | C8 | H | = B6 (deleting entities / removing Collider or RigidBody in Play leaves live Jolt bodies) | `physics_system.cpp`, editor | open |

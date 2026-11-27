@@ -10,6 +10,7 @@
 #include <functional>
 #include <limits>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <utility>
 #include <variant>
@@ -54,6 +55,129 @@ constexpr auto kParserExtensions = fastgltf::Extensions::KHR_materials_transmiss
                                    fastgltf::Extensions::KHR_texture_transform |
                                    fastgltf::Extensions::KHR_materials_emissive_strength |
                                    fastgltf::Extensions::KHR_materials_clearcoat;
+
+// Structural validation of a parsed asset, run before any extraction. glTF
+// files are untrusted input: every cross-reference the loader follows is
+// range-checked here, attribute accessors must agree with POSITION's count
+// (they are written by index into arrays sized from it), and the node graph
+// must be a forest (each node has at most one parent, no cycles) because
+// scene assembly, skin extraction and world-matrix resolution recurse over
+// it. fastgltf::validate covers the spec's general rules on top.
+[[nodiscard]] std::expected<void, core::Error> validate_asset(const fastgltf::Asset& asset) {
+    if (const fastgltf::Error e = fastgltf::validate(asset); e != fastgltf::Error::None) {
+        return fail(std::string("glTF failed validation: ") +
+                    std::string(fastgltf::getErrorMessage(e)));
+    }
+    const std::size_t n_acc = asset.accessors.size();
+    const std::size_t n_nodes = asset.nodes.size();
+
+    for (std::size_t mi = 0; mi < asset.meshes.size(); ++mi) {
+        for (const fastgltf::Primitive& prim : asset.meshes[mi].primitives) {
+            const auto* pos = prim.findAttribute("POSITION");
+            std::size_t vertex_count = 0;
+            if (pos != prim.attributes.cend()) {
+                if (pos->accessorIndex >= n_acc) return fail("glTF: POSITION accessor out of range");
+                vertex_count = asset.accessors[pos->accessorIndex].count;
+            }
+            for (const auto& attr : prim.attributes) {
+                if (attr.accessorIndex >= n_acc) {
+                    return fail("glTF: mesh " + std::to_string(mi) + " attribute accessor out of range");
+                }
+                if (pos != prim.attributes.cend() &&
+                    asset.accessors[attr.accessorIndex].count != vertex_count) {
+                    return fail("glTF: mesh " + std::to_string(mi) + " attribute '" +
+                                std::string(std::string_view(attr.name)) + "' count differs from POSITION");
+                }
+            }
+            if (prim.indicesAccessor.has_value() && prim.indicesAccessor.value() >= n_acc) {
+                return fail("glTF: index accessor out of range");
+            }
+            if (prim.materialIndex.has_value() &&
+                prim.materialIndex.value() >= asset.materials.size()) {
+                return fail("glTF: primitive material index out of range");
+            }
+        }
+    }
+
+    const auto check_texture = [&](const auto& info) -> bool {
+        if (!info.has_value()) return true;
+        if (info->textureIndex >= asset.textures.size()) return false;
+        const fastgltf::Texture& tex = asset.textures[info->textureIndex];
+        return !tex.imageIndex.has_value() || tex.imageIndex.value() < asset.images.size();
+    };
+    for (const fastgltf::Material& mat : asset.materials) {
+        bool ok = check_texture(mat.pbrData.baseColorTexture) &&
+                  check_texture(mat.pbrData.metallicRoughnessTexture) &&
+                  check_texture(mat.normalTexture) && check_texture(mat.occlusionTexture) &&
+                  check_texture(mat.emissiveTexture);
+        if (mat.volume != nullptr) ok = ok && check_texture(mat.volume->thicknessTexture);
+        if (!ok) return fail("glTF: material texture or image index out of range");
+    }
+
+    // Node graph: references in range, at most one parent, acyclic.
+    std::vector<std::uint8_t> has_parent(n_nodes, 0);
+    for (std::size_t ni = 0; ni < n_nodes; ++ni) {
+        const fastgltf::Node& n = asset.nodes[ni];
+        if (n.meshIndex.has_value() && n.meshIndex.value() >= asset.meshes.size()) {
+            return fail("glTF: node mesh index out of range");
+        }
+        if (n.skinIndex.has_value() && n.skinIndex.value() >= asset.skins.size()) {
+            return fail("glTF: node skin index out of range");
+        }
+        for (const std::size_t c : n.children) {
+            if (c >= n_nodes || c == ni) return fail("glTF: node child index invalid");
+            if (has_parent[c] != 0) return fail("glTF: node has more than one parent");
+            has_parent[c] = 1;
+        }
+    }
+    // With one parent per node, a cycle is exactly a set of nodes no root
+    // reaches: walk down from the roots iteratively and require full coverage.
+    {
+        std::vector<std::uint8_t> reached(n_nodes, 0);
+        std::vector<std::size_t> stack;
+        for (std::size_t ni = 0; ni < n_nodes; ++ni) {
+            if (has_parent[ni] == 0) stack.push_back(ni);
+        }
+        std::size_t count = 0;
+        while (!stack.empty()) {
+            const std::size_t ni = stack.back();
+            stack.pop_back();
+            if (reached[ni] != 0) continue;
+            reached[ni] = 1;
+            ++count;
+            for (const std::size_t c : asset.nodes[ni].children) stack.push_back(c);
+        }
+        if (count != n_nodes) return fail("glTF: node hierarchy contains a cycle");
+    }
+
+    for (const fastgltf::Skin& skin : asset.skins) {
+        for (const std::size_t j : skin.joints) {
+            if (j >= n_nodes) return fail("glTF: skin joint index out of range");
+        }
+        if (skin.inverseBindMatrices.has_value() && skin.inverseBindMatrices.value() >= n_acc) {
+            return fail("glTF: inverse bind matrix accessor out of range");
+        }
+    }
+    for (const fastgltf::Animation& anim : asset.animations) {
+        for (const fastgltf::AnimationSampler& smp : anim.samplers) {
+            if (smp.inputAccessor >= n_acc || smp.outputAccessor >= n_acc) {
+                return fail("glTF: animation sampler accessor out of range");
+            }
+        }
+        for (const fastgltf::AnimationChannel& ch : anim.channels) {
+            if (ch.samplerIndex >= anim.samplers.size() ||
+                (ch.nodeIndex.has_value() && ch.nodeIndex.value() >= n_nodes)) {
+                return fail("glTF: animation channel reference out of range");
+            }
+        }
+    }
+    for (const fastgltf::Scene& sc : asset.scenes) {
+        for (const std::size_t ni : sc.nodeIndices) {
+            if (ni >= n_nodes) return fail("glTF: scene node index out of range");
+        }
+    }
+    return {};
+}
 
 [[nodiscard]] glm::vec3 to_glm(fastgltf::math::fvec3 v) { return {v[0], v[1], v[2]}; }
 [[nodiscard]] glm::vec2 to_glm(fastgltf::math::fvec2 v) { return {v[0], v[1]}; }
@@ -117,9 +241,13 @@ constexpr auto kParserExtensions = fastgltf::Extensions::KHR_materials_transmiss
             const fastgltf::Accessor& idx_acc = asset.accessors[prim.indicesAccessor.value()];
             const auto index_offset = static_cast<std::uint32_t>(out.indices.size());
             out.indices.reserve(out.indices.size() + idx_acc.count);
-            fastgltf::iterateAccessor<std::uint32_t>(
-                asset, idx_acc,
-                [&](std::uint32_t idx) { out.indices.push_back(base_vertex + idx); });
+            bool index_out_of_range = false;
+            fastgltf::iterateAccessor<std::uint32_t>(asset, idx_acc, [&](std::uint32_t idx) {
+                index_out_of_range = index_out_of_range || idx >= pos_acc.count;
+                out.indices.push_back(base_vertex + idx);
+            });
+            // An index past the vertex count makes the GPU fetch out of bounds.
+            if (index_out_of_range) return fail("glTF: vertex index out of range");
 
             asset::SubMesh sub;
             sub.index_offset = index_offset;
@@ -201,8 +329,13 @@ extract_primitive(const fastgltf::Asset& asset, const fastgltf::Primitive& prim)
     }
     const fastgltf::Accessor& idx_acc = asset.accessors[prim.indicesAccessor.value()];
     out.indices.reserve(idx_acc.count);
-    fastgltf::iterateAccessor<std::uint32_t>(
-        asset, idx_acc, [&](std::uint32_t idx) { out.indices.push_back(idx); });
+    bool index_out_of_range = false;
+    fastgltf::iterateAccessor<std::uint32_t>(asset, idx_acc, [&](std::uint32_t idx) {
+        index_out_of_range = index_out_of_range || idx >= pos_acc.count;
+        out.indices.push_back(idx);
+    });
+    // An index past the vertex count makes the GPU fetch out of bounds.
+    if (index_out_of_range) return fail("glTF: vertex index out of range");
 
     if (out.vertices.empty() || out.indices.empty()) {
         return fail("glTF primitive contained no triangle geometry");
@@ -330,6 +463,7 @@ parse_and_extract_skeletons(fastgltf::GltfDataBuffer& data,
         return fail(std::string("fastgltf parse failed: ") +
                     std::string(fastgltf::getErrorMessage(asset.error())));
     }
+    if (auto valid = validate_asset(asset.get()); !valid) return std::unexpected(valid.error());
     return extract_skeletons(asset.get());
 }
 
@@ -438,6 +572,7 @@ parse_and_extract_animations(fastgltf::GltfDataBuffer& data,
         return fail(std::string("fastgltf parse failed: ") +
                     std::string(fastgltf::getErrorMessage(asset.error())));
     }
+    if (auto valid = validate_asset(asset.get()); !valid) return std::unexpected(valid.error());
     return extract_animations(asset.get());
 }
 
@@ -449,6 +584,7 @@ parse_and_extract(fastgltf::GltfDataBuffer& data, const std::filesystem::path& b
         return fail(std::string("fastgltf parse failed: ") +
                     std::string(fastgltf::getErrorMessage(asset.error())));
     }
+    if (auto valid = validate_asset(asset.get()); !valid) return std::unexpected(valid.error());
     return extract(asset.get());
 }
 
@@ -541,6 +677,7 @@ parse_and_extract_textures(fastgltf::GltfDataBuffer& data,
         return fail(std::string("fastgltf parse failed: ") +
                     std::string(fastgltf::getErrorMessage(asset.error())));
     }
+    if (auto valid = validate_asset(asset.get()); !valid) return std::unexpected(valid.error());
     return extract_textures(asset.get());
 }
 
@@ -671,6 +808,7 @@ parse_and_extract_materials(fastgltf::GltfDataBuffer& data,
         return fail(std::string("fastgltf parse failed: ") +
                     std::string(fastgltf::getErrorMessage(asset.error())));
     }
+    if (auto valid = validate_asset(asset.get()); !valid) return std::unexpected(valid.error());
     return extract_materials(asset.get());
 }
 
@@ -1129,6 +1267,7 @@ GltfLoader::instantiate(const std::filesystem::path& path, rhi::GpuAllocator& al
         return fail(std::string("fastgltf parse failed: ") +
                     std::string(fastgltf::getErrorMessage(parsed.error())));
     }
+    if (auto valid = validate_asset(parsed.get()); !valid) return std::unexpected(valid.error());
     return assemble_scene(parsed.get(), path.generic_string(), allocator, transfer, assets, scene);
 }
 
@@ -1381,6 +1520,7 @@ run_gltf_scene_self_test(rhi::GpuAllocator& allocator, const rhi::TransferContex
         return fail(std::string("gltf scene self-test: parse failed: ") +
                     std::string(fastgltf::getErrorMessage(parsed.error())));
     }
+    if (auto valid = validate_asset(parsed.get()); !valid) return std::unexpected(valid.error());
 
     Scene scene;
     asset::AssetManager assets;
@@ -1568,6 +1708,60 @@ std::expected<void, core::Error> run_animation_load_self_test() {
     const glm::quat expected(0.92387953F, 0.0F, 0.38268343F, 0.0F);
     if (glm::abs(glm::dot(r, expected)) < 0.9999F) {
         return fail("animation self-test: rotation slerp sample wrong");
+    }
+    return {};
+}
+
+std::expected<void, core::Error> run_gltf_validation_self_test() {
+    // Shared buffer: 3 float3 positions (36 bytes) + 3 float2 UVs (24 bytes),
+    // all zero — only structure matters here.
+    const std::string b64(80, 'A'); // 60 bytes of zeros
+    const auto doc = [&](const std::string& body) {
+        return std::string(R"({"asset":{"version":"2.0"},)") + body +
+               R"("buffers":[{"byteLength":60,"uri":"data:application/octet-stream;base64,)" + b64 +
+               R"("}],)"
+               R"("bufferViews":[{"buffer":0,"byteOffset":0,"byteLength":36},)"
+               R"({"buffer":0,"byteOffset":36,"byteLength":24}],)"
+               R"("accessors":[{"bufferView":0,"componentType":5126,"count":3,"type":"VEC3",)"
+               R"("min":[0,0,0],"max":[0,0,0]},)"
+               R"({"bufferView":1,"componentType":5126,"count":2,"type":"VEC2"}]})";
+    };
+    const auto parses = [](const std::string& gltf) -> std::expected<void, core::Error> {
+        auto data = fastgltf::GltfDataBuffer::FromBytes(
+            reinterpret_cast<const std::byte*>(gltf.data()), gltf.size());
+        if (data.error() != fastgltf::Error::None) return fail("could not wrap buffer");
+        fastgltf::Parser parser(kParserExtensions);
+        fastgltf::Expected<fastgltf::Asset> asset = parser.loadGltf(data.get(), ".", kLoadOptions);
+        if (asset.error() != fastgltf::Error::None) {
+            return fail(std::string(fastgltf::getErrorMessage(asset.error())));
+        }
+        return validate_asset(asset.get());
+    };
+    const std::string mesh = R"("meshes":[{"primitives":[{"attributes":{"POSITION":0}}]}],)";
+
+    if (auto ok = parses(doc(mesh + R"("nodes":[{"mesh":0,"children":[1]},{"mesh":0}],)")); !ok) {
+        return fail("gltf validation self-test: well-formed document rejected: " + ok.error().message);
+    }
+    const struct {
+        const char* what;
+        std::string body;
+    } bad[] = {
+        {"two-node cycle", mesh + R"("nodes":[{"children":[1]},{"children":[0]}],)"},
+        {"self child", mesh + R"("nodes":[{"children":[0]}],)"},
+        {"two parents", mesh + R"("nodes":[{"children":[2]},{"children":[2]},{}],)"},
+        {"child out of range", mesh + R"("nodes":[{"children":[7]}],)"},
+        {"mesh index out of range", mesh + R"("nodes":[{"mesh":3}],)"},
+        {"material out of range",
+         R"("meshes":[{"primitives":[{"attributes":{"POSITION":0},"material":2}]}],)"},
+        {"accessor out of range",
+         R"("meshes":[{"primitives":[{"attributes":{"POSITION":9}}]}],)"},
+        {"attribute count mismatch",
+         R"("meshes":[{"primitives":[{"attributes":{"POSITION":0,"TEXCOORD_0":1}}]}],)"},
+    };
+    for (const auto& b : bad) {
+        if (parses(doc(b.body))) {
+            return fail(std::string("gltf validation self-test: accepted ") + b.what);
+        }
     }
     return {};
 }
