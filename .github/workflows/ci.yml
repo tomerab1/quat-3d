@@ -1,10 +1,11 @@
 name: CI
 
-# Pushes to master, and pull requests. Cycle branches (claude/**) are built
-# through their PR; building them on push too ran every commit twice.
+# Pushes to master, pull requests, and manual runs (workflow_dispatch, e.g. to
+# build a feature branch on all three platforms). Cycle branches (claude/**)
+# are built through their PR; building them on push too ran every commit twice.
 on:
   push:
-    branches: [main, master, feat/s4-platform-ci]  # TEMP while iterating S4
+    branches: [main, master]
   pull_request:
   workflow_dispatch:
 
@@ -113,9 +114,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Full SDK (headers, vulkan-1.lib) plus the loader runtime: the runner
-      # image ships no vulkan-1.dll and engine_tests links it, so even the CPU
-      # tests need it. Lavapipe is registered as an ICD for the GPU suites.
+      # Full SDK (headers, vulkan-1.lib) plus the loader runtime: engine_tests
+      # links vulkan-1.dll, so even the CPU tests need it, and the runner image
+      # is not relied on for it. Lavapipe is registered as an ICD for the GPU
+      # suites.
       - name: Vulkan SDK + lavapipe
         uses: jakoch/install-vulkan-sdk-action@v1.8.1
         with:
@@ -272,8 +274,9 @@ jobs:
         run: ctest --test-dir build/macos-release -R engine_tests_cpu -V --timeout 900
 
       # Apple Silicon runners expose a paravirtualised Metal device, so the GPU
-      # suites are attempted through MoltenVK — informational for now (not a
-      # gate) until MoltenVK on the runner's virtual GPU is proven (ROADMAP P1).
+      # suites run through MoltenVK (all of them passed on the first S4 runs).
+      # Informational for now (not a gate) while MoltenVK on the runner's
+      # virtual GPU builds a track record; ROADMAP P1 makes it a gate.
       - name: Tests (GPU on MoltenVK, informational)
         if: always() && steps.build.outcome == 'success'
         continue-on-error: true

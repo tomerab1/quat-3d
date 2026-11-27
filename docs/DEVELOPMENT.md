@@ -23,7 +23,8 @@ the current state is in [`STATUS.md`](STATUS.md).
 |---|---|
 | `debug` | clang + libc++, validation layers on |
 | `release` | clang + libc++, optimised (Tracy enabled via `ENGINE_PROFILE`) |
-| `windows-release` | MSVC |
+| `windows-release` | MSVC 2022 (run from an x64 developer prompt), `x64-windows` triplet |
+| `macos-release` | Apple clang, `arm64-osx` triplet, MoltenVK — sets `ENGINE_DESCRIPTOR_SETS_FALLBACK=ON` |
 
 CMake options: `ENGINE_EDITOR` (default ON), `ENGINE_PROFILE`,
 `ENGINE_DESCRIPTOR_SETS_FALLBACK` (macOS / drivers without descriptor buffers).
@@ -62,10 +63,22 @@ Test layout:
 
 ## CI
 
-`.github/workflows/ci.yml` builds the `release` preset on Ubuntu 24.04 and runs
-`ctest` with lavapipe. The vcpkg binary cache is saved right after configure,
+`.github/workflows/ci.yml` runs on pushes to `master`, on pull requests and on
+demand (`workflow_dispatch`):
+
+| Job | Runner | Preset | Tests |
+|---|---|---|---|
+| `linux` | ubuntu-24.04 | `release` | CPU + GPU on Mesa lavapipe |
+| `windows` | windows-2022 | `windows-release` | CPU + GPU on Mesa lavapipe (Windows build, from `jakoch/install-vulkan-sdk-action`) |
+| `macos` | macos-15 (Apple Silicon) | `macos-release` | CPU; GPU on MoltenVK over the runner's paravirtual Metal device — informational (`continue-on-error`) until P1 makes it a gate |
+| `rust` | ubuntu-24.04 | — | `tools/quat-mcp` fmt, clippy, tests |
+
+Each C++ job pins vcpkg to the manifest baseline and Slang to the same
+release. The vcpkg binary cache (one per OS) is saved right after configure,
 so only the first run (or a dependency change) pays for the full dependency
-build. Logs are uploaded as an artifact when a run fails.
+build (cold: ~17 min macOS, ~28 min Windows). Logs are uploaded as an artifact when
+a run fails. The Windows and macOS test steps print GoogleTest's brief summary
+(`GTEST_BRIEF=1`), so skipped GPU tests are visible in the log.
 
 ## Building in a cloud container
 
@@ -145,7 +158,13 @@ clang++ -std=c++23 -stdlib=libc++ -Wall -Wextra -Wshadow -fno-exceptions -fno-rt
   process. Read files and network input through `engine/core/json_fields.hpp`.
   Dump JSON that may contain non-UTF-8 strings with
   `error_handler_t::replace`.
-- **libc++ everywhere:** every vcpkg port with compiled C++ must use the
-  `x64-linux-libcxx` triplet (see `triplets/`), or linking fails.
+- **libc++ everywhere (Linux):** every vcpkg port with compiled C++ must use
+  the `x64-linux-libcxx` triplet (see `triplets/`), or linking fails. macOS
+  needs no custom triplet (Apple clang defaults to libc++); Windows uses MSVC's
+  STL throughout.
+- **MSVC builds at `/W4` with no warnings.** Third-party headers must come in
+  through SYSTEM include directories (`/external:I`, warning level 0) — use
+  `target_include_directories(<t> SYSTEM ...)` for any non-imported
+  third-party path (e.g. stb).
 - **Main-thread ECS:** systems, editor actions and remote-control handlers all
   mutate the registry on the main thread; do not add threads that touch it.

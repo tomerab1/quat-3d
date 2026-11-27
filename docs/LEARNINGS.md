@@ -26,6 +26,25 @@ into CLAUDE.md or the brief template in [`CYCLE.md`](CYCLE.md).
 
 ## Build and CI
 
+- **Windows/macOS CI (S4) needed no source fixes** — the tree was already
+  conversion-clean (clang `-Wshorten-64-to-32 -Wimplicit-*-conversion` is a
+  good local proxy for MSVC's C4244/C4267). Handled up front, then verified
+  warning-free on the runners: CMake's default `/EHsc /GR` against our
+  `/EHs-c- /GR-` (D9025 "overriding" — strip them), `-w` on MSVC (collides
+  with `/W4`; MSVC gets nothing, third-party headers are `/external:W0` via
+  SYSTEM includes), and Apple ld-prime's "ignoring duplicate libraries"
+  warning (`-no_warn_duplicate_libraries`).
+- **Windows CI puts the Vulkan runtime on PATH itself.** `engine_tests`
+  links `vulkan-1.dll`, so even the CPU tests need it; the job adds
+  `$VULKAN_SDK\runtime\x64` (`install_runtime: true`) instead of relying on
+  the runner image. `jakoch/install-vulkan-sdk-action` also installs and
+  registers a Mesa lavapipe build — the GPU suites run there.
+- **`ilammy/msvc-dev-cmd` snapshots PATH and sets `VCPKG_ROOT`** to Visual
+  Studio's bundled vcpkg: run it after every other PATH-changing step, and
+  keep the preset's explicit `CMAKE_TOOLCHAIN_FILE` (pinned vcpkg clone).
+- **macOS arm64 runners run the GPU suites on MoltenVK** ("Apple Paravirtual
+  device"); Homebrew's `molten-vk` + `vulkan-loader` suffice, with
+  `VULKAN_SDK=$(brew --prefix)` for CMake's FindVulkan.
 - **Lavapipe's ICD file is `lvp_icd.json` on Ubuntu 24.04** (not
   `lvp_icd.x86_64.json`) — a wrong `VK_ICD_FILENAMES` gives
   `VK_ERROR_INCOMPATIBLE_DRIVER` from vkCreateInstance. CI globs for it.
