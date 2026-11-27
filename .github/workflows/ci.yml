@@ -25,13 +25,14 @@ jobs:
     name: Linux (clang + libc++, lavapipe)
     runs-on: ubuntu-24.04
     timeout-minutes: 120
-    # contents: write lets the Screenshots publish step commit to the
-    # ci-screenshots branch (pushes and same-repo PRs only; a fork PR's token
-    # stays read-only whatever this says).
+    # Builds and runs code from the PR: read-only token, not persisted in the
+    # checkout. Publishing screenshots happens in publish-screenshots below.
     permissions:
-      contents: write
+      contents: read
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: System packages
         run: |
@@ -130,22 +131,6 @@ jobs:
           retention-days: 14
           if-no-files-found: ignore
 
-      # Commits the PNGs to the ci-screenshots branch (runs/<pr-N|branch>/<sha>/,
-      # index.md newest first) and shows them inline in the step summary, so
-      # they can be viewed without downloading the artifact. Never for fork PRs.
-      - name: Publish screenshots
-        if: >-
-          ${{ !cancelled() && steps.shots.outcome != 'skipped' &&
-          (github.event_name == 'push' ||
-          github.event.pull_request.head.repo.full_name == github.repository) }}
-        continue-on-error: true
-        env:
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-          HEAD_REF: ${{ github.head_ref }}
-          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
-        run: scripts/ci-publish-screenshots.sh screenshots
-
       # Not covered by the Screenshots step's continue-on-error: a capture that
       # rendered but is wrong fails the job — an exact-black block (a NaN/Inf
       # spreading through the HDR chain, issue #45) in any scene, or an editor
@@ -154,6 +139,10 @@ jobs:
       - name: Capture checks
         if: ${{ !cancelled() && steps.shots.outcome != 'skipped' }}
         run: |
+          if [ ! -f screenshots/results.tsv ]; then
+            echo "::warning title=Capture checks::no screenshots/results.tsv (the Screenshots step did not get as far as rendering)"
+            exit 0
+          fi
           bad=$(awk -F'\t' '$2 ~ /^bad capture/ {print $1 ": " $2}' screenshots/results.tsv)
           if [ -n "$bad" ]; then
             while IFS= read -r line; do
@@ -172,6 +161,46 @@ jobs:
             build/release/Testing/Temporary/LastTest.log
             build/release/CMakeFiles/CMakeConfigureLog.yaml
           if-no-files-found: ignore
+
+  # Commits the linux job's screenshots to the ci-screenshots branch
+  # (runs/<pr-N|branch>/<sha>/, index.md newest first) and shows them inline
+  # in the step summary, so they can be viewed without downloading the
+  # artifact. The only job with a write token; it runs no build output, and
+  # never for fork PRs. Runs also when the linux job failed (a bad capture is
+  # exactly what needs looking at).
+  publish-screenshots:
+    name: Publish screenshots
+    needs: linux
+    if: >-
+      ${{ !cancelled() &&
+      (github.event_name == 'push' ||
+      github.event.pull_request.head.repo.full_name == github.repository) }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    concurrency:
+      group: ci-screenshots
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download screenshots
+        id: download
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: linux-screenshots
+          path: screenshots
+
+      - name: Publish screenshots
+        if: ${{ steps.download.outcome == 'success' && hashFiles('screenshots/results.tsv') != '' }}
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          HEAD_REF: ${{ github.head_ref }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+        run: scripts/ci-publish-screenshots.sh screenshots
 
   rust:
     name: quat-mcp (Rust fmt, clippy, tests)

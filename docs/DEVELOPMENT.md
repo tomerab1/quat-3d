@@ -121,7 +121,16 @@ Where the images land:
   `runs/<pr-N or branch>/<short-sha>/` and rebuilds `index.md` there (newest
   first, images inline), then shows them inline in the step summary. Commits
   are append-only (no force-push; a lost push race re-applies on the new
-  tip). Fork PRs never publish. To read them without the browser:
+  tip). Fork PRs never publish. Publishing runs in its own
+  `publish-screenshots` job (the only one with a write token; the build job
+  is read-only), from the uploaded artifact. Retention: each publish keeps
+  the newest 10 runs per PR/branch and the newest 20 of `master`
+  (`KEEP_RUNS`, `KEEP_DEFAULT_RUNS`) at the branch tip; older run
+  directories are deleted there but stay in the branch history. When the
+  branch grows too large, re-root it by hand — the only force-push allowed,
+  on this machine-owned branch only: check out `ci-screenshots`, `git
+  checkout --orphan tmp && git commit -m "Re-root ci-screenshots"`, then
+  `git push --force origin tmp:ci-screenshots`. To read them without the browser:
   `git fetch origin ci-screenshots && git show origin/ci-screenshots:index.md`.
 
 Run locally: `scripts/ci-screenshots.sh build/release/game /tmp/shots`

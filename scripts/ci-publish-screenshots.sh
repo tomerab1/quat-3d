@@ -10,7 +10,11 @@
 #
 # Commits are append-only (a new commit on top of the remote branch, never a
 # force-push); a push that loses a race re-applies the run on the new tip.
-# Also appends the images to $GITHUB_STEP_SUMMARY.
+# Retention: each publish keeps the newest KEEP_RUNS runs (default 10) per
+# key and the newest KEEP_DEFAULT_RUNS (default 20) of the default branch
+# (DEFAULT_BRANCH, default master); older run directories are deleted from
+# the branch tip (their history stays in git until the branch is re-rooted —
+# see docs/DEVELOPMENT.md). Also appends the images to $GITHUB_STEP_SUMMARY.
 #
 #   scripts/ci-publish-screenshots.sh [OUT_DIR]
 #
@@ -27,6 +31,9 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 OUT="$(realpath -m "${1:-$ROOT/screenshots}")"
 BRANCH=ci-screenshots
 SERVER="${GITHUB_SERVER_URL:-https://github.com}"
+KEEP_RUNS="${KEEP_RUNS:-10}"
+KEEP_DEFAULT_RUNS="${KEEP_DEFAULT_RUNS:-20}"
+DEFAULT_BRANCH="${DEFAULT_BRANCH:-master}"
 
 die() { echo "ci-publish-screenshots: $*" >&2; exit 2; }
 for v in GITHUB_REPOSITORY GITHUB_SHA GITHUB_RUN_ID GITHUB_EVENT_NAME GITHUB_REF_NAME; do
@@ -56,7 +63,7 @@ short="${sha:0:8}"
 run_dir="runs/$key/$short"
 run_url="$SERVER/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
 when="$(date -u '+%Y-%m-%d %H:%M UTC')"
-epoch="$(date -u +%s)"
+epoch="$(date -u +%s.%N)"
 
 shopt -s nullglob
 pngs=("$OUT"/*.png)
@@ -111,9 +118,25 @@ apply_run() {
   local tsv="$work/runs/index.tsv"
   touch "$tsv"
   # One line per run directory: a re-run of the same commit replaces its line.
-  { awk -F'\t' -v dir="$run_dir" '$2 != dir' "$tsv"; printf '%s\t%s\n' "$epoch" "$run_dir"; } \
-    | sort -t$'\t' -k1,1nr >"$tsv.new"
-  mv "$tsv.new" "$tsv"
+  # (Stable sort with this run first: on equal timestamps it counts as newest.)
+  { printf '%s\t%s\n' "$epoch" "$run_dir"; awk -F'\t' -v dir="$run_dir" '$2 != dir' "$tsv"; } \
+    | sort -s -t$'\t' -k1,1gr >"$tsv.new"
+  # Retention: newest KEEP_RUNS per key (runs/<key>/<sha>), KEEP_DEFAULT_RUNS
+  # for the default branch; the rest are listed in $tsv.old and deleted.
+  local default_key
+  default_key="$(sanitize "$DEFAULT_BRANCH")"
+  awk -F'\t' -v keep="$KEEP_RUNS" -v keep_default="$KEEP_DEFAULT_RUNS" \
+      -v default_key="$default_key" -v kept="$tsv" -v old="$tsv.old" '
+    { split($2, part, "/"); key = part[2]; n[key]++
+      limit = (key == default_key) ? keep_default : keep
+      if (n[key] <= limit) print > kept; else print $2 > old }' "$tsv.new"
+  rm -f "$tsv.new"
+  if [ -f "$tsv.old" ]; then
+    while IFS= read -r dir; do
+      case "$dir" in runs/*/*) rm -rf "${work:?}/$dir" ;; esac
+    done <"$tsv.old"
+    rm -f "$tsv.old"
+  fi
   {
     echo "# CI screenshots"
     echo
