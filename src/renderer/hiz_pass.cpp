@@ -29,8 +29,9 @@ struct HiZPush {
     std::uint32_t first = 0;
 };
 
-constexpr std::array<rhi::BindingRequest, 4> kResources{{
+constexpr std::array<rhi::BindingRequest, 5> kResources{{
     {"g_depth", VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE},
+    {"g_level0", VK_DESCRIPTOR_TYPE_STORAGE_IMAGE},
     {"g_src", VK_DESCRIPTOR_TYPE_STORAGE_IMAGE},
     {"g_dst", VK_DESCRIPTOR_TYPE_STORAGE_IMAGE},
     {"g_bounds", VK_DESCRIPTOR_TYPE_STORAGE_BUFFER},
@@ -66,8 +67,8 @@ std::expected<HiZPass, core::Error> HiZPass::create(const rhi::Device& device,
     if (!shader) return std::unexpected(shader.error());
     auto bindings = rhi::reflected_bindings((*shader)->reflection, kResources, kComputeStage);
     if (!bindings) return fail("hi-z pass: " + bindings.error().message);
-    out.slots_ = {(*bindings)[0].binding, (*bindings)[1].binding, (*bindings)[2].binding,
-                  (*bindings)[3].binding};
+    const auto& b = *bindings;
+    out.slots_ = {b[0].binding, b[1].binding, b[2].binding, b[3].binding, b[4].binding};
     auto layout = rhi::DescriptorSetLayout::create(device, out.db_fns_, *bindings);
     if (!layout) return std::unexpected(layout.error());
     out.layout_ = std::move(*layout);
@@ -128,17 +129,20 @@ std::expected<void, core::Error> HiZPass::ensure(VkExtent2D extent) {
                                            VK_IMAGE_ASPECT_COLOR_BIT, 1, VK_IMAGE_VIEW_TYPE_2D, m);
         if (!view) return std::unexpected(view.error());
         mip_views_.push_back(std::move(*view));
-        auto descriptor = rhi::DescriptorBuffer::create(*device_, *allocator_, db_fns_, layout_);
-        if (!descriptor) return std::unexpected(descriptor.error());
-        descriptors_.push_back(std::move(*descriptor));
         mip_extents_.push_back(level);
         level = {std::max(level.width / 2, 1U), std::max(level.height / 2, 1U)};
     }
-    for (std::uint32_t m = 0; m < mips; ++m) {
-        rhi::DescriptorBuffer& d = descriptors_[m];
-        d.write_storage_image(slots_.src, mip_views_[m == 0 ? 0 : m - 1].handle(),
-                              VK_IMAGE_LAYOUT_GENERAL);
-        d.write_storage_image(slots_.dst, mip_views_[m].handle(), VK_IMAGE_LAYOUT_GENERAL);
+    // Dispatch i reads mip i (the depth buffer for i = 0, which also writes
+    // mip 0) and writes mip i + 1; a single-level pyramid only copies.
+    const std::uint32_t dispatches = std::max(mips, 2U) - 1;
+    for (std::uint32_t i = 0; i < dispatches; ++i) {
+        auto descriptor = rhi::DescriptorBuffer::create(*device_, *allocator_, db_fns_, layout_);
+        if (!descriptor) return std::unexpected(descriptor.error());
+        rhi::DescriptorBuffer& d = descriptors_.emplace_back(std::move(*descriptor));
+        const std::uint32_t dst = std::min(i + 1, mips - 1);
+        d.write_storage_image(slots_.level0, mip_views_[0].handle(), VK_IMAGE_LAYOUT_GENERAL);
+        d.write_storage_image(slots_.src, mip_views_[i].handle(), VK_IMAGE_LAYOUT_GENERAL);
+        d.write_storage_image(slots_.dst, mip_views_[dst].handle(), VK_IMAGE_LAYOUT_GENERAL);
         d.write_storage_buffer(slots_.bounds, bounds_address_, k_bounds_bytes);
     }
     extent_ = extent;
@@ -180,19 +184,19 @@ HiZPass::add_to_graph(rhi::RenderGraph& graph, rhi::ResourceHandle depth, VkExte
             const VkCommandBuffer cmd = ctx.cmd();
             descriptors_[0].write_sampled_image(slots_.depth, ctx.resolve(depth).view,
                                                 VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-            for (std::size_t m = 1; m < descriptors_.size(); ++m) {
-                // Bound but never read past mip 0; any valid view will do.
-                descriptors_[m].write_sampled_image(slots_.depth, ctx.resolve(depth).view,
+            for (std::size_t i = 1; i < descriptors_.size(); ++i) {
+                // Bound but only read by the first dispatch.
+                descriptors_[i].write_sampled_image(slots_.depth, ctx.resolve(depth).view,
                                                     VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
             }
             vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline_.handle());
-            for (std::size_t m = 0; m < descriptors_.size(); ++m) {
-                if (m > 0) compute_to_compute_barrier(cmd);
-                const VkExtent2D dst = mip_extents_[m];
-                const VkExtent2D src = m == 0 ? dst : mip_extents_[m - 1];
+            for (std::size_t i = 0; i < descriptors_.size(); ++i) {
+                if (i > 0) compute_to_compute_barrier(cmd);
+                const VkExtent2D src = mip_extents_[i];
+                const VkExtent2D dst = mip_extents_[std::min(i + 1, mip_extents_.size() - 1)];
                 const HiZPush push{src.width, src.height, dst.width, dst.height,
-                                   m == 0 ? 1U : 0U};
-                descriptors_[m].bind(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline_.layout(), 0);
+                                   i == 0 ? 1U : 0U};
+                descriptors_[i].bind(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline_.layout(), 0);
                 vkCmdPushConstants(cmd, pipeline_.layout(), kComputeStage, 0, sizeof(push),
                                    &push);
                 vkCmdDispatch(cmd, (dst.width + kGroupSize - 1) / kGroupSize,

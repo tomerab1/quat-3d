@@ -3,14 +3,14 @@
 // HiZPass — hierarchical depth pyramid (ROADMAP R12).
 //
 // Builds an RG32F mip chain from the frame's depth buffer every frame
-// (hiz_build.slang, one compute dispatch per level): mip 0 is the depth
-// buffer itself, each further texel holds the min (r, nearest) and max
-// (g, farthest) depth of its footprint in the level above. It is the shared
-// screen-space substrate: GTAO samples its r channel at a distance-dependent
-// mip, and later consumers (SSR Hi-Z tracing on r, occlusion culling R6 on g)
-// read the same graph resource. The mip-0 dispatch also reduces the min / max
-// geometry depth (background excluded) into a small buffer the cascaded
-// shadow setup fits its cascades to (SDSM).
+// (hiz_build.slang, one compute dispatch per level, mips 0 and 1 fused):
+// mip 0 is the depth buffer itself, each further texel holds the min (r,
+// nearest) and max (g, farthest) depth of its footprint in the level above.
+// It is the shared screen-space substrate: GTAO samples its r channel at a
+// distance-dependent mip, and later consumers (SSR Hi-Z tracing on r,
+// occlusion culling R6 on g) read the same graph resource. The first
+// dispatch also reduces the min / max geometry depth (background excluded)
+// into a small buffer the cascaded shadow setup fits its cascades to (SDSM).
 //
 // The pyramid is a persistent image owned by the pass (one pass per frame
 // slot, like every other pass), recreated when the extent changes and
@@ -85,6 +85,7 @@ private:
     // Descriptor slots of hiz_build.slang's resources (from reflection).
     struct Slots {
         std::uint32_t depth = 0;
+        std::uint32_t level0 = 0;
         std::uint32_t src = 0;
         std::uint32_t dst = 0;
         std::uint32_t bounds = 0;

@@ -35,7 +35,8 @@ struct Slice {
 
 [[nodiscard]] std::array<CornerRay, 4> corner_rays(const glm::mat4& projection) {
     const glm::mat4 inv_proj = glm::inverse(projection);
-    const std::array<glm::vec2, 4> ndc{{{-1.0F, -1.0F}, {1.0F, -1.0F}, {-1.0F, 1.0F}, {1.0F, 1.0F}}};
+    const std::array<glm::vec2, 4> ndc{
+        {{-1.0F, -1.0F}, {1.0F, -1.0F}, {-1.0F, 1.0F}, {1.0F, 1.0F}}};
     std::array<CornerRay, 4> rays{};
     for (std::size_t i = 0; i < ndc.size(); ++i) {
         rays[i].near_p = unproject(inv_proj, ndc[i].x, ndc[i].y, 0.0F);

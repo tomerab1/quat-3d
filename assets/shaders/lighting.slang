@@ -222,8 +222,9 @@ float sun_visibility(int2 coord, uint2 size, float3 world_pos, float3 n, float3 
         float4 clip0 = mul_cols(g_frame.view_proj, float4(start, 1.0));
         float4 clip1 =
             mul_cols(g_frame.view_proj, float4(start + ldir * g_frame.contact.y, 1.0));
-        float hit = contact_shadow(g_depth, size, clip0, clip1, g_frame.csm_misc.zw,
-                                   uint(g_frame.contact.z), g_frame.contact.w, noise);
+        float hit = contact_shadow(g_depth, g_point_sampler, size, clip0, clip1,
+                                   g_frame.csm_misc.zw, uint(g_frame.contact.z),
+                                   g_frame.contact.w, noise);
         vis *= lerp(1.0, hit, g_frame.contact.x);
     }
     return vis;

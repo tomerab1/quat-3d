@@ -55,8 +55,16 @@ public float gtao_specular_occlusion(float3 bent_normal, float visibility, float
 // buffer. `clip0` / `clip1` are the ray's start and end in clip space
 // (perspective: clip.w is the view distance, compared against the depth
 // buffer linearised with depth_lin = (A, B): view distance = B / (d + A)).
-public float contact_shadow(Texture2D depth, uint2 size, float4 clip0, float4 clip1,
-                            float2 depth_lin, uint steps, float thickness, float noise) {
+// The scene depth at each sample is the bilinear interpolation of the four
+// nearest depth texels: NDC depth is affine in screen space over a plane, so
+// a planar receiver is reconstructed exactly at the sample's sub-pixel
+// position and cannot shadow itself, even seen at a grazing angle where one
+// pixel spans metres of depth. Footprints touching the background fall back
+// to the nearest texel.
+public float contact_shadow(Texture2D depth, SamplerState point_sampler, uint2 size,
+                            float4 clip0, float4 clip1, float2 depth_lin, uint steps,
+                            float thickness, float noise) {
+    float2 fsize = float2(size);
     for (uint i = 0; i < steps; ++i) {
         float t = (float(i) + noise) / float(steps);
         float4 c = lerp(clip0, clip1, t);
@@ -67,13 +75,23 @@ public float contact_shadow(Texture2D depth, uint2 size, float4 clip0, float4 cl
         if (any(uv <= 0.0) || any(uv >= 1.0)) {
             break;
         }
-        float d = depth.Load(int3(int2(uv * float2(size)), 0)).r;
+        // Gather order: x = (0,1), y = (1,1), z = (1,0), w = (0,0) of the 2x2.
+        float4 g = depth.GatherRed(point_sampler, uv);
+        float2 f = frac(uv * fsize - 0.5);
+        float d;
+        if (any(g >= 1.0)) {
+            d = depth.Load(int3(int2(uv * fsize), 0)).r;
+        } else {
+            float top = lerp(g.w, g.z, f.x);
+            float bottom = lerp(g.x, g.y, f.x);
+            d = lerp(top, bottom, f.y);
+        }
         if (d >= 1.0) {
             continue;
         }
         float scene = depth_lin.y / (d + depth_lin.x);
         float delta = c.w - scene;
-        if (delta > c.w * 0.002 && delta < thickness) {
+        if (delta > c.w * 0.001 && delta < thickness) {
             return 0.0;
         }
     }
