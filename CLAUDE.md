@@ -14,11 +14,17 @@ When there is a "proper" way and a "cheap" way to do something, default to the p
 
 ## Development Process
 
-**Start every session by reading `docs/STATUS.md`** (what is in flight,
+**Start every session by reading `docs/STATUS.md` and `docs/LEARNINGS.md`** (what is in flight,
 blockers, next steps) and **update it before ending a session**. Build/test
 instructions — including setting up a cloud container — are in
 `docs/DEVELOPMENT.md`. Keep `README.md` current and readable for humans
 whenever user-visible features, build steps or env vars change.
+
+Development runs as a repeating improvement cycle (plan → parallel worktree
+agents → merge → CI → audit → record lessons) described in
+**`docs/CYCLE.md`**; follow it when asked to "run a cycle" or when started by
+the scheduled task. Record anything that went wrong, with the rule that
+prevents it, in `docs/LEARNINGS.md`.
 
 See **`ROADMAP.md`** for the plan. Work is organised into tracks (S stability,
 A AI tooling/MCP, R rendering, P platforms, G gameplay, E editor); each item

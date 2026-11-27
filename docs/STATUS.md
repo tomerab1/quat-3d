@@ -7,6 +7,12 @@ work session updates it (keep it short — history belongs in git and
 
 _Last updated: 2026-11-27._
 
+## How work runs
+
+As repeated improvement cycles — see [`CYCLE.md`](CYCLE.md) (up to 8 parallel
+worktree agents per cycle, a scheduled cloud session every 2 hours, one PR per
+cycle) and [`LEARNINGS.md`](LEARNINGS.md).
+
 ## Current focus
 
 Priority order agreed with the project owner: **stability (track S) → AI
