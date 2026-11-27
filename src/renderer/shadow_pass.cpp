@@ -5,6 +5,8 @@
 #include <string>
 #include <utility>
 
+#include <glm/gtc/matrix_transform.hpp>
+
 #include "engine/asset/mesh_asset.hpp"
 #include "engine/rhi/device.hpp"
 #include "engine/rhi/pipeline_cache.hpp"
@@ -138,6 +140,16 @@ ShadowPass::add_to_graph(rhi::RenderGraph& graph, const glm::mat4& light_view_pr
         });
 
     return shadow;
+}
+
+glm::mat4 directional_shadow_view_proj(const glm::vec3& travel_dir, const glm::vec3& center,
+                                       float extent_m) {
+    const glm::vec3 dir = glm::normalize(travel_dir);
+    const glm::vec3 eye = center - dir * (extent_m * 1.5F);
+    const glm::mat4 view = glm::lookAt(eye, center, glm::vec3(0.0F, 1.0F, 0.0F));
+    const glm::mat4 proj =
+        glm::ortho(-extent_m, extent_m, -extent_m, extent_m, 0.1F, extent_m * 3.5F);
+    return proj * view;
 }
 
 } // namespace engine::renderer

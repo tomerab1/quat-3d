@@ -45,6 +45,15 @@ struct DirectionalLightParams {
 };
 static_assert(sizeof(DirectionalLightParams) == 48, "must match lighting.slang LightParams");
 
+// Tunable lighting terms (RenderSettings::shadows / ::ibl). Defaults are the
+// engine's defaults.
+struct LightingTuning {
+    float ibl_intensity     = 1.0F;    // scales image-based ambient + reflections
+    float shadow_depth_bias = 0.0008F; // constant shadow-map depth bias
+    float shadow_slope_bias = 0.0025F; // extra bias * (1 - N.L)
+    int   shadow_pcf_radius = 1;       // PCF kernel radius in texels (0..3)
+};
+
 class LightingPass {
 public:
     [[nodiscard]] static std::expected<LightingPass, core::Error>
@@ -71,7 +80,7 @@ public:
     // are set and the sky is enabled, the background uses the physically-based
     // sky-view LUT and the sun is transmittance-tinted; otherwise the
     // procedural sky. `clouds` drives the per-pixel volumetric cloud march
-    // (LUT sky only).
+    // (LUT sky only). `tuning` holds the shadow filter / bias and IBL scale.
     [[nodiscard]] std::expected<rhi::ResourceHandle, core::Error>
     add_to_graph(rhi::RenderGraph& graph, const GBufferTargets& gbuffer, VkExtent2D extent,
                  const DirectionalLightParams& light, const glm::mat4& inv_view_proj,
@@ -80,7 +89,7 @@ public:
                  bool enable_sky = false, IblViewSet ibl = {},
                  VkImageView atmosphere_skyview = VK_NULL_HANDLE,
                  VkImageView atmosphere_transmittance = VK_NULL_HANDLE,
-                 const CloudSettings& clouds = {});
+                 const CloudSettings& clouds = {}, const LightingTuning& tuning = {});
 
 private:
     const rhi::Device* device_    = nullptr;   // non-owning

@@ -3,18 +3,19 @@
 // World commands (ROADMAP A2/A3) — the remote-control methods that let an
 // out-of-process tool (the quat-mcp bridge, i.e. a language model) inspect and
 // build the world: scene.*, environment.*, world.ground_height, camera.*,
-// render.screenshot, asset.*, sim.*, scene.save/load, nav.bake — and the
+// render.screenshot, asset.*, sim.*, scene.save/load, nav.bake — the
 // debugging commands (ROADMAP A5): debug.log, debug.stats, debug.pause /
 // resume / step / time_scale, debug.watch, debug.raycast, debug.nav_path — and
-// behaviour-tree authoring (ROADMAP A7): bt.leaves, bt.get, bt.set,
-// bt.add_node, bt.remove_node, bt.move_node, bt.set_params, bt.status. The
-// method contract is docs/remote-control.md.
+// look tuning (ROADMAP A8): render.settings.get / set / reset / schema,
+// material.get / set — and behaviour-tree authoring (ROADMAP A7): bt.leaves,
+// bt.get, bt.set, bt.add_node, bt.remove_node, bt.move_node, bt.set_params,
+// bt.status. The method contract is docs/remote-control.md.
 //
 // Scene editing works on any Scene. Everything that only the running
-// application has — the view camera, clouds, terrain heights, glTF uploads,
-// screenshots, play mode, scene files, the navmesh — is reached through
-// WorldServices callbacks; a callback left empty makes its methods answer
-// `unavailable` (tests, headless tools, builds without the editor).
+// application has — the view camera, the renderer's settings, terrain heights,
+// glTF uploads, screenshots, play mode, scene files, the navmesh — is reached
+// through WorldServices; a callback (or pointer) left empty makes its methods
+// answer `unavailable` (tests, headless tools).
 //
 // All handlers run on the main thread (RpcServer::poll), so they mutate the
 // ECS between frames exactly like editor actions. Requests are decoded through
@@ -33,7 +34,6 @@
 
 #include "engine/core/error.hpp"
 #include "engine/remote/rpc_server.hpp"
-#include "engine/renderer/cloud_settings.hpp"
 
 namespace engine::core {
 class LogRing;
@@ -44,6 +44,9 @@ class NavMesh;
 }
 namespace engine::physics {
 class PhysicsWorld;
+}
+namespace engine::renderer {
+struct RenderSettings;
 }
 namespace engine::scene {
 class Scene;
@@ -81,8 +84,9 @@ struct WorldServices {
     std::function<CameraPose()>                  camera_get;
     std::function<void(const CameraPose& pose)>  camera_set;
 
-    std::function<renderer::CloudSettings()>                     clouds_get;
-    std::function<void(const renderer::CloudSettings& clouds)>   clouds_set;
+    // The renderer's settings (non-owning): render.settings.* and the clouds
+    // of environment.* read and write them; the next frame renders with them.
+    renderer::RenderSettings* render_settings = nullptr;
 
     // Terrain surface height at world (x, z); nullopt where no terrain is.
     std::function<std::optional<float>(float x, float z)> ground_height;

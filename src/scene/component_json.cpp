@@ -20,6 +20,7 @@
 #include "engine/core/json_fields.hpp"
 #include "engine/physics/physics_world.hpp"
 #include "engine/scene/components.hpp"
+#include "engine/scene/material_override.hpp"
 
 namespace engine::scene {
 
@@ -32,6 +33,7 @@ using core::JsonFields;
 constexpr std::array k_components = {
     ComponentInfo{"transform", "Local position / rotation (Euler degrees, YXZ) / scale", false, true},
     ComponentInfo{"primitive", "Procedural shape (cube, sphere, plane, cylinder, cone, capsule) with a PBR colour", true, true},
+    ComponentInfo{"material", "Per-entity overrides of the drawn material's PBR factors (null clears one)", true, true},
     ComponentInfo{"instanced_mesh", "Many placements of one model (glTF or primitive shape), drawn instanced", true, true},
     ComponentInfo{"scatter", "Seeded procedural placement of the entity's instanced mesh on the terrain", true, true},
     ComponentInfo{"point_light", "Point light at the entity position", true, true},
@@ -463,6 +465,9 @@ json encode_components(const entt::registry& r, entt::entity e, const EncodeOpti
     if (const auto* p = pick.get<Primitive>("primitive")) {
         out["primitive"] = primitive_fields_json(*p);
     }
+    if (const auto* m = pick.get<MaterialOverride>("material"); m != nullptr && m->mask != 0) {
+        out["material"] = encode_material_override(*m);
+    }
     if (const auto* m = pick.get<InstancedMesh>("instanced_mesh")) {
         json j = primitive_fields_json(m->primitive);
         j["gltf"] = m->gltf_path;
@@ -598,6 +603,8 @@ std::vector<std::string_view> component_names(const entt::registry& r, entt::ent
     };
     add(r.all_of<Transform>(e), "transform");
     add(r.all_of<Primitive>(e), "primitive");
+    const auto* material = r.try_get<MaterialOverride>(e);
+    add(material != nullptr && material->mask != 0, "material");
     add(r.all_of<InstancedMesh>(e), "instanced_mesh");
     add(r.all_of<Scatter>(e), "scatter");
     add(r.all_of<PointLight>(e), "point_light");
@@ -649,6 +656,17 @@ std::expected<void, core::Error> apply_component(entt::registry& r, entt::entity
         });
         if (ok) r.remove<MeshSource>(e); // the primitive is now the mesh's provenance
         return ok;
+    }
+    if (name == "material") {
+        MaterialOverride o = r.all_of<MaterialOverride>(e) ? r.get<MaterialOverride>(e)
+                                                           : MaterialOverride{};
+        if (auto ok = decode_material_override(v, o, strict); !ok) return ok;
+        if (o.mask == 0) {
+            r.remove<MaterialOverride>(e);
+        } else {
+            r.emplace_or_replace<MaterialOverride>(e, std::move(o));
+        }
+        return {};
     }
     if (name == "instanced_mesh") {
         const bool scattered = r.all_of<Scatter>(e);
@@ -901,6 +919,7 @@ bool remove_component(entt::registry& r, entt::entity e, std::string_view name) 
         if (had) r.remove<InstancedMeshParts, Scatter>(e);
         return had;
     }
+    if (name == "material") return r.remove<MaterialOverride>(e) > 0;
     if (name == "scatter") return r.remove<Scatter>(e) > 0; // keeps the placements (baked)
     if (name == "point_light") return r.remove<PointLight>(e) > 0;
     if (name == "dir_light") return r.remove<DirectionalLight>(e) > 0;

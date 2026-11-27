@@ -34,6 +34,7 @@
 #include "engine/scene/components.hpp"
 #include "engine/scene/gltf_loader.hpp"
 #include "engine/scene/instanced_mesh.hpp"
+#include "engine/scene/material_override.hpp"
 #include "engine/scene/primitives.hpp"
 #include "engine/scene/scatter.hpp"
 #include "engine/scene/scene_io.hpp"
@@ -87,6 +88,7 @@ struct RemoteBridge::Impl {
     ScreenshotCapture                shots;
     bool                             warned_primitives = false;
     std::string                      last_instanced_warning;
+    std::string                      last_material_warning;
 
     // ---- Debugging (A5) -----------------------------------------------------
     engine::core::SimClock clock;
@@ -171,7 +173,8 @@ struct RemoteBridge::Impl {
         if (is_playing()) return fail("stop play mode first (sim.stop)");
         std::expected<void, Error> loaded = fail("not loaded");
         auto ctx = with_upload([&](const engine::rhi::TransferContext& transfer) {
-            loaded = engine::scene::load_scene(*t.scene, path, *t.allocator, transfer, *t.assets);
+            loaded = engine::scene::load_scene(*t.scene, path, *t.allocator, transfer, *t.assets,
+                                               t.render_settings);
         });
         if (!ctx) return ctx;
         if (!loaded) return loaded;
@@ -241,15 +244,8 @@ struct RemoteBridge::Impl {
         s.project_root = [this] { return t.project_root; };
         s.camera_get = [this] { return camera_get(); };
         s.camera_set = [this](const remote::CameraPose& p) { camera_set(p); };
+        s.render_settings = t.render_settings;
 #ifdef ENGINE_EDITOR
-        if (t.render_settings != nullptr) {
-            s.clouds_get = [this] { return t.render_settings->clouds; };
-            s.clouds_set = [this](const engine::renderer::CloudSettings& c) {
-                const float time = t.render_settings->clouds.time_s;
-                t.render_settings->clouds = c;
-                t.render_settings->clouds.time_s = time;
-            };
-        }
         if (t.play != nullptr) {
             s.playing = [this] { return *t.play; };
             s.set_playing = [this](bool play) -> std::expected<bool, Error> {
@@ -267,7 +263,7 @@ struct RemoteBridge::Impl {
         };
         s.save_scene = [this](const std::filesystem::path& p) -> std::expected<void, Error> {
             if (is_playing()) return fail("stop play mode first (sim.stop)");
-            return engine::scene::save_scene(*t.scene, p);
+            return engine::scene::save_scene(*t.scene, p, t.render_settings);
         };
         s.load_scene = [this](const std::filesystem::path& p) { return load_scene(p); };
         if (t.navmesh != nullptr) {
@@ -345,6 +341,29 @@ struct RemoteBridge::Impl {
         }
     }
 
+    // A8: derived materials of changed MaterialOverrides (after the
+    // primitives, whose rebuilt materials are the overrides' bases). Runs
+    // before the frame is recorded: replaced materials are retired as of this
+    // frame and freed once the frames in flight before it completed.
+    void resolve_material_overrides() {
+        if (t.material_overrides == nullptr) return;
+        engine::scene::MaterialOverrideStore& store = *t.material_overrides;
+        const std::uint64_t frame = *t.frame_counter;
+        store.collect(frame);
+        if (!store.needs_resolve(t.scene->registry())) return;
+        std::expected<std::size_t, Error> result = fail("not run");
+        auto ctx = with_upload([&](const engine::rhi::TransferContext& transfer) {
+            result = store.resolve(t.scene->registry(), *t.allocator, transfer, frame);
+        });
+        if (!ctx || !result) {
+            const std::string& msg = (!ctx ? ctx.error() : result.error()).message;
+            if (msg != last_material_warning) {
+                std::fprintf(stderr, "[warn] %s\n", msg.c_str());
+                last_material_warning = msg;
+            }
+        }
+    }
+
     // The ground scatters stand on: the streamed tiles or the single editing
     // tile of the (first) Terrain entity; none (flat ground) without terrain.
     // While a tile is still generating the ground is known to exist but not
@@ -410,6 +429,7 @@ void RemoteBridge::poll() {
     impl_->finish_steps(); // steps run last frame: reply before new requests
     if (impl_->server) impl_->server->poll();
     impl_->resolve_primitives();
+    impl_->resolve_material_overrides();
     impl_->update_instanced_meshes();
     impl_->shots.finish_encodings();
 }
