@@ -59,7 +59,59 @@ token, `session.hello` is optional (it still reports the protocol version).
 | `rpc.methods` | — | `[{name, summary, deferred}]` |
 | `engine.info` | — | `{engine, frame, entities, playing, editor}` |
 
-Planned methods (A2/A3) are listed in [`STATUS.md`](STATUS.md#a2-design-notes-agreed-not-yet-implemented).
+## Methods (v1 contract — being implemented, ROADMAP A2/A3)
+
+This is the agreed contract between the engine (`src/remote/`) and the MCP
+server (`tools/quat-mcp`). Change it here first if either side needs a
+change.
+
+**Entity references.** Wherever a parameter is called `entity` or `parent`
+it accepts the entity's integer `id` (as returned by the engine) or a string
+name, which must match exactly one entity (otherwise `not_found` or
+`invalid_params` listing the ambiguity). `parent: null` means "root".
+
+**Components** are JSON objects keyed by the component names of the shared
+codec (`engine/scene/component_json.hpp`): `transform` (`position`,
+`rotation` in Euler degrees YXZ, `scale` number or `[x,y,z]`, `look_at`),
+`primitive` (`shape`: cube/sphere/plane/cylinder/cone/capsule, `color`
+`"#rrggbb"` or linear `[r,g,b,a]`, `metallic`, `roughness`, `emissive`),
+`point_light`, `dir_light`, `camera`, `collider`, `rigidbody`, `character`,
+`nav_agent`, `behavior`, `patrol`, `terrain`, `net_replicated`, `animator`
+(edit only), `mesh` (read only). Updates merge: omitted fields keep their
+values. Unknown fields are errors (they name the known fields).
+
+| Method | Params | Result |
+|---|---|---|
+| `scene.components` | — | `[{name, summary, addable, writable}]` |
+| `scene.list` | `{name_contains?, component?, limit?=100, offset?=0}` | `{total, entities:[{id, name, parent, components:[names], world_position}]}` |
+| `scene.get` | `{entity}` | `{id, name, parent, children:[ids], components:{...}}` |
+| `scene.create` | `{name?, parent?, components?:{...}}` | `{id, name}` |
+| `scene.update` | `{entity, name?, components?:{...}}` | `{id}` |
+| `scene.remove_components` | `{entity, components:[names]}` | `{removed:[names]}` |
+| `scene.destroy` | `{entity}` (recursive) | `{destroyed: n}` |
+| `scene.set_parent` | `{entity, parent, keep_world?=true}` | `{id}` |
+| `scene.clear` | `{keep_lights?=true}` | `{destroyed: n}` |
+| `scene.batch` | `{commands:[{method, params}], stop_on_error?=true}` | `{results:[{ok:true, result} \| {ok:false, error:{code,message}}]}` — a string `"@N"` in an `entity`/`parent` field means the `id` returned by command N of this batch. Deferred methods cannot be batched. |
+| `environment.get` | — | `{sun:{azimuth_deg, elevation_deg, intensity, color}, clouds:{enabled, coverage, density, bottom_km, thickness_km, size_km, detail, wind_speed, wind_dir_deg}}` |
+| `environment.set` | same shape, every field optional | `environment.get` result |
+| `world.ground_height` | `{points:[[x,z],...]}` (≤ 1024) | `{heights:[y \| null]}` — null where no terrain covers the point |
+| `camera.get` | — | `{position, yaw_deg, pitch_deg, fov_deg}` |
+| `camera.set` | `{position?, look_at?, yaw_deg?, pitch_deg?, fov_deg?}` | `camera.get` result |
+| `camera.frame` | `{entity?}` (whole scene when omitted) | `camera.get` result |
+| `render.screenshot` *(deferred)* | `{max_size?=1024}` | `{mime:"image/png", width, height, data:<base64>}` |
+| `asset.list_models` | — | `{models:[project-relative paths of .gltf/.glb]}` |
+| `asset.spawn_model` | `{path, name?, parent?, components?}` | `{roots:[ids]}` |
+| `sim.play` / `sim.stop` | — | `{playing}` |
+| `scene.save` / `scene.load` | `{path}` (project-relative; `..` escapes refused) | `{path}` |
+| `nav.bake` | — | `{polygons}` |
+
+Sun convention (same as the editor's Renderer panel): the light's travel
+direction `d` gives `azimuth_deg = atan2(d.z, d.x)` and `elevation_deg =
+asin(-d.y)`.
+
+Methods that need something only the full application has (camera,
+screenshot, clouds, glTF spawn, play/stop, save/load, nav bake) return
+`unavailable` when the engine runs without it (e.g. in tests).
 
 ## Errors
 

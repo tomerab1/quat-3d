@@ -120,6 +120,8 @@ clang++ -std=c++23 -stdlib=libc++ -Wall -Wextra -Wshadow -fno-exceptions -fno-rt
 ```
 
 This catches compile errors and warnings, not link errors or test failures.
+`scripts/check-compile.sh <files...>` wraps exactly this (set `DEPS` if the
+clones live elsewhere than `~/deps`).
 
 Quick check without vcpkg (the remote-control library only needs
 nlohmann-json and glm headers — `apt-get install nlohmann-json3-dev libglm-dev`):
