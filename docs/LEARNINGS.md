@@ -26,6 +26,14 @@ into CLAUDE.md or the brief template in [`CYCLE.md`](CYCLE.md).
 
 ## Build and CI
 
+- **Look at every render you report on (issue #21).** A worker reported the
+  physics demo "unchanged" after #7/#8 without opening the image; every box
+  had fallen out of the world. Cause: `physics_system` creates bodies at
+  `Transform.world`, and on frame 0 only `FlyCamera::create`'s `scene.tick()`
+  had resolved those — #8 skipped it for the physics demo. → Systems resolve
+  the transforms they read (`WorldRuntime::simulate` now does, every slice),
+  and `tests/app/` drives the real `WorldRuntime` path (`game_world` library).
+
 - **The real `game` runs locally under Xvfb + lavapipe.** Without vcpkg, a
   non-editor build links from the `~/deps` clones: build SDL3
   (`~/deps/sdl`, cmake, shared) and link libJolt / libfastgltf / GNS /

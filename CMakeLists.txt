@@ -427,19 +427,32 @@ endif()
 # frame loop; FrameRenderer, WorldRuntime, FlyCamera, EditorBridge, the remote
 # bridge and the startup scenes run inside it); it is not an engine library.
 # main.cpp only parses the environment and hands off to Application.
+#
+# game_world holds the window-free part of the app layer — WorldRuntime (the
+# simulated world: demo scenes, terrain, grass, navmesh, audio) — so tests
+# can drive the exact frame-loop simulation path (tests/app/) without SDL.
+add_library(game_world STATIC
+    src/app/world_runtime.cpp
+    src/app/demo_scenes.cpp
+    src/app/audio_runtime.cpp
+    src/app/grass_runtime.cpp
+    src/app/nav_bake.cpp)
+target_link_libraries(game_world PUBLIC
+    engine_flags engine_core engine_rhi engine_asset engine_scene engine_renderer engine_physics
+    engine_terrain engine_nav engine_net engine_audio)
+target_include_directories(game_world PUBLIC
+    ${ENGINE_PUBLIC_INCLUDE}
+    ${CMAKE_CURRENT_SOURCE_DIR}/src)
+
 add_executable(game
     src/main.cpp
     src/app/application.cpp
     src/app/fly_camera.cpp
     src/app/frame_graph.cpp
     src/app/frame_renderer.cpp
-    src/app/world_runtime.cpp
-    src/app/demo_scenes.cpp
-    src/app/audio_runtime.cpp
-    src/app/grass_runtime.cpp
-    src/app/nav_bake.cpp
     src/app/remote_bridge.cpp)
 target_link_libraries(game PRIVATE
+    game_world
     engine_flags engine_core engine_rhi engine_asset engine_scene engine_renderer engine_physics
     engine_terrain engine_nav engine_net engine_remote engine_remote_world engine_audio
     SDL3::SDL3)

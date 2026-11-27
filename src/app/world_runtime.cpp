@@ -172,15 +172,22 @@ void WorldRuntime::simulate(engine::scene::Scene& scene, std::uint64_t frame_num
 
     // Audit D2: every simulation system advances by the same sim_dt. A scaled
     // dt above the physics budget runs in equal slices (systems in the same
-    // order per slice, transforms refreshed in between as across frames);
-    // animation samples the whole sim_dt in the scene tick. A paused frame
-    // still runs the systems once with dt 0 (bodies for new entities, swept
-    // bodies, kinematic poses).
+    // order per slice); animation samples the whole sim_dt in the scene tick.
+    // A paused frame still runs the systems once with dt 0 (bodies for new
+    // entities, swept bodies, kinematic poses).
+    //
+    // World transforms are resolved before every slice, the first included:
+    // the systems read Transform.world (physics creates bodies at it, nav and
+    // behaviour trees steer from it), and entities created or edited since
+    // the last scene tick — the startup scene on frame 0, a remote spawn, an
+    // editor edit — would otherwise be read at a stale or identity world
+    // (issue #21: the physics demo's boxes were all created at the origin,
+    // inside the floor, and fell out of the world).
     engine::core::SimSlices slices =
         engine::core::slice_sim_dt(sim_dt, engine::physics::PhysicsWorld::max_update_dt);
     if (slices.count == 0) slices = {.count = 1, .dt = 0.0F};
     for (std::uint32_t i = 0; i < slices.count; ++i) {
-        if (i > 0) engine::scene::transform_system(scene.registry());
+        engine::scene::transform_system(scene.registry());
         simulate_slice(scene, slices.dt, play);
     }
     scene.tick(sim_dt); // advances any Animators by simulated time
