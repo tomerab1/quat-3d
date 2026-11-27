@@ -21,6 +21,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <expected>
+#include <span>
 #include <unordered_map>
 #include <vector>
 
@@ -56,10 +57,16 @@ public:
     // exact, but a hitch does not trigger a burst of back-to-back snapshots.
     [[nodiscard]] std::vector<SnapshotPacket> collect(entt::registry& registry, float dt);
 
-    // collect() + broadcast. A packet the transport refuses is not lost: its
-    // entities are forgotten from the delta baseline and go out again in the
-    // next snapshot. Call once per frame (the caller owns server.poll()).
-    void tick(entt::registry& registry, NetServer& server, float dt);
+    // collect() + send to `recipients` (the authenticated peers; others get
+    // nothing). A packet the transport refuses is not lost: its entities are
+    // forgotten from the delta baseline and go out again in the next
+    // snapshot. Call once per frame (the caller owns server.poll()).
+    void tick(entt::registry& registry, NetServer& server, std::span<const ClientId> recipients,
+              float dt);
+
+    // Make the next snapshot a keyframe (a peer just joined the recipients
+    // and has no baseline to apply deltas to).
+    void request_keyframe() { snapshots_since_keyframe_ = keyframe_interval; }
 
     // Packets the transport refused since start (logged on the first and then
     // every 100th failure).

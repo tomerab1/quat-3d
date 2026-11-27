@@ -167,7 +167,11 @@ Environment variables switch on extra modes:
 | `QUAT_GLTF=<file>` | Load a glTF/GLB model instead of the showcase scene |
 | `QUAT_TERRAIN=1` | Add a procedural terrain tile (with a grass field) |
 | `QUAT_PHYSICS=1` / `QUAT_CHARACTER=1` | Physics / character-controller demo scenes |
-| `QUAT_HOST=<port>` / `QUAT_JOIN=<ip:port>` | Host or join a networked session |
+| `QUAT_HOST=<port>` / `QUAT_JOIN=<ip:port>` | Host or join a networked session (host listens on 127.0.0.1 only unless `QUAT_NET_BIND` says otherwise) — see [Networking](#networking) |
+| `QUAT_NET_BIND=<ipv4>` | Host: interface to listen on (default `127.0.0.1`; `0.0.0.0` = every interface, for LAN/internet play) |
+| `QUAT_NET_MAX_CLIENTS=<n>` | Host: connections held at once (default 8, max 1024); more are refused as "server full" |
+| `QUAT_NET_TOKEN=<secret>` | Host: join token every client must present; client: the token it presents |
+| `QUAT_NET_OWNER_TOKEN=<secret>` | Host: only a client presenting this token (as its `QUAT_NET_TOKEN`) controls the player character |
 | `QUAT_REMOTE=<port>` | Open the remote-control endpoint for AI tools (`1` = port 7878). It always requires a session token: a random one per run, written to a file only you can read, where quat-mcp finds it — see [`docs/remote-control.md`](docs/remote-control.md#session-token) |
 | `QUAT_REMOTE_TOKEN=<secret>` / `QUAT_REMOTE_TOKEN_FILE=<path>` | With `QUAT_REMOTE`: use this token instead of a generated one / publish the token at this path instead of the per-user default |
 | `QUAT_LOG_CAPTURE=0` | With `QUAT_REMOTE`: do not tee stderr into the engine log the AI debugging tools read (`debug.log`) |
@@ -178,6 +182,45 @@ Environment variables switch on extra modes:
 | `QUAT_NO_AUDIO=1` | Mute: run audio without opening a playback device |
 | `QUAT_NON_FINITE_CHECK=1` | Count NaN/Inf values the bloom / TAA guards replace and log them per frame (always on in debug builds) |
 | `QUAT_MAX_FRAMES=<n>` + `QUAT_SCREENSHOT=<file.ppm>` | Render n frames, save the last one, exit (headless checks) |
+
+### Networking
+
+One machine hosts, others join it with the same scene; the host simulates and
+replicates, and the joined player's character is predicted locally.
+
+```sh
+# Same machine (the host only listens on 127.0.0.1 by default)
+QUAT_HOST=27015 ./build/release/game
+QUAT_JOIN=127.0.0.1:27015 ./build/release/game
+
+# Over a LAN / the internet: opt in to every interface and set a token
+QUAT_HOST=27015 QUAT_NET_BIND=0.0.0.0 QUAT_NET_TOKEN=letmein ./build/release/game
+QUAT_JOIN=192.168.1.20:27015 QUAT_NET_TOKEN=letmein ./build/release/game
+```
+
+What the host enforces:
+
+- **Bind address:** loopback unless `QUAT_NET_BIND` names another IPv4
+  interface. A host bound beyond loopback without a token logs a warning.
+- **Connection cap:** at most `QUAT_NET_MAX_CLIENTS` connections (default 8),
+  counting ones still handshaking; extra ones are refused as "server full".
+- **Join handshake:** a client's first message is a hello carrying the
+  protocol version and `QUAT_NET_TOKEN`. Until it arrives the client gets no
+  snapshots and cannot control anything. A wrong token, a version mismatch or
+  any other first message disconnects it, and so does staying silent for 5 s.
+- **Player control:** the player character goes to the first client to
+  authenticate (not to whoever sends input first). With
+  `QUAT_NET_OWNER_TOKEN` set, only a client presenting that token gets it;
+  others watch. When the controlling client leaves, the next eligible client
+  that authenticated takes over.
+- **Rate limits:** each client may send 1000 messages and 64 KiB per second
+  (2 s of burst); a client above either is disconnected. Clients send one
+  input per frame, so this also caps a joined client's useful frame rate.
+
+A refused or dropped client logs the reason (`server full`, `authentication
+failed`, `authentication timed out`, `rate limited`). The limits are fields of
+`engine::net::HostConfig` (`include/engine/net/session_config.hpp`,
+`host_access.hpp`) for code that hosts through `NetSession::host`.
 
 ### Audio
 
