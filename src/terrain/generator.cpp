@@ -6,9 +6,10 @@
 #include <cstdint>
 #include <limits>
 #include <numeric>
-#include <thread>
 #include <utility>
 #include <vector>
+
+#include "parallel_rows.hpp"
 
 namespace engine::terrain {
 
@@ -42,15 +43,10 @@ struct Pcg32 {
 // --------------------------------------------------------------------------
 class GradientNoise {
 public:
-    explicit GradientNoise(std::uint32_t seed) {
-        std::iota(perm_.begin(), perm_.begin() + 256, std::uint8_t{0});
-        Pcg32 rng(seed);
-        for (int i = 255; i > 0; --i) {
-            const int j = static_cast<int>(rng.next() % static_cast<std::uint32_t>(i + 1));
-            std::swap(perm_[static_cast<std::size_t>(i)], perm_[static_cast<std::size_t>(j)]);
-        }
-        for (int i = 0; i < 256; ++i) {
-            perm_[static_cast<std::size_t>(i) + 256] = perm_[static_cast<std::size_t>(i)];
+    explicit GradientNoise(const std::array<std::uint8_t, 256>& permutation) {
+        for (std::size_t i = 0; i < 256; ++i) {
+            perm_[i] = permutation[i];
+            perm_[i + 256] = permutation[i];
         }
     }
 
@@ -126,13 +122,16 @@ private:
     return value / total;
 }
 
-// One texel of the composed height field, normalised [0, 1]. `uv` in [0, 1]²
-// within the tile; world_tile shifts the noise domain so neighbouring tiles
-// from the same seed continue each other seamlessly.
-[[nodiscard]] float compose_height(const GradientNoise& noise, glm::vec2 uv,
+// One texel of the composed height field, normalised [0, 1]. `p` is the
+// noise-space position of a texel on the world texel lattice (world_texel),
+// so neighbouring tiles from the same seed evaluate their shared edge at
+// identical positions.
+//
+// assets/shaders/lib/terrain_noise.slang mirrors this function and the noise
+// above operation for operation (same association order, glm's mix and
+// smoothstep formulas) — keep them in sync; GpuTerrainSynth tests compare.
+[[nodiscard]] float compose_height(const GradientNoise& noise, glm::vec2 p,
                                    const TerrainParams& tp) {
-    const glm::vec2 p = (glm::vec2(tp.world_tile) + uv) * tp.base_frequency;
-
     // iq domain warp: offset the sample position by another FBM pair.
     const float wx = fbm(noise, p + glm::vec2(5.2F, 1.3F), 4, tp.lacunarity, tp.gain);
     const float wz = fbm(noise, p + glm::vec2(9.7F, 8.3F), 4, tp.lacunarity, tp.gain);
@@ -286,47 +285,88 @@ void erode(std::vector<float>& h, std::uint32_t res, const TerrainParams& tp) {
 
 } // namespace
 
+bool erosion_enabled(const TerrainParams& params) {
+    return params.erosion_model == ErosionModel::grid ? params.grid.iterations > 0
+                                                      : params.erosion_droplets > 0;
+}
+
+std::array<std::uint8_t, 256> noise_permutation(std::uint32_t seed) {
+    std::array<std::uint8_t, 256> perm{};
+    std::iota(perm.begin(), perm.end(), std::uint8_t{0});
+    Pcg32 rng(seed);
+    for (int i = 255; i > 0; --i) {
+        const int j = static_cast<int>(rng.next() % static_cast<std::uint32_t>(i + 1));
+        std::swap(perm[static_cast<std::size_t>(i)], perm[static_cast<std::size_t>(j)]);
+    }
+    return perm;
+}
+
+float noise_texel_scale(const TerrainParams& params) {
+    const std::uint32_t res = glm::max(params.resolution, 2U);
+    return params.base_frequency / static_cast<float>(res - 1);
+}
+
+glm::ivec2 world_texel(const TerrainParams& params, glm::ivec2 local) {
+    const auto span = static_cast<std::int32_t>(glm::max(params.resolution, 2U) - 1);
+    return params.world_tile * span + local;
+}
+
+float grid_erosion_fade(std::uint32_t x, std::uint32_t z, std::uint32_t resolution) {
+    // Same band as the droplet fade: zero for the 4 outermost texels, then a
+    // ramp over 5% of the tile (at least 4 texels).
+    const auto last = static_cast<std::int32_t>(resolution) - 1;
+    const auto xi = static_cast<std::int32_t>(x);
+    const auto zi = static_cast<std::int32_t>(z);
+    const std::int32_t edge = glm::min(glm::min(xi, zi), glm::min(last - xi, last - zi)) - 4;
+    const float band = glm::max(static_cast<float>(resolution) * 0.05F, 4.0F);
+    return glm::clamp(static_cast<float>(edge) / band, 0.0F, 1.0F);
+}
+
 Heightmap generate(const TerrainParams& params) {
     Heightmap map;
     map.resolution = glm::max(params.resolution, 2U);
     map.tile_size_m = params.tile_size_m;
     map.heights.resize(static_cast<std::size_t>(map.resolution) * map.resolution);
 
-    const GradientNoise noise(params.seed);
+    const GradientNoise noise(noise_permutation(params.seed));
     const std::uint32_t res = map.resolution;
+    const float scale = noise_texel_scale(params);
 
     // FBM is per-texel independent — split rows across the hardware threads.
-    const std::uint32_t workers =
-        glm::clamp(std::thread::hardware_concurrency(), 1U, 16U);
-    {
-        // std::thread + explicit join rather than std::jthread: libc++ 18
-        // (Ubuntu 24.04's clang, our CI) still gates jthread behind
-        // -fexperimental-library.
-        std::vector<std::thread> threads;
-        threads.reserve(workers);
-        for (std::uint32_t w = 0; w < workers; ++w) {
-            threads.emplace_back([&, w] {
-                for (std::uint32_t z = w; z < res; z += workers) {
-                    for (std::uint32_t x = 0; x < res; ++x) {
-                        const glm::vec2 uv(static_cast<float>(x) / static_cast<float>(res - 1),
-                                           static_cast<float>(z) / static_cast<float>(res - 1));
-                        map.heights[static_cast<std::size_t>(z) * res + x] =
-                            compose_height(noise, uv, params);
-                    }
+    detail::parallel_rows(res, [&](std::uint32_t z) {
+        for (std::uint32_t x = 0; x < res; ++x) {
+            const glm::ivec2 g = world_texel(
+                params, glm::ivec2(static_cast<std::int32_t>(x), static_cast<std::int32_t>(z)));
+            const glm::vec2 p(static_cast<float>(g.x) * scale, static_cast<float>(g.y) * scale);
+            map.heights[static_cast<std::size_t>(z) * res + x] = compose_height(noise, p, params);
+        }
+    });
+
+    if (params.erosion_model == ErosionModel::droplets) {
+        // Droplets run on the normalised field (parameters are resolution-relative).
+        erode(map.heights, res, params);
+        for (float& v : map.heights) v *= params.height_m;
+    } else {
+        for (float& v : map.heights) v *= params.height_m;
+        if (params.grid.iterations > 0) {
+            std::vector<float> eroded = map.heights;
+            erode_grid(eroded, res, map.metres_per_texel(), params.grid);
+            // Tile-local erosion fades out before the border (streaming seams).
+            detail::parallel_rows(res, [&](std::uint32_t z) {
+                for (std::uint32_t x = 0; x < res; ++x) {
+                    const float fade = grid_erosion_fade(x, z, res);
+                    if (fade <= 0.0F) continue;
+                    const std::size_t i = static_cast<std::size_t>(z) * res + x;
+                    map.heights[i] += fade * (eroded[i] - map.heights[i]);
                 }
             });
         }
-        for (std::thread& t : threads) t.join();
     }
 
-    // Erosion runs on the normalised field (parameters are resolution-relative).
-    erode(map.heights, res, params);
-
-    // Scale to metres and track the range.
+    // Track the range.
     map.min_height = std::numeric_limits<float>::max();
     map.max_height = std::numeric_limits<float>::lowest();
-    for (float& v : map.heights) {
-        v *= params.height_m;
+    for (const float v : map.heights) {
         map.min_height = glm::min(map.min_height, v);
         map.max_height = glm::max(map.max_height, v);
     }

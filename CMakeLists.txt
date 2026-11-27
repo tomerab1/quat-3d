@@ -242,6 +242,7 @@ set_source_files_properties(src/scene/stb_image_impl.cpp PROPERTIES COMPILE_OPTI
 # ---------------------------------------------------------------------------
 add_library(engine_terrain STATIC
     src/terrain/generator.cpp
+    src/terrain/grid_erosion.cpp
     src/terrain/streamer.cpp)
 target_link_libraries(engine_terrain PUBLIC engine_flags glm::glm)
 target_include_directories(engine_terrain PUBLIC ${ENGINE_PUBLIC_INCLUDE})
@@ -354,7 +355,9 @@ add_library(engine_renderer STATIC
     src/renderer/exposure_pass.cpp
     src/renderer/taa_pass.cpp
     src/renderer/atmosphere_pass.cpp
-    src/renderer/terrain_pass.cpp)
+    src/renderer/terrain_pass.cpp
+    src/renderer/terrain_gpu_tiles.cpp
+    src/renderer/terrain_synth_pass.cpp)
 target_link_libraries(engine_renderer PUBLIC
     engine_flags engine_rhi engine_asset engine_terrain glm::glm)
 target_include_directories(engine_renderer PUBLIC ${ENGINE_PUBLIC_INCLUDE})

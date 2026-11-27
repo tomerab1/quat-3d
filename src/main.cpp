@@ -1429,6 +1429,8 @@ int main() {
                     }
                     terrain_pass.remove_tile(glm::ivec2(0, 0));
                     terrain_streamer.emplace(tcomp.params, tcomp.stream_radius);
+                    terrain_streamer->set_generator(  // R10.2 GPU synthesis
+                        tcomp.gpu_generate ? terrain_pass.tile_generator() : nullptr);
                     invalidate_navmesh("terrain regenerated");
                     std::fprintf(stderr, "[terrain] streaming world (seed %u, radius %d)\n",
                                  tcomp.params.seed, tcomp.stream_radius);
@@ -1443,7 +1445,9 @@ int main() {
                 }
                 if (tcomp.regenerate && !terrain_job.valid()) {
                     tcomp.regenerate = false;
-                    terrain_job = engine::terrain::generate_async(tcomp.params);
+                    terrain_job = engine::terrain::generate_tile_async(  // R10.2: GPU or CPU
+                        tcomp.gpu_generate ? terrain_pass.tile_generator() : nullptr,
+                        tcomp.params);
                     std::fprintf(stderr, "[terrain] generating %ux%u tile (seed %u)...\n",
                                  tcomp.params.resolution, tcomp.params.resolution,
                                  tcomp.params.seed);

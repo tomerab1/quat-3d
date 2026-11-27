@@ -71,6 +71,8 @@ constexpr EnumName<audio::AudioBus> k_audio_buses[] = {
     {"master", audio::AudioBus::master}, {"music", audio::AudioBus::music},
     {"sfx", audio::AudioBus::sfx},       {"ui", audio::AudioBus::ui},
     {"ambience", audio::AudioBus::ambience}};
+constexpr EnumName<terrain::ErosionModel> k_erosion_models[] = {
+    {"droplets", terrain::ErosionModel::droplets}, {"grid", terrain::ErosionModel::grid}};
 constexpr EnumName<AudioCommand> k_audio_commands[] = {
     {"none", AudioCommand::none}, {"play", AudioCommand::play}, {"stop", AudioCommand::stop},
     {"pause", AudioCommand::pause}, {"resume", AudioCommand::resume}};
@@ -465,10 +467,13 @@ json encode_components(const entt::registry& r, entt::entity e, const EncodeOpti
                           {"height", t->params.height_m},
                           {"octaves", t->params.octaves},
                           {"warp", t->params.warp_strength},
+                          {"erosion", enum_name(k_erosion_models, t->params.erosion_model)},
                           {"droplets", t->params.erosion_droplets},
+                          {"erosion_steps", t->params.grid.iterations},
                           {"snowline", t->snowline_m},
                           {"streaming", t->streaming},
-                          {"stream_radius", t->stream_radius}};
+                          {"stream_radius", t->stream_radius},
+                          {"gpu", t->gpu_generate}};
     }
     if (const auto* n = r.try_get<NetReplicated>(e)) out["net_replicated"] = {{"net_id", n->net_id}};
     if (const auto* a = r.try_get<AudioSource>(e)) {
@@ -729,10 +734,13 @@ std::expected<void, core::Error> apply_component(entt::registry& r, entt::entity
             f.number("height", p.height_m, 0.0F, 100000.0F);
             f.integer("octaves", p.octaves, 1, 16);
             f.number("warp", p.warp_strength, 0.0F, 4.0F);
+            f.enumeration("erosion", p.erosion_model, k_erosion_models);
             f.integer("droplets", p.erosion_droplets, 0, 50'000'000);
+            f.integer("erosion_steps", p.grid.iterations, 0, 100'000);
             f.number("snowline", t.snowline_m);
             f.boolean("streaming", t.streaming);
             f.integer("stream_radius", t.stream_radius, 0, 8);
+            f.boolean("gpu", t.gpu_generate);
             t.regenerate = true; // rebuild with the new parameters
         });
     }
