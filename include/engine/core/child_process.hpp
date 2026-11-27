@@ -66,8 +66,16 @@ struct ProcessOptions {
 // Runs `program` with `args` (argv[1..]), blocking until it exits. Fails when
 // the process cannot be started, exceeds `options.timeout` or is cancelled (the
 // child is killed in both cases and the error carries its output so far); a
-// non-zero exit is a ProcessResult.
-// Safe to call from any thread.
+// non-zero exit is a ProcessResult. The child's stdin is the null device.
+//
+// Thread safety: concurrent calls from any threads are safe — no call's
+// output pipe leaks into another call's child (Linux/BSD: pipe2(O_CLOEXEC);
+// Windows: the child inherits only its own handles via
+// PROC_THREAD_ATTRIBUTE_HANDLE_LIST; other POSIX systems: pipe creation and
+// spawn are serialised). Not covered: code elsewhere in the process that
+// spawns with blanket inheritance — Windows CreateProcess(bInheritHandles=TRUE)
+// without a handle list, or on POSIX systems without pipe2 a raw fork/exec —
+// can still inherit the pipe while a spawn is in progress.
 [[nodiscard]] std::expected<ProcessResult, Error>
 run_process(const std::filesystem::path& program, std::span<const std::string> args,
             const ProcessOptions& options = {});

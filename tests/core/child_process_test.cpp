@@ -3,6 +3,8 @@
 // child that outlives its timeout, or is cancelled from another thread, is
 // killed (with anything it started) and reported as an error promptly.
 
+#include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <string>
 #include <thread>
@@ -107,6 +109,34 @@ TEST(ChildProcess, CancelFromAnotherThreadKillsTheChild) {
     const Clock::time_point again = Clock::now();
     EXPECT_ERR(engine::core::run_process(*sh, k_hang, options));
     EXPECT_LT(Clock::now() - again, std::chrono::seconds(5));
+}
+
+// Spawns racing on two threads: if a slow child inherited a fast call's
+// pipe, that call would wait for the slow child before seeing EOF.
+TEST(ChildProcess, ConcurrentCallsDoNotInheritEachOthersPipes) {
+    const auto sh = engine::core::find_on_path("sh");
+    ASSERT_TRUE(sh.has_value());
+    std::atomic<bool> slow_done{false};
+    std::thread slow([&] {
+        const std::vector<std::string> args = {"-c", "sleep 0.5"};
+        for (int i = 0; i < 4; ++i) EXPECT_OK(engine::core::run_process(*sh, args));
+        slow_done = true;
+    });
+    const std::vector<std::string> quick = {"-c", "echo quick"};
+    Clock::duration worst{};
+    int runs = 0;
+    while (!slow_done) {
+        const Clock::time_point start = Clock::now();
+        auto r = engine::core::run_process(*sh, quick);
+        worst = std::max(worst, Clock::now() - start);
+        ++runs;
+        EXPECT_OK(r);
+        if (r) EXPECT_EQ(r->output, "quick\n");
+    }
+    slow.join();
+    EXPECT_GT(runs, 0);
+    EXPECT_LT(worst, std::chrono::milliseconds(400))
+        << "a quick call waited on another call's child";
 }
 
 #endif

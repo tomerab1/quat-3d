@@ -167,15 +167,51 @@ void append_quoted(std::wstring& cmd, const std::wstring& arg) {
 std::expected<ProcessResult, Error>
 run_process(const fs::path& program, std::span<const std::string> args,
             const ProcessOptions& options) {
-    SECURITY_ATTRIBUTES sa{};
-    sa.nLength = sizeof(sa);
-    sa.bInheritHandle = TRUE;
+    // Both pipe ends start non-inheritable. The child's end, and a NUL stdin,
+    // become inheritable only for the CreateProcess call, and that call
+    // inherits exactly those two (PROC_THREAD_ATTRIBUTE_HANDLE_LIST) — so a
+    // concurrent run_process never hands its pipe to another call's child.
     HANDLE read_end = nullptr;
     HANDLE write_end = nullptr;
-    if (!CreatePipe(&read_end, &write_end, &sa, 0)) {
-        return fail("CreatePipe failed");
+    if (!CreatePipe(&read_end, &write_end, nullptr, 0)) {
+        return fail("CreatePipe failed (error " + std::to_string(GetLastError()) + ")");
     }
-    SetHandleInformation(read_end, HANDLE_FLAG_INHERIT, 0); // parent-only end
+    SECURITY_ATTRIBUTES inherit{};
+    inherit.nLength = sizeof(inherit);
+    inherit.bInheritHandle = TRUE;
+    HANDLE null_in = CreateFileW(L"NUL", GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, &inherit,
+                                 OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    const auto close_all = [&] {
+        CloseHandle(read_end);
+        CloseHandle(write_end);
+        if (null_in != INVALID_HANDLE_VALUE) CloseHandle(null_in);
+    };
+    if (null_in == INVALID_HANDLE_VALUE ||
+        !SetHandleInformation(write_end, HANDLE_FLAG_INHERIT, HANDLE_FLAG_INHERIT)) {
+        const DWORD err = GetLastError();
+        close_all();
+        return fail("cannot set up the child's standard handles (error " + std::to_string(err) +
+                    ")");
+    }
+
+    HANDLE inherited[] = {write_end, null_in};
+    SIZE_T list_size = 0;
+    InitializeProcThreadAttributeList(nullptr, 1, 0, &list_size); // sizes the list
+    std::vector<std::uint64_t> list_storage((list_size + sizeof(std::uint64_t) - 1) /
+                                            sizeof(std::uint64_t));
+    auto* attributes = reinterpret_cast<LPPROC_THREAD_ATTRIBUTE_LIST>(list_storage.data());
+    if (!InitializeProcThreadAttributeList(attributes, 1, 0, &list_size)) {
+        const DWORD err = GetLastError();
+        close_all();
+        return fail("InitializeProcThreadAttributeList failed (error " + std::to_string(err) + ")");
+    }
+    if (!UpdateProcThreadAttribute(attributes, 0, PROC_THREAD_ATTRIBUTE_HANDLE_LIST, inherited,
+                                   sizeof(inherited), nullptr, nullptr)) {
+        const DWORD err = GetLastError();
+        DeleteProcThreadAttributeList(attributes);
+        close_all();
+        return fail("UpdateProcThreadAttribute failed (error " + std::to_string(err) + ")");
+    }
 
     std::wstring cmd;
     append_quoted(cmd, program.wstring());
@@ -184,20 +220,28 @@ run_process(const fs::path& program, std::span<const std::string> args,
         append_quoted(cmd, widen(a));
     }
 
-    STARTUPINFOW si{};
-    si.cb = sizeof(si);
-    si.dwFlags = STARTF_USESTDHANDLES;
-    si.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
-    si.hStdOutput = write_end;
-    si.hStdError = write_end;
+    STARTUPINFOEXW si{};
+    si.StartupInfo.cb = sizeof(si);
+    si.StartupInfo.dwFlags = STARTF_USESTDHANDLES;
+    si.StartupInfo.hStdInput = null_in;
+    si.StartupInfo.hStdOutput = write_end;
+    si.StartupInfo.hStdError = write_end;
+    si.lpAttributeList = attributes;
     PROCESS_INFORMATION pi{};
     const std::wstring app = program.wstring();
     const BOOL started = CreateProcessW(app.c_str(), cmd.data(), nullptr, nullptr, TRUE,
-                                        CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi);
-    CloseHandle(write_end); // the child holds its own copy
+                                        CREATE_NO_WINDOW | EXTENDED_STARTUPINFO_PRESENT, nullptr,
+                                        nullptr, &si.StartupInfo, &pi);
+    const DWORD create_error = started ? 0 : GetLastError();
+    DeleteProcThreadAttributeList(attributes);
+    CloseHandle(write_end); // the child holds its own copies
+    write_end = nullptr;
+    CloseHandle(null_in);
+    null_in = INVALID_HANDLE_VALUE;
     if (!started) {
         CloseHandle(read_end);
-        return fail("CreateProcess failed for " + program.string());
+        return fail("CreateProcess failed for " + program.string() + " (error " +
+                    std::to_string(create_error) + ")");
     }
     CloseHandle(pi.hThread);
 
@@ -280,19 +324,6 @@ run_process(const fs::path& program, std::span<const std::string> args,
     if (::access(program.c_str(), X_OK) != 0) {
         return fail("cannot start " + program.string() + ": " + std::strerror(errno));
     }
-    int pipe_fds[2] = {-1, -1};
-#if defined(__linux__)
-    if (::pipe2(pipe_fds, O_CLOEXEC) != 0) {
-        return fail(std::string("pipe2 failed: ") + std::strerror(errno));
-    }
-#else
-    if (::pipe(pipe_fds) != 0) {
-        return fail(std::string("pipe failed: ") + std::strerror(errno));
-    }
-    ::fcntl(pipe_fds[0], F_SETFD, FD_CLOEXEC);
-    ::fcntl(pipe_fds[1], F_SETFD, FD_CLOEXEC);
-#endif
-
     // argv: program, args..., null. posix_spawn takes char* const[] but does
     // not modify the strings.
     const std::string program_str = program.string();
@@ -302,24 +333,57 @@ run_process(const fs::path& program, std::span<const std::string> args,
     for (const std::string& a : args) argv.push_back(const_cast<char*>(a.c_str()));
     argv.push_back(nullptr);
 
-    posix_spawn_file_actions_t actions;
-    posix_spawn_file_actions_init(&actions);
-    // stdout and stderr both go to the pipe (dup2 clears close-on-exec).
-    posix_spawn_file_actions_adddup2(&actions, pipe_fds[1], STDOUT_FILENO);
-    posix_spawn_file_actions_adddup2(&actions, pipe_fds[1], STDERR_FILENO);
     // A process group of its own, so a timeout or cancel also kills whatever
     // the child started (a grandchild would otherwise keep the pipe open).
     posix_spawnattr_t attr;
     posix_spawnattr_init(&attr);
-    posix_spawnattr_setflags(&attr, POSIX_SPAWN_SETPGROUP);
+    short spawn_flags = POSIX_SPAWN_SETPGROUP;
+#if defined(__APPLE__)
+    // Only the descriptors set up below reach the child, whatever else the
+    // process has open without close-on-exec.
+    spawn_flags |= POSIX_SPAWN_CLOEXEC_DEFAULT;
+#endif
+    posix_spawnattr_setflags(&attr, spawn_flags);
     posix_spawnattr_setpgroup(&attr, 0);
 
+    int pipe_fds[2] = {-1, -1};
     pid_t pid = -1;
-    const int spawn_err =
-        ::posix_spawn(&pid, program_str.c_str(), &actions, &attr, argv.data(), environ);
+    int spawn_err = 0;
+    {
+        // The pipe must be close-on-exec from birth, or a concurrent spawn
+        // inherits its write end (and this call then waits for that unrelated
+        // child to exit before it sees EOF). pipe2 does it atomically; without
+        // it, run_process calls are serialised from pipe() until the write end
+        // is closed (a fork/exec elsewhere in the process is not covered).
+#if defined(__linux__) || defined(__FreeBSD__) || defined(__NetBSD__) || \
+    defined(__OpenBSD__) || defined(__DragonFly__)
+        if (::pipe2(pipe_fds, O_CLOEXEC) != 0) {
+            posix_spawnattr_destroy(&attr);
+            return fail(std::string("pipe2 failed: ") + std::strerror(errno));
+        }
+#else
+        static std::mutex spawn_mutex;
+        std::lock_guard spawn_lock(spawn_mutex);
+        if (::pipe(pipe_fds) != 0) {
+            posix_spawnattr_destroy(&attr);
+            return fail(std::string("pipe failed: ") + std::strerror(errno));
+        }
+        ::fcntl(pipe_fds[0], F_SETFD, FD_CLOEXEC);
+        ::fcntl(pipe_fds[1], F_SETFD, FD_CLOEXEC);
+#endif
+        posix_spawn_file_actions_t actions;
+        posix_spawn_file_actions_init(&actions);
+        // stdin from /dev/null (a compiler never waits on the engine's
+        // terminal); stdout and stderr both go to the pipe (dup2 clears
+        // close-on-exec).
+        posix_spawn_file_actions_addopen(&actions, STDIN_FILENO, "/dev/null", O_RDONLY, 0);
+        posix_spawn_file_actions_adddup2(&actions, pipe_fds[1], STDOUT_FILENO);
+        posix_spawn_file_actions_adddup2(&actions, pipe_fds[1], STDERR_FILENO);
+        spawn_err = ::posix_spawn(&pid, program_str.c_str(), &actions, &attr, argv.data(), environ);
+        posix_spawn_file_actions_destroy(&actions);
+        ::close(pipe_fds[1]); // the child holds its own copy
+    }
     posix_spawnattr_destroy(&attr);
-    posix_spawn_file_actions_destroy(&actions);
-    ::close(pipe_fds[1]); // the child holds its own copy
     if (spawn_err != 0) {
         ::close(pipe_fds[0]);
         return fail("cannot start " + program_str + ": " + std::strerror(spawn_err));
