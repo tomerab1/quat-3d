@@ -33,7 +33,8 @@
 //
 // Screenshots never stall the GPU: the copy lands in a per-slot host-visible
 // buffer that is read only once that slot's fence has signalled anyway, and
-// PNG encoding runs on a worker thread; the reply goes out from poll().
+// PNG encoding runs on a worker thread; the reply goes out from poll()
+// (screenshot_capture.hpp).
 
 #include <cstdint>
 #include <filesystem>
@@ -44,6 +45,7 @@
 #include <glm/glm.hpp>
 #include <vulkan/vulkan.h>
 
+#include "app/screenshot_capture.hpp" // CaptureSource
 #include "engine/core/stderr_capture.hpp"
 #include "engine/scene/scene.hpp" // GroundHeightFn
 
@@ -111,16 +113,6 @@ struct RemoteBridgeTargets {
 #endif
 
     std::filesystem::path project_root;
-};
-
-// The image a screenshot copies: the final scene colour (the editor's
-// offscreen viewport, else the swapchain image) as the recorded frame leaves
-// it. Needs TRANSFER_SRC usage.
-struct CaptureSource {
-    VkImage       image = VK_NULL_HANDLE;
-    VkFormat      format = VK_FORMAT_UNDEFINED;
-    VkExtent2D    extent{0, 0};
-    VkImageLayout layout = VK_IMAGE_LAYOUT_UNDEFINED; // before and after the copy
 };
 
 class RemoteBridge {
