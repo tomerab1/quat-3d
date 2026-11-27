@@ -345,6 +345,7 @@ set_source_files_properties(src/remote/world/stb_image_write_impl.cpp
 # GBuffer pass (mesh_pass); lighting/tonemap/imgui passes follow in later slices.
 # ---------------------------------------------------------------------------
 add_library(engine_renderer STATIC
+    src/renderer/csm.cpp
     src/renderer/draw_batching.cpp
     src/renderer/grass.cpp
     src/renderer/grass_pass.cpp
