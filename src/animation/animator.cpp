@@ -49,8 +49,12 @@ std::vector<JointPose> bind_pose(const SkeletonAsset& skeleton) {
 std::vector<JointPose> sample_local_pose(const SkeletonAsset& skeleton, const AnimClipAsset& clip,
                                          float time) {
     std::vector<JointPose> pose = bind_pose(skeleton);
-    if (clip.compressed != nullptr && clip.compressed->binds(skeleton)) {
-        decompress_pose(*clip.compressed, time, pose);
+    // Compressed tracks serve any skin over the clip's nodes. With the raw
+    // keys dropped every animated node has a track (joints without one are
+    // unanimated); with them kept, a skin the tracks do not cover reads them.
+    if (clip.compressed != nullptr &&
+        (clip.channels.empty() || clip.compressed->covers(skeleton))) {
+        decompress_pose(*clip.compressed, skeleton, time, pose);
         return pose;
     }
 

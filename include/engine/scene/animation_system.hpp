@@ -25,7 +25,8 @@
 namespace engine::scene {
 
 // Ground under a foot: cast straight down from `origin` for `length` metres,
-// skipping colliders owned by `ignore` (the character and its ancestors).
+// skipping colliders owned by `ignore` (the character's whole hierarchy:
+// its body or controller entity and everything parented under it).
 using FootGroundProbe = std::function<std::optional<animation::GroundHit>(
     const glm::vec3& origin, float length, std::span<const entt::entity> ignore)>;
 
@@ -50,6 +51,7 @@ struct AnimationRuntime {
     std::string                       foot_rig_names; // pelvis|left|right it resolved
     animation::FootPlacementState     feet;
     animation::FootPlacementResult    foot_result;
+    std::vector<entt::entity>         probe_ignore; // reused buffer for the probes
 };
 
 // Advance every Animator by `dt`, sample it against the entity's SkinnedMesh

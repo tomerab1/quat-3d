@@ -143,20 +143,36 @@ TEST(AclCompression, RawKeysStayWhenAskedOrWhenTheClipDrivesOtherNodes) {
     EXPECT_FALSE(stats->raw_dropped);
 }
 
-TEST(AclCompression, OnlyTheBoundSkeletonDecompresses) {
+TEST(AclCompression, TracksMatchOtherSkinsByNode) {
     const SkeletonAsset skel = tree_skeleton();
     AnimClipAsset clip = swing_clip(skel);
     ASSERT_OK(compress_clip(clip, skel));
     EXPECT_TRUE(clip.compressed->binds(skel));
 
+    // A skin over limb 2 only (nodes 11..15, re-indexed), as a hair or
+    // clothing skin shares a subset of the body's joints.
+    SkeletonAsset limb;
+    for (int n = 11; n <= 15; ++n) {
+        Joint j = skel.joints[static_cast<std::size_t>(n)];
+        j.parent = n == 11 ? -1 : static_cast<int>(limb.joints.size()) - 1;
+        limb.joints.push_back(j);
+    }
+    EXPECT_FALSE(clip.compressed->binds(limb));
+    EXPECT_TRUE(clip.compressed->covers(limb));
+    const std::vector<JointPose> full = sample_local_pose(skel, clip, 0.7F);
+    const std::vector<JointPose> part = sample_local_pose(limb, clip, 0.7F);
+    const std::vector<JointPose> part_bind = bind_pose(limb);
+    for (std::size_t j = 0; j < limb.joints.size(); ++j) {
+        EXPECT_EQ(part[j].rotation, full[11 + j].rotation) << "joint " << j;
+        EXPECT_NE(part[j].rotation, part_bind[j].rotation) << "joint " << j << " left at bind";
+    }
+
+    // A joint the clip has no track for keeps its bind pose; the rest play.
     SkeletonAsset other = skel;
     other.joints[3].node = 42;
-    EXPECT_FALSE(clip.compressed->binds(other));
-    // Raw keys are gone: another layout gets its bind pose, never garbage.
     const std::vector<JointPose> pose = sample_local_pose(other, clip, 0.5F);
-    const std::vector<JointPose> bind = bind_pose(other);
-    EXPECT_EQ(pose[1].translation, bind[1].translation);
-    EXPECT_EQ(pose[1].rotation, bind[1].rotation);
+    EXPECT_EQ(pose[3].rotation, bind_pose(other)[3].rotation);
+    EXPECT_EQ(pose[1].rotation, sample_local_pose(skel, clip, 0.5F)[1].rotation);
 }
 
 TEST(AclCompression, RejectsUnusableInput) {

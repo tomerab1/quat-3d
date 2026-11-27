@@ -50,6 +50,7 @@ struct FootRig {
     int                          pelvis = -1;
     std::array<TwoBoneChain, 2>  legs{};
     std::array<float, 2>         ankle_height{}; // rest ankle height above the root plane
+    std::array<glm::vec3, 2>     bind_bend{};    // knee bend direction at rest (armature space)
     std::vector<std::uint8_t>    pelvis_subtree; // 1 = joint moves with the pelvis
 
     [[nodiscard]] bool valid() const noexcept {
@@ -74,6 +75,7 @@ struct FootPlacementState {
     std::array<float, 2>     foot{};
     std::array<float, 2>     foot_velocity{};
     std::array<glm::vec3, 2> normal{glm::vec3(0.0F, 1.0F, 0.0F), glm::vec3(0.0F, 1.0F, 0.0F)};
+    std::array<glm::vec3, 2> knee_bend{}; // last solved bend direction (world), zero = none
     bool                     initialized = false;
 };
 

@@ -1,6 +1,7 @@
 // Two-bone IK: exact reach, clamped reach, pole side, and the local-pose rewrite.
 
 #include <cmath>
+#include <utility>
 #include <vector>
 
 #include <glm/gtc/matrix_transform.hpp>
@@ -12,6 +13,7 @@
 namespace {
 
 using namespace engine::animation;
+using quat::test::glm_text;
 
 // Hip at the origin, knee bent forward (+Z), ankle straight below the hip.
 const glm::vec3 k_hip(0.0F, 0.0F, 0.0F);
@@ -86,6 +88,75 @@ TEST(TwoBoneIk, RewritesTheLocalPoseUnderARotatedRoot) {
     const std::vector<glm::mat4> solved = pose_world_matrices(skel, pose, root);
     EXPECT_VEC_NEAR(glm::vec3(solved[3][3]), target, 1e-4F);
     EXPECT_VEC_NEAR(glm::vec3(solved[1][3]), glm::vec3(world[1][3]), 1e-5F) << "hip moved";
+}
+
+// ---- Degenerate input ------------------------------------------------------
+
+[[nodiscard]] bool finite(const glm::vec3& v) {
+    return std::isfinite(v.x) && std::isfinite(v.y) && std::isfinite(v.z);
+}
+[[nodiscard]] bool unit_quat(const glm::quat& q) {
+    return std::isfinite(q.w) && std::isfinite(q.x) && std::isfinite(q.y) &&
+           std::isfinite(q.z) && std::abs(glm::length(q) - 1.0F) < 1e-4F;
+}
+
+// Finite output, unit deltas, and the deltas carry each bone onto the solved
+// positions without changing its length.
+void expect_sane(const TwoBoneIkSolution& s, const glm::vec3& a, const glm::vec3& b,
+                 const glm::vec3& c) {
+    ASSERT_TRUE(finite(s.joint) && finite(s.end)) << glm_text(s.joint) << glm_text(s.end);
+    ASSERT_TRUE(unit_quat(s.upper) && unit_quat(s.lower));
+    const glm::vec3 upper = s.upper * (b - a);
+    const glm::vec3 lower = s.lower * (s.upper * (c - b));
+    EXPECT_NEAR(glm::length(upper), glm::length(b - a), 1e-5F);
+    EXPECT_NEAR(glm::length(lower), glm::length(c - b), 1e-5F);
+    EXPECT_VEC_NEAR(a + upper, s.joint, 1e-4F);
+    EXPECT_VEC_NEAR(s.joint + lower, s.end, 1e-4F);
+}
+
+TEST(TwoBoneIkDegenerate, ZeroLengthBonesLeaveTheChainAlone) {
+    const glm::vec3 target(0.3F, -0.7F, 0.2F);
+    const glm::vec3 pole(0.0F, -0.5F, 1.0F);
+    for (const auto& [b, c] : {std::pair{k_hip, k_ankle}, std::pair{k_knee, k_knee}}) {
+        const TwoBoneIkSolution s = solve_two_bone_ik(k_hip, b, c, target, pole);
+        EXPECT_FALSE(s.reachable);
+        expect_sane(s, k_hip, b, c);
+        EXPECT_VEC_NEAR(s.end, c, 1e-6F);
+    }
+}
+
+TEST(TwoBoneIkDegenerate, TargetAtTheRootFoldsTheLeg) {
+    const TwoBoneIkSolution s =
+        solve_two_bone_ik(k_hip, k_knee, k_ankle, k_hip, k_knee + glm::vec3(0, 0, 1));
+    expect_sane(s, k_hip, k_knee, k_ankle);
+    EXPECT_LT(glm::length(s.end - k_hip), 1e-3F) << "equal bones fold onto the root";
+}
+
+TEST(TwoBoneIkDegenerate, PoleOnTheRootTargetLineKeepsTheCurrentKneeSide) {
+    const glm::vec3 target(0.0F, -0.8F, 0.0F);
+    const TwoBoneIkSolution s =
+        solve_two_bone_ik(k_hip, k_knee, k_ankle, target, glm::vec3(0.0F, -2.0F, 0.0F));
+    expect_sane(s, k_hip, k_knee, k_ankle);
+    EXPECT_VEC_NEAR(s.end, target, 1e-5F);
+    EXPECT_GT(side_of_line(s.joint, target, glm::vec3(0, 0, 1)), 0.1F) << "knee flipped";
+}
+
+TEST(TwoBoneIkDegenerate, StraightLegWithACollinearPoleBendsAlongTheHint) {
+    // Hip, knee, ankle, target and pole all on one vertical line.
+    const glm::vec3 b(0.0F, -0.5F, 0.0F);
+    const glm::vec3 c(0.0F, -1.0F, 0.0F);
+    const glm::vec3 target(0.0F, -0.7F, 0.0F);
+    const glm::vec3 pole(0.0F, -2.0F, 0.0F);
+    for (const glm::vec3& hint : {glm::vec3(0, 0, 1), glm::vec3(1, 0, 0), glm::vec3(-1, 0, -1)}) {
+        const TwoBoneIkSolution s = solve_two_bone_ik(k_hip, b, c, target, pole, hint);
+        expect_sane(s, k_hip, b, c);
+        EXPECT_VEC_NEAR(s.end, target, 1e-5F);
+        EXPECT_GT(side_of_line(s.joint, target, glm::normalize(hint)), 0.1F)
+            << "knee ignored the hint " << glm_text(hint);
+        // The same input bends the same way (no dependence on call history).
+        const TwoBoneIkSolution again = solve_two_bone_ik(k_hip, b, c, target, pole, hint);
+        EXPECT_VEC_NEAR(again.joint, s.joint, 0.0F);
+    }
 }
 
 } // namespace

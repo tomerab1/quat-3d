@@ -3,6 +3,7 @@
 #include "engine/animation/compression.hpp"
 
 #include <algorithm>
+#include <vector>
 
 #include <acl/core/compressed_tracks.h>
 #include <acl/decompression/decompress.h>
@@ -50,14 +51,32 @@ struct PoseWriter final : acl::track_writer {
 
 } // namespace
 
-void decompress_pose(const CompressedClip& compressed, float time, std::span<JointPose> pose) {
+void decompress_pose(const CompressedClip& compressed, const SkeletonAsset& skeleton,
+                     float time, std::span<JointPose> pose) {
     if (compressed.size == 0) return;
     const auto* tracks = reinterpret_cast<const acl::compressed_tracks*>(compressed.buffer.data());
     acl::decompression_context<acl::default_transform_decompression_settings> context;
     if (!context.initialize(*tracks)) return;
     context.seek(std::clamp(time, 0.0F, compressed.duration), acl::sample_rounding_policy::none);
-    PoseWriter writer(pose);
+    if (compressed.binds(skeleton)) { // the layout it was built for
+        PoseWriter writer(pose);
+        context.decompress_tracks(writer);
+        return;
+    }
+    // Another skin over the same nodes: decompress the full layout (seeded
+    // with this skeleton's bind pose where joints match, so skipped default
+    // sub-tracks keep it), then gather by node.
+    std::vector<JointPose> full(compressed.joint_nodes.size());
+    std::vector<int> track(skeleton.joints.size(), -1);
+    for (std::size_t j = 0; j < skeleton.joints.size() && j < pose.size(); ++j) {
+        track[j] = compressed.track_of(skeleton.joints[j].node);
+        if (track[j] >= 0) full[static_cast<std::size_t>(track[j])] = pose[j];
+    }
+    PoseWriter writer(full);
     context.decompress_tracks(writer);
+    for (std::size_t j = 0; j < track.size() && j < pose.size(); ++j) {
+        if (track[j] >= 0) pose[j] = full[static_cast<std::size_t>(track[j])];
+    }
 }
 
 } // namespace engine::animation

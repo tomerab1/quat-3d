@@ -13,6 +13,7 @@
 #include <cstdint>
 #include <expected>
 #include <span>
+#include <utility>
 #include <vector>
 
 #include "engine/animation/animator.hpp"
@@ -49,7 +50,9 @@ struct CompressionStats {
     bool          raw_dropped = false;
 };
 
-// An ACL-compressed clip bound to one skeleton layout (one track per joint).
+// An ACL-compressed clip: one track per joint of the skeleton it was built
+// for, addressed by glTF node, so it also serves other skins over the same
+// nodes (a hair or clothing skin using a subset of the body's joints).
 struct CompressedClip {
     struct alignas(16) Block {
         std::byte bytes[16];
@@ -57,13 +60,19 @@ struct CompressedClip {
     std::vector<Block> buffer;      // acl::compressed_tracks, 16-byte aligned
     std::size_t        size = 0;    // bytes used in `buffer`
     std::vector<int>   joint_nodes; // glTF node of each track's joint
+    std::vector<std::pair<int, std::uint32_t>> node_tracks; // (node, track), sorted
     float              duration = 0.0F;
 
     [[nodiscard]] std::size_t size_bytes() const noexcept {
-        return size + joint_nodes.size() * sizeof(int);
+        return size + joint_nodes.size() * sizeof(int) +
+               node_tracks.size() * sizeof(std::pair<int, std::uint32_t>);
     }
     // Same joint count and node per joint as the skeleton it was built for.
     [[nodiscard]] bool binds(const SkeletonAsset& skeleton) const noexcept;
+    // Track of glTF node `node`, or -1 when the clip has none.
+    [[nodiscard]] int track_of(int node) const noexcept;
+    // Every joint of `skeleton` has a track.
+    [[nodiscard]] bool covers(const SkeletonAsset& skeleton) const noexcept;
 };
 
 // Keyframe payload of the clip's raw samplers (times + values).
@@ -79,8 +88,10 @@ compress_clip(AnimClipAsset& clip, const SkeletonAsset& skeleton,
               const CompressionSettings& settings = {}, float metres_per_unit = 1.0F);
 
 // Decompresses the pose at `time` (clamped to the clip) into `pose`, one
-// entry per track. `pose` must hold the skeleton's bind pose on entry:
-// sub-tracks equal to it are not stored and are left untouched.
-void decompress_pose(const CompressedClip& compressed, float time, std::span<JointPose> pose);
+// entry per joint of `skeleton`, matching joints to tracks by glTF node.
+// `pose` must hold the skeleton's bind pose on entry: joints without a track
+// and sub-tracks equal to the bind pose are left untouched.
+void decompress_pose(const CompressedClip& compressed, const SkeletonAsset& skeleton,
+                     float time, std::span<JointPose> pose);
 
 } // namespace engine::animation

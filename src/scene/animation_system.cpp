@@ -3,7 +3,7 @@
 #include "engine/scene/animation_system.hpp"
 
 #include <algorithm>
-#include <array>
+#include <vector>
 #include <cmath>
 #include <utility>
 
@@ -38,16 +38,22 @@ using ClipHandle = asset::AssetHandle<animation::AnimClipAsset>;
 }
 
 // Starts a transition after `anim.clip` replaced `rt.playing`; returns this
-// tick's pose when the transition already sampled it.
+// tick's pose when the transition already sampled it. A switch during a
+// running transition always inertializes from the last output pose (which
+// carries that transition's state), so it never pops: a crossfade would
+// restart from the pure outgoing clip and drop the running offset.
 [[nodiscard]] std::vector<JointPose> begin_switch(const animation::SkeletonAsset& skeleton,
                                                   const Animator& anim, AnimationRuntime& rt,
                                                   float dt) {
-    rt.inertializer.reset();
-    rt.fade_from = {};
     const std::size_t joints = skeleton.joints.size();
-    if (!(anim.blend_time > 0.0F)) return {};
+    const bool transitioning = rt.inertializer.active() || rt.fade_from.valid();
+    if (!(anim.blend_time > 0.0F)) { // a cut
+        rt.inertializer.reset();
+        rt.fade_from = {};
+        return {};
+    }
 
-    if (anim.blend_mode == animation::BlendMode::crossfade) {
+    if (anim.blend_mode == animation::BlendMode::crossfade && !transitioning) {
         if (!playable(rt.playing)) return {};
         rt.fade_from = rt.playing;
         rt.fade_time = rt.playing_time;
@@ -55,7 +61,12 @@ using ClipHandle = asset::AssetHandle<animation::AnimClipAsset>;
         rt.fade_duration = anim.blend_time;
         return {};
     }
-    if (rt.last_pose.size() != joints || rt.prev_pose.size() != joints) return {};
+    if (rt.last_pose.size() != joints || rt.prev_pose.size() != joints) {
+        rt.inertializer.reset(); // no history yet: a cut
+        rt.fade_from = {};
+        return {};
+    }
+    rt.fade_from = {}; // its blend lives on in last_pose, now the source
     const float duration = playable(anim.clip) ? anim.clip->duration : 0.0F;
     std::vector<JointPose> now = sample(skeleton, anim.clip, anim.time);
     const std::vector<JointPose> before =
@@ -104,15 +115,30 @@ using ClipHandle = asset::AssetHandle<animation::AnimClipAsset>;
 }
 
 // The entity and its ancestors: colliders foot probes must not hit.
-[[nodiscard]] std::size_t probe_ignores(const entt::registry& registry, entt::entity e,
-                                        std::array<entt::entity, 8>& out) {
-    std::size_t n = 0;
-    for (entt::entity a = e; a != entt::null && n < out.size();) {
-        out[n++] = a;
+// Everything the character owns, which foot probes must not stand on: the
+// whole subtree of its top-most ancestor carrying a CharacterController or
+// RigidBody (else of its hierarchy root), so weapon, shield or prop colliders
+// parented under it are skipped too.
+void probe_ignores(const entt::registry& registry, entt::entity e,
+                   std::vector<entt::entity>& out) {
+    out.clear();
+    entt::entity anchor = entt::null;
+    entt::entity top = e;
+    std::size_t guard = 0;
+    for (entt::entity a = e; a != entt::null && guard++ < 4096;) {
+        top = a;
+        if (registry.any_of<CharacterController, RigidBody>(a)) anchor = a;
         const auto* parent = registry.try_get<Parent>(a);
         a = parent != nullptr && registry.valid(parent->entity) ? parent->entity : entt::null;
     }
-    return n;
+    out.push_back(anchor != entt::null ? anchor : top);
+    for (std::size_t i = 0; i < out.size() && out.size() < 4096; ++i) {
+        if (const auto* kids = registry.try_get<Children>(out[i])) {
+            for (const entt::entity k : kids->entities) {
+                if (registry.valid(k)) out.push_back(k);
+            }
+        }
+    }
 }
 
 void place_feet(entt::registry& registry, entt::entity e, const FootIK& fik,
@@ -136,14 +162,11 @@ void place_feet(entt::registry& registry, entt::entity e, const FootIK& fik,
     settings.max_foot_angle = glm::radians(fik.max_foot_angle);
     settings.smoothing = fik.smoothing;
 
-    std::array<entt::entity, 8> ignore{};
-    const std::size_t ignored = probe_ignores(registry, e, ignore);
+    if (ground) probe_ignores(registry, e, rt.probe_ignore);
     const animation::GroundProbe probe =
-        ground ? animation::GroundProbe(
-                     [&](const glm::vec3& origin, float length) {
-                         return ground(origin, length,
-                                       std::span<const entt::entity>(ignore.data(), ignored));
-                     })
+        ground ? animation::GroundProbe([&](const glm::vec3& origin, float length) {
+            return ground(origin, length, rt.probe_ignore);
+        })
                : animation::GroundProbe{};
     rt.foot_result = animation::apply_foot_placement(skeleton, pose, root, rt.foot_rig, settings,
                                                      probe, rt.feet, dt);

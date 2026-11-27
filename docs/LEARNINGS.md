@@ -26,6 +26,18 @@ into CLAUDE.md or the brief template in [`CYCLE.md`](CYCLE.md).
 
 ## Build and CI
 
+- **Hand-compiling translation units proves neither that they are in a CMake
+  target nor that they link.** G8.4 passed every `-fsyntax-only` check, but
+  `game` failed to link: `compress_clips` was declared in
+  `scene::gltf_detail` (internal.hpp) and defined in `scene`. → Before
+  pushing, grep CMakeLists for every new `.cpp`, and for a new cross-file
+  function compile caller and callee with `-c` and compare `nm` (the
+  undefined symbol must match the defined one).
+- **Local `-c` object caches go stale across merges.** A GPU test failed with
+  "no Vulkan device" after master changed `rhi::Device`: unchanged test
+  sources kept objects built against the old header. Rebuild from scratch
+  after merging.
+
 - **`--validation` silently runs without the layer when it isn't
   installed.** The container lacks the Khronos layer;
   `apt-get install -y vulkan-validationlayers` adds it (R10.2 ran its GPU

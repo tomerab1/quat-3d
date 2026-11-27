@@ -1,7 +1,7 @@
 #include "app/world_runtime.hpp"
 
 #include <algorithm>
-#include <array>
+#include <vector>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -59,13 +59,13 @@ WorldRuntime::WorldRuntime() {
             : demo_.physics_world ? &*demo_.physics_world
                                   : nullptr;
         if (world != nullptr) {
-            std::array<std::uint32_t, 8> owners{};
-            const std::size_t n = std::min(ignore.size(), owners.size());
-            for (std::size_t i = 0; i < n; ++i) {
-                owners[i] = static_cast<std::uint32_t>(entt::to_integral(ignore[i]));
+            std::vector<std::uint32_t>& owners = probe_owners_; // reused buffer
+            owners.clear();
+            for (const entt::entity e : ignore) {
+                owners.push_back(static_cast<std::uint32_t>(entt::to_integral(e)));
             }
             if (const auto hit = world->cast_ray(origin, glm::vec3(0.0F, -1.0F, 0.0F), length,
-                                                 false, std::span(owners.data(), n))) {
+                                                 false, owners)) {
                 return engine::animation::GroundHit{hit->point, hit->normal};
             }
         }

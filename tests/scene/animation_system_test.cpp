@@ -1,6 +1,8 @@
 // Animation system: Animator clip switches (inertialized / crossfaded), FootIK
 // on a skinned entity, and the animator / foot_ik codec.
 
+#include <algorithm>
+#include <cmath>
 #include <string>
 #include <vector>
 
@@ -13,6 +15,7 @@
 #include "engine/scene/animation_system.hpp"
 #include "engine/scene/component_json.hpp"
 #include "engine/scene/components.hpp"
+#include "engine/scene/scene.hpp"
 #include "support/expect_ok.hpp"
 
 namespace {
@@ -96,6 +99,54 @@ TEST_F(AnimatorSwitch, CrossfadeBlendsTheOldClipOut) {
     EXPECT_NEAR(child_x(), 3.0F + (2.5F - 3.0F) * 0.5F, 1e-3F) << "halfway";
     for (int i = 0; i < 16; ++i) (void)tick();
     EXPECT_NEAR(child_x(), 2.5F, 1e-5F);
+}
+
+// Switching again mid-transition must not pop: the per-tick change on the
+// second switch stays within the motion of the ticks before it.
+class AnimatorReswitch : public AnimatorSwitch {
+protected:
+    void SetUp() override {
+        AnimatorSwitch::SetUp();
+        reg.get<s::Animator>(e).clips.push_back(assets.load<anim::AnimClipAsset>(
+            "far", [](const auto&) { return slide_clip("far", 1.0F, 1.0F); }));
+        reg.get<s::Animator>(e).time = 0.5F - 30 * k_dt;
+        for (int i = 0; i < 30; ++i) (void)tick(); // slide at t = 0.5: x = 3, +2 m/s
+    }
+
+    // Switches to clip `index` with `mode`, ticks `frames` times; returns x.
+    std::vector<float> switch_to(std::size_t index, anim::BlendMode mode, int frames) {
+        s::Animator& a = reg.get<s::Animator>(e);
+        a.blend_mode = mode;
+        a.clip = a.clips[index];
+        a.time = 0.0F;
+        std::vector<float> xs;
+        for (int i = 0; i < frames; ++i) xs.push_back(tick());
+        return xs;
+    }
+
+    static void expect_no_pop(const std::vector<float>& before, float after) {
+        const std::size_t n = before.size();
+        const float step = std::abs(before[n - 1] - before[n - 2]);
+        EXPECT_LE(std::abs(after - before[n - 1]), step + 0.01F)
+            << "popped from " << before[n - 1] << " to " << after << " (ticks moved " << step
+            << ")";
+    }
+};
+
+TEST_F(AnimatorReswitch, CrossfadeDuringAnInertializationDoesNotPop) {
+    const std::vector<float> xs = switch_to(1, anim::BlendMode::inertialize, 10);
+    ASSERT_TRUE(reg.get<s::AnimationRuntime>(e).inertializer.active());
+    const std::vector<float> next = switch_to(2, anim::BlendMode::crossfade, 1);
+    expect_no_pop(xs, next[0]);
+    EXPECT_NEAR(switch_to(2, anim::BlendMode::crossfade, 31).back(), 1.0F, 1e-5F);
+}
+
+TEST_F(AnimatorReswitch, CrossfadeDuringACrossfadeDoesNotPop) {
+    const std::vector<float> xs = switch_to(1, anim::BlendMode::crossfade, 15);
+    ASSERT_TRUE(reg.get<s::AnimationRuntime>(e).fade_from.valid());
+    const std::vector<float> next = switch_to(2, anim::BlendMode::crossfade, 1);
+    expect_no_pop(xs, next[0]);
+    EXPECT_NEAR(switch_to(2, anim::BlendMode::crossfade, 31).back(), 1.0F, 1e-5F);
 }
 
 TEST_F(AnimatorSwitch, CodecSwitchesClipsByNameAndListsThem) {
@@ -186,6 +237,45 @@ TEST(FootIkSystem, LowersThePelvisOntoAStepAndIgnoresItsOwnColliders) {
     s::animation_system(reg, k_dt, step);
     EXPECT_NEAR(quat::test::displacement(reg.get<s::SkinnedMesh>(e).joint_matrices[0]).y, 0.0F,
                 1e-6F);
+}
+
+TEST(FootIkSystem, ProbesSkipEverythingTheCharacterOwns) {
+    // world root > character (controller) > model (skinned) > weapon (collider);
+    // a sibling crate under the world root is ground.
+    engine::asset::AssetManager assets;
+    s::Scene                    scene;
+    entt::registry&             reg = scene.registry();
+    const entt::entity world = scene.create_entity("world");
+    const entt::entity character = scene.create_entity("character");
+    const entt::entity model = scene.create_entity("model");
+    const entt::entity weapon = scene.create_entity("weapon");
+    const entt::entity crate = scene.create_entity("crate");
+    ASSERT_TRUE(scene.set_parent(character, world));
+    ASSERT_TRUE(scene.set_parent(model, character));
+    ASSERT_TRUE(scene.set_parent(weapon, model));
+    ASSERT_TRUE(scene.set_parent(crate, world));
+    reg.emplace<s::CharacterController>(character);
+    reg.emplace<s::Collider>(weapon);
+    reg.emplace<s::SkinnedMesh>(
+        model, assets.load<anim::SkeletonAsset>("legs", [](const auto&) { return legs(); }),
+        std::vector<glm::mat4>{});
+    reg.emplace<s::Animator>(model);
+    reg.emplace<s::FootIK>(model);
+
+    std::vector<entt::entity> seen;
+    const s::FootGroundProbe probe = [&](const glm::vec3&, float,
+                                         std::span<const entt::entity> ignore)
+        -> std::optional<anim::GroundHit> {
+        seen.assign(ignore.begin(), ignore.end());
+        return std::nullopt;
+    };
+    s::animation_system(reg, k_dt, probe);
+    const auto has = [&](entt::entity x) { return std::find(seen.begin(), seen.end(), x) != seen.end(); };
+    EXPECT_TRUE(has(character));
+    EXPECT_TRUE(has(model));
+    EXPECT_TRUE(has(weapon)) << "a collider parented under the character catches the feet";
+    EXPECT_FALSE(has(world));
+    EXPECT_FALSE(has(crate));
 }
 
 TEST(FootIkCodec, RoundTripsAndValidates) {

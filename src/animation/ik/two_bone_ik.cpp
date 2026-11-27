@@ -51,7 +51,8 @@ glm::quat world_rotation(const glm::mat4& m) {
 }
 
 TwoBoneIkSolution solve_two_bone_ik(const glm::vec3& a, const glm::vec3& b, const glm::vec3& c,
-                                    const glm::vec3& target, const glm::vec3& pole) {
+                                    const glm::vec3& target, const glm::vec3& pole,
+                                    const glm::vec3& bend_hint) {
     TwoBoneIkSolution s;
     const float upper_len = glm::length(b - a);
     const float lower_len = glm::length(c - b);
@@ -70,10 +71,11 @@ TwoBoneIkSolution solve_two_bone_ik(const glm::vec3& a, const glm::vec3& b, cons
     const glm::vec3 dir = safe_normalize(to_target, safe_normalize(c - a, {0.0F, -1.0F, 0.0F}));
     const float reach = std::clamp(dist, std::max(min_len, k_epsilon), max_len);
 
-    // Bend plane: root, target and pole; the current knee, then any
-    // perpendicular, when the pole lies on the root-target line.
+    // Bend plane: root, target and pole; then the current knee, the hint,
+    // and only as a last resort an arbitrary perpendicular.
     glm::vec3 bend = perpendicular_part(pole - a, dir);
     if (bend == glm::vec3(0.0F)) bend = perpendicular_part(b - a, dir);
+    if (bend == glm::vec3(0.0F)) bend = perpendicular_part(bend_hint, dir);
     if (bend == glm::vec3(0.0F)) bend = any_perpendicular(dir);
 
     const float cos_upper = std::clamp(
@@ -94,7 +96,7 @@ TwoBoneIkSolution solve_two_bone_ik(const glm::vec3& a, const glm::vec3& b, cons
 TwoBoneIkSolution apply_two_bone_ik(std::span<JointPose> pose, std::span<const glm::mat4> world,
                                     const TwoBoneChain& chain, const glm::vec3& target,
                                     const glm::vec3& pole, float weight,
-                                    glm::quat* end_rotation) {
+                                    glm::quat* end_rotation, const glm::vec3& bend_hint) {
     const auto in_range = [&](int i) {
         return i >= 0 && static_cast<std::size_t>(i) < pose.size() &&
                static_cast<std::size_t>(i) < world.size();
@@ -110,7 +112,8 @@ TwoBoneIkSolution apply_two_bone_ik(std::span<JointPose> pose, std::span<const g
     const glm::vec3 b(world[lo][3]);
     const glm::vec3 c(world[en][3]);
     const float w = std::clamp(weight, 0.0F, 1.0F);
-    const TwoBoneIkSolution s = solve_two_bone_ik(a, b, c, glm::mix(c, target, w), pole);
+    const TwoBoneIkSolution s =
+        solve_two_bone_ik(a, b, c, glm::mix(c, target, w), pole, bend_hint);
 
     // local' = local * W^-1 * D * W for a world delta D on a joint whose
     // parent did not move; the lower joint's parent moved by `upper`.

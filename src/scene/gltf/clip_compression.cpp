@@ -1,10 +1,11 @@
 // Load-time ACL compression of a glTF's clips against the skins they drive.
 
+#include "clip_compression.hpp"
+
 #include <cmath>
 #include <cstdio>
 
 #include "engine/animation/compression.hpp"
-#include "internal.hpp"
 
 namespace engine::scene {
 

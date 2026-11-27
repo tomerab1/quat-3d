@@ -37,6 +37,17 @@ namespace {
 
 } // namespace
 
+int CompressedClip::track_of(int node) const noexcept {
+    const auto it = std::lower_bound(node_tracks.begin(), node_tracks.end(),
+                                     std::pair<int, std::uint32_t>{node, 0U});
+    return it != node_tracks.end() && it->first == node ? static_cast<int>(it->second) : -1;
+}
+
+bool CompressedClip::covers(const SkeletonAsset& skeleton) const noexcept {
+    return std::all_of(skeleton.joints.begin(), skeleton.joints.end(),
+                       [&](const Joint& j) { return track_of(j.node) >= 0; });
+}
+
 bool CompressedClip::binds(const SkeletonAsset& skeleton) const noexcept {
     if (joint_nodes.size() != skeleton.joints.size()) return false;
     for (std::size_t i = 0; i < joint_nodes.size(); ++i) {
@@ -150,7 +161,12 @@ std::expected<CompressionStats, core::Error> compress_clip(AnimClipAsset& clip,
     allocator.deallocate(tracks, out->size);
     out->duration = clip.duration;
     out->joint_nodes.reserve(joints);
-    for (const Joint& j : skeleton.joints) out->joint_nodes.push_back(j.node);
+    out->node_tracks.reserve(joints);
+    for (std::size_t j = 0; j < joints; ++j) {
+        out->joint_nodes.push_back(skeleton.joints[j].node);
+        out->node_tracks.emplace_back(skeleton.joints[j].node, static_cast<std::uint32_t>(j));
+    }
+    std::sort(out->node_tracks.begin(), out->node_tracks.end());
     stats.compressed_bytes = out->size_bytes();
 
     if (!settings.keep_raw && covered_by(clip, skeleton)) {

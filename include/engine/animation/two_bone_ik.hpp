@@ -7,6 +7,8 @@
 // middle joint is placed by the law of cosines in the plane of root, target
 // and pole, and each bone is rotated onto its new direction by the shortest
 // arc. Runs on a local pose between sampling and world composition.
+// Parent joints with non-uniform scale are not supported: world rotations
+// are read from normalized matrix columns, which such scale shears.
 
 #include <span>
 
@@ -28,10 +30,15 @@ struct TwoBoneIkSolution {
 };
 
 // World-space solve for root `a`, middle `b`, effector `c`. The middle joint
-// bends toward `pole` (any point on the side the knee should point to).
+// bends toward `pole` (any point on the side the knee should point to). When
+// the pole and the current knee both lie on the root-target line (a straight
+// leg), it bends along `bend_hint` (e.g. the previous frame's or the bind
+// pose's bend direction); only without one does it pick an arbitrary side.
+// Zero-length bones return the input unchanged (not reachable).
 [[nodiscard]] TwoBoneIkSolution solve_two_bone_ik(const glm::vec3& a, const glm::vec3& b,
                                                   const glm::vec3& c, const glm::vec3& target,
-                                                  const glm::vec3& pole);
+                                                  const glm::vec3& pole,
+                                                  const glm::vec3& bend_hint = glm::vec3(0.0F));
 
 // Joint indices of a two-bone chain; `lower` descends from `upper` and `end`
 // from `lower` (intermediate twist joints are allowed).
@@ -51,7 +58,8 @@ struct TwoBoneChain {
 TwoBoneIkSolution apply_two_bone_ik(std::span<JointPose> pose, std::span<const glm::mat4> world,
                                     const TwoBoneChain& chain, const glm::vec3& target,
                                     const glm::vec3& pole, float weight,
-                                    glm::quat* end_rotation = nullptr);
+                                    glm::quat* end_rotation = nullptr,
+                                    const glm::vec3& bend_hint = glm::vec3(0.0F));
 
 // Shortest-arc rotation taking unit vector `from` onto unit vector `to`.
 [[nodiscard]] glm::quat rotation_between(const glm::vec3& from, const glm::vec3& to);

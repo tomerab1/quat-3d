@@ -28,6 +28,8 @@
 #include "engine/animation/clip.hpp"
 #include "engine/animation/skeleton.hpp"
 #include "engine/core/error.hpp"
+
+#include "clip_compression.hpp"
 #include "engine/scene/gltf_loader.hpp"
 
 namespace engine::asset {
@@ -89,13 +91,6 @@ parse_and_extract_skeletons(fastgltf::GltfDataBuffer& data, const std::filesyste
 [[nodiscard]] std::vector<animation::AnimClipAsset> extract_animations(const fastgltf::Asset& asset);
 [[nodiscard]] std::expected<std::vector<animation::AnimClipAsset>, core::Error>
 parse_and_extract_animations(fastgltf::GltfDataBuffer& data, const std::filesystem::path& base_dir);
-
-// clip_compression.cpp: ACL-compresses each clip against the skin owning most
-// of its channels (skin_roots: each skin's armature global, for its scale).
-// Clips that cannot be compressed stay raw; one summary line goes to stderr.
-void compress_clips(std::vector<animation::AnimClipAsset>& clips,
-                    const std::vector<animation::SkeletonAsset>& skins,
-                    const std::vector<glm::mat4>& skin_roots, const std::string& label);
 
 // material.cpp
 [[nodiscard]] std::expected<std::vector<TextureData>, core::Error>

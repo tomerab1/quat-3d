@@ -118,6 +118,10 @@ FootRig find_foot_rig(const SkeletonAsset& skeleton, std::string_view pelvis,
         const glm::vec4 ankle =
             root_transform * bind[static_cast<std::size_t>(rig.legs[i].end)][3];
         rig.ankle_height[i] = ankle.y - root_transform[3].y;
+        const glm::vec3 hip(bind[static_cast<std::size_t>(rig.legs[i].upper)][3]);
+        const glm::vec3 knee(bind[static_cast<std::size_t>(rig.legs[i].lower)][3]);
+        const glm::vec3 bend = knee - 0.5F * (hip + glm::vec3(ankle));
+        rig.bind_bend[i] = glm::length(bend) > 1e-5F ? glm::normalize(bend) : glm::vec3(0.0F);
     }
     return rig;
 }
@@ -196,14 +200,23 @@ FootPlacementResult apply_foot_placement(const SkeletonAsset& skeleton, std::spa
         const glm::vec3 b(world[static_cast<std::size_t>(leg.lower)][3]);
         const glm::vec3 c(world[static_cast<std::size_t>(leg.end)][3]);
 
-        // Bend the knee the way the animation does (forward when straight).
+        // Bend the knee the way the animation does; a straight leg keeps
+        // last frame's bend, else the rest pose's, else forward.
+        const glm::vec3 rest_bend =
+            glm::vec3(root_transform * glm::vec4(rig.bind_bend[i], 0.0F));
+        glm::vec3 hint = state.knee_bend[i];
+        if (glm::length(hint) < 1e-4F) hint = rest_bend;
+        if (glm::length(hint) < 1e-4F) hint = forward;
         glm::vec3 knee_dir = b - 0.5F * (a + c);
-        if (glm::length(knee_dir) < 1e-4F) knee_dir = forward;
+        if (glm::length(knee_dir) < 1e-4F) knee_dir = hint;
         const glm::vec3 pole = b + glm::normalize(knee_dir) * glm::length(b - a);
 
         glm::quat end_rotation(1.0F, 0.0F, 0.0F, 0.0F);
-        (void)apply_two_bone_ik(pose, world, leg, animated_ankle[i] + k_up * state.foot[i], pole,
-                                1.0F, &end_rotation);
+        const TwoBoneIkSolution solved =
+            apply_two_bone_ik(pose, world, leg, animated_ankle[i] + k_up * state.foot[i], pole,
+                              1.0F, &end_rotation, hint);
+        const glm::vec3 bend = solved.joint - 0.5F * (a + solved.end);
+        if (glm::length(bend) > 1e-4F) state.knee_bend[i] = glm::normalize(bend);
 
         // Planted feet tilt toward the ground normal, up to the limit.
         const float plant = result.grounded[i] && settings.plant_height > 0.0F

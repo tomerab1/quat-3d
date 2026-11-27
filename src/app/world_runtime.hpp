@@ -15,6 +15,7 @@
 #include <map>
 #include <optional>
 #include <string>
+#include <vector>
 
 #include <entt/entity/entity.hpp>
 #include <glm/glm.hpp>
@@ -183,6 +184,7 @@ private:
 
     engine::scene::GroundHeightFn  ground_height_at_;
     engine::scene::FootGroundProbe foot_probe_;
+    std::vector<std::uint32_t>     probe_owners_; // foot_probe_ scratch: owners to skip
     std::optional<AudioRuntime>   audio_;
 };
 
