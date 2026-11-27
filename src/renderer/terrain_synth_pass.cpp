@@ -46,18 +46,21 @@ enum Kernel : std::uint8_t { k_init, k_flux, k_water, k_apply, k_transport, k_fi
 constexpr std::array<const char*, k_count> kEntries{
     "synth_init", "erode_flux", "erode_water", "erode_apply", "erode_transport", "synth_finalize"};
 
-// terrain_synth.slang set 0: params, permutation, height, water, sediment,
-// flux, flow, out.
-constexpr std::uint32_t kBindingCount = 8;
-
-[[nodiscard]] std::array<rhi::DescriptorBinding, kBindingCount> synth_bindings() {
-    std::array<rhi::DescriptorBinding, kBindingCount> b{};
-    b[0] = {0, 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, kComputeStage};
-    for (std::uint32_t i = 1; i < kBindingCount; ++i) {
-        b[i] = {0, i, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kComputeStage};
-    }
-    return b;
-}
+// terrain_synth.slang's resources, by name; their binding slots come from the
+// shader's reflection (State::slots, indexed by Resource).
+enum Resource : std::uint8_t {
+    r_params, r_perm, r_height, r_water, r_sediment, r_flux, r_flow, r_out, r_count
+};
+constexpr std::array<rhi::BindingRequest, r_count> kResources{{
+    {"g_params", VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER},
+    {"g_perm", VK_DESCRIPTOR_TYPE_STORAGE_BUFFER},
+    {"g_height", VK_DESCRIPTOR_TYPE_STORAGE_BUFFER},
+    {"g_water", VK_DESCRIPTOR_TYPE_STORAGE_BUFFER},
+    {"g_sediment", VK_DESCRIPTOR_TYPE_STORAGE_BUFFER},
+    {"g_flux", VK_DESCRIPTOR_TYPE_STORAGE_BUFFER},
+    {"g_flow", VK_DESCRIPTOR_TYPE_STORAGE_BUFFER},
+    {"g_out", VK_DESCRIPTOR_TYPE_STORAGE_BUFFER},
+}};
 
 [[nodiscard]] SynthUniforms make_uniforms(const terrain::TerrainParams& p, std::uint32_t res) {
     SynthUniforms u;
@@ -127,7 +130,8 @@ struct TerrainSynthPass::State {
     rhi::GpuAllocator*                    allocator = nullptr;
     rhi::DescriptorBufferFunctions        fns{};
     rhi::DescriptorSetLayout              layout;
-    std::array<rhi::ComputePipeline, k_count> pipelines;
+    std::array<std::uint32_t, r_count>    slots{}; // binding of each Resource (reflected)
+    std::array<rhi::ManagedPipeline, k_count> pipelines; // hot-reloadable (R2)
     VkDeviceSize                          max_storage_range = 0;
 
     std::uint64_t cell_budget = default_cell_budget;
@@ -207,17 +211,20 @@ std::expected<void, core::Error> TerrainSynthPass::State::start(Job& job) {
     auto descriptor = rhi::DescriptorBuffer::create(*device, *allocator, fns, layout);
     if (!descriptor) return std::unexpected(descriptor.error());
     job.descriptor = std::move(*descriptor);
-    job.descriptor.write_uniform_buffer(0, rhi::buffer_device_address(vk, job.uniforms),
+    const auto storage = [&](Resource r, const rhi::GpuBuffer& buffer, VkDeviceSize range) {
+        job.descriptor.write_storage_buffer(slots[r], rhi::buffer_device_address(vk, buffer),
+                                            range);
+    };
+    job.descriptor.write_uniform_buffer(slots[r_params],
+                                        rhi::buffer_device_address(vk, job.uniforms),
                                         sizeof(SynthUniforms));
-    job.descriptor.write_storage_buffer(1, rhi::buffer_device_address(vk, job.perm),
-                                        512 * sizeof(std::uint32_t));
-    job.descriptor.write_storage_buffer(2, rhi::buffer_device_address(vk, job.height), scalar);
-    job.descriptor.write_storage_buffer(3, rhi::buffer_device_address(vk, job.water), scalar);
-    job.descriptor.write_storage_buffer(4, rhi::buffer_device_address(vk, job.sediment),
-                                        2 * scalar);
-    job.descriptor.write_storage_buffer(5, rhi::buffer_device_address(vk, job.flux), vector);
-    job.descriptor.write_storage_buffer(6, rhi::buffer_device_address(vk, job.flow), vector);
-    job.descriptor.write_storage_buffer(7, rhi::buffer_device_address(vk, job.out), scalar);
+    storage(r_perm, job.perm, 512 * sizeof(std::uint32_t));
+    storage(r_height, job.height, scalar);
+    storage(r_water, job.water, scalar);
+    storage(r_sediment, job.sediment, 2 * scalar);
+    storage(r_flux, job.flux, vector);
+    storage(r_flow, job.flow, vector);
+    storage(r_out, job.out, scalar);
 
     VkEventCreateInfo ei{};
     ei.sType = VK_STRUCTURE_TYPE_EVENT_CREATE_INFO;
@@ -235,7 +242,7 @@ void TerrainSynthPass::State::record_slice(VkCommandBuffer cmd, Job& job, bool i
     bool pending_barrier = false;
     const auto dispatch = [&](Kernel kernel, std::uint32_t cur) {
         if (pending_barrier) compute_barrier(cmd);
-        const rhi::ComputePipeline& pipeline = pipelines[kernel];
+        const rhi::ManagedPipeline& pipeline = pipelines[kernel];
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline.handle());
         if (!bound) {
             // Every kernel shares the set layout and push range, so the
@@ -280,13 +287,17 @@ TerrainSynthPass::create(const rhi::Device& device, rhi::GpuAllocator& allocator
 
     s.fns = rhi::DescriptorBufferFunctions::load(device.handle());
     if (!s.fns.valid()) return fail("terrain synth: descriptor buffer functions unavailable");
-    const auto bindings = synth_bindings();
-    auto layout = rhi::DescriptorSetLayout::create(device, s.fns, bindings);
-    if (!layout) return std::unexpected(layout.error());
-    s.layout = std::move(*layout);
 
     auto shader = cache.load(cooked_shader_dir + "/terrain_synth.spv");
     if (!shader) return std::unexpected(shader.error());
+    // The set layout and every descriptor slot come from the shader's reflection.
+    auto bindings = rhi::reflected_bindings((*shader)->reflection, kResources, kComputeStage);
+    if (!bindings) return fail("terrain synth: " + bindings.error().message);
+    for (std::size_t r = 0; r < r_count; ++r) s.slots[r] = (*bindings)[r].binding;
+    auto layout = rhi::DescriptorSetLayout::create(device, s.fns, *bindings);
+    if (!layout) return std::unexpected(layout.error());
+    s.layout = std::move(*layout);
+
     const VkDescriptorSetLayout set_layout = s.layout.handle();
     const VkPushConstantRange push{kComputeStage, 0, sizeof(SynthPush)};
     for (std::size_t k = 0; k < k_count; ++k) {
@@ -295,7 +306,7 @@ TerrainSynthPass::create(const rhi::Device& device, rhi::GpuAllocator& allocator
         info.entry = kEntries[k];
         info.set_layouts = {&set_layout, 1};
         info.push_constants = {&push, 1};
-        auto pipeline = rhi::ComputePipeline::create(device, cache.handle(), info);
+        auto pipeline = cache.create_compute_pipeline(info);
         if (!pipeline) return std::unexpected(pipeline.error());
         s.pipelines[k] = std::move(*pipeline);
     }

@@ -190,7 +190,10 @@ parse_reflection_json(std::string_view json_text) {
                 db.stages  = VK_SHADER_STAGE_ALL;
                 db.type    = p.contains("type") ? descriptor_type_from_type(p["type"])
                                                 : VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-                refl.descriptor_bindings.push_back(db);
+                if (p.contains("name") && p["name"].is_string()) {
+                    db.name = p["name"].get_ref<const std::string&>();
+                }
+                refl.descriptor_bindings.push_back(std::move(db));
             }
         }
     }
@@ -214,6 +217,34 @@ namespace {
 
 } // namespace
 
+const DescriptorBinding* ShaderReflection::find_binding(std::string_view name) const {
+    const auto it = std::find_if(descriptor_bindings.begin(), descriptor_bindings.end(),
+                                 [&](const DescriptorBinding& b) { return b.name == name; });
+    return it == descriptor_bindings.end() ? nullptr : &*it;
+}
+
+std::expected<std::vector<DescriptorBinding>, core::Error>
+reflected_bindings(const ShaderReflection& reflection, std::span<const BindingRequest> requests,
+                   VkShaderStageFlags stages) {
+    std::vector<DescriptorBinding> out;
+    out.reserve(requests.size());
+    for (const BindingRequest& request : requests) {
+        const DescriptorBinding* b = reflection.find_binding(request.name);
+        const std::string name(request.name);
+        if (b == nullptr) return fail("shader declares no resource '" + name + "'");
+        if (b->set != 0) return fail("'" + name + "' is in set " + std::to_string(b->set) +
+                                     " (the pass binds set 0)");
+        if (b->type != request.type) {
+            return fail("'" + name + "' has descriptor type " + std::to_string(b->type) +
+                        ", the pass binds " + std::to_string(request.type));
+        }
+        DescriptorBinding binding = *b;
+        binding.stages = stages;
+        out.push_back(std::move(binding));
+    }
+    return out;
+}
+
 std::expected<void, core::Error>
 check_reflection_compatible(const ShaderReflection& baseline, const ShaderReflection& updated,
                             std::span<const std::string> required_entries) {
@@ -231,6 +262,9 @@ check_reflection_compatible(const ShaderReflection& baseline, const ShaderReflec
         }
         if (it->type != b.type) {
             return fail(binding_name(b) + " changed descriptor type");
+        }
+        if (!it->name.empty() && !b.name.empty() && it->name != b.name) {
+            return fail(binding_name(b) + " was '" + it->name + "', now '" + b.name + "'");
         }
         if (b.count > it->count) {
             return fail(binding_name(b) + " array grew from " + std::to_string(it->count) +
