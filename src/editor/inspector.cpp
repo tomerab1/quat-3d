@@ -270,6 +270,7 @@ struct ComponentInspector<scene::Scatter> {
         ImGui::DragFloatRange2("scale", &s.scale_range.x, &s.scale_range.y, 0.01F, 0.01F, 100.0F);
         ImGui::Checkbox("random yaw", &s.random_yaw);
         ImGui::SliderFloat("align to ground", &s.align_to_normal, 0.0F, 1.0F);
+        ImGui::SliderFloat("mirrored", &s.mirror, 0.0F, 1.0F, "%.2f of placements");
         ImGui::DragFloat("base offset", &s.base_offset, 0.01F, -100.0F, 100.0F, "%.2f x scale");
         if (ImGui::IsItemHovered()) {
             ImGui::SetTooltip("Lift along the placement's up axis, times its scale\n"

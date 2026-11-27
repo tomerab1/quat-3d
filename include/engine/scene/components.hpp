@@ -146,7 +146,9 @@ struct InstancedMeshParts {
 // (metres) fall within the limits. Each placement gets a uniform scale in
 // `scale_range`, an optional random yaw, tilts `align_to_normal` (0 upright
 // .. 1 along the ground normal) and is lifted `base_offset` * scale along
-// its up axis (0.5 seats a unit primitive on the ground). Generation is
+// its up axis (0.5 seats a unit primitive on the ground). A `mirror`
+// fraction of the placements is mirrored (local X scale negated), which
+// doubles the visible variety of asymmetric models such as plants and rocks. Generation is
 // deterministic per seed, and a candidate's fate depends only on its own
 // ground sample, so terrain streaming in or out never reshuffles the rest.
 // scatter_system (scatter.hpp) regenerates whenever the parameters, the
@@ -167,6 +169,7 @@ struct Scatter {
     bool           random_yaw = true;
     float          align_to_normal = 0.0F;
     float          base_offset = 0.0F;
+    float          mirror = 0.0F;                 // fraction of mirrored placements, 0..1
     glm::vec2      slope_deg{0.0F, 35.0F};       // keep ground slopes in [x, y]
     glm::vec2      height_m{-10000.0F, 10000.0F}; // keep ground heights in [x, y]
     std::uint32_t  max_instances = 20000;
