@@ -21,9 +21,8 @@
 
 namespace quat::app {
 
-// A single debug step, and a frame at time scale 1, fit one physics update.
+// A single debug step fits one physics update; longer frames are sliced.
 static_assert(engine::core::SimClock::max_step_dt <= engine::physics::PhysicsWorld::max_update_dt);
-static_assert(engine::core::SimClock::max_frame_dt <= engine::physics::PhysicsWorld::max_update_dt);
 
 WorldRuntime::WorldRuntime() {
     // Authoritative ground height at world (x, z): streamed tiles first,
@@ -183,10 +182,15 @@ void WorldRuntime::simulate(engine::scene::Scene& scene, std::uint64_t frame_num
     // editor edit — would otherwise be read at a stale or identity world
     // (issue #21: the physics demo's boxes were all created at the origin,
     // inside the floor, and fell out of the world).
+    // Nothing simulates in edit mode without a demo physics world: the
+    // transform passes and empty slices are skipped (the scene tick below
+    // still resolves transforms and animates).
+    const bool simulates = demo_.physics_world.has_value() ||
+                           (play != nullptr && play_physics_.has_value());
     engine::core::SimSlices slices =
         engine::core::slice_sim_dt(sim_dt, engine::physics::PhysicsWorld::max_update_dt);
     if (slices.count == 0) slices = {.count = 1, .dt = 0.0F};
-    for (std::uint32_t i = 0; i < slices.count; ++i) {
+    for (std::uint32_t i = 0; simulates && i < slices.count; ++i) {
         engine::scene::transform_system(scene.registry());
         simulate_slice(scene, slices.dt, play);
     }

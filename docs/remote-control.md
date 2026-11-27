@@ -251,13 +251,14 @@ sim_time_s}`. `engine.info` also reports `paused`.
   and queues nothing).
   `debug.resume` drops pending steps (their `debug.step`
   replies then complete). Every simulation system advances by the same
-  simulated time: real frame time beyond 1/15 s (a hitch) is dropped for
+  simulated time: real frame time beyond 0.25 s (a hitch) is dropped for
   all of them, a step's `dt` is at most 1/15 s (what one physics update —
   8 fixed 1/120 s substeps — simulates exactly; `debug.step` refuses a
   larger `dt` with `invalid_params` naming `dt` and queues nothing, rather
   than silently clamping it, so a stepped trace never runs with a dt the
-  caller did not ask for), and a scaled frame above
-  that runs the simulation in equal slices of at most 1/15 s, so physics
+  caller did not ask for), and a frame above 1/15 s (a slow
+  frame, or any frame at a high time scale) runs the simulation in equal
+  slices of at most 1/15 s, so physics
   keeps up with agents, characters and animation at any time scale. The
   clock state survives play/stop: a paused clock stays paused when play
   starts.

@@ -80,13 +80,17 @@ TEST(SimClock, IgnoresBadFrameTimes) {
 }
 
 // Audit D2: real time beyond max_frame_dt is a hitch, dropped before scaling,
-// so every simulation system sees the same bounded dt.
+// so every simulation system sees the same bounded dt. Slow frames below it
+// are kept whole (the frame loop slices them for physics).
 TEST(SimClock, DropsHitchBacklogBeforeScaling) {
     SimClock c;
+    EXPECT_FLOAT_EQ(SimClock::max_frame_dt, 0.25F);
     EXPECT_FLOAT_EQ(c.advance(0.5F), SimClock::max_frame_dt);
+    EXPECT_FLOAT_EQ(c.advance(0.2F), 0.2F) << "a slow frame (5 fps) is not a hitch";
     c.set_time_scale(10.0F);
     EXPECT_FLOAT_EQ(c.advance(0.5F), SimClock::max_frame_dt * 10.0F);
     EXPECT_FLOAT_EQ(c.advance(1.0F / 60.0F), 10.0F / 60.0F); // below the cap: unchanged
+    EXPECT_LT(SimClock::max_step_dt, SimClock::max_frame_dt) << "steps are bounded separately";
 }
 
 TEST(SimClock, SlicesCoverTheDtWithinTheBudget) {

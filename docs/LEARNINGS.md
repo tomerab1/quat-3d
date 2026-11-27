@@ -26,6 +26,17 @@ into CLAUDE.md or the brief template in [`CYCLE.md`](CYCLE.md).
 
 ## Build and CI
 
+- **Don't tie the hitch clamp to the physics budget.** D2 first capped the
+  sim frame dt at 1/15 s (8 physics substeps), so on slow machines (CI's
+  lavapipe at 1-3 fps) the whole world ran several times slower than real
+  time. The clamp is now 0.25 s (only true hitches are dropped) and frames
+  above 1/15 s are sliced for physics; 1/15 s bounds only `debug.step`.
+- **Half-float HDR targets overflow on mirror highlights (#45).** A punctual
+  GGX peak of 1/(pi alpha^2) exceeds 65504 for alpha < ~0.003; some drivers
+  round to +Inf (CI's lavapipe), others saturate (the container's), so the
+  bug only showed in CI. Floor punctual roughness (0.089), clamp HDR writes
+  (`lib/hdr.slang`), and test overflow with `<` 65504, not `<=`.
+
 - **Look at every render you report on (issue #21).** A worker reported the
   physics demo "unchanged" after #7/#8 without opening the image; every box
   had fallen out of the world. Cause: `physics_system` creates bodies at
