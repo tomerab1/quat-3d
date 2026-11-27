@@ -35,7 +35,9 @@ struct BehaviorTree;
 
 namespace engine::editor {
 
-inline constexpr const char* behavior_panel_title = "Behaviour";
+// The panel's window ID (its tab shows an icon + "Behaviour"; see
+// shell/panels.hpp): for ImGui::SetWindowFocus.
+inline constexpr const char* behavior_panel_title = "###Behaviour";
 
 using scene::BtGraph;
 using scene::BtGraphIssue;

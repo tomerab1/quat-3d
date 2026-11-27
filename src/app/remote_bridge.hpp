@@ -38,6 +38,7 @@
 // PNG encoding runs on a worker thread; the reply goes out from poll()
 // (screenshot_capture.hpp).
 
+#include <cstddef>
 #include <cstdint>
 #include <filesystem>
 #include <memory>
@@ -53,6 +54,9 @@
 
 namespace engine::asset {
 class AssetManager;
+}
+namespace engine::core {
+class SimClock;
 }
 namespace engine::nav {
 class NavMesh;
@@ -152,15 +156,23 @@ public:
     void note_draws(std::size_t draws);
 
     [[nodiscard]] bool listening() const;
+    // Endpoint port and connected clients (editor status bar); 0 / 0 when
+    // not listening.
+    [[nodiscard]] std::uint16_t port() const;
+    [[nodiscard]] std::size_t   client_count() const;
+    // The simulation clock (pause / step / time scale), shared with the
+    // editor's Play controls.
+    [[nodiscard]] engine::core::SimClock& sim_clock();
 
 private:
     struct Impl;
     std::unique_ptr<Impl> impl_;
 };
 
-// Tees the process's stderr into the engine log ring (debug.log) when the
-// remote-control endpoint is requested (QUAT_REMOTE set) unless
-// QUAT_LOG_CAPTURE=0. Keep the returned object alive for the whole run.
-[[nodiscard]] engine::core::StderrCapture capture_stderr_for_remote();
+// Tees the process's stderr into the engine log ring (debug.log, the editor
+// Console) when the remote-control endpoint is requested (QUAT_REMOTE set) or
+// `editor_console` is true, unless QUAT_LOG_CAPTURE=0. Keep the returned
+// object alive for the whole run.
+[[nodiscard]] engine::core::StderrCapture capture_stderr_for_remote(bool editor_console = false);
 
 } // namespace quat::app

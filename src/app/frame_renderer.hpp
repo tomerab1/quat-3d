@@ -204,6 +204,12 @@ public:
     [[nodiscard]] engine::scene::MaterialOverrideStore& material_overrides() {
         return material_overrides_;
     }
+#ifdef ENGINE_EDITOR
+    // Re-uploads the editor's font atlas into every frame slot's UI pass
+    // after the editor rebuilt it (display scale change). Waits for the
+    // device to idle first; rare, so the stall does not matter.
+    void reload_ui_fonts();
+#endif
     // Atmosphere LUTs + dynamic IBL probe, lit by the scene's sun. Optional:
     // failures are logged and fall back to the procedural sky / flat ambient.
     void create_environment(engine::scene::Scene& scene,

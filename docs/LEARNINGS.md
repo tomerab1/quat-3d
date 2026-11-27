@@ -26,6 +26,33 @@ into CLAUDE.md or the brief template in [`CYCLE.md`](CYCLE.md).
 
 ## Build and CI
 
+- **A clean auto-merge can still break the build.** Merging master (#20)
+  into the E8 branch raised no conflict, but master had renamed
+  `WorldRuntime::clear_spin_entity` while the branch added a new call to it;
+  the 40-minute forced rebuild failed late. → After any merge, compile-check
+  the TUs both sides touched (`scripts/check-compile.sh` on the merge's file
+  list) before starting a long build.
+- **Hand-rolled local builds must rebuild dependents of changed headers.**
+  The E8 worker's scratch build script recompiled a `.cpp` only when it was
+  newer than its object; after a member was added to `EditorShell`, stale
+  objects disagreed on its size and the game aborted in `free()` at exit
+  (heap corruption, not a logic bug). → Scratch scripts rebuild every TU of a
+  module when any of its headers is newer than the object (or use `FORCE=1`);
+  a crash right after a header change is a stale-object suspect first.
+- **The editor can be seen headless.** `QUAT_SCREENSHOT` copies the presented
+  swapchain image, UI included; `scripts/editor-screenshots.sh` runs the
+  game under Xvfb + lavapipe at 1600x900 with `QUAT_EDITOR_SELECT` /
+  `QUAT_EDITOR_FOCUS` / `QUAT_EDITOR_LAYOUT=default` to pose it. CI's
+  `showcase-editor` image was never broken, only useless: 1280x720 halved to
+  640x360. Editor captures are taken at 1600x900 or larger without
+  downscaling; the remote `view.screenshot` deliberately returns only the
+  viewport image.
+- **A full game build without vcpkg works in the container**: header clones
+  in `~/deps` plus prebuilt `libJolt.a` / `libfastgltf.a` / SDL3 / GNS, and
+  ImGui, ImGuizmo (tag 1.10), imgui-node-editor and Recast compiled from
+  source, linked with `-lSDL3 -lGameNetworkingSockets -lvulkan`. It takes
+  20-40 minutes of shared CPU from scratch; captures are then
+  `scripts/editor-screenshots.sh <game> <dir> <prefix>`.
 - **Don't tie the hitch clamp to the physics budget.** D2 first capped the
   sim frame dt at 1/15 s (8 physics substeps), so on slow machines (CI's
   lavapipe at 1-3 fps) the whole world ran several times slower than real
@@ -173,6 +200,25 @@ into CLAUDE.md or the brief template in [`CYCLE.md`](CYCLE.md).
   untrusted fields multiply into memory or time, check the product, and
   have the error name the largest values that fit.
 
+- **Designated initializers + `-Wextra` warn for every omitted field that
+  has no default member initializer** (clang's
+  `-Wmissing-field-initializers`). Option structs meant for `{.a = 1}` call
+  sites (the editor's `PropOpts`, `Command`, `DragSpec`) give every member a
+  default (`std::string id{};`), or each call site warns.
+- **Inter (and other UI faces) put stylistic alternates in the Unicode
+  Private Use Area**, where icon fonts live. Merging an icon font into it
+  without `ImFontConfig::GlyphExcludeRanges = {0xE000, 0xF8FF}` on the text
+  face makes some icons render as alternate digits / letters (E8: Inspector's
+  icon showed "3", Stats' showed "ǒ").
+- **ImGui docking: the focused window's tab stays in front.** New windows take
+  focus as they appear, so the last panel submitted wins its tab group no
+  matter what the DockBuilder said. Select tabs through the dock node's tab
+  bar and move focus elsewhere (the viewport) for the first frames after
+  building a layout.
+- **An ImGui settings handler's `UserData` must outlive the context, or the
+  ini must be written first.** `DestroyContext` saves the ini through every
+  handler; the editor saves explicitly, clears `IniFilename`, then destroys
+  the shell the handler points at.
 - **A render-graph image is one unit: a pass that changes per-mip layouts
   must hand every mip back in the layout its declared usage implies.** The
   transparent pass's scene-colour copy blitted its mip chain and left mips
@@ -467,3 +513,24 @@ clean locally and conflicting on GitHub. **Rule:** trust GitHub's
 until the orchestrator noticed. **Rule:** marking a PR ready and creating
 its Reviewer session are one step; the orchestrator's status sweep checks
 that every non-draft PR has one.
+
+## A hand-tuned local define compiled what CI could not (E8)
+
+The local editor build passed `-DQUAT_PROJECT_ROOT` to every translation
+unit, while CMake defines it only for the `game` target and `engine_tests`.
+`inspector_world.cpp` (in `engine_editor`) used the macro, compiled locally
+and failed in CI with an undeclared identifier. **Rule:** build with CI's
+exact preset and defines, not a hand-tuned local set; per-target
+definitions in the scratch build must mirror the CMake targets. Library
+code takes the project root at runtime (from `EditorLayer::create`), never
+from a compile-time path.
+
+## Review found state bugs a smoke test cannot (E8)
+
+The first E8 review found Reset removing and re-adding components (which
+cascaded through the codec's removal rules and deleted an Animator), Remove
+bypassing the codec, a recent-files loop passing a reference into the vector
+it reordered, and an unvalidated ini file. Each lived in code only reachable
+through an ImGui frame. **Rule:** UI actions are plain functions over the
+registry or the state struct, called by the widget and by GoogleTest;
+anything read from disk goes through a pure, tested parser.

@@ -7,6 +7,7 @@
 #include <cstdlib>
 #include <utility>
 
+#include "app/load_transfer.hpp"
 #include "engine/rhi/device.hpp"
 #include "engine/rhi/pipeline_cache.hpp"
 #include "engine/rhi/swapchain.hpp"
@@ -193,6 +194,26 @@ bool FrameRenderer::create_passes(const engine::rhi::Device& device,
     }
     return frames_ok;
 }
+
+#ifdef ENGINE_EDITOR
+void FrameRenderer::reload_ui_fonts() {
+    if (!editor_active_ || device_ == nullptr) return;
+    // Both frames' atlases are replaced: no submitted frame may still read them.
+    if (const VkResult r = vkDeviceWaitIdle(device_->handle()); r != VK_SUCCESS) {
+        std::fprintf(stderr, "[warn] UI font reload skipped: vkDeviceWaitIdle failed (%d)\n",
+                     static_cast<int>(r));
+        return;
+    }
+    (void)with_load_transfer(*device_, [&](const engine::rhi::TransferContext& transfer) {
+        for (auto& f : frames_) {
+            if (auto r = f.imgui.upload_font_atlas(transfer); !r) {
+                std::fprintf(stderr, "[warn] UI font reload failed: %s\n",
+                             r.error().message.c_str());
+            }
+        }
+    });
+}
+#endif
 
 void FrameRenderer::create_environment(engine::scene::Scene& scene,
                                        engine::rhi::PipelineCache& pipeline_cache,

@@ -170,7 +170,7 @@ void FlyCamera::fly([[maybe_unused]] engine::scene::Scene& scene, FlyInputGate g
                      axis(keys, gate.arrows, SDL_SCANCODE_RIGHT, SDL_SCANCODE_LEFT)) +
         k_world_up * (axis(keys, gate.wasd, SDL_SCANCODE_E, SDL_SCANCODE_Q) +
                       axis(keys, gate.arrows, SDL_SCANCODE_PAGEUP, SDL_SCANCODE_PAGEDOWN));
-    const float speed = move_speed_ * (keys[SDL_SCANCODE_LSHIFT] ? 4.0F : 1.0F);
+    const float speed = move_speed_ * speed_scale * (keys[SDL_SCANCODE_LSHIFT] ? 4.0F : 1.0F);
     if (move != glm::vec3(0.0F)) {
         pos += glm::normalize(move) * speed * dt;
     }

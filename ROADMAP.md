@@ -335,25 +335,35 @@ is JSON/Lua so it is authorable over MCP.
 - [ ] **E7 — Build & export dialog** (drives P4).
 - [ ] **E8 — Editor UI/UX redesign** *(owner request, top editor priority)*.
   A coherent, modern editor on par with Unreal 5 / Godot 4 / Blender:
-  - **E8.1 Design system** (`src/editor/ui/`): theme tokens (dark + light,
+  - [x] **E8.1 Design system** (`src/editor/ui/`): theme tokens (dark + light,
     one accent, semantic colours), Inter + JetBrains Mono + an icon font,
     DPI-aware sizing and spacing scale, and a widget kit — property grid
     rows (label column, reset-to-default, tooltips), XYZ-coloured vector
     fields, component headers (icon, enable toggle, ⋮ menu), search fields,
     icon buttons/toolbars, toasts, empty states.
-  - **E8.2 Shell**: main menu, main toolbar (play/pause/step, gizmo mode +
+  - [x] **E8.2 Shell**: main menu, main toolbar (play/pause/step, gizmo mode +
     space, snapping, camera speed), status bar (FPS/frame time, sim state,
     selection, remote/MCP connection), viewport as a dock panel with an
     overlay toolbar (view modes, stats), default layout + reset, layout
     persistence, a command palette (Ctrl+P) and consistent shortcuts.
-  - **E8.3 Core panels** on the kit: Hierarchy (search, type icons,
-    visibility, F2 rename, drag re-parent, context menu), Inspector
-    (property grid, searchable Add Component), Asset browser (breadcrumbs,
-    grid/list, search, type icons), Console (A5 log ring, filters).
-  - **E8.4 Feature panels** migrated once their PRs land (tuning, shadows/AO,
-    upscaler, particles, scripts, behaviour editor, audio, grass).
-  - **Verification:** real editor screenshots in CI (headless capture of the
-    docked editor) with before/after images for every slice.
+  - [x] **E8.3 Core panels** on the kit: Hierarchy (search, type icons,
+    F2 rename, drag re-parent, context menu), Inspector (property grid,
+    searchable Add Component), Asset browser (breadcrumbs, grid/list, search,
+    type icons), Console (A5 log ring, filters). The hierarchy visibility
+    toggle moved to E8.4: the engine has no per-entity visibility yet.
+  - [ ] **E8.4 Feature panels and follow-ups**: migrate the panels still on
+    plain ImGui (Physics, Animation preview, the behaviour editor's toolbar
+    and nodes, the Grass and Audio inspector sections) and those of later
+    PRs (upscaler, particles, scripts) to the kit; hierarchy visibility
+    toggle and an entity enable toggle (need an engine-side visible /
+    enabled concept honoured by every draw path, not editor state in the
+    ECS); wire Undo / Redo to E1's command stack; ImGui 1.92 dynamic font
+    textures in `ImGuiPass` (free font scaling, thumbnails for E6).
+  - **Verification:** real editor screenshots (headless capture of the
+    docked editor) with before/after images for every slice:
+    `scripts/editor-screenshots.sh` and `docs/screenshots/editor/`; the CI
+    screenshot job captures the editor at 1600x900 once it adopts that
+    script's settings.
 
 ---
 

@@ -38,19 +38,52 @@ If you read only a few things, read these. They underpin most of the engine.
 
 ---
 
-## Engine architecture & performance
+## Engine architecture
 
 | | Reading | In quat-3d |
 |---|---|---|
 | ✅ | **FrameGraph: Extensible Rendering Architecture in Frostbite** — O'Donnell, GDC 2017. [GDC Vault](https://www.gdcvault.com/play/1024612/FrameGraph-Extensible-Rendering-Architecture-in) | Render graph: `src/rhi/render_graph.cpp`, `include/engine/rhi/render_graph.hpp` |
 | ✅ | **ECS back and forth** (series) — Caini (author of entt), 2019. [part 1](https://skypjack.github.io/2019-02-14-ecs-baf-part-1/) | ECS on entt: `src/scene/` |
-| 🔧 | **Tracy profiler manual** — Taudul. [github.com/wolfpld/tracy](https://github.com/wolfpld/tracy) | R4 profiling (in progress) |
-| 🗺 | **Data-Oriented Design and C++** — Acton, CppCon 2014. [video](https://www.youtube.com/watch?v=rX0ItVEVjHc) | R4.5 data-oriented CPU pass |
-| 🗺 | **Data-Oriented Design** (book) — Fabian. Free online. [dataorienteddesign.com](https://www.dataorienteddesign.com/dodbook/) | R4.5 |
-| 🗺 | **What Every Programmer Should Know About Memory** — Drepper, 2007. [PDF](https://www.akkadia.org/drepper/cpumemory.pdf) | R4.5 (caches, alignment, false sharing) |
-| ✅ | **Vulkan Guide** (Khronos) and **Synchronization Examples**. [docs.vulkan.org/guide](https://docs.vulkan.org/guide/latest/index.html) · [sync examples](https://github.com/KhronosGroup/Vulkan-Docs/wiki/Synchronization-Examples) | `src/rhi/` (sync2, dynamic rendering, descriptor buffer) |
 | 🗺 | **GPU-Driven Rendering Pipelines** — Haar & Aaltonen, SIGGRAPH 2015. [PDF](https://advances.realtimerendering.com/s2015/aaltonenhaar_siggraph2015_combined_final_footer_220dpi.pdf) | R5 GPU-driven rendering, R6 GPU culling |
 | 🗺 | **Nanite: A Deep Dive** — Karis, Stubbe, Wihlidal, SIGGRAPH 2021. [PDF](https://advances.realtimerendering.com/s2021/Karis_Nanite_SIGGRAPH_Advances_2021_final.pdf) | R19 virtual geometry |
+
+## Vulkan & GPU architecture
+
+| | Reading | In quat-3d |
+|---|---|---|
+| ✅ | **A trip through the Graphics Pipeline 2011** — Giesen. A 13-part tour of what the GPU and driver actually do with your draw calls. [index](https://fgiesen.wordpress.com/2011/07/09/a-trip-through-the-graphics-pipeline-2011-index/) | Background for all of `src/rhi/` and `src/renderer/` |
+| ✅ | **Life of a triangle — NVIDIA's logical pipeline** — Christoph Kubisch (NVIDIA), 2015. [article](https://developer.nvidia.com/content/life-triangle-nvidias-logical-pipeline) | Background (warps, SMs, raster) |
+| ✅ | **From Shader Code to a Teraflop: How GPU Shader Cores Work** — Fatahalian, SIGGRAPH *Beyond Programmable Shading* course (2009 and 2010 editions). SIMD lanes, latency hiding, why divergence costs. [SIGGRAPH 2010 slides (PDF)](http://bps10.idav.ucdavis.edu/talks/03-fatahalian_gpuArchTeraflop_BPS_SIGGRAPH2010.pdf) | Every compute pass |
+| ✅ | **Occupancy explained** — Guthmann (AMD GPUOpen). Registers, LDS and waves in flight. [gpuopen.com](https://gpuopen.com/learn/occupancy-explained/) | Compute passes (particles, grass, terrain, GTAO) |
+| ✅ | **Vulkan Guide** (Khronos) and **Synchronization Examples**. [docs.vulkan.org/guide](https://docs.vulkan.org/guide/latest/index.html) · [sync examples](https://github.com/KhronosGroup/Vulkan-Docs/wiki/Synchronization-Examples) | `src/rhi/` (sync2, dynamic rendering, descriptor buffer) |
+| ✅ | **Yet another blog explaining Vulkan synchronization** — Themaister (Arntzen), 2019. [blog](https://themaister.net/blog/2019/08/14/yet-another-blog-explaining-vulkan-synchronization/) | Render-graph barrier insertion, `src/rhi/render_graph.cpp` |
+| ✅ | **Breaking Down Barriers** (series) — Pettineo (MJP), 2018. What a GPU barrier really does in hardware. [part 1](https://therealmjp.github.io/posts/breaking-down-barriers-part-1-whats-a-barrier/) | same |
+| ✅ | **Writing an efficient Vulkan renderer** — Kapoulkine, 2020 (blog edition of his *GPU Zen 2* chapter, 2019). Memory, descriptors, pipelines, command submission, sync. [zeux.io](https://zeux.io/2020/02/27/writing-an-efficient-vulkan-renderer/) | `src/rhi/` design |
+| ✅ | **Vulkan Memory Allocator documentation** — AMD GPUOpen. [docs](https://gpuopen-librariesandsdks.github.io/VulkanMemoryAllocator/html/) | `src/rhi/gpu_allocator.cpp`, `vma_impl.cpp` |
+| ✅ | **VK_EXT_descriptor_buffer** — Khronos Vulkan blog, November 2022. [vulkan.org](https://vulkan.org/blog/vk_ext_descriptor_buffer) · [extension proposal](https://docs.vulkan.org/features/latest/features/proposals/VK_EXT_descriptor_buffer.html) | `src/rhi/descriptor_buffer.cpp` |
+
+## Low-level CPU performance & concurrency
+
+| | Reading | In quat-3d |
+|---|---|---|
+| 🗺 | **What Every Programmer Should Know About Memory** — Drepper, 2007. [PDF](https://www.akkadia.org/drepper/cpumemory.pdf) | R4.5 data-oriented CPU pass, added to the ROADMAP by #82 (caches, alignment, false sharing) |
+| 🗺 | **Data-Oriented Design and C++** — Acton, CppCon 2014. [video](https://www.youtube.com/watch?v=rX0ItVEVjHc) | R4.5 data-oriented CPU pass |
+| 🗺 | **Data-Oriented Design** (book) — Fabian. Free online. [dataorienteddesign.com](https://www.dataorienteddesign.com/dodbook/) | R4.5 |
+| 🗺 | **Gallery of Processor Cache Effects** — Ostrovsky, 2010. Seven tiny experiments that make cache behaviour visible. [blog](https://igoro.com/archive/gallery-of-processor-cache-effects/) | R4.5 |
+| 🗺 | **Software optimization resources** — Fog. Instruction tables, microarchitecture guide, C++ optimisation manual. [agner.org/optimize](https://www.agner.org/optimize/) | R4.5 (SIMD, branch costs) |
+| ✅ | **An Introduction to Lock-Free Programming** and the memory-ordering series — Preshing, 2012. [preshing.com](https://preshing.com/20120612/an-introduction-to-lock-free-programming/) | Acquire/release atomics: asset load state (`include/engine/asset/asset_manager.hpp`), shader hot-reload worker hand-off (`src/rhi/shader_hot_reload.cpp`) |
+| 🗺 | **Parallelizing the Naughty Dog Engine Using Fibers** — Gyrling (Naughty Dog), GDC 2015. [GDC Vault](https://www.gdcvault.com/play/1022186/Parallelizing-the-Naughty-Dog-Engine) | An engine job system (not on the ROADMAP yet; today Jolt runs its own `JobSystemThreadPool` in `src/physics/physics_world.cpp`, and R1 plans thread-pool asset loads) |
+| 🗺 | **Job System 2.0: Lock-Free Work Stealing** (series) — Reinalter (Molecular Matters), 2015. [part 1](https://blog.molecular-matters.com/2015/08/24/job-system-2-0-lock-free-work-stealing-part-1-basics/) | Engine job system (as above) |
+
+## Instrumentation, profiling & GPU debugging
+
+| | Reading | In quat-3d |
+|---|---|---|
+| 🔧 | **Tracy profiler manual** — Taudul. [manual (PDF)](https://github.com/wolfpld/tracy/releases/latest/download/tracy.pdf) · [github.com/wolfpld/tracy](https://github.com/wolfpld/tracy) | R4 profiling: CPU/GPU zones, `profile.*` remote + MCP tools (#82) |
+| 🔧 | **Timestamp queries** — Vulkan specification, *Queries → Timestamp Queries*. [docs.vulkan.org](https://docs.vulkan.org/spec/latest/chapters/queries.html#queries-timestamps) | R4 per-pass GPU timing via `vkCmdWriteTimestamp2` (#82) |
+| ✅ | **RenderDoc documentation** — Karlsson. Frame capture and GPU debugging. [renderdoc.org/docs](https://renderdoc.org/docs/) | Debugging any pass (external tool; no in-engine capture hooks) |
+| ✅ | **Flame Graphs** — Gregg. Reading CPU profiles (and his *Systems Performance* book for the full method). [brendangregg.com](https://www.brendangregg.com/flamegraphs.html) | Reading CPU sampling profiles of the engine (e.g. Linux `perf`; not wired into the build) |
+| ✅ | **Validation layers guide** — Khronos Vulkan Guide. [docs.vulkan.org](https://docs.vulkan.org/guide/latest/validation_overview.html) | Debug builds enable the validation layer (`src/app/application.cpp`); `engine_tests --validation` or `QUAT_VALIDATION=1` runs the GPU tests under it |
 
 ## Materials & shading (PBR)
 
@@ -111,12 +144,23 @@ If you read only a few things, read these. They underpin most of the engine.
 | 🔧 | **AgX** — Sobotka's view transform, and **Minimal AgX implementation** (iolite). [AgX](https://github.com/sobotka/AgX) · [minimal implementation](https://iolite-engine.com/blog_posts/minimal_agx_implementation) | R20 (#79) |
 | 🔧 | **Stochastic Screen-Space Reflections** — Stachowiak, SIGGRAPH 2015. [EA](https://www.ea.com/frostbite/news/stochastic-screen-space-reflections) | R21 SSR (#80) |
 
-## Transparency & particles
+## Transparency, particles & VFX
 
 | | Reading | In quat-3d |
 |---|---|---|
-| ✅ | **Weighted Blended Order-Independent Transparency** — McGuire & Bavoil, JCGT 2013. [JCGT](https://jcgt.org/published/0002/02/09/) | `particle_draw.slang`, `particle_composite.slang` |
-| 🔧 | **A Phenomenological Scattering Model for Order-Independent Transparency** — McGuire & Mara, I3D 2016. [PDF](https://research.nvidia.com/sites/default/files/pubs/2016-02_A-Phenomenological-Scattering/McGuire2016Transparency.pdf) | Glass / transmissive shadows (#70) |
+| 🔧 | **Weighted Blended Order-Independent Transparency** — McGuire & Bavoil, JCGT 2013. [JCGT](https://jcgt.org/published/0002/02/09/) | `particle_draw.slang`, `particle_composite.slang` (R10.3 GPU particles, #26 in the merge train) |
+| ✅ | **A Phenomenological Scattering Model for Order-Independent Transparency** — McGuire & Mara, I3D 2016. [PDF](https://research.nvidia.com/sites/default/files/pubs/2016-02_A-Phenomenological-Scattering/McGuire2016Transparency.pdf) | Coloured shadows through glass and blended casters: `shadow_material.slang` translucency map (#70) |
+| 🔧 | **Holy Smoke! Faster Particle Rendering Using DirectCompute** — Thomas (AMD), AMD/Microsoft Developer Day, Stockholm 2014; follows his GDC 2014 talk *Compute-Based GPU Particle Systems*. The canonical GPU particle architecture: dead/alive lists, compute emit + simulate, depth-buffer collisions, GPU sort, tiled compute rendering. [slides](https://www.slideshare.net/slideshow/holy-smoke-faster-particle-rendering-using-direct-compute-by-gareth-thomas/35656271) · [GDC Vault](https://gdcvault.com/play/1020002/Advanced-Visual-Effects-with-DirectX) · [GPUParticles11 sample](https://gpuopen.com/learn/gpuparticles11-directx-11-sdk-sample/) | R10.3 GPU particles: compute emit / simulate / compact, depth collisions (#26) |
+| 🔧 | **GPU-based particle simulation** — Turánszki (Wicked Engine blog), 2017. A readable end-to-end implementation with indirect-argument buffers. [wickedengine.net](https://wickedengine.net/2017/11/gpu-based-particle-simulation) | R10.3 (#26) |
+| 🔧 | **Soft Particles** — Lorach (NVIDIA), 2007 whitepaper. Depth-fade where sprites meet geometry. [PDF](https://developer.download.nvidia.com/whitepapers/2007/SDK10/SoftParticles_hi.pdf) | Soft-particle fade in `particle_draw.slang` (#26) |
+| 🗺 | **High-Speed, Off-Screen Particles** — Cantlay, GPU Gems 3 ch. 23 (2007). Low-resolution particle rendering to bound fill rate. [online](https://developer.nvidia.com/gpugems/gpugems3/part-iv-image-effects/chapter-23-high-speed-screen-particles) | Particle fill-rate budget (not scoped on the ROADMAP yet) |
+| 🗺 | **Programmable VFX with Unreal Engine's Niagara** — Wyeth Johnson (Epic), GDC 2018, the talk that introduced Niagara's modular emitter stack. [session page](https://www.unrealengine.com/events/gdc2018/programmable-vfx-with-unreal-engine-s-niagara) · [Niagara enhancements and samples (Epic tech blog, 2018)](https://www.unrealengine.com/en-US/tech-blog/niagara-enhancements-and-sample-overview) | R18 VFX graph (Niagara-class) |
+| 🗺 | **Niagara documentation** — Epic. Systems, emitters, modules and parameters; the model R18 follows. [Overview of Niagara Effects](https://dev.epicgames.com/documentation/en-us/unreal-engine/overview-of-niagara-effects-for-unreal-engine) | R18 |
+| 🗺 | **Visual Effect Graph manual** — Unity. The other production node-graph GPU VFX system; its contexts/blocks model is a useful comparison. [docs.unity3d.com](https://docs.unity3d.com/Packages/com.unity.visualeffectgraph@17.2/manual/toc.html) | R18 |
+| 🗺 | **Curl-Noise for Procedural Fluid Flow** — Bridson, Hourihan, Nordenstam, SIGGRAPH 2007. Divergence-free turbulence for smoke and sparks without a simulation. [PDF](https://www.dneg.com/wp-content/uploads/2022/11/2007.pdf) · [ACM](https://doi.org/10.1145/1239451.1239497) | R18 update modules (turbulence; not in R18's scope list yet); cloud distortion (clouds v2) |
+| 🗺 | **Real-Time Fluid Dynamics for Games** — Stam, GDC 2003 (stable fluids, with full C source). [Autodesk Research](https://www.research.autodesk.com/publications/real-time-fluid-dynamics-for-games/) | Local smoke/fire grids (beyond R18's current scope) |
+| 🗺 | **Real-Time Simulation and Rendering of 3D Fluids** — Crane, Llamas, Tariq, GPU Gems 3 ch. 30 (2007). [online](https://developer.nvidia.com/gpugems/gpugems3/part-v-physics-simulation/chapter-30-real-time-simulation-and-rendering-3d-fluids) | Local smoke/fire grids (beyond R18's current scope) |
+| 🗺 | **Position Based Fluids** — Macklin & Müller, SIGGRAPH 2013; **Unified Particle Physics for Real-Time Applications** — Macklin, Müller, Chentanez, Kim, SIGGRAPH 2014. [PBF (dblp)](https://dblp.uni-trier.de/rec/journals/tog/MacklinM13.html) · [Unified (PDF)](https://matthias-research.github.io/pages/publications/flex.pdf) | Particle fluids (beyond R18's current scope) |
 
 ## Terrain, scattering & foliage
 
@@ -140,6 +184,19 @@ If you read only a few things, read these. They underpin most of the engine.
 | 🗺 | **XPBD: Position-Based Simulation of Compliant Constrained Dynamics** — Macklin, Müller, Chentanez, MIG 2016. [PDF](https://matthias-research.github.io/pages/publications/XPBD.pdf) | Cloth (G-track) |
 | ✅ | **Jolt Physics** documentation — Rouwé. [jrouwe.github.io/JoltPhysics](https://jrouwe.github.io/JoltPhysics/) | `src/physics/` |
 | ✅ | **Recast & Detour** — Mononen. [GitHub](https://github.com/recastnavigation/recastnavigation) | Navigation meshes and pathfinding |
+
+## Networking
+
+| | Reading | In quat-3d |
+|---|---|---|
+| ✅ | **Fix Your Timestep!** — Fiedler (Gaffer On Games), 2004. Fixed-step simulation with an accumulator. [gafferongames.com](https://gafferongames.com/post/fix_your_timestep/) | Jolt steps on a fixed 1/120 s accumulator (`src/physics/physics_world.cpp`); `src/core/sim_clock.cpp` drops hitches over 0.25 s and slices long frames into physics-budget steps |
+| ✅ | **Networking for Game Programmers** and **Networked Physics** (series) — Fiedler. UDP, reliability, snapshot interpolation, state sync. [gafferongames.com](https://gafferongames.com/) · [Networked Physics](https://gafferongames.com/categories/networked-physics/) | Snapshots in `src/net/replication.cpp` (clients smooth exponentially toward the latest snapshot rather than buffering and interpolating between two); UDP and reliability come from GameNetworkingSockets (`src/net/transport.cpp`) |
+| ✅ | **Fast-Paced Multiplayer** (series) — Gambetta. Client prediction, server reconciliation, entity interpolation, lag compensation. [gabrielgambetta.com](https://www.gabrielgambetta.com/client-server-game-architecture.html) | Prediction + reconciliation: `src/net/prediction.cpp`, `character_step.cpp` (no lag compensation yet) |
+| ✅ | **Latency Compensating Methods in Client/Server In-game Protocol Design and Optimization** — Bernier (Valve), GDC 2001; and **Source Multiplayer Networking**. [Bernier](https://developer.valvesoftware.com/wiki/Latency_Compensating_Methods_in_Client/Server_In-game_Protocol_Design_and_Optimization) · [Source networking](https://developer.valvesoftware.com/wiki/Source_Multiplayer_Networking) | Client prediction in `src/net/prediction.cpp`; server-side lag compensation not implemented |
+| 🗺 | **Overwatch Gameplay Architecture and Netcode** — Timothy Ford (Blizzard), GDC 2017. ECS plus deterministic prediction and rollback. [GDC Vault](https://www.gdcvault.com/play/1024001/-Overwatch-Gameplay-Architecture-and) | Net + ECS design |
+| 🗺 | **I Shot You First: Networking the Gameplay of Halo: Reach** — Aldridge (Bungie), GDC 2011. [GDC Vault](https://www.gdcvault.com/play/1014346/I-Shot-You-First-Networking) · [video (GDC YouTube)](https://www.youtube.com/watch?v=h47zZrqjgLc) | Replication priorities |
+| 🗺 | **8 Frames in 16ms: Rollback Networking in Mortal Kombat and Injustice 2** — Stallone (NetherRealm), GDC 2018. [GDC Vault](https://www.gdcvault.com/play/1025471/8-Frames-in-16ms-Rollback) | Rollback (A10.4 checkpoints) |
+| ✅ | **Quake 3 Source Code Review: Network Model** — Sanglard, 2012. Delta-compressed snapshots, in readable form. [fabiensanglard.net](https://fabiensanglard.net/quake3/network.php) | `src/net/replication.cpp` sends only entities that moved since the last snapshot plus periodic reliable keyframes: simpler than Quake 3's per-client delta against the last acknowledged snapshot |
 
 ## Water
 
