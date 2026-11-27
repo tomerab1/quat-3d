@@ -140,6 +140,25 @@ engine/
 - Mark all implementation-private functions `static` or put them in anonymous namespaces.
 - Prefer `[[nodiscard]]` on any function returning a status or resource.
 
+### File size and structure
+- Keep files focused and small: aim for **under ~600 lines per `.cpp`**; past
+  ~1000 lines a file must be split by responsibility (vendored third-party
+  code excepted). Prefer several cohesive files over one large one.
+- **`src/main.cpp` stays thin**: process entry, argument/env parsing, and
+  handing off to the application layer. New features never go into
+  `main.cpp`; they get their own module and are wired in through it.
+- Test code does not live in engine sources: tests go under `tests/`
+  (see Testing).
+
+### Testing
+- Tests use **GoogleTest** (vcpkg `gtest`), under `tests/<module>/*_test.cpp`,
+  built into the `engine_tests` executable and run by CTest.
+- GPU tests use the shared fixture in `tests/` that creates a surface-less
+  Vulkan device; they skip (not fail) when no device exists unless
+  `--require-gpu` / `QUAT_REQUIRE_GPU=1` is given.
+- Legacy `run_*_self_test()` functions in engine sources are being migrated
+  into GoogleTest cases; do not add new ones.
+
 ### Headers
 - Every public header in `include/engine/<module>/` — no implementation details leak.
 - Private headers stay in `src/<module>/`.

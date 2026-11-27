@@ -18,8 +18,9 @@ ID (`S3`, `A2`, …) and ends in one or more commits titled `[<ID>] <description
 - If an item turns out to be wrongly scoped, edit this file first (in its own
   commit) rather than silently drifting.
 
-**Current priority order:** S (stability) → A (AI tooling / MCP) → P1/P2 (Mac)
-→ G1 (audio) → the rest by need.
+**Current priority order:** S1 audit fixes → S3 GoogleTest → S7/S8 (thin
+`main.cpp`, split oversized files) → rest of S → A (AI tooling / MCP) → P1/P2
+(Mac) → G1 (audio) → the rest by need.
 
 ---
 
@@ -33,9 +34,12 @@ ID (`S3`, `A2`, …) and ends in one or more commits titled `[<ID>] <description
   process. All external JSON (scene files, behaviour trees, remote requests)
   goes through the checked reader (`engine/core/json_fields.hpp`); network
   packets and glTF accessors are bounds-checked.
-- [ ] **S3 — Headless test runner.** One `engine_tests` executable running
-  every device-free self-test, plus GPU tests on a software Vulkan device
-  (lavapipe) without a window. Non-zero exit on failure.
+- [ ] **S3 — GoogleTest suite.** `engine_tests` on GoogleTest (vcpkg `gtest`):
+  CPU tests always, GPU tests through a shared surface-less Vulkan device
+  fixture (lavapipe in CI), registered with CTest. Step 1 wraps the existing
+  `run_*_self_test()` functions as test cases; step 2 moves their bodies out
+  of engine sources into `tests/<module>/` (smaller engine files, real
+  per-assertion failure messages).
 - [ ] **S4 — CI.** GitHub Actions: Linux (clang + libc++, vcpkg binary cache),
   Windows (MSVC), macOS (MoltenVK). Builds, runs S3, uploads failure logs.
 - [ ] **S5 — Sanitizers + validation gates.** ASan/UBSan preset; CI fails on
@@ -47,6 +51,9 @@ ID (`S3`, `A2`, …) and ends in one or more commits titled `[<ID>] <description
   `Application` (window, device, lifecycle), `FrameRenderer` (graph build +
   submission), `EditorBridge` (editor requests) and `RuntimeServices`
   (terrain streaming, play mode, networking). Behaviour-preserving.
+- [ ] **S8 — Split oversized files.** Enforce the file-size rule in
+  CLAUDE.md: `gltf_loader.cpp` (validation / mesh / material / skin /
+  animation / scene assembly), and any file past ~1000 lines.
 
 ## A — AI tooling: MCP server in Rust
 
@@ -116,10 +123,12 @@ JSON-RPC over loopback TCP to the engine.
 - [ ] **G1 — Audio (miniaudio).** `AudioSource` / `AudioListener` components,
   3D spatialisation and attenuation, mixer buses, streaming music, editor
   preview, scene serialization.
-- [ ] **G2 — Behaviour node graph.** Node editor (visual) over the existing
-  data-driven behaviour trees; blackboard; more leaves (perception, animation
-  parameters).
-- [ ] **G3 — Shader node editor.** Visual front-end for R7.
+- [ ] **G2 — Behaviour node graph.** Visual node editor built on
+  `imgui-node-editor` (thedmd, vcpkg port) over the existing data-driven
+  behaviour trees (JSON stays the asset format); blackboard; more leaves
+  (perception, animation parameters).
+- [ ] **G3 — Shader node editor.** Visual front-end for R7 (same
+  `imgui-node-editor` foundation as G2).
 - [ ] **G4 — Networking.** Multiple players, entity spawn/despawn replication,
   interest management, RPCs, lag compensation, dedicated-server build.
 - [ ] **G5 — Input actions.** Action maps over keyboard/mouse/gamepad,

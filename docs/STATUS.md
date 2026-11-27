@@ -28,7 +28,7 @@ Decisions already made (do not re-litigate without the owner):
 | Item | State | Verified? |
 |---|---|---|
 | S1 bug audit | 46 findings recorded in [`audit/S1-findings.md`](audit/S1-findings.md) with severity and status. Fixed so far: B7, B11/C4, B13 (`[S1.1]`); C1–C3 + C5 index part — glTF structural validation (`[S1.2]`); B6/C8 orphaned Jolt bodies/characters swept (`[S1.3]`); B10/C7 behaviour-tree parsing hardened (`[S1.4]`) | Animation fix verified locally; physics/scene fixes await CI |
-| S3 `engine_tests` | Written (`tests/engine_tests.cpp`, CTest entries in `CMakeLists.txt`) | Not yet compiled |
+| S3 GoogleTest | Step 1 done: `tests/` (gtest via vcpkg), legacy self-tests wrapped (`tests/legacy/`), GPU fixture, CTest CPU/GPU split. Step 2 (move test bodies out of engine sources) not started | Harness built and run locally against a source-built gtest (RPC tests pass); full suite awaits CI |
 | S4 CI | Linux job in `.github/workflows/ci.yml` | First runs in progress on GitHub — check the Actions tab |
 | A1 remote transport | `src/remote/`, `include/engine/remote/rpc_server.hpp`, wired in `main.cpp` (`QUAT_REMOTE`) | Library compiled warning-free + self-test passed standalone; `main.cpp` wiring not yet compiled |
 | A2 world commands | `Primitive` component declared in `components.hpp`; codec, resolver and commands not written | — |
@@ -58,6 +58,14 @@ top.
 - A3 adds frame-loop services via a `WorldServices` struct of callbacks:
   screenshot (non-stalling readback, PNG), camera, glTF spawn, play/stop,
   save/load (paths confined to the project root), navmesh bake.
+
+## Standing instructions from the owner
+
+- Keep `src/main.cpp` thin — new features get their own modules (S7).
+- No very long files: aim under ~600 lines per `.cpp`, split past ~1000 (S8).
+- Tests in GoogleTest under `tests/`; no new `run_*_self_test()` functions.
+- Behaviour/shader node editors use `imgui-node-editor` (thedmd, vcpkg port).
+- Keep `README.md` human-readable and current; keep this file current.
 
 ## Blockers
 

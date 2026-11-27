@@ -152,13 +152,14 @@ cp -R Models/Fox/glTF ~/quat-3d/sample-assets/Fox
 
 ## Testing
 
-All engine self-tests run without a window through `engine_tests`:
+Tests use [GoogleTest](https://github.com/google/googletest) and run without
+a window through `engine_tests`:
 
 ```sh
-ctest --test-dir build/release --output-on-failure   # everything
-./build/release/engine_tests --cpu                   # only the tests that need no GPU
-./build/release/engine_tests physics                 # only tests whose name contains "physics"
-./build/release/engine_tests --list                  # list all tests
+ctest --test-dir build/release --output-on-failure      # everything
+./build/release/engine_tests --gtest_filter='-Gpu*'     # only tests that need no GPU
+./build/release/engine_tests --gtest_filter='Physics.*' # one suite
+./build/release/engine_tests --gtest_list_tests         # list all tests
 ```
 
 GPU tests run on any Vulkan device; without a GPU, Mesa's software driver
@@ -196,7 +197,7 @@ include/engine/     Public headers, one folder per module
 src/                Implementation, mirroring include/ (rhi, renderer, scene, physics, ...)
 src/editor/         The editor (only in builds with ENGINE_EDITOR=ON, the default)
 src/remote/         Remote-control endpoint used by AI tooling
-tests/              Headless test runners (engine_tests, anim_smoke)
+tests/              GoogleTest suite (engine_tests): tests/<module>/, shared helpers in tests/support/
 docs/               Project documentation
 ports/, triplets/   vcpkg customisations
 ```

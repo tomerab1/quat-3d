@@ -11,8 +11,9 @@ the current state is in [`STATUS.md`](STATUS.md).
 - Commits are titled `[<item ID>] <what changed>`, e.g. `[S1.3] fix cascade
   split overflow`; multi-commit items use `[<ID>.<n>]`.
 - Before committing: the build is warning-free and `ctest` passes.
-- New behaviour gets a test in `engine_tests` (a `run_*_self_test()` function
-  in the module, registered in `tests/engine_tests.cpp`).
+- New behaviour gets a GoogleTest case in `tests/<module>/<topic>_test.cpp`
+  (picked up automatically by `tests/CMakeLists.txt`). Do not add new
+  `run_*_self_test()` functions to engine sources.
 - Tick the roadmap checkbox in the commit that completes an item, and update
   `docs/STATUS.md` at the end of each work session.
 
@@ -30,16 +31,17 @@ CMake options: `ENGINE_EDITOR` (default ON), `ENGINE_PROFILE`,
 Targets: the engine libraries (`engine_rhi`, `engine_renderer`,
 `engine_scene`, `engine_physics`, `engine_animation`, `engine_terrain`,
 `engine_nav`, `engine_net`, `engine_remote`, `engine_editor`), the `game`
-executable, and the test runners `engine_tests` and `anim_smoke`.
+executable, and the GoogleTest suite `engine_tests` (`tests/`).
 
 ## Testing
 
 ```sh
 ctest --test-dir build/release --output-on-failure
-./build/release/engine_tests --list            # every test, tagged cpu/gpu
-./build/release/engine_tests --cpu             # device-free tests only
-./build/release/engine_tests render/ nav/      # filter by name substring
-./build/release/engine_tests --validation      # GPU tests under the validation layer
+./build/release/engine_tests --gtest_list_tests       # every test
+./build/release/engine_tests --gtest_filter='-Gpu*'    # device-free tests only
+./build/release/engine_tests --gtest_filter='Nav.*:Ai.*'
+./build/release/engine_tests --validation              # GPU tests under the validation layer
+./build/release/engine_tests --require-gpu             # fail (not skip) GPU tests without a device
 ```
 
 Without a GPU, point the Vulkan loader at Mesa's software driver:
@@ -47,6 +49,15 @@ Without a GPU, point the Vulkan loader at Mesa's software driver:
 ```sh
 VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.x86_64.json ./build/release/engine_tests
 ```
+
+Test layout:
+
+| Path | Contents |
+|---|---|
+| `tests/<module>/*_test.cpp` | Test cases (new tests go here) |
+| `tests/support/expect_ok.hpp` | `ASSERT_OK` / `EXPECT_OK` / `ASSERT_ERR` for `std::expected` results |
+| `tests/support/gpu_context.hpp` | Shared surface-less Vulkan device; start GPU tests with `QUAT_REQUIRE_GPU(ctx)` and name the suite `Gpu*` |
+| `tests/legacy/` | Wrappers around the old `run_*_self_test()` functions, removed as their bodies migrate into `tests/<module>/` |
 
 A few self-tests still live in `src/main.cpp` (they need frame-loop helpers)
 and run with `QUAT_SELFTEST=1 ./build/release/game` until S7 moves them.

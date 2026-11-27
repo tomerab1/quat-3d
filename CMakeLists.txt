@@ -324,34 +324,10 @@ target_compile_definitions(game PRIVATE
     QUAT_PROJECT_ROOT="${CMAKE_CURRENT_SOURCE_DIR}")
 
 # ---------------------------------------------------------------------------
-# anim_smoke — windowless CPU harness for the animation self-tests (no SDL /
-# Vulkan), so the animation runtime can be verified without a display.
+# Tests (GoogleTest) — see tests/CMakeLists.txt. `ctest --test-dir build/<preset>`.
 # ---------------------------------------------------------------------------
-add_executable(anim_smoke tests/anim_smoke.cpp)
-target_link_libraries(anim_smoke PRIVATE engine_flags engine_animation)
-target_include_directories(anim_smoke PRIVATE ${ENGINE_PUBLIC_INCLUDE})
-
-# ---------------------------------------------------------------------------
-# engine_tests — the headless test runner (ROADMAP S3): every library
-# self-test, CPU ones always and GPU ones on a surface-less Vulkan device
-# (lavapipe on CI). Registered with CTest: `ctest --test-dir build/<preset>`.
-# ---------------------------------------------------------------------------
-add_executable(engine_tests tests/engine_tests.cpp)
-target_link_libraries(engine_tests PRIVATE
-    engine_flags engine_rhi engine_asset engine_scene engine_renderer engine_physics
-    engine_animation engine_terrain engine_nav engine_net engine_remote)
-if(ENGINE_EDITOR)
-    target_link_libraries(engine_tests PRIVATE engine_editor)
-endif()
-target_include_directories(engine_tests PRIVATE ${ENGINE_PUBLIC_INCLUDE})
-target_compile_definitions(engine_tests PRIVATE
-    QUAT_COOKED_SHADER_DIR="${CMAKE_CURRENT_SOURCE_DIR}/cooked/shaders")
-add_dependencies(engine_tests shaders)
-
 enable_testing()
-add_test(NAME engine_tests_cpu COMMAND engine_tests --cpu)
-add_test(NAME engine_tests_gpu COMMAND engine_tests --require-gpu)
-add_test(NAME anim_smoke COMMAND anim_smoke)
+add_subdirectory(tests)
 
 # ---------------------------------------------------------------------------
 # Offline shader cooking: assets/shaders/*.slang -> cooked/shaders/*.{spv,json}
