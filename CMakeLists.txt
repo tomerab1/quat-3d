@@ -390,6 +390,7 @@ add_library(engine_remote_world STATIC
     src/remote/world/tuning_commands.cpp
     src/remote/world/behavior_commands.cpp
     src/remote/world/behavior_edit_commands.cpp
+    src/remote/world/project_commands.cpp
     src/remote/world/image_encode.cpp
     src/remote/world/stb_image_write_impl.cpp)
 target_link_libraries(engine_remote_world PUBLIC

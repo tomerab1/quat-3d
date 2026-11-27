@@ -9,7 +9,8 @@
 // look tuning (ROADMAP A8): render.settings.get / set / reset / schema,
 // material.get / set — and behaviour-tree authoring (ROADMAP A7): bt.leaves,
 // bt.get, bt.set, bt.add_node, bt.remove_node, bt.move_node, bt.set_params,
-// bt.status. The method contract is docs/remote-control.md.
+// bt.status — and game packaging (ROADMAP P4): project.info, project.build,
+// project.build_status. The method contract is docs/remote-control.md.
 //
 // Scene editing works on any Scene. Everything that only the running
 // application has — the view camera, the renderer's settings, terrain heights,
@@ -33,6 +34,8 @@
 #include <glm/glm.hpp>
 
 #include "engine/core/error.hpp"
+#include "engine/project/build_job.hpp"
+#include "engine/project/game_project.hpp"
 #include "engine/remote/rpc_server.hpp"
 
 namespace engine::core {
@@ -74,6 +77,20 @@ struct FrameStats {
     std::uint32_t                samples = 0;
     std::optional<std::uint32_t> draws;            // draw items submitted last frame
     std::optional<std::uint64_t> resident_bytes;   // process resident memory
+};
+
+// The game project the engine opened (QUAT_GAME, or the player's game.json).
+struct GameProjectInfo {
+    std::filesystem::path root; // absolute; holds game.json
+    project::GameProject  project;
+};
+
+// A validated project.build request.
+struct ProjectBuildParams {
+    std::string            target; // empty: the host's
+    std::filesystem::path  output; // absolute, inside the game project
+    project::PackageConfig config = project::PackageConfig::shipping;
+    bool                   smoke_test = false;
 };
 
 struct WorldServices {
@@ -135,6 +152,17 @@ struct WorldServices {
 
     // The current navmesh, or null / invalid when none is baked.
     std::function<const nav::NavMesh*()> navmesh;
+
+    // ---- Game projects and packaging (ROADMAP P4) -----------------------------
+
+    // The open game project; nullopt when the engine runs without one.
+    std::function<std::optional<GameProjectInfo>()> game_project;
+    // Starts packaging the open project in the background (quat-pack);
+    // returns the job number. Fails when a build runs or the tools are missing.
+    std::function<std::expected<std::uint64_t, core::Error>(const ProjectBuildParams&)>
+        project_build;
+    // The packaging job's state (idle before the first build).
+    std::function<project::BuildStatus()> project_build_status;
 };
 
 // Registers every world command on `server`. `scene` must outlive the server's

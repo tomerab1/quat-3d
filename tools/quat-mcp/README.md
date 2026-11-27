@@ -129,6 +129,8 @@ command ends in `quat-mcp.exe`.
 | `render_settings_reset` | `render.settings.reset` | Restore one group's (or every group's) defaults |
 | `render_settings_schema` | `render.settings.schema` | Every tunable field with type, range, default, unit and hint (settings and material factors) |
 | `material_get` / `material_set` | `material.get` / `material.set` | An entity's PBR factors (colour, roughness, metallic, clearcoat, glass, emission …); per-entity edits and reverts |
+| `project_info` | `project.info` | The open game project (`game.json`), its executable name and the host target |
+| `project_build` / `project_build_status` | `project.build` / `project.build_status` | Package the game for the host OS in the background; poll progress, log tail and the archive path |
 
 Tool descriptions spell out units and conventions (metres, Y up, Euler degrees
 in YXZ order, `"#rrggbb"` sRGB colours for primitives and linear `[r,g,b]` for
@@ -184,8 +186,8 @@ Layout:
 |---|---|
 | `content/` | **Everything the model reads**, as Markdown: server instructions, one file per tool description, the component reference, prompt templates ([MiniJinja](https://docs.rs/minijinja)). See `content/README.md`. |
 | `src/client/` | Engine JSON-RPC client: `mod.rs` (calls, reconnects, handshake), `connection.rs` (socket, reader task, in-flight calls), `error.rs` (error codes, `EngineError`) |
-| `src/server/` | MCP server: `mod.rs` (handler, resource), tools grouped by area (`scene_tools.rs`, `world_tools.rs`, `sim_tools.rs`, `debug_tools.rs`, `behavior_tools.rs`, `tuning_tools.rs`, each its own rmcp router), `bt_outline.rs` (behaviour-tree outlines), `prompts.rs`, `results.rs` |
-| `src/params.rs`, `src/params/` | Typed tool inputs — their doc comments are the JSON schemas the model reads (`debug.rs`, `behavior.rs`, `tuning.rs` per area) |
+| `src/server/` | MCP server: `mod.rs` (handler, resource), tools grouped by area (`scene_tools.rs`, `world_tools.rs`, `sim_tools.rs`, `debug_tools.rs`, `behavior_tools.rs`, `tuning_tools.rs`, `project_tools.rs`, each its own rmcp router), `bt_outline.rs` (behaviour-tree outlines), `prompts.rs`, `results.rs` |
+| `src/params.rs`, `src/params/` | Typed tool inputs — their doc comments are the JSON schemas the model reads (`debug.rs`, `behavior.rs`, `tuning.rs`, `project.rs` per area) |
 | `src/content.rs` | Embeds `content/` and renders prompt templates |
 | `src/config.rs` | Flags / environment |
 

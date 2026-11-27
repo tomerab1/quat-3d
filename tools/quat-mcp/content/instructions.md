@@ -6,4 +6,6 @@ To change how the scene looks, tune the renderer (`render_settings_get` / `rende
 
 NPC behaviour is a behaviour tree per entity: `bt_leaves` lists the node kinds and leaves, `bt_set` writes a whole tree, `bt_get` shows it with stable node ids for the incremental `bt_add_node` / `bt_move_node` / `bt_remove_node` / `bt_set_params`, and `bt_status` shows what each node did on the last tick during Play.
 
+A game made here ships as a standalone package: `project_info` shows the open game project, `project_build` packages it for the engine's OS in the background and `project_build_status` reports progress and the archive.
+
 Engine errors name the offending field and what was expected — fix the call instead of repeating it. The `build_world`, `inspect_scene`, `debug_session`, `design_behavior` and `tune_look` prompts describe the workflows in detail.

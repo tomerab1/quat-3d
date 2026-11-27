@@ -8,9 +8,11 @@ use serde_json::{Map, Value};
 
 mod behavior;
 mod debug;
+mod project;
 mod tuning;
 pub use behavior::*;
 pub use debug::*;
+pub use project::*;
 pub use tuning::*;
 
 /// A JSON object keyed by component name (see the tool description).

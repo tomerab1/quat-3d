@@ -21,6 +21,8 @@
 #include <glm/gtc/constants.hpp>
 
 #include "engine/core/utf8_path.hpp"
+#include "app/app_config.hpp"
+#include "app/build_service.hpp"
 #include "app/nav_bake.hpp"
 #include "engine/asset/asset_manager.hpp"
 #include "engine/core/log.hpp"
@@ -277,6 +279,22 @@ struct RemoteBridge::Impl {
         };
         s.frame_stats = [this] { return frame_stats(); };
         s.physics_world = [this] { return physics_world(); };
+        s.game_project = [this]() -> std::optional<remote::GameProjectInfo> {
+            if (t.game == nullptr) return std::nullopt;
+            return remote::GameProjectInfo{t.game->root, t.game->project};
+        };
+        if (t.build_job != nullptr) {
+            s.project_build = [this](const remote::ProjectBuildParams& p)
+                -> std::expected<std::uint64_t, Error> {
+                if (t.game == nullptr) return fail("no game project is open");
+                return start_game_build(*t.build_job, t.game->root,
+                                        {.target = p.target,
+                                         .output = p.output,
+                                         .config = p.config,
+                                         .smoke_test = p.smoke_test});
+            };
+            s.project_build_status = [this] { return t.build_job->status(); };
+        }
         return s;
     }
 
