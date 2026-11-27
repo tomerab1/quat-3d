@@ -1279,10 +1279,15 @@ int main() {
                     std::fprintf(stderr, "[net] client %u left\n", ev.client);
                     if (ev.client == net_player_owner) {
                         net_player_owner = engine::net::invalid_client;
+                        net_last_input_seq = 0;
                     }
                 } else if (ev.type == engine::net::NetEvent::Type::message) {
                     engine::net::PlayerInput input;
-                    if (engine::net::decode_input(ev.payload, input)) {
+                    // decode_input sanitizes (finite, y = 0, |xz| <= 1, sane
+                    // dt); replayed / reordered sequences are dropped.
+                    if (engine::net::decode_input(ev.payload, input) &&
+                        (ev.client != net_player_owner ||
+                         input.sequence > net_last_input_seq)) {
                         // First sender claims the player character (v1: one
                         // remote player). Apply authoritatively.
                         if (net_player_owner == engine::net::invalid_client) {

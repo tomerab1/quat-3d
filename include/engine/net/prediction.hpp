@@ -13,10 +13,12 @@
 // CharacterPredictor is engine-agnostic: the step function is injected, which
 // keeps the replay math unit-testable without physics or sockets.
 
+#include <cstddef>
 #include <cstdint>
 #include <deque>
 #include <expected>
 #include <functional>
+#include <optional>
 #include <vector>
 
 #include <glm/glm.hpp>
@@ -31,7 +33,50 @@ struct PlayerInput {
     float         dt = 0.0F;
 };
 
+// Longest frame a single input may cover. Longer client frames are clamped
+// (on both ends, so prediction and the authoritative step agree).
+inline constexpr float max_input_dt = 0.1F;
+
+// Validate + normalise an input in place — every input from the wire is
+// untrusted. Returns false (drop it) for non-finite values or dt <= 0;
+// otherwise forces move.y = 0, clamps |move.xz| <= 1 and dt <= max_input_dt.
+[[nodiscard]] bool sanitize_input(PlayerInput& input);
+
+// Client side: the input for this frame, normalised by the same rules the
+// host applies (nullopt when `dt` / `move` are unusable).
+[[nodiscard]] std::optional<PlayerInput> make_input(std::uint32_t sequence, const glm::vec3& move,
+                                                    float dt);
+
+// Host side: one remote player's inputs, validated and in sequence order.
+class InputQueue {
+public:
+    // ~1 s of 60 Hz input. Beyond it the client is flooding (or the host is
+    // far behind); newer inputs are refused and the client gets corrected.
+    static constexpr std::size_t capacity = 64;
+
+    enum class Push : std::uint8_t {
+        queued,    // accepted
+        malformed, // failed sanitize_input
+        stale,     // sequence not above the last accepted one (replay / reorder)
+        full,      // capacity reached
+    };
+
+    // Sanitize, enforce strictly increasing sequences, enqueue.
+    [[nodiscard]] Push push(PlayerInput input);
+
+    [[nodiscard]] std::size_t size() const { return queue_.size(); }
+    [[nodiscard]] std::uint32_t last_received() const { return last_received_; }
+
+    // Forget everything (owner left / a new owner claimed the character).
+    void reset();
+
+private:
+    std::deque<PlayerInput> queue_;
+    std::uint32_t           last_received_ = 0;
+};
+
 // Wire helpers (kind 2 = input, kind 3 = authoritative character state).
+// decode_input also sanitizes: a decoded input is always safe to simulate.
 [[nodiscard]] std::vector<std::uint8_t> encode_input(const PlayerInput& input);
 [[nodiscard]] bool decode_input(const std::vector<std::uint8_t>& payload, PlayerInput& out);
 [[nodiscard]] std::vector<std::uint8_t> encode_character_state(std::uint32_t acked_sequence,

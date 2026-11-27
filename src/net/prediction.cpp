@@ -1,5 +1,6 @@
 #include "engine/net/prediction.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <cstring>
 #include <string>
@@ -22,10 +23,51 @@ std::vector<std::uint8_t> encode_input(const PlayerInput& input) {
 
 bool decode_input(const std::vector<std::uint8_t>& payload, PlayerInput& out) {
     if (payload.size() != 21 || payload[0] != kInputKind) return false;
-    std::memcpy(&out.sequence, payload.data() + 1, 4);
-    std::memcpy(&out.move, payload.data() + 5, 12);
-    std::memcpy(&out.dt, payload.data() + 17, 4);
+    PlayerInput in;
+    std::memcpy(&in.sequence, payload.data() + 1, 4);
+    std::memcpy(&in.move, payload.data() + 5, 12);
+    std::memcpy(&in.dt, payload.data() + 17, 4);
+    if (!sanitize_input(in)) return false;
+    out = in;
     return true;
+}
+
+bool sanitize_input(PlayerInput& input) {
+    const glm::vec3& m = input.move;
+    if (!std::isfinite(m.x) || !std::isfinite(m.y) || !std::isfinite(m.z) ||
+        !std::isfinite(input.dt) || !(input.dt > 0.0F)) {
+        return false;
+    }
+    // Horizontal only, |xz| <= 1. Pre-scale by the largest component so huge
+    // (finite) values cannot overflow the length to infinity.
+    glm::vec2 xz(m.x, m.z);
+    const float largest = std::max(std::abs(xz.x), std::abs(xz.y));
+    if (largest > 1.0F) xz /= largest;
+    const float len = glm::length(xz);
+    if (len > 1.0F) xz /= len;
+    input.move = glm::vec3(xz.x, 0.0F, xz.y);
+    input.dt = std::min(input.dt, max_input_dt);
+    return true;
+}
+
+std::optional<PlayerInput> make_input(std::uint32_t sequence, const glm::vec3& move, float dt) {
+    PlayerInput input{sequence, move, dt};
+    if (!sanitize_input(input)) return std::nullopt;
+    return input;
+}
+
+InputQueue::Push InputQueue::push(PlayerInput input) {
+    if (!sanitize_input(input)) return Push::malformed;
+    if (input.sequence <= last_received_) return Push::stale;
+    if (queue_.size() >= capacity) return Push::full;
+    last_received_ = input.sequence;
+    queue_.push_back(input);
+    return Push::queued;
+}
+
+void InputQueue::reset() {
+    queue_.clear();
+    last_received_ = 0;
 }
 
 std::vector<std::uint8_t> encode_character_state(std::uint32_t acked_sequence,
