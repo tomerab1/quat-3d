@@ -29,7 +29,7 @@
 #include "engine/rhi/device.hpp"
 #include "engine/rhi/gpu_allocator.hpp"
 #include "engine/rhi/render_graph.hpp"
-#include "renderer/pbr_reference.hpp"
+#include "render/pbr_reference.hpp"
 #include "support/expect_ok.hpp"
 #include "support/gpu_context.hpp"
 #include "support/gpu_submit.hpp"
@@ -289,7 +289,7 @@ TEST(GpuClusteredLighting, PointLightLitWithinRadiusDarkBeyond) {
     const float dist = glm::distance(light_pos, p);
     const float t = std::clamp(1.0F - std::pow(dist / 5.0F, 4.0F), 0.0F, 1.0F);
     const float att = t * t / (dist * dist + 1.0F);
-    const glm::vec3 expected = r::pbr_ref::direct(
+    const glm::vec3 expected = quat::test::pbr_ref::direct(
         glm::vec3(quant8(base.x), quant8(base.y), quant8(base.z)), 0.0F, 1.0F,
         glm::vec3(0.0F, 0.0F, 1.0F), glm::normalize(cam.eye - p), glm::normalize(light_pos - p),
         light_color, intensity * att);
@@ -424,9 +424,9 @@ TEST(GpuClusteredLighting, MatchesBruteForceShadingWithManySmallLights) {
                 if (d >= l.position_range.w) continue;
                 const float t = std::clamp(1.0F - std::pow(d / l.position_range.w, 4.0F), 0.0F,
                                            1.0F);
-                expected += r::pbr_ref::direct(albedo, 0.0F, 1.0F, n, -dir, glm::normalize(lp - p),
-                                               glm::vec3(l.color_intensity),
-                                               l.color_intensity.w * t * t / (d * d + 1.0F));
+                expected += quat::test::pbr_ref::direct(
+                    albedo, 0.0F, 1.0F, n, -dir, glm::normalize(lp - p),
+                    glm::vec3(l.color_intensity), l.color_intensity.w * t * t / (d * d + 1.0F));
             }
             const glm::vec3 got = f->at({x, y});
             if (expected.r + expected.g + expected.b > 0.01F) ++lit_pixels;

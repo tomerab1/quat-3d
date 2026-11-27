@@ -1,5 +1,6 @@
 // Snapshot building (S1 audit B15): chunking below the MTU, exact send rate,
-// keyframes. Transport-free — the GNS loopback path is Net.Replication.
+// keyframes. Transport-free — the GNS loopback path is
+// NetReplicationLoopback.
 
 #include <cstdint>
 #include <cstring>

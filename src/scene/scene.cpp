@@ -122,6 +122,18 @@ void animation_system(entt::registry& registry, float dt) {
     }
 }
 
+void set_world_transform(entt::registry& registry, entt::entity e, const glm::mat4& world) {
+    auto* t = registry.try_get<Transform>(e);
+    if (t == nullptr) return;
+    glm::mat4 parent_world(1.0F);
+    if (const auto* p = registry.try_get<Parent>(e);
+        p != nullptr && p->entity != entt::null && registry.valid(p->entity)) {
+        if (const auto* pt = registry.try_get<Transform>(p->entity)) parent_world = pt->world;
+    }
+    t->world = world;
+    t->local = glm::inverse(parent_world) * world;
+}
+
 void transform_system(entt::registry& registry) {
     const glm::mat4 identity(1.0F);
     for (entt::entity e : registry.view<Transform>()) {

@@ -146,6 +146,34 @@ append_indices(const fastgltf::Asset& asset, const fastgltf::Primitive& prim,
     return out;
 }
 
+std::optional<std::uint32_t> max_weighted_joint(const fastgltf::Asset& asset,
+                                                const fastgltf::Primitive& prim) {
+    const auto* joints_attr = prim.findAttribute("JOINTS_0");
+    const auto* weights_attr = prim.findAttribute("WEIGHTS_0");
+    if (joints_attr == prim.attributes.cend() || weights_attr == prim.attributes.cend()) {
+        return std::nullopt;
+    }
+    const fastgltf::Accessor& joints_acc = asset.accessors[joints_attr->accessorIndex];
+    std::vector<glm::vec4> weights(joints_acc.count, glm::vec4(0.0F));
+    fastgltf::iterateAccessorWithIndex<fastgltf::math::fvec4>(
+        asset, asset.accessors[weights_attr->accessorIndex],
+        [&](fastgltf::math::fvec4 v, std::size_t i) {
+            if (i < weights.size()) weights[i] = to_glm(v);
+        });
+    std::optional<std::uint32_t> max_joint;
+    fastgltf::iterateAccessorWithIndex<fastgltf::math::uvec4>(
+        asset, joints_acc, [&](fastgltf::math::uvec4 v, std::size_t i) {
+            for (std::size_t k = 0; k < 4; ++k) {
+                // NaN weights count as used: they poison the blend just the same.
+                if (!(weights[i][static_cast<glm::length_t>(k)] == 0.0F)) {
+                    const auto j = static_cast<std::uint32_t>(v[k]);
+                    max_joint = max_joint ? std::max(*max_joint, j) : j;
+                }
+            }
+        });
+    return max_joint;
+}
+
 // Extract a single triangle primitive into its own self-contained MeshData (one
 // submesh spanning all its indices). Used by scene instantiation so each glTF
 // primitive becomes one MeshAsset with its own material — the granularity the

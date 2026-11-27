@@ -14,6 +14,9 @@ It runs in two places:
   cycle merges once its CI is green. (A fresh-session-per-run variant was
   tried first and disabled: fresh sessions had no repository access.)
 
+The surrounding issue → worker → PR → review → merge flow (hourly scanner,
+per-PR reviewer sessions) is described in [`FACTORY.md`](FACTORY.md).
+
 Every cycle starts by reading, in order: [`STATUS.md`](STATUS.md),
 [`LEARNINGS.md`](LEARNINGS.md), [`../ROADMAP.md`](../ROADMAP.md),
 [`audit/`](audit/), and the open pull requests.

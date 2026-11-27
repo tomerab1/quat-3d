@@ -85,6 +85,14 @@ void animation_system(entt::registry& registry, float dt);
 // Parent == entt::null).
 void transform_system(entt::registry& registry);
 
+// Place `e` at world pose `world` without leaving its parent's space: sets
+// Transform.world and rewrites Transform.local = inverse(parent.world) * world,
+// so the next transform_system pass reproduces the pose. Roots (no Parent, or
+// an invalid one) get local = world. Systems that simulate in world space
+// (physics bodies, character controllers, kinematic nav agents) write their
+// results back through this. No-op without a Transform.
+void set_world_transform(entt::registry& registry, entt::entity e, const glm::mat4& world);
+
 // Gather every entity carrying Transform + MeshRenderer into `out` as DrawItems
 // (model = Transform.world, resolved mesh/material pointers). `out` is cleared
 // first. Entities with an unloaded/empty mesh are still emitted; the GBuffer
@@ -115,12 +123,9 @@ struct CameraMatrices {
 
 // Bridge ECS <-> physics: create a body for each new RigidBody+Collider+Transform
 // entity, push kinematic transforms into the world, step it by `dt`, then write
-// dynamic bodies' transforms back into Transform (entities are treated as roots).
+// dynamic bodies' transforms back into Transform (through the parent's space,
+// see set_world_transform).
 void physics_system(entt::registry& registry, physics::PhysicsWorld& world, float dt);
-
-// Drops a dynamic sphere entity onto a static box-floor entity through the ECS
-// physics system and verifies its Transform fell and came to rest on the floor.
-[[nodiscard]] std::expected<void, core::Error> run_physics_body_self_test();
 
 // Create a static Jolt height-field body for the first Terrain entity in the
 // registry, matching the rendered surface: the body sits at the tile's minimum
@@ -154,13 +159,11 @@ void collect_nav_geometry(entt::registry& registry, const terrain::Heightmap* ma
                                                   const terrain::Heightmap& map,
                                                   const glm::vec3& origin);
 
-// Generates a small tile, adds its height-field body, drops a sphere onto it
-// through the ECS physics system, and verifies it rests on the surface height.
-[[nodiscard]] std::expected<void, core::Error> run_terrain_physics_self_test();
-
 // Advance every CharacterController: integrate gravity, apply `move` * `speed`
 // horizontally, move + resolve collisions via the character controller, and write
-// the result back into Transform. NetDriven characters are skipped (the network
+// the result back into Transform: only the world translation changes — the
+// entity's rotation and scale are kept and parented entities stay in their
+// parent's space. NetDriven characters are skipped (the network
 // layer steps them per input with step_character).
 void character_system(entt::registry& registry, physics::PhysicsWorld& world, float dt);
 
@@ -168,10 +171,6 @@ void character_system(entt::registry& registry, physics::PhysicsWorld& world, fl
 // first use). No-op unless `e` has a CharacterController and a Transform.
 void step_character(entt::registry& registry, physics::PhysicsWorld& world, entt::entity e,
                     float dt);
-
-// Drops a character onto a floor, then walks it, verifying it lands (on_ground)
-// and moves horizontally.
-[[nodiscard]] std::expected<void, core::Error> run_character_self_test();
 
 // nav_agent_system and the other navigation entry points: navigation.hpp.
 

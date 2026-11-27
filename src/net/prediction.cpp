@@ -3,7 +3,6 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
-#include <string>
 
 namespace engine::net {
 
@@ -168,63 +167,6 @@ std::optional<CharacterState> CharacterPredictor::reconcile(std::uint32_t acked_
 void CharacterPredictor::reset() {
     pending_.clear();
     last_acked_ = 0;
-}
-
-// ---------------------------------------------------------------------------
-// Self-test
-// ---------------------------------------------------------------------------
-std::expected<void, core::Error> run_prediction_self_test() {
-    const auto fail = [](const char* what) {
-        return std::unexpected(core::Error{std::string(what)});
-    };
-
-    // Deterministic toy locomotion: position += move * 2 m/s * dt.
-    const CharacterPredictor::StepFn step = [](const CharacterState& s, const PlayerInput& in) {
-        CharacterState next = s;
-        next.velocity = in.move * 2.0F;
-        next.position += next.velocity * in.dt;
-        return next;
-    };
-    CharacterPredictor predictor;
-
-    // Wire round trip.
-    PlayerInput probe{41U, glm::vec3(0.6F, 0.0F, -0.8F), 1.0F / 60.0F}; // |xz| <= 1
-    PlayerInput decoded;
-    if (!decode_input(encode_input(probe), decoded) || decoded.sequence != 41U ||
-        decoded.move != probe.move || decoded.dt != probe.dt) {
-        return fail("prediction self-test: input wire round trip failed");
-    }
-
-    // Predict 10 inputs of +x movement.
-    CharacterState client;
-    CharacterState server;
-    std::vector<PlayerInput> inputs;
-    for (std::uint32_t s = 1; s <= 10; ++s) {
-        PlayerInput in{s, glm::vec3(1.0F, 0.0F, 0.0F), 0.1F};
-        inputs.push_back(in);
-        client = predictor.predict(client, in, step);
-    }
-    // The server processed inputs 1..5 but ended somewhere slightly different
-    // (e.g. it collided with something the client did not predict).
-    for (std::uint32_t s = 0; s < 5; ++s) server = step(server, inputs[s]);
-    server.position += glm::vec3(0.0F, 0.0F, 0.4F); // authoritative divergence
-
-    const std::optional<CharacterState> corrected = predictor.reconcile(5U, server, step);
-
-    // Expected: server state + replay of inputs 6..10.
-    CharacterState expected = server;
-    for (std::uint32_t s = 5; s < 10; ++s) expected = step(expected, inputs[s]);
-    if (!corrected || glm::distance(corrected->position, expected.position) > 1e-5F) {
-        return fail("prediction self-test: replay did not land on server + unacked inputs");
-    }
-    if (predictor.pending() != 5) {
-        return fail("prediction self-test: acked inputs were not dropped");
-    }
-    // A matching state for the final sequence clears the queue, no correction.
-    if (predictor.reconcile(10U, expected, step).has_value() || predictor.pending() != 0) {
-        return fail("prediction self-test: queue not empty after full ack");
-    }
-    return {};
 }
 
 } // namespace engine::net

@@ -56,6 +56,8 @@ TEST_F(ComponentJson, RoundTripsEveryWritableComponent) {
                      {"octaves", 5}, {"warp", 0.2}, {"droplets", 1000}, {"snowline", 40},
                      {"streaming", true}, {"stream_radius", 2}}},
         {"net_replicated", {{"net_id", 1234}}},
+        {"grass", {{"density", 30}, {"radius", 25}, {"blade_height", {0.2, 0.9}},
+                   {"base_color", "#203010"}, {"wind_direction", {1, 1}}, {"terrain_only", false}}},
         {"audio_source", {{"clip", "assets/audio/hum.wav"}, {"bus", "sfx"}, {"volume", 0.5},
                           {"pitch", 2}, {"loop", true}, {"spatial", false}}},
         {"audio_listener", {{"active", true}}},
@@ -81,6 +83,40 @@ TEST_F(ComponentJson, RoundTripsEveryWritableComponent) {
     for (const auto& [name, value] : authored.items()) {
         EXPECT_TRUE(first.contains(name)) << name << " missing from the encoding";
     }
+}
+
+// R10.2: the erosion model, grid step count and GPU flag round-trip; new
+// terrains default to GPU-capable grid erosion.
+TEST_F(ComponentJson, TerrainCarriesErosionModelAndGpuFlag) {
+    ASSERT_OK(apply("terrain", {{"seed", 7}}));
+    EXPECT_EQ(r.get<s::Terrain>(e).params.erosion_model, engine::terrain::ErosionModel::grid);
+    EXPECT_TRUE(r.get<s::Terrain>(e).gpu_generate);
+
+    ASSERT_OK(apply("terrain", {{"erosion", "droplets"}, {"erosion_steps", 50}, {"gpu", false}}));
+    const s::Terrain& t = r.get<s::Terrain>(e);
+    EXPECT_EQ(t.params.erosion_model, engine::terrain::ErosionModel::droplets);
+    EXPECT_EQ(t.params.grid.iterations, 50U);
+    EXPECT_FALSE(t.gpu_generate);
+    const json out = encode_components(r, e, {});
+    EXPECT_EQ(out["terrain"]["erosion"], "droplets");
+    EXPECT_EQ(out["terrain"]["erosion_steps"], 50);
+    EXPECT_EQ(out["terrain"]["gpu"], false);
+    EXPECT_FALSE(apply("terrain", {{"erosion", "rivers"}}));
+}
+
+// Audit D3: grid erosion cost (resolution² x steps) is bounded at the codec,
+// so a remote request cannot start hours of CPU work or a multi-GB
+// allocation; droplet terrains keep their own (droplet-count) bound.
+TEST_F(ComponentJson, TerrainGridErosionCostIsBounded) {
+    ASSERT_OK(apply("terrain",
+                    {{"erosion", "grid"}, {"resolution", 1025}, {"erosion_steps", 5000}}));
+    EXPECT_FALSE(apply("terrain", {{"erosion_steps", 100000}}));
+    EXPECT_FALSE(apply("terrain", {{"resolution", 8193}}));
+    EXPECT_FALSE(apply("terrain", {{"resolution", 2049}})); // 2049² x 5000 over budget
+    ASSERT_OK(apply("terrain", {{"resolution", 2049}, {"erosion_steps", 1000}}));
+    EXPECT_EQ(r.get<s::Terrain>(e).params.resolution, 2049U);
+    ASSERT_OK(apply("terrain", {{"erosion", "droplets"}, {"resolution", 8193}}));
+    EXPECT_EQ(r.get<s::Terrain>(e).params.resolution, 8193U);
 }
 
 TEST_F(ComponentJson, MergeKeepsFieldsNotMentioned) {

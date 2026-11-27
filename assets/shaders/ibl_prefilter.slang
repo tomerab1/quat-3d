@@ -17,7 +17,7 @@ struct PrefilterParams {
 
 [[vk::binding(0)]] TextureCube              g_env;
 [[vk::binding(1)]] SamplerState             g_samp;
-[[vk::binding(2)]] RWTexture2DArray<float4> g_out;
+[[vk::binding(2)]] [format("rgba16f")] RWTexture2DArray<float4> g_out;
 
 static const uint PREFILTER_SAMPLES = 128u;
 

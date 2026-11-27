@@ -14,6 +14,7 @@
 
 #include <expected>
 #include <filesystem>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -72,6 +73,12 @@ inline constexpr auto kParserExtensions = fastgltf::Extensions::KHR_materials_tr
 extract_primitive(const fastgltf::Asset& asset, const fastgltf::Primitive& prim);
 [[nodiscard]] std::expected<MeshData, core::Error>
 parse_and_extract(fastgltf::GltfDataBuffer& data, const std::filesystem::path& base_dir);
+// The largest JOINTS_0 index any vertex of `prim` uses with a non-zero
+// WEIGHTS_0 weight; nullopt when the primitive is not skinned (or no vertex
+// carries weight). Zero-weight influences are ignored: they contribute
+// nothing, and the skinning shader clamps their indices.
+[[nodiscard]] std::optional<std::uint32_t> max_weighted_joint(const fastgltf::Asset& asset,
+                                                              const fastgltf::Primitive& prim);
 
 // skin_animation.cpp
 [[nodiscard]] glm::mat4 node_local_matrix(const fastgltf::Node& node);
@@ -91,6 +98,12 @@ parse_and_extract_textures(fastgltf::GltfDataBuffer& data, const std::filesystem
 [[nodiscard]] std::vector<MaterialData> extract_materials(const fastgltf::Asset& asset);
 [[nodiscard]] std::expected<std::vector<MaterialData>, core::Error>
 parse_and_extract_materials(fastgltf::GltfDataBuffer& data, const std::filesystem::path& base_dir);
+
+// scene_assembly.cpp — every skinned node's mesh may only weight joints its
+// skin has: JOINTS_0 indexes the skin's joint matrices on the GPU, so an index
+// past the skin's joint count is an out-of-bounds read in the skinning pass.
+// Only known per node (a mesh is skinned by whichever node instances it).
+[[nodiscard]] std::expected<void, core::Error> validate_skin_bindings(const fastgltf::Asset& a);
 
 // scene_assembly.cpp — build ECS entities from a parsed asset. `key_prefix`
 // namespaces the AssetManager cache keys (two files' meshes don't collide).

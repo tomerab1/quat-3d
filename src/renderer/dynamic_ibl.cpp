@@ -1,13 +1,11 @@
 #include "engine/renderer/dynamic_ibl.hpp"
 
 #include <array>
-#include <cmath>
 #include <cstdint>
 #include <string>
 #include <utility>
 #include <vector>
 
-#include "engine/renderer/atmosphere_pass.hpp" // self-test bakes through the LUT sky
 #include "engine/rhi/device.hpp"
 #include "engine/rhi/pipeline_cache.hpp"
 
@@ -24,9 +22,9 @@ constexpr VkFormat           kCubeFormat   = VK_FORMAT_R16G16B16A16_SFLOAT;
 
 // Resolutions match the blocking IblBaker so the two paths are comparable.
 constexpr std::uint32_t kEnvSize        = 256;
-constexpr std::uint32_t kIrradianceSize = 16;
-constexpr std::uint32_t kPrefilterSize  = 128;
-constexpr std::uint32_t kBrdfSize       = 256;
+constexpr std::uint32_t kIrradianceSize = ibl_irradiance_size;
+constexpr std::uint32_t kPrefilterSize  = ibl_prefilter_size;
+constexpr std::uint32_t kBrdfSize       = ibl_brdf_lut_size;
 
 // Cycle layout: each env face is baked as four 128x128 tiles (the per-texel
 // cloud march makes a full 256x256 face too heavy for one frame's budget on
@@ -490,75 +488,6 @@ std::expected<void, core::Error> DynamicIbl::add_step_to_graph(rhi::RenderGraph&
     return {};
 }
 
-// ---------------------------------------------------------------------------
-// Self-test
-// ---------------------------------------------------------------------------
-std::expected<void, core::Error>
-run_dynamic_ibl_self_test(const rhi::Device& device, rhi::GpuAllocator& allocator,
-                          rhi::PipelineCache& cache, const std::string& cooked_shader_dir) {
-    // Use the atmosphere LUT path: its transmittance makes a near-horizon sun
-    // dim the whole sky strongly, giving the probe an unambiguous signal to
-    // verify (the procedural fallback's zenith barely depends on the sun).
-    auto atmos = AtmospherePass::create(device, allocator, cache, cooked_shader_dir);
-    if (!atmos) return std::unexpected(atmos.error());
-
-    // Noon probe: the initial blocking cycle must land sky-blue zenith
-    // irradiance in the front set.
-    IblCycleParams noon{};
-    noon.sun_to = glm::normalize(glm::vec3(0.3F, 1.0F, 0.3F));
-    noon.clouds.enabled = false; // keep the zenith readback deterministic
-    if (auto r = atmos->ensure_skyview(noon.sun_to); !r) return std::unexpected(r.error());
-    noon.skyview = atmos->skyview_view();
-    noon.transmittance = atmos->transmittance_view();
-    auto dyn = DynamicIbl::create(device, allocator, cache, cooked_shader_dir, noon);
-    if (!dyn) return std::unexpected(dyn.error());
-
-    constexpr std::uint32_t up_face = 2;
-    const auto centre = [&](const std::vector<float>& texels) {
-        const std::size_t i = (static_cast<std::size_t>(kIrradianceSize / 2) * kIrradianceSize +
-                               kIrradianceSize / 2) * 4;
-        return glm::vec3(texels[i], texels[i + 1], texels[i + 2]);
-    };
-    auto irr0 = read_rgba16f_subresource(device, allocator, dyn->front_irradiance_image(), 0,
-                                         up_face, kIrradianceSize, kIrradianceSize);
-    if (!irr0) return std::unexpected(irr0.error());
-    const glm::vec3 noon_zenith = centre(*irr0);
-    if (noon_zenith.b <= 0.0F || noon_zenith.b <= noon_zenith.r) {
-        return fail("dynamic ibl self-test: initial irradiance is not sky-blue");
-    }
-
-    // Run one full incremental cycle with a near-horizon sun, one step per
-    // graph as at runtime. The sets must flip and the new front must differ.
-    const IblViewSet before = dyn->views();
-    IblCycleParams dusk{};
-    dusk.sun_to = glm::normalize(glm::vec3(0.95F, 0.12F, 0.0F));
-    dusk.clouds.enabled = false;
-    if (auto r = atmos->ensure_skyview(dusk.sun_to); !r) return std::unexpected(r.error());
-    dusk.skyview = atmos->skyview_view();
-    dusk.transmittance = atmos->transmittance_view();
-    for (std::uint32_t i = 0; i < kCycleSteps; ++i) {
-        rhi::RenderGraph graph;
-        if (auto r = dyn->add_step_to_graph(graph, dusk); !r) return std::unexpected(r.error());
-        if (auto c = graph.compile(); !c) return std::unexpected(c.error());
-        auto run = submit_blocking(device, [&](VkCommandBuffer cmd) { graph.execute(cmd); });
-        if (!run) return std::unexpected(run.error());
-    }
-    if (dyn->views().irradiance == before.irradiance) {
-        return fail("dynamic ibl self-test: probe sets did not flip after a cycle");
-    }
-
-    auto irr1 = read_rgba16f_subresource(device, allocator, dyn->front_irradiance_image(), 0,
-                                         up_face, kIrradianceSize, kIrradianceSize);
-    if (!irr1) return std::unexpected(irr1.error());
-    const glm::vec3 dusk_zenith = centre(*irr1);
-    if (!(dusk_zenith.r >= 0.0F) || !(dusk_zenith.b >= 0.0F)) {
-        return fail("dynamic ibl self-test: dusk irradiance is not finite");
-    }
-    // The zenith must dim measurably as the sun drops to the horizon.
-    if (dusk_zenith.b > noon_zenith.b * 0.8F) {
-        return fail("dynamic ibl self-test: irradiance did not respond to the sun move");
-    }
-    return {};
-}
+std::uint32_t DynamicIbl::cycle_step_count() { return kCycleSteps; }
 
 } // namespace engine::renderer

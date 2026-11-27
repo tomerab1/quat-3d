@@ -42,7 +42,7 @@ struct LightParams {
 [[vk::binding(1)]] Texture2D                  g_normal;
 [[vk::binding(2)]] Texture2D                  g_material;
 [[vk::binding(3)]] Texture2D                  g_depth;
-[[vk::binding(4)]] RWTexture2D<float4>        g_hdr;
+[[vk::binding(4)]] [format("rgba16f")] RWTexture2D<float4>        g_hdr;
 [[vk::binding(5)]] Texture2D                  g_shadow;
 [[vk::binding(6)]] SamplerState               g_shadow_sampler;
 // Binding 7 is unused (it held the pre-R10.1 flat point-light list).

@@ -6,8 +6,6 @@
 #include <functional>
 #include <cmath>
 #include <cstddef>
-#include <cstdlib>
-#include <cstring>
 #include <limits>
 #include <string>
 #include <unordered_map>
@@ -199,7 +197,7 @@ MeshPass::add_to_graph(rhi::RenderGraph& graph, VkExtent2D extent, const glm::ma
     frame_push_.camera = camera_from_view_proj(view_proj);
 
     // GBuffer targets. SAMPLED is added so the lighting pass (3.6) can read them;
-    // TRANSFER_SRC lets the self-test (and debug tooling) read them back.
+    // TRANSFER_SRC lets tests and debug tooling read them back.
     const VkImageUsageFlags color_usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT
                                           | VK_IMAGE_USAGE_SAMPLED_BIT
                                           | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;

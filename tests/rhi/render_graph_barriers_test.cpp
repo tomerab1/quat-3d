@@ -75,6 +75,27 @@ TEST(GpuRenderGraph, WriteAfterReadWaitsForTheReaders) {
     EXPECT_TRUE(b[0].srcStageMask & VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT);
 }
 
+// R10.2: sampled_graphics (vertex texture fetch) transitions to
+// SHADER_READ_ONLY and makes the prior write visible to the vertex stage too.
+TEST(GpuRenderGraph, SampledGraphicsReadCoversTheVertexStage) {
+    QUAT_REQUIRE_GPU(g);
+    TransientImagePool pool(g->device, g->allocator);
+    RenderGraph graph(pool);
+    const auto img = graph.create_transient_image(
+        "heights", VK_FORMAT_R32_SFLOAT, k_extent,
+        VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT);
+    (void)graph.add_pass("upload", PassType::transfer).writes(img, ResourceUsage::transfer_dst);
+    (void)graph.add_pass("draw", PassType::graphics).reads(img, ResourceUsage::sampled_graphics);
+    ASSERT_OK(graph.compile());
+    const auto b = graph.planned_barriers("draw");
+    ASSERT_EQ(b.size(), 1U);
+    EXPECT_EQ(b[0].newLayout, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    EXPECT_TRUE(b[0].srcAccessMask & VK_ACCESS_2_TRANSFER_WRITE_BIT);
+    EXPECT_TRUE(b[0].dstStageMask & VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT);
+    EXPECT_TRUE(b[0].dstStageMask & VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT);
+    EXPECT_TRUE(b[0].dstAccessMask & VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
+}
+
 // A3: an imported image's first barrier waits on the stage it was made
 // available at (the swapchain's acquire semaphore wait stage).
 TEST(GpuRenderGraph, ImportedImageFirstBarrierWaitsOnItsAvailableStage) {
@@ -200,6 +221,45 @@ TEST(RenderGraphBuffers, ImportedBufferFirstAccessWaitsOnItsAvailableStage) {
     const auto b = graph.planned_buffer_barriers("read");
     ASSERT_EQ(b.size(), 1U);
     EXPECT_EQ(b[0].srcStageMask, VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT);
+}
+
+// Compute-generated draws (R9.3): the indirect-argument read waits on the
+// compute write at DRAW_INDIRECT, the instance read at the vertex shader.
+TEST(RenderGraphBuffers, IndirectAndVertexReadsWaitOnTheComputeWrite) {
+    RenderGraph graph;
+    const auto args = graph.import_buffer("args", fake_buffer(0x60), 64);
+    const auto items = graph.import_buffer("items", fake_buffer(0x70), 1024);
+    (void)graph.add_pass("generate", PassType::compute)
+        .writes(args, ResourceUsage::buffer_write_compute)
+        .writes(items, ResourceUsage::buffer_write_compute);
+    (void)graph.add_pass("draw", PassType::graphics)
+        .reads(args, ResourceUsage::buffer_read_indirect)
+        .reads(items, ResourceUsage::buffer_read_vertex);
+    ASSERT_OK(graph.compile());
+    const auto b = graph.planned_buffer_barriers("draw");
+    ASSERT_EQ(b.size(), 2U);
+    for (const auto& barrier : b) {
+        EXPECT_TRUE(barrier.srcStageMask & VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT);
+        EXPECT_TRUE(barrier.srcAccessMask & VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT);
+        if (barrier.buffer == fake_buffer(0x60)) {
+            EXPECT_EQ(barrier.dstStageMask, VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT);
+            EXPECT_EQ(barrier.dstAccessMask, VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT);
+        } else {
+            EXPECT_EQ(barrier.buffer, fake_buffer(0x70));
+            EXPECT_TRUE(barrier.dstStageMask & VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT);
+            EXPECT_TRUE(barrier.dstAccessMask & VK_ACCESS_2_SHADER_STORAGE_READ_BIT);
+        }
+    }
+}
+
+// Indirect / vertex reads are buffer-only usages.
+TEST(RenderGraphBuffers, IndirectUsageOnAnImageIsAnError) {
+    RenderGraph graph;
+    const auto img = graph.import_image("img", VK_NULL_HANDLE, VK_NULL_HANDLE,
+                                        VK_FORMAT_R8G8B8A8_UNORM, k_extent,
+                                        VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL);
+    (void)graph.add_pass("bad", PassType::graphics).reads(img, ResourceUsage::buffer_read_indirect);
+    ASSERT_ERR(graph.compile());
 }
 
 } // namespace
