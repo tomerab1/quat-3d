@@ -82,7 +82,9 @@ Details the contract leaves open, as implemented:
   `point_light`, detached to the root at their world placement.
 - **`environment.get`**: `sun` is `null` when the scene has no directional
   light (`environment.set {sun}` then creates one named `sun`); `clouds` is
-  `null` when the engine has no cloud control (no editor layer).
+  `null` when the engine has no renderer settings (tests, headless tools). The
+  clouds are the `clouds` group of the render settings (same fields, ranges
+  and errors as `render.settings.*`).
   `sun.color` accepts linear `[r,g,b]` (may exceed 1) or `"#rrggbb"`.
 - **Camera angles**: `yaw_deg` is the heading in the XZ plane from +X toward
   +Z (forward = `(cos p cos y, sin p, cos p sin y)`), `pitch_deg` is positive
@@ -139,6 +141,8 @@ per m², `min_spacing` m, `pattern` poisson/jittered_grid, `scale` [min,max],
 unit primitive), `slope` [min,max] degrees, `height` [min,max] m,
 `max_instances`; regenerates when these, the entity position or the terrain
 change; removing it keeps the placements),
+`material` (per-entity overrides of the PBR factors the entity's material is
+drawn with — see "Look tuning" below; `null` drops one override),
 `grass` (GPU grass around the camera, one field per scene — the first
 `grass` entity's: `seed`, `density` blades per m² (0..1000), `radius` m
 (0..500), `blade_height` / `blade_width` [min,max] m, `base_color` /
@@ -268,6 +272,72 @@ sim_time_s}`. `engine.info` also reports `paused`.
   the snapped start; `partial` means the target is unreachable and the path
   ends at the closest reachable point. No baked navmesh is `unavailable`
   (call `nav.bake`); an end off the mesh is `failed`.
+
+## Look tuning (ROADMAP A8)
+
+Every tunable renderer parameter, and the PBR factors an entity is drawn
+with, are readable and writable remotely — the same values the editor's
+Renderer panel and Material inspector show, because all of them go through
+one descriptor table each (`engine/renderer/render_settings.hpp`,
+`engine/scene/material_override.hpp`).
+
+| Method | Params | Result |
+|---|---|---|
+| `render.settings.get` | `{group?}` | `{<group>: {<field>: value}}` — every group, or only `group` |
+| `render.settings.set` | `{<group>: {<field>: value}, ...}` | every group's new values |
+| `render.settings.reset` | `{group?}` (every group when omitted) | every group's values |
+| `render.settings.schema` | — | `{groups: [{name, label, hint, fields: [{name, label, type, min, max, default, unit?, hint}]}], material: [{name, label, kind, min, max, hint, primitive_field}]}` |
+| `material.get` | `{entity}` | `{id, name, source: "primitive"\|"mesh", material: {...}, overridden: [fields], textures: [slots], transparent, shared_by?}` |
+| `material.set` | `{entity, material: {<field>: value \| null}}` | `material.get` result |
+
+Settings groups (the renderer implements exactly these):
+
+| Group | Fields |
+|---|---|
+| `exposure` | `auto` (histogram auto exposure; off = fixed exposure 2^EV), `compensation_ev` [-10, 10] EV (applies in both modes), `key` [0.01, 1], `min_exposure` / `max_exposure` [0.001, 64] (auto multiplier clamps), `adaptation_s` [0.05, 10] s |
+| `bloom` | `enabled`, `threshold` [0, 8], `knee` [0, 1], `intensity` [0, 1], `radius` [0.2, 2] |
+| `taa` | `enabled` (off: no jitter, the resolve passes the frame through), `feedback` [0, 0.98] (history weight) |
+| `shadows` | `enabled`, `extent_m` [2, 500] (half-size of the shadowed box around the world origin), `depth_bias` / `slope_bias` [0, 0.05], `pcf_radius` integer [0, 3] texels |
+| `ibl` | `intensity` [0, 4] — scales image-based ambient light and reflections |
+| `clouds` | as `environment.*`: `enabled`, `coverage` [0, 1], `density` [0, 128] /km, `bottom_km` [0.2, 15], `thickness_km` [0.2, 10], `size_km` [1, 80], `detail` [0, 1], `wind_speed` [0, 100] m/s, `wind_dir_deg` [-180, 180] |
+
+The tonemap operator (ACES filmic fit) is fixed; the renderer has no fog or
+debug views, so neither is listed. The sun is scene data: `environment.*`.
+
+- **Set** merges: absent groups and fields (and fields given as `null`) keep
+  their values. Every value is type- and range-checked and the call is all or
+  nothing; errors name the field and its range, e.g.
+  `exposure.compensation_ev: expected a number in [-10, 10] (EV)`, and unknown
+  groups / fields list the known ones. Changes apply from the next frame.
+  Without the renderer's settings (tests, headless tools) get / set / reset
+  are `unavailable`; the schema is static and always available.
+- **Materials.** Fields: `base_color` (linear `[r, g, b(, a)]` in [0, 1] or
+  `"#rrggbb"` / `"#rrggbbaa"` sRGB), `emissive` (linear `[r, g, b]` in
+  [0, 1000] or `"#rrggbb"`), `metallic`, `roughness`, `occlusion_strength`,
+  `alpha_cutoff`, `transmission`, `clearcoat`, `clearcoat_roughness` [0, 1],
+  `normal_scale` [0, 4], `ior` [1, 3], `attenuation_color` [0, 1] RGB,
+  `attenuation_distance` and `thickness` [0, 10000]. On a primitive,
+  `base_color`, `metallic`, `roughness` and `emissive` write the `primitive`
+  component itself (and drop a `material` override of that field); every
+  other field — and every field of a glTF / code-created material — is stored
+  in the entity's `material` component, an override applied on top of the
+  shared material asset, which itself never changes (`shared_by` counts the
+  entities drawing it). `null` reverts one override. A `transmission` above 0
+  routes the material to the forward glass pass. The derived material is
+  each entity's own copy of its base material with the overrides applied, drawn
+  from the next frame; a replaced copy (every edit makes one) is destroyed
+  once the frames in flight that may read it have completed, so tuning never
+  accumulates materials. Instanced meshes keep their material in
+  `instanced_mesh`
+  (`invalid_params`); an entity without a primitive or mesh has no material
+  (`invalid_params`).
+- **Scene files** carry the settings in an optional, versioned
+  `"render_settings"` block (`{"version": 1, "<group>": {...}}`) and material
+  overrides as the `material` component. A file without the block loads with
+  the default settings. Files decode leniently: unknown groups / fields are
+  ignored and out-of-range numbers clamped (in the block and in `material`
+  overrides). A block whose `version` is newer than the build reads, or a
+  malformed one, fails the load and leaves the scene and settings untouched.
 
 ## Behaviour-tree authoring (ROADMAP A7)
 
@@ -416,7 +486,11 @@ cooked/shaders/materials/<name>.gbuffer.spv (+ .json reflection)
   `params.shader_params[0..1]` in order. Entities that name a shader that is
   not (yet) compiled render with the built-in program; the renderer retries
   every 30 frames, so a shader created after the assignment appears on its own.
-  `MaterialInput::time` is seconds since the renderer started.
+  `MaterialInput::time` is seconds since the renderer started. A per-entity
+  `material` override (A8) draws a derived copy that keeps the shader and its
+  `shader_params` (they are not override fields — edit them on the
+  `primitive`); the overridden factors reach the shader through
+  `MaterialInput::params` and `standard`.
 - **Transactional edits.** `shader.create` / `shader.update` write the file,
   have the hot reload service compile it, and reply when the compile finished.
   A failed create deletes the file again; a failed update restores the previous

@@ -58,6 +58,24 @@ Swapchain::create(const Device& device, VkSurfaceKHR surface, VkExtent2D window_
 
 std::expected<void, core::Error> Swapchain::build(VkExtent2D window_extent) {
     VkPhysicalDevice gpu = device_->physical_device();
+    const QueueFamilies& families = device_->queue_families();
+
+    // The device must have been selected for this surface
+    // (VUID-VkSwapchainCreateInfoKHR-surface-01270): presenting from a queue
+    // that cannot present to it is undefined.
+    if (surface_ == VK_NULL_HANDLE) return fail("swapchain: no surface");
+    if (families.present == VK_QUEUE_FAMILY_IGNORED) {
+        return fail("swapchain: the device was created without a surface "
+                    "(pass Device::CreateInfo::create_surface)");
+    }
+    VkBool32 supported = VK_FALSE;
+    if (vkGetPhysicalDeviceSurfaceSupportKHR(gpu, families.present, surface_, &supported) !=
+            VK_SUCCESS ||
+        supported != VK_TRUE) {
+        return fail(std::format("swapchain: queue family {} of the selected GPU cannot present "
+                                "to this surface",
+                                families.present));
+    }
 
     VkSurfaceCapabilitiesKHR caps{};
     if (VkResult r = vkGetPhysicalDeviceSurfaceCapabilitiesKHR(gpu, surface_, &caps);
@@ -85,7 +103,17 @@ std::expected<void, core::Error> Swapchain::build(VkExtent2D window_extent) {
     // TRANSFER_SRC for headless screenshot capture (QUAT_SCREENSHOT).
     info.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT |
                       VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
-    info.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    // Rendered on the graphics queue, presented from the present queue. When
+    // those are different families (rare: no family both draws and presents)
+    // the images are shared concurrently, so no ownership transfer is needed.
+    const std::array<std::uint32_t, 2> sharing_families{families.graphics, families.present};
+    if (families.graphics != families.present) {
+        info.imageSharingMode = VK_SHARING_MODE_CONCURRENT;
+        info.queueFamilyIndexCount = static_cast<std::uint32_t>(sharing_families.size());
+        info.pQueueFamilyIndices = sharing_families.data();
+    } else {
+        info.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    }
     info.preTransform = caps.currentTransform;
     info.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
     // FIFO (vsync) is the guaranteed default. QUAT_NO_VSYNC=1 prefers MAILBOX,

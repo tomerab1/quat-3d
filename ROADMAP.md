@@ -95,13 +95,19 @@ JSON-RPC over loopback TCP to the engine.
     and alpha-blended material shaders in the transparent pass.
 - [ ] **A7 — Behaviour authoring.** Build and edit behaviour graphs (G2) by
   tool call, with validation errors returned as data.
-
-## R — Rendering & performance
-
 - [ ] **A8 — Live tuning.** Every renderer / post-process / material
   parameter readable and writable over the remote API and MCP from one
   settings model the editor also edits (schema with ranges and units),
   saved with the scene; a `tune_look` workflow prompt.
+- [ ] **A9 — World-building ergonomics** (from MCP world-building sessions,
+  issues #37–#42): scene-derived camera far plane; shading-only terrain
+  edits without regeneration; batch-consistent `world.ground_height`;
+  entity world bounds + `world.place_on_ground`; screenshots from an
+  explicit offscreen camera; `asset_search` / `asset_fetch` for CC0 Poly
+  Haven models (licence recorded, cooked with R17).
+
+## R — Rendering & performance
+
 - [ ] **R1 — Async asset loading.** Thread-pool loads, `is_ready()` handles,
   fallback assets while loading, upload queue budgeted per frame.
 - [x] **R2 — Shader hot reload.** File watcher → `slangc` → pipeline recreation

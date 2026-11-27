@@ -59,11 +59,17 @@ class NavMesh;
 namespace engine::physics {
 class PhysicsWorld;
 }
+namespace engine::renderer {
+struct RenderSettings;
+}
 namespace engine::rhi {
 class Device;
 class GpuAllocator;
 class ShaderHotReload;
 } // namespace engine::rhi
+namespace engine::scene {
+class MaterialOverrideStore;
+}
 namespace engine::terrain {
 class TerrainStreamer;
 struct Heightmap;
@@ -71,7 +77,6 @@ struct Heightmap;
 #ifdef ENGINE_EDITOR
 namespace engine::editor {
 class EditorLayer;
-struct RendererSettings;
 } // namespace engine::editor
 #endif
 
@@ -108,13 +113,17 @@ struct RemoteBridgeTargets {
     // Loop-cached entity dropped when a scene file replaces the scene.
     entt::entity* spin_entity = nullptr;
 
+    // The renderer's settings (render.settings.*, environment.* clouds,
+    // scene files).
+    engine::renderer::RenderSettings* render_settings = nullptr;
+    // The renderer's per-entity derived materials (A8), resolved in poll().
+    engine::scene::MaterialOverrideStore* material_overrides = nullptr;
     // Compiles material shaders for shader.create / update (A6); null when
     // shader hot reload is off (those methods then answer `unavailable`).
     engine::rhi::ShaderHotReload* shader_reload = nullptr;
 
 #ifdef ENGINE_EDITOR
-    engine::editor::EditorLayer*      editor = nullptr;
-    engine::editor::RendererSettings* render_settings = nullptr; // clouds
+    engine::editor::EditorLayer* editor = nullptr;
     bool* play = nullptr; // editor play flag; null where play mode is unavailable
 #endif
 

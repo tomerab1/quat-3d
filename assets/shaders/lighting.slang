@@ -24,7 +24,7 @@ static const float SKY_LUT_BRIGHTNESS = 8.0;
 // match prefilter_mip_count in ibl_pass.cpp.
 static const float PREFILTER_MAX_LOD = 4.0;
 
-// Light + camera parameters, pushed as a 224-byte block (matches
+// Light + camera parameters, pushed as a 240-byte block (matches
 // LightingPushConstants in lighting_pass.cpp).
 struct LightParams {
     float4x4 inv_view_proj;   // reconstruct world pos from depth
@@ -32,9 +32,10 @@ struct LightParams {
     float4   camera_pos;      // xyz = world-space camera position, w = shadows enabled
     float4   direction;       // xyz = direction TO the light (normalised)
     float4   color;           // rgb = colour, w = intensity
-    float4   ambient;         // rgb = ambient colour, w unused
+    float4   ambient;         // rgb = flat ambient colour, w = IBL intensity
     float4   cloud_a;         // coverage, extinction /km, bottom km, thickness km
-    float4   cloud_b;         // 1/size km, detail erosion, unused, unused
+    float4   cloud_b;         // 1/size km, detail erosion, drift x km, drift z km
+    float4   shadow;          // depth bias, slope bias, PCF radius (texels), unused
 }
 [[vk::push_constant]] LightParams pc;
 
@@ -190,8 +191,8 @@ float3 layer_clearcoat_ibl(float3 base, float3 N, float3 V, float cc, float ccr)
 }
 
 // Fraction of the directional light reaching `world_pos` (1 = lit, 0 = shadowed),
-// 3x3 PCF over the shadow map. Returns 1 when shadows are disabled or the point
-// falls outside the map.
+// (2r+1)^2 PCF over the shadow map (r = pc.shadow.z). Returns 1 when shadows are
+// disabled or the point falls outside the map.
 float shadow_factor(float3 world_pos, float ndotl) {
     if (pc.camera_pos.w < 0.5) {
         return 1.0;
@@ -207,19 +208,19 @@ float shadow_factor(float3 world_pos, float ndotl) {
     uint height = 0;
     g_shadow.GetDimensions(width, height);
     float2 texel = 1.0 / float2(width, height);
-    float bias = max(0.0025 * (1.0 - ndotl), 0.0008);
+    float bias = max(pc.shadow.y * (1.0 - ndotl), pc.shadow.x);
+    int r = clamp(int(pc.shadow.z + 0.5), 0, 3);
 
     float sum = 0.0;
-    [unroll]
-    for (int dy = -1; dy <= 1; ++dy) {
-        [unroll]
-        for (int dx = -1; dx <= 1; ++dx) {
+    for (int dy = -r; dy <= r; ++dy) {
+        for (int dx = -r; dx <= r; ++dx) {
             float closest =
                 g_shadow.SampleLevel(g_shadow_sampler, uv + float2(dx, dy) * texel, 0).r;
             sum += (ndc.z - bias) > closest ? 0.0 : 1.0;
         }
     }
-    return sum / 9.0;
+    float taps = float(2 * r + 1);
+    return sum / (taps * taps);
 }
 
 [shader("compute")]
@@ -317,7 +318,7 @@ void compute_main(uint3 tid : SV_DispatchThreadID) {
     // the sky background, since the IBL reflects that sky), else a flat constant.
     if (pc.direction.w > 0.5) {
         float3 ambient = ibl_ambient(n, v, albedo.rgb, metallic, roughness, occlusion);
-        color += layer_clearcoat_ibl(ambient, n, v, cc, ccr);
+        color += layer_clearcoat_ibl(ambient, n, v, cc, ccr) * pc.ambient.w;
     } else {
         color += pc.ambient.rgb * albedo.rgb * occlusion;
     }
