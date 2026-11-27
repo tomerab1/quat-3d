@@ -34,21 +34,20 @@ Decisions already made (do not re-litigate without the owner):
 
 ## Claimed by the live session (do not pick up)
 
-Cycle 1 is merged into `master` (PR #2, `c6acf19`). **Cycle 2** is PR #3
-(`claude/nifty-hopper-nb68qe` → `master`): A5, G2, R2, R9.2, R9.3, R10.2,
-S1 batch 2, S3.3, S7.3, A7 and the PR #3 review fixes are merged into it;
-review is non-blocking; it merges when CI on its head is green. Item PRs
-below are stacked on it and get retargeted to `master` after it merges.
+Cycles 1 and 2 are merged into `master` (PR #2 `c6acf19`, PR #3
+`4294812`, both with all CI jobs green). Item PRs now target `master`
+directly; `claude/nifty-hopper-nb68qe` carries only orchestrator docs between
+merges.
 
 | PR | Item | Branch | State |
 |---|---|---|---|
 | #17 | A8 live tuning | `feat/a8-tuning` | review blocking (derived-material leak, A6 shader copy, shadow tests, base conflict) — worker fixing; merges before #19 |
-| #18 | S1: issues #4 #5 #9 (RHI) | `feat/issues-4-5` | review clean; merges when CI is green |
+| #18 | S1: issues #4 #5 #9 (RHI) | `feat/issues-4-5` | review clean; base merged (`e3338c6`), merges when CI is green |
 | #19 | A6 shader authoring | `feat/a6-shader-authoring` | review blocking (source path confinement, timeout rollback, A8 composition, base conflict) — worker fixing |
 | #20 | CI screenshots + audit D2/D7, fixes #7 #8 #21 | `feat/ci-screenshots` | #21 fixed (bodies spawned inside the floor); merging base to clear conflicts |
 | #22 | G7 Lua scripting | `feat/g7-lua` | in review |
 | #24 | S4/P1 Win + macOS CI, P6 release | `feat/s4-platform-ci` | review blocking (Windows UTF-8 paths, action SHA pins, base conflict) — worker fixing; tag `v0.1.0` after it merges |
-| #25 | R12 shadows + AO foundation | `feat/r12-shadows-ao` | worker running |
+| #25 | R12 shadows + AO foundation | `feat/r12-shadows-ao` | done; review: 1 blocking (storage-format feature check) + 4 non-blocking — worker fixing |
 | #26 | R10.3 GPU particles | `feat/r10-particles` | worker running |
 | #28 | G8 animation quick wins | `feat/g8-animation` | worker running |
 | — | R11 velocity + FSR | `feat/r11-velocity` | worker running (PR opens on first push) |
@@ -57,7 +56,7 @@ below are stacked on it and get retargeted to `master` after it merges.
 
 Triaged issues queued for the next free agents: #10 + #11, #14 + #23
 (glass), #13 (aerial perspective → R13), #15 + #27 (terrain/grass look →
-R14), #30 (Lua patterns).
+R14), #30 (Lua patterns), #29 (more screenshot scenes, after #20).
 
 ### A2 design notes (agreed, not yet implemented)
 
