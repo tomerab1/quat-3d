@@ -1,5 +1,6 @@
 #include "app/application.hpp"
 
+#include <algorithm>
 #include <cstdio>
 #include <expected>
 #include <string>
@@ -183,20 +184,32 @@ bool Application::init_subsystems() {
         return false;
     }
 
-    add_default_lighting(scene_, !world_.from_gltf());
+    add_default_lighting(scene_, !world_.from_gltf(), world_.demo_root());
     // Atmosphere LUTs + dynamic IBL probe, lit by the scene's sun.
     renderer_.create_environment(scene_, pipeline_cache_, shader_dir_);
     // Terrain, networking (QUAT_HOST / QUAT_JOIN) and the QUAT_TERRAIN tile.
     world_.init(device_, allocator_, pipeline_cache_, shader_dir_, scene_);
 
     // Free-fly view camera, seeded by framing the scene.
-    camera_ = FlyCamera::create(scene_, world_.physics_mode());
+    // Issue #8: frame the demo content (not its ground plate) for the view it
+    // renders into. The editor's Viewport panel is narrower than the window,
+    // so its framing assumes at most 4:3.
+    {
+        const VkExtent2D extent = renderer_.present_extent();
+        float aspect = extent.height == 0 ? 16.0F / 9.0F
+                                          : static_cast<float>(extent.width) /
+                                                static_cast<float>(extent.height);
+        if (with_ui) aspect = std::min(aspect, 4.0F / 3.0F);
+        camera_ = FlyCamera::create(scene_, {.physics_mode = world_.physics_mode(),
+                                             .aspect = aspect,
+                                             .exclude = world_.framing_exclude()});
+    }
 
     // ---- Per-frame command + sync resources --------------------------------
     renderer_.create_frame_sync();
     renderer_.set_screenshot_path(config_.screenshot_path);
 
-    last_ticks_ = SDL_GetTicksNS();
+    frame_timer_.skip(SDL_GetTicksNS()); // setup time is not frame time
     connect_remote();
     world_.init_audio(QUAT_PROJECT_ROOT);
 #ifdef ENGINE_EDITOR
@@ -214,8 +227,9 @@ bool Application::init_subsystems() {
 
 void Application::connect_remote() {
     // Remote control (ROADMAP A2/A3): QUAT_REMOTE=<port> opens the loopback
-    // JSON-RPC endpoint the quat-mcp bridge talks to (QUAT_REMOTE_TOKEN
-    // requires session.hello). The bridge also resolves Primitive components
+    // JSON-RPC endpoint the quat-mcp bridge talks to (always token-protected:
+    // QUAT_REMOTE_TOKEN or a generated one in a user-only token file). The
+    // bridge also resolves Primitive components
     // every frame, endpoint or not. See src/app/remote_bridge.hpp.
     RemoteBridgeTargets remote_targets;
     remote_targets.device = &device_;
@@ -284,6 +298,9 @@ bool Application::run_frame() {
     const VkExtent2D pixel_extent = window_pixel_extent(platform_.window);
     if (pixel_extent.width == 0 || pixel_extent.height == 0) {
         SDL_Delay(10); // minimized — nothing to draw
+        // Time spent minimised is not frame time (#61): without this the first
+        // frame after restore would advance everything by the whole gap.
+        frame_timer_.skip(SDL_GetTicksNS());
         run_unrendered_step();
         return true;
     }
@@ -293,7 +310,7 @@ bool Application::run_frame() {
     if (shader_reload_) shader_reload_->update(presented_); // R2: swap rebuilt pipelines
     remote_->on_frame_complete(slot); // the slot's screenshot readback landed
     switch (renderer_.acquire_and_begin()) {
-    case FrameRenderer::Acquire::retry: return true;
+    case FrameRenderer::Acquire::retry: frame_timer_.skip(SDL_GetTicksNS()); return true;
     case FrameRenderer::Acquire::failed: return false;
     case FrameRenderer::Acquire::ok: break;
     }
@@ -311,9 +328,7 @@ bool Application::run_frame() {
             ? 1.0F
             : static_cast<float>(draw_extent.width) / static_cast<float>(draw_extent.height);
 
-    const std::uint64_t now_ticks = SDL_GetTicksNS();
-    const float dt = static_cast<float>(now_ticks - last_ticks_) * 1e-9F;
-    last_ticks_ = now_ticks;
+    const float dt = frame_timer_.tick(SDL_GetTicksNS());
     renderer_.advance_time(dt);
     const float sim_dt = remote_->advance_sim(dt); // A5: pause / step / time scale
 
@@ -321,6 +336,7 @@ bool Application::run_frame() {
     const FrameScene frame_scene = renderer_.gather(scene_, cam, draw_extent, presented_);
 
     world_.update_terrain(scene_, cam.position);
+    camera_.pos.y += world_.take_demo_shift(); // the content moved onto the terrain (#7)
 #ifdef ENGINE_EDITOR
     editor_.handle_ground_click();
 #endif
@@ -341,14 +357,13 @@ bool Application::run_frame() {
     }
 #ifdef ENGINE_EDITOR
     frame_inputs.build_ui = [&]() {
-        return editor_.build_ui(
-            dt, static_cast<int>(frame_scene.draws.size() + frame_scene.transparent_draws.size()),
-            cam);
+        // record() calls this after batching, so the count is this frame's.
+        return editor_.build_ui(dt, static_cast<int>(renderer_.draw_count()), cam);
     };
 #endif
-    // A5 debug.stats: the frame's submitted draws (noted before batching).
-    remote_->note_draws(frame_scene.draws.size() + frame_scene.transparent_draws.size());
     if (!renderer_.record(frame_inputs)) return false;
+    // A5 debug.stats: the frame's submitted draws, counted after batching.
+    remote_->note_draws(renderer_.draw_count());
 
     remote_->record_capture(renderer_.command_buffer(), renderer_.frame_slot(),
                             renderer_.capture_source());

@@ -13,9 +13,23 @@ struct Params {
     float threshold;
     float knee;
     float prefilter; // 1 on the first level, else 0
-    float pad;
+    uint  count_non_finite; // 1: count dropped groups into *non_finite
+    // Debug counter (NonFiniteCounters). Guarded by the flag, not compared
+    // with null: a 64-bit comparison needs the optional shaderInt64 feature.
+    uint* non_finite;
 };
 [[vk::push_constant]] Params pc;
+
+// Zero for a non-finite value: one Inf/NaN texel would otherwise spread
+// through every mip as a NaN block (Karis weighting turns Inf into Inf * 0).
+float3 finite_or_zero(float3 c) {
+    if (all(isfinite(c))) return c;
+    if (pc.count_non_finite != 0) {
+        uint previous;
+        InterlockedAdd(*pc.non_finite, 1u, previous);
+    }
+    return float3(0.0, 0.0, 0.0);
+}
 
 float karis_weight(float3 c) {
     float luma = dot(c, float3(0.2126, 0.7152, 0.0722));
@@ -60,11 +74,11 @@ void compute_main(uint3 tid : SV_DispatchThreadID) {
     float3 result;
     if (pc.prefilter > 0.5) {
         // Karis-weighted average of the four inner 2x2 groups -> firefly-stable.
-        float3 g0 = (j + k + l + m) * 0.25;
-        float3 g1 = (a + b + d + e) * 0.25;
-        float3 g2 = (b + c + e + f) * 0.25;
-        float3 g3 = (d + e + g + hh) * 0.25;
-        float3 g4 = (e + f + hh + i) * 0.25;
+        float3 g0 = finite_or_zero((j + k + l + m) * 0.25);
+        float3 g1 = finite_or_zero((a + b + d + e) * 0.25);
+        float3 g2 = finite_or_zero((b + c + e + f) * 0.25);
+        float3 g3 = finite_or_zero((d + e + g + hh) * 0.25);
+        float3 g4 = finite_or_zero((e + f + hh + i) * 0.25);
         float w0 = karis_weight(g0), w1 = karis_weight(g1), w2 = karis_weight(g2);
         float w3 = karis_weight(g3), w4 = karis_weight(g4);
         result = (g0 * w0 * 0.5 + g1 * w1 * 0.125 + g2 * w2 * 0.125 + g3 * w3 * 0.125 +

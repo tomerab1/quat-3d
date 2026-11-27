@@ -26,6 +26,36 @@ into CLAUDE.md or the brief template in [`CYCLE.md`](CYCLE.md).
 
 ## Build and CI
 
+- **Don't tie the hitch clamp to the physics budget.** D2 first capped the
+  sim frame dt at 1/15 s (8 physics substeps), so on slow machines (CI's
+  lavapipe at 1-3 fps) the whole world ran several times slower than real
+  time. The clamp is now 0.25 s (only true hitches are dropped) and frames
+  above 1/15 s are sliced for physics; 1/15 s bounds only `debug.step`.
+- **Half-float HDR targets overflow on mirror highlights (#45).** A punctual
+  GGX peak of 1/(pi alpha^2) exceeds 65504 for alpha < ~0.003; some drivers
+  round to +Inf (CI's lavapipe), others saturate (the container's), so the
+  bug only showed in CI. Floor punctual roughness (0.089), clamp HDR writes
+  (`lib/hdr.slang`), and test overflow with `<` 65504, not `<=`.
+
+- **Look at every render you report on (issue #21).** A worker reported the
+  physics demo "unchanged" after #7/#8 without opening the image; every box
+  had fallen out of the world. Cause: `physics_system` creates bodies at
+  `Transform.world`, and on frame 0 only `FlyCamera::create`'s `scene.tick()`
+  had resolved those — #8 skipped it for the physics demo. → Systems resolve
+  the transforms they read (`WorldRuntime::simulate` now does, every slice),
+  and `tests/app/` drives the real `WorldRuntime` path (`game_world` library).
+
+- **The real `game` runs locally under Xvfb + lavapipe.** Without vcpkg, a
+  non-editor build links from the `~/deps` clones: build SDL3
+  (`~/deps/sdl`, cmake, shared) and link libJolt / libfastgltf / GNS /
+  Recast sources; then `scripts/ci-screenshots.sh <game>` renders the CI
+  scenes (about 0.7 s per frame on 4 cores). libc++'s libunwind prints
+  `__unw_add_dynamic_fde: bad fde` for every function lavapipe's JIT
+  registers — hundreds of lines per run — so filter it before reading a log
+  tail (the screenshot script does).
+- **`git ls-files` + `check-compile.sh` catches includes lost in merges.**
+  `skinning_pass.cpp` used `glm::mat4` with no glm include after S3.3
+  removed the self-test that pulled it in.
 - **Link the game executable locally after any merge that touches library
   targets.** R17 linked libktx into `game` directly while engine_asset only
   compiled against its headers; the tests (linking the full libktx) passed,
@@ -149,6 +179,16 @@ into CLAUDE.md or the brief template in [`CYCLE.md`](CYCLE.md).
   8-bit step of whole stems of equal alpha, and rounding flipped them all
   (+9 % coverage). Evaluate the stored coverage at a few 8-bit steps around
   the analytic threshold and keep the closest.
+- **A line protocol on a loopback port is reachable from every web page**
+  (issue #56). Browsers send cross-origin `POST`s to `127.0.0.1` without a
+  CORS preflight, and HTTP is lines: the remote endpoint answered the request
+  line and headers with parse errors, kept reading, and ran the body as an
+  RPC call — unauthenticated, because the token was optional and off by
+  default. Loopback is not a trust boundary (other local users, browsers,
+  DNS rebinding). → A loopback service drops a connection on the first HTTP
+  line and on the first line that isn't its protocol, never defaults to
+  unauthenticated (generate a CSPRNG token and publish it in a user-only
+  file, as Jupyter does), and has a test replaying a browser-style request.
 
 - **Fuzz every payload variant, not just one.** R17's KTX2 fuzz test first
   mutated only UASTC files; the review asked for ETC1S too, and the first
@@ -173,6 +213,7 @@ into CLAUDE.md or the brief template in [`CYCLE.md`](CYCLE.md).
   flag.** Parallel transcodes are serialised until the first one succeeds
   (`ktx2_transcode.cpp`); the encoder has the same pattern, so the cooker
   encodes one image at a time with libktx's own worker threads.
+
 - **Shadow acne has more than one cause; test it with an image test first.**
   R12.9: D16 over a caster-padded range gave 0.83 of the unshadowed value on
   a sloped lit floor; pancaking (depth clamp, tight range) alone still gave

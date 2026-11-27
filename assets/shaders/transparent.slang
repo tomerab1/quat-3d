@@ -14,6 +14,7 @@
 import instancing;
 import clustered_lights;
 import pbr;
+import hdr;
 
 static const uint MAT_HAS_BASE_COLOR = 1u << 0;
 static const uint MAT_HAS_NORMAL     = 1u << 1;
@@ -148,7 +149,7 @@ float3 clustered_lighting(float3 world_pos, float3 N, float3 V, float3 albedo, f
     }
     uint2 range = g_cluster_grid[cluster_index_of_world(g_cluster_params, world_pos)];
     float ndotv = max(dot(N, V), 1e-4);
-    float a = max(roughness * roughness, 1e-3);
+    float a = pbr_punctual_alpha(roughness); // finite highlight (issue #45)
     for (uint k = 0; k < range.y; ++k) {
         GpuLight light = g_lights[g_cluster_indices[range.x + k]];
         float3 L;
@@ -271,7 +272,7 @@ float4 fragment_main(VsOut input) : SV_Target0 {
         // Sun: specular highlight only — the diffuse fraction is what transmits.
         float3 h = normalize(V + L);
         float ndotl = max(dot(world_n, L), 0.0);
-        float a = max(roughness * roughness, 1e-3);
+        float a = pbr_punctual_alpha(roughness); // finite highlight (issue #45)
         float3 sun_spec = pbr_d_ggx(max(dot(world_n, h), 0.0), a) *
                           pbr_v_smith(ndotv, ndotl, a) *
                           pbr_f_schlick(max(dot(V, h), 0.0), f0) * ndotl *
@@ -287,7 +288,7 @@ float4 fragment_main(VsOut input) : SV_Target0 {
                                                roughness, f0, true);
 
         float3 color = (1.0 - F) * base_diffuse + spec_ibl + sun_spec + point_spec + emissive;
-        return float4(color, 1.0); // background already composited
+        return float4(hdr_store(color), 1.0); // background already composited
     }
 
     float3 lit = pbr_surface_brdf(world_n, V, L, albedo, metallic, roughness) *
@@ -295,5 +296,5 @@ float4 fragment_main(VsOut input) : SV_Target0 {
     lit += clustered_lighting(input.world_pos, world_n, V, albedo, metallic, roughness,
                               float3(0.04, 0.04, 0.04), false);
     float3 ambient = pc.ambient.rgb * albedo * occ;
-    return float4(lit + ambient + emissive, alpha);
+    return float4(hdr_store(lit + ambient + emissive), alpha);
 }

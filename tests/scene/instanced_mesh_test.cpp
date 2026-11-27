@@ -176,6 +176,43 @@ TEST_F(InstancedMeshCollect, PassRouting) {
     EXPECT_TRUE(none.draws.empty());
 }
 
+// Audit D7: the frame's draw count is taken after batching, so InstancedMesh
+// batches (opaque and shadow) are counted, and items sharing a mesh and a
+// material count once.
+TEST_F(InstancedMeshCollect, FrameDrawCountIncludesInstancedBatches) {
+    // A forest: 200 trees of two opaque parts plus a blended canopy part.
+    const glm::mat4 up = glm::translate(glm::mat4(1.0F), glm::vec3(0.0F, 2.0F, 0.0F));
+    make_entity(glm::mat4(1.0F), 200, glm::vec3(0.0F, 0.0F, -5.0F),
+                {part(trunk, bark), part(crown, bark, up), part(crown, glass, up)});
+
+    // Three ordinary items: two share (trunk, bark) and batch into one draw.
+    std::vector<engine::renderer::DrawItem> items(3);
+    items[0] = {&*trunk, &*bark, glm::translate(glm::mat4(1.0F), glm::vec3(0, 0, -3)), {}};
+    items[1] = {&*trunk, &*bark, glm::translate(glm::mat4(1.0F), glm::vec3(1, 0, -3)), {}};
+    items[2] = {&*crown, &*glass, glm::translate(glm::mat4(1.0F), glm::vec3(2, 0, -3)), {}};
+    const std::vector<engine::renderer::DrawItem> opaque_items(items.begin(), items.begin() + 2);
+    std::vector<engine::renderer::DrawItem> transparent{items[2]};
+    s::append_instanced_transparent_items(r, view_proj, transparent);
+
+    const s::FrameDrawLists lists =
+        s::build_frame_draw_lists(r, opaque_items, opaque_items, view_proj, view_proj);
+    // Opaque: the batched trunk items, then the forest's trunk and crown batches.
+    ASSERT_EQ(lists.opaque.draws.size(), 3U);
+    EXPECT_EQ(lists.opaque.draws[0].instance_count, 2U);
+    EXPECT_EQ(lists.opaque.draws[1].instance_count, 200U);
+    EXPECT_EQ(lists.opaque.draws[2].instance_count, 200U);
+    EXPECT_EQ(lists.shadow.draws.size(), 3U);
+    ASSERT_EQ(transparent.size(), 201U); // one per visible canopy + the blended item
+
+    EXPECT_EQ(s::frame_draw_count(lists, transparent.size()), 3U + 3U + 201U);
+
+    // Without instanced content only the batched items remain.
+    r.clear();
+    const s::FrameDrawLists plain =
+        s::build_frame_draw_lists(r, opaque_items, {}, view_proj, view_proj);
+    EXPECT_EQ(s::frame_draw_count(plain, 1), 2U);
+}
+
 TEST_F(InstancedMeshCollect, PartsBoundsCoverEveryPart) {
     const glm::mat4 up = glm::translate(glm::mat4(1.0F), glm::vec3(0.0F, 3.0F, 0.0F));
     const std::vector<s::InstancedMeshPart> parts{part(trunk, bark), part(crown, bark, up)};

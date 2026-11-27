@@ -9,9 +9,9 @@
 // the model's parts); GPU culling and LOD arrive with R9.4.
 //
 // Frame-loop use (after the scene's transforms are current):
-//   opaque  = batch_draws(draws);   append_instanced_draws(reg, cam_vp, opaque, opaque_list)
-//   shadows = batch_draws(casters); append_instanced_draws(reg, light_vp, shadow, shadow_list)
 //   append_instanced_transparent_items(reg, cam_vp, transparent_items) // before sorting
+//   lists = build_frame_draw_lists(reg, draws, casters, cam_vp, light_vp)
+//   (batch_draws + append_instanced_draws for the opaque and shadow passes)
 // Alpha-blended and transmissive parts go to the transparent list as
 // per-instance DrawItems (they must be depth-sorted, so they cannot share an
 // instanced draw); the frame loop already makes transmissive items cast
@@ -91,5 +91,26 @@ std::size_t append_instanced_draws(const entt::registry& registry,
 std::size_t append_instanced_transparent_items(const entt::registry& registry,
                                                const glm::mat4& cull_view_proj,
                                                std::vector<renderer::DrawItem>& out);
+
+// The frame's batched opaque (GBuffer) and shadow-caster draw lists: the
+// gathered draw items grouped by (mesh, material) (renderer::batch_draws),
+// followed by every visible InstancedMesh placement (append_instanced_draws,
+// culled against the camera and the light respectively).
+struct FrameDrawLists {
+    renderer::InstancedDrawList opaque;
+    renderer::InstancedDrawList shadow;
+};
+[[nodiscard]] FrameDrawLists build_frame_draw_lists(const entt::registry& registry,
+                                                    std::span<const renderer::DrawItem> opaque_items,
+                                                    std::span<const renderer::DrawItem> shadow_items,
+                                                    const glm::mat4& camera_view_proj,
+                                                    const glm::mat4& light_view_proj);
+
+// Draws the frame submits for its scene geometry (debug.stats, the editor's
+// Stats panel): one per batched opaque and shadow draw — instanced batches
+// included — plus one per transparent item (the forward pass draws those
+// unmerged, back to front).
+[[nodiscard]] std::size_t frame_draw_count(const FrameDrawLists& lists,
+                                           std::size_t transparent_items);
 
 } // namespace engine::scene

@@ -40,7 +40,10 @@ void compute_main(uint gi : SV_GroupIndex) {
         float avg_lum = exp2(avg_log);
 
         float prev = g_exposure[0];
-        if (prev <= 0.0) prev = avg_lum; // first frame seeds directly
+        // First frame seeds directly; a non-finite state (never expected,
+        // but persistent) is reseeded rather than kept for ever.
+        if (!(prev > 0.0) || isinf(prev)) prev = avg_lum;
+        if (!isfinite(avg_lum)) avg_lum = prev; // keep adapting from a sane value
         float rate = 1.0 - exp(-pc.dt / max(pc.tau, 1e-3));
         g_exposure[0] = prev + (avg_lum - prev) * rate;
     }

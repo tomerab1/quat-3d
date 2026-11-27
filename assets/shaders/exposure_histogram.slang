@@ -16,7 +16,8 @@ struct Params {
 [[vk::push_constant]] Params pc;
 
 uint bin_for(float lum) {
-    if (lum < 1e-5) return 0; // black -> reserved bin 0
+    // Black (and NaN, which fails every comparison) -> reserved bin 0.
+    if (!(lum >= 1e-5)) return 0;
     float t = saturate((log2(lum) - pc.min_log_lum) * pc.inv_log_lum_range);
     return uint(t * 254.0 + 1.0); // bins 1..255
 }

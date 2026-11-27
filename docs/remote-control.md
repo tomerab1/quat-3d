@@ -20,12 +20,18 @@ protocol so either side can be built and tested independently.
 
 ```sh
 QUAT_REMOTE=7878 ./build/release/game                          # or QUAT_REMOTE=1 for port 7878
-QUAT_REMOTE=7878 QUAT_REMOTE_TOKEN=secret ./build/release/game  # require a token
+QUAT_REMOTE=7878 QUAT_REMOTE_TOKEN=secret ./build/release/game  # choose the token yourself
 ```
 
-The endpoint listens on `127.0.0.1` only. Requests are processed once per
-frame on the engine's main thread, before the scene updates, so a command sees
-and changes the same state the editor does.
+The endpoint listens on `127.0.0.1` only and always requires a session token
+(see [Session token](#session-token)); the engine prints where it wrote it:
+
+```
+[remote] listening on 127.0.0.1:7878; session token in /run/user/1000/quat-3d/remote-7878.token
+```
+
+Requests are processed once per frame on the engine's main thread, before the
+scene updates, so a command sees and changes the same state the editor does.
 
 ## Wire format
 
@@ -35,6 +41,14 @@ must be objects with `"jsonrpc": "2.0"`, a string `method`, optional object
 notification: it runs, and no reply is sent. Batch arrays are not supported —
 use the engine's own batch command (A2) instead.
 
+The first line that is not such a request — invalid JSON, a JSON value that is
+not an object, an object without `"jsonrpc": "2.0"` and a string `method` —
+gets one error reply (`-32700` or `-32600`) and the engine closes the
+connection; nothing after it is read. A line of an HTTP message (a request
+line such as `POST / HTTP/1.1`, a status line, or a header such as `Host: …`)
+closes the connection at once, without a reply. Bad *parameters* (`-32602`)
+on an authenticated connection do not close it.
+
 ```json
 → {"jsonrpc":"2.0","id":1,"method":"session.hello","params":{"token":"secret"}}
 ← {"jsonrpc":"2.0","id":1,"result":{"protocol":1,"server":"quat-3d","methods":4}}
@@ -42,14 +56,68 @@ use the engine's own batch command (A2) instead.
 ← {"jsonrpc":"2.0","id":2,"result":{"engine":"quat-3d","frame":812,"entities":14,"playing":false,"editor":true}}
 ```
 
-Try it by hand: `nc 127.0.0.1 7878`, then type a request line.
+Try it by hand: `nc 127.0.0.1 7878`, then type a `session.hello` line with
+the token from the token file (`cat` the path the engine printed), then
+requests.
 
 ## Authentication
 
-With `QUAT_REMOTE_TOKEN` set, the first call on a connection must be
-`session.hello` with the matching `token`; any other first call, or a wrong
-token, gets an `unauthorized` error and the connection is closed. Without a
-token, `session.hello` is optional (it still reports the protocol version).
+The first call on every connection must be `session.hello` with the session
+token; any other first call, a missing token or a wrong one gets an
+`unauthorized` error (`-32001`) and the connection is closed. The comparison
+is constant-time.
+
+### Session token
+
+There is no unauthenticated mode. The engine's token is, in order:
+
+1. `QUAT_REMOTE_TOKEN`, when set and non-empty;
+2. otherwise a fresh random token for this run: 256 bits from OpenSSL's
+   CSPRNG (`RAND_bytes`), written as 64 hex digits.
+
+Either way the engine publishes the token in a **token file** that only the
+user running the engine can read, and deletes it on exit. quat-mcp reads the
+same file when it has no explicit token, so `QUAT_REMOTE=1` plus an MCP client
+needs no configuration. The file is read again on every new connection, so
+restarting the engine (new token) needs no quat-mcp restart.
+
+| Platform | Token file |
+|---|---|
+| Linux / other POSIX | `$XDG_RUNTIME_DIR/quat-3d/remote-<port>.token`; without `XDG_RUNTIME_DIR`, `$XDG_STATE_HOME/quat-3d/…` (default `~/.local/state/quat-3d/…`) |
+| macOS | `~/Library/Application Support/quat-3d/remote-<port>.token` |
+| Windows | `%LOCALAPPDATA%\quat-3d\remote-<port>.token` |
+
+`QUAT_REMOTE_TOKEN_FILE=<path>` overrides the location; set it to the same
+value for the engine and quat-mcp. The file holds the token on one line.
+
+Why a per-user directory and not the project directory: the token belongs to
+the user, not the repository (it can't be committed by accident, and a project
+on a shared or network drive doesn't expose it), and the path depends only on
+the port, so quat-mcp finds it whatever directory the MCP client starts it in.
+`$XDG_RUNTIME_DIR` is a per-user `0700` tmpfs on systemd systems, cleared at
+logout.
+
+How the file is written (`src/remote/private_file_*.cpp`): on POSIX the
+`quat-3d` directory is created `0700`; an existing directory must belong to
+the user (or root) and must not be writable by others unless sticky. The token
+goes to a temporary file opened `O_CREAT | O_EXCL | O_NOFOLLOW` with mode
+`0600` (re-applied with `fchmod`, whatever the umask) that is then renamed over
+the target, so a stale file with looser permissions, or a symlink planted at
+the path, is replaced and never written through. On Windows the temporary
+file is created with `CREATE_NEW` and `FILE_FLAG_OPEN_REPARSE_POINT` under an
+explicit protected DACL granting only the current user's SID — so an explicit
+`QUAT_REMOTE_TOKEN_FILE` in a shared directory is still user-only — then moved
+over the target with `MoveFileExW(MOVEFILE_REPLACE_EXISTING)`. If a generated token can't be published, the
+endpoint is not opened (nobody could use it); with `QUAT_REMOTE_TOKEN` it opens
+and warns.
+
+**Why this matters (issue #56).** A browser may send a cross-origin `POST`
+to `127.0.0.1` without a CORS preflight (`fetch(..., {mode: "no-cors"})` with a
+`text/plain` body), and an HTTP request is a sequence of lines. Before this
+was fixed, the request line and headers each got a parse error and the body
+line ran as an RPC call on an unauthenticated connection — any web page could
+clear and overwrite scenes. Now the request line closes the connection before
+the body is read, and the body could not authenticate anyway.
 
 ## Methods (implemented)
 
@@ -58,7 +126,7 @@ wired into the game by `src/app/remote_bridge.cpp`), plus:
 
 | Method | Params | Result |
 |---|---|---|
-| `session.hello` | `{token?}` | `{protocol, server, methods}` |
+| `session.hello` | `{token}` — required first call on every connection | `{protocol, server, methods}` |
 | `rpc.methods` | — | `[{name, summary, deferred}]` |
 | `engine.info` | — | `{engine, frame, entities, playing, paused, editor}` |
 
@@ -152,7 +220,10 @@ also flat ground at `ground_y` where no terrain is loaded), `lod_start`
 radius),
 `point_light`, `dir_light`, `camera`, `collider`, `rigidbody`, `character`,
 `nav_agent`, `behavior`, `patrol`, `terrain`, `net_replicated`,
-`audio_source` (`clip`, `bus`: master/music/sfx/ui/ambience, `volume`,
+`audio_source` (`clip`: a project-relative file — absolute paths, `..`
+escapes, symlinks leading out of the project and non-regular files are
+refused, and clips decoded into memory (sfx/ui) are capped at 64 MiB;
+`bus`: master/music/sfx/ui/ambience, `volume`,
 `pitch`, `loop`, `play_on_start`, `spatial`, `min_distance`, `max_distance`,
 `rolloff`, `doppler`, plus write-only `command`: play/stop/pause/resume),
 `audio_listener` (`active`), `animator` (edit only: `clip` switches by name
@@ -207,7 +278,7 @@ engine (`src/remote/world/debug_*.cpp`, services wired by
 | `debug.log` | `{since_seq?, level?, category?, contains?, limit?=100}` (limit 1..1000) | `{lines:[{seq, t, level, category, message}], cursor, more, missed, oldest_seq, capacity}` |
 | `debug.stats` | — | `{frame, frame_time_ms:{last, avg, worst, samples}, fps, draws, memory:{resident_bytes}, entities, physics:{bodies, active_bodies, characters}, nav:{agents, moving, failed, navmesh_polygons}, sim:<clock>, log:{last_seq, warnings, errors, last_error_seq}}` |
 | `debug.pause` / `debug.resume` | — | `<clock>` |
-| `debug.step` *(deferred)* | `{frames?=1, dt?=1/60}` (frames 1..10000, dt in [0.0001, 0.1] s) | `<clock>` once the steps have run |
+| `debug.step` *(deferred)* | `{frames?=1, dt?=1/60}` (frames 1..10000, dt in [0.0001, 1/15] s) | `<clock>` once the steps have run |
 | `debug.time_scale` | `{scale}` in [0.01, 10] | `<clock>` |
 | `debug.watch` | `{entity}` or `{entities:[...]}` (≤ 64), `components?:[names]` | `{entities:[{id, name, world_position, components:{...}, missing?:[names], nav_agent_state?}], frame?, sim_time_s?}` |
 | `debug.raycast` | `{origin, direction, max_distance?=1000, include_sensors?=false}` | `{hit:false}` or `{hit:true, entity, name, kind, point, normal, distance, sensor}` |
@@ -233,8 +304,10 @@ sim_time_s}`. `engine.info` also reports `paused`.
   beyond the newest line (a cursor from before an engine restart) reads from
   the oldest retained line. `t` is seconds since the log started.
 - **Stats.** Frame times are real (wall-clock) frame times over the last 240
-  frames; `draws` is the previous frame's draw-item count; `memory` is the
-  process resident set (Linux; `null` elsewhere); `physics` is `null` while
+  frames; `draws` counts the previous frame's scene draws after instancing
+  (opaque + shadow batches, InstancedMesh batches included, plus one per
+  transparent item); `memory` is the process resident set (Linux; `null`
+  elsewhere); `physics` is `null` while
   no physics world runs (edit mode). `nav.moving` counts active agents that
   have not arrived, `nav.failed` agents that gave up on their target. Fields
   the running engine cannot provide are `null`.
@@ -252,10 +325,18 @@ sim_time_s}`. `engine.info` also reports `paused`.
   waiting requests are accepted (beyond that a request fails with `failed`
   and queues nothing).
   `debug.resume` drops pending steps (their `debug.step`
-  replies then complete). Physics itself still integrates in fixed 1/120 s
-  substeps, at most 8 per frame, so very high time scales are capped by
-  that catch-up limit. The clock state survives play/stop: a paused clock
-  stays paused when play starts.
+  replies then complete). Every simulation system advances by the same
+  simulated time: real frame time beyond 0.25 s (a hitch) is dropped for
+  all of them, a step's `dt` is at most 1/15 s (what one physics update —
+  8 fixed 1/120 s substeps — simulates exactly; `debug.step` refuses a
+  larger `dt` with `invalid_params` naming `dt` and queues nothing, rather
+  than silently clamping it, so a stepped trace never runs with a dt the
+  caller did not ask for), and a frame above 1/15 s (a slow
+  frame, or any frame at a high time scale) runs the simulation in equal
+  slices of at most 1/15 s, so physics
+  keeps up with agents, characters and animation at any time scale. The
+  clock state survives play/stop: a paused clock stays paused when play
+  starts.
 - **Watch** reuses the component codec (same shapes as `scene.get`);
   `components` restricts the snapshot (unknown names are `invalid_params`,
   names the entity lacks are listed in `missing`). Entities with a nav agent
@@ -425,12 +506,12 @@ the stored tree from running (empty for a valid tree).
 
 | Code | Meaning |
 |---|---|
-| -32700 | Invalid JSON |
-| -32600 | Not a valid request (also: message larger than the limit, 16 MiB) |
+| -32700 | Invalid JSON (the connection is then closed) |
+| -32600 | Not a valid request (the connection is then closed; also: message larger than the limit, 16 MiB) |
 | -32601 | Unknown method |
 | -32602 | Bad parameters — the message names the field and what was expected |
 | -32603 | Internal error (also: a deferred request was dropped) |
-| -32001 | Unauthorized (missing or wrong token) |
+| -32001 | Unauthorized: first call not `session.hello`, or a missing or wrong token (the connection is then closed) |
 | -32002 | Unavailable in this build or state |
 | -32003 | Referenced entity/asset not found |
 | -32004 | The operation itself failed |
