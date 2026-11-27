@@ -11,6 +11,7 @@
 
 #include <cstdint>
 #include <expected>
+#include <string>
 
 #include <entt/entity/fwd.hpp>
 #include <glm/glm.hpp>
@@ -83,6 +84,21 @@ namespace engine::scene {
 // access) — the frame loop calls it to decide whether to open an upload
 // context for resolve_primitives().
 [[nodiscard]] bool primitives_need_resolve(const entt::registry& registry);
+
+// The shared mesh + material a Primitive renders with, loaded (or found)
+// through `assets` under the keys described at resolve_primitives(). A failed
+// upload leaves the handle in the failed state (it renders the manager's
+// default); the keys name what failed.
+struct PrimitiveAssets {
+    asset::AssetHandle<asset::MeshAsset>     mesh;
+    asset::AssetHandle<asset::MaterialAsset> material;
+    std::string                              mesh_key;
+    std::string                              material_key;
+};
+[[nodiscard]] PrimitiveAssets load_primitive_assets(const Primitive& primitive,
+                                                    rhi::GpuAllocator& allocator,
+                                                    const rhi::TransferContext& transfer,
+                                                    asset::AssetManager& assets);
 
 // (Re)builds the MeshRenderer of every Primitive whose `resolved` hash differs
 // from its current fields. Meshes and materials are shared through `assets`:
