@@ -15,6 +15,7 @@
 #include <map>
 #include <optional>
 #include <string>
+#include <utility>
 
 #include <entt/entity/entity.hpp>
 #include <glm/glm.hpp>
@@ -99,8 +100,15 @@ public:
     // Demo modes own their physics world (and so have no editor Play mode).
     [[nodiscard]] bool has_demo_physics() const { return demo_.physics_world.has_value(); }
     [[nodiscard]] entt::entity character_entity() const { return demo_.character_entity; }
-    // The loop drops this when a scene file replaces the scene.
-    void clear_spin_entity() { demo_.spin_entity = entt::null; }
+    // What the opening camera framing leaves out (the showcase's pedestal).
+    [[nodiscard]] entt::entity framing_exclude() const { return demo_.pedestal; }
+    // The loop drops the demo's entity references when a scene file replaces
+    // the scene.
+    void clear_demo_entities() {
+        demo_.spin_entity = entt::null;
+        demo_.root = entt::null;
+        demo_.pedestal = entt::null;
+    }
 
     // ---- Per frame ---------------------------------------------------------
     // Character-mode input (heading-relative, normalised or zero).

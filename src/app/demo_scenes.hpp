@@ -42,7 +42,18 @@ struct DemoScene {
     entt::entity spin_entity = entt::null;
     glm::vec3    spin_pos{0.0F};
     float        spin_scale = 1.0F;
+    // The showcase's content hangs under `root` (moved as a whole, e.g. onto
+    // terrain). `pedestal` is its ground plate: a box whose top is at the
+    // root's origin, `footprint_half` metres to each side in X and Z. It is
+    // left out of the opening camera framing (the content is what to see).
+    entt::entity root = entt::null;
+    entt::entity pedestal = entt::null;
+    glm::vec2    footprint_half{0.0F};
 };
+
+// Half the height of the pedestal mesh (a box) as built; its Transform scales
+// it to the depth it needs.
+inline constexpr float k_pedestal_mesh_half_height = 0.25F;
 
 // Build the startup scene into `scene` (meshes/materials uploaded through
 // `transfer` and cached in `assets`).
