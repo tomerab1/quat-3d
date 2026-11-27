@@ -215,6 +215,8 @@ add_library(engine_scene STATIC
     src/scene/bt_graph_edit.cpp
     src/scene/scene_io.cpp
     src/scene/component_json.cpp
+    src/scene/material_override.cpp
+    src/scene/render_settings_json.cpp
     src/scene/audio_system.cpp
     src/scene/primitives.cpp
     src/scene/primitive_resolve.cpp
@@ -329,6 +331,7 @@ add_library(engine_remote_world STATIC
     src/remote/world/app_commands.cpp
     src/remote/world/debug_commands.cpp
     src/remote/world/debug_query_commands.cpp
+    src/remote/world/tuning_commands.cpp
     src/remote/world/behavior_commands.cpp
     src/remote/world/behavior_edit_commands.cpp
     src/remote/world/image_encode.cpp
@@ -348,6 +351,7 @@ set_source_files_properties(src/remote/world/stb_image_write_impl.cpp
 add_library(engine_renderer STATIC
     src/renderer/csm.cpp
     src/renderer/draw_batching.cpp
+    src/renderer/render_settings.cpp
     src/renderer/grass.cpp
     src/renderer/grass_pass.cpp
     src/renderer/gtao_pass.cpp
@@ -397,6 +401,7 @@ if(ENGINE_EDITOR)
         src/editor/editor.cpp
         src/editor/scene_hierarchy.cpp
         src/editor/inspector.cpp
+        src/editor/tuning_panels.cpp
         src/editor/asset_browser.cpp
         src/editor/animation_preview.cpp
         src/editor/physics_debug.cpp
@@ -404,7 +409,6 @@ if(ENGINE_EDITOR)
         src/editor/scene_snapshot.cpp
         src/editor/audio_inspector.cpp
         src/editor/grass_inspector.cpp
-        src/editor/shadow_ao_panel.cpp
         src/editor/behavior_panel.cpp
         src/editor/behavior_canvas.cpp
         src/editor/vendor/imgui_impl_sdl3.cpp)

@@ -7,6 +7,8 @@
 #include <string>
 #include <utility>
 
+#include <glm/gtc/matrix_transform.hpp>
+
 #include "engine/asset/mesh_asset.hpp"
 #include "engine/renderer/hiz_pass.hpp"
 #include "engine/rhi/device.hpp"
@@ -293,7 +295,7 @@ ShadowPass::add_to_graph(rhi::RenderGraph& graph, const CsmView& view,
         if (auto f = cascades_.flush(0, sizeof(cpu)); !f) return std::unexpected(f.error());
     }
 
-    const std::uint32_t count = s.cascade_count;
+    const auto count = static_cast<std::uint32_t>(s.cascade_count);
     (void)graph.add_pass("csm_shadow", rhi::PassType::graphics)
         .reads(out.cascades, rhi::ResourceUsage::buffer_read_vertex)
         .writes(out.shadow_map, rhi::ResourceUsage::depth_attachment)
@@ -350,5 +352,6 @@ void ShadowPass::record_cascades(VkCommandBuffer cmd, std::uint32_t count) const
         vkCmdEndRendering(cmd);
     }
 }
+
 
 } // namespace engine::renderer

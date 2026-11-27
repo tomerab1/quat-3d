@@ -199,12 +199,13 @@ GpuCascades fit_cascades(const CsmView& view, const CsmSettings& settings, glm::
     const std::array<CornerRay, 4> rays = corner_rays(view.projection);
     const glm::mat4 inv_view = glm::inverse(view.view);
     const LightBasis light = light_basis(view.to_light);
-    const auto splits = cascade_splits(range.x, range.y, s.cascade_count, s.split_lambda);
+    const auto count = static_cast<std::uint32_t>(s.cascade_count);
+    const auto splits = cascade_splits(range.x, range.y, count, s.split_lambda);
     const float padding = pancaked ? 0.0F : s.caster_distance;
 
     GpuCascades out;
     for (std::uint32_t i = 0; i < max_cascades; ++i) {
-        const std::uint32_t c = std::min(i, s.cascade_count - 1);
+        const std::uint32_t c = std::min(i, count - 1);
         float start = splits[c];
         if (c > 0) start -= s.blend_band * (splits[c] - splits[c - 1]);
         const Slice slice = fit_slice(inv_view, rays, light, start, splits[c + 1], map_size,

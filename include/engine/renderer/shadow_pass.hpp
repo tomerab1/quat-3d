@@ -125,6 +125,7 @@ private:
     VkDeviceAddress             range_state_address_ = 0;
 };
 
+
 class ShadowPass {
 public:
     // `shared` is the map + fit state shared by every frame slot; null

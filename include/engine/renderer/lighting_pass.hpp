@@ -74,6 +74,12 @@ struct LightingOcclusion {
     std::uint32_t         frame_index = 0; // rotates the filter noise for TAA
 };
 
+// Lighting terms tuned outside LightingOcclusion (RenderSettings::ibl). The
+// sun-shadow filter and biases are CsmSettings (LightingOcclusion::csm).
+struct LightingTuning {
+    float ibl_intensity = 1.0F; // scales image-based ambient + reflections
+};
+
 class LightingPass {
 public:
     [[nodiscard]] static std::expected<LightingPass, core::Error>
@@ -99,7 +105,7 @@ public:
     // are set and the sky is enabled, the background uses the physically-based
     // sky-view LUT and the sun is transmittance-tinted; otherwise the
     // procedural sky. `clouds` drives the per-pixel volumetric cloud march
-    // (LUT sky only).
+    // (LUT sky only). `tuning` holds the IBL scale.
     [[nodiscard]] std::expected<rhi::ResourceHandle, core::Error>
     add_to_graph(rhi::RenderGraph& graph, const GBufferTargets& gbuffer, VkExtent2D extent,
                  const DirectionalLightParams& light, const glm::mat4& inv_view_proj,
@@ -107,7 +113,7 @@ public:
                  const ClusteredLights& lights = {}, bool enable_sky = false,
                  IblViewSet ibl = {}, VkImageView atmosphere_skyview = VK_NULL_HANDLE,
                  VkImageView atmosphere_transmittance = VK_NULL_HANDLE,
-                 const CloudSettings& clouds = {});
+                 const CloudSettings& clouds = {}, const LightingTuning& tuning = {});
 
 private:
     // Descriptor slots of lighting.slang's resources, from reflection (in

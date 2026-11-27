@@ -40,7 +40,7 @@ struct LightingConstants {
     float4 camera_pos;       // xyz = world-space camera position, w = sun shadows (CSM) on
     float4 direction;        // xyz = direction TO the light (normalised), w = sky mode
     float4 color;            // rgb = colour, w = intensity
-    float4 ambient;          // rgb = ambient colour, w unused
+    float4 ambient;          // rgb = flat ambient colour, w = IBL intensity
     float4 cloud_a;          // coverage, extinction /km, bottom km, thickness km
     float4 cloud_b;          // 1/size km, detail erosion, drift x km, drift z km
     float4 csm_filter;       // PCF radius, tan(sun size), normal bias, depth bias
@@ -345,7 +345,7 @@ void compute_main(uint3 tid : SV_DispatchThreadID) {
     if (g_frame.direction.w > 0.5) {
         float3 ambient = ibl_ambient(n, diffuse_n, v, albedo.rgb, metallic, roughness,
                                      diffuse_occ, specular_occ);
-        color += layer_clearcoat_ibl(ambient, n, v, cc, ccr);
+        color += layer_clearcoat_ibl(ambient, n, v, cc, ccr) * g_frame.ambient.w;
     } else {
         color += g_frame.ambient.rgb * albedo.rgb * diffuse_occ;
     }

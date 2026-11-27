@@ -1,5 +1,6 @@
 #include "engine/renderer/lighting_pass.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstdint>
@@ -33,7 +34,7 @@ struct LightingConstants {
     glm::vec4 camera_pos{0.0F}; // w = sun shadows (CSM) on
     glm::vec4 direction{0.0F, 0.0F, 1.0F, 0.0F}; // w = sky mode
     glm::vec4 color{1.0F};
-    glm::vec4 ambient{0.0F};
+    glm::vec4 ambient{0.0F};    // rgb flat ambient, w IBL intensity
     glm::vec4 cloud_a{0.0F};
     glm::vec4 cloud_b{0.0F};
     glm::vec4 csm_filter{0.0F}; // PCF radius, tan(sun size), normal bias, depth bias
@@ -195,7 +196,8 @@ LightingPass::add_to_graph(rhi::RenderGraph& graph, const GBufferTargets& gbuffe
                            const glm::mat4& inv_view_proj, const glm::vec3& camera_pos,
                            const LightingOcclusion& occlusion, const ClusteredLights& lights,
                            bool enable_sky, IblViewSet ibl, VkImageView atmosphere_skyview,
-                           VkImageView atmosphere_transmittance, const CloudSettings& clouds) {
+                           VkImageView atmosphere_transmittance, const CloudSettings& clouds,
+                           const LightingTuning& tuning) {
     const rhi::ResourceHandle hdr = graph.create_transient_image(
         "hdr_color", hdr_color_format, extent,
         VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
@@ -215,7 +217,7 @@ LightingPass::add_to_graph(rhi::RenderGraph& graph, const GBufferTargets& gbuffe
     c.direction = glm::vec4(glm::vec3(light.direction),
                             enable_sky ? (has_atmosphere ? 2.0F : 1.0F) : 0.0F);
     c.color = light.color;
-    c.ambient = glm::vec4(glm::vec3(light.ambient), 0.0F);
+    c.ambient = glm::vec4(glm::vec3(light.ambient), std::max(tuning.ibl_intensity, 0.0F));
     c.cloud_a = clouds.pack_a();
     c.cloud_b = clouds.pack_b();
     fill_occlusion(c, occlusion);

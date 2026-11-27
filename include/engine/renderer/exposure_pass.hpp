@@ -63,8 +63,8 @@ private:
 
 class ExposurePass {
 public:
-    // Adaptation time constant (seconds): after t seconds of a constant scene the
-    // remaining error is exp(-t / k_adaptation_tau).
+    // Default adaptation time constant (seconds): after t seconds of a constant
+    // scene the remaining error is exp(-t / tau).
     static constexpr float k_adaptation_tau = 1.1F;
 
     // `state` is shared by every frame-in-flight slot's pass; null creates a
@@ -81,9 +81,11 @@ public:
 
     // Update the shared adapted luminance from `hdr`, advancing it by `dt`
     // seconds (the real time since the previous frame, whichever slot recorded
-    // it). Pass exposure_buffer_address() to TonemapPass::add_to_graph.
+    // it) with time constant `adaptation_tau` seconds. Pass
+    // exposure_buffer_address() to TonemapPass::add_to_graph.
     [[nodiscard]] std::expected<void, core::Error>
-    add_to_graph(rhi::RenderGraph& graph, rhi::ResourceHandle hdr, VkExtent2D extent, float dt);
+    add_to_graph(rhi::RenderGraph& graph, rhi::ResourceHandle hdr, VkExtent2D extent, float dt,
+                 float adaptation_tau = k_adaptation_tau);
 
     [[nodiscard]] VkDeviceAddress exposure_buffer_address() const { return state_->address(); }
 

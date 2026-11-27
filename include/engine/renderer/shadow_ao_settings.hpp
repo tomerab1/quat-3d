@@ -17,18 +17,16 @@ struct FloatRange {
     [[nodiscard]] constexpr float clamp(float v) const { return std::clamp(v, min, max); }
 };
 
-struct UintRange {
-    std::uint32_t min = 0;
-    std::uint32_t max = 1;
-    [[nodiscard]] constexpr std::uint32_t clamp(std::uint32_t v) const {
-        return std::clamp(v, min, max);
-    }
+struct IntRange {
+    int min = 0;
+    int max = 1;
+    [[nodiscard]] constexpr int clamp(int v) const { return std::clamp(v, min, max); }
 };
 
 // Cascaded shadow maps for the sun (4 cascades, CLAUDE.md frame structure).
 struct CsmSettings {
     bool          enabled = true;
-    std::uint32_t cascade_count = 4;   // cascades rendered
+    int           cascade_count = 4;   // cascades rendered
     float         split_lambda = 0.8F; // 0 = linear splits, 1 = logarithmic
     float         max_distance = 150.0F; // metres from the camera where shadows end
     // Fit the cascades to this frame's depth range (min/max geometry depth,
@@ -46,7 +44,7 @@ struct CsmSettings {
     float         caster_distance = 200.0F;
     bool          debug_cascades = false; // tint each pixel by its cascade
 
-    static constexpr UintRange  k_cascade_count{1, 4};
+    static constexpr IntRange  k_cascade_count{1, 4};
     static constexpr FloatRange k_split_lambda{0.0F, 1.0F};
     static constexpr FloatRange k_max_distance{5.0F, 5000.0F};
     static constexpr FloatRange k_blend_band{0.0F, 0.5F};
@@ -80,9 +78,9 @@ struct GtaoSettings {
     float         thin_occluder_compensation = 0.0F;
     float         final_value_power = 2.2F; // visibility exponent (strength)
     float         depth_mip_offset = 3.3F;  // Hi-Z mip bias for distant samples
-    std::uint32_t slice_count = 3;          // XeGTAO "High": 3 slices x 3 steps
-    std::uint32_t steps_per_slice = 3;
-    std::uint32_t denoise_passes = 1;       // edge-aware 3x3 passes (0 = raw)
+    int           slice_count = 3;          // XeGTAO "High": 3 slices x 3 steps
+    int           steps_per_slice = 3;
+    int           denoise_passes = 1;       // edge-aware 3x3 passes (0 = raw)
     float         denoise_blur_beta = 1.2F;
     bool          bent_normals = true;      // IBL diffuse + specular occlusion
     bool          specular_occlusion = true;
@@ -94,9 +92,9 @@ struct GtaoSettings {
     static constexpr FloatRange k_thin_occluder_compensation{0.0F, 0.7F};
     static constexpr FloatRange k_final_value_power{0.5F, 5.0F};
     static constexpr FloatRange k_depth_mip_offset{0.0F, 8.0F};
-    static constexpr UintRange  k_slice_count{1, 9};
-    static constexpr UintRange  k_steps_per_slice{1, 8};
-    static constexpr UintRange  k_denoise_passes{0, 3};
+    static constexpr IntRange  k_slice_count{1, 9};
+    static constexpr IntRange  k_steps_per_slice{1, 8};
+    static constexpr IntRange  k_denoise_passes{0, 3};
     static constexpr FloatRange k_denoise_blur_beta{0.1F, 10.0F};
 
     [[nodiscard]] constexpr GtaoSettings sanitized() const {
@@ -121,12 +119,12 @@ struct GtaoSettings {
 struct ContactShadowSettings {
     bool          enabled = true;
     float         length = 0.35F;    // ray length toward the sun, metres
-    std::uint32_t steps = 12;        // depth samples along the ray
+    int           steps = 12;        // depth samples along the ray
     float         thickness = 0.2F;  // how far behind the depth buffer a hit still counts, m
     float         intensity = 1.0F;  // 0 = no effect, 1 = full shadow on a hit
 
     static constexpr FloatRange k_length{0.01F, 4.0F};
-    static constexpr UintRange  k_steps{2, 64};
+    static constexpr IntRange  k_steps{2, 64};
     static constexpr FloatRange k_thickness{0.01F, 4.0F};
     static constexpr FloatRange k_intensity{0.0F, 1.0F};
 

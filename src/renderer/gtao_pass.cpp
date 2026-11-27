@@ -231,10 +231,11 @@ GtaoPass::add_to_graph(rhi::RenderGraph& graph, const HiZTargets& hiz, rhi::Reso
     rhi::ResourceHandle current = raw;
     static constexpr std::array<const char*, k_max_denoise> kNames{
         "gtao_denoise0", "gtao_denoise1", "gtao_denoise2"};
-    for (std::uint32_t i = 0; i < s.denoise_passes; ++i) {
+    const auto passes = static_cast<std::uint32_t>(s.denoise_passes);
+    for (std::uint32_t i = 0; i < passes; ++i) {
         const rhi::ResourceHandle out = graph.create_transient_image(kNames[i], gtao_format,
                                                                      extent, usage);
-        const bool last = i + 1 == s.denoise_passes;
+        const bool last = i + 1 == passes;
         const GtaoDenoisePush push{last ? s.denoise_blur_beta : s.denoise_blur_beta / 5.0F,
                                    0.0F};
         rhi::DescriptorBuffer* d = &denoise_descriptors_[i];

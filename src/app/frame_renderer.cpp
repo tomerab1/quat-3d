@@ -11,9 +11,6 @@
 #include "engine/rhi/swapchain.hpp"
 #include "engine/scene/components.hpp"
 #include "engine/scene/scene.hpp"
-#ifdef ENGINE_EDITOR
-#include "engine/editor/editor.hpp"
-#endif
 
 namespace quat::app {
 namespace {
@@ -263,6 +260,7 @@ void FrameRenderer::create_frame_sync() {
 }
 
 void FrameRenderer::destroy_frame_sync() {
+    material_overrides_.clear(); // the device is idle: no frame reads them
     if (device_ == nullptr || command_pool_ == VK_NULL_HANDLE) return;
     const VkDevice vk_device = device_->handle();
     for (VkSemaphore s : render_finished_) {
