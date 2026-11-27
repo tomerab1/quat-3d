@@ -1,4 +1,5 @@
 #include "asset_browser.hpp"
+#include "shell/panels.hpp"
 
 #include <algorithm>
 #include <cstdio>
@@ -88,7 +89,7 @@ void draw_directory(const fs::path& dir, std::string& instantiate_request) {
 } // namespace
 
 void draw_asset_browser(const std::string& project_root, std::string& instantiate_request) {
-    if (!ImGui::Begin("Assets")) {
+    if (!ImGui::Begin(shell::panel_window_name(shell::Panel::assets))) {
         ImGui::End();
         return;
     }

@@ -8,6 +8,7 @@
 
 #include "engine/scene/components.hpp"
 #include "engine/scene/scene.hpp"
+#include "shell/panels.hpp"
 
 namespace engine::editor {
 
@@ -109,7 +110,7 @@ void draw_physics_debug(scene::Scene& scene, const glm::mat4& view_proj,
                         bool* build_navmesh_request,
                         const std::vector<std::pair<glm::vec3, glm::vec3>>* nav_edges,
                         const std::string* nav_status) {
-    if (ImGui::Begin("Physics")) {
+    if (ImGui::Begin(shell::panel_window_name(shell::Panel::physics))) {
         ImGui::Checkbox("draw colliders", &state.enabled);
         ImGui::Checkbox("static", &state.show_static);
         ImGui::Checkbox("dynamic / kinematic", &state.show_dynamic);

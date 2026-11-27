@@ -22,7 +22,7 @@ HEADER = ROOT / "src" / "editor" / "ui" / "icons.hpp"
 
 ICONS = """
 activity app-window arrow-down arrow-up atom audio-lines box boxes braces brain brush bug
-camera check chevron-down chevron-right chevrons-up-down circle-alert circle-check
+camera check chevron-down chevron-left cone cylinder database pill chevron-right chevrons-up-down circle-alert circle-check
 circle-dot circle-help circle-x clapperboard clipboard-paste clock-3 cloud code command
 compass copy cpu crosshair cuboid ear ellipsis-vertical eye eye-off file file-audio
 file-box file-code file-image file-json file-plus file-text film filter flame folder

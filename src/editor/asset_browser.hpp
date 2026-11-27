@@ -12,8 +12,9 @@ namespace engine::editor {
 // path into `instantiate_request`; the frame loop consumes it.
 void draw_asset_browser(const std::string& project_root, std::string& instantiate_request);
 
-// Payload type for glTF drag-and-drop (path string, used by the Viewport
-// panel's drop target).
-inline constexpr const char* asset_drag_payload = "QUAT_GLTF_PATH";
+// Payload type for asset drag-and-drop (UTF-8 path string): the Viewport
+// panel places glTF files, asset fields accept matching files. Same value as
+// ui::k_asset_payload.
+inline constexpr const char* asset_drag_payload = "QUAT_ASSET_PATH";
 
 } // namespace engine::editor

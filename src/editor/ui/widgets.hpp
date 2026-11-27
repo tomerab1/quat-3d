@@ -213,6 +213,11 @@ struct AssetSpec {
 bool prop_asset(const char* label, std::string& path, const AssetSpec& spec,
                 const PropOpts<std::string>& opts = {});
 
+// A wrapped explanatory line in the value column (secondary text unless
+// `color` is given): hints that would otherwise float outside the grid.
+void prop_note(const char* text);
+void prop_note(const char* text, Rgba color);
+
 // Separator row spanning both columns (sub-group inside one component).
 void prop_separator(const char* title = nullptr);
 

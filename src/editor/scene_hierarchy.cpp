@@ -8,6 +8,7 @@
 #include "engine/scene/components.hpp"
 #include "engine/scene/scene.hpp"
 #include "scene_snapshot.hpp"
+#include "shell/panels.hpp"
 
 namespace engine::editor {
 
@@ -98,7 +99,7 @@ void delete_subtree(scene::Scene& scene, entt::entity root, entt::entity& select
 } // namespace
 
 void draw_scene_hierarchy(scene::Scene& scene, entt::entity& selected) {
-    if (!ImGui::Begin("Hierarchy")) {
+    if (!ImGui::Begin(shell::panel_window_name(shell::Panel::hierarchy))) {
         ImGui::End();
         return;
     }

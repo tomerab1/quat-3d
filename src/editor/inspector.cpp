@@ -20,6 +20,7 @@
 #include "engine/scene/components.hpp"
 #include "engine/scene/scatter.hpp"
 #include "engine/scene/scene.hpp"
+#include "shell/panels.hpp"
 
 namespace engine::editor {
 
@@ -528,7 +529,7 @@ void add_component_item(entt::registry& registry, entt::entity entity, Args&&...
 } // namespace
 
 void draw_inspector(scene::Scene& scene, entt::entity selected) {
-    if (!ImGui::Begin("Inspector")) {
+    if (!ImGui::Begin(shell::panel_window_name(shell::Panel::inspector))) {
         ImGui::End();
         return;
     }
@@ -588,7 +589,7 @@ void draw_inspector(scene::Scene& scene, entt::entity selected) {
 }
 
 void draw_renderer_panel(RendererSettings& settings, scene::Scene* scene) {
-    if (!ImGui::Begin("Renderer")) {
+    if (!ImGui::Begin(shell::panel_window_name(shell::Panel::renderer))) {
         ImGui::End();
         return;
     }

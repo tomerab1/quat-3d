@@ -291,6 +291,16 @@ bool prop_enum(const char* text, int& v, std::span<const EnumItem> items,
     });
 }
 
+void prop_note(const char* text) { prop_note(text, tokens().text_secondary); }
+
+void prop_note(const char* text, Rgba color) {
+    ImGui::TableNextRow();
+    ImGui::TableSetColumnIndex(1);
+    ImGui::PushTextWrapPos(0.0F);
+    text_colored(color, text);
+    ImGui::PopTextWrapPos();
+}
+
 void prop_separator(const char* title) {
     ImGui::TableNextRow();
     ImGui::TableSetColumnIndex(0);

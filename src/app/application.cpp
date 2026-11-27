@@ -205,7 +205,8 @@ bool Application::init_subsystems() {
                   .scene = &scene_,
                   .world = &world_,
                   .camera = &camera_,
-                  .shader_reload = shader_reload_.get()});
+                  .shader_reload = shader_reload_.get(),
+                  .remote = &*remote_});
 #endif
     return true;
 }

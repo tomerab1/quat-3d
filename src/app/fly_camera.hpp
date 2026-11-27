@@ -63,6 +63,7 @@ public:
     float     yaw = 0.0F;
     float     pitch = 0.0F;
     float     fov_y = 0.0F; // remote camera.set can change it
+    float     speed_scale = 1.0F; // editor toolbar's camera speed multiplier
 
 private:
     float move_speed_ = 3.0F;

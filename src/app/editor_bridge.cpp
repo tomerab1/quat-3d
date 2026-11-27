@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cstdio>
 #include <cstdlib>
+#include <string_view>
 #include <utility>
 
 #include <glm/gtc/matrix_transform.hpp>
@@ -58,6 +59,11 @@ void EditorBridge::create(SDL_Window* window, bool enabled) {
         }
         if (const char* focus = std::getenv("QUAT_EDITOR_FOCUS"); focus != nullptr) {
             editor_.focus_panel(focus);
+        }
+        // QUAT_EDITOR_LAYOUT=default: ignore (and keep) the saved layout.
+        if (const char* layout = std::getenv("QUAT_EDITOR_LAYOUT");
+            layout != nullptr && std::string_view(layout) == "default") {
+            editor_.use_saved_layout(false);
         }
     } else {
         std::fprintf(stderr, "[warn] editor disabled: %s\n", e.error().message.c_str());
@@ -157,12 +163,27 @@ void EditorBridge::apply_scene_file_requests() {
     // Scene save/load requested from the File menu. Saving is pure CPU;
     // loading clears the scene and needs an upload context for asset
     // re-resolution, then the loop's cached entities are rebound.
+    using engine::editor::NoticeKind;
+    if (new_scene_ && !play_) {
+        new_scene_ = false;
+        // File > New: an empty scene with a sun, so it is not pitch black.
+        scene = engine::scene::Scene{};
+        const entt::entity sun = scene.create_entity("sun");
+        scene.registry().emplace<engine::scene::DirectionalLight>(
+            sun, glm::normalize(glm::vec3(-0.4F, -1.0F, -0.3F)), glm::vec3(1.0F), 3.0F);
+        t_.world->invalidate_navmesh("new scene");
+        t_.world->clear_spin_entity();
+        editor_.set_selected(entt::null);
+        editor_.notify(NoticeKind::info, "New scene");
+    }
     if (!pending_save_.empty()) {
         const std::string path = std::exchange(pending_save_, {});
         if (auto r = engine::scene::save_scene(scene, path); r) {
             std::fprintf(stderr, "[editor] saved scene: %s\n", path.c_str());
+            editor_.notify(NoticeKind::success, "Saved " + path);
         } else {
             std::fprintf(stderr, "[editor] save failed: %s\n", r.error().message.c_str());
+            editor_.notify(NoticeKind::error, "Save failed: " + r.error().message);
         }
     }
     if (!pending_load_.empty() && !play_) {
@@ -172,6 +193,7 @@ void EditorBridge::apply_scene_file_requests() {
                                                    *t_.assets);
                 r) {
                 std::fprintf(stderr, "[editor] loaded scene: %s\n", path.c_str());
+                editor_.notify(NoticeKind::success, "Loaded " + path);
                 t_.world->invalidate_navmesh("scene loaded");
                 // Rebind the loop's cached entities to the loaded scene.
                 // (The view camera is editor state — nothing to rebind.)
@@ -181,6 +203,7 @@ void EditorBridge::apply_scene_file_requests() {
                 // within one refresh cycle — no explicit rebake needed.
             } else {
                 std::fprintf(stderr, "[editor] load failed: %s\n", r.error().message.c_str());
+                editor_.notify(NoticeKind::error, "Load failed: " + r.error().message);
             }
         });
     }
@@ -211,6 +234,8 @@ void EditorBridge::apply_instantiate_request() {
         } else {
             std::fprintf(stderr, "[editor] instantiate failed: %s\n",
                          roots.error().message.c_str());
+            editor_.notify(engine::editor::NoticeKind::error,
+                           "Could not place the model: " + roots.error().message);
         }
     });
 }
@@ -288,6 +313,15 @@ const ImDrawData* EditorBridge::build_ui(float dt, int draw_count,
     ui_ctx.nav_edges =
         world.navmesh().mesh.valid() ? &world.navmesh().mesh.debug_edges() : nullptr;
     ui_ctx.nav_status = &world.navmesh().status;
+    ui_ctx.new_scene_request = &new_scene_;
+    ui_ctx.camera_speed = &t_.camera->speed_scale;
+    ui_ctx.dt = dt;
+    if (t_.remote != nullptr) {
+        ui_ctx.sim_clock = &t_.remote->sim_clock();
+        ui_ctx.remote.enabled = t_.remote->listening();
+        ui_ctx.remote.port = t_.remote->port();
+        ui_ctx.remote.clients = t_.remote->client_count();
+    }
     ui_ctx.view_proj = cam.view_proj; // unjittered, for overlays
     ui_ctx.view = cam.view;
     ui_ctx.proj_no_flip = cam.projection;

@@ -30,6 +30,10 @@ constexpr ImWchar k_text_ranges[] = {
     0,
 };
 
+// Inter maps stylistic alternates into the Private Use Area, where Lucide's
+// icons live; text faces must never answer for those code points.
+constexpr ImWchar k_private_use[] = {0xE000, 0xF8FF, 0};
+
 // The icon table's code points as ImGui glyph ranges (built once; ImGui
 // keeps the pointer for the atlas' lifetime).
 const ImWchar* icon_ranges() {
@@ -63,6 +67,7 @@ ImFont* add_ttf(ImFontAtlas& atlas, const fs::path& file, float px, DpiScale dpi
     cfg.OversampleH = 2;
     cfg.OversampleV = 1;
     cfg.PixelSnapH = merge; // icons on whole pixels; text keeps sub-pixel advances
+    if (!merge) cfg.GlyphExcludeRanges = k_private_use;
     const std::string name = file.filename().string();
     std::snprintf(cfg.Name, sizeof(cfg.Name), "%s %.0fpx", name.c_str(), static_cast<double>(px));
     return atlas.AddFontFromFileTTF(file.string().c_str(), px, &cfg, ranges);

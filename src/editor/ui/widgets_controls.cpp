@@ -1,7 +1,9 @@
 // Widget kit: text, buttons, toolbars, search fields, headers, empty states.
 
 #include <algorithm>
+#include <cfloat>
 #include <cmath>
+#include <cstring>
 #include <cctype>
 #include <string>
 
@@ -113,10 +115,12 @@ bool toggle_button(const char* id, const char* icon, bool active, const char* to
         ImGui::PushStyleColor(ImGuiCol_ButtonActive, to_imvec4(t.accent_active));
         ImGui::PushStyleColor(ImGuiCol_Text, to_imvec4(t.on_accent));
     } else {
+        // Inactive buttons keep the caller's text colour (status-coloured
+        // icons such as Play / Stop).
         ImGui::PushStyleColor(ImGuiCol_Button, to_imvec4(with_alpha(t.bg2, 0.0F)));
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, to_imvec4(t.bg3));
         ImGui::PushStyleColor(ImGuiCol_ButtonActive, to_imvec4(with_alpha(t.accent, 0.45F)));
-        ImGui::PushStyleColor(ImGuiCol_Text, to_imvec4(t.text));
+        ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_Text));
     }
     const char* glyph = ic(icon);
     // Without the icon font, fall back to the id's first letter so the
@@ -406,13 +410,23 @@ bool empty_state(const char* icon_glyph, const char* title, const char* hint, co
         text_colored(t.text_secondary, title);
     }
     if (hint != nullptr) {
-        // Centre each wrapped line: ImGui wraps left-aligned, so draw the
-        // hint as a centred block of its wrapped width.
+        // Centre each wrapped line (ImGui wraps left-aligned).
         ImGui::Dummy(ImVec2(0.0F, scaled(2.0F)));
-        ImGui::SetCursorPosX(cx - hint_size.x * 0.5F);
-        ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + hint_size.x + 1.0F);
-        text_colored(t.text_disabled, hint);
-        ImGui::PopTextWrapPos();
+        ImFont* font = ImGui::GetFont();
+        const float size = ImGui::GetFontSize();
+        const char* line = hint;
+        const char* end = hint + std::strlen(hint);
+        while (line < end) {
+            const char* brk = font->CalcWordWrapPosition(size, line, end, wrap);
+            if (brk == line) brk = line + 1; // a word wider than the line
+            const ImVec2 ls = font->CalcTextSizeA(size, FLT_MAX, 0.0F, line, brk);
+            ImGui::SetCursorPosX(cx - ls.x * 0.5F);
+            ImGui::PushStyleColor(ImGuiCol_Text, to_imvec4(t.text_disabled));
+            ImGui::TextUnformatted(line, brk);
+            ImGui::PopStyleColor();
+            line = brk;
+            while (line < end && (*line == ' ' || *line == '\n')) ++line;
+        }
     }
     bool clicked = false;
     if (action != nullptr) {

@@ -18,9 +18,16 @@
 #include "engine/core/stderr_capture.hpp"
 
 int main() {
-    // A5: stderr -> engine log ring for debug.log (QUAT_REMOTE runs only).
+    // A5: stderr -> engine log ring for debug.log and the editor Console.
     // Created first, destroyed last: it must outlive everything that logs.
-    const engine::core::StderrCapture stderr_capture = quat::app::capture_stderr_for_remote();
+    // Editor builds with the UI also capture it for the Console panel.
+#ifdef ENGINE_EDITOR
+    const bool editor_console = std::getenv("QUAT_NO_UI") == nullptr;
+#else
+    const bool editor_console = false;
+#endif
+    const engine::core::StderrCapture stderr_capture =
+        quat::app::capture_stderr_for_remote(editor_console);
     quat::app::AppConfig config;
     // QUAT_MAX_FRAMES, when set, auto-quits after that many presented frames.
     // Used for headless smoke tests so clean teardown can be verified.

@@ -17,6 +17,7 @@
 #include "engine/scene/components.hpp"
 #include "engine/scene/scene.hpp"
 #include "behavior_panel_style.hpp"
+#include "shell/panels.hpp"
 
 namespace engine::editor {
 
@@ -76,7 +77,7 @@ void BehaviorPanel::load(entt::entity entity, const scene::BehaviorTree& bt) {
 }
 
 void BehaviorPanel::draw(scene::Scene& scene, entt::entity selected) {
-    const bool visible = ImGui::Begin(behavior_panel_title, nullptr,
+    const bool visible = ImGui::Begin(shell::panel_window_name(shell::Panel::behaviour), nullptr,
                                       ImGuiWindowFlags_NoScrollbar |
                                           ImGuiWindowFlags_NoScrollWithMouse);
     if (!visible) {

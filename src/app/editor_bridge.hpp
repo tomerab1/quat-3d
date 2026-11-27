@@ -46,6 +46,7 @@ struct CameraMatrices;
 
 namespace quat::app {
 
+class RemoteBridge;
 struct RemoteBridgeTargets;
 
 // What the editor's requests act on. Non-owning; set once by bind().
@@ -58,6 +59,8 @@ struct EditorBridgeTargets {
     FlyCamera*                   camera = nullptr;
     // Shader hot-reload state for the Stats panel (R2); null when off.
     const engine::rhi::ShaderHotReload* shader_reload = nullptr;
+    // Simulation clock (Pause / Step) and endpoint state for the status bar.
+    RemoteBridge* remote = nullptr;
 };
 
 class EditorBridge {
@@ -124,6 +127,7 @@ private:
     engine::editor::RendererSettings render_settings_;
     std::string startup_select_;      // QUAT_EDITOR_SELECT, applied on the first frame
     std::string pending_instantiate_; // set by the asset browser, consumed below
+    bool        new_scene_ = false;   // File > New
     std::string pending_save_;        // scene file requests from the File menu
     std::string pending_load_;
     // Play mode: snapshot taken on Play, restored on Stop; the play session

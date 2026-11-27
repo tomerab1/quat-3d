@@ -35,6 +35,7 @@ STATE_TABLE=(
   "inspector|QUAT_EDITOR_SELECT=metal_sphere"
   "assets|QUAT_EDITOR_FOCUS=Assets"
   "behaviour|QUAT_EDITOR_SELECT=metal_sphere QUAT_EDITOR_FOCUS=Behaviour"
+  "console|QUAT_EDITOR_FOCUS=Console"
 )
 
 die() { echo "editor-screenshots: $*" >&2; exit 2; }

@@ -31,6 +31,9 @@ union SDL_Event;
 struct ImDrawData;
 struct ImVec2;
 
+namespace engine::core {
+class SimClock;
+}
 namespace engine::scene {
 class Scene;
 }
@@ -38,8 +41,8 @@ class Scene;
 namespace engine::editor {
 
 class BehaviorPanel;
-namespace ui {
-class Appearance;
+namespace shell {
+class EditorShell;
 }
 
 // Animation panel state owned by EditorLayer (editor state stays out of the
@@ -69,6 +72,16 @@ struct RendererSettings {
     // Volumetric cloud layer. The background follows edits live and the
     // dynamic IBL probe re-renders continuously, so no rebake plumbing.
     renderer::CloudSettings clouds;
+};
+
+// Toast severity for EditorLayer::notify.
+enum class NoticeKind : std::uint8_t { info, success, warning, error };
+
+// The remote-control endpoint as the status bar shows it.
+struct RemoteStatus {
+    bool          enabled = false; // QUAT_REMOTE set and listening
+    std::uint16_t port = 0;
+    std::size_t   clients = 0; // connected tools (the MCP bridge)
 };
 
 // Everything the UI needs from (and feeds back to) the engine for one frame.
@@ -126,6 +139,18 @@ struct EditorContext {
     // gizmo maps NDC to the rect itself and expects a y-up projection).
     glm::mat4 view{1.0F};
     glm::mat4 proj_no_flip{1.0F};
+
+    // ---- Shell (ROADMAP E8.2) --------------------------------------------
+    // The simulation clock (A5) for Pause / Step; null disables them.
+    core::SimClock* sim_clock = nullptr;
+    // Remote-control endpoint state for the status bar.
+    RemoteStatus remote;
+    // In/out: the fly camera's speed multiplier (toolbar); may be null.
+    float* camera_speed = nullptr;
+    // Out: File > New; the frame loop replaces the scene with an empty one.
+    bool* new_scene_request = nullptr;
+    // Real frame time (seconds) for toasts and the status bar.
+    float dt = 0.0F;
 };
 
 class EditorLayer {
@@ -167,16 +192,21 @@ public:
     // built frame — the scene renders at this size, and camera input is only
     // captured while the cursor is over the panel. Zero size until the first
     // frame; callers fall back to the swapchain extent.
-    [[nodiscard]] std::uint32_t viewport_width() const { return viewport_width_; }
-    [[nodiscard]] std::uint32_t viewport_height() const { return viewport_height_; }
-    [[nodiscard]] bool viewport_hovered() const { return viewport_hovered_; }
+    [[nodiscard]] std::uint32_t viewport_width() const;
+    [[nodiscard]] std::uint32_t viewport_height() const;
+    [[nodiscard]] bool viewport_hovered() const;
 
     // The entity selected in the hierarchy (entt::null when none).
-    [[nodiscard]] entt::entity selected() const { return selected_; }
-    void set_selected(entt::entity entity) { selected_ = entity; }
+    [[nodiscard]] entt::entity selected() const;
+    void set_selected(entt::entity entity);
     // Brings the panel titled `title` to the front of its dock tab bar over
     // the next few frames (startup state for headless captures).
-    void focus_panel(std::string title) { pending_focus_ = std::move(title); }
+    void focus_panel(std::string title);
+    // A toast in the editor's bottom-right corner (scene saved, load failed).
+    void notify(NoticeKind kind, std::string text);
+    // False: start from the default layout and never write the layout file
+    // (QUAT_EDITOR_LAYOUT=default; headless captures, tests).
+    void use_saved_layout(bool use);
 
     // Frame flow: begin_frame() right after event processing, build_ui() once
     // the frame's numbers are known, end_frame() to obtain the draw data for
@@ -187,41 +217,11 @@ public:
 
 private:
     void destroy() noexcept;
-    void build_dock_layout(unsigned int dockspace_id);
-    void build_viewport_panel(const EditorContext& ctx);
-    void build_stats_panel(const EditorContext& ctx);
-    void build_shader_status(const EditorContext& ctx);
-    void build_gizmo(const EditorContext& ctx, const ImVec2& rect_min, const ImVec2& rect_max);
-    void handle_picking(const EditorContext& ctx, const ImVec2& rect_min,
-                        const ImVec2& rect_max);
 
-    bool initialized_  = false;
+    bool initialized_ = false;
     bool font_atlas_changed_ = false;
-    std::unique_ptr<ui::Appearance> appearance_; // theme, DPI scale, fonts
-    bool layout_built_ = false;
-    bool show_stats_   = true;
-    bool show_demo_    = false;
-
-    std::uint32_t viewport_width_   = 0;
-    std::uint32_t viewport_height_  = 0;
-    bool          viewport_hovered_ = false;
-    // Viewport image rect in screen pixels (min x/y, max x/y) — overlays
-    // (joints, gizmos) project into this.
-    float viewport_rect_[4]{0.0F, 0.0F, 0.0F, 0.0F};
-
-    AnimationPreviewState anim_state_;
-    PhysicsDebugState     physics_state_;
-    // Behaviour-tree node editor (G2); created with the first frame, destroyed
-    // before the ImGui context.
-    std::unique_ptr<BehaviorPanel> behavior_panel_;
-
-    int gizmo_op_ = 0; // 0 translate, 1 rotate, 2 scale (W/E/R over the viewport)
-
-    char scene_file_[160] = "scenes/editor.json"; // File menu path (project-relative)
-
-    entt::entity selected_ = entt::null;
-    std::string  pending_focus_; // focus_panel()
-    int          focus_frames_ = 0;
+    // Everything the UI keeps between frames (src/editor/shell/editor_shell.hpp).
+    std::unique_ptr<shell::EditorShell> shell_;
 };
 
 } // namespace engine::editor

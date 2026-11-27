@@ -8,6 +8,7 @@
 #include "engine/animation/skeleton.hpp"
 #include "engine/scene/components.hpp"
 #include "engine/scene/scene.hpp"
+#include "shell/panels.hpp"
 
 namespace engine::editor {
 
@@ -70,7 +71,7 @@ void draw_joint_overlay(const scene::SkinnedMesh& skinned, const glm::mat4& view
 void draw_animation_preview(scene::Scene& scene, entt::entity selected,
                             const glm::mat4& view_proj, const float viewport_rect[4],
                             AnimationPreviewState& state) {
-    if (!ImGui::Begin("Animation")) {
+    if (!ImGui::Begin(shell::panel_window_name(shell::Panel::animation))) {
         ImGui::End();
         return;
     }

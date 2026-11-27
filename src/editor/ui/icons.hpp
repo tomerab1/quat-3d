@@ -29,6 +29,7 @@ inline constexpr char bug[] = "\xee\x88\x8c"; // U+E20C bug
 inline constexpr char camera[] = "\xee\x81\xa4"; // U+E064 camera
 inline constexpr char check[] = "\xee\x81\xac"; // U+E06C check
 inline constexpr char chevron_down[] = "\xee\x81\xad"; // U+E06D chevron-down
+inline constexpr char chevron_left[] = "\xee\x81\xae"; // U+E06E chevron-left
 inline constexpr char chevron_right[] = "\xee\x81\xaf"; // U+E06F chevron-right
 inline constexpr char chevrons_up_down[] = "\xee\x88\x91"; // U+E211 chevrons-up-down
 inline constexpr char circle_alert[] = "\xee\x81\xb7"; // U+E077 circle-alert
@@ -43,10 +44,13 @@ inline constexpr char cloud[] = "\xee\x82\x88"; // U+E088 cloud
 inline constexpr char code[] = "\xee\x82\x93"; // U+E093 code
 inline constexpr char command[] = "\xee\x82\x9a"; // U+E09A command
 inline constexpr char compass[] = "\xee\x82\x9b"; // U+E09B compass
+inline constexpr char cone[] = "\xee\x94\xa3"; // U+E523 cone
 inline constexpr char copy[] = "\xee\x82\x9e"; // U+E09E copy
 inline constexpr char cpu[] = "\xee\x82\xa9"; // U+E0A9 cpu
 inline constexpr char crosshair[] = "\xee\x82\xac"; // U+E0AC crosshair
 inline constexpr char cuboid[] = "\xee\x94\xa4"; // U+E524 cuboid
+inline constexpr char cylinder[] = "\xee\x94\xa5"; // U+E525 cylinder
+inline constexpr char database[] = "\xee\x82\xad"; // U+E0AD database
 inline constexpr char ear[] = "\xee\x8e\x82"; // U+E382 ear
 inline constexpr char ellipsis_vertical[] = "\xee\x82\xb7"; // U+E0B7 ellipsis-vertical
 inline constexpr char eye[] = "\xee\x82\xba"; // U+E0BA eye
@@ -104,6 +108,7 @@ inline constexpr char panel_left[] = "\xee\x84\xaa"; // U+E12A panel-left
 inline constexpr char panel_right[] = "\xee\x90\xb1"; // U+E431 panel-right
 inline constexpr char pause[] = "\xee\x84\xae"; // U+E12E pause
 inline constexpr char person_standing[] = "\xee\x88\x9e"; // U+E21E person-standing
+inline constexpr char pill[] = "\xee\x8e\xbd"; // U+E3BD pill
 inline constexpr char pin[] = "\xee\x89\x99"; // U+E259 pin
 inline constexpr char play[] = "\xee\x84\xbc"; // U+E13C play
 inline constexpr char plug[] = "\xee\x8d\xbf"; // U+E37F plug
@@ -173,6 +178,7 @@ inline constexpr IconEntry k_icons[] = {
     {"camera", 0xE064, camera},
     {"check", 0xE06C, check},
     {"chevron-down", 0xE06D, chevron_down},
+    {"chevron-left", 0xE06E, chevron_left},
     {"chevron-right", 0xE06F, chevron_right},
     {"chevrons-up-down", 0xE211, chevrons_up_down},
     {"circle-alert", 0xE077, circle_alert},
@@ -187,10 +193,13 @@ inline constexpr IconEntry k_icons[] = {
     {"code", 0xE093, code},
     {"command", 0xE09A, command},
     {"compass", 0xE09B, compass},
+    {"cone", 0xE523, cone},
     {"copy", 0xE09E, copy},
     {"cpu", 0xE0A9, cpu},
     {"crosshair", 0xE0AC, crosshair},
     {"cuboid", 0xE524, cuboid},
+    {"cylinder", 0xE525, cylinder},
+    {"database", 0xE0AD, database},
     {"ear", 0xE382, ear},
     {"ellipsis-vertical", 0xE0B7, ellipsis_vertical},
     {"eye", 0xE0BA, eye},
@@ -248,6 +257,7 @@ inline constexpr IconEntry k_icons[] = {
     {"panel-right", 0xE431, panel_right},
     {"pause", 0xE12E, pause},
     {"person-standing", 0xE21E, person_standing},
+    {"pill", 0xE3BD, pill},
     {"pin", 0xE259, pin},
     {"play", 0xE13C, play},
     {"plug", 0xE37F, plug},
