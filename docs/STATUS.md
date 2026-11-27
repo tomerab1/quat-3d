@@ -41,6 +41,9 @@ branches merge into `claude/nifty-hopper-nb68qe` (PR #1):
 | A4 Rust MCP server | `feat/a4-quat-mcp` |
 | G1 audio (miniaudio) | `feat/g1-audio` |
 | S1 nav/NPC fixes N1–N6, N8, N10, N12, N13 | `feat/s1-nav-fixes` |
+| S3.2 legacy self-tests → GoogleTest (animation, terrain, asset, remote, rhi) | `feat/s3-test-migration` |
+| S1 networking fixes B1–B5, B15 | `feat/s1-net-fixes` |
+| S1 TAA + exposure fixes A1, A2, A14, A11 | `feat/s1-taa` |
 
 If this table is still here and those branches are not on the remote, the
 live session ended before merging them: treat the items as unclaimed.
