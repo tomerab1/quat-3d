@@ -88,8 +88,10 @@ struct Generated {
     const std::uint32_t near = gen.args.near.instanceCount;
     const std::uint32_t far = gen.args.far.instanceCount;
     gen.blades.assign(all, all + near);
-    gen.blades.insert(gen.blades.end(), all + gen.args.far.firstInstance,
-                      all + gen.args.far.firstInstance + far);
+    // Far blades start at the near region's capacity; the indirect commands
+    // keep firstInstance = 0 (drawIndirectFirstInstance is not required) and
+    // the draw pass passes the region base as a push constant.
+    gen.blades.insert(gen.blades.end(), all + gen.capacity.near, all + gen.capacity.near + far);
     return gen;
 }
 
@@ -151,6 +153,13 @@ TEST(GpuGrass, GeneratedCountMatchesDensityTimesArea) {
     frame.draw_view_proj = frame.cull_view_proj = overview(camera);
     auto gen = generate(*g, *pass, frame);
     ASSERT_OK(gen);
+
+    // Both indirect commands draw from instance 0: a non-zero firstInstance
+    // would need drawIndirectFirstInstance, which the engine doesn't enable
+    // (PR #3 review). The far region's base is a push constant instead.
+    EXPECT_EQ(gen->args.near.firstInstance, 0U);
+    EXPECT_EQ(gen->args.far.firstInstance, 0U);
+    EXPECT_GT(gen->args.far.instanceCount, 0U) << "the far LOD path must be exercised";
 
     // Every cell within the radius is a candidate; all placed blades are visible.
     const float area = 3.14159265F * s.radius * s.radius;

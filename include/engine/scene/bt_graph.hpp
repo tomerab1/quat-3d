@@ -14,12 +14,14 @@
 // Layout lives in the root object's optional "editor" field, which the
 // runtime ignores:
 //
-//     "editor": {"version": 1, "nodes": [[id, x, y], ...]}
+//     "editor": {"version": 1, "shape": "<hash>", "nodes": [[id, x, y], ...]}
 //
 // one entry per node in depth-first pre-order (the order the runtime stores
-// compiled nodes in). Loading reuses those ids and positions when the entry
-// count matches the tree; a tree edited by hand into a different shape gets
-// fresh ids and an automatic layout instead.
+// compiled nodes in); "shape" fingerprints the kinds, leaves and child counts
+// in that order. Loading reuses those ids and positions when the shape matches
+// the tree and the positions agree with its child order; a tree edited
+// elsewhere into a different shape (or with re-ordered children) gets fresh
+// ids and an automatic layout instead.
 
 #include <cstddef>
 #include <cstdint>

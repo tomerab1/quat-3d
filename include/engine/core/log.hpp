@@ -65,6 +65,13 @@ struct LogQueryResult {
     bool more = false;
 };
 
+// Warning / error lines the ring currently holds (see LogRing::counts).
+struct LogCounts {
+    std::size_t   warnings = 0;
+    std::size_t   errors = 0;
+    std::uint64_t last_error_seq = 0; // newest retained error line; 0 when none
+};
+
 class LogRing {
 public:
     static constexpr std::size_t default_capacity = 4096;
@@ -80,6 +87,10 @@ public:
     // Thread-safe snapshot query (see LogQuery).
     [[nodiscard]] LogQueryResult query(const LogQuery& q) const;
 
+    // Thread-safe, O(1): kept up to date by push(), so health checks need not
+    // copy the ring.
+    [[nodiscard]] LogCounts counts() const;
+
     [[nodiscard]] std::uint64_t last_seq() const;  // 0 when nothing was pushed
     [[nodiscard]] std::uint64_t first_seq() const; // oldest retained (0 when empty)
     [[nodiscard]] std::size_t   size() const;
@@ -92,6 +103,9 @@ private:
     std::vector<LogLine>                  lines_; // circular once full
     std::size_t                           head_ = 0; // index of the oldest line when full
     std::uint64_t                         next_seq_ = 1;
+    std::size_t                           warnings_ = 0; // retained warn lines
+    std::size_t                           errors_ = 0;   // retained error lines
+    std::uint64_t                         last_error_seq_ = 0; // newest error pushed
 };
 
 // The process-wide ring (created on first use, thread-safe).

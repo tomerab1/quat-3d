@@ -238,16 +238,20 @@ sim_time_s}`. `engine.info` also reports `paused`.
   audio, networking and rendering keep running in real time, so a paused
   scene can still be inspected, screenshotted and flown around.
   `debug.step` pauses (if running) and queues `frames` single steps, each
-  advancing the simulation by exactly `dt` (unscaled) on one rendered frame;
+  advancing the simulation by exactly `dt` (unscaled) on one rendered frame
+  (one loop iteration while the window is minimised);
   the reply comes after the last step ran, so a following `debug.watch`
-  sees the result. `debug.resume` drops pending steps (their `debug.step`
-  replies then complete). Every simulation system advances by the same
-  simulated time: real frame time beyond 1/15 s (a hitch) is dropped for
-  all of them, a step's `dt` is at most 1/15 s (what one physics update —
-  8 fixed 1/120 s substeps — simulates exactly), and a scaled frame above
-  that runs the simulation in equal slices of at most 1/15 s, so physics
-  keeps up with agents, characters and animation at any time scale. The
-  clock state survives play/stop: a paused clock stays paused when play
+  sees the result. Further requests queue behind pending steps, each keeping
+  its own `dt`; at most 100000 steps, 64 runs of differing `dt` and 64
+  waiting requests are accepted (beyond that a request fails with `failed`
+  and queues nothing). `debug.resume` drops pending steps (their
+  `debug.step` replies then complete). Every simulation system advances by
+  the same simulated time: real frame time beyond 1/15 s (a hitch) is
+  dropped for all of them, a step's `dt` is at most 1/15 s (what one physics
+  update — 8 fixed 1/120 s substeps — simulates exactly), and a scaled frame
+  above that runs the simulation in equal slices of at most 1/15 s, so
+  physics keeps up with agents, characters and animation at any time scale.
+  The clock state survives play/stop: a paused clock stays paused when play
   starts.
 - **Watch** reuses the component codec (same shapes as `scene.get`);
   `components` restricts the snapshot (unknown names are `invalid_params`,

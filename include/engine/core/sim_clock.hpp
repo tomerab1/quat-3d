@@ -8,8 +8,9 @@
 // dt to the simulation systems (physics, characters, AI, navigation,
 // animation). Running, that is min(real_dt, max_frame_dt) * time_scale;
 // paused, it is 0 — except for frames consumed by step(), which each advance
-// by exactly step_dt (unscaled, so a stepped trace is reproducible regardless
-// of frame rate).
+// by exactly the dt that step() was given (unscaled, so a stepped trace is
+// reproducible regardless of frame rate). Steps queued by successive step()
+// calls run in order, each with its own dt.
 //
 // Every simulation system advances by the same dt (audit D2). Real time
 // beyond max_frame_dt is a hitch (a blocking load, a breakpoint, a slow
@@ -22,7 +23,11 @@
 // at most that budget, so physics simulates the requested time exactly
 // rather than dropping it as a hitch.
 
+#include <array>
 #include <cstdint>
+#include <expected>
+
+#include "engine/core/error.hpp"
 
 namespace engine::core {
 
@@ -61,6 +66,9 @@ public:
     // The largest single step: what one physics update simulates exactly.
     static constexpr float max_step_dt = max_frame_dt;
     static constexpr std::uint32_t max_pending_steps = 100'000;
+    // Queued runs of steps with differing dt (consecutive requests with the
+    // same dt share one run).
+    static constexpr std::uint32_t max_step_runs = 64;
 
     // Simulation dt for this frame (see the header comment).
     [[nodiscard]] float advance(float real_dt);
@@ -69,19 +77,31 @@ public:
     // Resumes real-time simulation; pending single steps are dropped.
     void resume();
     // Pauses (if running) and queues `frames` single steps of `dt` seconds
-    // each (clamped to (0, max_step_dt]). Returns the steps_run value at
-    // which the last queued step will have run.
-    std::uint64_t step(std::uint32_t frames, float dt = default_step_dt);
+    // each (clamped to (0, max_step_dt]; a non-finite or non-positive dt
+    // means default_step_dt) after any already queued. Returns the steps_run
+    // value at which the last queued step will have run, or an error (and
+    // queues nothing) when that would exceed max_pending_steps or
+    // max_step_runs.
+    [[nodiscard]] std::expected<std::uint64_t, Error> step(std::uint32_t frames,
+                                                           float dt = default_step_dt);
     // Clamped to [min_time_scale, max_time_scale].
     void set_time_scale(float scale);
 
     [[nodiscard]] SimClockState state() const;
 
 private:
+    struct StepRun {
+        std::uint32_t count = 0;
+        float         dt = default_step_dt;
+    };
+
     bool          paused_ = false;
     float         time_scale_ = 1.0F;
-    float         step_dt_ = default_step_dt;
-    std::uint32_t pending_steps_ = 0;
+    // FIFO ring of queued runs: `run_count_` entries starting at `run_head_`.
+    std::array<StepRun, max_step_runs> runs_{};
+    std::uint32_t run_head_ = 0;
+    std::uint32_t run_count_ = 0;
+    std::uint32_t pending_steps_ = 0; // sum of the queued runs' counts
     std::uint64_t sim_frames_ = 0;
     double        sim_time_s_ = 0.0;
     std::uint64_t steps_run_ = 0;
