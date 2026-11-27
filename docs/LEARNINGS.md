@@ -518,3 +518,17 @@ it reordered, and an unvalidated ini file. Each lived in code only reachable
 through an ImGui frame. **Rule:** UI actions are plain functions over the
 registry or the state struct, called by the widget and by GoogleTest;
 anything read from disk goes through a pure, tested parser.
+
+## Interpolated depth invented a surface at every silhouette (#86)
+
+The contact-shadow march interpolated the 2x2 nearest depth texels. This is
+exact on planes, which is why it fixed grazing-angle self-shadowing. Across a
+silhouette, though, it blended the sphere and the floor behind it into a
+surface that isn't there. Floor rays crossing the edge hit that surface, and
+the march jitter turned the hits into a dotted halo. Plain nearest-texel or
+per-texel tests are no cure: at 5 m a floor texel one pixel nearer the camera
+is already ~1.6 cm closer than the ray, more than the 0.1 % self-hit guard.
+**Rule:** a screen-space march reconstructs depth per surface. Take the
+nearest texel and extend it along its own plane, with slopes from neighbours
+on the same side of any edge (smaller second difference). Test it with a
+silhouette that has a depth gap behind it, not only with planes.

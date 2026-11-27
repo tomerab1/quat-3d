@@ -7,7 +7,6 @@
 #include <cstddef>
 #include <cstdint>
 #include <expected>
-#include <string>
 #include <vector>
 
 #include <glm/glm.hpp>
@@ -281,15 +280,16 @@ TEST(GpuContactShadows, NoHaloBesideSilhouettes) {
                 const float with = images[0].rgba16f(x, y).r;
                 const float without = images[1].rgba16f(x, y).r;
                 if (with < 0.98F * without) {
-                    ++darkened;
+                    if (++darkened <= 8) { // enough to locate the pattern
+                        ADD_FAILURE() << "floor pixel " << x << "," << y << " (frame " << frame
+                                      << ") darkened to " << with / without;
+                    }
                     worst = std::min(worst, with / without);
-                    ADD_FAILURE() << "floor pixel " << x << "," << y << " (frame " << frame
-                                  << ") darkened to " << with / without;
-                    if (darkened > 12) return; // enough to see the pattern
                 }
             }
         }
     }
     EXPECT_GT(floor_pixels, 50000U); // the camera sees the floor around the sphere
-    RecordProperty("worst_ratio", std::to_string(worst));
+    EXPECT_EQ(darkened, 0U) << "of " << floor_pixels << " floor pixels; darkest at " << worst
+                            << " of the light without contact shadows";
 }

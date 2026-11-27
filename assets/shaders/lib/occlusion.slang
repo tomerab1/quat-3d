@@ -69,10 +69,9 @@ float depth_texel(Texture2D depth, int2 p, int2 last) {
 // central difference is exact. Otherwise a depth edge or a curve runs beside
 // the texel: keep the side whose next texel continues the same surface, the
 // one-sided difference with the smaller second difference on its own side
-// (as in Y. Wu's depth-buffer normal reconstruction), so the slope never spans
-// the edge. A texel that neither side continues (a feature one
-// pixel thin) gets slope 0: its own depth, never a ramp toward what is
-// behind it.
+// (as in Y. Wu's depth-buffer normal reconstruction), so the slope never
+// spans the edge. A texel that neither side continues (a feature one pixel
+// thin) gets slope 0: its own depth, never a ramp toward what is behind it.
 float depth_slope(Texture2D depth, int2 texel, int2 axis, int2 last, float dm, float d0,
                   float dp, float tol) {
     bool vm = all(texel - axis >= 0) && dm < 1.0;
