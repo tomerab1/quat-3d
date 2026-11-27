@@ -43,6 +43,8 @@ public:
         // Changes are compiled once a file has been quiet this long (editors
         // often write a file in several steps).
         std::chrono::milliseconds debounce{80};
+        // A slangc run exceeding this is killed and reported as an error.
+        std::chrono::milliseconds compile_timeout{60'000};
         std::uint32_t frames_in_flight = 2;
         // Compile on a worker thread (false: compile inside update(); tests).
         bool async = true;
