@@ -13,6 +13,7 @@
 
 #include "app/asset_root.hpp"
 #include "app/demo_scenes.hpp"
+#include "engine/core/profile.hpp"
 #include "engine/core/utf8_path.hpp"
 #include "engine/scene/bounds.hpp"
 #include "engine/scene/components.hpp"
@@ -63,8 +64,13 @@ Application::~Application() {
 }
 
 int Application::run() {
+    // R4: the frame profiler records the main thread's zones; each loop
+    // iteration is one profiler frame.
+    QUAT_THREAD_NAME("main");
+    engine::core::profiler().bind_current_thread();
     if (!init_platform() || !init_subsystems()) return 1;
     while (pump_events() && run_frame()) {
+        QUAT_FRAME_MARK();
     }
     report_stats();
     return 0;
@@ -335,7 +341,10 @@ bool Application::run_frame() {
     // scene tick.
     remote_->poll();
 #ifdef ENGINE_EDITOR
-    editor_.begin_frame(); // UI frame + Play/Stop, save/load, instantiate
+    {
+        QUAT_ZONE_N("editor_begin");
+        editor_.begin_frame(); // UI frame + Play/Stop, save/load, instantiate
+    }
 #else
     // Play/Stop requested by sim.play / sim.stop; a transition swaps worlds,
     // so no temporal history carries across.
@@ -412,6 +421,7 @@ bool Application::run_frame() {
     }
 #ifdef ENGINE_EDITOR
     frame_inputs.build_ui = [&]() {
+        QUAT_ZONE_N("editor_ui");
         // record() calls this after batching, so the count is this frame's.
         return editor_.build_ui(dt, static_cast<int>(renderer_.draw_count()), cam);
     };
@@ -460,6 +470,7 @@ std::optional<PlayStep> Application::play_step() const {
 }
 
 engine::scene::CameraMatrices Application::update_world(float dt, float sim_dt, float aspect) {
+    QUAT_ZONE_N("update_world");
     const bool character_mode = world_.character_mode();
 
     // Free-fly camera: right-drag looks, WASD moves, Q/E down/up, Shift = fast.

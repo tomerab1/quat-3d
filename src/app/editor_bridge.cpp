@@ -11,6 +11,7 @@
 
 #include "app/asset_root.hpp"
 #include "app/remote_bridge.hpp"
+#include "engine/core/frame_profiler.hpp"
 #include "engine/core/utf8_path.hpp"
 #include "engine/rhi/device.hpp"
 #include "engine/rhi/gpu_allocator.hpp"
@@ -235,6 +236,7 @@ const ImDrawData* EditorBridge::build_ui(float dt, int draw_count,
         static_cast<int>(scene.registry().view<engine::scene::Transform>().size());
     ui_ctx.shader_statuses = t_.shader_reload != nullptr ? &t_.shader_reload->statuses() : nullptr;
     ui_ctx.scripts = world.scripts();
+    ui_ctx.profiler = &engine::core::profiler();
     ui_ctx.scene = &scene;
     ui_ctx.renderer = t_.render_settings;
     ui_ctx.project_root = engine::core::path_to_utf8(project_root()); // UTF-8 for ImGui

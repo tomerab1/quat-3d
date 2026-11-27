@@ -29,6 +29,9 @@ union SDL_Event;
 struct ImDrawData;
 struct ImVec2;
 
+namespace engine::core {
+class FrameProfiler;
+}
 namespace engine::renderer {
 struct RenderSettings;
 }
@@ -42,6 +45,7 @@ class ScriptRuntime;
 namespace engine::editor {
 
 class BehaviorPanel;
+struct ProfilerPanelState;
 
 // Animation panel state owned by EditorLayer (editor state stays out of the
 // ECS).
@@ -74,6 +78,8 @@ struct EditorContext {
     script::ScriptRuntime* scripts = nullptr;
     // Scene access for the hierarchy/inspector panels (may be null).
     scene::Scene* scene = nullptr;
+    // The frame profiler the Profiler panel shows and resets (R4; may be null).
+    core::FrameProfiler* profiler = nullptr;
     // Renderer settings the Renderer panel edits (owned by the frame
     // renderer; may be null).
     renderer::RenderSettings* renderer = nullptr;
@@ -195,6 +201,8 @@ private:
     // Behaviour-tree node editor (G2); created with the first frame, destroyed
     // before the ImGui context.
     std::unique_ptr<BehaviorPanel> behavior_panel_;
+    // Profiler panel (R4) state: visibility, filters, frozen snapshot.
+    std::unique_ptr<ProfilerPanelState> profiler_panel_;
 
     int gizmo_op_ = 0; // 0 translate, 1 rotate, 2 scale (W/E/R over the viewport)
 

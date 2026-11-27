@@ -21,6 +21,7 @@
 #include "behavior_panel.hpp"
 #include "physics_debug.hpp"
 #include "picking.hpp"
+#include "profiler_panel.hpp"
 #include "engine/renderer/imgui_pass.hpp" // viewport_texture_id
 #include "inspector.hpp"
 #include "tuning_panels.hpp"
@@ -156,6 +157,7 @@ EditorLayer& EditorLayer::operator=(EditorLayer&& other) noexcept {
         viewport_hovered_ = other.viewport_hovered_;
         selected_ = other.selected_;
         behavior_panel_ = std::move(other.behavior_panel_);
+        profiler_panel_ = std::move(other.profiler_panel_);
     }
     return *this;
 }
@@ -221,6 +223,7 @@ void EditorLayer::build_dock_layout(unsigned int dockspace_id) {
     ImGui::DockBuilderDockWindow("Assets", bottom);
     ImGui::DockBuilderDockWindow("Animation", bottom);
     ImGui::DockBuilderDockWindow(behavior_panel_title, bottom);
+    ImGui::DockBuilderDockWindow("Profiler", bottom);
     ImGui::DockBuilderFinish(dockspace_id);
 }
 
@@ -471,6 +474,9 @@ void EditorLayer::build_ui(const EditorContext& ctx) {
         }
         if (ImGui::BeginMenu("View")) {
             ImGui::MenuItem("Stats", nullptr, &show_stats_);
+            if (profiler_panel_ != nullptr) {
+                ImGui::MenuItem("Profiler", nullptr, &profiler_panel_->open);
+            }
             ImGui::MenuItem("ImGui Demo", nullptr, &show_demo_);
             ImGui::EndMenu();
         }
@@ -516,6 +522,8 @@ void EditorLayer::build_ui(const EditorContext& ctx) {
     if (ctx.renderer != nullptr) {
         draw_renderer_panel(*ctx.renderer, ctx.scene);
     }
+    if (profiler_panel_ == nullptr) profiler_panel_ = std::make_unique<ProfilerPanelState>();
+    draw_profiler_panel(ctx.profiler, *profiler_panel_);
     if (!ctx.project_root.empty() && ctx.instantiate_request != nullptr) {
         draw_asset_browser(ctx.project_root, *ctx.instantiate_request);
     }

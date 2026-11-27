@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "parallel_rows.hpp"
+#include "engine/core/profile.hpp"
 
 namespace engine::terrain {
 
@@ -417,6 +418,8 @@ Heightmap generate(const TerrainParams& params, const std::atomic<bool>* cancel)
 
 std::future<Heightmap> generate_async(TerrainParams params, CancelToken cancel) {
     return std::async(std::launch::async, [params, cancel = std::move(cancel)] {
+        QUAT_THREAD_NAME("terrain generator");
+        QUAT_ZONE_N("generate_terrain_tile");
         return generate(params, cancel.get());
     });
 }

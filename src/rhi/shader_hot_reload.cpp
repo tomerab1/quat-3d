@@ -19,6 +19,7 @@
 #include "engine/core/child_process.hpp"
 #include "engine/rhi/pipeline_cache.hpp"
 #include "engine/rhi/shader_compiler.hpp"
+#include "engine/core/profile.hpp"
 
 namespace engine::rhi {
 
@@ -316,7 +317,10 @@ ShaderHotReload::create(PipelineCache& cache, Config config) {
     impl->graph.scan();
     for (const fs::path& source : impl->graph.sources()) impl->status_for(source);
     if (impl->config.async) {
-        impl->worker = std::thread([raw = impl.get()] { raw->worker_main(); });
+        impl->worker = std::thread([raw = impl.get()] {
+            QUAT_THREAD_NAME("shader compiler");
+            raw->worker_main();
+        });
     }
     return std::make_unique<ShaderHotReload>(PrivateTag{}, std::move(impl));
 }

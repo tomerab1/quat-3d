@@ -6,6 +6,7 @@
 #include <string>
 #include <vector>
 
+#include "engine/core/profile.hpp"
 #include "engine/rhi/gpu_allocator.hpp"
 #include "one_time_commands.hpp"
 
@@ -47,6 +48,7 @@ upload_device_image_levels(GpuAllocator& allocator, const TransferContext& trans
                            const void* data, VkDeviceSize size, VkExtent2D extent,
                            VkFormat format, std::span<const ImageLevelRegion> levels,
                            VkImageUsageFlags usage) {
+    QUAT_ZONE_N("upload_image");
     if (levels.empty() || levels.size() > full_mip_levels(extent)) {
         return fail("upload_device_image_levels: bad mip level count");
     }

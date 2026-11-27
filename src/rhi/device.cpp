@@ -437,11 +437,25 @@ std::expected<Device, core::Error> Device::create(const CreateInfo& info) {
     if (candidate.has_descriptor_buffer) {
         device_exts.push_back(VK_EXT_DESCRIPTOR_BUFFER_EXTENSION_NAME);
     }
+    // Profiling (R4), each enabled whenever offered: the driver's memory
+    // budget for VMA, and calibrated timestamps for GPU zones in Tracy.
+    const auto available_device_exts = device_extensions(dev.physical_device_);
+    if (has_extension(available_device_exts, VK_EXT_MEMORY_BUDGET_EXTENSION_NAME)) {
+        device_exts.push_back(VK_EXT_MEMORY_BUDGET_EXTENSION_NAME);
+        dev.memory_budget_ = true;
+    }
+    if (has_extension(available_device_exts, VK_KHR_CALIBRATED_TIMESTAMPS_EXTENSION_NAME)) {
+        device_exts.push_back(VK_KHR_CALIBRATED_TIMESTAMPS_EXTENSION_NAME);
+        dev.calibrated_timestamps_ = CalibratedTimestamps::khr;
+    } else if (has_extension(available_device_exts,
+                             VK_EXT_CALIBRATED_TIMESTAMPS_EXTENSION_NAME)) {
+        device_exts.push_back(VK_EXT_CALIBRATED_TIMESTAMPS_EXTENSION_NAME);
+        dev.calibrated_timestamps_ = CalibratedTimestamps::ext;
+    }
 #ifdef ENGINE_DESCRIPTOR_SETS_FALLBACK
     // Portability-subset ICDs advertise VK_KHR_portability_subset, and the spec
     // requires it to be enabled whenever present. String spelled out to avoid
     // pulling in vulkan_beta.h.
-    const auto available_device_exts = device_extensions(dev.physical_device_);
     if (has_extension(available_device_exts, "VK_KHR_portability_subset")) {
         device_exts.push_back("VK_KHR_portability_subset");
     }
@@ -583,6 +597,8 @@ Device& Device::operator=(Device&& other) noexcept {
         simulate_missing_extended_formats_ = other.simulate_missing_extended_formats_;
         depth_clamp_ = other.depth_clamp_;
         simulate_missing_depth_clamp_ = other.simulate_missing_depth_clamp_;
+        memory_budget_ = other.memory_budget_;
+        calibrated_timestamps_ = other.calibrated_timestamps_;
     }
     return *this;
 }

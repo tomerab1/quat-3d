@@ -205,6 +205,7 @@ add_library(engine_rhi STATIC
     src/rhi/pipeline_cache.cpp
     src/rhi/descriptor_buffer.cpp
     src/rhi/render_graph.cpp
+    src/rhi/gpu_profiler.cpp
     src/rhi/graphics_pipeline.cpp
     src/rhi/compute_pipeline.cpp
     src/rhi/shader_compiler.cpp
@@ -288,6 +289,7 @@ add_library(engine_physics STATIC
     src/physics/physics_world.cpp
     src/physics/physics_queries.cpp)
 target_link_libraries(engine_physics PUBLIC engine_flags)
+target_link_libraries(engine_physics PRIVATE engine_core) # profiler zones + worker names (R4)
 target_link_libraries(engine_physics PRIVATE Jolt::Jolt)
 target_include_directories(engine_physics PUBLIC ${ENGINE_PUBLIC_INCLUDE})
 
@@ -427,6 +429,7 @@ add_library(engine_terrain STATIC
     src/terrain/grid_erosion.cpp
     src/terrain/streamer.cpp)
 target_link_libraries(engine_terrain PUBLIC engine_flags glm::glm)
+target_link_libraries(engine_terrain PRIVATE engine_core) # profiler zones + thread names (R4)
 target_include_directories(engine_terrain PUBLIC ${ENGINE_PUBLIC_INCLUDE})
 
 # ---------------------------------------------------------------------------
@@ -604,6 +607,7 @@ if(ENGINE_EDITOR)
         src/editor/particle_inspector.cpp
         src/editor/behavior_panel.cpp
         src/editor/behavior_canvas.cpp
+        src/editor/profiler_panel.cpp
         src/editor/vendor/imgui_impl_sdl3.cpp)
     # engine_scene is PUBLIC: editor.hpp exposes entt entity types (selection)
     # and the hierarchy/inspector panels reflect scene components.
@@ -655,6 +659,7 @@ add_executable(game
     src/app/frame_graph.cpp
     src/app/frame_temporal.cpp
     src/app/frame_renderer.cpp
+    src/app/frame_profiling.cpp
     src/app/input_sampler.cpp
     src/app/remote_bridge.cpp
     src/app/screenshot_capture.cpp

@@ -21,6 +21,7 @@
 
 #include "engine/asset/material_asset.hpp"
 #include "engine/asset/mesh_asset.hpp"
+#include "engine/core/profile.hpp"
 #include "engine/renderer/ibl_pass.hpp"
 #include "engine/renderer/terrain_pass.hpp"
 #include "engine/rhi/device.hpp"
@@ -138,6 +139,7 @@ engine::renderer::ContactShadowSettings FrameRenderer::current_contact_shadows()
 FrameScene FrameRenderer::gather(engine::scene::Scene& scene,
                                  const engine::scene::CameraMatrices& cam,
                                  VkExtent2D draw_extent, std::uint64_t frame_number) {
+    QUAT_ZONE_N("scene_gather");
     const VkDevice vk_device = device_->handle();
     engine::rhi::GpuAllocator& allocator = *allocator_;
     DeferredFrame& fr = frames_[frame_];
@@ -265,6 +267,7 @@ FrameScene FrameRenderer::gather(engine::scene::Scene& scene,
 }
 
 bool FrameRenderer::record(const FrameInputs& in) {
+    QUAT_ZONE_N("record_frame");
     const engine::rhi::Device& device = *device_;
     engine::rhi::GpuAllocator& allocator = *allocator_;
     engine::rhi::Swapchain& swapchain = *swapchain_;
@@ -349,6 +352,7 @@ bool FrameRenderer::record(const FrameInputs& in) {
     // shadow casters only when the cascades are rendered).
     draw_count_ = engine::scene::frame_draw_count(batches, fs.transparent_draws.size()) -
                   (csm.enabled ? 0 : shadow_batches.draws.size());
+    plot_frame_counters(engine::scene::frame_draw_stats(batches, fs.transparent_draws, csm.enabled));
     engine::renderer::HiZTargets hiz{};
     if (fr.hiz.valid()) {
         if (auto h = fr.hiz.add_to_graph(graph, gbuffer->depth, render_extent)) {
@@ -534,12 +538,16 @@ bool FrameRenderer::record(const FrameInputs& in) {
     // Skin (compute) before the graph; record() adds the compute -> vertex
     // fetch barrier so the GBuffer sees the skinned vertices.
     if (!fs.dispatches.empty()) {
+        QUAT_ZONE_C("skinning", engine::core::ProfileCategory::pass);
+        static const engine::core::ProfileNameId skinning_zone =
+            engine::core::intern_profile_name("skinning", engine::core::ProfileCategory::pass);
+        const engine::rhi::GpuZoneScope gpu_zone(&gpu_profiler_, cmd, skinning_zone, "skinning");
         if (auto rs = fr.skinning.record(cmd, fs.dispatches); !rs) {
             std::fprintf(stderr, "[fatal] skinning pass: %s\n", rs.error().message.c_str());
             return false;
         }
     }
-    graph.execute(cmd);
+    graph.execute(cmd, &gpu_profiler_);
     return true;
 }
 

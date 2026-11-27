@@ -11,6 +11,7 @@
 
 #include "engine/scene/components.hpp"
 #include "engine/scene/scene.hpp"
+#include "engine/core/profile.hpp"
 
 namespace quat::app {
 
@@ -98,8 +99,11 @@ void ParticleRuntime::start_load(const std::string& path, Flipbook& book) {
     const std::filesystem::path file = project_root_ / path;
     book.failed = false;
     book.stamp = stamp_of(file);
-    book.pending = std::async(std::launch::async,
-                              [file, path] { return decode_flipbook(file, path); });
+    book.pending = std::async(std::launch::async, [file, path] {
+        QUAT_THREAD_NAME("asset load");
+        QUAT_ZONE_N("decode_flipbook");
+        return decode_flipbook(file, path);
+    });
 }
 
 VkImageView ParticleRuntime::flipbook(const std::string& path, Clock::time_point now) {
