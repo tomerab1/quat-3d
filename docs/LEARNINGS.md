@@ -101,6 +101,20 @@ into CLAUDE.md or the brief template in [`CYCLE.md`](CYCLE.md).
 
 ## C++ in this codebase
 
+- **Half-float accumulation buffers stall.** A running average whose
+  per-frame weight falls below ~1/1000 (R11's TAAU at 50% render scale)
+  loses its updates to RGBA16F rounding and drifts; the upscale test's error
+  rose from 0.0017 to 0.0047. Temporal histories with small blend weights are
+  RGBA32F (a mandatory storage format).
+- **A Slang pointer null test (`p != nullptr`) emits the Int64 capability**,
+  which needs `shaderInt64` (not enabled): the validation layer rejects the
+  pipeline. Pass a presence flag next to device addresses instead.
+- **A pipeline without descriptor sets drawn while a descriptor buffer is
+  bound** fails VUID-vkCmdDraw-None-08117 (it lacks the descriptor-buffer
+  flag). Give it an empty descriptor-buffer set layout (VelocityPass).
+- **Slang lays out `uint3` at 16-byte alignment in push constants**: `uint;
+  uint3` is a 28-byte block, not 16. Pad with scalars.
+
 - **slangc 2025.6.1 segfaults after reporting a compile error** when
   `-reflection-json` is passed (exit by SIGSEGV, diagnostics already
   printed). Treat any non-zero exit *or* signal as a failed compile and keep
