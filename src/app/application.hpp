@@ -1,0 +1,117 @@
+#pragma once
+
+// Application — the `game` executable's application layer root. Owns the
+// window, the Vulkan device / allocator / surface / swapchain, the scene and
+// its assets, and the subsystems that run around them:
+//
+//   FrameRenderer  per-frame rendering (frame slots, graph build, submission)
+//   WorldRuntime   terrain, play-mode physics, nav / behaviour trees,
+//                  networking, audio
+//   FlyCamera      the view camera
+//   EditorBridge   the editor layer and its requests (editor builds)
+//   RemoteBridge   remote control (QUAT_REMOTE) and primitive resolution
+//
+// run() performs setup, the frame loop and teardown. Frame order: events,
+// remote requests, editor requests, swapchain / frame slot, camera input,
+// simulation, view, scene gather, terrain upkeep, ground clicks, navmesh bake,
+// render graph, remote capture, submit + present.
+
+#include <cstdint>
+#include <optional>
+#include <string>
+
+#include <vulkan/vulkan.h>
+
+#include "app/fly_camera.hpp"
+#include "app/frame_renderer.hpp"
+#include "app/remote_bridge.hpp"
+#include "app/world_runtime.hpp"
+#include "engine/asset/asset_manager.hpp"
+#include "engine/rhi/device.hpp"
+#include "engine/rhi/gpu_allocator.hpp"
+#include "engine/rhi/pipeline_cache.hpp"
+#include "engine/rhi/swapchain.hpp"
+#include "engine/scene/scene.hpp"
+#ifdef ENGINE_EDITOR
+#include "app/editor_bridge.hpp"
+#endif
+
+struct SDL_Window;
+
+namespace quat::app {
+
+// Process-level options, parsed from the environment by main().
+struct AppConfig {
+    // QUAT_MAX_FRAMES: auto-quit after this many presented frames (0 = run
+    // until the window closes). Headless smoke tests verify clean teardown.
+    std::uint64_t max_frames = 0;
+    // QUAT_SCREENSHOT (with QUAT_MAX_FRAMES): the final frame as binary PPM.
+    std::optional<std::string> screenshot_path;
+    // False with QUAT_NO_UI=1: no editor shell (deterministic headless renders).
+    bool editor_ui = true;
+};
+
+class Application {
+public:
+    explicit Application(AppConfig config);
+    ~Application();
+    Application(const Application&) = delete;
+    Application& operator=(const Application&) = delete;
+    Application(Application&&) = delete;
+    Application& operator=(Application&&) = delete;
+
+    // Sets up, runs the frame loop until quit, and returns the process exit
+    // code (1 when setup fails; the [fatal] line says why).
+    [[nodiscard]] int run();
+
+private:
+    // SDL video + the window; torn down after every other member.
+    struct Platform {
+        Platform() = default;
+        Platform(const Platform&) = delete;
+        Platform& operator=(const Platform&) = delete;
+        ~Platform();
+        bool        sdl_initialized = false;
+        SDL_Window* window = nullptr;
+    };
+
+    [[nodiscard]] bool init_platform();
+    [[nodiscard]] bool init_subsystems();
+    void connect_remote();
+    // Polls SDL events; false when the app should quit.
+    [[nodiscard]] bool pump_events();
+    // One frame; false when the loop ends (fatal error or QUAT_MAX_FRAMES).
+    [[nodiscard]] bool run_frame();
+    // Camera input, simulation, follow camera, then the view matrices.
+    [[nodiscard]] engine::scene::CameraMatrices update_world(float dt, float aspect);
+    void report_stats() const;
+
+    AppConfig config_;
+
+    Platform                   platform_;
+    engine::rhi::Device        device_;
+    engine::rhi::GpuAllocator  allocator_;
+    VkSurfaceKHR               surface_ = VK_NULL_HANDLE;
+    engine::rhi::Swapchain     swapchain_;
+    engine::rhi::PipelineCache pipeline_cache_;
+    std::string                shader_dir_;
+
+#ifdef ENGINE_EDITOR
+    EditorBridge editor_;
+#endif
+    FrameRenderer renderer_;
+    // Scene assets live in an AssetManager so MeshRenderer handles keep them
+    // alive.
+    engine::asset::AssetManager assets_;
+    engine::scene::Scene        scene_;
+    WorldRuntime                world_;
+    FlyCamera                   camera_;
+    std::optional<RemoteBridge> remote_;
+
+    std::uint64_t presented_ = 0;
+    double        frame_time_sum_ = 0.0; // avg-frame-time report at exit
+    std::uint64_t frame_time_samples_ = 0;
+    std::uint64_t last_ticks_ = 0;
+};
+
+} // namespace quat::app
