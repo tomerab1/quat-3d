@@ -32,10 +32,12 @@ case "$archive" in
   tar -C "$scratch" -xzf "$archive"
   dir=$(ls -d "$scratch"/quat-3d-*/)
   # Everything but the system Vulkan loader must resolve, libc++ from lib/.
-  ldd "$dir/game"
-  if ldd "$dir/game" | grep -q 'not found'; then echo "unresolved libraries" >&2; exit 1; fi
-  ldd "$dir/game" | grep -q "$dir/*lib/libc++.so" || { echo "libc++ not taken from the package" >&2; exit 1; }
-  export VK_ICD_FILENAMES="$(ls /usr/share/vulkan/icd.d/lvp_icd*.json | head -n1)"
+  deps=$(ldd "$dir/game")
+  echo "$deps"
+  if grep -q 'not found' <<<"$deps"; then echo "unresolved libraries" >&2; exit 1; fi
+  grep -q "$dir/*lib/libc++.so" <<<"$deps" || { echo "libc++ not taken from the package" >&2; exit 1; }
+  icds=(/usr/share/vulkan/icd.d/lvp_icd*.json)
+  export VK_ICD_FILENAMES="${icds[0]}"
   (cd "$scratch" && xvfb-run -a -s "-screen 0 1280x720x24" "$dir/game") 2>&1 | tee "$log"
   ;;
 *windows-x64.zip)

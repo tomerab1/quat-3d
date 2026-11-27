@@ -78,8 +78,9 @@ windows-x64)
   cp "$build_dir"/*.dll "$stage/"
   # MSVC runtime, app-local (no VC++ redistributable install needed).
   redist="$(cygpath -u "${VCToolsRedistDir:?run inside an MSVC developer environment}")"
-  crt_dir=$(ls -d "$redist"/x64/Microsoft.VC*.CRT | head -n1)
-  cp "$crt_dir"/*.dll "$stage/"
+  crt_dirs=("$redist"/x64/Microsoft.VC*.CRT)
+  [ -d "${crt_dirs[0]}" ] || { echo "no MSVC runtime under $redist/x64" >&2; exit 1; }
+  cp "${crt_dirs[0]}"/*.dll "$stage/"
   copy_data "$stage"
   cp "$root/packaging/README-RUN-windows.txt" "$stage/README-RUN.txt"
   archive="$out_dir/$name.zip"
@@ -99,7 +100,13 @@ macos-arm64)
   loader="$(brew --prefix vulkan-loader)/lib/libvulkan.1.dylib"
   cp -L "$loader" "$contents/Frameworks/libvulkan.1.dylib"
   cp -L "$mvk_prefix/lib/libMoltenVK.dylib" "$contents/Frameworks/libMoltenVK.dylib"
-  icd_src=$(ls "$mvk_prefix"/etc/vulkan/icd.d/MoltenVK_icd.json "$mvk_prefix"/share/vulkan/icd.d/MoltenVK_icd.json 2>/dev/null | head -n1)
+  # (No `ls a b | head` lookups in this script: under pipefail a missing
+  # candidate or an early-exiting reader fails the whole command.)
+  icd_src=""
+  for c in "$mvk_prefix"/etc/vulkan/icd.d/MoltenVK_icd.json "$mvk_prefix"/share/vulkan/icd.d/MoltenVK_icd.json; do
+    if [ -f "$c" ]; then icd_src=$c; break; fi
+  done
+  [ -n "$icd_src" ] || { echo "no MoltenVK ICD manifest under $mvk_prefix" >&2; exit 1; }
   python3 -I - "$icd_src" "$contents/Resources/vulkan/icd.d/MoltenVK_icd.json" <<'PY'
 import json, sys
 src, dst = sys.argv[1], sys.argv[2]
@@ -113,7 +120,7 @@ PY
   chmod u+w "$contents"/Frameworks/*.dylib
   install_name_tool -id @rpath/libvulkan.1.dylib "$contents/Frameworks/libvulkan.1.dylib"
   install_name_tool -id @rpath/libMoltenVK.dylib "$contents/Frameworks/libMoltenVK.dylib"
-  old=$(otool -L "$contents/MacOS/game" | awk '/libvulkan/ { print $1; exit }')
+  old=$(otool -L "$contents/MacOS/game" | awk '/libvulkan/ && !done { print $1; done = 1 }')
   install_name_tool -change "$old" @rpath/libvulkan.1.dylib "$contents/MacOS/game"
   install_name_tool -add_rpath @executable_path/../Frameworks "$contents/MacOS/game"
 
@@ -127,7 +134,7 @@ PY
   # built for: the game and vcpkg ports target 14.0 (arm64-osx-14 triplet),
   # Homebrew's loader/MoltenVK bottles the runner's own release.
   minos=$(for bin in "$contents/MacOS/game" "$contents"/Frameworks/*.dylib; do
-            otool -l "$bin" | awk '/LC_BUILD_VERSION/ { f = 1 } f && $1 == "minos" { print $2; exit }'
+            otool -l "$bin" | awk '/LC_BUILD_VERSION/ { f = 1 } f && $1 == "minos" && !done { print $2; done = 1 }'
           done | sort -V | tail -n1)
   echo "bundle minimum macOS: ${minos:?could not read minos}"
   # CFBundleVersion must be numeric: tags v1.2.3 -> 1.2.3, dev builds -> 0.0.0.

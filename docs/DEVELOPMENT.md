@@ -24,12 +24,15 @@ the current state is in [`STATUS.md`](STATUS.md).
 | `debug` | clang + libc++, validation layers on |
 | `release` | clang + libc++, optimised (Tracy enabled via `ENGINE_PROFILE`) |
 | `windows-release` | MSVC 2022 (run from an x64 developer prompt), `x64-windows` triplet |
-| `macos-release` | Apple clang, `arm64-osx` triplet, MoltenVK — sets `ENGINE_DESCRIPTOR_SETS_FALLBACK=ON` |
+| `macos-release` | Apple clang, `arm64-osx-14` triplet (macOS 14 minimum), MoltenVK — sets `ENGINE_DESCRIPTOR_SETS_FALLBACK=ON` |
 
 CMake options: `ENGINE_EDITOR` (default ON), `ENGINE_PROFILE`,
-`ENGINE_DESCRIPTOR_SETS_FALLBACK` (macOS / drivers without descriptor buffers).
+`ENGINE_DESCRIPTOR_SETS_FALLBACK` (macOS / drivers without descriptor buffers),
+`ENGINE_PACKAGE_BUILD` (release archives: no source-tree paths compiled in —
+the game finds `assets/` + `cooked/shaders/` next to its executable or in
+`QUAT_ASSET_ROOT`; see `src/app/asset_root.hpp`).
 
-Targets: the engine libraries (`engine_rhi`, `engine_renderer`,
+Targets: the engine libraries (`engine_core`, `engine_rhi`, `engine_renderer`,
 `engine_scene`, `engine_physics`, `engine_animation`, `engine_terrain`,
 `engine_nav`, `engine_net`, `engine_remote`, `engine_audio`, `engine_editor`), the `game`
 executable, and the GoogleTest suite `engine_tests` (`tests/`).
@@ -79,6 +82,27 @@ so only the first run (or a dependency change) pays for the full dependency
 build (cold: ~17 min macOS, ~28 min Windows). Logs are uploaded as an artifact when
 a run fails. The Windows and macOS test steps print GoogleTest's brief summary
 (`GTEST_BRIEF=1`), so skipped GPU tests are visible in the log.
+
+## Releases
+
+`.github/workflows/release.yml` builds `game` in Release with
+`ENGINE_PACKAGE_BUILD=ON` on all three OSes (toolchain setup shared with CI
+through `.github/actions/setup-build`), packages it with
+`scripts/package-release.sh`, and smoke-tests each package with
+`scripts/smoke-test-package.sh` (unpack, launch headless for 30 frames, require
+a clean exit, a screenshot, and data resolved next to the executable):
+
+| Package | Contents | Smoke test |
+|---|---|---|
+| `quat-3d-<v>-linux-x64.tar.gz` | `game` (RUNPATH `$ORIGIN/lib`), `lib/` libc++ runtime, data | Xvfb + lavapipe |
+| `quat-3d-<v>-windows-x64.zip` | `game.exe`, vcpkg DLLs (applocal), MSVC runtime DLLs, data | lavapipe |
+| `quat-3d-<v>-macos-arm64.zip` | `Quat3D.app`: Vulkan loader + MoltenVK in `Frameworks/` (ICD manifest in `Resources/vulkan/icd.d`), data in `Resources/`, ad-hoc signed | MoltenVK, with Homebrew's Vulkan uninstalled first |
+
+Each archive carries `packaging/README-RUN-<os>.txt` as `README-RUN.txt`.
+Pushing a `v*` tag publishes a GitHub Release (tags with a `-`, e.g.
+`v0.2.0-rc1`, are prereleases); running the workflow by hand
+(`gh workflow run release.yml --ref <branch>`) only uploads the packages as
+workflow artifacts.
 
 ## Building in a cloud container
 
@@ -160,8 +184,8 @@ clang++ -std=c++23 -stdlib=libc++ -Wall -Wextra -Wshadow -fno-exceptions -fno-rt
   `error_handler_t::replace`.
 - **libc++ everywhere (Linux):** every vcpkg port with compiled C++ must use
   the `x64-linux-libcxx` triplet (see `triplets/`), or linking fails. macOS
-  needs no custom triplet (Apple clang defaults to libc++); Windows uses MSVC's
-  STL throughout.
+  uses `arm64-osx-14` only to pin the minimum OS (Apple clang defaults to
+  libc++); Windows uses MSVC's STL throughout.
 - **MSVC builds at `/W4` with no warnings.** Third-party headers must come in
   through SYSTEM include directories (`/external:I`, warning level 0) — use
   `target_include_directories(<t> SYSTEM ...)` for any non-imported

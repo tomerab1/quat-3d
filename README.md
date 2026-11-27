@@ -63,6 +63,25 @@ three platforms (see [`.github/workflows/ci.yml`](.github/workflows/ci.yml)):
 | Windows | Supported | MSVC 2022, CPU and GPU tests on Mesa lavapipe |
 | macOS (Apple Silicon) | Runs through MoltenVK (Vulkan on Metal) with the descriptor-set compatibility path; native Metal is on the roadmap | Apple clang, CPU tests; GPU tests on MoltenVK (informational) |
 
+## Download a build
+
+Ready-to-run builds are attached to each
+[GitHub Release](../../releases) (built and smoke-tested by
+[`.github/workflows/release.yml`](.github/workflows/release.yml) for every
+`v*` tag). Every archive contains a `README-RUN.txt` with the launch options
+and troubleshooting.
+
+| Download | Run |
+|---|---|
+| `quat-3d-<version>-linux-x64.tar.gz` | `tar xzf quat-3d-*-linux-x64.tar.gz && ./quat-3d-*/game`. Needs the system Vulkan loader and a Vulkan 1.3 driver (Mesa or NVIDIA; `sudo apt install libvulkan1 mesa-vulkan-drivers`); the C++ runtime ships in `lib/`. |
+| `quat-3d-<version>-windows-x64.zip` | Unzip, run `game.exe`. Needs a current GPU driver (it provides `vulkan-1.dll`); the libraries and MSVC runtime are in the folder. The build is not code-signed: SmartScreen → *More info* → *Run anyway*. |
+| `quat-3d-<version>-macos-arm64.zip` | Unzip, then **right-click `Quat3D.app` → Open → Open** the first time: the app is ad-hoc signed but not notarized, so Gatekeeper refuses a plain double-click (on newer macOS: System Settings → Privacy & Security → *Open Anyway*). MoltenVK and the Vulkan loader are inside the app. |
+
+Environment variables (see [Running](#running)) work with the packaged game
+too; on macOS launch `Quat3D.app/Contents/MacOS/game` from Terminal to set
+them. The game looks for its data (`assets/`, `cooked/shaders/`) next to the
+executable — or in `QUAT_ASSET_ROOT` — so keep the unpacked folder together.
+
 ## Building
 
 You need CMake 3.22+, Ninja, a C++23 compiler, `slangc` (the
@@ -140,8 +159,10 @@ cmake --build --preset macos-release
 
 MoltenVK lacks `VK_EXT_descriptor_buffer`, so the `macos-release` preset turns
 on `ENGINE_DESCRIPTOR_SETS_FALLBACK` (classic descriptor sets + portability
-enumeration). The default `arm64-osx` vcpkg triplet is used as is: Apple clang
-already builds everything against libc++. With the LunarG macOS Vulkan SDK
+enumeration). It also pins macOS 14 as the minimum for the engine and every
+vcpkg port (the `arm64-osx-14` overlay triplet in `triplets/` — Apple clang
+already uses libc++, so nothing else differs from vcpkg's stock triplet).
+With the LunarG macOS Vulkan SDK
 instead of Homebrew, set `VULKAN_SDK=$HOME/VulkanSDK/<version>/macOS`.
 
 ### Graphics driver requirements
@@ -169,6 +190,7 @@ Environment variables switch on extra modes:
 | `QUAT_NO_VSYNC=1` | Disable vsync |
 | `QUAT_NO_AUDIO=1` | Mute: run audio without opening a playback device |
 | `QUAT_MAX_FRAMES=<n>` + `QUAT_SCREENSHOT=<file.ppm>` | Render n frames, save the last one, exit (headless checks) |
+| `QUAT_ASSET_ROOT=<dir>` | Data directory holding `assets/` and `cooked/shaders/` (default: next to the executable — inside a macOS app, `Contents/Resources` — then, in development builds, the source tree) |
 
 ### Audio
 

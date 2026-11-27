@@ -78,7 +78,8 @@ jobs:
         id: package
         shell: bash
         run: |
-          archive=$(bash scripts/package-release.sh "build/${{ matrix.preset }}" dist "${{ steps.version.outputs.version }}" | tee /dev/stderr | tail -n1)
+          bash scripts/package-release.sh "build/${{ matrix.preset }}" dist "${{ steps.version.outputs.version }}" | tee package.log
+          archive=$(tail -n1 package.log)
           echo "archive=dist/$(basename "$archive")" >> "$GITHUB_OUTPUT"
           ls -l dist
 
