@@ -234,3 +234,20 @@ finished worker's worktree, whose files then no longer matched its HEAD.
 **Rule:** in scratch worktrees use a unique local branch name and push with
 `git push origin HEAD:feat/<id>`; never create or reset a local branch that
 another worktree has checked out (`git worktree list` shows them).
+
+## Central registration lists turn every merge into N conflicts (factory)
+
+Merging A8 (#17) made #19, #22, #25, #26 and #34 conflict at once — mostly
+in the same lists every feature appends to (CMake source lists,
+`component_json.cpp`'s component table, `remote_bridge`, quat-mcp
+`server/mod.rs`, `inspector.cpp`). **Rule:** a feature adds its own files
+and registers itself in one line; central lists are split per module (S9).
+Until S9 lands, merge PRs that touch registration lists one at a time and
+re-run CI on each merged head.
+
+## Hand-compiled translation units are not proof of a CMake target (G8)
+
+G8 compiled every new `.cpp` with `check-compile.sh`, but `compress_clips`'s
+source was not in the target `engine_scene` links, so `game` failed to link
+in CI. **Rule:** before pushing, grep the CMake lists for every new `.cpp`;
+compile checks cover syntax, only a real configure + link covers targets.

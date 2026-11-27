@@ -83,6 +83,15 @@ JSON-RPC over loopback TCP to the engine.
   under `content/` (tool descriptions via `#[doc = include_str!]`, prompts as
   MiniJinja templates); `server.rs`/`client.rs` split by responsibility (one
   rmcp router per tool group); `clippy::pedantic` enforced.
+- [ ] **S9 — Conflict-resistant registration.** Every feature PR edits the
+  same central lists (top-level `CMakeLists.txt` source lists, the
+  component table in `component_json.cpp`, `remote_bridge` method wiring,
+  quat-mcp `server/mod.rs` tool lists, `inspector.cpp`), so each merge
+  forces the next 3–5 PRs to re-resolve them. Move to per-module
+  `CMakeLists.txt` (`add_subdirectory` per `src/<module>`), a component
+  registry built from per-component registration files, remote method
+  tables registered per module, quat-mcp tools grouped by module with one
+  router merge line each, and per-component inspector files.
 - [ ] **A5 — Debugging tools.** Log tail + filters (S6), Vulkan validation
   messages, frame/GPU timings, pause / single-step / time scale, entity watch,
   physics raycasts and contact queries, navmesh path queries.
