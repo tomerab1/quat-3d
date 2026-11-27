@@ -47,8 +47,9 @@ target_include_directories(engine_tests SYSTEM PRIVATE ${LUA_INCLUDE_DIR})
 target_compile_definitions(engine_tests PRIVATE SOL_NO_EXCEPTIONS=1 SOL_ALL_SAFETIES_ON=1)
 target_compile_definitions(engine_tests PRIVATE
     QUAT_COOKED_SHADER_DIR="${PROJECT_SOURCE_DIR}/cooked/shaders"
-    QUAT_PROJECT_ROOT="${PROJECT_SOURCE_DIR}" # shipped assets (the G7 demo scripts)
-    QUAT_SHADER_SOURCE_DIR="${PROJECT_SOURCE_DIR}/assets/shaders")
+    QUAT_SHADER_SOURCE_DIR="${PROJECT_SOURCE_DIR}/assets/shaders"
+    # Shipped / vendored assets: the G7 demo scripts, editor fonts, icon table.
+    QUAT_PROJECT_ROOT="${PROJECT_SOURCE_DIR}")
 add_dependencies(engine_tests shaders)
 
 add_test(NAME engine_tests_cpu COMMAND engine_tests "--gtest_filter=-Gpu*")

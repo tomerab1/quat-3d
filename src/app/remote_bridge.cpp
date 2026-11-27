@@ -549,8 +549,8 @@ void RemoteBridge::note_draws(std::size_t draws) {
     impl_->draws = static_cast<std::uint32_t>(std::min<std::size_t>(draws, UINT32_MAX));
 }
 
-engine::core::StderrCapture capture_stderr_for_remote() {
-    if (std::getenv("QUAT_REMOTE") == nullptr) return {};
+engine::core::StderrCapture capture_stderr_for_remote(bool editor_console) {
+    if (std::getenv("QUAT_REMOTE") == nullptr && !editor_console) return {};
     if (const char* opt = std::getenv("QUAT_LOG_CAPTURE"); opt != nullptr && std::string(opt) == "0") {
         return {};
     }
@@ -573,5 +573,15 @@ void RemoteBridge::on_frame_complete(std::uint32_t frame_slot) {
 }
 
 bool RemoteBridge::listening() const { return impl_->server.has_value(); }
+
+std::uint16_t RemoteBridge::port() const {
+    return impl_->server.has_value() ? impl_->server->port() : std::uint16_t{0};
+}
+
+std::size_t RemoteBridge::client_count() const {
+    return impl_->server.has_value() ? impl_->server->client_count() : 0;
+}
+
+engine::core::SimClock& RemoteBridge::sim_clock() { return impl_->clock; }
 
 } // namespace quat::app

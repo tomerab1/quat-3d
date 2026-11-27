@@ -596,12 +596,35 @@ if(ENGINE_EDITOR)
         src/editor/picking.cpp
         src/editor/audio_inspector.cpp
         src/editor/script_inspector.cpp
-        src/editor/material_inspector.cpp
         src/editor/animation_inspector.cpp
         src/editor/grass_inspector.cpp
         src/editor/particle_inspector.cpp
         src/editor/behavior_panel.cpp
         src/editor/behavior_canvas.cpp
+        src/editor/inspector_world.cpp
+        src/editor/panels/console.cpp
+        src/editor/panels/inspector_parts.cpp
+        src/editor/shell/command_palette.cpp
+        src/editor/shell/commands.cpp
+        src/editor/shell/dialogs.cpp
+        src/editor/shell/editor_shell.cpp
+        src/editor/shell/fuzzy.cpp
+        src/editor/shell/layout.cpp
+        src/editor/shell/menu.cpp
+        src/editor/shell/panels.cpp
+        src/editor/shell/prefs.cpp
+        src/editor/shell/scene_actions.cpp
+        src/editor/shell/stats_panel.cpp
+        src/editor/shell/status_bar.cpp
+        src/editor/shell/toolbar.cpp
+        src/editor/shell/viewport.cpp
+        src/editor/ui/appearance.cpp
+        src/editor/ui/fonts.cpp
+        src/editor/ui/theme.cpp
+        src/editor/ui/toasts.cpp
+        src/editor/ui/widgets_asset.cpp
+        src/editor/ui/widgets_controls.cpp
+        src/editor/ui/widgets_property.cpp
         src/editor/vendor/imgui_impl_sdl3.cpp)
     # engine_scene is PUBLIC: editor.hpp exposes entt entity types (selection)
     # and the hierarchy/inspector panels reflect scene components.
