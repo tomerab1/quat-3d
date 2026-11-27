@@ -227,7 +227,8 @@ workflow artifacts.
 After the tests (also when they fail), the `linux` job renders a fixed set of
 scenes with the real `game` binary on lavapipe under Xvfb —
 `scripts/ci-screenshots.sh`: the showcase with and without the editor UI,
-`QUAT_TERRAIN=1` and `QUAT_PHYSICS=1`, each with a frame budget, muted audio
+`QUAT_TERRAIN=1`, `QUAT_PHYSICS=1` and an HDRI-lit showcase (`QUAT_HDRI`, the
+CC0 panorama fetched by `scripts/fetch-hdri.sh`), each with a frame budget, muted audio
 and a per-scene timeout (`SCENE_TIMEOUT`, default 300 s) so a hang fails that
 scene instead of the job. Each final frame is converted to PNG
 (`scripts/ppm_to_png.py`, halved when 1280 px or wider, except the editor capture, kept full size so its UI stays readable). A crash, timeout or

@@ -36,7 +36,10 @@ SCENE_TABLE=(
   "showcase|30|QUAT_NO_UI=1|Showcase scene, no UI"
   "terrain|90|QUAT_NO_UI=1 QUAT_TERRAIN=1|Showcase + GPU-generated terrain tile"
   "physics|90|QUAT_NO_UI=1 QUAT_PHYSICS=1|Physics demo (Jolt) after 90 frames"
+  "showcase-hdri|40|QUAT_NO_UI=1 QUAT_HDRI=hdri-cache/kloofendal_48d_partly_cloudy_2k.hdr|Showcase lit by a CC0 Poly Haven HDRI (R21: HDRI IBL, its sun as the shadowed light, SSR)"
 )
+# HDRI panoramas the scenes use, fetched into hdri-cache/ (gitignored).
+HDRIS=("kloofendal_48d_partly_cloudy 2k")
 
 die() { echo "ci-screenshots: $*" >&2; exit 2; }
 
@@ -49,6 +52,12 @@ if [ -z "${VK_ICD_FILENAMES:-}" ]; then
   export VK_ICD_FILENAMES="$icd"
 fi
 mkdir -p "$OUT" || die "cannot create $OUT"
+# A download failure is not fatal: the HDRI scene then renders the procedural
+# sky and its log says why.
+for hdri in "${HDRIS[@]}"; do
+  # shellcheck disable=SC2086 # "<id> <resolution>"
+  "$ROOT/scripts/fetch-hdri.sh" $hdri >/dev/null || echo "::warning::could not fetch HDRI $hdri"
+done
 
 # The last $2 lines of log $1 without the line libc++'s libunwind prints for
 # every function lavapipe's LLVM JIT registers (hundreds per run; they would
