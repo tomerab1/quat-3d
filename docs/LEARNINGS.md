@@ -26,6 +26,18 @@ into CLAUDE.md or the brief template in [`CYCLE.md`](CYCLE.md).
 
 ## Build and CI
 
+- **Compile-check the whole tree once, not only changed files.** The first
+  full CI build failed on a pre-existing `std::jthread` use that no
+  per-file check had touched; one `scripts/check-compile.sh $(git ls-files
+  'src/*.cpp')` pass found it in a minute (missing-header failures for
+  ImGui / GNS / Recast are expected locally). → Run it before every push
+  that triggers CI.
+- **libc++ 18 (Ubuntu 24.04 clang) gates `std::jthread`/`stop_token`**
+  behind `-fexperimental-library`. Use `std::thread` + explicit join.
+- **Subagent pushes can be blocked by the permission system** even when the
+  owner asked for pushes (the agent's own context lacks the owner's
+  instruction). The orchestrator pushes `feat/*` branches itself when a
+  worker reports a blocked push.
 - **Cloud containers can't fetch vcpkg sources** (codeload.github.com is
   blocked even when allowed in the environment, as of 2026-11-27). CI is the
   source of truth for linking and tests; locally use

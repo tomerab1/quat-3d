@@ -344,7 +344,7 @@ collider_convex(positions)     → JPH::ConvexHullShape
 ## Threading Model
 
 - **Main thread**: SDL event loop, ECS tick, render graph submission.
-- **Thread pool** (`std::jthread` × N-1 cores): asset loading, physics step (Jolt has its own job system — hand it the thread pool).
+- **Thread pool** (`std::thread` × N-1 cores — not `std::jthread`, which libc++ 18 still gates behind `-fexperimental-library`): asset loading, physics step (Jolt has its own job system — hand it the thread pool).
 - **No engine-level mutexes on hot paths.** Systems run single-threaded in declared order; parallelism is within Jolt and the asset loader.
 - Tracy zones on all systems and passes. GPU zones on all render/compute passes.
 
