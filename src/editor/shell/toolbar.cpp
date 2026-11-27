@@ -78,9 +78,14 @@ void snap_controls(EditorShell& shell) {
     ImGui::BeginDisabled(!shell.snap.enabled);
     if (ImGui::BeginCombo("##snap", preview, ImGuiComboFlags_HeightLargest)) {
         ImGui::PushItemWidth(ui::scaled(120.0F));
-        ImGui::DragFloat("Move (m)", &shell.snap.translate, 0.01F, SnapLimits::move_min, SnapLimits::move_max, "%.3f");
-        ImGui::DragFloat("Rotate (°)", &shell.snap.rotate_deg, 0.5F, SnapLimits::rotate_min, SnapLimits::rotate_max, "%.1f");
-        ImGui::DragFloat("Scale", &shell.snap.scale, 0.01F, SnapLimits::scale_min, SnapLimits::scale_max, "%.3f");
+        // Clamped (typed values too) to the ranges the ini parser accepts.
+        constexpr ImGuiSliderFlags clamp = ImGuiSliderFlags_AlwaysClamp;
+        ImGui::DragFloat("Move (m)", &shell.snap.translate, 0.01F, SnapLimits::move_min,
+                         SnapLimits::move_max, "%.3f", clamp);
+        ImGui::DragFloat("Rotate (°)", &shell.snap.rotate_deg, 0.5F, SnapLimits::rotate_min,
+                         SnapLimits::rotate_max, "%.1f", clamp);
+        ImGui::DragFloat("Scale", &shell.snap.scale, 0.01F, SnapLimits::scale_min,
+                         SnapLimits::scale_max, "%.3f", clamp);
         ImGui::PopItemWidth();
         ImGui::EndCombo();
     }

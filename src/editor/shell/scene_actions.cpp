@@ -1,6 +1,7 @@
 #include "scene_actions.hpp"
 
 #include <array>
+#include <cmath>
 #include <cstddef>
 #include <cstdio>
 #include <string>
@@ -106,18 +107,24 @@ glm::mat4 current_world(const entt::registry& registry, entt::entity e) {
     return world;
 }
 
-bool reparent_keep_world(scene::Scene& scene, entt::entity child, entt::entity parent) {
+ReparentResult reparent_keep_world(scene::Scene& scene, entt::entity child, entt::entity parent) {
     entt::registry& r = scene.registry();
-    if (!r.valid(child)) return false;
+    if (!r.valid(child) || (parent != entt::null && !r.valid(parent))) {
+        return ReparentResult::refused;
+    }
     const glm::mat4 world = current_world(r, child);
-    if (!scene.set_parent(child, parent)) return false;
+    const glm::mat4 parent_world = parent != entt::null ? current_world(r, parent) : glm::mat4(1.0F);
+    // glm::inverse of a singular matrix divides by zero: a zero-scaled
+    // parent (or a NaN in its chain) has no local pose that keeps the child
+    // where it is. Checked before anything changes.
+    const float det = glm::determinant(glm::mat3(parent_world));
+    if (!std::isfinite(det) || std::abs(det) < 1e-12F) return ReparentResult::singular_parent;
+    if (!scene.set_parent(child, parent)) return ReparentResult::refused;
     if (auto* t = r.try_get<scene::Transform>(child)) {
-        const glm::mat4 parent_world =
-            parent != entt::null ? current_world(r, parent) : glm::mat4(1.0F);
         t->local = glm::inverse(parent_world) * world;
         t->world = world;
     }
-    return true;
+    return ReparentResult::done;
 }
 
 } // namespace engine::editor::shell

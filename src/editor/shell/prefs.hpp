@@ -48,9 +48,19 @@ bool parse_pref_line(std::string_view line, EditorPrefs& prefs);
 // The section's lines (without the "[QuatEditor][Prefs]" header).
 [[nodiscard]] std::string write_prefs(const EditorPrefs& prefs);
 
-// Why `path` cannot be a scene file path (absolute, leaves the project,
-// not .json, empty), or null when it can.
+// Why `path` cannot be a scene file path (empty, too long, NUL, invalid
+// UTF-8, absolute, leaves the project, not .json), or null when it can.
 [[nodiscard]] const char* scene_path_problem(std::string_view path);
+
+// The theme preference. A theme forced at startup (QUAT_EDITOR_THEME) is
+// shown but never saved: the ini keeps the theme it had until the user
+// picks one in the editor, which ends the override.
+struct ThemePreference {
+    bool forced = false;      // a startup override is showing
+    bool saved_light = false; // the theme read from the ini (dark by default)
+};
+// The theme to write back to the ini.
+[[nodiscard]] bool theme_to_save(const ThemePreference& t, bool showing_light);
 
 // Moves (or inserts) `path` to the front of `recents`, keeping at most
 // `cap` entries. Takes the path by value: callers may pass an element of
