@@ -11,6 +11,8 @@
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
+#include <utility>
+#include <vector>
 
 #include <glm/gtc/matrix_transform.hpp>
 
@@ -326,8 +328,15 @@ bool FrameRenderer::record(const FrameInputs& in) {
     } else {
         std::fprintf(stderr, "[warn] hi-z pass: %s\n", h.error().message.c_str());
     }
+    std::vector<engine::renderer::ShadowCasterFn> extra_casters;
+    if (in.terrain != nullptr && csm.enabled) {
+        if (auto fn = in.terrain->shadow_casters(fs.shadow_cull_view_proj, cam.position,
+                                                 in.terrain_anchor)) {
+            extra_casters.push_back(std::move(fn));
+        }
+    }
     auto shadows = fr.shadow.add_to_graph(graph, fs.csm_view, csm, hiz.valid() ? &hiz : nullptr,
-                                          shadow_batches);
+                                          shadow_batches, extra_casters);
     if (!shadows) {
         std::fprintf(stderr, "[fatal] shadow pass: %s\n", shadows.error().message.c_str());
         return false;

@@ -368,7 +368,8 @@ add_library(engine_renderer STATIC
     src/renderer/atmosphere_pass.cpp
     src/renderer/terrain_pass.cpp
     src/renderer/terrain_gpu_tiles.cpp
-    src/renderer/terrain_synth_pass.cpp)
+    src/renderer/terrain_synth_pass.cpp
+    src/renderer/terrain_shadow.cpp)
 target_link_libraries(engine_renderer PUBLIC
     engine_flags engine_rhi engine_asset engine_terrain glm::glm)
 target_include_directories(engine_renderer PUBLIC ${ENGINE_PUBLIC_INCLUDE})
