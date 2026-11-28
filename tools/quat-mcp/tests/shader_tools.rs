@@ -73,7 +73,7 @@ async fn connect(engine_addr: &str) -> RunningService<RoleClient, ()> {
         let running = server.serve(server_io).await.expect("server starts");
         let _ = running.waiting().await;
     });
-    ().serve(client_io).await.expect("client connects")
+    common::client(client_io).await
 }
 
 async fn call(client: &RunningService<RoleClient, ()>, tool: &str, args: Value) -> CallToolResult {
@@ -237,7 +237,7 @@ async fn bad_names_and_sources_are_rejected_before_the_engine() {
         ),
         ("shader_create", json!({"name": "Lava", "source": TEMPLATE})),
         ("shader_update", json!({"name": "lava", "source": "   "})),
-        ("shader_delete", json!({"name": "a/b"})),
+        ("shader_delete", json!({"name": "a/b", "confirm": true})),
     ] {
         let r = call(&client, tool, args.clone()).await;
         assert_eq!(r.is_error, Some(true), "{tool} {args}");
@@ -284,7 +284,12 @@ async fn list_get_template_and_delete() {
     let r = call(&client, "shader_template", json!({})).await;
     assert_eq!(text(&r), TEMPLATE);
 
-    let r = call(&client, "shader_delete", json!({"name": "lava"})).await;
+    let r = call(
+        &client,
+        "shader_delete",
+        json!({"name": "lava", "confirm": true}),
+    )
+    .await;
     assert!(text(&r).contains(r#""entities_reset":3"#));
     assert_eq!(
         engine.last_params("shader.delete"),

@@ -74,20 +74,20 @@ impl QuatServer {
     // ---- environment / world ----------------------------------------------
 
     #[doc = include_str!("../../content/tools/environment_get.md")]
-    #[tool(annotations(read_only_hint = true))]
+    #[tool]
     async fn environment_get(&self) -> CallToolResult {
         self.run("environment.get", None).await
     }
 
     #[doc = include_str!("../../content/tools/environment_set.md")]
-    #[tool(annotations(idempotent_hint = true))]
+    #[tool]
     async fn environment_set(&self, params: Parameters<EnvironmentSetParams>) -> CallToolResult {
         self.run("environment.set", Some(to_params(&params.0)))
             .await
     }
 
     #[doc = include_str!("../../content/tools/world_ground_height.md")]
-    #[tool(annotations(read_only_hint = true))]
+    #[tool]
     async fn world_ground_height(&self, params: Parameters<GroundHeightParams>) -> CallToolResult {
         let n = params.0.points.len();
         if n == 0 {
@@ -104,7 +104,7 @@ impl QuatServer {
     }
 
     #[doc = include_str!("../../content/tools/world_place_on_ground.md")]
-    #[tool(annotations(idempotent_hint = true))]
+    #[tool]
     async fn world_place_on_ground(
         &self,
         params: Parameters<PlaceOnGroundParams>,
@@ -114,7 +114,7 @@ impl QuatServer {
     }
 
     #[doc = include_str!("../../content/tools/terrain_status.md")]
-    #[tool(annotations(read_only_hint = true))]
+    #[tool]
     async fn terrain_status(&self) -> CallToolResult {
         self.run("terrain.status", None).await
     }
@@ -122,25 +122,25 @@ impl QuatServer {
     // ---- camera / screenshot ----------------------------------------------
 
     #[doc = include_str!("../../content/tools/camera_get.md")]
-    #[tool(annotations(read_only_hint = true))]
+    #[tool]
     async fn camera_get(&self) -> CallToolResult {
         self.run("camera.get", None).await
     }
 
     #[doc = include_str!("../../content/tools/camera_set.md")]
-    #[tool(annotations(idempotent_hint = true))]
+    #[tool]
     async fn camera_set(&self, params: Parameters<CameraSetParams>) -> CallToolResult {
         self.run("camera.set", Some(to_params(&params.0))).await
     }
 
     #[doc = include_str!("../../content/tools/camera_frame.md")]
-    #[tool(annotations(idempotent_hint = true))]
+    #[tool]
     async fn camera_frame(&self, params: Parameters<CameraFrameParams>) -> CallToolResult {
         self.run("camera.frame", Some(to_params(&params.0))).await
     }
 
     #[doc = include_str!("../../content/tools/screenshot.md")]
-    #[tool(annotations(read_only_hint = true))]
+    #[tool]
     async fn screenshot(&self, params: Parameters<ScreenshotParams>) -> CallToolResult {
         self.capture_screenshot(params.0).await
     }
@@ -148,7 +148,7 @@ impl QuatServer {
     // ---- assets -----------------------------------------------------------
 
     #[doc = include_str!("../../content/tools/asset_list_models.md")]
-    #[tool(annotations(read_only_hint = true))]
+    #[tool]
     async fn asset_list_models(&self) -> CallToolResult {
         self.run("asset.list_models", None).await
     }

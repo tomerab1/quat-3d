@@ -504,6 +504,13 @@ physics glitches and playtesting. They are
 [Agent Skills](https://agentskills.io) served over the MCP skills extension,
 and the same guides are MCP prompts for clients without skills support.
 
+It speaks MCP 2026-07-28 (and 2025-11-25 for older clients): every tool is
+annotated (read-only, destructive, idempotent) and has an icon, stable tools
+return structured output, entities / scripts / shaders are resources with
+completion, and clearing or loading the scene and deleting scripts or
+shaders ask the user first through elicitation — see
+[Protocol](tools/quat-mcp/README.md#protocol).
+
 Start the engine with `QUAT_REMOTE=7878` and install the server:
 
 - **Claude Code** — the quat-3d plugin from this repository's marketplace

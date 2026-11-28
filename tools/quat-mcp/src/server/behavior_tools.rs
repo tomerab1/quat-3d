@@ -36,19 +36,19 @@ impl QuatServer {
 #[tool_router(router = behavior_tools, vis = "pub(super)")]
 impl QuatServer {
     #[doc = include_str!("../../content/tools/bt_leaves.md")]
-    #[tool(annotations(read_only_hint = true))]
+    #[tool]
     async fn bt_leaves(&self) -> CallToolResult {
         self.run("bt.leaves", None).await
     }
 
     #[doc = include_str!("../../content/tools/bt_get.md")]
-    #[tool(annotations(read_only_hint = true))]
+    #[tool]
     async fn bt_get(&self, params: Parameters<EntityParams>) -> CallToolResult {
         self.tree_call("bt.get", to_params(&params.0)).await
     }
 
     #[doc = include_str!("../../content/tools/bt_set.md")]
-    #[tool(annotations(destructive_hint = true))]
+    #[tool]
     async fn bt_set(&self, params: Parameters<BtSetParams>) -> CallToolResult {
         self.tree_call("bt.set", to_params(&params.0)).await
     }
@@ -60,7 +60,7 @@ impl QuatServer {
     }
 
     #[doc = include_str!("../../content/tools/bt_remove_node.md")]
-    #[tool(annotations(destructive_hint = true))]
+    #[tool]
     async fn bt_remove_node(&self, params: Parameters<BtRemoveNodeParams>) -> CallToolResult {
         self.tree_call("bt.remove_node", to_params(&params.0)).await
     }
@@ -72,7 +72,7 @@ impl QuatServer {
     }
 
     #[doc = include_str!("../../content/tools/bt_set_params.md")]
-    #[tool(annotations(idempotent_hint = true))]
+    #[tool]
     async fn bt_set_params(&self, params: Parameters<BtSetParamsParams>) -> CallToolResult {
         if params.0.params.is_empty() {
             return invalid_input(
@@ -84,7 +84,7 @@ impl QuatServer {
     }
 
     #[doc = include_str!("../../content/tools/bt_status.md")]
-    #[tool(annotations(read_only_hint = true))]
+    #[tool]
     async fn bt_status(&self, params: Parameters<EntityParams>) -> CallToolResult {
         let args = to_params(&params.0);
         let value = match self.engine.call("bt.status", Some(args.clone())).await {

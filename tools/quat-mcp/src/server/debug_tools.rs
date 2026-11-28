@@ -67,7 +67,7 @@ fn format_log(reply: &LogReply) -> String {
 #[tool_router(router = debug_tools, vis = "pub(super)")]
 impl QuatServer {
     #[doc = include_str!("../../content/tools/debug_log.md")]
-    #[tool(annotations(read_only_hint = true))]
+    #[tool]
     async fn debug_log(&self, params: Parameters<DebugLogParams>) -> CallToolResult {
         let value = match self
             .engine
@@ -85,19 +85,19 @@ impl QuatServer {
     }
 
     #[doc = include_str!("../../content/tools/debug_stats.md")]
-    #[tool(annotations(read_only_hint = true))]
+    #[tool]
     async fn debug_stats(&self) -> CallToolResult {
         self.run("debug.stats", None).await
     }
 
     #[doc = include_str!("../../content/tools/debug_pause.md")]
-    #[tool(annotations(idempotent_hint = true))]
+    #[tool]
     async fn debug_pause(&self) -> CallToolResult {
         self.run("debug.pause", None).await
     }
 
     #[doc = include_str!("../../content/tools/debug_resume.md")]
-    #[tool(annotations(idempotent_hint = true))]
+    #[tool]
     async fn debug_resume(&self) -> CallToolResult {
         self.run("debug.resume", None).await
     }
@@ -118,14 +118,14 @@ impl QuatServer {
     }
 
     #[doc = include_str!("../../content/tools/debug_time_scale.md")]
-    #[tool(annotations(idempotent_hint = true))]
+    #[tool]
     async fn debug_time_scale(&self, params: Parameters<DebugTimeScaleParams>) -> CallToolResult {
         self.run("debug.time_scale", Some(to_params(&params.0)))
             .await
     }
 
     #[doc = include_str!("../../content/tools/debug_watch.md")]
-    #[tool(annotations(read_only_hint = true))]
+    #[tool]
     async fn debug_watch(&self, params: Parameters<DebugWatchParams>) -> CallToolResult {
         let p = &params.0;
         match (&p.entity, &p.entities) {
@@ -147,7 +147,7 @@ impl QuatServer {
     }
 
     #[doc = include_str!("../../content/tools/debug_raycast.md")]
-    #[tool(annotations(read_only_hint = true))]
+    #[tool]
     async fn debug_raycast(&self, params: Parameters<DebugRaycastParams>) -> CallToolResult {
         if params.0.direction.iter().all(|c| *c == 0.0) {
             return invalid_input(
@@ -159,7 +159,7 @@ impl QuatServer {
     }
 
     #[doc = include_str!("../../content/tools/debug_nav_path.md")]
-    #[tool(annotations(read_only_hint = true))]
+    #[tool]
     async fn debug_nav_path(&self, params: Parameters<DebugNavPathParams>) -> CallToolResult {
         self.run("debug.nav_path", Some(to_params(&params.0))).await
     }

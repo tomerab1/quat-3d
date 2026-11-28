@@ -86,7 +86,7 @@ impl QuatServer {
 #[tool_router(router = asset_tools, vis = "pub(super)")]
 impl QuatServer {
     #[doc = include_str!("../../content/tools/asset_search.md")]
-    #[tool(annotations(read_only_hint = true, open_world_hint = true))]
+    #[tool]
     async fn asset_search(&self, params: Parameters<AssetSearchParams>) -> CallToolResult {
         let ph = match self.polyhaven() {
             Ok(ph) => ph,
@@ -103,7 +103,7 @@ impl QuatServer {
     }
 
     #[doc = include_str!("../../content/tools/asset_fetch.md")]
-    #[tool(annotations(idempotent_hint = true, open_world_hint = true))]
+    #[tool]
     async fn asset_fetch(&self, params: Parameters<AssetFetchParams>) -> CallToolResult {
         let ph = match self.polyhaven() {
             Ok(ph) => ph,

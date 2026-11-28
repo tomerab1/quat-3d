@@ -65,7 +65,7 @@ async fn connect(engine_addr: &str) -> RunningService<RoleClient, ()> {
         let running = server.serve(server_io).await.expect("server starts");
         let _ = running.waiting().await;
     });
-    ().serve(client_io).await.expect("client connects")
+    common::client(client_io).await
 }
 
 async fn call(client: &RunningService<RoleClient, ()>, tool: &str, args: Value) -> CallToolResult {
@@ -179,7 +179,12 @@ async fn create_update_get_and_delete_forward_to_the_engine() {
     let r = call(&client, "script_list", json!({})).await;
     assert!(text(&r).contains("coin.lua:7: attempt to index a nil value"));
 
-    let r = call(&client, "script_delete", json!({"path": "coin.lua"})).await;
+    let r = call(
+        &client,
+        "script_delete",
+        json!({"path": "coin.lua", "confirm": true}),
+    )
+    .await;
     assert!(text(&r).contains(r#""entities_still_using":1"#));
     client.cancel().await.unwrap();
 }
@@ -227,7 +232,10 @@ async fn syntax_errors_name_the_line_and_bad_input_stays_local() {
             json!({"path": "coin.lua", "source": "x".repeat(300 * 1024)}),
         ),
         ("script_get", json!({"path": "/etc/passwd"})),
-        ("script_delete", json!({"path": "a//b.lua"})),
+        (
+            "script_delete",
+            json!({"path": "a//b.lua", "confirm": true}),
+        ),
     ] {
         let r = call(&client, tool, args).await;
         assert_eq!(r.is_error, Some(true), "{tool}");

@@ -18,13 +18,13 @@ impl QuatServer {
     // ---- engine -----------------------------------------------------------
 
     #[doc = include_str!("../../content/tools/engine_info.md")]
-    #[tool(annotations(read_only_hint = true))]
+    #[tool]
     async fn engine_info(&self) -> CallToolResult {
         self.run("engine.info", None).await
     }
 
     #[doc = include_str!("../../content/tools/engine_methods.md")]
-    #[tool(annotations(read_only_hint = true))]
+    #[tool]
     async fn engine_methods(&self) -> CallToolResult {
         self.run("rpc.methods", None).await
     }
@@ -47,19 +47,19 @@ impl QuatServer {
     // ---- scene: read ------------------------------------------------------
 
     #[doc = include_str!("../../content/tools/scene_components.md")]
-    #[tool(annotations(read_only_hint = true))]
+    #[tool]
     async fn scene_components(&self) -> CallToolResult {
         self.run("scene.components", None).await
     }
 
     #[doc = include_str!("../../content/tools/scene_list.md")]
-    #[tool(annotations(read_only_hint = true))]
+    #[tool]
     async fn scene_list(&self, params: Parameters<SceneListParams>) -> CallToolResult {
         self.run("scene.list", Some(to_params(&params.0))).await
     }
 
     #[doc = include_str!("../../content/tools/scene_get.md")]
-    #[tool(annotations(read_only_hint = true))]
+    #[tool]
     async fn scene_get(&self, params: Parameters<EntityParams>) -> CallToolResult {
         self.run("scene.get", Some(to_params(&params.0))).await
     }
@@ -75,13 +75,13 @@ impl QuatServer {
 
     #[doc = include_str!("../../content/tools/scene_update.md")]
     #[doc = include_str!("../../content/components.md")]
-    #[tool(annotations(idempotent_hint = true))]
+    #[tool]
     async fn scene_update(&self, params: Parameters<SceneUpdateParams>) -> CallToolResult {
         self.run("scene.update", Some(to_params(&params.0))).await
     }
 
     #[doc = include_str!("../../content/tools/scene_remove_components.md")]
-    #[tool(annotations(destructive_hint = true))]
+    #[tool]
     async fn scene_remove_components(
         &self,
         params: Parameters<RemoveComponentsParams>,
@@ -91,20 +91,20 @@ impl QuatServer {
     }
 
     #[doc = include_str!("../../content/tools/scene_destroy.md")]
-    #[tool(annotations(destructive_hint = true))]
+    #[tool]
     async fn scene_destroy(&self, params: Parameters<EntityParams>) -> CallToolResult {
         self.run("scene.destroy", Some(to_params(&params.0))).await
     }
 
     #[doc = include_str!("../../content/tools/scene_set_parent.md")]
-    #[tool(annotations(idempotent_hint = true))]
+    #[tool]
     async fn scene_set_parent(&self, params: Parameters<SetParentParams>) -> CallToolResult {
         self.run("scene.set_parent", Some(to_params(&params.0)))
             .await
     }
 
     #[doc = include_str!("../../content/tools/scene_clear.md")]
-    #[tool(annotations(destructive_hint = true))]
+    #[tool]
     async fn scene_clear(&self, params: Parameters<SceneClearParams>) -> CallToolResult {
         self.run_long("scene.clear", Some(to_params(&params.0)))
             .await

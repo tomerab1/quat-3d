@@ -1,6 +1,8 @@
 //! `asset_search` / `asset_fetch` through the MCP server against a local
 //! stand-in for the Poly Haven API (plain HTTP on loopback): no internet.
 
+mod common;
+
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
@@ -62,7 +64,7 @@ async fn connect(assets: AssetConfig) -> RunningService<RoleClient, ()> {
         let running = server.serve(server_io).await.expect("server starts");
         let _ = running.waiting().await;
     });
-    ().serve(client_io).await.expect("client connects")
+    common::client(client_io).await
 }
 
 async fn call(client: &RunningService<RoleClient, ()>, tool: &str, args: Value) -> CallToolResult {

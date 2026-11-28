@@ -52,13 +52,13 @@ fn format_script(reply: &Value) -> String {
 #[tool_router(router = script_tools, vis = "pub(super)")]
 impl QuatServer {
     #[doc = include_str!("../../content/tools/script_list.md")]
-    #[tool(annotations(read_only_hint = true))]
+    #[tool]
     async fn script_list(&self) -> CallToolResult {
         self.run("script.list", None).await
     }
 
     #[doc = include_str!("../../content/tools/script_get.md")]
-    #[tool(annotations(read_only_hint = true))]
+    #[tool]
     async fn script_get(&self, params: Parameters<ScriptPathParams>) -> CallToolResult {
         if let Some(problem) = script_path_problem(&params.0.path) {
             return invalid_input(format!("script_get: {problem}"));
@@ -88,7 +88,7 @@ impl QuatServer {
     }
 
     #[doc = include_str!("../../content/tools/script_delete.md")]
-    #[tool(annotations(destructive_hint = true))]
+    #[tool]
     async fn script_delete(&self, params: Parameters<ScriptPathParams>) -> CallToolResult {
         if let Some(problem) = script_path_problem(&params.0.path) {
             return invalid_input(format!("script_delete: {problem}"));
@@ -97,7 +97,7 @@ impl QuatServer {
     }
 
     #[doc = include_str!("../../content/tools/script_check.md")]
-    #[tool(annotations(read_only_hint = true))]
+    #[tool]
     async fn script_check(&self, params: Parameters<ScriptCheckParams>) -> CallToolResult {
         if let Some(problem) = script_source_problem(&params.0.source) {
             return invalid_input(format!("script_check: {problem}"));

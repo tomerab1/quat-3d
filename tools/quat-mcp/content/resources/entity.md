@@ -1,0 +1,1 @@
+One entity as JSON, exactly as `scene_get` returns it: id, name, parent, children, world and local bounds, and every component with its fields. `{entity}` is the entity's id or its unique name. Tools that create entities (`scene_create`, `asset_spawn_model`) link to this resource.

@@ -131,13 +131,13 @@ impl QuatServer {
 #[tool_router(router = shader_tools, vis = "pub(super)")]
 impl QuatServer {
     #[doc = include_str!("../../content/tools/shader_list.md")]
-    #[tool(annotations(read_only_hint = true))]
+    #[tool]
     async fn shader_list(&self) -> CallToolResult {
         self.run("shader.list", None).await
     }
 
     #[doc = include_str!("../../content/tools/shader_get.md")]
-    #[tool(annotations(read_only_hint = true))]
+    #[tool]
     async fn shader_get(&self, params: Parameters<ShaderNameParams>) -> CallToolResult {
         let mut reply = match self
             .engine
@@ -160,7 +160,7 @@ impl QuatServer {
     }
 
     #[doc = include_str!("../../content/tools/shader_template.md")]
-    #[tool(annotations(read_only_hint = true))]
+    #[tool]
     async fn shader_template(&self) -> CallToolResult {
         match self.engine.call("shader.template", None).await {
             Ok(v) => match v.get("source").and_then(Value::as_str) {
@@ -184,7 +184,7 @@ impl QuatServer {
     }
 
     #[doc = include_str!("../../content/tools/shader_delete.md")]
-    #[tool(annotations(destructive_hint = true))]
+    #[tool]
     async fn shader_delete(&self, params: Parameters<ShaderNameParams>) -> CallToolResult {
         if let Some(problem) = shader_name_problem(&params.0.name) {
             return invalid_input(problem);

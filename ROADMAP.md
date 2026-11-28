@@ -160,15 +160,22 @@ JSON-RPC over loopback TCP to the engine.
     sampler, `camera.view`.
   - **A10.5** *(S each)*: animation state-machine params, audio bus mix,
     particle bursts, editor selection.
-- [ ] **A11 — MCP protocol upgrades** *(M–L)*: annotation audit (rule
-  test, `anthropic/maxResultSizeChars`); structured output (`outputSchema`)
-  for stable tools; resources, templates, resource links and completions;
-  subscriptions over the A10.1 event ring (legacy + `subscriptions/listen`);
-  engine jobs (`jobs.*`, progress, cancel) mapped to MCP tasks (SEP-2663)
-  and progress notifications; elicitation confirms for destructive tools
-  (MRTR + legacy, `confirm: true` fallback); icons; the test suite on
-  protocol 2025-11-25 and 2026-07-28. Roots / sampling / logging stay
-  unused (deprecated).
+- [ ] **A11 — MCP protocol upgrades** *(M–L)*: target MCP **2026-07-28**
+  (rmcp 3.12), still serving 2025-11-25 clients over `initialize`. Roots /
+  sampling / logging stay unused (deprecated in 2026-07-28). Three PRs:
+  - [x] **A11.1 Tool surface.** Annotation audit (one per-tool policy table,
+    a rule test, `anthropic/maxResultSizeChars` on large results);
+    structured output (`outputSchema` + `structuredContent`) for stable
+    tools; resources, resource templates, resource links and completions;
+    elicitation confirms for destructive tools (MRTR on 2026-07-28,
+    `elicitation/create` on 2025-11-25, `confirm: true` fallback); icons;
+    the end-to-end suite run on both protocol versions.
+  - [ ] **A11.2 Subscriptions** over the A10.1 event ring: resource updates
+    for subscribed `quat://` resources (legacy `resources/subscribe` +
+    `subscriptions/listen`).
+  - [ ] **A11.3 Jobs.** Engine `jobs.*` (list / get / cancel, progress) over
+    the existing background work (`project.build`, `profile.capture`, nav
+    bake), mapped to MCP tasks (SEP-2663) and progress notifications.
 - [ ] **A12 — Skills** *(M)*: quat-3d workflows as Agent Skills
   (research: [`docs/research/mcp-skills.md`](docs/research/mcp-skills.md)).
   - [x] **A12.1 Skills, serving, plugin.** `tools/quat-mcp/content/skills/`

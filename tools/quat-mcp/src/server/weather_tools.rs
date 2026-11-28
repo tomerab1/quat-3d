@@ -16,7 +16,7 @@ const MAX_WIND_POINTS: usize = 1024;
 #[tool_router(router = weather_tools, vis = "pub(super)")]
 impl QuatServer {
     #[doc = include_str!("../../content/tools/weather_get.md")]
-    #[tool(annotations(read_only_hint = true))]
+    #[tool]
     async fn weather_get(&self, params: Parameters<WeatherGetParams>) -> CallToolResult {
         let n = params.0.wind_at.as_ref().map_or(0, Vec::len);
         if n > MAX_WIND_POINTS {
@@ -29,7 +29,7 @@ impl QuatServer {
     }
 
     #[doc = include_str!("../../content/tools/weather_set.md")]
-    #[tool(annotations(idempotent_hint = true))]
+    #[tool]
     async fn weather_set(&self, params: Parameters<WeatherSetParams>) -> CallToolResult {
         if params.0.is_empty() {
             return invalid_input(

@@ -27,6 +27,23 @@ const DOCUMENTS: &[(&str, &str)] = &[
         "asset_license",
         include_str!("../content/assets/license.md"),
     ),
+    // The questions destructive tools ask (`server::confirm`), one per tool.
+    (
+        "confirm/scene_clear",
+        include_str!("../content/confirm/scene_clear.md"),
+    ),
+    (
+        "confirm/scene_load",
+        include_str!("../content/confirm/scene_load.md"),
+    ),
+    (
+        "confirm/script_delete",
+        include_str!("../content/confirm/script_delete.md"),
+    ),
+    (
+        "confirm/shader_delete",
+        include_str!("../content/confirm/shader_delete.md"),
+    ),
 ];
 
 static TEMPLATES: LazyLock<Environment<'static>> = LazyLock::new(|| {
@@ -103,6 +120,17 @@ mod tests {
                 assert_eq!(text.contains(skill.uri()), s, "{text}");
             }
             assert_eq!(text.contains("prompts of the same name"), p, "{text}");
+        }
+    }
+
+    #[test]
+    fn every_confirm_file_is_a_document() {
+        let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/content/confirm");
+        for entry in std::fs::read_dir(dir).expect("content/confirm exists") {
+            let path = entry.expect("entry").path();
+            let stem = path.file_stem().and_then(|s| s.to_str()).expect("name");
+            let name = format!("confirm/{stem}");
+            assert!(DOCUMENTS.iter().any(|(n, _)| *n == name), "{name}");
         }
     }
 
