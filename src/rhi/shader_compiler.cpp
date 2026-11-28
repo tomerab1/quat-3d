@@ -12,6 +12,7 @@
 #include "engine/core/env.hpp"
 #include "engine/core/utf8_path.hpp"
 #include "engine/core/child_process.hpp"
+#include "engine/rhi/material_shader_names.hpp"
 
 namespace engine::rhi {
 
@@ -159,9 +160,13 @@ std::expected<ShaderCompiler, core::Error> ShaderCompiler::create(ShaderCompiler
         return fail("shader compiler: slangc not found at " + core::path_to_utf8(config.slangc));
     }
     if (config.module_dir.empty()) config.module_dir = config.source_dir / "lib";
+    if (config.material_dir.empty()) {
+        config.material_dir = config.source_dir / std::string(material_shaders::subdir);
+    }
     config.source_dir = normal(config.source_dir);
     config.module_dir = normal(config.module_dir);
     config.output_dir = normal(config.output_dir);
+    config.material_dir = normal(config.material_dir);
 
     std::error_code ec;
     if (!fs::is_directory(config.source_dir, ec)) {
@@ -178,25 +183,62 @@ std::expected<ShaderCompiler, core::Error> ShaderCompiler::create(ShaderCompiler
 }
 
 ShaderSourceKind ShaderCompiler::kind_of(const fs::path& source) const {
-    return normal(source).parent_path() == config_.module_dir ? ShaderSourceKind::module
-                                                              : ShaderSourceKind::pass;
+    const fs::path dir = normal(source).parent_path();
+    if (dir == config_.module_dir) return ShaderSourceKind::module;
+    if (dir == config_.material_dir) return ShaderSourceKind::material;
+    return ShaderSourceKind::pass;
 }
 
 std::vector<fs::path> ShaderCompiler::outputs_for(const fs::path& source) const {
     const std::string name = core::path_to_utf8(source.stem());
-    if (kind_of(source) == ShaderSourceKind::module) {
+    switch (kind_of(source)) {
+    case ShaderSourceKind::module:
         return {config_.output_dir / (name + ".slang-module")};
+    case ShaderSourceKind::material: {
+        std::vector<fs::path> out;
+        const fs::path dir = config_.output_dir / std::string(material_shaders::subdir);
+        for (const material_shaders::Variant& v : material_shaders::variants) {
+            const std::string stem = name + "." + std::string(v.name);
+            out.push_back(dir / (stem + ".spv"));
+            out.push_back(dir / (stem + ".json"));
+        }
+        return out;
+    }
+    case ShaderSourceKind::pass: break;
     }
     return {config_.output_dir / (name + ".spv"), config_.output_dir / (name + ".json")};
 }
 
 std::vector<std::string> ShaderCompiler::arguments(const fs::path& source,
-                                                   const fs::path& out_dir) const {
+                                                   const fs::path& out_dir,
+                                                   std::size_t variant) const {
     const std::string name = core::path_to_utf8(source.stem());
     // Keep in sync with cmake/CompileShaders.cmake.
-    if (kind_of(source) == ShaderSourceKind::module) {
+    const ShaderSourceKind kind = kind_of(source);
+    if (kind == ShaderSourceKind::module) {
         return {core::path_to_utf8(source), "-I", core::path_to_utf8(config_.module_dir), "-o",
                 core::path_to_utf8(out_dir / (name + ".slang-module"))};
+    }
+    if (kind == ShaderSourceKind::material) {
+        const material_shaders::Variant& v =
+            material_shaders::variants[std::min(variant, material_shaders::variants.size() - 1)];
+        const std::string stem = name + "." + std::string(v.name);
+        const fs::path driver =
+            config_.output_dir / (std::string(v.driver_module) + ".slang-module");
+        return {core::path_to_utf8(source),
+                core::path_to_utf8(driver),
+                "-I",
+                core::path_to_utf8(config_.module_dir),
+                "-I",
+                core::path_to_utf8(config_.output_dir),
+                "-target",
+                "spirv",
+                "-emit-spirv-directly",
+                "-fvk-use-entrypoint-name",
+                "-o",
+                core::path_to_utf8(out_dir / (stem + ".spv")),
+                "-reflection-json",
+                core::path_to_utf8(out_dir / (stem + ".json"))};
     }
     return {core::path_to_utf8(source),
             "-I",
@@ -233,24 +275,35 @@ ShaderCompileResult ShaderCompiler::compile(const fs::path& source_in,
         fs::remove(staged.back(), ec); // stale output from an earlier failed run
     }
 
-    const std::vector<std::string> args = arguments(result.source, staging);
+    // One slangc run per program (a material has one per pass variant); all
+    // must succeed before anything is installed.
+    const std::size_t runs =
+        result.kind == ShaderSourceKind::material ? material_shaders::variants.size() : 1;
     core::ProcessOptions run_options;
     run_options.timeout = config_.timeout;
     run_options.canceller = canceller;
-    auto run = core::run_process(config_.slangc, args, run_options);
-    if (!run) {
-        result.diagnostics = run.error().message;
-        for (const fs::path& out : staged) fs::remove(out, ec); // partial outputs
-        return result;
-    }
-    result.diagnostics = std::move(run->output);
-    if (run->signaled) {
-        result.diagnostics += "\nslangc terminated by signal " + std::to_string(run->signal);
-    } else if (run->exit_code != 0) {
-        result.diagnostics += "\nslangc exited with code " + std::to_string(run->exit_code);
+    bool ok = true;
+    for (std::size_t variant = 0; ok && variant < runs; ++variant) {
+        const std::vector<std::string> args = arguments(result.source, staging, variant);
+        auto run = core::run_process(config_.slangc, args, run_options);
+        if (!run) {
+            result.diagnostics += run.error().message;
+            for (const fs::path& out : staged) fs::remove(out, ec); // partial outputs
+            return result;
+        }
+        if (runs > 1) {
+            result.diagnostics +=
+                "[" + std::string(material_shaders::variants[variant].name) + "]\n";
+        }
+        result.diagnostics += run->output;
+        if (run->signaled) {
+            result.diagnostics += "\nslangc terminated by signal " + std::to_string(run->signal);
+        } else if (run->exit_code != 0) {
+            result.diagnostics += "\nslangc exited with code " + std::to_string(run->exit_code);
+        }
+        ok = run->succeeded();
     }
 
-    bool ok = run->succeeded();
     for (const fs::path& out : staged) {
         if (ok && !fs::is_regular_file(out, ec)) {
             ok = false;
@@ -263,6 +316,7 @@ ShaderCompileResult ShaderCompiler::compile(const fs::path& source_in,
     }
 
     std::vector<fs::path> finals = outputs_for(result.source);
+    if (!finals.empty()) fs::create_directories(finals.front().parent_path(), ec); // materials/
     if (auto installed = install_outputs(staged, finals, staging / "prev"); !installed) {
         result.diagnostics += "\n" + installed.error().message;
         for (const fs::path& out : staged) fs::remove(out, ec);
@@ -277,8 +331,10 @@ ShaderCompileResult ShaderCompiler::compile(const fs::path& source_in,
 // ShaderDependencyGraph
 // ---------------------------------------------------------------------------
 
-ShaderDependencyGraph::ShaderDependencyGraph(fs::path source_dir, fs::path module_dir)
-    : source_dir_(normal(source_dir)), module_dir_(normal(module_dir)) {}
+ShaderDependencyGraph::ShaderDependencyGraph(fs::path source_dir, fs::path module_dir,
+                                             fs::path material_dir)
+    : source_dir_(normal(source_dir)), module_dir_(normal(module_dir)),
+      material_dir_(material_dir.empty() ? fs::path{} : normal(material_dir)) {}
 
 std::vector<std::string> ShaderDependencyGraph::parse_imports(std::string_view source_text) {
     const std::string text = strip_comments(source_text);
@@ -297,6 +353,15 @@ std::vector<std::string> ShaderDependencyGraph::parse_imports(std::string_view s
             if (end == std::string::npos) continue;
             name = text.substr(i + 1, end - i - 1);
             i = end + 1;
+            // Only paths inside the shader tree are dependencies: an absolute
+            // path or one climbing out with `..` is never tracked (and never
+            // resolved to a file to watch or read).
+            const fs::path p(name);
+            const bool climbs = std::any_of(p.begin(), p.end(),
+                                            [](const fs::path& part) { return part == ".."; });
+            if (p.is_absolute() || p.has_root_name() || p.has_root_directory() || climbs) {
+                continue;
+            }
         } else { // import a.b.c;  -> a/b/c
             while (i < text.size() && (is_ident_char(text[i]) || text[i] == '.')) {
                 name += text[i] == '.' ? '/' : text[i];
@@ -312,7 +377,8 @@ std::vector<std::string> ShaderDependencyGraph::parse_imports(std::string_view s
 
 void ShaderDependencyGraph::scan() {
     imports_.clear();
-    for (const fs::path& dir : {source_dir_, module_dir_}) {
+    for (const fs::path& dir : {source_dir_, module_dir_, material_dir_}) {
+        if (dir.empty()) continue;
         std::error_code ec;
         fs::directory_iterator it(dir, ec);
         for (; !ec && it != fs::directory_iterator(); it.increment(ec)) {
@@ -344,6 +410,10 @@ void ShaderDependencyGraph::set_imports(const fs::path& source, std::vector<std:
 
 bool ShaderDependencyGraph::is_module(const fs::path& source) const {
     return normal(source).parent_path() == module_dir_;
+}
+
+bool ShaderDependencyGraph::is_material(const fs::path& source) const {
+    return !material_dir_.empty() && normal(source).parent_path() == material_dir_;
 }
 
 bool ShaderDependencyGraph::contains(const fs::path& source) const {
@@ -381,6 +451,16 @@ std::vector<fs::path> ShaderDependencyGraph::imports_of(const fs::path& source) 
     if (it == imports_.end()) return out;
     for (const std::string& name : it->second) {
         if (auto dep = resolve(key, name); dep && *dep != key) out.push_back(*dep);
+    }
+    // A material is linked against every variant's driver module.
+    if (is_material(key)) {
+        for (const material_shaders::Variant& v : material_shaders::variants) {
+            const fs::path driver = normal(module_dir_ / (std::string(v.driver_module) + ".slang"));
+            if (imports_.contains(driver) &&
+                std::find(out.begin(), out.end(), driver) == out.end()) {
+                out.push_back(driver);
+            }
+        }
     }
     return out;
 }

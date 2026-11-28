@@ -8,6 +8,7 @@
 // DirectionalLight, Name, Parent, Children); skinning/physics/light components
 // arrive with their respective phases.
 
+#include <array>
 #include <cstdint>
 #include <expected>
 #include <memory>
@@ -21,6 +22,7 @@
 
 #include "engine/audio/audio_types.hpp"
 #include "engine/animation/clip.hpp"
+#include "engine/animation/inertialization.hpp"
 #include "engine/animation/skeleton.hpp"
 #include "engine/asset/asset_manager.hpp"
 #include "engine/terrain/generator.hpp"
@@ -28,6 +30,7 @@
 #include "engine/asset/mesh_asset.hpp"
 #include "engine/core/error.hpp"
 #include "engine/renderer/grass.hpp"
+#include "engine/renderer/particles.hpp"
 
 namespace engine::scene {
 
@@ -80,12 +83,20 @@ struct MeshSource {
 // meshes and materials are shared through the AssetManager by content — and
 // rebuilds it whenever the fields change. `resolved` is system-managed.
 enum class PrimitiveShape : std::uint8_t { cube, sphere, plane, cylinder, cone, capsule };
+//
+// `shader` selects an authored material shader (ROADMAP A6) by name — the stem
+// of assets/shaders/materials/<shader>.slang — which then computes the
+// surface from these fields (MaterialInput::params) and `shader_params` (two
+// free vec4s). Empty = the built-in PBR material. With a shader the material
+// stays opaque (the shader's alpha cuts out below 0.5 instead of blending).
 struct Primitive {
     PrimitiveShape shape = PrimitiveShape::cube;
     glm::vec4      color{0.8F, 0.8F, 0.8F, 1.0F}; // linear base colour; alpha < 1 blends
     float          metallic = 0.0F;
     float          roughness = 0.5F;
     glm::vec3      emissive{0.0F};                // linear emitted radiance (HDR)
+    std::string    shader;                        // material shader name; empty = built-in
+    std::array<glm::vec4, 2> shader_params{};     // the shader's free parameters
     std::uint64_t  resolved = 0;                  // hash the MeshRenderer was built from
 };
 
@@ -190,12 +201,35 @@ struct SkinnedMesh {
 
 // Plays an animation clip on a skinned entity. The AnimationSystem advances
 // `time` by dt*speed each tick (wrapping when `looping`), samples the clip, and
-// writes the result into the entity's SkinnedMesh::joint_matrices.
+// writes the result into the entity's SkinnedMesh::joint_matrices. Switching
+// `clip` (normally to another of `clips`, the source glTF's animations)
+// transitions over `blend_time` seconds: inertialized (only the new clip is
+// evaluated) or crossfaded.
 struct Animator {
     asset::AssetHandle<animation::AnimClipAsset> clip;
     float time    = 0.0F;
     float speed   = 1.0F;
     bool  looping = true;
+    animation::BlendMode blend_mode = animation::BlendMode::inertialize;
+    float                blend_time = 0.25F;
+    std::vector<asset::AssetHandle<animation::AnimClipAsset>> clips;
+};
+
+// Foot placement for a skinned, animated entity: legs reach the ground
+// (physics raycasts, else the terrain height) and the pelvis lowers to the
+// lower foot. Runs after animation sampling, before skinning. Joint names
+// pick the ankles (knee = parent, hip = grandparent) and pelvis; empty names
+// are detected from common rig conventions.
+struct FootIK {
+    bool        enabled = true;
+    std::string pelvis;
+    std::string left_foot;
+    std::string right_foot;
+    float       ray_up = 0.5F;           // probe start above the ankle (m)
+    float       ray_down = 0.8F;         // probe reach below the ankle (m)
+    float       max_adjust = 0.45F;      // largest pelvis / foot offset (m)
+    float       max_foot_angle = 35.0F;  // ground-alignment limit (degrees)
+    float       smoothing = 0.05F;       // spring half-life (s)
 };
 
 // Perspective camera parameters. The view/projection matrices are derived each
@@ -304,6 +338,29 @@ struct BehaviorTree {
     bool parse_failed = false;
 };
 
+// A gameplay script (G7): a Lua file under assets/scripts/ (`path` relative
+// to that directory, e.g. "coin.lua") whose callbacks the script runtime
+// (engine/script/script_runtime.hpp) runs in play mode. `properties`
+// override the values the script declares in its `properties` table; they
+// show up in the inspector and the codec. `revision` changes whenever the
+// properties are edited, so a running instance picks the new values up.
+// One script per entity; the runtime keeps the Lua state, not this struct.
+enum class ScriptValueType : std::uint8_t { number, boolean, string, vec3 };
+struct ScriptProperty {
+    std::string     name;
+    ScriptValueType type = ScriptValueType::number;
+    double          number = 0.0;
+    bool            boolean = false;
+    std::string     text;
+    glm::vec3       vec{0.0F};
+};
+struct Script {
+    std::string                 path;
+    bool                        enabled = true;
+    std::vector<ScriptProperty> properties;
+    std::uint32_t               revision = 0;
+};
+
 // Single directional light (sun). `direction` points from the light toward the
 // scene (i.e. the direction photons travel) in world space.
 struct DirectionalLight {
@@ -323,7 +380,9 @@ struct PointLight {
 // minimum XZ corner sits at translation - tile_size/2 on each axis, heights
 // offset by translation.y). The frame loop owns generation: it kicks an async
 // rebuild whenever `regenerate` is set (the inspector's button / fresh
-// component) and uploads the result to the terrain pass.
+// component / a codec edit that changes the shape — terrain::same_shape) and
+// uploads the result to the terrain pass. Shading (`snowline_m`), the stream
+// radius and the GPU flag apply without regenerating.
 struct Terrain {
     // New terrains erode with the grid model, which the GPU can synthesise
     // (TerrainParams itself defaults to the CPU-only droplet model).
@@ -352,6 +411,16 @@ struct Terrain {
 // is not used.
 struct Grass {
     renderer::GrassSettings settings{};
+};
+
+// A GPU particle emitter (R10.3) at the entity's world transform:
+// renderer/particles.hpp has the settings (emission, shape, forces, curves,
+// flipbook, blending, lighting, collision), particle_pass.hpp the passes.
+// Each emitter reserves `settings.max_particles` of the renderer's global
+// particle pool; particles advance on the simulation clock (they freeze
+// while it is paused).
+struct ParticleEmitter {
+    renderer::ParticleEmitterSettings settings{};
 };
 
 // An authored walk route (editor: Shift+click the ground to append points).

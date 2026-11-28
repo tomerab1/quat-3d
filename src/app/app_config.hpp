@@ -30,7 +30,9 @@ struct AppConfig {
     // False with QUAT_NO_UI=1: no editor shell (deterministic headless renders).
     bool editor_ui = true;
 
-    // The window (a game's game.json sets these for the player).
+    // The window (a game's game.json sets these for the player;
+    // QUAT_WINDOW_SIZE=<w>x<h> sets the initial size, e.g. for headless
+    // captures of the editor).
     std::string                          window_title = "quat-3d";
     int                                  window_width = 1280;
     int                                  window_height = 720;
@@ -49,7 +51,7 @@ struct AppConfig {
     std::optional<OpenGame> game;
 };
 
-// QUAT_MAX_FRAMES, QUAT_SCREENSHOT and QUAT_NO_UI.
+// QUAT_MAX_FRAMES, QUAT_SCREENSHOT, QUAT_NO_UI and QUAT_WINDOW_SIZE.
 [[nodiscard]] AppConfig app_config_from_environment();
 
 } // namespace quat::app

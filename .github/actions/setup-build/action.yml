@@ -43,6 +43,9 @@ runs:
       if: runner.os == 'Linux'
       shell: bash
       run: |
+        # The runner image ships Microsoft's apt repo; nothing here comes from it,
+        # and when it refuses (403) apt-get update fails the whole job.
+        sudo find /etc/apt/sources.list.d -maxdepth 1 -name 'microsoft*' -delete
         sudo apt-get update
         sudo apt-get install -y --no-install-recommends \
           clang libc++-dev libc++abi-dev ninja-build cmake pkg-config \

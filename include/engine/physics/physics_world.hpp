@@ -39,16 +39,24 @@ public:
     ~PhysicsWorld();
 
     // Advance by `dt` seconds, stepping the simulation in fixed 1/120 s ticks
-    // (accumulated; clamped to avoid a spiral of death on long frames).
+    // (accumulated). A `dt` up to max_update_dt is simulated exactly: what
+    // does not fill a whole tick carries to the next call. A longer `dt` is a
+    // hitch: at most max_steps_per_update ticks run and the backlog beyond
+    // the sub-tick remainder is dropped (no spiral of death). Callers that
+    // need more simulated time per frame (the debug time scale) call update()
+    // several times with slices of at most max_update_dt (core::slice_sim_dt).
     void update(float dt);
 
     // Fixed simulation timestep.
     static constexpr float fixed_timestep = 1.0F / 120.0F;
-    // Catch-up limit per update(); time beyond it is dropped, not carried.
+    // Catch-up limit per update(); see update().
     static constexpr int max_steps_per_update = 8;
+    // The longest dt one update() simulates exactly.
+    static constexpr float max_update_dt =
+        static_cast<float>(max_steps_per_update) * fixed_timestep;
 
-    // Accumulated time not yet simulated (always < fixed_timestep after a
-    // capped update). Render interpolation and debugging read it.
+    // Accumulated time not yet simulated (under a tick, up to float rounding,
+    // after any update). Render interpolation and debugging read it.
     [[nodiscard]] float pending_time() const;
 
     // Sentinel for "no body".
@@ -133,12 +141,27 @@ public:
     [[nodiscard]] bool character_on_ground(std::uint32_t character) const;
 
     // Trigger (sensor) overlap events recorded during the most recent update().
-    // Valid until the next update() call.
+    // Valid until the next update() call. A character controller takes part
+    // through its inner body, which overlaps sensors only (no physical
+    // response); body_owner() maps it to the character's owner.
     [[nodiscard]] std::span<const TriggerEvent> trigger_events() const;
 
+    // The owner a body was created with (a character's owner for its inner
+    // body); no_owner for unowned or unknown bodies.
+    [[nodiscard]] std::uint32_t body_owner(std::uint32_t body) const;
+
+    // ---- Dynamic body control (gameplay scripts) ---------------------------
+    // No-ops unless `body` is a live dynamic body. The impulse is in N·s
+    // (kg·m/s) and wakes the body.
+    [[nodiscard]] bool is_dynamic(std::uint32_t body) const;
+    void add_impulse(std::uint32_t body, const glm::vec3& impulse);
+    void set_linear_velocity(std::uint32_t body, const glm::vec3& velocity);
+    [[nodiscard]] glm::vec3 linear_velocity(std::uint32_t body) const;
+
     // ---- Queries (debugging, gameplay) -------------------------------------
-    // Bodies in the simulation (all kinds, terrain included) and how many of
-    // them are awake (active rigid bodies).
+    // Bodies in the simulation (all kinds, terrain included; not the
+    // characters' inner bodies) and how many of them are awake (active rigid
+    // bodies).
     [[nodiscard]] std::uint32_t body_count() const;
     [[nodiscard]] std::uint32_t active_body_count() const;
     // Live character controllers.
@@ -155,10 +178,13 @@ public:
     };
     // Closest hit along `direction` (need not be normalized; zero = no hit)
     // within `max_distance`, against bodies (sensors only when
-    // `include_sensors`) and character capsules. nullopt when nothing is hit.
+    // `include_sensors`) and character capsules, skipping bodies and
+    // characters whose owner is in `ignore_owners` (e.g. a character's own
+    // capsule under its feet). nullopt when nothing is hit.
     [[nodiscard]] std::optional<RayHit> cast_ray(const glm::vec3& origin, const glm::vec3& direction,
-                                                 float max_distance,
-                                                 bool include_sensors = false) const;
+                                                 float max_distance, bool include_sensors = false,
+                                                 std::span<const std::uint32_t> ignore_owners = {})
+        const;
 
 private:
     PhysicsWorld() = default;

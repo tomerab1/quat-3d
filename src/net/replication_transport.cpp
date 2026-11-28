@@ -12,9 +12,10 @@
 
 namespace engine::net {
 
-void ReplicationServer::tick(entt::registry& registry, NetServer& server, float dt) {
+void ReplicationServer::tick(entt::registry& registry, NetServer& server,
+                             std::span<const ClientId> recipients, float dt) {
     for (const SnapshotPacket& packet : collect(registry, dt)) {
-        if (server.broadcast(packet.bytes, packet.reliable)) continue;
+        if (server.send_to(recipients, packet.bytes, packet.reliable)) continue;
         // Refused (send queue full, connection closing): resend these
         // entities with the next snapshot instead of waiting for a keyframe.
         forget(packet);

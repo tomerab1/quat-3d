@@ -1,0 +1,3 @@
+# Append-only logs: every PR appends lessons at the end; resolve concurrent
+# appends by keeping both sides instead of conflicting (see S9).
+docs/LEARNINGS.md merge=union

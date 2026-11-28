@@ -20,12 +20,17 @@
 //   point_light, dir_light, camera
 //   collider, rigidbody, character
 //   nav_agent, behavior, patrol
+//   script           Lua gameplay script path + property overrides (G7)
 //   terrain
 //   grass            GPU grass around the camera (density, blades, colours, wind, limits, LOD)
+//   particle_emitter GPU particles: emission, shape, forces, size / colour curves,
+//                    flipbook, blend (additive / alpha = WBOIT), lighting, collision
 //   net_replicated
 //   audio_source     clip / bus / volume / pitch / loop / 3D falloff (+ write-only command)
 //   audio_listener
-//   animator         edit-only (needs a clip from a glTF; cannot be added)
+//   animator         edit-only (needs a clip from a glTF; cannot be added):
+//                    clip (by name, switches with blend / blend_time), time, speed, looping
+//   foot_ik          foot placement (joint names, probe lengths, limits, smoothing)
 //   mesh             read-only (glTF provenance; scene_io resolves it)
 //
 // Decoding merges: fields present in the JSON overwrite the component's

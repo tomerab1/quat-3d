@@ -13,6 +13,7 @@
 
 #include "engine/core/path_confine.hpp"
 #include "engine/core/utf8_path.hpp"
+
 #include "engine/scene/component_json.hpp"
 #include "engine/scene/components.hpp"
 #include "engine/scene/scene.hpp"
@@ -170,7 +171,10 @@ std::expected<void, RpcError> apply_components_atomic(entt::registry& registry,
     const entt::entity s = scratch.create();
     scratch.emplace<scene::Transform>(s);
     if (registry.valid(target)) {
-        if (registry.all_of<scene::Animator>(target)) scratch.emplace<scene::Animator>(s);
+        // Animators are edit-only: copy the live one (its clip list).
+        if (const auto* anim = registry.try_get<scene::Animator>(target)) {
+            scratch.emplace<scene::Animator>(s, *anim);
+        }
         scene::EncodeOptions options;
         options.transform_as_matrix = true;
         options.include_read_only = false;
@@ -227,6 +231,8 @@ void register_world_commands(RpcServer& server, scene::Scene& scene, WorldServic
     world::register_scene_commands(server, ctx);
     world::register_batch_command(server, ctx);
     world::register_environment_commands(server, ctx);
+    world::register_terrain_commands(server, ctx);
+    world::register_placement_commands(server, ctx);
     world::register_camera_commands(server, ctx);
     world::register_app_commands(server, ctx);
     world::register_debug_commands(server, ctx);
@@ -235,6 +241,8 @@ void register_world_commands(RpcServer& server, scene::Scene& scene, WorldServic
     world::register_behavior_commands(server, ctx);
     world::register_behavior_edit_commands(server, ctx);
     world::register_project_commands(server, ctx);
+    world::register_script_commands(server, ctx);
+    world::register_shader_commands(server, ctx);
 }
 
 } // namespace engine::remote

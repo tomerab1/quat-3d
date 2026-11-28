@@ -26,10 +26,72 @@ using engine::scene::make_box_data;
 using engine::scene::make_cube_data;
 using engine::scene::make_sphere_data;
 
+namespace {
+
+// R10.3 demo effects beside the physics pile: additive sparks that bounce on
+// the floor (depth-buffer collision) and lit smoke (weighted blended OIT).
+// Fixed seeds: the same simulation steps give the same particles.
+void add_demo_particles(engine::scene::Scene& scene) {
+    namespace r = engine::renderer;
+    using engine::scene::ParticleEmitter;
+    using engine::scene::Transform;
+
+    const entt::entity sparks = scene.create_entity("sparks");
+    scene.registry().get<Transform>(sparks).local =
+        glm::translate(glm::mat4(1.0F), glm::vec3(-3.0F, 0.2F, 1.5F));
+    r::ParticleEmitterSettings& s = scene.registry().emplace<ParticleEmitter>(sparks).settings;
+    s.seed = 7;
+    s.max_particles = 2048;
+    s.rate = 220.0F;
+    s.lifetime = {0.8F, 1.6F};
+    s.shape = r::ParticleShape::cone;
+    s.radius = 0.05F;
+    s.cone_angle_deg = 30.0F;
+    s.speed = {3.0F, 6.0F};
+    s.size = {0.03F, 0.06F};
+    s.color_keys = 3;
+    s.color_curve = {{{0.0F, {1.0F, 0.85F, 0.4F, 1.0F}},
+                      {0.5F, {1.0F, 0.35F, 0.05F, 1.0F}},
+                      {1.0F, {0.6F, 0.1F, 0.0F, 0.0F}}}};
+    s.emissive = 12.0F;
+    s.collide = true;
+    s.bounce = 0.4F;
+    s.friction = 0.3F;
+    s.soft_distance = 0.0F;
+
+    const entt::entity smoke = scene.create_entity("smoke");
+    scene.registry().get<Transform>(smoke).local =
+        glm::translate(glm::mat4(1.0F), glm::vec3(3.0F, 0.1F, 1.0F));
+    r::ParticleEmitterSettings& m = scene.registry().emplace<ParticleEmitter>(smoke).settings;
+    m.seed = 11;
+    m.max_particles = 512;
+    m.rate = 24.0F;
+    m.lifetime = {4.0F, 6.0F};
+    m.shape = r::ParticleShape::sphere;
+    m.radius = 0.3F;
+    m.speed = {0.1F, 0.4F};
+    m.gravity = {0.15F, 0.6F, 0.0F}; // buoyant, drifting with a light breeze
+    m.drag = 0.4F;
+    m.size = {0.6F, 1.0F};
+    m.size_keys = 2;
+    m.size_curve = {{{0.0F, 0.6F}, {1.0F, 2.5F}}};
+    m.color_keys = 3;
+    m.color_curve = {{{0.0F, {0.35F, 0.35F, 0.37F, 0.0F}},
+                      {0.15F, {0.35F, 0.35F, 0.37F, 0.55F}},
+                      {1.0F, {0.5F, 0.5F, 0.52F, 0.0F}}}};
+    m.spin_deg = {-20.0F, 20.0F};
+    m.blend = r::ParticleBlend::alpha;
+    m.lighting = r::ParticleLighting::lit;
+    m.soft_distance = 0.5F;
+}
+
+} // namespace
+
 std::expected<DemoScene, engine::core::Error>
 build_demo_scene(engine::scene::Scene& scene, engine::asset::AssetManager& assets,
                  engine::rhi::GpuAllocator& allocator,
                  const engine::rhi::TransferContext& setup_transfer,
+                 const std::filesystem::path& project_root,
                  const std::optional<std::filesystem::path>& start_scene,
                  engine::renderer::RenderSettings* render_settings) {
     if (start_scene) {
@@ -48,6 +110,9 @@ build_demo_scene(engine::scene::Scene& scene, engine::asset::AssetManager& asset
         return out;
     }
     entt::entity spin_entity = entt::null;
+    entt::entity demo_root = entt::null;
+    entt::entity pedestal = entt::null;
+    glm::vec2 footprint_half{0.0F};
     glm::vec3 spin_pos{0.0F};
     float spin_scale = 1.0F;
     std::optional<engine::physics::PhysicsWorld> physics_world;
@@ -56,6 +121,20 @@ build_demo_scene(engine::scene::Scene& scene, engine::asset::AssetManager& asset
     entt::entity character_entity = entt::null;
     bool scene_ok = true;
 
+    if (auto scene_path = engine::core::env_path("QUAT_SCENE")) {
+        std::filesystem::path path = std::move(*scene_path);
+        if (path.is_relative()) path = project_root / path;
+        if (auto loaded = engine::scene::load_scene(scene, path, allocator, setup_transfer, assets);
+            !loaded) {
+            std::fprintf(stderr, "[fatal] QUAT_SCENE load failed: %s\n",
+                         loaded.error().message.c_str());
+            return std::unexpected(engine::core::Error{"scene file load failed"});
+        }
+        std::fprintf(stderr, "[info] loaded scene %s\n", engine::core::path_to_utf8(path).c_str());
+        DemoScene out;
+        out.from_scene_file = true;
+        return out;
+    }
     if (const auto gltf_path = engine::core::env_path("QUAT_GLTF")) {
         auto roots = engine::scene::GltfLoader::instantiate(*gltf_path, allocator, setup_transfer,
                                                             assets, scene);
@@ -140,11 +219,13 @@ build_demo_scene(engine::scene::Scene& scene, engine::asset::AssetManager& asset
                 scene.registry().emplace<RigidBody>(b, BodyMotion::dynamic, 1.0F, no_body);
             }
 
-            // A transparent glass panel in front of the pile (visual only).
+            // A transparent glass panel in front of the pile: a static body
+            // matching its mesh, so boxes bounce off it (issue #46).
+            const glm::vec3 glass_half(3.0F, 2.2F, 0.08F);
             auto glass_mesh = assets.load<engine::asset::MeshAsset>(
                 "demo/glass", [&](const std::filesystem::path&) {
-                    return engine::scene::upload_mesh(make_box_data(glm::vec3(3.0F, 2.2F, 0.08F)),
-                                                      allocator, setup_transfer);
+                    return engine::scene::upload_mesh(make_box_data(glass_half), allocator,
+                                                      setup_transfer);
                 });
             auto glass_mat = assets.load<engine::asset::MaterialAsset>(
                 "demo/glass_mat", [&](const std::filesystem::path&) {
@@ -162,7 +243,11 @@ build_demo_scene(engine::scene::Scene& scene, engine::asset::AssetManager& asset
                 scene.registry().get<Transform>(glass).local =
                     glm::translate(glm::mat4(1.0F), glm::vec3(0.0F, 2.2F, 3.0F));
                 scene.registry().emplace<MeshRenderer>(glass, glass_mesh, glass_mat);
+                scene.registry().emplace<Collider>(glass, ColliderShape::box, glass_half,
+                                                   glm::vec3(0.0F));
+                scene.registry().emplace<RigidBody>(glass, BodyMotion::static_body, 1.0F, no_body);
             }
+            add_demo_particles(scene);
         }
     } else if (std::getenv("QUAT_CHARACTER") != nullptr) {
         // Character demo: walk a capsule around a floor with WASD (third-person).
@@ -249,10 +334,13 @@ build_demo_scene(engine::scene::Scene& scene, engine::asset::AssetManager& asset
                 });
         };
 
+        const glm::vec2 k_plate_half(14.0F, 14.0F);
         auto ground_mesh = assets.load<engine::asset::MeshAsset>(
             "show/ground", [&](const std::filesystem::path&) {
-                return engine::scene::upload_mesh(make_box_data(glm::vec3(14.0F, 0.25F, 14.0F)),
-                                                  allocator, setup_transfer);
+                return engine::scene::upload_mesh(
+                    make_box_data(glm::vec3(k_plate_half.x, k_pedestal_mesh_half_height,
+                                            k_plate_half.y)),
+                    allocator, setup_transfer);
             });
         auto sphere_mesh = assets.load<engine::asset::MeshAsset>(
             "show/sphere", [&](const std::filesystem::path&) {
@@ -272,9 +360,19 @@ build_demo_scene(engine::scene::Scene& scene, engine::asset::AssetManager& asset
             // MeshSource tags carry the cache keys so scene save/load can
             // re-resolve these code-created assets (recreated every startup).
             using engine::scene::MeshSource;
-            const entt::entity ground = scene.create_entity("ground");
-            scene.registry().get<Transform>(ground).local =
-                glm::translate(glm::mat4(1.0F), glm::vec3(0.0F, -0.25F, 0.0F));
+            // Everything hangs under one root so the showcase moves as a
+            // whole (QUAT_TERRAIN settles it onto the generated ground).
+            demo_root = scene.create_entity("showcase");
+            const auto add = [&](const char* name) {
+                const entt::entity e = scene.create_entity(name);
+                scene.set_parent(e, demo_root);
+                return e;
+            };
+            const entt::entity ground = add("ground");
+            pedestal = ground;
+            footprint_half = k_plate_half;
+            scene.registry().get<Transform>(ground).local = glm::translate(
+                glm::mat4(1.0F), glm::vec3(0.0F, -k_pedestal_mesh_half_height, 0.0F));
             scene.registry().emplace<MeshRenderer>(ground, ground_mesh, ground_mat);
             scene.registry().emplace<MeshSource>(ground, "show/ground", "show/ground_mat", "");
 
@@ -283,7 +381,7 @@ build_demo_scene(engine::scene::Scene& scene, engine::asset::AssetManager& asset
                 const float t = static_cast<float>(i) / static_cast<float>(count - 1);
                 const float x = (t - 0.5F) * 7.5F;
                 // Top row: polished metal, roughness sweep.
-                const entt::entity m = scene.create_entity("metal_sphere");
+                const entt::entity m = add("metal_sphere");
                 scene.registry().get<Transform>(m).local =
                     glm::translate(glm::mat4(1.0F), glm::vec3(x, 0.55F, -1.6F));
                 scene.registry().emplace<MeshRenderer>(
@@ -293,7 +391,7 @@ build_demo_scene(engine::scene::Scene& scene, engine::asset::AssetManager& asset
                 scene.registry().emplace<MeshSource>(m, "show/sphere",
                                                      "show/metal" + std::to_string(i), "");
                 // Bottom row: coloured dielectric, metalness sweep.
-                const entt::entity d_ent = scene.create_entity("dielectric_sphere");
+                const entt::entity d_ent = add("dielectric_sphere");
                 scene.registry().get<Transform>(d_ent).local =
                     glm::translate(glm::mat4(1.0F), glm::vec3(x, 0.55F, 1.4F));
                 scene.registry().emplace<MeshRenderer>(
@@ -305,7 +403,7 @@ build_demo_scene(engine::scene::Scene& scene, engine::asset::AssetManager& asset
             }
 
             // A warm emissive cube as a visible local light source.
-            const entt::entity glow = scene.create_entity("glow_cube");
+            const entt::entity glow = add("glow_cube");
             scene.registry().get<Transform>(glow).local =
                 glm::translate(glm::mat4(1.0F), glm::vec3(-5.5F, 0.5F, 4.0F)) *
                 glm::rotate(glm::mat4(1.0F), 0.6F, glm::vec3(0.2F, 1.0F, 0.1F));
@@ -316,7 +414,7 @@ build_demo_scene(engine::scene::Scene& scene, engine::asset::AssetManager& asset
             scene.registry().emplace<MeshSource>(glow, "show/cube", "show/glow_mat", "");
 
             // A clear glass sphere up front that refracts the spheres behind it.
-            const entt::entity glass = scene.create_entity("glass_sphere");
+            const entt::entity glass = add("glass_sphere");
             spin_entity = glass; // gently rotate it so the refraction shifts
             spin_pos = glm::vec3(0.0F, 0.85F, 4.2F);
             spin_scale = 1.5F;
@@ -341,10 +439,13 @@ build_demo_scene(engine::scene::Scene& scene, engine::asset::AssetManager& asset
     out.spin_entity = spin_entity;
     out.spin_pos = spin_pos;
     out.spin_scale = spin_scale;
+    out.root = demo_root;
+    out.pedestal = pedestal;
+    out.footprint_half = footprint_half;
     return out;
 }
 
-void add_default_lighting(engine::scene::Scene& scene, bool fill_lights) {
+void add_default_lighting(engine::scene::Scene& scene, bool fill_lights, entt::entity root) {
 // A sun light, and a camera that auto-frames whatever was loaded.
 const entt::entity sun_entity = scene.create_entity("sun");
 scene.registry().emplace<engine::scene::DirectionalLight>(
@@ -364,6 +465,10 @@ if (fill_lights) {
         glm::translate(glm::mat4(1.0F), glm::vec3(3.5F, 3.0F, -2.5F));
     scene.registry().emplace<engine::scene::PointLight>(cool, glm::vec3(0.3F, 0.5F, 1.0F),
                                                         14.0F, 12.0F);
+    if (root != entt::null) {
+        scene.set_parent(warm, root);
+        scene.set_parent(cool, root);
+    }
 }
 
 }

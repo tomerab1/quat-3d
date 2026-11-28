@@ -1,20 +1,23 @@
 #pragma once
 
-// TaaPass — temporal anti-aliasing (Phase 8.1; history sharing and unjittered
-// reprojection fixed in S1, audit A2 + A14).
+// TaaPass / TaaUpscaler — temporal anti-aliasing and upsampling (TAAU), the
+// engine's own Upscaler backend (ROADMAP R11; Phase 8.1 TAA, history sharing
+// fixed in S1 audit A2).
 //
-// Resolves the camera-jittered current frame against a reprojected history
-// (taa.slang) and copies the result into the target (swapchain or editor
-// viewport image). The caller jitters the projection per frame with
-// taa_jitter() and passes the UNjittered view-projection: reprojection works
-// between unjittered matrices, so a static camera reprojects every pixel onto
-// itself and the history is never resampled at a sub-pixel offset.
+// Resolves the jittered, render-extent HDR frame against a history at the
+// display extent (taa.slang): the history is reprojected with the velocity
+// target (velocity.hpp) at the closest-depth sample of each pixel's
+// neighbourhood and clipped toward the current frame's neighbourhood
+// statistics. At native resolution this is TAA; below it, each display pixel
+// accumulates the jittered render samples that land on it (TAAU). The jitter
+// comes from jitter.hpp, so render samples, velocity and the resolve agree.
 //
 // The history lives in a TaaHistory shared by every frame-in-flight slot. Each
 // slot owns its own TaaPass (per-slot descriptor buffer); all of them resolve
 // into the one history pair, which ping-pongs on the history's own frame
 // counter, so every frame reads the image the previous frame wrote — whichever
-// slot recorded it.
+// slot recorded it. TaaUpscaler bundles the history with one pass per slot
+// behind the Upscaler interface.
 
 #include <array>
 #include <cstdint>
@@ -23,11 +26,10 @@
 #include <string>
 #include <vector>
 
-#include <glm/glm.hpp>
 #include <vulkan/vulkan.h>
 
 #include "engine/core/error.hpp"
-#include "engine/renderer/render_settings.hpp"
+#include "engine/renderer/upscaler.hpp"
 #include "engine/rhi/descriptor_buffer.hpp"
 #include "engine/rhi/gpu_allocator.hpp"
 #include "engine/rhi/managed_pipeline.hpp"
@@ -40,17 +42,17 @@ class PipelineCache;
 
 namespace engine::renderer {
 
-// Sub-pixel camera jitter (NDC units) for frame `index`, from the Halton(2,3)
-// sequence. Add to projection[2][0]/[2][1] (the w-multiplied clip translation).
-[[nodiscard]] glm::vec2 taa_jitter(std::uint64_t index, std::uint32_t width, std::uint32_t height);
-
 // Temporal history shared by every frame-in-flight slot of one view (audit A2).
-// Owns the ping-pong pair of RGBA16F images (storage-capable everywhere, and
-// float precision so accumulation never stalls on 8-bit rounding), the frame
-// counter that picks the ping-pong slot, the previous frame's unjittered
-// view-projection, and history validity. Recreated (and invalidated) when the
-// resolve extent changes; replaced images stay alive until every frame that
-// may still use them has retired.
+// Owns the ping-pong pair of display-extent RGBA16F images (rgb colour, a the
+// accumulated sample weight), the frame counter that picks the ping-pong
+// slot, and history validity. Recreated (and invalidated) when the display
+// extent changes; replaced images stay alive until every frame that may still
+// use them has retired.
+//
+// The running average blends far-away samples in with weights well below
+// 1/1000; plain half-float rounding drops those updates (the 50% upscale
+// test's error rose from 0.0017 to 0.0047), so taa.slang rounds its history
+// writes stochastically instead of doubling the history to RGBA32F.
 //
 // Contract: the caller waits on a slot's fence before recording that slot's
 // frame (the standard frame loop), records one resolve per frame, and compiles
@@ -105,21 +107,20 @@ private:
     std::array<Image, 2> images_;
     std::vector<Retired> retired_;
     VkExtent2D           extent_{0, 0};
-    glm::mat4            prev_view_proj_{1.0F};
     std::uint64_t        frame_ = 0;
     bool                 valid_ = false;
 };
 
 class TaaPass {
 public:
-    // `ldr_format` is the format of the image being resolved and of the target
-    // the result is copied into: R8G8B8A8 / A8B8G8R8 / B8G8R8A8 (UNORM or
-    // SRGB). `history` is shared by every slot's pass; null creates a private
-    // one (single-slot use, tests).
+    // The resolved image add_to_graph returns (Upscaler::add_to_graph contract).
+    static constexpr VkFormat k_output_format = VK_FORMAT_R16G16B16A16_SFLOAT;
+
+    // `history` is shared by every slot's pass; null creates a private one
+    // (single-slot use, tests).
     [[nodiscard]] static std::expected<TaaPass, core::Error>
     create(const rhi::Device& device, rhi::GpuAllocator& allocator, rhi::PipelineCache& cache,
-           const std::string& cooked_shader_dir, VkFormat ldr_format,
-           std::shared_ptr<TaaHistory> history = nullptr);
+           const std::string& cooked_shader_dir, std::shared_ptr<TaaHistory> history = nullptr);
 
     TaaPass() = default;
     TaaPass(TaaPass&&) noexcept = default;
@@ -127,32 +128,48 @@ public:
     TaaPass(const TaaPass&) = delete;
     TaaPass& operator=(const TaaPass&) = delete;
 
-    // Resolve `current` (rendered with the jittered projection) against the
-    // shared history, using `depth` for reprojection, and copy the result to
-    // `target`. `view_proj` is this frame's UNjittered view-projection; the
-    // history remembers it for the next frame. Advances the history.
-    // `settings.feedback` is the history weight; with `settings.enabled` off the
-    // resolve passes the current frame through (the caller stops jittering)
-    // while still recording it as the next frame's history.
-    [[nodiscard]] std::expected<void, core::Error>
-    add_to_graph(rhi::RenderGraph& graph, rhi::ResourceHandle current, rhi::ResourceHandle depth,
-                 rhi::ResourceHandle target, VkExtent2D extent, const glm::mat4& view_proj,
-                 const TaaSettings& settings = {});
+    // Resolves `in` against the shared history and returns the display-extent
+    // result (see Upscaler::add_to_graph). Advances the history. The reactive
+    // mask is not consumed yet (transparents and particles do not write one).
+    [[nodiscard]] std::expected<rhi::ResourceHandle, core::Error>
+    add_to_graph(rhi::RenderGraph& graph, const UpscalerInputs& in);
 
     [[nodiscard]] TaaHistory& history() { return *history_; }
 
 private:
     const rhi::Device* device_    = nullptr;
     rhi::GpuAllocator* allocator_ = nullptr;
-    bool               swap_rb_   = false; // BGRA target: store the output swizzled
 
     rhi::DescriptorBufferFunctions db_fns_{};
     rhi::DescriptorSetLayout       layout_;
     rhi::ManagedPipeline           pipeline_;
     rhi::Sampler                   sampler_;
+    std::vector<std::uint32_t>     slots_; // reflected binding of each resource
+    rhi::GpuBuffer                 unit_exposure_; // bound when no exposure is given
+    VkDeviceAddress                unit_exposure_address_ = 0;
 
     std::shared_ptr<TaaHistory> history_;
     rhi::DescriptorBuffer       frame_descriptor_;
+};
+
+// The TAAU backend of the Upscaler interface: one TaaPass per frame slot
+// sharing one history.
+class TaaUpscaler final : public Upscaler {
+public:
+    [[nodiscard]] static std::expected<std::unique_ptr<TaaUpscaler>, core::Error>
+    create(const rhi::Device& device, rhi::GpuAllocator& allocator, rhi::PipelineCache& cache,
+           const std::string& cooked_shader_dir, std::uint32_t frames_in_flight);
+
+    [[nodiscard]] UpscalerBackend backend() const override { return UpscalerBackend::taau; }
+    [[nodiscard]] std::expected<rhi::ResourceHandle, core::Error>
+    add_to_graph(rhi::RenderGraph& graph, std::uint32_t slot, const UpscalerInputs& in) override;
+    void reset_history() override { history_->invalidate(); }
+
+    [[nodiscard]] TaaHistory& history() { return *history_; }
+
+private:
+    std::shared_ptr<TaaHistory> history_;
+    std::vector<TaaPass>        passes_;
 };
 
 } // namespace engine::renderer

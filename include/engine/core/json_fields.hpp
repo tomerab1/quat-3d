@@ -225,6 +225,8 @@ public:
     }
 
     [[nodiscard]] bool ok() const { return error_.empty(); }
+    // Lenient decoders (scene files) skip values that no longer resolve.
+    [[nodiscard]] bool strict() const { return strict_; }
 
     // First recorded error, or (strict) the first unread key.
     [[nodiscard]] std::expected<void, Error> finish() const {
@@ -277,6 +279,11 @@ public:
             return true;
         }
         return false;
+    }
+    [[nodiscard]] static bool read_string(const Json& v, std::string& out) {
+        if (!v.is_string()) return false;
+        out = v.get_ref<const std::string&>();
+        return true;
     }
     [[nodiscard]] static bool read_vec3(const Json& v, glm::vec3& out) {
         if (!v.is_array() || v.size() != 3) return false;

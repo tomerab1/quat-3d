@@ -6,6 +6,7 @@
 #include <glm/glm.hpp>
 #include <gtest/gtest.h>
 
+#include "engine/asset/asset_manager.hpp"
 #include "remote/world_fixture.hpp"
 
 namespace {
@@ -149,6 +150,34 @@ TEST_F(SceneCommands, StrictUnknownFieldsAndAtomicEdits) {
         code::invalid_params);
 }
 
+TEST_F(SceneCommands, AnimatorSwitchesClipsByName) {
+    engine::asset::AssetManager assets;
+    const auto clip = [&](const char* name) {
+        return assets.load<engine::animation::AnimClipAsset>(name, [&](const auto&) {
+            engine::animation::AnimClipAsset c;
+            c.name = name;
+            c.duration = 1.0F;
+            c.channels = {engine::animation::AnimChannel{}};
+            return c;
+        });
+    };
+    const Json a = ok("scene.create", {{"name", "hero"}});
+    const entt::entity e = entity(a["id"]);
+    s::Animator& anim = reg().emplace<s::Animator>(e);
+    anim.clips = {clip("idle"), clip("walk")};
+    anim.clip = anim.clips[0];
+
+    ok("scene.update", {{"entity", "hero"},
+                        {"components", {{"animator", {{"clip", "walk"}, {"blend_time", 0.3}}}}}});
+    EXPECT_EQ(reg().get<s::Animator>(e).clip.id(), reg().get<s::Animator>(e).clips[1].id());
+    const Json got = ok("scene.get", {{"entity", "hero"}});
+    EXPECT_EQ(got["components"]["animator"]["clip"], "walk") << got.dump();
+    const std::string msg =
+        err("scene.update", {{"entity", "hero"}, {"components", {{"animator", {{"clip", "run"}}}}}},
+            code::invalid_params);
+    EXPECT_TRUE(contains(msg, "available: idle, walk")) << msg;
+}
+
 TEST_F(SceneCommands, SetParentKeepsWorldAndRefusesCycles) {
     const Json a = ok("scene.create",
                       {{"name", "a"}, {"components", {{"transform", {{"position", {10, 0, 0}}}}}}});
@@ -217,6 +246,33 @@ TEST_F(SceneCommands, ComponentsCatalogue) {
         }
     }
     EXPECT_TRUE(saw_mesh);
+}
+
+// R10.3: emitters are plain components — created, edited and checked over
+// scene.create / scene.update like any other, with precise errors.
+TEST_F(SceneCommands, ParticleEmittersAreScriptable) {
+    const Json created = ok("scene.create",
+                            {{"name", "campfire_sparks"},
+                             {"components",
+                              {{"transform", {{"position", {0, 0.2, 0}}}},
+                               {"particle_emitter",
+                                {{"rate", 150}, {"shape", "cone"}, {"blend", "additive"},
+                                 {"emissive", 8}, {"collide", true}}}}}});
+    const entt::entity e = entity(created["id"]);
+    ASSERT_TRUE(reg().all_of<s::ParticleEmitter>(e));
+    EXPECT_FLOAT_EQ(reg().get<s::ParticleEmitter>(e).settings.rate, 150.0F);
+    ok("scene.update", {{"entity", "campfire_sparks"},
+                        {"components", {{"particle_emitter", {{"max_particles", 4096}}}}}});
+    EXPECT_EQ(reg().get<s::ParticleEmitter>(e).settings.max_particles, 4096U);
+    EXPECT_TRUE(reg().get<s::ParticleEmitter>(e).settings.collide); // kept
+    const std::string why =
+        err("scene.update",
+            {{"entity", "campfire_sparks"},
+             {"components", {{"particle_emitter", {{"texture", "../../etc/passwd"}}}}}},
+            code::invalid_params);
+    EXPECT_NE(why.find("particle_emitter.texture"), std::string::npos) << why;
+    const Json got = ok("scene.get", {{"entity", created["id"]}});
+    EXPECT_EQ(got["components"]["particle_emitter"]["shape"], "cone");
 }
 
 TEST_F(SceneCommands, BatchWithBackReferences) {

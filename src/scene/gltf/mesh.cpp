@@ -248,14 +248,9 @@ extract_primitive(const fastgltf::Asset& asset, const fastgltf::Primitive& prim)
 
 [[nodiscard]] std::expected<MeshData, core::Error>
 parse_and_extract(fastgltf::GltfDataBuffer& data, const std::filesystem::path& base_dir) {
-    fastgltf::Parser parser(kParserExtensions);
-    fastgltf::Expected<fastgltf::Asset> asset = parser.loadGltf(data, base_dir, kLoadOptions);
-    if (asset.error() != fastgltf::Error::None) {
-        return fail(std::string("fastgltf parse failed: ") +
-                    std::string(fastgltf::getErrorMessage(asset.error())));
-    }
-    if (auto valid = validate_asset(asset.get()); !valid) return std::unexpected(valid.error());
-    return extract(asset.get());
+    auto asset = parse_gltf(data, base_dir);
+    if (!asset) return std::unexpected(asset.error());
+    return extract(*asset);
 }
 
 // -------------------------------------------------------------------------

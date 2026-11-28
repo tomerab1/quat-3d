@@ -16,6 +16,7 @@
 #include "engine/asset/material_asset.hpp"
 #include "engine/asset/mesh_asset.hpp"
 #include "engine/renderer/draw_batching.hpp"
+#include "engine/renderer/motion_history.hpp"
 #include "engine/scene/components.hpp"
 #include "engine/scene/instanced_mesh.hpp"
 
@@ -176,6 +177,43 @@ TEST_F(InstancedMeshCollect, PassRouting) {
     EXPECT_TRUE(none.draws.empty());
 }
 
+// Audit D7: the frame's draw count is taken after batching, so InstancedMesh
+// batches (opaque and shadow) are counted, and items sharing a mesh and a
+// material count once.
+TEST_F(InstancedMeshCollect, FrameDrawCountIncludesInstancedBatches) {
+    // A forest: 200 trees of two opaque parts plus a blended canopy part.
+    const glm::mat4 up = glm::translate(glm::mat4(1.0F), glm::vec3(0.0F, 2.0F, 0.0F));
+    make_entity(glm::mat4(1.0F), 200, glm::vec3(0.0F, 0.0F, -5.0F),
+                {part(trunk, bark), part(crown, bark, up), part(crown, glass, up)});
+
+    // Three ordinary items: two share (trunk, bark) and batch into one draw.
+    std::vector<engine::renderer::DrawItem> items(3);
+    items[0] = {&*trunk, &*bark, glm::translate(glm::mat4(1.0F), glm::vec3(0, 0, -3)), {}};
+    items[1] = {&*trunk, &*bark, glm::translate(glm::mat4(1.0F), glm::vec3(1, 0, -3)), {}};
+    items[2] = {&*crown, &*glass, glm::translate(glm::mat4(1.0F), glm::vec3(2, 0, -3)), {}};
+    const std::vector<engine::renderer::DrawItem> opaque_items(items.begin(), items.begin() + 2);
+    std::vector<engine::renderer::DrawItem> transparent{items[2]};
+    s::append_instanced_transparent_items(r, view_proj, transparent);
+
+    const s::FrameDrawLists lists =
+        s::build_frame_draw_lists(r, opaque_items, opaque_items, view_proj, view_proj);
+    // Opaque: the batched trunk items, then the forest's trunk and crown batches.
+    ASSERT_EQ(lists.opaque.draws.size(), 3U);
+    EXPECT_EQ(lists.opaque.draws[0].instance_count, 2U);
+    EXPECT_EQ(lists.opaque.draws[1].instance_count, 200U);
+    EXPECT_EQ(lists.opaque.draws[2].instance_count, 200U);
+    EXPECT_EQ(lists.shadow.draws.size(), 3U);
+    ASSERT_EQ(transparent.size(), 201U); // one per visible canopy + the blended item
+
+    EXPECT_EQ(s::frame_draw_count(lists, transparent.size()), 3U + 3U + 201U);
+
+    // Without instanced content only the batched items remain.
+    r.clear();
+    const s::FrameDrawLists plain =
+        s::build_frame_draw_lists(r, opaque_items, {}, view_proj, view_proj);
+    EXPECT_EQ(s::frame_draw_count(plain, 1), 2U);
+}
+
 TEST_F(InstancedMeshCollect, PartsBoundsCoverEveryPart) {
     const glm::mat4 up = glm::translate(glm::mat4(1.0F), glm::vec3(0.0F, 3.0F, 0.0F));
     const std::vector<s::InstancedMeshPart> parts{part(trunk, bark), part(crown, bark, up)};
@@ -218,6 +256,40 @@ TEST_F(InstancedMeshCollect, ResolveIsNeededWhenTheSourceChanges) {
     node.gltf_node = "Trunk";
     EXPECT_NE(s::instanced_mesh_source_hash(gltf), s::instanced_mesh_source_hash(node));
     EXPECT_NE(s::instanced_mesh_source_hash(gltf), s::instanced_mesh_source_hash(mesh));
+}
+
+// R11: with a MotionHistory, each instance's motion record is the entity's
+// previous world transform times its placement (and part); without previous
+// data (first frame) it equals the current model (camera-only velocity).
+TEST_F(InstancedMeshCollect, MotionRecordsFollowTheEntitysPreviousTransform) {
+    const glm::mat4 crown_local = glm::translate(glm::mat4(1.0F), glm::vec3(0.0F, 2.0F, 0.0F));
+    const glm::mat4 world0 = glm::translate(glm::mat4(1.0F), glm::vec3(0.0F, 0.0F, -5.0F));
+    const entt::entity e = make_entity(world0, 4, glm::vec3(0.0F),
+                                       {part(trunk, bark), part(crown, bark, crown_local)});
+    engine::renderer::MotionHistory history;
+
+    history.begin_frame();
+    InstancedDrawList first;
+    s::append_instanced_draws(r, view_proj, s::InstancedPass::opaque, first, &history);
+    ASSERT_EQ(first.motion.size(), first.instances.size());
+    for (std::size_t i = 0; i < first.instances.size(); ++i) {
+        expect_mat_near(first.motion[i].prev_model, first.instances[i].model);
+    }
+
+    const glm::mat4 world1 = glm::translate(glm::mat4(1.0F), glm::vec3(0.5F, 0.0F, -5.0F));
+    r.get<s::Transform>(e).world = world1;
+    history.begin_frame();
+    InstancedDrawList second;
+    s::append_instanced_draws(r, view_proj, s::InstancedPass::opaque, second, &history);
+    ASSERT_EQ(second.motion.size(), 8U);
+    const auto& mesh = r.get<s::InstancedMesh>(e);
+    for (std::size_t i = 0; i < 4; ++i) {
+        const glm::mat4 placement = s::instance_matrix(mesh.instances[i]);
+        expect_mat_near(second.instances[i].model, world1 * placement);
+        expect_mat_near(second.motion[i].prev_model, world0 * placement);
+        expect_mat_near(second.motion[4 + i].prev_model, world0 * placement * crown_local);
+        EXPECT_EQ(second.motion[i].has_prev_positions, 0U);
+    }
 }
 
 } // namespace

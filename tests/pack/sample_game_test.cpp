@@ -16,7 +16,7 @@
 namespace {
 
 TEST(SampleGame, CoinCollectorPackages) {
-    const auto root = engine::core::path_from_utf8(QUAT_SOURCE_DIR) / "games" / "coin-collector";
+    const auto root = engine::core::path_from_utf8(QUAT_PROJECT_ROOT) / "games" / "coin-collector";
     auto project = engine::project::load_game_project(root);
     ASSERT_OK(project);
     EXPECT_EQ(engine::project::executable_slug(*project), "coin-collector");

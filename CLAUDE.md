@@ -36,6 +36,9 @@ Rules:
   starting work that depends on it.
 - Build must be warning-free and the headless tests green before committing.
 - New behaviour comes with a test the headless runner executes.
+- Implementing a published technique (paper, talk, article)? Cite it in a
+  comment at the implementation and add it to `docs/reading/README.md` in the
+  same PR.
 - Tick the item's checkbox in `ROADMAP.md` in the commit that completes it.
 - If an item's scope is wrong, update `ROADMAP.md` first — do not drift silently.
 - All external data (files, network, remote requests) is untrusted: the engine

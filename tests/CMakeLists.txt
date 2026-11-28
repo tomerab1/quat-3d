@@ -14,6 +14,7 @@ file(GLOB_RECURSE ENGINE_TEST_SOURCES CONFIGURE_DEPENDS
 # GameBoot (P4) is graphics-free application-layer logic: compiled in directly.
 add_executable(engine_tests
     test_main.cpp
+    support/alloc_probe.cpp
     support/gpu_context.cpp
     ${PROJECT_SOURCE_DIR}/src/app/game_boot.cpp
     ${PROJECT_SOURCE_DIR}/src/app/app_config.cpp
@@ -21,8 +22,18 @@ add_executable(engine_tests
 target_link_libraries(engine_tests PRIVATE
     engine_flags engine_editor_build engine_core engine_rhi engine_asset engine_scene
     engine_renderer engine_physics engine_animation engine_terrain engine_nav engine_net
-    engine_remote engine_remote_world engine_audio engine_project engine_pack
+    engine_remote engine_remote_world engine_audio engine_script engine_cook engine_gltf_io
+    game_world # gltf_io.hpp internals (fastgltf)
+    engine_project engine_pack
     GTest::gtest)
+# Full libktx in this program (engine_cook encodes; the tests decode ASTC
+# references through it): engine_asset then links KTX::ktx instead of
+# KTX::ktx_read, see the root CMakeLists. The tests also call libktx directly.
+set_target_properties(engine_tests PROPERTIES QUAT_KTX_FULL ON)
+target_include_directories(engine_tests SYSTEM PRIVATE
+    $<TARGET_PROPERTY:KTX::ktx,INTERFACE_INCLUDE_DIRECTORIES>)
+target_compile_definitions(engine_tests PRIVATE
+    $<TARGET_PROPERTY:KTX::ktx,INTERFACE_COMPILE_DEFINITIONS>)
 if(ENGINE_EDITOR)
     # imgui: the ImGui pass test builds its draw data in a private context.
     target_link_libraries(engine_tests PRIVATE engine_editor imgui::imgui)
@@ -34,27 +45,51 @@ target_include_directories(engine_tests PRIVATE
 # Image round trips (stb_image) in the screenshot tests; SYSTEM so MSVC /W4
 # does not warn inside stb.
 target_include_directories(engine_tests SYSTEM PRIVATE ${Stb_INCLUDE_DIR})
+# White-box script VM tests (tests/script/vm_test.cpp) include engine_script's
+# private headers, which use sol2 and Lua.
+target_link_libraries(engine_tests PRIVATE sol2::sol2 ${LUA_LIBRARIES})
+target_include_directories(engine_tests SYSTEM PRIVATE ${LUA_INCLUDE_DIR})
+target_compile_definitions(engine_tests PRIVATE SOL_NO_EXCEPTIONS=1 SOL_ALL_SAFETIES_ON=1)
 target_compile_definitions(engine_tests PRIVATE
     QUAT_COOKED_SHADER_DIR="${PROJECT_SOURCE_DIR}/cooked/shaders"
-    QUAT_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+    QUAT_SHADER_SOURCE_DIR="${PROJECT_SOURCE_DIR}/assets/shaders"
+    # Shipped / vendored assets: the G7 demo scripts, editor fonts, icon table.
+    QUAT_PROJECT_ROOT="${PROJECT_SOURCE_DIR}")
 add_dependencies(engine_tests shaders)
 
 add_test(NAME engine_tests_cpu COMMAND engine_tests "--gtest_filter=-Gpu*")
 add_test(NAME engine_tests_gpu COMMAND engine_tests "--gtest_filter=Gpu*" --require-gpu)
 set_tests_properties(engine_tests_gpu PROPERTIES LABELS gpu)
 
-# The shipping player must contain no remote-control code (P4). GCC/Clang:
-# the symbol table via nm. MSVC: release executables carry no COFF symbols,
-# so quat-player-shipping writes a linker map (root CMakeLists) instead.
+# Binary-content checks on the executables. GCC/Clang: the symbol table via
+# nm. MSVC: release executables carry no COFF symbols (dumpbin /symbols lists
+# nothing), so the checked executables write linker maps (root CMakeLists) and
+# the checks read those.
+#  - game, quat-player-shipping: link the read-only libktx, no Basis / ASTC
+#    encoder code.
+#  - quat-player-shipping: contains no remote-control code (P4).
 if(MSVC)
+    add_test(NAME game_has_no_texture_encoder
+        COMMAND ${CMAKE_COMMAND} -DMAP=$<TARGET_FILE_DIR:game>/game.map
+                -P ${PROJECT_SOURCE_DIR}/cmake/CheckNoTextureEncoder.cmake)
+    add_test(NAME quat_player_shipping_has_no_texture_encoder
+        COMMAND ${CMAKE_COMMAND}
+                -DMAP=$<TARGET_FILE_DIR:quat-player-shipping>/quat-player-shipping.map
+                -P ${PROJECT_SOURCE_DIR}/cmake/CheckNoTextureEncoder.cmake)
     add_test(NAME quat_player_shipping_has_no_remote
         COMMAND ${CMAKE_COMMAND}
                 -DMAP=$<TARGET_FILE_DIR:quat-player-shipping>/quat-player-shipping.map
                 -P ${PROJECT_SOURCE_DIR}/cmake/CheckNoRemoteControl.cmake)
 elseif(CMAKE_NM)
+    add_test(NAME game_has_no_texture_encoder
+        COMMAND ${CMAKE_COMMAND} -DNM=${CMAKE_NM} -DBINARY=$<TARGET_FILE:game>
+                -P ${PROJECT_SOURCE_DIR}/cmake/CheckNoTextureEncoder.cmake)
+    add_test(NAME quat_player_shipping_has_no_texture_encoder
+        COMMAND ${CMAKE_COMMAND} -DNM=${CMAKE_NM} -DBINARY=$<TARGET_FILE:quat-player-shipping>
+                -P ${PROJECT_SOURCE_DIR}/cmake/CheckNoTextureEncoder.cmake)
     add_test(NAME quat_player_shipping_has_no_remote
         COMMAND ${CMAKE_COMMAND} -DNM=${CMAKE_NM} -DBINARY=$<TARGET_FILE:quat-player-shipping>
                 -P ${PROJECT_SOURCE_DIR}/cmake/CheckNoRemoteControl.cmake)
 else()
-    message(WARNING "quat_player_shipping_has_no_remote: no nm found; the check is not registered")
+    message(WARNING "binary-content checks (no texture encoder, no remote control): no nm found; not registered")
 endif()

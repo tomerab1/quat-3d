@@ -26,13 +26,14 @@ namespace s = engine::scene;
 class AudioSystemTest : public ::testing::Test {
 protected:
     void SetUp() override {
-        auto created = a::AudioEngine::create({.no_device = true});
+        // Clips are relative to the asset root (issue #66).
+        auto created = a::AudioEngine::create({.no_device = true, .asset_root = ::testing::TempDir()});
         ASSERT_OK(created);
         engine.emplace(std::move(*created));
-        clip = quat::test::write_test_wav("audio_system_test.wav", 1.0F);
-        other_clip = quat::test::write_test_wav("audio_system_test_other.wav", 0.5F);
-        ASSERT_FALSE(clip.empty());
-        ASSERT_FALSE(other_clip.empty());
+        ASSERT_FALSE(quat::test::write_test_wav("audio_system_test.wav", 1.0F).empty());
+        ASSERT_FALSE(quat::test::write_test_wav("audio_system_test_other.wav", 0.5F).empty());
+        clip = "audio_system_test.wav";
+        other_clip = "audio_system_test_other.wav";
     }
 
     entt::entity make_source(const glm::vec3& position = glm::vec3(0.0F)) {

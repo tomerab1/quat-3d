@@ -159,4 +159,40 @@ TEST(GpuMaterialOverride, DerivedMaterialKeepsTheBaseFields) {
     EXPECT_FALSE(derived->textures.emissive.valid());
 }
 
+// A6 x A8: a primitive drawn with an authored material shader keeps it (and
+// its shader parameters) through a per-entity override, so the GBuffer pass
+// still selects the authored pipeline for the derived material.
+TEST(GpuMaterialOverride, TheDerivedMaterialKeepsTheMaterialShader) {
+    QUAT_REQUIRE_GPU(ctx);
+    entt::registry r;
+    a::AssetManager assets;
+    s::MaterialOverrideStore store(k_frames_in_flight);
+    const entt::entity e = r.create();
+    s::Primitive& p = r.emplace<s::Primitive>(e, s::PrimitiveShape::sphere);
+    p.shader = "lava";
+    p.shader_params[0] = glm::vec4(1.0F, 0.35F, 0.05F, 6.0F);
+    ASSERT_OK(s::resolve_primitives(r, ctx->allocator, ctx->transfer, assets));
+    const a::MaterialAsset* base = &*r.get<s::MeshRenderer>(e).material;
+    ASSERT_EQ(base->shader, "lava");
+
+    s::set_entity_material_field(r, e, field("normal_scale"), glm::vec4(0.5F));
+    ASSERT_OK(store.resolve(r, ctx->allocator, ctx->transfer, 1));
+    const a::MaterialAsset* drawn = store.drawn(r, e, r.get<s::MeshRenderer>(e));
+    ASSERT_NE(drawn, nullptr);
+    ASSERT_NE(drawn, base) << "the override is drawn";
+    EXPECT_EQ(drawn->shader, "lava") << "the authored pipeline is still selected";
+    EXPECT_EQ(drawn->params.shader_params[0], glm::vec4(1.0F, 0.35F, 0.05F, 6.0F));
+    EXPECT_FLOAT_EQ(drawn->params.normal_scale, 0.5F);
+
+    // Switching the primitive to another shader rebuilds the base, and the
+    // override on top draws with the new shader.
+    r.get<s::Primitive>(e).shader = "glow";
+    ASSERT_OK(s::resolve_primitives(r, ctx->allocator, ctx->transfer, assets));
+    ASSERT_TRUE(store.needs_resolve(r));
+    ASSERT_OK(store.resolve(r, ctx->allocator, ctx->transfer, 2));
+    drawn = store.drawn(r, e, r.get<s::MeshRenderer>(e));
+    EXPECT_EQ(drawn->shader, "glow");
+    EXPECT_FLOAT_EQ(drawn->params.normal_scale, 0.5F);
+}
+
 } // namespace

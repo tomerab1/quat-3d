@@ -166,9 +166,10 @@ the target and the build id.
   smoke-tests each package (unpacked under a non-ASCII path, launched
   headless for 30 frames, start scene loaded, screenshot written) and uploads
   it as a workflow artifact — a playable test build per OS.
-- **Editor**: File → Build & Export… picks the target (the host OS), the
-  output folder and the config, runs `quat-pack` in the background with
-  progress and its log, and shows "Show in folder" when done.
+- **Editor**: File → Build & Export… (Ctrl+B) picks the target (the host
+  OS), the output folder and the config, runs `quat-pack` in the background
+  with progress and its log, and raises a toast with "Show in folder" when
+  done (a failed build's toast reopens the log).
 - **MCP**: `project.info` describes the open game project; `project.build
   {target?, output?, config?}` starts the same background job and
   `project.build_status` reports its state, progress, log tail and archive

@@ -1,9 +1,14 @@
 #include "engine/renderer/mesh_pass.hpp"
 
+#include <algorithm>
 #include <array>
+#include <chrono>
+#include <functional>
+#include <cmath>
 #include <cstddef>
 #include <limits>
 #include <string>
+#include <tuple>
 #include <unordered_map>
 #include <utility>
 
@@ -11,6 +16,7 @@
 
 #include "engine/rhi/device.hpp"
 #include "engine/rhi/gpu_allocator.hpp"
+#include "engine/rhi/material_shader_names.hpp"
 #include "engine/rhi/pipeline_cache.hpp"
 
 namespace engine::renderer {
@@ -22,6 +28,8 @@ namespace {
 }
 
 constexpr VkShaderStageFlags kMaterialStages = VK_SHADER_STAGE_FRAGMENT_BIT;
+
+constexpr std::uint32_t kMaterialMaxLod = material_sampler_max_lod;
 
 // Material descriptor set 0, matching PbrMaterial in material.slang (verified
 // against the gbuffer.slang SPIR-V): uniform params at 0, the five optional
@@ -39,7 +47,93 @@ constexpr VkShaderStageFlags kMaterialStages = VK_SHADER_STAGE_FRAGMENT_BIT;
     }};
 }
 
+// Fragment entry point of each alpha mode in a GBuffer program.
+[[nodiscard]] const char* fragment_entry(GBufferAlphaMode alpha) {
+    return alpha == GBufferAlphaMode::masked ? "fragment_masked" : "fragment_main";
+}
+
+constexpr std::array<GBufferAlphaMode, 2> kAlphaModes{GBufferAlphaMode::opaque,
+                                                      GBufferAlphaMode::masked};
+
+// The GBuffer pipeline for `program` (the built-in gbuffer.spv, one per alpha
+// mode, or an authored material's variant, whose only fragment entry point is
+// fragment_main — they share this exact layout).
+[[nodiscard]] std::expected<rhi::ManagedPipeline, core::Error>
+create_gbuffer_pipeline(rhi::PipelineCache& cache, const rhi::LoadedShader& program,
+                        VkDescriptorSetLayout set_layout,
+                        GBufferAlphaMode alpha = GBufferAlphaMode::opaque) {
+    // Vertex input mirrors asset::Vertex.
+    const VkVertexInputBindingDescription vbind{0, sizeof(asset::Vertex),
+                                                VK_VERTEX_INPUT_RATE_VERTEX};
+    const std::array<VkVertexInputAttributeDescription, 4> vattrs{{
+        {0, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(asset::Vertex, position)},
+        {1, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(asset::Vertex, normal)},
+        {2, 0, VK_FORMAT_R32G32_SFLOAT, offsetof(asset::Vertex, uv)},
+        {3, 0, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(asset::Vertex, tangent)},
+    }};
+    const VkPushConstantRange pc{VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
+                                 sizeof(GBufferPushConstants)};
+
+    rhi::GraphicsPipeline::CreateInfo info{};
+    info.vertex = &program;
+    info.fragment = &program;
+    info.fragment_entry = fragment_entry(alpha);
+    info.color_formats = gbuffer_color_formats; // every variant writes every GBuffer target
+    info.depth_format = gbuffer_depth_format;
+    info.depth_compare_op = VK_COMPARE_OP_LESS_OR_EQUAL; // standard [0,1] depth
+    info.cull_mode = VK_CULL_MODE_NONE;                  // double-sided for now
+    info.vertex_bindings = {&vbind, 1};
+    info.vertex_attributes = vattrs;
+    info.set_layouts = {&set_layout, 1};
+    info.push_constants = {&pc, 1};
+    return cache.create_graphics_pipeline(info);
+}
+
+// Camera term of the push constants from the view-projection: the eye is the
+// point the projection sends to w = 0, i.e. inverse(VP) * (0, 0, 1, 0) in
+// homogeneous form. For an orthographic projection that point is at infinity
+// (w = 0) and only the direction toward the camera is meaningful.
+[[nodiscard]] glm::vec4 camera_from_view_proj(const glm::mat4& view_proj) {
+    const glm::vec4 h = glm::inverse(view_proj) * glm::vec4(0.0F, 0.0F, 1.0F, 0.0F);
+    if (std::abs(h.w) > 1e-6F * glm::length(glm::vec3(h))) {
+        return {glm::vec3(h) / h.w, 1.0F};
+    }
+    // Orthographic: the view direction is the near->far direction; the camera
+    // lies against it.
+    const glm::vec4 n = glm::inverse(view_proj) * glm::vec4(0.0F, 0.0F, 0.0F, 1.0F);
+    const glm::vec4 f = glm::inverse(view_proj) * glm::vec4(0.0F, 0.0F, 1.0F, 1.0F);
+    const glm::vec3 toward = glm::vec3(n) / n.w - glm::vec3(f) / f.w;
+    const float len = glm::length(toward);
+    return {len > 0.0F ? toward / len : glm::vec3(0.0F, 0.0F, 1.0F), 0.0F};
+}
+
 } // namespace
+
+GBufferVariant gbuffer_variant(const asset::MaterialAsset& material) {
+    GBufferVariant v;
+    v.module = material.shader; // empty: the built-in program
+    v.alpha = (material.params.flags & asset::material_alpha_mask) != 0
+                  ? GBufferAlphaMode::masked
+                  : GBufferAlphaMode::opaque;
+    return v;
+}
+
+std::expected<void, core::Error> MeshPass::create_variants(rhi::PipelineCache& cache,
+                                                           const std::string& module,
+                                                           const rhi::LoadedShader& shader) {
+    for (const GBufferAlphaMode alpha : kAlphaModes) {
+        auto pipeline = create_gbuffer_pipeline(cache, shader, material_layout_.handle(), alpha);
+        if (!pipeline) return std::unexpected(pipeline.error());
+        pipelines_.insert_or_assign(GBufferVariant{module, alpha}, std::move(*pipeline));
+    }
+    return {};
+}
+
+float MeshPass::material_time() const {
+    if (fixed_time_) return *fixed_time_;
+    const std::chrono::duration<double> t = std::chrono::steady_clock::now() - epoch_;
+    return static_cast<float>(t.count());
+}
 
 std::expected<MeshPass, core::Error>
 MeshPass::create(const rhi::Device& device, rhi::GpuAllocator& allocator,
@@ -62,39 +156,21 @@ MeshPass::create(const rhi::Device& device, rhi::GpuAllocator& allocator,
     auto shader = cache.load(cooked_shader_dir + "/gbuffer.spv");
     if (!shader) return std::unexpected(shader.error());
 
-    // Vertex input mirrors asset::Vertex.
-    const VkVertexInputBindingDescription vbind{0, sizeof(asset::Vertex),
-                                                VK_VERTEX_INPUT_RATE_VERTEX};
-    const std::array<VkVertexInputAttributeDescription, 4> vattrs{{
-        {0, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(asset::Vertex, position)},
-        {1, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(asset::Vertex, normal)},
-        {2, 0, VK_FORMAT_R32G32_SFLOAT, offsetof(asset::Vertex, uv)},
-        {3, 0, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(asset::Vertex, tangent)},
-    }};
-    const std::array<VkFormat, 4> color_formats{gbuffer_albedo_format, gbuffer_normal_format,
-                                                gbuffer_material_format,
-                                                gbuffer_clearcoat_format};
-    const VkPushConstantRange pc{VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
-                                 sizeof(GBufferPushConstants)};
+    if (auto r = out.create_variants(cache, std::string{}, **shader); !r) {
+        return std::unexpected(r.error());
+    }
+
+    // Authored material shaders: same layout, their own program (A6).
     const VkDescriptorSetLayout set_layout = out.material_layout_.handle();
+    out.materials_ = MaterialPipelines(
+        cache, cooked_shader_dir, std::string(rhi::material_shaders::variants[0].name), *shader,
+        [&cache, set_layout](const rhi::LoadedShader& program) {
+            return create_gbuffer_pipeline(cache, program, set_layout);
+        });
+    out.epoch_ = std::chrono::steady_clock::now();
 
-    rhi::GraphicsPipeline::CreateInfo info{};
-    info.vertex = *shader;
-    info.fragment = *shader;
-    info.color_formats = color_formats;
-    info.depth_format = gbuffer_depth_format;
-    info.depth_compare_op = VK_COMPARE_OP_LESS_OR_EQUAL; // standard [0,1] depth
-    info.cull_mode = VK_CULL_MODE_NONE;                  // double-sided for now
-    info.vertex_bindings = {&vbind, 1};
-    info.vertex_attributes = vattrs;
-    info.set_layouts = {&set_layout, 1};
-    info.push_constants = {&pc, 1};
-
-    auto pipeline = cache.create_graphics_pipeline(info);
-    if (!pipeline) return std::unexpected(pipeline.error());
-    out.pipeline_ = std::move(*pipeline);
-
-    auto sampler = rhi::create_sampler(device.handle());
+    auto sampler = rhi::create_sampler(device.handle(), rhi::SamplerAddress::repeat,
+                                       kMaterialMaxLod);
     if (!sampler) return std::unexpected(sampler.error());
     out.sampler_ = std::move(*sampler);
 
@@ -127,6 +203,18 @@ VkImageView MeshPass::texture_view_or_fallback(
     return fallback_texture_.view.handle();
 }
 
+std::expected<void, core::Error> MeshPass::set_texture_lod_bias(float bias) {
+    if (bias == lod_bias_ && sampler_.handle() != VK_NULL_HANDLE) return {};
+    // The slot's previous frame has finished (frame-slot ownership), and the
+    // descriptors are rewritten every add_to_graph: replacing it is safe.
+    auto sampler = rhi::create_sampler(device_->handle(), rhi::SamplerAddress::repeat,
+                                       kMaterialMaxLod, 0.0F, bias);
+    if (!sampler) return std::unexpected(sampler.error());
+    sampler_ = std::move(*sampler);
+    lod_bias_ = bias;
+    return {};
+}
+
 std::expected<GBufferTargets, core::Error>
 MeshPass::add_to_graph(rhi::RenderGraph& graph, VkExtent2D extent, const glm::mat4& view_proj,
                        std::span<const DrawItem> draws) {
@@ -136,13 +224,36 @@ MeshPass::add_to_graph(rhi::RenderGraph& graph, VkExtent2D extent, const glm::ma
 std::expected<GBufferTargets, core::Error>
 MeshPass::add_to_graph(rhi::RenderGraph& graph, VkExtent2D extent, const glm::mat4& view_proj,
                        const InstancedDrawList& list) {
+    return add_to_graph(graph, extent, view_proj, list, ViewMotion::still(view_proj));
+}
+
+std::expected<GBufferTargets, core::Error>
+MeshPass::add_to_graph(rhi::RenderGraph& graph, VkExtent2D extent, const glm::mat4& view_proj,
+                       const InstancedDrawList& list, const ViewMotion& motion) {
     frame_descriptors_.clear();
     frame_draws_.clear();
     frame_draws_.reserve(list.draws.size());
 
+    if (!list.motion.empty() && list.motion.size() != list.instances.size()) {
+        return fail("gbuffer pass: motion records do not match the instance array");
+    }
     auto instances = instances_.upload(*device_, *allocator_, list.instances);
     if (!instances) return std::unexpected(instances.error());
     frame_instances_ = *instances;
+    auto motion_addr = motion_.upload(*device_, *allocator_, list.motion);
+    if (!motion_addr) return std::unexpected(motion_addr.error());
+    frame_motion_ = *motion_addr;
+    materials_.begin_frame();
+
+    frame_push_ = GBufferPushConstants{};
+    frame_push_.view_proj = view_proj;
+    frame_push_.instances = frame_instances_;
+    frame_push_.time = material_time();
+    frame_push_.camera = camera_from_view_proj(view_proj);
+    frame_push_.prev_view_proj = motion.prev_view_proj;
+    frame_push_.motion = frame_motion_;
+    frame_push_.jitter_ndc = motion.jitter_ndc;
+    frame_push_.has_motion = frame_motion_ != 0 ? 1U : 0U;
 
     // GBuffer targets. SAMPLED is added so the lighting pass (3.6) can read them;
     // TRANSFER_SRC lets tests and debug tooling read them back.
@@ -158,9 +269,15 @@ MeshPass::add_to_graph(rhi::RenderGraph& graph, VkExtent2D extent, const glm::ma
                                                     extent, color_usage);
     targets.clearcoat = graph.create_transient_image("gbuffer_clearcoat",
                                                      gbuffer_clearcoat_format, extent, color_usage);
+    targets.emissive = graph.create_transient_image("gbuffer_emissive", gbuffer_emissive_format,
+                                                    extent, color_usage);
+    targets.velocity =
+        graph.create_transient_image("gbuffer_velocity", velocity_format, extent, color_usage);
+    targets.motion = motion;
     targets.depth = graph.create_transient_image(
         "gbuffer_depth", gbuffer_depth_format, extent,
-        VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT);
+        VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT |
+            VK_IMAGE_USAGE_TRANSFER_SRC_BIT); // TRANSFER_SRC: tests / tools read depth back
 
     // One descriptor buffer per distinct material this frame (batches already
     // merged identical mesh+material draws; meshes sharing a material share it).
@@ -200,23 +317,51 @@ MeshPass::add_to_graph(rhi::RenderGraph& graph, VkExtent2D extent, const glm::ma
         fd.first_instance = d.first_instance;
         fd.instance_count = d.instance_count;
         fd.descriptor_index = slot->second;
+        const GBufferVariant variant = gbuffer_variant(mat);
+        const rhi::ManagedPipeline* custom =
+            variant.module.empty() ? nullptr : materials_.find(variant.module);
+        if (custom != nullptr) {
+            // Authored programs cut out below alpha 0.5 themselves (discard):
+            // they draw with the alpha-tested group.
+            fd.pipeline = custom;
+            fd.alpha = GBufferAlphaMode::masked;
+        } else {
+            // The built-in program (also for a material shader not compiled yet).
+            const auto pipeline = pipelines_.find(GBufferVariant{{}, variant.alpha});
+            if (pipeline == pipelines_.end()) {
+                return fail("gbuffer pass: no built-in pipeline for the material's alpha mode");
+            }
+            fd.pipeline = &pipeline->second;
+            fd.alpha = variant.alpha;
+        }
         frame_draws_.push_back(fd);
     }
+    // Opaque variants first, so the alpha-tested ones (no early depth test)
+    // are rejected by the depth they wrote; then by pipeline and material to
+    // minimise binds.
+    std::stable_sort(frame_draws_.begin(), frame_draws_.end(),
+                     [](const FrameDraw& l, const FrameDraw& r) {
+                         return std::tie(l.alpha, l.pipeline, l.descriptor_index) <
+                                std::tie(r.alpha, r.pipeline, r.descriptor_index);
+                     });
 
     const GBufferTargets t = targets;
-    const glm::mat4 vp = view_proj;
     graph.add_pass("gbuffer", rhi::PassType::graphics)
         .writes(t.albedo, rhi::ResourceUsage::color_attachment)
         .writes(t.normal, rhi::ResourceUsage::color_attachment)
         .writes(t.material, rhi::ResourceUsage::color_attachment)
         .writes(t.clearcoat, rhi::ResourceUsage::color_attachment)
+        .writes(t.emissive, rhi::ResourceUsage::color_attachment)
+        .writes(t.velocity, rhi::ResourceUsage::color_attachment)
         .writes(t.depth, rhi::ResourceUsage::depth_attachment)
-        .execute([this, t, extent, vp](rhi::PassContext& ctx) {
+        .execute([this, t, extent](rhi::PassContext& ctx) {
             const VkCommandBuffer cmd = ctx.cmd();
             const rhi::ResourceBinding a = ctx.resolve(t.albedo);
             const rhi::ResourceBinding n = ctx.resolve(t.normal);
             const rhi::ResourceBinding m = ctx.resolve(t.material);
             const rhi::ResourceBinding cc = ctx.resolve(t.clearcoat);
+            const rhi::ResourceBinding em = ctx.resolve(t.emissive);
+            const rhi::ResourceBinding vel = ctx.resolve(t.velocity);
             const rhi::ResourceBinding depth = ctx.resolve(t.depth);
 
             const auto color_attachment = [](VkImageView view) {
@@ -229,9 +374,9 @@ MeshPass::add_to_graph(rhi::RenderGraph& graph, VkExtent2D extent, const glm::ma
                 ai.clearValue.color = {{0.0F, 0.0F, 0.0F, 0.0F}};
                 return ai;
             };
-            const std::array<VkRenderingAttachmentInfo, 4> colors{
+            const std::array<VkRenderingAttachmentInfo, gbuffer_color_formats.size()> colors{
                 color_attachment(a.view), color_attachment(n.view), color_attachment(m.view),
-                color_attachment(cc.view)};
+                color_attachment(cc.view), color_attachment(em.view), color_attachment(vel.view)};
 
             VkRenderingAttachmentInfo depth_attachment{};
             depth_attachment.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
@@ -260,21 +405,23 @@ MeshPass::add_to_graph(rhi::RenderGraph& graph, VkExtent2D extent, const glm::ma
             const VkRect2D scissor{{0, 0}, extent};
             vkCmdSetScissor(cmd, 0, 1, &scissor);
 
-            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_.handle());
-
-            // The instance array is shared by every draw: push it once.
-            GBufferPushConstants push{};
-            push.view_proj = vp;
-            push.instances = frame_instances_;
-            vkCmdPushConstants(cmd, pipeline_.layout(),
-                               VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
-                               sizeof(push), &push);
-
+            // Every program shares one layout definition; on a program switch
+            // re-push the (shared) constants and re-bind the material set.
+            const rhi::ManagedPipeline* bound_pipeline = nullptr;
             std::uint32_t bound_descriptor = std::numeric_limits<std::uint32_t>::max();
             for (const FrameDraw& fd : frame_draws_) {
+                if (fd.pipeline != bound_pipeline) {
+                    bound_pipeline = fd.pipeline;
+                    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                      bound_pipeline->handle());
+                    vkCmdPushConstants(cmd, bound_pipeline->layout(),
+                                       VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+                                       0, sizeof(frame_push_), &frame_push_);
+                    bound_descriptor = std::numeric_limits<std::uint32_t>::max();
+                }
                 if (fd.descriptor_index != bound_descriptor) {
                     frame_descriptors_[fd.descriptor_index].bind(
-                        cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_.layout(), 0);
+                        cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, bound_pipeline->layout(), 0);
                     bound_descriptor = fd.descriptor_index;
                 }
 

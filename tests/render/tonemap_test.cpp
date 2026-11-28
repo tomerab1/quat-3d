@@ -71,8 +71,7 @@ std::expected<HostImage, Error> render_ldr(quat::test::GpuContext& g) {
     auto targets = mesh_pass->add_to_graph(graph, k_extent, glm::mat4(1.0F), {&item, 1});
     if (!targets) return std::unexpected(targets.error());
     auto hdr = lighting->add_to_graph(graph, *targets, k_extent, light, glm::mat4(1.0F),
-                                      glm::vec3(0.0F, 0.0F, 1.0F), rhi::ResourceHandle{},
-                                      glm::mat4(1.0F));
+                                      glm::vec3(0.0F, 0.0F, 1.0F), {});
     if (!hdr) return std::unexpected(hdr.error());
     const rhi::ResourceHandle ldr = graph.create_transient_image(
         "ldr_color", k_ldr_format, k_extent,

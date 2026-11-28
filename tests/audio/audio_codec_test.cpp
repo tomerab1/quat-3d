@@ -67,6 +67,9 @@ TEST_F(AudioCodec, RejectsMalformedValues) {
         {{"clip", 5}},
         {{"clip", std::string("a\0b.wav", 7)}},
         {{"clip", std::string(5000, 'x')}},
+        {{"clip", "/etc/hosts"}},     // issue #66: clips are project-relative
+        {{"clip", "../outside.wav"}},
+        {{"clip", "audio/../../outside.wav"}},
         {{"bus", "loud"}},
         {{"volume", -1}},
         {{"volume", "max"}},

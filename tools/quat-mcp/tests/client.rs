@@ -299,3 +299,96 @@ async fn oversized_reply_drops_the_connection_then_recovers() {
     assert_eq!(v, json!("x".repeat(10)));
     assert_eq!(engine.connections(), 2);
 }
+
+// ---- Session token file (the engine publishes its token there) -------------
+
+fn client_with_file(addr: &str, token: Option<&str>, file: &std::path::Path) -> EngineClient {
+    let mut c = EngineConfig::new(addr);
+    c.token = token.map(str::to_owned);
+    c.token_file = Some(file.to_owned());
+    c.timeout = Duration::from_secs(5);
+    EngineClient::new(c)
+}
+
+#[tokio::test]
+async fn token_file_is_read_again_for_every_connection() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("remote-7878.token");
+    std::fs::write(&file, "first-run-token\n").unwrap();
+    let engine = MockEngine::start(Some("first-run-token"), echo).await;
+    let addr = engine.addr_string();
+    let c = client_with_file(&addr, None, &file);
+    assert_eq!(c.call("echo", Some(json!(1))).await.unwrap(), json!(1));
+    assert_eq!(
+        engine.last_params("session.hello"),
+        Some(json!({"token": "first-run-token"}))
+    );
+
+    // The engine restarts with a new token and rewrites the file.
+    engine.shutdown();
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    std::fs::write(&file, "second-run-token\n").unwrap();
+    let engine = MockEngine::start_on(&addr, Some("second-run-token"), echo).await;
+    let mut result = c.call("echo", Some(json!(2))).await;
+    if matches!(result, Err(EngineError::Disconnected { .. })) {
+        result = c.call("echo", Some(json!(2))).await; // the old connection's last gasp
+    }
+    assert_eq!(result.unwrap(), json!(2));
+    assert_eq!(
+        engine.last_params("session.hello"),
+        Some(json!({"token": "second-run-token"}))
+    );
+}
+
+#[tokio::test]
+async fn configured_token_wins_over_the_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("remote.token");
+    std::fs::write(&file, "from-file\n").unwrap();
+    let engine = MockEngine::start(Some("configured"), echo).await;
+    let c = client_with_file(&engine.addr_string(), Some("configured"), &file);
+    c.call("echo", None).await.unwrap();
+    assert_eq!(
+        engine.last_params("session.hello"),
+        Some(json!({"token": "configured"}))
+    );
+}
+
+#[tokio::test]
+async fn missing_or_stale_token_file_says_where_it_looked() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("remote-7878.token");
+    let engine = MockEngine::start(Some("secret"), echo).await;
+    let c = client_with_file(&engine.addr_string(), None, &file);
+
+    let err = c.call("echo", None).await.unwrap_err();
+    assert!(matches!(err, EngineError::Unauthorized { .. }), "{err:?}");
+    let text = err.to_string();
+    assert!(text.contains(&file.display().to_string()), "{text}");
+    assert!(text.contains("does not exist"), "{text}");
+    assert_eq!(engine.last_params("session.hello"), Some(json!({})));
+
+    std::fs::write(&file, "an-older-run\n").unwrap();
+    let text = c.call("echo", None).await.unwrap_err().to_string();
+    assert!(text.contains("another engine run"), "{text}");
+
+    // Fixed by the engine rewriting it: no restart of quat-mcp needed.
+    std::fs::write(&file, "secret\n").unwrap();
+    c.call("echo", None).await.unwrap();
+}
+
+#[tokio::test]
+async fn unusable_token_file_is_reported() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("remote.token");
+    std::fs::write(&file, "two\nlines\n").unwrap();
+    let engine = MockEngine::start(Some("secret"), echo).await;
+    let c = client_with_file(&engine.addr_string(), None, &file);
+    let err = c.call("echo", None).await.unwrap_err();
+    assert!(matches!(err, EngineError::TokenFile(_)), "{err:?}");
+    assert!(err.to_string().contains("QUAT_REMOTE_TOKEN"), "{err}");
+    assert!(
+        !engine.methods().contains(&"session.hello".to_owned()),
+        "a bad token file must not be sent"
+    );
+}

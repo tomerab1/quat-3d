@@ -6,6 +6,8 @@
 // rustdoc lints would police that Markdown. It is text for the model, not API
 // documentation: `doc_markdown` (backticks around identifiers) is off there.
 #[allow(clippy::doc_markdown)]
+mod asset_tools;
+#[allow(clippy::doc_markdown)]
 mod behavior_tools;
 mod bt_outline;
 #[allow(clippy::doc_markdown)]
@@ -16,6 +18,10 @@ mod prompts;
 mod results;
 #[allow(clippy::doc_markdown)]
 mod scene_tools;
+#[allow(clippy::doc_markdown)]
+mod script_tools;
+#[allow(clippy::doc_markdown)]
+mod shader_tools;
 #[allow(clippy::doc_markdown)]
 mod sim_tools;
 #[allow(clippy::doc_markdown)]
@@ -40,20 +46,25 @@ use serde_json::{Value, json};
 use crate::client::{EngineClient, EngineError};
 use crate::content;
 
+pub use asset_tools::AssetConfig;
 pub use prompts::{
     BuildWorldArgs, DebugSessionArgs, DesignBehaviorArgs, InspectSceneArgs, TuneLookArgs,
+    WriteGameScriptArgs, WriteMaterialShaderArgs,
 };
 pub use results::{error_result, normalize_method};
 pub use world_tools::MAX_GROUND_POINTS;
 
 /// URI of the scene-summary resource.
 pub const SCENE_SUMMARY_URI: &str = "quat://scene/summary";
+/// URI of the Lua scripting reference resource.
+pub const SCRIPTING_REFERENCE_URI: &str = "quat://docs/scripting";
 
 /// The quat-mcp server. Cheap to clone; all clones share one engine connection.
 #[derive(Clone)]
 pub struct QuatServer {
     engine: Arc<EngineClient>,
     long_timeout: Duration,
+    assets: Arc<asset_tools::AssetService>,
     tool_router: ToolRouter<Self>,
     prompt_router: PromptRouter<Self>,
 }
@@ -73,9 +84,18 @@ impl QuatServer {
         Self {
             engine,
             long_timeout,
+            assets: asset_tools::AssetService::new(AssetConfig::default()),
             tool_router: Self::tools(),
             prompt_router: Self::prompt_router(),
         }
+    }
+
+    /// Where the asset tools download from and to (default: Poly Haven into
+    /// the current directory's `assets/`).
+    #[must_use]
+    pub fn with_assets(mut self, config: AssetConfig) -> Self {
+        self.assets = asset_tools::AssetService::new(config);
+        self
     }
 
     /// Every tool this server offers, across all tool groups.
@@ -87,6 +107,9 @@ impl QuatServer {
             + Self::debug_tools()
             + Self::tuning_tools()
             + Self::behavior_tools()
+            + Self::script_tools()
+            + Self::asset_tools()
+            + Self::shader_tools()
             + Self::project_tools()
     }
 
@@ -156,6 +179,12 @@ impl ServerHandler for QuatServer {
                 .with_title("Current scene summary")
                 .with_description(include_str!("../../content/resources/scene_summary.md").trim())
                 .with_mime_type("application/json"),
+            Resource::new(SCRIPTING_REFERENCE_URI, "scripting_reference")
+                .with_title("Lua scripting reference")
+                .with_description(
+                    include_str!("../../content/resources/scripting_reference.md").trim(),
+                )
+                .with_mime_type("text/markdown"),
         ]))
     }
 
@@ -164,10 +193,18 @@ impl ServerHandler for QuatServer {
         request: ReadResourceRequestParams,
         _context: RequestContext<RoleServer>,
     ) -> Result<ReadResourceResponse, ErrorData> {
+        if request.uri == SCRIPTING_REFERENCE_URI {
+            return Ok(ReadResourceResult::new(vec![
+                ResourceContents::text(content::SCRIPTING_REFERENCE, SCRIPTING_REFERENCE_URI)
+                    .with_mime_type("text/markdown"),
+            ])
+            .into());
+        }
         if request.uri != SCENE_SUMMARY_URI {
             return Err(ErrorData::resource_not_found(
                 format!(
-                    "unknown resource `{}`; available: {SCENE_SUMMARY_URI}",
+                    "unknown resource `{}`; available: {SCENE_SUMMARY_URI}, \
+                     {SCRIPTING_REFERENCE_URI}",
                     request.uri
                 ),
                 None,

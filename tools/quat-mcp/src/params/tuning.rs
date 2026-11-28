@@ -16,7 +16,11 @@ pub enum SettingsGroup {
     Exposure,
     Bloom,
     Taa,
+    Upscaler,
     Shadows,
+    Ao,
+    #[serde(rename = "contact_shadows")]
+    ContactShadows,
     Ibl,
     Clouds,
 }
@@ -83,24 +87,153 @@ pub struct TaaParams {
     pub feedback: Option<f64>,
 }
 
+/// Render-resolution mode of the temporal upscaler.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum UpscalerMode {
+    /// Full resolution, anti-aliasing only.
+    NativeAa,
+    /// Render scale 1/1.5 per axis.
+    Quality,
+    /// Render scale 1/1.7 per axis.
+    Balanced,
+    /// Render scale 1/2 per axis.
+    Performance,
+}
+
+/// Upscaler implementation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum UpscalerBackend {
+    /// The engine's temporal upsampler.
+    Taau,
+    /// AMD FSR 2: not built yet, the engine falls back to `taau`.
+    Fsr2,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct UpscalerParams {
+    /// Render resolution (needs `taa.enabled`): `native_aa` (default), `quality`, `balanced` or `performance`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mode: Option<UpscalerMode>,
+    /// Render scale per axis overriding the mode when above 0, 0..1 (min effective 0.25; default 0 = off).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub render_scale: Option<f64>,
+    /// Sharpening of the reconstructed frame, 0..1 (default 0.25).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sharpness: Option<f64>,
+    /// Implementation: `taau` (default) or `fsr2` (not built yet).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub backend: Option<UpscalerBackend>,
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ShadowParams {
-    /// Sun shadows on/off.
+    /// Cascaded sun shadows on/off.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub enabled: Option<bool>,
-    /// Half-size in metres of the shadowed box around the world origin, 2..500 (default 14).
+    /// Metres from the camera where shadows end, 5..5000 (default 150).
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub extent_m: Option<f64>,
-    /// Constant depth bias against acne, 0..0.05 (default 0.0008).
+    pub max_distance: Option<f64>,
+    /// Number of cascades, integer 1..4 (default 4).
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub depth_bias: Option<f64>,
-    /// Extra bias on surfaces facing away from the sun, 0..0.05 (default 0.0025).
+    pub cascades: Option<u32>,
+    /// Cascade split spacing, 0 (linear) .. 1 (logarithmic) (default 0.8).
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub slope_bias: Option<f64>,
-    /// Edge softness: filter radius in texels, integer 0..3 (default 1).
+    pub split_lambda: Option<f64>,
+    /// Fit the cascades to the frame's depth range on the GPU (default true).
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub pcf_radius: Option<u32>,
+    pub fit_to_depth: Option<bool>,
+    /// Fraction of each cascade cross-faded into the next, 0..0.5 (default 0.1).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub blend_band: Option<f64>,
+    /// Edge softness: filter radius in texels, 0..8 (default 1.5).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pcf_radius: Option<f64>,
+    /// Sun angular diameter in degrees for contact-hardening penumbrae, 0..10 (default 0.53; 0 = fixed filter).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sun_size_deg: Option<f64>,
+    /// Receiver offset along the normal against acne, texels 0..8 (default 1).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub normal_bias_texels: Option<f64>,
+    /// Receiver offset toward the sun against acne, texels 0..8 (default 1).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub depth_bias_texels: Option<f64>,
+    /// How far toward the sun casters are captured, metres 1..10000 (default 200).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub caster_distance: Option<f64>,
+    /// Tint each pixel by its cascade (debug view).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub debug_cascades: Option<bool>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct AoParams {
+    /// Ground-truth ambient occlusion (GTAO) on/off.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub enabled: Option<bool>,
+    /// World-space reach of the occlusion search, metres 0.05..10 (default 0.75).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub radius: Option<f64>,
+    /// Darkening strength (visibility exponent), 0.5..5 (default 2.2).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub strength: Option<f64>,
+    /// Fraction of the radius over which occluders fade out, 0..1 (default 0.615).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub falloff_range: Option<f64>,
+    /// Above 1 packs samples near the pixel, 1..4 (default 2).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sample_distribution_power: Option<f64>,
+    /// Lets light pass behind thin objects, 0..0.7 (default 0).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thin_occluder_compensation: Option<f64>,
+    /// Hi-Z mip bias for distant samples, 0..8 (default 3.3).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub depth_mip_offset: Option<f64>,
+    /// Search directions per pixel, integer 1..9 (default 3).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub slices: Option<u32>,
+    /// Depth samples per direction and side, integer 1..8 (default 3).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub steps_per_slice: Option<u32>,
+    /// Edge-aware blur passes, integer 0..3 (default 1).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub denoise_passes: Option<u32>,
+    /// Denoiser centre weight: higher keeps more detail, 0.1..10 (default 1.2).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub denoise_blur_beta: Option<f64>,
+    /// Light the ambient term along the least-occluded direction (default true).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bent_normals: Option<bool>,
+    /// Occlude environment reflections in crevices (default true).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub specular_occlusion: Option<bool>,
+    /// Brighten occlusion on light surfaces (default true).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub multi_bounce: Option<bool>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ContactShadowParams {
+    /// Screen-space contact shadows on/off.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub enabled: Option<bool>,
+    /// Ray length toward the sun, metres 0.01..4 (default 0.35).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub length: Option<f64>,
+    /// Depth samples along the ray, integer 2..64 (default 12).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub steps: Option<u32>,
+    /// How far behind the depth buffer a hit still counts, metres 0.01..4 (default 0.2).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thickness: Option<f64>,
+    /// 0 = no effect, 1 = full shadow on a hit (default 1).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub intensity: Option<f64>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
@@ -123,9 +256,18 @@ pub struct RenderSettingsSetParams {
     /// Temporal anti-aliasing.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub taa: Option<TaaParams>,
-    /// Sun shadow map.
+    /// Render resolution and temporal upscaling.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub upscaler: Option<UpscalerParams>,
+    /// Cascaded sun shadows.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub shadows: Option<ShadowParams>,
+    /// Ambient occlusion (GTAO).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ao: Option<AoParams>,
+    /// Screen-space contact shadows.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub contact_shadows: Option<ContactShadowParams>,
     /// Image-based (sky) ambient light and reflections.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ibl: Option<IblParams>,
@@ -141,7 +283,10 @@ impl RenderSettingsSetParams {
         self.exposure.is_none()
             && self.bloom.is_none()
             && self.taa.is_none()
+            && self.upscaler.is_none()
             && self.shadows.is_none()
+            && self.ao.is_none()
+            && self.contact_shadows.is_none()
             && self.ibl.is_none()
             && self.clouds.is_none()
     }
@@ -265,13 +410,17 @@ mod tests {
     #[test]
     fn settings_serialize_only_given_fields() {
         let p: RenderSettingsSetParams = serde_json::from_value(
-            json!({"exposure": {"auto": false, "compensation_ev": 1.5}, "shadows": {"pcf_radius": 2}}),
+            json!({"exposure": {"auto": false, "compensation_ev": 1.5}, "shadows": {"pcf_radius": 2.5},
+                   "contact_shadows": {"steps": 16}}),
         )
         .unwrap();
         assert_eq!(
             serde_json::to_value(&p).unwrap(),
-            json!({"exposure": {"auto": false, "compensation_ev": 1.5}, "shadows": {"pcf_radius": 2}})
+            json!({"exposure": {"auto": false, "compensation_ev": 1.5}, "shadows": {"pcf_radius": 2.5},
+                   "contact_shadows": {"steps": 16}})
         );
+        let group: SettingsGroup = serde_json::from_value(json!("contact_shadows")).unwrap();
+        assert_eq!(group, SettingsGroup::ContactShadows);
         assert!(!p.is_empty());
         assert!(RenderSettingsSetParams::default().is_empty());
     }

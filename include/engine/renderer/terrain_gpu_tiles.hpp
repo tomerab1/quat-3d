@@ -15,7 +15,9 @@
 // Fallbacks keep the CPU generator in charge of correctness: params the GPU
 // cannot do (droplet erosion, oversized tiles) are refused by supports(),
 // and a job that fails on the GPU (out of memory) is regenerated on a CPU
-// worker and delivered through the same future.
+// worker and delivered through the same future. That worker keeps the
+// request's CancelToken, and abandon() / destruction cancel it, so a
+// fallback never runs a generation nobody wants to completion (#78).
 
 #include <cstddef>
 #include <cstdint>
@@ -25,12 +27,12 @@
 #include <memory>
 #include <optional>
 #include <string>
-#include <vector>
 
 #include "engine/core/error.hpp"
 #include "engine/renderer/terrain_synth_pass.hpp"
 #include "engine/rhi/gpu_allocator.hpp"
 #include "engine/rhi/render_graph.hpp"
+#include "engine/terrain/cpu_tile_jobs.hpp"
 #include "engine/terrain/tile_generator.hpp"
 
 namespace engine::rhi {
@@ -72,7 +74,9 @@ public:
 
     // Gives up every tile not yet delivered: queued jobs are dropped and
     // each pending future becomes ready with an empty (invalid) Heightmap,
-    // i.e. cancelled. Jobs already on the GPU finish and are discarded. Call
+    // i.e. cancelled. Jobs already on the GPU finish and are discarded; CPU
+    // fallbacks are cancelled (their futures resolve invalid once their
+    // workers notice). Call
     // it before blocking on a future once frames stop running (teardown), or
     // when nothing wants the tiles any more (the Terrain entity is gone).
     void abandon();
@@ -84,6 +88,8 @@ public:
     // release (tests / diagnostics).
     [[nodiscard]] std::size_t parked_count() const { return parked_.size(); }
     [[nodiscard]] std::size_t retired_count() const { return synth_.retired_count(); }
+    // CPU fallbacks not yet reaped by tick() (tests / diagnostics).
+    [[nodiscard]] std::size_t cpu_fallback_count() const { return cpu_fallbacks_.size(); }
 
 private:
     // Passkey: only create() can name Key, so construction goes through it.
@@ -95,6 +101,10 @@ public:
     explicit GpuTileSource(Key /*key*/) {}
 
 private:
+    // Tests fail pending jobs through the real fallback path (defined in
+    // tests/, so production builds carry no fault-injection switch).
+    friend struct GpuTileSourceTestAccess;
+
     void deliver(TerrainSynthPass::Result result);
     void fall_back_to_cpu(std::uint64_t id);
 
@@ -111,7 +121,7 @@ private:
     TerrainSynthPass                 synth_;
     std::map<std::uint64_t, Pending> pending_; // by job id
     std::map<std::uint64_t, Parked>  parked_;  // delivered, awaiting adoption
-    std::vector<std::future<void>>   cpu_fallbacks_;
+    terrain::CpuTileJobs             cpu_fallbacks_; // GPU jobs regenerating on the CPU
 };
 
 } // namespace engine::renderer

@@ -38,10 +38,14 @@ Targets: the engine libraries (`engine_core`, `engine_rhi`, `engine_renderer`,
 `engine_editor`), the `game` executable (the editor when `ENGINE_EDITOR` is
 on), `quat-player` (the runtime player games ship with — always without the
 editor) and `quat-player-shipping` (the same with remote control compiled out,
-`QUAT_SHIPPING`; what shipping packages contain), the game packager `quat-pack` (`engine_pack`), and the GoogleTest
-suite `engine_tests` (`tests/`). `ENGINE_EDITOR` is a per-target definition
-(the `engine_editor_build` interface target), not a global one, so one
-editor build produces both executables from the same application sources.
+`QUAT_SHIPPING`; what shipping packages contain), the game packager
+`quat-pack` (`engine_pack`), the offline cooker (`engine_cook` + the
+`quat-cook` CLI, never linked into the game or the players) and the
+GoogleTest suite `engine_tests` (`tests/`). `ENGINE_EDITOR` is a per-target
+definition (the `engine_editor_build` interface target), not a global one, so
+one editor build produces both executables from the same application sources
+(`game_world` / `game_world_runtime` are the two builds of the window-free
+world layer).
 
 ## Testing
 
@@ -71,6 +75,16 @@ Test layout:
 | `tests/legacy/` | Wrappers around the old `run_*_self_test()` functions, removed as their bodies migrate into `tests/<module>/` |
 
 
+## Script hot reload
+
+Editor builds watch `assets/scripts/` (and its subdirectories present at
+startup) while running (`QUAT_SCRIPT_HOT_RELOAD=0` turns it off, `=1` turns
+it on in non-editor builds). Saving a `.lua` file recompiles it; while
+playing, its instances restart with the new code, and a compile or load
+error keeps the previous version running (the error shows under **Stats →
+Scripts**, in the log, and in `script.list`). Outside Play the file is only
+syntax-checked. See [`scripting.md`](scripting.md).
+
 ## Shader hot reload
 
 Editor builds watch `assets/shaders/` and `assets/shaders/lib/` while running
@@ -97,6 +111,119 @@ destroyed once the frames in flight are done.
   holding the returned `rhi::ManagedPipeline`, reading `handle()` /
   `layout()` when recording.
 - `QUAT_SLANGC=<path>` overrides which slangc is used.
+
+## Material shaders
+
+Authored materials (ROADMAP A6) are Slang modules in
+`assets/shaders/materials/<name>.slang` implementing `IMaterial`
+(`assets/shaders/lib/material.slang`) and ending with
+`export struct SurfaceMaterial : IMaterial = <their struct>;` — start from
+`assets/shaders/templates/material.slang`. Select one on an entity with
+`primitive.shader` (+ `shader_params`), in the inspector or over remote
+control (`shader.*` methods, see [`remote-control.md`](remote-control.md#material-shaders-roadmap-a6)).
+
+- Each material is linked against the pass driver module
+  `lib/material_pass_gbuffer.slang` (link-time specialisation: the driver
+  declares `extern struct SurfaceMaterial`) into
+  `cooked/shaders/materials/<name>.gbuffer.spv`, offline by
+  `cmake/CompileShaders.cmake` and at runtime by shader hot reload — one
+  program and pipeline per material, same layout as the built-in GBuffer
+  program. Saving the file hot-swaps it like any other shader.
+- Materials cannot declare resources: everything comes in through
+  `MaterialInput` (uv, world position, normal, view direction, time, the
+  entity's material constants incl. two `shader_params` vec4s, and the
+  built-in PBR result `standard`). A program whose reflection does not fit the
+  pass layout is rejected.
+- They run in the deferred pass only (emission is a GBuffer target the
+  lighting pass adds; alpha below 0.5 cuts out). Shadows do not run the
+  material: a cut-out hole still casts a shadow (the mesh's silhouette). The
+  variant table in `include/engine/rhi/material_shader_names.hpp` is where
+  `shadow` and `forward` variants go (ROADMAP A6 follow-up).
+- Sources sent over remote control may not read other files: no `#`
+  directives, no `__include`, no `import "<path>"`, and `import` only names a
+  library module (`rhi::check_material_source`).
+- Test material sources live in `tests/data/materials/`;
+  `tests/support/material_shader_tree.hpp` builds a scratch project with the
+  library modules cooked.
+
+## Cooking assets
+
+`quat-cook <input.gltf|glb> <output.gltf|glb> [options]` (target
+`quat-cook`) prepares a glTF for shipping. A `.glb` output is one binary
+file; a `.gltf` output gets a `.bin` next to it. The input goes through the
+runtime's own parse and validation (`parse_gltf`, `asset::decode_png_jpeg`
+and its limits), so anything the cooker accepts the engine loads; already
+cooked files can be cooked again (their meshopt streams are decoded first).
+Cooked files target the engine: see the normal-map note below.
+
+- **Textures** become KTX2 with Basis Universal supercompression
+  (`KHR_texture_basisu`, the PNG/JPEG is dropped), full mip chains generated
+  in linear light (normal maps renormalised), resized to multiples of 4 as
+  the extension requires. Normal maps use UASTC (+ RDO + Zstd) and are stored
+  as X in RGB / Y in alpha so they transcode to BC5; everything else uses
+  ETC1S. Occlusion-only images are stored single-channel (BC4 at runtime).
+  Third-party viewers read such a normal map's RGB as (X, X, X); textures in
+  that layout carry `extras.quat_normal_xy: true` (the engine itself reads
+  the layout from the KTX2 descriptor). Use `--normal-layout rgb` for files
+  meant for other viewers.
+- **Meshes**: primitives sharing a vertex stream set are optimised together
+  (meshoptimizer vertex cache, overdraw, vertex fetch; unused vertices are
+  dropped), then quantised — normals / tangents as 8-bit octahedral
+  (`KHR_mesh_quantization`), UVs and colours in [0, 1] as 16-bit unorm,
+  positions as floats through the exponent filter, skin weights as bytes —
+  and compressed with the meshopt codecs (`EXT_meshopt_compression`, vertex
+  codec v0 as the extension requires). Primitives with morph targets, or
+  whose accessors other primitives share differently, are copied unchanged.
+- Buffers are compacted to the data the output still references.
+
+| Option | Default | |
+|---|---|---|
+| `--color-codec etc1s\|uastc` | `etc1s` | codec for every non-normal texture |
+| `--normal-codec etc1s\|uastc` | `uastc` | codec for normal maps |
+| `--normal-layout xy\|rgb` | `xy` | `rgb` keeps normals readable by other glTF viewers (BC7 instead of BC5) |
+| `--etc1s-quality N` | 128 | 1..255 |
+| `--uastc-level N` / `--uastc-rdo Q` / `--zstd N` | 2 / 1.0 / 18 | UASTC effort, RDO strength (0 = off), Zstd level (0 = off) |
+| `--no-mips`, `--no-textures` | | |
+| `--no-optimize`, `--no-quantize`, `--no-compress` | | skip the mesh passes |
+| `--position-bits N`, `--normal-bits 8\|16` | 16, 8 | quantisation precision |
+| `--threads N` | all cores | texture encoder threads |
+
+At load the engine picks the transcode target from what the device samples
+(`rhi::TextureCaps`, enabled at device creation):
+
+| Texture | BC (desktop, lavapipe) | ASTC only, or Apple GPU | Neither |
+|---|---|---|---|
+| Colour, sRGB or linear | BC7 | ASTC 4x4 | RGBA8 |
+| Normal map, X/Y layout | BC5 | ASTC 4x4 + RA swizzle | RGBA8 + RA swizzle |
+| Normal map, RGB layout | BC7 | ASTC 4x4 | RGBA8 |
+| Single channel, linear | BC4 (+ RRR1 swizzle) | ASTC 4x4 | RGBA8 |
+
+KTX2 files that already hold BC7/BC5/BC4/ASTC 4x4/RGBA8 data are uploaded
+as they are when the device supports the format. Decoding and transcoding run
+on worker threads (`extract_textures`); only the upload uses the device.
+
+Every texture is untrusted input, checked against one configuration,
+`asset::TextureLimits` (default 8192 per side, lowered to the device's
+`maxImageDimension2D`; 512 MiB decoded per image; 2 GiB per load, shared by a
+file's images through `asset::DecodeBudget`) before anything is allocated:
+
+- PNG / JPEG (`asset::decode_png_jpeg`): only those two formats are compiled
+  into stb_image (`STBI_MAX_DIMENSIONS` 16384 as a second guard); the size in
+  the header is checked first and stb's buffer is adopted without a copy.
+- KTX2 (`asset::validate_ktx2`): header, level index (in-file, ordered,
+  sizes matching the extent), BasisLZ global data (codebook lengths, one
+  image descriptor per level, slices inside their level), then libktx loads
+  and transcodes. The `ktx` overlay port also makes libktx fail on corrupt
+  BasisLZ codebooks instead of transcoding with them (a crash found by the
+  fuzz test), and exports `KTX::ktx_read`, which the game links (no Basis /
+  ASTC encoders; the `game_has_no_texture_encoder` CTest checks with `nm`).
+  `QUAT_KTX2_FUZZ_ROUNDS=<n>` lengthens the `Ktx2Decode.CorruptedFilesNeverCrash`
+  fuzz test, e.g. in an ASan build (CI runs it without sanitizers).
+- `EXT_meshopt_compression` views are rejected when they claim more than
+  1024x their compressed size or push the file past 1 GiB decoded.
+Quantised attributes are dequantised to the float vertex layout at load —
+smaller downloads, same VRAM per vertex; a quantised vertex format is a
+later step.
 
 ## CI
 
@@ -173,6 +300,46 @@ whose `manifest.json` says `development` (missing or invalid: shipping), and
 `QUAT_GAME` cannot raise that. `quat-pack --out` / `project.build` `output`
 may not equal, lie inside or contain a content root or the start scene's
 folder.
+### Screenshots
+
+After the tests (also when they fail), the `linux` job renders a fixed set of
+scenes with the real `game` binary on lavapipe under Xvfb —
+`scripts/ci-screenshots.sh`: the showcase with and without the editor UI,
+`QUAT_TERRAIN=1` and `QUAT_PHYSICS=1`, each with a frame budget, muted audio
+and a per-scene timeout (`SCENE_TIMEOUT`, default 300 s) so a hang fails that
+scene instead of the job. Each final frame is converted to PNG
+(`scripts/ppm_to_png.py`, halved when 1280 px or wider, except the editor capture, kept full size so its UI stays readable). A crash, timeout or
+missing image is listed in the step summary with the log tail and an
+`::error` annotation. The step is `continue-on-error` for now (temporary,
+until the headless scenes have proven stable). Rendered captures are
+checked by `scripts/check_capture.py`: no large exact-black rectangle in any
+scene (a NaN/Inf spreading through the HDR chain), and the editor scene must
+show the docked editor UI; a failed check fails the job (`Capture checks`
+step).
+
+Where the images land:
+
+- the `linux-screenshots` artifact (PNGs, per-scene logs, `results.tsv`);
+- for pushes and same-repository PRs, `scripts/ci-publish-screenshots.sh`
+  commits them to the **`ci-screenshots` branch** under
+  `runs/<pr-N or branch>/<short-sha>/` and rebuilds `index.md` there (newest
+  first, images inline), then shows them inline in the step summary. Commits
+  are append-only (no force-push; a lost push race re-applies on the new
+  tip). Fork PRs never publish. Publishing runs in its own
+  `publish-screenshots` job (the only one with a write token; the build job
+  is read-only), from the uploaded artifact. Retention: each publish keeps
+  the newest 10 runs per PR/branch and the newest 20 of `master`
+  (`KEEP_RUNS`, `KEEP_DEFAULT_RUNS`) at the branch tip; older run
+  directories are deleted there but stay in the branch history. When the
+  branch grows too large, re-root it by hand — the only force-push allowed,
+  on this machine-owned branch only: check out `ci-screenshots`, `git
+  checkout --orphan tmp && git commit -m "Re-root ci-screenshots"`, then
+  `git push --force origin tmp:ci-screenshots`. To read them without the browser:
+  `git fetch origin ci-screenshots && git show origin/ci-screenshots:index.md`.
+
+Run locally: `scripts/ci-screenshots.sh build/release/game /tmp/shots`
+(`SCENES="showcase physics"` picks a subset; needs `xvfb` and
+`mesa-vulkan-drivers`).
 
 ## Building in a cloud container
 
@@ -202,6 +369,10 @@ cmake --build --preset release
 VK_ICD_FILENAMES=/opt/lavapipe/lvp_icd.json ctest --test-dir build/release --output-on-failure
 ```
 
+Configure also fetches ACL v2.1.0 and RTM v2.2.0 (header-only animation
+compression, `cmake/FetchAcl.cmake`) with git from GitHub. Offline, pass
+`-DFETCHCONTENT_SOURCE_DIR_ACL=<acl clone> -DFETCHCONTENT_SOURCE_DIR_RTM=<rtm clone>`.
+
 ### Compile-checking without vcpkg
 
 When vcpkg can't download (blocked network), clone the dependency headers at
@@ -221,8 +392,13 @@ git clone --depth 1 --branch v1.92.8-docking https://github.com/ocornut/imgui.gi
 # imgui-node-editor (Behaviour panel): the vcpkg port's tag plus its patches,
 # which make 0.9.3 build against imgui 1.92
 git clone --depth 1 --branch v0.9.3 https://github.com/thedmd/imgui-node-editor.git
+GIT_LFS_SKIP_SMUDGE=1 git clone --depth 1 --branch v4.4.2 https://github.com/KhronosGroup/KTX-Software.git ktx
+git clone --depth 1 --branch v1.1.1 https://github.com/zeux/meshoptimizer.git
 for p in fix-vec2-math-operators remove-getkeyindex fix-imgui-v1.92.5; do
   patch -d imgui-node-editor -p1 < ~/vcpkg/ports/imgui-node-editor/$p.patch; done
+# ACL + RTM (animation compression; not in vcpkg — cmake/FetchAcl.cmake pins them)
+git clone --depth 1 --branch v2.1.0 https://github.com/nfrechette/acl.git
+git clone --depth 1 --branch v2.2.0 https://github.com/nfrechette/rtm.git
 apt-get install -y nlohmann-json3-dev libglm-dev libvulkan-dev
 
 D=~/deps; cd ~/quat-3d
@@ -233,9 +409,28 @@ clang++ -std=c++23 -stdlib=libc++ -Wall -Wextra -Wshadow -fno-exceptions -fno-rt
   -isystem $D/stb -isystem $D/sdl/include  src/scene/scene.cpp
 ```
 
+Lua and sol2 (engine_script, G7) are not in that list: clone sol2 v3.5.0
+(header-only) and Lua v5.4.8 into a scratch directory and pass both through
+`EXTRA_FLAGS`. Lua builds into a static library with one compiler call per
+file, so the script tests can be linked and run locally:
+
+```sh
+git clone --depth 1 --branch v3.5.0 https://github.com/ThePhD/sol2.git $S/sol2
+git clone --depth 1 --branch v5.4.8 https://github.com/lua/lua.git $S/lua
+(cd $S/lua && for f in l*.c; do case $f in lua.c|ltests.c) continue;; esac
+   cc -O2 -DLUA_USE_POSIX -c $f; done && ar rcs liblua.a l*.o)
+EXTRA_FLAGS="-isystem $S/sol2/include -isystem $S/lua" scripts/check-compile.sh src/script/*.cpp
+```
+
 This catches compile errors and warnings, not link errors or test failures.
 `scripts/check-compile.sh <files...>` wraps exactly this (set `DEPS` if the
-clones live elsewhere than `~/deps`).
+clones live elsewhere than `~/deps`). Files under `src/app/` and
+`src/player/` are checked three times — the editor build, `quat-player`
+(no `ENGINE_EDITOR`) and `quat-player-shipping` (`QUAT_SHIPPING`) — the
+last two without the source-tree path macros. Also needed for the whole tree:
+ImGuizmo (`-isystem <clone>/src`), nlohmann-json, glm and the Vulkan headers
+(through `EXTRA_FLAGS` when not installed), and libc++ (`apt-get install
+libc++-dev libc++abi-dev`).
 
 Modules whose dependencies are header-only (animation and terrain need glm;
 remote needs nlohmann-json and glm — `apt-get install nlohmann-json3-dev

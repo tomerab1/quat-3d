@@ -1,0 +1,1 @@
+Delete an authored material shader: its source file and compiled programs. Every entity whose `primitive.shader` (or `instanced_mesh` primitive) named it is reset to the built-in `standard` material; the reply says how many (`entities_reset`). The built-in material cannot be deleted. This cannot be undone — read the source with `shader_get` first if it may be needed again.

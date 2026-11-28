@@ -15,6 +15,9 @@
 
 namespace quat::test::pbr_ref {
 
+// Mirrors PBR_MIN_PUNCTUAL_ROUGHNESS in assets/shaders/lib/pbr.slang.
+inline constexpr float k_min_punctual_roughness = 0.089F;
+
 inline constexpr float k_pi = 3.14159265358979F;
 
 inline float d_ggx(float ndoth, float a) {
@@ -44,7 +47,10 @@ inline glm::vec3 direct(glm::vec3 albedo, float metallic, float roughness, glm::
     const float ndoth = std::max(glm::dot(N, H), 0.0F);
     const float vdoth = std::max(glm::dot(V, H), 0.0F);
 
-    const float a = std::max(roughness * roughness, 1e-3F);
+    // Punctual lights use at least perceptual roughness 0.089, as the shaders
+    // do (PBR_MIN_PUNCTUAL_ROUGHNESS in lib/pbr.slang, issue #45).
+    const float r = std::max(roughness, k_min_punctual_roughness);
+    const float a = r * r;
     const glm::vec3 f0 = glm::mix(glm::vec3(0.04F), albedo, metallic);
 
     const float D = d_ggx(ndoth, a);

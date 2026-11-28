@@ -83,24 +83,80 @@ JSON-RPC over loopback TCP to the engine.
   under `content/` (tool descriptions via `#[doc = include_str!]`, prompts as
   MiniJinja templates); `server.rs`/`client.rs` split by responsibility (one
   rmcp router per tool group); `clippy::pedantic` enforced.
+- [ ] **S9 — Conflict-resistant registration.** Every feature PR edits the
+  same central lists (top-level `CMakeLists.txt` source lists, the
+  component table in `component_json.cpp`, `remote_bridge` method wiring,
+  quat-mcp `server/mod.rs` tool lists, `inspector.cpp`), so each merge
+  forces the next 3–5 PRs to re-resolve them. Move to per-module
+  `CMakeLists.txt` (`add_subdirectory` per `src/<module>`), a component
+  registry built from per-component registration files, remote method
+  tables registered per module, quat-mcp tools grouped by module with one
+  router merge line each, and per-component inspector files.
 - [ ] **A5 — Debugging tools.** Log tail + filters (S6), Vulkan validation
   messages, frame/GPU timings, pause / single-step / time scale, entity watch,
   physics raycasts and contact queries, navmesh path queries.
 - [ ] **A6 — Shader authoring.** Create/edit material shaders (Slang modules
   implementing the material interface), compile with diagnostics returned to
   the model, hot-swap (needs R2).
+  - [ ] A6 follow-up: `shadow` and `forward` variants in
+    `material_shaders::variants` — shadow casting that evaluates the material
+    and honours its alpha cutout (today shadows use the mesh's silhouette),
+    and alpha-blended material shaders in the transparent pass.
 - [ ] **A7 — Behaviour authoring.** Build and edit behaviour graphs (G2) by
   tool call, with validation errors returned as data.
 - [ ] **A8 — Live tuning.** Every renderer / post-process / material
   parameter readable and writable over the remote API and MCP from one
   settings model the editor also edits (schema with ranges and units),
   saved with the scene; a `tune_look` workflow prompt.
-- [ ] **A9 — World-building ergonomics** (from MCP world-building sessions,
-  issues #37–#42): scene-derived camera far plane; shading-only terrain
-  edits without regeneration; batch-consistent `world.ground_height`;
-  entity world bounds + `world.place_on_ground`; screenshots from an
-  explicit offscreen camera; `asset_search` / `asset_fetch` for CC0 Poly
-  Haven models (licence recorded, cooked with R17).
+- [x] **A9 — World-building ergonomics** (from MCP world-building sessions,
+  issues #37–#42): scene-derived camera clip planes (+ `camera.set`
+  near/far/cut); shading-only terrain edits without regeneration;
+  batch-consistent `world.ground_height` + `terrain.status`; entity world
+  bounds + `world.place_on_ground`; screenshots from an explicit camera
+  (a one-frame camera swap that leaves the viewport camera untouched — the
+  renderer has a single view); `asset_search` / `asset_fetch` for CC0 Poly
+  Haven models (licence recorded, cooked with R17's `quat-cook` when
+  installed).
+- [ ] **A10 — Gameplay control** (design:
+  [`docs/research/mcp-gameplay-control.md`](docs/research/mcp-gameplay-control.md)).
+  Runtime control of a playing game over remote + MCP, all mutations
+  reverted by Stop:
+  - **A10.1 Physics** *(L)*: engine event ring (`events.poll`: contacts,
+    triggers, script errors, sim state, scene changes); body velocities,
+    impulses / forces, one gravity setting (Jolt + characters, saved with the
+    scene), overlap / shape-cast / all-hits queries, current contacts;
+    rigidbody friction / restitution / damping / CCD / axis locks; a `joint`
+    component on Jolt constraints (motors, limits, break force);
+    `character.move`.
+  - **A10.2 Behaviour runtime** *(M)*: a blackboard (component, `bb_*`
+    leaves, Lua access); `bt.blackboard.*`, per-tick trace, breakpoints that
+    pause the sim clock, forced leaf results.
+  - **A10.3 Script runtime** *(M, needs G7/#22)*: list instances with
+    errors and timings, inspect `self`, call exported functions, sandboxed
+    `eval` (same limits, captured output), restart, binding reflection.
+  - **A10.4 Play-mode control** *(M–L)*: checkpoints (ECS + Jolt
+    `StateRecorder`) with a determinism test, `sim.state`, `sim.run_until`
+    (event / watch / log conditions), `input.inject` into the G7 input
+    sampler, `camera.view`.
+  - **A10.5** *(S each)*: animation state-machine params, audio bus mix,
+    particle bursts, editor selection.
+- [ ] **A11 — MCP protocol upgrades** *(M–L)*: annotation audit (rule
+  test, `anthropic/maxResultSizeChars`); structured output (`outputSchema`)
+  for stable tools; resources, templates, resource links and completions;
+  subscriptions over the A10.1 event ring (legacy + `subscriptions/listen`);
+  engine jobs (`jobs.*`, progress, cancel) mapped to MCP tasks (SEP-2663)
+  and progress notifications; elicitation confirms for destructive tools
+  (MRTR + legacy, `confirm: true` fallback); icons; the test suite on
+  protocol 2025-11-25 and 2026-07-28. Roots / sampling / logging stay
+  unused (deprecated).
+- [ ] **A12 — Skills** *(M)*: quat-3d workflows as Agent Skills in
+  `tools/quat-mcp/content/skills/` (build-level, tune-look,
+  debug-physics-glitch, write-gameplay-script, design-npc-behaviour,
+  author-material-shader, playtest), served over MCP (SEP-2640 skills
+  extension), packaged as a Claude Code plugin + marketplace entry, and
+  rendered as the MCP prompts for clients without skills; tests keep
+  skills, tool names and resources in sync. Each skill ships with the tools
+  it needs (A10.x, A6, G7, A9).
 
 ## R — Rendering & performance
 
@@ -155,13 +211,17 @@ JSON-RPC over loopback TCP to the engine.
   4-cascade CSM with GPU depth bounds and texel snapping, XeGTAO port with
   bent normals → visibility-bitmask SSILVB, contact shadows, then stochastic
   SSR. Supersedes the AO/SSR/contact-shadow parts of R8. *(quick win)*
+  - [x] R12.11 Materials in the depth / shadow passes: glTF `MASK` alpha test
+    (GBuffer + CSM casters, separate pipelines so opaque keeps early-Z,
+    coverage-preserving alpha mips), translucent (coloured) shadows for
+    transmissive / blended casters (#35, #23, #62).
 - [ ] **R13 — Weather + wind.** One `WeatherState` (ECS singleton, Lua + MCP
   `set_weather`) driving a global wind field (grass, foliage, cloth, particles,
   ocean, clouds), wetness/snow layers, rain with an occlusion map, cloud
   shadows; then froxel volumetric fog + local fog volumes (on R10.1's
   clusters) and a 2.5D volumetric cloud layer. *(quick win → medium)*
 - [ ] **R14 — Foliage.** Main + detail wind bending, two-sided foliage shading
-  model ID in the GBuffer, hashed alpha with coverage-preserving mips, GPU
+  model ID in the GBuffer, hashed alpha (coverage-preserving mips: R12.11), GPU
   instance cull + LOD cross-fade (with R9.4), octahedral impostors, GPU
   density placement from R10.2 terrain maps with **biome recipes authored
   over MCP**. *(quick win → medium)*
@@ -172,8 +232,30 @@ JSON-RPC over loopback TCP to the engine.
 - [ ] **R16 — Water.** FFT ocean (JONSWAP) with single-layer water shading and
   Jolt buoyancy from a deterministic CPU height reference; later heightfield /
   shallow-water local sims and rivers from R10.2 erosion flow. *(medium)*
-- [ ] **R17 — Asset cooker formats.** KTX2 + Basis Universal textures,
-  meshoptimizer codecs and quantisation. *(quick win)*
+- [x] **R17 — Asset cooker formats.** KTX2 + Basis Universal textures,
+  meshoptimizer codecs and quantisation. *(quick win)* Simplified mesh LODs
+  were cut from R17 (no consumer yet) and moved to R17.1.
+  - [ ] **R17.1 Mesh LODs.** Cooker writes simplified index buffers
+    (`meshopt_simplifyWithAttributes` with the normal stream), the loader
+    validates and exposes them on `MeshAsset`, the renderer selects by
+    screen size; round-trip test.
+- [ ] **R18 — VFX graph (Niagara-class).** On R10.3's GPU particle core: a
+  modular emitter model (spawn / init / update / render stages), a node
+  graph compiled to Slang compute modules (shares R7's codegen), events
+  between emitters, ribbons/trails, mesh particles, beams, GPU data
+  interfaces (sample skeleton, mesh surface, terrain, depth/SDF, wind
+  field), parameter collections, sub-UV + motion vectors, an editor graph
+  (imgui-node-editor) with live preview, and MCP authoring of emitters.
+  *(large; after R10.3, R7)*
+- [ ] **R19 — Virtualized geometry (Nanite-class).** Cluster DAG built
+  offline with meshoptimizer clusterlod (extends R17's cooker), page
+  streaming, GPU-driven two-pass occlusion culling on R12's Hi-Z, a
+  visibility buffer + material resolve pass, hardware raster through
+  indirect draws (mesh shaders where `VK_EXT_mesh_shader` exists) plus a
+  compute software rasteriser for sub-pixel triangles so every platform
+  (MoltenVK included) has a path; foliage and instanced meshes first, then
+  shadows (virtual shadow maps as a follow-up). *(very large; after R5, R6,
+  R9.4)*
 
 ## P — Platforms & shipping
 
@@ -245,6 +327,26 @@ JSON-RPC over loopback TCP to the engine.
   `DEBRIS` layer, bond-delta replication over the net layer, destruction
   fields over MCP. *(medium)*
 
+**RPG / action-adventure set** (owner: "RPG games will be possible?"). With
+G5 + G6 these make a small third-person RPG shippable via P4; all game data
+is JSON/Lua so it is authorable over MCP.
+
+- [ ] **G11 — Save / load game state.** Versioned save files (player,
+  world deltas, script state via an explicit Lua `save`/`load` contract,
+  quest/inventory state), slots + autosave, migration on version bump.
+- [ ] **G12 — Dialogue + quests.** Data-driven dialogue graphs (choices,
+  conditions, Lua hooks, localisable string tables) and a quest system
+  (objectives, triggers, journal), each with an editor node view (reusing
+  imgui-node-editor) and MCP authoring tools.
+- [ ] **G13 — Gameplay framework.** Stats/attributes with modifiers,
+  abilities with cooldowns/costs, items + inventory + equipment, loot
+  tables — all data (JSON schemas) driven from Lua, validated on load.
+- [ ] **G14 — Combat.** Hitbox/hurtbox shapes on skeleton joints, animation
+  events/notifies and root motion (extends G8), damage pipeline, lock-on
+  targeting, NPC combat behaviour-tree leaves.
+- [ ] **G15 — Third-person camera rig.** Orbit/follow camera with collision
+  (sphere cast), lock-on framing, smoothing, cutscene camera tracks.
+
 ## E — Editor (production readiness)
 
 - [ ] **E1 — Undo/redo.** Command stack covering every editor and remote edit.
@@ -261,25 +363,39 @@ JSON-RPC over loopback TCP to the engine.
   when those land.
 - [ ] **E8 — Editor UI/UX redesign** *(owner request, top editor priority)*.
   A coherent, modern editor on par with Unreal 5 / Godot 4 / Blender:
-  - **E8.1 Design system** (`src/editor/ui/`): theme tokens (dark + light,
+  - [x] **E8.1 Design system** (`src/editor/ui/`): theme tokens (dark + light,
     one accent, semantic colours), Inter + JetBrains Mono + an icon font,
     DPI-aware sizing and spacing scale, and a widget kit — property grid
     rows (label column, reset-to-default, tooltips), XYZ-coloured vector
     fields, component headers (icon, enable toggle, ⋮ menu), search fields,
     icon buttons/toolbars, toasts, empty states.
-  - **E8.2 Shell**: main menu, main toolbar (play/pause/step, gizmo mode +
+  - [x] **E8.2 Shell**: main menu, main toolbar (play/pause/step, gizmo mode +
     space, snapping, camera speed), status bar (FPS/frame time, sim state,
     selection, remote/MCP connection), viewport as a dock panel with an
     overlay toolbar (view modes, stats), default layout + reset, layout
     persistence, a command palette (Ctrl+P) and consistent shortcuts.
-  - **E8.3 Core panels** on the kit: Hierarchy (search, type icons,
-    visibility, F2 rename, drag re-parent, context menu), Inspector
-    (property grid, searchable Add Component), Asset browser (breadcrumbs,
-    grid/list, search, type icons), Console (A5 log ring, filters).
-  - **E8.4 Feature panels** migrated once their PRs land (tuning, shadows/AO,
-    upscaler, particles, scripts, behaviour editor, audio, grass).
-  - **Verification:** real editor screenshots in CI (headless capture of the
-    docked editor) with before/after images for every slice.
+  - [x] **E8.3 Core panels** on the kit: Hierarchy (search, type icons,
+    F2 rename, drag re-parent, context menu), Inspector (property grid,
+    searchable Add Component), Asset browser (breadcrumbs, grid/list, search,
+    type icons), Console (A5 log ring, filters). The hierarchy visibility
+    toggle moved to E8.4: the engine has no per-entity visibility yet.
+  - [ ] **E8.4 Feature panels and follow-ups**: migrate the panels still on
+    plain ImGui (Physics, Animation preview, the behaviour editor's toolbar
+    and nodes, the Grass and Audio inspector sections) and those of later
+    PRs (upscaler, particles, scripts) to the kit; hierarchy visibility
+    toggle and an entity enable toggle (need an engine-side visible /
+    enabled concept honoured by every draw path, not editor state in the
+    ECS); wire Undo / Redo to E1's command stack; ImGui 1.92 dynamic font
+    textures in `ImGuiPass` (free font scaling, thumbnails for E6).
+    Done in the #52 follow-up PR: a forced `QUAT_EDITOR_THEME` is not saved;
+    re-parenting under a zero-scaled parent is refused; scene paths must be
+    valid UTF-8; escaping file symlinks are not listed; snap steps are
+    clamped; swatch text follows the swatch's luminance.
+  - **Verification:** real editor screenshots (headless capture of the
+    docked editor) with before/after images for every slice:
+    `scripts/editor-screenshots.sh` and `docs/screenshots/editor/`; the CI
+    screenshot job captures the editor at 1600x900 once it adopts that
+    script's settings.
 
 ---
 

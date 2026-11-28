@@ -18,6 +18,7 @@
 
 #include "engine/core/error.hpp"
 #include "engine/renderer/mesh_pass.hpp"
+#include "engine/scene/animation_system.hpp"
 #include "engine/scene/components.hpp"
 #include "engine/scene/navigation.hpp"
 
@@ -51,10 +52,11 @@ public:
     bool set_parent(entt::entity child, entt::entity parent);
 
     // Run the fixed system sequence for one tick (`dt` seconds since the last):
-    //   1. AnimationSystem     — advance Animators, write skinning matrices.
-    //   2. TransformSystem     — propagate world matrices down the hierarchy.
+    //   1. TransformSystem     — propagate world matrices down the hierarchy.
+    //   2. AnimationSystem     — advance Animators, place feet (probing the
+    //                            ground with `ground`), write skinning matrices.
     //   3. RenderCollectSystem — gather drawable entities into draw_list().
-    void tick(float dt = 0.0F);
+    void tick(float dt = 0.0F, const FootGroundProbe& ground = {});
 
     // First entity with an active Camera, or entt::null if none.
     [[nodiscard]] entt::entity active_camera() const;
@@ -74,11 +76,7 @@ private:
 // Systems — stateless, exposed for explicit ordering and direct testing.
 // ---------------------------------------------------------------------------
 
-// Advance every Animator by `dt` (scaled by its speed, wrapped when looping),
-// sample its clip against the entity's SkinnedMesh skeleton, and write the
-// per-joint skinning matrices into SkinnedMesh::joint_matrices. Entities with a
-// SkinnedMesh but no/!loaded Animator clip get the bind pose.
-void animation_system(entt::registry& registry, float dt);
+// animation_system (Animator playback, FootIK, skinning): animation_system.hpp.
 
 // Propagate world-space transforms down the Parent/Children hierarchy:
 // world = parent.world * local, starting from roots (entities with no Parent, or
@@ -126,6 +124,12 @@ struct CameraMatrices {
 // dynamic bodies' transforms back into Transform (through the parent's space,
 // see set_world_transform).
 void physics_system(entt::registry& registry, physics::PhysicsWorld& world, float dt);
+
+// The body of `e`'s RigidBody, created now (as physics_system's first step
+// would) when it has none yet — so gameplay code can push a body it spawned
+// this frame. invalid_body without RigidBody + Collider + Transform.
+std::uint32_t ensure_rigid_body(entt::registry& registry, physics::PhysicsWorld& world,
+                                entt::entity e);
 
 // Create a static Jolt height-field body for the first Terrain entity in the
 // registry, matching the rendered surface: the body sits at the tile's minimum

@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <expected>
+#include <span>
 #ifdef ENGINE_DESCRIPTOR_SETS_FALLBACK
 #include <optional>
 #endif
@@ -10,6 +11,7 @@
 #include <vk_mem_alloc.h>
 
 #include "engine/core/error.hpp"
+#include "engine/rhi/texture_caps.hpp"
 
 namespace engine::rhi {
 
@@ -157,13 +159,16 @@ private:
 
 // Immutable transfer context (transfer-capable queue + a command pool created on
 // its family) used by the staging upload helper. `max_anisotropy` carries the
-// device's sampler anisotropy limit (0 = feature unavailable) so asset uploads
-// can build properly filtered samplers without a Device reference.
+// device's sampler anisotropy limit (0 = feature unavailable) and
+// `texture_caps` the sampleable formats and size limit, so asset loads can
+// build properly filtered samplers, pick transcode targets and reject
+// oversized images without a Device.
 struct TransferContext {
     VkDevice      device         = VK_NULL_HANDLE;
     VkCommandPool pool           = VK_NULL_HANDLE;
     VkQueue       queue          = VK_NULL_HANDLE;
     float         max_anisotropy = 0.0F;
+    TextureCaps   texture_caps{};
 };
 
 // Creates a device-local buffer and uploads `data` into it through a temporary
@@ -207,17 +212,38 @@ upload_device_image(GpuAllocator& allocator, const TransferContext& transfer,
                     VkImageUsageFlags usage = VK_IMAGE_USAGE_SAMPLED_BIT,
                     std::uint32_t mip_levels = 1);
 
+// One mip level of a pre-built chain inside an upload blob: `offset`/`size`
+// locate the tightly packed texel blocks, `width`/`height` are the level's
+// texel extent.
+struct ImageLevelRegion {
+    VkDeviceSize  offset = 0;
+    VkDeviceSize  size   = 0;
+    std::uint32_t width  = 0;
+    std::uint32_t height = 0;
+};
+
+// Like upload_device_image, but every mip level comes from `data` (block-
+// compressed formats cannot be blitted, so their chains are cooked offline).
+// Levels must be in order from 0, each within `size` and with the extent of
+// that level of `extent`. The image is left in SHADER_READ_ONLY_OPTIMAL.
+[[nodiscard]] std::expected<GpuImage, core::Error>
+upload_device_image_levels(GpuAllocator& allocator, const TransferContext& transfer,
+                           const void* data, VkDeviceSize size, VkExtent2D extent,
+                           VkFormat format, std::span<const ImageLevelRegion> levels,
+                           VkImageUsageFlags usage = VK_IMAGE_USAGE_SAMPLED_BIT);
+
 // Creates a VkImageView over `image` wrapped in an RAII ImageView. Defaults to a
 // 2D colour view of mip 0; the extra parameters cover cube views
 // (VK_IMAGE_VIEW_TYPE_CUBE, layer_count = 6), single-mip array views for storage
-// writes (VK_IMAGE_VIEW_TYPE_2D_ARRAY, base_mip = mip, layer_count = 6), etc.
+// writes (VK_IMAGE_VIEW_TYPE_2D_ARRAY, base_mip = mip, layer_count = 6),
+// channel swizzles (`components`, identity by default), etc.
 [[nodiscard]] std::expected<ImageView, core::Error>
 create_image_view(VkDevice device, VkImage image, VkFormat format,
                   VkImageAspectFlags aspect = VK_IMAGE_ASPECT_COLOR_BIT,
                   std::uint32_t mip_levels = 1,
                   VkImageViewType view_type = VK_IMAGE_VIEW_TYPE_2D,
                   std::uint32_t base_mip = 0, std::uint32_t base_layer = 0,
-                  std::uint32_t layer_count = 1);
+                  std::uint32_t layer_count = 1, VkComponentMapping components = {});
 
 // Sampler addressing modes for create_sampler. Filtering is always linear with a
 // linear mip mode.
@@ -226,8 +252,27 @@ enum class SamplerAddress : std::uint8_t { repeat, clamp_to_edge, mirrored_repea
 // Creates a linear-filtered VkSampler wrapped in an RAII Sampler.
 // `max_anisotropy` > 0 enables anisotropic filtering at that level (the caller
 // clamps to the device limit; pass TransferContext::max_anisotropy).
+// `mip_lod_bias` is added to every LOD (negative = sharper; upscaled rendering
+// uses texture_lod_bias(), R11).
 [[nodiscard]] std::expected<Sampler, core::Error>
 create_sampler(VkDevice device, SamplerAddress address = SamplerAddress::repeat,
-               std::uint32_t mip_levels = 1, float max_anisotropy = 0.0F);
+               std::uint32_t mip_levels = 1, float max_anisotropy = 0.0F,
+               float mip_lod_bias = 0.0F);
+
+// Every sampler parameter the renderer varies: point sampling (depth
+// pyramids), depth-comparison samplers (hardware PCF on shadow maps) and the
+// border colour sampled outside a clamp-to-border image.
+struct SamplerDesc {
+    VkFilter             filter = VK_FILTER_LINEAR;
+    VkSamplerMipmapMode  mip_mode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+    VkSamplerAddressMode address = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    float                max_lod = VK_LOD_CLAMP_NONE;
+    bool                 compare = false;
+    VkCompareOp          compare_op = VK_COMPARE_OP_LESS_OR_EQUAL;
+    VkBorderColor        border = VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE;
+};
+
+[[nodiscard]] std::expected<Sampler, core::Error> create_sampler(VkDevice device,
+                                                                 const SamplerDesc& desc);
 
 } // namespace engine::rhi

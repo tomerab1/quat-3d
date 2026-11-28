@@ -305,6 +305,31 @@ bool erosion_enabled(const TerrainParams& params) {
                                                       : params.erosion_droplets > 0;
 }
 
+// same_shape lists every field by hand: a new parameter must be added there
+// too (or a shape edit would silently skip regeneration). These sizes trip
+// when the structs change.
+static_assert(sizeof(GridErosionParams) == 48, "GridErosionParams changed: update same_shape");
+static_assert(sizeof(TerrainParams) == 124, "TerrainParams changed: update same_shape");
+
+bool same_shape(const TerrainParams& a, const TerrainParams& b) {
+    const GridErosionParams& ga = a.grid;
+    const GridErosionParams& gb = b.grid;
+    return a.seed == b.seed && a.resolution == b.resolution && a.tile_size_m == b.tile_size_m &&
+           a.height_m == b.height_m && a.octaves == b.octaves && a.lacunarity == b.lacunarity &&
+           a.gain == b.gain && a.base_frequency == b.base_frequency &&
+           a.warp_strength == b.warp_strength && a.erosion_model == b.erosion_model &&
+           a.erosion_droplets == b.erosion_droplets && a.droplet_lifetime == b.droplet_lifetime &&
+           a.erosion_inertia == b.erosion_inertia && a.erosion_capacity == b.erosion_capacity &&
+           a.erosion_deposit_rate == b.erosion_deposit_rate &&
+           a.erosion_erode_rate == b.erosion_erode_rate &&
+           a.erosion_evaporate == b.erosion_evaporate && ga.iterations == gb.iterations &&
+           ga.time_step == gb.time_step && ga.rain == gb.rain && ga.capacity == gb.capacity &&
+           ga.erode_rate == gb.erode_rate && ga.deposit_rate == gb.deposit_rate &&
+           ga.evaporate == gb.evaporate && ga.min_tilt == gb.min_tilt &&
+           ga.max_depth == gb.max_depth && ga.talus == gb.talus &&
+           ga.thermal_rate == gb.thermal_rate && ga.relax_cycles == gb.relax_cycles;
+}
+
 std::array<std::uint8_t, 256> noise_permutation(std::uint32_t seed) {
     std::array<std::uint8_t, 256> perm{};
     std::iota(perm.begin(), perm.end(), std::uint8_t{0});
@@ -338,6 +363,10 @@ float grid_erosion_fade(std::uint32_t x, std::uint32_t z, std::uint32_t resoluti
 }
 
 Heightmap generate(const TerrainParams& params, const std::atomic<bool>* cancel) {
+    const auto cancelled = [cancel] {
+        return cancel != nullptr && cancel->load(std::memory_order_relaxed);
+    };
+    if (cancelled()) return {}; // given up before it started (#78)
     Heightmap map;
     map.resolution = glm::max(params.resolution, 2U);
     map.tile_size_m = params.tile_size_m;
@@ -356,6 +385,7 @@ Heightmap generate(const TerrainParams& params, const std::atomic<bool>* cancel)
             map.heights[static_cast<std::size_t>(z) * res + x] = compose_height(noise, p, params);
         }
     });
+    if (cancelled()) return {};
 
     if (params.erosion_model == ErosionModel::droplets) {
         // Droplets run on the normalised field (parameters are resolution-relative).

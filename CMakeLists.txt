@@ -123,14 +123,21 @@ find_package(VulkanMemoryAllocator CONFIG REQUIRED)
 find_package(nlohmann_json CONFIG REQUIRED)
 find_package(glm CONFIG REQUIRED)
 find_package(fastgltf CONFIG REQUIRED)
+find_package(Ktx CONFIG REQUIRED)            # KTX2 + Basis Universal (R17)
+find_package(meshoptimizer CONFIG REQUIRED)  # mesh codecs / optimisation (R17)
 find_package(Stb REQUIRED)
 find_package(EnTT CONFIG REQUIRED)
 find_package(Jolt CONFIG REQUIRED)
 find_package(recastnavigation CONFIG REQUIRED)
 find_package(GameNetworkingSockets CONFIG REQUIRED)
-# OpenSSL (already in the tree through GameNetworkingSockets): SHA-256 for
-# game package manifests (engine_pack).
-find_package(OpenSSL REQUIRED)
+# Lua 5.4 (C library, longjmp error handling) + sol2 (header-only bindings).
+find_package(Lua REQUIRED)
+find_package(sol2 CONFIG REQUIRED)
+# OpenSSL's libcrypto (GameNetworkingSockets already depends on it): the CSPRNG
+# behind remote-control session tokens (engine_remote) and SHA-256 for game
+# package manifests (engine_pack).
+find_package(OpenSSL REQUIRED COMPONENTS Crypto)
+include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/FetchAcl.cmake) # ACL + RTM (header-only)
 # miniaudio: vcpkg's port is header-only (it installs miniaudio.h and nothing
 # else), so it is wrapped in an imported target here and engine_audio compiles
 # the implementation (src/audio/miniaudio_impl.cpp). Linux needs pthread, libm
@@ -160,6 +167,8 @@ add_library(engine_core STATIC
     src/core/log.cpp
     src/core/stderr_capture.cpp
     src/core/sim_clock.cpp
+    src/core/frame_timer.cpp
+    src/core/path_confine.cpp
     src/core/file_watcher.cpp
     src/core/child_process.cpp
     src/core/asset_root.cpp
@@ -190,6 +199,7 @@ add_library(engine_rhi STATIC
     src/rhi/queue_selection.cpp
     src/rhi/swapchain.cpp
     src/rhi/gpu_allocator.cpp
+    src/rhi/image_upload.cpp
     src/rhi/vma_impl.cpp
     src/rhi/shader_reflection.cpp
     src/rhi/pipeline_cache.cpp
@@ -198,7 +208,10 @@ add_library(engine_rhi STATIC
     src/rhi/graphics_pipeline.cpp
     src/rhi/compute_pipeline.cpp
     src/rhi/shader_compiler.cpp
-    src/rhi/shader_hot_reload.cpp)
+    src/rhi/shader_diagnostics.cpp
+    src/rhi/shader_hot_reload.cpp
+    src/rhi/material_shader_registry.cpp
+    src/rhi/material_shader_source.cpp)
 target_link_libraries(engine_rhi PUBLIC
     engine_flags engine_core Vulkan::Vulkan GPUOpen::VulkanMemoryAllocator)
 # engine_core is public: shader hot reload's headers use its watcher/process
@@ -220,23 +233,56 @@ set_source_files_properties(src/rhi/vma_impl.cpp PROPERTIES COMPILE_OPTIONS "${E
 # and asset types (MeshAsset). MeshAsset owns GpuBuffers, so engine_rhi and glm
 # are PUBLIC: any consumer of the asset headers needs them transitively.
 # ---------------------------------------------------------------------------
+# engine_image — graphics-free texture data, limits and the guarded PNG/JPEG
+# decoder (stb_image), shared by engine_asset and the cooker.
+add_library(engine_image STATIC
+    src/asset/alpha_coverage.cpp
+    src/asset/texture_data.cpp
+    src/asset/image_decode.cpp)
+target_link_libraries(engine_image PUBLIC engine_flags)
+target_link_libraries(engine_image PRIVATE engine_stb_image)
+target_include_directories(engine_image PUBLIC ${ENGINE_PUBLIC_INCLUDE})
+target_include_directories(engine_image PRIVATE ${Stb_INCLUDE_DIR})
+
+# libktx (KTX2 parsing, Zstd, Basis Universal transcoding) backs the KTX2
+# loader. A program can hold only one libktx archive (ktx and ktx_read share
+# objects: duplicate symbols), so engine_asset's link interface picks it for
+# the executable being linked: KTX::ktx_read (decoder only; ports/ktx,
+# game_has_no_texture_encoder) unless the executable sets QUAT_KTX_FULL, as
+# the cooker and the tests do (they need the full KTX::ktx for encoding).
+# The bare $<TARGET_PROPERTY:QUAT_KTX_FULL> is evaluated on the consuming
+# executable, and as engine_asset's own dependency the archive is emitted
+# after every copy of libengine_asset.a on the link line.
 add_library(engine_asset STATIC
     src/asset/asset_manager.cpp
-    src/asset/material_asset.cpp)
-target_link_libraries(engine_asset PUBLIC engine_flags engine_rhi glm::glm)
+    src/asset/material_asset.cpp
+    src/asset/ktx2_validate.cpp
+    src/asset/ktx2_transcode.cpp
+    src/asset/texture_upload.cpp)
+target_link_libraries(engine_asset PUBLIC engine_flags engine_rhi engine_image glm::glm)
+target_link_libraries(engine_asset PRIVATE
+    $<IF:$<BOOL:$<TARGET_PROPERTY:QUAT_KTX_FULL>>,KTX::ktx,KTX::ktx_read>)
 target_include_directories(engine_asset PUBLIC ${ENGINE_PUBLIC_INCLUDE})
 
 # ---------------------------------------------------------------------------
-# engine_animation — CPU-side skeletal animation (skeletons, clips, animator).
-# Graphics-free: plain data + math, consumed by engine_scene and the renderer's
-# GPU skinning pass. Starts with SkeletonAsset (5.1).
+# engine_animation — CPU-side skeletal animation (skeletons, clips, animator,
+# inertialization, two-bone / foot IK, ACL clip compression). Graphics-free:
+# plain data + math, consumed by engine_scene and the GPU skinning pass.
 # ---------------------------------------------------------------------------
 add_library(engine_animation STATIC
     src/animation/skeleton.cpp
     src/animation/clip.cpp
     src/animation/animator.cpp
-    src/animation/state_machine.cpp)
+    src/animation/state_machine.cpp
+    src/animation/inertialization.cpp
+    src/animation/clip_resample.cpp
+    src/animation/acl_compress.cpp
+    src/animation/acl_decompress.cpp
+    src/animation/ik/two_bone_ik.cpp
+    src/animation/ik/foot_placement.cpp)
 target_link_libraries(engine_animation PUBLIC engine_flags glm::glm)
+# ACL is an implementation detail of the clip codec (acl_*.cpp).
+target_link_libraries(engine_animation PRIVATE acl_headers)
 target_include_directories(engine_animation PUBLIC ${ENGINE_PUBLIC_INCLUDE})
 
 # ---------------------------------------------------------------------------
@@ -244,7 +290,8 @@ target_include_directories(engine_animation PUBLIC ${ENGINE_PUBLIC_INCLUDE})
 # implementation detail (PRIVATE); the public header is Jolt-free (PIMPL).
 # ---------------------------------------------------------------------------
 add_library(engine_physics STATIC
-    src/physics/physics_world.cpp)
+    src/physics/physics_world.cpp
+    src/physics/physics_queries.cpp)
 target_link_libraries(engine_physics PUBLIC engine_flags)
 target_link_libraries(engine_physics PRIVATE Jolt::Jolt)
 target_include_directories(engine_physics PUBLIC ${ENGINE_PUBLIC_INCLUDE})
@@ -255,15 +302,16 @@ target_include_directories(engine_physics PUBLIC ${ENGINE_PUBLIC_INCLUDE})
 # fastgltf is an implementation detail of the loader (PRIVATE).
 # ---------------------------------------------------------------------------
 add_library(engine_scene STATIC
-    src/scene/gltf/validate.cpp
     src/scene/gltf/mesh.cpp
     src/scene/gltf/material.cpp
     src/scene/gltf/skin_animation.cpp
+    src/scene/gltf/clip_compression.cpp
     src/scene/gltf/scene_assembly.cpp
     src/scene/gltf/self_tests.cpp
-    src/scene/stb_image_impl.cpp
+    src/scene/gltf/texture.cpp
     src/scene/components.cpp
     src/scene/scene.cpp
+    src/scene/animation_system.cpp
     src/scene/physics_system.cpp
     src/scene/nav_agent_system.cpp
     src/scene/navigation.cpp
@@ -273,6 +321,10 @@ add_library(engine_scene STATIC
     src/scene/scene_io.cpp
     src/scene/scene_references.cpp
     src/scene/component_json.cpp
+    src/scene/particle_json.cpp
+    src/scene/script_component.cpp
+    src/scene/scene_snapshot.cpp
+    src/scene/component_json_animation.cpp
     src/scene/material_override.cpp
     src/scene/render_settings_json.cpp
     src/scene/audio_system.cpp
@@ -280,7 +332,11 @@ add_library(engine_scene STATIC
     src/scene/primitive_resolve.cpp
     src/scene/scatter.cpp
     src/scene/instanced_mesh.cpp
-    src/scene/instanced_mesh_resolve.cpp)
+    src/scene/instanced_mesh_resolve.cpp
+    src/scene/ground_placement.cpp
+    src/scene/camera_framing.cpp
+    src/scene/bounds.cpp
+    src/scene/view_clip.cpp)
 # EnTT is PUBLIC: components.hpp exposes entt types (Parent/Children) to consumers.
 # engine_renderer is PUBLIC: scene.hpp's RenderCollectSystem fills a renderer
 # DrawItem list (no cycle — the renderer does not depend on the scene).
@@ -293,22 +349,92 @@ target_link_libraries(engine_scene PUBLIC
 # nlohmann_json is PUBLIC: component_json.hpp exposes JSON values (the codec
 # shared by scene files and the remote-control API).
 target_link_libraries(engine_scene PUBLIC nlohmann_json::nlohmann_json)
-target_link_libraries(engine_scene PRIVATE fastgltf::fastgltf)
+target_link_libraries(engine_scene PRIVATE fastgltf::fastgltf engine_gltf_io)
 target_include_directories(engine_scene SYSTEM PRIVATE ${Stb_INCLUDE_DIR})
 target_include_directories(engine_scene PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_include_directories(engine_scene PUBLIC ${ENGINE_PUBLIC_INCLUDE})
 
-# stb's implementation TU is not warning-clean under our strict flags.
+# engine_gltf_io — glTF parse + validation, EXT_meshopt_compression decoding
+# and buffer access (src/scene/gltf/gltf_io.hpp): fastgltf only, no ECS or
+# GPU, so the cooker parses and validates exactly like the runtime loader.
+add_library(engine_gltf_io STATIC
+    src/scene/gltf/validate.cpp
+    src/scene/gltf/meshopt_decode.cpp
+    src/scene/gltf/gltf_source.cpp)
+target_link_libraries(engine_gltf_io PUBLIC engine_flags engine_image fastgltf::fastgltf)
+target_link_libraries(engine_gltf_io PRIVATE meshoptimizer::meshoptimizer)
+target_include_directories(engine_gltf_io PUBLIC
+    ${ENGINE_PUBLIC_INCLUDE} ${CMAKE_CURRENT_SOURCE_DIR}/src)
+
+# stb_image's implementation (PNG + JPEG only), used through engine_image's
+# guarded decoder. Its TU is not warning-clean under our strict flags.
+add_library(engine_stb_image STATIC src/scene/stb_image_impl.cpp)
+target_link_libraries(engine_stb_image PRIVATE engine_flags)
+target_include_directories(engine_stb_image SYSTEM PRIVATE ${Stb_INCLUDE_DIR})
 set_source_files_properties(src/scene/stb_image_impl.cpp PROPERTIES COMPILE_OPTIONS "${ENGINE_THIRD_PARTY_TU_FLAGS}")
+
+# ---------------------------------------------------------------------------
+# engine_script — Lua gameplay scripting (G7): one sandboxed Lua 5.4 state
+# per play session with per-call instruction / memory limits, the Script
+# component's runtime, hot reload, and the engine API scripts call (entities,
+# components through the codec, physics, input, audio, navigation). Lua and
+# sol2 are implementation details (PRIVATE); the public headers are Lua-free.
+# sol2 runs without exceptions (the engine builds with -fno-exceptions) and
+# with every safety check on.
+# ---------------------------------------------------------------------------
+add_library(engine_script STATIC
+    src/script/lua_vm.cpp
+    src/script/lua_bind.cpp
+    src/script/lua_json.cpp
+    src/script/script_api_math.cpp
+    src/script/script_api_entity.cpp
+    src/script/script_api_scene.cpp
+    src/script/script_api_services.cpp
+    src/script/script_api_input.cpp
+    src/script/script_input.cpp
+    src/script/script_source.cpp
+    src/script/script_runtime.cpp
+    src/script/script_files.cpp)
+target_link_libraries(engine_script PUBLIC engine_flags engine_core engine_scene engine_physics)
+target_link_libraries(engine_script PRIVATE sol2::sol2 ${LUA_LIBRARIES})
+# SYSTEM: the vcpkg include directory holds every dependency's headers.
+target_include_directories(engine_script SYSTEM PRIVATE ${LUA_INCLUDE_DIR})
+target_include_directories(engine_script PUBLIC ${ENGINE_PUBLIC_INCLUDE})
+target_compile_definitions(engine_script PRIVATE SOL_NO_EXCEPTIONS=1 SOL_ALL_SAFETIES_ON=1)
+
+# ---------------------------------------------------------------------------
+# engine_cook — offline asset cooker (R17): glTF textures -> KTX2/Basis,
+# meshes -> meshoptimizer passes, quantisation and EXT_meshopt_compression.
+# Used by tools/quat-cook and the tests; never linked into the game.
+# ---------------------------------------------------------------------------
+add_library(engine_cook STATIC
+    src/cook/gltf_access.cpp
+    src/cook/gltf_cooker.cpp
+    src/cook/mesh_cook.cpp
+    src/cook/mesh_streams.cpp
+    src/cook/texture_encode.cpp)
+target_link_libraries(engine_cook PUBLIC engine_flags)
+target_link_libraries(engine_cook PRIVATE
+    engine_image engine_gltf_io fastgltf::fastgltf KTX::ktx meshoptimizer::meshoptimizer)
+target_include_directories(engine_cook PUBLIC ${ENGINE_PUBLIC_INCLUDE})
+target_include_directories(engine_cook PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+
+add_executable(quat-cook tools/quat-cook/main.cpp)
+target_link_libraries(quat-cook PRIVATE engine_flags engine_cook)
+# Full libktx (engine_cook encodes); see engine_asset.
+set_target_properties(quat-cook PROPERTIES QUAT_KTX_FULL ON)
 
 # ---------------------------------------------------------------------------
 # engine_terrain — procedural terrain (Phase 12). Pure CPU heightmap generation
 # in 12.1; chunked LOD rendering and Jolt height fields layer on in 12.2/12.3.
 # ---------------------------------------------------------------------------
 add_library(engine_terrain STATIC
+    src/terrain/budget.cpp
+    src/terrain/cpu_tile_jobs.cpp
     src/terrain/generator.cpp
     src/terrain/grid_erosion.cpp
-    src/terrain/streamer.cpp)
+    src/terrain/streamer.cpp
+    src/terrain/talus_relax.cpp)
 target_link_libraries(engine_terrain PUBLIC engine_flags glm::glm)
 target_include_directories(engine_terrain PUBLIC ${ENGINE_PUBLIC_INCLUDE})
 
@@ -331,6 +457,9 @@ add_library(engine_net STATIC
     src/net/character_step.cpp
     src/net/net_ids.cpp
     src/net/transport.cpp
+    src/net/transport_common.cpp
+    src/net/host_access.cpp
+    src/net/session_config.cpp
     src/net/replication.cpp
     src/net/replication_transport.cpp
     src/net/prediction.cpp
@@ -353,7 +482,7 @@ add_library(engine_audio STATIC
     src/audio/audio_engine.cpp
     src/audio/miniaudio_impl.cpp)
 target_link_libraries(engine_audio PUBLIC engine_flags glm::glm)
-target_link_libraries(engine_audio PRIVATE miniaudio_headers)
+target_link_libraries(engine_audio PRIVATE miniaudio_headers engine_core)
 target_include_directories(engine_audio PUBLIC ${ENGINE_PUBLIC_INCLUDE})
 # miniaudio's implementation is not warning-clean under our strict flags.
 set_source_files_properties(src/audio/miniaudio_impl.cpp PROPERTIES COMPILE_OPTIONS "${ENGINE_THIRD_PARTY_TU_FLAGS}")
@@ -362,15 +491,22 @@ set_source_files_properties(src/audio/miniaudio_impl.cpp PROPERTIES COMPILE_OPTI
 # engine_remote — remote-control endpoint (Phase 15): loopback JSON-RPC 2.0
 # over TCP, poll-driven on the main thread. Out-of-process tools (the quat-mcp
 # Model Context Protocol bridge in tools/quat-mcp) drive the engine through it.
-# nlohmann_json is PUBLIC: the handler API traffics in JSON values.
+# nlohmann_json is PUBLIC: the handler API traffics in JSON values. OpenSSL's
+# libcrypto (PRIVATE) generates the session tokens (session_token.cpp).
 # ---------------------------------------------------------------------------
 add_library(engine_remote STATIC
     src/remote/rpc_server.cpp
+    src/remote/session_token.cpp
     src/remote/socket.cpp)
 target_link_libraries(engine_remote PUBLIC engine_flags nlohmann_json::nlohmann_json)
+target_link_libraries(engine_remote PRIVATE OpenSSL::Crypto)
 target_include_directories(engine_remote PUBLIC ${ENGINE_PUBLIC_INCLUDE})
+# The user-only token file: one implementation per platform (private_file.hpp).
 if(WIN32)
-    target_link_libraries(engine_remote PRIVATE ws2_32)
+    target_sources(engine_remote PRIVATE src/remote/private_file_win32.cpp)
+    target_link_libraries(engine_remote PRIVATE ws2_32 advapi32)
+else()
+    target_sources(engine_remote PRIVATE src/remote/private_file_posix.cpp)
 endif()
 
 # ---------------------------------------------------------------------------
@@ -386,18 +522,24 @@ add_library(engine_remote_world STATIC
     src/remote/world/scene_commands.cpp
     src/remote/world/batch_command.cpp
     src/remote/world/environment_commands.cpp
+    src/remote/world/terrain_commands.cpp
+    src/remote/world/surface_query.cpp
+    src/remote/world/placement_commands.cpp
     src/remote/world/camera_commands.cpp
     src/remote/world/app_commands.cpp
     src/remote/world/debug_commands.cpp
     src/remote/world/debug_query_commands.cpp
+    src/remote/world/shader_commands.cpp
     src/remote/world/tuning_commands.cpp
     src/remote/world/behavior_commands.cpp
     src/remote/world/behavior_edit_commands.cpp
     src/remote/world/project_commands.cpp
+    src/remote/world/script_commands.cpp
     src/remote/world/image_encode.cpp
     src/remote/world/stb_image_write_impl.cpp)
 target_link_libraries(engine_remote_world PUBLIC
-    engine_flags engine_core engine_remote engine_scene engine_physics engine_nav engine_project)
+    engine_flags engine_core engine_remote engine_scene engine_physics engine_nav engine_script
+    engine_project)
 target_include_directories(engine_remote_world PUBLIC ${ENGINE_PUBLIC_INCLUDE})
 target_include_directories(engine_remote_world SYSTEM PRIVATE ${Stb_INCLUDE_DIR})
 # stb's implementation TU is not warning-clean under our strict flags.
@@ -409,17 +551,28 @@ set_source_files_properties(src/remote/world/stb_image_write_impl.cpp
 # GBuffer pass (mesh_pass); lighting/tonemap/imgui passes follow in later slices.
 # ---------------------------------------------------------------------------
 add_library(engine_renderer STATIC
+    src/renderer/csm.cpp
     src/renderer/draw_batching.cpp
     src/renderer/render_settings.cpp
     src/renderer/grass.cpp
     src/renderer/grass_pass.cpp
+    src/renderer/gtao_pass.cpp
+    src/renderer/hiz_pass.cpp
     src/renderer/instance_buffer.cpp
+    src/renderer/non_finite_counters.cpp
     src/renderer/mesh_pass.cpp
+    src/renderer/material_pipelines.cpp
     src/renderer/lighting_pass.cpp
     src/renderer/light_clusters.cpp
     src/renderer/light_cull_pass.cpp
+    src/renderer/particles.cpp
+    src/renderer/particle_emitters.cpp
+    src/renderer/particle_pass.cpp
+    src/renderer/particle_sort.cpp
+    src/renderer/particle_draw.cpp
     src/renderer/tonemap_pass.cpp
     src/renderer/skinning_pass.cpp
+    src/renderer/shadow_casters.cpp
     src/renderer/shadow_pass.cpp
     src/renderer/transparent_pass.cpp
     src/renderer/ibl_pass.cpp
@@ -427,10 +580,16 @@ add_library(engine_renderer STATIC
     src/renderer/bloom_pass.cpp
     src/renderer/exposure_pass.cpp
     src/renderer/taa_pass.cpp
+    src/renderer/jitter.cpp
+    src/renderer/velocity.cpp
+    src/renderer/velocity_pass.cpp
+    src/renderer/motion_history.cpp
+    src/renderer/upscaler.cpp
     src/renderer/atmosphere_pass.cpp
     src/renderer/terrain_pass.cpp
     src/renderer/terrain_gpu_tiles.cpp
-    src/renderer/terrain_synth_pass.cpp)
+    src/renderer/terrain_synth_pass.cpp
+    src/renderer/terrain_shadow.cpp)
 target_link_libraries(engine_renderer PUBLIC
     engine_flags engine_rhi engine_asset engine_terrain glm::glm)
 target_include_directories(engine_renderer PUBLIC ${ENGINE_PUBLIC_INCLUDE})
@@ -462,9 +621,11 @@ if(ENGINE_EDITOR)
         src/editor/animation_preview.cpp
         src/editor/physics_debug.cpp
         src/editor/picking.cpp
-        src/editor/scene_snapshot.cpp
         src/editor/audio_inspector.cpp
+        src/editor/script_inspector.cpp
+        src/editor/animation_inspector.cpp
         src/editor/grass_inspector.cpp
+        src/editor/particle_inspector.cpp
         src/editor/behavior_panel.cpp
         src/editor/behavior_canvas.cpp
         src/editor/export_dialog.cpp
@@ -475,7 +636,7 @@ if(ENGINE_EDITOR)
     # vcpkg target does not declare the imgui dependency, so a single-pass
     # linker must see it first to resolve its ImGui references.
     target_link_libraries(engine_editor
-        PUBLIC engine_flags engine_scene engine_project
+        PUBLIC engine_flags engine_scene engine_script engine_project
         PRIVATE engine_editor_build
                 unofficial::imgui-node-editor::imgui-node-editor
                 imgui::imgui imguizmo::imguizmo SDL3::SDL3)
@@ -496,20 +657,52 @@ endif()
 # on) and `quat-player`, the runtime player games ship with — always built
 # without the editor. Each entry point only parses the environment and hands
 # off to Application.
+#
+# game_world holds the window-free part of the app layer — WorldRuntime (the
+# simulated world: demo scenes, terrain, grass, particles, navmesh, audio,
+# play mode and gameplay scripts) — so tests can drive the exact frame-loop
+# simulation path (tests/app/, including the play state machine) without SDL.
+# world_runtime.cpp has editor-only behaviour (script hot reload on, the play
+# session's physics world), so an editor build compiles it twice: game_world
+# with ENGINE_EDITOR for `game`, game_world_runtime without it for the players.
+set(GAME_WORLD_SOURCES
+    src/app/world_runtime.cpp
+    src/app/demo_scenes.cpp
+    src/app/audio_runtime.cpp
+    src/app/play_mode.cpp
+    src/app/grass_runtime.cpp
+    src/app/particle_runtime.cpp
+    src/app/nav_bake.cpp)
+set(GAME_WORLD_LIBRARIES
+    engine_flags engine_core engine_rhi engine_asset engine_scene engine_renderer engine_physics
+    engine_terrain engine_nav engine_net engine_audio engine_script)
+add_library(game_world STATIC ${GAME_WORLD_SOURCES})
+target_link_libraries(game_world PUBLIC ${GAME_WORLD_LIBRARIES})
+target_link_libraries(game_world PRIVATE engine_editor_build)
+target_include_directories(game_world PUBLIC
+    ${ENGINE_PUBLIC_INCLUDE}
+    ${CMAKE_CURRENT_SOURCE_DIR}/src)
+if(ENGINE_EDITOR)
+    add_library(game_world_runtime STATIC ${GAME_WORLD_SOURCES})
+    target_link_libraries(game_world_runtime PUBLIC ${GAME_WORLD_LIBRARIES})
+    target_include_directories(game_world_runtime PUBLIC
+        ${ENGINE_PUBLIC_INCLUDE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/src)
+else()
+    add_library(game_world_runtime ALIAS game_world)
+endif()
+
 set(QUAT_APP_SOURCES
     src/app/application.cpp
     src/app/app_config.cpp
     src/app/build_service.cpp
     src/app/fly_camera.cpp
     src/app/frame_graph.cpp
+    src/app/frame_temporal.cpp
     src/app/frame_renderer.cpp
-    src/app/world_runtime.cpp
-    src/app/demo_scenes.cpp
-    src/app/audio_runtime.cpp
     src/app/game_boot.cpp
     src/app/game_startup.cpp
-    src/app/grass_runtime.cpp
-    src/app/nav_bake.cpp
+    src/app/input_sampler.cpp
     src/app/remote_bridge.cpp
     src/app/screenshot_capture.cpp
     src/app/window_icon.cpp
@@ -517,17 +710,21 @@ set(QUAT_APP_SOURCES
 set(QUAT_APP_LIBRARIES
     engine_flags engine_core engine_rhi engine_asset engine_scene engine_renderer engine_physics
     engine_terrain engine_nav engine_net engine_remote engine_remote_world engine_audio
-    engine_project SDL3::SDL3)
+    engine_script engine_project SDL3::SDL3)
 
 add_executable(game src/main.cpp ${QUAT_APP_SOURCES})
-target_link_libraries(game PRIVATE ${QUAT_APP_LIBRARIES} engine_editor_build)
+target_link_libraries(game PRIVATE game_world ${QUAT_APP_LIBRARIES} engine_editor_build)
+if(MSVC)
+    # Linker map for the game_has_no_texture_encoder test.
+    target_link_options(game PRIVATE "/MAP:$<TARGET_FILE_DIR:game>/game.map")
+endif()
 if(ENGINE_EDITOR)
     target_sources(game PRIVATE src/app/editor_bridge.cpp)
     target_link_libraries(game PRIVATE engine_editor)
 endif()
 
 add_executable(quat-player src/player/main.cpp ${QUAT_APP_SOURCES})
-target_link_libraries(quat-player PRIVATE ${QUAT_APP_LIBRARIES})
+target_link_libraries(quat-player PRIVATE game_world_runtime ${QUAT_APP_LIBRARIES})
 
 # quat-player-shipping: what `quat-pack --config shipping` ships. Built with
 # QUAT_SHIPPING, which compiles remote control out (no endpoint, no remote
@@ -542,7 +739,7 @@ list(REMOVE_ITEM QUAT_SHIPPING_APP_SOURCES
 set(QUAT_SHIPPING_APP_LIBRARIES ${QUAT_APP_LIBRARIES})
 list(REMOVE_ITEM QUAT_SHIPPING_APP_LIBRARIES engine_remote engine_remote_world)
 add_executable(quat-player-shipping src/player/main.cpp ${QUAT_SHIPPING_APP_SOURCES})
-target_link_libraries(quat-player-shipping PRIVATE ${QUAT_SHIPPING_APP_LIBRARIES})
+target_link_libraries(quat-player-shipping PRIVATE game_world_runtime ${QUAT_SHIPPING_APP_LIBRARIES})
 target_compile_definitions(quat-player-shipping PRIVATE QUAT_SHIPPING)
 if(MSVC)
     # Linker map for the quat_player_shipping_has_no_remote test.

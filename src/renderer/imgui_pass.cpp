@@ -46,6 +46,10 @@ ImGuiPass::create(const rhi::Device& device, rhi::GpuAllocator& allocator,
     if (ImGui::GetCurrentContext() == nullptr) {
         return fail("imgui pass: no ImGui context — create the EditorLayer first");
     }
+    // add_to_graph applies ImDrawCmd::VtxOffset, so ImGui may split a draw
+    // list past 65535 vertices into offset commands instead of overflowing
+    // the 16-bit indices (it asserts / wraps without this flag).
+    ImGui::GetIO().BackendFlags |= ImGuiBackendFlags_RendererHasVtxOffset;
 
     ImGuiPass out;
     out.device_ = &device;
@@ -90,9 +94,23 @@ ImGuiPass::create(const rhi::Device& device, rhi::GpuAllocator& allocator,
     if (!pipeline) return std::unexpected(pipeline.error());
     out.pipeline_ = std::move(*pipeline);
 
-    // Font atlas: built once up front (the pre-1.92 "legacy" path — the engine
-    // renderer does not advertise ImGuiBackendFlags_RendererHasTextures, so
-    // ImGui keeps the atlas static after this build).
+    if (auto r = out.upload_font_atlas(transfer); !r) return std::unexpected(r.error());
+
+    auto sampler = rhi::create_sampler(device.handle(), rhi::SamplerAddress::clamp_to_edge);
+    if (!sampler) return std::unexpected(sampler.error());
+    out.font_sampler_ = std::move(*sampler);
+
+    // The font DescriptorBuffer is built lazily on first add_to_graph: a
+    // DescriptorBuffer keeps pointers to the functions/layout it was created
+    // with, and `out` is still going to move — creating it here would dangle.
+    return out;
+}
+
+std::expected<void, core::Error>
+ImGuiPass::upload_font_atlas(const rhi::TransferContext& transfer) {
+    // The pre-1.92 "legacy" path: the engine renderer does not advertise
+    // ImGuiBackendFlags_RendererHasTextures, so ImGui keeps the atlas static
+    // between uploads; the editor rebuilds it (DPI change) and calls this.
     ImGuiIO& io = ImGui::GetIO();
     unsigned char* pixels = nullptr;
     int width = 0;
@@ -107,24 +125,16 @@ ImGuiPass::create(const rhi::Device& device, rhi::GpuAllocator& allocator,
                                  static_cast<std::uint32_t>(height)};
     const VkDeviceSize font_bytes =
         static_cast<VkDeviceSize>(width) * static_cast<VkDeviceSize>(height) * 4;
-    auto image = rhi::upload_device_image(allocator, transfer, pixels, font_bytes, font_extent,
+    auto image = rhi::upload_device_image(*allocator_, transfer, pixels, font_bytes, font_extent,
                                           VK_FORMAT_R8G8B8A8_UNORM);
     if (!image) return std::unexpected(image.error());
-    out.font_image_ = std::move(*image);
-
-    auto view = rhi::create_image_view(device.handle(), out.font_image_.handle(),
+    auto view = rhi::create_image_view(device_->handle(), image->handle(),
                                        VK_FORMAT_R8G8B8A8_UNORM);
     if (!view) return std::unexpected(view.error());
-    out.font_view_ = std::move(*view);
-
-    auto sampler = rhi::create_sampler(device.handle(), rhi::SamplerAddress::clamp_to_edge);
-    if (!sampler) return std::unexpected(sampler.error());
-    out.font_sampler_ = std::move(*sampler);
-
-    // The font DescriptorBuffer is built lazily on first add_to_graph: a
-    // DescriptorBuffer keeps pointers to the functions/layout it was created
-    // with, and `out` is still going to move — creating it here would dangle.
-    return out;
+    font_view_ = std::move(*view); // the old view goes before the old image
+    font_image_ = std::move(*image);
+    font_descriptor_ready_ = false; // rewritten with the new view on next use
+    return {};
 }
 
 std::expected<void, core::Error> ImGuiPass::ensure_buffers(VkDeviceSize vertex_bytes,

@@ -75,6 +75,13 @@ struct UsageState {
                     | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
                 VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT
                     | VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT};
+    case ResourceUsage::depth_read:
+        return {VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL,
+                VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT
+                    | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT
+                    | VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+                VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT
+                    | VK_ACCESS_2_SHADER_SAMPLED_READ_BIT};
     case ResourceUsage::sampled:
         return {VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
                 VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
@@ -192,7 +199,10 @@ make_barrier(VkImage image, VkImageAspectFlags aspect,
     barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
     barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
     barrier.image = image;
-    barrier.subresourceRange = {aspect, 0, 1, 0, 1};
+    // Every mip and layer: a graph resource is one unit (an imported mip
+    // chain or layered image changes layout as a whole).
+    barrier.subresourceRange = {aspect, 0, VK_REMAINING_MIP_LEVELS, 0,
+                                VK_REMAINING_ARRAY_LAYERS};
     return barrier;
 }
 
