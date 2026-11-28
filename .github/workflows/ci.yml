@@ -252,8 +252,14 @@ jobs:
     timeout-minutes: 15
     permissions:
       contents: write
+    # One group per PR / branch, not one for the whole repository: GitHub keeps
+    # at most one *pending* job per concurrency group, so a shared group made
+    # each new publish replace (cancel) another PR's waiting one. Publishes of
+    # different PRs may run at once: scripts/ci-publish-screenshots.sh only
+    # appends commits and re-applies its run on the new tip when a push loses
+    # a race. Within one PR a newer head's publish supersedes the older one.
     concurrency:
-      group: ci-screenshots
+      group: ci-screenshots-${{ github.event.pull_request.number || github.ref }}
       cancel-in-progress: false
     steps:
       - uses: actions/checkout@v4
