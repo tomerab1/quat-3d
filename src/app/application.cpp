@@ -13,11 +13,13 @@
 
 #include "app/asset_root.hpp"
 #include "app/demo_scenes.hpp"
+#include "app/device_loss.hpp"
 #include "app/window_icon.hpp"
 #include "engine/core/profile.hpp"
 #include "engine/core/utf8_path.hpp"
 #include "engine/scene/bounds.hpp"
 #include "engine/scene/components.hpp"
+#include "engine/scene/scene_io.hpp"
 #include "engine/scene/view_clip.hpp"
 
 namespace quat::app {
@@ -69,8 +71,29 @@ int Application::run() {
     while (pump_events() && run_frame()) {
         QUAT_FRAME_MARK();
     }
+    if (const std::optional<GpuFault>& fault = renderer_.gpu_fault()) {
+        const int status = handle_gpu_fault_exit(*fault);
+        if (fault->kind == GpuFaultKind::hang) {
+            // A hung GPU may never go idle: teardown would wait on it
+            // forever. The recovery save is written and the log flushed.
+            std::_Exit(status);
+        }
+        return status;
+    }
     report_stats();
     return 0;
+}
+
+int Application::handle_gpu_fault_exit(const GpuFault& fault) {
+    engine::scene::SceneEnvironment environment;
+    environment.hdri = renderer_.hdri_status().path;
+    const RecoveryInputs recovery{.scene = &scene_,
+                                  .edit_snapshot = play_mode_.edit_snapshot(),
+                                  .render_settings = &renderer_.render_settings(),
+                                  .environment = &environment};
+    const auto& last_change = pipeline_cache_.last_change();
+    return handle_gpu_fault(fault, device_, last_change ? &*last_change : nullptr, presented_,
+                            recovery, project_root());
 }
 
 bool Application::init_platform() {
@@ -241,7 +264,10 @@ bool Application::init_subsystems() {
     }
 
     // ---- Per-frame command + sync resources --------------------------------
-    renderer_.create_frame_sync();
+    if (!renderer_.create_frame_sync(
+            config_.gpu_timeout_ns.value_or(FrameFences::k_default_timeout_ns))) {
+        return false;
+    }
     renderer_.set_screenshot_path(config_.screenshot_path);
 
     frame_timer_.skip(SDL_GetTicksNS()); // setup time is not frame time
@@ -425,7 +451,9 @@ bool Application::run_frame() {
     }
     if (!renderer_.ensure_swapchain(pixel_extent)) return false;
 
-    const std::uint32_t slot = renderer_.wait_for_slot();
+    const auto waited = renderer_.wait_for_slot();
+    if (!waited) return false; // GPU fault: run() takes the device-loss path
+    const std::uint32_t slot = *waited;
     if (shader_reload_) shader_reload_->update(presented_); // R2: swap rebuilt pipelines
     remote_->on_frame_complete(slot); // the slot's screenshot readback landed
     switch (renderer_.acquire_and_begin()) {

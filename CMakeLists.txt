@@ -237,6 +237,7 @@ add_library(engine_rhi STATIC
     src/rhi/vma_impl.cpp
     src/rhi/shader_reflection.cpp
     src/rhi/pipeline_cache.cpp
+    src/rhi/queue_submit.cpp
     src/rhi/descriptor_buffer.cpp
     src/rhi/render_graph.cpp
     src/rhi/gpu_profiler.cpp
@@ -801,6 +802,8 @@ set(GAME_WORLD_SOURCES
     src/app/demo_scenes.cpp
     src/app/audio_runtime.cpp
     src/app/play_mode.cpp
+    src/app/frame_sync.cpp
+    src/app/device_loss.cpp
     src/app/grass_runtime.cpp
     src/app/particle_runtime.cpp
     src/app/nav_bake.cpp)
@@ -833,6 +836,7 @@ set(QUAT_APP_SOURCES
     src/app/frame_post.cpp
     src/app/frame_environment.cpp
     src/app/frame_renderer.cpp
+    src/app/frame_screenshot.cpp
     src/app/frame_profiling.cpp
     src/app/game_boot.cpp
     src/app/game_startup.cpp

@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <expected>
 #include <memory>
+#include <optional>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -37,6 +38,15 @@ struct PipelineReloadReport {
     bool                     shader_in_use = false; // the cache had loaded this shader
     std::size_t              rebuilt = 0;           // pipelines replaced
     std::vector<std::string> errors;                // pipelines kept (with the reason)
+};
+
+// The most recent pipeline change a cache made: a pipeline created, or
+// rebuilt by a shader reload. Logged when the GPU is lost (issue #110), since
+// a freshly changed shader (e.g. a model-authored material) is the likely
+// cause.
+struct PipelineChange {
+    std::string   what;      // e.g. "created graphics pipeline from <spv>"
+    std::uint64_t frame = 0; // begin_frame()'s frame number at the time
 };
 
 // Loads and caches SPIR-V shader modules by source path, owns the Vulkan
@@ -92,6 +102,9 @@ public:
     void set_frames_in_flight(std::uint32_t frames) { retired_.set_frames_in_flight(frames); }
     [[nodiscard]] std::size_t retired_count() const { return retired_.size(); }
 
+    // The last pipeline created or rebuilt (none before the first).
+    [[nodiscard]] const std::optional<PipelineChange>& last_change() const { return last_change_; }
+
     // Live registered pipelines using `spv_path` (diagnostics/tests).
     [[nodiscard]] std::size_t pipeline_count(const std::string& spv_path) const;
 
@@ -114,6 +127,7 @@ private:
     std::unordered_map<std::string, std::vector<std::weak_ptr<detail::PipelineSlot>>> slots_;
     core::DeferredReleaseQueue retired_;
     std::uint64_t              frame_ = 0;
+    std::optional<PipelineChange> last_change_;
 };
 
 } // namespace engine::rhi

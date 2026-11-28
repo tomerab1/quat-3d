@@ -109,6 +109,9 @@ private:
                                                           float aspect) const;
 #endif
     void report_stats() const;
+    // The frame loop stopped on a GPU fault (issue #110): logs it, writes the
+    // recovery save (device_loss.hpp) and returns the exit status.
+    [[nodiscard]] int handle_gpu_fault_exit(const GpuFault& fault);
 
     AppConfig config_;
     // Game packaging (P4/E7): quat-pack runs here for the editor's Build &

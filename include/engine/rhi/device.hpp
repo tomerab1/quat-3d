@@ -123,6 +123,10 @@ public:
     // VK_EXT_memory_budget, enabled whenever offered: VMA then reports the
     // driver's per-heap budget and usage instead of estimates (R4).
     [[nodiscard]] bool memory_budget() const { return memory_budget_; }
+    // VK_EXT_device_fault with its deviceFault feature, enabled whenever
+    // offered: after VK_ERROR_DEVICE_LOST, vkGetDeviceFaultInfoEXT describes
+    // what faulted (issue #110; optional diagnostics only).
+    [[nodiscard]] bool device_fault() const { return device_fault_; }
     // Which calibrated-timestamps extension is enabled (whenever offered),
     // for correlating GPU and CPU timestamps (R4 GPU profiling).
     enum class CalibratedTimestamps : std::uint8_t { none, khr, ext };
@@ -174,6 +178,7 @@ private:
     bool                     swapchain_mutable_format_ = false;
     bool                     simulate_missing_swapchain_mutable_format_ = false;
     bool                     memory_budget_ = false;
+    bool                     device_fault_ = false;
     CalibratedTimestamps     calibrated_timestamps_ = CalibratedTimestamps::none;
 };
 

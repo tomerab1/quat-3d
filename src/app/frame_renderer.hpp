@@ -22,6 +22,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <expected>
 #include <filesystem>
 #include <functional>
 #include <memory>
@@ -35,6 +36,7 @@
 #include <glm/glm.hpp>
 #include <vulkan/vulkan.h>
 
+#include "app/frame_sync.hpp"
 #include "app/screenshot_capture.hpp" // CaptureSource
 #include "engine/renderer/atmosphere_pass.hpp"
 #include "engine/renderer/bloom_pass.hpp"
@@ -293,8 +295,10 @@ public:
     [[nodiscard]] std::expected<void, engine::core::Error>
     set_hdri(const std::string& relative, const std::filesystem::path& project_root);
     [[nodiscard]] const HdriStatus& hdri_status() const { return hdri_status_; }
-    // Command buffers and frame synchronisation.
-    void create_frame_sync();
+    // Command buffers and frame synchronisation. Fence waits give up after
+    // `gpu_timeout_ns` (a GPU hang, issue #110). False on failure (logged).
+    [[nodiscard]] bool create_frame_sync(
+        std::uint64_t gpu_timeout_ns = FrameFences::k_default_timeout_ns);
     // QUAT_SCREENSHOT: the final frame is written to `path` as binary PPM.
     void set_screenshot_path(std::optional<std::filesystem::path> path) {
         screenshot_path_ = std::move(path);
@@ -306,10 +310,12 @@ public:
     void request_swapchain_recreate() { needs_recreate_ = true; }
     // Recreates the swapchain if requested. False on failure (logged).
     [[nodiscard]] bool ensure_swapchain(VkExtent2D pixel_extent);
-    // Waits for the next slot's previous submission; returns the slot index.
-    // With NaN/Inf counting on (debug builds, or QUAT_NON_FINITE_CHECK=1),
-    // also logs once when that frame's guards replaced non-finite values.
-    std::uint32_t wait_for_slot();
+    // Waits for the next slot's previous submission; returns the slot index,
+    // or the GPU fault that ended the wait (device lost, hang: see
+    // gpu_fault()). With NaN/Inf counting on (debug builds, or
+    // QUAT_NON_FINITE_CHECK=1), also logs once when that frame's guards
+    // replaced non-finite values.
+    [[nodiscard]] std::expected<std::uint32_t, GpuFault> wait_for_slot();
     [[nodiscard]] Acquire acquire_and_begin();
     // Accumulates the time that drives the clouds' drift (with the scene's
     // weather: integrates its wind at cloud height, R13.1).
@@ -336,8 +342,12 @@ public:
     // The final scene image (no editor UI), for remote screenshots.
     [[nodiscard]] CaptureSource capture_source() const;
     // `screenshot_frame`: copy this frame to the QUAT_SCREENSHOT file. False
-    // on a fatal present error (logged).
+    // on a fatal submit / present error (logged; gpu_fault() says which).
     [[nodiscard]] bool submit_and_present(bool screenshot_frame);
+    // The GPU fault that stopped the frame loop (issue #110): any failed
+    // submit, fence wait / reset, acquire or present. Rendering cannot
+    // continue once it is set.
+    [[nodiscard]] const std::optional<GpuFault>& gpu_fault() const { return fences_.fault(); }
 
 private:
     [[nodiscard]] engine::renderer::CloudSettings current_clouds() const;
@@ -467,7 +477,7 @@ private:
     VkCommandPool                                   command_pool_ = VK_NULL_HANDLE;
     std::array<VkCommandBuffer, k_frames_in_flight> command_buffers_{};
     std::array<VkSemaphore, k_frames_in_flight>     image_available_{};
-    std::array<VkFence, k_frames_in_flight>         in_flight_{};
+    FrameFences                                     fences_; // in-flight fence per slot
     std::vector<VkSemaphore>                        render_finished_;
     bool                                            needs_recreate_ = false;
 

@@ -466,6 +466,22 @@ std::expected<Device, core::Error> Device::create(const CreateInfo& info) {
         device_exts.push_back(VK_EXT_CALIBRATED_TIMESTAMPS_EXTENSION_NAME);
         dev.calibrated_timestamps_ = CalibratedTimestamps::ext;
     }
+    // Fault reports after a device loss (issue #110): extension and feature
+    // both optional, enabled whenever offered.
+    VkPhysicalDeviceFaultFeaturesEXT fault_features{};
+    fault_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FAULT_FEATURES_EXT;
+    if (has_extension(available_device_exts, VK_EXT_DEVICE_FAULT_EXTENSION_NAME)) {
+        VkPhysicalDeviceFeatures2 query{};
+        query.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+        query.pNext = &fault_features;
+        vkGetPhysicalDeviceFeatures2(dev.physical_device_, &query);
+        if (fault_features.deviceFault == VK_TRUE) {
+            device_exts.push_back(VK_EXT_DEVICE_FAULT_EXTENSION_NAME);
+            fault_features.deviceFaultVendorBinary = VK_FALSE; // not read
+            fault_features.pNext = &features13;
+            dev.device_fault_ = true;
+        }
+    }
 #ifdef ENGINE_DESCRIPTOR_SETS_FALLBACK
     // Portability-subset ICDs advertise VK_KHR_portability_subset, and the spec
     // requires it to be enabled whenever present. String spelled out to avoid
@@ -477,7 +493,8 @@ std::expected<Device, core::Error> Device::create(const CreateInfo& info) {
 
     VkDeviceCreateInfo device_info{};
     device_info.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
-    device_info.pNext = &features13;
+    device_info.pNext = dev.device_fault_ ? static_cast<const void*>(&fault_features)
+                                          : static_cast<const void*>(&features13);
     device_info.queueCreateInfoCount = static_cast<std::uint32_t>(queue_infos.size());
     device_info.pQueueCreateInfos = queue_infos.data();
     device_info.enabledExtensionCount = static_cast<std::uint32_t>(device_exts.size());
@@ -615,6 +632,7 @@ Device& Device::operator=(Device&& other) noexcept {
         simulate_missing_swapchain_mutable_format_ =
             other.simulate_missing_swapchain_mutable_format_;
         memory_budget_ = other.memory_budget_;
+        device_fault_ = other.device_fault_;
         calibrated_timestamps_ = other.calibrated_timestamps_;
     }
     return *this;

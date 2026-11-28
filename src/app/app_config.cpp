@@ -31,7 +31,30 @@ AppConfig app_config_from_environment() {
             config.window_height = h;
         }
     }
+    if (const char* env = std::getenv("QUAT_GPU_TIMEOUT_MS"); env != nullptr) {
+        config.gpu_timeout_ns = parse_gpu_timeout_ms(env);
+        if (!config.gpu_timeout_ns) {
+            std::fprintf(stderr,
+                         "[warn] QUAT_GPU_TIMEOUT_MS=%s ignored: expected milliseconds from "
+                         "100 to 3600000\n",
+                         env);
+        }
+    }
     return config;
+}
+
+std::optional<std::uint64_t> parse_gpu_timeout_ms(const char* text) {
+    constexpr std::uint64_t k_min_ms = 100;
+    constexpr std::uint64_t k_max_ms = 3'600'000;
+    if (text == nullptr || *text == '\0') return std::nullopt;
+    std::uint64_t ms = 0;
+    for (const char* c = text; *c != '\0'; ++c) {
+        if (*c < '0' || *c > '9') return std::nullopt;
+        ms = ms * 10 + static_cast<std::uint64_t>(*c - '0');
+        if (ms > k_max_ms) return std::nullopt;
+    }
+    if (ms < k_min_ms) return std::nullopt;
+    return ms * 1'000'000ULL;
 }
 
 } // namespace quat::app

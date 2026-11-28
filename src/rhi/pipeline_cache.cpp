@@ -15,6 +15,12 @@ namespace engine::rhi {
 
 namespace {
 
+// A shader for the log: its cache path, or a placeholder for one created
+// outside the cache.
+[[nodiscard]] std::string shader_label(const LoadedShader& shader) {
+    return shader.path.empty() ? std::string("<uncached shader>") : shader.path;
+}
+
 [[nodiscard]] std::unexpected<core::Error> fail(std::string what) {
     return std::unexpected(core::Error{std::move(what)});
 }
@@ -219,6 +225,8 @@ PipelineCache::create_compute_pipeline(const ComputePipeline::CreateInfo& info) 
         slot->shaders.push_back({info.shader->path, {slot->entry_a}, info.shader->reflection});
         register_slot(slot);
     }
+    last_change_ = PipelineChange{"created compute pipeline from " + shader_label(*info.shader),
+                                  frame_};
     return ManagedPipeline(std::move(slot));
 }
 
@@ -277,6 +285,9 @@ PipelineCache::create_graphics_pipeline(const GraphicsPipeline::CreateInfo& info
         }
         register_slot(slot);
     }
+    std::string from = shader_label(*info.vertex);
+    if (info.fragment != info.vertex) from += " + " + shader_label(*info.fragment);
+    last_change_ = PipelineChange{"created graphics pipeline from " + from, frame_};
     return ManagedPipeline(std::move(slot));
 }
 
@@ -391,6 +402,11 @@ PipelineCache::reload(const std::string& spv_path) {
             ++report.rebuilt;
         }
     }
+    if (report.rebuilt > 0) {
+        last_change_ = PipelineChange{"rebuilt " + std::to_string(report.rebuilt) +
+                                          " pipeline(s) after reloading " + key,
+                                      frame_};
+    }
     return report;
 }
 
@@ -442,6 +458,7 @@ PipelineCache& PipelineCache::operator=(PipelineCache&& other) noexcept {
         other.slots_.clear();
         retired_    = std::move(other.retired_);
         frame_      = std::exchange(other.frame_, 0);
+        last_change_ = std::exchange(other.last_change_, std::nullopt);
     }
     return *this;
 }
