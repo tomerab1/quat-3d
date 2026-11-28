@@ -10,12 +10,14 @@ mod behavior;
 mod debug;
 mod profile;
 mod script;
+mod shader;
 mod tuning;
 mod world;
 pub use behavior::*;
 pub use debug::*;
 pub use profile::*;
 pub use script::*;
+pub use shader::*;
 pub use tuning::*;
 pub use world::*;
 

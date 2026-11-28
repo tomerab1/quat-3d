@@ -41,6 +41,10 @@ const PROMPTS: &[(&str, &str)] = &[
         "find_performance_problem",
         include_str!("../content/prompts/find_performance_problem.md"),
     ),
+    (
+        "write_material_shader",
+        include_str!("../content/prompts/write_material_shader.md"),
+    ),
 ];
 
 /// Templates for files the server writes (rendered with the same engine).

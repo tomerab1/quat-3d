@@ -1,8 +1,10 @@
 #pragma once
 
 // RemoteBridge — the `game` executable's side of remote control (ROADMAP
-// A2/A3, app layer). It owns the JSON-RPC endpoint (QUAT_REMOTE=<port>,
-// QUAT_REMOTE_TOKEN), registers engine.info plus the world commands, and
+// A2/A3, app layer). It owns the JSON-RPC endpoint (QUAT_REMOTE=<port>;
+// QUAT_REMOTE_TOKEN or a generated session token, published in a user-only
+// token file for quat-mcp — engine/remote/session_token.hpp), registers
+// engine.info plus the world commands, and
 // implements their WorldServices against the frame loop's state: the fly
 // camera, clouds, terrain heights, glTF spawning, play mode, scene files,
 // navmesh baking and screenshots.
@@ -20,7 +22,8 @@
 //   poll()               once per frame before the scene updates: RPC
 //                        requests, primitive + instanced-mesh resolution,
 //                        scatter regeneration, finished screenshots,
-//                        completed debug.step requests
+//                        completed debug.step requests, finished
+//                        shader.create / update compiles
 //   advance_sim(dt)      once per frame with the real frame time: records it
 //                        and returns the simulation dt (0 while paused);
 //                        advance_sim_unrendered() instead on iterations that
@@ -38,6 +41,7 @@
 // PNG encoding runs on a worker thread; the reply goes out from poll()
 // (screenshot_capture.hpp).
 
+#include <cstddef>
 #include <cstdint>
 #include <expected>
 #include <filesystem>
@@ -59,6 +63,9 @@
 namespace engine::asset {
 class AssetManager;
 }
+namespace engine::core {
+class SimClock;
+}
 namespace engine::nav {
 class NavMesh;
 }
@@ -71,6 +78,7 @@ struct RenderSettings;
 namespace engine::rhi {
 class Device;
 class GpuAllocator;
+class ShaderHotReload;
 } // namespace engine::rhi
 namespace engine::scene {
 class MaterialOverrideStore;
@@ -138,6 +146,9 @@ struct RemoteBridgeTargets {
     std::function<void()> reset_temporal;
     // Gameplay scripts (G7): script.* statuses and reloads (may be null).
     engine::script::ScriptRuntime* scripts = nullptr;
+    // Compiles material shaders for shader.create / update (A6); null when
+    // shader hot reload is off (those methods then answer `unavailable`).
+    engine::rhi::ShaderHotReload* shader_reload = nullptr;
 
 #ifdef ENGINE_EDITOR
     engine::editor::EditorLayer* editor = nullptr;
@@ -187,15 +198,23 @@ public:
     spawn_model(const std::filesystem::path& absolute);
 
     [[nodiscard]] bool listening() const;
+    // Endpoint port and connected clients (editor status bar); 0 / 0 when
+    // not listening.
+    [[nodiscard]] std::uint16_t port() const;
+    [[nodiscard]] std::size_t   client_count() const;
+    // The simulation clock (pause / step / time scale), shared with the
+    // editor's Play controls.
+    [[nodiscard]] engine::core::SimClock& sim_clock();
 
 private:
     struct Impl;
     std::unique_ptr<Impl> impl_;
 };
 
-// Tees the process's stderr into the engine log ring (debug.log) when the
-// remote-control endpoint is requested (QUAT_REMOTE set) unless
-// QUAT_LOG_CAPTURE=0. Keep the returned object alive for the whole run.
-[[nodiscard]] engine::core::StderrCapture capture_stderr_for_remote();
+// Tees the process's stderr into the engine log ring (debug.log, the editor
+// Console) when the remote-control endpoint is requested (QUAT_REMOTE set) or
+// `editor_console` is true, unless QUAT_LOG_CAPTURE=0. Keep the returned
+// object alive for the whole run.
+[[nodiscard]] engine::core::StderrCapture capture_stderr_for_remote(bool editor_console = false);
 
 } // namespace quat::app

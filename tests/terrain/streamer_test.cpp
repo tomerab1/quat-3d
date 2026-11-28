@@ -109,6 +109,9 @@ TEST(TerrainParamsShape, OnlyGenerationFieldsChangeTheShape) {
     b = a;
     b.grid.talus = 0.7F;
     EXPECT_FALSE(engine::terrain::same_shape(a, b));
+    b = a;
+    b.grid.relax_cycles += 1; // talus relaxation (#90) changes the heights
+    EXPECT_FALSE(engine::terrain::same_shape(a, b));
 }
 
 } // namespace

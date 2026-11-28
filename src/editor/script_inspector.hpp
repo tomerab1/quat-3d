@@ -24,6 +24,9 @@ bool draw_script_component(entt::registry& registry, entt::entity entity, scene:
 
 // One row per script file the runtime knows: state, instances, reloads and
 // the last error (failed scripts open by default, like shaders).
+// The Script component's fields without a section header (the inspector
+// draws the header).
+void draw_script_fields(scene::Script& script, script::ScriptRuntime* scripts);
 void draw_script_status(const script::ScriptRuntime* scripts);
 
 } // namespace engine::editor

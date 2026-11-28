@@ -162,13 +162,17 @@ bool draw_script_component(entt::registry& registry, entt::entity entity, scene:
         }
     }
     if (!open) return true;
+    draw_script_fields(sc, scripts);
+    return true;
+}
+
+void draw_script_fields(scene::Script& sc, script::ScriptRuntime* scripts) {
     ImGui::PushID("script");
     draw_path(sc, scripts);
     ImGui::Checkbox("enabled", &sc.enabled);
     draw_status(scripts, sc.path);
     draw_properties(sc, scripts);
     ImGui::PopID();
-    return true;
 }
 
 void draw_script_status(const script::ScriptRuntime* scripts) {

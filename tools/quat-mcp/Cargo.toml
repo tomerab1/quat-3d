@@ -30,10 +30,12 @@ humantime = "2"
 which = "8"
 percent-encoding = "2"
 tempfile = "3"
+dirs = "6"
 
 [dev-dependencies]
 rmcp = { version = "3.12", default-features = false, features = ["server", "client", "macros", "transport-io", "schemars", "base64"] }
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "sync", "time"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "sync", "time", "fs"] }
+tempfile = "3"
 
 [lints.rust]
 unsafe_code = "forbid"

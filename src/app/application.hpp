@@ -32,6 +32,7 @@
 #include "app/remote_bridge.hpp"
 #include "app/world_runtime.hpp"
 #include "engine/asset/asset_manager.hpp"
+#include "engine/core/frame_timer.hpp"
 #include "engine/rhi/device.hpp"
 #include "engine/rhi/gpu_allocator.hpp"
 #include "engine/rhi/pipeline_cache.hpp"
@@ -55,6 +56,10 @@ struct AppConfig {
     std::optional<std::filesystem::path> screenshot_path;
     // False with QUAT_NO_UI=1: no editor shell (deterministic headless renders).
     bool editor_ui = true;
+    // QUAT_WINDOW_SIZE=<w>x<h>: initial window size in screen coordinates
+    // (headless captures of the editor want more than the 1280x720 default).
+    int window_width = 1280;
+    int window_height = 720;
 };
 
 class Application {
@@ -146,7 +151,7 @@ private:
     std::uint64_t presented_ = 0;
     double        frame_time_sum_ = 0.0; // avg-frame-time report at exit
     std::uint64_t frame_time_samples_ = 0;
-    std::uint64_t last_ticks_ = 0;
+    engine::core::FrameTimer frame_timer_; // real frame dt; skips minimised gaps (#61)
 };
 
 } // namespace quat::app

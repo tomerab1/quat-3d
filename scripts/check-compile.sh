@@ -16,9 +16,14 @@ ROOT="$(git rev-parse --show-toplevel)"
 cd "$ROOT" || exit 2
 fail=0
 for f in "$@"; do
+  # Mirror CMake: the path macros exist only for the game target and the
+  # tests, so library code that uses them fails here as it does in CI.
+  paths=()
+  case "$f" in src/app/*|src/main.cpp|tests/*) paths=(-DQUAT_COOKED_SHADER_DIR='"x"' -DQUAT_PROJECT_ROOT='"x"');; esac
+  case "$f" in tests/*) paths+=(-DQUAT_SHADER_SOURCE_DIR='"x"');; esac
   out=$(clang++ -std=c++23 -stdlib=libc++ -Wall -Wextra -Wshadow -fno-exceptions -fno-rtti \
     -fsyntax-only -DGLM_FORCE_DEPTH_ZERO_TO_ONE -DGLM_FORCE_RADIANS -DENGINE_EDITOR \
-    -DQUAT_COOKED_SHADER_DIR='"x"' -DQUAT_PROJECT_ROOT='"x"' \
+    "${paths[@]}" \
     -Iinclude -Isrc -Isrc/remote -Itests \
     -isystem "$D/entt/src" -isystem "$D/vma/include" -isystem "$D/jolt" \
     -isystem "$D/fastgltf/include" -isystem "$D/stb" -isystem "$D/sdl/include" \

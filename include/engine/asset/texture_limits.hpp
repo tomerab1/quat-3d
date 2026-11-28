@@ -34,6 +34,9 @@ public:
 
     // Claims `bytes`; false (claiming nothing) when that would exceed the total.
     [[nodiscard]] bool reserve(std::uint64_t bytes) noexcept;
+    // Gives back `bytes` claimed earlier (memory that was transient or has
+    // been replaced); never goes below zero.
+    void release(std::uint64_t bytes) noexcept;
     [[nodiscard]] std::uint64_t used() const noexcept { return used_.load(); }
     [[nodiscard]] std::uint64_t total() const noexcept { return total_; }
 

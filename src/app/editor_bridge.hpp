@@ -49,6 +49,7 @@ struct CameraMatrices;
 
 namespace quat::app {
 
+class RemoteBridge;
 struct RemoteBridgeTargets;
 
 // What the editor's requests act on. Non-owning; set once by bind().
@@ -69,6 +70,8 @@ struct EditorBridgeTargets {
     // Camera cut for the renderer's temporal state (R11): called after a scene
     // load and on every Play / Stop transition. May be empty.
     std::function<void()> reset_temporal;
+    // Simulation clock (Pause / Step) and endpoint state for the status bar.
+    RemoteBridge* remote = nullptr;
 };
 
 class EditorBridge {
@@ -88,6 +91,9 @@ public:
     void fill_remote_targets(RemoteBridgeTargets& targets);
 
     [[nodiscard]] bool active() const { return editor_.active(); }
+    // True once after the editor rebuilt its font atlas (display scale
+    // change); the frame renderer must re-upload it.
+    [[nodiscard]] bool take_font_atlas_changed() { return editor_.take_font_atlas_changed(); }
 
     // ---- Input -------------------------------------------------------------
     void process_event(const SDL_Event& event);
@@ -128,7 +134,9 @@ private:
 
     EditorBridgeTargets              t_;
     engine::editor::EditorLayer      editor_;
+    std::string startup_select_;      // QUAT_EDITOR_SELECT, applied on the first frame
     std::string pending_instantiate_; // set by the asset browser, consumed below
+    bool        new_scene_ = false;   // File > New
     std::string pending_save_;        // scene file requests from the File menu
     std::string pending_load_;
     bool play_use_scene_camera_ = false; // menu-bar "Game camera" checkbox

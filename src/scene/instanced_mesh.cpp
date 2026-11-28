@@ -95,6 +95,10 @@ std::uint64_t instanced_mesh_source_hash(const InstancedMesh& mesh) {
         h.f32(p.metallic);
         h.f32(p.roughness);
         for (int i = 0; i < 3; ++i) h.f32(p.emissive[i]);
+        h.str(p.shader);
+        for (const glm::vec4& v : p.shader_params) {
+            for (int i = 0; i < 4; ++i) h.f32(v[i]);
+        }
     } else {
         h.str(mesh.gltf_node);
     }

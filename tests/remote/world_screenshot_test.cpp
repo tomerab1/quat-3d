@@ -38,6 +38,7 @@ protected:
     void SetUp() override {
         engine::remote::RpcServerConfig config;
         config.port = 0;
+        config.token = "screenshot-camera-test"; // the endpoint always requires one (#63)
         auto listened = engine::remote::RpcServer::listen(config);
         ASSERT_OK(listened);
         server.emplace(std::move(*listened));
@@ -57,6 +58,8 @@ protected:
         auto c = engine::remote::detail::connect_loopback(server->port());
         ASSERT_OK(c);
         sock = std::move(*c);
+        const Json hello = rpc("session.hello", {{"token", "screenshot-camera-test"}});
+        ASSERT_TRUE(hello.is_object() && hello.contains("result")) << hello.dump();
     }
 
     // Sends one request and returns its reply (null on timeout).

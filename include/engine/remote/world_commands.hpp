@@ -11,8 +11,10 @@
 // material.get / set — behaviour-tree authoring (ROADMAP A7): bt.leaves,
 // bt.get, bt.set, bt.add_node, bt.remove_node, bt.move_node, bt.set_params,
 // bt.status — the gameplay script files (ROADMAP G7): script.list / get /
-// create / update / delete / check — and profiling (ROADMAP R4):
-// profile.frame / capture / result / counters / reset. The method contract is
+// create / update / delete / check — material shader authoring (ROADMAP
+// A6): shader.list / get / template / create / update / delete — and
+// profiling (ROADMAP R4): profile.frame / capture / result / counters /
+// reset. The method contract is
 // docs/remote-control.md.
 //
 // Scene editing works on any Scene. Everything that only the running
@@ -52,6 +54,9 @@ class PhysicsWorld;
 }
 namespace engine::renderer {
 struct RenderSettings;
+}
+namespace engine::rhi {
+class MaterialShaderRegistry;
 }
 namespace engine::scene {
 class Scene;
@@ -208,6 +213,11 @@ struct WorldServices {
     core::FrameProfiler* profiler = nullptr;
     // Per-heap GPU memory for profile.counters (empty: reported as null).
     std::function<std::vector<GpuMemoryHeap>()> gpu_memory;
+    // ---- Material shaders (ROADMAP A6) -------------------------------------------
+
+    // Authored material shaders (non-owning; its poll() must run every frame
+    // so shader.create / update replies go out). Null: shader.* unavailable.
+    rhi::MaterialShaderRegistry* material_shaders = nullptr;
 };
 
 // Registers every world command on `server`. `scene` must outlive the server's

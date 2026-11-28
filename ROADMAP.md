@@ -98,6 +98,10 @@ JSON-RPC over loopback TCP to the engine.
 - [ ] **A6 — Shader authoring.** Create/edit material shaders (Slang modules
   implementing the material interface), compile with diagnostics returned to
   the model, hot-swap (needs R2).
+  - [ ] A6 follow-up: `shadow` and `forward` variants in
+    `material_shaders::variants` — shadow casting that evaluates the material
+    and honours its alpha cutout (today shadows use the mesh's silhouette),
+    and alpha-blended material shaders in the transparent pass.
 - [ ] **A7 — Behaviour authoring.** Build and edit behaviour graphs (G2) by
   tool call, with validation errors returned as data.
 - [ ] **A8 — Live tuning.** Every renderer / post-process / material
@@ -242,13 +246,17 @@ JSON-RPC over loopback TCP to the engine.
   4-cascade CSM with GPU depth bounds and texel snapping, XeGTAO port with
   bent normals → visibility-bitmask SSILVB, contact shadows, then stochastic
   SSR. Supersedes the AO/SSR/contact-shadow parts of R8. *(quick win)*
+  - [x] R12.11 Materials in the depth / shadow passes: glTF `MASK` alpha test
+    (GBuffer + CSM casters, separate pipelines so opaque keeps early-Z,
+    coverage-preserving alpha mips), translucent (coloured) shadows for
+    transmissive / blended casters (#35, #23, #62).
 - [ ] **R13 — Weather + wind.** One `WeatherState` (ECS singleton, Lua + MCP
   `set_weather`) driving a global wind field (grass, foliage, cloth, particles,
   ocean, clouds), wetness/snow layers, rain with an occlusion map, cloud
   shadows; then froxel volumetric fog + local fog volumes (on R10.1's
   clusters) and a 2.5D volumetric cloud layer. *(quick win → medium)*
 - [ ] **R14 — Foliage.** Main + detail wind bending, two-sided foliage shading
-  model ID in the GBuffer, hashed alpha with coverage-preserving mips, GPU
+  model ID in the GBuffer, hashed alpha (coverage-preserving mips: R12.11), GPU
   instance cull + LOD cross-fade (with R9.4), octahedral impostors, GPU
   density placement from R10.2 terrain maps with **biome recipes authored
   over MCP**. *(quick win → medium)*
@@ -375,25 +383,39 @@ is JSON/Lua so it is authorable over MCP.
 - [ ] **E7 — Build & export dialog** (drives P4).
 - [ ] **E8 — Editor UI/UX redesign** *(owner request, top editor priority)*.
   A coherent, modern editor on par with Unreal 5 / Godot 4 / Blender:
-  - **E8.1 Design system** (`src/editor/ui/`): theme tokens (dark + light,
+  - [x] **E8.1 Design system** (`src/editor/ui/`): theme tokens (dark + light,
     one accent, semantic colours), Inter + JetBrains Mono + an icon font,
     DPI-aware sizing and spacing scale, and a widget kit — property grid
     rows (label column, reset-to-default, tooltips), XYZ-coloured vector
     fields, component headers (icon, enable toggle, ⋮ menu), search fields,
     icon buttons/toolbars, toasts, empty states.
-  - **E8.2 Shell**: main menu, main toolbar (play/pause/step, gizmo mode +
+  - [x] **E8.2 Shell**: main menu, main toolbar (play/pause/step, gizmo mode +
     space, snapping, camera speed), status bar (FPS/frame time, sim state,
     selection, remote/MCP connection), viewport as a dock panel with an
     overlay toolbar (view modes, stats), default layout + reset, layout
     persistence, a command palette (Ctrl+P) and consistent shortcuts.
-  - **E8.3 Core panels** on the kit: Hierarchy (search, type icons,
-    visibility, F2 rename, drag re-parent, context menu), Inspector
-    (property grid, searchable Add Component), Asset browser (breadcrumbs,
-    grid/list, search, type icons), Console (A5 log ring, filters).
-  - **E8.4 Feature panels** migrated once their PRs land (tuning, shadows/AO,
-    upscaler, particles, scripts, behaviour editor, audio, grass).
-  - **Verification:** real editor screenshots in CI (headless capture of the
-    docked editor) with before/after images for every slice.
+  - [x] **E8.3 Core panels** on the kit: Hierarchy (search, type icons,
+    F2 rename, drag re-parent, context menu), Inspector (property grid,
+    searchable Add Component), Asset browser (breadcrumbs, grid/list, search,
+    type icons), Console (A5 log ring, filters). The hierarchy visibility
+    toggle moved to E8.4: the engine has no per-entity visibility yet.
+  - [ ] **E8.4 Feature panels and follow-ups**: migrate the panels still on
+    plain ImGui (Physics, Animation preview, the behaviour editor's toolbar
+    and nodes, the Grass and Audio inspector sections) and those of later
+    PRs (upscaler, particles, scripts) to the kit; hierarchy visibility
+    toggle and an entity enable toggle (need an engine-side visible /
+    enabled concept honoured by every draw path, not editor state in the
+    ECS); wire Undo / Redo to E1's command stack; ImGui 1.92 dynamic font
+    textures in `ImGuiPass` (free font scaling, thumbnails for E6).
+    Done in the #52 follow-up PR: a forced `QUAT_EDITOR_THEME` is not saved;
+    re-parenting under a zero-scaled parent is refused; scene paths must be
+    valid UTF-8; escaping file symlinks are not listed; snap steps are
+    clamped; swatch text follows the swatch's luminance.
+  - **Verification:** real editor screenshots (headless capture of the
+    docked editor) with before/after images for every slice:
+    `scripts/editor-screenshots.sh` and `docs/screenshots/editor/`; the CI
+    screenshot job captures the editor at 1600x900 once it adopts that
+    script's settings.
 
 ---
 

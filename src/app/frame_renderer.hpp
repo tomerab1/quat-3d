@@ -231,6 +231,12 @@ public:
     // teleport): the next frame drops the motion history and previous view
     // (velocity 0) and resolves without the TAA / upscaler history.
     void reset_temporal() { temporal_.reset(); }
+#ifdef ENGINE_EDITOR
+    // Re-uploads the editor's font atlas into every frame slot's UI pass
+    // after the editor rebuilt it (display scale change). Waits for the
+    // device to idle first; rare, so the stall does not matter.
+    void reload_ui_fonts();
+#endif
     // Atmosphere LUTs + dynamic IBL probe, lit by the scene's sun. Optional:
     // failures are logged and fall back to the procedural sky / flat ambient.
     void create_environment(engine::scene::Scene& scene,

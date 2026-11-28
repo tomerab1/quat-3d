@@ -21,6 +21,8 @@ mod scene_tools;
 #[allow(clippy::doc_markdown)]
 mod script_tools;
 #[allow(clippy::doc_markdown)]
+mod shader_tools;
+#[allow(clippy::doc_markdown)]
 mod sim_tools;
 #[allow(clippy::doc_markdown)]
 mod tuning_tools;
@@ -47,7 +49,7 @@ use crate::content;
 pub use asset_tools::AssetConfig;
 pub use prompts::{
     BuildWorldArgs, DebugSessionArgs, DesignBehaviorArgs, FindPerformanceProblemArgs,
-    InspectSceneArgs, TuneLookArgs, WriteGameScriptArgs,
+    InspectSceneArgs, TuneLookArgs, WriteGameScriptArgs, WriteMaterialShaderArgs,
 };
 pub use results::{error_result, normalize_method};
 pub use world_tools::MAX_GROUND_POINTS;
@@ -108,6 +110,7 @@ impl QuatServer {
             + Self::behavior_tools()
             + Self::script_tools()
             + Self::asset_tools()
+            + Self::shader_tools()
     }
 
     /// Timeout for slow engine work (loading, baking, screenshots).

@@ -5,14 +5,17 @@
 #include <algorithm>
 #include <cstdio>
 #include <cstdlib>
+#include <string_view>
 #include <utility>
 
 #include <glm/gtc/matrix_transform.hpp>
 
 #include "app/asset_root.hpp"
+#include "app/load_transfer.hpp"
 #include "app/remote_bridge.hpp"
 #include "engine/core/frame_profiler.hpp"
 #include "engine/core/utf8_path.hpp"
+#include "engine/renderer/render_settings.hpp"
 #include "engine/rhi/device.hpp"
 #include "engine/rhi/gpu_allocator.hpp"
 #include "engine/rhi/shader_hot_reload.hpp"
@@ -23,36 +26,31 @@
 #include "engine/scene/scene_io.hpp"
 
 namespace quat::app {
-namespace {
-
-// Runs `fn` with a transient upload context on the graphics queue (mip
-// blits need a graphics-capable queue), like the startup path. Skipped if the
-// command pool cannot be created.
-template <typename Fn>
-void with_load_transfer(const engine::rhi::Device& device, Fn&& fn) {
-    const VkDevice vk_device = device.handle();
-    VkCommandPool load_pool = VK_NULL_HANDLE;
-    VkCommandPoolCreateInfo pool_info{};
-    pool_info.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
-    pool_info.flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT;
-    pool_info.queueFamilyIndex = device.queue_families().graphics;
-    if (vkCreateCommandPool(vk_device, &pool_info, nullptr, &load_pool) == VK_SUCCESS) {
-        const engine::rhi::TransferContext load_transfer{
-            vk_device, load_pool, device.graphics_queue(), device.max_sampler_anisotropy(),
-            device.texture_caps()};
-        std::forward<Fn>(fn)(load_transfer);
-        vkDestroyCommandPool(vk_device, load_pool, nullptr);
-    }
-}
-
-} // namespace
 
 void EditorBridge::create(SDL_Window* window, bool enabled) {
     if (!enabled) return;
     if (auto e = engine::editor::EditorLayer::create(
-            window, engine::core::path_to_utf8(project_root() / "assets" / "fonts" / "Roboto-Medium.ttf"));
+            window, engine::core::path_to_utf8(project_root())); // UTF-8 (#24)
         e) {
         editor_ = std::move(*e);
+        // QUAT_EDITOR_THEME=light|dark picks the theme (over the one saved in
+        // .quat/editor.ini).
+        if (const char* theme = std::getenv("QUAT_EDITOR_THEME"); theme != nullptr) {
+            editor_.set_theme(theme);
+        }
+        // Startup editor state (headless captures, scripted demos):
+        // QUAT_EDITOR_SELECT=<entity name>, QUAT_EDITOR_FOCUS=<panel title>.
+        if (const char* sel = std::getenv("QUAT_EDITOR_SELECT"); sel != nullptr) {
+            startup_select_ = sel;
+        }
+        if (const char* focus = std::getenv("QUAT_EDITOR_FOCUS"); focus != nullptr) {
+            editor_.focus_panel(focus);
+        }
+        // QUAT_EDITOR_LAYOUT=default: ignore (and keep) the saved layout.
+        if (const char* layout = std::getenv("QUAT_EDITOR_LAYOUT");
+            layout != nullptr && std::string_view(layout) == "default") {
+            editor_.use_saved_layout(false);
+        }
     } else {
         std::fprintf(stderr, "[warn] editor disabled: %s\n", e.error().message.c_str());
     }
@@ -102,6 +100,15 @@ bool EditorBridge::through_scene_camera() const {
 
 void EditorBridge::begin_frame() {
     editor_.begin_frame();
+    if (!startup_select_.empty()) {
+        const std::string name = std::exchange(startup_select_, {});
+        for (auto [e, n] : t_.scene->registry().view<const engine::scene::Name>().each()) {
+            if (n.value == name) {
+                editor_.set_selected(e);
+                break;
+            }
+        }
+    }
     // Play/Stop requested by the UI / remote. Play swaps worlds (snapshot /
     // restore): no temporal history carries across.
     if (t_.world->apply_play(*t_.play_mode, *t_.scene) && t_.reset_temporal) t_.reset_temporal();
@@ -114,24 +121,44 @@ void EditorBridge::apply_scene_file_requests() {
     // Scene save/load requested from the File menu. Saving is pure CPU;
     // loading clears the scene and needs an upload context for asset
     // re-resolution, then the loop's cached entities are rebound.
+    using engine::editor::NoticeKind;
+    if (new_scene_ && !playing()) {
+        new_scene_ = false;
+        // File > New: an empty scene with a sun, so it is not pitch black.
+        scene = engine::scene::Scene{};
+        const entt::entity sun = scene.create_entity("sun");
+        scene.registry().emplace<engine::scene::DirectionalLight>(
+            sun, glm::normalize(glm::vec3(-0.4F, -1.0F, -0.3F)), glm::vec3(1.0F), 3.0F);
+        if (t_.render_settings != nullptr) {
+            (void)engine::renderer::reset_render_settings(*t_.render_settings);
+        }
+        t_.world->invalidate_navmesh("new scene");
+        t_.world->clear_demo_entities();
+        editor_.set_selected(entt::null);
+        if (t_.reset_temporal) t_.reset_temporal(); // a new world: a camera cut (R11)
+        editor_.notify(NoticeKind::info, "New scene");
+    }
     if (!pending_save_.empty()) {
         const std::string path = std::exchange(pending_save_, {});
         if (auto r = engine::scene::save_scene(scene, engine::core::path_from_utf8(path),
                                                t_.render_settings);
             r) {
             std::fprintf(stderr, "[editor] saved scene: %s\n", path.c_str());
+            editor_.notify(NoticeKind::success, "Saved " + path);
         } else {
             std::fprintf(stderr, "[editor] save failed: %s\n", r.error().message.c_str());
+            editor_.notify(NoticeKind::error, "Save failed: " + r.error().message);
         }
     }
     if (!pending_load_.empty() && !playing()) {
         const std::string path = std::exchange(pending_load_, {});
-        with_load_transfer(*t_.device, [&](const engine::rhi::TransferContext& load_transfer) {
+        (void)with_load_transfer(*t_.device, [&](const engine::rhi::TransferContext& load_transfer) {
             if (auto r = engine::scene::load_scene(scene, engine::core::path_from_utf8(path),
                                                    *t_.allocator, load_transfer, *t_.assets,
                                                    t_.render_settings);
                 r) {
                 std::fprintf(stderr, "[editor] loaded scene: %s\n", path.c_str());
+                editor_.notify(NoticeKind::success, "Loaded " + path);
                 t_.world->invalidate_navmesh("scene loaded");
                 // Rebind the loop's cached entities to the loaded scene.
                 // (The view camera is editor state — nothing to rebind.)
@@ -142,6 +169,7 @@ void EditorBridge::apply_scene_file_requests() {
                 // within one refresh cycle — no explicit rebake needed.
             } else {
                 std::fprintf(stderr, "[editor] load failed: %s\n", r.error().message.c_str());
+                editor_.notify(NoticeKind::error, "Load failed: " + r.error().message);
             }
         });
     }
@@ -154,7 +182,7 @@ void EditorBridge::apply_instantiate_request() {
     // the graphics queue (mip blits), like the startup path.
     if (pending_instantiate_.empty()) return;
     const std::string path = std::exchange(pending_instantiate_, {});
-    with_load_transfer(*t_.device, [&](const engine::rhi::TransferContext& load_transfer) {
+    (void)with_load_transfer(*t_.device, [&](const engine::rhi::TransferContext& load_transfer) {
         if (auto roots = engine::scene::GltfLoader::instantiate(engine::core::path_from_utf8(path), *t_.allocator,
                                                                 load_transfer, *t_.assets, scene);
             roots) {
@@ -172,6 +200,8 @@ void EditorBridge::apply_instantiate_request() {
         } else {
             std::fprintf(stderr, "[editor] instantiate failed: %s\n",
                          roots.error().message.c_str());
+            editor_.notify(engine::editor::NoticeKind::error,
+                           "Could not place the model: " + roots.error().message);
         }
     });
 }
@@ -251,6 +281,15 @@ const ImDrawData* EditorBridge::build_ui(float dt, int draw_count,
     ui_ctx.nav_edges =
         world.navmesh().mesh.valid() ? &world.navmesh().mesh.debug_edges() : nullptr;
     ui_ctx.nav_status = &world.navmesh().status;
+    ui_ctx.new_scene_request = &new_scene_;
+    ui_ctx.camera_speed = &t_.camera->speed_scale;
+    ui_ctx.dt = dt;
+    if (t_.remote != nullptr) {
+        ui_ctx.sim_clock = &t_.remote->sim_clock();
+        ui_ctx.remote.enabled = t_.remote->listening();
+        ui_ctx.remote.port = t_.remote->port();
+        ui_ctx.remote.clients = t_.remote->client_count();
+    }
     ui_ctx.view_proj = cam.view_proj; // unjittered, for overlays
     ui_ctx.view = cam.view;
     ui_ctx.proj_no_flip = cam.projection;

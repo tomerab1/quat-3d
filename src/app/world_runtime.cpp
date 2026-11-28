@@ -26,6 +26,7 @@
 #include "engine/scene/ground_placement.hpp"
 #include "engine/scene/scene.hpp"
 #include "engine/scene/view_clip.hpp"
+#include "engine/terrain/budget.hpp"
 
 namespace quat::app {
 
@@ -388,6 +389,19 @@ void WorldRuntime::update_terrain(engine::scene::Scene& scene, const glm::vec3& 
         const auto* tf = scene.registry().try_get<engine::scene::Transform>(te);
         terrain_anchor_ = tf != nullptr ? glm::vec3(tf->world[3]) : glm::vec3(0.0F);
         terrain_snowline_ = tcomp.snowline_m;
+
+        // #67: a configuration over the memory / droplet budget is not
+        // generated (the codec rejects it; editor edits bypass the codec).
+        // Whatever is loaded stays; a pending regenerate waits for a fix.
+        if (const auto over = engine::terrain::terrain_budget_problem(
+                tcomp.params, tcomp.streaming, tcomp.stream_radius)) {
+            if (over->message != terrain_budget_error_) {
+                std::fprintf(stderr, "[terrain] not generating: %s\n", over->message.c_str());
+                terrain_budget_error_ = over->message;
+            }
+            break;
+        }
+        terrain_budget_error_.clear();
 
         if (tcomp.streaming) {
             if (tcomp.regenerate || !terrain_streamer_) {
