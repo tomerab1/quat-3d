@@ -541,6 +541,7 @@ json encode_components(const entt::registry& r, entt::entity e, const EncodeOpti
         j["gltf"] = m->gltf_path;
         j["node"] = m->gltf_node;
         j["cast_shadows"] = m->cast_shadows;
+        j["shadow_distance"] = m->shadow_distance;
         j["instance_count"] = m->instances.size();
         // A scatter regenerates the placements: they are derived data, not
         // part of the entity's description (and can number in the tens of
@@ -760,6 +761,7 @@ std::expected<void, core::Error> apply_component(entt::registry& r, entt::entity
             f.string("gltf", m.gltf_path, k_max_asset_path).string("node", m.gltf_node, 1024);
             check_project_path(f, "gltf", m.gltf_path);
             f.boolean("cast_shadows", m.cast_shadows);
+            f.number("shadow_distance", m.shadow_distance, 0.0F, 100000.0F);
             f.known({"instance_count", "instances"});
             (void)f.raw("instance_count"); // echoed back by encode; ignored on input
             const json* list = f.raw("instances");

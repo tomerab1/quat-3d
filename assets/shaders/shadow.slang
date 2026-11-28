@@ -5,16 +5,19 @@
 // cascade's view-projection comes from the CascadeData buffer (fitted on the
 // GPU by csm_setup.slang, or uploaded by the CPU fallback), read through a
 // buffer device address. Draws are instanced (R9.1), reading per-instance
-// transforms like the GBuffer pass.
+// transforms like the GBuffer pass, through
+// this cascade's visible list (GPU instance culling, R6 / R9.4).
 
 import csm;
 import instancing;
 
-// Mirrors engine::renderer::ShadowPushConstants (24 bytes).
+// Mirrors engine::renderer::ShadowPushConstants (32 bytes).
 struct PushConstants {
-    CascadeData*  cascades;
-    InstanceData* instances; // indexed by instance_index() (includes firstInstance)
-    uint          cascade;
+    CascadeData*     cascades;
+    InstanceData*    instances; // indexed through the visible list
+    VisibleInstance* visible;   // this cascade's culled list, indexed by instance_index()
+    uint             cascade;
+    uint             pad;
 }
 [[vk::push_constant]] PushConstants pc;
 
@@ -24,7 +27,7 @@ struct VsIn {
 
 [shader("vertex")]
 float4 vertex_main(VsIn input) : SV_Position {
-    InstanceData inst = pc.instances[instance_index()];
+    InstanceData inst = pc.instances[pc.visible[instance_index()].index];
     float4 p = inst.world_position(input.position);
     uint b = pc.cascade * 4;
     return pc.cascades[0].view_proj[b] * p.x + pc.cascades[0].view_proj[b + 1] * p.y +

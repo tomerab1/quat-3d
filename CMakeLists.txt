@@ -699,6 +699,8 @@ add_library(engine_renderer STATIC
     src/renderer/gtao_pass.cpp
     src/renderer/hiz_pass.cpp
     src/renderer/instance_buffer.cpp
+    src/renderer/instance_cull.cpp
+    src/renderer/instance_cull_pass.cpp
     src/renderer/non_finite_counters.cpp
     src/renderer/mesh_pass.cpp
     src/renderer/material_pipelines.cpp

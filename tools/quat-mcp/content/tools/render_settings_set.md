@@ -6,6 +6,7 @@ Examples:
 - softer, wider glow: `{"bloom": {"intensity": 0.12, "radius": 1.5, "threshold": 0.8}}`
 - softer shadow edges and no acne: `{"shadows": {"pcf_radius": 2.5, "normal_bias_texels": 1.5}}`
 - shadows further out, coarser near the camera: `{"shadows": {"max_distance": 400, "split_lambda": 0.6}}`
+- cheaper shadows in dense foliage (small casters stop casting into the coarse far cascades): `{"shadows": {"caster_min_texels": 3}}`; per model, `instanced_mesh.shadow_distance` stops far placements casting at all. `{"shadows": {"gpu_culling": false}}` draws every caster into every cascade (compare with `profile_frame`)
 - stronger, wider ambient occlusion: `{"ao": {"radius": 1.5, "strength": 3}}`
 - dimmer sky light: `{"ibl": {"intensity": 0.6}}`
 - sharper, longer reflections on glossy floors: `{"ssr": {"quality": "high", "max_roughness": 0.7}}`

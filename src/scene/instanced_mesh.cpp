@@ -142,6 +142,7 @@ std::size_t append_instanced_draws(const entt::registry& registry,
     struct Bucket {
         const asset::MeshAsset*              mesh = nullptr;
         const asset::MaterialAsset*          material = nullptr;
+        float                                shadow_distance = 0.0F; // shadow pass only
         std::vector<renderer::InstanceData>  instances;
         std::vector<renderer::InstanceMotion> motion;
     };
@@ -154,6 +155,10 @@ std::size_t append_instanced_draws(const entt::registry& registry,
          registry.view<const Transform, const InstancedMesh, const InstancedMeshParts>().each()) {
         if (mesh.instances.empty() || parts.parts.empty()) continue;
         if (pass == InstancedPass::shadow && !mesh.cast_shadows) continue;
+        // Entities with different caster distances never share a shadow draw
+        // (the GPU cull reads the distance per draw).
+        const float shadow_distance =
+            pass == InstancedPass::shadow ? std::max(mesh.shadow_distance, 0.0F) : 0.0F;
 
         // Map this entity's parts to shared (mesh, material) buckets once.
         part_bucket.assign(parts.parts.size(), -1);
@@ -163,10 +168,10 @@ std::size_t append_instanced_draws(const entt::registry& registry,
             const asset::MaterialAsset* mat = material_of(parts.parts[i]);
             if (m == nullptr || is_transparent(mat)) continue;
             auto it = std::find_if(buckets.begin(), buckets.end(), [&](const Bucket& b) {
-                return b.mesh == m && b.material == mat;
+                return b.mesh == m && b.material == mat && b.shadow_distance == shadow_distance;
             });
             if (it == buckets.end()) {
-                buckets.push_back(Bucket{m, mat, {}, {}});
+                buckets.push_back(Bucket{m, mat, shadow_distance, {}, {}});
                 it = buckets.end() - 1;
             }
             part_bucket[i] = static_cast<int>(it - buckets.begin());
@@ -200,6 +205,7 @@ std::size_t append_instanced_draws(const entt::registry& registry,
         renderer::InstancedDraw draw;
         draw.mesh = b.mesh;
         draw.material = b.material;
+        draw.shadow_distance = b.shadow_distance;
         draw.first_instance = static_cast<std::uint32_t>(out.instances.size());
         draw.instance_count = static_cast<std::uint32_t>(b.instances.size());
         out.instances.insert(out.instances.end(), b.instances.begin(), b.instances.end());

@@ -160,8 +160,10 @@ ShadowPass::create_material_casters(rhi::PipelineCache& cache,
     return {};
 }
 
-std::expected<void, core::Error> ShadowPass::add_caster(const InstancedDraw& d) {
+std::expected<void, core::Error> ShadowPass::add_caster(const InstancedDraw& d,
+                                                        std::uint32_t index) {
     FrameDraw fd;
+    fd.draw = index;
     fd.vertex_buffer = d.skinned_vertices != VK_NULL_HANDLE ? d.skinned_vertices
                                                             : d.mesh->vertex_buffer.handle();
     fd.index_buffer = d.mesh->index_buffer.handle();
@@ -229,6 +231,7 @@ ShadowPass::add_translucent_pass(rhi::RenderGraph& graph, CascadedShadows& out,
     auto pass = graph.add_pass("csm_translucent", rhi::PassType::graphics);
     pass.reads(out.cascades, rhi::ResourceUsage::buffer_read_vertex)
         .writes(out.transmittance, rhi::ResourceUsage::color_attachment);
+    culler_.declare_reads(pass);
     if (fallback.valid()) pass.reads(fallback, rhi::ResourceUsage::sampled);
     pass.execute([this, count](rhi::PassContext& ctx) { record_translucent(ctx.cmd(), count); });
     return {};
@@ -242,6 +245,7 @@ void ShadowPass::draw_material_casters(VkCommandBuffer cmd, const rhi::ManagedPi
     ShadowMaterialPushConstants push{};
     push.cascades = cascades_address_;
     push.instances = frame_instances_;
+    push.visible = culler_.visible_address(cascade);
     push.to_light = frame_to_light_;
     push.cascade = cascade;
     vkCmdPushConstants(cmd, pipeline.layout(), kPushStages, 0, sizeof(push), &push);
@@ -255,11 +259,8 @@ void ShadowPass::draw_material_casters(VkCommandBuffer cmd, const rhi::ManagedPi
         const VkDeviceSize offset = 0;
         vkCmdBindVertexBuffers(cmd, 0, 1, &fd.vertex_buffer, &offset);
         vkCmdBindIndexBuffer(cmd, fd.index_buffer, 0, VK_INDEX_TYPE_UINT32);
-        // firstInstance selects the instance range (see instancing.slang).
-        for (const asset::SubMesh& sm : fd.submeshes) {
-            vkCmdDrawIndexed(cmd, sm.index_count, fd.instance_count, sm.index_offset, 0,
-                             fd.first_instance);
-        }
+        // The cascade's surviving instances, one indirect command per submesh.
+        culler_.draw(cmd, cascade, fd.draw);
     }
 }
 

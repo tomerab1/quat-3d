@@ -42,6 +42,17 @@ public struct InstanceData {
     }
 }
 
+// One entry of a view's visible list (R6 / R9.4 GPU instance culling,
+// engine/renderer/instance_cull.hpp): a culled draw's InstanceIndex indexes
+// the list, which holds the surviving instance's index into the InstanceData
+// array. Passes read `instances[visible[instance_index()].index]`; both
+// pointers come straight from the push constants, so no pointer is reached
+// through an array element (issue #103). A struct, not a bare uint pointer:
+// older SPIRV-Cross releases size a pointer-to-scalar member like the scalar.
+public struct VisibleInstance {
+    public uint index;
+}
+
 // Vulkan InstanceIndex (includes the draw's firstInstance). Vertex stage only.
 public uint instance_index() {
     return spirv_asm {

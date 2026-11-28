@@ -98,6 +98,9 @@ struct InstancedDraw {
     VkDeviceAddress             prev_positions = 0;                // see DrawItem
     std::uint32_t               first_instance = 0;
     std::uint32_t               instance_count = 0;
+    // Shadow passes (R9.4): instances farther than this from the camera cast
+    // no shadow (InstancedMesh::shadow_distance); 0 = no limit.
+    float                       shadow_distance = 0.0F;
 };
 
 // Draws plus the flat instance array they index. Every draw's instance range

@@ -85,6 +85,19 @@ public:
     // and MoltenVK offer it; enabled whenever offered). Weighted blended OIT
     // needs it.
     [[nodiscard]] bool independent_blend() const { return independent_blend_; }
+    // Indirect-draw features (each enabled whenever offered) for GPU-driven
+    // draws: a non-zero firstInstance in indirect commands, several commands
+    // per call, and vkCmdDrawIndexedIndirectCount (Vulkan 1.2 drawIndirectCount).
+    struct IndirectCaps {
+        bool first_instance = false;
+        bool multi_draw = false;
+        bool count = false;
+    };
+    [[nodiscard]] IndirectCaps indirect_caps() const {
+        return simulate_no_indirect_ ? IndirectCaps{} : indirect_caps_;
+    }
+    // Tests: behave as a device without any of the indirect-draw features.
+    void simulate_missing_indirect(bool missing) { simulate_no_indirect_ = missing; }
     // Sampled-texture capabilities of this device (see TransferContext).
     [[nodiscard]] const TextureCaps& texture_caps() const {
         return texture_caps_;
@@ -165,6 +178,8 @@ private:
     VkPhysicalDeviceDescriptorBufferPropertiesEXT descriptor_buffer_props_{};
     float                    max_sampler_anisotropy_ = 0.0F;
     bool                     independent_blend_ = false;
+    IndirectCaps             indirect_caps_{};
+    bool                     simulate_no_indirect_ = false;
     TextureCaps              texture_caps_{};
     DescriptorBackend        descriptor_backend_ = DescriptorBackend::ext_descriptor_buffer;
     bool                     storage_image_extended_formats_ = false;

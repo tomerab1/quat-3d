@@ -16,7 +16,10 @@
 //
 // Casters: the instanced draw list (meshes and InstancedMesh placements,
 // culled on the CPU against caster_cull_view_proj, the volume every cascade
-// fits in), drawn into every cascade, plus optional extra casters
+// fits in), then culled per cascade on the GPU (R6 / R9.4, InstanceCuller:
+// the cascade's light-space volume extruded toward the sun by the caster
+// reach, the projected-size cull CsmSettings::caster_min_texels and each
+// draw's caster distance) and drawn indirectly, plus optional extra casters
 // (ShadowCasterFn — e.g. terrain) recorded inside each cascade's rendering.
 // The map and the cascade buffer are owned by the pass (one per frame slot)
 // and imported into each frame's graph.
@@ -52,6 +55,7 @@
 #include "engine/renderer/csm.hpp"
 #include "engine/renderer/draw_batching.hpp"
 #include "engine/renderer/instance_buffer.hpp"
+#include "engine/renderer/instance_cull_pass.hpp"
 #include "engine/renderer/shadow_ao_settings.hpp"
 #include "engine/rhi/descriptor_buffer.hpp"
 #include "engine/rhi/gpu_allocator.hpp"
@@ -87,25 +91,28 @@ inline constexpr VkFormat shadow_map_format_padded = VK_FORMAT_D32_SFLOAT;
 inline constexpr std::uint32_t translucent_shadow_map_size = 1024;
 inline constexpr VkFormat translucent_shadow_format = VK_FORMAT_R16G16B16A16_SFLOAT;
 
-// Push-constant block, mirrors PushConstants in shadow.slang (24 bytes).
+// Push-constant block, mirrors PushConstants in shadow.slang (32 bytes).
 struct ShadowPushConstants {
     VkDeviceAddress cascades = 0;
     VkDeviceAddress instances = 0;
+    VkDeviceAddress visible = 0; // the cascade's culled list (InstanceCuller)
     std::uint32_t   cascade = 0;
     std::uint32_t   pad = 0;
 };
-static_assert(sizeof(ShadowPushConstants) == 24, "must match shadow.slang PushConstants");
+static_assert(sizeof(ShadowPushConstants) == 32, "must match shadow.slang PushConstants");
 
 // Push-constant block of the casters that read their material, mirrors
-// PushConstants in shadow_material.slang (48 bytes).
+// PushConstants in shadow_material.slang (64 bytes).
 struct ShadowMaterialPushConstants {
     VkDeviceAddress              cascades = 0;
     VkDeviceAddress              instances = 0;
+    VkDeviceAddress              visible = 0; // the cascade's culled list
+    std::array<std::uint32_t, 2> pad_a{};
     glm::vec4                    to_light{0.0F}; // xyz = unit direction toward the sun
     std::uint32_t                cascade = 0;
     std::array<std::uint32_t, 3> pad{};
 };
-static_assert(sizeof(ShadowMaterialPushConstants) == 48,
+static_assert(sizeof(ShadowMaterialPushConstants) == 64,
               "must match shadow_material.slang PushConstants");
 
 // This frame's sun shadows as graph resources.
@@ -215,6 +222,7 @@ private:
         std::uint32_t                   first_instance = 0;
         std::uint32_t                   instance_count = 0;
         std::uint32_t                   descriptor = 0; // material casters only
+        std::uint32_t                   draw = 0;       // index in the caster list (culler)
     };
     struct SetupSlots {
         std::uint32_t params = 0;
@@ -230,7 +238,8 @@ private:
     create_material_casters(rhi::PipelineCache& cache, const std::string& cooked_shader_dir);
     // Files `d` (already validated) under the opaque, masked or translucent
     // casters by its material.
-    [[nodiscard]] std::expected<void, core::Error> add_caster(const InstancedDraw& d);
+    [[nodiscard]] std::expected<void, core::Error> add_caster(const InstancedDraw& d,
+                                                              std::uint32_t index);
     // The first frame with material casters clears the fallback texture in
     // its graph: returns the imported handle the caster passes then read
     // (invalid on later frames, when it is already initialised).
@@ -253,6 +262,8 @@ private:
     rhi::ManagedPipeline   pipeline_;
     InstanceBuffer         instances_;
     VkDeviceAddress        frame_instances_ = 0;
+    // Per-cascade GPU culling of the casters (one view per cascade).
+    InstanceCuller         culler_;
     std::vector<FrameDraw> frame_draws_;
     std::vector<ShadowCasterFn> frame_extra_;
 

@@ -411,6 +411,15 @@ std::expected<Device, core::Error> Device::create(const CreateInfo& info) {
     }
     core_features.independentBlend = supported_core.independentBlend;
     dev.independent_blend_ = supported_core.independentBlend == VK_TRUE;
+    // GPU-driven draws (R6 / R9.4 instance culling): indirect commands with a
+    // non-zero firstInstance (each draw's compacted instance range), several
+    // commands per call, and a GPU-written draw count. Enabled whenever
+    // offered (desktop drivers, lavapipe, MoltenVK); the culler falls back to
+    // direct, unculled draws without firstInstance support.
+    core_features.drawIndirectFirstInstance = supported_core.drawIndirectFirstInstance;
+    core_features.multiDrawIndirect = supported_core.multiDrawIndirect;
+    dev.indirect_caps_.first_instance = supported_core.drawIndirectFirstInstance == VK_TRUE;
+    dev.indirect_caps_.multi_draw = supported_core.multiDrawIndirect == VK_TRUE;
     // Block-compressed texture families, likewise enabled whenever offered;
     // asset loads pick their transcode targets from what is enabled here.
     core_features.textureCompressionBC = supported_core.textureCompressionBC;
@@ -421,9 +430,18 @@ std::expected<Device, core::Error> Device::create(const CreateInfo& info) {
         dev.texture_caps_.astc_ldr && candidate.properties.vendorID == k_vendor_apple;
     dev.texture_caps_.max_dimension_2d = candidate.properties.limits.maxImageDimension2D;
 
+    VkPhysicalDeviceVulkan12Features supported12{};
+    supported12.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES;
+    VkPhysicalDeviceFeatures2 supported2{};
+    supported2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+    supported2.pNext = &supported12;
+    vkGetPhysicalDeviceFeatures2(dev.physical_device_, &supported2);
+
     VkPhysicalDeviceVulkan12Features features12{};
     features12.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES;
     features12.bufferDeviceAddress = VK_TRUE;
+    features12.drawIndirectCount = supported12.drawIndirectCount;
+    dev.indirect_caps_.count = supported12.drawIndirectCount == VK_TRUE;
     // Only chain the descriptor-buffer feature struct when the extension is
     // actually enabled; requesting it otherwise is a spec violation.
     features12.pNext = candidate.has_descriptor_buffer ? &db_features : nullptr;
@@ -605,6 +623,8 @@ Device& Device::operator=(Device&& other) noexcept {
         descriptor_buffer_props_ = other.descriptor_buffer_props_;
         max_sampler_anisotropy_  = other.max_sampler_anisotropy_;
         independent_blend_       = other.independent_blend_;
+        indirect_caps_           = other.indirect_caps_;
+        simulate_no_indirect_    = other.simulate_no_indirect_;
         texture_caps_            = other.texture_caps_;
         descriptor_backend_      = other.descriptor_backend_;
         storage_image_extended_formats_ = other.storage_image_extended_formats_;

@@ -162,6 +162,9 @@ ShadowPass::create(const rhi::Device& device, rhi::GpuAllocator& allocator,
     if (auto r = out.create_material_casters(cache, cooked_shader_dir); !r) {
         return std::unexpected(r.error());
     }
+    auto culler = InstanceCuller::create(device, allocator, cache, cooked_shader_dir);
+    if (!culler) return std::unexpected(culler.error());
+    out.culler_ = std::move(*culler);
 
     // GPU cascade fitting.
     auto setup = cache.load(cooked_shader_dir + "/csm_setup.spv");
@@ -221,14 +224,17 @@ ShadowPass::add_to_graph(rhi::RenderGraph& graph, const CsmView& view,
     frame_descriptor_of_.clear();
     frame_draws_.reserve(casters.draws.size());
     frame_to_light_ = glm::vec4(glm::normalize(view.to_light), 0.0F);
-    for (const InstancedDraw& d : casters.draws) {
+    for (std::size_t i = 0; i < casters.draws.size(); ++i) {
+        const InstancedDraw& d = casters.draws[i];
         if (d.mesh == nullptr || !d.mesh->valid() || d.instance_count == 0) continue;
         if (static_cast<std::size_t>(d.first_instance) + d.instance_count >
             casters.instances.size()) {
             return fail("shadow pass: draw instance range exceeds the instance array");
         }
         // Opaque, alpha-tested or translucent, by material.
-        if (auto r = add_caster(d); !r) return std::unexpected(r.error());
+        if (auto r = add_caster(d, static_cast<std::uint32_t>(i)); !r) {
+            return std::unexpected(r.error());
+        }
     }
     frame_extra_.assign(extra_casters.begin(), extra_casters.end());
 
@@ -298,10 +304,27 @@ ShadowPass::add_to_graph(rhi::RenderGraph& graph, const CsmView& view,
     }
 
     const auto count = static_cast<std::uint32_t>(s.cascade_count);
+    // R6 / R9.4: cull the casters per cascade on the GPU, against the
+    // cascades just fitted (or uploaded).
+    std::array<CullViewGpu, max_cascades> views{};
+    for (std::uint32_t c = 0; c < count; ++c) {
+        views[c] = s.gpu_culling ? cascade_cull_view(c, s.caster_min_texels) : keep_all_cull_view();
+    }
+    InstanceCullInput cull;
+    cull.instances = frame_instances_;
+    cull.views = std::span<const CullViewGpu>(views.data(), count);
+    cull.camera = glm::vec3(glm::inverse(view.view)[3]);
+    cull.cascades = out.cascades;
+    cull.cascades_address = cascades_address_;
+    if (auto r = culler_.add_to_graph(graph, casters, cull); !r) {
+        return std::unexpected(r.error());
+    }
+
     const rhi::ResourceHandle fallback = add_fallback_clear(graph);
     auto depth_pass = graph.add_pass("csm_shadow", rhi::PassType::graphics);
     depth_pass.reads(out.cascades, rhi::ResourceUsage::buffer_read_vertex)
         .writes(out.shadow_map, rhi::ResourceUsage::depth_attachment);
+    culler_.declare_reads(depth_pass);
     if (fallback.valid()) depth_pass.reads(fallback, rhi::ResourceUsage::sampled);
     depth_pass.execute([this, count](rhi::PassContext& ctx) { record_cascades(ctx.cmd(), count); });
     if (auto r = add_translucent_pass(graph, out, count, fallback); !r) {
@@ -340,6 +363,7 @@ void ShadowPass::record_cascades(VkCommandBuffer cmd, std::uint32_t count) const
         ShadowPushConstants push{};
         push.cascades = cascades_address_;
         push.instances = frame_instances_;
+        push.visible = culler_.visible_address(c);
         push.cascade = c;
         vkCmdPushConstants(cmd, pipeline_.layout(), VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(push),
                            &push);
@@ -347,11 +371,8 @@ void ShadowPass::record_cascades(VkCommandBuffer cmd, std::uint32_t count) const
             const VkDeviceSize offset = 0;
             vkCmdBindVertexBuffers(cmd, 0, 1, &fd.vertex_buffer, &offset);
             vkCmdBindIndexBuffer(cmd, fd.index_buffer, 0, VK_INDEX_TYPE_UINT32);
-            // firstInstance selects the instance range (see instancing.slang).
-            for (const asset::SubMesh& sm : fd.submeshes) {
-                vkCmdDrawIndexed(cmd, sm.index_count, fd.instance_count, sm.index_offset, 0,
-                                 fd.first_instance);
-            }
+            // The cascade's surviving instances, one indirect command per submesh.
+            culler_.draw(cmd, c, fd.draw);
         }
         for (const ShadowCasterFn& extra : frame_extra_) {
             if (extra) extra(cmd, c, cascades_address_);
