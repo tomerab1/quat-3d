@@ -96,8 +96,10 @@ private:
     // refreshed every k_bounds_refresh_frames) and the terrain (issue #37).
     void update_view_clip();
     // View / projection for a screenshot's own camera (issue #41).
+#if !defined(QUAT_SHIPPING)
     [[nodiscard]] engine::scene::CameraMatrices shot_view(const engine::remote::CameraPose& pose,
                                                           float aspect) const;
+#endif
     void report_stats() const;
 
     AppConfig config_;

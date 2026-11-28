@@ -292,6 +292,11 @@ void Application::connect_remote() {
     remote_targets.material_overrides = &renderer_.material_overrides();
     remote_targets.reset_temporal = [this] { renderer_.reset_temporal(); };
     world_.fill_remote_targets(remote_targets);
+#if !defined(QUAT_SHIPPING)
+    // terrain.status only (remote control): wired here, not in WorldRuntime,
+    // whose library the shipping player shares with quat-player.
+    remote_targets.terrain_status = [this] { return world_.terrain_status(); };
+#endif
     remote_targets.play = world_.has_demo_physics() ? nullptr : play_mode_.request();
 #ifdef ENGINE_EDITOR
     editor_.fill_remote_targets(remote_targets);
@@ -402,8 +407,12 @@ bool Application::run_frame() {
     const engine::scene::CameraMatrices cam = update_world(dt, sim_dt, aspect);
     // A screenshot with its own camera renders this frame from there (issue
     // #41); terrain streaming, audio and the editor UI stay with the user's view.
+#if defined(QUAT_SHIPPING)
+    const engine::scene::CameraMatrices& view = cam; // no remote screenshots
+#else
     const std::optional<engine::remote::CameraPose> shot = remote_->screenshot_view();
     const engine::scene::CameraMatrices view = shot ? shot_view(*shot, aspect) : cam;
+#endif
     // A camera cut (a remote teleport, or a screenshot's own camera and the
     // frame returning from it): the temporal history restarts instead of
     // blending across the jump (R11).
@@ -534,6 +543,7 @@ engine::scene::CameraMatrices Application::update_world(float dt, float sim_dt, 
     return cam;
 }
 
+#if !defined(QUAT_SHIPPING)
 engine::scene::CameraMatrices Application::shot_view(const engine::remote::CameraPose& pose,
                                                      float aspect) const {
     // Clip planes derived for the shot's own position, with its overrides.
@@ -546,6 +556,7 @@ engine::scene::CameraMatrices Application::shot_view(const engine::remote::Camer
                          glm::radians(glm::clamp(pose.pitch_deg, -89.0F, 89.0F)),
                          glm::radians(pose.fov_deg), clip, aspect);
 }
+#endif // !QUAT_SHIPPING
 
 void Application::update_view_clip() {
     // Scanning every drawable is cheap but not free: refresh the bounds a few

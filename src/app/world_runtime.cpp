@@ -205,7 +205,6 @@ void WorldRuntime::init_scripts(const std::filesystem::path& project_root,
 
 void WorldRuntime::fill_remote_targets(RemoteBridgeTargets& targets) {
     targets.terrain_height = [this](float lx, float lz) { return local_ground_height(lx, lz); };
-    targets.terrain_status = [this] { return terrain_status(); };
     targets.terrain_streamer = &terrain_streamer_;
     targets.terrain_heightmap = &terrain_heightmap_;
     targets.terrain_anchor = &terrain_anchor_;

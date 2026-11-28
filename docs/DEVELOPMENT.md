@@ -432,6 +432,14 @@ ImGuizmo (`-isystem <clone>/src`), nlohmann-json, glm and the Vulkan headers
 (through `EXTRA_FLAGS` when not installed), and libc++ (`apt-get install
 libc++-dev libc++abi-dev`).
 
+The `quat_player_shipping_has_no_remote` check (`cmake/CheckNoRemoteControl.cmake`)
+can be approximated without a link: compile the shipping player's app-layer
+sources (`QUAT_SHIPPING_APP_SOURCES` with `-DQUAT_SHIPPING`, plus
+`game_world_runtime`'s sources without it) with `-c -O2` and run its pattern
+over `nm -C` of the objects. Data types in `engine::remote::` count: remote-only
+wiring (screenshot cameras, `terrain.status`) belongs in code compiled per
+executable, guarded by `QUAT_SHIPPING`, not in the shared world library.
+
 Modules whose dependencies are header-only (animation and terrain need glm;
 remote needs nlohmann-json and glm — `apt-get install nlohmann-json3-dev
 libglm-dev`) can also be linked and their tests run, against a GoogleTest built
