@@ -19,8 +19,6 @@ namespace engine::scene::codec {
 namespace {
 
 using namespace detail;
-using core::EnumName;
-using core::JsonFields;
 
 } // namespace
 
@@ -31,10 +29,8 @@ std::expected<void, core::Error> register_weather(ComponentRegistry& registry) {
                          .writable = true,
                          .order = 1900};
     codec.encode = [](const entt::registry& r, entt::entity e, const EncodeOptions& /*options*/) {
-        json out;
-        const auto* w = &r.get<weather::WeatherState>(e);
-        out["weather"] = encode_weather(*w);
-        return std::move(out["weather"]);
+        const weather::WeatherState& w = r.get<weather::WeatherState>(e);
+        return json(encode_weather(w));
     };
     codec.apply = [](entt::registry& r, entt::entity e, const json& v, bool strict)
         -> std::expected<void, core::Error> {

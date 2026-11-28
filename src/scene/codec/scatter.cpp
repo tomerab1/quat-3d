@@ -35,24 +35,22 @@ std::expected<void, core::Error> register_scatter(ComponentRegistry& registry) {
                          .writable = true,
                          .order = 500};
     codec.encode = [](const entt::registry& r, entt::entity e, const EncodeOptions& /*options*/) {
-        json out;
-        const auto* sc = &r.get<Scatter>(e);
-        out["scatter"] = {{"seed", sc->seed},
-                          {"area", enum_name(k_scatter_areas, sc->area)},
-                          {"size", json::array({sc->size.x, sc->size.y})},
-                          {"radius", sc->radius},
-                          {"density", sc->density},
-                          {"min_spacing", sc->min_spacing},
-                          {"pattern", enum_name(k_scatter_patterns, sc->pattern)},
-                          {"scale", json::array({sc->scale_range.x, sc->scale_range.y})},
-                          {"random_yaw", sc->random_yaw},
-                          {"align_to_normal", sc->align_to_normal},
-                          {"base_offset", sc->base_offset},
-                          {"mirror", sc->mirror},
-                          {"slope", json::array({sc->slope_deg.x, sc->slope_deg.y})},
-                          {"height", json::array({sc->height_m.x, sc->height_m.y})},
-                          {"max_instances", sc->max_instances}};
-        return std::move(out["scatter"]);
+        const Scatter& sc = r.get<Scatter>(e);
+        return json({{"seed", sc.seed},
+                     {"area", enum_name(k_scatter_areas, sc.area)},
+                     {"size", json::array({sc.size.x, sc.size.y})},
+                     {"radius", sc.radius},
+                     {"density", sc.density},
+                     {"min_spacing", sc.min_spacing},
+                     {"pattern", enum_name(k_scatter_patterns, sc.pattern)},
+                     {"scale", json::array({sc.scale_range.x, sc.scale_range.y})},
+                     {"random_yaw", sc.random_yaw},
+                     {"align_to_normal", sc.align_to_normal},
+                     {"base_offset", sc.base_offset},
+                     {"mirror", sc.mirror},
+                     {"slope", json::array({sc.slope_deg.x, sc.slope_deg.y})},
+                     {"height", json::array({sc.height_m.x, sc.height_m.y})},
+                     {"max_instances", sc.max_instances}});
     };
     codec.apply = [](entt::registry& r, entt::entity e, const json& v, bool strict)
         -> std::expected<void, core::Error> {

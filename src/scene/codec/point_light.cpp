@@ -17,7 +17,6 @@ namespace engine::scene::codec {
 namespace {
 
 using namespace detail;
-using core::EnumName;
 using core::JsonFields;
 
 } // namespace
@@ -29,12 +28,10 @@ std::expected<void, core::Error> register_point_light(ComponentRegistry& registr
                          .writable = true,
                          .order = 600};
     codec.encode = [](const entt::registry& r, entt::entity e, const EncodeOptions& /*options*/) {
-        json out;
-        const auto* l = &r.get<PointLight>(e);
-        out["point_light"] = {{"color", vec3_json(l->color)},
-                              {"radius", l->radius},
-                              {"intensity", l->intensity}};
-        return std::move(out["point_light"]);
+        const PointLight& l = r.get<PointLight>(e);
+        return json({{"color", vec3_json(l.color)},
+                     {"radius", l.radius},
+                     {"intensity", l.intensity}});
     };
     codec.apply = [](entt::registry& r, entt::entity e, const json& v, bool strict)
         -> std::expected<void, core::Error> {

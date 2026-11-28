@@ -22,7 +22,6 @@ namespace engine::scene::codec {
 namespace {
 
 using namespace detail;
-using core::EnumName;
 using core::JsonFields;
 
 struct Trs {
@@ -130,10 +129,8 @@ std::expected<void, core::Error> register_transform(ComponentRegistry& registry)
                          .writable = true,
                          .order = 100};
     codec.encode = [](const entt::registry& r, entt::entity e, const EncodeOptions& options) {
-        json out;
-        const auto* t = &r.get<Transform>(e);
-        out["transform"] = encode_transform(*t, options.transform_as_matrix);
-        return std::move(out["transform"]);
+        const Transform& t = r.get<Transform>(e);
+        return json(encode_transform(t, options.transform_as_matrix));
     };
     codec.apply = [](entt::registry& r, entt::entity e, const json& v, bool strict)
         -> std::expected<void, core::Error> {

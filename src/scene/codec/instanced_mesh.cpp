@@ -21,7 +21,6 @@ namespace engine::scene::codec {
 namespace {
 
 using namespace detail;
-using core::EnumName;
 using core::JsonFields;
 
 [[nodiscard]] json encode_instance(const InstanceTransform& t) {
@@ -80,23 +79,21 @@ std::expected<void, core::Error> register_instanced_mesh(ComponentRegistry& regi
                          .writable = true,
                          .order = 400};
     codec.encode = [](const entt::registry& r, entt::entity e, const EncodeOptions& /*options*/) {
-        json out;
-        const auto* m = &r.get<InstancedMesh>(e);
-        json j = primitive_fields_json(m->primitive);
-        j["gltf"] = m->gltf_path;
-        j["node"] = m->gltf_node;
-        j["cast_shadows"] = m->cast_shadows;
-        j["instance_count"] = m->instances.size();
+        const InstancedMesh& m = r.get<InstancedMesh>(e);
+        json j = primitive_fields_json(m.primitive);
+        j["gltf"] = m.gltf_path;
+        j["node"] = m.gltf_node;
+        j["cast_shadows"] = m.cast_shadows;
+        j["instance_count"] = m.instances.size();
         // A scatter regenerates the placements: they are derived data, not
         // part of the entity's description (and can number in the tens of
         // thousands).
         if (!r.all_of<Scatter>(e)) {
             json list = json::array();
-            for (const InstanceTransform& t : m->instances) list.push_back(encode_instance(t));
+            for (const InstanceTransform& t : m.instances) list.push_back(encode_instance(t));
             j["instances"] = std::move(list);
         }
-        out["instanced_mesh"] = std::move(j);
-        return std::move(out["instanced_mesh"]);
+        return j;
     };
     codec.apply = [](entt::registry& r, entt::entity e, const json& v, bool strict)
         -> std::expected<void, core::Error> {

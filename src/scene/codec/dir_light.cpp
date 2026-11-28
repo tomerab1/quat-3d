@@ -17,7 +17,6 @@ namespace engine::scene::codec {
 namespace {
 
 using namespace detail;
-using core::EnumName;
 using core::JsonFields;
 
 } // namespace
@@ -29,12 +28,10 @@ std::expected<void, core::Error> register_dir_light(ComponentRegistry& registry)
                          .writable = true,
                          .order = 700};
     codec.encode = [](const entt::registry& r, entt::entity e, const EncodeOptions& /*options*/) {
-        json out;
-        const auto* l = &r.get<DirectionalLight>(e);
-        out["dir_light"] = {{"direction", vec3_json(l->direction)},
-                            {"color", vec3_json(l->color)},
-                            {"intensity", l->intensity}};
-        return std::move(out["dir_light"]);
+        const DirectionalLight& l = r.get<DirectionalLight>(e);
+        return json({{"direction", vec3_json(l.direction)},
+                     {"color", vec3_json(l.color)},
+                     {"intensity", l.intensity}});
     };
     codec.apply = [](entt::registry& r, entt::entity e, const json& v, bool strict)
         -> std::expected<void, core::Error> {

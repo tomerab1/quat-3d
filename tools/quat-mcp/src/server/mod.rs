@@ -36,7 +36,8 @@ pub use world_tools::MAX_GROUND_POINTS;
 /// `#[tool_router(router = <area>_tools)]` impl block holds its tools) and
 /// merges their routers into [`QuatServer::tools`]. A new group is one new
 /// file and one line in the [`tool_groups!`] list below, never an edit to
-/// shared code (ROADMAP S9).
+/// shared code (ROADMAP S9). Keep the list alphabetical, so parallel
+/// additions land on different lines.
 macro_rules! tool_groups {
     ($($group:ident),+ $(,)?) => {
         // Tool modules attach `content/tools/*.md` as doc attributes, so
@@ -65,21 +66,21 @@ macro_rules! tool_groups {
 }
 
 tool_groups! {
-    scene_tools,
-    world_tools,
-    sim_tools,
-    debug_tools,
-    profile_tools,
-    tuning_tools,
-    behavior_tools,
-    physics_tools,
-    weather_tools,
-    script_tools,
     asset_tools,
-    shader_tools,
-    project_tools,
-    time_tools,
+    behavior_tools,
+    debug_tools,
     input_tools,
+    physics_tools,
+    profile_tools,
+    project_tools,
+    scene_tools,
+    script_tools,
+    shader_tools,
+    sim_tools,
+    time_tools,
+    tuning_tools,
+    weather_tools,
+    world_tools,
 }
 
 /// URI of the scene-summary resource.

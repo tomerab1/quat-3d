@@ -18,7 +18,6 @@ namespace engine::scene::codec {
 namespace {
 
 using namespace detail;
-using core::EnumName;
 using core::JsonFields;
 
 } // namespace
@@ -30,14 +29,13 @@ std::expected<void, core::Error> register_camera(ComponentRegistry& registry) {
                          .writable = true,
                          .order = 800};
     codec.encode = [](const entt::registry& r, entt::entity e, const EncodeOptions& /*options*/) {
-        json out;
-        const auto* c = &r.get<Camera>(e);
-        out["camera"] = {{"fov_deg", glm::degrees(c->fov_y)},
-                         {"near", c->near_z},
-                         {"far", c->far_z},
-                         {"active", c->is_active}};
-        write_lens_fields(out["camera"], c->lens);
-        return std::move(out["camera"]);
+        const Camera& c = r.get<Camera>(e);
+        json out = {{"fov_deg", glm::degrees(c.fov_y)},
+                    {"near", c.near_z},
+                    {"far", c.far_z},
+                    {"active", c.is_active}};
+        write_lens_fields(out, c.lens);
+        return out;
     };
     codec.apply = [](entt::registry& r, entt::entity e, const json& v, bool strict)
         -> std::expected<void, core::Error> {

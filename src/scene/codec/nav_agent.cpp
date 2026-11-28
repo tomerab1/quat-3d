@@ -18,7 +18,6 @@ namespace engine::scene::codec {
 namespace {
 
 using namespace detail;
-using core::EnumName;
 using core::JsonFields;
 
 } // namespace
@@ -30,14 +29,12 @@ std::expected<void, core::Error> register_nav_agent(ComponentRegistry& registry)
                          .writable = true,
                          .order = 1300};
     codec.encode = [](const entt::registry& r, entt::entity e, const EncodeOptions& /*options*/) {
-        json out;
-        const auto* a = &r.get<NavAgent>(e);
-        out["nav_agent"] = {{"target", vec3_json(a->target)},
-                            {"speed", a->speed},
-                            {"ground_offset", a->ground_offset},
-                            {"active", a->active},
-                            {"paused", a->paused}};
-        return std::move(out["nav_agent"]);
+        const NavAgent& a = r.get<NavAgent>(e);
+        return json({{"target", vec3_json(a.target)},
+                     {"speed", a.speed},
+                     {"ground_offset", a.ground_offset},
+                     {"active", a.active},
+                     {"paused", a.paused}});
     };
     codec.apply = [](entt::registry& r, entt::entity e, const json& v, bool strict)
         -> std::expected<void, core::Error> {

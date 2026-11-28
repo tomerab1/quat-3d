@@ -7,7 +7,7 @@ use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::{Map, Value};
 
 /// One parameter module per tool group, re-exported flat: a new group is one
-/// line here (ROADMAP S9).
+/// line here (ROADMAP S9), kept alphabetical.
 macro_rules! param_groups {
     ($($group:ident),+ $(,)?) => {
         $(

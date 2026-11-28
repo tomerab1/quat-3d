@@ -3,8 +3,9 @@
 #include "engine/scene/component_registry.hpp"
 
 #include <algorithm>
-#include <cstdio>
 #include <utility>
+
+#include "engine/core/log.hpp"
 
 namespace engine::scene {
 
@@ -71,7 +72,7 @@ ComponentRegistry& component_registry() {
         if (auto ok = register_engine_components(registry); !ok) {
             // A broken engine codec is a build defect (the EngineComponents
             // tests catch it): report it, keep what did register.
-            std::fprintf(stderr, "[error] component registry: %s\n", ok.error().message.c_str());
+            core::log(core::LogLevel::error, "scene", "component registry: {}", ok.error().message);
         }
         return true;
     }();

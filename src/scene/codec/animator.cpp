@@ -18,8 +18,6 @@ namespace engine::scene::codec {
 namespace {
 
 using namespace detail;
-using core::EnumName;
-using core::JsonFields;
 
 } // namespace
 
@@ -30,10 +28,8 @@ std::expected<void, core::Error> register_animator(ComponentRegistry& registry) 
                          .writable = true,
                          .order = 2500};
     codec.encode = [](const entt::registry& r, entt::entity e, const EncodeOptions& /*options*/) {
-        json out;
-        const auto* a = &r.get<Animator>(e);
-        out["animator"] = detail::encode_animator(*a);
-        return std::move(out["animator"]);
+        const Animator& a = r.get<Animator>(e);
+        return json(detail::encode_animator(a));
     };
     codec.apply = [](entt::registry& r, entt::entity e, const json& v, bool strict)
         -> std::expected<void, core::Error> {

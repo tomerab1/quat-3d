@@ -17,7 +17,6 @@ namespace engine::scene::codec {
 namespace {
 
 using namespace detail;
-using core::EnumName;
 using core::JsonFields;
 
 } // namespace
@@ -29,12 +28,10 @@ std::expected<void, core::Error> register_character(ComponentRegistry& registry)
                          .writable = true,
                          .order = 1100};
     codec.encode = [](const entt::registry& r, entt::entity e, const EncodeOptions& /*options*/) {
-        json out;
-        const auto* c = &r.get<CharacterController>(e);
-        out["character"] = {{"radius", c->radius},
-                            {"half_height", c->half_height},
-                            {"speed", c->speed}};
-        return std::move(out["character"]);
+        const CharacterController& c = r.get<CharacterController>(e);
+        return json({{"radius", c.radius},
+                     {"half_height", c.half_height},
+                     {"speed", c.speed}});
     };
     codec.apply = [](entt::registry& r, entt::entity e, const json& v, bool strict)
         -> std::expected<void, core::Error> {

@@ -18,7 +18,6 @@ namespace engine::scene::codec {
 namespace {
 
 using namespace detail;
-using core::EnumName;
 using core::JsonFields;
 
 [[nodiscard]] json encode_grass(const renderer::GrassSettings& g) {
@@ -76,10 +75,8 @@ std::expected<void, core::Error> register_grass(ComponentRegistry& registry) {
                          .writable = true,
                          .order = 1800};
     codec.encode = [](const entt::registry& r, entt::entity e, const EncodeOptions& /*options*/) {
-        json out;
-        const auto* g = &r.get<Grass>(e);
-        out["grass"] = encode_grass(g->settings);
-        return std::move(out["grass"]);
+        const Grass& g = r.get<Grass>(e);
+        return json(encode_grass(g.settings));
     };
     codec.apply = [](entt::registry& r, entt::entity e, const json& v, bool strict)
         -> std::expected<void, core::Error> {

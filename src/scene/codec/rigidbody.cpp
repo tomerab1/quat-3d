@@ -33,16 +33,14 @@ std::expected<void, core::Error> register_rigidbody(ComponentRegistry& registry)
                          .writable = true,
                          .order = 1000};
     codec.encode = [](const entt::registry& r, entt::entity e, const EncodeOptions& /*options*/) {
-        json out;
-        const auto* b = &r.get<RigidBody>(e);
-        out["rigidbody"] = {{"motion", enum_name(k_motions, b->motion)},
-                            {"mass", b->mass},
-                            {"friction", b->friction},
-                            {"restitution", b->restitution},
-                            {"gravity_factor", b->gravity_factor},
-                            {"linear_damping", b->linear_damping},
-                            {"angular_damping", b->angular_damping}};
-        return std::move(out["rigidbody"]);
+        const RigidBody& b = r.get<RigidBody>(e);
+        return json({{"motion", enum_name(k_motions, b.motion)},
+                     {"mass", b.mass},
+                     {"friction", b.friction},
+                     {"restitution", b.restitution},
+                     {"gravity_factor", b.gravity_factor},
+                     {"linear_damping", b.linear_damping},
+                     {"angular_damping", b.angular_damping}});
     };
     codec.apply = [](entt::registry& r, entt::entity e, const json& v, bool strict)
         -> std::expected<void, core::Error> {

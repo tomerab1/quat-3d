@@ -172,10 +172,8 @@ std::expected<void, core::Error> register_joint(ComponentRegistry& registry) {
                          .writable = true,
                          .order = 1200};
     codec.encode = [](const entt::registry& r, entt::entity e, const EncodeOptions& /*options*/) {
-        json out;
-        const auto* j = &r.get<Joint>(e);
-        out["joint"] = encode_joint(*j);
-        return std::move(out["joint"]);
+        const Joint& j = r.get<Joint>(e);
+        return json(encode_joint(j));
     };
     codec.apply = [](entt::registry& r, entt::entity e, const json& v, bool strict)
         -> std::expected<void, core::Error> {

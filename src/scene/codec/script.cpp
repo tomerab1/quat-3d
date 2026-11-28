@@ -18,7 +18,6 @@ namespace engine::scene::codec {
 namespace {
 
 using namespace detail;
-using core::EnumName;
 using core::JsonFields;
 
 } // namespace
@@ -30,10 +29,8 @@ std::expected<void, core::Error> register_script(ComponentRegistry& registry) {
                          .writable = true,
                          .order = 1600};
     codec.encode = [](const entt::registry& r, entt::entity e, const EncodeOptions& /*options*/) {
-        json out;
-        const auto* sc = &r.get<Script>(e);
-        out["script"] = encode_script(*sc);
-        return std::move(out["script"]);
+        const Script& sc = r.get<Script>(e);
+        return json(encode_script(sc));
     };
     codec.apply = [](entt::registry& r, entt::entity e, const json& v, bool strict)
         -> std::expected<void, core::Error> {

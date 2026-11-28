@@ -18,8 +18,6 @@ namespace engine::scene::codec {
 namespace {
 
 using namespace detail;
-using core::EnumName;
-using core::JsonFields;
 
 } // namespace
 
@@ -30,10 +28,8 @@ std::expected<void, core::Error> register_foot_ik(ComponentRegistry& registry) {
                          .writable = true,
                          .order = 2600};
     codec.encode = [](const entt::registry& r, entt::entity e, const EncodeOptions& /*options*/) {
-        json out;
-        const auto* k = &r.get<FootIK>(e);
-        out["foot_ik"] = detail::encode_foot_ik(*k);
-        return std::move(out["foot_ik"]);
+        const FootIK& k = r.get<FootIK>(e);
+        return json(detail::encode_foot_ik(k));
     };
     codec.apply = [](entt::registry& r, entt::entity e, const json& v, bool strict)
         -> std::expected<void, core::Error> {

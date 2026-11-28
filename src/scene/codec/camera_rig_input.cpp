@@ -18,8 +18,6 @@ namespace engine::scene::codec {
 namespace {
 
 using namespace detail;
-using core::EnumName;
-using core::JsonFields;
 
 } // namespace
 
@@ -30,10 +28,8 @@ std::expected<void, core::Error> register_camera_rig_input(ComponentRegistry& re
                          .writable = true,
                          .order = 2800};
     codec.encode = [](const entt::registry& r, entt::entity e, const EncodeOptions& /*options*/) {
-        json out;
-        const auto* c = &r.get<CameraRigInput>(e);
-        out["camera_rig_input"] = detail::encode_camera_rig_input(*c);
-        return std::move(out["camera_rig_input"]);
+        const CameraRigInput& c = r.get<CameraRigInput>(e);
+        return json(detail::encode_camera_rig_input(c));
     };
     codec.apply = [](entt::registry& r, entt::entity e, const json& v, bool strict)
         -> std::expected<void, core::Error> {

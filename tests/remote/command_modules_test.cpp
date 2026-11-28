@@ -37,9 +37,12 @@ TEST(CommandModules, GeneratedFromTheWorldDirectory) {
     EXPECT_EQ(files, generated);
 }
 
-// One method of each module answers, through the generated registration.
+// One method of each module answers, through the generated registration, and
+// no two modules register the same name (the later would silently win).
 TEST_F(WorldCommands, EveryModuleRegistersItsMethods) {
     register_commands();
+    EXPECT_TRUE(server.replaced_methods().empty())
+        << "registered twice: " << server.replaced_methods().front();
     std::set<std::string> methods;
     for (const auto& m : server.methods()) methods.insert(m.name);
     for (const char* name :
@@ -72,6 +75,12 @@ TEST_F(WorldCommands, ANewComponentReachesTheSceneMethods) {
     };
     auto& registry = engine::scene::component_registry();
     ASSERT_TRUE(registry.add(engine::scene::typed_codec<Marker>(std::move(codec))));
+    // Unregistered however the test ends: a failed assertion must not leave a
+    // component behind for the rest of engine_tests.
+    struct Unregister {
+        engine::scene::ComponentRegistry& registry;
+        ~Unregister() { (void)registry.remove("test_marker"); }
+    } const unregister{registry};
     register_commands();
 
     bool listed = false;
@@ -87,7 +96,6 @@ TEST_F(WorldCommands, ANewComponentReachesTheSceneMethods) {
     EXPECT_NE(message.find("test_marker.level"), std::string::npos) << message;
     (void)ok("scene.remove_components", {{"entity", created["id"]}, {"components", {"test_marker"}}});
     EXPECT_FALSE(reg().all_of<Marker>(entity(created["id"])));
-    EXPECT_TRUE(registry.remove("test_marker"));
 }
 
 } // namespace

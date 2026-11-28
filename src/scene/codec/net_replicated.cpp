@@ -17,7 +17,6 @@ namespace engine::scene::codec {
 namespace {
 
 using namespace detail;
-using core::EnumName;
 using core::JsonFields;
 
 } // namespace
@@ -29,10 +28,8 @@ std::expected<void, core::Error> register_net_replicated(ComponentRegistry& regi
                          .writable = true,
                          .order = 2200};
     codec.encode = [](const entt::registry& r, entt::entity e, const EncodeOptions& /*options*/) {
-        json out;
-        const auto* n = &r.get<NetReplicated>(e);
-        out["net_replicated"] = {{"net_id", n->net_id}};
-        return std::move(out["net_replicated"]);
+        const NetReplicated& n = r.get<NetReplicated>(e);
+        return json({{"net_id", n.net_id}});
     };
     codec.apply = [](entt::registry& r, entt::entity e, const json& v, bool strict)
         -> std::expected<void, core::Error> {

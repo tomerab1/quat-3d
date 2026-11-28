@@ -18,7 +18,6 @@ namespace engine::scene::codec {
 namespace {
 
 using namespace detail;
-using core::EnumName;
 using core::JsonFields;
 
 } // namespace
@@ -30,10 +29,8 @@ std::expected<void, core::Error> register_behavior(ComponentRegistry& registry) 
                          .writable = true,
                          .order = 1400};
     codec.encode = [](const entt::registry& r, entt::entity e, const EncodeOptions& /*options*/) {
-        json out;
-        const auto* b = &r.get<BehaviorTree>(e);
-        out["behavior"] = {{"source", b->source}, {"enabled", b->enabled}};
-        return std::move(out["behavior"]);
+        const BehaviorTree& b = r.get<BehaviorTree>(e);
+        return json({{"source", b.source}, {"enabled", b.enabled}});
     };
     codec.apply = [](entt::registry& r, entt::entity e, const json& v, bool strict)
         -> std::expected<void, core::Error> {

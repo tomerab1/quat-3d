@@ -33,13 +33,11 @@ std::expected<void, core::Error> register_collider(ComponentRegistry& registry) 
                          .writable = true,
                          .order = 900};
     codec.encode = [](const entt::registry& r, entt::entity e, const EncodeOptions& /*options*/) {
-        json out;
-        const auto* c = &r.get<Collider>(e);
-        out["collider"] = {{"shape", enum_name(k_collider_shapes, c->shape)},
-                           {"half_extents", vec3_json(c->half_extents)},
-                           {"offset", vec3_json(c->offset)},
-                           {"sensor", c->is_sensor}};
-        return std::move(out["collider"]);
+        const Collider& c = r.get<Collider>(e);
+        return json({{"shape", enum_name(k_collider_shapes, c.shape)},
+                     {"half_extents", vec3_json(c.half_extents)},
+                     {"offset", vec3_json(c.offset)},
+                     {"sensor", c.is_sensor}});
     };
     codec.apply = [](entt::registry& r, entt::entity e, const json& v, bool strict)
         -> std::expected<void, core::Error> {

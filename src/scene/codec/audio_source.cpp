@@ -53,20 +53,18 @@ std::expected<void, core::Error> register_audio_source(ComponentRegistry& regist
                          .writable = true,
                          .order = 2300};
     codec.encode = [](const entt::registry& r, entt::entity e, const EncodeOptions& /*options*/) {
-        json out;
-        const auto* a = &r.get<AudioSource>(e);
-        out["audio_source"] = {{"clip", a->clip},
-                               {"bus", enum_name(k_audio_buses, a->bus)},
-                               {"volume", a->volume},
-                               {"pitch", a->pitch},
-                               {"loop", a->loop},
-                               {"play_on_start", a->play_on_start},
-                               {"spatial", a->spatial},
-                               {"min_distance", a->min_distance},
-                               {"max_distance", a->max_distance},
-                               {"rolloff", a->rolloff},
-                               {"doppler", a->doppler}};
-        return std::move(out["audio_source"]);
+        const AudioSource& a = r.get<AudioSource>(e);
+        return json({{"clip", a.clip},
+                     {"bus", enum_name(k_audio_buses, a.bus)},
+                     {"volume", a.volume},
+                     {"pitch", a.pitch},
+                     {"loop", a.loop},
+                     {"play_on_start", a.play_on_start},
+                     {"spatial", a.spatial},
+                     {"min_distance", a.min_distance},
+                     {"max_distance", a.max_distance},
+                     {"rolloff", a.rolloff},
+                     {"doppler", a.doppler}});
     };
     codec.apply = [](entt::registry& r, entt::entity e, const json& v, bool strict)
         -> std::expected<void, core::Error> {
