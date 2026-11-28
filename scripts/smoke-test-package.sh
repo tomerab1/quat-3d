@@ -66,10 +66,42 @@ case "$base" in
 esac
 dir="$scratch/$pkg"
 
+# static_checks <quat-mcp path>: what the unpacked package must contain,
+# checked before the launch so a failed launch still reports it.
+#   - Licences: every package, engine or game, ships them (on macOS also
+#     inside the app). The engine's notices list quat-mcp's crates; a game's
+#     must not.
+#   - The engine's package bundles quat-mcp.
+static_checks() {
+  if [ "$engine_pkg" = 1 ]; then
+    [ -f "$1" ] || { echo "the package has no quat-mcp at $1" >&2; exit 1; }
+  fi
+  local licence_dirs=("${dir%/}") d f
+  [ -n "${app:-}" ] && licence_dirs+=("$app/Contents/Resources")
+  for d in "${licence_dirs[@]}"; do
+    for f in LICENSE THIRD_PARTY_NOTICES.md; do
+      [ -s "$d/$f" ] || { echo "the package has no $f in $d" >&2; exit 1; }
+    done
+    grep -q '^## Licence texts' "$d/THIRD_PARTY_NOTICES.md" \
+      || { echo "$d/THIRD_PARTY_NOTICES.md has no licence texts" >&2; exit 1; }
+    grep -q '^### vcpkg ports' "$d/THIRD_PARTY_NOTICES.md" \
+      || { echo "$d/THIRD_PARTY_NOTICES.md has no vcpkg licence texts" >&2; exit 1; }
+    if [ "$engine_pkg" = 1 ]; then
+      grep -q '^### quat-mcp (Rust crates)' "$d/THIRD_PARTY_NOTICES.md" \
+        || { echo "$d/THIRD_PARTY_NOTICES.md has no quat-mcp crate licences" >&2; exit 1; }
+    elif grep -q '^### quat-mcp (Rust crates)' "$d/THIRD_PARTY_NOTICES.md"; then
+      echo "$d/THIRD_PARTY_NOTICES.md lists quat-mcp's crates, which a game package does not ship" >&2
+      exit 1
+    fi
+  done
+  echo "licences: LICENSE and THIRD_PARTY_NOTICES.md in ${licence_dirs[*]}"
+}
+
 case "$archive" in
 *linux-x64.tar.gz)
   tar -C "$scratch" -xzf "$archive"
   [ -d "$dir" ] || { echo "archive has no $pkg/ folder" >&2; exit 1; }
+  static_checks "$dir/quat-mcp"
   # Everything but the system Vulkan loader must resolve, libc++ from lib/.
   deps=$(ldd "$dir/$exe")
   echo "$deps"
@@ -83,6 +115,7 @@ case "$archive" in
 *windows-x64.zip)
   (cd "$scratch" && 7z x -bso0 -bsp0 "$archive")
   [ -d "$dir" ] || { echo "archive has no $pkg/ folder" >&2; exit 1; }
+  static_checks "$dir/quat-mcp.exe"
   sys32=$(cygpath -u "${SYSTEMROOT:-C:\\Windows}")/System32
   # Every DLL the executable or a bundled DLL imports must be in the package
   # or a Windows system DLL; vulkan-1.dll comes with the GPU driver.
@@ -115,6 +148,7 @@ case "$archive" in
   apps=("$dir"/*.app)
   app=${apps[0]}
   [ -d "$app" ] || { echo "no .app bundle in $pkg/" >&2; exit 1; }
+  static_checks "$app/Contents/MacOS/quat-mcp"
   codesign --verify --deep --strict "$app"
   plutil -lint "$app/Contents/Info.plist"
   # Uninstalling Homebrew packages is only acceptable on a throwaway CI runner;
@@ -142,27 +176,6 @@ if [ "$engine_pkg" = 1 ]; then
   echo "$mcp_version"
   [[ "$mcp_version" == "quat-mcp "* ]] || { echo "quat-mcp --version printed '$mcp_version'" >&2; exit 1; }
 fi
-
-# Licences: every package, engine or game, ships them.
-licence_dirs=("${dir%/}")
-[ -n "${app:-}" ] && licence_dirs+=("$app/Contents/Resources")
-for d in "${licence_dirs[@]}"; do
-  for f in LICENSE THIRD_PARTY_NOTICES.md; do
-    [ -s "$d/$f" ] || { echo "the package has no $f in $d" >&2; exit 1; }
-  done
-  grep -q '^## Licence texts' "$d/THIRD_PARTY_NOTICES.md" \
-    || { echo "$d/THIRD_PARTY_NOTICES.md has no licence texts" >&2; exit 1; }
-  grep -q '^### vcpkg ports' "$d/THIRD_PARTY_NOTICES.md" \
-    || { echo "$d/THIRD_PARTY_NOTICES.md has no vcpkg licence texts" >&2; exit 1; }
-  if [ "$engine_pkg" = 1 ]; then
-    grep -q '^### quat-mcp (Rust crates)' "$d/THIRD_PARTY_NOTICES.md" \
-      || { echo "$d/THIRD_PARTY_NOTICES.md has no quat-mcp crate licences" >&2; exit 1; }
-  elif grep -q '^### quat-mcp (Rust crates)' "$d/THIRD_PARTY_NOTICES.md"; then
-    echo "$d/THIRD_PARTY_NOTICES.md lists quat-mcp's crates, which a game package does not ship" >&2
-    exit 1
-  fi
-done
-echo "licences: LICENSE and THIRD_PARTY_NOTICES.md in ${licence_dirs[*]}"
 
 grep -q 'data root (install directory)' "$log" \
   || { echo "did not resolve its data next to the executable" >&2; exit 1; }
