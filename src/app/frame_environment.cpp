@@ -17,8 +17,8 @@
 
 #include "engine/asset/hdr_decode.hpp"
 #include "engine/asset/texture_limits.hpp"
+#include "engine/core/path_confine.hpp"
 #include "engine/core/utf8_path.hpp"
-#include "engine/remote/world_commands.hpp" // confine_to_root
 #include "engine/rhi/device.hpp"
 #include "engine/scene/scene.hpp"
 
@@ -84,7 +84,7 @@ FrameRenderer::set_hdri(const std::string& relative, const std::filesystem::path
         return std::unexpected(engine::core::Error{std::move(why)});
     };
     if (!hdri_) return failed("the HDRI environment is unavailable (renderer setup failed)");
-    auto path = engine::remote::confine_to_root(project_root, relative);
+    auto path = engine::core::confine_to_root(project_root, relative);
     if (!path) return failed(path.error().message);
     const engine::asset::TextureLimits limits =
         engine::asset::clamp_to_device(engine::asset::TextureLimits{}, device_->texture_caps());
