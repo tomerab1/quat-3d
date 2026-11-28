@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "engine/renderer/lighting_pass.hpp" // hdr_color_format
+#include "engine/renderer/non_finite_counters.hpp"
 #include "engine/rhi/device.hpp"
 #include "engine/rhi/gpu_allocator.hpp"
 #include "engine/rhi/pipeline_cache.hpp"
@@ -25,11 +26,19 @@ constexpr std::uint32_t      kMaxMips      = 6;
 constexpr std::uint32_t      kMinMipSize   = 8;
 
 struct DownParams {
-    float           threshold, knee, prefilter;
-    std::uint32_t   count_non_finite; // 1: the shader counts into non_finite
-    VkDeviceAddress non_finite;       // bloom_down.slang Params.non_finite
+    float         threshold, knee, prefilter;
+    std::uint32_t count_non_finite; // 1: the shader counts into g_non_finite
 };
-static_assert(sizeof(DownParams) == 24, "must match bloom_down.slang Params");
+static_assert(sizeof(DownParams) == 16, "must match bloom_down.slang Params");
+
+// bloom_down.slang's resources, by name; binding slots come from its reflection.
+enum DownResource : std::uint8_t { d_src, d_sampler, d_dst, d_non_finite, d_count };
+constexpr std::array<rhi::BindingRequest, d_count> kDownResources{{
+    {"g_src", VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE},
+    {"g_samp", VK_DESCRIPTOR_TYPE_SAMPLER},
+    {"g_dst", VK_DESCRIPTOR_TYPE_STORAGE_IMAGE},
+    {"g_non_finite", VK_DESCRIPTOR_TYPE_STORAGE_BUFFER},
+}};
 struct UpParams {
     float radius, pad0, pad1, pad2;
 };
@@ -38,14 +47,12 @@ struct CompositeParams {
 };
 
 [[nodiscard]] std::expected<rhi::ManagedPipeline, core::Error>
-make_pipeline(rhi::PipelineCache& cache, const std::string& spv,
+make_pipeline(rhi::PipelineCache& cache, const rhi::LoadedShader* shader,
               const rhi::DescriptorSetLayout& layout, std::uint32_t push_size) {
-    auto shader = cache.load(spv);
-    if (!shader) return std::unexpected(shader.error());
     const VkDescriptorSetLayout set_layout = layout.handle();
     const VkPushConstantRange pc{kComputeStage, 0, push_size};
     rhi::ComputePipeline::CreateInfo info{};
-    info.shader = *shader;
+    info.shader = shader;
     info.set_layouts = {&set_layout, 1};
     info.push_constants = {&pc, 1};
     return cache.create_compute_pipeline(info);
@@ -66,7 +73,12 @@ BloomPass::create(const rhi::Device& device, rhi::GpuAllocator& allocator,
     if (!out.db_fns_.valid()) return fail("bloom: descriptor buffer functions unavailable");
 
     using rhi::DescriptorBinding;
-    const std::array<DescriptorBinding, 3> down_b{{
+    auto down_shader = cache.load(cooked_shader_dir + "/bloom_down.spv");
+    if (!down_shader) return std::unexpected(down_shader.error());
+    auto down_b = rhi::reflected_bindings((*down_shader)->reflection, kDownResources, kComputeStage);
+    if (!down_b) return fail("bloom: " + down_b.error().message);
+    for (std::size_t i = 0; i < down_b->size(); ++i) out.down_slots_[i] = (*down_b)[i].binding;
+    const std::array<DescriptorBinding, 3> composite_b{{
         {0, 0, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, kComputeStage},
         {0, 1, VK_DESCRIPTOR_TYPE_SAMPLER, 1, kComputeStage},
         {0, 2, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, kComputeStage},
@@ -77,29 +89,43 @@ BloomPass::create(const rhi::Device& device, rhi::GpuAllocator& allocator,
         {0, 2, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, kComputeStage},
         {0, 3, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, kComputeStage},
     }};
-    auto down_layout = rhi::DescriptorSetLayout::create(device, out.db_fns_, down_b);
+    auto down_layout = rhi::DescriptorSetLayout::create(device, out.db_fns_, *down_b);
     if (!down_layout) return std::unexpected(down_layout.error());
     out.down_layout_ = std::move(*down_layout);
+    auto composite_layout = rhi::DescriptorSetLayout::create(device, out.db_fns_, composite_b);
+    if (!composite_layout) return std::unexpected(composite_layout.error());
+    out.composite_layout_ = std::move(*composite_layout);
     auto up_layout = rhi::DescriptorSetLayout::create(device, out.db_fns_, up_b);
     if (!up_layout) return std::unexpected(up_layout.error());
     out.up_layout_ = std::move(*up_layout);
 
-    auto down = make_pipeline(cache, cooked_shader_dir + "/bloom_down.spv", out.down_layout_,
-                              sizeof(DownParams));
+    auto down = make_pipeline(cache, *down_shader, out.down_layout_, sizeof(DownParams));
     if (!down) return std::unexpected(down.error());
     out.down_pipeline_ = std::move(*down);
-    auto up = make_pipeline(cache, cooked_shader_dir + "/bloom_up.spv", out.up_layout_,
-                            sizeof(UpParams));
+    auto up_shader = cache.load(cooked_shader_dir + "/bloom_up.spv");
+    if (!up_shader) return std::unexpected(up_shader.error());
+    auto up = make_pipeline(cache, *up_shader, out.up_layout_, sizeof(UpParams));
     if (!up) return std::unexpected(up.error());
     out.up_pipeline_ = std::move(*up);
-    auto comp = make_pipeline(cache, cooked_shader_dir + "/bloom_composite.spv",
-                              out.down_layout_, sizeof(CompositeParams));
+    auto comp_shader = cache.load(cooked_shader_dir + "/bloom_composite.spv");
+    if (!comp_shader) return std::unexpected(comp_shader.error());
+    auto comp = make_pipeline(cache, *comp_shader, out.composite_layout_, sizeof(CompositeParams));
     if (!comp) return std::unexpected(comp.error());
     out.composite_pipeline_ = std::move(*comp);
 
     auto sampler = rhi::create_sampler(device.handle(), rhi::SamplerAddress::clamp_to_edge);
     if (!sampler) return std::unexpected(sampler.error());
     out.sampler_ = std::move(*sampler);
+
+    // A valid buffer for the counter slot when counting is off (the shader
+    // does not write it then).
+    auto counter = allocator.create_buffer(
+        NonFiniteCounters::k_counter_range,
+        VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+        VMA_MEMORY_USAGE_AUTO);
+    if (!counter) return std::unexpected(counter.error());
+    out.unused_counter_ = std::move(*counter);
+    out.unused_counter_address_ = rhi::buffer_device_address(device.handle(), out.unused_counter_);
     return out;
 }
 
@@ -151,15 +177,19 @@ BloomPass::add_to_graph(rhi::RenderGraph& graph, rhi::ResourceHandle hdr, VkExte
             .writes(dst, rhi::ResourceUsage::storage_write)
             .execute([this, di = *idx, src, dst, ds, params, prefilter](rhi::PassContext& ctx) {
                 rhi::DescriptorBuffer& db = frame_descriptors_[di];
-                db.write_sampled_image(0, ctx.resolve(src).view, ro);
-                db.write_sampler(1, sampler_.handle());
-                db.write_storage_image(2, ctx.resolve(dst).view, gen);
+                const auto& s = down_slots_;
+                const bool count = prefilter && non_finite_counter_ != 0;
+                db.write_sampled_image(s[d_src], ctx.resolve(src).view, ro);
+                db.write_sampler(s[d_sampler], sampler_.handle());
+                db.write_storage_image(s[d_dst], ctx.resolve(dst).view, gen);
+                db.write_storage_buffer(s[d_non_finite],
+                                        count ? non_finite_counter_ : unused_counter_address_,
+                                        NonFiniteCounters::k_counter_range);
                 const VkCommandBuffer cmd = ctx.cmd();
                 vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, down_pipeline_.handle());
                 db.bind(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, down_pipeline_.layout(), 0);
-                const bool count = prefilter && non_finite_counter_ != 0;
                 DownParams p{params.threshold, params.knee, prefilter ? 1.0F : 0.0F,
-                             count ? 1U : 0U, count ? non_finite_counter_ : 0};
+                             count ? 1U : 0U};
                 vkCmdPushConstants(cmd, down_pipeline_.layout(), kComputeStage, 0, sizeof(p), &p);
                 vkCmdDispatch(cmd, groups(ds.width), groups(ds.height), 1);
             });
@@ -194,7 +224,7 @@ BloomPass::add_to_graph(rhi::RenderGraph& graph, rhi::ResourceHandle hdr, VkExte
 
     // --- composite back into the full-res HDR -------------------------------
     const rhi::ResourceHandle bloom = (n >= 2) ? up[0] : down[0];
-    auto cidx = add_db(down_layout_);
+    auto cidx = add_db(composite_layout_);
     if (!cidx) return std::unexpected(cidx.error());
     graph.add_pass("bloom_composite", rhi::PassType::compute)
         .reads(bloom, rhi::ResourceUsage::sampled_compute)

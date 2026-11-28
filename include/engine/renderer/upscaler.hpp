@@ -62,7 +62,8 @@ struct UpscalerInputs {
     bool            reset = false; // camera cut: ignore the history this frame
     // Debug (issue #45): device address of a uint32 the resolve increments for
     // every non-finite colour sample, reprojection or history value it
-    // rejects (NonFiniteCounters, NonFiniteSource::taa_history); 0 = off.
+    // rejects (NonFiniteCounters::address, NonFiniteSource::taa_history; bound
+    // as a storage-buffer descriptor); 0 = off.
     VkDeviceAddress non_finite_counter = 0;
 };
 

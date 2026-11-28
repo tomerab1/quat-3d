@@ -14,6 +14,7 @@
 #include <glm/glm.hpp>
 
 #include "engine/core/profile.hpp"
+#include "engine/renderer/non_finite_counters.hpp"
 #include "engine/rhi/device.hpp"
 #include "engine/rhi/pipeline_cache.hpp"
 
@@ -34,12 +35,11 @@ struct TaaPushConstants {
     glm::vec4 jitter{0.0F};       // xy jitter (render px), z sharpness, w history valid
     glm::vec4 exposure{0.0F};     // x read the exposure buffer, y key, z min, w max
     glm::vec4 blend{0.0F};        // x max weight, y sample falloff, z clip rejection, w frame
-    std::uint32_t   count_non_finite = 0; // 1: the shader counts into non_finite
-    std::uint32_t   pad0 = 0;
-    VkDeviceAddress non_finite = 0; // debug counter (NonFiniteCounters), 0 = off
+    std::uint32_t count_non_finite = 0; // 1: the shader counts into g_non_finite
+    std::uint32_t pad0 = 0, pad1 = 0, pad2 = 0;
 };
 static_assert(sizeof(TaaPushConstants) == 96, "must match taa.slang Params");
-static_assert(offsetof(TaaPushConstants, non_finite) == 88, "must match taa.slang Params");
+static_assert(offsetof(TaaPushConstants, count_non_finite) == 80, "must match taa.slang Params");
 
 // Cap on a pixel's accumulated sample weight, from the history feedback f
 // (A8's taa.feedback): 1 / (1 - f). With a sample on the pixel every frame the
@@ -71,6 +71,7 @@ enum Resource : std::uint8_t {
     r_exposure,
     r_history_out,
     r_out,
+    r_non_finite,
     r_count
 };
 constexpr std::array<rhi::BindingRequest, r_count> kResources{{
@@ -82,6 +83,7 @@ constexpr std::array<rhi::BindingRequest, r_count> kResources{{
     {"g_exposure", VK_DESCRIPTOR_TYPE_STORAGE_BUFFER},
     {"g_history_out", VK_DESCRIPTOR_TYPE_STORAGE_IMAGE},
     {"g_out", VK_DESCRIPTOR_TYPE_STORAGE_IMAGE},
+    {"g_non_finite", VK_DESCRIPTOR_TYPE_STORAGE_BUFFER},
 }};
 
 [[nodiscard]] glm::vec4 size_vec(VkExtent2D e) {
@@ -189,6 +191,17 @@ TaaPass::create(const rhi::Device& device, rhi::GpuAllocator& allocator, rhi::Pi
     out.unit_exposure_ = std::move(*unit);
     out.unit_exposure_address_ = rhi::buffer_device_address(device.handle(), out.unit_exposure_);
 
+    // A valid buffer for the non-finite counter slot when counting is off
+    // (the shader does not write it then).
+    auto counter = allocator.create_buffer(
+        NonFiniteCounters::k_counter_range,
+        VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+        VMA_MEMORY_USAGE_AUTO);
+    if (!counter) return std::unexpected(counter.error());
+    out.unused_counter_ = std::move(*counter);
+    out.unused_counter_address_ =
+        rhi::buffer_device_address(device.handle(), out.unused_counter_);
+
     // A private history assumes the engine's two frames in flight (CLAUDE.md);
     // that only delays freeing replaced images by a frame when fewer are used.
     out.history_ = history ? std::move(history)
@@ -248,7 +261,8 @@ TaaPass::add_to_graph(rhi::RenderGraph& graph, const UpscalerInputs& in) {
     push.blend = glm::vec4(max_weight(in.feedback), k_sample_falloff, k_clip_rejection,
                            static_cast<float>(hist.frame_ % (1U << 24))); // dither seed
     push.count_non_finite = in.non_finite_counter != 0 ? 1U : 0U;
-    push.non_finite = in.non_finite_counter;
+    const VkDeviceAddress non_finite =
+        in.non_finite_counter != 0 ? in.non_finite_counter : unused_counter_address_;
     const VkDeviceAddress exposure = in.exposure != 0 ? in.exposure : unit_exposure_address_;
     const bool exposure_from_gpu = in.exposure != 0;
 
@@ -263,7 +277,7 @@ TaaPass::add_to_graph(rhi::RenderGraph& graph, const UpscalerInputs& in) {
         .writes(h_cur, rhi::ResourceUsage::storage_write)
         .writes(h_out, rhi::ResourceUsage::storage_write)
         .execute([this, color, depth, velocity, h_prev, h_cur, h_out, display, push, exposure,
-                  exposure_from_gpu](rhi::PassContext& ctx) {
+                  exposure_from_gpu, non_finite](rhi::PassContext& ctx) {
             const VkCommandBuffer cmd = ctx.cmd();
             if (exposure_from_gpu) {
                 // The adapted luminance was written by the previous frame's
@@ -292,6 +306,8 @@ TaaPass::add_to_graph(rhi::RenderGraph& graph, const UpscalerInputs& in) {
                                                   VK_IMAGE_LAYOUT_GENERAL);
             frame_descriptor_.write_storage_image(s[r_out], ctx.resolve(h_out).view,
                                                   VK_IMAGE_LAYOUT_GENERAL);
+            frame_descriptor_.write_storage_buffer(s[r_non_finite], non_finite,
+                                                   NonFiniteCounters::k_counter_range);
             vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline_.handle());
             frame_descriptor_.bind(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline_.layout(), 0);
             vkCmdPushConstants(cmd, pipeline_.layout(), kComputeStage, 0, sizeof(push), &push);

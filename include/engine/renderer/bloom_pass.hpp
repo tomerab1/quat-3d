@@ -7,6 +7,7 @@
 // the HDR colour buffer before tonemap. This gives highlights (the sun, glass
 // speculars, emissive surfaces) a physically-plausible glow.
 
+#include <array>
 #include <cstdint>
 #include <expected>
 #include <string>
@@ -16,6 +17,7 @@
 
 #include "engine/core/error.hpp"
 #include "engine/rhi/descriptor_buffer.hpp"
+#include "engine/rhi/gpu_allocator.hpp"
 #include "engine/rhi/managed_pipeline.hpp"
 #include "engine/rhi/render_graph.hpp"
 
@@ -54,7 +56,8 @@ public:
                  const BloomParams& params);
 
     // Debug: device address of a uint32 the prefilter increments for every
-    // non-finite texel group it drops (NonFiniteCounters); 0 turns it off.
+    // non-finite texel group it drops (NonFiniteCounters::address, bound as a
+    // storage-buffer descriptor); 0 turns it off.
     void set_non_finite_counter(VkDeviceAddress counter) { non_finite_counter_ = counter; }
 
 private:
@@ -62,7 +65,9 @@ private:
     rhi::GpuAllocator* allocator_ = nullptr;
 
     rhi::DescriptorBufferFunctions db_fns_{};
-    rhi::DescriptorSetLayout       down_layout_;  // sampled, sampler, storage
+    rhi::DescriptorSetLayout       down_layout_;  // reflected from bloom_down.slang
+    std::array<std::uint32_t, 4>   down_slots_{};  // reflected binding of each down resource
+    rhi::DescriptorSetLayout       composite_layout_; // sampled, sampler, storage
     rhi::DescriptorSetLayout       up_layout_;     // sampled, sampler, sampled, storage
     rhi::ManagedPipeline           down_pipeline_;
     rhi::ManagedPipeline           up_pipeline_;
@@ -71,6 +76,8 @@ private:
 
     std::vector<rhi::DescriptorBuffer> frame_descriptors_; // rebuilt each add_to_graph
     VkDeviceAddress                    non_finite_counter_ = 0;
+    rhi::GpuBuffer                     unused_counter_; // bound when counting is off
+    VkDeviceAddress                    unused_counter_address_ = 0;
 };
 
 } // namespace engine::renderer
