@@ -26,7 +26,12 @@ protected:
     engine::remote::RpcServer    server;
     engine::remote::WorldServices services; // tests fill these before register_commands()
 
-    void register_commands() { engine::remote::register_world_commands(server, scene, services); }
+    // Registers the world commands on a fresh server: tests that change
+    // `services` call it again, and RpcServer refuses a name registered twice.
+    void register_commands() {
+        server = engine::remote::RpcServer{};
+        engine::remote::register_world_commands(server, scene, services);
+    }
     void SetUp() override {} // derived fixtures call register_commands() when ready
 
     [[nodiscard]] RpcResult call(const std::string& method, const Json& params = Json::object()) {
