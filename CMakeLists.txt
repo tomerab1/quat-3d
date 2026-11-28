@@ -509,6 +509,7 @@ add_library(engine_script STATIC
     src/script/script_api_entity.cpp
     src/script/script_api_scene.cpp
     src/script/script_api_services.cpp
+    src/script/script_api_season.cpp
     src/script/script_api_input.cpp
     src/script/script_source.cpp
     src/script/script_runtime.cpp
@@ -674,6 +675,7 @@ add_library(engine_remote_world STATIC
     src/remote/world/physics_body_commands.cpp
     src/remote/world/physics_query_commands.cpp
     src/remote/world/weather_commands.cpp
+    src/remote/world/season_commands.cpp
     src/remote/world/project_commands.cpp
     src/remote/world/time_commands.cpp
     src/remote/world/script_commands.cpp
@@ -776,6 +778,7 @@ if(ENGINE_EDITOR)
         src/editor/inspector.cpp
         src/editor/tuning_panels.cpp
         src/editor/weather_panel.cpp
+        src/editor/season_panel.cpp
         src/editor/time_of_day_panel.cpp
         src/editor/asset_browser.cpp
         src/editor/animation_preview.cpp
@@ -855,6 +858,7 @@ endif()
 set(GAME_WORLD_SOURCES
     src/app/world_runtime.cpp
     src/app/demo_scenes.cpp
+    src/app/demo_season_env.cpp
     src/app/audio_runtime.cpp
     src/app/play_mode.cpp
     src/app/grass_runtime.cpp

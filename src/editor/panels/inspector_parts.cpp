@@ -46,6 +46,8 @@ constexpr CodecIcon k_codec_icons[] = {
     {"particle_emitter", icon::sparkles}, {"script", icon::file_code},
     {"joint", icon::link},
     {"world_clock", icon::clock_3},
+    {"season", icon::leaf},
+    {"climate", icon::cloud},
     {"camera_rig", icon::orbit},         {"camera_rig_input", icon::orbit},
 };
 

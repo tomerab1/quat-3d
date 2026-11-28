@@ -20,6 +20,8 @@
 #include "engine/scene/components.hpp"
 #include "engine/scene/physics_settings.hpp"
 #include "engine/scene/world_clock.hpp"
+#include "engine/scene/season.hpp"
+#include "engine/weather/climate.hpp"
 
 namespace engine::scene {
 
@@ -39,6 +41,7 @@ using SnapshotComponents =
                   scene::DirectionalLight, scene::PointLight, scene::Collider,
                   scene::RigidBody, scene::Joint, scene::CharacterController, scene::Terrain,
                   scene::Grass, scene::ParticleEmitter, scene::WorldClock,
+                  scene::SeasonState, weather::Climate,
                   scene::NavAgent, scene::BehaviorTree, scene::PatrolRoute, scene::Primitive,
                   scene::InstancedMesh, scene::InstancedMeshParts, scene::Scatter,
                   scene::NetReplicated, scene::AudioSource, scene::AudioListener,

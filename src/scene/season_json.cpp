@@ -75,7 +75,8 @@ Json encode_season(const SeasonState& s) {
             {"phase_rate", s.phase_rate},
             {"drive_clock_date", s.drive_clock_date},
             {"weather_auto", s.weather_auto},
-            {"weather_seed", s.weather_seed}};
+            {"weather_seed", s.weather_seed},
+            {"weather_clock_time", s.weather_clock_time}};
 }
 
 void decode_season(core::JsonFields& f, SeasonState& s) {
@@ -89,6 +90,7 @@ void decode_season(core::JsonFields& f, SeasonState& s) {
     f.boolean("drive_clock_date", s.drive_clock_date);
     f.boolean("weather_auto", s.weather_auto);
     f.integer("weather_seed", s.weather_seed, 0, 0xFFFFFFFFLL);
+    f.boolean("weather_clock_time", s.weather_clock_time);
 }
 
 Json encode_climate(const weather::Climate& c) {

@@ -28,7 +28,9 @@
 // weather_auto, a seeded weather sequence over the climate writes the scene's
 // WeatherState (wind, clouds, precipitation, temperature; created when the
 // scene has none), and R13.1's step_weather accumulates wetness and snow from
-// it. A manual weather.set suspends weather_auto.
+// it — in world-clock time (weather_clock_time), so a 12-minute day dries
+// and thaws at the pace of its sun. A manual weather.set suspends
+// weather_auto.
 
 #include <array>
 #include <cstdint>
@@ -63,6 +65,10 @@ struct SeasonState {
     // Drive the scene's WeatherState from the climate's weather sequence.
     bool          weather_auto = true;
     std::uint32_t weather_seed = 1;
+    // Wetness and snow evolve in world-clock time (the simulation dt times
+    // the enabled clock's time_scale) instead of simulated seconds, so an
+    // accelerated day dries, snows and thaws at the pace its sun moves.
+    bool weather_clock_time = true;
 
     friend bool operator==(const SeasonState&, const SeasonState&) = default;
 };
@@ -137,6 +143,17 @@ void season_system(entt::registry& registry, float dt);
 // Re-derives the sample (and drives the clock date and weather) without
 // advancing time: after an edit, so the next read sees the new state.
 void apply_season(entt::registry& registry);
+
+// The dt weather::weather_system should integrate this tick: `dt` times the
+// enabled clock's time_scale while an enabled season has weather_clock_time,
+// else `dt`. Scene::tick and spin_up_season() use it.
+[[nodiscard]] float weather_dt(const entt::registry& registry, float dt);
+
+// Applies the season-aware weather preset `kind` (weather::weather_preset)
+// to the scene's WeatherState now, creating it on the season's entity when
+// the scene has none, and suspends the season's weather_auto. Uses the
+// season's climate at its phase (the default climate without a season).
+void apply_weather_preset(entt::registry& registry, weather::WeatherKind kind);
 
 // Runs the weather, clock and season systems over the `seconds` of
 // simulated time that lead to the current state (rewinding first), in steps

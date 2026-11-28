@@ -5,6 +5,7 @@
 #include <nlohmann/json.hpp>
 
 #include "engine/scene/scene.hpp"
+#include "engine/scene/season.hpp"
 #include "engine/scene/weather_json.hpp"
 #include "engine/weather/weather_state.hpp"
 #include "engine/weather/wind_field.hpp"
@@ -89,6 +90,11 @@ RpcResult weather_set(Context& ctx, const Json& params) {
     }
     const entt::entity e = existing != entt::null ? existing : ctx.scene->create_entity("Weather");
     r.emplace_or_replace<weather::WeatherState>(e, state);
+    // A hand-set weather holds: the season's climate stops driving it until
+    // season.set {weather_auto: true} (R25.1).
+    if (const entt::entity s = scene::find_season(r); s != entt::null) {
+        r.get<scene::SeasonState>(s).weather_auto = false;
+    }
     return weather_get(ctx, Json::object());
 }
 

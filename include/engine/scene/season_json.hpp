@@ -6,7 +6,7 @@
 //
 //   season:  {"enabled": true, "mode": "independent", "year_phase": 0.62,
 //             "year": 2026, "phase_rate": 0.000416667, "drive_clock_date": true,
-//             "weather_auto": true, "weather_seed": 7}
+//             "weather_auto": true, "weather_seed": 7, "weather_clock_time": true}
 //   climate: {"temperature_c": [12 numbers ...], "diurnal_range_c": [...],
 //             "precipitation_chance": [...], "cloud_cover": [...],
 //             "wind_speed": [...], "temperature_variability_c": 3,

@@ -94,7 +94,9 @@ void Scene::tick(float dt, const FootGroundProbe& ground) {
     }
     {
         QUAT_ZONE_C("weather_system", core::ProfileCategory::system);
-        weather::weather_system(registry_, dt); // wetness / snow accumulation (R13.1)
+        // Wetness / snow accumulation (R13.1), in world-clock time while a
+        // season runs (R25.1).
+        weather::weather_system(registry_, weather_dt(registry_, dt));
     }
     {
         QUAT_ZONE_C("world_clock_system", core::ProfileCategory::system);

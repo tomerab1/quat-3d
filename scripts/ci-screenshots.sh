@@ -57,6 +57,15 @@ SCENE_TABLE=(
   "editor-time-of-day|30|QUAT_WINDOW_SIZE=1600x900 QUAT_EDITOR_LAYOUT=default QUAT_EDITOR_SELECT=world_clock QUAT_TIME=2026-06-21T21:35:00+02:00 QUAT_TIME_SCALE=0|Editor: the world clock in the Inspector at sunset"
   "showcase-hdri|40|QUAT_NO_UI=1 QUAT_HDRI=hdri-cache/kloofendal_48d_partly_cloudy_2k.hdr|Showcase lit by a CC0 Poly Haven HDRI (R21: HDRI IBL, its sun as the shadowed light, SSR)"
   "mountain-forest|30|QUAT_NO_UI=1 QUAT_DEMO=mountain|Mountain + forest showcase: terrain, scattered trees and rocks, GPU grass"
+  # Seasons (R25.1): the same mountain forest at 11:00 in Paris in the middle
+  # of each season, held (QUAT_SEASON), with weather seed 29: the season
+  # writes the clock's date (sun height, day length) and drives the weather,
+  # and five simulated minutes of a 12-minute day are lived through first so
+  # the surfaces show it. Seasonal materials and snow masks are R25.2 / R25.3.
+  "season-spring|30|QUAT_NO_UI=1 QUAT_DEMO=mountain QUAT_WINDOW_SIZE=960x540 QUAT_TIME=2026-06-21T11:00:00+02:00 QUAT_LATLON=48.8566,2.3522 QUAT_TIME_SCALE=0 QUAT_SEASON=spring QUAT_SEASON_SEED=29|Seasons: mid-spring (early May), overcast after rain, wet ground"
+  "season-summer|30|QUAT_NO_UI=1 QUAT_DEMO=mountain QUAT_WINDOW_SIZE=960x540 QUAT_TIME=2026-06-21T11:00:00+02:00 QUAT_LATLON=48.8566,2.3522 QUAT_TIME_SCALE=0 QUAT_SEASON=summer QUAT_SEASON_SEED=29|Seasons: midsummer (early August), clear and dry, high sun"
+  "season-autumn|30|QUAT_NO_UI=1 QUAT_DEMO=mountain QUAT_WINDOW_SIZE=960x540 QUAT_TIME=2026-06-21T11:00:00+02:00 QUAT_LATLON=48.8566,2.3522 QUAT_TIME_SCALE=0 QUAT_SEASON=autumn QUAT_SEASON_SEED=29|Seasons: mid-autumn (early November), showers, lower sun"
+  "season-winter|30|QUAT_NO_UI=1 QUAT_DEMO=mountain QUAT_WINDOW_SIZE=960x540 QUAT_TIME=2026-06-21T11:00:00+02:00 QUAT_LATLON=48.8566,2.3522 QUAT_TIME_SCALE=0 QUAT_SEASON=winter QUAT_SEASON_SEED=29|Seasons: mid-winter (early February), snow showers, snow lying, low sun"
 )
 # HDRI panoramas the scenes use, fetched into hdri-cache/ (gitignored).
 HDRIS=("kloofendal_48d_partly_cloudy 2k")

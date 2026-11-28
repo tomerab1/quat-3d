@@ -243,24 +243,7 @@ std::expected<void, core::Error> set_season(Scene& scene, const Json& params) {
     } else {
         apply_season(r);
     }
-    if (x.preset) {
-        entt::entity we = weather::find_weather(r);
-        if (we == entt::null) {
-            r.emplace<weather::WeatherState>(e);
-            we = e;
-        }
-        weather::WeatherState&       w = r.get<weather::WeatherState>(we);
-        // The sample is missing while the season is disabled: the climate
-        // at its phase, daily mean.
-        const SeasonSample*          smp = r.try_get<SeasonSample>(e);
-        const weather::Climate*      custom = r.try_get<weather::Climate>(e);
-        const weather::ClimateSample now =
-            smp != nullptr ? smp->climate
-                           : weather::sample_climate(
-                                 weather::sanitized(custom != nullptr ? *custom : weather::Climate{}),
-                                 s.year_phase, std::nullopt);
-        w = weather::weather_preset(*x.preset, now, weather::sanitized(w));
-    }
+    if (x.preset) apply_weather_preset(r, *x.preset);
     return {};
 }
 

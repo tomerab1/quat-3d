@@ -31,6 +31,9 @@
 #include "engine/scene/scatter.hpp"
 #include "engine/scene/scene.hpp"
 #include "engine/scene/world_clock.hpp"
+#include "engine/scene/season.hpp"
+#include "engine/weather/climate.hpp"
+#include "season_panel.hpp"
 #include "inspector_world.hpp"
 #include "panels/inspector_parts.hpp"
 #include "shell/panels.hpp"
@@ -175,6 +178,24 @@ struct ComponentInspector<scene::WorldClock> {
     static void draw(entt::registry& r, entt::entity e, scene::WorldClock& clock) {
         draw_world_clock(r, e, clock);
     }
+};
+
+template <>
+struct ComponentInspector<scene::SeasonState> {
+    static constexpr const char* title = "Season";
+    static constexpr const char* codec = "season";
+    static constexpr const char* icon = icon::leaf;
+    static constexpr bool property_grid = true;
+    static void draw(entt::registry& r, entt::entity e, scene::SeasonState& s) { draw_season(r, e, s); }
+};
+
+template <>
+struct ComponentInspector<weather::Climate> {
+    static constexpr const char* title = "Climate";
+    static constexpr const char* codec = "climate";
+    static constexpr const char* icon = icon::cloud;
+    static constexpr bool property_grid = true;
+    static void draw(entt::registry& r, entt::entity e, weather::Climate& c) { draw_climate(r, e, c); }
 };
 
 template <>
@@ -579,6 +600,8 @@ void draw_inspector(scene::Scene& scene, entt::entity selected, panels::Inspecto
     inspect<scene::Grass>(state, r, selected, true);
     inspect<scene::ParticleEmitter>(state, r, selected, true);
     inspect<scene::WorldClock>(state, r, selected, true);
+    inspect<scene::SeasonState>(state, r, selected, true);
+    inspect<weather::Climate>(state, r, selected, true);
     inspect<scene::InstancedMesh>(state, r, selected, true); // removal takes parts + scatter
     inspect<scene::Scatter>(state, r, selected, true);
     inspect<scene::NavAgent>(state, r, selected, true);

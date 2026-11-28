@@ -154,7 +154,7 @@ struct SeasonWorld {
     }
     // Scene::tick's order for the systems involved.
     void tick(float dt) {
-        w::weather_system(r, dt);
+        w::weather_system(r, s::weather_dt(r, dt));
         s::world_clock_system(r, dt);
         s::season_system(r, dt);
     }
@@ -380,6 +380,39 @@ TEST(SeasonSpinUp, AccumulatesThenLandsExactlyOnTheState) {
     const w::WeatherState held = one.weather();
     s::spin_up_season(one.r, 0.0);
     EXPECT_TRUE(same_bytes(one.weather(), held));
+}
+
+TEST(SeasonWeather, SurfacesEvolveInWorldClockTime) {
+    s::WorldClock c;
+    c.time_scale = 120.0; // a 12-minute day
+    SeasonWorld world({}, &c);
+    EXPECT_FLOAT_EQ(s::weather_dt(world.r, 0.5F), 60.0F);
+    world.state().weather_clock_time = false;
+    EXPECT_FLOAT_EQ(s::weather_dt(world.r, 0.5F), 0.5F);
+    world.state().weather_clock_time = true;
+    world.world_clock().enabled = false;
+    EXPECT_FLOAT_EQ(s::weather_dt(world.r, 0.5F), 0.5F);
+    world.world_clock().enabled = true;
+    world.state().enabled = false;
+    EXPECT_FLOAT_EQ(s::weather_dt(world.r, 0.5F), 0.5F);
+    world.state().enabled = true;
+    entt::registry empty;
+    EXPECT_FLOAT_EQ(s::weather_dt(empty, 0.5F), 0.5F);
+
+    // The cozy day: a snowfall covers the ground within a minute of
+    // simulation (hours of clock time), and a summer thaw clears it as fast.
+    world.state().mode = s::SeasonMode::manual;
+    world.state().year_phase = s::season_centre(s::Season::winter);
+    s::apply_season(world.r);
+    s::apply_weather_preset(world.r, w::WeatherKind::snow);
+    EXPECT_FALSE(world.state().weather_auto) << "a preset suspends the automatic weather";
+    for (int i = 0; i < 60; ++i) world.tick(1.0F);
+    EXPECT_GT(world.weather().snow, 0.5F);
+    world.state().year_phase = s::season_centre(s::Season::summer);
+    world.state().weather_auto = true;
+    s::apply_season(world.r);
+    for (int i = 0; i < 60; ++i) world.tick(1.0F);
+    EXPECT_LT(world.weather().snow, 0.01F);
 }
 
 TEST(SeasonStale, DisabledOrRemovedSeasonDropsItsSample) {

@@ -248,6 +248,43 @@ void season_system(entt::registry& r, float dt) {
 
 void apply_season(entt::registry& registry) { season_system(registry, 0.0F); }
 
+float weather_dt(const entt::registry& r, float dt) {
+    const entt::entity e = find_season(r);
+    if (e == entt::null) return dt;
+    const SeasonState& s = r.get<SeasonState>(e);
+    if (!s.enabled || !s.weather_clock_time) return dt;
+    const entt::entity ce = find_world_clock(r);
+    if (ce == entt::null) return dt;
+    const WorldClock& c = r.get<WorldClock>(ce);
+    if (!c.enabled) return dt;
+    // step_weather integrates exactly (exponential approach): any step is stable.
+    return static_cast<float>(static_cast<double>(dt) * c.time_scale);
+}
+
+void apply_weather_preset(entt::registry& r, weather::WeatherKind kind) {
+    const entt::entity e = find_season(r);
+    if (e != entt::null) r.get<SeasonState>(e).weather_auto = false;
+    // The sample is missing while the season is disabled: the climate at
+    // its phase, daily mean.
+    const SeasonSample* smp = e != entt::null ? r.try_get<SeasonSample>(e) : nullptr;
+    weather::ClimateSample now;
+    if (smp != nullptr) {
+        now = smp->climate;
+    } else {
+        const weather::Climate* custom = e != entt::null ? r.try_get<weather::Climate>(e) : nullptr;
+        const double            phase = e != entt::null ? r.get<SeasonState>(e).year_phase : 0.0;
+        now = weather::sample_climate(weather::sanitized(custom != nullptr ? *custom : weather::Climate{}),
+                                      phase, std::nullopt);
+    }
+    entt::entity we = weather::find_weather(r);
+    if (we == entt::null) {
+        we = e != entt::null ? e : r.create();
+        r.emplace<weather::WeatherState>(we);
+    }
+    weather::WeatherState& w = r.get<weather::WeatherState>(we);
+    w = weather::weather_preset(kind, now, weather::sanitized(w));
+}
+
 void spin_up_season(entt::registry& r, double seconds, float step) {
     const entt::entity e = find_season(r);
     if (e == entt::null || !r.get<SeasonState>(e).enabled) return;
@@ -281,7 +318,7 @@ void spin_up_season(entt::registry& r, double seconds, float step) {
     while (left > 1e-9) {
         const auto dt = static_cast<float>(std::min(dt_step, left));
         left -= static_cast<double>(dt);
-        weather::weather_system(r, dt);
+        weather::weather_system(r, weather_dt(r, dt));
         world_clock_system(r, dt);
         season_system(r, dt);
     }
