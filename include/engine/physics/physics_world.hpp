@@ -93,10 +93,24 @@ public:
     // Static terrain surface: sample (x, z) sits at offset + scale * (x, h, z)
     // with h = samples[z * sample_count + x]. sample_count must be a multiple
     // of Jolt's block size (2) — callers pad odd grids by duplicating an edge.
+    // `reserve` (min, max; ignored when min > max) widens the range of
+    // heights the field can encode beyond its samples', so later
+    // update_height_field calls (terrain edits, G19.1) stay in range.
     [[nodiscard]] std::uint32_t create_height_field(std::span<const float> samples,
                                                     std::uint32_t sample_count,
                                                     const glm::vec3& offset,
-                                                    const glm::vec3& scale);
+                                                    const glm::vec3& scale,
+                                                    glm::vec2 reserve = glm::vec2(1.0F, 0.0F));
+    // Rewrites the samples [x, x + size_x) x [z, z + size_z) of the height
+    // field `body` stands on, in place (Jolt SetHeights), and wakes the bodies
+    // resting there. `heights` holds size_z rows `stride` floats apart. The
+    // block must be aligned to the field's block size (2) and every height
+    // within the range the field encodes. Returns false (nothing changed)
+    // when `body` has no height field, the block is out of bounds or
+    // misaligned, or a height is out of range: rebuild the body then.
+    [[nodiscard]] bool update_height_field(std::uint32_t body, std::uint32_t x, std::uint32_t z,
+                                           std::uint32_t size_x, std::uint32_t size_z,
+                                           std::span<const float> heights, std::size_t stride);
 
     struct BodyParams {
         std::uint32_t shape = 0;

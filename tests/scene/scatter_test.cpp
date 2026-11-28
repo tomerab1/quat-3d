@@ -18,6 +18,7 @@
 #include "engine/scene/components.hpp"
 #include "engine/scene/instanced_mesh.hpp"
 #include "engine/scene/scatter.hpp"
+#include "engine/terrain/edits.hpp"
 #include "engine/terrain/heightmap.hpp"
 
 namespace {
@@ -319,6 +320,36 @@ TEST(Scatter, TileGroundSamplesAndRevisions) {
     map.max_height = 4.0F;
     EXPECT_NE(ground.revision({104.0F, 104.0F}, {106.0F, 106.0F}), over);
     EXPECT_EQ(ground.revision({0.0F, 0.0F}, {10.0F, 10.0F}), away);
+}
+
+// G19.1: a terrain edit changes the ground revision only for rectangles
+// over the edited cells, not for every scatter on the tile.
+TEST(Scatter, TerrainEditsChangeOnlyNearbyRevisions) {
+    namespace t = engine::terrain;
+    Heightmap map = make_map(100.0F, [](float x, float z) { return 0.1F * x + 0.05F * z; });
+    const t::TileFrame frame{{0, 0}, map.resolution, map.tile_size_m};
+    // The tile spans terrain-local [-size/2, size/2]; place it there in the world.
+    const glm::vec3 origin(-0.5F * map.tile_size_m, 0.0F, -0.5F * map.tile_size_m);
+    const s::ScatterGround ground = s::make_tile_ground({{&map, origin}});
+    t::TerrainStamp bump;
+    bump.points = {{-0.4F * map.tile_size_m, -0.4F * map.tile_size_m}};
+    bump.radius = 0.05F * map.tile_size_m;
+    bump.amount = 1.0F;
+    (void)t::apply_edits(map, frame, std::vector<t::TerrainStamp>{bump});
+    const glm::vec2 near_lo(-0.45F * map.tile_size_m), near_hi(-0.35F * map.tile_size_m);
+    const glm::vec2 far_lo(0.3F * map.tile_size_m), far_hi(0.4F * map.tile_size_m);
+    const std::uint64_t near = ground.revision(near_lo, near_hi);
+    const std::uint64_t far = ground.revision(far_lo, far_hi);
+
+    bump.amount = 2.0F;
+    const t::TexelRect dirty = t::texel_rect(frame, t::stamp_bounds(bump));
+    (void)t::apply_edits(map, frame, std::vector<t::TerrainStamp>{bump}, dirty);
+    EXPECT_NE(ground.revision(near_lo, near_hi), near);
+    EXPECT_EQ(ground.revision(far_lo, far_hi), far);
+    ASSERT_TRUE(ground.sample(bump.points[0].x, bump.points[0].y).has_value());
+    EXPECT_NEAR(ground.sample(bump.points[0].x, bump.points[0].y)->height,
+                0.1F * (bump.points[0].x - origin.x) + 0.05F * (bump.points[0].y - origin.z) + 2.0F,
+                0.05F);
 }
 
 TEST(Scatter, SystemRegeneratesOnlyOnChange) {

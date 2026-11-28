@@ -65,6 +65,12 @@ public:
     [[nodiscard]] const std::map<glm::ivec2, Heightmap, TileCoordLess>& maps() const {
         return maps_;
     }
+    // Mutable access for edits applied to loaded tiles (G19.1); null when
+    // `coord` is not loaded.
+    [[nodiscard]] Heightmap* find_map(const glm::ivec2& coord) {
+        const auto it = maps_.find(coord);
+        return it == maps_.end() ? nullptr : &it->second;
+    }
     [[nodiscard]] const TerrainParams& base() const { return base_; }
 
     // Non-owning; null = CPU only. The backend must outlive the streamer (or

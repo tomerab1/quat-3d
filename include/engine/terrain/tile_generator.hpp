@@ -9,9 +9,12 @@
 // whatever a backend does not support, and the reference it is tested
 // against.
 
+#include <cstdint>
 #include <future>
+#include <span>
 #include <utility>
 
+#include "engine/terrain/edits.hpp"
 #include "engine/terrain/generator.hpp"
 #include "engine/terrain/heightmap.hpp"
 
@@ -38,6 +41,15 @@ public:
     // next frame).
     [[nodiscard]] virtual std::future<Heightmap> generate(const TerrainParams& params,
                                                           CancelToken cancel) = 0;
+
+    // Terrain edits (G19.1) a backend applies to the tiles it generates from
+    // now on, tagging them with `revision` (Heightmap::edit_revision; tiles
+    // generated with other edits get recomputed on the CPU when they land).
+    // A backend that cannot apply edits ignores this: the CPU applies them.
+    virtual void set_edits(std::span<const TerrainStamp> stamps, std::uint64_t revision) {
+        (void)stamps;
+        (void)revision;
+    }
 };
 
 // Generates a tile on `backend` when it supports `params`, else on a CPU

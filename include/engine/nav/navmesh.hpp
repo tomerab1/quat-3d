@@ -100,6 +100,11 @@ public:
     [[nodiscard]] std::expected<float, core::Error>
     surface_height(float x, float z, float reference_y) const;
 
+    // World-space bounds of the baked polygons (zero when invalid): what a
+    // change to the walkable geometry must touch to make this bake stale
+    // (terrain edits, G19.1).
+    [[nodiscard]] std::pair<glm::vec3, glm::vec3> bounds() const;
+
     // Polygon edges of the baked mesh, for the editor overlay.
     [[nodiscard]] const std::vector<std::pair<glm::vec3, glm::vec3>>& debug_edges() const;
 

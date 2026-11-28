@@ -550,6 +550,7 @@ add_library(engine_terrain STATIC
     src/terrain/cpu_tile_jobs.cpp
     src/terrain/edits.cpp
     src/terrain/edits_apply.cpp
+    src/terrain/edit_sync.cpp
     src/terrain/generator.cpp
     src/terrain/grid_erosion.cpp
     src/terrain/streamer.cpp
@@ -852,6 +853,7 @@ endif()
 # with ENGINE_EDITOR for `game`, game_world_runtime without it for the players.
 set(GAME_WORLD_SOURCES
     src/app/world_runtime.cpp
+    src/app/world_terrain_edits.cpp
     src/app/demo_scenes.cpp
     src/app/audio_runtime.cpp
     src/app/play_mode.cpp
