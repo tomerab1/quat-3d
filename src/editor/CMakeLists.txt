@@ -64,6 +64,16 @@ if(ENGINE_EDITOR)
                 unofficial::imgui-node-editor::imgui-node-editor
                 imgui::imgui imguizmo::imguizmo SDL3::SDL3)
     target_include_directories(engine_editor PUBLIC ${ENGINE_PUBLIC_INCLUDE})
+    # Inspector sections (ROADMAP S9): one file per component in inspectors/,
+    # each defining register_<file stem>_inspector(InspectorRegistry&). The call
+    # list is generated from the directory: a new section is a new file.
+    quat_generate_registration(engine_editor
+        DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/inspectors
+        PATTERN   "*.cpp"
+        TEMPLATE  ${CMAKE_CURRENT_SOURCE_DIR}/inspectors.cpp.in
+        OUTPUT    ${CMAKE_CURRENT_BINARY_DIR}/generated/inspectors.cpp
+        DECLARE   "void register_@NAME@_inspector(InspectorRegistry& registry)"
+        CALL      "    register_@NAME@_inspector(registry)")
     # Vendored third-party backend: not warning-clean under our strict flags.
     set_source_files_properties(vendor/imgui_impl_sdl3.cpp
         PROPERTIES COMPILE_OPTIONS "${ENGINE_THIRD_PARTY_TU_FLAGS}")
