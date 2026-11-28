@@ -71,6 +71,15 @@ inline constexpr float k_histogram_max_log2 = 8.0F;
 // The log2 luminance at the centre of bin `bin` (1..255).
 [[nodiscard]] float histogram_bin_log2(std::uint32_t bin);
 
+// Centre-weighted metering (a camera's centre-weighted average metering;
+// Unreal's metering mask): each pixel's histogram weight is
+// 1 - s + s * exp(-r^2 / (2 * 0.4^2)), r the distance from the frame's
+// centre normalised so the corners are at 1 (uv in [0, 1]^2). s = 0 meters
+// the frame evenly. The histogram stores weights in fixed point,
+// k_metering_weight_one per full-weight pixel.
+inline constexpr float k_metering_weight_one = 256.0F;
+[[nodiscard]] float metering_weight(float u, float v, float strength);
+
 struct MeteringParams {
     float low_percent  = 0.10F; // pixels darker than this fraction are ignored
     float high_percent = 0.90F; // pixels brighter than this fraction are ignored

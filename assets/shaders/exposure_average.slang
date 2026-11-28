@@ -33,7 +33,8 @@ struct Params {
     float nits_per_unit;
     float key_reference; // Krawczyk key at the reference luminance
     float log_inv_pre_exposure; // log2(1 / the frame's pre-exposure)
-    float pad0, pad1, pad2;
+    float reset;                // > 0.5: seed from this frame's metering (a cut)
+    float pad0, pad1;
 };
 
 static const float UNDEREXPOSED_STEP_EV = 4.0;
@@ -61,7 +62,9 @@ void compute_main(uint gi : SV_GroupIndex) {
     const float total = s_scan[255];
     const float below = s_scan[gi] - count;
     const float lo = total * pc.low_percent;
-    const float hi = max(total * pc.high_percent, min(lo + 1.0, total));
+    // At least one pixel's weight (histogram_bin weights are fixed point,
+    // 256 per pixel), so equal percentiles still pick a pixel.
+    const float hi = max(total * pc.high_percent, min(lo + 256.0, total));
     const float overlap = max(min(below + count, hi) - max(below, lo), 0.0);
     const float bin_log = pc.min_log_lum + (float(gi) - 0.5) * (pc.log_lum_range / 255.0);
     GroupMemoryBarrierWithGroupSync();
@@ -83,7 +86,10 @@ void compute_main(uint gi : SV_GroupIndex) {
     }
 
     if (gi == 0u) {
-        const bool seeded = g_exposure[0] > 0.0 && isfinite(g_exposure[2]);
+        // A camera cut or a new scene restarts from the metered value
+        // instead of adapting from the previous shot (headless captures
+        // converge in one frame).
+        const bool seeded = g_exposure[0] > 0.0 && isfinite(g_exposure[2]) && pc.reset < 0.5;
         float state = g_exposure[2];
         if (total > 0.0) {
             const float target = s_scan[0] / max(weight, 1e-6);
@@ -117,7 +123,10 @@ void compute_main(uint gi : SV_GroupIndex) {
         if (pc.adaptive_key > 0.5) {
             key *= saturate(krawczyk_key(adapted * pc.nits_per_unit) / pc.key_reference);
         }
-        g_exposure[0] = adapted;
+        // Still unseeded after a black frame: stay so (adapted 0), so the
+        // first frame with something measurable seeds directly instead of
+        // adapting slowly from the underexposure guess.
+        g_exposure[0] = (total > 0.0 || seeded) ? adapted : 0.0;
         g_exposure[1] = clamp(key / adapted, pc.min_exposure, pc.max_exposure);
         g_exposure[2] = state;
         g_exposure[3] = key;

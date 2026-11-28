@@ -36,7 +36,8 @@ struct HistogramParams {
     std::uint32_t width;
     std::uint32_t height;
     float         inv_pre_exposure;
-    float         pad0, pad1, pad2;
+    float         center_weight;
+    float         pad0, pad1;
 };
 static_assert(sizeof(HistogramParams) == 32);
 struct AverageParams {
@@ -53,7 +54,8 @@ struct AverageParams {
     float nits_per_unit;
     float key_reference;
     float log_inv_pre_exposure;
-    float pad0, pad1, pad2;
+    float reset;
+    float pad0, pad1;
 };
 static_assert(sizeof(AverageParams) == 64);
 
@@ -145,6 +147,7 @@ ExposureMetering ExposureMetering::from(const ExposureSettings& settings, float 
     m.adaptive_key = settings.adaptive_key;
     m.min_ev100 = settings.min_ev100;
     m.max_ev100 = settings.max_ev100;
+    m.center_weight = settings.center_weight;
     m.pre_exposure = pre_exposure;
     return m;
 }
@@ -220,7 +223,9 @@ ExposurePass::add_to_graph(rhi::RenderGraph& graph, rhi::ResourceHandle hdr, VkE
 
     const float pre = finite_or(metering.pre_exposure, 1.0F);
     HistogramParams hp{kMinLogLum, 1.0F / kLogLumRange, extent.width, extent.height,
-                       1.0F / std::max(pre, 1e-30F), 0.0F, 0.0F, 0.0F};
+                       1.0F / std::max(pre, 1e-30F),
+                       std::clamp(finite_or(metering.center_weight, 0.0F), 0.0F, 1.0F), 0.0F,
+                       0.0F};
     const float lo_ev = std::min(metering.min_ev100, metering.max_ev100);
     const float hi_ev = std::max(metering.min_ev100, metering.max_ev100);
     const float low = std::clamp(finite_or(metering.low_percent, 0.1F), 0.0F, 1.0F);
@@ -237,7 +242,7 @@ ExposurePass::add_to_graph(rhi::RenderGraph& graph, rhi::ResourceHandle hdr, VkE
                      photometry::k_nits_per_unit,
                      photometry::krawczyk_key(photometry::k_adaptive_key_reference_nits),
                      -std::log2(std::max(pre, 1e-30F)),
-                     0.0F,
+                     metering.reset ? 1.0F : 0.0F,
                      0.0F,
                      0.0F};
 

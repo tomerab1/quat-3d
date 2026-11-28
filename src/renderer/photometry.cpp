@@ -35,6 +35,14 @@ float histogram_bin_log2(std::uint32_t bin) {
     return k_histogram_min_log2 + (static_cast<float>(bin) - 0.5F) * k_bin_width;
 }
 
+float metering_weight(float u, float v, float strength) {
+    const float s = std::clamp(strength, 0.0F, 1.0F);
+    const float du = u - 0.5F;
+    const float dv = v - 0.5F;
+    const float r2 = (du * du + dv * dv) * 2.0F;
+    return 1.0F - s + s * std::exp(-r2 / (2.0F * 0.4F * 0.4F));
+}
+
 float metered_log2(std::span<const std::uint32_t, k_histogram_bins> bins,
                    const MeteringParams& params) {
     float total = 0.0F;
@@ -43,8 +51,8 @@ float metered_log2(std::span<const std::uint32_t, k_histogram_bins> bins,
     const float lo_p = std::clamp(params.low_percent, 0.0F, 1.0F);
     const float hi_p = std::clamp(params.high_percent, lo_p, 1.0F);
     const float lo = total * lo_p;
-    // A window of at least one pixel, so equal percentiles pick that pixel.
-    const float hi = std::max(total * hi_p, std::min(lo + 1.0F, total));
+    // A window of at least one pixel's weight, so equal percentiles pick a pixel.
+    const float hi = std::max(total * hi_p, std::min(lo + k_metering_weight_one, total));
     float below = 0.0F;
     float weight = 0.0F;
     float sum = 0.0F;

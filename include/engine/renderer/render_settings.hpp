@@ -40,6 +40,9 @@ struct ExposureSettings {
     // Krawczyk et al. 2005's adaptive key: dim scenes are shown dimmer than
     // `key` (photometry.hpp); off = always `key`.
     bool  adaptive_key    = true;
+    // Centre-weighted metering (photometry::metering_weight): 0 meters the
+    // frame evenly, 1 weighs the corners at ~4 % of the centre.
+    float center_weight   = 0.75F;
     float adaptation_s    = 1.1F;  // exponential adaptation time constant
 };
 

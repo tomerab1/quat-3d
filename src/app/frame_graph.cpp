@@ -521,9 +521,12 @@ bool FrameRenderer::record(const FrameInputs& in) {
     // Auto-exposure: measure the (post-bloom) HDR luminance and adapt over
     // time. It keeps measuring in manual mode, so switching back to auto
     // starts from the current scene instead of a stale value.
-    if (auto r = fr.exposure.add_to_graph(
-            graph, *hdr, draw_extent, in.dt,
-            engine::renderer::ExposureMetering::from(settings.exposure, pre_exposure_));
+    // A camera cut / new scene meters afresh instead of adapting from the
+    // previous shot.
+    engine::renderer::ExposureMetering metering =
+        engine::renderer::ExposureMetering::from(settings.exposure, pre_exposure_);
+    metering.reset = fs.reset_history;
+    if (auto r = fr.exposure.add_to_graph(graph, *hdr, draw_extent, in.dt, metering);
         !r) {
         std::fprintf(stderr, "[fatal] exposure pass: %s\n", r.error().message.c_str());
         return false;

@@ -85,6 +85,10 @@ struct ExposureMetering {
     float max_ev100      = 20.0F;
     float low_percent    = 0.10F;
     float high_percent   = 0.90F;
+    // Centre-weighted metering strength (photometry::metering_weight).
+    float center_weight  = 0.75F;
+    // Seed from this frame's metering instead of adapting (a camera cut).
+    bool  reset          = false;
     // The multiplier the HDR image was pre-exposed with (> 0).
     float pre_exposure   = 1.0F;
 

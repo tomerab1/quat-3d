@@ -67,6 +67,9 @@ pub struct ExposureParams {
     /// Show dim scenes dimmer, as the eye sees them (default true); false = always `key`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub adaptive_key: Option<bool>,
+    /// Meter the centre of the frame more than its edges, 0..1 (default 0.75; 0 = even metering).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub center_weight: Option<f64>,
     /// Eye adaptation time constant in seconds, 0.05..10 (default 1.1).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub adaptation_s: Option<f64>,
