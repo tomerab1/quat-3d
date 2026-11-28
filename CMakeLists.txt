@@ -856,6 +856,7 @@ endif()
 set(GAME_WORLD_SOURCES
     src/app/world_runtime.cpp
     src/app/demo_scenes.cpp
+    src/app/env_weather.cpp
     src/app/audio_runtime.cpp
     src/app/play_mode.cpp
     src/app/grass_runtime.cpp

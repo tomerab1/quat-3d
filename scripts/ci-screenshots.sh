@@ -57,6 +57,15 @@ SCENE_TABLE=(
   "editor-time-of-day|30|QUAT_WINDOW_SIZE=1600x900 QUAT_EDITOR_LAYOUT=default QUAT_EDITOR_SELECT=world_clock QUAT_TIME=2026-06-21T21:35:00+02:00 QUAT_TIME_SCALE=0|Editor: the world clock in the Inspector at sunset"
   "showcase-hdri|40|QUAT_NO_UI=1 QUAT_HDRI=hdri-cache/kloofendal_48d_partly_cloudy_2k.hdr|Showcase lit by a CC0 Poly Haven HDRI (R21: HDRI IBL, its sun as the shadowed light, SSR)"
   "mountain-forest|30|QUAT_NO_UI=1 QUAT_DEMO=mountain|Mountain + forest showcase: terrain, scattered trees and rocks, GPU grass"
+  # Volumetric clouds v2 (R13.4) under the weather presets (QUAT_WEATHER), a
+  # sky-facing camera over a small terrain tile; the sunset row uses the
+  # world clock (Paris, June solstice, 21:35, sun 2.5 deg up in the north-west).
+  "clouds-clear|40|QUAT_NO_UI=1 QUAT_SCENE=assets/scenes/sky_clouds.json QUAT_WEATHER=clear|Clouds v2: clear sky, fair-weather cumuli under cirrus"
+  "clouds-cumulus|40|QUAT_NO_UI=1 QUAT_SCENE=assets/scenes/sky_clouds.json QUAT_WEATHER=cumulus|Clouds v2: a cumulus field"
+  "clouds-overcast|40|QUAT_NO_UI=1 QUAT_SCENE=assets/scenes/sky_clouds.json QUAT_WEATHER=overcast|Clouds v2: overcast stratocumulus deck"
+  "clouds-sunset|40|QUAT_NO_UI=1 QUAT_SCENE=assets/scenes/sky_clouds.json QUAT_WEATHER=cumulus QUAT_TIME=2026-06-21T21:35:00+02:00 QUAT_LATLON=48.8566,2.3522 QUAT_TIME_SCALE=0|Clouds v2: cumulus at sunset (world clock)"
+  # R13.3: radiation fog filling the valley of the mountain scene at sunrise.
+  "foggy-valley|30|QUAT_NO_UI=1 QUAT_DEMO=mountain QUAT_WEATHER=valley_fog QUAT_TIME=2026-06-21T07:10:00+02:00 QUAT_LATLON=48.8566,2.3522 QUAT_TIME_SCALE=0|Volumetric fog: a foggy valley in the mountain scene at sunrise"
 )
 # HDRI panoramas the scenes use, fetched into hdri-cache/ (gitignored).
 HDRIS=("kloofendal_48d_partly_cloudy 2k")
