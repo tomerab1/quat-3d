@@ -358,6 +358,10 @@ bool FrameRenderer::record(const FrameInputs& in) {
     const engine::renderer::InstancedDrawList& shadow_batches = batches.shadow;
     const engine::renderer::InstancedDrawList& opaque_batches = batches.opaque;
     const engine::renderer::RenderSettings& settings = settings_;
+    // Hashed alpha (R26.3): the temporal resolve integrates the dither of
+    // MASK materials into smooth coverage; the shadow casters match it.
+    fr.mesh.set_alpha_hash(settings.taa.enabled, fs.frame_number);
+    fr.shadow.set_alpha_hash(settings.taa.enabled);
     auto gbuffer = fr.mesh.add_to_graph(graph, render_extent, fs.jittered_vp, opaque_batches,
                                         fs.motion);
     if (!gbuffer) {

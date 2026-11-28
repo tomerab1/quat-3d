@@ -103,7 +103,8 @@ struct ShadowMaterialPushConstants {
     VkDeviceAddress              instances = 0;
     glm::vec4                    to_light{0.0F}; // xyz = unit direction toward the sun
     std::uint32_t                cascade = 0;
-    std::array<std::uint32_t, 3> pad{};
+    std::uint32_t                alpha_hash = 0; // 1: hashed alpha test (R26.3)
+    std::array<std::uint32_t, 2> pad{};
 };
 static_assert(sizeof(ShadowMaterialPushConstants) == 48,
               "must match shadow_material.slang PushConstants");
@@ -186,6 +187,10 @@ public:
     ShadowPass& operator=(ShadowPass&&) noexcept = default;
     ShadowPass(const ShadowPass&) = delete;
     ShadowPass& operator=(const ShadowPass&) = delete;
+
+    // Alpha-tested casters use the GBuffer's hashed coverage when it hashes
+    // (R26.3, MeshPass::set_alpha_hash), with a fixed seed.
+    void set_alpha_hash(bool hashed) { alpha_hash_ = hashed; }
 
     // Declares cascade fitting and the cascade rendering into `graph`.
     // `hiz` (may be null) supplies the depth bounds for GPU fitting. Returns
@@ -274,6 +279,7 @@ private:
     std::vector<FrameDraw>             frame_masked_;
     std::vector<FrameDraw>             frame_translucent_;
     glm::vec4                          frame_to_light_{0.0F};
+    bool                               alpha_hash_ = false;
 
     // Cascade fitting (csm_setup.slang).
     rhi::DescriptorSetLayout       setup_layout_;

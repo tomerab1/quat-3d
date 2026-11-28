@@ -48,7 +48,9 @@ public struct GBufferPushConstants {
     // flag rather than a null test, which would need shaderInt64).
     public uint            has_prev_positions;
     public float           time;           // material clock, seconds
-    public float           pad;
+    // Hashed alpha test seed (lib/alpha_test.slang): < 0 plain cutoff test,
+    // >= 0 hashed with this per-frame seed (a temporal resolve is on).
+    public float           alpha_hash;
     public PrevPosition*   prev_positions; // per draw: one per vertex (skinned draws)
     // xyz = camera position, w = 1; for an orthographic view w = 0 and xyz is
     // the unit direction toward the camera.
@@ -70,6 +72,7 @@ public struct GBufferVsIn {
 public struct GBufferVsOut {
     public float4 clip      : SV_Position;
     public float3 world_pos : POSITION0;
+    public float3 object_pos : POSITION1; // hashed alpha test domain
     public float3 world_n   : NORMAL;
     public float4 world_t   : TANGENT;
     public float2 uv        : TEXCOORD0;
@@ -95,6 +98,7 @@ public GBufferVsOut gbuffer_vertex(GBufferVsIn input) {
     float4 world = inst.world_position(input.position);
     o.clip = mul(pc.view_proj, world);
     o.world_pos = world.xyz;
+    o.object_pos = input.position;
 
     float4x4 prev_model = inst.model;
     float3 prev_position = input.position;

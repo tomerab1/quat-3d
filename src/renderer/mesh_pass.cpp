@@ -249,6 +249,7 @@ MeshPass::add_to_graph(rhi::RenderGraph& graph, VkExtent2D extent, const glm::ma
     frame_push_.view_proj = view_proj;
     frame_push_.instances = frame_instances_;
     frame_push_.time = material_time();
+    frame_push_.alpha_hash = alpha_hash_;
     frame_push_.camera = camera_from_view_proj(view_proj);
     frame_push_.prev_view_proj = motion.prev_view_proj;
     frame_push_.motion = frame_motion_;

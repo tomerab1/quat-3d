@@ -119,7 +119,9 @@ struct GBufferPushConstants {
     std::uint32_t   has_motion = 0;
     std::uint32_t   has_prev_positions = 0; // per draw
     float           time = 0.0F; // material clock, seconds
-    float           pad = 0.0F;
+    // Hashed alpha test (lib/alpha_test.slang, R26.3): < 0 plain cutoff,
+    // >= 0 hashed with this per-frame seed.
+    float           alpha_hash = -1.0F;
     VkDeviceAddress prev_positions = 0; // per draw
     // xyz = camera position, w = 1; orthographic: xyz = unit direction toward
     // the camera, w = 0.
@@ -179,6 +181,13 @@ public:
     // created, or a fixed value (deterministic captures, tests); nullopt
     // returns to the running clock.
     void set_material_time(std::optional<float> seconds) { fixed_time_ = seconds; }
+
+    // Hashed alpha testing of MASK materials (R26.3): on when a temporal
+    // resolve integrates the dither (TAA), seeded per frame by `frame`; off
+    // is the plain alpha cutoff.
+    void set_alpha_hash(bool hashed, std::uint64_t frame) {
+        alpha_hash_ = hashed ? static_cast<float>(frame % 64U) : -1.0F;
+    }
     [[nodiscard]] float material_time() const;
 
     // Pipelines of authored material shaders (ROADMAP A6).
@@ -228,6 +237,7 @@ private:
     VkDeviceAddress                    frame_instances_ = 0;
     VkDeviceAddress                    frame_motion_ = 0;
     GBufferPushConstants               frame_push_{};
+    float                              alpha_hash_ = -1.0F; // set_alpha_hash
     std::vector<rhi::DescriptorBuffer> frame_descriptors_;
     std::vector<FrameDraw>             frame_draws_; // opaque variants first, then masked
 };
