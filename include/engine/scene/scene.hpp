@@ -119,6 +119,13 @@ struct CameraMatrices {
 // exists" is what decides whether play mode renders through the scene.
 [[nodiscard]] entt::entity find_active_camera(const entt::registry& registry);
 
+// R20: the lens of the view when it renders through the scene: the active
+// camera's lens, or `fallback` (the fly camera's) when there is none. Remote
+// camera.get / camera.set read it in builds without the editor, so a pose
+// edit round-trips the authored lens instead of the fly camera's defaults.
+[[nodiscard]] renderer::PhysicalCamera active_camera_lens(const entt::registry& registry,
+                                                          const renderer::PhysicalCamera& fallback);
+
 // Bridge ECS <-> physics: create a body for each new RigidBody+Collider+Transform
 // entity, push kinematic transforms into the world, step it by `dt`, then write
 // dynamic bodies' transforms back into Transform (through the parent's space,

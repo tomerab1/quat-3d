@@ -37,7 +37,8 @@ struct PhysicalCameraLimits {
     static constexpr float min_shutter = 1.0F / 16000.0F, max_shutter = 30.0F;
     static constexpr float min_iso = 25.0F, max_iso = 409600.0F;
     static constexpr float min_sensor_mm = 1.0F, max_sensor_mm = 100.0F;
-    static constexpr float max_focal_mm = 2000.0F;
+    // 0 means "derive from the field of view"; anything else is >= min.
+    static constexpr float min_focal_mm = 1.0F, max_focal_mm = 2000.0F;
     static constexpr float min_focus_m = 0.05F, max_focus_m = 100000.0F;
 };
 

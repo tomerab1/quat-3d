@@ -355,4 +355,17 @@ TEST_F(ComponentJson, CameraLensRoundTripsAndFocalLengthSetsTheFov) {
     EXPECT_NEAR(1.0F / std::abs(m.projection[1][1]), 12.0F / 50.0F, 1e-5F);
 }
 
+// A focal length is 0 (derive from the FOV) or at least 1 mm: shorter ones
+// give a field of view of almost 180 degrees and a degenerate projection.
+TEST_F(ComponentJson, CameraFocalLengthBelowOneMillimetreIsRejected) {
+    r.emplace<s::Transform>(e);
+    ASSERT_OK(apply("camera", {{"focal_length_mm", 35}}));
+    const auto bad = apply("camera", {{"focal_length_mm", 0.001}});
+    ASSERT_FALSE(bad);
+    EXPECT_NE(bad.error().message.find("focal_length_mm"), std::string::npos) << bad.error().message;
+    EXPECT_FLOAT_EQ(r.get<s::Camera>(e).lens.focal_length_mm, 35.0F) << "a failed merge changes nothing";
+    ASSERT_OK(apply("camera", {{"focal_length_mm", 0}}));
+    ASSERT_OK(apply("camera", {{"focal_length_mm", 1}}));
+}
+
 } // namespace

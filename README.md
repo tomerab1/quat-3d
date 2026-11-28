@@ -51,9 +51,10 @@ The editor (dark theme; a light theme is one click away in View > Theme):
   setting from the Renderer panel, `render.settings.*` / MCP or a scene file
 - Cinematic camera and post: a physical lens on every camera (aperture,
   shutter, ISO, focal length, focus distance) driving exposure (EV100),
-  bokeh depth of field and motion blur; AgX, ACES and Khronos PBR Neutral
-  tonemapping; colour grading (white balance, contrast, lift / gamma / gain)
-  with `.cube` look LUTs; lens vignetting, film grain and chromatic aberration
+  bokeh depth of field and motion blur (both off by default); AgX, ACES and
+  Khronos PBR Neutral tonemapping; colour grading (white balance, contrast,
+  lift / gamma / gain) with `.cube` look LUTs; lens vignetting, film grain
+  and chromatic aberration
 - Bloom and auto-exposure
 - Automatic instancing: objects sharing a mesh and material (trees, rocks,
   crates) are drawn together in one instanced draw

@@ -49,6 +49,22 @@ TEST(PhysicalCamera, FocalLengthAndFieldOfView) {
     EXPECT_FLOAT_EQ(r::effective_focal_length_mm(c, glm::radians(60.0F)), 50.0F);
 }
 
+// sanitized() keeps a positive focal length at or above min_focal_mm, so the
+// derived FOV stays well below 180 degrees (0 still means "use the FOV").
+TEST(PhysicalCamera, TinyFocalLengthsAreClampedToTheMinimum) {
+    using L = r::PhysicalCameraLimits;
+    r::PhysicalCamera c;
+    c.focal_length_mm = 0.001F;
+    EXPECT_FLOAT_EQ(r::sanitized(c).focal_length_mm, L::min_focal_mm);
+    EXPECT_LT(r::effective_fov_y(c, glm::radians(60.0F)), 3.1F);
+    c.sensor_height_mm = L::max_sensor_mm; // widest sensor on the shortest lens
+    EXPECT_LE(r::effective_fov_y(c, glm::radians(60.0F)), 3.1F);
+    c.sensor_height_mm = 24.0F;
+    c.focal_length_mm = -5.0F;
+    EXPECT_FLOAT_EQ(r::sanitized(c).focal_length_mm, 0.0F);
+    EXPECT_FLOAT_EQ(r::effective_fov_y(c, glm::radians(60.0F)), glm::radians(60.0F));
+}
+
 TEST(PhysicalCamera, ThinLensCircleOfConfusion) {
     // 50 mm f/2 focused at 2 m; a point at 4 m:
     // c = f^2 / (N (S - f)) * (z - S) / z = 2500 / 3900 * 0.5 = 0.3205 mm.

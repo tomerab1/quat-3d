@@ -8,6 +8,7 @@
 #include <nlohmann/json.hpp>
 
 #include "engine/scene/components.hpp"
+#include "engine/scene/lens_json.hpp"
 #include "engine/scene/scene.hpp"
 #include "internal.hpp"
 
@@ -18,12 +19,9 @@ namespace {
 constexpr float k_max_pitch = 89.0F;
 
 [[nodiscard]] Json lens_json(const renderer::PhysicalCamera& l) {
-    return Json{{"aperture_f", l.aperture_f},
-                {"shutter_s", l.shutter_s},
-                {"iso", l.iso},
-                {"sensor_height_mm", l.sensor_height_mm},
-                {"focal_length_mm", l.focal_length_mm},
-                {"focus_distance_m", l.focus_distance_m}};
+    Json out = Json::object();
+    scene::write_lens_fields(out, l);
+    return out;
 }
 
 struct ClipLimits {
@@ -78,14 +76,8 @@ void read_lens(core::JsonFields& f, renderer::PhysicalCamera& lens) {
         f.fail("lens", "expected an object of lens fields");
         return;
     }
-    using L = renderer::PhysicalCameraLimits;
     core::JsonFields l(*v, "lens");
-    l.number("aperture_f", lens.aperture_f, L::min_aperture, L::max_aperture)
-        .number("shutter_s", lens.shutter_s, L::min_shutter, L::max_shutter)
-        .number("iso", lens.iso, L::min_iso, L::max_iso)
-        .number("sensor_height_mm", lens.sensor_height_mm, L::min_sensor_mm, L::max_sensor_mm)
-        .number("focal_length_mm", lens.focal_length_mm, 0.0F, L::max_focal_mm)
-        .number("focus_distance_m", lens.focus_distance_m, L::min_focus_m, L::max_focus_m);
+    scene::read_lens_fields(l, lens);
     if (auto ok = finish(l); !ok) f.fail("lens", ok.error().message);
 }
 

@@ -46,9 +46,13 @@ makes every other judgement misleading, so it always comes first.
 7. **Then the camera and grade.** For a filmic shot, give the active
    camera a lens with `scene_update` on its `camera` component
    (`focal_length_mm`, `aperture_f`, `focus_distance_m` on the subject;
-   `camera_set` `lens` for the editor view) and turn on `dof`.
-   `motion_blur` follows the camera's `shutter_s`. With `exposure`
-   `physical` on, the camera's aperture, shutter and ISO set the exposure.
+   `camera_set` `lens` for the editor view) and turn on `dof`. Motion
+   blur is off by default; with `motion_blur` on, its length follows the
+   camera's `shutter_s` (1/120 s is a 180-degree shutter at 60 fps). Turn
+   `exposure` `physical` on only when the lights are physically scaled
+   (sun around 100 000 lux): with the default lights it makes the frame
+   almost black, so otherwise keep auto or manual exposure and use the lens
+   for depth of field and motion blur only.
    Grade last: `grading` (`temperature_k` for warmth, `contrast`,
    `saturation`, per-channel `lift_*` / `gamma_*` / `gain_*`, a `.cube`
    look `lut` inside the project) and `film` (`vignette_natural`,

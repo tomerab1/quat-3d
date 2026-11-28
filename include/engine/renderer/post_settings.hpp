@@ -22,8 +22,10 @@ struct DofSettings {
 
 // McGuire 2012 reconstruction-filter motion blur (MotionBlurPass). Blur
 // length = velocity x the camera's shutter fraction (shutter angle / 360).
+// Off by default like depth of field: the default 1/50 s shutter is a
+// 360-degree shutter at 60 fps, so turning it on changes a scene's look.
 struct MotionBlurSettings {
-    bool  enabled       = true;
+    bool  enabled       = false;
     float max_radius_px = 32.0F; // largest blur radius (also the tile size), display px
     int   samples       = 12;    // reconstruction taps per pixel
     float scale         = 1.0F;  // artistic multiplier on the shutter fraction

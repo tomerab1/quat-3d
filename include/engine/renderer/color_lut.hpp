@@ -24,6 +24,14 @@ inline constexpr VkFormat color_lut_format = VK_FORMAT_R16G16B16A16_SFLOAT;
 // The strip's texels (RGBA16F, row-major, (size * size) x size), as uploaded.
 [[nodiscard]] std::vector<std::uint16_t> color_lut_strip(const asset::CubeLut& lut);
 
+// Whether a size^3 LUT's strip fits the device's 2D image limit
+// (caps.max_dimension_2d, 0 = unknown: fits); the error names the limit and
+// the largest size that fits. ColorLutTexture::create checks it first.
+[[nodiscard]] std::expected<void, core::Error> check_color_lut_fits(std::uint32_t size,
+                                                                  const rhi::TextureCaps& caps);
+// Largest LUT size whose strip fits caps.max_dimension_2d (k_max_size when unknown).
+[[nodiscard]] std::uint32_t max_color_lut_size(const rhi::TextureCaps& caps);
+
 class ColorLutTexture {
 public:
     // Uploads `lut` (already validated by asset::parse_cube_lut).

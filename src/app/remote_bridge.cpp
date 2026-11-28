@@ -150,6 +150,12 @@ struct RemoteBridge::Impl {
         p.pitch_deg = glm::degrees(*t.cam_pitch);
         p.fov_deg = glm::degrees(*t.cam_fov_y);
         if (t.cam_lens != nullptr) p.lens = *t.cam_lens;
+#ifndef ENGINE_EDITOR
+        // Without the editor the view renders through the scene camera: report
+        // its lens, so camera.set (which merges into this pose) writes the
+        // authored lens back instead of the fly camera's defaults.
+        p.lens = engine::scene::active_camera_lens(t.scene->registry(), p.lens);
+#endif
         if (t.cam_near_override != nullptr) p.near_override = *t.cam_near_override;
         if (t.cam_far_override != nullptr) p.far_override = *t.cam_far_override;
         const engine::scene::ClipRange derived =

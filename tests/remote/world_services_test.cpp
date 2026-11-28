@@ -353,6 +353,7 @@ TEST_F(WorldWithServices, CameraSetMergesTheLens) {
         err("camera.set", {{"lens", {{"aperture_f", 0.1}}}}, code::invalid_params);
     EXPECT_NE(msg.find("aperture_f"), std::string::npos) << msg;
     err("camera.set", {{"lens", {{"f_stop", 2}}}}, code::invalid_params);
+    err("camera.set", {{"lens", {{"focal_length_mm", 0.01}}}}, code::invalid_params);
     err("camera.set", {{"lens", 3}}, code::invalid_params);
     EXPECT_FLOAT_EQ(camera.lens.aperture_f, 2.8F);
 }

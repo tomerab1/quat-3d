@@ -132,6 +132,12 @@ entt::entity find_active_camera(const entt::registry& registry) {
     return entt::null;
 }
 
+renderer::PhysicalCamera active_camera_lens(const entt::registry& registry,
+                                            const renderer::PhysicalCamera& fallback) {
+    const entt::entity e = find_active_camera(registry);
+    return e == entt::null ? fallback : registry.get<const Camera>(e).lens;
+}
+
 CameraMatrices camera_system(const entt::registry& registry, float aspect_ratio) {
     CameraMatrices out;
 

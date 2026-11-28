@@ -24,7 +24,7 @@ pub struct LensParams {
     /// Sensor height in mm, 1..100 (default 24, full frame).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sensor_height_mm: Option<f64>,
-    /// Focal length in mm, 0..2000 (0 = keep `fov_deg`; e.g. 24 wide, 50 normal, 85 portrait).
+    /// Focal length in mm: 0 keeps `fov_deg`, else 1..2000 (e.g. 24 wide, 50 normal, 85 portrait).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub focal_length_mm: Option<f64>,
     /// Distance in metres that is in focus, 0.05..100000 (default 10).
@@ -49,7 +49,7 @@ pub struct DofParams {
 #[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct MotionBlurParams {
-    /// Motion blur on/off (default on); length = motion while the camera's shutter is open.
+    /// Motion blur on/off (default off); length = motion while the camera's shutter is open.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub enabled: Option<bool>,
     /// Longest blur radius in pixels (also the tile size), 8..64 (default 32).

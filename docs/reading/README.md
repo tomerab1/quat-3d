@@ -28,6 +28,8 @@ If you read only a few things, read these. They underpin most of the engine.
 3. **Moving Frostbite to Physically Based Rendering 3.0** — Lagarde & de Rousiers,
    SIGGRAPH 2014. The most complete practical PBR write-up: units, lights,
    materials, IBL. [course notes (PDF)](https://seblagarde.files.wordpress.com/2015/07/course_notes_moving_frostbite_to_pbr_v32.pdf)
+   Its camera chapter (EV100 from aperture, shutter and ISO) is R20's
+   physical exposure: `src/renderer/physical_camera.cpp`.
 4. **Physically Based Rendering: From Theory to Implementation, 4th ed.** —
    Pharr, Jakob, Humphreys. Free online; the theory behind microfacets,
    sampling and volumes. [pbr-book.org](https://pbr-book.org/4ed/contents)
@@ -139,9 +141,15 @@ If you read only a few things, read these. They underpin most of the engine.
 | ✅ | **High Quality Temporal Supersampling** — Karis, SIGGRAPH 2014. [course page](https://advances.realtimerendering.com/s2014/) | `assets/shaders/taa.slang` |
 | ✅ | **An Excursion in Temporal Supersampling** — Salvi, GDC 2016 (variance clipping). [PDF](https://developer.download.nvidia.com/gameworks/events/GDC2016/msalvi_temporal_supersampling.pdf) | `taa.slang` |
 | ✅ | **Temporal AA and the Quest for the Holy Trail** — López, 2022. Approachable TAA overview. [blog](https://www.elopezr.com/temporal-aa-and-the-quest-for-the-holy-trail/) | `taa.slang`; TAAU upscaler (R11) |
-| ✅ | **Next Generation Post Processing in Call of Duty: Advanced Warfare** — Jimenez, SIGGRAPH 2014 (bloom, motion blur, DoF, interleaved gradient noise). [iryoku.com](https://www.iryoku.com/next-generation-post-processing-in-call-of-duty-advanced-warfare/) | `bloom_down.slang`; R20 DoF & motion blur (#79) |
-| ✅ | **ACES Filmic Tone Mapping Curve** — Narkowicz, 2016. [blog](https://knarkowicz.wordpress.com/2016/01/06/aces-filmic-tone-mapping-curve/) | `assets/shaders/tonemap.slang` |
-| 🔧 | **AgX** — Sobotka's view transform, and **Minimal AgX implementation** (iolite). [AgX](https://github.com/sobotka/AgX) · [minimal implementation](https://iolite-engine.com/blog_posts/minimal_agx_implementation) | R20 (#79) |
+| ✅ | **Next Generation Post Processing in Call of Duty: Advanced Warfare** — Jimenez, SIGGRAPH 2014 (bloom, motion blur, DoF, interleaved gradient noise). [iryoku.com](https://www.iryoku.com/next-generation-post-processing-in-call-of-duty-advanced-warfare/) | `bloom_down.slang`; R20: `dof_*.slang` (CoC tiles, near/far gather, composite), `motion_blur*.slang` sampling and IGN jitter (#79) |
+| ✅ | **ACES Filmic Tone Mapping Curve** — Narkowicz, 2016. [blog](https://knarkowicz.wordpress.com/2016/01/06/aces-filmic-tone-mapping-curve/) | `assets/shaders/lib/color.slang` (`AcesTonemapper`), CPU reference `src/renderer/color_grading.cpp` |
+| 🔧 | **AgX** — Sobotka's view transform as Blender 4 ships it, and **Minimal AgX implementation** (iolite). [AgX](https://github.com/sobotka/AgX) · [minimal implementation](https://iolite-engine.com/blog_posts/minimal_agx_implementation) | R20 `AgxTonemapper` in `lib/color.slang`, CPU reference in `color_grading.cpp` (#79) |
+| 🔧 | **A Reconstruction Filter for Plausible Motion Blur** — McGuire, Hennessy, Bukowski & Osman, I3D 2012 (TileMax / NeighborMax, cone and cylinder weights, soft depth comparison). [PDF](https://casual-effects.com/research/McGuire2012Blur/McGuire12Blur.pdf) | R20 `motion_blur_tiles.slang`, `motion_blur_neighbor.slang`, `motion_blur.slang` (#79) |
+| 🔧 | **A Fast and Stable Feature-Aware Motion Blur Filter** — Guertin, McGuire & Nowrouzezahrai, HPG 2014 (alternate sampling along the pixel's own vector). [project page](https://casual-effects.com/research/Guertin2013MotionBlur/) | R20 `motion_blur.slang` (#79) |
+| 🔧 | **Khronos PBR Neutral Tone Mapper** — Khronos 3D Commerce, 2024. [specification](https://github.com/KhronosGroup/ToneMapping/tree/main/PBR_Neutral) | R20 `PbrNeutralTonemapper` in `lib/color.slang`, CPU reference in `color_grading.cpp` (#79) |
+| 🔧 | **ACEScct — A Quasi-Logarithmic Encoding of ACES Data** — Academy S-2016-001. [ACES documentation](https://docs.acescentral.com/) | R20 grading (contrast, lift / gamma / gain) in `lib/color.slang` and `color_grading.cpp` (#79) |
+| 🔧 | **Chromatic adaptation** (von Kries in Bradford LMS) — Lindbloom; and **Planckian locus approximation** — Krystek, *Color Res. Appl.* 1985. [Lindbloom](http://www.brucelindbloom.com/index.html?Eqn_ChromAdapt.html) | R20 white balance, `color_grading.cpp` `white_balance_matrix` (#79) |
+| 🔧 | **Cube LUT Specification 1.0** — Adobe, 2013 (the `.cube` text format Resolve also writes). | R20 look LUTs: parser `src/asset/cube_lut.cpp` (#79) |
 | 🔧 | **Stochastic Screen-Space Reflections** — Stachowiak, SIGGRAPH 2015. [EA](https://www.ea.com/frostbite/news/stochastic-screen-space-reflections) | R21 SSR (#80) |
 
 ## Transparency, particles & VFX

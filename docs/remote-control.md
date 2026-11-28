@@ -179,7 +179,7 @@ Details the contract leaves open, as implemented:
   `FrameInputs::camera_cut`, which invalidates the TAA history.
 - **Camera lens** (R20): the view's physical lens — `aperture_f` [0.7, 64],
   `shutter_s` [1/16000, 30] s, `iso` [25, 409600], `sensor_height_mm`
-  [1, 100], `focal_length_mm` [0, 2000] (0 = `fov_deg` applies; otherwise it
+  [1, 100], `focal_length_mm` 0 or [1, 2000] (0 = `fov_deg` applies; otherwise it
   sets the field of view from the sensor) and `focus_distance_m`
   [0.05, 100000]. It drives depth of field (`dof`), the motion-blur shutter
   and, with `exposure.physical`, the exposure. In the editor it belongs to
@@ -482,7 +482,7 @@ Settings groups (the renderer implements exactly these):
 | `ibl` | `intensity` [0, 4] — scales image-based ambient light and reflections |
 | `clouds` | as `environment.*`: `enabled`, `coverage` [0, 1], `density` [0, 128] /km, `bottom_km` [0.2, 15], `thickness_km` [0.2, 10], `size_km` [1, 80], `detail` [0, 1], `wind_speed` [0, 100] m/s, `wind_dir_deg` [-180, 180] |
 | `dof` | depth of field from the active camera's lens (`camera` component: `aperture_f`, `focal_length_mm`, `focus_distance_m`, `sensor_height_mm`): `enabled` (default off), `max_radius_px` [4, 64], `rings` integer [2, 6] |
-| `motion_blur` | `enabled`, `max_radius_px` [8, 64] (also the tile size), `samples` integer [4, 32], `scale` [0, 2] × the camera's shutter fraction (`shutter_s` / frame time, at most 1) |
+| `motion_blur` | `enabled` (default off), `max_radius_px` [8, 64] (also the tile size), `samples` integer [4, 32], `scale` [0, 2] × the camera's shutter fraction (`shutter_s` / frame time, at most 1) |
 | `tonemap` | `operator` `"aces"` \| `"agx"` \| `"pbr_neutral"` |
 | `grading` | `temperature_k` [1500, 15000] K and `tint` [-1, 1] (white balance; 6500 / 0 neutral), `contrast` [0, 2], `saturation` [0, 2], `lift_r/g/b` [-0.5, 0.5], `gamma_r/g/b` [0.2, 5], `gain_r/g/b` [0, 4] (in ACEScct), `lut` (project-relative `.cube` path, `""` = none; checked on set — a missing or malformed file is rejected with the parser's error), `lut_contribution` [0, 1] |
 | `film` | `vignette_natural` [0, 1] (cos⁴ falloff of the camera's field of view), `vignette_intensity` [0, 1], `vignette_smoothness` [0.05, 1], `grain_intensity` [0, 1], `grain_size_px` [0.5, 4], `chromatic_aberration` [0, 1] |

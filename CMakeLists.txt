@@ -300,6 +300,7 @@ add_library(engine_scene STATIC
     src/scene/bt_graph_edit.cpp
     src/scene/scene_io.cpp
     src/scene/component_json.cpp
+    src/scene/lens_json.cpp
     src/scene/particle_json.cpp
     src/scene/script_component.cpp
     src/scene/scene_snapshot.cpp

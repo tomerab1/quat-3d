@@ -29,7 +29,11 @@ PhysicalCamera sanitized(const PhysicalCamera& c) {
     out.iso = clamp_or(c.iso, L::min_iso, L::max_iso, d.iso);
     out.sensor_height_mm =
         clamp_or(c.sensor_height_mm, L::min_sensor_mm, L::max_sensor_mm, d.sensor_height_mm);
-    out.focal_length_mm = clamp_or(c.focal_length_mm, 0.0F, L::max_focal_mm, 0.0F);
+    // 0 derives the focal length from the field of view; a positive value is
+    // at least min_focal_mm (shorter ones give a near-180-degree FOV).
+    out.focal_length_mm = c.focal_length_mm > 0.0F
+                              ? clamp_or(c.focal_length_mm, L::min_focal_mm, L::max_focal_mm, 0.0F)
+                              : 0.0F;
     out.focus_distance_m =
         clamp_or(c.focus_distance_m, L::min_focus_m, L::max_focus_m, d.focus_distance_m);
     return out;
@@ -63,7 +67,11 @@ float effective_focal_length_mm(const PhysicalCamera& camera, float fov_y) {
 
 float effective_fov_y(const PhysicalCamera& camera, float fov_y) {
     const PhysicalCamera c = sanitized(camera);
-    if (c.focal_length_mm > 0.0F) return fov_from_focal_length(c.focal_length_mm, c.sensor_height_mm);
+    if (c.focal_length_mm > 0.0F) {
+        // The same range effective_focal_length_mm accepts: a wide sensor on
+        // a 1 mm lens would otherwise approach 180 degrees.
+        return std::clamp(fov_from_focal_length(c.focal_length_mm, c.sensor_height_mm), 1e-3F, 3.1F);
+    }
     return fov_y;
 }
 

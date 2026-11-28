@@ -68,7 +68,7 @@ inline constexpr std::array k_post_fields = {
                       "Gather rings per field (more = smoother bokeh, slower)",
                       &field_ref<&S::dof, &Dof::rings>},
     // ---- motion_blur ----
-    RenderSettingDesc{"motion_blur", "enabled", "enabled", T::boolean, 0.0F, 1.0F, 1.0F, "",
+    RenderSettingDesc{"motion_blur", "enabled", "enabled", T::boolean, 0.0F, 1.0F, 0.0F, "",
                       "Blur moving things along their motion while the shutter is open",
                       &field_ref<&S::motion_blur, &Mb::enabled>},
     RenderSettingDesc{"motion_blur", "max_radius_px", "max blur radius", T::number, 8.0F, 64.0F,
