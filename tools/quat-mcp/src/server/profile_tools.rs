@@ -74,7 +74,7 @@ impl QuatServer {
 #[tool_router(router = profile_tools, vis = "pub(super)")]
 impl QuatServer {
     #[doc = include_str!("../../content/tools/profile_frame.md")]
-    #[tool(annotations(read_only_hint = true))]
+    #[tool]
     async fn profile_frame(&self, params: Parameters<ProfileFrameParams>) -> CallToolResult {
         self.run("profile.frame", Some(to_params(&params.0))).await
     }
@@ -125,7 +125,7 @@ impl QuatServer {
     }
 
     #[doc = include_str!("../../content/tools/profile_counters.md")]
-    #[tool(annotations(read_only_hint = true))]
+    #[tool]
     async fn profile_counters(&self) -> CallToolResult {
         self.run("profile.counters", None).await
     }

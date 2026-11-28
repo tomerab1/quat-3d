@@ -19,19 +19,19 @@ use crate::params::{
 #[tool_router(router = physics_tools, vis = "pub(super)")]
 impl QuatServer {
     #[doc = include_str!("../../content/tools/events_poll.md")]
-    #[tool(annotations(read_only_hint = true))]
+    #[tool]
     async fn events_poll(&self, params: Parameters<EventsPollParams>) -> CallToolResult {
         self.run("events.poll", Some(to_params(&params.0))).await
     }
 
     #[doc = include_str!("../../content/tools/physics_get.md")]
-    #[tool(annotations(read_only_hint = true))]
+    #[tool]
     async fn physics_get(&self, params: Parameters<EntityParams>) -> CallToolResult {
         self.run("physics.get", Some(to_params(&params.0))).await
     }
 
     #[doc = include_str!("../../content/tools/physics_set.md")]
-    #[tool(annotations(idempotent_hint = true, destructive_hint = false))]
+    #[tool]
     async fn physics_set(&self, params: Parameters<PhysicsSetParams>) -> CallToolResult {
         if params.0.is_empty() {
             return invalid_input(
@@ -44,7 +44,7 @@ impl QuatServer {
     }
 
     #[doc = include_str!("../../content/tools/physics_apply.md")]
-    #[tool(annotations(destructive_hint = false, idempotent_hint = false))]
+    #[tool]
     async fn physics_apply(&self, params: Parameters<PhysicsApplyParams>) -> CallToolResult {
         if params.0.kinds() != 1 {
             return invalid_input(
@@ -55,20 +55,20 @@ impl QuatServer {
     }
 
     #[doc = include_str!("../../content/tools/physics_get_gravity.md")]
-    #[tool(annotations(read_only_hint = true))]
+    #[tool]
     async fn physics_get_gravity(&self) -> CallToolResult {
         self.run("physics.get_gravity", None).await
     }
 
     #[doc = include_str!("../../content/tools/physics_set_gravity.md")]
-    #[tool(annotations(idempotent_hint = true, destructive_hint = false))]
+    #[tool]
     async fn physics_set_gravity(&self, params: Parameters<GravityParams>) -> CallToolResult {
         self.run("physics.set_gravity", Some(to_params(&params.0)))
             .await
     }
 
     #[doc = include_str!("../../content/tools/physics_raycast_all.md")]
-    #[tool(annotations(read_only_hint = true))]
+    #[tool]
     async fn physics_raycast_all(&self, params: Parameters<RaycastAllParams>) -> CallToolResult {
         if params.0.direction.iter().all(|c| *c == 0.0) {
             return invalid_input(
@@ -81,14 +81,14 @@ impl QuatServer {
     }
 
     #[doc = include_str!("../../content/tools/physics_overlap.md")]
-    #[tool(annotations(read_only_hint = true))]
+    #[tool]
     async fn physics_overlap(&self, params: Parameters<OverlapParams>) -> CallToolResult {
         self.run("physics.overlap", Some(to_params(&params.0)))
             .await
     }
 
     #[doc = include_str!("../../content/tools/physics_shape_cast.md")]
-    #[tool(annotations(read_only_hint = true))]
+    #[tool]
     async fn physics_shape_cast(&self, params: Parameters<ShapeCastParams>) -> CallToolResult {
         let p = &params.0;
         let length_sq: f64 = p
@@ -107,7 +107,7 @@ impl QuatServer {
     }
 
     #[doc = include_str!("../../content/tools/character_move.md")]
-    #[tool(annotations(destructive_hint = false, idempotent_hint = false))]
+    #[tool]
     async fn character_move(&self, params: Parameters<CharacterMoveParams>) -> CallToolResult {
         let p = &params.0;
         if p.velocity.is_some() && p.target.is_some() {

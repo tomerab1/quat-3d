@@ -13,7 +13,7 @@ use crate::params::{TimeSetParams, TimeSkipParams};
 #[tool_router(router = time_tools, vis = "pub(super)")]
 impl QuatServer {
     #[doc = include_str!("../../content/tools/time_get.md")]
-    #[tool(annotations(read_only_hint = true))]
+    #[tool]
     async fn time_get(&self) -> CallToolResult {
         self.run("time.get", None).await
     }

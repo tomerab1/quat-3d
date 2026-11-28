@@ -31,7 +31,7 @@ impl QuatServer {
     }
 
     #[doc = include_str!("../../content/tools/scene_load.md")]
-    #[tool(annotations(destructive_hint = true))]
+    #[tool]
     async fn scene_load(&self, params: Parameters<ScenePathParams>) -> CallToolResult {
         self.run_long("scene.load", Some(to_params(&params.0)))
             .await

@@ -15,24 +15,20 @@ const MAX_LOG_LINES: u32 = 1000;
 #[tool_router(router = project_tools, vis = "pub(super)")]
 impl QuatServer {
     #[doc = include_str!("../../content/tools/project_info.md")]
-    #[tool(annotations(read_only_hint = true))]
+    #[tool]
     async fn project_info(&self) -> CallToolResult {
         self.run("project.info", None).await
     }
 
     // Destructive: a rebuild replaces the package of the same name in `output`.
     #[doc = include_str!("../../content/tools/project_build.md")]
-    #[tool(annotations(
-        destructive_hint = true,
-        idempotent_hint = false,
-        open_world_hint = false
-    ))]
+    #[tool]
     async fn project_build(&self, params: Parameters<ProjectBuildParams>) -> CallToolResult {
         self.run("project.build", Some(to_params(&params.0))).await
     }
 
     #[doc = include_str!("../../content/tools/project_build_status.md")]
-    #[tool(annotations(read_only_hint = true))]
+    #[tool]
     async fn project_build_status(
         &self,
         params: Parameters<ProjectBuildStatusParams>,

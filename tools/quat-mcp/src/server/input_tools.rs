@@ -37,7 +37,7 @@ fn rig_set_params(p: &CameraRigSetParams) -> Result<Value, String> {
 #[tool_router(router = input_tools, vis = "pub(super)")]
 impl QuatServer {
     #[doc = include_str!("../../content/tools/input_actions.md")]
-    #[tool(annotations(read_only_hint = true))]
+    #[tool]
     async fn input_actions(&self, params: Parameters<InputActionsParams>) -> CallToolResult {
         self.run("input.actions", Some(to_params(&params.0))).await
     }
@@ -49,7 +49,7 @@ impl QuatServer {
     }
 
     #[doc = include_str!("../../content/tools/input_bind.md")]
-    #[tool(annotations(idempotent_hint = true))]
+    #[tool]
     async fn input_bind(&self, params: Parameters<InputBindParams>) -> CallToolResult {
         self.run("input.bind", Some(to_params(&params.0))).await
     }
@@ -61,13 +61,13 @@ impl QuatServer {
     }
 
     #[doc = include_str!("../../content/tools/camera_rig_get.md")]
-    #[tool(annotations(read_only_hint = true))]
+    #[tool]
     async fn camera_rig_get(&self, params: Parameters<CameraRigGetParams>) -> CallToolResult {
         self.run("camera.rig.get", Some(to_params(&params.0))).await
     }
 
     #[doc = include_str!("../../content/tools/camera_rig_set.md")]
-    #[tool(annotations(idempotent_hint = true))]
+    #[tool]
     async fn camera_rig_set(&self, params: Parameters<CameraRigSetParams>) -> CallToolResult {
         match rig_set_params(&params.0) {
             Ok(p) => self.run("camera.rig.set", Some(p)).await,
@@ -76,7 +76,7 @@ impl QuatServer {
     }
 
     #[doc = include_str!("../../content/tools/camera_rig_frame.md")]
-    #[tool(annotations(idempotent_hint = true))]
+    #[tool]
     async fn camera_rig_frame(&self, params: Parameters<CameraRigFrameParams>) -> CallToolResult {
         self.run("camera.rig.frame", Some(to_params(&params.0)))
             .await

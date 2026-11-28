@@ -16,14 +16,14 @@ use crate::params::{
 #[tool_router(router = tuning_tools, vis = "pub(super)")]
 impl QuatServer {
     #[doc = include_str!("../../content/tools/render_settings_get.md")]
-    #[tool(annotations(read_only_hint = true))]
+    #[tool]
     async fn render_settings_get(&self, params: Parameters<SettingsGroupParams>) -> CallToolResult {
         self.run("render.settings.get", Some(to_params(&params.0)))
             .await
     }
 
     #[doc = include_str!("../../content/tools/render_settings_set.md")]
-    #[tool(annotations(idempotent_hint = true))]
+    #[tool]
     async fn render_settings_set(
         &self,
         params: Parameters<RenderSettingsSetParams>,
@@ -39,7 +39,7 @@ impl QuatServer {
     }
 
     #[doc = include_str!("../../content/tools/render_settings_reset.md")]
-    #[tool(annotations(idempotent_hint = true))]
+    #[tool]
     async fn render_settings_reset(
         &self,
         params: Parameters<SettingsGroupParams>,
@@ -49,19 +49,19 @@ impl QuatServer {
     }
 
     #[doc = include_str!("../../content/tools/render_settings_schema.md")]
-    #[tool(annotations(read_only_hint = true))]
+    #[tool]
     async fn render_settings_schema(&self) -> CallToolResult {
         self.run("render.settings.schema", None).await
     }
 
     #[doc = include_str!("../../content/tools/material_get.md")]
-    #[tool(annotations(read_only_hint = true))]
+    #[tool]
     async fn material_get(&self, params: Parameters<MaterialGetParams>) -> CallToolResult {
         self.run("material.get", Some(to_params(&params.0))).await
     }
 
     #[doc = include_str!("../../content/tools/material_set.md")]
-    #[tool(annotations(idempotent_hint = true))]
+    #[tool]
     async fn material_set(&self, params: Parameters<MaterialSetParams>) -> CallToolResult {
         let Some(engine_params) = params.0.to_engine() else {
             return invalid_input(
