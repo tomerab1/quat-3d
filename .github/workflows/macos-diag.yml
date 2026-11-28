@@ -2,9 +2,8 @@ name: macOS pipeline diagnostics (temporary, issue #103)
 
 # TEMPORARY: removed before the fix's PR leaves draft. Builds the GPU tests on
 # macOS only and captures why MoltenVK fails to create the GBuffer pipelines:
-#   * static: every cooked entry point (the train's shaders, the fixed ones,
-#     and single-suspect variants of gbuffer.slang) through SPIRV-Cross + the
-#     Metal compiler (scripts/msl-check.sh);
+#   * static: every cooked entry point (the train's shaders and the fixed
+#     ones) through SPIRV-Cross + the Metal compiler (scripts/msl-check.sh);
 #   * runtime: a narrow test filter on the train's shaders and on the fixed
 #     ones with MoltenVK's debug log and shader dump, then every GPU test.
 on:
@@ -60,61 +59,41 @@ jobs:
           prefix="$(brew --prefix molten-vk)"
           icd=$(ls "$prefix"/etc/vulkan/icd.d/MoltenVK_icd.json "$prefix"/share/vulkan/icd.d/MoltenVK_icd.json 2>/dev/null | head -n1)
           echo "VK_ICD_FILENAMES=$icd" >> "$GITHUB_ENV"
+          tests=$(find build/macos-release -name engine_tests -type f -perm -u+x | head -n1)
+          echo "ENGINE_TESTS=$tests" >> "$GITHUB_ENV"
+          echo "engine_tests: $tests"
 
-      # orig/ = the train's shaders; v-*/ = orig with one suspect removed.
-      - name: Cook shader variants
+      # cooked-orig/ = the train's shaders (before the fix), for MoltenVK's own
+      # error on the original pipelines.
+      - name: Cook the train's shaders
         run: |
           set -e
-          cook() { # <source root> <out dir> [gbuffer-only]
-            local src="$1/assets/shaders" out="$2"
-            mkdir -p "$out/materials"
-            for f in "$src"/lib/*.slang; do
-              slangc "$f" -I "$src/lib" -o "$out/$(basename "$f" .slang).slang-module"
-            done
-            local passes=("$src"/*.slang)
-            [ "${3:-}" = gbuffer-only ] && passes=("$src/gbuffer.slang")
-            for f in "${passes[@]}"; do
-              n=$(basename "$f" .slang)
-              slangc "$f" -I "$src/lib" -target spirv -emit-spirv-directly -fvk-use-entrypoint-name \
-                -o "$out/$n.spv" -reflection-json "$out/$n.json"
-            done
-            [ "${3:-}" = gbuffer-only ] && return 0
-            for f in "$src"/materials/*.slang; do
-              n=$(basename "$f" .slang)
-              slangc "$f" "$out/material_pass_gbuffer.slang-module" -I "$src/lib" -I "$out" \
-                -target spirv -emit-spirv-directly -fvk-use-entrypoint-name \
-                -o "$out/materials/$n.gbuffer.spv" -reflection-json "$out/materials/$n.gbuffer.json"
-            done
-          }
-          variant() { # <name> <file under assets/shaders> <perl substitution>
-            rm -rf "$RUNNER_TEMP/src-$1"; cp -R "$RUNNER_TEMP/orig" "$RUNNER_TEMP/src-$1"
-            perl -0pi -e "$3" "$RUNNER_TEMP/src-$1/assets/shaders/$2"
-            if diff -q "$RUNNER_TEMP/orig/assets/shaders/$2" "$RUNNER_TEMP/src-$1/assets/shaders/$2"; then
-              echo "::warning::variant $1 changed nothing"
-            fi
-            cook "$RUNNER_TEMP/src-$1" "$RUNNER_TEMP/v-$1" gbuffer-only
-          }
-          cook "$RUNNER_TEMP/orig" "$RUNNER_TEMP/cooked-orig"
-          variant no-prev-read lib/gbuffer_common.slang 's/if \(m\.has_prev_positions != 0\) prev_position = [^;]*;//'
-          variant no-motion lib/gbuffer_common.slang 's/if \(pc\.has_motion != 0\) \{/if (false) {/'
-          variant no-flat lib/gbuffer_common.slang 's/public nointerpolation float mirrored/public float mirrored/'
-          variant no-vertex-index lib/gbuffer_common.slang 's/prev_positions\[vertex_index\(\)\]/prev_positions[0]/'
-          variant five-targets lib/gbuffer_common.slang 's/public float2 *velocity *: SV_Target5;//; s/o\.velocity *= [^;]*;//'
+          src="$RUNNER_TEMP/orig/assets/shaders" out="$RUNNER_TEMP/cooked-orig"
+          mkdir -p "$out/materials"
+          for f in "$src"/lib/*.slang; do
+            slangc "$f" -I "$src/lib" -o "$out/$(basename "$f" .slang).slang-module"
+          done
+          for f in "$src"/*.slang; do
+            n=$(basename "$f" .slang)
+            slangc "$f" -I "$src/lib" -target spirv -emit-spirv-directly -fvk-use-entrypoint-name \
+              -o "$out/$n.spv" -reflection-json "$out/$n.json"
+          done
+          for f in "$src"/materials/*.slang; do
+            n=$(basename "$f" .slang)
+            slangc "$f" "$out/material_pass_gbuffer.slang-module" -I "$src/lib" -I "$out" \
+              -target spirv -emit-spirv-directly -fvk-use-entrypoint-name \
+              -o "$out/materials/$n.gbuffer.spv" -reflection-json "$out/materials/$n.gbuffer.json"
+          done
 
       - name: MSL check (static)
         continue-on-error: true
         run: |
           rc=0
-          for d in cooked-orig v-no-prev-read v-no-motion v-no-flat v-no-vertex-index v-five-targets; do
-            echo "::group::msl-check $d"
-            scripts/msl-check.sh "$RUNNER_TEMP/$d" "$RUNNER_TEMP/msl-$d" | tee "$RUNNER_TEMP/msl-$d.txt" || rc=1
-            echo "::endgroup::"
-            echo "== $d"; grep -v '^ok' "$RUNNER_TEMP/msl-$d.txt" | head -n 60
+          for d in "$RUNNER_TEMP/cooked-orig" cooked/shaders; do
+            name=$(basename "$d")
+            scripts/msl-check.sh "$d" "$RUNNER_TEMP/msl-$name" > "$RUNNER_TEMP/msl-$name.txt" || rc=1
+            echo "== $d"; grep -v '^ok' "$RUNNER_TEMP/msl-$name.txt" | head -n 40
           done
-          echo "::group::msl-check fixed (cooked/shaders)"
-          scripts/msl-check.sh cooked/shaders "$RUNNER_TEMP/msl-fixed" | tee "$RUNNER_TEMP/msl-fixed.txt" || rc=1
-          echo "::endgroup::"
-          echo "== fixed"; grep -v '^ok' "$RUNNER_TEMP/msl-fixed.txt" | head -n 60
           exit $rc
 
       - name: Narrow GPU run with MoltenVK debug log (train shaders, then fixed)
@@ -123,15 +102,11 @@ jobs:
           MVK_CONFIG_LOG_LEVEL: "4"
           MVK_CONFIG_DEBUG: "1"
         run: |
-          filter='GpuInstancing.RendersEveryInstanceOfOneInstancedDraw:GpuParticleDraw.WeightedBlendedOitIsOrderIndependent:GpuTerrainPass.RasterisesTheTileUnderTheCamera:GpuGrass.DrawWritesBladesIntoTheGBuffer:GpuVelocity.TranslatingQuadMatchesItsScreenMotion'
+          filter='GpuInstancing.RendersEveryInstanceOfOneInstancedDraw:GpuParticleDraw.WeightedBlendedOitIsOrderIndependent:GpuTerrainPass.RasterisesTheTileUnderTheCamera:GpuGrass.DrawWritesBladesIntoTheGBuffer:GpuVelocity.TranslatingQuadMatchesItsScreenMotion:GpuVelocity.SkinnedMeshMatchesCpuSkinning'
           run() { # <label>
             MVK_CONFIG_SHADER_DUMP_DIR="$RUNNER_TEMP/mvk-dump-$1" \
-              build/macos-release/engine_tests --require-gpu --gtest_filter="$filter" \
+              "$ENGINE_TESTS" --require-gpu --gtest_filter="$filter" \
               > "$RUNNER_TEMP/mvk-$1.log" 2>&1 || true
-            echo "== $1: test results"
-            grep -E '^\[ *(OK|FAILED|PASSED|SKIPPED) *\]' "$RUNNER_TEMP/mvk-$1.log" | head -n 40
-            echo "== $1: MoltenVK errors/warnings"
-            grep -n -i -E 'mvk-error|mvk-warn|error|fail|cannot|unsupported' "$RUNNER_TEMP/mvk-$1.log" | head -n 120
           }
           mv cooked/shaders cooked/shaders.fixed
           cp -R "$RUNNER_TEMP/cooked-orig" cooked/shaders
@@ -144,7 +119,26 @@ jobs:
         continue-on-error: true
         env:
           GTEST_BRIEF: 1
-        run: build/macos-release/engine_tests --require-gpu --gtest_filter='Gpu*' 2>&1 | tee "$RUNNER_TEMP/gpu-full.log"
+        run: |
+          "$ENGINE_TESTS" --require-gpu --gtest_filter='Gpu*' > "$RUNNER_TEMP/gpu-full.log" 2>&1 || true
+          tail -n 5 "$RUNNER_TEMP/gpu-full.log"
+
+      # Everything worth reading, last, so the end of the job log holds it.
+      - name: Summary
+        if: always()
+        run: |
+          echo "== versions"
+          brew list --versions molten-vk vulkan-loader spirv-cross || true
+          for f in "$RUNNER_TEMP"/msl-*.txt; do echo "== $(basename "$f")"; grep -v '^ok' "$f" | head -n 12; done
+          for l in orig fixed; do
+            f="$RUNNER_TEMP/mvk-$l.log"
+            echo "== narrow run, $l shaders: results"
+            grep -E '^\[ *(OK|FAILED|PASSED) *\]' "$f" | head -n 20 || true
+            echo "== narrow run, $l shaders: MoltenVK errors (first 25 matching lines, cut to 300 chars)"
+            grep -i -E 'mvk-error|error:|failed|cannot|compil' "$f" | grep -v '^\[ *FAILED' | cut -c1-300 | head -n 25 || true
+          done
+          echo "== full GPU run"
+          grep -E '^\[ *(FAILED|PASSED) *\]|tests from .* ran' "$RUNNER_TEMP/gpu-full.log" | sort -u | head -n 80 || true
 
       - name: Upload diagnostics
         if: always()

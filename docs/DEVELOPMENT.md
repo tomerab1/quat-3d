@@ -225,7 +225,7 @@ demand (`workflow_dispatch`):
 |---|---|---|---|
 | `linux` | ubuntu-24.04 | `release` | CPU + GPU on Mesa lavapipe; then `game` once more with `ENGINE_EDITOR=OFF` (sharing the dependency tree) |
 | `windows` | windows-2022 | `windows-release` | CPU + GPU on Mesa lavapipe (Windows build, from `jakoch/install-vulkan-sdk-action`) |
-| `macos` | macos-15 (Apple Silicon) | `macos-release` | CPU; GPU on MoltenVK over the runner's paravirtual Metal device — informational (`continue-on-error`) until P1 makes it a gate |
+| `macos` | macos-15 (Apple Silicon) | `macos-release` | CPU; MSL translation check of every cooked shader; GPU on MoltenVK over the runner's paravirtual Metal device — both informational (`continue-on-error`) until P1 makes them a gate |
 | `rust` | ubuntu-24.04 | — | `tools/quat-mcp` fmt, clippy, tests |
 
 Each C++ job pins vcpkg to the manifest baseline and Slang to the same
@@ -234,6 +234,27 @@ so only the first run (or a dependency change) pays for the full dependency
 build (cold: ~17 min macOS, ~28 min Windows). Logs are uploaded as an artifact when
 a run fails. The Windows and macOS test steps print GoogleTest's brief summary
 (`GTEST_BRIEF=1`), so skipped GPU tests are visible in the log.
+
+### Debugging MoltenVK
+
+MoltenVK translates SPIR-V to Metal Shading Language with SPIRV-Cross when a
+pipeline is created, and a failed translation surfaces only as
+`vkCreateGraphicsPipelines failed: VkResult(<n>)` (issue #103). Two tools name
+the shader and the error:
+
+- **`scripts/msl-check.sh <cooked-shader-dir> [out-dir]`** translates every
+  cooked entry point with SPIRV-Cross and, on macOS, compiles the MSL with
+  `xcrun metal`. The `macos` job runs it after the build (informational). It
+  also runs on Linux with `apt install spirv-cross`, but Ubuntu 24.04's
+  package is from 2021 and both misses and invents errors compared with the
+  current SPIRV-Cross; trust the macOS step (Homebrew's `spirv-cross`).
+- **`mvk_debug` workflow input:** `gh workflow run ci.yml --ref <branch> -f
+  mvk_debug=true` runs the macOS GPU tests with `MVK_CONFIG_LOG_LEVEL=4`
+  (debug), `MVK_CONFIG_DEBUG=1` (the generated MSL of each converted shader)
+  and `MVK_CONFIG_SHADER_DUMP_DIR` (every SPIR-V and MSL shader MoltenVK
+  saw), and uploads them as the `macos-mvk-debug` artifact. The same
+  variables work on a Mac when running `engine_tests` by hand (MoltenVK's
+  `Docs/MoltenVK_Configuration_Parameters.md` lists them all).
 
 ## Releases
 
