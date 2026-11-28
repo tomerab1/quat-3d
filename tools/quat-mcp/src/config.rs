@@ -5,7 +5,9 @@ use std::time::Duration;
 
 use clap::Parser;
 
+use crate::assets::POLYHAVEN_API;
 use crate::client::{ENGINE_MAX_MESSAGE_BYTES, EngineConfig, token_file};
+use crate::server::AssetConfig;
 
 /// MCP server for the quat-3d engine. Speaks MCP over stdio; connects to the
 /// engine's remote-control endpoint (start the engine with `QUAT_REMOTE`=<port>).
@@ -42,6 +44,19 @@ pub struct Cli {
     /// Largest reply accepted from the engine, in MiB.
     #[arg(long, env = "QUAT_MCP_MAX_REPLY_MB", default_value_t = 64)]
     pub max_reply_mb: usize,
+
+    /// The quat-3d checkout `asset_fetch` downloads into (its `assets/`);
+    /// default: the current directory.
+    #[arg(long, env = "QUAT_MCP_PROJECT_ROOT")]
+    pub project_root: Option<PathBuf>,
+
+    /// Poly Haven API base URL (`asset_search` / `asset_fetch`).
+    #[arg(long, env = "QUAT_MCP_POLYHAVEN_API", default_value = POLYHAVEN_API)]
+    pub polyhaven_api: String,
+
+    /// Largest model download `asset_fetch` accepts, in MiB.
+    #[arg(long, env = "QUAT_MCP_ASSET_MAX_MB", default_value_t = 512)]
+    pub asset_max_mb: u64,
 }
 
 impl Cli {
@@ -56,6 +71,17 @@ impl Cli {
         c.timeout = secs(self.timeout_secs, 15.0);
         c.max_request_bytes = ENGINE_MAX_MESSAGE_BYTES;
         c.max_reply_bytes = self.max_reply_mb.clamp(1, 4096) * 1024 * 1024;
+        c
+    }
+
+    #[must_use]
+    pub fn asset_config(&self) -> AssetConfig {
+        let mut c = AssetConfig::default();
+        if let Some(root) = &self.project_root {
+            c.project_root.clone_from(root);
+        }
+        c.api.clone_from(&self.polyhaven_api);
+        c.max_bytes = self.asset_max_mb.clamp(1, 16 * 1024) * 1024 * 1024;
         c
     }
 

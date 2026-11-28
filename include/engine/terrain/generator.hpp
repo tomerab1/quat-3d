@@ -120,6 +120,12 @@ struct TerrainParams {
 // True when `params` erodes at all (with its selected model).
 [[nodiscard]] bool erosion_enabled(const TerrainParams& params);
 
+// True when `a` and `b` generate the same heights: every field that feeds
+// generation is equal (world_tile, which streaming sets per tile, is ignored).
+// A terrain edit that keeps the shape (shading, streaming radius, CPU vs GPU
+// synthesis) needs no regeneration (issue #38).
+[[nodiscard]] bool same_shape(const TerrainParams& a, const TerrainParams& b);
+
 // Whether `params`' grid erosion is within the limits above (always true for
 // droplet erosion or zero steps).
 [[nodiscard]] bool grid_erosion_within_limits(const TerrainParams& params);

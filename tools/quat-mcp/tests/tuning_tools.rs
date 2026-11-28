@@ -122,10 +122,13 @@ async fn tuning_tools_and_prompt_are_listed() {
         .find(|t| t.name == "render_settings_set")
         .unwrap();
     let schema = serde_json::to_string(&set.input_schema).unwrap();
-    for group in ["exposure", "bloom", "taa", "shadows", "ibl", "clouds"] {
+    for group in [
+        "exposure", "bloom", "taa", "upscaler", "shadows", "ibl", "clouds",
+    ] {
         assert!(schema.contains(group), "render_settings_set lacks {group}");
     }
     assert!(schema.contains("compensation_ev") && schema.contains("pcf_radius"));
+    assert!(schema.contains("performance") && schema.contains("render_scale"));
     let material = tools.iter().find(|t| t.name == "material_set").unwrap();
     let schema = serde_json::to_string(&material.input_schema).unwrap();
     assert!(schema.contains("clearcoat_roughness") && schema.contains("revert"));

@@ -22,6 +22,8 @@ public struct GrassParams {
     public float4   tile_rect[4];  // xy origin XZ, z size, w base y
     public float4   tile_info[4];  // x texel uv, y metres per texel
     public float4   ground;        // x min ground y, y max ground y (tile culling bounds)
+    public float4x4 prev_view_proj; // velocity (R11): last frame, unjittered
+    public float4   motion;         // x previous wind time (s), yz this frame's jitter (NDC)
 }
 
 // A visible blade: world root + packed variation (bits 0-15 shape hash,

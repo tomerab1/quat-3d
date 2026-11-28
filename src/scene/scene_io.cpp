@@ -13,6 +13,7 @@
 #include <glm/glm.hpp>
 #include <nlohmann/json.hpp>
 
+#include "engine/core/utf8_path.hpp"
 #include "engine/asset/asset_manager.hpp"
 #include "engine/core/json_fields.hpp"
 #include "engine/renderer/render_settings.hpp"
@@ -163,10 +164,10 @@ std::expected<void, core::Error> save_scene(const Scene& scene, const std::files
     std::error_code ec;
     if (path.has_parent_path()) std::filesystem::create_directories(path.parent_path(), ec);
     std::ofstream out(path);
-    if (!out) return fail("save_scene: cannot open '" + path.string() + "' for writing");
+    if (!out) return fail("save_scene: cannot open '" + core::path_to_utf8(path) + "' for writing");
     // Replace (not throw on) invalid UTF-8: names from glTF files are untrusted.
     out << root.dump(2, ' ', false, json::error_handler_t::replace);
-    if (!out.good()) return fail("save_scene: write failed for '" + path.string() + "'");
+    if (!out.good()) return fail("save_scene: write failed for '" + core::path_to_utf8(path) + "'");
     return {};
 }
 
@@ -175,12 +176,12 @@ load_scene(Scene& scene, const std::filesystem::path& path, rhi::GpuAllocator& a
            const rhi::TransferContext& transfer, asset::AssetManager& assets,
            renderer::RenderSettings* render_settings) {
     std::ifstream in(path);
-    if (!in) return fail("load_scene: cannot open '" + path.string() + "'");
+    if (!in) return fail("load_scene: cannot open '" + core::path_to_utf8(path) + "'");
     const json root = json::parse(in, nullptr, /*allow_exceptions=*/false);
-    if (root.is_discarded()) return fail("load_scene: '" + path.string() + "' is not valid JSON");
+    if (root.is_discarded()) return fail("load_scene: '" + core::path_to_utf8(path) + "' is not valid JSON");
     auto file_entities = read_entities(root);
     if (!file_entities) {
-        return fail("load_scene: '" + path.string() + "': " + file_entities.error().message);
+        return fail("load_scene: '" + core::path_to_utf8(path) + "': " + file_entities.error().message);
     }
     // Render settings: decoded up front, applied only once the scene loaded.
     std::optional<renderer::RenderSettings> settings;
@@ -191,15 +192,15 @@ load_scene(Scene& scene, const std::filesystem::path& path, rhi::GpuAllocator& a
             int version = 1;
             block.integer("version", version, 1, 1000);
             if (auto ok = block.finish(); !ok) {
-                return fail("load_scene: '" + path.string() + "': " + ok.error().message);
+                return fail("load_scene: '" + core::path_to_utf8(path) + "': " + ok.error().message);
             }
             if (version > k_render_settings_version) {
-                return fail("load_scene: '" + path.string() + "': render_settings version " +
+                return fail("load_scene: '" + core::path_to_utf8(path) + "': render_settings version " +
                             std::to_string(version) + " is newer than this build reads (" +
                             std::to_string(k_render_settings_version) + ")");
             }
             if (auto ok = apply_render_settings_json(*settings, *it, /*strict=*/false); !ok) {
-                return fail("load_scene: '" + path.string() + "': render_settings: " +
+                return fail("load_scene: '" + core::path_to_utf8(path) + "': render_settings: " +
                             ok.error().message);
             }
         }
@@ -264,7 +265,7 @@ load_scene(Scene& scene, const std::filesystem::path& path, rhi::GpuAllocator& a
             if (auto ok = apply_component(r, e, key, with_file_defaults(key, value),
                                           /*strict=*/false);
                 !ok) {
-                return fail("load_scene: '" + path.string() + "': entities[" + std::to_string(i) +
+                return fail("load_scene: '" + core::path_to_utf8(path) + "': entities[" + std::to_string(i) +
                             "]: " + ok.error().message);
             }
         }
@@ -308,7 +309,7 @@ load_scene(Scene& scene, const std::filesystem::path& path, rhi::GpuAllocator& a
         if (const auto it = fe.object->find("animator");
             it != fe.object->end() && r.all_of<Animator>(e)) {
             if (auto ok = apply_component(r, e, "animator", *it, /*strict=*/false); !ok) {
-                return fail("load_scene: '" + path.string() + "': entities[" +
+                return fail("load_scene: '" + core::path_to_utf8(path) + "': entities[" +
                             std::to_string(i) + "]: " + ok.error().message);
             }
         }
@@ -320,7 +321,7 @@ load_scene(Scene& scene, const std::filesystem::path& path, rhi::GpuAllocator& a
         const int parent = (*file_entities)[i].parent;
         if (parent >= 0 &&
             !staging.set_parent(created[i], created[static_cast<std::size_t>(parent)])) {
-            return fail("load_scene: '" + path.string() + "': entities[" + std::to_string(i) +
+            return fail("load_scene: '" + core::path_to_utf8(path) + "': entities[" + std::to_string(i) +
                         "].parent creates a cycle");
         }
     }

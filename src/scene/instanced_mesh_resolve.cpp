@@ -9,6 +9,7 @@
 #include <entt/entity/registry.hpp>
 
 #include "engine/asset/asset_manager.hpp"
+#include "engine/core/utf8_path.hpp"
 #include "engine/rhi/gpu_allocator.hpp"
 #include "engine/scene/gltf_loader.hpp"
 #include "engine/scene/instanced_mesh.hpp"
@@ -31,7 +32,7 @@ using ScratchScenes = std::map<std::string, std::expected<Scene, core::Error>>;
 [[nodiscard]] const std::expected<Scene, core::Error>&
 scratch_for(ScratchScenes& cache, const std::filesystem::path& path, rhi::GpuAllocator& allocator,
             const rhi::TransferContext& transfer, asset::AssetManager& assets) {
-    const std::string key = path.string();
+    const std::string key = core::path_to_utf8(path);
     if (auto it = cache.find(key); it != cache.end()) return it->second;
     Scene scratch;
     auto roots = GltfLoader::instantiate(path, allocator, transfer, assets, scratch);

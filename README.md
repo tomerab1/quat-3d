@@ -45,9 +45,17 @@ The editor (dark theme; a light theme is one click away in View > Theme):
   (coverage-preserving mipmaps); double-sided leaves are lit on both sides
 - Physically based sky with volumetric clouds and a moving sun
 - Image-based lighting that keeps up with the sky in real time
-- Anti-aliasing (TAA), bloom, auto-exposure, filmic tonemapping
+- Temporal anti-aliasing and upscaling (TAAU) with per-object motion vectors for
+  moving, skinned, instanced and wind-animated geometry; render scale modes
+  (native, quality, balanced, performance), set like every other render
+  setting from the Renderer panel, `render.settings.*` / MCP or a scene file
+- Bloom, auto-exposure, filmic tonemapping
 - Automatic instancing: objects sharing a mesh and material (trees, rocks,
   crates) are drawn together in one instanced draw
+- GPU particles for sparks, fire, smoke and dust: simulated in compute
+  shaders (collisions with what the camera sees), soft edges, flipbook
+  animation, lit by the sun and point lights, order-independent transparency
+  for smoke; emitters are plain components, so AI tools can author them
 - GPU-compressed textures: KTX2 / Basis Universal textures (glTF
   `KHR_texture_basisu` or loose `.ktx2`) are transcoded at load to BC7 / BC5 /
   BC4 on desktop GPUs, ASTC on Apple GPUs, or plain RGBA8 elsewhere
@@ -80,6 +88,11 @@ The editor (dark theme; a light theme is one click away in View > Theme):
   sound with distance falloff, streamed music (wav, flac, mp3)
 
 **Gameplay**
+- Lua 5.4 gameplay scripting: per-entity scripts with start / update /
+  trigger / destroy callbacks, an API for entities, components, physics,
+  input (keyboard, mouse, gamepad), audio and navigation, sandboxed with
+  per-call time and memory limits, hot-reloaded on save — see
+  [`docs/scripting.md`](docs/scripting.md)
 - NPC navigation (Recast/Detour navmesh), path following, patrol routes
 - Data-driven behaviour trees (JSON)
 - Multiplayer foundations: client/server transport, state replication,
@@ -102,27 +115,54 @@ The editor (dark theme; a light theme is one click away in View > Theme):
 
 ## Platforms
 
-| Platform | Status |
+Every push to `master` and every pull request is built and tested on all
+three platforms (see [`.github/workflows/ci.yml`](.github/workflows/ci.yml)):
+
+| Platform | Status | CI |
+|---|---|---|
+| Linux | Supported (primary development platform) | clang + libc++, CPU and GPU tests on Mesa lavapipe |
+| Windows | Supported | MSVC 2022, CPU and GPU tests on Mesa lavapipe |
+| macOS (Apple Silicon) | Runs through MoltenVK (Vulkan on Metal) with the descriptor-set compatibility path; native Metal is on the roadmap | Apple clang, CPU tests; GPU tests on MoltenVK (informational) |
+
+## Download a build
+
+Ready-to-run builds are attached to each
+[GitHub Release](../../releases) (built and smoke-tested by
+[`.github/workflows/release.yml`](.github/workflows/release.yml) for every
+`v*` tag). Every archive contains a `README-RUN.txt` with the launch options
+and troubleshooting.
+
+| Download | Run |
 |---|---|
-| Linux | Supported (primary development platform, built in CI) |
-| Windows | Supported |
-| macOS | Runs through MoltenVK (Vulkan on Metal) with a compatibility flag; full support is on the roadmap |
+| `quat-3d-<version>-linux-x64.tar.gz` | `tar xzf quat-3d-*-linux-x64.tar.gz && ./quat-3d-*/game`. Needs the system Vulkan loader and a Vulkan 1.3 driver (Mesa or NVIDIA; `sudo apt install libvulkan1 mesa-vulkan-drivers`); the C++ runtime ships in `lib/`. Built on Ubuntu 24.04: needs glibc 2.39+ (Ubuntu 24.04, Debian 13, Fedora 40 or newer). |
+| `quat-3d-<version>-windows-x64.zip` | Unzip, run `game.exe`. Needs a current GPU driver (it provides `vulkan-1.dll`); the libraries and MSVC runtime are in the folder. The build is not code-signed: SmartScreen → *More info* → *Run anyway*. |
+| `quat-3d-<version>-macos-arm64.zip` | Unzip and double-click `Quat3D.app`. The app is ad-hoc signed but not notarized (signing is ROADMAP P7), so Gatekeeper blocks the first launch: dismiss the dialog, then **System Settings → Privacy & Security → *Open Anyway*** (macOS 15+; on macOS 14 right-click → Open also works) — or run `xattr -dr com.apple.quarantine Quat3D.app` once. MoltenVK and the Vulkan loader are inside the app. Apple Silicon, macOS 15 or later today (the bundled Vulkan libraries come from Homebrew; the engine itself targets macOS 14). |
+
+Environment variables (see [Running](#running)) work with the packaged game
+too; on macOS launch `Quat3D.app/Contents/MacOS/game` from Terminal to set
+them. The game looks for its data (`assets/`, `cooked/shaders/`) next to the
+executable — or in `QUAT_ASSET_ROOT` — so keep the unpacked folder together.
 
 ## Building
 
-You need CMake 3.22+, Ninja, a C++23 compiler, the
-[Vulkan SDK](https://vulkan.lunarg.com/) (for `slangc`, the shader compiler),
-and [vcpkg](https://github.com/microsoft/vcpkg). vcpkg downloads and builds
-every C++ library the engine uses the first time you configure — expect that
-first configure to take a while; later ones are fast.
+You need CMake 3.22+, Ninja, a C++23 compiler, `slangc` (the
+[Slang](https://github.com/shader-slang/slang/releases) shader compiler — CI
+uses Slang 2025.6.1; the [Vulkan SDK](https://vulkan.lunarg.com/) also ships
+one), and [vcpkg](https://github.com/microsoft/vcpkg). vcpkg downloads and
+builds every C++ library the engine uses the first time you configure — expect
+that first configure to take a while (roughly 15–30 minutes); later ones are fast.
 
 Set up vcpkg once (the build expects it at `~/vcpkg`, or `%USERPROFILE%\vcpkg`
-on Windows):
+on Windows; CI pins it to the manifest's `builtin-baseline`):
 
 ```sh
 git clone https://github.com/microsoft/vcpkg.git ~/vcpkg
 ~/vcpkg/bootstrap-vcpkg.sh -disableMetrics      # bootstrap-vcpkg.bat on Windows
 ```
+
+Every preset builds the engine, the `game` executable and the `engine_tests`
+suite; run the tests with `ctest --test-dir build/<preset> --output-on-failure`
+(see [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md#testing)).
 
 ### Linux
 
@@ -130,8 +170,9 @@ git clone https://github.com/microsoft/vcpkg.git ~/vcpkg
 sudo apt install clang libc++-dev libc++abi-dev cmake ninja-build pkg-config \
      libx11-dev libxext-dev libxft-dev libxcursor-dev libxrandr-dev libxi-dev \
      libxss-dev libxtst-dev libxfixes-dev libxkbcommon-dev \
-     libwayland-dev wayland-protocols libegl-dev libdecor-0-dev   # SDL3 X11/Wayland
-# install the Vulkan SDK (or just slangc) and make sure `slangc` is on PATH
+     libwayland-dev wayland-protocols libegl-dev libdecor-0-dev \
+     libvulkan-dev autoconf automake libtool                     # SDL3 X11/Wayland, ports
+# put `slangc` on PATH (Vulkan SDK or a Slang release)
 
 cmake --preset release
 cmake --build --preset release
@@ -140,32 +181,50 @@ cmake --build --preset release
 
 ### Windows
 
-Install Visual Studio 2022 (Desktop C++ workload), the Vulkan SDK, CMake and
-Ninja, then run:
+Install Visual Studio 2022 (Desktop C++ workload — it includes CMake and
+Ninja) and the [Vulkan SDK](https://vulkan.lunarg.com/) (headers, loader and
+`slangc`; CI uses 1.4.321.1), then from a plain shell run:
 
 ```bat
 scripts\build-windows-release.bat
 ```
 
-or use the `windows-release` CMake preset from a Visual Studio developer prompt.
+or, from a Visual Studio x64 developer prompt (MSVC must be the active
+compiler — the preset pins `cl`):
+
+```bat
+cmake --preset windows-release
+cmake --build --preset windows-release
+build\windows-release\game.exe
+```
+
+vcpkg's `x64-windows` triplet builds the dependencies as DLLs; the build copies
+them next to `game.exe` and `engine_tests.exe`.
 
 ### macOS (Apple Silicon)
 
-Install the Xcode command-line tools, `brew install cmake ninja`, and the macOS
-Vulkan SDK (it includes MoltenVK). MoltenVK lacks one Vulkan feature the engine
-normally uses, so the build turns on a compatibility path:
+Install the Xcode command-line tools and, with Homebrew, the build tools and
+Vulkan-on-Metal (the Vulkan loader plus the MoltenVK driver). Get `slangc` from
+a [Slang release](https://github.com/shader-slang/slang/releases)
+(`slang-<version>-macos-aarch64.tar.gz`) or the macOS Vulkan SDK:
 
 ```sh
-export VULKAN_SDK=$HOME/VulkanSDK/<version>/macOS
-export PATH="$VULKAN_SDK/bin:$PATH"
+brew install cmake ninja pkgconf molten-vk vulkan-loader vulkan-headers vulkan-tools
+export VULKAN_SDK=$(brew --prefix)      # lets CMake find the Vulkan headers/loader
+export PATH="$HOME/slang/bin:$PATH"     # wherever slangc lives
 
-cmake -S . -B build/macos -G Ninja \
-  -DCMAKE_BUILD_TYPE=Release \
-  -DENGINE_DESCRIPTOR_SETS_FALLBACK=ON \
-  -DCMAKE_TOOLCHAIN_FILE=$HOME/vcpkg/scripts/buildsystems/vcpkg.cmake
-cmake --build build/macos
-./build/macos/game
+cmake --preset macos-release
+cmake --build --preset macos-release
+./build/macos-release/game
 ```
+
+MoltenVK lacks `VK_EXT_descriptor_buffer`, so the `macos-release` preset turns
+on `ENGINE_DESCRIPTOR_SETS_FALLBACK` (classic descriptor sets + portability
+enumeration). It also pins macOS 14 as the minimum for the engine and every
+vcpkg port (the `arm64-osx-14` overlay triplet in `triplets/` — Apple clang
+already uses libc++, so nothing else differs from vcpkg's stock triplet).
+With the LunarG macOS Vulkan SDK
+instead of Homebrew, set `VULKAN_SDK=$HOME/VulkanSDK/<version>/macOS`.
 
 ### Graphics driver requirements
 
@@ -187,9 +246,12 @@ Environment variables switch on extra modes:
 
 | Variable | Effect |
 |---|---|
+| `QUAT_SCENE=<file>` | Load a scene file (project-relative) instead of the showcase scene |
+| `QUAT_PLAY=1` | Enter Play mode on the first frame (a non-editor build also plays a `QUAT_SCENE` game) |
+| `QUAT_SCRIPT_HOT_RELOAD=0` / `=1` | Turn script hot reload off (editor) / on (non-editor builds) |
 | `QUAT_GLTF=<file>` | Load a glTF/GLB model instead of the showcase scene |
 | `QUAT_TERRAIN=1` | Add a procedural terrain tile (with a grass field) |
-| `QUAT_PHYSICS=1` / `QUAT_CHARACTER=1` | Physics / character-controller demo scenes |
+| `QUAT_PHYSICS=1` / `QUAT_CHARACTER=1` | Physics (with sparks and smoke) / character-controller demo scenes |
 | `QUAT_HOST=<port>` / `QUAT_JOIN=<ip:port>` | Host or join a networked session (host listens on 127.0.0.1 only unless `QUAT_NET_BIND` says otherwise) — see [Networking](#networking) |
 | `QUAT_NET_BIND=<ipv4>` | Host: interface to listen on (default `127.0.0.1`; `0.0.0.0` = every interface, for LAN/internet play) |
 | `QUAT_NET_MAX_CLIENTS=<n>` | Host: connections held at once (default 8, max 1024); more are refused as "server full" |
@@ -209,6 +271,7 @@ Environment variables switch on extra modes:
 | `QUAT_NO_AUDIO=1` | Mute: run audio without opening a playback device |
 | `QUAT_NON_FINITE_CHECK=1` | Count NaN/Inf values the bloom / TAA guards replace and log them per frame (always on in debug builds) |
 | `QUAT_MAX_FRAMES=<n>` + `QUAT_SCREENSHOT=<file.ppm>` | Render n frames, save the last one, exit (headless checks) |
+| `QUAT_ASSET_ROOT=<dir>` | Data directory holding `assets/` and `cooked/shaders/` (default: next to the executable — inside a macOS app, `Contents/Resources` — then, in development builds, the source tree) |
 
 ### Networking
 
@@ -263,6 +326,22 @@ camera, or from the entity carrying an active **Audio Listener** (e.g. the
 player). From scripts and AI tools, set `audio_source.command` to `play`,
 `stop`, `pause` or `resume`.
 
+### Scripting
+
+Gameplay is written in Lua: put a script under `assets/scripts/`, give an
+entity a **Script** component (Inspector → Add component) and pick the file;
+it runs when you press Play and reloads whenever you save it. The inspector
+lists the script's declared properties so each entity can tune them, and
+*Stats → Scripts* shows errors with their line. Try the bundled demo:
+
+```sh
+QUAT_SCENE=assets/scenes/coin_collector.json QUAT_PLAY=1 ./build/release/game
+```
+
+The language reference, callbacks and the whole engine API are in
+[`docs/scripting.md`](docs/scripting.md). AI assistants can write and debug
+scripts through MCP (`script_*` tools and the `write_game_script` prompt).
+
 ### Sample models
 
 Put glTF models under `sample-assets/` (not committed) and they show up in the
@@ -303,10 +382,16 @@ validation messages, frame statistics, pause / single-step / slow down the
 simulation, watch entities, cast physics rays and query navmesh paths — and
 tune the look: exposure, bloom, anti-aliasing, shadows, sky light, clouds and
 per-entity materials, with the same values the editor's Renderer panel and
-Material inspector show — and author NPC behaviour trees: build, inspect and
+Material inspector show — author NPC behaviour trees: build, inspect and
 edit the same graph the editor's Behaviour panel shows, with per-node
-validation errors, and see what each node did on the last tick. Start the
-engine with `QUAT_REMOTE=7878`, build the
+validation errors, and see what each node did on the last tick — and write
+material shaders: Slang modules the engine compiles (returning the compiler
+errors with line numbers), assigns to entities and hot-swaps while it runs.
+For world building it reports entity bounds, sets models down on terrain or
+colliders (`world_place_on_ground`), takes screenshots from any camera without
+moving yours, and searches and downloads CC0 models from Poly Haven
+(`asset_search` / `asset_fetch`, into the gitignored `assets/meshes/polyhaven/`).
+Start the engine with `QUAT_REMOTE=7878`, build the
 server with `cargo build --release` in `tools/quat-mcp`, and register it with
 your client:
 
@@ -360,6 +445,7 @@ The plan lives in [`ROADMAP.md`](ROADMAP.md), grouped into tracks:
 |---|---|
 | [`docs/STATUS.md`](docs/STATUS.md) | What is in progress, what is blocked, what comes next |
 | [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md) | Building, testing, CI, and conventions for contributors |
+| [`docs/scripting.md`](docs/scripting.md) | Lua gameplay scripting: callbacks, the engine API, limits, hot reload |
 | [`docs/reading/README.md`](docs/reading/README.md) | Reading list: the papers and talks behind the engine's techniques, with where each lives in the code |
 | [`docs/remote-control.md`](docs/remote-control.md) | The remote-control protocol AI tools use to drive the engine |
 | [`docs/editor-ux.md`](docs/editor-ux.md) | The editor's design system: principles, tokens, widget kit, layout, shortcuts |
@@ -371,7 +457,9 @@ The plan lives in [`ROADMAP.md`](ROADMAP.md), grouped into tracks:
 ## Repository layout
 
 ```
-assets/shaders/     Slang shader sources (compiled into cooked/shaders/ during the build)
+assets/shaders/     Slang shader sources (compiled into cooked/shaders/ during the build);
+                    materials/ holds material shaders, templates/ the starter module
+assets/scripts/     Lua gameplay scripts; assets/scenes/ holds scene files (the Coin Collector demo)
 include/engine/     Public headers, one folder per module
 src/                Implementation, mirroring include/ (rhi, renderer, scene, physics, ...)
 src/editor/         The editor (only in builds with ENGINE_EDITOR=ON, the default)
@@ -387,4 +475,4 @@ ports/, triplets/   vcpkg customisations
 
 Vulkan 1.3 · Slang · SDL3 · Jolt Physics · EnTT · fastgltf · glm · Dear ImGui +
 ImGuizmo · Vulkan Memory Allocator · Recast/Detour · GameNetworkingSockets ·
-KTX-Software (Basis Universal) · meshoptimizer · nlohmann/json · CMake + vcpkg
+Lua 5.4 + sol2 · KTX-Software (Basis Universal) · meshoptimizer · nlohmann/json · CMake + vcpkg

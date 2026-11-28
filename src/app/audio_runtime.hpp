@@ -3,6 +3,7 @@
 // Audio wiring for the `game` executable (app layer, not engine): owns the
 // AudioEngine and runs audio_system once per frame.
 
+#include <filesystem>
 #include <optional>
 #include <string>
 
@@ -19,7 +20,7 @@ public:
     // or with QUAT_NO_AUDIO=1 it falls back to a silent no-device engine, so
     // the audio components keep working; if even that fails, audio is off.
     // Relative clip paths resolve against `asset_root` (the project root).
-    [[nodiscard]] static AudioRuntime create(const std::string& asset_root);
+    [[nodiscard]] static AudioRuntime create(const std::filesystem::path& asset_root);
 
     // Once per frame, after the scene tick. `live` is play mode (always true
     // in builds without the editor): play_on_start sources start. Outside

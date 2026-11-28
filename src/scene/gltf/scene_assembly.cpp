@@ -28,6 +28,7 @@
 #include <glm/gtc/quaternion.hpp>
 #include <glm/gtx/matrix_decompose.hpp>
 
+#include "engine/core/utf8_path.hpp"
 #include "engine/animation/clip.hpp"
 #include "engine/animation/skeleton.hpp"
 #include "engine/asset/asset_manager.hpp"
@@ -300,12 +301,12 @@ GltfLoader::instantiate(const std::filesystem::path& path, rhi::GpuAllocator& al
                         Scene& scene) {
     auto data = fastgltf::GltfDataBuffer::FromPath(path);
     if (data.error() != fastgltf::Error::None) {
-        return fail("fastgltf: could not read '" + path.string() + "': " +
+        return fail("fastgltf: could not read '" + core::path_to_utf8(path) + "': " +
                     std::string(fastgltf::getErrorMessage(data.error())));
     }
     auto parsed = parse_gltf(data.get(), path.parent_path());
     if (!parsed) return std::unexpected(parsed.error());
-    return assemble_scene(*parsed, path.generic_string(), allocator, transfer, assets, scene);
+    return assemble_scene(*parsed, core::path_to_generic_utf8(path), allocator, transfer, assets, scene);
 }
 
 // ---------------------------------------------------------------------------

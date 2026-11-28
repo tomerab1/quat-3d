@@ -15,7 +15,7 @@
 #include "../panels/console.hpp"
 #include "../physics_debug.hpp"
 #include "../scene_hierarchy.hpp"
-#include "../scene_snapshot.hpp"
+#include "engine/scene/scene_snapshot.hpp"
 #include "../tuning_panels.hpp"
 #include "../ui/icons.hpp"
 #include "../ui/toasts.hpp"
@@ -217,7 +217,7 @@ void EditorShell::register_commands() {
     c.add({.id = "edit.duplicate", .label = "Duplicate", .category = "Edit", .icon = icon::copy,
            .shortcut = ImGuiMod_Ctrl | ImGuiKey_D, .scope = ShortcutScope::selection,
            .enabled = selection_ok, .action = [this] {
-               const entt::entity copy = duplicate_entity(*ctx->scene, selected);
+               const entt::entity copy = scene::duplicate_entity(*ctx->scene, selected);
                if (copy != entt::null) selected = copy;
            }});
     c.add({.id = "edit.delete", .label = "Delete", .category = "Edit", .icon = icon::trash_2,
@@ -400,6 +400,7 @@ void EditorShell::draw_panels() {
     const EditorContext& c = *ctx;
     const auto open = [this](Panel p) { return &panel_open[static_cast<std::size_t>(p)]; };
     draw_viewport(*this);
+    inspector.scripts = c.scripts; // a Script's declared properties (G7)
     if (c.scene != nullptr) draw_inspector(*c.scene, selected, inspector, open(Panel::inspector));
     if (c.renderer != nullptr) draw_renderer_panel(*c.renderer, c.scene);
     if (c.scene != nullptr) {

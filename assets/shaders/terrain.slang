@@ -13,14 +13,17 @@
 // collapses frac(sin()) lattices). Writes the same GBuffer layout as
 // gbuffer.slang; the deferred lighting pass shades terrain like any mesh.
 
+import velocity;
 import terrain_grid;
 
 struct PushConstants {
-    float4x4 view_proj;
+    float4x4 view_proj;      // jittered
     float4   chunk;  // x,y = chunk origin (world xz), z = chunk size m, w = skirt depth m
     float4   region; // x,y = heightmap uv offset, z = uv scale, w = metres per texel
     float4   shade;  // x = grid_n, y = heightmap texel uv, z = snowline m, w = rock slope
     float4   misc;   // x = tile origin world y, yzw unused
+    float4x4 prev_view_proj; // last frame, unjittered (terrain is static: camera motion only)
+    float4   motion;         // xy = this frame's jitter (NDC), zw unused
 }
 [[vk::push_constant]] PushConstants pc;
 
@@ -28,9 +31,11 @@ struct PushConstants {
 [[vk::binding(1)]] SamplerState g_sampler;   // linear clamp
 
 struct VsOut {
-    float4 clip     : SV_Position;
-    float3 world    : WORLD_POS;
-    float2 uv       : TEXCOORD0; // heightmap uv
+    float4 clip      : SV_Position;
+    float3 world     : WORLD_POS;
+    float2 uv        : TEXCOORD0; // heightmap uv
+    float4 cur_clip  : CUR_CLIP;
+    float4 prev_clip : PREV_CLIP;
 }
 
 // Vertex id -> chunk grid coordinate (lib/terrain_grid.slang).
@@ -53,6 +58,8 @@ VsOut vertex_main(uint id : SV_VertexID) {
                      pc.chunk.y + local01.y * pc.chunk.z);
     o.uv = uv;
     o.clip = mul(pc.view_proj, float4(o.world, 1.0));
+    o.cur_clip = o.clip;
+    o.prev_clip = mul(pc.prev_view_proj, float4(o.world, 1.0));
     return o;
 }
 
@@ -114,6 +121,8 @@ struct GBufferOut {
     float2 normal    : SV_Target1;
     float4 material  : SV_Target2; // r metallic, g roughness, b occlusion, a mask
     float2 clearcoat : SV_Target3;
+    float4 emissive  : SV_Target4; // terrain emits nothing
+    float2 velocity  : SV_Target5;
 }
 
 [shader("fragment")]
@@ -153,5 +162,7 @@ GBufferOut fragment_main(VsOut input) {
     o.normal = oct_encode(n);
     o.material = float4(0.0, roughness, 1.0, 1.0);
     o.clearcoat = float2(0.0, 0.0);
+    o.emissive = float4(0.0, 0.0, 0.0, 0.0);
+    o.velocity = surface_velocity(input.cur_clip, input.prev_clip, pc.motion.xy);
     return o;
 }

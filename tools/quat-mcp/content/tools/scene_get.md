@@ -1,1 +1,3 @@
-Get one entity in full: `{id, name, parent, children, components:{...}}` with every component's current field values (same field names as `scene_update` accepts).
+Get one entity in full: `{id, name, parent, children, world_bounds, local_bounds, components:{...}}` with every component's current field values (same field names as `scene_update` accepts).
+
+`world_bounds` is the world-space box `{min, max}` around everything the entity and its children draw (meshes, primitives, instanced meshes; for the terrain entity, its loaded tiles), or null when nothing draws (a light, an empty group, a model still loading). `local_bounds` is the same box in the entity's own frame, before its position, rotation and scale: use it to learn a model's size and where its origin sits (`-local_bounds.min[1]` is the height of the origin above the model's bottom at scale 1). To set something on the ground, use `world_place_on_ground` instead of computing heights by hand.

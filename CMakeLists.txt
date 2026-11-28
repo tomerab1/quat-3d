@@ -38,6 +38,10 @@ option(ENGINE_PROFILE "Enable Tracy profiling in non-debug builds" OFF)
 # instance opts into portability (non-conformant) ICD enumeration. Descriptor
 # buffers remain the mandated model (CLAUDE.md); this exists only so the engine
 # can run on platforms where the extension does not exist.
+# Distribution build (release archives): the game embeds no build-machine
+# paths and finds its data next to the executable (or via QUAT_ASSET_ROOT);
+# see src/app/asset_root.hpp. Development builds also fall back to the tree.
+option(ENGINE_PACKAGE_BUILD "Build for packaging: no source-tree data fallback" OFF)
 option(ENGINE_DESCRIPTOR_SETS_FALLBACK
     "Allow classic descriptor-set fallback on drivers without VK_EXT_descriptor_buffer" OFF)
 
@@ -50,6 +54,11 @@ add_library(engine_flags INTERFACE)
 target_compile_features(engine_flags INTERFACE cxx_std_23)
 
 if(MSVC)
+    # CMake's default MSVC flags enable exceptions and RTTI (/EHsc /GR); drop
+    # them so engine_flags' /EHs-c- /GR- don't trip D9025 ("overriding")
+    # on every translation unit. vcpkg ports are built separately.
+    string(REPLACE "/EHsc" "" CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}")
+    string(REPLACE "/GR" "" CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}")
     target_compile_options(engine_flags INTERFACE /W4 /permissive- /EHs-c- /GR-)
     # getenv/fopen are used deliberately (portable C, bounds-checked call
     # sites); _HAS_EXCEPTIONS=0 matches /EHs-c- so the STL stops emitting
@@ -63,6 +72,12 @@ else()
         -fno-exceptions -fno-rtti)
 endif()
 
+# Third-party implementation TUs (VMA, stb, miniaudio, vendored backends) are
+# compiled with warnings off: -w on clang/gcc. Nothing on MSVC — /w would
+# collide with engine_flags' /W4 (D9025), and the third-party headers already
+# arrive through SYSTEM include dirs, i.e. /external:I at /external:W0.
+set(ENGINE_THIRD_PARTY_TU_FLAGS "$<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-w>")
+
 # Per CLAUDE.md: column-major, reverse-Z friendly depth range [0, 1].
 target_compile_definitions(engine_flags INTERFACE
     GLM_FORCE_DEPTH_ZERO_TO_ONE
@@ -75,6 +90,22 @@ endif()
 
 if(ENGINE_DESCRIPTOR_SETS_FALLBACK)
     target_compile_definitions(engine_flags INTERFACE ENGINE_DESCRIPTOR_SETS_FALLBACK)
+endif()
+
+if(ENGINE_PACKAGE_BUILD)
+    target_compile_definitions(engine_flags INTERFACE ENGINE_PACKAGE_BUILD)
+endif()
+
+# Apple's linker (ld-prime, Xcode 15+) warns about every static library CMake
+# repeats on the link line — repetition CMake emits on purpose to resolve the
+# engine libraries' mutual dependencies. Silence just that diagnostic where
+# the linker understands the flag (older ld64 does not, and never warned).
+if(APPLE)
+    include(CheckLinkerFlag)
+    check_linker_flag(CXX "LINKER:-no_warn_duplicate_libraries" ENGINE_LD_NO_WARN_DUPLICATE_LIBS)
+    if(ENGINE_LD_NO_WARN_DUPLICATE_LIBS)
+        target_link_options(engine_flags INTERFACE "LINKER:-no_warn_duplicate_libraries")
+    endif()
 endif()
 
 # ---------------------------------------------------------------------------
@@ -95,6 +126,9 @@ find_package(EnTT CONFIG REQUIRED)
 find_package(Jolt CONFIG REQUIRED)
 find_package(recastnavigation CONFIG REQUIRED)
 find_package(GameNetworkingSockets CONFIG REQUIRED)
+# Lua 5.4 (C library, longjmp error handling) + sol2 (header-only bindings).
+find_package(Lua REQUIRED)
+find_package(sol2 CONFIG REQUIRED)
 # OpenSSL's libcrypto: the CSPRNG behind remote-control session tokens
 # (engine_remote). GameNetworkingSockets already depends on it.
 find_package(OpenSSL REQUIRED COMPONENTS Crypto)
@@ -121,7 +155,8 @@ set(ENGINE_PUBLIC_INCLUDE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 # ---------------------------------------------------------------------------
 # engine_core — graphics-free foundations: the log ring + log() helper, stderr
 # capture into the ring, the simulation clock (A5; S6 grows the logging layer
-# here), file watching and child processes (shader hot reload, R2).
+# here), file watching and child processes (shader hot reload, R2), and the
+# runtime data-root resolution used by the game and packaged builds (P4).
 # ---------------------------------------------------------------------------
 add_library(engine_core STATIC
     src/core/log.cpp
@@ -130,7 +165,9 @@ add_library(engine_core STATIC
     src/core/frame_timer.cpp
     src/core/path_confine.cpp
     src/core/file_watcher.cpp
-    src/core/child_process.cpp)
+    src/core/child_process.cpp
+    src/core/asset_root.cpp
+    src/core/env.cpp)
 target_link_libraries(engine_core PUBLIC engine_flags Threads::Threads)
 target_include_directories(engine_core PUBLIC ${ENGINE_PUBLIC_INCLUDE})
 
@@ -151,7 +188,10 @@ add_library(engine_rhi STATIC
     src/rhi/graphics_pipeline.cpp
     src/rhi/compute_pipeline.cpp
     src/rhi/shader_compiler.cpp
-    src/rhi/shader_hot_reload.cpp)
+    src/rhi/shader_diagnostics.cpp
+    src/rhi/shader_hot_reload.cpp
+    src/rhi/material_shader_registry.cpp
+    src/rhi/material_shader_source.cpp)
 target_link_libraries(engine_rhi PUBLIC
     engine_flags engine_core Vulkan::Vulkan GPUOpen::VulkanMemoryAllocator)
 # engine_core is public: shader hot reload's headers use its watcher/process
@@ -165,7 +205,7 @@ target_include_directories(engine_rhi PUBLIC ${ENGINE_PUBLIC_INCLUDE})
 
 # VMA's implementation is not warning-clean under our strict flags; compile just
 # that TU permissively (our code using VMA stays strict).
-set_source_files_properties(src/rhi/vma_impl.cpp PROPERTIES COMPILE_OPTIONS "-w")
+set_source_files_properties(src/rhi/vma_impl.cpp PROPERTIES COMPILE_OPTIONS "${ENGINE_THIRD_PARTY_TU_FLAGS}")
 
 # ---------------------------------------------------------------------------
 # engine_asset — asset identity, ref-counted handles, synchronous load path,
@@ -229,7 +269,8 @@ target_include_directories(engine_animation PUBLIC ${ENGINE_PUBLIC_INCLUDE})
 # implementation detail (PRIVATE); the public header is Jolt-free (PIMPL).
 # ---------------------------------------------------------------------------
 add_library(engine_physics STATIC
-    src/physics/physics_world.cpp)
+    src/physics/physics_world.cpp
+    src/physics/physics_queries.cpp)
 target_link_libraries(engine_physics PUBLIC engine_flags)
 target_link_libraries(engine_physics PRIVATE Jolt::Jolt)
 target_include_directories(engine_physics PUBLIC ${ENGINE_PUBLIC_INCLUDE})
@@ -259,6 +300,9 @@ add_library(engine_scene STATIC
     src/scene/bt_graph_edit.cpp
     src/scene/scene_io.cpp
     src/scene/component_json.cpp
+    src/scene/particle_json.cpp
+    src/scene/script_component.cpp
+    src/scene/scene_snapshot.cpp
     src/scene/component_json_animation.cpp
     src/scene/material_override.cpp
     src/scene/render_settings_json.cpp
@@ -269,7 +313,9 @@ add_library(engine_scene STATIC
     src/scene/instanced_mesh.cpp
     src/scene/instanced_mesh_resolve.cpp
     src/scene/ground_placement.cpp
-    src/scene/camera_framing.cpp)
+    src/scene/camera_framing.cpp
+    src/scene/bounds.cpp
+    src/scene/view_clip.cpp)
 # EnTT is PUBLIC: components.hpp exposes entt types (Parent/Children) to consumers.
 # engine_renderer is PUBLIC: scene.hpp's RenderCollectSystem fills a renderer
 # DrawItem list (no cycle — the renderer does not depend on the scene).
@@ -283,7 +329,8 @@ target_link_libraries(engine_scene PUBLIC
 # shared by scene files and the remote-control API).
 target_link_libraries(engine_scene PUBLIC nlohmann_json::nlohmann_json)
 target_link_libraries(engine_scene PRIVATE fastgltf::fastgltf engine_gltf_io)
-target_include_directories(engine_scene PRIVATE ${Stb_INCLUDE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_include_directories(engine_scene SYSTEM PRIVATE ${Stb_INCLUDE_DIR})
+target_include_directories(engine_scene PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_include_directories(engine_scene PUBLIC ${ENGINE_PUBLIC_INCLUDE})
 
 # engine_gltf_io — glTF parse + validation, EXT_meshopt_compression decoding
@@ -302,8 +349,37 @@ target_include_directories(engine_gltf_io PUBLIC
 # guarded decoder. Its TU is not warning-clean under our strict flags.
 add_library(engine_stb_image STATIC src/scene/stb_image_impl.cpp)
 target_link_libraries(engine_stb_image PRIVATE engine_flags)
-target_include_directories(engine_stb_image PRIVATE ${Stb_INCLUDE_DIR})
-set_source_files_properties(src/scene/stb_image_impl.cpp PROPERTIES COMPILE_OPTIONS "-w")
+target_include_directories(engine_stb_image SYSTEM PRIVATE ${Stb_INCLUDE_DIR})
+set_source_files_properties(src/scene/stb_image_impl.cpp PROPERTIES COMPILE_OPTIONS "${ENGINE_THIRD_PARTY_TU_FLAGS}")
+
+# ---------------------------------------------------------------------------
+# engine_script — Lua gameplay scripting (G7): one sandboxed Lua 5.4 state
+# per play session with per-call instruction / memory limits, the Script
+# component's runtime, hot reload, and the engine API scripts call (entities,
+# components through the codec, physics, input, audio, navigation). Lua and
+# sol2 are implementation details (PRIVATE); the public headers are Lua-free.
+# sol2 runs without exceptions (the engine builds with -fno-exceptions) and
+# with every safety check on.
+# ---------------------------------------------------------------------------
+add_library(engine_script STATIC
+    src/script/lua_vm.cpp
+    src/script/lua_bind.cpp
+    src/script/lua_json.cpp
+    src/script/script_api_math.cpp
+    src/script/script_api_entity.cpp
+    src/script/script_api_scene.cpp
+    src/script/script_api_services.cpp
+    src/script/script_api_input.cpp
+    src/script/script_input.cpp
+    src/script/script_source.cpp
+    src/script/script_runtime.cpp
+    src/script/script_files.cpp)
+target_link_libraries(engine_script PUBLIC engine_flags engine_core engine_scene engine_physics)
+target_link_libraries(engine_script PRIVATE sol2::sol2 ${LUA_LIBRARIES})
+# SYSTEM: the vcpkg include directory holds every dependency's headers.
+target_include_directories(engine_script SYSTEM PRIVATE ${LUA_INCLUDE_DIR})
+target_include_directories(engine_script PUBLIC ${ENGINE_PUBLIC_INCLUDE})
+target_compile_definitions(engine_script PRIVATE SOL_NO_EXCEPTIONS=1 SOL_ALL_SAFETIES_ON=1)
 
 # ---------------------------------------------------------------------------
 # engine_cook — offline asset cooker (R17): glTF textures -> KTX2/Basis,
@@ -388,7 +464,7 @@ target_link_libraries(engine_audio PUBLIC engine_flags glm::glm)
 target_link_libraries(engine_audio PRIVATE miniaudio_headers engine_core)
 target_include_directories(engine_audio PUBLIC ${ENGINE_PUBLIC_INCLUDE})
 # miniaudio's implementation is not warning-clean under our strict flags.
-set_source_files_properties(src/audio/miniaudio_impl.cpp PROPERTIES COMPILE_OPTIONS "-w")
+set_source_files_properties(src/audio/miniaudio_impl.cpp PROPERTIES COMPILE_OPTIONS "${ENGINE_THIRD_PARTY_TU_FLAGS}")
 
 # ---------------------------------------------------------------------------
 # engine_remote — remote-control endpoint (Phase 15): loopback JSON-RPC 2.0
@@ -425,22 +501,27 @@ add_library(engine_remote_world STATIC
     src/remote/world/scene_commands.cpp
     src/remote/world/batch_command.cpp
     src/remote/world/environment_commands.cpp
+    src/remote/world/terrain_commands.cpp
+    src/remote/world/surface_query.cpp
+    src/remote/world/placement_commands.cpp
     src/remote/world/camera_commands.cpp
     src/remote/world/app_commands.cpp
     src/remote/world/debug_commands.cpp
     src/remote/world/debug_query_commands.cpp
+    src/remote/world/shader_commands.cpp
     src/remote/world/tuning_commands.cpp
     src/remote/world/behavior_commands.cpp
     src/remote/world/behavior_edit_commands.cpp
+    src/remote/world/script_commands.cpp
     src/remote/world/image_encode.cpp
     src/remote/world/stb_image_write_impl.cpp)
 target_link_libraries(engine_remote_world PUBLIC
-    engine_flags engine_core engine_remote engine_scene engine_physics engine_nav)
+    engine_flags engine_core engine_remote engine_scene engine_physics engine_nav engine_script)
 target_include_directories(engine_remote_world PUBLIC ${ENGINE_PUBLIC_INCLUDE})
-target_include_directories(engine_remote_world PRIVATE ${Stb_INCLUDE_DIR})
+target_include_directories(engine_remote_world SYSTEM PRIVATE ${Stb_INCLUDE_DIR})
 # stb's implementation TU is not warning-clean under our strict flags.
 set_source_files_properties(src/remote/world/stb_image_write_impl.cpp
-    PROPERTIES COMPILE_OPTIONS "-w")
+    PROPERTIES COMPILE_OPTIONS "${ENGINE_THIRD_PARTY_TU_FLAGS}")
 
 # ---------------------------------------------------------------------------
 # engine_renderer — high-level passes built on the RHI. Starts with the deferred
@@ -457,9 +538,15 @@ add_library(engine_renderer STATIC
     src/renderer/instance_buffer.cpp
     src/renderer/non_finite_counters.cpp
     src/renderer/mesh_pass.cpp
+    src/renderer/material_pipelines.cpp
     src/renderer/lighting_pass.cpp
     src/renderer/light_clusters.cpp
     src/renderer/light_cull_pass.cpp
+    src/renderer/particles.cpp
+    src/renderer/particle_emitters.cpp
+    src/renderer/particle_pass.cpp
+    src/renderer/particle_sort.cpp
+    src/renderer/particle_draw.cpp
     src/renderer/tonemap_pass.cpp
     src/renderer/skinning_pass.cpp
     src/renderer/shadow_casters.cpp
@@ -470,6 +557,11 @@ add_library(engine_renderer STATIC
     src/renderer/bloom_pass.cpp
     src/renderer/exposure_pass.cpp
     src/renderer/taa_pass.cpp
+    src/renderer/jitter.cpp
+    src/renderer/velocity.cpp
+    src/renderer/velocity_pass.cpp
+    src/renderer/motion_history.cpp
+    src/renderer/upscaler.cpp
     src/renderer/atmosphere_pass.cpp
     src/renderer/terrain_pass.cpp
     src/renderer/terrain_gpu_tiles.cpp
@@ -506,10 +598,11 @@ if(ENGINE_EDITOR)
         src/editor/animation_preview.cpp
         src/editor/physics_debug.cpp
         src/editor/picking.cpp
-        src/editor/scene_snapshot.cpp
         src/editor/audio_inspector.cpp
+        src/editor/script_inspector.cpp
         src/editor/animation_inspector.cpp
         src/editor/grass_inspector.cpp
+        src/editor/particle_inspector.cpp
         src/editor/behavior_panel.cpp
         src/editor/behavior_canvas.cpp
         src/editor/inspector_world.cpp
@@ -543,13 +636,13 @@ if(ENGINE_EDITOR)
     # vcpkg target does not declare the imgui dependency, so a single-pass
     # linker must see it first to resolve its ImGui references.
     target_link_libraries(engine_editor
-        PUBLIC engine_flags engine_scene
+        PUBLIC engine_flags engine_scene engine_script
         PRIVATE unofficial::imgui-node-editor::imgui-node-editor
                 imgui::imgui imguizmo::imguizmo SDL3::SDL3)
     target_include_directories(engine_editor PUBLIC ${ENGINE_PUBLIC_INCLUDE})
     # Vendored third-party backend: not warning-clean under our strict flags.
     set_source_files_properties(src/editor/vendor/imgui_impl_sdl3.cpp
-        PROPERTIES COMPILE_OPTIONS "-w")
+        PROPERTIES COMPILE_OPTIONS "${ENGINE_THIRD_PARTY_TU_FLAGS}")
 endif()
 
 # ---------------------------------------------------------------------------
@@ -562,17 +655,20 @@ endif()
 # main.cpp only parses the environment and hands off to Application.
 #
 # game_world holds the window-free part of the app layer — WorldRuntime (the
-# simulated world: demo scenes, terrain, grass, navmesh, audio) — so tests
-# can drive the exact frame-loop simulation path (tests/app/) without SDL.
+# simulated world: demo scenes, terrain, grass, particles, navmesh, audio,
+# play mode and gameplay scripts) — so tests can drive the exact frame-loop
+# simulation path (tests/app/, including the play state machine) without SDL.
 add_library(game_world STATIC
     src/app/world_runtime.cpp
     src/app/demo_scenes.cpp
     src/app/audio_runtime.cpp
+    src/app/play_mode.cpp
     src/app/grass_runtime.cpp
+    src/app/particle_runtime.cpp
     src/app/nav_bake.cpp)
 target_link_libraries(game_world PUBLIC
     engine_flags engine_core engine_rhi engine_asset engine_scene engine_renderer engine_physics
-    engine_terrain engine_nav engine_net engine_audio)
+    engine_terrain engine_nav engine_net engine_audio engine_script)
 target_include_directories(game_world PUBLIC
     ${ENGINE_PUBLIC_INCLUDE}
     ${CMAKE_CURRENT_SOURCE_DIR}/src)
@@ -582,14 +678,17 @@ add_executable(game
     src/app/application.cpp
     src/app/fly_camera.cpp
     src/app/frame_graph.cpp
+    src/app/frame_temporal.cpp
     src/app/frame_renderer.cpp
+    src/app/input_sampler.cpp
     src/app/remote_bridge.cpp
-    src/app/screenshot_capture.cpp)
+    src/app/screenshot_capture.cpp
+    src/app/asset_root.cpp)
 target_link_libraries(game PRIVATE
     game_world
     engine_flags engine_core engine_rhi engine_asset engine_scene engine_renderer engine_physics
     engine_terrain engine_nav engine_net engine_remote engine_remote_world engine_audio
-    SDL3::SDL3)
+    engine_script SDL3::SDL3)
 if(MSVC)
     # Linker map for the game_has_no_texture_encoder test.
     target_link_options(game PRIVATE "/MAP:$<TARGET_FILE_DIR:game>/game.map")
@@ -601,11 +700,14 @@ endif()
 target_include_directories(game PRIVATE
     ${ENGINE_PUBLIC_INCLUDE}
     ${CMAKE_CURRENT_SOURCE_DIR}/src)
-# Absolute path to cooked shaders so the binary finds them regardless of CWD.
-# A proper asset-path resolver arrives with the asset manager in Phase 3.
-target_compile_definitions(game PRIVATE
-    QUAT_COOKED_SHADER_DIR="${CMAKE_CURRENT_SOURCE_DIR}/cooked/shaders"
-    QUAT_PROJECT_ROOT="${CMAKE_CURRENT_SOURCE_DIR}")
+# Data root, resolved at runtime (src/app/asset_root.hpp): QUAT_ASSET_ROOT, the
+# executable's directory (packaged builds), then - development builds only -
+# the source tree baked in here.
+if(NOT ENGINE_PACKAGE_BUILD)
+    set_property(SOURCE src/app/asset_root.cpp APPEND PROPERTY COMPILE_DEFINITIONS
+        QUAT_BUILD_TREE_ROOT="${CMAKE_CURRENT_SOURCE_DIR}"
+        QUAT_BUILD_TREE_SHADER_DIR="${CMAKE_CURRENT_SOURCE_DIR}/cooked/shaders")
+endif()
 
 # ---------------------------------------------------------------------------
 # Tests (GoogleTest) — see tests/CMakeLists.txt. `ctest --test-dir build/<preset>`.
@@ -619,5 +721,8 @@ add_subdirectory(tests)
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/CompileShaders.cmake)
 add_shader_compilation(shaders)
 add_dependencies(game shaders)
-# Shader hot reload (R2) runs the same slangc the build cooks with.
-target_compile_definitions(engine_rhi PRIVATE QUAT_SLANGC_PATH="${SLANGC_EXECUTABLE}")
+# Shader hot reload (R2) runs the same slangc the build cooks with. Not in
+# packaged builds: no build-machine paths there, and hot reload defaults off.
+if(NOT ENGINE_PACKAGE_BUILD)
+    target_compile_definitions(engine_rhi PRIVATE QUAT_SLANGC_PATH="${SLANGC_EXECUTABLE}")
+endif()
