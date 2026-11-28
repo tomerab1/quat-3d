@@ -314,6 +314,7 @@ MeshPass::add_to_graph(rhi::RenderGraph& graph, VkExtent2D extent, const glm::ma
                                                                 : d.mesh->vertex_buffer.handle();
         fd.index_buffer = d.mesh->index_buffer.handle();
         fd.submeshes = d.mesh->submeshes;
+        fd.prev_positions = d.prev_positions;
         fd.first_instance = d.first_instance;
         fd.instance_count = d.instance_count;
         fd.descriptor_index = slot->second;
@@ -407,17 +408,32 @@ MeshPass::add_to_graph(rhi::RenderGraph& graph, VkExtent2D extent, const glm::ma
 
             // Every program shares one layout definition; on a program switch
             // re-push the (shared) constants and re-bind the material set.
+            // The per-draw range (last frame's skinned positions) is re-pushed
+            // when it changes.
+            constexpr VkShaderStageFlags k_push_stages =
+                VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+            constexpr std::uint32_t k_draw_push_begin =
+                offsetof(GBufferPushConstants, has_prev_positions);
+            constexpr std::uint32_t k_draw_push_end = offsetof(GBufferPushConstants, camera);
+            GBufferPushConstants push = frame_push_;
             const rhi::ManagedPipeline* bound_pipeline = nullptr;
             std::uint32_t bound_descriptor = std::numeric_limits<std::uint32_t>::max();
             for (const FrameDraw& fd : frame_draws_) {
+                const bool draw_push_changed = fd.prev_positions != push.prev_positions;
+                push.prev_positions = fd.prev_positions;
+                push.has_prev_positions = fd.prev_positions != 0 ? 1U : 0U;
                 if (fd.pipeline != bound_pipeline) {
                     bound_pipeline = fd.pipeline;
                     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
                                       bound_pipeline->handle());
-                    vkCmdPushConstants(cmd, bound_pipeline->layout(),
-                                       VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
-                                       0, sizeof(frame_push_), &frame_push_);
+                    vkCmdPushConstants(cmd, bound_pipeline->layout(), k_push_stages, 0,
+                                       sizeof(push), &push);
                     bound_descriptor = std::numeric_limits<std::uint32_t>::max();
+                } else if (draw_push_changed) {
+                    vkCmdPushConstants(cmd, bound_pipeline->layout(), k_push_stages,
+                                       k_draw_push_begin, k_draw_push_end - k_draw_push_begin,
+                                       reinterpret_cast<const std::byte*>(&push) +
+                                           k_draw_push_begin);
                 }
                 if (fd.descriptor_index != bound_descriptor) {
                     frame_descriptors_[fd.descriptor_index].bind(
