@@ -469,7 +469,9 @@ git -C ~/vcpkg checkout 10ceb139a610ebf3c6aa49cdc4a4b7f3db5d3f2b
 ~/vcpkg/bootstrap-vcpkg.sh -disableMetrics
 
 # slangc (GitHub release downloads are reachable)
-mkdir -p ~/slang && curl -sSL https://github.com/shader-slang/slang/releases/download/v2025.6.1/slang-2025.6.1-linux-x86_64.tar.gz | tar xz -C ~/slang
+curl -sSLo /tmp/slang.tgz https://github.com/shader-slang/slang/releases/download/v2025.12/slang-2025.12-linux-x86_64.tar.gz
+echo "8ff27feb4355bcdb5749e8c2156dd79e3756c452d9fe30836da111470568ed0f  /tmp/slang.tgz" | sha256sum -c -
+mkdir -p ~/slang && tar xzf /tmp/slang.tgz -C ~/slang
 export PATH="$HOME/slang/bin:$PATH"
 
 cmake --preset release -DENGINE_PROFILE=OFF   # first run builds all dependencies (long)

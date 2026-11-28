@@ -214,9 +214,8 @@ std::vector<std::string> ShaderCompiler::arguments(const fs::path& source,
                                                    std::size_t variant) const {
     const std::string name = core::path_to_utf8(source.stem());
     // Keep in sync with cmake/CompileShaders.cmake. Search paths come before
-    // the inputs: slangc (2025.20+) loads a `.slang-module` input as soon as
-    // it parses it, resolving its imports against the -I paths seen so far
-    // (#136).
+    // the inputs: slangc 2025.12+ loads a `.slang-module` input as soon as it
+    // parses it, resolving its imports against the -I paths seen so far (#136).
     const ShaderSourceKind kind = kind_of(source);
     if (kind == ShaderSourceKind::module) {
         return {"-I", core::path_to_utf8(config_.module_dir), core::path_to_utf8(source), "-o",

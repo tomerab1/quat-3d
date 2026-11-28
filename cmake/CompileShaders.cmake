@@ -20,7 +20,7 @@
 #
 # Shader hot reload (src/rhi/shader_compiler.cpp, ShaderCompiler::arguments)
 # runs slangc with these exact flags at runtime — keep the two in sync.
-# Search paths (-I) come before the inputs: slangc 2025.20+ loads a
+# Search paths (-I) come before the inputs: slangc 2025.12+ loads a
 # `.slang-module` input (the material driver) as soon as it parses it and
 # resolves the module's imports against the -I paths seen so far (#136).
 

@@ -9,7 +9,8 @@
 // SDK 1.4.321+ and spirv-val v2025.1+. Workgroup memory may be laid out
 // explicitly only with WorkgroupMemoryExplicitLayoutKHR. Slang 2025.6.1
 // reused one strided array type for buffers, locals and groupshared arrays;
-// drivers accepted it, the validation layer did not.
+// drivers accepted it, the validation layer did not (fixed upstream by
+// shader-slang/slang#7527, first in 2025.11.1; the engine pins 2025.12).
 //
 // CI also runs spirv-val --target-env vulkan1.3 on every cooked .spv
 // (ENGINE_VALIDATE_SHADERS); this walk runs wherever the tests run, without
