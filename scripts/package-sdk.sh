@@ -27,6 +27,7 @@ case "$(uname -s)" in
   *) echo "unsupported OS: $(uname -s)" >&2; exit 2 ;;
 esac
 
+root="$(cd "$(dirname "$0")/.." && pwd)"
 name="quat3d-sdk-${version}-${os}"
 mkdir -p "$out_dir"
 out_dir="$(cd "$out_dir" && pwd)"
@@ -39,6 +40,32 @@ for required in lib/cmake/quat3d/quat3dConfig.cmake lib/cmake/quat3d/quat3d-tool
   [ -e "$stage/$required" ] || { echo "SDK stage lacks $required" >&2; exit 1; }
 done
 ls "$stage"/bin
+
+# Licences (#96, #122). Two full notices files, generated from this build by
+# scripts/third-party-notices.sh, which ships with the release-notes work:
+#   <sdk>/THIRD_PARTY_NOTICES.md              everything the SDK carries: the
+#       engine, every vcpkg port in deps/, the fonts, and quat-mcp's crates
+#       when bin/ has quat-mcp;
+#   <sdk>/share/quat3d/THIRD_PARTY_NOTICES.md the --no-rust notices quat-pack
+#       copies into game packages (the engine root's file; a game carries no
+#       quat-mcp, so it must not list its crates).
+# Each must have the "## Licence texts" section (quat-pack ignores a summary),
+# and LICENSE must sit beside each. Until the generator exists in the tree
+# the SDK is packaged without generated notices, and says so.
+notices_tool="$root/scripts/third-party-notices.sh"
+if [ -f "$notices_tool" ]; then
+  rust_flag=()
+  [ -e "$stage/bin/quat-mcp" ] || [ -e "$stage/bin/quat-mcp.exe" ] || rust_flag=(--no-rust)
+  bash "$notices_tool" ${rust_flag[@]+"${rust_flag[@]}"} "$build_dir" "$stage/THIRD_PARTY_NOTICES.md"
+  bash "$notices_tool" --no-rust "$build_dir" "$stage/share/quat3d/THIRD_PARTY_NOTICES.md"
+  for dir in "$stage" "$stage/share/quat3d"; do
+    grep -q '^## Licence texts' "$dir/THIRD_PARTY_NOTICES.md" ||
+      { echo "$dir/THIRD_PARTY_NOTICES.md has no licence texts" >&2; exit 1; }
+    [ -s "$dir/LICENSE" ] || { echo "no engine LICENSE in $dir" >&2; exit 1; }
+  done
+else
+  echo "note: $notices_tool not in this tree (#96): SDK packaged without generated notices" >&2
+fi
 # Size and contents report for the release log (what a game downloads).
 echo "== SDK sizes"
 # One du call per level: du counts a directory once, so listing a parent
