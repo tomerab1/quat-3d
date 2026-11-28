@@ -100,10 +100,6 @@ public:
     // call: tests, offline baking). At least one step always runs.
     void set_cell_budget(std::uint64_t cells_per_frame);
 
-    // Fault injection (tests, diagnostics): while set, every job fails as if
-    // its GPU resources could not be created, so callers' fallbacks run.
-    void simulate_failure(bool fail);
-
     // Records this frame's synthesis work (nothing when idle). Call at most
     // once per frame, before compiling the graph.
     // A job whose resources cannot be created fails (collect() reports it)

@@ -81,10 +81,6 @@ public:
     // when nothing wants the tiles any more (the Terrain entity is gone).
     void abandon();
 
-    // Fault injection (tests, diagnostics): GPU jobs fail to start, so every
-    // tile takes the CPU fallback.
-    void simulate_gpu_failure(bool fail) { synth_.simulate_failure(fail); }
-
     // Tiles queued or in flight (frames must keep calling add_to_graph).
     [[nodiscard]] bool busy() const { return !pending_.empty() || !synth_.idle(); }
 
@@ -105,6 +101,10 @@ public:
     explicit GpuTileSource(Key /*key*/) {}
 
 private:
+    // Tests fail pending jobs through the real fallback path (defined in
+    // tests/, so production builds carry no fault-injection switch).
+    friend struct GpuTileSourceTestAccess;
+
     void deliver(TerrainSynthPass::Result result);
     void fall_back_to_cpu(std::uint64_t id);
 

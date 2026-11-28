@@ -43,7 +43,8 @@ inline constexpr std::uint64_t max_terrain_memory_bytes = 2ULL << 30U; // 2 GiB
 // the largest single tile.
 inline constexpr std::uint64_t max_terrain_window_droplets = 50'000'000;
 
-// Tiles a configuration keeps loaded: (2r+1)² when streaming, else 1.
+// Tiles a configuration keeps loaded: (2r+1)² when streaming, else 1. Radii
+// outside [0, 32767] are clamped to it (the count saturates, never wraps).
 [[nodiscard]] std::uint32_t terrain_tile_count(bool streaming, int stream_radius);
 
 struct TerrainFootprint {

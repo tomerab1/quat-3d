@@ -3,6 +3,7 @@
 // work across a streamed window are bounded as a whole.
 
 #include <cstdint>
+#include <limits>
 #include <string>
 
 #include <gtest/gtest.h>
@@ -28,6 +29,12 @@ TEST(TerrainBudget, CountsTheStreamedWindow) {
     EXPECT_EQ(t::terrain_tile_count(true, 1), 9U);
     EXPECT_EQ(t::terrain_tile_count(true, 8), 289U);
     EXPECT_EQ(t::terrain_tile_count(true, -3), 1U);
+    // Unvalidated radii saturate instead of overflowing or wrapping (a
+    // wrapped count would pass the budget).
+    EXPECT_EQ(t::terrain_tile_count(true, 32768), 65535U * 65535U);
+    EXPECT_EQ(t::terrain_tile_count(true, std::numeric_limits<int>::max()), 65535U * 65535U);
+    EXPECT_TRUE(t::terrain_budget_problem(params(17, t::ErosionModel::grid), true,
+                                          std::numeric_limits<int>::max()));
 }
 
 TEST(TerrainBudget, FootprintCountsEveryCopyOfEveryTile) {

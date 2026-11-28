@@ -15,7 +15,8 @@ namespace engine::terrain {
 
 namespace {
 
-constexpr float k_rate = 0.125F; // talus_relax.hpp: 1/8, exact
+// Interior sweep rate (talus_relax.hpp); x2 on an edge, x4 at a corner.
+constexpr float k_rate = 0.0625F;
 // Grids at least this wide split their rows over the hardware threads.
 constexpr std::uint32_t k_parallel_resolution = 128;
 
@@ -23,24 +24,44 @@ constexpr std::uint32_t k_parallel_resolution = 128;
     return static_cast<std::size_t>(z) * res + x;
 }
 
-// Coarse texels around fine texel f (bilinear prolongation): f even -> one
-// texel, f odd -> the pair either side; the last fine texel maps to the
-// last coarse one (restriction decimates it there for even resolutions).
-struct Span {
-    std::uint32_t a = 0;
-    std::uint32_t b = 0;
-};
-[[nodiscard]] Span coarse_span(std::uint32_t f, std::uint32_t fine_res, std::uint32_t coarse_res) {
-    if (f == fine_res - 1) return {coarse_res - 1, coarse_res - 1};
-    const std::uint32_t a = f / 2;
-    return {a, a + (f & 1U)};
+// 1 when index i is on the grid's border, else 0.
+[[nodiscard]] std::uint32_t border(std::uint32_t i, std::uint32_t res) {
+    return (i == 0 || i == res - 1) ? 1U : 0U;
+}
+
+// Full-weighting row sum around fine texel (fx, fz): h[-1] + 2 h[0] + h[+1]
+// inside; h[0] + h[1] on the border, where a sample weighs half (the
+// restriction is the volume-weighted transpose of the prolongation, so a
+// coarse level holds the same volume as the fine one). Additions and
+// doublings only; the normalisation (1/16, 1/8 on an edge, 1/4 at a corner)
+// is a power of two.
+[[nodiscard]] float weighted_row(const float* src, std::uint32_t res, std::uint32_t fx,
+                                 std::uint32_t fz) {
+    const float c = src[at(res, fx, fz)];
+    if (fx == 0) return c + src[at(res, fx + 1, fz)];
+    if (fx == res - 1) return src[at(res, fx - 1, fz)] + c;
+    return src[at(res, fx - 1, fz)] + 2.0F * c + src[at(res, fx + 1, fz)];
 }
 
 void restrict_row(std::vector<float>& p, const TalusOp& op, std::uint32_t z) {
-    const std::uint32_t last = op.src_resolution - 1;
-    const std::uint32_t fz = std::min(2 * z, last);
+    const std::uint32_t fres = op.src_resolution;
+    const float* src = p.data() + op.src;
+    const std::uint32_t fz = 2 * z; // odd resolutions nest exactly: coarse i = fine 2i
     for (std::uint32_t x = 0; x < op.resolution; ++x) {
-        const float v = p[op.src + at(op.src_resolution, std::min(2 * x, last), fz)];
+        const std::uint32_t fx = 2 * x;
+        const float mid = weighted_row(src, fres, fx, fz);
+        float sum = 0.0F;
+        if (fz == 0) {
+            sum = mid + weighted_row(src, fres, fx, fz + 1);
+        } else if (fz == fres - 1) {
+            sum = weighted_row(src, fres, fx, fz - 1) + mid;
+        } else {
+            sum = weighted_row(src, fres, fx, fz - 1) + 2.0F * mid +
+                  weighted_row(src, fres, fx, fz + 1);
+        }
+        const std::uint32_t edges = border(fx, fres) + border(fz, fres);
+        const float inv = edges == 0 ? 0.0625F : edges == 1 ? 0.125F : 0.25F;
+        const float v = sum * inv;
         p[op.dst + at(op.resolution, x, z)] = v;
         p[op.orig + at(op.resolution, x, z)] = v;
     }
@@ -50,6 +71,7 @@ void sweep_row(std::vector<float>& p, const TalusOp& op, std::uint32_t z) {
     const auto res = static_cast<std::int32_t>(op.resolution);
     const auto zi = static_cast<std::int32_t>(z);
     const float* src = p.data() + op.src;
+    const std::uint32_t z_edge = border(z, op.resolution);
     for (std::int32_t x = 0; x < res; ++x) {
         const float h = src[at(op.resolution, static_cast<std::uint32_t>(x), z)];
         float moved = 0.0F;
@@ -66,7 +88,11 @@ void sweep_row(std::vector<float>& p, const TalusOp& op, std::uint32_t z) {
                 if (excess > 0.0F) moved += dh > 0.0F ? excess : -excess;
             }
         }
-        p[op.dst + at(op.resolution, static_cast<std::uint32_t>(x), z)] = h + k_rate * moved;
+        // Border texels stand for half a cell (a quarter at a corner): the
+        // same transfer changes their height twice (four times) as much.
+        const std::uint32_t edges = border(static_cast<std::uint32_t>(x), op.resolution) + z_edge;
+        const float rate = k_rate * static_cast<float>(1U << edges);
+        p[op.dst + at(op.resolution, static_cast<std::uint32_t>(x), z)] = h + rate * moved;
     }
 }
 
@@ -76,17 +102,20 @@ void prolong_row(std::vector<float>& p, const TalusOp& op, std::uint32_t z) {
         const std::size_t i = at(cres, x, zz);
         return p[op.src + i] - p[op.orig + i];
     };
-    const Span sz = coarse_span(z, op.resolution, cres);
+    // Coarse texels around fine texel f: f even -> f/2, f odd -> f/2 and f/2 + 1.
+    const std::uint32_t z0 = z / 2;
+    const std::uint32_t z1 = z0 + (z & 1U);
     for (std::uint32_t x = 0; x < op.resolution; ++x) {
-        const Span sx = coarse_span(x, op.resolution, cres);
-        const float d00 = delta(sx.a, sz.a);
+        const std::uint32_t x0 = x / 2;
+        const std::uint32_t x1 = x0 + (x & 1U);
+        const float d00 = delta(x0, z0);
         float v = d00;
-        if (sx.a != sx.b && sz.a != sz.b) {
-            v = (d00 + delta(sx.b, sz.a) + delta(sx.a, sz.b) + delta(sx.b, sz.b)) * 0.25F;
-        } else if (sx.a != sx.b) {
-            v = (d00 + delta(sx.b, sz.a)) * 0.5F;
-        } else if (sz.a != sz.b) {
-            v = (d00 + delta(sx.a, sz.b)) * 0.5F;
+        if (x0 != x1 && z0 != z1) {
+            v = (d00 + delta(x1, z0) + delta(x0, z1) + delta(x1, z1)) * 0.25F;
+        } else if (x0 != x1) {
+            v = (d00 + delta(x1, z0)) * 0.5F;
+        } else if (z0 != z1) {
+            v = (d00 + delta(x0, z1)) * 0.5F;
         }
         float& out = p[op.dst + at(op.resolution, x, z)];
         out = out + v;
@@ -112,7 +141,9 @@ TalusPyramid talus_pyramid(std::uint32_t resolution, float cell_m, float talus) 
         level.limit_axis = std::ldexp(axis, k); // x 2^k: exact
         level.limit_diagonal = std::ldexp(diagonal, k);
         pyr.levels.push_back(level);
-        if (res <= talus_relax_coarsest) break;
+        // Only odd grids nest exactly in the next coarser one (fine 2i =
+        // coarse i, both borders kept).
+        if (res <= talus_relax_coarsest || res % 2 == 0) break;
         res = res / 2 + 1;
     }
     return pyr;

@@ -30,6 +30,24 @@
 #include "support/gpu_context.hpp"
 #include "support/gpu_submit.hpp"
 
+namespace engine::renderer {
+
+// Issue #78: fails every pending tile exactly as a failed synthesis job does
+// (the GPU job stops, the tile is regenerated on a CPU worker), through the
+// source's own fallback, without a fault-injection switch in the engine.
+struct GpuTileSourceTestAccess {
+    static void fail_pending(GpuTileSource& src) {
+        std::vector<std::uint64_t> ids;
+        for (const auto& [id, pending] : src.pending_) ids.push_back(id);
+        for (const std::uint64_t id : ids) {
+            src.synth_.cancel(id);
+            src.fall_back_to_cpu(id);
+        }
+    }
+};
+
+} // namespace engine::renderer
+
 namespace {
 
 namespace r = engine::renderer;
@@ -278,13 +296,13 @@ TEST(GpuTerrainTiles, CpuFallbackHonoursCancellation) {
         auto source = r::GpuTileSource::create(g->device, g->allocator, g->cache, g->shader_dir);
         ASSERT_OK(source);
         r::GpuTileSource& src = **source;
-        src.simulate_gpu_failure(true);
+        const auto fail_gpu = [&] { r::GpuTileSourceTestAccess::fail_pending(src); };
 
         // The requester cancels after the job fell back to the CPU.
         t::CancelToken token = t::make_cancel_token();
         auto cancelled = src.generate(endless, token);
-        source_frame(*g, src); // the job fails to start ...
-        source_frame(*g, src); // ... and is handed to a CPU worker
+        source_frame(*g, src); // the job starts on the GPU ...
+        fail_gpu();            // ... fails, and is handed to a CPU worker
         ASSERT_EQ(src.cpu_fallback_count(), 1U);
         EXPECT_FALSE(src.busy()) << "the fallback still counts as GPU work";
         EXPECT_EQ(cancelled.wait_for(50ms), std::future_status::timeout);
@@ -295,16 +313,14 @@ TEST(GpuTerrainTiles, CpuFallbackHonoursCancellation) {
 
         // abandon() gives up a fallback the requester still wants.
         auto given_up = src.generate(endless, t::make_cancel_token());
-        source_frame(*g, src);
-        source_frame(*g, src);
+        fail_gpu();
         src.abandon();
         ASSERT_EQ(given_up.wait_for(30s), std::future_status::ready);
         EXPECT_FALSE(given_up.get().valid());
 
         // A fallback still running when the source is destroyed (no token).
         abandoned = src.generate(endless, nullptr);
-        source_frame(*g, src);
-        source_frame(*g, src);
+        fail_gpu();
         ASSERT_GE(src.cpu_fallback_count(), 1U);
         EXPECT_EQ(abandoned.wait_for(0s), std::future_status::timeout);
     } // ~GpuTileSource

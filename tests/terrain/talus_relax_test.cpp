@@ -56,10 +56,18 @@ struct Steepness {
             worst};
 }
 
-[[nodiscard]] double sum(const std::vector<float>& h) {
-    double s = 0.0;
-    for (const float v : h) s += v;
-    return s;
+// Volume under the bilinear surface, in samples (the trapezoid rule): border
+// samples count half, corners a quarter. What the relaxation conserves.
+[[nodiscard]] double volume(const std::vector<float>& h, std::uint32_t n) {
+    double v = 0.0;
+    for (std::uint32_t z = 0; z < n; ++z) {
+        for (std::uint32_t x = 0; x < n; ++x) {
+            const double wx = (x == 0 || x == n - 1) ? 0.5 : 1.0;
+            const double wz = (z == 0 || z == n - 1) ? 0.5 : 1.0;
+            v += wx * wz * static_cast<double>(h[static_cast<std::size_t>(z) * n + x]);
+        }
+    }
+    return v;
 }
 
 TEST(TerrainTalusRelax, PyramidHalvesDownToTheCoarsestLevel) {
@@ -74,10 +82,11 @@ TEST(TerrainTalusRelax, PyramidHalvesDownToTheCoarsestLevel) {
     }
     EXPECT_EQ(p.floats, floats);
     EXPECT_LT(p.floats, 31ULL * 513 * 513 / 10) << "~12 B a texel (terrain budget)";
-    // Even resolutions keep their last texel: 100 -> 51 -> 26 -> 14 -> 8.
-    const t::TalusPyramid even = t::talus_pyramid(100, 1.0F, 1.0F);
-    ASSERT_EQ(even.levels.size(), 5U);
-    EXPECT_EQ(even.levels.back().resolution, 8U);
+    // Only odd grids nest: 97 -> 49 -> 25 -> 13 -> 7; 99 -> 50 stops there;
+    // an even grid is relaxed in place.
+    EXPECT_EQ(t::talus_pyramid(97, 1.0F, 1.0F).levels.back().resolution, 7U);
+    EXPECT_EQ(t::talus_pyramid(99, 1.0F, 1.0F).levels.back().resolution, 50U);
+    EXPECT_EQ(t::talus_pyramid(100, 1.0F, 1.0F).levels.size(), 1U);
     // A grid at or under the coarsest size is relaxed in place.
     EXPECT_EQ(t::talus_pyramid(t::talus_relax_coarsest, 1.0F, 1.0F).levels.size(), 1U);
     // Each cycle: restrict every coarse level, solve the coarsest, smooth
@@ -94,9 +103,70 @@ TEST(TerrainTalusRelax, ColumnSettlesIntoATalusConeConservingMaterial) {
     h[32 * n + 32] = 40.0F; // a 40 m spike on a 1 m grid
     ASSERT_TRUE(t::relax_talus(h, n, 1.0F, 0.6F, 3));
     EXPECT_LT(h[32 * n + 32], 6.0F);
-    EXPECT_NEAR(sum(h), 40.0, 1e-3) << "relaxation must conserve material";
+    EXPECT_NEAR(volume(h, n), 40.0, 1e-3) << "relaxation must conserve material";
     const Steepness s = steepness(h, n, 1.0F, 0.6F, 1.1F);
     EXPECT_EQ(s.share, 0.0) << "steepest slope " << s.max_slope;
+}
+
+// PR #90 review: a narrow feature must never turn into a pit. Thermal
+// erosion only moves material downhill, so nothing may leave the input's
+// [min, max] — wherever the feature sits: even and odd texels (decimation
+// aliased the even ones into coarse plateaus), borders and corners. And the
+// volume is conserved there too.
+TEST(TerrainTalusRelax, StaysWithinTheInputRangeAndConservesVolume) {
+    struct Feature {
+        const char*   name;
+        std::uint32_t x, z, size;
+        float         height;
+    };
+    for (const std::uint32_t n : {33U, 65U, 129U, 257U}) {
+        const std::uint32_t mid = n / 2;
+        const Feature features[] = {
+            {"spike, even texel", mid, mid, 1, 50.0F},
+            {"spike, odd texel", mid + 1, mid + 1, 1, 50.0F},
+            {"3x3 block, odd corner", mid - 1, mid + 2, 3, 50.0F},
+            {"spike on the border", 0, mid + 1, 1, 50.0F},
+            {"column on the border", 0, mid, 3, 40.0F},
+            {"spike in the corner", n - 1, n - 1, 1, 50.0F},
+            {"block in the corner", 0, 0, 2, 40.0F},
+            {"16x16 block", mid - 8, mid - 8, 16, 100.0F},
+        };
+        for (const Feature& f : features) {
+            std::vector<float> h(static_cast<std::size_t>(n) * n, 3.0F); // base above 0
+            for (std::uint32_t z = f.z; z < f.z + f.size && z < n; ++z) {
+                for (std::uint32_t x = f.x; x < f.x + f.size && x < n; ++x) {
+                    h[static_cast<std::size_t>(z) * n + x] = f.height;
+                }
+            }
+            const double before = volume(h, n);
+            ASSERT_TRUE(t::relax_talus(h, n, 1.0F, 0.5F, 3));
+            const auto [lo, hi] = std::ranges::minmax(h);
+            EXPECT_GE(lo, 3.0F) << n << "²: " << f.name << " dug a pit";
+            EXPECT_LE(hi, f.height) << n << "²: " << f.name;
+            EXPECT_NEAR(volume(h, n), before, 1e-5 * before) << n << "²: " << f.name;
+        }
+    }
+}
+
+// The same on rough fields: white noise is the worst case for aliasing.
+TEST(TerrainTalusRelax, NoiseFieldsStayInRangeAndConserveVolume) {
+    std::uint32_t state = 12345;
+    const auto next = [&state] {
+        state = state * 1664525U + 1013904223U;
+        return static_cast<float>(state >> 8) * (1.0F / 16777216.0F);
+    };
+    for (const std::uint32_t n : {65U, 129U}) {
+        std::vector<float> h(static_cast<std::size_t>(n) * n);
+        for (float& v : h) v = 40.0F * next();
+        const auto [lo, hi] = std::ranges::minmax(h);
+        const double before = volume(h, n);
+        ASSERT_TRUE(t::relax_talus(h, n, 1.0F, 0.5F, 3));
+        const auto [out_lo, out_hi] = std::ranges::minmax(h);
+        EXPECT_GE(out_lo, lo) << n;
+        EXPECT_LE(out_hi, hi) << n;
+        EXPECT_NEAR(volume(h, n), before, 1e-5 * before) << n;
+        EXPECT_LT(steepness(h, n, 1.0F, 0.5F, 1.2F).share, 0.01) << n;
+    }
 }
 
 // The case the interleaved thermal steps cannot fix: the interior of a
@@ -118,19 +188,22 @@ TEST(TerrainTalusRelax, UniformSteepRampComesDownToTheTalusAngle) {
     // As many plain thermal sweeps as the cascade costs barely touch it.
     std::vector<float> local = ramp;
     t::GridErosionParams thermal;
-    thermal.iterations = 40;
+    thermal.iterations = 100;
     thermal.rain = 0.0F;
     thermal.talus = talus;
     thermal.thermal_rate = 1.0F;
     thermal.relax_cycles = 0;
     ASSERT_TRUE(t::erode_grid(local, n, cell, thermal));
-    EXPECT_GT(steepness(local, n, cell, talus, 1.1F).share, 0.25);
+    EXPECT_GT(steepness(local, n, cell, talus, 1.2F).share, 0.25);
+    EXPECT_GT(steepness(local, n, cell, talus, 1.2F).max_slope, 1.7F);
 
     std::vector<float> relaxed = ramp;
     ASSERT_TRUE(t::relax_talus(relaxed, n, cell, talus, 3));
-    const Steepness after = steepness(relaxed, n, cell, talus, 1.1F);
-    EXPECT_LT(after.share, 0.01) << "steepest slope " << after.max_slope;
-    EXPECT_NEAR(sum(relaxed) / (n * n), sum(ramp) / (n * n), 0.01 * 220.0);
+    const Steepness after = steepness(relaxed, n, cell, talus, 1.2F);
+    std::printf("[talus] 60° ramp: steepest %.3f -> %.3f x talus\n",
+                static_cast<double>(before.max_slope), static_cast<double>(after.max_slope));
+    EXPECT_EQ(after.share, 0.0) << "steepest slope " << after.max_slope;
+    EXPECT_NEAR(volume(relaxed, n), volume(ramp, n), 1e-5 * volume(ramp, n));
 }
 
 TEST(TerrainTalusRelax, SurfaceWithinTheTalusIsAFixedPoint) {

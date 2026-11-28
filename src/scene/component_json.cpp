@@ -880,13 +880,14 @@ std::expected<void, core::Error> apply_component(entt::registry& r, entt::entity
             // The fields above are bounded one by one; their product (tiles
             // kept loaded x resolution², droplets x tiles) is bounded here (#67).
             if (const auto over = terrain::terrain_budget_problem(p, t.streaming, t.stream_radius)) {
-                const char* field = "streaming"; // the field the request changed
-                if (over->kind == terrain::TerrainBudgetProblem::Kind::droplets) {
-                    field = "droplets";
-                } else if (f.has("stream_radius")) {
-                    field = "stream_radius";
-                } else if (f.has("resolution")) {
-                    field = "resolution";
+                // Blame the first budget-relevant field the request changed.
+                const char* field = "resolution";
+                for (const char* key : {"stream_radius", "resolution", "droplets", "erosion",
+                                        "erosion_steps", "streaming"}) {
+                    if (f.has(key)) {
+                        field = key;
+                        break;
+                    }
                 }
                 f.fail(field, over->message);
             }

@@ -68,7 +68,8 @@ RWStructuredBuffer<float>   g_relax;    // talus relaxation pyramid (terrain::Ta
 [[vk::push_constant]] Push pc;
 
 static const float k_min_flow_depth = 1e-4; // grid_erosion.cpp k_min_flow_depth
-static const float k_relax_rate = 0.125;    // talus_relax.cpp k_rate (exact)
+static const float k_relax_rate = 0.0625;   // talus_relax.cpp k_rate (exact)
+
 
 struct BufferPermutation : IPermutation {
     uint at(uint index) { return g_perm[index]; }
@@ -273,19 +274,48 @@ void relax_load(uint3 id : SV_DispatchThreadID) {
     g_relax[pc.dst + i] = g_height[i] + g_sediment[pc.cur * texel_count() + i];
 }
 
-// Decimation into the next coarser level, also kept as its original.
+uint border(uint i, uint res) { return (i == 0 || i == res - 1) ? 1u : 0u; }
+
+// Full-weighting row sum around fine texel (fx, fz) of the source level:
+// h[-1] + 2 h[0] + h[+1] inside, h[0] + h[1] on the border (half-weight
+// samples; talus_relax.cpp weighted_row).
+float weighted_row(uint fx, uint fz) {
+    uint res = pc.src_res;
+    float c = g_relax[pc.src + level_texel(res, fx, fz)];
+    if (fx == 0) return c + g_relax[pc.src + level_texel(res, fx + 1, fz)];
+    if (fx == res - 1) return g_relax[pc.src + level_texel(res, fx - 1, fz)] + c;
+    return g_relax[pc.src + level_texel(res, fx - 1, fz)] + 2.0 * c +
+           g_relax[pc.src + level_texel(res, fx + 1, fz)];
+}
+
+// Full weighting into the next coarser level (volume-weighted on the
+// border), also kept as its original.
 [shader("compute")]
 [numthreads(8, 8, 1)]
 void relax_restrict(uint3 id : SV_DispatchThreadID) {
     if (!inside_level(id)) return;
-    uint last = pc.src_res - 1;
-    float v = g_relax[pc.src + level_texel(pc.src_res, min(2 * id.x, last), min(2 * id.y, last))];
+    uint fres = pc.src_res;
+    uint fx = 2 * id.x; // odd levels nest exactly: coarse i = fine 2i
+    uint fz = 2 * id.y;
+    float mid = weighted_row(fx, fz);
+    float sum;
+    if (fz == 0) {
+        sum = mid + weighted_row(fx, fz + 1);
+    } else if (fz == fres - 1) {
+        sum = weighted_row(fx, fz - 1) + mid;
+    } else {
+        sum = weighted_row(fx, fz - 1) + 2.0 * mid + weighted_row(fx, fz + 1);
+    }
+    uint edges = border(fx, fres) + border(fz, fres);
+    float inv = edges == 0 ? 0.0625 : (edges == 1 ? 0.125 : 0.25);
+    float v = sum * inv;
     uint i = level_texel(pc.res, id.x, id.y);
     g_relax[pc.dst + i] = v;
     g_relax[pc.orig + i] = v;
 }
 
-// One Jacobi sweep of the pairwise thermal transfer (src -> dst).
+// One Jacobi sweep of the pairwise thermal transfer (src -> dst); border
+// samples weigh half (corners a quarter), so they move twice (four times) as far.
 [shader("compute")]
 [numthreads(8, 8, 1)]
 void relax_sweep(uint3 id : SV_DispatchThreadID) {
@@ -306,12 +336,13 @@ void relax_sweep(uint3 id : SV_DispatchThreadID) {
             if (excess > 0.0) moved += dh > 0.0 ? excess : -excess;
         }
     }
-    g_relax[pc.dst + level_texel(pc.res, id.x, id.y)] = h + k_relax_rate * moved;
+    uint edges = border(id.x, pc.res) + border(id.y, pc.res);
+    float rate = k_relax_rate * float(1u << edges);
+    g_relax[pc.dst + level_texel(pc.res, id.x, id.y)] = h + rate * moved;
 }
 
-// Coarse texels around fine texel f (talus_relax.cpp coarse_span).
+// Coarse texels around fine texel f: f even -> f/2, f odd -> f/2 and f/2 + 1.
 uint2 coarse_span(uint f) {
-    if (f == pc.res - 1) return uint2(pc.src_res - 1, pc.src_res - 1);
     uint a = f / 2;
     return uint2(a, a + (f & 1u));
 }

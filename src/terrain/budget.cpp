@@ -1,11 +1,14 @@
 #include "engine/terrain/budget.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cstdio>
 
 namespace engine::terrain {
 
 namespace {
+
+constexpr int k_max_radius = 0x7FFF; // terrain_tile_count saturates here
 
 // Resolutions suggested back to the caller: 2^n + 1, which LOD and the
 // height-field collider prefer.
@@ -27,7 +30,10 @@ constexpr std::array<std::uint32_t, 10> k_resolutions{8193, 4097, 2049, 1025, 51
 
 std::uint32_t terrain_tile_count(bool streaming, int stream_radius) {
     if (!streaming) return 1;
-    const auto side = static_cast<std::uint32_t>(2 * (stream_radius < 0 ? 0 : stream_radius) + 1);
+    // Saturate unvalidated radii (the runtime checks whatever the component
+    // holds): side <= 65535, so side² fits 32 bits and is far over any budget.
+    const auto r = static_cast<std::uint32_t>(std::clamp(stream_radius, 0, k_max_radius));
+    const std::uint32_t side = 2 * r + 1;
     return side * side;
 }
 
@@ -67,7 +73,7 @@ std::optional<TerrainBudgetProblem> terrain_budget_problem(const TerrainParams& 
             }
         }
         if (streaming) {
-            for (int r = stream_radius - 1; r >= 0; --r) {
+            for (int r = std::min(stream_radius, k_max_radius) - 1; r >= 0; --r) {
                 if (fits(params, terrain_tile_count(true, r), memory_budget)) {
                     m += ", or stream_radius <= " + std::to_string(r) + " at resolution " +
                          std::to_string(params.resolution);

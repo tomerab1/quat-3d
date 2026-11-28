@@ -104,7 +104,6 @@ struct TerrainSynthPass::State {
     VkDeviceSize                          max_storage_range = 0;
 
     std::uint64_t cell_budget = default_cell_budget;
-    bool          simulate_failure = false; // fault injection: jobs fail to start
     std::uint64_t next_id = 1;
 
     std::deque<std::unique_ptr<Job>>  queued;
@@ -371,10 +370,6 @@ std::size_t TerrainSynthPass::retired_count() const {
     return state_ ? state_->retired.size() : 0;
 }
 
-void TerrainSynthPass::simulate_failure(bool fail) {
-    if (state_) state_->simulate_failure = fail;
-}
-
 void TerrainSynthPass::set_cell_budget(std::uint64_t cells_per_frame) {
     if (state_) state_->cell_budget = cells_per_frame;
 }
@@ -392,10 +387,6 @@ std::expected<void, core::Error> TerrainSynthPass::add_to_graph(rhi::RenderGraph
     while (!s.active && !s.queued.empty()) {
         std::unique_ptr<Job> job = std::move(s.queued.front());
         s.queued.pop_front();
-        if (s.simulate_failure) {
-            s.failed.push_back(std::move(job));
-            continue;
-        }
         if (auto r = s.start(*job); !r) {
             s.failed.push_back(std::move(job));
             continue;
