@@ -27,9 +27,11 @@ using engine::core::path_to_utf8;
     // the ANSI code page); SDL_GetBasePath returns UTF-8.
     candidates.override_root = engine::core::env_path("QUAT_ASSET_ROOT");
     // The executable's directory, or a macOS bundle's Contents/Resources
-    // (where the packaged .app keeps its data).
+    // (where the packaged .app keeps its data); then, for the players an
+    // engine SDK installs in <sdk>/bin, <sdk>/share/quat3d (P8).
     if (const char* base = SDL_GetBasePath(); base != nullptr) {
-        candidates.install_dirs.push_back(path_from_utf8(base).lexically_normal().parent_path());
+        candidates.install_dirs =
+            engine::core::install_dirs_for(path_from_utf8(base).lexically_normal().parent_path());
     }
 #if defined(QUAT_BUILD_TREE_ROOT)
     candidates.build_tree_root = path_from_utf8(QUAT_BUILD_TREE_ROOT);

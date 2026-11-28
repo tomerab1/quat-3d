@@ -277,8 +277,8 @@ Design: [`docs/design/cozy-builder.md` §4.14](../design/cozy-builder.md#414-sea
 | ✅ | **Critically Damped Ease-In/Ease-Out Smoothing** — Lowe, Game Programming Gems 4 (2004). See also Holden's *Spring-It-On* under Animation. | `include/engine/core/spring.hpp`; G15.1 camera rig smoothing (`src/scene/camera_rig_system.cpp`) |
 | ✅ | **50 Game Camera Mistakes** — Nesky, GDC 2014. [GDC Vault](https://www.gdcvault.com/play/1020460/50-Camera) | G15.1 pitch eased with zoom (`src/scene/camera_rig.cpp`) |
 | ✅ | **Real-Time Cameras** — Haigh-Hutchinson, Morgan Kaufmann 2009. | G15.1 target-space orbit rig (`include/engine/scene/camera_rig.hpp`) |
-| 🗺 | **Semantic Versioning 2.0.0** — Preston-Werner. [semver.org](https://semver.org/spec/v2.0.0.html) | P8 SDK versioning policy |
-| 🗺 | **CMake: Importing and Exporting Guide** — Kitware (exported targets, package config and version files). [cmake.org](https://cmake.org/cmake/help/latest/guide/importing-exporting/index.html) | P8 `find_package(quat3d CONFIG)` |
+| 🔧 | **Semantic Versioning 2.0.0** — Preston-Werner. [semver.org](https://semver.org/spec/v2.0.0.html) | P8 SDK versioning policy (`docs/sdk.md`, `cmake/Quat3dInstall.cmake`) |
+| 🔧 | **CMake: Importing and Exporting Guide** — Kitware (exported targets, package config and version files). [cmake.org](https://cmake.org/cmake/help/latest/guide/importing-exporting/index.html) | P8 `find_package(quat3d CONFIG)` (`cmake/Quat3dInstall.cmake`, `cmake/quat3dConfig.cmake.in`) |
 | 🗺 | **Game Programming Patterns: Command** — Nystrom, 2014. [online](https://gameprogrammingpatterns.com/command.html) · and **Design Patterns** — Gamma, Helm, Johnson, Vlissides, 1994 (Command, Memento). | E1 `core::CommandStack`; G16.6 undo/redo |
 
 ## Animation, physics & navigation

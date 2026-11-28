@@ -148,6 +148,8 @@ private:
     std::vector<std::uint32_t>     slots_; // reflected binding of each resource
     rhi::GpuBuffer                 unit_exposure_; // bound when no exposure is given
     VkDeviceAddress                unit_exposure_address_ = 0;
+    rhi::GpuBuffer                 unused_counter_; // bound when non-finite counting is off
+    VkDeviceAddress                unused_counter_address_ = 0;
 
     std::shared_ptr<TaaHistory> history_;
     rhi::DescriptorBuffer       frame_descriptor_;

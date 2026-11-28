@@ -84,6 +84,27 @@ TEST(AssetRoot, InstallDirWinsOverBuildTree) {
     EXPECT_EQ(root->origin, "install directory");
 }
 
+// An engine SDK (P8): <sdk>/bin/quat-player has no data next to it; the data
+// root is <sdk>/share/quat3d, found without QUAT_ASSET_ROOT or a build tree.
+TEST(AssetRoot, SdkPlayerFindsShareQuat3d) {
+    TempDir tmp;
+    const fs::path sdk = tmp.path() / "sdk";
+    fs::create_directories(sdk / "bin");
+    fs::create_directories(sdk / "share" / "quat3d" / "assets");
+    fs::create_directories(sdk / "share" / "quat3d" / "cooked" / "shaders");
+
+    AssetRootCandidates c;
+    c.install_dirs = engine::core::install_dirs_for(sdk / "bin");
+    ASSERT_EQ(c.install_dirs.size(), 2U);
+    EXPECT_EQ(c.install_dirs[0], sdk / "bin"); // packaged games still win
+    const auto root = resolve_asset_root(c);
+    ASSERT_OK(root);
+    EXPECT_TRUE(fs::equivalent(root->project_root, sdk / "share" / "quat3d"));
+    EXPECT_TRUE(fs::equivalent(root->shader_dir, sdk / "share" / "quat3d" / "cooked" / "shaders"));
+    EXPECT_EQ(root->origin, "install directory");
+    EXPECT_TRUE(engine::core::install_dirs_for(fs::path{}).empty());
+}
+
 TEST(AssetRoot, BuildTreeFallbackUsesItsShaderDir) {
     TempDir tmp;
     const fs::path tree = tmp.path() / "tree";

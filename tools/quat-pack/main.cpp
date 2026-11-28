@@ -42,6 +42,9 @@ int run(const std::vector<std::string>& args) {
     if (auto root = engine::core::env_path("QUAT_ENGINE_ROOT")) defaults.engine_root = root;
     if (auto shaders = engine::core::env_path("QUAT_SHADER_DIR")) defaults.shader_dir = shaders;
     if (auto self = engine::core::current_executable_path()) defaults.tool_dir = self->parent_path();
+    // Installed in an engine SDK (<sdk>/bin): engine root and shaders from
+    // <sdk>/share/quat3d, unless the build tree or the environment set them.
+    engine::pack::apply_installed_sdk_defaults(defaults);
 
     return engine::pack::run_pack(*options, defaults, [](std::string_view text) {
         std::fwrite(text.data(), 1, text.size(), stdout);

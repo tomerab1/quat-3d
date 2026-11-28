@@ -75,7 +75,10 @@ if(MSVC)
     # on every translation unit. vcpkg ports are built separately.
     string(REPLACE "/EHsc" "" CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}")
     string(REPLACE "/GR" "" CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}")
-    target_compile_options(engine_flags INTERFACE /W4 /permissive- /EHs-c- /GR-)
+    # Warning levels apply to the engine's own sources only (BUILD_INTERFACE):
+    # SDK consumers (P8) get the language/ABI-relevant flags, not our warnings.
+    target_compile_options(engine_flags INTERFACE
+        $<BUILD_INTERFACE:/W4> /permissive- /EHs-c- /GR-)
     # getenv/fopen are used deliberately (portable C, bounds-checked call
     # sites); _HAS_EXCEPTIONS=0 matches /EHs-c- so the STL stops emitting
     # C4530 from its internal try/catch.
@@ -84,7 +87,7 @@ if(MSVC)
         _HAS_EXCEPTIONS=0)
 else()
     target_compile_options(engine_flags INTERFACE
-        -Wall -Wextra -Wshadow
+        $<BUILD_INTERFACE:-Wall -Wextra -Wshadow>
         -fno-exceptions -fno-rtti)
 endif()
 
@@ -148,6 +151,12 @@ find_package(recastnavigation CONFIG REQUIRED)
 find_package(GameNetworkingSockets CONFIG REQUIRED)
 # Lua 5.4 (C library, longjmp error handling) + sol2 (header-only bindings).
 find_package(Lua REQUIRED)
+# FindLua reports paths (LUA_LIBRARIES: liblua plus libm on Unix), not a
+# target. Wrapped in an imported target so engine_script's export names it
+# (quat3d_deps::lua) instead of the build machine's paths; quat3dConfig.cmake
+# defines the same target from the consumer's own FindLua result (P8).
+add_library(quat3d_deps::lua INTERFACE IMPORTED)
+set_target_properties(quat3d_deps::lua PROPERTIES INTERFACE_LINK_LIBRARIES "${LUA_LIBRARIES}")
 find_package(sol2 CONFIG REQUIRED)
 # OpenSSL's libcrypto (GameNetworkingSockets already depends on it): the CSPRNG
 # behind remote-control session tokens (engine_remote) and SHA-256 for game
@@ -177,7 +186,16 @@ if(ENGINE_EDITOR)
     find_package(unofficial-imgui-node-editor CONFIG REQUIRED)
 endif()
 
-set(ENGINE_PUBLIC_INCLUDE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+# Public include directories. In the build tree: include/ plus the generated
+# engine/version.hpp; installed (the SDK, P8): <prefix>/include, which holds
+# only the stable header set (cmake/Quat3dInstall.cmake).
+set(ENGINE_GENERATED_INCLUDE ${CMAKE_CURRENT_BINARY_DIR}/generated/include)
+configure_file(${CMAKE_CURRENT_SOURCE_DIR}/cmake/version.hpp.in
+    ${ENGINE_GENERATED_INCLUDE}/engine/version.hpp @ONLY)
+set(ENGINE_PUBLIC_INCLUDE
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    $<BUILD_INTERFACE:${ENGINE_GENERATED_INCLUDE}>
+    $<INSTALL_INTERFACE:include>)
 
 # ---------------------------------------------------------------------------
 # engine_core — graphics-free foundations: the log ring + log() helper, stderr
@@ -200,8 +218,12 @@ add_library(engine_core STATIC
     src/core/profile_names.cpp
     src/core/profile_stats.cpp
     src/core/profile_capture.cpp
-    src/core/frame_profiler.cpp)
-target_link_libraries(engine_core PUBLIC engine_flags Threads::Threads)
+    src/core/frame_profiler.cpp
+    src/core/version.cpp)
+# glm + nlohmann_json are PUBLIC: engine/core/json_fields.hpp (header-only,
+# part of the SDK's stable API) reads JSON into glm types.
+target_link_libraries(engine_core PUBLIC engine_flags Threads::Threads
+    glm::glm nlohmann_json::nlohmann_json)
 target_include_directories(engine_core PUBLIC ${ENGINE_PUBLIC_INCLUDE})
 # QUAT_TRACY switches engine/core/profile.hpp's macros (and the GPU zones of
 # rhi::GpuProfiler) to Tracy as well; PUBLIC so every engine target that
@@ -247,6 +269,7 @@ target_include_directories(engine_input PUBLIC ${ENGINE_PUBLIC_INCLUDE})
 # ---------------------------------------------------------------------------
 add_library(engine_rhi STATIC
     src/rhi/device.cpp
+    src/rhi/driver_info.cpp
     src/rhi/queue_selection.cpp
     src/rhi/swapchain.cpp
     src/rhi/gpu_allocator.cpp
@@ -256,6 +279,7 @@ add_library(engine_rhi STATIC
     src/rhi/pipeline_cache.cpp
     src/rhi/descriptor_buffer.cpp
     src/rhi/render_graph.cpp
+    src/rhi/render_graph_copy.cpp
     src/rhi/gpu_profiler.cpp
     src/rhi/graphics_pipeline.cpp
     src/rhi/compute_pipeline.cpp
@@ -336,7 +360,9 @@ add_library(engine_animation STATIC
     src/animation/ik/foot_placement.cpp)
 target_link_libraries(engine_animation PUBLIC engine_flags glm::glm)
 # ACL is an implementation detail of the clip codec (acl_*.cpp).
-target_link_libraries(engine_animation PRIVATE acl_headers)
+# BUILD_INTERFACE: header-only and fetched at configure time, so the SDK's
+# exported engine_animation (a static library) needs nothing from it.
+target_link_libraries(engine_animation PRIVATE $<BUILD_INTERFACE:acl_headers>)
 target_include_directories(engine_animation PUBLIC ${ENGINE_PUBLIC_INCLUDE})
 
 # ---------------------------------------------------------------------------
@@ -370,7 +396,8 @@ add_library(engine_physics STATIC
     src/physics/physics_body_control.cpp
     src/physics/physics_shape_queries.cpp
     src/physics/physics_joints.cpp)
-target_link_libraries(engine_physics PUBLIC engine_flags)
+# glm is PUBLIC: physics_world.hpp's API takes glm vectors/quaternions.
+target_link_libraries(engine_physics PUBLIC engine_flags glm::glm)
 target_link_libraries(engine_physics PRIVATE engine_core) # profiler zones + worker names (R4)
 target_link_libraries(engine_physics PRIVATE Jolt::Jolt)
 target_include_directories(engine_physics PUBLIC ${ENGINE_PUBLIC_INCLUDE})
@@ -456,7 +483,7 @@ add_library(engine_gltf_io STATIC
 target_link_libraries(engine_gltf_io PUBLIC engine_flags engine_image fastgltf::fastgltf)
 target_link_libraries(engine_gltf_io PRIVATE meshoptimizer::meshoptimizer)
 target_include_directories(engine_gltf_io PUBLIC
-    ${ENGINE_PUBLIC_INCLUDE} ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    ${ENGINE_PUBLIC_INCLUDE} $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src>)
 
 # stb_image's implementation (PNG + JPEG only), used through engine_image's
 # guarded decoder. Its TU is not warning-clean under our strict flags.
@@ -487,7 +514,7 @@ add_library(engine_script STATIC
     src/script/script_runtime.cpp
     src/script/script_files.cpp)
 target_link_libraries(engine_script PUBLIC engine_flags engine_core engine_input engine_scene engine_physics)
-target_link_libraries(engine_script PRIVATE sol2::sol2 ${LUA_LIBRARIES})
+target_link_libraries(engine_script PRIVATE sol2::sol2 quat3d_deps::lua)
 # SYSTEM: the vcpkg include directory holds every dependency's headers.
 target_include_directories(engine_script SYSTEM PRIVATE ${LUA_INCLUDE_DIR})
 target_include_directories(engine_script PUBLIC ${ENGINE_PUBLIC_INCLUDE})
@@ -586,7 +613,11 @@ add_library(engine_audio STATIC
     src/audio/audio_engine.cpp
     src/audio/miniaudio_impl.cpp)
 target_link_libraries(engine_audio PUBLIC engine_flags glm::glm)
-target_link_libraries(engine_audio PRIVATE miniaudio_headers engine_core)
+# miniaudio_headers is a local imported target holding a build-machine path:
+# BUILD_INTERFACE keeps it out of the SDK export; its link libraries (threads,
+# libdl, libm) are repeated so the exported static library carries them.
+target_link_libraries(engine_audio PRIVATE $<BUILD_INTERFACE:miniaudio_headers> engine_core
+    Threads::Threads ${CMAKE_DL_LIBS} $<$<PLATFORM_ID:Linux,FreeBSD>:m>)
 target_include_directories(engine_audio PUBLIC ${ENGINE_PUBLIC_INCLUDE})
 # miniaudio's implementation is not warning-clean under our strict flags.
 set_source_files_properties(src/audio/miniaudio_impl.cpp PROPERTIES COMPILE_OPTIONS "${ENGINE_THIRD_PARTY_TU_FLAGS}")
@@ -980,3 +1011,9 @@ add_dependencies(quat-player-shipping shaders)
 if(NOT ENGINE_PACKAGE_BUILD)
     target_compile_definitions(engine_rhi PRIVATE QUAT_SLANGC_PATH="${SLANGC_EXECUTABLE}")
 endif()
+
+# ---------------------------------------------------------------------------
+# Engine SDK (ROADMAP P8): umbrella targets, install rules, the quat3d CMake
+# package, the toolchain file and the SDK tools. See docs/sdk.md.
+# ---------------------------------------------------------------------------
+include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/Quat3dInstall.cmake)
