@@ -8,6 +8,7 @@
 #include <memory>
 #include <system_error>
 
+#include "engine/core/utf8_path.hpp"
 #include "engine/scene/script_component.hpp"
 #include "sol_config.hpp"
 
@@ -74,13 +75,13 @@ std::expected<fs::path, core::Error> script_file(const fs::path& scripts_root,
 std::expected<std::string, core::Error> read_script(const fs::path& file) {
     std::error_code ec;
     const auto size = fs::file_size(file, ec);
-    if (ec) return std::unexpected(core::Error{"cannot read " + file.filename().string() + ": " + ec.message()});
+    if (ec) return std::unexpected(core::Error{"cannot read " + core::path_to_utf8(file.filename()) + ": " + ec.message()});
     if (size > k_max_script_bytes) {
-        return std::unexpected(core::Error{file.filename().string() + " is larger than " +
+        return std::unexpected(core::Error{core::path_to_utf8(file.filename()) + " is larger than " +
                                            std::to_string(k_max_script_bytes) + " bytes"});
     }
     std::ifstream in(file, std::ios::binary);
-    if (!in) return std::unexpected(core::Error{"cannot open " + file.filename().string()});
+    if (!in) return std::unexpected(core::Error{"cannot open " + core::path_to_utf8(file.filename())});
     std::string text(static_cast<std::size_t>(size), '\0');
     in.read(text.data(), static_cast<std::streamsize>(text.size()));
     text.resize(static_cast<std::size_t>(in.gcount()));
@@ -94,7 +95,7 @@ std::vector<std::string> list_scripts(const fs::path& scripts_root) {
     for (; !ec && it != fs::recursive_directory_iterator(); it.increment(ec)) {
         if (out.size() >= k_max_listed_scripts) break;
         if (!it->is_regular_file(ec) || it->path().extension() != ".lua") continue;
-        std::string rel = it->path().lexically_relative(scripts_root).generic_string();
+        std::string rel = core::path_to_generic_utf8(it->path().lexically_relative(scripts_root));
         if (scene::validate_script_path(rel)) out.push_back(std::move(rel));
     }
     std::ranges::sort(out);

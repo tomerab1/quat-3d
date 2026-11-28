@@ -8,6 +8,7 @@
 
 #include "engine/core/log.hpp"
 #include "engine/core/profile.hpp"
+#include "engine/core/utf8_path.hpp"
 #include "engine/scene/scene.hpp"
 #include "engine/scene/script_component.hpp"
 #include "engine/script/script_source.hpp"
@@ -101,7 +102,8 @@ void ScriptRuntime::poll_changes() {
     if (!impl_->watcher) return;
     for (const core::FileChange& change : impl_->watcher->poll()) {
         const std::string rel =
-            change.path.lexically_relative(impl_->options.scripts_root).generic_string();
+            core::path_to_generic_utf8(
+                change.path.lexically_relative(impl_->options.scripts_root));
         if (scene::validate_script_path(rel)) reload(rel);
     }
 }
