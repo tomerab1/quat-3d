@@ -184,6 +184,15 @@ into CLAUDE.md or the brief template in [`CYCLE.md`](CYCLE.md).
 
 ## C++ in this codebase
 
+- **An sRGB attachment decides the blending space, and ImGui's is gamma**
+  (issue #92). The UI pass linearised ImGui's vertex colours so the sRGB
+  swapchain would re-encode them; flat colours round-tripped, but glyph
+  coverage was then blended in linear space and black text on white topped
+  out at 64/255. Colour tests of opaque fills cannot see this. → UI (and
+  any content authored for gamma blending) renders through a UNORM view of
+  the sRGB target (`RenderGraph::set_unorm_view`, mutable-format swapchain)
+  or a UNORM scratch + byte copy; its pixel tests cover partial coverage
+  (half-alpha quads, the complement of black-on-white vs white-on-black).
 - **Designated initializers + `-Wextra` warn for every omitted field that
   has no default member initializer** (clang's
   `-Wmissing-field-initializers`). Option structs meant for `{.a = 1}` call

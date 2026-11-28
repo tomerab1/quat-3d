@@ -19,6 +19,7 @@
 #include <algorithm>
 #include <array>
 #include <cstdint>
+#include <cstdlib>
 #include <expected>
 #include <filesystem>
 #include <string>
@@ -45,7 +46,7 @@ namespace ui = engine::editor::ui;
 using engine::core::Error;
 using quat::test::HostImage;
 
-constexpr VkExtent2D k_extent{192, 96};
+constexpr VkExtent2D k_extent{192, 112};
 constexpr const char* k_label = "Attenuation";
 
 enum class Target : std::uint8_t { unorm, srgb_unorm_view, srgb_fallback };
@@ -85,16 +86,20 @@ private:
 struct Rect {
     int x0, y0, x1, y1;
 };
-constexpr Rect k_light_panel{0, 0, 96, 88};   // white, black text + swatches
-constexpr Rect k_dark_panel{96, 0, 192, 88};  // black, white text
-constexpr Rect k_half_black{8, 56, 24, 72};   // black at alpha 128 over white
-constexpr Rect k_half_white{104, 56, 120, 72}; // white at alpha 128 over black
+// The two labels sit at the same x (one band below the other), so ImGui
+// places their glyphs at identical sub-pixel offsets.
+constexpr Rect k_light_band{0, 0, 192, 32};   // white, black label at (6, 8)
+constexpr Rect k_dark_band{0, 32, 192, 64};   // black, white label at (6, 40)
+constexpr Rect k_light_panel{0, 64, 96, 104}; // white: half coverage + greys
+constexpr Rect k_dark_panel{96, 64, 192, 104}; // black: half coverage + viewport
+constexpr Rect k_half_black{8, 72, 24, 88};   // black at alpha 128 over white
+constexpr Rect k_half_white{104, 72, 120, 88}; // white at alpha 128 over black
 constexpr std::array<int, 3> k_greys{37, 128, 200};
-constexpr std::array<Rect, 3> k_grey_rects{{{32, 56, 48, 72}, {56, 56, 72, 72}, {76, 56, 92, 72}}};
-constexpr Rect k_viewport_rect{128, 56, 176, 72};
+constexpr std::array<Rect, 3> k_grey_rects{{{32, 72, 48, 88}, {56, 72, 72, 88}, {76, 72, 92, 88}}};
+constexpr Rect k_viewport_rect{128, 72, 176, 88};
 constexpr glm::ivec3 k_viewport_bytes{100, 150, 200};
-constexpr Rect k_over_scene{150, 88, 170, 96}; // black at alpha 128 over the scene row
-constexpr glm::ivec2 k_scene_probe{10, 92};    // untouched by the UI
+constexpr Rect k_over_scene{150, 104, 170, 112}; // black at alpha 128 over the scene row
+constexpr glm::ivec2 k_scene_probe{10, 108};     // untouched by the UI
 
 struct UiFrame {
     HostImage image;
@@ -159,6 +164,8 @@ void build_frame(const ui::FontSet& fonts, UiFrame& out) {
     io.DisplaySize = v2(static_cast<int>(k_extent.width), static_cast<int>(k_extent.height));
     ImGui::NewFrame();
     ImDrawList* list = ImGui::GetForegroundDrawList();
+    fill(list, k_light_band, IM_COL32(255, 255, 255, 255));
+    fill(list, k_dark_band, IM_COL32(0, 0, 0, 255));
     fill(list, k_light_panel, IM_COL32(255, 255, 255, 255));
     fill(list, k_dark_panel, IM_COL32(0, 0, 0, 255));
 
@@ -169,8 +176,8 @@ void build_frame(const ui::FontSet& fonts, UiFrame& out) {
         list->AddText(font, size, v2(x, y), col, k_label);
         return Rect{x, y, x + static_cast<int>(extent.x) + 1, y + static_cast<int>(extent.y) + 1};
     };
-    out.light_text = place(6, 16, IM_COL32(0, 0, 0, 255));
-    out.dark_text = place(102, 16, IM_COL32(255, 255, 255, 255));
+    out.light_text = place(6, 8, IM_COL32(0, 0, 0, 255));
+    out.dark_text = place(6, 40, IM_COL32(255, 255, 255, 255));
 
     fill(list, k_half_black, IM_COL32(0, 0, 0, 128));
     fill(list, k_half_white, IM_COL32(255, 255, 255, 128));
@@ -305,7 +312,7 @@ TEST(GpuImGuiSrgb, BlackTextOnWhiteReachesBlackAtTheGlyphCore) {
         // Linear-space blending left the darkest glyph pixel at 64 (#92).
         EXPECT_LE(min_red(f->image, f->light_text), 10);
         // ... and the panel around the text stays white.
-        EXPECT_EQ(rgb(f->image, Rect{80, 4, 90, 10}), glm::ivec3(255));
+        EXPECT_EQ(rgb(f->image, Rect{170, 4, 180, 10}), glm::ivec3(255));
     }
 }
 
@@ -316,38 +323,51 @@ TEST(GpuImGuiSrgb, WhiteTextOnBlackReachesWhiteAtTheGlyphCore) {
         const auto& f = frame(*g, kind, Mode::editor_clear);
         ASSERT_OK(f);
         EXPECT_GE(max_red(f->image, f->dark_text), 245);
-        EXPECT_EQ(rgb(f->image, Rect{176, 4, 186, 10}), glm::ivec3(0));
+        EXPECT_EQ(rgb(f->image, Rect{170, 36, 180, 42}), glm::ivec3(0));
     }
 }
 
-// Gamma-space blending makes dark-on-light the exact complement of
-// light-on-dark: a glyph pixel of coverage c is 255 (1 - c) on white and
-// 255 c on black, so the two labels' pixels sum to 255. Linear blending
-// encodes both sides up (c = 0.5 gives 188 + 188), so it fails everywhere
-// the text is antialiased.
-TEST(GpuImGuiSrgb, TextContrastIsSymmetricAcrossThemes) {
+// Gamma-space blending makes dark-on-light the complement of light-on-dark:
+// a glyph pixel of coverage c is 255 (1 - c) on white and 255 c on black, so
+// the label carries the same ink on either background and nearly every pixel
+// pair sums to 255. (A few glyph-edge texels differ: the atlas has
+// transparent black, not transparent white, around some glyphs, which only
+// the white label picks up through bilinear filtering — as with ImGui's own
+// backends.) Linear blending encodes both sides up — c = 0.5 shows as 188
+// on white and 188 on black — so black text loses about half its ink and
+// white text gains it.
+TEST(GpuImGuiSrgb, TextWeightIsTheSameInBothThemes) {
     QUAT_REQUIRE_GPU(g);
     for (const Target kind : k_targets) {
         SCOPED_TRACE(name(kind));
         const auto& f = frame(*g, kind, Mode::editor_clear);
         ASSERT_OK(f);
-        const int dx = f->dark_text.x0 - f->light_text.x0;
+        const int dy = f->dark_text.y0 - f->light_text.y0;
         int partial = 0;
-        int worst = 0;
+        int complementary = 0;
+        long ink_on_white = 0;
+        long ink_on_black = 0;
         for (int y = f->light_text.y0; y < f->light_text.y1; ++y) {
             for (int x = f->light_text.x0; x < f->light_text.x1; ++x) {
                 const int on_white =
                     f->image.rgba8(static_cast<std::uint32_t>(x), static_cast<std::uint32_t>(y)).r;
                 const int on_black = f->image
-                                         .rgba8(static_cast<std::uint32_t>(x + dx),
-                                                static_cast<std::uint32_t>(y))
+                                         .rgba8(static_cast<std::uint32_t>(x),
+                                                static_cast<std::uint32_t>(y + dy))
                                          .r;
-                if (on_white > 0 && on_white < 255) ++partial;
-                worst = std::max(worst, std::abs(on_white + on_black - 255));
+                ink_on_white += 255 - on_white;
+                ink_on_black += on_black;
+                if (on_white == 255) continue;
+                ++partial;
+                if (std::abs(on_white + on_black - 255) <= 2) ++complementary;
             }
         }
-        EXPECT_GT(partial, 20) << "the label has antialiased pixels to compare";
-        EXPECT_LE(worst, 2);
+        ASSERT_GT(partial, 50) << "the label has glyph pixels to compare";
+        EXPECT_GE(complementary * 10, partial * 9)
+            << complementary << " of " << partial << " glyph pixels are complementary";
+        const double ratio = static_cast<double>(ink_on_white) / static_cast<double>(ink_on_black);
+        EXPECT_GT(ratio, 0.9) << "ink on white " << ink_on_white << ", on black " << ink_on_black;
+        EXPECT_LT(ratio, 1.15) << "ink on white " << ink_on_white << ", on black " << ink_on_black;
     }
 }
 
