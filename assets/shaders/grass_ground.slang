@@ -8,7 +8,10 @@
 //     the gaps between tufts read as low undergrowth rather than bare soil;
 //   * toward the blades' mean colour from the thinning start to the radius
 //     and beyond, so the field keeps its colour where blades thin out and
-//     does not end in a visible ring at the radius.
+//     does not end in a visible ring at the radius. On flat ground this
+//     reaches the horizon; over terrain it fades out between the radius and
+//     the edge of the bound height tiles (at most 1.5 x radius), the only
+//     ground whose height the pass knows.
 // This is the terrain-colour half of the usual grass/ground blend (Ghost of
 // Tsushima: Wohllaib, "Procedural Grass in 'Ghost of Tsushima'", GDC 2021 —
 // grass colour sampled from, and fading into, the terrain albedo; the
@@ -60,6 +63,12 @@ void compute_main(uint3 id : SV_DispatchThreadID) {
         const Clump clump = grass_clump(g_params, world.xz);
         const float r = length(clump.centre - world.xz) / g_params.clump.x;
         cover *= lerp(lerp(1.25, 0.55, saturate(r * 1.4)), 1.0, far);
+    }
+    // Fade out before the edge of the bound height tiles: beyond them there
+    // is no ground height to match (grass_cover_fade).
+    if (g_params.clump.w > 0.0) {
+        const float dist_xz = length(world.xz - g_params.camera.xz);
+        cover *= 1.0 - smoothstep(g_params.ground.w, g_params.clump.w, dist_xz);
     }
     cover = saturate(cover);
     if (cover <= 0.0) return;

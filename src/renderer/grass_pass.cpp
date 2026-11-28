@@ -4,6 +4,7 @@
 #include <array>
 #include <cmath>
 #include <cstddef>
+#include <cstdio>
 #include <cstring>
 #include <limits>
 #include <string>
@@ -222,7 +223,21 @@ std::expected<void, core::Error> GrassPass::create_pipelines(rhi::PipelineCache&
     if (auto r = compute("grass_generate.spv", "finalize_main", s.generate_layout, s.finalize); !r) {
         return r;
     }
-    if (auto r = compute("grass_ground.spv", nullptr, s.ground_layout, s.ground); !r) return r;
+    // The ground cover writes the GBuffer albedo as a storage image. RGBA8
+    // storage is mandatory in Vulkan, but a translation layer may still lack
+    // it (Metal read-write textures need tier 2): check, and run without the
+    // cover rather than fail.
+    VkFormatProperties albedo_props{};
+    vkGetPhysicalDeviceFormatProperties(device.physical_device(), gbuffer_albedo_format,
+                                        &albedo_props);
+    s.ground_cover_supported =
+        (albedo_props.optimalTilingFeatures & VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT) != 0;
+    if (!s.ground_cover_supported) {
+        std::fprintf(stderr, "[warn] grass: the GBuffer albedo format has no storage support; "
+                             "ground cover disabled\n");
+    } else if (auto r = compute("grass_ground.spv", nullptr, s.ground_layout, s.ground); !r) {
+        return r;
+    }
 
     auto draw_shader = cache.load(dir + "/grass.spv");
     if (!draw_shader) return std::unexpected(draw_shader.error());
@@ -344,7 +359,8 @@ GrassPass::add_to_graph(rhi::RenderGraph& graph, std::uint32_t slot_index,
             vkCmdFillBuffer(ctx.cmd(), ctx.resolve(args).buffer, 0, kArgsBytes, 0);
         });
 
-    if (gbuffer != nullptr && (settings.ground_cover > 0.0F || settings.far_ground_cover > 0.0F)) {
+    if (gbuffer != nullptr && s.ground_cover_supported &&
+        (settings.ground_cover > 0.0F || settings.far_ground_cover > 0.0F)) {
         add_ground_cover(graph, slot, *gbuffer, extent);
     }
 

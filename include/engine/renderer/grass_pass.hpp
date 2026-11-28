@@ -163,7 +163,8 @@ private:
         rhi::DescriptorSetLayout       draw_layout;
         rhi::ManagedPipeline           generate;
         rhi::ManagedPipeline           finalize;
-        rhi::ManagedPipeline           ground;
+        rhi::ManagedPipeline           ground; // absent without RGBA8 storage support
+        bool                           ground_cover_supported = false;
         rhi::ManagedPipeline           draw;
         rhi::GpuBuffer                 indices; // near strip, then far strip
         rhi::GpuImage                  flat_height; // 1x1 R32F stand-in for unused tile slots (and depth)

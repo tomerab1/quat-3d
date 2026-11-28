@@ -18,6 +18,8 @@
 #include "engine/renderer/grass.hpp"
 #include "engine/renderer/grass_pass.hpp"
 #include "engine/renderer/mesh_pass.hpp"
+#include "engine/rhi/device.hpp"
+#include "engine/rhi/gpu_allocator.hpp"
 #include "engine/rhi/render_graph.hpp"
 #include "support/expect_ok.hpp"
 #include "support/gpu_context.hpp"
@@ -246,7 +248,8 @@ TEST(GpuGrassV2, FootprintLodThinsSubPixelBladesAndWidensTheRest) {
 }
 
 // Blade roots record the ground albedo under them from the GBuffer; roots
-// hidden behind the wall or off screen record no tint.
+// hidden behind the wall (by more than the pixel footprint along the ray)
+// or off screen record no tint.
 TEST(GpuGrassV2, RootsTakeTheGroundAlbedoWhereTheGroundIsVisible) {
     QUAT_REQUIRE_GPU(g);
     auto mesh = r::MeshPass::create(g->device, g->allocator, g->cache, g->transfer, g->shader_dir);
@@ -260,6 +263,10 @@ TEST(GpuGrassV2, RootsTakeTheGroundAlbedoWhereTheGroundIsVisible) {
     r::GrassFrame frame = ground_level_frame(glm::vec3(10.0F, 0.0F, 0.0F));
     frame.settings.ground_cover = 0.0F; // the albedo under the roots stays the ground's own
     frame.settings.far_ground_cover = 0.0F;
+    // The frame loop's projection scale: the tint tolerance follows the
+    // pixel footprint along the ray.
+    frame.pixels_per_metre = r::grass_pixels_per_metre(
+        vulkan_perspective(glm::radians(60.0F), 1.0F, 0.1F, 300.0F), k_extent.height);
     rhi::TransientImagePool pool(g->device, g->allocator);
     rhi::RenderGraph graph(pool);
     const std::array<r::DrawItem, 2> items{
@@ -285,9 +292,13 @@ TEST(GpuGrassV2, RootsTakeTheGroundAlbedoWhereTheGroundIsVisible) {
             if (edge > 1.01F) EXPECT_EQ(tint_weight(b), 0U);
             continue;
         }
-        // Behind the wall: the ray to the root crosses x = 5 well inside it.
+        // Behind the wall: the ray to the root crosses x = 5 well inside it,
+        // and the root lies more than two ground-pixel footprints behind it
+        // (closer, the wall and the ground under the root share a pixel).
         const float t = 5.0F / to.x;
-        if (b.root.x > 5.3F && std::abs(to.z * t) < 0.9F) {
+        const float dist = glm::length(to);
+        const float footprint = dist / frame.pixels_per_metre / (frame.camera.y / dist);
+        if (b.root.x > 5.0F + 2.0F * footprint && std::abs(to.z * t) < 0.9F) {
             ++hidden;
             EXPECT_EQ(tint_weight(b), 0U) << "hidden root at " << b.root.x << ", " << b.root.z;
             continue;
@@ -362,4 +373,62 @@ TEST(GpuGrassV2, GroundCoverTintsOnlyTheGroundGrassGrowsOn) {
     EXPECT_NEAR(bare.b, 77, 2);
     const glm::ivec4 w2 = excluded->rgba8(wall.x, wall.y);
     EXPECT_EQ(w2, w);
+}
+
+// #143 review: over terrain the ground cover only knows the ground inside the
+// bound height tiles, so it must fade out before their edge rather than
+// stop there (or, with terrain_only false, tint whatever lies at ground_y far
+// beyond them). A flat 16 m tile around the camera: the ground 2.8 m away
+// (inside the fade start) is tinted, the ground 26 m away (beyond the tile)
+// keeps its albedo exactly.
+TEST(GpuGrassV2, GroundCoverFadesOutBeforeTheBoundTilesEnd) {
+    QUAT_REQUIRE_GPU(g);
+    auto mesh = r::MeshPass::create(g->device, g->allocator, g->cache, g->transfer, g->shader_dir);
+    ASSERT_OK(mesh);
+    auto pass = r::GrassPass::create(g->device, g->allocator, g->cache, g->transfer, g->shader_dir, 1);
+    ASSERT_OK(pass);
+    auto scene = make_scene(*g, glm::vec3(0.3F), glm::vec3(0.1F, 0.1F, 0.6F));
+    ASSERT_OK(scene);
+
+    constexpr std::uint32_t res = 17;
+    const std::vector<float> heights(res * res, 0.0F);
+    auto image = rhi::upload_device_image(g->allocator, g->transfer, heights.data(),
+                                          heights.size() * sizeof(float), {res, res},
+                                          VK_FORMAT_R32_SFLOAT);
+    ASSERT_OK(image);
+    auto view = rhi::create_image_view(g->device.handle(), image->handle(), VK_FORMAT_R32_SFLOAT);
+    ASSERT_OK(view);
+    r::TerrainHeightTile tile;
+    tile.view = view->handle();
+    tile.origin_xz = glm::vec2(-8.0F);
+    tile.size_m = 16.0F;
+    tile.resolution = res;
+    const std::array<r::TerrainHeightTile, 1> tiles{tile};
+
+    r::GrassFrame frame = ground_level_frame(glm::vec3(30.0F, 0.6F, 0.0F));
+    frame.settings = flat_settings(); // terrain_only false: flat fallback at y = 0 outside
+    frame.settings.radius = 6.0F;     // fade 5.33 m (2/3 of the tile's 8 m reach) to 8 m
+    frame.settings.height_range = glm::vec2(0.01F); // blades too small to hide the ground
+    frame.settings.width_range = glm::vec2(0.001F);
+    frame.settings.far_ground_cover = 1.0F;
+    frame.terrain = tiles;
+    rhi::TransientImagePool pool(g->device, g->allocator);
+    rhi::RenderGraph graph(pool);
+    const std::array<r::DrawItem, 2> items{
+        r::DrawItem{&scene->ground, &scene->ground_material, glm::mat4(1.0F)},
+        r::DrawItem{&scene->wall, &scene->wall_material, glm::mat4(1.0F)}};
+    auto gbuffer = mesh->add_to_graph(graph, k_extent, frame.draw_view_proj, items);
+    ASSERT_OK(gbuffer);
+    ASSERT_OK(pass->add_to_graph(graph, 0, frame, &*gbuffer, k_extent));
+    auto albedo = quat::test::render_to_host(*g, graph, gbuffer->albedo, k_extent, 4);
+    ASSERT_OK(albedo);
+
+    // Column 10 misses the wall. Row 108 sees the ground ~2.8 m away; row 67
+    // sees it ~26 m away, far outside the tile.
+    const glm::ivec4 near = albedo->rgba8(10, 108);
+    EXPECT_LT(near.r, 72) << "the ground inside the tile was not covered";
+    const glm::ivec4 far = albedo->rgba8(10, 67);
+    EXPECT_NEAR(far.r, 77, 1) << "the cover reached past the bound tiles";
+    EXPECT_NEAR(far.g, 77, 1);
+    EXPECT_NEAR(far.b, 77, 1);
 }

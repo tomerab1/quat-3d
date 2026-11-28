@@ -123,9 +123,10 @@ READ_CHUNK = 1 << 16
 def stream(url, host, sink, max_bytes, deadline_s):
     """GETs `url` (https on `host`, redirects re-checked), passing each chunk
     to `sink`; fails past `max_bytes` or the wall-clock `deadline_s`. Every
-    socket operation is bounded by SOCKET_TIMEOUT_S (and by the time left),
-    and the deadline is checked after each recv, so a server trickling bytes
-    overruns it by at most one socket timeout. A body cut short raises
+    socket operation is bounded by min(SOCKET_TIMEOUT_S, deadline_s), set
+    once when the connection opens, and the deadline is checked after each
+    recv, so a server trickling bytes overruns it by at most one socket
+    timeout. A body cut short raises
     http.client.IncompleteRead, which `retried` retries."""
     check_url(url, host)
     opener = urllib.request.build_opener(_ConfinedRedirects(host))

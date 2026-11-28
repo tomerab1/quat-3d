@@ -43,6 +43,10 @@ bool ground_at(float2 xz, out float height, out float3 normal) {
 // blends into whatever it stands on (Ghost of Tsushima's root tint). Packed
 // as unorm8 sqrt(rgb) + weight; weight 0 where the root is off screen or
 // hidden behind something (the GBuffer there is not the ground under it).
+// The surface seen at the root's pixel must lie within the pixel's footprint
+// along the ray (which grows at grazing angles, so distant visible ground is
+// not rejected); the weight falls off smoothly over the outer half of that
+// tolerance, so TAA jitter cannot flip it between 0 and 1.
 uint ground_tint(float3 root, float dist) {
     if (g_params.look.w < 0.5) return 0;
     const float4 clip = mul(g_params.view_proj, float4(root, 1.0));
@@ -54,10 +58,18 @@ uint ground_tint(float3 root, float dist) {
     const float4 h = mul(g_params.inv_view_proj,
                          float4((float2(px) + 0.5) * g_params.screen.zw * 2.0 - 1.0, depth, 1.0));
     const float3 seen = h.xyz / h.w;
-    if (length(seen - root) > 0.06 + 0.01 * dist) return 0;
+    float tolerance = 0.06 + 0.01 * dist; // without a projection scale
+    if (g_params.footprint.x > 0.0) {
+        // One pixel spans dist / ppm metres across the ray; on the ground
+        // that stretches by 1 / sin(grazing angle).
+        const float grazing = max(abs(root.y - g_params.camera.y) / max(dist, 1e-3), 0.05);
+        tolerance = 0.03 + dist / g_params.footprint.x / grazing;
+    }
+    const float weight = 1.0 - smoothstep(0.5 * tolerance, tolerance, length(seen - root));
+    if (weight <= 0.0) return 0;
     const float3 albedo = sqrt(saturate(g_albedo.Load(int3(px, 0)).rgb));
-    const uint3 q = uint3(albedo * 255.0 + 0.5);
-    return q.x | (q.y << 8u) | (q.z << 16u) | (255u << 24u);
+    const uint4 q = uint4(uint3(albedo * 255.0 + 0.5), uint(weight * 255.0 + 0.5));
+    return q.x | (q.y << 8u) | (q.z << 16u) | (q.w << 24u);
 }
 
 bool sphere_visible(float3 c, float r) {

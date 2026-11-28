@@ -31,13 +31,13 @@ struct GrassParamsGpu {
     glm::uvec4 draw{0};
     glm::vec4  tile_rect[grass_max_height_tiles]{};
     glm::vec4  tile_info[grass_max_height_tiles]{};
-    glm::vec4  ground{0.0F};
+    glm::vec4  ground{0.0F}; // x/y min/max ground y, z slope fade start, w ground cover fade start
     glm::vec4  wind_rect{0.0F}; // wind texture corner XZ, 1 / size, profile at blade height
     glm::vec4  wind_flow{0.0F}; // mean heading XZ (flutter phase), field bound (1) or R9.3 sway (0)
     glm::mat4  prev_view_proj{1.0F};
     glm::vec4  motion{0.0F}; // x previous wind time, yz jitter (NDC)
     // Grass v2.
-    glm::vec4  clump{0.0F};       // x size, y pull, z max pull (m)
+    glm::vec4  clump{0.0F};       // x size, y pull, z max pull (m), w ground cover fade end (< 0: none)
     glm::vec4  look{0.0F};        // x colour variation, y dry fraction, z root tint, w GBuffer bound
     glm::vec4  dry_color{0.0F};   // rgb, w min blade px
     glm::vec4  footprint{0.0F};   // x pixels per metre at 1 m, y mean width, z/w ground cover near/far

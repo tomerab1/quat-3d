@@ -21,13 +21,13 @@ public struct GrassParams {
     public uint4    draw;          // x near index count, y far index count, z near segments, w far segments
     public float4   tile_rect[4];  // xy origin XZ, z size, w base y
     public float4   tile_info[4];  // x texel uv, y metres per texel
-    public float4   ground;        // x min ground y, y max ground y (tile culling bounds), z slope fade start normal.y
+    public float4   ground;        // x min ground y, y max ground y (tile culling bounds), z slope fade start normal.y, w ground cover fade start (m, XZ)
     public float4   wind_rect;     // R13.1 wind texture: xy world XZ corner, z 1 / size m, w log-profile factor at blade height
     public float4   wind_flow;     // R13.1: xy mean heading (flutter phase), z 1 = wind field bound (else the R9.3 sway)
     public float4x4 prev_view_proj; // velocity (R11): last frame, unjittered
     public float4   motion;         // x previous wind time (s), yz this frame's jitter (NDC)
     // Grass v2.
-    public float4   clump;          // x clump size (0 = off), y pull, z max pull (m)
+    public float4   clump;          // x clump size (0 = off), y pull, z max pull (m), w ground cover fade end (m, XZ; < 0: unbounded)
     public float4   look;           // x colour variation, y dry fraction, z root tint, w 1 = GBuffer bound (root tint)
     public float4   dry_color;      // rgb dry tip colour, w min blade width (px)
     public float4   footprint;      // x pixels per metre at 1 m (0 = off), y mean blade width, z ground cover near, w far

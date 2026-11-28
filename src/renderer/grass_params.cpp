@@ -4,6 +4,7 @@
 #include <cmath>
 #include <cstddef>
 #include <limits>
+#include <vector>
 
 #include "engine/weather/wind_field.hpp"
 
@@ -66,7 +67,16 @@ GrassParamsGpu make_params(const GrassFrame& frame, const GrassSettings& s, cons
         lo = std::min(lo, s.ground_y);
         hi = std::max(hi, s.ground_y);
     }
-    p.ground = glm::vec4(lo, hi, grass_slope_fade_start(s), 0.0F);
+    // The ground cover's outer fade: it only knows the ground inside the bound
+    // tiles. Unbounded (end < 0) on flat ground without tiles.
+    std::vector<glm::vec3> rects;
+    rects.reserve(tiles.size());
+    for (const TerrainHeightTile& t : tiles) rects.emplace_back(t.origin_xz, t.size_m);
+    const glm::vec2 cam_xz(frame.camera.x, frame.camera.z);
+    const glm::vec2 fade =
+        grass_cover_fade(s, grass_tile_coverage(rects, cam_xz, 1.5F * s.radius), !tiles.empty());
+    const bool bounded = std::isfinite(fade.y);
+    p.ground = glm::vec4(lo, hi, grass_slope_fade_start(s), bounded ? fade.x : -1.0F);
     p.wind_rect = frame.wind.valid() ? frame.wind.rect : glm::vec4(0.0F, 0.0F, 1.0F, 0.0F);
     p.wind_rect.w = weather::wind_profile(kBladeWindHeightM);
     // Without a field (no weather) the blades keep the R9.3 sway exactly.
@@ -74,7 +84,8 @@ GrassParamsGpu make_params(const GrassFrame& frame, const GrassSettings& s, cons
     p.prev_view_proj = motion.prev_view_proj;
     p.motion = glm::vec4(frame.prev_time_s.value_or(frame.time_s), motion.jitter_ndc, 0.0F);
 
-    p.clump = glm::vec4(s.clump_size, s.clump_strength, grass_max_clump_pull(s), 0.0F);
+    p.clump = glm::vec4(s.clump_size, s.clump_strength, grass_max_clump_pull(s),
+                        bounded ? std::max(fade.y, 1e-3F) : -1.0F);
     p.look = glm::vec4(s.color_variation, s.dry_fraction, s.root_tint,
                        gbuffer_bound ? 1.0F : 0.0F);
     p.dry_color = glm::vec4(s.dry_color, s.min_blade_px);

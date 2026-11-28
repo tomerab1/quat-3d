@@ -37,6 +37,7 @@
 
 #include <array>
 #include <cstdint>
+#include <span>
 
 #include <glm/glm.hpp>
 
@@ -143,6 +144,21 @@ struct GrassGrid {
 // slope fade alone (1 on gentle ground, 0 at the steepest allowed slope).
 // Multiplies grass_keep_fraction; the hard slope limits still apply.
 [[nodiscard]] float grass_slope_keep(const GrassSettings& settings, float normal_y);
+
+// Distance from `centre` (world XZ) to the nearest point outside the union of
+// the square tiles `rects` (x, z: minimum corner; z component of the vec3:
+// side length), capped at `max_distance`; 0 when `centre` itself is outside.
+// The ground cover fades out before it: beyond the bound tiles it has no
+// ground height to match (the flat-ground fallback is wrong over terrain).
+// Sampled along 128 directions in steps of max_distance / 256 (deterministic).
+[[nodiscard]] float grass_tile_coverage(std::span<const glm::vec3> rects, glm::vec2 centre,
+                                        float max_distance);
+// The ground cover's outer fade (start, end) in metres from the camera (XZ):
+// unbounded (both infinite) on flat ground without tiles; otherwise ending at
+// min(tile coverage, 1.5 x radius) and starting at the radius (or two thirds
+// of the end, when the tiles cover less than the radius).
+[[nodiscard]] glm::vec2 grass_cover_fade(const GrassSettings& settings, float tile_coverage,
+                                         bool has_tiles);
 
 // Blade buffer regions: near-LOD blades at [0, near), far-LOD at [near, near + far).
 struct GrassCapacity {

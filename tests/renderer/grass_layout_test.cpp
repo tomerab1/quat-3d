@@ -1,6 +1,7 @@
 // GPU grass CPU helpers (R9.3): candidate grid, distance LOD, capacities.
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdint>
 #include <limits>
@@ -252,6 +253,39 @@ TEST(GrassLayout, FootprintKeepHoldsProjectedCoverage) {
         EXPECT_NEAR(keep * r::grass_width_scale(keep), 1.0F, 1e-6F);
     }
     EXPECT_FLOAT_EQ(r::grass_width_scale(0.01F), r::grass_max_width_scale);
+    // Past the cap (kept share below 1 / max scale) coverage falls with the
+    // kept share; the far ground cover carries the colour from there.
+    const float floor = 1.0F / r::grass_max_width_scale;
+    for (const float keep : {floor * 0.8F, floor * 0.5F, 0.0125F}) {
+        EXPECT_NEAR(keep * r::grass_width_scale(keep), keep / floor, 1e-6F);
+        EXPECT_LT(keep * r::grass_width_scale(keep), 1.0F);
+    }
+}
+
+// The ground cover's outer bound (#143 review): how far the bound height
+// tiles reach around the camera, and the fade derived from it.
+TEST(GrassLayout, TileCoverageBoundsTheGroundCover) {
+    // One 64 m tile with the camera 10 m from its west edge.
+    const std::array<glm::vec3, 1> one{glm::vec3(-10.0F, -32.0F, 64.0F)};
+    EXPECT_NEAR(r::grass_tile_coverage(one, {0.0F, 0.0F}, 100.0F), 10.0F, 0.5F);
+    // Capped at the requested distance; outside every tile: nothing.
+    EXPECT_FLOAT_EQ(r::grass_tile_coverage(one, {20.0F, 0.0F}, 5.0F), 5.0F);
+    EXPECT_FLOAT_EQ(r::grass_tile_coverage(one, {-50.0F, 0.0F}, 100.0F), 0.0F);
+    // Two adjacent tiles cover their union.
+    const std::array<glm::vec3, 2> two{glm::vec3(-64.0F, -32.0F, 64.0F),
+                                       glm::vec3(0.0F, -32.0F, 64.0F)};
+    EXPECT_NEAR(r::grass_tile_coverage(two, {0.0F, 0.0F}, 100.0F), 32.0F, 0.5F);
+
+    r::GrassSettings s;
+    s.radius = 20.0F;
+    // Flat ground without tiles: unbounded.
+    EXPECT_TRUE(std::isinf(r::grass_cover_fade(s, 0.0F, false).y));
+    // Tiles reaching far: fade from the radius to 1.5 x radius.
+    EXPECT_EQ(r::grass_cover_fade(s, 500.0F, true), glm::vec2(20.0F, 30.0F));
+    // Tiles reaching less than the radius: the fade ends at their edge.
+    const glm::vec2 near_edge = r::grass_cover_fade(s, 12.0F, true);
+    EXPECT_FLOAT_EQ(near_edge.y, 12.0F);
+    EXPECT_FLOAT_EQ(near_edge.x, 8.0F);
 }
 
 TEST(GrassLayout, SanitizeClampsTheV2Fields) {

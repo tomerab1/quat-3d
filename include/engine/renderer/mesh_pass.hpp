@@ -208,6 +208,9 @@ private:
 
     const rhi::Device*   device_    = nullptr;   // non-owning
     rhi::GpuAllocator*   allocator_ = nullptr;   // non-owning
+    // STORAGE when the device supports it for the albedo format: the grass
+    // ground cover (GrassPass) tints the ground's albedo in place.
+    VkImageUsageFlags    albedo_storage_ = 0;
 
     rhi::DescriptorBufferFunctions db_fns_{};
     rhi::DescriptorSetLayout       material_layout_;

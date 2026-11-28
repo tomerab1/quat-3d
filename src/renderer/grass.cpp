@@ -135,6 +135,41 @@ float grass_slope_keep(const GrassSettings& settings, float normal_y) {
     return smoothstep(limit, start, normal_y);
 }
 
+float grass_tile_coverage(std::span<const glm::vec3> rects, glm::vec2 centre,
+                          float max_distance) {
+    const auto covered = [&](glm::vec2 p) {
+        for (const glm::vec3& r : rects) {
+            if (p.x >= r.x && p.x <= r.x + r.z && p.y >= r.y && p.y <= r.y + r.z) return true;
+        }
+        return false;
+    };
+    if (!(max_distance > 0.0F) || !covered(centre)) return 0.0F;
+    constexpr int k_directions = 128;
+    constexpr int k_steps = 256;
+    const float step = max_distance / static_cast<float>(k_steps);
+    float nearest = max_distance;
+    for (int d = 0; d < k_directions; ++d) {
+        const float a = static_cast<float>(d) * (2.0F * std::numbers::pi_v<float> / k_directions);
+        const glm::vec2 dir(std::cos(a), std::sin(a));
+        for (int s = 1; s <= k_steps; ++s) {
+            const float t = static_cast<float>(s) * step;
+            if (t >= nearest) break;
+            if (!covered(centre + dir * t)) {
+                nearest = t - step; // last covered sample
+                break;
+            }
+        }
+    }
+    return std::max(nearest, 0.0F);
+}
+
+glm::vec2 grass_cover_fade(const GrassSettings& settings, float tile_coverage, bool has_tiles) {
+    if (!has_tiles) return glm::vec2(std::numeric_limits<float>::infinity());
+    const float end = std::min(tile_coverage, 1.5F * settings.radius);
+    const float start = std::min(settings.radius, end * (2.0F / 3.0F));
+    return {start, end};
+}
+
 GrassCapacity grass_capacity(const GrassSettings& settings) {
     const float cell = grass_cell_size(settings);
     if (cell <= 0.0F) return {};
