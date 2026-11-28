@@ -341,9 +341,9 @@ engine does not override them:
   shapes on every platform.
 - **A version of "1.4.2" does not identify a build.** MoltenVK's main branch
   has reported 1.4.2 since December 2025, seven months before the 1.4.2
-  release, so the MoltenVK in a LunarG SDK can print `MoltenVK 1.4.2` and
-  still predate fixes the release has (SDK 1.4.341 embeds SPIRV-Cross
-  `vulkan-sdk-1.4.341.0`, which has the #130 bug). Driver workarounds are
+  release, so a MoltenVK built from main in that window (a LunarG SDK may
+  ship one) prints `MoltenVK 1.4.2` and still predates fixes the release
+  has. Driver workarounds are
   therefore keyed on the first version every build of which has the fix.
 - **No UNORM views of the swapchain before MoltenVK 1.4.3.** Until
   KhronosGroup/MoltenVK#2747 (June 2026) a view that reinterprets a

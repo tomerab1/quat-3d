@@ -265,8 +265,8 @@ into CLAUDE.md or the brief template in [`CYCLE.md`](CYCLE.md).
   driver is known good (`rhi::swapchain_format_views_track_images`); the
   UI's copy-composite path exists for that. And never key a workaround on
   the version a release *first* fixed something in: MoltenVK main reports
-  the next version for months before it ships (the LunarG SDK's "1.4.2" is
-  from January 2026), so require the version after it.
+  the next version for months before it ships (1.4.2 from December 2025,
+  released July 2026), so require the version after it.
 - **A failed pipeline creation must carry its VkResult.** The macOS failure
   above printed only "vkCreateGraphicsPipelines failed"; the RHI's errors
   now include the result code.

@@ -60,9 +60,9 @@ using GetEnvFn = std::function<const char*(const char* name)>;
 // the one being presented. Upstream fixed it in June 2026 ("Fix caching of
 // MTLTexture object behind VkImageViews vended for swapchain images",
 // KhronosGroup/MoltenVK#2747), which the 1.4.2 release contains, but every
-// main-branch build since December 2025 already reports 1.4.2, including
-// the MoltenVK in LunarG Vulkan SDK 1.4.341. So 1.4.2 cannot be trusted and
-// the first version known to carry the fix in every build is 1.4.3.
+// main-branch build since December 2025 already reports 1.4.2 (a Vulkan SDK
+// may ship one). So 1.4.2 cannot be trusted, and the first version that
+// carries the fix in every build is 1.4.3.
 [[nodiscard]] bool swapchain_format_views_track_images(const DriverInfo& driver);
 
 } // namespace engine::rhi
