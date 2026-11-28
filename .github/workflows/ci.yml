@@ -5,7 +5,8 @@ name: CI
 # are built through their PR; building them on push too ran every commit twice.
 # Docs-only changes skip CI: nothing in the build or tests reads them. The
 # Markdown under tools/quat-mcp/content/ is compiled into quat-mcp
-# (include_str!), so it still triggers a build; later patterns win.
+# (include_str!), so it still triggers a build, and THIRD_PARTY_NOTICES.md is
+# checked against vcpkg.json; later patterns win.
 on:
   push:
     branches: [main, master]
@@ -15,6 +16,7 @@ on:
       - '!docs/**'
       - '!.gitattributes'
       - 'tools/quat-mcp/content/**'
+      - 'THIRD_PARTY_NOTICES.md'
   pull_request:
     paths:
       - '**'
@@ -22,6 +24,7 @@ on:
       - '!docs/**'
       - '!.gitattributes'
       - 'tools/quat-mcp/content/**'
+      - 'THIRD_PARTY_NOTICES.md'
   workflow_dispatch:
     inputs:
       mvk_debug:
@@ -60,13 +63,20 @@ jobs:
         with:
           persist-credentials: false
 
-      # xvfb: the Screenshots step runs the game under xvfb-run.
+      # Every vcpkg dependency, FetchContent package and bundled font has a
+      # licence row in THIRD_PARTY_NOTICES.md, which ships in every release
+      # archive (scripts/third-party-notices.sh).
+      - name: Third-party notices
+        run: python3 -I scripts/check-third-party-notices.py
+
+      # xvfb: the Screenshots step runs the game under xvfb-run. patchelf: the
+      # package_licences test lays out a game package (scripts/package-release.sh).
       # vulkan-validationlayers: the GPU tests run under the Khronos layer.
       - name: Set up build
         id: setup
         uses: ./.github/actions/setup-build
         with:
-          extra-apt-packages: xvfb vulkan-validationlayers
+          extra-apt-packages: xvfb patchelf vulkan-validationlayers
 
       # The release preset compiles the Tracy client in (ENGINE_PROFILE=ON,
       # on demand: it costs nothing without a viewer), so the tests run with
@@ -428,21 +438,76 @@ jobs:
         if: always() && steps.build.outcome == 'success'
         run: ctest --test-dir build/macos-release -L sdk --output-on-failure
 
-      # Every cooked shader through SPIRV-Cross (Homebrew's CLI; MoltenVK
-      # embeds the same library at its own pinned revision) and Apple's Metal
-      # compiler: names the shader and the translator's error, which MoltenVK
-      # reports only as a failed vkCreate*Pipelines (issue #103).
-      # Informational, like the GPU step; the mvk_debug input shows MoltenVK's
-      # own translation.
-      - name: MSL translation check (informational)
+      # SPIRV-Cross revisions the shader checks cover: the pins of Homebrew's
+      # MoltenVK (the GPU step's ICD), the latest release (newest supported),
+      # 1.4.1 and 1.4.0 (oldest supported), plus the LunarG Vulkan SDK
+      # 1.4.341 tag (the minimum SDK, whose MoltenVK overrides the bundled
+      # one when its setup-env is sourced). 1.4.0, 1.4.1 and SDK 1.4.341 emit
+      # Metal that does not compile for an atomic through a buffer device
+      # address (#130, which Homebrew's 1.4.2 hid). Deduplicated; each entry
+      # maps to a fixed revision, so the list keys the SPIRV-Cross build cache.
+      - name: Resolve MoltenVK versions
+        id: mvk
         if: always() && steps.build.outcome == 'success'
-        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          brew_ver=$(brew list --versions molten-vk | awk '{print $2}' | sed 's/_[0-9]*$//')
+          latest=$(gh release view -R KhronosGroup/MoltenVK --json tagName -q .tagName)
+          tags=$(printf '%s\n' "v$brew_ver" "$latest" v1.4.1 v1.4.0 spirv-cross@vulkan-sdk-1.4.341.0 | awk 'NF && !seen[$0]++' | tr '\n' ' ' | sed 's/ *$//')
+          echo "Homebrew MoltenVK v$brew_ver, latest release $latest; checking: $tags"
+          echo "brew=v$brew_ver" >> "$GITHUB_OUTPUT"
+          echo "latest=$latest" >> "$GITHUB_OUTPUT"
+          echo "tags=$tags" >> "$GITHUB_OUTPUT"
+
+      # Restored and saved explicitly (save with always()): a red MSL step,
+      # exactly when iterating on a translation failure, keeps the builds.
+      - name: Restore SPIRV-Cross builds (MoltenVK pins)
+        id: spvc-cache
+        if: always() && steps.mvk.outcome == 'success'
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ${{ runner.temp }}/mvk-spirv-cross
+          key: mvk-spirv-cross-${{ runner.os }}-${{ steps.mvk.outputs.tags }}
+
+      # Every cooked shader through SPIRV-Cross built at each MoltenVK
+      # release's pinned revision (ExternalRevisions/SPIRV-Cross_repo_revision,
+      # issue #109; Homebrew's spirv-cross is a different revision and missed
+      # the bug above) and then Apple's Metal compiler. MoltenVK reports a
+      # failed translation only as a failed vkCreate*Pipelines; this names the
+      # shader, the MoltenVK version and the error. Blocking.
+      - name: MSL check (SPIRV-Cross at MoltenVK's pins + Metal compiler)
+        if: always() && steps.mvk.outcome == 'success'
+        env:
+          TAGS: ${{ steps.mvk.outputs.tags }}
+          REQUIRE_METAL: 1
         run: |
           # The step's default shell has no pipefail: without it the filter
           # (which always matches the summary line) would hide a failure.
           set -o pipefail
-          brew install spirv-cross
-          scripts/msl-check.sh cooked/shaders "$RUNNER_TEMP/msl" | grep -v '^ok '
+          status=0
+          for tag in $TAGS; do
+            echo "::group::$tag"
+            # A failed build is reported and the remaining revisions still run.
+            if ! bin=$(scripts/build-mvk-spirv-cross.sh "$tag" "$RUNNER_TEMP/mvk-spirv-cross" | tail -n1); then
+              echo "::endgroup::"
+              echo "== $tag: FAILED to build SPIRV-Cross"
+              status=1
+              continue
+            fi
+            echo "::endgroup::"
+            echo "== $tag"
+            SPIRV_CROSS="$bin" scripts/msl-check.sh cooked/shaders "$RUNNER_TEMP/msl/$tag" \
+              | grep -v '^ok ' || status=1
+          done
+          exit "$status"
+
+      - name: Save SPIRV-Cross builds (MoltenVK pins)
+        if: always() && steps.spvc-cache.outcome == 'success' && steps.spvc-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ${{ runner.temp }}/mvk-spirv-cross
+          key: ${{ steps.spvc-cache.outputs.cache-primary-key }}
 
       # Apple Silicon runners expose a paravirtualised Metal device, so the GPU
       # suites run through MoltenVK (all of them passed on the first S4 runs).
@@ -473,6 +538,35 @@ jobs:
             exit "${status:-0}"
           fi
           ctest --test-dir build/macos-release -R engine_tests_gpu -V --timeout 900
+
+      # The GPU suites again on MoltenVK release builds other than
+      # Homebrew's: the latest release (Homebrew can lag it) and 1.4.1 (the
+      # oldest pin the MSL check covers, as shipped in LunarG SDKs).
+      # Informational like the Homebrew step until #109's remaining failures
+      # are fixed; each leg prints its failed tests.
+      - name: Tests (GPU on MoltenVK release builds, informational)
+        if: always() && steps.mvk.outcome == 'success'
+        continue-on-error: true
+        env:
+          GTEST_BRIEF: 1
+          GH_TOKEN: ${{ github.token }}
+          BREW_TAG: ${{ steps.mvk.outputs.brew }}
+          LATEST_TAG: ${{ steps.mvk.outputs.latest }}
+        run: |
+          status=0
+          for tag in $(printf '%s\n' "$LATEST_TAG" v1.4.1 | awk 'NF && !seen[$0]++'); do
+            if [ "$tag" = "$BREW_TAG" ]; then
+              echo "MoltenVK $tag is Homebrew's: covered by the step above"
+              continue
+            fi
+            icd=$(scripts/fetch-moltenvk-release.sh "$tag" "$RUNNER_TEMP/moltenvk" | tail -n1)
+            echo "== GPU tests on MoltenVK $tag ($icd)"
+            VK_ICD_FILENAMES="$icd" ctest --test-dir build/macos-release -R engine_tests_gpu -V \
+              --timeout 900 > "$RUNNER_TEMP/gpu-$tag.log" 2>&1 || status=1
+            grep -E '^\[ *(FAILED|PASSED) *\]|mvk-error|pipeline creation failed' \
+              "$RUNNER_TEMP/gpu-$tag.log" | head -n 100
+          done
+          exit "$status"
 
       - name: Upload MoltenVK debug log
         if: always() && inputs.mvk_debug
@@ -531,3 +625,8 @@ jobs:
 
       - name: Tests
         run: cargo test --locked
+
+      # Every crate in Cargo.lock declares an accepted licence; release
+      # archives ship quat-mcp with its crates' licence texts.
+      - name: Licences
+        run: python3 -I ../../scripts/rust-notices.py check Cargo.toml

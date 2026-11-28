@@ -26,6 +26,7 @@
 
 #include "engine/core/log.hpp"
 #include "engine/rhi/device.hpp"
+#include "engine/rhi/driver_info.hpp"
 #include "engine/rhi/queue_selection.hpp"
 #include "engine/rhi/render_graph.hpp"
 #include "engine/rhi/swapchain.hpp"
@@ -245,6 +246,13 @@ TEST(GpuDevicePresent, HeadlessSurfaceSelectsAPresentQueueAndPresents) {
 
     auto swapchain = engine::rhi::Swapchain::create(*device, device->surface(), {64, 64});
     ASSERT_OK(swapchain);
+    // No UNORM views of the swapchain images on a driver that does not keep
+    // such a view on its image (MoltenVK before 1.4.3): the UI must not
+    // render through one there.
+    if (!engine::rhi::swapchain_format_views_track_images(device->driver())) {
+        EXPECT_FALSE(device->swapchain_mutable_format());
+        EXPECT_TRUE(swapchain->unorm_image_views().empty());
+    }
     const VkDevice vk = device->handle();
 
     // Acquire an image, move it to PRESENT_SRC on the graphics queue, then
