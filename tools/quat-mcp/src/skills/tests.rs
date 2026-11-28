@@ -38,6 +38,8 @@ const NOT_TOOLS: &[&str] = &[
     "nav_agent",
     "nav_agent_state",
     "shader_params",
+    "weather_auto",
+    "weather_preset",
     "world_bounds",
     "world_position",
 ];
