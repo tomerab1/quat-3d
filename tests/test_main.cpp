@@ -8,6 +8,7 @@
 //
 // QUAT_REQUIRE_GPU=1 / QUAT_VALIDATION=1 do the same as the flags (CI).
 
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 
@@ -30,6 +31,12 @@ int main(int argc, char** argv) {
     }
 
     const int result = RUN_ALL_TESTS();
+    // Destroying the device reports leaked objects; those messages arrive
+    // after the last test, so they fail the run here.
     quat::test::shutdown_gpu_context();
+    if (const std::size_t errors = quat::test::validation_errors_outside_tests(); errors > 0) {
+        std::fprintf(stderr, "%zu Vulkan validation error(s) outside any test\n", errors);
+        return 1;
+    }
     return result;
 }

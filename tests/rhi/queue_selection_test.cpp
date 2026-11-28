@@ -227,6 +227,9 @@ TEST(GpuDevicePresent, HeadlessSurfaceSelectsAPresentQueueAndPresents) {
             }
             return surface;
         },
+        // Errors (also those at this device's destruction) fail the test
+        // through the fixture; the log check below adds the warnings.
+        .on_debug_message = quat::test::report_validation_message,
     });
     set_env("VK_LAYER_ENABLES", saved_enables ? saved_enables->c_str() : nullptr);
     ASSERT_OK(device);
@@ -344,7 +347,9 @@ TEST(GpuDevicePresent, HeadlessSurfaceSelectsAPresentQueueAndPresents) {
     query.min_level = engine::core::LogLevel::warn;
     query.category = "vulkan";
     const auto messages = engine::core::log_ring().query(query);
-    for (const auto& line : messages.lines) ADD_FAILURE() << line.message;
+    for (const auto& line : messages.lines) {
+        if (line.level != engine::core::LogLevel::error) ADD_FAILURE() << line.message;
+    }
     if (!validation_layer_installed()) {
         std::printf("[ note ] validation layer not installed: message check is vacuous\n");
     }
