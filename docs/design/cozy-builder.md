@@ -302,7 +302,8 @@ changes. Game CI never uses this mode.
 | Area | Headers |
 |---|---|
 | Game modules | `engine/game/*` (`Registrar`, phases, services, field tables) |
-| Core | `engine/core/{error, json_fields, sim_clock, log, command_stack, path_confine, utf8_path}.hpp` |
+| Core | `engine/core/{error, json_fields, sim_clock, log, command_stack, path_confine, spring, utf8_path}.hpp` |
+| Input | `engine/input/{actions, action_map, device_state}.hpp` (G5) |
 | Scene and ECS | `engine/scene/{components, scene, scene_io, component_json, instanced_mesh, scatter, ground_placement, camera_framing, navigation, camera_rig, spline}.hpp`, plus the season, decal and dynamic-mesh components |
 | Geometry | `engine/geometry/*` (R23.1) |
 | Physics | `engine/physics/physics_world.hpp` (queries, bodies, characters) |

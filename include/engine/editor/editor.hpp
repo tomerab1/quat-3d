@@ -9,6 +9,7 @@
 // here, not in the ECS (CLAUDE.md). ImGui types stay out of this header —
 // sources under src/editor/ are the only ImGui includes.
 
+#include <array>
 #include <cstdint>
 #include <expected>
 #include <functional>
@@ -234,6 +235,9 @@ public:
     [[nodiscard]] std::uint32_t viewport_width() const;
     [[nodiscard]] std::uint32_t viewport_height() const;
     [[nodiscard]] bool viewport_hovered() const;
+    // The Viewport panel's image in window coordinates (min x, min y, max x,
+    // max y), as the mouse reports positions; all zero before the first frame.
+    [[nodiscard]] std::array<float, 4> viewport_rect() const;
 
     // The entity selected in the hierarchy (entt::null when none).
     [[nodiscard]] entt::entity selected() const;

@@ -1,6 +1,7 @@
 // Foot placement: ground probes, pelvis offset, leg IK, foot alignment.
 
 #include "engine/animation/foot_placement.hpp"
+#include "engine/core/spring.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -65,20 +66,10 @@ constexpr float     k_min_ground_normal_y = 0.2F; // steeper than ~78 deg is a w
     return -1;
 }
 
-// Critically damped spring toward `goal` with the given half-life (Holden,
-// "Spring-It-On", 2021).
+// Critically damped spring toward `goal` with the given half-life
+// (engine/core/spring.hpp: Holden, "Spring-It-On", 2021).
 void spring(float& x, float& v, float goal, float half_life, float dt) {
-    if (!(half_life > 0.0F)) {
-        x = goal;
-        v = 0.0F;
-        return;
-    }
-    const float y = 2.0F * 0.69314718F / half_life;
-    const float j0 = x - goal;
-    const float j1 = v + j0 * y;
-    const float e = std::exp(-y * dt);
-    x = e * (j0 + j1 * dt) + goal;
-    v = e * (v - j1 * y * dt);
+    core::spring_damper(x, v, goal, half_life, dt);
 }
 
 } // namespace

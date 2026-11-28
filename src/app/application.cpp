@@ -1,10 +1,12 @@
 #include "app/application.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <expected>
 #include <filesystem>
+#include <optional>
 #include <string>
 #include <utility>
 
@@ -34,6 +36,20 @@ VkExtent2D window_pixel_extent(SDL_Window* window) {
     int h = 0;
     SDL_GetWindowSizeInPixels(window, &w, &h);
     return VkExtent2D{static_cast<std::uint32_t>(w), static_cast<std::uint32_t>(h)};
+}
+
+// The user's input rebinding file (G5): QUAT_INPUT_USER_FILE (empty: none),
+// else input.json in SDL's per-user preferences directory.
+std::optional<std::filesystem::path> user_input_file() {
+    if (const char* env = std::getenv("QUAT_INPUT_USER_FILE"); env != nullptr) {
+        if (*env == '\0') return std::nullopt;
+        return engine::core::path_from_utf8(env);
+    }
+    char* pref = SDL_GetPrefPath("quat-3d", "game");
+    if (pref == nullptr) return std::nullopt;
+    std::filesystem::path out = engine::core::path_from_utf8(pref) / "input.json";
+    SDL_free(pref);
+    return out;
 }
 
 } // namespace
@@ -272,8 +288,10 @@ bool Application::init_subsystems() {
 
 void Application::init_scripts() {
     input_.init();
+    input_runtime_.init(project_root(), user_input_file());
     engine::script::ScriptServices services;
     services.input = &input_.state();
+    services.actions = &input_runtime_.actions();
     services.spawn_model = [this](const std::filesystem::path& absolute) {
         return remote_->spawn_model(absolute);
     };
@@ -330,6 +348,14 @@ void Application::connect_remote() {
     remote_targets.wind_clock = [this] { return renderer_.wind_clock(); };
     remote_targets.material_overrides = &renderer_.material_overrides();
     remote_targets.reset_temporal = [this] { renderer_.reset_temporal(); };
+    remote_targets.input = &input_runtime_;
+    remote_targets.view_aspect = [this] {
+        VkExtent2D e = renderer_.present_extent();
+#ifdef ENGINE_EDITOR
+        e = editor_.scene_extent(e);
+#endif
+        return e.height == 0 ? 0.0F : static_cast<float>(e.width) / static_cast<float>(e.height);
+    };
     world_.fill_remote_targets(remote_targets);
 #if !defined(QUAT_SHIPPING)
     // environment.* HDRI control (R21), remote control only.
@@ -390,10 +416,18 @@ bool Application::pump_events() {
         }
     }
     bool keyboard_blocked = false;
+    bool pointer_blocked = false;
 #ifdef ENGINE_EDITOR
     keyboard_blocked = editor_.keyboard_captured();
+    pointer_blocked = !editor_.camera_accepts_clicks(); // over a panel, not the viewport
 #endif
-    input_.sample(keyboard_blocked);
+    input_.sample(platform_.window, keyboard_blocked, pointer_blocked);
+#ifdef ENGINE_EDITOR
+    // Pointer positions and edge zones are measured on the Viewport panel.
+    if (const auto rect = editor_.viewport_rect(); editor_.active() && rect[2] > rect[0]) {
+        input_.set_viewport({rect[0], rect[1]}, {rect[2] - rect[0], rect[3] - rect[1]});
+    }
+#endif
     return running;
 }
 
@@ -544,6 +578,7 @@ std::optional<PlayStep> Application::play_step() const {
 engine::scene::CameraMatrices Application::update_world(float dt, float sim_dt, float aspect) {
     QUAT_ZONE_N("update_world");
     const bool character_mode = world_.character_mode();
+    input_runtime_.update(input_.state(), dt, view_yaw_); // G5: once per frame
 
     // Free-fly camera: right-drag looks, WASD moves, Q/E down/up, Shift = fast.
     camera_.apply_look();
@@ -556,6 +591,16 @@ engine::scene::CameraMatrices Application::update_world(float dt, float sim_dt, 
     } else {
         camera_.fly(scene_, gate, dt);
     }
+
+    // Camera rigs (G15.1) before the scene tick resolves their transforms.
+    // They take input only while the game view is live, so the editor's fly
+    // camera and a rig never share WASD.
+#ifdef ENGINE_EDITOR
+    const bool rig_input = editor_.playing() && editor_.through_scene_camera();
+#else
+    const bool rig_input = true;
+#endif
+    input_runtime_.update_rigs(scene_, world_.ground_height(), world_.simulated_physics(), rig_input, dt);
 
     const std::optional<PlayStep> play = play_step();
     world_.simulate(scene_, presented_, dt, sim_dt, play ? &*play : nullptr);
@@ -589,6 +634,11 @@ engine::scene::CameraMatrices Application::update_world(float dt, float sim_dt, 
 #else
     const entt::entity view_camera = engine::scene::find_active_camera(scene_.registry());
 #endif
+    // The view's heading, for next frame's camera_relative actions.
+    const glm::vec3 view_forward = -glm::vec3(glm::inverse(cam.view)[2]);
+    if (glm::length(glm::vec2(view_forward.x, view_forward.z)) > 1e-4F) {
+        view_yaw_ = std::atan2(view_forward.z, view_forward.x);
+    }
     if (view_camera != view_camera_) {
         view_camera_ = view_camera;
         renderer_.reset_temporal();

@@ -24,11 +24,16 @@ set(QUAT3D_SDK_STABLE_HEADERS
     engine/core/log.hpp
     engine/core/path_confine.hpp
     engine/core/sim_clock.hpp
+    engine/core/spring.hpp
     engine/core/utf8_path.hpp
+    engine/input/action_map.hpp
+    engine/input/actions.hpp
+    engine/input/device_state.hpp
     engine/physics/physics_world.hpp
     engine/project/game_project.hpp
     engine/remote/rpc_server.hpp
     engine/scene/camera_framing.hpp
+    engine/scene/camera_rig.hpp
     engine/scene/component_json.hpp
     engine/scene/components.hpp
     engine/scene/ground_placement.hpp

@@ -161,7 +161,7 @@ Installed headers (`cmake/Quat3dSdkHeaders.cmake`):
 
 | Set | Headers |
 |---|---|
-| **Stable API** | `engine/core/{error, json_fields, log, path_confine, sim_clock, utf8_path}.hpp` · `engine/scene/{components, scene, scene_io, component_json, scatter, ground_placement, camera_framing, navigation}.hpp` · `engine/physics/physics_world.hpp` · `engine/project/game_project.hpp` · `engine/terrain/heightmap.hpp` · `engine/remote/rpc_server.hpp` · `engine/version.hpp` |
+| **Stable API** | `engine/core/{error, json_fields, log, path_confine, sim_clock, spring, utf8_path}.hpp` · `engine/input/{actions, action_map, device_state}.hpp` · `engine/scene/{components, scene, scene_io, component_json, scatter, ground_placement, camera_framing, camera_rig, navigation}.hpp` · `engine/physics/physics_world.hpp` · `engine/project/game_project.hpp` · `engine/terrain/heightmap.hpp` · `engine/remote/rpc_server.hpp` · `engine/version.hpp` |
 | **Support** (the stable headers include them; same versioning) | `engine/animation/{animator, clip, foot_placement, inertialization, skeleton, two_bone_ik}.hpp` · `engine/asset/{asset_manager, material_params}.hpp` · `engine/audio/audio_types.hpp` · `engine/nav/navmesh.hpp` · `engine/renderer/{grass, particles, physical_camera}.hpp` (settings structs) · `engine/scene/animation_system.hpp` · `engine/terrain/generator.hpp` |
 
 Not installed, and not API:

@@ -248,6 +248,23 @@ target_link_libraries(engine_project PRIVATE glm::glm Threads::Threads)
 target_include_directories(engine_project PUBLIC ${ENGINE_PUBLIC_INCLUDE})
 
 # ---------------------------------------------------------------------------
+# engine_input — action maps (G5): device state, JSON action maps, the
+# Actions evaluator (contexts, triggers, modifiers, injection, rebinding) and
+# the per-user rebinding file. Window-free: the app samples SDL3 into a
+# DeviceState (src/app/input_sampler.cpp).
+# ---------------------------------------------------------------------------
+add_library(engine_input STATIC
+    src/input/device_names.cpp
+    src/input/binding_json.cpp
+    src/input/action_map_json.cpp
+    src/input/default_map.cpp
+    src/input/source_read.cpp
+    src/input/actions.cpp
+    src/input/overrides.cpp)
+target_link_libraries(engine_input PUBLIC engine_flags engine_core nlohmann_json::nlohmann_json)
+target_include_directories(engine_input PUBLIC ${ENGINE_PUBLIC_INCLUDE})
+
+# ---------------------------------------------------------------------------
 # engine_rhi — thin Vulkan abstraction (instance/device, swapchain, ...).
 # ---------------------------------------------------------------------------
 add_library(engine_rhi STATIC
@@ -428,6 +445,9 @@ add_library(engine_scene STATIC
     src/scene/instanced_mesh_resolve.cpp
     src/scene/ground_placement.cpp
     src/scene/camera_framing.cpp
+    src/scene/camera_rig.cpp
+    src/scene/camera_rig_system.cpp
+    src/scene/component_json_camera_rig.cpp
     src/scene/world_clock.cpp
     src/scene/world_clock_json.cpp
     src/scene/world_clock_api.cpp
@@ -439,7 +459,7 @@ add_library(engine_scene STATIC
 # engine_animation is PUBLIC: components.hpp's SkinnedMesh holds a SkeletonAsset
 # handle and the glTF loader extracts skins.
 target_link_libraries(engine_scene PUBLIC
-    engine_flags engine_asset engine_rhi engine_renderer engine_animation engine_physics
+    engine_flags engine_input engine_asset engine_rhi engine_renderer engine_animation engine_physics
     engine_terrain engine_nav engine_audio engine_weather engine_astro EnTT::EnTT)
 # fastgltf and stb (image decode) are implementation details of the loader.
 # nlohmann_json is PUBLIC: component_json.hpp exposes JSON values (the codec
@@ -487,11 +507,10 @@ add_library(engine_script STATIC
     src/script/script_api_scene.cpp
     src/script/script_api_services.cpp
     src/script/script_api_input.cpp
-    src/script/script_input.cpp
     src/script/script_source.cpp
     src/script/script_runtime.cpp
     src/script/script_files.cpp)
-target_link_libraries(engine_script PUBLIC engine_flags engine_core engine_scene engine_physics)
+target_link_libraries(engine_script PUBLIC engine_flags engine_core engine_input engine_scene engine_physics)
 target_link_libraries(engine_script PRIVATE sol2::sol2 quat3d_deps::lua)
 # SYSTEM: the vcpkg include directory holds every dependency's headers.
 target_include_directories(engine_script SYSTEM PRIVATE ${LUA_INCLUDE_DIR})
@@ -653,11 +672,13 @@ add_library(engine_remote_world STATIC
     src/remote/world/project_commands.cpp
     src/remote/world/time_commands.cpp
     src/remote/world/script_commands.cpp
+    src/remote/world/input_commands.cpp
+    src/remote/world/camera_rig_commands.cpp
     src/remote/world/profile_commands.cpp
     src/remote/world/image_encode.cpp
     src/remote/world/stb_image_write_impl.cpp)
 target_link_libraries(engine_remote_world PUBLIC
-    engine_flags engine_core engine_remote engine_scene engine_physics engine_nav engine_weather
+    engine_flags engine_core engine_input engine_remote engine_scene engine_physics engine_nav engine_weather
     engine_script engine_project)
 target_include_directories(engine_remote_world PUBLIC ${ENGINE_PUBLIC_INCLUDE})
 target_include_directories(engine_remote_world SYSTEM PRIVATE ${Stb_INCLUDE_DIR})
@@ -758,6 +779,7 @@ if(ENGINE_EDITOR)
         src/editor/audio_inspector.cpp
         src/editor/script_inspector.cpp
         src/editor/animation_inspector.cpp
+        src/editor/camera_rig_inspector.cpp
         src/editor/grass_inspector.cpp
         src/editor/particle_inspector.cpp
         src/editor/physics_inspector.cpp
@@ -832,9 +854,10 @@ set(GAME_WORLD_SOURCES
     src/app/play_mode.cpp
     src/app/grass_runtime.cpp
     src/app/particle_runtime.cpp
-    src/app/nav_bake.cpp)
+    src/app/nav_bake.cpp
+    src/app/input_runtime.cpp)
 set(GAME_WORLD_LIBRARIES
-    engine_flags engine_core engine_rhi engine_asset engine_scene engine_renderer engine_physics
+    engine_flags engine_core engine_input engine_rhi engine_asset engine_scene engine_renderer engine_physics
     engine_terrain engine_nav engine_net engine_audio engine_script)
 add_library(game_world STATIC ${GAME_WORLD_SOURCES})
 target_link_libraries(game_world PUBLIC ${GAME_WORLD_LIBRARIES})
