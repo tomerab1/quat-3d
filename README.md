@@ -248,6 +248,7 @@ Environment variables switch on extra modes:
 |---|---|
 | `QUAT_SCENE=<file>` | Load a scene file (project-relative) instead of the showcase scene |
 | `QUAT_PLAY=1` | Enter Play mode on the first frame (a non-editor build also plays a `QUAT_SCENE` game) |
+| `QUAT_GAME_CAMERA=1` | Editor builds: Play looks through the scene's active camera from the start ("Game camera"), e.g. for a scene's hero shot |
 | `QUAT_SCRIPT_HOT_RELOAD=0` / `=1` | Turn script hot reload off (editor) / on (non-editor builds) |
 | `QUAT_GLTF=<file>` | Load a glTF/GLB model instead of the showcase scene |
 | `QUAT_TERRAIN=1` | Add a procedural terrain tile (with a grass field) |
@@ -352,7 +353,7 @@ and cook them first (about 560 MB, checksums verified), then run it:
 ```sh
 python3 scripts/fetch-polyhaven.py assets/showcase/cinematic/assets.json \
   --cook-with build/release/quat-cook
-QUAT_SCENE=assets/scenes/cinematic_forest.json QUAT_PLAY=1 ./build/release/game
+QUAT_SCENE=assets/scenes/cinematic_forest.json QUAT_PLAY=1 QUAT_GAME_CAMERA=1 ./build/release/game
 ```
 
 ![cinematic forest clearing](docs/screenshots/cinematic-hero.jpg)

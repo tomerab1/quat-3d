@@ -13,6 +13,7 @@
     },
     "shadows": {
       "max_distance": 80,
+      "cascades": 3,
       "caster_distance": 120,
       "sun_size_deg": 0.8
     },
@@ -100,7 +101,7 @@
       "grass": {
         "seed": 11,
         "density": 320,
-        "radius": 14,
+        "radius": 10,
         "blade_height": [
           0.025,
           0.13
@@ -479,7 +480,7 @@
           44,
           34
         ],
-        "density": 0.12,
+        "density": 0.08,
         "min_spacing": 0.8,
         "scale": [
           0.8,
@@ -515,7 +516,7 @@
           44,
           34
         ],
-        "density": 0.12,
+        "density": 0.08,
         "min_spacing": 0.8,
         "scale": [
           0.8,
@@ -551,7 +552,7 @@
           44,
           34
         ],
-        "density": 0.12,
+        "density": 0.08,
         "min_spacing": 0.8,
         "scale": [
           0.8,
@@ -587,7 +588,7 @@
           44,
           34
         ],
-        "density": 0.12,
+        "density": 0.08,
         "min_spacing": 0.8,
         "scale": [
           0.8,
@@ -1001,7 +1002,7 @@
       "instanced_mesh": {
         "gltf": "assets/meshes/polyhaven/fir_tree_01/fir_tree_01_far.glb",
         "node": "fir_tree_01_a_LOD0",
-        "cast_shadows": true
+        "cast_shadows": false
       },
       "scatter": {
         "seed": 81,
@@ -1033,7 +1034,7 @@
       "instanced_mesh": {
         "gltf": "assets/meshes/polyhaven/fir_tree_01/fir_tree_01_far.glb",
         "node": "fir_tree_01_a_LOD0",
-        "cast_shadows": true
+        "cast_shadows": false
       },
       "scatter": {
         "seed": 91,
@@ -1065,7 +1066,7 @@
       "instanced_mesh": {
         "gltf": "assets/meshes/polyhaven/fir_tree_01/fir_tree_01_far.glb",
         "node": "fir_tree_01_a_LOD0",
-        "cast_shadows": true
+        "cast_shadows": false
       },
       "scatter": {
         "seed": 101,
@@ -1193,7 +1194,7 @@
       "instanced_mesh": {
         "gltf": "assets/meshes/polyhaven/fir_tree_01/fir_tree_01_far.glb",
         "node": "fir_tree_01_b_LOD0",
-        "cast_shadows": true
+        "cast_shadows": false
       },
       "scatter": {
         "seed": 82,
@@ -1225,7 +1226,7 @@
       "instanced_mesh": {
         "gltf": "assets/meshes/polyhaven/fir_tree_01/fir_tree_01_far.glb",
         "node": "fir_tree_01_b_LOD0",
-        "cast_shadows": true
+        "cast_shadows": false
       },
       "scatter": {
         "seed": 92,
@@ -1257,7 +1258,7 @@
       "instanced_mesh": {
         "gltf": "assets/meshes/polyhaven/fir_tree_01/fir_tree_01_far.glb",
         "node": "fir_tree_01_b_LOD0",
-        "cast_shadows": true
+        "cast_shadows": false
       },
       "scatter": {
         "seed": 102,
@@ -1385,7 +1386,7 @@
       "instanced_mesh": {
         "gltf": "assets/meshes/polyhaven/fir_tree_01/fir_tree_01_far.glb",
         "node": "fir_tree_01_c_LOD0",
-        "cast_shadows": true
+        "cast_shadows": false
       },
       "scatter": {
         "seed": 83,
@@ -1417,7 +1418,7 @@
       "instanced_mesh": {
         "gltf": "assets/meshes/polyhaven/fir_tree_01/fir_tree_01_far.glb",
         "node": "fir_tree_01_c_LOD0",
-        "cast_shadows": true
+        "cast_shadows": false
       },
       "scatter": {
         "seed": 93,
@@ -1449,7 +1450,7 @@
       "instanced_mesh": {
         "gltf": "assets/meshes/polyhaven/fir_tree_01/fir_tree_01_far.glb",
         "node": "fir_tree_01_c_LOD0",
-        "cast_shadows": true
+        "cast_shadows": false
       },
       "scatter": {
         "seed": 103,

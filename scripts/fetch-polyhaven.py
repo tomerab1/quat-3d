@@ -403,6 +403,9 @@ def cook(asset, folder, cooker, gltf_rel, force):
         if r.returncode != 0:
             raise FetchError(f"{asset['id']}: quat-cook failed ({r.returncode}): "
                              f"{(r.stderr or r.stdout).strip()[-2000:]}")
+        for line in r.stdout.splitlines():  # e.g. "meshes ... 6972997 -> 451446 triangles"
+            if line.strip().startswith("meshes"):
+                log(f"{asset['id']}: {name}: {line.strip()}")
         stamp.write_text(want)
         ran += 1
     return ran

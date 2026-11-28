@@ -18,7 +18,8 @@
 # any scene failed.
 #
 # Environment: VK_ICD_FILENAMES (default: the first lavapipe manifest found),
-# SCENE_TIMEOUT (seconds per scene, default 300), SCENES (space-separated
+# SCENE_TIMEOUT (seconds per scene, default 300; a row may raise its own with
+# SCENE_TIMEOUT=<s> in its environment column), SCENES (space-separated
 # subset of the scene names below).
 set -uo pipefail
 
@@ -44,7 +45,7 @@ SCENE_TABLE=(
   "showcase|30|QUAT_NO_UI=1|Showcase scene, no UI"
   "terrain|90|QUAT_NO_UI=1 QUAT_TERRAIN=1|Showcase + GPU-generated terrain tile"
   "physics|90|QUAT_NO_UI=1 QUAT_PHYSICS=1|Physics demo (Jolt) after 90 frames"
-  "cinematic|16|QUAT_NO_UI=1 QUAT_PLAY=1 QUAT_SCENE=assets/scenes/cinematic_forest.json|Cinematic forest clearing at golden hour (CC0 Poly Haven assets), hero camera|assets/showcase/cinematic/assets.json"
+  "cinematic|16|SCENE_TIMEOUT=900 QUAT_NO_UI=1 QUAT_PLAY=1 QUAT_GAME_CAMERA=1 QUAT_WINDOW_SIZE=960x540 QUAT_SCENE=assets/scenes/cinematic_forest.json|Cinematic forest clearing at golden hour (CC0 Poly Haven assets), hero camera|assets/showcase/cinematic/assets.json"
 )
 
 die() { echo "ci-screenshots: $*" >&2; exit 2; }
@@ -104,6 +105,10 @@ for row in "${SCENE_TABLE[@]}"; do
     echo "| \`$name\` | skipped: assets not fetched | 0 s | \`$scene_env\` |" >>"$summary"
     continue
   fi
+  row_timeout="$TIMEOUT"
+  for kv in $scene_env; do
+    case "$kv" in SCENE_TIMEOUT=*) row_timeout="${kv#SCENE_TIMEOUT=}" ;; esac
+  done
   ppm="$OUT/$name.ppm"
   png="$OUT/$name.png"
   log="$OUT/$name.log"
@@ -114,7 +119,7 @@ for row in "${SCENE_TABLE[@]}"; do
   xvfb-run -a -s "-screen 0 1920x1080x24" \
     env SDL_VIDEO_DRIVER=x11 QUAT_NO_AUDIO=1 QUAT_NO_VSYNC=1 QUAT_NON_FINITE_CHECK=1 \
         QUAT_MAX_FRAMES="$frames" QUAT_SCREENSHOT="$ppm" $scene_env \
-    timeout --kill-after=15 "$TIMEOUT" "$GAME" >"$log" 2>&1
+    timeout --kill-after=15 "$row_timeout" "$GAME" >"$log" 2>&1
   code=$?
   elapsed=$((SECONDS - start))
   log_tail "$log" 20

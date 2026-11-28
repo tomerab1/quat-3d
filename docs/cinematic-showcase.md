@@ -32,8 +32,8 @@ and each asset's file list against the `content_sha256` pinned in the
 manifest (a republished asset fails the fetch instead of silently changing
 the scene); re-running only verifies. The cooker then writes one GLB per model (KTX2
 textures, meshoptimizer meshes); the heavy firs are cooked to two levels of
-detail with `quat-cook --simplify` (6 % for the rows around the clearing,
-1.5 % for the rows behind), the saplings to 25 %. The first cook takes a few
+detail with `quat-cook --simplify` (3.5 % for the rows around the clearing,
+1.5 % for the rows behind), the saplings to 15 %. The first cook takes a few
 minutes (most of it the fir). CI does the same before its screenshots and
 caches the result.
 
@@ -41,9 +41,9 @@ caches the result.
 
 | Poly Haven id | Kind | Res. | Use in the scene | Authors |
 |---|---|---|---|---|
-| [`fir_tree_01`](https://polyhaven.com/a/fir_tree_01) | model | 1k | the forest (3 variants, 18 m), cooked to 6 % (near rows) and 1.5 % (far rows) by thinning its needle cards, BLEND twigs made alpha-tested | Rob Tuytel (photography), Rico Cilliers (modeling) |
-| [`fir_sapling`](https://polyhaven.com/a/fir_sapling) | model | 1k | young firs in the clearing (cooked to 25 %) | Rob Tuytel, Rico Cilliers |
-| [`pine_sapling_small`](https://polyhaven.com/a/pine_sapling_small) | model | 1k | young pines in the clearing (cooked to 25 %) | Rob Tuytel, Rico Cilliers |
+| [`fir_tree_01`](https://polyhaven.com/a/fir_tree_01) | model | 1k | the forest (3 variants, 18 m), cooked to 3.5 % (near rows) and 1.5 % (far rows) by thinning its needle cards, BLEND twigs made alpha-tested | Rob Tuytel (photography), Rico Cilliers (modeling) |
+| [`fir_sapling`](https://polyhaven.com/a/fir_sapling) | model | 1k | young firs in the clearing (cooked to 15 %) | Rob Tuytel, Rico Cilliers |
+| [`pine_sapling_small`](https://polyhaven.com/a/pine_sapling_small) | model | 1k | young pines in the clearing (cooked to 15 %) | Rob Tuytel, Rico Cilliers |
 | [`fern_02`](https://polyhaven.com/a/fern_02) | model | 1k | foreground framing and ground cover (4 variants) | Rob Tuytel (scanning), Rico Cilliers (modeling) |
 | [`dead_tree_trunk`](https://polyhaven.com/a/dead_tree_trunk) | model | 1k | the hero fallen log | Rob Tuytel |
 | [`tree_stump_01`](https://polyhaven.com/a/tree_stump_01), [`tree_stump_02`](https://polyhaven.com/a/tree_stump_02) | model | 1k | stumps | Rob Tuytel |
@@ -60,8 +60,8 @@ is cooked. Every download folder also gets a `LICENSE.md` and a
 ## The scene
 
 - **Layout.** A clearing about 25 m across, ringed by full-size firs: near
-  rows (6 % LOD) 16–30 m from its centre, far rows (1.5 % LOD) out to
-  about 70 m, one `scatter` per variant and belt. Young firs and
+  rows (3.5 % LOD) 16–30 m from its centre, far rows (1.5 % LOD, casting
+  no shadows) out to about 70 m, one `scatter` per variant and belt. Young firs and
   pines, ferns and mossy rocks are scattered inside; the hero fallen log,
   a stump, two rocks and two branches are placed by hand in the middle
   ground, each seated on the ground by the lowest point of its mesh (from
@@ -100,16 +100,19 @@ with a log line, so the scene loads on builds with or without these:
 
 ### Cost
 
-On lavapipe (CPU Vulkan) a 1920x1080 frame of the hero view takes about
-18 s on four loaded cores; most of it is the forest (about 6 M triangles
-after the LOD cook). Engines ship forests with runtime LOD selection and
-impostors for the far rows; quat-3d has neither yet, so the cook-time LODs
-and the row densities are the budget.
+On lavapipe (CPU Vulkan) a 960x540 frame of the hero view takes about 10 s
+on four idle cores. The near fir rows dominate (about 6 s: 18 alpha-tested
+trees of ~93 k triangles, drawn into the GBuffer and three shadow cascades),
+then the far rows and the grass. `quat-cook` prints each LOD's triangle count,
+and the fetch script logs it. Engines ship forests with runtime LOD selection
+and impostors for the far rows; quat-3d has neither yet, so the cook-time LODs,
+row densities and shadow casting are the budget.
 
 ## Rendering
 
-The CI screenshot job renders the hero camera (`cinematic` row of
-`scripts/ci-screenshots.sh`, Play mode so the scene camera is the view).
+The CI screenshot job renders the hero camera at 960x540 (`cinematic` row of
+`scripts/ci-screenshots.sh`: Play mode with `QUAT_GAME_CAMERA=1`, so the
+scene's camera is the view, and a 900 s row timeout).
 The stills come from `scripts/render-shots.py`, which drives the engine over
 the same JSON-RPC endpoint quat-mcp uses (`camera.set`, `render.screenshot`):
 
