@@ -43,8 +43,8 @@ function(_quat_cook_materials target dir)
             add_custom_command(
                 OUTPUT ${spv} ${json}
                 COMMAND ${CMAKE_COMMAND} -E make_directory ${out_dir}
-                COMMAND ${QUAT3D_SLANGC} ${src} ${module_dir}/material_pass_${variant}.slang-module
-                        -I ${lib_dir} -I ${module_dir}
+                COMMAND ${QUAT3D_SLANGC} -I ${lib_dir} -I ${module_dir}
+                        ${src} ${module_dir}/material_pass_${variant}.slang-module
                         -target spirv -emit-spirv-directly -fvk-use-entrypoint-name
                         -o ${spv} -reflection-json ${json}
                 DEPENDS ${src}

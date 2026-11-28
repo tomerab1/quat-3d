@@ -30,6 +30,18 @@ if(ENGINE_PROFILE)
     list(APPEND VCPKG_MANIFEST_FEATURES "profiling")
 endif()
 
+# Cook-time SPIR-V validation (#136): every cooked .spv goes through
+# `spirv-val --target-env vulkan1.3` and an invalid module fails the build,
+# on every OS, instead of only where a recent validation layer runs. spirv-val
+# comes from the vcpkg manifest feature `shader-validation` (SPIRV-Tools at
+# the baseline, a host tool), so all platforms check with the same version.
+# CI turns it on; see cmake/CompileShaders.cmake.
+option(ENGINE_VALIDATE_SHADERS
+    "Run spirv-val --target-env vulkan1.3 on every cooked shader (fails the build)" OFF)
+if(ENGINE_VALIDATE_SHADERS)
+    list(APPEND VCPKG_MANIFEST_FEATURES "shader-validation")
+endif()
+
 project(quat_3d
     VERSION 0.1.0
     DESCRIPTION "Modular data-driven C++23 game engine"

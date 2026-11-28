@@ -213,10 +213,12 @@ std::vector<std::string> ShaderCompiler::arguments(const fs::path& source,
                                                    const fs::path& out_dir,
                                                    std::size_t variant) const {
     const std::string name = core::path_to_utf8(source.stem());
-    // Keep in sync with cmake/CompileShaders.cmake.
+    // Keep in sync with cmake/CompileShaders.cmake. Search paths come before
+    // the inputs: slangc 2025.12+ loads a `.slang-module` input as soon as it
+    // parses it, resolving its imports against the -I paths seen so far (#136).
     const ShaderSourceKind kind = kind_of(source);
     if (kind == ShaderSourceKind::module) {
-        return {core::path_to_utf8(source), "-I", core::path_to_utf8(config_.module_dir), "-o",
+        return {"-I", core::path_to_utf8(config_.module_dir), core::path_to_utf8(source), "-o",
                 core::path_to_utf8(out_dir / (name + ".slang-module"))};
     }
     if (kind == ShaderSourceKind::material) {
@@ -225,12 +227,12 @@ std::vector<std::string> ShaderCompiler::arguments(const fs::path& source,
         const std::string stem = name + "." + std::string(v.name);
         const fs::path driver =
             config_.output_dir / (std::string(v.driver_module) + ".slang-module");
-        return {core::path_to_utf8(source),
-                core::path_to_utf8(driver),
-                "-I",
+        return {"-I",
                 core::path_to_utf8(config_.module_dir),
                 "-I",
                 core::path_to_utf8(config_.output_dir),
+                core::path_to_utf8(source),
+                core::path_to_utf8(driver),
                 "-target",
                 "spirv",
                 "-emit-spirv-directly",
@@ -240,9 +242,9 @@ std::vector<std::string> ShaderCompiler::arguments(const fs::path& source,
                 "-reflection-json",
                 core::path_to_utf8(out_dir / (stem + ".json"))};
     }
-    return {core::path_to_utf8(source),
-            "-I",
+    return {"-I",
             core::path_to_utf8(config_.module_dir),
+            core::path_to_utf8(source),
             "-target",
             "spirv",
             "-emit-spirv-directly",

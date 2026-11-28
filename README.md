@@ -211,9 +211,9 @@ executable — or in `QUAT_ASSET_ROOT` — so keep the unpacked folder together.
 ## Building
 
 You need CMake 3.22+, Ninja, a C++23 compiler, `slangc` (the
-[Slang](https://github.com/shader-slang/slang/releases) shader compiler — CI
-uses Slang 2025.6.1; the [Vulkan SDK](https://vulkan.lunarg.com/) also ships
-one), and [vcpkg](https://github.com/microsoft/vcpkg). vcpkg downloads and
+[Slang](https://github.com/shader-slang/slang/releases) shader compiler,
+2025.12 or newer — CI uses Slang 2025.12; the [Vulkan SDK](https://vulkan.lunarg.com/)
+also ships one; older releases emit SPIR-V the Vulkan validation layer rejects), and [vcpkg](https://github.com/microsoft/vcpkg). vcpkg downloads and
 builds every C++ library the engine uses the first time you configure — expect
 that first configure to take a while (roughly 15–30 minutes); later ones are fast.
 
@@ -234,6 +234,7 @@ CMake options:
 | Option | Default | Effect |
 |---|---|---|
 | `ENGINE_EDITOR` | `ON` | Build the editor layer |
+| `ENGINE_VALIDATE_SHADERS` | `OFF` (CI: `ON`) | Run `spirv-val --target-env vulkan1.3` on every cooked shader and fail the build on invalid SPIR-V; spirv-val comes from vcpkg (manifest feature `shader-validation`) |
 | `ENGINE_PROFILE` | `ON` for Debug / RelWithDebInfo and the `release` preset, else `OFF` | Compile in the [Tracy](https://github.com/wolfpld/tracy) profiler client (on demand: no cost until a viewer connects) — see [Profiling](#profiling) |
 | `ENGINE_PACKAGE_BUILD` | `OFF` | Release archives: no source-tree paths compiled in |
 

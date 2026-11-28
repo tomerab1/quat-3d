@@ -717,7 +717,7 @@ cooked/shaders/materials/<name>.gbuffer.spv (+ .json reflection)
 - **Link-time specialisation, one program per material.** A material is
   compiled with one slangc run per pass variant: the material source plus the
   variant's cooked driver module
-  (`slangc <name>.slang cooked/material_pass_gbuffer.slang-module -I lib -I cooked ...`).
+  (`slangc -I lib -I cooked <name>.slang cooked/material_pass_gbuffer.slang-module ...`; the search paths must come first).
   The driver declares `extern struct SurfaceMaterial : IMaterial` and the
   material exports it, so the program is linked and specialised by Slang — no
   source splicing, no `#ifdef`s, and the generated code is what a hand-written

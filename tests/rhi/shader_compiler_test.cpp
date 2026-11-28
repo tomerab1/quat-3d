@@ -87,7 +87,7 @@ TEST(ShaderCompiler, ArgumentsMatchTheCMakeFlags) {
     const fs::path pass = t.src / "pass.slang";
     const std::vector<std::string> pass_args = compiler.arguments(pass, stage);
     const std::vector<std::string> want_pass = {
-        path_to_utf8(pass), "-I", path_to_utf8(t.lib), "-target", "spirv", "-emit-spirv-directly",
+        "-I", path_to_utf8(t.lib), path_to_utf8(pass), "-target", "spirv", "-emit-spirv-directly",
         "-fvk-use-entrypoint-name", "-o", path_to_utf8(stage / "pass.spv"), "-reflection-json",
         path_to_utf8(stage / "pass.json")};
     EXPECT_EQ(pass_args, want_pass);
@@ -95,7 +95,7 @@ TEST(ShaderCompiler, ArgumentsMatchTheCMakeFlags) {
 
     const fs::path mod = t.lib / "scale.slang";
     EXPECT_EQ(compiler.kind_of(mod), ShaderSourceKind::module);
-    const std::vector<std::string> want_mod = {path_to_utf8(mod), "-I", path_to_utf8(t.lib), "-o",
+    const std::vector<std::string> want_mod = {"-I", path_to_utf8(t.lib), path_to_utf8(mod), "-o",
                                                path_to_utf8(stage / "scale.slang-module")};
     EXPECT_EQ(compiler.arguments(mod, stage), want_mod);
     EXPECT_EQ(compiler.outputs_for(mod),

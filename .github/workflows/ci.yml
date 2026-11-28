@@ -77,9 +77,11 @@ jobs:
       # The release preset compiles the Tracy client in (ENGINE_PROFILE=ON,
       # on demand: it costs nothing without a viewer), so the tests run with
       # it; the no-editor game below keeps ENGINE_PROFILE=OFF compiling.
+      # ENGINE_VALIDATE_SHADERS: every cooked .spv must pass
+      # spirv-val --target-env vulkan1.3 (#136), on all three OSes.
       - name: Configure
         id: configure
-        run: cmake --preset release
+        run: cmake --preset release -DENGINE_VALIDATE_SHADERS=ON
 
       # Saved right after configure (where vcpkg builds the dependencies) and
       # even when configure fails, so neither a dependency failure nor a later
@@ -295,7 +297,7 @@ jobs:
 
       - name: Configure
         id: configure
-        run: cmake --preset windows-release
+        run: cmake --preset windows-release -DENGINE_VALIDATE_SHADERS=ON
 
       - name: Save vcpkg binary cache
         if: always() && steps.setup.outputs.cache-key != ''
@@ -355,7 +357,7 @@ jobs:
 
       - name: Configure
         id: configure
-        run: cmake --preset macos-release
+        run: cmake --preset macos-release -DENGINE_VALIDATE_SHADERS=ON
 
       - name: Save vcpkg binary cache
         if: always() && steps.setup.outputs.cache-key != ''

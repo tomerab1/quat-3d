@@ -12,17 +12,20 @@ inputs:
     description: vcpkg commit; must equal vcpkg.json's builtin-baseline.
     default: 10ceb139a610ebf3c6aa49cdc4a4b7f3db5d3f2b
   slang-version:
-    description: Slang release used on every OS (update the SHA-256s with it).
-    default: 2025.6.1
+    description: >
+      Slang release used on every OS (update the SHA-256s with it). 2025.12 is
+      the first minor release with shader-slang/slang#7527: no ArrayStride on
+      arrays used by Function/Workgroup variables (VUID-StandaloneSpirv-None-10684, #136).
+    default: 2025.12
   slang-sha256-linux:
     description: SHA-256 of slang-<version>-linux-x86_64.tar.gz.
-    default: 836c8a23b5619dcfec13676c924ddadb46d8dd5e82cae2cad26d3a28da4d7538
+    default: 8ff27feb4355bcdb5749e8c2156dd79e3756c452d9fe30836da111470568ed0f
   slang-sha256-macos:
     description: SHA-256 of slang-<version>-macos-aarch64.tar.gz.
-    default: b2684ad6050a0adb4779605e2632a03fff1fc27cd5265010ff59877b4a59bbea
+    default: 24a210f282030310c449a1c3ab308087806341e27b55cad8c496cd1d02cc57b1
   slang-sha256-windows:
     description: SHA-256 of slang-<version>-windows-x86_64.zip.
-    default: 47ef4f7f2df17f9965612bc39e63dac0d9748985887339bb5f11f2d931c0cb61
+    default: 2adc95e76cbe07c0caf669a373997382772f589bc7f164347a79b429e4c41208
   vulkan-sdk-version:
     description: Windows only (headers, import library, loader runtime, lavapipe).
     default: 1.4.321.1
