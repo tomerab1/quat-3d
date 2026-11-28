@@ -44,7 +44,8 @@ TEST(InspectorSections, KeepTheirOrder) {
         "transform", "primitive", "mesh_renderer", "material", "dir_light", "point_light",
         "camera", "camera_rig", "camera_rig_input", "animator", "foot_ik", "terrain", "grass",
         "particle_emitter", "world_clock", "instanced_mesh", "scatter", "nav_agent", "behavior",
-        "patrol", "script", "collider", "rigidbody", "joint", "audio_source", "audio_listener"};
+        "patrol", "script", "collider", "rigidbody", "joint", "audio_source", "audio_listener",
+        "field_table"}; // game-module components (G17.1), after the engine's
     EXPECT_EQ(order, expected);
 }
 

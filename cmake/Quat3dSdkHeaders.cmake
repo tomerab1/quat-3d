@@ -26,6 +26,11 @@ set(QUAT3D_SDK_STABLE_HEADERS
     engine/core/sim_clock.hpp
     engine/core/spring.hpp
     engine/core/utf8_path.hpp
+    engine/game/fields.hpp
+    engine/game/json_schema.hpp
+    engine/game/module.hpp
+    engine/game/module_set.hpp
+    engine/game/player.hpp
     engine/input/action_map.hpp
     engine/input/actions.hpp
     engine/input/device_state.hpp
@@ -36,12 +41,14 @@ set(QUAT3D_SDK_STABLE_HEADERS
     engine/scene/camera_rig.hpp
     engine/scene/component_json.hpp
     engine/scene/component_registry.hpp
+    engine/scene/field_table.hpp
     engine/scene/components.hpp
     engine/scene/ground_placement.hpp
     engine/scene/navigation.hpp
     engine/scene/scatter.hpp
     engine/scene/scene.hpp
     engine/scene/scene_io.hpp
+    engine/script/module_bind.hpp
     engine/terrain/heightmap.hpp)
 
 set(QUAT3D_SDK_SUPPORT_HEADERS

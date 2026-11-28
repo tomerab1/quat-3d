@@ -24,8 +24,10 @@
 
 namespace engine::project {
 
-// The game.json format this engine reads and writes.
-inline constexpr int k_game_project_format = 1;
+// The newest game.json format this engine reads (and the one it writes for
+// projects that use format 2's keys). Format 1 stays valid.
+inline constexpr int k_game_project_format = 2;
+inline constexpr std::size_t k_max_game_modules = 64;
 inline constexpr std::string_view k_game_project_file = "game.json";
 inline constexpr std::size_t      k_max_game_project_bytes = 1U << 20;
 inline constexpr std::size_t      k_max_content_roots = 256;
@@ -38,7 +40,8 @@ struct WindowSettings {
 };
 
 struct GameProject {
-    int         format = k_game_project_format;
+    // 1 unless the project uses a format 2 key (game_project_json writes 2 then).
+    int         format = 1;
     std::string name;    // display name
     std::string id;      // reverse-DNS, e.g. "dev.quat3d.coin-collector"
     std::string version; // MAJOR.MINOR.PATCH[-prerelease]
@@ -47,6 +50,16 @@ struct GameProject {
     std::string              icon; // empty: none
     std::vector<std::string> content;
     WindowSettings           window;
+    // Format 2 (ROADMAP G17.1).
+    // Native game modules the game needs (quat_add_game_module names); a
+    // player that was not built with every one of them refuses the game.
+    std::vector<std::string> modules;
+    // Project-relative folder of game MCP tool descriptions and skills
+    // (G17.2); empty: none.
+    std::string mcp;
+    // The engine versions the game was built for, e.g. ">=0.4,<0.5"; empty:
+    // any. Checked when the project loads.
+    std::string engine;
 };
 
 // Decodes and validates a game.json document (lexical checks only; see
@@ -83,6 +96,14 @@ load_game_project(const std::filesystem::path& project_root);
 [[nodiscard]] std::expected<void, core::Error>
 check_output_folder(const GameProject& project, const std::filesystem::path& project_root,
                     const std::filesystem::path& output);
+
+// Format 2's "engine" range: comma-separated comparators (>=, >, <=, <, = or
+// none) on MAJOR.MINOR[.PATCH], all of which must hold: ">=0.4,<0.5".
+[[nodiscard]] std::expected<void, core::Error> validate_engine_range(std::string_view range);
+// Whether engine version major.minor.patch satisfies `range`; the error says
+// which version the game needs and which engine this is.
+[[nodiscard]] std::expected<void, core::Error> check_engine_range(std::string_view range, int major,
+                                                                  int minor, int patch);
 
 // Individual validators (also used by quat-pack's command line).
 [[nodiscard]] std::expected<void, core::Error> validate_game_id(std::string_view id);

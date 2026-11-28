@@ -1,4 +1,5 @@
 #include "engine/project/game_project.hpp"
+#include "engine/version.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -274,6 +275,50 @@ std::expected<void, core::Error> validate_project_path(std::string_view path) {
     return {};
 }
 
+// Format 2 (ROADMAP G17.1): modules, mcp, engine. A format 1 file that uses
+// them is told which format it needs.
+void read_format2(core::JsonFields& f, GameProject& p) {
+    for (const char* key : {"modules", "mcp", "engine"}) {
+        if (p.format < 2 && f.has(key)) {
+            f.fail(key, "needs \"format\": 2");
+            return;
+        }
+    }
+    f.known({"modules"});
+    if (const json* list = f.raw("modules"); list != nullptr && !list->is_null()) {
+        if (!list->is_array() || list->size() > k_max_game_modules) {
+            f.fail("modules", "expected an array of at most " + std::to_string(k_max_game_modules) +
+                                  " module names");
+            return;
+        }
+        for (const json& m : *list) {
+            std::string name;
+            const bool ok = core::JsonFields::read_string(m, name) && !name.empty() &&
+                            name.size() <= 64 && name.front() >= 'a' && name.front() <= 'z' &&
+                            std::ranges::all_of(name, [](char c) {
+                                return (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_';
+                            });
+            if (!ok) {
+                f.fail("modules", "expected module names (lowercase letters, digits and '_', "
+                                  "as in quat_add_game_module)");
+                return;
+            }
+            if (std::ranges::find(p.modules, name) != p.modules.end()) {
+                f.fail("modules", "'" + name + "' is listed twice");
+                return;
+            }
+            p.modules.push_back(std::move(name));
+        }
+    }
+    f.string("mcp", p.mcp, k_max_path).string("engine", p.engine, 128);
+    if (f.ok() && !p.mcp.empty()) check_field(f, "mcp", validate_project_path(p.mcp));
+    if (f.ok() && !p.engine.empty()) {
+        if (auto ok = validate_engine_range(p.engine); !ok) {
+            f.fail("engine", ok.error().message.substr(std::string_view("engine: ").size()));
+        }
+    }
+}
+
 std::expected<GameProject, core::Error> parse_game_project(const json& doc) {
     auto format = read_format(doc);
     if (!format) return std::unexpected(format.error());
@@ -306,6 +351,7 @@ std::expected<GameProject, core::Error> parse_game_project(const json& doc) {
     }
     const json* window = f.raw("window");
     if (f.ok()) read_content(f, p.content);
+    if (f.ok()) read_format2(f, p);
     if (auto ok = f.finish(); !ok) return fail("game.json: " + ok.error().message);
     if (auto ok = read_window(window, p.window); !ok) {
         return fail("game.json: " + ok.error().message);
@@ -341,6 +387,17 @@ std::expected<GameProject, core::Error> load_game_project(const fs::path& projec
             return std::unexpected(ok.error());
         }
     }
+    if (!project->mcp.empty()) {
+        if (auto ok = check_on_disk(project_root, "mcp", project->mcp, PathKind::file_or_directory); !ok) {
+            return std::unexpected(ok.error());
+        }
+    }
+    if (!project->engine.empty()) {
+        const quat3d::Version v = quat3d::version();
+        if (auto ok = check_engine_range(project->engine, v.major, v.minor, v.patch); !ok) {
+            return fail("game.json: " + ok.error().message);
+        }
+    }
     for (std::size_t i = 0; i < project->content.size(); ++i) {
         if (auto ok = check_on_disk(project_root, "content[" + std::to_string(i) + "]",
                                     project->content[i], PathKind::file_or_directory);
@@ -353,7 +410,9 @@ std::expected<GameProject, core::Error> load_game_project(const fs::path& projec
 
 json game_project_json(const GameProject& p) {
     json out = json::object();
-    out["format"] = p.format;
+    // The oldest format that holds the project: format 2's keys need 2.
+    const bool needs_2 = !p.modules.empty() || !p.mcp.empty() || !p.engine.empty();
+    out["format"] = needs_2 ? std::max(p.format, 2) : p.format;
     out["name"] = p.name;
     out["id"] = p.id;
     out["version"] = p.version;
@@ -364,6 +423,9 @@ json game_project_json(const GameProject& p) {
                      {"fullscreen", p.window.fullscreen}};
     if (!p.icon.empty()) out["icon"] = p.icon;
     out["content"] = p.content;
+    if (!p.modules.empty()) out["modules"] = p.modules;
+    if (!p.mcp.empty()) out["mcp"] = p.mcp;
+    if (!p.engine.empty()) out["engine"] = p.engine;
     return out;
 }
 

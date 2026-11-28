@@ -13,7 +13,8 @@
 #   lib/                     engine static libraries
 #   lib/cmake/quat3d/        quat3dConfig.cmake, quat3dConfigVersion.cmake,
 #                            quat3dTargets*.cmake, quat3d-toolchain.cmake,
-#                            Quat3dGame.cmake, Quat3dToolchainCheck.cmake
+#                            Quat3dGame.cmake, QuatRegistration.cmake,
+#                            Quat3dToolchainCheck.cmake
 #   bin/                     quat-cook, slangc (+ its libraries), quat-mcp
 #   deps/                    the vcpkg installed tree the engine was built with
 #                            (release only), so a game never runs vcpkg
@@ -32,8 +33,9 @@ include(${CMAKE_CURRENT_LIST_DIR}/Quat3dSdkHeaders.cmake)
 # module directories (src/<module>/CMakeLists.txt), derived rather than listed, so a new engine library (engine_weather, ...)
 # joins the SDK and quat3d::engine without an edit here; the sdk_consumer and
 # public-header guards then check it is installable. Not in the SDK:
-# engine_cook (offline cooker, shipped as bin/quat-cook) and the editor
-# (exported only with ENGINE_EDITOR, below).
+# engine_cook (offline cooker, shipped as bin/quat-cook), the editor
+# (exported only with ENGINE_EDITOR, below) and the player libraries (the
+# application layer, exported as quat3d::player*, below).
 # The root directory and every module directory under src/ (S9: one
 # CMakeLists.txt per module), depth-first in add_subdirectory order, which is
 # the definition order. Games and samples (games/, examples/) and tests/ are
@@ -54,7 +56,7 @@ endfunction()
 quat3d_engine_directory_targets(${PROJECT_SOURCE_DIR} quat3d_directory_targets)
 set(QUAT3D_ENGINE_LIBRARIES)
 foreach(target IN LISTS quat3d_directory_targets)
-    if(NOT target MATCHES "^engine_" OR target MATCHES "^engine_(cook|editor)$")
+    if(NOT target MATCHES "^engine_" OR target MATCHES "^engine_(cook|editor|player.*)$")
         continue()
     endif()
     get_target_property(type ${target} TYPE)
@@ -83,6 +85,29 @@ if(ENGINE_EDITOR)
     add_library(quat3d::editor ALIAS quat3d_editor)
     list(APPEND QUAT3D_EXPORTED_TARGETS engine_editor quat3d_editor)
 endif()
+# The players (G17.1): what quat_add_game() links a game's executables
+# against (engine::game::run_player / run_editor, engine/game/player.hpp).
+# The application layer's world library comes along (no headers installed).
+set(quat3d_world_libraries game_world)
+if(TARGET game_world_runtime)
+    list(APPEND quat3d_world_libraries game_world_runtime)
+endif()
+foreach(world IN LISTS quat3d_world_libraries)
+    set_target_properties(${world} PROPERTIES EXPORT_NAME app_${world})
+endforeach()
+list(APPEND QUAT3D_EXPORTED_TARGETS ${quat3d_world_libraries})
+set(quat3d_players player engine_player player_shipping engine_player_shipping)
+if(ENGINE_EDITOR)
+    list(APPEND quat3d_players player_editor engine_player_editor)
+endif()
+while(quat3d_players)
+    list(POP_FRONT quat3d_players export_name library)
+    add_library(quat3d_${export_name} INTERFACE)
+    target_link_libraries(quat3d_${export_name} INTERFACE ${library})
+    set_target_properties(quat3d_${export_name} PROPERTIES EXPORT_NAME ${export_name})
+    add_library(quat3d::${export_name} ALIAS quat3d_${export_name})
+    list(APPEND QUAT3D_EXPORTED_TARGETS ${library} quat3d_${export_name})
+endwhile()
 list(JOIN QUAT3D_ENGINE_LIBRARIES " " quat3d_engine_list)
 message(STATUS "quat3d SDK engine libraries: ${quat3d_engine_list}")
 
@@ -168,6 +193,8 @@ install(FILES
     ${CMAKE_CURRENT_BINARY_DIR}/sdk/quat3dConfigVersion.cmake
     ${CMAKE_CURRENT_BINARY_DIR}/sdk/quat3d-toolchain.cmake
     ${CMAKE_CURRENT_LIST_DIR}/Quat3dGame.cmake
+    ${CMAKE_CURRENT_LIST_DIR}/quat_game_main.cpp.in
+    ${CMAKE_CURRENT_LIST_DIR}/QuatRegistration.cmake
     ${CMAKE_CURRENT_LIST_DIR}/Quat3dToolchainCheck.cmake
     DESTINATION ${QUAT3D_CMAKE_DIR})
 
@@ -270,4 +297,11 @@ if(QUAT3D_SDK_BUNDLE_DEPS AND DEFINED VCPKG_INSTALLED_DIR AND DEFINED VCPKG_TARG
                 PATTERN "*.pdb" EXCLUDE)
         endif()
     endforeach()
+    # protobuf's config package (found through GameNetworkingSockets) imports
+    # protobuf::protoc and refuses to load when that file is missing, so the
+    # tool ships with the tree; vcpkg's other tools are not needed.
+    if(EXISTS "${quat3d_vcpkg_tree}/tools/protobuf")
+        install(DIRECTORY "${quat3d_vcpkg_tree}/tools/protobuf" DESTINATION deps/tools
+            USE_SOURCE_PERMISSIONS)
+    endif()
 endif()

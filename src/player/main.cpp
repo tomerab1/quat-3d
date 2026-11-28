@@ -8,14 +8,9 @@
 // player double-clicks it); a terminal that redirects its output still gets
 // the log through the inherited standard handles.
 
-#include <cstdio>
-#include <utility>
+#include <span>
 
-#include "app/app_config.hpp"
-#include "app/application.hpp"
-#include "app/game_startup.hpp"
-#include "app/remote_bridge.hpp"
-#include "engine/core/stderr_capture.hpp"
+#include "engine/game/player.hpp"
 
 #if defined(_WIN32)
 #ifndef NOMINMAX
@@ -27,30 +22,15 @@
 #include <windows.h>
 #endif
 
-namespace {
-
-int run_player() {
-    // stderr -> engine log ring for debug.log (QUAT_REMOTE runs only).
-    // Created first, destroyed last: it must outlive everything that logs.
-    const engine::core::StderrCapture stderr_capture = quat::app::capture_stderr_for_remote();
-    quat::app::AppConfig config = quat::app::app_config_from_environment();
-    if (auto booted = quat::app::boot_player(config); !booted) {
-        std::fprintf(stderr, "[fatal] %s\n", booted.error().message.c_str());
-        return 1;
-    }
-    quat::app::Application app(std::move(config));
-    return app.run();
-}
-
-} // namespace
-
+// The stock player runs data-plus-Lua games: no native modules (G17.1 games
+// get their own player from quat_add_game, over the same library).
 #if defined(_WIN32)
 int WINAPI wWinMain(HINSTANCE /*instance*/, HINSTANCE /*previous*/, PWSTR /*command_line*/,
                     int /*show*/) {
-    return run_player();
+    return engine::game::run_player(0, nullptr, std::span<const engine::game::ModuleEntry>{});
 }
 #else
-int main() {
-    return run_player();
+int main(int argc, char** argv) {
+    return engine::game::run_player(argc, argv, std::span<const engine::game::ModuleEntry>{});
 }
 #endif

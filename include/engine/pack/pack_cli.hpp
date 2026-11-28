@@ -71,10 +71,11 @@ parse_pack_args(std::span<const std::string> args);
 // A build id may name packages: 1-64 of [A-Za-z0-9.-], starting alphanumeric.
 [[nodiscard]] std::expected<void, core::Error> validate_build_id(std::string_view id);
 
-// The player binary a package of `config` ships, given --player (the
-// development quat-player, or quat-player-shipping): shipping packages use
-// quat-player-shipping next to it (remote control compiled out), development
-// packages quat-player itself. The error says what to build.
+// The player binary a package of `config` ships, given --player (a
+// development player such as quat-player or a game's own, or its shipping
+// build): shipping packages use "<player>-shipping" next to it (remote control
+// compiled out; quat-player-shipping for quat-player), development packages
+// the player itself. The error says what to build.
 [[nodiscard]] std::expected<std::filesystem::path, core::Error>
 player_for_config(const std::filesystem::path& player, project::PackageConfig config);
 

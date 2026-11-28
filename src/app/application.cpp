@@ -1,5 +1,7 @@
 #include "app/application.hpp"
 
+#include "engine/game/module_set.hpp"
+
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -16,6 +18,7 @@
 #include "app/asset_root.hpp"
 #include "app/demo_scenes.hpp"
 #include "app/window_icon.hpp"
+#include "engine/core/log.hpp"
 #include "engine/core/profile.hpp"
 #include "engine/core/utf8_path.hpp"
 #include "engine/scene/bounds.hpp"
@@ -289,6 +292,13 @@ bool Application::init_subsystems() {
 void Application::init_scripts() {
     input_.init();
     input_runtime_.init(project_root(), user_input_file());
+    if (config_.modules) { // G17.1: before the scripts, which take their Lua modules
+        if (auto ok = config_.modules->apply_input(input_runtime_.actions()); !ok) {
+            engine::core::log(engine::core::LogLevel::error, "game", "module input actions: {}",
+                              ok.error().message);
+        }
+        world_.modules().bind(config_.modules.get(), &input_runtime_.actions(), project_root());
+    }
     engine::script::ScriptServices services;
     services.input = &input_.state();
     services.actions = &input_runtime_.actions();

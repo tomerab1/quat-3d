@@ -1,5 +1,9 @@
 -- Coin Collector: the game manager. Spawns a ring of coins, keeps the score
--- and reports progress to the engine log.
+-- and reports progress to the engine log. Coins spin through the game's
+-- native module (module/coin_module.cpp): its coin_spin component, and the
+-- ring layout from its Lua module.
+
+local coin_collector = require("coin_collector")
 
 local Game = {
     properties = {
@@ -14,13 +18,13 @@ function Game:on_start()
     self.collected = 0
     self.started_at = time.elapsed()
     for i = 1, self.coins do
-        local angle = (i - 1) / self.coins * 2 * math.pi
         scene.spawn({
             name = "Coin",
             transform = {
-                position = vec3(math.cos(angle) * self.radius, 1.0, math.sin(angle) * self.radius),
+                position = coin_collector.ring_position(i - 1, self.coins, self.radius),
                 scale = vec3(0.6, 0.08, 0.6),
             },
+            coin_spin = { spin_speed = 180, bob_height = 0.15 },
             primitive = {
                 shape = "cylinder",
                 color = "#ffc832",

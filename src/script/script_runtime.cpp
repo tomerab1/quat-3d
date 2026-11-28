@@ -113,6 +113,7 @@ std::expected<void, core::Error> ScriptRuntime::start(scene::Scene& scene) {
         return sol::make_object(s->vm->state(), sol::lua_nil);
     };
     detail::register_api(*session->vm, session->ctx);
+    detail::register_modules(*session->vm, impl_->options.modules);
     impl_->session = std::move(session);
     return {};
 }

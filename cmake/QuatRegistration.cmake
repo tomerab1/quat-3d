@@ -10,7 +10,8 @@
 #       TEMPLATE  <file.cpp.in>  # the generated TU, with the @QUAT_REG_*@ slots below
 #       OUTPUT    <file.cpp>
 #       DECLARE   <declaration>  # per item, without the ';' (CMake splits
-#       CALL      <statement>)   # arguments on it); @NAME@ is the file's stem
+#       CALL      <statement>    # arguments on it); @NAME@ is the file's stem
+#       [INCLUDE_DIRECTORIES <dir>...])  # extra include dirs for the generated TU
 #
 # adds the matched files and the generated TU to <target>. Items are sorted by
 # file name, so the output is deterministic. The template sees
@@ -21,6 +22,10 @@
 # Registration is explicit generated code, not static initialisers: a linker
 # drops unreferenced objects from static libraries, and the generated TU
 # references every item.
+#
+# The SDK installs this file (quat3dConfig.cmake includes it), so a game can
+# generate its own per-file tables the same way, e.g. one file per component
+# whose generated TU its module's register function calls.
 #
 # quat_write_registration(...) takes FILES instead of TARGET / DIRECTORY /
 # PATTERN and only writes OUTPUT; it works in script mode (cmake -P), which the
@@ -61,13 +66,16 @@ function(quat_write_registration)
 endfunction()
 
 function(quat_generate_registration target)
-    cmake_parse_arguments(ARG "" "DIRECTORY;PATTERN;TEMPLATE;OUTPUT;DECLARE;CALL" "" ${ARGN})
+    cmake_parse_arguments(ARG "" "DIRECTORY;PATTERN;TEMPLATE;OUTPUT;DECLARE;CALL" "INCLUDE_DIRECTORIES"
+        ${ARGN})
     file(GLOB files CONFIGURE_DEPENDS "${ARG_DIRECTORY}/${ARG_PATTERN}")
     quat_write_registration(FILES ${files} TEMPLATE "${ARG_TEMPLATE}" OUTPUT "${ARG_OUTPUT}"
         DECLARE "${ARG_DECLARE}" CALL "${ARG_CALL}")
     target_sources(${target} PRIVATE ${files} "${ARG_OUTPUT}")
-    # The generated TU lives in the build tree: it reaches the module's
-    # private headers as "<module>/<header>" through src/.
-    set_source_files_properties("${ARG_OUTPUT}" PROPERTIES
-        INCLUDE_DIRECTORIES "${PROJECT_SOURCE_DIR}/src")
+    # The generated TU lives in the build tree: the engine passes src/ so it
+    # reaches a module's private headers as "<module>/<header>".
+    if(ARG_INCLUDE_DIRECTORIES)
+        set_source_files_properties("${ARG_OUTPUT}" PROPERTIES
+            INCLUDE_DIRECTORIES "${ARG_INCLUDE_DIRECTORIES}")
+    endif()
 endfunction()

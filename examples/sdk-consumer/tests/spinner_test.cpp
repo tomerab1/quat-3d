@@ -8,8 +8,10 @@
 #include <gtest/gtest.h>
 #include <nlohmann/json.hpp>
 
+#include "engine/game/module_set.hpp"
 #include "engine/remote/rpc_server.hpp"
 #include "engine/scene/component_json.hpp"
+#include "engine/scene/component_registry.hpp"
 #include "engine/scene/components.hpp"
 #include "engine/scene/scene.hpp"
 #include "engine/version.hpp"
@@ -78,6 +80,29 @@ TEST(SdkConsumer, SaveChunkRoundTripsAndRejectsBadInput) {
 // The engine's own components reach a game through the installed codec.
 TEST(SdkConsumer, EngineComponentCodecIsAvailable) {
     EXPECT_NE(engine::scene::find_component_info("transform"), nullptr);
+}
+
+} // namespace
+
+namespace {
+
+// The native module through the engine's module loader (G17.1).
+TEST(SdkConsumer, ModuleRegistersThroughTheSdk) {
+    const engine::game::ModuleEntry modules[] = {{"sdk_consumer", &consumer::register_module}};
+    auto set = engine::game::ModuleSet::load(modules, engine::scene::component_registry(), {});
+    ASSERT_TRUE(set) << set.error().message;
+    engine::scene::Scene scene;
+    const entt::entity e = scene.create_entity("s");
+    ASSERT_TRUE(engine::scene::apply_component(scene.registry(), e, "consumer_spinner",
+                                               {{"degrees_per_second", 90}}, true));
+    engine::game::Services services;
+    engine::game::SystemContext context(scene, services);
+    set->run(engine::game::Phase::pre_physics, context, 1.0F);
+    EXPECT_FLOAT_EQ(scene.registry().get<Spinner>(e).angle_degrees, 90.0F);
+    auto count = set->call("consumer.count", context, nlohmann::json::object());
+    ASSERT_TRUE(count) << count.error().message;
+    EXPECT_EQ((*count)["count"], 1);
+    for (const std::string& c : set->components()) engine::scene::component_registry().remove(c);
 }
 
 } // namespace

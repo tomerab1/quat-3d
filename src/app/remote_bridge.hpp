@@ -102,6 +102,8 @@ class EditorLayer;
 
 namespace quat::app {
 
+class ModuleRuntime;
+
 class InputRuntime;
 struct OpenGame;
 
@@ -157,6 +159,8 @@ struct RemoteBridgeTargets {
     std::function<void()> reset_temporal;
     // Input actions and the user's rebinding file (G5): input.* (may be null).
     InputRuntime* input = nullptr;
+    // Game modules (G17.1): their methods join the endpoint (may be null).
+    const ModuleRuntime* modules = nullptr;
     // Width / height of the scene view (camera.rig.frame).
     std::function<float()> view_aspect;
     // Gameplay scripts (G7): script.* statuses and reloads (may be null).

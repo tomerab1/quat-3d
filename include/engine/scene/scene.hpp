@@ -39,6 +39,13 @@ struct DrawItem;
 
 namespace engine::scene {
 
+// Callbacks Scene::tick runs between its systems: game modules' post_transform
+// and pre_render phases (G17.1).
+struct SceneTickHooks {
+    std::function<void(float dt)> post_transform{}; // after the world transforms resolve
+    std::function<void(float dt)> pre_render{};     // before render collection
+};
+
 class Scene {
 public:
     // Out of line: the members' special functions need the complete DrawItem.
@@ -74,7 +81,9 @@ public:
     //   4. WorldClockSystem    — advance the scene's WorldClock, derive the
     //                            sky, drive the sun (world_clock.hpp).
     //   5. RenderCollectSystem — gather drawable entities into draw_list().
-    void tick(float dt = 0.0F, const FootGroundProbe& ground = {});
+    // `hooks` run between them: post_transform after 1, pre_render before 5.
+    void tick(float dt = 0.0F, const FootGroundProbe& ground = {},
+              const SceneTickHooks& hooks = {});
 
     // First entity with an active Camera, or entt::null if none.
     [[nodiscard]] entt::entity active_camera() const;

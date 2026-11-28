@@ -213,6 +213,7 @@ add_subdirectory(src/astro)
 add_subdirectory(src/physics)
 add_subdirectory(src/scene)
 add_subdirectory(src/script)
+add_subdirectory(src/game)
 add_subdirectory(src/cook)
 add_subdirectory(src/terrain)
 add_subdirectory(src/weather)
@@ -255,3 +256,14 @@ endif()
 # package, the toolchain file and the SDK tools. See docs/sdk.md.
 # ---------------------------------------------------------------------------
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/Quat3dInstall.cmake)
+
+# ---------------------------------------------------------------------------
+# In-tree samples (ROADMAP P4 / G17.1): leaves built like games in their own
+# repositories, against the quat3d:: targets and Quat3dGame.cmake only. The
+# engine never depends on them (layering_check); CI also configures with
+# QUAT_BUILD_SAMPLES=OFF to prove it.
+# ---------------------------------------------------------------------------
+option(QUAT_BUILD_SAMPLES "Build the in-tree sample games" ${PROJECT_IS_TOP_LEVEL})
+if(QUAT_BUILD_SAMPLES)
+    add_subdirectory(games/coin-collector)
+endif()

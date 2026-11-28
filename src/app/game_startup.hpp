@@ -5,6 +5,8 @@
 // (asset_root.hpp). Kept out of the entry points so they stay thin.
 
 #include <expected>
+#include <filesystem>
+#include <optional>
 
 #include "app/app_config.hpp"
 #include "engine/core/error.hpp"
@@ -14,10 +16,12 @@ namespace quat::app {
 // quat-player: boots the game (QUAT_GAME or game.json next to the
 // executable) and configures `config` for it. The error explains what is
 // missing or invalid.
-[[nodiscard]] std::expected<void, engine::core::Error> boot_player(AppConfig& config);
+[[nodiscard]] std::expected<void, engine::core::Error>
+boot_player(AppConfig& config, const std::optional<std::filesystem::path>& default_game = std::nullopt);
 
 // The editor build: with QUAT_GAME set, opens that game project for editing
 // and Build & Export (a bad project is logged and skipped). No-op otherwise.
-void open_game_from_environment(AppConfig& config);
+void open_game_from_environment(AppConfig& config,
+                                const std::optional<std::filesystem::path>& default_game = std::nullopt);
 
 } // namespace quat::app

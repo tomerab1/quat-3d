@@ -30,6 +30,7 @@
 
 #include "engine/core/error.hpp"
 #include "engine/scene/component_json.hpp"
+#include "engine/scene/field_table.hpp"
 
 namespace engine::scene {
 
@@ -58,6 +59,12 @@ struct ComponentCodec {
     // Remove it and what it implies; returns whether it was there. Null: the
     // component cannot be removed (transform).
     std::function<bool(entt::registry&, entt::entity)> remove{};
+
+    // Optional: the component's JSON Schema (scene.components reports it) and
+    // its field table (the editor draws inspector rows from it). Components
+    // described by a field table (engine::game::ComponentFields) have both.
+    std::shared_ptr<const nlohmann::json> schema{};
+    std::shared_ptr<const FieldTable>     fields{};
 
     static constexpr std::int32_t k_default_order = 100'000;
 };

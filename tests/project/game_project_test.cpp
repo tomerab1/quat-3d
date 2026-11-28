@@ -74,9 +74,9 @@ TEST(GameProject, DefaultsForOptionalFields) {
 
 TEST(GameProject, FormatIsVersionChecked) {
     json doc = valid();
-    doc["format"] = 2;
+    doc["format"] = 3;
     std::string e = error_of(doc);
-    EXPECT_TRUE(contains(e, "format 2 is newer than this engine reads (1)")) << e;
+    EXPECT_TRUE(contains(e, "format 3 is newer than this engine reads (2)")) << e;
     EXPECT_TRUE(contains(e, "update the engine")) << e;
     // A newer file fails on its format, not on the fields it added.
     doc["new_field"] = true;

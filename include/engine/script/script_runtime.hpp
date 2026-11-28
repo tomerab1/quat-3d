@@ -42,6 +42,7 @@
 #include <entt/entity/entity.hpp>
 
 #include "engine/core/error.hpp"
+#include "engine/script/module_bind.hpp"
 #include "engine/scene/components.hpp"
 
 namespace engine::physics {
@@ -100,6 +101,8 @@ public:
         std::filesystem::path scripts_root; // absolute path of assets/scripts/
         ScriptLimits          limits;
         bool                  watch = false; // hot reload through a FileWatcher
+        // Native Lua modules (G17.1): require("<name>") in every session.
+        std::vector<LuaModuleDesc> modules{};
     };
 
     explicit ScriptRuntime(Options options);

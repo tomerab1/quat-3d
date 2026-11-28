@@ -261,6 +261,17 @@ TEST(PackCli, ShippingPackagesUseTheShippingPlayer) {
     auto wrong = player_for_config(ship, project::PackageConfig::development);
     ASSERT_ERR(wrong);
     EXPECT_TRUE(contains(wrong.error().message, "no remote control"));
+
+    // A game's own player (G17.1, quat_add_game): "<game>" ships "<game>-shipping".
+    bin.write("coin-collector" + ext, "game");
+    const fs::path game = bin.path() / ("coin-collector" + ext);
+    auto game_missing = player_for_config(game, project::PackageConfig::shipping);
+    ASSERT_ERR(game_missing);
+    EXPECT_TRUE(contains(game_missing.error().message, "build the coin-collector-shipping target"));
+    bin.write("coin-collector-shipping" + ext, "game ship");
+    auto game_shipping = player_for_config(game, project::PackageConfig::shipping);
+    ASSERT_OK(game_shipping);
+    EXPECT_EQ(*game_shipping, bin.path() / ("coin-collector-shipping" + ext));
 }
 
 } // namespace

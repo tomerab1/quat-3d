@@ -43,6 +43,9 @@ the remote API / MCP, `scene.update {entity, components: {script: {path:
   on `self` is per-entity state. Callbacks not defined on `self` are looked up
   on the script's table.
 - Paths are relative to `assets/scripts/` and use `/`: `"coin_collector/coin.lua"`.
+- `require("<name>")` of a game's native Lua module (G17.1,
+  [`game-modules.md`](game-modules.md)) returns the module's functions instead
+  of loading a file.
 - `require("lib.util")` (or `"lib/util"`) loads `assets/scripts/lib/util.lua`
   once and returns what it returns. Nothing outside `assets/scripts/` can be
   loaded.

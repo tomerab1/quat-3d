@@ -115,13 +115,18 @@ jobs:
       # install is off: with ENGINE_PROFILE=OFF the manifest no longer asks
       # for the `profiling` feature, and an install would remove Tracy from
       # the shared tree under the release build.
-      - name: Build game without the editor (ENGINE_EDITOR=OFF, ENGINE_PROFILE=OFF)
+      #
+      # The same build leaves the in-tree samples out (QUAT_BUILD_SAMPLES=OFF,
+      # ROADMAP G17.1): the engine configures, builds and passes its layering
+      # check alone, so nothing in it depends on a game.
+      - name: Build game without the editor or samples (ENGINE_EDITOR=OFF, ENGINE_PROFILE=OFF, QUAT_BUILD_SAMPLES=OFF)
         if: ${{ !cancelled() && steps.configure.outcome == 'success' }}
         run: |
           cmake --preset release -B build/release-noeditor \
-            -DENGINE_PROFILE=OFF -DENGINE_EDITOR=OFF -DVCPKG_MANIFEST_INSTALL=OFF \
+            -DENGINE_PROFILE=OFF -DENGINE_EDITOR=OFF -DQUAT_BUILD_SAMPLES=OFF -DVCPKG_MANIFEST_INSTALL=OFF \
             -DVCPKG_INSTALLED_DIR="${{ github.workspace }}/build/release/vcpkg_installed"
-          cmake --build build/release-noeditor --target game
+          cmake --build build/release-noeditor --target game quat-player
+          ctest --test-dir build/release-noeditor -R "^layering_check$" --output-on-failure
 
       # CC0 Poly Haven assets of the showcase scenes (assets/showcase/*/assets.json),
       # downloaded and cooked with this build's quat-cook. Two caches: the

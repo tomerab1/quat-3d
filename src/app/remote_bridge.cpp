@@ -25,6 +25,7 @@
 #include "app/app_config.hpp"
 #include "app/asset_root.hpp"
 #include "app/build_service.hpp"
+#include "app/module_methods.hpp"
 #include "app/nav_bake.hpp"
 #include "engine/asset/asset_manager.hpp"
 #include "engine/core/event_ring.hpp"
@@ -488,6 +489,10 @@ struct RemoteBridge::Impl {
         open_material_shaders();
         // The server lives in this Impl (stable address), as batching requires.
         remote::register_world_commands(*server, *t.scene, services());
+        if (t.modules != nullptr) {
+            install_module_methods(*server, *t.modules, *t.scene, [this] { return physics_world(); },
+                                   t.frame_counter);
+        }
     }
 
 #endif // !QUAT_SHIPPING

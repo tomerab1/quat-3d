@@ -27,6 +27,7 @@ add_library(engine_scene STATIC
     component_json.cpp
     component_json_common.cpp
     component_registry.cpp
+    field_table.cpp
     lens_json.cpp
     particle_json.cpp
     script_component.cpp
@@ -78,7 +79,8 @@ quat_generate_registration(engine_scene
     TEMPLATE  ${CMAKE_CURRENT_SOURCE_DIR}/engine_components.cpp.in
     OUTPUT    ${CMAKE_CURRENT_BINARY_DIR}/generated/engine_components.cpp
     DECLARE   "[[nodiscard]] std::expected<void, core::Error> register_@NAME@(ComponentRegistry& registry)"
-    CALL      "    keep_first(codec::register_@NAME@(registry))")
+    CALL      "    keep_first(codec::register_@NAME@(registry))"
+    INCLUDE_DIRECTORIES ${PROJECT_SOURCE_DIR}/src)
 
 # engine_gltf_io — glTF parse + validation, EXT_meshopt_compression decoding
 # and buffer access (src/scene/gltf/gltf_io.hpp): fastgltf only, no ECS or

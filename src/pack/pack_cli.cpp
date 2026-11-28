@@ -66,29 +66,35 @@ constexpr std::chrono::minutes k_smoke_timeout{10};
 #endif
 }
 
-constexpr std::string_view k_shipping_player = "quat-player-shipping";
+// A player's shipping build is its sibling "<name>-shipping": quat-player's is
+// quat-player-shipping, a game's own player (G17.1, quat_add_game) "<game>" has
+// "<game>-shipping".
+constexpr std::string_view k_shipping_suffix = "-shipping";
 
 } // namespace
 
 std::expected<fs::path, core::Error> player_for_config(const fs::path& player,
                                                        project::PackageConfig config) {
-    const bool is_shipping = path_to_utf8(player.stem()) == k_shipping_player;
+    const std::string stem = path_to_utf8(player.stem());
+    const bool is_shipping = stem.ends_with(k_shipping_suffix);
     if (config == project::PackageConfig::development) {
         if (is_shipping) {
             return fail("--player: '" + path_to_utf8(player) +
                         "' is the shipping player, which has no remote control; a development "
-                        "package needs quat-player");
+                        "package needs the development player (" +
+                        stem.substr(0, stem.size() - k_shipping_suffix.size()) + ")");
         }
         return player;
     }
     if (is_shipping) return player;
-    fs::path shipping = player.parent_path() / std::string(k_shipping_player);
+    const std::string shipping_name = stem + std::string(k_shipping_suffix);
+    fs::path shipping = player.parent_path() / core::path_from_utf8(shipping_name);
     shipping += player.extension(); // ".exe" on Windows
     std::error_code ec;
     if (!fs::is_regular_file(shipping, ec)) {
-        return fail("--config shipping packages quat-player-shipping (remote control compiled "
+        return fail("--config shipping packages " + shipping_name + " (remote control compiled "
                     "out), but there is none at '" +
-                    path_to_utf8(shipping) + "'; build the quat-player-shipping target");
+                    path_to_utf8(shipping) + "'; build the " + shipping_name + " target");
     }
     return shipping;
 }

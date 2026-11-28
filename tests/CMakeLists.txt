@@ -11,20 +11,22 @@ find_package(GTest CONFIG REQUIRED)
 file(GLOB_RECURSE ENGINE_TEST_SOURCES CONFIGURE_DEPENDS
     ${CMAKE_CURRENT_SOURCE_DIR}/*_test.cpp)
 
-# GameBoot (P4) is graphics-free application-layer logic: compiled in directly.
+# GameBoot (P4) and the module method installer (G17.1) are graphics-free
+# application-layer logic: compiled in directly.
 add_executable(engine_tests
     test_main.cpp
     support/alloc_probe.cpp
     support/gpu_context.cpp
     ${PROJECT_SOURCE_DIR}/src/app/game_boot.cpp
     ${PROJECT_SOURCE_DIR}/src/app/app_config.cpp
+    ${PROJECT_SOURCE_DIR}/src/app/module_methods.cpp # G17.1 (app layer, remote-only)
     ${ENGINE_TEST_SOURCES})
 target_link_libraries(engine_tests PRIVATE
     engine_flags engine_editor_build engine_core engine_input engine_rhi engine_asset engine_scene
     engine_renderer engine_physics engine_animation engine_terrain engine_nav engine_net
     engine_remote engine_remote_world engine_audio engine_weather engine_script engine_cook
     engine_gltf_io game_world # gltf_io.hpp internals (fastgltf)
-    engine_project engine_pack
+    engine_project engine_pack engine_game
     quat_asset_gen
     GTest::gtest)
 # Full libktx in this program (engine_cook encodes; the tests decode ASTC
