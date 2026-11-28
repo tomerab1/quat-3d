@@ -53,8 +53,9 @@ Model build_conifer(std::string_view name, const ConiferParams& params, std::uin
         const float r = std::max(params.radius * std::pow(1.0F - t, params.taper) *
                                      rng.uniform(0.92F, 1.08F),
                                  0.25F);
-        const glm::vec3 axis_off(rng.uniform(-params.sway, params.sway), 0.0F,
-                                 rng.uniform(-params.sway, params.sway));
+        const float sway_x = rng.uniform(-params.sway, params.sway);
+        const float sway_z = rng.uniform(-params.sway, params.sway);
+        const glm::vec3 axis_off(sway_x, 0.0F, sway_z);
         const float phase = rng.uniform(0.0F, k_tau);
         const glm::vec3 up(0.0F, 1.0F, 0.0F);
 
@@ -64,9 +65,9 @@ Model build_conifer(std::string_view name, const ConiferParams& params, std::uin
         Ring mid = make_ring(axis_off * 0.6F + glm::vec3(0.0F, base_y + 0.42F * tier_h, 0.0F), up,
                              r * 0.52F, sides, phase + 0.5F * k_tau / static_cast<float>(sides));
         jitter_ring(mid, rng, params.jitter * 0.8F, 0.04F * r);
-        const glm::vec3 apex =
-            axis_off * 0.3F + glm::vec3(rng.uniform(-0.05F, 0.05F) * r, base_y + tier_h,
-                                        rng.uniform(-0.05F, 0.05F) * r);
+        const float apex_x = rng.uniform(-0.05F, 0.05F) * r;
+        const float apex_z = rng.uniform(-0.05F, 0.05F) * r;
+        const glm::vec3 apex = axis_off * 0.3F + glm::vec3(apex_x, base_y + tier_h, apex_z);
         const glm::vec3 underside = axis_off + glm::vec3(0.0F, base_y + 0.18F * tier_h, 0.0F);
 
         // Lower tiers lean to the darker needle colour (self-shadowed mass).
@@ -102,8 +103,10 @@ Model build_broadleaf(std::string_view name, const BroadleafParams& params, std:
     const auto add_canopy_blob = [&](const glm::vec3& centre, float radius) {
         BlobParams b;
         b.centre = centre;
+        const float scale_x = rng.uniform(0.9F, 1.1F);
+        const float scale_z = rng.uniform(0.9F, 1.1F);
         b.radii = glm::vec3(radius, radius * params.squash, radius) *
-                  glm::vec3(rng.uniform(0.9F, 1.1F), 1.0F, rng.uniform(0.9F, 1.1F));
+                  glm::vec3(scale_x, 1.0F, scale_z);
         b.subdivisions = 1;
         b.roughness = 0.28F;
         b.frequency = 2.2F;
@@ -122,8 +125,10 @@ Model build_broadleaf(std::string_view name, const BroadleafParams& params, std:
         const glm::vec3 end = start + dir * (cr * rng.uniform(0.75F, 1.0F));
         add_frustum(m.part(0), start, end, tr * 0.5F, tr * 0.22F, 5, rng.uniform(0.0F, k_tau));
         for (int k = 0; k < std::max(params.blobs_per_branch, 1); ++k) {
-            const glm::vec3 off(rng.uniform(-0.35F, 0.35F) * cr, rng.uniform(0.0F, 0.35F) * cr,
-                                rng.uniform(-0.35F, 0.35F) * cr);
+            const float off_x = rng.uniform(-0.35F, 0.35F) * cr;
+            const float off_y = rng.uniform(0.0F, 0.35F) * cr;
+            const float off_z = rng.uniform(-0.35F, 0.35F) * cr;
+            const glm::vec3 off(off_x, off_y, off_z);
             add_canopy_blob(end + off, cr * rng.uniform(0.42F, 0.6F));
         }
     }
@@ -138,8 +143,10 @@ Model build_rock(std::string_view name, const RockParams& params, std::uint32_t 
     m.name = std::string(name);
     m.materials = {make_material("rock", params.color, 0.86F)};
     BlobParams b;
-    b.radii = params.radii * glm::vec3(rng.uniform(0.9F, 1.1F), rng.uniform(0.9F, 1.1F),
-                                       rng.uniform(0.9F, 1.1F));
+    const float scale_x = rng.uniform(0.9F, 1.1F);
+    const float scale_y = rng.uniform(0.9F, 1.1F);
+    const float scale_z = rng.uniform(0.9F, 1.1F);
+    b.radii = params.radii * glm::vec3(scale_x, scale_y, scale_z);
     b.centre = glm::vec3(0.0F, b.radii.y * (1.0F - 2.0F * params.embed), 0.0F);
     b.subdivisions = params.subdivisions;
     b.roughness = params.roughness;

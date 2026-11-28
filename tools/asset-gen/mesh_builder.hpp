@@ -46,7 +46,9 @@ struct Model {
 };
 
 // PCG32 (O'Neill), with an explicit float mapping so results never depend on
-// the standard library's distributions.
+// the standard library's distributions. Take each draw in its own statement:
+// two draws in one expression (e.g. the arguments of a glm::vec3) run in an
+// unspecified order, which MSVC and clang differ on.
 class Rng {
 public:
     explicit Rng(std::uint64_t seed, std::uint64_t stream = 0x5851F42D4C957F2DULL);
