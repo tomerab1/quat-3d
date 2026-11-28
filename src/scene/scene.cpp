@@ -3,6 +3,7 @@
 #include "engine/scene/scene.hpp"
 #include "engine/weather/weather_state.hpp"
 #include "engine/scene/world_clock.hpp"
+#include "engine/scene/season.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -98,6 +99,10 @@ void Scene::tick(float dt, const FootGroundProbe& ground) {
     {
         QUAT_ZONE_C("world_clock_system", core::ProfileCategory::system);
         world_clock_system(registry_, dt); // date / time, sun and sky (R22.1)
+    }
+    {
+        QUAT_ZONE_C("season_system", core::ProfileCategory::system);
+        season_system(registry_, dt); // year phase, climate-driven weather (R25.1)
     }
     QUAT_ZONE_C("render_collect_system", core::ProfileCategory::system);
     render_collect_system(registry_, draw_list_);

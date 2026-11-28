@@ -29,6 +29,9 @@
 #include "component_json_physics.hpp"
 #include "engine/scene/world_clock.hpp"
 #include "engine/scene/world_clock_json.hpp"
+#include "engine/scene/season.hpp"
+#include "engine/scene/season_json.hpp"
+#include "engine/weather/climate.hpp"
 #include "engine/terrain/budget.hpp"
 #include "engine/terrain/talus_relax.hpp"
 #include "engine/scene/weather_json.hpp"
@@ -68,6 +71,8 @@ constexpr std::array k_components = {
     ComponentInfo{"weather", "The scene's weather (one per scene): wind, clouds, rain/snow, wetness, snow cover, temperature", true, true},
     ComponentInfo{"particle_emitter", "GPU particle emitter (sparks, smoke, dust): emission, shape, forces, curves, flipbook, blending, collision", true, true},
     ComponentInfo{"world_clock", "The scene's date, time and place (one per scene): drives the sun, moon and sky", true, true},
+    ComponentInfo{"season", "The scene's season (one per scene): year phase from the clock, a fast year or held; drives the weather from the climate", true, true},
+    ComponentInfo{"climate", "Climate curves over the year (on the season's entity): temperature, diurnal range, precipitation chance, clouds, wind", true, true},
     ComponentInfo{"net_replicated", "Replicate this entity's transform to network clients", true, true},
     ComponentInfo{"audio_source", "Sound emitter: wav/flac/mp3 clip on a bus, optionally 3D", true, true},
     ComponentInfo{"audio_listener", "The audio listener follows this entity (else the camera)", true, true},
@@ -636,6 +641,8 @@ json encode_components(const entt::registry& r, entt::entity e, const EncodeOpti
         out["particle_emitter"] = detail::encode_particle_emitter(p->settings);
     }
     if (const auto* c = pick.get<WorldClock>("world_clock")) out["world_clock"] = encode_world_clock(*c);
+    if (const auto* s = pick.get<SeasonState>("season")) out["season"] = encode_season(*s);
+    if (const auto* c = pick.get<weather::Climate>("climate")) out["climate"] = encode_climate(*c);
     if (const auto* n = pick.get<NetReplicated>("net_replicated")) {
         out["net_replicated"] = {{"net_id", n->net_id}};
     }
@@ -700,6 +707,8 @@ std::vector<std::string_view> component_names(const entt::registry& r, entt::ent
     add(r.all_of<weather::WeatherState>(e), "weather");
     add(r.all_of<ParticleEmitter>(e), "particle_emitter");
     add(r.all_of<WorldClock>(e), "world_clock");
+    add(r.all_of<SeasonState>(e), "season");
+    add(r.all_of<weather::Climate>(e), "climate");
     add(r.all_of<NetReplicated>(e), "net_replicated");
     add(r.all_of<AudioSource>(e), "audio_source");
     add(r.all_of<AudioListener>(e), "audio_listener");
@@ -994,6 +1003,16 @@ std::expected<void, core::Error> apply_component(entt::registry& r, entt::entity
         }
         return merge<WorldClock>(r, e, v, name, strict, decode_world_clock);
     }
+    if (name == "season") {
+        // One season per scene: a second entity cannot take the component.
+        if (const entt::entity owner = find_season(r); owner != entt::null && owner != e) {
+            return std::unexpected(core::Error{
+                "season: the scene already has its season on entity " +
+                std::to_string(entt::to_integral(owner)) + " (edit that one, or remove it first)"});
+        }
+        return merge<SeasonState>(r, e, v, name, strict, decode_season);
+    }
+    if (name == "climate") return merge<weather::Climate>(r, e, v, name, strict, decode_climate);
     if (name == "net_replicated") {
         return merge<NetReplicated>(r, e, v, name, strict, [](JsonFields& f, NetReplicated& n) {
             f.integer("net_id", n.net_id, 0, 0xFFFFFFFFLL);
@@ -1068,6 +1087,8 @@ bool remove_component(entt::registry& r, entt::entity e, std::string_view name) 
     if (name == "weather") return r.remove<weather::WeatherState>(e) > 0;
     if (name == "particle_emitter") return r.remove<ParticleEmitter>(e) > 0;
     if (name == "world_clock") return r.remove<WorldClock>(e) > 0;
+    if (name == "season") return r.remove<SeasonState>(e) > 0;
+    if (name == "climate") return r.remove<weather::Climate>(e) > 0;
     if (name == "net_replicated") return r.remove<NetReplicated>(e) > 0;
     if (name == "audio_source") return r.remove<AudioSource>(e) > 0;
     if (name == "audio_listener") return r.remove<AudioListener>(e) > 0;

@@ -451,6 +451,9 @@ add_library(engine_scene STATIC
     src/scene/world_clock.cpp
     src/scene/world_clock_json.cpp
     src/scene/world_clock_api.cpp
+    src/scene/season.cpp
+    src/scene/season_json.cpp
+    src/scene/season_api.cpp
     src/scene/bounds.cpp
     src/scene/view_clip.cpp)
 # EnTT is PUBLIC: components.hpp exposes entt types (Parent/Children) to consumers.
@@ -562,6 +565,8 @@ target_include_directories(engine_terrain PUBLIC ${ENGINE_PUBLIC_INCLUDE})
 # ---------------------------------------------------------------------------
 add_library(engine_weather STATIC
     src/weather/weather_state.cpp
+    src/weather/climate.cpp
+    src/weather/climate_sequence.cpp
     src/weather/wind_field.cpp)
 target_link_libraries(engine_weather PUBLIC engine_flags glm::glm EnTT::EnTT)
 target_include_directories(engine_weather PUBLIC ${ENGINE_PUBLIC_INCLUDE})
