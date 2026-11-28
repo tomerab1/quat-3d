@@ -3,6 +3,12 @@
 // Output.x = (NdotV, roughness) -> scale, Output.y = bias for the environment
 // BRDF: specular = prefiltered · (F0 · scale + bias). Independent of the
 // environment, so it is baked once. Written to an RGBA16F image (rg used).
+//
+// R21: the visibility term is the same height-correlated Smith-GGX the
+// punctual lights use (pbr.slang), so x + y is the lobe's directional albedo
+// E_ss(mu) that the multiple-scattering compensation (lib/brdf_energy.slang)
+// divides by; the earlier separable Schlick-Smith with k = a^2/2 over-darkened
+// rough surfaces and broke that identity.
 
 import ibl_common;
 
@@ -40,9 +46,11 @@ void compute_main(uint3 tid : SV_DispatchThreadID) {
         float ndotl = max(L.z, 0.0);
         float ndoth = max(H.z, 0.0);
         float vdoth = max(dot(V, H), 0.0);
-        if (ndotl > 0.0) {
-            float g = ibl_g_smith(ndotv, ndotl, roughness);
-            float g_vis = g * vdoth / (ndoth * ndotv);
+        if (ndotl > 0.0 && ndoth > 0.0) {
+            // f cos / pdf for GGX-sampled half vectors:
+            // D V F NdotL / (D NdotH / (4 VdotH)) = 4 V F NdotL VdotH / NdotH.
+            float vis = ibl_v_smith_correlated(ndotv, ndotl, roughness);
+            float g_vis = 4.0 * vis * ndotl * vdoth / ndoth;
             float fc = pow(1.0 - vdoth, 5.0);
             a += (1.0 - fc) * g_vis;
             b += fc * g_vis;

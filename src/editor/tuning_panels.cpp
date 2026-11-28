@@ -12,8 +12,10 @@
 #include <entt/entity/registry.hpp>
 #include <glm/glm.hpp>
 #include <imgui.h>
+#include <imgui_stdlib.h>
 
 #include "engine/renderer/physical_camera.hpp"
+#include "engine/core/utf8_path.hpp"
 #include "engine/renderer/render_settings.hpp"
 #include "engine/scene/components.hpp"
 #include "engine/scene/material_override.hpp"
@@ -184,6 +186,24 @@ void draw_sun(scene::Scene* scene) {
     ui::end_property_grid();
 }
 
+// The HDRI file row of the "Sky & HDRI" section (R21): a project-relative
+// .hdr path (typed, browsed or dropped from the asset browser; the reset
+// arrow clears it) and the load status (resolution and sun, or the error).
+void draw_hdri_file(const HdriPanel& hdri) {
+    if (hdri.request == nullptr) return;
+    static constexpr std::string_view k_extensions[] = {".hdr"};
+    std::string path = hdri.path;
+    ui::PropOpts<std::string> opts;
+    opts.reset = std::string();
+    opts.tooltip = "Radiance .hdr panorama, relative to the project root";
+    if (ui::prop_asset("HDRI file", path,
+                       {.root = core::path_from_utf8(hdri.project_root), .extensions = k_extensions},
+                       opts)) {
+        *hdri.request = path;
+    }
+    if (!hdri.status.empty()) ui::prop_note(hdri.status.c_str());
+}
+
 // One material factor row; the reset arrow reverts an entity override.
 void draw_material_field(entt::registry& r, entt::entity e, const scene::MaterialFieldInfo& f,
                          const asset::PbrMaterialParams& params, bool overridden) {
@@ -265,7 +285,7 @@ bool draw_lens_controls(renderer::PhysicalCamera& lens, float fov_y) {
     return changed;
 }
 
-void draw_renderer_panel(RenderSettings& settings, scene::Scene* scene,
+void draw_renderer_panel(RenderSettings& settings, scene::Scene* scene, const HdriPanel& hdri,
                          renderer::PhysicalCamera* view_lens, float view_fov_y) {
     if (!ImGui::Begin(shell::panel_window_name(shell::Panel::renderer).c_str())) {
         ImGui::End();
@@ -315,6 +335,7 @@ void draw_renderer_panel(RenderSettings& settings, scene::Scene* scene,
                 draw_setting(settings, d);
                 ImGui::EndDisabled();
             }
+            if (g.name == "environment") draw_hdri_file(hdri);
             ui::prop_begin("", nullptr, false, false);
             if (ui::button(ui::label(icon::rotate_ccw, "Reset group").c_str(),
                            ui::ButtonKind::ghost)) {

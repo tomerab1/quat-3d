@@ -52,7 +52,10 @@ SCENE_TABLE=(
   "noon|30|QUAT_NO_UI=1 QUAT_TIME=2026-06-21T13:52:00+02:00 QUAT_LATLON=48.8566,2.3522 QUAT_TIME_SCALE=0|World clock: Paris, June solstice, solar noon (sun 64.6° up, south)"
   "sunset|30|QUAT_NO_UI=1 QUAT_TIME=2026-06-21T21:35:00+02:00 QUAT_LATLON=48.8566,2.3522 QUAT_TIME_SCALE=0|World clock: Paris, June solstice, 21:35 (sun 2.5° up, north-west)"
   "editor-time-of-day|30|QUAT_WINDOW_SIZE=1600x900 QUAT_EDITOR_LAYOUT=default QUAT_EDITOR_SELECT=world_clock QUAT_TIME=2026-06-21T21:35:00+02:00 QUAT_TIME_SCALE=0|Editor: the world clock in the Inspector at sunset"
+  "showcase-hdri|40|QUAT_NO_UI=1 QUAT_HDRI=hdri-cache/kloofendal_48d_partly_cloudy_2k.hdr|Showcase lit by a CC0 Poly Haven HDRI (R21: HDRI IBL, its sun as the shadowed light, SSR)"
 )
+# HDRI panoramas the scenes use, fetched into hdri-cache/ (gitignored).
+HDRIS=("kloofendal_48d_partly_cloudy 2k")
 
 die() { echo "ci-screenshots: $*" >&2; exit 2; }
 
@@ -65,6 +68,12 @@ if [ -z "${VK_ICD_FILENAMES:-}" ]; then
   export VK_ICD_FILENAMES="$icd"
 fi
 mkdir -p "$OUT" || die "cannot create $OUT"
+# A download failure is not fatal: the HDRI scene then renders the procedural
+# sky and its log says why.
+for hdri in "${HDRIS[@]}"; do
+  # shellcheck disable=SC2086 # "<id> <resolution>"
+  "$ROOT/scripts/fetch-hdri.sh" $hdri >/dev/null || echo "::warning::could not fetch HDRI $hdri"
+done
 
 # The last $2 lines of log $1 without the line libc++'s libunwind prints for
 # every function lavapipe's LLVM JIT registers (hundreds per run; they would

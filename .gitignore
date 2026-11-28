@@ -14,6 +14,8 @@
 # Downloaded glTF test models (Khronos sample assets — fetched on demand, not committed)
 /sample-assets/
 
+# Downloaded HDRI panoramas (Poly Haven CC0, scripts/fetch-hdri.sh; not committed)
+/hdri-cache/
 # CC0 models quat-mcp's asset_fetch downloads from Poly Haven (fetched on demand)
 /assets/meshes/polyhaven/
 

@@ -99,8 +99,12 @@ build_demo_scene(engine::scene::Scene& scene, engine::asset::AssetManager& asset
                  const std::optional<std::filesystem::path>& start_scene,
                  engine::renderer::RenderSettings* render_settings) {
     if (start_scene) {
+        // A game's start scene brings its own look: render settings and the
+        // scene-level environment (its HDRI, R21).
+        engine::scene::SceneEnvironment environment;
         if (auto loaded = engine::scene::load_scene(scene, *start_scene, allocator,
-                                                    setup_transfer, assets, render_settings);
+                                                    setup_transfer, assets, render_settings,
+                                                    &environment);
             !loaded) {
             std::fprintf(stderr, "[fatal] start scene: %s\n", loaded.error().message.c_str());
             return std::unexpected(engine::core::Error{"start scene load failed"});
@@ -111,6 +115,7 @@ build_demo_scene(engine::scene::Scene& scene, engine::asset::AssetManager& asset
                          scene.registry().view<engine::scene::Transform>().size()));
         DemoScene out;
         out.from_scene_file = true;
+        out.environment = std::move(environment);
         return out;
     }
     entt::entity spin_entity = entt::null;
@@ -128,7 +133,10 @@ build_demo_scene(engine::scene::Scene& scene, engine::asset::AssetManager& asset
     if (auto scene_path = engine::core::env_path("QUAT_SCENE")) {
         std::filesystem::path path = std::move(*scene_path);
         if (path.is_relative()) path = project_root / path;
-        if (auto loaded = engine::scene::load_scene(scene, path, allocator, setup_transfer, assets);
+        // The file's render settings and environment (HDRI) apply as well.
+        engine::scene::SceneEnvironment environment;
+        if (auto loaded = engine::scene::load_scene(scene, path, allocator, setup_transfer, assets,
+                                                    render_settings, &environment);
             !loaded) {
             std::fprintf(stderr, "[fatal] QUAT_SCENE load failed: %s\n",
                          loaded.error().message.c_str());
@@ -137,6 +145,7 @@ build_demo_scene(engine::scene::Scene& scene, engine::asset::AssetManager& asset
         std::fprintf(stderr, "[info] loaded scene %s\n", engine::core::path_to_utf8(path).c_str());
         DemoScene out;
         out.from_scene_file = true;
+        out.environment = std::move(environment);
         return out;
     }
     if (const auto gltf_path = engine::core::env_path("QUAT_GLTF")) {

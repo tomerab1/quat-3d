@@ -19,6 +19,7 @@
 
 #include "engine/renderer/cloud_settings.hpp"
 #include "engine/renderer/post_settings.hpp"
+#include "engine/renderer/reflection_settings.hpp"
 #include "engine/renderer/shadow_ao_settings.hpp"
 #include "engine/renderer/upscaler_settings.hpp"
 
@@ -55,9 +56,13 @@ struct TaaSettings {
     float feedback = 0.9F;
 };
 
-// Image-based ambient + reflections (dynamic IBL probe).
+// Image-based ambient + reflections (dynamic IBL probe or HDRI). R21:
+// multiple-scattering GGX energy compensation and horizon occlusion of
+// normal-mapped reflections.
 struct IblSettings {
     float intensity = 1.0F;
+    bool  multiscatter = true;
+    bool  horizon_occlusion = true;
 };
 
 struct RenderSettings {
@@ -69,6 +74,8 @@ struct RenderSettings {
     GtaoSettings     ao;              // ground-truth ambient occlusion (R12)
     ContactShadowSettings contact_shadows; // screen-space contact shadows (R12)
     IblSettings      ibl;
+    EnvironmentSettings environment; // R21: sky source (procedural / HDRI)
+    SsrSettings      ssr;            // R21: screen-space reflections
     // CloudSettings::time_s is frame-loop state, not a setting: the renderer
     // overwrites it each frame and the table does not list it.
     CloudSettings    clouds;

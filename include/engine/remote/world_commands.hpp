@@ -35,6 +35,7 @@
 #include <filesystem>
 #include <functional>
 #include <optional>
+#include <string>
 #include <vector>
 
 #include <entt/entity/fwd.hpp>
@@ -126,6 +127,17 @@ struct ProjectBuildParams {
     bool                   smoke_test = false;
 };
 
+// The lighting environment's HDRI panorama (ROADMAP R21), as environment.get
+// reports it.
+struct HdriInfo {
+    std::string   path; // project-relative; empty = none
+    bool          loaded = false;
+    std::uint32_t width = 0;
+    std::uint32_t height = 0;
+    bool          sun_found = false;
+    std::string   error; // why the last load failed
+};
+
 // Terrain generation state (terrain.status). Tile counts and bounds are those
 // of the runtime's terrain (the first Terrain entity's); bounds are relative
 // to its anchor (the entity's world position), like terrain_height.
@@ -198,6 +210,12 @@ struct WorldServices {
 
     // Bake the navmesh from the current static world; returns its polygon count.
     std::function<std::expected<std::size_t, core::Error>()> nav_bake;
+
+    // ---- Lighting environment (ROADMAP R21) --------------------------------------
+    // The HDRI panorama's status, and loading one: `relative` is a project-
+    // relative path already confined to the project root ("" clears it).
+    std::function<HdriInfo()>                                                hdri_info;
+    std::function<std::expected<void, core::Error>(const std::string& relative)> set_hdri;
 
     // ---- Debugging (ROADMAP A5) ------------------------------------------------
 

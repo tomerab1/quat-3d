@@ -414,7 +414,11 @@ void EditorShell::draw_panels() {
     draw_viewport(*this);
     inspector.scripts = c.scripts; // a Script's declared properties (G7)
     if (c.scene != nullptr) draw_inspector(*c.scene, selected, inspector, open(Panel::inspector));
-    if (c.renderer != nullptr) draw_renderer_panel(*c.renderer, c.scene, c.view_lens, c.view_fov_y);
+    if (c.renderer != nullptr) {
+        draw_renderer_panel(*c.renderer, c.scene,
+                            {c.hdri_path, c.hdri_status, c.project_root, c.hdri_request},
+                            c.view_lens, c.view_fov_y);
+    }
     if (c.scene != nullptr) {
         if (rename_pending) {
             begin_rename(hierarchy, *c.scene, selected);

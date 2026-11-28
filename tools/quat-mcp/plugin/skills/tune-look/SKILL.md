@@ -41,6 +41,11 @@ makes every other judgement misleading, so it always comes first.
    - `ao` (`radius`, `strength`) and `contact_shadows` for small-scale
      contact.
    - `ibl` `intensity` for how much the sky lights the shadows.
+   - `ssr` for reflections on glossy surfaces.
+   - For a photographic look, light the scene with an HDRI panorama
+     (`environment_set` with `sky: "hdri"` and `hdri.path`), then turn it
+     with `hdri.rotation_deg` until its sun lights the subject the way you
+     want.
    - The sun and clouds with `environment_set`: `elevation_deg` 5..10 is
      golden hour, 45..70 daylight; `clouds` `coverage` 0.85 is overcast.
 7. **Then the camera and grade.** For a filmic shot, give the active

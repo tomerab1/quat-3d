@@ -120,6 +120,7 @@ void EditorBridge::begin_frame() {
     // restore): no temporal history carries across.
     if (t_.world->apply_play(*t_.play_mode, *t_.scene) && t_.reset_temporal) t_.reset_temporal();
     apply_scene_file_requests();
+    apply_hdri_request();
     apply_instantiate_request();
 }
 
@@ -139,6 +140,7 @@ void EditorBridge::apply_scene_file_requests() {
         if (t_.render_settings != nullptr) {
             (void)engine::renderer::reset_render_settings(*t_.render_settings);
         }
+        if (t_.set_hdri) (void)t_.set_hdri(""); // a new scene has no HDRI (R21)
         t_.world->invalidate_navmesh("new scene");
         t_.world->clear_demo_entities();
         editor_.set_selected(entt::null);
@@ -147,8 +149,10 @@ void EditorBridge::apply_scene_file_requests() {
     }
     if (!pending_save_.empty()) {
         const std::string path = std::exchange(pending_save_, {});
+        engine::scene::SceneEnvironment environment;
+        if (t_.hdri_info) environment.hdri = t_.hdri_info().path;
         if (auto r = engine::scene::save_scene(scene, engine::core::path_from_utf8(path),
-                                               t_.render_settings);
+                                               t_.render_settings, &environment);
             r) {
             std::fprintf(stderr, "[editor] saved scene: %s\n", path.c_str());
             editor_.notify(NoticeKind::success, "Saved " + path);
@@ -160,12 +164,14 @@ void EditorBridge::apply_scene_file_requests() {
     if (!pending_load_.empty() && !playing()) {
         const std::string path = std::exchange(pending_load_, {});
         (void)with_load_transfer(*t_.device, [&](const engine::rhi::TransferContext& load_transfer) {
+            engine::scene::SceneEnvironment environment;
             if (auto r = engine::scene::load_scene(scene, engine::core::path_from_utf8(path),
                                                    *t_.allocator, load_transfer, *t_.assets,
-                                                   t_.render_settings);
+                                                   t_.render_settings, &environment);
                 r) {
                 std::fprintf(stderr, "[editor] loaded scene: %s\n", path.c_str());
                 editor_.notify(NoticeKind::success, "Loaded " + path);
+                if (t_.set_hdri) (void)t_.set_hdri(environment.hdri); // failures are logged
                 t_.world->invalidate_navmesh("scene loaded");
                 // Rebind the loop's cached entities to the loaded scene.
                 // (The view camera is editor state — nothing to rebind.)
@@ -180,6 +186,12 @@ void EditorBridge::apply_scene_file_requests() {
             }
         });
     }
+}
+
+void EditorBridge::apply_hdri_request() {
+    if (!pending_hdri_ || !t_.set_hdri) return;
+    const std::string path = *std::exchange(pending_hdri_, std::nullopt);
+    (void)t_.set_hdri(path); // the panel shows the status / error
 }
 
 void EditorBridge::apply_instantiate_request() {
@@ -279,6 +291,17 @@ const ImDrawData* EditorBridge::build_ui(float dt, int draw_count,
     if (!through_scene_camera()) {
         ui_ctx.view_lens = &t_.camera->lens;
         ui_ctx.view_fov_y = t_.camera->fov_y;
+    }
+    if (t_.hdri_info && t_.set_hdri) {
+        const engine::remote::HdriInfo hdri = t_.hdri_info();
+        ui_ctx.hdri_path = hdri.path;
+        if (!hdri.error.empty()) {
+            ui_ctx.hdri_status = "failed: " + hdri.error;
+        } else if (hdri.loaded) {
+            ui_ctx.hdri_status = std::to_string(hdri.width) + "x" + std::to_string(hdri.height) +
+                                 (hdri.sun_found ? ", sun found" : ", no sun");
+        }
+        ui_ctx.hdri_request = &pending_hdri_;
     }
     ui_ctx.project_root = engine::core::path_to_utf8(project_root()); // UTF-8 for ImGui
     ui_ctx.instantiate_request = &pending_instantiate_;

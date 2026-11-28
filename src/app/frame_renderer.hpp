@@ -45,6 +45,7 @@
 #include "engine/renderer/dynamic_ibl.hpp"
 #include "engine/renderer/exposure_pass.hpp"
 #include "engine/renderer/gtao_pass.hpp"
+#include "engine/renderer/hdri_environment.hpp"
 #include "engine/renderer/hiz_pass.hpp"
 #include "engine/renderer/light_clusters.hpp"
 #include "engine/renderer/light_cull_pass.hpp"
@@ -58,6 +59,7 @@
 #include "engine/renderer/render_settings.hpp"
 #include "engine/renderer/shadow_pass.hpp"
 #include "engine/renderer/skinning_pass.hpp"
+#include "engine/renderer/ssr_pass.hpp"
 #include "engine/renderer/tonemap_pass.hpp"
 #include "engine/renderer/transparent_pass.hpp"
 #include "engine/renderer/cloud_shadow_pass.hpp"
@@ -95,6 +97,17 @@ namespace quat::app {
 
 class GrassRuntime;
 class ParticleRuntime;
+
+// The scene's HDRI panorama (R21): its project-relative path and whether it
+// loaded (`error` says why not).
+struct HdriStatus {
+    std::string   path;
+    bool          loaded = false;
+    std::uint32_t width = 0;
+    std::uint32_t height = 0;
+    bool          sun_found = false;
+    std::string   error;
+};
 
 inline constexpr std::uint32_t k_frames_in_flight = 2;
 // Stage the image-acquire semaphore is waited at; the swapchain image's first
@@ -268,6 +281,18 @@ public:
     void create_environment(engine::scene::Scene& scene,
                             engine::rhi::PipelineCache& pipeline_cache,
                             const std::string& shader_dir);
+    // R21: the HDRI environment and screen-space reflections
+    // (frame_environment.cpp). Optional: failures are logged and the frame
+    // renders without them.
+    void create_reflections(engine::rhi::PipelineCache& pipeline_cache,
+                            const std::string& shader_dir);
+    // Loads `relative` (a project-relative Radiance .hdr confined to
+    // `project_root`; empty clears it) as the environment's HDRI, used while
+    // render_settings().environment.source is hdri. A failed load keeps the
+    // current HDRI; hdri_status().error says why.
+    [[nodiscard]] std::expected<void, engine::core::Error>
+    set_hdri(const std::string& relative, const std::filesystem::path& project_root);
+    [[nodiscard]] const HdriStatus& hdri_status() const { return hdri_status_; }
     // Command buffers and frame synchronisation.
     void create_frame_sync();
     // QUAT_SCREENSHOT: the final frame is written to `path` as binary PPM.
@@ -345,6 +370,30 @@ private:
     [[nodiscard]] engine::renderer::TonemapLook tonemap_look(const FrameInputs& in,
                                                              DeferredFrame& frame);
     void update_color_lut();
+    // ---- R21 environment and reflections (frame_environment.cpp) ----------
+    struct EnvironmentMaps {
+        engine::renderer::IblViewSet ibl{};
+        VkImageView                  background = VK_NULL_HANDLE; // HDRI cube, else none
+    };
+    // The HDRI is loaded and selected (settings_.environment.source).
+    [[nodiscard]] bool hdri_active() const;
+    [[nodiscard]] engine::renderer::HdriBakeSettings hdri_bake_settings() const;
+    // With the HDRI active and its sun matched, the panorama's sun replaces
+    // the scene's directional light (direction, colour, intensity).
+    void apply_hdri_sun(engine::renderer::DirectionalLightParams& light) const;
+    // Declares the HDRI bake (when its inputs changed) or the sky probe's
+    // step, before every pass that samples the maps; returns those maps.
+    [[nodiscard]] EnvironmentMaps add_environment(engine::rhi::RenderGraph& graph,
+                                                  const glm::vec3& sun_to);
+    // SsrPass for this frame (invalid handle when off or unavailable).
+    [[nodiscard]] engine::rhi::ResourceHandle
+    add_reflections(engine::rhi::RenderGraph& graph, const FrameScene& fs,
+                    const engine::renderer::GBufferTargets& gbuffer,
+                    const engine::renderer::HiZTargets& hiz, const glm::vec3& camera);
+    // The colour next frame's reflections read (after the last HDR writer).
+    void add_reflection_color(engine::rhi::RenderGraph& graph, engine::rhi::ResourceHandle hdr);
+    [[nodiscard]] engine::renderer::LightingTuning
+    lighting_tuning(engine::rhi::ResourceHandle reflections, VkImageView background) const;
     // The editor's R12 settings (defaults in headless builds).
     [[nodiscard]] engine::renderer::CsmSettings current_csm() const;
     [[nodiscard]] engine::renderer::GtaoSettings current_gtao() const;
@@ -402,6 +451,12 @@ private:
 
     std::optional<engine::renderer::AtmospherePass> atmosphere_;
     std::optional<engine::renderer::DynamicIbl>     dynamic_ibl_;
+    // R21: the HDRI panorama's maps and the screen-space reflections (shared
+    // by both slots; each owns its own cross-frame state).
+    std::optional<engine::renderer::HdriEnvironment> hdri_;
+    std::optional<engine::renderer::SsrPass>         ssr_;
+    HdriStatus                                       hdri_status_;
+    bool hdri_was_active_ = false; // last frame lit by the HDRI (SSR history reset on change)
     // Debug NaN/Inf counters of the bloom / TAA guards (issue #45); empty
     // unless enabled (see wait_for_slot).
     std::optional<engine::renderer::NonFiniteCounters> non_finite_;

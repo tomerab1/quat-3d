@@ -154,6 +154,17 @@ Details the contract leaves open, as implemented:
   clouds are the `clouds` group of the render settings (same fields, ranges
   and errors as `render.settings.*`).
   `sun.color` accepts linear `[r,g,b]` (may exceed 1) or `"#rrggbb"`.
+- **HDRI environment** (R21): `environment.set {sky: "hdri", hdri: {path}}`
+  loads a Radiance `.hdr` panorama. The path is project-relative and checked
+  against the texture limits before decoding. A failed load changes nothing
+  and returns the decoder's error. `hdri.path` of `""` (or `null`) clears it.
+  `hdri.{intensity, rotation_deg, sun}` and `sky` are the render settings'
+  `environment` group (`hdri_intensity`, `hdri_rotation_deg`, `hdri_sun`,
+  `source`). With `sun` on, the panorama's sun drives the shadowed
+  directional light instead of the scene's `dir_light`. Scene files save the
+  path under `"environment": {"hdri": ...}`. `environment.get` reports
+  `hdri: {path, loaded, width, height, sun_found, error?, intensity,
+  rotation_deg, sun}` and `sky`.
 - **Camera angles**: `yaw_deg` is the heading in the XZ plane from +X toward
   +Z (forward = `(cos p cos y, sin p, cos p sin y)`), `pitch_deg` is positive
   looking up, clamped to ±89. `camera.set` takes `look_at` *or*
@@ -341,8 +352,8 @@ values. Unknown fields are errors (they name the known fields).
 | `scene.set_parent` | `{entity, parent, keep_world?=true}` | `{id}` |
 | `scene.clear` | `{keep_lights?=true}` | `{destroyed: n}` |
 | `scene.batch` | `{commands:[{method, params}], stop_on_error?=true}` | `{results:[{ok:true, result} \| {ok:false, error:{code,message}}]}` — a string `"@N"` in an `entity`/`parent` field means the `id` returned by command N of this batch. Deferred methods cannot be batched. |
-| `environment.get` | — | `{sun:{azimuth_deg, elevation_deg, intensity, color, driven_by_clock}, clouds:{enabled, coverage, density, bottom_km, thickness_km, size_km, detail, wind_speed, wind_dir_deg, shadows}}` |
-| `environment.set` | same shape, every field optional | `environment.get` result |
+| `environment.get` | — | `{sun:{azimuth_deg, elevation_deg, intensity, color, driven_by_clock}, clouds:{enabled, coverage, density, bottom_km, thickness_km, size_km, detail, wind_speed, wind_dir_deg, shadows}, sky, hdri:{path, loaded, width, height, sun_found, error?, intensity, rotation_deg, sun}}` |
+| `environment.set` | same shape, every field optional; `sky: "procedural" \| "hdri"`, `hdri.path` loads a file | `environment.get` result |
 | `world.ground_height` | `{points:[[x,z],...]}` (≤ 1024) | `{heights:[y \| null], generating}` — null where no tile is loaded; `not_found` without terrain |
 | `terrain.status` | — | `{present, entity, streaming, generating, tiles_loaded, tiles_wanted, anchor, tile_size, bounds:{min,max} \| null}` (`{present:false}` without terrain) |
 | `world.place_on_ground` | `{entity, at?:[x,z], align_to_normal?=false, max_tilt_deg?=30, offset?=0}` | `{id, position, world_bounds, moved_y, tilt_deg, surface:{kind, entity, y, normal} \| null}` |

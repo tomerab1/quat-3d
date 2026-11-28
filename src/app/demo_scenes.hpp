@@ -21,6 +21,7 @@
 
 #include "engine/core/error.hpp"
 #include "engine/physics/physics_world.hpp"
+#include "engine/scene/scene_io.hpp" // SceneEnvironment
 
 namespace engine::asset {
 class AssetManager;
@@ -57,6 +58,8 @@ struct DemoScene {
     entt::entity root = entt::null;
     entt::entity pedestal = entt::null;
     glm::vec2    footprint_half{0.0F};
+    // QUAT_SCENE: the file's scene-level environment (its HDRI, R21).
+    engine::scene::SceneEnvironment environment;
 };
 
 // Half the height of the pedestal mesh (a box) as built; its Transform scales

@@ -269,12 +269,13 @@ set_source_files_properties(src/rhi/vma_impl.cpp PROPERTIES COMPILE_OPTIONS "${E
 # are PUBLIC: any consumer of the asset headers needs them transitively.
 # ---------------------------------------------------------------------------
 # engine_image — graphics-free texture data, limits and the guarded PNG/JPEG
-# decoder (stb_image), shared by engine_asset and the cooker.
+# and Radiance HDR decoders (stb_image), shared by engine_asset and the cooker.
 add_library(engine_image STATIC
     src/asset/alpha_coverage.cpp
     src/asset/texture_data.cpp
     src/asset/image_decode.cpp
     src/asset/cube_lut.cpp)
+    src/asset/hdr_decode.cpp)
 target_link_libraries(engine_image PUBLIC engine_flags)
 target_link_libraries(engine_image PRIVATE engine_stb_image)
 target_include_directories(engine_image PUBLIC ${ENGINE_PUBLIC_INCLUDE})
@@ -672,6 +673,10 @@ add_library(engine_renderer STATIC
     src/renderer/transparent_pass.cpp
     src/renderer/ibl_pass.cpp
     src/renderer/dynamic_ibl.cpp
+    src/renderer/compute_kernel.cpp
+    src/renderer/hdri_environment.cpp
+    src/renderer/hdri_sun.cpp
+    src/renderer/ssr_pass.cpp
     src/renderer/bloom_pass.cpp
     src/renderer/exposure_pass.cpp
     src/renderer/taa_pass.cpp
@@ -826,6 +831,7 @@ set(QUAT_APP_SOURCES
     src/app/frame_graph.cpp
     src/app/frame_temporal.cpp
     src/app/frame_post.cpp
+    src/app/frame_environment.cpp
     src/app/frame_renderer.cpp
     src/app/frame_profiling.cpp
     src/app/game_boot.cpp

@@ -356,7 +356,8 @@ folder.
 After the tests (also when they fail), the `linux` job renders a fixed set of
 scenes with the real `game` binary on lavapipe under Xvfb —
 `scripts/ci-screenshots.sh`: the showcase with and without the editor UI,
-`QUAT_TERRAIN=1` and `QUAT_PHYSICS=1`, the world clock at sunrise, solar
+`QUAT_TERRAIN=1`, `QUAT_PHYSICS=1`, an HDRI-lit showcase (`QUAT_HDRI`, the
+CC0 panorama fetched by `scripts/fetch-hdri.sh`), the world clock at sunrise, solar
 noon and sunset (`QUAT_TIME`, frozen) and the editor's world-clock Inspector, each with a frame budget, muted audio
 and a per-scene timeout (`SCENE_TIMEOUT`, default 300 s) so a hang fails that
 scene instead of the job. Each final frame is converted to PNG

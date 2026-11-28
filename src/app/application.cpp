@@ -220,6 +220,8 @@ bool Application::init_subsystems() {
     add_env_world_clock(scene_);
     // Atmosphere LUTs + dynamic IBL probe, lit by the scene's sun.
     renderer_.create_environment(scene_, pipeline_cache_, shader_dir_);
+    renderer_.create_reflections(pipeline_cache_, shader_dir_); // R21: HDRI + SSR
+    load_startup_hdri();
     // Terrain, networking (QUAT_HOST / QUAT_JOIN) and the QUAT_TERRAIN tile.
     world_.init(device_, allocator_, pipeline_cache_, shader_dir_, project_root(), scene_);
 
@@ -257,6 +259,10 @@ bool Application::init_subsystems() {
                   .shader_reload = shader_reload_.get(),
                   .render_settings = &renderer_.render_settings(),
                   .reset_temporal = [this] { renderer_.reset_temporal(); },
+                  .hdri_info = [this] { return hdri_info(); },
+                  .set_hdri = [this](const std::string& relative) {
+                      return renderer_.set_hdri(relative, project_root());
+                  },
                   .remote = &*remote_,
                   .game = config_.game ? &*config_.game : nullptr,
                   .build_job = &build_job_});
@@ -283,6 +289,21 @@ void Application::init_scripts() {
     if (play_on_start && !world_.has_demo_physics()) *play_mode_.request() = true;
 }
 
+engine::remote::HdriInfo Application::hdri_info() const {
+    const HdriStatus& s = renderer_.hdri_status();
+    return engine::remote::HdriInfo{s.path, s.loaded, s.width, s.height, s.sun_found, s.error};
+}
+
+void Application::load_startup_hdri() {
+    std::string hdri = world_.startup_environment().hdri;
+    if (const char* env = std::getenv("QUAT_HDRI"); env != nullptr && *env != '\0') {
+        hdri = env;
+        renderer_.render_settings().environment.source =
+            static_cast<int>(engine::renderer::SkySource::hdri);
+    }
+    if (!hdri.empty()) (void)renderer_.set_hdri(hdri, project_root()); // failures are logged
+}
+
 void Application::connect_remote() {
     // Remote control (ROADMAP A2/A3): QUAT_REMOTE=<port> opens the loopback
     // JSON-RPC endpoint the quat-mcp bridge talks to (always token-protected:
@@ -307,6 +328,10 @@ void Application::connect_remote() {
     remote_targets.wind_clock = [this] { return renderer_.wind_clock(); };
     remote_targets.material_overrides = &renderer_.material_overrides();
     remote_targets.reset_temporal = [this] { renderer_.reset_temporal(); };
+    remote_targets.hdri_info = [this] { return hdri_info(); };
+    remote_targets.set_hdri = [this](const std::string& relative) {
+        return renderer_.set_hdri(relative, project_root());
+    };
     world_.fill_remote_targets(remote_targets);
 #if !defined(QUAT_SHIPPING)
     // terrain.status only (remote control): wired here, not in WorldRuntime,

@@ -56,7 +56,7 @@
 
 #include "app/screenshot_capture.hpp" // CaptureSource
 #include "engine/core/stderr_capture.hpp"
-#include "engine/remote/world_commands.hpp" // TerrainStatus
+#include "engine/remote/world_commands.hpp" // HdriInfo, TerrainStatus
 #include "engine/scene/scene.hpp"     // GroundHeightFn
 #include "engine/scene/view_clip.hpp" // ClipRange
 #include "engine/weather/wind_field.hpp"
@@ -156,6 +156,10 @@ struct RemoteBridgeTargets {
     std::function<void()> reset_temporal;
     // Gameplay scripts (G7): script.* statuses and reloads (may be null).
     engine::script::ScriptRuntime* scripts = nullptr;
+    // The lighting environment's HDRI (R21): environment.* and scene files
+    // (its path is saved with the scene). May be empty.
+    std::function<engine::remote::HdriInfo()> hdri_info;
+    std::function<std::expected<void, engine::core::Error>(const std::string& relative)> set_hdri;
     // Compiles material shaders for shader.create / update (A6); null when
     // shader hot reload is off (those methods then answer `unavailable`).
     engine::rhi::ShaderHotReload* shader_reload = nullptr;
