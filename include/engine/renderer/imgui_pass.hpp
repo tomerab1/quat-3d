@@ -21,9 +21,11 @@
 //   * an sRGB target with a UNORM view (RenderGraph::set_unorm_view; the
 //     mutable-format swapchain, VK_KHR_swapchain_mutable_format) is drawn
 //     through that view;
-//   * any other sRGB target gets the UI drawn into a UNORM scratch image whose
-//     bytes are then copied over it (overlay mode first copies the target's
-//     bytes in) — bit-identical to the view path, one or two copies dearer.
+//   * any other sRGB target gets the UI drawn through the UNORM view of a
+//     scratch image stored in the target's format, whose bytes are then
+//     copied over it (overlay mode first copies the target's bytes in) —
+//     bit-identical to the view path, one or two same-format copies dearer
+//     (rhi::add_byte_copy: no UNORM <-> sRGB copies into a swapchain).
 // Textures are sampled the same way, without sRGB decode: the font atlas is
 // UNORM, and the viewport image must be UNORM or carry a UNORM view, so the
 // tonemapped scene's encoded bytes reach the screen exactly as in the game
