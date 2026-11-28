@@ -35,6 +35,14 @@ see the log):
 
     QUAT_TERRAIN=1 ./Quat3D.app/Contents/MacOS/game
 
+    QUAT_DEMO=mountain                    the mountain-forest showcase
+    QUAT_TIME=2026-06-21T21:30+02:00      a world clock at that date and time
+                                          drives the sun; QUAT_LATLON=<lat>,<lon>
+                                          sets the place (default Paris),
+                                          QUAT_TIME_SCALE=<n> its speed (0 = frozen)
+    QUAT_HDRI=hdri/sky.hdr                light the scene with a Radiance .hdr
+                                          panorama (path relative to
+                                          Quat3D.app/Contents/Resources)
     QUAT_TERRAIN=1                        add a procedural terrain tile
     QUAT_PHYSICS=1                        physics demo scene
     QUAT_CHARACTER=1                      character-controller demo
@@ -46,6 +54,25 @@ see the log):
     QUAT_NO_AUDIO=1                       mute (no playback device)
     QUAT_ASSET_ROOT=<dir>                 data directory (assets/ + cooked/shaders/);
                                           default: Quat3D.app/Contents/Resources
+
+AI assistants (Claude Code)
+---------------------------
+Quat3D.app/Contents/MacOS/quat-mcp is the MCP server that lets Claude Code
+drive the running game. Run `xattr -dr com.apple.quarantine Quat3D.app`
+once so it may start. Then start the game with the endpoint, and register
+the server by its absolute path (the token needs no setup):
+
+    QUAT_REMOTE=1 ./Quat3D.app/Contents/MacOS/game
+    claude mcp add quat-3d -- "$PWD/Quat3D.app/Contents/MacOS/quat-mcp" \
+      --project-root "$PWD/Quat3D.app/Contents/Resources"
+
+--project-root is where asset_fetch saves downloaded models.
+
+Or install the quat-3d plugin, which adds the workflow skills: in Claude
+Code run `/plugin marketplace add tomerab1/quat-3d` and
+`/plugin install quat-3d@quat-3d`, then give its quat_mcp_command option
+the absolute path above, and its project_root option the --project-root
+value.
 
 Troubleshooting
 ---------------
