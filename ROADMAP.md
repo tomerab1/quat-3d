@@ -747,7 +747,7 @@ the engine.
     closing, straight segments; shared by games and the editor's spline
     gizmo. *(needs G18.1, G5.1)*
 - [ ] **G19 — Terrain editing.**
-  - [ ] **G19.1 Edit layers**: an ordered, serialised list of stamps
+  - [x] **G19.1 Edit layers**: an ordered, serialised list of stamps
     (polygon / curve capsule / circle with falloff): flatten to a height or
     plane, raise / lower, smooth, paint material channels and a grass mask;
     applied after generation per tile, deterministic (CPU reference + GPU

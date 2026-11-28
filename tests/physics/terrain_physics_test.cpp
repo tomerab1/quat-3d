@@ -93,3 +93,53 @@ TEST_F(TerrainPhysics, DroppedSphereRestsOnTheSurface) {
 }
 
 } // namespace
+
+namespace {
+
+// G19.1: a terrain edit rewrites the height field in place; rays see the new
+// ground and the untouched texels keep theirs.
+TEST(TerrainPhysicsEdits, RegionUpdateMovesTheGroundInPlace) {
+    auto w = PhysicsWorld::create();
+    ASSERT_OK(w);
+    PhysicsWorld world = std::move(*w);
+    t::Heightmap map = t::generate(small_tile());
+    ASSERT_TRUE(map.valid());
+    const glm::vec3 origin(-32.0F, 0.0F, -32.0F); // tile centred on the world origin
+    const std::uint32_t body = s::add_height_field_body(world, map, origin);
+    ASSERT_NE(body, PhysicsWorld::invalid_body);
+    const std::uint32_t shapes = world.shape_count();
+
+    const auto ground_at = [&](float x, float z) -> std::optional<float> {
+        const auto hit = world.cast_ray(glm::vec3(x, 500.0F, z), glm::vec3(0, -1, 0), 1000.0F);
+        if (!hit) return std::nullopt;
+        return hit->point.y;
+    };
+    const float far_before = ground_at(25.0F, 25.0F).value_or(-1e9F);
+
+    // Flatten a plinth at 20 m around the tile centre (texel = 1 m).
+    t::TerrainStamp plinth;
+    plinth.shape = t::StampShape::polygon;
+    plinth.points = {{-6, -6}, {6, -6}, {6, 6}, {-6, 6}};
+    plinth.falloff = 3.0F;
+    plinth.op = t::StampOp::flatten;
+    plinth.height = 20.0F;
+    const t::TileFrame frame{{0, 0}, map.resolution, map.tile_size_m};
+    const t::TexelRect done = t::apply_edits(map, frame, std::vector<t::TerrainStamp>{plinth});
+    ASSERT_FALSE(done.empty());
+    ASSERT_TRUE(s::update_height_field_body(world, body, map, done));
+    EXPECT_EQ(world.shape_count(), shapes); // in place, no new shape
+
+    const std::optional<float> centre = ground_at(0.5F, 0.5F);
+    ASSERT_TRUE(centre);
+    EXPECT_NEAR(*centre, 20.0F, 0.05F);
+    EXPECT_NEAR(ground_at(25.0F, 25.0F).value_or(1e9F), far_before, 1e-3F);
+
+    // Beyond the reserved headroom: refused, nothing changed.
+    t::TerrainStamp tower = plinth;
+    tower.height = map.max_height + s::height_field_edit_headroom_m + 50.0F;
+    const t::TexelRect again = t::apply_edits(map, frame, std::vector<t::TerrainStamp>{tower});
+    EXPECT_FALSE(s::update_height_field_body(world, body, map, again));
+    EXPECT_NEAR(ground_at(0.5F, 0.5F).value_or(-1e9F), 20.0F, 0.05F);
+}
+
+} // namespace

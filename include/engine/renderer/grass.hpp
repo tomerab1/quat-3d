@@ -101,6 +101,13 @@ struct GrassGrid {
 // Multiplies grass_keep_fraction; the hard slope limits still apply.
 [[nodiscard]] float grass_slope_keep(const GrassSettings& settings, float normal_y);
 
+// Ground keep of a blade on ground whose normal has this y and whose terrain
+// edit grass mask (G19.1, the RGBA8 paint's alpha) is `mask` in [0, 1]: the
+// slope fade times the mask. A painted-out path thins the field exactly as a
+// steep slope does (blades shrink, then drop, no hard edge), and ground a
+// flatten stamp levelled regains the density its old slope faded away.
+[[nodiscard]] float grass_ground_keep(const GrassSettings& settings, float normal_y, float mask);
+
 // Blade buffer regions: near-LOD blades at [0, near), far-LOD at [near, near + far).
 struct GrassCapacity {
     std::uint32_t near = 0;

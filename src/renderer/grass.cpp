@@ -103,6 +103,10 @@ float grass_slope_keep(const GrassSettings& settings, float normal_y) {
     return smoothstep(limit, start, normal_y);
 }
 
+float grass_ground_keep(const GrassSettings& settings, float normal_y, float mask) {
+    return grass_slope_keep(settings, normal_y) * std::clamp(mask, 0.0F, 1.0F);
+}
+
 GrassCapacity grass_capacity(const GrassSettings& settings) {
     const float cell = grass_cell_size(settings);
     if (cell <= 0.0F) return {};

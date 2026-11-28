@@ -311,7 +311,9 @@ std::uint32_t add_height_field_body(physics::PhysicsWorld& world, const terrain:
 
     const float texel = map.metres_per_texel();
     const std::uint32_t shape = world.create_height_field(
-        samples, padded, glm::vec3(0.0F), glm::vec3(texel, 1.0F, texel));
+        samples, padded, glm::vec3(0.0F), glm::vec3(texel, 1.0F, texel),
+        glm::vec2(map.min_height - height_field_edit_headroom_m,
+                  map.max_height + height_field_edit_headroom_m));
     if (shape == physics::PhysicsWorld::invalid_body) {
         return physics::PhysicsWorld::invalid_body;
     }
@@ -417,6 +419,35 @@ std::uint32_t add_terrain_body(entt::registry& registry, physics::PhysicsWorld& 
     const float tile = map.tile_size_m;
     return add_height_field_body(world, map,
                                  glm::vec3(pos.x - tile * 0.5F, pos.y, pos.z - tile * 0.5F));
+}
+
+bool update_height_field_body(physics::PhysicsWorld& world, std::uint32_t body,
+                              const terrain::Heightmap& map, const terrain::TexelRect& rect) {
+    if (!map.valid() || rect.empty()) return true;
+    // The body's samples are the map plus one duplicated row / column (see
+    // add_height_field_body); Jolt updates whole blocks of 2.
+    const std::uint32_t res = map.resolution;
+    const std::uint32_t padded = res % 2 == 0 ? res : res + 1;
+    constexpr std::uint32_t block = 2;
+    const std::uint32_t x0 = rect.x0 / block * block;
+    const std::uint32_t z0 = rect.z0 / block * block;
+    // The padding duplicates the last texel: an edit there moves it too.
+    const std::uint32_t xe = rect.x1 >= res ? padded : rect.x1;
+    const std::uint32_t ze = rect.z1 >= res ? padded : rect.z1;
+    const std::uint32_t x1 = std::min((xe + block - 1) / block * block, padded);
+    const std::uint32_t z1 = std::min((ze + block - 1) / block * block, padded);
+    const std::uint32_t w = x1 - x0;
+    const std::uint32_t h = z1 - z0;
+    std::vector<float> block_samples(static_cast<std::size_t>(w) * h);
+    for (std::uint32_t z = 0; z < h; ++z) {
+        const std::uint32_t sz = std::min(z0 + z, res - 1);
+        for (std::uint32_t x = 0; x < w; ++x) {
+            const std::uint32_t sx = std::min(x0 + x, res - 1);
+            block_samples[static_cast<std::size_t>(z) * w + x] =
+                map.heights[static_cast<std::size_t>(sz) * res + sx];
+        }
+    }
+    return world.update_height_field(body, x0, z0, w, h, block_samples, w);
 }
 
 } // namespace engine::scene

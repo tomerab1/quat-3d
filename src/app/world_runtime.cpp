@@ -463,6 +463,7 @@ void WorldRuntime::update_terrain(engine::scene::Scene& scene, const glm::vec3& 
         }
         break; // a single Terrain entity drives the world
     }
+    if (terrain_present_) sync_terrain_edits(scene);
     if (terrain_streamer_ && terrain_present_ && terrain_stream_mode_) {
         const auto ev = terrain_streamer_->update(
             glm::vec2(camera_pos.x - terrain_anchor_.x, camera_pos.z - terrain_anchor_.z));
@@ -474,7 +475,8 @@ void WorldRuntime::update_terrain(engine::scene::Scene& scene, const glm::vec3& 
             }
         }
         for (const glm::ivec2& c : ev.ready) {
-            const engine::terrain::Heightmap& map = terrain_streamer_->maps().at(c);
+            engine::terrain::Heightmap& map = *terrain_streamer_->find_map(c);
+            prepare_edited_tile(c, map);
             if (auto r = terrain_pass_.set_tile(c, map, terrain_transfer_); r) {
                 std::fprintf(stderr, "[terrain] tile (%d,%d) streamed in\n", c.x, c.y);
             } else {
@@ -498,6 +500,7 @@ void WorldRuntime::update_terrain(engine::scene::Scene& scene, const glm::vec3& 
         engine::terrain::Heightmap map = terrain_job_.get();
         if (!map.valid()) return; // cancelled / abandoned
         terrain_heightmap_ = std::move(map);
+        prepare_edited_tile(glm::ivec2(0, 0), terrain_heightmap_);
         invalidate_navmesh("terrain regenerated");
         if (auto r = terrain_pass_.set_tile(glm::ivec2(0, 0), terrain_heightmap_,
                                             terrain_transfer_);
@@ -630,9 +633,9 @@ std::expected<void, engine::core::Error> WorldRuntime::begin_play(engine::scene:
         }
         std::fprintf(stderr, "[terrain] %zu height-field bodies added\n", terrain_bodies_.size());
     } else if (terrain_heightmap_.valid()) {
-        if (engine::scene::add_terrain_body(scene.registry(), *play_physics_,
-                                            terrain_heightmap_) !=
-            engine::physics::PhysicsWorld::invalid_body) {
+        terrain_body_ =
+            engine::scene::add_terrain_body(scene.registry(), *play_physics_, terrain_heightmap_);
+        if (terrain_body_ != engine::physics::PhysicsWorld::invalid_body) {
             std::fprintf(stderr, "[terrain] height-field body added\n");
         }
     }
@@ -665,6 +668,7 @@ void WorldRuntime::end_play() {
     }
     play_physics_.reset();
     terrain_bodies_.clear(); // died with the play world
+    terrain_body_ = engine::physics::PhysicsWorld::invalid_body;
 }
 
 void WorldRuntime::invalidate_navmesh(const char* why) {

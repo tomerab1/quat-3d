@@ -41,6 +41,8 @@ set(QUAT3D_SDK_STABLE_HEADERS
     engine/scene/scatter.hpp
     engine/scene/scene.hpp
     engine/scene/scene_io.hpp
+    engine/scene/terrain_edits.hpp
+    engine/terrain/edits.hpp
     engine/terrain/heightmap.hpp)
 
 set(QUAT3D_SDK_SUPPORT_HEADERS

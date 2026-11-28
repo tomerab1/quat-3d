@@ -23,6 +23,11 @@ import grass_common;
 [[vk::binding(5)]] Texture2D                    g_height1;
 [[vk::binding(6)]] Texture2D                    g_height2;
 [[vk::binding(7)]] Texture2D                    g_height3;
+// The same tiles' edit paint (G19.1): alpha is the grass-density mask.
+[[vk::binding(8)]] Texture2D                    g_paint0;
+[[vk::binding(9)]] Texture2D                    g_paint1;
+[[vk::binding(10)]] Texture2D                   g_paint2;
+[[vk::binding(11)]] Texture2D                   g_paint3;
 
 static const uint TILE = 8;
 
@@ -38,9 +43,19 @@ float sample_tile(uint tile, float2 uv) {
     }
 }
 
+float sample_mask(uint tile, float2 uv) {
+    switch (tile) {
+    case 0: return g_paint0.SampleLevel(g_sampler, uv, 0.0).a;
+    case 1: return g_paint1.SampleLevel(g_sampler, uv, 0.0).a;
+    case 2: return g_paint2.SampleLevel(g_sampler, uv, 0.0).a;
+    default: return g_paint3.SampleLevel(g_sampler, uv, 0.0).a;
+    }
+}
+
 // Ground height + normal at world XZ, with the terrain pass's uv convention
-// and central-difference normal. False where there is no ground to grow on.
-bool ground_at(float2 xz, out float height, out float3 normal) {
+// and central-difference normal, and the terrain edits' grass mask (1 off
+// the terrain). False where there is no ground to grow on.
+bool ground_at(float2 xz, out float height, out float3 normal, out float mask) {
     for (uint k = 0; k < g_params.counts.y; ++k) {
         float4 rect = g_params.tile_rect[k];
         float2 local = xz - rect.xy;
@@ -54,11 +69,13 @@ bool ground_at(float2 xz, out float height, out float3 normal) {
             float hd = sample_tile(k, uv - float2(0.0, du));
             float hu = sample_tile(k, uv + float2(0.0, du));
             normal = normalize(float3(hl - hr, 2.0 * mpt, hd - hu));
+            mask = sample_mask(k, uv);
             return true;
         }
     }
     height = g_params.tip_color.w;
     normal = float3(0.0, 1.0, 0.0);
+    mask = 1.0;
     return g_params.base_color.w < 0.5;
 }
 
@@ -119,13 +136,14 @@ void compute_main(uint3 group : SV_GroupID, uint3 thread : SV_GroupThreadID,
     if (candidate) {
         float ground_y;
         float3 n;
-        if (ground_at(root_xz, ground_y, n) && n.y >= g_params.limits.x &&
+        float mask;
+        if (ground_at(root_xz, ground_y, n, mask) && n.y >= g_params.limits.x &&
             n.y <= g_params.limits.y && ground_y >= g_params.limits.z &&
             ground_y <= g_params.limits.w) {
             blade.root.y = ground_y;
             const float dist = length(blade.root - cam);
             const float fade = grass_blade_fade(
-                grass_keep(g_params, dist) * grass_slope_keep(g_params, n.y), threshold);
+                grass_keep(g_params, dist) * grass_ground_keep(g_params, n.y, mask), threshold);
             if (fade > 0.0) {
                 placed = true;
                 const BladeShape shape = blade_shape(g_params, hash);

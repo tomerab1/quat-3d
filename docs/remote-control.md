@@ -1093,6 +1093,52 @@ apparent (refracted), topocentric. Event times are local ISO-8601 strings
 atmosphere, at normal incidence (Sun: 133 334 lx / R²; Moon: Krisciunas &
 Schaefer 1991).
 
+## Terrain edits (ROADMAP G19.1)
+
+The terrain's ordered edit stamps (`terrain_edits` component on the Terrain
+entity, `engine/terrain/edits.hpp`; guide: [`terrain-edits.md`](terrain-edits.md)).
+They apply after generation, per tile, in order, on the next frame; ground
+queries (`world.ground_height`, scatters, physics, the navmesh) see the
+edited ground from then on. Coordinates here are **world space** (the
+component stores them relative to the terrain's position).
+
+Stamp fields:
+
+| Field | Meaning |
+|---|---|
+| `shape` | `circle` (one point: the centre), `capsule` (a polyline of 1+ points swept by a disc), `polygon` (a closed ring of 3+ points) |
+| `points` | `[[x, z], ...]`, metres, at most 256 |
+| `radius` | circle radius / capsule half-width / polygon outset, metres |
+| `falloff` | metres beyond the shape over which the effect fades to 0 (smoothstep); `radius + falloff` ≤ 4096 |
+| `op` | `flatten`, `raise`, `lower`, `smooth`, `paint` |
+| `strength` | 0..1 blend toward the op's target (default 1) |
+| `height`, `pivot`, `normal` | flatten: target height (world Y) at `pivot` `[x, z]`; with an upward `normal` `[x, y, z]` the target is that plane, else level |
+| `amount` | raise / lower: metres (0..1000) |
+| `iterations` | smooth: 3×3 binomial passes, 1..16 |
+| `channel`, `value` | paint: `dirt`, `gravel`, `soil` or `grass` (the grass-density mask; 0 clears grass) toward `value` 0..1 |
+
+| Method | Params | Result |
+|---|---|---|
+| `terrain.edit.add` | stamp fields, `before?` (id: insert before that stamp, else append) | `{id, revision, count}` |
+| `terrain.edit.update` | `{id, <stamp fields to change>}` (others kept) | `{id, revision, count}` |
+| `terrain.edit.remove` | `{id}` or `{ids:[...]}` | `{removed:[ids], missing:[ids], revision, count}` |
+| `terrain.edit.list` | — | `{stamps:[stamp + id, in order], revision, count}` |
+| `terrain.edit.clear` | — | `{removed: n, revision, count}` |
+
+Ids are stable and never reused, so a client (or undo) can refer to a
+stamp. Every method is `not_found` without a Terrain entity; a bad field is
+`invalid_params` naming it (`op: expected one of flatten, raise, lower,
+smooth, paint`). Examples:
+
+```json
+{"method": "terrain.edit.add", "params": {"shape": "polygon",
+  "points": [[10, 4], [18, 4], [18, 10], [10, 10]], "radius": 1, "falloff": 2,
+  "op": "flatten", "height": 22.5}}
+{"method": "terrain.edit.add", "params": {"shape": "capsule",
+  "points": [[0, 0], [12, 3], [25, 2]], "radius": 1.2, "falloff": 0.8,
+  "op": "paint", "channel": "grass", "value": 0}}
+```
+
 ## Errors
 
 | Code | Meaning |

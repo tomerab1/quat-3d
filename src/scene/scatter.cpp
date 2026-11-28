@@ -12,6 +12,7 @@
 #include <entt/entity/registry.hpp>
 #include <glm/gtc/quaternion.hpp>
 
+#include "engine/terrain/edits.hpp"
 #include "engine/terrain/heightmap.hpp"
 #include "fnv_hash.hpp"
 
@@ -410,13 +411,39 @@ ScatterGround make_tile_ground(std::vector<GroundTile> tiles) {
             h.f32(t.origin.z);
             h.u32(t.map->resolution);
             h.f32(size);
-            h.f32(t.map->min_height);
-            h.f32(t.map->max_height);
-            // A sparse fingerprint of the heights (regenerated tiles with
-            // identical placement and range still differ here).
-            const std::size_t n = t.map->heights.size();
+            // An edited tile's range moves with its edits: the cells below
+            // carry those, region by region.
+            if (t.map->edit_cells.empty()) {
+                h.f32(t.map->min_height);
+                h.f32(t.map->max_height);
+            }
+            // A sparse fingerprint of the generated heights (regenerated
+            // tiles with identical placement and range still differ here).
+            const std::vector<float>& generated =
+                t.map->base_heights.empty() ? t.map->heights : t.map->base_heights;
+            const std::size_t n = generated.size();
             constexpr std::size_t k_probes = 64;
-            for (std::size_t k = 0; k < k_probes; ++k) h.f32(t.map->heights[(k * n) / k_probes]);
+            for (std::size_t k = 0; k < k_probes; ++k) h.f32(generated[(k * n) / k_probes]);
+            // Terrain edits (G19.1): only the edit cells under the rectangle,
+            // so an edit regenerates the scatters it touches, not the tile's.
+            if (t.map->edit_cells.size() ==
+                terrain::edit_cells_per_side * terrain::edit_cells_per_side) {
+                const float cell = size / static_cast<float>(terrain::edit_cells_per_side);
+                const auto first = [&](float v, float o) {
+                    return static_cast<std::uint32_t>(std::clamp(
+                        std::floor((v - o) / cell), 0.0F,
+                        static_cast<float>(terrain::edit_cells_per_side - 1)));
+                };
+                const std::uint32_t cx0 = first(min_xz.x, t.origin.x);
+                const std::uint32_t cx1 = first(max_xz.x, t.origin.x);
+                const std::uint32_t cz0 = first(min_xz.y, t.origin.z);
+                const std::uint32_t cz1 = first(max_xz.y, t.origin.z);
+                for (std::uint32_t cz = cz0; cz <= cz1; ++cz) {
+                    for (std::uint32_t cx = cx0; cx <= cx1; ++cx) {
+                        h.u64(t.map->edit_cells[cz * terrain::edit_cells_per_side + cx]);
+                    }
+                }
+            }
         }
         return h.value();
     };

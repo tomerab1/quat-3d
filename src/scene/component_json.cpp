@@ -36,6 +36,7 @@
 
 #include "component_json_animation.hpp"
 #include "component_json_camera_rig.hpp"
+#include "engine/scene/terrain_edits.hpp"
 
 namespace engine::scene {
 
@@ -64,6 +65,7 @@ constexpr std::array k_components = {
     ComponentInfo{"patrol", "Patrol route the nav agent walks", true, true},
     ComponentInfo{"script", "Lua gameplay script (assets/scripts/) with property overrides", true, true},
     ComponentInfo{"terrain", "Procedural terrain tile / streamed world", true, true},
+    ComponentInfo{"terrain_edits", "The terrain's ordered edit stamps (flatten, raise, lower, smooth, paint) in terrain-local metres", true, true},
     ComponentInfo{"grass", "GPU-generated, wind-animated grass around the camera", true, true},
     ComponentInfo{"weather", "The scene's weather (one per scene): wind, clouds, rain/snow, wetness, snow cover, temperature", true, true},
     ComponentInfo{"particle_emitter", "GPU particle emitter (sparks, smoke, dust): emission, shape, forces, curves, flipbook, blending, collision", true, true},
@@ -658,6 +660,9 @@ json encode_components(const entt::registry& r, entt::entity e, const EncodeOpti
     if (const auto* a = pick.get<Animator>("animator")) out["animator"] = detail::encode_animator(*a);
     if (const auto* k = pick.get<FootIK>("foot_ik")) out["foot_ik"] = detail::encode_foot_ik(*k);
     if (const auto* c = pick.get<CameraRig>("camera_rig")) out["camera_rig"] = detail::encode_camera_rig(*c);
+    if (const auto* c = pick.get<TerrainEditLayer>("terrain_edits")) {
+        out["terrain_edits"] = encode_terrain_edits(*c);
+    }
     if (const auto* c = pick.get<CameraRigInput>("camera_rig_input")) {
         out["camera_rig_input"] = detail::encode_camera_rig_input(*c);
     }
@@ -706,6 +711,7 @@ std::vector<std::string_view> component_names(const entt::registry& r, entt::ent
     add(r.all_of<Animator>(e), "animator");
     add(r.all_of<FootIK>(e), "foot_ik");
     add(r.all_of<CameraRig>(e), "camera_rig");
+    add(r.all_of<TerrainEditLayer>(e), "terrain_edits");
     add(r.all_of<CameraRigInput>(e), "camera_rig_input");
     add(include_read_only && r.all_of<MeshSource>(e), "mesh");
     return out;
@@ -1029,6 +1035,9 @@ std::expected<void, core::Error> apply_component(entt::registry& r, entt::entity
     }
     if (name == "foot_ik") return merge<FootIK>(r, e, v, name, strict, detail::decode_foot_ik);
     if (name == "camera_rig") return merge<CameraRig>(r, e, v, name, strict, detail::decode_camera_rig);
+    if (name == "terrain_edits") {
+        return merge<TerrainEditLayer>(r, e, v, name, strict, decode_terrain_edits);
+    }
     if (name == "camera_rig_input") {
         return merge<CameraRigInput>(r, e, v, name, strict, detail::decode_camera_rig_input);
     }
@@ -1074,6 +1083,7 @@ bool remove_component(entt::registry& r, entt::entity e, std::string_view name) 
     if (name == "animator") return r.remove<Animator>(e) > 0;
     if (name == "foot_ik") return r.remove<FootIK>(e) > 0;
     if (name == "camera_rig") return r.remove<CameraRig>(e) > 0;
+    if (name == "terrain_edits") return r.remove<TerrainEditLayer>(e) > 0;
     if (name == "camera_rig_input") return r.remove<CameraRigInput>(e) > 0;
     return false; // transform (not removable) or unknown
 }

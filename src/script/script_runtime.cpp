@@ -61,6 +61,7 @@ void register_api(LuaVm& vm, ApiContext& ctx) {
     register_scene(vm, ctx);
     register_services(vm, ctx);
     register_input(vm, ctx);
+    register_terrain(vm, ctx);
 }
 
 } // namespace detail

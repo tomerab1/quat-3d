@@ -20,6 +20,7 @@
 #include "engine/scene/animation_system.hpp"
 #include "engine/scene/components.hpp"
 #include "engine/scene/navigation.hpp"
+#include "engine/terrain/edits.hpp"
 
 namespace engine::core {
 class EventRing;
@@ -199,6 +200,19 @@ void collect_nav_geometry(entt::registry& registry, const terrain::Heightmap* ma
 [[nodiscard]] std::uint32_t add_height_field_body(physics::PhysicsWorld& world,
                                                   const terrain::Heightmap& map,
                                                   const glm::vec3& origin);
+
+// Headroom the height field reserves above and below the tile's heights at
+// creation, so terrain edits (G19.1) update it in place.
+inline constexpr float height_field_edit_headroom_m = 128.0F;
+
+// Rewrites the texels `rect` of a tile's height-field body (from
+// add_height_field_body / add_terrain_body) from `map` in place, block
+// aligned, waking what rests there (terrain edits, G19.1). False when the
+// body cannot take the change (an edit beyond the reserved headroom): the
+// caller then replaces the body.
+[[nodiscard]] bool update_height_field_body(physics::PhysicsWorld& world, std::uint32_t body,
+                                            const terrain::Heightmap& map,
+                                            const terrain::TexelRect& rect);
 
 // Advance every CharacterController: integrate gravity, apply `move` * `speed`
 // horizontally, move + resolve collisions via the character controller, and write

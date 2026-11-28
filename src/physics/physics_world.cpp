@@ -185,14 +185,69 @@ std::uint32_t PhysicsWorld::create_mesh(std::span<const glm::vec3> points,
 
 std::uint32_t PhysicsWorld::create_height_field(std::span<const float> samples,
                                                 std::uint32_t sample_count,
-                                                const glm::vec3& offset, const glm::vec3& scale) {
+                                                const glm::vec3& offset, const glm::vec3& scale,
+                                                glm::vec2 reserve) {
     if (sample_count < 2 ||
         samples.size() != static_cast<std::size_t>(sample_count) * sample_count) {
         return invalid_body;
     }
-    return impl_->add_shape(built(JPH::HeightFieldShapeSettings(
-        samples.data(), JPH::Vec3(offset.x, offset.y, offset.z),
-        JPH::Vec3(scale.x, scale.y, scale.z), sample_count)));
+    JPH::HeightFieldShapeSettings settings(samples.data(), JPH::Vec3(offset.x, offset.y, offset.z),
+                                           JPH::Vec3(scale.x, scale.y, scale.z), sample_count);
+    if (reserve.x <= reserve.y && std::isfinite(reserve.x) && std::isfinite(reserve.y)) {
+        settings.mMinHeightValue = reserve.x;
+        settings.mMaxHeightValue = reserve.y;
+    }
+    return impl_->add_shape(built(settings));
+}
+
+bool PhysicsWorld::update_height_field(std::uint32_t body, std::uint32_t x, std::uint32_t z,
+                                       std::uint32_t size_x, std::uint32_t size_z,
+                                       std::span<const float> heights, std::size_t stride) {
+    if (!impl_) return false;
+    const auto rec = impl_->bodies.find(body);
+    if (rec == impl_->bodies.end()) return false;
+    const detail::ShapeRecord* shape = impl_->shapes.get(rec->second.shape);
+    if (shape == nullptr || shape->shape == nullptr ||
+        shape->shape->GetSubType() != JPH::EShapeSubType::HeightField) {
+        return false;
+    }
+    // The world created this shape and owns its only reference besides the
+    // body's; Jolt's in-place update is the documented way to edit terrain.
+    auto* field = const_cast<JPH::HeightFieldShape*>(
+        static_cast<const JPH::HeightFieldShape*>(shape->shape.GetPtr()));
+    const std::uint32_t count = field->GetSampleCount();
+    const std::uint32_t block = field->GetBlockSize();
+    if (size_x == 0 || size_z == 0 || x % block != 0 || z % block != 0 || size_x % block != 0 ||
+        size_z % block != 0 || x + size_x > count || z + size_z > count || stride < size_x ||
+        heights.size() < (static_cast<std::size_t>(size_z) - 1) * stride + size_x) {
+        return false;
+    }
+    const float lo = field->GetMinHeightValue();
+    const float hi = field->GetMaxHeightValue();
+    for (std::uint32_t row = 0; row < size_z; ++row) {
+        for (std::uint32_t col = 0; col < size_x; ++col) {
+            const float h = heights[row * stride + col];
+            if (!(h >= lo && h <= hi)) return false;
+        }
+    }
+    const JPH::BodyID id(body);
+    JPH::BodyInterface& bi = impl_->system.GetBodyInterface();
+    const JPH::Vec3 com = field->GetCenterOfMass();
+    field->SetHeights(x, z, size_x, size_z, heights.data(), static_cast<intptr_t>(stride),
+                      *impl_->temp_allocator);
+    bi.NotifyShapeChanged(id, com, false, JPH::EActivation::DontActivate);
+    // Wake whatever rests on the changed block so it falls / settles anew.
+    const JPH::RVec3 origin = bi.GetPosition(id);
+    const JPH::Vec3 a = field->GetPosition(x, z);
+    const JPH::Vec3 b = field->GetPosition(x + size_x - 1, z + size_z - 1);
+    const JPH::Vec3 lo_corner(std::min(a.GetX(), b.GetX()), lo - 1.0F, std::min(a.GetZ(), b.GetZ()));
+    const JPH::Vec3 hi_corner(std::max(a.GetX(), b.GetX()), hi + 1.0F, std::max(a.GetZ(), b.GetZ()));
+    const JPH::BroadPhaseLayerFilter any_bp;
+    const JPH::ObjectLayerFilter any_layer;
+    bi.ActivateBodiesInAABox(
+        JPH::AABox(JPH::Vec3(origin) + lo_corner, JPH::Vec3(origin) + hi_corner), any_bp,
+        any_layer);
+    return true;
 }
 
 void PhysicsWorld::release_shape(std::uint32_t shape) {

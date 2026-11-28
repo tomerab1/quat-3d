@@ -39,6 +39,7 @@
 #include "engine/scene/animation_system.hpp"
 #include "engine/scene/navigation.hpp"
 #include "engine/script/script_runtime.hpp"
+#include "engine/terrain/edit_sync.hpp"
 #include "engine/terrain/generator.hpp"
 #include "engine/terrain/streamer.hpp"
 
@@ -231,6 +232,19 @@ private:
     // pierced. Called whenever the single terrain tile arrives.
     void settle_demo_on_terrain(engine::scene::Scene& scene);
 
+    // Terrain edits (G19.1, world_terrain_edits.cpp): brings loaded tiles in
+    // step with the Terrain entity's edit list, then refreshes what changed —
+    // the terrain pass's tile images (heights + paint / grass mask), the play
+    // world's height fields block by block, and the navmesh where an edit
+    // touches its bounds; scatters follow through the tiles' edit cells.
+    void sync_terrain_edits(const engine::scene::Scene& scene);
+    // Applies the current edits to a tile that just loaded, before upload.
+    void prepare_edited_tile(glm::ivec2 coord, engine::terrain::Heightmap& map);
+    // Rewrites the play world's height field of tile `coord` over `texels`
+    // (in place; the body is replaced when the edit leaves its range).
+    void refresh_tile_body(glm::ivec2 coord, const engine::terrain::Heightmap& map,
+                           const engine::terrain::TexelRect& texels);
+
     // Cancels the single-tile job: GPU tiles are abandoned (their future
     // resolves at once, invalid) and a CPU job stops at its next step.
     void abandon_terrain_job();
@@ -260,6 +274,8 @@ private:
     bool      terrain_stream_mode_ = false;
 
     NavmeshState nav_;
+    engine::terrain::EditSync terrain_edits_; // G19.1
+    std::uint32_t terrain_body_ = engine::physics::PhysicsWorld::invalid_body; // single tile, play
 
     // Networking (Phase 14; S1 B1-B5): QUAT_HOST=<port> hosts this scene,
     // QUAT_JOIN=<ip:port> joins a host running the same scene. See

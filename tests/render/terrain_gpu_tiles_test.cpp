@@ -4,10 +4,12 @@
 // GPU wrote, and the tile renders; unsupported params and blocking updates
 // fall back to the CPU.
 
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
 #include <future>
 #include <optional>
 #include <vector>
@@ -23,6 +25,7 @@
 #include "engine/rhi/device.hpp"
 #include "engine/rhi/gpu_allocator.hpp"
 #include "engine/rhi/render_graph.hpp"
+#include "engine/terrain/edits.hpp"
 #include "engine/terrain/generator.hpp"
 #include "engine/terrain/streamer.hpp"
 #include "engine/terrain/tile_generator.hpp"
@@ -70,6 +73,7 @@ namespace t = engine::terrain;
 struct Frame {
     r::MeshPass&    mesh;
     r::TerrainPass& terrain;
+    std::array<std::uint8_t, 4> rgba{}; // the centre albedo texel of the last run
 
     [[nodiscard]] std::optional<std::uint8_t> run(quat::test::GpuContext& g, rhi::GpuBuffer& px) {
         constexpr VkExtent2D extent{64, 64};
@@ -120,7 +124,8 @@ struct Frame {
         });
         if (!done) return std::nullopt;
         if (!px.invalidate_mapped()) return std::nullopt;
-        return static_cast<const std::uint8_t*>(px.mapped())[3]; // albedo alpha
+        std::memcpy(rgba.data(), px.mapped(), rgba.size());
+        return rgba[3]; // albedo alpha
     }
 };
 
@@ -169,6 +174,57 @@ TEST(GpuTerrainTiles, StreamedTileIsSynthesisedAdoptedAndRendered) {
         worst = std::max(worst, std::abs(gpu.heights[i] - cpu.heights[i]));
     }
     EXPECT_LT(worst, 0.01F) << "read-back heights drifted from the CPU reference";
+}
+
+// G19.1: with edits set, a streamed GPU tile arrives edited on the GPU —
+// tagged with the edit revision, carrying base heights and paint — and its
+// paint image is adopted with it: the painted dirt shows in the GBuffer.
+TEST(GpuTerrainTiles, EditedTileArrivesPaintedAndFlattened) {
+    QUAT_REQUIRE_GPU(g);
+    auto mesh = r::MeshPass::create(g->device, g->allocator, g->cache, g->transfer, g->shader_dir);
+    ASSERT_OK(mesh);
+    auto terrain =
+        r::TerrainPass::create(g->device, g->allocator, g->cache, g->transfer, g->shader_dir);
+    ASSERT_OK(terrain);
+    ASSERT_NE(terrain->tile_generator(), nullptr) << "GPU synthesis unavailable";
+    auto px = g->allocator.create_buffer(
+        4, VK_BUFFER_USAGE_TRANSFER_DST_BIT, VMA_MEMORY_USAGE_AUTO,
+        VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT);
+    ASSERT_OK(px);
+
+    t::TerrainEditList list;
+    t::TerrainStamp level;
+    level.points = {{0.0F, 0.0F}};
+    level.radius = 40.0F;
+    level.falloff = 10.0F;
+    level.op = t::StampOp::flatten;
+    level.height = 7.5F;
+    ASSERT_TRUE(list.add(level));
+    t::TerrainStamp dirt = level;
+    dirt.op = t::StampOp::paint;
+    dirt.channel = t::PaintChannel::dirt;
+    ASSERT_TRUE(list.add(dirt));
+    terrain->tile_generator()->set_edits(list.stamps(), list.revision());
+
+    t::TerrainStreamer streamer(tile_params(), 0);
+    streamer.set_generator(terrain->tile_generator());
+    Frame frame{*mesh, *terrain};
+    bool adopted = false;
+    for (int frames = 0; frames < 50 && !adopted; ++frames) {
+        for (const glm::ivec2& c : streamer.update(glm::vec2(0.0F)).ready) {
+            const t::Heightmap& map = streamer.maps().at(c);
+            EXPECT_NE(map.gpu_tile, 0U);
+            EXPECT_EQ(map.edit_revision, list.revision());
+            EXPECT_EQ(map.paint.size(), map.heights.size());
+            EXPECT_EQ(map.heights[64U * 129U + 64U], 7.5F); // centre texel flattened
+            ASSERT_OK(terrain->set_tile(c, map, g->transfer));
+            adopted = true;
+        }
+        ASSERT_TRUE(frame.run(*g, *px).has_value());
+    }
+    ASSERT_TRUE(adopted);
+    // Packed dirt is red-brown; the procedural meadow it replaced is green.
+    EXPECT_GT(frame.rgba[0], frame.rgba[1]) << "painted dirt not in the GBuffer albedo";
 }
 
 TEST(GpuTerrainTiles, DropletTilesAndBlockingUpdatesFallBackToTheCpu) {

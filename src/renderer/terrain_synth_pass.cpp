@@ -3,14 +3,17 @@
 #include <algorithm>
 #include <array>
 #include <cstddef>
+#include <cstdio>
 #include <cstring>
 #include <deque>
 #include <limits>
+#include <optional>
 #include <string>
 #include <utility>
 
 #include "engine/rhi/device.hpp"
 #include "engine/rhi/pipeline_cache.hpp"
+#include "engine/renderer/terrain_edit_pass.hpp"
 #include "engine/terrain/talus_relax.hpp"
 #include "terrain_synth_layout.hpp"
 
@@ -66,9 +69,14 @@ struct TerrainSynthPass::Job {
     rhi::GpuBuffer        uniforms; // host-visible SynthUniforms
     rhi::GpuBuffer        perm;     // host-visible uint[512]
     rhi::GpuBuffer        height, water, sediment, flux, flow, out, relax;
-    rhi::GpuBuffer        readback; // host-visible float[n]
+    rhi::GpuBuffer        readback; // host-visible float[n] (x3 with edits: + base, paint)
     rhi::GpuImage         image;
     rhi::DescriptorBuffer descriptor;
+
+    // Terrain edits (G19.1), applied after the last erosion slice.
+    EditRequest                            edit_request;
+    std::optional<TerrainEditPass::Target> edit;  // null: no stamps reach the tile
+    rhi::GpuImage                          paint; // RGBA8, with `edit`
 
     Job() = default;
     Job(const Job&) = delete;
@@ -101,6 +109,7 @@ struct TerrainSynthPass::State {
     rhi::DescriptorSetLayout              layout;
     std::array<std::uint32_t, r_count>    slots{}; // binding of each Resource (reflected)
     std::array<rhi::ManagedPipeline, k_count> pipelines; // hot-reloadable (R2)
+    TerrainEditPass                       edit; // invalid: edits stay on the CPU
     VkDeviceSize                          max_storage_range = 0;
 
     std::uint64_t cell_budget = default_cell_budget;
@@ -164,8 +173,21 @@ std::expected<void, core::Error> TerrainSynthPass::State::start(Job& job) {
     if (auto r = local(job.out, scalar, VK_BUFFER_USAGE_TRANSFER_SRC_BIT); !r) return r;
     if (auto r = local(job.relax, job.relax_bytes(), 0); !r) return r; // 1 float when unused
 
+    if (!job.edit_request.packed.stamps.empty() && edit.valid()) {
+        auto target = edit.prepare(std::move(job.edit_request.packed), job.params.world_tile,
+                                   job.res, job.params.tile_size_m,
+                                   rhi::buffer_device_address(vk, job.out), scalar);
+        if (!target) return std::unexpected(target.error());
+        job.edit = std::move(*target);
+        auto paint = allocator->create_image(VK_FORMAT_R8G8B8A8_UNORM, {job.res, job.res},
+                                             VK_IMAGE_USAGE_SAMPLED_BIT |
+                                                 VK_IMAGE_USAGE_TRANSFER_DST_BIT |
+                                                 VK_IMAGE_USAGE_TRANSFER_SRC_BIT);
+        if (!paint) return std::unexpected(paint.error());
+        job.paint = std::move(*paint);
+    }
     auto readback = allocator->create_buffer(
-        scalar, VK_BUFFER_USAGE_TRANSFER_DST_BIT, VMA_MEMORY_USAGE_AUTO,
+        job.edit ? 3 * scalar : scalar, VK_BUFFER_USAGE_TRANSFER_DST_BIT, VMA_MEMORY_USAGE_AUTO,
         VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT);
     if (!readback) return std::unexpected(readback.error());
     job.readback = std::move(*readback);
@@ -315,6 +337,14 @@ TerrainSynthPass::create(const rhi::Device& device, rhi::GpuAllocator& allocator
         if (!pipeline) return std::unexpected(pipeline.error());
         s.pipelines[k] = std::move(*pipeline);
     }
+    // Edits on the GPU are optional: without them the CPU applies them to
+    // the delivered tile.
+    if (auto edit = TerrainEditPass::create(device, allocator, cache, cooked_shader_dir); edit) {
+        s.edit = std::move(*edit);
+    } else {
+        std::fprintf(stderr, "[terrain] GPU terrain edits unavailable (%s); applied on the CPU\n",
+                     edit.error().message.c_str());
+    }
     return out;
 }
 
@@ -329,11 +359,15 @@ bool TerrainSynthPass::supports(const terrain::TerrainParams& params) const {
     return widest <= state_->max_storage_range;
 }
 
-std::uint64_t TerrainSynthPass::enqueue(const terrain::TerrainParams& params) {
+bool TerrainSynthPass::edits_supported() const { return state_ && state_->edit.valid(); }
+
+std::uint64_t TerrainSynthPass::enqueue(const terrain::TerrainParams& params,
+                                        EditRequest edits) {
     if (!supports(params)) return 0;
     auto job = std::make_unique<Job>();
     job->id = state_->next_id++;
     job->params = params;
+    job->edit_request = std::move(edits);
     job->res = params.resolution;
     // terrain::erode_grid skips grids smaller than 3x3; so do we.
     const bool erodes = params.erosion_model == terrain::ErosionModel::grid && job->res >= 3;
@@ -454,6 +488,25 @@ std::expected<void, core::Error> TerrainSynthPass::add_to_graph(rhi::RenderGraph
     job->next_unit = first_unit + slice;
     if (!last) return {};
 
+    // Terrain edits (G19.1) on the finished heights, before they leave.
+    rhi::ResourceHandle edit_base{};
+    rhi::ResourceHandle edit_paint{};
+    if (job->edit) {
+        const TerrainEditPass::Target& t = *job->edit;
+        edit_base = graph.import_buffer("terrain_edit_base", t.base.handle(), scalar);
+        edit_paint = graph.import_buffer("terrain_edit_paint", t.paint.handle(), scalar);
+        const rhi::ResourceHandle edit_scratch =
+            graph.import_buffer("terrain_edit_scratch", t.scratch.handle(), scalar);
+        (void)graph.add_pass("terrain_edit", rhi::PassType::compute)
+            .writes(out, rhi::ResourceUsage::buffer_write_compute)
+            .writes(edit_base, rhi::ResourceUsage::buffer_write_compute)
+            .writes(edit_paint, rhi::ResourceUsage::buffer_write_compute)
+            .writes(edit_scratch, rhi::ResourceUsage::buffer_write_compute)
+            .execute([state = &s, job](rhi::PassContext& ctx) {
+                state->edit.record(ctx.cmd(), *job->edit);
+            });
+    }
+
     // Last slice: heights -> the tile image (shader-read for the terrain
     // pass's vertex + fragment stages) and -> the host, then signal.
     const VkExtent2D extent{job->res, job->res};
@@ -461,28 +514,55 @@ std::expected<void, core::Error> TerrainSynthPass::add_to_graph(rhi::RenderGraph
         graph.import_image("terrain_synth_image", job->image.handle(), VK_NULL_HANDLE,
                            VK_FORMAT_R32_SFLOAT, extent, VK_IMAGE_LAYOUT_UNDEFINED,
                            VK_IMAGE_LAYOUT_UNDEFINED);
-    const rhi::ResourceHandle readback =
-        graph.import_buffer("terrain_synth_readback", job->readback.handle(), scalar);
+    const rhi::ResourceHandle readback = graph.import_buffer(
+        "terrain_synth_readback", job->readback.handle(), job->edit ? 3 * scalar : scalar);
 
+    VkBufferImageCopy region{};
+    region.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+    region.imageExtent = {extent.width, extent.height, 1};
     (void)graph.add_pass("terrain_synth_upload", rhi::PassType::transfer)
         .reads(out, rhi::ResourceUsage::transfer_src)
         .writes(image, rhi::ResourceUsage::transfer_dst)
-        .execute([out, image, extent](rhi::PassContext& ctx) {
-            VkBufferImageCopy region{};
-            region.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
-            region.imageExtent = {extent.width, extent.height, 1};
+        .execute([out, image, region](rhi::PassContext& ctx) {
             vkCmdCopyBufferToImage(ctx.cmd(), ctx.resolve(out).buffer, ctx.resolve(image).image,
                                    VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
         });
+    rhi::ResourceHandle paint_image{};
+    if (job->edit) {
+        paint_image = graph.import_image("terrain_edit_paint_image", job->paint.handle(),
+                                         VK_NULL_HANDLE, VK_FORMAT_R8G8B8A8_UNORM, extent,
+                                         VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_UNDEFINED);
+        (void)graph.add_pass("terrain_edit_upload", rhi::PassType::transfer)
+            .reads(edit_paint, rhi::ResourceUsage::transfer_src)
+            .writes(paint_image, rhi::ResourceUsage::transfer_dst)
+            .execute([edit_paint, paint_image, region](rhi::PassContext& ctx) {
+                vkCmdCopyBufferToImage(ctx.cmd(), ctx.resolve(edit_paint).buffer,
+                                       ctx.resolve(paint_image).image,
+                                       VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+            });
+    }
 
-    (void)graph.add_pass("terrain_synth_publish", rhi::PassType::transfer)
-        .reads(image, rhi::ResourceUsage::sampled_graphics)
+    auto publish = graph.add_pass("terrain_synth_publish", rhi::PassType::transfer);
+    publish.reads(image, rhi::ResourceUsage::sampled_graphics)
         .reads(out, rhi::ResourceUsage::transfer_src)
-        .writes(readback, rhi::ResourceUsage::transfer_dst)
-        .execute([job, out, readback, scalar](rhi::PassContext& ctx) {
+        .writes(readback, rhi::ResourceUsage::transfer_dst);
+    if (job->edit) {
+        publish.reads(paint_image, rhi::ResourceUsage::sampled_graphics)
+            .reads(edit_base, rhi::ResourceUsage::transfer_src)
+            .reads(edit_paint, rhi::ResourceUsage::transfer_src);
+    }
+    publish.execute([job, out, readback, scalar, edit_base, edit_paint](rhi::PassContext& ctx) {
             const VkCommandBuffer cmd = ctx.cmd();
             const VkBufferCopy copy{0, 0, scalar};
             vkCmdCopyBuffer(cmd, ctx.resolve(out).buffer, ctx.resolve(readback).buffer, 1, &copy);
+            if (job->edit) { // generated heights, then paint, after the edited heights
+                const VkBufferCopy base{0, scalar, scalar};
+                vkCmdCopyBuffer(cmd, ctx.resolve(edit_base).buffer, ctx.resolve(readback).buffer,
+                                1, &base);
+                const VkBufferCopy paint{0, 2 * scalar, scalar};
+                vkCmdCopyBuffer(cmd, ctx.resolve(edit_paint).buffer,
+                                ctx.resolve(readback).buffer, 1, &paint);
+            }
 
             VkMemoryBarrier2 to_host{};
             to_host.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2;
@@ -545,6 +625,18 @@ std::vector<TerrainSynthPass::Result> TerrainSynthPass::collect() {
             for (const float v : map.heights) {
                 map.min_height = std::min(map.min_height, v);
                 map.max_height = std::max(map.max_height, v);
+            }
+            map.edit_revision = job.edit_request.revision;
+            if (job.edit) {
+                const auto* bytes = static_cast<const std::byte*>(job.readback.mapped());
+                const std::size_t n = job.texels();
+                map.base_heights.resize(n);
+                std::memcpy(map.base_heights.data(), bytes + n * sizeof(float), n * sizeof(float));
+                map.paint.resize(n);
+                std::memcpy(map.paint.data(), bytes + 2 * n * sizeof(float),
+                            n * sizeof(std::uint32_t));
+                terrain::fingerprint_edit_cells(map);
+                r.paint = std::move(job.paint);
             }
             r.image = std::move(job.image);
         }

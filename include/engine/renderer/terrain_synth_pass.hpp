@@ -29,6 +29,11 @@
 // (image -> shader-read layout for vertex + fragment stages, heights ->
 // host-visible readback buffer, then a VkEvent the host polls). collect()
 // returns the finished jobs. Jobs run one at a time, in order.
+//
+// Terrain edits (G19.1): a job enqueued with stamps runs terrain_edit (the
+// TerrainEditPass) on its heights right after the last erosion slice; the
+// upload then also fills an RGBA8 paint image, and the readback carries the
+// generated heights and the paint as well as the edited heights.
 
 #include <cstddef>
 #include <cstdint>
@@ -44,6 +49,7 @@
 #include "engine/rhi/descriptor_buffer.hpp"
 #include "engine/rhi/gpu_allocator.hpp"
 #include "engine/rhi/render_graph.hpp"
+#include "engine/terrain/edits.hpp"
 #include "engine/terrain/generator.hpp"
 #include "engine/terrain/heightmap.hpp"
 
@@ -53,6 +59,14 @@ class PipelineCache;
 }
 
 namespace engine::renderer {
+
+// Terrain edits (G19.1) a synthesis job applies after synthesis, on the GPU
+// (TerrainEditPass): the stamps that reach its tile, packed, and the edit
+// list's revision the result is tagged with. No stamps: nothing runs.
+struct TerrainSynthEdits {
+    terrain::PackedStamps packed{};
+    std::uint64_t         revision = 0;
+};
 
 class TerrainSynthPass {
 public:
@@ -80,9 +94,14 @@ public:
     // (CPU only) and within max_resolution / the device's buffer limits.
     [[nodiscard]] bool supports(const terrain::TerrainParams& params) const;
 
+    using EditRequest = TerrainSynthEdits;
+
     // Queues a tile (params.world_tile picks it). Returns the job id (> 0),
     // or 0 when !supports(params).
-    [[nodiscard]] std::uint64_t enqueue(const terrain::TerrainParams& params);
+    [[nodiscard]] std::uint64_t enqueue(const terrain::TerrainParams& params,
+                                        EditRequest edits = {});
+    // Whether jobs can apply edits on the GPU (terrain_edit.spv loaded).
+    [[nodiscard]] bool edits_supported() const;
 
     // Cancels a job: a queued one is dropped, the one being recorded stops
     // (no further slices; its resources retire once the frames in flight are
@@ -110,6 +129,10 @@ public:
         std::uint64_t      id = 0;
         glm::ivec2         tile{0, 0};
         rhi::GpuImage      image;   // R32F metres, SHADER_READ_ONLY_OPTIMAL; null on failure
+        // Edits applied: the RGBA8 paint image (SHADER_READ_ONLY_OPTIMAL),
+        // and `heights` carries base_heights, paint and edit_cells; null when
+        // the job had no stamps.
+        rhi::GpuImage      paint;
         terrain::Heightmap heights; // the read-back field; !valid() on failure
     };
     // Jobs whose readback has landed (the GPU signalled their event) or that

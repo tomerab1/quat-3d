@@ -82,6 +82,11 @@ public float grass_slope_keep(GrassParams p, float normal_y) {
     return smoothstep(p.limits.x, p.ground.z, normal_y);
 }
 
+// Slope fade times the terrain edits' grass mask (grass_ground_keep, G19.1).
+public float grass_ground_keep(GrassParams p, float normal_y, float mask) {
+    return grass_slope_keep(p, normal_y) * saturate(mask);
+}
+
 public float grass_blade_fade(float keep, float threshold) {
     float t = threshold * (1.0 - FADE_BAND);
     if (t >= keep) return 0.0;

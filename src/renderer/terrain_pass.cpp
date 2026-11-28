@@ -13,6 +13,7 @@
 
 #include "engine/rhi/device.hpp"
 #include "engine/rhi/pipeline_cache.hpp"
+#include "engine/terrain/edits.hpp"
 #include "engine/terrain/generator.hpp"
 
 namespace engine::renderer {
@@ -123,9 +124,10 @@ TerrainPass::create(const rhi::Device& device, rhi::GpuAllocator& allocator,
     if (!out.db_fns_.valid()) return fail("terrain pass: descriptor buffer functions unavailable");
 
     using rhi::DescriptorBinding;
-    const std::array<DescriptorBinding, 2> bindings{{
+    const std::array<DescriptorBinding, 3> bindings{{
         {0, 0, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, kStages},
         {0, 1, VK_DESCRIPTOR_TYPE_SAMPLER, 1, kStages},
+        {0, 2, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, kStages}, // edit paint (G19.1)
     }};
     auto layout = rhi::DescriptorSetLayout::create(device, out.db_fns_, bindings);
     if (!layout) return std::unexpected(layout.error());
@@ -153,6 +155,16 @@ TerrainPass::create(const rhi::Device& device, rhi::GpuAllocator& allocator,
     auto sampler = rhi::create_sampler(device.handle(), rhi::SamplerAddress::clamp_to_edge);
     if (!sampler) return std::unexpected(sampler.error());
     out.sampler_ = std::move(*sampler);
+
+    const std::uint32_t unpainted = terrain::paint_default_texel;
+    auto paint = rhi::upload_device_image(allocator, transfer, &unpainted, sizeof(unpainted), {1, 1},
+                                          VK_FORMAT_R8G8B8A8_UNORM);
+    if (!paint) return std::unexpected(paint.error());
+    out.default_paint_ = std::move(*paint);
+    auto paint_view = rhi::create_image_view(device.handle(), out.default_paint_.handle(),
+                                             VK_FORMAT_R8G8B8A8_UNORM);
+    if (!paint_view) return std::unexpected(paint_view.error());
+    out.default_paint_view_ = std::move(*paint_view);
 
     out.lods_.reserve(lod_count);
     for (std::uint32_t lod = 0; lod < lod_count; ++lod) {
@@ -200,6 +212,25 @@ std::expected<void, core::Error> TerrainPass::set_tile(const glm::ivec2& coord,
                                        VK_FORMAT_R32_SFLOAT);
     if (!view) return std::unexpected(view.error());
     tile.view = std::move(*view);
+
+    // Edit paint: the GPU's when it painted the synthesised tile, else the
+    // CPU's, else the shared unpainted texel.
+    std::optional<rhi::GpuImage> painted;
+    if (synthesised && gpu_tiles_) painted = gpu_tiles_->take_paint_image(map.gpu_tile);
+    if (!painted && map.paint.size() == map.heights.size()) {
+        auto image = rhi::upload_device_image(
+            *allocator_, transfer, map.paint.data(), map.paint.size() * sizeof(std::uint32_t),
+            {map.resolution, map.resolution}, VK_FORMAT_R8G8B8A8_UNORM);
+        if (!image) return std::unexpected(image.error());
+        painted = std::move(*image);
+    }
+    if (painted) {
+        tile.paint = std::move(*painted);
+        auto pv = rhi::create_image_view(device_->handle(), tile.paint.handle(),
+                                         VK_FORMAT_R8G8B8A8_UNORM);
+        if (!pv) return std::unexpected(pv.error());
+        tile.paint_view = std::move(*pv);
+    }
     tile.resolution = map.resolution;
     tile.tile_size_m = map.tile_size_m;
     tile.min_height = map.min_height;
@@ -209,6 +240,7 @@ std::expected<void, core::Error> TerrainPass::set_tile(const glm::ivec2& coord,
     if (!db) return std::unexpected(db.error());
     db->write_sampled_image(0, tile.view.handle(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
     db->write_sampler(1, sampler_.handle());
+    db->write_sampled_image(2, tile_paint_view(tile), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
     tile.descriptor = std::move(*db);
 
     if (auto it = tiles_.find(coord); it != tiles_.end()) {
@@ -253,6 +285,7 @@ std::vector<TerrainHeightTile> TerrainPass::height_tiles(const glm::vec2& centre
         if (dist > radius) continue;
         TerrainHeightTile t;
         t.view = tile.view.handle();
+        t.paint = tile_paint_view(tile);
         t.origin_xz = origin;
         t.size_m = tsize;
         t.base_y = anchor.y;

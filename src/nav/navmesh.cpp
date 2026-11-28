@@ -48,6 +48,10 @@ bool NavMesh::valid() const { return impl_ != nullptr && impl_->mesh != nullptr;
 
 std::size_t NavMesh::polygon_count() const { return valid() ? impl_->polygons : 0; }
 std::uint64_t NavMesh::generation() const { return valid() ? impl_->generation : 0; }
+std::pair<glm::vec3, glm::vec3> NavMesh::bounds() const {
+    if (!valid()) return {glm::vec3(0.0F), glm::vec3(0.0F)};
+    return {impl_->bmin, impl_->bmax};
+}
 
 const std::vector<std::pair<glm::vec3, glm::vec3>>& NavMesh::debug_edges() const {
     static const std::vector<std::pair<glm::vec3, glm::vec3>> empty;

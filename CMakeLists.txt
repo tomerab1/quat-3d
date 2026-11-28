@@ -443,6 +443,7 @@ add_library(engine_scene STATIC
     src/scene/primitives.cpp
     src/scene/primitive_resolve.cpp
     src/scene/scatter.cpp
+    src/scene/terrain_edits.cpp
     src/scene/instanced_mesh.cpp
     src/scene/instanced_mesh_resolve.cpp
     src/scene/ground_placement.cpp
@@ -508,6 +509,7 @@ add_library(engine_script STATIC
     src/script/script_api_entity.cpp
     src/script/script_api_scene.cpp
     src/script/script_api_services.cpp
+    src/script/script_api_terrain.cpp
     src/script/script_api_input.cpp
     src/script/script_source.cpp
     src/script/script_runtime.cpp
@@ -549,6 +551,9 @@ set_target_properties(quat-cook PROPERTIES QUAT_KTX_FULL ON)
 add_library(engine_terrain STATIC
     src/terrain/budget.cpp
     src/terrain/cpu_tile_jobs.cpp
+    src/terrain/edits.cpp
+    src/terrain/edits_apply.cpp
+    src/terrain/edit_sync.cpp
     src/terrain/generator.cpp
     src/terrain/grid_erosion.cpp
     src/terrain/streamer.cpp
@@ -676,6 +681,7 @@ add_library(engine_remote_world STATIC
     src/remote/world/script_commands.cpp
     src/remote/world/input_commands.cpp
     src/remote/world/camera_rig_commands.cpp
+    src/remote/world/terrain_edit_commands.cpp
     src/remote/world/profile_commands.cpp
     src/remote/world/image_encode.cpp
     src/remote/world/stb_image_write_impl.cpp)
@@ -741,6 +747,7 @@ add_library(engine_renderer STATIC
     src/renderer/terrain_pass.cpp
     src/renderer/terrain_gpu_tiles.cpp
     src/renderer/terrain_synth_pass.cpp
+    src/renderer/terrain_edit_pass.cpp
     src/renderer/terrain_shadow.cpp
     src/renderer/wind_field_pass.cpp
     src/renderer/cloud_shadow_pass.cpp
@@ -851,6 +858,7 @@ endif()
 # with ENGINE_EDITOR for `game`, game_world_runtime without it for the players.
 set(GAME_WORLD_SOURCES
     src/app/world_runtime.cpp
+    src/app/world_terrain_edits.cpp
     src/app/demo_scenes.cpp
     src/app/audio_runtime.cpp
     src/app/play_mode.cpp
