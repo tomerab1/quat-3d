@@ -119,12 +119,15 @@ int main(int argc, char** argv) {
     std::printf("%s -> %s in %.1fs\n"
                 "  total   %llu -> %llu bytes\n"
                 "  images  %u encoded, %llu -> %llu bytes\n"
-                "  meshes  %u primitives cooked (%u skipped), %llu -> %llu bytes\n",
+                "  meshes  %u primitives cooked (%u skipped), %llu -> %llu bytes, "
+                "%llu -> %llu triangles\n",
                 argv[1], argv[2], secs, static_cast<unsigned long long>(stats->input_bytes),
                 static_cast<unsigned long long>(stats->output_bytes), stats->images_encoded,
                 static_cast<unsigned long long>(stats->image_bytes_before),
                 static_cast<unsigned long long>(stats->image_bytes_after), stats->primitives_cooked,
                 stats->primitives_skipped, static_cast<unsigned long long>(stats->mesh_bytes_before),
-                static_cast<unsigned long long>(stats->mesh_bytes_after));
+                static_cast<unsigned long long>(stats->mesh_bytes_after),
+                static_cast<unsigned long long>(stats->triangles_before),
+                static_cast<unsigned long long>(stats->triangles_after));
     return 0;
 }

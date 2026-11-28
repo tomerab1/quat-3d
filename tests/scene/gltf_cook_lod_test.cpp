@@ -170,7 +170,9 @@ TEST(GltfCookLod, ConnectedSurfaceIsSimplifiedAndKeepsItsShape) {
     const Geometry g = hill();
     const fs::path src = write_gltf(dir.path(), g, "OPAQUE");
     const fs::path out = dir.path() / "hill_lod.glb";
-    ASSERT_OK(engine::cook::cook_gltf(src, out, options(0.1F)));
+    auto stats = engine::cook::cook_gltf(src, out, options(0.1F));
+    ASSERT_OK(stats);
+    EXPECT_EQ(stats->triangles_before, g.indices.size() / 3);
 
     auto before = GltfLoader::load_mesh_data(src);
     auto after = GltfLoader::load_mesh_data(out);
@@ -180,6 +182,7 @@ TEST(GltfCookLod, ConnectedSurfaceIsSimplifiedAndKeepsItsShape) {
     const std::size_t tris_after = after->indices.size() / 3;
     EXPECT_GT(tris_after, 0U);
     EXPECT_LE(tris_after, tris_before / 10 + 2);
+    EXPECT_EQ(stats->triangles_after, tris_after);
     EXPECT_LT(after->vertices.size(), before->vertices.size() / 4); // unused vertices dropped
     // Same extent (the border and the peak survive within the error bound).
     EXPECT_LT(glm::length(after->bounds.min - before->bounds.min), 0.05F);

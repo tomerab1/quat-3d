@@ -55,6 +55,8 @@ struct GeometryResult {
     std::uint32_t skipped = 0;
     std::uint64_t bytes_before = 0;
     std::uint64_t bytes_after = 0; // raw (pre-codec) bytes of the new views
+    std::uint64_t triangles_before = 0; // of the cooked primitives
+    std::uint64_t triangles_after = 0;
 };
 
 // gltf_access.cpp: bytes of a buffer view, range-checked.

@@ -87,6 +87,8 @@ struct CookStats {
     std::uint32_t images_encoded     = 0;
     std::uint32_t primitives_cooked  = 0;
     std::uint32_t primitives_skipped = 0; // morph targets, shared streams, non-triangles
+    std::uint64_t triangles_before   = 0; // of the cooked primitives (--simplify changes it)
+    std::uint64_t triangles_after    = 0;
 };
 
 // Cooks `input` into `output` (.glb writes a binary glTF, anything else a

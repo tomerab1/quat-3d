@@ -150,6 +150,7 @@ cook_group(fastgltf::Asset& asset, const Group& g, const MeshCookOptions& o, Geo
         }
     }
 
+    for (const auto& idx : indices) out.triangles_before += idx.size() / 3;
     // Level of detail first (it may move foliage vertices: shared[v] marks
     // vertices more than one primitive references, which stay put).
     if (o.simplify_ratio < 1.0F) {
@@ -167,6 +168,7 @@ cook_group(fastgltf::Asset& asset, const Group& g, const MeshCookOptions& o, Geo
         }
     }
 
+    for (const auto& idx : indices) out.triangles_after += idx.size() / 3;
     for (auto& idx : indices) {
         if (o.optimize && !idx.empty()) {
             meshopt_optimizeVertexCache(idx.data(), idx.data(), idx.size(), vertex_count);

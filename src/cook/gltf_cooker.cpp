@@ -321,6 +321,8 @@ std::expected<CookStats, core::Error> cook_gltf(const fs::path& input, const fs:
     if (!geo) return std::unexpected(geo.error());
     stats.primitives_cooked = geo->cooked;
     stats.primitives_skipped = geo->skipped;
+    stats.triangles_before = geo->triangles_before;
+    stats.triangles_after = geo->triangles_after;
     std::vector<std::string> extras;
     if (auto ok = assemble(asset, *geo, *images, options.meshes, stats, extras); !ok) {
         return std::unexpected(ok.error());
