@@ -12,23 +12,19 @@
 //   * both are blurred and cover each other (the cylinder term);
 // depth order is a soft comparison over a fraction of the depth. The pixel
 // itself weighs 1 / |v_X|. Pixels whose neighbourhood barely moves are
-// copied unchanged.
+// copied unchanged. Velocities and depths are the per-display-pixel values
+// motion_blur_tiles resolved from the closest-depth footprint.
 
 import post_common;
 import motion_blur_common;
 
-Texture2D         g_color;    // display extent, linear HDR
-Texture2D<float2> g_velocity; // render extent, UV motion over a frame
-Texture2D         g_depth;    // render extent, [0, 1]
-Texture2D<float2> g_neighbor; // tile grid, dominant half vector (px)
+Texture2D         g_color;      // display extent, linear HDR
+Texture2D<float2> g_vectors;    // display extent, half vector (px)
+Texture2D<float>  g_view_depth; // display extent, linear depth
+Texture2D<float2> g_neighbor;   // tile grid, dominant half vector (px)
 [format("rgba16f")] RWTexture2D<float4> g_out;
 
 [[vk::push_constant]] MotionBlurParams pc;
-
-float depth_at(int2 p) {
-    const int2 t = render_texel(p, pc.sizes.zw / pc.sizes.xy, int2(pc.sizes.zw));
-    return linear_depth(g_depth.Load(int3(t, 0)).r, pc.proj.xy);
-}
 
 // 1 when depth a is in front of depth b, fading over the soft extent.
 float soft_depth_compare(float a, float b, float extent) {
@@ -58,9 +54,9 @@ void compute_main(uint3 tid : SV_DispatchThreadID) {
         return;
     }
 
-    const float2 vx = blur_half_vector(pc, g_velocity, p);
+    const float2 vx = g_vectors.Load(int3(p, 0));
     const float vx_len = max(length(vx), 0.5);
-    const float zx = depth_at(p);
+    const float zx = g_view_depth.Load(int3(p, 0));
     const float2 vx_dir = length(vx) >= 0.5 ? vx : vn;
     const int samples = clamp(int(pc.blur.z), 2, 64);
     const float jitter = interleaved_gradient_noise(float2(p) + pc.blur.w * 5.588238) - 0.5;
@@ -74,8 +70,8 @@ void compute_main(uint3 tid : SV_DispatchThreadID) {
         const int2 y = clamp(int2(round(float2(p) + dir * t)), int2(0, 0), display - 1);
         if (all(y == p)) continue;
         const float dist = length(float2(y - p));
-        const float zy = depth_at(y);
-        const float vy_len = max(length(blur_half_vector(pc, g_velocity, y)), 0.5);
+        const float zy = g_view_depth.Load(int3(y, 0));
+        const float vy_len = max(length(g_vectors.Load(int3(y, 0))), 0.5);
         const float extent = max(pc.depth.x * min(zx, zy), 1e-3);
         const float front = soft_depth_compare(zy, zx, extent); // Y in front of X
         const float back = soft_depth_compare(zx, zy, extent);  // X in front of Y
