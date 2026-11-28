@@ -114,6 +114,22 @@ std::expected<void, std::string> validate_stamp(const TerrainStamp& s) {
     return {};
 }
 
+TerrainStamp canonical_stamp(TerrainStamp s) {
+    const TerrainStamp d{};
+    if (s.op != StampOp::flatten) {
+        s.height = d.height;
+        s.pivot = d.pivot;
+        s.normal = d.normal;
+    }
+    if (s.op != StampOp::raise && s.op != StampOp::lower) s.amount = d.amount;
+    if (s.op != StampOp::smooth) s.iterations = d.iterations;
+    if (s.op != StampOp::paint) {
+        s.channel = d.channel;
+        s.value = d.value;
+    }
+    return s;
+}
+
 EditRect stamp_bounds(const TerrainStamp& s) {
     EditRect r{glm::vec2(std::numeric_limits<float>::max()),
                glm::vec2(std::numeric_limits<float>::lowest())};
@@ -275,6 +291,7 @@ TerrainEditList::add(TerrainStamp stamp, std::optional<std::uint64_t> before) {
             return bad("before: no stamp with id " + std::to_string(*before));
         }
     }
+    stamp = canonical_stamp(std::move(stamp));
     stamp.id = next_id_++;
     const std::uint64_t id = stamp.id;
     stamps_.insert(at, std::move(stamp));
@@ -286,6 +303,7 @@ std::expected<void, std::string> TerrainEditList::update(std::uint64_t id, Terra
     const auto it = std::ranges::find(stamps_, id, &TerrainStamp::id);
     if (it == stamps_.end()) return bad("id: no stamp with id " + std::to_string(id));
     if (auto ok = validate_stamp(stamp); !ok) return std::unexpected(ok.error());
+    stamp = canonical_stamp(std::move(stamp));
     stamp.id = id;
     if (*it == stamp) return {};
     *it = std::move(stamp);
@@ -326,6 +344,7 @@ std::expected<void, std::string> TerrainEditList::assign(std::vector<TerrainStam
             return bad(where + ".id: expected a unique id > 0");
         }
         largest = std::max(largest, stamps[i].id);
+        stamps[i] = canonical_stamp(std::move(stamps[i]));
     }
     if (next_id == 0) next_id = largest + 1;
     if (next_id <= largest) {

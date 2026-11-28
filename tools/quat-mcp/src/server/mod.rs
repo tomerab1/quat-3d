@@ -31,6 +31,8 @@ mod shader_tools;
 #[allow(clippy::doc_markdown)]
 mod sim_tools;
 #[allow(clippy::doc_markdown)]
+mod terrain_tools;
+#[allow(clippy::doc_markdown)]
 mod time_tools;
 #[allow(clippy::doc_markdown)]
 mod tuning_tools;
@@ -150,6 +152,7 @@ impl QuatServer {
             + Self::behavior_tools()
             + Self::physics_tools()
             + Self::weather_tools()
+            + Self::terrain_tools()
             + Self::script_tools()
             + Self::asset_tools()
             + Self::shader_tools()

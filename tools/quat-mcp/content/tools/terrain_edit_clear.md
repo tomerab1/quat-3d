@@ -1,0 +1,1 @@
+Remove every terrain edit stamp; the terrain returns to its generated shape and surface on the next frame. Returns `{removed: n, revision, count}`. Ids are not reused afterwards. To undo a single edit, use `terrain_edit_remove` instead.

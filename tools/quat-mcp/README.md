@@ -154,6 +154,8 @@ Windows the command ends in `quat-mcp.exe`.
 | `time_get` / `time_set` / `time_skip` | `time.*` | World clock: date, time, place and speed; the real Sun and Moon, sunrise / sunset, Moon phase |
 | `world_ground_height` | `world.ground_height` | Terrain height under `[x, z]` points |
 | `terrain_status` | `terrain.status` | Whether terrain tiles are still generating; loaded tiles and bounds |
+| `terrain_edit_add` / `terrain_edit_update` | `terrain.edit.add` / `terrain.edit.update` | Add or change an edit stamp (circle / capsule / polygon in world space) that flattens, raises, lowers, smooths or paints the terrain |
+| `terrain_edit_remove` / `terrain_edit_list` / `terrain_edit_clear` | `terrain.edit.remove` / `.list` / `.clear` | Remove stamps by stable id, list them in order, remove all |
 | `world_place_on_ground` | `world.place_on_ground` | Rest an entity's bounds on the terrain or colliders below it, optionally tilted to the slope |
 | `camera_get` / `camera_set` / `camera_frame` | `camera.*` | Read, place or auto-frame the viewport camera |
 | `camera_rig_get` / `camera_rig_set` / `camera_rig_frame` | `camera.rig.*` | Read, drive (optionally snapping) or frame an entity's orbit / strategy camera rig |

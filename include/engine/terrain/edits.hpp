@@ -106,6 +106,12 @@ struct TerrainStamp {
 // Why `stamp` cannot be applied (empty: it can), naming the field.
 [[nodiscard]] std::expected<void, std::string> validate_stamp(const TerrainStamp& stamp);
 
+// `stamp` with the fields its op does not read reset to their defaults
+// (a paint stamp's height, a flatten stamp's channel...), so equal effects
+// compare equal and survive the codec, which writes only the op's fields.
+// The list stores stamps in this form.
+[[nodiscard]] TerrainStamp canonical_stamp(TerrainStamp stamp);
+
 // Terrain-local XZ rectangle (inclusive).
 struct EditRect {
     glm::vec2 min{0.0F};

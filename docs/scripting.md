@@ -244,6 +244,32 @@ the closest hit as `{ entity, point, normal, distance, sensor }` (`entity` is
 `nil` for terrain and other unowned bodies) or `nil`. `max_distance`
 defaults to 1000 m; sensors are skipped unless `include_sensors` is true.
 
+## `terrain`
+
+The terrain's edit stamps (G19.1, [`terrain-edits.md`](terrain-edits.md)),
+world space, the same fields as the remote `terrain.edit.*` commands:
+
+```lua
+local plinth = terrain.edit.add({ shape = "polygon",
+    points = { {10, 4}, {18, 4}, {18, 10}, {10, 10} }, radius = 1, falloff = 3,
+    op = "flatten", height = 22.5 })
+local path = terrain.edit.add({ shape = "capsule", points = { {0, 0}, {12, 3}, {25, 2} },
+    radius = 1.2, op = "paint", channel = "grass", value = 0 })
+terrain.edit.update(plinth, { height = 23 })
+```
+
+| Function | Returns |
+|---|---|
+| `terrain.edit.add(stamp, before?)` | the new stamp's id (inserted before stamp `before` when given) |
+| `terrain.edit.update(id, fields)` | nothing; the other fields are kept |
+| `terrain.edit.remove(id)` | `true` when a stamp was removed |
+| `terrain.edit.list()` | the stamps in order, each with its `id` |
+| `terrain.edit.clear()` | how many stamps were removed |
+
+A bad field raises an error naming it (`shape: expected one of circle,
+capsule, polygon`); without a terrain every call errors. Edits apply on the
+next frame.
+
 ## `input`
 
 Keyboard, mouse and the first gamepad, sampled once per frame, plus the

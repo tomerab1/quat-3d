@@ -112,6 +112,12 @@ The editor (dark theme; a light theme is one click away in View > Theme):
   solver) are synthesised on the GPU in milliseconds, with the deterministic
   CPU generator as fallback and reference; one memory budget bounds the
   resolution x streaming radius of a world
+- Terrain edit layers: an ordered list of stamps (circle, capsule along a
+  curve, polygon; flatten to a height or plane, raise, lower, smooth, paint
+  dirt / gravel / soil and a grass mask) applied per tile on the CPU or the
+  GPU; an edit recomputes only the regions it touches and refreshes the
+  terrain, Jolt height fields, scatters, grass and the navmesh
+  ([docs/terrain-edits.md](docs/terrain-edits.md))
 - Dense grass generated on the GPU every frame around the camera (slope /
   height limits, distance level of detail, no popping); with weather it bends
   in a global wind field computed on the GPU: gust fronts sweep across the

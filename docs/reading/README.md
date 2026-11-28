@@ -205,6 +205,8 @@ The world clock and ephemerides of R22.1 (`src/astro/`, `src/scene/world_clock.c
 | | Reading | In quat-3d |
 |---|---|---|
 | ✅ | **Fast Hydraulic Erosion Simulation and Visualization on GPU** — Mei, Decaudin, Hu, Pacific Graphics 2007 (virtual pipes). [HAL](https://hal.archives-ouvertes.fr/inria-00402079) | `src/terrain/grid_erosion.cpp`, `include/engine/terrain/generator.hpp` |
+| ✅ | **2D distance functions** — Quilez (circle, segment, sdPolygon with its division-free winding test). [iquilezles.org](https://iquilezles.org/articles/distfunctions2d/) | Terrain edit stamp coverage (G19.1): `src/terrain/edits.cpp`, `assets/shaders/terrain_edit.slang` |
+| ✅ | **HeightFieldShape::SetHeights** — Jolt Physics documentation: in-place height-field updates with reserved min/max height range. [jrouwe.github.io](https://jrouwe.github.io/JoltPhysics/class_height_field_shape.html) | Region-limited terrain edit refresh of the play world: `src/physics/physics_world.cpp` (`update_height_field`) |
 | ✅ | **Fast Poisson Disk Sampling in Arbitrary Dimensions** — Bridson, SIGGRAPH 2007 sketch. [PDF](https://www.cs.ubc.ca/~rbridson/docs/bridson-siggraph07-poissondisk.pdf) | `src/scene/scatter.cpp` |
 | ✅ | **Hash Functions for GPU Rendering** — Jarzynski & Olano, JCGT 2020 (pcg3d). [JCGT](https://jcgt.org/published/0009/03/02/) | `lib/grass_common.slang`, `include/engine/renderer/grass.hpp` |
 | 🔧 | **Vegetation Procedural Animation and Shading in Crysis** — Sousa, GPU Gems 3 ch. 16 (2007). [online](https://developer.nvidia.com/gpugems/gpugems3/part-iii-rendering/chapter-16-vegetation-procedural-animation-and-shading-crysis) | Foliage wind (R14, #49; R13 wind field, #64) |
