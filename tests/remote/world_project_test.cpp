@@ -42,8 +42,10 @@ protected:
         };
         services.project_build = [this](const engine::remote::ProjectBuildParams& p)
             -> std::expected<std::uint64_t, engine::core::Error> {
-            if (p.target == "windows-x64") {
-                return std::unexpected(engine::core::Error{"cannot package for windows-x64"});
+            // Like the real service (app/build_service.cpp): a package is
+            // built on its own OS only.
+            if (!p.target.empty() && p.target != project::host_target()) {
+                return std::unexpected(engine::core::Error{"cannot package for " + p.target});
             }
             builds.push_back(p);
             return builds.size();
@@ -101,7 +103,9 @@ TEST_F(WorldProject, BuildValidatesAndConfinesItsParameters) {
     EXPECT_TRUE(contains(err("project.build", {{"targets", "x"}}, code::invalid_params),
                          "unknown field"));
     // A refusal from the service (another OS, a build already running).
-    EXPECT_TRUE(contains(err("project.build", {{"target", "windows-x64"}}, code::failed),
+    // A valid target that is not this OS's (the service refuses it).
+    const std::string foreign = project::host_target() == "linux-x64" ? "windows-x64" : "linux-x64";
+    EXPECT_TRUE(contains(err("project.build", {{"target", foreign}}, code::failed),
                          "cannot package"));
 }
 
