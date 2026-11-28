@@ -116,7 +116,7 @@ If you read only a few things, read these. They underpin most of the engine.
 | ✅ | **Stable Cascaded Shadow Maps** — Valient, ShaderX6 (2008); also Microsoft's **Cascaded Shadow Maps** article. [learn.microsoft.com](https://learn.microsoft.com/en-us/windows/win32/dxtecharts/cascaded-shadow-maps) | Texel snapping, `csm.hpp` |
 | ✅ | **Practical Realtime Strategies for Accurate Indirect Occlusion** (GTAO) — Jimenez, Wu, Pesce, Jarabo, SIGGRAPH 2016. [PDF](https://www.activision.com/cdn/research/Practical_Real_Time_Strategies_for_Accurate_Indirect_Occlusion_NEW%20VERSION_COLOR.pdf) | `assets/shaders/gtao.slang`, `lib/occlusion.slang` (multi-bounce, eq. 10) |
 | ✅ | **XeGTAO** — Strugar & McCalla (Intel), MIT-licensed reference implementation we port. [GitHub](https://github.com/GameTechDev/XeGTAO) | `gtao.slang`, `gtao_denoise.slang` |
-| 🔧 | **Hashed Alpha Testing** — Wyman & McGuire, I3D 2017. [NVIDIA Research](https://research.nvidia.com/labs/rtr/publication/wyman2017hashed) | Alpha MASK cut-outs (#70) |
+| 🔧 | **Hashed Alpha Testing** — Wyman & McGuire, I3D 2017. [NVIDIA Research](https://research.nvidia.com/labs/rtr/publication/wyman2017hashed) | Alpha MASK cut-outs (#70); planned: R25.2 seasonal leaf drop |
 | 🔧 | **Anti-aliased Alpha Test: The Esoteric Alpha To Coverage** — Golus, 2017 (coverage-preserving mips). [Medium](https://bgolus.medium.com/anti-aliased-alpha-test-the-esoteric-alpha-to-coverage-8b177335ae4f) | #70 |
 
 ## Sky, atmosphere, clouds & fog
@@ -199,6 +199,19 @@ items G18, R23, R9.5, G19, R24; the Cozy Builder game, G16).
 | 🗺 | **Screen Space Decals in Warhammer 40,000: Space Marine** — Kim, SIGGRAPH 2012 talks. | R24 decals |
 | 🗺 | **Clipper2** — Johnson (polygon clipping and offsetting, Boost licence) and **earcut.hpp** — Mapbox (ear-clipping triangulation, ISC). [Clipper2](https://github.com/AngusJohnson/Clipper2) · [earcut.hpp](https://github.com/mapbox/earcut.hpp) | R23.1 polygon operations |
 
+## Seasons, snow & ambient life
+
+Design: [`docs/design/cozy-builder.md` §4.14](../design/cozy-builder.md#414-seasons-r25) (R25) and §5.16 (G16.10).
+
+| | Reading | In quat-3d |
+|---|---|---|
+| 🗺 | **Real-time Rendering of Accumulated Snow** — Ohlsson & Seipel, SIGRAD 2004. Exposure from a top-down depth map plus slope-based coverage. [PDF](https://ep.liu.se/ecp/013/007/ecp01307.pdf) | R25.3 precipitation occlusion map and snow coverage |
+| 🗺 | **Real-time accumulation of occlusion-based snow** — Reynolds, Laycock & Day, The Visual Computer 2015. [DOI](https://doi.org/10.1007/s00371-014-0995-5) | R25.3 |
+| 🗺 | **Computer Modelling of Fallen Snow** — Fearing, SIGGRAPH 2000 (offline accumulation and stability; the physical reference). [SIGGRAPH history](https://history.siggraph.org/?p=118252) | R25.3 coverage rules |
+| 🗺 | **Real-Time Rendering of Seasonal Influenced Trees** — Braitmaier, Diepstraten & Ertl, Theory and Practice of Computer Graphics 2004 (leaf pigments in shaders). | R25.2 `ColourRamp` |
+| 🗺 | **Realistic Simulation of Seasonal Variant Maples** — Zhou, Dong & Mei (chlorophyll / carotenoid / anthocyanin over time). [HAL](https://hal.archives-ouvertes.fr/inria-00521833) | R25.2 ramp authoring |
+| 🗺 | **Flocks, Herds, and Schools: A Distributed Behavioral Model** — Reynolds, SIGGRAPH 1987 (boids). [DOI](https://doi.org/10.1145/37401.37406) | G16.9 birds |
+
 ## Cameras, tools & game architecture
 
 | | Reading | In quat-3d |
@@ -206,6 +219,8 @@ items G18, R23, R9.5, G19, R24; the Cozy Builder game, G16).
 | 🗺 | **Critically Damped Ease-In/Ease-Out Smoothing** — Lowe, Game Programming Gems 4 (2004). See also Holden's *Spring-It-On* under Animation. | G15.1 camera rig smoothing |
 | 🗺 | **50 Game Camera Mistakes** — Nesky, GDC 2014. [GDC Vault](https://www.gdcvault.com/play/1020460/50-Camera) | G15 camera rigs |
 | 🗺 | **Real-Time Cameras** — Haigh-Hutchinson, Morgan Kaufmann 2009. | G15 camera rigs |
+| 🗺 | **Semantic Versioning 2.0.0** — Preston-Werner. [semver.org](https://semver.org/spec/v2.0.0.html) | P8 SDK versioning policy |
+| 🗺 | **CMake: Importing and Exporting Guide** — Kitware (exported targets, package config and version files). [cmake.org](https://cmake.org/cmake/help/latest/guide/importing-exporting/index.html) | P8 `find_package(quat3d CONFIG)` |
 | 🗺 | **Game Programming Patterns: Command** — Nystrom, 2014. [online](https://gameprogrammingpatterns.com/command.html) · and **Design Patterns** — Gamma, Helm, Johnson, Vlissides, 1994 (Command, Memento). | E1 `core::CommandStack`; G16.6 undo/redo |
 
 ## Animation, physics & navigation
