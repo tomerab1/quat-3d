@@ -12,11 +12,13 @@
 // Only parameters the renderer implements are listed. The sun is not here: it
 // is scene data (a DirectionalLight entity, environment.*).
 
+#include <optional>
 #include <span>
 #include <string_view>
 
 #include "engine/renderer/cloud_settings.hpp"
 #include "engine/renderer/shadow_ao_settings.hpp"
+#include "engine/renderer/upscaler_settings.hpp"
 
 namespace engine::renderer {
 
@@ -38,9 +40,14 @@ struct BloomSettings {
     float radius    = 1.0F;
 };
 
+// The temporal resolve (TAAU, R11). Off: no jitter, every frame resolves
+// without history and the scene renders at native resolution (the upscaler
+// group's scale needs the temporal resolve). `feedback` is the history weight
+// a pixel converges to when a sample lands on it every frame; TAAU caps a
+// pixel's accumulated sample weight at 1 / (1 - feedback).
 struct TaaSettings {
     bool  enabled  = true;
-    float feedback = 0.9F; // history weight of the resolve
+    float feedback = 0.9F;
 };
 
 // Image-based ambient + reflections (dynamic IBL probe).
@@ -52,6 +59,7 @@ struct RenderSettings {
     ExposureSettings exposure;
     BloomSettings    bloom;
     TaaSettings      taa;
+    UpscalerSettings upscaler; // R11: render scale mode, sharpness, backend
     CsmSettings      shadows;         // cascaded sun shadows (R12)
     GtaoSettings     ao;              // ground-truth ambient occlusion (R12)
     ContactShadowSettings contact_shadows; // screen-space contact shadows (R12)
@@ -63,7 +71,9 @@ struct RenderSettings {
 
 // ---- Descriptor table ----------------------------------------------------------
 
-enum class RenderSettingType { boolean, number, integer };
+// `choice`: an int field holding an index into RenderSettingDesc::choices,
+// encoded by name in JSON (an enum such as the upscaler mode).
+enum class RenderSettingType { boolean, number, integer, choice };
 
 // Where a field lives in a RenderSettings; exactly one pointer is set,
 // matching the field's type.
@@ -90,7 +100,15 @@ struct RenderSettingDesc {
     std::string_view  unit;                 // "" when unitless
     std::string_view  hint;                 // one line (tooltip / schema)
     RenderSettingRef (*ref)(RenderSettings&) = nullptr;
+    std::span<const std::string_view> choices{}; // `choice` fields: names by index
 };
+
+// Name of a `choice` field's value (empty for other types or out of range),
+// and the index of `name` among its choices.
+[[nodiscard]] std::string_view render_setting_choice_name(const RenderSettingDesc& field,
+                                                          float value);
+[[nodiscard]] std::optional<int> render_setting_choice_index(const RenderSettingDesc& field,
+                                                             std::string_view name);
 
 // A key the table no longer lists but older scene files and clients may
 // still send: accepted and ignored (never written; listed in the schema as

@@ -57,8 +57,8 @@ the rest by need.
 - [ ] **S8 — Split oversized files.** Enforce the file-size rule in
   CLAUDE.md: `gltf_loader.cpp` (validation / mesh / material / skin /
   animation / scene assembly), and any file past ~1000 lines. Next:
-  `src/scene/component_json.cpp` (992 lines after R22.1 + the terrain fixes; one component
-  more crosses the limit): move per-component codecs into their own files
+  `src/scene/component_json.cpp` (1076 lines after the #93 train and R22.1, past the limit already;
+  master alone was 1061): move per-component codecs into their own files
   as `world_clock_json.cpp` / `component_json_animation.cpp` do.
 
 ## A — AI tooling: MCP server in Rust
@@ -101,18 +101,25 @@ JSON-RPC over loopback TCP to the engine.
 - [ ] **A6 — Shader authoring.** Create/edit material shaders (Slang modules
   implementing the material interface), compile with diagnostics returned to
   the model, hot-swap (needs R2).
+  - [ ] A6 follow-up: `shadow` and `forward` variants in
+    `material_shaders::variants` — shadow casting that evaluates the material
+    and honours its alpha cutout (today shadows use the mesh's silhouette),
+    and alpha-blended material shaders in the transparent pass.
 - [ ] **A7 — Behaviour authoring.** Build and edit behaviour graphs (G2) by
   tool call, with validation errors returned as data.
 - [ ] **A8 — Live tuning.** Every renderer / post-process / material
   parameter readable and writable over the remote API and MCP from one
   settings model the editor also edits (schema with ranges and units),
   saved with the scene; a `tune_look` workflow prompt.
-- [ ] **A9 — World-building ergonomics** (from MCP world-building sessions,
-  issues #37–#42): scene-derived camera far plane; shading-only terrain
-  edits without regeneration; batch-consistent `world.ground_height`;
-  entity world bounds + `world.place_on_ground`; screenshots from an
-  explicit offscreen camera; `asset_search` / `asset_fetch` for CC0 Poly
-  Haven models (licence recorded, cooked with R17).
+- [x] **A9 — World-building ergonomics** (from MCP world-building sessions,
+  issues #37–#42): scene-derived camera clip planes (+ `camera.set`
+  near/far/cut); shading-only terrain edits without regeneration;
+  batch-consistent `world.ground_height` + `terrain.status`; entity world
+  bounds + `world.place_on_ground`; screenshots from an explicit camera
+  (a one-frame camera swap that leaves the viewport camera untouched — the
+  renderer has a single view); `asset_search` / `asset_fetch` for CC0 Poly
+  Haven models (licence recorded, cooked with R17's `quat-cook` when
+  installed).
 - [ ] **A10 — Gameplay control** (design:
   [`docs/research/mcp-gameplay-control.md`](docs/research/mcp-gameplay-control.md)).
   Runtime control of a playing game over remote + MCP, all mutations
@@ -272,7 +279,7 @@ JSON-RPC over loopback TCP to the engine.
     sunrises and sunsets work with the existing atmosphere; disabled, nothing
     changes. Scene files, remote `time.get` / `time.set` / `time.skip`,
     quat-mcp tools, an editor Time of Day section and CI sunrise / noon /
-    sunset screenshots (#87). The Lua binding follows once G7 (#22) lands.
+    sunset screenshots and the Lua `time.clock` / `set_clock` / `skip` (#87).
   - [ ] **R22.2 Night sky rendering** (after #80 lighting realism and #64
     weather land; state of the art, physical units throughout):
     - *Atmosphere:* Hillaire 2020 with the Moon as a second light; airglow and
@@ -315,6 +322,12 @@ JSON-RPC over loopback TCP to the engine.
 - [ ] **P6 — Release builds.** Tag-driven GitHub Releases with Linux,
   Windows and macOS (Vulkan-on-Metal) archives the owner can download and
   run; runtime asset-root resolution; smoke-tested in CI.
+- [ ] **P7 — Signed releases.** Follow-up to P6: Developer ID signing +
+  notarization (stapled) of the macOS .app so it opens with a plain
+  double-click, Authenticode signing of the Windows build (SmartScreen);
+  credentials as CI secrets, signing skipped on forks. Bundle a MoltenVK /
+  Vulkan loader built for the engine's macOS 14 minimum (Homebrew bottles
+  raise it to the runner's OS).
 - [ ] **P4 — Game packaging.** Engine-as-library + game project template,
   editor vs runtime builds, cooked asset bundles, shipping config, depot layout.
 - [ ] **P5 — Native Metal backend.** On top of P2.

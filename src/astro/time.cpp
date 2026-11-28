@@ -186,11 +186,11 @@ std::expected<ParsedDateTime, std::string> parse_iso8601(std::string_view text) 
             c.skip();
             int oh = 0;
             int om = 0;
-            if (!c.digits(2, oh)) return std::unexpected("expected the UTC offset as ±hh:mm");
+            if (!c.digits(2, oh)) return std::unexpected("expected the UTC offset as +hh:mm or -hh:mm");
             if (c.accept(':')) {
-                if (!c.digits(2, om)) return std::unexpected("expected the UTC offset as ±hh:mm");
+                if (!c.digits(2, om)) return std::unexpected("expected the UTC offset as +hh:mm or -hh:mm");
             } else if (!c.done()) {
-                if (!c.digits(2, om)) return std::unexpected("expected the UTC offset as ±hh:mm");
+                if (!c.digits(2, om)) return std::unexpected("expected the UTC offset as +hh:mm or -hh:mm");
             }
             if (oh > 14 || om > 59 || oh * 60 + om > 14 * 60) {
                 return std::unexpected("UTC offset out of range -14:00..+14:00");

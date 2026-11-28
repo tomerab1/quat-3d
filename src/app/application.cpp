@@ -2,15 +2,21 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <cstdlib>
 #include <expected>
+#include <filesystem>
 #include <string>
 #include <utility>
 
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_vulkan.h>
 
+#include "app/asset_root.hpp"
 #include "app/demo_scenes.hpp"
+#include "engine/core/utf8_path.hpp"
+#include "engine/scene/bounds.hpp"
 #include "engine/scene/components.hpp"
+#include "engine/scene/view_clip.hpp"
 
 namespace quat::app {
 namespace {
@@ -136,9 +142,10 @@ bool Application::init_subsystems() {
         return false;
     }
     pipeline_cache_ = std::move(*pipeline_cache);
-    shader_dir_ = QUAT_COOKED_SHADER_DIR;
+    // Pipeline-cache paths are UTF-8 strings (opened via path_from_utf8).
+    shader_dir_ = engine::core::path_to_utf8(cooked_shader_dir());
     shader_reload_ = engine::rhi::ShaderHotReload::create_from_environment( // R2
-        pipeline_cache_, QUAT_PROJECT_ROOT "/assets/shaders", shader_dir_);
+        pipeline_cache_, project_root() / "assets" / "shaders", cooked_shader_dir());
     const VkDevice vk_device = device_.handle();
 
     // One-time transfer context for setup uploads (demo mesh/material + each
@@ -173,7 +180,8 @@ bool Application::init_subsystems() {
 
     // QUAT_GLTF=<path> instantiates a real glTF scene graph; otherwise a
     // spinning demo cube stands in (see demo_scenes.hpp).
-    const bool scene_ok = world_.build_scene(scene_, assets_, allocator_, setup_transfer);
+    const bool scene_ok = world_.build_scene(scene_, assets_, allocator_, setup_transfer,
+                                             project_root());
 
     vkDestroyCommandPool(vk_device, setup_pool, nullptr);
 
@@ -183,13 +191,15 @@ bool Application::init_subsystems() {
         return false;
     }
 
-    add_default_lighting(scene_, !world_.from_gltf(), world_.demo_root());
+    if (!world_.from_scene_file()) {
+        add_default_lighting(scene_, !world_.from_gltf(), world_.demo_root());
+    }
     // QUAT_TIME: a world clock places the sun before the sky is first baked.
     add_env_world_clock(scene_);
     // Atmosphere LUTs + dynamic IBL probe, lit by the scene's sun.
     renderer_.create_environment(scene_, pipeline_cache_, shader_dir_);
     // Terrain, networking (QUAT_HOST / QUAT_JOIN) and the QUAT_TERRAIN tile.
-    world_.init(device_, allocator_, pipeline_cache_, shader_dir_, scene_);
+    world_.init(device_, allocator_, pipeline_cache_, shader_dir_, project_root(), scene_);
 
     // Free-fly view camera, seeded by framing the scene.
     // Issue #8: frame the demo content (not its ground plate) for the view it
@@ -211,8 +221,9 @@ bool Application::init_subsystems() {
     renderer_.set_screenshot_path(config_.screenshot_path);
 
     frame_timer_.skip(SDL_GetTicksNS()); // setup time is not frame time
+    init_scripts();
     connect_remote();
-    world_.init_audio(QUAT_PROJECT_ROOT);
+    world_.init_audio(project_root());
 #ifdef ENGINE_EDITOR
     editor_.bind({.device = &device_,
                   .allocator = &allocator_,
@@ -220,11 +231,32 @@ bool Application::init_subsystems() {
                   .scene = &scene_,
                   .world = &world_,
                   .camera = &camera_,
+                  .play_mode = &play_mode_,
                   .shader_reload = shader_reload_.get(),
                   .render_settings = &renderer_.render_settings(),
+                  .reset_temporal = [this] { renderer_.reset_temporal(); },
                   .remote = &*remote_});
 #endif
     return true;
+}
+
+void Application::init_scripts() {
+    input_.init();
+    engine::script::ScriptServices services;
+    services.input = &input_.state();
+    services.spawn_model = [this](const std::filesystem::path& absolute) {
+        return remote_->spawn_model(absolute);
+    };
+    world_.init_scripts(project_root(), std::move(services));
+    // Start in Play (the transition runs on the first frame) for QUAT_PLAY=1
+    // and, without the editor, for a QUAT_SCENE game. The showcase, glTF and
+    // screenshot runs stay static; the physics / character demos own their
+    // world and have no play mode.
+    bool play_on_start = std::getenv("QUAT_PLAY") != nullptr;
+#ifndef ENGINE_EDITOR
+    play_on_start = play_on_start || world_.from_scene_file();
+#endif
+    if (play_on_start && !world_.has_demo_physics()) *play_mode_.request() = true;
 }
 
 void Application::connect_remote() {
@@ -243,24 +275,32 @@ void Application::connect_remote() {
     remote_targets.cam_yaw = &camera_.yaw;
     remote_targets.cam_pitch = &camera_.pitch;
     remote_targets.cam_fov_y = &camera_.fov_y;
+    remote_targets.cam_near_override = &camera_.near_override;
+    remote_targets.cam_far_override = &camera_.far_override;
+    remote_targets.cam_derived_clip = &camera_.derived_clip();
     remote_targets.render_settings = &renderer_.render_settings();
     remote_targets.material_overrides = &renderer_.material_overrides();
+    remote_targets.reset_temporal = [this] { renderer_.reset_temporal(); };
     world_.fill_remote_targets(remote_targets);
+    remote_targets.play = world_.has_demo_physics() ? nullptr : play_mode_.request();
 #ifdef ENGINE_EDITOR
-    editor_.fill_remote_targets(remote_targets, world_.has_demo_physics());
+    editor_.fill_remote_targets(remote_targets);
 #endif
-    remote_targets.project_root = QUAT_PROJECT_ROOT;
+    remote_targets.shader_reload = shader_reload_.get(); // A6: shader.create / update compile
+    remote_targets.project_root = project_root();
     remote_.emplace(std::move(remote_targets), k_frames_in_flight);
 }
 
 bool Application::pump_events() {
     camera_.begin_input(); // per-frame accumulated mouse-look delta
+    input_.begin_frame();
     bool running = true;
     SDL_Event event;
     while (SDL_PollEvent(&event)) {
 #ifdef ENGINE_EDITOR
         editor_.process_event(event);
 #endif
+        input_.process_event(event);
         switch (event.type) {
         case SDL_EVENT_QUIT:
             running = false;
@@ -285,6 +325,11 @@ bool Application::pump_events() {
             break;
         }
     }
+    bool keyboard_blocked = false;
+#ifdef ENGINE_EDITOR
+    keyboard_blocked = editor_.keyboard_captured();
+#endif
+    input_.sample(keyboard_blocked);
     return running;
 }
 
@@ -296,6 +341,10 @@ bool Application::run_frame() {
 #ifdef ENGINE_EDITOR
     editor_.begin_frame(); // UI frame + Play/Stop, save/load, instantiate
     if (editor_.take_font_atlas_changed()) renderer_.reload_ui_fonts(); // DPI change
+#else
+    // Play/Stop requested by sim.play / sim.stop; a transition swaps worlds,
+    // so no temporal history carries across.
+    if (world_.apply_play(play_mode_, scene_)) renderer_.reset_temporal();
 #endif
 
     const VkExtent2D pixel_extent = window_pixel_extent(platform_.window);
@@ -336,7 +385,15 @@ bool Application::run_frame() {
     const float sim_dt = remote_->advance_sim(dt); // A5: pause / step / time scale
 
     const engine::scene::CameraMatrices cam = update_world(dt, sim_dt, aspect);
-    const FrameScene frame_scene = renderer_.gather(scene_, cam, draw_extent, presented_);
+    // A screenshot with its own camera renders this frame from there (issue
+    // #41); terrain streaming, audio and the editor UI stay with the user's view.
+    const std::optional<engine::remote::CameraPose> shot = remote_->screenshot_view();
+    const engine::scene::CameraMatrices view = shot ? shot_view(*shot, aspect) : cam;
+    // A camera cut (a remote teleport, or a screenshot's own camera and the
+    // frame returning from it): the temporal history restarts instead of
+    // blending across the jump (R11).
+    if (remote_->take_camera_cut()) renderer_.reset_temporal();
+    const FrameScene frame_scene = renderer_.gather(scene_, view, draw_extent, presented_);
 
     world_.update_terrain(scene_, cam.position);
     camera_.pos.y += world_.take_demo_shift(); // the content moved onto the terrain (#7)
@@ -348,10 +405,11 @@ bool Application::run_frame() {
     FrameInputs frame_inputs;
     frame_inputs.scene = &frame_scene;
     frame_inputs.registry = &scene_.registry();
-    frame_inputs.cam = &cam;
+    frame_inputs.cam = &view;
     frame_inputs.draw_extent = draw_extent;
     frame_inputs.dt = dt;
     frame_inputs.grass = world_.grass();
+    frame_inputs.particles = world_.particles();
     frame_inputs.sim_dt = sim_dt;
     if (world_.terrain_drawable()) {
         frame_inputs.terrain = &world_.terrain_pass();
@@ -394,11 +452,17 @@ void Application::run_unrendered_step() {
     // still gets its reply. No camera input or audio: nothing is shown.
     const float sim_dt = remote_->advance_sim_unrendered();
     if (sim_dt <= 0.0F) return;
-    std::optional<PlayStep> play;
-#ifdef ENGINE_EDITOR
-    play = editor_.play_step(camera_.pos);
-#endif
+    const std::optional<PlayStep> play = play_step();
     world_.simulate(scene_, presented_, 0.0F, sim_dt, play ? &*play : nullptr);
+}
+
+std::optional<PlayStep> Application::play_step() const {
+#ifdef ENGINE_EDITOR
+    return editor_.play_step(camera_.pos);
+#else
+    if (!play_mode_.active()) return std::nullopt;
+    return PlayStep{.use_scene_camera = true, .fly_camera_pos = camera_.pos};
+#endif
 }
 
 engine::scene::CameraMatrices Application::update_world(float dt, float sim_dt, float aspect) {
@@ -416,14 +480,12 @@ engine::scene::CameraMatrices Application::update_world(float dt, float sim_dt, 
         camera_.fly(scene_, gate, dt);
     }
 
-    std::optional<PlayStep> play;
-#ifdef ENGINE_EDITOR
-    play = editor_.play_step(camera_.pos);
-#endif
+    const std::optional<PlayStep> play = play_step();
     world_.simulate(scene_, presented_, dt, sim_dt, play ? &*play : nullptr);
 
     // Third-person follow camera, placed after the character has moved.
     if (character_mode) camera_.follow(scene_, world_.character_entity());
+    update_view_clip();
 
 #ifdef ENGINE_EDITOR
     // The editor's fly camera is the default view in BOTH modes — Play
@@ -441,7 +503,46 @@ engine::scene::CameraMatrices Application::update_world(float dt, float sim_dt, 
         engine::scene::camera_system(scene_.registry(), aspect);
     world_.update_audio(scene_, cam.view, /*live=*/true, dt);
 #endif
+    // Switching the view to another camera is a cut: TAA / velocity must not
+    // blend or reproject across it (R11).
+#ifdef ENGINE_EDITOR
+    const entt::entity view_camera = editor_.through_scene_camera()
+                                         ? engine::scene::find_active_camera(scene_.registry())
+                                         : entt::entity{entt::null};
+#else
+    const entt::entity view_camera = engine::scene::find_active_camera(scene_.registry());
+#endif
+    if (view_camera != view_camera_) {
+        view_camera_ = view_camera;
+        renderer_.reset_temporal();
+    }
     return cam;
+}
+
+engine::scene::CameraMatrices Application::shot_view(const engine::remote::CameraPose& pose,
+                                                     float aspect) const {
+    // Clip planes derived for the shot's own position, with its overrides.
+    const engine::scene::ViewExtent extent{.drawables = scene_bounds_,
+                                           .terrain = world_.terrain_view_bounds(pose.position)};
+    const engine::scene::ClipRange clip = engine::scene::apply_clip_overrides(
+        engine::scene::derive_clip_range(pose.position, extent), pose.near_override,
+        pose.far_override);
+    return view_matrices(pose.position, glm::radians(pose.yaw_deg),
+                         glm::radians(glm::clamp(pose.pitch_deg, -89.0F, 89.0F)),
+                         glm::radians(pose.fov_deg), clip, aspect);
+}
+
+void Application::update_view_clip() {
+    // Scanning every drawable is cheap but not free: refresh the bounds a few
+    // times a second (the far plane keeps a margin for what moved meanwhile).
+    if (!scene_bounds_valid_ || presented_ - scene_bounds_frame_ >= k_bounds_refresh_frames) {
+        scene_bounds_ = engine::scene::scene_draw_bounds(scene_.registry());
+        scene_bounds_frame_ = presented_;
+        scene_bounds_valid_ = true;
+    }
+    const engine::scene::ViewExtent extent{.drawables = scene_bounds_,
+                                           .terrain = world_.terrain_view_bounds(camera_.pos)};
+    camera_.set_derived_clip(scene_, engine::scene::derive_clip_range(camera_.pos, extent));
 }
 
 void Application::report_stats() const {

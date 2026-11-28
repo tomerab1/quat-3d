@@ -15,6 +15,7 @@
 
 #ifdef ENGINE_EDITOR
 
+#include <functional>
 #include <optional>
 #include <string>
 
@@ -22,8 +23,8 @@
 #include <vulkan/vulkan.h>
 
 #include "app/fly_camera.hpp"
+#include "app/play_mode.hpp"
 #include "app/world_runtime.hpp"
-#include "editor/scene_snapshot.hpp"
 #include "engine/editor/editor.hpp"
 
 struct ImDrawData;
@@ -59,11 +60,16 @@ struct EditorBridgeTargets {
     engine::scene::Scene*        scene = nullptr;
     WorldRuntime*                world = nullptr;
     FlyCamera*                   camera = nullptr;
+    // Play/Stop (shared with the non-editor game; owned by the Application).
+    PlayMode*                    play_mode = nullptr;
     // Shader hot-reload state for the Stats panel (R2); null when off.
     const engine::rhi::ShaderHotReload* shader_reload = nullptr;
     // The renderer's settings: the Renderer panel edits them and scene files
     // save / load them (A8).
     engine::renderer::RenderSettings* render_settings = nullptr;
+    // Camera cut for the renderer's temporal state (R11): called after a scene
+    // load and on every Play / Stop transition. May be empty.
+    std::function<void()> reset_temporal;
     // Simulation clock (Pause / Step) and endpoint state for the status bar.
     RemoteBridge* remote = nullptr;
 };
@@ -81,9 +87,8 @@ public:
     // false (QUAT_NO_UI=1) the editor stays inactive.
     void create(SDL_Window* window, bool enabled);
     void bind(const EditorBridgeTargets& targets) { t_ = targets; }
-    // Points the remote bridge at the editor and (when the scene has no demo
-    // physics world) the play flag.
-    void fill_remote_targets(RemoteBridgeTargets& targets, bool demo_physics);
+    // Points the remote bridge at the editor.
+    void fill_remote_targets(RemoteBridgeTargets& targets);
 
     [[nodiscard]] bool active() const { return editor_.active(); }
     // True once after the editor rebuilt its font atlas (display scale
@@ -101,12 +106,16 @@ public:
     // gizmo otherwise); the ARROW keys fly whenever the cursor is over the
     // viewport (they conflict with nothing). Text input freezes both.
     [[nodiscard]] FlyInputGate input_gate(bool looking, bool character_mode) const;
+    // A UI text field owns the keyboard (scripts read keys as released).
+    [[nodiscard]] bool keyboard_captured() const;
     // The scene's render size: the Viewport panel (sized by last frame's UI)
     // when the editor is up, else the whole window.
     [[nodiscard]] VkExtent2D scene_extent(VkExtent2D present_extent) const;
 
     // ---- Play mode ---------------------------------------------------------
-    [[nodiscard]] bool playing() const { return play_; }
+    [[nodiscard]] bool playing() const {
+        return t_.play_mode != nullptr && t_.play_mode->requested();
+    }
     // This frame's play-mode simulation input (none outside play).
     [[nodiscard]] std::optional<PlayStep> play_step(const glm::vec3& fly_camera_pos) const;
     // Play viewed through the scene's active Camera entity (menu-bar "Game
@@ -120,7 +129,6 @@ public:
                                              const engine::scene::CameraMatrices& cam);
 
 private:
-    void apply_play_transition();
     void apply_scene_file_requests();
     void apply_instantiate_request();
 
@@ -131,12 +139,7 @@ private:
     bool        new_scene_ = false;   // File > New
     std::string pending_save_;        // scene file requests from the File menu
     std::string pending_load_;
-    // Play mode: snapshot taken on Play, restored on Stop; the play session
-    // owns its own physics world (demo modes keep theirs).
-    bool play_ = false;
     bool play_use_scene_camera_ = false; // menu-bar "Game camera" checkbox
-    bool play_prev_ = false;
-    std::optional<engine::editor::SceneSnapshot> play_snapshot_;
     std::optional<engine::editor::EditorContext::GroundClick> ground_click_; // 13.4
 };
 

@@ -12,8 +12,8 @@
 
 #include "engine/scene/components.hpp"
 #include "engine/scene/scene.hpp"
+#include "engine/scene/scene_snapshot.hpp"
 #include "engine/scene/world_clock.hpp"
-#include "scene_snapshot.hpp"
 #include "shell/scene_actions.hpp"
 #include "ui/fonts.hpp"
 #include "ui/icons.hpp"
@@ -112,7 +112,9 @@ void row_context_menu(RowContext& ctx, entt::entity e) {
         begin_rename(ctx.state, ctx.scene, e);
     }
     if (ImGui::MenuItem(ui::label(icon::copy, "Duplicate").c_str(), "Ctrl+D")) {
-        if (const entt::entity c = duplicate_entity(ctx.scene, e); c != entt::null) ctx.selected = c;
+        if (const entt::entity c = scene::duplicate_entity(ctx.scene, e); c != entt::null) {
+            ctx.selected = c;
+        }
         ctx.mutated = true;
     }
     if (ctx.scene.registry().all_of<scene::Parent>(e) &&

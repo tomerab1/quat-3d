@@ -118,7 +118,7 @@ public:
 private:
     // Descriptor slots of lighting.slang's resources, from reflection (in
     // the order of kResources in lighting_pass.cpp).
-    static constexpr std::size_t k_slot_count = 23;
+    static constexpr std::size_t k_slot_count = 24;
 
     const rhi::Device* device_    = nullptr;   // non-owning
     rhi::GpuAllocator* allocator_ = nullptr;   // non-owning

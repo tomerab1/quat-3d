@@ -1,12 +1,15 @@
 // FrameRenderer, per frame: gathers the ticked scene into draw lists and builds
 // the render graph. Pass order (graph declaration order):
-//   sky-view LUT update, dynamic IBL step, GBuffer, terrain, grass, Hi-Z,
-//   cascaded shadows (GPU fit + cascades), GTAO, light culling, lighting,
-//   transparent, bloom, exposure, tonemap, TAA, editor UI; GPU skinning is
-//   recorded before the graph executes.
+//   sky-view LUT update, dynamic IBL step, GBuffer, terrain, grass,
+//   background velocity, Hi-Z, cascaded shadows (GPU fit + cascades), GTAO,
+//   light culling, lighting, transparent, particles (all at the render
+//   extent), upscaler (render -> display extent), bloom, exposure, tonemap,
+//   present copy, editor UI; GPU skinning is recorded before the graph
+//   executes.
 
 #include "app/frame_renderer.hpp"
 #include "app/grass_runtime.hpp"
+#include "app/particle_runtime.hpp"
 
 #include <algorithm>
 #include <cstdio>
@@ -73,24 +76,39 @@ SkinnedEntityGpu* ensure_skin_gpu(DeferredFrame& frame, entt::entity entity,
     const VkDeviceSize verts_size =
         static_cast<VkDeviceSize>(mesh.vertex_count) * sizeof(engine::asset::Vertex);
 
-    auto joints = allocator.create_buffer(
-        joints_size,
-        VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
-        VMA_MEMORY_USAGE_AUTO,
-        VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT);
-    if (!joints) return nullptr;
+    const auto host_joints = [&] {
+        return allocator.create_buffer(
+            joints_size,
+            VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+            VMA_MEMORY_USAGE_AUTO,
+            VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT |
+                VMA_ALLOCATION_CREATE_MAPPED_BIT);
+    };
+    auto joints = host_joints();
+    auto prev_joints = host_joints();
+    if (!joints || !prev_joints) return nullptr;
     auto verts = allocator.create_buffer(
         verts_size,
         VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT |
             VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
         VMA_MEMORY_USAGE_AUTO, 0);
     if (!verts) return nullptr;
+    // Velocity: positions skinned with last frame's palette (float4 each).
+    auto prev_positions = allocator.create_buffer(
+        static_cast<VkDeviceSize>(mesh.vertex_count) * sizeof(glm::vec4),
+        VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+        VMA_MEMORY_USAGE_AUTO, 0);
+    if (!prev_positions) return nullptr;
 
     SkinnedEntityGpu g;
     g.joints = std::move(*joints);
+    g.prev_joints = std::move(*prev_joints);
     g.skinned_verts = std::move(*verts);
+    g.prev_positions = std::move(*prev_positions);
     g.joints_addr = engine::rhi::buffer_device_address(vk_device, g.joints);
+    g.prev_joints_addr = engine::rhi::buffer_device_address(vk_device, g.prev_joints);
     g.skinned_addr = engine::rhi::buffer_device_address(vk_device, g.skinned_verts);
+    g.prev_positions_addr = engine::rhi::buffer_device_address(vk_device, g.prev_positions);
     g.vertex_count = mesh.vertex_count;
     g.joint_count = joint_count;
     frame.skin_gpu[entity] = std::move(g);
@@ -125,19 +143,8 @@ FrameScene FrameRenderer::gather(engine::scene::Scene& scene,
     DeferredFrame& fr = frames_[frame_];
     FrameScene out;
 
-    // TAA: jitter the projection sub-pixel each frame (Halton). The whole
-    // frame renders with the jittered view-proj; the resolve accumulates
-    // into the shared history, reprojecting with the UNjittered
-    // cam.view_proj (audit A14). No jitter while TAA is off.
-    const glm::vec2 jitter =
-        settings_.taa.enabled
-            ? engine::renderer::taa_jitter(frame_number, draw_extent.width, draw_extent.height)
-            : glm::vec2(0.0F);
-    glm::mat4 jitter_mat(1.0F);
-    jitter_mat[3][0] = jitter.x;
-    jitter_mat[3][1] = jitter.y;
-    out.jittered_vp = jitter_mat * cam.view_proj;
-    out.jittered_inv_vp = glm::inverse(out.jittered_vp);
+    // R11: render extent, jitter, view motion, camera-cut flag (frame_temporal.cpp).
+    begin_view(out, cam, draw_extent, frame_number);
 
     engine::renderer::DirectionalLightParams& light = out.light;
     const auto light_view = scene.registry().view<const engine::scene::DirectionalLight>();
@@ -169,6 +176,8 @@ FrameScene FrameRenderer::gather(engine::scene::Scene& scene,
         item.mesh = mr.mesh.valid() ? &*mr.mesh : nullptr;
         item.material = material_overrides_.drawn(scene.registry(), e, mr);
         item.model = t.world;
+        const auto key = static_cast<std::uint64_t>(entt::to_integral(e));
+        item.prev_model = temporal_.motion().advance(key, t.world);
 
         const auto* sm = scene.registry().try_get<engine::scene::SkinnedMesh>(e);
         if (item.mesh != nullptr && item.mesh->skinned() && sm != nullptr &&
@@ -178,11 +187,16 @@ FrameScene FrameRenderer::gather(engine::scene::Scene& scene,
                 static_cast<std::uint32_t>(sm->joint_matrices.size()));
             if (g != nullptr) {
                 const VkDeviceSize joint_bytes = sm->joint_matrices.size() * sizeof(glm::mat4);
+                const std::span<const glm::mat4> prev_palette =
+                    temporal_.motion().advance_palette(key, sm->joint_matrices);
                 std::memcpy(g->joints.mapped(), sm->joint_matrices.data(), joint_bytes);
+                std::memcpy(g->prev_joints.mapped(), prev_palette.data(), joint_bytes);
                 // Sequential-write host memory may be non-coherent (S1.A15).
-                if (auto flushed = g->joints.flush(0, joint_bytes); !flushed) {
-                    std::fprintf(stderr, "[warn] joint matrix flush: %s\n",
-                                 flushed.error().message.c_str());
+                for (engine::rhi::GpuBuffer* b : {&g->joints, &g->prev_joints}) {
+                    if (auto flushed = b->flush(0, joint_bytes); !flushed) {
+                        std::fprintf(stderr, "[warn] joint matrix flush: %s\n",
+                                     flushed.error().message.c_str());
+                    }
                 }
                 engine::renderer::SkinDispatch d;
                 d.vertices_in =
@@ -198,11 +212,17 @@ FrameScene FrameRenderer::gather(engine::scene::Scene& scene,
                 d.vertices_out_size = static_cast<VkDeviceSize>(g->vertex_count) *
                                       sizeof(engine::asset::Vertex);
                 d.vertex_count = item.mesh->vertex_count;
+                d.prev_joints = g->prev_joints_addr;
+                d.prev_positions_out = g->prev_positions_addr;
+                d.prev_positions_out_size =
+                    static_cast<VkDeviceSize>(g->vertex_count) * sizeof(glm::vec4);
                 out.dispatches.push_back(d);
                 item.skinned_vertices = g->skinned_verts.handle();
+                item.prev_positions = g->prev_positions_addr;
                 // Skinned vertices are already in skin space (glTF ignores the
                 // mesh node transform), so draw them with an identity model.
                 item.model = glm::mat4(1.0F);
+                item.prev_model = glm::mat4(1.0F);
             }
         }
         // Route alpha-blended + transmissive (glass) materials to the forward pass.
@@ -254,6 +274,10 @@ bool FrameRenderer::record(const FrameInputs& in) {
     const std::uint32_t image_index = image_index_;
     DeferredFrame& fr = frames_[frame_];
     draw_extent_ = draw_extent;
+    // R11: the scene renders at render_extent; the upscaler resolves to
+    // draw_extent, where post-processing and the UI run.
+    const VkExtent2D render_extent = fs.render_extent;
+    apply_texture_lod_bias(fr, render_extent, draw_extent);
     const auto atmos_skyview = [&]() {
         return atmosphere_ ? atmosphere_->skyview_view() : VK_NULL_HANDLE;
     };
@@ -290,25 +314,31 @@ bool FrameRenderer::record(const FrameInputs& in) {
     // R9.1: draws sharing mesh + material collapse into instanced draws;
     // R9.2: InstancedMesh placements join them, one draw per (mesh,
     // material), culled per instance (shadow casters against the cascades'
-    // cull volume).
+    // cull volume). R11: the opaque placements record their previous
+    // transforms for the velocity target.
     const engine::scene::FrameDrawLists batches = engine::scene::build_frame_draw_lists(
-        *in.registry, fs.draws, fs.shadow_draws, cam.view_proj, fs.shadow_cull_view_proj);
+        *in.registry, fs.draws, fs.shadow_draws, cam.view_proj, fs.shadow_cull_view_proj,
+        &temporal_.motion());
     const engine::renderer::InstancedDrawList& shadow_batches = batches.shadow;
     const engine::renderer::InstancedDrawList& opaque_batches = batches.opaque;
     const engine::renderer::RenderSettings& settings = settings_;
-    auto gbuffer = fr.mesh.add_to_graph(graph, draw_extent, fs.jittered_vp, opaque_batches);
+    auto gbuffer = fr.mesh.add_to_graph(graph, render_extent, fs.jittered_vp, opaque_batches,
+                                        fs.motion);
     if (!gbuffer) {
         std::fprintf(stderr, "[fatal] gbuffer pass: %s\n", gbuffer.error().message.c_str());
         return false;
     }
     if (in.terrain != nullptr) {
-        in.terrain->add_to_graph(graph, *gbuffer, draw_extent, fs.jittered_vp, cam.position,
+        in.terrain->add_to_graph(graph, *gbuffer, render_extent, fs.jittered_vp, cam.position,
                                  in.terrain_anchor, in.terrain_snowline);
     }
     if (in.grass != nullptr) {
-        in.grass->add_to_graph(graph, frame_, *in.registry, *gbuffer, draw_extent, fs.jittered_vp,
-                               cam, in.terrain, in.terrain_anchor, in.sim_dt);
+        in.grass->add_to_graph(graph, frame_, *in.registry, *gbuffer, render_extent,
+                               fs.jittered_vp, cam, in.terrain, in.terrain_anchor, in.sim_dt);
     }
+    // R11: camera-only velocity where no geometry was drawn (after every
+    // opaque writer).
+    velocity_.add_background_to_graph(graph, *gbuffer, render_extent, cam.view_proj);
     // R12: Hi-Z pyramid of the final depth (after terrain / grass), then the
     // sun's cascades fitted to its depth bounds and rendered (shadows.enabled
     // off: no shadow passes, the lighting is unshadowed).
@@ -319,7 +349,7 @@ bool FrameRenderer::record(const FrameInputs& in) {
                   (csm.enabled ? 0 : shadow_batches.draws.size());
     engine::renderer::HiZTargets hiz{};
     if (fr.hiz.valid()) {
-        if (auto h = fr.hiz.add_to_graph(graph, gbuffer->depth, draw_extent)) {
+        if (auto h = fr.hiz.add_to_graph(graph, gbuffer->depth, render_extent)) {
             hiz = *h;
         } else {
             std::fprintf(stderr, "[warn] hi-z pass: %s\n", h.error().message.c_str());
@@ -343,7 +373,7 @@ bool FrameRenderer::record(const FrameInputs& in) {
     occlusion.csm = csm;
     occlusion.gtao = current_gtao();
     if (hiz.valid() && fr.gtao.valid()) {
-        if (auto ao = fr.gtao.add_to_graph(graph, hiz, gbuffer->normal, draw_extent, cam.view,
+        if (auto ao = fr.gtao.add_to_graph(graph, hiz, gbuffer->normal, render_extent, cam.view,
                                            cam.projection, occlusion.gtao,
                                            static_cast<std::uint32_t>(fs.frame_number))) {
             occlusion.ao = *ao;
@@ -363,7 +393,7 @@ bool FrameRenderer::record(const FrameInputs& in) {
     } else {
         std::fprintf(stderr, "[warn] light cull: %s\n", c.error().message.c_str());
     }
-    auto hdr = fr.lighting.add_to_graph(graph, *gbuffer, draw_extent, fs.light,
+    auto hdr = fr.lighting.add_to_graph(graph, *gbuffer, render_extent, fs.light,
                                         fs.jittered_inv_vp, cam.position, occlusion, clustered,
                                         /*enable_sky=*/true, ibl_views, atmos_skyview(),
                                         atmos_transmittance(), current_clouds(),
@@ -376,7 +406,7 @@ bool FrameRenderer::record(const FrameInputs& in) {
     // Forward-blend transparent geometry over the lit HDR, depth-tested
     // against the opaque GBuffer depth.
     if (!fs.transparent_draws.empty()) {
-        if (auto r = fr.transparent.add_to_graph(graph, *hdr, gbuffer->depth, draw_extent,
+        if (auto r = fr.transparent.add_to_graph(graph, *hdr, gbuffer->depth, render_extent,
                                                  fs.jittered_vp, fs.light, cam.position,
                                                  fs.transparent_draws, ibl_views, clustered,
                                                  settings.ibl.intensity);
@@ -385,6 +415,22 @@ bool FrameRenderer::record(const FrameInputs& in) {
             return false;
         }
     }
+    // GPU particles (R10.3): simulated on the sim clock, drawn over the lit
+    // HDR and the transparent geometry, depth-tested against the GBuffer (at
+    // the render extent, before the upscaler resolves them with the rest).
+    if (in.particles != nullptr) {
+        in.particles->add_to_graph(graph, *in.registry,
+                                   {frame_, &*gbuffer, *hdr, &clustered, &cam, fs.jittered_vp,
+                                    fs.light, render_extent, in.sim_dt});
+    }
+    // R11: temporal resolve / upscale of the pre-tonemap HDR to the display
+    // extent (frame_temporal.cpp); post-processing runs on its output.
+    auto upscaled = add_upscale(graph, fs, *hdr, *gbuffer, draw_extent);
+    if (!upscaled) {
+        std::fprintf(stderr, "[fatal] upscaler: %s\n", upscaled.error().message.c_str());
+        return false;
+    }
+    hdr = *upscaled;
     // Bloom: blur the bright parts of the HDR and add them back before tonemap.
     if (settings.bloom.enabled) {
         const engine::renderer::BloomParams bloom_params{
@@ -411,7 +457,7 @@ bool FrameRenderer::record(const FrameInputs& in) {
         swapchain.format(), present_extent, VK_IMAGE_LAYOUT_UNDEFINED,
         VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
         // The first barrier waits on the acquire semaphore's stage, so
-        // every first touch (layout transition, TAA's copy) is ordered
+        // every first touch (layout transition, the present copy) is ordered
         // after the presentation engine releases the image (audit A3).
         k_acquire_wait_stage, /*available_access=*/0,
         // The final PRESENT_SRC transition is ordered before the stage the
@@ -439,10 +485,12 @@ bool FrameRenderer::record(const FrameInputs& in) {
     (void)device;
     (void)allocator;
 #endif
-    // Tonemap to an intermediate LDR image; TAA resolves it into the target.
+    // Tonemap to an intermediate LDR image (UNORM twin of the target format),
+    // then byte-copy it into the target.
     const engine::rhi::ResourceHandle ldr_current = graph.create_transient_image(
         "ldr_current", ldr_format_, draw_extent,
-        VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT);
+        VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT |
+            VK_IMAGE_USAGE_TRANSFER_SRC_BIT);
     if (auto r = fr.tonemap.add_to_graph(graph, *hdr, ldr_current, draw_extent,
                                          fr.exposure.exposure_buffer_address(),
                                          settings.exposure);
@@ -450,13 +498,18 @@ bool FrameRenderer::record(const FrameInputs& in) {
         std::fprintf(stderr, "[fatal] tonemap pass: %s\n", r.error().message.c_str());
         return false;
     }
-    // Temporal anti-aliasing: resolve the jittered frame against history.
-    if (auto r = fr.taa.add_to_graph(graph, ldr_current, gbuffer->depth, scene_target,
-                                     draw_extent, cam.view_proj, settings.taa);
-        !r) {
-        std::fprintf(stderr, "[fatal] taa pass: %s\n", r.error().message.c_str());
-        return false;
-    }
+    graph.add_pass("present_copy", engine::rhi::PassType::transfer)
+        .reads(ldr_current, engine::rhi::ResourceUsage::transfer_src)
+        .writes(scene_target, engine::rhi::ResourceUsage::transfer_dst)
+        .execute([ldr_current, scene_target, draw_extent](engine::rhi::PassContext& ctx) {
+            VkImageCopy region{};
+            region.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+            region.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+            region.extent = {draw_extent.width, draw_extent.height, 1};
+            vkCmdCopyImage(ctx.cmd(), ctx.resolve(ldr_current).image,
+                           VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, ctx.resolve(scene_target).image,
+                           VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+        });
 #ifdef ENGINE_EDITOR
     // Editor UI: build the dockspace + panels (the Viewport panel samples
     // the offscreen scene image), then draw the UI into the swapchain as

@@ -1,6 +1,7 @@
 #include "tuning_panels.hpp"
 
 #include <cmath>
+#include <cstddef>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -64,6 +65,20 @@ void draw_setting(RenderSettings& s, const RenderSettingDesc& d) {
     ui::prop_begin(label.c_str(), hint.empty() ? nullptr : hint.c_str(), true, modified);
     if (ref.b != nullptr) {
         ImGui::Checkbox("##v", ref.b);
+    } else if (d.type == renderer::RenderSettingType::choice && ref.i != nullptr) {
+        // A named choice (e.g. the upscaler mode, R11).
+        const std::string current(
+            renderer::render_setting_choice_name(d, static_cast<float>(*ref.i)));
+        ImGui::SetNextItemWidth(-1.0F);
+        if (ImGui::BeginCombo("##v", current.c_str())) {
+            for (std::size_t k = 0; k < d.choices.size(); ++k) {
+                const std::string name(d.choices[k]);
+                if (ImGui::Selectable(name.c_str(), static_cast<int>(k) == *ref.i)) {
+                    *ref.i = static_cast<int>(k);
+                }
+            }
+            ImGui::EndCombo();
+        }
     } else if (ref.i != nullptr) {
         // Integers print as integers (a float format would read garbage).
         const std::string int_format = d.unit.empty() ? "%d" : "%d " + std::string(d.unit);
@@ -84,6 +99,8 @@ void draw_setting(RenderSettings& s, const RenderSettingDesc& d) {
         enabled != nullptr && renderer::render_setting_value(s, *enabled) == 0.0F) {
         return true;
     }
+    // Upscaling needs the temporal resolve (TAA off renders at native scale).
+    if (d.group == "upscaler" && !s.taa.enabled) return true;
     return d.group == "exposure" && !s.exposure.auto_exposure && d.name != "auto" &&
            d.name != "compensation_ev";
 }

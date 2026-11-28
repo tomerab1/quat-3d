@@ -23,12 +23,16 @@ the current state is in [`STATUS.md`](STATUS.md).
 |---|---|
 | `debug` | clang + libc++, validation layers on |
 | `release` | clang + libc++, optimised (Tracy enabled via `ENGINE_PROFILE`) |
-| `windows-release` | MSVC |
+| `windows-release` | MSVC 2022 (run from an x64 developer prompt), `x64-windows` triplet |
+| `macos-release` | Apple clang, `arm64-osx-14` triplet (macOS 14 minimum), MoltenVK — sets `ENGINE_DESCRIPTOR_SETS_FALLBACK=ON` |
 
 CMake options: `ENGINE_EDITOR` (default ON), `ENGINE_PROFILE`,
-`ENGINE_DESCRIPTOR_SETS_FALLBACK` (macOS / drivers without descriptor buffers).
+`ENGINE_DESCRIPTOR_SETS_FALLBACK` (macOS / drivers without descriptor buffers),
+`ENGINE_PACKAGE_BUILD` (release archives: no source-tree paths compiled in —
+the game finds `assets/` + `cooked/shaders/` next to its executable or in
+`QUAT_ASSET_ROOT`; see `src/app/asset_root.hpp`).
 
-Targets: the engine libraries (`engine_rhi`, `engine_renderer`,
+Targets: the engine libraries (`engine_core`, `engine_rhi`, `engine_renderer`,
 `engine_scene`, `engine_physics`, `engine_animation`, `engine_terrain`,
 `engine_nav`, `engine_net`, `engine_remote`, `engine_audio`, `engine_editor`), the `game`
 executable, the offline cooker (`engine_cook` + the `quat-cook` CLI, never
@@ -62,6 +66,16 @@ Test layout:
 | `tests/legacy/` | Wrappers around the old `run_*_self_test()` functions, removed as their bodies migrate into `tests/<module>/` |
 
 
+## Script hot reload
+
+Editor builds watch `assets/scripts/` (and its subdirectories present at
+startup) while running (`QUAT_SCRIPT_HOT_RELOAD=0` turns it off, `=1` turns
+it on in non-editor builds). Saving a `.lua` file recompiles it; while
+playing, its instances restart with the new code, and a compile or load
+error keeps the previous version running (the error shows under **Stats →
+Scripts**, in the log, and in `script.list`). Outside Play the file is only
+syntax-checked. See [`scripting.md`](scripting.md).
+
 ## Shader hot reload
 
 Editor builds watch `assets/shaders/` and `assets/shaders/lib/` while running
@@ -88,6 +102,40 @@ destroyed once the frames in flight are done.
   holding the returned `rhi::ManagedPipeline`, reading `handle()` /
   `layout()` when recording.
 - `QUAT_SLANGC=<path>` overrides which slangc is used.
+
+## Material shaders
+
+Authored materials (ROADMAP A6) are Slang modules in
+`assets/shaders/materials/<name>.slang` implementing `IMaterial`
+(`assets/shaders/lib/material.slang`) and ending with
+`export struct SurfaceMaterial : IMaterial = <their struct>;` — start from
+`assets/shaders/templates/material.slang`. Select one on an entity with
+`primitive.shader` (+ `shader_params`), in the inspector or over remote
+control (`shader.*` methods, see [`remote-control.md`](remote-control.md#material-shaders-roadmap-a6)).
+
+- Each material is linked against the pass driver module
+  `lib/material_pass_gbuffer.slang` (link-time specialisation: the driver
+  declares `extern struct SurfaceMaterial`) into
+  `cooked/shaders/materials/<name>.gbuffer.spv`, offline by
+  `cmake/CompileShaders.cmake` and at runtime by shader hot reload — one
+  program and pipeline per material, same layout as the built-in GBuffer
+  program. Saving the file hot-swaps it like any other shader.
+- Materials cannot declare resources: everything comes in through
+  `MaterialInput` (uv, world position, normal, view direction, time, the
+  entity's material constants incl. two `shader_params` vec4s, and the
+  built-in PBR result `standard`). A program whose reflection does not fit the
+  pass layout is rejected.
+- They run in the deferred pass only (emission is a GBuffer target the
+  lighting pass adds; alpha below 0.5 cuts out). Shadows do not run the
+  material: a cut-out hole still casts a shadow (the mesh's silhouette). The
+  variant table in `include/engine/rhi/material_shader_names.hpp` is where
+  `shadow` and `forward` variants go (ROADMAP A6 follow-up).
+- Sources sent over remote control may not read other files: no `#`
+  directives, no `__include`, no `import "<path>"`, and `import` only names a
+  library module (`rhi::check_material_source`).
+- Test material sources live in `tests/data/materials/`;
+  `tests/support/material_shader_tree.hpp` builds a scratch project with the
+  library modules cooked.
 
 ## Cooking assets
 
@@ -170,11 +218,43 @@ later step.
 
 ## CI
 
-`.github/workflows/ci.yml` builds the `release` preset on Ubuntu 24.04 and runs
-`ctest` with lavapipe, then builds the `game` target once more with
-`ENGINE_EDITOR=OFF` (sharing the dependency tree). The vcpkg binary cache is saved right after configure,
+`.github/workflows/ci.yml` runs on pushes to `master`, on pull requests and on
+demand (`workflow_dispatch`):
+
+| Job | Runner | Preset | Tests |
+|---|---|---|---|
+| `linux` | ubuntu-24.04 | `release` | CPU + GPU on Mesa lavapipe; then `game` once more with `ENGINE_EDITOR=OFF` (sharing the dependency tree) |
+| `windows` | windows-2022 | `windows-release` | CPU + GPU on Mesa lavapipe (Windows build, from `jakoch/install-vulkan-sdk-action`) |
+| `macos` | macos-15 (Apple Silicon) | `macos-release` | CPU; GPU on MoltenVK over the runner's paravirtual Metal device — informational (`continue-on-error`) until P1 makes it a gate |
+| `rust` | ubuntu-24.04 | — | `tools/quat-mcp` fmt, clippy, tests |
+
+Each C++ job pins vcpkg to the manifest baseline and Slang to the same
+release. The vcpkg binary cache (one per OS) is saved right after configure,
 so only the first run (or a dependency change) pays for the full dependency
-build. Logs are uploaded as an artifact when a run fails.
+build (cold: ~17 min macOS, ~28 min Windows). Logs are uploaded as an artifact when
+a run fails. The Windows and macOS test steps print GoogleTest's brief summary
+(`GTEST_BRIEF=1`), so skipped GPU tests are visible in the log.
+
+## Releases
+
+`.github/workflows/release.yml` builds `game` in Release with
+`ENGINE_PACKAGE_BUILD=ON` on all three OSes (toolchain setup shared with CI
+through `.github/actions/setup-build`), packages it with
+`scripts/package-release.sh`, and smoke-tests each package with
+`scripts/smoke-test-package.sh` (unpack, launch headless for 30 frames, require
+a clean exit, a screenshot, and data resolved next to the executable):
+
+| Package | Contents | Smoke test |
+|---|---|---|
+| `quat-3d-<v>-linux-x64.tar.gz` | `game` (RUNPATH `$ORIGIN/lib`), `lib/` libc++ runtime, data | Xvfb + lavapipe |
+| `quat-3d-<v>-windows-x64.zip` | `game.exe`, vcpkg DLLs (applocal), MSVC runtime DLLs, data | lavapipe |
+| `quat-3d-<v>-macos-arm64.zip` | `Quat3D.app`: Vulkan loader + MoltenVK in `Frameworks/` (ICD manifest in `Resources/vulkan/icd.d`), data in `Resources/`, ad-hoc signed | MoltenVK, with Homebrew's Vulkan uninstalled first |
+
+Each archive carries `packaging/README-RUN-<os>.txt` as `README-RUN.txt`.
+Pushing a `v*` tag publishes a GitHub Release (tags with a `-`, e.g.
+`v0.2.0-rc1`, are prereleases); running the workflow by hand
+(`gh workflow run release.yml --ref <branch>`) only uploads the packages as
+workflow artifacts.
 
 ### Screenshots
 
@@ -286,6 +366,19 @@ clang++ -std=c++23 -stdlib=libc++ -Wall -Wextra -Wshadow -fno-exceptions -fno-rt
   -isystem $D/stb -isystem $D/sdl/include  src/scene/scene.cpp
 ```
 
+Lua and sol2 (engine_script, G7) are not in that list: clone sol2 v3.5.0
+(header-only) and Lua v5.4.8 into a scratch directory and pass both through
+`EXTRA_FLAGS`. Lua builds into a static library with one compiler call per
+file, so the script tests can be linked and run locally:
+
+```sh
+git clone --depth 1 --branch v3.5.0 https://github.com/ThePhD/sol2.git $S/sol2
+git clone --depth 1 --branch v5.4.8 https://github.com/lua/lua.git $S/lua
+(cd $S/lua && for f in l*.c; do case $f in lua.c|ltests.c) continue;; esac
+   cc -O2 -DLUA_USE_POSIX -c $f; done && ar rcs liblua.a l*.o)
+EXTRA_FLAGS="-isystem $S/sol2/include -isystem $S/lua" scripts/check-compile.sh src/script/*.cpp
+```
+
 This catches compile errors and warnings, not link errors or test failures.
 `scripts/check-compile.sh <files...>` wraps exactly this (set `DEPS` if the
 clones live elsewhere than `~/deps`).
@@ -311,7 +404,13 @@ clang++ -std=c++23 -stdlib=libc++ -Wall -Wextra -Wshadow -fno-exceptions -fno-rt
   process. Read files and network input through `engine/core/json_fields.hpp`.
   Dump JSON that may contain non-UTF-8 strings with
   `error_handler_t::replace`.
-- **libc++ everywhere:** every vcpkg port with compiled C++ must use the
-  `x64-linux-libcxx` triplet (see `triplets/`), or linking fails.
+- **libc++ everywhere (Linux):** every vcpkg port with compiled C++ must use
+  the `x64-linux-libcxx` triplet (see `triplets/`), or linking fails. macOS
+  uses `arm64-osx-14` only to pin the minimum OS (Apple clang defaults to
+  libc++); Windows uses MSVC's STL throughout.
+- **MSVC builds at `/W4` with no warnings.** Third-party headers must come in
+  through SYSTEM include directories (`/external:I`, warning level 0) — use
+  `target_include_directories(<t> SYSTEM ...)` for any non-imported
+  third-party path (e.g. stb).
 - **Main-thread ECS:** systems, editor actions and remote-control handlers all
   mutate the registry on the main thread; do not add threads that touch it.
