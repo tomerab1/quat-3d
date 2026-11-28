@@ -133,7 +133,7 @@ void append_strip(std::vector<std::uint32_t>& out, std::uint32_t segments) {
         lo = std::min(lo, s.ground_y);
         hi = std::max(hi, s.ground_y);
     }
-    p.ground = glm::vec4(lo, hi, 0.0F, 0.0F);
+    p.ground = glm::vec4(lo, hi, grass_slope_fade_start(s), 0.0F);
     p.prev_view_proj = motion.prev_view_proj;
     p.motion = glm::vec4(frame.prev_time_s.value_or(frame.time_s), motion.jitter_ndc, 0.0F);
     return p;

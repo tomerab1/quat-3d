@@ -79,6 +79,7 @@ struct SceneData {
     glm::vec3                 terrain_origin{0.0F};
     glm::vec3                 camera{0.0F};
     int                       suns = 0;
+    float                     grass_max_slope_deg = 90.0F; // the meadow grass layer's limit
     bool                      has_render_settings = false;
     engine::renderer::RenderSettings render_settings;
     engine::terrain::Heightmap map;
@@ -138,6 +139,9 @@ const SceneData& scene_data() {
             }
             if (const auto* sc = r.try_get<s::Scatter>(e)) d.layers.push_back({name, *sc, local});
             if (r.all_of<s::DirectionalLight>(e)) ++d.suns;
+            if (const auto* gr = r.try_get<s::Grass>(e)) {
+                d.grass_max_slope_deg = gr->settings.slope_deg.y;
+            }
             if (const auto* c = r.try_get<s::Camera>(e); c != nullptr && c->is_active) {
                 d.camera = glm::vec3(local[3]);
             }
@@ -235,6 +239,40 @@ TEST(MountainScene, LayersPlaceTheExpectedInstanceCounts) {
         EXPECT_LE(placements.size(), it->second.max) << layer.name;
     }
     std::printf("[ mountain ] total %zu instances\n", total);
+}
+
+// The meadow in front of the camera stays under the grass layer's slope
+// limit (issue #116): stronger hydraulic erosion plus the ~59-degree talus
+// had carved 40-55 degree micro-relief into it, which the grass skipped and
+// the terrain shaded as rock, leaving bare faceted patches. Measured on the
+// heightmap with central differences, within 80 m of the camera in XZ.
+TEST(MountainScene, MeadowAroundTheCameraStaysUnderTheGrassSlopeLimit) {
+    const SceneData& d = scene_data();
+    ASSERT_TRUE(d.map.valid());
+    ASSERT_LT(d.grass_max_slope_deg, 90.0F) << "the scene's grass layer has no slope limit";
+    const engine::terrain::Heightmap& m = d.map;
+    const auto n = static_cast<std::int32_t>(m.resolution);
+    const float dx = m.tile_size_m / static_cast<float>(m.resolution - 1U);
+    const float half = m.tile_size_m * 0.5F;
+    const float limit = glm::radians(d.grass_max_slope_deg);
+    std::size_t texels = 0;
+    std::size_t steep = 0;
+    for (std::int32_t z = 1; z + 1 < n; ++z) {
+        for (std::int32_t x = 1; x + 1 < n; ++x) {
+            const float wx = d.terrain_origin.x - half + static_cast<float>(x) * dx;
+            const float wz = d.terrain_origin.z - half + static_cast<float>(z) * dx;
+            if (glm::length(glm::vec2(wx - d.camera.x, wz - d.camera.z)) > 80.0F) continue;
+            const float gx = (m.at(x + 1, z) - m.at(x - 1, z)) / (2.0F * dx);
+            const float gz = (m.at(x, z + 1) - m.at(x, z - 1)) / (2.0F * dx);
+            ++texels;
+            if (std::atan(std::sqrt(gx * gx + gz * gz)) > limit) ++steep;
+        }
+    }
+    ASSERT_GT(texels, 500U);
+    const double share = static_cast<double>(steep) / static_cast<double>(texels);
+    std::printf("[ mountain ] meadow texels steeper than %.0f deg: %.2f %%\n",
+                static_cast<double>(d.grass_max_slope_deg), 100.0 * share);
+    EXPECT_LT(share, 0.05);
 }
 
 // The cliff-rock layers (boulders, spires) stay out of the meadow in front

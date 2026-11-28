@@ -375,6 +375,30 @@ TEST(GpuGrass, SlopeAndHeightLimitsRejectBlades) {
     EXPECT_GT(low, 1000U);
     EXPECT_GT(plateau, 1000U);
 
+    // Slopes up to 47 degrees: the 45-degree ramp lies in the slope fade
+    // (39..47 degrees), so it keeps a thinned field, not all and not none:
+    // grass_slope_keep there is ~0.17, ~20 % of candidates past the blade fade.
+    {
+        r::GrassFrame faded = frame;
+        faded.settings.slope_deg = glm::vec2(0.0F, 47.0F);
+        const float keep = r::grass_slope_keep(faded.settings, std::cos(glm::radians(45.0F)));
+        EXPECT_GT(keep, 0.1F);
+        EXPECT_LT(keep, 0.25F);
+        auto thinned = generate(*g, *pass, faded);
+        ASSERT_OK(thinned);
+        std::size_t flat_band = 0; // x in (-31, -1): 30 m wide
+        std::size_t ramp_band = 0; // x in (1.5, 6.5): 5 m wide
+        for (const auto& bl : thinned->blades) {
+            if (bl.root.x > -31.0F && bl.root.x < -1.0F) ++flat_band;
+            if (bl.root.x > 1.5F && bl.root.x < 6.5F) ++ramp_band;
+        }
+        ASSERT_GT(flat_band, 1000U);
+        const double ratio = (static_cast<double>(ramp_band) / 5.0) /
+                             (static_cast<double>(flat_band) / 30.0);
+        EXPECT_GT(ratio, 0.05) << "the fade band should keep some grass on the ramp";
+        EXPECT_LT(ratio, 0.5) << "the fade band should thin the ramp";
+    }
+
     // Heights up to 5 m: the plateau is bare too.
     frame.settings.height_m = glm::vec2(-1.0F, 5.0F);
     auto low_only = generate(*g, *pass, frame);

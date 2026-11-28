@@ -6,7 +6,7 @@
       "name": "terrain",
       "parent": -1,
       "transform": {"position": [0, 0, 0]},
-      "terrain": {"seed": 29, "resolution": 513, "tile_size": 2000, "height": 900, "octaves": 7, "frequency": 1.6, "gain": 0.55, "warp": 0.3, "erosion": "grid", "erosion_steps": 400, "erosion_relax": 3, "erosion_talus": 1.65, "erosion_rain": 0.015, "erosion_capacity": 1.0, "erosion_rate": 0.4, "erosion_thermal": 0.3, "snowline": 500, "streaming": false, "gpu": true}
+      "terrain": {"seed": 29, "resolution": 513, "tile_size": 2000, "height": 900, "octaves": 7, "frequency": 1.6, "gain": 0.55, "warp": 0.3, "erosion": "grid", "erosion_steps": 400, "erosion_relax": 3, "erosion_talus": 1.65, "erosion_rain": 0.01, "erosion_capacity": 0.5, "erosion_rate": 0.3, "erosion_thermal": 0.3, "snowline": 500, "streaming": false, "gpu": true}
     },
     {
       "name": "sun",
