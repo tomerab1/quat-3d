@@ -1,7 +1,9 @@
 name: Release
 
 # Downloadable builds of the game/editor for Linux, Windows and macOS.
-#   - Tag push v*: build, package, smoke-test, publish a GitHub Release.
+#   - Tag push v*: build, package, smoke-test, publish a GitHub Release whose
+#     notes are docs/releases/<tag>.md (required unless the tag is a
+#     prerelease) followed by GitHub's generated PR list. See docs/RELEASING.md.
 #   - workflow_dispatch: the same builds, uploaded as workflow artifacts only.
 # Packaging: scripts/package-release.sh; smoke test (launch the unpacked
 # package headless for 30 frames): scripts/smoke-test-package.sh.
@@ -37,6 +39,13 @@ jobs:
             preset: macos-release
     steps:
       - uses: actions/checkout@v4
+
+      # Fail a release tag without curated notes now, not after the builds;
+      # the publish job resolves the same file (docs/RELEASING.md).
+      - name: Release notes present
+        if: github.ref_type == 'tag'
+        shell: bash
+        run: bash scripts/release-notes.sh "$GITHUB_REF_NAME" > /dev/null
 
       - name: Set up build
         id: setup
@@ -129,16 +138,39 @@ jobs:
     runs-on: ubuntu-24.04
     permissions:
       contents: write
+    # This job holds a write token: actions pinned by commit, and the checkout
+    # is only the release notes and their resolver, without a stored token.
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          sparse-checkout: |
+            docs/releases
+            scripts
+          persist-credentials: false
+
+      # docs/releases/<tag>.md, required unless the tag is a prerelease
+      # (scripts/release-notes.sh; empty output = generated notes only).
+      - name: Release notes
+        id: notes
+        shell: bash
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          body_path=$(bash scripts/release-notes.sh "$TAG")
+          echo "body_path=$body_path" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           pattern: quat-3d-*
           path: dist
           merge-multiple: true
 
+      # With both set, action-gh-release v3 puts the body_path file first and
+      # GitHub's generated notes (the merged PRs, "Full Changelog") below it.
       - name: Release
         uses: softprops/action-gh-release@8a0cd651e5b2365bd640854a3fa5dfc70e4875f3 # v3.0.4
         with:
+          body_path: ${{ steps.notes.outputs.body_path }}
           files: dist/*
           fail_on_unmatched_files: true
           generate_release_notes: true
