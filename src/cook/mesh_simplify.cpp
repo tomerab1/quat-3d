@@ -4,10 +4,12 @@
 // The attribute-aware simplifier (normals and the first UV set in the error
 // metric) keeps the mesh topology and UV seams, so it is right for solid
 // models (rocks, logs, trunks). Foliage built from thousands of disconnected
-// cards or needle clusters cannot get far that way: each component collapses
-// to its own minimum. When the topology-preserving pass stops above twice
-// the target, the primitive is thinned instead, the way foliage LODs are
-// usually built: a deterministic subset of its components (leaf cards,
+// cards or needle clusters cannot be treated that way: each component
+// collapses to its own minimum, or vanishes outright once it is smaller than
+// the error bound, which empties a canopy. A primitive whose components
+// average fewer than k_card_triangles triangles (and any other one the
+// topology-preserving pass leaves above twice the target) is thinned
+// instead, the way foliage LODs are usually built: a deterministic subset of its components (leaf cards,
 // needle clusters) is kept and each kept one grows about its centre so the
 // foliage keeps its projected area, and with it its coverage from afar.
 // (Vertex clustering would merge neighbouring cards into large triangles
@@ -33,6 +35,10 @@ namespace {
 // recommends values well below 1 for unit vectors / [0, 1] UVs).
 constexpr float k_normal_weight = 0.5F;
 constexpr float k_uv_weight = 0.5F;
+// A primitive whose connected components average fewer triangles than this
+// is card / needle foliage: it is thinned, never edge-collapsed (collapsing
+// deletes whole small cards within the error bound and empties the canopy).
+constexpr double k_card_triangles = 24.0;
 // A kept card never grows by more than this (very low ratios would otherwise
 // turn needles into planks).
 constexpr float k_max_card_growth = 8.0F;
@@ -51,6 +57,34 @@ constexpr float k_max_card_growth = 8.0F;
         v = next;
     }
     return r;
+}
+
+// Average triangles per connected component of `indices`.
+[[nodiscard]] double triangles_per_component(std::span<const std::uint32_t> indices,
+                                             std::size_t vertex_count) {
+    std::vector<std::uint32_t> parent(vertex_count);
+    std::iota(parent.begin(), parent.end(), 0U);
+    std::size_t components = 0;
+    std::vector<std::uint8_t> used(vertex_count, 0);
+    for (std::size_t t = 0; t + 2 < indices.size(); t += 3) {
+        for (std::size_t k = 0; k < 3; ++k) {
+            if (used[indices[t + k]] == 0) {
+                used[indices[t + k]] = 1;
+                ++components; // every new vertex starts its own component...
+            }
+        }
+        for (std::size_t k = 1; k < 3; ++k) {
+            const std::uint32_t a = find_root(parent, indices[t]);
+            const std::uint32_t b = find_root(parent, indices[t + k]);
+            if (a != b) {
+                parent[b] = a;
+                --components; // ...and every union merges two
+            }
+        }
+    }
+    return components == 0 ? 0.0
+                           : static_cast<double>(indices.size() / 3) /
+                                 static_cast<double>(components);
 }
 
 // A stable value in [0, 1) per component (independent of triangle order).
@@ -133,6 +167,12 @@ std::size_t simplify_triangles(std::vector<std::uint32_t>& indices, Stream& posi
         return indices.size();
     }
     const std::size_t target = target_index_count(indices.size(), o.simplify_ratio);
+    if (triangles_per_component(indices, vertex_count) < k_card_triangles) {
+        std::vector<std::uint32_t> thinned = thin_components(indices, positions, shared, target);
+        if (thinned.empty()) return indices.size(); // never erase a primitive outright
+        indices = std::move(thinned);
+        return indices.size();
+    }
     // The error bound is relative to the whole vertex set's extent (every
     // primitive sharing these streams), so each primitive of a model is
     // simplified to the same absolute tolerance.

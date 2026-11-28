@@ -170,9 +170,10 @@ Cooked files target the engine: see the normal-map note below.
   primitive is reduced to about R of its triangles with meshoptimizer's
   attribute-aware simplifier (normals and UVs weigh in; error bound
   `--simplify-error`, relative to the model's size). Foliage made of
-  thousands of disconnected cards or needle clusters cannot get there while
-  keeping its topology, so when that pass stops above twice the target the
-  primitive is thinned instead, as foliage LODs usually are: a deterministic
+  thousands of disconnected cards or needle clusters cannot be simplified
+  that way (small cards vanish within the error bound and the canopy
+  empties), so a primitive whose components average fewer than 24 triangles,
+  or one that pass leaves above twice the target, is thinned instead, as foliage LODs usually are: a deterministic
   subset of whole components (cards, needle clusters) is kept and each grows
   about its centre by 1/sqrt(kept share), so the canopy keeps its projected
   area. (Vertex clustering merges neighbouring cards into large triangles
