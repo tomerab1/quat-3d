@@ -9,11 +9,12 @@
 #include <cmath>
 #include <cstdio>
 #include <memory>
+#include <string>
 #include <utility>
 
 #include "app/asset_root.hpp"
 #include "engine/asset/cube_lut.hpp"
-#include "engine/remote/world_commands.hpp" // confine_to_root
+#include "engine/core/path_confine.hpp"
 #include "engine/renderer/physical_camera.hpp"
 #include "engine/rhi/device.hpp"
 #include "engine/scene/components.hpp"
@@ -107,7 +108,7 @@ void FrameRenderer::update_color_lut() {
     lut_path_ = wanted;
     lut_.reset(); // frames in flight keep theirs (DeferredFrame::lut_in_use)
     if (wanted.empty()) return;
-    auto file = engine::remote::confine_to_root(project_root(), wanted);
+    auto file = engine::core::confine_to_root(project_root(), wanted);
     if (!file) {
         std::fprintf(stderr, "[warn] grading.lut '%s': %s\n", wanted.c_str(),
                      file.error().message.c_str());
