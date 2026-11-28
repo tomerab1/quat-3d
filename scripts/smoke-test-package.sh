@@ -4,7 +4,11 @@
 # directory, launch the packaged executable for 30 frames with a software or
 # runner GPU, and require a clean exit plus a written screenshot. The
 # executable must find its data next to itself (packaged builds embed no
-# source path).
+# source path). Every package must carry LICENSE and a THIRD_PARTY_NOTICES.md
+# with the licence texts (on macOS also inside the app's Contents/Resources).
+# The engine's package (--exe game, the default) must also list quat-mcp's
+# Rust crates there, and its bundled quat-mcp must run (`quat-mcp --version`);
+# a game's notices must not list crates it does not ship.
 #
 #   scripts/smoke-test-package.sh <archive> <scratch-dir> [options]
 #     --exe <name>      executable inside the package (default: game)
@@ -37,6 +41,52 @@ while [ $# -gt 0 ]; do
   shift 2
 done
 
+# The engine's own package bundles quat-mcp (scripts/package-release.sh); a
+# game packaged by quat-pack does not.
+engine_pkg=0
+[ "$exe" = game ] && engine_pkg=1
+mcp_version=""
+# macOS: prints the crashed and main threads of the newest crash report for
+# <exe> written after <marker> (ReportCrash needs a few seconds).
+print_macos_crash_report() {
+  local exe=$1 marker=$2 dir="$HOME/Library/Logs/DiagnosticReports" report="" _
+  for _ in $(seq 1 30); do
+    report=$(find "$dir" -maxdepth 1 -name "$exe*.ips" -newer "$marker" 2>/dev/null | sort | tail -n1)
+    [ -n "$report" ] && break
+    sleep 1
+  done
+  if [ -z "$report" ]; then
+    echo "no crash report for $exe in $dir" >&2
+    return 0
+  fi
+  echo "---- crash report: $report" >&2
+  python3 - "$report" >&2 <<'PY'
+import json
+import sys
+
+text = open(sys.argv[1], encoding="utf-8", errors="replace").read()
+_, _, body = text.partition("\n")  # line 1: header object; then the report
+try:
+    report = json.loads(body)
+except ValueError:
+    print(text[:20000])
+    sys.exit(0)
+images = report.get("usedImages", [])
+print("exception:", json.dumps(report.get("exception", {})))
+faulting = report.get("faultingThread", 0)
+for index, thread in enumerate(report.get("threads", [])):
+    if index not in (0, faulting):
+        continue
+    label = "crashed" if index == faulting else "main"
+    print(f"thread {index} ({label}) {thread.get('name', '')} {thread.get('queue', '')}")
+    for n, frame in enumerate(thread.get("frames", [])[:64]):
+        image = frame.get("imageIndex", -1)
+        name = images[image].get("name", "?") if 0 <= image < len(images) else "?"
+        symbol = frame.get("symbol", hex(frame.get("imageOffset", 0)))
+        print(f"  #{n:<2} {name:<28} {symbol} + {frame.get('symbolLocation', 0)}")
+PY
+}
+
 rm -rf "$scratch"
 mkdir -p "$scratch"
 scratch="$(cd "$scratch" && pwd)"
@@ -56,10 +106,42 @@ case "$base" in
 esac
 dir="$scratch/$pkg"
 
+# static_checks <quat-mcp path>: what the unpacked package must contain,
+# checked before the launch so a failed launch still reports it.
+#   - Licences: every package, engine or game, ships them (on macOS also
+#     inside the app). The engine's notices list quat-mcp's crates; a game's
+#     must not.
+#   - The engine's package bundles quat-mcp.
+static_checks() {
+  if [ "$engine_pkg" = 1 ]; then
+    [ -f "$1" ] || { echo "the package has no quat-mcp at $1" >&2; exit 1; }
+  fi
+  local licence_dirs=("${dir%/}") d f
+  [ -n "${app:-}" ] && licence_dirs+=("$app/Contents/Resources")
+  for d in "${licence_dirs[@]}"; do
+    for f in LICENSE THIRD_PARTY_NOTICES.md; do
+      [ -s "$d/$f" ] || { echo "the package has no $f in $d" >&2; exit 1; }
+    done
+    grep -q '^## Licence texts' "$d/THIRD_PARTY_NOTICES.md" \
+      || { echo "$d/THIRD_PARTY_NOTICES.md has no licence texts" >&2; exit 1; }
+    grep -q '^### vcpkg ports' "$d/THIRD_PARTY_NOTICES.md" \
+      || { echo "$d/THIRD_PARTY_NOTICES.md has no vcpkg licence texts" >&2; exit 1; }
+    if [ "$engine_pkg" = 1 ]; then
+      grep -q '^### quat-mcp (Rust crates)' "$d/THIRD_PARTY_NOTICES.md" \
+        || { echo "$d/THIRD_PARTY_NOTICES.md has no quat-mcp crate licences" >&2; exit 1; }
+    elif grep -q '^### quat-mcp (Rust crates)' "$d/THIRD_PARTY_NOTICES.md"; then
+      echo "$d/THIRD_PARTY_NOTICES.md lists quat-mcp's crates, which a game package does not ship" >&2
+      exit 1
+    fi
+  done
+  echo "licences: LICENSE and THIRD_PARTY_NOTICES.md in ${licence_dirs[*]}"
+}
+
 case "$archive" in
 *linux-x64.tar.gz)
   tar -C "$scratch" -xzf "$archive"
   [ -d "$dir" ] || { echo "archive has no $pkg/ folder" >&2; exit 1; }
+  static_checks "$dir/quat-mcp"
   # Everything but the system Vulkan loader must resolve, libc++ from lib/.
   deps=$(ldd "$dir/$exe")
   echo "$deps"
@@ -68,16 +150,20 @@ case "$archive" in
   icds=(/usr/share/vulkan/icd.d/lvp_icd*.json)
   export VK_ICD_FILENAMES="${VK_ICD_FILENAMES:-${icds[0]}}"
   (cd "$scratch" && xvfb-run -a -s "-screen 0 1280x720x24" "$dir/$exe") 2>&1 | tee "$log"
+  if [ "$engine_pkg" = 1 ]; then mcp_version=$("$dir/quat-mcp" --version); fi
   ;;
 *windows-x64.zip)
   (cd "$scratch" && 7z x -bso0 -bsp0 "$archive")
   [ -d "$dir" ] || { echo "archive has no $pkg/ folder" >&2; exit 1; }
+  static_checks "$dir/quat-mcp.exe"
   sys32=$(cygpath -u "${SYSTEMROOT:-C:\\Windows}")/System32
   # Every DLL the executable or a bundled DLL imports must be in the package
   # or a Windows system DLL; vulkan-1.dll comes with the GPU driver.
   missing=0
   # dumpbin gets relative names: it may not take a non-ASCII argument intact.
-  for bin in "$dir/$exe.exe" "$dir"/*.dll; do
+  bins=("$dir/$exe.exe")
+  [ "$engine_pkg" = 1 ] && bins+=("$dir/quat-mcp.exe")
+  for bin in "${bins[@]}" "$dir"/*.dll; do
     while read -r dll; do
       case "${dll,,}" in
         api-ms-*|ext-ms-*|vulkan-1.dll) continue ;;
@@ -93,7 +179,21 @@ case "$archive" in
   # a DLL the package lacks cannot be picked up from the runner's tool dirs.
   clean_path="$sys32:$(dirname "$sys32")"
   [ -n "${VULKAN_SDK:-}" ] && clean_path="$clean_path:$(cygpath -u "$VULKAN_SDK")/runtime/x64"
-  (cd "$scratch" && PATH="$clean_path" "$dir/$exe.exe") 2>&1 | tee "$log"
+  status=0
+  (cd "$scratch" && PATH="$clean_path" "$dir/$exe.exe") 2>&1 | tee "$log" || status=$?
+  if [ "$status" != 0 ]; then
+    # Git Bash reports most crashes (an unhandled NTSTATUS such as
+    # 0xC0000409, MSVC's fast-fail after abort / an exception in a build
+    # without them) as 127; run it once more through PowerShell for the code.
+    # shellcheck disable=SC2016 # PowerShell expands these
+    code=$(cd "$scratch" && PATH="$clean_path:$sys32/WindowsPowerShell/v1.0" \
+             QUAT_SMOKE_EXE="$(cygpath -w "$dir/$exe.exe")" powershell.exe -NoProfile -Command \
+             '$p = Start-Process $env:QUAT_SMOKE_EXE -Wait -PassThru -NoNewWindow; "0x{0:X8}" -f $p.ExitCode' \
+             2>/dev/null | tr -d '\r' | tail -n1)
+    echo "$exe.exe exited with status $status (process exit code ${code:-unknown})" >&2
+    exit "$status"
+  fi
+  if [ "$engine_pkg" = 1 ]; then mcp_version=$(PATH="$clean_path" "$dir/quat-mcp.exe" --version | tr -d '\r'); fi
   ;;
 *macos-arm64.zip)
   ditto -x -k "$archive" "$scratch"
@@ -101,6 +201,7 @@ case "$archive" in
   apps=("$dir"/*.app)
   app=${apps[0]}
   [ -d "$app" ] || { echo "no .app bundle in $pkg/" >&2; exit 1; }
+  static_checks "$app/Contents/MacOS/quat-mcp"
   codesign --verify --deep --strict "$app"
   plutil -lint "$app/Contents/Info.plist"
   # Uninstalling Homebrew packages is only acceptable on a throwaway CI runner;
@@ -112,15 +213,30 @@ case "$archive" in
     echo "note: not on CI - keeping Homebrew's Vulkan installed" >&2
   fi
   export VK_LOADER_DEBUG=driver
-  (cd "$scratch" && "$app/Contents/MacOS/$exe") 2>&1 | tee "$log"
+  touch "$scratch/.launched"
+  status=0
+  (cd "$scratch" && "$app/Contents/MacOS/$exe") 2>&1 | tee "$log" || status=$?
+  if [ "$status" != 0 ]; then
+    # A crash leaves only "Segmentation fault: 11" here; ReportCrash writes
+    # the backtrace to a .ips report a moment later.
+    print_macos_crash_report "$exe" "$scratch/.launched"
+    exit "$status"
+  fi
   grep -q "$(basename "$app")/Contents/Resources/vulkan/icd.d" "$log" \
     || { echo "loader did not use the bundled MoltenVK manifest" >&2; exit 1; }
+  if [ "$engine_pkg" = 1 ]; then mcp_version=$("$app/Contents/MacOS/quat-mcp" --version); fi
   ;;
 *)
   echo "unknown archive type: $archive" >&2
   exit 2
   ;;
 esac
+
+if [ "$engine_pkg" = 1 ]; then
+  # The bundled MCP server starts and reports its version.
+  echo "$mcp_version"
+  [[ "$mcp_version" == "quat-mcp "* ]] || { echo "quat-mcp --version printed '$mcp_version'" >&2; exit 1; }
+fi
 
 grep -q 'data root (install directory)' "$log" \
   || { echo "did not resolve its data next to the executable" >&2; exit 1; }

@@ -30,3 +30,8 @@ Troubleshooting
 - No suitable GPU: update the GPU driver. Without a GPU, Mesa's software
   driver works (slowly):
       VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.json ./@EXE@
+
+Licences
+--------
+LICENSE and THIRD_PARTY_NOTICES.md (next to @EXE@) are the licences of the
+quat-3d engine and of the third-party libraries this game ships with.

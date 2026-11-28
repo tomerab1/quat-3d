@@ -113,6 +113,36 @@ game packages inherit every fix to it. On Windows it runs under Git Bash.
 Packages are built for the host OS: each needs that OS's player binary and
 its tools. CI builds all three.
 
+### Licences
+
+A game package bundles the engine and its third-party libraries, so it
+ships their licences: `LICENSE` (quat-3d, MIT) and `THIRD_PARTY_NOTICES.md`
+next to the player (on macOS next to the `.app` and inside it, in
+`Contents/Resources`). The notices are the engine build's, not regenerated
+per game: the summary plus the licence text of every vcpkg port,
+FetchContent package, font and bundled runtime, without quat-mcp's Rust
+crates, which games do not ship. They are not part of `manifest.json`.
+
+`scripts/package-release.sh` (`find_game_notices`) takes them from, in
+order, the first that holds the licence texts (a `## Licence texts`
+section):
+
+1. `--notices <file>`, else `QUAT_THIRD_PARTY_NOTICES=<file>` (exactly that
+   file; anything else is an error);
+2. `<player dir>/THIRD_PARTY_NOTICES.md`, next to the player binaries. The
+   engine's own packaging writes it there for its build directory, as the
+   release workflow does before packaging the sample game;
+3. `<engine root>/THIRD_PARTY_NOTICES.md`, the engine root `quat-pack` gets
+   (`--engine-root` / `QUAT_ENGINE_ROOT`): an engine install. In a source
+   checkout that file is the summary only and is skipped.
+
+`LICENSE` is `<engine root>/LICENSE`. Without both, packaging fails with the
+paths it tried and the command that generates the notices for a build:
+
+```sh
+scripts/third-party-notices.sh --no-rust --runtimes <build>/quat-player <build> <build>/THIRD_PARTY_NOTICES.md
+```
+
 Output is deterministic: files are staged and listed in sorted order, the
 manifest has no timestamps, and archives are written with fixed ordering,
 owners and modification times (`SOURCE_DATE_EPOCH`, default 2000-01-01).

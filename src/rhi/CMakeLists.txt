@@ -3,6 +3,7 @@
 # ---------------------------------------------------------------------------
 add_library(engine_rhi STATIC
     device.cpp
+    driver_info.cpp
     queue_selection.cpp
     swapchain.cpp
     gpu_allocator.cpp
@@ -12,6 +13,7 @@ add_library(engine_rhi STATIC
     pipeline_cache.cpp
     descriptor_buffer.cpp
     render_graph.cpp
+    render_graph_copy.cpp
     gpu_profiler.cpp
     graphics_pipeline.cpp
     compute_pipeline.cpp
