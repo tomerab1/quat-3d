@@ -107,6 +107,7 @@ FrameRenderer::set_hdri(const std::string& relative, const std::filesystem::path
                  image->height, hdri_status_.sun_found ? "sun found" : "no sun");
     // Reflections and the temporal history saw the old lighting.
     temporal_.reset();
+    if (ssr_) ssr_->reset();
     return {};
 }
 
@@ -136,13 +137,25 @@ void FrameRenderer::apply_hdri_sun(engine::renderer::DirectionalLightParams& lig
 FrameRenderer::EnvironmentMaps FrameRenderer::add_environment(engine::rhi::RenderGraph& graph,
                                                               const glm::vec3& sun_to) {
     EnvironmentMaps maps;
-    if (hdri_active()) {
-        if (auto r = hdri_->add_bake_to_graph(graph, hdri_bake_settings()); !r) {
+    const bool hdri = hdri_active();
+    // Switching between the HDRI and the sky changes the lighting the SSR
+    // history and colour copy saw.
+    if (hdri != hdri_was_active_ && ssr_) ssr_->reset();
+    hdri_was_active_ = hdri;
+    if (hdri) {
+        auto r = hdri_->add_bake_to_graph(graph, hdri_bake_settings());
+        if (!r) {
             std::fprintf(stderr, "[warn] hdri bake: %s\n", r.error().message.c_str());
+        } else if (*r && ssr_) {
+            ssr_->reset(); // rotation / intensity / sun removal changed the lighting
         }
-        maps.ibl = hdri_->views();
-        maps.background = hdri_->environment_view();
-        return maps;
+        // The maps are usable once a bake has been recorded; until then (the
+        // frame that declares the first bake) the sky probe below still lights.
+        if (hdri_->baked()) {
+            maps.ibl = hdri_->views();
+            maps.background = hdri_->environment_view();
+            return maps;
+        }
     }
     // The sky probe advances one step per frame and flips when a cycle
     // completes (declared before every consumer: the graph keeps
@@ -199,6 +212,8 @@ FrameRenderer::lighting_tuning(engine::rhi::ResourceHandle reflections,
     t.horizon_occlusion = settings_.ibl.horizon_occlusion;
     t.reflections = reflections;
     t.environment = background;
+    t.hdri_sun_disc = background != VK_NULL_HANDLE && settings_.environment.hdri_sun &&
+                      hdri_ && hdri_->sun().found;
     return t;
 }
 

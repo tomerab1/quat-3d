@@ -305,6 +305,13 @@ JSON-RPC over loopback TCP to the engine.
     with edge and roughness fades; A8 `ssr` group; mirror-plane test.
   - [ ] **R21.4 OpenEXR HDRIs** (tinyexr or OpenEXR core via vcpkg, with
     the same limits and fuzzing as `.hdr`).
+  - [ ] **R21.5 SSR reprojection at the reflected point.** Reproject the
+    SSR history through the hit's virtual position (surface + ray direction ×
+    hit distance, stored by the resolve; surface velocity on misses), as
+    Stachowiak 2015 / FidelityFX SSSR do, instead of the reflector's surface
+    velocity, which trails when the camera moves over a mirror. GPU test: a
+    camera pan over the mirror floor, error bounded against a history-free
+    render. (PR #80 review.)
 - [ ] **R23 — Runtime procedural geometry** (design:
   [`docs/design/cozy-builder.md` §4.4](docs/design/cozy-builder.md#44-runtime-procedural-geometry-r23)).
   Generic: any game that builds meshes at runtime (builders, roads, rivers,

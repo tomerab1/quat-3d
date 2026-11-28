@@ -391,6 +391,7 @@ private:
     std::optional<engine::renderer::HdriEnvironment> hdri_;
     std::optional<engine::renderer::SsrPass>         ssr_;
     HdriStatus                                       hdri_status_;
+    bool hdri_was_active_ = false; // last frame lit by the HDRI (SSR history reset on change)
     // Debug NaN/Inf counters of the bloom / TAA guards (issue #45); empty
     // unless enabled (see wait_for_slot).
     std::optional<engine::renderer::NonFiniteCounters> non_finite_;

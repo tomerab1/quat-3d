@@ -94,8 +94,11 @@ If you read only a few things, read these. They underpin most of the engine.
 | ✅ | **Physically-Based Shading at Disney** — Burley, SIGGRAPH 2012. [PDF](https://media.disneyanimation.com/uploads/production/publication_asset/48/asset/s2012_pbs_disney_brdf_notes_v3.pdf) | Material parameterisation |
 | ✅ | **Real Shading in Unreal Engine 4** — Karis 2013 (see *Where to start*) | Split-sum IBL, `lib/pbr.slang` |
 | ✅ | **Filtering Distributions of Normals for Shading Antialiasing** — Kaplanyan, Hill, Patney, Lefohn, HPG 2016; refined by Tokuyoshi & Kaplanyan, I3D 2019. [NVIDIA Research](https://research.nvidia.com/publication/2016-06_filtering-distributions-normals-shading-antialiasing) | Geometric specular AA, `lib/pbr.slang` |
-| 🔧 | **Revisiting Physically Based Shading at Imageworks** — Kulla & Conty, SIGGRAPH 2017 (energy-conserving multiple scattering). [course page](https://blog.selfshadow.com/publications/s2017-shading-course/) | R21 lighting realism (#80) |
-| 🔧 | **A Multiple-Scattering Microfacet Model for Real-Time Image-based Lighting** — Fdez-Agüera, JCGT 2019. [JCGT](https://jcgt.org/published/0008/01/03/) | R21 (#80) |
+| ✅ | **Revisiting Physically Based Shading at Imageworks** — Kulla & Conty, SIGGRAPH 2017 (energy-conserving multiple scattering). [course page](https://blog.selfshadow.com/publications/s2017-shading-course/) | Punctual-light compensation (Filament's form): `assets/shaders/lib/brdf_energy.slang`, `lighting.slang` |
+| ✅ | **A Multiple-Scattering Microfacet Model for Real-Time Image-based Lighting** — Fdez-Agüera, JCGT 2019. [JCGT](https://jcgt.org/published/0008/01/03/) | `lib/brdf_energy.slang` (`ibl_energy`), `lighting.slang`; the DFG LUT it reads, `ibl_brdf_lut.slang` |
+| ✅ | **Horizon Occlusion for Normal Mapped Reflections** — Russell (Marmoset), 2014, as used in Jimenez et al., *Practical Realtime Strategies for Accurate Indirect Occlusion*, SIGGRAPH 2016. [Marmoset](https://marmosetco.tumblr.com/post/81245981087) | `lib/brdf_energy.slang` (`horizon_occlusion`), geometric normal from depth in `lighting.slang` |
+| ✅ | **Real-time Shading with Filtered Importance Sampling** — Křivánek & Colbert, GPU Gems 3 ch. 20, 2008. [NVIDIA](https://developer.nvidia.com/gpugems/gpugems3/part-iii-rendering/chapter-20-gpu-based-importance-sampling) | HDRI GGX prefilter: `assets/shaders/env_prefilter.slang` (R21) |
+| ✅ | **An Efficient Representation for Irradiance Environment Maps** — Ramamoorthi & Hanrahan, SIGGRAPH 2001. [PDF](https://cseweb.ucsd.edu/~ravir/papers/envmap/envmap.pdf) | SH9 irradiance: `assets/shaders/lib/sh9.slang`, `sh_project.slang`, `sh_irradiance.slang` (R21) |
 
 ## Lighting pipeline
 
@@ -142,7 +145,10 @@ If you read only a few things, read these. They underpin most of the engine.
 | ✅ | **Next Generation Post Processing in Call of Duty: Advanced Warfare** — Jimenez, SIGGRAPH 2014 (bloom, motion blur, DoF, interleaved gradient noise). [iryoku.com](https://www.iryoku.com/next-generation-post-processing-in-call-of-duty-advanced-warfare/) | `bloom_down.slang`; R20 DoF & motion blur (#79) |
 | ✅ | **ACES Filmic Tone Mapping Curve** — Narkowicz, 2016. [blog](https://knarkowicz.wordpress.com/2016/01/06/aces-filmic-tone-mapping-curve/) | `assets/shaders/tonemap.slang` |
 | 🔧 | **AgX** — Sobotka's view transform, and **Minimal AgX implementation** (iolite). [AgX](https://github.com/sobotka/AgX) · [minimal implementation](https://iolite-engine.com/blog_posts/minimal_agx_implementation) | R20 (#79) |
-| 🔧 | **Stochastic Screen-Space Reflections** — Stachowiak, SIGGRAPH 2015. [EA](https://www.ea.com/frostbite/news/stochastic-screen-space-reflections) | R21 SSR (#80) |
+| ✅ | **Stochastic Screen-Space Reflections** — Stachowiak, SIGGRAPH 2015. [EA](https://www.ea.com/frostbite/news/stochastic-screen-space-reflections) | `assets/shaders/ssr_trace.slang`, `ssr_resolve.slang` (ray reuse), `ssr_temporal.slang`; `src/renderer/ssr_pass.cpp` |
+| ✅ | **Sampling the GGX Distribution of Visible Normals** — Heitz, JCGT 2018. [JCGT](https://jcgt.org/published/0007/04/01/) | SSR ray directions: `lib/ssr_common.slang` (`ssr_sample_vndf`) |
+| ✅ | **Hi-Z Screen-Space Cone-Traced Reflections** — Uludag, GPU Pro 5, 2014; with the min-Z traversal of **AMD FidelityFX SSSR**. [FidelityFX SSSR](https://gpuopen.com/fidelityfx-sssr/) | SSR Hi-Z march: `assets/shaders/ssr_trace.slang` (`hiz_march`) over R12's pyramid |
+| ✅ | **Building an Orthonormal Basis, Revisited** — Duff, Burgess, Christensen, Hery, Kensler, Liani, Villemin, JCGT 2017. [JCGT](https://jcgt.org/published/0006/01/01/) | `lib/ssr_common.slang` (`ssr_basis`), `lib/particle_common.slang`, `src/renderer/particles.cpp` |
 
 ## Transparency, particles & VFX
 

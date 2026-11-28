@@ -138,12 +138,15 @@ struct HdriEnvironment::Impl {
     rhi::GpuImage         brdf_lut;
     rhi::ImageView        brdf_view;
     rhi::DescriptorBuffer lut_set;
-    bool                  lut_baked = false;
+    bool                  lut_baked = false; // recorded into a command buffer at least once
     rhi::GpuBuffer        sh;
     VkDeviceAddress       sh_address = 0;
 
     std::optional<Maps>             maps;
     HdriSun                         sun;
+    // The settings of the last bake that was recorded (set by the pass's
+    // execute, not its declaration: a graph that is never recorded leaves the
+    // maps unbaked, and the next frame declares the bake again).
     std::optional<HdriBakeSettings> baked_settings;
 
     [[nodiscard]] std::expected<rhi::DescriptorBuffer, core::Error>
@@ -432,13 +435,13 @@ std::expected<bool, core::Error> HdriEnvironment::add_bake_to_graph(rhi::RenderG
     if (!has_image()) return false;
     Impl& s = *impl_;
     if (s.baked_settings && *s.baked_settings == settings) return false;
-    s.baked_settings = settings;
     const bool bake_lut = !s.lut_baked;
-    s.lut_baked = true;
     Impl* impl = impl_.get();
     graph.add_pass("hdri_bake", rhi::PassType::compute)
         .execute([impl, settings, bake_lut](rhi::PassContext& ctx) {
             impl->record(ctx.cmd(), settings, bake_lut);
+            impl->baked_settings = settings;
+            if (bake_lut) impl->lut_baked = true;
         });
     return true;
 }

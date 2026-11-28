@@ -11,8 +11,10 @@
 #include <cstdint>
 #include <expected>
 #include <optional>
+#include <span>
 
 #include <glm/glm.hpp>
+#include <glm/gtc/constants.hpp>
 #include <gtest/gtest.h>
 #include <vulkan/vulkan.h>
 
@@ -75,7 +77,7 @@ std::expected<Furnace, Error> make_furnace(quat::test::GpuContext& g) {
 // pixel is shaded at NdotV = cos(tilt).
 std::expected<glm::vec3, Error> furnace_pixel(quat::test::GpuContext& g, Furnace& f,
                                               float metallic, float roughness, float tilt_deg,
-                                              bool multiscatter) {
+                                              bool multiscatter, bool horizon_occlusion = false) {
     const float t = glm::radians(tilt_deg);
     const glm::vec3 n(std::sin(t), 0.0F, std::cos(t));
     std::array<asset::Vertex, 4> verts{};
@@ -111,7 +113,7 @@ std::expected<glm::vec3, Error> furnace_pixel(quat::test::GpuContext& g, Furnace
     light.ambient = {0.0F, 0.0F, 0.0F, 0.0F};
     r::LightingTuning tuning;
     tuning.multiscatter = multiscatter;
-    tuning.horizon_occlusion = false; // the furnace measures the BRDF alone
+    tuning.horizon_occlusion = horizon_occlusion; // off: the furnace measures the BRDF alone
     auto hdr = f.lighting->add_to_graph(graph, *targets, k_extent, light, glm::mat4(1.0F),
                                         glm::vec3(0.0F, 0.0F, 1.0F), {}, {}, /*enable_sky=*/true,
                                         f.env->views(), VK_NULL_HANDLE, VK_NULL_HANDLE, {},
@@ -173,4 +175,82 @@ TEST(GpuSpecularEnergy, SingleScatteringLosesEnergyOnRoughMetal) {
     auto compensated = furnace_pixel(*g, *f, 1.0F, 1.0F, 0.0F, true);
     ASSERT_OK(compensated);
     EXPECT_GT(compensated->g, rough->g + 0.08F);
+}
+
+// Horizon occlusion (Russell 2014 / Jimenez et al. 2016, lib/brdf_energy.slang):
+// the quad's geometric normal (rebuilt from depth) faces the camera, but its
+// shading normal is tilted 70 degrees, as a normal map would, so the mirror
+// direction reflect(-v, n) points 50 degrees below the surface. That light is
+// blocked by the surface itself, and the specular must lose it; with the
+// shading normal untilted the reflection stays above the horizon and the
+// term changes nothing. Single scattering on a smooth white metal, so the
+// pixel is the occluded specular alone.
+TEST(GpuSpecularEnergy, HorizonOcclusionDimsReflectionsBelowTheSurface) {
+    QUAT_REQUIRE_GPU(g);
+    // Per test, not static: GPU objects must die before the shared device.
+    auto f = make_furnace(*g);
+    ASSERT_OK(f);
+    auto tilted_off = furnace_pixel(*g, *f, 1.0F, 0.2F, 70.0F, false, false);
+    auto tilted_on = furnace_pixel(*g, *f, 1.0F, 0.2F, 70.0F, false, true);
+    ASSERT_OK(tilted_off);
+    ASSERT_OK(tilted_on);
+    EXPECT_GT(tilted_off->g, 0.5F); // the unoccluded reflection is bright
+    // h = saturate(1 + 1.3 dot(r, ng))^2 = ~0 here: nearly all of it goes.
+    EXPECT_LT(tilted_on->g, 0.25F * tilted_off->g)
+        << "off " << tilted_off->g << " on " << tilted_on->g;
+
+    // Control: the shading normal matches the geometry, nothing is occluded.
+    auto flat_off = furnace_pixel(*g, *f, 1.0F, 0.2F, 0.0F, false, false);
+    auto flat_on = furnace_pixel(*g, *f, 1.0F, 0.2F, 0.0F, false, true);
+    ASSERT_OK(flat_off);
+    ASSERT_OK(flat_on);
+    EXPECT_NEAR(flat_on->g, flat_off->g, 0.01F);
+}
+
+// The HDRI's sun is clamped out of the environment maps into the
+// directional light; the background draws it back as an analytic disc
+// carrying that light's irradiance E over its solid angle (radiance
+// E / (2 pi (1 - cos r)), r = half the shadows' sun size). An empty GBuffer
+// is all background: the furnace's radiance 1 everywhere, plus the disc
+// around the sun direction, aimed at the centre pixel (sun size 10 deg, so
+// the disc covers it whatever the background depth).
+TEST(GpuSpecularEnergy, HdriSunDiscCarriesTheSunsIrradiance) {
+    QUAT_REQUIRE_GPU(g);
+    // Per test, not static: GPU objects must die before the shared device.
+    auto f = make_furnace(*g);
+    ASSERT_OK(f);
+    constexpr float k_sun_size_deg = 10.0F;
+    constexpr float k_irradiance = 2.0F;
+    const auto background = [&](bool disc) -> std::expected<quat::test::HostImage, Error> {
+        rhi::TransientImagePool pool(g->device, g->allocator);
+        rhi::RenderGraph graph(pool);
+        auto targets = f->mesh_pass->add_to_graph(graph, k_extent, glm::mat4(1.0F),
+                                                  std::span<const r::DrawItem>{});
+        if (!targets) return std::unexpected(targets.error());
+        r::DirectionalLightParams light;
+        light.direction = {0.0F, 0.0F, 1.0F, 0.0F}; // towards the sun: straight ahead
+        light.color = {1.0F, 1.0F, 1.0F, k_irradiance};
+        light.ambient = {0.0F, 0.0F, 0.0F, 0.0F};
+        r::LightingOcclusion occlusion;
+        occlusion.csm.light_size_deg = k_sun_size_deg;
+        r::LightingTuning tuning;
+        tuning.environment = f->env->environment_view();
+        tuning.hdri_sun_disc = disc;
+        auto hdr = f->lighting->add_to_graph(graph, *targets, k_extent, light, glm::mat4(1.0F),
+                                             glm::vec3(0.0F, 0.0F, -1.0F), occlusion, {},
+                                             /*enable_sky=*/true, f->env->views(), VK_NULL_HANDLE,
+                                             VK_NULL_HANDLE, {}, tuning);
+        if (!hdr) return std::unexpected(hdr.error());
+        return quat::test::render_to_host(*g, graph, *hdr, k_extent, 8);
+    };
+    auto with = background(true);
+    auto without = background(false);
+    ASSERT_OK(with);
+    ASSERT_OK(without);
+    const glm::uvec2 c = with->centre();
+    const float r = glm::radians(0.5F * k_sun_size_deg);
+    const float expected = 1.0F + k_irradiance / (2.0F * glm::pi<float>() * (1.0F - std::cos(r)));
+    EXPECT_NEAR(with->rgba16f(c.x, c.y).g, expected, 0.03F * expected);
+    EXPECT_NEAR(without->rgba16f(c.x, c.y).g, 1.0F, 0.02F); // the clamped sky alone
+    EXPECT_NEAR(with->rgba16f(0, 0).g, 1.0F, 0.02F);        // far from the sun: no disc
 }

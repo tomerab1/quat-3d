@@ -88,6 +88,10 @@ struct LightingTuning {
     // R21: the HdriEnvironment cube; set (with the sky enabled) it is the
     // background (sky mode 3) instead of the procedural / atmosphere sky.
     VkImageView environment = VK_NULL_HANDLE;
+    // R21: the HDRI's sun was clamped out of `environment` and became the
+    // directional light; the background draws it back as an analytic disc
+    // (angular diameter = the shadows' sun size) carrying the light's energy.
+    bool hdri_sun_disc = false;
 };
 
 class LightingPass {

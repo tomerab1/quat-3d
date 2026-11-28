@@ -57,7 +57,8 @@ struct LightingConstants {
     float4 csm_misc;         // x debug cascades, y noise offset (frame), zw depth -> view (A, B)
     float4 contact;          // x intensity (0 = off), y length m, z steps, w thickness m
     float4 ao;               // x GTAO on, y bent normals, z specular occlusion, w multi-bounce
-    float4 realism;          // x multiscatter, y horizon occlusion, z reflections bound (R21)
+    float4 realism;          // x multiscatter, y horizon occlusion, z reflections bound,
+                             // w HDRI sun disc angular radius (radians, 0 = none) (R21)
 }
 ConstantBuffer<LightingConstants> g_frame;
 
@@ -307,6 +308,16 @@ void compute_main(uint3 tid : SV_DispatchThreadID) {
             if (g_frame.direction.w > 2.5) {
                 // R21: HDRI environment (rotation and intensity baked in).
                 bg = g_environment.SampleLevel(g_ibl_sampler, ray, 0.0).rgb;
+                // Its sun was clamped out of the maps into the directional
+                // light; draw it back as a disc carrying that irradiance
+                // (E / solid angle), so the sky and screen-space reflections
+                // show the sun the scene is lit by.
+                if (g_frame.realism.w > 0.0) {
+                    float one_minus_cos = 1.0 - cos(g_frame.realism.w);
+                    float t = (dot(ray, sun) - (1.0 - one_minus_cos)) / one_minus_cos;
+                    float disc = smoothstep(0.0, 0.25, t); // antialiased rim
+                    bg += g_frame.color.rgb * g_frame.color.w * disc / (2.0 * PI * one_minus_cos);
+                }
             } else if (g_frame.direction.w > 1.5) {
                 // Physically-based sky: atmosphere from the sky-view LUT,
                 // volumetric clouds marched per pixel (sharp shapes — the LUT

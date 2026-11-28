@@ -111,11 +111,12 @@ public:
     [[nodiscard]] bool has_image() const;
 
     // Declares the bake pass when the image or `settings` changed since the
-    // last one; true when a bake was declared. Nothing without an image.
+    // last recorded bake; true when a bake was declared. Nothing without an
+    // image. A declared bake counts once its graph records it.
     [[nodiscard]] std::expected<bool, core::Error>
     add_bake_to_graph(rhi::RenderGraph& graph, const HdriBakeSettings& settings);
-    // A bake has been declared for the current image (the maps are valid
-    // from the frame that recorded it on).
+    // A bake of the current image has been recorded into a command buffer
+    // (the maps are valid from that submission on; views() is empty before).
     [[nodiscard]] bool baked() const;
 
     [[nodiscard]] IblViewSet views() const;             // invalid until baked

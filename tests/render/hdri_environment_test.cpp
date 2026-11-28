@@ -306,20 +306,38 @@ TEST(GpuHdriEnvironment, SunIsRemovedAndRotated) {
     EXPECT_LE(brightest(*removed).first, sun.clamp_luminance * 1.02F);
 }
 
-// Changing nothing declares nothing; a settings change re-bakes.
+// Changing nothing declares nothing; a settings change re-bakes. A bake
+// counts once its graph records it: a declared graph that never runs (a
+// failed frame) leaves the maps unbaked, and the next frame declares again.
 TEST(GpuHdriEnvironment, RebakesOnlyWhenSettingsChange) {
     QUAT_REQUIRE_GPU(g);
     auto env = r::HdriEnvironment::create(g->device, g->allocator, g->cache, g->shader_dir);
     ASSERT_OK(env);
+    const auto run = [&](rhi::RenderGraph& graph) {
+        ASSERT_OK(graph.compile());
+        ASSERT_OK(quat::test::submit_and_wait(g->device,
+                                              [&](VkCommandBuffer cmd) { graph.execute(cmd); }));
+    };
     rhi::RenderGraph none;
     auto empty = env->add_bake_to_graph(none, {});
     ASSERT_OK(empty);
     EXPECT_FALSE(*empty); // no image yet
     ASSERT_OK(env->set_image(panorama(64, 32, smooth_sky), g->transfer));
+
+    rhi::RenderGraph dropped; // declared, never recorded
+    auto declared = env->add_bake_to_graph(dropped, {});
+    ASSERT_OK(declared);
+    EXPECT_TRUE(*declared);
+    EXPECT_FALSE(env->baked());
+    EXPECT_FALSE(env->views().valid()); // no unrecorded maps handed out
+    EXPECT_EQ(env->environment_view(), VK_NULL_HANDLE);
+
     rhi::RenderGraph a;
     auto first = env->add_bake_to_graph(a, {});
     ASSERT_OK(first);
-    EXPECT_TRUE(*first);
+    EXPECT_TRUE(*first); // declared again: the first one never ran
+    run(a);
+    EXPECT_TRUE(env->baked());
     rhi::RenderGraph b;
     auto same = env->add_bake_to_graph(b, {});
     ASSERT_OK(same);
@@ -330,6 +348,7 @@ TEST(GpuHdriEnvironment, RebakesOnlyWhenSettingsChange) {
     auto changed = env->add_bake_to_graph(c, brighter);
     ASSERT_OK(changed);
     EXPECT_TRUE(*changed);
+    run(c);
     EXPECT_TRUE(env->views().valid());
     EXPECT_NE(env->environment_view(), VK_NULL_HANDLE);
 }

@@ -24,8 +24,14 @@ Texture2D                               g_material;
 
 static const float SSR_FAR = 1.0e30;
 
+// A Hi-Z mip's size in texels: R12's pyramid halves with floor (hiz_build),
+// so at odd extents this is not screen / 2^mip.
+float2 hiz_mip_size(int mip) {
+    return float2(max(int2(g_consts.screen.xy) >> mip, int2(1, 1)));
+}
+
 float load_hiz(float2 mip_pos, int mip) {
-    int2 size = max(int2(g_consts.screen.xy) >> mip, int2(1, 1));
+    int2 size = int2(hiz_mip_size(mip));
     int2 p = clamp(int2(floor(mip_pos)), int2(0, 0), size - 1);
     return g_hiz.Load(int3(p, mip)).r;
 }
@@ -76,7 +82,7 @@ float3 hiz_march(float3 origin, float3 dir, uint max_steps, int max_mip, out boo
                 return pos;
             }
         }
-        res = screen * exp2(-float(mip));
+        res = hiz_mip_size(mip);
     }
     return pos;
 }
