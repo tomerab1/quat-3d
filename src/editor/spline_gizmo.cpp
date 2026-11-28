@@ -132,10 +132,20 @@ void spline_delete_point(scene::Spline& s, std::size_t i) {
     if (s.kind == scene::SplineKind::cubic_bezier) {
         if (i % 3 != 0) return; // handles are not deleted
         const std::size_t n = trial.points.size();
-        std::size_t first = i == 0 ? 0 : i - 1;
-        if (!trial.closed && i == n - 1) first = i - 2;
-        trial.points.erase(trial.points.begin() + static_cast<std::ptrdiff_t>(first),
-                           trial.points.begin() + static_cast<std::ptrdiff_t>(std::min(first + 3, n)));
+        auto& pts = trial.points;
+        if (i == 0 && trial.closed) {
+            // Anchor 0 of a loop: its out-handle (1) and its in-handle (n - 1).
+            pts.erase(pts.begin() + static_cast<std::ptrdiff_t>(n - 1));
+            pts.erase(pts.begin(), pts.begin() + 2);
+            // Point 0 is now anchor 3's in-handle: rotate so the loop starts
+            // at that anchor (anchors sit at 3k).
+            if (!pts.empty()) std::rotate(pts.begin(), pts.begin() + 1, pts.end());
+        } else {
+            std::size_t first = i == 0 ? 0 : i - 1;
+            if (!trial.closed && i == n - 1) first = i - 2;
+            pts.erase(pts.begin() + static_cast<std::ptrdiff_t>(first),
+                      pts.begin() + static_cast<std::ptrdiff_t>(std::min(first + 3, n)));
+        }
     } else {
         trial.points.erase(trial.points.begin() + static_cast<std::ptrdiff_t>(i));
     }

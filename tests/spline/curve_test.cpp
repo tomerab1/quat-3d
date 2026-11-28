@@ -194,6 +194,11 @@ TEST(SplineSpacing, EvenSamplesFitToEndsAndClosedLaps) {
     EXPECT_NEAR(s[1].position.x, 10.0F / 3.0F, 1e-5F);
     EXPECT_TRUE(sp::sample_by_spacing(line, {.spacing = 0.0F}).empty());
     EXPECT_EQ(sp::sample_by_spacing(line, {.spacing = 1.0e-6F, .max_samples = 10}).size(), 10U);
+    // Fit-to-ends at the cap widens the spacing instead of losing the tail.
+    s = sp::sample_by_spacing(line, {.spacing = 1.0e-3F, .fit_to_ends = true, .max_samples = 11});
+    ASSERT_EQ(s.size(), 11U);
+    EXPECT_EQ(s.back().position.x, 10.0F);
+    EXPECT_NEAR(s[1].position.x, 1.0F, 1e-5F);
 
     const sp::Curve loop = build(make(sp::SplineKind::polyline, {{0, 0, 0}, {4, 0, 0}, {4, 0, 4}, {0, 0, 4}}, true));
     s = sp::sample_by_spacing(loop, {.spacing = 2.0F, .phase = 1.0F});

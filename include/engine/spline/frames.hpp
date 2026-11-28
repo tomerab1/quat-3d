@@ -13,6 +13,11 @@
 //
 // right = cross(tangent, up): looking along the curve with +Y up, right
 // points to the right-hand side. Widths and offsets are measured along it.
+//
+// Limitation: on a closed, non-planar curve the rotation-minimising frame
+// does not return to its start after one lap (holonomy), so a ribbon shows
+// a twist step at the seam. Distributing that angle over the lap (Wang et
+// al. 2008, section 6) needs trigonometry and is not done yet.
 
 #include <cstdint>
 #include <span>

@@ -47,6 +47,13 @@ TEST_F(WorldSpline, GetAndSetReportLengthAndBounds) {
               "spline.points[1]: expected [x, y, z] in metres (finite, within 1e6)");
     // The failed edits changed nothing.
     EXPECT_EQ(ok("spline.get", {{"entity", id}})["spline"]["points"].size(), 3U);
+    // An invalid spline (here: edited in place, as the inspector can) still
+    // reads back, with the reason, so a client can repair it.
+    reg().get<engine::scene::Spline>(entity(id)).kind = engine::scene::SplineKind::cubic_bezier;
+    out = ok("spline.get", {{"entity", id}});
+    EXPECT_FALSE(out["valid"].get<bool>());
+    EXPECT_NE(out["error"].get<std::string>().find("cubic_bezier"), std::string::npos);
+    EXPECT_EQ(out["spline"]["points"].size(), 3U);
 
     const Json bare = ok("scene.create", {{"name", "bare"}})["id"];
     EXPECT_NE(err("spline.get", {{"entity", bare}}, rc::not_found).find("has no spline"), std::string::npos);
@@ -160,10 +167,17 @@ TEST_F(WorldSpline, FitTurnsAStrokeIntoASpline) {
     EXPECT_EQ(err("spline.fit", {{"points", {{0, 0, 0}}}}, rc::invalid_params),
               "points: a stroke needs at least 2 points, got 1");
     EXPECT_EQ(err("spline.fit", {{"points", {{0, 0, 0}, {1, 0}}}}, rc::invalid_params),
-              "points[1]: expected [x, y, z] or {position: [x, y, z], straight?: bool}");
+              "points[1]: expected [x, y, z] (finite numbers) or {position: [x, y, z], straight?: bool}");
+    EXPECT_EQ(err("spline.fit", {{"points", {{0, 0, 0}, {{"position", {1, 0, 0}}, {"straight", "yes"}}}}},
+                  rc::invalid_params),
+              "points[1].straight: expected true or false");
     EXPECT_NE(err("spline.fit", {{"points", pts}, {"output", "nurbs"}}, rc::invalid_params).find("catmull_rom"),
               std::string::npos);
     EXPECT_NE(err("spline.fit", Json::object(), rc::invalid_params).find("points"), std::string::npos);
+    // A huge stroke at the finest spacing is refused, not resampled to 2e8 points.
+    const std::string huge =
+        err("spline.fit", {{"points", {{-1e6, 0, 0}, {1e6, 0, 0}}}, {"sample_spacing", 0.01}}, rc::invalid_params);
+    EXPECT_EQ(huge.rfind("sample_spacing: use >= ", 0), 0U) << huge;
 }
 
 } // namespace

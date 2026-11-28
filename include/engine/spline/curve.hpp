@@ -128,7 +128,9 @@ struct SpacingOptions {
 // Open: samples at distances phase, phase + spacing, ... up to the length (a
 // negative phase continues a pattern that began before the start). Closed:
 // one lap of samples from the phase, wrapping past the seam. With
-// fit_to_ends the phase is ignored and the samples are at k * length / n.
+// fit_to_ends the phase is ignored and the samples are at k * length / n
+// (n reduced to fit max_samples: the samples always span the whole curve;
+// without fit_to_ends they stop at the cap).
 // Empty on an empty curve or a spacing <= 0.
 [[nodiscard]] std::vector<CurveSample> sample_by_spacing(const Curve& curve, const SpacingOptions& options);
 

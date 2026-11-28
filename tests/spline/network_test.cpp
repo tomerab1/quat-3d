@@ -116,6 +116,45 @@ TEST(SplineNetwork, SnappedEndpointsMakeBendsAndStraights) {
     EXPECT_NEAR(n.only(sp::NodeKind::bend).position.x, 5.05F, 1e-5F);
 }
 
+TEST(SplineNetwork, AnEndpointBesideAnotherCurvesEndJoinsIt) {
+    // B starts 0.24 m beside A, 0.15 m from A's end along A: farther than
+    // the 0.25 m radius from A's end point itself, too close to the end for a
+    // T. It joins A's end (a bend), not nothing.
+    Net n;
+    n.add(1, line({{0, 0, 0}, {10, 0, 0}}));
+    n.add(2, line({{9.85F, 0, 0.24F}, {9.85F, 0, 6}}));
+    n.build();
+    EXPECT_EQ(n.count(sp::NodeKind::bend), 1U);
+    EXPECT_EQ(n.count(sp::NodeKind::end), 2U);
+    EXPECT_EQ(n.net.edges.size(), 2U);
+}
+
+// Crossing nodes are named by the crossing's index along their pair, so a new
+// crossing of the same two curves before an existing one renames the later
+// ones (carrying ids over from a previous network is a follow-up).
+TEST(SplineNetwork, CrossingIdsFollowTheirOrderAlongThePair) {
+    Net n;
+    n.add(1, line({{0, 0, 0}, {20, 0, 0}}));
+    n.add(2, line({{15, 0, -5}, {15, 0, 5}}));
+    n.build();
+    std::uint64_t x = 0;
+    for (const auto& node : n.net.nodes) {
+        if (node.kind == sp::NodeKind::cross) x = node.id;
+    }
+    Net more;
+    more.add(1, line({{0, 0, 0}, {20, 0, 0}}));
+    more.add(2, line({{5, 0, -5}, {5, 0, 5}, {15, 0, 5}, {15, 0, -5}})); // now crosses at x = 5 first
+    more.build();
+    std::vector<std::pair<float, std::uint64_t>> crosses;
+    for (const auto& node : more.net.nodes) {
+        if (node.kind == sp::NodeKind::cross) crosses.emplace_back(node.position.x, node.id);
+    }
+    ASSERT_EQ(crosses.size(), 2U);
+    std::sort(crosses.begin(), crosses.end());
+    EXPECT_EQ(crosses[0].second, x) << "the first crossing along the pair takes index 0";
+    EXPECT_NE(crosses[1].second, x);
+}
+
 TEST(SplineNetwork, ManyWaysAndLoops) {
     Net n;
     // Five spokes meeting at the origin through their start points.

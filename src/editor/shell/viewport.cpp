@@ -235,7 +235,8 @@ void draw_viewport(EditorShell& shell) {
         // The spline gizmo (G18.3) handles its clicks before selection picking.
         const bool spline_used =
             !ImGuizmo::IsOver() && !ImGuizmo::IsUsing() &&
-            spline_gizmo(*ctx.scene, shell.selected, ctx.view_proj, min, max, shell.viewport_hovered,
+            spline_gizmo(*ctx.scene, shell.selected, ctx.view_proj, min, max,
+                         shell.viewport_hovered && !overlay_rect(min).contains(ImGui::GetMousePos()),
                          shell.spline_gizmo);
         if (!spline_used) picking(shell, min, max);
     }

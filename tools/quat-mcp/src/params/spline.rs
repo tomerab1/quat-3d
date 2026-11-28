@@ -61,6 +61,7 @@ pub struct SplineSetParams {
     pub kind: Option<SplineKind>,
     /// Replaces every control point (entity-local, metres).
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(length(max = 16384))]
     pub points: Option<Vec<SplinePoint>>,
     /// Loop back to the first point.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -198,6 +199,7 @@ pub enum StrokeOutput {
 #[serde(deny_unknown_fields)]
 pub struct SplineFitParams {
     /// The stroke, in drawing order (world metres).
+    #[schemars(length(max = 65536))]
     pub points: Vec<StrokePoint>,
     /// Write the fitted spline to this entity (its spline is replaced; its
     /// network and id are kept). Omit to only return it.

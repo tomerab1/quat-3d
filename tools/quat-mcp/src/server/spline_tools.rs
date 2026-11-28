@@ -102,4 +102,16 @@ mod tests {
         assert_eq!(v["output"], "cubic_bezier");
         assert!(v.get("entity").is_none());
     }
+
+    #[test]
+    fn point_lists_are_bounded_in_the_schema() {
+        let fit = serde_json::to_value(schemars::schema_for!(SplineFitParams)).unwrap();
+        assert_eq!(fit["properties"]["points"]["maxItems"], 65536);
+        let set = serde_json::to_value(schemars::schema_for!(SplineSetParams)).unwrap();
+        assert!(
+            serde_json::to_string(&set["properties"]["points"])
+                .unwrap()
+                .contains("\"maxItems\":16384")
+        );
+    }
 }

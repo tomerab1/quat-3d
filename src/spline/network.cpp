@@ -101,12 +101,30 @@ private:
             return i;
         };
         const float r2 = o_.snap_radius * o_.snap_radius;
+        auto join = [&](std::uint32_t i, std::uint32_t j) {
+            const std::uint32_t a = root(i);
+            const std::uint32_t b = root(j);
+            if (a != b) parent[std::max(a, b)] = std::min(a, b);
+        };
+        std::vector<std::int64_t> first_end(in_.size(), -1); // index of a curve's start in ends_
+        for (std::uint32_t i = 0; i < ends_.size(); ++i) {
+            if (ends_[i].end == 0) first_end[ends_[i].curve] = i;
+        }
         for (std::uint32_t i = 0; i < ends_.size(); ++i) {
             for (std::uint32_t j = i + 1; j < ends_.size(); ++j) {
-                if (xz_distance2(ends_[i].position, ends_[j].position) > r2) continue;
-                const std::uint32_t a = root(i);
-                const std::uint32_t b = root(j);
-                if (a != b) parent[std::max(a, b)] = std::min(a, b);
+                if (xz_distance2(ends_[i].position, ends_[j].position) <= r2) join(i, j);
+            }
+            // Within the radius of another curve near (within the radius
+            // along it of) one of its ends: it joins that end, as tees()
+            // leaves such a point to the endpoint clusters.
+            for (std::uint32_t k = 0; k < in_.size(); ++k) {
+                if (k == ends_[i].curve || first_end[k] < 0 || !near_box(in_[k].box, ends_[i].position)) continue;
+                const Curve& c = *in_[k].curve;
+                const auto cp = closest_point(c, ends_[i].position, true);
+                if (!cp || cp->gap > o_.snap_radius) continue;
+                const auto base = static_cast<std::uint32_t>(first_end[k]);
+                if (cp->distance <= o_.snap_radius) join(i, base);
+                if (c.length() - cp->distance <= o_.snap_radius) join(i, base + 1);
             }
         }
         end_node_.assign(ends_.size(), 0);

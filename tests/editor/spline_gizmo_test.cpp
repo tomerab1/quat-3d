@@ -56,6 +56,20 @@ TEST(EditorSplineGizmo, DeletingNeverBreaksTheSpline) {
     engine::editor::spline_delete_point(b, 3); // the middle anchor and its handles
     ASSERT_EQ(b.points.size(), 4U);
     EXPECT_TRUE(sp::validate(b).has_value());
+
+    // Anchor 0 of a closed Bézier goes with its own handles: point 1 (out)
+    // and the last point (in); anchor 3 keeps both of its handles and the
+    // loop now starts at it.
+    Spline loop = make(sp::SplineKind::cubic_bezier, {{0, 0, 0}, {1, 0, 1}, {2, 0, 1}, {3, 0, 0}, {4, 0, -1}, {5, 0, -1},
+                                                      {6, 0, 0}, {7, 0, 1}, {8, 0, 1}});
+    loop.closed = true;
+    engine::editor::spline_delete_point(loop, 0);
+    ASSERT_EQ(loop.points.size(), 6U);
+    EXPECT_EQ(loop.points[0].position, glm::vec3(3, 0, 0));
+    EXPECT_EQ(loop.points[3].position, glm::vec3(6, 0, 0));
+    EXPECT_EQ(loop.points[4].position, glm::vec3(7, 0, 1)); // anchor 6's out-handle
+    EXPECT_EQ(loop.points[5].position, glm::vec3(2, 0, 1)); // anchor 3's in-handle, kept
+    EXPECT_TRUE(sp::validate(loop).has_value());
 }
 
 } // namespace

@@ -40,8 +40,12 @@ RpcResult spline_get(Context& ctx, const Json& params) {
     auto e = required_entity(f, ctx.scene->registry(), "entity");
     if (!e) return std::unexpected(e.error());
     if (auto ok = finish(f); !ok) return std::unexpected(ok.error());
-    auto curve = spline_curve(ctx, *e);
-    if (!curve) return std::unexpected(curve.error());
+    if (!ctx.scene->registry().all_of<scene::Spline>(*e)) {
+        return rpc_fail(rpc_code::not_found, "entity: entity " + std::to_string(entt::to_integral(*e)) +
+                                                 " has no spline (add one: spline.set {entity, points: [[x, y, z], ...]})");
+    }
+    // An invalid spline reads back with valid: false and the reason, so a
+    // client can see the points it has to repair.
     return spline_summary(ctx, *e);
 }
 

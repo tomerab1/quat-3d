@@ -32,6 +32,14 @@ TEST_F(ScriptTest, SplineQueriesAndCodecEdits) {
             print("fit", fitted.kind, string.format("%.3f", spline.length(e)))
             ok, err = pcall(spline.fit, { vec3(0, 0, 0) })
             print("fit_bad", ok, err)
+            ok, err = pcall(spline.fit, stroke, { sample_spacing = 1e-30 })
+            print("fit_tiny", ok, err)
+            ok, err = pcall(spline.fit, stroke, { fit_tolerance = "0.1" })
+            print("fit_type", ok, err)
+            ok, err = pcall(spline.fit, stroke, { tolerance = 0.1 })
+            print("fit_key", ok, err)
+            ok, err = pcall(spline.fit, { vec3(-1e6, 0, 0), vec3(1e6, 0, 0) }, { sample_spacing = 0.01 })
+            print("fit_huge", ok, err)
         end
     )");
     (void)scripted("path", "path.lua");
@@ -47,6 +55,10 @@ TEST_F(ScriptTest, SplineQueriesAndCodecEdits) {
         << ::testing::PrintToString(log);
     EXPECT_TRUE(has_line(log, "fit\tcubic_bezier\t15.000")) << ::testing::PrintToString(log);
     EXPECT_TRUE(has_line(log, "fit_bad\tfalse\tspline.fit: points: a stroke needs at least 2 points, got 1"));
+    EXPECT_TRUE(has_line(log, "fit_tiny\tfalse\tspline.fit: sample_spacing must be a number in ["));
+    EXPECT_TRUE(has_line(log, "fit_type\tfalse\tspline.fit: fit_tolerance must be a number in ["));
+    EXPECT_TRUE(has_line(log, "fit_key\tfalse\tspline.fit: unknown option 'tolerance'"));
+    EXPECT_TRUE(has_line(log, "fit_huge\tfalse\tspline.fit: sample_spacing: use >= ")) << ::testing::PrintToString(log);
 }
 
 } // namespace

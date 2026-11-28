@@ -327,8 +327,10 @@ std::vector<CurveSample> sample_by_spacing(const Curve& curve, const SpacingOpti
     const std::size_t cap = std::max<std::size_t>(o.max_samples, 1);
     if (o.fit_to_ends) {
         const float ratio = total / o.spacing;
-        const auto intervals = static_cast<std::size_t>(std::max(1.0F, std::floor(std::min(ratio, 1.0e9F) + 0.5F)));
-        const std::size_t count = std::min(curve.closed() ? intervals : intervals + 1, cap);
+        auto intervals = static_cast<std::size_t>(std::max(1.0F, std::floor(std::min(ratio, 1.0e9F) + 0.5F)));
+        // Too many for the cap: wider spacing, still spanning the whole curve.
+        intervals = std::min(intervals, curve.closed() ? cap : std::max<std::size_t>(cap, 2) - 1);
+        const std::size_t count = curve.closed() ? intervals : intervals + 1;
         out.reserve(count);
         for (std::size_t k = 0; k < count; ++k) {
             const float s = k == intervals ? total

@@ -19,16 +19,27 @@ namespace {
 
 constexpr std::size_t k_max_stroke_points = 65536;
 
-// [x, y, z] or {position: [x, y, z], straight?: bool}.
-[[nodiscard]] bool read_stroke_point(const Json& v, spline::StrokePoint& out) {
-    const Json* pos = &v;
-    if (v.is_object()) {
-        core::JsonFields f(v, "");
-        pos = f.raw("position");
-        f.boolean("straight", out.straight);
-        if (pos == nullptr || !f.finish()) return false;
+// [x, y, z] or {position: [x, y, z], straight?: bool}; on failure `error`
+// holds the precise reason (with the field's path).
+[[nodiscard]] bool read_stroke_point(const Json& v, std::size_t index, spline::StrokePoint& out, std::string& error) {
+    const std::string where = "points[" + std::to_string(index) + "]";
+    if (v.is_array()) {
+        if (v.size() == 3 && core::JsonFields::read_vec3(v, out.position)) return true;
+        error = where + ": expected [x, y, z] (finite numbers) or {position: [x, y, z], straight?: bool}";
+        return false;
     }
-    return pos->is_array() && pos->size() == 3 && core::JsonFields::read_vec3(*pos, out.position);
+    if (!v.is_object()) {
+        error = where + ": expected [x, y, z] or {position: [x, y, z], straight?: bool}";
+        return false;
+    }
+    core::JsonFields f(v, where);
+    if (!f.has("position")) f.fail("position", "required: [x, y, z]");
+    f.vec3("position", out.position).boolean("straight", out.straight);
+    if (auto ok = f.finish(); !ok) {
+        error = ok.error().message;
+        return false;
+    }
+    return true;
 }
 
 RpcResult spline_fit(Context& ctx, const Json& params) {
@@ -62,10 +73,8 @@ RpcResult spline_fit(Context& ctx, const Json& params) {
     stroke.reserve(pts->size());
     for (std::size_t i = 0; i < pts->size(); ++i) {
         spline::StrokePoint p;
-        if (!read_stroke_point((*pts)[i], p)) {
-            return bad_params("points[" + std::to_string(i) +
-                              "]: expected [x, y, z] or {position: [x, y, z], straight?: bool}");
-        }
+        std::string error;
+        if (!read_stroke_point((*pts)[i], i, p, error)) return bad_params(error);
         stroke.push_back(p);
     }
     auto fit = spline::fit_stroke(stroke, o);
@@ -91,7 +100,6 @@ RpcResult spline_fit(Context& ctx, const Json& params) {
         }
         r.emplace_or_replace<scene::Spline>(*e, spline::transformed(result, to_local));
         Json summary = spline_summary(ctx, *e);
-        summary["closed_loop"] = fit->closed;
         summary["pieces"] = fit->beziers.size();
         return summary;
     }

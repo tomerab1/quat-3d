@@ -78,7 +78,10 @@ struct OffsetOptions {
     float spacing = 0.25F;
     // Remove what comes closer to the curve than the offset distance: the
     // swallowtails inside tight bends and a U-turn's overlapping inner side,
-    // joining the remaining runs where they cross.
+    // joining the remaining runs where they cross. Each sample is tested
+    // against its own offset distance (with width_factor and varying widths
+    // this approximates the envelope test against the nearest base point).
+    // Cost: one closest_point() per sample, O(samples x segments log segments).
     bool  trim_loops = true;
     std::size_t max_points = 1U << 16;
 };

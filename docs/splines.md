@@ -118,8 +118,26 @@ The library uses only + − × ÷ and √, in a fixed order, and
 `engine_spline` is compiled without floating-point contraction (no FMA
 fusion). The same input therefore gives bit-identical output on Linux,
 Windows and macOS (arm64). `SplineDeterminism.SampleBitsMatchTheReference`
-pins a hash of sample bits and runs on every CI platform. If you change an
-algorithm on purpose, update the reference hash in the same commit.
+pins a hash of sample bits and runs on every CI platform, and
+`tests/spline/determinism_test.cpp` does the same for every kind,
+`transformed()`, both frame modes, stroke fits in both outputs, a network
+with a T and an X, and trimmed offsets. If you change an algorithm on
+purpose, update the reference hash in the same commit.
+
+The guarantee covers the library's inputs. The scene layer (`SplineCache`,
+the remote methods) applies the entity's world matrix, which `engine_scene`
+composes with the platform's default contraction. A deep hierarchy's matrix
+can therefore differ by an ulp between platforms before it reaches the
+library. Keep spline entities at the root, or with exactly representable
+transforms, where bit-identical output matters.
+
+**Known limitations**
+
+- On a closed, non-planar curve, rotation-minimising frames have a twist
+  step at the seam (no holonomy correction yet).
+- Offsets test each sample against its own distance, which approximates
+  the envelope when widths vary.
+- A network's crossing ids follow the crossing's index along its pair.
 
 ## Curve networks (G18.2)
 
@@ -160,8 +178,11 @@ edge runs over the seam (`Curve` wraps the parameter).
 - An edge is named after its curve and its two nodes.
 
 Reshaping a curve without changing what it meets therefore keeps every id.
-Adding a curve that crosses one edge changes only that edge. The result
-does not depend on input order. Remote replies write ids as 16 hex digits.
+Adding a curve that crosses one edge changes only that edge. A new crossing
+between the same two curves, earlier along their pair, renumbers the later
+crossings of that pair: carrying ids over from a previous network is a
+planned follow-up. The result does not depend on input order. Remote
+replies write ids as 16 hex digits.
 
 ## Stroke capture (G18.3)
 
@@ -176,7 +197,9 @@ these steps:
 5. Convert to centripetal Catmull-Rom points. Starting from the fit's
    anchors, a span's midpoint is added wherever the curve leaves the fit
    by more than the tolerance; both directions are checked, so overshoot
-   at corners is caught. `output = cubic_bezier` returns the fitted pieces
+   at corners is caught. Sharp joints (corners and both ends of a straight
+   segment) are doubled knots, so they stay exactly sharp and straight runs
+   stay exactly straight. `output = cubic_bezier` returns the fitted pieces
    instead.
 
 A point with `straight = true` makes the segment from the previous point

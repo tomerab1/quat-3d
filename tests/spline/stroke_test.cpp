@@ -165,6 +165,29 @@ TEST(SplineStroke, StraightSegmentsStayStraightAndCornersSharp) {
     }
 }
 
+TEST(SplineStroke, HugeStrokesAreBoundedNotHung) {
+    // 2e6 m at 1 cm would be 2e8 samples, and a float accumulator stalls
+    // past ~2.6e5 m: resampling is capped and walks by integer index.
+    const std::vector<glm::vec3> line = {{-1.0e6F, 0, 0}, {1.0e6F, 0, 0}};
+    const auto r = sp::resample_polyline(line, 0.01F, 1000);
+    EXPECT_LE(r.size(), 1000U);
+    EXPECT_EQ(r.front(), line.front());
+    EXPECT_EQ(r.back(), line.back());
+    for (std::size_t i = 1; i < r.size(); ++i) EXPECT_GT(r[i].x, r[i - 1].x);
+    // 3e5 m at 0.02 m: below the cap, and past where s += spacing stalls.
+    const std::vector<glm::vec3> far = {{0, 0, 0}, {3.0e5F, 0, 0}};
+    const auto f = sp::resample_polyline(far, 0.5F);
+    EXPECT_EQ(f.size(), 600001U);
+    EXPECT_EQ(f.back().x, 3.0e5F);
+
+    std::vector<sp::StrokePoint> huge = {{{-1.0e6F, 0, 0}, false}, {{1.0e6F, 0, 0}, false}};
+    sp::StrokeOptions o;
+    o.sample_spacing = 0.01F;
+    const auto fit = sp::fit_stroke(huge, o);
+    ASSERT_FALSE(fit.has_value());
+    EXPECT_EQ(fit.error().message.rfind("sample_spacing: use >= ", 0), 0U) << fit.error().message;
+}
+
 TEST(SplineStroke, RefusesBadStrokes) {
     std::vector<sp::StrokePoint> one = {{{0, 0, 0}, false}};
     EXPECT_EQ(sp::fit_stroke(one).error().message, "points: a stroke needs at least 2 points, got 1");
