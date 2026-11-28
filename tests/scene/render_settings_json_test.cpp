@@ -94,9 +94,9 @@ TEST(RenderSettingsJson, SetMergesAndKeepsOtherFields) {
 
 TEST(RenderSettingsJson, StrictErrorsArePreciseAndAtomic) {
     r::RenderSettings st;
-    auto e = s::apply_render_settings_json(st, json{{"fog", {{"density", 1}}}}, true);
+    auto e = s::apply_render_settings_json(st, json{{"haze", {{"density", 1}}}}, true);
     ASSERT_FALSE(e);
-    EXPECT_TRUE(contains(e.error().message, "fog: unknown group")) << e.error().message;
+    EXPECT_TRUE(contains(e.error().message, "haze: unknown group")) << e.error().message;
     EXPECT_TRUE(contains(e.error().message, "exposure, bloom")) << e.error().message;
 
     e = s::apply_render_settings_json(st, json{{"bloom", {{"strength", 1}}}}, true);
@@ -134,7 +134,7 @@ TEST(RenderSettingsJson, LenientDecodingToleratesNewerFiles) {
     ASSERT_OK(s::apply_render_settings_json(
         st,
         json{{"version", 9},
-             {"fog", {{"density", 1}}},
+             {"haze", {{"density", 1}}},
              {"bloom", {{"intensity", 50}, {"future_field", true}}},
              {"exposure", {{"compensation_ev", -1}}}},
         /*strict=*/false));
