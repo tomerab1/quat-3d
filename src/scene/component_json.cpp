@@ -29,6 +29,7 @@
 #include "engine/terrain/talus_relax.hpp"
 
 #include "component_json_animation.hpp"
+#include "component_json_camera_rig.hpp"
 
 namespace engine::scene {
 
@@ -63,6 +64,8 @@ constexpr std::array k_components = {
     ComponentInfo{"audio_listener", "The audio listener follows this entity (else the camera)", true, true},
     ComponentInfo{"animator", "Animation playback of a glTF clip: clip switching (inertialized or crossfaded), time, speed, looping", false, true},
     ComponentInfo{"foot_ik", "Foot placement on uneven ground for an animated character (leg IK + pelvis)", true, true},
+    ComponentInfo{"camera_rig", "Orbit / strategy camera rig driving the entity: focus, yaw, pitch eased with zoom, distance, springs, ground following, bounds", true, true},
+    ComponentInfo{"camera_rig_input", "Input actions that drive the entity's camera_rig (pan, orbit, zoom to cursor, grab-the-world drag)", true, true},
     ComponentInfo{"mesh", "glTF mesh provenance (read-only)", false, false},
 };
 
@@ -659,6 +662,10 @@ json encode_components(const entt::registry& r, entt::entity e, const EncodeOpti
     }
     if (const auto* a = pick.get<Animator>("animator")) out["animator"] = detail::encode_animator(*a);
     if (const auto* k = pick.get<FootIK>("foot_ik")) out["foot_ik"] = detail::encode_foot_ik(*k);
+    if (const auto* c = pick.get<CameraRig>("camera_rig")) out["camera_rig"] = detail::encode_camera_rig(*c);
+    if (const auto* c = pick.get<CameraRigInput>("camera_rig_input")) {
+        out["camera_rig_input"] = detail::encode_camera_rig_input(*c);
+    }
     if (options.include_read_only) {
         if (const auto* m = pick.get<MeshSource>("mesh")) {
             out["mesh"] = {{"mesh_key", m->mesh_key},
@@ -701,6 +708,8 @@ std::vector<std::string_view> component_names(const entt::registry& r, entt::ent
     add(r.all_of<AudioListener>(e), "audio_listener");
     add(r.all_of<Animator>(e), "animator");
     add(r.all_of<FootIK>(e), "foot_ik");
+    add(r.all_of<CameraRig>(e), "camera_rig");
+    add(r.all_of<CameraRigInput>(e), "camera_rig_input");
     add(include_read_only && r.all_of<MeshSource>(e), "mesh");
     return out;
 }
@@ -1014,6 +1023,10 @@ std::expected<void, core::Error> apply_component(entt::registry& r, entt::entity
         return merge<Animator>(r, e, v, name, strict, detail::decode_animator);
     }
     if (name == "foot_ik") return merge<FootIK>(r, e, v, name, strict, detail::decode_foot_ik);
+    if (name == "camera_rig") return merge<CameraRig>(r, e, v, name, strict, detail::decode_camera_rig);
+    if (name == "camera_rig_input") {
+        return merge<CameraRigInput>(r, e, v, name, strict, detail::decode_camera_rig_input);
+    }
     return std::unexpected(core::Error{"component '" + std::string(name) + "' has no decoder"});
 }
 
@@ -1055,6 +1068,8 @@ bool remove_component(entt::registry& r, entt::entity e, std::string_view name) 
     if (name == "audio_listener") return r.remove<AudioListener>(e) > 0;
     if (name == "animator") return r.remove<Animator>(e) > 0;
     if (name == "foot_ik") return r.remove<FootIK>(e) > 0;
+    if (name == "camera_rig") return r.remove<CameraRig>(e) > 0;
+    if (name == "camera_rig_input") return r.remove<CameraRigInput>(e) > 0;
     return false; // transform (not removable) or unknown
 }
 

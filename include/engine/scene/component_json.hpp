@@ -31,6 +31,9 @@
 //   animator         edit-only (needs a clip from a glTF; cannot be added):
 //                    clip (by name, switches with blend / blend_time), time, speed, looping
 //   foot_ik          foot placement (joint names, probe lengths, limits, smoothing)
+//   camera_rig       orbit / strategy camera rig (targets, limits, springs, bounds;
+//                    `current` is read-only)
+//   camera_rig_input G5 action names that drive the camera rig
 //   mesh             read-only (glTF provenance; scene_io resolves it)
 //
 // Decoding merges: fields present in the JSON overwrite the component's

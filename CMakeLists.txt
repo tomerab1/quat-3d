@@ -330,6 +330,9 @@ add_library(engine_scene STATIC
     src/scene/instanced_mesh_resolve.cpp
     src/scene/ground_placement.cpp
     src/scene/camera_framing.cpp
+    src/scene/camera_rig.cpp
+    src/scene/camera_rig_system.cpp
+    src/scene/component_json_camera_rig.cpp
     src/scene/bounds.cpp
     src/scene/view_clip.cpp)
 # EnTT is PUBLIC: components.hpp exposes entt types (Parent/Children) to consumers.
@@ -338,7 +341,7 @@ add_library(engine_scene STATIC
 # engine_animation is PUBLIC: components.hpp's SkinnedMesh holds a SkeletonAsset
 # handle and the glTF loader extracts skins.
 target_link_libraries(engine_scene PUBLIC
-    engine_flags engine_asset engine_rhi engine_renderer engine_animation engine_physics
+    engine_flags engine_input engine_asset engine_rhi engine_renderer engine_animation engine_physics
     engine_terrain engine_nav engine_audio EnTT::EnTT)
 # fastgltf and stb (image decode) are implementation details of the loader.
 # nlohmann_json is PUBLIC: component_json.hpp exposes JSON values (the codec
@@ -616,6 +619,7 @@ if(ENGINE_EDITOR)
         src/editor/audio_inspector.cpp
         src/editor/script_inspector.cpp
         src/editor/animation_inspector.cpp
+        src/editor/camera_rig_inspector.cpp
         src/editor/grass_inspector.cpp
         src/editor/particle_inspector.cpp
         src/editor/behavior_panel.cpp
