@@ -322,7 +322,7 @@ TEST_F(RigFixture, DragGrabsTheWorldThenSpringsBackIntoBounds) {
 }
 
 // Review #111: the release glide is the exact integral of the decaying
-// velocity, so a flick travels the same distance at 30 and 240 Hz.
+// velocity, so a flick travels the same distance at 30, 60, 144 and 240 Hz.
 TEST(CameraRigSystem, InertiaGlideIsFrameRateIndependent) {
     const auto glide = [](int hz) {
         entt::registry r;
@@ -337,8 +337,7 @@ TEST(CameraRigSystem, InertiaGlideIsFrameRateIndependent) {
         return rig.focus.x;
     };
     const float expected = 10.0F * 0.15F / std::log(2.0F); // v0 * h / ln 2
-    EXPECT_NEAR(glide(30), expected, 0.01F);
-    EXPECT_NEAR(glide(240), expected, 0.01F);
+    for (const int hz : {30, 60, 144, 240}) EXPECT_NEAR(glide(hz), expected, 0.01F) << hz << " Hz";
 }
 
 TEST_F(RigFixture, YawStepsStayOnTheLatticeAcrossTheWrap) {
