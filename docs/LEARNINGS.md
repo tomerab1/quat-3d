@@ -656,3 +656,27 @@ it reordered, and an unvalidated ini file. Each lived in code only reachable
 through an ImGui frame. **Rule:** UI actions are plain functions over the
 registry or the state struct, called by the widget and by GoogleTest;
 anything read from disk goes through a pure, tested parser.
+
+## A font pushed across a scrolling table broke ImGui's font stack (R4)
+
+The ported Profiler panel pushed the monospace font (a `ui::FontScope`)
+before `BeginTable(... ScrollY)` and popped it after `EndTable`. The table's
+scrolling child window restores the font stack when it ends, so every frame
+logged "Calling PopFont() too many times". Only the panel test that counts
+ImGui's recoverable errors (as `panel_sweep_test.cpp` does) caught it.
+**Rule:** push and pop fonts / style inside the same window — between
+`TableHeadersRow` and `EndTable` for table rows; panel tests install the
+error callback and assert zero errors.
+
+## Dependency headers for compile checks come from conda-forge (factory)
+
+With the GitHub proxy limited to this repository, `~/deps` cannot be cloned.
+conda-forge (`conda.anaconda.org`) and crates.io are reachable: entt, Jolt,
+SDL3, VMA, gtest, Tracy, Lua and sol2 come as conda packages (`.conda` = zip
+of `pkg-*.tar.zst`); Dear ImGui docking 1.92.x and ImGuizmo come vendored in
+the `dear-imgui-sys` / `dear-imguizmo-sys` crates (`static.crates.io`), and
+apt's `googletest` package has the sources to build a libc++ GoogleTest.
+That is enough for `scripts/check-compile.sh` on most of the engine (not
+fastgltf / ktx / meshoptimizer users) and to link and run the editor panel
+tests. **Rule:** before saying a compile check is impossible, try those
+mirrors; say which versions differ from vcpkg's pins.
