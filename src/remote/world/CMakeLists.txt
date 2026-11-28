@@ -8,32 +8,19 @@
 # ---------------------------------------------------------------------------
 add_library(engine_remote_world STATIC
     common.cpp
-    scene_commands.cpp
-    batch_command.cpp
-    environment_commands.cpp
-    terrain_commands.cpp
     surface_query.cpp
-    placement_commands.cpp
-    camera_commands.cpp
-    app_commands.cpp
-    debug_commands.cpp
-    debug_query_commands.cpp
-    shader_commands.cpp
-    tuning_commands.cpp
-    behavior_commands.cpp
-    behavior_edit_commands.cpp
-    physics_commands.cpp
-    physics_body_commands.cpp
-    physics_query_commands.cpp
-    weather_commands.cpp
-    project_commands.cpp
-    time_commands.cpp
-    script_commands.cpp
-    input_commands.cpp
-    camera_rig_commands.cpp
-    profile_commands.cpp
     image_encode.cpp
     stb_image_write_impl.cpp)
+# Command modules (ROADMAP S9): one <domain>_commands.cpp per domain, each
+# defining register_<file stem>(RpcServer&, const ContextPtr&). The call list is
+# generated from the directory: a new module is a new file.
+quat_generate_registration(engine_remote_world
+    DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+    PATTERN   "*_command*.cpp"
+    TEMPLATE  ${CMAKE_CURRENT_SOURCE_DIR}/command_modules.cpp.in
+    OUTPUT    ${CMAKE_CURRENT_BINARY_DIR}/generated/command_modules.cpp
+    DECLARE   "void register_@NAME@(RpcServer& server, const ContextPtr& ctx)"
+    CALL      "    register_@NAME@(server, ctx)")
 target_link_libraries(engine_remote_world PUBLIC
     engine_flags engine_core engine_input engine_remote engine_scene engine_physics engine_nav engine_weather
     engine_script engine_project)

@@ -245,29 +245,7 @@ void register_world_commands(RpcServer& server, scene::Scene& scene, WorldServic
     ctx->server = &server;
     ctx->scene = &scene;
     ctx->services = std::move(services);
-    world::register_scene_commands(server, ctx);
-    world::register_batch_command(server, ctx);
-    world::register_environment_commands(server, ctx);
-    world::register_terrain_commands(server, ctx);
-    world::register_placement_commands(server, ctx);
-    world::register_camera_commands(server, ctx);
-    world::register_app_commands(server, ctx);
-    world::register_debug_commands(server, ctx);
-    world::register_debug_query_commands(server, ctx);
-    world::register_tuning_commands(server, ctx);
-    world::register_behavior_commands(server, ctx);
-    world::register_behavior_edit_commands(server, ctx);
-    world::register_physics_commands(server, ctx);
-    world::register_physics_body_commands(server, ctx);
-    world::register_physics_query_commands(server, ctx);
-    world::register_weather_commands(server, ctx);
-    world::register_project_commands(server, ctx);
-    world::register_script_commands(server, ctx);
-    world::register_profile_commands(server, ctx);
-    world::register_shader_commands(server, ctx);
-    world::register_time_commands(server, ctx);
-    world::register_input_commands(server, ctx);
-    world::register_camera_rig_commands(server, ctx);
+    world::register_command_modules(server, ctx);
 }
 
 } // namespace engine::remote

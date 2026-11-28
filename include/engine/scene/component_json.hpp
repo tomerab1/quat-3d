@@ -18,7 +18,7 @@
 //                    scatter generates them; instance_count is read-only)
 //   scatter          seeded procedural placement of the instanced mesh
 //   point_light, dir_light, camera
-//   collider, rigidbody, character, joint (component_json_physics.cpp)
+//   collider, rigidbody, character, joint
 //   nav_agent, behavior, patrol
 //   script           Lua gameplay script path + property overrides (G7)
 //   terrain

@@ -7,6 +7,7 @@
 #include <expected>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <unordered_set>
@@ -153,31 +154,15 @@ struct SurfaceSample {
 project_path(const Context& ctx, core::JsonFields& fields, std::string_view key,
              std::string& relative);
 
-// ---- Registration (one per domain file) -----------------------------------------
+// ---- Registration ------------------------------------------------------------
 
-void register_scene_commands(RpcServer& server, const ContextPtr& ctx);
-void register_batch_command(RpcServer& server, const ContextPtr& ctx);
-void register_environment_commands(RpcServer& server, const ContextPtr& ctx);
-void register_terrain_commands(RpcServer& server, const ContextPtr& ctx);
-void register_placement_commands(RpcServer& server, const ContextPtr& ctx);
-void register_camera_commands(RpcServer& server, const ContextPtr& ctx);
-void register_app_commands(RpcServer& server, const ContextPtr& ctx);
-void register_debug_commands(RpcServer& server, const ContextPtr& ctx);
-void register_debug_query_commands(RpcServer& server, const ContextPtr& ctx);
-void register_tuning_commands(RpcServer& server, const ContextPtr& ctx);
-void register_behavior_commands(RpcServer& server, const ContextPtr& ctx);
-void register_behavior_edit_commands(RpcServer& server, const ContextPtr& ctx);
-void register_physics_commands(RpcServer& server, const ContextPtr& ctx);
-void register_physics_body_commands(RpcServer& server, const ContextPtr& ctx);
-void register_physics_query_commands(RpcServer& server, const ContextPtr& ctx);
-void register_weather_commands(RpcServer& server, const ContextPtr& ctx);
-void register_project_commands(RpcServer& server, const ContextPtr& ctx);
-void register_script_commands(RpcServer& server, const ContextPtr& ctx);
-void register_profile_commands(RpcServer& server, const ContextPtr& ctx);
-void register_shader_commands(RpcServer& server, const ContextPtr& ctx);
-void register_time_commands(RpcServer& server, const ContextPtr& ctx);
-void register_input_commands(RpcServer& server, const ContextPtr& ctx);
-void register_camera_rig_commands(RpcServer& server, const ContextPtr& ctx);
+// Every command module: one file per domain, src/remote/world/<domain>_commands.cpp,
+// defining register_<file stem>(RpcServer&, const ContextPtr&). The calls are
+// generated from the directory (command_modules.cpp.in, ROADMAP S9): a new
+// module is a new file, with no list to edit.
+void register_command_modules(RpcServer& server, const ContextPtr& ctx);
+// The file stems the build generated calls for, sorted (for tests).
+[[nodiscard]] std::span<const std::string_view> command_module_sources();
 
 // {paused, time_scale, pending_steps, steps_run, sim_frames, sim_time_s}.
 [[nodiscard]] Json sim_clock_json(const core::SimClock& clock);

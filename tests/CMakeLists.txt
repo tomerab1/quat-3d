@@ -95,6 +95,13 @@ else()
     message(WARNING "binary-content checks (no texture encoder, no remote control): no nm found; not registered")
 endif()
 
+# Registration tables (S9): a file dropped into a registration directory is
+# registered without editing a list.
+add_test(NAME registration_generator
+    COMMAND ${CMAKE_COMMAND} -DROOT=${PROJECT_SOURCE_DIR}
+            -DWORK=${CMAKE_CURRENT_BINARY_DIR}/registration_generator
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/registration_generator_test.cmake)
+
 # Engine SDK guards: install, self-contained public headers, the SDK
 # consumer, refusals, layering (ROADMAP P8).
 add_subdirectory(sdk)

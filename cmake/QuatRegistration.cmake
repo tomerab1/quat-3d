@@ -66,4 +66,8 @@ function(quat_generate_registration target)
     quat_write_registration(FILES ${files} TEMPLATE "${ARG_TEMPLATE}" OUTPUT "${ARG_OUTPUT}"
         DECLARE "${ARG_DECLARE}" CALL "${ARG_CALL}")
     target_sources(${target} PRIVATE ${files} "${ARG_OUTPUT}")
+    # The generated TU lives in the build tree: it reaches the module's
+    # private headers as "<module>/<header>" through src/.
+    set_source_files_properties("${ARG_OUTPUT}" PROPERTIES
+        INCLUDE_DIRECTORIES "${PROJECT_SOURCE_DIR}/src")
 endfunction()
