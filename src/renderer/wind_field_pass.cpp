@@ -1,6 +1,7 @@
 #include "engine/renderer/wind_field_pass.hpp"
 
 #include <cmath>
+#include <cstdio>
 #include <utility>
 
 #include "engine/rhi/device.hpp"
@@ -116,7 +117,17 @@ WindFieldPass::add_to_graph(rhi::RenderGraph& graph, const weather::WindFieldPar
         // Last frame's field over THIS frame's rect: the field is a function
         // of world position, so the blades sample both at the same uv.
         auto prev_db = rhi::DescriptorBuffer::create(*device_, *allocator_, db_fns_, layout_);
-        if (!prev_db) return std::unexpected(prev_db.error());
+        if (!prev_db) {
+            // Only motion vectors need it: keep this frame's field (the
+            // blades bend as usual, with no field motion this frame).
+            if (!prev_failure_logged_) {
+                std::fprintf(stderr, "[warn] wind field: last frame's field skipped: %s\n",
+                             prev_db.error().message.c_str());
+                prev_failure_logged_ = true;
+            }
+            return out;
+        }
+        prev_failure_logged_ = false;
         prev_descriptor_ = std::move(*prev_db);
         out.prev_texture =
             graph.create_transient_image("wind_field_prev", wind_field_format, extent, usage);

@@ -98,7 +98,8 @@ public:
 
     // Declares the wind texture and the compute pass that fills it with
     // `params` around `camera_xz`, plus — with `prev_params` — last frame's
-    // field into `prev_texture` over the same rect. The descriptor buffers are
+    // field into `prev_texture` over the same rect (left invalid, with a
+    // warning, if that second evaluation cannot be set up). The descriptor buffers are
     // owned by the pass and rewritten by the next call, so the graph must have
     // executed (the frame slot's fence waited) before reuse.
     [[nodiscard]] std::expected<WindFieldOutput, core::Error>
@@ -119,6 +120,7 @@ private:
     std::uint32_t                  out_slot_ = 0; // g_wind's reflected binding
     rhi::DescriptorBuffer          frame_descriptor_;
     rhi::DescriptorBuffer          prev_descriptor_; // last frame's field
+    bool prev_failure_logged_ = false; // one warning per run of failures
 };
 
 } // namespace engine::renderer
