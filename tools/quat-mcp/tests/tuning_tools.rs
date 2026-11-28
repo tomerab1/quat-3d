@@ -214,7 +214,7 @@ async fn settings_errors_reach_the_model() {
         rejected(
             &client,
             "render_settings_set",
-            json!({"fog": {"density": 1}})
+            json!({"haze": {"density": 1}})
         )
         .await
     );
