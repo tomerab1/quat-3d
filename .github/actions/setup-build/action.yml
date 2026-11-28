@@ -68,6 +68,10 @@ runs:
         install_lavapipe: true
         cache: true
         stripdown: true
+        # Authenticated release lookups: the action's anonymous GitHub API
+        # calls share the runner IP's 60/hour limit and failed with "API rate
+        # limit exceeded" on busy days (#73).
+        github_token: ${{ github.token }}
 
     - name: Vulkan runtime on PATH (Windows)
       if: runner.os == 'Windows'
