@@ -44,6 +44,8 @@ constexpr CodecIcon k_codec_icons[] = {
     {"animator", icon::clapperboard},    {"mesh", icon::box},
     {"material", icon::palette},         {"foot_ik", icon::footprints},
     {"particle_emitter", icon::sparkles}, {"script", icon::file_code},
+    {"joint", icon::link},
+    {"world_clock", icon::clock_3},
 };
 
 [[nodiscard]] std::optional<nlohmann::json> encode_one(const entt::registry& r, entt::entity e,

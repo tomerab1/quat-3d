@@ -13,6 +13,7 @@
 #include "../behavior_panel.hpp"
 #include "../inspector.hpp"
 #include "../panels/console.hpp"
+#include "../panels/profiler.hpp"
 #include "../physics_debug.hpp"
 #include "../scene_hierarchy.hpp"
 #include "engine/scene/scene_snapshot.hpp"
@@ -51,16 +52,21 @@ void select_docked_tab(const char* id) {
 
 } // namespace
 
-EditorShell::EditorShell(SDL_Window* window, std::filesystem::path root)
+EditorShell::EditorShell(SDL_Window* window, std::filesystem::path root,
+                         const std::filesystem::path& data_root)
     : project_root(std::move(root)) {
     panel_open.fill(true);
     inspector.project_root = project_root;
-    appearance_.init(window, project_root, ui::ThemeId::dark);
+    appearance_.init(window, data_root, ui::ThemeId::dark);
     console = std::make_unique<panels::ConsoleState>();
+    profiler = std::make_unique<panels::ProfilerState>();
     register_commands();
 }
 
-EditorShell::~EditorShell() = default;
+EditorShell::~EditorShell() {
+    // Toast actions may point into this shell (Build & Export's "Show log").
+    ui::toasts().clear();
+}
 
 void EditorShell::force_theme(ui::ThemeId theme) {
     appearance_.set_theme(theme);
@@ -194,6 +200,12 @@ void EditorShell::register_commands() {
            .icon = icon::save, .shortcut = ImGuiMod_Ctrl | ImGuiMod_Shift | ImGuiKey_S,
            .enabled = [this] { return ctx != nullptr && ctx->save_request != nullptr; },
            .action = [this] { save_as_dialog = true; }});
+    c.add({.id = "file.export", .label = "Build & Export...", .category = "File",
+           .icon = icon::package, .shortcut = ImGuiMod_Ctrl | ImGuiKey_B,
+           .hint = "Package the game project for this OS (quat-pack)",
+           .enabled = [this] { return ctx != nullptr && ctx->build_job != nullptr &&
+                                      static_cast<bool>(ctx->start_export); },
+           .action = [this] { export_dialog.open_request = true; }});
     c.add({.id = "file.exit", .label = "Exit", .category = "File", .icon = icon::log_out,
            .shortcut = ImGuiMod_Ctrl | ImGuiKey_Q, .action = [] {
                SDL_Event quit{};
@@ -402,7 +414,11 @@ void EditorShell::draw_panels() {
     draw_viewport(*this);
     inspector.scripts = c.scripts; // a Script's declared properties (G7)
     if (c.scene != nullptr) draw_inspector(*c.scene, selected, inspector, open(Panel::inspector));
-    if (c.renderer != nullptr) draw_renderer_panel(*c.renderer, c.scene);
+    if (c.renderer != nullptr) {
+        draw_renderer_panel(*c.renderer, c.scene,
+                            {c.hdri_path, c.hdri_status, c.project_root, c.hdri_request},
+                            c.view_lens, c.view_fov_y);
+    }
     if (c.scene != nullptr) {
         if (rename_pending) {
             begin_rename(hierarchy, *c.scene, selected);
@@ -424,6 +440,8 @@ void EditorShell::draw_panels() {
                            c.build_navmesh_request, c.nav_edges, c.nav_status);
     }
     draw_stats_panel(*this);
+    panels::draw_profiler(c.profiler, *profiler, panel_window_name(Panel::profiler).c_str(),
+                          open(Panel::profiler));
 }
 
 void EditorShell::draw(const EditorContext& context) {

@@ -124,4 +124,17 @@ struct InstancedDrawList {
 // transparent geometry, which must not be regrouped.
 [[nodiscard]] InstancedDrawList unbatched_draws(std::span<const DrawItem> items);
 
+// True when the instance's transform mirrors (det < 0): its triangles wind
+// the other way on screen (InstanceData::normal[0].w carries sign(det)).
+[[nodiscard]] inline bool is_mirrored(const InstanceData& instance) {
+    return instance.normal[0].w < 0.0F;
+}
+
+// Reorders each draw's instance range so its unmirrored instances come first
+// and its mirrored ones last (stable within each group; `motion` follows when
+// present) and returns, per draw, how many unmirrored instances lead its
+// range. A pass that culls back faces draws the two groups separately, the
+// mirrored one culling front faces (scatter.mirror makes such mixes common).
+[[nodiscard]] std::vector<std::uint32_t> partition_mirrored(InstancedDrawList& list);
+
 } // namespace engine::renderer

@@ -139,6 +139,9 @@ struct Candidate {
     // VK_EXT_descriptor_buffer feature + extension both present. Always true
     // unless ENGINE_DESCRIPTOR_SETS_FALLBACK admits classic-sets devices.
     bool has_descriptor_buffer = false;
+    // VK_KHR_swapchain_mutable_format (surface devices only): swapchain
+    // images that can also be viewed in their UNORM twin format.
+    bool has_swapchain_mutable_format = false;
 };
 
 // PCI vendor id Apple GPUs report through MoltenVK / KosmicKrisp.
@@ -239,7 +242,10 @@ constexpr std::uint32_t k_vendor_apple = 0x106B;
         const int score = device_type_score(props.deviceType) + (db_ok ? 2 : 0) +
                           (presents_from_graphics ? 1 : 0);
         if (score > best.score) {
-            best = Candidate{device, *families, props, score, db_ok};
+            best = Candidate{device, *families, props, score, db_ok,
+                             surface != VK_NULL_HANDLE &&
+                                 has_extension(exts,
+                                               VK_KHR_SWAPCHAIN_MUTABLE_FORMAT_EXTENSION_NAME)};
         }
     }
     return best;
@@ -433,15 +439,37 @@ std::expected<Device, core::Error> Device::create(const CreateInfo& info) {
     std::vector<const char*> device_exts;
     if (dev.surface_ != VK_NULL_HANDLE) {
         device_exts.push_back(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
+        // Optional: lets the editor UI render through a UNORM view of the
+        // sRGB swapchain (gamma-space compositing). Its dependencies
+        // (VK_KHR_image_format_list, VK_KHR_maintenance2) are core in 1.2 /
+        // 1.1. Offered by desktop drivers, lavapipe and MoltenVK.
+        if (candidate.has_swapchain_mutable_format) {
+            device_exts.push_back(VK_KHR_SWAPCHAIN_MUTABLE_FORMAT_EXTENSION_NAME);
+            dev.swapchain_mutable_format_ = true;
+        }
     }
     if (candidate.has_descriptor_buffer) {
         device_exts.push_back(VK_EXT_DESCRIPTOR_BUFFER_EXTENSION_NAME);
+    }
+    // Profiling (R4), each enabled whenever offered: the driver's memory
+    // budget for VMA, and calibrated timestamps for GPU zones in Tracy.
+    const auto available_device_exts = device_extensions(dev.physical_device_);
+    if (has_extension(available_device_exts, VK_EXT_MEMORY_BUDGET_EXTENSION_NAME)) {
+        device_exts.push_back(VK_EXT_MEMORY_BUDGET_EXTENSION_NAME);
+        dev.memory_budget_ = true;
+    }
+    if (has_extension(available_device_exts, VK_KHR_CALIBRATED_TIMESTAMPS_EXTENSION_NAME)) {
+        device_exts.push_back(VK_KHR_CALIBRATED_TIMESTAMPS_EXTENSION_NAME);
+        dev.calibrated_timestamps_ = CalibratedTimestamps::khr;
+    } else if (has_extension(available_device_exts,
+                             VK_EXT_CALIBRATED_TIMESTAMPS_EXTENSION_NAME)) {
+        device_exts.push_back(VK_EXT_CALIBRATED_TIMESTAMPS_EXTENSION_NAME);
+        dev.calibrated_timestamps_ = CalibratedTimestamps::ext;
     }
 #ifdef ENGINE_DESCRIPTOR_SETS_FALLBACK
     // Portability-subset ICDs advertise VK_KHR_portability_subset, and the spec
     // requires it to be enabled whenever present. String spelled out to avoid
     // pulling in vulkan_beta.h.
-    const auto available_device_exts = device_extensions(dev.physical_device_);
     if (has_extension(available_device_exts, "VK_KHR_portability_subset")) {
         device_exts.push_back("VK_KHR_portability_subset");
     }
@@ -583,6 +611,11 @@ Device& Device::operator=(Device&& other) noexcept {
         simulate_missing_extended_formats_ = other.simulate_missing_extended_formats_;
         depth_clamp_ = other.depth_clamp_;
         simulate_missing_depth_clamp_ = other.simulate_missing_depth_clamp_;
+        swapchain_mutable_format_ = other.swapchain_mutable_format_;
+        simulate_missing_swapchain_mutable_format_ =
+            other.simulate_missing_swapchain_mutable_format_;
+        memory_budget_ = other.memory_budget_;
+        calibrated_timestamps_ = other.calibrated_timestamps_;
     }
     return *this;
 }

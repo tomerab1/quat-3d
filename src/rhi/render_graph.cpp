@@ -8,7 +8,10 @@
 #include <unordered_set>
 #include <utility>
 
+#include "engine/core/profile.hpp"
 #include "engine/rhi/device.hpp"
+#include "engine/rhi/formats.hpp"
+#include "engine/rhi/gpu_profiler.hpp"
 
 namespace engine::rhi {
 
@@ -355,6 +358,13 @@ ResourceHandle RenderGraph::import_image(const char* name, VkImage image, VkImag
     return ResourceHandle{static_cast<std::uint32_t>(resources_.size() - 1)};
 }
 
+void RenderGraph::set_unorm_view(ResourceHandle image, VkImageView view) {
+    if (!image.valid() || image.index >= resources_.size()) return;
+    Resource& r = resources_[image.index];
+    if (!r.imported || r.is_buffer) return;
+    r.unorm_view = view;
+}
+
 ResourceHandle RenderGraph::import_buffer(const char* name, VkBuffer buffer, VkDeviceSize size,
                                           VkPipelineStageFlags2 available_stage,
                                           VkAccessFlags2 available_access) {
@@ -383,8 +393,13 @@ ResourceHandle RenderGraph::create_transient_image(const char* name, VkFormat fo
 }
 
 RenderGraph::PassBuilder RenderGraph::add_pass(const char* name, PassType type) {
+    // The graph is rebuilt every frame: pass names resolve through a
+    // per-thread cache, so the name table's lock is taken once per name, not
+    // once per pass per frame (no engine mutexes on the hot path).
+    thread_local core::ProfileNameCache pass_names(core::ProfileCategory::pass);
     Pass p;
     p.name = name;
+    p.profile_id = pass_names.id(p.name);
     p.type = type;
     passes_.push_back(std::move(p));
     return PassBuilder{*this, static_cast<std::uint32_t>(passes_.size() - 1)};
@@ -409,7 +424,11 @@ RenderGraph::PassBuilder& RenderGraph::PassBuilder::execute(PassExecuteFn fn) {
 
 ResourceBinding RenderGraph::binding(ResourceHandle handle) const {
     const Resource& r = resources_[handle.index];
-    return ResourceBinding{r.image, r.view, r.format, r.extent, r.buffer, r.buffer_size};
+    ResourceBinding b{r.image, r.view, r.format, r.extent, r.buffer, r.buffer_size};
+    b.unorm_view = r.unorm_view != VK_NULL_HANDLE ? r.unorm_view
+                   : is_srgb(r.format)            ? VK_NULL_HANDLE
+                                                  : r.view;
+    return b;
 }
 
 // ===========================================================================
@@ -666,10 +685,12 @@ RenderGraph::planned_buffer_barriers(std::string_view pass_name) const {
 // ===========================================================================
 // RenderGraph — execute
 // ===========================================================================
-void RenderGraph::execute(VkCommandBuffer cmd) {
+void RenderGraph::execute(VkCommandBuffer cmd, GpuProfiler* gpu) {
     for (std::uint32_t pos = 0; pos < order_.size(); ++pos) {
-        submit_barriers(cmd, pass_barriers_[pos], pass_buffer_barriers_[pos]);
         Pass& pass = passes_[order_[pos]];
+        QUAT_ZONE_DYNAMIC(pass.profile_id, pass.name.c_str());
+        const GpuZoneScope gpu_zone(gpu, cmd, pass.profile_id, pass.name.c_str());
+        submit_barriers(cmd, pass_barriers_[pos], pass_buffer_barriers_[pos]);
         if (pass.execute) {
             PassContext ctx(cmd, *this);
             pass.execute(ctx);

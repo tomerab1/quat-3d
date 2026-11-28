@@ -50,9 +50,9 @@ tree nor the build tree.
 | `include/engine/**` | the installed headers (see [What is stable](#what-is-stable)) and the generated `engine/version.hpp` |
 | `lib/` | the engine static libraries, and Slang's shared libraries on Linux/macOS |
 | `lib/cmake/quat3d/` | `quat3dConfig.cmake`, `quat3dConfigVersion.cmake`, `quat3dTargets*.cmake`, `quat3d-toolchain.cmake`, `Quat3dGame.cmake`, `Quat3dToolchainCheck.cmake` |
-| `bin/` | `quat-cook`, `slangc` (plus Slang's DLLs on Windows), `quat-mcp` (release archives), and the dependency DLLs on Windows |
+| `bin/` | `quat-cook`, `quat-pack`, `quat-player` and `quat-player-shipping` (P4: run and package a data-plus-Lua game), `slangc` (plus Slang's DLLs on Windows), `quat-mcp` (release archives), and the dependency DLLs on Windows |
 | `deps/` | the release half of the vcpkg tree the engine was built with: every library the engine links, plus GoogleTest. A game never runs vcpkg |
-| `share/quat3d/` | a data root: `cooked/shaders/` (the engine's shaders), `assets/shaders/lib/*.slang` (the modules material shaders import), `assets/fonts/` (the editor's fonts and icons), plus licences |
+| `share/quat3d/` | a data root: `cooked/shaders/` (the engine's shaders), `assets/shaders/lib/*.slang` (the modules material shaders import), `assets/fonts/` (the editor's fonts and icons), plus licences. It is also `quat-pack`'s engine root (`scripts/package-release.sh`, `scripts/smoke-test-package.sh`, `packaging/`), which `bin/quat-pack` finds on its own |
 
 ## Using it
 
@@ -118,6 +118,14 @@ Package variables:
 - `QUAT3D_SLANGC`, `QUAT3D_COOK`, `QUAT3D_MCP`;
 - `quat3d_VERSION`.
 
+A data-plus-Lua game (`game.json`, scenes, scripts; see
+[`game-packaging.md`](game-packaging.md)) needs no C++ at all: run it with
+`QUAT_GAME=<game> <sdk>/bin/quat-player` and package it with
+`<sdk>/bin/quat-pack <game> --player <sdk>/bin/quat-player --out dist`.
+`quat-pack` takes its engine root and cooked shaders from `<sdk>/share/quat3d`
+(`QUAT_ENGINE_ROOT` / `QUAT_SHADER_DIR` or `--engine-root` / `--shaders`
+override them).
+
 [`examples/sdk-consumer/`](../examples/sdk-consumer) is a complete, tested
 example: a component, a system, a remote method, a save chunk, a physics body,
 and GoogleTest from the SDK's `deps/`.
@@ -153,8 +161,8 @@ Installed headers (`cmake/Quat3dSdkHeaders.cmake`):
 
 | Set | Headers |
 |---|---|
-| **Stable API** | `engine/core/{error, json_fields, log, path_confine, sim_clock, utf8_path}.hpp` · `engine/scene/{components, scene, scene_io, component_json, scatter, ground_placement, camera_framing, navigation}.hpp` · `engine/physics/physics_world.hpp` · `engine/terrain/heightmap.hpp` · `engine/remote/rpc_server.hpp` · `engine/version.hpp` |
-| **Support** (the stable headers include them; same versioning) | `engine/animation/{animator, clip, foot_placement, inertialization, skeleton, two_bone_ik}.hpp` · `engine/asset/{asset_manager, material_params}.hpp` · `engine/audio/audio_types.hpp` · `engine/nav/navmesh.hpp` · `engine/renderer/{grass, particles}.hpp` (settings structs) · `engine/scene/animation_system.hpp` · `engine/terrain/generator.hpp` |
+| **Stable API** | `engine/core/{error, json_fields, log, path_confine, sim_clock, utf8_path}.hpp` · `engine/scene/{components, scene, scene_io, component_json, scatter, ground_placement, camera_framing, navigation}.hpp` · `engine/physics/physics_world.hpp` · `engine/project/game_project.hpp` · `engine/terrain/heightmap.hpp` · `engine/remote/rpc_server.hpp` · `engine/version.hpp` |
+| **Support** (the stable headers include them; same versioning) | `engine/animation/{animator, clip, foot_placement, inertialization, skeleton, two_bone_ik}.hpp` · `engine/asset/{asset_manager, material_params}.hpp` · `engine/audio/audio_types.hpp` · `engine/nav/navmesh.hpp` · `engine/renderer/{grass, particles, physical_camera}.hpp` (settings structs) · `engine/scene/animation_system.hpp` · `engine/terrain/generator.hpp` |
 
 Not installed, and not API:
 - `engine/rhi/*` and the renderer passes;

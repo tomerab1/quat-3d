@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <expected>
 #include <span>
+#include <vector>
 #ifdef ENGINE_DESCRIPTOR_SETS_FALLBACK
 #include <optional>
 #endif
@@ -123,6 +124,21 @@ private:
     VkSampler sampler_ = VK_NULL_HANDLE;
 };
 
+// One Vulkan memory heap as VMA sees it (profiling, R4). With
+// VK_EXT_memory_budget (Device::memory_budget) `budget` and `usage` are the
+// driver's numbers for the whole process; without it VMA estimates them
+// (budget 80% of the heap, usage = this allocator's blocks).
+struct GpuHeapStats {
+    std::uint32_t heap = 0;
+    bool          device_local = false;
+    VkDeviceSize  size = 0;             // heap size
+    VkDeviceSize  budget = 0;           // what the process may use
+    VkDeviceSize  usage = 0;            // what the process uses
+    VkDeviceSize  block_bytes = 0;      // VkDeviceMemory this allocator holds
+    VkDeviceSize  allocation_bytes = 0; // of which handed out to resources
+    std::uint32_t allocations = 0;
+};
+
 // Owns the VmaAllocator and is the single entry point for GPU allocations.
 class GpuAllocator {
 public:
@@ -152,6 +168,16 @@ public:
     create_image(VkFormat format, VkExtent2D extent, VkImageUsageFlags usage,
                  std::uint32_t mip_levels = 1, std::uint32_t array_layers = 1,
                  VkImageCreateFlags flags = 0);
+
+    // Per-heap budget and usage into `out` (cleared; heaps in Vulkan's
+    // order). Cheap: VMA keeps the numbers, refreshed by the driver about
+    // once per frame; reusing `out` makes it allocation-free.
+    void heap_stats(std::vector<GpuHeapStats>& out) const;
+
+    // A single-level VK_IMAGE_TYPE_3D image (e.g. a colour-grading LUT).
+    // Vulkan guarantees maxImageDimension3D >= 256.
+    [[nodiscard]] std::expected<GpuImage, core::Error>
+    create_image_3d(VkFormat format, VkExtent3D extent, VkImageUsageFlags usage);
 
 private:
     VmaAllocator allocator_ = nullptr;
@@ -211,6 +237,14 @@ upload_device_image(GpuAllocator& allocator, const TransferContext& transfer,
                     VkFormat format,
                     VkImageUsageFlags usage = VK_IMAGE_USAGE_SAMPLED_BIT,
                     std::uint32_t mip_levels = 1);
+
+// Creates a single-level 3D image and uploads `data` (tightly packed texels,
+// x fastest, then y, then z) through a staging buffer; left in
+// SHADER_READ_ONLY_OPTIMAL. SAMPLED and TRANSFER_DST are always added.
+[[nodiscard]] std::expected<GpuImage, core::Error>
+upload_device_image_3d(GpuAllocator& allocator, const TransferContext& transfer,
+                       const void* data, VkDeviceSize size, VkExtent3D extent, VkFormat format,
+                       VkImageUsageFlags usage = VK_IMAGE_USAGE_SAMPLED_BIT);
 
 // One mip level of a pre-built chain inside an upload blob: `offset`/`size`
 // locate the tightly packed texel blocks, `width`/`height` are the level's

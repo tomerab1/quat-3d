@@ -25,8 +25,10 @@ pub const SKILL_FILES: &[EmbeddedFile] = embed!("skills":
     "debug-physics-glitch/SKILL.md",
     "debug-session/SKILL.md",
     "design-npc-behaviour/SKILL.md",
+    "find-performance-problem/SKILL.md",
     "inspect-scene/SKILL.md",
     "playtest/SKILL.md",
+    "set-weather/SKILL.md",
     "tune-look/SKILL.md",
     "write-gameplay-script/SKILL.md",
 );
@@ -39,8 +41,10 @@ pub const PROMPT_FILES: &[EmbeddedFile] = embed!("prompts":
     "debug-physics-glitch.md",
     "debug-session.md",
     "design-npc-behaviour.md",
+    "find-performance-problem.md",
     "inspect-scene.md",
     "playtest.md",
+    "set-weather.md",
     "tune-look.md",
     "write-gameplay-script.md",
 );

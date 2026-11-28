@@ -1,5 +1,5 @@
-// glTF cook: parse + validate (the runtime's parse_gltf) -> meshes
-// (mesh_cook.cpp) -> images (KTX2) -> one compacted binary buffer plus an
+// glTF cook: parse + validate (the runtime's parse_gltf) -> material
+// rewrites -> meshes (mesh_cook.cpp) -> images (KTX2) -> one compacted binary buffer plus an
 // EXT_meshopt_compression fallback buffer -> export.
 
 #include <algorithm>
@@ -40,6 +40,17 @@ void drop_extension(fastgltf::Asset& asset, std::string_view name) {
     const auto is = [&](const auto& e) { return std::string_view(e) == name; };
     std::erase_if(asset.extensionsUsed, is);
     std::erase_if(asset.extensionsRequired, is);
+}
+
+// MaterialCookOptions::blend_to_mask_cutoff: BLEND -> MASK (before images
+// are cooked, so a newly masked base colour gets coverage-preserving mips).
+void rewrite_materials(fastgltf::Asset& asset, const MaterialCookOptions& o) {
+    if (!o.blend_to_mask_cutoff) return;
+    for (fastgltf::Material& m : asset.materials) {
+        if (m.alphaMode != fastgltf::AlphaMode::Blend) continue;
+        m.alphaMode = fastgltf::AlphaMode::Mask;
+        m.alphaCutoff = std::clamp(*o.blend_to_mask_cutoff, 0.0F, 1.0F);
+    }
 }
 
 struct CookedImages {
@@ -303,12 +314,15 @@ std::expected<CookStats, core::Error> cook_gltf(const fs::path& input, const fs:
         }
     }
 
+    rewrite_materials(asset, options.materials);
     auto images = cook_images(asset, options.textures, stats);
     if (!images) return std::unexpected(images.error());
     auto geo = detail::cook_meshes(asset, options.meshes);
     if (!geo) return std::unexpected(geo.error());
     stats.primitives_cooked = geo->cooked;
     stats.primitives_skipped = geo->skipped;
+    stats.triangles_before = geo->triangles_before;
+    stats.triangles_after = geo->triangles_after;
     std::vector<std::string> extras;
     if (auto ok = assemble(asset, *geo, *images, options.meshes, stats, extras); !ok) {
         return std::unexpected(ok.error());

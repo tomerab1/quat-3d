@@ -68,6 +68,26 @@ TEST(WorldPoseWriteback, SetWorldTransformKeepsTheParentSpace) {
     expect_mat_near(scene.registry().get<s::Transform>(p).local, target);
 }
 
+// A fly camera driving an authored, parented scene camera (non-editor
+// builds) places it in world space: the view is the requested one, not the
+// parent's transform applied on top of it.
+TEST(WorldPoseWriteback, ParentedCameraViewsFromTheRequestedPose) {
+    s::Scene scene;
+    const entt::entity p = make_rotated_parent(scene, {5.0F, 2.0F, -1.0F});
+    const entt::entity cam = scene.create_entity("camera");
+    scene.registry().emplace<s::Camera>(cam);
+    ASSERT_TRUE(scene.set_parent(cam, p));
+    scene.tick();
+
+    const glm::vec3 eye(-4.0F, 3.0F, 6.0F);
+    const glm::mat4 view = glm::lookAt(eye, glm::vec3(0.0F), glm::vec3(0.0F, 1.0F, 0.0F));
+    s::set_world_transform(scene.registry(), cam, glm::inverse(view));
+    scene.tick(); // propagation must reproduce the pose
+    const s::CameraMatrices m = s::camera_system(scene.registry(), 16.0F / 9.0F);
+    EXPECT_NEAR(glm::distance(m.position, eye), 0.0F, 1e-4F);
+    expect_mat_near(m.view, view);
+}
+
 TEST(WorldPoseWriteback, CharacterKeepsRotationScaleAndParentSpace) {
     auto created = PhysicsWorld::create();
     ASSERT_OK(created);

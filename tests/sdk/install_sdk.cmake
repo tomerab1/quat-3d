@@ -34,15 +34,21 @@ foreach(required
         # not cover (a new FetchContent dependency adds its own here).
         share/quat3d/licenses/acl-LICENSE
         share/quat3d/licenses/rtm-LICENSE
-        share/quat3d/licenses/slang-LICENSE)
+        share/quat3d/licenses/slang-LICENSE
+        # quat-pack's engine root (P4).
+        share/quat3d/scripts/package-release.sh
+        share/quat3d/scripts/smoke-test-package.sh
+        share/quat3d/packaging/game)
     if(NOT EXISTS "${PREFIX}/${required}")
         message(FATAL_ERROR "the installed SDK lacks ${required}")
     endif()
 endforeach()
 file(GLOB cook "${PREFIX}/bin/quat-cook*")
 file(GLOB slangc "${PREFIX}/bin/slangc*")
-if(NOT cook OR NOT slangc)
-    message(FATAL_ERROR "the installed SDK lacks bin/quat-cook or bin/slangc")
+file(GLOB pack "${PREFIX}/bin/quat-pack*")
+file(GLOB player "${PREFIX}/bin/quat-player*")
+if(NOT cook OR NOT slangc OR NOT pack OR NOT player)
+    message(FATAL_ERROR "the installed SDK lacks one of bin/quat-cook, bin/slangc, bin/quat-pack, bin/quat-player")
 endif()
 # Private and graphics-API headers stay out of the SDK.
 foreach(forbidden engine/rhi engine/cook engine/editor engine/renderer/mesh_pass.hpp

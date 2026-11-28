@@ -13,6 +13,7 @@
 
 #include <glm/glm.hpp>
 
+#include "engine/core/profile.hpp"
 #include "engine/rhi/device.hpp"
 #include "engine/rhi/pipeline_cache.hpp"
 
@@ -104,6 +105,7 @@ std::expected<void, core::Error> TaaHistory::ensure(VkExtent2D extent) {
         images_[0].image.handle() != VK_NULL_HANDLE) {
         return {};
     }
+    QUAT_ZONE_N("taa_history_resize"); // only on a new render extent
     // The other frame in flight may still read/write the old pair: retire it
     // instead of destroying it here (collect_retired frees it later).
     if (images_[0].image.handle() != VK_NULL_HANDLE) {

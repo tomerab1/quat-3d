@@ -10,6 +10,9 @@
 //     intersection solid angle, smoothstep approximation).
 //   * Contact shadows: a short screen-space march toward the light through
 //     the depth buffer (as in UE4/5 and Bend Studio's screen-space shadows).
+//   * Y. Wu, "Accurate Normal Reconstruction from Depth Buffer", 2021
+//     (choosing the depth-buffer neighbour on a texel's own surface by
+//     comparing the second differences on either side).
 
 static const float OCC_PI = 3.14159265358979;
 
@@ -51,20 +54,84 @@ public float gtao_specular_occlusion(float3 bent_normal, float visibility, float
     return saturate(cap_intersection(cos_vis, cos_spec, dot(bent_normal, r)) / max(spec_cap, 1e-4));
 }
 
+// A one-sided depth slope still counts as the texel's own surface while its
+// second difference (how much the slope changes over the next texel) stays
+// within this fraction of the slope itself: a curve that bends by less than
+// a factor of 1.5 per texel, such as a sphere's limb seen edge-on, keeps its
+// ramp. Anything sharper is a depth edge (a jump over one texel has a second
+// difference equal to the jump) and gets no ramp.
+static const float CONTACT_CURVE_LIMIT = 0.5;
+
+// Depth texel `p`, background (1) outside the image.
+float depth_texel(Texture2D depth, int2 p, int2 last) {
+    if (any(p < 0) || any(p > last)) {
+        return 1.0;
+    }
+    return depth.Load(int3(p, 0)).r;
+}
+
+// Slope of the depth buffer at `texel` along `axis` (depth units per texel),
+// given its neighbours `dm` (texel - axis) and `dp` (texel + axis). NDC depth
+// is affine in screen space over a plane, so through a planar footprint the
+// two one-sided differences agree (second difference within `tol`) and the
+// central difference is exact. Otherwise a depth edge or a curve runs beside
+// the texel: keep the side whose next texel continues the same surface, the
+// one-sided difference with the smaller second difference on its own side
+// (as in Y. Wu's depth-buffer normal reconstruction), so the slope never
+// spans the edge. That side is accepted within CONTACT_CURVE_LIMIT; a texel
+// that neither side continues (a feature one pixel thin) gets slope 0: its
+// own depth, never a ramp toward what is behind it.
+float depth_slope(Texture2D depth, int2 texel, int2 axis, int2 last, float dm, float d0,
+                  float dp, float tol) {
+    bool vm = all(texel - axis >= 0) && dm < 1.0;
+    bool vp = all(texel + axis <= last) && dp < 1.0;
+    float back = d0 - dm;
+    float fwd = dp - d0;
+    if (vm && vp && abs(fwd - back) <= tol) {
+        return 0.5 * (back + fwd);
+    }
+    float back_curve = 1e30;
+    float fwd_curve = 1e30;
+    if (vm) {
+        float dmm = depth_texel(depth, texel - 2 * axis, last);
+        if (dmm < 1.0) {
+            back_curve = abs(back - (dm - dmm));
+        }
+    }
+    if (vp) {
+        float dpp = depth_texel(depth, texel + 2 * axis, last);
+        if (dpp < 1.0) {
+            fwd_curve = abs((dpp - dp) - fwd);
+        }
+    }
+    float slope = back_curve <= fwd_curve ? back : fwd;
+    float curve = min(back_curve, fwd_curve);
+    return curve <= max(tol, CONTACT_CURVE_LIMIT * abs(slope)) ? slope : 0.0;
+}
+
 // Contact shadow: 1 = lit, 0 = a short ray toward the sun hits the depth
 // buffer. `clip0` / `clip1` are the ray's start and end in clip space
 // (perspective: clip.w is the view distance, compared against the depth
 // buffer linearised with depth_lin = (A, B): view distance = B / (d + A)).
-// The scene depth at each sample is the bilinear interpolation of the four
-// nearest depth texels: NDC depth is affine in screen space over a plane, so
-// a planar receiver is reconstructed exactly at the sample's sub-pixel
-// position and cannot shadow itself, even seen at a grazing angle where one
-// pixel spans metres of depth. Footprints touching the background fall back
-// to the nearest texel.
+//
+// The scene depth at each sample is the nearest texel's depth carried along
+// that texel's own surface (depth_slope per axis) to the sample's sub-pixel
+// position. NDC depth is affine in screen space over a plane, so a planar
+// receiver is reconstructed exactly and cannot shadow itself, even seen at a
+// grazing angle where one pixel spans metres of depth. Interpolating between
+// the 2x2 nearest texels instead is exact only on planes: across a depth
+// discontinuity (a sphere's silhouette in front of a floor) it invents a
+// surface in between, which floor rays crossing the silhouette hit in a
+// dotted halo (#86). The planarity tolerance is relative to d + A = B / w,
+// the reciprocal view distance: 1e-3 of it is a depth step of 0.1 % of the
+// distance, the same as the self-hit guard below, plus ~16 ulps of a D32
+// depth near 1. Standard Z is assumed (cleared to 1, background d >= 1): the
+// background tests here and in depth_slope flip for reversed Z.
 public float contact_shadow(Texture2D depth, SamplerState point_sampler, uint2 size,
                             float4 clip0, float4 clip1, float2 depth_lin, uint steps,
                             float thickness, float noise) {
     float2 fsize = float2(size);
+    int2 last = int2(size) - 1;
     for (uint i = 0; i < steps; ++i) {
         float t = (float(i) + noise) / float(steps);
         float4 c = lerp(clip0, clip1, t);
@@ -75,17 +142,21 @@ public float contact_shadow(Texture2D depth, SamplerState point_sampler, uint2 s
         if (any(uv <= 0.0) || any(uv >= 1.0)) {
             break;
         }
-        // Gather order: x = (0,1), y = (1,1), z = (1,0), w = (0,0) of the 2x2.
-        float4 g = depth.GatherRed(point_sampler, uv);
-        float2 f = frac(uv * fsize - 0.5);
-        float d;
-        if (any(g >= 1.0)) {
-            d = depth.Load(int3(int2(uv * fsize), 0)).r;
-        } else {
-            float top = lerp(g.w, g.z, f.x);
-            float bottom = lerp(g.x, g.y, f.x);
-            d = lerp(top, bottom, f.y);
+        float2 p = uv * fsize;
+        int2 texel = min(int2(p), last);
+        float2 offset = p - (float2(texel) + 0.5); // [-0.5, 0.5] texels
+        // Gather order: x = (0,1), y = (1,1), z = (1,0), w = (0,0) of the 2x2;
+        // `lo` covers texel-1 .. texel, `hi` covers texel .. texel+1.
+        float4 lo = depth.GatherRed(point_sampler, float2(texel) / fsize);
+        float4 hi = depth.GatherRed(point_sampler, float2(texel + 1) / fsize);
+        float d0 = lo.y;
+        if (d0 >= 1.0) {
+            continue;
         }
+        float tol = 1e-3 * abs(d0 + depth_lin.x) + 1e-6;
+        float sx = depth_slope(depth, texel, int2(1, 0), last, lo.x, d0, hi.z, tol);
+        float sy = depth_slope(depth, texel, int2(0, 1), last, lo.z, d0, hi.x, tol);
+        float d = d0 + offset.x * sx + offset.y * sy;
         if (d >= 1.0) {
             continue;
         }

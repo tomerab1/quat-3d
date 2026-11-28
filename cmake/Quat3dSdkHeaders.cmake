@@ -26,6 +26,7 @@ set(QUAT3D_SDK_STABLE_HEADERS
     engine/core/sim_clock.hpp
     engine/core/utf8_path.hpp
     engine/physics/physics_world.hpp
+    engine/project/game_project.hpp
     engine/remote/rpc_server.hpp
     engine/scene/camera_framing.hpp
     engine/scene/component_json.hpp
@@ -50,6 +51,7 @@ set(QUAT3D_SDK_SUPPORT_HEADERS
     engine/nav/navmesh.hpp
     engine/renderer/grass.hpp
     engine/renderer/particles.hpp
+    engine/renderer/physical_camera.hpp
     engine/scene/animation_system.hpp
     engine/terrain/generator.hpp)
 

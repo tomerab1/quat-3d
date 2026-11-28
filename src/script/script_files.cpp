@@ -7,6 +7,7 @@
 #include <entt/entity/registry.hpp>
 
 #include "engine/core/log.hpp"
+#include "engine/core/profile.hpp"
 #include "engine/scene/scene.hpp"
 #include "engine/scene/script_component.hpp"
 #include "engine/script/script_source.hpp"
@@ -106,6 +107,7 @@ void ScriptRuntime::poll_changes() {
 }
 
 void ScriptRuntime::reload(std::string_view path_view) {
+    QUAT_ZONE_N("script_reload");
     const std::string path(path_view);
     impl_->descriptions.erase(path);
     if (impl_->session) {

@@ -24,6 +24,7 @@ set(QUAT3D_SDK_CXX_COMPILER_ID "@CMAKE_CXX_COMPILER_ID@")
 set(QUAT3D_SDK_CXX_COMPILER_VERSION "@CMAKE_CXX_COMPILER_VERSION@")
 set(QUAT3D_SDK_STDLIB "@QUAT3D_SDK_STDLIB@")
 set(QUAT3D_SDK_EDITOR @ENGINE_EDITOR@)
+set(QUAT3D_SDK_PROFILE @ENGINE_PROFILE@)
 
 # --- Toolchain match --------------------------------------------------------
 include("${CMAKE_CURRENT_LIST_DIR}/Quat3dToolchainCheck.cmake")
@@ -109,6 +110,10 @@ find_dependency(GameNetworkingSockets CONFIG)
 find_dependency(sol2 CONFIG)
 find_dependency(Lua)
 find_dependency(OpenSSL COMPONENTS Crypto)
+# Tracy (ENGINE_PROFILE builds): engine_core links its client publicly.
+if(QUAT3D_SDK_PROFILE)
+    find_dependency(Tracy CONFIG)
+endif()
 if(QUAT3D_SDK_EDITOR)
     find_dependency(SDL3 CONFIG)
     find_dependency(imgui CONFIG)

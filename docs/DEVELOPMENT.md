@@ -22,11 +22,14 @@ the current state is in [`STATUS.md`](STATUS.md).
 | Preset | Use |
 |---|---|
 | `debug` | clang + libc++, validation layers on |
-| `release` | clang + libc++, optimised (Tracy enabled via `ENGINE_PROFILE`) |
+| `release` | clang + libc++, optimised, Tracy compiled in (`ENGINE_PROFILE=ON`) |
 | `windows-release` | MSVC 2022 (run from an x64 developer prompt), `x64-windows` triplet |
 | `macos-release` | Apple clang, `arm64-osx-14` triplet (macOS 14 minimum), MoltenVK — sets `ENGINE_DESCRIPTOR_SETS_FALLBACK=ON` |
 
-CMake options: `ENGINE_EDITOR` (default ON), `ENGINE_PROFILE`,
+CMake options: `ENGINE_EDITOR` (default ON), `ENGINE_PROFILE` (the Tracy
+client, R4: default ON for Debug / RelWithDebInfo, OFF for Release; it also
+selects the vcpkg manifest feature `profiling`, so OFF builds never build
+Tracy; see [`profiling.md`](profiling.md)),
 `ENGINE_DESCRIPTOR_SETS_FALLBACK` (macOS / drivers without descriptor buffers),
 `ENGINE_PACKAGE_BUILD` (release archives: no source-tree paths compiled in —
 the game finds `assets/` + `cooked/shaders/` next to its executable or in
@@ -34,9 +37,18 @@ the game finds `assets/` + `cooked/shaders/` next to its executable or in
 
 Targets: the engine libraries (`engine_core`, `engine_rhi`, `engine_renderer`,
 `engine_scene`, `engine_physics`, `engine_animation`, `engine_terrain`,
-`engine_nav`, `engine_net`, `engine_remote`, `engine_audio`, `engine_editor`), the `game`
-executable, the offline cooker (`engine_cook` + the `quat-cook` CLI, never
-linked into the game) and the GoogleTest suite `engine_tests` (`tests/`).
+`engine_nav`, `engine_net`, `engine_remote`, `engine_audio`, `engine_project`,
+`engine_editor`), the `game` executable (the editor when `ENGINE_EDITOR` is
+on), `quat-player` (the runtime player games ship with — always without the
+editor) and `quat-player-shipping` (the same with remote control compiled out,
+`QUAT_SHIPPING`; what shipping packages contain), the game packager
+`quat-pack` (`engine_pack`), the offline cooker (`engine_cook` + the
+`quat-cook` CLI, never linked into the game or the players) and the
+GoogleTest suite `engine_tests` (`tests/`). `ENGINE_EDITOR` is a per-target
+definition (the `engine_editor_build` interface target), not a global one, so
+one editor build produces both executables from the same application sources
+(`game_world` / `game_world_runtime` are the two builds of the window-free
+world layer).
 
 ## Testing
 
@@ -166,6 +178,29 @@ Cooked files target the engine: see the normal-map note below.
   codec v0 as the extension requires). Primitives with morph targets, or
   whose accessors other primitives share differently, are copied unchanged.
 - Buffers are compacted to the data the output still references.
+- **Level of detail** (`--simplify R`): before the passes above, each
+  primitive is reduced to about R of its triangles with meshoptimizer's
+  attribute-aware simplifier (normals and UVs weigh in; error bound
+  `--simplify-error`, relative to the model's size). When the bound stops it
+  above the target, the result is kept: the LOD misses its budget rather than
+  change shape. Foliage made of
+  thousands of disconnected cards or needle clusters cannot be simplified
+  that way (small cards vanish within the error bound and the canopy
+  empties), so a primitive of at least 64 position-welded components that
+  average fewer than 24 triangles is thinned instead (stochastic
+  simplification of aggregate detail, Cook et al. 2007), as foliage LODs usually are: a deterministic
+  subset of whole components (cards, needle clusters) is kept and each grows
+  about its centre by 1/sqrt(kept share), so the canopy keeps its projected
+  area. (Vertex clustering merges neighbouring cards into large triangles
+  whose UVs span unrelated texels; alpha-tested, those render as shards.)
+  Vertices another primitive also uses are not moved. The cook writes one
+  level; a manifest that wants several cooks several outputs (see
+  `scripts/fetch-polyhaven.py`). Runtime LOD selection is not implemented yet.
+- **Material rewrites** (`--blend-to-mask C`): scanned foliage is often
+  exported as glTF BLEND, which the engine draws in the sorted forward pass
+  without cut-out shadows; this turns every BLEND material into MASK with
+  alpha cutoff C (before the textures are encoded, so the base colour gets
+  coverage-preserving mips).
 
 | Option | Default | |
 |---|---|---|
@@ -178,6 +213,8 @@ Cooked files target the engine: see the normal-map note below.
 | `--no-optimize`, `--no-quantize`, `--no-compress` | | skip the mesh passes |
 | `--position-bits N`, `--normal-bits 8\|16` | 16, 8 | quantisation precision |
 | `--threads N` | all cores | texture encoder threads |
+| `--simplify R` / `--simplify-error E` | 1 / 0.01 | keep about R (0..1] of each primitive's triangles |
+| `--blend-to-mask C` | off | BLEND materials become MASK with alpha cutoff C |
 
 At load the engine picks the transcode target from what the device samples
 (`rhi::TextureCaps`, enabled at device creation):
@@ -282,7 +319,7 @@ target recreated by the config, like `quat3d_deps::lua`).
 
 ## Releases
 
-`.github/workflows/release.yml` builds `game` in Release with
+`.github/workflows/release.yml` builds `game`, `quat-player` and `quat-pack` in Release with
 `ENGINE_PACKAGE_BUILD=ON` on all three OSes (toolchain setup shared with CI
 through `.github/actions/setup-build`), packages it with
 `scripts/package-release.sh`, and smoke-tests each package with
@@ -294,6 +331,7 @@ a clean exit, a screenshot, and data resolved next to the executable):
 | `quat-3d-<v>-linux-x64.tar.gz` | `game` (RUNPATH `$ORIGIN/lib`), `lib/` libc++ runtime, data | Xvfb + lavapipe |
 | `quat-3d-<v>-windows-x64.zip` | `game.exe`, vcpkg DLLs (applocal), MSVC runtime DLLs, data | lavapipe |
 | `quat-3d-<v>-macos-arm64.zip` | `Quat3D.app`: Vulkan loader + MoltenVK in `Frameworks/` (ICD manifest in `Resources/vulkan/icd.d`), data in `Resources/`, ad-hoc signed | MoltenVK, with Homebrew's Vulkan uninstalled first |
+| `coin-collector-<v>[-dev.<sha>]-<os>.{tar.gz,zip}` | The sample game through `quat-pack`: `coin-collector` / `coin-collector.exe` / `Coin Collector.app` (Info.plist and icon from `game.json`) next to `game.json`, `manifest.json` and only the data it uses | as above, plus the start scene must load |
 
 Each archive carries `packaging/README-RUN-<os>.txt` as `README-RUN.txt`.
 The same job then runs `ctest -L sdk` and packages the engine SDK with
@@ -305,14 +343,51 @@ Pushing a `v*` tag publishes a GitHub Release (tags with a `-`, e.g.
 (`gh workflow run release.yml --ref <branch>`) only uploads the packages as
 workflow artifacts.
 
+## Game projects and packaging
+
+Games live in `games/<name>/` with a `game.json` (docs/game-packaging.md):
+
+```sh
+QUAT_GAME=games/coin-collector ./build/release/game          # edit it in the editor
+QUAT_GAME=games/coin-collector ./build/release/quat-player   # play it, no editor
+./build/release/quat-pack games/coin-collector --player ./build/release/quat-player \
+    --out dist [--config development] [--smoke-test] [--stage-only]
+```
+
+`quat-pack` validates `game.json`, collects the files the game references
+(the start scene and scenes in `content` roots → models, audio, scripts; Lua
+`require`s and script literals), cooks models with `quat-cook` when it is
+next to `quat-pack` or on `PATH` (R17), stages the data root with
+`manifest.json`, and lays out the package with
+`scripts/package-release.sh` (`--stage-only` stops after staging). Progress
+lines (`[pack] step i/n ...`, `[pack] package <archive>`) drive the editor's
+*File → Build & Export…* dialog and the remote `project.build` /
+`project.build_status` methods, which run it in the background. Development
+builds of `quat-pack` find the cooked shaders and scripts in the source
+tree; package builds take `--shaders` and `--engine-root` (or
+`QUAT_SHADER_DIR` / `QUAT_ENGINE_ROOT`). On Windows the layout runs under
+Git Bash (`QUAT_BASH` overrides where it is).
+
+The player resolves its game from `QUAT_GAME`, else `game.json` in the data
+root next to the executable; it changes the working directory to the game
+project so scene-relative paths resolve the same everywhere. Shipping
+packages contain `quat-player-shipping`, which has no remote control at all;
+`quat-player` honours `QUAT_REMOTE` only outside a package or in a package
+whose `manifest.json` says `development` (missing or invalid: shipping), and
+`QUAT_GAME` cannot raise that. `quat-pack --out` / `project.build` `output`
+may not equal, lie inside or contain a content root or the start scene's
+folder.
 ### Screenshots
 
 After the tests (also when they fail), the `linux` job renders a fixed set of
 scenes with the real `game` binary on lavapipe under Xvfb —
 `scripts/ci-screenshots.sh`: the showcase with and without the editor UI,
-`QUAT_TERRAIN=1` and `QUAT_PHYSICS=1`, each with a frame budget, muted audio
-and a per-scene timeout (`SCENE_TIMEOUT`, default 300 s) so a hang fails that
-scene instead of the job. Each final frame is converted to PNG
+`QUAT_TERRAIN=1`, `QUAT_PHYSICS=1`, the mountain-forest showcase
+(`QUAT_DEMO=mountain`), an HDRI-lit showcase (`QUAT_HDRI`, the
+CC0 panorama fetched by `scripts/fetch-hdri.sh`), the world clock at sunrise, solar
+noon and sunset (`QUAT_TIME`, frozen) and the editor's world-clock Inspector, each with a frame budget, muted audio
+and a per-scene timeout (`SCENE_TIMEOUT`, default 300 s; a scene row can raise its
+own) so a hang fails that scene instead of the job. Each final frame is converted to PNG
 (`scripts/ppm_to_png.py`, halved when 1280 px or wider, except the editor capture, kept full size so its UI stays readable). A crash, timeout or
 missing image is listed in the step summary with the log tail and an
 `::error` annotation. The step is `continue-on-error` for now (temporary,
@@ -342,9 +417,37 @@ Where the images land:
   `git push --force origin tmp:ci-screenshots`. To read them without the browser:
   `git fetch origin ci-screenshots && git show origin/ci-screenshots:index.md`.
 
+Scenes built from downloaded CC0 assets (the `cinematic` row) need them
+fetched first: before the Screenshots step, CI runs
+`scripts/fetch-polyhaven.py` on every `assets/showcase/*/assets.json` with
+the build's `quat-cook`, caching the result (`actions/cache`, keyed on the
+manifests, the fetch script and the cooker sources). Fetching is
+`continue-on-error` with a 25-minute timeout, and its downloads and cooked models are cached separately; a row whose manifest is not satisfied is reported as
+*skipped (assets not fetched)*, not as a failure. See
+[`cinematic-showcase.md`](cinematic-showcase.md).
+
 Run locally: `scripts/ci-screenshots.sh build/release/game /tmp/shots`
 (`SCENES="showcase physics"` picks a subset; needs `xvfb` and
 `mesa-vulkan-drivers`).
+
+## Generated assets
+
+The nature models in `assets/meshes/nature/` (conifers and their
+distant-forest variants, broadleaf trees, rocks, a bush) are generated, not
+authored: `tools/asset-gen` builds them procedurally from a seed and writes
+glTF 2.0 binaries. The `quat-asset-gen` tool is not part of the default
+build (`EXCLUDE_FROM_ALL`; its library is built for `engine_tests`); after
+changing the generator, build it explicitly and regenerate:
+
+```sh
+cmake --build --preset release --target quat-asset-gen
+./build/release/tools/asset-gen/quat-asset-gen assets/meshes/nature   # --seed N (default 1)
+```
+
+`AssetGen.CommittedAssetsAreCurrent` fails while the committed files are
+stale. The mountain showcase (`assets/scenes/mountain_forest.json`) scatters
+them; `MountainScene.*` checks its instance counts and that every placement
+respects its layer's slope / height limits.
 
 ## Building in a cloud container
 
@@ -427,9 +530,29 @@ git clone --depth 1 --branch v5.4.8 https://github.com/lua/lua.git $S/lua
 EXTRA_FLAGS="-isystem $S/sol2/include -isystem $S/lua" scripts/check-compile.sh src/script/*.cpp
 ```
 
+Both profiling configurations must compile: the default above is
+`ENGINE_PROFILE=OFF`. For `ON`, clone Tracy at the vcpkg version
+(`git clone --depth 1 --branch v0.13.1 https://github.com/wolfpld/tracy.git`)
+and add `EXTRA_FLAGS="-DQUAT_TRACY -DTRACY_ENABLE -DTRACY_ON_DEMAND -isystem
+<tracy>/public"`.
+
 This catches compile errors and warnings, not link errors or test failures.
 `scripts/check-compile.sh <files...>` wraps exactly this (set `DEPS` if the
-clones live elsewhere than `~/deps`).
+clones live elsewhere than `~/deps`). Files under `src/app/` and
+`src/player/` are checked three times — the editor build, `quat-player`
+(no `ENGINE_EDITOR`) and `quat-player-shipping` (`QUAT_SHIPPING`) — the
+last two without the source-tree path macros. Also needed for the whole tree:
+ImGuizmo (`-isystem <clone>/src`), nlohmann-json, glm and the Vulkan headers
+(through `EXTRA_FLAGS` when not installed), and libc++ (`apt-get install
+libc++-dev libc++abi-dev`).
+
+The `quat_player_shipping_has_no_remote` check (`cmake/CheckNoRemoteControl.cmake`)
+can be approximated without a link: compile the shipping player's app-layer
+sources (`QUAT_SHIPPING_APP_SOURCES` with `-DQUAT_SHIPPING`, plus
+`game_world_runtime`'s sources without it) with `-c -O2` and run its pattern
+over `nm -C` of the objects. Data types in `engine::remote::` count: remote-only
+wiring (screenshot cameras, `terrain.status`) belongs in code compiled per
+executable, guarded by `QUAT_SHIPPING`, not in the shared world library.
 
 Modules whose dependencies are header-only (animation and terrain need glm;
 remote needs nlohmann-json and glm — `apt-get install nlohmann-json3-dev

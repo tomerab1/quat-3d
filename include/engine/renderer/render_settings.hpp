@@ -14,9 +14,12 @@
 
 #include <optional>
 #include <span>
+#include <string>
 #include <string_view>
 
 #include "engine/renderer/cloud_settings.hpp"
+#include "engine/renderer/post_settings.hpp"
+#include "engine/renderer/reflection_settings.hpp"
 #include "engine/renderer/shadow_ao_settings.hpp"
 #include "engine/renderer/upscaler_settings.hpp"
 
@@ -25,6 +28,9 @@ namespace engine::renderer {
 // Histogram auto-exposure (ExposurePass) and the exposure the tonemap applies.
 struct ExposureSettings {
     bool  auto_exposure   = true;  // adapt to the measured scene luminance
+    // R20: exposure from the active camera's aperture / shutter / ISO (EV100);
+    // takes precedence over auto_exposure. The compensation still applies.
+    bool  physical        = false;
     float compensation_ev = 0.0F;  // bias in stops (manual mode: exposure = 2^EV)
     float key             = 0.18F; // mid-grey the adapted luminance maps to
     float min_exposure    = 0.05F; // auto exposure multiplier clamp
@@ -50,9 +56,13 @@ struct TaaSettings {
     float feedback = 0.9F;
 };
 
-// Image-based ambient + reflections (dynamic IBL probe).
+// Image-based ambient + reflections (dynamic IBL probe or HDRI). R21:
+// multiple-scattering GGX energy compensation and horizon occlusion of
+// normal-mapped reflections.
 struct IblSettings {
     float intensity = 1.0F;
+    bool  multiscatter = true;
+    bool  horizon_occlusion = true;
 };
 
 struct RenderSettings {
@@ -64,23 +74,35 @@ struct RenderSettings {
     GtaoSettings     ao;              // ground-truth ambient occlusion (R12)
     ContactShadowSettings contact_shadows; // screen-space contact shadows (R12)
     IblSettings      ibl;
+    EnvironmentSettings environment; // R21: sky source (procedural / HDRI)
+    SsrSettings      ssr;            // R21: screen-space reflections
     // CloudSettings::time_s is frame-loop state, not a setting: the renderer
     // overwrites it each frame and the table does not list it.
     CloudSettings    clouds;
+    // R20: the cinematic post stack (post_settings.hpp).
+    DofSettings        dof;
+    MotionBlurSettings motion_blur;
+    TonemapSettings    tonemap;
+    GradingSettings    grading;
+    FilmSettings       film;
 };
 
 // ---- Descriptor table ----------------------------------------------------------
 
 // `choice`: an int field holding an index into RenderSettingDesc::choices,
-// encoded by name in JSON (an enum such as the upscaler mode).
-enum class RenderSettingType { boolean, number, integer, choice };
+// encoded by name in JSON (an enum such as the upscaler mode). `path`: a
+// std::string holding a project-relative file path ("" = none) whose
+// required extension is the descriptor's `unit`; the codec checks its form
+// (check_render_setting_path), the consumer loads it as untrusted data.
+enum class RenderSettingType { boolean, number, integer, choice, path };
 
 // Where a field lives in a RenderSettings; exactly one pointer is set,
 // matching the field's type.
 struct RenderSettingRef {
-    bool*  b = nullptr;
-    float* f = nullptr;
-    int*   i = nullptr;
+    bool*        b = nullptr;
+    float*       f = nullptr;
+    int*         i = nullptr;
+    std::string* s = nullptr;
 };
 
 struct RenderSettingGroup {
@@ -129,12 +151,25 @@ struct DeprecatedRenderSetting {
 [[nodiscard]] const DeprecatedRenderSetting* find_deprecated_render_setting(
     std::string_view group, std::string_view name);
 
-// Value as a float (booleans 0 / 1).
+// Value as a float (booleans 0 / 1; `path` fields: 0).
 [[nodiscard]] float render_setting_value(const RenderSettings& settings,
                                          const RenderSettingDesc& field);
 // Stores `value` (clamped into the field's range; booleans: != 0, integers:
-// rounded).
+// rounded). No effect on `path` fields.
 void set_render_setting(RenderSettings& settings, const RenderSettingDesc& field, float value);
+
+// Text of a `path` field ("" for other types).
+[[nodiscard]] std::string render_setting_text(const RenderSettings& settings,
+                                              const RenderSettingDesc& field);
+// Stores the text of a `path` field after check_render_setting_path; false
+// (unchanged) when it does not pass or the field is not a path.
+bool set_render_setting_text(RenderSettings& settings, const RenderSettingDesc& field,
+                             std::string_view text);
+// Why `text` is not an acceptable value of the `path` field `field` (empty
+// when it is): at most 256 bytes of printable characters, relative, no `..`
+// segment, ending in the field's extension. "" (none) is always acceptable.
+[[nodiscard]] std::string check_render_setting_path(const RenderSettingDesc& field,
+                                                    std::string_view text);
 
 // Restores one group's defaults (empty `group`: every group). False for an
 // unknown group name.

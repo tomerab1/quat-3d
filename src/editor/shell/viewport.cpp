@@ -14,6 +14,7 @@
 #include <ImGuizmo.h> // must follow imgui.h
 
 #include "../picking.hpp"
+#include "../time_of_day_panel.hpp"
 #include "../ui/fonts.hpp"
 #include "../ui/icons.hpp"
 #include "../ui/metrics.hpp"
@@ -56,7 +57,7 @@ void gizmo(EditorShell& shell, const ImVec2& min, const ImVec2& max) {
     entt::registry& r = ctx.scene->registry();
     if (!shell.has_selection()) return;
     auto* transform = r.try_get<scene::Transform>(shell.selected);
-    if (transform == nullptr) return;
+    if (transform == nullptr || clock_only_entity(r, shell.selected)) return; // nothing to move
 
     ImGuizmo::SetOrthographic(false);
     ImGuizmo::SetDrawlist(ImGui::GetWindowDrawList());

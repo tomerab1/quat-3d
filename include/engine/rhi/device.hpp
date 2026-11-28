@@ -120,12 +120,33 @@ public:
     void simulate_missing_extended_storage_formats(bool missing) {
         simulate_missing_extended_formats_ = missing;
     }
+    // VK_EXT_memory_budget, enabled whenever offered: VMA then reports the
+    // driver's per-heap budget and usage instead of estimates (R4).
+    [[nodiscard]] bool memory_budget() const { return memory_budget_; }
+    // Which calibrated-timestamps extension is enabled (whenever offered),
+    // for correlating GPU and CPU timestamps (R4 GPU profiling).
+    enum class CalibratedTimestamps : std::uint8_t { none, khr, ext };
+    [[nodiscard]] CalibratedTimestamps calibrated_timestamps() const {
+        return calibrated_timestamps_;
+    }
+
     // Whether the depthClamp feature is enabled (it is whenever offered).
     [[nodiscard]] bool depth_clamp() const {
         return depth_clamp_ && !simulate_missing_depth_clamp_;
     }
     // Tests: behave as a device without depthClamp.
     void simulate_missing_depth_clamp(bool missing) { simulate_missing_depth_clamp_ = missing; }
+    // Whether VK_KHR_swapchain_mutable_format is enabled (surface devices
+    // whose driver offers it): the Swapchain then creates its sRGB images
+    // mutable-format with a UNORM view each (Swapchain::unorm_image_views).
+    [[nodiscard]] bool swapchain_mutable_format() const {
+        return swapchain_mutable_format_ && !simulate_missing_swapchain_mutable_format_;
+    }
+    // Behave as a device without it (tests; QUAT_NO_MUTABLE_SWAPCHAIN=1
+    // exercises the editor UI's copy-composite fallback in the real game).
+    void simulate_missing_swapchain_mutable_format(bool missing) {
+        simulate_missing_swapchain_mutable_format_ = missing;
+    }
 
 private:
     void destroy() noexcept;
@@ -150,6 +171,10 @@ private:
     bool                     simulate_missing_extended_formats_ = false;
     bool                     depth_clamp_ = false;
     bool                     simulate_missing_depth_clamp_ = false;
+    bool                     swapchain_mutable_format_ = false;
+    bool                     simulate_missing_swapchain_mutable_format_ = false;
+    bool                     memory_budget_ = false;
+    CalibratedTimestamps     calibrated_timestamps_ = CalibratedTimestamps::none;
 };
 
 } // namespace engine::rhi

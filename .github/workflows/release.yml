@@ -1,10 +1,13 @@
 name: Release
 
-# Downloadable builds of the game/editor for Linux, Windows and macOS.
+# Downloadable builds of the game/editor for Linux, Windows and macOS, and of
+# the sample game made with it (games/coin-collector, ROADMAP P4).
 #   - Tag push v*: build, package, smoke-test, publish a GitHub Release.
-#   - workflow_dispatch: the same builds, uploaded as workflow artifacts only.
-# Packaging: scripts/package-release.sh; smoke test (launch the unpacked
-# package headless for 30 frames): scripts/smoke-test-package.sh.
+#   - workflow_dispatch: the same builds, uploaded as workflow artifacts only
+#     (a playable test build of the sample game per OS).
+# Packaging: scripts/package-release.sh (engine) and quat-pack (games, which
+# lays out through the same script); smoke test (launch the unpacked package
+# headless for 30 frames): scripts/smoke-test-package.sh.
 on:
   push:
     tags: ["v*"]
@@ -61,7 +64,7 @@ jobs:
 
       - name: Build
         if: steps.configure.outcome == 'success'
-        run: cmake --build --preset ${{ matrix.preset }} --target game
+        run: cmake --build --preset ${{ matrix.preset }} --target game quat-player quat-player-shipping quat-pack
 
       # Tags must look like v1.2.3 or v1.2.3-rc.1: the version ends up in file
       # names, Info.plist and the release title.
@@ -93,6 +96,26 @@ jobs:
           echo "archive=dist/$(basename "$archive")" >> "$GITHUB_OUTPUT"
           ls -l dist
 
+      # The sample game through quat-pack (packaged before any smoke test: the
+      # macOS one uninstalls Homebrew's Vulkan, which the bundle copies from).
+      # A package build of quat-pack has no source-tree defaults, so the
+      # shaders and the layout scripts are passed explicitly. Tags package the
+      # game's own version; other runs add the commit as the build id.
+      - name: Package the sample game
+        id: package-game
+        shell: bash
+        env:
+          BUILD_DIR: build/${{ matrix.preset }}
+        run: |
+          build_id=()
+          if [ "$GITHUB_REF_TYPE" != "tag" ]; then build_id=(--build-id "dev.${GITHUB_SHA::7}"); fi
+          "$BUILD_DIR/quat-pack" games/coin-collector --player "$BUILD_DIR/quat-player" \
+            --out dist-game --shaders cooked/shaders --engine-root . "${build_id[@]}" | tee pack.log
+          archive=$(sed -n 's/^\[pack\] package //p' pack.log | tail -n1)
+          [ -n "$archive" ] || { echo "::error::quat-pack wrote no package"; exit 1; }
+          echo "archive=dist-game/$(basename "$archive")" >> "$GITHUB_OUTPUT"
+          ls -l dist-game
+
       # Unpacked under a directory with a space and a non-ASCII character:
       # the game must resolve its data through UTF-8-safe paths.
       - name: Smoke test (launch the package headless)
@@ -101,6 +124,17 @@ jobs:
         env:
           ARCHIVE: ${{ steps.package.outputs.archive }}
         run: bash scripts/smoke-test-package.sh "$ARCHIVE" "$RUNNER_TEMP/smoke dir ü 画"
+
+      # The game must boot its start scene from the package, found next to
+      # the executable, under the same non-ASCII path.
+      - name: Smoke test the sample game
+        timeout-minutes: 15
+        shell: bash
+        env:
+          ARCHIVE: ${{ steps.package-game.outputs.archive }}
+        run: |
+          bash scripts/smoke-test-package.sh "$ARCHIVE" "$RUNNER_TEMP/game smoke ü 画" \
+            --exe coin-collector --expect "[game] start scene loaded"
 
       - name: Upload package
         uses: actions/upload-artifact@v4
@@ -111,6 +145,14 @@ jobs:
           # Already compressed.
           compression-level: 0
 
+      - name: Upload the sample game
+        uses: actions/upload-artifact@v4
+        with:
+          name: coin-collector-${{ matrix.name }}
+          path: ${{ steps.package-game.outputs.archive }}
+          if-no-files-found: error
+          compression-level: 0
+
       - name: Upload smoke-test output on failure
         if: failure()
         uses: actions/upload-artifact@v4
@@ -119,6 +161,9 @@ jobs:
           path: |
             ${{ runner.temp }}/smoke dir ü 画/smoke.log
             ${{ runner.temp }}/smoke dir ü 画/smoke.ppm
+            ${{ runner.temp }}/game smoke ü 画/smoke.log
+            ${{ runner.temp }}/game smoke ü 画/smoke.ppm
+            pack.log
             build/${{ matrix.preset }}/vcpkg-manifest-install.log
           if-no-files-found: ignore
 
@@ -179,6 +224,12 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           pattern: quat-3d-*
+          path: dist
+          merge-multiple: true
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: coin-collector-*
           path: dist
           merge-multiple: true
 

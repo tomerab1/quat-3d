@@ -157,13 +157,22 @@ install(FILES
 # ---------------------------------------------------------------------------
 # Tools: quat-cook, slangc (with the shared libraries it loads), quat-mcp.
 # ---------------------------------------------------------------------------
-install(TARGETS quat-cook RUNTIME DESTINATION bin)
-if(TARGET quat-pack) # P4 (#55)
-    install(TARGETS quat-pack RUNTIME DESTINATION bin)
-endif()
+# quat-pack and the stock players (P4): a data-plus-Lua game runs in
+# quat-player and ships with quat-pack. quat-pack finds the engine root it
+# packages with (scripts/ + packaging/) and the cooked shaders in
+# share/quat3d (engine::pack::apply_installed_sdk_defaults).
+set(quat3d_sdk_programs quat-cook)
+foreach(program quat-pack quat-player quat-player-shipping)
+    if(TARGET ${program})
+        list(APPEND quat3d_sdk_programs ${program})
+    endif()
+endforeach()
+install(TARGETS ${quat3d_sdk_programs} RUNTIME DESTINATION bin BUNDLE DESTINATION bin)
 if(WIN32)
     # The x64-windows triplet links dependencies as DLLs.
-    install(FILES $<TARGET_RUNTIME_DLLS:quat-cook> DESTINATION bin)
+    foreach(program IN LISTS quat3d_sdk_programs)
+        install(FILES $<TARGET_RUNTIME_DLLS:${program}> DESTINATION bin)
+    endforeach()
 endif()
 
 # Slang's release layout is bin/slangc + lib/ (shared libraries found through
@@ -212,6 +221,13 @@ install(DIRECTORY ${PROJECT_SOURCE_DIR}/assets/fonts/
 # (cmake/FetchAcl.cmake). sdk_install requires every file named here.
 install(FILES ${acl_SOURCE_DIR}/LICENSE DESTINATION ${QUAT3D_SHARE_DIR}/licenses RENAME acl-LICENSE)
 install(FILES ${rtm_SOURCE_DIR}/LICENSE DESTINATION ${QUAT3D_SHARE_DIR}/licenses RENAME rtm-LICENSE)
+# quat-pack's engine root (P4): the per-OS package layout script, the smoke
+# test it runs, and the README / Info.plist templates it fills in.
+install(PROGRAMS
+    ${PROJECT_SOURCE_DIR}/scripts/package-release.sh
+    ${PROJECT_SOURCE_DIR}/scripts/smoke-test-package.sh
+    DESTINATION ${QUAT3D_SHARE_DIR}/scripts)
+install(DIRECTORY ${PROJECT_SOURCE_DIR}/packaging/ DESTINATION ${QUAT3D_SHARE_DIR}/packaging)
 # LICENSE / THIRD_PARTY_NOTICES.md arrive with the release-notes work (#96).
 install(FILES
     ${PROJECT_SOURCE_DIR}/LICENSE

@@ -2,9 +2,11 @@
 
 // Demo / startup scenes for the `game` executable (app layer, not engine).
 //
-// Selected by environment variables:
+// A game's start scene (quat-player, P4) wins; otherwise selected by
+// environment variables:
 //   QUAT_SCENE=<file>  load a scene file (project-relative unless absolute),
 //                      e.g. a scripted game; it brings its own lights
+//   QUAT_DEMO=<name>   a showcase scene file from assets/scenes/ (k_demo_scenes)
 //   QUAT_GLTF=<file>   instantiate a glTF scene graph
 //   QUAT_PHYSICS=1     a pile of boxes dropped on a floor (owns a physics world)
 //   QUAT_CHARACTER=1   a WASD capsule character on a floor (owns a physics world)
@@ -20,9 +22,13 @@
 
 #include "engine/core/error.hpp"
 #include "engine/physics/physics_world.hpp"
+#include "engine/scene/scene_io.hpp" // SceneEnvironment
 
 namespace engine::asset {
 class AssetManager;
+}
+namespace engine::renderer {
+struct RenderSettings;
 }
 namespace engine::rhi {
 class GpuAllocator;
@@ -39,7 +45,7 @@ struct DemoScene {
     bool physics_mode = false;   // QUAT_PHYSICS: physics_world steps rigid bodies
     bool character_mode = false; // QUAT_CHARACTER: physics_world steps the character
     bool from_gltf = false;      // QUAT_GLTF: show the model under its own lighting
-    bool from_scene_file = false; // QUAT_SCENE: no default lights / camera added
+    bool from_scene_file = false; // a start scene or QUAT_SCENE: no default lights / camera added
     std::optional<engine::physics::PhysicsWorld> physics_world;
     entt::entity character_entity = entt::null;
     // An object the loop slowly spins (the demo cube / glass sphere).
@@ -53,6 +59,18 @@ struct DemoScene {
     entt::entity root = entt::null;
     entt::entity pedestal = entt::null;
     glm::vec2    footprint_half{0.0F};
+    // QUAT_SCENE: the file's scene-level environment (its HDRI, R21).
+    engine::scene::SceneEnvironment environment;
+};
+
+// QUAT_DEMO scenes: a name and its scene file (relative to the project root).
+// The file's render_settings block (shadow coverage, clouds, ...) applies.
+struct DemoSceneFile {
+    const char* name;
+    const char* path;
+};
+inline constexpr DemoSceneFile k_demo_scenes[] = {
+    {"mountain", "assets/scenes/mountain_forest.json"},
 };
 
 // Half the height of the pedestal mesh (a box) as built; its Transform scales
@@ -60,21 +78,33 @@ struct DemoScene {
 inline constexpr float k_pedestal_mesh_half_height = 0.25F;
 
 // Build the startup scene into `scene` (meshes/materials uploaded through
-// `transfer` and cached in `assets`). A relative QUAT_SCENE path resolves
-// against `project_root`.
+// `transfer` and cached in `assets`): `start_scene` when given (its render
+// settings replace `render_settings`), else QUAT_SCENE (a relative path
+// resolves against `project_root`), else a QUAT_DEMO scene file (also under
+// `project_root`; sets `render_settings` too), else a demo scene.
 [[nodiscard]] std::expected<DemoScene, engine::core::Error>
 build_demo_scene(engine::scene::Scene& scene, engine::asset::AssetManager& assets,
                  engine::rhi::GpuAllocator& allocator,
                  const engine::rhi::TransferContext& setup_transfer,
-                 const std::filesystem::path& project_root);
+                 const std::filesystem::path& project_root,
+                 engine::renderer::RenderSettings& render_settings,
+                 const std::optional<std::filesystem::path>& start_scene = std::nullopt);
 
 // The sun, plus two coloured point lights unless the scene came from a glTF
 // file (a model is shown under just its own lighting setup). The point lights
-// hang under `root` when given, so they move with the demo content.
+// hang under `root` when given, so they move with the demo content. A scene
+// that brings its own sun (a scene file) keeps its lighting as authored.
 void add_default_lighting(engine::scene::Scene& scene, bool fill_lights,
                           entt::entity root = entt::null);
 
 // QUAT_TERRAIN=1: a procedural terrain tile sunk under the scene.
 void add_env_terrain(engine::scene::Scene& scene);
+
+// QUAT_TIME=<ISO-8601 date-time>: a world clock (R22.1) that drives the sun,
+// with QUAT_LATLON=<lat>,<lon> (degrees; default Paris) and
+// QUAT_TIME_SCALE=<clock seconds per second> (default 1; 0 freezes it, as
+// the CI sunrise / noon / sunset screenshots do). Invalid values are
+// reported on stderr and ignored.
+void add_env_world_clock(engine::scene::Scene& scene);
 
 } // namespace quat::app
