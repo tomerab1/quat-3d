@@ -5,7 +5,8 @@ name: CI
 # are built through their PR; building them on push too ran every commit twice.
 # Docs-only changes skip CI: nothing in the build or tests reads them. The
 # Markdown under tools/quat-mcp/content/ is compiled into quat-mcp
-# (include_str!), so it still triggers a build; later patterns win.
+# (include_str!), so it still triggers a build, and THIRD_PARTY_NOTICES.md is
+# checked against vcpkg.json; later patterns win.
 on:
   push:
     branches: [main, master]
@@ -15,6 +16,7 @@ on:
       - '!docs/**'
       - '!.gitattributes'
       - 'tools/quat-mcp/content/**'
+      - 'THIRD_PARTY_NOTICES.md'
   pull_request:
     paths:
       - '**'
@@ -22,6 +24,7 @@ on:
       - '!docs/**'
       - '!.gitattributes'
       - 'tools/quat-mcp/content/**'
+      - 'THIRD_PARTY_NOTICES.md'
   workflow_dispatch:
     inputs:
       mvk_debug:
@@ -57,12 +60,19 @@ jobs:
         with:
           persist-credentials: false
 
-      # xvfb: the Screenshots step runs the game under xvfb-run.
+      # Every vcpkg dependency, FetchContent package and bundled font has a
+      # licence row in THIRD_PARTY_NOTICES.md, which ships in every release
+      # archive (scripts/third-party-notices.sh).
+      - name: Third-party notices
+        run: python3 -I scripts/check-third-party-notices.py
+
+      # xvfb: the Screenshots step runs the game under xvfb-run. patchelf: the
+      # package_licences test lays out a game package (scripts/package-release.sh).
       - name: Set up build
         id: setup
         uses: ./.github/actions/setup-build
         with:
-          extra-apt-packages: xvfb
+          extra-apt-packages: xvfb patchelf
 
       # The release preset compiles the Tracy client in (ENGINE_PROFILE=ON,
       # on demand: it costs nothing without a viewer), so the tests run with
@@ -104,14 +114,32 @@ jobs:
       # no dependency is rebuilt; only the `game` target is built. Manifest
       # install is off: with ENGINE_PROFILE=OFF the manifest no longer asks
       # for the `profiling` feature, and an install would remove Tracy from
-      # the shared tree under the release build.
+      # the shared tree under the release build. The same build directory
+      # also carries ENGINE_DESCRIPTOR_SETS_FALLBACK (additive #ifdef code;
+      # the release build above covers the build without it), so the next
+      # step reuses its engine libraries instead of compiling them again.
       - name: Build game without the editor (ENGINE_EDITOR=OFF, ENGINE_PROFILE=OFF)
+        id: noeditor
         if: ${{ !cancelled() && steps.configure.outcome == 'success' }}
         run: |
           cmake --preset release -B build/release-noeditor \
             -DENGINE_PROFILE=OFF -DENGINE_EDITOR=OFF -DVCPKG_MANIFEST_INSTALL=OFF \
+            -DENGINE_DESCRIPTOR_SETS_FALLBACK=ON \
             -DVCPKG_INSTALLED_DIR="${{ github.workspace }}/build/release/vcpkg_installed"
           cmake --build build/release-noeditor --target game
+
+      # Every macOS run (MoltenVK) uses the classic descriptor-set fallback.
+      # QUAT_FORCE_DESCRIPTOR_SETS=1 selects that path on lavapipe, so the GPU
+      # suite covers it on every PR; only engine_tests' own sources compile
+      # here (the engine libraries come from the step above).
+      - name: Tests (GPU on lavapipe, classic descriptor sets)
+        if: ${{ !cancelled() && steps.noeditor.outcome == 'success' }}
+        run: |
+          cmake --build build/release-noeditor --target engine_tests
+          icd=$(ls /usr/share/vulkan/icd.d/lvp_icd*.json | head -n1)
+          export VK_ICD_FILENAMES="$icd"
+          export QUAT_FORCE_DESCRIPTOR_SETS=1
+          ctest --test-dir build/release-noeditor -R engine_tests_gpu --output-on-failure --timeout 900
 
       # CC0 Poly Haven assets of the showcase scenes (assets/showcase/*/assets.json),
       # downloaded and cooked with this build's quat-cook. Two caches: the
@@ -459,3 +487,8 @@ jobs:
 
       - name: Tests
         run: cargo test --locked
+
+      # Every crate in Cargo.lock declares an accepted licence; release
+      # archives ship quat-mcp with its crates' licence texts.
+      - name: Licences
+        run: python3 -I ../../scripts/rust-notices.py check Cargo.toml

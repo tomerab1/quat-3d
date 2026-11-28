@@ -55,12 +55,20 @@ ls "$stage"/bin
 #     fails, because a published SDK never ships without its notices;
 #   - a dev build or a workflow_dispatch dry run packages the SDK without
 #     them and says so.
+# Both also carry the licences of the platform runtimes a game package
+# bundles next to the player (libc++ on Linux, MoltenVK and the Vulkan loader
+# on macOS): --runtimes reads them off the build's quat-player.
 notices_tool="$root/scripts/third-party-notices.sh"
 if [ -f "$notices_tool" ]; then
   rust_flag=()
   [ -e "$stage/bin/quat-mcp" ] || [ -e "$stage/bin/quat-mcp.exe" ] || rust_flag=(--no-rust)
-  bash "$notices_tool" ${rust_flag[@]+"${rust_flag[@]}"} "$build_dir" "$stage/THIRD_PARTY_NOTICES.md"
-  bash "$notices_tool" --no-rust "$build_dir" "$stage/share/quat3d/THIRD_PARTY_NOTICES.md"
+  runtimes=()
+  for player in "$build_dir/quat-player" "$build_dir/quat-player.exe"; do
+    if [ -f "$player" ]; then runtimes=(--runtimes "$player"); break; fi
+  done
+  [ ${#runtimes[@]} -gt 0 ] || { echo "no quat-player in $build_dir: its runtime licences are needed for the notices" >&2; exit 1; }
+  bash "$notices_tool" ${rust_flag[@]+"${rust_flag[@]}"} "${runtimes[@]}" "$build_dir" "$stage/THIRD_PARTY_NOTICES.md"
+  bash "$notices_tool" --no-rust "${runtimes[@]}" "$build_dir" "$stage/share/quat3d/THIRD_PARTY_NOTICES.md"
   for dir in "$stage" "$stage/share/quat3d"; do
     grep -q '^## Licence texts' "$dir/THIRD_PARTY_NOTICES.md" ||
       { echo "$dir/THIRD_PARTY_NOTICES.md has no licence texts" >&2; exit 1; }
