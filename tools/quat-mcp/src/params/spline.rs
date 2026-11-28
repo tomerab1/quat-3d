@@ -162,3 +162,72 @@ pub struct SplineNetworkParams {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub straight_deg: Option<f64>,
 }
+
+/// One stroke point: [x, y, z] in world metres, or with `straight` set when
+/// the segment from the previous point was drawn straight.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(untagged)]
+pub enum StrokePoint {
+    /// A freehand point [x, y, z].
+    Position([f64; 3]),
+    /// A point with flags.
+    Full(StrokePointFull),
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct StrokePointFull {
+    /// [x, y, z] in world metres.
+    pub position: [f64; 3],
+    /// The segment from the previous point is straight.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub straight: Option<bool>,
+}
+
+/// What a fitted stroke becomes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum StrokeOutput {
+    /// Centripetal Catmull-Rom points (the default).
+    CatmullRom,
+    /// The fitted Bézier pieces themselves.
+    CubicBezier,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SplineFitParams {
+    /// The stroke, in drawing order (world metres).
+    pub points: Vec<StrokePoint>,
+    /// Write the fitted spline to this entity (its spline is replaced; its
+    /// network and id are kept). Omit to only return it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub entity: Option<EntityRef>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output: Option<StrokeOutput>,
+    /// Max distance of the curve from the stroke, metres (default 0.1).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fit_tolerance: Option<f64>,
+    /// Hand jitter to ignore, metres (default 0.05).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub jitter_tolerance: Option<f64>,
+    /// Resampling distance, metres (default 0.25).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sample_spacing: Option<f64>,
+    /// Turns sharper than this cosine are kept as corners (default 0.5 = 60 degrees).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub corner_cos: Option<f64>,
+    /// Close the loop when the stroke ends this close to its start, metres
+    /// (default 0.75; 0 never closes).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub close_radius: Option<f64>,
+    /// Shorter strokes are refused, metres (default 0.25).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min_length: Option<f64>,
+    /// Width of every point of the result, metres (default 1).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub width: Option<f64>,
+    /// Put the points on the terrain and make the spline follow it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ground: Option<bool>,
+}

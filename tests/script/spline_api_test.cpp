@@ -24,6 +24,14 @@ TEST_F(ScriptTest, SplineQueriesAndCodecEdits) {
             print("bad", ok, err)
             ok, err = pcall(e.set, e, "spline", { closed = true, points = { vec3(0, 0, 0), vec3(1, 0, 0) } })
             print("invalid", ok, err)
+            local stroke = {}
+            for i = 0, 20 do stroke[#stroke + 1] = vec3(i * 0.5, 0, 0) end
+            stroke[#stroke + 1] = { position = vec3(10, 0, 5), straight = true }
+            local fitted = spline.fit(stroke, { output = "cubic_bezier" })
+            e:set("spline", fitted)
+            print("fit", fitted.kind, string.format("%.3f", spline.length(e)))
+            ok, err = pcall(spline.fit, { vec3(0, 0, 0) })
+            print("fit_bad", ok, err)
         end
     )");
     (void)scripted("path", "path.lua");
@@ -37,6 +45,8 @@ TEST_F(ScriptTest, SplineQueriesAndCodecEdits) {
     EXPECT_TRUE(has_line(log, "bad\tfalse\tspline.sample: spacing must give at most 4096 samples"));
     EXPECT_TRUE(has_line(log, "invalid\tfalse\tspline.points: a closed polyline spline needs at least 3 points"))
         << ::testing::PrintToString(log);
+    EXPECT_TRUE(has_line(log, "fit\tcubic_bezier\t15.000")) << ::testing::PrintToString(log);
+    EXPECT_TRUE(has_line(log, "fit_bad\tfalse\tspline.fit: points: a stroke needs at least 2 points, got 1"));
 }
 
 } // namespace

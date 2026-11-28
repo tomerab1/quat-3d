@@ -7,8 +7,8 @@ use rmcp::{tool, tool_router};
 use super::QuatServer;
 use super::results::to_params;
 use crate::params::{
-    SplineClosestParams, SplineCrossingsParams, SplineEntityParams, SplineNetworkParams,
-    SplineOffsetParams, SplineSampleParams, SplineSetParams,
+    SplineClosestParams, SplineCrossingsParams, SplineEntityParams, SplineFitParams,
+    SplineNetworkParams, SplineOffsetParams, SplineSampleParams, SplineSetParams,
 };
 
 #[tool_router(router = spline_tools, vis = "pub(super)")]
@@ -55,11 +55,17 @@ impl QuatServer {
     async fn spline_network(&self, params: Parameters<SplineNetworkParams>) -> CallToolResult {
         self.run("spline.network", Some(to_params(&params.0))).await
     }
+
+    #[doc = include_str!("../../content/tools/spline_fit.md")]
+    #[tool]
+    async fn spline_fit(&self, params: Parameters<SplineFitParams>) -> CallToolResult {
+        self.run("spline.fit", Some(to_params(&params.0))).await
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::params::{SplinePoint, SplineSetParams};
+    use crate::params::{SplineFitParams, SplinePoint, SplineSetParams, StrokePoint};
     use serde_json::json;
 
     #[test]
@@ -81,5 +87,19 @@ mod tests {
             serde_json::from_value::<SplineSetParams>(json!({"entity": 1, "kind": "bspline"}))
                 .is_err()
         );
+    }
+
+    #[test]
+    fn stroke_points_carry_the_straight_flag() {
+        let p: SplineFitParams = serde_json::from_value(json!({
+            "points": [[0, 0, 0], {"position": [4, 0, 0], "straight": true}],
+            "output": "cubic_bezier"
+        }))
+        .unwrap();
+        assert!(matches!(p.points[1], StrokePoint::Full(_)));
+        let v = serde_json::to_value(&p).unwrap();
+        assert_eq!(v["points"][1]["straight"], true);
+        assert_eq!(v["output"], "cubic_bezier");
+        assert!(v.get("entity").is_none());
     }
 }

@@ -7,10 +7,14 @@
 
 #include <entt/entity/registry.hpp>
 
+#include <nlohmann/json.hpp>
+
+#include "engine/scene/component_json.hpp"
 #include "engine/scene/components.hpp"
 #include "engine/scene/spline.hpp"
 #include "engine/spline/frames.hpp"
 #include "engine/spline/queries.hpp"
+#include "engine/spline/stroke.hpp"
 #include "lua_vm.hpp"
 #include "script_api.hpp"
 
@@ -19,6 +23,7 @@ namespace engine::script::detail {
 namespace {
 
 constexpr std::size_t k_max_script_samples = 4096;
+constexpr std::size_t k_max_stroke_points = 65536;
 
 struct Resolved {
     spline::Curve             curve;
@@ -145,6 +150,64 @@ void register_spline(LuaVm& vm, ApiContext& c) {
               out["gap"] = cp->gap;
               out["param"] = cp->param;
               return sol::object(out);
+          }));
+
+    // spline.fit(points, {fit_tolerance, jitter_tolerance, sample_spacing,
+    // corner_cos, close_radius, width, output}) -> a `spline` component table
+    // (for entity:set("spline", ...)), plus `closed`.
+    t.set("fit", bind(L, [](const sol::table& points, sol::optional<sol::table> opts,
+                            sol::this_state s) -> Result<sol::object> {
+              std::vector<spline::StrokePoint> stroke;
+              const std::size_t n = points.size();
+              if (n > k_max_stroke_points) {
+                  return fail("spline.fit: at most " + std::to_string(k_max_stroke_points) + " points");
+              }
+              for (std::size_t i = 1; i <= n; ++i) {
+                  const sol::object item = points[i];
+                  spline::StrokePoint p;
+                  if (item.is<glm::vec3>()) {
+                      p.position = item.as<glm::vec3>();
+                  } else if (item.get_type() == sol::type::table) {
+                      const sol::table pt = item.as<sol::table>();
+                      const sol::object pos = pt["position"];
+                      if (!pos.is<glm::vec3>()) {
+                          return fail("spline.fit: points[" + std::to_string(i) + "].position must be a vec3");
+                      }
+                      p.position = pos.as<glm::vec3>();
+                      p.straight = pt.get_or("straight", false);
+                  } else {
+                      return fail("spline.fit: points[" + std::to_string(i) +
+                                  "] must be a vec3 or {position = vec3, straight = bool}");
+                  }
+                  stroke.push_back(p);
+              }
+              spline::StrokeOptions o;
+              if (opts) {
+                  o.fit_tolerance = opts->get_or("fit_tolerance", o.fit_tolerance);
+                  o.jitter_tolerance = opts->get_or("jitter_tolerance", o.jitter_tolerance);
+                  o.sample_spacing = opts->get_or("sample_spacing", o.sample_spacing);
+                  o.corner_cos = opts->get_or("corner_cos", o.corner_cos);
+                  o.close_radius = opts->get_or("close_radius", o.close_radius);
+                  o.min_length = opts->get_or("min_length", o.min_length);
+                  o.width = opts->get_or("width", o.width);
+                  const std::string output = opts->get_or("output", std::string("catmull_rom"));
+                  if (output == "cubic_bezier") {
+                      o.output = spline::StrokeOutput::cubic_bezier;
+                  } else if (output != "catmull_rom") {
+                      return fail("spline.fit: output must be \"catmull_rom\" or \"cubic_bezier\"");
+                  }
+              }
+              auto fit = spline::fit_stroke(stroke, o);
+              if (!fit) return fail("spline.fit: " + fit.error().message);
+              entt::registry scratch;
+              const entt::entity tmp = scratch.create();
+              scratch.emplace<scene::Spline>(tmp, fit->spline);
+              const std::string only[] = {"spline"};
+              scene::EncodeOptions eo;
+              eo.only = only;
+              nlohmann::json j = scene::encode_components(scratch, tmp, eo)["spline"];
+              j["closed"] = fit->closed;
+              return json_to_lua(s.lua_state(), j);
           }));
 
     vm.expose("spline", t);

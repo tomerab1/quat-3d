@@ -126,3 +126,39 @@ TEST_F(WorldSpline, NetworkReportsNodesAndEdges) {
 
 } // namespace
 } // namespace quat::test
+
+namespace quat::test {
+namespace {
+
+TEST_F(WorldSpline, FitTurnsAStrokeIntoASpline) {
+    // A jagged freehand arc, then a straight segment drawn with the modifier.
+    Json pts = Json::array();
+    for (int i = 0; i <= 40; ++i) {
+        const float a = 1.5707963F * static_cast<float>(i) / 40.0F;
+        pts.push_back({10.0F * std::cos(a), 0.0F, 10.0F * std::sin(a) + ((i % 2) != 0 ? 0.02F : -0.02F)});
+    }
+    pts.push_back({{"position", {-5, 0, 10}}, {"straight", true}});
+    Json out = ok("spline.fit", {{"points", pts}});
+    EXPECT_FALSE(out["closed"].get<bool>());
+    EXPECT_EQ(out["spline"]["kind"], "centripetal_catmull_rom");
+    EXPECT_GE(out["pieces"].get<int>(), 2);
+    EXPECT_LT(out["spline"]["points"].size(), 41U);
+
+    // Written to an entity that sits at x = 100: its points are local.
+    const Json id = ok("scene.create", {{"name", "path"}, {"components", {{"transform", {{"position", {100, 0, 0}}}}}}})["id"];
+    out = ok("spline.fit", {{"points", pts}, {"entity", id}, {"output", "cubic_bezier"}});
+    EXPECT_EQ(out["spline"]["kind"], "cubic_bezier");
+    EXPECT_NEAR(out["spline"]["points"][0][0].get<float>(), 10.0F - 100.0F, 1e-3F);
+    EXPECT_NEAR(out["bounds"]["max"][0].get<float>(), 110.5F, 0.2F); // world: back at x = 110 (+ half width)
+
+    EXPECT_EQ(err("spline.fit", {{"points", {{0, 0, 0}}}}, rc::invalid_params),
+              "points: a stroke needs at least 2 points, got 1");
+    EXPECT_EQ(err("spline.fit", {{"points", {{0, 0, 0}, {1, 0}}}}, rc::invalid_params),
+              "points[1]: expected [x, y, z] or {position: [x, y, z], straight?: bool}");
+    EXPECT_NE(err("spline.fit", {{"points", pts}, {"output", "nurbs"}}, rc::invalid_params).find("catmull_rom"),
+              std::string::npos);
+    EXPECT_NE(err("spline.fit", Json::object(), rc::invalid_params).find("points"), std::string::npos);
+}
+
+} // namespace
+} // namespace quat::test

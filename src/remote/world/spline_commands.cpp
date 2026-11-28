@@ -193,6 +193,7 @@ RpcResult spline_offset(Context& ctx, const Json& params) {
 
 void register_spline_commands(RpcServer& server, const ContextPtr& ctx) {
     register_spline_network_commands(server, ctx);
+    register_spline_fit_commands(server, ctx);
     server.add_method("spline.get",
                       "An entity's spline: {entity} -> {entity, spline (local points), length, segments, "
                       "bounds (world, swept by width / height)}.",

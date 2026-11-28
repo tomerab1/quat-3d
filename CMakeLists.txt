@@ -706,6 +706,7 @@ add_library(engine_remote_world STATIC
     src/remote/world/spline_common.cpp
     src/remote/world/spline_commands.cpp
     src/remote/world/spline_network_commands.cpp
+    src/remote/world/spline_fit_commands.cpp
     src/remote/world/profile_commands.cpp
     src/remote/world/image_encode.cpp
     src/remote/world/stb_image_write_impl.cpp)
@@ -812,6 +813,7 @@ if(ENGINE_EDITOR)
         src/editor/script_inspector.cpp
         src/editor/animation_inspector.cpp
         src/editor/camera_rig_inspector.cpp
+        src/editor/spline_gizmo.cpp
         src/editor/grass_inspector.cpp
         src/editor/particle_inspector.cpp
         src/editor/physics_inspector.cpp

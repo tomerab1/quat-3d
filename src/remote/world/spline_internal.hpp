@@ -28,6 +28,7 @@ namespace engine::remote::world {
 [[nodiscard]] std::string id_string(std::uint64_t id);
 
 void register_spline_network_commands(RpcServer& server, const ContextPtr& ctx);
+void register_spline_fit_commands(RpcServer& server, const ContextPtr& ctx);
 
 // Terrain height in world space (null when the scene has no terrain).
 [[nodiscard]] spline::GroundHeightFn ground_fn(const Context& ctx);

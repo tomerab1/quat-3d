@@ -15,6 +15,7 @@
 #include "animation_inspector.hpp"
 #include "audio_inspector.hpp"
 #include "camera_rig_inspector.hpp"
+#include "spline_gizmo.hpp"
 #include "behavior_panel.hpp"
 #include "grass_inspector.hpp"
 #include "particle_inspector.hpp"
@@ -385,6 +386,15 @@ struct ComponentInspector<scene::CameraRigInput> {
 };
 
 template <>
+struct ComponentInspector<scene::Spline> {
+    static constexpr const char* title = "Spline";
+    static constexpr const char* codec = "spline";
+    static constexpr const char* icon = icon::route;
+    static constexpr bool property_grid = true;
+    static void draw(entt::registry& r, entt::entity e, scene::Spline& s) { draw_spline_inspector(r, e, s); }
+};
+
+template <>
 struct ComponentInspector<scene::MeshRenderer> {
     static constexpr const char* title = "Mesh Renderer";
     static constexpr const char* icon = icon::box;
@@ -573,6 +583,7 @@ void draw_inspector(scene::Scene& scene, entt::entity selected, panels::Inspecto
     inspect<scene::Camera>(state, r, selected, true);
     inspect<scene::CameraRig>(state, r, selected, true);
     inspect<scene::CameraRigInput>(state, r, selected, true);
+    inspect<scene::Spline>(state, r, selected, true);
     inspect<scene::Animator>(state, r, selected);
     inspect<scene::FootIK>(state, r, selected, true);
     inspect<scene::Terrain>(state, r, selected, true);
