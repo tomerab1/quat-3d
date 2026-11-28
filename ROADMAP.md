@@ -253,7 +253,7 @@ JSON-RPC over loopback TCP to the engine.
   nights … a time system where the sun rises and sets, with a moon")*.
   Canonical reference: Jensen, Durand, Stark, Premože, Dorsey, Shirley, "A
   Physically-Based Night Sky Model" (SIGGRAPH 2001).
-  - [ ] **R22.1 World clock + astronomy** (simulation only, no shader
+  - [x] **R22.1 World clock + astronomy** (simulation only, no shader
     changes). `engine_astro`: pure double-precision CPU ephemerides — UTC ↔
     Julian date with ΔT, Greenwich / local mean sidereal time, precession,
     nutation (low precision), the Meeus / NOAA low-precision Sun (≈ 0.01°)
@@ -269,7 +269,7 @@ JSON-RPC over loopback TCP to the engine.
     sunrises and sunsets work with the existing atmosphere; disabled, nothing
     changes. Scene files, remote `time.get` / `time.set` / `time.skip`,
     quat-mcp tools, an editor Time of Day section and CI sunrise / noon /
-    sunset screenshots. Lua binding when G7 lands.
+    sunset screenshots (#87). The Lua binding follows once G7 (#22) lands.
   - [ ] **R22.2 Night sky rendering** (after #80 lighting realism and #64
     weather land; state of the art, physical units throughout):
     - *Atmosphere:* Hillaire 2020 with the Moon as a second light; airglow and

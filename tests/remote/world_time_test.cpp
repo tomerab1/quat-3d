@@ -117,7 +117,7 @@ TEST_F(TimeCommands, TheClockIsASceneComponent) {
                                              {"components", {{"world_clock", {{"latitude_deg", -33.86}}}}}});
     EXPECT_EQ(ok("time.get")["latitude_deg"], -33.86);
     EXPECT_TRUE(contains(err("scene.create", {{"components", {{"world_clock", Json::object()}}}},
-                             code::invalid_params),
+                             code::failed),
                          "already has its clock"));
     (void)created;
 }

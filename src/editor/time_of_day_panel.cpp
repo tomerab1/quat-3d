@@ -38,8 +38,12 @@ constexpr std::array k_places = {
     Place{"Cape Town", -33.9249, 18.4241, 120},   Place{"Svalbard", 78.2232, 15.6267, 60},
 };
 
-constexpr std::array<double, 5> k_speeds = {1.0, 60.0, 600.0, 3600.0, 86400.0 / 60.0};
-constexpr std::array k_speed_labels = {"1x", "1 min/s", "10 min/s", "1 h/s", "1 day/min"};
+// Speed presets (1x is the time scale's reset arrow): a minute, ten minutes
+// and an hour of clock time per second.
+constexpr std::array<double, 3> k_speeds = {60.0, 600.0, 3600.0};
+constexpr std::array k_speed_labels = {"60x", "600x", "3600x"};
+constexpr std::array k_speed_tips = {"A minute per second", "Ten minutes per second",
+                                     "An hour per second"};
 
 // The day's events change only with the day or the place: computed once.
 struct AlmanacCache {
@@ -61,7 +65,8 @@ AlmanacCache g_almanac; // editor-only display cache (main thread)
 
 [[nodiscard]] std::string clock_text(const std::optional<astro::UtcTime>& t, int offset_min) {
     if (!t) return "—";
-    const astro::CivilTime c = astro::civil_from_utc(*t, offset_min);
+    // Rounded to the nearest minute, as almanacs print them.
+    const astro::CivilTime c = astro::civil_from_utc(astro::add_seconds(*t, 30.0), offset_min);
     std::array<char, 16> buf{};
     std::snprintf(buf.data(), buf.size(), "%02d:%02d", c.hour, c.minute);
     return buf.data();
@@ -151,6 +156,7 @@ void draw_speed(scene::WorldClock& c) {
                                                                        : ui::ButtonKind::ghost)) {
             c.time_scale = k_speeds[i];
         }
+        ui::item_tooltip(k_speed_tips[i]);
     }
     (void)ui::prop_end(false, false);
     float scale = static_cast<float>(c.time_scale);
@@ -184,10 +190,12 @@ void draw_readouts(const entt::registry& r, entt::entity e, const scene::WorldCl
     ui::prop_value("Civil twilight",
                    clock_text(day.civil_dawn, c.utc_offset_min) + " / " + clock_text(day.civil_dusk, c.utc_offset_min),
                    "Sun's centre 6° below the horizon", true);
-    std::snprintf(buf.data(), buf.size(), "%s, %.0f%% lit  az %.1f°  el %.1f°",
+    std::snprintf(buf.data(), buf.size(), "%s, %.0f%% lit",
                   astro::moon_phase_name(sky->moon_elongation_deg, sky->moon_waxing),
-                  sky->moon_illuminated_fraction * 100.0F, sky->moon_azimuth_deg, sky->moon_elevation_deg);
-    ui::prop_value("Moon", buf.data(), nullptr, true);
+                  sky->moon_illuminated_fraction * 100.0F);
+    ui::prop_value("Moon phase", buf.data(), nullptr, true);
+    std::snprintf(buf.data(), buf.size(), "az %.1f°  el %.1f°", sky->moon_azimuth_deg, sky->moon_elevation_deg);
+    ui::prop_value("Moon", buf.data(), "Compass azimuth and apparent (topocentric) elevation", true);
     ui::prop_value("Moonrise / set",
                    clock_text(day.moonrise, c.utc_offset_min) + " / " + clock_text(day.moonset, c.utc_offset_min),
                    nullptr, true);

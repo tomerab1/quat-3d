@@ -7,6 +7,13 @@ into CLAUDE.md or the brief template in [`CYCLE.md`](CYCLE.md).
 
 ## Agents and orchestration
 
+- **Worktree-isolated agents get compound shell commands refused.** The
+  isolation guard rejects heredocs and multi-step commands that mention
+  paths it cannot verify (R22 lost several calls to "too complex to
+  verify"). → Write edit scripts to the agent's own scratchpad directory
+  and run them with the worktree path as an argument; keep git commands
+  plain and separate.
+
 - **Unpushed worktree commits die with the container.** Worker agents push
   their `feat/<id>` branch to origin after every commit (owner's rule,
   2026-11-27). `feat/**` pushes don't trigger CI, so they never cancel a
