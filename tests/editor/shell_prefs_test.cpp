@@ -14,6 +14,7 @@
 #include <gtest/gtest.h>
 
 #include "editor/shell/prefs.hpp"
+#include "engine/core/utf8_path.hpp"
 
 namespace {
 
@@ -136,6 +137,40 @@ TEST(EditorPrefs, PushRecentMovesThePathToTheFront) {
     EXPECT_EQ(r, (std::vector<std::string>{"d.json", "b.json", "a.json", "c.json"}));
     sh::push_recent(r, "e.json", 3);
     EXPECT_EQ(r, (std::vector<std::string>{"e.json", "d.json", "b.json"}));
+}
+
+TEST(EditorPrefs, ScenePathsMustBeValidUtf8) {
+    // Each would make path construction throw on Windows.
+    for (const std::string& bad : {std::string("scenes/\xFF.json"),        // invalid byte
+                                  std::string("scenes/\xC3.json"),        // truncated sequence
+                                  std::string("scenes/\xC0\xAF.json"),    // overlong '/'
+                                  std::string("scenes/\xE0\x80\xAF.json"), // overlong, 3 bytes
+                                  std::string("scenes/\xED\xA0\x80.json"), // surrogate U+D800
+                                  std::string("scenes/\xF4\x90\x80\x80.json"), // > U+10FFFF
+                                  std::string("scenes/\x80.json")}) {    // stray continuation
+        EXPECT_FALSE(engine::core::is_valid_utf8(bad)) << bad;
+        EXPECT_NE(sh::scene_path_problem(bad), nullptr) << bad;
+        sh::EditorPrefs p = sh::default_prefs();
+        EXPECT_FALSE(sh::parse_pref_line("Scene=" + bad, p));
+        EXPECT_FALSE(sh::parse_pref_line("Recent=" + bad, p));
+    }
+    for (const char* good : {"scenes/caf\xC3\xA9.json", "scenes/\xE6\x97\xA5\xE6\x9C\xAC.json",
+                             "scenes/\xF0\x9F\x8C\xB2 trees.json", "scenes/\xEF\xBF\xBD.json"}) {
+        EXPECT_TRUE(engine::core::is_valid_utf8(good)) << good;
+        EXPECT_EQ(sh::scene_path_problem(good), nullptr) << good;
+    }
+}
+
+TEST(EditorPrefs, AForcedThemeIsNotSaved) {
+    // Saved dark, QUAT_EDITOR_THEME=light showing: the ini keeps dark.
+    sh::ThemePreference t{.forced = true, .saved_light = false};
+    EXPECT_FALSE(sh::theme_to_save(t, /*showing_light=*/true));
+    t.saved_light = true;
+    EXPECT_TRUE(sh::theme_to_save(t, false));
+    // Once the user picks a theme the override is over: what shows is saved.
+    t.forced = false;
+    EXPECT_FALSE(sh::theme_to_save(t, false));
+    EXPECT_TRUE(sh::theme_to_save(t, true));
 }
 
 } // namespace

@@ -57,7 +57,7 @@ the rest by need.
 - [ ] **S8 — Split oversized files.** Enforce the file-size rule in
   CLAUDE.md: `gltf_loader.cpp` (validation / mesh / material / skin /
   animation / scene assembly), and any file past ~1000 lines. Next:
-  `src/scene/component_json.cpp` (974 lines after R22.1; one component
+  `src/scene/component_json.cpp` (992 lines after R22.1 + the terrain fixes; one component
   more crosses the limit): move per-component codecs into their own files
   as `world_clock_json.cpp` / `component_json_animation.cpp` do.
 
@@ -409,6 +409,10 @@ is JSON/Lua so it is authorable over MCP.
     enabled concept honoured by every draw path, not editor state in the
     ECS); wire Undo / Redo to E1's command stack; ImGui 1.92 dynamic font
     textures in `ImGuiPass` (free font scaling, thumbnails for E6).
+    Done in the #52 follow-up PR: a forced `QUAT_EDITOR_THEME` is not saved;
+    re-parenting under a zero-scaled parent is refused; scene paths must be
+    valid UTF-8; escaping file symlinks are not listed; snap steps are
+    clamped; swatch text follows the swatch's luminance.
   - **Verification:** real editor screenshots (headless capture of the
     docked editor) with before/after images for every slice:
     `scripts/editor-screenshots.sh` and `docs/screenshots/editor/`; the CI

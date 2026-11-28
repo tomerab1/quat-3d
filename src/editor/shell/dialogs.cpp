@@ -214,7 +214,7 @@ void preferences_window(EditorShell& shell) {
                 {static_cast<int>(ui::ThemeId::light), "Light", nullptr},
             };
             ui::ThemeId theme = shell.appearance().theme_id();
-            if (ui::prop_enum("Theme", theme, themes)) shell.appearance().set_theme(theme);
+            if (ui::prop_enum("Theme", theme, themes)) shell.choose_theme(theme);
             char scale[48];
             std::snprintf(scale, sizeof(scale), "%.0f %% (fonts at %.1fx density)",
                           static_cast<double>(shell.appearance().dpi().ui * 100.0F),
@@ -227,13 +227,13 @@ void preferences_window(EditorShell& shell) {
             }
             ui::prop_separator("Snapping");
             (void)ui::prop_float("Move step", shell.snap.translate,
-                                 {.speed = 0.01F, .min = SnapLimits::move_min, .max = SnapLimits::move_max, .format = "%.3f m"},
+                                 {.speed = 0.01F, .min = SnapLimits::move_min, .max = SnapLimits::move_max, .format = "%.3f m", .clamp = true},
                                  {.reset = 0.5F});
             (void)ui::prop_float("Rotate step", shell.snap.rotate_deg,
-                                 {.speed = 0.5F, .min = SnapLimits::rotate_min, .max = SnapLimits::rotate_max, .format = "%.1f°"},
+                                 {.speed = 0.5F, .min = SnapLimits::rotate_min, .max = SnapLimits::rotate_max, .format = "%.1f°", .clamp = true},
                                  {.reset = 15.0F});
             (void)ui::prop_float("Scale step", shell.snap.scale,
-                                 {.speed = 0.01F, .min = SnapLimits::scale_min, .max = SnapLimits::scale_max, .format = "%.3f"},
+                                 {.speed = 0.01F, .min = SnapLimits::scale_min, .max = SnapLimits::scale_max, .format = "%.3f", .clamp = true},
                                  {.reset = 0.1F});
             ui::end_property_grid();
         }

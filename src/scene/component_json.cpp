@@ -24,6 +24,8 @@
 #include "engine/scene/material_override.hpp"
 #include "engine/scene/world_clock.hpp"
 #include "engine/scene/world_clock_json.hpp"
+#include "engine/terrain/budget.hpp"
+#include "engine/terrain/talus_relax.hpp"
 
 #include "component_json_animation.hpp"
 
@@ -575,6 +577,7 @@ json encode_components(const entt::registry& r, entt::entity e, const EncodeOpti
                           {"erosion", enum_name(k_erosion_models, t->params.erosion_model)},
                           {"droplets", t->params.erosion_droplets},
                           {"erosion_steps", t->params.grid.iterations},
+                          {"erosion_relax", t->params.grid.relax_cycles},
                           {"snowline", t->snowline_m},
                           {"streaming", t->streaming},
                           {"stream_radius", t->stream_radius},
@@ -864,6 +867,7 @@ std::expected<void, core::Error> apply_component(entt::registry& r, entt::entity
             f.enumeration("erosion", p.erosion_model, k_erosion_models);
             f.integer("droplets", p.erosion_droplets, 0, 50'000'000);
             f.integer("erosion_steps", p.grid.iterations, 0, terrain::max_grid_erosion_steps);
+            f.integer("erosion_relax", p.grid.relax_cycles, 0, terrain::max_talus_relax_cycles);
             f.number("snowline", t.snowline_m);
             f.boolean("streaming", t.streaming);
             f.integer("stream_radius", t.stream_radius, 0, 8);
@@ -877,6 +881,20 @@ std::expected<void, core::Error> apply_component(entt::registry& r, entt::entity
                            " and resolution^2 x erosion_steps <= " +
                            std::to_string(terrain::max_grid_erosion_texel_steps) +
                            " (e.g. 1025 at 5000 steps)");
+            }
+            // The fields above are bounded one by one; their product (tiles
+            // kept loaded x resolution², droplets x tiles) is bounded here (#67).
+            if (const auto over = terrain::terrain_budget_problem(p, t.streaming, t.stream_radius)) {
+                // Blame the first budget-relevant field the request changed.
+                const char* field = "resolution";
+                for (const char* key : {"stream_radius", "resolution", "droplets", "erosion",
+                                        "erosion_steps", "streaming"}) {
+                    if (f.has(key)) {
+                        field = key;
+                        break;
+                    }
+                }
+                f.fail(field, over->message);
             }
             t.regenerate = true; // rebuild with the new parameters
         });

@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <filesystem>
+#include <limits>
 #include <string>
 #include <system_error>
 #include <vector>
@@ -181,7 +182,7 @@ TEST(EditorHierarchy, ReparentKeepsTheWorldPose) {
     r.get<s::Transform>(child).local = glm::translate(glm::mat4(1.0F), glm::vec3(1.0F, 2.0F, 3.0F));
     const glm::mat4 before = sh::current_world(r, child);
 
-    ASSERT_TRUE(sh::reparent_keep_world(scene, child, parent));
+    ASSERT_EQ(sh::reparent_keep_world(scene, child, parent), sh::ReparentResult::done);
     EXPECT_EQ(r.get<s::Parent>(child).entity, parent);
     const glm::mat4 after = sh::current_world(r, child);
     for (int c = 0; c < 4; ++c) {
@@ -190,16 +191,45 @@ TEST(EditorHierarchy, ReparentKeepsTheWorldPose) {
     EXPECT_NEAR(glm::vec3(after[3]).x, 1.0F, 1e-4F);
 
     // And back to the root.
-    ASSERT_TRUE(sh::reparent_keep_world(scene, child, k_none));
+    ASSERT_EQ(sh::reparent_keep_world(scene, child, k_none), sh::ReparentResult::done);
     EXPECT_FALSE(r.all_of<s::Parent>(child));
     const glm::mat4 root = r.get<s::Transform>(child).local;
     EXPECT_NEAR(root[3].z, 3.0F, 1e-4F);
     // A cycle is refused and changes nothing.
-    ASSERT_TRUE(sh::reparent_keep_world(scene, child, parent));
+    ASSERT_EQ(sh::reparent_keep_world(scene, child, parent), sh::ReparentResult::done);
     const glm::mat4 local = r.get<s::Transform>(child).local;
-    EXPECT_FALSE(sh::reparent_keep_world(scene, parent, child));
+    EXPECT_EQ(sh::reparent_keep_world(scene, parent, child), sh::ReparentResult::refused);
     EXPECT_EQ(r.get<s::Transform>(child).local, local);
     EXPECT_FALSE(r.all_of<s::Parent>(parent));
+}
+
+TEST(EditorHierarchy, ReparentUnderAZeroScaledParentIsRefused) {
+    s::Scene scene;
+    entt::registry& r = scene.registry();
+    const entt::entity flat = scene.create_entity("flat");
+    r.get<s::Transform>(flat).local = glm::scale(glm::mat4(1.0F), glm::vec3(1.0F, 0.0F, 1.0F));
+    const entt::entity child = scene.create_entity("child");
+    const glm::mat4 local = glm::translate(glm::mat4(1.0F), glm::vec3(1.0F, 2.0F, 3.0F));
+    r.get<s::Transform>(child).local = local;
+
+    EXPECT_EQ(sh::reparent_keep_world(scene, child, flat), sh::ReparentResult::singular_parent);
+    EXPECT_FALSE(r.all_of<s::Parent>(child)) << "nothing changes";
+    EXPECT_EQ(r.get<s::Transform>(child).local, local);
+    const auto* kids = r.try_get<s::Children>(flat);
+    EXPECT_TRUE(kids == nullptr || kids->entities.empty());
+
+    // Also through a zero-scaled grandparent, and with a NaN in the chain.
+    const entt::entity inner = scene.create_entity("inner");
+    ASSERT_TRUE(scene.set_parent(inner, flat));
+    EXPECT_EQ(sh::reparent_keep_world(scene, child, inner), sh::ReparentResult::singular_parent);
+    r.get<s::Transform>(flat).local = glm::mat4(1.0F);
+    r.get<s::Transform>(flat).local[0][0] = std::numeric_limits<float>::quiet_NaN();
+    EXPECT_EQ(sh::reparent_keep_world(scene, child, inner), sh::ReparentResult::singular_parent);
+    EXPECT_FALSE(r.all_of<s::Parent>(child));
+
+    // A healthy parent still works.
+    r.get<s::Transform>(flat).local = glm::mat4(1.0F);
+    EXPECT_EQ(sh::reparent_keep_world(scene, child, inner), sh::ReparentResult::done);
 }
 
 TEST(EditorAssetBrowser, ListsFoldersFirstAndStaysInsideTheProject) {
@@ -228,7 +258,7 @@ TEST(EditorAssetBrowser, ListsFoldersFirstAndStaysInsideTheProject) {
     std::vector<std::string> names;
     for (const auto& e : assets) names.push_back(e.name);
     std::vector<std::string> want = {"models", "a.glb", "b.png"};
-    if (have_link) want.insert(want.begin(), "escape");
+    // (the "escape" symlink to outside the project is not listed)
     EXPECT_EQ(names, want) << "folders first, then files, by name; dot files hidden";
 
     const auto found = ed::list_assets(root, "", "TREE");

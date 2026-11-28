@@ -338,6 +338,10 @@ float grid_erosion_fade(std::uint32_t x, std::uint32_t z, std::uint32_t resoluti
 }
 
 Heightmap generate(const TerrainParams& params, const std::atomic<bool>* cancel) {
+    const auto cancelled = [cancel] {
+        return cancel != nullptr && cancel->load(std::memory_order_relaxed);
+    };
+    if (cancelled()) return {}; // given up before it started (#78)
     Heightmap map;
     map.resolution = glm::max(params.resolution, 2U);
     map.tile_size_m = params.tile_size_m;
@@ -356,6 +360,7 @@ Heightmap generate(const TerrainParams& params, const std::atomic<bool>* cancel)
             map.heights[static_cast<std::size_t>(z) * res + x] = compose_height(noise, p, params);
         }
     });
+    if (cancelled()) return {};
 
     if (params.erosion_model == ErosionModel::droplets) {
         // Droplets run on the normalised field (parameters are resolution-relative).
