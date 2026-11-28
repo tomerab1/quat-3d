@@ -441,6 +441,7 @@ add_library(engine_scene STATIC
     src/scene/primitives.cpp
     src/scene/primitive_resolve.cpp
     src/scene/scatter.cpp
+    src/scene/terrain_edits.cpp
     src/scene/instanced_mesh.cpp
     src/scene/instanced_mesh_resolve.cpp
     src/scene/ground_placement.cpp

@@ -4,6 +4,7 @@
 #include "engine/terrain/edits.hpp"
 
 #include <algorithm>
+#include <atomic>
 #include <array>
 #include <cmath>
 #include <limits>
@@ -254,6 +255,11 @@ void apply_pointwise(const PackedStamps& packed, const PackedStamp& s, glm::vec2
 // TerrainEditList
 // ---------------------------------------------------------------------------
 
+std::uint64_t fresh_edit_revision() {
+    static std::atomic<std::uint64_t> counter{0};
+    return counter.fetch_add(1, std::memory_order_relaxed) + 1;
+}
+
 std::expected<std::uint64_t, std::string>
 TerrainEditList::add(TerrainStamp stamp, std::optional<std::uint64_t> before) {
     if (stamps_.size() >= max_stamps) {
@@ -271,7 +277,7 @@ TerrainEditList::add(TerrainStamp stamp, std::optional<std::uint64_t> before) {
     stamp.id = next_id_++;
     const std::uint64_t id = stamp.id;
     stamps_.insert(at, std::move(stamp));
-    ++revision_;
+    revision_ = fresh_edit_revision();
     return id;
 }
 
@@ -282,7 +288,7 @@ std::expected<void, std::string> TerrainEditList::update(std::uint64_t id, Terra
     stamp.id = id;
     if (*it == stamp) return {};
     *it = std::move(stamp);
-    ++revision_;
+    revision_ = fresh_edit_revision();
     return {};
 }
 
@@ -290,14 +296,14 @@ bool TerrainEditList::remove(std::uint64_t id) {
     const auto it = std::ranges::find(stamps_, id, &TerrainStamp::id);
     if (it == stamps_.end()) return false;
     stamps_.erase(it);
-    ++revision_;
+    revision_ = fresh_edit_revision();
     return true;
 }
 
 void TerrainEditList::clear() {
     if (stamps_.empty()) return;
     stamps_.clear();
-    ++revision_;
+    revision_ = fresh_edit_revision();
 }
 
 const TerrainStamp* TerrainEditList::find(std::uint64_t id) const {
@@ -326,7 +332,7 @@ std::expected<void, std::string> TerrainEditList::assign(std::vector<TerrainStam
     }
     stamps_ = std::move(stamps);
     next_id_ = next_id;
-    ++revision_;
+    revision_ = fresh_edit_revision();
     return {};
 }
 

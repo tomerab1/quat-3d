@@ -129,9 +129,14 @@ struct EditRect {
 // The ordered list
 // ---------------------------------------------------------------------------
 
+// A process-wide unique, increasing revision number (never 0).
+[[nodiscard]] std::uint64_t fresh_edit_revision();
+
 // The edit layer of one terrain: stamps in application order. `revision`
-// changes on every mutation (consumers compare it to decide whether to
-// diff). Ids are stable and never reused within a list.
+// takes a fresh process-wide value on every mutation (and for every new
+// list), so a consumer that remembers the revision it applied notices any
+// change, also a list replaced by another. Ids are stable and never reused
+// within a list.
 class TerrainEditList {
 public:
     [[nodiscard]] const std::vector<TerrainStamp>& stamps() const { return stamps_; }
@@ -157,7 +162,7 @@ public:
 private:
     std::vector<TerrainStamp> stamps_;
     std::uint64_t             next_id_ = 1;
-    std::uint64_t             revision_ = 1;
+    std::uint64_t             revision_ = fresh_edit_revision();
 };
 
 // Terrain-local rectangles whose ground differs between two versions of a
