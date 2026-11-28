@@ -36,6 +36,7 @@
 #include <vulkan/vulkan.h>
 
 #include "app/screenshot_capture.hpp" // CaptureSource
+#include "app/volumetrics_runtime.hpp"
 #include "engine/renderer/atmosphere_pass.hpp"
 #include "engine/renderer/bloom_pass.hpp"
 #include "engine/renderer/color_lut.hpp"
@@ -394,6 +395,19 @@ private:
     void add_reflection_color(engine::rhi::RenderGraph& graph, engine::rhi::ResourceHandle hdr);
     [[nodiscard]] engine::renderer::LightingTuning
     lighting_tuning(engine::rhi::ResourceHandle reflections, VkImageView background) const;
+    // ---- R13.3 / R13.4 volumetrics (frame_volumetrics.cpp) ------------------
+    // Aerial perspective, volumetric clouds and froxel fog composited over
+    // `hdr` (the lit image at the render extent). Failures are logged and
+    // leave the image as it was.
+    void add_volumetrics(engine::rhi::RenderGraph& graph, const FrameScene& fs,
+                         const engine::scene::CameraMatrices& cam,
+                         const engine::renderer::GBufferTargets& gbuffer,
+                         engine::rhi::ResourceHandle hdr,
+                         const engine::renderer::CascadedShadows& shadows,
+                         const engine::renderer::CloudShadowMap& cloud_shadow,
+                         const engine::renderer::ClusteredLights& lights,
+                         const engine::renderer::IblViewSet& ibl,
+                         const entt::registry* registry);
     // The editor's R12 settings (defaults in headless builds).
     [[nodiscard]] engine::renderer::CsmSettings current_csm() const;
     [[nodiscard]] engine::renderer::GtaoSettings current_gtao() const;
@@ -450,6 +464,9 @@ private:
     std::array<DeferredFrame, k_frames_in_flight>    frames_;
 
     std::optional<engine::renderer::AtmospherePass> atmosphere_;
+    // R13.3 / R13.4: volumetric clouds, aerial perspective and froxel fog
+    // (null when creation failed: no clouds, no fog).
+    std::unique_ptr<VolumetricsRuntime>             volumetrics_;
     std::optional<engine::renderer::DynamicIbl>     dynamic_ibl_;
     // R21: the HDRI panorama's maps and the screen-space reflections (shared
     // by both slots; each owns its own cross-frame state).

@@ -3,7 +3,8 @@
 //   sky-view LUT update, HDRI bake or dynamic IBL step, wind field, GBuffer,
 //   terrain, grass, background velocity, Hi-Z, cascaded shadows (GPU fit +
 //   cascades), GTAO, screen-space reflections, light culling, cloud shadow
-//   map, lighting, transparent, particles, reflection colour copy (all at
+//   map, lighting, volumetrics (aerial perspective, clouds, fog), transparent,
+//   particles, reflection colour copy (all at
 //   the render extent), upscaler (render -> display extent), depth of field,
 //   motion blur (R20, frame_post.cpp), bloom, exposure, tonemap / grade,
 //   present copy, editor UI; GPU skinning is recorded before the graph
@@ -438,10 +439,15 @@ bool FrameRenderer::record(const FrameInputs& in) {
     // R13.1: with weather, the cloud shadow map (one compute pass; the
     // lighting pass samples it). Needs the atmosphere's cloud layer.
     const engine::renderer::CloudSettings clouds = current_clouds();
+    if (volumetrics_) {
+        volumetrics_->begin_frame(clouds, fs.has_weather, cam.position, sun_to, in.registry);
+    }
     engine::renderer::CloudShadowMap cloud_shadow{};
-    if (fs.has_weather && atmosphere_ && clouds.enabled && clouds.shadows &&
+    if (fs.has_weather && atmosphere_ && volumetrics_ && clouds.enabled && clouds.shadows &&
         fr.cloud_shadow.valid()) {
-        if (auto m = fr.cloud_shadow.add_to_graph(graph, sun_to, cam.position, clouds)) {
+        if (auto m = fr.cloud_shadow.add_to_graph(graph, sun_to, cam.position,
+                                                  volumetrics_->cloud_layer(),
+                                                  volumetrics_->noise())) {
             cloud_shadow = *m;
         } else {
             std::fprintf(stderr, "[warn] cloud shadow map: %s\n", m.error().message.c_str());
@@ -463,6 +469,10 @@ bool FrameRenderer::record(const FrameInputs& in) {
         std::fprintf(stderr, "[fatal] lighting pass: %s\n", hdr.error().message.c_str());
         return false;
     }
+    // R13.3 / R13.4: aerial perspective, volumetric clouds and fog over the
+    // lit image (frame_volumetrics.cpp), before the transparents.
+    add_volumetrics(graph, fs, cam, *gbuffer, *hdr, occlusion.shadows, cloud_shadow, clustered,
+                    ibl_views, in.registry);
     // Forward-blend transparent geometry over the lit HDR, depth-tested
     // against the opaque GBuffer depth.
     if (!fs.transparent_draws.empty()) {

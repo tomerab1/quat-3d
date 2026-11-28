@@ -2,8 +2,10 @@
 
 #include <array>
 #include <cmath>
+#include <cstring>
 #include <utility>
 
+#include "engine/renderer/cloud_noise_pass.hpp"
 #include "engine/rhi/device.hpp"
 #include "engine/rhi/gpu_allocator.hpp"
 #include "engine/rhi/pipeline_cache.hpp"
@@ -16,20 +18,25 @@ namespace {
     return std::unexpected(core::Error{std::move(what)});
 }
 
-constexpr std::array<rhi::BindingRequest, 1> kResources{{
+enum Slot : std::uint8_t { s_out, s_layer, s_base, s_detail, s_curl, s_weather, s_sampler };
+constexpr std::array<rhi::BindingRequest, 7> kResources{{
     {"g_cloud_shadow", VK_DESCRIPTOR_TYPE_STORAGE_IMAGE},
+    {"g_layer", VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER},
+    {"g_base", VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE},
+    {"g_detail", VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE},
+    {"g_curl", VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE},
+    {"g_weather", VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE},
+    {"g_noise_sampler", VK_DESCRIPTOR_TYPE_SAMPLER},
 }};
 
-// Mirrors CloudShadowGpu in cloud_shadow.slang (push constants, 96 bytes).
+// Mirrors CloudShadowGpu in cloud_shadow.slang (push constants, 64 bytes).
 struct CloudShadowGpu {
-    glm::vec4 cloud_a{0.0F};
-    glm::vec4 cloud_b{0.0F};
     glm::vec4 sun{0.0F};    // xyz toward the sun, w texel size m
     glm::vec4 right{0.0F};  // xyz axis, w snapped centre coordinate
     glm::vec4 up{0.0F};
     glm::vec4 camera{0.0F}; // xyz position, w resolution
 };
-static_assert(sizeof(CloudShadowGpu) == 96, "must match cloud_shadow.slang CloudShadowGpu");
+static_assert(sizeof(CloudShadowGpu) == 64, "must match cloud_shadow.slang CloudShadowGpu");
 
 constexpr float kExtent = cloud_shadow_extent_m;
 
@@ -88,7 +95,7 @@ CloudShadowPass::create(const rhi::Device& device, rhi::GpuAllocator& allocator,
     auto bindings =
         rhi::reflected_bindings((*shader)->reflection, kResources, VK_SHADER_STAGE_COMPUTE_BIT);
     if (!bindings) return fail("cloud shadow pass: " + bindings.error().message);
-    out.out_slot_ = (*bindings)[0].binding;
+    for (std::size_t i = 0; i < kResources.size(); ++i) out.slots_[i] = (*bindings)[i].binding;
     auto layout = rhi::DescriptorSetLayout::create(device, out.db_fns_, *bindings);
     if (!layout) return std::unexpected(layout.error());
     out.layout_ = std::move(*layout);
@@ -102,13 +109,24 @@ CloudShadowPass::create(const rhi::Device& device, rhi::GpuAllocator& allocator,
     auto pipeline = cache.create_compute_pipeline(info);
     if (!pipeline) return std::unexpected(pipeline.error());
     out.pipeline_ = std::move(*pipeline);
+    auto buffer = allocator.create_buffer(
+        sizeof(CloudLayerGpu),
+        VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+        VMA_MEMORY_USAGE_AUTO,
+        VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT);
+    if (!buffer) return std::unexpected(buffer.error());
+    out.layer_buffer_ = std::move(*buffer);
     return out;
 }
 
 std::expected<CloudShadowMap, core::Error>
 CloudShadowPass::add_to_graph(rhi::RenderGraph& graph, const glm::vec3& sun_to,
-                              const glm::vec3& camera, const CloudSettings& clouds) {
+                              const glm::vec3& camera, const CloudLayerGpu& layer,
+                              const CloudNoisePass& noise) {
     if (!valid()) return fail("cloud shadow pass: not created");
+    if (!noise.valid()) return fail("cloud shadow pass: no cloud noise");
+    std::memcpy(layer_buffer_.mapped(), &layer, sizeof(layer));
+    if (auto f = layer_buffer_.flush(0, sizeof(layer)); !f) return std::unexpected(f.error());
     // Created here: the descriptor buffer refers to layout_, which must not
     // move afterwards (the pass is moved into its frame slot).
     auto db = rhi::DescriptorBuffer::create(*device_, *allocator_, db_fns_, layout_);
@@ -124,19 +142,27 @@ CloudShadowPass::add_to_graph(rhi::RenderGraph& graph, const glm::vec3& sun_to,
         VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT);
 
     CloudShadowGpu push;
-    push.cloud_a = clouds.pack_a();
-    push.cloud_b = clouds.pack_b();
     push.sun = {frame.sun, frame.texel_m};
     push.right = {frame.right, frame.centre.x};
     push.up = {frame.up, frame.centre.y};
     push.camera = {camera, static_cast<float>(cloud_shadow_resolution)};
 
     const rhi::ResourceHandle texture = out.texture;
+    constexpr VkImageLayout ro = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    rhi::DescriptorBuffer& d = frame_descriptor_;
+    d.write_uniform_buffer(slots_[s_layer],
+                           rhi::buffer_device_address(device_->handle(), layer_buffer_),
+                           sizeof(CloudLayerGpu));
+    d.write_sampled_image(slots_[s_base], noise.base_view(), ro);
+    d.write_sampled_image(slots_[s_detail], noise.detail_view(), ro);
+    d.write_sampled_image(slots_[s_curl], noise.curl_view(), ro);
+    d.write_sampled_image(slots_[s_weather], noise.weather_view(), ro);
+    d.write_sampler(slots_[s_sampler], noise.sampler());
     (void)graph.add_pass("cloud_shadow", rhi::PassType::compute)
         .writes(texture, rhi::ResourceUsage::storage_write)
         .execute([this, texture, push](rhi::PassContext& ctx) {
             const VkCommandBuffer cmd = ctx.cmd();
-            frame_descriptor_.write_storage_image(out_slot_, ctx.resolve(texture).view,
+            frame_descriptor_.write_storage_image(slots_[s_out], ctx.resolve(texture).view,
                                                   VK_IMAGE_LAYOUT_GENERAL);
             vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline_.handle());
             frame_descriptor_.bind(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline_.layout(), 0);

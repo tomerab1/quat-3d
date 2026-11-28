@@ -269,6 +269,47 @@ pub struct CloudParams {
     /// With a weather in the scene, clouds shadow the sun on the ground (default true).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub shadows: Option<bool>,
+    /// Cloud type, 0..1: 0 stratus, 0.5 stratocumulus, 1 cumulus (default 0.8). A closing sky (high coverage) turns toward stratus.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub r#type: Option<f64>,
+    /// Coverage of the high cirrus layer, 0..1 (default 0.35; 0 = none).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cirrus_coverage: Option<f64>,
+    /// Altitude of the cirrus layer, km, 4..15 (default 9).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cirrus_altitude_km: Option<f64>,
+    /// Optical depth of a full cirrus sheet, 0..3 (default 0.35).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cirrus_opacity: Option<f64>,
+    /// Cloud march samples of a vertical ray, 16..96 (default 48; more toward the horizon).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub march_steps: Option<i64>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct FogParams {
+    /// Volumetric fog on or off: fog volumes and the height fog (default true).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub enabled: Option<bool>,
+    /// Height fog extinction at its base, per metre, 0..0.2 (default 0 = none). Visibility is about 3.9 / density.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub density: Option<f64>,
+    /// How fast the height fog thins above its base, per metre, 0..1 (default 0.02).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub height_falloff: Option<f64>,
+    /// World height below which the height fog is uniformly dense, metres (default 0).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base_height_m: Option<f64>,
+    /// Fraction of the extinction that scatters, 0..1 (default 0.9).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub albedo: Option<f64>,
+    /// Forward (> 0) or backward (< 0) scattering, -0.9..0.9 (default 0.6).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub anisotropy: Option<f64>,
+    /// Range of the froxel fog volume, metres, 50..20000 (default 1000); analytic fog beyond.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_distance_m: Option<f64>,
 }
 
 /// What lights and fills the background.

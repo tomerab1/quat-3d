@@ -18,12 +18,16 @@
 // The sun's elevation is clamped to cloud_shadow_min_sun_y for the map:
 // below it the path through the shell keeps its length limit and the map
 // keeps its last shape, so dawn and dusk never pop to full sun. The CPU
-// mirror (CloudShadowFrame::texel_point + cloud_sun_transmittance_reference)
-// is the reference the tests compare texels against.
+// mirror (CloudShadowFrame::texel_point + cloud_reference::
+// shadow_transmittance over cloud_shadow_steps) is the reference the tests
+// compare texels against. R13.4: the map integrates the volumetric cloud
+// model of lib/clouds.slang (its CloudLayerGpu and CloudNoisePass textures),
+// the clouds the sky shows.
 //
 // One instance per frame in flight (its descriptor buffer is rewritten each
 // frame).
 
+#include <array>
 #include <cstdint>
 #include <expected>
 #include <string>
@@ -32,7 +36,8 @@
 #include <vulkan/vulkan.h>
 
 #include "engine/core/error.hpp"
-#include "engine/renderer/cloud_settings.hpp"
+#include "engine/renderer/cloud_reference.hpp"
+#include "engine/rhi/gpu_allocator.hpp"
 #include "engine/rhi/descriptor_buffer.hpp"
 #include "engine/rhi/managed_pipeline.hpp"
 #include "engine/rhi/render_graph.hpp"
@@ -49,6 +54,7 @@ inline constexpr std::uint32_t cloud_shadow_resolution = 512;
 inline constexpr float         cloud_shadow_extent_m = 6144.0F; // 12 m texels
 inline constexpr VkFormat      cloud_shadow_format = VK_FORMAT_R16_SFLOAT;
 inline constexpr float         cloud_shadow_min_sun_y = 0.0523F; // sin(3 deg), as the shader
+inline constexpr int           cloud_shadow_steps = 16;          // CLOUD_SHADOW_MAP_STEPS
 
 // World position -> map uv: (dot(P, u_axis.xyz) + u_axis.w, dot(P, v_axis.xyz)
 // + v_axis.w). Mirrors CloudShadowProjection in lib/cloud_shadow_common.slang.
@@ -78,13 +84,7 @@ struct CloudShadowFrame {
     [[nodiscard]] glm::vec3 texel_point(std::uint32_t x, std::uint32_t y) const;
 };
 
-// CPU mirror of lib/atmosphere.slang's cloud_sun_transmittance: the sun's
-// transmittance through the cloud layer of `clouds` (as packed for the frame,
-// offset included) along the line through `offset_km` (relative to the
-// camera, km) toward `sun` (unit, at least cloud_shadow_min_sun_y high).
-[[nodiscard]] float cloud_sun_transmittance_reference(const glm::vec3& offset_km,
-                                                      const glm::vec3& sun,
-                                                      const CloudSettings& clouds);
+class CloudNoisePass;
 
 // One frame's map in the graph. Invalid when the frame has none (no weather,
 // clouds or cloud shadows off): no cloud shadows then.
@@ -110,13 +110,13 @@ public:
     [[nodiscard]] bool valid() const { return pipeline_.handle() != VK_NULL_HANDLE; }
 
     // Declares the map and the compute pass that fills it for the cloud layer
-    // `clouds` (packed as the lighting pass packs it) under the sun `sun_to`,
-    // around `camera`. The descriptor buffer is owned by the pass and
-    // rewritten by the next call (the frame slot's fence must have been
-    // waited).
+    // `layer` (make_cloud_layer, as the cloud pass draws it; `noise` its
+    // baked textures) under the sun `sun_to`, around `camera`. The descriptor
+    // and constant buffers are owned by the pass and rewritten by the next
+    // call (the frame slot's fence must have been waited).
     [[nodiscard]] std::expected<CloudShadowMap, core::Error>
     add_to_graph(rhi::RenderGraph& graph, const glm::vec3& sun_to, const glm::vec3& camera,
-                 const CloudSettings& clouds);
+                 const CloudLayerGpu& layer, const CloudNoisePass& noise);
 
 private:
     const rhi::Device* device_ = nullptr;    // non-owning
@@ -125,8 +125,9 @@ private:
     rhi::DescriptorBufferFunctions db_fns_{};
     rhi::DescriptorSetLayout       layout_;
     rhi::ManagedPipeline           pipeline_;
-    std::uint32_t                  out_slot_ = 0; // g_cloud_shadow's reflected binding
+    std::array<std::uint32_t, 7>   slots_{}; // reflected bindings (kResources order)
     rhi::DescriptorBuffer          frame_descriptor_;
+    rhi::GpuBuffer                 layer_buffer_; // CloudLayerGpu, host-mapped
 };
 
 } // namespace engine::renderer

@@ -327,7 +327,24 @@ JSON-RPC over loopback TCP to the engine.
     sweep sideways (integrate a 2D displacement in `WindAdvection` and keep
     the along / across anisotropy local).
   - [ ] **R13.3 Volumetrics.** Froxel volumetric fog + local fog volumes on
-    R10.1's clusters, and a 2.5D volumetric cloud layer.
+    R10.1's clusters (Wronski 2014; Hillaire 2015): exponential height fog
+    and box / ellipsoid `FogVolume`s voxelised into a 160x90x64 froxel
+    grid, lit by the sun through the CSM and the cloud shadow map, by the
+    clustered point / spot lights and the sky's ambient, temporally
+    filtered and integrated energy-conservingly; the analytic height fog
+    continues it beyond the grid's range; Hillaire 2020's aerial
+    perspective volume on opaque pixels and clouds. Remaining: the
+    `FogVolume` codec / editor / remote (after S9's per-module
+    registration), fog on transparents and particles.
+  - [ ] **R13.4 Volumetric clouds v2** *(owner request: "clouds are nice but
+    would like them to be better")*: Nubis-style (Schneider 2015 / 2017)
+    weather-driven coverage and type, Perlin-Worley base + curl-distorted
+    Worley detail baked by compute, a cirrus layer; Hillaire 2016's
+    energy-conserving lighting with Wrenninge's multiple-scattering octaves,
+    sun and moon (R22.1 SkyState) through the transmittance LUT; quarter
+    resolution with temporal reprojection; cloud shadows and aerial
+    perspective from the same model. Remaining: the IBL probe still bakes
+    the R11.2 clouds.
 - [ ] **R14 — Foliage.** Main + detail wind bending, two-sided foliage shading
   model ID in the GBuffer, hashed alpha (coverage-preserving mips: R12.11), GPU
   instance cull + LOD cross-fade (with R9.4), octahedral impostors, GPU

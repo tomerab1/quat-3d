@@ -8,8 +8,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
 use super::{
-    CloudParams, Color, DofParams, EntityRef, FilmParams, GradingParams, MotionBlurParams,
-    SkySource, TonemapParams,
+    CloudParams, Color, DofParams, EntityRef, FilmParams, FogParams, GradingParams,
+    MotionBlurParams, SkySource, TonemapParams,
 };
 
 /// A render-settings group.
@@ -28,6 +28,7 @@ pub enum SettingsGroup {
     Environment,
     Ssr,
     Clouds,
+    Fog,
     Dof,
     #[serde(rename = "motion_blur")]
     MotionBlur,
@@ -346,6 +347,9 @@ pub struct RenderSettingsSetParams {
     /// Volumetric clouds (same fields as `environment_set`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub clouds: Option<CloudParams>,
+    /// Volumetric fog: the height fog and fog volumes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fog: Option<FogParams>,
     /// Depth of field from the active camera's lens.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dof: Option<DofParams>,
@@ -378,6 +382,7 @@ impl RenderSettingsSetParams {
             && self.environment.is_none()
             && self.ssr.is_none()
             && self.clouds.is_none()
+            && self.fog.is_none()
             && self.dof.is_none()
             && self.motion_blur.is_none()
             && self.tonemap.is_none()
@@ -537,8 +542,8 @@ mod tests {
     #[test]
     fn unknown_settings_are_rejected() {
         let err =
-            serde_json::from_value::<RenderSettingsSetParams>(json!({"fog": {}})).unwrap_err();
-        assert!(err.to_string().contains("fog"));
+            serde_json::from_value::<RenderSettingsSetParams>(json!({"haze": {}})).unwrap_err();
+        assert!(err.to_string().contains("haze"));
         let err = serde_json::from_value::<RenderSettingsSetParams>(json!({"bloom": {"glow": 1}}))
             .unwrap_err();
         assert!(err.to_string().contains("glow"));

@@ -18,6 +18,7 @@
 #include <string_view>
 
 #include "engine/renderer/cloud_settings.hpp"
+#include "engine/renderer/fog_settings.hpp"
 #include "engine/renderer/post_settings.hpp"
 #include "engine/renderer/reflection_settings.hpp"
 #include "engine/renderer/shadow_ao_settings.hpp"
@@ -79,6 +80,7 @@ struct RenderSettings {
     // CloudSettings::time_s is frame-loop state, not a setting: the renderer
     // overwrites it each frame and the table does not list it.
     CloudSettings    clouds;
+    FogSettings      fog;            // R13.3: volumetric fog
     // R20: the cinematic post stack (post_settings.hpp).
     DofSettings        dof;
     MotionBlurSettings motion_blur;

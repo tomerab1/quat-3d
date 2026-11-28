@@ -46,9 +46,11 @@ renderer::CloudSettings frame_clouds(const renderer::CloudSettings& settings, fl
     }
     const weather::WeatherState w = weather::sanitized(*weather);
     c.coverage = w.cloud_cover;
-    c.density *= 1.0F + w.precipitation;
+    c.precipitation = w.precipitation;
     c.time_s = 0.0F;
-    c.offset_km = drift_km + glm::vec2(camera.x, camera.z) * 0.001F;
+    // A feature of the field at f sits at world X = f + drift: the field
+    // coordinate is X - drift, so the clouds move with the wind.
+    c.offset_km = glm::vec2(camera.x, camera.z) * 0.001F - drift_km;
     return c;
 }
 

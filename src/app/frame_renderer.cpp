@@ -284,6 +284,14 @@ void FrameRenderer::create_environment(engine::scene::Scene& scene,
                          atmos.error().message.c_str());
         }
     }
+    // R13.3 / R13.4: volumetric clouds (noise baked once here), aerial
+    // perspective and froxel fog.
+    if (auto v = VolumetricsRuntime::create(device, allocator, pipeline_cache, shader_dir)) {
+        volumetrics_ = std::move(*v);
+    } else {
+        std::fprintf(stderr, "[warn] volumetrics create failed: %s\n",
+                     v.error().message.c_str());
+    }
 
     // Image-based lighting: a dynamic environment probe (11.3). create() runs
     // one blocking full cycle so ambient/reflections are complete from frame
