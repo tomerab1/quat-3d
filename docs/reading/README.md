@@ -117,7 +117,7 @@ If you read only a few things, read these. They underpin most of the engine.
 | ✅ | **Practical Realtime Strategies for Accurate Indirect Occlusion** (GTAO) — Jimenez, Wu, Pesce, Jarabo, SIGGRAPH 2016. [PDF](https://www.activision.com/cdn/research/Practical_Real_Time_Strategies_for_Accurate_Indirect_Occlusion_NEW%20VERSION_COLOR.pdf) | `assets/shaders/gtao.slang`, `lib/occlusion.slang` (multi-bounce, eq. 10) |
 | ✅ | **XeGTAO** — Strugar & McCalla (Intel), MIT-licensed reference implementation we port. [GitHub](https://github.com/GameTechDev/XeGTAO) | `gtao.slang`, `gtao_denoise.slang` |
 | ✅ | **Accurate Normal Reconstruction from Depth Buffer** — Yuwen Wu, 2021. [blog](https://atyuwen.github.io/posts/normal-reconstruction) | `lib/occlusion.slang` contact shadows: `depth_slope` picks each axis's neighbour on the texel's own surface by second difference (#86) |
-| 🔧 | **Hashed Alpha Testing** — Wyman & McGuire, I3D 2017. [NVIDIA Research](https://research.nvidia.com/labs/rtr/publication/wyman2017hashed) | Alpha MASK cut-outs (#70) |
+| 🔧 | **Hashed Alpha Testing** — Wyman & McGuire, I3D 2017. [NVIDIA Research](https://research.nvidia.com/labs/rtr/publication/wyman2017hashed) | Alpha MASK cut-outs (#70); planned: R25.2 seasonal leaf drop |
 | 🔧 | **Anti-aliased Alpha Test: The Esoteric Alpha To Coverage** — Golus, 2017 (coverage-preserving mips). [Medium](https://bgolus.medium.com/anti-aliased-alpha-test-the-esoteric-alpha-to-coverage-8b177335ae4f) | #70 |
 
 ## Sky, atmosphere, clouds & fog
@@ -173,6 +173,56 @@ If you read only a few things, read these. They underpin most of the engine.
 | 🔧 | **Vegetation Procedural Animation and Shading in Crysis** — Sousa, GPU Gems 3 ch. 16 (2007). [online](https://developer.nvidia.com/gpugems/gpugems3/part-iii-rendering/chapter-16-vegetation-procedural-animation-and-shading-crysis) | Foliage wind (R14, #49; R13 wind field, #64) |
 | 🗺 | **GPU-Based Procedural Placement in Horizon Zero Dawn** — van Muijden, GDC 2017. [Guerrilla](https://www.guerrilla-games.com/read/gpu-based-procedural-placement-in-horizon-zero-dawn) | R14 biome placement |
 | 🗺 | **Octahedral Impostors** — Brucks, 2018. [shaderbits.com](https://shaderbits.com/blog/octahedral-impostors) | R14 far-field trees |
+
+## Procedural building, curves & geometry
+
+Design: [`docs/design/cozy-builder.md`](../design/cozy-builder.md) (engine
+items G18, R23, R9.5, G19, R24; the Cozy Builder game, G16).
+
+| | Reading | In quat-3d |
+|---|---|---|
+| 🗺 | **Rendering Tiny Glades With Entirely Too Much Ray Marching** — Stachowiak (Pounce Light), Graphics Programming Conference 2024. GI, GPU-driven rendering, tilt-shift DoF, stable shadows under a moving sun. [video](https://www.youtube.com/watch?v=jusWW2pPnA0) · [GPC 2024 archive](https://graphicsprogrammingconference.com/archive/2024/) | Reference look for G16; R20 DoF, R12 CSM, R15 GI |
+| 🗺 | **Tiny Glade Developers on Bevy, Proceduralism, Publishers & Cozy Games** — Opara & Stachowiak, 80.lv interview. Rule-authored, real-time (GPU) procedural generation; brush-painted paths. [80.lv](https://80.lv/articles/exclusive-tiny-glade-developers-discuss-bevy-proceduralism-publishers-cozy-games) · dev clips: [walls](https://80.lv/articles/anastasia-opara-s-procedural-wall-generator-upgraded), [glued buildings](https://80.lv/articles/this-upcoming-game-lets-you-procedurally-glue-buildings-together), [tower roofs](https://80.lv/articles/a-look-at-procedural-tower-roofs-in-tiny-glade), [windows](https://80.lv/articles/procedural-windows-in-pounce-light-s-tiny-glade-get-an-upgrade/) | G16 intent-vs-derived model and feature set |
+| 🗺 | **Functional Symbiosis of Art Direction and Proceduralism** — Opara (EA SEED), CEDEC 2018. [PDF](https://media.contentapi.ea.com/content/dam/ea/seed/presentations/cedec-2018-functional-symbiosis-of-art-direction-and-proceduralism.pdf) | G16 hand-authored rule philosophy |
+| 🗺 | **Organic Towns from Square Tiles** — Stålberg, IndieCade Europe 2019 (Townscaper's irregular grid and topology-driven module choice). [Game Developer summary](https://www.gamedeveloper.com/game-platforms/how-townscaper-works-a-story-four-games-in-the-making) | Considered for G16 and rejected (gridless); its idea survives in G16.2's junction rules on a curve graph |
+| 🗺 | **A Novel Type of Skeleton for Polygons** — Aichholzer, Aurenhammer, Alberts, Gärtner, J.UCS 1995. The straight skeleton, the canonical roof over a polygon. [J.UCS](https://doi.org/10.3217/jucs-001-12-0752) | R23.1 straight skeleton; G16.3 roofs |
+| 🗺 | **Straight Skeleton Implementation** — Felkel & Obdržálek, SCCG 1998 (the event algorithm; known to be incorrect in corner cases). [PDF](https://www.sthu.org/misc/SKRW14/papers/Felkel_1998_StraightSkeletonImplementation.pdf) | R23.1 |
+| 🗺 | **On Implementing Straight Skeletons: Challenges and Experiences** — Eder, Held, Palfrader, SoCG 2020. Robustness and exact arithmetic. [LIPIcs](https://doi.org/10.4230/LIPIcs.SoCG.2020.38) | R23.1 robustness and tests |
+| 🗺 | **Interactive Architectural Modeling with Procedural Extrusions** — Kelly & Wonka, ACM TOG 30(2), 2011. Weighted skeletons: gables, mixed pitches. [DOI](https://doi.org/10.1145/1944846.1944854) | R23.1 weights; G16.3 gable and mansard roofs |
+| 🗺 | **Procedural Modeling of Buildings** — Müller, Wonka, Haegler, Ulmer, Van Gool, SIGGRAPH 2006 (CGA shape grammar). [DOI](https://doi.org/10.1145/1141911.1141931) | G16.3 façade split rules (bays, doors, windows) |
+| 🗺 | **Instant Architecture** — Wonka, Wimmer, Sillion, Ribarsky, SIGGRAPH 2003 (split grammars). [DOI](https://doi.org/10.1145/882262.882324) | G16.3 façade rules |
+| 🗺 | **Computation of Rotation Minimizing Frames** — Wang, Jüttler, Zheng, Liu, ACM TOG 27(1), 2008 (double reflection). [DOI](https://doi.org/10.1145/1330511.1330513) | G18.1 curve frames; R23.1 sweeps (rails, ivy) |
+| 🗺 | **Parameterization and applications of Catmull-Rom curves** — Yuksel, Schaefer, Keyser, Computer-Aided Design 43(7), 2011 (centripetal Catmull-Rom). [project page](https://cemyuksel.com/research/catmullrom_param/) · [DOI](https://doi.org/10.1016/j.cad.2010.08.008) | G18.1 default spline kind |
+| 🗺 | **An Algorithm for Automatically Fitting Digitized Curves** — Schneider, Graphics Gems (1990). | G18.3 stroke capture |
+| 🗺 | **Algorithms for the Reduction of the Number of Points Required to Represent a Digitized Line or its Caricature** — Douglas & Peucker, The Canadian Cartographer 10(2), 1973 (with Ramer 1972: polyline simplification). | G18.3 stroke capture; G16.3 footprint simplification |
+| 🗺 | **Simulation of Wrinkled Surfaces Revisited** — Mikkelsen, 2008 (MikkTSpace tangents); the reference implementation is [mmikk/MikkTSpace](https://github.com/mmikk/MikkTSpace). | R23.1 mesh builder tangents |
+| 🗺 | **An Ivy Generator** — Luft, 2007 (growth by direction, randomness and adhesion). [project page](https://graphics.uni-konstanz.de/~luft/ivy_generator/) | G16.4 ivy |
+| 🗺 | **Screen Space Decals in Warhammer 40,000: Space Marine** — Kim, SIGGRAPH 2012 talks. | R24 decals |
+| 🗺 | **Clipper2** — Johnson (polygon clipping and offsetting, Boost licence) and **earcut.hpp** — Mapbox (ear-clipping triangulation, ISC). [Clipper2](https://github.com/AngusJohnson/Clipper2) · [earcut.hpp](https://github.com/mapbox/earcut.hpp) | R23.1 polygon operations |
+
+## Seasons, snow & ambient life
+
+Design: [`docs/design/cozy-builder.md` §4.14](../design/cozy-builder.md#414-seasons-r25) (R25) and §5.16 (G16.10).
+
+| | Reading | In quat-3d |
+|---|---|---|
+| 🗺 | **Real-time Rendering of Accumulated Snow** — Ohlsson & Seipel, SIGRAD 2004. Exposure from a top-down depth map plus slope-based coverage. [PDF](https://ep.liu.se/ecp/013/007/ecp01307.pdf) | R25.3 precipitation occlusion map and snow coverage |
+| 🗺 | **Real-time accumulation of occlusion-based snow** — Reynolds, Laycock & Day, The Visual Computer 2015. [DOI](https://doi.org/10.1007/s00371-014-0995-5) | R25.3 |
+| 🗺 | **Computer Modelling of Fallen Snow** — Fearing, SIGGRAPH 2000 (offline accumulation and stability; the physical reference). [SIGGRAPH history](https://history.siggraph.org/?p=118252) | R25.3 coverage rules |
+| 🗺 | **Real-Time Rendering of Seasonal Influenced Trees** — Braitmaier, Diepstraten & Ertl, Theory and Practice of Computer Graphics 2004 (leaf pigments in shaders). | R25.2 `ColourRamp` |
+| 🗺 | **Realistic Simulation of Seasonal Variant Maples** — Zhou, Dong & Mei (chlorophyll / carotenoid / anthocyanin over time). [HAL](https://hal.archives-ouvertes.fr/inria-00521833) | R25.2 ramp authoring |
+| 🗺 | **Flocks, Herds, and Schools: A Distributed Behavioral Model** — Reynolds, SIGGRAPH 1987 (boids). [DOI](https://doi.org/10.1145/37401.37406) | G16.9 birds |
+
+## Cameras, tools & game architecture
+
+| | Reading | In quat-3d |
+|---|---|---|
+| 🗺 | **Critically Damped Ease-In/Ease-Out Smoothing** — Lowe, Game Programming Gems 4 (2004). See also Holden's *Spring-It-On* under Animation. | G15.1 camera rig smoothing |
+| 🗺 | **50 Game Camera Mistakes** — Nesky, GDC 2014. [GDC Vault](https://www.gdcvault.com/play/1020460/50-Camera) | G15 camera rigs |
+| 🗺 | **Real-Time Cameras** — Haigh-Hutchinson, Morgan Kaufmann 2009. | G15 camera rigs |
+| 🗺 | **Semantic Versioning 2.0.0** — Preston-Werner. [semver.org](https://semver.org/spec/v2.0.0.html) | P8 SDK versioning policy |
+| 🗺 | **CMake: Importing and Exporting Guide** — Kitware (exported targets, package config and version files). [cmake.org](https://cmake.org/cmake/help/latest/guide/importing-exporting/index.html) | P8 `find_package(quat3d CONFIG)` |
+| 🗺 | **Game Programming Patterns: Command** — Nystrom, 2014. [online](https://gameprogrammingpatterns.com/command.html) · and **Design Patterns** — Gamma, Helm, Johnson, Vlissides, 1994 (Command, Memento). | E1 `core::CommandStack`; G16.6 undo/redo |
 
 ## Animation, physics & navigation
 

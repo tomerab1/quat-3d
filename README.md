@@ -340,7 +340,7 @@ QUAT_SCENE=assets/scenes/coin_collector.json QUAT_PLAY=1 ./build/release/game
 
 The language reference, callbacks and the whole engine API are in
 [`docs/scripting.md`](docs/scripting.md). AI assistants can write and debug
-scripts through MCP (`script_*` tools and the `write_game_script` prompt).
+scripts through MCP (`script_*` tools and the `write-gameplay-script` skill).
 
 ### Sample models
 
@@ -391,20 +391,48 @@ For world building it reports entity bounds, sets models down on terrain or
 colliders (`world_place_on_ground`), takes screenshots from any camera without
 moving yours, and searches and downloads CC0 models from Poly Haven
 (`asset_search` / `asset_fetch`, into the gitignored `assets/meshes/polyhaven/`).
-Start the engine with `QUAT_REMOTE=7878`, build the
-server with `cargo build --release` in `tools/quat-mcp`, and register it with
-your client:
 
-```sh
-claude mcp add quat-3d --env QUAT_REMOTE_PORT=7878 -- "$PWD/tools/quat-mcp/target/release/quat-mcp"
-```
+It also ships **workflow skills** — step-by-step guides with verification
+steps and pitfalls for building a level, tuning the look, authoring
+materials, writing gameplay scripts, designing NPC behaviour, debugging
+physics glitches and playtesting. They are
+[Agent Skills](https://agentskills.io) served over the MCP skills extension,
+and the same guides are MCP prompts for clients without skills support.
+
+Start the engine with `QUAT_REMOTE=7878` and install the server:
+
+- **Claude Code** — the quat-3d plugin from this repository's marketplace
+  registers quat-mcp and installs the skills. Build and install the server,
+  then add the plugin:
+
+  ```sh
+  cargo install --path tools/quat-mcp
+  ```
+
+  ```
+  /plugin marketplace add tomerab1/quat-3d
+  /plugin install quat-3d@quat-3d
+  ```
+
+  The skills appear as `/quat-3d:build-level`, `/quat-3d:tune-look` and so
+  on, and Claude picks them up by itself when a task matches.
+- **Any other MCP client** — build the server with `cargo build --release`
+  in `tools/quat-mcp` and register the binary; for example, without the
+  plugin in Claude Code:
+
+  ```sh
+  claude mcp add quat-3d --env QUAT_REMOTE_PORT=7878 -- "$PWD/tools/quat-mcp/target/release/quat-mcp"
+  ```
+
+  Clients with skills support load the workflows as skills; the others list
+  them as prompts (`build-level`, `tune-look`, ...).
 
 No token setup is needed: the engine writes a fresh session token for each run
 to a file only your user can read, and quat-mcp reads it from there. The
 endpoint listens on `127.0.0.1` only and refuses connections without the
 token, so other users on the machine and web pages in your browser cannot
 drive the engine. See [`tools/quat-mcp/README.md`](tools/quat-mcp/README.md)
-for Claude Desktop setup, explicit tokens and the full tool list.
+for Claude Desktop setup, explicit tokens, the full tool list and the workflows.
 
 ## Testing
 
@@ -464,7 +492,8 @@ include/engine/     Public headers, one folder per module
 src/                Implementation, mirroring include/ (rhi, renderer, scene, physics, ...)
 src/editor/         The editor (only in builds with ENGINE_EDITOR=ON, the default)
 src/remote/         Remote-control endpoint used by AI tooling
-tools/quat-mcp/     MCP server for AI assistants (Rust, standalone Cargo crate)
+tools/quat-mcp/     MCP server for AI assistants (Rust, standalone Cargo crate),
+                    its workflow skills and the Claude Code plugin
 tools/quat-cook/    Offline asset cooker CLI (src/cook/ holds the cooking library)
 tests/              GoogleTest suite (engine_tests): tests/<module>/, shared helpers in tests/support/
 docs/               Project documentation
