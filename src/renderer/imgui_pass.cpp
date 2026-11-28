@@ -38,31 +38,6 @@ struct UiPushConstants {
 };
 static_assert(sizeof(UiPushConstants) == 16, "must match imgui.slang PushConstants");
 
-// Byte copy of a whole colour image between two size-compatible formats (an
-// sRGB image and its UNORM twin): the bytes move as they are, no conversion.
-void add_byte_copy(rhi::RenderGraph& graph, const char* name, rhi::ResourceHandle src,
-                   rhi::ResourceHandle dst, VkExtent2D extent) {
-    (void)graph.add_pass(name, rhi::PassType::transfer)
-        .reads(src, rhi::ResourceUsage::transfer_src)
-        .writes(dst, rhi::ResourceUsage::transfer_dst)
-        .execute([src, dst, extent](rhi::PassContext& ctx) {
-            VkImageCopy2 region{};
-            region.sType = VK_STRUCTURE_TYPE_IMAGE_COPY_2;
-            region.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
-            region.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
-            region.extent = {extent.width, extent.height, 1};
-            VkCopyImageInfo2 copy{};
-            copy.sType = VK_STRUCTURE_TYPE_COPY_IMAGE_INFO_2;
-            copy.srcImage = ctx.resolve(src).image;
-            copy.srcImageLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
-            copy.dstImage = ctx.resolve(dst).image;
-            copy.dstImageLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-            copy.regionCount = 1;
-            copy.pRegions = &region;
-            vkCmdCopyImage2(ctx.cmd(), &copy);
-        });
-}
-
 } // namespace
 
 std::expected<ImGuiPass, core::Error>
@@ -283,7 +258,9 @@ std::expected<void, core::Error> ImGuiPass::add_to_graph(rhi::RenderGraph& graph
     // Where the UI is drawn. Its blending must happen on the stored
     // (gamma-encoded) bytes: directly on a UNORM target or through an sRGB
     // target's UNORM view (a mutable-format swapchain); otherwise into a
-    // UNORM scratch image whose bytes are copied over the target — exact,
+    // UNORM view of a scratch image stored in the target's format, whose
+    // bytes are copied over the target — exact (a same-format copy:
+    // rhi::add_byte_copy explains why not UNORM -> sRGB),
     // at the cost of one (overlay: two) full-target copy.
     const rhi::ResourceBinding target_binding = graph.binding(target);
     if (rhi::storage_unorm(target_binding.format) != pipeline_format_) {
@@ -310,8 +287,13 @@ std::expected<void, core::Error> ImGuiPass::add_to_graph(rhi::RenderGraph& graph
         ui = graph.create_transient_image("ui_composite", pipeline_format_, extent,
                                           VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
                                               VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
-                                              VK_IMAGE_USAGE_TRANSFER_DST_BIT);
-        if (!clear) add_byte_copy(graph, "imgui_load", target, ui, extent);
+                                              VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+                                          graph.storage_format(target));
+        if (!clear) {
+            if (auto r = rhi::add_byte_copy(graph, "imgui_load", target, ui, extent); !r) {
+                return std::unexpected(r.error());
+            }
+        }
     }
 
     frame_scale_[0] = 2.0F / draw_data->DisplaySize.x;
@@ -394,7 +376,7 @@ std::expected<void, core::Error> ImGuiPass::add_to_graph(rhi::RenderGraph& graph
             }
             vkCmdEndRendering(cmd);
         });
-    if (!direct) add_byte_copy(graph, "imgui_store", ui, target, extent);
+    if (!direct) return rhi::add_byte_copy(graph, "imgui_store", ui, target, extent);
     return {};
 }
 

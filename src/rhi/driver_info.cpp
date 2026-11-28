@@ -25,6 +25,12 @@ constexpr std::array<std::string_view, 5> k_driver_variables{
     "VK_LOADER_DRIVERS_DISABLE", // loader 1.3.234+: drop manifests matching these globs
 };
 
+// MoltenVK's VkPhysicalDeviceProperties::driverVersion (MVK_MAKE_VERSION).
+[[nodiscard]] constexpr std::uint32_t moltenvk_version(std::uint32_t major, std::uint32_t minor,
+                                                       std::uint32_t patch) {
+    return major * 10000U + minor * 100U + patch;
+}
+
 } // namespace
 
 DriverInfo query_driver_info(VkPhysicalDevice physical_device) {
@@ -72,6 +78,11 @@ std::string describe_driver(const DriverInfo& driver,
         }
     }
     return line;
+}
+
+bool swapchain_format_views_track_images(const DriverInfo& driver) {
+    return driver.driver_id != VK_DRIVER_ID_MOLTENVK ||
+           driver.driver_version >= moltenvk_version(1, 4, 3);
 }
 
 } // namespace engine::rhi

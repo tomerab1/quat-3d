@@ -1,6 +1,7 @@
 // Driver identification logged at device creation (issue #130): which
 // driver loaded and which loader override, if any, picked it.
 
+#include <cstdint>
 #include <map>
 #include <string>
 #include <vector>
@@ -69,6 +70,35 @@ TEST(DriverInfo, DescribesTheDriverVersionAndWhereTheLoaderLooked) {
 
     const std::string blank = rhi::describe_driver(rhi::DriverInfo{}, {});
     EXPECT_NE(blank.find("<unnamed>"), std::string::npos) << blank;
+}
+
+rhi::DriverInfo moltenvk_at(std::uint32_t major, std::uint32_t minor, std::uint32_t patch) {
+    rhi::DriverInfo d = moltenvk();
+    d.driver_info = std::to_string(major) + "." + std::to_string(minor) + "." +
+                    std::to_string(patch);
+    d.driver_version = major * 10000U + minor * 100U + patch; // MVK_MAKE_VERSION
+    return d;
+}
+
+// A UNORM view of an sRGB swapchain image is only used where it keeps
+// following the image: not on MoltenVK before 1.4.3, whose view stays on the
+// drawable it was first used with. 1.4.2 is excluded as well: pre-release
+// builds without the fix (LunarG SDK 1.4.341's) report that version too.
+TEST(DriverInfo, SwapchainFormatViewsAreNotTrustedOnMoltenVkBefore143) {
+    EXPECT_FALSE(rhi::swapchain_format_views_track_images(moltenvk_at(1, 3, 0)));
+    EXPECT_FALSE(rhi::swapchain_format_views_track_images(moltenvk_at(1, 4, 0)));
+    EXPECT_FALSE(rhi::swapchain_format_views_track_images(moltenvk_at(1, 4, 1)));
+    EXPECT_FALSE(rhi::swapchain_format_views_track_images(moltenvk_at(1, 4, 2)));
+    EXPECT_TRUE(rhi::swapchain_format_views_track_images(moltenvk_at(1, 4, 3)));
+    EXPECT_TRUE(rhi::swapchain_format_views_track_images(moltenvk_at(1, 5, 0)));
+    EXPECT_TRUE(rhi::swapchain_format_views_track_images(moltenvk_at(2, 0, 0)));
+
+    // Every other driver: its driverVersion encoding is its own business.
+    rhi::DriverInfo lavapipe;
+    lavapipe.driver_id = VK_DRIVER_ID_MESA_LLVMPIPE;
+    lavapipe.driver_version = 1;
+    EXPECT_TRUE(rhi::swapchain_format_views_track_images(lavapipe));
+    EXPECT_TRUE(rhi::swapchain_format_views_track_images(rhi::DriverInfo{}));
 }
 
 // The selected device's driver is queried at creation (every conformant

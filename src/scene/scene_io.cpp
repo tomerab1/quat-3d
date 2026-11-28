@@ -241,15 +241,15 @@ load_scene(Scene& scene, const std::filesystem::path& path, rhi::GpuAllocator& a
         int version = 1;
         block.integer("version", version, 1, 1000);
         if (auto ok = block.finish(); !ok) {
-            return fail("load_scene: '" + path.string() + "': " + ok.error().message);
+            return fail("load_scene: '" + core::path_to_utf8(path) + "': " + ok.error().message);
         }
         if (version > k_physics_settings_version) {
-            return fail("load_scene: '" + path.string() + "': physics_settings version " +
+            return fail("load_scene: '" + core::path_to_utf8(path) + "': physics_settings version " +
                         std::to_string(version) + " is newer than this build reads (" +
                         std::to_string(k_physics_settings_version) + ")");
         }
         if (auto ok = apply_physics_settings_json(physics, *it, /*strict=*/false); !ok) {
-            return fail("load_scene: '" + path.string() + "': " + ok.error().message);
+            return fail("load_scene: '" + core::path_to_utf8(path) + "': " + ok.error().message);
         }
     }
 
@@ -384,13 +384,13 @@ load_scene(Scene& scene, const std::filesystem::path& path, rhi::GpuAllocator& a
             if (!core::JsonFields::read_int(joint["target"], index) || index < 0 ||
                 index >= static_cast<std::int64_t>(created.size()) ||
                 index == static_cast<std::int64_t>(i)) {
-                return fail("load_scene: '" + path.string() + "': entities[" + std::to_string(i) +
+                return fail("load_scene: '" + core::path_to_utf8(path) + "': entities[" + std::to_string(i) +
                             "].joint.target: expected the index of another entity, or null");
             }
             joint["target"] = entt::to_integral(created[static_cast<std::size_t>(index)]);
         }
         if (auto ok = apply_component(r, created[i], "joint", joint, /*strict=*/false); !ok) {
-            return fail("load_scene: '" + path.string() + "': entities[" + std::to_string(i) +
+            return fail("load_scene: '" + core::path_to_utf8(path) + "': entities[" + std::to_string(i) +
                         "]: " + ok.error().message);
         }
     }
