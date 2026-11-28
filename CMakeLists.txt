@@ -300,6 +300,7 @@ add_library(engine_scene STATIC
     src/scene/physics_system.cpp
     src/scene/joint_system.cpp
     src/scene/nav_agent_system.cpp
+    src/scene/nav_separation.cpp
     src/scene/navigation.cpp
     src/scene/behavior.cpp
     src/scene/bt_graph.cpp

@@ -1,5 +1,6 @@
 #include "engine/rhi/compute_pipeline.hpp"
 
+#include <format>
 #include <string>
 #include <utility>
 
@@ -57,9 +58,12 @@ ComputePipeline::create(const Device& device, VkPipelineCache cache, const Creat
         pipeline_info.flags = VK_PIPELINE_CREATE_DESCRIPTOR_BUFFER_BIT_EXT;
     }
 
-    if (vkCreateComputePipelines(vk_device, cache, 1, &pipeline_info, nullptr, &out.pipeline_)
-        != VK_SUCCESS) {
-        return fail("ComputePipeline::create: vkCreateComputePipelines failed");
+    if (const VkResult r =
+            vkCreateComputePipelines(vk_device, cache, 1, &pipeline_info, nullptr, &out.pipeline_);
+        r != VK_SUCCESS) {
+        return fail(std::format("ComputePipeline::create: vkCreateComputePipelines failed: "
+                                "VkResult({})",
+                                static_cast<int>(r)));
     }
     return out;
 }

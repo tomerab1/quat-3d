@@ -60,6 +60,7 @@ Merged on 2026-11-27 after cycle 2:
 | #54 | A10.1 physics control (fixes #47 #48) | `feat/a10-physics-control` | train #93 merged in; review fixes pushed (set_motion fallback, SlotMap wrap, duration_s in whole steps, read_bool, O(1) strongest impact, lock-free EventRing); CI pending, then re-review |
 | #55 | P4 game packaging + E7 export | `feat/p4-game-packaging` | draft; worker running |
 | #83 | A12.1 skills (MCP skills extension, prompts, Claude Code plugin) | `feat/a12-skills` | train #93 merged in (A6 shader + G7 script tools used by the skills; plugin works with the release-bundled quat-mcp); A12.2 waits on #54, A10.4, R4 |
+| #106 | P1 macOS GBuffer pipelines (fixes #103) | `feat/macos-pipeline-diag` | draft, master merged; macOS GPU 186/194 (was 108/192); 8 left are not #103 (KTX2 picks ASTC over BC, fast-math bit-identity, TAA/TAAU/particle/contact-shadow tolerances; separate issue) |
 
 Queued for the next free agents, in order:
 1. R13 weather.

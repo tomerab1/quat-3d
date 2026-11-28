@@ -238,6 +238,32 @@ into CLAUDE.md or the brief template in [`CYCLE.md`](CYCLE.md).
 - **SDL3 (vcpkg, x11/wayland features) needs the X11/Wayland dev packages**
   on Linux: xcursor, xrandr, xi, xss, xtst, xfixes, xkbcommon,
   wayland-protocols, libdecor. The first CI run failed on xcursor.
+- **MoltenVK mistranslates a pointer read from an array element (#103).**
+  After the merge train, every GBuffer pipeline failed on macOS with no
+  message: `InstanceMotion` (an array read through a buffer address) held a
+  `float4*`, and SPIRV-Cross folded the `OpPtrAccessChain` index into the
+  array index — `motion[instance].prev_positions[vertex]` became
+  `motion[instance + vertex].prev_positions`, which Metal refused
+  ("cannot initialize a variable of type 'float4' with an lvalue of type
+  'const device float4 *const device'"; MoltenVK: VK_ERROR_INITIALIZATION_FAILED).
+  Pointing it at a struct changed nothing. It is an upstream SPIRV-Cross
+  bug, fixed on main by 89a33616 (#2705, "Do not fold OpPtrAccessChain into
+  the chain of a loaded pointer", 2026-10-14), which neither MoltenVK 1.4.2
+  nor its main branch pins yet. → Rule: never index a pointer that was
+  reached through any `[...]` (array element, pointer index, StructuredBuffer
+  or ConstantBuffer array element, pointer array in push constants); read
+  per-draw addresses straight from push constants. `MslPortability.*`
+  enforces it on every platform; relax it once the runners' MoltenVK ships
+  a SPIRV-Cross with the fix. The informational macOS GPU step had shown
+  108/192 for a whole train without anyone reading why;
+  `scripts/msl-check.sh` (SPIRV-Cross + `xcrun metal`, run by the macOS
+  job) names the shader and the Metal error in seconds. Homebrew's
+  `spirv-cross` is not the revision MoltenVK embeds (it only shares this
+  bug), and Ubuntu's 2021 package reports a different, spurious packing
+  error for the same shader: confirm with the `mvk_debug` CI run.
+- **A failed pipeline creation must carry its VkResult.** The macOS failure
+  above printed only "vkCreateGraphicsPipelines failed"; the RHI's errors
+  now include the result code.
 
 ## C++ in this codebase
 
@@ -263,6 +289,18 @@ into CLAUDE.md or the brief template in [`CYCLE.md`](CYCLE.md).
   that is updated pushes dynamic bodies itself. Only an idle (NetDriven)
   character showed the bug. → Revert the fix locally once and watch the
   test fail.
+- **Optimising a fixed-step system must not change its floats (#84).** Nav
+  feeds network prediction, so the separation grid had to match the
+  all-pairs loop bit for bit. Two traps: float sums depend on order (sort
+  the neighbours back into view order), and kinematic agents move while the
+  same loop is still running (the grid re-files each one as it moves). →
+  Keep the old loop behind a reference switch that only tests can reach (a
+  private field plus `friend struct NavSeparationTestAccess`, defined in
+  `tests/`, as #90 did) and compare whole-registry state
+  bytewise tick after tick. Mutating the new code (dropping the sort, the
+  re-file, or the cell headroom) must make that test fail. The nav tests
+  link locally without Jolt: recast sources plus a stub
+  `collect_nav_geometry` for box colliders.
 - **A new member of a class with a hand-written move must be added to the
   move too.** R10.3 added `Device::independent_blend_` and set it in
   `create()`, but `Device::operator=(Device&&)` copies members one by one:
