@@ -140,8 +140,10 @@ public:
     // Tests: behave as a device without depthClamp.
     void simulate_missing_depth_clamp(bool missing) { simulate_missing_depth_clamp_ = missing; }
     // Whether VK_KHR_swapchain_mutable_format is enabled (surface devices
-    // whose driver offers it): the Swapchain then creates its sRGB images
-    // mutable-format with a UNORM view each (Swapchain::unorm_image_views).
+    // whose driver offers it and keeps a format view on its swapchain image,
+    // rhi::swapchain_format_views_track_images): the Swapchain then creates
+    // its sRGB images mutable-format with a UNORM view each
+    // (Swapchain::unorm_image_views).
     [[nodiscard]] bool swapchain_mutable_format() const {
         return swapchain_mutable_format_ && !simulate_missing_swapchain_mutable_format_;
     }

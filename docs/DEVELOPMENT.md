@@ -339,6 +339,21 @@ engine does not override them:
   mistranslate some shapes newer ones handle, such as an atomic through a
   buffer device address (#130), and `msl_portability_test` rejects those
   shapes on every platform.
+- **A version of "1.4.2" does not identify a build.** MoltenVK's main branch
+  has reported 1.4.2 since December 2025, seven months before the 1.4.2
+  release, so the MoltenVK in a LunarG SDK can print `MoltenVK 1.4.2` and
+  still predate fixes the release has (SDK 1.4.341 embeds SPIRV-Cross
+  `vulkan-sdk-1.4.341.0`, which has the #130 bug). Driver workarounds are
+  therefore keyed on the first version every build of which has the fix.
+- **No UNORM views of the swapchain before MoltenVK 1.4.3.** Until
+  KhronosGroup/MoltenVK#2747 (June 2026) a view that reinterprets a
+  swapchain image's format stays on the drawable it was first used with,
+  while the image moves to another drawable on each acquire. The device
+  therefore leaves `VK_KHR_swapchain_mutable_format` off on MoltenVK older
+  than 1.4.3 (`rhi::swapchain_format_views_track_images`, logged at
+  startup), and the editor UI composites through a scratch image and a
+  same-format copy, the path `QUAT_NO_MUTABLE_SWAPCHAIN=1` selects
+  elsewhere. Same pixels, one extra full-window copy per frame.
 - To run on the bundled MoltenVK from an SDK shell, unset the variables
   first: `env -u VK_DRIVER_FILES -u VK_ICD_FILENAMES -u VK_ADD_DRIVER_FILES
   -u VK_LOADER_DRIVERS_SELECT -u VK_LOADER_DRIVERS_DISABLE

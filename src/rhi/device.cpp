@@ -453,9 +453,21 @@ std::expected<Device, core::Error> Device::create(const CreateInfo& info) {
         // sRGB swapchain (gamma-space compositing). Its dependencies
         // (VK_KHR_image_format_list, VK_KHR_maintenance2) are core in 1.2 /
         // 1.1. Offered by desktop drivers, lavapipe and MoltenVK.
+        // Not on a driver whose reinterpreting views of swapchain images go
+        // stale (MoltenVK before 1.4.3, driver_info.hpp): the UI then takes
+        // its copy-composite path, which only makes same-format copies into
+        // the swapchain image.
         if (candidate.has_swapchain_mutable_format) {
-            device_exts.push_back(VK_KHR_SWAPCHAIN_MUTABLE_FORMAT_EXTENSION_NAME);
-            dev.swapchain_mutable_format_ = true;
+            if (swapchain_format_views_track_images(dev.driver_)) {
+                device_exts.push_back(VK_KHR_SWAPCHAIN_MUTABLE_FORMAT_EXTENSION_NAME);
+                dev.swapchain_mutable_format_ = true;
+            } else {
+                core::log(core::LogLevel::info, "rhi",
+                          "VK_KHR_swapchain_mutable_format not used: {} {} can leave a "
+                          "format view of a swapchain image on a stale drawable; the UI "
+                          "composites through a scratch image instead",
+                          dev.driver_.driver_name, dev.driver_.driver_info);
+            }
         }
     }
     if (candidate.has_descriptor_buffer) {
