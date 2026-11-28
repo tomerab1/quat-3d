@@ -22,3 +22,9 @@ Troubleshooting
 ---------------
 - Nothing happens on launch: run "@APP@.app/Contents/MacOS/@EXE@" from
   Terminal to read its log.
+
+Licences
+--------
+LICENSE and THIRD_PARTY_NOTICES.md (next to @APP@.app, and inside it in
+Contents/Resources) are the licences of the quat-3d engine and of the
+third-party libraries this game ships with.
