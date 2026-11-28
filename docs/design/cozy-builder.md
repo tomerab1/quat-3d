@@ -957,7 +957,8 @@ bare variant (§5.16).
   - four smooth season weights (spring, summer, autumn, winter), with
     overlapping cosine windows
   - `day_length_h`, from `day_almanac()`
-  - a per-frame constant block shared by every pass
+  - a per-frame constant block shared by every pass (it lands with
+    R25.2, its first consumer)
 - A **`Climate`** component holds data curves over the year phase: mean
   temperature and diurnal amplitude, precipitation probability, rain/snow
   split by temperature, and cloud cover.
@@ -965,7 +966,11 @@ bare variant (§5.16).
   `WeatherState` targets (R13.1). `step_weather` already accumulates
   wetness and snow from precipitation and temperature, so **winter snow
   arrives and melts through R13's existing accumulation**. There is no
-  separate snow switch. Manual `weather.set` keeps working and suspends
+  separate snow switch. While a season runs, the accumulation integrates
+  world-clock time (`weather_clock_time`: the simulation dt × the clock's
+  `time_scale`): in simulated seconds a 10-minute winter would barely
+  whiten before spring, while a 12-minute day snows and thaws at the pace
+  of its sun. Manual `weather.set` keeps working and suspends
   `weather_auto` until it is re-enabled.
 - `season.get / set` over remote, MCP and Lua, and a codec field table
   (A8 style).

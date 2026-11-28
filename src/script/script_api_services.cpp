@@ -246,6 +246,7 @@ void register_services(LuaVm& vm, ApiContext& ctx) {
     register_time(vm, ctx);
     register_physics(vm, ctx);
     register_audio(vm, ctx);
+    register_season(vm, ctx);
 }
 
 } // namespace engine::script::detail

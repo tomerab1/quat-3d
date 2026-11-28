@@ -27,6 +27,8 @@
 //                    flipbook, blend (additive / alpha = WBOIT), lighting, collision
 //   weather          the scene's weather singleton (weather_json.hpp; one entity at most)
 //   world_clock      date / time / place, one per scene (world_clock_json.hpp)
+//   season           year phase / mode / weather sequence, one per scene (season_json.hpp)
+//   climate          climate curves over the year, read on the season's entity
 //   net_replicated
 //   audio_source     clip / bus / volume / pitch / loop / 3D falloff (+ write-only command)
 //   audio_listener

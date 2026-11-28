@@ -107,4 +107,11 @@ void add_env_terrain(engine::scene::Scene& scene);
 // reported on stderr and ignored.
 void add_env_world_clock(engine::scene::Scene& scene);
 
+// QUAT_SEASON=<spring|summer|autumn|winter|year phase>: a held season (R25.1)
+// that drives the world clock's date (combine with QUAT_TIME for the time of
+// day and place) and the weather, with QUAT_SEASON_SEED=<n> for the weather
+// sequence; five simulated minutes of weather are lived through first, so
+// snow and wet ground show. Invalid values are reported and ignored.
+void add_env_season(engine::scene::Scene& scene);
+
 } // namespace quat::app

@@ -27,6 +27,8 @@ mod scene_tools;
 #[allow(clippy::doc_markdown)]
 mod script_tools;
 #[allow(clippy::doc_markdown)]
+mod season_tools;
+#[allow(clippy::doc_markdown)]
 mod shader_tools;
 #[allow(clippy::doc_markdown)]
 mod sim_tools;
@@ -155,6 +157,7 @@ impl QuatServer {
             + Self::shader_tools()
             + Self::project_tools()
             + Self::time_tools()
+            + Self::season_tools()
             + Self::input_tools()
     }
 

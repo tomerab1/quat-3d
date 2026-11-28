@@ -79,6 +79,7 @@ void register_entity(LuaVm& vm, ApiContext& ctx);
 void register_scene(LuaVm& vm, ApiContext& ctx);
 void register_services(LuaVm& vm, ApiContext& ctx);
 void register_input(LuaVm& vm, ApiContext& ctx);
+void register_season(LuaVm& vm, ApiContext& ctx);
 
 // Transform helpers shared by the entity and scene bindings.
 void refresh_world(entt::registry& registry, entt::entity e);

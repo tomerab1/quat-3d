@@ -488,7 +488,7 @@ JSON-RPC over loopback TCP to the engine.
 - [ ] **R25 — Seasons** (design:
   [`docs/design/cozy-builder.md` §4.14](docs/design/cozy-builder.md#414-seasons-r25)).
   Generic season machinery; games supply per-asset content.
-  - [ ] **R25.1 Season state + climate.** A `SeasonState` singleton:
+  - [x] **R25.1 Season state + climate.** A `SeasonState` singleton:
     `year_phase` from the R22.1 Sun's ecliptic longitude (by hemisphere), or
     an independent phase rate, or manual. Season weights, and an option to
     drive the `WorldClock` date from the season (day length follows it while
@@ -496,14 +496,24 @@ JSON-RPC over loopback TCP to the engine.
     precipitation and cloud curves over the year) drives `WeatherState`
     through a seeded daily sequence, so R13's accumulation brings and melts
     snow. `season.*` remote / MCP / Lua. *(needs R22.1 #87, R13.1 #64)*
-  - [ ] **R25.2 Seasonal materials and variants.** A Slang `ISeasonal`
-    interface (no `#ifdef`): `ColourRamp` (1D ramp at phase + per-instance
+    Done: clock / independent / manual modes with `year_minutes` /
+    `day_minutes` (the cozy 40-minute year and 12-minute day) and a
+    `real_calendar` switch; climate curves with Dai's (2008) rain / snow
+    split and a Parton & Logan (1981) diurnal course; season-aware weather
+    presets; wetness and snow accumulate in world-clock time
+    (`weather_clock_time`), so a fast day snows and thaws at its sun's pace;
+    `season` / `climate` codec components, inspector sections, and the
+    `season-*` CI screenshot strip (`QUAT_SEASON`). Moved to R25.2: the
+    per-frame season constant block for shaders (its first consumer).
+  - [ ] **R25.2 Seasonal materials and variants** *(next, with R25.3)*.
+    The per-frame season constant block (phase, weights, snow) every pass
+    reads, then a Slang `ISeasonal` interface (no `#ifdef`): `ColourRamp` (1D ramp at phase + per-instance
     spread), `LeafDrop` (hashed alpha over a phase interval, applied in
     depth / shadow / velocity passes too), `Blossom`, and `SeasonalGrass` for
     R9.3. A material JSON `season` block. `SeasonalVariants` mesh sets per
     phase interval, chosen per instance. A particle-rate hook over the phase
     (falling leaves). *(needs R25.1, A6 #19, R12.11, R9.3)*
-  - [ ] **R25.3 Snow accumulation masks.** A top-down precipitation
+  - [ ] **R25.3 Snow accumulation masks** *(next, with R25.2)*. A top-down precipitation
     occlusion map shared with R13's rain occlusion (Ohlsson & Seipel 2004;
     Reynolds, Laycock & Day 2015), re-rendered on geometry change. Coverage
     from accumulation × exposure × slope × material `snow_affinity` with

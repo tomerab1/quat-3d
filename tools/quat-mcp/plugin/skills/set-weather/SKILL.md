@@ -3,7 +3,7 @@ name: set-weather
 description: Set the weather of a running quat-3d scene - wind, gusts, cloud cover, rain or snow, wet and snowy surfaces, temperature - and check it with screenshots from a fixed camera. Use when the user asks for a windy, rainy, stormy, overcast or snowy scene, wet streets, a dusting of snow or calmer air.
 compatibility: Needs the quat-mcp MCP server connected to a running quat-3d engine (started with QUAT_REMOTE).
 metadata:
-  quat-mcp-tools: "camera_frame camera_set screenshot weather_get weather_set environment_set scene_save"
+  quat-mcp-tools: "camera_frame camera_set screenshot weather_get weather_set season_get season_set environment_set scene_save"
 ---
 
 # Set the weather
@@ -46,3 +46,7 @@ The scene has at most one weather. Without one it renders on the defaults
 - `weather_set` merges fields; `reset: true` returns to the defaults first.
 - Surfaces keep changing while `accumulate` is on and the simulation runs:
   turn it off to hold a look you set by hand.
+- A scene with a season (`season_get`) drives the weather from its climate
+  while `weather_auto` is on. `weather_set` suspends that; for weather that
+  suits the season use `season_set` with `weather_preset` instead, and
+  `season_set {"weather_auto": true}` to hand control back.
