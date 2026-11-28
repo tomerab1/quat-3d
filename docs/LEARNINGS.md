@@ -7,15 +7,6 @@ into CLAUDE.md or the brief template in [`CYCLE.md`](CYCLE.md).
 
 ## Agents and orchestration
 
-- **Orphaned renders starve every agent's build (R21, 2026-11-27).**
-  `xvfb-run` sessions whose driving script was killed left about ten `game`
-  processes on lavapipe running for hours, re-parented to PID 1. They kept
-  the shared 4-core container at a load average of 60+, and a full build
-  took over two hours instead of about twenty minutes. → Run the game itself
-  under `timeout`, and launch each render under `setsid` with a `trap` that
-  kills its process group. After a render session, check
-  `ps -eo ppid,etime,args | grep game` and kill only your own leftovers.
-
 - **The worktree isolation guard refuses complex shell commands** (heredocs
   with quotes, `cd` into computed paths, git on paths it cannot verify). A
   worker loses turns retrying them. → Write edit scripts / build scripts as
@@ -64,13 +55,6 @@ into CLAUDE.md or the brief template in [`CYCLE.md`](CYCLE.md).
   them; parallel edits always conflict.
 
 ## Build and CI
-
-- **Editing a file while ninja compiles it leaves a stale object that looks
-  fresh (R21).** The compile reads the old text, but the object's mtime is
-  newer than the edit, so the next build skips it. `game` then failed to link
-  against the new `save_scene` signature. → Do not edit sources during a
-  long local build. Otherwise, `touch` every file edited while it ran
-  before you build again.
 
 - **A clean auto-merge can still break the build.** Merging master (#20)
   into the E8 branch raised no conflict, but master had renamed
@@ -275,15 +259,6 @@ into CLAUDE.md or the brief template in [`CYCLE.md`](CYCLE.md).
   now include the result code.
 
 ## C++ in this codebase
-
-- **Check BRDF integrals against an independent quadrature before building
-  on them (R21).** The split-sum LUT used a separable Schlick-Smith term with
-  k = alpha^2 / 2, computed from alpha = roughness^2, so it was neither
-  Karis's IBL k nor the punctual lights' height-correlated Smith. Multiple
-  scattering divides by A + B, so a LUT that does not match the lighting
-  breaks energy conservation. Two estimators (importance-sampled and a
-  hemisphere quadrature) now agree on E_ss(mu = 1, alpha = 1) = 0.307, and
-  a GPU white-furnace test checks the shaded result.
 
 - **Optimising a fixed-step system must not change its floats (#84).** Nav
   feeds network prediction, so the separation grid had to match the
@@ -705,22 +680,3 @@ it reordered, and an unvalidated ini file. Each lived in code only reachable
 through an ImGui frame. **Rule:** UI actions are plain functions over the
 registry or the state struct, called by the widget and by GoogleTest;
 anything read from disk goes through a pure, tested parser.
-
-## A test linked against a third-party feature the engine compiles out (R21)
-
-`hdr_decode_test.cpp` encoded its inputs with `stbi_write_hdr_to_func`. The
-engine's only stb_image_write TU defines `STBI_WRITE_NO_STDIO`, which also
-removes stb's HDR writer, so `engine_tests` failed to link in CI; the local
-build had passed against a different prefix. **Rule:** tests do not call
-third-party functions the engine's own build may configure away; encode test
-inputs with a small encoder under `tests/support/` (here `rgbe_encode.hpp`).
-
-## An invariant test that passes at any input hides a broken setup (R21)
-
-The white-furnace tests reach radiance 1 at every angle once multiple
-scattering is on, so when #70 started shading double-sided back faces with the
-reversed normal, the furnace quad (wound clockwise, a back face) was lit at
-NdotV ~ 0 and only the single-scatter control test noticed. **Rule:** pair an
-invariant test with a control that depends on the inputs it claims to sweep,
-and build test geometry front-facing and single-sided unless the test is
-about the back face.
