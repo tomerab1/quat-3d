@@ -224,7 +224,12 @@ TEST(AlphaCoverageBudget, ChainIsBuiltInPlaceAndCharged) {
         ASSERT_TRUE(a::apply_alpha_tested_mips(t, 0.5F, &budget));
         largest = probe.largest();
     }
-    EXPECT_LE(largest, level0);
+    // MSVC's std::allocator pads blocks of 4 KiB and more by 39 bytes (32-byte
+    // alignment plus a back pointer) on x64, so the probe sees level0 + 39 for
+    // a level0-sized buffer. A fixed slack keeps the intent: no allocation
+    // anywhere near a second full-size (float) copy of level 0.
+    constexpr std::size_t k_allocator_slack = 64;
+    EXPECT_LE(largest, level0 + k_allocator_slack);
     EXPECT_EQ(budget.used(), cost.chain_bytes);
     ASSERT_EQ(t.levels.size(), 10U);
     EXPECT_EQ(t.pixels.size(), cost.chain_bytes);
