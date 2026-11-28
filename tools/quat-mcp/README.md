@@ -151,6 +151,7 @@ Windows the command ends in `quat-mcp.exe`.
 | `scene_set_parent` | `scene.set_parent` | Re-parent (keeping the world transform by default) |
 | `scene_batch` | `scene.batch` | Many commands in one frame, with `"@N"` back-references |
 | `environment_get` / `environment_set` | `environment.*` | Sun angles and colour, volumetric clouds |
+| `time_get` / `time_set` / `time_skip` | `time.*` | World clock: date, time, place and speed; the real Sun and Moon, sunrise / sunset, Moon phase |
 | `world_ground_height` | `world.ground_height` | Terrain height under `[x, z]` points |
 | `terrain_status` | `terrain.status` | Whether terrain tiles are still generating; loaded tiles and bounds |
 | `world_place_on_ground` | `world.place_on_ground` | Rest an entity's bounds on the terrain or colliders below it, optionally tilted to the slope |
@@ -177,6 +178,12 @@ Windows the command ends in `quat-mcp.exe`.
 | `render_settings_reset` | `render.settings.reset` | Restore one group's (or every group's) defaults |
 | `render_settings_schema` | `render.settings.schema` | Every tunable field with type, range, default, unit and hint (settings and material factors) |
 | `material_get` / `material_set` | `material.get` / `material.set` | An entity's PBR factors (colour, roughness, metallic, clearcoat, glass, emission …); per-entity edits and reverts |
+| `physics_get` / `physics_set` | `physics.get` / `physics.set` | A body's live state (velocities, mass, sleeping, motion type, layer, tuning); change velocities, motion type, gravity factor, friction, restitution, damping, wake / sleep (play mode) |
+| `physics_apply` | `physics.apply` | Impulse, force, angular impulse or torque on a dynamic body, optionally at a point |
+| `physics_get_gravity` / `physics_set_gravity` | `physics.get_gravity` / `physics.set_gravity` | The scene's one gravity setting (bodies + characters, saved with the scene) |
+| `physics_raycast_all` / `physics_overlap` / `physics_shape_cast` | `physics.raycast_all` / `.overlap` / `.shape_cast` | Every hit along a ray, bodies a sphere / box / capsule overlaps, a swept shape's hits — with layer masks |
+| `events_poll` | `events.poll` | Contact and trigger events (who hit whom, where, how hard), incremental via a cursor |
+| `character_move` | `character.move` | Walk a character controller at a velocity or to a point, jump |
 | `weather_get` / `weather_set` | `weather.get` / `weather.set` | The scene's weather: wind, cloud cover, rain / snow, wetness, snow cover, temperature; wind velocity at points |
 | `script_list` / `script_get` | `script.list` / `script.get` | Lua scripts with their status (errors with file:line); read one |
 | `script_create` / `script_update` | `script.create` / `script.update` | Write a script (compiled first, syntax errors name the line); updates hot-reload while playing |
@@ -186,6 +193,8 @@ Windows the command ends in `quat-mcp.exe`.
 | `shader_template` | `shader.template` | The starter material shader module |
 | `shader_create` / `shader_update` | `shader.create` / `shader.update` | Write + compile a material shader; errors as `file:line:column` with a caret; a failed update keeps the old version |
 | `shader_delete` | `shader.delete` | Delete a material shader; entities using it fall back to the built-in |
+| `project_info` | `project.info` | The open game project (`game.json`), its executable name and the host target |
+| `project_build` / `project_build_status` | `project.build` / `project.build_status` | Package the game for the host OS in the background; poll progress, log tail and the archive path |
 
 Tool descriptions spell out units and conventions (metres, Y up, Euler degrees
 in YXZ order, `"#rrggbb"` sRGB colours for primitives and linear `[r,g,b]` for
@@ -207,6 +216,7 @@ written once as [Agent Skills](https://agentskills.io) in
 | `write-gameplay-script` | Lua scripts: read the reference, write, compile, attach, play, read the log |
 | `design-npc-behaviour` | Behaviour trees: leaves, plan, `bt_set`, play, `bt_status` / `debug_watch` |
 | `set-weather` | Wind, gusts, cloud cover, rain / snow, wet and snowy surfaces, checked with screenshots |
+| `find-performance-problem` | Profiling: baseline `profile_capture`, CPU- or GPU-bound, locate the zone, one fix at a time, before / after numbers |
 | `debug-physics-glitch` | Falling through, jitter, tunnelling, stuck bodies: pause, step, watch, raycast |
 | `playtest` | Run the level and report script errors, stuck NPCs, objects leaving the world, hitches |
 | `inspect-scene` | Survey and review the scene without changing it |
@@ -286,10 +296,10 @@ Layout:
 |---|---|
 | `content/` | **Everything the model reads**, as Markdown: server instructions, one file per tool description, the component reference, the workflow skills and their prompt templates ([MiniJinja](https://docs.rs/minijinja)). See `content/README.md`. |
 | `src/client/` | Engine JSON-RPC client: `mod.rs` (calls, reconnects, handshake), `connection.rs` (socket, reader task, in-flight calls), `error.rs` (error codes, `EngineError`), `token_file.rs` (the engine's session token file) |
-| `src/server/` | MCP server: `mod.rs` (handler, resource), tools grouped by area (`scene_tools.rs`, `world_tools.rs`, `sim_tools.rs`, `debug_tools.rs`, `behavior_tools.rs`, `tuning_tools.rs`, `script_tools.rs`, `shader_tools.rs`, each its own rmcp router), `bt_outline.rs` (behaviour-tree outlines), `results.rs` |
+| `src/server/` | MCP server: `mod.rs` (handler, resource), tools grouped by area (`scene_tools.rs`, `world_tools.rs`, `sim_tools.rs`, `debug_tools.rs`, `behavior_tools.rs`, `tuning_tools.rs`, `script_tools.rs`, `shader_tools.rs`, `project_tools.rs`, each its own rmcp router), `bt_outline.rs` (behaviour-tree outlines), `results.rs` |
 | `src/skills/` | The workflows: `mod.rs` (skill catalog: `skills/list`, `skills/get`, `skill://` resources), `frontmatter.rs` (Agent Skills rules), `prompts.rs` (prompts generated from the skills), `embedded.rs` (the compiled-in files), `tests.rs` (sync tests) |
 | `plugin/` | The Claude Code plugin: `.claude-plugin/plugin.json`, `.mcp.json`, and `skills/`, a copy of `content/skills/` |
-| `src/params.rs`, `src/params/` | Typed tool inputs — their doc comments are the JSON schemas the model reads (`debug.rs`, `behavior.rs`, `tuning.rs`, `script.rs`, `shader.rs` per area) |
+| `src/params.rs`, `src/params/` | Typed tool inputs — their doc comments are the JSON schemas the model reads (`debug.rs`, `behavior.rs`, `tuning.rs`, `script.rs`, `shader.rs`, `project.rs` per area) |
 | `src/content.rs` | Embeds `content/` and renders the instructions and document templates |
 | `src/config.rs` | Flags / environment |
 

@@ -12,7 +12,10 @@
 #include <glm/glm.hpp>
 #include <gtest/gtest.h>
 
+#include "engine/renderer/physical_camera.hpp"
 #include "engine/renderer/render_settings.hpp"
+#include "engine/scene/components.hpp"
+#include "engine/scene/scene.hpp"
 #include "remote/world_fixture.hpp"
 #include "support/expect_ok.hpp"
 
@@ -117,6 +120,10 @@ protected:
     engine::renderer::RenderSettings settings;
     engine::renderer::CloudSettings& clouds = settings.clouds;
     bool                   playing = false;
+    // Mirror the game build (no editor): the view renders through the active
+    // scene camera, so camera.get reports that camera's lens and camera.set
+    // writes the merged lens back into it (src/app/remote_bridge.cpp).
+    bool                   through_scene_camera = false;
     std::vector<fs::path>  saved;
     std::vector<fs::path>  loaded;
     std::vector<fs::path>  spawned;
@@ -141,8 +148,19 @@ protected:
 
     void SetUp() override {
         services.project_root = [this] { return root.path(); };
-        services.camera_get = [this] { return camera; };
-        services.camera_set = [this](const CameraPose& p) { camera = p; };
+        services.camera_get = [this] {
+            CameraPose p = camera;
+            if (through_scene_camera) p.lens = s::active_camera_lens(reg(), p.lens);
+            return p;
+        };
+        services.camera_set = [this](const CameraPose& p) {
+            camera = p;
+            camera.lens = engine::renderer::sanitized(p.lens);
+            if (!through_scene_camera) return;
+            if (const entt::entity cam = s::find_active_camera(reg()); cam != entt::null) {
+                reg().get<s::Camera>(cam).lens = camera.lens;
+            }
+        };
         services.render_settings = &settings;
         // Terrain tiles: height lx + 2 lz above the anchor where lx >= 0.
         services.terrain_height = [](float x, float z) -> std::optional<float> {
@@ -337,6 +355,75 @@ TEST_F(WorldWithServices, CameraClipPlanesAndCuts) {
     err("camera.set", {{"cut", 1}}, code::invalid_params);
     ok("camera.frame");
     EXPECT_TRUE(camera.cut) << "framing is a cut";
+}
+
+// R20: camera.set merges the view's physical lens; bad lens values are
+// rejected with the field and change nothing.
+TEST_F(WorldWithServices, CameraSetMergesTheLens) {
+    Json got = ok("camera.get");
+    EXPECT_FLOAT_EQ(got["lens"]["aperture_f"].get<float>(), 2.8F);
+    got = ok("camera.set", {{"lens", {{"focal_length_mm", 85}, {"focus_distance_m", 3}}}});
+    EXPECT_FLOAT_EQ(camera.lens.focal_length_mm, 85.0F);
+    EXPECT_FLOAT_EQ(camera.lens.focus_distance_m, 3.0F);
+    EXPECT_FLOAT_EQ(camera.lens.aperture_f, 2.8F); // kept
+    EXPECT_FLOAT_EQ(got["lens"]["focal_length_mm"].get<float>(), 85.0F);
+    const std::string msg =
+        err("camera.set", {{"lens", {{"aperture_f", 0.1}}}}, code::invalid_params);
+    EXPECT_NE(msg.find("aperture_f"), std::string::npos) << msg;
+    err("camera.set", {{"lens", {{"f_stop", 2}}}}, code::invalid_params);
+    err("camera.set", {{"lens", {{"focal_length_mm", 0.01}}}}, code::invalid_params);
+    err("camera.set", {{"lens", 3}}, code::invalid_params);
+    EXPECT_FLOAT_EQ(camera.lens.aperture_f, 2.8F);
+}
+
+// PR #79 review: without the editor, a pose-only camera.set must not replace
+// the scene camera's authored lens with the fly camera's defaults.
+TEST_F(WorldWithServices, PoseOnlyCameraSetKeepsTheSceneCamerasLens) {
+    through_scene_camera = true;
+    const Json made = ok("scene.create",
+                         {{"name", "shot"},
+                          {"components",
+                           {{"transform", {{"position", {0, 1, 5}}}},
+                            {"camera", {{"active", true}, {"aperture_f", 1.4}, {"focus_distance_m", 3},
+                                        {"focal_length_mm", 85}}}}}});
+    const entt::entity cam = entity(made["id"]);
+    const Json got = ok("camera.get");
+    EXPECT_FLOAT_EQ(got["lens"]["aperture_f"].get<float>(), 1.4F) << "reports the rendering lens";
+    ok("camera.set", {{"position", {4, 2, 8}}});
+    const engine::renderer::PhysicalCamera& lens = reg().get<s::Camera>(cam).lens;
+    EXPECT_FLOAT_EQ(lens.aperture_f, 1.4F);
+    EXPECT_FLOAT_EQ(lens.focus_distance_m, 3.0F);
+    EXPECT_FLOAT_EQ(lens.focal_length_mm, 85.0F);
+    // A lens edit still merges into the scene camera's lens.
+    ok("camera.set", {{"lens", {{"aperture_f", 2.8}}}});
+    EXPECT_FLOAT_EQ(reg().get<s::Camera>(cam).lens.aperture_f, 2.8F);
+    EXPECT_FLOAT_EQ(reg().get<s::Camera>(cam).lens.focus_distance_m, 3.0F);
+}
+
+// R20: a look LUT set over render.settings.set must be a valid .cube inside
+// the project; the parser's error comes back and nothing changes.
+TEST_F(WorldWithServices, LookLutIsValidatedOnSet) {
+    fs::create_directories(root.path() / "luts");
+    {
+        std::ofstream good(root.path() / "luts" / "id.cube");
+        good << "LUT_3D_SIZE 2\n0 0 0\n1 0 0\n0 1 0\n1 1 0\n0 0 1\n1 0 1\n0 1 1\n1 1 1\n";
+        std::ofstream bad(root.path() / "luts" / "bad.cube");
+        bad << "LUT_3D_SIZE 2\n0 0 0\n";
+    }
+    ok("render.settings.set", {{"grading", {{"lut", "luts/id.cube"}}}});
+    EXPECT_EQ(settings.grading.lut, "luts/id.cube");
+    std::string msg = err("render.settings.set",
+                          {{"grading", {{"lut", "luts/bad.cube"}, {"contrast", 1.5}}}},
+                          code::invalid_params);
+    EXPECT_TRUE(contains(msg, "grading.lut") && contains(msg, "expected 8")) << msg;
+    msg = err("render.settings.set", {{"grading", {{"lut", "luts/missing.cube"}}}},
+              code::invalid_params);
+    EXPECT_TRUE(contains(msg, "missing.cube")) << msg;
+    err("render.settings.set", {{"grading", {{"lut", "../outside.cube"}}}}, code::invalid_params);
+    EXPECT_EQ(settings.grading.lut, "luts/id.cube");
+    EXPECT_FLOAT_EQ(settings.grading.contrast, 1.0F); // the failed call changed nothing
+    ok("render.settings.set", {{"grading", {{"lut", ""}}}});
+    EXPECT_EQ(settings.grading.lut, "");
 }
 
 TEST_F(WorldWithServices, PathsAreConfinedToTheProjectRoot) {

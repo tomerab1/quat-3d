@@ -9,6 +9,7 @@
 #include <thread>
 
 #include "engine/core/log.hpp"
+#include "engine/core/profile.hpp"
 
 #if defined(__unix__) || defined(__APPLE__)
 #define QUAT_STDERR_CAPTURE_POSIX 1
@@ -190,7 +191,10 @@ std::expected<StderrCapture, Error> StderrCapture::start(LogRing& ring) {
     ::close(write_fd); // fd 2 now holds the pipe's only write end
 
     Impl* raw = impl.get();
-    impl->thread = std::thread([raw] { raw->run(); });
+    impl->thread = std::thread([raw] {
+        QUAT_THREAD_NAME("stderr capture");
+        raw->run();
+    });
     StderrCapture capture;
     capture.impl_ = std::move(impl);
     return capture;

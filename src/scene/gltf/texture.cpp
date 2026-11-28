@@ -19,6 +19,7 @@
 #include "engine/asset/ktx2_texture.hpp"
 #include "scene/gltf/internal.hpp"
 #include "engine/core/utf8_path.hpp"
+#include "engine/core/profile.hpp"
 
 namespace engine::scene {
 
@@ -50,6 +51,7 @@ extract_textures(const fastgltf::Asset& asset, const rhi::TextureCaps& caps,
             options.caps = caps;
             options.limits = limits;
             options.budget = &budget;
+            QUAT_ZONE_N("decode_image");
             results[i] = decode_image(*encoded, options);
             // Alpha-tested base colour decoded to one RGBA8 image: build its
             // coverage-preserving mips here instead of blitting on upload
@@ -65,7 +67,13 @@ extract_textures(const fastgltf::Asset& asset, const rhi::TextureCaps& caps,
         std::min<std::size_t>(n, std::clamp<std::size_t>(std::thread::hardware_concurrency(), 1, 8));
     std::vector<std::thread> threads;
     threads.reserve(workers);
-    for (std::size_t t = 0; t < workers; ++t) threads.emplace_back(work);
+    for (std::size_t t = 0; t < workers; ++t) {
+        threads.emplace_back([&work, t] {
+            const std::string name = "asset decode " + std::to_string(t);
+            QUAT_THREAD_NAME(name.c_str());
+            work();
+        });
+    }
     for (std::thread& t : threads) t.join();
 
     std::vector<TextureData> out;

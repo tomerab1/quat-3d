@@ -53,6 +53,10 @@ inline constexpr std::uint32_t grass_near_segments = 7;
 inline constexpr std::uint32_t grass_far_segments = 3;
 inline constexpr float         grass_edge_band = 0.1F;  // fraction of radius
 inline constexpr float         grass_fade_band = 0.15F; // fraction of thresholds
+// Below the layer's steepest slope, density thins to zero over this many
+// degrees instead of stopping at a hard edge (isolated steep texels then
+// thin the field rather than punch bare holes into it).
+inline constexpr float         grass_slope_fade_deg = 8.0F;
 inline constexpr float         grass_max_width_scale = 2.5F;
 // Candidate cells evaluated per frame; denser or larger fields coarsen the grid.
 inline constexpr std::uint64_t grass_max_cells = 1ULL << 24;
@@ -87,6 +91,15 @@ struct GrassGrid {
 // alone (without the edge fade), which sets the width compensation.
 [[nodiscard]] float grass_keep_fraction(const GrassSettings& settings, float distance);
 [[nodiscard]] float grass_thinning(const GrassSettings& settings, float distance);
+
+// Ground normal.y at which the slope fade begins (full density at or above
+// it, thinning to 0 at the steepest allowed slope's normal.y); -2 when the
+// layer allows every slope (no fade). Sent to the GPU as GrassParams.ground.z.
+[[nodiscard]] float grass_slope_fade_start(const GrassSettings& settings);
+// Fraction of candidates kept on ground whose normal has this y, from the
+// slope fade alone (1 on gentle ground, 0 at the steepest allowed slope).
+// Multiplies grass_keep_fraction; the hard slope limits still apply.
+[[nodiscard]] float grass_slope_keep(const GrassSettings& settings, float normal_y);
 
 // Blade buffer regions: near-LOD blades at [0, near), far-LOD at [near, near + far).
 struct GrassCapacity {

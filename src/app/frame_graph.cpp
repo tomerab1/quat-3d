@@ -1,11 +1,13 @@
 // FrameRenderer, per frame: gathers the ticked scene into draw lists and builds
 // the render graph. Pass order (graph declaration order):
-//   sky-view LUT update, dynamic IBL step, wind field, GBuffer, terrain, grass,
-//   background velocity, Hi-Z, cascaded shadows (GPU fit + cascades), GTAO,
-//   light culling, cloud shadow map, lighting, transparent, particles (all at
-//   the render extent), upscaler (render -> display extent), bloom, exposure,
-//   tonemap, present copy, editor UI; GPU skinning is recorded before the
-//   graph executes.
+//   sky-view LUT update, HDRI bake or dynamic IBL step, wind field, GBuffer,
+//   terrain, grass, background velocity, Hi-Z, cascaded shadows (GPU fit +
+//   cascades), GTAO, screen-space reflections, light culling, cloud shadow
+//   map, lighting, transparent, particles, reflection colour copy (all at
+//   the render extent), upscaler (render -> display extent), depth of field,
+//   motion blur (R20, frame_post.cpp), bloom, exposure, tonemap / grade,
+//   present copy, editor UI; GPU skinning is recorded before the graph
+//   executes.
 
 #include "app/frame_renderer.hpp"
 #include "app/grass_runtime.hpp"
@@ -21,6 +23,7 @@
 
 #include "engine/asset/material_asset.hpp"
 #include "engine/asset/mesh_asset.hpp"
+#include "engine/core/profile.hpp"
 #include "engine/renderer/ibl_pass.hpp"
 #include "engine/renderer/terrain_pass.hpp"
 #include "engine/rhi/device.hpp"
@@ -149,6 +152,7 @@ engine::renderer::ContactShadowSettings FrameRenderer::current_contact_shadows()
 FrameScene FrameRenderer::gather(engine::scene::Scene& scene,
                                  const engine::scene::CameraMatrices& cam,
                                  VkExtent2D draw_extent, std::uint64_t frame_number) {
+    QUAT_ZONE_N("scene_gather");
     const VkDevice vk_device = device_->handle();
     engine::rhi::GpuAllocator& allocator = *allocator_;
     DeferredFrame& fr = frames_[frame_];
@@ -165,6 +169,7 @@ FrameScene FrameRenderer::gather(engine::scene::Scene& scene,
         light.color = glm::vec4(dl.color, dl.intensity);
         break;
     }
+    apply_hdri_sun(light); // R21: the HDRI's own sun, when selected
 
     // Gather point lights from the ECS (world position from Transform); the
     // light-cull compute pass bins them into view clusters on the GPU.
@@ -280,6 +285,7 @@ FrameScene FrameRenderer::gather(engine::scene::Scene& scene,
 }
 
 bool FrameRenderer::record(const FrameInputs& in) {
+    QUAT_ZONE_N("record_frame");
     const engine::rhi::Device& device = *device_;
     engine::rhi::GpuAllocator& allocator = *allocator_;
     engine::rhi::Swapchain& swapchain = *swapchain_;
@@ -307,26 +313,17 @@ bool FrameRenderer::record(const FrameInputs& in) {
     // Sky + environment upkeep, declared FIRST so their trailing barriers
     // precede every consumer this frame (the graph keeps declaration order
     // for independent passes). The sky-view LUT recomputes in-graph when
-    // the sun moved (no pipeline stall on sun drags); the dynamic IBL
-    // probe advances one step per frame and flips when a cycle completes.
+    // the sun moved (no pipeline stall on sun drags); the environment maps
+    // are the HDRI's (baked when its inputs change) or the dynamic IBL
+    // probe's (one step per frame, flipping when a cycle completes).
     const glm::vec3 sun_to = glm::vec3(fs.light.direction);
     if (atmosphere_) {
         if (auto r = atmosphere_->add_skyview_update_to_graph(graph, sun_to); !r) {
             std::fprintf(stderr, "[warn] sky-view update: %s\n", r.error().message.c_str());
         }
     }
-    if (dynamic_ibl_) {
-        engine::renderer::IblCycleParams cycle{};
-        cycle.sun_to = sun_to;
-        cycle.skyview = atmos_skyview();
-        cycle.transmittance = atmos_transmittance();
-        cycle.clouds = current_clouds();
-        if (auto r = dynamic_ibl_->add_step_to_graph(graph, cycle); !r) {
-            std::fprintf(stderr, "[warn] ibl step: %s\n", r.error().message.c_str());
-        }
-    }
-    const engine::renderer::IblViewSet ibl_views =
-        dynamic_ibl_ ? dynamic_ibl_->views() : engine::renderer::IblViewSet{};
+    const EnvironmentMaps environment = add_environment(graph, sun_to);
+    const engine::renderer::IblViewSet ibl_views = environment.ibl;
 
     // R13.1: with weather, the global wind field around the camera (grass
     // samples it), advanced by simulated time so pausing freezes the wind
@@ -387,6 +384,7 @@ bool FrameRenderer::record(const FrameInputs& in) {
     // shadow casters only when the cascades are rendered).
     draw_count_ = engine::scene::frame_draw_count(batches, fs.transparent_draws.size()) -
                   (csm.enabled ? 0 : shadow_batches.draws.size());
+    plot_frame_counters(engine::scene::frame_draw_stats(batches, fs.transparent_draws, csm.enabled));
     engine::renderer::HiZTargets hiz{};
     if (fr.hiz.valid()) {
         if (auto h = fr.hiz.add_to_graph(graph, gbuffer->depth, render_extent)) {
@@ -421,6 +419,10 @@ bool FrameRenderer::record(const FrameInputs& in) {
             std::fprintf(stderr, "[warn] gtao pass: %s\n", ao.error().message.c_str());
         }
     }
+    // R21: screen-space reflections over the environment (Hi-Z traced).
+    const engine::rhi::ResourceHandle reflections =
+        hiz.valid() ? add_reflections(graph, fs, *gbuffer, hiz, cam.position)
+                    : engine::rhi::ResourceHandle{};
     occlusion.contact = current_contact_shadows();
     occlusion.projection = cam.projection;
     occlusion.frame_index = static_cast<std::uint32_t>(fs.frame_number);
@@ -445,18 +447,18 @@ bool FrameRenderer::record(const FrameInputs& in) {
             std::fprintf(stderr, "[warn] cloud shadow map: %s\n", m.error().message.c_str());
         }
     }
+    // R21 terms (frame_environment.cpp) plus the R13.1 weather surfaces and
+    // cloud shadows.
+    engine::renderer::LightingTuning tuning =
+        lighting_tuning(reflections, environment.background);
+    tuning.weather = engine::renderer::WeatherSurfaces::from(
+        fs.weather,
+        in.terrain != nullptr ? in.terrain_snowline : engine::renderer::k_no_snowline_m);
+    tuning.cloud_shadow = cloud_shadow;
     auto hdr = fr.lighting.add_to_graph(graph, *gbuffer, render_extent, fs.light,
                                         fs.jittered_inv_vp, cam.position, occlusion, clustered,
                                         /*enable_sky=*/true, ibl_views, atmos_skyview(),
-                                        atmos_transmittance(), clouds,
-                                        engine::renderer::LightingTuning{
-                                            .ibl_intensity = settings.ibl.intensity,
-                                            .weather = engine::renderer::WeatherSurfaces::from(
-                                                fs.weather,
-                                                in.terrain != nullptr
-                                                    ? in.terrain_snowline
-                                                    : engine::renderer::k_no_snowline_m),
-                                            .cloud_shadow = cloud_shadow});
+                                        atmos_transmittance(), clouds, tuning);
     if (!hdr) {
         std::fprintf(stderr, "[fatal] lighting pass: %s\n", hdr.error().message.c_str());
         return false;
@@ -481,6 +483,8 @@ bool FrameRenderer::record(const FrameInputs& in) {
                                    {frame_, &*gbuffer, *hdr, &clustered, &cam, fs.jittered_vp,
                                     fs.light, render_extent, in.sim_dt});
     }
+    // R21: this frame's lit HDR is what next frame's reflections show.
+    add_reflection_color(graph, *hdr);
     // R11: temporal resolve / upscale of the pre-tonemap HDR to the display
     // extent (frame_temporal.cpp); post-processing runs on its output.
     auto upscaled = add_upscale(graph, fs, *hdr, *gbuffer, draw_extent);
@@ -489,6 +493,8 @@ bool FrameRenderer::record(const FrameInputs& in) {
         return false;
     }
     hdr = *upscaled;
+    // R20: depth of field and motion blur on the resolved display image.
+    hdr = add_cinematic_post(graph, in, *gbuffer, *hdr);
     // Bloom: blur the bright parts of the HDR and add them back before tonemap.
     if (settings.bloom.enabled) {
         const engine::renderer::BloomParams bloom_params{
@@ -557,7 +563,7 @@ bool FrameRenderer::record(const FrameInputs& in) {
             VK_IMAGE_USAGE_TRANSFER_SRC_BIT);
     if (auto r = fr.tonemap.add_to_graph(graph, *hdr, ldr_current, draw_extent,
                                          fr.exposure.exposure_buffer_address(),
-                                         settings.exposure);
+                                         settings.exposure, tonemap_look(in, fr));
         !r) {
         std::fprintf(stderr, "[fatal] tonemap pass: %s\n", r.error().message.c_str());
         return false;
@@ -596,12 +602,16 @@ bool FrameRenderer::record(const FrameInputs& in) {
     // Skin (compute) before the graph; record() adds the compute -> vertex
     // fetch barrier so the GBuffer sees the skinned vertices.
     if (!fs.dispatches.empty()) {
+        QUAT_ZONE_C("skinning", engine::core::ProfileCategory::pass);
+        static const engine::core::ProfileNameId skinning_zone =
+            engine::core::intern_profile_name("skinning", engine::core::ProfileCategory::pass);
+        const engine::rhi::GpuZoneScope gpu_zone(&gpu_profiler_, cmd, skinning_zone, "skinning");
         if (auto rs = fr.skinning.record(cmd, fs.dispatches); !rs) {
             std::fprintf(stderr, "[fatal] skinning pass: %s\n", rs.error().message.c_str());
             return false;
         }
     }
-    graph.execute(cmd);
+    graph.execute(cmd, &gpu_profiler_);
     return true;
 }
 

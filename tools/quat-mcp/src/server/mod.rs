@@ -13,6 +13,12 @@ mod behavior_tools;
 mod bt_outline;
 #[allow(clippy::doc_markdown)]
 mod debug_tools;
+#[allow(clippy::doc_markdown)]
+mod physics;
+#[allow(clippy::doc_markdown)]
+mod profile_tools;
+#[allow(clippy::doc_markdown)]
+mod project_tools;
 mod results;
 #[allow(clippy::doc_markdown)]
 mod scene_tools;
@@ -22,6 +28,8 @@ mod script_tools;
 mod shader_tools;
 #[allow(clippy::doc_markdown)]
 mod sim_tools;
+#[allow(clippy::doc_markdown)]
+mod time_tools;
 #[allow(clippy::doc_markdown)]
 mod tuning_tools;
 #[allow(clippy::doc_markdown)]
@@ -135,12 +143,16 @@ impl QuatServer {
             + Self::world_tools()
             + Self::sim_tools()
             + Self::debug_tools()
+            + Self::profile_tools()
             + Self::tuning_tools()
             + Self::behavior_tools()
+            + Self::physics_tools()
             + Self::weather_tools()
             + Self::script_tools()
             + Self::asset_tools()
             + Self::shader_tools()
+            + Self::project_tools()
+            + Self::time_tools()
     }
 
     /// Timeout for slow engine work (loading, baking, screenshots).

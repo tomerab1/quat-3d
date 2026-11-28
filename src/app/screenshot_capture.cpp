@@ -8,6 +8,7 @@
 #include <utility>
 
 #include "engine/remote/image_encode.hpp"
+#include "engine/core/profile.hpp"
 
 namespace quat::app {
 
@@ -198,6 +199,8 @@ void ScreenshotCapture::on_frame_complete(std::uint32_t slot_index) {
         enc.result = std::async(std::launch::async, [pixels, extent, bgra,
                                                      max_size = p.max_size]()
                                                         -> std::expected<EncodedShot, Error> {
+            QUAT_THREAD_NAME("screenshot encoder");
+            QUAT_ZONE_N("encode_screenshot");
             auto img = remote::encode_screenshot(*pixels, extent.width, extent.height,
                                                  static_cast<std::size_t>(extent.width) * 4,
                                                  bgra, max_size);

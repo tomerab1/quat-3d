@@ -88,6 +88,21 @@ float grass_keep_fraction(const GrassSettings& settings, float distance) {
     return grass_thinning(settings, distance) * edge;
 }
 
+float grass_slope_fade_start(const GrassSettings& settings) {
+    if (settings.slope_deg.y >= 90.0F) return -2.0F;
+    const float start_deg =
+        std::max(settings.slope_deg.x, settings.slope_deg.y - grass_slope_fade_deg);
+    return std::cos(start_deg * (std::numbers::pi_v<float> / 180.0F));
+}
+
+float grass_slope_keep(const GrassSettings& settings, float normal_y) {
+    const float start = grass_slope_fade_start(settings);
+    if (start <= -1.5F) return 1.0F;
+    const float limit = std::cos(settings.slope_deg.y * (std::numbers::pi_v<float> / 180.0F));
+    if (start <= limit) return normal_y >= limit ? 1.0F : 0.0F; // no band (min == max)
+    return smoothstep(limit, start, normal_y);
+}
+
 GrassCapacity grass_capacity(const GrassSettings& settings) {
     const float cell = grass_cell_size(settings);
     if (cell <= 0.0F) return {};

@@ -154,6 +154,17 @@ Details the contract leaves open, as implemented:
   clouds are the `clouds` group of the render settings (same fields, ranges
   and errors as `render.settings.*`).
   `sun.color` accepts linear `[r,g,b]` (may exceed 1) or `"#rrggbb"`.
+- **HDRI environment** (R21): `environment.set {sky: "hdri", hdri: {path}}`
+  loads a Radiance `.hdr` panorama. The path is project-relative and checked
+  against the texture limits before decoding. A failed load changes nothing
+  and returns the decoder's error. `hdri.path` of `""` (or `null`) clears it.
+  `hdri.{intensity, rotation_deg, sun}` and `sky` are the render settings'
+  `environment` group (`hdri_intensity`, `hdri_rotation_deg`, `hdri_sun`,
+  `source`). With `sun` on, the panorama's sun drives the shadowed
+  directional light instead of the scene's `dir_light`. Scene files save the
+  path under `"environment": {"hdri": ...}`. `environment.get` reports
+  `hdri: {path, loaded, width, height, sun_found, error?, intensity,
+  rotation_deg, sun}` and `sky`.
 - **Camera angles**: `yaw_deg` is the heading in the XZ plane from +X toward
   +Z (forward = `(cos p cos y, sin p, cos p sin y)`), `pitch_deg` is positive
   looking up, clamped to ±89. `camera.set` takes `look_at` *or*
@@ -177,6 +188,15 @@ Details the contract leaves open, as implemented:
   turns more than 30° or changes its field of view by more than 30°.
   `camera.frame` is always a cut. The flag reaches the frame loop as
   `FrameInputs::camera_cut`, which invalidates the TAA history.
+- **Camera lens** (R20): the view's physical lens — `aperture_f` [0.7, 64],
+  `shutter_s` [1/16000, 30] s, `iso` [25, 409600], `sensor_height_mm`
+  [1, 100], `focal_length_mm` 0 or [1, 2000] (0 = `fov_deg` applies; otherwise it
+  sets the field of view from the sensor) and `focus_distance_m`
+  [0.05, 100000]. It drives depth of field (`dof`), the motion-blur shutter
+  and, with `exposure.physical`, the exposure. In the editor it belongs to
+  the fly camera (Renderer panel, "View camera lens"); in play through a
+  scene camera, and in non-editor builds, the active `camera` component's
+  lens fields are used.
 - **`render.screenshot`** captures the scene view (the editor viewport
   without UI, else the window), copied on the GPU into a per-frame readback
   buffer that is read after that frame's fence — no stall — then downscaled
@@ -281,7 +301,8 @@ and cannot be written — while a `scatter` generates them),
 entity: `seed`, `area` rect/circle, `size` [x,z] m, `radius` m, `density`
 per m², `min_spacing` m, `pattern` poisson/jittered_grid, `scale` [min,max],
 `random_yaw`, `align_to_normal` 0..1, `base_offset` (× scale, 0.5 seats a
-unit primitive), `slope` [min,max] degrees, `height` [min,max] m,
+unit primitive), `mirror` 0..1 (fraction of placements mirrored), `slope`
+[min,max] degrees, `height` [min,max] m,
 `max_instances`; regenerates when these, the entity position or the terrain
 change; removing it keeps the placements),
 `material` (per-entity overrides of the PBR factors the entity's material is
@@ -331,13 +352,13 @@ values. Unknown fields are errors (they name the known fields).
 | `scene.set_parent` | `{entity, parent, keep_world?=true}` | `{id}` |
 | `scene.clear` | `{keep_lights?=true}` | `{destroyed: n}` |
 | `scene.batch` | `{commands:[{method, params}], stop_on_error?=true}` | `{results:[{ok:true, result} \| {ok:false, error:{code,message}}]}` — a string `"@N"` in an `entity`/`parent` field means the `id` returned by command N of this batch. Deferred methods cannot be batched. |
-| `environment.get` | — | `{sun:{azimuth_deg, elevation_deg, intensity, color}, clouds:{enabled, coverage, density, bottom_km, thickness_km, size_km, detail, wind_speed, wind_dir_deg, shadows}}` |
-| `environment.set` | same shape, every field optional | `environment.get` result |
+| `environment.get` | — | `{sun:{azimuth_deg, elevation_deg, intensity, color, driven_by_clock}, clouds:{enabled, coverage, density, bottom_km, thickness_km, size_km, detail, wind_speed, wind_dir_deg, shadows}, sky, hdri:{path, loaded, width, height, sun_found, error?, intensity, rotation_deg, sun}}` |
+| `environment.set` | same shape, every field optional; `sky: "procedural" \| "hdri"`, `hdri.path` loads a file | `environment.get` result |
 | `world.ground_height` | `{points:[[x,z],...]}` (≤ 1024) | `{heights:[y \| null], generating}` — null where no tile is loaded; `not_found` without terrain |
 | `terrain.status` | — | `{present, entity, streaming, generating, tiles_loaded, tiles_wanted, anchor, tile_size, bounds:{min,max} \| null}` (`{present:false}` without terrain) |
 | `world.place_on_ground` | `{entity, at?:[x,z], align_to_normal?=false, max_tilt_deg?=30, offset?=0}` | `{id, position, world_bounds, moved_y, tilt_deg, surface:{kind, entity, y, normal} \| null}` |
-| `camera.get` | — | `{position, yaw_deg, pitch_deg, fov_deg, near, far, near_auto, far_auto}` |
-| `camera.set` | `{position?, look_at?, yaw_deg?, pitch_deg?, fov_deg?, near?, far?, cut?}` | `camera.get` result |
+| `camera.get` | — | `{position, yaw_deg, pitch_deg, fov_deg, near, far, near_auto, far_auto, lens: {aperture_f, shutter_s, iso, sensor_height_mm, focal_length_mm, focus_distance_m}}` |
+| `camera.set` | `{position?, look_at?, yaw_deg?, pitch_deg?, fov_deg?, near?, far?, cut?, lens?}` (`lens` merges: omitted fields keep their values) | `camera.get` result |
 | `camera.frame` | `{entity?}` (whole scene when omitted) | `camera.get` result |
 | `render.screenshot` *(deferred)* | `{max_size?=1024, camera?:{position?, look_at? \| yaw_deg?/pitch_deg?, frame?, fov_deg?, near?, far?}}` | `{mime:"image/png", width, height, data:<base64>}` |
 | `asset.list_models` | — | `{models:[project-relative paths of .gltf/.glb]}` |
@@ -348,7 +369,13 @@ values. Unknown fields are errors (they name the known fields).
 
 Sun convention (same as the editor's Renderer panel): the light's travel
 direction `d` gives `azimuth_deg = atan2(d.z, d.x)` and `elevation_deg =
-asin(-d.y)`.
+asin(-d.y)`. This azimuth is a world-space angle (from +X toward +Z), not a
+compass bearing: a scene has no compass until it has a world clock.
+`time.get`'s `sun.azimuth_deg` is the compass bearing (0 = north = −Z by
+default, 90 = east = +X), so the same light reads differently in the two
+(e.g. the Sun due south at noon: `time.get` 180, `environment.get` −90).
+`driven_by_clock` is true while the world clock positions the sun (then
+`environment.set` refuses angles and intensity).
 
 Methods that need something only the full application has (camera,
 screenshot, clouds, glTF spawn, play/stop, save/load, nav bake, and the
@@ -465,7 +492,7 @@ Settings groups (the renderer implements exactly these):
 
 | Group | Fields |
 |---|---|
-| `exposure` | `auto` (histogram auto exposure; off = fixed exposure 2^EV), `compensation_ev` [-10, 10] EV (applies in both modes), `key` [0.01, 1], `min_exposure` / `max_exposure` [0.001, 64] (auto multiplier clamps), `adaptation_s` [0.05, 10] s |
+| `exposure` | `auto` (histogram auto exposure; off = fixed exposure 2^EV), `compensation_ev` [-10, 10] EV (applies in every mode), `key` [0.01, 1], `min_exposure` / `max_exposure` [0.001, 64] (auto multiplier clamps), `adaptation_s` [0.05, 10] s, `physical` (exposure from the active camera's aperture / shutter / ISO: 1 / (1.2 · 2^EV100); overrides `auto`) |
 | `bloom` | `enabled`, `threshold` [0, 8], `knee` [0, 1], `intensity` [0, 1], `radius` [0.2, 2] |
 | `taa` | `enabled` (off: no jitter, no history — the frame passes through — and native resolution), `feedback` [0, 0.98] (history weight; the resolve caps a pixel's accumulated sample weight at 1 / (1 − feedback)) |
 | `upscaler` | `mode` `"native_aa"` \| `"quality"` \| `"balanced"` \| `"performance"` (render scale 1, 1/1.5, 1/1.7, 1/2 per axis; needs TAA on), `render_scale` [0, 1] (overrides the mode when > 0, min 0.25), `sharpness` [0, 1], `backend` `"taau"` \| `"fsr2"` (FSR 2 is not built yet: falls back to `taau`) |
@@ -474,9 +501,16 @@ Settings groups (the renderer implements exactly these):
 | `contact_shadows` | `enabled`, `length` [0.01, 4] m, `steps` integer [2, 64], `thickness` [0.01, 4] m, `intensity` [0, 1] |
 | `ibl` | `intensity` [0, 4] — scales image-based ambient light and reflections |
 | `clouds` | as `environment.*`: `enabled`, `coverage` [0, 1], `density` [0, 128] /km, `bottom_km` [0.2, 15], `thickness_km` [0.2, 10], `size_km` [1, 80], `detail` [0, 1], `wind_speed` [0, 100] m/s, `wind_dir_deg` [-180, 180], `shadows` (with weather: clouds shadow the sun on the ground). While the scene has a weather, its `cloud_cover` replaces `coverage` and its wind drives the drift |
+| `dof` | depth of field from the active camera's lens (`camera` component: `aperture_f`, `focal_length_mm`, `focus_distance_m`, `sensor_height_mm`): `enabled` (default off), `max_radius_px` [4, 64], `rings` integer [2, 6] |
+| `motion_blur` | `enabled` (default off), `max_radius_px` [8, 64] (also the tile size), `samples` integer [4, 32], `scale` [0, 2] × the camera's shutter fraction (`shutter_s` / frame time, at most 1) |
+| `tonemap` | `operator` `"aces"` \| `"agx"` \| `"pbr_neutral"` |
+| `grading` | `temperature_k` [1500, 15000] K and `tint` [-1, 1] (white balance; 6500 / 0 neutral), `contrast` [0, 2], `saturation` [0, 2], `lift_r/g/b` [-0.5, 0.5], `gamma_r/g/b` [0.2, 5], `gain_r/g/b` [0, 4] (in ACEScct), `lut` (project-relative `.cube` path, `""` = none; checked on set — a missing or malformed file is rejected with the parser's error), `lut_contribution` [0, 1] |
+| `film` | `vignette_natural` [0, 1] (cos⁴ falloff of the camera's field of view), `vignette_intensity` [0, 1], `vignette_smoothness` [0.05, 1], `grain_intensity` [0, 1], `grain_size_px` [0.5, 4], `chromatic_aberration` [0, 1] |
 
-The tonemap operator (ACES filmic fit) is fixed; the renderer has no fog or
-debug views, so neither is listed. The sun is scene data: `environment.*`.
+The renderer has no fog or debug views, so neither is listed. The sun is
+scene data: `environment.*`. Field types in the schema: `boolean`, `number`,
+`integer`, `string` with `enum` (a choice) or with `format: "path"` and an
+`extension` (a project file).
 
 - **Set** merges: absent groups and fields (and fields given as `null`) keep
   their values. Every value is type- and range-checked and the call is all or
@@ -814,6 +848,75 @@ session runs scripts.
 - `script.delete` does not detach the file from entities; running instances
   keep their loaded code until the session ends.
 
+## Profiling (ROADMAP R4)
+
+The built-in frame profiler (`engine/core/frame_profiler.hpp`, see
+[`profiling.md`](profiling.md)) over the remote endpoint; quat-mcp's
+`profile_*` tools follow this table. Times are milliseconds rounded to
+microseconds (per-frame lists to 0.01 ms).
+
+| Method | Params | Result |
+|---|---|---|
+| `profile.frame` | `{sort?="cost", kind?="all", limit?=30}` (limit 1..200) | `{frame, window, frames, fps, frame_ms:{total, cpu, gpu, wait}, gpu_timing, zones:[{name, kind, cpu?:{avg, p95, max}, cpu_self?:{avg, p95, max}, calls?, gpu?:{avg, p95, max}}], zones_matched, counters:{...}}` |
+| `profile.capture` | `{frames?=120, budget_ms?=16.667, top?=10}` (frames 1..1000, budget 0.1..1000 ms, top 1..50) | `{id, status:"recording", frames, budget_ms, gpu_timing}` |
+| `profile.result` | `{id}` | `{id, status:"recording", frames, frames_done, waiting_for_gpu}` or the summary below |
+| `profile.counters` | — | `{frame, counters:{...}, gpu_memory:{device_local_usage_mib, device_local_budget_mib, heaps:[...]}\|null, entities:{...}}` |
+| `profile.reset` | — | `{reset:true, frame}` |
+
+- **Frame times.** `frame_ms.total` is the wall time between frames, `wait`
+  the time the main thread blocked on the GPU or the display (the frame
+  fence, image acquire and present: zones of kind `wait`), `cpu` = total −
+  wait, `gpu` the GPU time from the frame's first to its last timestamp.
+  Each is `{avg, p50, p95, max}` over the window (240 frames), or `null`
+  before any sample. `gpu_timing` is `"ok (...)"` or why GPU timing is off
+  (no timestamps on the graphics queue).
+- **Zones.** `kind` is `pass` (one render-graph pass: `cpu` is the time to
+  record it, `gpu` its GPU time between timestamps, barriers included),
+  `system` (a scene system per call site; physics sub-steps of one frame are
+  summed), `scope` (frame loop, uploads, editor UI) or `wait`. Zones nest:
+  `cpu` is inclusive (the zones nested inside counted too), `cpu_self` the
+  zone's own time without them, so `cpu` rows do not add up and causes rank
+  by `cpu_self`. GPU zones (passes) do not nest. A zone's statistics are per
+  frame it ran in, over its last 240 runs (a zone that runs every 30 frames
+  averages its runs, not 240 frames); a zone that has not run for a window's
+  worth of frames is dropped. `sort` is `cost` (the larger of CPU self and
+  GPU average), `self`, `self_p95`, `self_max`, `cpu`, `cpu_p95`, `cpu_max`,
+  `gpu`, `gpu_p95`, `gpu_max` or `name`; `kind` filters
+  by `all`, `pass`, `system`, `scope` or `wait`; `zones_matched` counts the
+  rows before `limit`.
+- **Captures.** `profile.capture` starts recording with the next frame and
+  answers at once; the handler never waits. One capture records at a time
+  (another `profile.capture` fails with `busy` and names it). The capture
+  finishes when its frames have closed and their GPU timings arrived (one or
+  two frames later), or 8 frames after the CPU side finished if GPU timings
+  stop arriving. The summary:
+  `{id, status:"done", frames, first_frame, budget_ms, frame_ms:{total, cpu,
+  gpu, wait}, gpu_frames, top_by_total:[zone], top_by_p95:[zone],
+  spikes:{count, worst:[{frame, total_ms, cpu_ms, gpu_ms, zones:[{name,
+  self_ms, ms, on:"cpu"|"gpu"}]}]}, per_frame:{total_ms:[...], gpu_ms:[...]}}`
+  with `zone` = `{name, kind, frames, cpu?:{total, avg, p95, max},
+  cpu_self?:{...}, gpu?:{...}}` (statistics over the frames the zone ran
+  in). Rankings use the larger of the CPU self and GPU value, so a wrapper
+  zone does not outrank the work nested inside it. A spike is a frame whose
+  wall or GPU time exceeds `budget_ms`; `worst` lists up to 10 of them,
+  worst first, each with its three costliest zones by own time (`self_ms`;
+  `ms` is inclusive; wait zones excluded).
+  `gpu_ms` entries are `null` for frames without GPU timing. The last 8
+  summaries are kept; an unknown or dropped id is `not_found`.
+- **Counters.** `counters` holds the last frame's values of every
+  `QUAT_PLOT`: `draws`, `instances`, `triangles` (scene meshes after
+  batching; shadow casters only while the cascades render), `vram_usage_mib`
+  and `vram_budget_mib` (device-local heaps). `gpu_memory.heaps[]` is
+  `{heap, device_local, size_mib, budget_mib, usage_mib, allocated_mib,
+  used_mib, allocations}` (budget / usage from `VK_EXT_memory_budget` when the
+  device has it, VMA's estimate otherwise). `entities` counts entities by
+  component (`total`, `meshes`, `skinned`, `instanced_meshes`,
+  `instance_placements`, `point_lights`, `rigid_bodies`, `characters`,
+  `nav_agents`, `behaviors`, `scripts`, `particle_emitters`,
+  `audio_sources`).
+- **Reset.** Clears the rolling statistics, counters and every capture
+  (recording or finished); capture ids keep counting.
+
 ## Asset downloads (quat-mcp only, ROADMAP A9)
 
 The engine never downloads anything. quat-mcp's `asset_search` /
@@ -835,6 +938,153 @@ when everything verified, next to `LICENSE.md` (CC0, authors, source) and
 `polyhaven.json` (provenance). With `quat-cook` on PATH the model is also
 cooked to `<id>.glb`. The folder is gitignored. The engine then loads the
 files through `asset.spawn_model` / `instanced_mesh` like any other model.
+
+## Physics control (ROADMAP A10.1)
+
+Runtime control of the simulation. The engine side is
+`src/remote/world/physics_*.cpp` on `PhysicsWorld`'s body-control, query
+and joint API, which G7 Lua scripts call too. quat-mcp's `physics_*`,
+`events_poll` and `character_move` tools map 1:1 onto these methods
+(design: [`research/mcp-gameplay-control.md`](research/mcp-gameplay-control.md)).
+Bodies exist only while playing (or in the physics demo modes). Without
+them, every method except the gravity pair answers `unavailable` with the
+hint to call `sim.play`. Entities are ids or unique names.
+
+| Method | Params | Result |
+|---|---|---|
+| `events.poll` | `{since?=0, max?=200 (1..2000), kinds?:[contact_added\|contact_removed\|trigger_enter\|trigger_exit], entity?}` | `{events:[{seq, kind, time_s, entity_a, entity_b, name_a?, name_b?, point?, normal?, impulse?}], cursor, more, dropped, oldest_seq, last_seq, capacity}` |
+| `physics.get` | `{entity}` | body: `{entity, name, kind:"body", motion_type, layer, sensor, sleeping, mass, linear_velocity, angular_velocity (deg/s), speed, position, friction, restitution, gravity_factor, linear_damping, angular_damping}`; character: `{kind:"character", position, velocity, on_ground, move, speed, layer}` |
+| `physics.set` | `{entity, linear_velocity?, angular_velocity? (deg/s), motion_type?, gravity_factor? [-10,10], friction? [0,10], restitution? [0,1], linear_damping? [0,100], angular_damping? [0,100], wake?}` | the body as `physics.get`, or `{entity, rebuilt:true, motion_type}` when the change rebuilds it |
+| `physics.apply` | `{entity, impulse \| force \| angular_impulse \| torque, at_point?, duration_s? (force/torque, 0.0001..10, default 1/60)}` | the body as `physics.get` plus `applied` (and `duration_s`) |
+| `physics.get_gravity` | — | `{gravity, magnitude}` |
+| `physics.set_gravity` | `{gravity:[x,y,z]}` (\|g\| ≤ 1000) | `{gravity, magnitude}` |
+| `physics.raycast_all` | `{origin, direction, max_distance?=1000, layers?, max_hits?=32 (1..256)}` | `{hits:[{entity, name, kind, layer, point, normal, fraction, distance}], count}` nearest first |
+| `physics.overlap` | `{shape: sphere\|box\|capsule, radius? \| half_extents?, half_height?, position, rotation? (Euler deg), layers?, max_hits?}` | `{hits:[{entity, name, kind, layer, point, normal, penetration}], count}` deepest first |
+| `physics.shape_cast` | `{shape..., from, to, rotation?, layers?, max_hits?}` | `{hits:[{..., fraction, distance, penetration?}], count}` nearest first |
+| `character.move` | `{entity, velocity? \| target?, jump? (true = 5 m/s, or (0, 50] m/s), duration_s? (0.01..60)}` | `{entity, position, velocity, on_ground, move, target?}` |
+
+- **Events.** The physics world collects contact callbacks on Jolt's
+  worker threads without a lock. Each one appends to a fixed per-step
+  buffer with one atomic increment; two buffers alternate. After every
+  fixed step the calling thread resolves them into one event per body
+  pair: `contact_added` when two bodies start touching, `contact_removed`
+  when they stop or one is removed. A body falling asleep does not end
+  its contacts. `trigger_enter` / `trigger_exit` have the trigger volume
+  as `entity_a`. The frame loop pushes them into the engine event ring
+  (`engine/core/event_ring.hpp`, 8192 events) after each physics update.
+  `impulse` is Jolt's estimate of the impact impulse (N·s) from the
+  pre-contact velocities. `point` comes with added / enter events,
+  `normal` and `impulse` with `contact_added`. `entity_*` is null for
+  unowned bodies (terrain). Tail the ring with `since` = the previous
+  `cursor`. `dropped` counts sequence numbers in `(since, cursor]` that
+  can no longer be read: overwritten by the ring, or lost because a step
+  produced more than 4096 callbacks. Filters apply before `max`, and the
+  cursor stops after the last event returned when `more` is true.
+- **Bodies.** `physics.*` resolve the entity's `RigidBody`. An entity
+  with only a `character` is pointed to `character.move` (`physics.get`
+  reads characters). One without a body is told to add `collider` +
+  `rigidbody`. A body not yet built (it is (re)built on the next
+  simulated frame) answers `unavailable`. Velocities, impulses and forces
+  need a dynamic body. The error names the current motion type.
+  `physics.set` is atomic. Its tuning fields (`motion_type`,
+  `gravity_factor`, `friction`, `restitution`, damping) are also written
+  to the `rigidbody` component, the same fields scene files save. Stop
+  reverts them with the rest of the play session. Dynamic ↔ kinematic
+  switches in place; to or from `static` rebuilds the body. Forces and
+  torques act on every fixed step for `duration_s` of simulated time
+  (Jolt clears forces after each step, so the world re-applies them).
+  Magnitudes are capped (|v| ≤ 1e4 m/s, spin ≤ 1e5 deg/s, impulses /
+  forces / torques ≤ 1e7).
+- **Gravity** is one scene setting (`scene::PhysicsSettings` in the
+  registry context) used by Jolt and the character controllers, which fall
+  with its vertical component. It works in edit mode. Scene files save it
+  as a versioned `physics_settings` block; the play snapshot restores it on
+  Stop. A change wakes sleeping bodies.
+- **Queries** filter by collision layer: `static`, `dynamic`,
+  `character`, `trigger`, `sensor`. The default is the solid three; add
+  `sensor` to see trigger volumes. They return at most one hit per body.
+  Characters are found through their inner bodies (`kind: "character"`).
+  `kind` is `static_world` for unowned geometry. Shape dimensions a shape
+  does not take are errors (a box has no `radius`).
+- **Characters.** `character.move` sets the controller's walk:
+  `velocity` (x/z, at most the controller's `speed`; `[0,0,0]` stops),
+  or `target` (walk straight there at full speed and stop within 2 cm).
+  `duration_s` limits a walk. `jump` applies on the next tick only if
+  grounded. Characters with an active `nav_agent` (navigation steers them)
+  or `NetDriven` ones (network players) are refused. Characters collide
+  with each other (`CharacterVsCharacterCollisionSimple`) and carry a
+  kinematic inner body, so dynamic bodies rest on them and sensors detect
+  them.
+- **Joints** are authored as the `joint` component through
+  `scene.create` / `scene.update` (component reference in
+  quat-mcp's `content/components.md`). `joint_system` builds the Jolt
+  constraint in play mode once both bodies exist and one is dynamic, and
+  rebuilds it when a body is rebuilt. `scene.get` shows `active`.
+
+## Game projects and packaging (ROADMAP P4)
+
+The game project the engine has open (`QUAT_GAME=<project dir>`, or the
+player's own `game.json`) and packaging it into a standalone game for the
+engine's OS (docs/game-packaging.md). The engine
+(`src/remote/world/project_commands.cpp`) runs `quat-pack` in the background
+(`engine/project/build_job.hpp`); quat-mcp's `project_*` tools follow this
+table.
+
+| Method | Params | Result |
+|---|---|---|
+| `project.info` | — | `{open, host_target, root?, game?, executable?, build?}` — `game` is `game.json` (defaults written out); `open:false` comes with a `reason` |
+| `project.build` | `{target?, output?="dist", config?="shipping", smoke_test?=false}` | `{job, state:"running", target, config, output}` |
+| `project.build_status` | `{log_lines?=40}` (0..1000) | `{job, state, progress, step, steps, step_name, package?, folder?, error?, elapsed_s, log:[lines]}` |
+
+- `target` is `linux-x64`, `windows-x64` or `macos-arm64`; anything but the
+  engine's own OS fails (`failed`): a package needs that OS's player build
+  and tools.
+- `output` is relative to the game project and confined to it, and may not
+  equal, lie inside or contain a content root or the start scene's folder
+  (`invalid_params`, e.g. `output: 'assets/dist' is inside the content root
+  'assets'`).
+- `config` `development` packages `quat-player` (accepts `QUAT_REMOTE`);
+  `shipping` packages `quat-player-shipping`, which has no remote control.
+- `state` is `idle`, `running`, `succeeded`, `failed` or `cancelled`;
+  `package` / `folder` are relative to the game project. A build while one
+  runs fails (`failed`, naming the running job).
+- Without a game project open, `project.build` fails; a build without the
+  `quat-pack` / `quat-player` executables next to the engine (or
+  `QUAT_PACK` / `QUAT_PLAYER`) fails with the path it looked at.
+
+## World clock (ROADMAP R22.1)
+
+The scene's date, time and place: one `world_clock` component per scene
+(`engine/scene/world_clock.hpp`). It advances with the simulation clock
+(`debug.pause` / `step` / `time_scale` apply) × its own `time_scale`, and
+while `enabled` and `drive_sun` it writes the scene's first `dir_light`:
+direction toward the apparent Sun, intensity `sun_intensity` × the fraction
+of the solar disc above the horizon. Disabled, nothing is touched.
+`environment.set` refuses sun angles / intensity while the clock drives the
+sun.
+
+Clock fields (also the `world_clock` component of the scene codec):
+`enabled`, `datetime` (ISO-8601 `YYYY-MM-DDThh:mm[:ss[.fff]][Z|±hh:mm]`,
+years 1800..2200; without a zone it is local time at `utc_offset_h`; a zone
+also becomes the display zone unless `utc_offset_h` is given),
+`utc_offset_h` (−14..14), `latitude_deg` (−90..90, north),
+`longitude_deg` (−180..180, east), `north_offset_deg` (world rotation of
+compass north; 0 = north is −Z, east +X), `time_scale` (clock seconds per
+simulated second, 0..1e6; 0 freezes it), `fixed_day` (the time of day wraps
+at local midnight), `drive_sun`, `sun_intensity` (0..1e5).
+
+| Method | Params | Result |
+|---|---|---|
+| `time.get` | — | clock fields + `in_scene`, `entity`, `utc`, `julian_date`, `local_sidereal_time_deg`, `sun:{azimuth_deg, elevation_deg, direction, illuminance_lux, visible_fraction, sunrise, sunset, solar_noon, civil_dawn, civil_dusk, day_length_h?, polar}`, `moon:{azimuth_deg, elevation_deg, direction, illuminated_fraction, phase_angle_deg, phase, illuminance_lux, distance_km, moonrise, moonset}` |
+| `time.set` | any clock field, plus `local_time` (`hh:mm[:ss]`, keeps the date) | `time.get` result; creates the clock (and a sun light when it drives one and the scene has none) |
+| `time.skip` | `{hours}` (−87600..87600) | `time.get` result; `not_found` without a clock |
+
+Azimuths are compass bearings (0 = north, 90 = east); elevations are
+apparent (refracted), topocentric. Event times are local ISO-8601 strings
+(null when the event does not happen that local day; `polar` is `"day"` /
+`"night"` when the Sun stays up / down). Illuminances are outside the
+atmosphere, at normal incidence (Sun: 133 334 lx / R²; Moon: Krisciunas &
+Schaefer 1991).
 
 ## Errors
 

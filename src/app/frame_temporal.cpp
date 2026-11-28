@@ -12,6 +12,7 @@
 #include <cstdio>
 #include <string>
 
+#include "engine/core/profile.hpp"
 #include "engine/renderer/jitter.hpp"
 #include "engine/scene/scene.hpp"
 
@@ -60,6 +61,7 @@ std::expected<engine::rhi::ResourceHandle, engine::core::Error>
 FrameRenderer::add_upscale(engine::rhi::RenderGraph& graph, const FrameScene& scene,
                            engine::rhi::ResourceHandle hdr,
                            const engine::renderer::GBufferTargets& gbuffer, VkExtent2D display) {
+    QUAT_ZONE_N("upscaler"); // backend choice + TAAU history / resolve declaration
     const engine::renderer::UpscalerSettings upscale = current_upscaler();
     const engine::renderer::UpscalerBackend wanted = engine::renderer::upscaler_backend(upscale);
     if (wanted != upscaler_->backend() && !backend_warned_) {

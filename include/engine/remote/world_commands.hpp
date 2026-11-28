@@ -12,8 +12,11 @@
 // behaviour-tree authoring (ROADMAP A7): bt.leaves, bt.get, bt.set,
 // bt.add_node, bt.remove_node, bt.move_node, bt.set_params, bt.status — the
 // gameplay script files (ROADMAP G7): script.list / get / create / update /
-// delete / check — and material shader authoring (ROADMAP A6): shader.list /
-// get / template / create / update / delete. The method contract is
+// delete / check — material shader authoring (ROADMAP A6): shader.list /
+// get / template / create / update / delete — game packaging (ROADMAP P4):
+// project.info, project.build, project.build_status — the world clock
+// (ROADMAP R22.1): time.get / set / skip — and profiling (ROADMAP R4):
+// profile.frame / capture / result / counters / reset. The method contract is
 // docs/remote-control.md.
 //
 // Scene editing works on any Scene. Everything that only the running
@@ -32,16 +35,22 @@
 #include <filesystem>
 #include <functional>
 #include <optional>
+#include <string>
 #include <vector>
 
 #include <entt/entity/fwd.hpp>
 #include <glm/glm.hpp>
 
 #include "engine/core/error.hpp"
+#include "engine/project/build_job.hpp"
+#include "engine/project/game_project.hpp"
 #include "engine/remote/rpc_server.hpp"
+#include "engine/renderer/physical_camera.hpp"
 #include "engine/weather/wind_field.hpp"
 
 namespace engine::core {
+class EventRing;
+class FrameProfiler;
 class LogRing;
 class SimClock;
 } // namespace engine::core
@@ -87,6 +96,9 @@ struct CameraPose {
     std::optional<float> near_override{};
     std::optional<float> far_override{};
     bool      cut = false;
+    // R20 physical lens of the view (exposure, depth of field, shutter); a
+    // focal length > 0 overrides fov_deg.
+    renderer::PhysicalCamera lens{};
 };
 
 // Frame timing over the last `samples` frames and renderer counters, for
@@ -99,6 +111,31 @@ struct FrameStats {
     std::uint32_t                samples = 0;
     std::optional<std::uint32_t> draws;            // scene draws last frame, after batching
     std::optional<std::uint64_t> resident_bytes;   // process resident memory
+};
+
+// The game project the engine opened (QUAT_GAME, or the player's game.json).
+struct GameProjectInfo {
+    std::filesystem::path root; // absolute; holds game.json
+    project::GameProject  project;
+};
+
+// A validated project.build request.
+struct ProjectBuildParams {
+    std::string            target; // empty: the host's
+    std::filesystem::path  output; // absolute, inside the game project
+    project::PackageConfig config = project::PackageConfig::shipping;
+    bool                   smoke_test = false;
+};
+
+// The lighting environment's HDRI panorama (ROADMAP R21), as environment.get
+// reports it.
+struct HdriInfo {
+    std::string   path; // project-relative; empty = none
+    bool          loaded = false;
+    std::uint32_t width = 0;
+    std::uint32_t height = 0;
+    bool          sun_found = false;
+    std::string   error; // why the last load failed
 };
 
 // Terrain generation state (terrain.status). Tile counts and bounds are those
@@ -119,6 +156,18 @@ struct TerrainStatus {
 struct ScreenshotRequest {
     std::uint32_t             max_size = 1024; // longer side of the reply, pixels
     std::optional<CameraPose> camera;
+};
+
+// One GPU memory heap for profile.counters (bytes; see rhi::GpuHeapStats).
+struct GpuMemoryHeap {
+    std::uint32_t heap = 0;
+    bool          device_local = false;
+    std::uint64_t size = 0;
+    std::uint64_t budget = 0;
+    std::uint64_t usage = 0;
+    std::uint64_t allocated = 0; // memory blocks the engine's allocator holds
+    std::uint64_t used = 0;      // of which bound to resources
+    std::uint32_t allocations = 0;
 };
 
 struct WorldServices {
@@ -162,6 +211,12 @@ struct WorldServices {
     // Bake the navmesh from the current static world; returns its polygon count.
     std::function<std::expected<std::size_t, core::Error>()> nav_bake;
 
+    // ---- Lighting environment (ROADMAP R21) --------------------------------------
+    // The HDRI panorama's status, and loading one: `relative` is a project-
+    // relative path already confined to the project root ("" clears it).
+    std::function<HdriInfo()>                                                hdri_info;
+    std::function<std::expected<void, core::Error>(const std::string& relative)> set_hdri;
+
     // ---- Debugging (ROADMAP A5) ------------------------------------------------
 
     // Log lines debug.log reads (non-owning; normally core::log_ring()).
@@ -182,6 +237,13 @@ struct WorldServices {
     // The physics world being simulated, or null (edit mode: bodies only
     // exist while playing). debug.raycast and debug.stats read it.
     std::function<const physics::PhysicsWorld*()> physics_world;
+    // The same world, writable: the physics.* and character.move methods
+    // (A10.1) read and drive it. Unset or null: they answer `unavailable`.
+    std::function<physics::PhysicsWorld*()> physics_control;
+
+    // Gameplay events events.poll reads (non-owning; normally
+    // core::event_ring(), fed by the frame loop after each physics update).
+    core::EventRing* event_ring = nullptr;
 
     // The current navmesh, or null / invalid when none is baked.
     std::function<const nav::NavMesh*()> navmesh;
@@ -199,11 +261,29 @@ struct WorldServices {
     // (on <project_root>/assets/scripts).
     std::function<script::ScriptRuntime*()> scripts;
 
+    // ---- Profiling (ROADMAP R4) -------------------------------------------------
+
+    // The frame profiler (non-owning; normally core::profiler()): profile.*
+    // read its statistics and run captures on it. Null: unavailable.
+    core::FrameProfiler* profiler = nullptr;
+    // Per-heap GPU memory for profile.counters (empty: reported as null).
+    std::function<std::vector<GpuMemoryHeap>()> gpu_memory;
     // ---- Material shaders (ROADMAP A6) -------------------------------------------
 
     // Authored material shaders (non-owning; its poll() must run every frame
     // so shader.create / update replies go out). Null: shader.* unavailable.
     rhi::MaterialShaderRegistry* material_shaders = nullptr;
+
+    // ---- Game projects and packaging (ROADMAP P4) -----------------------------
+
+    // The open game project; nullopt when the engine runs without one.
+    std::function<std::optional<GameProjectInfo>()> game_project;
+    // Starts packaging the open project in the background (quat-pack);
+    // returns the job number. Fails when a build runs or the tools are missing.
+    std::function<std::expected<std::uint64_t, core::Error>(const ProjectBuildParams&)>
+        project_build;
+    // The packaging job's state (idle before the first build).
+    std::function<project::BuildStatus()> project_build_status;
 };
 
 // Registers every world command on `server`. `scene` must outlive the server's

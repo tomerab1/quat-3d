@@ -102,9 +102,10 @@ std::size_t append_instanced_transparent_items(const entt::registry& registry,
 // The frame's batched opaque (GBuffer) and shadow-caster draw lists: the
 // gathered draw items grouped by (mesh, material) (renderer::batch_draws),
 // followed by every visible InstancedMesh placement (append_instanced_draws,
-// culled against the camera and the light respectively). `opaque_motion`,
-// when set, records each opaque placement's previous transform for the
-// velocity target (append_instanced_draws' `motion`).
+// culled against the camera and the shadow casters' volume respectively,
+// e.g. renderer::caster_cull_view_proj). `opaque_motion`, when set, records
+// each opaque placement's previous transform for the velocity target
+// (append_instanced_draws' `motion`).
 struct FrameDrawLists {
     renderer::InstancedDrawList opaque;
     renderer::InstancedDrawList shadow;
@@ -113,7 +114,7 @@ struct FrameDrawLists {
                                                     std::span<const renderer::DrawItem> opaque_items,
                                                     std::span<const renderer::DrawItem> shadow_items,
                                                     const glm::mat4& camera_view_proj,
-                                                    const glm::mat4& light_view_proj,
+                                                    const glm::mat4& shadow_cull_view_proj,
                                                     renderer::MotionHistory* opaque_motion = nullptr);
 
 // Draws the frame submits for its scene geometry (debug.stats, the editor's
@@ -122,5 +123,16 @@ struct FrameDrawLists {
 // unmerged, back to front).
 [[nodiscard]] std::size_t frame_draw_count(const FrameDrawLists& lists,
                                            std::size_t transparent_items);
+
+// The same draws with their instance and triangle counts (profiling, R4):
+// shadow casters only when `with_shadows` (the cascades are rendered).
+struct FrameDrawStats {
+    std::size_t   draws = 0;
+    std::uint64_t instances = 0;
+    std::uint64_t triangles = 0;
+};
+[[nodiscard]] FrameDrawStats frame_draw_stats(const FrameDrawLists& lists,
+                                              std::span<const renderer::DrawItem> transparent,
+                                              bool with_shadows);
 
 } // namespace engine::scene

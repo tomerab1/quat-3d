@@ -30,6 +30,7 @@
 #include "engine/asset/mesh_asset.hpp"
 #include "engine/core/error.hpp"
 #include "engine/renderer/grass.hpp"
+#include "engine/renderer/physical_camera.hpp"
 #include "engine/renderer/particles.hpp"
 
 namespace engine::scene {
@@ -155,7 +156,9 @@ struct InstancedMeshParts {
 // (metres) fall within the limits. Each placement gets a uniform scale in
 // `scale_range`, an optional random yaw, tilts `align_to_normal` (0 upright
 // .. 1 along the ground normal) and is lifted `base_offset` * scale along
-// its up axis (0.5 seats a unit primitive on the ground). Generation is
+// its up axis (0.5 seats a unit primitive on the ground). A `mirror`
+// fraction of the placements is mirrored (local X scale negated), which
+// doubles the visible variety of asymmetric models such as plants and rocks. Generation is
 // deterministic per seed, and a candidate's fate depends only on its own
 // ground sample, so terrain streaming in or out never reshuffles the rest.
 // scatter_system (scatter.hpp) regenerates whenever the parameters, the
@@ -176,6 +179,7 @@ struct Scatter {
     bool           random_yaw = true;
     float          align_to_normal = 0.0F;
     float          base_offset = 0.0F;
+    float          mirror = 0.0F;                 // fraction of mirrored placements, 0..1
     glm::vec2      slope_deg{0.0F, 35.0F};       // keep ground slopes in [x, y]
     glm::vec2      height_m{-10000.0F, 10000.0F}; // keep ground heights in [x, y]
     std::uint32_t  max_instances = 20000;
@@ -235,11 +239,15 @@ struct FootIK {
 // Perspective camera parameters. The view/projection matrices are derived each
 // frame by CameraSystem from this plus the entity's world Transform (4.3).
 // Aspect ratio is supplied by the renderer from the swapchain extent.
+// `lens` (R20) is the physical camera: aperture / shutter / ISO drive the
+// physical exposure mode, depth of field and the motion-blur shutter; a focal
+// length > 0 replaces fov_y (renderer::effective_fov_y).
 struct Camera {
     float fov_y  = glm::radians(60.0F); // vertical field of view, radians
     float near_z = 0.1F;
     float far_z  = 1000.0F;
     bool  is_active = true;
+    renderer::PhysicalCamera lens{};
 };
 
 // Collision shape for a physics body. Primitive shapes only; `half_extents`
@@ -262,6 +270,44 @@ struct RigidBody {
     BodyMotion    motion = BodyMotion::dynamic;
     float         mass = 1.0F;
     std::uint32_t body = 0xFFFFFFFFU; // PhysicsWorld body handle
+    // Surface and motion tuning (authoring data, saved with the scene).
+    // Damping and the gravity factor only affect moving bodies.
+    float friction = 0.2F;        // Coulomb friction coefficient
+    float restitution = 0.0F;     // bounciness, 0..1
+    float gravity_factor = 1.0F;  // scales the world gravity for this body
+    float linear_damping = 0.05F; // 1/s
+    float angular_damping = 0.05F;
+};
+
+// A physics joint (A10.1) between this entity's rigid body and `target`'s (or
+// the world when `target` is null). Authored in this entity's local space:
+// `anchor` is the pivot (a point on this body), `axis` the hinge / slider
+// axis; a distance joint's other end is `target_anchor` (in the target's
+// local space, or world space for the world). joint_system builds the Jolt
+// constraint when both bodies exist (at least one dynamic) and rebuilds it
+// whenever a body is rebuilt; `constraint` is its runtime handle.
+//   fixed     glues the bodies in their current relative pose
+//   point     ball-and-socket at the anchor
+//   hinge     rotation about `axis` through the anchor; limits in degrees
+//             within [-180, 0] / [0, 180]; motor: deg/s or a target angle
+//   slider    translation along `axis`; limits in metres (min <= 0 <= max);
+//             motor: m/s or a target position
+//   distance  keeps anchor and target_anchor apart: [min, max] metres when
+//             limited, else the distance they had when the joint was built
+enum class JointType : std::uint8_t { fixed, point, hinge, slider, distance };
+enum class JointMotorMode : std::uint8_t { off, velocity, position };
+struct Joint {
+    JointType      type = JointType::hinge;
+    entt::entity   target = entt::null;
+    glm::vec3      anchor{0.0F};
+    glm::vec3      target_anchor{0.0F};
+    glm::vec3      axis{0.0F, 1.0F, 0.0F};
+    bool           limits_enabled = false;
+    glm::vec2      limits{0.0F}; // [min, max]
+    JointMotorMode motor = JointMotorMode::off;
+    float          motor_target = 0.0F;    // velocity: deg/s or m/s; position: deg or m
+    float          motor_max_force = 0.0F; // N*m (hinge) or N (slider); 0 = unlimited
+    std::uint32_t  constraint = 0xFFFFFFFFU; // PhysicsWorld joint handle (runtime)
 };
 
 // A capsule character controller (predictive, no rigid body). `move` is the
@@ -275,6 +321,14 @@ struct CharacterController {
     glm::vec3     velocity{0.0F};
     bool          on_ground = false;
     std::uint32_t character = 0xFFFFFFFFU;
+    // Remote driving (A10.1 character.move), system-managed and not saved:
+    // walk straight to `move_target` while `has_move_target` (overriding
+    // `move`), stop walking once `move_time_left` runs out (< 0: no limit),
+    // and jump at `jump_speed` m/s on the next tick if grounded (consumed).
+    glm::vec3 move_target{0.0F};
+    bool      has_move_target = false;
+    float     move_time_left = -1.0F;
+    float     jump_speed = 0.0F;
 };
 
 // Autonomous navigation: the agent repaths on the baked navmesh whenever

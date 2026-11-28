@@ -17,13 +17,16 @@
 #include "behavior_panel.hpp"
 #include "grass_inspector.hpp"
 #include "particle_inspector.hpp"
+#include "physics_inspector.hpp"
 #include "script_inspector.hpp"
+#include "time_of_day_panel.hpp"
 #include "tuning_panels.hpp"
 #include "engine/editor/editor.hpp"
 #include "engine/scene/behavior.hpp"
 #include "engine/scene/components.hpp"
 #include "engine/scene/scatter.hpp"
 #include "engine/scene/scene.hpp"
+#include "engine/scene/world_clock.hpp"
 #include "inspector_world.hpp"
 #include "panels/inspector_parts.hpp"
 #include "shell/panels.hpp"
@@ -156,6 +159,17 @@ struct ComponentInspector<scene::Script> {
     static void draw(entt::registry&, entt::entity, scene::Script& script,
                      const panels::InspectorState& state) {
         draw_script_fields(script, state.scripts);
+    }
+};
+
+template <>
+struct ComponentInspector<scene::WorldClock> {
+    static constexpr const char* title = "World Clock";
+    static constexpr const char* codec = "world_clock";
+    static constexpr const char* icon = icon::clock_3;
+    static constexpr bool property_grid = true;
+    static void draw(entt::registry& r, entt::entity e, scene::WorldClock& clock) {
+        draw_world_clock(r, e, clock);
     }
 };
 
@@ -341,6 +355,10 @@ struct ComponentInspector<scene::Camera> {
         }
         ui::prop_note("Put the camera on a child entity offset from the body; on the mesh itself "
                       "the view sits inside the geometry.");
+        // R20 physical lens: exposure (with exposure "physical"), depth of
+        // field and the motion blur shutter.
+        ui::prop_separator("Lens");
+        (void)draw_lens_controls(camera.lens, camera.fov_y);
     }
 };
 
@@ -406,33 +424,7 @@ struct ComponentInspector<scene::Collider> {
     static constexpr const char* icon = icon::shield;
     static constexpr bool property_grid = true;
     static void draw(entt::registry&, entt::entity, scene::Collider& collider) {
-        static constexpr ui::EnumItem shapes[] = {
-            {static_cast<int>(scene::ColliderShape::box), "Box", nullptr},
-            {static_cast<int>(scene::ColliderShape::sphere), "Sphere", nullptr},
-            {static_cast<int>(scene::ColliderShape::capsule), "Capsule", nullptr},
-        };
-        (void)ui::prop_enum("Shape", collider.shape, shapes);
-        const ui::DragSpec size{.speed = 0.05F, .min = 0.01F, .max = 1000.0F};
-        switch (collider.shape) {
-        case scene::ColliderShape::box:
-            (void)ui::prop_vec3("Half extents", collider.half_extents, size);
-            break;
-        case scene::ColliderShape::sphere:
-            (void)ui::prop_float("Radius", collider.half_extents.x, size);
-            break;
-        case scene::ColliderShape::capsule:
-            (void)ui::prop_float("Radius", collider.half_extents.x, size);
-            (void)ui::prop_float("Half height", collider.half_extents.y, size);
-            break;
-        }
-        (void)ui::prop_vec3("Offset", collider.offset, {.speed = 0.05F}, {.reset = glm::vec3(0.0F)});
-        (void)ui::prop_bool("Trigger", collider.is_sensor,
-                            {.reset = false, .tooltip = "Overlap events only: objects pass through"});
-        if (collider.is_sensor) {
-            ui::prop_note("No collision response: objects pass through.", ui::tokens().warning);
-        }
-        ui::prop_note("Without a Rigid Body this simulates as static; add a dynamic Rigid Body "
-                      "to make it fall in Play.");
+        draw_collider_fields(collider);
     }
 };
 
@@ -443,15 +435,18 @@ struct ComponentInspector<scene::RigidBody> {
     static constexpr const char* icon = icon::atom;
     static constexpr bool property_grid = true;
     static void draw(entt::registry&, entt::entity, scene::RigidBody& body) {
-        static constexpr ui::EnumItem motions[] = {
-            {static_cast<int>(scene::BodyMotion::static_body), "Static", "Never moves"},
-            {static_cast<int>(scene::BodyMotion::kinematic), "Kinematic", "Moved by the transform"},
-            {static_cast<int>(scene::BodyMotion::dynamic), "Dynamic", "Simulated by Jolt"},
-        };
-        (void)ui::prop_enum("Motion", body.motion, motions);
-        (void)ui::prop_float("Mass", body.mass,
-                             {.speed = 0.1F, .min = 0.01F, .max = 10000.0F, .format = "%.2f kg"});
-        ui::prop_value("Body", body.body == 0xFFFFFFFFU ? "not created (press Play)" : "live");
+        draw_rigid_body_fields(body);
+    }
+};
+
+template <>
+struct ComponentInspector<scene::Joint> {
+    static constexpr const char* title = "Joint";
+    static constexpr const char* codec = "joint";
+    static constexpr const char* icon = icon::link;
+    static constexpr bool property_grid = true;
+    static void draw(entt::registry& r, entt::entity, scene::Joint& joint) {
+        draw_joint_fields(r, joint);
     }
 };
 
@@ -546,7 +541,8 @@ void draw_inspector(scene::Scene& scene, entt::entity selected, panels::Inspecto
     }
 
     panels::entity_header(scene, selected);
-    inspect<scene::Transform>(state, r, selected);
+    // A clock-only entity has no place in the world: no Transform section.
+    if (!clock_only_entity(r, selected)) inspect<scene::Transform>(state, r, selected);
     inspect<scene::Primitive>(state, r, selected, true);
     if (!r.all_of<scene::Primitive>(selected)) inspect<scene::MeshRenderer>(state, r, selected);
     draw_material_inspector(r, selected);
@@ -558,6 +554,7 @@ void draw_inspector(scene::Scene& scene, entt::entity selected, panels::Inspecto
     inspect<scene::Terrain>(state, r, selected, true);
     inspect<scene::Grass>(state, r, selected, true);
     inspect<scene::ParticleEmitter>(state, r, selected, true);
+    inspect<scene::WorldClock>(state, r, selected, true);
     inspect<scene::InstancedMesh>(state, r, selected, true); // removal takes parts + scatter
     inspect<scene::Scatter>(state, r, selected, true);
     inspect<scene::NavAgent>(state, r, selected, true);
@@ -566,6 +563,7 @@ void draw_inspector(scene::Scene& scene, entt::entity selected, panels::Inspecto
     inspect<scene::Script>(state, r, selected, true);
     inspect<scene::Collider>(state, r, selected, true);
     inspect<scene::RigidBody>(state, r, selected, true);
+    inspect<scene::Joint>(state, r, selected, true);
     inspect<scene::AudioSource>(state, r, selected, true);
     inspect<scene::AudioListener>(state, r, selected, true);
 

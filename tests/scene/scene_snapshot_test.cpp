@@ -9,6 +9,7 @@
 
 #include "engine/scene/scene_snapshot.hpp"
 #include "engine/scene/components.hpp"
+#include "engine/scene/physics_settings.hpp"
 #include "engine/scene/scene.hpp"
 
 namespace {
@@ -200,6 +201,16 @@ TEST(EditorDuplicate, CopiesEverySnapshotComponent) {
     const auto& kids = r.get<s::Children>(parent).entities;
     EXPECT_NE(std::find(kids.begin(), kids.end(), copy), kids.end());
     EXPECT_FALSE(r.all_of<s::Children>(copy));
+}
+
+// A10.1: gravity changed during Play (physics.set_gravity) reverts on Stop.
+TEST(PlayModeSnapshot, RestoresThePhysicsSettings) {
+    s::Scene scene;
+    s::physics_settings_mut(scene.registry()).gravity = glm::vec3(0.0F, -3.0F, 0.0F);
+    const auto snapshot = engine::scene::capture_scene(scene);
+    s::physics_settings_mut(scene.registry()).gravity = glm::vec3(0.0F, 9.0F, 0.0F);
+    engine::scene::restore_scene(scene, snapshot);
+    EXPECT_EQ(s::physics_settings(scene.registry()).gravity, glm::vec3(0.0F, -3.0F, 0.0F));
 }
 
 } // namespace

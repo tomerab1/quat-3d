@@ -178,18 +178,35 @@ std::expected<void, RpcError> apply_components_atomic(entt::registry& registry,
         scene::EncodeOptions options;
         options.transform_as_matrix = true;
         options.include_read_only = false;
-        const Json current = scene::encode_components(registry, target, options);
+        Json current = scene::encode_components(registry, target, options);
+        if (current.contains("joint")) current["joint"]["target"] = nullptr; // see below
         for (const auto& [key, value] : current.items()) {
             (void)scene::apply_component(scratch, s, key, value, /*strict=*/false);
         }
     }
-    for (const auto& [key, value] : components.items()) {
+    // A joint's target is another entity, which the scratch registry lacks:
+    // resolve it (id or unique name) against the live registry here and dry
+    // run the rest of the joint without it.
+    Json resolved = components;
+    Json dry = components;
+    if (const auto it = components.find("joint");
+        it != components.end() && it->is_object() && it->contains("target") &&
+        !(*it)["target"].is_null()) {
+        auto t = resolve_entity(registry, (*it)["target"], "components.joint.target");
+        if (!t) return std::unexpected(t.error());
+        if (*t == target) {
+            return bad_params("components.joint.target: a joint cannot target its own entity");
+        }
+        resolved["joint"]["target"] = entt::to_integral(*t);
+        dry["joint"]["target"] = nullptr;
+    }
+    for (const auto& [key, value] : dry.items()) {
         if (auto ok = scene::apply_component(scratch, s, key, value, /*strict=*/true); !ok) {
             return bad_params(components_path(key, ok.error().message));
         }
     }
     bool moved = false;
-    for (const auto& [key, value] : components.items()) {
+    for (const auto& [key, value] : resolved.items()) {
         if (auto ok = scene::apply_component(registry, target, key, value, /*strict=*/true); !ok) {
             return rpc_fail(rpc_code::failed, components_path(key, ok.error().message));
         }
@@ -240,9 +257,15 @@ void register_world_commands(RpcServer& server, scene::Scene& scene, WorldServic
     world::register_tuning_commands(server, ctx);
     world::register_behavior_commands(server, ctx);
     world::register_behavior_edit_commands(server, ctx);
+    world::register_physics_commands(server, ctx);
+    world::register_physics_body_commands(server, ctx);
+    world::register_physics_query_commands(server, ctx);
     world::register_weather_commands(server, ctx);
+    world::register_project_commands(server, ctx);
     world::register_script_commands(server, ctx);
+    world::register_profile_commands(server, ctx);
     world::register_shader_commands(server, ctx);
+    world::register_time_commands(server, ctx);
 }
 
 } // namespace engine::remote

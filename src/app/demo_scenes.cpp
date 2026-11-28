@@ -4,9 +4,11 @@
 #include <cstdlib>
 #include <filesystem>
 #include <string>
+#include <string_view>
 
 #include <entt/entity/registry.hpp>
 #include <glm/gtc/matrix_transform.hpp>
+#include <nlohmann/json.hpp>
 
 #include "engine/asset/asset_manager.hpp"
 #include "engine/core/env.hpp"
@@ -14,11 +16,14 @@
 #include "engine/asset/material_asset.hpp"
 #include "engine/asset/mesh_asset.hpp"
 #include "engine/rhi/gpu_allocator.hpp"
+#include "engine/scene/component_json.hpp"
 #include "engine/scene/components.hpp"
 #include "engine/scene/gltf_loader.hpp"
 #include "engine/scene/primitives.hpp"
 #include "engine/scene/scene.hpp"
 #include "engine/scene/scene_io.hpp"
+#include "engine/scene/world_clock.hpp"
+#include "engine/scene/world_clock_json.hpp"
 
 namespace quat::app {
 
@@ -91,7 +96,29 @@ std::expected<DemoScene, engine::core::Error>
 build_demo_scene(engine::scene::Scene& scene, engine::asset::AssetManager& assets,
                  engine::rhi::GpuAllocator& allocator,
                  const engine::rhi::TransferContext& setup_transfer,
-                 const std::filesystem::path& project_root) {
+                 const std::filesystem::path& project_root,
+                 engine::renderer::RenderSettings& render_settings,
+                 const std::optional<std::filesystem::path>& start_scene) {
+    if (start_scene) {
+        // A game's start scene brings its own look: render settings and the
+        // scene-level environment (its HDRI, R21).
+        engine::scene::SceneEnvironment environment;
+        if (auto loaded = engine::scene::load_scene(scene, *start_scene, allocator,
+                                                    setup_transfer, assets, &render_settings,
+                                                    &environment);
+            !loaded) {
+            std::fprintf(stderr, "[fatal] start scene: %s\n", loaded.error().message.c_str());
+            return std::unexpected(engine::core::Error{"start scene load failed"});
+        }
+        std::fprintf(stderr, "[game] start scene loaded: %s (%zu entities)\n",
+                     engine::core::path_to_utf8(*start_scene).c_str(),
+                     static_cast<std::size_t>(
+                         scene.registry().view<engine::scene::Transform>().size()));
+        DemoScene out;
+        out.from_scene_file = true;
+        out.environment = std::move(environment);
+        return out;
+    }
     entt::entity spin_entity = entt::null;
     entt::entity demo_root = entt::null;
     entt::entity pedestal = entt::null;
@@ -107,7 +134,10 @@ build_demo_scene(engine::scene::Scene& scene, engine::asset::AssetManager& asset
     if (auto scene_path = engine::core::env_path("QUAT_SCENE")) {
         std::filesystem::path path = std::move(*scene_path);
         if (path.is_relative()) path = project_root / path;
-        if (auto loaded = engine::scene::load_scene(scene, path, allocator, setup_transfer, assets);
+        // The file's render settings and environment (HDRI) apply as well.
+        engine::scene::SceneEnvironment environment;
+        if (auto loaded = engine::scene::load_scene(scene, path, allocator, setup_transfer, assets,
+                                                    &render_settings, &environment);
             !loaded) {
             std::fprintf(stderr, "[fatal] QUAT_SCENE load failed: %s\n",
                          loaded.error().message.c_str());
@@ -116,9 +146,27 @@ build_demo_scene(engine::scene::Scene& scene, engine::asset::AssetManager& asset
         std::fprintf(stderr, "[info] loaded scene %s\n", engine::core::path_to_utf8(path).c_str());
         DemoScene out;
         out.from_scene_file = true;
+        out.environment = std::move(environment);
         return out;
     }
-    if (const auto gltf_path = engine::core::env_path("QUAT_GLTF")) {
+    if (const char* demo = std::getenv("QUAT_DEMO"); demo != nullptr) {
+        const DemoSceneFile* file = nullptr;
+        for (const DemoSceneFile& d : k_demo_scenes) {
+            if (std::string_view(demo) == d.name) file = &d;
+        }
+        if (file == nullptr) {
+            std::fprintf(stderr, "[fatal] QUAT_DEMO=%s: unknown demo (try 'mountain')\n", demo);
+            scene_ok = false;
+        } else if (auto loaded = engine::scene::load_scene(scene, project_root / file->path,
+                                                           allocator, setup_transfer, assets,
+                                                           &render_settings);
+                   !loaded) {
+            std::fprintf(stderr, "[fatal] QUAT_DEMO=%s: %s\n", demo, loaded.error().message.c_str());
+            scene_ok = false;
+        } else {
+            std::fprintf(stderr, "[info] demo '%s' loaded from %s\n", demo, file->path);
+        }
+    } else if (const auto gltf_path = engine::core::env_path("QUAT_GLTF")) {
         auto roots = engine::scene::GltfLoader::instantiate(*gltf_path, allocator, setup_transfer,
                                                             assets, scene);
         if (!roots) {
@@ -429,6 +477,7 @@ build_demo_scene(engine::scene::Scene& scene, engine::asset::AssetManager& asset
 }
 
 void add_default_lighting(engine::scene::Scene& scene, bool fill_lights, entt::entity root) {
+if (!scene.registry().view<engine::scene::DirectionalLight>().empty()) return;
 // A sun light, and a camera that auto-frames whatever was loaded.
 const entt::entity sun_entity = scene.create_entity("sun");
 scene.registry().emplace<engine::scene::DirectionalLight>(
@@ -470,6 +519,45 @@ if (std::getenv("QUAT_TERRAIN") != nullptr) {
     grass.settings.height_m = glm::vec2(-10000.0F, t.snowline_m - 5.0F); // none on the snow
     std::fprintf(stderr, "[terrain] QUAT_TERRAIN tile requested\n");
 }
+}
+
+void add_env_world_clock(engine::scene::Scene& scene) {
+    const char* when = std::getenv("QUAT_TIME");
+    if (when == nullptr) return;
+    nlohmann::json clock = {{"datetime", when}};
+    if (const char* where = std::getenv("QUAT_LATLON"); where != nullptr) {
+        char*        end = nullptr;
+        const double lat = std::strtod(where, &end);
+        const bool   comma = end != where && *end == ',';
+        const double lon = comma ? std::strtod(end + 1, &end) : 0.0;
+        if (!comma || *end != '\0') {
+            std::fprintf(stderr, "[time] QUAT_LATLON='%s': expected <latitude>,<longitude> in degrees\n",
+                         where);
+            return;
+        }
+        clock["latitude_deg"] = lat;
+        clock["longitude_deg"] = lon;
+    }
+    if (const char* scale = std::getenv("QUAT_TIME_SCALE"); scale != nullptr) {
+        char*        end = nullptr;
+        const double v = std::strtod(scale, &end);
+        if (end == scale || *end != '\0') {
+            std::fprintf(stderr, "[time] QUAT_TIME_SCALE='%s': expected a number\n", scale);
+            return;
+        }
+        clock["time_scale"] = v;
+    }
+    // The scene codec validates every field (the same rules as time.set).
+    const entt::entity e = scene.create_entity("world_clock");
+    if (auto ok = engine::scene::apply_component(scene.registry(), e, "world_clock", clock, true); !ok) {
+        std::fprintf(stderr, "[time] QUAT_TIME ignored: %s\n", ok.error().message.c_str());
+        scene.registry().destroy(e);
+        return;
+    }
+    engine::scene::apply_world_clock(scene.registry());
+    const auto& c = scene.registry().get<engine::scene::WorldClock>(e);
+    std::fprintf(stderr, "[time] world clock at %s (%.4f, %.4f)\n",
+                 engine::scene::world_clock_datetime(c).c_str(), c.latitude_deg, c.longitude_deg);
 }
 
 } // namespace quat::app

@@ -4,6 +4,7 @@
 //
 //   texture_encode.cpp  RGBA8 -> mip chain -> KTX2 / Basis Universal
 //   mesh_cook.cpp       primitive grouping, meshoptimizer passes
+//   mesh_simplify.cpp   optional level-of-detail reduction (--simplify)
 //   mesh_streams.cpp    attribute quantisation into new buffer views
 //   gltf_access.cpp     buffer view bytes
 //   gltf_cooker.cpp     parse (runtime parse_gltf), textures, buffer compaction,
@@ -54,6 +55,8 @@ struct GeometryResult {
     std::uint32_t skipped = 0;
     std::uint64_t bytes_before = 0;
     std::uint64_t bytes_after = 0; // raw (pre-codec) bytes of the new views
+    std::uint64_t triangles_before = 0; // of the cooked primitives
+    std::uint64_t triangles_after = 0;
 };
 
 // gltf_access.cpp: bytes of a buffer view, range-checked.
@@ -81,6 +84,17 @@ void emit_stream(fastgltf::Asset& asset, const Stream& stream, std::size_t verte
 void emit_indices(fastgltf::Asset& asset, std::size_t accessor,
                   std::span<const std::uint32_t> indices, std::size_t vertex_count,
                   const MeshCookOptions& options, GeometryResult& out);
+
+// mesh_simplify.cpp: reduces `indices` (one primitive over the vertices of
+// `positions`) to about options.simplify_ratio of its triangles; returns the
+// new index count (unchanged when simplification is off or would remove
+// every triangle). Thinning disconnected foliage grows the kept cards, which
+// moves their vertices in `positions` — except vertices flagged in `shared`
+// (used by another primitive too). `normals` / `uvs` may be null.
+std::size_t simplify_triangles(std::vector<std::uint32_t>& indices, Stream& positions,
+                               const Stream* normals, const Stream* uvs,
+                               std::span<const std::uint8_t> shared,
+                               const MeshCookOptions& options);
 
 // texture_encode.cpp: an RGBA8 image's mip chain encoded to KTX2. With an
 // `alpha_test_cutoff` (glTF MASK base colour) the chain preserves alpha-test

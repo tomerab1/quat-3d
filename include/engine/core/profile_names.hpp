@@ -1,0 +1,87 @@
+#pragma once
+
+// Zone names of the built-in frame profiler (ROADMAP R4.2), interned into
+// small integer ids so the per-scope record stays 24 bytes and statistics are
+// indexed arrays. The table is process-wide and thread-safe; call sites
+// intern once and cache the id (the QUAT_ZONE macros keep it in a static).
+// Also names threads for the profiler's records.
+
+#include <cstddef>
+#include <cstdint>
+#include <functional>
+#include <string>
+#include <string_view>
+#include <unordered_map>
+#include <vector>
+
+namespace engine::core {
+
+// What a zone measures. `wait` zones block on the GPU or the presentation
+// engine (fence waits, image acquire, present): the frame's wait time is their
+// sum, and its CPU time is the wall time minus that.
+enum class ProfileCategory : std::uint8_t { scope, system, pass, wait };
+
+[[nodiscard]] std::string_view to_string(ProfileCategory category);
+
+using ProfileNameId = std::uint16_t;
+
+// Distinct names the table holds. Interning past it returns
+// k_profile_overflow_name ("(other)"), so the profiler never allocates for a
+// runaway set of dynamic names.
+inline constexpr std::uint32_t k_max_profile_names = 1024;
+inline constexpr ProfileNameId k_profile_overflow_name = 0;
+// Longest name kept; longer names are truncated before interning.
+inline constexpr std::size_t k_max_profile_name_length = 96;
+
+// The id of `name`, interning it with `category` the first time (a later
+// call with another category keeps the first one).
+[[nodiscard]] ProfileNameId intern_profile_name(std::string_view name,
+                                                ProfileCategory category = ProfileCategory::scope);
+// Name / category of an interned id ("(other)" / scope for unknown ids).
+[[nodiscard]] std::string_view profile_name(ProfileNameId id);
+[[nodiscard]] ProfileCategory profile_category(ProfileNameId id);
+// Ids handed out so far (overflow entry included).
+[[nodiscard]] std::uint32_t profile_name_count();
+
+// Ids of names that are only known at run time, for one thread: call sites
+// that rebuild their zones every frame (render-graph passes) look names up
+// here, an unlocked hash-map probe, and take the table's lock only the first
+// time a name is seen. Not thread-safe: keep one per thread (thread_local)
+// or per owner.
+class ProfileNameCache {
+public:
+    explicit ProfileNameCache(ProfileCategory category = ProfileCategory::scope)
+        : category_(category) {}
+
+    // The id of `name` (interned with this cache's category on a miss).
+    [[nodiscard]] ProfileNameId id(std::string_view name);
+    // Names cached, and lookups that had to intern.
+    [[nodiscard]] std::size_t size() const { return ids_.size(); }
+    [[nodiscard]] std::uint32_t misses() const { return misses_; }
+
+private:
+    struct Hash {
+        using is_transparent = void;
+        [[nodiscard]] std::size_t operator()(std::string_view s) const noexcept {
+            return std::hash<std::string_view>{}(s);
+        }
+    };
+    std::unordered_map<std::string, ProfileNameId, Hash, std::equal_to<>> ids_;
+    ProfileCategory category_;
+    std::uint32_t   misses_ = 0;
+};
+
+// Index of threads that never named themselves (and of every thread past the
+// 254th).
+inline constexpr std::uint8_t k_unnamed_profile_thread = 0xFF;
+
+// Names the calling thread in profiler records and returns its index (indices
+// count up in naming order). Naming a thread again keeps its index and
+// replaces the name.
+std::uint8_t set_profile_thread_name(std::string_view name);
+// The calling thread's index (k_unnamed_profile_thread until it is named).
+[[nodiscard]] std::uint8_t profile_thread_index();
+// Names by thread index.
+[[nodiscard]] std::vector<std::string> profile_thread_names();
+
+} // namespace engine::core

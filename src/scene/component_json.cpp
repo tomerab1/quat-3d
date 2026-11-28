@@ -22,9 +22,13 @@
 #include "engine/physics/physics_world.hpp"
 #include "engine/rhi/material_shader_names.hpp"
 #include "engine/scene/components.hpp"
+#include "engine/scene/lens_json.hpp"
 #include "engine/scene/material_override.hpp"
 #include "engine/scene/script_component.hpp"
 #include "component_json_internal.hpp"
+#include "component_json_physics.hpp"
+#include "engine/scene/world_clock.hpp"
+#include "engine/scene/world_clock_json.hpp"
 #include "engine/terrain/budget.hpp"
 #include "engine/terrain/talus_relax.hpp"
 #include "engine/scene/weather_json.hpp"
@@ -53,6 +57,7 @@ constexpr std::array k_components = {
     ComponentInfo{"collider", "Physics collision shape (box, sphere, capsule)", true, true},
     ComponentInfo{"rigidbody", "Physics body: static, kinematic or dynamic", true, true},
     ComponentInfo{"character", "Capsule character controller", true, true},
+    ComponentInfo{"joint", "Physics joint to another body or the world: fixed, point, hinge, slider, distance", true, true},
     ComponentInfo{"nav_agent", "Navmesh path-following agent", true, true},
     ComponentInfo{"behavior", "Behaviour tree (JSON source)", true, true},
     ComponentInfo{"patrol", "Patrol route the nav agent walks", true, true},
@@ -61,6 +66,7 @@ constexpr std::array k_components = {
     ComponentInfo{"grass", "GPU-generated, wind-animated grass around the camera", true, true},
     ComponentInfo{"weather", "The scene's weather (one per scene): wind, clouds, rain/snow, wetness, snow cover, temperature", true, true},
     ComponentInfo{"particle_emitter", "GPU particle emitter (sparks, smoke, dust): emission, shape, forces, curves, flipbook, blending, collision", true, true},
+    ComponentInfo{"world_clock", "The scene's date, time and place (one per scene): drives the sun, moon and sky", true, true},
     ComponentInfo{"net_replicated", "Replicate this entity's transform to network clients", true, true},
     ComponentInfo{"audio_source", "Sound emitter: wav/flac/mp3 clip on a bus, optionally 3D", true, true},
     ComponentInfo{"audio_listener", "The audio listener follows this entity (else the camera)", true, true},
@@ -69,12 +75,6 @@ constexpr std::array k_components = {
     ComponentInfo{"mesh", "glTF mesh provenance (read-only)", false, false},
 };
 
-constexpr EnumName<ColliderShape> k_collider_shapes[] = {
-    {"box", ColliderShape::box}, {"sphere", ColliderShape::sphere},
-    {"capsule", ColliderShape::capsule}};
-constexpr EnumName<BodyMotion> k_motions[] = {{"static", BodyMotion::static_body},
-                                              {"kinematic", BodyMotion::kinematic},
-                                              {"dynamic", BodyMotion::dynamic}};
 constexpr EnumName<PrimitiveShape> k_primitive_shapes[] = {
     {"cube", PrimitiveShape::cube},         {"sphere", PrimitiveShape::sphere},
     {"plane", PrimitiveShape::plane},       {"cylinder", PrimitiveShape::cylinder},
@@ -457,16 +457,6 @@ template <typename T, typename Decode>
     return {};
 }
 
-// Editing a physics component invalidates its body/character: resetting the
-// handle makes the physics systems' orphan sweep drop the old one and build
-// a new one from the edited data on the next tick.
-void invalidate_physics(entt::registry& r, entt::entity e) {
-    if (auto* rb = r.try_get<RigidBody>(e)) rb->body = physics::PhysicsWorld::invalid_body;
-    if (auto* cc = r.try_get<CharacterController>(e)) {
-        cc->character = physics::PhysicsWorld::invalid_body;
-    }
-}
-
 } // namespace
 
 std::expected<void, core::Error> decode_color(const json& v, glm::vec4& out) {
@@ -571,6 +561,7 @@ json encode_components(const entt::registry& r, entt::entity e, const EncodeOpti
                           {"random_yaw", sc->random_yaw},
                           {"align_to_normal", sc->align_to_normal},
                           {"base_offset", sc->base_offset},
+                          {"mirror", sc->mirror},
                           {"slope", json::array({sc->slope_deg.x, sc->slope_deg.y})},
                           {"height", json::array({sc->height_m.x, sc->height_m.y})},
                           {"max_instances", sc->max_instances}};
@@ -590,20 +581,12 @@ json encode_components(const entt::registry& r, entt::entity e, const EncodeOpti
                          {"near", c->near_z},
                          {"far", c->far_z},
                          {"active", c->is_active}};
+        write_lens_fields(out["camera"], c->lens);
     }
-    if (const auto* c = pick.get<Collider>("collider")) {
-        out["collider"] = {{"shape", enum_name(k_collider_shapes, c->shape)},
-                           {"half_extents", vec3_json(c->half_extents)},
-                           {"offset", vec3_json(c->offset)},
-                           {"sensor", c->is_sensor}};
-    }
-    if (const auto* b = pick.get<RigidBody>("rigidbody")) {
-        out["rigidbody"] = {{"motion", enum_name(k_motions, b->motion)}, {"mass", b->mass}};
-    }
-    if (const auto* c = pick.get<CharacterController>("character")) {
-        out["character"] = {{"radius", c->radius},
-                            {"half_height", c->half_height},
-                            {"speed", c->speed}};
+    for (const std::string_view name : detail::k_physics_components) {
+        if (options.only.empty() || std::ranges::find(options.only, name) != options.only.end()) {
+            detail::encode_physics_component(r, e, name, out);
+        }
     }
     if (const auto* a = pick.get<NavAgent>("nav_agent")) {
         out["nav_agent"] = {{"target", vec3_json(a->target)},
@@ -627,11 +610,18 @@ json encode_components(const entt::registry& r, entt::entity e, const EncodeOpti
                           {"tile_size", t->params.tile_size_m},
                           {"height", t->params.height_m},
                           {"octaves", t->params.octaves},
+                          {"frequency", t->params.base_frequency},
+                          {"gain", t->params.gain},
                           {"warp", t->params.warp_strength},
                           {"erosion", enum_name(k_erosion_models, t->params.erosion_model)},
                           {"droplets", t->params.erosion_droplets},
                           {"erosion_steps", t->params.grid.iterations},
                           {"erosion_relax", t->params.grid.relax_cycles},
+                          {"erosion_talus", t->params.grid.talus},
+                          {"erosion_rain", t->params.grid.rain},
+                          {"erosion_capacity", t->params.grid.capacity},
+                          {"erosion_rate", t->params.grid.erode_rate},
+                          {"erosion_thermal", t->params.grid.thermal_rate},
                           {"snowline", t->snowline_m},
                           {"streaming", t->streaming},
                           {"stream_radius", t->stream_radius},
@@ -642,6 +632,7 @@ json encode_components(const entt::registry& r, entt::entity e, const EncodeOpti
     if (const auto* p = pick.get<ParticleEmitter>("particle_emitter")) {
         out["particle_emitter"] = detail::encode_particle_emitter(p->settings);
     }
+    if (const auto* c = pick.get<WorldClock>("world_clock")) out["world_clock"] = encode_world_clock(*c);
     if (const auto* n = pick.get<NetReplicated>("net_replicated")) {
         out["net_replicated"] = {{"net_id", n->net_id}};
     }
@@ -690,9 +681,9 @@ std::vector<std::string_view> component_names(const entt::registry& r, entt::ent
     add(r.all_of<PointLight>(e), "point_light");
     add(r.all_of<DirectionalLight>(e), "dir_light");
     add(r.all_of<Camera>(e), "camera");
-    add(r.all_of<Collider>(e), "collider");
-    add(r.all_of<RigidBody>(e), "rigidbody");
-    add(r.all_of<CharacterController>(e), "character");
+    for (const std::string_view name : detail::k_physics_components) {
+        add(detail::has_physics_component(r, e, name), name);
+    }
     add(r.all_of<NavAgent>(e), "nav_agent");
     add(r.all_of<BehaviorTree>(e), "behavior");
     add(r.all_of<PatrolRoute>(e), "patrol");
@@ -701,6 +692,7 @@ std::vector<std::string_view> component_names(const entt::registry& r, entt::ent
     add(r.all_of<Grass>(e), "grass");
     add(r.all_of<weather::WeatherState>(e), "weather");
     add(r.all_of<ParticleEmitter>(e), "particle_emitter");
+    add(r.all_of<WorldClock>(e), "world_clock");
     add(r.all_of<NetReplicated>(e), "net_replicated");
     add(r.all_of<AudioSource>(e), "audio_source");
     add(r.all_of<AudioListener>(e), "audio_listener");
@@ -811,6 +803,7 @@ std::expected<void, core::Error> apply_component(entt::registry& r, entt::entity
             f.boolean("random_yaw", s.random_yaw);
             f.number("align_to_normal", s.align_to_normal, 0.0F, 1.0F);
             f.number("base_offset", s.base_offset, -1000.0F, 1000.0F);
+            f.number("mirror", s.mirror, 0.0F, 1.0F);
             read_range(f, "slope", s.slope_deg, 0.0F, 90.0F);
             read_range(f, "height", s.height_m, -100000.0F, 100000.0F);
             f.integer("max_instances", s.max_instances, 0, static_cast<std::int64_t>(k_max_instances));
@@ -843,33 +836,11 @@ std::expected<void, core::Error> apply_component(entt::registry& r, entt::entity
             c.fov_y = glm::radians(fov_deg);
             f.number("near", c.near_z, 1e-4F).number("far", c.far_z, 1e-3F).boolean("active", c.is_active);
             if (c.far_z <= c.near_z) f.fail("far", "must be greater than near");
+            read_lens_fields(f, c.lens); // R20 physical lens
         });
     }
-    if (name == "collider") {
-        auto ok = merge<Collider>(r, e, v, name, strict, [](JsonFields& f, Collider& c) {
-            f.enumeration("shape", c.shape, k_collider_shapes);
-            f.vec3("half_extents", c.half_extents).vec3("offset", c.offset).boolean("sensor", c.is_sensor);
-            if (glm::any(glm::lessThanEqual(c.half_extents, glm::vec3(0.0F)))) {
-                f.fail("half_extents", "components must be > 0");
-            }
-        });
-        if (ok) invalidate_physics(r, e);
-        return ok;
-    }
-    if (name == "rigidbody") {
-        auto ok = merge<RigidBody>(r, e, v, name, strict, [](JsonFields& f, RigidBody& b) {
-            f.enumeration("motion", b.motion, k_motions).number("mass", b.mass, 0.0F);
-        });
-        if (ok) invalidate_physics(r, e);
-        return ok;
-    }
-    if (name == "character") {
-        auto ok = merge<CharacterController>(r, e, v, name, strict, [](JsonFields& f, CharacterController& c) {
-            f.number("radius", c.radius, 0.01F).number("half_height", c.half_height, 0.0F);
-            f.number("speed", c.speed, 0.0F);
-        });
-        if (ok) invalidate_physics(r, e);
-        return ok;
+    if (detail::is_physics_component(name)) {
+        return detail::apply_physics_component(r, e, name, v, strict);
     }
     if (name == "nav_agent") {
         return merge<NavAgent>(r, e, v, name, strict, [](JsonFields& f, NavAgent& a) {
@@ -936,11 +907,18 @@ std::expected<void, core::Error> apply_component(entt::registry& r, entt::entity
             f.number("tile_size", p.tile_size_m, 1.0F, 100000.0F);
             f.number("height", p.height_m, 0.0F, 100000.0F);
             f.integer("octaves", p.octaves, 1, 16);
+            f.number("frequency", p.base_frequency, 0.05F, 64.0F);
+            f.number("gain", p.gain, 0.1F, 0.9F);
             f.number("warp", p.warp_strength, 0.0F, 4.0F);
             f.enumeration("erosion", p.erosion_model, k_erosion_models);
             f.integer("droplets", p.erosion_droplets, 0, 50'000'000);
             f.integer("erosion_steps", p.grid.iterations, 0, terrain::max_grid_erosion_steps);
             f.integer("erosion_relax", p.grid.relax_cycles, 0, terrain::max_talus_relax_cycles);
+            f.number("erosion_talus", p.grid.talus, 0.05F, 4.0F);
+            f.number("erosion_rain", p.grid.rain, 0.0F, 1.0F);
+            f.number("erosion_capacity", p.grid.capacity, 0.0F, 20.0F);
+            f.number("erosion_rate", p.grid.erode_rate, 0.0F, 10.0F);
+            f.number("erosion_thermal", p.grid.thermal_rate, 0.0F, 1.0F);
             f.number("snowline", t.snowline_m);
             f.boolean("streaming", t.streaming);
             f.integer("stream_radius", t.stream_radius, 0, 8);
@@ -997,6 +975,15 @@ std::expected<void, core::Error> apply_component(entt::registry& r, entt::entity
         return merge<ParticleEmitter>(r, e, v, name, strict, [](JsonFields& f, ParticleEmitter& p) {
             detail::decode_particle_emitter(f, p.settings);
         });
+    }
+    if (name == "world_clock") {
+        // One clock per scene: a second entity cannot take the component.
+        if (const entt::entity owner = find_world_clock(r); owner != entt::null && owner != e) {
+            return std::unexpected(core::Error{
+                "world_clock: the scene already has its clock on entity " +
+                std::to_string(entt::to_integral(owner)) + " (edit that one, or remove it first)"});
+        }
+        return merge<WorldClock>(r, e, v, name, strict, decode_world_clock);
     }
     if (name == "net_replicated") {
         return merge<NetReplicated>(r, e, v, name, strict, [](JsonFields& f, NetReplicated& n) {
@@ -1058,9 +1045,7 @@ bool remove_component(entt::registry& r, entt::entity e, std::string_view name) 
     if (name == "point_light") return r.remove<PointLight>(e) > 0;
     if (name == "dir_light") return r.remove<DirectionalLight>(e) > 0;
     if (name == "camera") return r.remove<Camera>(e) > 0;
-    if (name == "collider") return r.remove<Collider>(e) > 0;
-    if (name == "rigidbody") return r.remove<RigidBody>(e) > 0;
-    if (name == "character") return r.remove<CharacterController>(e) > 0;
+    if (detail::is_physics_component(name)) return detail::remove_physics_component(r, e, name);
     if (name == "nav_agent") return r.remove<NavAgent>(e) > 0;
     if (name == "behavior") return r.remove<BehaviorTree>(e) > 0;
     if (name == "patrol") return r.remove<PatrolRoute>(e) > 0;
@@ -1069,6 +1054,7 @@ bool remove_component(entt::registry& r, entt::entity e, std::string_view name) 
     if (name == "grass") return r.remove<Grass>(e) > 0;
     if (name == "weather") return r.remove<weather::WeatherState>(e) > 0;
     if (name == "particle_emitter") return r.remove<ParticleEmitter>(e) > 0;
+    if (name == "world_clock") return r.remove<WorldClock>(e) > 0;
     if (name == "net_replicated") return r.remove<NetReplicated>(e) > 0;
     if (name == "audio_source") return r.remove<AudioSource>(e) > 0;
     if (name == "audio_listener") return r.remove<AudioListener>(e) > 0;

@@ -158,7 +158,7 @@ these and take colours and sizes from the tokens.
 | `search_field` | Magnifier, hint, clear button, Esc clears; `matches_filter` is the shared case-insensitive match. |
 | `icon_button`, `toggle_button`, `button` | Square frameless icon buttons (accent fill when toggled on, tooltip with shortcut, tooltips on disabled buttons too); text buttons in primary / secondary / danger / ghost. Icons are drawn centred on their ink box (`icon_origin` / `draw_icon`: the glyph's rasterised bounds, snapped to whole pixels), not passed as a button label, which ImGui centres by advance width and line height. |
 | `begin_toolbar` / `toolbar_separator` | Tight uniform spacing and hairline separators. |
-| `notify` / `draw_toasts` | Bottom-right toasts with a severity stripe and icon; auto-dismiss with a fade, click to dismiss, repeats restart instead of stacking. |
+| `notify` / `draw_toasts` | Bottom-right toasts with a severity stripe and icon; auto-dismiss with a fade, click to dismiss, repeats restart instead of stacking; an optional action button (`ToastAction`) runs a follow-up and dismisses the toast. |
 | `empty_state` | Centred large icon, title, wrapped hint (each line centred) and an optional primary action. |
 
 ## Shell
@@ -174,7 +174,7 @@ these and take colours and sizes from the tokens.
 | Hierarchy | Viewport (no tab bar)                  | Inspector | Renderer |
 |           |  [overlays][stats]           fps / ms  |                      |
 +-----------+----------------------------------------+                      |
-| Assets | Console | Animation | Behaviour | Physics | Stats                 |
+| Assets | Console | Animation | Behaviour | Physics | Stats | Profiler      |
 +---------------------------------------------------------------------------+
 | Editing | selection | 18 entities | newest log line ... | MCP | fps / ms   |  status bar
 +---------------------------------------------------------------------------+
@@ -220,7 +220,10 @@ these and take colours and sizes from the tokens.
   Save As validates the path (project-relative, `.json`, warns before
   replacing); Help > Keyboard Shortcuts is generated from the registry;
   Edit > Preferences edits theme, camera speed and snap steps through the
-  property grid.
+  property grid; File > Build & Export (P4/E7) shows the game project and
+  the package settings in the property grid, quat-pack's progress and log,
+  and raises a toast with a "Show in folder" action when the package is
+  written ("Show log" when the build fails).
 
 ## Shortcuts
 
@@ -229,6 +232,7 @@ Help > Keyboard Shortcuts generates this from the command registry:
 | Action | Shortcut | Scope |
 |---|---|---|
 | New / Open / Save / Save As scene | Ctrl+N / Ctrl+O / Ctrl+S / Ctrl+Shift+S | global |
+| Build & Export | Ctrl+B | global |
 | Exit | Ctrl+Q | global |
 | Undo / Redo (E1, disabled) | Ctrl+Z / Ctrl+Y | global |
 | Rename / Duplicate / Delete | F2 / Ctrl+D / Delete | selection |
@@ -286,6 +290,14 @@ there, Shift+click adds a patrol waypoint.
   one line from its context menu, clear; monospace with token level colours.
   Editor builds tee stderr into the ring whenever the UI is up (previously
   only with `QUAT_REMOTE`).
+- **Profiler** (R4, `panels/profiler.cpp`): the built-in frame profiler.
+  Toolbar with freeze / reset toggles, kind buttons (All / Passes / Systems /
+  Scopes / Waits), the frame budget and a search field; a property-grid
+  summary of frame / CPU / GPU / wait time (avg, p95, max; monospace) with a
+  warning note when GPU timing is off; a frame-time graph in token colours
+  (wall time accent, GPU info, budget dashed in the warning colour); a
+  sortable zone table with category-tinted kinds and values over the budget
+  in the error colour; empty states for no profiler and no matching zones.
 
 ## Resolution
 

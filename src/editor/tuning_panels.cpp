@@ -3,18 +3,24 @@
 
 #include <cmath>
 #include <cstddef>
+#include <cstdio>
 #include <optional>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include <entt/entity/registry.hpp>
 #include <glm/glm.hpp>
 #include <imgui.h>
+#include <imgui_stdlib.h>
 
+#include "engine/renderer/physical_camera.hpp"
+#include "engine/core/utf8_path.hpp"
 #include "engine/renderer/render_settings.hpp"
 #include "engine/scene/components.hpp"
 #include "engine/scene/material_override.hpp"
 #include "engine/scene/scene.hpp"
+#include "time_of_day_panel.hpp"
 #include "shell/panels.hpp"
 #include "ui/icons.hpp"
 #include "ui/widgets.hpp"
@@ -52,12 +58,43 @@ using renderer::RenderSettings;
     return f;
 }
 
+// A `path` field (R20 colour-grading LUT): a text row committed on Enter
+// when it passes the table's path check. The renderer loads and validates
+// the file itself; a bad file is reported on stderr and leaves the image
+// ungraded. A rejected entry keeps its error under the row.
+void draw_path_setting(RenderSettings& s, const RenderSettingDesc& d, const std::string& label,
+                       const std::string& hint, std::string& value) {
+    struct Edit {
+        const RenderSettingDesc* field = nullptr;
+        std::string              error;
+    };
+    static std::vector<Edit> edits;
+    Edit* e = nullptr;
+    for (Edit& candidate : edits) {
+        if (candidate.field == &d) e = &candidate;
+    }
+    if (e == nullptr) e = &edits.emplace_back(Edit{&d, {}});
+    std::string entered = value;
+    ui::PropOpts<std::string> opts;
+    opts.reset = std::string{};
+    opts.tooltip = hint.empty() ? nullptr : hint.c_str();
+    if (ui::prop_text(label.c_str(), entered, opts, /*commit_on_enter=*/true)) {
+        e->error = renderer::check_render_setting_path(d, entered);
+        if (e->error.empty()) (void)renderer::set_render_setting_text(s, d, entered);
+    }
+    if (!e->error.empty()) ui::prop_note(e->error.c_str(), ui::tokens().error);
+}
+
 // One settings-table row: label, slider / checkbox, reset arrow when the
 // value differs from the table's default.
 void draw_setting(RenderSettings& s, const RenderSettingDesc& d) {
     const RenderSettingRef ref = d.ref(s);
     const std::string label = sentence_case(d.label);
     const std::string hint(d.hint);
+    if (ref.s != nullptr) {
+        draw_path_setting(s, d, label, hint, *ref.s);
+        return;
+    }
     const std::string format = slider_format(d.min, d.max, d.unit);
     ImGuiSliderFlags flags = ImGuiSliderFlags_AlwaysClamp;
     if (logarithmic(d.min, d.max)) flags |= ImGuiSliderFlags_Logarithmic;
@@ -101,8 +138,10 @@ void draw_setting(RenderSettings& s, const RenderSettingDesc& d) {
     }
     // Upscaling needs the temporal resolve (TAA off renders at native scale).
     if (d.group == "upscaler" && !s.taa.enabled) return true;
-    return d.group == "exposure" && !s.exposure.auto_exposure && d.name != "auto" &&
-           d.name != "compensation_ev";
+    if (d.group != "exposure" || d.name == "compensation_ev" || d.name == "physical") return false;
+    // The physical camera overrides auto exposure; manual uses only the bias.
+    if (s.exposure.physical) return true;
+    return !s.exposure.auto_exposure && d.name != "auto";
 }
 
 void draw_sun(scene::Scene* scene) {
@@ -118,6 +157,11 @@ void draw_sun(scene::Scene* scene) {
         return;
     }
     if (!ui::begin_property_grid("sun")) return;
+    // While the world clock drives the light, its angles and strength come
+    // from the clock (Time of Day below): shown, not editable.
+    const bool driven = clock_drives_sun(scene->registry());
+    if (driven) ui::prop_note("Driven by the world clock (Time of Day).");
+    ImGui::BeginDisabled(driven);
     // direction = travel direction (sun -> scene), unit length; same angle
     // convention as environment.get / environment.set.
     const glm::vec3 dir = glm::normalize(sun->direction);
@@ -134,9 +178,30 @@ void draw_sun(scene::Scene* scene) {
         sun->direction =
             glm::vec3(std::cos(el) * std::cos(az), -std::sin(el), std::cos(el) * std::sin(az));
     }
+    ImGui::EndDisabled();
     (void)ui::prop_color3("Colour", sun->color, {.reset = glm::vec3(1.0F)});
+    ImGui::BeginDisabled(driven);
     (void)ui::prop_float("Intensity", sun->intensity, {.speed = 0.05F, .min = 0.0F, .max = 100.0F});
+    ImGui::EndDisabled();
     ui::end_property_grid();
+}
+
+// The HDRI file row of the "Sky & HDRI" section (R21): a project-relative
+// .hdr path (typed, browsed or dropped from the asset browser; the reset
+// arrow clears it) and the load status (resolution and sun, or the error).
+void draw_hdri_file(const HdriPanel& hdri) {
+    if (hdri.request == nullptr) return;
+    static constexpr std::string_view k_extensions[] = {".hdr"};
+    std::string path = hdri.path;
+    ui::PropOpts<std::string> opts;
+    opts.reset = std::string();
+    opts.tooltip = "Radiance .hdr panorama, relative to the project root";
+    if (ui::prop_asset("HDRI file", path,
+                       {.root = core::path_from_utf8(hdri.project_root), .extensions = k_extensions},
+                       opts)) {
+        *hdri.request = path;
+    }
+    if (!hdri.status.empty()) ui::prop_note(hdri.status.c_str());
 }
 
 // One material factor row; the reset arrow reverts an entity override.
@@ -170,9 +235,58 @@ void draw_material_field(entt::registry& r, entt::entity e, const scene::Materia
     if (ui::prop_end(true, overridden) && !changed) scene::clear_material_override_field(r, e, f);
 }
 
+// One lens row: a fill-bar slider with the reset arrow back to the
+// PhysicalCamera default.
+bool lens_slider(const char* label, const char* hint, float& v, float min, float max,
+                 const char* format, bool log, float reset) {
+    ImGuiSliderFlags flags = ImGuiSliderFlags_AlwaysClamp;
+    if (log) flags |= ImGuiSliderFlags_Logarithmic;
+    const bool modified = v != reset;
+    ui::prop_begin(label, hint, true, modified);
+    bool changed = ui::slider_float("##v", &v, min, max, format, flags);
+    if (ui::prop_end(true, modified)) {
+        v = reset;
+        changed = true;
+    }
+    return changed;
+}
+
 } // namespace
 
-void draw_renderer_panel(RenderSettings& settings, scene::Scene* scene) {
+bool draw_lens_controls(renderer::PhysicalCamera& lens, float fov_y) {
+    using L = renderer::PhysicalCameraLimits;
+    const renderer::PhysicalCamera defaults{};
+    bool changed = false;
+    changed |= lens_slider("Aperture", "Lower f-number: brighter and shallower depth of field",
+                           lens.aperture_f, 1.0F, 22.0F, "f/%.1f", true, defaults.aperture_f);
+    // Shown as the denominator of 1/x s, the photographer's notation.
+    float denominator = 1.0F / lens.shutter_s;
+    if (lens_slider("Shutter", "Exposure time; also the motion blur length (shutter angle)",
+                    denominator, 1.0F / L::max_shutter, 8000.0F, "1/%.0f s", true,
+                    1.0F / defaults.shutter_s)) {
+        lens.shutter_s = 1.0F / denominator;
+        changed = true;
+    }
+    changed |= lens_slider("ISO", "Sensor sensitivity", lens.iso, 50.0F, 12800.0F, "%.0f", true,
+                           defaults.iso);
+    changed |= lens_slider("Focal length", "> 0 sets the field of view from the sensor size",
+                           lens.focal_length_mm, 0.0F, 600.0F,
+                           lens.focal_length_mm > 0.0F ? "%.0f mm" : "Off (uses FOV)", false,
+                           defaults.focal_length_mm);
+    changed |= lens_slider("Sensor height", "Vertical sensor size", lens.sensor_height_mm, 4.0F,
+                           60.0F, "%.1f mm", false, defaults.sensor_height_mm);
+    changed |= lens_slider("Focus distance", "Distance that is sharp with depth of field on",
+                           lens.focus_distance_m, L::min_focus_m, 1000.0F, "%.2f m", true,
+                           defaults.focus_distance_m);
+    char summary[64];
+    (void)std::snprintf(summary, sizeof(summary), "EV100 %.1f, %.0f mm", renderer::ev100(lens),
+                        renderer::effective_focal_length_mm(lens, fov_y));
+    ui::prop_value("Exposure", summary, "Resulting exposure value and effective focal length");
+    return changed;
+}
+
+void draw_renderer_panel(RenderSettings& settings, scene::Scene* scene, const HdriPanel& hdri,
+                         renderer::PhysicalCamera* view_lens, float view_fov_y) {
     if (!ImGui::Begin(shell::panel_window_name(shell::Panel::renderer).c_str())) {
         ImGui::End();
         return;
@@ -184,10 +298,28 @@ void draw_renderer_panel(RenderSettings& settings, scene::Scene* scene) {
         draw_sun(scene);
         ImGui::PopID();
     }
+    if (ui::section_header(ui::label(icon::clock_3, "Time of Day").c_str())) {
+        ImGui::PushID("time_of_day");
+        draw_time_of_day_section(scene);
+        ImGui::PopID();
+    }
     if (ui::section_header(ui::label(icon::cloud, "Weather").c_str())) {
         ImGui::PushID("weather");
         draw_weather_section(scene); // R13.1
         ImGui::PopID();
+    }
+    if (view_lens != nullptr) {
+        const bool open = ui::section_header(ui::label(icon::camera, "View camera lens").c_str());
+        ui::item_tooltip("The editor camera's lens: depth of field, motion blur and physical "
+                         "exposure");
+        if (open) {
+            ImGui::PushID("view_lens");
+            if (ui::begin_property_grid("lens")) {
+                (void)draw_lens_controls(*view_lens, view_fov_y);
+                ui::end_property_grid();
+            }
+            ImGui::PopID();
+        }
     }
     for (const renderer::RenderSettingGroup& g : renderer::render_setting_groups()) {
         const std::string header(g.label);
@@ -203,6 +335,7 @@ void draw_renderer_panel(RenderSettings& settings, scene::Scene* scene) {
                 draw_setting(settings, d);
                 ImGui::EndDisabled();
             }
+            if (g.name == "environment") draw_hdri_file(hdri);
             ui::prop_begin("", nullptr, false, false);
             if (ui::button(ui::label(icon::rotate_ccw, "Reset group").c_str(),
                            ui::ButtonKind::ghost)) {

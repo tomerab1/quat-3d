@@ -12,11 +12,19 @@ To change how the scene looks, tune the renderer (`render_settings_get` / `rende
 
 The weather (`weather_get` / `weather_set`) drives the wind the grass bends in, cloud cover and cloud shadows, rain or snow, wet surfaces with puddles, and snow cover; the `set-weather` workflow walks through it.
 
+Time of day: `time_set` gives the scene a date, time and place (latitude / longitude); the sun then follows the real Sun (sunrise, sunset, night) and the clock runs with the simulation (`time_scale` speeds it up, 0 freezes it). `time_get` reports the Sun and Moon positions, sunrise / sunset and the Moon's phase; `time_skip` jumps forward or back.
+
 NPC behaviour is a behaviour tree per entity: `bt_leaves` lists the node kinds and leaves, `bt_set` writes a whole tree, `bt_get` shows it with stable node ids for the incremental `bt_add_node` / `bt_move_node` / `bt_remove_node` / `bt_set_params`, and `bt_status` shows what each node did on the last tick during Play.
+
+Physics runs during Play (`sim_play`). `physics_get` / `physics_set` / `physics_apply` read and push bodies, `physics_set_gravity` changes the scene's gravity, and `physics_raycast_all` / `physics_overlap` / `physics_shape_cast` query the world. `events_poll` reports which bodies touched and how hard; pass its `cursor` back to read only new events. `character_move` walks character controllers. Joints (`joint` component) are authored with `scene_update`. Pair these with `debug_pause` / `debug_step` for repeatable experiments.
 
 Gameplay is written as Lua scripts: read the `quat://docs/scripting` resource, write files with `script_create` / `script_update` (compiled first; errors name the line), attach them with the `script` component, run with `sim_play` and read `debug_log` (category `script`).
 
+Performance: `profile_frame` shows where the frame time goes (CPU and GPU per render pass and scene system), `profile_capture` records a number of frames and reports the costliest zones and the spikes over a frame budget, `profile_counters` the workload behind them (draws, triangles, GPU memory, entities). Measure before and after every change; the `find-performance-problem` workflow walks through it.
+
 Custom looks: write a material shader (a Slang module) with `shader_template` → `shader_create`, assign it with `scene_update` (`primitive.shader`), screenshot and refine with `shader_update`; compile errors come back with file, line and column.
+
+A game made here ships as a standalone package: `project_info` shows the open game project, `project_build` packages it for the engine's OS in the background and `project_build_status` reports progress and the archive.
 
 If a tool says quat-mcp cannot connect to the engine or that the engine rejected the session, the engine is not running with remote control on that port, or its session token does not match: pass the error's advice on to the user instead of retrying. Never ask the user to paste the session token into the conversation.
 

@@ -8,8 +8,10 @@
 #include <unordered_set>
 #include <utility>
 
+#include "engine/core/profile.hpp"
 #include "engine/rhi/device.hpp"
 #include "engine/rhi/formats.hpp"
+#include "engine/rhi/gpu_profiler.hpp"
 
 namespace engine::rhi {
 
@@ -391,8 +393,13 @@ ResourceHandle RenderGraph::create_transient_image(const char* name, VkFormat fo
 }
 
 RenderGraph::PassBuilder RenderGraph::add_pass(const char* name, PassType type) {
+    // The graph is rebuilt every frame: pass names resolve through a
+    // per-thread cache, so the name table's lock is taken once per name, not
+    // once per pass per frame (no engine mutexes on the hot path).
+    thread_local core::ProfileNameCache pass_names(core::ProfileCategory::pass);
     Pass p;
     p.name = name;
+    p.profile_id = pass_names.id(p.name);
     p.type = type;
     passes_.push_back(std::move(p));
     return PassBuilder{*this, static_cast<std::uint32_t>(passes_.size() - 1)};
@@ -678,10 +685,12 @@ RenderGraph::planned_buffer_barriers(std::string_view pass_name) const {
 // ===========================================================================
 // RenderGraph — execute
 // ===========================================================================
-void RenderGraph::execute(VkCommandBuffer cmd) {
+void RenderGraph::execute(VkCommandBuffer cmd, GpuProfiler* gpu) {
     for (std::uint32_t pos = 0; pos < order_.size(); ++pos) {
-        submit_barriers(cmd, pass_barriers_[pos], pass_buffer_barriers_[pos]);
         Pass& pass = passes_[order_[pos]];
+        QUAT_ZONE_DYNAMIC(pass.profile_id, pass.name.c_str());
+        const GpuZoneScope gpu_zone(gpu, cmd, pass.profile_id, pass.name.c_str());
+        submit_barriers(cmd, pass_barriers_[pos], pass_buffer_barriers_[pos]);
         if (pass.execute) {
             PassContext ctx(cmd, *this);
             pass.execute(ctx);

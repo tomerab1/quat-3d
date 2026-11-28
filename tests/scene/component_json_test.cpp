@@ -10,6 +10,7 @@
 #include "engine/physics/physics_world.hpp"
 #include "engine/scene/component_json.hpp"
 #include "engine/scene/components.hpp"
+#include "engine/scene/scene.hpp"
 #include "support/expect_ok.hpp"
 
 namespace {
@@ -43,18 +44,25 @@ TEST_F(ComponentJson, RoundTripsEveryWritableComponent) {
                        {"roughness", 0.25}, {"emissive", {2, 0, 0}}}},
         {"point_light", {{"color", {1, 0.5, 0}}, {"radius", 7}, {"intensity", 3}}},
         {"dir_light", {{"direction", {0, -1, 0}}, {"color", {1, 1, 1}}, {"intensity", 2}}},
-        {"camera", {{"fov_deg", 70}, {"near", 0.2}, {"far", 500}, {"active", false}}},
+        {"camera", {{"fov_deg", 70}, {"near", 0.2}, {"far", 500}, {"active", false},
+                    {"aperture_f", 1.4}, {"shutter_s", 0.004}, {"iso", 400},
+                    {"sensor_height_mm", 15.6}, {"focal_length_mm", 85}, {"focus_distance_m", 3}}},
         {"collider", {{"shape", "capsule"}, {"half_extents", {0.4, 0.9, 0.4}},
                       {"offset", {0, 0.1, 0}}, {"sensor", true}}},
-        {"rigidbody", {{"motion", "kinematic"}, {"mass", 4}}},
+        {"rigidbody", {{"motion", "kinematic"}, {"mass", 4}, {"friction", 0.6}, {"restitution", 0.4},
+                       {"gravity_factor", -1}, {"linear_damping", 0.5}, {"angular_damping", 2}}},
         {"character", {{"radius", 0.35}, {"half_height", 0.7}, {"speed", 5}}},
+        {"joint", {{"type", "slider"}, {"axis", {1, 0, 0}}, {"limits", {-1, 2}},
+                   {"motor", {{"mode", "position"}, {"target", 0.5}, {"max_force", 100}}}}},
         {"nav_agent", {{"target", {4, 0, 4}}, {"speed", 2}, {"ground_offset", 0.5}, {"active", true},
                        {"paused", true}}},
         {"behavior", {{"source", R"({"type":"leaf","name":"wait"})"}, {"enabled", false}}},
         {"patrol", {{"points", {{0, 0, 0}, {5, 0, 5}}}, {"loop", false}}},
         {"terrain", {{"seed", 42}, {"resolution", 257}, {"tile_size", 500}, {"height", 60},
-                     {"octaves", 5}, {"warp", 0.2}, {"droplets", 1000}, {"snowline", 40},
-                     {"streaming", true}, {"stream_radius", 2}}},
+                     {"octaves", 5}, {"frequency", 2.5}, {"gain", 0.6}, {"warp", 0.2},
+                     {"droplets", 1000}, {"erosion_talus", 0.8}, {"erosion_rain", 0.025},
+                     {"erosion_capacity", 1.5}, {"erosion_rate", 0.5}, {"erosion_thermal", 0.2},
+                     {"snowline", 40}, {"streaming", true}, {"stream_radius", 2}}},
         {"net_replicated", {{"net_id", 1234}}},
         {"grass", {{"density", 30}, {"radius", 25}, {"blade_height", {0.2, 0.9}},
                    {"base_color", "#203010"}, {"wind_direction", {1, 1}}, {"terrain_only", false}}},
@@ -262,6 +270,11 @@ TEST_F(ComponentJson, RejectsMalformedValuesWithoutAborting) {
         {"dir_light", {{"direction", {0, 0, 0}}}},
         {"camera", {{"near", 10}, {"far", 1}}},
         {"camera", {{"fov_deg", 0}}},
+        {"camera", {{"aperture_f", 0.1}}},
+        {"camera", {{"shutter_s", 0}}},
+        {"camera", {{"iso", "fast"}}},
+        {"camera", {{"focal_length_mm", -1}}},
+        {"camera", {{"focus_distance_m", 0}}},
         {"collider", {{"shape", "cone"}}},
         {"collider", {{"half_extents", {1, 0, 1}}}},
         {"rigidbody", {{"motion", true}}},
@@ -328,6 +341,36 @@ TEST_F(ComponentJson, RefusesReadOnlyEditOnlyAndUnknownComponents) {
     ASSERT_FALSE(unknown);
     EXPECT_NE(unknown.error().message.find("point_light"), std::string::npos);
     EXPECT_FALSE(s::remove_component(r, e, "transform"));
+}
+
+// R20: the camera's physical lens travels with the component, and a focal
+// length sets the projection's field of view.
+TEST_F(ComponentJson, CameraLensRoundTripsAndFocalLengthSetsTheFov) {
+    r.emplace<s::Transform>(e);
+    ASSERT_OK(apply("camera",
+                    {{"aperture_f", 2}, {"focal_length_mm", 50}, {"focus_distance_m", 4}}));
+    const auto& cam = r.get<s::Camera>(e);
+    EXPECT_FLOAT_EQ(cam.lens.aperture_f, 2.0F);
+    EXPECT_FLOAT_EQ(cam.lens.focus_distance_m, 4.0F);
+    EXPECT_FLOAT_EQ(cam.lens.iso, 100.0F); // untouched default
+    const json enc = encode_components(r, e, {});
+    EXPECT_FLOAT_EQ(enc["camera"]["focal_length_mm"].get<float>(), 50.0F);
+    // 50 mm on the default 24 mm sensor: tan(fov / 2) = 12 / 50.
+    const s::CameraMatrices m = s::camera_system(r, 1.0F);
+    EXPECT_NEAR(1.0F / std::abs(m.projection[1][1]), 12.0F / 50.0F, 1e-5F);
+}
+
+// A focal length is 0 (derive from the FOV) or at least 1 mm: shorter ones
+// give a field of view of almost 180 degrees and a degenerate projection.
+TEST_F(ComponentJson, CameraFocalLengthBelowOneMillimetreIsRejected) {
+    r.emplace<s::Transform>(e);
+    ASSERT_OK(apply("camera", {{"focal_length_mm", 35}}));
+    const auto bad = apply("camera", {{"focal_length_mm", 0.001}});
+    ASSERT_FALSE(bad);
+    EXPECT_NE(bad.error().message.find("focal_length_mm"), std::string::npos) << bad.error().message;
+    EXPECT_FLOAT_EQ(r.get<s::Camera>(e).lens.focal_length_mm, 35.0F) << "a failed merge changes nothing";
+    ASSERT_OK(apply("camera", {{"focal_length_mm", 0}}));
+    ASSERT_OK(apply("camera", {{"focal_length_mm", 1}}));
 }
 
 } // namespace

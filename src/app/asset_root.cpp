@@ -2,7 +2,9 @@
 
 #include <cstdio>
 #include <cstdlib>
+#include <optional>
 #include <string>
+#include <system_error>
 #include <utility>
 
 #include <SDL3/SDL_filesystem.h>
@@ -47,13 +49,46 @@ using engine::core::path_to_utf8;
 }
 
 [[nodiscard]] const engine::core::AssetRoot& resolved() {
-    static const engine::core::AssetRoot root = resolve_or_exit();
+    static const engine::core::AssetRoot root = [] {
+        engine::core::AssetRoot r = resolve_or_exit();
+        // Absolute: the working directory may change (open_project_root).
+        std::error_code ec;
+        r.project_root = fs::absolute(r.project_root, ec).lexically_normal();
+        r.shader_dir = fs::absolute(r.shader_dir, ec).lexically_normal();
+        return r;
+    }();
+    return root;
+}
+
+// The opened game project, if any (set once, before readers run).
+std::optional<fs::path>& opened_project() {
+    static std::optional<fs::path> root;
     return root;
 }
 
 } // namespace
 
-const std::filesystem::path& project_root() { return resolved().project_root; }
+const std::filesystem::path& project_root() {
+    const std::optional<fs::path>& opened = opened_project();
+    return opened ? *opened : resolved().project_root;
+}
+
+std::expected<void, engine::core::Error> open_project_root(const std::filesystem::path& root) {
+    (void)resolved(); // the data root, against the original working directory
+    std::error_code ec;
+    const fs::path abs = fs::absolute(root, ec).lexically_normal();
+    if (ec) return std::unexpected(engine::core::Error{"cannot resolve '" + path_to_utf8(root) + "'"});
+    fs::current_path(abs, ec);
+    if (ec) {
+        return std::unexpected(engine::core::Error{"cannot enter the game project '" +
+                                                   path_to_utf8(abs) + "': " + ec.message()});
+    }
+    opened_project() = abs;
+    std::fprintf(stderr, "[info] game project: %s\n", path_to_utf8(abs).c_str());
+    return {};
+}
+
+const std::filesystem::path& data_root() { return resolved().project_root; }
 
 const std::filesystem::path& cooked_shader_dir() { return resolved().shader_dir; }
 

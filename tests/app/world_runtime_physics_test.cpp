@@ -19,6 +19,7 @@
 #include "engine/asset/asset_manager.hpp"
 #include "engine/asset/mesh_asset.hpp"
 #include "engine/core/sim_clock.hpp"
+#include "engine/renderer/render_settings.hpp"
 #include "engine/scene/components.hpp"
 #include "engine/scene/scene.hpp"
 #include "support/gpu_context.hpp"
@@ -79,8 +80,9 @@ DemoResult run_physics_demo(quat::test::GpuContext& ctx, int frames, float time_
     quat::app::WorldRuntime world;
     {
         const ScopedEnv physics("QUAT_PHYSICS", "1");
+        engine::renderer::RenderSettings settings;
         EXPECT_TRUE(world.build_scene(scene, assets, ctx.allocator, ctx.transfer,
-                                      QUAT_PROJECT_ROOT));
+                                      QUAT_PROJECT_ROOT, settings));
     }
     EXPECT_TRUE(world.physics_mode());
 

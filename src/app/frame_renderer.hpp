@@ -38,23 +38,28 @@
 #include "app/screenshot_capture.hpp" // CaptureSource
 #include "engine/renderer/atmosphere_pass.hpp"
 #include "engine/renderer/bloom_pass.hpp"
+#include "engine/renderer/color_lut.hpp"
+#include "engine/renderer/dof_pass.hpp"
 #include "engine/renderer/cloud_settings.hpp"
 #include "engine/renderer/draw_batching.hpp"
 #include "engine/renderer/dynamic_ibl.hpp"
 #include "engine/renderer/exposure_pass.hpp"
 #include "engine/renderer/gtao_pass.hpp"
+#include "engine/renderer/hdri_environment.hpp"
 #include "engine/renderer/hiz_pass.hpp"
 #include "engine/renderer/light_clusters.hpp"
 #include "engine/renderer/light_cull_pass.hpp"
 #include "engine/renderer/jitter.hpp"
 #include "engine/renderer/lighting_pass.hpp"
 #include "engine/renderer/mesh_pass.hpp"
+#include "engine/renderer/motion_blur_pass.hpp"
 #include "engine/renderer/motion_history.hpp"
 #include "engine/renderer/non_finite_counters.hpp"
 #include "engine/renderer/shadow_ao_settings.hpp"
 #include "engine/renderer/render_settings.hpp"
 #include "engine/renderer/shadow_pass.hpp"
 #include "engine/renderer/skinning_pass.hpp"
+#include "engine/renderer/ssr_pass.hpp"
 #include "engine/renderer/tonemap_pass.hpp"
 #include "engine/renderer/transparent_pass.hpp"
 #include "engine/renderer/cloud_shadow_pass.hpp"
@@ -62,7 +67,9 @@
 #include "engine/renderer/upscaler.hpp"
 #include "engine/renderer/velocity.hpp"
 #include "engine/renderer/velocity_pass.hpp"
+#include "engine/core/frame_profiler.hpp"
 #include "engine/rhi/gpu_allocator.hpp"
+#include "engine/rhi/gpu_profiler.hpp"
 #include "engine/rhi/render_graph.hpp"
 #include "engine/scene/material_override.hpp"
 #include "engine/weather/weather_state.hpp"
@@ -84,11 +91,23 @@ class Swapchain;
 namespace engine::scene {
 class Scene;
 struct CameraMatrices;
+struct FrameDrawStats;
 } // namespace engine::scene
 namespace quat::app {
 
 class GrassRuntime;
 class ParticleRuntime;
+
+// The scene's HDRI panorama (R21): its project-relative path and whether it
+// loaded (`error` says why not).
+struct HdriStatus {
+    std::string   path;
+    bool          loaded = false;
+    std::uint32_t width = 0;
+    std::uint32_t height = 0;
+    bool          sun_found = false;
+    std::string   error;
+};
 
 inline constexpr std::uint32_t k_frames_in_flight = 2;
 // Stage the image-acquire semaphore is waited at; the swapchain image's first
@@ -140,6 +159,13 @@ struct DeferredFrame {
     engine::renderer::ExposurePass   exposure;
     engine::renderer::WindFieldPass  wind;          // R13.1 global wind field
     engine::renderer::CloudShadowPass cloud_shadow; // R13.1 cloud shadow map
+    // R20 cinematic post (optional: they need extended storage formats).
+    engine::renderer::DofPass        dof;
+    engine::renderer::MotionBlurPass motion_blur;
+    // The look LUT this slot's last frame sampled: kept alive until the slot
+    // records again (its fence has then been waited), so swapping the LUT
+    // never frees one a frame in flight still reads.
+    std::shared_ptr<const engine::renderer::ColorLutTexture> lut_in_use;
 #ifdef ENGINE_EDITOR
     engine::renderer::ImGuiPass      imgui;
     // Offscreen scene target for the editor's Viewport panel: the tonemapped
@@ -188,6 +214,9 @@ struct FrameInputs {
     const engine::scene::CameraMatrices* cam = nullptr; // unjittered
     VkExtent2D                           draw_extent{0, 0};
     float                                dt = 0.0F;
+    // R20: the lens of the camera `cam` views through when it is not a scene
+    // entity (the editor's fly camera); null: the scene's active Camera's.
+    const engine::renderer::PhysicalCamera* view_lens = nullptr;
     // Terrain tiles to draw into the GBuffer (null: none this frame).
     engine::renderer::TerrainPass* terrain = nullptr;
     glm::vec3                      terrain_anchor{0.0F};
@@ -252,6 +281,18 @@ public:
     void create_environment(engine::scene::Scene& scene,
                             engine::rhi::PipelineCache& pipeline_cache,
                             const std::string& shader_dir);
+    // R21: the HDRI environment and screen-space reflections
+    // (frame_environment.cpp). Optional: failures are logged and the frame
+    // renders without them.
+    void create_reflections(engine::rhi::PipelineCache& pipeline_cache,
+                            const std::string& shader_dir);
+    // Loads `relative` (a project-relative Radiance .hdr confined to
+    // `project_root`; empty clears it) as the environment's HDRI, used while
+    // render_settings().environment.source is hdri. A failed load keeps the
+    // current HDRI; hdri_status().error says why.
+    [[nodiscard]] std::expected<void, engine::core::Error>
+    set_hdri(const std::string& relative, const std::filesystem::path& project_root);
+    [[nodiscard]] const HdriStatus& hdri_status() const { return hdri_status_; }
     // Command buffers and frame synchronisation.
     void create_frame_sync();
     // QUAT_SCREENSHOT: the final frame is written to `path` as binary PPM.
@@ -317,12 +358,59 @@ private:
     add_upscale(engine::rhi::RenderGraph& graph, const FrameScene& scene,
                 engine::rhi::ResourceHandle hdr, const engine::renderer::GBufferTargets& gbuffer,
                 VkExtent2D display);
+    // ---- R20 cinematic post (frame_post.cpp) ------------------------------------
+    // Depth of field and motion blur on the display-extent `hdr` (after the
+    // upscaler); returns the image bloom and the tonemap continue from.
+    [[nodiscard]] engine::rhi::ResourceHandle
+    add_cinematic_post(engine::rhi::RenderGraph& graph, const FrameInputs& in,
+                       const engine::renderer::GBufferTargets& gbuffer,
+                       engine::rhi::ResourceHandle hdr);
+    // The tonemap's look (operator, grading, film, LUT, physical exposure)
+    // for this frame; (re)loads the look LUT when grading.lut changed.
+    [[nodiscard]] engine::renderer::TonemapLook tonemap_look(const FrameInputs& in,
+                                                             DeferredFrame& frame);
+    void update_color_lut();
+    // ---- R21 environment and reflections (frame_environment.cpp) ----------
+    struct EnvironmentMaps {
+        engine::renderer::IblViewSet ibl{};
+        VkImageView                  background = VK_NULL_HANDLE; // HDRI cube, else none
+    };
+    // The HDRI is loaded and selected (settings_.environment.source).
+    [[nodiscard]] bool hdri_active() const;
+    [[nodiscard]] engine::renderer::HdriBakeSettings hdri_bake_settings() const;
+    // With the HDRI active and its sun matched, the panorama's sun replaces
+    // the scene's directional light (direction, colour, intensity).
+    void apply_hdri_sun(engine::renderer::DirectionalLightParams& light) const;
+    // Declares the HDRI bake (when its inputs changed) or the sky probe's
+    // step, before every pass that samples the maps; returns those maps.
+    [[nodiscard]] EnvironmentMaps add_environment(engine::rhi::RenderGraph& graph,
+                                                  const glm::vec3& sun_to);
+    // SsrPass for this frame (invalid handle when off or unavailable).
+    [[nodiscard]] engine::rhi::ResourceHandle
+    add_reflections(engine::rhi::RenderGraph& graph, const FrameScene& fs,
+                    const engine::renderer::GBufferTargets& gbuffer,
+                    const engine::renderer::HiZTargets& hiz, const glm::vec3& camera);
+    // The colour next frame's reflections read (after the last HDR writer).
+    void add_reflection_color(engine::rhi::RenderGraph& graph, engine::rhi::ResourceHandle hdr);
+    [[nodiscard]] engine::renderer::LightingTuning
+    lighting_tuning(engine::rhi::ResourceHandle reflections, VkImageView background) const;
     // The editor's R12 settings (defaults in headless builds).
     [[nodiscard]] engine::renderer::CsmSettings current_csm() const;
     [[nodiscard]] engine::renderer::GtaoSettings current_gtao() const;
     [[nodiscard]] engine::renderer::ContactShadowSettings current_contact_shadows() const;
     void recreate_render_finished();
     [[nodiscard]] bool record_screenshot_copy(VkCommandBuffer cmd);
+
+    // ---- R4 profiling (frame_profiling.cpp) -------------------------------------
+    // Timestamp zones per pass, created with the frame sync; the frame
+    // profiler learns whether GPU timing is available.
+    void create_gpu_profiler();
+    // After the slot's fence: the GPU timings of the frame the slot last
+    // recorded go to the frame profiler.
+    void collect_gpu_timings();
+    // Per-frame counters (QUAT_PLOT): scene draws / instances / triangles
+    // and the VMA heaps' usage and budget.
+    void plot_frame_counters(const engine::scene::FrameDrawStats& draws);
     void write_screenshot() const;
 
     const engine::rhi::Device* device_ = nullptr;
@@ -363,6 +451,12 @@ private:
 
     std::optional<engine::renderer::AtmospherePass> atmosphere_;
     std::optional<engine::renderer::DynamicIbl>     dynamic_ibl_;
+    // R21: the HDRI panorama's maps and the screen-space reflections (shared
+    // by both slots; each owns its own cross-frame state).
+    std::optional<engine::renderer::HdriEnvironment> hdri_;
+    std::optional<engine::renderer::SsrPass>         ssr_;
+    HdriStatus                                       hdri_status_;
+    bool hdri_was_active_ = false; // last frame lit by the HDRI (SSR history reset on change)
     // Debug NaN/Inf counters of the bloom / TAA guards (issue #45); empty
     // unless enabled (see wait_for_slot).
     std::optional<engine::renderer::NonFiniteCounters> non_finite_;
@@ -382,8 +476,18 @@ private:
     VkExtent2D    draw_extent_{0, 0};
     std::size_t   draw_count_ = 0;
 
+    // R20 look LUT: the settings path it was loaded for (also after a failed
+    // load, which is logged once) and the texture.
+    std::string                                              lut_path_;
+    std::shared_ptr<const engine::renderer::ColorLutTexture> lut_;
+
     std::optional<std::filesystem::path> screenshot_path_;
     engine::rhi::GpuBuffer     screenshot_buffer_;
+
+    // R4: GPU pass timing and the scratch its results / counters reuse.
+    engine::rhi::GpuProfiler                  gpu_profiler_;
+    std::vector<engine::core::GpuZoneTiming>  gpu_timings_;
+    std::vector<engine::rhi::GpuHeapStats>    heap_stats_;
 };
 
 } // namespace quat::app

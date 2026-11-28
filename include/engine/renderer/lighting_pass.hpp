@@ -83,6 +83,20 @@ struct LightingTuning {
     WeatherSurfaces weather{};  // wet / snowy surfaces (R13.1); default: dry
     // Cloud shadows on the sun (R13.1; CloudShadowPass output). Invalid: none.
     CloudShadowMap cloud_shadow{};
+    // R21: multiple-scattering GGX energy (environment and punctual lights;
+    // needs real IBL maps) and horizon occlusion of normal-mapped reflections.
+    bool multiscatter = true;
+    bool horizon_occlusion = true;
+    // R21: SsrPass output (rgb radiance, a weight) replacing the environment
+    // where screen-space rays hit; invalid = environment only.
+    rhi::ResourceHandle reflections{};
+    // R21: the HdriEnvironment cube; set (with the sky enabled) it is the
+    // background (sky mode 3) instead of the procedural / atmosphere sky.
+    VkImageView environment = VK_NULL_HANDLE;
+    // R21: the HDRI's sun was clamped out of `environment` and became the
+    // directional light; the background draws it back as an analytic disc
+    // (angular diameter = the shadows' sun size) carrying the light's energy.
+    bool hdri_sun_disc = false;
 };
 
 class LightingPass {
@@ -123,7 +137,7 @@ public:
 private:
     // Descriptor slots of lighting.slang's resources, from reflection (in
     // the order of kResources in lighting_pass.cpp).
-    static constexpr std::size_t k_slot_count = 25;
+    static constexpr std::size_t k_slot_count = 27;
 
     const rhi::Device* device_    = nullptr;   // non-owning
     rhi::GpuAllocator* allocator_ = nullptr;   // non-owning

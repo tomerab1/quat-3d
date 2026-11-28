@@ -9,11 +9,13 @@
 #include <vulkan/vulkan.h>
 
 #include "engine/core/error.hpp"
+#include "engine/core/profile_names.hpp"
 #include "engine/rhi/gpu_allocator.hpp"
 
 namespace engine::rhi {
 
 class Device;
+class GpuProfiler;
 
 // How a pass touches a resource. Determines the image layout the resource must
 // be in for that pass, plus the pipeline-stage / access masks used to build the
@@ -250,7 +252,10 @@ public:
 
     // Replay the compiled plan into `cmd`: barriers then execute lambda, per
     // pass in dependency order, followed by trailing import final-layout barriers.
-    void execute(VkCommandBuffer cmd);
+    // Each pass is one profiler zone (R4): its CPU recording time in the
+    // frame profiler / Tracy, and, with `gpu`, its GPU time (barriers
+    // included) between timestamps.
+    void execute(VkCommandBuffer cmd, GpuProfiler* gpu = nullptr);
 
     [[nodiscard]] ResourceBinding binding(ResourceHandle handle) const;
 
@@ -263,6 +268,7 @@ private:
 
     struct Pass {
         std::string         name;
+        core::ProfileNameId profile_id = 0; // the pass's profiler zone
         PassType            type{};
         std::vector<Access> accesses;
         PassExecuteFn       execute;

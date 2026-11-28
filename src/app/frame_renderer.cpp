@@ -9,6 +9,7 @@
 #include <string>
 #include <utility>
 
+#include "engine/core/profile.hpp"
 #include "app/load_transfer.hpp"
 #include "engine/core/utf8_path.hpp"
 #include "engine/rhi/device.hpp"
@@ -180,6 +181,21 @@ bool FrameRenderer::create_passes(const engine::rhi::Device& device,
             std::fprintf(stderr, "[warn] hi-z pass unavailable (CPU cascade fit): %s\n",
                          hiz.error().message.c_str());
         }
+        // R20 depth of field + motion blur, optional for the same reason.
+        if (auto dof = engine::renderer::DofPass::create(device, allocator, pipeline_cache,
+                                                         shader_dir)) {
+            f.dof = std::move(*dof);
+        } else if (&f == &frames_[0]) {
+            std::fprintf(stderr, "[warn] depth of field unavailable: %s\n",
+                         dof.error().message.c_str());
+        }
+        if (auto mb = engine::renderer::MotionBlurPass::create(device, allocator, pipeline_cache,
+                                                               shader_dir)) {
+            f.motion_blur = std::move(*mb);
+        } else if (&f == &frames_[0]) {
+            std::fprintf(stderr, "[warn] motion blur unavailable: %s\n",
+                         mb.error().message.c_str());
+        }
         if (auto gtao = engine::renderer::GtaoPass::create(device, allocator, pipeline_cache,
                                                            shader_dir)) {
             f.gtao = std::move(*gtao);
@@ -327,10 +343,12 @@ void FrameRenderer::create_frame_sync() {
     for (VkSemaphore& s : render_finished_) {
         s = make_semaphore(vk_device);
     }
+    create_gpu_profiler();
 }
 
 void FrameRenderer::destroy_frame_sync() {
     material_overrides_.clear(); // the device is idle: no frame reads them
+    gpu_profiler_.destroy();
     if (device_ == nullptr || command_pool_ == VK_NULL_HANDLE) return;
     const VkDevice vk_device = device_->handle();
     for (VkSemaphore s : render_finished_) {
@@ -371,7 +389,11 @@ bool FrameRenderer::ensure_swapchain(VkExtent2D pixel_extent) {
 }
 
 std::uint32_t FrameRenderer::wait_for_slot() {
-    vkWaitForFences(device_->handle(), 1, &in_flight_[frame_], VK_TRUE, UINT64_MAX);
+    {
+        QUAT_ZONE_C("wait_gpu", engine::core::ProfileCategory::wait);
+        vkWaitForFences(device_->handle(), 1, &in_flight_[frame_], VK_TRUE, UINT64_MAX);
+    }
+    collect_gpu_timings();
     if (non_finite_) {
         const auto counts = non_finite_->collect(frame_);
         bool any = false;
@@ -393,9 +415,12 @@ std::uint32_t FrameRenderer::wait_for_slot() {
 FrameRenderer::Acquire FrameRenderer::acquire_and_begin() {
     const VkDevice vk_device = device_->handle();
     image_index_ = 0;
-    VkResult acquire = vkAcquireNextImageKHR(vk_device, swapchain_->handle(), UINT64_MAX,
-                                             image_available_[frame_], VK_NULL_HANDLE,
-                                             &image_index_);
+    VkResult acquire = VK_SUCCESS;
+    {
+        QUAT_ZONE_C("acquire_image", engine::core::ProfileCategory::wait);
+        acquire = vkAcquireNextImageKHR(vk_device, swapchain_->handle(), UINT64_MAX,
+                                        image_available_[frame_], VK_NULL_HANDLE, &image_index_);
+    }
     if (acquire == VK_ERROR_OUT_OF_DATE_KHR) {
         needs_recreate_ = true;
         return Acquire::retry;
@@ -414,6 +439,7 @@ FrameRenderer::Acquire FrameRenderer::acquire_and_begin() {
     begin.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
     begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
     vkBeginCommandBuffer(cmd, &begin);
+    gpu_profiler_.begin_frame(cmd, frame_, engine::core::profiler().frame_index());
 
     // This frame's deferred graph builds into the slot's own resources. The
     // slot's fence was waited above, so resetting its transient pool and
@@ -532,6 +558,7 @@ bool FrameRenderer::submit_and_present(bool screenshot_frame) {
     const bool screenshot_recorded =
         screenshot_frame && screenshot_path_.has_value() && record_screenshot_copy(cmd);
 
+    gpu_profiler_.end_frame(cmd);
     vkEndCommandBuffer(cmd);
 
     VkSemaphoreSubmitInfo wait{};
@@ -559,7 +586,10 @@ bool FrameRenderer::submit_and_present(bool screenshot_frame) {
     submit.pCommandBufferInfos = &cmd_info;
     submit.signalSemaphoreInfoCount = 1;
     submit.pSignalSemaphoreInfos = &signal;
-    vkQueueSubmit2(device_->graphics_queue(), 1, &submit, in_flight_[frame_]);
+    {
+        QUAT_ZONE_N("queue_submit");
+        vkQueueSubmit2(device_->graphics_queue(), 1, &submit, in_flight_[frame_]);
+    }
 
     VkSwapchainKHR sc = swapchain_->handle();
     VkPresentInfoKHR present{};
@@ -569,7 +599,11 @@ bool FrameRenderer::submit_and_present(bool screenshot_frame) {
     present.swapchainCount = 1;
     present.pSwapchains = &sc;
     present.pImageIndices = &image_index_;
-    VkResult present_result = vkQueuePresentKHR(device_->present_queue(), &present);
+    VkResult present_result = VK_SUCCESS;
+    {
+        QUAT_ZONE_C("present", engine::core::ProfileCategory::wait);
+        present_result = vkQueuePresentKHR(device_->present_queue(), &present);
+    }
     if (present_result == VK_ERROR_OUT_OF_DATE_KHR || present_result == VK_SUBOPTIMAL_KHR) {
         needs_recreate_ = true;
     } else if (present_result != VK_SUCCESS) {

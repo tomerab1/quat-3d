@@ -56,7 +56,7 @@
 
 #include "app/screenshot_capture.hpp" // CaptureSource
 #include "engine/core/stderr_capture.hpp"
-#include "engine/remote/world_commands.hpp" // TerrainStatus
+#include "engine/remote/world_commands.hpp" // HdriInfo, TerrainStatus
 #include "engine/scene/scene.hpp"     // GroundHeightFn
 #include "engine/scene/view_clip.hpp" // ClipRange
 #include "engine/weather/wind_field.hpp"
@@ -69,6 +69,9 @@ class SimClock;
 }
 namespace engine::nav {
 class NavMesh;
+}
+namespace engine::project {
+class BuildJob;
 }
 namespace engine::physics {
 class PhysicsWorld;
@@ -99,6 +102,8 @@ class EditorLayer;
 
 namespace quat::app {
 
+struct OpenGame;
+
 // Frame-loop state the bridge reads and drives. Non-owning: main() owns all of
 // it and keeps it alive for the bridge's lifetime.
 struct RemoteBridgeTargets {
@@ -113,6 +118,7 @@ struct RemoteBridgeTargets {
     float*     cam_yaw = nullptr;
     float*     cam_pitch = nullptr;
     float*     cam_fov_y = nullptr;
+    engine::renderer::PhysicalCamera* cam_lens = nullptr; // R20 view lens
     // Clip planes (issue #37): overrides camera.set writes (nullopt = derived)
     // and the planes derived from the scene this frame.
     std::optional<float>*           cam_near_override = nullptr;
@@ -129,10 +135,10 @@ struct RemoteBridgeTargets {
     const glm::vec3*                  terrain_anchor = nullptr;
     engine::nav::NavMesh*             navmesh = nullptr;
 
-    // Physics worlds debug.raycast / debug.stats read: the demo modes' world
+    // Physics worlds the debug and physics.* methods use: the demo modes' world
     // and the editor's play-mode world (whichever is engaged).
-    const std::optional<engine::physics::PhysicsWorld>* demo_physics = nullptr;
-    const std::optional<engine::physics::PhysicsWorld>* play_physics = nullptr;
+    std::optional<engine::physics::PhysicsWorld>* demo_physics = nullptr;
+    std::optional<engine::physics::PhysicsWorld>* play_physics = nullptr;
 
     // Loop-cached entity dropped when a scene file replaces the scene.
     entt::entity* spin_entity = nullptr;
@@ -150,6 +156,10 @@ struct RemoteBridgeTargets {
     std::function<void()> reset_temporal;
     // Gameplay scripts (G7): script.* statuses and reloads (may be null).
     engine::script::ScriptRuntime* scripts = nullptr;
+    // The lighting environment's HDRI (R21): environment.* and scene files
+    // (its path is saved with the scene). May be empty.
+    std::function<engine::remote::HdriInfo()> hdri_info;
+    std::function<std::expected<void, engine::core::Error>(const std::string& relative)> set_hdri;
     // Compiles material shaders for shader.create / update (A6); null when
     // shader hot reload is off (those methods then answer `unavailable`).
     engine::rhi::ShaderHotReload* shader_reload = nullptr;
@@ -162,6 +172,13 @@ struct RemoteBridgeTargets {
     bool* play = nullptr;
 
     std::filesystem::path project_root;
+
+    // Game packaging (P4): the open game project (null: none) and the job
+    // project.build runs quat-pack in. allow_endpoint false keeps the
+    // endpoint closed whatever QUAT_REMOTE says (shipping game packages).
+    const OpenGame*             game = nullptr;
+    engine::project::BuildJob* build_job = nullptr;
+    bool                        allow_endpoint = true;
 };
 
 class RemoteBridge {

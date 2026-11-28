@@ -65,7 +65,10 @@ G18.2/G18.3 → E1 → G6.1 → G11.1 → G17.2 → R25.1 → R25.2/R25.3 → R2
   (terrain streaming, play mode, networking). Behaviour-preserving.
 - [ ] **S8 — Split oversized files.** Enforce the file-size rule in
   CLAUDE.md: `gltf_loader.cpp` (validation / mesh / material / skin /
-  animation / scene assembly), and any file past ~1000 lines.
+  animation / scene assembly), and any file past ~1000 lines. Next:
+  `src/scene/component_json.cpp` (1076 lines after the #93 train and R22.1, past the limit already;
+  master alone was 1061): move per-component codecs into their own files
+  as `world_clock_json.cpp` / `component_json_animation.cpp` do.
 
 ## A — AI tooling: MCP server in Rust
 
@@ -137,6 +140,14 @@ JSON-RPC over loopback TCP to the engine.
     rigidbody friction / restitution / damping / CCD / axis locks; a `joint`
     component on Jolt constraints (motors, limits, break force);
     `character.move`.
+    Landed (`feat/a10-physics-control`, fixes #47 #48): the event ring with
+    contact / trigger events (`events.poll`), `physics.get/set/apply`,
+    gravity, `raycast_all` / `overlap` / `shape_cast`, friction /
+    restitution / gravity factor / damping, the `joint` component (fixed,
+    point, hinge, slider, distance; limits, motors), `character.move`, the
+    quat-mcp tools. Still open: script-error / sim-state / scene-change
+    events, `physics.contacts` (current contacts), CCD and axis locks, joint
+    break force.
   - **A10.2 Behaviour runtime** *(M)*: a blackboard (component, `bb_*`
     leaves, Lua access); `bt.blackboard.*`, per-tick trace, breakpoints that
     pause the sim clock, forced leaf results.
@@ -185,8 +196,43 @@ JSON-RPC over loopback TCP to the engine.
 - [x] **R2 — Shader hot reload.** File watcher → `slangc` → pipeline recreation
   on the next frame; compile errors surfaced, old pipeline kept on failure.
 - [ ] **R3 — Asset hot reload.** Meshes/textures re-imported on change.
-- [ ] **R4 — Profiling.** Tracy CPU zones on every system/pass, GPU zones via
-  the Vulkan extension; in-editor frame-time breakdown.
+- [x] **R4 — Profiling.** *(owner request: "no prod engine could be taken
+  seriously without it; the MCP should be able to query it")* Instrumentation
+  is central (graph executor, system calls, frame loop), not sprinkled.
+  - **R4.1 Profiling facade + Tracy.** `tracy` from vcpkg (overlay port:
+    on demand, loopback-only listener) behind `ENGINE_PROFILE` (default ON
+    for Debug / RelWithDebInfo, OFF for Release unless asked). One public
+    header of macros (`QUAT_ZONE*`, `QUAT_FRAME_MARK`, `QUAT_PLOT`,
+    `QUAT_THREAD_NAME`) feeding Tracy and the built-in profiler; Tracy
+    headers stay out of every other header. Named main / worker / loader
+    threads; one zone per render-graph pass, per scene system, and for the
+    physics step, nav, scripting, audio, remote poll, editor and asset
+    upload; plots for draws, instances, triangles and VMA budget / usage.
+  - **R4.2 GPU zones + built-in frame profiler.** Per-pass GPU timing from a
+    timestamp query pool per frame in flight (`vkCmdWriteTimestamp2`, read
+    back a frame later without stalling, availability-checked, honouring
+    `timestampValidBits` / `timestampPeriod`, disabled gracefully without
+    timestamps); TracyVkContext (calibrated where the device offers it)
+    when Tracy is on. Allocation-free per-frame scope ring; rolling avg /
+    p50 / p95 / max per pass and system (CPU and GPU) and per frame (CPU,
+    GPU, present wait) over 240 frames; editor Profiler panel (frame graph,
+    sortable CPU vs GPU table).
+  - **R4.3 Remote commands.** `profile.frame`, `profile.capture` (async over
+    frames; `profile.result {id}`: top zones by total and p95, spikes over a
+    budget with their worst zones, per-frame totals), `profile.counters`,
+    `profile.reset`; bounded inputs, compact replies.
+  - **R4.4 MCP.** `profile_frame`, `profile_capture` (starts, then polls
+    with bounded waiting), `profile_counters`; a "find a performance
+    problem" workflow prompt.
+- [ ] **R4.5 — Data-oriented CPU pass** *(after R4; benchmark-gated: each
+  change is kept only when an R4 capture or a benchmark shows a win)*:
+  a per-frame linear / arena allocator in core; hot / cold splitting of
+  components (strings, vectors and `shared_ptr` out of hot components such
+  as `MeshSource`, `BehaviorTree`, `NavAgent`, `FootIK`; names resolved to
+  indices at load); a compact TRS local transform and a parent-first
+  hierarchy sweep; an `entt::group` for render extraction; cache-line
+  padding of per-thread data; a glm SIMD trial behind the layout
+  `static_assert`s.
 - [ ] **R5 — GPU-driven rendering.** Bindless materials, one indirect draw per
   pass, instance data in storage buffers.
 - [ ] **R6 — GPU culling.** Frustum + Hi-Z occlusion culling in compute.
@@ -318,6 +364,93 @@ JSON-RPC over loopback TCP to the engine.
   (MoltenVK included) has a path; foliage and instanced meshes first, then
   shadows (virtual shadow maps as a follow-up). *(very large; after R5, R6,
   R9.4)*
+- [ ] **R20 — Cinematic camera + post stack.** A physical camera on the
+  `camera` component (aperture, shutter, ISO → EV100 exposure after Lagarde
+  & de Rousiers 2014; focal length + sensor → FOV; focus distance), a
+  gather-based bokeh depth of field in compute (Jimenez 2014: half
+  resolution, split near / far fields, CoC tile max + dilation, near-field
+  bleeding), McGuire 2012 tile-max / neighbour-max motion blur from R11's
+  velocity with the camera's shutter, AgX (Blender 4) and Khronos PBR
+  Neutral beside ACES, colour grading (white balance, contrast /
+  saturation / lift-gamma-gain in ACEScct, `.cube` look LUTs as validated
+  untrusted input) and film extras (cos⁴ + artistic vignette, temporally
+  stable grain, chromatic aberration), all in the A8 settings table, over
+  MCP and in the editor. Post runs after TAAU at the display extent:
+  TAAU → DoF → motion blur → bloom → exposure → tonemap / grade / film.
+  *(medium; after R11)*
+- [ ] **R21 — Lighting realism: SSR, HDRI IBL, energy-conserving specular.**
+  Takes over R12's stochastic-SSR step. *(medium; needs R11, R12)*
+  - [x] **R21.1 Energy-conserving specular.** DFG LUT with the punctual
+    lights' height-correlated Smith term; multiple-scattering GGX for the
+    environment (Fdez-Agüera 2019) and punctual lights (Kulla-Conty 2017
+    compensation); horizon occlusion of normal-mapped reflections against
+    the geometric normal from depth; A8 toggles; white-furnace tests.
+  - [x] **R21.2 HDRI environments.** Guarded Radiance `.hdr` decode (limits,
+    budget, fuzz test); GPU equirect → cube with rotation / intensity,
+    filtered-importance-sampled GGX prefilter (Křivánek & Colbert 2008),
+    SH9 irradiance, split-sum LUT; the HDRI's sun extracted into a shadowed
+    directional light and clamped out of the maps; A8 `environment` group,
+    `environment.set hdri`, scene files, editor; CPU-reference tests.
+  - [x] **R21.3 Screen-space reflections.** Stochastic SSR (Stachowiak
+    2015): GGX visible-normal rays marched through R12's Hi-Z pyramid,
+    ray-reuse resolve, temporal accumulation on R11 velocity, IBL fallback
+    with edge and roughness fades; A8 `ssr` group; mirror-plane test.
+  - [ ] **R21.4 OpenEXR HDRIs** (tinyexr or OpenEXR core via vcpkg, with
+    the same limits and fuzzing as `.hdr`).
+  - [ ] **R21.5 SSR reprojection at the reflected point.** Reproject the
+    SSR history through the hit's virtual position (surface + ray direction ×
+    hit distance, stored by the resolve; surface velocity on misses), as
+    Stachowiak 2015 / FidelityFX SSSR do, instead of the reflector's surface
+    velocity, which trails when the camera moves over a mirror. GPU test: a
+    camera pan over the mirror floor, error bounded against a history-free
+    render. (PR #80 review.)
+- [ ] **R22 — Time of day, sun & moon, night sky** *(owner request: "starry
+  nights … a time system where the sun rises and sets, with a moon")*.
+  Canonical reference: Jensen, Durand, Stark, Premože, Dorsey, Shirley, "A
+  Physically-Based Night Sky Model" (SIGGRAPH 2001).
+  - [x] **R22.1 World clock + astronomy** (simulation only, no shader
+    changes). `engine_astro`: pure double-precision CPU ephemerides — UTC ↔
+    Julian date with ΔT, Greenwich / local mean sidereal time, precession,
+    nutation (low precision), the Meeus / NOAA low-precision Sun (≈ 0.01°)
+    with the equation of time, sunrise / sunset / solar noon, the Meeus
+    ch. 47 Moon (≪ 1°) with phase angle, illuminated fraction, bright-limb
+    angle, optical libration and moonrise / moonset, refraction, airmass and
+    extra-atmospheric sun / moon illuminance (lux), and the celestial-sphere
+    rotation (J2000 → world) for the star field. Tested against Meeus'
+    worked examples and published rise / set times. A `WorldClock` (one per
+    scene, like `WeatherState`) advances on the sim clock (pause / step /
+    time scale apply), derives a renderer-facing `SkyState` POD each tick
+    and, when enabled, drives the scene's `DirectionalLight` so real
+    sunrises and sunsets work with the existing atmosphere; disabled, nothing
+    changes. Scene files, remote `time.get` / `time.set` / `time.skip`,
+    quat-mcp tools, an editor Time of Day section and CI sunrise / noon /
+    sunset screenshots and the Lua `time.clock` / `set_clock` / `skip` (#87).
+  - [ ] **R22.2 Night sky rendering** (after #80 lighting realism and #64
+    weather land; state of the art, physical units throughout):
+    - *Atmosphere:* Hillaire 2020 with the Moon as a second light; airglow and
+      zodiacal light (Jensen et al. 2001); a light-pollution skyglow parameter
+      (Garstang model).
+    - *Stars:* a tiered catalogue — bright stars (Hipparcos or Yale BSC) as
+      energy-conserving, TAA-stable sub-pixel PSF splats in physical units,
+      B−V → colour, airmass extinction from the transmittance LUT, refraction
+      near the horizon, scintillation; faint stars and the Milky Way as an HDR
+      sky texture (ESA Gaia sky map, CC BY-SA 3.0 IGO, or NASA SVS Deep Star
+      Maps, public domain — licences verified before import) rotated by
+      `SkyState`'s sidereal matrix.
+    - *Moon:* NASA CGI Moon Kit textures; a Hapke / Lommel-Seeliger BRDF with
+      the opposition surge; correct phase and libration (from `SkyState`);
+      earthshine; moonlight as the shadow caster with a twilight hand-off
+      from the sun.
+    - *Perception:* wide-range histogram auto-exposure (R22.1's sunrise /
+      sunset captures come out washed out: the current exposure over-brightens
+      a low sun); scotopic / mesopic
+      response with the Purkinje shift; night acuity loss and noise
+      (Thompson, Shirley & Ferwerda 2002; Kirk & O'Brien 2011).
+    - *Integration:* time-sliced IBL rebakes; moonlit volumetric clouds and
+      fog; optional aurora and meteors.
+    - *Validation:* photometric reference checks (full-moon ground
+      illuminance ≈ 0.1–0.3 lux, moonless clear sky ≈ 0.001 lux, Sirius at
+      magnitude −1.46) and twilight / night golden screenshots.
 - [ ] **R23 — Runtime procedural geometry** (design:
   [`docs/design/cozy-builder.md` §4.4](docs/design/cozy-builder.md#44-runtime-procedural-geometry-r23)).
   Generic: any game that builds meshes at runtime (builders, roads, rivers,
@@ -400,8 +533,19 @@ JSON-RPC over loopback TCP to the engine.
   credentials as CI secrets, signing skipped on forks. Bundle a MoltenVK /
   Vulkan loader built for the engine's macOS 14 minimum (Homebrew bottles
   raise it to the runner's OS).
-- [ ] **P4 — Game packaging.** Engine-as-library + game project template,
-  editor vs runtime builds, cooked asset bundles, shipping config, depot layout.
+- [x] **P4 — Game packaging.** Game projects (`game.json`: name, reverse-DNS
+  id, version, start scene, window, icon, content roots — strictly validated,
+  format-versioned) with the sample `games/coin-collector`; the runtime player
+  `quat-player` (same engine libraries and application layer, no editor, no
+  hot reload, remote control only in development packages) built beside the
+  editor; `quat-pack`: files collected by following references (scene codec,
+  glTF URIs, Lua requires/literals), cooked with `quat-cook` when present,
+  `manifest.json`, per-OS layout and smoke test through the P6 scripts
+  (Linux tar.gz, Windows zip, macOS `.app` with Info.plist + icon from
+  `game.json`); release-workflow packages per OS; editor (E7) and MCP
+  (`project.*`) triggers. See docs/game-packaging.md. *Scope moved:* Steam
+  depot layout → P3; follow-ups: Windows `.exe` icon resource, exporting from
+  a downloaded editor release, cross-OS packaging.
 - [ ] **P5 — Native Metal backend.** On top of P2.
 - [ ] **P8 — Engine SDK** (design:
   [`docs/design/cozy-builder.md` §3.3–3.5](docs/design/cozy-builder.md#33-how-the-game-consumes-the-engine-an-installed-sdk-package-p8)).
@@ -599,7 +743,11 @@ the engine.
 - [ ] **E4 — Workflow.** Multi-select, copy/paste, snapping, focus, search.
 - [ ] **E5 — Preferences + layouts.** Persisted settings, key bindings.
 - [ ] **E6 — Asset thumbnails + previews.**
-- [ ] **E7 — Build & export dialog** (drives P4).
+- [x] **E7 — Build & export dialog** (drives P4). File → Build & Export…:
+  host target, output folder, shipping/development, optional smoke test;
+  runs `quat-pack` in the background with progress, its log and a "Show in
+  folder" toast. Restyled on E8's widget kit, toasts and command registry
+  when those land.
 - [ ] **E8 — Editor UI/UX redesign** *(owner request, top editor priority)*.
   A coherent, modern editor on par with Unreal 5 / Godot 4 / Blender:
   - [x] **E8.1 Design system** (`src/editor/ui/`): theme tokens (dark + light,

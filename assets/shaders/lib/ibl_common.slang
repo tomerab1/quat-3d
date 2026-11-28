@@ -62,7 +62,17 @@ public float ibl_d_ggx(float ndoth, float rough) {
     return a2 / (IBL_PI * d * d);
 }
 
-// Smith geometry term (IBL k = a^2 / 2) for the BRDF-LUT integration.
+// Height-correlated Smith-GGX visibility G2 / (4 NdotV NdotL) (Heitz 2014),
+// the punctual lights' term (pbr_v_smith), for the BRDF-LUT integration.
+public float ibl_v_smith_correlated(float ndotv, float ndotl, float rough) {
+    float a = rough * rough;
+    float a2 = a * a;
+    float gv = ndotl * sqrt(ndotv * ndotv * (1.0 - a2) + a2);
+    float gl = ndotv * sqrt(ndotl * ndotl * (1.0 - a2) + a2);
+    return 0.5 / max(gv + gl, 1e-7);
+}
+
+// Separable Schlick-Smith geometry term (k = a^2 / 2; kept for reference).
 public float ibl_g_smith(float ndotv, float ndotl, float rough) {
     float a = rough * rough;
     float k = a * a * 0.5;

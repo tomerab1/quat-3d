@@ -49,6 +49,14 @@ class PipelineCache;
 
 namespace engine::renderer {
 
+// Cull mode of a transparent draw: none for glTF doubleSided materials,
+// else back faces — front faces for mirrored instances, whose outside faces
+// wind the other way on screen (see partition_mirrored).
+[[nodiscard]] constexpr VkCullModeFlags transparent_cull_mode(bool double_sided, bool mirrored) {
+    if (double_sided) return VK_CULL_MODE_NONE;
+    return mirrored ? VK_CULL_MODE_FRONT_BIT : VK_CULL_MODE_BACK_BIT;
+}
+
 // Push-constant block, mirrors PushConstants in transparent.slang (144 bytes).
 // `instances` is the device address of the InstanceData array.
 struct TransparentPushConstants {

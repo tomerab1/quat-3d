@@ -2,6 +2,7 @@
 
 #include "engine/scene/scene.hpp"
 #include "engine/weather/weather_state.hpp"
+#include "engine/scene/world_clock.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -10,6 +11,7 @@
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 
+#include "engine/core/profile.hpp"
 
 namespace engine::scene {
 
@@ -73,9 +75,23 @@ void Scene::tick(float dt, const FootGroundProbe& ground) {
     // Transforms first: the animation system folds each skinned entity's
     // current Transform.world into its skinning matrices, so worlds must be
     // up to date before sampling (animation writes no transforms itself).
-    transform_system(registry_);
-    animation_system(registry_, dt, ground);
-    weather::weather_system(registry_, dt); // wetness / snow accumulation (R13.1)
+    {
+        QUAT_ZONE_C("transform_system", core::ProfileCategory::system);
+        transform_system(registry_);
+    }
+    {
+        QUAT_ZONE_C("animation_system", core::ProfileCategory::system);
+        animation_system(registry_, dt, ground);
+    }
+    {
+        QUAT_ZONE_C("weather_system", core::ProfileCategory::system);
+        weather::weather_system(registry_, dt); // wetness / snow accumulation (R13.1)
+    }
+    {
+        QUAT_ZONE_C("world_clock_system", core::ProfileCategory::system);
+        world_clock_system(registry_, dt); // date / time, sun and sky (R22.1)
+    }
+    QUAT_ZONE_C("render_collect_system", core::ProfileCategory::system);
     render_collect_system(registry_, draw_list_);
 }
 
@@ -134,6 +150,12 @@ entt::entity find_active_camera(const entt::registry& registry) {
     return entt::null;
 }
 
+renderer::PhysicalCamera active_camera_lens(const entt::registry& registry,
+                                            const renderer::PhysicalCamera& fallback) {
+    const entt::entity e = find_active_camera(registry);
+    return e == entt::null ? fallback : registry.get<const Camera>(e).lens;
+}
+
 CameraMatrices camera_system(const entt::registry& registry, float aspect_ratio) {
     CameraMatrices out;
 
@@ -147,7 +169,8 @@ CameraMatrices camera_system(const entt::registry& registry, float aspect_ratio)
 
     out.position   = glm::vec3(world[3]);
     out.view       = glm::inverse(world);
-    out.projection = glm::perspective(cam.fov_y, aspect_ratio, cam.near_z, cam.far_z);
+    out.projection = glm::perspective(renderer::effective_fov_y(cam.lens, cam.fov_y),
+                                      aspect_ratio, cam.near_z, cam.far_z);
     out.projection[1][1] *= -1.0F; // Vulkan clip space: Y points down
     out.view_proj  = out.projection * out.view;
     return out;
