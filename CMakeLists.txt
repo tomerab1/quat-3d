@@ -172,6 +172,23 @@ target_link_libraries(engine_core PUBLIC engine_flags Threads::Threads)
 target_include_directories(engine_core PUBLIC ${ENGINE_PUBLIC_INCLUDE})
 
 # ---------------------------------------------------------------------------
+# engine_input — action maps (G5): device state, JSON action maps, the
+# Actions evaluator (contexts, triggers, modifiers, injection, rebinding) and
+# the per-user rebinding file. Window-free: the app samples SDL3 into a
+# DeviceState (src/app/input_sampler.cpp).
+# ---------------------------------------------------------------------------
+add_library(engine_input STATIC
+    src/input/device_names.cpp
+    src/input/binding_json.cpp
+    src/input/action_map_json.cpp
+    src/input/default_map.cpp
+    src/input/source_read.cpp
+    src/input/actions.cpp
+    src/input/overrides.cpp)
+target_link_libraries(engine_input PUBLIC engine_flags engine_core nlohmann_json::nlohmann_json)
+target_include_directories(engine_input PUBLIC ${ENGINE_PUBLIC_INCLUDE})
+
+# ---------------------------------------------------------------------------
 # engine_rhi — thin Vulkan abstraction (instance/device, swapchain, ...).
 # ---------------------------------------------------------------------------
 add_library(engine_rhi STATIC
@@ -369,11 +386,10 @@ add_library(engine_script STATIC
     src/script/script_api_scene.cpp
     src/script/script_api_services.cpp
     src/script/script_api_input.cpp
-    src/script/script_input.cpp
     src/script/script_source.cpp
     src/script/script_runtime.cpp
     src/script/script_files.cpp)
-target_link_libraries(engine_script PUBLIC engine_flags engine_core engine_scene engine_physics)
+target_link_libraries(engine_script PUBLIC engine_flags engine_core engine_input engine_scene engine_physics)
 target_link_libraries(engine_script PRIVATE sol2::sol2 ${LUA_LIBRARIES})
 # SYSTEM: the vcpkg include directory holds every dependency's headers.
 target_include_directories(engine_script SYSTEM PRIVATE ${LUA_INCLUDE_DIR})

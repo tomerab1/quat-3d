@@ -13,6 +13,7 @@
 #include <glm/glm.hpp>
 #include <nlohmann/json_fwd.hpp>
 
+#include "engine/input/actions.hpp"
 #include "engine/script/script_runtime.hpp"
 #include "engine/core/log.hpp"
 #include "lua_bind.hpp"
@@ -45,6 +46,11 @@ struct ApiContext {
     float         dt = 0.0F;
     float         fixed_dt = 1.0F / 60.0F;
     std::uint64_t frame = 0;
+    // The input actions this phase reads (on_update: the update's sample;
+    // on_fixed_update: one latched per fixed step) and the service that
+    // produced them (input.push_context). Null outside a session update.
+    const input::ActionSample* action_sample = nullptr;
+    input::Actions*            action_service = nullptr;
     // The `self` table of another entity's running script (Entity:script()).
     std::function<sol::object(entt::entity)> instance_of;
 };

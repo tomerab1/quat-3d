@@ -50,10 +50,14 @@ class PhysicsWorld;
 namespace engine::scene {
 class Scene;
 }
+namespace engine::input {
+class Actions;
+struct DeviceState;
+} // namespace engine::input
 
 namespace engine::script {
 
-struct ScriptInput;
+using ScriptInput = input::DeviceState;
 
 struct ScriptLimits {
     std::size_t   memory_bytes = 256U << 20;     // the scene's whole Lua heap
@@ -77,6 +81,11 @@ struct ScriptStatus {
 struct ScriptServices {
     physics::PhysicsWorld* physics = nullptr; // the world being simulated
     const ScriptInput*     input = nullptr;
+    // The action service (G5) behind input.axis / input.action: the
+    // application updates it once per frame and the runtime takes one
+    // simulation sample per update(). Without it the runtime evaluates the
+    // default action map over `input` itself.
+    input::Actions*        actions = nullptr;
     // Instantiates a glTF/GLB file (absolute path, already confined to the
     // project) and returns its root entities.
     std::function<std::expected<std::vector<entt::entity>, core::Error>(

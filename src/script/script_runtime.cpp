@@ -138,11 +138,27 @@ void ScriptRuntime::update(float dt) {
     s->ctx.dt = dt;
     s->ctx.elapsed_s += dt;
     ++s->ctx.frame;
+
+    // Input (G5): one simulation sample per update; each fixed step sees
+    // the edges since the previous fixed step exactly once.
+    input::Actions* actions = impl_->services.actions;
+    if (actions == nullptr) {
+        if (!impl_->fallback_actions) impl_->fallback_actions.emplace();
+        actions = &*impl_->fallback_actions;
+        if (impl_->services.input != nullptr) actions->update(*impl_->services.input, dt);
+    }
+    s->update_sample = actions->take_sim_sample();
+    s->fixed_latch.add(s->update_sample);
+    s->ctx.action_service = actions;
+    s->ctx.action_sample = &s->update_sample; // on_start
+
     impl_->sync_instances();
 
     s->fixed_accumulator += dt;
     int steps = 0;
     while (s->fixed_accumulator >= k_fixed_dt && steps < k_max_fixed_steps) {
+        s->fixed_sample = s->fixed_latch.take(actions->map());
+        s->ctx.action_sample = &s->fixed_sample;
         for (std::size_t i = 0; i < s->instances.size(); ++i) {
             impl_->invoke(s->instances[i], "on_fixed_update", k_fixed_dt);
         }
@@ -151,6 +167,7 @@ void ScriptRuntime::update(float dt) {
     }
     if (steps == k_max_fixed_steps) s->fixed_accumulator = std::fmod(s->fixed_accumulator, k_fixed_dt);
 
+    s->ctx.action_sample = &s->update_sample;
     for (std::size_t i = 0; i < s->instances.size(); ++i) {
         impl_->invoke(s->instances[i], "on_update", dt);
     }
