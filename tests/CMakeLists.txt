@@ -13,12 +13,13 @@ file(GLOB_RECURSE ENGINE_TEST_SOURCES CONFIGURE_DEPENDS
 
 add_executable(engine_tests
     test_main.cpp
+    support/alloc_probe.cpp
     support/gpu_context.cpp
     ${ENGINE_TEST_SOURCES})
 target_link_libraries(engine_tests PRIVATE
     engine_flags engine_core engine_rhi engine_asset engine_scene engine_renderer engine_physics
     engine_animation engine_terrain engine_nav engine_net engine_remote engine_remote_world
-    engine_audio engine_cook engine_gltf_io # gltf_io.hpp internals (fastgltf)
+    engine_audio engine_script engine_cook engine_gltf_io game_world # gltf_io.hpp internals (fastgltf)
     GTest::gtest)
 # Full libktx in this program (engine_cook encodes; the tests decode ASTC
 # references through it): engine_asset then links KTX::ktx instead of
@@ -35,10 +36,20 @@ endif()
 target_include_directories(engine_tests PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${PROJECT_SOURCE_DIR}/src
-    ${ENGINE_PUBLIC_INCLUDE}
-    ${Stb_INCLUDE_DIR}) # image round trips (stb_image) in the screenshot tests
+    ${ENGINE_PUBLIC_INCLUDE})
+# Image round trips (stb_image) in the screenshot tests; SYSTEM so MSVC /W4
+# does not warn inside stb.
+target_include_directories(engine_tests SYSTEM PRIVATE ${Stb_INCLUDE_DIR})
+# White-box script VM tests (tests/script/vm_test.cpp) include engine_script's
+# private headers, which use sol2 and Lua.
+target_link_libraries(engine_tests PRIVATE sol2::sol2 ${LUA_LIBRARIES})
+target_include_directories(engine_tests SYSTEM PRIVATE ${LUA_INCLUDE_DIR})
+target_compile_definitions(engine_tests PRIVATE SOL_NO_EXCEPTIONS=1 SOL_ALL_SAFETIES_ON=1)
 target_compile_definitions(engine_tests PRIVATE
-    QUAT_COOKED_SHADER_DIR="${PROJECT_SOURCE_DIR}/cooked/shaders")
+    QUAT_COOKED_SHADER_DIR="${PROJECT_SOURCE_DIR}/cooked/shaders"
+    QUAT_SHADER_SOURCE_DIR="${PROJECT_SOURCE_DIR}/assets/shaders"
+    # Shipped / vendored assets: the G7 demo scripts, editor fonts, icon table.
+    QUAT_PROJECT_ROOT="${PROJECT_SOURCE_DIR}")
 add_dependencies(engine_tests shaders)
 
 add_test(NAME engine_tests_cpu COMMAND engine_tests "--gtest_filter=-Gpu*")

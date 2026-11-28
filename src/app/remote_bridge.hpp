@@ -1,8 +1,10 @@
 #pragma once
 
 // RemoteBridge — the `game` executable's side of remote control (ROADMAP
-// A2/A3, app layer). It owns the JSON-RPC endpoint (QUAT_REMOTE=<port>,
-// QUAT_REMOTE_TOKEN), registers engine.info plus the world commands, and
+// A2/A3, app layer). It owns the JSON-RPC endpoint (QUAT_REMOTE=<port>;
+// QUAT_REMOTE_TOKEN or a generated session token, published in a user-only
+// token file for quat-mcp — engine/remote/session_token.hpp), registers
+// engine.info plus the world commands, and
 // implements their WorldServices against the frame loop's state: the fly
 // camera, clouds, terrain heights, glTF spawning, play mode, scene files,
 // navmesh baking and screenshots.
@@ -20,12 +22,15 @@
 //   poll()               once per frame before the scene updates: RPC
 //                        requests, primitive + instanced-mesh resolution,
 //                        scatter regeneration, finished screenshots,
-//                        completed debug.step requests
+//                        completed debug.step requests, finished
+//                        shader.create / update compiles
 //   advance_sim(dt)      once per frame with the real frame time: records it
 //                        and returns the simulation dt (0 while paused);
 //                        advance_sim_unrendered() instead on iterations that
 //                        draw nothing (minimised)
 //   note_draws(n)        the frame's submitted draw count (debug.stats)
+//   screenshot_view()    before the frame's view: a screenshot's own camera
+//                        to render this frame from, if one is pending
 //   record_capture()     after the frame's graph is recorded: copies the
 //                        final scene image for pending screenshots
 //   on_frame_complete()  right after the frame slot's fence wait: hands the
@@ -36,10 +41,14 @@
 // PNG encoding runs on a worker thread; the reply goes out from poll()
 // (screenshot_capture.hpp).
 
+#include <cstddef>
 #include <cstdint>
+#include <expected>
 #include <filesystem>
+#include <functional>
 #include <memory>
 #include <optional>
+#include <vector>
 
 #include <entt/entity/fwd.hpp>
 #include <glm/glm.hpp>
@@ -47,10 +56,15 @@
 
 #include "app/screenshot_capture.hpp" // CaptureSource
 #include "engine/core/stderr_capture.hpp"
-#include "engine/scene/scene.hpp" // GroundHeightFn
+#include "engine/remote/world_commands.hpp" // TerrainStatus
+#include "engine/scene/scene.hpp"     // GroundHeightFn
+#include "engine/scene/view_clip.hpp" // ClipRange
 
 namespace engine::asset {
 class AssetManager;
+}
+namespace engine::core {
+class SimClock;
 }
 namespace engine::nav {
 class NavMesh;
@@ -64,9 +78,13 @@ struct RenderSettings;
 namespace engine::rhi {
 class Device;
 class GpuAllocator;
+class ShaderHotReload;
 } // namespace engine::rhi
 namespace engine::scene {
 class MaterialOverrideStore;
+}
+namespace engine::script {
+class ScriptRuntime;
 }
 namespace engine::terrain {
 class TerrainStreamer;
@@ -94,8 +112,15 @@ struct RemoteBridgeTargets {
     float*     cam_yaw = nullptr;
     float*     cam_pitch = nullptr;
     float*     cam_fov_y = nullptr;
+    // Clip planes (issue #37): overrides camera.set writes (nullopt = derived)
+    // and the planes derived from the scene this frame.
+    std::optional<float>*           cam_near_override = nullptr;
+    std::optional<float>*           cam_far_override = nullptr;
+    const engine::scene::ClipRange* cam_derived_clip = nullptr;
 
-    const engine::scene::GroundHeightFn* ground_height = nullptr;
+    // Terrain heights above the anchor and generation state (world runtime).
+    std::function<std::optional<float>(float local_x, float local_z)> terrain_height;
+    std::function<engine::remote::TerrainStatus()>                    terrain_status;
 
     // Navmesh bake inputs and output.
     const std::optional<engine::terrain::TerrainStreamer>* terrain_streamer = nullptr;
@@ -116,11 +141,21 @@ struct RemoteBridgeTargets {
     engine::renderer::RenderSettings* render_settings = nullptr;
     // The renderer's per-entity derived materials (A8), resolved in poll().
     engine::scene::MaterialOverrideStore* material_overrides = nullptr;
+    // Camera cut for the renderer's temporal state (R11): called after
+    // scene.load (camera.set cuts go through take_camera_cut). May be empty.
+    std::function<void()> reset_temporal;
+    // Gameplay scripts (G7): script.* statuses and reloads (may be null).
+    engine::script::ScriptRuntime* scripts = nullptr;
+    // Compiles material shaders for shader.create / update (A6); null when
+    // shader hot reload is off (those methods then answer `unavailable`).
+    engine::rhi::ShaderHotReload* shader_reload = nullptr;
 
 #ifdef ENGINE_EDITOR
     engine::editor::EditorLayer* editor = nullptr;
-    bool* play = nullptr; // editor play flag; null where play mode is unavailable
 #endif
+    // Requested play state (PlayMode); null where play mode is unavailable
+    // (the physics / character demos own their world).
+    bool* play = nullptr;
 
     std::filesystem::path project_root;
 };
@@ -148,17 +183,38 @@ public:
     // stays frozen, but stepping callers still get their reply.
     [[nodiscard]] float advance_sim_unrendered();
     void note_draws(std::size_t draws);
+    // True once after a remote camera move that was a cut (a teleport: camera.set
+    // with `cut`, or a jump / turn past the threshold; camera.frame): the frame
+    // restarts temporal history (TAA) instead of blending across the jump.
+    [[nodiscard]] bool take_camera_cut();
+    // Once per frame, before the view is computed: the camera a pending
+    // screenshot needs this frame rendered from (issue #41), or nullopt for
+    // the viewport camera. The viewport camera is not modified.
+    [[nodiscard]] std::optional<engine::remote::CameraPose> screenshot_view();
+
+    // Instantiates a glTF/GLB file into the scene (blocking upload), as
+    // asset.spawn_model does; gameplay scripts reuse it.
+    [[nodiscard]] std::expected<std::vector<entt::entity>, engine::core::Error>
+    spawn_model(const std::filesystem::path& absolute);
 
     [[nodiscard]] bool listening() const;
+    // Endpoint port and connected clients (editor status bar); 0 / 0 when
+    // not listening.
+    [[nodiscard]] std::uint16_t port() const;
+    [[nodiscard]] std::size_t   client_count() const;
+    // The simulation clock (pause / step / time scale), shared with the
+    // editor's Play controls.
+    [[nodiscard]] engine::core::SimClock& sim_clock();
 
 private:
     struct Impl;
     std::unique_ptr<Impl> impl_;
 };
 
-// Tees the process's stderr into the engine log ring (debug.log) when the
-// remote-control endpoint is requested (QUAT_REMOTE set) unless
-// QUAT_LOG_CAPTURE=0. Keep the returned object alive for the whole run.
-[[nodiscard]] engine::core::StderrCapture capture_stderr_for_remote();
+// Tees the process's stderr into the engine log ring (debug.log, the editor
+// Console) when the remote-control endpoint is requested (QUAT_REMOTE set) or
+// `editor_console` is true, unless QUAT_LOG_CAPTURE=0. Keep the returned
+// object alive for the whole run.
+[[nodiscard]] engine::core::StderrCapture capture_stderr_for_remote(bool editor_console = false);
 
 } // namespace quat::app

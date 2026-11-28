@@ -159,6 +159,9 @@ ShadowPass::create(const rhi::Device& device, rhi::GpuAllocator& allocator,
     auto pipeline = cache.create_graphics_pipeline(info);
     if (!pipeline) return std::unexpected(pipeline.error());
     out.pipeline_ = std::move(*pipeline);
+    if (auto r = out.create_material_casters(cache, cooked_shader_dir); !r) {
+        return std::unexpected(r.error());
+    }
 
     // GPU cascade fitting.
     auto setup = cache.load(cooked_shader_dir + "/csm_setup.spv");
@@ -212,21 +215,20 @@ ShadowPass::add_to_graph(rhi::RenderGraph& graph, const CsmView& view,
     if (!instances) return std::unexpected(instances.error());
     frame_instances_ = *instances;
     frame_draws_.clear();
+    frame_masked_.clear();
+    frame_translucent_.clear();
+    frame_descriptors_.clear();
+    frame_descriptor_of_.clear();
     frame_draws_.reserve(casters.draws.size());
+    frame_to_light_ = glm::vec4(glm::normalize(view.to_light), 0.0F);
     for (const InstancedDraw& d : casters.draws) {
         if (d.mesh == nullptr || !d.mesh->valid() || d.instance_count == 0) continue;
         if (static_cast<std::size_t>(d.first_instance) + d.instance_count >
             casters.instances.size()) {
             return fail("shadow pass: draw instance range exceeds the instance array");
         }
-        FrameDraw fd;
-        fd.vertex_buffer = d.skinned_vertices != VK_NULL_HANDLE ? d.skinned_vertices
-                                                                : d.mesh->vertex_buffer.handle();
-        fd.index_buffer = d.mesh->index_buffer.handle();
-        fd.submeshes = d.mesh->submeshes;
-        fd.first_instance = d.first_instance;
-        fd.instance_count = d.instance_count;
-        frame_draws_.push_back(fd);
+        // Opaque, alpha-tested or translucent, by material.
+        if (auto r = add_caster(d); !r) return std::unexpected(r.error());
     }
     frame_extra_.assign(extra_casters.begin(), extra_casters.end());
 
@@ -296,10 +298,15 @@ ShadowPass::add_to_graph(rhi::RenderGraph& graph, const CsmView& view,
     }
 
     const auto count = static_cast<std::uint32_t>(s.cascade_count);
-    (void)graph.add_pass("csm_shadow", rhi::PassType::graphics)
-        .reads(out.cascades, rhi::ResourceUsage::buffer_read_vertex)
-        .writes(out.shadow_map, rhi::ResourceUsage::depth_attachment)
-        .execute([this, count](rhi::PassContext& ctx) { record_cascades(ctx.cmd(), count); });
+    const rhi::ResourceHandle fallback = add_fallback_clear(graph);
+    auto depth_pass = graph.add_pass("csm_shadow", rhi::PassType::graphics);
+    depth_pass.reads(out.cascades, rhi::ResourceUsage::buffer_read_vertex)
+        .writes(out.shadow_map, rhi::ResourceUsage::depth_attachment);
+    if (fallback.valid()) depth_pass.reads(fallback, rhi::ResourceUsage::sampled);
+    depth_pass.execute([this, count](rhi::PassContext& ctx) { record_cascades(ctx.cmd(), count); });
+    if (auto r = add_translucent_pass(graph, out, count, fallback); !r) {
+        return std::unexpected(r.error());
+    }
     return out;
 }
 
@@ -349,6 +356,8 @@ void ShadowPass::record_cascades(VkCommandBuffer cmd, std::uint32_t count) const
         for (const ShadowCasterFn& extra : frame_extra_) {
             if (extra) extra(cmd, c, cascades_address_);
         }
+        // Alpha-tested casters after the opaque ones (no early depth test).
+        draw_material_casters(cmd, masked_pipeline_, frame_masked_, c);
         vkCmdEndRendering(cmd);
     }
 }

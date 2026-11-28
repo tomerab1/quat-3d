@@ -77,4 +77,41 @@ TEST(TerrainStreaming, MovingOneTileEastSwapsOneColumn) {
     EXPECT_FALSE(streamer.maps().contains(glm::ivec2(-1, 0)));
 }
 
+// Issue #38: changing the stream radius resizes the window around the tiles
+// already loaded instead of regenerating the world.
+TEST(TerrainStreaming, RadiusChangeKeepsLoadedTiles) {
+    TerrainStreamer streamer(small_tiles(), 1);
+    (void)streamer.update(glm::vec2(0.0F), /*block=*/true);
+    const float* centre = streamer.maps().at(glm::ivec2(0, 0)).heights.data();
+
+    streamer.set_radius(2);
+    TerrainStreamer::Events events = streamer.update(glm::vec2(0.0F), /*block=*/true);
+    EXPECT_EQ(streamer.maps().size(), 25U);
+    EXPECT_EQ(events.ready.size(), 16U) << "only the new ring is generated";
+    EXPECT_TRUE(events.removed.empty());
+    EXPECT_EQ(streamer.maps().at(glm::ivec2(0, 0)).heights.data(), centre)
+        << "the loaded tile was kept, not regenerated";
+
+    streamer.set_radius(0);
+    events = streamer.update(glm::vec2(0.0F), /*block=*/true);
+    EXPECT_EQ(streamer.maps().size(), 1U);
+    EXPECT_EQ(events.removed.size(), 24U);
+    EXPECT_TRUE(events.ready.empty());
+}
+
+TEST(TerrainParamsShape, OnlyGenerationFieldsChangeTheShape) {
+    const TerrainParams a = small_tiles();
+    TerrainParams b = a;
+    b.world_tile = glm::ivec2(3, -2); // set per streamed tile
+    EXPECT_TRUE(engine::terrain::same_shape(a, b));
+    b.seed += 1;
+    EXPECT_FALSE(engine::terrain::same_shape(a, b));
+    b = a;
+    b.grid.talus = 0.7F;
+    EXPECT_FALSE(engine::terrain::same_shape(a, b));
+    b = a;
+    b.grid.relax_cycles += 1; // talus relaxation (#90) changes the heights
+    EXPECT_FALSE(engine::terrain::same_shape(a, b));
+}
+
 } // namespace

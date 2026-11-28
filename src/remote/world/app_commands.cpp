@@ -12,6 +12,7 @@
 #include <nlohmann/json.hpp>
 
 #include "engine/scene/components.hpp"
+#include "engine/core/utf8_path.hpp"
 #include "engine/scene/scene.hpp"
 #include "internal.hpp"
 
@@ -25,7 +26,7 @@ constexpr std::size_t k_max_models = 10'000;
 constexpr std::uintmax_t k_max_scene_bytes = 256ULL << 20;
 
 [[nodiscard]] std::string lower_extension(const fs::path& p) {
-    std::string ext = p.extension().string();
+    std::string ext = core::path_to_utf8(p.extension());
     std::transform(ext.begin(), ext.end(), ext.begin(),
                    [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
     return ext;
@@ -68,7 +69,7 @@ RpcResult list_models(Context& ctx, const Json& params) {
             truncated = true;
             break;
         }
-        models.push_back(it->path().lexically_relative(root).generic_string());
+        models.push_back(core::path_to_generic_utf8(it->path().lexically_relative(root)));
     }
     std::sort(models.begin(), models.end());
     Json out{{"models", models}};
@@ -116,7 +117,7 @@ RpcResult spawn_model(Context& ctx, const Json& params) {
     std::vector<entt::entity> top = *roots;
     if (top.size() > 1 && (has_name || parent != entt::null || has_components)) {
         const entt::entity group =
-            sc.create_entity(has_name ? name : path->stem().string());
+            sc.create_entity(has_name ? name : core::path_to_utf8(path->stem()));
         for (const entt::entity e : top) (void)sc.set_parent(e, group);
         top = {group};
     }
@@ -149,6 +150,16 @@ RpcResult set_playing(Context& ctx, const Json& params, bool play) {
     return Json{{"playing", *playing}};
 }
 
+// Scene files hold the authored scene: while a play session runs, the
+// registry holds simulated state (and the session's physics bodies and
+// script instances point into it), so saving or loading must wait for Stop.
+[[nodiscard]] std::expected<void, RpcError> require_stopped(const Context& ctx) {
+    if (ctx.services.playing && ctx.services.playing()) {
+        return rpc_fail(rpc_code::failed, "stop play mode first (sim.stop)");
+    }
+    return {};
+}
+
 RpcResult save_scene(Context& ctx, const Json& params) {
     core::JsonFields f(params, "");
     std::string relative;
@@ -162,6 +173,7 @@ RpcResult save_scene(Context& ctx, const Json& params) {
                           "' exists and is not a scene file; refusing to overwrite it");
     }
     if (!ctx.services.save_scene) return unavailable("scene saving");
+    if (auto ok = require_stopped(ctx); !ok) return std::unexpected(ok.error());
     if (auto ok = ctx.services.save_scene(*path); !ok) {
         return rpc_fail(rpc_code::failed, "save failed: " + ok.error().message);
     }
@@ -179,6 +191,7 @@ RpcResult load_scene(Context& ctx, const Json& params) {
         return rpc_fail(rpc_code::not_found, "path: no such file '" + relative + "'");
     }
     if (!ctx.services.load_scene) return unavailable("scene loading");
+    if (auto ok = require_stopped(ctx); !ok) return std::unexpected(ok.error());
     if (auto ok = ctx.services.load_scene(*path); !ok) {
         return rpc_fail(rpc_code::failed, "load failed: " + ok.error().message);
     }

@@ -27,6 +27,7 @@
 #include <glm/gtc/quaternion.hpp>
 #include <glm/gtx/matrix_decompose.hpp>
 
+#include "engine/core/utf8_path.hpp"
 #include "engine/animation/clip.hpp"
 #include "engine/animation/skeleton.hpp"
 #include "engine/asset/asset_manager.hpp"
@@ -126,6 +127,7 @@ void apply_uv_transform(asset::PbrMaterialParams& p, std::size_t slot,
         if (md.emissive_image != no_texture) flags |= asset::material_has_emissive;
         if (md.occlusion_image != no_texture) flags |= asset::material_has_occlusion;
         if (mat.alphaMode == fastgltf::AlphaMode::Blend) flags |= asset::material_blend;
+        if (mat.alphaMode == fastgltf::AlphaMode::Mask) flags |= asset::material_alpha_mask;
         if (mat.doubleSided) flags |= asset::material_double_sided;
         // KHR_materials_transmission → see-through glass.
         if (mat.transmission != nullptr && mat.transmission->transmissionFactor > 0.0F) {
@@ -176,7 +178,7 @@ std::expected<std::vector<MaterialData>, core::Error>
 GltfLoader::load_material_data(const std::filesystem::path& path) {
     auto data = fastgltf::GltfDataBuffer::FromPath(path);
     if (data.error() != fastgltf::Error::None) {
-        return fail("fastgltf: could not read '" + path.string() + "': " +
+        return fail("fastgltf: could not read '" + core::path_to_utf8(path) + "': " +
                     std::string(fastgltf::getErrorMessage(data.error())));
     }
     return parse_and_extract_materials(data.get(), path.parent_path());

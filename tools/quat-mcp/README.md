@@ -30,12 +30,33 @@ cargo build --release
 
 ```sh
 QUAT_REMOTE=7878 ./build/release/game                            # listen on 127.0.0.1:7878
-QUAT_REMOTE=7878 QUAT_REMOTE_TOKEN=s3cret ./build/release/game   # also require a token
+QUAT_REMOTE=7878 QUAT_REMOTE_TOKEN=s3cret ./build/release/game   # choose the token yourself
 ```
 
 quat-mcp connects lazily on the first tool call and reconnects automatically
 if the engine is restarted, so the engine and the AI client can be started in
 any order.
+
+### Session token
+
+The engine always requires a session token. Unless you give it one with
+`QUAT_REMOTE_TOKEN`, it generates a random 256-bit token for each run and
+writes it to a token file only your user can read; quat-mcp reads that file,
+so **no token configuration is needed**. It reads the file again on every
+reconnect, so restarting the engine (which changes the token) needs no
+quat-mcp restart.
+
+| Platform | Token file (`<port>` = the engine's port) |
+|---|---|
+| Linux | `$XDG_RUNTIME_DIR/quat-3d/remote-<port>.token`, else `~/.local/state/quat-3d/remote-<port>.token` |
+| macOS | `~/Library/Application Support/quat-3d/remote-<port>.token` |
+| Windows | `%LOCALAPPDATA%\quat-3d\remote-<port>.token` |
+
+Set `QUAT_REMOTE_TOKEN_FILE` to the same path for both to move it (for
+example when the engine and quat-mcp see different `XDG_RUNTIME_DIR`
+values), or `QUAT_REMOTE_TOKEN` to the same value for both to skip the file.
+See [Session token](../../docs/remote-control.md#session-token) in the
+protocol docs.
 
 ## Configuration
 
@@ -45,10 +66,14 @@ Every option is a flag or an environment variable:
 |---|---|---|---|
 | `--port` | `QUAT_REMOTE_PORT` | `7878` | Engine port (the engine's `QUAT_REMOTE` value) |
 | `--host` | `QUAT_REMOTE_HOST` | `127.0.0.1` | Engine host |
-| `--token` | `QUAT_REMOTE_TOKEN` | none | Token, if the engine requires one |
+| `--token` | `QUAT_REMOTE_TOKEN` | none | Token, if the engine was started with `QUAT_REMOTE_TOKEN` |
+| `--token-file` | `QUAT_REMOTE_TOKEN_FILE` | per-user file for `--port` | Where to read the engine's token when `--token` is not given |
 | `--timeout-secs` | `QUAT_MCP_TIMEOUT_SECS` | `15` | Per-request timeout |
 | `--long-timeout-secs` | `QUAT_MCP_LONG_TIMEOUT_SECS` | `120` | Timeout for screenshots, batches, model spawn, scene load/save/clear, nav bake |
 | `--max-reply-mb` | `QUAT_MCP_MAX_REPLY_MB` | `64` | Largest reply accepted from the engine |
+| `--project-root` | `QUAT_MCP_PROJECT_ROOT` | current directory | The quat-3d checkout `asset_fetch` downloads into (`assets/meshes/polyhaven/`) |
+| `--polyhaven-api` | `QUAT_MCP_POLYHAVEN_API` | `https://api.polyhaven.com` | Poly Haven API base URL |
+| `--asset-max-mb` | `QUAT_MCP_ASSET_MAX_MB` | `512` | Largest model download `asset_fetch` accepts |
 | — | `QUAT_MCP_LOG` | `info` | Log filter (`debug`, `quat_mcp=trace`, …) |
 
 Logs go to stderr; stdout carries the MCP protocol.
@@ -61,7 +86,9 @@ claude mcp add quat-3d \
   -- /absolute/path/to/quat-3d/tools/quat-mcp/target/release/quat-mcp
 ```
 
-With a token, add `--env QUAT_REMOTE_TOKEN=s3cret`. Use `--scope user` to make
+If you started the engine with `QUAT_REMOTE_TOKEN`, add
+`--env QUAT_REMOTE_TOKEN=s3cret`; otherwise the token file is found
+automatically. Use `--scope user` to make
 the server available in every project, or `--scope project` to write it into
 the repository's `.mcp.json` for the whole team. Check the connection with
 `claude mcp list`, or `/mcp` inside a session.
@@ -78,16 +105,16 @@ Edit `claude_desktop_config.json` (Settings → Developer → Edit Config; on ma
     "quat-3d": {
       "command": "/absolute/path/to/quat-3d/tools/quat-mcp/target/release/quat-mcp",
       "env": {
-        "QUAT_REMOTE_PORT": "7878",
-        "QUAT_REMOTE_TOKEN": "s3cret"
+        "QUAT_REMOTE_PORT": "7878"
       }
     }
   }
 }
 ```
 
-Leave out `QUAT_REMOTE_TOKEN` if the engine runs without one. On Windows the
-command ends in `quat-mcp.exe`.
+Add `"QUAT_REMOTE_TOKEN": "s3cret"` only if you started the engine with
+`QUAT_REMOTE_TOKEN`; otherwise quat-mcp reads the engine's token file. On
+Windows the command ends in `quat-mcp.exe`.
 
 ## What the model gets
 
@@ -107,9 +134,12 @@ command ends in `quat-mcp.exe`.
 | `scene_batch` | `scene.batch` | Many commands in one frame, with `"@N"` back-references |
 | `environment_get` / `environment_set` | `environment.*` | Sun angles and colour, volumetric clouds |
 | `world_ground_height` | `world.ground_height` | Terrain height under `[x, z]` points |
+| `terrain_status` | `terrain.status` | Whether terrain tiles are still generating; loaded tiles and bounds |
+| `world_place_on_ground` | `world.place_on_ground` | Rest an entity's bounds on the terrain or colliders below it, optionally tilted to the slope |
 | `camera_get` / `camera_set` / `camera_frame` | `camera.*` | Read, place or auto-frame the viewport camera |
-| `screenshot` | `render.screenshot` | The viewport as an MCP **image** (PNG) plus a caption |
+| `screenshot` | `render.screenshot` | The viewport (or an explicit camera, leaving the viewport alone) as an MCP **image** (PNG) plus a caption |
 | `asset_list_models` / `asset_spawn_model` | `asset.*` | Find and spawn glTF models |
+| `asset_search` / `asset_fetch` | — (Poly Haven API) | Search CC0 models on Poly Haven; download one (glTF + includes, size-capped, checksummed, with `LICENSE.md` / `polyhaven.json`) into `assets/meshes/polyhaven/<id>/`, cooked with `quat-cook` when it is on PATH |
 | `sim_play` / `sim_stop` | `sim.*` | Enter / leave play mode |
 | `scene_save` / `scene_load` | `scene.save` / `scene.load` | Project-relative JSON scene files |
 | `nav_bake` | `nav.bake` | Bake the navmesh for NPC agents |
@@ -135,6 +165,14 @@ command ends in `quat-mcp.exe`.
 | `physics_raycast_all` / `physics_overlap` / `physics_shape_cast` | `physics.raycast_all` / `.overlap` / `.shape_cast` | Every hit along a ray, bodies a sphere / box / capsule overlaps, a swept shape's hits — with layer masks |
 | `events_poll` | `events.poll` | Contact and trigger events (who hit whom, where, how hard), incremental via a cursor |
 | `character_move` | `character.move` | Walk a character controller at a velocity or to a point, jump |
+| `script_list` / `script_get` | `script.list` / `script.get` | Lua scripts with their status (errors with file:line); read one |
+| `script_create` / `script_update` | `script.create` / `script.update` | Write a script (compiled first, syntax errors name the line); updates hot-reload while playing |
+| `script_delete` / `script_check` | `script.delete` / `script.check` | Delete a script; compile a draft without saving |
+| `shader_list` | `shader.list` | Material shaders (built-in + authored) and their compile state |
+| `shader_get` | `shader.get` | One material shader's source, state and last diagnostics |
+| `shader_template` | `shader.template` | The starter material shader module |
+| `shader_create` / `shader_update` | `shader.create` / `shader.update` | Write + compile a material shader; errors as `file:line:column` with a caret; a failed update keeps the old version |
+| `shader_delete` | `shader.delete` | Delete a material shader; entities using it fall back to the built-in |
 
 Tool descriptions spell out units and conventions (metres, Y up, Euler degrees
 in YXZ order, `"#rrggbb"` sRGB colours for primitives and linear `[r,g,b]` for
@@ -149,13 +187,17 @@ screenshot → iterate), `inspect_scene` (survey and review the current
 scene), `debug_session` (diagnose a problem: stats → logs → watch →
 pause / step → raycast / nav path → conclude), `design_behavior` (an NPC
 behaviour tree: leaves → plan → `bt_set` or edits → play → `bt_status` /
-`debug_watch` → iterate) and `tune_look` (screenshot → read settings and
+`debug_watch` → iterate), `tune_look` (screenshot → read settings and
 schema → exposure first, then bloom, shadows, sky light and materials, one
-change and one screenshot at a time). In Claude Code they appear as
-`/mcp__quat-3d__build_world`.
+change and one screenshot at a time), `write_game_script` (read the Lua
+reference → write → compile → attach → play → read the log → iterate) and
+`write_material_shader` (template → write → `shader_create` → fix from the
+diagnostics → assign to an entity → screenshot → iterate). In Claude Code they
+appear as `/mcp__quat-3d__build_world`.
 
-**Resource** — `quat://scene/summary`: engine info, the first 500 entities,
-the environment and the camera as JSON.
+**Resources** — `quat://scene/summary`: engine info, the first 500 entities,
+the environment and the camera as JSON; `quat://docs/scripting`: the Lua
+scripting reference (the engine's `docs/scripting.md`).
 
 ## Example session
 
@@ -181,7 +223,7 @@ cargo test
 
 The tests run without the engine: `tests/common/mod.rs` is a mock engine (a
 tokio TCP server speaking the line protocol) used to test the client
-(handshake and tokens, id matching, timeouts, reconnects, error mapping, size
+(handshake, tokens and the token file, id matching, timeouts, reconnects, error mapping, size
 limits) and the tools end to end through an in-process MCP client.
 
 Layout:
@@ -189,9 +231,9 @@ Layout:
 | Path | What |
 |---|---|
 | `content/` | **Everything the model reads**, as Markdown: server instructions, one file per tool description, the component reference, prompt templates ([MiniJinja](https://docs.rs/minijinja)). See `content/README.md`. |
-| `src/client/` | Engine JSON-RPC client: `mod.rs` (calls, reconnects, handshake), `connection.rs` (socket, reader task, in-flight calls), `error.rs` (error codes, `EngineError`) |
-| `src/server/` | MCP server: `mod.rs` (handler, resource), tools grouped by area (`scene_tools.rs`, `world_tools.rs`, `sim_tools.rs`, `debug_tools.rs`, `behavior_tools.rs`, `tuning_tools.rs`, each its own rmcp router), `bt_outline.rs` (behaviour-tree outlines), `prompts.rs`, `results.rs` |
-| `src/params.rs`, `src/params/` | Typed tool inputs — their doc comments are the JSON schemas the model reads (`debug.rs`, `behavior.rs`, `tuning.rs` per area) |
+| `src/client/` | Engine JSON-RPC client: `mod.rs` (calls, reconnects, handshake), `connection.rs` (socket, reader task, in-flight calls), `error.rs` (error codes, `EngineError`), `token_file.rs` (the engine's session token file) |
+| `src/server/` | MCP server: `mod.rs` (handler, resource), tools grouped by area (`scene_tools.rs`, `world_tools.rs`, `sim_tools.rs`, `debug_tools.rs`, `behavior_tools.rs`, `tuning_tools.rs`, `script_tools.rs`, `shader_tools.rs`, each its own rmcp router), `bt_outline.rs` (behaviour-tree outlines), `prompts.rs`, `results.rs` |
+| `src/params.rs`, `src/params/` | Typed tool inputs — their doc comments are the JSON schemas the model reads (`debug.rs`, `behavior.rs`, `tuning.rs`, `script.rs`, `shader.rs` per area) |
 | `src/content.rs` | Embeds `content/` and renders prompt templates |
 | `src/config.rs` | Flags / environment |
 

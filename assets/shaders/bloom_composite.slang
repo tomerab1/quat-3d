@@ -2,6 +2,10 @@
 //
 // Tent-upsamples the half-resolution bloom result to full resolution and adds it
 // into the HDR colour (read-modify-write) scaled by intensity, before tonemap.
+// The sum is clamped to the half-float range (lib/hdr.slang): a pixel already
+// at 65504 plus bloom would otherwise round to +Inf.
+
+import hdr;
 
 [[vk::binding(0)]] Texture2D          g_bloom; // half-res accumulated bloom
 [[vk::binding(1)]] SamplerState       g_samp;
@@ -39,6 +43,6 @@ void compute_main(uint3 tid : SV_DispatchThreadID) {
     g_bloom.GetDimensions(bw, bh);
     float2 uv = (float2(tid.xy) + 0.5) / float2(w, h);
     float3 bloom = tent9(uv, 1.0 / float2(bw, bh));
-    float3 hdr = g_hdr[tid.xy].rgb;
-    g_hdr[tid.xy] = float4(hdr + bloom * pc.intensity, 1.0);
+    float3 base = g_hdr[tid.xy].rgb;
+    g_hdr[tid.xy] = float4(hdr_store(base + bloom * pc.intensity), 1.0);
 }

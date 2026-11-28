@@ -39,7 +39,16 @@
     "imgui-node-editor",
     "recastnavigation",
     "gamenetworkingsockets",
+    "openssl",
     "miniaudio",
+    "lua",
+    "sol2",
     "gtest"
+  ],
+  "overrides": [
+    {
+      "name": "lua",
+      "version": "5.4.8"
+    }
   ]
 }

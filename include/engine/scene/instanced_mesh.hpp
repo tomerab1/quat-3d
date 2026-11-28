@@ -9,9 +9,9 @@
 // the model's parts); GPU culling and LOD arrive with R9.4.
 //
 // Frame-loop use (after the scene's transforms are current):
-//   opaque  = batch_draws(draws);   append_instanced_draws(reg, cam_vp, opaque, opaque_list)
-//   shadows = batch_draws(casters); append_instanced_draws(reg, light_vp, shadow, shadow_list)
 //   append_instanced_transparent_items(reg, cam_vp, transparent_items) // before sorting
+//   lists = build_frame_draw_lists(reg, draws, casters, cam_vp, light_vp)
+//   (batch_draws + append_instanced_draws for the opaque and shadow passes)
 // Alpha-blended and transmissive parts go to the transparent list as
 // per-instance DrawItems (they must be depth-sorted, so they cannot share an
 // instanced draw); the frame loop already makes transmissive items cast
@@ -29,6 +29,7 @@
 
 #include "engine/core/error.hpp"
 #include "engine/renderer/draw_batching.hpp"
+#include "engine/renderer/motion_history.hpp"
 #include "engine/scene/components.hpp"
 
 namespace engine::asset {
@@ -81,9 +82,15 @@ enum class InstancedPass : std::uint8_t {
 // shared across entities, in the order each pair is first met. Instances
 // whose bounding sphere lies outside the frustum of `cull_view_proj`
 // (Vulkan [0, 1] depth) are dropped. Returns the instances appended.
+//
+// Velocity (R11): when `out.motion` is parallel to `out.instances`, a motion
+// record is appended per instance — each instance's previous model is the
+// entity's previous world transform (from `motion`, keyed by the entity id;
+// null or unseen: the current one) times its placement.
 std::size_t append_instanced_draws(const entt::registry& registry,
                                    const glm::mat4& cull_view_proj, InstancedPass pass,
-                                   renderer::InstancedDrawList& out);
+                                   renderer::InstancedDrawList& out,
+                                   renderer::MotionHistory* motion = nullptr);
 
 // Appends one DrawItem per visible placement of every alpha-blended or
 // transmissive part (for the forward pass, which sorts them back to front).
@@ -91,5 +98,29 @@ std::size_t append_instanced_draws(const entt::registry& registry,
 std::size_t append_instanced_transparent_items(const entt::registry& registry,
                                                const glm::mat4& cull_view_proj,
                                                std::vector<renderer::DrawItem>& out);
+
+// The frame's batched opaque (GBuffer) and shadow-caster draw lists: the
+// gathered draw items grouped by (mesh, material) (renderer::batch_draws),
+// followed by every visible InstancedMesh placement (append_instanced_draws,
+// culled against the camera and the light respectively). `opaque_motion`,
+// when set, records each opaque placement's previous transform for the
+// velocity target (append_instanced_draws' `motion`).
+struct FrameDrawLists {
+    renderer::InstancedDrawList opaque;
+    renderer::InstancedDrawList shadow;
+};
+[[nodiscard]] FrameDrawLists build_frame_draw_lists(const entt::registry& registry,
+                                                    std::span<const renderer::DrawItem> opaque_items,
+                                                    std::span<const renderer::DrawItem> shadow_items,
+                                                    const glm::mat4& camera_view_proj,
+                                                    const glm::mat4& light_view_proj,
+                                                    renderer::MotionHistory* opaque_motion = nullptr);
+
+// Draws the frame submits for its scene geometry (debug.stats, the editor's
+// Stats panel): one per batched opaque and shadow draw — instanced batches
+// included — plus one per transparent item (the forward pass draws those
+// unmerged, back to front).
+[[nodiscard]] std::size_t frame_draw_count(const FrameDrawLists& lists,
+                                           std::size_t transparent_items);
 
 } // namespace engine::scene

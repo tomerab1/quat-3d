@@ -438,11 +438,7 @@ TEST_F(BehaviorCommands, SetWithTheSameShapeKeepsIdsAndLayout) {
 }
 
 TEST_F(BehaviorCommands, StatusReportsTheLastTick) {
-    bool playing = false;
-    services.playing = [&] { return playing; };
-    server = engine::remote::RpcServer{};
-    register_commands();
-
+    // services.playing reads the fixture's `playing` (bound in SetUp).
     // 1 selector, 2 near_camera (fails: no camera), 3 wait (running).
     ok("bt.set", with_entity(R"({"tree": {"type": "selector", "children": [
         {"type": "leaf", "name": "near_camera"},

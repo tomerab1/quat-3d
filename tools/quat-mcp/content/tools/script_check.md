@@ -1,0 +1,1 @@
+Compile Lua source without saving or running it: `{ok: true}` or `{ok: false, line, message}` (the message names `path:line`). Use it to test a draft or a fix before `script_create` / `script_update`. It only checks syntax; mistakes in engine calls show up when the script runs (`debug_log`, category `script`).

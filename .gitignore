@@ -1,5 +1,6 @@
 # Build output
 /build/
+/screenshots/
 /out/
 *.o
 *.obj
@@ -9,6 +10,9 @@
 
 # Downloaded glTF test models (Khronos sample assets — fetched on demand, not committed)
 /sample-assets/
+
+# CC0 models quat-mcp's asset_fetch downloads from Poly Haven (fetched on demand)
+/assets/meshes/polyhaven/
 
 # vcpkg
 /vcpkg_installed/
@@ -30,3 +34,7 @@ imgui.ini
 
 # Claude Code agent worktrees (local, never committed)
 /.claude/worktrees/
+
+# Editor layout + preferences (per project, per user)
+.quat/
+__pycache__/

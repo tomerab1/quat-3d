@@ -140,6 +140,11 @@ void joint_system(entt::registry& registry, physics::PhysicsWorld& world);
 // contacts the world had to drop as a gap. Call once after each
 // physics_system / PhysicsWorld::update.
 void publish_physics_events(const physics::PhysicsWorld& world, core::EventRing& ring);
+// The body of `e`'s RigidBody, created now (as physics_system's first step
+// would) when it has none yet — so gameplay code can push a body it spawned
+// this frame. invalid_body without RigidBody + Collider + Transform.
+std::uint32_t ensure_rigid_body(entt::registry& registry, physics::PhysicsWorld& world,
+                                entt::entity e);
 
 // Create a static Jolt height-field body for the first Terrain entity in the
 // registry, matching the rendered surface: the body sits at the tile's minimum

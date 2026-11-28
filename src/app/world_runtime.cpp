@@ -1,12 +1,16 @@
 #include "app/world_runtime.hpp"
 
 #include <algorithm>
-#include <vector>
 #include <chrono>
+#include <limits>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <filesystem>
 #include <span>
 #include <utility>
+#include <vector>
 
 #include <glm/gtc/matrix_transform.hpp>
 
@@ -14,40 +18,30 @@
 #include "app/nav_bake.hpp"
 #include "app/remote_bridge.hpp"
 #include "engine/core/event_ring.hpp"
+#include "engine/core/sim_clock.hpp"
 #include "engine/rhi/device.hpp"
 #include "engine/rhi/pipeline_cache.hpp"
 #include "engine/scene/behavior.hpp"
 #include "engine/scene/components.hpp"
+#include "engine/scene/ground_placement.hpp"
 #include "engine/scene/scene.hpp"
+#include "engine/scene/view_clip.hpp"
+#include "engine/terrain/budget.hpp"
 
 namespace quat::app {
+
+// A single debug step fits one physics update; longer frames are sliced.
+static_assert(engine::core::SimClock::max_step_dt <= engine::physics::PhysicsWorld::max_update_dt);
 
 WorldRuntime::WorldRuntime() {
     // Authoritative ground height at world (x, z): streamed tiles first,
     // then the single editing tile. Shared by kinematic nav agents (the
     // coarse navmesh floats off the real surface) and ground clicks.
     ground_height_at_ = [this](float x, float z) -> std::optional<float> {
-        if (terrain_streamer_) {
-            const float tile = terrain_streamer_->base().tile_size_m;
-            const glm::ivec2 coord(
-                static_cast<int>(std::floor((x - terrain_anchor_.x) / tile + 0.5F)),
-                static_cast<int>(std::floor((z - terrain_anchor_.z) / tile + 0.5F)));
-            const auto it = terrain_streamer_->maps().find(coord);
-            if (it == terrain_streamer_->maps().end()) return std::nullopt;
-            const glm::vec3 org = terrain_streamer_->tile_origin(coord, terrain_anchor_);
-            return org.y + it->second.sample(x - org.x, z - org.z);
-        }
-        if (terrain_present_ && terrain_heightmap_.valid()) {
-            const float half = terrain_heightmap_.tile_size_m * 0.5F;
-            const float lx = x - (terrain_anchor_.x - half);
-            const float lz = z - (terrain_anchor_.z - half);
-            if (lx < 0.0F || lz < 0.0F || lx > terrain_heightmap_.tile_size_m ||
-                lz > terrain_heightmap_.tile_size_m) {
-                return std::nullopt;
-            }
-            return terrain_anchor_.y + terrain_heightmap_.sample(lx, lz);
-        }
-        return std::nullopt;
+        const std::optional<float> h =
+            local_ground_height(x - terrain_anchor_.x, z - terrain_anchor_.z);
+        if (!h) return std::nullopt;
+        return terrain_anchor_.y + *h;
     };
 
     // Ground under a foot (FootIK): a physics raycast in the running world
@@ -81,14 +75,68 @@ WorldRuntime::WorldRuntime() {
     };
 }
 
+std::optional<float> WorldRuntime::local_ground_height(float lx, float lz) const {
+    if (terrain_streamer_) {
+        const float tile = terrain_streamer_->base().tile_size_m;
+        const glm::ivec2 coord(static_cast<int>(std::floor(lx / tile + 0.5F)),
+                               static_cast<int>(std::floor(lz / tile + 0.5F)));
+        const auto it = terrain_streamer_->maps().find(coord);
+        if (it == terrain_streamer_->maps().end()) return std::nullopt;
+        const glm::vec3 org = terrain_streamer_->tile_origin(coord, glm::vec3(0.0F));
+        return it->second.sample(lx - org.x, lz - org.z);
+    }
+    // While a regeneration job runs, the kept heightmap is the previous shape
+    // (the job cleared Terrain::regenerate when it started): no heights.
+    if (terrain_present_ && terrain_heightmap_.valid() && !terrain_job_.valid()) {
+        const float size = terrain_heightmap_.tile_size_m;
+        const float x = lx + size * 0.5F;
+        const float z = lz + size * 0.5F;
+        if (x < 0.0F || z < 0.0F || x > size || z > size) return std::nullopt;
+        return terrain_heightmap_.sample(x, z);
+    }
+    return std::nullopt;
+}
+
+engine::remote::TerrainStatus WorldRuntime::terrain_status() const {
+    engine::remote::TerrainStatus s;
+    const auto grow = [&s](const glm::vec3& lo, const glm::vec3& hi) {
+        s.bounds_min = s.has_bounds ? glm::min(s.bounds_min, lo) : lo;
+        s.bounds_max = s.has_bounds ? glm::max(s.bounds_max, hi) : hi;
+        s.has_bounds = true;
+    };
+    if (terrain_streamer_) {
+        const int side = 2 * terrain_streamer_->radius() + 1;
+        s.tiles_wanted = static_cast<std::uint32_t>(side * side);
+        s.tiles_loaded = static_cast<std::uint32_t>(terrain_streamer_->maps().size());
+        s.generating = s.tiles_loaded < s.tiles_wanted;
+        const float t = terrain_streamer_->base().tile_size_m;
+        for (const auto& [coord, map] : terrain_streamer_->maps()) {
+            const glm::vec3 org = terrain_streamer_->tile_origin(coord, glm::vec3(0.0F));
+            grow(glm::vec3(org.x, map.min_height, org.z),
+                 glm::vec3(org.x + t, map.max_height, org.z + t));
+        }
+        return s;
+    }
+    s.tiles_wanted = terrain_present_ ? 1U : 0U;
+    s.generating = terrain_job_.valid();
+    if (terrain_present_ && terrain_heightmap_.valid()) {
+        s.tiles_loaded = 1;
+        const float half = terrain_heightmap_.tile_size_m * 0.5F;
+        grow(glm::vec3(-half, terrain_heightmap_.min_height, -half),
+             glm::vec3(half, terrain_heightmap_.max_height, half));
+    }
+    return s;
+}
+
 WorldRuntime::~WorldRuntime() {
     shutdown();
 }
 
 bool WorldRuntime::build_scene(engine::scene::Scene& scene, engine::asset::AssetManager& assets,
                                engine::rhi::GpuAllocator& allocator,
-                               const engine::rhi::TransferContext& setup_transfer) {
-    auto demo_result = build_demo_scene(scene, assets, allocator, setup_transfer);
+                               const engine::rhi::TransferContext& setup_transfer,
+                               const std::filesystem::path& project_root) {
+    auto demo_result = build_demo_scene(scene, assets, allocator, setup_transfer, project_root);
     if (!demo_result) return false;
     demo_ = std::move(*demo_result);
     return true;
@@ -96,7 +144,7 @@ bool WorldRuntime::build_scene(engine::scene::Scene& scene, engine::asset::Asset
 
 void WorldRuntime::init(const engine::rhi::Device& device, engine::rhi::GpuAllocator& allocator,
                         engine::rhi::PipelineCache& pipeline_cache, const std::string& shader_dir,
-                        engine::scene::Scene& scene) {
+                        const std::filesystem::path& project_root, engine::scene::Scene& scene) {
     // Terrain (Phase 12): the pass owns the heightmap texture + LOD index
     // buffers; the frame loop generates async whenever a Terrain component
     // asks and uploads the result here. Uploads need a transfer pool that
@@ -122,6 +170,8 @@ void WorldRuntime::init(const engine::rhi::Device& device, engine::rhi::GpuAlloc
     }
     grass_.emplace(device, allocator, pipeline_cache, terrain_transfer_, shader_dir,
                    k_frames_in_flight);
+    particles_.emplace(device, allocator, pipeline_cache, terrain_transfer_, shader_dir,
+                       project_root, k_frames_in_flight);
 
     net_ = engine::net::NetSession::from_environment(scene.registry());
 
@@ -131,18 +181,36 @@ void WorldRuntime::init(const engine::rhi::Device& device, engine::rhi::GpuAlloc
     add_env_terrain(scene);
 }
 
-void WorldRuntime::init_audio(const std::string& asset_root) {
+void WorldRuntime::init_audio(const std::filesystem::path& asset_root) {
     audio_.emplace(AudioRuntime::create(asset_root));
 }
 
+void WorldRuntime::init_scripts(const std::filesystem::path& project_root,
+                                engine::script::ScriptServices services) {
+    engine::script::ScriptRuntime::Options options;
+    options.scripts_root = project_root / "assets" / "scripts";
+#ifdef ENGINE_EDITOR
+    options.watch = true;
+#endif
+    if (const char* env = std::getenv("QUAT_SCRIPT_HOT_RELOAD"); env != nullptr) {
+        options.watch = std::strcmp(env, "0") != 0;
+    }
+    services.project_root = project_root;
+    script_services_ = std::move(services);
+    scripts_.emplace(std::move(options));
+    scripts_->set_services(script_services_);
+}
+
 void WorldRuntime::fill_remote_targets(RemoteBridgeTargets& targets) {
-    targets.ground_height = &ground_height_at_;
+    targets.terrain_height = [this](float lx, float lz) { return local_ground_height(lx, lz); };
+    targets.terrain_status = [this] { return terrain_status(); };
     targets.terrain_streamer = &terrain_streamer_;
     targets.terrain_heightmap = &terrain_heightmap_;
     targets.terrain_anchor = &terrain_anchor_;
     targets.navmesh = &nav_.mesh;
     targets.spin_entity = &demo_.spin_entity;
     targets.demo_physics = &demo_.physics_world;
+    targets.scripts = scripts();
 #ifdef ENGINE_EDITOR
     targets.play_physics = &play_physics_;
 #endif
@@ -197,6 +265,42 @@ void WorldRuntime::simulate(engine::scene::Scene& scene, std::uint64_t frame_num
     // this frame's physics and draw list see them).
     net_.update(scene.registry(), demo_.physics_world ? &*demo_.physics_world : nullptr,
                 demo_.character_entity, dt);
+
+    if (scripts_) scripts_->poll_changes(); // hot reload (G7), once per frame
+
+    // Audit D2: every simulation system advances by the same sim_dt. A scaled
+    // dt above the physics budget runs in equal slices (systems in the same
+    // order per slice); animation samples the whole sim_dt in the scene tick.
+    // A paused frame still runs the systems once with dt 0 (bodies for new
+    // entities, swept bodies, kinematic poses).
+    //
+    // World transforms are resolved before every slice, the first included:
+    // the systems read Transform.world (physics creates bodies at it, nav and
+    // behaviour trees steer from it), and entities created or edited since
+    // the last scene tick — the startup scene on frame 0, a remote spawn, an
+    // editor edit — would otherwise be read at a stale or identity world
+    // (issue #21: the physics demo's boxes were all created at the origin,
+    // inside the floor, and fell out of the world).
+    // Nothing simulates in edit mode without a demo physics world: the
+    // transform passes and empty slices are skipped (the scene tick below
+    // still resolves transforms and animates).
+    const bool simulates = demo_.physics_world.has_value() ||
+                           (play != nullptr && play_physics_.has_value());
+    engine::core::SimSlices slices =
+        engine::core::slice_sim_dt(sim_dt, engine::physics::PhysicsWorld::max_update_dt);
+    if (slices.count == 0) slices = {.count = 1, .dt = 0.0F};
+    for (std::uint32_t i = 0; simulates && i < slices.count; ++i) {
+        engine::scene::transform_system(scene.registry());
+        simulate_slice(scene, slices.dt, play);
+    }
+    scene.tick(sim_dt, foot_probe_); // advances any Animators by simulated time
+
+    // Replication: the host broadcasts moved entities (fresh world poses).
+    net_.publish(scene.registry(), dt);
+}
+
+void WorldRuntime::simulate_slice(engine::scene::Scene& scene, float sim_dt,
+                                  const PlayStep* play) {
     if (demo_.physics_world) {
         if (demo_.character_mode) {
             engine::scene::character_system(scene.registry(), *demo_.physics_world, sim_dt);
@@ -227,11 +331,13 @@ void WorldRuntime::simulate(engine::scene::Scene& scene, std::uint64_t frame_num
         engine::scene::character_system(scene.registry(), *play_physics_, sim_dt);
         engine::scene::physics_system(scene.registry(), *play_physics_, sim_dt);
         engine::scene::publish_physics_events(*play_physics_, engine::core::event_ring());
+        // Scripts see this step's trigger events, then update (G7); their
+        // moves and impulses apply on the next physics step.
+        if (scripts_ && scripts_->running()) {
+            scripts_->dispatch_triggers(*play_physics_);
+            scripts_->update(sim_dt);
+        }
     }
-    scene.tick(sim_dt, foot_probe_); // advances any Animators by simulated time
-
-    // Replication: the host broadcasts moved entities (fresh world poses).
-    net_.publish(scene.registry(), dt);
 }
 
 void WorldRuntime::update_audio(engine::scene::Scene& scene, const glm::mat4& view, bool live,
@@ -257,6 +363,19 @@ void WorldRuntime::update_terrain(engine::scene::Scene& scene, const glm::vec3& 
         terrain_anchor_ = tf != nullptr ? glm::vec3(tf->world[3]) : glm::vec3(0.0F);
         terrain_snowline_ = tcomp.snowline_m;
 
+        // #67: a configuration over the memory / droplet budget is not
+        // generated (the codec rejects it; editor edits bypass the codec).
+        // Whatever is loaded stays; a pending regenerate waits for a fix.
+        if (const auto over = engine::terrain::terrain_budget_problem(
+                tcomp.params, tcomp.streaming, tcomp.stream_radius)) {
+            if (over->message != terrain_budget_error_) {
+                std::fprintf(stderr, "[terrain] not generating: %s\n", over->message.c_str());
+                terrain_budget_error_ = over->message;
+            }
+            break;
+        }
+        terrain_budget_error_.clear();
+
         if (tcomp.streaming) {
             if (tcomp.regenerate || !terrain_streamer_) {
                 tcomp.regenerate = false;
@@ -273,6 +392,16 @@ void WorldRuntime::update_terrain(engine::scene::Scene& scene, const glm::vec3& 
                 invalidate_navmesh("terrain regenerated");
                 std::fprintf(stderr, "[terrain] streaming world (seed %u, radius %d)\n",
                              tcomp.params.seed, tcomp.stream_radius);
+            } else {
+                // Edits that keep the shape (issue #38): a new radius resizes
+                // the window around the tiles already loaded; the generator
+                // choice applies to the next tile.
+                if (terrain_streamer_->radius() != tcomp.stream_radius) {
+                    terrain_streamer_->set_radius(tcomp.stream_radius);
+                    std::fprintf(stderr, "[terrain] stream radius %d\n", tcomp.stream_radius);
+                }
+                terrain_streamer_->set_generator(
+                    tcomp.gpu_generate ? terrain_pass_.tile_generator() : nullptr);
             }
         } else {
             if (terrain_streamer_) {
@@ -343,10 +472,84 @@ void WorldRuntime::update_terrain(engine::scene::Scene& scene, const glm::vec3& 
             std::fprintf(stderr, "[terrain] tile ready (%.0f m, heights %.1f..%.1f m)\n",
                          terrain_heightmap_.tile_size_m, terrain_heightmap_.min_height,
                          terrain_heightmap_.max_height);
+            settle_demo_on_terrain(scene);
         } else {
             std::fprintf(stderr, "[terrain] upload failed: %s\n", r.error().message.c_str());
         }
     }
+}
+
+void WorldRuntime::settle_demo_on_terrain(engine::scene::Scene& scene) {
+    entt::registry& r = scene.registry();
+    if (demo_.root == entt::null || demo_.pedestal == entt::null) return;
+    // A replaced scene may have recycled the ids: only the showcase's own
+    // pedestal-under-root pair is moved.
+    const auto* parent = r.valid(demo_.pedestal) ? r.try_get<engine::scene::Parent>(demo_.pedestal)
+                                                 : nullptr;
+    if (!r.valid(demo_.root) || parent == nullptr || parent->entity != demo_.root ||
+        !r.all_of<engine::scene::Transform>(demo_.root) ||
+        !r.all_of<engine::scene::Transform>(demo_.pedestal) || !terrain_heightmap_.valid()) {
+        return;
+    }
+    // Room above the highest ground for the tallest grass blades (0.75 m by
+    // default) so none pokes through the plate; the foot is buried a little.
+    constexpr float k_clearance = 0.8F;
+    constexpr float k_embed = 0.5F;
+    auto& root_tf = r.get<engine::scene::Transform>(demo_.root);
+    const glm::vec2 centre(root_tf.world[3].x, root_tf.world[3].z);
+    const float half = terrain_heightmap_.tile_size_m * 0.5F;
+    const engine::scene::GroundLattice lattice{
+        glm::vec2(terrain_anchor_.x - half, terrain_anchor_.z - half),
+        terrain_heightmap_.metres_per_texel()};
+    const auto span =
+        engine::scene::ground_span(ground_height_at_, centre, demo_.footprint_half, lattice);
+    if (!span) {
+        std::fprintf(stderr, "[terrain] showcase plate is off the terrain tile; left in place\n");
+        return;
+    }
+    const engine::scene::Pedestal pedestal = engine::scene::pedestal_on(*span, k_clearance, k_embed);
+
+    // The root is a scene root (no parent): its local is its world.
+    const float old_y = root_tf.local[3].y;
+    root_tf.local[3].y = pedestal.top_y;
+    root_tf.world = root_tf.local;
+    // The pedestal box hangs below the root's origin, scaled to the depth.
+    const float depth = std::max(pedestal.depth(), 2.0F * k_pedestal_mesh_half_height);
+    r.get<engine::scene::Transform>(demo_.pedestal).local =
+        glm::translate(glm::mat4(1.0F), glm::vec3(0.0F, -0.5F * depth, 0.0F)) *
+        glm::scale(glm::mat4(1.0F),
+                   glm::vec3(1.0F, depth / (2.0F * k_pedestal_mesh_half_height), 1.0F));
+    engine::scene::transform_system(r);
+    demo_shift_ += pedestal.top_y - old_y;
+    std::fprintf(stderr,
+                 "[terrain] showcase settled on the terrain: plate top %.2f m (ground %.2f..%.2f m "
+                 "under it)\n",
+                 pedestal.top_y, span->min_y, span->max_y);
+}
+
+std::optional<engine::asset::Aabb> WorldRuntime::terrain_view_bounds(const glm::vec3& eye) const {
+    if (!terrain_present_) return std::nullopt;
+    if (terrain_stream_mode_ && terrain_streamer_) {
+        // Heights of the loaded tiles; before any loads, the nominal range.
+        const engine::terrain::TerrainParams& base = terrain_streamer_->base();
+        float lo = 0.0F;
+        float hi = base.height_m;
+        if (!terrain_streamer_->maps().empty()) {
+            lo = std::numeric_limits<float>::max();
+            hi = std::numeric_limits<float>::lowest();
+            for (const auto& [coord, map] : terrain_streamer_->maps()) {
+                lo = std::min(lo, map.min_height);
+                hi = std::max(hi, map.max_height);
+            }
+        }
+        return engine::scene::streaming_window_bounds(eye, terrain_anchor_, base.tile_size_m,
+                                                      terrain_streamer_->radius(), lo, hi);
+    }
+    if (!terrain_heightmap_.valid()) return std::nullopt;
+    const float half = terrain_heightmap_.tile_size_m * 0.5F;
+    return engine::asset::Aabb{
+        terrain_anchor_ + glm::vec3(-half, terrain_heightmap_.min_height, -half),
+        terrain_anchor_ + glm::vec3(half, terrain_heightmap_.max_height, half)};
 }
 
 void WorldRuntime::service_navmesh_request(engine::scene::Scene& scene) {
@@ -400,10 +603,32 @@ std::expected<void, engine::core::Error> WorldRuntime::begin_play(engine::scene:
         }
     }
     nav_.auto_bake = true; // bake now if agents have no mesh
+    if (scripts_) {
+        engine::script::ScriptServices services = script_services_;
+        services.physics = &*play_physics_;
+        scripts_->set_services(std::move(services));
+        if (auto started = scripts_->start(scene); !started) {
+            std::fprintf(stderr, "[script][warn] scripts disabled: %s\n",
+                         started.error().message.c_str());
+        }
+    }
     return {};
 }
 
+bool WorldRuntime::apply_play(PlayMode& mode, engine::scene::Scene& scene) {
+    const bool was_active = mode.active();
+    (void)mode.apply(scene, {.begin = [this](engine::scene::Scene& s) { return begin_play(s); },
+                             .end = [this] { end_play(); }});
+    if (mode.active() == was_active) return false;
+    reset_particles();
+    return true;
+}
+
 void WorldRuntime::end_play() {
+    if (scripts_) { // before the physics world the scripts point at
+        scripts_->stop();
+        scripts_->set_services(script_services_);
+    }
     play_physics_.reset();
     terrain_bodies_.clear(); // died with the play world
 }

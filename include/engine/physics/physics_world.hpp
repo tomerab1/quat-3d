@@ -49,16 +49,24 @@ public:
     ~PhysicsWorld();
 
     // Advance by `dt` seconds, stepping the simulation in fixed 1/120 s ticks
-    // (accumulated; clamped to avoid a spiral of death on long frames).
+    // (accumulated). A `dt` up to max_update_dt is simulated exactly: what
+    // does not fill a whole tick carries to the next call. A longer `dt` is a
+    // hitch: at most max_steps_per_update ticks run and the backlog beyond
+    // the sub-tick remainder is dropped (no spiral of death). Callers that
+    // need more simulated time per frame (the debug time scale) call update()
+    // several times with slices of at most max_update_dt (core::slice_sim_dt).
     void update(float dt);
 
     // Fixed simulation timestep.
     static constexpr float fixed_timestep = 1.0F / 120.0F;
-    // Catch-up limit per update(); time beyond it is dropped, not carried.
+    // Catch-up limit per update(); see update().
     static constexpr int max_steps_per_update = 8;
+    // The longest dt one update() simulates exactly.
+    static constexpr float max_update_dt =
+        static_cast<float>(max_steps_per_update) * fixed_timestep;
 
-    // Accumulated time not yet simulated (always < fixed_timestep after a
-    // capped update). Render interpolation and debugging read it.
+    // Accumulated time not yet simulated (under a tick, up to float rounding,
+    // after any update). Render interpolation and debugging read it.
     [[nodiscard]] float pending_time() const;
 
     // World gravity, m/s^2 (default (0, -9.81, 0)). Changing it wakes every

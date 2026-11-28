@@ -1,0 +1,145 @@
+name: Release
+
+# Downloadable builds of the game/editor for Linux, Windows and macOS.
+#   - Tag push v*: build, package, smoke-test, publish a GitHub Release.
+#   - workflow_dispatch: the same builds, uploaded as workflow artifacts only.
+# Packaging: scripts/package-release.sh; smoke test (launch the unpacked
+# package headless for 30 frames): scripts/smoke-test-package.sh.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    name: Package ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux-x64
+            runner: ubuntu-24.04
+            preset: release
+          - name: windows-x64
+            runner: windows-2022
+            preset: windows-release
+          - name: macos-arm64
+            runner: macos-15
+            preset: macos-release
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up build
+        id: setup
+        uses: ./.github/actions/setup-build
+        with:
+          extra-apt-packages: xvfb patchelf
+
+      # ENGINE_PACKAGE_BUILD: no build-machine paths in the binary; the game
+      # finds its data next to the executable.
+      - name: Configure
+        id: configure
+        run: cmake --preset ${{ matrix.preset }} -DENGINE_PACKAGE_BUILD=ON -DENGINE_PROFILE=OFF
+
+      # Not on tag refs: tag runs restore the caches master/CI built but never
+      # add their own (a tag's cache would only serve that one tag).
+      - name: Save vcpkg binary cache
+        if: always() && steps.setup.outputs.cache-key != '' && github.ref_type != 'tag'
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ github.workspace }}/.vcpkg-archives
+          key: ${{ steps.setup.outputs.cache-key }}
+
+      - name: Build
+        if: steps.configure.outcome == 'success'
+        run: cmake --build --preset ${{ matrix.preset }} --target game
+
+      # Tags must look like v1.2.3 or v1.2.3-rc.1: the version ends up in file
+      # names, Info.plist and the release title.
+      - name: Version
+        id: version
+        shell: bash
+        run: |
+          if [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            if ! [[ "$GITHUB_REF_NAME" =~ ^v[0-9]+(\.[0-9]+)*(-[0-9A-Za-z.]+)?$ ]]; then
+              echo "::error::tag '$GITHUB_REF_NAME' is not a release version (v1.2.3 or v1.2.3-rc.1)"
+              exit 1
+            fi
+            echo "version=$GITHUB_REF_NAME" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=dev-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Git Bash on Windows (inside the MSVC environment: the MSVC runtime
+      # DLLs are copied from VCToolsRedistDir).
+      - name: Package
+        id: package
+        shell: bash
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          BUILD_DIR: build/${{ matrix.preset }}
+        run: |
+          bash scripts/package-release.sh "$BUILD_DIR" dist "$VERSION" | tee package.log
+          archive=$(tail -n1 package.log)
+          echo "archive=dist/$(basename "$archive")" >> "$GITHUB_OUTPUT"
+          ls -l dist
+
+      # Unpacked under a directory with a space and a non-ASCII character:
+      # the game must resolve its data through UTF-8-safe paths.
+      - name: Smoke test (launch the package headless)
+        timeout-minutes: 15
+        shell: bash
+        env:
+          ARCHIVE: ${{ steps.package.outputs.archive }}
+        run: bash scripts/smoke-test-package.sh "$ARCHIVE" "$RUNNER_TEMP/smoke dir ü 画"
+
+      - name: Upload package
+        uses: actions/upload-artifact@v4
+        with:
+          name: quat-3d-${{ matrix.name }}
+          path: ${{ steps.package.outputs.archive }}
+          if-no-files-found: error
+          # Already compressed.
+          compression-level: 0
+
+      - name: Upload smoke-test output on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: smoke-${{ matrix.name }}
+          path: |
+            ${{ runner.temp }}/smoke dir ü 画/smoke.log
+            ${{ runner.temp }}/smoke dir ü 画/smoke.ppm
+            build/${{ matrix.preset }}/vcpkg-manifest-install.log
+          if-no-files-found: ignore
+
+  publish:
+    name: Publish GitHub Release
+    if: github.ref_type == 'tag'
+    needs: package
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: quat-3d-*
+          path: dist
+          merge-multiple: true
+
+      - name: Release
+        uses: softprops/action-gh-release@8a0cd651e5b2365bd640854a3fa5dfc70e4875f3 # v3.0.4
+        with:
+          files: dist/*
+          fail_on_unmatched_files: true
+          generate_release_notes: true
+          prerelease: ${{ contains(github.ref_name, '-') }}

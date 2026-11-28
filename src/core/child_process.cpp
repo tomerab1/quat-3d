@@ -1,10 +1,13 @@
 #include "engine/core/child_process.hpp"
+#include "engine/core/env.hpp"
+#include "engine/core/utf8_path.hpp"
 
 #include <algorithm>
 #include <cerrno>
 #include <cstdlib>
 #include <cstring>
 #include <system_error>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -23,6 +26,9 @@
 #include <spawn.h>
 #include <sys/wait.h>
 #include <unistd.h>
+#if defined(__linux__)
+#include <sys/syscall.h>
+#endif
 extern char** environ; // NOLINT: POSIX-defined process environment
 #endif
 
@@ -47,7 +53,7 @@ enum class Abort : std::uint8_t { none, timed_out, cancelled, failed };
 [[nodiscard]] std::unexpected<Error> abort_error(Abort why, const fs::path& program,
                                                  const ProcessOptions& options,
                                                  const std::string& output) {
-    std::string what = program.filename().string();
+    std::string what = core::path_to_utf8(program.filename());
     if (why == Abort::timed_out) {
         what += " timed out after " + std::to_string(options.timeout.count()) +
                 " ms and was killed";
@@ -240,7 +246,7 @@ run_process(const fs::path& program, std::span<const std::string> args,
     null_in = INVALID_HANDLE_VALUE;
     if (!started) {
         CloseHandle(read_end);
-        return fail("CreateProcess failed for " + program.string() + " (error " +
+        return fail("CreateProcess failed for " + core::path_to_utf8(program) + " (error " +
                     std::to_string(create_error) + ")");
     }
     CloseHandle(pi.hThread);
@@ -312,6 +318,55 @@ void kill_child(std::intptr_t child) {
     // started. The group id is the child's pid, which cannot be reused before
     // run_process reaps it — and it is unregistered before that.
     ::kill(-static_cast<pid_t>(child), SIGKILL);
+}
+
+// Waits until the child has exited, sliced against the deadline and the
+// canceller like the read loop: a child can close its output and keep
+// running, so EOF does not mean it is about to exit. The child is not reaped
+// (WNOWAIT) — its pid, and so its process group id, stay reserved while the
+// canceller can still signal them.
+[[nodiscard]] Abort wait_for_exit(pid_t pid, const ProcessOptions& options,
+                                  Clock::time_point deadline) {
+    const bool sliced = options.canceller != nullptr || deadline != Clock::time_point::max();
+#if defined(__linux__) && defined(SYS_pidfd_open)
+    // A pidfd turns readable when the process exits, so each slice sleeps on
+    // the exit itself rather than a timer (-1 on kernels before 5.3).
+    const int pidfd = sliced ? static_cast<int>(::syscall(SYS_pidfd_open, pid, 0)) : -1;
+#else
+    const int pidfd = -1;
+#endif
+    std::chrono::milliseconds backoff{1};
+    Abort why = Abort::none;
+    for (;;) {
+        siginfo_t info{}; // si_pid stays 0 when WNOHANG finds no exited child
+        const int flags = WEXITED | WNOWAIT | (sliced ? WNOHANG : 0);
+        if (::waitid(P_PID, static_cast<id_t>(pid), &info, flags) != 0) {
+            if (errno == EINTR) continue;
+            why = Abort::failed;
+            break;
+        }
+        if (info.si_pid == pid) break; // exited; the caller reaps it
+        if (options.canceller != nullptr && options.canceller->cancelled()) {
+            why = Abort::cancelled;
+            break;
+        }
+        std::chrono::milliseconds wait{0};
+        if (!next_wait(deadline, wait)) {
+            why = Abort::timed_out;
+            break;
+        }
+        if (pidfd >= 0) {
+            pollfd pfd{pidfd, POLLIN, 0};
+            (void)::poll(&pfd, 1, static_cast<int>(wait.count())); // ready, EINTR: re-check
+        } else {
+            // No pidfd: poll at a growing interval, so a child that exits just
+            // after closing its pipe (the usual case) costs about 1 ms.
+            std::this_thread::sleep_for(std::min(wait, backoff));
+            backoff = std::min(backoff * 2, k_wait_slice);
+        }
+    }
+    if (pidfd >= 0) ::close(pidfd);
+    return why;
 }
 
 } // namespace
@@ -428,12 +483,15 @@ run_process(const fs::path& program, std::span<const std::string> args,
             break;
         }
     }
-    // cancel() kills the child, which ends the loop at EOF: still a cancel.
+    ::close(pipe_fds[0]);
+    // EOF only means every writer closed the pipe; the child may still run.
+    // It stays registered with the canceller until it has exited.
+    if (abort == Abort::none) abort = wait_for_exit(pid, options, deadline);
+    // cancel() kills the child, which ends the wait: still a cancel.
     if (abort == Abort::none && options.canceller != nullptr && options.canceller->cancelled()) {
         abort = Abort::cancelled;
     }
     if (abort != Abort::none) kill_child(pid);
-    ::close(pipe_fds[0]);
     detail::CancellerAccess::detach(options.canceller); // before reaping: see kill_child
 
     int status = 0;
@@ -455,8 +513,10 @@ run_process(const fs::path& program, std::span<const std::string> args,
 #endif
 
 std::optional<fs::path> find_on_path(std::string_view name) {
-    const char* path_env = std::getenv("PATH");
-    if (path_env == nullptr) return std::nullopt;
+    // UTF-8 (read from the UTF-16 environment on Windows); each entry is
+    // converted back with path_from_utf8.
+    const std::optional<std::string> path_env = env_utf8("PATH");
+    if (!path_env) return std::nullopt;
 #if defined(_WIN32)
     constexpr char separator = ';';
     const std::string file = std::string(name) + ".exe";
@@ -464,14 +524,14 @@ std::optional<fs::path> find_on_path(std::string_view name) {
     constexpr char separator = ':';
     const std::string file(name);
 #endif
-    const std::string_view paths(path_env);
+    const std::string_view paths(*path_env);
     std::size_t start = 0;
     while (start <= paths.size()) {
         std::size_t end = paths.find(separator, start);
         if (end == std::string_view::npos) end = paths.size();
         const std::string_view dir = paths.substr(start, end - start);
         if (!dir.empty()) {
-            const fs::path candidate = fs::path(std::string(dir)) / file;
+            const fs::path candidate = path_from_utf8(dir) / file;
             std::error_code ec;
             if (fs::is_regular_file(candidate, ec)) {
 #if defined(_WIN32)

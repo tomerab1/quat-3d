@@ -21,21 +21,22 @@ async fn main() -> anyhow::Result<()> {
 
     let cli = Cli::parse();
     let config = cli.engine_config();
+    let token_from = match (&config.token, &config.token_file) {
+        (Some(_), _) => "QUAT_REMOTE_TOKEN".to_owned(),
+        (None, Some(path)) => path.display().to_string(),
+        (None, None) => "nowhere (no per-user directory)".to_owned(),
+    };
     tracing::info!(
-        "quat-mcp {} serving MCP on stdio; engine at {}{}",
+        "quat-mcp {} serving MCP on stdio; engine at {}; session token from {token_from}",
         env!("CARGO_PKG_VERSION"),
         config.addr,
-        if config.token.is_some() {
-            " (with token)"
-        } else {
-            ""
-        }
     );
 
     // The engine connection is opened lazily by the first tool call, so the
     // MCP client can start quat-mcp before the engine is running.
     let engine = Arc::new(EngineClient::new(config));
     let service = QuatServer::new(engine, cli.long_timeout())
+        .with_assets(cli.asset_config())
         .serve(rmcp::transport::stdio())
         .await
         .context("starting the MCP server on stdio")?;
