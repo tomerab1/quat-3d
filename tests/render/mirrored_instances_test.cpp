@@ -45,9 +45,9 @@ TEST(MirroredInstances, PartitionSplitsEachDrawStablyAndKeepsMotionParallel) {
         m.prev_model = list.instances.back().model;
         list.motion.push_back(m);
     }
-    list.draws = {{nullptr, nullptr, VK_NULL_HANDLE, 0, 5},
-                  {nullptr, nullptr, VK_NULL_HANDLE, 5, 3},
-                  {nullptr, nullptr, VK_NULL_HANDLE, 8, 2}};
+    list.draws = {{.first_instance = 0, .instance_count = 5},
+                  {.first_instance = 5, .instance_count = 3},
+                  {.first_instance = 8, .instance_count = 2}};
 
     const std::vector<std::uint32_t> unmirrored = r::partition_mirrored(list);
     ASSERT_EQ(unmirrored, (std::vector<std::uint32_t>{3, 0, 2}));
