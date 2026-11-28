@@ -93,12 +93,15 @@ jobs:
 
       # The game without the editor layer (and without Tracy) compiles other
       # code paths (it broke once unnoticed). Shares the release build's vcpkg_installed tree, so
-      # no dependency is rebuilt; only the `game` target is built.
+      # no dependency is rebuilt; only the `game` target is built. Manifest
+      # install is off: with ENGINE_PROFILE=OFF the manifest no longer asks
+      # for the `profiling` feature, and an install would remove Tracy from
+      # the shared tree under the release build.
       - name: Build game without the editor (ENGINE_EDITOR=OFF, ENGINE_PROFILE=OFF)
         if: ${{ !cancelled() && steps.configure.outcome == 'success' }}
         run: |
           cmake --preset release -B build/release-noeditor \
-            -DENGINE_PROFILE=OFF -DENGINE_EDITOR=OFF \
+            -DENGINE_PROFILE=OFF -DENGINE_EDITOR=OFF -DVCPKG_MANIFEST_INSTALL=OFF \
             -DVCPKG_INSTALLED_DIR="${{ github.workspace }}/build/release/vcpkg_installed"
           cmake --build build/release-noeditor --target game
 

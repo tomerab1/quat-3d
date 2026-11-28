@@ -43,15 +43,22 @@
     "miniaudio",
     "lua",
     "sol2",
-    {
-      "name": "tracy",
-      "default-features": false,
-      "features": [
-        "on-demand"
-      ]
-    },
     "gtest"
   ],
+  "features": {
+    "profiling": {
+      "description": "Tracy profiler client (ENGINE_PROFILE=ON; CMake requests this feature itself)",
+      "dependencies": [
+        {
+          "name": "tracy",
+          "default-features": false,
+          "features": [
+            "on-demand"
+          ]
+        }
+      ]
+    }
+  },
   "overrides": [
     {
       "name": "lua",

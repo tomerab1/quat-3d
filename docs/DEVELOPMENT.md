@@ -27,8 +27,9 @@ the current state is in [`STATUS.md`](STATUS.md).
 | `macos-release` | Apple clang, `arm64-osx-14` triplet (macOS 14 minimum), MoltenVK — sets `ENGINE_DESCRIPTOR_SETS_FALLBACK=ON` |
 
 CMake options: `ENGINE_EDITOR` (default ON), `ENGINE_PROFILE` (the Tracy
-client, R4: default ON for Debug / RelWithDebInfo, OFF for Release; see
-[`profiling.md`](profiling.md)),
+client, R4: default ON for Debug / RelWithDebInfo, OFF for Release; it also
+selects the vcpkg manifest feature `profiling`, so OFF builds never build
+Tracy; see [`profiling.md`](profiling.md)),
 `ENGINE_DESCRIPTOR_SETS_FALLBACK` (macOS / drivers without descriptor buffers),
 `ENGINE_PACKAGE_BUILD` (release archives: no source-tree paths compiled in —
 the game finds `assets/` + `cooked/shaders/` next to its executable or in

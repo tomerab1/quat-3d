@@ -13,6 +13,23 @@ cmake_minimum_required(VERSION 3.22)
 # before project() so the vcpkg toolchain sees it.
 set(VCPKG_OVERLAY_PORTS "${CMAKE_CURRENT_SOURCE_DIR}/ports")
 
+# Tracy profiling (R4): on by default for Debug / RelWithDebInfo (and an
+# unset build type, which becomes Debug below), off for Release unless asked
+# for (the `release` preset asks; packaged builds pass OFF). The built-in
+# frame profiler is compiled either way. Decided before project() because
+# Tracy is the vcpkg manifest feature `profiling`: only builds with
+# ENGINE_PROFILE=ON download and build it.
+if(NOT CMAKE_BUILD_TYPE OR CMAKE_BUILD_TYPE MATCHES "^(Debug|RelWithDebInfo)$")
+    set(ENGINE_PROFILE_DEFAULT ON)
+else()
+    set(ENGINE_PROFILE_DEFAULT OFF)
+endif()
+option(ENGINE_PROFILE "Compile in the Tracy profiler client (on demand, loopback only)"
+    ${ENGINE_PROFILE_DEFAULT})
+if(ENGINE_PROFILE)
+    list(APPEND VCPKG_MANIFEST_FEATURES "profiling")
+endif()
+
 project(quat_3d
     VERSION 0.1.0
     DESCRIPTION "Modular data-driven C++23 game engine"
@@ -32,16 +49,6 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
 endif()
 
 option(ENGINE_EDITOR "Build the ImGui-based editor layer" ON)
-# Tracy profiling (R4): on by default for Debug / RelWithDebInfo, off for
-# Release unless asked for (the `release` preset asks; packaged builds pass
-# OFF). The built-in frame profiler is compiled either way.
-if(CMAKE_BUILD_TYPE MATCHES "^(Debug|RelWithDebInfo)$")
-    set(ENGINE_PROFILE_DEFAULT ON)
-else()
-    set(ENGINE_PROFILE_DEFAULT OFF)
-endif()
-option(ENGINE_PROFILE "Compile in the Tracy profiler client (on demand, loopback only)"
-    ${ENGINE_PROFILE_DEFAULT})
 # Compatibility switch for drivers without VK_EXT_descriptor_buffer (MoltenVK on
 # macOS). When ON, the RHI may fall back to classic descriptor pools/sets and the
 # instance opts into portability (non-conformant) ICD enumeration. Descriptor
@@ -153,8 +160,9 @@ set_target_properties(miniaudio_headers PROPERTIES
     INTERFACE_INCLUDE_DIRECTORIES "${MINIAUDIO_INCLUDE_DIR}")
 target_link_libraries(miniaudio_headers INTERFACE
     Threads::Threads ${CMAKE_DL_LIBS} $<$<PLATFORM_ID:Linux,FreeBSD>:m>)
-# Tracy client (vcpkg overlay port ports/tracy: TRACY_ON_DEMAND, loopback
-# only). Its TRACY_ENABLE / TRACY_ON_DEMAND definitions travel with the target.
+# Tracy client (manifest feature `profiling`, overlay port ports/tracy:
+# TRACY_ON_DEMAND, loopback only). Its TRACY_ENABLE / TRACY_ON_DEMAND
+# definitions travel with the target.
 if(ENGINE_PROFILE)
     find_package(Tracy CONFIG REQUIRED)
 endif()
