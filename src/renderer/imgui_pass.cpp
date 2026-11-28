@@ -10,6 +10,7 @@
 #include <imgui.h>
 
 #include "engine/rhi/device.hpp"
+#include "engine/rhi/formats.hpp"
 #include "engine/rhi/gpu_allocator.hpp"
 #include "engine/rhi/pipeline_cache.hpp"
 
@@ -37,6 +38,31 @@ struct UiPushConstants {
 };
 static_assert(sizeof(UiPushConstants) == 16, "must match imgui.slang PushConstants");
 
+// Byte copy of a whole colour image between two size-compatible formats (an
+// sRGB image and its UNORM twin): the bytes move as they are, no conversion.
+void add_byte_copy(rhi::RenderGraph& graph, const char* name, rhi::ResourceHandle src,
+                   rhi::ResourceHandle dst, VkExtent2D extent) {
+    (void)graph.add_pass(name, rhi::PassType::transfer)
+        .reads(src, rhi::ResourceUsage::transfer_src)
+        .writes(dst, rhi::ResourceUsage::transfer_dst)
+        .execute([src, dst, extent](rhi::PassContext& ctx) {
+            VkImageCopy2 region{};
+            region.sType = VK_STRUCTURE_TYPE_IMAGE_COPY_2;
+            region.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+            region.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+            region.extent = {extent.width, extent.height, 1};
+            VkCopyImageInfo2 copy{};
+            copy.sType = VK_STRUCTURE_TYPE_COPY_IMAGE_INFO_2;
+            copy.srcImage = ctx.resolve(src).image;
+            copy.srcImageLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+            copy.dstImage = ctx.resolve(dst).image;
+            copy.dstImageLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+            copy.regionCount = 1;
+            copy.pRegions = &region;
+            vkCmdCopyImage2(ctx.cmd(), &copy);
+        });
+}
+
 } // namespace
 
 std::expected<ImGuiPass, core::Error>
@@ -54,6 +80,10 @@ ImGuiPass::create(const rhi::Device& device, rhi::GpuAllocator& allocator,
     ImGuiPass out;
     out.device_ = &device;
     out.allocator_ = &allocator;
+    // ImGui's colours and font coverage are authored for blending in gamma
+    // (sRGB-encoded) space, so the pipeline writes the target's stored bytes
+    // as they are: an sRGB target is drawn through its UNORM twin.
+    out.pipeline_format_ = rhi::storage_unorm(output_format);
 
     out.db_fns_ = rhi::DescriptorBufferFunctions::load(device.handle());
     if (!out.db_fns_.valid()) {
@@ -82,7 +112,7 @@ ImGuiPass::create(const rhi::Device& device, rhi::GpuAllocator& allocator,
     rhi::GraphicsPipeline::CreateInfo info{};
     info.vertex = *shader;
     info.fragment = *shader;
-    info.color_formats = {&output_format, 1};
+    info.color_formats = {&out.pipeline_format_, 1};
     info.alpha_blend = true; // UI composites over the scene
     info.cull_mode = VK_CULL_MODE_NONE;
     info.vertex_bindings = {&vbind, 1};
@@ -250,34 +280,71 @@ std::expected<void, core::Error> ImGuiPass::add_to_graph(rhi::RenderGraph& graph
     }
     if (frame_cmds_.empty()) return {};
 
+    // Where the UI is drawn. Its blending must happen on the stored
+    // (gamma-encoded) bytes: directly on a UNORM target or through an sRGB
+    // target's UNORM view (a mutable-format swapchain); otherwise into a
+    // UNORM scratch image whose bytes are copied over the target — exact,
+    // at the cost of one (overlay: two) full-target copy.
+    const rhi::ResourceBinding target_binding = graph.binding(target);
+    if (rhi::storage_unorm(target_binding.format) != pipeline_format_) {
+        return fail("imgui pass: target format " +
+                    std::to_string(static_cast<int>(target_binding.format)) +
+                    " differs from the format the pass was created for (" +
+                    std::to_string(static_cast<int>(pipeline_format_)) + ")");
+    }
+    if (viewport.valid()) {
+        // ImGui::Image samples are blended like vertex colours, in gamma
+        // space: an sRGB view would decode the scene image to linear and
+        // show it darker than the game view.
+        const rhi::ResourceBinding vb = graph.binding(viewport);
+        if (vb.unorm_view == VK_NULL_HANDLE && rhi::is_srgb(vb.format)) {
+            return fail("imgui pass: the viewport image is sRGB with no UNORM view; it must "
+                        "be sampled without sRGB decode (a UNORM image or "
+                        "RenderGraph::set_unorm_view)");
+        }
+    }
+    const bool direct =
+        !rhi::is_srgb(target_binding.format) || target_binding.unorm_view != VK_NULL_HANDLE;
+    rhi::ResourceHandle ui = target;
+    if (!direct) {
+        ui = graph.create_transient_image("ui_composite", pipeline_format_, extent,
+                                          VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
+                                              VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
+                                              VK_IMAGE_USAGE_TRANSFER_DST_BIT);
+        if (!clear) add_byte_copy(graph, "imgui_load", target, ui, extent);
+    }
+
     frame_scale_[0] = 2.0F / draw_data->DisplaySize.x;
     frame_scale_[1] = 2.0F / draw_data->DisplaySize.y;
     frame_translate_[0] = -1.0F - draw_data->DisplayPos.x * frame_scale_[0];
     frame_translate_[1] = -1.0F - draw_data->DisplayPos.y * frame_scale_[1];
 
     auto pass = graph.add_pass("imgui", rhi::PassType::graphics);
-    pass.writes(target, rhi::ResourceUsage::color_attachment);
+    pass.writes(ui, rhi::ResourceUsage::color_attachment);
     if (viewport.valid()) {
         pass.reads(viewport, rhi::ResourceUsage::sampled);
     }
-    pass.execute([this, target, extent, viewport, clear](rhi::PassContext& ctx) {
+    pass.execute([this, ui, extent, viewport, clear](rhi::PassContext& ctx) {
             const VkCommandBuffer cmd = ctx.cmd();
-            const rhi::ResourceBinding t = ctx.resolve(target);
+            const rhi::ResourceBinding t = ctx.resolve(ui);
 
             // The viewport panel's scene image: rebind every frame, the view
             // changes when the panel is resized.
             if (viewport.valid()) {
                 viewport_descriptor_.write_sampled_image(
-                    0, ctx.resolve(viewport).view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+                    0, ctx.resolve(viewport).unorm_view,
+                    VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
                 viewport_descriptor_.write_sampler(1, font_sampler_.handle());
             }
 
             VkRenderingAttachmentInfo color{};
             color.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
-            color.imageView = t.view;
+            color.imageView = t.unorm_view; // gamma-space blending (see above)
             color.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
             // Editor mode owns the whole swapchain (clear); overlay mode
-            // composites over the scene already present (load).
+            // composites over the scene already present (load). The clear
+            // value is stored as is (UNORM view): sRGB-encoded, like the
+            // theme colours it sits behind.
             color.loadOp = clear ? VK_ATTACHMENT_LOAD_OP_CLEAR : VK_ATTACHMENT_LOAD_OP_LOAD;
             color.clearValue.color = {{0.06F, 0.06F, 0.07F, 1.0F}};
             color.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
@@ -327,6 +394,7 @@ std::expected<void, core::Error> ImGuiPass::add_to_graph(rhi::RenderGraph& graph
             }
             vkCmdEndRendering(cmd);
         });
+    if (!direct) add_byte_copy(graph, "imgui_store", ui, target, extent);
     return {};
 }
 
