@@ -6,32 +6,32 @@ use serde::de::Error as _;
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::{Map, Value};
 
-mod behavior;
-mod debug;
-mod input;
-mod physics;
-mod post;
-mod profile;
-mod project;
-mod script;
-mod shader;
-mod time;
-mod tuning;
-mod weather;
-mod world;
-pub use behavior::*;
-pub use debug::*;
-pub use input::*;
-pub use physics::*;
-pub use post::*;
-pub use profile::*;
-pub use project::*;
-pub use script::*;
-pub use shader::*;
-pub use time::*;
-pub use tuning::*;
-pub use weather::*;
-pub use world::*;
+/// One parameter module per tool group, re-exported flat: a new group is one
+/// line here (ROADMAP S9).
+macro_rules! param_groups {
+    ($($group:ident),+ $(,)?) => {
+        $(
+            mod $group;
+            pub use $group::*;
+        )+
+    };
+}
+
+param_groups! {
+    behavior,
+    debug,
+    input,
+    physics,
+    post,
+    profile,
+    project,
+    script,
+    shader,
+    time,
+    tuning,
+    weather,
+    world,
+}
 
 /// A JSON object keyed by component name (see the tool description).
 pub type Components = Map<String, Value>;

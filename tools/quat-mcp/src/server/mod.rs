@@ -3,41 +3,10 @@
 //! (`crate::skills`), and the scene-summary and scripting resources.
 //! Everything the model reads is Markdown under `content/`.
 
-// Tool modules attach `content/tools/*.md` as doc attributes, so clippy's
-// rustdoc lints would police that Markdown. It is text for the model, not API
-// documentation: `doc_markdown` (backticks around identifiers) is off there.
-#[allow(clippy::doc_markdown)]
-mod asset_tools;
-#[allow(clippy::doc_markdown)]
-mod behavior_tools;
 mod bt_outline;
-#[allow(clippy::doc_markdown)]
-mod debug_tools;
-#[allow(clippy::doc_markdown)]
-mod input_tools;
-#[allow(clippy::doc_markdown)]
-mod physics;
-#[allow(clippy::doc_markdown)]
-mod profile_tools;
-#[allow(clippy::doc_markdown)]
-mod project_tools;
+#[cfg(test)]
+mod group_tests;
 mod results;
-#[allow(clippy::doc_markdown)]
-mod scene_tools;
-#[allow(clippy::doc_markdown)]
-mod script_tools;
-#[allow(clippy::doc_markdown)]
-mod shader_tools;
-#[allow(clippy::doc_markdown)]
-mod sim_tools;
-#[allow(clippy::doc_markdown)]
-mod time_tools;
-#[allow(clippy::doc_markdown)]
-mod tuning_tools;
-#[allow(clippy::doc_markdown)]
-mod weather_tools;
-#[allow(clippy::doc_markdown)]
-mod world_tools;
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -62,6 +31,56 @@ use crate::skills::{self, prompts};
 pub use asset_tools::AssetConfig;
 pub use results::{error_result, normalize_method};
 pub use world_tools::MAX_GROUND_POINTS;
+
+/// Declares the tool groups (one `<area>_tools.rs` module each, whose
+/// `#[tool_router(router = <area>_tools)]` impl block holds its tools) and
+/// merges their routers into [`QuatServer::tools`]. A new group is one new
+/// file and one line in the [`tool_groups!`] list below, never an edit to
+/// shared code (ROADMAP S9).
+macro_rules! tool_groups {
+    ($($group:ident),+ $(,)?) => {
+        // Tool modules attach `content/tools/*.md` as doc attributes, so
+        // clippy's rustdoc lints would police that Markdown. It is text for
+        // the model, not API documentation: `doc_markdown` (backticks around
+        // identifiers) is off there.
+        $(
+            #[allow(clippy::doc_markdown)]
+            mod $group;
+        )+
+
+        impl QuatServer {
+            /// Every tool this server offers, across all tool groups.
+            #[must_use]
+            pub fn tools() -> ToolRouter<Self> {
+                ToolRouter::new() $(+ Self::$group())+
+            }
+
+            /// Each group's name and router, in declaration order.
+            #[cfg(test)]
+            fn tool_groups() -> Vec<(&'static str, ToolRouter<Self>)> {
+                vec![$((stringify!($group), Self::$group())),+]
+            }
+        }
+    };
+}
+
+tool_groups! {
+    scene_tools,
+    world_tools,
+    sim_tools,
+    debug_tools,
+    profile_tools,
+    tuning_tools,
+    behavior_tools,
+    physics_tools,
+    weather_tools,
+    script_tools,
+    asset_tools,
+    shader_tools,
+    project_tools,
+    time_tools,
+    input_tools,
+}
 
 /// URI of the scene-summary resource.
 pub const SCENE_SUMMARY_URI: &str = "quat://scene/summary";
@@ -136,26 +155,6 @@ impl QuatServer {
     pub fn with_assets(mut self, config: AssetConfig) -> Self {
         self.assets = asset_tools::AssetService::new(config);
         self
-    }
-
-    /// Every tool this server offers, across all tool groups.
-    #[must_use]
-    pub fn tools() -> ToolRouter<Self> {
-        Self::scene_tools()
-            + Self::world_tools()
-            + Self::sim_tools()
-            + Self::debug_tools()
-            + Self::profile_tools()
-            + Self::tuning_tools()
-            + Self::behavior_tools()
-            + Self::physics_tools()
-            + Self::weather_tools()
-            + Self::script_tools()
-            + Self::asset_tools()
-            + Self::shader_tools()
-            + Self::project_tools()
-            + Self::time_tools()
-            + Self::input_tools()
     }
 
     /// Timeout for slow engine work (loading, baking, screenshots).
