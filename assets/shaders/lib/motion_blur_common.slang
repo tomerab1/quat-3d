@@ -45,8 +45,8 @@ public MotionPixel motion_pixel(MotionBlurParams pc, Texture2D<float2> velocity,
                                 int2 p) {
     const ClosestSample s =
         closest_depth_at_display_pixel(depth, p, pc.sizes.xy, pc.sizes.zw, pc.jitter.xy);
-    MotionPixel out;
-    out.half_vector = blur_half_vector(pc, velocity.Load(int3(s.texel, 0)));
-    out.depth = linear_depth(s.depth, pc.proj.xy);
-    return out;
+    MotionPixel result;
+    result.half_vector = blur_half_vector(pc, velocity.Load(int3(s.texel, 0)));
+    result.depth = linear_depth(s.depth, pc.proj.xy);
+    return result;
 }

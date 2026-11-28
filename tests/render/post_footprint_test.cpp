@@ -24,8 +24,13 @@
 //   depth of field   nearest texel 0.0066 / 0.081, closest depth 0.00060 / 0.0035
 //   motion blur      nearest texel 0.0029 / 0.054, closest depth 0.00063 / 0.010
 // The bounds sit between the two, about 2-3x from each.
+//
+// A third test pins the footprint itself: the display pixels DoF keeps sharp
+// around isolated in-focus render texels must be exactly those a CPU
+// reference of the jitter convention selects, at every jitter phase.
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -187,8 +192,36 @@ r::PhysicalCamera lens() {
     return c;
 }
 
-std::expected<std::vector<HostImage>, Error> render_dof_cycle(quat::test::GpuContext& g) {
+// One DofPass frame: display-extent `color`, render-extent `depth` (view
+// distances in metres) rendered with `jitter`.
+std::expected<HostImage, Error> render_dof(quat::test::GpuContext& g, r::DofPass& pass,
+                                           const quat::test::PostImage& color,
+                                           const std::vector<float>& distance_m,
+                                           glm::vec2 jitter) {
     const Proj proj = make_proj();
+    std::vector<float> depth(distance_m.size());
+    for (std::size_t i = 0; i < depth.size(); ++i) depth[i] = proj.depth_of(distance_m[i]);
+    auto depth_img = quat::test::upload_r32f(g, k_render, depth);
+    if (!depth_img) return std::unexpected(depth_img.error());
+    rhi::TransientImagePool pool(g.device, g.allocator);
+    rhi::RenderGraph graph(pool);
+    r::DofInputs in;
+    in.color = color.import(graph, "test_color");
+    in.depth = depth_img->import(graph, "test_depth");
+    in.display_extent = k_display;
+    in.render_extent = k_render;
+    in.jitter = jitter;
+    in.coc = r::coc_params(lens(), k_fov_y, static_cast<float>(k_display.height));
+    in.max_radius_px = 24.0F;
+    in.rings = 4;
+    in.proj22 = proj.p22;
+    in.proj32 = proj.p32;
+    auto out = pass.add_to_graph(graph, in);
+    if (!out) return std::unexpected(out.error());
+    return quat::test::render_to_host(g, graph, *out, k_display, 8);
+}
+
+std::expected<std::vector<HostImage>, Error> render_dof_cycle(quat::test::GpuContext& g) {
     auto color = quat::test::upload_rgba16f(g, k_display, resolved_color());
     if (!color) return std::unexpected(color.error());
     auto pass = r::DofPass::create(g.device, g.allocator, g.cache, g.shader_dir);
@@ -196,32 +229,35 @@ std::expected<std::vector<HostImage>, Error> render_dof_cycle(quat::test::GpuCon
     std::vector<HostImage> frames;
     for (const r::ViewJitter& j : jitter_cycle()) {
         const std::vector<bool> disc = jittered_disc(j.pixels);
-        std::vector<float> depth(disc.size());
+        std::vector<float> distance(disc.size());
         for (std::size_t i = 0; i < disc.size(); ++i) {
-            depth[i] = proj.depth_of(disc[i] ? k_focus_m : k_background_m);
+            distance[i] = disc[i] ? k_focus_m : k_background_m;
         }
-        auto depth_img = quat::test::upload_r32f(g, k_render, depth);
-        if (!depth_img) return std::unexpected(depth_img.error());
-        rhi::TransientImagePool pool(g.device, g.allocator);
-        rhi::RenderGraph graph(pool);
-        r::DofInputs in;
-        in.color = color->import(graph, "test_color");
-        in.depth = depth_img->import(graph, "test_depth");
-        in.display_extent = k_display;
-        in.render_extent = k_render;
-        in.jitter = j.pixels;
-        in.coc = r::coc_params(lens(), k_fov_y, static_cast<float>(k_display.height));
-        in.max_radius_px = 24.0F;
-        in.rings = 4;
-        in.proj22 = proj.p22;
-        in.proj32 = proj.p32;
-        auto out = pass->add_to_graph(graph, in);
-        if (!out) return std::unexpected(out.error());
-        auto img = quat::test::render_to_host(g, graph, *out, k_display, 8);
+        auto img = render_dof(g, *pass, *color, distance, j.pixels);
         if (!img) return std::unexpected(img.error());
         frames.push_back(std::move(*img));
     }
     return frames;
+}
+
+// CPU reference of the footprint (lib/depth_footprint.slang): whether display
+// pixel `p`'s 3 x 3 render samples around its nearest one, at `jitter`,
+// include render texel `t`. Sample i sits at rpos == i with
+// rpos = uv * render - 0.5 + jitter (jitter.hpp).
+[[nodiscard]] bool footprint_covers(glm::uvec2 p, glm::vec2 jitter, glm::ivec2 t) {
+    const glm::vec2 display(static_cast<float>(k_display.width), static_cast<float>(k_display.height));
+    const glm::vec2 render(static_cast<float>(k_render.width), static_cast<float>(k_render.height));
+    const glm::vec2 uv = (glm::vec2(p) + 0.5F) / display;
+    const glm::vec2 rpos = uv * render - 0.5F + jitter;
+    const glm::ivec2 centre(glm::floor(rpos + 0.5F));
+    const glm::ivec2 render_max(static_cast<int>(k_render.width) - 1,
+                                static_cast<int>(k_render.height) - 1);
+    for (int dy = -1; dy <= 1; ++dy) {
+        for (int dx = -1; dx <= 1; ++dx) {
+            if (glm::clamp(centre + glm::ivec2(dx, dy), glm::ivec2(0), render_max) == t) return true;
+        }
+    }
+    return false;
 }
 
 // The disc moves right by 12 display px per frame over a still background.
@@ -270,6 +306,50 @@ std::expected<std::vector<HostImage>, Error> render_motion_blur_cycle(quat::test
         frames.push_back(std::move(*img));
     }
     return frames;
+}
+
+// The render texels each display pixel's footprint selects follow the jitter
+// convention (a sign flip of the jitter, or a footprint in display pixels,
+// fails): two in-focus render texels (one on the border, where the footprint
+// clamps) in a defocused background. The background alternates black and
+// white per display pixel, so its far-field blur is ~0.5 everywhere while a
+// pixel whose footprint holds an in-focus texel keeps its sharp 0 or 1.
+TEST(GpuPostFootprint, DofFootprintMatchesTheCpuReferenceAtEveryJitter) {
+    QUAT_REQUIRE_GPU(g);
+    std::vector<glm::vec4> checker(static_cast<std::size_t>(k_display.width) * k_display.height);
+    for (std::uint32_t y = 0; y < k_display.height; ++y) {
+        for (std::uint32_t x = 0; x < k_display.width; ++x) {
+            const float c = ((x + y) & 1U) != 0 ? 1.0F : 0.0F;
+            checker[y * k_display.width + x] = glm::vec4(c, c, c, 1.0F);
+        }
+    }
+    auto color = quat::test::upload_rgba16f(*g, k_display, checker);
+    ASSERT_OK(color);
+    auto pass = r::DofPass::create(g->device, g->allocator, g->cache, g->shader_dir);
+    ASSERT_OK(pass);
+    const std::array<glm::ivec2, 2> focus{glm::ivec2(21, 13), glm::ivec2(0, 22)};
+    std::vector<float> distance(static_cast<std::size_t>(k_render.width) * k_render.height,
+                                k_background_m);
+    for (const glm::ivec2 t : focus) distance[static_cast<std::size_t>(t.y) * k_render.width + t.x] = k_focus_m;
+
+    for (const r::ViewJitter& j : jitter_cycle()) {
+        auto img = render_dof(*g, *pass, *color, distance, j.pixels);
+        ASSERT_OK(img);
+        int sharp = 0;
+        for (std::uint32_t y = 0; y < k_display.height; ++y) {
+            for (std::uint32_t x = 0; x < k_display.width; ++x) {
+                bool expected = false;
+                for (const glm::ivec2 t : focus) expected = expected || footprint_covers({x, y}, j.pixels, t);
+                const float in = checker[y * k_display.width + x].r;
+                const bool kept = std::abs(img->rgba16f(x, y).r - in) < 0.25F;
+                ASSERT_EQ(kept, expected) << "pixel " << x << "," << y << " at jitter "
+                                          << j.pixels.x << "," << j.pixels.y;
+                sharp += expected ? 1 : 0;
+            }
+        }
+        // 3 x 3 render texels = 6 x 6 display px around the inner texel.
+        EXPECT_GE(sharp, 36);
+    }
 }
 
 TEST(GpuPostFootprint, DofSilhouetteIsStableUnderJitter) {

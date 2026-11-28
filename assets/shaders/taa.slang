@@ -41,7 +41,7 @@
 // an Inf into its half-float targets.
 
 import hdr;             // hdr_store
-import depth_footprint; // nearest_render_sample, closest_depth_3x3
+import depth_footprint; // render_sample_position, nearest_render_sample, closest_depth_3x3
 
 Texture2D               g_color;    // render extent, linear HDR
 Texture2D               g_depth;    // render extent, [0, 1], 1 = far
@@ -182,8 +182,10 @@ void compute_main(uint3 tid : SV_DispatchThreadID) {
         exposure = clamp(pc.exposure.y / max(g_exposure[0], 1e-4), pc.exposure.z, pc.exposure.w);
     }
 
-    // This pixel in render-sample coordinates: sample i sits at rpos == i.
-    const float2 rpos = uv * pc.render_size.xy - 0.5 + pc.jitter.xy;
+    // This pixel in render-sample coordinates: sample i sits at rpos == i
+    // (depth_footprint.slang carries the jitter convention for every pass).
+    const float2 rpos = render_sample_position(p, pc.display_size.xy, pc.render_size.xy,
+                                               pc.jitter.xy);
     const int2 centre = nearest_render_sample(rpos);
 
     float3 sum = 0.0;

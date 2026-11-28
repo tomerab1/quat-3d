@@ -11,7 +11,10 @@
 // CoC comes from the closest depth of its render footprint
 // (depth_footprint.slang), so silhouettes do not shimmer as the TAAU jitter
 // cycles (issue #115). dof_prepare evaluates it once per display pixel and
-// stores it for dof_composite.
+// stores it for dof_composite. The resulting sharp ring of about one render
+// texel outside in-focus silhouettes is intentional: it keeps the
+// antialiased foreground edge pixels out of the far blur in every frame, so
+// do not "fix" it by shrinking the footprint.
 
 import post_common;
 import depth_footprint;
