@@ -1,4 +1,4 @@
-//! The weather tools (`weather_get`, `weather_set`) and the `set_weather`
+//! The weather tools (`weather_get`, `weather_set`) and the `set-weather`
 //! prompt, end to end against the mock engine.
 
 mod common;
@@ -107,7 +107,7 @@ async fn weather_tools_and_prompt_are_listed() {
         assert!(schema.contains(field), "weather_set lacks {field}");
     }
     let prompts = client.list_all_prompts().await.unwrap();
-    assert!(prompts.iter().any(|p| p.name == "set_weather"));
+    assert!(prompts.iter().any(|p| p.name == "set-weather"));
     client.cancel().await.unwrap();
 }
 
@@ -176,7 +176,7 @@ async fn set_weather_prompt_renders_the_description() {
     let mut args = serde_json::Map::new();
     args.insert("description".into(), json!("  light snowfall at dusk "));
     let prompt = client
-        .get_prompt(GetPromptRequestParams::new("set_weather").with_arguments(args))
+        .get_prompt(GetPromptRequestParams::new("set-weather").with_arguments(args))
         .await
         .unwrap();
     let body = serde_json::to_string(&prompt.messages).unwrap();
@@ -187,7 +187,7 @@ async fn set_weather_prompt_renders_the_description() {
     assert!(body.contains("weather_set"), "{body}");
 
     let bare = client
-        .get_prompt(GetPromptRequestParams::new("set_weather"))
+        .get_prompt(GetPromptRequestParams::new("set-weather"))
         .await
         .unwrap();
     let body = serde_json::to_string(&bare.messages).unwrap();

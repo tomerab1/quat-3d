@@ -1,4 +1,4 @@
-//! The debugging tools (`debug_*`) and the `debug_session` prompt, end to
+//! The debugging tools (`debug_*`) and the `debug-session` prompt, end to
 //! end against the mock engine.
 
 mod common;
@@ -118,7 +118,7 @@ async fn debug_tools_and_prompt_are_listed() {
     assert!(schema.contains("entities") && schema.contains("components"));
 
     let prompts = client.list_all_prompts().await.unwrap();
-    assert!(prompts.iter().any(|p| p.name == "debug_session"));
+    assert!(prompts.iter().any(|p| p.name == "debug-session"));
     client.cancel().await.unwrap();
 }
 
@@ -129,7 +129,7 @@ async fn debug_session_prompt_walks_the_workflow() {
     let args = json!({"problem": "the crate falls through the floor", "entity": "Crate"});
     let prompt = client
         .get_prompt(
-            GetPromptRequestParams::new("debug_session")
+            GetPromptRequestParams::new("debug-session")
                 .with_arguments(args.as_object().unwrap().clone()),
         )
         .await
@@ -151,7 +151,7 @@ async fn debug_session_prompt_walks_the_workflow() {
 
     // Without arguments the optional blocks disappear.
     let bare = client
-        .get_prompt(GetPromptRequestParams::new("debug_session"))
+        .get_prompt(GetPromptRequestParams::new("debug-session"))
         .await
         .unwrap();
     let ContentBlock::Text(b) = &bare.messages[0].content else {

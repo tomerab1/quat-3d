@@ -74,11 +74,29 @@ Every option is a flag or an environment variable:
 | `--project-root` | `QUAT_MCP_PROJECT_ROOT` | current directory | The quat-3d checkout `asset_fetch` downloads into (`assets/meshes/polyhaven/`) |
 | `--polyhaven-api` | `QUAT_MCP_POLYHAVEN_API` | `https://api.polyhaven.com` | Poly Haven API base URL |
 | `--asset-max-mb` | `QUAT_MCP_ASSET_MAX_MB` | `512` | Largest model download `asset_fetch` accepts |
+| `--skills` | `QUAT_MCP_SKILLS` | `true` | Serve the workflow skills over the MCP skills extension |
+| `--prompts` | `QUAT_MCP_PROMPTS` | `true` | Serve the workflows as MCP prompts |
 | — | `QUAT_MCP_LOG` | `info` | Log filter (`debug`, `quat_mcp=trace`, …) |
 
 Logs go to stderr; stdout carries the MCP protocol.
 
 ## Use with Claude Code
+
+The easiest way is the **quat-3d plugin**: it registers quat-mcp and installs
+the workflow skills. Put quat-mcp on your PATH first
+(`cargo install --path tools/quat-mcp`), then in Claude Code:
+
+```
+/plugin marketplace add tomerab1/quat-3d
+/plugin install quat-3d@quat-3d
+```
+
+Claude Code asks for the quat-mcp binary (default `quat-mcp`) and the engine
+port (default `7878`) when the plugin is enabled. The skills then appear as
+`/quat-3d:build-level` and so on, and Claude uses them on its own when a task
+matches. See [`plugin/README.md`](plugin/README.md).
+
+Without the plugin, add the server by hand:
 
 ```sh
 claude mcp add quat-3d \
@@ -177,27 +195,49 @@ and message intact (for example `scene.update failed — engine error
 invalid_params (-32602): point_light.radius: expected a number >= 0`), plus a
 short hint, so the model can correct itself.
 
-**Prompts** — `build_world` (inspect → plan → build with `scene_batch` →
-screenshot → iterate), `inspect_scene` (survey and review the current
-scene), `debug_session` (diagnose a problem: stats → logs → watch →
-pause / step → raycast / nav path → conclude), `design_behavior` (an NPC
-behaviour tree: leaves → plan → `bt_set` or edits → play → `bt_status` /
-`debug_watch` → iterate), `tune_look` (screenshot → read settings and
-schema → exposure first, then bloom, shadows, sky light and materials, one
-change and one screenshot at a time), `set_weather` (screenshot → wind and
-clouds → precipitation and surfaces → check), `write_game_script` (read the
-Lua reference → write → compile → attach → play → read the log → iterate) and
-`write_material_shader` (template → write → `shader_create` → fix from the
-diagnostics → assign to an entity → screenshot → iterate). In Claude Code they
-appear as `/mcp__quat-3d__build_world`.
+**Workflows** — step-by-step guides with verification steps and pitfalls,
+written once as [Agent Skills](https://agentskills.io) in
+`content/skills/<name>/SKILL.md`:
+
+| Workflow | For |
+|---|---|
+| `build-level` | Build or extend a level: inspect, plan in metres, `scene_batch`, screenshot, iterate |
+| `tune-look` | Exposure first, then bloom, shadows, AO, sky light and materials, one change per screenshot |
+| `author-material-shader` | PBR materials (metal, plastic, car paint, glass, emission) from reference values, and Slang material shaders with `shader_*` |
+| `write-gameplay-script` | Lua scripts: read the reference, write, compile, attach, play, read the log |
+| `design-npc-behaviour` | Behaviour trees: leaves, plan, `bt_set`, play, `bt_status` / `debug_watch` |
+| `set-weather` | Wind, gusts, cloud cover, rain / snow, wet and snowy surfaces, checked with screenshots |
+| `debug-physics-glitch` | Falling through, jitter, tunnelling, stuck bodies: pause, step, watch, raycast |
+| `playtest` | Run the level and report script errors, stuck NPCs, objects leaving the world, hitches |
+| `inspect-scene` | Survey and review the scene without changing it |
+| `debug-session` | General debugging: stats, logs, watch, pause / step, raycasts, nav paths |
+
+Each skill lists the quat-mcp tools it uses in its frontmatter
+(`metadata.quat-mcp-tools`). quat-mcp offers them three ways:
+
+- **MCP skills extension** ([SEP-2640](https://modelcontextprotocol.io/seps/2640-skills-extension),
+  `io.modelcontextprotocol/skills`): `skills/list` and `skills/get` return
+  each skill's frontmatter and a digest manifest, and every file is a
+  resource at `skill://<name>/SKILL.md`. Clients with skills support (Claude
+  Code 2.1.332+, beta) load them as `quat-3d:build-level`.
+- **MCP prompts** of the same names for clients without skills support,
+  with arguments such as `description` or `goal` (from
+  `content/prompts/<name>.md`). In Claude Code they appear as
+  `/mcp__quat-3d__build-level`.
+- **The Claude Code plugin** in `plugin/`, which installs them as plugin
+  skills (and runs quat-mcp with `--skills=false --prompts=false` so they are
+  not listed twice).
+
+The server instructions name every workflow and its `skill://` URI.
 
 **Resources** — `quat://scene/summary`: engine info, the first 500 entities,
 the environment and the camera as JSON; `quat://docs/scripting`: the Lua
-scripting reference (the engine's `docs/scripting.md`).
+scripting reference (the engine's `docs/scripting.md`); and the skill files
+(`skill://<name>/SKILL.md`).
 
 ## Example session
 
-> **You:** /mcp__quat-3d__build_world a small stone watchtower on a grassy hill at sunset
+> **You:** /quat-3d:build-level a small stone watchtower on a grassy hill at sunset
 >
 > **Claude:** *calls `scene_components`, `scene_list`, `environment_get`,
 > `camera_get`, then writes a plan with coordinates* … *calls `scene_batch`
@@ -226,17 +266,29 @@ Layout:
 
 | Path | What |
 |---|---|
-| `content/` | **Everything the model reads**, as Markdown: server instructions, one file per tool description, the component reference, prompt templates ([MiniJinja](https://docs.rs/minijinja)). See `content/README.md`. |
+| `content/` | **Everything the model reads**, as Markdown: server instructions, one file per tool description, the component reference, the workflow skills and their prompt templates ([MiniJinja](https://docs.rs/minijinja)). See `content/README.md`. |
 | `src/client/` | Engine JSON-RPC client: `mod.rs` (calls, reconnects, handshake), `connection.rs` (socket, reader task, in-flight calls), `error.rs` (error codes, `EngineError`), `token_file.rs` (the engine's session token file) |
-| `src/server/` | MCP server: `mod.rs` (handler, resource), tools grouped by area (`scene_tools.rs`, `world_tools.rs`, `sim_tools.rs`, `debug_tools.rs`, `behavior_tools.rs`, `tuning_tools.rs`, `script_tools.rs`, `shader_tools.rs`, each its own rmcp router), `bt_outline.rs` (behaviour-tree outlines), `prompts.rs`, `results.rs` |
+| `src/server/` | MCP server: `mod.rs` (handler, resource), tools grouped by area (`scene_tools.rs`, `world_tools.rs`, `sim_tools.rs`, `debug_tools.rs`, `behavior_tools.rs`, `tuning_tools.rs`, `script_tools.rs`, `shader_tools.rs`, each its own rmcp router), `bt_outline.rs` (behaviour-tree outlines), `results.rs` |
+| `src/skills/` | The workflows: `mod.rs` (skill catalog: `skills/list`, `skills/get`, `skill://` resources), `frontmatter.rs` (Agent Skills rules), `prompts.rs` (prompts generated from the skills), `embedded.rs` (the compiled-in files), `tests.rs` (sync tests) |
+| `plugin/` | The Claude Code plugin: `.claude-plugin/plugin.json`, `.mcp.json`, and `skills/`, a copy of `content/skills/` |
 | `src/params.rs`, `src/params/` | Typed tool inputs — their doc comments are the JSON schemas the model reads (`debug.rs`, `behavior.rs`, `tuning.rs`, `script.rs`, `shader.rs` per area) |
-| `src/content.rs` | Embeds `content/` and renders prompt templates |
+| `src/content.rs` | Embeds `content/` and renders the instructions and document templates |
 | `src/config.rs` | Flags / environment |
 
 To change what the model is told, edit the Markdown — no prose lives in Rust
 string literals (error messages excepted). A new tool is a function with
 `#[doc = include_str!("../../content/tools/<name>.md")]` + `#[tool]`; a test
 fails if a tool and its Markdown file don't match one-to-one.
+
+A new workflow is a directory `content/skills/<name>/` with a `SKILL.md`
+(frontmatter `name`, `description`, `compatibility`, and
+`metadata.quat-mcp-tools` listing every tool it names), a prompt template
+`content/prompts/<name>.md`, one line each in `src/skills/embedded.rs`, and
+a refreshed plugin copy (`rm -r plugin/skills && cp -R content/skills
+plugin/skills`). The sync tests in `src/skills/tests.rs` fail when a skill
+names a tool or resource that does not exist, leaves a used tool out of its
+metadata, breaks the Agent Skills rules, lacks a prompt, or when the plugin
+copy or manifests drift.
 
 When the engine contract in `docs/remote-control.md` changes, update it there
 first, then the matching tool here.
