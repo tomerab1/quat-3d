@@ -71,3 +71,7 @@ elseif(CMAKE_NM)
 else()
     message(WARNING "game_has_no_texture_encoder: no nm found; the check is not registered")
 endif()
+
+# Engine SDK guards: install, self-contained public headers, the SDK
+# consumer, refusals, layering (ROADMAP P8).
+add_subdirectory(sdk)
