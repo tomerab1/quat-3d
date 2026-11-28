@@ -11,11 +11,22 @@
 // float4 per vertex, valid when has_prev_positions != 0; otherwise this
 // frame's vertex position is reused). Presence is a flag rather than a null
 // pointer test, which would need the shaderInt64 feature.
+//
+// prev_positions points at a struct, not a bare float4: SPIRV-Cross (the
+// SPIR-V -> MSL translator inside MoltenVK) rejects a buffer-resident struct
+// member that is a physical-storage pointer to a vector ("Found a buffer
+// packing case which we cannot represent in MSL", issue #103), and the whole
+// GBuffer pipeline then fails to create on macOS. A one-member struct has the
+// same 16-byte stride and layout on every backend.
+public struct PrevPosition {
+    public float4 position; // xyz skinned position last frame, w = 1
+}
+
 public struct InstanceMotion {
-    public float4x4 prev_model;
-    public float4*  prev_positions;
-    public uint     has_prev_positions;
-    public uint     pad;
+    public float4x4      prev_model;
+    public PrevPosition* prev_positions;
+    public uint          has_prev_positions;
+    public uint          pad;
 }
 
 // Unjittered UV motion of a surface point (velocity.hpp convention).

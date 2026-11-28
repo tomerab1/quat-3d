@@ -85,7 +85,7 @@ public GBufferVsOut gbuffer_vertex(GBufferVsIn input) {
     if (pc.has_motion != 0) {
         const InstanceMotion m = pc.motion[instance];
         prev_model = m.prev_model;
-        if (m.has_prev_positions != 0) prev_position = m.prev_positions[vertex_index()].xyz;
+        if (m.has_prev_positions != 0) prev_position = m.prev_positions[vertex_index()].position.xyz;
     }
     o.cur_clip = o.clip;
     o.prev_clip = mul(pc.prev_view_proj, mul(prev_model, float4(prev_position, 1.0)));
