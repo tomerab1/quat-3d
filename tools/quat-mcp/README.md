@@ -152,6 +152,8 @@ Windows the command ends in `quat-mcp.exe`.
 | `scene_batch` | `scene.batch` | Many commands in one frame, with `"@N"` back-references |
 | `environment_get` / `environment_set` | `environment.*` | Sun angles and colour, volumetric clouds |
 | `time_get` / `time_set` / `time_skip` | `time.*` | World clock: date, time, place and speed; the real Sun and Moon, sunrise / sunset, Moon phase |
+| `geometry_generate` / `geometry_polygon` | `geometry.*` | Runtime geometry: straight-skeleton roofs, wall sweeps, extrusions, stones; 2D polygon offset / booleans / repair |
+| `mesh_dynamic_list` / `_get` / `_set` / `_update_vertices` / `_remove` | `mesh.dynamic.*` | The dynamic mesh store: generated meshes, raw triangles, region updates, upload state |
 | `world_ground_height` | `world.ground_height` | Terrain height under `[x, z]` points |
 | `terrain_status` | `terrain.status` | Whether terrain tiles are still generating; loaded tiles and bounds |
 | `world_place_on_ground` | `world.place_on_ground` | Rest an entity's bounds on the terrain or colliders below it, optionally tilted to the slope |

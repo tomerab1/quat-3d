@@ -72,6 +72,7 @@ namespace engine::rhi {
 class MaterialShaderRegistry;
 }
 namespace engine::scene {
+class DynamicMeshStore;
 class Scene;
 }
 namespace engine::script {
@@ -186,6 +187,10 @@ struct WorldServices {
     // The renderer's settings (non-owning): render.settings.* and the clouds
     // of environment.* read and write them; the next frame renders with them.
     renderer::RenderSettings* render_settings = nullptr;
+
+    // Runtime-generated meshes (R23.2, non-owning): geometry.* and
+    // mesh.dynamic.* submit to it. Null: those methods report it unavailable.
+    scene::DynamicMeshStore* dynamic_meshes = nullptr;
 
     // Height of the loaded terrain above its anchor at anchor-relative (x, z)
     // (tile (0,0) is centred on the anchor); nullopt where no tile is loaded.

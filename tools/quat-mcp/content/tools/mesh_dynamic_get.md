@@ -1,0 +1,1 @@
+Report one dynamic mesh by `id`: its version, its resident (drawn) version, vertex and triangle counts, GPU bytes, bounds and content hash. When `resident` is false, a newer version is still uploading and the previous one is being drawn.

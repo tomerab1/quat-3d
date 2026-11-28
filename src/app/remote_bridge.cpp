@@ -41,6 +41,7 @@
 #include "engine/rhi/gpu_allocator.hpp"
 #include "engine/rhi/material_shader_registry.hpp"
 #include "engine/rhi/shader_hot_reload.hpp"
+#include "engine/scene/dynamic_mesh_gpu.hpp"
 #include "engine/scene/components.hpp"
 #include "engine/scene/gltf_loader.hpp"
 #include "engine/scene/instanced_mesh.hpp"
@@ -114,6 +115,7 @@ struct RemoteBridge::Impl {
     bool                             shot_frame_last = false; // last frame used a shot camera
     std::string                      last_instanced_warning;
     std::string                      last_material_warning;
+    std::string                      last_dynamic_mesh_warning;
 
     // ---- Debugging (A5) -----------------------------------------------------
     engine::core::SimClock clock;
@@ -317,6 +319,7 @@ struct RemoteBridge::Impl {
         s.camera_get = [this] { return camera_get(); };
         s.camera_set = [this](const remote::CameraPose& p) { camera_set(p); };
         s.render_settings = t.render_settings;
+        s.dynamic_meshes = t.dynamic_meshes;
         s.wind_clock = t.wind_clock;
         if (t.play != nullptr) {
             s.playing = [this] { return *t.play; };
@@ -533,6 +536,27 @@ struct RemoteBridge::Impl {
         }
     }
 
+    // R23.2: promote finished dynamic-mesh uploads, run generator specs and
+    // point DynamicMesh entities at their resident meshes (before gather).
+    void resolve_dynamic_meshes() {
+        if (t.dynamic_meshes == nullptr) return;
+        engine::scene::DynamicMeshStore& store = *t.dynamic_meshes;
+        engine::scene::dynamic_mesh_begin_frame(store, *t.frame_counter);
+        if (!engine::scene::dynamic_meshes_need_resolve(t.scene->registry(), store)) return;
+        std::expected<std::size_t, Error> result = fail("not run");
+        auto ctx = with_upload([&](const engine::rhi::TransferContext& transfer) {
+            result = engine::scene::resolve_dynamic_meshes(t.scene->registry(), store, *t.allocator, transfer,
+                                                           *t.assets);
+        });
+        if (!ctx || !result) {
+            const std::string& msg = (!ctx ? ctx.error() : result.error()).message;
+            if (msg != last_dynamic_mesh_warning) {
+                std::fprintf(stderr, "[warn] %s\n", msg.c_str());
+                last_dynamic_mesh_warning = msg;
+            }
+        }
+    }
+
     // The ground scatters stand on: the streamed tiles or the single editing
     // tile of the (first) Terrain entity; none (flat ground) without terrain.
     // While a tile is still generating the ground is known to exist but not
@@ -610,6 +634,7 @@ void RemoteBridge::poll() {
 #endif
     impl_->resolve_primitives();
     impl_->resolve_material_overrides();
+    impl_->resolve_dynamic_meshes();
     impl_->update_instanced_meshes();
 #if !defined(QUAT_SHIPPING)
     impl_->shots.finish_encodings();

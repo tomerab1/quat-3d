@@ -36,6 +36,7 @@
 
 #include "component_json_animation.hpp"
 #include "component_json_camera_rig.hpp"
+#include "component_json_dynamic_mesh.hpp"
 
 namespace engine::scene {
 
@@ -50,6 +51,7 @@ constexpr std::array k_components = {
     ComponentInfo{"transform", "Local position / rotation (Euler degrees, YXZ) / scale", false, true},
     ComponentInfo{"primitive", "Procedural shape (cube, sphere, plane, cylinder, cone, capsule) with a PBR colour or a material shader", true, true},
     ComponentInfo{"material", "Per-entity overrides of the drawn material's PBR factors (null clears one)", true, true},
+    ComponentInfo{"dynamic_mesh", "Runtime-generated mesh: an id in the dynamic mesh store, an optional generator spec (roof, sweep, extrude, stone), a flat material and an optional static mesh collider", true, true},
     ComponentInfo{"instanced_mesh", "Many placements of one model (glTF or primitive shape), drawn instanced", true, true},
     ComponentInfo{"scatter", "Seeded procedural placement of the entity's instanced mesh on the terrain", true, true},
     ComponentInfo{"point_light", "Point light at the entity position", true, true},
@@ -388,6 +390,26 @@ void read_primitive_fields(JsonFields& f, Primitive& p) {
             {"shader_params", std::move(params)}};
 }
 
+} // namespace
+
+namespace detail {
+
+void read_primitive_material(JsonFields& f, Primitive& p) {
+    const PrimitiveShape shape = p.shape;
+    read_primitive_fields(f, p);
+    p.shape = shape; // a material has no shape
+}
+
+json primitive_material_json(const Primitive& p) {
+    json j = primitive_fields_json(p);
+    j.erase("shape");
+    return j;
+}
+
+} // namespace detail
+
+namespace {
+
 // ---- Grass ---------------------------------------------------------------
 
 [[nodiscard]] json range_json(const glm::vec2& r) { return json::array({r.x, r.y}); }
@@ -536,6 +558,7 @@ json encode_components(const entt::registry& r, entt::entity e, const EncodeOpti
     if (const auto* m = pick.get<MaterialOverride>("material"); m != nullptr && m->mask != 0) {
         out["material"] = encode_material_override(*m);
     }
+    if (const auto* d = pick.get<DynamicMesh>("dynamic_mesh")) out["dynamic_mesh"] = detail::encode_dynamic_mesh(*d);
     if (const auto* m = pick.get<InstancedMesh>("instanced_mesh")) {
         json j = primitive_fields_json(m->primitive);
         j["gltf"] = m->gltf_path;
@@ -681,6 +704,7 @@ std::vector<std::string_view> component_names(const entt::registry& r, entt::ent
     };
     add(r.all_of<Transform>(e), "transform");
     add(r.all_of<Primitive>(e), "primitive");
+    add(r.all_of<DynamicMesh>(e), "dynamic_mesh");
     const auto* material = r.try_get<MaterialOverride>(e);
     add(material != nullptr && material->mask != 0, "material");
     add(r.all_of<InstancedMesh>(e), "instanced_mesh");
@@ -735,6 +759,10 @@ std::expected<void, core::Error> apply_component(entt::registry& r, entt::entity
         return {};
     }
     if (name == "primitive") {
+        if (r.all_of<DynamicMesh>(e)) {
+            return std::unexpected(core::Error{
+                "primitive: the entity has a dynamic_mesh; remove it first (both would build its MeshRenderer)"});
+        }
         auto ok = merge<Primitive>(r, e, v, name, strict, [](JsonFields& f, Primitive& p) {
             read_primitive_fields(f, p);
             p.resolved = 0; // rebuild the MeshRenderer
@@ -752,6 +780,13 @@ std::expected<void, core::Error> apply_component(entt::registry& r, entt::entity
             r.emplace_or_replace<MaterialOverride>(e, std::move(o));
         }
         return {};
+    }
+    if (name == "dynamic_mesh") {
+        if (r.all_of<Primitive>(e)) {
+            return std::unexpected(core::Error{
+                "dynamic_mesh: the entity has a primitive; remove it first (both would build its MeshRenderer)"});
+        }
+        return merge<DynamicMesh>(r, e, v, name, strict, detail::decode_dynamic_mesh);
     }
     if (name == "instanced_mesh") {
         const bool scattered = r.all_of<Scatter>(e);
@@ -1073,6 +1108,11 @@ bool remove_component(entt::registry& r, entt::entity e, std::string_view name) 
     if (name == "audio_listener") return r.remove<AudioListener>(e) > 0;
     if (name == "animator") return r.remove<Animator>(e) > 0;
     if (name == "foot_ik") return r.remove<FootIK>(e) > 0;
+    if (name == "dynamic_mesh") {
+        if (r.remove<DynamicMesh>(e) == 0) return false;
+        r.remove<MeshRenderer>(e); // it drew the dynamic mesh
+        return true;
+    }
     if (name == "camera_rig") return r.remove<CameraRig>(e) > 0;
     if (name == "camera_rig_input") return r.remove<CameraRigInput>(e) > 0;
     return false; // transform (not removable) or unknown

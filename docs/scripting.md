@@ -166,7 +166,7 @@ Children follow their parent immediately.
 ### Components
 
 Every component of the engine's codec can be read and written as a Lua
-table: `transform`, `primitive`, `instanced_mesh`, `scatter`, `point_light`,
+table: `transform`, `primitive`, `dynamic_mesh`, `instanced_mesh`, `scatter`, `point_light`,
 `dir_light`, `camera`, `collider`, `rigidbody`, `character`, `nav_agent`,
 `behavior`, `patrol`, `script`, `terrain`, `net_replicated`, `audio_source`,
 `audio_listener`, `animator` (edit only) and `mesh` (read only). Field names
@@ -293,6 +293,25 @@ error listing what exists.
 Arguments are converted with `tostring` and separated by tabs, as Lua's
 `print` does. Read the log with quat-mcp's `debug_log` (`category:
 "script"`).
+
+## `geometry`
+
+Runtime procedural geometry (ROADMAP R23.2): the same calls and tables as
+the remote `geometry.*` / `mesh.dynamic.*` methods
+([`remote-control.md`](remote-control.md#runtime-geometry-roadmap-r232)),
+with generator specs as in [`geometry.md`](geometry.md#generator-specs).
+
+| Call | Returns |
+|---|---|
+| `geometry.generate{spec = {...}, id = "name"}` | Runs a generator (`roof`, `sweep`, `extrude`, `stone`) and stores the mesh under `id` (info table); without `id` it only measures the result. |
+| `geometry.polygon{op = "offset", subject = {...}, delta = -0.5}` | 2D polygon operations: `{polygons, area}`. |
+| `geometry.set_mesh{id, positions, indices, normals?, uvs?}` | Stores raw triangles. |
+| `geometry.update_vertices{id, first, positions, normals?}` | Region update of a stored mesh. |
+| `geometry.mesh_info{id = "name"}` / `geometry.remove_mesh{id = "name"}` | Info / removal. |
+
+Show a stored mesh by giving an entity a `dynamic_mesh` component naming the
+id (`e:set("dynamic_mesh", {mesh = "name"})`). Errors raise a Lua error
+naming the field.
 
 ## Properties
 

@@ -291,7 +291,8 @@ add_library(engine_rhi STATIC
     src/rhi/shader_diagnostics.cpp
     src/rhi/shader_hot_reload.cpp
     src/rhi/material_shader_registry.cpp
-    src/rhi/material_shader_source.cpp)
+    src/rhi/material_shader_source.cpp
+    src/rhi/staging_ring.cpp)
 target_link_libraries(engine_rhi PUBLIC
     engine_flags engine_core Vulkan::Vulkan GPUOpen::VulkanMemoryAllocator)
 # engine_core is public: shader hot reload's headers use its watcher/process
@@ -461,6 +462,13 @@ target_include_directories(engine_physics PUBLIC ${ENGINE_PUBLIC_INCLUDE})
 # fastgltf is an implementation detail of the loader (PRIVATE).
 # ---------------------------------------------------------------------------
 add_library(engine_scene STATIC
+    src/scene/dynamic_mesh_store.cpp
+    src/scene/component_json_dynamic_mesh.cpp
+    src/scene/dynamic_mesh_upload.cpp
+    src/scene/dynamic_mesh_resolve.cpp
+    src/scene/dynamic_mesh_api.cpp
+    src/scene/dynamic_mesh_physics.cpp
+    src/scene/geometry_spec.cpp
     src/scene/gltf/mesh.cpp
     src/scene/gltf/material.cpp
     src/scene/gltf/skin_animation.cpp
@@ -516,7 +524,7 @@ add_library(engine_scene STATIC
 # handle and the glTF loader extracts skins.
 target_link_libraries(engine_scene PUBLIC
     engine_flags engine_input engine_asset engine_rhi engine_renderer engine_animation engine_physics
-    engine_terrain engine_nav engine_audio engine_weather engine_astro EnTT::EnTT)
+    engine_terrain engine_nav engine_audio engine_weather engine_astro engine_geometry EnTT::EnTT)
 # fastgltf and stb (image decode) are implementation details of the loader.
 # nlohmann_json is PUBLIC: component_json.hpp exposes JSON values (the codec
 # shared by scene files and the remote-control API).
@@ -727,6 +735,7 @@ add_library(engine_remote_world STATIC
     src/remote/world/weather_commands.cpp
     src/remote/world/project_commands.cpp
     src/remote/world/time_commands.cpp
+    src/remote/world/geometry_commands.cpp
     src/remote/world/script_commands.cpp
     src/remote/world/input_commands.cpp
     src/remote/world/camera_rig_commands.cpp

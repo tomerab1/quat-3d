@@ -1,0 +1,905 @@
+{
+  "version": 2,
+  "entities": [
+    {
+      "name": "sun",
+      "parent": -1,
+      "dir_light": {
+        "direction": [
+          -0.55,
+          -0.62,
+          -0.56
+        ],
+        "color": [
+          1.0,
+          0.93,
+          0.82
+        ],
+        "intensity": 6.0
+      }
+    },
+    {
+      "name": "camera",
+      "parent": -1,
+      "transform": {
+        "position": [
+          -15.0,
+          9.5,
+          17.0
+        ],
+        "look_at": [
+          1.0,
+          1.5,
+          -1.0
+        ]
+      },
+      "camera": {
+        "fov_deg": 50,
+        "near": 0.1,
+        "far": 500,
+        "active": true
+      }
+    },
+    {
+      "name": "ground",
+      "parent": -1,
+      "transform": {
+        "position": [
+          0,
+          -0.5,
+          0
+        ],
+        "scale": [
+          80,
+          1,
+          80
+        ]
+      },
+      "primitive": {
+        "shape": "cube",
+        "color": "#5d8a43",
+        "roughness": 0.95
+      }
+    },
+    {
+      "name": "cottage_walls",
+      "parent": -1,
+      "transform": {
+        "position": [
+          -9,
+          0,
+          -7
+        ]
+      },
+      "dynamic_mesh": {
+        "mesh": "cottage_walls",
+        "generator": {
+          "type": "extrude",
+          "polygon": [
+            [
+              0,
+              0
+            ],
+            [
+              8,
+              0
+            ],
+            [
+              8,
+              5
+            ],
+            [
+              0,
+              5
+            ]
+          ],
+          "height": 2.8
+        },
+        "material": {
+          "color": "#e9e1cf",
+          "roughness": 0.85
+        },
+        "collider": "mesh"
+      }
+    },
+    {
+      "name": "cottage_roof",
+      "parent": -1,
+      "transform": {
+        "position": [
+          -9,
+          0,
+          -7
+        ]
+      },
+      "dynamic_mesh": {
+        "mesh": "cottage_roof",
+        "generator": {
+          "type": "roof",
+          "polygon": [
+            [
+              0,
+              0
+            ],
+            [
+              8,
+              0
+            ],
+            [
+              8,
+              5
+            ],
+            [
+              0,
+              5
+            ]
+          ],
+          "weights": [
+            1,
+            0,
+            1,
+            0
+          ],
+          "base_height": 2.8,
+          "height_scale": 0.85
+        },
+        "material": {
+          "color": "#a5452f",
+          "roughness": 0.6
+        },
+        "collider": "none"
+      }
+    },
+    {
+      "name": "house_walls",
+      "parent": -1,
+      "transform": {
+        "position": [
+          3,
+          0,
+          -9
+        ]
+      },
+      "dynamic_mesh": {
+        "mesh": "house_walls",
+        "generator": {
+          "type": "extrude",
+          "polygon": [
+            [
+              0,
+              0
+            ],
+            [
+              9,
+              0
+            ],
+            [
+              9,
+              4
+            ],
+            [
+              4,
+              4
+            ],
+            [
+              4,
+              9
+            ],
+            [
+              0,
+              9
+            ]
+          ],
+          "height": 3.2
+        },
+        "material": {
+          "color": "#e9e1cf",
+          "roughness": 0.85
+        },
+        "collider": "mesh"
+      }
+    },
+    {
+      "name": "house_roof",
+      "parent": -1,
+      "transform": {
+        "position": [
+          3,
+          0,
+          -9
+        ]
+      },
+      "dynamic_mesh": {
+        "mesh": "house_roof",
+        "generator": {
+          "type": "roof",
+          "polygon": [
+            [
+              0,
+              0
+            ],
+            [
+              9,
+              0
+            ],
+            [
+              9,
+              4
+            ],
+            [
+              4,
+              4
+            ],
+            [
+              4,
+              9
+            ],
+            [
+              0,
+              9
+            ]
+          ],
+          "base_height": 3.2,
+          "height_scale": 0.75
+        },
+        "material": {
+          "color": "#4a5361",
+          "roughness": 0.55
+        },
+        "collider": "none"
+      }
+    },
+    {
+      "name": "tower",
+      "parent": -1,
+      "transform": {
+        "position": [
+          -1,
+          0,
+          2.5
+        ]
+      },
+      "dynamic_mesh": {
+        "mesh": "tower",
+        "generator": {
+          "type": "extrude",
+          "polygon": [
+            [
+              1.7,
+              0.0
+            ],
+            [
+              1.5706,
+              0.6506
+            ],
+            [
+              1.2021,
+              1.2021
+            ],
+            [
+              0.6506,
+              1.5706
+            ],
+            [
+              0.0,
+              1.7
+            ],
+            [
+              -0.6506,
+              1.5706
+            ],
+            [
+              -1.2021,
+              1.2021
+            ],
+            [
+              -1.5706,
+              0.6506
+            ],
+            [
+              -1.7,
+              0.0
+            ],
+            [
+              -1.5706,
+              -0.6506
+            ],
+            [
+              -1.2021,
+              -1.2021
+            ],
+            [
+              -0.6506,
+              -1.5706
+            ],
+            [
+              -0.0,
+              -1.7
+            ],
+            [
+              0.6506,
+              -1.5706
+            ],
+            [
+              1.2021,
+              -1.2021
+            ],
+            [
+              1.5706,
+              -0.6506
+            ]
+          ],
+          "height": 6.5,
+          "taper": 0.2
+        },
+        "material": {
+          "color": "#9a948a",
+          "roughness": 0.9
+        },
+        "collider": "mesh"
+      }
+    },
+    {
+      "name": "tower_roof",
+      "parent": -1,
+      "transform": {
+        "position": [
+          -1,
+          0,
+          2.5
+        ]
+      },
+      "dynamic_mesh": {
+        "mesh": "tower_roof",
+        "generator": {
+          "type": "roof",
+          "polygon": [
+            [
+              1.5,
+              0.0
+            ],
+            [
+              1.3858,
+              0.574
+            ],
+            [
+              1.0607,
+              1.0607
+            ],
+            [
+              0.574,
+              1.3858
+            ],
+            [
+              0.0,
+              1.5
+            ],
+            [
+              -0.574,
+              1.3858
+            ],
+            [
+              -1.0607,
+              1.0607
+            ],
+            [
+              -1.3858,
+              0.574
+            ],
+            [
+              -1.5,
+              0.0
+            ],
+            [
+              -1.3858,
+              -0.574
+            ],
+            [
+              -1.0607,
+              -1.0607
+            ],
+            [
+              -0.574,
+              -1.3858
+            ],
+            [
+              -0.0,
+              -1.5
+            ],
+            [
+              0.574,
+              -1.3858
+            ],
+            [
+              1.0607,
+              -1.0607
+            ],
+            [
+              1.3858,
+              -0.574
+            ]
+          ],
+          "base_height": 6.5,
+          "height_scale": 2.2
+        },
+        "material": {
+          "color": "#4a5361",
+          "roughness": 0.55
+        },
+        "collider": "none"
+      }
+    },
+    {
+      "name": "garden_wall",
+      "parent": -1,
+      "transform": {
+        "position": [
+          0,
+          0,
+          0
+        ]
+      },
+      "dynamic_mesh": {
+        "mesh": "garden_wall",
+        "generator": {
+          "type": "sweep",
+          "path": [
+            [
+              -14.0,
+              0,
+              6.0
+            ],
+            [
+              -13.4167,
+              0,
+              6.3157
+            ],
+            [
+              -12.8333,
+              0,
+              6.6248
+            ],
+            [
+              -12.25,
+              0,
+              6.9211
+            ],
+            [
+              -11.6667,
+              0,
+              7.1982
+            ],
+            [
+              -11.0833,
+              0,
+              7.4506
+            ],
+            [
+              -10.5,
+              0,
+              7.6729
+            ],
+            [
+              -9.9167,
+              0,
+              7.8606
+            ],
+            [
+              -9.3333,
+              0,
+              8.0098
+            ],
+            [
+              -8.75,
+              0,
+              8.1174
+            ],
+            [
+              -8.1667,
+              0,
+              8.1812
+            ],
+            [
+              -7.5833,
+              0,
+              8.1998
+            ],
+            [
+              -7.0,
+              0,
+              8.1729
+            ],
+            [
+              -6.4167,
+              0,
+              8.101
+            ],
+            [
+              -5.8333,
+              0,
+              7.9857
+            ],
+            [
+              -5.25,
+              0,
+              7.8292
+            ],
+            [
+              -4.6667,
+              0,
+              7.6349
+            ],
+            [
+              -4.0833,
+              0,
+              7.4068
+            ],
+            [
+              -3.5,
+              0,
+              7.1495
+            ],
+            [
+              -2.9167,
+              0,
+              6.8684
+            ],
+            [
+              -2.3333,
+              0,
+              6.5694
+            ],
+            [
+              -1.75,
+              0,
+              6.2586
+            ],
+            [
+              -1.1667,
+              0,
+              5.9424
+            ],
+            [
+              -0.5833,
+              0,
+              5.6274
+            ],
+            [
+              0.0,
+              0,
+              5.3202
+            ],
+            [
+              0.5833,
+              0,
+              5.027
+            ],
+            [
+              1.1667,
+              0,
+              4.7539
+            ],
+            [
+              1.75,
+              0,
+              4.5066
+            ],
+            [
+              2.3333,
+              0,
+              4.2903
+            ],
+            [
+              2.9167,
+              0,
+              4.1093
+            ],
+            [
+              3.5,
+              0,
+              3.9675
+            ],
+            [
+              4.0833,
+              0,
+              3.8677
+            ],
+            [
+              4.6667,
+              0,
+              3.8121
+            ],
+            [
+              5.25,
+              0,
+              3.8017
+            ],
+            [
+              5.8333,
+              0,
+              3.8368
+            ],
+            [
+              6.4167,
+              0,
+              3.9168
+            ],
+            [
+              7.0,
+              0,
+              4.0398
+            ],
+            [
+              7.5833,
+              0,
+              4.2034
+            ],
+            [
+              8.1667,
+              0,
+              4.4042
+            ],
+            [
+              8.75,
+              0,
+              4.638
+            ],
+            [
+              9.3333,
+              0,
+              4.9
+            ],
+            [
+              9.9167,
+              0,
+              5.1848
+            ],
+            [
+              10.5,
+              0,
+              5.4864
+            ],
+            [
+              11.0833,
+              0,
+              5.7987
+            ],
+            [
+              11.6667,
+              0,
+              6.1151
+            ],
+            [
+              12.25,
+              0,
+              6.4292
+            ],
+            [
+              12.8333,
+              0,
+              6.7344
+            ],
+            [
+              13.4167,
+              0,
+              7.0244
+            ],
+            [
+              14.0,
+              0,
+              7.2931
+            ]
+          ],
+          "profile": [
+            [
+              -0.3,
+              0
+            ],
+            [
+              0.3,
+              0
+            ],
+            [
+              0.27,
+              1.05
+            ],
+            [
+              0.2,
+              1.2
+            ],
+            [
+              -0.2,
+              1.2
+            ],
+            [
+              -0.27,
+              1.05
+            ]
+          ],
+          "closed_profile": true,
+          "uv_scale": 0.5,
+          "crease_angle": 35
+        },
+        "material": {
+          "color": "#9a948a",
+          "roughness": 0.9
+        },
+        "collider": "mesh"
+      }
+    },
+    {
+      "name": "stone_0",
+      "parent": -1,
+      "transform": {
+        "position": [
+          -11,
+          0.15,
+          8.6
+        ]
+      },
+      "dynamic_mesh": {
+        "mesh": "stone_0",
+        "generator": {
+          "type": "stone",
+          "seed": 11,
+          "size": [
+            0.65,
+            0.4,
+            0.5
+          ],
+          "chips": 3
+        },
+        "material": {
+          "color": "#9a948a",
+          "roughness": 0.9
+        },
+        "collider": "none"
+      }
+    },
+    {
+      "name": "stone_1",
+      "parent": -1,
+      "transform": {
+        "position": [
+          -6,
+          0.105,
+          9.4
+        ]
+      },
+      "dynamic_mesh": {
+        "mesh": "stone_1",
+        "generator": {
+          "type": "stone",
+          "seed": 18,
+          "size": [
+            0.45499999999999996,
+            0.27999999999999997,
+            0.35
+          ],
+          "chips": 4
+        },
+        "material": {
+          "color": "#9a948a",
+          "roughness": 0.9
+        },
+        "collider": "none"
+      }
+    },
+    {
+      "name": "stone_2",
+      "parent": -1,
+      "transform": {
+        "position": [
+          -2,
+          0.135,
+          4.6
+        ]
+      },
+      "dynamic_mesh": {
+        "mesh": "stone_2",
+        "generator": {
+          "type": "stone",
+          "seed": 25,
+          "size": [
+            0.5850000000000001,
+            0.36000000000000004,
+            0.45
+          ],
+          "chips": 5
+        },
+        "material": {
+          "color": "#9a948a",
+          "roughness": 0.9
+        },
+        "collider": "none"
+      }
+    },
+    {
+      "name": "stone_3",
+      "parent": -1,
+      "transform": {
+        "position": [
+          3,
+          0.12,
+          8.9
+        ]
+      },
+      "dynamic_mesh": {
+        "mesh": "stone_3",
+        "generator": {
+          "type": "stone",
+          "seed": 32,
+          "size": [
+            0.52,
+            0.32000000000000006,
+            0.4
+          ],
+          "chips": 3
+        },
+        "material": {
+          "color": "#9a948a",
+          "roughness": 0.9
+        },
+        "collider": "none"
+      }
+    },
+    {
+      "name": "stone_4",
+      "parent": -1,
+      "transform": {
+        "position": [
+          10,
+          0.165,
+          4.2
+        ]
+      },
+      "dynamic_mesh": {
+        "mesh": "stone_4",
+        "generator": {
+          "type": "stone",
+          "seed": 39,
+          "size": [
+            0.7150000000000001,
+            0.44000000000000006,
+            0.55
+          ],
+          "chips": 4
+        },
+        "material": {
+          "color": "#9a948a",
+          "roughness": 0.9
+        },
+        "collider": "none"
+      }
+    },
+    {
+      "name": "stone_5",
+      "parent": -1,
+      "transform": {
+        "position": [
+          12.5,
+          0.09,
+          7.6
+        ]
+      },
+      "dynamic_mesh": {
+        "mesh": "stone_5",
+        "generator": {
+          "type": "stone",
+          "seed": 46,
+          "size": [
+            0.39,
+            0.24,
+            0.3
+          ],
+          "chips": 5
+        },
+        "material": {
+          "color": "#9a948a",
+          "roughness": 0.9
+        },
+        "collider": "none"
+      }
+    }
+  ]
+}

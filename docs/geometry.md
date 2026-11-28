@@ -9,9 +9,10 @@ never a crash. The design is in
 [`design/cozy-builder.md` §4.4](design/cozy-builder.md#44-runtime-procedural-geometry-r23);
 the papers are in the [reading list](reading/README.md#procedural-building-curves--geometry).
 
-R23.2 (next) adds the `DynamicMesh` component, its GPU upload path,
-colliders, picking, and remote / MCP / Lua access. Until then a game uploads
-`MeshData` the way it uploads any mesh.
+R23.2 adds the runtime side: the `DynamicMesh` component and the dynamic
+mesh store that uploads generated meshes in the background (see
+[Dynamic meshes](#dynamic-meshes)), generator specs that scene files, remote
+tools, MCP and Lua share, and static mesh colliders.
 
 ## Pieces
 
@@ -121,6 +122,63 @@ so a result can differ by one grid step (15 µm) in a rare half-way case.
 Polygon operations, `repair`, flat-topped roofs and outward tapers use
 Clipper2. If bit-exactness matters there, snap the output to a coarser grid
 before hashing it.
+
+## Dynamic meshes
+
+`engine/scene/dynamic_mesh.hpp` (ROADMAP R23.2). A game submits `MeshData`
+to the `DynamicMeshStore` under a string id. Entities show it with a
+`DynamicMesh` component naming the id:
+
+```cpp
+auto roof = geometry::roof_mesh(*geometry::straight_skeleton(footprint, weights), {});
+store.submit("house_3/roof", std::move(*roof));      // version 1, 2, ... per id
+registry.emplace<scene::DynamicMesh>(house, scene::DynamicMesh{.mesh = "house_3/roof"});
+```
+
+- **Uploads** go through a staging ring (`rhi::StagingRing`) with a per-frame
+  byte budget (8 MiB by default). They are recorded as one transfer pass in
+  the frame's render graph, and a mesh larger than the budget takes several
+  frames. Nothing on the CPU waits for the GPU.
+- **Swaps** happen at a frame boundary, the frame after the last copy was
+  recorded. The previous version keeps drawing until then, so edits never
+  pop or flicker. Replaced buffers are freed through a `DeferredReleaseQueue`
+  once no frame in flight can read them.
+- **Region updates**: `update_vertices(id, first, vertices)` changes a range
+  of vertices and keeps the topology. Only those bytes are staged; the rest
+  of the new version is copied on the GPU from the resident one.
+- **Drawing**: a resolved `DynamicMesh` gets an ordinary `MeshRenderer`.
+  Batching, shadows, motion vectors, culling, bounds and editor picking work
+  as for any mesh. Its material is the flat `Primitive` material (colour,
+  metallic, roughness, emissive, material shader), shared between entities
+  with equal materials. All submeshes draw with the entity's material: split
+  a mesh by material into entities if it needs several.
+- **Colliders**: `collider = mesh` builds a static Jolt `MeshShape` from the
+  latest CPU version, with the entity's world scale baked in and the entity
+  as the body's owner. It is rebuilt when the mesh or the entity's transform
+  changes. Moving dynamic bodies need primitive colliders.
+- **Generators**: a `DynamicMesh` can carry a generator spec. When the store
+  has no mesh under the id, or the spec changes, the spec runs and its
+  output is submitted. A scene file therefore stores the recipe, not the
+  triangles: `assets/scenes/procedural_village.json` (`QUAT_DEMO=village`)
+  builds a walled village this way.
+
+Remote control (`geometry.*`, `mesh.dynamic.*`), MCP (`geometry_generate`,
+`geometry_polygon`, `mesh_dynamic_*`) and Lua (`geometry`) share one JSON
+surface (`engine/scene/dynamic_mesh_api.hpp`).
+
+## Generator specs
+
+`engine/scene/geometry_spec.hpp`: one JSON object naming a generator. Unknown
+fields and out-of-range values are refused, and the error names the field.
+Point lists are bounded (4096 polygon or path points, 1024 profile points)
+and so is the output (2^20 vertices).
+
+| `type` | Fields (defaults) |
+|---|---|
+| `roof` | `polygon` [[x, z]] counter-clockwise; `holes` [[[x, z]]]; `weights` (one per edge, all 1); `base_height` (0); `height_scale` (1); `max_height` (0: none); `uv_scale` (1) |
+| `sweep` | `path` [[x, y, z]]; `profile` [[x, y]]; `closed_path` (false); `closed_profile` (false); `caps` (true, closed profiles on open paths); `miter_limit` (4); `uv_scale` (1); `crease_angle` (40) |
+| `extrude` | `polygon`; `holes`; `height` (1); `base_height` (0); `taper` (0); `caps` (true); `uv_scale` (1) |
+| `stone` | `seed` (1); `size` [x, y, z] (0.4, 0.25, 0.3); `subdivisions` (3); `roundness` (0.6); `noise` (0.08); `chips` (3); `chip_depth` (0.15); `uv_scale` (0.5) |
 
 ## Cost
 

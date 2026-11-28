@@ -72,6 +72,7 @@
 #include "engine/rhi/gpu_profiler.hpp"
 #include "engine/rhi/render_graph.hpp"
 #include "engine/scene/material_override.hpp"
+#include "engine/scene/dynamic_mesh.hpp"
 #include "engine/weather/weather_state.hpp"
 #include "engine/weather/wind_field.hpp"
 #ifdef ENGINE_EDITOR
@@ -263,6 +264,10 @@ public:
     [[nodiscard]] engine::scene::MaterialOverrideStore& material_overrides() {
         return material_overrides_;
     }
+    // Runtime-generated meshes (R23.2): games, remote tools and scripts
+    // submit; the remote bridge resolves DynamicMesh components, record()
+    // stages the uploads.
+    [[nodiscard]] engine::scene::DynamicMeshStore& dynamic_meshes() { return dynamic_meshes_; }
     // Camera cut (scene load, play enter / exit, active-camera change,
     // teleport): the next frame drops the motion history and previous view
     // (velocity 0) and resolves without the TAA / upscaler history.
@@ -421,6 +426,8 @@ private:
     engine::renderer::RenderSettings settings_;
     // Destroyed (cleared) with the frame sync, after the device went idle.
     engine::scene::MaterialOverrideStore material_overrides_{k_frames_in_flight};
+    engine::scene::DynamicMeshStore dynamic_meshes_{
+        engine::scene::DynamicMeshStore::Config{std::size_t{8} << 20, k_frames_in_flight, std::size_t{256} << 20}};
 
     // Drives the clouds' wind drift (settings_.clouds.time_s is ignored). The
     // frame loop accumulates it always, like the animated sky in other engines

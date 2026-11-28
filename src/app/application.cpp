@@ -240,6 +240,7 @@ bool Application::init_subsystems() {
     load_startup_hdri();
     // Terrain, networking (QUAT_HOST / QUAT_JOIN) and the QUAT_TERRAIN tile.
     world_.init(device_, allocator_, pipeline_cache_, shader_dir_, project_root(), scene_);
+    world_.set_dynamic_meshes(&renderer_.dynamic_meshes());
 
     // Free-fly view camera, seeded by framing the scene.
     // Issue #8: frame the demo content (not its ground plate) for the view it
@@ -347,6 +348,7 @@ void Application::connect_remote() {
     remote_targets.render_settings = &renderer_.render_settings();
     remote_targets.wind_clock = [this] { return renderer_.wind_clock(); };
     remote_targets.material_overrides = &renderer_.material_overrides();
+    remote_targets.dynamic_meshes = &renderer_.dynamic_meshes();
     remote_targets.reset_temporal = [this] { renderer_.reset_temporal(); };
     remote_targets.input = &input_runtime_;
     remote_targets.view_aspect = [this] {

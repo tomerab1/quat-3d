@@ -71,6 +71,9 @@ struct DemoSceneFile {
 };
 inline constexpr DemoSceneFile k_demo_scenes[] = {
     {"mountain", "assets/scenes/mountain_forest.json"},
+    // R23.2: walls, buildings, roofs and stones generated at load time
+    // (dynamic_mesh generator specs).
+    {"village", "assets/scenes/procedural_village.json"},
 };
 
 // Half the height of the pedestal mesh (a box) as built; its Transform scales

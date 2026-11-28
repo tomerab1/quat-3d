@@ -17,6 +17,7 @@
 #include <entt/entity/entity.hpp>
 
 #include "engine/core/error.hpp"
+#include "engine/scene/dynamic_mesh.hpp"
 #include "engine/scene/components.hpp"
 #include "engine/scene/physics_settings.hpp"
 #include "engine/scene/world_clock.hpp"
@@ -39,7 +40,7 @@ using SnapshotComponents =
                   scene::DirectionalLight, scene::PointLight, scene::Collider,
                   scene::RigidBody, scene::Joint, scene::CharacterController, scene::Terrain,
                   scene::Grass, scene::ParticleEmitter, scene::WorldClock,
-                  scene::NavAgent, scene::BehaviorTree, scene::PatrolRoute, scene::Primitive,
+                  scene::NavAgent, scene::BehaviorTree, scene::PatrolRoute, scene::Primitive, scene::DynamicMesh,
                   scene::InstancedMesh, scene::InstancedMeshParts, scene::Scatter,
                   scene::NetReplicated, scene::AudioSource, scene::AudioListener,
                   scene::Script>;

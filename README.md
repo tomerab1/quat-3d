@@ -126,7 +126,9 @@ The editor (dark theme; a light theme is one click away in View > Theme):
   gable, shed, flat-topped), wall sweeps along paths with mitred corners,
   lofts, tapered extrusions and seeded stones, with crease normals, UVs and
   MikkTSpace tangents. Output is bit-identical on every OS, so a hash can key
-  caches — see [`docs/geometry.md`](docs/geometry.md)
+  caches — see [`docs/geometry.md`](docs/geometry.md); dynamic meshes stream to the GPU in
+  the background (per-frame budget, no pops), with static mesh colliders and
+  generator specs saved in scene files (`QUAT_DEMO=village`)
 
 **Audio**
 - miniaudio-based mixer with music / sfx / ui / ambience buses, 3D positional
@@ -326,6 +328,7 @@ Environment variables switch on extra modes:
 | Variable | Effect |
 |---|---|
 | `QUAT_DEMO=mountain` | Open the mountain-forest showcase (`assets/scenes/mountain_forest.json`) instead of the material showcase |
+| `QUAT_DEMO=village` | Open the procedural village (`assets/scenes/procedural_village.json`): walls, roofs and stones generated at load time |
 | `QUAT_SCENE=<file>` | Load a scene file (project-relative) instead of the showcase scene |
 | `QUAT_INPUT_USER_FILE=<path>` | The player's input rebinding file (default `input.json` in the per-user preferences directory; empty = none) — see [`docs/input.md`](docs/input.md) |
 | `QUAT_HDRI=<file>` | Light the scene with a Radiance `.hdr` panorama (project-relative). `scripts/fetch-hdri.sh <id>` downloads a CC0 one from Poly Haven into `hdri-cache/` |

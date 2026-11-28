@@ -22,6 +22,7 @@
 #include "engine/core/sim_clock.hpp"
 #include "engine/rhi/device.hpp"
 #include "engine/rhi/pipeline_cache.hpp"
+#include "engine/scene/dynamic_mesh.hpp"
 #include "engine/scene/behavior.hpp"
 #include "engine/scene/components.hpp"
 #include "engine/scene/ground_placement.hpp"
@@ -321,6 +322,10 @@ void WorldRuntime::simulate_slice(engine::scene::Scene& scene, float sim_dt,
             engine::scene::character_system(scene.registry(), *demo_.physics_world, sim_dt);
         } else {
             QUAT_ZONE_C("physics_system", ProfileCategory::system);
+            if (dynamic_meshes_ != nullptr) {
+                engine::scene::dynamic_mesh_collider_system(scene.registry(), *demo_.physics_world,
+                                                            *dynamic_meshes_);
+            }
             engine::scene::physics_system(scene.registry(), *demo_.physics_world, sim_dt);
             engine::scene::publish_physics_events(*demo_.physics_world,
                                                   engine::core::event_ring());
@@ -357,6 +362,10 @@ void WorldRuntime::simulate_slice(engine::scene::Scene& scene, float sim_dt,
         }
         {
             QUAT_ZONE_C("physics_system", ProfileCategory::system);
+            if (dynamic_meshes_ != nullptr) {
+                engine::scene::dynamic_mesh_collider_system(scene.registry(), *play_physics_,
+                                                            *dynamic_meshes_);
+            }
             engine::scene::physics_system(scene.registry(), *play_physics_, sim_dt);
         }
         engine::scene::publish_physics_events(*play_physics_, engine::core::event_ring());
@@ -640,6 +649,7 @@ std::expected<void, engine::core::Error> WorldRuntime::begin_play(engine::scene:
     if (scripts_) {
         engine::script::ScriptServices services = script_services_;
         services.physics = &*play_physics_;
+        services.dynamic_meshes = dynamic_meshes_;
         scripts_->set_services(std::move(services));
         if (auto started = scripts_->start(scene); !started) {
             std::fprintf(stderr, "[script][warn] scripts disabled: %s\n",

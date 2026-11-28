@@ -176,6 +176,7 @@ void register_script_commands(RpcServer& server, const ContextPtr& ctx);
 void register_profile_commands(RpcServer& server, const ContextPtr& ctx);
 void register_shader_commands(RpcServer& server, const ContextPtr& ctx);
 void register_time_commands(RpcServer& server, const ContextPtr& ctx);
+void register_geometry_commands(RpcServer& server, const ContextPtr& ctx);
 void register_input_commands(RpcServer& server, const ContextPtr& ctx);
 void register_camera_rig_commands(RpcServer& server, const ContextPtr& ctx);
 

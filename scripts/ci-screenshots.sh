@@ -57,6 +57,7 @@ SCENE_TABLE=(
   "editor-time-of-day|30|QUAT_WINDOW_SIZE=1600x900 QUAT_EDITOR_LAYOUT=default QUAT_EDITOR_SELECT=world_clock QUAT_TIME=2026-06-21T21:35:00+02:00 QUAT_TIME_SCALE=0|Editor: the world clock in the Inspector at sunset"
   "showcase-hdri|40|QUAT_NO_UI=1 QUAT_HDRI=hdri-cache/kloofendal_48d_partly_cloudy_2k.hdr|Showcase lit by a CC0 Poly Haven HDRI (R21: HDRI IBL, its sun as the shadowed light, SSR)"
   "mountain-forest|30|QUAT_NO_UI=1 QUAT_DEMO=mountain|Mountain + forest showcase: terrain, scattered trees and rocks, GPU grass"
+  "procedural-village|24|QUAT_NO_UI=1 QUAT_DEMO=village|Runtime geometry (R23.2): swept garden wall, straight-skeleton gable / hip / spire roofs, extruded walls, seeded stones"
 )
 # HDRI panoramas the scenes use, fetched into hdri-cache/ (gitignored).
 HDRIS=("kloofendal_48d_partly_cloudy 2k")
