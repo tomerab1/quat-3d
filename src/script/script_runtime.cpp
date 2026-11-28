@@ -12,6 +12,7 @@
 #include <entt/entity/registry.hpp>
 
 #include "engine/core/log.hpp"
+#include "engine/core/profile.hpp"
 #include "engine/physics/physics_world.hpp"
 #include "engine/scene/scene.hpp"
 #include "engine/script/script_source.hpp"
@@ -91,6 +92,7 @@ ScriptRuntime::ScriptRuntime(ScriptRuntime&&) noexcept = default;
 ScriptRuntime& ScriptRuntime::operator=(ScriptRuntime&&) noexcept = default;
 
 std::expected<void, core::Error> ScriptRuntime::start(scene::Scene& scene) {
+    QUAT_ZONE_N("script_start"); // VM + API registration (modules load lazily)
     stop();
     detail::VmLimits limits;
     limits.memory_bytes = impl_->options.limits.memory_bytes;
@@ -135,24 +137,33 @@ const std::filesystem::path& ScriptRuntime::scripts_root() const { return impl_-
 void ScriptRuntime::update(float dt) {
     detail::Session* s = impl_->session.get();
     if (s == nullptr || !(dt > 0.0F)) return; // paused: scripts hold too
+    QUAT_ZONE_N("script_update");
     s->ctx.dt = dt;
     s->ctx.elapsed_s += dt;
     ++s->ctx.frame;
     impl_->sync_instances();
 
     s->fixed_accumulator += dt;
-    int steps = 0;
-    while (s->fixed_accumulator >= k_fixed_dt && steps < k_max_fixed_steps) {
-        for (std::size_t i = 0; i < s->instances.size(); ++i) {
-            impl_->invoke(s->instances[i], "on_fixed_update", k_fixed_dt);
+    {
+        QUAT_ZONE_N("script_on_fixed_update");
+        int steps = 0;
+        while (s->fixed_accumulator >= k_fixed_dt && steps < k_max_fixed_steps) {
+            for (std::size_t i = 0; i < s->instances.size(); ++i) {
+                impl_->invoke(s->instances[i], "on_fixed_update", k_fixed_dt);
+            }
+            s->fixed_accumulator -= k_fixed_dt;
+            ++steps;
         }
-        s->fixed_accumulator -= k_fixed_dt;
-        ++steps;
+        if (steps == k_max_fixed_steps) {
+            s->fixed_accumulator = std::fmod(s->fixed_accumulator, k_fixed_dt);
+        }
     }
-    if (steps == k_max_fixed_steps) s->fixed_accumulator = std::fmod(s->fixed_accumulator, k_fixed_dt);
 
-    for (std::size_t i = 0; i < s->instances.size(); ++i) {
-        impl_->invoke(s->instances[i], "on_update", dt);
+    {
+        QUAT_ZONE_N("script_on_update");
+        for (std::size_t i = 0; i < s->instances.size(); ++i) {
+            impl_->invoke(s->instances[i], "on_update", dt);
+        }
     }
     impl_->flush_destroys();
     impl_->count_instances();
@@ -161,6 +172,7 @@ void ScriptRuntime::update(float dt) {
 void ScriptRuntime::dispatch_triggers(const physics::PhysicsWorld& world) {
     detail::Session* s = impl_->session.get();
     if (s == nullptr) return;
+    QUAT_ZONE_N("script_triggers");
     const entt::registry& r = s->ctx.scene->registry();
     const auto entity_of = [&](std::uint32_t body) {
         const std::uint32_t owner = world.body_owner(body);
@@ -198,6 +210,7 @@ std::expected<sol::table, std::string> ScriptRuntime::Impl::module(const std::st
     if (const auto it = s.module_errors.find(path); it != s.module_errors.end()) {
         return std::unexpected(it->second);
     }
+    QUAT_ZONE_N("script_load_module"); // first use of a file: read + compile + run
     std::expected<sol::table, std::string> loaded = std::unexpected(std::string());
     if (auto file = script_file(options.scripts_root, path); !file) {
         loaded = std::unexpected(file.error().message);

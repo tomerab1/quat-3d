@@ -130,6 +130,18 @@ times every pass (`RenderGraph::execute`), the system call sites in
 frame loop times its own stages and waits. A new pass or system is profiled
 without touching the profiler.
 
+Inside a system, the subsystems that do enough work to matter have their own
+scopes, so a slow frame is attributable below the system level:
+
+| Area | Zones |
+|---|---|
+| Scripts (G7) | `script_system` (system) → `script_triggers`, `script_update` → `script_on_fixed_update`, `script_on_update`; `script_load_module` (first use of a file), `script_start` (Play), `script_reload` / `script_hot_reload` (file changes) |
+| GPU particles (R10) | `particle_emitters` (system: spawn budget, pool ranges, flipbooks) → `particle_record` (emitter records, pass declaration), `particle_flipbook_upload`; the `particle_*` compute passes are timed on the CPU and GPU by the render graph |
+| Upscaler (R11) | `upscaler` (backend choice, TAAU declaration) → `taa_history_resize` (only on a new render extent); `taa_resolve` is a timed render-graph pass |
+
+Zone names are interned with the category of their first use, so a CPU scope
+never reuses a render-graph pass's name.
+
 ### CPU side
 
 Scopes on the main thread (the thread bound with
