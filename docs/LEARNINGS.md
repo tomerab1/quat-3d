@@ -85,6 +85,12 @@ into CLAUDE.md or the brief template in [`CYCLE.md`](CYCLE.md).
   the old signature and broke CI's build. → When a resolution changes a
   declaration, `grep -rn` its name over `src/` and `tests/` and
   compile-check every caller.
+- **Two RNG draws in one expression are not deterministic across
+  compilers.** `glm::vec3(rng.uniform(..), .., rng.uniform(..))` evaluates
+  its arguments in an unspecified order: MSVC right to left, clang left to
+  right. quat-asset-gen's committed models matched on Linux and failed
+  `AssetGen.CommittedAssetsAreCurrent` on Windows (0.21 m off). → One draw
+  per statement, into a named local, wherever output must be reproducible.
 - **Hand-rolled local builds must rebuild dependents of changed headers.**
   The E8 worker's scratch build script recompiled a `.cpp` only when it was
   newer than its object; after a member was added to `EditorShell`, stale
