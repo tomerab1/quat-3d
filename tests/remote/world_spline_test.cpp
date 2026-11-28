@@ -38,7 +38,11 @@ TEST_F(WorldSpline, GetAndSetReportLengthAndBounds) {
     out = ok("spline.set", {{"entity", id}, {"points", {{0, 1, 0}, {10, 1, 0}, {10, 1, 10}}}});
     EXPECT_NEAR(out["length"].get<float>(), 20.0F, 1e-4F);
     EXPECT_EQ(err("spline.set", {{"entity", id}, {"kind", "cubic_bezier"}}, rc::invalid_params),
-              "spline.points: a cubic_bezier spline needs 3k + 1 points (anchor, handle, handle, anchor, ...), got 3");
+              "spline.points: a cubic_bezier spline needs at least 4 points, got 3");
+    EXPECT_EQ(err("spline.set",
+                  {{"entity", id}, {"kind", "cubic_bezier"}, {"points", {{0, 1, 0}, {1, 1, 0}, {2, 1, 0}, {3, 1, 0}, {4, 1, 0}}}},
+                  rc::invalid_params),
+              "spline.points: a cubic_bezier spline needs 3k + 1 points (anchor, handle, handle, anchor, ...), got 5");
     EXPECT_EQ(err("spline.set", {{"entity", id}, {"points", {{0, 1, 0}, {1, 1}}}}, rc::invalid_params),
               "spline.points[1]: expected [x, y, z] in metres (finite, within 1e6)");
     // The failed edits changed nothing.
@@ -149,7 +153,9 @@ TEST_F(WorldSpline, FitTurnsAStrokeIntoASpline) {
     out = ok("spline.fit", {{"points", pts}, {"entity", id}, {"output", "cubic_bezier"}});
     EXPECT_EQ(out["spline"]["kind"], "cubic_bezier");
     EXPECT_NEAR(out["spline"]["points"][0][0].get<float>(), 10.0F - 100.0F, 1e-3F);
-    EXPECT_NEAR(out["bounds"]["max"][0].get<float>(), 110.5F, 0.2F); // world: back at x = 110 (+ half width)
+    // The stroke was drawn in world space, so the world bounds are where it
+    // was drawn: x up to 10 (+ half the 1 m width).
+    EXPECT_NEAR(out["bounds"]["max"][0].get<float>(), 10.5F, 0.2F);
 
     EXPECT_EQ(err("spline.fit", {{"points", {{0, 0, 0}}}}, rc::invalid_params),
               "points: a stroke needs at least 2 points, got 1");
