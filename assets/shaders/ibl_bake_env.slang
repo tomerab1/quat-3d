@@ -22,6 +22,8 @@ struct BakeParams {
                         // dispatches all 6 layers)
     uint   tile_x;      // texel offset of this dispatch's tile (0 = full face)
     uint   tile_y;
+    float  scale;       // radiance multiplier: the frame's pre-exposure for the
+                        // dynamic probe (DynamicIbl::scale), 1 for static bakes
 }
 [[vk::push_constant]] BakeParams pc;
 
@@ -64,5 +66,5 @@ void compute_main(uint3 tid : SV_DispatchThreadID) {
     } else {
         radiance = sky(dir, sun);
     }
-    g_out[uint3(px, face)] = float4(radiance, 1.0);
+    g_out[uint3(px, face)] = float4(radiance * pc.scale, 1.0);
 }

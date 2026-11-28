@@ -14,6 +14,7 @@
 #include "engine/renderer/atmosphere_pass.hpp"
 #include "engine/renderer/dynamic_ibl.hpp"
 #include "engine/renderer/ibl_pass.hpp"
+#include "engine/renderer/photometry.hpp"
 #include "engine/rhi/render_graph.hpp"
 #include "support/expect_ok.hpp"
 #include "support/gpu_context.hpp"
@@ -126,6 +127,51 @@ std::expected<ProbeRun, Error> noon_then_dusk(quat::test::GpuContext& g) {
     return run;
 }
 
+// A moonless night (R22.2.1): the sky is ~2e-8 HDR units, below RGBA16F's
+// smallest subnormal, so the probe bakes it times the frame's pre-exposure
+// (IblCycleParams::scale). Zenith irradiance divided by the scale, baked at
+// 1e6 by the initial cycle and at 1e4 by a cycle the 6.6 EV move starts.
+struct NightRun {
+    glm::vec3 at_1e6{0.0F};
+    glm::vec3 at_1e4{0.0F};
+    float     scale_after = 0.0F; // DynamicIbl::scale() after the second cycle
+};
+
+std::expected<NightRun, Error> night_at_two_scales(quat::test::GpuContext& g) {
+    namespace ph = r::photometry;
+    auto atmos = r::AtmospherePass::create(g.device, g.allocator, g.cache, g.shader_dir);
+    if (!atmos) return std::unexpected(atmos.error());
+    r::IblCycleParams p{};
+    p.sun_to = glm::normalize(glm::vec3(0.0F, -0.64F, -0.77F)); // -40 deg
+    p.clouds.enabled = false;
+    r::SkyLights lights;
+    lights.night_irradiance = ph::k_night_sky_floor_lux / ph::k_sun_reference_lux;
+    if (auto s = atmos->ensure_skyview(p.sun_to, lights); !s) return std::unexpected(s.error());
+    p.skyview = atmos->skyview_view();
+    p.transmittance = atmos->transmittance_view();
+    p.scale = 1.0e6F;
+    auto probe = r::DynamicIbl::create(g.device, g.allocator, g.cache, g.shader_dir, p);
+    if (!probe) return std::unexpected(probe.error());
+    NightRun run;
+    auto zenith = front_zenith(g, *probe);
+    if (!zenith) return std::unexpected(zenith.error());
+    run.at_1e6 = *zenith / probe->scale();
+    p.scale = 1.0e4F;
+    for (std::uint32_t i = 0; i < r::DynamicIbl::cycle_step_count(); ++i) {
+        rhi::RenderGraph graph;
+        if (auto s = probe->add_step_to_graph(graph, p); !s) return std::unexpected(s.error());
+        if (auto c = graph.compile(); !c) return std::unexpected(c.error());
+        auto ran = quat::test::submit_and_wait(g.device,
+                                               [&](VkCommandBuffer cmd) { graph.execute(cmd); });
+        if (!ran) return std::unexpected(ran.error());
+    }
+    run.scale_after = probe->scale();
+    zenith = front_zenith(g, *probe);
+    if (!zenith) return std::unexpected(zenith.error());
+    run.at_1e4 = *zenith / probe->scale();
+    return run;
+}
+
 const std::expected<ProbeRun, Error>& probe_run(quat::test::GpuContext& g) {
     static const std::expected<ProbeRun, Error> run = noon_then_dusk(g);
     return run;
@@ -195,4 +241,21 @@ TEST(GpuDynamicIbl, IrradianceFollowsTheSunDown) {
     EXPECT_GE(run->dusk_zenith.r, 0.0F) << "dusk irradiance is not finite";
     EXPECT_GE(run->dusk_zenith.b, 0.0F) << "dusk irradiance is not finite";
     EXPECT_LE(run->dusk_zenith.b, run->noon_zenith.b * 0.8F);
+}
+
+// The night sky survives the probe: non-zero, the same at both scales, and
+// of the order of the dome's luminance (E / pi in lux -> HDR units; the
+// irradiance map holds radiance-weighted cosine averages of that order).
+TEST(GpuDynamicIbl, NightSkyIsKeptByThePreExposureScale) {
+    QUAT_REQUIRE_GPU(g);
+    namespace ph = r::photometry;
+    auto run = night_at_two_scales(*g);
+    ASSERT_OK(run);
+    EXPECT_EQ(run->scale_after, 1.0e4F) << "a 6.6 EV pre-exposure move must re-bake";
+    const float dome = ph::k_night_sky_floor_lux / 3.14159265F / ph::k_nits_per_unit;
+    const float a = glm::dot(run->at_1e6, glm::vec3(0.2126F, 0.7152F, 0.0722F));
+    const float b = glm::dot(run->at_1e4, glm::vec3(0.2126F, 0.7152F, 0.0722F));
+    EXPECT_GT(a, dome * 0.3F);
+    EXPECT_LT(a, dome * 4.0F);
+    EXPECT_NEAR(b, a, a * 0.05F);
 }

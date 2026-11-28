@@ -307,6 +307,8 @@ bool FrameRenderer::record(const FrameInputs& in) {
     const VkExtent2D render_extent = fs.render_extent;
     apply_texture_lod_bias(fr, render_extent, draw_extent);
     // R22.2.1: every light this frame writes into the HDR is pre-exposed.
+    // SSR reads the previous frame's HDR, pre-exposed with the previous value.
+    previous_pre_exposure_ = pre_exposure_;
     pre_exposure_ = choose_pre_exposure(in);
     const auto atmos_skyview = [&]() {
         return atmosphere_ ? atmosphere_->skyview_view() : VK_NULL_HANDLE;
@@ -463,6 +465,8 @@ bool FrameRenderer::record(const FrameInputs& in) {
         in.terrain != nullptr ? in.terrain_snowline : engine::renderer::k_no_snowline_m);
     tuning.cloud_shadow = cloud_shadow;
     tuning.pre_exposure = pre_exposure_;
+    tuning.ibl_scale = environment.ibl_scale;
+    tuning.reflection_pre_exposure = previous_pre_exposure_;
     auto hdr = fr.lighting.add_to_graph(graph, *gbuffer, render_extent, fs.light,
                                         fs.jittered_inv_vp, cam.position, occlusion, clustered,
                                         /*enable_sky=*/true, ibl_views, atmos_skyview(),
@@ -480,7 +484,7 @@ bool FrameRenderer::record(const FrameInputs& in) {
         if (auto r = fr.transparent.add_to_graph(graph, *hdr, gbuffer->depth, render_extent,
                                                  fs.jittered_vp, fs.light, cam.position,
                                                  fs.transparent_draws, ibl_views, clustered,
-                                                 settings.ibl.intensity);
+                                                 settings.ibl.intensity / environment.ibl_scale);
             !r) {
             std::fprintf(stderr, "[fatal] transparent pass: %s\n", r.error().message.c_str());
             return false;

@@ -386,6 +386,9 @@ private:
     struct EnvironmentMaps {
         engine::renderer::IblViewSet ibl{};
         VkImageView                  background = VK_NULL_HANDLE; // HDRI cube, else none
+        // The multiplier baked into `ibl` (DynamicIbl::scale); consumers
+        // scale the IBL intensity by its inverse.
+        float                        ibl_scale = 1.0F;
     };
     // The HDRI is loaded and selected (settings_.environment.source).
     [[nodiscard]] bool hdri_active() const;
@@ -475,6 +478,7 @@ private:
     std::shared_ptr<const engine::renderer::StarCatalogueGpu> star_catalogue_;
     // The frame being recorded is pre-exposed with this (choose_pre_exposure).
     float pre_exposure_ = 1.0F;
+    float previous_pre_exposure_ = 1.0F; // the last frame's pre_exposure_
     std::optional<engine::renderer::DynamicIbl>     dynamic_ibl_;
     // R21: the HDRI panorama's maps and the screen-space reflections (shared
     // by both slots; each owns its own cross-frame state).
