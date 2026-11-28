@@ -1,6 +1,9 @@
 # Engine SDK (ROADMAP P8): umbrella targets, install rules and the quat3d CMake
 # package. docs/sdk.md is the consumer's guide; docs/design/cozy-builder.md
-# §3.3–3.5 the design.
+# §3.3–3.5 the design. Follows Kitware's "Importing and Exporting Guide"
+# (cmake.org/cmake/help/latest/guide/importing-exporting) for the exported
+# targets, package config and version files; versions follow Semantic
+# Versioning 2.0.0 (semver.org), see docs/reading/README.md.
 #
 #   cmake --build build/release
 #   cmake --install build/release --prefix <sdk>

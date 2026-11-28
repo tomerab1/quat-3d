@@ -434,6 +434,27 @@ token, so other users on the machine and web pages in your browser cannot
 drive the engine. See [`tools/quat-mcp/README.md`](tools/quat-mcp/README.md)
 for Claude Desktop setup, explicit tokens, the full tool list and the workflows.
 
+## Building a game against the SDK
+
+Games in their own repositories link an installed engine SDK instead of the
+engine sources. Each release attaches `quat3d-sdk-<version>-<os>` archives,
+or you can install one from a build with
+`cmake --install build/release --prefix <sdk>`. Then:
+
+```cmake
+find_package(quat3d 0.1 CONFIG REQUIRED)
+quat_add_game(my_game SOURCES src/main.cpp ASSETS assets)
+```
+
+```sh
+cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE=<sdk>/lib/cmake/quat3d/quat3d-toolchain.cmake
+```
+
+[`docs/sdk.md`](docs/sdk.md) covers the layout, which headers are stable,
+the toolchain rules and the versioning policy.
+[`examples/sdk-consumer/`](examples/sdk-consumer) is a working example, and
+CI builds it on every PR.
+
 ## Testing
 
 Tests use [GoogleTest](https://github.com/google/googletest) and run without
@@ -473,6 +494,7 @@ The plan lives in [`ROADMAP.md`](ROADMAP.md), grouped into tracks:
 |---|---|
 | [`docs/STATUS.md`](docs/STATUS.md) | What is in progress, what is blocked, what comes next |
 | [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md) | Building, testing, CI, and conventions for contributors |
+| [`docs/sdk.md`](docs/sdk.md) | The engine SDK: building a game in its own repository against an installed, versioned `quat3d` CMake package |
 | [`docs/scripting.md`](docs/scripting.md) | Lua gameplay scripting: callbacks, the engine API, limits, hot reload |
 | [`docs/reading/README.md`](docs/reading/README.md) | Reading list: the papers and talks behind the engine's techniques, with where each lives in the code |
 | [`docs/remote-control.md`](docs/remote-control.md) | The remote-control protocol AI tools use to drive the engine |
@@ -496,6 +518,7 @@ tools/quat-mcp/     MCP server for AI assistants (Rust, standalone Cargo crate),
                     its workflow skills and the Claude Code plugin
 tools/quat-cook/    Offline asset cooker CLI (src/cook/ holds the cooking library)
 tests/              GoogleTest suite (engine_tests): tests/<module>/, shared helpers in tests/support/
+examples/sdk-consumer/  A tiny game built only against the installed SDK (CI guard; docs/sdk.md)
 docs/               Project documentation
 ports/, triplets/   vcpkg customisations
 ```

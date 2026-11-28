@@ -235,6 +235,28 @@ build (cold: ~17 min macOS, ~28 min Windows). Logs are uploaded as an artifact w
 a run fails. The Windows and macOS test steps print GoogleTest's brief summary
 (`GTEST_BRIEF=1`), so skipped GPU tests are visible in the log.
 
+## Engine SDK
+
+`cmake --install <build> --prefix <sdk>` produces the engine SDK (ROADMAP P8;
+[`sdk.md`](sdk.md)). The install rules are in `cmake/Quat3dInstall.cmake`,
+and the installed header list is `cmake/Quat3dSdkHeaders.cmake`. A new public
+header that a game should use goes into that list. It must stay free of
+Vulkan, VMA and other non-SDK includes, and every `engine/` header it includes
+must be in the list too (`layering_check`, `public_headers_self_contained`).
+A header added to a stable header's includes changes what the SDK must
+install, so run the guards:
+
+```sh
+ctest --test-dir build/release -L sdk --output-on-failure
+```
+
+These guards install into `build/release/sdk-test/prefix`, then build
+`examples/sdk-consumer/` and the header test against that prefix alone. A new
+static library the engine links privately needs a matching `find_dependency`
+in `cmake/quat3dConfig.cmake.in`. A helper target that holds a build-machine
+path must stay out of the export (`$<BUILD_INTERFACE:…>` or an imported
+target recreated by the config, like `quat3d_deps::lua`).
+
 ## Releases
 
 `.github/workflows/release.yml` builds `game` in Release with
@@ -251,6 +273,10 @@ a clean exit, a screenshot, and data resolved next to the executable):
 | `quat-3d-<v>-macos-arm64.zip` | `Quat3D.app`: Vulkan loader + MoltenVK in `Frameworks/` (ICD manifest in `Resources/vulkan/icd.d`), data in `Resources/`, ad-hoc signed | MoltenVK, with Homebrew's Vulkan uninstalled first |
 
 Each archive carries `packaging/README-RUN-<os>.txt` as `README-RUN.txt`.
+The same job then runs `ctest -L sdk` and packages the engine SDK with
+`scripts/package-sdk.sh`: `quat3d-sdk-<v>-<os>.tar.gz` (Linux, macOS) or
+`.zip` (Windows), attached to the release next to the game packages
+([`sdk.md`](sdk.md)).
 Pushing a `v*` tag publishes a GitHub Release (tags with a `-`, e.g.
 `v0.2.0-rc1`, are prereleases); running the workflow by hand
 (`gh workflow run release.yml --ref <branch>`) only uploads the packages as
