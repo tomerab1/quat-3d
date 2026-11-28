@@ -254,6 +254,8 @@ std::vector<Segment> build_segments(const Spline& s) {
 glm::vec3 bezier_point(const glm::vec3 (&p)[4], float u) {
     // de Casteljau: stable, exact at u = 0 and 1, and exact on any axis
     // where the control points agree (a flat curve stays at its height).
+    if (u <= 0.0F) return p[0];
+    if (u >= 1.0F) return p[3];
     const glm::vec3 a = p[0] + (p[1] - p[0]) * u;
     const glm::vec3 b = p[1] + (p[2] - p[1]) * u;
     const glm::vec3 c = p[2] + (p[3] - p[2]) * u;
