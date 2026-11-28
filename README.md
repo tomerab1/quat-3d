@@ -8,11 +8,12 @@ ships with an editor for building scenes. The long-term goal is an engine you
 can ship real games with — including on Steam — and that AI assistants can
 drive directly to build and debug worlds from a prompt.
 
-> **Project status:** the core engine (rendering, animation, physics, terrain,
-> NPCs, basic multiplayer, editor) works. Current work is a stability pass
-> (bug audit, automated tests, CI), followed by AI tooling over the Model
-> Context Protocol, macOS support, and audio. See [Roadmap](#roadmap) and
-> [`docs/STATUS.md`](docs/STATUS.md) for what is in progress right now.
+> **Project status:** v0.1.0 is the first release. The core engine
+> (rendering, animation, physics, terrain, NPCs, basic multiplayer, audio,
+> Lua scripting, editor) works on Linux, Windows and macOS, AI assistants can
+> drive it over the Model Context Protocol, and games made with it can be
+> packaged. See [Roadmap](#roadmap) and [`docs/STATUS.md`](docs/STATUS.md)
+> for what is in progress right now.
 
 ## Screenshots
 
@@ -116,7 +117,10 @@ The editor (dark theme; a light theme is one click away in View > Theme):
   height limits, distance level of detail, no popping); with weather it bends
   in a global wind field computed on the GPU: gust fronts sweep across the
   field and eddies swirl through it
-- Jolt physics: rigid bodies, character controller, triggers, terrain collision
+- Jolt physics: rigid bodies, character controllers that collide with each
+  other, triggers, terrain collision, joints (fixed, point, hinge, slider,
+  distance) with limits and motors, contact and trigger events, and gravity
+  saved with the scene
 
 **Audio**
 - miniaudio-based mixer with music / sfx / ui / ambience buses, 3D positional
@@ -155,6 +159,9 @@ The editor (dark theme; a light theme is one click away in View > Theme):
   searchable Add Component list; hierarchy search, type icons, rename,
   duplicate and drag-to-re-parent
 - Save and load scenes as JSON; click-to-walk and patrol authoring for NPCs
+- *File → Build & Export…* (Ctrl+B) packages the open game project with
+  `quat-pack`, with live progress — see
+  [Make a game and ship it](#make-a-game-and-ship-it)
 
 ## Platforms
 
@@ -173,10 +180,14 @@ Ready-to-run builds are attached to each
 [GitHub Release](../../releases) (built and smoke-tested by
 [`.github/workflows/release.yml`](.github/workflows/release.yml) for every
 `v*` tag), with release notes listing what changed (also in
-[`CHANGELOG.md`](CHANGELOG.md)). Every archive contains a `README-RUN.txt`
-with the launch options and troubleshooting, `quat-mcp` (the MCP server for AI
-assistants; see [Use it with Claude Code](#use-it-with-claude-code)), and
-`LICENSE` and `THIRD_PARTY_NOTICES.md` (see [License](#license)).
+[`CHANGELOG.md`](CHANGELOG.md)). Every engine archive contains a
+`README-RUN.txt` with the launch options and troubleshooting, `quat-mcp` (the
+MCP server for AI assistants; see [Use it with Claude Code](#use-it-with-claude-code)),
+and `LICENSE` and `THIRD_PARTY_NOTICES.md` (see [License](#license)). The
+editor's own tools (`quat-cook`, `quat-pack`, `quat-player`) are not in the
+archives yet: cooking assets and packaging games need a [source build](#building).
+Each release also carries the sample game, `coin-collector-<version>-<os>`,
+packaged with `quat-pack` (see [Make a game and ship it](#make-a-game-and-ship-it)).
 
 | Download | Run |
 |---|---|
@@ -303,6 +314,7 @@ Environment variables switch on extra modes:
 | `QUAT_DEMO=mountain` | Open the mountain-forest showcase (`assets/scenes/mountain_forest.json`) instead of the material showcase |
 | `QUAT_SCENE=<file>` | Load a scene file (project-relative) instead of the showcase scene |
 | `QUAT_HDRI=<file>` | Light the scene with a Radiance `.hdr` panorama (project-relative). `scripts/fetch-hdri.sh <id>` downloads a CC0 one from Poly Haven into `hdri-cache/` |
+| `QUAT_GAME=<dir>` | Open a game project (a folder with a `game.json`, e.g. `games/coin-collector`): scene files, scripts and the asset browser use it — see [Make a game and ship it](#make-a-game-and-ship-it) |
 | `QUAT_PLAY=1` | Enter Play mode on the first frame (a non-editor build also plays a `QUAT_SCENE` game) |
 | `QUAT_GAME_CAMERA=1` | Editor builds: Play looks through the scene's active camera from the start ("Game camera"), e.g. for a scene's hero shot |
 | `QUAT_SCRIPT_HOT_RELOAD=0` / `=1` | Turn script hot reload off (editor) / on (non-editor builds) |
@@ -482,7 +494,9 @@ validation errors, and see what each node did on the last tick — write
 material shaders: Slang modules the engine compiles (returning the compiler
 errors with line numbers), assigns to entities and hot-swaps while it runs —
 and profile it: the costliest passes and systems on the CPU and GPU, frame
-captures with spikes and their causes, draw / triangle / memory counters.
+captures with spikes and their causes, draw / triangle / memory counters —
+set the time of day (`time_set` / `time_skip`) — and package the open game
+(`project_build`).
 For world building it reports entity bounds, sets models down on terrain or
 colliders (`world_place_on_ground`), takes screenshots from any camera without
 moving yours, and searches and downloads CC0 models from Poly Haven
@@ -496,7 +510,8 @@ controllers.
 It also ships **workflow skills** — step-by-step guides with verification
 steps and pitfalls for building a level, tuning the look, authoring
 materials, writing gameplay scripts, designing NPC behaviour, debugging
-physics glitches and playtesting. They are
+physics glitches, playtesting, setting the weather and finding performance
+problems. They are
 [Agent Skills](https://agentskills.io) served over the MCP skills extension,
 and the same guides are MCP prompts for clients without skills support.
 

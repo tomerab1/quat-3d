@@ -102,8 +102,9 @@ notes. A prerelease without a notes file gets the generated notes only.
    newer, untested commit on top of it.
 5. **Watch the workflow** (Actions → Release). When it finishes, check the
    published release: the curated notes come first, then the generated PR
-   list, and three archives are attached, each with `LICENSE` and
-   `THIRD_PARTY_NOTICES.md`.
+   list, and six archives are attached: three engine archives, each with
+   `LICENSE` and `THIRD_PARTY_NOTICES.md`, and the three
+   `coin-collector-<version>-<os>` sample-game archives.
 
 ## What the workflow does
 
@@ -114,15 +115,16 @@ notes. A prerelease without a notes file gets the generated notes only.
    1. Checks that the notes exist (`scripts/release-notes.sh`), so a missing
       file fails within a minute rather than after the builds. On Linux it
       also checks that `THIRD_PARTY_NOTICES.md` lists every dependency.
-   2. Builds `game` in Release with `ENGINE_PACKAGE_BUILD=ON`, which embeds
-      no source-tree paths.
+   2. Builds `game`, `quat-player`, `quat-player-shipping` and `quat-pack` in
+      Release with `ENGINE_PACKAGE_BUILD=ON`, which embeds no source-tree
+      paths.
    3. Builds `quat-mcp` with `cargo build --release --locked`, on the Rust
       toolchain CI uses (`tools/quat-mcp/rust-toolchain.toml`).
    4. Validates the tag.
    5. Packages the build with `scripts/package-release.sh`:
       - `quat-mcp` goes next to the game, or into
         `Quat3D.app/Contents/MacOS/` on macOS;
-      - `LICENSE` goes in every archive;
+      - `LICENSE` goes in every engine archive;
       - so does a `THIRD_PARTY_NOTICES.md`, written by
         `scripts/third-party-notices.sh`. It is the repository's summary,
         followed by the licence texts from the build: every vcpkg port,
@@ -132,6 +134,10 @@ notes. A prerelease without a notes file gets the generated notes only.
       unpacks it under a path with a space and non-ASCII characters and runs
       30 frames headless. It requires a clean exit and a screenshot. It also
       requires the two licence files and a working `quat-mcp --version`.
+   7. Packages the sample game, `games/coin-collector`, with `quat-pack`
+      (through the same layout script, without `quat-mcp` or the licence
+      files, #122) and smoke-tests it the same way; it must also load its
+      start scene.
 2. **publish** runs only on tags, after all three packages pass:
    1. Makes a sparse checkout of `docs/releases/` and `scripts/`, with no
       stored token.

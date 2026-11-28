@@ -8,7 +8,7 @@ are cut.
 
 | Version | Notes | Summary |
 |---|---|---|
-| v0.1.0 | [`docs/releases/v0.1.0.md`](docs/releases/v0.1.0.md) | First release: engine, editor, MCP server with workflow skills and a Claude Code plugin, Lua scripting, Linux / Windows / macOS builds with quat-mcp bundled |
+| v0.1.0 | [`docs/releases/v0.1.0.md`](docs/releases/v0.1.0.md) | First release: engine, editor, MCP server with workflow skills and a Claude Code plugin, Lua scripting, weather and a real-time sky clock, SSR and HDRI lighting, a cinematic camera, physics control over MCP, profiling, game packaging, Linux / Windows / macOS builds with quat-mcp bundled, and the Coin Collector sample game |
 
 ## Breaking changes
 
@@ -28,4 +28,5 @@ the repository before #83.
 | `inspect_scene` | `inspect-scene` |
 | `debug_session` | `debug-session` |
 
-`debug-physics-glitch` and `playtest` are new.
+`debug-physics-glitch`, `playtest`, `set-weather` and
+`find-performance-problem` are new.
