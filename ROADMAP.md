@@ -163,7 +163,7 @@ JSON-RPC over loopback TCP to the engine.
 - [ ] **A11 — MCP protocol upgrades** *(M–L)*: target MCP **2026-07-28**
   (rmcp 3.12), still serving 2025-11-25 clients over `initialize`. Roots /
   sampling / logging stay unused (deprecated in 2026-07-28). Three PRs:
-  - [ ] **A11.1 Tool surface.** Annotation audit (one per-tool policy table,
+  - [x] **A11.1 Tool surface.** Annotation audit (one per-tool policy table,
     a rule test, `anthropic/maxResultSizeChars` on large results);
     structured output (`outputSchema` + `structuredContent`) for stable
     tools; resources, resource templates, resource links and completions;
