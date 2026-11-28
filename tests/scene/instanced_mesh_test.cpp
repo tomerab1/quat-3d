@@ -288,8 +288,8 @@ TEST_F(InstancedMeshCollect, MotionRecordsFollowTheEntitysPreviousTransform) {
         expect_mat_near(second.instances[i].model, world1 * placement);
         expect_mat_near(second.motion[i].prev_model, world0 * placement);
         expect_mat_near(second.motion[4 + i].prev_model, world0 * placement * crown_local);
-        EXPECT_EQ(second.motion[i].has_prev_positions, 0U);
     }
+    for (const engine::renderer::InstancedDraw& d : second.draws) EXPECT_EQ(d.prev_positions, 0U);
 }
 
 } // namespace

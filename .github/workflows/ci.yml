@@ -23,6 +23,11 @@ on:
       - '!.gitattributes'
       - 'tools/quat-mcp/content/**'
   workflow_dispatch:
+    inputs:
+      mvk_debug:
+        description: 'macOS: run the GPU tests with MoltenVK debug logging + shader dump (artifact macos-mvk-debug)'
+        type: boolean
+        default: false
 
 # A running build is never cancelled: a new push waits for it (GitHub keeps
 # only the newest pending run per group), so every build finishes even while
@@ -291,6 +296,22 @@ jobs:
         if: always() && steps.build.outcome == 'success'
         run: ctest --test-dir build/macos-release -L sdk --output-on-failure
 
+      # Every cooked shader through SPIRV-Cross (Homebrew's CLI; MoltenVK
+      # embeds the same library at its own pinned revision) and Apple's Metal
+      # compiler: names the shader and the translator's error, which MoltenVK
+      # reports only as a failed vkCreate*Pipelines (issue #103).
+      # Informational, like the GPU step; the mvk_debug input shows MoltenVK's
+      # own translation.
+      - name: MSL translation check (informational)
+        if: always() && steps.build.outcome == 'success'
+        continue-on-error: true
+        run: |
+          # The step's default shell has no pipefail: without it the filter
+          # (which always matches the summary line) would hide a failure.
+          set -o pipefail
+          brew install spirv-cross
+          scripts/msl-check.sh cooked/shaders "$RUNNER_TEMP/msl" | grep -v '^ok '
+
       # Apple Silicon runners expose a paravirtualised Metal device, so the GPU
       # suites run through MoltenVK (all of them passed on the first S4 runs).
       # Informational for now (not a gate) while MoltenVK on the runner's
@@ -300,13 +321,35 @@ jobs:
         continue-on-error: true
         env:
           GTEST_BRIEF: 1
+          MVK_DEBUG_REQUESTED: ${{ inputs.mvk_debug }}
         run: |
           prefix="$(brew --prefix molten-vk)"
           icd=$(ls "$prefix"/etc/vulkan/icd.d/MoltenVK_icd.json "$prefix"/share/vulkan/icd.d/MoltenVK_icd.json 2>/dev/null | head -n1)
           echo "Using Vulkan ICD: $icd"
           export VK_ICD_FILENAMES="$icd"
           vulkaninfo --summary || true
+          # Opt-in (workflow_dispatch input mvk_debug): MoltenVK's debug log,
+          # with the MSL of every converted shader, plus a dump of all SPIR-V
+          # and MSL it saw (docs/DEVELOPMENT.md, "Debugging MoltenVK").
+          if [ "$MVK_DEBUG_REQUESTED" = true ]; then
+            export MVK_CONFIG_LOG_LEVEL=4 MVK_CONFIG_DEBUG=1
+            export MVK_CONFIG_SHADER_DUMP_DIR="$RUNNER_TEMP/mvk-debug/shaders"
+            mkdir -p "$RUNNER_TEMP/mvk-debug"
+            ctest --test-dir build/macos-release -R engine_tests_gpu -V --timeout 900 \
+              > "$RUNNER_TEMP/mvk-debug/gpu-tests.log" 2>&1 || status=$?
+            grep -E '^\[ *(FAILED|PASSED) *\]|mvk-error' "$RUNNER_TEMP/mvk-debug/gpu-tests.log" | head -n 200
+            exit "${status:-0}"
+          fi
           ctest --test-dir build/macos-release -R engine_tests_gpu -V --timeout 900
+
+      - name: Upload MoltenVK debug log
+        if: always() && inputs.mvk_debug
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-mvk-debug
+          path: ${{ runner.temp }}/mvk-debug/
+          retention-days: 14
+          if-no-files-found: ignore
 
       - name: Upload logs on failure
         if: failure()
