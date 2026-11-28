@@ -149,14 +149,25 @@ JSON-RPC over loopback TCP to the engine.
   (MRTR + legacy, `confirm: true` fallback); icons; the test suite on
   protocol 2025-11-25 and 2026-07-28. Roots / sampling / logging stay
   unused (deprecated).
-- [ ] **A12 — Skills** *(M)*: quat-3d workflows as Agent Skills in
-  `tools/quat-mcp/content/skills/` (build-level, tune-look,
-  debug-physics-glitch, write-gameplay-script, design-npc-behaviour,
-  author-material-shader, playtest), served over MCP (SEP-2640 skills
-  extension), packaged as a Claude Code plugin + marketplace entry, and
-  rendered as the MCP prompts for clients without skills; tests keep
-  skills, tool names and resources in sync. Each skill ships with the tools
-  it needs (A10.x, A6, G7, A9).
+- [ ] **A12 — Skills** *(M)*: quat-3d workflows as Agent Skills
+  (research: [`docs/research/mcp-skills.md`](docs/research/mcp-skills.md)).
+  - [x] **A12.1 Skills, serving, plugin.** `tools/quat-mcp/content/skills/`
+    (build-level, tune-look, debug-physics-glitch, write-gameplay-script,
+    design-npc-behaviour, author-material-shader, playtest, plus
+    inspect-scene and debug-session from the old prompts), served over MCP
+    with the skills extension (SEP-2640, rmcp 3.12), rendered as the MCP
+    prompts (replacing `content/prompts/`), packaged as a Claude Code plugin
+    (`tools/quat-mcp/plugin/`) + marketplace (`.claude-plugin/`); sync tests
+    keep skills, tool names, resources, prompts and the plugin copy
+    consistent. Built on the tools on the base branch (A5, A6, A7, A8, A9,
+    G7): author-material-shader covers factors and A6 Slang material
+    shaders (it replaces the `write_material_shader` prompt). The plugin
+    runs a source build or the quat-mcp bundled in a release (P4,
+    `project_root` option = the release's data folder).
+  - [ ] **A12.2 Skills follow their tools.** Extend the skills as the tools
+    they need land: debug-physics-glitch with A10.1 physics control (#54: velocities,
+    contacts, events), playtest with A10.4 (`input.inject`,
+    `sim.run_until`) and R4 profiling (`profile_*`).
 
 ## R — Rendering & performance
 
