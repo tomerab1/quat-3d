@@ -15,6 +15,7 @@
 #include <thread>
 #include <utility>
 
+#include "engine/core/env.hpp"
 #include "engine/core/utf8_path.hpp"
 #include "engine/core/child_process.hpp"
 #include "engine/rhi/pipeline_cache.hpp"
@@ -293,8 +294,7 @@ struct ShaderHotReload::Impl {
 
 bool ShaderHotReload::enabled_by_environment() {
     if (const char* v = std::getenv("QUAT_SHADER_HOT_RELOAD"); v != nullptr && *v != '\0') {
-        return std::strcmp(v, "0") != 0 && std::strcmp(v, "false") != 0 &&
-               std::strcmp(v, "off") != 0;
+        return core::env_flag("QUAT_SHADER_HOT_RELOAD");
     }
     // Default: on in editor builds run from the source tree; off in packaged
     // builds (ENGINE_PACKAGE_BUILD), which ship no slangc.

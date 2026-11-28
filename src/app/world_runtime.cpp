@@ -16,6 +16,7 @@
 
 #include "app/frame_renderer.hpp" // k_frames_in_flight
 #include "app/nav_bake.hpp"
+#include "engine/core/env.hpp"
 #include "engine/core/profile.hpp"
 #include "app/remote_bridge.hpp"
 #include "engine/core/event_ring.hpp"
@@ -196,9 +197,7 @@ void WorldRuntime::init_scripts(const std::filesystem::path& project_root,
 #ifdef ENGINE_EDITOR
     options.watch = true;
 #endif
-    if (const char* env = std::getenv("QUAT_SCRIPT_HOT_RELOAD"); env != nullptr) {
-        options.watch = std::strcmp(env, "0") != 0;
-    }
+    options.watch = engine::core::env_flag("QUAT_SCRIPT_HOT_RELOAD", options.watch);
     services.project_root = project_root;
     script_services_ = std::move(services);
     scripts_.emplace(std::move(options));

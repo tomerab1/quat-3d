@@ -19,7 +19,7 @@ AppConfig app_config_from_environment() {
     // Read as a path (UTF-16 environment on Windows), not via std::getenv.
     config.screenshot_path = engine::core::env_path("QUAT_SCREENSHOT");
     // QUAT_NO_UI=1 disables the editor shell (deterministic headless renders).
-    config.editor_ui = std::getenv("QUAT_NO_UI") == nullptr;
+    config.editor_ui = !engine::core::env_flag("QUAT_NO_UI");
     // QUAT_WINDOW_SIZE=<w>x<h> sets the initial window size (e.g. 1600x900 for
     // editor screenshots); malformed or out-of-range values keep the default.
     if (const char* env = std::getenv("QUAT_WINDOW_SIZE"); env != nullptr) {

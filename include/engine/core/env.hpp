@@ -9,6 +9,7 @@
 #include <filesystem>
 #include <optional>
 #include <string>
+#include <string_view>
 
 namespace engine::core {
 
@@ -17,5 +18,15 @@ namespace engine::core {
 
 // The variable's value as a path; nullopt when unset or empty.
 [[nodiscard]] std::optional<std::filesystem::path> env_path(const char* name);
+
+// A boolean switch's value: "1", "true", "yes", "on" are true; "0",
+// "false", "no", "off" and the empty string are false (ASCII
+// case-insensitive, surrounding blanks ignored); nullopt otherwise.
+[[nodiscard]] std::optional<bool> parse_env_flag(std::string_view value);
+
+// The boolean switch `name` (QUAT_NO_UI, QUAT_GAME_CAMERA, ...): `fallback`
+// when unset; a value parse_env_flag does not recognise counts as on (the
+// switch was set) and is reported on stderr once per call.
+[[nodiscard]] bool env_flag(const char* name, bool fallback = false);
 
 } // namespace engine::core

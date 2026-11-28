@@ -4,6 +4,7 @@
 
 #include <cstdlib>
 #include <filesystem>
+#include <optional>
 #include <string>
 
 #include <gtest/gtest.h>
@@ -62,3 +63,41 @@ TEST(Env, UnsetOrEmptyIsNoPath) {
 }
 
 } // namespace
+
+// Boolean switches (#119: QUAT_GAME_CAMERA=0 used to turn the game camera on).
+TEST(EnvFlag, ParsesTheUsualSpellingsAndRejectsTheRest) {
+    using engine::core::parse_env_flag;
+    for (const char* on : {"1", "true", "TRUE", "Yes", "on", " 1 "}) {
+        EXPECT_EQ(parse_env_flag(on), std::optional<bool>(true)) << on;
+    }
+    for (const char* off : {"0", "false", "False", "no", "OFF", "", "  "}) {
+        EXPECT_EQ(parse_env_flag(off), std::optional<bool>(false)) << off;
+    }
+    for (const char* bad : {"2", "enable", "0x1", "truee"}) {
+        EXPECT_EQ(parse_env_flag(bad), std::nullopt) << bad;
+    }
+}
+
+TEST(EnvFlag, UnsetUsesTheFallbackAndZeroIsOff) {
+    using engine::core::env_flag;
+    constexpr const char* k_flag = "QUAT_ENV_TEST_FLAG";
+#if defined(_WIN32)
+    const auto set = [&](const char* v) { ASSERT_EQ(::_putenv_s(k_flag, v), 0); };
+    const auto unset = [&] { (void)::_putenv_s(k_flag, ""); };
+#else
+    const auto set = [&](const char* v) { ASSERT_EQ(::setenv(k_flag, v, 1), 0); };
+    const auto unset = [&] { (void)::unsetenv(k_flag); };
+#endif
+    unset();
+    EXPECT_FALSE(env_flag(k_flag));
+    EXPECT_TRUE(env_flag(k_flag, true));
+    set("0");
+    EXPECT_FALSE(env_flag(k_flag, true));
+    set("1");
+    EXPECT_TRUE(env_flag(k_flag));
+    set("off");
+    EXPECT_FALSE(env_flag(k_flag, true));
+    set("maybe"); // set, but not a boolean: on (with a warning)
+    EXPECT_TRUE(env_flag(k_flag));
+    unset();
+}

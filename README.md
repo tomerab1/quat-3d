@@ -299,7 +299,8 @@ command palette and F1 lists every shortcut. The layout and editor
 preferences are saved to `.quat/editor.ini` in the project root (View >
 Reset Layout restores the default).
 
-Environment variables switch on extra modes:
+Environment variables switch on extra modes. On/off switches read `1`,
+`true`, `yes`, `on` as on and `0`, `false`, `no`, `off` (or empty) as off:
 
 | Variable | Effect |
 |---|---|
