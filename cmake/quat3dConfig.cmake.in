@@ -106,7 +106,17 @@ find_dependency(Ktx CONFIG)
 find_dependency(meshoptimizer CONFIG)
 find_dependency(Jolt CONFIG)
 find_dependency(recastnavigation CONFIG)
+# GameNetworkingSockets' own config finds Protobuf. Under the vcpkg toolchain
+# a wrapper makes that protobuf's CONFIG package (whose targets carry abseil
+# and utf8_range); a game builds with quat3d-toolchain.cmake instead, where
+# CMake's FindProtobuf would name libprotobuf.a alone and a static link of the
+# networking code (the players, G17.1) misses abseil. Prefer config packages
+# for this lookup.
+set(_quat3d_prefer_config "${CMAKE_FIND_PACKAGE_PREFER_CONFIG}")
+set(CMAKE_FIND_PACKAGE_PREFER_CONFIG ON)
 find_dependency(GameNetworkingSockets CONFIG)
+set(CMAKE_FIND_PACKAGE_PREFER_CONFIG "${_quat3d_prefer_config}")
+unset(_quat3d_prefer_config)
 find_dependency(sol2 CONFIG)
 find_dependency(Lua)
 find_dependency(OpenSSL COMPONENTS Crypto)

@@ -40,7 +40,8 @@ struct WindowSettings {
 };
 
 struct GameProject {
-    int         format = k_game_project_format;
+    // 1 unless the project uses a format 2 key (game_project_json writes 2 then).
+    int         format = 1;
     std::string name;    // display name
     std::string id;      // reverse-DNS, e.g. "dev.quat3d.coin-collector"
     std::string version; // MAJOR.MINOR.PATCH[-prerelease]

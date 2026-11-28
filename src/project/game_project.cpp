@@ -410,7 +410,9 @@ std::expected<GameProject, core::Error> load_game_project(const fs::path& projec
 
 json game_project_json(const GameProject& p) {
     json out = json::object();
-    out["format"] = p.format;
+    // The oldest format that holds the project: format 2's keys need 2.
+    const bool needs_2 = !p.modules.empty() || !p.mcp.empty() || !p.engine.empty();
+    out["format"] = needs_2 ? std::max(p.format, 2) : p.format;
     out["name"] = p.name;
     out["id"] = p.id;
     out["version"] = p.version;
