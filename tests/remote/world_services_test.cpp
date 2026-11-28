@@ -376,8 +376,6 @@ TEST_F(WorldWithServices, CameraSetMergesTheLens) {
     EXPECT_FLOAT_EQ(camera.lens.aperture_f, 2.8F);
 }
 
-// R20: a look LUT set over render.settings.set must be a valid .cube inside
-// the project; the parser's error comes back and nothing changes.
 // PR #79 review: without the editor, a pose-only camera.set must not replace
 // the scene camera's authored lens with the fly camera's defaults.
 TEST_F(WorldWithServices, PoseOnlyCameraSetKeepsTheSceneCamerasLens) {
@@ -402,6 +400,8 @@ TEST_F(WorldWithServices, PoseOnlyCameraSetKeepsTheSceneCamerasLens) {
     EXPECT_FLOAT_EQ(reg().get<s::Camera>(cam).lens.focus_distance_m, 3.0F);
 }
 
+// R20: a look LUT set over render.settings.set must be a valid .cube inside
+// the project; the parser's error comes back and nothing changes.
 TEST_F(WorldWithServices, LookLutIsValidatedOnSet) {
     fs::create_directories(root.path() / "luts");
     {
