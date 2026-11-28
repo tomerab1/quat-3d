@@ -135,13 +135,15 @@ jobs:
         if: runner.os == 'macOS'
         run: brew install molten-vk vulkan-loader vulkan-tools
 
-      - name: SDK build (libraries, tools, quat-mcp)
-        shell: bash
-        env:
-          PRESET: ${{ matrix.preset }}
-        run: |
-          cmake --build --preset "$PRESET"
-          (cd tools/quat-mcp && cargo build --release --locked)
+      - name: SDK build (libraries, tools)
+        run: cmake --build --preset ${{ matrix.preset }}
+
+      # The runner's default shell, not bash: under Git Bash on Windows,
+      # link.exe resolves to Git's coreutils `link` instead of MSVC's linker.
+      # (A no-op when an earlier step already built quat-mcp.)
+      - name: SDK quat-mcp
+        working-directory: tools/quat-mcp
+        run: cargo build --release --locked
 
       - name: SDK check (install + sdk-consumer)
         run: ctest --test-dir build/${{ matrix.preset }} -L sdk --output-on-failure
