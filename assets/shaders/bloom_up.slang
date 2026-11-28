@@ -4,10 +4,10 @@
 // level's downsample result, building the progressively wider blur. g_base is
 // this level's downsample; g_src is the next-smaller upsampled level.
 
-[[vk::binding(0)]] Texture2D          g_src;  // smaller, upsampled level
-[[vk::binding(1)]] SamplerState       g_samp;
-[[vk::binding(2)]] Texture2D          g_base; // this level's downsample
-[[vk::binding(3)]] [format("rgba16f")] RWTexture2D<float4> g_dst;
+Texture2D          g_src;  // smaller, upsampled level
+SamplerState       g_samp;
+Texture2D          g_base; // this level's downsample
+[format("rgba16f")] RWTexture2D<float4> g_dst;
 
 struct Params {
     float radius;

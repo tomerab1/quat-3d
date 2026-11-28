@@ -8,6 +8,7 @@
 #include <entt/entity/registry.hpp>
 #include <nlohmann/json.hpp>
 
+#include "engine/core/utf8_path.hpp"
 #include "engine/scene/component_json.hpp"
 #include "engine/scene/components.hpp"
 #include "engine/scene/scene.hpp"
@@ -93,7 +94,7 @@ constexpr std::size_t k_max_clone_entities = 4096;
     }
     const fs::path norm = p.lexically_normal();
     if (norm.empty() || *norm.begin() == "..") return fail("the model path escapes the project root");
-    const std::string ext = norm.extension().string();
+    const std::string ext = core::path_to_utf8(norm.extension());
     if (ext != ".gltf" && ext != ".glb") return fail("models are .gltf or .glb files");
     std::error_code ec;
     const fs::path root = fs::weakly_canonical(ctx.services.project_root, ec);
@@ -216,7 +217,7 @@ void register_scene(LuaVm& vm, ApiContext& c) {
               if (roots->empty()) return fail("spawn_model: the model has no nodes");
               entt::entity root = roots->front();
               if (roots->size() > 1) { // group several roots under one entity
-                  root = ctx->scene->create_entity(file.value->stem().string());
+                  root = ctx->scene->create_entity(core::path_to_utf8(file.value->stem()));
                   for (const entt::entity e : *roots) (void)ctx->scene->set_parent(e, root);
               }
               if (const auto it = json.find("name"); it != json.end() && it->is_string()) {
