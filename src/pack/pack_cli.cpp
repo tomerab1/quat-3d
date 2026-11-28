@@ -392,4 +392,13 @@ int run_pack(const PackOptions& options, const PackDefaults& defaults,
     return Driver(options, defaults, out).run();
 }
 
+void apply_installed_sdk_defaults(PackDefaults& defaults) {
+    if (!defaults.tool_dir) return;
+    std::error_code ec;
+    const fs::path share = (*defaults.tool_dir / ".." / "share" / "quat3d").lexically_normal();
+    if (!fs::is_regular_file(share / "scripts" / "package-release.sh", ec)) return;
+    if (!defaults.engine_root) defaults.engine_root = share;
+    if (!defaults.shader_dir) defaults.shader_dir = share / "cooked" / "shaders";
+}
+
 } // namespace engine::pack

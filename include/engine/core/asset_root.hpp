@@ -39,6 +39,12 @@ struct AssetRootCandidates {
 // Relative location of the cooked shaders under a root.
 [[nodiscard]] std::filesystem::path cooked_shader_subdir();
 
+// The install candidates for an executable in `exe_dir`, in priority order:
+// the directory itself (packaged games: data next to the executable), then
+// <exe_dir>/../share/quat3d (the engine SDK, ROADMAP P8: bin/quat-player
+// next to share/quat3d's assets/ + cooked/shaders/).
+[[nodiscard]] std::vector<std::filesystem::path> install_dirs_for(const std::filesystem::path& exe_dir);
+
 // True when `dir` has the packaged layout: assets/ and cooked/shaders/.
 [[nodiscard]] bool is_asset_root(const std::filesystem::path& dir);
 

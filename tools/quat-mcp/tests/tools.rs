@@ -80,6 +80,13 @@ async fn lists_tools_prompts_and_resources() {
         "scene_save",
         "scene_load",
         "nav_bake",
+        "input_actions",
+        "input_inject",
+        "input_bind",
+        "input_context",
+        "camera_rig_get",
+        "camera_rig_set",
+        "camera_rig_frame",
     ] {
         assert!(
             names.contains(&expected),

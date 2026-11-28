@@ -49,7 +49,18 @@ void InputSampler::process_event(const SDL_Event& event) {
     }
 }
 
-void InputSampler::sample(bool keyboard_blocked) {
+void InputSampler::sample(SDL_Window* window, bool keyboard_blocked, bool pointer_blocked) {
+    state_.pointer_blocked = pointer_blocked;
+    if (window != nullptr) {
+        int w = 0;
+        int h = 0;
+        (void)SDL_GetWindowSize(window, &w, &h);
+        state_.viewport_origin = glm::vec2(0.0F);
+        state_.viewport_size = glm::vec2(static_cast<float>(w), static_cast<float>(h));
+        const SDL_WindowFlags flags = SDL_GetWindowFlags(window);
+        state_.fullscreen = (flags & SDL_WINDOW_FULLSCREEN) != 0;
+        state_.focused = (flags & SDL_WINDOW_INPUT_FOCUS) != 0;
+    }
     int count = 0;
     const bool* keys = SDL_GetKeyboardState(&count);
     state_.keys.reset();

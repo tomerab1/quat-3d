@@ -102,6 +102,7 @@ class EditorLayer;
 
 namespace quat::app {
 
+class InputRuntime;
 struct OpenGame;
 
 // Frame-loop state the bridge reads and drives. Non-owning: main() owns all of
@@ -154,6 +155,10 @@ struct RemoteBridgeTargets {
     // Camera cut for the renderer's temporal state (R11): called after
     // scene.load (camera.set cuts go through take_camera_cut). May be empty.
     std::function<void()> reset_temporal;
+    // Input actions and the user's rebinding file (G5): input.* (may be null).
+    InputRuntime* input = nullptr;
+    // Width / height of the scene view (camera.rig.frame).
+    std::function<float()> view_aspect;
     // Gameplay scripts (G7): script.* statuses and reloads (may be null).
     engine::script::ScriptRuntime* scripts = nullptr;
     // The lighting environment's HDRI (R21): environment.* and scene files

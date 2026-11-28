@@ -15,8 +15,10 @@
 // delete / check — material shader authoring (ROADMAP A6): shader.list /
 // get / template / create / update / delete — game packaging (ROADMAP P4):
 // project.info, project.build, project.build_status — the world clock
-// (ROADMAP R22.1): time.get / set / skip — and profiling (ROADMAP R4):
-// profile.frame / capture / result / counters / reset. The method contract is
+// (ROADMAP R22.1): time.get / set / skip — profiling (ROADMAP R4):
+// profile.frame / capture / result / counters / reset — input actions
+// (ROADMAP G5): input.actions / inject / bind / context — and camera rigs
+// (ROADMAP G15.1): camera.rig.get / set / frame. The method contract is
 // docs/remote-control.md.
 //
 // Scene editing works on any Scene. Everything that only the running
@@ -54,6 +56,9 @@ class FrameProfiler;
 class LogRing;
 class SimClock;
 } // namespace engine::core
+namespace engine::input {
+class Actions;
+}
 namespace engine::nav {
 class NavMesh;
 }
@@ -284,6 +289,19 @@ struct WorldServices {
         project_build;
     // The packaging job's state (idle before the first build).
     std::function<project::BuildStatus()> project_build_status;
+
+    // ---- Input actions (ROADMAP G5) ----------------------------------------------
+
+    // The application's action service (non-owning): input.actions / inject /
+    // bind / context. Null: input.* unavailable.
+    input::Actions* actions = nullptr;
+    // Writes the user's rebinding file (input.bind with save).
+    std::function<std::expected<void, core::Error>()> save_input_bindings;
+
+    // ---- Camera rigs (ROADMAP G15.1) ----------------------------------------------
+
+    // Width / height of the scene view (camera.rig.frame); 16:9 without it.
+    std::function<float()> view_aspect;
 };
 
 // Registers every world command on `server`. `scene` must outlive the server's

@@ -11,7 +11,10 @@
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 
+#include "engine/asset/material_asset.hpp"
+#include "engine/asset/mesh_asset.hpp"
 #include "engine/core/profile.hpp"
+#include "engine/renderer/draw_batching.hpp"
 
 namespace engine::scene {
 
@@ -31,6 +34,11 @@ void propagate(entt::registry& reg, entt::entity e, const glm::mat4& parent_worl
 }
 
 } // namespace
+
+Scene::Scene()                           = default;
+Scene::~Scene()                          = default;
+Scene::Scene(Scene&&) noexcept           = default;
+Scene& Scene::operator=(Scene&&) noexcept = default;
 
 entt::entity Scene::create_entity(std::string name) {
     const entt::entity e = registry_.create();

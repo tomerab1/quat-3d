@@ -1,0 +1,1 @@
+Push an input context on top of the stack (`{"push": "build"}`) or remove one (`{"pop": "build"}`); returns the contexts and the stack. Only actions in contexts on the stack respond. A context higher up takes the controls its actions use away from the contexts below it, and an exclusive context (a modal menu) blocks everything below it.

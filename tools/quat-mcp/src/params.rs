@@ -8,6 +8,7 @@ use serde_json::{Map, Value};
 
 mod behavior;
 mod debug;
+mod input;
 mod physics;
 mod post;
 mod profile;
@@ -20,6 +21,7 @@ mod weather;
 mod world;
 pub use behavior::*;
 pub use debug::*;
+pub use input::*;
 pub use physics::*;
 pub use post::*;
 pub use profile::*;
