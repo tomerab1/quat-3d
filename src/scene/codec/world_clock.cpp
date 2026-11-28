@@ -19,8 +19,6 @@ namespace engine::scene::codec {
 namespace {
 
 using namespace detail;
-using core::EnumName;
-using core::JsonFields;
 
 } // namespace
 
@@ -31,10 +29,8 @@ std::expected<void, core::Error> register_world_clock(ComponentRegistry& registr
                          .writable = true,
                          .order = 2100};
     codec.encode = [](const entt::registry& r, entt::entity e, const EncodeOptions& /*options*/) {
-        json out;
-        const auto* c = &r.get<WorldClock>(e);
-        out["world_clock"] = encode_world_clock(*c);
-        return std::move(out["world_clock"]);
+        const WorldClock& c = r.get<WorldClock>(e);
+        return json(encode_world_clock(c));
     };
     codec.apply = [](entt::registry& r, entt::entity e, const json& v, bool strict)
         -> std::expected<void, core::Error> {

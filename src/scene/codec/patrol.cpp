@@ -17,7 +17,6 @@ namespace engine::scene::codec {
 namespace {
 
 using namespace detail;
-using core::EnumName;
 using core::JsonFields;
 
 } // namespace
@@ -29,12 +28,10 @@ std::expected<void, core::Error> register_patrol(ComponentRegistry& registry) {
                          .writable = true,
                          .order = 1500};
     codec.encode = [](const entt::registry& r, entt::entity e, const EncodeOptions& /*options*/) {
-        json out;
-        const auto* p = &r.get<PatrolRoute>(e);
+        const PatrolRoute& p = r.get<PatrolRoute>(e);
         json pts = json::array();
-        for (const glm::vec3& pt : p->points) pts.push_back(vec3_json(pt));
-        out["patrol"] = {{"points", std::move(pts)}, {"loop", p->loop}};
-        return std::move(out["patrol"]);
+        for (const glm::vec3& pt : p.points) pts.push_back(vec3_json(pt));
+        return json({{"points", std::move(pts)}, {"loop", p.loop}});
     };
     codec.apply = [](entt::registry& r, entt::entity e, const json& v, bool strict)
         -> std::expected<void, core::Error> {

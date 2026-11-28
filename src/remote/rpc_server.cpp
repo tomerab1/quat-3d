@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstdio>
 #include <string_view>
 #include <unordered_map>
 #include <utility>
@@ -110,12 +111,25 @@ struct RpcServer::Impl {
     std::vector<Client>                      clients;
     std::uint32_t                            next_client = 1;
     std::unordered_map<std::string, Method>  methods;
+    // Names registered more than once (the later registration replaced the
+    // earlier): with generated module tables nothing orders two modules that
+    // pick the same name, so this is reported and tested, never relied on.
+    std::vector<std::string>                 replaced;
     std::shared_ptr<Responder::Target>       target = std::make_shared<Responder::Target>();
 
     Impl() { target->impl = this; }
     ~Impl() { target->impl = nullptr; }
     Impl(const Impl&) = delete;
     Impl& operator=(const Impl&) = delete;
+
+    void insert(std::string name, Method m) {
+        if (methods.contains(name)) {
+            std::fprintf(stderr, "[remote][error] method '%s' registered twice; the later "
+                                 "registration replaces the earlier\n", name.c_str());
+            replaced.push_back(name);
+        }
+        methods.insert_or_assign(std::move(name), std::move(m));
+    }
 
     Client* find_client(std::uint32_t id) {
         for (Client& c : clients) {
@@ -208,7 +222,7 @@ void RpcServer::add_method(std::string name, std::string summary, SyncHandler ha
     Method m;
     m.info = {name, std::move(summary), false, nullptr, nullptr};
     m.sync = std::move(handler);
-    impl_->methods.insert_or_assign(std::move(name), std::move(m));
+    impl_->insert(std::move(name), std::move(m));
 }
 
 void RpcServer::add_deferred_method(std::string name, std::string summary,
@@ -216,8 +230,10 @@ void RpcServer::add_deferred_method(std::string name, std::string summary,
     Method m;
     m.info = {name, std::move(summary), true, nullptr, nullptr};
     m.deferred = std::move(handler);
-    impl_->methods.insert_or_assign(std::move(name), std::move(m));
+    impl_->insert(std::move(name), std::move(m));
 }
+
+std::span<const std::string> RpcServer::replaced_methods() const { return impl_->replaced; }
 
 bool RpcServer::set_method_schemas(const std::string& name, Json params_schema, Json result_schema) {
     const auto it = impl_->methods.find(name);

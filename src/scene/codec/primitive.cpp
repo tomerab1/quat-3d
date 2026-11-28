@@ -17,7 +17,6 @@ namespace engine::scene::codec {
 namespace {
 
 using namespace detail;
-using core::EnumName;
 using core::JsonFields;
 
 } // namespace
@@ -29,10 +28,8 @@ std::expected<void, core::Error> register_primitive(ComponentRegistry& registry)
                          .writable = true,
                          .order = 200};
     codec.encode = [](const entt::registry& r, entt::entity e, const EncodeOptions& /*options*/) {
-        json out;
-        const auto* p = &r.get<Primitive>(e);
-        out["primitive"] = primitive_fields_json(*p);
-        return std::move(out["primitive"]);
+        const Primitive& p = r.get<Primitive>(e);
+        return json(primitive_fields_json(p));
     };
     codec.apply = [](entt::registry& r, entt::entity e, const json& v, bool strict)
         -> std::expected<void, core::Error> {

@@ -156,10 +156,11 @@ project_path(const Context& ctx, core::JsonFields& fields, std::string_view key,
 
 // ---- Registration ------------------------------------------------------------
 
-// Every command module: one file per domain, src/remote/world/<domain>_commands.cpp,
+// Every command module: one file per domain, src/remote/world/<name>_commands.cpp,
 // defining register_<file stem>(RpcServer&, const ContextPtr&). The calls are
 // generated from the directory (command_modules.cpp.in, ROADMAP S9): a new
-// module is a new file, with no list to edit.
+// module is a new file, with no list to edit. File names matching
+// *_command*.cpp are reserved for modules: helpers go in other names.
 void register_command_modules(RpcServer& server, const ContextPtr& ctx);
 // The file stems the build generated calls for, sorted (for tests).
 [[nodiscard]] std::span<const std::string_view> command_module_sources();

@@ -17,7 +17,6 @@ namespace engine::scene::codec {
 namespace {
 
 using namespace detail;
-using core::EnumName;
 using core::JsonFields;
 
 } // namespace
@@ -29,10 +28,8 @@ std::expected<void, core::Error> register_audio_listener(ComponentRegistry& regi
                          .writable = true,
                          .order = 2400};
     codec.encode = [](const entt::registry& r, entt::entity e, const EncodeOptions& /*options*/) {
-        json out;
-        const auto* l = &r.get<AudioListener>(e);
-        out["audio_listener"] = {{"active", l->active}};
-        return std::move(out["audio_listener"]);
+        const AudioListener& l = r.get<AudioListener>(e);
+        return json({{"active", l.active}});
     };
     codec.apply = [](entt::registry& r, entt::entity e, const json& v, bool strict)
         -> std::expected<void, core::Error> {

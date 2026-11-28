@@ -17,8 +17,6 @@ namespace engine::scene::codec {
 namespace {
 
 using namespace detail;
-using core::EnumName;
-using core::JsonFields;
 
 } // namespace
 
@@ -29,13 +27,10 @@ std::expected<void, core::Error> register_mesh(ComponentRegistry& registry) {
                          .writable = false,
                          .order = 2900};
     codec.encode = [](const entt::registry& r, entt::entity e, const EncodeOptions& /*options*/) {
-        json out;
-        const auto* m = &r.get<MeshSource>(e);
-        out["mesh"] = {{"mesh_key", m->mesh_key},
-                       {"material_key", m->material_key},
-                       {"gltf", m->gltf_path}};
-        if (m->gltf_node >= 0) out["mesh"]["node"] = m->gltf_node;
-        return std::move(out["mesh"]);
+        const MeshSource& m = r.get<MeshSource>(e);
+        json out = {{"mesh_key", m.mesh_key}, {"material_key", m.material_key}, {"gltf", m.gltf_path}};
+        if (m.gltf_node >= 0) out["node"] = m.gltf_node;
+        return out;
     };
     codec.remove = [](entt::registry& r, entt::entity e) {
         const bool had = r.remove<MeshSource>(e) > 0;

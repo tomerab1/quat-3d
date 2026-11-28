@@ -34,30 +34,28 @@ std::expected<void, core::Error> register_terrain(ComponentRegistry& registry) {
                          .writable = true,
                          .order = 1700};
     codec.encode = [](const entt::registry& r, entt::entity e, const EncodeOptions& /*options*/) {
-        json out;
-        const auto* t = &r.get<Terrain>(e);
-        out["terrain"] = {{"seed", t->params.seed},
-                          {"resolution", t->params.resolution},
-                          {"tile_size", t->params.tile_size_m},
-                          {"height", t->params.height_m},
-                          {"octaves", t->params.octaves},
-                          {"frequency", t->params.base_frequency},
-                          {"gain", t->params.gain},
-                          {"warp", t->params.warp_strength},
-                          {"erosion", enum_name(k_erosion_models, t->params.erosion_model)},
-                          {"droplets", t->params.erosion_droplets},
-                          {"erosion_steps", t->params.grid.iterations},
-                          {"erosion_relax", t->params.grid.relax_cycles},
-                          {"erosion_talus", t->params.grid.talus},
-                          {"erosion_rain", t->params.grid.rain},
-                          {"erosion_capacity", t->params.grid.capacity},
-                          {"erosion_rate", t->params.grid.erode_rate},
-                          {"erosion_thermal", t->params.grid.thermal_rate},
-                          {"snowline", t->snowline_m},
-                          {"streaming", t->streaming},
-                          {"stream_radius", t->stream_radius},
-                          {"gpu", t->gpu_generate}};
-        return std::move(out["terrain"]);
+        const Terrain& t = r.get<Terrain>(e);
+        return json({{"seed", t.params.seed},
+                     {"resolution", t.params.resolution},
+                     {"tile_size", t.params.tile_size_m},
+                     {"height", t.params.height_m},
+                     {"octaves", t.params.octaves},
+                     {"frequency", t.params.base_frequency},
+                     {"gain", t.params.gain},
+                     {"warp", t.params.warp_strength},
+                     {"erosion", enum_name(k_erosion_models, t.params.erosion_model)},
+                     {"droplets", t.params.erosion_droplets},
+                     {"erosion_steps", t.params.grid.iterations},
+                     {"erosion_relax", t.params.grid.relax_cycles},
+                     {"erosion_talus", t.params.grid.talus},
+                     {"erosion_rain", t.params.grid.rain},
+                     {"erosion_capacity", t.params.grid.capacity},
+                     {"erosion_rate", t.params.grid.erode_rate},
+                     {"erosion_thermal", t.params.grid.thermal_rate},
+                     {"snowline", t.snowline_m},
+                     {"streaming", t.streaming},
+                     {"stream_radius", t.stream_radius},
+                     {"gpu", t.gpu_generate}});
     };
     codec.apply = [](entt::registry& r, entt::entity e, const json& v, bool strict)
         -> std::expected<void, core::Error> {

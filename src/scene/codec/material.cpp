@@ -18,8 +18,6 @@ namespace engine::scene::codec {
 namespace {
 
 using namespace detail;
-using core::EnumName;
-using core::JsonFields;
 
 } // namespace
 
@@ -34,10 +32,8 @@ std::expected<void, core::Error> register_material(ComponentRegistry& registry) 
         return m != nullptr && m->mask != 0;
     };
     codec.encode = [](const entt::registry& r, entt::entity e, const EncodeOptions& /*options*/) {
-        json out;
-        const auto* m = &r.get<MaterialOverride>(e);
-        out["material"] = encode_material_override(*m);
-        return std::move(out["material"]);
+        const MaterialOverride& m = r.get<MaterialOverride>(e);
+        return json(encode_material_override(m));
     };
     codec.apply = [](entt::registry& r, entt::entity e, const json& v, bool strict)
         -> std::expected<void, core::Error> {

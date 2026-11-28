@@ -17,7 +17,6 @@ namespace engine::scene::codec {
 namespace {
 
 using namespace detail;
-using core::EnumName;
 using core::JsonFields;
 
 } // namespace
@@ -29,10 +28,8 @@ std::expected<void, core::Error> register_particle_emitter(ComponentRegistry& re
                          .writable = true,
                          .order = 2000};
     codec.encode = [](const entt::registry& r, entt::entity e, const EncodeOptions& /*options*/) {
-        json out;
-        const auto* p = &r.get<ParticleEmitter>(e);
-        out["particle_emitter"] = detail::encode_particle_emitter(p->settings);
-        return std::move(out["particle_emitter"]);
+        const ParticleEmitter& p = r.get<ParticleEmitter>(e);
+        return json(detail::encode_particle_emitter(p.settings));
     };
     codec.apply = [](entt::registry& r, entt::entity e, const json& v, bool strict)
         -> std::expected<void, core::Error> {

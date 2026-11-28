@@ -115,6 +115,11 @@ REGISTER <ns::fn>)` makes a module library, and
 player, shipping player and editor with a generated `main()` that registers
 them. See [`game-modules.md`](game-modules.md).
 
+A game registers its own codec components at boot, through the stable
+`engine/scene/component_registry.hpp` (`component_registry().add(...)`; they
+sort after every engine component), not through the engine's generated
+registration tables, which are build-tree only.
+
 Package variables:
 - `QUAT3D_SDK_ROOT`;
 - `QUAT3D_DATA_DIR` (`share/quat3d`);
