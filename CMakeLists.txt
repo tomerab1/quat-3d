@@ -144,6 +144,10 @@ find_package(glm CONFIG REQUIRED)
 find_package(fastgltf CONFIG REQUIRED)
 find_package(Ktx CONFIG REQUIRED)            # KTX2 + Basis Universal (R17)
 find_package(meshoptimizer CONFIG REQUIRED)  # mesh codecs / optimisation (R17)
+find_package(Clipper2 CONFIG REQUIRED)       # polygon offset / booleans (R23.1)
+# earcut.hpp (R23.1 triangulation) is header-only: vcpkg installs the header
+# and no CMake package.
+find_path(EARCUT_INCLUDE_DIR mapbox/earcut.hpp REQUIRED)
 find_package(Stb REQUIRED)
 find_package(EnTT CONFIG REQUIRED)
 find_package(Jolt CONFIG REQUIRED)
@@ -382,6 +386,56 @@ add_library(engine_astro STATIC
     src/astro/sky_state.cpp)
 target_link_libraries(engine_astro PUBLIC engine_flags glm::glm)
 target_include_directories(engine_astro PUBLIC ${ENGINE_PUBLIC_INCLUDE})
+
+# ---------------------------------------------------------------------------
+# engine_geometry — runtime procedural geometry kernel (R23.1): polygon offset
+# and booleans (Clipper2), triangulation (earcut), the weighted straight
+# skeleton and roofs, sweeps / lofts / extrusions, the MeshData builder
+# (welding, crease normals, MikkTSpace tangents, UVs, meshoptimizer) and
+# seeded stones. CPU only, no graphics dependency.
+#
+# Deterministic across compilers and OSes: no floating-point contraction
+# (FMA fusion changes results between GCC, clang and MSVC, and between
+# x86-64 and arm64; issue #101) and no libm transcendentals (src/geometry/
+# det_math.hpp). MikkTSpace is vendored (src/geometry/vendor, zlib licence)
+# so it compiles under the same rules (as C++, mikktspace_impl.cpp); its cos
+# and acos calls are routed to det_math.
+# ---------------------------------------------------------------------------
+add_library(engine_geometry STATIC
+    src/geometry/det_math.cpp
+    src/geometry/mesh_data.cpp
+    src/geometry/polygon.cpp
+    src/geometry/triangulate.cpp
+    src/geometry/straight_skeleton.cpp
+    src/geometry/skeleton_wavefront.cpp
+    src/geometry/roof.cpp
+    src/geometry/weld_normals.cpp
+    src/geometry/tangents.cpp
+    src/geometry/uv.cpp
+    src/geometry/optimize.cpp
+    src/geometry/frames.cpp
+    src/geometry/sweep.cpp
+    src/geometry/extrude.cpp
+    src/geometry/stone.cpp
+    src/geometry/mikktspace_impl.cpp)
+target_link_libraries(engine_geometry PUBLIC engine_flags glm::glm)
+target_link_libraries(engine_geometry PRIVATE Clipper2::Clipper2 meshoptimizer::meshoptimizer)
+target_include_directories(engine_geometry PUBLIC ${ENGINE_PUBLIC_INCLUDE})
+target_include_directories(engine_geometry PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src) # "geometry/det_math.hpp"
+# Third-party headers through SYSTEM dirs (MSVC /external:W0); the vendored
+# MikkTSpace source is #included by mikktspace_impl.cpp from there.
+target_include_directories(engine_geometry SYSTEM PRIVATE
+    $<BUILD_INTERFACE:${EARCUT_INCLUDE_DIR}>
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src/geometry/vendor/mikktspace>)
+if(MSVC)
+    # /fp:precise is MSVC's default and never contracts unless /fp:contract
+    # is given; stated explicitly so a global /fp:fast cannot slip in.
+    target_compile_options(engine_geometry PRIVATE /fp:precise)
+else()
+    target_compile_options(engine_geometry PRIVATE -ffp-contract=off)
+endif()
+set_source_files_properties(src/geometry/mikktspace_impl.cpp PROPERTIES
+    COMPILE_OPTIONS "${ENGINE_THIRD_PARTY_TU_FLAGS}")
 
 # ---------------------------------------------------------------------------
 # engine_physics — Jolt Physics wrapper (PhysicsWorld). Jolt is an

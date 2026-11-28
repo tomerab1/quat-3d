@@ -8,8 +8,8 @@
 #
 # DEPS (default ~/deps) must hold: entt, vma, jolt, fastgltf, stb, sdl,
 # googletest, miniaudio, imgui, imgui-node-editor, ktx (KTX-Software),
-# meshoptimizer (cloned at the vcpkg-pinned versions), acl and rtm (the tags
-# cmake/FetchAcl.cmake pins).
+# meshoptimizer, clipper2 (Clipper2) and earcut (earcut.hpp) (cloned at the
+# vcpkg-pinned versions), acl and rtm (the tags cmake/FetchAcl.cmake pins).
 set -u
 D="${DEPS:-$HOME/deps}"
 ROOT="$(git rev-parse --show-toplevel)"
@@ -31,7 +31,7 @@ check_one() {
     -Iinclude -Isrc -Isrc/remote -Itests \
     -isystem "$D/entt/src" -isystem "$D/vma/include" -isystem "$D/jolt" \
     -isystem "$D/fastgltf/include" -isystem "$D/stb" -isystem "$D/sdl/include" \
-    -isystem "$D/miniaudio" -isystem "$D/imgui" -isystem "$D/imgui/backends" -isystem "$D/imgui/misc/cpp" -isystem "$D/imgui-node-editor" -isystem "$D/recast-inc" -isystem "$D/googletest/googletest/include" -isystem "$D/acl/includes" -isystem "$D/rtm/includes" -isystem "$D/ktx/include" -isystem "$D/meshoptimizer/src" ${EXTRA_FLAGS:-} \
+    -isystem "$D/miniaudio" -isystem "$D/imgui" -isystem "$D/imgui/backends" -isystem "$D/imgui/misc/cpp" -isystem "$D/imgui-node-editor" -isystem "$D/recast-inc" -isystem "$D/googletest/googletest/include" -isystem "$D/acl/includes" -isystem "$D/rtm/includes" -isystem "$D/ktx/include" -isystem "$D/meshoptimizer/src" -isystem "$D/clipper2/CPP/Clipper2Lib/include" -isystem "$D/earcut/include" -isystem src/geometry/vendor/mikktspace ${EXTRA_FLAGS:-} \
     "$f" 2>&1)
   local what="$f"
   [ $# -gt 0 ] && what="$f ($*)"

@@ -22,7 +22,7 @@ add_executable(engine_tests
 target_link_libraries(engine_tests PRIVATE
     engine_flags engine_editor_build engine_core engine_input engine_rhi engine_asset engine_scene
     engine_renderer engine_physics engine_animation engine_terrain engine_nav engine_net
-    engine_remote engine_remote_world engine_audio engine_weather engine_script engine_cook
+    engine_remote engine_remote_world engine_audio engine_weather engine_geometry engine_script engine_cook
     engine_gltf_io game_world # gltf_io.hpp internals (fastgltf)
     engine_project engine_pack
     quat_asset_gen
@@ -57,6 +57,16 @@ target_compile_definitions(engine_tests PRIVATE
     # Shipped / vendored assets: the G7 demo scripts, editor fonts, icon table.
     QUAT_PROJECT_ROOT="${PROJECT_SOURCE_DIR}")
 add_dependencies(engine_tests shaders)
+
+# The geometry tests compare generated meshes with golden hashes that must
+# hold on every platform, so the inputs they compute follow engine_geometry's
+# floating-point rules too (no contraction; root CMakeLists.txt).
+file(GLOB ENGINE_GEOMETRY_TEST_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/geometry/*_test.cpp)
+if(MSVC)
+    set_source_files_properties(${ENGINE_GEOMETRY_TEST_SOURCES} PROPERTIES COMPILE_OPTIONS /fp:precise)
+else()
+    set_source_files_properties(${ENGINE_GEOMETRY_TEST_SOURCES} PROPERTIES COMPILE_OPTIONS -ffp-contract=off)
+endif()
 
 add_test(NAME engine_tests_cpu COMMAND engine_tests "--gtest_filter=-Gpu*")
 add_test(NAME engine_tests_gpu COMMAND engine_tests "--gtest_filter=Gpu*" --require-gpu)

@@ -221,6 +221,9 @@ install(DIRECTORY ${PROJECT_SOURCE_DIR}/assets/fonts/
 # (cmake/FetchAcl.cmake). sdk_install requires every file named here.
 install(FILES ${acl_SOURCE_DIR}/LICENSE DESTINATION ${QUAT3D_SHARE_DIR}/licenses RENAME acl-LICENSE)
 install(FILES ${rtm_SOURCE_DIR}/LICENSE DESTINATION ${QUAT3D_SHARE_DIR}/licenses RENAME rtm-LICENSE)
+# MikkTSpace (zlib), vendored into libengine_geometry (src/geometry/vendor).
+install(FILES ${PROJECT_SOURCE_DIR}/src/geometry/vendor/mikktspace/LICENSE.txt
+    DESTINATION ${QUAT3D_SHARE_DIR}/licenses RENAME mikktspace-LICENSE)
 # quat-pack's engine root (P4): the per-OS package layout script, the smoke
 # test it runs, and the README / Info.plist templates it fills in.
 install(PROGRAMS

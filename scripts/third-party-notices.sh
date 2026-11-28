@@ -6,7 +6,8 @@
 #     plus <port>/LICENSES/* where a port installs them (KTX-Software);
 #   - the FetchContent packages (ACL, RTM): <build>/_deps/<name>-src/LICENSE,
 #     or the FETCHCONTENT_SOURCE_DIR_<NAME> an offline build points at;
-#   - the fonts in assets/fonts/ and the XeGTAO port (texts in the repository);
+#   - the fonts in assets/fonts/, the XeGTAO port and the vendored MikkTSpace
+#     (texts in the repository);
 #   - the Rust crates compiled into quat-mcp (scripts/rust-notices.py over
 #     `cargo metadata`, texts from the Cargo registry: build quat-mcp first),
 #     unless --no-rust (a package without quat-mcp: games from quat-pack);
@@ -185,6 +186,7 @@ fi
 
   printf '\n### Ported code\n'
   emit "xegtao" "$root/packaging/licenses/XeGTAO-LICENSE.txt"
+  emit "mikktspace" "$root/src/geometry/vendor/mikktspace/LICENSE.txt"
 
   printf '\n### Fonts and icons\n'
   for dir in "$root"/assets/fonts/*/; do

@@ -28,6 +28,8 @@ metadata at the manifest's `builtin-baseline`.
 | `fastgltf` | fastgltf | MIT | https://github.com/spnda/fastgltf | linked |
 | `ktx` | KTX-Software (libktx, with the Basis Universal transcoder) | Apache-2.0, with component licences in its `LICENSES/` | https://github.com/KhronosGroup/KTX-Software | linked (the overlay port builds it without the non-open-source ETC decoder) |
 | `meshoptimizer` | meshoptimizer | MIT | https://github.com/zeux/meshoptimizer | linked |
+| `clipper2` | Clipper2 | BSL-1.0 | https://github.com/AngusJohnson/Clipper2 | linked |
+| `earcut-hpp` | earcut.hpp | ISC | https://github.com/mapbox/earcut.hpp | linked (header-only) |
 | `stb` | stb single-file libraries | MIT OR CC-PDDC | https://github.com/nothings/stb | linked |
 | `entt` | EnTT | MIT | https://github.com/skypjack/entt | linked |
 | `joltphysics` | Jolt Physics | MIT | https://github.com/jrouwe/JoltPhysics | linked |
@@ -59,6 +61,7 @@ in the archives. They include `protobuf` (BSD-3-Clause), `abseil`
 | ID | Component | Licence | Upstream | In the archives |
 |---|---|---|---|---|
 | `xegtao` | XeGTAO: `assets/shaders/gtao.slang` and `gtao_denoise.slang` are Slang ports of it | MIT | https://github.com/GameTechDev/XeGTAO | shader sources and compiled SPIR-V |
+| `mikktspace` | MikkTSpace, vendored in `src/geometry/vendor/mikktspace/` (altered: deterministic `cos` / `acos`, marked in the source) | Zlib | https://github.com/mmikk/MikkTSpace | linked |
 
 ## Fonts and icons (`assets/fonts/`)
 
