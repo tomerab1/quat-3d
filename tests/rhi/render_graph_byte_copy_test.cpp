@@ -125,4 +125,19 @@ TEST(GpuTransientPool, StorageFormatMustBeTheSrgbUnormTwin) {
     EXPECT_EQ(pool.size(), 0U);
 }
 
+// sRGB formats support no storage-image usage, and usage is validated against
+// the image's own (storage) format: refused with a precise error up front.
+TEST(GpuTransientPool, StorageUsageOnSrgbStorageIsRefused) {
+    QUAT_REQUIRE_GPU(g);
+    TransientImagePool pool(g->device, g->allocator);
+    const auto refused =
+        pool.acquire(VK_FORMAT_R8G8B8A8_UNORM, k_extent, VK_IMAGE_USAGE_STORAGE_BIT,
+                     VK_FORMAT_R8G8B8A8_SRGB);
+    ASSERT_FALSE(refused.has_value());
+    EXPECT_NE(refused.error().message.find("storage usage"), std::string::npos)
+        << refused.error().message;
+    EXPECT_EQ(pool.size(), 0U);
+    ASSERT_OK(pool.acquire(VK_FORMAT_R8G8B8A8_UNORM, k_extent, VK_IMAGE_USAGE_STORAGE_BIT));
+}
+
 } // namespace

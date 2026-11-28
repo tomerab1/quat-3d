@@ -274,6 +274,16 @@ TransientImagePool::acquire(VkFormat format, VkExtent2D extent, VkImageUsageFlag
                                 "twin of view format {}",
                                 static_cast<int>(storage_format), static_cast<int>(format)));
     }
+    // An image's usage is checked against its own format, and sRGB formats
+    // have no storage-image support: a compute pass writing the UNORM view
+    // would need VK_IMAGE_CREATE_EXTENDED_USAGE_BIT plus per-view usage
+    // (VkImageViewUsageCreateInfo), which the pool does not do.
+    if (is_srgb(storage_format) && (usage & VK_IMAGE_USAGE_STORAGE_BIT) != 0) {
+        return fail(std::format("TransientImagePool: storage usage on an sRGB storage format ({}) "
+                                "is not supported; store it as UNORM, or write it through a "
+                                "colour attachment",
+                                static_cast<int>(storage_format)));
+    }
 
     for (Entry& e : entries_) {
         if (!e.in_use && e.format == format && e.storage_format == storage_format &&

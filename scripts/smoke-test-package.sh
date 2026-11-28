@@ -41,17 +41,15 @@ while [ $# -gt 0 ]; do
   shift 2
 done
 
-# The engine's own package bundles quat-mcp (scripts/package-release.sh); a
-# game packaged by quat-pack does not.
-engine_pkg=0
-[ "$exe" = game ] && engine_pkg=1
-mcp_version=""
 # macOS: prints the crashed and main threads of the newest crash report for
-# <exe> written after <marker> (ReportCrash needs a few seconds).
+# <exe> written after <marker> (ReportCrash needs a few seconds). Never fails:
+# under set -e / pipefail a missing report directory or an unexpected report
+# shape must not end the script before the caller exits with the crash status.
 print_macos_crash_report() {
   local exe=$1 marker=$2 dir="$HOME/Library/Logs/DiagnosticReports" report="" _
   for _ in $(seq 1 30); do
-    report=$(find "$dir" -maxdepth 1 -name "$exe*.ips" -newer "$marker" 2>/dev/null | sort | tail -n1)
+    report=$( { find "$dir" -maxdepth 1 -name "$exe*.ips" -newer "$marker" 2>/dev/null || true; } |
+                sort | tail -n1)
     [ -n "$report" ] && break
     sleep 1
   done
@@ -60,7 +58,7 @@ print_macos_crash_report() {
     return 0
   fi
   echo "---- crash report: $report" >&2
-  python3 - "$report" >&2 <<'PY'
+  python3 - "$report" >&2 <<'PY' || echo "could not summarise $report" >&2
 import json
 import sys
 
@@ -86,6 +84,12 @@ for index, thread in enumerate(report.get("threads", [])):
         print(f"  #{n:<2} {name:<28} {symbol} + {frame.get('symbolLocation', 0)}")
 PY
 }
+
+# The engine's own package bundles quat-mcp (scripts/package-release.sh); a
+# game packaged by quat-pack does not.
+engine_pkg=0
+[ "$exe" = game ] && engine_pkg=1
+mcp_version=""
 
 rm -rf "$scratch"
 mkdir -p "$scratch"
@@ -184,13 +188,20 @@ case "$archive" in
   if [ "$status" != 0 ]; then
     # Git Bash reports most crashes (an unhandled NTSTATUS such as
     # 0xC0000409, MSVC's fast-fail after abort / an exception in a build
-    # without them) as 127; run it once more through PowerShell for the code.
+    # without them) as 127, and the first run's real code is not visible
+    # here. Run it once more through PowerShell, which reports it — a rerun:
+    # a flaky failure may pass there (0x00000000). It runs in its own
+    # directory, so the first run's log and screenshot stay as they were.
+    mkdir -p "$scratch/rerun"
     # shellcheck disable=SC2016 # PowerShell expands these
-    code=$(cd "$scratch" && PATH="$clean_path:$sys32/WindowsPowerShell/v1.0" \
+    code=$(cd "$scratch/rerun" || exit 0
+           PATH="$clean_path:$sys32/WindowsPowerShell/v1.0" \
+             QUAT_SCREENSHOT="$scratch/rerun/smoke.ppm" \
              QUAT_SMOKE_EXE="$(cygpath -w "$dir/$exe.exe")" powershell.exe -NoProfile -Command \
              '$p = Start-Process $env:QUAT_SMOKE_EXE -Wait -PassThru -NoNewWindow; "0x{0:X8}" -f $p.ExitCode' \
-             2>/dev/null | tr -d '\r' | tail -n1)
-    echo "$exe.exe exited with status $status (process exit code ${code:-unknown})" >&2
+             2>/dev/null | tr -d '\r' | tail -n1 || true)
+    echo "$exe.exe failed: status $status under Git Bash (crashes show as 127);" \
+         "a rerun through PowerShell exited with ${code:-unknown}" >&2
     exit "$status"
   fi
   if [ "$engine_pkg" = 1 ]; then mcp_version=$(PATH="$clean_path" "$dir/quat-mcp.exe" --version | tr -d '\r'); fi
