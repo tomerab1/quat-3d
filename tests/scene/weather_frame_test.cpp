@@ -112,10 +112,13 @@ TEST(WeatherFrame, WithWeatherTheCloudsFollowItAndStayAnchored) {
     const glm::vec3 camera(4000.0F, 12.0F, -2500.0F);
     const r::CloudSettings c = s::frame_clouds(settings, 99.0F, &state, {7.0F, -3.0F}, camera);
     EXPECT_FLOAT_EQ(c.coverage, 0.9F);
-    EXPECT_FLOAT_EQ(c.density, settings.density * 1.5F);
+    EXPECT_FLOAT_EQ(c.density, settings.density) << "rain thickens the clouds in the shader";
+    EXPECT_FLOAT_EQ(c.precipitation, 0.5F);
     EXPECT_EQ(c.time_s, 0.0F) << "drift comes from the integrated weather wind";
-    EXPECT_FLOAT_EQ(c.offset_km.x, 7.0F + 4.0F);
-    EXPECT_FLOAT_EQ(c.offset_km.y, -3.0F - 2.5F);
+    // Field coordinate = world - drift: features move downwind (R13.4 fixed
+    // the sign; they used to drift upwind).
+    EXPECT_FLOAT_EQ(c.offset_km.x, 4.0F - 7.0F);
+    EXPECT_FLOAT_EQ(c.offset_km.y, -2.5F + 3.0F);
 }
 
 } // namespace

@@ -128,7 +128,7 @@ TEST(RenderSettings, ResetRestoresOneGroupOrAll) {
     ASSERT_TRUE(r::reset_render_settings(s, "bloom"));
     EXPECT_FLOAT_EQ(s.bloom.intensity, r::BloomSettings{}.intensity);
     EXPECT_FLOAT_EQ(s.exposure.compensation_ev, 2.0F);
-    EXPECT_FALSE(r::reset_render_settings(s, "fog"));
+    EXPECT_FALSE(r::reset_render_settings(s, "haze"));
     ASSERT_TRUE(r::reset_render_settings(s));
     EXPECT_FLOAT_EQ(s.exposure.compensation_ev, 0.0F);
     EXPECT_FLOAT_EQ(s.clouds.time_s, 42.0F);

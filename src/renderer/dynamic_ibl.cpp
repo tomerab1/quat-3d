@@ -1,11 +1,14 @@
 #include "engine/renderer/dynamic_ibl.hpp"
 
 #include <array>
+#include <cmath>
 #include <cstdint>
+#include <cstring>
 #include <string>
 #include <utility>
 #include <vector>
 
+#include "engine/renderer/cloud_noise_pass.hpp"
 #include "engine/rhi/device.hpp"
 #include "engine/rhi/pipeline_cache.hpp"
 
@@ -43,6 +46,22 @@ constexpr std::uint32_t kCycleSteps = kPreFirst + prefilter_mip_count;
 // so reflections lagging by a second is imperceptible). Sun or cloud-setting
 // edits start a cycle immediately.
 constexpr float kDriftRefreshSeconds = 1.0F;
+// R13.4: the v2 layer is anchored to the world, so drift (wind or weather)
+// and camera motion move its field offset; a cycle starts once it moved this
+// far (km) since the last one.
+constexpr float kDriftRefreshKm = 0.15F;
+
+// Whether the probe bakes clouds for `p`.
+[[nodiscard]] bool probe_clouds(const IblCycleParams& p) {
+    return p.noise != nullptr && p.noise->valid() && p.clouds.enabled;
+}
+
+// The layers differ in anything but their field offsets.
+[[nodiscard]] bool layer_edited(const CloudLayerGpu& a, const CloudLayerGpu& b) {
+    return a.shell != b.shell || a.medium != b.medium || a.scale != b.scale ||
+           glm::vec3(a.cirrus) != glm::vec3(b.cirrus) || a.octaves != b.octaves ||
+           a.phase != b.phase || a.moon != b.moon;
+}
 
 // Push-constant blocks mirroring the IBL shaders (see ibl_bake_env.slang).
 struct BakeParams {
@@ -169,11 +188,18 @@ DynamicIbl::create(const rhi::Device& device, rhi::GpuAllocator& allocator,
     if (!out.db_fns_.valid()) return fail("dynamic ibl: descriptor buffer functions unavailable");
 
     using rhi::DescriptorBinding;
-    const std::array<DescriptorBinding, 4> env_b{{
+    const std::array<DescriptorBinding, 10> env_b{{
         {0, 0, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, kComputeStage},
         {0, 1, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, kComputeStage},
         {0, 2, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, kComputeStage},
         {0, 3, VK_DESCRIPTOR_TYPE_SAMPLER, 1, kComputeStage},
+        // R13.4 clouds (ibl_bake_env.slang bindings 4..9).
+        {0, 4, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, kComputeStage},
+        {0, 5, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, kComputeStage},
+        {0, 6, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, kComputeStage},
+        {0, 7, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, kComputeStage},
+        {0, 8, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, kComputeStage},
+        {0, 9, VK_DESCRIPTOR_TYPE_SAMPLER, 1, kComputeStage},
     }};
     const std::array<DescriptorBinding, 3> conv_b{{
         {0, 0, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, kComputeStage},
@@ -241,6 +267,27 @@ DynamicIbl::create(const rhi::Device& device, rhi::GpuAllocator& allocator,
     auto fb_view = rhi::create_image_view(dev, out.fallback_lut_.handle(), kCubeFormat);
     if (!fb_view) return std::unexpected(fb_view.error());
     out.fallback_view_ = std::move(*fb_view);
+    auto fb_volume = allocator.create_image_3d(
+        kCubeFormat, {1, 1, 1}, VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT);
+    if (!fb_volume) return std::unexpected(fb_volume.error());
+    out.fallback_volume_ = std::move(*fb_volume);
+    auto fb_volume_view = rhi::create_image_view(dev, out.fallback_volume_.handle(), kCubeFormat,
+                                                 VK_IMAGE_ASPECT_COLOR_BIT, 1,
+                                                 VK_IMAGE_VIEW_TYPE_3D);
+    if (!fb_volume_view) return std::unexpected(fb_volume_view.error());
+    out.fallback_volume_view_ = std::move(*fb_volume_view);
+    for (rhi::GpuBuffer& b : out.layer_buffers_) {
+        auto buf = allocator.create_buffer(
+            sizeof(CloudLayerGpu),
+            VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+            VMA_MEMORY_USAGE_AUTO,
+            VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT |
+                VMA_ALLOCATION_CREATE_MAPPED_BIT);
+        if (!buf) return std::unexpected(buf.error());
+        b = std::move(*buf);
+        std::memset(b.mapped(), 0, sizeof(CloudLayerGpu));
+        if (auto f = b.flush(); !f) return std::unexpected(f.error());
+    }
 
     for (ProbeSet& set : out.sets_) {
         auto irr = allocator.create_image(kCubeFormat, {kIrradianceSize, kIrradianceSize},
@@ -289,6 +336,7 @@ DynamicIbl::create(const rhi::Device& device, rhi::GpuAllocator& allocator,
     const VkImage env_img = out.env_.handle();
     const VkImage brdf_img = out.brdf_lut_.handle();
     const VkImage fb_img = out.fallback_lut_.handle();
+    const VkImage fb_volume_img = out.fallback_volume_.handle();
     auto init = submit_blocking(device, [&](VkCommandBuffer cmd) {
         constexpr auto top = VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT;
         constexpr auto cs = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT;
@@ -302,6 +350,13 @@ DynamicIbl::create(const rhi::Device& device, rhi::GpuAllocator& allocator,
         VkImageSubresourceRange range{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
         vkCmdClearColorImage(cmd, fb_img, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &black, 1, &range);
         transition(cmd, fb_img, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, kRo,
+                   VK_PIPELINE_STAGE_2_CLEAR_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT, cs, r);
+        transition(cmd, fb_volume_img, VK_IMAGE_LAYOUT_UNDEFINED,
+                   VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, top, 0, VK_PIPELINE_STAGE_2_CLEAR_BIT,
+                   VK_ACCESS_2_TRANSFER_WRITE_BIT);
+        vkCmdClearColorImage(cmd, fb_volume_img, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &black, 1,
+                             &range);
+        transition(cmd, fb_volume_img, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, kRo,
                    VK_PIPELINE_STAGE_2_CLEAR_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT, cs, r);
 
         // env lives in GENERAL; the probe sets idle in READ_ONLY.
@@ -328,6 +383,7 @@ DynamicIbl::create(const rhi::Device& device, rhi::GpuAllocator& allocator,
     // --- initial blocking cycle so views() is complete from frame one ---------
     out.cycle_params_ = initial;
     out.last_cycle_start_s_ = initial.clouds.time_s;
+    if (auto w = out.write_layer(initial); !w) return std::unexpected(w.error());
     std::vector<rhi::DescriptorBuffer> dbs;
     dbs.reserve(kCycleSteps);
     for (std::uint32_t step = 0; step < kCycleSteps; ++step) {
@@ -365,6 +421,19 @@ DynamicIbl::make_step_db(std::uint32_t step, std::uint32_t back_index,
         db->write_sampled_image(1, atmos ? params.skyview : fallback_view_.handle(), kRo);
         db->write_sampled_image(2, atmos ? params.transmittance : fallback_view_.handle(), kRo);
         db->write_sampler(3, sampler_.handle());
+        const rhi::GpuBuffer& layer = layer_buffers_[cycle_ % 2];
+        db->write_uniform_buffer(4, rhi::buffer_device_address(device_->handle(), layer),
+                                 sizeof(CloudLayerGpu));
+        const bool clouds = probe_clouds(params);
+        db->write_sampled_image(5, clouds ? params.noise->base_view() : fallback_volume_view_.handle(),
+                                kRo);
+        db->write_sampled_image(6, clouds ? params.noise->detail_view()
+                                          : fallback_volume_view_.handle(),
+                                kRo);
+        db->write_sampled_image(7, clouds ? params.noise->curl_view() : fallback_view_.handle(), kRo);
+        db->write_sampled_image(8, clouds ? params.noise->weather_view() : fallback_view_.handle(),
+                                kRo);
+        db->write_sampler(9, clouds ? params.noise->sampler() : sampler_.handle());
     } else {
         db->write_sampled_image(0, env_cube_.handle(), kGen); // env stays GENERAL
         db->write_sampler(1, sampler_.handle());
@@ -393,8 +462,10 @@ void DynamicIbl::record_step(VkCommandBuffer cmd, std::uint32_t step, std::uint3
         const std::uint32_t tile = step % kTilesFace;
         BakeParams bp{};
         bp.sun_dir = glm::vec4(glm::normalize(params.sun_to), atmos ? 1.0F : 0.0F);
-        bp.cloud_a = params.clouds.pack_a();
-        bp.cloud_b = params.clouds.pack_b();
+        bp.cloud_a = glm::vec4(probe_clouds(params) && atmos
+                                   ? static_cast<float>(std::clamp(params.clouds.march_steps, 8, 96))
+                                   : 0.0F,
+                               0.0F, 0.0F, 0.0F);
         bp.face_size = kEnvSize;
         bp.face_offset = step / kTilesFace;
         bp.tile_x = (tile % kTilesEdge) * kEnvTile;
@@ -451,19 +522,21 @@ std::expected<void, core::Error> DynamicIbl::add_step_to_graph(rhi::RenderGraph&
         const bool sun_moved =
             glm::dot(glm::normalize(params.sun_to), glm::normalize(cycle_params_.sun_to)) <
             0.99999F;
-        const bool clouds_edited =
-            a.enabled != b.enabled || a.coverage != b.coverage || a.density != b.density ||
-            a.bottom_km != b.bottom_km || a.thickness_km != b.thickness_km ||
-            a.size_km != b.size_km || a.detail != b.detail || a.wind_speed != b.wind_speed ||
-            a.wind_dir_deg != b.wind_dir_deg;
+        const bool clouds_edited = a.enabled != b.enabled ||
+                                   probe_clouds(params) != probe_clouds(cycle_params_) ||
+                                   layer_edited(params.layer, cycle_params_.layer);
         const bool atmos_changed = params.skyview != cycle_params_.skyview ||
                                    params.transmittance != cycle_params_.transmittance;
+        const glm::vec2 moved = glm::vec2(params.layer.offset) - glm::vec2(cycle_params_.layer.offset);
         const bool drift_due =
-            a.enabled && a.wind_speed > 0.0F &&
-            a.time_s - last_cycle_start_s_ >= kDriftRefreshSeconds;
+            probe_clouds(params) &&
+            (glm::length(moved) >= kDriftRefreshKm ||
+             (a.wind_speed > 0.0F && a.time_s - last_cycle_start_s_ >= kDriftRefreshSeconds));
         if (!(sun_moved || clouds_edited || atmos_changed || drift_due)) {
             return {};
         }
+        ++cycle_;
+        if (auto w = write_layer(params); !w) return std::unexpected(w.error());
         cycle_params_ = params; // latch for face consistency
         last_cycle_start_s_ = a.time_s;
     }
@@ -489,5 +562,13 @@ std::expected<void, core::Error> DynamicIbl::add_step_to_graph(rhi::RenderGraph&
 }
 
 std::uint32_t DynamicIbl::cycle_step_count() { return kCycleSteps; }
+
+std::expected<void, core::Error> DynamicIbl::write_layer(const IblCycleParams& params) {
+    rhi::GpuBuffer& buffer = layer_buffers_[cycle_ % 2];
+    CloudLayerGpu layer = params.layer;
+    if (!probe_clouds(params)) layer = CloudLayerGpu{};
+    std::memcpy(buffer.mapped(), &layer, sizeof(layer));
+    return buffer.flush(0, sizeof(layer));
+}
 
 } // namespace engine::renderer

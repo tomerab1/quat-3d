@@ -1,5 +1,6 @@
 #include "compute_kernel.hpp"
 
+#include <string>
 #include <utility>
 
 #include "engine/rhi/compute_pipeline.hpp"
@@ -96,6 +97,53 @@ void memory_barrier(VkCommandBuffer cmd, VkPipelineStageFlags2 src_stage,
     dep.memoryBarrierCount = 1;
     dep.pMemoryBarriers = &b;
     vkCmdPipelineBarrier2(cmd, &dep);
+}
+
+std::expected<void, core::Error>
+submit_blocking(const rhi::Device& device, const char* what,
+                const std::function<void(VkCommandBuffer)>& record) {
+    auto fail = [what](const char* why) {
+        return std::unexpected(core::Error{std::string(what) + ": " + why});
+    };
+    VkCommandPool pool = VK_NULL_HANDLE;
+    VkCommandPoolCreateInfo pi{};
+    pi.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+    pi.flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT;
+    pi.queueFamilyIndex = device.queue_families().graphics;
+    if (vkCreateCommandPool(device.handle(), &pi, nullptr, &pool) != VK_SUCCESS) {
+        return fail("vkCreateCommandPool failed");
+    }
+    VkCommandBufferAllocateInfo ai{};
+    ai.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+    ai.commandPool = pool;
+    ai.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    ai.commandBufferCount = 1;
+    VkCommandBuffer cmd = VK_NULL_HANDLE;
+    if (vkAllocateCommandBuffers(device.handle(), &ai, &cmd) != VK_SUCCESS) {
+        vkDestroyCommandPool(device.handle(), pool, nullptr);
+        return fail("vkAllocateCommandBuffers failed");
+    }
+    VkCommandBufferBeginInfo bi{};
+    bi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+    vkBeginCommandBuffer(cmd, &bi);
+    record(cmd);
+    vkEndCommandBuffer(cmd);
+    VkCommandBufferSubmitInfo ci{};
+    ci.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO;
+    ci.commandBuffer = cmd;
+    VkSubmitInfo2 si{};
+    si.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO_2;
+    si.commandBufferInfoCount = 1;
+    si.pCommandBufferInfos = &ci;
+    VkResult r = vkQueueSubmit2(device.graphics_queue(), 1, &si, VK_NULL_HANDLE);
+    if (r == VK_SUCCESS) r = vkQueueWaitIdle(device.graphics_queue());
+    vkDestroyCommandPool(device.handle(), pool, nullptr);
+    if (r != VK_SUCCESS) {
+        return std::unexpected(core::Error{std::string(what) + ": submit failed (VkResult " +
+                                           std::to_string(static_cast<int>(r)) + ")"});
+    }
+    return {};
 }
 
 } // namespace engine::renderer::detail

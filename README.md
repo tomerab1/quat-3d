@@ -50,7 +50,12 @@ The editor (dark theme; a light theme is one click away in View > Theme):
 - Alpha-cut materials (glTF `MASK`: leaves, grass cards, fences) cut holes in
   the surface and in its shadow, and keep their shape at a distance
   (coverage-preserving mipmaps); double-sided leaves are lit on both sides
-- Physically based sky with volumetric clouds and a moving sun
+- Physically based sky with a moving sun and volumetric clouds (Horizon Zero
+  Dawn-style: cumulus, stratocumulus, stratus and cirrus driven by the
+  weather, lit by the sun and the moon, rendered at quarter resolution and
+  accumulated over frames), aerial perspective on distant terrain, and
+  volumetric fog: height fog and fog volumes lit by the sun, its shadows and
+  local lights — see [`docs/volumetrics.md`](docs/volumetrics.md)
 - Weather: wind, cloud cover, rain or snow, wet ground and snow cover, set
   in the editor's Renderer panel, saved with the scene, and scriptable over
   MCP. Wet surfaces darken and turn glossy, with puddles on flat ground; snow
@@ -304,6 +309,8 @@ instead of Homebrew, set `VULKAN_SDK=$HOME/VulkanSDK/<version>/macOS`.
 A Vulkan 1.3 driver with dynamic rendering, synchronization2 and buffer device
 addresses, plus `VK_EXT_descriptor_buffer` (any recent NVIDIA, AMD or Intel
 driver, or Mesa) — or a build with `ENGINE_DESCRIPTOR_SETS_FALLBACK=ON`.
+In such a build `QUAT_FORCE_DESCRIPTOR_SETS=1` takes the classic-sets path on
+any device, so Linux runs (lavapipe included) reproduce what macOS runs do.
 
 ## Running
 
@@ -330,6 +337,7 @@ Environment variables switch on extra modes:
 | `QUAT_GLTF=<file>` | Load a glTF/GLB model instead of the showcase scene |
 | `QUAT_TERRAIN=1` | Add a procedural terrain tile (with a grass field) |
 | `QUAT_TIME=<ISO-8601>` | Start with a world clock at this date and time (e.g. `2026-06-21T21:30+02:00`) driving the sun; `QUAT_LATLON=<lat>,<lon>` sets the place (default Paris), `QUAT_TIME_SCALE=<n>` the clock speed (default 1, 0 = frozen) |
+| `QUAT_WEATHER=<preset>` | Start with a weather preset: `clear`, `cumulus`, `overcast`, `rain` or `valley_fog` (adds the volumetric height fog) — the cloud and fog screenshot rows use it |
 | `QUAT_PHYSICS=1` / `QUAT_CHARACTER=1` | Physics (with sparks and smoke) / character-controller demo scenes |
 | `QUAT_HOST=<port>` / `QUAT_JOIN=<ip:port>` | Host or join a networked session (host listens on 127.0.0.1 only unless `QUAT_NET_BIND` says otherwise) — see [Networking](#networking) |
 | `QUAT_NET_BIND=<ipv4>` | Host: interface to listen on (default `127.0.0.1`; `0.0.0.0` = every interface, for LAN/internet play) |

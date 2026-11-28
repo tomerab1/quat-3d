@@ -216,13 +216,13 @@ buffer_device_address(VkDevice device, const GpuBuffer& buffer);
 // Classic-sets fallback support: vkUpdateDescriptorSets needs VkBuffer + offset,
 // but the descriptor API traffics in raw device addresses. Buffers created with
 // SHADER_DEVICE_ADDRESS usage are recorded so a write can be translated back to
-// the buffer that contains the address.
+// the buffer that contains the address. Addresses are per device.
 struct BufferAddressRange {
     VkBuffer     buffer = VK_NULL_HANDLE;
     VkDeviceSize offset = 0;
 };
 [[nodiscard]] std::optional<BufferAddressRange>
-find_buffer_for_address(VkDeviceAddress address);
+find_buffer_for_address(VkDevice device, VkDeviceAddress address);
 #endif
 
 // Full mip chain length for an extent: floor(log2(max(w, h))) + 1.

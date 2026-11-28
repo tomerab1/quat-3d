@@ -94,9 +94,9 @@ public:
     // SHADER_READ_ONLY_OPTIMAL, ready to sample. When the atmosphere LUT views
     // are provided (Phase 11.1), the environment is baked from the physically-
     // based sky-view LUT (+ transmittance-tinted sun disc) instead of the
-    // procedural sky, so ambient/reflections match the background. `clouds`
-    // drives the volumetric cloud layer baked into the environment (LUT path
-    // only) — pass the same settings the lighting pass uses.
+    // procedural sky, so ambient/reflections match the background. No clouds:
+    // the runtime probe (DynamicIbl) bakes the R13.4 cloud layer; `clouds`
+    // is kept for callers and ignored.
     [[nodiscard]] std::expected<IblMaps, core::Error>
     bake(const glm::vec3& sun_dir, VkImageView atmosphere_skyview = VK_NULL_HANDLE,
          VkImageView atmosphere_transmittance = VK_NULL_HANDLE,
@@ -117,6 +117,12 @@ private:
     rhi::Sampler                   env_sampler_;
     rhi::GpuImage                  fallback_lut_;      // 1x1 black for unused LUT slots
     rhi::ImageView                 fallback_lut_view_;
+    // The cloud slots of ibl_bake_env.slang (R13.4): this blocking baker
+    // bakes no clouds (the runtime probe, DynamicIbl, does), so they hold a
+    // 1x1x1 black volume and an all-zero layer.
+    rhi::GpuImage                  fallback_volume_;
+    rhi::ImageView                 fallback_volume_view_;
+    rhi::GpuBuffer                 zero_layer_;
 };
 
 } // namespace engine::renderer

@@ -264,7 +264,7 @@ void DescriptorBuffer::write_buffer_descriptor(std::uint32_t binding, VkDescript
 #ifdef ENGINE_DESCRIPTOR_SETS_FALLBACK
     if (set_ != VK_NULL_HANDLE) {
         // Classic path: translate the device address back to buffer + offset.
-        const auto located = find_buffer_for_address(address);
+        const auto located = find_buffer_for_address(device_->handle(), address);
         if (!located) {
             std::fprintf(stderr,
                          "[rhi] classic descriptor write: no buffer registered for address 0x%llx\n",

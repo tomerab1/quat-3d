@@ -63,6 +63,8 @@ public:
     [[nodiscard]] bool valid() const { return skyview_view_.handle() != VK_NULL_HANDLE; }
     [[nodiscard]] VkImageView skyview_view() const { return skyview_view_.handle(); }
     [[nodiscard]] VkImageView transmittance_view() const { return transmittance_view_.handle(); }
+    // The multiple-scattering LUT (R13.3: the aerial perspective volume).
+    [[nodiscard]] VkImageView multiscatter_view() const { return multiscatter_view_.handle(); }
     // Raw LUT images (SHADER_READ_ONLY_OPTIMAL between uses), for readback.
     [[nodiscard]] VkImage skyview_image() const { return skyview_.handle(); }
     [[nodiscard]] VkImage transmittance_image() const { return transmittance_.handle(); }

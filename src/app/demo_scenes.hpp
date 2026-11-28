@@ -107,4 +107,10 @@ void add_env_terrain(engine::scene::Scene& scene);
 // reported on stderr and ignored.
 void add_env_world_clock(engine::scene::Scene& scene);
 
+// QUAT_WEATHER=<clear | cumulus | overcast | rain | valley_fog>: start with
+// that weather (R13.1) and cloud type / cirrus (R13.4); valley_fog also
+// fills the low ground with the volumetric height fog (R13.3). The CI
+// screenshot rows of the clouds use it (env_weather.cpp).
+void add_env_weather(engine::scene::Scene& scene, engine::renderer::RenderSettings& settings);
+
 } // namespace quat::app

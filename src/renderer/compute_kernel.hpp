@@ -9,6 +9,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <expected>
+#include <functional>
 #include <span>
 #include <string>
 #include <vector>
@@ -67,5 +68,12 @@ void image_barrier(VkCommandBuffer cmd, VkImage image, VkImageLayout old_layout,
 void memory_barrier(VkCommandBuffer cmd, VkPipelineStageFlags2 src_stage,
                     VkAccessFlags2 src_access, VkPipelineStageFlags2 dst_stage,
                     VkAccessFlags2 dst_access);
+
+// Records `record(cmd)` into a one-time command buffer, submits it on the
+// graphics queue and waits for the queue to go idle — startup bakes and tests
+// only, never the frame loop. `what` prefixes errors.
+[[nodiscard]] std::expected<void, core::Error>
+submit_blocking(const rhi::Device& device, const char* what,
+                const std::function<void(VkCommandBuffer)>& record);
 
 } // namespace engine::renderer::detail

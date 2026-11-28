@@ -7,9 +7,10 @@
 #include <format>
 #include <utility>
 #ifdef ENGINE_DESCRIPTOR_SETS_FALLBACK
+#include <cstdio>
+#include <iterator>
 #include <map>
 #include <mutex>
-#include <unordered_map>
 #endif
 
 #include "engine/core/profile.hpp"
@@ -27,36 +28,69 @@ namespace {
 #ifdef ENGINE_DESCRIPTOR_SETS_FALLBACK
 // Address -> buffer registry for the classic-sets fallback (see
 // find_buffer_for_address in the header). Process-global because GpuBuffer only
-// holds the VmaAllocator, not the GpuAllocator that created it. Guarded by a
-// mutex: buffer create/destroy happens on asset-loader threads, never per draw,
-// so this stays off the hot path required by CLAUDE.md.
+// holds the VmaAllocator, not the GpuAllocator that created it, and keyed by
+// device: addresses are only unique within one VkDevice, and tests (and tools)
+// run several devices in one process. Guarded by a mutex: buffer
+// create/destroy happens on asset-loader threads, never per draw, so this
+// stays off the hot path required by CLAUDE.md.
 struct AddressEntry {
     VkBuffer     buffer = VK_NULL_HANDLE;
     VkDeviceSize size = 0;
 };
+using AddressKey = std::pair<VkDevice, VkDeviceAddress>;
+using BufferKey = std::pair<VkDevice, VkBuffer>;
 std::mutex g_address_registry_mutex;
-std::map<VkDeviceAddress, AddressEntry> g_address_registry;        // keyed by base address
-std::unordered_map<VkBuffer, VkDeviceAddress> g_buffer_to_address; // for unregistering
+std::map<AddressKey, AddressEntry> g_address_registry; // keyed by (device, base address)
+std::map<BufferKey, VkDeviceAddress> g_buffer_to_address; // for unregistering
 
-void register_buffer_address(VmaAllocator allocator, VkBuffer buffer, VkDeviceSize size) {
+[[nodiscard]] VkDevice allocator_device(VmaAllocator allocator) {
     VmaAllocatorInfo allocator_info{};
     vmaGetAllocatorInfo(allocator, &allocator_info);
+    return allocator_info.device;
+}
+
+void register_buffer_address(VmaAllocator allocator, VkBuffer buffer, VkDeviceSize size) {
+    const VkDevice device = allocator_device(allocator);
     VkBufferDeviceAddressInfo info{};
     info.sType = VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO;
     info.buffer = buffer;
-    const VkDeviceAddress address = vkGetBufferDeviceAddress(allocator_info.device, &info);
+    const VkDeviceAddress address = vkGetBufferDeviceAddress(device, &info);
 
     const std::lock_guard<std::mutex> lock(g_address_registry_mutex);
-    g_address_registry[address] = AddressEntry{buffer, size};
-    g_buffer_to_address[buffer] = address;
+    // Live buffers of one device never share addresses; an overlap means
+    // the driver aliases them and descriptor writes would pick either one.
+    auto next = g_address_registry.lower_bound({device, address});
+    const bool overlaps_next = next != g_address_registry.end() && next->first.first == device &&
+                               next->first.second < address + size;
+    bool overlaps_prev = false;
+    if (next != g_address_registry.begin()) {
+        const auto prev = std::prev(next);
+        overlaps_prev = prev->first.first == device &&
+                        prev->first.second + prev->second.size > address;
+    }
+    if (overlaps_next || overlaps_prev || address == 0) {
+        std::fprintf(stderr,
+                     "[rhi] classic descriptor fallback: buffer address 0x%llx (+%llu) overlaps a "
+                     "live buffer; descriptor writes into it are ambiguous\n",
+                     static_cast<unsigned long long>(address),
+                     static_cast<unsigned long long>(size));
+    }
+    g_address_registry[{device, address}] = AddressEntry{buffer, size};
+    g_buffer_to_address[{device, buffer}] = address;
 }
 
-void unregister_buffer_address(VkBuffer buffer) {
+void unregister_buffer_address(VmaAllocator allocator, VkBuffer buffer) {
+    const VkDevice device = allocator_device(allocator);
     const std::lock_guard<std::mutex> lock(g_address_registry_mutex);
-    if (auto it = g_buffer_to_address.find(buffer); it != g_buffer_to_address.end()) {
-        g_address_registry.erase(it->second);
-        g_buffer_to_address.erase(it);
+    const auto it = g_buffer_to_address.find({device, buffer});
+    if (it == g_buffer_to_address.end()) return;
+    // Erase the address entry only while it still names this buffer: a
+    // later registration at the same address owns it now.
+    if (const auto entry = g_address_registry.find({device, it->second});
+        entry != g_address_registry.end() && entry->second.buffer == buffer) {
+        g_address_registry.erase(entry);
     }
+    g_buffer_to_address.erase(it);
 }
 #endif
 
@@ -68,7 +102,7 @@ void unregister_buffer_address(VkBuffer buffer) {
 void GpuBuffer::destroy() noexcept {
     if (buffer_ != VK_NULL_HANDLE && allocator_ != nullptr) {
 #ifdef ENGINE_DESCRIPTOR_SETS_FALLBACK
-        unregister_buffer_address(buffer_);
+        unregister_buffer_address(allocator_, buffer_);
 #endif
         vmaDestroyBuffer(allocator_, buffer_, allocation_);
     }
@@ -406,13 +440,16 @@ VkDeviceAddress buffer_device_address(VkDevice device, const GpuBuffer& buffer) 
 }
 
 #ifdef ENGINE_DESCRIPTOR_SETS_FALLBACK
-std::optional<BufferAddressRange> find_buffer_for_address(VkDeviceAddress address) {
+std::optional<BufferAddressRange> find_buffer_for_address(VkDevice device,
+                                                          VkDeviceAddress address) {
     const std::lock_guard<std::mutex> lock(g_address_registry_mutex);
-    auto it = g_address_registry.upper_bound(address);
+    auto it = g_address_registry.upper_bound({device, address});
     if (it == g_address_registry.begin()) return std::nullopt;
-    --it; // greatest base address <= address
-    if (address >= it->first + it->second.size) return std::nullopt;
-    return BufferAddressRange{it->second.buffer, address - it->first};
+    --it; // greatest (device, base address) <= (device, address)
+    if (it->first.first != device || address >= it->first.second + it->second.size) {
+        return std::nullopt;
+    }
+    return BufferAddressRange{it->second.buffer, address - it->first.second};
 }
 #endif
 

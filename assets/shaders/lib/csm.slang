@@ -399,3 +399,18 @@ public float3 csm_debug_color(uint cascade) {
                                       float3(0.35, 0.5, 1.0), float3(1.0, 1.0, 0.35) };
     return cascade < CSM_MAX_CASCADES ? colors[cascade] : float3(1.0, 1.0, 1.0);
 }
+
+// The sun's visibility at a point in participating media (R13.3 froxel
+// fog): one hardware-PCF tap of the cascade covering `view_dist`, with no
+// surface to bias against (a medium sample has no normal; the per-frame
+// jittered froxel position and the temporal accumulation filter the edge).
+// 1 beyond the cascades.
+public float csm_visibility_volume(CascadeData d, Texture2DArray map, SamplerComparisonState cmp,
+                                   float3 world_pos, float view_dist) {
+    CascadePick pick;
+    if (!csm_pick(d, view_dist, pick)) return 1.0;
+    float4 clip = csm_mul(d, pick.c, float4(world_pos, 1.0));
+    float2 uv = clip.xy * 0.5 + 0.5;
+    if (any(uv < 0.0) || any(uv > 1.0) || clip.z > 1.0) return 1.0;
+    return map.SampleCmpLevelZero(cmp, float3(uv, float(pick.c)), clip.z);
+}

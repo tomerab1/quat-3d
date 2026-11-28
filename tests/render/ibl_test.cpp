@@ -2,6 +2,7 @@
 // BRDF LUT, irradiance and prefiltered cubes, and the incrementally refreshed
 // DynamicIbl probe responding to a sun move.
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <expected>
@@ -12,6 +13,8 @@
 #include <vulkan/vulkan.h>
 
 #include "engine/renderer/atmosphere_pass.hpp"
+#include "engine/renderer/cloud_noise_pass.hpp"
+#include "engine/renderer/cloud_reference.hpp"
 #include "engine/renderer/dynamic_ibl.hpp"
 #include "engine/renderer/ibl_pass.hpp"
 #include "engine/rhi/render_graph.hpp"
@@ -195,4 +198,47 @@ TEST(GpuDynamicIbl, IrradianceFollowsTheSunDown) {
     EXPECT_GE(run->dusk_zenith.r, 0.0F) << "dusk irradiance is not finite";
     EXPECT_GE(run->dusk_zenith.b, 0.0F) << "dusk irradiance is not finite";
     EXPECT_LE(run->dusk_zenith.b, run->noon_zenith.b * 0.8F);
+}
+
+namespace {
+
+// R13.4: the probe bakes the v2 clouds of the layer it is given — an
+// overcast deck overhead turns the zenith irradiance from sky blue toward
+// cloud white (blue / red closer to 1), and the clear layer leaves it blue.
+std::expected<std::array<glm::vec3, 2>, Error> clear_then_overcast(quat::test::GpuContext& g) {
+    auto atmos = r::AtmospherePass::create(g.device, g.allocator, g.cache, g.shader_dir);
+    if (!atmos) return std::unexpected(atmos.error());
+    auto noise = r::CloudNoisePass::create(g.device, g.allocator, g.cache, g.shader_dir);
+    if (!noise) return std::unexpected(noise.error());
+    std::array<glm::vec3, 2> out{};
+    for (int i = 0; i < 2; ++i) {
+        auto p = lut_sky(*atmos, glm::vec3(0.3F, 1.0F, 0.3F));
+        if (!p) return std::unexpected(p.error());
+        p->clouds.enabled = true;
+        r::CloudSettings c;
+        c.coverage = i == 0 ? 0.0F : 1.0F;
+        c.cirrus_coverage = 0.0F;
+        p->layer = r::make_cloud_layer(c, false, glm::vec3(0.0F), r::CloudLights{.sun_to = p->sun_to});
+        p->noise = &*noise;
+        auto probe = r::DynamicIbl::create(g.device, g.allocator, g.cache, g.shader_dir, *p);
+        if (!probe) return std::unexpected(probe.error());
+        auto zenith = front_zenith(g, *probe);
+        if (!zenith) return std::unexpected(zenith.error());
+        out[static_cast<std::size_t>(i)] = *zenith;
+    }
+    return out;
+}
+
+} // namespace
+
+TEST(GpuDynamicIbl, OvercastCloudsWhitenTheProbe) {
+    QUAT_REQUIRE_GPU(g);
+    auto z = clear_then_overcast(*g);
+    ASSERT_OK(z);
+    const glm::vec3 clear = (*z)[0];
+    const glm::vec3 overcast = (*z)[1];
+    ASSERT_GT(clear.r, 0.0F);
+    ASSERT_GT(overcast.r, 0.0F);
+    EXPECT_GT(clear.b / clear.r, 1.2F) << "clear: sky blue";
+    EXPECT_LT(overcast.b / overcast.r, 0.85F * (clear.b / clear.r)) << "overcast: whiter";
 }

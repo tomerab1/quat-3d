@@ -32,10 +32,11 @@ namespace engine::scene {
 //   Without weather (`weather` null): the settings exactly as before R13.1 —
 //     drift = wind_speed x `time_s` along wind_dir_deg, camera-relative
 //     (offset_km 0).
-//   With weather: its cloud cover; denser with precipitation; drift is the
-//     integrated `drift_km` of its wind; anchored to the world (the camera's
-//     XZ in km joins the offset), so clouds and their shadows stay put as
-//     the camera moves.
+//   With weather: its cloud cover and precipitation; drift is the
+//     integrated `drift_km` of its wind; anchored to the world (offset_km =
+//     camera XZ in km - drift: the field coordinate of world point X is
+//     X - drift, so features move downwind and stay put as the camera
+//     moves).
 [[nodiscard]] renderer::CloudSettings frame_clouds(const renderer::CloudSettings& settings,
                                                    float time_s,
                                                    const weather::WeatherState* weather,

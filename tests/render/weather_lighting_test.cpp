@@ -18,6 +18,7 @@
 #include "engine/asset/mesh_asset.hpp"
 #include "engine/renderer/atmosphere_pass.hpp"
 #include "engine/renderer/cloud_settings.hpp"
+#include "engine/renderer/cloud_noise_pass.hpp"
 #include "engine/renderer/cloud_shadow_pass.hpp"
 #include "engine/renderer/lighting_pass.hpp"
 #include "engine/renderer/mesh_pass.hpp"
@@ -106,11 +107,17 @@ std::expected<HostImage, Error> render_floor(quat::test::GpuContext& g, const Fl
     rhi::TransientImagePool pool(g.device, g.allocator);
     rhi::RenderGraph graph(pool);
     std::optional<r::CloudShadowPass> cloud_pass;
+    std::optional<r::CloudNoisePass> noise;
     if (f.cloud_map) {
         auto c = r::CloudShadowPass::create(g.device, g.allocator, g.cache, g.shader_dir);
         if (!c) return std::unexpected(c.error());
         cloud_pass = std::move(*c);
-        auto map = cloud_pass->add_to_graph(graph, k_sun, f.camera, f.clouds);
+        auto n = r::CloudNoisePass::create(g.device, g.allocator, g.cache, g.shader_dir);
+        if (!n) return std::unexpected(n.error());
+        noise = std::move(*n);
+        const r::CloudLayerGpu layer =
+            r::make_cloud_layer(f.clouds, false, f.camera, r::CloudLights{.sun_to = k_sun});
+        auto map = cloud_pass->add_to_graph(graph, k_sun, f.camera, layer, *noise);
         if (!map) return std::unexpected(map.error());
         tuning.cloud_shadow = *map;
     }

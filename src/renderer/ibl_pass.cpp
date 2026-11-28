@@ -2,10 +2,12 @@
 
 #include <array>
 #include <cstdint>
+#include <cstring>
 #include <string>
 #include <utility>
 #include <vector>
 
+#include "engine/renderer/cloud_reference.hpp"
 #include "engine/rhi/device.hpp"
 #include "engine/rhi/pipeline_cache.hpp"
 
@@ -143,11 +145,18 @@ IblBaker::create(const rhi::Device& device, rhi::GpuAllocator& allocator,
     using rhi::DescriptorBinding;
     // Env bake: cube storage out + the atmosphere LUTs (fallback-bound when the
     // procedural sky path is used).
-    const std::array<DescriptorBinding, 4> env_b{{
+    const std::array<DescriptorBinding, 10> env_b{{
         {0, 0, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, kComputeStage},
         {0, 1, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, kComputeStage},
         {0, 2, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, kComputeStage},
         {0, 3, VK_DESCRIPTOR_TYPE_SAMPLER, 1, kComputeStage},
+        // R13.4 cloud layer + noise (bindings 4..9 of ibl_bake_env.slang).
+        {0, 4, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, kComputeStage},
+        {0, 5, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, kComputeStage},
+        {0, 6, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, kComputeStage},
+        {0, 7, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, kComputeStage},
+        {0, 8, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, kComputeStage},
+        {0, 9, VK_DESCRIPTOR_TYPE_SAMPLER, 1, kComputeStage},
     }};
     const std::array<DescriptorBinding, 3> conv_b{{
         {0, 0, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, kComputeStage},
@@ -194,6 +203,20 @@ IblBaker::create(const rhi::Device& device, rhi::GpuAllocator& allocator,
     if (!fb) return std::unexpected(fb.error());
     out.fallback_lut_ = std::move(*fb);
     const VkImage fb_img = out.fallback_lut_.handle();
+    auto fb_volume = allocator.create_image_3d(
+        kCubeFormat, {1, 1, 1}, VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT);
+    if (!fb_volume) return std::unexpected(fb_volume.error());
+    out.fallback_volume_ = std::move(*fb_volume);
+    const VkImage fb_volume_img = out.fallback_volume_.handle();
+    auto zero_layer = allocator.create_buffer(
+        sizeof(CloudLayerGpu),
+        VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+        VMA_MEMORY_USAGE_AUTO,
+        VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT);
+    if (!zero_layer) return std::unexpected(zero_layer.error());
+    out.zero_layer_ = std::move(*zero_layer);
+    std::memset(out.zero_layer_.mapped(), 0, sizeof(CloudLayerGpu));
+    if (auto f = out.zero_layer_.flush(); !f) return std::unexpected(f.error());
     auto cleared = submit_blocking(device, [&](VkCommandBuffer cmd) {
         VkClearColorValue black{};
         transition(cmd, fb_img, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
@@ -206,18 +229,32 @@ IblBaker::create(const rhi::Device& device, rhi::GpuAllocator& allocator,
                    VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_PIPELINE_STAGE_2_CLEAR_BIT,
                    VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
                    VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
+        transition(cmd, fb_volume_img, VK_IMAGE_LAYOUT_UNDEFINED,
+                   VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT, 0,
+                   VK_PIPELINE_STAGE_2_CLEAR_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT);
+        vkCmdClearColorImage(cmd, fb_volume_img, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &black, 1,
+                             &range);
+        transition(cmd, fb_volume_img, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                   VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_PIPELINE_STAGE_2_CLEAR_BIT,
+                   VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                   VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
     });
     if (!cleared) return std::unexpected(cleared.error());
     auto fb_view = rhi::create_image_view(device.handle(), fb_img, kCubeFormat);
     if (!fb_view) return std::unexpected(fb_view.error());
     out.fallback_lut_view_ = std::move(*fb_view);
+    auto fb_volume_view = rhi::create_image_view(device.handle(), fb_volume_img, kCubeFormat,
+                                                 VK_IMAGE_ASPECT_COLOR_BIT, 1,
+                                                 VK_IMAGE_VIEW_TYPE_3D);
+    if (!fb_volume_view) return std::unexpected(fb_volume_view.error());
+    out.fallback_volume_view_ = std::move(*fb_volume_view);
     return out;
 }
 
 std::expected<IblMaps, core::Error> IblBaker::bake(const glm::vec3& sun_dir,
                                                    VkImageView atmosphere_skyview,
                                                    VkImageView atmosphere_transmittance,
-                                                   const CloudSettings& clouds) {
+                                                   const CloudSettings& /*clouds*/) {
     const bool has_atmosphere =
         atmosphere_skyview != VK_NULL_HANDLE && atmosphere_transmittance != VK_NULL_HANDLE;
     const VkDevice dev = device_->handle();
@@ -295,6 +332,13 @@ std::expected<IblMaps, core::Error> IblBaker::bake(const glm::vec3& sun_dir,
     (*env_db)->write_sampled_image(
         2, has_atmosphere ? atmosphere_transmittance : fallback_lut_view_.handle(), ro);
     (*env_db)->write_sampler(3, env_sampler_.handle());
+    (*env_db)->write_uniform_buffer(4, rhi::buffer_device_address(dev, zero_layer_),
+                                    sizeof(CloudLayerGpu));
+    (*env_db)->write_sampled_image(5, fallback_volume_view_.handle(), ro);
+    (*env_db)->write_sampled_image(6, fallback_volume_view_.handle(), ro);
+    (*env_db)->write_sampled_image(7, fallback_lut_view_.handle(), ro);
+    (*env_db)->write_sampled_image(8, fallback_lut_view_.handle(), ro);
+    (*env_db)->write_sampler(9, env_sampler_.handle());
 
     auto irr_db = new_db(conv_layout_);
     if (!irr_db) return std::unexpected(irr_db.error());
@@ -342,8 +386,7 @@ std::expected<IblMaps, core::Error> IblBaker::bake(const glm::vec3& sun_dir,
                    0, cs, w, 1, 6);
         BakeParams bp{};
         bp.sun_dir = glm::vec4(sun, has_atmosphere ? 1.0F : 0.0F);
-        bp.cloud_a = clouds.pack_a();
-        bp.cloud_b = clouds.pack_b();
+        // No clouds (cloud_a.x = 0 steps): see bake()'s note.
         bp.face_size = kEnvSize;
         dispatch(env_pipeline_, **env_db, &bp, sizeof(bp), groups(kEnvSize), groups(kEnvSize), 6);
 

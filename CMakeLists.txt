@@ -744,7 +744,13 @@ add_library(engine_renderer STATIC
     src/renderer/terrain_shadow.cpp
     src/renderer/wind_field_pass.cpp
     src/renderer/cloud_shadow_pass.cpp
-    src/renderer/cloud_shadow_reference.cpp)
+    src/renderer/cloud_noise.cpp
+    src/renderer/cloud_noise_pass.cpp
+    src/renderer/cloud_reference.cpp
+    src/renderer/volumetric_cloud_pass.cpp
+    src/renderer/aerial_perspective_pass.cpp
+    src/renderer/fog_pass.cpp
+    src/renderer/atmospherics_pass.cpp)
 target_link_libraries(engine_renderer PUBLIC
     engine_flags engine_rhi engine_asset engine_terrain engine_weather glm::glm)
 target_include_directories(engine_renderer PUBLIC ${ENGINE_PUBLIC_INCLUDE})
@@ -852,6 +858,7 @@ endif()
 set(GAME_WORLD_SOURCES
     src/app/world_runtime.cpp
     src/app/demo_scenes.cpp
+    src/app/env_weather.cpp
     src/app/audio_runtime.cpp
     src/app/play_mode.cpp
     src/app/grass_runtime.cpp
@@ -886,6 +893,8 @@ set(QUAT_APP_SOURCES
     src/app/frame_temporal.cpp
     src/app/frame_post.cpp
     src/app/frame_environment.cpp
+    src/app/frame_volumetrics.cpp
+    src/app/volumetrics_runtime.cpp
     src/app/frame_renderer.cpp
     src/app/frame_profiling.cpp
     src/app/game_boot.cpp

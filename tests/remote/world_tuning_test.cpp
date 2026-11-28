@@ -61,8 +61,8 @@ TEST_F(WorldTuning, GetReturnsEveryGroupOrOne) {
     EXPECT_EQ(one.size(), 1U);
     EXPECT_FLOAT_EQ(one["taa"]["feedback"].get<float>(), 0.9F);
 
-    const std::string msg = err("render.settings.get", {{"group", "fog"}}, code::invalid_params);
-    EXPECT_TRUE(contains(msg, "group: unknown group 'fog' (known: exposure")) << msg;
+    const std::string msg = err("render.settings.get", {{"group", "haze"}}, code::invalid_params);
+    EXPECT_TRUE(contains(msg, "group: unknown group 'haze' (known: exposure")) << msg;
     err("render.settings.get", {{"groups", "taa"}}, code::invalid_params);
 }
 

@@ -12,6 +12,7 @@
 #include <string>
 #include <vector>
 
+#include "engine/core/env.hpp"
 #include "engine/core/log.hpp"
 #include "engine/rhi/driver_info.hpp"
 
@@ -27,6 +28,13 @@ constexpr const char* k_validation_layer = "VK_LAYER_KHRONOS_validation";
 // descriptor model (CLAUDE.md); it is hard-required unless
 // ENGINE_DESCRIPTOR_SETS_FALLBACK permits the classic-sets compatibility path
 // on drivers that lack it (MoltenVK on macOS).
+
+#ifdef ENGINE_DESCRIPTOR_SETS_FALLBACK
+[[nodiscard]] bool force_classic_sets() {
+    const auto v = engine::core::env_utf8("QUAT_FORCE_DESCRIPTOR_SETS");
+    return v.has_value() && *v == "1";
+}
+#endif
 
 [[nodiscard]] std::string vk_result_string(VkResult result) {
     switch (result) {
@@ -204,9 +212,13 @@ constexpr std::uint32_t k_vendor_apple = 0x106B;
             continue;
         }
 
-        const bool db_ok = db_features.descriptorBuffer == VK_TRUE
+        bool db_ok = db_features.descriptorBuffer == VK_TRUE
             && has_extension(exts, VK_EXT_DESCRIPTOR_BUFFER_EXTENSION_NAME);
-#ifndef ENGINE_DESCRIPTOR_SETS_FALLBACK
+#ifdef ENGINE_DESCRIPTOR_SETS_FALLBACK
+        // QUAT_FORCE_DESCRIPTOR_SETS=1 takes the classic-sets path on any
+        // device, so Linux runs exercise what every macOS (MoltenVK) run does.
+        if (force_classic_sets()) db_ok = false;
+#else
         if (!db_ok) {
             reject("no VK_EXT_descriptor_buffer");
             continue;

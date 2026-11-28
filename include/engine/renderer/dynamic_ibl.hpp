@@ -28,6 +28,7 @@
 #include <vulkan/vulkan.h>
 
 #include "engine/core/error.hpp"
+#include "engine/renderer/cloud_reference.hpp"
 #include "engine/renderer/cloud_settings.hpp"
 #include "engine/renderer/ibl_pass.hpp"
 #include "engine/rhi/descriptor_buffer.hpp"
@@ -42,14 +43,20 @@ class PipelineCache;
 
 namespace engine::renderer {
 
+class CloudNoisePass;
+
 // Inputs of one probe refresh. Captured at cycle start so all six env faces
 // see consistent sun/cloud parameters; when skyview/transmittance are both set
 // the env bakes from the atmosphere LUTs, otherwise the procedural sky.
+// R13.4: with `noise` set (and clouds.enabled) the LUT path bakes the
+// volumetric clouds of `layer`, the layer the cloud pass draws.
 struct IblCycleParams {
     glm::vec3     sun_to{0.0F, 1.0F, 0.0F}; // unit, toward the sun
     VkImageView   skyview = VK_NULL_HANDLE;
     VkImageView   transmittance = VK_NULL_HANDLE;
     CloudSettings clouds{};
+    CloudLayerGpu layer{};
+    const CloudNoisePass* noise = nullptr; // non-owning; null: no clouds in the probe
 };
 
 class DynamicIbl {
@@ -104,6 +111,8 @@ private:
     // One descriptor set per step; fallible, so done outside the execute lambda.
     [[nodiscard]] std::expected<rhi::DescriptorBuffer, core::Error>
     make_step_db(std::uint32_t step, std::uint32_t back, const IblCycleParams& params);
+    // The cycle's cloud layer into layer_buffers_[cycle_ % 2].
+    [[nodiscard]] std::expected<void, core::Error> write_layer(const IblCycleParams& params);
     // Barriers + bind + dispatch for `step`, writing probe set `back`. The
     // back index is latched at record time — front_ flips before the cycle's
     // last lambda executes, so it must not be re-read here.
@@ -129,6 +138,12 @@ private:
     rhi::ImageView brdf_view_;
     rhi::GpuImage  fallback_lut_; // 1x1 black for unused LUT slots
     rhi::ImageView fallback_view_;
+    rhi::GpuImage  fallback_volume_; // 1x1x1 black for the cloud noise slots
+    rhi::ImageView fallback_volume_view_;
+    // The cloud layer of each cycle, alternating so a new cycle never
+    // rewrites the block the previous one's last steps may still read.
+    std::array<rhi::GpuBuffer, 2> layer_buffers_;
+    std::uint32_t                 cycle_ = 0;
 
     std::array<ProbeSet, 2> sets_;
     std::uint32_t           front_ = 0;

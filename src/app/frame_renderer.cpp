@@ -284,6 +284,14 @@ void FrameRenderer::create_environment(engine::scene::Scene& scene,
                          atmos.error().message.c_str());
         }
     }
+    // R13.3 / R13.4: volumetric clouds (noise baked once here), aerial
+    // perspective and froxel fog.
+    if (auto v = VolumetricsRuntime::create(device, allocator, pipeline_cache, shader_dir)) {
+        volumetrics_ = std::move(*v);
+    } else {
+        std::fprintf(stderr, "[warn] volumetrics create failed: %s\n",
+                     v.error().message.c_str());
+    }
 
     // Image-based lighting: a dynamic environment probe (11.3). create() runs
     // one blocking full cycle so ambient/reflections are complete from frame
@@ -303,6 +311,15 @@ void FrameRenderer::create_environment(engine::scene::Scene& scene,
         initial.skyview = atmosphere_ ? atmosphere_->skyview_view() : VK_NULL_HANDLE;
         initial.transmittance = atmosphere_ ? atmosphere_->transmittance_view() : VK_NULL_HANDLE;
         initial.clouds = current_clouds();
+        if (volumetrics_) {
+            // The probe's first cycle bakes the clouds the first frame shows.
+            const glm::vec3 camera =
+                engine::scene::camera_system(scene.registry(), 16.0F / 9.0F).position;
+            volumetrics_->begin_frame(initial.clouds, has_weather_, camera, sun_to,
+                                      &scene.registry());
+            initial.layer = volumetrics_->cloud_layer();
+            initial.noise = &volumetrics_->noise();
+        }
         if (auto dyn = engine::renderer::DynamicIbl::create(device, allocator, pipeline_cache,
                                                             shader_dir, initial);
             dyn) {

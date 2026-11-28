@@ -234,6 +234,7 @@ bool Application::init_subsystems() {
     }
     // QUAT_TIME: a world clock places the sun before the sky is first baked.
     add_env_world_clock(scene_);
+    add_env_weather(scene_, renderer_.render_settings()); // QUAT_WEATHER (R13.4 screenshots)
     // Atmosphere LUTs + dynamic IBL probe, lit by the scene's sun.
     renderer_.create_environment(scene_, pipeline_cache_, shader_dir_);
     renderer_.create_reflections(pipeline_cache_, shader_dir_); // R21: HDRI + SSR

@@ -30,7 +30,9 @@ CMake options: `ENGINE_EDITOR` (default ON), `ENGINE_PROFILE` (the Tracy
 client, R4: default ON for Debug / RelWithDebInfo, OFF for Release; it also
 selects the vcpkg manifest feature `profiling`, so OFF builds never build
 Tracy; see [`profiling.md`](profiling.md)),
-`ENGINE_DESCRIPTOR_SETS_FALLBACK` (macOS / drivers without descriptor buffers),
+`ENGINE_DESCRIPTOR_SETS_FALLBACK` (macOS / drivers without descriptor buffers;
+with it, `QUAT_FORCE_DESCRIPTOR_SETS=1` runs the macOS classic-sets path on any
+device — use it to reproduce MoltenVK-only failures on Linux),
 `ENGINE_PACKAGE_BUILD` (release archives: no source-tree paths compiled in —
 the game finds `assets/` + `cooked/shaders/` next to its executable or in
 `QUAT_ASSET_ROOT`; see `src/app/asset_root.hpp`).
@@ -467,7 +469,10 @@ scenes with the real `game` binary on lavapipe under Xvfb —
 `QUAT_TERRAIN=1`, `QUAT_PHYSICS=1`, the mountain-forest showcase
 (`QUAT_DEMO=mountain`), an HDRI-lit showcase (`QUAT_HDRI`, the
 CC0 panorama fetched by `scripts/fetch-hdri.sh`), the world clock at sunrise, solar
-noon and sunset (`QUAT_TIME`, frozen) and the editor's world-clock Inspector, each with a frame budget, muted audio
+noon and sunset (`QUAT_TIME`, frozen), the editor's world-clock Inspector, the
+volumetric clouds under the clear / cumulus / overcast weather presets and at
+sunset (`QUAT_WEATHER`, `assets/scenes/sky_clouds.json`) and a foggy valley in the
+mountain scene (`QUAT_WEATHER=valley_fog`), each with a frame budget, muted audio
 and a per-scene timeout (`SCENE_TIMEOUT`, default 300 s; a scene row can raise its
 own) so a hang fails that scene instead of the job. Each final frame is converted to PNG
 (`scripts/ppm_to_png.py`, halved when 1280 px or wider, except the editor capture, kept full size so its UI stays readable). A crash, timeout or
