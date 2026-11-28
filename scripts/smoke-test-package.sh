@@ -4,9 +4,11 @@
 # directory, launch the packaged executable for 30 frames with a software or
 # runner GPU, and require a clean exit plus a written screenshot. The
 # executable must find its data next to itself (packaged builds embed no
-# source path). The engine's package (--exe game, the default) must also
-# carry LICENSE and THIRD_PARTY_NOTICES.md, and its bundled quat-mcp must run
-# (`quat-mcp --version`).
+# source path). Every package must carry LICENSE and a THIRD_PARTY_NOTICES.md
+# with the licence texts (on macOS also inside the app's Contents/Resources).
+# The engine's package (--exe game, the default) must also list quat-mcp's
+# Rust crates there, and its bundled quat-mcp must run (`quat-mcp --version`);
+# a game's notices must not list crates it does not ship.
 #
 #   scripts/smoke-test-package.sh <archive> <scratch-dir> [options]
 #     --exe <name>      executable inside the package (default: game)
@@ -39,8 +41,8 @@ while [ $# -gt 0 ]; do
   shift 2
 done
 
-# The engine's own package bundles quat-mcp and the licence files
-# (scripts/package-release.sh); a game packaged by quat-pack does not.
+# The engine's own package bundles quat-mcp (scripts/package-release.sh); a
+# game packaged by quat-pack does not.
 engine_pkg=0
 [ "$exe" = game ] && engine_pkg=1
 mcp_version=""
@@ -139,13 +141,28 @@ if [ "$engine_pkg" = 1 ]; then
   # The bundled MCP server starts and reports its version.
   echo "$mcp_version"
   [[ "$mcp_version" == "quat-mcp "* ]] || { echo "quat-mcp --version printed '$mcp_version'" >&2; exit 1; }
-
-  for f in LICENSE THIRD_PARTY_NOTICES.md; do
-    [ -s "${dir%/}/$f" ] || { echo "the package has no $f" >&2; exit 1; }
-  done
-  grep -q '^## Licence texts' "${dir%/}/THIRD_PARTY_NOTICES.md" \
-    || { echo "THIRD_PARTY_NOTICES.md has no licence texts" >&2; exit 1; }
 fi
+
+# Licences: every package, engine or game, ships them.
+licence_dirs=("${dir%/}")
+[ -n "${app:-}" ] && licence_dirs+=("$app/Contents/Resources")
+for d in "${licence_dirs[@]}"; do
+  for f in LICENSE THIRD_PARTY_NOTICES.md; do
+    [ -s "$d/$f" ] || { echo "the package has no $f in $d" >&2; exit 1; }
+  done
+  grep -q '^## Licence texts' "$d/THIRD_PARTY_NOTICES.md" \
+    || { echo "$d/THIRD_PARTY_NOTICES.md has no licence texts" >&2; exit 1; }
+  grep -q '^### vcpkg ports' "$d/THIRD_PARTY_NOTICES.md" \
+    || { echo "$d/THIRD_PARTY_NOTICES.md has no vcpkg licence texts" >&2; exit 1; }
+  if [ "$engine_pkg" = 1 ]; then
+    grep -q '^### quat-mcp (Rust crates)' "$d/THIRD_PARTY_NOTICES.md" \
+      || { echo "$d/THIRD_PARTY_NOTICES.md has no quat-mcp crate licences" >&2; exit 1; }
+  elif grep -q '^### quat-mcp (Rust crates)' "$d/THIRD_PARTY_NOTICES.md"; then
+    echo "$d/THIRD_PARTY_NOTICES.md lists quat-mcp's crates, which a game package does not ship" >&2
+    exit 1
+  fi
+done
+echo "licences: LICENSE and THIRD_PARTY_NOTICES.md in ${licence_dirs[*]}"
 
 grep -q 'data root (install directory)' "$log" \
   || { echo "did not resolve its data next to the executable" >&2; exit 1; }

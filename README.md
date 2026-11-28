@@ -183,7 +183,8 @@ Ready-to-run builds are attached to each
 [`CHANGELOG.md`](CHANGELOG.md)). Every engine archive contains a
 `README-RUN.txt` with the launch options and troubleshooting, `quat-mcp` (the
 MCP server for AI assistants; see [Use it with Claude Code](#use-it-with-claude-code)),
-and `LICENSE` and `THIRD_PARTY_NOTICES.md` (see [License](#license)). The
+and `LICENSE` and `THIRD_PARTY_NOTICES.md` (see [License](#license)); game
+packages carry the last two as well. The
 editor's own tools (`quat-cook`, `quat-pack`, `quat-player`) are not in the
 archives yet: cooking assets and packaging games need a [source build](#building).
 Each release also carries the sample game, `coin-collector-<version>-<os>`,

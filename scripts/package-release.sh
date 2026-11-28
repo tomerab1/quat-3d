@@ -17,6 +17,8 @@
 #     --bundle-id <id>       macOS CFBundleIdentifier (default: dev.quat3d.editor)
 #     --icon <png>           macOS app icon (converted to .icns)
 #     --readme-dir <dir>     README-RUN-<os>.txt templates (default: packaging/)
+#     --notices <file>       games: the engine's THIRD_PARTY_NOTICES.md to ship
+#                            (default: found as below)
 #
 # Layout (the executable finds its data next to itself - src/app/asset_root.hpp):
 #   linux:   <name>-<v>-linux-x64/{<exe>, lib/<libc++ runtime>, <data>, README-RUN.txt}
@@ -28,14 +30,21 @@
 #            The bundle carries the Vulkan loader + MoltenVK (Contents/Frameworks,
 #            ICD manifest in Contents/Resources/vulkan/icd.d) and the data in
 #            Contents/Resources; ad-hoc code-signed (P7 replaces the identity).
-# The engine's package (no --data) also carries LICENSE (quat-3d, MIT) and
-# THIRD_PARTY_NOTICES.md (every component's licence text) next to the game;
-# on macOS also inside the app's Contents/Resources. And quat-mcp, the MCP
-# server AI tools drive the game through, built first with
-# `cargo build --release --locked` in tools/quat-mcp (or QUAT_MCP=<path>):
-# next to the game on Linux and Windows; on macOS in Quat3D.app/Contents/MacOS
-# beside the game, so the bundle's signature and one quarantine removal cover
-# it.
+# Every package carries LICENSE (quat-3d, MIT) and THIRD_PARTY_NOTICES.md
+# (every bundled component's licence text) next to the executable; on macOS
+# also inside the app's Contents/Resources.
+#   - The engine's package (no --data) generates its notices with
+#     scripts/third-party-notices.sh, quat-mcp's Rust crates included. It also
+#     writes the same notices without the crates to
+#     <build-dir>/THIRD_PARTY_NOTICES.md, for games packaged from this build.
+#   - A game (--data) ships the engine's notices as they are, never
+#     regenerated: see find_game_notices below for where they come from. No
+#     notices, no package.
+# The engine's package also carries quat-mcp, the MCP server AI tools drive
+# the game through, built first with `cargo build --release --locked` in
+# tools/quat-mcp (or QUAT_MCP=<path>): next to the game on Linux and Windows;
+# on macOS in Quat3D.app/Contents/MacOS beside the game, so the bundle's
+# signature and one quarantine removal cover it.
 #
 # Archives are reproducible where the platform tools allow it: files carry
 # SOURCE_DATE_EPOCH (default 2000-01-01) as their time, and the Linux tarball
@@ -45,7 +54,7 @@
 set -euo pipefail
 
 usage() {
-  sed -n '9,20p' "$0" | sed 's/^# \{0,1\}//' >&2
+  sed -n '9,22p' "$0" | sed 's/^# \{0,1\}//' >&2
   exit 2
 }
 [ $# -ge 3 ] || usage
@@ -64,6 +73,7 @@ display_name=""
 bundle_id=dev.quat3d.editor
 icon=""
 readme_dir="$root/packaging"
+notices=""
 while [ $# -gt 0 ]; do
   [ $# -ge 2 ] || usage
   case "$1" in
@@ -76,6 +86,7 @@ while [ $# -gt 0 ]; do
     --bundle-id) bundle_id=$2 ;;
     --icon) icon=$2 ;;
     --readme-dir) readme_dir=$2 ;;
+    --notices) notices=$2 ;;
     *) echo "unknown option: $1" >&2; usage ;;
   esac
   shift 2
@@ -92,17 +103,69 @@ case "$(uname -s)" in
 esac
 
 pkg="${name}-${version}-${os}"
-# The engine's own package (no --data) bundles quat-mcp and the licence
-# files; a game packaged by quat-pack ships its player and data.
+# The engine's own package (no --data) bundles quat-mcp and generates its
+# licence notices; a game packaged by quat-pack ships its player and data,
+# with the engine's LICENSE and notices.
 engine_pkg=0
 mcp=""
+exe_ext=""
+[ "$os" = windows-x64 ] && exe_ext=.exe
 if [ -z "$data_dir" ]; then
   engine_pkg=1
-  exe_ext=""
-  [ "$os" = windows-x64 ] && exe_ext=.exe
   mcp="${QUAT_MCP:-$root/tools/quat-mcp/target/release/quat-mcp$exe_ext}"
   [ -f "$mcp" ] || { echo "no quat-mcp at $mcp (run cargo build --release --locked in tools/quat-mcp)" >&2; exit 1; }
 fi
+
+# is_full_notices <file>: a THIRD_PARTY_NOTICES.md with the licence texts
+# (scripts/third-party-notices.sh output), not the repository's summary alone.
+is_full_notices() {
+  [ -s "$1" ] && grep -q '^## Licence texts' "$1"
+}
+
+# find_game_notices: the engine LICENSE and THIRD_PARTY_NOTICES.md a game
+# package ships, into game_license / game_notices. The one place that knows
+# where they live; an engine install (the SDK's share/quat3d) uses the
+# engine-root layout. Lookup order for the notices, the first full one wins:
+#   1. --notices <file>, else QUAT_THIRD_PARTY_NOTICES=<file> (exactly that
+#      file: an error if it is not full notices);
+#   2. <build-dir>/THIRD_PARTY_NOTICES.md: next to the player binaries, where
+#      the engine's packaging writes them;
+#   3. <engine root>/THIRD_PARTY_NOTICES.md: an engine install. In a source
+#      checkout this is the summary without licence texts, so it is skipped.
+# LICENSE is <engine root>/LICENSE (the checkout's, or the install's).
+find_game_notices() {
+  game_license="$root/LICENSE"
+  [ -s "$game_license" ] || { echo "no engine LICENSE at $game_license: a game package must carry it" >&2; exit 1; }
+  local explicit="${notices:-${QUAT_THIRD_PARTY_NOTICES:-}}"
+  if [ -n "$explicit" ]; then
+    is_full_notices "$explicit" ||
+      { echo "$explicit is not a THIRD_PARTY_NOTICES.md with licence texts (scripts/third-party-notices.sh output)" >&2; exit 1; }
+    game_notices=$explicit
+    return
+  fi
+  local candidate
+  for candidate in "$build_dir/THIRD_PARTY_NOTICES.md" "$root/THIRD_PARTY_NOTICES.md"; do
+    if is_full_notices "$candidate"; then
+      game_notices=$candidate
+      return
+    fi
+  done
+  cat >&2 <<EOF
+no engine THIRD_PARTY_NOTICES.md with licence texts for this game package.
+Looked for it at:
+  $build_dir/THIRD_PARTY_NOTICES.md (next to the player)
+  $root/THIRD_PARTY_NOTICES.md (the engine root; a source checkout's is the summary only)
+A game package bundles the engine's libraries and must carry their licences.
+Package the engine from this build first (scripts/package-release.sh $build_dir <out> <version>
+writes it), or generate it:
+  scripts/third-party-notices.sh --no-rust --runtimes $build_dir/$exe$exe_ext $build_dir $build_dir/THIRD_PARTY_NOTICES.md
+or pass --notices <file> / set QUAT_THIRD_PARTY_NOTICES=<file>.
+EOF
+  exit 1
+}
+game_license=""
+game_notices=""
+[ "$engine_pkg" = 1 ] || find_game_notices
 mkdir -p "$out_dir"
 out_dir="$(cd "$out_dir" && pwd)"
 stage="$out_dir/$pkg"
@@ -141,15 +204,26 @@ normalize_times() {
   find "$1" -exec touch -h -d "@$epoch" {} + 2>/dev/null || find "$1" -exec touch -d "@$epoch" {} +
 }
 
-# copy_licences <dest> [<title>=<licence-file> ...]: LICENSE (quat-3d, MIT) and
-# THIRD_PARTY_NOTICES.md (the summary plus every component's licence text, from
-# scripts/third-party-notices.sh); the extra arguments add the licences of
-# bundled platform runtimes.
+# copy_licences <dest>: LICENSE (quat-3d, MIT) and THIRD_PARTY_NOTICES.md
+# into <dest>.
+#   - engine: generated from this build (scripts/third-party-notices.sh), with
+#     the platform runtimes the package bundles (--runtimes, read from the
+#     build's executable: it resolves them to their system paths) and
+#     quat-mcp's crates. The same notices without the crates go to
+#     <build-dir>/THIRD_PARTY_NOTICES.md for games packaged from this build.
+#   - game: the files find_game_notices chose, copied as they are.
 copy_licences() {
   local dest=$1
-  shift
-  cp "$root/LICENSE" "$dest/LICENSE"
-  bash "$root/scripts/third-party-notices.sh" "$build_dir" "$dest/THIRD_PARTY_NOTICES.md" "$@"
+  if [ "$engine_pkg" = 1 ]; then
+    cp "$root/LICENSE" "$dest/LICENSE"
+    bash "$root/scripts/third-party-notices.sh" --runtimes "$build_dir/$exe$exe_ext" \
+      "$build_dir" "$dest/THIRD_PARTY_NOTICES.md"
+    bash "$root/scripts/third-party-notices.sh" --no-rust --runtimes "$build_dir/$exe$exe_ext" \
+      "$build_dir" "$build_dir/THIRD_PARTY_NOTICES.md"
+  else
+    cp "$game_license" "$dest/LICENSE"
+    cp "$game_notices" "$dest/THIRD_PARTY_NOTICES.md"
+  fi
 }
 
 case "$os" in
@@ -161,32 +235,14 @@ linux-x64)
   # ship it next to the executable. Everything else is either statically
   # linked (vcpkg's static triplet) or a base system library.
   mkdir -p "$stage/lib"
-  runtime_libs=$(ldd "$stage/$package_exe" | awk '/=> \// && /libc\+\+|libunwind/ { print $3 }')
-  for lib in $runtime_libs; do
+  ldd "$stage/$package_exe" | awk '/=> \// && /libc\+\+|libunwind/ { print $3 }' | while read -r lib; do
     cp -L "$lib" "$stage/lib/"
-  done
-  # Their licence texts: the Debian/Ubuntu copyright file of each library's
-  # package (libc++1-18, libunwind-18, ...), once per package.
-  runtime_licences=()
-  seen=" "
-  for lib in $runtime_libs; do
-    deb=$(dpkg -S "$(readlink -f "$lib")" 2>/dev/null | sed -n '1s/:.*//p' || true)
-    [ -n "$deb" ] || { echo "::warning::no package owns $lib: its licence text is not in THIRD_PARTY_NOTICES.md" >&2; continue; }
-    case "$seen" in *" $deb "*) continue ;; esac
-    seen="$seen$deb "
-    if [ -f "/usr/share/doc/$deb/copyright" ]; then
-      runtime_licences+=("$deb (bundled in lib/)=/usr/share/doc/$deb/copyright")
-    else
-      echo "::warning::no /usr/share/doc/$deb/copyright: the $deb licence text is not in THIRD_PARTY_NOTICES.md" >&2
-    fi
   done
   # RUNPATH is not transitive: the bundled libs find each other via $ORIGIN.
   patchelf --set-rpath '$ORIGIN/lib' "$stage/$package_exe"
   for lib in "$stage"/lib/*; do patchelf --set-rpath '$ORIGIN' "$lib"; done
   readme linux "$stage/README-RUN.txt"
-  if [ "$engine_pkg" = 1 ]; then
-    copy_licences "$stage" ${runtime_licences[@]+"${runtime_licences[@]}"}
-  fi
+  copy_licences "$stage"
   normalize_times "$stage"
   archive="$out_dir/$pkg.tar.gz"
   tar -C "$out_dir" --sort=name --owner=0 --group=0 --numeric-owner --mtime="@$epoch" \
@@ -219,7 +275,7 @@ windows-x64)
   readme windows "$stage/README-RUN.txt"
   # The MSVC runtime DLLs come without a licence file; the summary in
   # THIRD_PARTY_NOTICES.md names the Visual Studio redistribution terms.
-  if [ "$engine_pkg" = 1 ]; then copy_licences "$stage"; fi
+  copy_licences "$stage"
   normalize_times "$stage"
   archive="$out_dir/$pkg.zip"
   rm -f "$archive"
@@ -315,24 +371,9 @@ PY
   plutil -lint "$contents/Info.plist"
 
   # Licences, before signing (the signature seals Contents/Resources): in the
-  # bundle so they travel with the app, and next to it in the archive. The
-  # bundled loader's and MoltenVK's texts are the files Homebrew keeps in
-  # each keg.
-  if [ "$engine_pkg" = 1 ]; then
-    runtime_licences=()
-    for formula in molten-vk vulkan-loader; do
-      keg="$(brew --prefix "$formula")"
-      found=0
-      for f in "$keg"/LICENSE* "$keg"/COPYING*; do
-        [ -f "$f" ] || continue
-        runtime_licences+=("$formula (bundled in $app_name.app)=$f")
-        found=1
-      done
-      [ "$found" = 1 ] || echo "::warning::no licence file in $keg: the $formula licence text is not in THIRD_PARTY_NOTICES.md" >&2
-    done
-    copy_licences "$contents/Resources" ${runtime_licences[@]+"${runtime_licences[@]}"}
-    cp "$contents/Resources/LICENSE" "$contents/Resources/THIRD_PARTY_NOTICES.md" "$stage/"
-  fi
+  # bundle so they travel with the app, and next to it in the archive.
+  copy_licences "$contents/Resources"
+  cp "$contents/Resources/LICENSE" "$contents/Resources/THIRD_PARTY_NOTICES.md" "$stage/"
 
   # Ad-hoc signature (no Developer ID; P7 signs for distribution): inner code
   # first, then the bundle. Apple Silicon refuses unsigned code, and

@@ -102,9 +102,9 @@ notes. A prerelease without a notes file gets the generated notes only.
    newer, untested commit on top of it.
 5. **Watch the workflow** (Actions → Release). When it finishes, check the
    published release: the curated notes come first, then the generated PR
-   list, and six archives are attached: three engine archives, each with
-   `LICENSE` and `THIRD_PARTY_NOTICES.md`, and the three
-   `coin-collector-<version>-<os>` sample-game archives.
+   list, and six archives are attached: three engine archives and the
+   three `coin-collector-<version>-<os>` sample-game archives, each with
+   `LICENSE` and `THIRD_PARTY_NOTICES.md`.
 
 ## What the workflow does
 
@@ -124,20 +124,23 @@ notes. A prerelease without a notes file gets the generated notes only.
    5. Packages the build with `scripts/package-release.sh`:
       - `quat-mcp` goes next to the game, or into
         `Quat3D.app/Contents/MacOS/` on macOS;
-      - `LICENSE` goes in every engine archive;
+      - `LICENSE` goes in every archive;
       - so does a `THIRD_PARTY_NOTICES.md`, written by
         `scripts/third-party-notices.sh`. It is the repository's summary,
         followed by the licence texts from the build: every vcpkg port,
         FetchContent package, font, bundled runtime, and every Rust crate
-        in `quat-mcp`.
+        in `quat-mcp`;
+      - the same notices without the Rust crates go to
+        `build/<preset>/THIRD_PARTY_NOTICES.md`, for the game packages.
    6. Smoke-tests the archive with `scripts/smoke-test-package.sh`. The test
       unpacks it under a path with a space and non-ASCII characters and runs
       30 frames headless. It requires a clean exit and a screenshot. It also
       requires the two licence files and a working `quat-mcp --version`.
    7. Packages the sample game, `games/coin-collector`, with `quat-pack`
-      (through the same layout script, without `quat-mcp` or the licence
-      files, #122) and smoke-tests it the same way; it must also load its
-      start scene.
+      through the same layout script, without `quat-mcp`. The package gets
+      `LICENSE` and the build's `THIRD_PARTY_NOTICES.md` from step 5; the
+      layout fails if they are missing. It is smoke-tested the same way,
+      licence files included, and must also load its start scene.
 2. **publish** runs only on tags, after all three packages pass:
    1. Makes a sparse checkout of `docs/releases/` and `scripts/`, with no
       stored token.

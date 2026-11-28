@@ -66,12 +66,13 @@ jobs:
       - name: Third-party notices
         run: python3 -I scripts/check-third-party-notices.py
 
-      # xvfb: the Screenshots step runs the game under xvfb-run.
+      # xvfb: the Screenshots step runs the game under xvfb-run. patchelf: the
+      # package_licences test lays out a game package (scripts/package-release.sh).
       - name: Set up build
         id: setup
         uses: ./.github/actions/setup-build
         with:
-          extra-apt-packages: xvfb
+          extra-apt-packages: xvfb patchelf
 
       # The release preset compiles the Tracy client in (ENGINE_PROFILE=ON,
       # on demand: it costs nothing without a viewer), so the tests run with

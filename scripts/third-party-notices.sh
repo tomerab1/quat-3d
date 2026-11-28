@@ -8,11 +8,21 @@
 #     or the FETCHCONTENT_SOURCE_DIR_<NAME> an offline build points at;
 #   - the fonts in assets/fonts/ and the XeGTAO port (texts in the repository);
 #   - the Rust crates compiled into quat-mcp (scripts/rust-notices.py over
-#     `cargo metadata`, texts from the Cargo registry: build quat-mcp first);
-#   - extra files given on the command line (platform runtimes).
-# Used by scripts/package-release.sh.
+#     `cargo metadata`, texts from the Cargo registry: build quat-mcp first),
+#     unless --no-rust (a package without quat-mcp: games from quat-pack);
+#   - with --runtimes <exe>, the platform runtimes a package bundles: on
+#     Linux the Debian/Ubuntu copyright file of the package owning each
+#     libc++ / libunwind library <exe> loads (as lib/ ships them), on macOS
+#     the licence files of Homebrew's molten-vk and vulkan-loader kegs (as the
+#     .app ships them); Windows bundles only the MSVC runtime, whose terms the
+#     summary names;
+#   - extra files given on the command line.
+# Used by scripts/package-release.sh, which also writes the --no-rust variant
+# to <build-dir>/THIRD_PARTY_NOTICES.md for the game packages quat-pack lays
+# out from the same build.
 #
-#   scripts/third-party-notices.sh <build-dir> <out-file> [<title>=<licence-file> ...]
+#   scripts/third-party-notices.sh [--no-rust] [--runtimes <exe>] <build-dir> <out-file>
+#                                  [<title>=<licence-file> ...]
 #
 # Fails when the build has no vcpkg licence files, so a wrong build directory
 # cannot ship an archive without them.
@@ -22,10 +32,21 @@ set -euo pipefail
 # "Illegal byte sequence", so process bytes, which also gives a byte-order sort.
 export LC_ALL=C
 
-if [ $# -lt 2 ]; then
-  echo "usage: $0 <build-dir> <out-file> [<title>=<licence-file> ...]" >&2
+usage() {
+  echo "usage: $0 [--no-rust] [--runtimes <exe>] <build-dir> <out-file> [<title>=<licence-file> ...]" >&2
   exit 2
-fi
+}
+with_rust=1
+runtimes_of=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --no-rust) with_rust=0; shift ;;
+    --runtimes) [ $# -ge 2 ] || usage; runtimes_of=$2; shift 2 ;;
+    --*) echo "unknown option: $1" >&2; usage ;;
+    *) break ;;
+  esac
+done
+[ $# -ge 2 ] || usage
 build_dir=$1
 out=$2
 shift 2
@@ -80,20 +101,61 @@ cleanup() {
 }
 trap cleanup EXIT
 
-# Python 3 under whichever name this OS has (Windows runners: python or py),
-# given paths it can open (POSIX-style shell paths are converted on Windows).
-python=""
-for candidate in python3 python py; do
-  if command -v "$candidate" > /dev/null &&
-     "$candidate" -c 'import sys; sys.exit(sys.version_info < (3, 9))' 2> /dev/null; then
-    python=$candidate
-    break
-  fi
-done
-[ -n "$python" ] || { echo "no Python 3.9+ for the Rust notices (scripts/rust-notices.py)" >&2; exit 1; }
-native() { if command -v cygpath > /dev/null; then cygpath -w "$1"; else printf '%s' "$1"; fi; }
-"$python" -I "$(native "$root/scripts/rust-notices.py")" markdown \
-  "$(native "$root/tools/quat-mcp/Cargo.toml")" "$(native "$rust_notices")"
+if [ "$with_rust" = 1 ]; then
+  # Python 3 under whichever name this OS has (Windows runners: python or py),
+  # given paths it can open (POSIX-style shell paths are converted on Windows).
+  python=""
+  for candidate in python3 python py; do
+    if command -v "$candidate" > /dev/null &&
+       "$candidate" -c 'import sys; sys.exit(sys.version_info < (3, 9))' 2> /dev/null; then
+      python=$candidate
+      break
+    fi
+  done
+  [ -n "$python" ] || { echo "no Python 3.9+ for the Rust notices (scripts/rust-notices.py)" >&2; exit 1; }
+  native() { if command -v cygpath > /dev/null; then cygpath -w "$1"; else printf '%s' "$1"; fi; }
+  "$python" -I "$(native "$root/scripts/rust-notices.py")" markdown \
+    "$(native "$root/tools/quat-mcp/Cargo.toml")" "$(native "$rust_notices")"
+else
+  : > "$rust_notices"
+fi
+
+# The platform runtimes a package bundles next to the executable (see the
+# header), as <title>=<file> arguments after the command line's own.
+if [ -n "$runtimes_of" ]; then
+  [ -f "$runtimes_of" ] || { echo "--runtimes: no executable at $runtimes_of" >&2; exit 1; }
+  case "$(uname -s)" in
+  Linux)
+    # The libraries as the build machine resolves them (system paths), each
+    # package once. A library no package owns has no licence file to ship:
+    # that is an error, not a warning, since the package would bundle it.
+    seen=" "
+    while read -r lib; do
+      [ -n "$lib" ] || continue
+      deb=$(dpkg -S "$(readlink -f "$lib")" 2>/dev/null | sed -n '1s/:.*//p' || true)
+      [ -n "$deb" ] || { echo "no package owns $lib: its licence text cannot go into the notices" >&2; exit 1; }
+      case "$seen" in *" $deb "*) continue ;; esac
+      seen="$seen$deb "
+      [ -f "/usr/share/doc/$deb/copyright" ] ||
+        { echo "no /usr/share/doc/$deb/copyright: the $deb licence text is missing" >&2; exit 1; }
+      set -- "$@" "$deb (bundled in lib/)=/usr/share/doc/$deb/copyright"
+    done < <(ldd "$runtimes_of" | awk '/=> \// && /libc\+\+|libunwind/ { print $3 }')
+    ;;
+  Darwin)
+    for formula in molten-vk vulkan-loader; do
+      keg="$(brew --prefix "$formula")"
+      found=0
+      for f in "$keg"/LICENSE* "$keg"/COPYING*; do
+        [ -f "$f" ] || continue
+        set -- "$@" "$formula (bundled in the app)=$f"
+        found=1
+      done
+      [ "$found" = 1 ] || { echo "no licence file in $keg: the $formula licence text is missing" >&2; exit 1; }
+    done
+    ;;
+  *) ;; # Windows: the MSVC runtime, whose terms the summary names.
+  esac
+fi
 
 {
   tr -d '\r' < "$root/THIRD_PARTY_NOTICES.md"

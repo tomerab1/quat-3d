@@ -23,6 +23,14 @@ Requirements
 
 Options (environment variables)
 -------------------------------
+    QUAT_DEMO=mountain ./game             the mountain-forest showcase
+    QUAT_TIME=2026-06-21T21:30+02:00 ./game
+                                          a world clock at that date and time
+                                          drives the sun; QUAT_LATLON=<lat>,<lon>
+                                          sets the place (default Paris),
+                                          QUAT_TIME_SCALE=<n> its speed (0 = frozen)
+    QUAT_HDRI=hdri/sky.hdr ./game         light the scene with a Radiance .hdr
+                                          panorama (path relative to this folder)
     QUAT_TERRAIN=1 ./game                 add a procedural terrain tile
     QUAT_PHYSICS=1 ./game                 physics demo scene
     QUAT_CHARACTER=1 ./game               character-controller demo

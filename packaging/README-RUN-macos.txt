@@ -35,6 +35,14 @@ see the log):
 
     QUAT_TERRAIN=1 ./Quat3D.app/Contents/MacOS/game
 
+    QUAT_DEMO=mountain                    the mountain-forest showcase
+    QUAT_TIME=2026-06-21T21:30+02:00      a world clock at that date and time
+                                          drives the sun; QUAT_LATLON=<lat>,<lon>
+                                          sets the place (default Paris),
+                                          QUAT_TIME_SCALE=<n> its speed (0 = frozen)
+    QUAT_HDRI=hdri/sky.hdr                light the scene with a Radiance .hdr
+                                          panorama (path relative to
+                                          Quat3D.app/Contents/Resources)
     QUAT_TERRAIN=1                        add a procedural terrain tile
     QUAT_PHYSICS=1                        physics demo scene
     QUAT_CHARACTER=1                      character-controller demo
