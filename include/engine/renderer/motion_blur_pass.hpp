@@ -5,7 +5,9 @@
 // McGuire, Hennessy, Bukowski and Osman 2012, "A Reconstruction Filter for
 // Plausible Motion Blur" (with the sampling refinements of Jimenez 2014), in
 // three compute dispatches over R11's velocity target:
-//   1. motion_blur_tiles     longest half blur vector per K x K tile
+//   1. motion_blur_tiles     every display pixel's half vector and depth
+//                            (closest-depth footprint), and the longest
+//                            half vector per K x K tile
 //   2. motion_blur_neighbor  the dominant vector of each 3 x 3 tile block
 //   3. motion_blur           per-pixel gather along it with soft depth
 //                            ordering (foreground blurs over background)
@@ -14,13 +16,17 @@
 // length follows the shutter, not the frame rate.
 //
 // Runs on the display-extent colour after depth of field (dof_pass.hpp has
-// the order), reading the render-extent velocity and depth.
+// the order), reading the render-extent velocity and depth: both jittered,
+// so each display pixel takes them from the closest-depth sample of its
+// 3 x 3 render footprint at this frame's jitter (lib/depth_footprint.slang,
+// issue #115) and moving silhouettes do not shimmer.
 
 #include <cstdint>
 #include <expected>
 #include <memory>
 #include <string>
 
+#include <glm/vec2.hpp>
 #include <vulkan/vulkan.h>
 
 #include "engine/core/error.hpp"
@@ -40,6 +46,7 @@ struct MotionBlurInputs {
     rhi::ResourceHandle depth;    // render extent, [0, 1] depth (sampled)
     VkExtent2D          display_extent{0, 0};
     VkExtent2D          render_extent{0, 0};
+    glm::vec2           jitter{0.0F}; // velocity / depth sub-pixel jitter (render px, jitter.hpp)
     float               shutter_fraction = 0.5F; // shutter angle / 360 (x artistic scale)
     float               max_radius_px = 32.0F;   // also the tile size
     int                 samples = 12;

@@ -10,8 +10,9 @@
 // render resolution).
 //
 // The history (display extent) is reprojected with the velocity target
-// (velocity.hpp) at the closest-depth sample of the 3x3 (depth dilation:
-// edges of foreground objects carry their own motion), sampled with a 5-tap
+// (velocity.hpp) at the closest-depth sample of the 3x3 (depth dilation,
+// lib/depth_footprint.slang, shared with the post passes: edges of
+// foreground objects carry their own motion), sampled with a 5-tap
 // Catmull-Rom filter and clipped toward the current neighbourhood (variance
 // clipping, Salvi 2016, inside the min/max box). Its alpha channel holds the
 // accumulated confidence: each frame adds the current confidence (capped),
@@ -39,7 +40,8 @@
 // outputs go through hdr_store (lib/hdr.slang), so the resolve never writes
 // an Inf into its half-float targets.
 
-import hdr; // hdr_store
+import hdr;             // hdr_store
+import depth_footprint; // nearest_render_sample, closest_depth_3x3
 
 Texture2D               g_color;    // render extent, linear HDR
 Texture2D               g_depth;    // render extent, [0, 1], 1 = far
@@ -182,7 +184,7 @@ void compute_main(uint3 tid : SV_DispatchThreadID) {
 
     // This pixel in render-sample coordinates: sample i sits at rpos == i.
     const float2 rpos = uv * pc.render_size.xy - 0.5 + pc.jitter.xy;
-    const int2 centre = int2(floor(rpos + 0.5));
+    const int2 centre = nearest_render_sample(rpos);
 
     float3 sum = 0.0;
     float  weight = 0.0;
@@ -192,8 +194,6 @@ void compute_main(uint3 tid : SV_DispatchThreadID) {
     float3 nmax = -1e9;
     const float2 to_nearest = float2(centre) - rpos;
     const float nearest_d2 = dot(to_nearest, to_nearest);
-    float  closest_depth = 2.0;
-    int2   closest = clamp(centre, int2(0, 0), render_max);
     for (int dy = -1; dy <= 1; ++dy) {
         for (int dx = -1; dx <= 1; ++dx) {
             const int2 q = clamp(centre + int2(dx, dy), int2(0, 0), render_max);
@@ -210,11 +210,6 @@ void compute_main(uint3 tid : SV_DispatchThreadID) {
             m2 += c * c;
             nmin = min(nmin, c);
             nmax = max(nmax, c);
-            const float depth = g_depth.Load(int3(q, 0)).r;
-            if (depth < closest_depth) {
-                closest_depth = depth;
-                closest = q;
-            }
         }
     }
     const float3 mean = m1 / 9.0;
@@ -224,7 +219,8 @@ void compute_main(uint3 tid : SV_DispatchThreadID) {
 
     float3 result = current;
     float  accumulated = confidence;
-    const float2 velocity = g_velocity.Load(int3(closest, 0));
+    const ClosestSample closest = closest_depth_3x3(g_depth, centre, int2(pc.render_size.xy));
+    const float2 velocity = g_velocity.Load(int3(closest.texel, 0));
     const float2 prev_uv = uv - velocity;
     // A non-finite reprojection has no usable history: NaN fails every
     // comparison below, so test it first (and count it).

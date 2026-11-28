@@ -6,15 +6,23 @@
 // display is scale + bias / z for a view distance z (PhysicalCamera's
 // coc_params), clamped to +-max_radius. The half-resolution passes store it
 // in half-resolution pixels (display radius / 2).
+//
+// The depth is the render-extent, jittered GBuffer depth: a display pixel's
+// CoC comes from the closest depth of its render footprint
+// (depth_footprint.slang), so silhouettes do not shimmer as the TAAU jitter
+// cycles (issue #115). dof_prepare evaluates it once per display pixel and
+// stores it for dof_composite.
 
 import post_common;
+import depth_footprint;
 
-// Mirrors DofPushConstants in dof_pass.cpp (64 bytes).
+// Mirrors DofPushConstants in dof_pass.cpp (80 bytes).
 public struct DofParams {
     public float4 sizes;   // xy display extent, zw render extent
     public float4 coc;     // x scale (display px), y bias (display px * m), z max radius (display px), w rings
     public float4 proj;    // x P[2][2], y P[3][2], zw tile grid size
     public float4 half_size; // xy half-resolution extent, zw 1 / half extent
+    public float4 jitter;  // xy this frame's jitter (render px), zw unused
 }
 
 // Half-resolution pixels per CoC tile (each tile covers 16 x 16 display px).
@@ -26,8 +34,10 @@ public float coc_radius(DofParams p, float d) {
     return clamp(p.coc.x + p.coc.y / z, -p.coc.z, p.coc.z);
 }
 
-// The CoC of the depth under display pixel `pixel`.
+// The CoC of display pixel `pixel`: of the closest depth in its render
+// footprint.
 public float coc_at_display_pixel(DofParams p, Texture2D depth, int2 pixel) {
-    const int2 t = render_texel(pixel, p.sizes.zw / p.sizes.xy, int2(p.sizes.zw));
-    return coc_radius(p, depth.Load(int3(t, 0)).r);
+    const ClosestSample s =
+        closest_depth_at_display_pixel(depth, pixel, p.sizes.xy, p.sizes.zw, p.jitter.xy);
+    return coc_radius(p, s.depth);
 }

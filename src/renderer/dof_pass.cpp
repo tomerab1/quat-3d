@@ -26,8 +26,10 @@ constexpr VkDescriptorType k_sampled = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
 constexpr VkDescriptorType k_storage = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
 
 // Each stage's resources, by the names its shader declares.
-constexpr std::array<BindingRequest, 3> k_prepare{
-    {{"g_color", k_sampled}, {"g_depth", k_sampled}, {"g_half", k_storage}}};
+constexpr std::array<BindingRequest, 4> k_prepare{{{"g_color", k_sampled},
+                                                   {"g_depth", k_sampled},
+                                                   {"g_half", k_storage},
+                                                   {"g_coc", k_storage}}};
 constexpr std::array<BindingRequest, 2> k_tiles{{{"g_half", k_sampled}, {"g_tiles", k_storage}}};
 constexpr std::array<BindingRequest, 2> k_dilate{
     {{"g_tiles", k_sampled}, {"g_dilated", k_storage}}};
@@ -36,7 +38,7 @@ constexpr std::array<BindingRequest, 4> k_gather{{{"g_half", k_sampled},
                                                   {"g_near", k_storage},
                                                   {"g_far", k_storage}}};
 constexpr std::array<BindingRequest, 6> k_composite{{{"g_color", k_sampled},
-                                                     {"g_depth", k_sampled},
+                                                     {"g_coc", k_sampled},
                                                      {"g_near", k_sampled},
                                                      {"g_far", k_sampled},
                                                      {"g_linear", VK_DESCRIPTOR_TYPE_SAMPLER},
@@ -48,12 +50,14 @@ struct DofPushConstants {
     glm::vec4 coc{0.0F};       // x scale, y bias (display px), z max radius, w rings
     glm::vec4 proj{0.0F};      // x P22, y P32, zw tile grid
     glm::vec4 half_size{0.0F}; // xy half extent, zw 1 / half extent
+    glm::vec4 jitter{0.0F};    // xy depth jitter (render px)
 };
-static_assert(sizeof(DofPushConstants) == 64, "must match lib/dof_common.slang DofParams");
+static_assert(sizeof(DofPushConstants) == 80, "must match lib/dof_common.slang DofParams");
 
 constexpr std::uint32_t k_tile = 8; // half-resolution pixels per tile (DOF_TILE)
 constexpr VkFormat      k_half_format = VK_FORMAT_R16G16B16A16_SFLOAT;
 constexpr VkFormat      k_tile_format = VK_FORMAT_R16G16_SFLOAT;
+constexpr VkFormat      k_coc_format = VK_FORMAT_R16_SFLOAT; // display-pixel CoC
 
 } // namespace
 
@@ -75,7 +79,7 @@ std::expected<DofPass, core::Error> DofPass::create(const rhi::Device& device,
                                                     rhi::GpuAllocator& allocator,
                                                     rhi::PipelineCache& cache,
                                                     const std::string& cooked_shader_dir) {
-    const std::array<VkFormat, 1> extended{k_tile_format};
+    const std::array<VkFormat, 2> extended{k_tile_format, k_coc_format};
     if (auto ok = device.require_extended_storage_formats(extended, "dof pass"); !ok) {
         return std::unexpected(ok.error());
     }
@@ -141,10 +145,15 @@ std::expected<rhi::ResourceHandle, core::Error> DofPass::add_to_graph(rhi::Rende
     push.half_size = glm::vec4(static_cast<float>(half.width), static_cast<float>(half.height),
                                1.0F / static_cast<float>(half.width),
                                1.0F / static_cast<float>(half.height));
+    const bool jitter_ok = std::isfinite(in.jitter.x) && std::isfinite(in.jitter.y);
+    push.jitter = glm::vec4(jitter_ok ? glm::clamp(in.jitter, -0.5F, 0.5F) : glm::vec2(0.0F),
+                            0.0F, 0.0F);
 
     constexpr VkImageUsageFlags usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
     const rhi::ResourceHandle half_img =
         graph.create_transient_image("dof_half", k_half_format, half, usage);
+    const rhi::ResourceHandle coc =
+        graph.create_transient_image("dof_coc", k_coc_format, display, usage);
     const rhi::ResourceHandle tiles =
         graph.create_transient_image("dof_tiles", k_tile_format, grid, usage);
     const rhi::ResourceHandle dilated =
@@ -174,12 +183,14 @@ std::expected<rhi::ResourceHandle, core::Error> DofPass::add_to_graph(rhi::Rende
         .reads(color, sampled)
         .reads(depth, sampled)
         .writes(half_img, storage)
-        .execute([s, d = db[0], color, depth, half_img, push, half](rhi::PassContext& ctx) {
+        .writes(coc, storage)
+        .execute([s, d = db[0], color, depth, half_img, coc, push, half](rhi::PassContext& ctx) {
             const post::ComputeStage& stage = s->stages[0];
             rhi::DescriptorBuffer& b = s->pool[d];
             b.write_sampled_image(stage.slots[0], ctx.resolve(color).view, ro);
             b.write_sampled_image(stage.slots[1], ctx.resolve(depth).view, ro);
             b.write_storage_image(stage.slots[2], ctx.resolve(half_img).view, gen);
+            b.write_storage_image(stage.slots[3], ctx.resolve(coc).view, gen);
             post::dispatch(ctx.cmd(), stage, b, &push, sizeof(push), half.width, half.height);
         });
     graph.add_pass("dof_tiles", rhi::PassType::compute)
@@ -219,16 +230,16 @@ std::expected<rhi::ResourceHandle, core::Error> DofPass::add_to_graph(rhi::Rende
         });
     graph.add_pass("dof_composite", rhi::PassType::compute)
         .reads(color, sampled)
-        .reads(depth, sampled)
+        .reads(coc, sampled)
         .reads(near_img, sampled)
         .reads(far_img, sampled)
         .writes(out, storage)
-        .execute([s, d = db[4], color, depth, near_img, far_img, out, push,
+        .execute([s, d = db[4], color, coc, near_img, far_img, out, push,
                   display](rhi::PassContext& ctx) {
             const post::ComputeStage& stage = s->stages[4];
             rhi::DescriptorBuffer& b = s->pool[d];
             b.write_sampled_image(stage.slots[0], ctx.resolve(color).view, ro);
-            b.write_sampled_image(stage.slots[1], ctx.resolve(depth).view, ro);
+            b.write_sampled_image(stage.slots[1], ctx.resolve(coc).view, ro);
             b.write_sampled_image(stage.slots[2], ctx.resolve(near_img).view, ro);
             b.write_sampled_image(stage.slots[3], ctx.resolve(far_img).view, ro);
             b.write_sampler(stage.slots[4], s->sampler.handle());

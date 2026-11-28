@@ -2,7 +2,9 @@
 // colour + CoC.
 //
 // One thread per half-resolution pixel reads its 2x2 display pixels and their
-// circles of confusion (thin lens, from the render-extent depth). The half-
+// circles of confusion (thin lens, from the closest depth of each pixel's
+// render footprint; dof_common.slang), and stores those display-pixel CoCs
+// for the composite. The half-
 // resolution CoC is the 2x2's nearest-field value when any of it is in front
 // of the focus plane (so foreground edges keep their blur), else the largest
 // far value; colours are averaged with weights favouring taps whose CoC
@@ -13,8 +15,9 @@ import post_common;
 import dof_common;
 
 Texture2D g_color; // display extent, linear HDR
-Texture2D g_depth; // render extent, [0, 1]
+Texture2D g_depth; // render extent, [0, 1], jittered
 [format("rgba16f")] RWTexture2D<float4> g_half; // rgb colour, a signed CoC (half px)
+[format("r16f")] RWTexture2D<float> g_coc;      // display extent, signed CoC (display px)
 
 [[vk::push_constant]] DofParams pc;
 
@@ -31,9 +34,11 @@ void compute_main(uint3 tid : SV_DispatchThreadID) {
     float  far_coc = 0.0;
     [unroll]
     for (int i = 0; i < 4; ++i) {
-        const int2 p = min(half_px * 2 + int2(i & 1, i >> 1), display_max);
+        const int2 q = half_px * 2 + int2(i & 1, i >> 1);
+        const int2 p = min(q, display_max);
         color[i] = g_color.Load(int3(p, 0)).rgb;
         coc[i] = coc_at_display_pixel(pc, g_depth, p);
+        if (all(q == p)) g_coc[p] = coc[i];
         near_coc = min(near_coc, coc[i]);
         far_coc = max(far_coc, coc[i]);
     }

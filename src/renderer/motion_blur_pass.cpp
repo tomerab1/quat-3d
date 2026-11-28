@@ -25,13 +25,16 @@ using rhi::BindingRequest;
 constexpr VkDescriptorType k_sampled = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
 constexpr VkDescriptorType k_storage = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
 
-constexpr std::array<BindingRequest, 2> k_tiles{
-    {{"g_velocity", k_sampled}, {"g_tiles", k_storage}}};
+constexpr std::array<BindingRequest, 5> k_tiles{{{"g_velocity", k_sampled},
+                                                 {"g_depth", k_sampled},
+                                                 {"g_tiles", k_storage},
+                                                 {"g_vectors", k_storage},
+                                                 {"g_view_depth", k_storage}}};
 constexpr std::array<BindingRequest, 2> k_neighbor{
     {{"g_tiles", k_sampled}, {"g_neighbor", k_storage}}};
 constexpr std::array<BindingRequest, 5> k_gather{{{"g_color", k_sampled},
-                                                  {"g_velocity", k_sampled},
-                                                  {"g_depth", k_sampled},
+                                                  {"g_vectors", k_sampled},
+                                                  {"g_view_depth", k_sampled},
                                                   {"g_neighbor", k_sampled},
                                                   {"g_out", k_storage}}};
 
@@ -41,11 +44,13 @@ struct MotionBlurPushConstants {
     glm::vec4 blur{0.0F};  // x shutter fraction, y tile size, z samples, w frame
     glm::vec4 proj{0.0F};  // x P22, y P32, zw tile grid
     glm::vec4 depth{0.0F}; // x soft depth extent (fraction)
+    glm::vec4 jitter{0.0F}; // xy velocity / depth jitter (render px)
 };
-static_assert(sizeof(MotionBlurPushConstants) == 64,
+static_assert(sizeof(MotionBlurPushConstants) == 80,
               "must match lib/motion_blur_common.slang MotionBlurParams");
 
-constexpr VkFormat k_tile_format = VK_FORMAT_R16G16_SFLOAT;
+constexpr VkFormat k_tile_format = VK_FORMAT_R16G16_SFLOAT;   // half vectors (tiles, pixels)
+constexpr VkFormat k_depth_format = VK_FORMAT_R32_SFLOAT;    // per-pixel linear depth
 // Depth difference (as a fraction of the nearer depth) over which the
 // foreground / background classification fades.
 constexpr float k_soft_depth = 0.02F;
@@ -128,8 +133,15 @@ MotionBlurPass::add_to_graph(rhi::RenderGraph& graph, const MotionBlurInputs& in
     push.proj = glm::vec4(in.proj22, in.proj32, static_cast<float>(grid.width),
                           static_cast<float>(grid.height));
     push.depth = glm::vec4(k_soft_depth, 0.0F, 0.0F, 0.0F);
+    const bool jitter_ok = std::isfinite(in.jitter.x) && std::isfinite(in.jitter.y);
+    push.jitter = glm::vec4(jitter_ok ? glm::clamp(in.jitter, -0.5F, 0.5F) : glm::vec2(0.0F),
+                            0.0F, 0.0F);
 
     constexpr VkImageUsageFlags usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+    const rhi::ResourceHandle vectors =
+        graph.create_transient_image("motion_blur_vectors", k_tile_format, display, usage);
+    const rhi::ResourceHandle view_depth =
+        graph.create_transient_image("motion_blur_depth", k_depth_format, display, usage);
     const rhi::ResourceHandle tiles =
         graph.create_transient_image("motion_blur_tiles", k_tile_format, grid, usage);
     const rhi::ResourceHandle neighbor =
@@ -154,12 +166,19 @@ MotionBlurPass::add_to_graph(rhi::RenderGraph& graph, const MotionBlurInputs& in
 
     graph.add_pass("motion_blur_tiles", rhi::PassType::compute)
         .reads(velocity, sampled)
+        .reads(depth, sampled)
         .writes(tiles, storage)
-        .execute([s, d = db[0], velocity, tiles, push, grid](rhi::PassContext& ctx) {
+        .writes(vectors, storage)
+        .writes(view_depth, storage)
+        .execute([s, d = db[0], velocity, depth, tiles, vectors, view_depth, push,
+                  grid](rhi::PassContext& ctx) {
             const post::ComputeStage& stage = s->stages[0];
             rhi::DescriptorBuffer& b = s->pool[d];
             b.write_sampled_image(stage.slots[0], ctx.resolve(velocity).view, ro);
-            b.write_storage_image(stage.slots[1], ctx.resolve(tiles).view, gen);
+            b.write_sampled_image(stage.slots[1], ctx.resolve(depth).view, ro);
+            b.write_storage_image(stage.slots[2], ctx.resolve(tiles).view, gen);
+            b.write_storage_image(stage.slots[3], ctx.resolve(vectors).view, gen);
+            b.write_storage_image(stage.slots[4], ctx.resolve(view_depth).view, gen);
             // One 8 x 8 workgroup per tile.
             post::dispatch(ctx.cmd(), stage, b, &push, sizeof(push), grid.width * 8,
                            grid.height * 8);
@@ -176,17 +195,17 @@ MotionBlurPass::add_to_graph(rhi::RenderGraph& graph, const MotionBlurInputs& in
         });
     graph.add_pass("motion_blur", rhi::PassType::compute)
         .reads(color, sampled)
-        .reads(velocity, sampled)
-        .reads(depth, sampled)
+        .reads(vectors, sampled)
+        .reads(view_depth, sampled)
         .reads(neighbor, sampled)
         .writes(out, storage)
-        .execute([s, d = db[2], color, velocity, depth, neighbor, out, push,
+        .execute([s, d = db[2], color, vectors, view_depth, neighbor, out, push,
                   display](rhi::PassContext& ctx) {
             const post::ComputeStage& stage = s->stages[2];
             rhi::DescriptorBuffer& b = s->pool[d];
             b.write_sampled_image(stage.slots[0], ctx.resolve(color).view, ro);
-            b.write_sampled_image(stage.slots[1], ctx.resolve(velocity).view, ro);
-            b.write_sampled_image(stage.slots[2], ctx.resolve(depth).view, ro);
+            b.write_sampled_image(stage.slots[1], ctx.resolve(vectors).view, ro);
+            b.write_sampled_image(stage.slots[2], ctx.resolve(view_depth).view, ro);
             b.write_sampled_image(stage.slots[3], ctx.resolve(neighbor).view, ro);
             b.write_storage_image(stage.slots[4], ctx.resolve(out).view, gen);
             post::dispatch(ctx.cmd(), stage, b, &push, sizeof(push), display.width,

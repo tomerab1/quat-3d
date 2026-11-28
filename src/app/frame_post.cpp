@@ -66,6 +66,7 @@ engine::rhi::ResourceHandle FrameRenderer::add_cinematic_post(
         dof.depth = gbuffer.depth;
         dof.display_extent = in.draw_extent;
         dof.render_extent = fs.render_extent;
+        dof.jitter = fs.jitter.pixels;
         dof.coc = r::coc_params(lens.camera, lens.fov_y,
                                 static_cast<float>(in.draw_extent.height));
         dof.max_radius_px = settings_.dof.max_radius_px;
@@ -87,6 +88,7 @@ engine::rhi::ResourceHandle FrameRenderer::add_cinematic_post(
         mb.depth = gbuffer.depth;
         mb.display_extent = in.draw_extent;
         mb.render_extent = fs.render_extent;
+        mb.jitter = fs.jitter.pixels;
         mb.shutter_fraction = fraction;
         mb.max_radius_px = settings_.motion_blur.max_radius_px;
         mb.samples = settings_.motion_blur.samples;

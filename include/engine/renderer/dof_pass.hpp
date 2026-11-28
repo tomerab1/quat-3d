@@ -15,15 +15,19 @@
 // The circle of confusion is the thin-lens CoC of the active camera
 // (physical_camera.hpp coc_params), evaluated per pixel from linear depth.
 //
-// Order: DoF runs after TAAU on the resolved display-extent colour (reading
-// the render-extent depth through the display -> render scale), before motion
-// blur — as HDRP orders them: blurred bokeh then moves rather than motion
-// blur being defocused, and the temporal history never holds defocus.
+// Order: DoF runs after TAAU on the resolved display-extent colour, before
+// motion blur — as HDRP orders them: blurred bokeh then moves rather than
+// motion blur being defocused, and the temporal history never holds defocus.
+// The render-extent depth is jittered; each display pixel takes the closest
+// depth of its 3 x 3 render footprint at this frame's jitter
+// (lib/depth_footprint.slang, issue #115), so in-focus silhouettes stay put
+// as the jitter cycles.
 
 #include <expected>
 #include <memory>
 #include <string>
 
+#include <glm/vec2.hpp>
 #include <vulkan/vulkan.h>
 
 #include "engine/core/error.hpp"
@@ -43,6 +47,7 @@ struct DofInputs {
     rhi::ResourceHandle depth; // render extent, [0, 1] depth (sampled)
     VkExtent2D          display_extent{0, 0};
     VkExtent2D          render_extent{0, 0};
+    glm::vec2           jitter{0.0F}; // the depth's sub-pixel jitter (render px, jitter.hpp)
     CocParams           coc;   // signed radius in DISPLAY pixels
     float               max_radius_px = 24.0F;
     int                 rings = 4;
