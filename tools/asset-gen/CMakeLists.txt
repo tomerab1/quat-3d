@@ -13,3 +13,5 @@ target_include_directories(quat_asset_gen PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/..)
 
 add_executable(quat-asset-gen EXCLUDE_FROM_ALL main.cpp)
 target_link_libraries(quat-asset-gen PRIVATE quat_asset_gen)
+# engine/core/utf8_path.hpp (header-only): paths printed as UTF-8.
+target_include_directories(quat-asset-gen PRIVATE ${PROJECT_SOURCE_DIR}/include)

@@ -31,10 +31,38 @@ namespace fs = std::filesystem;
     return ext == ".cpp" || ext == ".hpp" || ext == ".h" || ext == ".inl";
 }
 
-// The code part of a line: everything before a `//` comment.
+// The code part of a line: everything before a `//` comment that is not
+// inside a string or character literal ("file://" + p.string() is code).
+// Block comments count as code, which errs on the side of reporting.
 [[nodiscard]] std::string_view code_of(std::string_view line) {
-    const std::size_t comment = line.find("//");
-    return comment == std::string_view::npos ? line : line.substr(0, comment);
+    char quote = 0; // the open literal's delimiter, 0 outside literals
+    for (std::size_t i = 0; i < line.size(); ++i) {
+        const char c = line[i];
+        if (quote != 0) {
+            if (c == '\\') {
+                ++i; // an escaped character never closes the literal
+            } else if (c == quote) {
+                quote = 0;
+            }
+        } else if (c == '"' || c == '\'') {
+            quote = c;
+        } else if (c == '/' && i + 1 < line.size() && line[i + 1] == '/') {
+            return line.substr(0, i);
+        }
+    }
+    return line;
+}
+
+// Whether `code` calls string() / generic_string() on an object (`.` or `->`).
+[[nodiscard]] bool converts_to_narrow(std::string_view code) {
+    for (const std::string_view call : {"string()", "generic_string()"}) {
+        for (std::size_t at = code.find(call); at != std::string_view::npos;
+             at = code.find(call, at + 1)) {
+            const std::string_view before = code.substr(0, at);
+            if (before.ends_with('.') || before.ends_with("->")) return true;
+        }
+    }
+    return false;
 }
 
 // Lines calling .string() / .generic_string() (as "file:line: text").
@@ -44,9 +72,7 @@ namespace fs = std::filesystem;
     std::ifstream in(file, std::ios::binary);
     std::string line;
     for (int n = 1; std::getline(in, line); ++n) {
-        const std::string_view code = code_of(line);
-        if (code.find(".string()") != std::string_view::npos ||
-            code.find(".generic_string()") != std::string_view::npos) {
+        if (converts_to_narrow(code_of(line))) {
             out.push_back(engine::core::path_to_generic_utf8(file.lexically_relative(root)) + ":" +
                           std::to_string(n) + ": " + line);
         }
@@ -83,6 +109,21 @@ TEST(PathEncodingRule, SourcesNeverConvertPathsToTheNarrowEncoding) {
 TEST(PathEncodingRule, TheScanSeesCodeButNotComments) {
     EXPECT_EQ(code_of("auto s = p.string(); // ok"), "auto s = p.string(); ");
     EXPECT_EQ(code_of("// never with .string()"), "");
+    // `//` inside a literal is not a comment.
+    EXPECT_EQ(code_of(R"(f("file://" + p.string()); // x)"), R"(f("file://" + p.string()); )");
+    EXPECT_EQ(code_of(R"(f("a\"//" + p.string());)"), R"(f("a\"//" + p.string());)");
+    EXPECT_EQ(code_of("c = '/'; // x"), "c = '/'; ");
+}
+
+TEST(PathEncodingRule, CatchesMemberAndPointerCalls) {
+    EXPECT_TRUE(converts_to_narrow("auto s = p.string();"));
+    EXPECT_TRUE(converts_to_narrow("auto s = p.generic_string();"));
+    EXPECT_TRUE(converts_to_narrow("auto s = file.value->string();"));
+    EXPECT_TRUE(converts_to_narrow("auto s = it->path().stem()->generic_string();"));
+    EXPECT_TRUE(converts_to_narrow(code_of(R"(log("file://" + p.string());)")));
+    EXPECT_FALSE(converts_to_narrow("std::string s = std::string();"));
+    EXPECT_FALSE(converts_to_narrow("const auto s = core::path_to_utf8(p);"));
+    EXPECT_FALSE(converts_to_narrow("x.u8string(); y.generic_u8string();"));
 }
 
 } // namespace
