@@ -114,14 +114,32 @@ jobs:
       # no dependency is rebuilt; only the `game` target is built. Manifest
       # install is off: with ENGINE_PROFILE=OFF the manifest no longer asks
       # for the `profiling` feature, and an install would remove Tracy from
-      # the shared tree under the release build.
+      # the shared tree under the release build. The same build directory
+      # also carries ENGINE_DESCRIPTOR_SETS_FALLBACK (additive #ifdef code;
+      # the release build above covers the build without it), so the next
+      # step reuses its engine libraries instead of compiling them again.
       - name: Build game without the editor (ENGINE_EDITOR=OFF, ENGINE_PROFILE=OFF)
+        id: noeditor
         if: ${{ !cancelled() && steps.configure.outcome == 'success' }}
         run: |
           cmake --preset release -B build/release-noeditor \
             -DENGINE_PROFILE=OFF -DENGINE_EDITOR=OFF -DVCPKG_MANIFEST_INSTALL=OFF \
+            -DENGINE_DESCRIPTOR_SETS_FALLBACK=ON \
             -DVCPKG_INSTALLED_DIR="${{ github.workspace }}/build/release/vcpkg_installed"
           cmake --build build/release-noeditor --target game
+
+      # Every macOS run (MoltenVK) uses the classic descriptor-set fallback.
+      # QUAT_FORCE_DESCRIPTOR_SETS=1 selects that path on lavapipe, so the GPU
+      # suite covers it on every PR; only engine_tests' own sources compile
+      # here (the engine libraries come from the step above).
+      - name: Tests (GPU on lavapipe, classic descriptor sets)
+        if: ${{ !cancelled() && steps.noeditor.outcome == 'success' }}
+        run: |
+          cmake --build build/release-noeditor --target engine_tests
+          icd=$(ls /usr/share/vulkan/icd.d/lvp_icd*.json | head -n1)
+          export VK_ICD_FILENAMES="$icd"
+          export QUAT_FORCE_DESCRIPTOR_SETS=1
+          ctest --test-dir build/release-noeditor -R engine_tests_gpu --output-on-failure --timeout 900
 
       # CC0 Poly Haven assets of the showcase scenes (assets/showcase/*/assets.json),
       # downloaded and cooked with this build's quat-cook. Two caches: the
