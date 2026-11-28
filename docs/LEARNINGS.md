@@ -56,41 +56,12 @@ into CLAUDE.md or the brief template in [`CYCLE.md`](CYCLE.md).
 
 ## Build and CI
 
-- **Budget landscape renders on lavapipe before art-directing them.** The
-  mountain showcase at 720p costs ~2.5 s per frame for terrain + lighting +
-  post alone; ~11k flat-shaded instances add under a second only because
-  distant forest uses low-poly models (full models everywhere doubled it),
-  and grass (radius 60 m) adds ~0.8 s. Iterate composition on a CPU
-  heightmap preview (the generator is the reference) and a few 12-frame
-  renders; render 30 frames only for the keepers. Frame timings vary ±30 %
-  while other agents share the machine.
-- **A local editor build must compile `src/main.cpp` with `ENGINE_EDITOR`
-  too.** `Application`'s members differ between editor and non-editor
-  builds; linking a non-editor `main.o` into an editor binary corrupts it
-  at startup (it showed up as `SDL_Init failed: No available video device`).
-  Recompile main, `src/app/*`, `shader_hot_reload.cpp`, `imgui_pass.cpp`,
-  `src/editor/**`, ImGui (+ `misc/cpp/imgui_stdlib.cpp`), imgui-node-editor
-  (needs `-include exception`) and ImGuizmo with the define; the other
-  engine objects are shared with the non-editor build.
 - **A clean auto-merge can still break the build.** Merging master (#20)
   into the E8 branch raised no conflict, but master had renamed
   `WorldRuntime::clear_spin_entity` while the branch added a new call to it;
   the 40-minute forced rebuild failed late. → After any merge, compile-check
   the TUs both sides touched (`scripts/check-compile.sh` on the merge's file
   list) before starting a long build.
-- **A signature changed while resolving a conflict has callers outside the
-  merge's file list.** PR #49's train merge gave `WorldRuntime::build_scene`
-  a `RenderSettings&` parameter; every file in the merge diff compiled, but
-  a train test (`tests/app/world_runtime_physics_test.cpp`) still called
-  the old signature and broke CI's build. → When a resolution changes a
-  declaration, `grep -rn` its name over `src/` and `tests/` and
-  compile-check every caller.
-- **Two RNG draws in one expression are not deterministic across
-  compilers.** `glm::vec3(rng.uniform(..), .., rng.uniform(..))` evaluates
-  its arguments in an unspecified order: MSVC right to left, clang left to
-  right. quat-asset-gen's committed models matched on Linux and failed
-  `AssetGen.CommittedAssetsAreCurrent` on Windows (0.21 m off). → One draw
-  per statement, into a named local, wherever output must be reproducible.
 - **Hand-rolled local builds must rebuild dependents of changed headers.**
   The E8 worker's scratch build script recompiled a `.cpp` only when it was
   newer than its object; after a member was added to `EditorShell`, stale
@@ -171,6 +142,7 @@ into CLAUDE.md or the brief template in [`CYCLE.md`](CYCLE.md).
   (engine_asset links libktx through a per-executable `QUAT_KTX_FULL`
   switch), and without vcpkg a stub prefix (`find_package` configs over the
   `~/deps` builds) is enough to configure and link `game` / `engine_tests`.
+
 - **Local test builds must track header dependencies.** A scratch build that
   rebuilt only changed .cpp files linked objects compiled against an old
   class layout and crashed (R12). Compile with `-MMD -MF` and rebuild when
@@ -288,20 +260,6 @@ into CLAUDE.md or the brief template in [`CYCLE.md`](CYCLE.md).
 
 ## C++ in this codebase
 
-- **Grid erosion's default talus (tan 0.5, ~27°) flattens mountains.**
-  Thermal weathering relaxes every steeper slope, so eroded peaks came out
-  as smooth mounds while the un-eroded tile border stayed rugged. Mountain
-  scenes raise `erosion_talus` and the octave `gain` (~0.55); both are in
-  the terrain codec.
-- **With talus relaxation on (#90, `erosion_relax`), the talus is a hard
-  cap.** Relaxation runs thermal erosion to its steady state, so every
-  slope ends at or below the talus angle. The mountain scene had tuned
-  `erosion_talus` 1.0 (45°) against a partial thermal pass that left 55-65°
-  cliffs; relaxed, those cliffs became uniform 45° planes (above the
-  snowline the share past 50° fell from 84 % to 17 %). Set the talus to the
-  steepest face you want to keep (1.65, ~59°, restored the measured slope
-  mix) and measure the slope histogram on the CPU heightmap before
-  re-rendering. Relaxation also needs a 2^n + 1 `resolution` (#95).
 - **Optimising a fixed-step system must not change its floats (#84).** Nav
   feeds network prediction, so the separation grid had to match the
   all-pairs loop bit for bit. Two traps: float sums depend on order (sort
