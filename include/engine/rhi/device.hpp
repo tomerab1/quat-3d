@@ -9,6 +9,7 @@
 #include <vulkan/vulkan.h>
 
 #include "engine/core/error.hpp"
+#include "engine/rhi/driver_info.hpp"
 #include "engine/rhi/queue_selection.hpp"
 #include "engine/rhi/texture_caps.hpp"
 
@@ -76,6 +77,8 @@ public:
     // device), or null.
     [[nodiscard]] VkSurfaceKHR surface() const { return surface_; }
     [[nodiscard]] const VkPhysicalDeviceProperties& properties() const { return properties_; }
+    // The driver behind the selected device (logged at creation; driver_info.hpp).
+    [[nodiscard]] const DriverInfo& driver() const { return driver_; }
     [[nodiscard]] const VkPhysicalDeviceDescriptorBufferPropertiesEXT&
     descriptor_buffer_properties() const { return descriptor_buffer_props_; }
     // Device limit for anisotropic filtering; 0 when samplerAnisotropy is
@@ -137,8 +140,10 @@ public:
     // Tests: behave as a device without depthClamp.
     void simulate_missing_depth_clamp(bool missing) { simulate_missing_depth_clamp_ = missing; }
     // Whether VK_KHR_swapchain_mutable_format is enabled (surface devices
-    // whose driver offers it): the Swapchain then creates its sRGB images
-    // mutable-format with a UNORM view each (Swapchain::unorm_image_views).
+    // whose driver offers it and keeps a format view on its swapchain image,
+    // rhi::swapchain_format_views_track_images): the Swapchain then creates
+    // its sRGB images mutable-format with a UNORM view each
+    // (Swapchain::unorm_image_views).
     [[nodiscard]] bool swapchain_mutable_format() const {
         return swapchain_mutable_format_ && !simulate_missing_swapchain_mutable_format_;
     }
@@ -162,6 +167,7 @@ private:
     VkQueue                  transfer_queue_   = VK_NULL_HANDLE;
     VkQueue                  present_queue_    = VK_NULL_HANDLE;
     VkPhysicalDeviceProperties properties_{};
+    DriverInfo                 driver_{};
     VkPhysicalDeviceDescriptorBufferPropertiesEXT descriptor_buffer_props_{};
     float                    max_sampler_anisotropy_ = 0.0F;
     bool                     independent_blend_ = false;

@@ -164,10 +164,13 @@ public:
 
     // `array_layers`/`flags` support cubemaps (6 layers +
     // VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT) and other layered images.
+    // `view_formats` (with VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT in `flags`) lists
+    // every format the image will be viewed as (VkImageFormatListCreateInfo),
+    // so the driver can keep its compression for a mutable-format image.
     [[nodiscard]] std::expected<GpuImage, core::Error>
     create_image(VkFormat format, VkExtent2D extent, VkImageUsageFlags usage,
                  std::uint32_t mip_levels = 1, std::uint32_t array_layers = 1,
-                 VkImageCreateFlags flags = 0);
+                 VkImageCreateFlags flags = 0, std::span<const VkFormat> view_formats = {});
 
     // Per-heap budget and usage into `out` (cleared; heaps in Vulkan's
     // order). Cheap: VMA keeps the numbers, refreshed by the driver about

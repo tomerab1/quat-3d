@@ -4,6 +4,7 @@
 #include <array>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <format>
 #include <optional>
@@ -13,6 +14,7 @@
 
 #include "engine/core/env.hpp"
 #include "engine/core/log.hpp"
+#include "engine/rhi/driver_info.hpp"
 
 namespace engine::rhi {
 
@@ -378,6 +380,14 @@ std::expected<Device, core::Error> Device::create(const CreateInfo& info) {
                  candidate.families.graphics, candidate.families.compute,
                  candidate.families.transfer, present_family.c_str(),
                  candidate.has_descriptor_buffer ? "descriptor_buffer" : "classic sets (fallback)");
+    // Which driver actually loaded (MoltenVK reports its version in
+    // driverInfo), and any loader override that chose it: a LunarG SDK's
+    // setup-env replaces a bundled MoltenVK this way (#130).
+    dev.driver_ = query_driver_info(dev.physical_device_);
+    core::log(core::LogLevel::info, "rhi", "{}",
+              describe_driver(dev.driver_, loader_driver_overrides([](const char* name) {
+                                  return std::getenv(name);
+                              })));
 
     // ---- Logical device -------------------------------------------------
     std::set<std::uint32_t> unique_families = {
@@ -455,9 +465,21 @@ std::expected<Device, core::Error> Device::create(const CreateInfo& info) {
         // sRGB swapchain (gamma-space compositing). Its dependencies
         // (VK_KHR_image_format_list, VK_KHR_maintenance2) are core in 1.2 /
         // 1.1. Offered by desktop drivers, lavapipe and MoltenVK.
+        // Not on a driver whose reinterpreting views of swapchain images go
+        // stale (MoltenVK before 1.4.3, driver_info.hpp): the UI then takes
+        // its copy-composite path, which only makes same-format copies into
+        // the swapchain image.
         if (candidate.has_swapchain_mutable_format) {
-            device_exts.push_back(VK_KHR_SWAPCHAIN_MUTABLE_FORMAT_EXTENSION_NAME);
-            dev.swapchain_mutable_format_ = true;
+            if (swapchain_format_views_track_images(dev.driver_)) {
+                device_exts.push_back(VK_KHR_SWAPCHAIN_MUTABLE_FORMAT_EXTENSION_NAME);
+                dev.swapchain_mutable_format_ = true;
+            } else {
+                core::log(core::LogLevel::info, "rhi",
+                          "VK_KHR_swapchain_mutable_format not used: {} {} can leave a "
+                          "format view of a swapchain image on a stale drawable; the UI "
+                          "composites through a scratch image instead",
+                          dev.driver_.driver_name, dev.driver_.driver_info);
+            }
         }
     }
     if (candidate.has_descriptor_buffer) {
@@ -614,6 +636,7 @@ Device& Device::operator=(Device&& other) noexcept {
         transfer_queue_  = std::exchange(other.transfer_queue_, VK_NULL_HANDLE);
         present_queue_   = std::exchange(other.present_queue_, VK_NULL_HANDLE);
         properties_     = other.properties_;
+        driver_         = std::move(other.driver_);
         descriptor_buffer_props_ = other.descriptor_buffer_props_;
         max_sampler_anisotropy_  = other.max_sampler_anisotropy_;
         independent_blend_       = other.independent_blend_;
