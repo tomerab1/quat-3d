@@ -47,7 +47,17 @@ TEST_F(GrassCodec, RoundTripsEveryField) {
                            {"terrain_only", false},
                            {"ground_y", 1.25},
                            {"lod_start", 0.4},
-                           {"far_density", 0.1}};
+                           {"far_density", 0.1},
+                           {"clump_size", 0.8},
+                           {"clump_strength", 0.5},
+                           {"color_variation", 0.25},
+                           {"dry_color", {0.3, 0.2, 0.1}},
+                           {"dry_fraction", 0.3},
+                           {"root_tint", 0.75},
+                           {"ground_cover_color", {0.04, 0.05, 0.01}},
+                           {"ground_cover", 0.2},
+                           {"far_ground_cover", 0.9},
+                           {"min_blade_px", 1.5}};
     ASSERT_OK(apply(authored));
     EXPECT_EQ(grass().seed, 99U);
     EXPECT_FLOAT_EQ(grass().density, 55.5F);
@@ -55,6 +65,13 @@ TEST_F(GrassCodec, RoundTripsEveryField) {
     EXPECT_EQ(grass().wind_direction, glm::vec2(0.0F, 1.0F));
     EXPECT_FALSE(grass().terrain_only);
     EXPECT_FLOAT_EQ(grass().ground_y, 1.25F);
+    EXPECT_FLOAT_EQ(grass().clump_size, 0.8F);
+    EXPECT_FLOAT_EQ(grass().clump_strength, 0.5F);
+    EXPECT_EQ(grass().dry_color, glm::vec3(0.3F, 0.2F, 0.1F));
+    EXPECT_FLOAT_EQ(grass().root_tint, 0.75F);
+    EXPECT_EQ(grass().ground_cover_color, glm::vec3(0.04F, 0.05F, 0.01F));
+    EXPECT_FLOAT_EQ(grass().far_ground_cover, 0.9F);
+    EXPECT_FLOAT_EQ(grass().min_blade_px, 1.5F);
 
     const json encoded = s::encode_components(r, e).at("grass");
     EXPECT_EQ(encoded.size(), authored.size());
@@ -94,6 +111,11 @@ TEST_F(GrassCodec, RejectsMalformedValues) {
         {{"base_color", "#12345"}},
         {{"tip_color", {2, 0, 0}}},
         {{"lod_start", 1.5}},
+        {{"clump_size", -0.5}},
+        {{"clump_strength", 1.0}},
+        {{"dry_color", {0, 0, 1.5}}},
+        {{"ground_cover", 2}},
+        {{"min_blade_px", "wide"}},
         {{"terrain_only", "yes"}},
         {{"seed", -3}},
         {{"blade_hieght", {0.2, 0.5}}},

@@ -261,8 +261,9 @@ MeshPass::add_to_graph(rhi::RenderGraph& graph, VkExtent2D extent, const glm::ma
                                           | VK_IMAGE_USAGE_SAMPLED_BIT
                                           | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
     GBufferTargets targets;
-    targets.albedo =
-        graph.create_transient_image("gbuffer_albedo", gbuffer_albedo_format, extent, color_usage);
+    // STORAGE: the grass ground cover (GrassPass) tints the ground's albedo in place.
+    targets.albedo = graph.create_transient_image("gbuffer_albedo", gbuffer_albedo_format, extent,
+                                                  color_usage | VK_IMAGE_USAGE_STORAGE_BIT);
     targets.normal =
         graph.create_transient_image("gbuffer_normal", gbuffer_normal_format, extent, color_usage);
     targets.material = graph.create_transient_image("gbuffer_material", gbuffer_material_format,

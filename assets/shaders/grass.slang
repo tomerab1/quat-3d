@@ -12,7 +12,10 @@
 // camera so the field does not thin out at grazing angles. Normals are
 // rounded across the blade's width and pulled toward the ground's up
 // direction for soft, ground-cover-like shading. Opaque (no alpha test or
-// blending), so grass stays in the deferred path. The velocity target (R11)
+// blending), so grass stays in the deferred path. Grass v2 (Ghost of
+// Tsushima's grass, Wohllaib GDC 2021): blades share their clump's height,
+// facing, lean and dryness, curl along their lean, taper only near the tip,
+// vary in hue and value, and blend into the ground's albedo at the root. The velocity target (R11)
 // gets the blade's motion by evaluating it again at the previous wind time
 // (with weather, in last frame's wind field, so gusts sweeping through give
 // motion vectors too).
@@ -42,7 +45,8 @@ struct VsOut {
     float3 normal : NORMAL;   // blade face normal (unrounded)
     float3 side   : TANGENT;  // across the blade
     float2 coord  : TEXCOORD0; // x across width [-1, 1], y along the blade [0, 1]
-    nointerpolation float variation : TEXCOORD1;
+    nointerpolation float4 look : TEXCOORD1; // x value variation, y hue, z dryness
+    nointerpolation float4 tint : TEXCOORD2; // ground albedo under the root, a = weight
     float4 cur_clip  : CUR_CLIP;
     float4 prev_clip : PREV_CLIP; // the blade at the previous wind time, last frame's camera
 }
@@ -125,7 +129,7 @@ float2 wind_offset(float3 root, float phase, float variation, float time, int fr
 [shader("vertex")]
 VsOut vertex_main(uint vertex_id : SV_VertexID) {
     const GrassBlade blade = g_blades[pc.base + instance_index()];
-    const BladeShape shape = blade_shape(g_params, blade.packed & 0xFFFFu);
+    const BladeShape shape = blade_shape(g_params, blade.packed & 0xFFFFu, blade.clump);
     const float height = shape.height * blade_fade(blade.packed);
     const float width = shape.width * blade_width_scale(blade.packed, g_params.lod.w);
     const float3 up = float3(0.0, 1.0, 0.0);
@@ -147,21 +151,26 @@ VsOut vertex_main(uint vertex_id : SV_VertexID) {
     const float across = level == segments ? 0.0 : ((vertex_id & 1u) == 0u ? -1.0 : 1.0);
     const float t = float(level) / float(segments);
     const float s = 1.0 - t;
-    const float half_width = 0.5 * width * pow(max(s, 0.0), 0.65);
+    // Nearly parallel edges for most of the length, tapering over the top
+    // third to the tip (a grass leaf, not a spike).
+    const float half_width = 0.5 * width * pow(max(1.0 - t * t, 0.0), 0.55);
 
-    // Tip direction: static lean along the facing plus the wind; the control
-    // point drops as the blade bends so its length stays roughly constant.
-    // Evaluated at this frame's and the previous frame's wind time (velocity).
+    // Tip direction: static lean (toward the clump's lean direction) plus the
+    // wind; the control point drops as the blade bends so its length stays
+    // roughly constant, and moves out along the lean so leaning blades curl
+    // (an arc, not a straight tilted card). Evaluated at this frame's and the
+    // previous frame's wind time (velocity).
     float3 tangent = up;
     float3 world[2];
     [unroll]
     for (int frame = 0; frame < 2; ++frame) {
         const float time = frame == 0 ? g_params.camera.w : g_params.motion.x;
         const float2 offset =
-            facing * shape.lean + wind_offset(root, shape.phase, shape.variation, time, frame);
+            shape.lean_dir * shape.lean + wind_offset(root, shape.phase, shape.flutter, time, frame);
         const float3 tip_dir = normalize(float3(offset.x, 1.0, offset.y));
         const float3 p0 = root;
-        const float3 p1 = root + up * (height * 0.62 * tip_dir.y);
+        const float3 p1 = root + up * (height * 0.62 * tip_dir.y) +
+                          float3(tip_dir.x, 0.0, tip_dir.z) * (height * shape.bend);
         const float3 p2 = root + tip_dir * height;
         const float3 centre = s * s * p0 + 2.0 * s * t * p1 + t * t * p2;
         world[frame] = centre + side * (across * half_width);
@@ -178,7 +187,10 @@ VsOut vertex_main(uint vertex_id : SV_VertexID) {
     o.normal = normalize(cross(side, tangent));
     o.side = side;
     o.coord = float2(across, t);
-    o.variation = shape.variation;
+    o.look = float4(shape.variation, shape.hue, shape.dryness, 0.0);
+    const uint tint = blade.tint;
+    const float3 tint_sqrt = float3(tint & 0xFFu, (tint >> 8u) & 0xFFu, (tint >> 16u) & 0xFFu) / 255.0;
+    o.tint = float4(tint_sqrt * tint_sqrt, float(tint >> 24u) / 255.0);
     return o;
 }
 
@@ -215,9 +227,19 @@ GBufferOut fragment_main(VsOut input) {
     n = normalize(lerp(n, float3(0.0, 1.0, 0.0), 0.35));
 
     const float t = saturate(input.coord.y);
-    const float3 albedo =
-        lerp(g_params.base_color.rgb, g_params.tip_color.rgb, smoothstep(0.0, 1.0, t)) *
-        input.variation;
+    // Green ramp root -> tip, and a dry (straw) ramp for dry clumps.
+    const float ramp = smoothstep(0.0, 1.0, t);
+    const float3 green = lerp(g_params.base_color.rgb, g_params.tip_color.rgb, ramp);
+    const float3 dry_base = lerp(g_params.base_color.rgb, g_params.dry_color.rgb, 0.45);
+    const float3 dry = lerp(dry_base, g_params.dry_color.rgb, ramp);
+    float3 albedo = lerp(green, dry, input.look.z) * input.look.x;
+    // Hue spread: positive leans yellow, negative blue-green.
+    const float hue = input.look.y;
+    albedo *= float3(1.0 + 0.22 * hue, 1.0 + 0.04 * hue, 1.0 - 0.35 * hue);
+    // Root tint: the base takes the ground's colour, so blades grow out of
+    // the ground instead of standing on it.
+    const float root = g_params.look.z * input.tint.a * (1.0 - smoothstep(0.0, 0.35, t));
+    albedo = lerp(albedo, input.tint.rgb, root);
     // Cheap self-occlusion: the bottom of the field sits in the blades' shade.
     const float occlusion = lerp(0.3, 1.0, sqrt(t));
 

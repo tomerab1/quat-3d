@@ -76,7 +76,12 @@ is cooked. Every download folder also gets a `LICENSE.md` and a
   the lens and the grass and fern edges catch the light. Fill comes from the
   sky (the dynamic IBL probe of the procedural atmosphere).
 - **Ground.** The forest-floor texture on a generated 400 m plane, under a
-  short (2.5–13 cm), dense (320 blades/m²) GPU grass field with golden tips (`grass`, `terrain_only: false`) with a light wind.
+  GPU grass field (`grass`, `terrain_only: false`, grass v2) with golden
+  tips and a light wind: 6–22 cm blades, 8–16 mm wide, 260 blades/m² in
+  0.45 m clumps with some dry ones; the blade roots take the leaf litter's
+  colour, the litter between tufts is tinted toward undergrowth, and from
+  4 m out toward the blades' own colour, so the field holds its coverage
+  as the blades thin (pixel-footprint LOD) and does not end at its 12 m radius.
 - **Camera.** `HeroCamera`: 0.42 m above the ground, 38° vertical field of
   view (about a 35 mm lens), the log on the left third, the bright gap in
   the tree line on the right third.

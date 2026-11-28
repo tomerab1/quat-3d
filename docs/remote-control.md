@@ -316,7 +316,11 @@ while the scene has weather), `wind_frequency` Hz 0..10, `slope`
 [min,max] degrees, `height` [min,max] ground height m, `terrain_only` (false:
 also flat ground at `ground_y` where no terrain is loaded), `lod_start`
 0..1 × radius where blades start thinning, `far_density` 0..1 kept at the
-radius),
+radius, `min_blade_px` 0..8 projected width below which blades thin out and
+widen (0 = off); grass v2 look: `clump_size` m 0..8 (0 = no clumps),
+`clump_strength` 0..0.9, `color_variation` 0..1, `dry_color`, `dry_fraction`
+0..1, `root_tint` 0..1, `ground_cover_color`, `ground_cover` 0..1 near the
+camera and `far_ground_cover` 0..1 from the thinning start outwards),
 `weather` (the scene's weather, one entity at most — see "Weather" below),
 `point_light`, `dir_light`, `camera`, `collider`, `rigidbody`, `character`,
 `nav_agent`, `behavior`, `patrol`, `terrain` (only an edit that changes the

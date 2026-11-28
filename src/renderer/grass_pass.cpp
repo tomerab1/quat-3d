@@ -7,43 +7,22 @@
 #include <cstring>
 #include <limits>
 #include <string>
+#include <optional>
 #include <utility>
 
 #include "engine/rhi/device.hpp"
 #include "engine/rhi/pipeline_cache.hpp"
+#include "grass_params.hpp"
 
 namespace engine::renderer {
 
 namespace {
 
+using grass_detail::GrassParamsGpu;
+
 [[nodiscard]] std::unexpected<core::Error> fail(std::string what) {
     return std::unexpected(core::Error{std::move(what)});
 }
-
-// Mirrors GrassParams in lib/grass_common.slang (std140, 592 bytes).
-struct GrassParamsGpu {
-    glm::mat4  view_proj{1.0F};
-    glm::vec4  planes[6]{};
-    glm::vec4  camera{0.0F};
-    glm::ivec4 grid{0};
-    glm::vec4  cell{0.0F};
-    glm::vec4  lod{0.0F};
-    glm::vec4  blade{0.0F};
-    glm::vec4  limits{0.0F};
-    glm::vec4  wind{0.0F};
-    glm::vec4  base_color{0.0F};
-    glm::vec4  tip_color{0.0F};
-    glm::uvec4 counts{0};
-    glm::uvec4 draw{0};
-    glm::vec4  tile_rect[grass_max_height_tiles]{};
-    glm::vec4  tile_info[grass_max_height_tiles]{};
-    glm::vec4  ground{0.0F};
-    glm::vec4  wind_rect{0.0F}; // wind texture corner XZ, 1 / size, profile at blade height
-    glm::vec4  wind_flow{0.0F}; // mean heading XZ (flutter phase), field bound (1) or R9.3 sway (0)
-    glm::mat4  prev_view_proj{1.0F};
-    glm::vec4  motion{0.0F}; // x previous wind time, yz jitter (NDC)
-};
-static_assert(sizeof(GrassParamsGpu) == 592, "must match grass_common.slang GrassParams");
 
 // Mirrors PushConstants in grass.slang.
 struct GrassDrawPush {
@@ -61,11 +40,10 @@ constexpr VkShaderStageFlags kDrawStages = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADE
 constexpr VkDeviceSize kParamsBytes = sizeof(GrassParamsGpu);
 constexpr VkDeviceSize kArgsBytes = sizeof(GrassArgsGpu);
 constexpr VkDeviceSize kBladeBytes = sizeof(GrassBladeGpu);
-constexpr std::uint32_t kNearIndices = grass_index_count(grass_near_segments);
-constexpr std::uint32_t kFarIndices = grass_index_count(grass_far_segments);
 
-// grass_generate.slang set 0: params, blades, args, sampler, four height tiles.
-[[nodiscard]] std::array<rhi::DescriptorBinding, 8> generate_bindings() {
+// grass_generate.slang set 0: params, blades, args, sampler, four height
+// tiles, the GBuffer albedo + depth (root tint).
+[[nodiscard]] std::array<rhi::DescriptorBinding, 10> generate_bindings() {
     return {{
         {0, 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, kCompute},
         {0, 1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kCompute},
@@ -75,6 +53,23 @@ constexpr std::uint32_t kFarIndices = grass_index_count(grass_far_segments);
         {0, 5, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, kCompute},
         {0, 6, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, kCompute},
         {0, 7, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, kCompute},
+        {0, 8, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, kCompute},
+        {0, 9, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, kCompute},
+    }};
+}
+
+// grass_ground.slang set 0: params, sampler, four height tiles, GBuffer
+// depth, GBuffer albedo (storage, read-modify-write).
+[[nodiscard]] std::array<rhi::DescriptorBinding, 8> ground_bindings() {
+    return {{
+        {0, 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, kCompute},
+        {0, 1, VK_DESCRIPTOR_TYPE_SAMPLER, 1, kCompute},
+        {0, 2, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, kCompute},
+        {0, 3, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, kCompute},
+        {0, 4, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, kCompute},
+        {0, 5, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, kCompute},
+        {0, 6, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, kCompute},
+        {0, 7, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, kCompute},
     }};
 }
 
@@ -90,10 +85,6 @@ constexpr std::uint32_t kFarIndices = grass_index_count(grass_far_segments);
     }};
 }
 
-// Blades are ~0.5 m tall: the log-profile factor from the field's 10 m
-// reference height down to them.
-constexpr float kBladeWindHeightM = 0.5F;
-
 // Strip of `segments` levels (2 * segments + 1 vertices) as a triangle list.
 void append_strip(std::vector<std::uint32_t>& out, std::uint32_t segments) {
     for (std::uint32_t k = 0; k + 1 < segments; ++k) {
@@ -102,55 +93,6 @@ void append_strip(std::vector<std::uint32_t>& out, std::uint32_t segments) {
     }
     const std::uint32_t a = 2 * (segments - 1);
     out.insert(out.end(), {a, a + 1, a + 2});
-}
-
-[[nodiscard]] GrassParamsGpu make_params(const GrassFrame& frame, const GrassSettings& s,
-                                         const GrassGrid& grid, const GrassCapacity& capacity,
-                                         std::span<const TerrainHeightTile> tiles,
-                                         const ViewMotion& motion) {
-    GrassParamsGpu p;
-    p.view_proj = frame.draw_view_proj;
-    const auto planes = grass_frustum_planes(frame.cull_view_proj);
-    std::copy(planes.begin(), planes.end(), p.planes);
-    p.camera = glm::vec4(frame.camera, frame.time_s);
-    p.grid = glm::ivec4(grid.origin, glm::ivec2(grid.cells));
-    p.cell = glm::vec4(grid.cell_size, s.radius, s.lod_start * s.radius,
-                       s.lod_start * s.radius);
-    p.lod = glm::vec4(s.far_density, s.radius * (1.0F - grass_edge_band), s.height_range.y,
-                      grass_max_width_scale);
-    p.blade = glm::vec4(s.height_range, s.width_range);
-    const float max_cos = s.slope_deg.y >= 90.0F ? -2.0F : std::cos(glm::radians(s.slope_deg.y));
-    const float min_cos = s.slope_deg.x <= 0.0F ? 2.0F : std::cos(glm::radians(s.slope_deg.x));
-    p.limits = glm::vec4(max_cos, min_cos, s.height_m);
-    p.wind = glm::vec4(s.wind_direction, s.wind_strength, s.wind_frequency);
-    p.base_color = glm::vec4(s.base_color, s.terrain_only ? 1.0F : 0.0F);
-    p.tip_color = glm::vec4(s.tip_color, s.ground_y);
-    p.counts = glm::uvec4(s.seed, static_cast<std::uint32_t>(tiles.size()), capacity.near,
-                          capacity.far);
-    p.draw = glm::uvec4(kNearIndices, kFarIndices, grass_near_segments, grass_far_segments);
-
-    float lo = std::numeric_limits<float>::max();
-    float hi = std::numeric_limits<float>::lowest();
-    for (std::size_t k = 0; k < tiles.size(); ++k) {
-        const TerrainHeightTile& t = tiles[k];
-        p.tile_rect[k] = glm::vec4(t.origin_xz, t.size_m, t.base_y);
-        p.tile_info[k] = glm::vec4(1.0F / static_cast<float>(t.resolution),
-                                   t.size_m / static_cast<float>(t.resolution - 1), 0.0F, 0.0F);
-        lo = std::min(lo, t.base_y + t.min_height);
-        hi = std::max(hi, t.base_y + t.max_height);
-    }
-    if (!s.terrain_only) {
-        lo = std::min(lo, s.ground_y);
-        hi = std::max(hi, s.ground_y);
-    }
-    p.ground = glm::vec4(lo, hi, grass_slope_fade_start(s), 0.0F);
-    p.wind_rect = frame.wind.valid() ? frame.wind.rect : glm::vec4(0.0F, 0.0F, 1.0F, 0.0F);
-    p.wind_rect.w = weather::wind_profile(kBladeWindHeightM);
-    // Without a field (no weather) the blades keep the R9.3 sway exactly.
-    p.wind_flow = frame.wind.valid() ? glm::vec4(frame.wind.heading, 1.0F, 0.0F) : glm::vec4(0.0F);
-    p.prev_view_proj = motion.prev_view_proj;
-    p.motion = glm::vec4(frame.prev_time_s.value_or(frame.time_s), motion.jitter_ndc, 0.0F);
-    return p;
 }
 
 } // namespace
@@ -169,45 +111,9 @@ GrassPass::create(const rhi::Device& device, rhi::GpuAllocator& allocator,
     s.fns = rhi::DescriptorBufferFunctions::load(device.handle());
     if (!s.fns.valid()) return fail("grass pass: descriptor buffer functions unavailable");
 
-    const auto gen_bindings = generate_bindings();
-    auto gen_layout = rhi::DescriptorSetLayout::create(device, s.fns, gen_bindings);
-    if (!gen_layout) return std::unexpected(gen_layout.error());
-    s.generate_layout = std::move(*gen_layout);
-    const auto drw_bindings = draw_bindings();
-    auto drw_layout = rhi::DescriptorSetLayout::create(device, s.fns, drw_bindings);
-    if (!drw_layout) return std::unexpected(drw_layout.error());
-    s.draw_layout = std::move(*drw_layout);
-
-    auto gen_shader = cache.load(cooked_shader_dir + "/grass_generate.spv");
-    if (!gen_shader) return std::unexpected(gen_shader.error());
-    const VkDescriptorSetLayout gen_set = s.generate_layout.handle();
-    rhi::ComputePipeline::CreateInfo ci{};
-    ci.shader = *gen_shader;
-    ci.set_layouts = {&gen_set, 1};
-    auto generate = cache.create_compute_pipeline(ci);
-    if (!generate) return std::unexpected(generate.error());
-    s.generate = std::move(*generate);
-    ci.entry = "finalize_main";
-    auto finalize = cache.create_compute_pipeline(ci);
-    if (!finalize) return std::unexpected(finalize.error());
-    s.finalize = std::move(*finalize);
-
-    auto draw_shader = cache.load(cooked_shader_dir + "/grass.spv");
-    if (!draw_shader) return std::unexpected(draw_shader.error());
-    const VkPushConstantRange push{VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(GrassDrawPush)};
-    const VkDescriptorSetLayout draw_set = s.draw_layout.handle();
-    rhi::GraphicsPipeline::CreateInfo gi{};
-    gi.vertex = *draw_shader;
-    gi.fragment = *draw_shader;
-    gi.color_formats = gbuffer_color_formats;
-    gi.depth_format = gbuffer_depth_format;
-    gi.depth_compare_op = VK_COMPARE_OP_LESS_OR_EQUAL; // standard [0,1] depth
-    gi.cull_mode = VK_CULL_MODE_NONE;                  // blades are two-sided
-    gi.set_layouts = {&draw_set, 1};
-    gi.push_constants = {&push, 1};
-    auto draw = cache.create_graphics_pipeline(gi);
-    if (!draw) return std::unexpected(draw.error());
-    s.draw = std::move(*draw);
+    if (auto r = out.create_pipelines(cache, cooked_shader_dir); !r) {
+        return std::unexpected(r.error());
+    }
 
     std::vector<std::uint32_t> indices;
     append_strip(indices, grass_near_segments);
@@ -236,6 +142,15 @@ GrassPass::create(const rhi::Device& device, rhi::GpuAllocator& allocator,
                                             wind_field_format);
     if (!calm_view) return std::unexpected(calm_view.error());
     s.calm_wind_view = std::move(*calm_view);
+    const std::uint8_t k_no_albedo[4] = {0, 0, 0, 0};
+    auto no_albedo = rhi::upload_device_image(allocator, transfer, k_no_albedo,
+                                              sizeof(k_no_albedo), {1, 1}, gbuffer_albedo_format);
+    if (!no_albedo) return std::unexpected(no_albedo.error());
+    s.no_albedo = std::move(*no_albedo);
+    auto no_albedo_view = rhi::create_image_view(device.handle(), s.no_albedo.handle(),
+                                                 gbuffer_albedo_format);
+    if (!no_albedo_view) return std::unexpected(no_albedo_view.error());
+    s.no_albedo_view = std::move(*no_albedo_view);
     auto sampler = rhi::create_sampler(device.handle(), rhi::SamplerAddress::clamp_to_edge);
     if (!sampler) return std::unexpected(sampler.error());
     s.sampler = std::move(*sampler);
@@ -259,12 +174,73 @@ GrassPass::create(const rhi::Device& device, rhi::GpuAllocator& allocator,
         auto gen_db = rhi::DescriptorBuffer::create(device, allocator, s.fns, s.generate_layout);
         if (!gen_db) return std::unexpected(gen_db.error());
         slot.generate_set = std::move(*gen_db);
+        auto ground_db = rhi::DescriptorBuffer::create(device, allocator, s.fns, s.ground_layout);
+        if (!ground_db) return std::unexpected(ground_db.error());
+        slot.ground_set = std::move(*ground_db);
         auto draw_db = rhi::DescriptorBuffer::create(device, allocator, s.fns, s.draw_layout);
         if (!draw_db) return std::unexpected(draw_db.error());
         slot.draw_set = std::move(*draw_db);
         if (auto r = out.reserve(slot, 1); !r) return std::unexpected(r.error());
     }
     return out;
+}
+
+std::expected<void, core::Error> GrassPass::create_pipelines(rhi::PipelineCache& cache,
+                                                             const std::string& dir) {
+    State& s = *state_;
+    const rhi::Device& device = *s.device;
+    const auto make_layout = [&](std::span<const rhi::DescriptorBinding> bindings,
+                                 rhi::DescriptorSetLayout& out) -> std::expected<void, core::Error> {
+        auto layout = rhi::DescriptorSetLayout::create(device, s.fns, bindings);
+        if (!layout) return std::unexpected(layout.error());
+        out = std::move(*layout);
+        return {};
+    };
+    const auto gen_bindings = generate_bindings();
+    if (auto r = make_layout(gen_bindings, s.generate_layout); !r) return r;
+    const auto gnd_bindings = ground_bindings();
+    if (auto r = make_layout(gnd_bindings, s.ground_layout); !r) return r;
+    const auto drw_bindings = draw_bindings();
+    if (auto r = make_layout(drw_bindings, s.draw_layout); !r) return r;
+
+    const auto compute = [&](const std::string& file, const char* entry,
+                             const rhi::DescriptorSetLayout& layout,
+                             rhi::ManagedPipeline& out) -> std::expected<void, core::Error> {
+        auto shader = cache.load(dir + "/" + file);
+        if (!shader) return std::unexpected(shader.error());
+        const VkDescriptorSetLayout set = layout.handle();
+        rhi::ComputePipeline::CreateInfo ci{};
+        ci.shader = *shader;
+        if (entry != nullptr) ci.entry = entry;
+        ci.set_layouts = {&set, 1};
+        auto pipeline = cache.create_compute_pipeline(ci);
+        if (!pipeline) return std::unexpected(pipeline.error());
+        out = std::move(*pipeline);
+        return {};
+    };
+    if (auto r = compute("grass_generate.spv", nullptr, s.generate_layout, s.generate); !r) return r;
+    if (auto r = compute("grass_generate.spv", "finalize_main", s.generate_layout, s.finalize); !r) {
+        return r;
+    }
+    if (auto r = compute("grass_ground.spv", nullptr, s.ground_layout, s.ground); !r) return r;
+
+    auto draw_shader = cache.load(dir + "/grass.spv");
+    if (!draw_shader) return std::unexpected(draw_shader.error());
+    const VkPushConstantRange push{VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(GrassDrawPush)};
+    const VkDescriptorSetLayout draw_set = s.draw_layout.handle();
+    rhi::GraphicsPipeline::CreateInfo gi{};
+    gi.vertex = *draw_shader;
+    gi.fragment = *draw_shader;
+    gi.color_formats = gbuffer_color_formats;
+    gi.depth_format = gbuffer_depth_format;
+    gi.depth_compare_op = VK_COMPARE_OP_LESS_OR_EQUAL; // standard [0,1] depth
+    gi.cull_mode = VK_CULL_MODE_NONE;                  // blades are two-sided
+    gi.set_layouts = {&draw_set, 1};
+    gi.push_constants = {&push, 1};
+    auto draw = cache.create_graphics_pipeline(gi);
+    if (!draw) return std::unexpected(draw.error());
+    s.draw = std::move(*draw);
+    return {};
 }
 
 std::expected<void, core::Error> GrassPass::reserve(Slot& slot, std::uint32_t blades) {
@@ -284,6 +260,12 @@ std::expected<void, core::Error> GrassPass::reserve(Slot& slot, std::uint32_t bl
     slot.blades = std::move(*buffer);
     slot.blade_capacity = blades;
     return {};
+}
+
+float grass_pixels_per_metre(const glm::mat4& projection, std::uint32_t height) {
+    // A perspective projection has w = -z (column 2, row 3); an orthographic one does not.
+    if (std::abs(projection[2][3]) < 0.5F) return 0.0F;
+    return 0.5F * static_cast<float>(height) * std::abs(projection[1][1]);
 }
 
 std::expected<GrassOutput, core::Error>
@@ -313,7 +295,8 @@ GrassPass::add_to_graph(rhi::RenderGraph& graph, std::uint32_t slot_index,
     // device — no graph barrier needed for the params.
     const ViewMotion motion =
         gbuffer != nullptr ? gbuffer->motion : ViewMotion::still(frame.draw_view_proj);
-    const GrassParamsGpu params = make_params(frame, settings, grid, capacity, tiles, motion);
+    const GrassParamsGpu params = grass_detail::make_params(frame, settings, grid, capacity, tiles,
+                                                            motion, extent, gbuffer != nullptr);
     std::memcpy(slot.params.mapped(), &params, sizeof(params));
     if (auto f = slot.params.flush(0, kParamsBytes); !f) return std::unexpected(f.error());
 
@@ -323,22 +306,28 @@ GrassPass::add_to_graph(rhi::RenderGraph& graph, std::uint32_t slot_index,
     const VkDeviceAddress params_addr = rhi::buffer_device_address(vk, slot.params);
     const VkDeviceAddress blades_addr = rhi::buffer_device_address(vk, slot.blades);
     const VkDeviceSize blades_bytes = static_cast<VkDeviceSize>(slot.blade_capacity) * kBladeBytes;
+    constexpr VkImageLayout k_read = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
     slot.generate_set.write_uniform_buffer(0, params_addr, kParamsBytes);
     slot.generate_set.write_storage_buffer(1, blades_addr, blades_bytes);
     slot.generate_set.write_storage_buffer(2, rhi::buffer_device_address(vk, slot.args), kArgsBytes);
     slot.generate_set.write_sampler(3, s.sampler.handle());
+    slot.ground_set.write_uniform_buffer(0, params_addr, kParamsBytes);
+    slot.ground_set.write_sampler(1, s.sampler.handle());
     for (std::uint32_t k = 0; k < grass_max_height_tiles; ++k) {
         const VkImageView view = k < tiles.size() ? tiles[k].view : s.flat_height_view.handle();
-        slot.generate_set.write_sampled_image(4 + k, view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+        slot.generate_set.write_sampled_image(4 + k, view, k_read);
+        slot.ground_set.write_sampled_image(2 + k, view, k_read);
+    }
+    if (gbuffer == nullptr) { // no root tint (look.w = 0): stand-ins
+        slot.generate_set.write_sampled_image(8, s.no_albedo_view.handle(), k_read);
+        slot.generate_set.write_sampled_image(9, s.flat_height_view.handle(), k_read);
     }
     slot.draw_set.write_uniform_buffer(0, params_addr, kParamsBytes);
     slot.draw_set.write_storage_buffer(1, blades_addr, blades_bytes);
     slot.draw_set.write_sampler(3, s.sampler.handle());
     if (!frame.wind.valid()) {
-        slot.draw_set.write_sampled_image(2, s.calm_wind_view.handle(),
-                                          VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-        slot.draw_set.write_sampled_image(4, s.calm_wind_view.handle(),
-                                          VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+        slot.draw_set.write_sampled_image(2, s.calm_wind_view.handle(), k_read);
+        slot.draw_set.write_sampled_image(4, s.calm_wind_view.handle(), k_read);
     }
 
     GrassOutput out;
@@ -355,11 +344,27 @@ GrassPass::add_to_graph(rhi::RenderGraph& graph, std::uint32_t slot_index,
             vkCmdFillBuffer(ctx.cmd(), ctx.resolve(args).buffer, 0, kArgsBytes, 0);
         });
 
+    if (gbuffer != nullptr && (settings.ground_cover > 0.0F || settings.far_ground_cover > 0.0F)) {
+        add_ground_cover(graph, slot, *gbuffer, extent);
+    }
+
     const glm::uvec2 groups = grid.groups;
-    (void)graph.add_pass("grass_generate", rhi::PassType::compute)
-        .writes(args, rhi::ResourceUsage::buffer_write_compute)
+    auto generate = graph.add_pass("grass_generate", rhi::PassType::compute);
+    if (gbuffer != nullptr) {
+        generate.reads(gbuffer->albedo, rhi::ResourceUsage::sampled_compute)
+            .reads(gbuffer->depth, rhi::ResourceUsage::sampled_compute);
+    }
+    generate.writes(args, rhi::ResourceUsage::buffer_write_compute)
         .writes(blades, rhi::ResourceUsage::buffer_write_compute)
-        .execute([state = &s, set = &slot.generate_set, groups](rhi::PassContext& ctx) {
+        .execute([state = &s, set = &slot.generate_set, groups,
+                  targets = gbuffer != nullptr ? std::optional<GBufferTargets>(*gbuffer)
+                                               : std::nullopt](rhi::PassContext& ctx) {
+            if (targets) { // the transient views exist once the graph compiled
+                set->write_sampled_image(8, ctx.resolve(targets->albedo).view,
+                                         VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+                set->write_sampled_image(9, ctx.resolve(targets->depth).view,
+                                         VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+            }
             const VkCommandBuffer cmd = ctx.cmd();
             vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, state->generate.handle());
             set->bind(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, state->generate.layout(), 0);
@@ -375,9 +380,32 @@ GrassPass::add_to_graph(rhi::RenderGraph& graph, std::uint32_t slot_index,
             vkCmdDispatch(cmd, 1, 1, 1);
         });
 
-    if (gbuffer == nullptr) return out;
+    if (gbuffer != nullptr) add_draw(graph, slot, *gbuffer, extent, frame, out);
+    return out;
+}
 
-    const GBufferTargets t = *gbuffer;
+void GrassPass::add_ground_cover(rhi::RenderGraph& graph, Slot& slot, const GBufferTargets& t,
+                                 VkExtent2D extent) {
+    const glm::uvec2 groups((extent.width + 7) / 8, (extent.height + 7) / 8);
+    (void)graph.add_pass("grass_ground", rhi::PassType::compute)
+        .reads(t.depth, rhi::ResourceUsage::sampled_compute)
+        .writes(t.albedo, rhi::ResourceUsage::storage_read_write)
+        .execute([state = state_.get(), set = &slot.ground_set, t, groups](rhi::PassContext& ctx) {
+            set->write_sampled_image(6, ctx.resolve(t.depth).view,
+                                     VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+            set->write_storage_image(7, ctx.resolve(t.albedo).view, VK_IMAGE_LAYOUT_GENERAL);
+            const VkCommandBuffer cmd = ctx.cmd();
+            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, state->ground.handle());
+            set->bind(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, state->ground.layout(), 0);
+            vkCmdDispatch(cmd, groups.x, groups.y, 1);
+        });
+}
+
+void GrassPass::add_draw(rhi::RenderGraph& graph, Slot& slot, const GBufferTargets& t,
+                         VkExtent2D extent, const GrassFrame& frame, const GrassOutput& out) {
+    State& s = *state_;
+    const rhi::ResourceHandle args = out.args;
+    const rhi::ResourceHandle blades = out.blades;
     const rhi::ResourceHandle wind = frame.wind.texture;
     // Without last frame's field the blades get no field motion (this
     // frame's field on both sides).
@@ -398,7 +426,7 @@ GrassPass::add_to_graph(rhi::RenderGraph& graph, std::uint32_t slot_index,
         .writes(t.velocity, rhi::ResourceUsage::color_attachment)
         .writes(t.depth, rhi::ResourceUsage::depth_attachment)
         .execute([state = &s, set = &slot.draw_set, t, args, extent, wind, wind_prev,
-                  far_base = capacity.near](rhi::PassContext& ctx) {
+                  far_base = out.capacity.near](rhi::PassContext& ctx) {
             const VkCommandBuffer cmd = ctx.cmd();
             if (wind.valid()) { // the transient views exist once the graph compiled
                 set->write_sampled_image(2, ctx.resolve(wind).view,
@@ -464,7 +492,6 @@ GrassPass::add_to_graph(rhi::RenderGraph& graph, std::uint32_t slot_index,
             vkCmdDrawIndexedIndirect(cmd, args_buffer, offsetof(GrassArgsGpu, far), 1, stride);
             vkCmdEndRendering(cmd);
         });
-    return out;
 }
 
 } // namespace engine::renderer

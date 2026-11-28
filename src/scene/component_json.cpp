@@ -408,7 +408,17 @@ void read_primitive_fields(JsonFields& f, Primitive& p) {
             {"terrain_only", g.terrain_only},
             {"ground_y", g.ground_y},
             {"lod_start", g.lod_start},
-            {"far_density", g.far_density}};
+            {"far_density", g.far_density},
+            {"clump_size", g.clump_size},
+            {"clump_strength", g.clump_strength},
+            {"color_variation", g.color_variation},
+            {"dry_color", vec3_json(g.dry_color)},
+            {"dry_fraction", g.dry_fraction},
+            {"root_tint", g.root_tint},
+            {"ground_cover_color", vec3_json(g.ground_cover_color)},
+            {"ground_cover", g.ground_cover},
+            {"far_ground_cover", g.far_ground_cover},
+            {"min_blade_px", g.min_blade_px}};
 }
 
 // "#rrggbb" (sRGB) or linear [r, g, b] in 0..1.
@@ -444,6 +454,15 @@ void decode_grass(JsonFields& f, renderer::GrassSettings& g) {
     f.boolean("terrain_only", g.terrain_only);
     f.number("ground_y", g.ground_y, -100000.0F, 100000.0F);
     f.number("lod_start", g.lod_start, 0.0F, 1.0F).number("far_density", g.far_density, 0.0F, 1.0F);
+    f.number("clump_size", g.clump_size, 0.0F, 8.0F)
+        .number("clump_strength", g.clump_strength, 0.0F, 0.9F)
+        .number("color_variation", g.color_variation, 0.0F, 1.0F);
+    read_color3(f, "dry_color", g.dry_color);
+    f.number("dry_fraction", g.dry_fraction, 0.0F, 1.0F).number("root_tint", g.root_tint, 0.0F, 1.0F);
+    read_color3(f, "ground_cover_color", g.ground_cover_color);
+    f.number("ground_cover", g.ground_cover, 0.0F, 1.0F)
+        .number("far_ground_cover", g.far_ground_cover, 0.0F, 1.0F)
+        .number("min_blade_px", g.min_blade_px, 0.0F, 8.0F);
 }
 
 // ---- Merge helper --------------------------------------------------------
