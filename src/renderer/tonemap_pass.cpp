@@ -155,6 +155,16 @@ TonemapPass::create(const rhi::Device& device, rhi::GpuAllocator& allocator,
     out.fallback_exposure_address_ =
         rhi::buffer_device_address(device.handle(), out.fallback_exposure_buffer_);
 
+    auto fallback_lut =
+        allocator.create_image_3d(color_lut_format, VkExtent3D{1, 1, 1}, VK_IMAGE_USAGE_SAMPLED_BIT);
+    if (!fallback_lut) return std::unexpected(fallback_lut.error());
+    auto fallback_view =
+        rhi::create_image_view(device.handle(), fallback_lut->handle(), color_lut_format,
+                               VK_IMAGE_ASPECT_COLOR_BIT, 1, VK_IMAGE_VIEW_TYPE_3D);
+    if (!fallback_view) return std::unexpected(fallback_view.error());
+    out.fallback_lut_ = std::move(*fallback_lut);
+    out.fallback_lut_view_ = std::move(*fallback_view);
+
     auto params = host_buffer(sizeof(PostParams), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT);
     if (!params) return std::unexpected(params.error());
     out.params_ = std::move(*params);
@@ -180,14 +190,24 @@ TonemapPass::add_to_graph(rhi::RenderGraph& graph, rhi::ResourceHandle hdr,
         exposure_buffer != 0 ? exposure_buffer : fallback_exposure_address_;
     const auto op_index = static_cast<std::size_t>(
         std::clamp(static_cast<int>(look.op), 0, static_cast<int>(pipelines_.size()) - 1));
-    // Without a LUT the slot still needs a valid image: the HDR input (the
-    // shader does not read it then).
-    const VkImageView lut_view = params.lut.x > 0.0F ? look.lut->view() : VK_NULL_HANDLE;
+    // Without a LUT the Texture3D slot still needs a valid 3D image: the
+    // 1x1x1 fallback, imported with an undefined layout every frame (its
+    // contents are never read), so the graph transitions it for sampling.
+    VkImageView lut_view = params.lut.x > 0.0F ? look.lut->view() : VK_NULL_HANDLE;
+    rhi::ResourceHandle fallback{};
+    if (lut_view == VK_NULL_HANDLE) {
+        fallback = graph.import_image("tonemap_fallback_lut", fallback_lut_.handle(),
+                                      fallback_lut_view_.handle(), color_lut_format,
+                                      VkExtent2D{1, 1}, VK_IMAGE_LAYOUT_UNDEFINED,
+                                      VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+        lut_view = fallback_lut_view_.handle();
+    }
 
-    graph.add_pass("tonemap", rhi::PassType::graphics)
-        .reads(hdr, rhi::ResourceUsage::sampled)
-        .writes(output, rhi::ResourceUsage::color_attachment)
-        .execute([this, hdr, output, extent, exposure_addr, op_index,
+    auto pass = graph.add_pass("tonemap", rhi::PassType::graphics);
+    pass.reads(hdr, rhi::ResourceUsage::sampled)
+        .writes(output, rhi::ResourceUsage::color_attachment);
+    if (fallback.valid()) pass.reads(fallback, rhi::ResourceUsage::sampled);
+    pass.execute([this, hdr, output, extent, exposure_addr, op_index,
                   lut_view](rhi::PassContext& ctx) {
             const VkCommandBuffer cmd = ctx.cmd();
             constexpr VkImageLayout ro = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
@@ -197,8 +217,7 @@ TonemapPass::add_to_graph(rhi::RenderGraph& graph, rhi::ResourceHandle hdr,
             frame_descriptor_.write_sampler(s[r_sampler], sampler_.handle());
             frame_descriptor_.write_storage_buffer(s[r_exposure], exposure_addr, sizeof(float));
             frame_descriptor_.write_uniform_buffer(s[r_post], params_address_, sizeof(PostParams));
-            frame_descriptor_.write_sampled_image(
-                s[r_lut], lut_view != VK_NULL_HANDLE ? lut_view : hdr_view, ro);
+            frame_descriptor_.write_sampled_image(s[r_lut], lut_view, ro);
 
             VkRenderingAttachmentInfo color{};
             color.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;

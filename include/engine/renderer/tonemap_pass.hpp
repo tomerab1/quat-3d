@@ -87,6 +87,11 @@ private:
     std::array<rhi::ManagedPipeline, tonemap_operator_names.size()> pipelines_;
     rhi::Sampler                   sampler_;
 
+    // 1x1x1 3D image bound to the LUT slot when no look LUT is set (the slot
+    // is a Texture3D; the shader does not sample it then). Imported into the
+    // graph each frame, which moves it to SHADER_READ_ONLY_OPTIMAL.
+    rhi::GpuImage   fallback_lut_;
+    rhi::ImageView  fallback_lut_view_;
     rhi::GpuBuffer  fallback_exposure_buffer_;  // bound when auto-exposure is off
     VkDeviceAddress fallback_exposure_address_ = 0;
     rhi::GpuBuffer  params_;                    // PostParams, host-visible

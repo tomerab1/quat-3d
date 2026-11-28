@@ -50,7 +50,7 @@ Texture2D               g_hdr;
 SamplerState            g_sampler;  // bilinear, clamp to edge
 StructuredBuffer<float> g_exposure; // [0] = adapted average luminance
 ConstantBuffer<PostParams> g_post;
-Texture2D               g_lut;      // look LUT strip (lib/color.slang)
+Texture3D               g_lut;      // look LUT (lib/color.slang sample_lut)
 
 // Lateral chromatic aberration: the image is magnified slightly differently
 // per wavelength. Five taps along the radial direction, each weighted by a
@@ -123,7 +123,7 @@ float4 post_main<T : ITonemapper>(VsOut input, T op) {
     float3 ldr = linear_to_srgb(op.map(hdr));
     if (g_post.lut.x > 0.0) {
         const float3 coord = (ldr - g_post.lut_domain.xyz) * g_post.lut_scale.xyz;
-        const float3 looked = sample_lut_strip(g_lut, g_sampler, coord, g_post.lut.y);
+        const float3 looked = sample_lut(g_lut, g_sampler, coord, g_post.lut.y);
         ldr = lerp(ldr, looked, g_post.lut.x);
     }
     if (g_post.grain.x > 0.0) {

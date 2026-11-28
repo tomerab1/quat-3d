@@ -654,3 +654,19 @@ it reordered, and an unvalidated ini file. Each lived in code only reachable
 through an ImGui frame. **Rule:** UI actions are plain functions over the
 registry or the state struct, called by the widget and by GoogleTest;
 anything read from disk goes through a pure, tested parser.
+
+## Shader and C++ checks without vcpkg or slangc (R20)
+
+R20's review fixes touched the RHI, the tonemap shader and the camera
+codec in a container where vcpkg cannot fetch sources and `slangc` is not
+installed. Ubuntu still packages enough for useful checks:
+`apt-get install libvulkan-memory-allocator-dev libgtest-dev libglm-dev
+nlohmann-json3-dev libvulkan-dev` lets `g++-13 -std=c++23 -fsyntax-only`
+check RHI / renderer files (clang 18 with libstdc++ has no `std::expected`),
+and CPU-only tests link against `-lgtest -lgtest_main`. PyPI's `slangpy`
+bundles the Slang compiler: `create_device(type=vulkan, include_paths=...)`
+on `/opt/lavapipe/lvp_icd.json`, then `load_module` + `link_program` with
+the entry points compiles a shader (a deliberately broken copy must fail
+first, to prove the check is real). **Rule:** before pushing shader or
+RHI changes from a cloud container, compile them this way; it is not a
+substitute for CI's full build and GPU tests.

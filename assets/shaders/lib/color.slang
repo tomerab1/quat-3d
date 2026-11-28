@@ -143,19 +143,10 @@ public float3 grade(Grading g, float3 c) {
 
 // ---- Look LUT ----------------------------------------------------------------
 
-// A size^3 LUT unwrapped into a (size * size) x size strip: blue selects the
-// slice, red runs within a slice, green down it. Trilinear: bilinear within
-// the two neighbouring slices (texel centres only, so no bleeding across a
-// slice edge), then a lerp between them. `c` is in [0, 1].
-public float3 sample_lut_strip(Texture2D strip, SamplerState linear_clamp, float3 c, float size) {
-    c = saturate(c);
-    const float n1 = size - 1.0;
-    const float slice = c.b * n1;
-    const float s0 = min(floor(slice), n1 - 1.0);
-    const float f = slice - s0;
-    const float u = (c.r * n1 + 0.5) / (size * size);
-    const float v = (c.g * n1 + 0.5) / size;
-    const float3 a = strip.SampleLevel(linear_clamp, float2(u + s0 / size, v), 0.0).rgb;
-    const float3 b = strip.SampleLevel(linear_clamp, float2(u + (s0 + 1.0) / size, v), 0.0).rgb;
-    return lerp(a, b, f);
+// A size^3 LUT as a 3D texture (x red, y green, z blue): one hardware
+// trilinear lookup at the texel centres that span [0, 1], so the end points
+// map exactly to the table's first and last entries. `c` is in [0, 1].
+public float3 sample_lut(Texture3D lut, SamplerState linear_clamp, float3 c, float size) {
+    const float3 uvw = (saturate(c) * (size - 1.0) + 0.5) / size;
+    return lut.SampleLevel(linear_clamp, uvw, 0.0).rgb;
 }

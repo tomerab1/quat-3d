@@ -12,7 +12,10 @@
 #include <glm/glm.hpp>
 #include <gtest/gtest.h>
 
+#include "engine/renderer/physical_camera.hpp"
 #include "engine/renderer/render_settings.hpp"
+#include "engine/scene/components.hpp"
+#include "engine/scene/scene.hpp"
 #include "remote/world_fixture.hpp"
 #include "support/expect_ok.hpp"
 
@@ -117,6 +120,10 @@ protected:
     engine::renderer::RenderSettings settings;
     engine::renderer::CloudSettings& clouds = settings.clouds;
     bool                   playing = false;
+    // Mirror the game build (no editor): the view renders through the active
+    // scene camera, so camera.get reports that camera's lens and camera.set
+    // writes the merged lens back into it (src/app/remote_bridge.cpp).
+    bool                   through_scene_camera = false;
     std::vector<fs::path>  saved;
     std::vector<fs::path>  loaded;
     std::vector<fs::path>  spawned;
@@ -141,8 +148,19 @@ protected:
 
     void SetUp() override {
         services.project_root = [this] { return root.path(); };
-        services.camera_get = [this] { return camera; };
-        services.camera_set = [this](const CameraPose& p) { camera = p; };
+        services.camera_get = [this] {
+            CameraPose p = camera;
+            if (through_scene_camera) p.lens = s::active_camera_lens(reg(), p.lens);
+            return p;
+        };
+        services.camera_set = [this](const CameraPose& p) {
+            camera = p;
+            camera.lens = engine::renderer::sanitized(p.lens);
+            if (!through_scene_camera) return;
+            if (const entt::entity cam = s::find_active_camera(reg()); cam != entt::null) {
+                reg().get<s::Camera>(cam).lens = camera.lens;
+            }
+        };
         services.render_settings = &settings;
         // Terrain tiles: height lx + 2 lz above the anchor where lx >= 0.
         services.terrain_height = [](float x, float z) -> std::optional<float> {
@@ -360,6 +378,30 @@ TEST_F(WorldWithServices, CameraSetMergesTheLens) {
 
 // R20: a look LUT set over render.settings.set must be a valid .cube inside
 // the project; the parser's error comes back and nothing changes.
+// PR #79 review: without the editor, a pose-only camera.set must not replace
+// the scene camera's authored lens with the fly camera's defaults.
+TEST_F(WorldWithServices, PoseOnlyCameraSetKeepsTheSceneCamerasLens) {
+    through_scene_camera = true;
+    const Json made = ok("scene.create",
+                         {{"name", "shot"},
+                          {"components",
+                           {{"transform", {{"position", {0, 1, 5}}}},
+                            {"camera", {{"active", true}, {"aperture_f", 1.4}, {"focus_distance_m", 3},
+                                        {"focal_length_mm", 85}}}}}});
+    const entt::entity cam = entity(made["id"]);
+    const Json got = ok("camera.get");
+    EXPECT_FLOAT_EQ(got["lens"]["aperture_f"].get<float>(), 1.4F) << "reports the rendering lens";
+    ok("camera.set", {{"position", {4, 2, 8}}});
+    const engine::renderer::PhysicalCamera& lens = reg().get<s::Camera>(cam).lens;
+    EXPECT_FLOAT_EQ(lens.aperture_f, 1.4F);
+    EXPECT_FLOAT_EQ(lens.focus_distance_m, 3.0F);
+    EXPECT_FLOAT_EQ(lens.focal_length_mm, 85.0F);
+    // A lens edit still merges into the scene camera's lens.
+    ok("camera.set", {{"lens", {{"aperture_f", 2.8}}}});
+    EXPECT_FLOAT_EQ(reg().get<s::Camera>(cam).lens.aperture_f, 2.8F);
+    EXPECT_FLOAT_EQ(reg().get<s::Camera>(cam).lens.focus_distance_m, 3.0F);
+}
+
 TEST_F(WorldWithServices, LookLutIsValidatedOnSet) {
     fs::create_directories(root.path() / "luts");
     {

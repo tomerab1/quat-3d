@@ -306,6 +306,36 @@ GpuAllocator::create_image(VkFormat format, VkExtent2D extent, VkImageUsageFlags
     return image;
 }
 
+std::expected<GpuImage, core::Error>
+GpuAllocator::create_image_3d(VkFormat format, VkExtent3D extent, VkImageUsageFlags usage) {
+    VkImageCreateInfo image_info{};
+    image_info.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+    image_info.imageType = VK_IMAGE_TYPE_3D;
+    image_info.format = format;
+    image_info.extent = extent;
+    image_info.mipLevels = 1;
+    image_info.arrayLayers = 1;
+    image_info.samples = VK_SAMPLE_COUNT_1_BIT;
+    image_info.tiling = VK_IMAGE_TILING_OPTIMAL;
+    image_info.usage = usage;
+    image_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    image_info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+
+    VmaAllocationCreateInfo alloc_info{};
+    alloc_info.usage = VMA_MEMORY_USAGE_AUTO;
+
+    GpuImage image;
+    if (VkResult r = vmaCreateImage(allocator_, &image_info, &alloc_info,
+                                    &image.image_, &image.allocation_, nullptr);
+        r != VK_SUCCESS) {
+        return fail(std::format("vmaCreateImage (3D) failed ({})", static_cast<int>(r)));
+    }
+    image.allocator_ = allocator_;
+    image.format_ = format;
+    image.extent_ = extent;
+    return image;
+}
+
 // ===========================================================================
 // Staging upload
 // ===========================================================================
