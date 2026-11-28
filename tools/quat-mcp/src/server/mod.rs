@@ -14,6 +14,8 @@ mod bt_outline;
 #[allow(clippy::doc_markdown)]
 mod debug_tools;
 #[allow(clippy::doc_markdown)]
+mod geometry_tools;
+#[allow(clippy::doc_markdown)]
 mod input_tools;
 #[allow(clippy::doc_markdown)]
 mod physics;
@@ -155,6 +157,7 @@ impl QuatServer {
             + Self::shader_tools()
             + Self::project_tools()
             + Self::time_tools()
+            + Self::geometry_tools()
             + Self::input_tools()
     }
 

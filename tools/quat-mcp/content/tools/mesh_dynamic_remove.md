@@ -1,0 +1,1 @@
+Delete dynamic mesh `id` from the store. Entities whose `dynamic_mesh` names it stop drawing it, and their static mesh colliders are removed. The GPU memory is freed once no frame in flight uses it. Returns `{removed}`, which is false if no such mesh existed.

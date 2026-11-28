@@ -187,7 +187,7 @@ public:
 
     // Runtime-generated meshes whose static colliders the physics steps keep
     // in sync (R23.2). May be null (no dynamic mesh colliders).
-    void set_dynamic_meshes(const engine::scene::DynamicMeshStore* store) { dynamic_meshes_ = store; }
+    void set_dynamic_meshes(engine::scene::DynamicMeshStore* store) { dynamic_meshes_ = store; }
 
     // ---- Navmesh / terrain -------------------------------------------------
     // A navmesh describes the geometry it was baked from: drop it when that
@@ -275,7 +275,7 @@ private:
         terrain_bodies_; // streamed tiles' play-mode physics bodies
 
     engine::scene::GroundHeightFn  ground_height_at_;
-    const engine::scene::DynamicMeshStore* dynamic_meshes_ = nullptr;
+    engine::scene::DynamicMeshStore* dynamic_meshes_ = nullptr;
     engine::scene::FootGroundProbe foot_probe_;
     std::vector<std::uint32_t>     probe_owners_; // foot_probe_ scratch: owners to skip
     std::optional<AudioRuntime>   audio_;

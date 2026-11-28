@@ -9,6 +9,7 @@
 #include <nlohmann/json.hpp>
 
 #include "engine/physics/physics_world.hpp"
+#include "engine/scene/dynamic_mesh_api.hpp"
 #include "engine/scene/components.hpp"
 #include "engine/scene/scene.hpp"
 #include "engine/scene/world_clock_api.hpp"
@@ -105,6 +106,49 @@ void register_time(LuaVm& vm, ApiContext& c) {
               return json_to_lua(s.lua_state(), scene::world_clock_report(**r.value));
           }));
     vm.expose("time", t);
+}
+
+// geometry (R23.2): runtime procedural geometry, the same JSON surface as the
+// remote geometry.* / mesh.dynamic.* methods (scene/dynamic_mesh_api.hpp):
+// tables in, tables out.
+void register_geometry(LuaVm& vm, ApiContext& c) {
+    ApiContext* ctx = &c;
+    lua_State* L = vm.state();
+    sol::table g(L, sol::create);
+    using Api = std::expected<nlohmann::json, core::Error> (*)(scene::DynamicMeshStore&, const nlohmann::json&);
+    const auto store_call = [ctx, L](const char* name, Api api) {
+        return bind(L, [ctx, name, api](const sol::table& params, sol::this_state s) -> Result<sol::object> {
+            if (ctx->services.dynamic_meshes == nullptr) {
+                return fail(std::string(name) + ": no dynamic mesh store in this build");
+            }
+            auto json = lua_to_json(params, true);
+            if (!json.value) return fail(std::string(name) + ": " + json.value.error().message);
+            auto out = api(*ctx->services.dynamic_meshes, *json.value);
+            if (!out) return fail(std::string(name) + ": " + out.error().message);
+            return json_to_lua(s.lua_state(), *out);
+        });
+    };
+    g.set("generate", bind(L, [ctx](const sol::table& params, sol::this_state s) -> Result<sol::object> {
+              auto json = lua_to_json(params, true);
+              if (!json.value) return fail("generate: " + json.value.error().message);
+              auto out = scene::geometry_generate(ctx->services.dynamic_meshes, *json.value);
+              if (!out) return fail("generate: " + out.error().message);
+              return json_to_lua(s.lua_state(), *out);
+          }));
+    g.set("polygon", bind(L, [](const sol::table& params, sol::this_state s) -> Result<sol::object> {
+              auto json = lua_to_json(params, true);
+              if (!json.value) return fail("polygon: " + json.value.error().message);
+              auto out = scene::geometry_polygon(*json.value);
+              if (!out) return fail("polygon: " + out.error().message);
+              return json_to_lua(s.lua_state(), *out);
+          }));
+    g.set("set_mesh", store_call("set_mesh", &scene::dynamic_mesh_set));
+    g.set("update_vertices", store_call("update_vertices", &scene::dynamic_mesh_update));
+    g.set("remove_mesh", store_call("remove_mesh", &scene::dynamic_mesh_remove));
+    g.set("mesh_info", store_call("mesh_info", [](scene::DynamicMeshStore& st, const nlohmann::json& p) {
+              return scene::dynamic_mesh_get(st, p);
+          }));
+    vm.expose("geometry", g);
 }
 
 void register_physics(LuaVm& vm, ApiContext& c) {
@@ -244,6 +288,7 @@ void teleport_physics(ApiContext& ctx, entt::registry& r, entt::entity e) {
 void register_services(LuaVm& vm, ApiContext& ctx) {
     register_log(vm, ctx);
     register_time(vm, ctx);
+    register_geometry(vm, ctx);
     register_physics(vm, ctx);
     register_audio(vm, ctx);
 }

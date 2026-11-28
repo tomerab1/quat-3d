@@ -649,6 +649,7 @@ std::expected<void, engine::core::Error> WorldRuntime::begin_play(engine::scene:
     if (scripts_) {
         engine::script::ScriptServices services = script_services_;
         services.physics = &*play_physics_;
+        services.dynamic_meshes = dynamic_meshes_;
         scripts_->set_services(std::move(services));
         if (auto started = scripts_->start(scene); !started) {
             std::fprintf(stderr, "[script][warn] scripts disabled: %s\n",

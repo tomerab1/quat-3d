@@ -48,6 +48,7 @@ namespace engine::physics {
 class PhysicsWorld;
 }
 namespace engine::scene {
+class DynamicMeshStore;
 class Scene;
 }
 namespace engine::input {
@@ -92,6 +93,8 @@ struct ScriptServices {
         const std::filesystem::path& absolute)>
         spawn_model;
     std::filesystem::path project_root; // spawn_model paths are relative to it
+    // Runtime-generated meshes (R23.2): the `geometry` table submits here.
+    scene::DynamicMeshStore* dynamic_meshes = nullptr;
 };
 
 class ScriptRuntime {

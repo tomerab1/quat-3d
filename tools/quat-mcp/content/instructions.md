@@ -14,6 +14,8 @@ The weather (`weather_get` / `weather_set`) drives the wind the grass bends in, 
 
 Time of day: `time_set` gives the scene a date, time and place (latitude / longitude); the sun then follows the real Sun (sunrise, sunset, night) and the clock runs with the simulation (`time_scale` speeds it up, 0 freezes it). `time_get` reports the Sun and Moon positions, sunrise / sunset and the Moon's phase; `time_skip` jumps forward or back.
 
+Building at runtime: `geometry_generate` makes roofs (straight skeleton over a footprint; weight 0 edges are gables), walls (a profile swept along a path), extrusions and stones, and stores them by `id`. A `dynamic_mesh` component (`scene_create` / `scene_update`) naming the id shows it, with an optional static mesh collider; put the spec in its `generator` field to keep it in the scene file. `geometry_polygon` offsets, combines and repairs footprints first.
+
 NPC behaviour is a behaviour tree per entity: `bt_leaves` lists the node kinds and leaves, `bt_set` writes a whole tree, `bt_get` shows it with stable node ids for the incremental `bt_add_node` / `bt_move_node` / `bt_remove_node` / `bt_set_params`, and `bt_status` shows what each node did on the last tick during Play.
 
 Physics runs during Play (`sim_play`). `physics_get` / `physics_set` / `physics_apply` read and push bodies, `physics_set_gravity` changes the scene's gravity, and `physics_raycast_all` / `physics_overlap` / `physics_shape_cast` query the world. `events_poll` reports which bodies touched and how hard; pass its `cursor` back to read only new events. `character_move` walks character controllers. Joints (`joint` component) are authored with `scene_update`. Pair these with `debug_pause` / `debug_step` for repeatable experiments.

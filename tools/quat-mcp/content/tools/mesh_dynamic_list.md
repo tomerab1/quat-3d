@@ -1,0 +1,3 @@
+List the meshes in the engine's dynamic mesh store, which holds geometry generated at runtime by `geometry_generate`, `mesh_dynamic_set`, scripts or the game. Each entry reports its version, whether that version is resident on the GPU yet (uploads are spread over frames within a byte budget, and the previous version keeps drawing until then), vertex and triangle counts, size, bounds and a content hash. The `stats` object shows pending uploads and the per-frame upload budget.
+
+Use it to find mesh ids for `dynamic_mesh` components, or to check that an upload finished before taking a `screenshot`.
