@@ -16,6 +16,7 @@
 #include "app/application.hpp"
 #include "app/game_startup.hpp"
 #include "app/remote_bridge.hpp"
+#include "engine/core/env.hpp"
 #include "engine/core/stderr_capture.hpp"
 
 int main() {
@@ -23,7 +24,7 @@ int main() {
     // Created first, destroyed last: it must outlive everything that logs.
     // Editor builds with the UI also capture it for the Console panel.
 #ifdef ENGINE_EDITOR
-    const bool editor_console = std::getenv("QUAT_NO_UI") == nullptr;
+    const bool editor_console = !engine::core::env_flag("QUAT_NO_UI");
 #else
     const bool editor_console = false;
 #endif

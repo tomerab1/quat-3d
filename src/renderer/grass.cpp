@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <numbers>
 
 namespace engine::renderer {
@@ -18,6 +19,11 @@ namespace {
     r = glm::clamp(r, glm::vec2(lo), glm::vec2(hi));
     if (r.y < r.x) std::swap(r.x, r.y);
     return r;
+}
+
+// [0, 1) from the top 24 bits (mantissa-exact; unit_floats in grass_common.slang).
+[[nodiscard]] float unit_float(std::uint32_t h) {
+    return static_cast<float>(h >> 8U) * (1.0F / 16777216.0F);
 }
 
 // Upper bound on the cells any point of which lies within `radius` (in cell
@@ -46,6 +52,18 @@ GrassSettings sanitize(const GrassSettings& in) {
     s.height_m = ordered(s.height_m, -100000.0F, 100000.0F);
     s.lod_start = std::clamp(s.lod_start, 0.0F, 1.0F);
     s.far_density = std::clamp(s.far_density, 0.0F, 1.0F);
+    const auto unit = [](float v) { return std::isfinite(v) ? std::clamp(v, 0.0F, 1.0F) : 0.0F; };
+    s.clump_size = std::isfinite(s.clump_size) ? std::clamp(s.clump_size, 0.0F, 8.0F) : 0.0F;
+    s.clump_strength = std::isfinite(s.clump_strength) ? std::clamp(s.clump_strength, 0.0F, 0.9F)
+                                                       : 0.0F;
+    s.color_variation = unit(s.color_variation);
+    s.dry_color = glm::clamp(s.dry_color, glm::vec3(0.0F), glm::vec3(1.0F));
+    s.dry_fraction = unit(s.dry_fraction);
+    s.root_tint = unit(s.root_tint);
+    s.ground_cover_color = glm::clamp(s.ground_cover_color, glm::vec3(0.0F), glm::vec3(1.0F));
+    s.ground_cover = unit(s.ground_cover);
+    s.far_ground_cover = unit(s.far_ground_cover);
+    s.min_blade_px = std::isfinite(s.min_blade_px) ? std::clamp(s.min_blade_px, 0.0F, 8.0F) : 0.0F;
     return s;
 }
 
@@ -88,6 +106,20 @@ float grass_keep_fraction(const GrassSettings& settings, float distance) {
     return grass_thinning(settings, distance) * edge;
 }
 
+float grass_footprint_keep(const GrassSettings& settings, float distance,
+                           float pixels_per_metre_at_1m) {
+    if (settings.min_blade_px <= 0.0F || pixels_per_metre_at_1m <= 0.0F || distance <= 0.0F) {
+        return 1.0F;
+    }
+    const float width = 0.5F * (settings.width_range.x + settings.width_range.y);
+    const float px = width * pixels_per_metre_at_1m / distance;
+    return std::clamp(px / settings.min_blade_px, grass_min_footprint_keep, 1.0F);
+}
+
+float grass_width_scale(float thinning) {
+    return std::min(1.0F / std::max(thinning, 1e-4F), grass_max_width_scale);
+}
+
 float grass_slope_fade_start(const GrassSettings& settings) {
     if (settings.slope_deg.y >= 90.0F) return -2.0F;
     const float start_deg =
@@ -101,6 +133,41 @@ float grass_slope_keep(const GrassSettings& settings, float normal_y) {
     const float limit = std::cos(settings.slope_deg.y * (std::numbers::pi_v<float> / 180.0F));
     if (start <= limit) return normal_y >= limit ? 1.0F : 0.0F; // no band (min == max)
     return smoothstep(limit, start, normal_y);
+}
+
+float grass_tile_coverage(std::span<const glm::vec3> rects, glm::vec2 centre,
+                          float max_distance) {
+    const auto covered = [&](glm::vec2 p) {
+        for (const glm::vec3& r : rects) {
+            if (p.x >= r.x && p.x <= r.x + r.z && p.y >= r.y && p.y <= r.y + r.z) return true;
+        }
+        return false;
+    };
+    if (!(max_distance > 0.0F) || !covered(centre)) return 0.0F;
+    constexpr int k_directions = 128;
+    constexpr int k_steps = 256;
+    const float step = max_distance / static_cast<float>(k_steps);
+    float nearest = max_distance;
+    for (int d = 0; d < k_directions; ++d) {
+        const float a = static_cast<float>(d) * (2.0F * std::numbers::pi_v<float> / k_directions);
+        const glm::vec2 dir(std::cos(a), std::sin(a));
+        for (int s = 1; s <= k_steps; ++s) {
+            const float t = static_cast<float>(s) * step;
+            if (t >= nearest) break;
+            if (!covered(centre + dir * t)) {
+                nearest = t - step; // last covered sample
+                break;
+            }
+        }
+    }
+    return std::max(nearest, 0.0F);
+}
+
+glm::vec2 grass_cover_fade(const GrassSettings& settings, float tile_coverage, bool has_tiles) {
+    if (!has_tiles) return glm::vec2(std::numeric_limits<float>::infinity());
+    const float end = std::min(tile_coverage, 1.5F * settings.radius);
+    const float start = std::min(settings.radius, end * (2.0F / 3.0F));
+    return {start, end};
 }
 
 GrassCapacity grass_capacity(const GrassSettings& settings) {
@@ -127,18 +194,60 @@ glm::uvec3 grass_pcg3d(glm::uvec3 v) {
     return v;
 }
 
+// The nearest feature point of a jittered grid over the 3x3 neighbouring
+// cells (Worley, "A Cellular Texture Basis Function", SIGGRAPH 1996).
+GrassClump grass_clump(const GrassSettings& settings, glm::vec2 xz) {
+    GrassClump out;
+    if (settings.clump_size <= 0.0F) return out;
+    const float size = settings.clump_size;
+    const glm::ivec2 home(static_cast<int>(std::floor(xz.x / size)),
+                          static_cast<int>(std::floor(xz.y / size)));
+    float best = std::numeric_limits<float>::max();
+    for (int dz = -1; dz <= 1; ++dz) {
+        for (int dx = -1; dx <= 1; ++dx) {
+            const glm::ivec2 c = home + glm::ivec2(dx, dz);
+            const glm::uvec3 h = grass_pcg3d(glm::uvec3(static_cast<std::uint32_t>(c.x),
+                                                        static_cast<std::uint32_t>(c.y),
+                                                        settings.seed ^ grass_clump_salt));
+            const glm::vec2 centre((static_cast<float>(c.x) + unit_float(h.x)) * size,
+                                   (static_cast<float>(c.y) + unit_float(h.y)) * size);
+            const glm::vec2 d = centre - xz;
+            const float d2 = d.x * d.x + d.y * d.y;
+            if (d2 < best) { // first wins on ties (same order as the shader)
+                best = d2;
+                out.centre = centre;
+                out.hash = h.z;
+            }
+        }
+    }
+    return out;
+}
+
+float grass_max_blade_height(const GrassSettings& settings) {
+    return settings.height_range.y *
+           (settings.clump_size > 0.0F ? grass_clump_max_height_scale : 1.0F);
+}
+
+float grass_max_clump_pull(const GrassSettings& settings) {
+    // The chosen centre is never farther than the home cell's own centre,
+    // which lies within one cell diagonal of the point.
+    return settings.clump_size * settings.clump_strength * std::numbers::sqrt2_v<float>;
+}
+
 GrassCandidate grass_candidate(const GrassSettings& settings, float cell_size, glm::ivec2 cell) {
     const glm::uvec3 h = grass_pcg3d(
         glm::uvec3(static_cast<std::uint32_t>(cell.x), static_cast<std::uint32_t>(cell.y),
                    settings.seed));
-    constexpr float k_unit = 1.0F / 16777216.0F; // 24-bit mantissa-exact
-    const float u = static_cast<float>(h.x >> 8U) * k_unit;
-    const float v = static_cast<float>(h.y >> 8U) * k_unit;
     GrassCandidate c;
-    c.root_xz = glm::vec2((static_cast<float>(cell.x) + u) * cell_size,
-                          (static_cast<float>(cell.y) + v) * cell_size);
-    c.threshold = static_cast<float>(h.z >> 8U) * k_unit;
+    c.root_xz = glm::vec2((static_cast<float>(cell.x) + unit_float(h.x)) * cell_size,
+                          (static_cast<float>(cell.y) + unit_float(h.y)) * cell_size);
+    c.threshold = unit_float(h.z);
     c.hash = (h.x ^ h.z) & 0xFFFFU;
+    if (settings.clump_size > 0.0F) {
+        const GrassClump clump = grass_clump(settings, c.root_xz);
+        c.root_xz += (clump.centre - c.root_xz) * settings.clump_strength;
+        c.clump_hash = clump.hash;
+    }
     return c;
 }
 

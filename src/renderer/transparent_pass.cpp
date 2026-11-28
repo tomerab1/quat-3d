@@ -251,9 +251,21 @@ TransparentPass::add_to_graph(rhi::RenderGraph& graph, rhi::ResourceHandle hdr,
 
     // Single-sided materials cull back faces; a mirrored instance's outside
     // faces wind the other way, so each draw's mirrored instances are drawn
-    // as a separate range that culls front faces instead.
-    InstancedDrawList split = list;
-    const std::vector<std::uint32_t> unmirrored = partition_mirrored(split);
+    // as a separate range that culls front faces instead. Only a list that
+    // has mirrored instances is partitioned (into persistent scratch); the
+    // usual list is drawn as given, without a copy.
+    const bool any_mirrored = std::ranges::any_of(list.instances, is_mirrored);
+    if (any_mirrored) {
+        mirrored_split_.draws.assign(list.draws.begin(), list.draws.end());
+        mirrored_split_.instances.assign(list.instances.begin(), list.instances.end());
+        mirrored_split_.motion.assign(list.motion.begin(), list.motion.end());
+        unmirrored_ = partition_mirrored(mirrored_split_);
+    } else {
+        unmirrored_.clear();
+        for (const InstancedDraw& d : list.draws) unmirrored_.push_back(d.instance_count);
+    }
+    const InstancedDrawList& split = any_mirrored ? mirrored_split_ : list;
+    const std::vector<std::uint32_t>& unmirrored = unmirrored_;
     auto instances = instances_.upload(*device_, *allocator_, split.instances);
     if (!instances) return std::unexpected(instances.error());
 

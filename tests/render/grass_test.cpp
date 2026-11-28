@@ -25,6 +25,7 @@
 #include "engine/terrain/generator.hpp"
 #include "support/expect_ok.hpp"
 #include "support/gpu_context.hpp"
+#include "support/grass_readback.hpp"
 #include "support/gpu_submit.hpp"
 
 namespace {
@@ -33,12 +34,7 @@ namespace r = engine::renderer;
 namespace rhi = engine::rhi;
 using engine::core::Error;
 
-// What one generation produced.
-struct Generated {
-    r::GrassArgsGpu                 args{};
-    std::vector<r::GrassBladeGpu>   blades; // near list, then far list (visible only)
-    r::GrassCapacity                capacity{};
-};
+using Generated = quat::test::GrassGenerated;
 
 [[nodiscard]] std::expected<rhi::GpuBuffer, Error> readback_buffer(rhi::GpuAllocator& allocator,
                                                                    VkDeviceSize bytes) {
@@ -47,52 +43,12 @@ struct Generated {
         VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT);
 }
 
-// Runs generation only and reads the lists + arguments back through a graph
-// transfer pass (exercising the compute -> transfer buffer barriers).
+// Runs generation only and reads the lists + arguments back.
 [[nodiscard]] std::expected<Generated, Error> generate(quat::test::GpuContext& g,
                                                        r::GrassPass& pass,
                                                        const r::GrassFrame& frame) {
     rhi::RenderGraph graph;
-    auto out = pass.add_to_graph(graph, 0, frame, nullptr, {});
-    if (!out) return std::unexpected(out.error());
-    if (!out->valid()) return Generated{};
-    const r::GrassOutput o = *out;
-    const VkDeviceSize blade_bytes =
-        static_cast<VkDeviceSize>(o.capacity.near + o.capacity.far) * sizeof(r::GrassBladeGpu);
-    auto args = readback_buffer(g.allocator, sizeof(r::GrassArgsGpu));
-    if (!args) return std::unexpected(args.error());
-    auto blades = readback_buffer(g.allocator, blade_bytes);
-    if (!blades) return std::unexpected(blades.error());
-    const VkBuffer args_dst = args->handle();
-    const VkBuffer blades_dst = blades->handle();
-    (void)graph.add_pass("readback", rhi::PassType::transfer)
-        .reads(o.args, rhi::ResourceUsage::transfer_src)
-        .reads(o.blades, rhi::ResourceUsage::transfer_src)
-        .execute([=](rhi::PassContext& ctx) {
-            const VkBufferCopy a{0, 0, sizeof(r::GrassArgsGpu)};
-            vkCmdCopyBuffer(ctx.cmd(), ctx.resolve(o.args).buffer, args_dst, 1, &a);
-            const VkBufferCopy b{0, 0, blade_bytes};
-            vkCmdCopyBuffer(ctx.cmd(), ctx.resolve(o.blades).buffer, blades_dst, 1, &b);
-        });
-    if (auto c = graph.compile(); !c) return std::unexpected(c.error());
-    auto done = quat::test::submit_and_wait(g.device, [&](VkCommandBuffer cmd) {
-        graph.execute(cmd);
-        quat::test::transfer_to_host_barrier(cmd);
-    });
-    if (!done) return std::unexpected(done.error());
-
-    Generated gen;
-    gen.capacity = o.capacity;
-    std::memcpy(&gen.args, args->mapped(), sizeof(gen.args));
-    const auto* all = static_cast<const r::GrassBladeGpu*>(blades->mapped());
-    const std::uint32_t near = gen.args.near.instanceCount;
-    const std::uint32_t far = gen.args.far.instanceCount;
-    gen.blades.assign(all, all + near);
-    // Far blades start at the near region's capacity; the indirect commands
-    // keep firstInstance = 0 (drawIndirectFirstInstance is not required) and
-    // the draw pass passes the region base as a push constant.
-    gen.blades.insert(gen.blades.end(), all + gen.capacity.near, all + gen.capacity.near + far);
-    return gen;
+    return quat::test::run_grass(g, pass, graph, frame);
 }
 
 glm::mat4 vulkan_perspective(float fov_y, float aspect, float near_z, float far_z) {
@@ -252,16 +208,32 @@ TEST(GpuGrass, BladesStayFixedInTheWorldAsTheCameraMoves) {
     EXPECT_EQ(matched, from_first.size());
     EXPECT_GT(matched, 5000U);
 
-    // The GPU positions are the CPU reference's.
+    // The GPU positions are the CPU reference's. Clumping (on by default)
+    // moves a root up to grass_max_clump_pull out of its cell, so the
+    // reference candidate is searched in the cells around it.
     const float cell = r::grass_cell_size(frame.settings);
+    ASSERT_GT(frame.settings.clump_size * frame.settings.clump_strength, 0.0F);
+    const int reach =
+        static_cast<int>(std::ceil(r::grass_max_clump_pull(frame.settings) / cell)) + 1;
     for (std::size_t i = 0; i < second->blades.size(); i += 97) {
         const r::GrassBladeGpu& bl = second->blades[i];
-        const glm::ivec2 c(static_cast<int>(std::floor(bl.root.x / cell)),
-                           static_cast<int>(std::floor(bl.root.z / cell)));
-        const r::GrassCandidate ref = r::grass_candidate(frame.settings, cell, c);
-        EXPECT_NEAR(ref.root_xz.x, bl.root.x, 1e-4F);
-        EXPECT_NEAR(ref.root_xz.y, bl.root.z, 1e-4F);
-        EXPECT_EQ(ref.hash, bl.packed & 0xFFFFU);
+        const glm::ivec2 home(static_cast<int>(std::floor(bl.root.x / cell)),
+                              static_cast<int>(std::floor(bl.root.z / cell)));
+        bool found = false;
+        for (int dz = -reach; dz <= reach && !found; ++dz) {
+            for (int dx = -reach; dx <= reach && !found; ++dx) {
+                const r::GrassCandidate ref =
+                    r::grass_candidate(frame.settings, cell, home + glm::ivec2(dx, dz));
+                if (std::abs(ref.root_xz.x - bl.root.x) < 1e-4F &&
+                    std::abs(ref.root_xz.y - bl.root.z) < 1e-4F &&
+                    ref.hash == (bl.packed & 0xFFFFU)) {
+                    EXPECT_EQ(ref.clump_hash, bl.clump);
+                    found = true;
+                }
+            }
+        }
+        EXPECT_TRUE(found) << "no reference candidate for the blade at " << bl.root.x << ", "
+                           << bl.root.z;
     }
 }
 
@@ -290,7 +262,7 @@ TEST(GpuGrass, FrustumCullingRemovesOffscreenBlades) {
     // Whole tiles outside the view were skipped before any per-blade work.
     EXPECT_LT(gen->args.candidates, everything->args.candidates / 2);
     const auto planes = r::grass_frustum_planes(frame.cull_view_proj);
-    const float max_h = frame.settings.height_range.y;
+    const float max_h = r::grass_max_blade_height(frame.settings);
     for (const auto& bl : gen->blades) {
         EXPECT_GT(bl.root.x, -max_h) << "blade behind the camera";
         const glm::vec3 c = bl.root + glm::vec3(0.0F, 0.5F * max_h, 0.0F);

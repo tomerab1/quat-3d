@@ -698,6 +698,7 @@ add_library(engine_renderer STATIC
     src/renderer/render_settings.cpp
     src/renderer/grass.cpp
     src/renderer/grass_pass.cpp
+    src/renderer/grass_params.cpp
     src/renderer/gtao_pass.cpp
     src/renderer/hiz_pass.cpp
     src/renderer/instance_buffer.cpp

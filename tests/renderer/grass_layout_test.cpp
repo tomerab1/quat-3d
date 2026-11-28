@@ -1,7 +1,10 @@
 // GPU grass CPU helpers (R9.3): candidate grid, distance LOD, capacities.
 
+#include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdint>
+#include <limits>
 
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
@@ -193,3 +196,111 @@ TEST(GrassLayout, FrustumPlanesAreNormalisedAndInward) {
 }
 
 } // namespace
+
+// Grass v2 (#119): every root lies `clump_strength` of the way to the centre
+// of its clump; clumps are fixed in the world and the pull never exceeds its
+// bound.
+TEST(GrassLayout, ClumpsPullRootsTowardTheNearestCentre) {
+    r::GrassSettings s;
+    s.seed = 9;
+    s.clump_size = 0.6F;
+    s.clump_strength = 0.4F;
+    r::GrassSettings loose = s;
+    loose.clump_size = 0.0F;
+    const float cell = 0.1F;
+    std::uint32_t distinct_clumps = 0;
+    std::uint32_t last = 0;
+    for (int z = -40; z < 40; z += 3) {
+        for (int x = -40; x < 40; x += 3) {
+            const glm::ivec2 c(x, z);
+            const glm::vec2 own = r::grass_candidate(loose, cell, c).root_xz;
+            const r::GrassCandidate pulled = r::grass_candidate(s, cell, c);
+            const r::GrassClump clump = r::grass_clump(s, own);
+            EXPECT_EQ(pulled.clump_hash, clump.hash);
+            EXPECT_NEAR(glm::length(pulled.root_xz - own),
+                        glm::length(clump.centre - own) * s.clump_strength, 1e-5F);
+            EXPECT_LE(glm::length(pulled.root_xz - own), r::grass_max_clump_pull(s) + 1e-6F);
+            if (clump.hash != last) ++distinct_clumps;
+            last = clump.hash;
+            // Same thing, same answer (fixed in the world).
+            EXPECT_EQ(r::grass_candidate(s, cell, c).root_xz, pulled.root_xz);
+        }
+    }
+    EXPECT_GT(distinct_clumps, 100U);
+    // No clumps: the root is the jittered cell position and no clump hash.
+    EXPECT_EQ(r::grass_candidate(loose, cell, {3, 4}).clump_hash, 0U);
+    EXPECT_FLOAT_EQ(r::grass_max_clump_pull(loose), 0.0F);
+}
+
+// The pixel-footprint term keeps every blade while the mean blade spans at
+// least min_blade_px, then falls as 1 / distance to its floor; survivors widen
+// by the inverse of the kept share so the projected coverage holds.
+TEST(GrassLayout, FootprintKeepHoldsProjectedCoverage) {
+    r::GrassSettings s;
+    s.width_range = {0.01F, 0.03F}; // mean 2 cm
+    s.min_blade_px = 2.0F;
+    const float ppm = 500.0F; // 2 cm spans 2 px at 5 m
+    EXPECT_FLOAT_EQ(r::grass_footprint_keep(s, 1.0F, ppm), 1.0F);
+    EXPECT_FLOAT_EQ(r::grass_footprint_keep(s, 5.0F, ppm), 1.0F);
+    EXPECT_NEAR(r::grass_footprint_keep(s, 10.0F, ppm), 0.5F, 1e-6F);
+    EXPECT_NEAR(r::grass_footprint_keep(s, 20.0F, ppm), 0.25F, 1e-6F);
+    EXPECT_FLOAT_EQ(r::grass_footprint_keep(s, 1.0e5F, ppm), r::grass_min_footprint_keep);
+    EXPECT_FLOAT_EQ(r::grass_footprint_keep(s, 20.0F, 0.0F), 1.0F); // off (orthographic)
+    s.min_blade_px = 0.0F;
+    EXPECT_FLOAT_EQ(r::grass_footprint_keep(s, 20.0F, ppm), 1.0F); // off (setting)
+    // Coverage = kept share x width scale stays 1 until the width cap.
+    for (const float keep : {1.0F, 0.8F, 0.5F, 0.3F}) {
+        EXPECT_NEAR(keep * r::grass_width_scale(keep), 1.0F, 1e-6F);
+    }
+    EXPECT_FLOAT_EQ(r::grass_width_scale(0.01F), r::grass_max_width_scale);
+    // Past the cap (kept share below 1 / max scale) coverage falls with the
+    // kept share; the far ground cover carries the colour from there.
+    const float floor = 1.0F / r::grass_max_width_scale;
+    for (const float keep : {floor * 0.8F, floor * 0.5F, 0.0125F}) {
+        EXPECT_NEAR(keep * r::grass_width_scale(keep), keep / floor, 1e-6F);
+        EXPECT_LT(keep * r::grass_width_scale(keep), 1.0F);
+    }
+}
+
+// The ground cover's outer bound (#143 review): how far the bound height
+// tiles reach around the camera, and the fade derived from it.
+TEST(GrassLayout, TileCoverageBoundsTheGroundCover) {
+    // One 64 m tile with the camera 10 m from its west edge.
+    const std::array<glm::vec3, 1> one{glm::vec3(-10.0F, -32.0F, 64.0F)};
+    EXPECT_NEAR(r::grass_tile_coverage(one, {0.0F, 0.0F}, 100.0F), 10.0F, 0.5F);
+    // Capped at the requested distance; outside every tile: nothing.
+    EXPECT_FLOAT_EQ(r::grass_tile_coverage(one, {20.0F, 0.0F}, 5.0F), 5.0F);
+    EXPECT_FLOAT_EQ(r::grass_tile_coverage(one, {-50.0F, 0.0F}, 100.0F), 0.0F);
+    // Two adjacent tiles cover their union.
+    const std::array<glm::vec3, 2> two{glm::vec3(-64.0F, -32.0F, 64.0F),
+                                       glm::vec3(0.0F, -32.0F, 64.0F)};
+    EXPECT_NEAR(r::grass_tile_coverage(two, {0.0F, 0.0F}, 100.0F), 32.0F, 0.5F);
+
+    r::GrassSettings s;
+    s.radius = 20.0F;
+    // Flat ground without tiles: unbounded.
+    EXPECT_TRUE(std::isinf(r::grass_cover_fade(s, 0.0F, false).y));
+    // Tiles reaching far: fade from the radius to 1.5 x radius.
+    EXPECT_EQ(r::grass_cover_fade(s, 500.0F, true), glm::vec2(20.0F, 30.0F));
+    // Tiles reaching less than the radius: the fade ends at their edge.
+    const glm::vec2 near_edge = r::grass_cover_fade(s, 12.0F, true);
+    EXPECT_FLOAT_EQ(near_edge.y, 12.0F);
+    EXPECT_FLOAT_EQ(near_edge.x, 8.0F);
+}
+
+TEST(GrassLayout, SanitizeClampsTheV2Fields) {
+    r::GrassSettings s;
+    s.clump_size = -1.0F;
+    s.clump_strength = 3.0F;
+    s.color_variation = std::numeric_limits<float>::quiet_NaN();
+    s.dry_color = glm::vec3(2.0F, -1.0F, 0.5F);
+    s.ground_cover = 1.5F;
+    s.min_blade_px = 100.0F;
+    const r::GrassSettings c = r::sanitize(s);
+    EXPECT_EQ(c.clump_size, 0.0F);
+    EXPECT_EQ(c.clump_strength, 0.9F);
+    EXPECT_EQ(c.color_variation, 0.0F);
+    EXPECT_EQ(c.dry_color, glm::vec3(1.0F, 0.0F, 0.5F));
+    EXPECT_EQ(c.ground_cover, 1.0F);
+    EXPECT_EQ(c.min_blade_px, 8.0F);
+}

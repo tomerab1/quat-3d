@@ -14,6 +14,7 @@
 #include "app/build_service.hpp"
 #include "app/load_transfer.hpp"
 #include "app/remote_bridge.hpp"
+#include "engine/core/env.hpp"
 #include "engine/core/frame_profiler.hpp"
 #include "engine/core/utf8_path.hpp"
 #include "engine/project/game_project.hpp"
@@ -33,7 +34,7 @@ void EditorBridge::create(SDL_Window* window, bool enabled) {
     // QUAT_GAME_CAMERA=1: Play looks through the scene's active Camera entity
     // (the menu-bar "Game camera" box) from the start, with or without the
     // UI, so a QUAT_PLAY capture shows the scene's own framing.
-    play_use_scene_camera_ = std::getenv("QUAT_GAME_CAMERA") != nullptr;
+    play_use_scene_camera_ = engine::core::env_flag("QUAT_GAME_CAMERA");
     if (!enabled) return;
     if (auto e = engine::editor::EditorLayer::create(
             window, engine::core::path_to_utf8(project_root()), // UTF-8 (#24)

@@ -141,6 +141,12 @@ MeshPass::create(const rhi::Device& device, rhi::GpuAllocator& allocator,
                  const std::string& cooked_shader_dir) {
     MeshPass out;
     out.device_ = &device;
+    VkFormatProperties albedo_props{};
+    vkGetPhysicalDeviceFormatProperties(device.physical_device(), gbuffer_albedo_format,
+                                        &albedo_props);
+    if ((albedo_props.optimalTilingFeatures & VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT) != 0) {
+        out.albedo_storage_ = VK_IMAGE_USAGE_STORAGE_BIT;
+    }
     out.allocator_ = &allocator;
 
     out.db_fns_ = rhi::DescriptorBufferFunctions::load(device.handle());
@@ -261,8 +267,9 @@ MeshPass::add_to_graph(rhi::RenderGraph& graph, VkExtent2D extent, const glm::ma
                                           | VK_IMAGE_USAGE_SAMPLED_BIT
                                           | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
     GBufferTargets targets;
-    targets.albedo =
-        graph.create_transient_image("gbuffer_albedo", gbuffer_albedo_format, extent, color_usage);
+    // STORAGE (where supported): the grass ground cover tints the ground's albedo in place.
+    targets.albedo = graph.create_transient_image("gbuffer_albedo", gbuffer_albedo_format, extent,
+                                                  color_usage | albedo_storage_);
     targets.normal =
         graph.create_transient_image("gbuffer_normal", gbuffer_normal_format, extent, color_usage);
     targets.material = graph.create_transient_image("gbuffer_material", gbuffer_material_format,

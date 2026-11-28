@@ -57,10 +57,15 @@ void GrassRuntime::add_to_graph(engine::rhi::RenderGraph& graph, std::uint32_t s
     frame.time_s = static_cast<float>(wind_time_s_);
     frame.prev_time_s = static_cast<float>(prev_wind_time_s); // velocity of the wind motion
     frame.wind = wind;
+    frame.pixels_per_metre = engine::renderer::grass_pixels_per_metre(camera.projection, extent.height);
     std::vector<engine::renderer::TerrainHeightTile> tiles;
     if (terrain != nullptr) {
+        // 1.5 x radius: the ground cover fades out by then (grass_cover_fade),
+        // so a tile entering that band is already bound and the fade's end
+        // does not hop when it starts to count. Terrain tiles are hundreds of
+        // metres, so four tiles cover the disc.
         tiles = terrain->height_tiles(glm::vec2(camera.position.x, camera.position.z),
-                                      frame.settings.radius, terrain_anchor,
+                                      1.5F * frame.settings.radius, terrain_anchor,
                                       engine::renderer::grass_max_height_tiles);
     }
     frame.terrain = tiles;

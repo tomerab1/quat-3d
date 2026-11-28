@@ -43,6 +43,23 @@ void draw_grass(scene::Grass& grass) {
     color_srgb("base colour", g.base_color);
     color_srgb("tip colour", g.tip_color);
 
+    ImGui::SeparatorText("Look");
+    ImGui::SliderFloat("clump size", &g.clump_size, 0.0F, 8.0F, "%.2f m");
+    ImGui::SetItemTooltip("Blades grow in tufts this far apart (0: an even carpet)");
+    ImGui::SliderFloat("clump strength", &g.clump_strength, 0.0F, 0.9F);
+    ImGui::SetItemTooltip("How far each blade moves toward its tuft's centre");
+    ImGui::SliderFloat("colour variation", &g.color_variation, 0.0F, 1.0F);
+    color_srgb("dry colour", g.dry_color);
+    ImGui::SliderFloat("dry fraction", &g.dry_fraction, 0.0F, 1.0F);
+    ImGui::SetItemTooltip("Share of tufts that are dry");
+    ImGui::SliderFloat("root tint", &g.root_tint, 0.0F, 1.0F);
+    ImGui::SetItemTooltip("Blade bases take the colour of the ground they grow from");
+    color_srgb("ground cover colour", g.ground_cover_color);
+    ImGui::SliderFloat("ground cover", &g.ground_cover, 0.0F, 1.0F);
+    ImGui::SetItemTooltip("Tints the ground between tufts toward the cover colour");
+    ImGui::SliderFloat("far ground cover", &g.far_ground_cover, 0.0F, 1.0F);
+    ImGui::SetItemTooltip("Tints the ground toward the blades' colour where they thin out");
+
     ImGui::SeparatorText("Wind");
     ImGui::SliderFloat("strength", &g.wind_strength, 0.0F, 2.0F);
     float heading = glm::degrees(std::atan2(g.wind_direction.y, g.wind_direction.x));
@@ -68,6 +85,8 @@ void draw_grass(scene::Grass& grass) {
     ImGui::SetItemTooltip("Distance where blades start thinning out and lose segments");
     ImGui::SliderFloat("far density", &g.far_density, 0.0F, 1.0F);
     ImGui::SetItemTooltip("Fraction of blades kept at the radius");
+    ImGui::SliderFloat("min blade width", &g.min_blade_px, 0.0F, 8.0F, "%.1f px");
+    ImGui::SetItemTooltip("Thinner blades thin out and the rest widen (0: off)");
 }
 
 } // namespace engine::editor
