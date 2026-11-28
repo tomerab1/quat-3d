@@ -356,7 +356,7 @@ Environment variables switch on extra modes:
 | `QUAT_EDITOR_SELECT=<name>` / `QUAT_EDITOR_FOCUS=<panel>` | Select an entity / bring a panel forward at startup (`scripts/editor-screenshots.sh`) |
 | `QUAT_WINDOW_SIZE=<w>x<h>` | Initial window size (default 1280x720) |
 | `QUAT_NO_VSYNC=1` | Disable vsync |
-| `QUAT_NO_MUTABLE_SWAPCHAIN=1` | Act as a driver without `VK_KHR_swapchain_mutable_format`: the editor UI composites through a scratch image and a copy instead of a UNORM view of the swapchain (same pixels; for checking that fallback) |
+| `QUAT_NO_MUTABLE_SWAPCHAIN=1` | Act as a driver without `VK_KHR_swapchain_mutable_format`: the editor UI composites through a scratch image and a copy instead of a UNORM view of the swapchain (same pixels; for checking that fallback, which MoltenVK older than 1.4.3 always uses) |
 | `QUAT_NO_AUDIO=1` | Mute: run audio without opening a playback device |
 | `QUAT_NON_FINITE_CHECK=1` | Count NaN/Inf values the bloom / TAA guards replace and log them per frame (always on in debug builds) |
 | `QUAT_MAX_FRAMES=<n>` + `QUAT_SCREENSHOT=<file.ppm>` | Render n frames, save the last one, exit (headless checks) |

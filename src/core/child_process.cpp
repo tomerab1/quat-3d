@@ -381,11 +381,11 @@ run_process(const fs::path& program, std::span<const std::string> args,
     // posix_spawn reports a failed exec only on some implementations (glibc
     // does; others spawn a child that exits 127), so check up front.
     if (::access(program.c_str(), X_OK) != 0) {
-        return fail("cannot start " + program.string() + ": " + std::strerror(errno));
+        return fail("cannot start " + path_to_utf8(program) + ": " + std::strerror(errno));
     }
     // argv: program, args..., null. posix_spawn takes char* const[] but does
     // not modify the strings.
-    const std::string program_str = program.string();
+    const std::string program_str = path_to_utf8(program);
     std::vector<char*> argv;
     argv.reserve(args.size() + 2);
     argv.push_back(const_cast<char*>(program_str.c_str()));
