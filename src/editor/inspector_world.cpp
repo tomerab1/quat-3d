@@ -227,6 +227,9 @@ void draw_scatter(entt::registry& r, entt::entity e, scene::Scatter& s) {
     (void)ui::prop_bool("Random yaw", s.random_yaw);
     (void)ui::prop_float("Align to ground", s.align_to_normal,
                          {.min = 0.0F, .max = 1.0F, .slider = true});
+    (void)ui::prop_float("Mirrored", s.mirror,
+                         {.min = 0.0F, .max = 1.0F, .format = "%.2f", .slider = true},
+                         {.tooltip = "Fraction of the placements mirrored (variety)"});
     (void)ui::prop_float("Base offset", s.base_offset,
                          {.speed = 0.01F, .min = -100.0F, .max = 100.0F, .format = "%.2f x scale"},
                          {.tooltip = "Lift along the placement's up axis, times its scale "

@@ -257,6 +257,7 @@ Environment variables switch on extra modes:
 |---|---|
 | `QUAT_SCENE=<file>` | Load a scene file (project-relative) instead of the showcase scene |
 | `QUAT_PLAY=1` | Enter Play mode on the first frame (a non-editor build also plays a `QUAT_SCENE` game) |
+| `QUAT_GAME_CAMERA=1` | Editor builds: Play looks through the scene's active camera from the start ("Game camera"), e.g. for a scene's hero shot |
 | `QUAT_SCRIPT_HOT_RELOAD=0` / `=1` | Turn script hot reload off (editor) / on (non-editor builds) |
 | `QUAT_GLTF=<file>` | Load a glTF/GLB model instead of the showcase scene |
 | `QUAT_TERRAIN=1` | Add a procedural terrain tile (with a grass field) |
@@ -351,6 +352,24 @@ QUAT_SCENE=assets/scenes/coin_collector.json QUAT_PLAY=1 ./build/release/game
 The language reference, callbacks and the whole engine API are in
 [`docs/scripting.md`](docs/scripting.md). AI assistants can write and debug
 scripts through MCP (`script_*` tools and the `write-gameplay-script` skill).
+
+### Cinematic showcase (CC0 Poly Haven assets)
+
+`assets/scenes/cinematic_forest.json` is a pine-forest clearing at golden
+hour built from real downloaded CC0 models, textures and an HDRI from
+[Poly Haven](https://polyhaven.com). The assets are not committed; fetch
+and cook them first (about 560 MB, checksums verified), then run it:
+
+```sh
+python3 scripts/fetch-polyhaven.py assets/showcase/cinematic/assets.json \
+  --cook-with build/release/quat-cook
+QUAT_SCENE=assets/scenes/cinematic_forest.json QUAT_PLAY=1 QUAT_GAME_CAMERA=1 ./build/release/game
+```
+
+![cinematic forest clearing](docs/screenshots/cinematic-hero.jpg)
+
+The assets, credits, stills and the MCP recipe for building scenes like it
+are in [`docs/cinematic-showcase.md`](docs/cinematic-showcase.md).
 
 ### Sample models
 
@@ -485,6 +504,7 @@ The plan lives in [`ROADMAP.md`](ROADMAP.md), grouped into tracks:
 | [`docs/STATUS.md`](docs/STATUS.md) | What is in progress, what is blocked, what comes next |
 | [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md) | Building, testing, CI, and conventions for contributors |
 | [`docs/scripting.md`](docs/scripting.md) | Lua gameplay scripting: callbacks, the engine API, limits, hot reload |
+| [`docs/cinematic-showcase.md`](docs/cinematic-showcase.md) | The CC0 cinematic forest scene: assets and credits, fetching, renders, the MCP recipe |
 | [`docs/reading/README.md`](docs/reading/README.md) | Reading list: the papers and talks behind the engine's techniques, with where each lives in the code |
 | [`docs/remote-control.md`](docs/remote-control.md) | The remote-control protocol AI tools use to drive the engine |
 | [`docs/editor-ux.md`](docs/editor-ux.md) | The editor's design system: principles, tokens, widget kit, layout, shortcuts |

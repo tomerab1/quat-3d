@@ -14,6 +14,11 @@
 # CC0 models quat-mcp's asset_fetch downloads from Poly Haven (fetched on demand)
 /assets/meshes/polyhaven/
 
+# CC0 Poly Haven textures and HDRIs scripts/fetch-polyhaven.py downloads for the
+# showcase scenes (manifests under assets/showcase/; fetched on demand)
+/assets/textures/polyhaven/
+/assets/hdri/polyhaven/
+
 # vcpkg
 /vcpkg_installed/
 /vcpkg/

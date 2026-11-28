@@ -172,6 +172,8 @@ If you read only a few things, read these. They underpin most of the engine.
 | ✅ | **Hash Functions for GPU Rendering** — Jarzynski & Olano, JCGT 2020 (pcg3d). [JCGT](https://jcgt.org/published/0009/03/02/) | `lib/grass_common.slang`, `include/engine/renderer/grass.hpp` |
 | 🔧 | **Vegetation Procedural Animation and Shading in Crysis** — Sousa, GPU Gems 3 ch. 16 (2007). [online](https://developer.nvidia.com/gpugems/gpugems3/part-iii-rendering/chapter-16-vegetation-procedural-animation-and-shading-crysis) | Foliage wind (R14, #49; R13 wind field, #64) |
 | 🗺 | **GPU-Based Procedural Placement in Horizon Zero Dawn** — van Muijden, GDC 2017. [Guerrilla](https://www.guerrilla-games.com/read/gpu-based-procedural-placement-in-horizon-zero-dawn) | R14 biome placement |
+| 🔧 | **Stochastic Simplification of Aggregate Detail** — Cook, Halstead, Planck & Ryu, SIGGRAPH 2007 (Pixar): keep a random subset of the elements of foliage / fur and scale the survivors to preserve area. [Pixar](https://graphics.pixar.com/library/StochasticSimplification) | `quat-cook --simplify` card thinning, `src/cook/mesh_simplify.cpp` (#91) |
+| 🔧 | **Surface Simplification Using Quadric Error Metrics** — Garland & Heckbert, SIGGRAPH 1997; the edge-collapse metric behind meshoptimizer's simplifier (with attribute error). [CMU](https://www.cs.cmu.edu/~garland/quadrics/) | `quat-cook --simplify` solid meshes, `src/cook/mesh_simplify.cpp` (#91) |
 | 🗺 | **Octahedral Impostors** — Brucks, 2018. [shaderbits.com](https://shaderbits.com/blog/octahedral-impostors) | R14 far-field trees |
 
 ## Procedural building, curves & geometry

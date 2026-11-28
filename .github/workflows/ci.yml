@@ -104,6 +104,68 @@ jobs:
             -DVCPKG_INSTALLED_DIR="${{ github.workspace }}/build/release/vcpkg_installed"
           cmake --build build/release-noeditor --target game
 
+      # CC0 Poly Haven assets of the showcase scenes (assets/showcase/*/assets.json),
+      # downloaded and cooked with this build's quat-cook. Two caches: the
+      # downloads (keyed on the manifests, which pin each asset's content, and
+      # the fetch script) and the cooked GLBs (also keyed on the cooker
+      # sources), so a cooker change re-cooks without re-downloading ~560 MB.
+      # Most runs only verify checksums. A Poly Haven outage or a slow cook
+      # does not fail the job (continue-on-error, timeout): ci-screenshots.sh
+      # then skips the scenes whose assets are missing.
+      - name: Restore showcase downloads
+        id: showcase-downloads
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            assets/meshes/polyhaven
+            !assets/meshes/polyhaven/*/*.glb
+            !assets/meshes/polyhaven/*/*.cook-stamp
+            assets/textures/polyhaven
+            assets/hdri/polyhaven
+          key: showcase-downloads-${{ hashFiles('assets/showcase/**/assets.json', 'scripts/fetch-polyhaven.py') }}
+
+      - name: Restore showcase cooked models
+        id: showcase-cooked
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            assets/meshes/polyhaven/*/*.glb
+            assets/meshes/polyhaven/*/*.cook-stamp
+          key: showcase-cooked-${{ hashFiles('assets/showcase/**/assets.json', 'src/cook/**', 'include/engine/cook/**', 'tools/quat-cook/**') }}
+
+      - name: Fetch showcase assets
+        id: showcase-fetch
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        continue-on-error: true
+        timeout-minutes: 25
+        run: |
+          for manifest in assets/showcase/*/assets.json; do
+            python3 scripts/fetch-polyhaven.py "$manifest" --cook-with build/release/quat-cook
+          done
+
+      - name: Save showcase downloads
+        if: ${{ !cancelled() && steps.showcase-fetch.outcome == 'success' && steps.showcase-downloads.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            assets/meshes/polyhaven
+            !assets/meshes/polyhaven/*/*.glb
+            !assets/meshes/polyhaven/*/*.cook-stamp
+            assets/textures/polyhaven
+            assets/hdri/polyhaven
+          key: ${{ steps.showcase-downloads.outputs.cache-primary-key }}
+
+      - name: Save showcase cooked models
+        if: ${{ !cancelled() && steps.showcase-fetch.outcome == 'success' && steps.showcase-cooked.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            assets/meshes/polyhaven/*/*.glb
+            assets/meshes/polyhaven/*/*.cook-stamp
+          key: ${{ steps.showcase-cooked.outputs.cache-primary-key }}
+
       # Real engine frames on lavapipe under Xvfb (scripts/ci-screenshots.sh),
       # also when the tests failed. continue-on-error is TEMPORARY, until the
       # headless scenes have proven stable in CI: a crashed or hung scene is

@@ -571,6 +571,7 @@ json encode_components(const entt::registry& r, entt::entity e, const EncodeOpti
                           {"random_yaw", sc->random_yaw},
                           {"align_to_normal", sc->align_to_normal},
                           {"base_offset", sc->base_offset},
+                          {"mirror", sc->mirror},
                           {"slope", json::array({sc->slope_deg.x, sc->slope_deg.y})},
                           {"height", json::array({sc->height_m.x, sc->height_m.y})},
                           {"max_instances", sc->max_instances}};
@@ -811,6 +812,7 @@ std::expected<void, core::Error> apply_component(entt::registry& r, entt::entity
             f.boolean("random_yaw", s.random_yaw);
             f.number("align_to_normal", s.align_to_normal, 0.0F, 1.0F);
             f.number("base_offset", s.base_offset, -1000.0F, 1000.0F);
+            f.number("mirror", s.mirror, 0.0F, 1.0F);
             read_range(f, "slope", s.slope_deg, 0.0F, 90.0F);
             read_range(f, "height", s.height_m, -100000.0F, 100000.0F);
             f.integer("max_instances", s.max_instances, 0, static_cast<std::int64_t>(k_max_instances));

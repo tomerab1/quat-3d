@@ -166,6 +166,29 @@ Cooked files target the engine: see the normal-map note below.
   codec v0 as the extension requires). Primitives with morph targets, or
   whose accessors other primitives share differently, are copied unchanged.
 - Buffers are compacted to the data the output still references.
+- **Level of detail** (`--simplify R`): before the passes above, each
+  primitive is reduced to about R of its triangles with meshoptimizer's
+  attribute-aware simplifier (normals and UVs weigh in; error bound
+  `--simplify-error`, relative to the model's size). When the bound stops it
+  above the target, the result is kept: the LOD misses its budget rather than
+  change shape. Foliage made of
+  thousands of disconnected cards or needle clusters cannot be simplified
+  that way (small cards vanish within the error bound and the canopy
+  empties), so a primitive of at least 64 position-welded components that
+  average fewer than 24 triangles is thinned instead (stochastic
+  simplification of aggregate detail, Cook et al. 2007), as foliage LODs usually are: a deterministic
+  subset of whole components (cards, needle clusters) is kept and each grows
+  about its centre by 1/sqrt(kept share), so the canopy keeps its projected
+  area. (Vertex clustering merges neighbouring cards into large triangles
+  whose UVs span unrelated texels; alpha-tested, those render as shards.)
+  Vertices another primitive also uses are not moved. The cook writes one
+  level; a manifest that wants several cooks several outputs (see
+  `scripts/fetch-polyhaven.py`). Runtime LOD selection is not implemented yet.
+- **Material rewrites** (`--blend-to-mask C`): scanned foliage is often
+  exported as glTF BLEND, which the engine draws in the sorted forward pass
+  without cut-out shadows; this turns every BLEND material into MASK with
+  alpha cutoff C (before the textures are encoded, so the base colour gets
+  coverage-preserving mips).
 
 | Option | Default | |
 |---|---|---|
@@ -178,6 +201,8 @@ Cooked files target the engine: see the normal-map note below.
 | `--no-optimize`, `--no-quantize`, `--no-compress` | | skip the mesh passes |
 | `--position-bits N`, `--normal-bits 8\|16` | 16, 8 | quantisation precision |
 | `--threads N` | all cores | texture encoder threads |
+| `--simplify R` / `--simplify-error E` | 1 / 0.01 | keep about R (0..1] of each primitive's triangles |
+| `--blend-to-mask C` | off | BLEND materials become MASK with alpha cutoff C |
 
 At load the engine picks the transcode target from what the device samples
 (`rhi::TextureCaps`, enabled at device creation):
@@ -315,6 +340,15 @@ Where the images land:
   checkout --orphan tmp && git commit -m "Re-root ci-screenshots"`, then
   `git push --force origin tmp:ci-screenshots`. To read them without the browser:
   `git fetch origin ci-screenshots && git show origin/ci-screenshots:index.md`.
+
+Scenes built from downloaded CC0 assets (the `cinematic` row) need them
+fetched first: before the Screenshots step, CI runs
+`scripts/fetch-polyhaven.py` on every `assets/showcase/*/assets.json` with
+the build's `quat-cook`, caching the result (`actions/cache`, keyed on the
+manifests, the fetch script and the cooker sources). Fetching is
+`continue-on-error` with a 25-minute timeout, and its downloads and cooked models are cached separately; a row whose manifest is not satisfied is reported as
+*skipped (assets not fetched)*, not as a failure. See
+[`cinematic-showcase.md`](cinematic-showcase.md).
 
 Run locally: `scripts/ci-screenshots.sh build/release/game /tmp/shots`
 (`SCENES="showcase physics"` picks a subset; needs `xvfb` and

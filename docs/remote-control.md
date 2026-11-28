@@ -281,7 +281,8 @@ and cannot be written — while a `scatter` generates them),
 entity: `seed`, `area` rect/circle, `size` [x,z] m, `radius` m, `density`
 per m², `min_spacing` m, `pattern` poisson/jittered_grid, `scale` [min,max],
 `random_yaw`, `align_to_normal` 0..1, `base_offset` (× scale, 0.5 seats a
-unit primitive), `slope` [min,max] degrees, `height` [min,max] m,
+unit primitive), `mirror` 0..1 (fraction of placements mirrored), `slope`
+[min,max] degrees, `height` [min,max] m,
 `max_instances`; regenerates when these, the entity position or the terrain
 change; removing it keeps the placements),
 `material` (per-entity overrides of the PBR factors the entity's material is
