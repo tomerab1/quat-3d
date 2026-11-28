@@ -128,6 +128,13 @@ jobs:
       # examples/sdk-consumer and the public headers against that prefix
       # alone. Uploaded as quat-3d-sdk-<os>, so the publish job's quat-3d-*
       # download attaches quat3d-sdk-<version>-<os>.{tar.gz,zip} to the release.
+      # The smoke test above uninstalled Homebrew's Vulkan loader and MoltenVK
+      # (proving the .app bundle carries its own); the SDK build, its
+      # consumer check and every game built against it need them again.
+      - name: Restore Homebrew Vulkan (macOS)
+        if: runner.os == 'macOS'
+        run: brew install molten-vk vulkan-loader vulkan-tools
+
       - name: SDK build (libraries, tools, quat-mcp)
         shell: bash
         env:
