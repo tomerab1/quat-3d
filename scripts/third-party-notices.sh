@@ -17,6 +17,10 @@
 # Fails when the build has no vcpkg licence files, so a wrong build directory
 # cannot ship an archive without them.
 set -euo pipefail
+# Licence texts are copied byte for byte, and some are not valid UTF-8 (Latin-1
+# copyright lines). macOS's BSD tr/sed reject those under a UTF-8 locale with
+# "Illegal byte sequence", so process bytes, which also gives a byte-order sort.
+export LC_ALL=C
 
 if [ $# -lt 2 ]; then
   echo "usage: $0 <build-dir> <out-file> [<title>=<licence-file> ...]" >&2
