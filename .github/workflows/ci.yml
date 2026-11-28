@@ -5,7 +5,8 @@ name: CI
 # are built through their PR; building them on push too ran every commit twice.
 # Docs-only changes skip CI: nothing in the build or tests reads them. The
 # Markdown under tools/quat-mcp/content/ is compiled into quat-mcp
-# (include_str!), so it still triggers a build; later patterns win.
+# (include_str!), so it still triggers a build, and THIRD_PARTY_NOTICES.md is
+# checked against vcpkg.json; later patterns win.
 on:
   push:
     branches: [main, master]
@@ -15,6 +16,7 @@ on:
       - '!docs/**'
       - '!.gitattributes'
       - 'tools/quat-mcp/content/**'
+      - 'THIRD_PARTY_NOTICES.md'
   pull_request:
     paths:
       - '**'
@@ -22,6 +24,7 @@ on:
       - '!docs/**'
       - '!.gitattributes'
       - 'tools/quat-mcp/content/**'
+      - 'THIRD_PARTY_NOTICES.md'
   workflow_dispatch:
     inputs:
       mvk_debug:
@@ -57,12 +60,19 @@ jobs:
         with:
           persist-credentials: false
 
-      # xvfb: the Screenshots step runs the game under xvfb-run.
+      # Every vcpkg dependency, FetchContent package and bundled font has a
+      # licence row in THIRD_PARTY_NOTICES.md, which ships in every release
+      # archive (scripts/third-party-notices.sh).
+      - name: Third-party notices
+        run: python3 -I scripts/check-third-party-notices.py
+
+      # xvfb: the Screenshots step runs the game under xvfb-run. patchelf: the
+      # package_licences test lays out a game package (scripts/package-release.sh).
       - name: Set up build
         id: setup
         uses: ./.github/actions/setup-build
         with:
-          extra-apt-packages: xvfb
+          extra-apt-packages: xvfb patchelf
 
       # The release preset compiles the Tracy client in (ENGINE_PROFILE=ON,
       # on demand: it costs nothing without a viewer), so the tests run with
@@ -459,3 +469,8 @@ jobs:
 
       - name: Tests
         run: cargo test --locked
+
+      # Every crate in Cargo.lock declares an accepted licence; release
+      # archives ship quat-mcp with its crates' licence texts.
+      - name: Licences
+        run: python3 -I ../../scripts/rust-notices.py check Cargo.toml
