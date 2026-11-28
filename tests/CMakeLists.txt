@@ -94,3 +94,7 @@ elseif(CMAKE_NM)
 else()
     message(WARNING "binary-content checks (no texture encoder, no remote control): no nm found; not registered")
 endif()
+
+# Engine SDK guards: install, self-contained public headers, the SDK
+# consumer, refusals, layering (ROADMAP P8).
+add_subdirectory(sdk)

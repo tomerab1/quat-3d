@@ -17,7 +17,6 @@
 #include <entt/entity/registry.hpp>
 
 #include "engine/core/error.hpp"
-#include "engine/renderer/mesh_pass.hpp"
 #include "engine/scene/animation_system.hpp"
 #include "engine/scene/components.hpp"
 #include "engine/scene/navigation.hpp"
@@ -31,12 +30,24 @@ class NavMesh;
 namespace engine::physics {
 class PhysicsWorld;
 }
+// The draw list's element type is only named here so this header stays free of
+// the renderer and the graphics API (P8: it is part of the installed SDK);
+// code that reads draw_list() includes engine/renderer/draw_batching.hpp.
+namespace engine::renderer {
+struct DrawItem;
+}
 
 namespace engine::scene {
 
 class Scene {
 public:
-    Scene() = default;
+    // Out of line: the members' special functions need the complete DrawItem.
+    Scene();
+    ~Scene();
+    Scene(Scene&&) noexcept;
+    Scene& operator=(Scene&&) noexcept;
+    Scene(const Scene&)            = delete;
+    Scene& operator=(const Scene&) = delete;
 
     [[nodiscard]] entt::registry& registry() noexcept { return registry_; }
     [[nodiscard]] const entt::registry& registry() const noexcept { return registry_; }

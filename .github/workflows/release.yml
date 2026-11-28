@@ -169,6 +169,52 @@ jobs:
             build/${{ matrix.preset }}/vcpkg-manifest-install.log
           if-no-files-found: ignore
 
+      # ---- Engine SDK (ROADMAP P8, docs/sdk.md) ---------------------------
+      # The same release build installed as an SDK. Before it is archived,
+      # ctest -L sdk installs it into a fresh prefix and builds + tests
+      # examples/sdk-consumer and the public headers against that prefix
+      # alone. Uploaded as quat-3d-sdk-<os>, so the publish job's quat-3d-*
+      # download attaches quat3d-sdk-<version>-<os>.{tar.gz,zip} to the release.
+      # The smoke test above uninstalled Homebrew's Vulkan loader and MoltenVK
+      # (proving the .app bundle carries its own); the SDK build, its
+      # consumer check and every game built against it need them again.
+      - name: Restore Homebrew Vulkan (macOS)
+        if: runner.os == 'macOS'
+        run: brew install molten-vk vulkan-loader vulkan-tools
+
+      - name: SDK build (libraries, tools)
+        run: cmake --build --preset ${{ matrix.preset }}
+
+      # The runner's default shell, not bash: under Git Bash on Windows,
+      # link.exe resolves to Git's coreutils `link` instead of MSVC's linker.
+      # (A no-op when an earlier step already built quat-mcp.)
+      - name: SDK quat-mcp
+        working-directory: tools/quat-mcp
+        run: cargo build --release --locked
+
+      - name: SDK check (install + sdk-consumer)
+        run: ctest --test-dir build/${{ matrix.preset }} -L sdk --output-on-failure
+
+      - name: SDK package
+        id: sdk
+        shell: bash
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          BUILD_DIR: build/${{ matrix.preset }}
+        run: |
+          bash scripts/package-sdk.sh "$BUILD_DIR" dist-sdk "$VERSION" | tee sdk.log
+          archive=$(tail -n1 sdk.log)
+          echo "archive=dist-sdk/$(basename "$archive")" >> "$GITHUB_OUTPUT"
+          ls -l dist-sdk
+
+      - name: Upload SDK
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: quat-3d-sdk-${{ matrix.name }}
+          path: ${{ steps.sdk.outputs.archive }}
+          if-no-files-found: error
+          compression-level: 0
+
   publish:
     name: Publish GitHub Release
     if: github.ref_type == 'tag'

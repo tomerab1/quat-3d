@@ -1,0 +1,136 @@
+# quat3d — the quat-3d engine SDK's CMake package (ROADMAP P8).
+#
+#   find_package(quat3d 0.N CONFIG REQUIRED)
+#   target_link_libraries(my_game PRIVATE quat3d::engine)
+#
+# Configure the game with -DCMAKE_TOOLCHAIN_FILE=<sdk>/lib/cmake/quat3d/quat3d-toolchain.cmake
+# (it selects the SDK's compiler and standard library and puts <sdk>/deps on
+# the search path). docs/sdk.md in the engine repository is the full guide.
+#
+# Targets: quat3d::engine (the engine libraries), quat3d::remote (the
+# JSON-RPC remote-control endpoint and world commands), quat3d::editor (the
+# ImGui editor layer, when the SDK was built with it).
+# Variables: QUAT3D_SDK_ROOT, QUAT3D_DATA_DIR (a data root: assets/ +
+# cooked/shaders/), QUAT3D_SLANGC, QUAT3D_COOK, QUAT3D_MCP, quat3d_VERSION.
+
+@PACKAGE_INIT@
+
+set(QUAT3D_SDK_ROOT "${PACKAGE_PREFIX_DIR}")
+set(QUAT3D_DATA_DIR "${PACKAGE_PREFIX_DIR}/share/quat3d")
+set(QUAT3D_SLANGC "${PACKAGE_PREFIX_DIR}/bin/slangc@CMAKE_EXECUTABLE_SUFFIX@")
+set(QUAT3D_COOK "${PACKAGE_PREFIX_DIR}/bin/quat-cook@CMAKE_EXECUTABLE_SUFFIX@")
+set(QUAT3D_MCP "${PACKAGE_PREFIX_DIR}/bin/quat-mcp@CMAKE_EXECUTABLE_SUFFIX@")
+set(QUAT3D_SDK_CXX_COMPILER_ID "@CMAKE_CXX_COMPILER_ID@")
+set(QUAT3D_SDK_CXX_COMPILER_VERSION "@CMAKE_CXX_COMPILER_VERSION@")
+set(QUAT3D_SDK_STDLIB "@QUAT3D_SDK_STDLIB@")
+set(QUAT3D_SDK_EDITOR @ENGINE_EDITOR@)
+set(QUAT3D_SDK_PROFILE @ENGINE_PROFILE@)
+
+# --- Toolchain match --------------------------------------------------------
+include("${CMAKE_CURRENT_LIST_DIR}/Quat3dToolchainCheck.cmake")
+# (No if(IN_LIST) here: this file runs under the consumer's policy settings.)
+get_property(_quat3d_languages GLOBAL PROPERTY ENABLED_LANGUAGES)
+list(FIND _quat3d_languages CXX _quat3d_cxx)
+if(_quat3d_cxx EQUAL -1)
+    set(${CMAKE_FIND_PACKAGE_NAME}_NOT_FOUND_MESSAGE
+        "quat3d needs the CXX language: call project(<name> LANGUAGES CXX) before find_package(quat3d).")
+    set(${CMAKE_FIND_PACKAGE_NAME}_FOUND FALSE)
+    return()
+endif()
+if(MSVC)
+    set(_quat3d_stdlib msvc)
+elseif(DEFINED QUAT3D_CONSUMER_STDLIB)
+    set(_quat3d_stdlib "${QUAT3D_CONSUMER_STDLIB}")
+else()
+    # The library the compiler actually uses, whatever flag selected it.
+    include(CheckCXXSourceCompiles)
+    set(CMAKE_REQUIRED_QUIET ON)
+    check_cxx_source_compiles("#include <version>
+#ifndef _LIBCPP_VERSION
+#error not libc++
+#endif
+int main() { return 0; }" QUAT3D_CONSUMER_USES_LIBCXX)
+    unset(CMAKE_REQUIRED_QUIET)
+    if(QUAT3D_CONSUMER_USES_LIBCXX)
+        set(_quat3d_stdlib libc++)
+    else()
+        set(_quat3d_stdlib libstdc++)
+    endif()
+endif()
+quat3d_toolchain_problem(_quat3d_problem
+    "${QUAT3D_SDK_CXX_COMPILER_ID}" "${QUAT3D_SDK_CXX_COMPILER_VERSION}" "${QUAT3D_SDK_STDLIB}"
+    "${CMAKE_CXX_COMPILER_ID}" "${CMAKE_CXX_COMPILER_VERSION}" "${_quat3d_stdlib}")
+if(NOT _quat3d_problem STREQUAL "")
+    set(_quat3d_message
+        "quat3d ${PACKAGE_VERSION} cannot be used by this project's toolchain: ${_quat3d_problem}. "
+        "The SDK is static C++ without a cross-compiler ABI, so the game must be built with "
+        "${QUAT3D_SDK_CXX_COMPILER_ID} ${QUAT3D_SDK_CXX_COMPILER_VERSION} and ${QUAT3D_SDK_STDLIB}. "
+        "Configure with -DCMAKE_TOOLCHAIN_FILE=${CMAKE_CURRENT_LIST_DIR}/quat3d-toolchain.cmake "
+        "(in a fresh build directory).")
+    string(JOIN "" _quat3d_message ${_quat3d_message})
+    if(QUAT3D_ALLOW_TOOLCHAIN_MISMATCH)
+        message(WARNING "${_quat3d_message} QUAT3D_ALLOW_TOOLCHAIN_MISMATCH is set: continuing, unsupported.")
+    else()
+        set(${CMAKE_FIND_PACKAGE_NAME}_NOT_FOUND_MESSAGE "${_quat3d_message}")
+        set(${CMAKE_FIND_PACKAGE_NAME}_FOUND FALSE)
+        return()
+    endif()
+endif()
+
+# --- Dependencies -----------------------------------------------------------
+# From the bundled vcpkg tree (deps/) first. Public-header dependencies (glm,
+# EnTT, nlohmann_json) and every library the static engine archives link.
+list(FIND CMAKE_PREFIX_PATH "${PACKAGE_PREFIX_DIR}/deps" _quat3d_deps_listed)
+if(EXISTS "${PACKAGE_PREFIX_DIR}/deps" AND _quat3d_deps_listed EQUAL -1)
+    list(INSERT CMAKE_PREFIX_PATH 0 "${PACKAGE_PREFIX_DIR}/deps")
+endif()
+include(CMakeFindDependencyMacro)
+find_dependency(Threads)
+find_dependency(glm CONFIG)
+find_dependency(EnTT CONFIG)
+find_dependency(nlohmann_json CONFIG)
+# Vulkan is the one link dependency deps/ does not carry: the loader and
+# headers come from the system (the Vulkan SDK on Windows and macOS,
+# libvulkan-dev or another loader package on Linux). Name that prerequisite
+# instead of FindVulkan's generic error.
+find_package(Vulkan QUIET)
+if(NOT Vulkan_FOUND)
+    set(${CMAKE_FIND_PACKAGE_NAME}_NOT_FOUND_MESSAGE
+        "quat3d needs the Vulkan headers and loader, which are not bundled in the SDK: install the Vulkan SDK (Windows, macOS; or set VULKAN_SDK) or libvulkan-dev (Linux).")
+    set(${CMAKE_FIND_PACKAGE_NAME}_FOUND FALSE)
+    return()
+endif()
+find_dependency(VulkanMemoryAllocator CONFIG)
+find_dependency(fastgltf CONFIG)
+find_dependency(Ktx CONFIG)
+find_dependency(meshoptimizer CONFIG)
+find_dependency(Jolt CONFIG)
+find_dependency(recastnavigation CONFIG)
+find_dependency(GameNetworkingSockets CONFIG)
+find_dependency(sol2 CONFIG)
+find_dependency(Lua)
+find_dependency(OpenSSL COMPONENTS Crypto)
+# Tracy (ENGINE_PROFILE builds): engine_core links its client publicly.
+if(QUAT3D_SDK_PROFILE)
+    find_dependency(Tracy CONFIG)
+endif()
+if(QUAT3D_SDK_EDITOR)
+    find_dependency(SDL3 CONFIG)
+    find_dependency(imgui CONFIG)
+    find_dependency(imguizmo CONFIG)
+    find_dependency(unofficial-imgui-node-editor CONFIG)
+endif()
+
+# FindLua reports paths, not a target; the engine's export names this one
+# (see the root CMakeLists.txt), built from the consumer's FindLua result.
+if(NOT TARGET quat3d_deps::lua)
+    add_library(quat3d_deps::lua INTERFACE IMPORTED)
+    set_target_properties(quat3d_deps::lua PROPERTIES INTERFACE_LINK_LIBRARIES "${LUA_LIBRARIES}")
+endif()
+
+include("${CMAKE_CURRENT_LIST_DIR}/quat3dTargets.cmake")
+
+include("${CMAKE_CURRENT_LIST_DIR}/Quat3dGame.cmake")
+
+set(quat3d_FOUND TRUE)
+check_required_components(quat3d)

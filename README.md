@@ -585,6 +585,27 @@ example:
 The details — project format, what ships, versioning, signing — are in
 [`docs/game-packaging.md`](docs/game-packaging.md).
 
+## Building a game against the SDK
+
+Games in their own repositories link an installed engine SDK instead of the
+engine sources. Each release attaches `quat3d-sdk-<version>-<os>` archives,
+or you can install one from a build with
+`cmake --install build/release --prefix <sdk>`. Then:
+
+```cmake
+find_package(quat3d 0.1 CONFIG REQUIRED)
+quat_add_game(my_game SOURCES src/main.cpp ASSETS assets)
+```
+
+```sh
+cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE=<sdk>/lib/cmake/quat3d/quat3d-toolchain.cmake
+```
+
+[`docs/sdk.md`](docs/sdk.md) covers the layout, which headers are stable,
+the toolchain rules and the versioning policy.
+[`examples/sdk-consumer/`](examples/sdk-consumer) is a working example, and
+CI builds it on every PR.
+
 ## Testing
 
 Tests use [GoogleTest](https://github.com/google/googletest) and run without
@@ -624,6 +645,7 @@ The plan lives in [`ROADMAP.md`](ROADMAP.md), grouped into tracks:
 |---|---|
 | [`docs/STATUS.md`](docs/STATUS.md) | What is in progress, what is blocked, what comes next |
 | [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md) | Building, testing, CI, and conventions for contributors |
+| [`docs/sdk.md`](docs/sdk.md) | The engine SDK: building a game in its own repository against an installed, versioned `quat3d` CMake package |
 | [`docs/scripting.md`](docs/scripting.md) | Lua gameplay scripting: callbacks, the engine API, limits, hot reload |
 | [`docs/input.md`](docs/input.md) | Input actions: action-map format, triggers, modifiers, contexts, rebinding |
 | [`docs/camera-rig.md`](docs/camera-rig.md) | The orbit / strategy camera rig and its input |
@@ -659,6 +681,7 @@ tools/quat-cook/    Offline asset cooker CLI (src/cook/ holds the cooking librar
 tools/asset-gen/    quat-asset-gen: procedural nature models -> assets/meshes/nature/
 assets/scenes/      Showcase scene files (scene JSON v2)
 tests/              GoogleTest suite (engine_tests): tests/<module>/, shared helpers in tests/support/
+examples/sdk-consumer/  A tiny game built only against the installed SDK (CI guard; docs/sdk.md)
 docs/               Project documentation
 ports/, triplets/   vcpkg customisations
 ```

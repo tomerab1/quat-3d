@@ -22,6 +22,8 @@
 #include "script_inspector.hpp"
 #include "time_of_day_panel.hpp"
 #include "tuning_panels.hpp"
+#include "engine/asset/material_asset.hpp"
+#include "engine/asset/mesh_asset.hpp"
 #include "engine/editor/editor.hpp"
 #include "engine/scene/behavior.hpp"
 #include "engine/scene/camera_rig.hpp"

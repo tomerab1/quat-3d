@@ -67,7 +67,10 @@ public:
     explicit AssetHandle(std::shared_ptr<AssetSlot<T>> slot) noexcept
         : slot_(std::move(slot)) {}
 
-    [[nodiscard]] bool valid() const noexcept { return slot_ != nullptr; }
+    // Works on a handle to an incomplete T (components.hpp only names the GPU
+    // assets): the explicit conversion does not instantiate AssetSlot<T>, a
+    // comparison with nullptr would (ADL over the template arguments).
+    [[nodiscard]] bool valid() const noexcept { return static_cast<bool>(slot_); }
     [[nodiscard]] explicit operator bool() const noexcept { return valid(); }
 
     [[nodiscard]] AssetId id() const noexcept { return slot_ ? slot_->id : AssetId{}; }

@@ -354,6 +354,28 @@ the shader and the error:
   variables work on a Mac when running `engine_tests` by hand (MoltenVK's
   `Docs/MoltenVK_Configuration_Parameters.md` lists them all).
 
+## Engine SDK
+
+`cmake --install <build> --prefix <sdk>` produces the engine SDK (ROADMAP P8;
+[`sdk.md`](sdk.md)). The install rules are in `cmake/Quat3dInstall.cmake`,
+and the installed header list is `cmake/Quat3dSdkHeaders.cmake`. A new public
+header that a game should use goes into that list. It must stay free of
+Vulkan, VMA and other non-SDK includes, and every `engine/` header it includes
+must be in the list too (`layering_check`, `public_headers_self_contained`).
+A header added to a stable header's includes changes what the SDK must
+install, so run the guards:
+
+```sh
+ctest --test-dir build/release -L sdk --output-on-failure
+```
+
+These guards install into `build/release/sdk-test/prefix`, then build
+`examples/sdk-consumer/` and the header test against that prefix alone. A new
+static library the engine links privately needs a matching `find_dependency`
+in `cmake/quat3dConfig.cmake.in`. A helper target that holds a build-machine
+path must stay out of the export (`$<BUILD_INTERFACE:…>` or an imported
+target recreated by the config, like `quat3d_deps::lua`).
+
 ## Releases
 
 `.github/workflows/release.yml` builds `game`, `quat-player` and `quat-pack` in Release with
@@ -371,6 +393,10 @@ a clean exit, a screenshot, and data resolved next to the executable):
 | `coin-collector-<v>[-dev.<sha>]-<os>.{tar.gz,zip}` | The sample game through `quat-pack`: `coin-collector` / `coin-collector.exe` / `Coin Collector.app` (Info.plist and icon from `game.json`) next to `game.json`, `manifest.json` and only the data it uses | as above, plus the start scene must load |
 
 Each archive carries `packaging/README-RUN-<os>.txt` as `README-RUN.txt`.
+The same job then runs `ctest -L sdk` and packages the engine SDK with
+`scripts/package-sdk.sh`: `quat3d-sdk-<v>-<os>.tar.gz` (Linux, macOS) or
+`.zip` (Windows), attached to the release next to the game packages
+([`sdk.md`](sdk.md)).
 Pushing a `v*` tag publishes a GitHub Release (tags with a `-`, e.g.
 `v0.2.0-rc1`, are prereleases); running the workflow by hand
 (`gh workflow run release.yml --ref <branch>`) only uploads the packages as

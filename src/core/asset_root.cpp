@@ -21,6 +21,11 @@ fs::path cooked_shader_subdir() {
     return fs::path("cooked") / "shaders";
 }
 
+std::vector<fs::path> install_dirs_for(const fs::path& exe_dir) {
+    if (exe_dir.empty()) return {};
+    return {exe_dir, (exe_dir / ".." / "share" / "quat3d").lexically_normal()};
+}
+
 bool is_asset_root(const fs::path& dir) {
     return !dir.empty() && is_dir(dir / "assets") && is_dir(dir / cooked_shader_subdir());
 }

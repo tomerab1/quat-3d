@@ -199,7 +199,7 @@ The engine repository (`quat-3d`) ships an SDK. The game repository
 **CI checks in this repository (P8 + G17.1).** Each one is a CTest test,
 so it runs on every PR with the rest of the headless suite.
 
-- **`layering_check`** (`scripts/check-layering.sh`) fails when:
+- **`layering_check`** (`cmake/CheckLayering.cmake`, link graph in `cmake/CheckLinkLayering.cmake`) fails when:
   - any file under `src/ include/ tools/ tests/ assets/ cmake/` refers to
     `games/` or `examples/` in an `#include`, a CMake path or a Lua
     `require`. The only exceptions are the top-level `option`-guarded
@@ -302,7 +302,8 @@ changes. Game CI never uses this mode.
 | Area | Headers |
 |---|---|
 | Game modules | `engine/game/*` (`Registrar`, phases, services, field tables) |
-| Core | `engine/core/{error, json_fields, sim_clock, log, command_stack, path_confine, utf8_path}.hpp` |
+| Core | `engine/core/{error, json_fields, sim_clock, log, command_stack, path_confine, spring, utf8_path}.hpp` |
+| Input | `engine/input/{actions, action_map, device_state}.hpp` (G5) |
 | Scene and ECS | `engine/scene/{components, scene, scene_io, component_json, instanced_mesh, scatter, ground_placement, camera_framing, navigation, camera_rig, spline}.hpp`, plus the season, decal and dynamic-mesh components |
 | Geometry | `engine/geometry/*` (R23.1) |
 | Physics | `engine/physics/physics_world.hpp` (queries, bodies, characters) |
