@@ -463,6 +463,7 @@ add_library(engine_scene STATIC
     src/scene/component_json_dynamic_mesh.cpp
     src/scene/dynamic_mesh_upload.cpp
     src/scene/dynamic_mesh_resolve.cpp
+    src/scene/dynamic_mesh_api.cpp
     src/scene/dynamic_mesh_physics.cpp
     src/scene/geometry_spec.cpp
     src/scene/gltf/mesh.cpp
@@ -731,6 +732,7 @@ add_library(engine_remote_world STATIC
     src/remote/world/weather_commands.cpp
     src/remote/world/project_commands.cpp
     src/remote/world/time_commands.cpp
+    src/remote/world/geometry_commands.cpp
     src/remote/world/script_commands.cpp
     src/remote/world/input_commands.cpp
     src/remote/world/camera_rig_commands.cpp
