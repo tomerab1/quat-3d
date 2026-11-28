@@ -164,6 +164,7 @@ void register_debug_query_commands(RpcServer& server, const ContextPtr& ctx);
 void register_tuning_commands(RpcServer& server, const ContextPtr& ctx);
 void register_behavior_commands(RpcServer& server, const ContextPtr& ctx);
 void register_behavior_edit_commands(RpcServer& server, const ContextPtr& ctx);
+void register_weather_commands(RpcServer& server, const ContextPtr& ctx);
 void register_script_commands(RpcServer& server, const ContextPtr& ctx);
 void register_shader_commands(RpcServer& server, const ContextPtr& ctx);
 

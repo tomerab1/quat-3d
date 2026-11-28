@@ -19,7 +19,7 @@ add_executable(engine_tests
 target_link_libraries(engine_tests PRIVATE
     engine_flags engine_core engine_rhi engine_asset engine_scene engine_renderer engine_physics
     engine_animation engine_terrain engine_nav engine_net engine_remote engine_remote_world
-    engine_audio engine_script engine_cook engine_gltf_io game_world # gltf_io.hpp internals (fastgltf)
+    engine_audio engine_weather engine_script engine_cook engine_gltf_io game_world # gltf_io.hpp internals (fastgltf)
     GTest::gtest)
 # Full libktx in this program (engine_cook encodes; the tests decode ASTC
 # references through it): engine_asset then links KTX::ktx instead of

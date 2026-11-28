@@ -240,6 +240,7 @@ void register_world_commands(RpcServer& server, scene::Scene& scene, WorldServic
     world::register_tuning_commands(server, ctx);
     world::register_behavior_commands(server, ctx);
     world::register_behavior_edit_commands(server, ctx);
+    world::register_weather_commands(server, ctx);
     world::register_script_commands(server, ctx);
     world::register_shader_commands(server, ctx);
 }

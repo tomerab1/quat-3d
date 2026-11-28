@@ -26,6 +26,7 @@ const SKILLS: &[&str] = &[
     "design-npc-behaviour",
     "inspect-scene",
     "playtest",
+    "set-weather",
     "tune-look",
     "write-gameplay-script",
 ];

@@ -44,6 +44,13 @@ The editor (dark theme; a light theme is one click away in View > Theme):
   the surface and in its shadow, and keep their shape at a distance
   (coverage-preserving mipmaps); double-sided leaves are lit on both sides
 - Physically based sky with volumetric clouds and a moving sun
+- Weather: wind, cloud cover, rain or snow, wet ground and snow cover, set
+  in the editor's Renderer panel, saved with the scene, and scriptable over
+  MCP. Wet surfaces darken and turn glossy, with puddles on flat ground; snow
+  settles on upward-facing surfaces and lowers the terrain's snowline; the
+  clouds cast moving shadows (a cloud shadow map computed on the GPU). With
+  accumulation on, rain soaks the ground, snow settles in the cold and melts
+  in the warm, and the ground slowly dries.
 - Image-based lighting that keeps up with the sky in real time
 - Temporal anti-aliasing and upscaling (TAAU) with per-object motion vectors for
   moving, skinned, instanced and wind-animated geometry; render scale modes
@@ -79,8 +86,10 @@ The editor (dark theme; a light theme is one click away in View > Theme):
   solver) are synthesised on the GPU in milliseconds, with the deterministic
   CPU generator as fallback and reference; one memory budget bounds the
   resolution x streaming radius of a world
-- Dense, wind-animated grass generated on the GPU every frame around the
-  camera (slope / height limits, distance level of detail, no popping)
+- Dense grass generated on the GPU every frame around the camera (slope /
+  height limits, distance level of detail, no popping); with weather it bends
+  in a global wind field computed on the GPU: gust fronts sweep across the
+  field and eddies swirl through it
 - Jolt physics: rigid bodies, character controller, triggers, terrain collision
 
 **Audio**
@@ -383,7 +392,8 @@ validation messages, frame statistics, pause / single-step / slow down the
 simulation, watch entities, cast physics rays and query navmesh paths — and
 tune the look: exposure, bloom, anti-aliasing, shadows, sky light, clouds and
 per-entity materials, with the same values the editor's Renderer panel and
-Material inspector show — author NPC behaviour trees: build, inspect and
+Material inspector show — set the weather (wind, clouds, rain or snow,
+wetness, snow cover) — author NPC behaviour trees: build, inspect and
 edit the same graph the editor's Behaviour panel shows, with per-node
 validation errors, and see what each node did on the last tick — and write
 material shaders: Slang modules the engine compiles (returning the compiler

@@ -139,7 +139,7 @@ void register_environment_commands(RpcServer& server, const ContextPtr& ctx) {
     server.add_method("environment.set",
                       "Set any of {sun:{azimuth_deg, elevation_deg, intensity, color}, "
                       "clouds:{enabled, coverage, density, bottom_km, thickness_km, size_km, "
-                      "detail, wind_speed, wind_dir_deg}}; returns environment.get.",
+                      "detail, wind_speed, wind_dir_deg, shadows}}; returns environment.get.",
                       [ctx](const Json& p) { return environment_set(*ctx, p); });
 }
 

@@ -290,11 +290,13 @@ drawn with — see "Look tuning" below; `null` drops one override),
 `grass` entity's: `seed`, `density` blades per m² (0..1000), `radius` m
 (0..500), `blade_height` / `blade_width` [min,max] m, `base_color` /
 `tip_color` `"#rrggbb"` or linear `[r,g,b]`, `wind_strength` 0..4,
-`wind_direction` [x,z] (normalised), `wind_frequency` Hz 0..10, `slope`
+`wind_direction` [x,z] (normalised; superseded by the `weather` wind
+while the scene has weather), `wind_frequency` Hz 0..10, `slope`
 [min,max] degrees, `height` [min,max] ground height m, `terrain_only` (false:
 also flat ground at `ground_y` where no terrain is loaded), `lod_start`
 0..1 × radius where blades start thinning, `far_density` 0..1 kept at the
 radius),
+`weather` (the scene's weather, one entity at most — see "Weather" below),
 `point_light`, `dir_light`, `camera`, `collider`, `rigidbody`, `character`,
 `nav_agent`, `behavior`, `patrol`, `terrain` (only an edit that changes the
 generated heights — `seed`, `resolution`, `tile_size`, `height`, `octaves`,
@@ -329,7 +331,7 @@ values. Unknown fields are errors (they name the known fields).
 | `scene.set_parent` | `{entity, parent, keep_world?=true}` | `{id}` |
 | `scene.clear` | `{keep_lights?=true}` | `{destroyed: n}` |
 | `scene.batch` | `{commands:[{method, params}], stop_on_error?=true}` | `{results:[{ok:true, result} \| {ok:false, error:{code,message}}]}` — a string `"@N"` in an `entity`/`parent` field means the `id` returned by command N of this batch. Deferred methods cannot be batched. |
-| `environment.get` | — | `{sun:{azimuth_deg, elevation_deg, intensity, color}, clouds:{enabled, coverage, density, bottom_km, thickness_km, size_km, detail, wind_speed, wind_dir_deg}}` |
+| `environment.get` | — | `{sun:{azimuth_deg, elevation_deg, intensity, color}, clouds:{enabled, coverage, density, bottom_km, thickness_km, size_km, detail, wind_speed, wind_dir_deg, shadows}}` |
 | `environment.set` | same shape, every field optional | `environment.get` result |
 | `world.ground_height` | `{points:[[x,z],...]}` (≤ 1024) | `{heights:[y \| null], generating}` — null where no tile is loaded; `not_found` without terrain |
 | `terrain.status` | — | `{present, entity, streaming, generating, tiles_loaded, tiles_wanted, anchor, tile_size, bounds:{min,max} \| null}` (`{present:false}` without terrain) |
@@ -471,7 +473,7 @@ Settings groups (the renderer implements exactly these):
 | `ao` | GTAO: `enabled`, `radius` [0.05, 10] m, `strength` [0.5, 5], `falloff_range` [0, 1], `sample_distribution_power` [1, 4], `thin_occluder_compensation` [0, 0.7], `depth_mip_offset` [0, 8], `slices` integer [1, 9], `steps_per_slice` integer [1, 8], `denoise_passes` integer [0, 3], `denoise_blur_beta` [0.1, 10], `bent_normals`, `specular_occlusion`, `multi_bounce` |
 | `contact_shadows` | `enabled`, `length` [0.01, 4] m, `steps` integer [2, 64], `thickness` [0.01, 4] m, `intensity` [0, 1] |
 | `ibl` | `intensity` [0, 4] — scales image-based ambient light and reflections |
-| `clouds` | as `environment.*`: `enabled`, `coverage` [0, 1], `density` [0, 128] /km, `bottom_km` [0.2, 15], `thickness_km` [0.2, 10], `size_km` [1, 80], `detail` [0, 1], `wind_speed` [0, 100] m/s, `wind_dir_deg` [-180, 180] |
+| `clouds` | as `environment.*`: `enabled`, `coverage` [0, 1], `density` [0, 128] /km, `bottom_km` [0.2, 15], `thickness_km` [0.2, 10], `size_km` [1, 80], `detail` [0, 1], `wind_speed` [0, 100] m/s, `wind_dir_deg` [-180, 180], `shadows` (with weather: clouds shadow the sun on the ground). While the scene has a weather, its `cloud_cover` replaces `coverage` and its wind drives the drift |
 
 The tonemap operator (ACES filmic fit) is fixed; the renderer has no fog or
 debug views, so neither is listed. The sun is scene data: `environment.*`.
@@ -510,6 +512,57 @@ debug views, so neither is listed. The sun is scene data: `environment.*`.
   ignored and out-of-range numbers clamped (in the block and in `material`
   overrides). A block whose `version` is newer than the build reads, or a
   malformed one, fails the load and leaves the scene and settings untouched.
+
+## Weather (ROADMAP R13.1)
+
+The scene's weather is one `weather` component on a single entity (the
+codec refuses a second one). Its fields come from one table
+(`engine/weather/weather_state.hpp`), shared by the component codec,
+these methods, the quat-mcp `weather_*` tools and the editor's Renderer panel.
+
+| Method | Params | Result |
+|---|---|---|
+| `weather.get` | `{schema?: bool, wind_at?: [[x, y, z], ...]}` (≤ 1024 points) | `{present, entity, weather: {<field>: value}, schema?: [{name, group, label, type, min?, max?, default, unit?, hint, values?}], wind_at?: [[vx, vy, vz], ...]}` |
+| `weather.set` | `{reset?: bool, <field>: value, ...}` | `weather.get` result |
+
+Fields:
+
+| Field | Range | Meaning |
+|---|---|---|
+| `wind_dir_deg` | [-180, 180] deg | heading the wind blows toward, from +X toward +Z (the clouds' convention) |
+| `wind_speed` | [0, 60] m/s | mean wind 10 m above the ground |
+| `gustiness` | [0, 1] | gust fronts sweeping downwind |
+| `turbulence` | [0, 1] | small-scale swirl |
+| `cloud_cover` | [0, 1] | sky fraction covered; overrides `clouds.coverage` while the scene has weather |
+| `precipitation` | [0, 1] | 0 dry, 1 downpour or blizzard |
+| `precipitation_type` | `"rain"` \| `"snow"` | what falls |
+| `wetness` | [0, 1] | surface wetness; puddles on flat ground from about 0.55 |
+| `snow` | [0, 1] | snow lying on upward-facing surfaces |
+| `temperature_c` | [-40, 45] C | snow settles at or below 1 C and melts above 0 C |
+| `accumulate` | bool | let rain, snowfall, melt and drying evolve `wetness` / `snow` over simulated time |
+
+- **get** without weather reports `present: false`, `entity: null` and the
+  defaults (what the renderer uses then). `wind_at` evaluates the CPU
+  reference of the wind field (`weather::sample_wind`) at the renderer's wind
+  clock, at the given height above the ground (`y`; the field is defined at
+  10 m and scaled by the logarithmic wind profile). It is what the grass
+  feels this frame, and what physics or audio should query.
+- **set** merges like the component codec: absent fields (and `null`) keep
+  their values; `reset: true` starts from the defaults. Every value is type-
+  and range-checked and the call is all or nothing, e.g.
+  `weather.wind_speed: expected a number in [0, 60] (m/s)`. Unknown fields
+  list the known ones. The first set creates an entity named `Weather`.
+- **Precedence.** While the scene has weather, it overrides the cloud
+  layer's `coverage` and drift (the clouds advect with the weather's wind,
+  anchored to the world), the clouds shadow the sun (`clouds.shadows`), and
+  grass bends in the global wind field instead of its own sway (its
+  `wind_direction` is unused). Without weather nothing changes: the clouds,
+  their drift and the grass's sway are exactly the settings', there are no
+  cloud shadows, and the wind field and cloud shadow map do not run.
+  `wind_at` then answers for the default weather (heading taken from the
+  grass, when the scene has grass).
+- **Scene files** store it as the `weather` component (lenient decode:
+  unknown fields ignored, numbers clamped).
 
 ## Behaviour-tree authoring (ROADMAP A7)
 

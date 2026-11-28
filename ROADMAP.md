@@ -250,6 +250,30 @@ JSON-RPC over loopback TCP to the engine.
   ocean, clouds), wetness/snow layers, rain with an occlusion map, cloud
   shadows; then froxel volumetric fog + local fog volumes (on R10.1's
   clusters) and a 2.5D volumetric cloud layer. *(quick win → medium)*
+  - [x] **R13.1 Weather + wind foundation.** One `WeatherState` singleton
+    component (wind direction / speed / gustiness / turbulence, cloud
+    cover, precipitation intensity + type, surface wetness, snow
+    accumulation, temperature) with an A8-style field table driving the
+    component codec (scene files), remote `weather.get` / `weather.set`,
+    the quat-mcp tools and the editor's Renderer panel. A global wind field
+    computed on the GPU (advected gust fronts + turbulence around the
+    camera) that grass samples, with a CPU reference
+    (`weather::wind_at`) for tests, physics and audio; clouds advect with
+    it and take their cover from the weather. Wet surfaces (Lagarde's
+    porosity-driven darkening / roughness and puddles on flat ground),
+    snow accumulation on upward-facing surfaces (normal + height, lowering
+    the terrain's snowline) and cloud shadows on the sun (a cloud shadow
+    map computed on the GPU), composed with R12's CSM, all in the deferred lighting path through Slang interfaces.
+  - [ ] **R13.2 Precipitation.** Rain / snow particles with an occlusion
+    (rain-shadow) map, wind on particles, Lua `set_weather`, splashes and
+    ripples, lightning. *(after R10.3 GPU particles and G7 Lua)* Also:
+    weather transitions (eased changes), and with them anchor the wind
+    lattice to the advected air: today a heading change rotates the gust /
+    swirl lattices about the world origin, so far from it the gust fronts
+    sweep sideways (integrate a 2D displacement in `WindAdvection` and keep
+    the along / across anisotropy local).
+  - [ ] **R13.3 Volumetrics.** Froxel volumetric fog + local fog volumes on
+    R10.1's clusters, and a 2.5D volumetric cloud layer.
 - [ ] **R14 — Foliage.** Main + detail wind bending, two-sided foliage shading
   model ID in the GBuffer, hashed alpha (coverage-preserving mips: R12.11), GPU
   instance cull + LOD cross-fade (with R9.4), octahedral impostors, GPU

@@ -18,8 +18,8 @@ class Scene;
 namespace engine::editor {
 
 // The "Renderer" window: the scene's sun (azimuth / elevation / colour /
-// intensity of its DirectionalLight), then one section per RenderSettings
-// group with a reset button.
+// intensity of its DirectionalLight), its weather (weather_panel.hpp), then
+// one section per RenderSettings group with a reset button.
 void draw_renderer_panel(renderer::RenderSettings& settings, scene::Scene* scene);
 
 // The Inspector's "Material" section for an entity drawn with a material

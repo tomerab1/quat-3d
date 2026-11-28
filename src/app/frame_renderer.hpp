@@ -57,12 +57,16 @@
 #include "engine/renderer/skinning_pass.hpp"
 #include "engine/renderer/tonemap_pass.hpp"
 #include "engine/renderer/transparent_pass.hpp"
+#include "engine/renderer/cloud_shadow_pass.hpp"
+#include "engine/renderer/wind_field_pass.hpp"
 #include "engine/renderer/upscaler.hpp"
 #include "engine/renderer/velocity.hpp"
 #include "engine/renderer/velocity_pass.hpp"
 #include "engine/rhi/gpu_allocator.hpp"
 #include "engine/rhi/render_graph.hpp"
 #include "engine/scene/material_override.hpp"
+#include "engine/weather/weather_state.hpp"
+#include "engine/weather/wind_field.hpp"
 #ifdef ENGINE_EDITOR
 #include "engine/renderer/imgui_pass.hpp"
 #endif
@@ -134,6 +138,8 @@ struct DeferredFrame {
     engine::renderer::TransparentPass transparent;
     engine::renderer::BloomPass      bloom;
     engine::renderer::ExposurePass   exposure;
+    engine::renderer::WindFieldPass  wind;          // R13.1 global wind field
+    engine::renderer::CloudShadowPass cloud_shadow; // R13.1 cloud shadow map
 #ifdef ENGINE_EDITOR
     engine::renderer::ImGuiPass      imgui;
     // Offscreen scene target for the editor's Viewport panel: the tonemapped
@@ -169,6 +175,10 @@ struct FrameScene {
     engine::renderer::CsmView csm_view{};
     glm::mat4                 shadow_cull_view_proj{1.0F};
     std::uint64_t             frame_number = 0;
+    // The weather the frame renders (R13.1): the scene's, or the defaults
+    // (wind heading from the grass, when it has some) without one.
+    engine::weather::WeatherState weather{};
+    bool                          has_weather = false;
 };
 
 // Everything record() draws besides the gathered scene.
@@ -227,7 +237,10 @@ public:
     // Camera cut (scene load, play enter / exit, active-camera change,
     // teleport): the next frame drops the motion history and previous view
     // (velocity 0) and resolves without the TAA / upscaler history.
-    void reset_temporal() { temporal_.reset(); }
+    void reset_temporal() {
+        temporal_.reset();
+        prev_wind_params_.reset(); // a cut: no field motion across it
+    }
 #ifdef ENGINE_EDITOR
     // Re-uploads the editor's font atlas into every frame slot's UI pass
     // after the editor rebuilt it (display scale change). Waits for the
@@ -257,8 +270,12 @@ public:
     // also logs once when that frame's guards replaced non-finite values.
     std::uint32_t wait_for_slot();
     [[nodiscard]] Acquire acquire_and_begin();
-    // Accumulates the time that drives the clouds' wind drift.
-    void advance_time(float dt) { cloud_time_s_ += dt; }
+    // Accumulates the time that drives the clouds' drift (with the scene's
+    // weather: integrates its wind at cloud height, R13.1).
+    void advance_time(float dt);
+    // The global wind field's clock (advanced by simulated time in record()):
+    // CPU wind queries use it to match what the frame draws.
+    [[nodiscard]] const engine::weather::WindAdvection& wind_clock() const { return wind_clock_; }
 
     [[nodiscard]] VkExtent2D present_extent() const;
     [[nodiscard]] FrameScene gather(engine::scene::Scene& scene,
@@ -321,6 +338,15 @@ private:
     // frame loop accumulates it always, like the animated sky in other engines
     // — not gated on play mode.
     float cloud_time_s_ = 0.0F;
+    // R13.1: while the scene has weather, the clouds' drift integrated from
+    // its wind (km), and the weather / camera of the last gathered frame.
+    glm::vec2                     cloud_drift_km_{0.0F};
+    engine::weather::WeatherState weather_{};
+    bool                          has_weather_ = false;
+    glm::vec3                     camera_pos_{0.0F};
+    engine::weather::WindAdvection wind_clock_{};
+    // The wind field params the last frame drew (grass velocity, R11).
+    std::optional<engine::weather::WindFieldParams> prev_wind_params_{};
 
     // Temporal state shared by both slots (audit A2 / A11): the upscaler (its
     // history), one adapted luminance and the motion history, each advanced

@@ -8,12 +8,12 @@
 // debugging commands (ROADMAP A5): debug.log, debug.stats, debug.pause /
 // resume / step / time_scale, debug.watch, debug.raycast, debug.nav_path —
 // look tuning (ROADMAP A8): render.settings.get / set / reset / schema,
-// material.get / set — behaviour-tree authoring (ROADMAP A7): bt.leaves,
-// bt.get, bt.set, bt.add_node, bt.remove_node, bt.move_node, bt.set_params,
-// bt.status — the gameplay script files (ROADMAP G7): script.list / get /
-// create / update / delete / check — and material shader authoring (ROADMAP
-// A6): shader.list / get / template / create / update / delete. The method
-// contract is
+// material.get / set — weather (ROADMAP R13.1): weather.get / set —
+// behaviour-tree authoring (ROADMAP A7): bt.leaves, bt.get, bt.set,
+// bt.add_node, bt.remove_node, bt.move_node, bt.set_params, bt.status — the
+// gameplay script files (ROADMAP G7): script.list / get / create / update /
+// delete / check — and material shader authoring (ROADMAP A6): shader.list /
+// get / template / create / update / delete. The method contract is
 // docs/remote-control.md.
 //
 // Scene editing works on any Scene. Everything that only the running
@@ -39,6 +39,7 @@
 
 #include "engine/core/error.hpp"
 #include "engine/remote/rpc_server.hpp"
+#include "engine/weather/wind_field.hpp"
 
 namespace engine::core {
 class LogRing;
@@ -184,6 +185,12 @@ struct WorldServices {
 
     // The current navmesh, or null / invalid when none is baked.
     std::function<const nav::NavMesh*()> navmesh;
+
+    // ---- Weather (ROADMAP R13.1) -------------------------------------------------
+
+    // The renderer's wind clock, so weather.get's wind_at answers match the
+    // field the frame draws. Empty: a clock at zero.
+    std::function<weather::WindAdvection()> wind_clock;
 
     // ---- Gameplay scripts (ROADMAP G7) ------------------------------------------
 

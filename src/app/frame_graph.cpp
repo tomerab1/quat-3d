@@ -1,11 +1,11 @@
 // FrameRenderer, per frame: gathers the ticked scene into draw lists and builds
 // the render graph. Pass order (graph declaration order):
-//   sky-view LUT update, dynamic IBL step, GBuffer, terrain, grass,
+//   sky-view LUT update, dynamic IBL step, wind field, GBuffer, terrain, grass,
 //   background velocity, Hi-Z, cascaded shadows (GPU fit + cascades), GTAO,
-//   light culling, lighting, transparent, particles (all at the render
-//   extent), upscaler (render -> display extent), bloom, exposure, tonemap,
-//   present copy, editor UI; GPU skinning is recorded before the graph
-//   executes.
+//   light culling, cloud shadow map, lighting, transparent, particles (all at
+//   the render extent), upscaler (render -> display extent), bloom, exposure,
+//   tonemap, present copy, editor UI; GPU skinning is recorded before the
+//   graph executes.
 
 #include "app/frame_renderer.hpp"
 #include "app/grass_runtime.hpp"
@@ -29,6 +29,8 @@
 #include "engine/scene/instanced_mesh.hpp"
 #include "engine/scene/scene.hpp"
 #include "engine/scene/material_override.hpp"
+#include "engine/renderer/weather_surfaces.hpp"
+#include "engine/scene/weather_frame.hpp"
 
 namespace quat::app {
 namespace {
@@ -120,9 +122,16 @@ SkinnedEntityGpu* ensure_skin_gpu(DeferredFrame& frame, entt::entity entity,
 } // namespace
 
 engine::renderer::CloudSettings FrameRenderer::current_clouds() const {
-    engine::renderer::CloudSettings c = settings_.clouds;
-    c.time_s = cloud_time_s_;
-    return c;
+    return engine::scene::frame_clouds(settings_.clouds, cloud_time_s_,
+                                       has_weather_ ? &weather_ : nullptr, cloud_drift_km_,
+                                       camera_pos_);
+}
+
+void FrameRenderer::advance_time(float dt) {
+    cloud_time_s_ += dt;
+    if (has_weather_) {
+        cloud_drift_km_ += engine::scene::cloud_wind(weather_, settings_.clouds) * (dt * 0.001F);
+    }
 }
 
 engine::renderer::CsmSettings FrameRenderer::current_csm() const {
@@ -261,6 +270,12 @@ FrameScene FrameRenderer::gather(engine::scene::Scene& scene,
     out.shadow_cull_view_proj = engine::renderer::caster_cull_view_proj(
         out.csm_view, current_csm(), engine::renderer::shadow_map_size);
     out.frame_number = frame_number;
+
+    // R13.1: the weather this frame renders.
+    out.has_weather = engine::scene::frame_weather(scene.registry(), out.weather);
+    weather_ = out.weather;
+    has_weather_ = out.has_weather;
+    camera_pos_ = cam.position;
     return out;
 }
 
@@ -313,6 +328,28 @@ bool FrameRenderer::record(const FrameInputs& in) {
     const engine::renderer::IblViewSet ibl_views =
         dynamic_ibl_ ? dynamic_ibl_->views() : engine::renderer::IblViewSet{};
 
+    // R13.1: with weather, the global wind field around the camera (grass
+    // samples it), advanced by simulated time so pausing freezes the wind
+    // with the world. Without weather nothing runs: grass keeps its R9.3 sway.
+    wind_clock_.advance(engine::weather::sanitized(fs.weather).wind_speed, in.sim_dt);
+    // Last frame's field is evaluated too, so grass motion vectors (R11)
+    // carry the gusts sweeping through, not only the flutter.
+    engine::renderer::WindFieldOutput wind{};
+    if (fs.has_weather && fr.wind.valid()) {
+        const engine::weather::WindFieldParams wind_params =
+            engine::weather::wind_field_params(fs.weather, wind_clock_);
+        if (auto w = fr.wind.add_to_graph(graph, wind_params,
+                                          glm::vec2(cam.position.x, cam.position.z),
+                                          prev_wind_params_)) {
+            wind = *w;
+        } else {
+            std::fprintf(stderr, "[warn] wind field: %s\n", w.error().message.c_str());
+        }
+        prev_wind_params_ = wind_params;
+    } else {
+        prev_wind_params_.reset(); // weather (re)appearing starts without field motion
+    }
+
     // R9.1: draws sharing mesh + material collapse into instanced draws;
     // R9.2: InstancedMesh placements join them, one draw per (mesh,
     // material), culled per instance (shadow casters against the cascades'
@@ -336,7 +373,8 @@ bool FrameRenderer::record(const FrameInputs& in) {
     }
     if (in.grass != nullptr) {
         in.grass->add_to_graph(graph, frame_, *in.registry, *gbuffer, render_extent,
-                               fs.jittered_vp, cam, in.terrain, in.terrain_anchor, in.sim_dt);
+                               fs.jittered_vp, cam, in.terrain, in.terrain_anchor, in.sim_dt,
+                               wind);
     }
     // R11: camera-only velocity where no geometry was drawn (after every
     // opaque writer).
@@ -395,12 +433,30 @@ bool FrameRenderer::record(const FrameInputs& in) {
     } else {
         std::fprintf(stderr, "[warn] light cull: %s\n", c.error().message.c_str());
     }
+    // R13.1: with weather, the cloud shadow map (one compute pass; the
+    // lighting pass samples it). Needs the atmosphere's cloud layer.
+    const engine::renderer::CloudSettings clouds = current_clouds();
+    engine::renderer::CloudShadowMap cloud_shadow{};
+    if (fs.has_weather && atmosphere_ && clouds.enabled && clouds.shadows &&
+        fr.cloud_shadow.valid()) {
+        if (auto m = fr.cloud_shadow.add_to_graph(graph, sun_to, cam.position, clouds)) {
+            cloud_shadow = *m;
+        } else {
+            std::fprintf(stderr, "[warn] cloud shadow map: %s\n", m.error().message.c_str());
+        }
+    }
     auto hdr = fr.lighting.add_to_graph(graph, *gbuffer, render_extent, fs.light,
                                         fs.jittered_inv_vp, cam.position, occlusion, clustered,
                                         /*enable_sky=*/true, ibl_views, atmos_skyview(),
-                                        atmos_transmittance(), current_clouds(),
+                                        atmos_transmittance(), clouds,
                                         engine::renderer::LightingTuning{
-                                            .ibl_intensity = settings.ibl.intensity});
+                                            .ibl_intensity = settings.ibl.intensity,
+                                            .weather = engine::renderer::WeatherSurfaces::from(
+                                                fs.weather,
+                                                in.terrain != nullptr
+                                                    ? in.terrain_snowline
+                                                    : engine::renderer::k_no_snowline_m),
+                                            .cloud_shadow = cloud_shadow});
     if (!hdr) {
         std::fprintf(stderr, "[fatal] lighting pass: %s\n", hdr.error().message.c_str());
         return false;
