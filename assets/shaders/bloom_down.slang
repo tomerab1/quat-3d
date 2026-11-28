@@ -5,18 +5,22 @@
 // applies a soft-knee bright-pass threshold so only highlights bloom, with a
 // Karis luma average on the brightest taps to suppress fireflies.
 
-[[vk::binding(0)]] Texture2D          g_src;
-[[vk::binding(1)]] SamplerState       g_samp;
-[[vk::binding(2)]] [format("rgba16f")] RWTexture2D<float4> g_dst;
+// Binding slots come from reflection (bloom_pass.cpp looks them up by name).
+Texture2D          g_src;
+SamplerState       g_samp;
+[format("rgba16f")] RWTexture2D<float4> g_dst;
+// Debug counter (NonFiniteCounters), bound as a descriptor: an atomic through
+// a buffer device address is mistranslated by
+// MoltenVK's SPIRV-Cross into Metal that does not compile.
+// Always bound (a dummy when counting is off); written only under the flag.
+RWStructuredBuffer<uint> g_non_finite;
 
+// Mirrors DownParams in bloom_pass.cpp (16 bytes).
 struct Params {
     float threshold;
     float knee;
     float prefilter; // 1 on the first level, else 0
-    uint  count_non_finite; // 1: count dropped groups into *non_finite
-    // Debug counter (NonFiniteCounters). Guarded by the flag, not compared
-    // with null: a 64-bit comparison needs the optional shaderInt64 feature.
-    uint* non_finite;
+    uint  count_non_finite; // 1: count dropped groups into g_non_finite[0]
 };
 [[vk::push_constant]] Params pc;
 
@@ -26,7 +30,7 @@ float3 finite_or_zero(float3 c) {
     if (all(isfinite(c))) return c;
     if (pc.count_non_finite != 0) {
         uint previous;
-        InterlockedAdd(*pc.non_finite, 1u, previous);
+        InterlockedAdd(g_non_finite[0], 1u, previous);
     }
     return float3(0.0, 0.0, 0.0);
 }

@@ -17,6 +17,7 @@
 #include <entt/entity/registry.hpp>
 #include <nlohmann/json.hpp>
 
+#include "engine/core/utf8_path.hpp"
 #include "engine/scene/components.hpp"
 #include "engine/scene/scene.hpp"
 #include "engine/scene/script_component.hpp"
@@ -126,11 +127,11 @@ namespace fs = std::filesystem;
                                                        const fs::path& file, const std::string& source) {
     std::error_code ec;
     fs::create_directories(file.parent_path(), ec);
-    if (ec) return rpc_fail(rpc_code::failed, "cannot create " + file.parent_path().filename().string() + ": " + ec.message());
+    if (ec) return rpc_fail(rpc_code::failed, "cannot create " + core::path_to_utf8(file.parent_path().filename()) + ": " + ec.message());
     if (!script::script_file(root, relative)) return bad_params("path: resolves outside assets/scripts/");
     std::random_device rd;
     const fs::path tmp = file.parent_path() /
-                         ("." + file.filename().string() + "." + std::to_string(rd()) + ".tmp");
+                         ("." + core::path_to_utf8(file.filename()) + "." + std::to_string(rd()) + ".tmp");
     if (!write_new_file(tmp, source)) {
         fs::remove(tmp, ec);
         return rpc_fail(rpc_code::failed, "cannot write the script file");

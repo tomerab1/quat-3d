@@ -95,6 +95,19 @@ else()
     message(WARNING "binary-content checks (no texture encoder, no remote control): no nm found; not registered")
 endif()
 
+# Game packages carry the engine's LICENSE and THIRD_PARTY_NOTICES.md (#122):
+# scripts/package-release.sh with a real player (Linux: the layout under test
+# runs ldd / patchelf on it). Skipped (77) without patchelf.
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    find_program(QUAT_BASH_FOR_TESTS bash)
+    if(QUAT_BASH_FOR_TESTS)
+        add_test(NAME package_licences
+            COMMAND ${QUAT_BASH_FOR_TESTS} ${PROJECT_SOURCE_DIR}/tests/pack/package_licences_test.sh
+                    ${PROJECT_SOURCE_DIR} ${CMAKE_BINARY_DIR} $<TARGET_FILE:quat-player-shipping>)
+        set_tests_properties(package_licences PROPERTIES SKIP_RETURN_CODE 77)
+    endif()
+endif()
+
 # Engine SDK guards: install, self-contained public headers, the SDK
 # consumer, refusals, layering (ROADMAP P8).
 add_subdirectory(sdk)

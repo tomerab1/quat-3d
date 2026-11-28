@@ -555,12 +555,17 @@ bool FrameRenderer::record(const FrameInputs& in) {
     (void)device;
     (void)allocator;
 #endif
-    // Tonemap to an intermediate LDR image (UNORM twin of the target format),
-    // then byte-copy it into the target.
+    // Tonemap to an intermediate LDR image viewed as the UNORM twin of the
+    // target format (the shader encodes sRGB itself), then byte-copy it into
+    // the target. The image is *stored* in the target's format, so the copy
+    // into an sRGB swapchain is same-format: a UNORM -> sRGB copy made
+    // MoltenVK cache a view of one CAMetalDrawable in the swapchain image and
+    // crash at exit (rhi::add_byte_copy).
     const engine::rhi::ResourceHandle ldr_current = graph.create_transient_image(
         "ldr_current", ldr_format_, draw_extent,
         VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT |
-            VK_IMAGE_USAGE_TRANSFER_SRC_BIT);
+            VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
+        graph.storage_format(scene_target));
     if (auto r = fr.tonemap.add_to_graph(graph, *hdr, ldr_current, draw_extent,
                                          fr.exposure.exposure_buffer_address(),
                                          settings.exposure, tonemap_look(in, fr));
@@ -568,18 +573,12 @@ bool FrameRenderer::record(const FrameInputs& in) {
         std::fprintf(stderr, "[fatal] tonemap pass: %s\n", r.error().message.c_str());
         return false;
     }
-    graph.add_pass("present_copy", engine::rhi::PassType::transfer)
-        .reads(ldr_current, engine::rhi::ResourceUsage::transfer_src)
-        .writes(scene_target, engine::rhi::ResourceUsage::transfer_dst)
-        .execute([ldr_current, scene_target, draw_extent](engine::rhi::PassContext& ctx) {
-            VkImageCopy region{};
-            region.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
-            region.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
-            region.extent = {draw_extent.width, draw_extent.height, 1};
-            vkCmdCopyImage(ctx.cmd(), ctx.resolve(ldr_current).image,
-                           VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, ctx.resolve(scene_target).image,
-                           VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
-        });
+    if (auto r = engine::rhi::add_byte_copy(graph, "present_copy", ldr_current, scene_target,
+                                            draw_extent);
+        !r) {
+        std::fprintf(stderr, "[fatal] %s\n", r.error().message.c_str());
+        return false;
+    }
 #ifdef ENGINE_EDITOR
     // Editor UI: build the dockspace + panels (the Viewport panel samples
     // the offscreen scene image), then draw the UI into the swapchain as
