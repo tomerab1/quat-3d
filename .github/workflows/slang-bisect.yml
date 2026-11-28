@@ -37,7 +37,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        version: ['2025.6.1', '2025.12', '2025.19.1', '2025.20', '2025.21', '2025.24.3', '2026.1.2', '2026.10.2', '2026.22.1', '2026.23']
+        version: ['2025.6.1', '2025.12', '2025.19.1', '2025.20', '2025.21', '2025.24.3', '2026.10.2', '2026.23']
     steps:
       - uses: actions/checkout@v4
         with: { persist-credentials: false }
@@ -64,8 +64,8 @@ jobs:
         env: { V: '${{ matrix.version }}' }
         run: |
           chmod +x spvt/*
-          S=assets/shaders; O=cooked/shaders; mkdir -p $O/materials
-          C=slang/bin/slangc; fail=0
+          S=$PWD/assets/shaders; O=$PWD/cooked/shaders; mkdir -p $O/materials
+          C=$PWD/slang/bin/slangc; fail=0
           for f in $S/lib/*.slang; do n=$(basename $f .slang); $C $f -I $S/lib -o $O/$n.slang-module || { echo "MODULE-FAIL $n"; fail=1; }; done
           for f in $S/*.slang; do n=$(basename $f .slang)
             $C $f -I $S/lib -target spirv -emit-spirv-directly -fvk-use-entrypoint-name -o $O/$n.spv -reflection-json $O/$n.json 2> err.txt || { echo "COMPILE-FAIL $n"; fail=1; }
@@ -79,7 +79,7 @@ jobs:
             if ! out=$(spvt/spirv-val --target-env vulkan1.3 "$spv" 2>&1); then bad=$((bad+1)); echo "VAL-FAIL $spv: $(echo "$out" | grep -o 'VUID[^ :]*' | sort -u | tr '\n' ' ') $(echo "$out" | head -3 | tr '\n' ' ' | cut -c1-300)"; fi
           done
           echo "RESULT v$V: $bad of $total .spv fail spirv-val; compile-fail=$fail"
-          tar -czf cooked-$V.tgz cooked
+          tar -czf cooked-$V.tgz -C $PWD cooked
       - name: New explicit-layout test against this version's cooked shaders
         run: |
           git clone -q --depth 1 -b v1.17.0 https://github.com/google/googletest.git gt
@@ -91,7 +91,7 @@ jobs:
       - name: Workaround probes
         env: { V: '${{ matrix.version }}' }
         run: |
-          C=slang/bin/slangc; D=spvt/spirv-dis; mkdir -p p; cd p
+          set +e; C=$PWD/slang/bin/slangc; D=$PWD/spvt/spirv-dis; mkdir -p p; cd p
           cat > inst.slang <<'X'
           struct VOut { float4 pos : SV_Position; };
           [shader("vertex")] VOut main(uint iid : SV_InstanceID) { VOut o; o.pos = float4(float(iid), 0, 0, 1); return o; }
@@ -132,6 +132,7 @@ jobs:
           $C bad.slang -target spirv -o bad.spv -reflection-json bad.json > /dev/null 2>&1; echo "PROBE v$V compile error + reflection-json exit: $?"
           echo "PROBE v$V bad.spv written: $(test -e bad.spv && echo yes || echo no)"
       - uses: actions/upload-artifact@v4
+        if: always()
         with: { name: 'cooked-${{ matrix.version }}', path: 'cooked-${{ matrix.version }}.tgz' }
 
   reflection-diff:
