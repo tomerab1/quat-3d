@@ -180,12 +180,15 @@ TEST(GpuTerrainSynth, GridErosionTracksTheCpuReference) {
     }
 }
 
-// Issue #69: the talus relaxation's relax_* kernels follow the CPU cascade op
-// for op. With rain and thermal weathering off the simulation steps leave the
-// noise field untouched, so the only GPU/CPU difference going in is the
-// noise's rounding; the relaxation is non-expansive, so it must come out no
-// larger, while the relaxation itself moves metres of material.
-TEST(GpuTerrainSynth, TalusRelaxationMatchesTheCpuReference) {
+// Issue #69 / PR #90 review: the relax_* kernels and terrain::run_talus_op
+// produce the same bits from the same input. With rain and thermal
+// weathering off, the simulation steps leave the noise field bit for bit
+// (every update adds an exact zero), so a GPU job without relaxation reads
+// back the GPU's own noise field N. Feeding that N to the CPU reference
+// (erode_grid: the same identity steps, then relax_talus) must reproduce,
+// bit for bit, what the GPU job with relaxation reads back: N + (E - N)
+// where the border fade is 1, N where it is 0.
+TEST(GpuTerrainSynth, TalusRelaxationIsBitIdenticalToTheCpuReference) {
     QUAT_REQUIRE_GPU(g);
     r::TerrainSynthPass pass = make_pass(*g);
     ASSERT_TRUE(pass.valid());
@@ -200,24 +203,39 @@ TEST(GpuTerrainSynth, TalusRelaxationMatchesTheCpuReference) {
     t::TerrainParams unrelaxed = p;
     unrelaxed.grid.relax_cycles = 0;
 
+    const t::Heightmap noise = synthesize(*g, pass, unrelaxed); // the GPU's own N
     const t::Heightmap gpu = synthesize(*g, pass, p);
-    const t::Heightmap gpu_unrelaxed = synthesize(*g, pass, unrelaxed);
-    const t::Heightmap cpu = t::generate(p);
-    const t::Heightmap cpu_unrelaxed = t::generate(unrelaxed);
+    ASSERT_TRUE(noise.valid());
     ASSERT_TRUE(gpu.valid());
-    ASSERT_TRUE(gpu_unrelaxed.valid());
 
-    const Diff input = diff(gpu_unrelaxed, cpu_unrelaxed); // the noise's rounding
-    const Diff output = diff(gpu, cpu);
-    const Diff moved = diff(cpu, cpu_unrelaxed);
-    std::printf("[terrain synth] talus relaxation: |gpu-cpu| in %.3g m, out %.3g m (max); "
-                "relaxation moved %.3g m (mean), %.3g m (max)\n",
-                static_cast<double>(input.max_abs), static_cast<double>(output.max_abs),
-                moved.mean_abs, static_cast<double>(moved.max_abs));
-    EXPECT_LE(input.max_abs, k_noise_tolerance * p.height_m);
-    ASSERT_GT(moved.max_abs, 1.0F) << "the relaxation did nothing";
-    EXPECT_LE(output.max_abs, std::max(2.0F * input.max_abs, 1e-5F))
-        << "the GPU cascade diverged from the CPU's";
+    std::vector<float> cpu = noise.heights;
+    const std::uint32_t res = p.resolution;
+    ASSERT_TRUE(t::erode_grid(cpu, res, noise.metres_per_texel(), p.grid));
+
+    int compared = 0;
+    int mismatches = 0;
+    double moved = 0.0;
+    for (std::uint32_t z = 0; z < res; ++z) {
+        for (std::uint32_t x = 0; x < res; ++x) {
+            const std::size_t i = static_cast<std::size_t>(z) * res + x;
+            const float fade = t::grid_erosion_fade(x, z, res);
+            float expected = noise.heights[i];
+            if (fade >= 1.0F) {
+                const float d = cpu[i] - noise.heights[i];
+                expected = noise.heights[i] + d;
+            } else if (fade > 0.0F) {
+                continue; // the blend may fuse on the GPU: not the relaxation's bits
+            }
+            ++compared;
+            mismatches += same_bits(gpu.heights[i], expected) ? 0 : 1;
+            moved = std::max(moved, static_cast<double>(std::abs(cpu[i] - noise.heights[i])));
+        }
+    }
+    std::printf("[terrain synth] talus relaxation: %d of %d texels differ from the CPU "
+                "reference; it moved up to %.3g m\n",
+                mismatches, compared, moved);
+    ASSERT_GT(moved, 1.0) << "the relaxation did nothing";
+    EXPECT_EQ(mismatches, 0) << "the GPU cascade's bits differ from run_talus_op's";
 }
 
 TEST(GpuTerrainSynth, AdjacentGpuTilesShareBitIdenticalEdges) {

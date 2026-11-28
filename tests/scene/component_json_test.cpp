@@ -180,6 +180,17 @@ TEST_F(ComponentJson, TerrainCombinedBudgetIsBounded) {
     EXPECT_NE(droplets.error().message.find("droplets"), std::string::npos);
     EXPECT_NE(droplets.error().message.find("<= 617283"), std::string::npos)
         << droplets.error().message; // 50M / 81 tiles
+
+    // The error names the field the request changed (PR #90 review).
+    ASSERT_OK(apply("terrain", {{"stream_radius", 4}, {"streaming", false}}));
+    const auto toggled = apply("terrain", {{"streaming", true}});
+    ASSERT_FALSE(toggled);
+    EXPECT_EQ(toggled.error().message.rfind("terrain.streaming", 0), 0U)
+        << toggled.error().message;
+    ASSERT_OK(apply("terrain", {{"droplets", 100'000}, {"streaming", true}}));
+    const auto more = apply("terrain", {{"droplets", 1'000'000}});
+    ASSERT_FALSE(more);
+    EXPECT_EQ(more.error().message.rfind("terrain.droplets", 0), 0U) << more.error().message;
 }
 
 TEST_F(ComponentJson, MergeKeepsFieldsNotMentioned) {

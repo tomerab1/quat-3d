@@ -191,6 +191,14 @@ into CLAUDE.md or the brief template in [`CYCLE.md`](CYCLE.md).
   multigrid (talus_relax.cpp), and solve the coarsest level to convergence:
   with only 8 sweeps there, a uniform 60° ramp stayed at 59°, because every
   level sees the same ramp. Test with a ramp, not just a spike.
+- **A multigrid cascade is not monotone just because its smoother is**
+  (PR #90 review). Restriction by decimation turned a one-texel spike on an
+  even index into a coarse plateau, and its correction, interpolated onto
+  neighbours that never held material, dug 5 m pits. Restrict with the
+  volume-weighted transpose of the prolongation (full weighting; [1 1]/2 on
+  borders, where a sample is half a cell), weight the sweeps by the same
+  volumes so borders conserve too, and test range and volume with spikes on
+  even and odd texels, borders and corners.
 - **A `std::async` future can be ready while its worker is still running.**
   The promise is fulfilled inside the lambda, so `wait_for(0)` on the
   task's own `future<void>` may still report "not ready" just after the
