@@ -151,6 +151,7 @@ Windows the command ends in `quat-mcp.exe`.
 | `scene_set_parent` | `scene.set_parent` | Re-parent (keeping the world transform by default) |
 | `scene_batch` | `scene.batch` | Many commands in one frame, with `"@N"` back-references |
 | `environment_get` / `environment_set` | `environment.*` | Sun angles and colour, volumetric clouds |
+| `time_get` / `time_set` / `time_skip` | `time.*` | World clock: date, time, place and speed; the real Sun and Moon, sunrise / sunset, Moon phase |
 | `world_ground_height` | `world.ground_height` | Terrain height under `[x, z]` points |
 | `terrain_status` | `terrain.status` | Whether terrain tiles are still generating; loaded tiles and bounds |
 | `world_place_on_ground` | `world.place_on_ground` | Rest an entity's bounds on the terrain or colliders below it, optionally tilted to the slope |

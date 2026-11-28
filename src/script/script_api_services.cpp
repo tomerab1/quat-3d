@@ -6,10 +6,12 @@
 
 #include <entt/entity/registry.hpp>
 #include <glm/gtc/quaternion.hpp>
+#include <nlohmann/json.hpp>
 
 #include "engine/physics/physics_world.hpp"
 #include "engine/scene/components.hpp"
 #include "engine/scene/scene.hpp"
+#include "engine/scene/world_clock_api.hpp"
 #include "lua_vm.hpp"
 #include "script_api.hpp"
 
@@ -77,6 +79,31 @@ void register_time(LuaVm& vm, ApiContext& c) {
     t.set_function("elapsed", [ctx] { return ctx->elapsed_s; });
     t.set_function("frame", [ctx] { return ctx->frame; });
     t.set_function("fixed_delta", [ctx] { return ctx->fixed_dt; });
+    // The world clock (R22.1): the same surface as the remote time.* commands.
+    lua_State* L = vm.state();
+    t.set("clock", bind(L, [ctx](sol::this_state s) -> Result<sol::object> {
+              auto r = scene_registry(*ctx);
+              if (!r.value) return std::unexpected(r.value.error());
+              return json_to_lua(s.lua_state(), scene::world_clock_report(**r.value));
+          }));
+    t.set("set_clock", bind(L, [ctx](const sol::table& spec, sol::this_state s) -> Result<sol::object> {
+              auto r = scene_registry(*ctx);
+              if (!r.value) return std::unexpected(r.value.error());
+              auto json = lua_to_json(spec, true);
+              if (!json.value) return fail("set_clock: " + json.value.error().message);
+              if (auto ok = scene::set_world_clock(*ctx->scene, *json.value); !ok) {
+                  return fail("set_clock: " + ok.error().message);
+              }
+              return json_to_lua(s.lua_state(), scene::world_clock_report(**r.value));
+          }));
+    t.set("skip", bind(L, [ctx](double hours, sol::this_state s) -> Result<sol::object> {
+              auto r = scene_registry(*ctx);
+              if (!r.value) return std::unexpected(r.value.error());
+              if (auto ok = scene::skip_world_clock(**r.value, hours); !ok) {
+                  return fail("skip: " + ok.error().message);
+              }
+              return json_to_lua(s.lua_state(), scene::world_clock_report(**r.value));
+          }));
     vm.expose("time", t);
 }
 

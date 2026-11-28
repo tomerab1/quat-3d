@@ -46,6 +46,12 @@ SCENE_TABLE=(
   "terrain|90|QUAT_NO_UI=1 QUAT_TERRAIN=1|Showcase + GPU-generated terrain tile"
   "physics|90|QUAT_NO_UI=1 QUAT_PHYSICS=1|Physics demo (Jolt) after 90 frames"
   "cinematic|16|SCENE_TIMEOUT=900 QUAT_NO_UI=1 QUAT_PLAY=1 QUAT_GAME_CAMERA=1 QUAT_WINDOW_SIZE=960x540 QUAT_SCENE=assets/scenes/cinematic_forest.json|Cinematic forest clearing at golden hour (CC0 Poly Haven assets), hero camera|assets/showcase/cinematic/assets.json"
+  # World clock (R22.1): Paris on the 2026 June solstice, the clock frozen.
+  # Sunrise 05:47, solar noon 13:52, sunset 21:58 local (UTC+2).
+  "sunrise|30|QUAT_NO_UI=1 QUAT_TIME=2026-06-21T06:10:00+02:00 QUAT_LATLON=48.8566,2.3522 QUAT_TIME_SCALE=0|World clock: Paris, June solstice, 06:10 (sun 2.5° up, north-east)"
+  "noon|30|QUAT_NO_UI=1 QUAT_TIME=2026-06-21T13:52:00+02:00 QUAT_LATLON=48.8566,2.3522 QUAT_TIME_SCALE=0|World clock: Paris, June solstice, solar noon (sun 64.6° up, south)"
+  "sunset|30|QUAT_NO_UI=1 QUAT_TIME=2026-06-21T21:35:00+02:00 QUAT_LATLON=48.8566,2.3522 QUAT_TIME_SCALE=0|World clock: Paris, June solstice, 21:35 (sun 2.5° up, north-west)"
+  "editor-time-of-day|30|QUAT_WINDOW_SIZE=1600x900 QUAT_EDITOR_LAYOUT=default QUAT_EDITOR_SELECT=world_clock QUAT_TIME=2026-06-21T21:35:00+02:00 QUAT_TIME_SCALE=0|Editor: the world clock in the Inspector at sunset"
 )
 
 die() { echo "ci-screenshots: $*" >&2; exit 2; }

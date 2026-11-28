@@ -60,7 +60,9 @@ public:
     //                            ground with `ground`), write skinning matrices.
     //   3. WeatherSystem       — evolve the weather's wetness and snow cover
     //                            (engine/weather/weather_state.hpp).
-    //   4. RenderCollectSystem — gather drawable entities into draw_list().
+    //   4. WorldClockSystem    — advance the scene's WorldClock, derive the
+    //                            sky, drive the sun (world_clock.hpp).
+    //   5. RenderCollectSystem — gather drawable entities into draw_list().
     void tick(float dt = 0.0F, const FootGroundProbe& ground = {});
 
     // First entity with an active Camera, or entt::null if none.

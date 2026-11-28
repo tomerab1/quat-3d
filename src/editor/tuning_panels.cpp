@@ -15,6 +15,7 @@
 #include "engine/scene/components.hpp"
 #include "engine/scene/material_override.hpp"
 #include "engine/scene/scene.hpp"
+#include "time_of_day_panel.hpp"
 #include "shell/panels.hpp"
 #include "ui/icons.hpp"
 #include "ui/widgets.hpp"
@@ -118,6 +119,11 @@ void draw_sun(scene::Scene* scene) {
         return;
     }
     if (!ui::begin_property_grid("sun")) return;
+    // While the world clock drives the light, its angles and strength come
+    // from the clock (Time of Day below): shown, not editable.
+    const bool driven = clock_drives_sun(scene->registry());
+    if (driven) ui::prop_note("Driven by the world clock (Time of Day).");
+    ImGui::BeginDisabled(driven);
     // direction = travel direction (sun -> scene), unit length; same angle
     // convention as environment.get / environment.set.
     const glm::vec3 dir = glm::normalize(sun->direction);
@@ -134,8 +140,11 @@ void draw_sun(scene::Scene* scene) {
         sun->direction =
             glm::vec3(std::cos(el) * std::cos(az), -std::sin(el), std::cos(el) * std::sin(az));
     }
+    ImGui::EndDisabled();
     (void)ui::prop_color3("Colour", sun->color, {.reset = glm::vec3(1.0F)});
+    ImGui::BeginDisabled(driven);
     (void)ui::prop_float("Intensity", sun->intensity, {.speed = 0.05F, .min = 0.0F, .max = 100.0F});
+    ImGui::EndDisabled();
     ui::end_property_grid();
 }
 
@@ -182,6 +191,11 @@ void draw_renderer_panel(RenderSettings& settings, scene::Scene* scene) {
     if (ui::section_header(ui::label(icon::sun, "Sun").c_str())) {
         ImGui::PushID("sun");
         draw_sun(scene);
+        ImGui::PopID();
+    }
+    if (ui::section_header(ui::label(icon::clock_3, "Time of Day").c_str())) {
+        ImGui::PushID("time_of_day");
+        draw_time_of_day_section(scene);
         ImGui::PopID();
     }
     if (ui::section_header(ui::label(icon::cloud, "Weather").c_str())) {

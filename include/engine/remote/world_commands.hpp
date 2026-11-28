@@ -13,9 +13,10 @@
 // bt.add_node, bt.remove_node, bt.move_node, bt.set_params, bt.status — the
 // gameplay script files (ROADMAP G7): script.list / get / create / update /
 // delete / check — material shader authoring (ROADMAP A6): shader.list /
-// get / template / create / update / delete — and game packaging (ROADMAP
-// P4): project.info, project.build, project.build_status. The method
-// contract is docs/remote-control.md.
+// get / template / create / update / delete — game packaging (ROADMAP P4):
+// project.info, project.build, project.build_status — and the world clock
+// (ROADMAP R22.1): time.get / set / skip. The method contract is
+// docs/remote-control.md.
 //
 // Scene editing works on any Scene. Everything that only the running
 // application has — the view camera, the renderer's settings, terrain heights,

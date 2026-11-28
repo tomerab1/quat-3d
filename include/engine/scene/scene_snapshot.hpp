@@ -19,6 +19,7 @@
 #include "engine/core/error.hpp"
 #include "engine/scene/components.hpp"
 #include "engine/scene/physics_settings.hpp"
+#include "engine/scene/world_clock.hpp"
 
 namespace engine::scene {
 
@@ -37,7 +38,7 @@ using SnapshotComponents =
                   scene::SkinnedMesh, scene::Animator, scene::FootIK, scene::Camera,
                   scene::DirectionalLight, scene::PointLight, scene::Collider,
                   scene::RigidBody, scene::Joint, scene::CharacterController, scene::Terrain,
-                  scene::Grass, scene::ParticleEmitter,
+                  scene::Grass, scene::ParticleEmitter, scene::WorldClock,
                   scene::NavAgent, scene::BehaviorTree, scene::PatrolRoute, scene::Primitive,
                   scene::InstancedMesh, scene::InstancedMeshParts, scene::Scatter,
                   scene::NetReplicated, scene::AudioSource, scene::AudioListener,

@@ -332,7 +332,7 @@ values. Unknown fields are errors (they name the known fields).
 | `scene.set_parent` | `{entity, parent, keep_world?=true}` | `{id}` |
 | `scene.clear` | `{keep_lights?=true}` | `{destroyed: n}` |
 | `scene.batch` | `{commands:[{method, params}], stop_on_error?=true}` | `{results:[{ok:true, result} \| {ok:false, error:{code,message}}]}` — a string `"@N"` in an `entity`/`parent` field means the `id` returned by command N of this batch. Deferred methods cannot be batched. |
-| `environment.get` | — | `{sun:{azimuth_deg, elevation_deg, intensity, color}, clouds:{enabled, coverage, density, bottom_km, thickness_km, size_km, detail, wind_speed, wind_dir_deg, shadows}}` |
+| `environment.get` | — | `{sun:{azimuth_deg, elevation_deg, intensity, color, driven_by_clock}, clouds:{enabled, coverage, density, bottom_km, thickness_km, size_km, detail, wind_speed, wind_dir_deg, shadows}}` |
 | `environment.set` | same shape, every field optional | `environment.get` result |
 | `world.ground_height` | `{points:[[x,z],...]}` (≤ 1024) | `{heights:[y \| null], generating}` — null where no tile is loaded; `not_found` without terrain |
 | `terrain.status` | — | `{present, entity, streaming, generating, tiles_loaded, tiles_wanted, anchor, tile_size, bounds:{min,max} \| null}` (`{present:false}` without terrain) |
@@ -349,7 +349,13 @@ values. Unknown fields are errors (they name the known fields).
 
 Sun convention (same as the editor's Renderer panel): the light's travel
 direction `d` gives `azimuth_deg = atan2(d.z, d.x)` and `elevation_deg =
-asin(-d.y)`.
+asin(-d.y)`. This azimuth is a world-space angle (from +X toward +Z), not a
+compass bearing: a scene has no compass until it has a world clock.
+`time.get`'s `sun.azimuth_deg` is the compass bearing (0 = north = −Z by
+default, 90 = east = +X), so the same light reads differently in the two
+(e.g. the Sun due south at noon: `time.get` 180, `environment.get` −90).
+`driven_by_clock` is true while the world clock positions the sun (then
+`environment.set` refuses angles and intensity).
 
 Methods that need something only the full application has (camera,
 screenshot, clouds, glTF spawn, play/stop, save/load, nav bake, and the
@@ -949,6 +955,40 @@ table.
 - Without a game project open, `project.build` fails; a build without the
   `quat-pack` / `quat-player` executables next to the engine (or
   `QUAT_PACK` / `QUAT_PLAYER`) fails with the path it looked at.
+
+## World clock (ROADMAP R22.1)
+
+The scene's date, time and place: one `world_clock` component per scene
+(`engine/scene/world_clock.hpp`). It advances with the simulation clock
+(`debug.pause` / `step` / `time_scale` apply) × its own `time_scale`, and
+while `enabled` and `drive_sun` it writes the scene's first `dir_light`:
+direction toward the apparent Sun, intensity `sun_intensity` × the fraction
+of the solar disc above the horizon. Disabled, nothing is touched.
+`environment.set` refuses sun angles / intensity while the clock drives the
+sun.
+
+Clock fields (also the `world_clock` component of the scene codec):
+`enabled`, `datetime` (ISO-8601 `YYYY-MM-DDThh:mm[:ss[.fff]][Z|±hh:mm]`,
+years 1800..2200; without a zone it is local time at `utc_offset_h`; a zone
+also becomes the display zone unless `utc_offset_h` is given),
+`utc_offset_h` (−14..14), `latitude_deg` (−90..90, north),
+`longitude_deg` (−180..180, east), `north_offset_deg` (world rotation of
+compass north; 0 = north is −Z, east +X), `time_scale` (clock seconds per
+simulated second, 0..1e6; 0 freezes it), `fixed_day` (the time of day wraps
+at local midnight), `drive_sun`, `sun_intensity` (0..1e5).
+
+| Method | Params | Result |
+|---|---|---|
+| `time.get` | — | clock fields + `in_scene`, `entity`, `utc`, `julian_date`, `local_sidereal_time_deg`, `sun:{azimuth_deg, elevation_deg, direction, illuminance_lux, visible_fraction, sunrise, sunset, solar_noon, civil_dawn, civil_dusk, day_length_h?, polar}`, `moon:{azimuth_deg, elevation_deg, direction, illuminated_fraction, phase_angle_deg, phase, illuminance_lux, distance_km, moonrise, moonset}` |
+| `time.set` | any clock field, plus `local_time` (`hh:mm[:ss]`, keeps the date) | `time.get` result; creates the clock (and a sun light when it drives one and the scene has none) |
+| `time.skip` | `{hours}` (−87600..87600) | `time.get` result; `not_found` without a clock |
+
+Azimuths are compass bearings (0 = north, 90 = east); elevations are
+apparent (refracted), topocentric. Event times are local ISO-8601 strings
+(null when the event does not happen that local day; `polar` is `"day"` /
+`"night"` when the Sun stays up / down). Illuminances are outside the
+atmosphere, at normal incidence (Sun: 133 334 lx / R²; Moon: Krisciunas &
+Schaefer 1991).
 
 ## Errors
 

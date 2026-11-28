@@ -2,6 +2,7 @@
 
 #include "engine/scene/scene.hpp"
 #include "engine/weather/weather_state.hpp"
+#include "engine/scene/world_clock.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -76,6 +77,7 @@ void Scene::tick(float dt, const FootGroundProbe& ground) {
     transform_system(registry_);
     animation_system(registry_, dt, ground);
     weather::weather_system(registry_, dt); // wetness / snow accumulation (R13.1)
+    world_clock_system(registry_, dt); // date / time, sun and sky (R22.1)
     render_collect_system(registry_, draw_list_);
 }
 

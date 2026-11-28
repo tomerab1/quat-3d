@@ -51,6 +51,13 @@ The editor (dark theme; a light theme is one click away in View > Theme):
   clouds cast moving shadows (a cloud shadow map computed on the GPU). With
   accumulation on, rain soaks the ground, snow settles in the cold and melts
   in the warm, and the ground slowly dries.
+- Time of day from real astronomy: a world clock (date, time, latitude /
+  longitude, speed) puts the Sun where it really is — sunrise in the
+  north-east at midsummer, polar day, the equation of time — and tracks the
+  Moon's position and phase (Meeus' algorithms, tested against the USNO
+  almanac to within half a minute). Edit it in the editor's Time of Day section or
+  over MCP (`time_set`) or from Lua (`time.set_clock`); the night sky itself (stars, Moon disc) is next
+  (ROADMAP R22.2)
 - Image-based lighting that keeps up with the sky in real time
 - Temporal anti-aliasing and upscaling (TAAU) with per-object motion vectors for
   moving, skinned, instanced and wind-animated geometry; render scale modes
@@ -261,6 +268,7 @@ Environment variables switch on extra modes:
 | `QUAT_SCRIPT_HOT_RELOAD=0` / `=1` | Turn script hot reload off (editor) / on (non-editor builds) |
 | `QUAT_GLTF=<file>` | Load a glTF/GLB model instead of the showcase scene |
 | `QUAT_TERRAIN=1` | Add a procedural terrain tile (with a grass field) |
+| `QUAT_TIME=<ISO-8601>` | Start with a world clock at this date and time (e.g. `2026-06-21T21:30+02:00`) driving the sun; `QUAT_LATLON=<lat>,<lon>` sets the place (default Paris), `QUAT_TIME_SCALE=<n>` the clock speed (default 1, 0 = frozen) |
 | `QUAT_PHYSICS=1` / `QUAT_CHARACTER=1` | Physics (with sparks and smoke) / character-controller demo scenes |
 | `QUAT_HOST=<port>` / `QUAT_JOIN=<ip:port>` | Host or join a networked session (host listens on 127.0.0.1 only unless `QUAT_NET_BIND` says otherwise) — see [Networking](#networking) |
 | `QUAT_NET_BIND=<ipv4>` | Host: interface to listen on (default `127.0.0.1`; `0.0.0.0` = every interface, for LAN/internet play) |

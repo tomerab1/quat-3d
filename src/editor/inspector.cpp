@@ -19,12 +19,14 @@
 #include "particle_inspector.hpp"
 #include "physics_inspector.hpp"
 #include "script_inspector.hpp"
+#include "time_of_day_panel.hpp"
 #include "tuning_panels.hpp"
 #include "engine/editor/editor.hpp"
 #include "engine/scene/behavior.hpp"
 #include "engine/scene/components.hpp"
 #include "engine/scene/scatter.hpp"
 #include "engine/scene/scene.hpp"
+#include "engine/scene/world_clock.hpp"
 #include "inspector_world.hpp"
 #include "panels/inspector_parts.hpp"
 #include "shell/panels.hpp"
@@ -157,6 +159,17 @@ struct ComponentInspector<scene::Script> {
     static void draw(entt::registry&, entt::entity, scene::Script& script,
                      const panels::InspectorState& state) {
         draw_script_fields(script, state.scripts);
+    }
+};
+
+template <>
+struct ComponentInspector<scene::WorldClock> {
+    static constexpr const char* title = "World Clock";
+    static constexpr const char* codec = "world_clock";
+    static constexpr const char* icon = icon::clock_3;
+    static constexpr bool property_grid = true;
+    static void draw(entt::registry& r, entt::entity e, scene::WorldClock& clock) {
+        draw_world_clock(r, e, clock);
     }
 };
 
@@ -524,7 +537,8 @@ void draw_inspector(scene::Scene& scene, entt::entity selected, panels::Inspecto
     }
 
     panels::entity_header(scene, selected);
-    inspect<scene::Transform>(state, r, selected);
+    // A clock-only entity has no place in the world: no Transform section.
+    if (!clock_only_entity(r, selected)) inspect<scene::Transform>(state, r, selected);
     inspect<scene::Primitive>(state, r, selected, true);
     if (!r.all_of<scene::Primitive>(selected)) inspect<scene::MeshRenderer>(state, r, selected);
     draw_material_inspector(r, selected);
@@ -536,6 +550,7 @@ void draw_inspector(scene::Scene& scene, entt::entity selected, panels::Inspecto
     inspect<scene::Terrain>(state, r, selected, true);
     inspect<scene::Grass>(state, r, selected, true);
     inspect<scene::ParticleEmitter>(state, r, selected, true);
+    inspect<scene::WorldClock>(state, r, selected, true);
     inspect<scene::InstancedMesh>(state, r, selected, true); // removal takes parts + scatter
     inspect<scene::Scatter>(state, r, selected, true);
     inspect<scene::NavAgent>(state, r, selected, true);

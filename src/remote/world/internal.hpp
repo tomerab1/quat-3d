@@ -174,6 +174,7 @@ void register_weather_commands(RpcServer& server, const ContextPtr& ctx);
 void register_project_commands(RpcServer& server, const ContextPtr& ctx);
 void register_script_commands(RpcServer& server, const ContextPtr& ctx);
 void register_shader_commands(RpcServer& server, const ContextPtr& ctx);
+void register_time_commands(RpcServer& server, const ContextPtr& ctx);
 
 // {paused, time_scale, pending_steps, steps_run, sim_frames, sim_time_s}.
 [[nodiscard]] Json sim_clock_json(const core::SimClock& clock);

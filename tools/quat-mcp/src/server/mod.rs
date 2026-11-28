@@ -27,6 +27,8 @@ mod shader_tools;
 #[allow(clippy::doc_markdown)]
 mod sim_tools;
 #[allow(clippy::doc_markdown)]
+mod time_tools;
+#[allow(clippy::doc_markdown)]
 mod tuning_tools;
 #[allow(clippy::doc_markdown)]
 mod weather_tools;
@@ -147,6 +149,7 @@ impl QuatServer {
             + Self::asset_tools()
             + Self::shader_tools()
             + Self::project_tools()
+            + Self::time_tools()
     }
 
     /// Timeout for slow engine work (loading, baking, screenshots).

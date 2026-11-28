@@ -26,6 +26,7 @@
 //   particle_emitter GPU particles: emission, shape, forces, size / colour curves,
 //                    flipbook, blend (additive / alpha = WBOIT), lighting, collision
 //   weather          the scene's weather singleton (weather_json.hpp; one entity at most)
+//   world_clock      date / time / place, one per scene (world_clock_json.hpp)
 //   net_replicated
 //   audio_source     clip / bus / volume / pitch / loop / 3D falloff (+ write-only command)
 //   audio_listener
