@@ -67,9 +67,13 @@ constexpr float k_grain_rate_hz = 24.0F;
     const float pre = std::isfinite(look.pre_exposure) && look.pre_exposure > 0.0F
                           ? look.pre_exposure
                           : 1.0F;
-    p.exposure = glm::vec4(auto_exposure && !physical ? 1.0F : 0.0F, 1.0F / pre, 0.0F, 0.0F);
-    p.exposure2.x =
-        std::exp2(exposure.compensation_ev) * (physical ? look.physical_exposure : 1.0F) / pre;
+    const bool from_buffer = auto_exposure && !physical;
+    // Auto: the shader multiplies by the buffer's exposure over the
+    // pre-exposure (exposure.y); fixed exposures divide it out here. The
+    // pre-exposure is divided out exactly once either way.
+    p.exposure = glm::vec4(from_buffer ? 1.0F : 0.0F, 1.0F / pre, 0.0F, 0.0F);
+    p.exposure2.x = std::exp2(exposure.compensation_ev) *
+                    (physical ? look.physical_exposure : 1.0F) / (from_buffer ? 1.0F : pre);
     p.grading = grading::make_grading_gpu(look.grading);
 
     const float w = static_cast<float>(std::max(extent.width, 1U));

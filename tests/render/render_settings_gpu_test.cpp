@@ -91,9 +91,11 @@ int reference(float hdr, float exposure) {
 
 // Tonemaps `hdr` with `settings`; with `exposure` the auto-exposure pass
 // measures the image first (dt far beyond the time constant: fully adapted).
+// `pre` is the multiplier `hdr` was pre-exposed with (R22.2.1).
 std::expected<HostImage, Error> tonemap(quat::test::GpuContext& g, const UniformHdr& hdr,
                                         const r::ExposureSettings& settings,
-                                        r::ExposurePass* exposure) {
+                                        r::ExposurePass* exposure, float pre = 1.0F,
+                                        float physical_exposure = 0.0F) {
     auto pass = r::TonemapPass::create(g.device, g.allocator, g.cache, g.shader_dir, k_ldr_format);
     if (!pass) return std::unexpected(pass.error());
     rhi::TransientImagePool pool(g.device, g.allocator);
@@ -102,7 +104,7 @@ std::expected<HostImage, Error> tonemap(quat::test::GpuContext& g, const Uniform
     VkDeviceAddress exposure_buffer = 0;
     if (exposure != nullptr) {
         if (auto a = exposure->add_to_graph(graph, in, k_extent, 1000.0F,
-                                            r::ExposureMetering::from(settings, 1.0F));
+                                            r::ExposureMetering::from(settings, pre));
             !a) {
             return std::unexpected(a.error());
         }
@@ -111,7 +113,11 @@ std::expected<HostImage, Error> tonemap(quat::test::GpuContext& g, const Uniform
     const rhi::ResourceHandle out = graph.create_transient_image(
         "ldr", k_ldr_format, k_extent,
         VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT);
-    if (auto a = pass->add_to_graph(graph, in, out, k_extent, exposure_buffer, settings); !a) {
+    r::TonemapLook look;
+    look.pre_exposure = pre;
+    look.physical_exposure = physical_exposure;
+    if (auto a = pass->add_to_graph(graph, in, out, k_extent, exposure_buffer, settings, look);
+        !a) {
         return std::unexpected(a.error());
     }
     return quat::test::render_to_host(g, graph, out, k_extent, 4,
@@ -220,3 +226,36 @@ TEST(GpuRenderSettings, TaaSettingsDriveTheResolve) {
 }
 
 } // namespace
+
+// R22.2.1: the HDR is pre-exposed; the tonemap divides the pre-exposure out
+// exactly once in every mode, so a scene pre-exposed by any factor tonemaps
+// to the same pixels as the unscaled one (auto, manual and physical).
+TEST(GpuRenderSettings, PreExposureDoesNotChangeTheImage) {
+    QUAT_REQUIRE_GPU(g);
+    constexpr float k_scene = 0.3F;
+    auto plain = UniformHdr::create(*g, k_scene);
+    ASSERT_OK(plain);
+    r::ExposureSettings automatic;
+    r::ExposureSettings manual;
+    manual.auto_exposure = false;
+    manual.compensation_ev = 1.0F;
+    for (const float pre : {0.25F, 7.0F}) {
+        auto scaled = UniformHdr::create(*g, k_scene * pre);
+        ASSERT_OK(scaled);
+        for (int mode = 0; mode < 3; ++mode) {
+            const r::ExposureSettings& s = mode == 1 ? manual : automatic;
+            const float physical = mode == 2 ? 3.5F : 0.0F;
+            auto e1 = r::ExposurePass::create(g->device, g->allocator, g->cache, g->shader_dir);
+            auto e2 = r::ExposurePass::create(g->device, g->allocator, g->cache, g->shader_dir);
+            ASSERT_OK(e1);
+            ASSERT_OK(e2);
+            auto a = tonemap(*g, *plain, s, &*e1, 1.0F, physical);
+            auto b = tonemap(*g, *scaled, s, &*e2, pre, physical);
+            ASSERT_OK(a);
+            ASSERT_OK(b);
+            EXPECT_NEAR(b->rgba8(3, 3).r, a->rgba8(3, 3).r, 1) << "mode " << mode << ", pre " << pre;
+            EXPECT_GT(a->rgba8(3, 3).r, 5) << "mode " << mode;
+            EXPECT_LT(a->rgba8(3, 3).r, 250) << "mode " << mode;
+        }
+    }
+}
