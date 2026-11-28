@@ -419,6 +419,7 @@ add_library(engine_geometry STATIC
 target_link_libraries(engine_geometry PUBLIC engine_flags glm::glm)
 target_link_libraries(engine_geometry PRIVATE Clipper2::Clipper2 meshoptimizer::meshoptimizer)
 target_include_directories(engine_geometry PUBLIC ${ENGINE_PUBLIC_INCLUDE})
+target_include_directories(engine_geometry PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src) # "geometry/det_math.hpp"
 # Third-party headers through SYSTEM dirs (MSVC /external:W0); the vendored
 # MikkTSpace source is #included by mikktspace_impl.cpp from there.
 target_include_directories(engine_geometry SYSTEM PRIVATE
