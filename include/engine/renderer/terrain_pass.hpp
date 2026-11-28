@@ -24,6 +24,11 @@
 // this pass samples, and set_tile() adopts it (Heightmap::gpu_tile) instead
 // of uploading the read-back heights again.
 //
+// Terrain edits (G19.1) reach the pass through the tiles: set_tile uploads a
+// map's edited heights and its RGBA8 paint (material weights + grass mask,
+// binding 2), which terrain.slang blends over the procedural splat and the
+// grass pass reads as a density mask (TerrainHeightTile::paint).
+//
 // Terrain casts into the sun's cascaded shadow map through shadow_casters()
 // (R12): a ShadowCasterFn the ShadowPass records inside every cascade, drawing
 // the same chunk geometry at the same LODs with terrain_shadow.slang.
@@ -146,6 +151,9 @@ private:
     rhi::DescriptorSetLayout       layout_;
     rhi::ManagedPipeline           pipeline_;
     rhi::Sampler                   sampler_;
+    // 1x1 RGBA8 "no paint, full grass" for tiles without edits.
+    rhi::GpuImage                  default_paint_;
+    rhi::ImageView                 default_paint_view_;
 
     // Shared chunk index buffers, one per LOD (grid triangles + skirt ring).
     struct LodIndices {
@@ -160,6 +168,10 @@ private:
     struct Tile {
         rhi::GpuImage         image;
         rhi::ImageView        view;
+        // Edit paint (G19.1): RGBA8 dirt / gravel / soil / grass mask; null
+        // for an unpainted tile, which samples default_paint_ instead.
+        rhi::GpuImage         paint;
+        rhi::ImageView        paint_view;
         rhi::DescriptorBuffer descriptor;
         std::uint32_t         resolution = 0;
         float                 tile_size_m = 0.0F;
@@ -181,6 +193,10 @@ private:
     };
     std::vector<TileDraws> frame_draws_; // rebuilt each add_to_graph, consumed same frame
 
+    [[nodiscard]] VkImageView tile_paint_view(const Tile& tile) const {
+        return tile.paint_view.handle() != VK_NULL_HANDLE ? tile.paint_view.handle()
+                                                          : default_paint_view_.handle();
+    }
     // Visible chunks of every tile (frustum `cull_view_proj`) with their LODs
     // for a camera at `camera_pos`.
     void collect_chunks(const glm::mat4& cull_view_proj, const glm::vec3& camera_pos,

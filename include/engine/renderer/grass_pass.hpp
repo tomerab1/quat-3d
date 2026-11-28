@@ -146,6 +146,8 @@ private:
         rhi::GpuBuffer                 indices; // near strip, then far strip
         rhi::GpuImage                  flat_height; // 1x1 R32F stand-in for unused tile slots
         rhi::ImageView                 flat_height_view;
+        rhi::GpuImage                  unpainted; // 1x1 RGBA8 full grass mask (G19.1)
+        rhi::ImageView                 unpainted_view;
         rhi::GpuImage                  calm_wind; // 1x1 zero wind for frames without a field
         rhi::ImageView                 calm_wind_view;
         rhi::Sampler                   sampler;

@@ -20,6 +20,10 @@ namespace engine::renderer {
 
 struct TerrainHeightTile {
     VkImageView   view = VK_NULL_HANDLE; // R32F heights (metres), SHADER_READ_ONLY_OPTIMAL
+    // RGBA8 edit paint (G19.1): r dirt, g gravel, b soil, a grass-density
+    // mask; same uv convention. Always valid for a loaded tile (a 1x1
+    // "unpainted" image when the tile has no edits).
+    VkImageView   paint = VK_NULL_HANDLE;
     glm::vec2     origin_xz{0.0F};       // world XZ of the tile's minimum corner
     float         size_m = 0.0F;         // world extent of one side
     float         base_y = 0.0F;         // world Y added to every height

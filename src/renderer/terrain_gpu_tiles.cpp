@@ -5,6 +5,7 @@
 #include <utility>
 #include <vector>
 
+#include "engine/terrain/edits.hpp"
 #include "engine/terrain/generator.hpp"
 
 namespace engine::renderer {
@@ -41,9 +42,28 @@ bool GpuTileSource::supports(const terrain::TerrainParams& params) const {
     return synth_.supports(params);
 }
 
+void GpuTileSource::set_edits(std::span<const terrain::TerrainStamp> stamps,
+                              std::uint64_t revision) {
+    if (!synth_.edits_supported()) return; // the CPU applies them on delivery
+    edits_.assign(stamps.begin(), stamps.end());
+    edit_revision_ = revision;
+}
+
 std::future<terrain::Heightmap> GpuTileSource::generate(const terrain::TerrainParams& params,
                                                         terrain::CancelToken cancel) {
-    const std::uint64_t id = synth_.enqueue(params);
+    // The stamps that reach this tile, in order (G19.1).
+    TerrainSynthPass::EditRequest edits;
+    edits.revision = edit_revision_;
+    if (!edits_.empty() && params.resolution >= 2) {
+        const terrain::TileFrame frame{params.world_tile, params.resolution, params.tile_size_m};
+        const terrain::EditRect bounds = frame.bounds();
+        std::vector<terrain::TerrainStamp> reach;
+        for (const terrain::TerrainStamp& st : edits_) {
+            if (terrain::stamp_bounds(st).overlaps(bounds)) reach.push_back(st);
+        }
+        edits.packed = terrain::pack_stamps(reach);
+    }
+    const std::uint64_t id = synth_.enqueue(params, std::move(edits));
     if (id == 0) return terrain::generate_async(params, std::move(cancel)); // unsupported: CPU
     Pending& p = pending_[id];
     p.params = params;
@@ -92,7 +112,8 @@ void GpuTileSource::deliver(TerrainSynthPass::Result result) {
     const auto it = pending_.find(result.id);
     if (it == pending_.end()) return;
     result.heights.gpu_tile = result.id;
-    parked_.emplace(result.id, Parked{std::move(result.image), unclaimed_frames});
+    parked_.emplace(result.id,
+                    Parked{std::move(result.image), std::move(result.paint), unclaimed_frames});
     it->second.promise.set_value(std::move(result.heights));
     pending_.erase(it);
 }
@@ -109,10 +130,18 @@ void GpuTileSource::fall_back_to_cpu(std::uint64_t id) {
 
 std::optional<rhi::GpuImage> GpuTileSource::take_image(std::uint64_t gpu_tile) {
     const auto it = parked_.find(gpu_tile);
-    if (it == parked_.end()) return std::nullopt;
+    if (it == parked_.end() || it->second.image.handle() == VK_NULL_HANDLE) return std::nullopt;
     rhi::GpuImage image = std::move(it->second.image);
-    parked_.erase(it);
+    if (it->second.paint.handle() == VK_NULL_HANDLE) parked_.erase(it);
     return image;
+}
+
+std::optional<rhi::GpuImage> GpuTileSource::take_paint_image(std::uint64_t gpu_tile) {
+    const auto it = parked_.find(gpu_tile);
+    if (it == parked_.end() || it->second.paint.handle() == VK_NULL_HANDLE) return std::nullopt;
+    rhi::GpuImage paint = std::move(it->second.paint);
+    parked_.erase(it);
+    return paint;
 }
 
 } // namespace engine::renderer

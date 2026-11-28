@@ -26,7 +26,9 @@
 #include <map>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
+#include <vector>
 
 #include "engine/core/error.hpp"
 #include "engine/renderer/terrain_synth_pass.hpp"
@@ -58,6 +60,9 @@ public:
     [[nodiscard]] bool supports(const terrain::TerrainParams& params) const override;
     [[nodiscard]] std::future<terrain::Heightmap>
     generate(const terrain::TerrainParams& params, terrain::CancelToken cancel) override;
+    // Terrain edits (G19.1) applied, on the GPU, to the tiles generated from
+    // now on (those already queued keep theirs; the CPU fixes them up).
+    void set_edits(std::span<const terrain::TerrainStamp> stamps, std::uint64_t revision) override;
 
     // Per-frame upkeep, whether or not terrain draws this frame: applies
     // cancelled requests (their futures resolve invalid and their GPU jobs
@@ -71,6 +76,9 @@ public:
     // Hands over the image of a delivered tile (R32F metres,
     // SHADER_READ_ONLY_OPTIMAL); nullopt when unknown or expired.
     [[nodiscard]] std::optional<rhi::GpuImage> take_image(std::uint64_t gpu_tile);
+    // The tile's edit paint image (RGBA8, SHADER_READ_ONLY_OPTIMAL) when the
+    // GPU applied edits; take it right after take_image.
+    [[nodiscard]] std::optional<rhi::GpuImage> take_paint_image(std::uint64_t gpu_tile);
 
     // Gives up every tile not yet delivered: queued jobs are dropped and
     // each pending future becomes ready with an empty (invalid) Heightmap,
@@ -115,6 +123,7 @@ private:
     };
     struct Parked {
         rhi::GpuImage image;
+        rhi::GpuImage paint; // null without edits
         int           frames_left = unclaimed_frames;
     };
 
@@ -122,6 +131,8 @@ private:
     std::map<std::uint64_t, Pending> pending_; // by job id
     std::map<std::uint64_t, Parked>  parked_;  // delivered, awaiting adoption
     terrain::CpuTileJobs             cpu_fallbacks_; // GPU jobs regenerating on the CPU
+    std::vector<terrain::TerrainStamp> edits_;        // set_edits
+    std::uint64_t                      edit_revision_ = 0;
 };
 
 } // namespace engine::renderer

@@ -743,6 +743,7 @@ add_library(engine_renderer STATIC
     src/renderer/terrain_pass.cpp
     src/renderer/terrain_gpu_tiles.cpp
     src/renderer/terrain_synth_pass.cpp
+    src/renderer/terrain_edit_pass.cpp
     src/renderer/terrain_shadow.cpp
     src/renderer/wind_field_pass.cpp
     src/renderer/cloud_shadow_pass.cpp

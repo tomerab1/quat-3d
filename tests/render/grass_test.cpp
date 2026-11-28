@@ -422,6 +422,74 @@ TEST(GpuGrass, SlopeAndHeightLimitsRejectBlades) {
     EXPECT_FALSE(none->valid());
 }
 
+// G19.1: the terrain edits' grass mask (paint alpha) multiplies the slope
+// fade on the GPU as grass_ground_keep does on the CPU. On the ramp tile: a
+// painted-out path (mask 0) is bare, a half mask thins flat ground, and a
+// half mask on the 45-degree ramp compounds with #49's slope fade.
+TEST(GpuGrass, EditGrassMaskCompoundsWithTheSlopeFade) {
+    QUAT_REQUIRE_GPU(g);
+    auto pass = r::GrassPass::create(g->device, g->allocator, g->cache, g->transfer, g->shader_dir, 1);
+    ASSERT_OK(pass);
+    auto tile = ramp_tile(*g);
+    ASSERT_OK(tile);
+
+    // Paint over the same 65² grid (1 m texels from x = -32): a path at
+    // x in [-20, -12], half grass at x in [-8, 8] (the flat edge and the ramp).
+    constexpr std::uint32_t res = 65;
+    std::vector<std::uint32_t> paint(res * res, 0xFF000000U);
+    for (std::uint32_t z = 0; z < res; ++z) {
+        for (std::uint32_t x = 0; x < res; ++x) {
+            const int wx = static_cast<int>(x) - 32;
+            if (wx >= -20 && wx <= -12) paint[z * res + x] = 0x000000FFU; // dirt, no grass
+            if (wx >= -8 && wx <= 8) paint[z * res + x] = 0x80000000U;    // half grass
+        }
+    }
+    auto image = rhi::upload_device_image(g->allocator, g->transfer, paint.data(),
+                                          paint.size() * sizeof(std::uint32_t), {res, res},
+                                          VK_FORMAT_R8G8B8A8_UNORM);
+    ASSERT_OK(image);
+    auto view = rhi::create_image_view(g->device.handle(), image->handle(), VK_FORMAT_R8G8B8A8_UNORM);
+    ASSERT_OK(view);
+    r::TerrainHeightTile painted = tile->tile;
+    painted.paint = view->handle();
+
+    r::GrassFrame frame;
+    frame.settings = flat_settings();
+    frame.settings.radius = 40.0F;
+    frame.settings.terrain_only = true;
+    frame.settings.slope_deg = glm::vec2(0.0F, 50.0F);
+    frame.camera = glm::vec3(0.0F, 2.0F, 0.0F);
+    frame.draw_view_proj = frame.cull_view_proj = overview(frame.camera);
+    const std::array<r::TerrainHeightTile, 1> tiles{painted};
+    frame.terrain = tiles;
+    auto out = generate(*g, *pass, frame);
+    ASSERT_OK(out);
+
+    std::size_t full = 0;     // x in (-31, -21): flat, mask 1
+    std::size_t half = 0;     // x in (-7, -1): flat, mask 0.5
+    std::size_t ramp = 0;     // x in (1.5, 6.5): 45 degrees, mask 0.5
+    for (const auto& bl : out->blades) {
+        const float x = bl.root.x;
+        ASSERT_FALSE(x > -19.5F && x < -12.5F) << "blade on the painted path at x " << x;
+        if (x > -31.0F && x < -21.0F) ++full;
+        if (x > -7.0F && x < -1.0F) ++half;
+        if (x > 1.5F && x < 6.5F) ++ramp;
+    }
+    ASSERT_GT(full, 500U);
+    const double per_m_full = static_cast<double>(full) / 10.0;
+    const auto expected = [&](float normal_y) {
+        // Placed fraction relative to full flat ground (see the slope test).
+        const double keep = r::grass_ground_keep(frame.settings, normal_y, 128.0F / 255.0F);
+        return std::min(1.0, keep / (1.0 - r::grass_fade_band));
+    };
+    const double half_ratio = static_cast<double>(half) / 6.0 / per_m_full;
+    const double ramp_ratio = static_cast<double>(ramp) / 5.0 / per_m_full;
+    EXPECT_NEAR(half_ratio, expected(1.0F), 0.2 * expected(1.0F));
+    EXPECT_NEAR(ramp_ratio, expected(std::cos(glm::radians(45.0F))),
+                0.35 * expected(std::cos(glm::radians(45.0F))));
+    EXPECT_LT(ramp_ratio, half_ratio); // the slope fade compounds with the mask
+}
+
 TEST(GpuGrass, DrawWritesBladesIntoTheGBuffer) {
     QUAT_REQUIRE_GPU(g);
     auto mesh = r::MeshPass::create(g->device, g->allocator, g->cache, g->transfer, g->shader_dir);

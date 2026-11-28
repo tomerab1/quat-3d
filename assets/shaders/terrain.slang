@@ -10,7 +10,8 @@
 //
 // Shading is fully procedural: slope/height splat between grass, rock and
 // snow, broken up by triplanar FBM detail (sin-free hash — NVIDIA fast-trig
-// collapses frac(sin()) lattices). Writes the same GBuffer layout as
+// collapses frac(sin()) lattices). Painted edit channels (paths, gravel,
+// garden soil) replace the grass / rock splat under the snow. Writes the same GBuffer layout as
 // gbuffer.slang; the deferred lighting pass shades terrain like any mesh.
 
 import velocity;
@@ -29,6 +30,9 @@ struct PushConstants {
 
 [[vk::binding(0)]] Texture2D    g_heightmap; // R32F, metres
 [[vk::binding(1)]] SamplerState g_sampler;   // linear clamp
+// Edit paint (G19.1, engine/terrain/edits.hpp): r dirt, g gravel, b garden
+// soil weights, a grass-density mask (read by the grass pass, not here).
+[[vk::binding(2)]] Texture2D    g_paint;
 
 struct VsOut {
     float4 clip      : SV_Position;
@@ -158,10 +162,29 @@ GBufferOut fragment_main(VsOut input) {
                                     n.y + (detail - 0.5) * 0.08);
 
     float3 albedo = lerp(grass, rock, rock_w);
+    float roughness = lerp(0.95, 0.90, rock_w);
+
+    // Painted materials, normalised when they overlap, with their own
+    // metre-scale break-up (packed dirt, speckled gravel, dark loam).
+    const float4 paint = g_paint.SampleLevel(g_sampler, input.uv, 0.0);
+    const float painted = paint.r + paint.g + paint.b;
+    if (painted > 1.0 / 255.0) {
+        const float fine = triplanar_fbm(input.world, n, 0.9); // ~1 m grit
+        const float3 dirt = lerp(float3(0.20, 0.14, 0.085), float3(0.30, 0.22, 0.14), detail);
+        const float3 gravel = lerp(float3(0.28, 0.27, 0.25), float3(0.46, 0.44, 0.41), fine);
+        const float3 soil = lerp(float3(0.085, 0.060, 0.040), float3(0.13, 0.09, 0.06), detail);
+        const float3 paint_albedo =
+            (dirt * paint.r + gravel * paint.g + soil * paint.b) / max(painted, 1e-4);
+        const float paint_rough =
+            (0.92 * paint.r + 0.80 * paint.g + 0.97 * paint.b) / max(painted, 1e-4);
+        const float w = min(painted, 1.0);
+        albedo = lerp(albedo, paint_albedo, w);
+        roughness = lerp(roughness, paint_rough, w);
+    }
+
     albedo = lerp(albedo, snow, snow_w);
     albedo *= 0.85 + 0.3 * detail; // break up tiling
-
-    float roughness = lerp(lerp(0.95, 0.90, rock_w), 0.55, snow_w);
+    roughness = lerp(roughness, 0.55, snow_w);
 
     GBufferOut o;
     o.albedo = float4(albedo, 1.0);

@@ -129,6 +129,12 @@ TexelRect texel_rect(const TileFrame& frame, const EditRect& rect) {
             hi(index(rect.max.x, tile.min.x)), hi(index(rect.max.y, tile.min.y))};
 }
 
+void fingerprint_edit_cells(Heightmap& map) {
+    if (!map.valid()) return;
+    map.edit_cells.clear(); // refresh_cells rebuilds every cell of a missing grid
+    refresh_cells(map, {});
+}
+
 TexelRect apply_edits(Heightmap& map, const TileFrame& frame, std::span<const TerrainStamp> stamps,
                       TexelRect dirty) {
     const std::uint32_t res = map.resolution;

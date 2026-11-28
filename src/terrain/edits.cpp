@@ -157,6 +157,7 @@ PackedStamps pack_stamps(std::span<const TerrainStamp> stamps) {
         p.slope = glm::vec2(-n.x / n.y, -n.z / n.y);
         p.channel = static_cast<std::uint32_t>(s.channel);
         p.value = s.value;
+        p.iterations = s.iterations;
         const EditRect b = stamp_bounds(s);
         p.bounds = glm::vec4(b.min, b.max);
         const std::size_t n_pts = s.points.size();

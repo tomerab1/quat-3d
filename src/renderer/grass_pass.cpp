@@ -64,8 +64,9 @@ constexpr VkDeviceSize kBladeBytes = sizeof(GrassBladeGpu);
 constexpr std::uint32_t kNearIndices = grass_index_count(grass_near_segments);
 constexpr std::uint32_t kFarIndices = grass_index_count(grass_far_segments);
 
-// grass_generate.slang set 0: params, blades, args, sampler, four height tiles.
-[[nodiscard]] std::array<rhi::DescriptorBinding, 8> generate_bindings() {
+// grass_generate.slang set 0: params, blades, args, sampler, four height
+// tiles, their four edit paint images (G19.1 grass mask).
+[[nodiscard]] std::array<rhi::DescriptorBinding, 12> generate_bindings() {
     return {{
         {0, 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, kCompute},
         {0, 1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kCompute},
@@ -75,6 +76,10 @@ constexpr std::uint32_t kFarIndices = grass_index_count(grass_far_segments);
         {0, 5, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, kCompute},
         {0, 6, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, kCompute},
         {0, 7, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, kCompute},
+        {0, 8, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, kCompute},
+        {0, 9, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, kCompute},
+        {0, 10, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, kCompute},
+        {0, 11, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, kCompute},
     }};
 }
 
@@ -227,6 +232,16 @@ GrassPass::create(const rhi::Device& device, rhi::GpuAllocator& allocator,
                                             VK_FORMAT_R32_SFLOAT);
     if (!flat_view) return std::unexpected(flat_view.error());
     s.flat_height_view = std::move(*flat_view);
+    const std::uint32_t k_unpainted = 0xFF000000U; // no material, full grass (G19.1)
+    auto unpainted = rhi::upload_device_image(allocator, transfer, &k_unpainted,
+                                              sizeof(k_unpainted), {1, 1},
+                                              VK_FORMAT_R8G8B8A8_UNORM);
+    if (!unpainted) return std::unexpected(unpainted.error());
+    s.unpainted = std::move(*unpainted);
+    auto unpainted_view = rhi::create_image_view(device.handle(), s.unpainted.handle(),
+                                                 VK_FORMAT_R8G8B8A8_UNORM);
+    if (!unpainted_view) return std::unexpected(unpainted_view.error());
+    s.unpainted_view = std::move(*unpainted_view);
     const std::uint16_t k_calm[4] = {0, 0, 0, 0x3C00}; // rgba16f (0, 0, 0, gust 1)
     auto calm = rhi::upload_device_image(allocator, transfer, k_calm, sizeof(k_calm), {1, 1},
                                          wind_field_format);
@@ -330,6 +345,11 @@ GrassPass::add_to_graph(rhi::RenderGraph& graph, std::uint32_t slot_index,
     for (std::uint32_t k = 0; k < grass_max_height_tiles; ++k) {
         const VkImageView view = k < tiles.size() ? tiles[k].view : s.flat_height_view.handle();
         slot.generate_set.write_sampled_image(4 + k, view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+        const VkImageView paint = k < tiles.size() && tiles[k].paint != VK_NULL_HANDLE
+                                      ? tiles[k].paint
+                                      : s.unpainted_view.handle();
+        slot.generate_set.write_sampled_image(8 + k, paint,
+                                              VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
     }
     slot.draw_set.write_uniform_buffer(0, params_addr, kParamsBytes);
     slot.draw_set.write_storage_buffer(1, blades_addr, blades_bytes);

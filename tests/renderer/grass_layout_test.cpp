@@ -176,6 +176,31 @@ TEST(GrassLayout, SlopeFadeThinsBelowTheSteepestSlope) {
     EXPECT_EQ(r::grass_slope_keep(s, ny(31.0F)), 0.0F);
 }
 
+// G19.1: the terrain edits' grass mask multiplies the slope fade. A painted-
+// out path thins like a steep slope, and levelling a slope (a flatten stamp)
+// restores the density its old steepness faded away.
+TEST(GrassLayout, EditGrassMaskScalesTheSlopeFade) {
+    const auto ny = [](float deg) { return std::cos(glm::radians(deg)); };
+    r::GrassSettings s;
+    s.slope_deg = glm::vec2(0.0F, 40.0F);
+    EXPECT_EQ(r::grass_ground_keep(s, 1.0F, 1.0F), 1.0F);
+    EXPECT_EQ(r::grass_ground_keep(s, 1.0F, 0.0F), 0.0F);
+    EXPECT_NEAR(r::grass_ground_keep(s, 1.0F, 0.25F), 0.25F, 1e-6F);
+    const float steep = r::grass_ground_keep(s, ny(37.0F), 1.0F);
+    EXPECT_GT(steep, 0.0F);
+    EXPECT_LT(steep, 1.0F);
+    EXPECT_NEAR(r::grass_ground_keep(s, ny(37.0F), 0.5F), 0.5F * steep, 1e-6F);
+    EXPECT_EQ(r::grass_ground_keep(s, ny(0.0F), 1.0F), 1.0F); // levelled: full density
+    // Out-of-range masks clamp.
+    EXPECT_EQ(r::grass_ground_keep(s, 1.0F, 2.0F), 1.0F);
+    EXPECT_EQ(r::grass_ground_keep(s, 1.0F, -1.0F), 0.0F);
+    // A half mask thins the field: some kept blades fade, none appear.
+    for (float threshold = 0.0F; threshold < 1.0F; threshold += 0.05F) {
+        EXPECT_LE(r::grass_blade_fade(r::grass_ground_keep(s, 1.0F, 0.5F), threshold),
+                  r::grass_blade_fade(r::grass_ground_keep(s, 1.0F, 1.0F), threshold));
+    }
+}
+
 TEST(GrassLayout, StripIndexCounts) {
     EXPECT_EQ(r::grass_index_count(r::grass_near_segments), 39U);
     EXPECT_EQ(r::grass_index_count(r::grass_far_segments), 15U);

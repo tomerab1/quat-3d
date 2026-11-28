@@ -228,6 +228,10 @@ inline TexelRect apply_edits(Heightmap& map, const TileFrame& frame,
     return apply_edits(map, frame, stamps, whole_tile(frame));
 }
 
+// Recomputes every edit-cell fingerprint of `map` (a tile whose edits were
+// applied elsewhere: the GPU path).
+void fingerprint_edit_cells(Heightmap& map);
+
 // --- Shared with the GPU path (renderer::TerrainEditPass) ------------------
 
 // A stamp in the flattened form both implementations evaluate: per-edge
@@ -248,9 +252,11 @@ struct PackedStamp {
     glm::vec2     slope{0.0F};        // d target / d (x, z)
     std::uint32_t channel = 0;
     float         value = 0.0F;
+    std::uint32_t iterations = 0;     // smooth passes
+    std::uint32_t pad[3]{};           // std430: bounds starts at 80
     glm::vec4     bounds{0.0F};       // min xz, max xz
 };
-static_assert(sizeof(PackedStamp) == 80);
+static_assert(sizeof(PackedStamp) == 96);
 
 // Segment k = points[i] -> points[i + 1] (polygon: wrapping to points[0]):
 // xy = edge vector, z = 1 / dot(edge, edge) (0 for a degenerate edge).
