@@ -37,6 +37,7 @@ class BuildJob;
 struct GameProject;
 } // namespace engine::project
 namespace engine::core {
+class FrameProfiler;
 class SimClock;
 }
 namespace engine::renderer {
@@ -105,6 +106,8 @@ struct EditorContext {
     script::ScriptRuntime* scripts = nullptr;
     // Scene access for the hierarchy/inspector panels (may be null).
     scene::Scene* scene = nullptr;
+    // The frame profiler the Profiler panel shows and resets (R4; may be null).
+    core::FrameProfiler* profiler = nullptr;
     // Renderer settings the Renderer panel edits (owned by the frame
     // renderer; may be null).
     renderer::RenderSettings* renderer = nullptr;

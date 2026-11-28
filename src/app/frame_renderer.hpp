@@ -62,7 +62,9 @@
 #include "engine/renderer/upscaler.hpp"
 #include "engine/renderer/velocity.hpp"
 #include "engine/renderer/velocity_pass.hpp"
+#include "engine/core/frame_profiler.hpp"
 #include "engine/rhi/gpu_allocator.hpp"
+#include "engine/rhi/gpu_profiler.hpp"
 #include "engine/rhi/render_graph.hpp"
 #include "engine/scene/material_override.hpp"
 #include "engine/weather/weather_state.hpp"
@@ -84,6 +86,7 @@ class Swapchain;
 namespace engine::scene {
 class Scene;
 struct CameraMatrices;
+struct FrameDrawStats;
 } // namespace engine::scene
 namespace quat::app {
 
@@ -323,6 +326,17 @@ private:
     [[nodiscard]] engine::renderer::ContactShadowSettings current_contact_shadows() const;
     void recreate_render_finished();
     [[nodiscard]] bool record_screenshot_copy(VkCommandBuffer cmd);
+
+    // ---- R4 profiling (frame_profiling.cpp) -------------------------------------
+    // Timestamp zones per pass, created with the frame sync; the frame
+    // profiler learns whether GPU timing is available.
+    void create_gpu_profiler();
+    // After the slot's fence: the GPU timings of the frame the slot last
+    // recorded go to the frame profiler.
+    void collect_gpu_timings();
+    // Per-frame counters (QUAT_PLOT): scene draws / instances / triangles
+    // and the VMA heaps' usage and budget.
+    void plot_frame_counters(const engine::scene::FrameDrawStats& draws);
     void write_screenshot() const;
 
     const engine::rhi::Device* device_ = nullptr;
@@ -384,6 +398,11 @@ private:
 
     std::optional<std::filesystem::path> screenshot_path_;
     engine::rhi::GpuBuffer     screenshot_buffer_;
+
+    // R4: GPU pass timing and the scratch its results / counters reuse.
+    engine::rhi::GpuProfiler                  gpu_profiler_;
+    std::vector<engine::core::GpuZoneTiming>  gpu_timings_;
+    std::vector<engine::rhi::GpuHeapStats>    heap_stats_;
 };
 
 } // namespace quat::app

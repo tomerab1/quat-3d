@@ -22,11 +22,14 @@ the current state is in [`STATUS.md`](STATUS.md).
 | Preset | Use |
 |---|---|
 | `debug` | clang + libc++, validation layers on |
-| `release` | clang + libc++, optimised (Tracy enabled via `ENGINE_PROFILE`) |
+| `release` | clang + libc++, optimised, Tracy compiled in (`ENGINE_PROFILE=ON`) |
 | `windows-release` | MSVC 2022 (run from an x64 developer prompt), `x64-windows` triplet |
 | `macos-release` | Apple clang, `arm64-osx-14` triplet (macOS 14 minimum), MoltenVK — sets `ENGINE_DESCRIPTOR_SETS_FALLBACK=ON` |
 
-CMake options: `ENGINE_EDITOR` (default ON), `ENGINE_PROFILE`,
+CMake options: `ENGINE_EDITOR` (default ON), `ENGINE_PROFILE` (the Tracy
+client, R4: default ON for Debug / RelWithDebInfo, OFF for Release; it also
+selects the vcpkg manifest feature `profiling`, so OFF builds never build
+Tracy; see [`profiling.md`](profiling.md)),
 `ENGINE_DESCRIPTOR_SETS_FALLBACK` (macOS / drivers without descriptor buffers),
 `ENGINE_PACKAGE_BUILD` (release archives: no source-tree paths compiled in —
 the game finds `assets/` + `cooked/shaders/` next to its executable or in
@@ -479,6 +482,12 @@ git clone --depth 1 --branch v5.4.8 https://github.com/lua/lua.git $S/lua
    cc -O2 -DLUA_USE_POSIX -c $f; done && ar rcs liblua.a l*.o)
 EXTRA_FLAGS="-isystem $S/sol2/include -isystem $S/lua" scripts/check-compile.sh src/script/*.cpp
 ```
+
+Both profiling configurations must compile: the default above is
+`ENGINE_PROFILE=OFF`. For `ON`, clone Tracy at the vcpkg version
+(`git clone --depth 1 --branch v0.13.1 https://github.com/wolfpld/tracy.git`)
+and add `EXTRA_FLAGS="-DQUAT_TRACY -DTRACY_ENABLE -DTRACY_ON_DEMAND -isystem
+<tracy>/public"`.
 
 This catches compile errors and warnings, not link errors or test failures.
 `scripts/check-compile.sh <files...>` wraps exactly this (set `DEPS` if the

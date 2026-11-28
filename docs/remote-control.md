@@ -821,6 +821,75 @@ session runs scripts.
 - `script.delete` does not detach the file from entities; running instances
   keep their loaded code until the session ends.
 
+## Profiling (ROADMAP R4)
+
+The built-in frame profiler (`engine/core/frame_profiler.hpp`, see
+[`profiling.md`](profiling.md)) over the remote endpoint; quat-mcp's
+`profile_*` tools follow this table. Times are milliseconds rounded to
+microseconds (per-frame lists to 0.01 ms).
+
+| Method | Params | Result |
+|---|---|---|
+| `profile.frame` | `{sort?="cost", kind?="all", limit?=30}` (limit 1..200) | `{frame, window, frames, fps, frame_ms:{total, cpu, gpu, wait}, gpu_timing, zones:[{name, kind, cpu?:{avg, p95, max}, cpu_self?:{avg, p95, max}, calls?, gpu?:{avg, p95, max}}], zones_matched, counters:{...}}` |
+| `profile.capture` | `{frames?=120, budget_ms?=16.667, top?=10}` (frames 1..1000, budget 0.1..1000 ms, top 1..50) | `{id, status:"recording", frames, budget_ms, gpu_timing}` |
+| `profile.result` | `{id}` | `{id, status:"recording", frames, frames_done, waiting_for_gpu}` or the summary below |
+| `profile.counters` | — | `{frame, counters:{...}, gpu_memory:{device_local_usage_mib, device_local_budget_mib, heaps:[...]}\|null, entities:{...}}` |
+| `profile.reset` | — | `{reset:true, frame}` |
+
+- **Frame times.** `frame_ms.total` is the wall time between frames, `wait`
+  the time the main thread blocked on the GPU or the display (the frame
+  fence, image acquire and present: zones of kind `wait`), `cpu` = total −
+  wait, `gpu` the GPU time from the frame's first to its last timestamp.
+  Each is `{avg, p50, p95, max}` over the window (240 frames), or `null`
+  before any sample. `gpu_timing` is `"ok (...)"` or why GPU timing is off
+  (no timestamps on the graphics queue).
+- **Zones.** `kind` is `pass` (one render-graph pass: `cpu` is the time to
+  record it, `gpu` its GPU time between timestamps, barriers included),
+  `system` (a scene system per call site; physics sub-steps of one frame are
+  summed), `scope` (frame loop, uploads, editor UI) or `wait`. Zones nest:
+  `cpu` is inclusive (the zones nested inside counted too), `cpu_self` the
+  zone's own time without them, so `cpu` rows do not add up and causes rank
+  by `cpu_self`. GPU zones (passes) do not nest. A zone's statistics are per
+  frame it ran in, over its last 240 runs (a zone that runs every 30 frames
+  averages its runs, not 240 frames); a zone that has not run for a window's
+  worth of frames is dropped. `sort` is `cost` (the larger of CPU self and
+  GPU average), `self`, `self_p95`, `self_max`, `cpu`, `cpu_p95`, `cpu_max`,
+  `gpu`, `gpu_p95`, `gpu_max` or `name`; `kind` filters
+  by `all`, `pass`, `system`, `scope` or `wait`; `zones_matched` counts the
+  rows before `limit`.
+- **Captures.** `profile.capture` starts recording with the next frame and
+  answers at once; the handler never waits. One capture records at a time
+  (another `profile.capture` fails with `busy` and names it). The capture
+  finishes when its frames have closed and their GPU timings arrived (one or
+  two frames later), or 8 frames after the CPU side finished if GPU timings
+  stop arriving. The summary:
+  `{id, status:"done", frames, first_frame, budget_ms, frame_ms:{total, cpu,
+  gpu, wait}, gpu_frames, top_by_total:[zone], top_by_p95:[zone],
+  spikes:{count, worst:[{frame, total_ms, cpu_ms, gpu_ms, zones:[{name,
+  self_ms, ms, on:"cpu"|"gpu"}]}]}, per_frame:{total_ms:[...], gpu_ms:[...]}}`
+  with `zone` = `{name, kind, frames, cpu?:{total, avg, p95, max},
+  cpu_self?:{...}, gpu?:{...}}` (statistics over the frames the zone ran
+  in). Rankings use the larger of the CPU self and GPU value, so a wrapper
+  zone does not outrank the work nested inside it. A spike is a frame whose
+  wall or GPU time exceeds `budget_ms`; `worst` lists up to 10 of them,
+  worst first, each with its three costliest zones by own time (`self_ms`;
+  `ms` is inclusive; wait zones excluded).
+  `gpu_ms` entries are `null` for frames without GPU timing. The last 8
+  summaries are kept; an unknown or dropped id is `not_found`.
+- **Counters.** `counters` holds the last frame's values of every
+  `QUAT_PLOT`: `draws`, `instances`, `triangles` (scene meshes after
+  batching; shadow casters only while the cascades render), `vram_usage_mib`
+  and `vram_budget_mib` (device-local heaps). `gpu_memory.heaps[]` is
+  `{heap, device_local, size_mib, budget_mib, usage_mib, allocated_mib,
+  used_mib, allocations}` (budget / usage from `VK_EXT_memory_budget` when the
+  device has it, VMA's estimate otherwise). `entities` counts entities by
+  component (`total`, `meshes`, `skinned`, `instanced_meshes`,
+  `instance_placements`, `point_lights`, `rigid_bodies`, `characters`,
+  `nav_agents`, `behaviors`, `scripts`, `particle_emitters`,
+  `audio_sources`).
+- **Reset.** Clears the rolling statistics, counters and every capture
+  (recording or finished); capture ids keep counting.
+
 ## Asset downloads (quat-mcp only, ROADMAP A9)
 
 The engine never downloads anything. quat-mcp's `asset_search` /

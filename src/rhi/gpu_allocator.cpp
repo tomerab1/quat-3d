@@ -1,6 +1,7 @@
 #include "engine/rhi/gpu_allocator.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstring>
 #include <format>
@@ -11,6 +12,7 @@
 #include <unordered_map>
 #endif
 
+#include "engine/core/profile.hpp"
 #include "engine/rhi/device.hpp"
 #include "one_time_commands.hpp"
 
@@ -200,6 +202,9 @@ std::expected<GpuAllocator, core::Error> GpuAllocator::create(const Device& devi
     // Buffers may request a device address (required by descriptor buffers and
     // bindless), so the allocator must opt into VK_KHR_buffer_device_address.
     info.flags = VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT;
+    // The driver's own budget / usage per heap when the device enabled
+    // VK_EXT_memory_budget (profiling, R4); VMA estimates otherwise.
+    if (device.memory_budget()) info.flags |= VMA_ALLOCATOR_CREATE_EXT_MEMORY_BUDGET_BIT;
     info.instance = device.instance();
     info.physicalDevice = device.physical_device();
     info.device = device.handle();
@@ -211,6 +216,29 @@ std::expected<GpuAllocator, core::Error> GpuAllocator::create(const Device& devi
         return fail(std::format("vmaCreateAllocator failed ({})", static_cast<int>(r)));
     }
     return out;
+}
+
+void GpuAllocator::heap_stats(std::vector<GpuHeapStats>& out) const {
+    out.clear();
+    if (allocator_ == nullptr) return;
+    const VkPhysicalDeviceMemoryProperties* props = nullptr;
+    vmaGetMemoryProperties(allocator_, &props);
+    if (props == nullptr) return;
+    std::array<VmaBudget, VK_MAX_MEMORY_HEAPS> budgets{};
+    vmaGetHeapBudgets(allocator_, budgets.data());
+    out.reserve(props->memoryHeapCount);
+    for (std::uint32_t h = 0; h < props->memoryHeapCount; ++h) {
+        const VmaBudget& b = budgets[h];
+        out.push_back(GpuHeapStats{
+            .heap = h,
+            .device_local = (props->memoryHeaps[h].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) != 0,
+            .size = props->memoryHeaps[h].size,
+            .budget = b.budget,
+            .usage = b.usage,
+            .block_bytes = b.statistics.blockBytes,
+            .allocation_bytes = b.statistics.allocationBytes,
+            .allocations = b.statistics.allocationCount});
+    }
 }
 
 GpuAllocator::~GpuAllocator() {
@@ -312,6 +340,7 @@ GpuAllocator::create_image(VkFormat format, VkExtent2D extent, VkImageUsageFlags
 std::expected<GpuBuffer, core::Error>
 upload_device_buffer(GpuAllocator& allocator, const TransferContext& transfer,
                      const void* data, VkDeviceSize size, VkBufferUsageFlags usage) {
+    QUAT_ZONE_N("upload_buffer");
     auto staging = allocator.create_staging_buffer(size);
     if (!staging) return std::unexpected(staging.error());
     std::memcpy(staging->mapped(), data, size);
@@ -361,6 +390,7 @@ upload_device_image(GpuAllocator& allocator, const TransferContext& transfer,
                     const void* data, VkDeviceSize size, VkExtent2D extent,
                     VkFormat format, VkImageUsageFlags usage,
                     std::uint32_t mip_levels) {
+    QUAT_ZONE_N("upload_image");
     mip_levels = std::max(mip_levels, 1U);
 
     auto staging = allocator.create_staging_buffer(size);

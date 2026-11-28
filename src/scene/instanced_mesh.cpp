@@ -254,4 +254,28 @@ std::size_t frame_draw_count(const FrameDrawLists& lists, std::size_t transparen
     return lists.opaque.draws.size() + lists.shadow.draws.size() + transparent_items;
 }
 
+FrameDrawStats frame_draw_stats(const FrameDrawLists& lists,
+                                std::span<const renderer::DrawItem> transparent,
+                                bool with_shadows) {
+    FrameDrawStats stats;
+    const auto add = [&stats](const renderer::InstancedDrawList& list) {
+        for (const renderer::InstancedDraw& d : list.draws) {
+            ++stats.draws;
+            stats.instances += d.instance_count;
+            if (d.mesh != nullptr) {
+                stats.triangles += std::uint64_t{d.instance_count} * (d.mesh->index_count / 3);
+            }
+        }
+    };
+    add(lists.opaque);
+    if (with_shadows) add(lists.shadow);
+    for (const renderer::DrawItem& item : transparent) {
+        if (item.mesh == nullptr) continue;
+        ++stats.draws;
+        ++stats.instances;
+        stats.triangles += item.mesh->index_count / 3;
+    }
+    return stats;
+}
+
 } // namespace engine::scene

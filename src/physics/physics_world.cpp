@@ -6,8 +6,10 @@
 
 #include <algorithm>
 #include <cmath>
+#include <string>
 #include <thread>
 
+#include "engine/core/profile.hpp"
 #include "physics_world_impl.hpp"
 
 namespace engine::physics {
@@ -45,8 +47,13 @@ std::expected<PhysicsWorld, core::Error> PhysicsWorld::create() {
     m.temp_allocator = std::make_unique<JPH::TempAllocatorImpl>(16 * 1024 * 1024);
     const unsigned hw = std::thread::hardware_concurrency();
     const int threads = static_cast<int>(hw > 1 ? hw - 1 : 1);
-    m.job_system = std::make_unique<JPH::JobSystemThreadPool>(JPH::cMaxPhysicsJobs,
-                                                              JPH::cMaxPhysicsBarriers, threads);
+    // Jolt's workers are named for the profiler (R4) before they start.
+    m.job_system = std::make_unique<JPH::JobSystemThreadPool>();
+    m.job_system->SetThreadInitFunction([](int index) {
+        const std::string name = "physics worker " + std::to_string(index);
+        QUAT_THREAD_NAME(name.c_str());
+    });
+    m.job_system->Init(JPH::cMaxPhysicsJobs, JPH::cMaxPhysicsBarriers, threads);
 
     constexpr JPH::uint max_bodies = 65536;
     constexpr JPH::uint num_body_mutexes = 0; // default
@@ -68,6 +75,7 @@ PhysicsWorld::~PhysicsWorld() = default;
 
 void PhysicsWorld::update(float dt) {
     if (!impl_) return;
+    QUAT_ZONE_N("physics_step");
     Impl& m = *impl_;
     // Contacts ended by remove_body() since the last update open the list.
     m.contact_events.clear();

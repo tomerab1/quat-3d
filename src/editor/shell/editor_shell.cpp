@@ -13,6 +13,7 @@
 #include "../behavior_panel.hpp"
 #include "../inspector.hpp"
 #include "../panels/console.hpp"
+#include "../panels/profiler.hpp"
 #include "../physics_debug.hpp"
 #include "../scene_hierarchy.hpp"
 #include "engine/scene/scene_snapshot.hpp"
@@ -58,6 +59,7 @@ EditorShell::EditorShell(SDL_Window* window, std::filesystem::path root,
     inspector.project_root = project_root;
     appearance_.init(window, data_root, ui::ThemeId::dark);
     console = std::make_unique<panels::ConsoleState>();
+    profiler = std::make_unique<panels::ProfilerState>();
     register_commands();
 }
 
@@ -434,6 +436,8 @@ void EditorShell::draw_panels() {
                            c.build_navmesh_request, c.nav_edges, c.nav_status);
     }
     draw_stats_panel(*this);
+    panels::draw_profiler(c.profiler, *profiler, panel_window_name(Panel::profiler).c_str(),
+                          open(Panel::profiler));
 }
 
 void EditorShell::draw(const EditorContext& context) {

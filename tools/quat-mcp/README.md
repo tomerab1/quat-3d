@@ -216,6 +216,7 @@ written once as [Agent Skills](https://agentskills.io) in
 | `write-gameplay-script` | Lua scripts: read the reference, write, compile, attach, play, read the log |
 | `design-npc-behaviour` | Behaviour trees: leaves, plan, `bt_set`, play, `bt_status` / `debug_watch` |
 | `set-weather` | Wind, gusts, cloud cover, rain / snow, wet and snowy surfaces, checked with screenshots |
+| `find-performance-problem` | Profiling: baseline `profile_capture`, CPU- or GPU-bound, locate the zone, one fix at a time, before / after numbers |
 | `debug-physics-glitch` | Falling through, jitter, tunnelling, stuck bodies: pause, step, watch, raycast |
 | `playtest` | Run the level and report script errors, stuck NPCs, objects leaving the world, hitches |
 | `inspect-scene` | Survey and review the scene without changing it |

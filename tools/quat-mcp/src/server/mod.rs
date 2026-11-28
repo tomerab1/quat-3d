@@ -16,6 +16,8 @@ mod debug_tools;
 #[allow(clippy::doc_markdown)]
 mod physics;
 #[allow(clippy::doc_markdown)]
+mod profile_tools;
+#[allow(clippy::doc_markdown)]
 mod project_tools;
 mod results;
 #[allow(clippy::doc_markdown)]
@@ -141,6 +143,7 @@ impl QuatServer {
             + Self::world_tools()
             + Self::sim_tools()
             + Self::debug_tools()
+            + Self::profile_tools()
             + Self::tuning_tools()
             + Self::behavior_tools()
             + Self::physics_tools()

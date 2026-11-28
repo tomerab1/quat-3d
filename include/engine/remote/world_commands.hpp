@@ -14,8 +14,9 @@
 // gameplay script files (ROADMAP G7): script.list / get / create / update /
 // delete / check — material shader authoring (ROADMAP A6): shader.list /
 // get / template / create / update / delete — game packaging (ROADMAP P4):
-// project.info, project.build, project.build_status — and the world clock
-// (ROADMAP R22.1): time.get / set / skip. The method contract is
+// project.info, project.build, project.build_status — the world clock
+// (ROADMAP R22.1): time.get / set / skip — and profiling (ROADMAP R4):
+// profile.frame / capture / result / counters / reset. The method contract is
 // docs/remote-control.md.
 //
 // Scene editing works on any Scene. Everything that only the running
@@ -47,6 +48,7 @@
 
 namespace engine::core {
 class EventRing;
+class FrameProfiler;
 class LogRing;
 class SimClock;
 } // namespace engine::core
@@ -140,6 +142,18 @@ struct ScreenshotRequest {
     std::optional<CameraPose> camera;
 };
 
+// One GPU memory heap for profile.counters (bytes; see rhi::GpuHeapStats).
+struct GpuMemoryHeap {
+    std::uint32_t heap = 0;
+    bool          device_local = false;
+    std::uint64_t size = 0;
+    std::uint64_t budget = 0;
+    std::uint64_t usage = 0;
+    std::uint64_t allocated = 0; // memory blocks the engine's allocator holds
+    std::uint64_t used = 0;      // of which bound to resources
+    std::uint32_t allocations = 0;
+};
+
 struct WorldServices {
     // Project root that scene.save/load, asset.list_models and
     // asset.spawn_model paths are confined to.
@@ -225,6 +239,13 @@ struct WorldServices {
     // (on <project_root>/assets/scripts).
     std::function<script::ScriptRuntime*()> scripts;
 
+    // ---- Profiling (ROADMAP R4) -------------------------------------------------
+
+    // The frame profiler (non-owning; normally core::profiler()): profile.*
+    // read its statistics and run captures on it. Null: unavailable.
+    core::FrameProfiler* profiler = nullptr;
+    // Per-heap GPU memory for profile.counters (empty: reported as null).
+    std::function<std::vector<GpuMemoryHeap>()> gpu_memory;
     // ---- Material shaders (ROADMAP A6) -------------------------------------------
 
     // Authored material shaders (non-owning; its poll() must run every frame

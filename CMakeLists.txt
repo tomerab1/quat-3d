@@ -13,6 +13,23 @@ cmake_minimum_required(VERSION 3.22)
 # before project() so the vcpkg toolchain sees it.
 set(VCPKG_OVERLAY_PORTS "${CMAKE_CURRENT_SOURCE_DIR}/ports")
 
+# Tracy profiling (R4): on by default for Debug / RelWithDebInfo (and an
+# unset build type, which becomes Debug below), off for Release unless asked
+# for (the `release` preset asks; packaged builds pass OFF). The built-in
+# frame profiler is compiled either way. Decided before project() because
+# Tracy is the vcpkg manifest feature `profiling`: only builds with
+# ENGINE_PROFILE=ON download and build it.
+if(NOT CMAKE_BUILD_TYPE OR CMAKE_BUILD_TYPE MATCHES "^(Debug|RelWithDebInfo)$")
+    set(ENGINE_PROFILE_DEFAULT ON)
+else()
+    set(ENGINE_PROFILE_DEFAULT OFF)
+endif()
+option(ENGINE_PROFILE "Compile in the Tracy profiler client (on demand, loopback only)"
+    ${ENGINE_PROFILE_DEFAULT})
+if(ENGINE_PROFILE)
+    list(APPEND VCPKG_MANIFEST_FEATURES "profiling")
+endif()
+
 project(quat_3d
     VERSION 0.1.0
     DESCRIPTION "Modular data-driven C++23 game engine"
@@ -32,7 +49,6 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
 endif()
 
 option(ENGINE_EDITOR "Build the ImGui-based editor layer" ON)
-option(ENGINE_PROFILE "Enable Tracy profiling in non-debug builds" OFF)
 # Compatibility switch for drivers without VK_EXT_descriptor_buffer (MoltenVK on
 # macOS). When ON, the RHI may fall back to classic descriptor pools/sets and the
 # instance opts into portability (non-conformant) ICD enumeration. Descriptor
@@ -149,6 +165,12 @@ set_target_properties(miniaudio_headers PROPERTIES
     INTERFACE_INCLUDE_DIRECTORIES "${MINIAUDIO_INCLUDE_DIR}")
 target_link_libraries(miniaudio_headers INTERFACE
     Threads::Threads ${CMAKE_DL_LIBS} $<$<PLATFORM_ID:Linux,FreeBSD>:m>)
+# Tracy client (manifest feature `profiling`, overlay port ports/tracy:
+# TRACY_ON_DEMAND, loopback only). Its TRACY_ENABLE / TRACY_ON_DEMAND
+# definitions travel with the target.
+if(ENGINE_PROFILE)
+    find_package(Tracy CONFIG REQUIRED)
+endif()
 if(ENGINE_EDITOR)
     find_package(imgui CONFIG REQUIRED)
     find_package(imguizmo CONFIG REQUIRED)
@@ -174,9 +196,20 @@ add_library(engine_core STATIC
     src/core/child_process.cpp
     src/core/asset_root.cpp
     src/core/path_confine.cpp
-    src/core/env.cpp)
+    src/core/env.cpp
+    src/core/profile_names.cpp
+    src/core/profile_stats.cpp
+    src/core/profile_capture.cpp
+    src/core/frame_profiler.cpp)
 target_link_libraries(engine_core PUBLIC engine_flags Threads::Threads)
 target_include_directories(engine_core PUBLIC ${ENGINE_PUBLIC_INCLUDE})
+# QUAT_TRACY switches engine/core/profile.hpp's macros (and the GPU zones of
+# rhi::GpuProfiler) to Tracy as well; PUBLIC so every engine target that
+# instruments code sees the same configuration.
+if(ENGINE_PROFILE)
+    target_link_libraries(engine_core PUBLIC Tracy::TracyClient)
+    target_compile_definitions(engine_core PUBLIC QUAT_TRACY)
+endif()
 
 # ---------------------------------------------------------------------------
 # engine_project — game projects (ROADMAP P4): the game.json descriptor and
@@ -206,6 +239,7 @@ add_library(engine_rhi STATIC
     src/rhi/pipeline_cache.cpp
     src/rhi/descriptor_buffer.cpp
     src/rhi/render_graph.cpp
+    src/rhi/gpu_profiler.cpp
     src/rhi/graphics_pipeline.cpp
     src/rhi/compute_pipeline.cpp
     src/rhi/shader_compiler.cpp
@@ -317,6 +351,7 @@ add_library(engine_physics STATIC
     src/physics/physics_shape_queries.cpp
     src/physics/physics_joints.cpp)
 target_link_libraries(engine_physics PUBLIC engine_flags)
+target_link_libraries(engine_physics PRIVATE engine_core) # profiler zones + worker names (R4)
 target_link_libraries(engine_physics PRIVATE Jolt::Jolt)
 target_include_directories(engine_physics PUBLIC ${ENGINE_PUBLIC_INCLUDE})
 
@@ -470,6 +505,7 @@ add_library(engine_terrain STATIC
     src/terrain/streamer.cpp
     src/terrain/talus_relax.cpp)
 target_link_libraries(engine_terrain PUBLIC engine_flags glm::glm)
+target_link_libraries(engine_terrain PRIVATE engine_core) # profiler zones + thread names (R4)
 target_include_directories(engine_terrain PUBLIC ${ENGINE_PUBLIC_INCLUDE})
 
 # ---------------------------------------------------------------------------
@@ -585,6 +621,7 @@ add_library(engine_remote_world STATIC
     src/remote/world/project_commands.cpp
     src/remote/world/time_commands.cpp
     src/remote/world/script_commands.cpp
+    src/remote/world/profile_commands.cpp
     src/remote/world/image_encode.cpp
     src/remote/world/stb_image_write_impl.cpp)
 target_link_libraries(engine_remote_world PUBLIC
@@ -687,6 +724,7 @@ if(ENGINE_EDITOR)
         src/editor/inspector_world.cpp
         src/editor/panels/console.cpp
         src/editor/panels/inspector_parts.cpp
+        src/editor/panels/profiler.cpp
         src/editor/shell/command_palette.cpp
         src/editor/shell/commands.cpp
         src/editor/shell/dialogs.cpp
@@ -780,6 +818,7 @@ set(QUAT_APP_SOURCES
     src/app/frame_graph.cpp
     src/app/frame_temporal.cpp
     src/app/frame_renderer.cpp
+    src/app/frame_profiling.cpp
     src/app/game_boot.cpp
     src/app/game_startup.cpp
     src/app/input_sampler.cpp

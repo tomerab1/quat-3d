@@ -11,6 +11,7 @@
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 
+#include "engine/core/profile.hpp"
 
 namespace engine::scene {
 
@@ -74,10 +75,23 @@ void Scene::tick(float dt, const FootGroundProbe& ground) {
     // Transforms first: the animation system folds each skinned entity's
     // current Transform.world into its skinning matrices, so worlds must be
     // up to date before sampling (animation writes no transforms itself).
-    transform_system(registry_);
-    animation_system(registry_, dt, ground);
-    weather::weather_system(registry_, dt); // wetness / snow accumulation (R13.1)
-    world_clock_system(registry_, dt); // date / time, sun and sky (R22.1)
+    {
+        QUAT_ZONE_C("transform_system", core::ProfileCategory::system);
+        transform_system(registry_);
+    }
+    {
+        QUAT_ZONE_C("animation_system", core::ProfileCategory::system);
+        animation_system(registry_, dt, ground);
+    }
+    {
+        QUAT_ZONE_C("weather_system", core::ProfileCategory::system);
+        weather::weather_system(registry_, dt); // wetness / snow accumulation (R13.1)
+    }
+    {
+        QUAT_ZONE_C("world_clock_system", core::ProfileCategory::system);
+        world_clock_system(registry_, dt); // date / time, sun and sky (R22.1)
+    }
+    QUAT_ZONE_C("render_collect_system", core::ProfileCategory::system);
     render_collect_system(registry_, draw_list_);
 }
 

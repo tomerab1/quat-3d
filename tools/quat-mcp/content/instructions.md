@@ -20,6 +20,8 @@ Physics runs during Play (`sim_play`). `physics_get` / `physics_set` / `physics_
 
 Gameplay is written as Lua scripts: read the `quat://docs/scripting` resource, write files with `script_create` / `script_update` (compiled first; errors name the line), attach them with the `script` component, run with `sim_play` and read `debug_log` (category `script`).
 
+Performance: `profile_frame` shows where the frame time goes (CPU and GPU per render pass and scene system), `profile_capture` records a number of frames and reports the costliest zones and the spikes over a frame budget, `profile_counters` the workload behind them (draws, triangles, GPU memory, entities). Measure before and after every change; the `find-performance-problem` workflow walks through it.
+
 Custom looks: write a material shader (a Slang module) with `shader_template` → `shader_create`, assign it with `scene_update` (`primitive.shader`), screenshot and refine with `shader_update`; compile errors come back with file, line and column.
 
 A game made here ships as a standalone package: `project_info` shows the open game project, `project_build` packages it for the engine's OS in the background and `project_build_status` reports progress and the archive.

@@ -40,6 +40,7 @@ class BehaviorPanel;
 
 namespace panels {
 struct ConsoleState;
+struct ProfilerState;
 } // namespace panels
 
 namespace shell {
@@ -132,6 +133,7 @@ public:
     AssetBrowserState                     assets;
     std::unique_ptr<BehaviorPanel>        behavior_panel;
     std::unique_ptr<panels::ConsoleState> console;
+    std::unique_ptr<panels::ProfilerState> profiler; // R4: freeze, filters, snapshot
     panels::InspectorState                inspector; // Add Component search, copied values
     DialogState                           dialog;
     ExportDialogState                     export_dialog; // File > Build & Export (P4/E7)

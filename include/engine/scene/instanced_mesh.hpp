@@ -123,4 +123,15 @@ struct FrameDrawLists {
 [[nodiscard]] std::size_t frame_draw_count(const FrameDrawLists& lists,
                                            std::size_t transparent_items);
 
+// The same draws with their instance and triangle counts (profiling, R4):
+// shadow casters only when `with_shadows` (the cascades are rendered).
+struct FrameDrawStats {
+    std::size_t   draws = 0;
+    std::uint64_t instances = 0;
+    std::uint64_t triangles = 0;
+};
+[[nodiscard]] FrameDrawStats frame_draw_stats(const FrameDrawLists& lists,
+                                              std::span<const renderer::DrawItem> transparent,
+                                              bool with_shadows);
+
 } // namespace engine::scene

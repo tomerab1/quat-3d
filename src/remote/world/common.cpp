@@ -263,6 +263,7 @@ void register_world_commands(RpcServer& server, scene::Scene& scene, WorldServic
     world::register_weather_commands(server, ctx);
     world::register_project_commands(server, ctx);
     world::register_script_commands(server, ctx);
+    world::register_profile_commands(server, ctx);
     world::register_shader_commands(server, ctx);
     world::register_time_commands(server, ctx);
 }
