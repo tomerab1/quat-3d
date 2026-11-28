@@ -18,19 +18,23 @@ same tree:
 
 Every file is checked against the size and MD5 Poly Haven's API publishes; a
 file already present with the right checksum is not downloaded again, so the
-script is cheap to re-run over a restored CI cache. Downloads come only over
-https from dl.polyhaven.org and every path from the API is confined to the
+script is cheap to re-run over a restored CI cache. An asset's
+`content_sha256` in the manifest pins those (path, MD5, size) lists, so a
+republished asset fails the fetch instead of silently changing a scene.
+Downloads come only over https from dl.polyhaven.org (API calls from
+api.polyhaven.com), redirects included; they are streamed to disk with a size
+cap and a wall-clock deadline, and every path from the API is confined to the
 asset's folder.
 
 --cook-with runs the engine's cooker (quat-cook) for each model whose manifest
 entry has a `cook` list: one GLB per entry (KTX2 textures, meshopt meshes,
 `--simplify` levels of detail), <id>.glb unless the entry names its
 `output`; the scene files reference those. A cooked file is rebuilt only
-when its glTF or cook arguments change (a `.<output>.cook-stamp` records
-them) or with --recook (after a cooker
-change; CI keys its cache on the cooker sources instead). --check downloads
-nothing: it exits 0 when every file the manifest
-produces is present (cooked models included), 1 otherwise.
+when its glTF or cook arguments change (an `<output>.cook-stamp` records
+them) or with --recook (after a cooker change; CI keys its cooked-model
+cache on the cooker sources instead). --check downloads nothing: it exits 0
+when every file the manifest produces is present (cooked models included),
+1 otherwise.
 
 Standard library only (it runs on a bare CI runner). Exit status: 0 = done,
 1 = an asset failed (the message names it), 2 = bad usage or manifest.
@@ -60,6 +64,9 @@ LICENSE_URL = "https://creativecommons.org/publicdomain/zero/1.0/"
 # Per asset, like asset_fetch's default cap (QUAT_MCP_ASSET_MAX_MB).
 MAX_ASSET_BYTES = 512 * 1024 * 1024
 MAX_FILES = 256
+MAX_API_BYTES = 16 * 1024 * 1024
+# Wall-clock budget of one file: a minute plus 256 KiB/s.
+MIN_RATE_BYTES_PER_S = 256 * 1024
 DIRS = {
     "model": pathlib.Path("assets/meshes/polyhaven"),
     "texture": pathlib.Path("assets/textures/polyhaven"),
@@ -87,30 +94,71 @@ def safe_relative(rel):
     return pathlib.Path(*p.parts)
 
 
-def check_url(url):
+def check_url(url, host=DOWNLOAD_HOST):
     u = urllib.parse.urlparse(url)
-    if u.scheme != "https" or u.hostname != DOWNLOAD_HOST:
-        raise FetchError(f"refusing download URL outside https://{DOWNLOAD_HOST}: {url}")
+    if u.scheme != "https" or u.hostname != host:
+        raise FetchError(f"refusing URL outside https://{host}: {url}")
 
 
-def http_get(url, attempts=3):
+class _ConfinedRedirects(urllib.request.HTTPRedirectHandler):
+    """Follows a redirect only to the host the request was confined to."""
+
+    def __init__(self, host):
+        super().__init__()
+        self.host = host
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        check_url(newurl, self.host)
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+def stream(url, host, sink, max_bytes, deadline_s):
+    """GETs `url` (https on `host`, redirects re-checked), passing each chunk
+    to `sink`; fails past `max_bytes` or the wall-clock `deadline_s` (a
+    server trickling bytes never trips a per-read timeout)."""
+    check_url(url, host)
+    opener = urllib.request.build_opener(_ConfinedRedirects(host))
+    req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
+    deadline = time.monotonic() + deadline_s
+    got = 0
+    with opener.open(req, timeout=60) as r:
+        while chunk := r.read(1 << 20):
+            got += len(chunk)
+            if got > max_bytes:
+                raise FetchError(f"{url}: more than the expected {max_bytes} bytes")
+            if time.monotonic() > deadline:
+                raise FetchError(f"{url}: download exceeded {deadline_s:.0f} s")
+            sink(chunk)
+    return got
+
+
+def retried(what, fn, attempts=3):
     last = None
     for attempt in range(attempts):
         try:
-            req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
-            with urllib.request.urlopen(req, timeout=120) as r:
-                return r.read()
+            return fn()
         except (urllib.error.URLError, TimeoutError, ConnectionError) as e:
             last = e
             time.sleep(2 * (attempt + 1))
-    raise FetchError(f"GET {url} failed: {last}")
+    raise FetchError(f"{what} failed: {last}")
 
 
 def api_json(path):
+    url = f"{API}/{path}"
+    host = urllib.parse.urlparse(API).hostname
+
+    def get():
+        parts = []
+        stream(url, host, parts.append, MAX_API_BYTES, 120)
+        return b"".join(parts)
+
     try:
-        return json.loads(http_get(f"{API}/{path}"))
+        doc = json.loads(retried(f"GET {url}", get))
     except json.JSONDecodeError as e:
-        raise FetchError(f"{API}/{path}: not JSON ({e})") from None
+        raise FetchError(f"{url}: not JSON ({e})") from None
+    if not isinstance(doc, dict):
+        raise FetchError(f"{url}: expected a JSON object")
+    return doc
 
 
 def md5_of(path):
@@ -134,13 +182,26 @@ def download(entry, dest):
     if verified(dest, size, md5):
         return False
     dest.parent.mkdir(parents=True, exist_ok=True)
-    data = http_get(url)
-    if len(data) != size or hashlib.md5(data, usedforsecurity=False).hexdigest() != md5:
-        raise FetchError(f"{url}: size or checksum mismatch (got {len(data)} bytes)")
-    fd, tmp = tempfile.mkstemp(dir=dest.parent, prefix=".part-")
-    with os.fdopen(fd, "wb") as f:
-        f.write(data)
-    os.replace(tmp, dest)
+
+    def get():
+        # Streamed to a temporary file while hashing: bounded memory, at
+        # most size + 1 bytes accepted, removed on any failure.
+        fd, tmp = tempfile.mkstemp(dir=dest.parent, prefix=".part-")
+        try:
+            h = hashlib.md5(usedforsecurity=False)
+            with os.fdopen(fd, "wb") as f:
+                def sink(chunk):
+                    h.update(chunk)
+                    f.write(chunk)
+                got = stream(url, DOWNLOAD_HOST, sink, size, 60 + size / MIN_RATE_BYTES_PER_S)
+            if got != size or h.hexdigest() != md5:
+                raise FetchError(f"{url}: size or checksum mismatch (got {got} bytes)")
+            os.replace(tmp, dest)
+        finally:
+            if os.path.exists(tmp):
+                os.unlink(tmp)
+
+    retried(f"GET {url}", get)
     return True
 
 
@@ -151,7 +212,10 @@ def plan_files(asset, files):
         if kind == "model":
             g = files["gltf"][res]["gltf"]
             out = [(f"{aid}_{res}.gltf", g)]
-            out += sorted(g.get("include", {}).items())
+            include = g.get("include", {})
+            if not isinstance(include, dict):
+                raise TypeError("include")
+            out += sorted(include.items())
         elif kind == "texture":
             out = [(pathlib.PurePosixPath(files[m][res]["jpg"]["url"]).name,
                     files[m][res]["jpg"]) for m in asset["maps"]]
@@ -165,19 +229,39 @@ def plan_files(asset, files):
         p = safe_relative(rel)
         if p is None:
             raise FetchError(f"{aid}: unsafe path from the API: {rel!r}")
+        if not (isinstance(entry, dict) and isinstance(entry.get("url"), str)
+                and isinstance(entry.get("size"), int) and entry["size"] >= 0
+                and isinstance(entry.get("md5"), str)):
+            raise FetchError(f"{aid}: malformed file entry for {rel!r} from the API")
         plan.append((p, entry))
-    total = sum(e.get("size", 0) for _, e in plan)
+    total = sum(e["size"] for _, e in plan)
     if len(plan) > MAX_FILES or total > MAX_ASSET_BYTES:
         raise FetchError(f"{aid}: {len(plan)} files / {total} bytes exceeds the cap")
     return plan
 
 
+def content_digest(plan):
+    """SHA-256 over the sorted (path, md5, size) of an asset's files: what the
+    manifest pins, so a republished asset is noticed instead of silently
+    changing the scene."""
+    h = hashlib.sha256()
+    for p, e in sorted(plan, key=lambda pe: pe[0].as_posix()):
+        h.update(f"{p.as_posix()}\0{e['md5']}\0{e['size']}\n".encode())
+    return h.hexdigest()
+
+
 def write_provenance(asset, info, plan, folder):
     authors = info.get("authors") or asset.get("authors") or {}
+    if not isinstance(authors, dict) or not all(
+            isinstance(k, str) and isinstance(v, str) for k, v in authors.items()):
+        raise FetchError(f"{asset['id']}: malformed authors from the API")
+    name = info.get("name")
+    if not isinstance(name, str):
+        raise FetchError(f"{asset['id']}: malformed name from the API")
     prov = {
         "source": "Poly Haven",
         "id": asset["id"],
-        "name": info.get("name", asset["id"]),
+        "name": name,
         "source_url": f"https://polyhaven.com/a/{asset['id']}",
         "license": LICENSE,
         "license_url": LICENSE_URL,
@@ -309,7 +393,7 @@ def cook(asset, folder, cooker, gltf_rel, force):
     src_md5 = md5_of(src)
     for name, args in cook_outputs(asset):
         out = folder / name
-        stamp = folder / f".{name}.cook-stamp"
+        stamp = folder / f"{name}.cook-stamp"
         want = json.dumps({"args": args, "input_md5": src_md5})
         if not force and out.is_file() and stamp.is_file() and stamp.read_text() == want:
             continue
@@ -351,6 +435,9 @@ def load_manifest(path):
             maps = a.get("maps")
             if not isinstance(maps, list) or not maps or any(m not in TEXTURE_MAPS for m in maps):
                 raise FetchError(f"{aid}: texture maps must be a list from {TEXTURE_MAPS}")
+        pin = a.get("content_sha256")
+        if pin is not None and (not isinstance(pin, str) or len(pin) != 64):
+            raise FetchError(f"{aid}: content_sha256 must be a 64-digit hex string")
         if (kind, aid) in seen:
             raise FetchError(f"{aid}: listed twice")
         seen.add((kind, aid))
@@ -371,9 +458,16 @@ def fetch_asset(asset, cooker, recook):
     aid, kind = asset["id"], asset["type"]
     folder = ROOT / DIRS[kind] / aid
     info = api_json(f"info/{aid}")
-    if not isinstance(info, dict) or "name" not in info:
+    if "name" not in info:
         raise FetchError(f"{aid}: not a Poly Haven asset")
     plan = plan_files(asset, api_json(f"files/{aid}"))
+    digest = content_digest(plan)
+    pinned = asset.get("content_sha256")
+    if pinned is None:
+        log(f"{aid}: not pinned; add \"content_sha256\": \"{digest}\" to the manifest")
+    elif pinned != digest:
+        raise FetchError(f"{aid}: Poly Haven's files differ from the pinned content_sha256 "
+                         f"(now {digest}); review the asset and update the manifest")
     fresh = sum(download(e, folder / p) for p, e in plan)
     write_provenance(asset, info, plan, folder)
     note = f"{fresh} downloaded" if fresh else "up to date"
@@ -421,7 +515,8 @@ def main():
     for asset in assets:
         try:
             fetch_asset(asset, cooker, args.recook)
-        except (FetchError, OSError, subprocess.TimeoutExpired) as e:
+        except (FetchError, OSError, subprocess.TimeoutExpired, KeyError, TypeError,
+                ValueError, AttributeError) as e:
             log(f"FAILED {asset['id']}: {e}")
             failed += 1
     return 1 if failed else 0

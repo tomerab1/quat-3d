@@ -27,8 +27,10 @@ python3 scripts/fetch-polyhaven.py assets/showcase/cinematic/assets.json \
 About 560 MB is downloaded (480 MB of it the full fir tree's geometry) into
 `assets/meshes/polyhaven/`, `assets/textures/polyhaven/` and
 `assets/hdri/polyhaven/`, exactly where quat-mcp's `asset_fetch` puts
-models. Each file is checked against the size and MD5 Poly Haven publishes;
-re-running only verifies. The cooker then writes one GLB per model (KTX2
+models. Each file is checked against the size and MD5 Poly Haven publishes,
+and each asset's file list against the `content_sha256` pinned in the
+manifest (a republished asset fails the fetch instead of silently changing
+the scene); re-running only verifies. The cooker then writes one GLB per model (KTX2
 textures, meshoptimizer meshes); the heavy firs are cooked to two levels of
 detail with `quat-cook --simplify` (6 % for the rows around the clearing,
 1.5 % for the rows behind), the saplings to 25 %. The first cook takes a few

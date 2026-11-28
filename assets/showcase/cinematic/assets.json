@@ -38,7 +38,8 @@
             "0.5"
           ]
         }
-      ]
+      ],
+      "content_sha256": "a2bbaecb0dd24583814371856d6532a0e56e65353112c0c4ce17eb6674648a38"
     },
     {
       "id": "fir_sapling",
@@ -60,7 +61,8 @@
             "0.002"
           ]
         }
-      ]
+      ],
+      "content_sha256": "63641f86d5909d57ab667909d9a168a59d42afbed4570d0930cc48bbde3526c7"
     },
     {
       "id": "pine_sapling_small",
@@ -82,7 +84,8 @@
             "0.002"
           ]
         }
-      ]
+      ],
+      "content_sha256": "edd20cf016038e97ee105e6c97c99cbc973a626e8303ddac018eb55aa7bdce34"
     },
     {
       "id": "fern_02",
@@ -99,7 +102,8 @@
         {
           "args": []
         }
-      ]
+      ],
+      "content_sha256": "f41a288f1658a4bebb68c38c6da467cbd71dc46db5f6c06ce2acc66dafae9c21"
     },
     {
       "id": "dead_tree_trunk",
@@ -115,7 +119,8 @@
         {
           "args": []
         }
-      ]
+      ],
+      "content_sha256": "3cf688ecbe9d8082d078658757ebe160e6ddf3eec9ff6e3dfd973699a2441da2"
     },
     {
       "id": "tree_stump_01",
@@ -131,7 +136,8 @@
         {
           "args": []
         }
-      ]
+      ],
+      "content_sha256": "e059e3631ec8f8ae3f4a369f339a2e1263cd6ca4cfa1bee578b8182be00ddab9"
     },
     {
       "id": "tree_stump_02",
@@ -147,7 +153,8 @@
         {
           "args": []
         }
-      ]
+      ],
+      "content_sha256": "49228a7653e2cb4e949aa32bebaad0e1b82e4ef8cabbb3e8e4eab9136ce04946"
     },
     {
       "id": "rock_moss_set_01",
@@ -163,7 +170,8 @@
         {
           "args": []
         }
-      ]
+      ],
+      "content_sha256": "a860ba7fbfad8c67a2feac0e37c61ccb9a199b8cd1b5b93afb160ada28ecb260"
     },
     {
       "id": "rock_moss_set_02",
@@ -179,7 +187,8 @@
         {
           "args": []
         }
-      ]
+      ],
+      "content_sha256": "880c8f3989c9b4cb8982fd5cb2e9da8d1ddba60b97e7f49e906daf6396ab1f31"
     },
     {
       "id": "dry_branches_medium_01",
@@ -195,7 +204,8 @@
         {
           "args": []
         }
-      ]
+      ],
+      "content_sha256": "04ed748079b354e1e7ca5c438c7cc5874db27ae1cca3fd97e7ad20c400f8a822"
     },
     {
       "id": "forest_leaves_04",
@@ -217,7 +227,8 @@
         "size": 400,
         "tile": 2.5,
         "segments": 64
-      }
+      },
+      "content_sha256": "b38e767627fb3cb435ec0ee5da31c30e5ddc2d6a42e8b5287bc5fa647f5db76c"
     },
     {
       "id": "spaichingen_hill",
@@ -233,7 +244,8 @@
         "elevation_deg": 12.9,
         "longitude_deg": 36.0,
         "note": "measured from the 1k .hdr: luminance-weighted centroid of the brightest pixels; longitude is measured from the image centre, positive to the right"
-      }
+      },
+      "content_sha256": "f33a42ae24cdd0fea5e15e3515e97604c2381f21453c237e79f6b62f6c67bf04"
     }
   ]
 }
