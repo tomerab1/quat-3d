@@ -122,6 +122,12 @@ bool Application::init_platform() {
     }
     allocator_ = std::move(*allocator_result);
 
+    // QUAT_NO_MUTABLE_SWAPCHAIN=1: behave as a driver without
+    // VK_KHR_swapchain_mutable_format, so the editor UI takes its
+    // copy-composite fallback (checking it on a machine that has the extension).
+    if (std::getenv("QUAT_NO_MUTABLE_SWAPCHAIN") != nullptr) {
+        device_.simulate_missing_swapchain_mutable_format(true);
+    }
     auto swapchain_result = engine::rhi::Swapchain::create(
         device_, device_.surface(), window_pixel_extent(platform_.window));
     if (!swapchain_result) {

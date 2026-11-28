@@ -35,9 +35,11 @@ namespace {
 
 #ifdef ENGINE_EDITOR
 // (Re)creates the slot's offscreen viewport image at `extent`. Safe to replace
-// here: the slot's fence was waited before its frame is rebuilt. The image uses
-// the swapchain format so the TAA resolve copy and the UI's sRGB sampling
-// behave exactly as the direct-to-swapchain path.
+// here: the slot's fence was waited before its frame is rebuilt. The image is
+// in the LDR (UNORM) format: TAA copies the tonemapped, already sRGB-encoded
+// bytes into it as into the swapchain, and the UI samples those bytes
+// undecoded and blends them in gamma space (issue #92), so the Viewport panel
+// shows exactly the bytes the game view presents.
 bool ensure_viewport_target(DeferredFrame& frame, const engine::rhi::Device& device,
                             engine::rhi::GpuAllocator& allocator, VkFormat format,
                             VkExtent2D extent) {
@@ -464,6 +466,12 @@ bool FrameRenderer::record(const FrameInputs& in) {
         // render-finished semaphore is signalled at, which present waits
         // on (issue #9).
         k_present_signal_stage);
+    // The UI blends in gamma space through the swapchain's UNORM view when
+    // the swapchain is mutable-format (ImGuiPass copies through a UNORM
+    // scratch image otherwise).
+    if (const auto unorm_views = swapchain.unorm_image_views(); !unorm_views.empty()) {
+        graph.set_unorm_view(backbuffer, unorm_views[image_index]);
+    }
     // In editor mode the frame resolves into the slot's offscreen viewport
     // image (sampled by the Viewport panel); otherwise straight into the
     // swapchain as before.
@@ -471,13 +479,13 @@ bool FrameRenderer::record(const FrameInputs& in) {
 #ifdef ENGINE_EDITOR
     engine::rhi::ResourceHandle viewport_handle{};
     if (editor_active_) {
-        if (!ensure_viewport_target(fr, device, allocator, swapchain.format(), draw_extent)) {
+        if (!ensure_viewport_target(fr, device, allocator, ldr_format_, draw_extent)) {
             std::fprintf(stderr, "[fatal] viewport target creation failed\n");
             return false;
         }
         viewport_handle = graph.import_image(
             "viewport", fr.viewport_image.handle(), fr.viewport_view.handle(),
-            swapchain.format(), draw_extent, VK_IMAGE_LAYOUT_UNDEFINED,
+            ldr_format_, draw_extent, VK_IMAGE_LAYOUT_UNDEFINED,
             VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
         scene_target = viewport_handle;
     }

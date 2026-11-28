@@ -46,6 +46,15 @@ void collect_subtree(const entt::registry& r, entt::entity root, std::vector<ent
     }
 }
 
+[[nodiscard]] bool all_finite(const glm::mat4& m) {
+    for (int c = 0; c < 4; ++c) {
+        for (int r = 0; r < 4; ++r) {
+            if (!std::isfinite(m[c][r])) return false;
+        }
+    }
+    return true;
+}
+
 } // namespace
 
 std::span<const CreateKind> create_kinds() { return k_kinds; }
@@ -115,8 +124,10 @@ ReparentResult reparent_keep_world(scene::Scene& scene, entt::entity child, entt
     const glm::mat4 world = current_world(r, child);
     const glm::mat4 parent_world = parent != entt::null ? current_world(r, parent) : glm::mat4(1.0F);
     // glm::inverse of a singular matrix divides by zero: a zero-scaled
-    // parent (or a NaN in its chain) has no local pose that keeps the child
-    // where it is. Checked before anything changes.
+    // parent (or a NaN / Inf anywhere in its chain, translation included)
+    // has no local pose that keeps the child where it is. Checked before
+    // anything changes.
+    if (!all_finite(parent_world)) return ReparentResult::singular_parent;
     const float det = glm::determinant(glm::mat3(parent_world));
     if (!std::isfinite(det) || std::abs(det) < 1e-12F) return ReparentResult::singular_parent;
     if (!scene.set_parent(child, parent)) return ReparentResult::refused;

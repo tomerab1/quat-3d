@@ -2,9 +2,13 @@
 //
 // Renders ImGui draw lists over the final swapchain image. Vertices arrive in
 // framebuffer pixel coordinates (ImDrawVert: pos2 / uv2 / RGBA8 colour) and are
-// mapped to clip space by a scale/translate push constant. Vertex colours are
-// authored in sRGB; they are linearised here so the sRGB swapchain attachment
-// re-encodes them correctly (and blending happens in linear space).
+// mapped to clip space by a scale/translate push constant.
+//
+// Everything stays in gamma (sRGB-encoded) space, as ImGui authors it: vertex
+// colours pass through unmodified, textures are bound through UNORM views
+// (stored bytes, no decode) and the attachment is the target's UNORM view, so
+// blending happens on the encoded values (issue #92: blending glyph coverage
+// in linear space thinned dark text on light backgrounds to grey).
 
 struct PushConstants {
     float2 scale;     // 2 / display_size
@@ -18,7 +22,7 @@ struct PushConstants {
 struct VsIn {
     float2 pos : POSITION;
     float2 uv  : TEXCOORD0;
-    float4 col : COLOR0; // RGBA8 UNORM, sRGB-authored
+    float4 col : COLOR0; // RGBA8 UNORM, sRGB-encoded (used as is)
 }
 
 struct VsOut {
@@ -27,19 +31,12 @@ struct VsOut {
     float4 col  : COLOR0;
 }
 
-// Piecewise sRGB EOTF (the exact inverse the sRGB attachment encode applies).
-float3 srgb_to_linear(float3 c) {
-    float3 lo = c / 12.92;
-    float3 hi = pow((c + 0.055) / 1.055, 2.4);
-    return select(c <= 0.04045, lo, hi);
-}
-
 [shader("vertex")]
 VsOut vertex_main(VsIn input) {
     VsOut o;
     o.clip = float4(input.pos * pc.scale + pc.translate, 0.0, 1.0);
     o.uv = input.uv;
-    o.col = float4(srgb_to_linear(input.col.rgb), input.col.a);
+    o.col = input.col;
     return o;
 }
 

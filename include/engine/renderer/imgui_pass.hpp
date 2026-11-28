@@ -12,6 +12,22 @@
 //
 // ImGui types stay out of this header (forward-declared ImDrawData) per the
 // project rule: ImGui headers only in src/editor/ and src/renderer/imgui_pass.cpp.
+//
+// Colour space (issue #92): ImGui's colours and its font antialiasing are
+// authored for blending in gamma (sRGB-encoded) space. The pass therefore
+// passes vertex colours through unmodified and blends on the target's stored
+// bytes — never in linear space, which washes dark-on-light text out to grey:
+//   * a UNORM target is drawn directly;
+//   * an sRGB target with a UNORM view (RenderGraph::set_unorm_view; the
+//     mutable-format swapchain, VK_KHR_swapchain_mutable_format) is drawn
+//     through that view;
+//   * any other sRGB target gets the UI drawn into a UNORM scratch image whose
+//     bytes are then copied over it (overlay mode first copies the target's
+//     bytes in) — bit-identical to the view path, one or two copies dearer.
+// Textures are sampled the same way, without sRGB decode: the font atlas is
+// UNORM, and the viewport image must be UNORM or carry a UNORM view, so the
+// tonemapped scene's encoded bytes reach the screen exactly as in the game
+// view.
 
 #include <cstdint>
 #include <expected>
@@ -44,8 +60,10 @@ public:
     static constexpr std::uint64_t font_texture_id     = 1;
     static constexpr std::uint64_t viewport_texture_id = 2;
 
-    // Builds the UI pipeline (targeting `output_format`) and uploads the font
-    // atlas of the CURRENT ImGui context — one must exist before this call.
+    // Builds the UI pipeline for targets of `output_format` (an sRGB format
+    // or its UNORM twin; the pipeline renders the UNORM one) and uploads the
+    // font atlas of the CURRENT ImGui context — one must exist before this
+    // call.
     [[nodiscard]] static std::expected<ImGuiPass, core::Error>
     create(const rhi::Device& device, rhi::GpuAllocator& allocator, rhi::PipelineCache& cache,
            const rhi::TransferContext& transfer, const std::string& cooked_shader_dir,
@@ -71,8 +89,11 @@ public:
     //
     // `viewport`, when valid, is the offscreen scene image the Viewport panel
     // samples (ImGui::Image with viewport_texture_id); the pass declares the
-    // read so the graph orders/transitions it. `clear` clears `target` first
-    // (editor mode owns the whole swapchain) instead of compositing (LOAD).
+    // read so the graph orders/transitions it. It is sampled through its
+    // UNORM view (stored bytes); an sRGB viewport without one is an error.
+    // `clear` clears `target` first (editor mode owns the whole swapchain)
+    // instead of compositing (LOAD). `target` must be of the create() format
+    // family; see the header comment for how an sRGB target is reached.
     [[nodiscard]] std::expected<void, core::Error>
     add_to_graph(rhi::RenderGraph& graph, rhi::ResourceHandle target, VkExtent2D extent,
                  const ImDrawData* draw_data, rhi::ResourceHandle viewport = {},
@@ -93,6 +114,7 @@ private:
     const rhi::Device* device_    = nullptr; // non-owning
     rhi::GpuAllocator* allocator_ = nullptr; // non-owning
 
+    VkFormat                       pipeline_format_ = VK_FORMAT_UNDEFINED; // UNORM
     rhi::DescriptorBufferFunctions db_fns_{};
     rhi::DescriptorSetLayout       layout_;
     rhi::ManagedPipeline           pipeline_;

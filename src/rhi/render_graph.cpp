@@ -9,6 +9,7 @@
 #include <utility>
 
 #include "engine/rhi/device.hpp"
+#include "engine/rhi/formats.hpp"
 
 namespace engine::rhi {
 
@@ -355,6 +356,13 @@ ResourceHandle RenderGraph::import_image(const char* name, VkImage image, VkImag
     return ResourceHandle{static_cast<std::uint32_t>(resources_.size() - 1)};
 }
 
+void RenderGraph::set_unorm_view(ResourceHandle image, VkImageView view) {
+    if (!image.valid() || image.index >= resources_.size()) return;
+    Resource& r = resources_[image.index];
+    if (!r.imported || r.is_buffer) return;
+    r.unorm_view = view;
+}
+
 ResourceHandle RenderGraph::import_buffer(const char* name, VkBuffer buffer, VkDeviceSize size,
                                           VkPipelineStageFlags2 available_stage,
                                           VkAccessFlags2 available_access) {
@@ -409,7 +417,11 @@ RenderGraph::PassBuilder& RenderGraph::PassBuilder::execute(PassExecuteFn fn) {
 
 ResourceBinding RenderGraph::binding(ResourceHandle handle) const {
     const Resource& r = resources_[handle.index];
-    return ResourceBinding{r.image, r.view, r.format, r.extent, r.buffer, r.buffer_size};
+    ResourceBinding b{r.image, r.view, r.format, r.extent, r.buffer, r.buffer_size};
+    b.unorm_view = r.unorm_view != VK_NULL_HANDLE ? r.unorm_view
+                   : is_srgb(r.format)            ? VK_NULL_HANDLE
+                                                  : r.view;
+    return b;
 }
 
 // ===========================================================================

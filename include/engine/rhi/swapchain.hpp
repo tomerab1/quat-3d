@@ -18,7 +18,11 @@ class Device;
 // references it, and creation fails clearly when the device's present queue
 // family cannot present to it. FIFO present mode (always available),
 // preferring a B8G8R8A8_SRGB surface format. Images are rendered on the
-// graphics queue and presented with Device::present_queue().
+// graphics queue and presented with Device::present_queue(). With
+// VK_KHR_swapchain_mutable_format (Device::swapchain_mutable_format) an sRGB
+// swapchain is created mutable-format and each image also gets a view in its
+// UNORM twin format (unorm_image_views), through which the editor UI blends
+// in gamma space.
 class Swapchain {
 public:
     [[nodiscard]] static std::expected<Swapchain, core::Error>
@@ -44,6 +48,12 @@ public:
     }
     [[nodiscard]] std::span<const VkImage> images() const { return images_; }
     [[nodiscard]] std::span<const VkImageView> image_views() const { return image_views_; }
+    // One UNORM-format view per image (same order as images()) of a
+    // mutable-format sRGB swapchain; empty otherwise (no extension, or the
+    // surface format is not sRGB). Hand it to RenderGraph::set_unorm_view.
+    [[nodiscard]] std::span<const VkImageView> unorm_image_views() const {
+        return unorm_image_views_;
+    }
 
 private:
     [[nodiscard]] std::expected<void, core::Error> build(VkExtent2D window_extent);
@@ -57,6 +67,7 @@ private:
     VkExtent2D                 extent_{};
     std::vector<VkImage>       images_;
     std::vector<VkImageView>   image_views_;
+    std::vector<VkImageView>   unorm_image_views_;
 };
 
 } // namespace engine::rhi

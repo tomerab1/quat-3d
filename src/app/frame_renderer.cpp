@@ -12,6 +12,7 @@
 #include "app/load_transfer.hpp"
 #include "engine/core/utf8_path.hpp"
 #include "engine/rhi/device.hpp"
+#include "engine/rhi/formats.hpp"
 #include "engine/rhi/pipeline_cache.hpp"
 #include "engine/rhi/swapchain.hpp"
 #include "engine/scene/components.hpp"
@@ -50,13 +51,7 @@ bool FrameRenderer::create_passes(const engine::rhi::Device& device,
     // shader's explicit sRGB output were hardware-encoded again. So the
     // tonemap works in the matching UNORM format (the shader does the sRGB
     // encode), then a size-compatible copy moves the bits into the swapchain.
-    ldr_format_ = [swap_format] {
-        switch (swap_format) {
-            case VK_FORMAT_B8G8R8A8_SRGB: return VK_FORMAT_B8G8R8A8_UNORM;
-            case VK_FORMAT_R8G8B8A8_SRGB: return VK_FORMAT_R8G8B8A8_UNORM;
-            default: return swap_format;
-        }
-    }();
+    ldr_format_ = engine::rhi::storage_unorm(swap_format);
     const VkFormat ldr_format = ldr_format_;
 
     // Temporal state shared by both slots (audit A2 / A11): the upscaler's
@@ -420,7 +415,7 @@ CaptureSource FrameRenderer::capture_source() const {
                           swapchain_->extent(), VK_IMAGE_LAYOUT_PRESENT_SRC_KHR};
 #ifdef ENGINE_EDITOR
     if (editor_active_) {
-        capture = {frames_[frame_].viewport_image.handle(), swapchain_->format(), draw_extent_,
+        capture = {frames_[frame_].viewport_image.handle(), ldr_format_, draw_extent_,
                    VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
     }
 #endif
