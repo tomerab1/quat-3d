@@ -24,6 +24,7 @@
 #include "app/asset_root.hpp"
 #include "app/nav_bake.hpp"
 #include "engine/asset/asset_manager.hpp"
+#include "engine/core/event_ring.hpp"
 #include "engine/core/log.hpp"
 #include "engine/core/sim_clock.hpp"
 #include "engine/core/utf8_path.hpp"
@@ -240,8 +241,8 @@ struct RemoteBridge::Impl {
         return fs;
     }
 
-    [[nodiscard]] const engine::physics::PhysicsWorld* physics_world() const {
-        for (const auto* w : {t.demo_physics, t.play_physics}) {
+    [[nodiscard]] engine::physics::PhysicsWorld* physics_world() const {
+        for (auto* w : {t.demo_physics, t.play_physics}) {
             if (w != nullptr && w->has_value()) return &**w;
         }
         return nullptr;
@@ -299,7 +300,11 @@ struct RemoteBridge::Impl {
             step_waiters.push_back({target, std::move(done)});
         };
         s.frame_stats = [this] { return frame_stats(); };
-        s.physics_world = [this] { return physics_world(); };
+        s.physics_world = [this]() -> const engine::physics::PhysicsWorld* {
+            return physics_world();
+        };
+        s.physics_control = [this] { return physics_world(); };
+        s.event_ring = &engine::core::event_ring();
         if (t.scripts != nullptr) s.scripts = [this] { return t.scripts; };
         if (material_shaders) s.material_shaders = &*material_shaders;
         return s;

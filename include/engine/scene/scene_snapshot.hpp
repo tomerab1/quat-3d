@@ -18,6 +18,7 @@
 
 #include "engine/core/error.hpp"
 #include "engine/scene/components.hpp"
+#include "engine/scene/physics_settings.hpp"
 
 namespace engine::scene {
 
@@ -35,7 +36,7 @@ using SnapshotComponents =
                   scene::MeshRenderer, scene::MaterialOverride, scene::MeshSource,
                   scene::SkinnedMesh, scene::Animator, scene::FootIK, scene::Camera,
                   scene::DirectionalLight, scene::PointLight, scene::Collider,
-                  scene::RigidBody, scene::CharacterController, scene::Terrain,
+                  scene::RigidBody, scene::Joint, scene::CharacterController, scene::Terrain,
                   scene::Grass, scene::ParticleEmitter,
                   scene::NavAgent, scene::BehaviorTree, scene::PatrolRoute, scene::Primitive,
                   scene::InstancedMesh, scene::InstancedMeshParts, scene::Scatter,
@@ -53,6 +54,8 @@ struct StoredTuple<ComponentList<Ts...>> {
 
 struct SceneSnapshot {
     std::vector<entt::entity> entities;
+    // Scene-level settings kept in the registry context (A10.1 gravity).
+    scene::PhysicsSettings    physics_settings{};
 
     template <typename T>
     using Stored = std::vector<std::pair<entt::entity, T>>;

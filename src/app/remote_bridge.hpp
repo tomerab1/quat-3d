@@ -129,10 +129,10 @@ struct RemoteBridgeTargets {
     const glm::vec3*                  terrain_anchor = nullptr;
     engine::nav::NavMesh*             navmesh = nullptr;
 
-    // Physics worlds debug.raycast / debug.stats read: the demo modes' world
+    // Physics worlds the debug and physics.* methods use: the demo modes' world
     // and the editor's play-mode world (whichever is engaged).
-    const std::optional<engine::physics::PhysicsWorld>* demo_physics = nullptr;
-    const std::optional<engine::physics::PhysicsWorld>* play_physics = nullptr;
+    std::optional<engine::physics::PhysicsWorld>* demo_physics = nullptr;
+    std::optional<engine::physics::PhysicsWorld>* play_physics = nullptr;
 
     // Loop-cached entity dropped when a scene file replaces the scene.
     entt::entity* spin_entity = nullptr;

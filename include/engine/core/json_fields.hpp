@@ -263,6 +263,11 @@ public:
         out = static_cast<float>(d);
         return true;
     }
+    [[nodiscard]] static bool read_bool(const Json& v, bool& out) {
+        if (!v.is_boolean()) return false;
+        out = v.get<bool>();
+        return true;
+    }
     [[nodiscard]] static bool read_int(const Json& v, std::int64_t& out) {
         if (v.is_number_integer()) {
             if (v.is_number_unsigned() &&

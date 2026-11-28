@@ -13,6 +13,8 @@ mod behavior_tools;
 mod bt_outline;
 #[allow(clippy::doc_markdown)]
 mod debug_tools;
+#[allow(clippy::doc_markdown)]
+mod physics;
 mod results;
 #[allow(clippy::doc_markdown)]
 mod scene_tools;
@@ -137,6 +139,7 @@ impl QuatServer {
             + Self::debug_tools()
             + Self::tuning_tools()
             + Self::behavior_tools()
+            + Self::physics_tools()
             + Self::weather_tools()
             + Self::script_tools()
             + Self::asset_tools()

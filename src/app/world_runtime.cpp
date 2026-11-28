@@ -17,6 +17,7 @@
 #include "app/frame_renderer.hpp" // k_frames_in_flight
 #include "app/nav_bake.hpp"
 #include "app/remote_bridge.hpp"
+#include "engine/core/event_ring.hpp"
 #include "engine/core/sim_clock.hpp"
 #include "engine/rhi/device.hpp"
 #include "engine/rhi/pipeline_cache.hpp"
@@ -305,6 +306,8 @@ void WorldRuntime::simulate_slice(engine::scene::Scene& scene, float sim_dt,
             engine::scene::character_system(scene.registry(), *demo_.physics_world, sim_dt);
         } else {
             engine::scene::physics_system(scene.registry(), *demo_.physics_world, sim_dt);
+            engine::scene::publish_physics_events(*demo_.physics_world,
+                                                  engine::core::event_ring());
         }
     } else if (play != nullptr && play_physics_) {
         // Perception: the trees see the user's view — the fly camera,
@@ -327,6 +330,7 @@ void WorldRuntime::simulate_slice(engine::scene::Scene& scene, float sim_dt,
         engine::scene::nav_agent_system(scene.registry(), nav_.mesh, sim_dt, ground_height_at_);
         engine::scene::character_system(scene.registry(), *play_physics_, sim_dt);
         engine::scene::physics_system(scene.registry(), *play_physics_, sim_dt);
+        engine::scene::publish_physics_events(*play_physics_, engine::core::event_ring());
         // Scripts see this step's trigger events, then update (G7); their
         // moves and impulses apply on the next physics step.
         if (scripts_ && scripts_->running()) {

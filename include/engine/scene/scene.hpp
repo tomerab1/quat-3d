@@ -22,6 +22,9 @@
 #include "engine/scene/components.hpp"
 #include "engine/scene/navigation.hpp"
 
+namespace engine::core {
+class EventRing;
+}
 namespace engine::nav {
 class NavMesh;
 }
@@ -127,6 +130,18 @@ struct CameraMatrices {
 // see set_world_transform).
 void physics_system(entt::registry& registry, physics::PhysicsWorld& world, float dt);
 
+// Joint components -> Jolt constraints (A10.1): removes constraints whose
+// Joint is gone or was edited, and builds one for each Joint whose bodies
+// both exist (its RigidBody's, and the target's or the world), at least one
+// dynamic. Anchors and axes are converted with the entities' current world
+// transforms. physics_system runs it right after creating bodies.
+void joint_system(entt::registry& registry, physics::PhysicsWorld& world);
+
+// Pushes the contact / trigger events of the world's last update() into
+// `ring` (A10.1 events.poll), body owners as entity ids, and records the
+// contacts the world had to drop as a gap. Call once after each
+// physics_system / PhysicsWorld::update.
+void publish_physics_events(const physics::PhysicsWorld& world, core::EventRing& ring);
 // The body of `e`'s RigidBody, created now (as physics_system's first step
 // would) when it has none yet — so gameplay code can push a body it spawned
 // this frame. invalid_body without RigidBody + Collider + Transform.

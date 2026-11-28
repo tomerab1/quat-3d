@@ -25,6 +25,7 @@
 #include "engine/scene/material_override.hpp"
 #include "engine/scene/script_component.hpp"
 #include "component_json_internal.hpp"
+#include "component_json_physics.hpp"
 #include "engine/terrain/budget.hpp"
 #include "engine/terrain/talus_relax.hpp"
 #include "engine/scene/weather_json.hpp"
@@ -53,6 +54,7 @@ constexpr std::array k_components = {
     ComponentInfo{"collider", "Physics collision shape (box, sphere, capsule)", true, true},
     ComponentInfo{"rigidbody", "Physics body: static, kinematic or dynamic", true, true},
     ComponentInfo{"character", "Capsule character controller", true, true},
+    ComponentInfo{"joint", "Physics joint to another body or the world: fixed, point, hinge, slider, distance", true, true},
     ComponentInfo{"nav_agent", "Navmesh path-following agent", true, true},
     ComponentInfo{"behavior", "Behaviour tree (JSON source)", true, true},
     ComponentInfo{"patrol", "Patrol route the nav agent walks", true, true},
@@ -69,12 +71,6 @@ constexpr std::array k_components = {
     ComponentInfo{"mesh", "glTF mesh provenance (read-only)", false, false},
 };
 
-constexpr EnumName<ColliderShape> k_collider_shapes[] = {
-    {"box", ColliderShape::box}, {"sphere", ColliderShape::sphere},
-    {"capsule", ColliderShape::capsule}};
-constexpr EnumName<BodyMotion> k_motions[] = {{"static", BodyMotion::static_body},
-                                              {"kinematic", BodyMotion::kinematic},
-                                              {"dynamic", BodyMotion::dynamic}};
 constexpr EnumName<PrimitiveShape> k_primitive_shapes[] = {
     {"cube", PrimitiveShape::cube},         {"sphere", PrimitiveShape::sphere},
     {"plane", PrimitiveShape::plane},       {"cylinder", PrimitiveShape::cylinder},
@@ -457,16 +453,6 @@ template <typename T, typename Decode>
     return {};
 }
 
-// Editing a physics component invalidates its body/character: resetting the
-// handle makes the physics systems' orphan sweep drop the old one and build
-// a new one from the edited data on the next tick.
-void invalidate_physics(entt::registry& r, entt::entity e) {
-    if (auto* rb = r.try_get<RigidBody>(e)) rb->body = physics::PhysicsWorld::invalid_body;
-    if (auto* cc = r.try_get<CharacterController>(e)) {
-        cc->character = physics::PhysicsWorld::invalid_body;
-    }
-}
-
 } // namespace
 
 std::expected<void, core::Error> decode_color(const json& v, glm::vec4& out) {
@@ -592,19 +578,10 @@ json encode_components(const entt::registry& r, entt::entity e, const EncodeOpti
                          {"far", c->far_z},
                          {"active", c->is_active}};
     }
-    if (const auto* c = pick.get<Collider>("collider")) {
-        out["collider"] = {{"shape", enum_name(k_collider_shapes, c->shape)},
-                           {"half_extents", vec3_json(c->half_extents)},
-                           {"offset", vec3_json(c->offset)},
-                           {"sensor", c->is_sensor}};
-    }
-    if (const auto* b = pick.get<RigidBody>("rigidbody")) {
-        out["rigidbody"] = {{"motion", enum_name(k_motions, b->motion)}, {"mass", b->mass}};
-    }
-    if (const auto* c = pick.get<CharacterController>("character")) {
-        out["character"] = {{"radius", c->radius},
-                            {"half_height", c->half_height},
-                            {"speed", c->speed}};
+    for (const std::string_view name : detail::k_physics_components) {
+        if (options.only.empty() || std::ranges::find(options.only, name) != options.only.end()) {
+            detail::encode_physics_component(r, e, name, out);
+        }
     }
     if (const auto* a = pick.get<NavAgent>("nav_agent")) {
         out["nav_agent"] = {{"target", vec3_json(a->target)},
@@ -691,9 +668,9 @@ std::vector<std::string_view> component_names(const entt::registry& r, entt::ent
     add(r.all_of<PointLight>(e), "point_light");
     add(r.all_of<DirectionalLight>(e), "dir_light");
     add(r.all_of<Camera>(e), "camera");
-    add(r.all_of<Collider>(e), "collider");
-    add(r.all_of<RigidBody>(e), "rigidbody");
-    add(r.all_of<CharacterController>(e), "character");
+    for (const std::string_view name : detail::k_physics_components) {
+        add(detail::has_physics_component(r, e, name), name);
+    }
     add(r.all_of<NavAgent>(e), "nav_agent");
     add(r.all_of<BehaviorTree>(e), "behavior");
     add(r.all_of<PatrolRoute>(e), "patrol");
@@ -847,31 +824,8 @@ std::expected<void, core::Error> apply_component(entt::registry& r, entt::entity
             if (c.far_z <= c.near_z) f.fail("far", "must be greater than near");
         });
     }
-    if (name == "collider") {
-        auto ok = merge<Collider>(r, e, v, name, strict, [](JsonFields& f, Collider& c) {
-            f.enumeration("shape", c.shape, k_collider_shapes);
-            f.vec3("half_extents", c.half_extents).vec3("offset", c.offset).boolean("sensor", c.is_sensor);
-            if (glm::any(glm::lessThanEqual(c.half_extents, glm::vec3(0.0F)))) {
-                f.fail("half_extents", "components must be > 0");
-            }
-        });
-        if (ok) invalidate_physics(r, e);
-        return ok;
-    }
-    if (name == "rigidbody") {
-        auto ok = merge<RigidBody>(r, e, v, name, strict, [](JsonFields& f, RigidBody& b) {
-            f.enumeration("motion", b.motion, k_motions).number("mass", b.mass, 0.0F);
-        });
-        if (ok) invalidate_physics(r, e);
-        return ok;
-    }
-    if (name == "character") {
-        auto ok = merge<CharacterController>(r, e, v, name, strict, [](JsonFields& f, CharacterController& c) {
-            f.number("radius", c.radius, 0.01F).number("half_height", c.half_height, 0.0F);
-            f.number("speed", c.speed, 0.0F);
-        });
-        if (ok) invalidate_physics(r, e);
-        return ok;
+    if (detail::is_physics_component(name)) {
+        return detail::apply_physics_component(r, e, name, v, strict);
     }
     if (name == "nav_agent") {
         return merge<NavAgent>(r, e, v, name, strict, [](JsonFields& f, NavAgent& a) {
@@ -1060,9 +1014,7 @@ bool remove_component(entt::registry& r, entt::entity e, std::string_view name) 
     if (name == "point_light") return r.remove<PointLight>(e) > 0;
     if (name == "dir_light") return r.remove<DirectionalLight>(e) > 0;
     if (name == "camera") return r.remove<Camera>(e) > 0;
-    if (name == "collider") return r.remove<Collider>(e) > 0;
-    if (name == "rigidbody") return r.remove<RigidBody>(e) > 0;
-    if (name == "character") return r.remove<CharacterController>(e) > 0;
+    if (detail::is_physics_component(name)) return detail::remove_physics_component(r, e, name);
     if (name == "nav_agent") return r.remove<NavAgent>(e) > 0;
     if (name == "behavior") return r.remove<BehaviorTree>(e) > 0;
     if (name == "patrol") return r.remove<PatrolRoute>(e) > 0;

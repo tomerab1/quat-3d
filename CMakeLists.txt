@@ -162,6 +162,7 @@ add_library(engine_core STATIC
     src/core/log.cpp
     src/core/stderr_capture.cpp
     src/core/sim_clock.cpp
+    src/core/event_ring.cpp
     src/core/frame_timer.cpp
     src/core/path_confine.cpp
     src/core/file_watcher.cpp
@@ -270,7 +271,12 @@ target_include_directories(engine_animation PUBLIC ${ENGINE_PUBLIC_INCLUDE})
 # ---------------------------------------------------------------------------
 add_library(engine_physics STATIC
     src/physics/physics_world.cpp
-    src/physics/physics_queries.cpp)
+    src/physics/physics_character.cpp
+    src/physics/physics_queries.cpp
+    src/physics/physics_events.cpp
+    src/physics/physics_body_control.cpp
+    src/physics/physics_shape_queries.cpp
+    src/physics/physics_joints.cpp)
 target_link_libraries(engine_physics PUBLIC engine_flags)
 target_link_libraries(engine_physics PRIVATE Jolt::Jolt)
 target_include_directories(engine_physics PUBLIC ${ENGINE_PUBLIC_INCLUDE})
@@ -292,6 +298,7 @@ add_library(engine_scene STATIC
     src/scene/scene.cpp
     src/scene/animation_system.cpp
     src/scene/physics_system.cpp
+    src/scene/joint_system.cpp
     src/scene/nav_agent_system.cpp
     src/scene/nav_separation.cpp
     src/scene/navigation.cpp
@@ -300,12 +307,14 @@ add_library(engine_scene STATIC
     src/scene/bt_graph_edit.cpp
     src/scene/scene_io.cpp
     src/scene/component_json.cpp
+    src/scene/component_json_physics.cpp
     src/scene/particle_json.cpp
     src/scene/script_component.cpp
     src/scene/scene_snapshot.cpp
     src/scene/component_json_animation.cpp
     src/scene/material_override.cpp
     src/scene/render_settings_json.cpp
+    src/scene/physics_settings.cpp
     src/scene/weather_json.cpp
     src/scene/weather_frame.cpp
     src/scene/audio_system.cpp
@@ -526,6 +535,9 @@ add_library(engine_remote_world STATIC
     src/remote/world/tuning_commands.cpp
     src/remote/world/behavior_commands.cpp
     src/remote/world/behavior_edit_commands.cpp
+    src/remote/world/physics_commands.cpp
+    src/remote/world/physics_body_commands.cpp
+    src/remote/world/physics_query_commands.cpp
     src/remote/world/weather_commands.cpp
     src/remote/world/script_commands.cpp
     src/remote/world/image_encode.cpp
@@ -623,6 +635,7 @@ if(ENGINE_EDITOR)
         src/editor/animation_inspector.cpp
         src/editor/grass_inspector.cpp
         src/editor/particle_inspector.cpp
+        src/editor/physics_inspector.cpp
         src/editor/behavior_panel.cpp
         src/editor/behavior_canvas.cpp
         src/editor/inspector_world.cpp

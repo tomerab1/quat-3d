@@ -837,6 +837,88 @@ when everything verified, next to `LICENSE.md` (CC0, authors, source) and
 cooked to `<id>.glb`. The folder is gitignored. The engine then loads the
 files through `asset.spawn_model` / `instanced_mesh` like any other model.
 
+## Physics control (ROADMAP A10.1)
+
+Runtime control of the simulation. The engine side is
+`src/remote/world/physics_*.cpp` on `PhysicsWorld`'s body-control, query
+and joint API, which G7 Lua scripts call too. quat-mcp's `physics_*`,
+`events_poll` and `character_move` tools map 1:1 onto these methods
+(design: [`research/mcp-gameplay-control.md`](research/mcp-gameplay-control.md)).
+Bodies exist only while playing (or in the physics demo modes). Without
+them, every method except the gravity pair answers `unavailable` with the
+hint to call `sim.play`. Entities are ids or unique names.
+
+| Method | Params | Result |
+|---|---|---|
+| `events.poll` | `{since?=0, max?=200 (1..2000), kinds?:[contact_added\|contact_removed\|trigger_enter\|trigger_exit], entity?}` | `{events:[{seq, kind, time_s, entity_a, entity_b, name_a?, name_b?, point?, normal?, impulse?}], cursor, more, dropped, oldest_seq, last_seq, capacity}` |
+| `physics.get` | `{entity}` | body: `{entity, name, kind:"body", motion_type, layer, sensor, sleeping, mass, linear_velocity, angular_velocity (deg/s), speed, position, friction, restitution, gravity_factor, linear_damping, angular_damping}`; character: `{kind:"character", position, velocity, on_ground, move, speed, layer}` |
+| `physics.set` | `{entity, linear_velocity?, angular_velocity? (deg/s), motion_type?, gravity_factor? [-10,10], friction? [0,10], restitution? [0,1], linear_damping? [0,100], angular_damping? [0,100], wake?}` | the body as `physics.get`, or `{entity, rebuilt:true, motion_type}` when the change rebuilds it |
+| `physics.apply` | `{entity, impulse \| force \| angular_impulse \| torque, at_point?, duration_s? (force/torque, 0.0001..10, default 1/60)}` | the body as `physics.get` plus `applied` (and `duration_s`) |
+| `physics.get_gravity` | — | `{gravity, magnitude}` |
+| `physics.set_gravity` | `{gravity:[x,y,z]}` (\|g\| ≤ 1000) | `{gravity, magnitude}` |
+| `physics.raycast_all` | `{origin, direction, max_distance?=1000, layers?, max_hits?=32 (1..256)}` | `{hits:[{entity, name, kind, layer, point, normal, fraction, distance}], count}` nearest first |
+| `physics.overlap` | `{shape: sphere\|box\|capsule, radius? \| half_extents?, half_height?, position, rotation? (Euler deg), layers?, max_hits?}` | `{hits:[{entity, name, kind, layer, point, normal, penetration}], count}` deepest first |
+| `physics.shape_cast` | `{shape..., from, to, rotation?, layers?, max_hits?}` | `{hits:[{..., fraction, distance, penetration?}], count}` nearest first |
+| `character.move` | `{entity, velocity? \| target?, jump? (true = 5 m/s, or (0, 50] m/s), duration_s? (0.01..60)}` | `{entity, position, velocity, on_ground, move, target?}` |
+
+- **Events.** The physics world collects contact callbacks on Jolt's
+  worker threads without a lock. Each one appends to a fixed per-step
+  buffer with one atomic increment; two buffers alternate. After every
+  fixed step the calling thread resolves them into one event per body
+  pair: `contact_added` when two bodies start touching, `contact_removed`
+  when they stop or one is removed. A body falling asleep does not end
+  its contacts. `trigger_enter` / `trigger_exit` have the trigger volume
+  as `entity_a`. The frame loop pushes them into the engine event ring
+  (`engine/core/event_ring.hpp`, 8192 events) after each physics update.
+  `impulse` is Jolt's estimate of the impact impulse (N·s) from the
+  pre-contact velocities. `point` comes with added / enter events,
+  `normal` and `impulse` with `contact_added`. `entity_*` is null for
+  unowned bodies (terrain). Tail the ring with `since` = the previous
+  `cursor`. `dropped` counts sequence numbers in `(since, cursor]` that
+  can no longer be read: overwritten by the ring, or lost because a step
+  produced more than 4096 callbacks. Filters apply before `max`, and the
+  cursor stops after the last event returned when `more` is true.
+- **Bodies.** `physics.*` resolve the entity's `RigidBody`. An entity
+  with only a `character` is pointed to `character.move` (`physics.get`
+  reads characters). One without a body is told to add `collider` +
+  `rigidbody`. A body not yet built (it is (re)built on the next
+  simulated frame) answers `unavailable`. Velocities, impulses and forces
+  need a dynamic body. The error names the current motion type.
+  `physics.set` is atomic. Its tuning fields (`motion_type`,
+  `gravity_factor`, `friction`, `restitution`, damping) are also written
+  to the `rigidbody` component, the same fields scene files save. Stop
+  reverts them with the rest of the play session. Dynamic ↔ kinematic
+  switches in place; to or from `static` rebuilds the body. Forces and
+  torques act on every fixed step for `duration_s` of simulated time
+  (Jolt clears forces after each step, so the world re-applies them).
+  Magnitudes are capped (|v| ≤ 1e4 m/s, spin ≤ 1e5 deg/s, impulses /
+  forces / torques ≤ 1e7).
+- **Gravity** is one scene setting (`scene::PhysicsSettings` in the
+  registry context) used by Jolt and the character controllers, which fall
+  with its vertical component. It works in edit mode. Scene files save it
+  as a versioned `physics_settings` block; the play snapshot restores it on
+  Stop. A change wakes sleeping bodies.
+- **Queries** filter by collision layer: `static`, `dynamic`,
+  `character`, `trigger`, `sensor`. The default is the solid three; add
+  `sensor` to see trigger volumes. They return at most one hit per body.
+  Characters are found through their inner bodies (`kind: "character"`).
+  `kind` is `static_world` for unowned geometry. Shape dimensions a shape
+  does not take are errors (a box has no `radius`).
+- **Characters.** `character.move` sets the controller's walk:
+  `velocity` (x/z, at most the controller's `speed`; `[0,0,0]` stops),
+  or `target` (walk straight there at full speed and stop within 2 cm).
+  `duration_s` limits a walk. `jump` applies on the next tick only if
+  grounded. Characters with an active `nav_agent` (navigation steers them)
+  or `NetDriven` ones (network players) are refused. Characters collide
+  with each other (`CharacterVsCharacterCollisionSimple`) and carry a
+  kinematic inner body, so dynamic bodies rest on them and sensors detect
+  them.
+- **Joints** are authored as the `joint` component through
+  `scene.create` / `scene.update` (component reference in
+  quat-mcp's `content/components.md`). `joint_system` builds the Jolt
+  constraint in play mode once both bodies exist and one is dynamic, and
+  rebuilds it when a body is rebuilt. `scene.get` shows `active`.
+
 ## Errors
 
 | Code | Meaning |

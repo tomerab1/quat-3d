@@ -20,6 +20,7 @@
 #include "engine/scene/component_json.hpp"
 #include "engine/scene/components.hpp"
 #include "engine/scene/gltf_loader.hpp"
+#include "engine/scene/physics_settings.hpp"
 #include "engine/scene/render_settings_json.hpp"
 #include "engine/scene/scene.hpp"
 
@@ -142,6 +143,13 @@ std::expected<void, core::Error> save_scene(const Scene& scene, const std::files
             parent = index_of.at(p->entity);
         }
         je["parent"] = parent;
+        // A joint's target is another entity: stored as its file index, like
+        // parents (null for the world, or a target that no longer exists).
+        if (const auto* j = r.try_get<Joint>(e); j != nullptr && je.contains("joint")) {
+            const auto t = index_of.find(j->target);
+            je["joint"]["target"] = t != index_of.end() ? json(t->second) : json(nullptr);
+            je["joint"].erase("active"); // runtime state
+        }
         // Primitives rebuild their own mesh; only glTF/code meshes need keys.
         if (const auto* src = r.try_get<MeshSource>(e); src != nullptr && !r.all_of<Primitive>(e)) {
             je["mesh"] = {{"mesh_key", src->mesh_key},
@@ -159,6 +167,11 @@ std::expected<void, core::Error> save_scene(const Scene& scene, const std::files
         json block = encode_render_settings(*render_settings);
         block["version"] = k_render_settings_version;
         root["render_settings"] = std::move(block);
+    }
+    {
+        json block = encode_physics_settings(physics_settings(r));
+        block["version"] = k_physics_settings_version;
+        root["physics_settings"] = std::move(block);
     }
 
     std::error_code ec;
@@ -207,6 +220,26 @@ load_scene(Scene& scene, const std::filesystem::path& path, rhi::GpuAllocator& a
         settings->clouds.time_s = render_settings->clouds.time_s;
     }
 
+    // Physics settings (A10.1): optional, versioned, decoded leniently; files
+    // without the block get the defaults.
+    PhysicsSettings physics;
+    if (const auto it = root.find("physics_settings"); it != root.end() && !it->is_null()) {
+        core::JsonFields block(*it, "physics_settings", /*strict=*/false);
+        int version = 1;
+        block.integer("version", version, 1, 1000);
+        if (auto ok = block.finish(); !ok) {
+            return fail("load_scene: '" + path.string() + "': " + ok.error().message);
+        }
+        if (version > k_physics_settings_version) {
+            return fail("load_scene: '" + path.string() + "': physics_settings version " +
+                        std::to_string(version) + " is newer than this build reads (" +
+                        std::to_string(k_physics_settings_version) + ")");
+        }
+        if (auto ok = apply_physics_settings_json(physics, *it, /*strict=*/false); !ok) {
+            return fail("load_scene: '" + path.string() + "': " + ok.error().message);
+        }
+    }
+
     // Pre-load every referenced glTF: instantiating into a scratch scene fills
     // the AssetManager cache with the exact keys the entities reference; the
     // scratch entities are discarded with the scratch scene.
@@ -248,6 +281,7 @@ load_scene(Scene& scene, const std::filesystem::path& path, rhi::GpuAllocator& a
     // whole file decoded, so a bad file leaves the current scene intact.
     Scene staging;
     entt::registry& r = staging.registry();
+    physics_settings_mut(r) = physics;
     std::vector<entt::entity> created;
     created.reserve(file_entities->size());
     for (std::size_t i = 0; i < file_entities->size(); ++i) {
@@ -255,8 +289,9 @@ load_scene(Scene& scene, const std::filesystem::path& path, rhi::GpuAllocator& a
         const entt::entity e = staging.create_entity(fe.name);
         created.push_back(e);
         for (const auto& [key, value] : fe.object->items()) {
-            // Animator settings apply after the glTF re-attaches the Animator.
-            if (is_entity_key(key) || key == "animator") continue;
+            // Animator settings apply after the glTF re-attaches the Animator;
+            // joints once every entity (their target) exists.
+            if (is_entity_key(key) || key == "animator" || key == "joint") continue;
             if (find_component_info(key) == nullptr) {
                 std::fprintf(stderr, "[scene] entities[%zu]: ignoring unknown key '%s'\n", i,
                              key.c_str());
@@ -323,6 +358,27 @@ load_scene(Scene& scene, const std::filesystem::path& path, rhi::GpuAllocator& a
             !staging.set_parent(created[i], created[static_cast<std::size_t>(parent)])) {
             return fail("load_scene: '" + core::path_to_utf8(path) + "': entities[" + std::to_string(i) +
                         "].parent creates a cycle");
+        }
+    }
+
+    // Joints third pass: the file stores the target as an entity index.
+    for (std::size_t i = 0; i < created.size(); ++i) {
+        const auto it = (*file_entities)[i].object->find("joint");
+        if (it == (*file_entities)[i].object->end()) continue;
+        json joint = *it;
+        if (joint.is_object() && joint.contains("target") && !joint["target"].is_null()) {
+            std::int64_t index = -1;
+            if (!core::JsonFields::read_int(joint["target"], index) || index < 0 ||
+                index >= static_cast<std::int64_t>(created.size()) ||
+                index == static_cast<std::int64_t>(i)) {
+                return fail("load_scene: '" + path.string() + "': entities[" + std::to_string(i) +
+                            "].joint.target: expected the index of another entity, or null");
+            }
+            joint["target"] = entt::to_integral(created[static_cast<std::size_t>(index)]);
+        }
+        if (auto ok = apply_component(r, created[i], "joint", joint, /*strict=*/false); !ok) {
+            return fail("load_scene: '" + path.string() + "': entities[" + std::to_string(i) +
+                        "]: " + ok.error().message);
         }
     }
 

@@ -14,6 +14,8 @@ The weather (`weather_get` / `weather_set`) drives the wind the grass bends in, 
 
 NPC behaviour is a behaviour tree per entity: `bt_leaves` lists the node kinds and leaves, `bt_set` writes a whole tree, `bt_get` shows it with stable node ids for the incremental `bt_add_node` / `bt_move_node` / `bt_remove_node` / `bt_set_params`, and `bt_status` shows what each node did on the last tick during Play.
 
+Physics runs during Play (`sim_play`). `physics_get` / `physics_set` / `physics_apply` read and push bodies, `physics_set_gravity` changes the scene's gravity, and `physics_raycast_all` / `physics_overlap` / `physics_shape_cast` query the world. `events_poll` reports which bodies touched and how hard; pass its `cursor` back to read only new events. `character_move` walks character controllers. Joints (`joint` component) are authored with `scene_update`. Pair these with `debug_pause` / `debug_step` for repeatable experiments.
+
 Gameplay is written as Lua scripts: read the `quat://docs/scripting` resource, write files with `script_create` / `script_update` (compiled first; errors name the line), attach them with the `script` component, run with `sim_play` and read `debug_log` (category `script`).
 
 Custom looks: write a material shader (a Slang module) with `shader_template` → `shader_create`, assign it with `scene_update` (`primitive.shader`), screenshot and refine with `shader_update`; compile errors come back with file, line and column.

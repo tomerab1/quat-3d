@@ -53,6 +53,7 @@ SceneSnapshot capture_scene(const scene::Scene& scene) {
     // without one (the audio system's sweep frees the play session's sounds)
     // and play_on_start fires again on the next Play.
     for (auto& [e, src] : snap.stored<scene::AudioSource>()) clear_audio_runtime(src);
+    snap.physics_settings = scene::physics_settings(r);
     return snap;
 }
 
@@ -72,6 +73,7 @@ void restore_scene(scene::Scene& scene, const SceneSnapshot& snapshot) {
             r.emplace<T>(e, component);
         }
     });
+    scene::physics_settings_mut(r) = snapshot.physics_settings; // gravity set during play reverts
 }
 
 entt::entity duplicate_entity(scene::Scene& scene, entt::entity source) {
@@ -99,6 +101,7 @@ entt::entity duplicate_entity(scene::Scene& scene, entt::entity source) {
 
     // Runtime state the copy must not share with its source.
     if (auto* rb = r.try_get<scene::RigidBody>(copy)) rb->body = scene::RigidBody{}.body;
+    if (auto* j = r.try_get<scene::Joint>(copy)) j->constraint = scene::Joint{}.constraint;
     if (auto* cc = r.try_get<scene::CharacterController>(copy)) {
         const scene::CharacterController fresh;
         cc->character = fresh.character;

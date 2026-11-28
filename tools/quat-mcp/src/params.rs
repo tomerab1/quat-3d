@@ -8,6 +8,7 @@ use serde_json::{Map, Value};
 
 mod behavior;
 mod debug;
+mod physics;
 mod script;
 mod shader;
 mod tuning;
@@ -15,6 +16,7 @@ mod weather;
 mod world;
 pub use behavior::*;
 pub use debug::*;
+pub use physics::*;
 pub use script::*;
 pub use shader::*;
 pub use tuning::*;
