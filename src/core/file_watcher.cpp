@@ -206,7 +206,7 @@ struct FileWatcher::Impl {
         for (const fs::path& dir : directories) {
             const int wd = ::inotify_add_watch(inotify_fd, dir.c_str(), k_mask);
             if (wd < 0) {
-                return fail("inotify_add_watch(" + dir.string() + ") failed: " +
+                return fail("inotify_add_watch(" + path_to_utf8(dir) + ") failed: " +
                             std::strerror(errno));
             }
             watch_dirs.emplace(wd, dir);
