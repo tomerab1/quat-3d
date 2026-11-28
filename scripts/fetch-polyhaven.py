@@ -43,6 +43,7 @@ Standard library only (it runs on a bare CI runner). Exit status: 0 = done,
 import argparse
 import base64
 import hashlib
+import http.client
 import json
 import os
 import pathlib
@@ -112,23 +113,39 @@ class _ConfinedRedirects(urllib.request.HTTPRedirectHandler):
         return super().redirect_request(req, fp, code, msg, headers, newurl)
 
 
+# Longest a single socket operation may block (connect or one recv).
+SOCKET_TIMEOUT_S = 30
+# Bytes per read: read1() returns after at most one recv, so the wall-clock
+# deadline below is checked after every network read, not every megabyte.
+READ_CHUNK = 1 << 16
+
+
 def stream(url, host, sink, max_bytes, deadline_s):
     """GETs `url` (https on `host`, redirects re-checked), passing each chunk
-    to `sink`; fails past `max_bytes` or the wall-clock `deadline_s` (a
-    server trickling bytes never trips a per-read timeout)."""
+    to `sink`; fails past `max_bytes` or the wall-clock `deadline_s`. Every
+    socket operation is bounded by SOCKET_TIMEOUT_S (and by the time left),
+    and the deadline is checked after each recv, so a server trickling bytes
+    overruns it by at most one socket timeout. A body cut short raises
+    http.client.IncompleteRead, which `retried` retries."""
     check_url(url, host)
     opener = urllib.request.build_opener(_ConfinedRedirects(host))
     req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
     deadline = time.monotonic() + deadline_s
     got = 0
-    with opener.open(req, timeout=60) as r:
-        while chunk := r.read(1 << 20):
+    timeout = max(1.0, min(SOCKET_TIMEOUT_S, deadline_s))
+    with opener.open(req, timeout=timeout) as r:
+        expected = r.headers.get("Content-Length")
+        while chunk := r.read1(READ_CHUNK):
             got += len(chunk)
             if got > max_bytes:
                 raise FetchError(f"{url}: more than the expected {max_bytes} bytes")
             if time.monotonic() > deadline:
                 raise FetchError(f"{url}: download exceeded {deadline_s:.0f} s")
             sink(chunk)
+        # read1 returns b"" at the end of the body; a connection closed early
+        # leaves fewer bytes than the server announced.
+        if expected is not None and expected.isdigit() and got < int(expected):
+            raise http.client.IncompleteRead(b"", int(expected) - got)
     return got
 
 
@@ -137,7 +154,10 @@ def retried(what, fn, attempts=3):
     for attempt in range(attempts):
         try:
             return fn()
-        except (urllib.error.URLError, TimeoutError, ConnectionError) as e:
+        except (urllib.error.URLError, TimeoutError, ConnectionError,
+                http.client.HTTPException) as e:
+            # HTTPException covers IncompleteRead (a truncated body) and
+            # malformed responses: retried, then reported as a FetchError.
             last = e
             time.sleep(2 * (attempt + 1))
     raise FetchError(f"{what} failed: {last}")
