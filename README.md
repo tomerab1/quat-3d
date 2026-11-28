@@ -117,6 +117,12 @@ The editor (dark theme; a light theme is one click away in View > Theme):
   in a global wind field computed on the GPU: gust fronts sweep across the
   field and eddies swirl through it
 - Jolt physics: rigid bodies, character controller, triggers, terrain collision
+- Runtime procedural geometry (`engine_geometry`): polygon offsets and
+  booleans, triangulation with holes, weighted straight-skeleton roofs (hip,
+  gable, shed, flat-topped), wall sweeps along paths with mitred corners,
+  lofts, tapered extrusions and seeded stones, with crease normals, UVs and
+  MikkTSpace tangents. Output is bit-identical on every OS, so a hash can key
+  caches — see [`docs/geometry.md`](docs/geometry.md)
 
 **Audio**
 - miniaudio-based mixer with music / sfx / ui / ambience buses, 3D positional
@@ -647,6 +653,7 @@ The plan lives in [`ROADMAP.md`](ROADMAP.md), grouped into tracks:
 | [`docs/scripting.md`](docs/scripting.md) | Lua gameplay scripting: callbacks, the engine API, limits, hot reload |
 | [`docs/input.md`](docs/input.md) | Input actions: action-map format, triggers, modifiers, contexts, rebinding |
 | [`docs/camera-rig.md`](docs/camera-rig.md) | The orbit / strategy camera rig and its input |
+| [`docs/geometry.md`](docs/geometry.md) | Runtime procedural geometry: polygons, straight-skeleton roofs, sweeps, stones, determinism |
 | [`docs/cinematic-showcase.md`](docs/cinematic-showcase.md) | The CC0 cinematic forest scene: assets and credits, fetching, renders, the MCP recipe |
 | [`docs/reading/README.md`](docs/reading/README.md) | Reading list: the papers and talks behind the engine's techniques, with where each lives in the code |
 | [`docs/remote-control.md`](docs/remote-control.md) | The remote-control protocol AI tools use to drive the engine |
@@ -688,4 +695,5 @@ ports/, triplets/   vcpkg customisations
 
 Vulkan 1.3 · Slang · SDL3 · Jolt Physics · EnTT · fastgltf · glm · Dear ImGui +
 ImGuizmo · Vulkan Memory Allocator · Recast/Detour · GameNetworkingSockets ·
-Lua 5.4 + sol2 · KTX-Software (Basis Universal) · meshoptimizer · nlohmann/json · CMake + vcpkg
+Lua 5.4 + sol2 · KTX-Software (Basis Universal) · meshoptimizer · Clipper2 · earcut.hpp · MikkTSpace ·
+nlohmann/json · CMake + vcpkg

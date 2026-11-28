@@ -502,6 +502,9 @@ git clone --depth 1 --branch v1.92.8-docking https://github.com/ocornut/imgui.gi
 git clone --depth 1 --branch v0.9.3 https://github.com/thedmd/imgui-node-editor.git
 GIT_LFS_SKIP_SMUDGE=1 git clone --depth 1 --branch v4.4.2 https://github.com/KhronosGroup/KTX-Software.git ktx
 git clone --depth 1 --branch v1.1.1 https://github.com/zeux/meshoptimizer.git
+# engine_geometry (R23.1): polygon clipping and triangulation
+git clone --depth 1 --branch Clipper2_2.0.1 https://github.com/AngusJohnson/Clipper2.git clipper2
+git clone --depth 1 --branch v2.2.4 https://github.com/mapbox/earcut.hpp.git earcut
 for p in fix-vec2-math-operators remove-getkeyindex fix-imgui-v1.92.5; do
   patch -d imgui-node-editor -p1 < ~/vcpkg/ports/imgui-node-editor/$p.patch; done
 # ACL + RTM (animation compression; not in vcpkg — cmake/FetchAcl.cmake pins them)

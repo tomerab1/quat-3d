@@ -26,6 +26,13 @@ set(QUAT3D_SDK_STABLE_HEADERS
     engine/core/sim_clock.hpp
     engine/core/spring.hpp
     engine/core/utf8_path.hpp
+    engine/geometry/mesh_data.hpp
+    engine/geometry/mesh_ops.hpp
+    engine/geometry/polygon.hpp
+    engine/geometry/stone.hpp
+    engine/geometry/straight_skeleton.hpp
+    engine/geometry/sweep.hpp
+    engine/geometry/triangulate.hpp
     engine/input/action_map.hpp
     engine/input/actions.hpp
     engine/input/device_state.hpp
@@ -51,6 +58,7 @@ set(QUAT3D_SDK_SUPPORT_HEADERS
     engine/animation/skeleton.hpp
     engine/animation/two_bone_ik.hpp
     engine/asset/asset_manager.hpp
+    engine/asset/mesh_types.hpp
     engine/asset/material_params.hpp
     engine/audio/audio_types.hpp
     engine/nav/navmesh.hpp

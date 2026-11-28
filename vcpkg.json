@@ -26,6 +26,8 @@
     "fastgltf",
     "ktx",
     "meshoptimizer",
+    "clipper2",
+    "earcut-hpp",
     "stb",
     "entt",
     "joltphysics",

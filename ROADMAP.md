@@ -455,7 +455,7 @@ JSON-RPC over loopback TCP to the engine.
   [`docs/design/cozy-builder.md` §4.4](docs/design/cozy-builder.md#44-runtime-procedural-geometry-r23)).
   Generic: any game that builds meshes at runtime (builders, roads, rivers,
   destruction debris).
-  - [ ] **R23.1 Geometry kernel** (`engine_geometry`, CPU, deterministic,
+  - [x] **R23.1 Geometry kernel** (`engine_geometry`, CPU, deterministic,
     no graphics dependency): Clipper2 polygon offset / booleans / repair,
     earcut triangulation with holes, a weighted straight skeleton (own
     implementation; CGAL's is GPL) per Aichholzer et al. 1995, Felkel &
@@ -463,7 +463,13 @@ JSON-RPC over loopback TCP to the engine.
     Kelly & Wonka 2011 weights; profile sweeps along G18 frames, lofts,
     tapered extrusion; a `MeshData` builder (welding, crease normals,
     MikkTSpace tangents, box / planar / along-curve UVs, meshopt); seeded
-    procedural stone meshes. Fixture + fuzz property tests.
+    procedural stone meshes. Fixture + fuzz property tests. Bit-identical
+    across OSes (no FP contraction, deterministic trig, golden hashes;
+    [`docs/geometry.md`](docs/geometry.md)). R23 ships as two PRs: R23.1
+    first, then R23.2. Sweeps take polylines with rotation-minimising
+    frames until G18 (#131) lands; the `engine_spline` adapter is a G18
+    follow-up (TODO in `sweep.hpp`). The optional simplified LOD is left to
+    R23.2's upload path.
   - [ ] **R23.2 Dynamic meshes.** `DynamicMesh` component + a
     `DynamicMeshStore` service: CPU `MeshData` uploaded through a staging
     ring with a per-frame byte budget, swapped at a frame boundary (old mesh

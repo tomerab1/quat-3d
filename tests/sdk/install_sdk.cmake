@@ -34,6 +34,7 @@ foreach(required
         # not cover (a new FetchContent dependency adds its own here).
         share/quat3d/licenses/acl-LICENSE
         share/quat3d/licenses/rtm-LICENSE
+        share/quat3d/licenses/mikktspace-LICENSE
         share/quat3d/licenses/slang-LICENSE
         # quat-pack's engine root (P4).
         share/quat3d/scripts/package-release.sh
