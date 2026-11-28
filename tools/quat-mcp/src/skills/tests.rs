@@ -16,6 +16,11 @@ use crate::server::{QuatServer, SCENE_SUMMARY_URI, SCRIPTING_REFERENCE_URI};
 /// Tool groups still in flight on other branches (profiling,
 /// physics control, events, input injection): a skill must not name their
 /// tools before they exist here.
+///
+/// Limitation: a body mention counts as a tool only when its prefix belongs
+/// to an existing tool group or to this list, so a skill naming a tool of a
+/// brand-new group (say `audio_play`) passes unnoticed. Add each new group's
+/// prefix here as soon as it is planned.
 const PENDING_TOOL_PREFIXES: &[&str] = &[
     "profile",
     "physics",
