@@ -86,6 +86,7 @@ class ShaderHotReload;
 } // namespace engine::rhi
 namespace engine::scene {
 class MaterialOverrideStore;
+class DynamicMeshStore;
 }
 namespace engine::script {
 class ScriptRuntime;
@@ -149,6 +150,8 @@ struct RemoteBridgeTargets {
     engine::renderer::RenderSettings* render_settings = nullptr;
     // The renderer's per-entity derived materials (A8), resolved in poll().
     engine::scene::MaterialOverrideStore* material_overrides = nullptr;
+    // The renderer's runtime-generated meshes (R23.2), resolved in poll().
+    engine::scene::DynamicMeshStore* dynamic_meshes = nullptr;
     // The renderer's wind clock (R13.1): weather.get wind queries match the
     // field the frame draws.
     std::function<engine::weather::WindAdvection()> wind_clock;

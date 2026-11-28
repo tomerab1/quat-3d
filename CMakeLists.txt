@@ -460,8 +460,10 @@ target_include_directories(engine_physics PUBLIC ${ENGINE_PUBLIC_INCLUDE})
 # ---------------------------------------------------------------------------
 add_library(engine_scene STATIC
     src/scene/dynamic_mesh_store.cpp
+    src/scene/component_json_dynamic_mesh.cpp
     src/scene/dynamic_mesh_upload.cpp
     src/scene/dynamic_mesh_resolve.cpp
+    src/scene/dynamic_mesh_physics.cpp
     src/scene/geometry_spec.cpp
     src/scene/gltf/mesh.cpp
     src/scene/gltf/material.cpp

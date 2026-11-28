@@ -28,6 +28,7 @@
 #include "engine/renderer/terrain_pass.hpp"
 #include "engine/rhi/device.hpp"
 #include "engine/rhi/swapchain.hpp"
+#include "engine/scene/dynamic_mesh_gpu.hpp"
 #include "engine/scene/components.hpp"
 #include "engine/scene/instanced_mesh.hpp"
 #include "engine/scene/scene.hpp"
@@ -323,6 +324,14 @@ bool FrameRenderer::record(const FrameInputs& in) {
         }
     }
     const EnvironmentMaps environment = add_environment(graph, sun_to);
+
+    // R23.2: this frame's budget of dynamic-mesh uploads (drawn from the
+    // next frame on, once promoted).
+    if (auto uploads = engine::scene::record_dynamic_mesh_uploads(dynamic_meshes_, allocator, graph,
+                                                                  fs.frame_number);
+        !uploads) {
+        std::fprintf(stderr, "[warn] %s\n", uploads.error().message.c_str());
+    }
     const engine::renderer::IblViewSet ibl_views = environment.ibl;
 
     // R13.1: with weather, the global wind field around the camera (grass

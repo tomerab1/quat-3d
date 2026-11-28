@@ -26,6 +26,7 @@
 #include <string_view>
 #include <vector>
 
+#include <entt/entity/registry.hpp>
 #include <glm/glm.hpp>
 #include <nlohmann/json.hpp>
 
@@ -33,6 +34,10 @@
 #include "engine/core/error.hpp"
 #include "engine/geometry/mesh_data.hpp"
 #include "engine/scene/components.hpp"
+
+namespace engine::physics {
+class PhysicsWorld;
+}
 
 namespace engine::scene {
 
@@ -125,6 +130,14 @@ public:
 private:
     std::unique_ptr<Impl> impl_;
 };
+
+// Keeps the static mesh bodies of DynamicMesh components (collider = mesh)
+// in step with their meshes and transforms: built from the latest CPU
+// version (physics does not wait for the GPU upload), rebuilt when the mesh
+// or the entity's world transform changes, removed with the component or
+// when the collider is turned off. Run before physics_system each step.
+void dynamic_mesh_collider_system(entt::registry& registry, physics::PhysicsWorld& world,
+                                  const DynamicMeshStore& store);
 
 // True for a valid store id.
 [[nodiscard]] bool valid_dynamic_mesh_id(std::string_view id);

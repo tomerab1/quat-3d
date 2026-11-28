@@ -13,6 +13,7 @@
 
 #include "engine/core/event_ring.hpp"
 #include "engine/physics/physics_world.hpp"
+#include "engine/scene/dynamic_mesh.hpp"
 #include "engine/scene/components.hpp"
 #include "engine/scene/physics_settings.hpp"
 #include "engine/terrain/generator.hpp"
@@ -120,6 +121,10 @@ void physics_system(entt::registry& registry, physics::PhysicsWorld& world, floa
         const bool live = rb != nullptr && rb->body == ob.body &&
                           registry.all_of<Collider, Transform>(e);
         if (live) continue;
+        // Static mesh colliders of DynamicMesh entities (R23.2) are kept by
+        // dynamic_mesh_collider_system.
+        const auto* dm = registry.valid(e) ? registry.try_get<DynamicMesh>(e) : nullptr;
+        if (dm != nullptr && dm->body == ob.body) continue;
         world.remove_body(ob.body);
         if (rb != nullptr && rb->body == ob.body) rb->body = invalid;
     }

@@ -36,6 +36,7 @@
 #include "engine/renderer/terrain_pass.hpp"
 #include "engine/remote/world_commands.hpp" // TerrainStatus
 #include "engine/rhi/gpu_allocator.hpp"
+#include "engine/scene/dynamic_mesh.hpp"
 #include "engine/scene/animation_system.hpp"
 #include "engine/scene/navigation.hpp"
 #include "engine/script/script_runtime.hpp"
@@ -184,6 +185,10 @@ public:
         return demo_.physics_world ? &*demo_.physics_world : nullptr;
     }
 
+    // Runtime-generated meshes whose static colliders the physics steps keep
+    // in sync (R23.2). May be null (no dynamic mesh colliders).
+    void set_dynamic_meshes(const engine::scene::DynamicMeshStore* store) { dynamic_meshes_ = store; }
+
     // ---- Navmesh / terrain -------------------------------------------------
     // A navmesh describes the geometry it was baked from: drop it when that
     // changes (scene load, terrain regeneration) and re-arm the auto-bake.
@@ -270,6 +275,7 @@ private:
         terrain_bodies_; // streamed tiles' play-mode physics bodies
 
     engine::scene::GroundHeightFn  ground_height_at_;
+    const engine::scene::DynamicMeshStore* dynamic_meshes_ = nullptr;
     engine::scene::FootGroundProbe foot_probe_;
     std::vector<std::uint32_t>     probe_owners_; // foot_probe_ scratch: owners to skip
     std::optional<AudioRuntime>   audio_;

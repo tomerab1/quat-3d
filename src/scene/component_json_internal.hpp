@@ -11,6 +11,7 @@
 #include <nlohmann/json.hpp>
 
 #include "engine/core/json_fields.hpp"
+#include "engine/scene/components.hpp"
 
 namespace engine::renderer {
 struct ParticleEmitterSettings;
@@ -24,6 +25,12 @@ void check_project_path(core::JsonFields& f, std::string_view key, const std::st
 
 // Reads a [min, max] pair within [lo, hi] (min <= max).
 void read_range(core::JsonFields& f, std::string_view key, glm::vec2& out, float lo, float hi);
+
+// The flat material fields of `primitive` without its shape (colour,
+// metallic, roughness, emissive, shader, shader_params): dynamic_mesh's
+// "material" object.
+void read_primitive_material(core::JsonFields& f, Primitive& p);
+[[nodiscard]] nlohmann::json primitive_material_json(const Primitive& p);
 
 // particle_emitter (particle_json.cpp).
 [[nodiscard]] nlohmann::json encode_particle_emitter(const renderer::ParticleEmitterSettings& s);
