@@ -49,7 +49,12 @@ The editor (dark theme; a light theme is one click away in View > Theme):
 - Alpha-cut materials (glTF `MASK`: leaves, grass cards, fences) cut holes in
   the surface and in its shadow, and keep their shape at a distance
   (coverage-preserving mipmaps); double-sided leaves are lit on both sides
-- Physically based sky with volumetric clouds and a moving sun
+- Physically based sky with a moving sun and volumetric clouds (Horizon Zero
+  Dawn-style: cumulus, stratocumulus, stratus and cirrus driven by the
+  weather, lit by the sun and the moon, rendered at quarter resolution and
+  accumulated over frames), aerial perspective on distant terrain, and
+  volumetric fog: height fog and fog volumes lit by the sun, its shadows and
+  local lights — see [`docs/volumetrics.md`](docs/volumetrics.md)
 - Weather: wind, cloud cover, rain or snow, wet ground and snow cover, set
   in the editor's Renderer panel, saved with the scene, and scriptable over
   MCP. Wet surfaces darken and turn glossy, with puddles on flat ground; snow

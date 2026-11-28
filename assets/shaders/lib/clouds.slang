@@ -239,6 +239,121 @@ public float4 cirrus_layer(CloudLayer L, Texture2D weather, Texture2D curl, Samp
 }
 
 // ---------------------------------------------------------------------------
+// The march of one view ray through the layer (the cloud pass and the IBL
+// probe). From the camera (ATMOS_VIEW_HEIGHT) along `dir` through the
+// spherical shell, at most CLOUD_MAX_MARCH_KM and `limit_km`. Adaptive
+// stepping (Schneider 2015): coarse steps through empty space on the cheap
+// density; on a hit, step back and continue at a quarter of the step with
+// the full density and lighting until CLOUD_EMPTY_FINE samples in a row are
+// empty. `base_steps` coarse steps span a vertical ray (twice as many toward
+// the horizon); `jitter` (0..1) offsets the start and the light samples.
+// Returns the luminance, the transmittance and the transmittance-weighted
+// distance (depth_sum / weight_sum, km).
+// ---------------------------------------------------------------------------
+public static const int   CLOUD_MAX_STEPS = 192; // iterations (coarse + fine) per ray
+public static const int   CLOUD_EMPTY_FINE = 6;  // empty fine samples before stepping coarse again
+public static const float CLOUD_MAX_MARCH_KM = 60.0;
+
+public struct CloudRay {
+    public float3 lum;
+    public float  trans;
+    public float  depth_sum;
+    public float  weight_sum;
+}
+
+public float cloud_layer_distance(float r, float mu, float shell_radius) {
+    float disc = r * r * (mu * mu - 1.0) + shell_radius * shell_radius;
+    if (disc < 0.0) return -1.0;
+    return -r * mu + sqrt(disc);
+}
+
+public CloudRay march_cloud_layer(CloudLayer L, Texture3D g_base, Texture3D g_detail,
+                                  Texture2D g_curl, Texture2D g_weather,
+                                  SamplerState g_noise_sampler, Texture2D g_transmittance,
+                                  SamplerState g_lut_sampler, float3 dir, float limit,
+                                  float jitter, float3 ambient_top, float steps) {
+    CloudRay out;
+    out.lum = float3(0.0, 0.0, 0.0);
+    out.trans = 1.0;
+    out.depth_sum = 0.0;
+    out.weight_sum = 0.0;
+    float r = ATMOS_VIEW_HEIGHT;
+    float mu = dir.y;
+    float bottom_r = ATMOS_GROUND_RADIUS + L.shell.x;
+    float top_r = bottom_r + L.shell.y;
+    if (L.shell.z <= 0.001 || r >= bottom_r || mu <= 0.0) return out;
+    float t_in = cloud_layer_distance(r, mu, bottom_r);
+    float t_out = cloud_layer_distance(r, mu, top_r);
+    t_out = min(min(t_out, t_in + CLOUD_MAX_MARCH_KM), limit);
+    if (t_out <= t_in) return out;
+    float3 lum = float3(0.0, 0.0, 0.0);
+    float trans = 1.0;
+    float depth_sum = 0.0;
+    float weight_sum = 0.0;
+    float base_steps = steps * lerp(2.0, 1.0, saturate(mu * 3.0));
+    float coarse = (t_out - t_in) / base_steps;
+    float fine = coarse * 0.25;
+    float cos_sun = dot(dir, L.sun.xyz);
+    float cos_moon = dot(dir, L.moon.xyz);
+    float t = t_in + jitter * coarse;
+    bool in_cloud = false;
+    int empty = 0;
+    for (int i = 0; i < CLOUD_MAX_STEPS; ++i) {
+        if (t >= t_out || trans < 0.005) break;
+        float dt = in_cloud ? fine : coarse;
+        float alt = sqrt(r * r + t * t + 2.0 * r * t * mu) - ATMOS_GROUND_RADIUS;
+        float3 p = float3(dir.x * t, alt, dir.z * t);
+        if (!in_cloud) {
+            if (cloud_density(L, g_base, g_detail, g_curl, g_weather, g_noise_sampler, p, true) >
+                0.0) {
+                // Step back to where the cloud may begin.
+                in_cloud = true;
+                empty = 0;
+                t = max(t - coarse + fine * jitter, t_in);
+            } else {
+                t += coarse;
+            }
+            continue;
+        }
+        float d = cloud_density(L, g_base, g_detail, g_curl, g_weather, g_noise_sampler, p, false);
+        if (d <= 0.0) {
+            if (++empty >= CLOUD_EMPTY_FINE) in_cloud = false;
+            t += dt;
+            continue;
+        }
+        empty = 0;
+        float sigma_t = d * L.medium.x;
+        float sigma_s = sigma_t * L.medium.y;
+        float h = saturate((alt - L.shell.x) / L.shell.y);
+        float3 s = sigma_s * cloud_ambient(L, ambient_top, h);
+        float3 e_sun = cloud_light_irradiance(g_transmittance, g_lut_sampler, L.sun, alt);
+        if (any(e_sun > 0.0)) {
+            float tau = cloud_light_depth(L, g_base, g_detail, g_curl, g_weather, g_noise_sampler,
+                                          p, L.sun.xyz, jitter);
+            s += cloud_light_scattering(L, e_sun, sigma_s, tau, cos_sun);
+        }
+        float3 e_moon = cloud_light_irradiance(g_transmittance, g_lut_sampler, L.moon, alt);
+        if (any(e_moon > 0.0)) {
+            float tau = cloud_light_depth(L, g_base, g_detail, g_curl, g_weather, g_noise_sampler,
+                                          p, L.moon.xyz, jitter);
+            s += cloud_light_scattering(L, e_moon, sigma_s, tau, cos_moon);
+        }
+        float step_len = min(dt, t_out - t);
+        float before = trans;
+        lum += integrate_step(s, sigma_t, step_len, trans);
+        float w = before - trans;
+        depth_sum += (t + 0.5 * step_len) * w;
+        weight_sum += w;
+        t += dt;
+    }
+    out.lum = lum;
+    out.trans = trans;
+    out.depth_sum = depth_sum;
+    out.weight_sum = weight_sum;
+    return out;
+}
+
+// ---------------------------------------------------------------------------
 // The sun's transmittance through the layer (cloud shadow map, R13.1): the
 // optical depth along the line from camera-relative `offset_km` toward
 // `sun_dir` through the shell (midpoint rule, `steps` samples, at most
