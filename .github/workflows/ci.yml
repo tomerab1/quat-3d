@@ -489,8 +489,12 @@ jobs:
             echo "== GPU tests on MoltenVK $tag ($icd)"
             VK_ICD_FILENAMES="$icd" ctest --test-dir build/macos-release -R engine_tests_gpu -V \
               --timeout 900 > "$RUNNER_TEMP/gpu-$tag.log" 2>&1 || status=1
-            grep -E '^\[ *(FAILED|PASSED) *\]|mvk-error|pipeline creation failed' \
-              "$RUNNER_TEMP/gpu-$tag.log" | head -n 100
+            log="$RUNNER_TEMP/gpu-$tag.log"
+            # Test summary first; MoltenVK errors counted and de-duplicated
+            # (a failed shader repeats one error per pipeline).
+            grep -E '^[0-9]*:? *\[ *(FAILED|PASSED) *\]' "$log" | head -n 60
+            echo "mvk-error lines: $(grep -c 'mvk-error' "$log")"
+            grep -E 'mvk-error|error: ' "$log" | sed 's/^[0-9]*: //' | sort | uniq -c | sort -rn | head -n 15
           done
           exit "$status"
 
