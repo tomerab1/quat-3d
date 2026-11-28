@@ -79,7 +79,11 @@ How each is addressed is listed under [Resolution](#resolution).
 
 ## Tokens
 
-`src/editor/ui/theme.hpp`. Colours are sRGB-authored. Both themes are tested
+`src/editor/ui/theme.hpp`. Colours are sRGB-authored and the UI is blended in
+sRGB (gamma) space, as ImGui expects: `ImGuiPass` draws through a UNORM view
+of the sRGB swapchain (or a UNORM scratch image copied over it), so a token
+lands on screen as its exact bytes and antialiased text keeps its weight in
+both themes (issue #92). Both themes are tested
 against WCAG 2.x (tests/editor/ui_theme_test.cpp): text, secondary text,
 accent text and status colours >= 4.5:1 on every surface they are drawn on;
 disabled text and axis markers >= 3:1.

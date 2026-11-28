@@ -10,6 +10,7 @@ Drive a running quat-3d engine from Claude Code: the
 | `quat-3d:author-material-shader` | PBR materials (metal, plastic, car paint, glass, emission) and Slang material shaders |
 | `quat-3d:write-gameplay-script` | Lua gameplay scripts: write, compile, attach, play, read the log |
 | `quat-3d:design-npc-behaviour` | NPC behaviour trees: plan, build, play, watch node status |
+| `quat-3d:set-weather` | Wind, clouds, rain or snow and wet / snowy surfaces, checked with screenshots |
 | `quat-3d:debug-physics-glitch` | Objects falling through, jittering, tunnelling, stuck |
 | `quat-3d:playtest` | Run the level and report script errors, stuck NPCs, hitches |
 | `quat-3d:inspect-scene` | Survey and review a scene without changing it |

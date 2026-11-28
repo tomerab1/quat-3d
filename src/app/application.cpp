@@ -122,6 +122,12 @@ bool Application::init_platform() {
     }
     allocator_ = std::move(*allocator_result);
 
+    // QUAT_NO_MUTABLE_SWAPCHAIN=1: behave as a driver without
+    // VK_KHR_swapchain_mutable_format, so the editor UI takes its
+    // copy-composite fallback (checking it on a machine that has the extension).
+    if (std::getenv("QUAT_NO_MUTABLE_SWAPCHAIN") != nullptr) {
+        device_.simulate_missing_swapchain_mutable_format(true);
+    }
     auto swapchain_result = engine::rhi::Swapchain::create(
         device_, device_.surface(), window_pixel_extent(platform_.window));
     if (!swapchain_result) {
@@ -277,6 +283,7 @@ void Application::connect_remote() {
     remote_targets.cam_far_override = &camera_.far_override;
     remote_targets.cam_derived_clip = &camera_.derived_clip();
     remote_targets.render_settings = &renderer_.render_settings();
+    remote_targets.wind_clock = [this] { return renderer_.wind_clock(); };
     remote_targets.material_overrides = &renderer_.material_overrides();
     remote_targets.reset_temporal = [this] { renderer_.reset_temporal(); };
     world_.fill_remote_targets(remote_targets);

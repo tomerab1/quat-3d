@@ -24,7 +24,11 @@ Development runs as a repeating improvement cycle (plan → parallel worktree
 agents → merge → CI → audit → record lessons) described in
 **`docs/CYCLE.md`**; follow it when asked to "run a cycle" or when started by
 the scheduled task. Record anything that went wrong, with the rule that
-prevents it, in `docs/LEARNINGS.md`.
+prevents it: worker PRs put lessons in the PR body under "Lessons for
+LEARNINGS", and the orchestrator carries them into `docs/LEARNINGS.md`. Only
+the orchestrator edits `docs/LEARNINGS.md` and `docs/STATUS.md`, in its own
+docs PRs (GitHub's merge ignores their `merge=union` driver, so a feature PR
+that appends to them conflicts as soon as master's copy changes).
 
 See **`ROADMAP.md`** for the plan. Work is organised into tracks (S stability,
 A AI tooling/MCP, R rendering, P platforms, G gameplay, E editor); each item

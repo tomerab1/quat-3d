@@ -27,7 +27,7 @@ constexpr VkShaderStageFlags kComputeStage = VK_SHADER_STAGE_COMPUTE_BIT;
 // Bound when the frame has no sun shadows (never sampled then).
 constexpr VkFormat kFallbackShadowFormat = VK_FORMAT_D16_UNORM;
 
-// Mirrors LightingConstants in lighting.slang (std140, 288 bytes).
+// Mirrors LightingConstants in lighting.slang (std140, 352 bytes).
 struct LightingConstants {
     glm::mat4 inv_view_proj{1.0F};
     glm::mat4 view_proj{1.0F};
@@ -41,8 +41,12 @@ struct LightingConstants {
     glm::vec4 csm_misc{0.0F};   // debug cascades, noise offset, depth -> view (A, B)
     glm::vec4 contact{0.0F};    // intensity (0 = off), length, steps, thickness
     glm::vec4 ao{0.0F};         // on, bent normals, specular occlusion, multi-bounce
+    glm::vec4 weather{0.0F};    // wetness, puddle water level, snow amount, snowline m
+    glm::vec4 weather_b{0.0F};  // cloud shadow map bound
+    glm::vec4 cloud_shadow_u{0.0F}; // CloudShadowProjection
+    glm::vec4 cloud_shadow_v{0.0F};
 };
-static_assert(sizeof(LightingConstants) == 288, "must match lighting.slang LightingConstants");
+static_assert(sizeof(LightingConstants) == 352, "must match lighting.slang LightingConstants");
 
 // lighting.slang's resources by name; slots_ holds their reflected bindings
 // in this order.
@@ -50,7 +54,7 @@ enum Slot : std::uint8_t {
     s_frame, s_albedo, s_normal, s_material, s_depth, s_hdr, s_clearcoat, s_shadow_map,
     s_shadow_cmp, s_point, s_cascades, s_ao, s_irradiance, s_prefiltered, s_brdf_lut,
     s_ibl_sampler, s_skyview, s_transmittance, s_cluster_params, s_lights, s_cluster_grid,
-    s_cluster_indices, s_emissive, s_shadow_transmittance, s_count
+    s_cluster_indices, s_cloud_shadow, s_emissive, s_shadow_transmittance, s_count
 };
 constexpr std::array<rhi::BindingRequest, s_count> kResources{{
     {"g_frame", VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER},
@@ -75,6 +79,7 @@ constexpr std::array<rhi::BindingRequest, s_count> kResources{{
     {"g_lights", VK_DESCRIPTOR_TYPE_STORAGE_BUFFER},
     {"g_cluster_grid", VK_DESCRIPTOR_TYPE_STORAGE_BUFFER},
     {"g_cluster_indices", VK_DESCRIPTOR_TYPE_STORAGE_BUFFER},
+    {"g_cloud_shadow", VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE},
     {"g_emissive", VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE},
     {"g_shadow_transmittance", VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE},
 }};
@@ -235,6 +240,12 @@ LightingPass::add_to_graph(rhi::RenderGraph& graph, const GBufferTargets& gbuffe
     c.cloud_a = clouds.pack_a();
     c.cloud_b = clouds.pack_b();
     fill_occlusion(c, occlusion);
+    const WeatherSurfaces w = tuning.weather.sanitized();
+    c.weather = {w.wetness, w.puddle_level(), w.snow, w.snowline_m};
+    const CloudShadowMap& cloud_shadow = tuning.cloud_shadow;
+    c.weather_b = {flag(cloud_shadow.valid()), 0.0F, 0.0F, 0.0F};
+    c.cloud_shadow_u = cloud_shadow.projection.u_axis;
+    c.cloud_shadow_v = cloud_shadow.projection.v_axis;
     // Host writes land before vkQueueSubmit, which makes them visible.
     std::memcpy(constants_.mapped(), &c, sizeof(c));
     if (auto f = constants_.flush(0, sizeof(c)); !f) return std::unexpected(f.error());
@@ -273,6 +284,8 @@ LightingPass::add_to_graph(rhi::RenderGraph& graph, const GBufferTargets& gbuffe
         pass.reads(occlusion.shadows.cascades, rhi::ResourceUsage::buffer_read_compute);
     }
     if (ao.valid()) pass.reads(ao, rhi::ResourceUsage::sampled_compute);
+    const rhi::ResourceHandle cloud_map = tuning.cloud_shadow.texture;
+    if (cloud_map.valid()) pass.reads(cloud_map, rhi::ResourceUsage::sampled_compute);
     // The cull pass's grid/index writes reach this pass through the graph's
     // compute -> compute buffer barriers.
     read_clustered_lights(pass, lights, rhi::ResourceUsage::buffer_read_compute);
@@ -285,8 +298,8 @@ LightingPass::add_to_graph(rhi::RenderGraph& graph, const GBufferTargets& gbuffe
     const VkDeviceAddress constants_address =
         rhi::buffer_device_address(device_->handle(), constants_);
     pass.execute([this, gbuffer, hdr, shadow_map, transmittance, cascades, ao, extent, maps,
-                  skyview_view, transmittance_view, cl,
-                  constants_address](rhi::PassContext& ctx) {
+                  skyview_view, transmittance_view, cl, constants_address,
+                  cloud_map](rhi::PassContext& ctx) {
         const VkCommandBuffer cmd = ctx.cmd();
         constexpr VkImageLayout ro = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
         rhi::DescriptorBuffer& d = frame_descriptor_;
@@ -320,6 +333,9 @@ LightingPass::add_to_graph(rhi::RenderGraph& graph, const GBufferTargets& gbuffe
         d.write_storage_buffer(s[s_lights], cl.lights, cl.lights_size);
         d.write_storage_buffer(s[s_cluster_grid], cl.grid, cl.grid_size);
         d.write_storage_buffer(s[s_cluster_indices], cl.indices, cl.indices_size);
+        // Without a cloud shadow map the fallback BRDF LUT stands in (never read).
+        d.write_sampled_image(s[s_cloud_shadow],
+                              cloud_map.valid() ? ctx.resolve(cloud_map).view : maps.brdf_lut, ro);
         d.write_sampled_image(s[s_emissive], ctx.resolve(gbuffer.emissive).view, ro);
 
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline_.handle());

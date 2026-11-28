@@ -10,6 +10,8 @@ World building:
 
 To change how the scene looks, tune the renderer (`render_settings_get` / `render_settings_set` / `render_settings_schema`: exposure, bloom, anti-aliasing, shadows, sky light, clouds) and per-entity materials (`material_get` / `material_set`), checking each change with `screenshot`.
 
+The weather (`weather_get` / `weather_set`) drives the wind the grass bends in, cloud cover and cloud shadows, rain or snow, wet surfaces with puddles, and snow cover; the `set-weather` workflow walks through it.
+
 NPC behaviour is a behaviour tree per entity: `bt_leaves` lists the node kinds and leaves, `bt_set` writes a whole tree, `bt_get` shows it with stable node ids for the incremental `bt_add_node` / `bt_move_node` / `bt_remove_node` / `bt_set_params`, and `bt_status` shows what each node did on the last tick during Play.
 
 Physics runs during Play (`sim_play`). `physics_get` / `physics_set` / `physics_apply` read and push bodies, `physics_set_gravity` changes the scene's gravity, and `physics_raycast_all` / `physics_overlap` / `physics_shape_cast` query the world. `events_poll` reports which bodies touched and how hard; pass its `cursor` back to read only new events. `character_move` walks character controllers. Joints (`joint` component) are authored with `scene_update`. Pair these with `debug_pause` / `debug_step` for repeatable experiments.

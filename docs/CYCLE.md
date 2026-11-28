@@ -59,7 +59,8 @@ Every cycle starts by reading, in order: [`STATUS.md`](STATUS.md),
    code, not your conclusions). Re-verify their findings; append confirmed
    ones to `audit/` — they feed the next cycle.
 9. **Learn.** Append to `LEARNINGS.md` anything that went wrong or cost
-   time, with the rule that prevents it. When a lesson recurs, promote it
+   time, with the rule that prevents it. Only the orchestrator edits it, in
+   its own docs PRs; workers' lessons arrive in their PR bodies. When a lesson recurs, promote it
    into CLAUDE.md or the brief template.
 10. **Hand off.** Update `STATUS.md` and the roadmap checkboxes in the PR;
     summarise the cycle (done / verified / open) in the PR description.
@@ -100,7 +101,8 @@ Every brief contains:
    commit** (`git push -u origin feat/<id>`, retry with backoff; never
    force-push, never push to master or the cycle branch). Worktrees live only
    in the container, so unpushed work is lost if it is reclaimed. Don't edit
-   STATUS.md / ROADMAP.md.
+   STATUS.md / ROADMAP.md / LEARNINGS.md; put lessons in the PR body under
+   "Lessons for LEARNINGS" for the orchestrator to carry over.
 8. **Report** — branch, commits, verified locally vs CI-only, files touched
    outside the item's module, open issues.
 

@@ -27,6 +27,8 @@ mod sim_tools;
 #[allow(clippy::doc_markdown)]
 mod tuning_tools;
 #[allow(clippy::doc_markdown)]
+mod weather_tools;
+#[allow(clippy::doc_markdown)]
 mod world_tools;
 
 use std::sync::Arc;
@@ -138,6 +140,7 @@ impl QuatServer {
             + Self::tuning_tools()
             + Self::behavior_tools()
             + Self::physics_tools()
+            + Self::weather_tools()
             + Self::script_tools()
             + Self::asset_tools()
             + Self::shader_tools()
@@ -174,11 +177,13 @@ impl QuatServer {
             .await?;
         // The sky may be unavailable (headless engine); the summary still works.
         let environment = self.engine.call("environment.get", None).await.ok();
+        let weather = self.engine.call("weather.get", None).await.ok();
         let camera = self.engine.call("camera.get", None).await.ok();
         Ok(json!({
             "engine": info,
             "scene": list,
             "environment": environment,
+            "weather": weather,
             "camera": camera,
         }))
     }

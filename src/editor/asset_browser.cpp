@@ -55,11 +55,15 @@ constexpr const char* k_roots[] = {"assets", "sample-assets", "scenes"};
 }
 
 // A symlink (to a file or a folder) whose target lies outside the project:
-// not listed, so it can be neither opened, dragged nor placed.
+// not listed, so it can be neither opened, dragged nor placed. A target that
+// cannot be resolved (dangling, a loop, no permission) counts as escaping:
+// fs::canonical needs every link in the chain to exist, where
+// weakly_canonical would hand back the link's own in-project path for a
+// dangling one (issue #92) — and the target may appear outside later.
 [[nodiscard]] bool escapes(const fs::directory_entry& entry, const fs::path& canon_root) {
     std::error_code ec;
     if (!entry.is_symlink(ec) || ec) return static_cast<bool>(ec);
-    const fs::path target = fs::weakly_canonical(entry.path(), ec);
+    const fs::path target = fs::canonical(entry.path(), ec);
     return ec || !within(canon_root, target);
 }
 

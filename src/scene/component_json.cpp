@@ -28,6 +28,8 @@
 #include "component_json_physics.hpp"
 #include "engine/terrain/budget.hpp"
 #include "engine/terrain/talus_relax.hpp"
+#include "engine/scene/weather_json.hpp"
+#include "engine/weather/weather_state.hpp"
 
 #include "component_json_animation.hpp"
 
@@ -59,6 +61,7 @@ constexpr std::array k_components = {
     ComponentInfo{"script", "Lua gameplay script (assets/scripts/) with property overrides", true, true},
     ComponentInfo{"terrain", "Procedural terrain tile / streamed world", true, true},
     ComponentInfo{"grass", "GPU-generated, wind-animated grass around the camera", true, true},
+    ComponentInfo{"weather", "The scene's weather (one per scene): wind, clouds, rain/snow, wetness, snow cover, temperature", true, true},
     ComponentInfo{"particle_emitter", "GPU particle emitter (sparks, smoke, dust): emission, shape, forces, curves, flipbook, blending, collision", true, true},
     ComponentInfo{"net_replicated", "Replicate this entity's transform to network clients", true, true},
     ComponentInfo{"audio_source", "Sound emitter: wav/flac/mp3 clip on a bus, optionally 3D", true, true},
@@ -612,6 +615,7 @@ json encode_components(const entt::registry& r, entt::entity e, const EncodeOpti
                           {"gpu", t->gpu_generate}};
     }
     if (const auto* g = pick.get<Grass>("grass")) out["grass"] = encode_grass(g->settings);
+    if (const auto* w = pick.get<weather::WeatherState>("weather")) out["weather"] = encode_weather(*w);
     if (const auto* p = pick.get<ParticleEmitter>("particle_emitter")) {
         out["particle_emitter"] = detail::encode_particle_emitter(p->settings);
     }
@@ -672,6 +676,7 @@ std::vector<std::string_view> component_names(const entt::registry& r, entt::ent
     add(r.all_of<Script>(e), "script");
     add(r.all_of<Terrain>(e), "terrain");
     add(r.all_of<Grass>(e), "grass");
+    add(r.all_of<weather::WeatherState>(e), "weather");
     add(r.all_of<ParticleEmitter>(e), "particle_emitter");
     add(r.all_of<NetReplicated>(e), "net_replicated");
     add(r.all_of<AudioSource>(e), "audio_source");
@@ -929,6 +934,19 @@ std::expected<void, core::Error> apply_component(entt::registry& r, entt::entity
         return merge<Grass>(r, e, v, name, strict,
                             [](JsonFields& f, Grass& g) { decode_grass(f, g.settings); });
     }
+    if (name == "weather") {
+        // One weather per scene: a second entity cannot take the component.
+        if (const entt::entity owner = weather::find_weather(r); owner != entt::null && owner != e) {
+            return std::unexpected(core::Error{
+                "weather: the scene already has its weather on entity " +
+                std::to_string(entt::to_integral(owner)) + " (edit that one, or remove it first)"});
+        }
+        weather::WeatherState w =
+            r.all_of<weather::WeatherState>(e) ? r.get<weather::WeatherState>(e) : weather::WeatherState{};
+        if (auto ok = apply_weather_json(w, v, strict, "weather"); !ok) return ok;
+        r.emplace_or_replace<weather::WeatherState>(e, w);
+        return {};
+    }
     if (name == "particle_emitter") {
         return merge<ParticleEmitter>(r, e, v, name, strict, [](JsonFields& f, ParticleEmitter& p) {
             detail::decode_particle_emitter(f, p.settings);
@@ -1001,6 +1019,7 @@ bool remove_component(entt::registry& r, entt::entity e, std::string_view name) 
     if (name == "script") return r.remove<Script>(e) > 0;
     if (name == "terrain") return r.remove<Terrain>(e) > 0;
     if (name == "grass") return r.remove<Grass>(e) > 0;
+    if (name == "weather") return r.remove<weather::WeatherState>(e) > 0;
     if (name == "particle_emitter") return r.remove<ParticleEmitter>(e) > 0;
     if (name == "net_replicated") return r.remove<NetReplicated>(e) > 0;
     if (name == "audio_source") return r.remove<AudioSource>(e) > 0;

@@ -59,6 +59,7 @@
 #include "engine/remote/world_commands.hpp" // TerrainStatus
 #include "engine/scene/scene.hpp"     // GroundHeightFn
 #include "engine/scene/view_clip.hpp" // ClipRange
+#include "engine/weather/wind_field.hpp"
 
 namespace engine::asset {
 class AssetManager;
@@ -141,6 +142,9 @@ struct RemoteBridgeTargets {
     engine::renderer::RenderSettings* render_settings = nullptr;
     // The renderer's per-entity derived materials (A8), resolved in poll().
     engine::scene::MaterialOverrideStore* material_overrides = nullptr;
+    // The renderer's wind clock (R13.1): weather.get wind queries match the
+    // field the frame draws.
+    std::function<engine::weather::WindAdvection()> wind_clock;
     // Camera cut for the renderer's temporal state (R11): called after
     // scene.load (camera.set cuts go through take_camera_cut). May be empty.
     std::function<void()> reset_temporal;

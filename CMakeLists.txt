@@ -315,6 +315,8 @@ add_library(engine_scene STATIC
     src/scene/material_override.cpp
     src/scene/render_settings_json.cpp
     src/scene/physics_settings.cpp
+    src/scene/weather_json.cpp
+    src/scene/weather_frame.cpp
     src/scene/audio_system.cpp
     src/scene/primitives.cpp
     src/scene/primitive_resolve.cpp
@@ -332,7 +334,7 @@ add_library(engine_scene STATIC
 # handle and the glTF loader extracts skins.
 target_link_libraries(engine_scene PUBLIC
     engine_flags engine_asset engine_rhi engine_renderer engine_animation engine_physics
-    engine_terrain engine_nav engine_audio EnTT::EnTT)
+    engine_terrain engine_nav engine_audio engine_weather EnTT::EnTT)
 # fastgltf and stb (image decode) are implementation details of the loader.
 # nlohmann_json is PUBLIC: component_json.hpp exposes JSON values (the codec
 # shared by scene files and the remote-control API).
@@ -425,6 +427,17 @@ add_library(engine_terrain STATIC
     src/terrain/talus_relax.cpp)
 target_link_libraries(engine_terrain PUBLIC engine_flags glm::glm)
 target_include_directories(engine_terrain PUBLIC ${ENGINE_PUBLIC_INCLUDE})
+
+# ---------------------------------------------------------------------------
+# engine_weather — the scene's weather (R13.1): the WeatherState singleton
+# component, its field table and accumulation, and the CPU reference of the
+# global wind field the renderer evaluates on the GPU. Graphics-free.
+# ---------------------------------------------------------------------------
+add_library(engine_weather STATIC
+    src/weather/weather_state.cpp
+    src/weather/wind_field.cpp)
+target_link_libraries(engine_weather PUBLIC engine_flags glm::glm EnTT::EnTT)
+target_include_directories(engine_weather PUBLIC ${ENGINE_PUBLIC_INCLUDE})
 
 # ---------------------------------------------------------------------------
 # engine_nav — Recast/Detour navigation (Phase 13). Recast is an implementation
@@ -524,11 +537,13 @@ add_library(engine_remote_world STATIC
     src/remote/world/physics_commands.cpp
     src/remote/world/physics_body_commands.cpp
     src/remote/world/physics_query_commands.cpp
+    src/remote/world/weather_commands.cpp
     src/remote/world/script_commands.cpp
     src/remote/world/image_encode.cpp
     src/remote/world/stb_image_write_impl.cpp)
 target_link_libraries(engine_remote_world PUBLIC
-    engine_flags engine_core engine_remote engine_scene engine_physics engine_nav engine_script)
+    engine_flags engine_core engine_remote engine_scene engine_physics engine_nav engine_weather
+    engine_script)
 target_include_directories(engine_remote_world PUBLIC ${ENGINE_PUBLIC_INCLUDE})
 target_include_directories(engine_remote_world SYSTEM PRIVATE ${Stb_INCLUDE_DIR})
 # stb's implementation TU is not warning-clean under our strict flags.
@@ -578,9 +593,12 @@ add_library(engine_renderer STATIC
     src/renderer/terrain_pass.cpp
     src/renderer/terrain_gpu_tiles.cpp
     src/renderer/terrain_synth_pass.cpp
-    src/renderer/terrain_shadow.cpp)
+    src/renderer/terrain_shadow.cpp
+    src/renderer/wind_field_pass.cpp
+    src/renderer/cloud_shadow_pass.cpp
+    src/renderer/cloud_shadow_reference.cpp)
 target_link_libraries(engine_renderer PUBLIC
-    engine_flags engine_rhi engine_asset engine_terrain glm::glm)
+    engine_flags engine_rhi engine_asset engine_terrain engine_weather glm::glm)
 target_include_directories(engine_renderer PUBLIC ${ENGINE_PUBLIC_INCLUDE})
 
 # The ImGui overlay pass is editor-only. It is a from-scratch renderer on the
@@ -606,6 +624,7 @@ if(ENGINE_EDITOR)
         src/editor/scene_hierarchy.cpp
         src/editor/inspector.cpp
         src/editor/tuning_panels.cpp
+        src/editor/weather_panel.cpp
         src/editor/asset_browser.cpp
         src/editor/animation_preview.cpp
         src/editor/physics_debug.cpp

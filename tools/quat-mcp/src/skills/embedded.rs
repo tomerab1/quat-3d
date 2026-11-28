@@ -27,6 +27,7 @@ pub const SKILL_FILES: &[EmbeddedFile] = embed!("skills":
     "design-npc-behaviour/SKILL.md",
     "inspect-scene/SKILL.md",
     "playtest/SKILL.md",
+    "set-weather/SKILL.md",
     "tune-look/SKILL.md",
     "write-gameplay-script/SKILL.md",
 );
@@ -41,6 +42,7 @@ pub const PROMPT_FILES: &[EmbeddedFile] = embed!("prompts":
     "design-npc-behaviour.md",
     "inspect-scene.md",
     "playtest.md",
+    "set-weather.md",
     "tune-look.md",
     "write-gameplay-script.md",
 );

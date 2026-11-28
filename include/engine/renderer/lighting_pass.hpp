@@ -25,6 +25,8 @@
 
 #include "engine/core/error.hpp"
 #include "engine/renderer/cloud_settings.hpp"
+#include "engine/renderer/cloud_shadow_pass.hpp"
+#include "engine/renderer/weather_surfaces.hpp"
 #include "engine/renderer/ibl_pass.hpp"
 #include "engine/renderer/light_cull_pass.hpp"
 #include "engine/renderer/mesh_pass.hpp"
@@ -78,6 +80,9 @@ struct LightingOcclusion {
 // sun-shadow filter and biases are CsmSettings (LightingOcclusion::csm).
 struct LightingTuning {
     float ibl_intensity = 1.0F; // scales image-based ambient + reflections
+    WeatherSurfaces weather{};  // wet / snowy surfaces (R13.1); default: dry
+    // Cloud shadows on the sun (R13.1; CloudShadowPass output). Invalid: none.
+    CloudShadowMap cloud_shadow{};
 };
 
 class LightingPass {
@@ -118,7 +123,7 @@ public:
 private:
     // Descriptor slots of lighting.slang's resources, from reflection (in
     // the order of kResources in lighting_pass.cpp).
-    static constexpr std::size_t k_slot_count = 24;
+    static constexpr std::size_t k_slot_count = 25;
 
     const rhi::Device* device_    = nullptr;   // non-owning
     rhi::GpuAllocator* allocator_ = nullptr;   // non-owning

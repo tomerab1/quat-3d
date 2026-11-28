@@ -183,6 +183,7 @@ Windows the command ends in `quat-mcp.exe`.
 | `physics_raycast_all` / `physics_overlap` / `physics_shape_cast` | `physics.raycast_all` / `.overlap` / `.shape_cast` | Every hit along a ray, bodies a sphere / box / capsule overlaps, a swept shape's hits — with layer masks |
 | `events_poll` | `events.poll` | Contact and trigger events (who hit whom, where, how hard), incremental via a cursor |
 | `character_move` | `character.move` | Walk a character controller at a velocity or to a point, jump |
+| `weather_get` / `weather_set` | `weather.get` / `weather.set` | The scene's weather: wind, cloud cover, rain / snow, wetness, snow cover, temperature; wind velocity at points |
 | `script_list` / `script_get` | `script.list` / `script.get` | Lua scripts with their status (errors with file:line); read one |
 | `script_create` / `script_update` | `script.create` / `script.update` | Write a script (compiled first, syntax errors name the line); updates hot-reload while playing |
 | `script_delete` / `script_check` | `script.delete` / `script.check` | Delete a script; compile a draft without saving |
@@ -211,6 +212,7 @@ written once as [Agent Skills](https://agentskills.io) in
 | `author-material-shader` | PBR materials (metal, plastic, car paint, glass, emission) from reference values, and Slang material shaders with `shader_*` |
 | `write-gameplay-script` | Lua scripts: read the reference, write, compile, attach, play, read the log |
 | `design-npc-behaviour` | Behaviour trees: leaves, plan, `bt_set`, play, `bt_status` / `debug_watch` |
+| `set-weather` | Wind, gusts, cloud cover, rain / snow, wet and snowy surfaces, checked with screenshots |
 | `debug-physics-glitch` | Falling through, jitter, tunnelling, stuck bodies: pause, step, watch, raycast |
 | `playtest` | Run the level and report script errors, stuck NPCs, objects leaving the world, hitches |
 | `inspect-scene` | Survey and review the scene without changing it |

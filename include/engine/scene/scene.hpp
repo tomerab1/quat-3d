@@ -58,7 +58,9 @@ public:
     //   1. TransformSystem     — propagate world matrices down the hierarchy.
     //   2. AnimationSystem     — advance Animators, place feet (probing the
     //                            ground with `ground`), write skinning matrices.
-    //   3. RenderCollectSystem — gather drawable entities into draw_list().
+    //   3. WeatherSystem       — evolve the weather's wetness and snow cover
+    //                            (engine/weather/weather_state.hpp).
+    //   4. RenderCollectSystem — gather drawable entities into draw_list().
     void tick(float dt = 0.0F, const FootGroundProbe& ground = {});
 
     // First entity with an active Camera, or entt::null if none.

@@ -4,21 +4,29 @@
 // list (drawn with vkCmdDrawIndexedIndirect, firstInstance = the list's
 // offset), and the vertex id walks the blade strip: a vertex pair per level
 // (left / right edge) and one tip vertex. The blade is a quadratic Bezier
-// from the root to a tip bent by the blade's static lean plus the wind (a
-// scrolling gust field along the wind direction and a per-blade flutter),
+// from the root to a tip bent by the blade's static lean plus the wind:
+// with weather, the global wind field texture (R13.1: drag grows with the
+// square of the wind speed at blade height and saturates, plus a per-blade
+// flutter); without, the original scrolling gust noise (R9.3),
 // with a tapering width. Blades seen edge-on turn slightly toward the
 // camera so the field does not thin out at grazing angles. Normals are
 // rounded across the blade's width and pulled toward the ground's up
 // direction for soft, ground-cover-like shading. Opaque (no alpha test or
 // blending), so grass stays in the deferred path. The velocity target (R11)
-// gets the blade's motion by evaluating it again at the previous wind time.
+// gets the blade's motion by evaluating it again at the previous wind time
+// (with weather, in last frame's wind field, so gusts sweeping through give
+// motion vectors too).
 
 import grass_common;
 import instancing; // instance_index(): InstanceIndex including firstInstance
 import velocity;
+import wind_common;
 
 [[vk::binding(0)]] ConstantBuffer<GrassParams>  g_params;
 [[vk::binding(1)]] StructuredBuffer<GrassBlade> g_blades;
+[[vk::binding(2)]] Texture2D                    g_wind;         // WindFieldPass output
+[[vk::binding(3)]] SamplerState                 g_wind_sampler; // linear clamp
+[[vk::binding(4)]] Texture2D                    g_wind_prev;    // last frame's field, same rect (velocity)
 
 // Mirrors engine::renderer GrassDrawPush (16 bytes).
 struct PushConstants {
@@ -39,6 +47,10 @@ struct VsOut {
     float4 prev_clip : PREV_CLIP; // the blade at the previous wind time, last frame's camera
 }
 
+// ---- Without weather: the original scrolling-gust sway (R9.3) ------------
+// Scenes without a weather entity have no wind field (WindFieldPass does not
+// run) and keep exactly this look (wind_flow.z = 0).
+
 float wind_hash(float2 p) {
     float3 q = frac(float3(p.x, p.y, p.x) * 0.1031);
     q += dot(q, float3(q.y, q.z, q.x) + 33.33);
@@ -53,9 +65,9 @@ float wind_noise(float2 p) {
                 lerp(wind_hash(i + float2(0, 1)), wind_hash(i + float2(1, 1)), w.x), w.y);
 }
 
-// Horizontal tip displacement per metre of blade height from the wind at
-// `time` (seconds on the wind clock).
-float2 wind_offset(float3 root, float phase, float variation, float time) {
+// Horizontal tip displacement per metre of blade height from the scrolling
+// gusts at `time` (seconds on the wind clock).
+float2 legacy_wind_offset(float3 root, float phase, float variation, float time) {
     const float2 dir = g_params.wind.xy;
     const float strength = g_params.wind.z;
     const float freq = g_params.wind.w;
@@ -67,6 +79,47 @@ float2 wind_offset(float3 root, float phase, float variation, float time) {
         sin(time * freq * 6.28318531 * (2.2 + 0.6 * variation) + phase + dot(root.xz, dir) * 0.8);
     const float bend = strength * (0.15 + 1.1 * gust * gust) + strength * 0.12 * flutter;
     return dir * bend;
+}
+
+// ---- With weather: the global wind field (R13.1) --------------------------
+// Blade response: (wind speed at blade height / this)^2 is the
+// drag-to-stiffness ratio q; the tip offset per metre is strength * 2.2 *
+// q / (1 + q) (drag grows with the square of the speed, bending saturates).
+static const float BLADE_STIFF_SPEED = 3.0; // m/s at blade height
+
+float2 field_wind_offset(Texture2D field_tex, float3 root, float phase, float variation,
+                         float time) {
+    const float strength = g_params.wind.z;
+    const float freq = g_params.wind.w;
+    // The global wind field at the root, scaled from its 10 m reference
+    // height down to the blades (log profile).
+    const float4 field = wind_texture_sample(field_tex, g_wind_sampler, g_params.wind_rect, root.xz);
+    const float2 v = field.xy * g_params.wind_rect.w;
+    const float speed = length(v);
+    if (speed < 1e-4) return float2(0.0, 0.0);
+    const float2 dir = v / speed; // local: bends the blade
+    const float q = (speed * speed) / (BLADE_STIFF_SPEED * BLADE_STIFF_SPEED);
+    const float bend = strength * 2.2 * q / (1.0 + q);
+    // Flutter: each blade oscillates around the bent pose, harder in gusts.
+    // The travelling wave's phase follows the MEAN heading, which is the
+    // same everywhere and changes only when the weather does: the local
+    // direction turns with the turbulence, and dot(root, local dir) far
+    // from the origin would jump by many radians per frame.
+    const float flutter = sin(time * freq * 6.28318531 * (2.2 + 0.6 * variation) + phase +
+                              dot(root.xz, g_params.wind_flow.xy) * 0.8);
+    const float gust = saturate(field.w - 0.6);
+    return dir * (bend + strength * 0.22 * saturate(q) * (0.5 + gust) * flutter);
+}
+
+// Horizontal tip displacement per metre of blade height from the wind at
+// `time`: frame 0 is this frame (this frame's field), frame 1 the previous
+// one (last frame's field and wind time), for the velocity target.
+float2 wind_offset(float3 root, float phase, float variation, float time, int frame) {
+    if (g_params.wind_flow.z > 0.5) {
+        return frame == 0 ? field_wind_offset(g_wind, root, phase, variation, time)
+                          : field_wind_offset(g_wind_prev, root, phase, variation, time);
+    }
+    return legacy_wind_offset(root, phase, variation, time);
 }
 
 [shader("vertex")]
@@ -105,7 +158,7 @@ VsOut vertex_main(uint vertex_id : SV_VertexID) {
     for (int frame = 0; frame < 2; ++frame) {
         const float time = frame == 0 ? g_params.camera.w : g_params.motion.x;
         const float2 offset =
-            facing * shape.lean + wind_offset(root, shape.phase, shape.variation, time);
+            facing * shape.lean + wind_offset(root, shape.phase, shape.variation, time, frame);
         const float3 tip_dir = normalize(float3(offset.x, 1.0, offset.y));
         const float3 p0 = root;
         const float3 p1 = root + up * (height * 0.62 * tip_dir.y);
