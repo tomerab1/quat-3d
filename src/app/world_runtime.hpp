@@ -85,11 +85,21 @@ public:
 
     // ---- Setup -------------------------------------------------------------
     // Builds the startup scene (see demo_scenes.hpp). False on failure.
+    // `start_scene` (a game's, P4) is loaded instead of a demo scene; its
+    // render settings replace `render_settings`.
     [[nodiscard]] bool build_scene(engine::scene::Scene& scene,
                                    engine::asset::AssetManager& assets,
                                    engine::rhi::GpuAllocator& allocator,
                                    const engine::rhi::TransferContext& setup_transfer,
-                                   const std::filesystem::path& project_root);
+                                   const std::filesystem::path& project_root,
+                                   engine::renderer::RenderSettings& render_settings,
+                                   const std::optional<std::filesystem::path>& start_scene =
+                                       std::nullopt);
+    // The startup scene file's environment (QUAT_SCENE or a game's start
+    // scene; empty otherwise).
+    [[nodiscard]] const engine::scene::SceneEnvironment& startup_environment() const {
+        return demo_.environment;
+    }
     // Terrain pass + its upload context, the network session and the
     // QUAT_TERRAIN tile. After the renderer's environment exists.
     // `project_root` holds assets/ (particle flipbooks resolve against it).
@@ -116,6 +126,8 @@ public:
     [[nodiscard]] bool physics_mode() const { return demo_.physics_mode; }
     [[nodiscard]] bool character_mode() const { return demo_.character_mode; }
     [[nodiscard]] bool from_gltf() const { return demo_.from_gltf; }
+    // The scene came from a scene file (a game's start scene or QUAT_SCENE):
+    // it brings its own lights and camera.
     [[nodiscard]] bool from_scene_file() const { return demo_.from_scene_file; }
     // Demo modes own their physics world (and so have no editor Play mode).
     [[nodiscard]] bool has_demo_physics() const { return demo_.physics_world.has_value(); }

@@ -29,4 +29,14 @@ struct FramingParams {
 [[nodiscard]] glm::vec3 frame_box(const glm::vec3& lo, const glm::vec3& hi,
                                   const FramingParams& params);
 
+// The yaw / pitch (convention above) a camera with world matrix `world`
+// looks along: its forward is -Z of the matrix. Roll is dropped. Looking
+// straight up or down, where the forward gives no heading, the yaw comes
+// from the camera's right axis instead.
+struct FlyAngles {
+    float yaw = 0.0F;
+    float pitch = 0.0F;
+};
+[[nodiscard]] FlyAngles fly_angles_from_world(const glm::mat4& world);
+
 } // namespace engine::scene

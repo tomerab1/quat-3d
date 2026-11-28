@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <expected>
 #include <filesystem>
+#include <functional>
 #include <mutex>
 #include <optional>
 #include <span>
@@ -61,6 +62,9 @@ struct ProcessOptions {
     // (zero: wait indefinitely).
     std::chrono::milliseconds timeout{0};
     ProcessCanceller*         canceller = nullptr; // optional
+    // Called with each chunk of output as it arrives (on the calling thread,
+    // before run_process returns) - live logs and progress. Optional.
+    std::function<void(std::string_view chunk)> on_output;
 };
 
 // Runs `program` with `args` (argv[1..]), blocking until it exits. Fails when
@@ -82,5 +86,9 @@ run_process(const std::filesystem::path& program, std::span<const std::string> a
 
 // Finds an executable named `name` on PATH (".exe" is appended on Windows).
 [[nodiscard]] std::optional<std::filesystem::path> find_on_path(std::string_view name);
+
+// The running executable's absolute path (nullopt if the OS will not say) -
+// tools find their sibling executables next to it.
+[[nodiscard]] std::optional<std::filesystem::path> current_executable_path();
 
 } // namespace engine::core

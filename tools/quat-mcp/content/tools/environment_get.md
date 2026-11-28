@@ -1,3 +1,5 @@
-Current sky: `{sun: {azimuth_deg, elevation_deg, intensity, color}, clouds: {enabled, coverage, density, bottom_km, thickness_km, size_km, detail, wind_speed, wind_dir_deg}}`.
+Current sky: `{sun: {azimuth_deg, elevation_deg, intensity, color, driven_by_clock}, clouds: {enabled, coverage, density, bottom_km, thickness_km, size_km, detail, wind_speed, wind_dir_deg, shadows}, sky: "procedural" | "hdri", hdri: {path, loaded, width, height, sun_found, error?, intensity, rotation_deg, sun}}`. While the scene has a weather (`weather_get`), its cloud cover and wind drive the clouds.
 
-Sun angles: `azimuth_deg = atan2(d.z, d.x)` and `elevation_deg = asin(-d.y)` of the light's travel direction d, so elevation 90 = noon overhead, 5..10 = golden hour, < 0 = night.
+Sun angles: `azimuth_deg = atan2(d.z, d.x)` and `elevation_deg = asin(-d.y)` of the light's travel direction d. Elevation 90 is noon overhead, 5..10 is golden hour, and below 0 is night. This azimuth is a world-space angle (from +X toward +Z), not a compass bearing: for the compass bearing of the real Sun use `time_get`. `sun.driven_by_clock` is true while a world clock (`time_set`) positions the sun; change the time instead of the angles then.
+
+`sky` is `hdri` only after a panorama was requested (`environment_set`). It renders only while `hdri.loaded` is true; until then the procedural sky stands in. `sun_found` tells whether the panorama has a sun that can drive the sun light.

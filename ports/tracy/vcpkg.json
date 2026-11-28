@@ -1,0 +1,30 @@
+{
+  "name": "tracy",
+  "version": "0.13.1",
+  "description": "Tracy profiler client library (quat-3d overlay: loopback-only listener, no viewer tools).",
+  "homepage": "https://github.com/wolfpld/tracy",
+  "license": "BSD-3-Clause",
+  "supports": "!(windows & (arm | uwp))",
+  "dependencies": [
+    {
+      "name": "pthreads",
+      "platform": "!windows"
+    },
+    {
+      "name": "vcpkg-cmake",
+      "host": true
+    },
+    {
+      "name": "vcpkg-cmake-config",
+      "host": true
+    }
+  ],
+  "features": {
+    "crash-handler": {
+      "description": "Enable crash handler"
+    },
+    "on-demand": {
+      "description": "Enable on-demand profiling"
+    }
+  }
+}

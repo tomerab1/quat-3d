@@ -13,6 +13,23 @@ cmake_minimum_required(VERSION 3.22)
 # before project() so the vcpkg toolchain sees it.
 set(VCPKG_OVERLAY_PORTS "${CMAKE_CURRENT_SOURCE_DIR}/ports")
 
+# Tracy profiling (R4): on by default for Debug / RelWithDebInfo (and an
+# unset build type, which becomes Debug below), off for Release unless asked
+# for (the `release` preset asks; packaged builds pass OFF). The built-in
+# frame profiler is compiled either way. Decided before project() because
+# Tracy is the vcpkg manifest feature `profiling`: only builds with
+# ENGINE_PROFILE=ON download and build it.
+if(NOT CMAKE_BUILD_TYPE OR CMAKE_BUILD_TYPE MATCHES "^(Debug|RelWithDebInfo)$")
+    set(ENGINE_PROFILE_DEFAULT ON)
+else()
+    set(ENGINE_PROFILE_DEFAULT OFF)
+endif()
+option(ENGINE_PROFILE "Compile in the Tracy profiler client (on demand, loopback only)"
+    ${ENGINE_PROFILE_DEFAULT})
+if(ENGINE_PROFILE)
+    list(APPEND VCPKG_MANIFEST_FEATURES "profiling")
+endif()
+
 project(quat_3d
     VERSION 0.1.0
     DESCRIPTION "Modular data-driven C++23 game engine"
@@ -32,7 +49,6 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
 endif()
 
 option(ENGINE_EDITOR "Build the ImGui-based editor layer" ON)
-option(ENGINE_PROFILE "Enable Tracy profiling in non-debug builds" OFF)
 # Compatibility switch for drivers without VK_EXT_descriptor_buffer (MoltenVK on
 # macOS). When ON, the RHI may fall back to classic descriptor pools/sets and the
 # instance opts into portability (non-conformant) ICD enumeration. Descriptor
@@ -84,8 +100,12 @@ target_compile_definitions(engine_flags INTERFACE
     GLM_FORCE_RADIANS
     $<$<CONFIG:Release>:NDEBUG>)
 
+# ENGINE_EDITOR is defined per target (engine_editor_build below), not on
+# engine_flags: an editor build also compiles quat-player (P4) from the same
+# application sources without it.
+add_library(engine_editor_build INTERFACE)
 if(ENGINE_EDITOR)
-    target_compile_definitions(engine_flags INTERFACE ENGINE_EDITOR)
+    target_compile_definitions(engine_editor_build INTERFACE ENGINE_EDITOR)
 endif()
 
 if(ENGINE_DESCRIPTOR_SETS_FALLBACK)
@@ -129,8 +149,9 @@ find_package(GameNetworkingSockets CONFIG REQUIRED)
 # Lua 5.4 (C library, longjmp error handling) + sol2 (header-only bindings).
 find_package(Lua REQUIRED)
 find_package(sol2 CONFIG REQUIRED)
-# OpenSSL's libcrypto: the CSPRNG behind remote-control session tokens
-# (engine_remote). GameNetworkingSockets already depends on it.
+# OpenSSL's libcrypto (GameNetworkingSockets already depends on it): the CSPRNG
+# behind remote-control session tokens (engine_remote) and SHA-256 for game
+# package manifests (engine_pack).
 find_package(OpenSSL REQUIRED COMPONENTS Crypto)
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/FetchAcl.cmake) # ACL + RTM (header-only)
 # miniaudio: vcpkg's port is header-only (it installs miniaudio.h and nothing
@@ -144,6 +165,12 @@ set_target_properties(miniaudio_headers PROPERTIES
     INTERFACE_INCLUDE_DIRECTORIES "${MINIAUDIO_INCLUDE_DIR}")
 target_link_libraries(miniaudio_headers INTERFACE
     Threads::Threads ${CMAKE_DL_LIBS} $<$<PLATFORM_ID:Linux,FreeBSD>:m>)
+# Tracy client (manifest feature `profiling`, overlay port ports/tracy:
+# TRACY_ON_DEMAND, loopback only). Its TRACY_ENABLE / TRACY_ON_DEMAND
+# definitions travel with the target.
+if(ENGINE_PROFILE)
+    find_package(Tracy CONFIG REQUIRED)
+endif()
 if(ENGINE_EDITOR)
     find_package(imgui CONFIG REQUIRED)
     find_package(imguizmo CONFIG REQUIRED)
@@ -162,14 +189,41 @@ add_library(engine_core STATIC
     src/core/log.cpp
     src/core/stderr_capture.cpp
     src/core/sim_clock.cpp
+    src/core/event_ring.cpp
     src/core/frame_timer.cpp
     src/core/path_confine.cpp
     src/core/file_watcher.cpp
     src/core/child_process.cpp
     src/core/asset_root.cpp
-    src/core/env.cpp)
+    src/core/path_confine.cpp
+    src/core/env.cpp
+    src/core/profile_names.cpp
+    src/core/profile_stats.cpp
+    src/core/profile_capture.cpp
+    src/core/frame_profiler.cpp)
 target_link_libraries(engine_core PUBLIC engine_flags Threads::Threads)
 target_include_directories(engine_core PUBLIC ${ENGINE_PUBLIC_INCLUDE})
+# QUAT_TRACY switches engine/core/profile.hpp's macros (and the GPU zones of
+# rhi::GpuProfiler) to Tracy as well; PUBLIC so every engine target that
+# instruments code sees the same configuration.
+if(ENGINE_PROFILE)
+    target_link_libraries(engine_core PUBLIC Tracy::TracyClient)
+    target_compile_definitions(engine_core PUBLIC QUAT_TRACY)
+endif()
+
+# ---------------------------------------------------------------------------
+# engine_project — game projects (ROADMAP P4): the game.json descriptor and
+# its validation, the package manifest, and BuildJob (quat-pack run in the
+# background for the editor's export dialog and remote project.build).
+# Graphics-free.
+# ---------------------------------------------------------------------------
+add_library(engine_project STATIC
+    src/project/game_project.cpp
+    src/project/package_manifest.cpp
+    src/project/build_job.cpp)
+target_link_libraries(engine_project PUBLIC engine_flags engine_core nlohmann_json::nlohmann_json)
+target_link_libraries(engine_project PRIVATE glm::glm Threads::Threads)
+target_include_directories(engine_project PUBLIC ${ENGINE_PUBLIC_INCLUDE})
 
 # ---------------------------------------------------------------------------
 # engine_rhi — thin Vulkan abstraction (instance/device, swapchain, ...).
@@ -185,6 +239,7 @@ add_library(engine_rhi STATIC
     src/rhi/pipeline_cache.cpp
     src/rhi/descriptor_buffer.cpp
     src/rhi/render_graph.cpp
+    src/rhi/gpu_profiler.cpp
     src/rhi/graphics_pipeline.cpp
     src/rhi/compute_pipeline.cpp
     src/rhi/shader_compiler.cpp
@@ -196,8 +251,9 @@ target_link_libraries(engine_rhi PUBLIC
     engine_flags engine_core Vulkan::Vulkan GPUOpen::VulkanMemoryAllocator)
 # engine_core is public: shader hot reload's headers use its watcher/process
 # types, and the debug messenger routes validation messages into its log ring.
-# The hot-reload compile worker runs on a std::thread.
-target_link_libraries(engine_rhi PRIVATE Threads::Threads)
+# The hot-reload compile worker runs on a std::thread; hot reload defaults on
+# in editor builds (engine_editor_build).
+target_link_libraries(engine_rhi PRIVATE Threads::Threads engine_editor_build)
 # nlohmann_json is an implementation detail of the reflection parser (PRIVATE);
 # glm because the parser reads slangc's JSON through core::JsonFields.
 target_link_libraries(engine_rhi PRIVATE nlohmann_json::nlohmann_json glm::glm)
@@ -213,11 +269,13 @@ set_source_files_properties(src/rhi/vma_impl.cpp PROPERTIES COMPILE_OPTIONS "${E
 # are PUBLIC: any consumer of the asset headers needs them transitively.
 # ---------------------------------------------------------------------------
 # engine_image — graphics-free texture data, limits and the guarded PNG/JPEG
-# decoder (stb_image), shared by engine_asset and the cooker.
+# and Radiance HDR decoders (stb_image), shared by engine_asset and the cooker.
 add_library(engine_image STATIC
     src/asset/alpha_coverage.cpp
     src/asset/texture_data.cpp
-    src/asset/image_decode.cpp)
+    src/asset/image_decode.cpp
+    src/asset/cube_lut.cpp
+    src/asset/hdr_decode.cpp)
 target_link_libraries(engine_image PUBLIC engine_flags)
 target_link_libraries(engine_image PRIVATE engine_stb_image)
 target_include_directories(engine_image PUBLIC ${ENGINE_PUBLIC_INCLUDE})
@@ -265,13 +323,37 @@ target_link_libraries(engine_animation PRIVATE acl_headers)
 target_include_directories(engine_animation PUBLIC ${ENGINE_PUBLIC_INCLUDE})
 
 # ---------------------------------------------------------------------------
+# engine_astro — astronomy for the time of day (R22.1): calendar / Julian
+# dates, sidereal time, precession, the Meeus Sun and Moon, rise / set,
+# and the renderer-facing SkyState. Pure, deterministic double-precision CPU
+# code; glm only.
+# ---------------------------------------------------------------------------
+add_library(engine_astro STATIC
+    src/astro/time.cpp
+    src/astro/coords.cpp
+    src/astro/sun.cpp
+    src/astro/moon.cpp
+    src/astro/moon_terms.cpp
+    src/astro/ephemeris.cpp
+    src/astro/events.cpp
+    src/astro/sky_state.cpp)
+target_link_libraries(engine_astro PUBLIC engine_flags glm::glm)
+target_include_directories(engine_astro PUBLIC ${ENGINE_PUBLIC_INCLUDE})
+
+# ---------------------------------------------------------------------------
 # engine_physics — Jolt Physics wrapper (PhysicsWorld). Jolt is an
 # implementation detail (PRIVATE); the public header is Jolt-free (PIMPL).
 # ---------------------------------------------------------------------------
 add_library(engine_physics STATIC
     src/physics/physics_world.cpp
-    src/physics/physics_queries.cpp)
+    src/physics/physics_character.cpp
+    src/physics/physics_queries.cpp
+    src/physics/physics_events.cpp
+    src/physics/physics_body_control.cpp
+    src/physics/physics_shape_queries.cpp
+    src/physics/physics_joints.cpp)
 target_link_libraries(engine_physics PUBLIC engine_flags)
+target_link_libraries(engine_physics PRIVATE engine_core) # profiler zones + worker names (R4)
 target_link_libraries(engine_physics PRIVATE Jolt::Jolt)
 target_include_directories(engine_physics PUBLIC ${ENGINE_PUBLIC_INCLUDE})
 
@@ -292,6 +374,7 @@ add_library(engine_scene STATIC
     src/scene/scene.cpp
     src/scene/animation_system.cpp
     src/scene/physics_system.cpp
+    src/scene/joint_system.cpp
     src/scene/nav_agent_system.cpp
     src/scene/nav_separation.cpp
     src/scene/navigation.cpp
@@ -299,13 +382,19 @@ add_library(engine_scene STATIC
     src/scene/bt_graph.cpp
     src/scene/bt_graph_edit.cpp
     src/scene/scene_io.cpp
+    src/scene/scene_references.cpp
     src/scene/component_json.cpp
+    src/scene/component_json_physics.cpp
+    src/scene/lens_json.cpp
     src/scene/particle_json.cpp
     src/scene/script_component.cpp
     src/scene/scene_snapshot.cpp
     src/scene/component_json_animation.cpp
     src/scene/material_override.cpp
     src/scene/render_settings_json.cpp
+    src/scene/physics_settings.cpp
+    src/scene/weather_json.cpp
+    src/scene/weather_frame.cpp
     src/scene/audio_system.cpp
     src/scene/primitives.cpp
     src/scene/primitive_resolve.cpp
@@ -314,6 +403,9 @@ add_library(engine_scene STATIC
     src/scene/instanced_mesh_resolve.cpp
     src/scene/ground_placement.cpp
     src/scene/camera_framing.cpp
+    src/scene/world_clock.cpp
+    src/scene/world_clock_json.cpp
+    src/scene/world_clock_api.cpp
     src/scene/bounds.cpp
     src/scene/view_clip.cpp)
 # EnTT is PUBLIC: components.hpp exposes entt types (Parent/Children) to consumers.
@@ -323,7 +415,7 @@ add_library(engine_scene STATIC
 # handle and the glTF loader extracts skins.
 target_link_libraries(engine_scene PUBLIC
     engine_flags engine_asset engine_rhi engine_renderer engine_animation engine_physics
-    engine_terrain engine_nav engine_audio EnTT::EnTT)
+    engine_terrain engine_nav engine_audio engine_weather engine_astro EnTT::EnTT)
 # fastgltf and stb (image decode) are implementation details of the loader.
 # nlohmann_json is PUBLIC: component_json.hpp exposes JSON values (the codec
 # shared by scene files and the remote-control API).
@@ -390,6 +482,7 @@ add_library(engine_cook STATIC
     src/cook/gltf_access.cpp
     src/cook/gltf_cooker.cpp
     src/cook/mesh_cook.cpp
+    src/cook/mesh_simplify.cpp
     src/cook/mesh_streams.cpp
     src/cook/texture_encode.cpp)
 target_link_libraries(engine_cook PUBLIC engine_flags)
@@ -415,7 +508,19 @@ add_library(engine_terrain STATIC
     src/terrain/streamer.cpp
     src/terrain/talus_relax.cpp)
 target_link_libraries(engine_terrain PUBLIC engine_flags glm::glm)
+target_link_libraries(engine_terrain PRIVATE engine_core) # profiler zones + thread names (R4)
 target_include_directories(engine_terrain PUBLIC ${ENGINE_PUBLIC_INCLUDE})
+
+# ---------------------------------------------------------------------------
+# engine_weather — the scene's weather (R13.1): the WeatherState singleton
+# component, its field table and accumulation, and the CPU reference of the
+# global wind field the renderer evaluates on the GPU. Graphics-free.
+# ---------------------------------------------------------------------------
+add_library(engine_weather STATIC
+    src/weather/weather_state.cpp
+    src/weather/wind_field.cpp)
+target_link_libraries(engine_weather PUBLIC engine_flags glm::glm EnTT::EnTT)
+target_include_directories(engine_weather PUBLIC ${ENGINE_PUBLIC_INCLUDE})
 
 # ---------------------------------------------------------------------------
 # engine_nav — Recast/Detour navigation (Phase 13). Recast is an implementation
@@ -512,11 +617,19 @@ add_library(engine_remote_world STATIC
     src/remote/world/tuning_commands.cpp
     src/remote/world/behavior_commands.cpp
     src/remote/world/behavior_edit_commands.cpp
+    src/remote/world/physics_commands.cpp
+    src/remote/world/physics_body_commands.cpp
+    src/remote/world/physics_query_commands.cpp
+    src/remote/world/weather_commands.cpp
+    src/remote/world/project_commands.cpp
+    src/remote/world/time_commands.cpp
     src/remote/world/script_commands.cpp
+    src/remote/world/profile_commands.cpp
     src/remote/world/image_encode.cpp
     src/remote/world/stb_image_write_impl.cpp)
 target_link_libraries(engine_remote_world PUBLIC
-    engine_flags engine_core engine_remote engine_scene engine_physics engine_nav engine_script)
+    engine_flags engine_core engine_remote engine_scene engine_physics engine_nav engine_weather
+    engine_script engine_project)
 target_include_directories(engine_remote_world PUBLIC ${ENGINE_PUBLIC_INCLUDE})
 target_include_directories(engine_remote_world SYSTEM PRIVATE ${Stb_INCLUDE_DIR})
 # stb's implementation TU is not warning-clean under our strict flags.
@@ -548,12 +661,22 @@ add_library(engine_renderer STATIC
     src/renderer/particle_sort.cpp
     src/renderer/particle_draw.cpp
     src/renderer/tonemap_pass.cpp
+    src/renderer/color_grading.cpp
+    src/renderer/color_lut.cpp
+    src/renderer/physical_camera.cpp
+    src/renderer/post_stage.cpp
+    src/renderer/dof_pass.cpp
+    src/renderer/motion_blur_pass.cpp
     src/renderer/skinning_pass.cpp
     src/renderer/shadow_casters.cpp
     src/renderer/shadow_pass.cpp
     src/renderer/transparent_pass.cpp
     src/renderer/ibl_pass.cpp
     src/renderer/dynamic_ibl.cpp
+    src/renderer/compute_kernel.cpp
+    src/renderer/hdri_environment.cpp
+    src/renderer/hdri_sun.cpp
+    src/renderer/ssr_pass.cpp
     src/renderer/bloom_pass.cpp
     src/renderer/exposure_pass.cpp
     src/renderer/taa_pass.cpp
@@ -566,9 +689,12 @@ add_library(engine_renderer STATIC
     src/renderer/terrain_pass.cpp
     src/renderer/terrain_gpu_tiles.cpp
     src/renderer/terrain_synth_pass.cpp
-    src/renderer/terrain_shadow.cpp)
+    src/renderer/terrain_shadow.cpp
+    src/renderer/wind_field_pass.cpp
+    src/renderer/cloud_shadow_pass.cpp
+    src/renderer/cloud_shadow_reference.cpp)
 target_link_libraries(engine_renderer PUBLIC
-    engine_flags engine_rhi engine_asset engine_terrain glm::glm)
+    engine_flags engine_rhi engine_asset engine_terrain engine_weather glm::glm)
 target_include_directories(engine_renderer PUBLIC ${ENGINE_PUBLIC_INCLUDE})
 
 # The ImGui overlay pass is editor-only. It is a from-scratch renderer on the
@@ -594,6 +720,8 @@ if(ENGINE_EDITOR)
         src/editor/scene_hierarchy.cpp
         src/editor/inspector.cpp
         src/editor/tuning_panels.cpp
+        src/editor/weather_panel.cpp
+        src/editor/time_of_day_panel.cpp
         src/editor/asset_browser.cpp
         src/editor/animation_preview.cpp
         src/editor/physics_debug.cpp
@@ -603,15 +731,18 @@ if(ENGINE_EDITOR)
         src/editor/animation_inspector.cpp
         src/editor/grass_inspector.cpp
         src/editor/particle_inspector.cpp
+        src/editor/physics_inspector.cpp
         src/editor/behavior_panel.cpp
         src/editor/behavior_canvas.cpp
         src/editor/inspector_world.cpp
         src/editor/panels/console.cpp
         src/editor/panels/inspector_parts.cpp
+        src/editor/panels/profiler.cpp
         src/editor/shell/command_palette.cpp
         src/editor/shell/commands.cpp
         src/editor/shell/dialogs.cpp
         src/editor/shell/editor_shell.cpp
+        src/editor/shell/export_dialog.cpp
         src/editor/shell/fuzzy.cpp
         src/editor/shell/layout.cpp
         src/editor/shell/menu.cpp
@@ -636,8 +767,9 @@ if(ENGINE_EDITOR)
     # vcpkg target does not declare the imgui dependency, so a single-pass
     # linker must see it first to resolve its ImGui references.
     target_link_libraries(engine_editor
-        PUBLIC engine_flags engine_scene engine_script
-        PRIVATE unofficial::imgui-node-editor::imgui-node-editor
+        PUBLIC engine_flags engine_scene engine_script engine_project
+        PRIVATE engine_editor_build
+                unofficial::imgui-node-editor::imgui-node-editor
                 imgui::imgui imguizmo::imguizmo SDL3::SDL3)
     target_include_directories(engine_editor PUBLIC ${ENGINE_PUBLIC_INCLUDE})
     # Vendored third-party backend: not warning-clean under our strict flags.
@@ -652,13 +784,19 @@ endif()
 # src/app/ is the application layer (Application owns the window, device and
 # frame loop; FrameRenderer, WorldRuntime, FlyCamera, EditorBridge, the remote
 # bridge and the startup scenes run inside it); it is not an engine library.
-# main.cpp only parses the environment and hands off to Application.
+# Two executables share it (P4): `game` (the editor build when ENGINE_EDITOR is
+# on) and `quat-player`, the runtime player games ship with — always built
+# without the editor. Each entry point only parses the environment and hands
+# off to Application.
 #
 # game_world holds the window-free part of the app layer — WorldRuntime (the
 # simulated world: demo scenes, terrain, grass, particles, navmesh, audio,
 # play mode and gameplay scripts) — so tests can drive the exact frame-loop
 # simulation path (tests/app/, including the play state machine) without SDL.
-add_library(game_world STATIC
+# world_runtime.cpp has editor-only behaviour (script hot reload on, the play
+# session's physics world), so an editor build compiles it twice: game_world
+# with ENGINE_EDITOR for `game`, game_world_runtime without it for the players.
+set(GAME_WORLD_SOURCES
     src/app/world_runtime.cpp
     src/app/demo_scenes.cpp
     src/app/audio_runtime.cpp
@@ -666,29 +804,50 @@ add_library(game_world STATIC
     src/app/grass_runtime.cpp
     src/app/particle_runtime.cpp
     src/app/nav_bake.cpp)
-target_link_libraries(game_world PUBLIC
+set(GAME_WORLD_LIBRARIES
     engine_flags engine_core engine_rhi engine_asset engine_scene engine_renderer engine_physics
     engine_terrain engine_nav engine_net engine_audio engine_script)
+add_library(game_world STATIC ${GAME_WORLD_SOURCES})
+target_link_libraries(game_world PUBLIC ${GAME_WORLD_LIBRARIES})
+target_link_libraries(game_world PRIVATE engine_editor_build)
 target_include_directories(game_world PUBLIC
     ${ENGINE_PUBLIC_INCLUDE}
     ${CMAKE_CURRENT_SOURCE_DIR}/src)
+if(ENGINE_EDITOR)
+    add_library(game_world_runtime STATIC ${GAME_WORLD_SOURCES})
+    target_link_libraries(game_world_runtime PUBLIC ${GAME_WORLD_LIBRARIES})
+    target_include_directories(game_world_runtime PUBLIC
+        ${ENGINE_PUBLIC_INCLUDE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/src)
+else()
+    add_library(game_world_runtime ALIAS game_world)
+endif()
 
-add_executable(game
-    src/main.cpp
+set(QUAT_APP_SOURCES
     src/app/application.cpp
+    src/app/app_config.cpp
+    src/app/build_service.cpp
     src/app/fly_camera.cpp
     src/app/frame_graph.cpp
     src/app/frame_temporal.cpp
+    src/app/frame_post.cpp
+    src/app/frame_environment.cpp
     src/app/frame_renderer.cpp
+    src/app/frame_profiling.cpp
+    src/app/game_boot.cpp
+    src/app/game_startup.cpp
     src/app/input_sampler.cpp
     src/app/remote_bridge.cpp
     src/app/screenshot_capture.cpp
+    src/app/window_icon.cpp
     src/app/asset_root.cpp)
-target_link_libraries(game PRIVATE
-    game_world
+set(QUAT_APP_LIBRARIES
     engine_flags engine_core engine_rhi engine_asset engine_scene engine_renderer engine_physics
     engine_terrain engine_nav engine_net engine_remote engine_remote_world engine_audio
-    engine_script SDL3::SDL3)
+    engine_script engine_project SDL3::SDL3)
+
+add_executable(game src/main.cpp ${QUAT_APP_SOURCES})
+target_link_libraries(game PRIVATE game_world ${QUAT_APP_LIBRARIES} engine_editor_build)
 if(MSVC)
     # Linker map for the game_has_no_texture_encoder test.
     target_link_options(game PRIVATE "/MAP:$<TARGET_FILE_DIR:game>/game.map")
@@ -697,9 +856,41 @@ if(ENGINE_EDITOR)
     target_sources(game PRIVATE src/app/editor_bridge.cpp)
     target_link_libraries(game PRIVATE engine_editor)
 endif()
-target_include_directories(game PRIVATE
-    ${ENGINE_PUBLIC_INCLUDE}
-    ${CMAKE_CURRENT_SOURCE_DIR}/src)
+
+add_executable(quat-player src/player/main.cpp ${QUAT_APP_SOURCES})
+target_link_libraries(quat-player PRIVATE game_world_runtime ${QUAT_APP_LIBRARIES})
+
+# quat-player-shipping: what `quat-pack --config shipping` ships. Built with
+# QUAT_SHIPPING, which compiles remote control out (no endpoint, no remote
+# screenshots, no QUAT_GAME override): it does not link engine_remote /
+# engine_remote_world at all, so any remote reference left in the shipping
+# path fails the link, and the quat_player_shipping_has_no_remote test checks
+# the symbol table.
+set(QUAT_SHIPPING_APP_SOURCES ${QUAT_APP_SOURCES})
+list(REMOVE_ITEM QUAT_SHIPPING_APP_SOURCES
+    src/app/screenshot_capture.cpp # remote render.screenshot only
+    src/app/build_service.cpp)     # project.build / the editor's export only
+set(QUAT_SHIPPING_APP_LIBRARIES ${QUAT_APP_LIBRARIES})
+list(REMOVE_ITEM QUAT_SHIPPING_APP_LIBRARIES engine_remote engine_remote_world)
+add_executable(quat-player-shipping src/player/main.cpp ${QUAT_SHIPPING_APP_SOURCES})
+target_link_libraries(quat-player-shipping PRIVATE game_world_runtime ${QUAT_SHIPPING_APP_LIBRARIES})
+target_compile_definitions(quat-player-shipping PRIVATE QUAT_SHIPPING)
+if(MSVC)
+    # Linker map for the quat_player_shipping_has_no_remote test.
+    target_link_options(quat-player-shipping PRIVATE
+        "/MAP:$<TARGET_FILE_DIR:quat-player-shipping>/quat-player-shipping.map")
+endif()
+
+# A game double-clicked on Windows opens no console window (wWinMain entry).
+set_target_properties(quat-player quat-player-shipping PROPERTIES WIN32_EXECUTABLE TRUE)
+
+foreach(app_target game quat-player quat-player-shipping)
+    target_include_directories(${app_target} PRIVATE
+        ${ENGINE_PUBLIC_INCLUDE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    # stb_image decodes the window icon (the implementation is in engine_scene).
+    target_include_directories(${app_target} SYSTEM PRIVATE ${Stb_INCLUDE_DIR})
+endforeach()
 # Data root, resolved at runtime (src/app/asset_root.hpp): QUAT_ASSET_ROOT, the
 # executable's directory (packaged builds), then - development builds only -
 # the source tree baked in here.
@@ -708,6 +899,40 @@ if(NOT ENGINE_PACKAGE_BUILD)
         QUAT_BUILD_TREE_ROOT="${CMAKE_CURRENT_SOURCE_DIR}"
         QUAT_BUILD_TREE_SHADER_DIR="${CMAKE_CURRENT_SOURCE_DIR}/cooked/shaders")
 endif()
+
+# ---------------------------------------------------------------------------
+# engine_pack + quat-pack — game packaging (ROADMAP P4): collects the files a
+# game references (through the scene codec, glTF and Lua scanners), cooks
+# them with quat-cook when available, stages the data root with a manifest,
+# and drives scripts/package-release.sh for the per-OS layout. Tool-side only:
+# never linked into the game or the player.
+# ---------------------------------------------------------------------------
+add_library(engine_pack STATIC
+    src/pack/digest.cpp
+    src/pack/lua_refs.cpp
+    src/pack/gltf_refs.cpp
+    src/pack/dependencies.cpp
+    src/pack/stage.cpp
+    src/pack/pack_cli.cpp)
+target_link_libraries(engine_pack PUBLIC engine_flags engine_core engine_project engine_scene)
+target_link_libraries(engine_pack PRIVATE OpenSSL::Crypto)
+target_include_directories(engine_pack PUBLIC ${ENGINE_PUBLIC_INCLUDE})
+
+add_executable(quat-pack tools/quat-pack/main.cpp)
+target_link_libraries(quat-pack PRIVATE engine_flags engine_pack)
+target_compile_definitions(quat-pack PRIVATE QUAT_VERSION="${PROJECT_VERSION}")
+# Development builds find the cooked shaders and the layout scripts in the
+# source tree; packaged builds take --shaders / --engine-root.
+if(NOT ENGINE_PACKAGE_BUILD)
+    target_compile_definitions(quat-pack PRIVATE
+        QUAT_BUILD_TREE_ROOT="${CMAKE_CURRENT_SOURCE_DIR}"
+        QUAT_BUILD_TREE_SHADER_DIR="${CMAKE_CURRENT_SOURCE_DIR}/cooked/shaders")
+endif()
+
+# ---------------------------------------------------------------------------
+# Offline asset generator (procedural nature models -> assets/meshes/nature/).
+# ---------------------------------------------------------------------------
+add_subdirectory(tools/asset-gen)
 
 # ---------------------------------------------------------------------------
 # Tests (GoogleTest) — see tests/CMakeLists.txt. `ctest --test-dir build/<preset>`.
@@ -721,6 +946,8 @@ add_subdirectory(tests)
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/CompileShaders.cmake)
 add_shader_compilation(shaders)
 add_dependencies(game shaders)
+add_dependencies(quat-player shaders)
+add_dependencies(quat-player-shipping shaders)
 # Shader hot reload (R2) runs the same slangc the build cooks with. Not in
 # packaged builds: no build-machine paths there, and hot reload defaults off.
 if(NOT ENGINE_PACKAGE_BUILD)

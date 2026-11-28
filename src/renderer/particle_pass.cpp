@@ -8,6 +8,7 @@
 #include <utility>
 #include <vector>
 
+#include "engine/core/profile.hpp"
 #include "engine/renderer/mesh_pass.hpp"
 #include "engine/rhi/device.hpp"
 #include "engine/rhi/pipeline_cache.hpp"
@@ -400,6 +401,7 @@ ParticlePass::create(const rhi::Device& device, rhi::GpuAllocator& allocator,
 std::expected<ParticleGraphOutput, core::Error>
 ParticlePass::add_to_graph(rhi::RenderGraph& graph, std::uint32_t slot_index,
                            const ParticleFrame& frame, const ParticleTargets& targets) {
+    QUAT_ZONE_N("particle_record"); // emitter records + the simulate / sort / draw passes
     if (!state_) return fail("not created");
     State& s = *state_;
     if (slot_index >= s.slots.size()) return fail("frame slot out of range");

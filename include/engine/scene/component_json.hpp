@@ -18,13 +18,15 @@
 //                    scatter generates them; instance_count is read-only)
 //   scatter          seeded procedural placement of the instanced mesh
 //   point_light, dir_light, camera
-//   collider, rigidbody, character
+//   collider, rigidbody, character, joint (component_json_physics.cpp)
 //   nav_agent, behavior, patrol
 //   script           Lua gameplay script path + property overrides (G7)
 //   terrain
 //   grass            GPU grass around the camera (density, blades, colours, wind, limits, LOD)
 //   particle_emitter GPU particles: emission, shape, forces, size / colour curves,
 //                    flipbook, blend (additive / alpha = WBOIT), lighting, collision
+//   weather          the scene's weather singleton (weather_json.hpp; one entity at most)
+//   world_clock      date / time / place, one per scene (world_clock_json.hpp)
 //   net_replicated
 //   audio_source     clip / bus / volume / pitch / loop / 3D falloff (+ write-only command)
 //   audio_listener

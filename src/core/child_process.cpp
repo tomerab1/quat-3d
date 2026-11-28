@@ -26,6 +26,9 @@
 #include <spawn.h>
 #include <sys/wait.h>
 #include <unistd.h>
+#if defined(__APPLE__)
+#include <mach-o/dyld.h>
+#endif
 #if defined(__linux__)
 #include <sys/syscall.h>
 #endif
@@ -271,6 +274,7 @@ run_process(const fs::path& program, std::span<const std::string> args,
                         nullptr) &&
                got > 0) {
             result.output.append(buffer, got);
+            if (options.on_output) options.on_output(std::string_view(buffer, got));
         }
     };
     while (abort == Abort::none) {
@@ -476,6 +480,9 @@ run_process(const fs::path& program, std::span<const std::string> args,
         const ssize_t n = ::read(pipe_fds[0], buffer, sizeof(buffer));
         if (n > 0) {
             result.output.append(buffer, static_cast<std::size_t>(n));
+            if (options.on_output) {
+                options.on_output(std::string_view(buffer, static_cast<std::size_t>(n)));
+            }
         } else if (n == 0) {
             break; // EOF: every writer (the child and its children) closed
         } else if (errno != EINTR && errno != EAGAIN) {
@@ -544,6 +551,30 @@ std::optional<fs::path> find_on_path(std::string_view name) {
         start = end + 1;
     }
     return std::nullopt;
+}
+
+std::optional<fs::path> current_executable_path() {
+#if defined(_WIN32)
+    std::wstring buffer(32768, L'\0');
+    const DWORD n = GetModuleFileNameW(nullptr, buffer.data(), static_cast<DWORD>(buffer.size()));
+    if (n == 0 || n >= buffer.size()) return std::nullopt;
+    buffer.resize(n);
+    return fs::path(buffer);
+#elif defined(__APPLE__)
+    std::uint32_t size = 0;
+    _NSGetExecutablePath(nullptr, &size);
+    std::string buffer(size, '\0');
+    if (_NSGetExecutablePath(buffer.data(), &size) != 0) return std::nullopt;
+    buffer.resize(std::strlen(buffer.c_str()));
+    std::error_code ec;
+    const fs::path canonical = fs::weakly_canonical(fs::path(buffer), ec);
+    return ec ? fs::path(buffer) : canonical;
+#else
+    std::error_code ec;
+    const fs::path self = fs::read_symlink("/proc/self/exe", ec);
+    if (ec) return std::nullopt;
+    return self;
+#endif
 }
 
 } // namespace engine::core

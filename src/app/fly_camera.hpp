@@ -22,6 +22,7 @@
 #include <entt/entity/entity.hpp>
 #include <glm/glm.hpp>
 
+#include "engine/renderer/physical_camera.hpp"
 #include "engine/scene/scene.hpp"     // CameraMatrices
 #include "engine/scene/view_clip.hpp" // ClipRange
 
@@ -58,8 +59,10 @@ public:
     // transforms are current) from a fixed heading, looking down 25 degrees,
     // as close as fits them with a 10% margin (scene::frame_box) — the same
     // view every run. The physics demo gets a fixed view of its drop zone
-    // instead. Builds without the editor also create the scene camera entity
-    // here.
+    // instead. A scene with an active Camera entity (a scene file) opens
+    // looking through it: its pose and field of view (clip planes stay
+    // derived, set_derived_clip). Builds without the editor drive that
+    // entity, or create the scene camera entity here when there is none.
     [[nodiscard]] static FlyCamera create(engine::scene::Scene& scene, const Start& start);
 
     // Per frame, before the event pump: clears the accumulated mouse look.
@@ -94,6 +97,10 @@ public:
     float     yaw = 0.0F;
     float     pitch = 0.0F;
     float     fov_y = 0.0F; // remote camera.set can change it
+    // R20: the view's physical lens (exposure, depth of field, shutter); a
+    // focal length > 0 replaces fov_y. Remote camera.set and the editor's
+    // Renderer panel edit it.
+    engine::renderer::PhysicalCamera lens{};
     // Explicit clip planes (remote camera.set); nullopt = derived.
     std::optional<float> near_override;
     std::optional<float> far_override;

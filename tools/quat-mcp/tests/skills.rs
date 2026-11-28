@@ -24,8 +24,10 @@ const SKILLS: &[&str] = &[
     "debug-physics-glitch",
     "debug-session",
     "design-npc-behaviour",
+    "find-performance-problem",
     "inspect-scene",
     "playtest",
+    "set-weather",
     "tune-look",
     "write-gameplay-script",
 ];

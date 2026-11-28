@@ -18,7 +18,8 @@
 # any scene failed.
 #
 # Environment: VK_ICD_FILENAMES (default: the first lavapipe manifest found),
-# SCENE_TIMEOUT (seconds per scene, default 300), SCENES (space-separated
+# SCENE_TIMEOUT (seconds per scene, default 300; a row may raise its own with
+# SCENE_TIMEOUT=<s> in its environment column), SCENES (space-separated
 # subset of the scene names below).
 set -uo pipefail
 
@@ -28,19 +29,37 @@ OUT="$(realpath -m "${2:-$ROOT/screenshots}")"
 TIMEOUT="${SCENE_TIMEOUT:-300}"
 
 # name | frames | environment (space-separated VAR=value) | description
+#      | asset manifest (optional)
 # Frame counts: TAA history and auto-exposure settle within ~30 frames; the
 # GPU terrain tile (513^2, 200 erosion steps, async readback) needs a few
 # frames to arrive, and the physics scene needs simulated seconds to fall.
+# mountain-forest: its tile (400 erosion steps + talus relaxation) lands by frame ~6, then ~11k
+# scattered instances + grass draw at ~2-3 s per frame on lavapipe (4 cores):
+# 60-100 s, inside the default timeout.
 # Editor rows run at 1600x900 from the default layout (QUAT_EDITOR_LAYOUT;
 # scripts/editor-screenshots.sh captures more editor states) and are never
 # downscaled.
+# A scene built from downloaded assets names its manifest: the row is
+# skipped (not failed) when scripts/fetch-polyhaven.py --check finds the
+# assets missing, e.g. because Poly Haven was unreachable.
 SCENE_TABLE=(
   "showcase-editor|30|QUAT_WINDOW_SIZE=1600x900 QUAT_EDITOR_LAYOUT=default|Showcase scene with the editor UI (1600x900)"
   "editor-inspector|30|QUAT_WINDOW_SIZE=1600x900 QUAT_EDITOR_LAYOUT=default QUAT_EDITOR_SELECT=metal_sphere|Editor with an entity selected (Inspector)"
   "showcase|30|QUAT_NO_UI=1|Showcase scene, no UI"
   "terrain|90|QUAT_NO_UI=1 QUAT_TERRAIN=1|Showcase + GPU-generated terrain tile"
   "physics|90|QUAT_NO_UI=1 QUAT_PHYSICS=1|Physics demo (Jolt) after 90 frames"
+  "cinematic|16|SCENE_TIMEOUT=900 QUAT_NO_UI=1 QUAT_PLAY=1 QUAT_GAME_CAMERA=1 QUAT_WINDOW_SIZE=960x540 QUAT_SCENE=assets/scenes/cinematic_forest.json|Cinematic forest clearing at golden hour (CC0 Poly Haven assets), hero camera|assets/showcase/cinematic/assets.json"
+  # World clock (R22.1): Paris on the 2026 June solstice, the clock frozen.
+  # Sunrise 05:47, solar noon 13:52, sunset 21:58 local (UTC+2).
+  "sunrise|30|QUAT_NO_UI=1 QUAT_TIME=2026-06-21T06:10:00+02:00 QUAT_LATLON=48.8566,2.3522 QUAT_TIME_SCALE=0|World clock: Paris, June solstice, 06:10 (sun 2.5° up, north-east)"
+  "noon|30|QUAT_NO_UI=1 QUAT_TIME=2026-06-21T13:52:00+02:00 QUAT_LATLON=48.8566,2.3522 QUAT_TIME_SCALE=0|World clock: Paris, June solstice, solar noon (sun 64.6° up, south)"
+  "sunset|30|QUAT_NO_UI=1 QUAT_TIME=2026-06-21T21:35:00+02:00 QUAT_LATLON=48.8566,2.3522 QUAT_TIME_SCALE=0|World clock: Paris, June solstice, 21:35 (sun 2.5° up, north-west)"
+  "editor-time-of-day|30|QUAT_WINDOW_SIZE=1600x900 QUAT_EDITOR_LAYOUT=default QUAT_EDITOR_SELECT=world_clock QUAT_TIME=2026-06-21T21:35:00+02:00 QUAT_TIME_SCALE=0|Editor: the world clock in the Inspector at sunset"
+  "showcase-hdri|40|QUAT_NO_UI=1 QUAT_HDRI=hdri-cache/kloofendal_48d_partly_cloudy_2k.hdr|Showcase lit by a CC0 Poly Haven HDRI (R21: HDRI IBL, its sun as the shadowed light, SSR)"
+  "mountain-forest|30|QUAT_NO_UI=1 QUAT_DEMO=mountain|Mountain + forest showcase: terrain, scattered trees and rocks, GPU grass"
 )
+# HDRI panoramas the scenes use, fetched into hdri-cache/ (gitignored).
+HDRIS=("kloofendal_48d_partly_cloudy 2k")
 
 die() { echo "ci-screenshots: $*" >&2; exit 2; }
 
@@ -53,6 +72,12 @@ if [ -z "${VK_ICD_FILENAMES:-}" ]; then
   export VK_ICD_FILENAMES="$icd"
 fi
 mkdir -p "$OUT" || die "cannot create $OUT"
+# A download failure is not fatal: the HDRI scene then renders the procedural
+# sky and its log says why.
+for hdri in "${HDRIS[@]}"; do
+  # shellcheck disable=SC2086 # "<id> <resolution>"
+  "$ROOT/scripts/fetch-hdri.sh" $hdri >/dev/null || echo "::warning::could not fetch HDRI $hdri"
+done
 
 # The last $2 lines of log $1 without the line libc++'s libunwind prints for
 # every function lavapipe's LLVM JIT registers (hundreds per run; they would
@@ -81,7 +106,7 @@ summary="$OUT/summary.md"
 {
   echo "## Screenshots"
   echo
-  echo "Rendered on lavapipe under Xvfb (\`scripts/ci-screenshots.sh\`, ${TIMEOUT} s timeout per scene)."
+  echo "Rendered on lavapipe under Xvfb (\`scripts/ci-screenshots.sh\`, ${TIMEOUT} s timeout per scene unless a scene sets more)."
   echo
   echo "| Scene | Result | Time | Setup |"
   echo "|---|---|---|---|"
@@ -90,8 +115,19 @@ failures=""
 failed=0
 
 for row in "${SCENE_TABLE[@]}"; do
-  IFS='|' read -r name frames scene_env description <<<"$row"
+  IFS='|' read -r name frames scene_env description manifest <<<"$row"
   selected "$name" || continue
+  if [ -n "$manifest" ] &&
+     ! python3 "$ROOT/scripts/fetch-polyhaven.py" --check "$ROOT/$manifest" >"$OUT/$name.log" 2>&1; then
+    echo "::warning title=Screenshot $name skipped::assets of $manifest not fetched (scripts/fetch-polyhaven.py)"
+    printf '%s\t%s\t%s\t%s\n' "$name" "skipped (assets not fetched)" 0 "$description" >>"$results"
+    echo "| \`$name\` | skipped: assets not fetched | 0 s | \`$scene_env\` |" >>"$summary"
+    continue
+  fi
+  row_timeout="$TIMEOUT"
+  for kv in $scene_env; do
+    case "$kv" in SCENE_TIMEOUT=*) row_timeout="${kv#SCENE_TIMEOUT=}" ;; esac
+  done
   ppm="$OUT/$name.ppm"
   png="$OUT/$name.png"
   log="$OUT/$name.log"
@@ -102,7 +138,7 @@ for row in "${SCENE_TABLE[@]}"; do
   xvfb-run -a -s "-screen 0 1920x1080x24" \
     env SDL_VIDEO_DRIVER=x11 QUAT_NO_AUDIO=1 QUAT_NO_VSYNC=1 QUAT_NON_FINITE_CHECK=1 \
         QUAT_MAX_FRAMES="$frames" QUAT_SCREENSHOT="$ppm" $scene_env \
-    timeout --kill-after=15 "$TIMEOUT" "$GAME" >"$log" 2>&1
+    timeout --kill-after=15 "$row_timeout" "$GAME" >"$log" 2>&1
   code=$?
   elapsed=$((SECONDS - start))
   log_tail "$log" 20

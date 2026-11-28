@@ -25,8 +25,9 @@ enum class Panel : std::uint8_t {
     physics,
     renderer,
     stats,
+    profiler,
 };
-inline constexpr std::size_t k_panel_count = 10;
+inline constexpr std::size_t k_panel_count = 11;
 
 struct PanelInfo {
     Panel       id;

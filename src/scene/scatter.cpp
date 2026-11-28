@@ -238,6 +238,7 @@ void hash_scatter(Fnv64& h, const Scatter& s) {
     h.u32(s.random_yaw ? 1U : 0U);
     h.f32(s.align_to_normal);
     h.f32(s.base_offset);
+    h.f32(s.mirror);
     h.f32(s.slope_deg.x);
     h.f32(s.slope_deg.y);
     h.f32(s.height_m.x);
@@ -352,6 +353,7 @@ std::vector<InstanceTransform> generate_scatter(const Scatter& s, const glm::mat
         const float scale = glm::mix(scale_lo, scale_hi, unit_from_bits(h0));
         const float yaw =
             s.random_yaw ? unit_from_bits(h1) * 2.0F * std::numbers::pi_v<float> : 0.0F;
+        const bool mirrored = unit_from_bits(splitmix64(h1)) < s.mirror;
 
         const glm::vec3 blended = glm::mix(up_axis, n, align);
         const glm::vec3 up = glm::length(blended) > 1e-6F ? glm::normalize(blended) : up_axis;
@@ -363,6 +365,7 @@ std::vector<InstanceTransform> generate_scatter(const Scatter& s, const glm::mat
         t.position = glm::vec3(to_local * glm::vec4(world_pos, 1.0F));
         t.rotation = glm::normalize(to_local_rot * world_rot);
         t.scale = glm::vec3(scale) / axis_scale;
+        if (mirrored) t.scale.x = -t.scale.x;
         out.push_back(t);
     }
     return out;

@@ -4,32 +4,21 @@
 #include <array>
 #include <cmath>
 #include <cstddef>
+#include <string>
 #include <type_traits>
+
+#include "render_settings_fields.hpp"
 
 namespace engine::renderer {
 
 namespace {
 
-// Typed reference to member `Field` of group `Group` of a RenderSettings.
-template <auto Group, auto Field>
-RenderSettingRef field_ref(RenderSettings& s) {
-    auto& v = (s.*Group).*Field;
-    using V = std::remove_cvref_t<decltype(v)>;
-    if constexpr (std::is_same_v<V, bool>) {
-        return {.b = &v};
-    } else if constexpr (std::is_same_v<V, int>) {
-        return {.i = &v};
-    } else {
-        static_assert(std::is_same_v<V, float>, "settings fields are bool, int or float");
-        return {.f = &v};
-    }
-}
-
-using T = RenderSettingType;
-using S = RenderSettings;
+using namespace settings_table; // field_ref, T, S
 using Csm = CsmSettings;
 using Gtao = GtaoSettings;
 using Contact = ContactShadowSettings;
+using Env = EnvironmentSettings;
+using Ssr = SsrSettings;
 
 constexpr std::array k_groups = {
     RenderSettingGroup{"exposure", "Exposure", "Auto exposure and exposure compensation"},
@@ -41,10 +30,19 @@ constexpr std::array k_groups = {
     RenderSettingGroup{"contact_shadows", "Contact shadows",
                        "Screen-space sun shadows for small detail"},
     RenderSettingGroup{"ibl", "Environment light", "Image-based ambient light and reflections"},
+    RenderSettingGroup{"environment", "Sky & HDRI",
+                       "Procedural sky or an HDRI panorama for background, ambient and reflections"},
+    RenderSettingGroup{"ssr", "Reflections", "Screen-space reflections over the environment"},
     RenderSettingGroup{"clouds", "Clouds", "Volumetric cloud layer of the sky"},
+    RenderSettingGroup{"dof", "Depth of field", "Bokeh blur from the camera's lens and focus"},
+    RenderSettingGroup{"motion_blur", "Motion blur", "Blur along motion over the camera's shutter"},
+    RenderSettingGroup{"tonemap", "Tonemapping", "HDR to display mapping"},
+    RenderSettingGroup{"grading", "Colour grading",
+                       "White balance, contrast, lift / gamma / gain and look LUT"},
+    RenderSettingGroup{"film", "Lens and film", "Vignette, film grain and chromatic aberration"},
 };
 
-constexpr std::array k_fields = {
+constexpr std::array k_core_fields = {
     // ---- exposure ----
     RenderSettingDesc{"exposure", "auto", "auto exposure", T::boolean, 0.0F, 1.0F, 1.0F, "",
                       "Adapt to the scene's measured brightness; off = fixed exposure",
@@ -64,6 +62,9 @@ constexpr std::array k_fields = {
     RenderSettingDesc{"exposure", "adaptation_s", "adaptation time", T::number, 0.05F, 10.0F, 1.1F,
                       "s", "Time constant of the eye adaptation",
                       &field_ref<&S::exposure, &ExposureSettings::adaptation_s>},
+    RenderSettingDesc{"exposure", "physical", "physical camera", T::boolean, 0.0F, 1.0F, 0.0F, "",
+                      "Expose from the camera's aperture, shutter and ISO (EV100); overrides auto",
+                      &field_ref<&S::exposure, &ExposureSettings::physical>},
     // ---- bloom ----
     RenderSettingDesc{"bloom", "enabled", "enabled", T::boolean, 0.0F, 1.0F, 1.0F, "",
                       "Run the bloom pass",
@@ -247,6 +248,48 @@ constexpr std::array k_fields = {
     RenderSettingDesc{"ibl", "intensity", "intensity", T::number, 0.0F, 4.0F, 1.0F, "",
                       "Scales image-based ambient light and reflections",
                       &field_ref<&S::ibl, &IblSettings::intensity>},
+    RenderSettingDesc{"ibl", "multiscatter", "multiple scattering", T::boolean, 0.0F, 1.0F, 1.0F,
+                      "", "Restore the energy rough metals lose to single-scattering GGX",
+                      &field_ref<&S::ibl, &IblSettings::multiscatter>},
+    RenderSettingDesc{"ibl", "horizon_occlusion", "horizon occlusion", T::boolean, 0.0F, 1.0F,
+                      1.0F, "", "Fade normal-mapped reflections that dip below the surface",
+                      &field_ref<&S::ibl, &IblSettings::horizon_occlusion>},
+    // ---- environment (R21) ----
+    RenderSettingDesc{"environment", "source", "sky", T::choice, 0.0F,
+                      static_cast<float>(sky_source_names.size() - 1), 0.0F, "",
+                      "procedural (atmosphere) or hdri (needs environment.set hdri.path)",
+                      &field_ref<&S::environment, &Env::source>, sky_source_names},
+    RenderSettingDesc{"environment", "hdri_intensity", "HDRI intensity", T::number,
+                      Env::k_intensity.min, Env::k_intensity.max, Env{}.hdri_intensity, "",
+                      "Scales the HDRI's background, lighting and sun",
+                      &field_ref<&S::environment, &Env::hdri_intensity>},
+    RenderSettingDesc{"environment", "hdri_rotation_deg", "HDRI rotation", T::number,
+                      Env::k_rotation_deg.min, Env::k_rotation_deg.max, Env{}.hdri_rotation_deg,
+                      "deg", "Turns the HDRI about the vertical axis",
+                      &field_ref<&S::environment, &Env::hdri_rotation_deg>},
+    RenderSettingDesc{"environment", "hdri_sun", "HDRI sun", T::boolean, 0.0F, 1.0F, 1.0F, "",
+                      "The HDRI's sun becomes the shadowed directional light",
+                      &field_ref<&S::environment, &Env::hdri_sun>},
+    // ---- ssr (R21) ----
+    RenderSettingDesc{"ssr", "enabled", "enabled", T::boolean, 0.0F, 1.0F, 1.0F, "",
+                      "Trace screen-space reflections; off leaves the environment only",
+                      &field_ref<&S::ssr, &Ssr::enabled>},
+    RenderSettingDesc{"ssr", "quality", "quality", T::choice, 0.0F,
+                      static_cast<float>(ssr_quality_names.size() - 1), 1.0F, "",
+                      "low: 32 steps, 1 reused ray; medium: 64, 4; high: 128, 4",
+                      &field_ref<&S::ssr, &Ssr::quality>, ssr_quality_names},
+    RenderSettingDesc{"ssr", "max_roughness", "max roughness", T::number,
+                      Ssr::k_max_roughness.min, Ssr::k_max_roughness.max, Ssr{}.max_roughness,
+                      "", "Rougher surfaces use the environment only",
+                      &field_ref<&S::ssr, &Ssr::max_roughness>},
+    RenderSettingDesc{"ssr", "thickness", "thickness", T::number, Ssr::k_thickness.min,
+                      Ssr::k_thickness.max, Ssr{}.thickness, "m",
+                      "How far behind the depth buffer a ray still hits",
+                      &field_ref<&S::ssr, &Ssr::thickness>},
+    RenderSettingDesc{"ssr", "edge_fade", "edge fade", T::number, Ssr::k_edge_fade.min,
+                      Ssr::k_edge_fade.max, Ssr{}.edge_fade, "",
+                      "Screen-edge band where reflections fade to the environment",
+                      &field_ref<&S::ssr, &Ssr::edge_fade>},
     // ---- clouds ----
     RenderSettingDesc{"clouds", "enabled", "enabled", T::boolean, 0.0F, 1.0F, 1.0F, "",
                       "Draw the volumetric cloud layer",
@@ -275,7 +318,12 @@ constexpr std::array k_fields = {
     RenderSettingDesc{"clouds", "wind_dir_deg", "wind direction", T::number, -180.0F, 180.0F,
                       35.0F, "deg", "Heading the clouds drift toward (from +X toward +Z)",
                       &field_ref<&S::clouds, &CloudSettings::wind_dir_deg>},
+    RenderSettingDesc{"clouds", "shadows", "shadows", T::boolean, 0.0F, 1.0F, 1.0F, "",
+                      "With weather: clouds shadow the sun on the ground",
+                      &field_ref<&S::clouds, &CloudSettings::shadows>},
 };
+
+constexpr auto k_fields = concat_fields(k_core_fields, k_post_fields);
 
 // Keys of the pre-R12 single shadow map (one orthographic box), still
 // accepted from older scene files and clients.
@@ -290,6 +338,11 @@ constexpr std::array k_deprecated = {
 } // namespace
 
 std::span<const RenderSettingGroup> render_setting_groups() { return k_groups; }
+
+SkySource sky_source(const EnvironmentSettings& settings) {
+    return settings.source == static_cast<int>(SkySource::hdri) ? SkySource::hdri
+                                                                : SkySource::procedural;
+}
 
 std::span<const DeprecatedRenderSetting> deprecated_render_settings() { return k_deprecated; }
 
@@ -323,7 +376,48 @@ float render_setting_value(const RenderSettings& settings, const RenderSettingDe
     const RenderSettingRef ref = field.ref(copy);
     if (ref.b != nullptr) return *ref.b ? 1.0F : 0.0F;
     if (ref.i != nullptr) return static_cast<float>(*ref.i);
-    return *ref.f;
+    if (ref.f != nullptr) return *ref.f;
+    return 0.0F;
+}
+
+std::string render_setting_text(const RenderSettings& settings, const RenderSettingDesc& field) {
+    RenderSettings copy = settings;
+    const RenderSettingRef ref = field.ref(copy);
+    return ref.s != nullptr ? *ref.s : std::string();
+}
+
+std::string check_render_setting_path(const RenderSettingDesc& field, std::string_view text) {
+    if (field.type != RenderSettingType::path) return "not a path field";
+    if (text.empty()) return {};
+    if (text.size() > 256) return "path longer than 256 bytes";
+    for (const char c : text) {
+        const auto u = static_cast<unsigned char>(c);
+        if (u < 0x20 || u == 0x7F || c == '\\' || c == ':') {
+            return "path has a control character, backslash or colon (use a relative path "
+                   "with '/')";
+        }
+    }
+    if (text.front() == '/') return "path must be relative to the project root";
+    std::size_t start = 0;
+    while (start <= text.size()) {
+        const std::size_t end = std::min(text.find('/', start), text.size());
+        if (text.substr(start, end - start) == "..") return "path must not contain '..'";
+        start = end + 1;
+    }
+    const std::string_view ext = field.unit;
+    if (!ext.empty() && (text.size() <= ext.size() ||
+                         text.substr(text.size() - ext.size()) != ext)) {
+        return "expected a " + std::string(ext) + " file";
+    }
+    return {};
+}
+
+bool set_render_setting_text(RenderSettings& settings, const RenderSettingDesc& field,
+                             std::string_view text) {
+    const RenderSettingRef ref = field.ref(settings);
+    if (ref.s == nullptr || !check_render_setting_path(field, text).empty()) return false;
+    *ref.s = std::string(text);
+    return true;
 }
 
 std::string_view render_setting_choice_name(const RenderSettingDesc& field, float value) {
@@ -343,6 +437,7 @@ std::optional<int> render_setting_choice_index(const RenderSettingDesc& field,
 
 void set_render_setting(RenderSettings& settings, const RenderSettingDesc& field, float value) {
     const RenderSettingRef ref = field.ref(settings);
+    if (ref.s != nullptr) return;
     if (ref.b != nullptr) {
         *ref.b = value != 0.0F;
         return;
@@ -358,13 +453,20 @@ void set_render_setting(RenderSettings& settings, const RenderSettingDesc& field
 bool reset_render_settings(RenderSettings& settings, std::string_view group) {
     if (group.empty()) {
         const float time = settings.clouds.time_s;
+        const glm::vec2 offset = settings.clouds.offset_km;
         settings = RenderSettings{};
         settings.clouds.time_s = time;
+        settings.clouds.offset_km = offset;
         return true;
     }
     if (find_render_setting_group(group) == nullptr) return false;
     for (const RenderSettingDesc& d : k_fields) {
-        if (d.group == group) set_render_setting(settings, d, d.default_value);
+        if (d.group != group) continue;
+        if (d.type == RenderSettingType::path) {
+            (void)set_render_setting_text(settings, d, "");
+        } else {
+            set_render_setting(settings, d, d.default_value);
+        }
     }
     return true;
 }

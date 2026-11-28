@@ -1,0 +1,3 @@
+Sweep a shape (as in `physics_overlap`: sphere, box or capsule, with an optional fixed `rotation`) from `from` to `to`, and report what it touches, nearest first: `{hits: [{entity, name, kind, layer, point, normal, fraction, distance}], count}`. `fraction` (0..1) and `distance` say how far along the sweep the shape got before touching. A hit at fraction 0 already overlapped at `from` and adds `penetration`.
+
+Use it to ask "can a crate this big slide from A to B?", where a falling object will land, or whether a character-sized capsule fits through a gap. `layers` and `max_hits` work as in `physics_raycast_all`. Needs a running simulation.

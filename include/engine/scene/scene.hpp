@@ -22,6 +22,9 @@
 #include "engine/scene/components.hpp"
 #include "engine/scene/navigation.hpp"
 
+namespace engine::core {
+class EventRing;
+}
 namespace engine::nav {
 class NavMesh;
 }
@@ -55,7 +58,11 @@ public:
     //   1. TransformSystem     — propagate world matrices down the hierarchy.
     //   2. AnimationSystem     — advance Animators, place feet (probing the
     //                            ground with `ground`), write skinning matrices.
-    //   3. RenderCollectSystem — gather drawable entities into draw_list().
+    //   3. WeatherSystem       — evolve the weather's wetness and snow cover
+    //                            (engine/weather/weather_state.hpp).
+    //   4. WorldClockSystem    — advance the scene's WorldClock, derive the
+    //                            sky, drive the sun (world_clock.hpp).
+    //   5. RenderCollectSystem — gather drawable entities into draw_list().
     void tick(float dt = 0.0F, const FootGroundProbe& ground = {});
 
     // First entity with an active Camera, or entt::null if none.
@@ -119,12 +126,31 @@ struct CameraMatrices {
 // exists" is what decides whether play mode renders through the scene.
 [[nodiscard]] entt::entity find_active_camera(const entt::registry& registry);
 
+// R20: the lens of the view when it renders through the scene: the active
+// camera's lens, or `fallback` (the fly camera's) when there is none. Remote
+// camera.get / camera.set read it in builds without the editor, so a pose
+// edit round-trips the authored lens instead of the fly camera's defaults.
+[[nodiscard]] renderer::PhysicalCamera active_camera_lens(const entt::registry& registry,
+                                                          const renderer::PhysicalCamera& fallback);
+
 // Bridge ECS <-> physics: create a body for each new RigidBody+Collider+Transform
 // entity, push kinematic transforms into the world, step it by `dt`, then write
 // dynamic bodies' transforms back into Transform (through the parent's space,
 // see set_world_transform).
 void physics_system(entt::registry& registry, physics::PhysicsWorld& world, float dt);
 
+// Joint components -> Jolt constraints (A10.1): removes constraints whose
+// Joint is gone or was edited, and builds one for each Joint whose bodies
+// both exist (its RigidBody's, and the target's or the world), at least one
+// dynamic. Anchors and axes are converted with the entities' current world
+// transforms. physics_system runs it right after creating bodies.
+void joint_system(entt::registry& registry, physics::PhysicsWorld& world);
+
+// Pushes the contact / trigger events of the world's last update() into
+// `ring` (A10.1 events.poll), body owners as entity ids, and records the
+// contacts the world had to drop as a gap. Call once after each
+// physics_system / PhysicsWorld::update.
+void publish_physics_events(const physics::PhysicsWorld& world, core::EventRing& ring);
 // The body of `e`'s RigidBody, created now (as physics_system's first step
 // would) when it has none yet — so gameplay code can push a body it spawned
 // this frame. invalid_body without RigidBody + Collider + Transform.

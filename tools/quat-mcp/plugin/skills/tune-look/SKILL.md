@@ -1,9 +1,9 @@
 ---
 name: tune-look
-description: Tune how a running quat-3d scene looks - exposure, bloom, shadows, ambient occlusion, sky light, clouds, sun and per-entity materials - one change at a time, judged by screenshots from a fixed camera. Use when the user says the scene is too dark, washed out, flat, noisy or wants a mood such as golden hour or overcast.
+description: Tune how a running quat-3d scene looks - exposure, tonemapping, bloom, shadows, ambient occlusion, sky light, clouds, sun, camera lens, depth of field, motion blur, colour grading and per-entity materials - one change at a time, judged by screenshots from a fixed camera. Use when the user says the scene is too dark, washed out, flat, noisy or wants a mood such as golden hour or overcast.
 compatibility: Needs the quat-mcp MCP server connected to a running quat-3d engine (started with QUAT_REMOTE).
 metadata:
-  quat-mcp-tools: "camera_frame camera_set screenshot render_settings_get render_settings_schema render_settings_set render_settings_reset environment_get environment_set material_get material_set debug_stats scene_save"
+  quat-mcp-tools: "camera_frame camera_set screenshot render_settings_get render_settings_schema render_settings_set render_settings_reset environment_get environment_set scene_update material_get material_set debug_stats scene_save"
 ---
 
 # Tune the look
@@ -28,10 +28,12 @@ makes every other judgement misleading, so it always comes first.
    0.3 to 1 EV. Touch `key`, `min_exposure` or `max_exposure` only if auto
    exposure pumps or overreacts. Turn `auto` off for a fixed, repeatable
    exposure (exposure = 2^`compensation_ev`).
-5. **Then highlights.** The tonemap curve is fixed (ACES filmic), so
-   highlight roll-off follows from exposure. Tune `bloom` (`threshold`,
-   `intensity`, `radius`) until highlights glow without a haze over the
-   image.
+5. **Then tonemap and highlights.** Pick the `tonemap` `operator`: `aces`
+   (contrasty, saturated), `agx` (natural roll-off of bright colours toward
+   white, the cinematic choice) or `pbr_neutral` (true base colours, for
+   product shots); highlight roll-off then follows from exposure. Tune
+   `bloom` (`threshold`, `intensity`, `radius`) until highlights glow
+   without a haze over the image.
 6. **Then shadows and ambient light.**
    - `shadows`: acne or stripes - raise `normal_bias_texels` or
      `depth_bias_texels`; jagged edges - `pcf_radius` or `sun_size_deg`;
@@ -39,13 +41,33 @@ makes every other judgement misleading, so it always comes first.
    - `ao` (`radius`, `strength`) and `contact_shadows` for small-scale
      contact.
    - `ibl` `intensity` for how much the sky lights the shadows.
+   - `ssr` for reflections on glossy surfaces.
+   - For a photographic look, light the scene with an HDRI panorama
+     (`environment_set` with `sky: "hdri"` and `hdri.path`), then turn it
+     with `hdri.rotation_deg` until its sun lights the subject the way you
+     want.
    - The sun and clouds with `environment_set`: `elevation_deg` 5..10 is
      golden hour, 45..70 daylight; `clouds` `coverage` 0.85 is overcast.
-7. **Then materials.** `material_get` on the entities that matter, then
+7. **Then the camera and grade.** For a filmic shot, give the active
+   camera a lens with `scene_update` on its `camera` component
+   (`focal_length_mm`, `aperture_f`, `focus_distance_m` on the subject;
+   `camera_set` `lens` for the editor view) and turn on `dof`. Motion
+   blur is off by default; with `motion_blur` on, its length follows the
+   camera's `shutter_s` (1/120 s is a 180-degree shutter at 60 fps). Turn
+   `exposure` `physical` on only when the lights are physically scaled
+   (sun around 100 000 lux): with the default lights it makes the frame
+   almost black, so otherwise keep auto or manual exposure and use the lens
+   for depth of field and motion blur only.
+   Grade last: `grading` (`temperature_k` for warmth, `contrast`,
+   `saturation`, per-channel `lift_*` / `gamma_*` / `gain_*`, a `.cube`
+   look `lut` inside the project) and `film` (`vignette_natural`,
+   `vignette_intensity`, subtle `grain_intensity`,
+   `chromatic_aberration`).
+8. **Then materials.** `material_get` on the entities that matter, then
    `material_set` (roughness, metallic, colour, clearcoat, glass, emission),
    one entity at a time. The author-material-shader skill covers materials
    in depth.
-8. **Finish** with a list of the changes you kept and why. `scene_save`
+9. **Finish** with a list of the changes you kept and why. `scene_save`
    stores the render settings and material overrides with the scene; save
    only if asked.
 

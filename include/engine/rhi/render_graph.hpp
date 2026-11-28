@@ -9,11 +9,13 @@
 #include <vulkan/vulkan.h>
 
 #include "engine/core/error.hpp"
+#include "engine/core/profile_names.hpp"
 #include "engine/rhi/gpu_allocator.hpp"
 
 namespace engine::rhi {
 
 class Device;
+class GpuProfiler;
 
 // How a pass touches a resource. Determines the image layout the resource must
 // be in for that pass, plus the pipeline-stage / access masks used to build the
@@ -58,7 +60,10 @@ struct ResourceHandle {
 
 // Concrete Vulkan objects backing a graph resource, resolved at compile time.
 // Image resources fill image/view/format/extent; buffer resources fill
-// buffer/size.
+// buffer/size. `unorm_view` reads and writes the stored bytes without sRGB
+// conversion: `view` itself for a non-sRGB image, the view registered with
+// RenderGraph::set_unorm_view for an imported mutable-format sRGB image, and
+// VK_NULL_HANDLE for an sRGB image that has none.
 struct ResourceBinding {
     VkImage      image  = VK_NULL_HANDLE;
     VkImageView  view   = VK_NULL_HANDLE;
@@ -66,6 +71,7 @@ struct ResourceBinding {
     VkExtent2D   extent{};
     VkBuffer     buffer = VK_NULL_HANDLE;
     VkDeviceSize size   = 0;
+    VkImageView  unorm_view = VK_NULL_HANDLE;
 };
 
 // Pools transient (graph-owned) images keyed by (format, extent, usage) so the
@@ -109,6 +115,7 @@ private:
     struct Entry {
         GpuImage          image;
         VkImageView       view   = VK_NULL_HANDLE;
+        VkImageView       unorm_view = VK_NULL_HANDLE;    // imported only, set_unorm_view
         VkFormat          format = VK_FORMAT_UNDEFINED;
         VkExtent2D        extent{};
         VkImageUsageFlags usage  = 0;
@@ -184,6 +191,15 @@ public:
                                 VkPipelineStageFlags2 final_stage =
                                     VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT);
 
+    // Registers `view`, a view of imported sRGB `image` in its UNORM twin
+    // format (the image was created mutable-format, e.g. a swapchain made
+    // with VK_KHR_swapchain_mutable_format), for passes that must touch the
+    // stored bytes without sRGB conversion: it is what ResourceBinding's
+    // `unorm_view` resolves to. Both views alias one image, so the graph's
+    // layout tracking and barriers on `image` cover either. Ignored for
+    // transient or buffer resources.
+    void set_unorm_view(ResourceHandle image, VkImageView view);
+
     // Import an externally-owned buffer (whole range). Buffers have no layout;
     // the graph orders passes by their buffer reads/writes and plans
     // VkBufferMemoryBarrier2s for the hazards between them (RAW, WAR, WAW).
@@ -236,7 +252,10 @@ public:
 
     // Replay the compiled plan into `cmd`: barriers then execute lambda, per
     // pass in dependency order, followed by trailing import final-layout barriers.
-    void execute(VkCommandBuffer cmd);
+    // Each pass is one profiler zone (R4): its CPU recording time in the
+    // frame profiler / Tracy, and, with `gpu`, its GPU time (barriers
+    // included) between timestamps.
+    void execute(VkCommandBuffer cmd, GpuProfiler* gpu = nullptr);
 
     [[nodiscard]] ResourceBinding binding(ResourceHandle handle) const;
 
@@ -249,6 +268,7 @@ private:
 
     struct Pass {
         std::string         name;
+        core::ProfileNameId profile_id = 0; // the pass's profiler zone
         PassType            type{};
         std::vector<Access> accesses;
         PassExecuteFn       execute;
@@ -262,6 +282,7 @@ private:
         VkDeviceSize      buffer_size = 0;
         VkImage           image  = VK_NULL_HANDLE;
         VkImageView       view   = VK_NULL_HANDLE;
+        VkImageView       unorm_view = VK_NULL_HANDLE;    // imported only, set_unorm_view
         VkFormat          format = VK_FORMAT_UNDEFINED;
         VkExtent2D        extent{};
         VkImageUsageFlags usage  = 0;                 // transient only

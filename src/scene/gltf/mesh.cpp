@@ -34,6 +34,7 @@
 #include "engine/scene/components.hpp"
 #include "engine/scene/scene.hpp"
 #include "scene/gltf/internal.hpp"
+#include "engine/core/profile.hpp"
 
 namespace engine::scene {
 
@@ -287,6 +288,7 @@ GltfLoader::load_mesh_data_from_memory(std::span<const std::byte> bytes,
 std::expected<asset::MeshAsset, core::Error>
 upload_mesh(const MeshData& data, rhi::GpuAllocator& allocator,
             const rhi::TransferContext& transfer) {
+    QUAT_ZONE_N("upload_mesh");
     asset::MeshAsset mesh;
     const bool skinned = !data.skin.empty();
 

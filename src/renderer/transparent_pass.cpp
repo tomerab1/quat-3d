@@ -249,7 +249,12 @@ TransparentPass::add_to_graph(rhi::RenderGraph& graph, rhi::ResourceHandle hdr,
 
     if (auto r = ensure_scene_color(extent); !r) return r;
 
-    auto instances = instances_.upload(*device_, *allocator_, list.instances);
+    // Single-sided materials cull back faces; a mirrored instance's outside
+    // faces wind the other way, so each draw's mirrored instances are drawn
+    // as a separate range that culls front faces instead.
+    InstancedDrawList split = list;
+    const std::vector<std::uint32_t> unmirrored = partition_mirrored(split);
+    auto instances = instances_.upload(*device_, *allocator_, split.instances);
     if (!instances) return std::unexpected(instances.error());
 
     // Non-owning view set; falls back to the member black maps when empty.
@@ -258,10 +263,11 @@ TransparentPass::add_to_graph(rhi::RenderGraph& graph, rhi::ResourceHandle hdr,
         lights.valid() ? lights.buffers : empty_lights_.buffers();
 
     bool any_transmissive = false;
-    for (const InstancedDraw& d : list.draws) {
+    for (std::size_t di = 0; di < split.draws.size(); ++di) {
+        const InstancedDraw& d = split.draws[di];
         if (d.mesh == nullptr || !d.mesh->valid() || d.instance_count == 0) continue;
         if (static_cast<std::size_t>(d.first_instance) + d.instance_count >
-            list.instances.size()) {
+            split.instances.size()) {
             return fail("transparent pass: draw instance range exceeds the instance array");
         }
         const asset::MaterialAsset& mat =
@@ -295,12 +301,20 @@ TransparentPass::add_to_graph(rhi::RenderGraph& graph, rhi::ResourceHandle hdr,
         fd.instance_count = d.instance_count;
         fd.descriptor_index = static_cast<std::uint32_t>(frame_descriptors_.size());
         fd.transmissive = (mat.params.flags & asset::material_transmission) != 0;
-        fd.cull_mode = (mat.params.flags & asset::material_double_sided) != 0
-                           ? VK_CULL_MODE_NONE
-                           : VK_CULL_MODE_BACK_BIT;
+        const bool double_sided = (mat.params.flags & asset::material_double_sided) != 0;
         any_transmissive = any_transmissive || fd.transmissive;
         frame_descriptors_.push_back(std::move(*db));
-        frame_draws_.push_back(fd);
+        // The draw's unmirrored range, then its mirrored range.
+        const std::uint32_t ranges[2][2] = {
+            {d.first_instance, unmirrored[di]},
+            {d.first_instance + unmirrored[di], d.instance_count - unmirrored[di]}};
+        for (int mirrored = 0; mirrored < 2; ++mirrored) {
+            if (ranges[mirrored][1] == 0) continue;
+            fd.first_instance = ranges[mirrored][0];
+            fd.instance_count = ranges[mirrored][1];
+            fd.cull_mode = transparent_cull_mode(double_sided, mirrored != 0);
+            frame_draws_.push_back(fd);
+        }
     }
 
     TransparentPushConstants push{};

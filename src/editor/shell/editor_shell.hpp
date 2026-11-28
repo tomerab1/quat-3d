@@ -27,6 +27,7 @@
 #include "../scene_hierarchy.hpp"
 #include "../ui/appearance.hpp"
 #include "commands.hpp"
+#include "export_dialog.hpp"
 #include "engine/editor/editor.hpp"
 #include "panels.hpp"
 #include "prefs.hpp"
@@ -39,6 +40,7 @@ class BehaviorPanel;
 
 namespace panels {
 struct ConsoleState;
+struct ProfilerState;
 } // namespace panels
 
 namespace shell {
@@ -72,7 +74,10 @@ enum class SimState : std::uint8_t { editing, playing, paused };
 
 class EditorShell {
 public:
-    EditorShell(SDL_Window* window, std::filesystem::path project_root);
+    // `project_root`: the project being edited (scene files, assets,
+    // .quat/editor.ini). `data_root`: the engine's data (editor fonts).
+    EditorShell(SDL_Window* window, std::filesystem::path project_root,
+                const std::filesystem::path& data_root);
     ~EditorShell();
     EditorShell(const EditorShell&) = delete;
     EditorShell& operator=(const EditorShell&) = delete;
@@ -128,8 +133,10 @@ public:
     AssetBrowserState                     assets;
     std::unique_ptr<BehaviorPanel>        behavior_panel;
     std::unique_ptr<panels::ConsoleState> console;
+    std::unique_ptr<panels::ProfilerState> profiler; // R4: freeze, filters, snapshot
     panels::InspectorState                inspector; // Add Component search, copied values
     DialogState                           dialog;
+    ExportDialogState                     export_dialog; // File > Build & Export (P4/E7)
     PaletteState                          palette;
     std::string ini_path; // <project>/.quat/editor.ini; ImGui keeps a pointer to it
 
@@ -172,7 +179,8 @@ void draw_main_menu(EditorShell& shell);
 void draw_main_toolbar(EditorShell& shell);
 void draw_status_bar(EditorShell& shell);
 void draw_command_palette(EditorShell& shell);
-void draw_dialogs(EditorShell& shell); // open / save as / shortcuts / about / preferences
+// open / save as / shortcuts / about / preferences / build & export
+void draw_dialogs(EditorShell& shell);
 void draw_viewport(EditorShell& shell);
 void draw_stats_panel(EditorShell& shell);
 // Docks every panel into the default arrangement under `dockspace_id`.

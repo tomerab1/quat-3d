@@ -8,11 +8,21 @@
 # Cooked assets (offline-generated, never committed)
 /cooked/
 
+# Game packages (quat-pack / project.build default output)
+/games/*/dist/
+
 # Downloaded glTF test models (Khronos sample assets — fetched on demand, not committed)
 /sample-assets/
 
+# Downloaded HDRI panoramas (Poly Haven CC0, scripts/fetch-hdri.sh; not committed)
+/hdri-cache/
 # CC0 models quat-mcp's asset_fetch downloads from Poly Haven (fetched on demand)
 /assets/meshes/polyhaven/
+
+# CC0 Poly Haven textures and HDRIs scripts/fetch-polyhaven.py downloads for the
+# showcase scenes (manifests under assets/showcase/; fetched on demand)
+/assets/textures/polyhaven/
+/assets/hdri/polyhaven/
 
 # vcpkg
 /vcpkg_installed/

@@ -11,6 +11,7 @@
 
 #include "engine/scene/components.hpp"
 #include "engine/scene/scene.hpp"
+#include "engine/core/profile.hpp"
 
 namespace quat::app {
 
@@ -98,8 +99,11 @@ void ParticleRuntime::start_load(const std::string& path, Flipbook& book) {
     const std::filesystem::path file = project_root_ / path;
     book.failed = false;
     book.stamp = stamp_of(file);
-    book.pending = std::async(std::launch::async,
-                              [file, path] { return decode_flipbook(file, path); });
+    book.pending = std::async(std::launch::async, [file, path] {
+        QUAT_THREAD_NAME("asset load");
+        QUAT_ZONE_N("decode_flipbook");
+        return decode_flipbook(file, path);
+    });
 }
 
 VkImageView ParticleRuntime::flipbook(const std::string& path, Clock::time_point now) {
@@ -121,6 +125,7 @@ VkImageView ParticleRuntime::flipbook(const std::string& path, Clock::time_point
         if (book.pending.wait_for(std::chrono::seconds(0)) != std::future_status::ready) {
             return VK_NULL_HANDLE; // the disc until it is decoded
         }
+        QUAT_ZONE_N("particle_flipbook_upload");
         Decoded decoded = book.pending.get();
         std::expected<engine::asset::TextureAsset, Error> texture =
             decoded ? engine::scene::upload_texture(*decoded, allocator_, transfer_)
@@ -152,6 +157,9 @@ VkImageView ParticleRuntime::flipbook(const std::string& path, Clock::time_point
 
 void ParticleRuntime::add_to_graph(engine::rhi::RenderGraph& graph, const entt::registry& registry,
                                    const ParticleFrameInputs& in) {
+    // CPU side of the particle simulation: emitter bookkeeping (spawn
+    // budget, pool ranges, flipbooks) before the GPU passes simulate.
+    QUAT_ZONE_C("particle_emitters", engine::core::ProfileCategory::system);
     const auto view =
         registry.view<const engine::scene::Transform, const engine::scene::ParticleEmitter>();
     if (table_.size() == 0 && view.begin() == view.end()) return;

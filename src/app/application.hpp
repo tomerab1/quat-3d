@@ -25,6 +25,7 @@
 
 #include <vulkan/vulkan.h>
 
+#include "app/app_config.hpp"
 #include "app/fly_camera.hpp"
 #include "app/frame_renderer.hpp"
 #include "app/input_sampler.hpp"
@@ -32,6 +33,7 @@
 #include "app/remote_bridge.hpp"
 #include "app/world_runtime.hpp"
 #include "engine/asset/asset_manager.hpp"
+#include "engine/project/build_job.hpp"
 #include "engine/core/frame_timer.hpp"
 #include "engine/rhi/device.hpp"
 #include "engine/rhi/gpu_allocator.hpp"
@@ -46,21 +48,6 @@
 struct SDL_Window;
 
 namespace quat::app {
-
-// Process-level options, parsed from the environment by main().
-struct AppConfig {
-    // QUAT_MAX_FRAMES: auto-quit after this many presented frames (0 = run
-    // until the window closes). Headless smoke tests verify clean teardown.
-    std::uint64_t max_frames = 0;
-    // QUAT_SCREENSHOT (with QUAT_MAX_FRAMES): the final frame as binary PPM.
-    std::optional<std::filesystem::path> screenshot_path;
-    // False with QUAT_NO_UI=1: no editor shell (deterministic headless renders).
-    bool editor_ui = true;
-    // QUAT_WINDOW_SIZE=<w>x<h>: initial window size in screen coordinates
-    // (headless captures of the editor want more than the 1280x720 default).
-    int window_width = 1280;
-    int window_height = 720;
-};
 
 class Application {
 public:
@@ -89,6 +76,14 @@ private:
     [[nodiscard]] bool init_platform();
     [[nodiscard]] bool init_subsystems();
     void connect_remote();
+    // R21: the startup HDRI — QUAT_HDRI=<project-relative .hdr> (also
+    // selects it as the sky), else the QUAT_SCENE file's environment.
+    void load_startup_hdri();
+#if !defined(QUAT_SHIPPING)
+    // The HDRI's status for environment.get and the editor (a remote-control
+    // type: not in the shipping player).
+    [[nodiscard]] engine::remote::HdriInfo hdri_info() const;
+#endif
     // Gameplay scripts (G7), and the startup play request: QUAT_PLAY=1, or a
     // QUAT_SCENE game in the non-editor build, starts in Play.
     void init_scripts();
@@ -109,11 +104,17 @@ private:
     // refreshed every k_bounds_refresh_frames) and the terrain (issue #37).
     void update_view_clip();
     // View / projection for a screenshot's own camera (issue #41).
+#if !defined(QUAT_SHIPPING)
     [[nodiscard]] engine::scene::CameraMatrices shot_view(const engine::remote::CameraPose& pose,
                                                           float aspect) const;
+#endif
     void report_stats() const;
 
     AppConfig config_;
+    // Game packaging (P4/E7): quat-pack runs here for the editor's Build &
+    // Export dialog and the remote project.build. Declared early so it
+    // outlives the editor and the remote bridge that use it.
+    engine::project::BuildJob build_job_;
 
     Platform                   platform_;
     engine::rhi::Device        device_;

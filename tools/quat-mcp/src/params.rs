@@ -8,15 +8,27 @@ use serde_json::{Map, Value};
 
 mod behavior;
 mod debug;
+mod physics;
+mod post;
+mod profile;
+mod project;
 mod script;
 mod shader;
+mod time;
 mod tuning;
+mod weather;
 mod world;
 pub use behavior::*;
 pub use debug::*;
+pub use physics::*;
+pub use post::*;
+pub use profile::*;
+pub use project::*;
 pub use script::*;
 pub use shader::*;
+pub use time::*;
 pub use tuning::*;
+pub use weather::*;
 pub use world::*;
 
 /// A JSON object keyed by component name (see the tool description).
@@ -228,7 +240,7 @@ pub struct CloudParams {
     /// Turn the volumetric cloud layer on or off.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub enabled: Option<bool>,
-    /// Fraction of the sky covered, 0..1 (default 0.42).
+    /// Fraction of the sky covered, 0..1 (default 0.42). The weather's `cloud_cover` replaces it while the scene has a weather.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub coverage: Option<f64>,
     /// Extinction per km at full density, 0..128 (default 24); higher = darker, more opaque clouds.
@@ -246,12 +258,43 @@ pub struct CloudParams {
     /// Edge erosion / wispiness, 0..1 (default 0.4).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub detail: Option<f64>,
-    /// Drift speed, m/s, 0..100 (default 12).
+    /// Drift speed, m/s, 0..100 (default 12). Ignored while the scene has a weather (its wind drives the clouds).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub wind_speed: Option<f64>,
-    /// World-space heading the clouds drift toward, degrees, -180..180 (default 35).
+    /// World-space heading the clouds drift toward, degrees, -180..180 (default 35). Ignored while the scene has a weather.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub wind_dir_deg: Option<f64>,
+    /// With a weather in the scene, clouds shadow the sun on the ground (default true).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shadows: Option<bool>,
+}
+
+/// What lights and fills the background.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum SkySource {
+    /// The physically based atmosphere and clouds.
+    Procedural,
+    /// The loaded HDRI panorama (`hdri.path`).
+    Hdri,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct HdriParams {
+    /// Radiance `.hdr` panorama relative to the project root (e.g.
+    /// `assets/hdri/meadow_2k.hdr`); an empty string clears it. Omit to keep the file.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+    /// Brightness multiplier of the HDRI and its sun, 0..100 (default 1).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub intensity: Option<f64>,
+    /// Turn the panorama about the vertical axis, degrees, -360..360 (default 0).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rotation_deg: Option<f64>,
+    /// The HDRI's sun becomes the shadow-casting sun light (default true).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sun: Option<bool>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
@@ -263,6 +306,12 @@ pub struct EnvironmentSetParams {
     /// Volumetric clouds. Omitted fields keep their values.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub clouds: Option<CloudParams>,
+    /// Background and lighting source: procedural sky or the HDRI.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sky: Option<SkySource>,
+    /// HDRI panorama file and look. Omitted fields keep their values.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hdri: Option<HdriParams>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -304,6 +353,9 @@ pub struct CameraSetParams {
     /// than 10% of the far plane or turns more than 30 degrees.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cut: Option<bool>,
+    /// Physical lens of the view (depth of field, motion blur, physical exposure); omitted fields keep their values.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lens: Option<LensParams>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
@@ -407,6 +459,21 @@ mod tests {
         let err = serde_json::from_value::<EnvironmentSetParams>(json!({"sun": {"elevation": 10}}))
             .unwrap_err();
         assert!(err.to_string().contains("elevation"));
+    }
+
+    #[test]
+    fn hdri_environment_round_trips() {
+        let request = json!({
+            "sky": "hdri",
+            "hdri": {"path": "assets/hdri/meadow_2k.hdr", "rotation_deg": 90.0, "sun": false}
+        });
+        let p: EnvironmentSetParams = serde_json::from_value(request.clone()).unwrap();
+        assert_eq!(p.sky, Some(SkySource::Hdri));
+        assert_eq!(serde_json::to_value(&p).unwrap(), request);
+        let cleared: EnvironmentSetParams =
+            serde_json::from_value(json!({"hdri": {"path": ""}})).unwrap();
+        assert_eq!(cleared.hdri.unwrap().path.as_deref(), Some(""));
+        assert!(serde_json::from_value::<EnvironmentSetParams>(json!({"sky": "space"})).is_err());
     }
 
     #[test]

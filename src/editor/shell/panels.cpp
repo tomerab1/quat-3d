@@ -21,6 +21,7 @@ constexpr std::array<PanelInfo, k_panel_count> k_panels = {{
     {Panel::physics, "Physics", icon::atom, false},
     {Panel::renderer, "Renderer", icon::sun_medium, false},
     {Panel::stats, "Stats", icon::activity, true},
+    {Panel::profiler, "Profiler", icon::gauge, true},
 }};
 
 } // namespace

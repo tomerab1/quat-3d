@@ -11,9 +11,12 @@
 #include <glm/gtc/matrix_transform.hpp>
 
 #include "app/asset_root.hpp"
+#include "app/build_service.hpp"
 #include "app/load_transfer.hpp"
 #include "app/remote_bridge.hpp"
+#include "engine/core/frame_profiler.hpp"
 #include "engine/core/utf8_path.hpp"
+#include "engine/project/game_project.hpp"
 #include "engine/renderer/render_settings.hpp"
 #include "engine/rhi/device.hpp"
 #include "engine/rhi/gpu_allocator.hpp"
@@ -27,9 +30,14 @@
 namespace quat::app {
 
 void EditorBridge::create(SDL_Window* window, bool enabled) {
+    // QUAT_GAME_CAMERA=1: Play looks through the scene's active Camera entity
+    // (the menu-bar "Game camera" box) from the start, with or without the
+    // UI, so a QUAT_PLAY capture shows the scene's own framing.
+    play_use_scene_camera_ = std::getenv("QUAT_GAME_CAMERA") != nullptr;
     if (!enabled) return;
     if (auto e = engine::editor::EditorLayer::create(
-            window, engine::core::path_to_utf8(project_root())); // UTF-8 (#24)
+            window, engine::core::path_to_utf8(project_root()), // UTF-8 (#24)
+            engine::core::path_to_utf8(data_root()));            // editor fonts (P4)
         e) {
         editor_ = std::move(*e);
         // QUAT_EDITOR_THEME=light|dark picks the theme (over the one saved in
@@ -112,6 +120,7 @@ void EditorBridge::begin_frame() {
     // restore): no temporal history carries across.
     if (t_.world->apply_play(*t_.play_mode, *t_.scene) && t_.reset_temporal) t_.reset_temporal();
     apply_scene_file_requests();
+    apply_hdri_request();
     apply_instantiate_request();
 }
 
@@ -131,6 +140,7 @@ void EditorBridge::apply_scene_file_requests() {
         if (t_.render_settings != nullptr) {
             (void)engine::renderer::reset_render_settings(*t_.render_settings);
         }
+        if (t_.set_hdri) (void)t_.set_hdri(""); // a new scene has no HDRI (R21)
         t_.world->invalidate_navmesh("new scene");
         t_.world->clear_demo_entities();
         editor_.set_selected(entt::null);
@@ -139,8 +149,10 @@ void EditorBridge::apply_scene_file_requests() {
     }
     if (!pending_save_.empty()) {
         const std::string path = std::exchange(pending_save_, {});
+        engine::scene::SceneEnvironment environment;
+        if (t_.hdri_info) environment.hdri = t_.hdri_info().path;
         if (auto r = engine::scene::save_scene(scene, engine::core::path_from_utf8(path),
-                                               t_.render_settings);
+                                               t_.render_settings, &environment);
             r) {
             std::fprintf(stderr, "[editor] saved scene: %s\n", path.c_str());
             editor_.notify(NoticeKind::success, "Saved " + path);
@@ -152,12 +164,14 @@ void EditorBridge::apply_scene_file_requests() {
     if (!pending_load_.empty() && !playing()) {
         const std::string path = std::exchange(pending_load_, {});
         (void)with_load_transfer(*t_.device, [&](const engine::rhi::TransferContext& load_transfer) {
+            engine::scene::SceneEnvironment environment;
             if (auto r = engine::scene::load_scene(scene, engine::core::path_from_utf8(path),
                                                    *t_.allocator, load_transfer, *t_.assets,
-                                                   t_.render_settings);
+                                                   t_.render_settings, &environment);
                 r) {
                 std::fprintf(stderr, "[editor] loaded scene: %s\n", path.c_str());
                 editor_.notify(NoticeKind::success, "Loaded " + path);
+                if (t_.set_hdri) (void)t_.set_hdri(environment.hdri); // failures are logged
                 t_.world->invalidate_navmesh("scene loaded");
                 // Rebind the loop's cached entities to the loaded scene.
                 // (The view camera is editor state — nothing to rebind.)
@@ -172,6 +186,12 @@ void EditorBridge::apply_scene_file_requests() {
             }
         });
     }
+}
+
+void EditorBridge::apply_hdri_request() {
+    if (!pending_hdri_ || !t_.set_hdri) return;
+    const std::string path = *std::exchange(pending_hdri_, std::nullopt);
+    (void)t_.set_hdri(path); // the panel shows the status / error
 }
 
 void EditorBridge::apply_instantiate_request() {
@@ -265,8 +285,24 @@ const ImDrawData* EditorBridge::build_ui(float dt, int draw_count,
         static_cast<int>(scene.registry().view<engine::scene::Transform>().size());
     ui_ctx.shader_statuses = t_.shader_reload != nullptr ? &t_.shader_reload->statuses() : nullptr;
     ui_ctx.scripts = world.scripts();
+    ui_ctx.profiler = &engine::core::profiler();
     ui_ctx.scene = &scene;
     ui_ctx.renderer = t_.render_settings;
+    if (!through_scene_camera()) {
+        ui_ctx.view_lens = &t_.camera->lens;
+        ui_ctx.view_fov_y = t_.camera->fov_y;
+    }
+    if (t_.hdri_info && t_.set_hdri) {
+        const engine::remote::HdriInfo hdri = t_.hdri_info();
+        ui_ctx.hdri_path = hdri.path;
+        if (!hdri.error.empty()) {
+            ui_ctx.hdri_status = "failed: " + hdri.error;
+        } else if (hdri.loaded) {
+            ui_ctx.hdri_status = std::to_string(hdri.width) + "x" + std::to_string(hdri.height) +
+                                 (hdri.sun_found ? ", sun found" : ", no sun");
+        }
+        ui_ctx.hdri_request = &pending_hdri_;
+    }
     ui_ctx.project_root = engine::core::path_to_utf8(project_root()); // UTF-8 for ImGui
     ui_ctx.instantiate_request = &pending_instantiate_;
     ui_ctx.save_request = &pending_save_;
@@ -292,8 +328,43 @@ const ImDrawData* EditorBridge::build_ui(float dt, int draw_count,
     ui_ctx.view = cam.view;
     ui_ctx.proj_no_flip = cam.projection;
     ui_ctx.proj_no_flip[1][1] *= -1.0F; // undo the Vulkan Y flip for ImGuizmo
+    if (t_.build_job != nullptr) {
+        ui_ctx.build_job = t_.build_job;
+        if (t_.game != nullptr) {
+            ui_ctx.game = &t_.game->project;
+            ui_ctx.game_root = engine::core::path_to_utf8(t_.game->root);
+        }
+        ui_ctx.start_export = [this](const engine::editor::ExportRequest& r) {
+            return start_export(r);
+        };
+    }
     editor_.build_ui(ui_ctx);
     return editor_.end_frame();
+}
+
+std::expected<std::uint64_t, engine::core::Error>
+EditorBridge::start_export(const engine::editor::ExportRequest& request) {
+    namespace fs = std::filesystem;
+    fs::path root;
+    if (request.project.empty()) {
+        if (t_.game == nullptr) return std::unexpected(engine::core::Error{"no game project"});
+        root = t_.game->root;
+    } else {
+        root = engine::core::path_from_utf8(request.project);
+        if (root.is_relative()) root = data_root() / root;
+        // Validate here so the dialog shows the precise problem right away.
+        if (auto p = engine::project::load_game_project(root); !p) {
+            return std::unexpected(p.error());
+        }
+    }
+    if (request.output.empty()) return std::unexpected(engine::core::Error{"no output folder"});
+    fs::path out = engine::core::path_from_utf8(request.output);
+    if (out.is_relative()) out = root / out;
+    return start_game_build(*t_.build_job, root,
+                            {.target = {},
+                             .output = out.lexically_normal(),
+                             .config = request.config,
+                             .smoke_test = request.smoke_test});
 }
 
 } // namespace quat::app

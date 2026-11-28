@@ -49,14 +49,16 @@ public:
     // Once per frame, after the terrain pass is declared. `slot` is the frame
     // in flight (its previous use has finished); `draw_view_proj` the frame's
     // jittered view-projection (culling uses camera.view_proj); `terrain`
-    // null when no terrain is present; `dt` advances the wind clock.
+    // null when no terrain is present; `dt` advances the flutter clock;
+    // `wind` is the frame's global wind field (R13.1).
     void add_to_graph(engine::rhi::RenderGraph& graph, std::uint32_t slot,
                       const entt::registry& registry,
                       const engine::renderer::GBufferTargets& gbuffer, VkExtent2D extent,
                       const glm::mat4& draw_view_proj,
                       const engine::scene::CameraMatrices& camera,
                       const engine::renderer::TerrainPass* terrain,
-                      const glm::vec3& terrain_anchor, float dt);
+                      const glm::vec3& terrain_anchor, float dt,
+                      const engine::renderer::WindFieldOutput& wind = {});
 
 private:
     const engine::rhi::Device&          device_;
