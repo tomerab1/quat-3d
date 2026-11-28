@@ -79,6 +79,7 @@ json encode_camera_rig(const CameraRig& r) {
                 {"focus_ground_halflife_s", r.focus_ground_halflife_s},
                 {"follow_ground", r.follow_ground},
                 {"drag_inertia_halflife_s", r.drag_inertia_halflife_s},
+                {"focus_lens", r.focus_lens},
                 {"bounds", {{"shape", shape_name(b.shape)},
                             {"min", vec2_json(b.min)},
                             {"max", vec2_json(b.max)},
@@ -131,6 +132,7 @@ void decode_camera_rig(JsonFields& f, CameraRig& r) {
     f.number("focus_ground_halflife_s", r.focus_ground_halflife_s, 0.0F, 10.0F);
     f.boolean("follow_ground", r.follow_ground);
     f.number("drag_inertia_halflife_s", r.drag_inertia_halflife_s, 0.0F, 10.0F);
+    f.boolean("focus_lens", r.focus_lens);
     decode_bounds(f, r.bounds);
     if (r.max_distance < r.min_distance) f.fail("max_distance", "must be >= min_distance");
     if (r.max_pitch_deg < r.min_pitch_deg) f.fail("max_pitch_deg", "must be >= min_pitch_deg");

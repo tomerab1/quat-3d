@@ -53,6 +53,9 @@ void draw_camera_rig(scene::CameraRig& rig) {
     (void)ui::prop_float("Drag inertia", rig.drag_inertia_halflife_s, k_halflife,
                          {.tooltip = "Half-life of the release velocity after a drag (0: none)"});
 
+    (void)ui::prop_bool("Focus lens", rig.focus_lens,
+                        {.tooltip = "Keep the camera's depth of field focused at the rig's distance"});
+
     ui::prop_separator("Ground");
     (void)ui::prop_bool("Follow ground", rig.follow_ground, {.tooltip = "The focus height follows the terrain"});
     (void)ui::prop_float("Ground smoothing", rig.focus_ground_halflife_s, k_halflife);

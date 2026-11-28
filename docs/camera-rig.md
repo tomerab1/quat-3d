@@ -63,6 +63,12 @@ damped on a **log** scale, so a zoom step feels the same at 6 m and at 180 m.
   `frame_box()` (`camera_framing.hpp`) at the rig's current heading. Pitch
   and distance are solved together when pitch follows the zoom.
 
+- **Lens (R20).** Pointer rays and framing use the `Camera`'s effective
+  field of view, so a focal length set on the lens is respected. With
+  `focus_lens` (the default), the lens's `focus_distance_m` follows the
+  rig's damped distance, so depth of field, including a tilt-shift look,
+  stays focused on what the rig orbits.
+
 The rig runs on **real** time, before the scene tick, so the camera still
 moves while the simulation is paused.
 
@@ -105,5 +111,4 @@ camera, or the only rig in the scene.
 
 - Collision against buildings by sphere cast (A10.1). It is rarely needed
   above 40° pitch.
-- Lens fields such as tilt-shift DoF focused at the rig's distance (R20).
 - G15.2 (third-person follow rig) and G15.3 (cutscene camera tracks).

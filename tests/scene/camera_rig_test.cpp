@@ -12,6 +12,7 @@
 #include "engine/core/spring.hpp"
 #include "engine/input/actions.hpp"
 #include "engine/input/device_state.hpp"
+#include "engine/renderer/physical_camera.hpp"
 #include "engine/scene/camera_rig.hpp"
 #include "engine/scene/components.hpp"
 
@@ -349,6 +350,37 @@ TEST_F(RigFixture, YawStepsStayOnTheLatticeAcrossTheWrap) {
         frame([](engine::input::DeviceState& d) { d.keys.reset(); });
     }
     EXPECT_FLOAT_EQ(rig().yaw_deg, 0.0F) << "90 + 3 x 90 wraps to 0";
+}
+
+// With R20's lens: rays use the focal-length field of view, and the depth
+// of field stays focused at the rig's distance.
+TEST_F(RigFixture, ComposesWithThePhysicalLens) {
+    auto& cam = r.get<s::Camera>(e);
+    cam.lens.focal_length_mm = 85.0F; // narrower than the 60 degree fov_y
+    rig().distance = 70.0F;
+    settle();
+    EXPECT_NEAR(cam.lens.focus_distance_m, 70.0F, 0.1F);
+    rig().focus_lens = false;
+    rig().distance = 30.0F;
+    settle();
+    EXPECT_NEAR(cam.lens.focus_distance_m, 70.0F, 0.1F) << "left alone when off";
+
+    // Zoom to cursor keeps the ground point under the cursor with the
+    // lens's field of view (a 60 degree ray would miss it).
+    device.mouse_position = {1100.0F, 150.0F};
+    env.pointer = device.mouse_position;
+    const float fov = engine::renderer::effective_fov_y(cam.lens, cam.fov_y);
+    const auto view_now = [&] {
+        return s::RigView{rig().state.focus, rig().state.yaw_deg, rig().state.pitch_deg,
+                          std::exp(rig().state.log_distance), fov, k_viewport.x / k_viewport.y};
+    };
+    const auto ground = s::ray_plane_y(s::rig_pointer_ray(view_now(), env.pointer, k_viewport), 0.0F);
+    ASSERT_TRUE(ground.has_value());
+    frame([](engine::input::DeviceState& d) { d.mouse_wheel = 2.0F; });
+    settle();
+    const auto again = s::ray_plane_y(s::rig_pointer_ray(view_now(), env.pointer, k_viewport), 0.0F);
+    ASSERT_TRUE(again.has_value());
+    EXPECT_NEAR(glm::length(*again - *ground), 0.0F, 0.05F);
 }
 
 TEST_F(RigFixture, FollowsTheGroundAndKeepsClearance) {

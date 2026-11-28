@@ -3,6 +3,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include "engine/renderer/physical_camera.hpp"
 #include "engine/scene/camera_rig.hpp"
 #include "engine/scene/component_json.hpp"
 #include "engine/scene/components.hpp"
@@ -128,7 +129,7 @@ RpcResult rig_frame(Context& ctx, const Json& params) {
     const auto* cam = r.try_get<scene::Camera>(*e);
     const float aspect = ctx.services.view_aspect ? ctx.services.view_aspect() : k_default_aspect;
     scene::camera_rig_frame(r.get<scene::CameraRig>(*e), box->min, box->max,
-                            cam != nullptr ? cam->fov_y : k_default_fov,
+                            cam != nullptr ? renderer::effective_fov_y(cam->lens, cam->fov_y) : k_default_fov,
                             aspect > 0.0F ? aspect : k_default_aspect, margin);
     if (immediate) snap(ctx, *e);
     return rig_json(ctx, *e);

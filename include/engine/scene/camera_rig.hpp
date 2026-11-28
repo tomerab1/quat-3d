@@ -24,7 +24,10 @@
 //     it by looking down more, never by moving the focus;
 //   - soft bounds on the focus (rubber band while dragging, a spring back
 //     after);
-//   - framing a box with frame_box() (camera_framing.hpp).
+//   - framing a box with frame_box() (camera_framing.hpp);
+//   - with a Camera on the entity: rays use its effective field of view
+//     (R20 focal length), and `focus_lens` keeps its lens focused at the
+//     rig's distance, so depth of field (tilt-shift) frames the focus.
 //
 // Conventions: yaw as camera_framing.hpp (forward = (cos p cos y, sin p,
 // cos p sin y)), degrees, pitch negative looking down. The rig writes the
@@ -95,6 +98,7 @@ struct CameraRig {
     float focus_ground_halflife_s = 0.25F; // smoothing of the focus height
     bool  follow_ground = true;            // focus height follows the ground
     float drag_inertia_halflife_s = 0.15F; // release velocity decay (0 = none)
+    bool  focus_lens = true; // keep the Camera lens (R20 depth of field) focused on the focus
     RigBounds bounds;
     RigState  state;
 };

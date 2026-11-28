@@ -10,6 +10,7 @@
 
 #include "engine/core/spring.hpp"
 #include "engine/input/actions.hpp"
+#include "engine/renderer/physical_camera.hpp"
 #include "engine/scene/camera_rig.hpp"
 #include "engine/scene/components.hpp"
 
@@ -232,13 +233,21 @@ void camera_rig_system(entt::registry& registry, float dt, const RigEnvironment&
     for (const entt::entity e : view) {
         CameraRig& rig = view.get<CameraRig>(e);
         if (!rig.state.valid) camera_rig_snap(rig);
-        const Camera* cam = registry.try_get<Camera>(e);
-        const float fov = cam != nullptr ? cam->fov_y : k_default_fov;
+        Camera* cam = registry.try_get<Camera>(e);
+        // The field of view the camera renders with: R20's focal length
+        // replaces fov_y when set, and pointer rays must match the image.
+        const float fov = cam != nullptr ? renderer::effective_fov_y(cam->lens, cam->fov_y) : k_default_fov;
         if (const auto* in = registry.try_get<CameraRigInput>(e); in != nullptr && env.actions != nullptr) {
             apply_input(rig, *in, env, dt, fov, aspect);
         }
         step_rig(rig, env, dt);
         view.get<Transform>(e).local = camera_rig_matrix(rig);
+        // Depth of field (R20) focuses on what the rig looks at.
+        if (cam != nullptr && rig.focus_lens) {
+            cam->lens.focus_distance_m =
+                std::clamp(std::exp(rig.state.log_distance), renderer::PhysicalCameraLimits::min_focus_m,
+                           renderer::PhysicalCameraLimits::max_focus_m);
+        }
     }
 }
 
