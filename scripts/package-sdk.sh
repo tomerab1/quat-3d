@@ -50,8 +50,11 @@ ls "$stage"/bin
 #       copies into game packages (the engine root's file; a game carries no
 #       quat-mcp, so it must not list its crates).
 # Each must have the "## Licence texts" section (quat-pack ignores a summary),
-# and LICENSE must sit beside each. Until the generator exists in the tree
-# the SDK is packaged without generated notices, and says so.
+# and LICENSE must sit beside each. Without the generator in the tree:
+#   - a release (a tag push: GITHUB_REF_TYPE=tag, or QUAT_SDK_RELEASE=1)
+#     fails, because a published SDK never ships without its notices;
+#   - a dev build or a workflow_dispatch dry run packages the SDK without
+#     them and says so.
 notices_tool="$root/scripts/third-party-notices.sh"
 if [ -f "$notices_tool" ]; then
   rust_flag=()
@@ -63,8 +66,11 @@ if [ -f "$notices_tool" ]; then
       { echo "$dir/THIRD_PARTY_NOTICES.md has no licence texts" >&2; exit 1; }
     [ -s "$dir/LICENSE" ] || { echo "no engine LICENSE in $dir" >&2; exit 1; }
   done
+elif [ "${GITHUB_REF_TYPE:-}" = "tag" ] || [ "${QUAT_SDK_RELEASE:-0}" = "1" ]; then
+  echo "release SDK: $notices_tool is missing, and a release must ship its licence notices" >&2
+  exit 1
 else
-  echo "note: $notices_tool not in this tree (#96): SDK packaged without generated notices" >&2
+  echo "note: $notices_tool not in this tree (#96): SDK packaged without generated notices (not a release)" >&2
 fi
 # Size and contents report for the release log (what a game downloads).
 echo "== SDK sizes"
