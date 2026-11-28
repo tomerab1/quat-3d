@@ -323,6 +323,11 @@ bool FrameRenderer::record(const FrameInputs& in) {
             std::fprintf(stderr, "[warn] sky-view update: %s\n", r.error().message.c_str());
         }
     }
+    // R13.4: this frame's cloud layer (the sky, its shadows and the probe).
+    const engine::renderer::CloudSettings clouds = current_clouds();
+    if (volumetrics_) {
+        volumetrics_->begin_frame(clouds, fs.has_weather, cam.position, sun_to, in.registry);
+    }
     const EnvironmentMaps environment = add_environment(graph, sun_to);
     const engine::renderer::IblViewSet ibl_views = environment.ibl;
 
@@ -438,10 +443,6 @@ bool FrameRenderer::record(const FrameInputs& in) {
     }
     // R13.1: with weather, the cloud shadow map (one compute pass; the
     // lighting pass samples it). Needs the atmosphere's cloud layer.
-    const engine::renderer::CloudSettings clouds = current_clouds();
-    if (volumetrics_) {
-        volumetrics_->begin_frame(clouds, fs.has_weather, cam.position, sun_to, in.registry);
-    }
     engine::renderer::CloudShadowMap cloud_shadow{};
     if (fs.has_weather && atmosphere_ && volumetrics_ && clouds.enabled && clouds.shadows &&
         fr.cloud_shadow.valid()) {

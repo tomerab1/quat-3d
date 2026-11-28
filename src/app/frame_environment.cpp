@@ -166,6 +166,10 @@ FrameRenderer::EnvironmentMaps FrameRenderer::add_environment(engine::rhi::Rende
         cycle.skyview = atmosphere_ ? atmosphere_->skyview_view() : VK_NULL_HANDLE;
         cycle.transmittance = atmosphere_ ? atmosphere_->transmittance_view() : VK_NULL_HANDLE;
         cycle.clouds = current_clouds();
+        if (volumetrics_) {
+            cycle.layer = volumetrics_->cloud_layer();
+            cycle.noise = &volumetrics_->noise();
+        }
         if (auto r = dynamic_ibl_->add_step_to_graph(graph, cycle); !r) {
             std::fprintf(stderr, "[warn] ibl step: %s\n", r.error().message.c_str());
         }

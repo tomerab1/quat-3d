@@ -191,6 +191,19 @@ public float cloud_light_depth(CloudLayer L, Texture3D base, Texture3D detail, T
     return tau * L.medium.x;
 }
 
+// The sky's mean radiance over the upper hemisphere: four sky-view LUT
+// samples (zenith, and 30 degrees up toward, away from and across the sun).
+public float3 cloud_sky_ambient(Texture2D skyview, SamplerState samp, float3 sun) {
+    float3 h = normalize(float3(sun.x, 0.0, sun.z) + float3(1e-4, 0.0, 0.0));
+    float3 side = float3(-h.z, 0.0, h.x);
+    const float c30 = 0.8660254;
+    float3 a = sample_skyview(skyview, samp, float3(0.0, 1.0, 0.0), sun).rgb;
+    a += sample_skyview(skyview, samp, h * c30 + float3(0.0, 0.5, 0.0), sun).rgb;
+    a += sample_skyview(skyview, samp, -h * c30 + float3(0.0, 0.5, 0.0), sun).rgb;
+    a += sample_skyview(skyview, samp, side * c30 + float3(0.0, 0.5, 0.0), sun).rgb;
+    return a * 0.25;
+}
+
 // Isotropic ambient radiance at height fraction h from the sky above (top)
 // fading toward the darker light under the layer (bottom).
 public float3 cloud_ambient(CloudLayer L, float3 ambient_top, float h) {

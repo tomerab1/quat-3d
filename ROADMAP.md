@@ -343,8 +343,7 @@ JSON-RPC over loopback TCP to the engine.
     energy-conserving lighting with Wrenninge's multiple-scattering octaves,
     sun and moon (R22.1 SkyState) through the transmittance LUT; quarter
     resolution with temporal reprojection; cloud shadows and aerial
-    perspective from the same model. Remaining: the IBL probe still bakes
-    the R11.2 clouds.
+    perspective from the same model; the IBL probe bakes the same clouds.
 - [ ] **R14 — Foliage.** Main + detail wind bending, two-sided foliage shading
   model ID in the GBuffer, hashed alpha (coverage-preserving mips: R12.11), GPU
   instance cull + LOD cross-fade (with R9.4), octahedral impostors, GPU

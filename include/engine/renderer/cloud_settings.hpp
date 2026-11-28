@@ -2,11 +2,9 @@
 
 // Volumetric cloud layer parameters (Phase 11.2; R13.4 clouds v2). One
 // authoritative POD shared by everything that renders the clouds: the
-// volumetric cloud pass and the cloud shadow map build their CloudLayerGpu
-// from it (cloud_reference.hpp make_cloud_layer), the IBL baker packs it into
-// two push-constant float4s that lib/atmosphere.slang's unpack_cloud_params()
-// decodes, so the editor's Renderer panel can drive the clouds without
-// touching shaders.
+// volumetric cloud pass, the cloud shadow map and the IBL probe build their
+// CloudLayerGpu from it (cloud_reference.hpp make_cloud_layer), so the
+// editor's Renderer panel can drive the clouds without touching shaders.
 
 #include <algorithm>
 #include <cmath>
@@ -48,8 +46,8 @@ struct CloudSettings {
     // optically thicker and darker at the base.
     float precipitation = 0.0F;
 
-    // The two push-constant words consumed by unpack_cloud_params(). A zero
-    // coverage in .first disables the layer in the shader.
+    // The R11.2 packing the lighting pass's constants still carry (unread
+    // since R13.4; kept so its constant layout stays put).
     [[nodiscard]] glm::vec4 pack_a() const {
         return {enabled ? coverage : 0.0F, density, bottom_km, thickness_km};
     }

@@ -51,6 +51,9 @@ lit the **Frostbite** way (Hillaire, SIGGRAPH 2016):
   with the aerial perspective in front of the clouds.
 - **Shadows**: with a weather in the scene, the cloud shadow map (R13.1)
   integrates the same clouds, so shadows sit under the visible clouds.
+- **Reflections and ambient**: the dynamic IBL probe bakes the same layer
+  (per texel, with the aerial perspective from the transmittance LUT), and
+  refreshes when the layer changes or has drifted 150 m.
 
 ### Settings (`clouds` group)
 
@@ -153,8 +156,6 @@ Set `QUAT_TEST_DUMP_DIR=<dir>` to write the tests' images as PPM.
 
 ## Limitations (follow-ups)
 
-- The IBL probe (reflections, ambient) still bakes the previous cloud
-  model; moving it to v2 is the next step.
 - Transparents and particles are drawn after the composite, so they are
   not fogged yet.
 - `FogVolume` has no scene-file codec / editor / remote yet (it lands with

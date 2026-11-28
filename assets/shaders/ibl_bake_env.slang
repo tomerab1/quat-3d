@@ -4,8 +4,13 @@
 // 0 = procedural sky (no LUTs bound), 1 = physically-based sky-view LUT with a
 // transmittance-tinted sun disc, so reflections and ambient match the
 // background. The result feeds the irradiance + prefilter convolutions.
+// R13.4: the LUT path bakes the volumetric clouds v2 (lib/clouds.slang, the
+// layer and noise the cloud pass draws), so reflections and ambient light
+// show the clouds of the sky.
 
 import atmosphere;
+import cloud_noise;
+import clouds;
 import ibl_common;
 import sky;
 
@@ -14,8 +19,8 @@ static const float SKY_LUT_BRIGHTNESS = 8.0;
 
 struct BakeParams {
     float4 sun_dir;  // xyz = direction to the sun, w = 1 to use the LUT sky
-    float4 cloud_a;  // coverage, extinction /km, bottom km, thickness km
-    float4 cloud_b;  // 1/size km, detail erosion, unused, unused
+    float4 cloud_a;  // x = cloud march steps (0 = no clouds), yzw unused
+    float4 cloud_b;  // unused
     uint   face_size;   // pixels per cube face edge
     uint   face_offset; // first cube face this dispatch covers (dynamic IBL
                         // bakes per-face tiles; the full bake passes 0 and
@@ -29,6 +34,13 @@ struct BakeParams {
 [[vk::binding(1)]] Texture2D    g_skyview;         // atmosphere LUTs (may be fallbacks)
 [[vk::binding(2)]] Texture2D    g_transmittance;
 [[vk::binding(3)]] SamplerState g_samp;
+// R13.4 cloud layer + baked noise (fallbacks when cloud_a.x is 0).
+[[vk::binding(4)]] ConstantBuffer<CloudLayer> g_layer;
+[[vk::binding(5)]] Texture3D    g_base;
+[[vk::binding(6)]] Texture3D    g_detail;
+[[vk::binding(7)]] Texture2D    g_curl;
+[[vk::binding(8)]] Texture2D    g_weather;
+[[vk::binding(9)]] SamplerState g_noise_sampler;
 
 [shader("compute")]
 [numthreads(8, 8, 1)]
@@ -44,17 +56,37 @@ void compute_main(uint3 tid : SV_DispatchThreadID) {
 
     float3 radiance;
     if (pc.sun_dir.w > 0.5) {
-        // Atmosphere from the LUT + per-texel volumetric clouds (the same
-        // march the lighting background uses), so reflections match the sky.
+        // Atmosphere from the LUT + the volumetric clouds marched per texel
+        // (no temporal accumulation here: the convolutions that follow
+        // integrate the per-texel jitter away).
         float3 sky_rgb = sample_skyview(g_skyview, g_samp, dir, sun).rgb;
-        float3 cloud_ambient =
-            sample_skyview(g_skyview, g_samp, float3(0.2, 0.97, 0.0), sun).rgb * 0.8 +
-            float3(0.008, 0.011, 0.016);
-        CloudParams cp = unpack_cloud_params(pc.cloud_a, pc.cloud_b);
-        float jitter = interleaved_gradient_noise(
-            float2(px.x + face * pc.face_size, px.y));
-        float4 clouds =
-            march_clouds(dir, sun, g_transmittance, g_samp, cloud_ambient, cp, jitter);
+        float4 clouds = float4(0.0, 0.0, 0.0, 1.0);
+        if (pc.cloud_a.x > 0.5) {
+            CloudLayer L = g_layer;
+            float3 ambient_top = cloud_sky_ambient(g_skyview, g_samp, sun);
+            float jitter = interleaved_gradient_noise(float2(px.x + face * pc.face_size, px.y));
+            CloudRay ray = march_cloud_layer(L, g_base, g_detail, g_curl, g_weather,
+                                             g_noise_sampler, g_transmittance, g_samp, dir, 1.0e9,
+                                             jitter, ambient_top, pc.cloud_a.x);
+            float4 ci = cirrus_layer(L, g_weather, g_curl, g_noise_sampler, g_transmittance, g_samp,
+                                     dir, ambient_top);
+            float3 lum = ray.lum + ray.trans * ci.rgb;
+            float trans = ray.trans * ci.a;
+            // Aerial perspective toward the clouds, from the transmittance
+            // LUT: the air between dims them and the sky's in-scattering
+            // replaces what they hide.
+            if (ray.weight_sum > 1e-4) {
+                float d = ray.depth_sum / ray.weight_sum;
+                float r = ATMOS_VIEW_HEIGHT;
+                float rd = sqrt(r * r + d * d + 2.0 * r * d * dir.y);
+                float mud = (r * dir.y + d) / rd;
+                float3 t_ap = sample_transmittance(g_transmittance, g_samp, r, dir.y) /
+                              max(sample_transmittance(g_transmittance, g_samp, rd, mud), 1e-4);
+                float t = saturate(dot(t_ap, float3(1.0 / 3.0, 1.0 / 3.0, 1.0 / 3.0)));
+                lum = lum * t + sky_rgb * (1.0 - t) * (1.0 - trans);
+            }
+            clouds = float4(lum, trans);
+        }
         radiance = (sky_rgb * clouds.a + clouds.rgb) * SKY_LUT_BRIGHTNESS;
         float cos_sun = dot(dir, sun);
         if (cos_sun > 0.9998) {

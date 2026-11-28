@@ -311,6 +311,15 @@ void FrameRenderer::create_environment(engine::scene::Scene& scene,
         initial.skyview = atmosphere_ ? atmosphere_->skyview_view() : VK_NULL_HANDLE;
         initial.transmittance = atmosphere_ ? atmosphere_->transmittance_view() : VK_NULL_HANDLE;
         initial.clouds = current_clouds();
+        if (volumetrics_) {
+            // The probe's first cycle bakes the clouds the first frame shows.
+            const glm::vec3 camera =
+                engine::scene::camera_system(scene.registry(), 16.0F / 9.0F).position;
+            volumetrics_->begin_frame(initial.clouds, has_weather_, camera, sun_to,
+                                      &scene.registry());
+            initial.layer = volumetrics_->cloud_layer();
+            initial.noise = &volumetrics_->noise();
+        }
         if (auto dyn = engine::renderer::DynamicIbl::create(device, allocator, pipeline_cache,
                                                             shader_dir, initial);
             dyn) {

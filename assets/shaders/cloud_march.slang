@@ -76,19 +76,6 @@ float scene_limit_km(uint2 texel, float3 dir) {
     return length(to_p) * 0.001 / max(dot(normalize(to_p), dir), 0.1);
 }
 
-// The sky's mean radiance over the upper hemisphere: four sky-view samples
-// (zenith, and 30 degrees up toward, away from and across the sun).
-float3 sky_ambient(float3 sun) {
-    float3 h = normalize(float3(sun.x, 0.0, sun.z) + float3(1e-4, 0.0, 0.0));
-    float3 side = float3(-h.z, 0.0, h.x);
-    const float c30 = 0.8660254;
-    float3 a = sample_skyview(g_skyview, g_lut_sampler, float3(0.0, 1.0, 0.0), sun).rgb;
-    a += sample_skyview(g_skyview, g_lut_sampler, h * c30 + float3(0.0, 0.5, 0.0), sun).rgb;
-    a += sample_skyview(g_skyview, g_lut_sampler, -h * c30 + float3(0.0, 0.5, 0.0), sun).rgb;
-    a += sample_skyview(g_skyview, g_lut_sampler, side * c30 + float3(0.0, 0.5, 0.0), sun).rgb;
-    return a * 0.25;
-}
-
 [shader("compute")]
 [numthreads(8, 8, 1)]
 void compute_main(uint3 tid : SV_DispatchThreadID) {
@@ -100,7 +87,7 @@ void compute_main(uint3 tid : SV_DispatchThreadID) {
     float3 far_p = world_at(uv, 1.0);
     float3 dir = normalize(far_p - near_p);
     CloudLayer L = g_layer;
-    float3 ambient_top = sky_ambient(L.sun.xyz);
+    float3 ambient_top = cloud_sky_ambient(g_skyview, g_lut_sampler, L.sun.xyz);
 
     // Per-frame jitter: interleaved gradient noise shifted along a
     // low-discrepancy (golden ratio) sequence.
