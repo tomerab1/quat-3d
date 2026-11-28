@@ -72,7 +72,9 @@ are only logged. Asking for validation without the layer installed is an
 error: there is no device, so GPU tests skip, or fail under
 `--require-gpu` — a run never silently loses validation. Install the layer
 with `apt-get install vulkan-validationlayers` (Linux) or the Vulkan SDK
-(Windows, with `VK_LAYER_PATH` at the SDK's `Bin`). A test that creates its
+(Windows; CI registers the SDK's `VkLayer_khronos_validation.json` under
+`HKLM\SOFTWARE\Khronos\Vulkan\ExplicitLayers`, since the loader ignores
+`VK_LAYER_PATH` in an elevated process). A test that creates its
 own validated `Device` passes `quat::test::report_validation_message` too.
 
 Without a GPU, point the Vulkan loader at Mesa's software driver:

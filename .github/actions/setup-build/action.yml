@@ -72,10 +72,12 @@ runs:
         # ones share the runner IP's rate limit and failed at random.
         github_token: ${{ github.token }}
 
-    # The SDK's validation layer is not registered (no installer, no
-    # registry keys): VK_LAYER_PATH points the loader at its manifest. Tests
-    # that ask for validation fail when the layer is missing.
-    - name: Vulkan runtime on PATH (Windows)
+    # The SDK's validation layer is not registered (the action runs no
+    # installer). Register its manifest where the SDK installer would, as the
+    # action does for lavapipe's ICD: the loader ignores VK_LAYER_PATH in an
+    # elevated process, which the runner's is. Tests that ask for validation
+    # fail when the layer is missing.
+    - name: Vulkan runtime on PATH, validation layer (Windows)
       if: runner.os == 'Windows'
       shell: pwsh
       run: |
@@ -83,7 +85,10 @@ runs:
         "$env:VULKAN_SDK\Bin" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
         $layer = Join-Path $env:VULKAN_SDK "Bin\VkLayer_khronos_validation.json"
         if (Test-Path $layer) {
-          "VK_LAYER_PATH=$env:VULKAN_SDK\Bin" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          $key = "HKLM:\SOFTWARE\Khronos\Vulkan\ExplicitLayers"
+          if (-not (Test-Path $key)) { New-Item -Path $key -Force | Out-Null }
+          New-ItemProperty -Path $key -Name $layer -PropertyType DWord -Value 0 -Force | Out-Null
+          Write-Output "Registered validation layer: $layer"
         } else {
           Write-Output "::warning title=Vulkan SDK::no validation layer at $layer"
         }

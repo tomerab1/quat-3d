@@ -314,7 +314,7 @@ jobs:
           GTEST_BRIEF: 1
         run: ctest --test-dir build/windows-release -R engine_tests_cpu -V --timeout 900
 
-      # Under the SDK's validation layer (VK_LAYER_PATH, set by setup-build),
+      # Under the SDK's validation layer (registered by setup-build),
       # failing on any error-severity message as on Linux.
       - name: Tests (GPU on lavapipe, validation layer)
         if: always() && steps.build.outcome == 'success'
