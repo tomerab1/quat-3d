@@ -20,7 +20,8 @@ quat_generate_registration(engine_remote_world
     TEMPLATE  ${CMAKE_CURRENT_SOURCE_DIR}/command_modules.cpp.in
     OUTPUT    ${CMAKE_CURRENT_BINARY_DIR}/generated/command_modules.cpp
     DECLARE   "void register_@NAME@(RpcServer& server, const ContextPtr& ctx)"
-    CALL      "    register_@NAME@(server, ctx)")
+    CALL      "    register_@NAME@(server, ctx)"
+    INCLUDE_DIRECTORIES ${PROJECT_SOURCE_DIR}/src)
 target_link_libraries(engine_remote_world PUBLIC
     engine_flags engine_core engine_input engine_remote engine_scene engine_physics engine_nav engine_weather
     engine_script engine_project)

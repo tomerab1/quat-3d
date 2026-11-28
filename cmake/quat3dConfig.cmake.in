@@ -142,6 +142,8 @@ endif()
 include("${CMAKE_CURRENT_LIST_DIR}/quat3dTargets.cmake")
 
 include("${CMAKE_CURRENT_LIST_DIR}/Quat3dGame.cmake")
+# quat_generate_registration(): per-file registration tables, as the engine uses.
+include("${CMAKE_CURRENT_LIST_DIR}/QuatRegistration.cmake")
 
 set(quat3d_FOUND TRUE)
 check_required_components(quat3d)

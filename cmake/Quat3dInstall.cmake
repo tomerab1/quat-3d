@@ -13,7 +13,8 @@
 #   lib/                     engine static libraries
 #   lib/cmake/quat3d/        quat3dConfig.cmake, quat3dConfigVersion.cmake,
 #                            quat3dTargets*.cmake, quat3d-toolchain.cmake,
-#                            Quat3dGame.cmake, Quat3dToolchainCheck.cmake
+#                            Quat3dGame.cmake, QuatRegistration.cmake,
+#                            Quat3dToolchainCheck.cmake
 #   bin/                     quat-cook, slangc (+ its libraries), quat-mcp
 #   deps/                    the vcpkg installed tree the engine was built with
 #                            (release only), so a game never runs vcpkg
@@ -193,6 +194,7 @@ install(FILES
     ${CMAKE_CURRENT_BINARY_DIR}/sdk/quat3d-toolchain.cmake
     ${CMAKE_CURRENT_LIST_DIR}/Quat3dGame.cmake
     ${CMAKE_CURRENT_LIST_DIR}/quat_game_main.cpp.in
+    ${CMAKE_CURRENT_LIST_DIR}/QuatRegistration.cmake
     ${CMAKE_CURRENT_LIST_DIR}/Quat3dToolchainCheck.cmake
     DESTINATION ${QUAT3D_CMAKE_DIR})
 

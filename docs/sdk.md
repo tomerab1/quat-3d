@@ -115,10 +115,16 @@ REGISTER <ns::fn>)` makes a module library, and
 player, shipping player and editor with a generated `main()` that registers
 them. See [`game-modules.md`](game-modules.md).
 
-A game registers its own codec components at boot, through the stable
-`engine/scene/component_registry.hpp` (`component_registry().add(...)`; they
-sort after every engine component), not through the engine's generated
-registration tables, which are build-tree only.
+A game registers its own components at boot: through its module's
+`Registrar::component<T>()` ([`game-modules.md`](game-modules.md)), or directly
+with `component_registry().add(...)` from the stable
+`engine/scene/component_registry.hpp`. They sort after every engine component.
+The engine's own tables are generated from its source directories and are not
+part of the SDK, but the generator is: `quat_generate_registration(<target>
+DIRECTORY … PATTERN … TEMPLATE … OUTPUT … DECLARE … CALL …)` (from
+`QuatRegistration.cmake`, included by `find_package(quat3d)`) gives a game
+the same one-file-per-item layout, with the generated function called from
+its module's register function.
 
 Package variables:
 - `QUAT3D_SDK_ROOT`;

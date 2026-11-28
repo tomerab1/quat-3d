@@ -73,7 +73,8 @@ if(ENGINE_EDITOR)
         TEMPLATE  ${CMAKE_CURRENT_SOURCE_DIR}/inspectors.cpp.in
         OUTPUT    ${CMAKE_CURRENT_BINARY_DIR}/generated/inspectors.cpp
         DECLARE   "void register_@NAME@_inspector(InspectorRegistry& registry)"
-        CALL      "    register_@NAME@_inspector(registry)")
+        CALL      "    register_@NAME@_inspector(registry)"
+        INCLUDE_DIRECTORIES ${PROJECT_SOURCE_DIR}/src)
     # Vendored third-party backend: not warning-clean under our strict flags.
     set_source_files_properties(vendor/imgui_impl_sdl3.cpp
         PROPERTIES COMPILE_OPTIONS "${ENGINE_THIRD_PARTY_TU_FLAGS}")
