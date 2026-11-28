@@ -60,10 +60,17 @@ RpcResult environment_get(Context& ctx, const Json& params) {
     if (const entt::entity sun = find_sun(r); sun != entt::null) {
         const auto& light = r.get<scene::DirectionalLight>(sun);
         const SunAngles a = angles_of(light.direction);
+        // azimuth_deg here is the world-space angle of the light's travel
+        // direction (the editor's convention; a scene without a world clock
+        // has no compass). time.get reports the Sun's compass bearing.
+        const entt::entity clock = scene::find_world_clock(r);
+        const bool driven = clock != entt::null && r.get<scene::WorldClock>(clock).enabled &&
+                            r.get<scene::WorldClock>(clock).drive_sun;
         out["sun"] = {{"azimuth_deg", a.azimuth_deg},
                       {"elevation_deg", a.elevation_deg},
                       {"intensity", light.intensity},
-                      {"color", vec3_json(light.color)}};
+                      {"color", vec3_json(light.color)},
+                      {"driven_by_clock", driven}};
     } else {
         out["sun"] = nullptr;
     }

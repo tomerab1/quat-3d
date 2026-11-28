@@ -25,4 +25,9 @@ void draw_time_of_day_section(scene::Scene* scene);
 // Sun section then shows the light's angles read-only).
 [[nodiscard]] bool clock_drives_sun(const entt::registry& registry);
 
+// True for an entity that only holds the world clock (and the Transform
+// every entity gets): it has no place in the world, so the Inspector hides
+// its Transform section and the viewport draws no gizmo for it.
+[[nodiscard]] bool clock_only_entity(const entt::registry& registry, entt::entity entity);
+
 } // namespace engine::editor

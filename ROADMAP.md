@@ -56,7 +56,10 @@ the rest by need.
   (terrain streaming, play mode, networking). Behaviour-preserving.
 - [ ] **S8 — Split oversized files.** Enforce the file-size rule in
   CLAUDE.md: `gltf_loader.cpp` (validation / mesh / material / skin /
-  animation / scene assembly), and any file past ~1000 lines.
+  animation / scene assembly), and any file past ~1000 lines. Next:
+  `src/scene/component_json.cpp` (974 lines after R22.1; one component
+  more crosses the limit): move per-component codecs into their own files
+  as `world_clock_json.cpp` / `component_json_animation.cpp` do.
 
 ## A — AI tooling: MCP server in Rust
 
@@ -286,7 +289,9 @@ JSON-RPC over loopback TCP to the engine.
       the opposition surge; correct phase and libration (from `SkyState`);
       earthshine; moonlight as the shadow caster with a twilight hand-off
       from the sun.
-    - *Perception:* wide-range histogram auto-exposure; scotopic / mesopic
+    - *Perception:* wide-range histogram auto-exposure (R22.1's sunrise /
+      sunset captures come out washed out: the current exposure over-brightens
+      a low sun); scotopic / mesopic
       response with the Purkinje shift; night acuity loss and noise
       (Thompson, Shirley & Ferwerda 2002; Kirk & O'Brien 2011).
     - *Integration:* time-sliced IBL rebakes; moonlit volumetric clouds and

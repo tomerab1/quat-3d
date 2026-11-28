@@ -62,8 +62,20 @@ void decode_world_clock(core::JsonFields& f, WorldClock& c) {
         } else {
             // A zone designator also becomes the display zone, unless the
             // same object sets utc_offset_h.
-            if (parsed->utc_offset_min && !has_offset) c.utc_offset_min = *parsed->utc_offset_min;
-            c.utc = astro::utc_from_civil(parsed->civil, parsed->utc_offset_min.value_or(c.utc_offset_min));
+            const int            zone = parsed->utc_offset_min.value_or(c.utc_offset_min);
+            const astro::UtcTime t = astro::utc_from_civil(parsed->civil, zone);
+            // The local year was checked; the offset can still carry the
+            // instant past the supported UTC range (the clock would clamp it
+            // on its next tick and the sun would jump).
+            if (!astro::in_supported_range(t)) {
+                f.fail("datetime", "the UTC instant " + astro::format_iso8601(t, 0) +
+                                       " is outside the supported years " +
+                                       std::to_string(astro::k_min_year) + ".." +
+                                       std::to_string(astro::k_max_year));
+            } else {
+                if (parsed->utc_offset_min && !has_offset) c.utc_offset_min = *parsed->utc_offset_min;
+                c.utc = t;
+            }
         }
     }
     f.number("latitude_deg", c.latitude_deg, -90.0, 90.0);

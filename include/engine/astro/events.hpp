@@ -7,8 +7,12 @@
 // across the window and each crossing of the event altitude is refined by
 // bisection to < 0.1 s on the full ephemeris — the scan-and-refine approach
 // of Montenbruck & Pfleger, "Astronomy on the Personal Computer" (4th ed.,
-// 2000, sec. 3.8), with a finer step so close pairs of events (high-latitude
-// moonrises) are not missed. Event altitudes follow the USNO / Meeus (ch. 15)
+// 2000, sec. 3.8), with a finer step. Excursions shorter than a step (the
+// first and last days of polar day / night, grazing high-latitude moonrises)
+// leave no sign change between samples: wherever three samples bend toward
+// the event altitude and come within 1° of it, the extremum between them is
+// located (golden-section search) and its sign decides whether the body
+// briefly crossed. Event altitudes follow the USNO / Meeus (ch. 15)
 // conventions:
 //   - sunrise / sunset: upper limb on the horizon with 34' of refraction,
 //     h0 = −0°50' (semidiameter 16' + refraction 34').

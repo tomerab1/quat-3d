@@ -532,7 +532,8 @@ void draw_inspector(scene::Scene& scene, entt::entity selected, panels::Inspecto
     }
 
     panels::entity_header(scene, selected);
-    inspect<scene::Transform>(state, r, selected);
+    // A clock-only entity has no place in the world: no Transform section.
+    if (!clock_only_entity(r, selected)) inspect<scene::Transform>(state, r, selected);
     inspect<scene::Primitive>(state, r, selected, true);
     if (!r.all_of<scene::Primitive>(selected)) inspect<scene::MeshRenderer>(state, r, selected);
     draw_material_inspector(r, selected);

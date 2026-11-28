@@ -245,7 +245,7 @@ values. Unknown fields are errors (they name the known fields).
 | `scene.set_parent` | `{entity, parent, keep_world?=true}` | `{id}` |
 | `scene.clear` | `{keep_lights?=true}` | `{destroyed: n}` |
 | `scene.batch` | `{commands:[{method, params}], stop_on_error?=true}` | `{results:[{ok:true, result} \| {ok:false, error:{code,message}}]}` — a string `"@N"` in an `entity`/`parent` field means the `id` returned by command N of this batch. Deferred methods cannot be batched. |
-| `environment.get` | — | `{sun:{azimuth_deg, elevation_deg, intensity, color}, clouds:{enabled, coverage, density, bottom_km, thickness_km, size_km, detail, wind_speed, wind_dir_deg}}` |
+| `environment.get` | — | `{sun:{azimuth_deg, elevation_deg, intensity, color, driven_by_clock}, clouds:{enabled, coverage, density, bottom_km, thickness_km, size_km, detail, wind_speed, wind_dir_deg}}` |
 | `environment.set` | same shape, every field optional | `environment.get` result |
 | `world.ground_height` | `{points:[[x,z],...]}` (≤ 1024) | `{heights:[y \| null]}` — null where no terrain covers the point |
 | `camera.get` | — | `{position, yaw_deg, pitch_deg, fov_deg}` |
@@ -260,7 +260,13 @@ values. Unknown fields are errors (they name the known fields).
 
 Sun convention (same as the editor's Renderer panel): the light's travel
 direction `d` gives `azimuth_deg = atan2(d.z, d.x)` and `elevation_deg =
-asin(-d.y)`.
+asin(-d.y)`. This azimuth is a world-space angle (from +X toward +Z), not a
+compass bearing: a scene has no compass until it has a world clock.
+`time.get`'s `sun.azimuth_deg` is the compass bearing (0 = north = −Z by
+default, 90 = east = +X), so the same light reads differently in the two
+(e.g. the Sun due south at noon: `time.get` 180, `environment.get` −90).
+`driven_by_clock` is true while the world clock positions the sun (then
+`environment.set` refuses angles and intensity).
 
 Methods that need something only the full application has (camera,
 screenshot, clouds, glTF spawn, play/stop, save/load, nav bake, and the

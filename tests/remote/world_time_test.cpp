@@ -89,6 +89,9 @@ TEST_F(TimeCommands, RejectsBadParametersPrecisely) {
     EXPECT_TRUE(contains(err("time.set", {{"local_time", "7pm"}}, code::invalid_params), "local_time:"));
     EXPECT_TRUE(contains(err("time.set", {{"speed", 10}}, code::invalid_params), "unknown field"));
     EXPECT_TRUE(contains(err("time.set", {{"datetime", "1500-01-01"}}, code::invalid_params), "1800..2200"));
+    // The local year is in range but the UTC instant is not.
+    EXPECT_TRUE(contains(err("time.set", {{"datetime", "2200-12-31T23:00-05:00"}}, code::invalid_params),
+                         "outside the supported years"));
     // Nothing was created by the failed calls.
     EXPECT_EQ(s::find_world_clock(reg()), entt::entity{entt::null});
 
@@ -104,11 +107,20 @@ TEST_F(TimeCommands, EnvironmentSetCannotMoveADrivenSun) {
     EXPECT_TRUE(contains(err("environment.set", {{"sun", {{"elevation_deg", 10}}}}, code::invalid_params),
                          "the world clock drives the sun"));
     // Colour stays the user's.
-    (void)ok("environment.set", {{"sun", {{"color", "#ffcc88"}}}});
+    Json env = ok("environment.set", {{"sun", {{"color", "#ffcc88"}}}});
+    EXPECT_EQ(env["sun"]["driven_by_clock"], true);
+    // The two azimuths name different angles of the same light: the Sun's
+    // compass bearing (time.get) and the travel direction's world angle
+    // atan2(d.z, d.x) (environment.get). Near solar noon in Paris the Sun is
+    // south (compass ~180) and the light travels north (-Z): about -90.
+    const Json t = ok("time.set", {{"local_time", "13:52"}});
+    EXPECT_NEAR(t["sun"]["azimuth_deg"].get<double>(), 180.0, 1.0);
+    EXPECT_NEAR(ok("environment.get")["sun"]["azimuth_deg"].get<double>(), -90.0, 1.0);
     // Once the clock lets go, the angles are free again.
     (void)ok("time.set", {{"drive_sun", false}});
-    const Json env = ok("environment.set", {{"sun", {{"elevation_deg", 10}}}});
+    env = ok("environment.set", {{"sun", {{"elevation_deg", 10}}}});
     EXPECT_NEAR(env["sun"]["elevation_deg"].get<double>(), 10.0, 1e-3);
+    EXPECT_EQ(env["sun"]["driven_by_clock"], false);
 }
 
 TEST_F(TimeCommands, TheClockIsASceneComponent) {

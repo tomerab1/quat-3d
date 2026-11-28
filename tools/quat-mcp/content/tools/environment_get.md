@@ -1,3 +1,3 @@
-Current sky: `{sun: {azimuth_deg, elevation_deg, intensity, color}, clouds: {enabled, coverage, density, bottom_km, thickness_km, size_km, detail, wind_speed, wind_dir_deg}}`.
+Current sky: `{sun: {azimuth_deg, elevation_deg, intensity, color, driven_by_clock}, clouds: {enabled, coverage, density, bottom_km, thickness_km, size_km, detail, wind_speed, wind_dir_deg}}`.
 
-Sun angles: `azimuth_deg = atan2(d.z, d.x)` and `elevation_deg = asin(-d.y)` of the light's travel direction d, so elevation 90 = noon overhead, 5..10 = golden hour, < 0 = night.
+Sun angles: `azimuth_deg = atan2(d.z, d.x)` and `elevation_deg = asin(-d.y)` of the light's travel direction d, so elevation 90 = noon overhead, 5..10 = golden hour, < 0 = night. This azimuth is a world-space angle (from +X toward +Z), not a compass bearing: for the compass bearing of the real Sun use `time_get`. `sun.driven_by_clock` is true while a world clock (`time_set`) positions the sun; change the time instead of the angles then.

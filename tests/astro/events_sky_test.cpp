@@ -1,8 +1,10 @@
 // engine/astro/events.hpp (rise / set / transit / twilight) against USNO
 // almanac times, and engine/astro/sky_state.hpp's world-space hand-off.
 
+#include <algorithm>
 #include <cmath>
 #include <cstdlib>
+#include <vector>
 
 #include <glm/glm.hpp>
 #include <gtest/gtest.h>
@@ -71,6 +73,110 @@ TEST(AstroEvents, GrazingMoonriseAtSeventyNorth) {
     const a::RiseSet r = a::rise_set(a::Body::moon, utc(2023, 2, 19), 70.0, 0.0);
     EXPECT_LE(seconds_off(r.rise, utc(2023, 2, 19, 11, 28)), 180.0);
     EXPECT_LE(seconds_off(r.set, utc(2023, 2, 19, 12, 5)), 180.0);
+}
+
+// The Sun's topocentric airless altitude above the sunrise altitude, the
+// function rise_set() searches, rebuilt from the public API for a brute-force
+// reference scan.
+[[nodiscard]] double sun_above_h0(a::UtcTime t, double lat, double lon) {
+    const double     d_ut = a::days_ut_since_j2000(t);
+    const double     d_tt = a::days_tt_since_j2000(t);
+    const double     T = a::centuries_tt(d_tt);
+    const a::Nutation n = a::nutation(T);
+    const double     eps = a::mean_obliquity(T) + n.obliquity;
+    const double     lst = a::greenwich_mean_sidereal_time(d_ut) + n.longitude * std::cos(eps * a::k_deg) + lon;
+    const a::SunPosition s = a::sun_position(d_tt);
+    const glm::dvec3 enu = a::topocentric_direction(a::enu_from_equatorial(lst, lat) * a::equatorial_vector(s.equatorial),
+                                                    s.distance_au * a::k_km_per_au, lat);
+    return std::asin(enu.z) / a::k_deg - a::k_sunrise_altitude;
+}
+
+struct Crossings {
+    std::vector<a::UtcTime> up;
+    std::vector<a::UtcTime> down;
+};
+// Every crossing in [start, start + 24 h) on a `step_s` grid (bisected).
+[[nodiscard]] Crossings brute_force(a::UtcTime start, double lat, double lon, double step_s) {
+    Crossings c;
+    const auto step = static_cast<std::int64_t>(step_s * 1e9);
+    double     prev = sun_above_h0(start, lat, lon);
+    for (std::int64_t t = start.ns + step; t <= start.ns + a::k_ns_per_day; t += step) {
+        const double cur = sun_above_h0(a::UtcTime{t}, lat, lon);
+        if ((prev > 0.0) != (cur > 0.0)) {
+            std::int64_t lo = t - step;
+            std::int64_t hi = t;
+            while (hi - lo > 10'000'000) {
+                const std::int64_t mid = lo + (hi - lo) / 2;
+                ((sun_above_h0(a::UtcTime{mid}, lat, lon) > 0.0) == (prev > 0.0) ? lo : hi) = mid;
+            }
+            (cur > 0.0 ? c.up : c.down).push_back(a::UtcTime{lo});
+        }
+        prev = cur;
+    }
+    return c;
+}
+
+TEST(AstroEvents, CatchesTheMinutesLongNightAtThePolarDayEdge) {
+    // At the June solstice the midnight Sun just touches the sunrise
+    // altitude at some latitude φ*. A little south of it the Sun dips below
+    // for a few minutes, a little north it stays up: the first / last day
+    // of polar day. A 10-minute scan alone misses that dip.
+    // 1.25°W puts the lower culmination (~00:07 UTC) between two of
+    // rise_set's 10-minute samples (00:00, 00:10), so only the extremum
+    // search can see the night.
+    constexpr double k_lon = -1.25;
+    const a::UtcTime start = utc(2026, 6, 20, 12);
+    const auto min_above = [&](double lat) {
+        double m = 1e9;
+        for (int k = 0; k < 2880; ++k) m = std::min(m, sun_above_h0(a::add_seconds(start, k * 30.0), lat, k_lon));
+        return m;
+    };
+    double lo = 64.0; // dips well below
+    double hi = 68.0; // stays well above
+    for (int it = 0; it < 40; ++it) {
+        const double mid = 0.5 * (lo + hi);
+        (min_above(mid) > 0.0 ? hi : lo) = mid;
+    }
+    const double edge = hi;
+
+    // 0.002° south of the edge: a night of a few minutes.
+    const double     south = edge - 0.002;
+    const Crossings  ref = brute_force(start, south, k_lon, 5.0);
+    ASSERT_EQ(ref.down.size(), 1U);
+    ASSERT_EQ(ref.up.size(), 1U);
+    const double night_s = static_cast<double>(ref.up[0].ns - ref.down[0].ns) * 1e-9;
+    EXPECT_GT(night_s, 0.0);
+    EXPECT_LT(night_s, 600.0) << "the test needs a night shorter than one scan step";
+    // ...lying wholly between two scan samples.
+    const std::int64_t into_step = (ref.down[0].ns - start.ns) % (600LL * a::k_ns_per_second);
+    ASSERT_LT(into_step + static_cast<std::int64_t>(night_s * 1e9), 600LL * a::k_ns_per_second)
+        << "the night spans a scan sample; move k_lon";
+    const a::RiseSet r = a::rise_set(a::Body::sun, start, south, k_lon);
+    EXPECT_FALSE(r.always_above);
+    EXPECT_LE(seconds_off(r.set, ref.down[0]), 1.0);
+    EXPECT_LE(seconds_off(r.rise, ref.up[0]), 1.0);
+
+    // 0.002° north: polar day, no crossing.
+    const a::RiseSet n = a::rise_set(a::Body::sun, start, edge + 0.002, k_lon);
+    EXPECT_TRUE(n.always_above);
+    EXPECT_FALSE(n.rise || n.set);
+}
+
+TEST(AstroEvents, PolarDayTransitionsAgreeWithABruteForceScan) {
+    // 67°N through the weeks polar day begins and ends: every day's sunrise
+    // and sunset match a 10-second scan, including the transition days.
+    for (int day = 0; day < 70; ++day) {
+        const a::UtcTime start = a::add_seconds(utc(2026, 5, 20, 12), day * 86400.0);
+        const Crossings  ref = brute_force(start, 67.0, 0.0, 10.0);
+        const a::RiseSet r = a::rise_set(a::Body::sun, start, 67.0, 0.0);
+        ASSERT_LE(ref.up.size(), 1U);
+        ASSERT_LE(ref.down.size(), 1U);
+        EXPECT_EQ(r.rise.has_value(), !ref.up.empty()) << "day " << day;
+        EXPECT_EQ(r.set.has_value(), !ref.down.empty()) << "day " << day;
+        if (r.rise && !ref.up.empty()) EXPECT_LE(seconds_off(r.rise, ref.up[0]), 1.0) << "day " << day;
+        if (r.set && !ref.down.empty()) EXPECT_LE(seconds_off(r.set, ref.down[0]), 1.0) << "day " << day;
+        EXPECT_EQ(r.always_above, ref.up.empty() && ref.down.empty() && sun_above_h0(start, 67.0, 0.0) > 0.0);
+    }
 }
 
 TEST(AstroEvents, PolarDayAndNightHaveNoCrossings) {

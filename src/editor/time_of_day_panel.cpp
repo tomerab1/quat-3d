@@ -5,6 +5,7 @@
 #include <cmath>
 #include <cstdio>
 #include <string>
+#include <string_view>
 
 #include <entt/entity/registry.hpp>
 #include <imgui.h>
@@ -13,6 +14,7 @@
 #include "engine/astro/moon.hpp"
 #include "engine/astro/sky_state.hpp"
 #include "engine/astro/time.hpp"
+#include "engine/scene/component_json.hpp"
 #include "engine/scene/components.hpp"
 #include "engine/scene/scene.hpp"
 #include "engine/scene/world_clock.hpp"
@@ -202,6 +204,14 @@ void draw_readouts(const entt::registry& r, entt::entity e, const scene::WorldCl
 }
 
 } // namespace
+
+bool clock_only_entity(const entt::registry& r, entt::entity e) {
+    if (!r.valid(e) || !r.all_of<scene::WorldClock>(e)) return false;
+    for (const std::string_view name : scene::component_names(r, e)) {
+        if (name != "transform" && name != "world_clock") return false;
+    }
+    return true;
+}
 
 bool clock_drives_sun(const entt::registry& r) {
     const entt::entity e = scene::find_world_clock(r);

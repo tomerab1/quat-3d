@@ -171,6 +171,11 @@ TEST(WorldClock, CodecRoundTripsAndValidates) {
     EXPECT_NE(error({{"time_scale", -1}}).find("world_clock.time_scale"), std::string::npos);
     EXPECT_NE(error({{"timezone", 2}}).find("unknown field"), std::string::npos);
     EXPECT_NE(error({{"utc_offset_h", 15}}).find("utc_offset_h"), std::string::npos);
+    // Scene files and add_component check the UTC instant, not just the
+    // local year: the clock would otherwise clamp it on its next tick.
+    EXPECT_NE(error({{"datetime", "1800-01-01T00:30+01:00"}}).find("outside the supported years"),
+              std::string::npos);
+    EXPECT_NE(error({{"datetime", "2200-12-31T22:00-05:00"}}).find("world_clock.datetime"), std::string::npos);
 
     // One clock per scene.
     const entt::entity other = r.create();
