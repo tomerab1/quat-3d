@@ -31,6 +31,7 @@ StructuredBuffer<GpuLight>          g_lights;
 StructuredBuffer<uint2>             g_cluster_grid;
 StructuredBuffer<uint>              g_cluster_indices;
 TextureCube                         g_irradiance;
+Texture2D                           g_transmittance; // atmosphere LUT (atmosphere.x)
 Texture3D                           g_history;
 [format("rgba16f")] RWTexture3D<float4> g_out;
 
@@ -83,7 +84,11 @@ void compute_main(uint3 tid : SV_DispatchThreadID) {
             proj.v_axis = g_fog.cloud_shadow_v;
             vis *= cloud_shadow_sample(g_cloud_shadow, g_linear, proj, p);
         }
-        radiance += g_fog.sun_radiance.rgb * (vis * fog_hg_phase(dot(dir, g_fog.sun.xyz), g));
+        float3 sun_rad = g_fog.sun_radiance.rgb;
+        if (g_fog.atmosphere.x > 0.5) {
+            sun_rad *= fog_sun_transmittance(g_transmittance, g_linear, g_fog.sun.y);
+        }
+        radiance += sun_rad * (vis * fog_hg_phase(dot(dir, g_fog.sun.xyz), g));
     }
     if (g_cluster_params.dims.w > 0u && any(scatter > 0.0)) {
         uint2 range = g_cluster_grid[cluster_index_of_world(g_cluster_params, p)];

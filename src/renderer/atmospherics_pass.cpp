@@ -18,7 +18,8 @@ namespace {
 }
 
 enum Slot : std::uint8_t {
-    a_comp, a_hdr, a_depth, a_cloud, a_cloud_depth, a_ap, a_fog, a_irradiance, a_linear, a_count
+    a_comp, a_hdr, a_depth, a_cloud, a_cloud_depth, a_ap, a_fog, a_irradiance, a_linear,
+    a_transmittance, a_count
 };
 constexpr std::array<rhi::BindingRequest, a_count> k_bindings{{
     {"g_comp", VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER},
@@ -30,9 +31,10 @@ constexpr std::array<rhi::BindingRequest, a_count> k_bindings{{
     {"g_fog", VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE},
     {"g_irradiance", VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE},
     {"g_linear", VK_DESCRIPTOR_TYPE_SAMPLER},
+    {"g_transmittance", VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE},
 }};
 
-// Mirrors Atmospherics in atmospherics_composite.slang (std140, 192 bytes).
+// Mirrors Atmospherics in atmospherics_composite.slang (std140, 208 bytes).
 struct AtmosphericsGpu {
     glm::mat4 inv_view_proj{1.0F};
     glm::vec4 camera{0.0F};
@@ -43,8 +45,9 @@ struct AtmosphericsGpu {
     glm::vec4 sun{0.0F};
     glm::vec4 sun_radiance{0.0F};
     glm::vec4 ambient{0.0F};
+    glm::vec4 atmosphere{0.0F};
 };
-static_assert(sizeof(AtmosphericsGpu) == 192, "must match atmospherics_composite.slang");
+static_assert(sizeof(AtmosphericsGpu) == 208, "must match atmospherics_composite.slang");
 
 [[nodiscard]] float flag(bool b) { return b ? 1.0F : 0.0F; }
 
@@ -129,6 +132,7 @@ std::expected<void, core::Error> AtmosphericsPass::add_to_graph(rhi::RenderGraph
     c.sun = glm::vec4(in.media.sun_to, 0.0F);
     c.sun_radiance = glm::vec4(in.media.sun_radiance, 0.0F);
     c.ambient = glm::vec4(in.media.ambient, 0.0F);
+    c.atmosphere = {in.transmittance != VK_NULL_HANDLE ? 1.0F : 0.0F, 0.0F, 0.0F, 0.0F};
     std::memcpy(constants_.mapped(), &c, sizeof(c));
     if (auto f = constants_.flush(0, sizeof(c)); !f) return std::unexpected(f.error());
 
@@ -154,6 +158,11 @@ std::expected<void, core::Error> AtmosphericsPass::add_to_graph(rhi::RenderGraph
     d.write_sampled_image(slots_[a_irradiance], irradiance,
                           VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
     d.write_sampler(slots_[a_linear], sampler_.handle());
+    // Without the LUT atmosphere the (black, never read) BRDF LUT stands in.
+    d.write_sampled_image(slots_[a_transmittance],
+                          in.transmittance != VK_NULL_HANDLE ? in.transmittance
+                                                             : fb.ibl.views().brdf_lut,
+                          VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
 
     auto pass = graph.add_pass("atmospherics", rhi::PassType::compute);
     pass.reads(in.depth, rhi::ResourceUsage::sampled_compute)

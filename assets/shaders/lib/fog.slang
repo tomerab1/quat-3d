@@ -21,13 +21,15 @@
 // near the camera, never collapsing at distance 0. Depth is the distance
 // along the view ray (m).
 
+import atmosphere;
+
 public static const uint FOG_X = 160;
 public static const uint FOG_Y = 90;
 public static const uint FOG_Z = 64;
 public static const float FOG_DEPTH_OFFSET_M = 2.0;
 public static const uint FOG_MAX_VOLUMES = 64;
 
-// Per-frame fog values (std140, 288 bytes; engine::renderer::FogFrameGpu).
+// Per-frame fog values (std140, 304 bytes; engine::renderer::FogFrameGpu).
 public struct FogFrame {
     public float4 inv_view_proj[4];  // clip -> world (render jitter removed), glm columns
     public float4 prev_view_proj[4]; // last frame world -> clip (render jitter removed)
@@ -41,6 +43,8 @@ public struct FogFrame {
     public float4 jitter;            // xyz froxel jitter (0..1), w IBL intensity (0 = no cube)
     public float4 cloud_shadow_u;    // CloudShadowProjection
     public float4 cloud_shadow_v;
+    public float4 atmosphere;        // x: 1 = the light reaches the fog through the
+                                     // transmittance LUT (as the lit surfaces do)
 }
 
 // One local fog volume (std430, 80 bytes; engine::renderer::FogVolumeGpu):
@@ -114,6 +118,15 @@ public float height_fog_optical_depth(float4 height_fog, float y0, float dir_y, 
     if (abs(slope) * len < 1e-4) return base * len;
     if (y_start < height_fog.z && dir_y < 0.0) return base * len; // under the base, going down
     return base * (1.0 - exp(-slope * len)) / slope;
+}
+
+// The sun's transmittance through the air down to the camera's view height
+// (0 below the horizon): the tint the lighting pass gives the sun on
+// surfaces, so lit fog matches lit ground at dawn and dusk.
+public float3 fog_sun_transmittance(Texture2D lut, SamplerState samp, float mu) {
+    return intersects_ground(ATMOS_VIEW_HEIGHT, mu)
+               ? float3(0.0, 0.0, 0.0)
+               : sample_transmittance(lut, samp, ATMOS_VIEW_HEIGHT, mu);
 }
 
 public float fog_hg_phase(float cos_theta, float g) {

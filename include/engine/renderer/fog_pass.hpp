@@ -95,6 +95,9 @@ struct FogInputs {
     const CloudShadowMap*  cloud_shadow = nullptr; // nullptr / invalid: no cloud shadows
     const ClusteredLights* lights = nullptr;       // nullptr / invalid: no local lights
     VkImageView            irradiance = VK_NULL_HANDLE; // IBL diffuse cube (ambient)
+    // The atmosphere's transmittance LUT: the sun reaches the fog through
+    // it, as it reaches lit surfaces (null: the LUT sky is off).
+    VkImageView            transmittance = VK_NULL_HANDLE;
 };
 
 class FogHistory {

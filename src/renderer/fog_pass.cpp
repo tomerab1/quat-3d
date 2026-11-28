@@ -23,7 +23,7 @@ namespace {
 enum ScatterSlot : std::uint8_t {
     s_fog, s_volumes, s_shadow_map, s_shadow_cmp, s_cascades, s_cloud_shadow, s_linear,
     s_cluster_params, s_lights, s_cluster_grid, s_cluster_indices, s_irradiance, s_history,
-    s_out, s_count
+    s_out, s_transmittance, s_count
 };
 constexpr std::array<rhi::BindingRequest, s_count> k_scatter_bindings{{
     {"g_fog", VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER},
@@ -40,6 +40,7 @@ constexpr std::array<rhi::BindingRequest, s_count> k_scatter_bindings{{
     {"g_irradiance", VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE},
     {"g_history", VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE},
     {"g_out", VK_DESCRIPTOR_TYPE_STORAGE_IMAGE},
+    {"g_transmittance", VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE},
 }};
 
 enum IntegrateSlot : std::uint8_t { i_scatter, i_integrated, i_count };
@@ -48,7 +49,7 @@ constexpr std::array<rhi::BindingRequest, i_count> k_integrate_bindings{{
     {"g_integrated", VK_DESCRIPTOR_TYPE_STORAGE_IMAGE},
 }};
 
-// Mirrors FogFrame in lib/fog.slang (std140, 288 bytes).
+// Mirrors FogFrame in lib/fog.slang (std140, 304 bytes).
 struct FogFrameGpu {
     glm::mat4 inv_view_proj{1.0F};
     glm::mat4 prev_view_proj{1.0F};
@@ -62,8 +63,9 @@ struct FogFrameGpu {
     glm::vec4 jitter{0.0F};
     glm::vec4 cloud_shadow_u{0.0F};
     glm::vec4 cloud_shadow_v{0.0F};
+    glm::vec4 atmosphere{0.0F};
 };
-static_assert(sizeof(FogFrameGpu) == 288, "must match FogFrame in lib/fog.slang");
+static_assert(sizeof(FogFrameGpu) == 304, "must match FogFrame in lib/fog.slang");
 
 struct IntegratePush {
     glm::vec4 params{0.0F}; // far m, pre-exposure
@@ -279,6 +281,7 @@ std::expected<rhi::ResourceHandle, core::Error> FogPass::add_to_graph(rhi::Rende
         f.cloud_shadow_u = in.cloud_shadow->projection.u_axis;
         f.cloud_shadow_v = in.cloud_shadow->projection.v_axis;
     }
+    f.atmosphere = {in.transmittance != VK_NULL_HANDLE ? 1.0F : 0.0F, 0.0F, 0.0F, 0.0F};
     std::memcpy(constants_.mapped(), &f, sizeof(f));
     if (auto r = constants_.flush(0, sizeof(f)); !r) return std::unexpected(r.error());
     if (count > 0) {
@@ -327,6 +330,11 @@ std::expected<rhi::ResourceHandle, core::Error> FogPass::add_to_graph(rhi::Rende
         d.write_storage_buffer(s[s_cluster_grid], cl.grid, cl.grid_size);
         d.write_storage_buffer(s[s_cluster_indices], cl.indices, cl.indices_size);
         d.write_sampled_image(s[s_irradiance], irradiance, ro);
+        // Without the LUT atmosphere the (black, never read) BRDF LUT stands in.
+        d.write_sampled_image(s[s_transmittance],
+                              in.transmittance != VK_NULL_HANDLE ? in.transmittance
+                                                                 : fb.ibl.views().brdf_lut,
+                              ro);
     }
 
     FogHistory::Slot& out_slot = *hist.slots_[hist.frame_ % 2];

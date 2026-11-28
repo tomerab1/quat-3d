@@ -46,6 +46,7 @@ struct AtmosphericsInputs {
     FogMedia            media{};             // height fog (analytic beyond the grid)
     bool                height_fog = false;  // apply the analytic height fog
     VkImageView         irradiance = VK_NULL_HANDLE; // IBL diffuse cube (fog ambient)
+    VkImageView         transmittance = VK_NULL_HANDLE; // atmosphere LUT (fog sun tint)
 };
 
 class AtmosphericsPass {

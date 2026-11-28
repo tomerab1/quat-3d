@@ -15,10 +15,11 @@
 // clouds) are scaled into the HDR's units by `scale.x`.
 
 import aerial_perspective;
+import atmosphere;
 import fog;
 import hdr; // hdr_store
 
-// std140, 192 bytes; engine::renderer::AtmosphericsGpu.
+// std140, 208 bytes; engine::renderer::AtmosphericsGpu.
 struct Atmospherics {
     float4 inv_view_proj[4]; // clip -> world (jittered, as the HDR was rendered)
     float4 camera;           // xyz world (m), w unused
@@ -29,6 +30,7 @@ struct Atmospherics {
     float4 sun;              // xyz unit toward the light, w unused
     float4 sun_radiance;     // rgb (scene units)
     float4 ambient;          // rgb flat ambient radiance
+    float4 atmosphere;       // x: 1 = the sun reaches the fog through the transmittance LUT
 }
 ConstantBuffer<Atmospherics> g_comp;
 
@@ -39,6 +41,7 @@ Texture2D    g_cloud_depth; // km
 Texture3D    g_ap;
 Texture3D    g_fog;
 TextureCube  g_irradiance;
+Texture2D    g_transmittance; // atmosphere LUT (atmosphere.x)
 SamplerState g_linear; // bilinear, clamp
 
 float4 mul_cols4(float4 cols[4], float4 v) {
@@ -81,9 +84,12 @@ void compute_main(uint3 tid : SV_DispatchThreadID) {
         float tau = height_fog_optical_depth(g_comp.height_fog, g_comp.camera.y, dir.y, t0, t1);
         if (tau > 0.0) {
             float trans = exp(-tau);
+            float3 sun_rad = g_comp.sun_radiance.rgb;
+            if (g_comp.atmosphere.x > 0.5) {
+                sun_rad *= fog_sun_transmittance(g_transmittance, g_linear, g_comp.sun.y);
+            }
             float3 lin = fog_ambient(g_irradiance, g_linear, g_comp.ambient.rgb, g_comp.scale.w) +
-                         g_comp.sun_radiance.rgb *
-                             fog_hg_phase(dot(dir, g_comp.sun.xyz), g_comp.height_fog.w);
+                         sun_rad * fog_hg_phase(dot(dir, g_comp.sun.xyz), g_comp.height_fog.w);
             col = col * trans + g_comp.fog_albedo.rgb * lin * (1.0 - trans) * g_comp.scale.y;
         }
     }

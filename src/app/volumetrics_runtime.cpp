@@ -126,6 +126,8 @@ VolumetricsRuntime::add_to_graph(engine::rhi::RenderGraph& graph, std::uint32_t 
     comp.camera = in.camera;
     comp.sky_scale = k_sky_lut_scale;
     comp.irradiance = in.irradiance;
+    const bool lut_sky = in.atmosphere != nullptr && in.atmosphere->valid();
+    comp.transmittance = lut_sky ? in.atmosphere->transmittance_view() : VK_NULL_HANDLE;
 
     // Aerial perspective and clouds need the LUT atmosphere.
     if (in.atmosphere != nullptr && in.atmosphere->valid()) {
@@ -192,6 +194,7 @@ VolumetricsRuntime::add_to_graph(engine::rhi::RenderGraph& graph, std::uint32_t 
         fi.cloud_shadow = in.cloud_shadow;
         fi.lights = in.lights;
         fi.irradiance = in.irradiance;
+        fi.transmittance = comp.transmittance;
         auto volume = s.fog.add_to_graph(graph, fi);
         if (!volume) return std::unexpected(volume.error());
         comp.fog = *volume;
