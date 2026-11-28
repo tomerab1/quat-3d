@@ -1,6 +1,7 @@
 // GPU pass timing (R4.2): two render-graph passes timed through
 // GpuProfiler resolve to non-negative, ordered durations inside the frame,
-// each frame is collected once, and a profiler without a device does
+// each frame is collected once, zones ended out of order or never ended
+// are still closed inside their frame, and a profiler without a device does
 // nothing.
 
 #include <gtest/gtest.h>
@@ -79,6 +80,49 @@ TEST(GpuProfilerTiming, TwoPassesResolveToOrderedDurations) {
     EXPECT_LT(frame->total_ms, 10'000.0F); // sane: not a wrapped counter
 
     EXPECT_FALSE(profiler->collect(1)); // a frame is returned once
+}
+
+TEST(GpuProfilerTiming, OutOfOrderAndUnendedZonesCloseInTheirFrame) {
+    QUAT_REQUIRE_GPU(ctx);
+    auto profiler = GpuProfiler::create(
+        ctx->device, GpuProfiler::Config{.frames_in_flight = 2, .max_zones = 8, .tracy = false});
+    ASSERT_OK(profiler);
+    if (!profiler->supported()) GTEST_SKIP() << profiler->status();
+    const auto outer = engine::core::intern_profile_name("unwind_outer");
+    const auto inner = engine::core::intern_profile_name("unwind_inner");
+    const auto unended = engine::core::intern_profile_name("unwind_unended");
+
+    GpuProfiler::ZoneToken next_frame_token = GpuProfiler::k_no_zone;
+    ASSERT_OK(quat::test::submit_and_wait(ctx->device, [&](VkCommandBuffer cmd) {
+        profiler->begin_frame(cmd, 0, 7);
+        const auto a = profiler->begin_zone(cmd, outer, "unwind_outer");
+        const auto b = profiler->begin_zone(cmd, inner, "unwind_inner");
+        EXPECT_EQ(a, 0);
+        EXPECT_EQ(b, 1);
+        profiler->end_zone(cmd, a); // outer first: closes inner too
+        profiler->end_zone(cmd, b); // already closed: no-op
+        (void)profiler->begin_zone(cmd, unended, "unwind_unended"); // never ended
+        profiler->end_frame(cmd);   // closes it while cmd still records
+        profiler->begin_frame(cmd, 1, 8);
+        next_frame_token = profiler->begin_zone(cmd, outer, "unwind_outer");
+        profiler->end_zone(cmd, next_frame_token);
+        profiler->end_frame(cmd);
+    }));
+    EXPECT_EQ(next_frame_token, 0) << "depth starts at 0 in the next frame";
+
+    const auto frame = profiler->collect(0);
+    ASSERT_TRUE(frame) << "every query of the frame was written";
+    ASSERT_EQ(frame->zones.size(), 3U);
+    EXPECT_EQ(frame->zones[0].id, outer);
+    EXPECT_EQ(frame->zones[1].id, inner);
+    EXPECT_EQ(frame->zones[2].id, unended);
+    EXPECT_EQ(frame->zones[1].depth, 1);
+    EXPECT_EQ(frame->zones[2].depth, 0);
+    constexpr float k_eps = 1e-4F;
+    // The inner zone ends no later than the outer one (closed innermost first).
+    EXPECT_LE(frame->zones[1].start_ms + frame->zones[1].ms,
+              frame->zones[0].start_ms + frame->zones[0].ms + k_eps);
+    EXPECT_TRUE(profiler->collect(1));
 }
 
 TEST(NoDeviceGpuProfiler, ADefaultProfilerDoesNothing) {

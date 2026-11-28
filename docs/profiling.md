@@ -81,8 +81,8 @@ numbers):
   each as average, p95 and max over the last 240 frames, and the fps;
 - a graph of the frame (wall) time and the GPU time per frame against a
   dashed budget line (default 16.7 ms);
-- a table of passes, systems and scopes with CPU and GPU avg / p95 / max and
-  calls per frame, kinds tinted by category and values over the budget in
+- a table of passes, systems and scopes with CPU self time (the zone's own
+  work), inclusive CPU and GPU avg / p95 / max and calls per frame, kinds tinted by category and values over the budget in
   the error colour. Click a column header to sort. **Freeze** holds the
   current numbers while you read them; **Reset** clears the statistics.
 
@@ -150,8 +150,27 @@ Scopes on the main thread (the thread bound with
 per-frame buffer — name id, start / end in nanoseconds, depth, thread; 24
 bytes, no allocation, no lock. Other threads' scopes go to Tracy only.
 `QUAT_FRAME_MARK()` closes the frame: each zone's calls are summed and pushed
-into a 240-frame ring per zone, next to the frame's wall, CPU and wait time.
-Percentiles are nearest-rank.
+into a 240-sample ring per zone, next to the frame's wall, CPU and wait time.
+A zone's ring takes one sample per frame it ran in, so its statistics cover
+its last 240 runs (per run), not the last 240 frames; a zone that has not
+run for 240 frames drops out of the table. Percentiles are nearest-rank.
+
+Every CPU zone has two times. **Inclusive** (`cpu`) runs from the scope's
+start to its end, so it contains every zone nested inside it; **self**
+(`cpu_self`) is that minus the inclusive time of its direct children — the
+zone's own work. Records are pushed as scopes close, so children arrive
+before their parent: `end_frame` keeps the closed children's time per
+nesting depth and subtracts it when the parent arrives, in one pass with no
+allocation. Rankings (the `cost` order, a capture's `top_by_*`, a spike's
+worst zones) use self time, so `update_world` > `physics_system` >
+`physics_step` reads as one cost in `physics_step` instead of three. GPU
+zones are render-graph passes timed back to back; none nests in another, so
+their self time is their time.
+
+Zone names resolve once per call site: the `QUAT_ZONE` macros keep the id in
+a static, and render-graph passes, whose graph is rebuilt every frame, look
+their names up in a per-thread `core::ProfileNameCache`, so the name table's
+lock is only taken the first time a name is seen.
 
 ### GPU side
 

@@ -26,11 +26,13 @@ namespace {
     return s;
 }
 
+// Self time ranks: an inclusive ranking puts every wrapper (update_world,
+// record_frame) above the work nested inside it.
 [[nodiscard]] double total_key(const CaptureZoneStats& z) {
-    return std::max(z.cpu_total_ms, z.gpu_total_ms);
+    return std::max(z.cpu_self_total_ms, z.gpu_total_ms);
 }
 [[nodiscard]] float p95_key(const CaptureZoneStats& z) {
-    return std::max(z.cpu.p95, z.gpu.p95);
+    return std::max(z.cpu_self.p95, z.gpu.p95);
 }
 
 } // namespace
@@ -76,6 +78,7 @@ ProfileCaptures::ZoneSeries& ProfileCaptures::series(Active& a, ProfileNameId id
         ZoneSeries s;
         s.id = id;
         s.cpu.assign(a.request.frames, -1.0F);
+        s.cpu_self.assign(a.request.frames, -1.0F);
         s.gpu.assign(a.request.frames, -1.0F);
         a.zones.push_back(std::move(s));
     }
@@ -96,8 +99,9 @@ void ProfileCaptures::on_cpu_frame(std::uint64_t frame, std::span<const ZoneSamp
         a.cpu[k] = cpu_ms;
         a.wait[k] = wait_ms;
         for (const ZoneSample& z : zones) {
-            float& slot = series(a, z.id).cpu[k];
-            slot = std::max(slot, 0.0F) + z.ms;
+            ZoneSeries& zs = series(a, z.id);
+            zs.cpu[k] = std::max(zs.cpu[k], 0.0F) + z.ms;
+            zs.cpu_self[k] = std::max(zs.cpu_self[k], 0.0F) + z.self_ms;
         }
     } else if (a.cpu_frames >= a.request.frames) {
         ++a.grace;
@@ -168,6 +172,7 @@ void ProfileCaptures::finish() {
         z.name = std::string(profile_name(series.id));
         z.category = profile_category(series.id);
         z.cpu = present_stats(series.cpu, z.cpu_total_ms);
+        z.cpu_self = present_stats(series.cpu_self, z.cpu_self_total_ms);
         z.gpu = present_stats(series.gpu, z.gpu_total_ms);
         for (std::uint32_t k = 0; k < n; ++k) {
             if (series.cpu[k] >= 0.0F || series.gpu[k] >= 0.0F) ++z.frames;
@@ -199,14 +204,19 @@ void ProfileCaptures::finish() {
             const ProfileCategory category = profile_category(series.id);
             // A wait zone is the symptom of a GPU-bound frame, not a cause.
             if (category == ProfileCategory::wait) continue;
-            if (series.cpu[k] > 0.0F) {
-                spike.worst.push_back({std::string(profile_name(series.id)), series.cpu[k], false});
+            if (series.cpu_self[k] > 0.0F) {
+                spike.worst.push_back({std::string(profile_name(series.id)), series.cpu[k],
+                                       series.cpu_self[k], false});
             }
             if (series.gpu[k] > 0.0F) {
-                spike.worst.push_back({std::string(profile_name(series.id)), series.gpu[k], true});
+                spike.worst.push_back({std::string(profile_name(series.id)), series.gpu[k],
+                                       series.gpu[k], true});
             }
         }
-        std::ranges::sort(spike.worst, [](const auto& l, const auto& r) { return l.ms > r.ms; });
+        // By self time: one call chain (update_world > physics_system >
+        // physics_step) must not fill every slot with the same 12 ms.
+        std::ranges::sort(spike.worst,
+                          [](const auto& l, const auto& r) { return l.self_ms > r.self_ms; });
         if (spike.worst.size() > k_capture_spike_zones) spike.worst.resize(k_capture_spike_zones);
         s.spikes.push_back(std::move(spike));
     }

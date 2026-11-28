@@ -30,7 +30,7 @@ constexpr std::array<KindButton, 5> k_kinds = {{
 }};
 
 constexpr float k_graph_height = 96.0F; // logical px
-constexpr int   k_columns = 9;
+constexpr int   k_columns = 10;
 
 [[nodiscard]] bool kind_shown(ProfilerKind kind, core::ProfileCategory category) {
     switch (kind) {
@@ -172,30 +172,34 @@ void frame_graph(const ProfilerState& state) {
     }
 }
 
-void stats_cells(const core::SampleStats& s, float budget_ms) {
+void ms_cell(const core::SampleStats& s, float v, float budget_ms) {
     const ui::Theme& t = ui::tokens();
-    for (int i = 0; i < 3; ++i) {
-        ImGui::TableNextColumn();
-        if (s.count == 0) {
-            ui::text_colored(t.text_disabled, "-");
-            continue;
-        }
-        const float v = i == 0 ? s.avg : i == 1 ? s.p95 : s.max;
-        char buf[24];
-        std::snprintf(buf, sizeof(buf), "%.3f", static_cast<double>(v));
-        ui::text_colored(v > budget_ms ? t.error : t.text, buf);
+    ImGui::TableNextColumn();
+    if (s.count == 0) {
+        ui::text_colored(t.text_disabled, "-");
+        return;
     }
+    char buf[24];
+    std::snprintf(buf, sizeof(buf), "%.3f", static_cast<double>(v));
+    ui::text_colored(v > budget_ms ? t.error : t.text, buf);
+}
+
+void stats_cells(const core::SampleStats& s, float budget_ms) {
+    ms_cell(s, s.avg, budget_ms);
+    ms_cell(s, s.p95, budget_ms);
+    ms_cell(s, s.max, budget_ms);
 }
 
 [[nodiscard]] core::ZoneSort sort_for_column(int column) {
     switch (column) {
     case 0: return core::ZoneSort::name;
-    case 2: return core::ZoneSort::cpu_avg;
-    case 3: return core::ZoneSort::cpu_p95;
-    case 4: return core::ZoneSort::cpu_max;
-    case 5: return core::ZoneSort::gpu_avg;
-    case 6: return core::ZoneSort::gpu_p95;
-    case 7: return core::ZoneSort::gpu_max;
+    case 2: return core::ZoneSort::self_avg;
+    case 3: return core::ZoneSort::cpu_avg;
+    case 4: return core::ZoneSort::cpu_p95;
+    case 5: return core::ZoneSort::cpu_max;
+    case 6: return core::ZoneSort::gpu_avg;
+    case 7: return core::ZoneSort::gpu_p95;
+    case 8: return core::ZoneSort::gpu_max;
     default: return core::ZoneSort::cost;
     }
 }
@@ -219,6 +223,9 @@ void zone_table(ProfilerState& state) {
     ImGui::TableSetupScrollFreeze(0, 1);
     ImGui::TableSetupColumn("Zone", ImGuiTableColumnFlags_WidthStretch);
     ImGui::TableSetupColumn("Kind", ImGuiTableColumnFlags_NoSort);
+    // Self: the zone's own CPU time (nested zones excluded); the CPU columns
+    // are inclusive.
+    ImGui::TableSetupColumn("Self avg", ImGuiTableColumnFlags_PreferSortDescending);
     ImGui::TableSetupColumn("CPU avg", ImGuiTableColumnFlags_PreferSortDescending);
     ImGui::TableSetupColumn("CPU p95", ImGuiTableColumnFlags_PreferSortDescending);
     ImGui::TableSetupColumn("CPU max", ImGuiTableColumnFlags_PreferSortDescending);
@@ -247,6 +254,7 @@ void zone_table(ProfilerState& state) {
         ImGui::TextUnformatted(z.name.data(), z.name.data() + z.name.size());
         ImGui::TableNextColumn();
         ui::text_colored(category_color(z.category), core::to_string(z.category));
+        ms_cell(z.cpu_self, z.cpu_self.avg, state.budget_ms);
         stats_cells(z.cpu, state.budget_ms);
         stats_cells(z.gpu, state.budget_ms);
         ImGui::TableNextColumn();

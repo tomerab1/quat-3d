@@ -20,6 +20,7 @@
 // this profiler and Tracy together.
 
 #include <chrono>
+#include <array>
 #include <cstdint>
 #include <span>
 #include <string>
@@ -130,7 +131,11 @@ struct ZoneSummary {
     ProfileNameId    id = 0;
     std::string_view name;
     ProfileCategory  category = ProfileCategory::scope;
+    // CPU times are per frame the zone ran in, over its last `window` runs.
+    // `cpu` is inclusive (children included); `cpu_self` excludes the time of
+    // zones nested inside it, so wrappers rank by their own work.
     SampleStats      cpu;           // count 0: no CPU samples in the window
+    SampleStats      cpu_self;
     SampleStats      gpu;           // count 0: no GPU timing
     std::uint32_t    calls = 0;     // calls in the zone's latest frame
 };
@@ -148,9 +153,13 @@ struct ProfileCounter {
 };
 
 // Orders for zone tables (editor, remote). `cost` is the larger of the CPU
-// and GPU average: what the zone costs whichever side it runs on.
+// self and GPU average: what the zone itself costs whichever side it runs
+// on (a wrapper zone does not outrank the work nested inside it).
 enum class ZoneSort : std::uint8_t {
     cost,
+    self_avg,
+    self_p95,
+    self_max,
     cpu_avg,
     cpu_p95,
     cpu_max,
@@ -225,6 +234,7 @@ public:
 private:
     struct ZoneStats {
         SampleRing    cpu;
+        SampleRing    cpu_self;
         SampleRing    gpu;
         std::uint64_t last_cpu_frame = 0;
         std::uint64_t last_gpu_frame = 0;
@@ -250,6 +260,10 @@ private:
 
     // end_frame / submit_gpu_frame scratch (sized to k_max_profile_names).
     std::vector<double>        sum_ms_;
+    std::vector<double>        self_ms_;
+    // Time of the closed children per nesting depth while a frame's records
+    // are summed (records arrive in close order, children first).
+    std::array<std::uint64_t, 257> child_ns_{};
     std::vector<std::uint32_t> calls_;
     std::vector<ProfileNameId> touched_;
     std::vector<ZoneSample>    samples_;

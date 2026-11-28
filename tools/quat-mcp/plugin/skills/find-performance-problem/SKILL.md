@@ -23,13 +23,18 @@ are.
    `total`: the frame is GPU-bound. Otherwise it is CPU-bound. Steady but
    slow means a constant cost; a low average with a high p95 / max or many
    spikes means hitches.
-3. **Locate.**
+3. **Locate.** Zones nest, so a CPU zone has two times: `cpu` (inclusive:
+   everything nested inside it counted too) and `cpu_self` (its own work).
+   Rankings and spike zones use self time; a wrapper such as `update_world`
+   with a large `cpu` but a small `cpu_self` only contains the cost.
    - GPU-bound: the passes at the top of `top_by_total` on the GPU side.
    - CPU-bound: the `system` and `scope` zones there; `profile_frame` with
-     `{"kind": "system"}` shows systems only. Scripts, particles and the
+     `{"kind": "system", "sort": "self"}` shows systems by their own time. Scripts, particles and the
      upscaler have their own zones (named `script_*`, `particle_*` and
      `upscaler*`).
-   - Hitches: the `spikes` and their worst zones, and `top_by_p95`.
+   - Hitches: the `spikes` and their worst zones (`self_ms`), and
+     `top_by_p95`. A zone's rolling statistics in `profile_frame` are per
+     run, so a zone that runs every few seconds still shows its full cost.
      `per_frame` shows whether spikes repeat: every N frames points at
      periodic work such as streaming, uploads or script reloads.
 4. **Explain.** `profile_counters` for the workload behind the cost (draws,

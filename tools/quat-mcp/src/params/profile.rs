@@ -9,9 +9,16 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ZoneSort {
-    /// The larger of CPU and GPU average: what the zone costs (default).
+    /// The larger of CPU self and GPU average: what the zone itself costs (default).
     Cost,
-    /// CPU average.
+    /// CPU self average: the zone's own time, nested zones excluded.
+    #[serde(rename = "self")]
+    SelfAvg,
+    #[serde(rename = "self_p95")]
+    SelfP95,
+    #[serde(rename = "self_max")]
+    SelfMax,
+    /// CPU average, inclusive of nested zones.
     Cpu,
     CpuP95,
     CpuMax,
@@ -157,6 +164,10 @@ mod tests {
             json!({})
         );
         assert!(serde_json::from_value::<ProfileFrameParams>(json!({"sort": "fast"})).is_err());
+        for sort in ["self", "self_p95", "self_max"] {
+            let p: ProfileFrameParams = serde_json::from_value(json!({"sort": sort})).unwrap();
+            assert_eq!(serde_json::to_value(&p).unwrap(), json!({"sort": sort}));
+        }
         assert!(serde_json::from_value::<ProfileFrameParams>(json!({"window": 10})).is_err());
     }
 

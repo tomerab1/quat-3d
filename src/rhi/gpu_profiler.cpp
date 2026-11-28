@@ -87,6 +87,27 @@ struct GpuProfiler::Impl {
     void write(VkCommandBuffer cmd, std::uint32_t query) const {
         vkCmdWriteTimestamp2(cmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, current->pool, query);
     }
+    // Closes the open zone at `at`: its end timestamp, and its Tracy scope
+    // (whose destructor records Tracy's end query into the same command
+    // buffer).
+    void close(VkCommandBuffer cmd, std::uint8_t at) {
+        if (current != nullptr && open[at] != UINT32_MAX) write(cmd, current->zones[open[at]].end);
+        open[at] = UINT32_MAX;
+#if defined(QUAT_TRACY)
+        TracyScopeStorage& storage = tracy_scopes[at];
+        if (storage.live) {
+            std::destroy_at(reinterpret_cast<tracy::VkCtxScope*>(storage.bytes.data()));
+            storage.live = false;
+        }
+#endif
+    }
+    // Closes every zone deeper than `to`, innermost first.
+    void unwind_to(VkCommandBuffer cmd, std::uint8_t to) {
+        while (depth > to) {
+            --depth;
+            close(cmd, depth);
+        }
+    }
     void destroy() noexcept;
 };
 
@@ -278,7 +299,14 @@ void GpuProfiler::begin_frame(VkCommandBuffer cmd, std::uint32_t slot, std::uint
 #if defined(QUAT_TRACY)
     if (m.tracy_ctx != nullptr) TracyVkCollect(m.tracy_ctx, cmd);
 #endif
+    // end_frame closes every open zone; a frame recorded without it leaves
+    // zones open on a command buffer that is gone, so they are dropped
+    // (never closed into the new one).
     m.depth = 0;
+    m.open.fill(UINT32_MAX);
+#if defined(QUAT_TRACY)
+    for (Impl::TracyScopeStorage& storage : m.tracy_scopes) storage.live = false;
+#endif
     if (!m.supported || slot >= m.slots.size()) {
         m.current = nullptr;
         return;
@@ -328,23 +356,21 @@ GpuProfiler::ZoneToken GpuProfiler::begin_zone(VkCommandBuffer cmd, core::Profil
 void GpuProfiler::end_zone(VkCommandBuffer cmd, ZoneToken token) {
     if (!impl_ || token == k_no_zone) return;
     Impl& m = *impl_;
-    if (token + 1 != m.depth) return; // zones must nest
-    m.depth = static_cast<std::uint8_t>(token);
-    if (m.current != nullptr && m.open[token] != UINT32_MAX) {
-        m.write(cmd, m.current->zones[m.open[token]].end);
-    }
-#if defined(QUAT_TRACY)
-    Impl::TracyScopeStorage& storage = m.tracy_scopes[token];
-    if (storage.live) {
-        std::destroy_at(reinterpret_cast<tracy::VkCtxScope*>(storage.bytes.data()));
-        storage.live = false;
-    }
-#endif
+    // Already closed (an outer zone ended first and unwound it).
+    if (token >= m.depth) return;
+    // Zones nest: ending an outer zone first also closes the ones opened
+    // inside it, so no timestamp or Tracy scope is left open.
+    m.unwind_to(cmd, static_cast<std::uint8_t>(token));
 }
 
 void GpuProfiler::end_frame(VkCommandBuffer cmd) {
-    if (!impl_ || impl_->current == nullptr) return;
+    if (!impl_) return;
     Impl& m = *impl_;
+    // Zones still open (a caller that never ended them) close here, while
+    // `cmd` still records: closing them in the next begin_frame would write
+    // into a command buffer that was already submitted.
+    m.unwind_to(cmd, 0);
+    if (m.current == nullptr) return;
     m.write(cmd, 1);
     m.current->pending = true;
     m.current = nullptr;

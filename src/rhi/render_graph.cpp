@@ -385,9 +385,13 @@ ResourceHandle RenderGraph::create_transient_image(const char* name, VkFormat fo
 }
 
 RenderGraph::PassBuilder RenderGraph::add_pass(const char* name, PassType type) {
+    // The graph is rebuilt every frame: pass names resolve through a
+    // per-thread cache, so the name table's lock is taken once per name, not
+    // once per pass per frame (no engine mutexes on the hot path).
+    thread_local core::ProfileNameCache pass_names(core::ProfileCategory::pass);
     Pass p;
     p.name = name;
-    p.profile_id = core::intern_profile_name(p.name, core::ProfileCategory::pass);
+    p.profile_id = pass_names.id(p.name);
     p.type = type;
     passes_.push_back(std::move(p));
     return PassBuilder{*this, static_cast<std::uint32_t>(passes_.size() - 1)};

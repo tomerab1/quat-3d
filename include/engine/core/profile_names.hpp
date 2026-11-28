@@ -6,9 +6,12 @@
 // intern once and cache the id (the QUAT_ZONE macros keep it in a static).
 // Also names threads for the profiler's records.
 
+#include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <vector>
 
 namespace engine::core {
@@ -39,6 +42,34 @@ inline constexpr std::size_t k_max_profile_name_length = 96;
 [[nodiscard]] ProfileCategory profile_category(ProfileNameId id);
 // Ids handed out so far (overflow entry included).
 [[nodiscard]] std::uint32_t profile_name_count();
+
+// Ids of names that are only known at run time, for one thread: call sites
+// that rebuild their zones every frame (render-graph passes) look names up
+// here, an unlocked hash-map probe, and take the table's lock only the first
+// time a name is seen. Not thread-safe: keep one per thread (thread_local)
+// or per owner.
+class ProfileNameCache {
+public:
+    explicit ProfileNameCache(ProfileCategory category = ProfileCategory::scope)
+        : category_(category) {}
+
+    // The id of `name` (interned with this cache's category on a miss).
+    [[nodiscard]] ProfileNameId id(std::string_view name);
+    // Names cached, and lookups that had to intern.
+    [[nodiscard]] std::size_t size() const { return ids_.size(); }
+    [[nodiscard]] std::uint32_t misses() const { return misses_; }
+
+private:
+    struct Hash {
+        using is_transparent = void;
+        [[nodiscard]] std::size_t operator()(std::string_view s) const noexcept {
+            return std::hash<std::string_view>{}(s);
+        }
+    };
+    std::unordered_map<std::string, ProfileNameId, Hash, std::equal_to<>> ids_;
+    ProfileCategory category_;
+    std::uint32_t   misses_ = 0;
+};
 
 // Index of threads that never named themselves (and of every thread past the
 // 254th).

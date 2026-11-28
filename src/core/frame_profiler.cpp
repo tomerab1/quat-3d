@@ -15,7 +15,10 @@ constexpr std::size_t k_max_counters = 64;
 
 [[nodiscard]] float sort_value(const ZoneSummary& z, ZoneSort key) {
     switch (key) {
-    case ZoneSort::cost: return std::max(z.cpu.avg, z.gpu.avg);
+    case ZoneSort::cost: return std::max(z.cpu_self.avg, z.gpu.avg);
+    case ZoneSort::self_avg: return z.cpu_self.avg;
+    case ZoneSort::self_p95: return z.cpu_self.p95;
+    case ZoneSort::self_max: return z.cpu_self.max;
     case ZoneSort::cpu_avg: return z.cpu.avg;
     case ZoneSort::cpu_p95: return z.cpu.p95;
     case ZoneSort::cpu_max: return z.cpu.max;
@@ -51,6 +54,7 @@ FrameProfiler::FrameProfiler(Config config)
       wait_(config.window),
       gpu_(config.window),
       sum_ms_(k_max_profile_names, 0.0),
+      self_ms_(k_max_profile_names, 0.0),
       calls_(k_max_profile_names, 0) {
     touched_.reserve(k_max_profile_names);
     samples_.reserve(k_max_profile_names);
@@ -81,6 +85,7 @@ FrameProfiler::ZoneStats& FrameProfiler::stats_for(ProfileNameId id) {
     ZoneStats& z = zones_[id];
     if (z.cpu.capacity() == 0) {
         z.cpu = SampleRing(config_.window);
+        z.cpu_self = SampleRing(config_.window);
         z.gpu = SampleRing(config_.window);
     }
     return z;
@@ -94,27 +99,39 @@ void FrameProfiler::end_frame() {
     const std::uint64_t now = profile_now_ns();
     ScopeBuffer& closed = buffers_[current_];
 
-    // Sum each zone's time over its calls this frame.
+    // Sum each zone's inclusive and self time over its calls this frame.
+    // Records are pushed as scopes close, so a zone's children (depth + 1)
+    // all arrive before it: their summed time, kept per depth, is what its
+    // self time excludes (the usual inclusive / exclusive split).
     touched_.clear();
+    child_ns_.fill(0);
     double wait_ms = 0.0;
     for (const ScopeRecord& r : closed.records()) {
         const ProfileNameId id = r.name < k_max_profile_names ? r.name : k_profile_overflow_name;
         if (calls_[id] == 0) touched_.push_back(id);
-        const double ms = static_cast<double>(r.end_ns - r.start_ns) * 1e-6;
-        sum_ms_[id] += ms;
+        const std::uint64_t ns = r.end_ns >= r.start_ns ? r.end_ns - r.start_ns : 0;
+        const std::size_t depth = r.depth;
+        const std::uint64_t children = child_ns_[depth + 1];
+        child_ns_[depth + 1] = 0;
+        child_ns_[depth] += ns;
+        sum_ms_[id] += static_cast<double>(ns) * 1e-6;
+        self_ms_[id] += static_cast<double>(ns > children ? ns - children : 0) * 1e-6;
         ++calls_[id];
     }
     samples_.clear();
     for (const ProfileNameId id : touched_) {
         ZoneStats& z = stats_for(id);
         const auto ms = static_cast<float>(sum_ms_[id]);
+        const auto self = static_cast<float>(self_ms_[id]);
         z.cpu.push(ms);
+        z.cpu_self.push(self);
         z.last_cpu_frame = frame_;
         z.seen_cpu = true;
         z.calls = calls_[id];
         if (profile_category(id) == ProfileCategory::wait) wait_ms += sum_ms_[id];
-        samples_.push_back({id, ms});
+        samples_.push_back({id, ms, self});
         sum_ms_[id] = 0.0;
+        self_ms_[id] = 0.0;
         calls_[id] = 0;
     }
 
@@ -152,7 +169,9 @@ void FrameProfiler::submit_gpu_frame(std::uint64_t frame_index,
         z.gpu.push(ms);
         z.last_gpu_frame = frame_index;
         z.seen_gpu = true;
-        samples_.push_back({id, ms});
+        // GPU zones are the passes, timed back to back: none nests inside
+        // another, so self time is the zone's time.
+        samples_.push_back({id, ms, ms});
         sum_ms_[id] = 0.0;
         calls_[id] = 0;
     }
@@ -188,7 +207,10 @@ std::vector<ZoneSummary> FrameProfiler::zones() const {
         s.id = id;
         s.name = profile_name(id);
         s.category = profile_category(id);
-        if (cpu) s.cpu = z.cpu.stats();
+        if (cpu) {
+            s.cpu = z.cpu.stats();
+            s.cpu_self = z.cpu_self.stats();
+        }
         if (gpu) s.gpu = z.gpu.stats();
         s.calls = cpu ? z.calls : 0;
         out.push_back(s);

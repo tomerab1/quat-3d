@@ -49,7 +49,9 @@ constexpr double k_mib = 1024.0 * 1024.0;
 }
 
 constexpr core::EnumName<core::ZoneSort> k_sort_names[] = {
-    {"cost", core::ZoneSort::cost},       {"cpu", core::ZoneSort::cpu_avg},
+    {"cost", core::ZoneSort::cost},       {"self", core::ZoneSort::self_avg},
+    {"self_p95", core::ZoneSort::self_p95}, {"self_max", core::ZoneSort::self_max},
+    {"cpu", core::ZoneSort::cpu_avg},
     {"cpu_p95", core::ZoneSort::cpu_p95}, {"cpu_max", core::ZoneSort::cpu_max},
     {"gpu", core::ZoneSort::gpu_avg},     {"gpu_p95", core::ZoneSort::gpu_p95},
     {"gpu_max", core::ZoneSort::gpu_max}, {"name", core::ZoneSort::name},
@@ -118,7 +120,8 @@ RpcResult profile_frame(Context& ctx, const Json& params) {
     for (const core::ZoneSummary& z : zones) {
         Json row{{"name", z.name}, {"kind", std::string(core::to_string(z.category))}};
         if (z.cpu.count > 0) {
-            row["cpu"] = zone_stats_json(z.cpu);
+            row["cpu"] = zone_stats_json(z.cpu);           // inclusive
+            row["cpu_self"] = zone_stats_json(z.cpu_self); // nested zones excluded
             row["calls"] = z.calls;
         }
         if (z.gpu.count > 0) row["gpu"] = zone_stats_json(z.gpu);
@@ -168,7 +171,10 @@ RpcResult profile_capture(Context& ctx, const Json& params) {
                     {"p95", ms3(s.p95)},
                     {"max", ms3(s.max)}};
     };
-    if (z.cpu.count > 0) row["cpu"] = side(z.cpu_total_ms, z.cpu);
+    if (z.cpu.count > 0) {
+        row["cpu"] = side(z.cpu_total_ms, z.cpu);
+        row["cpu_self"] = side(z.cpu_self_total_ms, z.cpu_self);
+    }
     if (z.gpu.count > 0) row["gpu"] = side(z.gpu_total_ms, z.gpu);
     return row;
 }
@@ -182,7 +188,10 @@ RpcResult profile_capture(Context& ctx, const Json& params) {
     for (const core::CaptureSpike& spike : s.spikes) {
         Json zones = Json::array();
         for (const core::CaptureSpikeZone& z : spike.worst) {
-            zones.push_back({{"name", z.name}, {"ms", ms3(z.ms)}, {"on", z.gpu ? "gpu" : "cpu"}});
+            zones.push_back({{"name", z.name},
+                             {"self_ms", ms3(z.self_ms)},
+                             {"ms", ms3(z.ms)},
+                             {"on", z.gpu ? "gpu" : "cpu"}});
         }
         spikes.push_back({{"frame", spike.frame},
                           {"total_ms", ms3(spike.total_ms)},
@@ -318,7 +327,8 @@ RpcResult profile_reset(Context& ctx, const Json& params) {
 void register_profile_commands(RpcServer& server, const ContextPtr& ctx) {
     server.add_method("profile.frame",
                       "Rolling frame profile (last 240 frames): frame CPU/GPU/wait times and "
-                      "per-pass / per-system CPU and GPU avg/p95/max: {sort?, kind?, limit?=30}.",
+                      "per-pass / per-system CPU (inclusive and self) and GPU avg/p95/max per "
+                      "run: {sort?, kind?, limit?=30}.",
                       [ctx](const Json& p) { return profile_frame(*ctx, p); });
     server.add_method("profile.capture",
                       "Start recording {frames?=120 (1..1000), budget_ms?=16.667, top?=10}; "

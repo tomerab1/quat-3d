@@ -1,6 +1,7 @@
 // Frame captures (R4.3): the state machine (start, frames advance, GPU
 // frames arriving late, result, unknown ids), input bounds, rankings and
-// spikes.
+// spikes, ranked by self time so a call chain does not crowd out other
+// causes.
 
 #include <gtest/gtest.h>
 
@@ -49,10 +50,11 @@ TEST(ProfileCapture, RecordsFramesThenWaitsForTheirGpuTimings) {
     EXPECT_EQ(c.result(*id), nullptr);
 
     for (std::uint64_t f = 100; f < 103; ++f) {
-        const std::vector<ZoneSample> cpu{{z.cheap, 1.0F}, {z.heavy, 2.0F}, {z.wait, 3.0F}};
+        const std::vector<ZoneSample> cpu{
+            {z.cheap, 1.0F, 1.0F}, {z.heavy, 2.0F, 2.0F}, {z.wait, 3.0F, 3.0F}};
         c.on_cpu_frame(f, cpu, 8.0F, 5.0F, 3.0F);
         if (f >= 101) { // GPU timings lag one frame here
-            const std::vector<ZoneSample> gpu{{z.heavy, 4.0F}};
+            const std::vector<ZoneSample> gpu{{z.heavy, 4.0F, 4.0F}};
             c.on_gpu_frame(f - 1, gpu, 6.0F);
         }
     }
@@ -61,7 +63,7 @@ TEST(ProfileCapture, RecordsFramesThenWaitsForTheirGpuTimings) {
     EXPECT_EQ(progress->frames_done, 3U);
     EXPECT_TRUE(progress->waiting_for_gpu);
 
-    const std::vector<ZoneSample> gpu{{z.heavy, 12.0F}}; // the last frame: a GPU spike
+    const std::vector<ZoneSample> gpu{{z.heavy, 12.0F, 12.0F}}; // the last frame: a GPU spike
     c.on_gpu_frame(102, gpu, 14.0F);
     EXPECT_FALSE(c.recording());
     EXPECT_FALSE(c.progress(*id));
@@ -76,7 +78,7 @@ TEST(ProfileCapture, RecordsFramesThenWaitsForTheirGpuTimings) {
     EXPECT_EQ(s->frame_total_ms, (std::vector<float>{8.0F, 8.0F, 8.0F}));
     EXPECT_EQ(s->frame_gpu_ms, (std::vector<float>{6.0F, 6.0F, 14.0F}));
 
-    // Ranked by the larger of CPU and GPU totals: heavy (GPU 20 ms) first.
+    // Ranked by the larger of CPU self and GPU totals: heavy (GPU 20 ms) first.
     ASSERT_EQ(s->top_by_total.size(), 3U);
     EXPECT_EQ(s->top_by_total[0].name, "capture_test.heavy");
     EXPECT_DOUBLE_EQ(s->top_by_total[0].gpu_total_ms, 20.0);
@@ -93,6 +95,46 @@ TEST(ProfileCapture, RecordsFramesThenWaitsForTheirGpuTimings) {
     EXPECT_EQ(s->spikes[0].worst[0].name, "capture_test.heavy");
     EXPECT_TRUE(s->spikes[0].worst[0].gpu);
     for (const auto& w : s->spikes[0].worst) EXPECT_NE(w.name, "capture_test.wait");
+}
+
+TEST(ProfileCapture, SpikesAndRankingsUseSelfTime) {
+    // One CPU spike: update_world (14 ms) > physics_system (12.1) >
+    // physics_step (12) is one call chain, script_on_update (3) a second
+    // cause. Inclusive ranking would fill all three spike slots with the
+    // chain; self time names physics_step, script_on_update, then the
+    // wrappers' own (small) work.
+    const auto world = engine::core::intern_profile_name("self_test.update_world",
+                                                         ProfileCategory::system);
+    const auto physics = engine::core::intern_profile_name("self_test.physics_system",
+                                                           ProfileCategory::system);
+    const auto step = engine::core::intern_profile_name("self_test.physics_step");
+    const auto script = engine::core::intern_profile_name("self_test.script_on_update");
+    ProfileCaptures c;
+    c.set_gpu_expected(false);
+    const auto id = c.start({.frames = 1, .budget_ms = 10.0F, .top = 4});
+    ASSERT_TRUE(id);
+    const std::vector<ZoneSample> cpu{{step, 12.0F, 12.0F},
+                                      {physics, 12.1F, 0.1F},
+                                      {script, 3.0F, 3.0F},
+                                      {world, 15.6F, 0.5F}};
+    c.on_cpu_frame(0, cpu, 16.0F, 16.0F, 0.0F);
+    const auto* s = c.result(*id);
+    ASSERT_NE(s, nullptr);
+    ASSERT_EQ(s->spikes.size(), 1U);
+    const auto& worst = s->spikes[0].worst;
+    ASSERT_EQ(worst.size(), engine::core::k_capture_spike_zones);
+    EXPECT_EQ(worst[0].name, "self_test.physics_step");
+    EXPECT_EQ(worst[1].name, "self_test.script_on_update");
+    EXPECT_EQ(worst[2].name, "self_test.update_world");
+    EXPECT_FLOAT_EQ(worst[2].ms, 15.6F) << "the inclusive time is still reported";
+    EXPECT_FLOAT_EQ(worst[2].self_ms, 0.5F);
+
+    ASSERT_EQ(s->top_by_total.size(), 4U);
+    EXPECT_EQ(s->top_by_total[0].name, "self_test.physics_step");
+    EXPECT_EQ(s->top_by_total[1].name, "self_test.script_on_update");
+    EXPECT_DOUBLE_EQ(s->top_by_total.back().cpu_self_total_ms, 0.1F);
+    EXPECT_DOUBLE_EQ(s->top_by_total.back().cpu_total_ms, 12.1F);
+    EXPECT_EQ(s->top_by_p95[0].name, "self_test.physics_step");
 }
 
 TEST(ProfileCapture, FinishesWithoutGpuWhenTimingIsUnavailable) {

@@ -73,9 +73,16 @@ TEST_F(WorldProfile, FrameReportsZonesWithCpuAndGpu) {
     EXPECT_EQ(z["kind"], "pass");
     EXPECT_DOUBLE_EQ(z["gpu"]["avg"].get<double>(), 3.0);
     EXPECT_TRUE(z["cpu"].is_object());
+    ASSERT_TRUE(z["cpu_self"].is_object()) << "self time next to the inclusive time";
+    EXPECT_LE(z["cpu_self"]["avg"].get<double>(), z["cpu"]["avg"].get<double>());
     EXPECT_EQ(z["calls"], 1);
     EXPECT_EQ(out["zones_matched"], 1);
 
+    for (const char* sort : {"self", "self_p95", "self_max"}) {
+        EXPECT_EQ(ok("profile.frame", {{"sort", sort}})["zones_matched"].get<int>(),
+                  out["zones_matched"].get<int>() + 1)
+            << sort << ": every zone, sorted by self time";
+    }
     const Json all = ok("profile.frame", {{"sort", "name"}, {"limit", 1}});
     EXPECT_EQ(all["zones"].size(), 1U);
     EXPECT_GE(all["zones_matched"].get<int>(), 2);
@@ -118,6 +125,9 @@ TEST_F(WorldProfile, CaptureRunsAcrossFramesThenSummarises) {
     // Every frame's GPU time (4 ms) is over the 1 ms budget.
     EXPECT_EQ(r["spikes"]["count"], 3);
     EXPECT_EQ(r["spikes"]["worst"][0]["zones"][0]["on"], "gpu");
+    // Spike zones carry self and inclusive time (equal for a GPU pass).
+    const Json& worst = r["spikes"]["worst"][0]["zones"][0];
+    EXPECT_EQ(worst["self_ms"], worst["ms"]);
 }
 
 TEST_F(WorldProfile, CaptureAndResultValidateTheirParameters) {

@@ -193,20 +193,28 @@ TEST(FrameProfiler, SortZones) {
     std::vector<ZoneSummary> zones(3);
     zones[0].name = "b";
     zones[0].cpu.avg = 1.0F;
+    zones[0].cpu_self.avg = 1.0F;
     zones[0].gpu.avg = 5.0F;
     zones[1].name = "a";
     zones[1].cpu.avg = 3.0F;
-    zones[2].name = "c";
-    zones[2].cpu.avg = 2.0F;
+    zones[1].cpu_self.avg = 3.0F;
+    zones[2].name = "c"; // a wrapper: large inclusive, small self time
+    zones[2].cpu.avg = 4.0F;
+    zones[2].cpu_self.avg = 0.2F;
     zones[2].gpu.avg = 0.5F;
 
     engine::core::sort_zones(zones, ZoneSort::cost);
     EXPECT_EQ(zones[0].name, "b"); // its GPU time dominates
     EXPECT_EQ(zones[1].name, "a");
-    engine::core::sort_zones(zones, ZoneSort::cpu_avg);
+    EXPECT_EQ(zones[2].name, "c"); // cost ranks by self time
+    engine::core::sort_zones(zones, ZoneSort::self_avg);
     EXPECT_EQ(zones[0].name, "a");
+    engine::core::sort_zones(zones, ZoneSort::cpu_avg);
+    EXPECT_EQ(zones[0].name, "c"); // inclusive
     engine::core::sort_zones(zones, ZoneSort::cpu_avg, /*ascending=*/true);
     EXPECT_EQ(zones[0].name, "b");
+    engine::core::sort_zones(zones, ZoneSort::self_avg);
+    EXPECT_EQ(zones[1].name, "b");
     engine::core::sort_zones(zones, ZoneSort::name, /*ascending=*/true);
     EXPECT_EQ(zones[0].name, "a");
     EXPECT_EQ(zones[2].name, "c");

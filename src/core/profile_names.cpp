@@ -81,6 +81,16 @@ ProfileNameId intern_profile_name(std::string_view name, ProfileCategory categor
     return id;
 }
 
+ProfileNameId ProfileNameCache::id(std::string_view name) {
+    if (const auto it = ids_.find(name); it != ids_.end()) return it->second;
+    ++misses_;
+    const ProfileNameId id = intern_profile_name(name, category_);
+    // Bounded like the table: once it is full every new name is "(other)",
+    // and caching those would only grow the map.
+    if (ids_.size() < k_max_profile_names) ids_.emplace(std::string(name), id);
+    return id;
+}
+
 std::string_view profile_name(ProfileNameId id) {
     const NameTable& t = names();
     if (id >= t.count.load(std::memory_order_acquire)) return t.entries[k_profile_overflow_name].name;

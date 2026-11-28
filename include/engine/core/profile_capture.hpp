@@ -29,7 +29,8 @@ namespace engine::core {
 // One zone's time in one frame (several calls summed).
 struct ZoneSample {
     ProfileNameId id = 0;
-    float         ms = 0.0F;
+    float         ms = 0.0F;      // inclusive: nested zones' time included
+    float         self_ms = 0.0F; // without nested zones (GPU: = ms)
 };
 
 inline constexpr std::uint32_t k_capture_max_frames = 1000;
@@ -56,15 +57,18 @@ struct CaptureZoneStats {
     std::string     name;
     ProfileCategory category = ProfileCategory::scope;
     std::uint32_t   frames = 0; // frames the zone ran in
-    double          cpu_total_ms = 0.0;
+    double          cpu_total_ms = 0.0;      // inclusive
+    double          cpu_self_total_ms = 0.0; // without nested zones
     double          gpu_total_ms = 0.0;
-    SampleStats     cpu; // over the frames it ran in (count 0: no CPU time)
+    SampleStats     cpu; // inclusive, over the frames it ran in (count 0: no CPU time)
+    SampleStats     cpu_self;
     SampleStats     gpu; // count 0: no GPU timing
 };
 
 struct CaptureSpikeZone {
     std::string name;
-    float       ms = 0.0F;
+    float       ms = 0.0F;      // inclusive
+    float       self_ms = 0.0F; // without nested zones (the ranking key)
     bool        gpu = false; // GPU time (else CPU)
 };
 
@@ -86,7 +90,8 @@ struct CaptureSummary {
     SampleStats   wait;  // fence / acquire / present waits
     SampleStats   gpu;   // over the frames with GPU timing
     std::uint32_t gpu_frames = 0;
-    // Ranked by the larger of the CPU and GPU value (total, then p95).
+    // Ranked by the larger of the CPU self and GPU value (total, then p95),
+    // so wrapper zones do not crowd out the work nested inside them.
     std::vector<CaptureZoneStats> top_by_total;
     std::vector<CaptureZoneStats> top_by_p95;
     std::uint32_t                 spike_count = 0;
@@ -133,6 +138,7 @@ private:
     struct ZoneSeries {
         ProfileNameId      id = 0;
         std::vector<float> cpu; // per frame, -1 when absent
+        std::vector<float> cpu_self;
         std::vector<float> gpu;
     };
     struct Active {
