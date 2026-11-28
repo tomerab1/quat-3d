@@ -106,7 +106,10 @@ struct GBufferVariant {
 // Push-constant block, mirrors GBufferPushConstants in lib/gbuffer_common.slang
 // (192 bytes): the jittered view-projection, last frame's unjittered one, the
 // device addresses of the InstanceData and InstanceMotion arrays, this frame's
-// jitter, the material clock and the camera (materials' view direction).
+// jitter, the material clock and the camera (materials' view direction), all
+// per pass; and, per draw, the address of last frame's skinned positions
+// (InstancedDraw::prev_positions; `has_prev_positions` mirrors it != 0, a null
+// test in the shader would need shaderInt64).
 struct GBufferPushConstants {
     glm::mat4       view_proj{1.0F};
     glm::mat4       prev_view_proj{1.0F};
@@ -114,18 +117,21 @@ struct GBufferPushConstants {
     VkDeviceAddress motion = 0;
     glm::vec2       jitter_ndc{0.0F};
     std::uint32_t   has_motion = 0;
-    std::uint32_t   pad = 0;
+    std::uint32_t   has_prev_positions = 0; // per draw
     float           time = 0.0F; // material clock, seconds
-    float           pad1 = 0.0F;
-    float           pad2 = 0.0F;
-    float           pad3 = 0.0F;
+    float           pad = 0.0F;
+    VkDeviceAddress prev_positions = 0; // per draw
     // xyz = camera position, w = 1; orthographic: xyz = unit direction toward
     // the camera, w = 0.
     glm::vec4       camera{0.0F, 0.0F, 0.0F, 1.0F};
 };
 static_assert(sizeof(GBufferPushConstants) == 192, "must match gbuffer_common.slang");
 static_assert(offsetof(GBufferPushConstants, instances) == 128, "must match gbuffer_common.slang");
+static_assert(offsetof(GBufferPushConstants, has_prev_positions) == 156,
+              "must match gbuffer_common.slang");
 static_assert(offsetof(GBufferPushConstants, time) == 160, "must match gbuffer_common.slang");
+static_assert(offsetof(GBufferPushConstants, prev_positions) == 168,
+              "must match gbuffer_common.slang");
 static_assert(offsetof(GBufferPushConstants, camera) == 176, "must match gbuffer_common.slang");
 
 class MeshPass {
@@ -183,6 +189,7 @@ private:
         VkBuffer                 vertex_buffer = VK_NULL_HANDLE;
         VkBuffer                 index_buffer  = VK_NULL_HANDLE;
         std::span<const asset::SubMesh> submeshes{};
+        VkDeviceAddress          prev_positions = 0; // per-draw push constant
         std::uint32_t            first_instance = 0;
         std::uint32_t            instance_count = 0;
         std::uint32_t            descriptor_index = 0;

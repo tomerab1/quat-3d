@@ -11,7 +11,8 @@
 // instanced (R9.1): per-instance model + normal matrices are read through a
 // buffer device address (lib/instancing.slang). The velocity target (R11,
 // lib/velocity.slang) gets each vertex's motion from the per-instance
-// previous model matrix (and previous skinned position).
+// previous model matrix (and, for skinned draws, the previous skinned
+// position).
 //
 // Both programs declare the same parameters (this module), so one pipeline
 // layout serves every material.
@@ -21,7 +22,21 @@ import instancing;
 import pbr;
 import velocity;
 
-// Mirrors engine::renderer::GBufferPushConstants (192 bytes).
+// Mirrors engine::renderer::GBufferPushConstants (192 bytes). Everything is
+// per pass except has_prev_positions / prev_positions, which the pass pushes
+// per draw.
+//
+// prev_positions lives here rather than in InstanceMotion: MoltenVK's SPIR-V
+// -> MSL translator (SPIRV-Cross) folds the index of an OpPtrAccessChain on a
+// pointer loaded from an array element into that element's index, so
+// `motion[instance].prev_positions[vertex]` became
+// `motion[instance + vertex].prev_positions` and the GBuffer pipelines failed
+// to compile on Metal (issue #103). Rule: never index a pointer that was
+// reached through any [...]; a pointer read straight from the push constants
+// has no index to fold into (MslPortability.* checks every cooked shader).
+// Fixed upstream in SPIRV-Cross 89a33616 (#2705, "Do not fold OpPtrAccessChain
+// into the chain of a loaded pointer", 2026-10-14); the rule can be relaxed
+// once the MoltenVK on the macOS runners ships a SPIRV-Cross with that fix.
 public struct GBufferPushConstants {
     public float4x4        view_proj;      // this frame, jittered
     public float4x4        prev_view_proj; // last frame, unjittered
@@ -29,14 +44,15 @@ public struct GBufferPushConstants {
     public InstanceMotion* motion;         // parallel to instances, valid when has_motion != 0
     public float2          jitter_ndc;     // this frame's projection jitter
     public uint            has_motion;     // 0: camera-only velocity (no previous poses)
-    public uint            pad;
+    // Per draw: 1 when prev_positions holds last frame's skinned positions (a
+    // flag rather than a null test, which would need shaderInt64).
+    public uint            has_prev_positions;
     public float           time;           // material clock, seconds
-    public float           pad1;
-    public float           pad2;
-    public float           pad3;
+    public float           pad;
+    public PrevPosition*   prev_positions; // per draw: one per vertex (skinned draws)
     // xyz = camera position, w = 1; for an orthographic view w = 0 and xyz is
     // the unit direction toward the camera.
-    public float4        camera;
+    public float4          camera;
 }
 [[vk::push_constant]] public GBufferPushConstants pc;
 
@@ -83,9 +99,8 @@ public GBufferVsOut gbuffer_vertex(GBufferVsIn input) {
     float4x4 prev_model = inst.model;
     float3 prev_position = input.position;
     if (pc.has_motion != 0) {
-        const InstanceMotion m = pc.motion[instance];
-        prev_model = m.prev_model;
-        if (m.has_prev_positions != 0) prev_position = m.prev_positions[vertex_index()].xyz;
+        prev_model = pc.motion[instance].prev_model;
+        if (pc.has_prev_positions != 0) prev_position = pc.prev_positions[vertex_index()].position.xyz;
     }
     o.cur_clip = o.clip;
     o.prev_clip = mul(pc.prev_view_proj, mul(prev_model, float4(prev_position, 1.0)));

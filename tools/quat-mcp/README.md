@@ -230,6 +230,24 @@ Each skill lists the quat-mcp tools it uses in its frontmatter
 
 The server instructions name every workflow and its `skill://` URI.
 
+**Renamed prompts (A12).** The prompts now carry the skill names, so the old
+ones are gone; asking for an old name returns an error that lists the new
+ones. The arguments are unchanged.
+
+| Old prompt | New prompt / skill |
+|---|---|
+| `build_world` | `build-level` |
+| `inspect_scene` | `inspect-scene` |
+| `debug_session` | `debug-session` |
+| `tune_look` | `tune-look` |
+| `design_behavior` | `design-npc-behaviour` |
+| `write_game_script` | `write-gameplay-script` |
+| `write_material_shader` | `author-material-shader` |
+
+In Claude Code, `/mcp__quat-3d__build_world` becomes
+`/mcp__quat-3d__build-level` (or `/quat-3d:build-level` with the plugin).
+New: `debug-physics-glitch` and `playtest`.
+
 **Resources** — `quat://scene/summary`: engine info, the first 500 entities,
 the environment and the camera as JSON; `quat://docs/scripting`: the Lua
 scripting reference (the engine's `docs/scripting.md`); and the skill files
