@@ -56,9 +56,11 @@ SCENE_TABLE=(
   "sunset|30|QUAT_NO_UI=1 QUAT_TIME=2026-06-21T21:35:00+02:00 QUAT_LATLON=48.8566,2.3522 QUAT_TIME_SCALE=0|World clock: Paris, June solstice, 21:35 (sun 2.5° up, north-west)"
   # Night sky (R22.2.1): civil twilight with the first stars and a half moon,
   # and a moonless night (new moon below the horizon). A moonlit row comes
-  # with the Moon as a light (R22.2.2).
+  # with the Moon as a light (R22.2.2). The night row is the mountain scene
+  # file (sky light only): the showcase's two fill point lights are floodlight
+  # bright, and a camera exposed for them shows a 3e-4 cd/m2 sky as black.
   "twilight|30|QUAT_NO_UI=1 QUAT_TIME=2026-06-21T22:30:00+02:00 QUAT_LATLON=48.8566,2.3522 QUAT_TIME_SCALE=0|World clock: Paris, June solstice, 22:30 (civil twilight, sun 4.8° down; half moon 27° up)"
-  "night|30|QUAT_NO_UI=1 QUAT_TIME=2026-12-09T23:00:00+01:00 QUAT_LATLON=48.8566,2.3522 QUAT_TIME_SCALE=0|World clock: Paris, 2026-12-09 23:00, moonless night (new moon below the horizon): stars, night-sky ground"
+  "night|30|QUAT_NO_UI=1 QUAT_SCENE=assets/scenes/mountain_forest.json QUAT_TIME=2026-12-09T23:00:00+01:00 QUAT_LATLON=48.8566,2.3522 QUAT_TIME_SCALE=0|World clock: Paris, 2026-12-09 23:00, moonless night (new moon below the horizon) over the mountain scene: stars, night-sky ground"
   "editor-time-of-day|30|QUAT_WINDOW_SIZE=1600x900 QUAT_EDITOR_LAYOUT=default QUAT_EDITOR_SELECT=world_clock QUAT_TIME=2026-06-21T21:35:00+02:00 QUAT_TIME_SCALE=0|Editor: the world clock in the Inspector at sunset"
   "showcase-hdri|40|QUAT_NO_UI=1 QUAT_HDRI=hdri-cache/kloofendal_48d_partly_cloudy_2k.hdr|Showcase lit by a CC0 Poly Haven HDRI (R21: HDRI IBL, its sun as the shadowed light, SSR)"
   "mountain-forest|30|QUAT_NO_UI=1 QUAT_DEMO=mountain|Mountain + forest showcase: terrain, scattered trees and rocks, GPU grass"
