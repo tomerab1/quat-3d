@@ -4,6 +4,7 @@
 #include <array>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <format>
 #include <optional>
@@ -12,6 +13,7 @@
 #include <vector>
 
 #include "engine/core/log.hpp"
+#include "engine/rhi/driver_info.hpp"
 
 namespace engine::rhi {
 
@@ -366,6 +368,14 @@ std::expected<Device, core::Error> Device::create(const CreateInfo& info) {
                  candidate.families.graphics, candidate.families.compute,
                  candidate.families.transfer, present_family.c_str(),
                  candidate.has_descriptor_buffer ? "descriptor_buffer" : "classic sets (fallback)");
+    // Which driver actually loaded (MoltenVK reports its version in
+    // driverInfo), and any loader override that chose it: a LunarG SDK's
+    // setup-env replaces a bundled MoltenVK this way (#130).
+    dev.driver_ = query_driver_info(dev.physical_device_);
+    core::log(core::LogLevel::info, "rhi", "{}",
+              describe_driver(dev.driver_, loader_driver_overrides([](const char* name) {
+                                  return std::getenv(name);
+                              })));
 
     // ---- Logical device -------------------------------------------------
     std::set<std::uint32_t> unique_families = {
