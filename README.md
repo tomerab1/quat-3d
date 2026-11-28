@@ -23,6 +23,10 @@ the CI screenshot pipeline.
 |---|---|---|
 | ![showcase](docs/screenshots/showcase.png) | ![terrain](docs/screenshots/terrain.png) | ![physics](docs/screenshots/physics.png) |
 
+The editor (dark theme; a light theme is one click away in View > Theme):
+
+![editor](docs/screenshots/editor/after-inspector.png)
+
 ## What it can do today
 
 **Rendering**
@@ -33,7 +37,12 @@ the CI screenshot pipeline.
   contact shadows for small detail; meshes, instanced objects and terrain cast
 - Ambient occlusion (GTAO) with bent normals that also darkens reflections in
   crevices; every shadow / AO setting is tunable in the editor's Renderer panel
-- Glass and transparency (refraction, absorption, IOR), clearcoat car paint
+- Glass and transparency (refraction, absorption, IOR), clearcoat car paint;
+  glass and see-through materials cast soft, coloured shadows instead of
+  black ones
+- Alpha-cut materials (glTF `MASK`: leaves, grass cards, fences) cut holes in
+  the surface and in its shadow, and keep their shape at a distance
+  (coverage-preserving mipmaps); double-sided leaves are lit on both sides
 - Physically based sky with volumetric clouds and a moving sun
 - Image-based lighting that keeps up with the sky in real time
 - HDRI environments: light and backdrop a scene with a Radiance `.hdr`
@@ -73,8 +82,10 @@ the CI screenshot pipeline.
 **World**
 - Procedural terrain: seeded generation with erosion, level of detail, and
   seamless streaming for kilometre-scale worlds; tiles (noise + hydraulic /
-  thermal erosion) are synthesised on the GPU in milliseconds, with the
-  deterministic CPU generator as fallback and reference
+  thermal erosion, with steep faces relaxed to the talus angle by a multigrid
+  solver) are synthesised on the GPU in milliseconds, with the deterministic
+  CPU generator as fallback and reference; one memory budget bounds the
+  resolution x streaming radius of a world
 - Dense, wind-animated grass generated on the GPU every frame around the
   camera (slope / height limits, distance level of detail, no popping)
 - Jolt physics: rigid bodies, character controller, triggers, terrain collision
@@ -95,11 +106,19 @@ the CI screenshot pipeline.
   client-side prediction
 
 **Editor**
-- Docked editor with viewport, scene hierarchy, inspector, asset browser,
-  animation preview and physics debug view
-- Move/rotate/scale gizmos, click-to-select, play/stop with automatic scene restore
-- Save and load scenes as JSON
-- Click-to-walk and patrol authoring for NPCs
+- Docked editor: viewport, hierarchy, inspector, asset browser, console,
+  animation preview, behaviour-tree graph editor, physics and stats panels;
+  the layout and preferences persist per project
+- Dark and light themes (WCAG AA contrast), Inter + JetBrains Mono with Lucide
+  icons, scaling with the display's DPI
+- A command palette (Ctrl+P) over every action, one shortcut table (F1), a
+  toolbar with play / pause / step / stop, move / rotate / scale gizmos in
+  world or local space with snapping, and a status bar with frame timing,
+  selection and the AI-tool (MCP) connection
+- Inspector property grid with reset-to-default, coloured X/Y/Z fields and a
+  searchable Add Component list; hierarchy search, type icons, rename,
+  duplicate and drag-to-re-parent
+- Save and load scenes as JSON; click-to-walk and patrol authoring for NPCs
 
 ## Platforms
 
@@ -224,7 +243,11 @@ driver, or Mesa) — or a build with `ENGINE_DESCRIPTOR_SETS_FALLBACK=ON`.
 
 `./build/release/game` opens the editor with a showcase scene. Hold the right
 mouse button in the viewport and use WASD to fly; W/E/R switch the gizmo
-between move, rotate and scale.
+between move, rotate and scale, X toggles world/local space and Y snapping.
+F5 plays, F6 pauses, F10 steps one frame, Shift+F5 stops. Ctrl+P opens the
+command palette and F1 lists every shortcut. The layout and editor
+preferences are saved to `.quat/editor.ini` in the project root (View >
+Reset Layout restores the default).
 
 Environment variables switch on extra modes:
 
@@ -237,17 +260,65 @@ Environment variables switch on extra modes:
 | `QUAT_GLTF=<file>` | Load a glTF/GLB model instead of the showcase scene |
 | `QUAT_TERRAIN=1` | Add a procedural terrain tile (with a grass field) |
 | `QUAT_PHYSICS=1` / `QUAT_CHARACTER=1` | Physics (with sparks and smoke) / character-controller demo scenes |
-| `QUAT_HOST=<port>` / `QUAT_JOIN=<ip:port>` | Host or join a networked session |
-| `QUAT_REMOTE=<port>` | Open the remote-control endpoint for AI tools (`1` = port 7878); add `QUAT_REMOTE_TOKEN=<secret>` to require a token — see [`docs/remote-control.md`](docs/remote-control.md) |
-| `QUAT_LOG_CAPTURE=0` | With `QUAT_REMOTE`: do not tee stderr into the engine log the AI debugging tools read (`debug.log`) |
+| `QUAT_HOST=<port>` / `QUAT_JOIN=<ip:port>` | Host or join a networked session (host listens on 127.0.0.1 only unless `QUAT_NET_BIND` says otherwise) — see [Networking](#networking) |
+| `QUAT_NET_BIND=<ipv4>` | Host: interface to listen on (default `127.0.0.1`; `0.0.0.0` = every interface, for LAN/internet play) |
+| `QUAT_NET_MAX_CLIENTS=<n>` | Host: connections held at once (default 8, max 1024); more are refused as "server full" |
+| `QUAT_NET_TOKEN=<secret>` | Host: join token every client must present; client: the token it presents |
+| `QUAT_NET_OWNER_TOKEN=<secret>` | Host: only a client presenting this token (as its `QUAT_NET_TOKEN`) controls the player character |
+| `QUAT_REMOTE=<port>` | Open the remote-control endpoint for AI tools (`1` = port 7878). It always requires a session token: a random one per run, written to a file only you can read, where quat-mcp finds it — see [`docs/remote-control.md`](docs/remote-control.md#session-token) |
+| `QUAT_REMOTE_TOKEN=<secret>` / `QUAT_REMOTE_TOKEN_FILE=<path>` | With `QUAT_REMOTE`: use this token instead of a generated one / publish the token at this path instead of the per-user default |
+| `QUAT_LOG_CAPTURE=0` | Do not tee stderr into the engine log that the editor Console and the AI debugging tools (`debug.log`) read |
 | `QUAT_SHADER_HOT_RELOAD=0` / `=1` | Turn shader hot reload off (on by default in editor builds) or on (in non-editor builds): saving a `.slang` file under `assets/shaders/` recompiles it and swaps the pipelines in — see [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md#shader-hot-reload) |
 | `QUAT_SLANGC=<path>` | The `slangc` hot reload compiles with (default: the one the build used, else `PATH`) |
 | `QUAT_NO_UI=1` | Run without the editor UI |
+| `QUAT_EDITOR_THEME=light` | Start the editor in the light theme |
+| `QUAT_EDITOR_LAYOUT=default` | Start from the default layout and do not save it (captures, tests) |
+| `QUAT_EDITOR_SELECT=<name>` / `QUAT_EDITOR_FOCUS=<panel>` | Select an entity / bring a panel forward at startup (`scripts/editor-screenshots.sh`) |
+| `QUAT_WINDOW_SIZE=<w>x<h>` | Initial window size (default 1280x720) |
 | `QUAT_NO_VSYNC=1` | Disable vsync |
 | `QUAT_NO_AUDIO=1` | Mute: run audio without opening a playback device |
 | `QUAT_NON_FINITE_CHECK=1` | Count NaN/Inf values the bloom / TAA guards replace and log them per frame (always on in debug builds) |
 | `QUAT_MAX_FRAMES=<n>` + `QUAT_SCREENSHOT=<file.ppm>` | Render n frames, save the last one, exit (headless checks) |
 | `QUAT_ASSET_ROOT=<dir>` | Data directory holding `assets/` and `cooked/shaders/` (default: next to the executable — inside a macOS app, `Contents/Resources` — then, in development builds, the source tree) |
+
+### Networking
+
+One machine hosts, others join it with the same scene; the host simulates and
+replicates, and the joined player's character is predicted locally.
+
+```sh
+# Same machine (the host only listens on 127.0.0.1 by default)
+QUAT_HOST=27015 ./build/release/game
+QUAT_JOIN=127.0.0.1:27015 ./build/release/game
+
+# Over a LAN / the internet: opt in to every interface and set a token
+QUAT_HOST=27015 QUAT_NET_BIND=0.0.0.0 QUAT_NET_TOKEN=letmein ./build/release/game
+QUAT_JOIN=192.168.1.20:27015 QUAT_NET_TOKEN=letmein ./build/release/game
+```
+
+What the host enforces:
+
+- **Bind address:** loopback unless `QUAT_NET_BIND` names another IPv4
+  interface. A host bound beyond loopback without a token logs a warning.
+- **Connection cap:** at most `QUAT_NET_MAX_CLIENTS` connections (default 8),
+  counting ones still handshaking; extra ones are refused as "server full".
+- **Join handshake:** a client's first message is a hello carrying the
+  protocol version and `QUAT_NET_TOKEN`. Until it arrives the client gets no
+  snapshots and cannot control anything. A wrong token, a version mismatch or
+  any other first message disconnects it, and so does staying silent for 5 s.
+- **Player control:** the player character goes to the first client to
+  authenticate (not to whoever sends input first). With
+  `QUAT_NET_OWNER_TOKEN` set, only a client presenting that token gets it;
+  others watch. When the controlling client leaves, the next eligible client
+  that authenticated takes over.
+- **Rate limits:** each client may send 1000 messages and 64 KiB per second
+  (2 s of burst); a client above either is disconnected. Clients send one
+  input per frame, so this also caps a joined client's useful frame rate.
+
+A refused or dropped client logs the reason (`server full`, `authentication
+failed`, `authentication timed out`, `rate limited`). The limits are fields of
+`engine::net::HostConfig` (`include/engine/net/session_config.hpp`,
+`host_access.hpp`) for code that hosts through `NetSession::host`.
 
 ### Audio
 
@@ -319,10 +390,16 @@ validation messages, frame statistics, pause / single-step / slow down the
 simulation, watch entities, cast physics rays and query navmesh paths — and
 tune the look: exposure, bloom, anti-aliasing, shadows, sky light, clouds and
 per-entity materials, with the same values the editor's Renderer panel and
-Material inspector show — and author NPC behaviour trees: build, inspect and
+Material inspector show — author NPC behaviour trees: build, inspect and
 edit the same graph the editor's Behaviour panel shows, with per-node
-validation errors, and see what each node did on the last tick. Start the
-engine with `QUAT_REMOTE=7878`, build the
+validation errors, and see what each node did on the last tick — and write
+material shaders: Slang modules the engine compiles (returning the compiler
+errors with line numbers), assigns to entities and hot-swaps while it runs.
+For world building it reports entity bounds, sets models down on terrain or
+colliders (`world_place_on_ground`), takes screenshots from any camera without
+moving yours, and searches and downloads CC0 models from Poly Haven
+(`asset_search` / `asset_fetch`, into the gitignored `assets/meshes/polyhaven/`).
+Start the engine with `QUAT_REMOTE=7878`, build the
 server with `cargo build --release` in `tools/quat-mcp`, and register it with
 your client:
 
@@ -330,8 +407,12 @@ your client:
 claude mcp add quat-3d --env QUAT_REMOTE_PORT=7878 -- "$PWD/tools/quat-mcp/target/release/quat-mcp"
 ```
 
-See [`tools/quat-mcp/README.md`](tools/quat-mcp/README.md) for Claude Desktop
-setup, tokens and the full tool list.
+No token setup is needed: the engine writes a fresh session token for each run
+to a file only your user can read, and quat-mcp reads it from there. The
+endpoint listens on `127.0.0.1` only and refuses connections without the
+token, so other users on the machine and web pages in your browser cannot
+drive the engine. See [`tools/quat-mcp/README.md`](tools/quat-mcp/README.md)
+for Claude Desktop setup, explicit tokens and the full tool list.
 
 ## Testing
 
@@ -373,7 +454,9 @@ The plan lives in [`ROADMAP.md`](ROADMAP.md), grouped into tracks:
 | [`docs/STATUS.md`](docs/STATUS.md) | What is in progress, what is blocked, what comes next |
 | [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md) | Building, testing, CI, and conventions for contributors |
 | [`docs/scripting.md`](docs/scripting.md) | Lua gameplay scripting: callbacks, the engine API, limits, hot reload |
+| [`docs/reading/README.md`](docs/reading/README.md) | Reading list: the papers and talks behind the engine's techniques, with where each lives in the code |
 | [`docs/remote-control.md`](docs/remote-control.md) | The remote-control protocol AI tools use to drive the engine |
+| [`docs/editor-ux.md`](docs/editor-ux.md) | The editor's design system: principles, tokens, widget kit, layout, shortcuts |
 | [`docs/CYCLE.md`](docs/CYCLE.md) | How development runs: the repeating plan → parallel agents → merge → CI → audit → learn cycle |
 | [`docs/LEARNINGS.md`](docs/LEARNINGS.md) | Lessons recorded by past cycles |
 | [`ROADMAP.md`](ROADMAP.md) | The full plan, with completed history |
@@ -382,7 +465,8 @@ The plan lives in [`ROADMAP.md`](ROADMAP.md), grouped into tracks:
 ## Repository layout
 
 ```
-assets/shaders/     Slang shader sources (compiled into cooked/shaders/ during the build)
+assets/shaders/     Slang shader sources (compiled into cooked/shaders/ during the build);
+                    materials/ holds material shaders, templates/ the starter module
 assets/scripts/     Lua gameplay scripts; assets/scenes/ holds scene files (the Coin Collector demo)
 include/engine/     Public headers, one folder per module
 src/                Implementation, mirroring include/ (rhi, renderer, scene, physics, ...)

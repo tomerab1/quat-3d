@@ -21,16 +21,21 @@
 #include <glm/gtc/constants.hpp>
 
 #include "engine/core/utf8_path.hpp"
+#include "app/asset_root.hpp"
 #include "app/nav_bake.hpp"
 #include "engine/asset/asset_manager.hpp"
 #include "engine/core/log.hpp"
 #include "engine/core/sim_clock.hpp"
+#include "engine/core/utf8_path.hpp"
 #include "engine/nav/navmesh.hpp"
 #include "engine/physics/physics_world.hpp"
 #include "engine/remote/rpc_server.hpp"
+#include "engine/remote/session_token.hpp"
 #include "engine/remote/world_commands.hpp"
 #include "engine/rhi/device.hpp"
 #include "engine/rhi/gpu_allocator.hpp"
+#include "engine/rhi/material_shader_registry.hpp"
+#include "engine/rhi/shader_hot_reload.hpp"
 #include "engine/scene/components.hpp"
 #include "engine/scene/gltf_loader.hpp"
 #include "engine/scene/instanced_mesh.hpp"
@@ -85,8 +90,14 @@ struct RemoteBridge::Impl {
     // Declared first so responders below are destroyed (answering "dropped")
     // while the server still exists.
     std::optional<remote::RpcServer> server;
+    remote::SessionTokenFile         token_file; // removed when the bridge goes away
+    // Authored material shaders (A6); after `server` so pending create /
+    // update replies are dropped while the server still exists.
+    std::optional<engine::rhi::MaterialShaderRegistry> material_shaders;
     ScreenshotCapture                shots;
     bool                             warned_primitives = false;
+    bool                             camera_cut = false; // take_camera_cut()
+    bool                             shot_frame_last = false; // last frame used a shot camera
     std::string                      last_instanced_warning;
     std::string                      last_material_warning;
 
@@ -138,6 +149,14 @@ struct RemoteBridge::Impl {
         p.yaw_deg = glm::degrees(*t.cam_yaw);
         p.pitch_deg = glm::degrees(*t.cam_pitch);
         p.fov_deg = glm::degrees(*t.cam_fov_y);
+        if (t.cam_near_override != nullptr) p.near_override = *t.cam_near_override;
+        if (t.cam_far_override != nullptr) p.far_override = *t.cam_far_override;
+        const engine::scene::ClipRange derived =
+            t.cam_derived_clip != nullptr ? *t.cam_derived_clip : engine::scene::ClipRange{};
+        const engine::scene::ClipRange planes =
+            engine::scene::apply_clip_overrides(derived, p.near_override, p.far_override);
+        p.near_m = planes.near_z;
+        p.far_m = planes.far_z;
         return p;
     }
 
@@ -146,7 +165,12 @@ struct RemoteBridge::Impl {
         *t.cam_yaw = glm::radians(p.yaw_deg);
         *t.cam_pitch = glm::radians(glm::clamp(p.pitch_deg, -89.0F, 89.0F));
         *t.cam_fov_y = glm::radians(p.fov_deg);
-        if (t.reset_temporal) t.reset_temporal(); // a teleport, not a camera move
+        if (t.cam_near_override != nullptr) *t.cam_near_override = p.near_override;
+        if (t.cam_far_override != nullptr) *t.cam_far_override = p.far_override;
+        // A teleport (`cut`, explicit or judged from the jump) restarts the
+        // renderer's temporal history (R11): the frame loop takes the cut
+        // (take_camera_cut) and resets it before the next gather.
+        camera_cut = camera_cut || p.cut;
 #ifndef ENGINE_EDITOR
         // Without the editor the view renders through the scene camera.
         entt::registry& r = t.scene->registry();
@@ -163,7 +187,9 @@ struct RemoteBridge::Impl {
                                                            *t.scene);
         });
         if (!ctx) return std::unexpected(ctx.error());
-        if (roots) std::fprintf(stderr, "[remote] spawned %s\n", engine::core::path_to_utf8(path).c_str());
+        if (roots) {
+            std::fprintf(stderr, "[remote] spawned %s\n", engine::core::path_to_utf8(path).c_str());
+        }
         return roots;
     }
 
@@ -254,12 +280,11 @@ struct RemoteBridge::Impl {
                 return play;
             };
         }
-        if (t.ground_height != nullptr) {
-            s.ground_height = [this](float x, float z) { return (*t.ground_height)(x, z); };
-        }
+        s.terrain_height = t.terrain_height;
+        s.terrain_status = t.terrain_status;
         s.spawn_model = [this](const std::filesystem::path& p) { return spawn_model(p); };
-        s.screenshot = [this](std::uint32_t max_size, remote::Responder r) {
-            shots.request(max_size, std::move(r));
+        s.screenshot = [this](const remote::ScreenshotRequest& req, remote::Responder r) {
+            shots.request(req, std::move(r));
         };
         s.save_scene = [this](const std::filesystem::path& p) -> std::expected<void, Error> {
             if (is_playing()) return fail("stop play mode first (sim.stop)");
@@ -282,7 +307,29 @@ struct RemoteBridge::Impl {
         if (t.scripts != nullptr) s.scripts = [this] { return t.scripts; };
         s.hdri_info = t.hdri_info;
         s.set_hdri = t.set_hdri;
+        if (material_shaders) s.material_shaders = &*material_shaders;
         return s;
+    }
+
+    // The registry behind shader.* — the hot reload service's directories when
+    // it runs, else the project's (listing and reading still work).
+    void open_material_shaders() {
+        namespace fs = std::filesystem;
+        const fs::path shaders = t.project_root / "assets" / "shaders";
+        engine::rhi::MaterialShaderRegistry::Config c;
+        c.cooked_dir = cooked_shader_dir(); // app/asset_root.hpp (#24)
+        c.material_dir = shaders / "materials";
+        c.module_dir = shaders / "lib";
+        if (t.shader_reload != nullptr) {
+            const engine::rhi::ShaderCompilerConfig& cc = t.shader_reload->compiler_config();
+            c.material_dir = cc.material_dir;
+            c.module_dir = cc.module_dir;
+            c.cooked_dir = cc.output_dir;
+        }
+        c.template_path = shaders / "templates" / "material.slang";
+        c.builtin_path = c.module_dir / "material.slang";
+        c.display_root = t.project_root;
+        material_shaders.emplace(std::move(c), t.shader_reload);
     }
 
     // ---- Endpoint ---------------------------------------------------------------
@@ -294,19 +341,54 @@ struct RemoteBridge::Impl {
         const unsigned long requested = std::strtoul(env, nullptr, 10);
         config.port = (requested > 1 && requested <= 65535) ? static_cast<std::uint16_t>(requested)
                                                             : std::uint16_t{7878};
+        // Never unauthenticated (issue #56): without QUAT_REMOTE_TOKEN the
+        // session gets a fresh random token. Either way the token is published
+        // in a user-only file, where quat-mcp finds it (session_token.hpp).
         if (const char* token = std::getenv("QUAT_REMOTE_TOKEN"); token != nullptr) {
             config.token = token;
         }
-        const bool has_token = !config.token.empty();
+        const bool generated = config.token.empty();
+        if (generated) {
+            auto token = remote::generate_session_token();
+            if (!token) {
+                std::fprintf(stderr, "[warn] remote control disabled: %s\n",
+                             token.error().message.c_str());
+                return;
+            }
+            config.token = std::move(*token);
+        }
+        const std::string token = config.token;
         auto listened = remote::RpcServer::listen(std::move(config));
         if (!listened) {
             std::fprintf(stderr, "[warn] remote control disabled: %s\n",
                          listened.error().message.c_str());
             return;
         }
+        auto published = remote::token_file_path(listened->port(),
+                                                 remote::TokenPathEnv::from_process())
+                             .and_then([&](std::filesystem::path path) {
+                                 return remote::SessionTokenFile::publish(std::move(path), token);
+                             });
+        if (!published && generated) {
+            // Nobody could learn the generated token: an endpoint no tool can use.
+            std::fprintf(stderr,
+                         "[warn] remote control disabled: cannot publish the session token: %s "
+                         "(set QUAT_REMOTE_TOKEN_FILE, or QUAT_REMOTE_TOKEN and give the same "
+                         "token to quat-mcp)\n",
+                         published.error().message.c_str());
+            return;
+        }
         server = std::move(*listened);
-        std::fprintf(stderr, "[remote] listening on 127.0.0.1:%u (%s)\n", server->port(),
-                     has_token ? "token required" : "no token");
+        if (published) {
+            token_file = std::move(*published);
+            std::fprintf(stderr, "[remote] listening on 127.0.0.1:%u; session token in %s\n",
+                         server->port(), engine::core::path_to_utf8(token_file.path()).c_str());
+        } else {
+            std::fprintf(stderr,
+                         "[remote] listening on 127.0.0.1:%u with QUAT_REMOTE_TOKEN (token file "
+                         "not written: %s)\n",
+                         server->port(), published.error().message.c_str());
+        }
 
         server->add_method(
             "engine.info", "Engine name, frame counter, entity count and play state.",
@@ -324,6 +406,7 @@ struct RemoteBridge::Impl {
                             {"paused", clock.state().paused},
                             {"editor", editor}};
             });
+        open_material_shaders();
         // The server lives in this Impl (stable address), as batching requires.
         remote::register_world_commands(*server, *t.scene, services());
     }
@@ -433,6 +516,7 @@ RemoteBridge::~RemoteBridge() = default;
 void RemoteBridge::poll() {
     impl_->finish_steps(); // steps run last frame: reply before new requests
     if (impl_->server) impl_->server->poll();
+    if (impl_->material_shaders) impl_->material_shaders->poll(); // compiles finished (A6)
     impl_->resolve_primitives();
     impl_->resolve_material_overrides();
     impl_->update_instanced_meshes();
@@ -456,12 +540,24 @@ RemoteBridge::spawn_model(const std::filesystem::path& absolute) {
 
 float RemoteBridge::advance_sim_unrendered() { return impl_->clock.advance(0.0F); }
 
+bool RemoteBridge::take_camera_cut() { return std::exchange(impl_->camera_cut, false); }
+
+std::optional<engine::remote::CameraPose> RemoteBridge::screenshot_view() {
+    Impl& m = *impl_;
+    std::optional<engine::remote::CameraPose> view = m.shots.begin_frame();
+    // The shot frame and the one returning to the viewport are both cuts:
+    // neither may blend with the other view's temporal history.
+    if (view || m.shot_frame_last) m.camera_cut = true;
+    m.shot_frame_last = view.has_value();
+    return view;
+}
+
 void RemoteBridge::note_draws(std::size_t draws) {
     impl_->draws = static_cast<std::uint32_t>(std::min<std::size_t>(draws, UINT32_MAX));
 }
 
-engine::core::StderrCapture capture_stderr_for_remote() {
-    if (std::getenv("QUAT_REMOTE") == nullptr) return {};
+engine::core::StderrCapture capture_stderr_for_remote(bool editor_console) {
+    if (std::getenv("QUAT_REMOTE") == nullptr && !editor_console) return {};
     if (const char* opt = std::getenv("QUAT_LOG_CAPTURE"); opt != nullptr && std::string(opt) == "0") {
         return {};
     }
@@ -484,5 +580,15 @@ void RemoteBridge::on_frame_complete(std::uint32_t frame_slot) {
 }
 
 bool RemoteBridge::listening() const { return impl_->server.has_value(); }
+
+std::uint16_t RemoteBridge::port() const {
+    return impl_->server.has_value() ? impl_->server->port() : std::uint16_t{0};
+}
+
+std::size_t RemoteBridge::client_count() const {
+    return impl_->server.has_value() ? impl_->server->client_count() : 0;
+}
+
+engine::core::SimClock& RemoteBridge::sim_clock() { return impl_->clock; }
 
 } // namespace quat::app

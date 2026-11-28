@@ -73,6 +73,9 @@ public:
     // frame-driven backend cannot finish while the frame loop waits on it.
     void set_generator(TileGenerator* generator) { generator_ = generator; }
     [[nodiscard]] int radius() const { return radius_; }
+    // Resizes the window: the next update() drops tiles outside it and
+    // generates the missing ones; tiles inside stay loaded.
+    void set_radius(int radius) { radius_ = glm::max(radius, 0); }
 
     // World-space minimum corner of a tile, given the anchor's world position.
     [[nodiscard]] glm::vec3 tile_origin(const glm::ivec2& coord, const glm::vec3& anchor) const {

@@ -25,6 +25,7 @@ namespace engine::editor {
 struct HdriPanel {
     const std::string&          path;
     const std::string&          status;
+    const std::string&          project_root; // .hdr files are browsed under it
     std::optional<std::string>* request = nullptr; // null hides the file row
 };
 

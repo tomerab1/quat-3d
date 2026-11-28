@@ -315,8 +315,12 @@ TransparentPass::add_to_graph(rhi::RenderGraph& graph, rhi::ResourceHandle hdr,
     // Snapshot the opaque HDR into the persistent scene-colour image and build
     // its blurred mip chain, so transmissive (glass) surfaces can sample what is
     // behind them at a roughness-dependent blur. Skipped when nothing refracts.
-    // The graph's barriers cover mip 0 only — mips 1.. are managed manually here
-    // and handed to the fragment stage in SHADER_READ_ONLY.
+    // The graph tracks the image as one unit: its barriers cover every mip, so
+    // the copy pass hands the whole chain back in TRANSFER_DST (the layout its
+    // usage declares) and the graph transitions it for the fragment stage.
+    // Inside the pass, each mip moves to TRANSFER_SRC only while it feeds the
+    // next blit (issue #62: mips left in SHADER_READ_ONLY here contradicted
+    // the graph's TRANSFER_DST -> SHADER_READ_ONLY transition).
     rhi::ResourceHandle scene_handle{};
     if (any_transmissive) {
         scene_handle = graph.import_image("scene_color", scene_color_.handle(),
@@ -332,17 +336,7 @@ TransparentPass::add_to_graph(rhi::RenderGraph& graph, rhi::ResourceHandle hdr,
                 const VkImage dst = scene_color_.handle();
                 const std::uint32_t mips = scene_color_mips_;
 
-                // Mips 1.. -> TRANSFER_DST (contents discarded; rewritten below).
-                std::vector<VkImageMemoryBarrier2> barriers;
-                for (std::uint32_t m = 1; m < mips; ++m) {
-                    barriers.push_back(mip_barrier(
-                        dst, m, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-                        VK_PIPELINE_STAGE_2_NONE, 0, VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT,
-                        VK_ACCESS_2_TRANSFER_WRITE_BIT));
-                }
-                if (!barriers.empty()) submit_barriers(cmd, barriers);
-
-                // HDR -> mip 0 (already TRANSFER_DST via the graph).
+                // HDR -> mip 0 (the graph moved every mip to TRANSFER_DST).
                 VkImageCopy region{};
                 region.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
                 region.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
@@ -375,28 +369,20 @@ TransparentPass::add_to_graph(rhi::RenderGraph& graph, rhi::ResourceHandle hdr,
                     ph = ch;
                 }
 
-                // Hand back: mip 0 to TRANSFER_DST (the layout the graph believes
-                // and transitions to SHADER_READ_ONLY itself); mips 1.. straight
-                // to SHADER_READ_ONLY for the fragment stage.
-                barriers.clear();
-                barriers.push_back(mip_barrier(
-                    dst, 0, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-                    VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT,
-                    VK_ACCESS_2_TRANSFER_READ_BIT, VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT,
-                    VK_ACCESS_2_TRANSFER_WRITE_BIT));
-                for (std::uint32_t m = 1; m < mips; ++m) {
-                    const bool last = m == mips - 1;
+                // Hand back: the blit sources (mips 0 .. n-2) return to
+                // TRANSFER_DST, the layout the graph tracks for the whole
+                // chain (the last mip never left it); the graph's own barrier
+                // then takes every mip to SHADER_READ_ONLY for the fragment
+                // stage, waiting on these transfer writes and reads.
+                std::vector<VkImageMemoryBarrier2> barriers;
+                for (std::uint32_t m = 0; m + 1 < mips; ++m) {
                     barriers.push_back(mip_barrier(
-                        dst, m,
-                        last ? VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL
-                             : VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-                        VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-                        VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT,
-                        last ? VK_ACCESS_2_TRANSFER_WRITE_BIT : VK_ACCESS_2_TRANSFER_READ_BIT,
-                        VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
-                        VK_ACCESS_2_SHADER_SAMPLED_READ_BIT));
+                        dst, m, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                        VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT,
+                        VK_ACCESS_2_TRANSFER_READ_BIT, VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT,
+                        VK_ACCESS_2_TRANSFER_WRITE_BIT));
                 }
-                submit_barriers(cmd, barriers);
+                if (!barriers.empty()) submit_barriers(cmd, barriers);
             });
     }
 

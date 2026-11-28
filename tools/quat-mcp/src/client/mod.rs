@@ -6,7 +6,9 @@
 //!
 //! Connection lifecycle:
 //! - The connection is opened lazily by the first call, and `session.hello`
-//!   (carrying the token when one is configured) is sent before anything else.
+//!   carrying the session token is sent before anything else. The token is
+//!   the configured one, else the one the engine publishes in its token file
+//!   ([`token_file`]), read again for every connection.
 //! - When the engine goes away (closed, restarted, crashed) every in-flight
 //!   call fails with [`EngineError::Disconnected`] and the *next* call opens a
 //!   fresh connection. A request that provably never reached the engine (the
@@ -17,8 +19,10 @@
 
 mod connection;
 mod error;
+pub mod token_file;
 
 use std::fmt;
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
 use std::time::Duration;
@@ -47,6 +51,9 @@ pub struct EngineConfig {
     pub addr: String,
     /// Session token (`QUAT_REMOTE_TOKEN`); sent with `session.hello`.
     pub token: Option<String>,
+    /// Where to read the session token when `token` is `None`: the engine's
+    /// token file ([`token_file::default_path`] or `QUAT_REMOTE_TOKEN_FILE`).
+    pub token_file: Option<PathBuf>,
     /// Default per-request timeout (also bounds connecting + hello).
     pub timeout: Duration,
     /// Largest request line sent; larger requests fail locally.
@@ -60,6 +67,7 @@ impl fmt::Debug for EngineConfig {
         f.debug_struct("EngineConfig")
             .field("addr", &self.addr)
             .field("token", &self.token.as_ref().map(|_| "<redacted>"))
+            .field("token_file", &self.token_file)
             .field("timeout", &self.timeout)
             .field("max_request_bytes", &self.max_request_bytes)
             .field("max_reply_bytes", &self.max_reply_bytes)
@@ -72,9 +80,44 @@ impl EngineConfig {
         Self {
             addr: addr.into(),
             token: None,
+            token_file: None,
             timeout: Duration::from_secs(15),
             max_request_bytes: ENGINE_MAX_MESSAGE_BYTES,
             max_reply_bytes: DEFAULT_MAX_REPLY_BYTES,
+        }
+    }
+}
+
+/// Where the token sent in `session.hello` came from; it decides the hint of
+/// an [`EngineError::Unauthorized`].
+enum TokenSource {
+    Configured,
+    File(PathBuf),
+    Missing(Option<PathBuf>),
+}
+
+impl TokenSource {
+    fn unauthorized_hint(&self, port: &str) -> String {
+        match self {
+            TokenSource::Configured => "quat-mcp sent the token from QUAT_REMOTE_TOKEN (--token); \
+                it must match the engine's QUAT_REMOTE_TOKEN. Unset it to use the token the \
+                engine publishes in its token file."
+                .to_owned(),
+            TokenSource::File(path) => format!(
+                "quat-mcp sent the token from {}, which belongs to another engine run. Restart \
+                 the engine and check that QUAT_REMOTE_PORT ({port}) matches its QUAT_REMOTE port.",
+                path.display()
+            ),
+            TokenSource::Missing(Some(path)) => format!(
+                "quat-mcp found no session token: {} does not exist. The engine writes it when \
+                 started with QUAT_REMOTE={port}; otherwise set QUAT_REMOTE_TOKEN (or \
+                 QUAT_REMOTE_TOKEN_FILE) for quat-mcp to match the engine.",
+                path.display()
+            ),
+            TokenSource::Missing(None) => "quat-mcp found no session token (there is no \
+                per-user directory for the token file). Set QUAT_REMOTE_TOKEN or \
+                QUAT_REMOTE_TOKEN_FILE for quat-mcp to match the engine."
+                .to_owned(),
         }
     }
 }
@@ -188,6 +231,7 @@ impl EngineClient {
             } => EngineError::Unauthorized {
                 addr: self.config.addr.clone(),
                 message,
+                hint: "The next call opens a new session.".to_owned(),
             },
             Failure::Rpc {
                 code,
@@ -221,11 +265,26 @@ impl EngineClient {
         Ok(conn)
     }
 
+    /// The token for a new session and where it came from.
+    async fn session_token(&self) -> Result<(Option<String>, TokenSource), EngineError> {
+        if let Some(token) = &self.config.token {
+            return Ok((Some(token.clone()), TokenSource::Configured));
+        }
+        let Some(path) = &self.config.token_file else {
+            return Ok((None, TokenSource::Missing(None)));
+        };
+        Ok(match token_file::read(path).await? {
+            Some(token) => (Some(token), TokenSource::File(path.clone())),
+            None => (None, TokenSource::Missing(Some(path.clone()))),
+        })
+    }
+
     async fn connect(&self) -> Result<Connection, EngineError> {
         let addr = &self.config.addr;
+        let port = addr.rsplit(':').next().unwrap_or("7878");
         let connect_err = |reason: String| EngineError::Connect {
             addr: addr.clone(),
-            port: addr.rsplit(':').next().unwrap_or("7878").to_owned(),
+            port: port.to_owned(),
             reason,
         };
         let stream = match tokio::time::timeout(self.config.timeout, TcpStream::connect(addr)).await
@@ -234,13 +293,16 @@ impl EngineClient {
             Ok(Err(e)) => return Err(connect_err(e.to_string())),
             Err(_) => return Err(connect_err("timed out".into())),
         };
+        // Read after connecting: a running engine has written its token file.
+        let (token, source) = self.session_token().await?;
         let conn = Connection::spawn(stream, self.config.max_reply_bytes);
 
-        // Greet first: required when the engine has a token, and it confirms
-        // we are talking to a quat-3d engine with a protocol we understand.
+        // Greet first: the engine requires the session token before anything
+        // else, and the reply confirms we are talking to a quat-3d engine with
+        // a protocol we understand.
         let mut params = Map::new();
-        if let Some(token) = &self.config.token {
-            params.insert("token".into(), Value::String(token.clone()));
+        if let Some(token) = token {
+            params.insert("token".into(), Value::String(token));
         }
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let line = encode_request(id, "session.hello", Some(&Value::Object(params)));
@@ -255,6 +317,7 @@ impl EngineClient {
                 return Err(EngineError::Unauthorized {
                     addr: addr.clone(),
                     message,
+                    hint: source.unauthorized_hint(port),
                 });
             }
             Err(Failure::Timeout) => {

@@ -82,10 +82,13 @@ void emit_indices(fastgltf::Asset& asset, std::size_t accessor,
                   std::span<const std::uint32_t> indices, std::size_t vertex_count,
                   const MeshCookOptions& options, GeometryResult& out);
 
-// texture_encode.cpp: an RGBA8 image's mip chain encoded to KTX2.
+// texture_encode.cpp: an RGBA8 image's mip chain encoded to KTX2. With an
+// `alpha_test_cutoff` (glTF MASK base colour) the chain preserves alpha-test
+// coverage (engine/asset/alpha_coverage.hpp).
 [[nodiscard]] std::expected<std::vector<std::byte>, core::Error>
 encode_image_ktx2(std::span<const std::byte> rgba, std::uint32_t width, std::uint32_t height,
                   asset::TextureRole role, asset::TextureColorSpace color_space,
-                  const TextureCookOptions& options);
+                  const TextureCookOptions& options,
+                  std::optional<float> alpha_test_cutoff = std::nullopt);
 
 } // namespace engine::cook::detail

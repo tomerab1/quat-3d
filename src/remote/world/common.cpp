@@ -11,7 +11,9 @@
 
 #include <nlohmann/json.hpp>
 
+#include "engine/core/path_confine.hpp"
 #include "engine/core/utf8_path.hpp"
+
 #include "engine/scene/component_json.hpp"
 #include "engine/scene/components.hpp"
 #include "engine/scene/scene.hpp"
@@ -218,28 +220,7 @@ std::expected<std::filesystem::path, RpcError> project_path(const Context& ctx,
 
 std::expected<std::filesystem::path, core::Error> confine_to_root(const std::filesystem::path& root,
                                                                   std::string_view relative) {
-    namespace fs = std::filesystem;
-    const auto fail = [](std::string what) { return std::unexpected(core::Error{std::move(what)}); };
-    if (relative.empty()) return fail("expected a path relative to the project root");
-    if (relative.find('\0') != std::string_view::npos) return fail("path contains a NUL byte");
-    const fs::path p = core::path_from_utf8(relative); // request JSON is UTF-8
-    if (p.is_absolute() || p.has_root_name() || p.has_root_directory()) {
-        return fail("absolute paths are not allowed; give a path relative to the project root");
-    }
-    const fs::path norm = p.lexically_normal();
-    if (norm.empty() || norm == ".") return fail("expected a file path, not the project root");
-    if (*norm.begin() == "..") return fail("the path escapes the project root");
-
-    // Symlinks inside the project could still point outside: compare the
-    // resolved forms of the existing prefixes too.
-    std::error_code ec;
-    const fs::path canon_root = fs::weakly_canonical(root, ec);
-    if (ec) return fail("cannot resolve the project root: " + ec.message());
-    const fs::path canon = fs::weakly_canonical(root / norm, ec);
-    if (ec) return fail("cannot resolve the path: " + ec.message());
-    const fs::path rel = canon.lexically_relative(canon_root);
-    if (rel.empty() || *rel.begin() == "..") return fail("the path escapes the project root");
-    return root / norm;
+    return core::confine_to_root(root, relative);
 }
 
 void register_world_commands(RpcServer& server, scene::Scene& scene, WorldServices services) {
@@ -250,6 +231,8 @@ void register_world_commands(RpcServer& server, scene::Scene& scene, WorldServic
     world::register_scene_commands(server, ctx);
     world::register_batch_command(server, ctx);
     world::register_environment_commands(server, ctx);
+    world::register_terrain_commands(server, ctx);
+    world::register_placement_commands(server, ctx);
     world::register_camera_commands(server, ctx);
     world::register_app_commands(server, ctx);
     world::register_debug_commands(server, ctx);
@@ -258,6 +241,7 @@ void register_world_commands(RpcServer& server, scene::Scene& scene, WorldServic
     world::register_behavior_commands(server, ctx);
     world::register_behavior_edit_commands(server, ctx);
     world::register_script_commands(server, ctx);
+    world::register_shader_commands(server, ctx);
 }
 
 } // namespace engine::remote

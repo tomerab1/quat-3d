@@ -11,10 +11,14 @@
 #include <imgui.h>
 #include <imgui_stdlib.h>
 
+#include "engine/core/utf8_path.hpp"
 #include "engine/renderer/render_settings.hpp"
 #include "engine/scene/components.hpp"
 #include "engine/scene/material_override.hpp"
 #include "engine/scene/scene.hpp"
+#include "shell/panels.hpp"
+#include "ui/icons.hpp"
+#include "ui/widgets.hpp"
 
 namespace engine::editor {
 
@@ -24,8 +28,14 @@ using renderer::RenderSettingDesc;
 using renderer::RenderSettingRef;
 using renderer::RenderSettings;
 
-void tooltip(std::string_view hint) {
-    if (!hint.empty()) ImGui::SetItemTooltip("%.*s", static_cast<int>(hint.size()), hint.data());
+// Table labels are lower case ("index of refraction"); the property grid
+// capitalises its labels.
+[[nodiscard]] std::string sentence_case(std::string_view label) {
+    std::string out(label);
+    if (!out.empty() && out[0] >= 'a' && out[0] <= 'z') {
+        out[0] = static_cast<char>(out[0] - 'a' + 'A');
+    }
+    return out;
 }
 
 // Ranges spanning orders of magnitude get a logarithmic slider.
@@ -43,35 +53,42 @@ void tooltip(std::string_view hint) {
     return f;
 }
 
-bool draw_setting(RenderSettings& s, const RenderSettingDesc& d) {
+// One settings-table row: label, slider / checkbox, reset arrow when the
+// value differs from the table's default.
+void draw_setting(RenderSettings& s, const RenderSettingDesc& d) {
     const RenderSettingRef ref = d.ref(s);
-    const std::string label(d.label);
+    const std::string label = sentence_case(d.label);
+    const std::string hint(d.hint);
     const std::string format = slider_format(d.min, d.max, d.unit);
     ImGuiSliderFlags flags = ImGuiSliderFlags_AlwaysClamp;
     if (logarithmic(d.min, d.max)) flags |= ImGuiSliderFlags_Logarithmic;
-    bool changed = false;
+    const bool modified = renderer::render_setting_value(s, d) != d.default_value;
+    ui::prop_begin(label.c_str(), hint.empty() ? nullptr : hint.c_str(), true, modified);
     if (ref.b != nullptr) {
-        changed = ImGui::Checkbox(label.c_str(), ref.b);
+        ImGui::Checkbox("##v", ref.b);
     } else if (d.type == renderer::RenderSettingType::choice && ref.i != nullptr) {
-        const std::string current(renderer::render_setting_choice_name(d, static_cast<float>(*ref.i)));
-        if (ImGui::BeginCombo(label.c_str(), current.c_str())) {
+        // A named choice (e.g. the upscaler mode, R11).
+        const std::string current(
+            renderer::render_setting_choice_name(d, static_cast<float>(*ref.i)));
+        ImGui::SetNextItemWidth(-1.0F);
+        if (ImGui::BeginCombo("##v", current.c_str())) {
             for (std::size_t k = 0; k < d.choices.size(); ++k) {
                 const std::string name(d.choices[k]);
                 if (ImGui::Selectable(name.c_str(), static_cast<int>(k) == *ref.i)) {
                     *ref.i = static_cast<int>(k);
-                    changed = true;
                 }
             }
             ImGui::EndCombo();
         }
     } else if (ref.i != nullptr) {
-        changed = ImGui::SliderInt(label.c_str(), ref.i, static_cast<int>(d.min),
-                                   static_cast<int>(d.max), format.c_str(), flags);
+        // Integers print as integers (a float format would read garbage).
+        const std::string int_format = d.unit.empty() ? "%d" : "%d " + std::string(d.unit);
+        (void)ui::slider_int("##v", ref.i, static_cast<int>(d.min), static_cast<int>(d.max),
+                             int_format.c_str(), flags);
     } else {
-        changed = ImGui::SliderFloat(label.c_str(), ref.f, d.min, d.max, format.c_str(), flags);
+        (void)ui::slider_float("##v", ref.f, d.min, d.max, format.c_str(), flags);
     }
-    tooltip(d.hint);
-    return changed;
+    if (ui::prop_end(true, modified)) renderer::set_render_setting(s, d, d.default_value);
 }
 
 // Fields that have no effect in the current state are shown disabled: the
@@ -98,106 +115,117 @@ void draw_sun(scene::Scene* scene) {
         }
     }
     if (sun == nullptr) {
-        ImGui::TextUnformatted("(no DirectionalLight in the scene)");
+        ui::text_secondary("No Directional Light in the scene (Create > Directional Light).");
         return;
     }
+    if (!ui::begin_property_grid("sun")) return;
     // direction = travel direction (sun -> scene), unit length; same angle
     // convention as environment.get / environment.set.
     const glm::vec3 dir = glm::normalize(sun->direction);
     float azimuth = glm::degrees(std::atan2(dir.z, dir.x));
     float elevation = glm::degrees(std::asin(glm::clamp(-dir.y, -1.0F, 1.0F)));
     bool changed = false;
-    changed |= ImGui::SliderFloat("azimuth", &azimuth, -180.0F, 180.0F, "%.0f deg");
-    changed |= ImGui::SliderFloat("elevation", &elevation, 2.0F, 89.0F, "%.0f deg");
+    changed |= ui::prop_float("Azimuth", azimuth,
+                              {.min = -180.0F, .max = 180.0F, .format = "%.0f°", .slider = true});
+    changed |= ui::prop_float("Elevation", elevation,
+                              {.min = 2.0F, .max = 89.0F, .format = "%.0f°", .slider = true});
     if (changed) {
         const float az = glm::radians(azimuth);
         const float el = glm::radians(glm::clamp(elevation, 2.0F, 89.0F));
         sun->direction =
             glm::vec3(std::cos(el) * std::cos(az), -std::sin(el), std::cos(el) * std::sin(az));
     }
-    ImGui::ColorEdit3("colour", &sun->color.x);
-    ImGui::DragFloat("intensity", &sun->intensity, 0.05F, 0.0F, 100.0F);
+    (void)ui::prop_color3("Colour", sun->color, {.reset = glm::vec3(1.0F)});
+    (void)ui::prop_float("Intensity", sun->intensity, {.speed = 0.05F, .min = 0.0F, .max = 100.0F});
+    ui::end_property_grid();
 }
 
-// The HDRI file row of the "Sky & HDRI" section: a project-relative path,
-// Load / Clear, and the load status (resolution and sun, or the error).
+// The HDRI file row of the "Sky & HDRI" section (R21): a project-relative
+// .hdr path (typed, browsed or dropped from the asset browser; the reset
+// arrow clears it) and the load status (resolution and sun, or the error).
 void draw_hdri_file(const HdriPanel& hdri) {
     if (hdri.request == nullptr) return;
-    static std::string edit; // the field's text between frames (one editor)
-    static std::string shown;
-    if (shown != hdri.path) { // follow loads from elsewhere (scene files, MCP)
-        shown = hdri.path;
-        edit = hdri.path;
+    static constexpr std::string_view k_extensions[] = {".hdr"};
+    std::string path = hdri.path;
+    ui::PropOpts<std::string> opts;
+    opts.reset = std::string();
+    opts.tooltip = "Radiance .hdr panorama, relative to the project root";
+    if (ui::prop_asset("HDRI file", path,
+                       {.root = core::path_from_utf8(hdri.project_root), .extensions = k_extensions},
+                       opts)) {
+        *hdri.request = path;
     }
-    ImGui::InputTextWithHint("HDRI file", "assets/hdri/<name>.hdr", &edit);
-    tooltip("Radiance .hdr panorama, relative to the project root");
-    if (ImGui::SmallButton("load")) *hdri.request = edit;
-    ImGui::SameLine();
-    if (ImGui::SmallButton("clear")) *hdri.request = std::string();
-    if (!hdri.status.empty()) ImGui::TextWrapped("%s", hdri.status.c_str());
+    if (!hdri.status.empty()) ui::prop_note(hdri.status.c_str());
 }
 
-bool draw_material_field(entt::registry& r, entt::entity e, const scene::MaterialFieldInfo& f,
-                         const asset::PbrMaterialParams& params) {
-    const std::string label(f.label);
+// One material factor row; the reset arrow reverts an entity override.
+void draw_material_field(entt::registry& r, entt::entity e, const scene::MaterialFieldInfo& f,
+                         const asset::PbrMaterialParams& params, bool overridden) {
+    const std::string label = sentence_case(f.label);
+    const std::string hint(f.hint);
     glm::vec4 v = scene::material_field_value(params, f);
+    ui::prop_begin(label.c_str(), hint.empty() ? nullptr : hint.c_str(), true, overridden);
     bool changed = false;
     switch (f.kind) {
     case scene::MaterialFieldKind::color4:
-        changed = ImGui::ColorEdit4(label.c_str(), &v.x, ImGuiColorEditFlags_Float);
+        changed = ui::color_field("##v", &v.x, true);
         break;
-    case scene::MaterialFieldKind::color3: {
-        ImGuiColorEditFlags flags = ImGuiColorEditFlags_Float;
-        if (f.max > 1.0F) flags |= ImGuiColorEditFlags_HDR;
-        changed = ImGui::ColorEdit3(label.c_str(), &v.x, flags);
+    case scene::MaterialFieldKind::color3:
+        changed = ui::color_field("##v", &v.x, false, f.max > 1.0F);
         break;
-    }
     case scene::MaterialFieldKind::scalar:
         if (f.max - f.min > 100.0F) {
-            changed = ImGui::DragFloat(label.c_str(), &v.x, 0.01F, f.min, f.max, "%.3f",
+            changed = ImGui::DragFloat("##v", &v.x, 0.01F, f.min, f.max, "%.3f",
                                        ImGuiSliderFlags_AlwaysClamp);
         } else {
-            changed = ImGui::SliderFloat(label.c_str(), &v.x, f.min, f.max,
-                                         slider_format(f.min, f.max, {}).c_str(),
-                                         ImGuiSliderFlags_AlwaysClamp);
+            changed = ui::slider_float("##v", &v.x, f.min, f.max,
+                                       slider_format(f.min, f.max, {}).c_str(),
+                                       ImGuiSliderFlags_AlwaysClamp);
         }
         break;
     }
-    tooltip(f.hint);
     if (changed) scene::set_entity_material_field(r, e, f, v);
-    return changed;
+    // An edit may have (re)created the override; the arrow acts next frame.
+    if (ui::prop_end(true, overridden) && !changed) scene::clear_material_override_field(r, e, f);
 }
 
 } // namespace
 
 void draw_renderer_panel(RenderSettings& settings, scene::Scene* scene, const HdriPanel& hdri) {
-    if (!ImGui::Begin("Renderer")) {
+    if (!ImGui::Begin(shell::panel_window_name(shell::Panel::renderer).c_str())) {
         ImGui::End();
         return;
     }
-    // Collapsing headers don't scope IDs: each section pushes its own, so
-    // equally labelled widgets (the sun's and bloom's "intensity") stay
-    // distinct.
-    if (ImGui::CollapsingHeader("Sun", ImGuiTreeNodeFlags_DefaultOpen)) {
+    // Sections push their own IDs, so equally labelled widgets (the sun's
+    // and bloom's "Intensity") stay distinct.
+    if (ui::section_header(ui::label(icon::sun, "Sun").c_str())) {
         ImGui::PushID("sun");
         draw_sun(scene);
         ImGui::PopID();
     }
     for (const renderer::RenderSettingGroup& g : renderer::render_setting_groups()) {
         const std::string header(g.label);
-        const bool open = ImGui::CollapsingHeader(header.c_str(), ImGuiTreeNodeFlags_DefaultOpen);
-        tooltip(g.hint);
+        const bool open = ui::section_header(header.c_str());
+        if (!g.hint.empty()) ui::item_tooltip(std::string(g.hint).c_str());
         if (!open) continue;
         const std::string id(g.name);
         ImGui::PushID(id.c_str());
-        for (const RenderSettingDesc& d : renderer::render_setting_fields()) {
-            if (d.group != g.name) continue;
-            ImGui::BeginDisabled(inactive(settings, d));
-            draw_setting(settings, d);
-            ImGui::EndDisabled();
+        if (ui::begin_property_grid("group")) {
+            for (const RenderSettingDesc& d : renderer::render_setting_fields()) {
+                if (d.group != g.name) continue;
+                ImGui::BeginDisabled(inactive(settings, d));
+                draw_setting(settings, d);
+                ImGui::EndDisabled();
+            }
+            if (g.name == "environment") draw_hdri_file(hdri);
+            ui::prop_begin("", nullptr, false, false);
+            if (ui::button(ui::label(icon::rotate_ccw, "Reset group").c_str(),
+                           ui::ButtonKind::ghost)) {
+                (void)renderer::reset_render_settings(settings, g.name);
+            }
+            (void)ui::prop_end(false, false);
+            ui::end_property_grid();
         }
-        if (g.name == "environment") draw_hdri_file(hdri);
-        if (ImGui::SmallButton("reset")) (void)renderer::reset_render_settings(settings, g.name);
         ImGui::PopID();
     }
     ImGui::End();
@@ -207,29 +235,37 @@ void draw_material_inspector(entt::registry& r, entt::entity e) {
     if (r.all_of<scene::InstancedMesh>(e)) return; // its parts have their own materials
     const std::optional<asset::PbrMaterialParams> params = scene::effective_material_params(r, e);
     if (!params) return;
-    if (!ImGui::CollapsingHeader("Material", ImGuiTreeNodeFlags_DefaultOpen)) return;
+    const auto* o = r.try_get<scene::MaterialOverride>(e);
+    const ui::ComponentHeader h = ui::component_header({
+        .id = "material_tuning",
+        .icon = icon::palette,
+        .title = "Material",
+        .can_reset = o != nullptr,
+        .can_copy = false,
+        .removable = false,
+        .tooltip = "The drawn material's PBR factors; edits are per-entity overrides",
+    });
+    if (h.action == ui::HeaderAction::reset) r.remove<scene::MaterialOverride>(e);
+    if (!h.open) return;
     // A primitive owns its colour, metallic, roughness and emission (its
     // component fields): they are edited there, not here.
     const bool primitive = r.all_of<scene::Primitive>(e);
     ImGui::PushID("material_tuning");
-    for (const scene::MaterialFieldInfo& f : scene::material_fields()) {
-        if (primitive && f.primitive_owned) continue;
-        const std::string id(f.name);
-        ImGui::PushID(id.c_str());
-        if (draw_material_field(r, e, f, *params)) {
+    if (ui::begin_property_grid("fields")) {
+        for (const scene::MaterialFieldInfo& f : scene::material_fields()) {
+            if (primitive && f.primitive_owned) continue;
+            const auto* ov = r.try_get<scene::MaterialOverride>(e);
+            const bool overridden = ov != nullptr && (ov->mask & f.bit) != 0;
+            const std::string id(f.name);
+            ImGui::PushID(id.c_str());
+            draw_material_field(r, e, f, *params, overridden);
             ImGui::PopID();
-            continue; // the override may have been (re)created: re-read next frame
         }
-        const auto* o = r.try_get<scene::MaterialOverride>(e);
-        if (o != nullptr && (o->mask & f.bit) != 0) {
-            ImGui::SameLine();
-            if (ImGui::SmallButton("revert")) scene::clear_material_override_field(r, e, f);
-            ImGui::SetItemTooltip("Overridden on this entity; revert to the material's value");
+        if (r.all_of<scene::MaterialOverride>(e)) {
+            ui::prop_note("Reset arrows revert a factor to the material's own value; the "
+                          "header's ⋮ menu reverts them all.");
         }
-        ImGui::PopID();
-    }
-    if (r.all_of<scene::MaterialOverride>(e) && ImGui::SmallButton("revert all")) {
-        r.remove<scene::MaterialOverride>(e);
+        ui::end_property_grid();
     }
     ImGui::PopID();
 }

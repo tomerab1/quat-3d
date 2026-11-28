@@ -14,6 +14,7 @@
 #include <fastgltf/core.hpp>
 #include <fastgltf/types.hpp>
 
+#include "engine/asset/alpha_coverage.hpp"
 #include "engine/asset/image_decode.hpp"
 #include "engine/asset/ktx2_texture.hpp"
 #include "scene/gltf/internal.hpp"
@@ -50,6 +51,14 @@ extract_textures(const fastgltf::Asset& asset, const rhi::TextureCaps& caps,
             options.limits = limits;
             options.budget = &budget;
             results[i] = decode_image(*encoded, options);
+            // Alpha-tested base colour decoded to one RGBA8 image: build its
+            // coverage-preserving mips here instead of blitting on upload
+            // (KTX2 chains were built that way by the cooker). Over budget it
+            // keeps the blitted mips: thinner at a distance, still correct.
+            if (results[i] && uses[i].alpha_test_cutoff.has_value()) {
+                (void)asset::apply_alpha_tested_mips(*results[i], *uses[i].alpha_test_cutoff,
+                                                     &budget, limits.max_decoded_bytes);
+            }
         }
     };
     const std::size_t workers =

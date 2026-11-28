@@ -51,7 +51,8 @@ enum Slot : std::uint8_t {
     s_frame, s_albedo, s_normal, s_material, s_depth, s_hdr, s_clearcoat, s_shadow_map,
     s_shadow_cmp, s_point, s_cascades, s_ao, s_irradiance, s_prefiltered, s_brdf_lut,
     s_ibl_sampler, s_skyview, s_transmittance, s_cluster_params, s_lights, s_cluster_grid,
-    s_cluster_indices, s_reflections, s_environment, s_count
+    s_cluster_indices, s_emissive, s_shadow_transmittance, s_reflections, s_environment,
+    s_count
 };
 constexpr std::array<rhi::BindingRequest, s_count> kResources{{
     {"g_frame", VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER},
@@ -76,6 +77,8 @@ constexpr std::array<rhi::BindingRequest, s_count> kResources{{
     {"g_lights", VK_DESCRIPTOR_TYPE_STORAGE_BUFFER},
     {"g_cluster_grid", VK_DESCRIPTOR_TYPE_STORAGE_BUFFER},
     {"g_cluster_indices", VK_DESCRIPTOR_TYPE_STORAGE_BUFFER},
+    {"g_emissive", VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE},
+    {"g_shadow_transmittance", VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE},
     {"g_reflections", VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE},
     {"g_environment", VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE},
 }};
@@ -93,7 +96,9 @@ mapped_buffer(rhi::GpuAllocator& allocator, VkDeviceSize size, VkBufferUsageFlag
 void fill_occlusion(LightingConstants& c, const LightingOcclusion& occlusion) {
     const CsmSettings csm = occlusion.csm.sanitized();
     const bool shadows = occlusion.shadows.valid();
-    c.camera_pos.w = flag(shadows);
+    // 0 unshadowed, 1 cascaded shadows, 2 plus the translucent casters' tint.
+    c.camera_pos.w =
+        flag(shadows) + flag(shadows && occlusion.shadows.transmittance.valid());
     const float sun_tan = std::tan(glm::radians(csm.light_size_deg));
     c.csm_filter = {csm.pcf_radius, sun_tan, csm.normal_bias, csm.depth_bias};
     // Noise offset: a different interleaved-gradient pattern each frame (the
@@ -190,6 +195,15 @@ LightingPass::create(const rhi::Device& device, rhi::GpuAllocator& allocator,
     if (!cascades) return std::unexpected(cascades.error());
     out.fallback_cascades_ = std::move(*cascades);
     std::memset(out.fallback_cascades_.mapped(), 0, sizeof(GpuCascades));
+    auto transmittance = allocator.create_image(translucent_shadow_format, {1, 1},
+                                                VK_IMAGE_USAGE_SAMPLED_BIT);
+    if (!transmittance) return std::unexpected(transmittance.error());
+    out.fallback_transmittance_ = std::move(*transmittance);
+    auto transmittance_view = rhi::create_image_view(
+        vk, out.fallback_transmittance_.handle(), translucent_shadow_format,
+        VK_IMAGE_ASPECT_COLOR_BIT, 1, VK_IMAGE_VIEW_TYPE_2D_ARRAY, 0, 0, 1);
+    if (!transmittance_view) return std::unexpected(transmittance_view.error());
+    out.fallback_transmittance_view_ = std::move(*transmittance_view);
     if (auto f = out.fallback_cascades_.flush(); !f) return std::unexpected(f.error());
     return out;
 }
@@ -241,6 +255,14 @@ LightingPass::add_to_graph(rhi::RenderGraph& graph, const GBufferTargets& gbuffe
                                         fallback_shadow_view_.handle(), kFallbackShadowFormat, {1, 1},
                                         VK_IMAGE_LAYOUT_UNDEFINED,
                                         VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    const bool has_transmittance = has_shadow && occlusion.shadows.transmittance.valid();
+    const rhi::ResourceHandle transmittance =
+        has_transmittance
+            ? occlusion.shadows.transmittance
+            : graph.import_image("csm_transmittance_fallback", fallback_transmittance_.handle(),
+                                 fallback_transmittance_view_.handle(), translucent_shadow_format,
+                                 {1, 1}, VK_IMAGE_LAYOUT_UNDEFINED,
+                                 VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
     const VkDeviceAddress cascades =
         has_shadow ? occlusion.shadows.cascades_address
                    : rhi::buffer_device_address(device_->handle(), fallback_cascades_);
@@ -251,8 +273,10 @@ LightingPass::add_to_graph(rhi::RenderGraph& graph, const GBufferTargets& gbuffe
         .reads(gbuffer.normal, rhi::ResourceUsage::sampled_compute)
         .reads(gbuffer.material, rhi::ResourceUsage::sampled_compute)
         .reads(gbuffer.clearcoat, rhi::ResourceUsage::sampled_compute)
+        .reads(gbuffer.emissive, rhi::ResourceUsage::sampled_compute)
         .reads(gbuffer.depth, rhi::ResourceUsage::sampled_compute)
         .reads(shadow_map, rhi::ResourceUsage::sampled_compute)
+        .reads(transmittance, rhi::ResourceUsage::sampled_compute)
         .writes(hdr, rhi::ResourceUsage::storage_write);
     if (has_shadow) {
         pass.reads(occlusion.shadows.cascades, rhi::ResourceUsage::buffer_read_compute);
@@ -271,8 +295,8 @@ LightingPass::add_to_graph(rhi::RenderGraph& graph, const GBufferTargets& gbuffe
     const VkDeviceAddress constants_address =
         rhi::buffer_device_address(device_->handle(), constants_);
     const VkImageView environment = has_hdri ? tuning.environment : maps.prefiltered;
-    pass.execute([this, gbuffer, hdr, shadow_map, cascades, ao, extent, maps, skyview_view,
-                  transmittance_view, cl, constants_address, reflections,
+    pass.execute([this, gbuffer, hdr, shadow_map, transmittance, cascades, ao, extent, maps,
+                  skyview_view, transmittance_view, cl, constants_address, reflections,
                   environment](rhi::PassContext& ctx) {
         const VkCommandBuffer cmd = ctx.cmd();
         constexpr VkImageLayout ro = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
@@ -286,6 +310,7 @@ LightingPass::add_to_graph(rhi::RenderGraph& graph, const GBufferTargets& gbuffe
         d.write_storage_image(s[s_hdr], ctx.resolve(hdr).view, VK_IMAGE_LAYOUT_GENERAL);
         d.write_sampled_image(s[s_clearcoat], ctx.resolve(gbuffer.clearcoat).view, ro);
         d.write_sampled_image(s[s_shadow_map], ctx.resolve(shadow_map).view, ro);
+        d.write_sampled_image(s[s_shadow_transmittance], ctx.resolve(transmittance).view, ro);
         d.write_sampler(s[s_shadow_cmp], shadow_cmp_sampler_.handle());
         d.write_sampler(s[s_point], point_sampler_.handle());
         d.write_storage_buffer(s[s_cascades], cascades, sizeof(GpuCascades));
@@ -306,6 +331,7 @@ LightingPass::add_to_graph(rhi::RenderGraph& graph, const GBufferTargets& gbuffe
         d.write_storage_buffer(s[s_lights], cl.lights, cl.lights_size);
         d.write_storage_buffer(s[s_cluster_grid], cl.grid, cl.grid_size);
         d.write_storage_buffer(s[s_cluster_indices], cl.indices, cl.indices_size);
+        d.write_sampled_image(s[s_emissive], ctx.resolve(gbuffer.emissive).view, ro);
         // R21: without reflections the (black) fallback BRDF LUT stands in
         // (never read); without an HDRI the prefiltered cube does.
         d.write_sampled_image(s[s_reflections],
