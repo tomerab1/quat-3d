@@ -84,14 +84,19 @@ std::expected<glm::vec3, Error> furnace_pixel(quat::test::GpuContext& g, Furnace
         verts[i].position = {corners[i] * 0.9F, 0.0F};
         verts[i].normal = n;
     }
-    const std::array<std::uint32_t, 6> indices{0, 1, 2, 0, 2, 3};
+    // Counter-clockwise in framebuffer space (the identity projection keeps
+    // Vulkan's y-down NDC), so the quad is a front face, and single-sided, so
+    // it is shaded with `n` as given. A double-sided back face is shaded with
+    // -n (glTF doubleSided, #70): facing away from the camera, at NdotV ~ 0,
+    // which the furnaces with multiple scattering cannot tell apart (they
+    // reach 1 at any angle) but SingleScatteringLosesEnergyOnRoughMetal can.
+    const std::array<std::uint32_t, 6> indices{0, 2, 1, 0, 3, 2};
     auto mesh = quat::test::upload_mesh(g, verts, indices);
     if (!mesh) return std::unexpected(mesh.error());
     asset::PbrMaterialParams params;
     params.base_color_factor = {1.0F, 1.0F, 1.0F, 1.0F};
     params.metallic_factor = metallic;
     params.roughness_factor = roughness;
-    params.flags |= asset::material_double_sided;
     auto material = asset::upload_material(params, asset::MaterialTextures{}, g.allocator,
                                            g.transfer);
     if (!material) return std::unexpected(material.error());

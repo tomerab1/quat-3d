@@ -676,3 +676,13 @@ removes stb's HDR writer, so `engine_tests` failed to link in CI; the local
 build had passed against a different prefix. **Rule:** tests do not call
 third-party functions the engine's own build may configure away; encode test
 inputs with a small encoder under `tests/support/` (here `rgbe_encode.hpp`).
+
+## An invariant test that passes at any input hides a broken setup (R21)
+
+The white-furnace tests reach radiance 1 at every angle once multiple
+scattering is on, so when #70 started shading double-sided back faces with the
+reversed normal, the furnace quad (wound clockwise, a back face) was lit at
+NdotV ~ 0 and only the single-scatter control test noticed. **Rule:** pair an
+invariant test with a control that depends on the inputs it claims to sweep,
+and build test geometry front-facing and single-sided unless the test is
+about the back face.
