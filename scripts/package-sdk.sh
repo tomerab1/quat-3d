@@ -39,6 +39,13 @@ for required in lib/cmake/quat3d/quat3dConfig.cmake lib/cmake/quat3d/quat3d-tool
   [ -e "$stage/$required" ] || { echo "SDK stage lacks $required" >&2; exit 1; }
 done
 ls "$stage"/bin
+# Size and contents report for the release log (what a game downloads).
+echo "== SDK sizes"
+du -sh "$stage" "$stage"/* "$stage"/deps/* "$stage"/share/quat3d/*
+echo "== deps/share ports"
+ls "$stage"/deps/share
+echo "== deps/lib"
+ls "$stage"/deps/lib
 
 case "$os" in
   windows-x64)
