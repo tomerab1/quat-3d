@@ -26,11 +26,18 @@
 #include "engine/animation/skeleton.hpp"
 #include "engine/asset/asset_manager.hpp"
 #include "engine/terrain/generator.hpp"
-#include "engine/asset/material_asset.hpp"
-#include "engine/asset/mesh_asset.hpp"
+#include "engine/asset/material_params.hpp"
 #include "engine/core/error.hpp"
 #include "engine/renderer/grass.hpp"
 #include "engine/renderer/particles.hpp"
+
+// The GPU-owning assets are only named here (through AssetHandle), so this
+// header stays free of the graphics API (P8: it is part of the installed SDK).
+// Code that dereferences a handle includes mesh_asset.hpp / material_asset.hpp.
+namespace engine::asset {
+struct MeshAsset;
+struct MaterialAsset;
+} // namespace engine::asset
 
 namespace engine::scene {
 

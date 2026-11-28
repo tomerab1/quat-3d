@@ -19,6 +19,8 @@
 #include "particle_inspector.hpp"
 #include "script_inspector.hpp"
 #include "tuning_panels.hpp"
+#include "engine/asset/material_asset.hpp"
+#include "engine/asset/mesh_asset.hpp"
 #include "engine/editor/editor.hpp"
 #include "engine/scene/behavior.hpp"
 #include "engine/scene/components.hpp"
