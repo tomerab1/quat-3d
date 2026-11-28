@@ -85,7 +85,9 @@ The editor (dark theme; a light theme is one click away in View > Theme):
   and chromatic aberration
 - Bloom and auto-exposure
 - Automatic instancing: objects sharing a mesh and material (trees, rocks,
-  crates) are drawn together in one instanced draw
+  crates) are drawn together in one instanced draw, culled per instance on
+  the GPU for the camera and for each shadow cascade (tiny casters skip the
+  coarse far cascades; a per-model shadow distance stops far foliage casting)
 - GPU particles for sparks, fire, smoke and dust: simulated in compute
   shaders (collisions with what the camera sees), soft edges, flipbook
   animation, lit by the sun and point lights, order-independent transparency
