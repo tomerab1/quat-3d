@@ -8,6 +8,7 @@
 //   WorldRuntime   terrain, play-mode physics, nav / behaviour trees,
 //                  gameplay scripts, networking, audio
 //   InputSampler   keyboard / mouse / gamepad state for scripts
+//   InputRuntime   input actions (G5) and camera rigs (G15)
 //   FlyCamera      the view camera
 //   EditorBridge   the editor layer and its requests (editor builds)
 //   RemoteBridge   remote control (QUAT_REMOTE) and primitive resolution
@@ -28,6 +29,7 @@
 #include "app/app_config.hpp"
 #include "app/fly_camera.hpp"
 #include "app/frame_renderer.hpp"
+#include "app/input_runtime.hpp"
 #include "app/input_sampler.hpp"
 #include "app/play_mode.hpp"
 #include "app/remote_bridge.hpp"
@@ -136,6 +138,8 @@ private:
     WorldRuntime                world_;
     FlyCamera                   camera_;
     InputSampler                input_;
+    InputRuntime                input_runtime_; // G5 actions + G15 camera rigs
+    float                       view_yaw_ = 0.0F; // last frame's view heading (camera_relative)
     PlayMode                    play_mode_; // Play/Stop (editor and non-editor game)
     std::optional<RemoteBridge> remote_;
 

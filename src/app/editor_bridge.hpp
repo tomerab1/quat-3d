@@ -15,6 +15,7 @@
 
 #ifdef ENGINE_EDITOR
 
+#include <array>
 #include <functional>
 #include <optional>
 #include <string>
@@ -119,6 +120,8 @@ public:
     // gizmo otherwise); the ARROW keys fly whenever the cursor is over the
     // viewport (they conflict with nothing). Text input freezes both.
     [[nodiscard]] FlyInputGate input_gate(bool looking, bool character_mode) const;
+    // The Viewport panel in window coordinates (min x/y, max x/y).
+    [[nodiscard]] std::array<float, 4> viewport_rect() const { return editor_.viewport_rect(); }
     // A UI text field owns the keyboard (scripts read keys as released).
     [[nodiscard]] bool keyboard_captured() const;
     // The scene's render size: the Viewport panel (sized by last frame's UI)

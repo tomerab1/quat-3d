@@ -246,8 +246,9 @@ defaults to 1000 m; sensors are skipped unless `include_sensors` is true.
 
 ## `input`
 
-Keyboard, mouse and the first gamepad, sampled once per frame. While an
-editor text field has focus, keys, movement axes and actions read as
+Keyboard, mouse and the first gamepad, sampled once per frame, plus the
+named **actions** of the project's action map (G5, [`input.md`](input.md)).
+While an editor text field has focus, keys and key-bound actions read as
 released.
 
 | Call | Notes |
@@ -260,9 +261,12 @@ released.
 | `input.gamepad_connected()` | A gamepad is connected. |
 | `input.gamepad_button(b)`, `input.gamepad_pressed(b)`, `input.gamepad_released(b)` | `south`/`a`, `east`/`b`, `west`/`x`, `north`/`y`, `back`, `guide`, `start`, `left_stick`, `right_stick`, `left_shoulder`, `right_shoulder`, `dpad_up`, `dpad_down`, `dpad_left`, `dpad_right`. |
 | `input.gamepad_axis(a)` | `left_x`, `left_y`, `right_x`, `right_y` in [-1, 1] (y down positive), `left_trigger`, `right_trigger` in [0, 1]. |
-| `input.axis(name)` | Virtual axes in [-1, 1]: `move_x` (A/D, ←/→, left stick), `move_y` (W/S, ↑/↓, left stick; forward positive), `look_x`, `look_y` (right stick; up positive). |
+| `input.axis(name)` (alias `input.value`) | The value of a button / axis1d **action** ([input actions](input.md)). The default map has `move_x` (A/D, ←/→, left stick), `move_y` (W/S, ↑/↓, left stick; forward positive), `look_x`, `look_y` (right stick; up positive), in [-1, 1]. |
+| `input.vector(name)` | An axis2d action as `vec3(x, y, 0)` (y up / forward). |
 | `input.move_vector()` | `vec3(move_x, 0, -move_y)` clamped to length 1: a world-space walk direction (forward = -Z) ready for `e:move`. |
-| `input.action(name)`, `input.action_pressed(name)`, `input.action_released(name)` | Actions: `jump` (Space, gamepad A), `fire` (Ctrl, left mouse, right trigger), `aim` (right mouse, left trigger), `interact` (E, gamepad X), `sprint` (Shift, left stick click), `pause` (P, Start). |
+| `input.action(name)`, `input.action_pressed(name)`, `input.action_released(name)` | An action is active / its trigger started / ended. Defaults: `jump` (Space, gamepad A), `fire` (Ctrl, left mouse, right trigger), `aim` (right mouse, left trigger), `interact` (E, gamepad X), `sprint` (Shift, left stick click), `pause` (P, Start); a project adds its own in `assets/input/actions.json`. In `on_fixed_update` each press is seen by exactly one fixed step. |
+| `input.held_time(name)` | Seconds the action has been held (0 when released). |
+| `input.push_context(name)`, `input.pop_context(name)` | Push / pop an input context (applies from the next frame); `pop_context` returns whether it was on the stack. |
 
 Key names: `a`–`z`, `0`–`9`, `f1`–`f12`, `space`, `enter` (`return`),
 `escape`, `tab`, `backspace`, `up`, `down`, `left`, `right`, `left_shift`,

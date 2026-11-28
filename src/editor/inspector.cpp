@@ -14,6 +14,7 @@
 
 #include "animation_inspector.hpp"
 #include "audio_inspector.hpp"
+#include "camera_rig_inspector.hpp"
 #include "behavior_panel.hpp"
 #include "grass_inspector.hpp"
 #include "particle_inspector.hpp"
@@ -23,6 +24,7 @@
 #include "tuning_panels.hpp"
 #include "engine/editor/editor.hpp"
 #include "engine/scene/behavior.hpp"
+#include "engine/scene/camera_rig.hpp"
 #include "engine/scene/components.hpp"
 #include "engine/scene/scatter.hpp"
 #include "engine/scene/scene.hpp"
@@ -363,6 +365,24 @@ struct ComponentInspector<scene::Camera> {
 };
 
 template <>
+struct ComponentInspector<scene::CameraRig> {
+    static constexpr const char* title = "Camera Rig";
+    static constexpr const char* codec = "camera_rig";
+    static constexpr const char* icon = icon::orbit;
+    static constexpr bool property_grid = true;
+    static void draw(entt::registry&, entt::entity, scene::CameraRig& rig) { draw_camera_rig(rig); }
+};
+
+template <>
+struct ComponentInspector<scene::CameraRigInput> {
+    static constexpr const char* title = "Camera Rig Input";
+    static constexpr const char* codec = "camera_rig_input";
+    static constexpr const char* icon = icon::orbit;
+    static constexpr bool property_grid = true;
+    static void draw(entt::registry&, entt::entity, scene::CameraRigInput& in) { draw_camera_rig_input(in); }
+};
+
+template <>
 struct ComponentInspector<scene::MeshRenderer> {
     static constexpr const char* title = "Mesh Renderer";
     static constexpr const char* icon = icon::box;
@@ -549,6 +569,8 @@ void draw_inspector(scene::Scene& scene, entt::entity selected, panels::Inspecto
     inspect<scene::DirectionalLight>(state, r, selected, true);
     inspect<scene::PointLight>(state, r, selected, true);
     inspect<scene::Camera>(state, r, selected, true);
+    inspect<scene::CameraRig>(state, r, selected, true);
+    inspect<scene::CameraRigInput>(state, r, selected, true);
     inspect<scene::Animator>(state, r, selected);
     inspect<scene::FootIK>(state, r, selected, true);
     inspect<scene::Terrain>(state, r, selected, true);

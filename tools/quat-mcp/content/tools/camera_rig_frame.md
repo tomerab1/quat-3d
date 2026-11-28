@@ -1,0 +1,1 @@
+Fit an entity (`target`, with its children) or, with no target, the whole scene in a camera rig's view. The rig keeps its heading: the focus becomes the centre of the content, and the distance (and pitch, when it follows the zoom) is chosen so that everything is in view with `margin` to spare. Pass `"immediate": true` to jump there at once.
