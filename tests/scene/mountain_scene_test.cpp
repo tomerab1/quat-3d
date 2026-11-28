@@ -5,6 +5,7 @@
 // treeline, off cliffs, seated on the ground).
 
 #include <cmath>
+#include <cstdint>
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
@@ -166,6 +167,54 @@ TEST(MountainScene, FileDecodesStrictly) {
     const float eye = d.camera.y - d.ground_at(d.camera.x, d.camera.z);
     EXPECT_GT(eye, 0.5F);
     EXPECT_LT(eye, 8.0F);
+}
+
+// The terrain runs the multigrid talus relaxation (#69) on a 2^n + 1 tile:
+// other sizes stop coarsening early and barely relax (issue #95). Relaxed,
+// almost no neighbour pair stays steeper than the talus (~59 degrees here,
+// 6.7 % of pairs without relaxation), yet the peaks keep their cliffs: the
+// talus is set so most ground above the snowline stays past 50 degrees.
+TEST(MountainScene, TerrainRelaxesOnAFullPyramidAndKeepsSteepPeaks) {
+    const SceneData& d = scene_data();
+    ASSERT_TRUE(d.map.valid());
+    const engine::terrain::TerrainParams& p = d.terrain.params;
+    const std::uint32_t cells = p.resolution - 1U;
+    EXPECT_TRUE(cells != 0U && (cells & (cells - 1U)) == 0U)
+        << "resolution " << p.resolution << " is not 2^n + 1";
+    EXPECT_GT(p.grid.relax_cycles, 0U);
+
+    const engine::terrain::Heightmap& m = d.map;
+    const auto n = static_cast<std::int32_t>(m.resolution);
+    const float dx = m.tile_size_m / static_cast<float>(m.resolution - 1U);
+    const float limit = 1.1F * p.grid.talus * dx;
+    std::size_t pairs = 0;
+    std::size_t steep = 0;
+    std::size_t high = 0;
+    std::size_t high_cliff = 0;
+    for (std::int32_t z = 0; z < n; ++z) {
+        for (std::int32_t x = 0; x < n; ++x) {
+            const float h = m.at(x, z);
+            if (x + 1 < n) {
+                ++pairs;
+                if (std::abs(m.at(x + 1, z) - h) > limit) ++steep;
+            }
+            if (z + 1 < n) {
+                ++pairs;
+                if (std::abs(m.at(x, z + 1) - h) > limit) ++steep;
+            }
+            if (x == 0 || z == 0 || x + 1 == n || z + 1 == n || h < d.terrain.snowline_m) {
+                continue;
+            }
+            const float gx = (m.at(x + 1, z) - m.at(x - 1, z)) / (2.0F * dx);
+            const float gz = (m.at(x, z + 1) - m.at(x, z - 1)) / (2.0F * dx);
+            ++high;
+            if (std::atan(std::sqrt(gx * gx + gz * gz)) > glm::radians(50.0F)) ++high_cliff;
+        }
+    }
+    ASSERT_GT(pairs, 0U);
+    ASSERT_GT(high, 0U);
+    EXPECT_LT(static_cast<double>(steep) / static_cast<double>(pairs), 0.03);
+    EXPECT_GT(static_cast<double>(high_cliff) / static_cast<double>(high), 0.6);
 }
 
 TEST(MountainScene, LayersPlaceTheExpectedInstanceCounts) {

@@ -2,14 +2,15 @@
 // file that validate_ktx2() has already range-checked.
 
 #include "engine/asset/ktx2_texture.hpp"
+#include "engine/core/utf8_path.hpp"
 
 #include <KHR/khr_df.h>
 #include <ktx.h>
 
 #include <algorithm>
 #include <atomic>
-#include <cstdio>
 #include <cstring>
+#include <fstream>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -228,16 +229,18 @@ std::expected<TextureData, core::Error> load_ktx2_file(const std::filesystem::pa
                                                         const Ktx2DecodeOptions& options) {
     std::error_code ec;
     const std::uintmax_t size = std::filesystem::file_size(path, ec);
-    if (ec) return fail("cannot stat '" + path.string() + "': " + ec.message());
+    if (ec) return fail("cannot stat '" + core::path_to_utf8(path) + "': " + ec.message());
     if (size > options.limits.max_file_bytes) {
-        return fail("'" + path.string() + "' is larger than the configured limit");
+        return fail("'" + core::path_to_utf8(path) + "' is larger than the configured limit");
     }
-    std::unique_ptr<std::FILE, int (*)(std::FILE*)> file(std::fopen(path.string().c_str(), "rb"),
-                                                         &std::fclose);
-    if (!file) return fail("cannot open '" + path.string() + "'");
+    // std::ifstream takes the path natively (wide on Windows), so non-ASCII
+    // paths open correctly, unlike a narrow-string open.
+    std::ifstream file(path, std::ios::binary);
+    if (!file) return fail("cannot open '" + core::path_to_utf8(path) + "'");
     std::vector<std::byte> bytes(static_cast<std::size_t>(size));
-    if (std::fread(bytes.data(), 1, bytes.size(), file.get()) != bytes.size()) {
-        return fail("short read on '" + path.string() + "'");
+    if (!file.read(reinterpret_cast<char*>(bytes.data()),
+                   static_cast<std::streamsize>(bytes.size()))) {
+        return fail("short read on '" + core::path_to_utf8(path) + "'");
     }
     return decode_ktx2(bytes, options);
 }

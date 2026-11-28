@@ -338,6 +338,7 @@ protected:
     void SetUp() override {
         engine::remote::RpcServerConfig config;
         config.port = 0;
+        config.token = "debug-step-test";
         auto listened = engine::remote::RpcServer::listen(config);
         ASSERT_OK(listened);
         server.emplace(std::move(*listened));
@@ -350,6 +351,12 @@ protected:
         auto c = engine::remote::detail::connect_loopback(server->port());
         ASSERT_OK(c);
         sock = std::move(*c);
+        send({{"jsonrpc", "2.0"},
+              {"id", "hello"},
+              {"method", "session.hello"},
+              {"params", {{"token", "debug-step-test"}}}});
+        const Json hello = pump(2000);
+        ASSERT_TRUE(hello.is_object() && hello.contains("result")) << hello.dump();
     }
 
     void send(const Json& msg) {
@@ -425,6 +432,8 @@ TEST_F(DebugStep, DroppedWaitStillAnswers) {
     EXPECT_TRUE(reply.contains("error")) << reply.dump();
 }
 
+// (dt values stay within SimClock::max_step_dt = 1/15 s, audit D2: a larger
+// dt is refused with invalid_params and would queue nothing.)
 TEST_F(DebugStep, LaterRequestsKeepQueuedStepsDt) {
     send({{"jsonrpc", "2.0"}, {"id", 4}, {"method", "debug.step"},
           {"params", {{"frames", 2}, {"dt", 0.05}}}});
@@ -439,20 +448,25 @@ TEST_F(DebugStep, LaterRequestsKeepQueuedStepsDt) {
     EXPECT_FLOAT_EQ(clock.advance(0.5F), 0.02F);
 }
 
-// A step of exactly the cap (one physics update) queues with that dt; one
-// above it is refused and leaves the queued run alone.
+// debug.step at exactly SimClock::max_step_dt (1/15 s, what one physics
+// update simulates exactly) is queued with that dt; above it the request is
+// refused with a precise error and queues nothing (no silent clamp).
 TEST_F(DebugStep, StepDtAtTheCapIsKeptAboveItRefused) {
-    const double cap = static_cast<double>(core::SimClock::max_step_dt);
     send({{"jsonrpc", "2.0"}, {"id", 6}, {"method", "debug.step"},
-          {"params", {{"frames", 1}, {"dt", cap}}}});
-    EXPECT_TRUE(pump(100).is_null());
+          {"params", {{"frames", 1}, {"dt", static_cast<double>(core::SimClock::max_step_dt)}}}});
+    EXPECT_TRUE(pump(100).is_null()) << "a valid step answers once it has run";
+    ASSERT_EQ(waiters.size(), 1U);
+    EXPECT_EQ(clock.state().pending_steps, 1U);
+
     send({{"jsonrpc", "2.0"}, {"id", 7}, {"method", "debug.step"},
           {"params", {{"frames", 1}, {"dt", 0.1}}}});
     const Json reply = pump(2000);
-    ASSERT_TRUE(reply.is_object()) << "no reply";
+    ASSERT_TRUE(reply.is_object());
     EXPECT_EQ(reply["id"], 7);
-    EXPECT_TRUE(reply.contains("error")) << reply.dump();
-    EXPECT_EQ(clock.state().pending_steps, 1U);
+    EXPECT_EQ(reply["error"]["code"], code::invalid_params);
+    EXPECT_TRUE(contains(reply["error"]["message"].get<std::string>(), "dt"));
+    EXPECT_EQ(waiters.size(), 1U);
+    EXPECT_EQ(clock.state().pending_steps, 1U) << "the refused request queued nothing";
     EXPECT_FLOAT_EQ(clock.advance(0.5F), core::SimClock::max_step_dt);
 }
 

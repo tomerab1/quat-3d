@@ -18,9 +18,15 @@
 #include <nlohmann/json.hpp>
 
 #include "engine/core/json_fields.hpp"
+#include "engine/core/utf8_path.hpp"
 #include "engine/physics/physics_world.hpp"
+#include "engine/rhi/material_shader_names.hpp"
 #include "engine/scene/components.hpp"
 #include "engine/scene/material_override.hpp"
+#include "engine/scene/script_component.hpp"
+#include "component_json_internal.hpp"
+#include "engine/terrain/budget.hpp"
+#include "engine/terrain/talus_relax.hpp"
 
 #include "component_json_animation.hpp"
 
@@ -31,10 +37,11 @@ namespace {
 using json = nlohmann::json;
 using core::EnumName;
 using core::JsonFields;
+namespace material_shaders = rhi::material_shaders;
 
 constexpr std::array k_components = {
     ComponentInfo{"transform", "Local position / rotation (Euler degrees, YXZ) / scale", false, true},
-    ComponentInfo{"primitive", "Procedural shape (cube, sphere, plane, cylinder, cone, capsule) with a PBR colour", true, true},
+    ComponentInfo{"primitive", "Procedural shape (cube, sphere, plane, cylinder, cone, capsule) with a PBR colour or a material shader", true, true},
     ComponentInfo{"material", "Per-entity overrides of the drawn material's PBR factors (null clears one)", true, true},
     ComponentInfo{"instanced_mesh", "Many placements of one model (glTF or primitive shape), drawn instanced", true, true},
     ComponentInfo{"scatter", "Seeded procedural placement of the entity's instanced mesh on the terrain", true, true},
@@ -47,8 +54,10 @@ constexpr std::array k_components = {
     ComponentInfo{"nav_agent", "Navmesh path-following agent", true, true},
     ComponentInfo{"behavior", "Behaviour tree (JSON source)", true, true},
     ComponentInfo{"patrol", "Patrol route the nav agent walks", true, true},
+    ComponentInfo{"script", "Lua gameplay script (assets/scripts/) with property overrides", true, true},
     ComponentInfo{"terrain", "Procedural terrain tile / streamed world", true, true},
     ComponentInfo{"grass", "GPU-generated, wind-animated grass around the camera", true, true},
+    ComponentInfo{"particle_emitter", "GPU particle emitter (sparks, smoke, dust): emission, shape, forces, curves, flipbook, blending, collision", true, true},
     ComponentInfo{"net_replicated", "Replicate this entity's transform to network clients", true, true},
     ComponentInfo{"audio_source", "Sound emitter: wav/flac/mp3 clip on a bus, optionally 3D", true, true},
     ComponentInfo{"audio_listener", "The audio listener follows this entity (else the camera)", true, true},
@@ -84,6 +93,19 @@ constexpr EnumName<AudioCommand> k_audio_commands[] = {
     {"none", AudioCommand::none}, {"play", AudioCommand::play}, {"stop", AudioCommand::stop},
     {"pause", AudioCommand::pause}, {"resume", AudioCommand::resume}};
 constexpr std::size_t k_max_clip_path = 4096;
+
+// Clips are project-relative (issue #66); AudioEngine::load re-checks against
+// the real root, symlinks included. Null when `clip` is acceptable.
+[[nodiscard]] const char* clip_path_problem(const std::string& clip) {
+    if (clip.empty()) return nullptr;
+    const std::filesystem::path p = core::path_from_utf8(clip);
+    if (p.is_absolute() || p.has_root_name() || p.has_root_directory()) {
+        return "must be a path relative to the project root, not an absolute path";
+    }
+    const std::filesystem::path norm = p.lexically_normal();
+    if (!norm.empty() && *norm.begin() == "..") return "must stay inside the project root";
+    return nullptr;
+}
 
 template <typename E, std::size_t N>
 [[nodiscard]] std::string enum_name(const EnumName<E> (&names)[N], E value) {
@@ -262,6 +284,10 @@ decode_instance(const json& v, const std::string& where, bool strict) {
     return t;
 }
 
+} // namespace
+
+namespace detail {
+
 // Asset paths in components are relative to the project root and may not
 // climb out of it (remote clients write them).
 void check_project_path(JsonFields& f, std::string_view key, const std::string& path) {
@@ -296,6 +322,42 @@ void read_range(JsonFields& f, std::string_view key, glm::vec2& out, float lo, f
     out = r;
 }
 
+} // namespace detail
+
+namespace {
+
+using detail::check_project_path;
+using detail::read_range;
+
+// `shader` (a material shader name; "standard" or "" = built-in) and
+// `shader_params` (up to 8 numbers filling the two parameter vec4s in order;
+// missing ones are 0).
+void read_material_shader(JsonFields& f, Primitive& p) {
+    std::string shader = p.shader;
+    f.string("shader", shader, material_shaders::max_name_length);
+    if (shader == material_shaders::builtin_name) shader.clear();
+    if (!shader.empty() && !material_shaders::valid_name(shader)) {
+        f.fail("shader", "expected a material shader name (lowercase letters, digits and '_', "
+                         "starting with a letter) or \"standard\"");
+    } else {
+        p.shader = std::move(shader);
+    }
+
+    f.known({"shader_params"});
+    const json* v = f.raw("shader_params");
+    if (v == nullptr || v->is_null()) return;
+    std::array<glm::vec4, 2> params{};
+    bool ok = v->is_array() && v->size() <= 8;
+    for (std::size_t i = 0; ok && i < v->size(); ++i) {
+        ok = JsonFields::read_float((*v)[i], params[i / 4][static_cast<glm::length_t>(i % 4)]);
+    }
+    if (ok) {
+        p.shader_params = params;
+    } else {
+        f.fail("shader_params", "expected an array of at most 8 finite numbers");
+    }
+}
+
 // The shape + flat material fields shared by `primitive` and `instanced_mesh`.
 void read_primitive_fields(JsonFields& f, Primitive& p) {
     f.enumeration("shape", p.shape, k_primitive_shapes);
@@ -303,14 +365,21 @@ void read_primitive_fields(JsonFields& f, Primitive& p) {
     read_color(f, "color", p.color);
     f.number("metallic", p.metallic, 0.0F, 1.0F).number("roughness", p.roughness, 0.0F, 1.0F);
     f.color3("emissive", p.emissive);
+    read_material_shader(f, p);
 }
 
 [[nodiscard]] json primitive_fields_json(const Primitive& p) {
+    json params = json::array();
+    for (const glm::vec4& v : p.shader_params) {
+        for (int i = 0; i < 4; ++i) params.push_back(v[i]);
+    }
     return {{"shape", enum_name(k_primitive_shapes, p.shape)},
             {"color", vec4_json(p.color)},
             {"metallic", p.metallic},
             {"roughness", p.roughness},
-            {"emissive", vec3_json(p.emissive)}};
+            {"emissive", vec3_json(p.emissive)},
+            {"shader", p.shader.empty() ? std::string(material_shaders::builtin_name) : p.shader},
+            {"shader_params", std::move(params)}};
 }
 
 // ---- Grass ---------------------------------------------------------------
@@ -543,6 +612,7 @@ json encode_components(const entt::registry& r, entt::entity e, const EncodeOpti
     if (const auto* b = pick.get<BehaviorTree>("behavior")) {
         out["behavior"] = {{"source", b->source}, {"enabled", b->enabled}};
     }
+    if (const auto* sc = pick.get<Script>("script")) out["script"] = encode_script(*sc);
     if (const auto* p = pick.get<PatrolRoute>("patrol")) {
         json pts = json::array();
         for (const glm::vec3& pt : p->points) pts.push_back(vec3_json(pt));
@@ -560,6 +630,7 @@ json encode_components(const entt::registry& r, entt::entity e, const EncodeOpti
                           {"erosion", enum_name(k_erosion_models, t->params.erosion_model)},
                           {"droplets", t->params.erosion_droplets},
                           {"erosion_steps", t->params.grid.iterations},
+                          {"erosion_relax", t->params.grid.relax_cycles},
                           {"erosion_talus", t->params.grid.talus},
                           {"erosion_rain", t->params.grid.rain},
                           {"erosion_capacity", t->params.grid.capacity},
@@ -571,6 +642,9 @@ json encode_components(const entt::registry& r, entt::entity e, const EncodeOpti
                           {"gpu", t->gpu_generate}};
     }
     if (const auto* g = pick.get<Grass>("grass")) out["grass"] = encode_grass(g->settings);
+    if (const auto* p = pick.get<ParticleEmitter>("particle_emitter")) {
+        out["particle_emitter"] = detail::encode_particle_emitter(p->settings);
+    }
     if (const auto* n = pick.get<NetReplicated>("net_replicated")) {
         out["net_replicated"] = {{"net_id", n->net_id}};
     }
@@ -625,8 +699,10 @@ std::vector<std::string_view> component_names(const entt::registry& r, entt::ent
     add(r.all_of<NavAgent>(e), "nav_agent");
     add(r.all_of<BehaviorTree>(e), "behavior");
     add(r.all_of<PatrolRoute>(e), "patrol");
+    add(r.all_of<Script>(e), "script");
     add(r.all_of<Terrain>(e), "terrain");
     add(r.all_of<Grass>(e), "grass");
+    add(r.all_of<ParticleEmitter>(e), "particle_emitter");
     add(r.all_of<NetReplicated>(e), "net_replicated");
     add(r.all_of<AudioSource>(e), "audio_source");
     add(r.all_of<AudioListener>(e), "audio_listener");
@@ -840,9 +916,23 @@ std::expected<void, core::Error> apply_component(entt::registry& r, entt::entity
             f.vec3_list("points", p.points).boolean("loop", p.loop);
         });
     }
+    if (name == "script") {
+        // A remote request must name the file (the model gets a precise
+        // error). Lenient decoding — the editor's Add Component, which adds
+        // every component from {}, and scene files — accepts a script without
+        // one yet: an empty path runs nothing until a file is picked.
+        const bool adding = !r.all_of<Script>(e);
+        return merge<Script>(r, e, v, name, strict, [adding, strict](JsonFields& f, Script& sc) {
+            if (strict && adding && !f.has("path")) {
+                f.fail("path", "required when adding a script (relative to assets/scripts/)");
+            }
+            decode_script_fields(f, sc);
+        });
+    }
     if (name == "terrain") {
         return merge<Terrain>(r, e, v, name, strict, [](JsonFields& f, Terrain& t) {
             terrain::TerrainParams& p = t.params;
+            const terrain::TerrainParams before = p;
             f.integer("seed", p.seed, 0, 0xFFFFFFFFLL);
             f.integer("resolution", p.resolution, 17, 8193);
             f.number("tile_size", p.tile_size_m, 1.0F, 100000.0F);
@@ -854,6 +944,7 @@ std::expected<void, core::Error> apply_component(entt::registry& r, entt::entity
             f.enumeration("erosion", p.erosion_model, k_erosion_models);
             f.integer("droplets", p.erosion_droplets, 0, 50'000'000);
             f.integer("erosion_steps", p.grid.iterations, 0, terrain::max_grid_erosion_steps);
+            f.integer("erosion_relax", p.grid.relax_cycles, 0, terrain::max_talus_relax_cycles);
             f.number("erosion_talus", p.grid.talus, 0.05F, 4.0F);
             f.number("erosion_rain", p.grid.rain, 0.0F, 1.0F);
             f.number("erosion_capacity", p.grid.capacity, 0.0F, 20.0F);
@@ -873,12 +964,35 @@ std::expected<void, core::Error> apply_component(entt::registry& r, entt::entity
                            std::to_string(terrain::max_grid_erosion_texel_steps) +
                            " (e.g. 1025 at 5000 steps)");
             }
-            t.regenerate = true; // rebuild with the new parameters
+            // The fields above are bounded one by one; their product (tiles
+            // kept loaded x resolution², droplets x tiles) is bounded here (#67).
+            if (const auto over = terrain::terrain_budget_problem(p, t.streaming, t.stream_radius)) {
+                // Blame the first budget-relevant field the request changed.
+                const char* field = "resolution";
+                for (const char* key : {"stream_radius", "resolution", "droplets", "erosion",
+                                        "erosion_steps", "streaming"}) {
+                    if (f.has(key)) {
+                        field = key;
+                        break;
+                    }
+                }
+                f.fail(field, over->message);
+            }
+            // Only a new shape regenerates (issue #38): `snowline` is
+            // shading, and the runtime applies `stream_radius` (resizing the
+            // window, keeping loaded tiles), `gpu` (the next tile's
+            // generator) and `streaming` (a mode switch) itself.
+            if (!terrain::same_shape(before, p)) t.regenerate = true;
         });
     }
     if (name == "grass") {
         return merge<Grass>(r, e, v, name, strict,
                             [](JsonFields& f, Grass& g) { decode_grass(f, g.settings); });
+    }
+    if (name == "particle_emitter") {
+        return merge<ParticleEmitter>(r, e, v, name, strict, [](JsonFields& f, ParticleEmitter& p) {
+            detail::decode_particle_emitter(f, p.settings);
+        });
     }
     if (name == "net_replicated") {
         return merge<NetReplicated>(r, e, v, name, strict, [](JsonFields& f, NetReplicated& n) {
@@ -891,6 +1005,7 @@ std::expected<void, core::Error> apply_component(entt::registry& r, entt::entity
         return merge<AudioSource>(r, e, v, name, strict, [](JsonFields& f, AudioSource& a) {
             f.string("clip", a.clip, k_max_clip_path).enumeration("bus", a.bus, k_audio_buses);
             if (a.clip.find('\0') != std::string::npos) f.fail("clip", "must not contain NUL");
+            if (const char* why = clip_path_problem(a.clip); why != nullptr) f.fail("clip", why);
             f.number("volume", a.volume, 0.0F, 16.0F).number("pitch", a.pitch, 0.01F, 16.0F);
             f.boolean("loop", a.loop).boolean("play_on_start", a.play_on_start);
             f.boolean("spatial", a.spatial);
@@ -945,8 +1060,10 @@ bool remove_component(entt::registry& r, entt::entity e, std::string_view name) 
     if (name == "nav_agent") return r.remove<NavAgent>(e) > 0;
     if (name == "behavior") return r.remove<BehaviorTree>(e) > 0;
     if (name == "patrol") return r.remove<PatrolRoute>(e) > 0;
+    if (name == "script") return r.remove<Script>(e) > 0;
     if (name == "terrain") return r.remove<Terrain>(e) > 0;
     if (name == "grass") return r.remove<Grass>(e) > 0;
+    if (name == "particle_emitter") return r.remove<ParticleEmitter>(e) > 0;
     if (name == "net_replicated") return r.remove<NetReplicated>(e) > 0;
     if (name == "audio_source") return r.remove<AudioSource>(e) > 0;
     if (name == "audio_listener") return r.remove<AudioListener>(e) > 0;

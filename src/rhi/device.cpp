@@ -326,7 +326,6 @@ std::expected<Device, core::Error> Device::create(const CreateInfo& info) {
         if (!surface) return std::unexpected(surface.error());
         if (*surface == VK_NULL_HANDLE) return fail("create_surface returned a null surface");
         dev.surface_ = *surface;
-        dev.presentable_ = true; // VK_KHR_swapchain is required and enabled below
     }
 
     // ---- Physical device ------------------------------------------------
@@ -404,6 +403,8 @@ std::expected<Device, core::Error> Device::create(const CreateInfo& info) {
     if (supported_core.samplerAnisotropy == VK_TRUE) {
         dev.max_sampler_anisotropy_ = candidate.properties.limits.maxSamplerAnisotropy;
     }
+    core_features.independentBlend = supported_core.independentBlend;
+    dev.independent_blend_ = supported_core.independentBlend == VK_TRUE;
     // Block-compressed texture families, likewise enabled whenever offered;
     // asset loads pick their transcode targets from what is enabled here.
     core_features.textureCompressionBC = supported_core.textureCompressionBC;
@@ -575,9 +576,9 @@ Device& Device::operator=(Device&& other) noexcept {
         properties_     = other.properties_;
         descriptor_buffer_props_ = other.descriptor_buffer_props_;
         max_sampler_anisotropy_  = other.max_sampler_anisotropy_;
+        independent_blend_       = other.independent_blend_;
         texture_caps_            = other.texture_caps_;
         descriptor_backend_      = other.descriptor_backend_;
-        presentable_             = std::exchange(other.presentable_, false);
         storage_image_extended_formats_ = other.storage_image_extended_formats_;
         simulate_missing_extended_formats_ = other.simulate_missing_extended_formats_;
         depth_clamp_ = other.depth_clamp_;

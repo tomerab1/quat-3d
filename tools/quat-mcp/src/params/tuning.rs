@@ -16,6 +16,7 @@ pub enum SettingsGroup {
     Exposure,
     Bloom,
     Taa,
+    Upscaler,
     Shadows,
     Ao,
     #[serde(rename = "contact_shadows")]
@@ -84,6 +85,47 @@ pub struct TaaParams {
     /// History weight, 0..0.98 (default 0.9): higher is smoother but ghosts more.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub feedback: Option<f64>,
+}
+
+/// Render-resolution mode of the temporal upscaler.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum UpscalerMode {
+    /// Full resolution, anti-aliasing only.
+    NativeAa,
+    /// Render scale 1/1.5 per axis.
+    Quality,
+    /// Render scale 1/1.7 per axis.
+    Balanced,
+    /// Render scale 1/2 per axis.
+    Performance,
+}
+
+/// Upscaler implementation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum UpscalerBackend {
+    /// The engine's temporal upsampler.
+    Taau,
+    /// AMD FSR 2: not built yet, the engine falls back to `taau`.
+    Fsr2,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct UpscalerParams {
+    /// Render resolution (needs `taa.enabled`): `native_aa` (default), `quality`, `balanced` or `performance`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mode: Option<UpscalerMode>,
+    /// Render scale per axis overriding the mode when above 0, 0..1 (min effective 0.25; default 0 = off).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub render_scale: Option<f64>,
+    /// Sharpening of the reconstructed frame, 0..1 (default 0.25).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sharpness: Option<f64>,
+    /// Implementation: `taau` (default) or `fsr2` (not built yet).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub backend: Option<UpscalerBackend>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
@@ -214,6 +256,9 @@ pub struct RenderSettingsSetParams {
     /// Temporal anti-aliasing.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub taa: Option<TaaParams>,
+    /// Render resolution and temporal upscaling.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub upscaler: Option<UpscalerParams>,
     /// Cascaded sun shadows.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub shadows: Option<ShadowParams>,
@@ -238,6 +283,7 @@ impl RenderSettingsSetParams {
         self.exposure.is_none()
             && self.bloom.is_none()
             && self.taa.is_none()
+            && self.upscaler.is_none()
             && self.shadows.is_none()
             && self.ao.is_none()
             && self.contact_shadows.is_none()

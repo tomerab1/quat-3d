@@ -13,6 +13,7 @@
 
 #include "cook/internal.hpp"
 #include "engine/asset/image_decode.hpp"
+#include "engine/core/utf8_path.hpp"
 
 namespace engine::cook {
 
@@ -63,7 +64,8 @@ cook_images(const fastgltf::Asset& asset, const TextureCookOptions& o, CookStats
         auto image = asset::decode_png_jpeg(*encoded, uses[i].color_space, {}, &budget);
         if (!image) return fail("image " + std::to_string(i) + ": " + image.error().message);
         auto ktx2 = detail::encode_image_ktx2(image->pixels.span(), image->width, image->height,
-                                              uses[i].role, uses[i].color_space, o);
+                                              uses[i].role, uses[i].color_space, o,
+                                              uses[i].alpha_test_cutoff);
         if (!ktx2) return fail("image " + std::to_string(i) + ": " + ktx2.error().message);
         stats.image_bytes_before += encoded->size();
         stats.image_bytes_after += ktx2->size();
@@ -279,7 +281,7 @@ std::optional<std::string> texture_extras(std::size_t index, fastgltf::Category 
 std::expected<CookStats, core::Error> cook_gltf(const fs::path& input, const fs::path& output,
                                                 const CookOptions& options) {
     auto data = fastgltf::GltfDataBuffer::FromPath(input);
-    if (data.error() != fastgltf::Error::None) return fail("cannot read '" + input.string() + "'");
+    if (data.error() != fastgltf::Error::None) return fail("cannot read '" + core::path_to_utf8(input) + "'");
     // The runtime's own parse: extensions, EXT_meshopt_compression decoding
     // and validate_asset() (buffer / accessor ranges, references, hierarchy).
     auto parsed = gltf::parse_gltf(data.get(), input.parent_path());
@@ -316,15 +318,15 @@ std::expected<CookStats, core::Error> cook_gltf(const fs::path& input, const fs:
     exporter.setUserPointer(&extras);
     exporter.setExtrasWriteCallback(&texture_extras);
     const bool binary = output.extension() == ".glb";
-    if (!binary) asset.buffers[0].name = output.stem().string();
+    if (!binary) asset.buffers[0].name = core::path_to_utf8(output.stem());
     const fastgltf::Error written = binary ? exporter.writeGltfBinary(asset, output)
                                            : exporter.writeGltfJson(asset, output);
     if (written != fastgltf::Error::None) {
-        return fail("writing '" + output.string() + "' failed: " +
+        return fail("writing '" + core::path_to_utf8(output) + "' failed: " +
                     std::string(fastgltf::getErrorMessage(written)));
     }
     stats.output_bytes = file_bytes(output);
-    if (!binary) stats.output_bytes += file_bytes(output.parent_path() / (output.stem().string() + ".bin"));
+    if (!binary) stats.output_bytes += file_bytes(output.parent_path() / (std::filesystem::path(output.stem()) += ".bin"));
     return stats;
 }
 

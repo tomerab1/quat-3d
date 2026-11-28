@@ -145,8 +145,24 @@ GraphicsPipeline::create(const Device& device, VkPipelineCache cache, const Crea
     blend_template.alphaBlendOp = VK_BLEND_OP_ADD;
     blend_template.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT
                                     | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+    if (info.transmittance_blend) {
+        // rgb: dst * src (light let through multiplies); a: min(dst, src).
+        blend_template.blendEnable = VK_TRUE;
+        blend_template.srcColorBlendFactor = VK_BLEND_FACTOR_ZERO;
+        blend_template.dstColorBlendFactor = VK_BLEND_FACTOR_SRC_COLOR;
+        blend_template.colorBlendOp = VK_BLEND_OP_ADD;
+        blend_template.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+        blend_template.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+        blend_template.alphaBlendOp = VK_BLEND_OP_MIN;
+    }
     std::vector<VkPipelineColorBlendAttachmentState> blend_attachments(
         info.color_formats.size(), blend_template);
+    if (!info.blend_attachments.empty()) {
+        if (info.blend_attachments.size() != info.color_formats.size()) {
+            return fail("GraphicsPipeline::create: blend_attachments must match color_formats");
+        }
+        blend_attachments.assign(info.blend_attachments.begin(), info.blend_attachments.end());
+    }
 
     VkPipelineColorBlendStateCreateInfo color_blend{};
     color_blend.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;

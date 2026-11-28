@@ -47,10 +47,6 @@ namespace {
 
 std::expected<Swapchain, core::Error>
 Swapchain::create(const Device& device, VkSurfaceKHR surface, VkExtent2D window_extent) {
-    if (!device.presentable()) {
-        return fail("the device was created without a surface (headless): it cannot "
-                    "present");
-    }
     Swapchain sc;
     sc.device_  = &device;
     sc.surface_ = surface;

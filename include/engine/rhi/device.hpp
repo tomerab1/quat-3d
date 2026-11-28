@@ -81,14 +81,15 @@ public:
     // Device limit for anisotropic filtering; 0 when samplerAnisotropy is
     // unsupported (the feature is enabled whenever the device offers it).
     [[nodiscard]] float max_sampler_anisotropy() const { return max_sampler_anisotropy_; }
+    // Per-attachment blend state (core independentBlend: every desktop driver
+    // and MoltenVK offer it; enabled whenever offered). Weighted blended OIT
+    // needs it.
+    [[nodiscard]] bool independent_blend() const { return independent_blend_; }
     // Sampled-texture capabilities of this device (see TransferContext).
     [[nodiscard]] const TextureCaps& texture_caps() const {
         return texture_caps_;
     }
     [[nodiscard]] DescriptorBackend descriptor_backend() const { return descriptor_backend_; }
-    // A window surface was created (CreateInfo::create_surface), so
-    // VK_KHR_swapchain is enabled.
-    [[nodiscard]] bool presentable() const { return presentable_; }
     [[nodiscard]] bool uses_descriptor_buffer() const {
         return descriptor_backend_ == DescriptorBackend::ext_descriptor_buffer;
     }
@@ -142,9 +143,9 @@ private:
     VkPhysicalDeviceProperties properties_{};
     VkPhysicalDeviceDescriptorBufferPropertiesEXT descriptor_buffer_props_{};
     float                    max_sampler_anisotropy_ = 0.0F;
+    bool                     independent_blend_ = false;
     TextureCaps              texture_caps_{};
     DescriptorBackend        descriptor_backend_ = DescriptorBackend::ext_descriptor_buffer;
-    bool                     presentable_ = false;
     bool                     storage_image_extended_formats_ = false;
     bool                     simulate_missing_extended_formats_ = false;
     bool                     depth_clamp_ = false;

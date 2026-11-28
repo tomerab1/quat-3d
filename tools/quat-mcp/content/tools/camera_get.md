@@ -1,1 +1,1 @@
-Current viewport camera: `{position, yaw_deg, pitch_deg, fov_deg}`. yaw 0 looks along +X and 90 along +Z; positive pitch looks up.
+Current viewport camera: `{position, yaw_deg, pitch_deg, fov_deg, near, far, near_auto, far_auto}`. yaw 0 looks along +X and 90 along +Z; positive pitch looks up. `near` / `far` are the clip planes in effect (metres); `near_auto` / `far_auto` say whether each is derived from the scene or was set with `camera_set`.

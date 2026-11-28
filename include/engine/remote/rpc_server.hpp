@@ -12,10 +12,16 @@
 // runs the handlers inline (so they may touch the ECS freely) and flushes
 // replies. No background thread touches engine state.
 //
-// Security: the listener binds 127.0.0.1 only. When a token is configured,
-// every connection must open with `session.hello {"token": ...}` before any
-// other method is accepted; anything else is answered "unauthorized" and the
-// connection is closed.
+// Security (issue #56): the listener binds 127.0.0.1 only, and a session
+// token is mandatory — listen() refuses an empty one. Every connection must
+// open with `session.hello {"token": ...}`; any other first call, or a missing
+// or wrong token, is answered "unauthorized" and the connection is closed.
+// The first line that is not a JSON-RPC 2.0 request object (invalid JSON, a
+// non-object, no "jsonrpc": "2.0" / string "method") is answered with an error
+// and closes the connection; a line of an HTTP message (request line, status
+// line or header) closes it at once with no reply, so a web page POSTing to
+// the port can never reach its body. session_token.hpp generates tokens and
+// publishes them for local tools.
 //
 // Methods are either synchronous (return a result or an RpcError) or deferred:
 // a deferred handler receives a one-shot Responder it may complete on a later
@@ -92,7 +98,7 @@ private:
 
 struct RpcServerConfig {
     std::uint16_t port = 7878;     // 0 = pick an ephemeral port (tests)
-    std::string   token;           // empty = no authentication
+    std::string   token;           // required (listen() fails when empty)
     std::size_t   max_clients = 4;
     std::size_t   max_message_bytes = 16U << 20; // inbound line limit
     std::size_t   max_pending_output = 256U << 20; // per-client backlog before drop
@@ -110,8 +116,9 @@ public:
     using SyncHandler = std::function<RpcResult(const Json& params)>;
     using DeferredHandler = std::function<void(const Json& params, Responder responder)>;
 
-    // Binds 127.0.0.1:<port> (non-blocking). The returned server already has
-    // the built-in methods (session.hello, rpc.methods) registered.
+    // Binds 127.0.0.1:<port> (non-blocking). Fails when config.token is
+    // empty. The returned server already has the built-in methods
+    // (session.hello, rpc.methods) registered.
     [[nodiscard]] static std::expected<RpcServer, core::Error> listen(RpcServerConfig config);
 
     // A server with no socket: methods can be registered and invoked through

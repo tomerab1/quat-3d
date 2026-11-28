@@ -3,6 +3,8 @@
 // Demo / startup scenes for the `game` executable (app layer, not engine).
 //
 // Selected by environment variables:
+//   QUAT_SCENE=<file>  load a scene file (project-relative unless absolute),
+//                      e.g. a scripted game; it brings its own lights
 //   QUAT_DEMO=<name>   a showcase scene file from assets/scenes/ (k_demo_scenes)
 //   QUAT_GLTF=<file>   instantiate a glTF scene graph
 //   QUAT_PHYSICS=1     a pile of boxes dropped on a floor (owns a physics world)
@@ -11,6 +13,7 @@
 // plus QUAT_TERRAIN=1 for a procedural terrain tile under any of them.
 
 #include <expected>
+#include <filesystem>
 #include <optional>
 
 #include <entt/entity/entity.hpp>
@@ -40,6 +43,7 @@ struct DemoScene {
     bool physics_mode = false;   // QUAT_PHYSICS: physics_world steps rigid bodies
     bool character_mode = false; // QUAT_CHARACTER: physics_world steps the character
     bool from_gltf = false;      // QUAT_GLTF: show the model under its own lighting
+    bool from_scene_file = false; // QUAT_SCENE: no default lights / camera added
     std::optional<engine::physics::PhysicsWorld> physics_world;
     entt::entity character_entity = entt::null;
     // An object the loop slowly spins (the demo cube / glass sphere).
@@ -70,12 +74,14 @@ inline constexpr DemoSceneFile k_demo_scenes[] = {
 inline constexpr float k_pedestal_mesh_half_height = 0.25F;
 
 // Build the startup scene into `scene` (meshes/materials uploaded through
-// `transfer` and cached in `assets`). A QUAT_DEMO scene file also sets
-// `render_settings`.
+// `transfer` and cached in `assets`). A relative QUAT_SCENE path resolves
+// against `project_root`; a QUAT_DEMO scene file (also under `project_root`)
+// sets `render_settings` too.
 [[nodiscard]] std::expected<DemoScene, engine::core::Error>
 build_demo_scene(engine::scene::Scene& scene, engine::asset::AssetManager& assets,
                  engine::rhi::GpuAllocator& allocator,
                  const engine::rhi::TransferContext& setup_transfer,
+                 const std::filesystem::path& project_root,
                  engine::renderer::RenderSettings& render_settings);
 
 // The sun, plus two coloured point lights unless the scene came from a glTF

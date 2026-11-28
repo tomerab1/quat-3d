@@ -1,7 +1,7 @@
 // A8: render settings reach the passes. A uniform HDR image is tonemapped
 // with exposure settings (manual EV, auto key / compensation / clamps) and the
 // RGBA8 result is compared with the CPU reference of tonemap.slang; the TAA
-// resolve passes the current frame through when TAA is off.
+// settings (enabled, feedback) drive the temporal resolve.
 
 #include <algorithm>
 #include <cmath>
@@ -15,10 +15,12 @@
 #include "engine/renderer/exposure_pass.hpp"
 #include "engine/renderer/render_settings.hpp"
 #include "engine/renderer/taa_pass.hpp"
+#include "engine/renderer/upscaler.hpp"
 #include "engine/renderer/tonemap_pass.hpp"
 #include "engine/rhi/device.hpp"
 #include "engine/rhi/render_graph.hpp"
 #include "render/pbr_reference.hpp"
+#include "render/temporal_rig.hpp"
 #include "support/expect_ok.hpp"
 #include "support/gpu_commands.hpp"
 #include "support/gpu_context.hpp"
@@ -158,82 +160,52 @@ TEST(GpuRenderSettings, AutoExposureAppliesKeyClampsAndCompensation) {
     EXPECT_NEAR(ldr->rgba8(3, 3).r, reference(0.5F, 0.1F), 2);
 }
 
-// With TAA off the resolve shows the current frame even where the history
-// (black, inside the neighbourhood clip) would otherwise dominate.
-TEST(GpuRenderSettings, TaaOffPassesTheCurrentFrameThrough) {
+// TAA settings reach the resolve (R11 TAAU, mapped by apply_taa_settings):
+// with TAA off it shows the current frame even where the history (black,
+// inside the neighbourhood clip) would otherwise dominate; feedback is the
+// history weight (0: current frame only).
+TEST(GpuRenderSettings, TaaSettingsDriveTheResolve) {
     QUAT_REQUIRE_GPU(g);
-    auto taa = r::TaaPass::create(g->device, g->allocator, g->cache, g->shader_dir, k_ldr_format);
-    ASSERT_OK(taa);
-    const auto run = [&](float grey, const r::TaaSettings& settings) -> std::expected<int, Error> {
-        rhi::TransientImagePool pool(g->device, g->allocator);
-        rhi::RenderGraph graph(pool);
-        const rhi::ResourceHandle current = graph.create_transient_image(
-            "current", k_ldr_format, k_extent,
-            VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT |
-                VK_IMAGE_USAGE_TRANSFER_DST_BIT);
-        const rhi::ResourceHandle depth = graph.create_transient_image(
-            "depth", VK_FORMAT_D32_SFLOAT, k_extent,
-            VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT);
-        const rhi::ResourceHandle target = graph.create_transient_image(
-            "target", k_ldr_format, k_extent,
-            VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT);
-        graph.add_pass("fill", rhi::PassType::graphics)
-            .writes(current, rhi::ResourceUsage::color_attachment)
-            .writes(depth, rhi::ResourceUsage::depth_attachment)
-            .execute([&, current, depth](rhi::PassContext& ctx) {
-                VkRenderingAttachmentInfo color{};
-                color.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
-                color.imageView = ctx.resolve(current).view;
-                color.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-                color.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-                color.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-                color.clearValue.color = {{0.0F, 0.0F, 0.0F, 1.0F}};
-                VkRenderingAttachmentInfo d{};
-                d.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
-                d.imageView = ctx.resolve(depth).view;
-                d.imageLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL;
-                d.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-                d.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-                d.clearValue.depthStencil = {0.5F, 0};
-                VkRenderingInfo info{};
-                info.sType = VK_STRUCTURE_TYPE_RENDERING_INFO;
-                info.renderArea = {{0, 0}, k_extent};
-                info.layerCount = 1;
-                info.colorAttachmentCount = 1;
-                info.pColorAttachments = &color;
-                info.pDepthAttachment = &d;
-                vkCmdBeginRendering(ctx.cmd(), &info);
-                // Left half `grey`: the edge column's neighbourhood spans
-                // [0, grey], so the clip keeps a black history there.
-                VkClearAttachment half{};
-                half.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-                half.colorAttachment = 0;
-                half.clearValue.color = {{grey, grey, grey, 1.0F}};
-                const VkClearRect rect{{{0, 0}, {k_extent.width / 2, k_extent.height}}, 0, 1};
-                vkCmdClearAttachments(ctx.cmd(), 1, &half, 1, &rect);
-                vkCmdEndRendering(ctx.cmd());
-            });
-        if (auto a = taa->add_to_graph(graph, current, depth, target, k_extent, glm::mat4(1.0F),
-                                       settings);
-            !a) {
-            return std::unexpected(a.error());
+    auto rig = quat::test::TemporalRig::create(*g, k_extent, k_extent);
+    ASSERT_OK(rig);
+    auto up = r::TaaUpscaler::create(g->device, g->allocator, g->cache, g->shader_dir, 1);
+    ASSERT_OK(up);
+    // Left half `grey`, right half black: the edge column's neighbourhood
+    // spans [0, grey], so the clip keeps a black history there.
+    const auto run = [&](float grey, const r::TaaSettings& settings) -> std::expected<float, Error> {
+        quat::test::TemporalFrame f;
+        for (std::uint32_t y = 0; y < k_extent.height; ++y) {
+            for (std::uint32_t x = 0; x < k_extent.width; ++x) {
+                const float v = x < k_extent.width / 2 ? grey : 0.0F;
+                f.color.emplace_back(v, v, v, 1.0F);
+            }
         }
-        auto px = quat::test::render_to_host(*g, graph, target, k_extent, 4);
-        if (!px) return std::unexpected(px.error());
-        return px->rgba8(k_extent.width / 2 - 1, 16).r; // the edge column
+        auto out = rig->frame(f, [&](rhi::RenderGraph& graph, r::UpscalerInputs in) {
+            r::apply_taa_settings(in, settings);
+            return (*up)->add_to_graph(graph, 0, in);
+        });
+        if (!out) return std::unexpected(out.error());
+        return quat::test::grey(*out, k_extent.width / 2 - 1, 16); // the edge column
     };
     r::TaaSettings on;
-    ASSERT_OK(run(0.0F, on)); // seeds the history with black
+    for (int i = 0; i < 12; ++i) ASSERT_OK(run(0.0F, on)); // settle a black history
     auto blended = run(1.0F, on);
     ASSERT_OK(blended);
-    EXPECT_LT(*blended, 128) << "with TAA on the black history dominates (feedback 0.9)";
+    EXPECT_LT(*blended, 0.5F) << "with TAA on the black history dominates (feedback 0.9)";
 
-    ASSERT_OK(run(0.0F, on));
+    for (int i = 0; i < 12; ++i) ASSERT_OK(run(0.0F, on));
     r::TaaSettings off;
     off.enabled = false;
     auto through = run(1.0F, off);
     ASSERT_OK(through);
-    EXPECT_EQ(*through, 255);
+    EXPECT_NEAR(*through, 1.0F, 3e-3F) << "TAA off must pass the current frame through";
+
+    for (int i = 0; i < 12; ++i) ASSERT_OK(run(0.0F, on));
+    r::TaaSettings no_feedback;
+    no_feedback.feedback = 0.0F;
+    auto current = run(1.0F, no_feedback);
+    ASSERT_OK(current);
+    EXPECT_NEAR(*current, 1.0F, 3e-3F) << "feedback 0 keeps no history";
 }
 
 } // namespace

@@ -8,6 +8,7 @@
 #include <utility>
 #include <vector>
 
+#include "engine/core/utf8_path.hpp"
 #include "engine/rhi/device.hpp"
 
 namespace engine::rhi {
@@ -20,7 +21,7 @@ namespace {
 
 [[nodiscard]] std::expected<std::vector<std::uint32_t>, core::Error>
 read_spirv(const std::string& path) {
-    std::ifstream file(path, std::ios::binary | std::ios::ate);
+    std::ifstream file(core::path_from_utf8(path), std::ios::binary | std::ios::ate);
     if (!file) {
         return fail("cannot open SPIR-V file: " + path);
     }
@@ -38,7 +39,7 @@ read_spirv(const std::string& path) {
 }
 
 [[nodiscard]] std::expected<std::string, core::Error> read_text(const std::string& path) {
-    std::ifstream file(path, std::ios::binary);
+    std::ifstream file(core::path_from_utf8(path), std::ios::binary);
     if (!file) {
         return fail("cannot open reflection file: " + path);
     }
@@ -58,7 +59,7 @@ read_spirv(const std::string& path) {
 // "a/b.spv" name the same entry (passes and the hot-reload service build their
 // paths independently).
 [[nodiscard]] std::string shader_key(const std::string& spv_path) {
-    return std::filesystem::path(spv_path).lexically_normal().generic_string();
+    return core::path_to_generic_utf8(core::path_from_utf8(spv_path).lexically_normal());
 }
 
 } // namespace
@@ -89,6 +90,7 @@ struct PipelineSlot {
     std::vector<VkDescriptorSetLayout>             set_layouts;
     std::vector<VkPushConstantRange>               push_constants;
     std::vector<VkFormat>                          color_formats;
+    std::vector<VkPipelineColorBlendAttachmentState> blend_attachments;
     std::vector<VkVertexInputBindingDescription>   vertex_bindings;
     std::vector<VkVertexInputAttributeDescription> vertex_attributes;
     ComputePipeline::CreateInfo                    compute_info{};  // shader set per build
@@ -243,6 +245,7 @@ PipelineCache::create_graphics_pipeline(const GraphicsPipeline::CreateInfo& info
         slot->push_constants.assign(info.push_constants.begin(), info.push_constants.end());
     }
     slot->color_formats.assign(info.color_formats.begin(), info.color_formats.end());
+    slot->blend_attachments.assign(info.blend_attachments.begin(), info.blend_attachments.end());
     slot->vertex_bindings.assign(info.vertex_bindings.begin(), info.vertex_bindings.end());
     slot->vertex_attributes.assign(info.vertex_attributes.begin(), info.vertex_attributes.end());
 
@@ -253,6 +256,7 @@ PipelineCache::create_graphics_pipeline(const GraphicsPipeline::CreateInfo& info
     g.vertex_entry = slot->entry_a.c_str();
     g.fragment_entry = slot->entry_b.c_str();
     g.color_formats = slot->color_formats;
+    g.blend_attachments = slot->blend_attachments;
     g.vertex_bindings = slot->vertex_bindings;
     g.vertex_attributes = slot->vertex_attributes;
     g.set_layouts = slot->set_layouts;

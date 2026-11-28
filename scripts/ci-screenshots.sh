@@ -8,7 +8,8 @@
 # scene runs the game under Xvfb (xvfb-run) on Mesa's lavapipe with audio
 # muted, a frame budget (QUAT_MAX_FRAMES + QUAT_SCREENSHOT) and a timeout, so
 # a hang fails that scene instead of wedging the job. Writes to OUT_DIR:
-#   <scene>.png      the final frame (downscaled 2x when >= 1280 px wide)
+#   <scene>.png      the final frame (downscaled 2x when >= 1280 px wide,
+#                    except editor scenes: their UI text must stay readable)
 #   <scene>.log      the scene's stdout + stderr
 #   results.tsv      scene, status (ok / crashed (exit N) / timed out / no image),
 #                    seconds, description — read by ci-publish-screenshots.sh
@@ -31,11 +32,15 @@ TIMEOUT="${SCENE_TIMEOUT:-300}"
 # Frame counts: TAA history and auto-exposure settle within ~30 frames; the
 # GPU terrain tile (513^2, 200 erosion steps, async readback) needs a few
 # frames to arrive, and the physics scene needs simulated seconds to fall.
-# mountain-forest: its tile (300 erosion steps) lands by frame ~6, then ~11k
+# mountain-forest: its tile (400 erosion steps + talus relaxation) lands by frame ~6, then ~11k
 # scattered instances + grass draw at ~2-3 s per frame on lavapipe (4 cores):
 # 60-100 s, inside the default timeout.
+# Editor rows run at 1600x900 from the default layout (QUAT_EDITOR_LAYOUT;
+# scripts/editor-screenshots.sh captures more editor states) and are never
+# downscaled.
 SCENE_TABLE=(
-  "showcase-editor|30||Showcase scene with the editor UI"
+  "showcase-editor|30|QUAT_WINDOW_SIZE=1600x900 QUAT_EDITOR_LAYOUT=default|Showcase scene with the editor UI (1600x900)"
+  "editor-inspector|30|QUAT_WINDOW_SIZE=1600x900 QUAT_EDITOR_LAYOUT=default QUAT_EDITOR_SELECT=metal_sphere|Editor with an entity selected (Inspector)"
   "showcase|30|QUAT_NO_UI=1|Showcase scene, no UI"
   "terrain|90|QUAT_NO_UI=1 QUAT_TERRAIN=1|Showcase + GPU-generated terrain tile"
   "physics|90|QUAT_NO_UI=1 QUAT_PHYSICS=1|Physics demo (Jolt) after 90 frames"
@@ -102,7 +107,7 @@ for row in "${SCENE_TABLE[@]}"; do
   start=$SECONDS
   # shellcheck disable=SC2086 # scene_env is a list of VAR=value words
   xvfb-run -a -s "-screen 0 1920x1080x24" \
-    env SDL_VIDEO_DRIVER=x11 QUAT_NO_AUDIO=1 QUAT_NO_VSYNC=1 \
+    env SDL_VIDEO_DRIVER=x11 QUAT_NO_AUDIO=1 QUAT_NO_VSYNC=1 QUAT_NON_FINITE_CHECK=1 \
         QUAT_MAX_FRAMES="$frames" QUAT_SCREENSHOT="$ppm" $scene_env \
     timeout --kill-after=15 "$timeout_s" "$GAME" >"$log" 2>&1
   code=$?
@@ -118,15 +123,33 @@ for row in "${SCENE_TABLE[@]}"; do
     status="no image"
   else
     status="ok"
+    # scripts/check_capture.py: no exact-black block (a NaN/Inf spreading
+    # through the HDR chain) and, for editor scenes, the editor UI really
+    # drawn (not blank, uniform or a 3D view without ImGui).
+    check_args=()
+    [[ "$name" == *editor* ]] && check_args=(--editor)
+    if ! python3 "$ROOT/scripts/check_capture.py" "${check_args[@]}" "$ppm" >>"$log" 2>&1; then
+      status="bad capture: $(grep '^check_capture:' "$log" | tail -n1 | sed 's/^[^:]*: [^:]*: //')"
+    fi
     width="$(ppm_width "$ppm")" || width=0
     factor=1
-    [ "$width" -ge 1280 ] && factor=2
+    # Editor captures stay at full size: halved, the panels' text is
+    # unreadable. The window is a fixed 1280x720 for now.
+    # TODO(E8, #52): once it lands, render the editor row with E8's startup
+    # hooks (QUAT_WINDOW_SIZE=1600x900, QUAT_EDITOR_LAYOUT=default, or its
+    # scripts/editor-screenshots.sh) instead of the default window.
+    [[ "$name" != *editor* ]] && [ "$width" -ge 1280 ] && factor=2
     if ! python3 "$ROOT/scripts/ppm_to_png.py" "$ppm" "$png" --downscale "$factor" >>"$log" 2>&1; then
       status="no image (PPM conversion failed)"
     fi
     rm -f "$ppm"
   fi
 
+  # QUAT_NON_FINITE_CHECK=1: the engine logs when its bloom / TAA guards had
+  # to replace NaN/Inf values (a source upstream to fix, issue #45).
+  if grep -q '^\[warn\] non-finite' "$log"; then
+    echo "::warning title=Non-finite values in $name::$(grep -m1 '^\[warn\] non-finite' "$log")"
+  fi
   printf '%s\t%s\t%s\t%s\n' "$name" "$status" "$elapsed" "$description" >>"$results"
   if [ "$status" != "ok" ]; then
     failed=1

@@ -80,13 +80,17 @@ TEST(SimClock, IgnoresBadFrameTimes) {
 }
 
 // Audit D2: real time beyond max_frame_dt is a hitch, dropped before scaling,
-// so every simulation system sees the same bounded dt.
+// so every simulation system sees the same bounded dt. Slow frames below it
+// are kept whole (the frame loop slices them for physics).
 TEST(SimClock, DropsHitchBacklogBeforeScaling) {
     SimClock c;
+    EXPECT_FLOAT_EQ(SimClock::max_frame_dt, 0.25F);
     EXPECT_FLOAT_EQ(c.advance(0.5F), SimClock::max_frame_dt);
+    EXPECT_FLOAT_EQ(c.advance(0.2F), 0.2F) << "a slow frame (5 fps) is not a hitch";
     c.set_time_scale(10.0F);
     EXPECT_FLOAT_EQ(c.advance(0.5F), SimClock::max_frame_dt * 10.0F);
     EXPECT_FLOAT_EQ(c.advance(1.0F / 60.0F), 10.0F / 60.0F); // below the cap: unchanged
+    EXPECT_LT(SimClock::max_step_dt, SimClock::max_frame_dt) << "steps are bounded separately";
 }
 
 TEST(SimClock, SlicesCoverTheDtWithinTheBudget) {
@@ -115,8 +119,6 @@ TEST(SimClock, SlicesCoverTheDtWithinTheBudget) {
 }
 
 // A second step request must not change the dt of steps already queued.
-// (The dt values sit below SimClock::max_step_dt so no request is clamped;
-// QueuedStepsKeepTheirDtAtTheCap covers the cap.)
 TEST(SimClock, QueuedStepsKeepTheirOwnDt) {
     SimClock c;
     ASSERT_OK(c.step(3, 0.05F));
@@ -133,21 +135,20 @@ TEST(SimClock, QueuedStepsKeepTheirOwnDt) {
     EXPECT_NEAR(c.state().sim_time_s, 0.21, 1e-6);
 }
 
-// At the step cap (one physics update, 1/15 s): a step of exactly
-// max_step_dt keeps it, a larger request is clamped to it on entry — so it
-// joins a queued run of max_step_dt — and later requests with another dt
-// still leave both runs' dt alone.
+// A step of exactly max_step_dt keeps its dt; a larger request is clamped to
+// the cap and so joins that run; a later request with a different dt leaves
+// both runs alone.
 TEST(SimClock, QueuedStepsKeepTheirDtAtTheCap) {
     SimClock c;
-    ASSERT_OK(c.step(2, SimClock::max_step_dt));
-    ASSERT_OK(c.step(1, 0.5F)); // clamped: same dt as the run before, joins it
-    ASSERT_OK(c.step(2, 0.01F));
-    ASSERT_OK(c.step(1, 1.0F)); // clamped again: a new run after the 0.01 run
-    for (int i = 0; i < 3; ++i) EXPECT_FLOAT_EQ(c.advance(1.0F), SimClock::max_step_dt) << i;
-    for (int i = 0; i < 2; ++i) EXPECT_FLOAT_EQ(c.advance(1.0F), 0.01F) << i;
-    EXPECT_FLOAT_EQ(c.advance(1.0F), SimClock::max_step_dt);
-    EXPECT_EQ(c.advance(1.0F), 0.0F);
-    EXPECT_EQ(c.state().steps_run, 6U);
+    ASSERT_OK(c.step(1, SimClock::max_step_dt));
+    ASSERT_OK(c.step(1, 0.1F)); // clamped to the cap: same run
+    ASSERT_OK(c.step(2, 0.02F));
+    EXPECT_EQ(c.state().pending_steps, 4U);
+    EXPECT_FLOAT_EQ(c.advance(0.5F), SimClock::max_step_dt);
+    EXPECT_FLOAT_EQ(c.advance(0.5F), SimClock::max_step_dt);
+    EXPECT_FLOAT_EQ(c.advance(0.5F), 0.02F);
+    EXPECT_FLOAT_EQ(c.advance(0.5F), 0.02F);
+    EXPECT_EQ(c.advance(0.5F), 0.0F);
 }
 
 TEST(SimClock, RejectsStepsBeyondItsQueueLimits) {
