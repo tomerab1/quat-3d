@@ -28,10 +28,28 @@ include(${CMAKE_CURRENT_LIST_DIR}/Quat3dSdkHeaders.cmake)
 # quat3d::remote and quat3d::editor; the ALIASes give an engine source
 # checkout (QUAT3D_SOURCE_DIR, docs/sdk.md) the same names.
 # ---------------------------------------------------------------------------
+# The engine libraries are every engine_* library target of this directory,
+# derived rather than listed, so a new engine library (engine_weather, ...)
+# joins the SDK and quat3d::engine without an edit here; the sdk_consumer and
+# public-header guards then check it is installable. Not in the SDK:
+# engine_cook (offline cooker, shipped as bin/quat-cook) and the editor
+# (exported only with ENGINE_EDITOR, below).
+get_property(quat3d_directory_targets DIRECTORY ${PROJECT_SOURCE_DIR} PROPERTY BUILDSYSTEM_TARGETS)
+set(QUAT3D_ENGINE_LIBRARIES)
+foreach(target IN LISTS quat3d_directory_targets)
+    if(NOT target MATCHES "^engine_" OR target MATCHES "^engine_(cook|editor)$")
+        continue()
+    endif()
+    get_target_property(type ${target} TYPE)
+    if(type STREQUAL "STATIC_LIBRARY" OR type STREQUAL "INTERFACE_LIBRARY")
+        list(APPEND QUAT3D_ENGINE_LIBRARIES ${target})
+    endif()
+endforeach()
+set(quat3d_engine_links ${QUAT3D_ENGINE_LIBRARIES})
+list(REMOVE_ITEM quat3d_engine_links engine_flags engine_remote engine_remote_world)
+
 add_library(quat3d_engine INTERFACE)
-target_link_libraries(quat3d_engine INTERFACE
-    engine_core engine_asset engine_animation engine_physics engine_scene engine_script
-    engine_terrain engine_nav engine_net engine_audio engine_renderer engine_rhi engine_image)
+target_link_libraries(quat3d_engine INTERFACE ${quat3d_engine_links})
 set_target_properties(quat3d_engine PROPERTIES EXPORT_NAME engine)
 add_library(quat3d::engine ALIAS quat3d_engine)
 
@@ -40,11 +58,7 @@ target_link_libraries(quat3d_remote INTERFACE quat3d_engine engine_remote engine
 set_target_properties(quat3d_remote PROPERTIES EXPORT_NAME remote)
 add_library(quat3d::remote ALIAS quat3d_remote)
 
-set(QUAT3D_EXPORTED_TARGETS
-    engine_flags engine_core engine_rhi engine_image engine_stb_image engine_asset
-    engine_animation engine_physics engine_scene engine_gltf_io engine_script engine_terrain
-    engine_nav engine_net engine_audio engine_remote engine_remote_world engine_renderer
-    quat3d_engine quat3d_remote)
+set(QUAT3D_EXPORTED_TARGETS ${QUAT3D_ENGINE_LIBRARIES} quat3d_engine quat3d_remote)
 if(ENGINE_EDITOR)
     add_library(quat3d_editor INTERFACE)
     target_link_libraries(quat3d_editor INTERFACE quat3d_engine engine_editor)
@@ -52,6 +66,8 @@ if(ENGINE_EDITOR)
     add_library(quat3d::editor ALIAS quat3d_editor)
     list(APPEND QUAT3D_EXPORTED_TARGETS engine_editor quat3d_editor)
 endif()
+list(JOIN QUAT3D_ENGINE_LIBRARIES " " quat3d_engine_list)
+message(STATUS "quat3d SDK engine libraries: ${quat3d_engine_list}")
 
 # layering_check's link-graph half: once every target exists (samples are
 # added later), no engine target may link a non-engine local target.
