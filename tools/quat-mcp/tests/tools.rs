@@ -94,8 +94,8 @@ async fn lists_tools_prompts_and_resources() {
 
     let prompts = client.list_all_prompts().await.unwrap();
     let prompt_names: Vec<&str> = prompts.iter().map(|p| p.name.as_str()).collect();
-    assert!(prompt_names.contains(&"build_world"), "{prompt_names:?}");
-    assert!(prompt_names.contains(&"inspect_scene"), "{prompt_names:?}");
+    assert!(prompt_names.contains(&"build-level"), "{prompt_names:?}");
+    assert!(prompt_names.contains(&"inspect-scene"), "{prompt_names:?}");
 
     let resources = client.list_all_resources().await.unwrap();
     assert!(resources.iter().any(|r| r.uri == "quat://scene/summary"));
@@ -241,7 +241,7 @@ async fn prompts_and_resource_render() {
 
     let prompt = client
         .get_prompt(
-            GetPromptRequestParams::new("build_world").with_arguments(
+            GetPromptRequestParams::new("build-level").with_arguments(
                 json!({"description": "a lighthouse on a rocky island"})
                     .as_object()
                     .unwrap()

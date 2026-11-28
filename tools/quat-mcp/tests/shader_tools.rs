@@ -1,4 +1,4 @@
-//! The material-shader tools (`shader_*`) and the `write_material_shader`
+//! The material-shader tools (`shader_*`) and the `author-material-shader`
 //! prompt, end to end against the mock engine.
 
 mod common;
@@ -121,18 +121,18 @@ async fn shader_tools_and_prompt_are_listed() {
     );
 
     let prompts = client.list_all_prompts().await.unwrap();
-    assert!(prompts.iter().any(|p| p.name == "write_material_shader"));
+    assert!(prompts.iter().any(|p| p.name == "author-material-shader"));
     client.cancel().await.unwrap();
 }
 
 #[tokio::test]
-async fn write_material_shader_prompt_walks_the_workflow() {
+async fn author_material_shader_prompt_walks_the_shader_workflow() {
     let engine = MockEngine::start(None, shader_handler).await;
     let client = connect(&engine.addr_string()).await;
     let args = json!({"goal": "glowing lava with flowing cracks", "entity": "Rock"});
     let prompt = client
         .get_prompt(
-            GetPromptRequestParams::new("write_material_shader")
+            GetPromptRequestParams::new("author-material-shader")
                 .with_arguments(args.as_object().unwrap().clone()),
         )
         .await
@@ -140,13 +140,15 @@ async fn write_material_shader_prompt_walks_the_workflow() {
     let ContentBlock::Text(t) = &prompt.messages[0].content else {
         panic!("text prompt expected");
     };
-    assert!(
-        t.text
-            .contains("The look: glowing lava with flowing cracks")
-    );
-    assert!(t.text.contains("Put it on this entity: Rock"));
-    // Workflow order: template -> create -> fix from diagnostics -> assign -> screenshot -> update.
-    let at = |s: &str| t.text.find(s).unwrap_or_else(|| panic!("missing {s}"));
+    assert!(t.text.contains("glowing lava with flowing cracks"));
+    assert!(t.text.contains("The surface: Rock"));
+    // Shader workflow order: template -> create -> fix from diagnostics ->
+    // assign -> screenshot -> update.
+    let shader = &t.text[t
+        .text
+        .find("## Workflow: material shader")
+        .expect("the skill's shader workflow")..];
+    let at = |s: &str| shader.find(s).unwrap_or_else(|| panic!("missing {s}"));
     assert!(at("shader_template") < at("shader_create"));
     assert!(at("shader_create") < at("file:line:column"));
     assert!(at("file:line:column") < at("scene_update"));
@@ -157,7 +159,7 @@ async fn write_material_shader_prompt_walks_the_workflow() {
     // The goal is required.
     assert!(
         client
-            .get_prompt(GetPromptRequestParams::new("write_material_shader"))
+            .get_prompt(GetPromptRequestParams::new("author-material-shader"))
             .await
             .is_err()
     );
