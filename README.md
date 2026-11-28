@@ -134,6 +134,11 @@ The editor (dark theme; a light theme is one click away in View > Theme):
 - Orbit / strategy camera rig: springs, pitch eased with zoom, grab-the-world
   drag, zoom to the cursor, ground following, bounds — see
   [`docs/camera-rig.md`](docs/camera-rig.md)
+- Splines and curve networks: centripetal Catmull-Rom / Bézier / polyline
+  curves with per-point width, height and tags, arc-length sampling,
+  rotation-minimising frames, closest point, crossings, offsets, junction
+  graphs with stable ids, and freehand stroke capture (Schneider fit) —
+  see [`docs/splines.md`](docs/splines.md)
 - NPC navigation (Recast/Detour navmesh), path following, patrol routes
 - Data-driven behaviour trees (JSON)
 - Multiplayer foundations: client/server transport, state replication,
@@ -647,6 +652,7 @@ The plan lives in [`ROADMAP.md`](ROADMAP.md), grouped into tracks:
 | [`docs/scripting.md`](docs/scripting.md) | Lua gameplay scripting: callbacks, the engine API, limits, hot reload |
 | [`docs/input.md`](docs/input.md) | Input actions: action-map format, triggers, modifiers, contexts, rebinding |
 | [`docs/camera-rig.md`](docs/camera-rig.md) | The orbit / strategy camera rig and its input |
+| [`docs/splines.md`](docs/splines.md) | Splines, curve networks and stroke capture (library, component, editor, remote, Lua) |
 | [`docs/cinematic-showcase.md`](docs/cinematic-showcase.md) | The CC0 cinematic forest scene: assets and credits, fetching, renders, the MCP recipe |
 | [`docs/reading/README.md`](docs/reading/README.md) | Reading list: the papers and talks behind the engine's techniques, with where each lives in the code |
 | [`docs/remote-control.md`](docs/remote-control.md) | The remote-control protocol AI tools use to drive the engine |

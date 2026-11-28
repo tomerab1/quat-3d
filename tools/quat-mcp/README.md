@@ -157,6 +157,8 @@ Windows the command ends in `quat-mcp.exe`.
 | `world_place_on_ground` | `world.place_on_ground` | Rest an entity's bounds on the terrain or colliders below it, optionally tilted to the slope |
 | `camera_get` / `camera_set` / `camera_frame` | `camera.*` | Read, place or auto-frame the viewport camera |
 | `camera_rig_get` / `camera_rig_set` / `camera_rig_frame` | `camera.rig.*` | Read, drive (optionally snapping) or frame an entity's orbit / strategy camera rig |
+| `spline_get` / `spline_set` / `spline_sample` / `spline_closest` / `spline_crossings` / `spline_offset` | `spline.*` | Read, edit and query an entity's spline (samples with frames, closest point, crossings, offsets) |
+| `spline_network` / `spline_fit` | `spline.network` / `spline.fit` | A curve network's junction graph; fit a drawn stroke into a spline |
 | `input_actions` / `input_inject` / `input_bind` / `input_context` | `input.*` | List input actions and contexts; make an action read a value for N frames (playtests); rebind (saved per user); push / pop contexts |
 | `screenshot` | `render.screenshot` | The viewport (or an explicit camera, leaving the viewport alone) as an MCP **image** (PNG) plus a caption |
 | `asset_list_models` / `asset_spawn_model` | `asset.*` | Find and spawn glTF models |
