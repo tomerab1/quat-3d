@@ -1,0 +1,65 @@
+# quat3d-toolchain.cmake — the toolchain a game uses with the quat-3d SDK
+# (ROADMAP P8). Generated when the SDK was built:
+#   SDK compiler: @CMAKE_CXX_COMPILER_ID@ @CMAKE_CXX_COMPILER_VERSION@, standard library @QUAT3D_SDK_STDLIB@
+#
+#   cmake -S <game> -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
+#         -DCMAKE_TOOLCHAIN_FILE=<sdk>/lib/cmake/quat3d/quat3d-toolchain.cmake
+#
+# It selects the SDK's compiler family and standard library, puts the SDK and
+# its bundled dependencies (deps/) on the package search path, and maps every
+# build configuration onto the SDK's release libraries. quat3dConfig.cmake
+# refuses a mismatched compiler either way (Quat3dToolchainCheck.cmake).
+# A project that needs its own toolchain file too names it in
+# QUAT3D_CHAINLOAD_TOOLCHAIN_FILE; it is included last.
+
+get_filename_component(QUAT3D_SDK_ROOT "${CMAKE_CURRENT_LIST_DIR}/../../.." ABSOLUTE)
+
+set(_quat3d_sdk_id "@CMAKE_CXX_COMPILER_ID@")
+set(_quat3d_sdk_stdlib "@QUAT3D_SDK_STDLIB@")
+
+# The compiler, when the project did not choose one (a mismatch is reported
+# by quat3dConfig.cmake, naming this file).
+if(_quat3d_sdk_id STREQUAL "Clang" AND NOT CMAKE_CXX_COMPILER AND NOT DEFINED ENV{CXX})
+    set(CMAKE_C_COMPILER "clang")
+    set(CMAKE_CXX_COMPILER "@QUAT3D_SDK_CXX_COMPILER_NAME@")
+elseif(_quat3d_sdk_id STREQUAL "MSVC" AND NOT CMAKE_CXX_COMPILER AND NOT DEFINED ENV{CXX})
+    set(CMAKE_C_COMPILER "cl")
+    set(CMAKE_CXX_COMPILER "cl")
+endif()
+
+# libc++ with clang on Linux (Apple clang uses it by default). Not for a
+# compiler the project chose that is not clang: quat3dConfig.cmake then names
+# the mismatch instead of the compiler failing on an unknown flag.
+get_filename_component(_quat3d_cxx_name "${CMAKE_CXX_COMPILER}" NAME)
+if(_quat3d_sdk_id STREQUAL "Clang" AND _quat3d_sdk_stdlib STREQUAL "libc++"
+   AND (NOT CMAKE_CXX_COMPILER OR _quat3d_cxx_name MATCHES "clang"))
+    # set(), not string(APPEND): CMake reads a toolchain file more than once.
+    set(CMAKE_CXX_FLAGS_INIT "-stdlib=libc++")
+    set(CMAKE_EXE_LINKER_FLAGS_INIT "-stdlib=libc++")
+    set(CMAKE_SHARED_LINKER_FLAGS_INIT "-stdlib=libc++")
+    set(CMAKE_MODULE_LINKER_FLAGS_INIT "-stdlib=libc++")
+endif()
+
+# macOS: the SDK's architecture and minimum system version.
+if("@APPLE@")
+    set(CMAKE_OSX_ARCHITECTURES "@CMAKE_OSX_ARCHITECTURES@" CACHE STRING "quat3d SDK architecture")
+    set(CMAKE_OSX_DEPLOYMENT_TARGET "@CMAKE_OSX_DEPLOYMENT_TARGET@" CACHE STRING "quat3d SDK minimum macOS")
+endif()
+
+# MSVC: the SDK links the release DLL runtime; a Debug game must too (/MD,
+# not /MDd), or the link fails on _ITERATOR_DEBUG_LEVEL / RuntimeLibrary.
+if(_quat3d_sdk_id STREQUAL "MSVC")
+    set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreadedDLL")
+endif()
+
+# The SDK ships release libraries only: every configuration imports them.
+foreach(_quat3d_config DEBUG RELWITHDEBINFO MINSIZEREL)
+    set(CMAKE_MAP_IMPORTED_CONFIG_${_quat3d_config} "Release;RelWithDebInfo;")
+endforeach()
+
+list(APPEND CMAKE_PREFIX_PATH "${QUAT3D_SDK_ROOT}" "${QUAT3D_SDK_ROOT}/deps")
+list(REMOVE_DUPLICATES CMAKE_PREFIX_PATH)
+
+if(QUAT3D_CHAINLOAD_TOOLCHAIN_FILE)
+    include("${QUAT3D_CHAINLOAD_TOOLCHAIN_FILE}")
+endif()

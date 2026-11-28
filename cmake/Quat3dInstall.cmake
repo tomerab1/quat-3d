@@ -1,0 +1,200 @@
+# Engine SDK (ROADMAP P8): umbrella targets, install rules and the quat3d CMake
+# package. docs/sdk.md is the consumer's guide; docs/design/cozy-builder.md
+# §3.3–3.5 the design.
+#
+#   cmake --build build/release
+#   cmake --install build/release --prefix <sdk>
+#
+# Layout of <sdk> (relocatable: nothing below names the build machine):
+#   include/engine/**        the stable header set (cmake/Quat3dSdkHeaders.cmake)
+#   lib/                     engine static libraries
+#   lib/cmake/quat3d/        quat3dConfig.cmake, quat3dConfigVersion.cmake,
+#                            quat3dTargets*.cmake, quat3d-toolchain.cmake,
+#                            Quat3dGame.cmake, Quat3dToolchainCheck.cmake
+#   bin/                     quat-cook, slangc (+ its libraries), quat-mcp
+#   deps/                    the vcpkg installed tree the engine was built with
+#                            (release only), so a game never runs vcpkg
+#   share/quat3d/            assets/ (engine Slang modules, editor fonts),
+#                            cooked/shaders/, licences
+
+include(CMakePackageConfigHelpers)
+include(${CMAKE_CURRENT_LIST_DIR}/Quat3dSdkHeaders.cmake)
+
+# ---------------------------------------------------------------------------
+# Umbrella targets: what a game links. Exported as quat3d::engine,
+# quat3d::remote and quat3d::editor; the ALIASes give an engine source
+# checkout (QUAT3D_SOURCE_DIR, docs/sdk.md) the same names.
+# ---------------------------------------------------------------------------
+add_library(quat3d_engine INTERFACE)
+target_link_libraries(quat3d_engine INTERFACE
+    engine_core engine_asset engine_animation engine_physics engine_scene engine_script
+    engine_terrain engine_nav engine_net engine_audio engine_renderer engine_rhi engine_image)
+set_target_properties(quat3d_engine PROPERTIES EXPORT_NAME engine)
+add_library(quat3d::engine ALIAS quat3d_engine)
+
+add_library(quat3d_remote INTERFACE)
+target_link_libraries(quat3d_remote INTERFACE quat3d_engine engine_remote engine_remote_world)
+set_target_properties(quat3d_remote PROPERTIES EXPORT_NAME remote)
+add_library(quat3d::remote ALIAS quat3d_remote)
+
+set(QUAT3D_EXPORTED_TARGETS
+    engine_flags engine_core engine_rhi engine_image engine_stb_image engine_asset
+    engine_animation engine_physics engine_scene engine_gltf_io engine_script engine_terrain
+    engine_nav engine_net engine_audio engine_remote engine_remote_world engine_renderer
+    quat3d_engine quat3d_remote)
+if(ENGINE_EDITOR)
+    add_library(quat3d_editor INTERFACE)
+    target_link_libraries(quat3d_editor INTERFACE quat3d_engine engine_editor)
+    set_target_properties(quat3d_editor PROPERTIES EXPORT_NAME editor)
+    add_library(quat3d::editor ALIAS quat3d_editor)
+    list(APPEND QUAT3D_EXPORTED_TARGETS engine_editor quat3d_editor)
+endif()
+
+# Quat3dGame.cmake works from a source checkout too (QUAT3D_SOURCE_DIR).
+set(QUAT3D_DATA_DIR ${PROJECT_SOURCE_DIR} CACHE INTERNAL "")
+set(QUAT3D_SLANGC ${SLANGC_EXECUTABLE} CACHE INTERNAL "")
+include(${CMAKE_CURRENT_LIST_DIR}/Quat3dGame.cmake)
+
+# Installing is the top-level build's business; a parent project that
+# add_subdirectory()s the engine (QUAT3D_SOURCE_DIR) gets the targets only.
+option(QUAT3D_INSTALL "Generate the engine SDK install rules (ROADMAP P8)" ${PROJECT_IS_TOP_LEVEL})
+if(NOT QUAT3D_INSTALL)
+    return()
+endif()
+
+set(QUAT3D_CMAKE_DIR lib/cmake/quat3d)
+set(QUAT3D_SHARE_DIR share/quat3d)
+
+# ---------------------------------------------------------------------------
+# Libraries, headers and the package files.
+# ---------------------------------------------------------------------------
+install(TARGETS ${QUAT3D_EXPORTED_TARGETS}
+    EXPORT quat3dTargets
+    ARCHIVE DESTINATION lib
+    LIBRARY DESTINATION lib
+    RUNTIME DESTINATION bin
+    INCLUDES DESTINATION include)
+
+foreach(header IN LISTS QUAT3D_SDK_HEADERS)
+    get_filename_component(header_dir ${header} DIRECTORY)
+    install(FILES ${PROJECT_SOURCE_DIR}/include/${header} DESTINATION include/${header_dir})
+endforeach()
+install(FILES ${ENGINE_GENERATED_INCLUDE}/engine/version.hpp DESTINATION include/engine)
+
+install(EXPORT quat3dTargets
+    NAMESPACE quat3d::
+    DESTINATION ${QUAT3D_CMAKE_DIR})
+
+# Toolchain the SDK was built with: quat3dConfig.cmake refuses another one
+# (Quat3dToolchainCheck.cmake), quat3d-toolchain.cmake selects it.
+set(QUAT3D_SDK_STDLIB "")
+if(MSVC)
+    set(QUAT3D_SDK_STDLIB msvc)
+elseif(APPLE OR CMAKE_CXX_FLAGS MATCHES "-stdlib=libc\\+\\+")
+    set(QUAT3D_SDK_STDLIB libc++)
+else()
+    set(QUAT3D_SDK_STDLIB libstdc++)
+endif()
+get_filename_component(QUAT3D_SDK_CXX_COMPILER_NAME "${CMAKE_CXX_COMPILER}" NAME)
+
+configure_package_config_file(
+    ${CMAKE_CURRENT_LIST_DIR}/quat3dConfig.cmake.in
+    ${CMAKE_CURRENT_BINARY_DIR}/sdk/quat3dConfig.cmake
+    INSTALL_DESTINATION ${QUAT3D_CMAKE_DIR})
+# 0.x: a MINOR release may break the API (docs/sdk.md), so a game asking for
+# 0.4 must not get 0.5: SameMinorVersion. From 1.0 breaks wait for a MAJOR
+# release and SameMajorVersion applies.
+if(PROJECT_VERSION_MAJOR EQUAL 0)
+    set(quat3d_compatibility SameMinorVersion)
+else()
+    set(quat3d_compatibility SameMajorVersion)
+endif()
+write_basic_package_version_file(
+    ${CMAKE_CURRENT_BINARY_DIR}/sdk/quat3dConfigVersion.cmake
+    VERSION ${PROJECT_VERSION}
+    COMPATIBILITY ${quat3d_compatibility})
+configure_file(${CMAKE_CURRENT_LIST_DIR}/quat3d-toolchain.cmake.in
+    ${CMAKE_CURRENT_BINARY_DIR}/sdk/quat3d-toolchain.cmake @ONLY)
+install(FILES
+    ${CMAKE_CURRENT_BINARY_DIR}/sdk/quat3dConfig.cmake
+    ${CMAKE_CURRENT_BINARY_DIR}/sdk/quat3dConfigVersion.cmake
+    ${CMAKE_CURRENT_BINARY_DIR}/sdk/quat3d-toolchain.cmake
+    ${CMAKE_CURRENT_LIST_DIR}/Quat3dGame.cmake
+    ${CMAKE_CURRENT_LIST_DIR}/Quat3dToolchainCheck.cmake
+    DESTINATION ${QUAT3D_CMAKE_DIR})
+
+# ---------------------------------------------------------------------------
+# Tools: quat-cook, slangc (with the shared libraries it loads), quat-mcp.
+# ---------------------------------------------------------------------------
+install(TARGETS quat-cook RUNTIME DESTINATION bin)
+if(TARGET quat-pack) # P4 (#55)
+    install(TARGETS quat-pack RUNTIME DESTINATION bin)
+endif()
+if(WIN32)
+    # The x64-windows triplet links dependencies as DLLs.
+    install(FILES $<TARGET_RUNTIME_DLLS:quat-cook> DESTINATION bin)
+endif()
+
+# Slang's release layout is bin/slangc + lib/ (shared libraries found through
+# slangc's RPATH, $ORIGIN/../lib) on Linux and macOS, everything in bin/ on
+# Windows. slang-llvm (CPU targets, ~100 MB) is not needed for SPIR-V.
+get_filename_component(quat3d_slang_bin "${SLANGC_EXECUTABLE}" REALPATH)
+get_filename_component(quat3d_slang_bin "${quat3d_slang_bin}" DIRECTORY)
+get_filename_component(quat3d_slang_root "${quat3d_slang_bin}" DIRECTORY)
+install(PROGRAMS ${SLANGC_EXECUTABLE} DESTINATION bin)
+if(WIN32)
+    install(DIRECTORY ${quat3d_slang_bin}/ DESTINATION bin
+        FILES_MATCHING PATTERN "*.dll" PATTERN "slang-llvm*" EXCLUDE)
+elseif(EXISTS ${quat3d_slang_root}/lib)
+    install(DIRECTORY ${quat3d_slang_root}/lib/ DESTINATION lib
+        USE_SOURCE_PERMISSIONS
+        FILES_MATCHING PATTERN "*.so*" PATTERN "*.dylib"
+        PATTERN "*slang-llvm*" EXCLUDE PATTERN "cmake" EXCLUDE)
+endif()
+if(EXISTS ${quat3d_slang_root}/LICENSE)
+    install(FILES ${quat3d_slang_root}/LICENSE
+        DESTINATION ${QUAT3D_SHARE_DIR}/licenses RENAME slang-LICENSE)
+endif()
+
+# quat-mcp is a cargo build (tools/quat-mcp); the release workflow builds it
+# before installing. Skipped when it was not built.
+set(QUAT3D_SDK_QUAT_MCP
+    "${PROJECT_SOURCE_DIR}/tools/quat-mcp/target/release/quat-mcp${CMAKE_EXECUTABLE_SUFFIX}"
+    CACHE FILEPATH "quat-mcp executable installed into the SDK's bin/ (when it exists)")
+install(PROGRAMS ${QUAT3D_SDK_QUAT_MCP} DESTINATION bin OPTIONAL)
+
+# ---------------------------------------------------------------------------
+# Data: share/quat3d is a data root (assets/ + cooked/shaders/, see
+# engine/core/asset_root.hpp): the engine's cooked shaders, the Slang modules
+# game material shaders import, and the editor's fonts and icons.
+# ---------------------------------------------------------------------------
+install(DIRECTORY ${PROJECT_SOURCE_DIR}/cooked/shaders/
+    DESTINATION ${QUAT3D_SHARE_DIR}/cooked/shaders)
+install(DIRECTORY ${PROJECT_SOURCE_DIR}/assets/shaders/lib/
+    DESTINATION ${QUAT3D_SHARE_DIR}/assets/shaders/lib
+    FILES_MATCHING PATTERN "*.slang")
+install(DIRECTORY ${PROJECT_SOURCE_DIR}/assets/fonts/
+    DESTINATION ${QUAT3D_SHARE_DIR}/assets/fonts)
+# LICENSE / THIRD_PARTY_NOTICES.md arrive with the release-notes work (#96).
+install(FILES
+    ${PROJECT_SOURCE_DIR}/LICENSE
+    ${PROJECT_SOURCE_DIR}/THIRD_PARTY_NOTICES.md
+    DESTINATION ${QUAT3D_SHARE_DIR} OPTIONAL)
+
+# ---------------------------------------------------------------------------
+# deps/: the vcpkg installed tree for this triplet, release half only (the SDK
+# is a release build; quat3d-toolchain.cmake maps every consumer configuration
+# onto it). Debug imports are dropped with the debug libraries they name.
+# ---------------------------------------------------------------------------
+option(QUAT3D_SDK_BUNDLE_DEPS "Install the vcpkg dependency tree into the SDK's deps/" ON)
+if(QUAT3D_SDK_BUNDLE_DEPS AND DEFINED VCPKG_INSTALLED_DIR AND DEFINED VCPKG_TARGET_TRIPLET)
+    set(quat3d_vcpkg_tree "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}")
+    foreach(sub include lib share bin)
+        if(EXISTS "${quat3d_vcpkg_tree}/${sub}")
+            install(DIRECTORY "${quat3d_vcpkg_tree}/${sub}" DESTINATION deps
+                USE_SOURCE_PERMISSIONS
+                PATTERN "*-debug.cmake" EXCLUDE
+                PATTERN "*.pdb" EXCLUDE)
+        endif()
+    endforeach()
+endif()
