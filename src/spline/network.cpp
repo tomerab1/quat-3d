@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstddef>
 #include <numeric>
 #include <string>
 
@@ -239,11 +240,42 @@ private:
         return out;
     }
 
+    [[nodiscard]] static bool usable(const glm::vec3& d) { return d.x * d.x + d.z * d.z > 1.0e-12F; }
+
+    // First non-degenerate XZ chord of a segment's control polygon, leaving its
+    // start (forward) or its end (backward): the one-sided tangent direction.
+    [[nodiscard]] static glm::vec3 polygon_direction(const Segment& seg, bool forward) {
+        for (int k = 1; k < 4; ++k) {
+            const glm::vec3 d = forward ? seg.p[k] - seg.p[0] : seg.p[3 - k] - seg.p[3];
+            if (usable(d)) return d;
+        }
+        return glm::vec3(0.0F);
+    }
+
+    // Unit XZ direction leaving the curve at t towards increasing (sign > 0)
+    // or decreasing t. Doubled knots (stroke corners) make zero-length
+    // segments where the derivative vanishes over a whole parameter interval,
+    // so past a small step the direction comes from the next segment along
+    // that is not degenerate.
     [[nodiscard]] static glm::vec2 leaving(const Curve& c, float t, float sign) {
         glm::vec3 d = c.derivative(t) * sign;
-        if (!(d.x * d.x + d.z * d.z > 1.0e-12F)) {
-            const float step = sign * 1.0e-3F;
-            d = c.position(t + step) - c.position(t);
+        if (!usable(d)) d = c.position(t + sign * 1.0e-3F) - c.position(t);
+        if (!usable(d)) {
+            const bool  forward = sign > 0.0F;
+            const auto  n = static_cast<std::ptrdiff_t>(c.segment_count());
+            std::size_t seg = 0;
+            float       u = 0.0F;
+            c.locate(t, seg, u);
+            auto k = static_cast<std::ptrdiff_t>(seg);
+            if (forward && u >= 1.0F) ++k;
+            if (!forward && u <= 0.0F) --k;
+            for (std::ptrdiff_t step = 0; step < n && !usable(d); ++step, k += forward ? 1 : -1) {
+                if (k < 0 || k >= n) {
+                    if (!c.closed()) break;
+                    k = (k % n + n) % n;
+                }
+                d = polygon_direction(c.segments()[static_cast<std::size_t>(k)], forward);
+            }
         }
         const float len = std::sqrt(d.x * d.x + d.z * d.z);
         return len > 0.0F ? glm::vec2(d.x / len, d.z / len) : glm::vec2(1.0F, 0.0F);

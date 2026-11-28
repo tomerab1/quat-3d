@@ -12,6 +12,7 @@
 #include "engine/input/action_map.hpp"
 #include "engine/input/actions.hpp"
 #include "engine/input/device_state.hpp"
+#include "engine/spline/network.hpp"
 #include "engine/spline/queries.hpp"
 #include "engine/spline/stroke.hpp"
 
@@ -163,6 +164,75 @@ TEST(SplineStroke, StraightSegmentsStayStraightAndCornersSharp) {
         const glm::vec3 p = c.sample_at(corner + (c.length() - corner) * static_cast<float>(i) / 50.0F).position;
         EXPECT_NEAR(p.x, 10.0F, 1e-4F);
     }
+}
+
+// Doubled knots make zero-length segments in the Catmull-Rom output. Nothing
+// downstream may see them: sample tangents stay unit and along the run,
+// node directions leave along the stroke, and the zero-length chords add no
+// self-crossings.
+TEST(SplineStroke, DoubledKnotsAreInvisibleDownstream) {
+    std::vector<sp::StrokePoint> pts;
+    pts.push_back({{0, 0, 0}, false});
+    pts.push_back({{10, 0, 0}, true}); // straight first piece: knots doubled at both ends
+    for (int i = 1; i <= 40; ++i) pts.push_back({{10.0F, 0.0F, 0.25F * static_cast<float>(i)}, false});
+    pts.push_back({{0, 0, 10}, true}); // straight last piece
+    const auto fit = sp::fit_stroke(pts);
+    ASSERT_TRUE(fit.has_value()) << fit.error().message;
+    ASSERT_FALSE(fit->closed);
+    // Corners are doubled knots (zero-length segments); the ends need none,
+    // as the reflected phantom points already make the end spans straight.
+    const auto& kp = fit->spline.points;
+    ASSERT_EQ(kp.size(), 6U);
+    EXPECT_EQ(kp[1].position, kp[2].position);
+    EXPECT_EQ(kp[3].position, kp[4].position);
+    const sp::Curve c = curve_of(*fit);
+
+    for (const sp::CurveSample& s : sp::sample_by_spacing(c, {.spacing = 0.05F})) {
+        EXPECT_NEAR(glm::length(s.tangent), 1.0F, 1e-4F) << "at s = " << s.distance;
+        const glm::vec3 along = s.distance < 10.0F ? glm::vec3(1, 0, 0)
+                              : s.distance < 20.0F ? glm::vec3(0, 0, 1)
+                                                   : glm::vec3(-1, 0, 0);
+        // Exactly at a corner either side's direction is right.
+        const bool corner = std::abs(s.distance - 10.0F) < 1e-3F || std::abs(s.distance - 20.0F) < 1e-3F;
+        if (!corner) EXPECT_GT(glm::dot(s.tangent, along), 0.999F) << "at s = " << s.distance;
+    }
+    EXPECT_TRUE(sp::self_crossings_xz(c).empty());
+
+    // A second curve starts at the first corner: the stroke splits there, on
+    // its doubled knot, and every edge must leave the tee along the curve.
+    const sp::Curve other = *sp::Curve::build({.kind = sp::SplineKind::polyline,
+                                              .points = {{.position = {10, 0, 0}}, {.position = {10, 0, -5}}}});
+    const std::vector<sp::NetworkCurve> in = {{1, &c}, {2, &other}};
+    const auto net = sp::build_network(in);
+    ASSERT_TRUE(net.has_value()) << net.error().message;
+    ASSERT_EQ(net->nodes.size(), 4U);
+    ASSERT_EQ(net->edges.size(), 3U);
+    const auto tee = std::find_if(net->nodes.begin(), net->nodes.end(),
+                                  [](const sp::NetworkNode& n) { return n.kind == sp::NodeKind::tee; });
+    ASSERT_NE(tee, net->nodes.end());
+    EXPECT_NEAR(glm::distance(tee->position, glm::vec3(10, 0, 0)), 0.0F, 1e-4F);
+    std::vector<glm::vec2> dirs;
+    for (const sp::NodeEnd& e : tee->ends) dirs.push_back(e.direction);
+    // Counter-clockwise from +X seen from above: -Z, -X, +Z.
+    ASSERT_EQ(dirs.size(), 3U);
+    EXPECT_GT(glm::dot(dirs[0], glm::vec2(0, -1)), 0.999F) << dirs[0].x << " " << dirs[0].y;
+    EXPECT_GT(glm::dot(dirs[1], glm::vec2(-1, 0)), 0.999F) << dirs[1].x << " " << dirs[1].y;
+    EXPECT_GT(glm::dot(dirs[2], glm::vec2(0, 1)), 0.999F) << dirs[2].x << " " << dirs[2].y;
+}
+
+// Zero-length chords at doubled knots sit between chords the self-crossing
+// search skips as neighbours: a stroke of straight pieces crossing itself
+// once must report exactly one crossing, and none at its corners.
+TEST(SplineStroke, DoubledKnotCornersAddNoSelfCrossings) {
+    std::vector<sp::StrokePoint> pts = {{{0, 0, 0}, false},  {{10, 0, 0}, true}, {{10, 0, 10}, true},
+                                        {{5, 0, 10}, true},  {{5, 0, -5}, true}};
+    const auto fit = sp::fit_stroke(pts);
+    ASSERT_TRUE(fit.has_value()) << fit.error().message;
+    const sp::Curve c = curve_of(*fit);
+    const auto x = sp::self_crossings_xz(c);
+    ASSERT_EQ(x.size(), 1U);
+    EXPECT_NEAR(x[0].position_a.x, 5.0F, 1e-4F);
+    EXPECT_NEAR(x[0].position_a.z, 0.0F, 1e-4F);
 }
 
 TEST(SplineStroke, HugeStrokesAreBoundedNotHung) {
