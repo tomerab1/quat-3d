@@ -69,37 +69,33 @@ static_assert(sizeof(InstanceData) == 112, "must match lib/instancing.slang Inst
 [[nodiscard]] InstanceData make_instance_data(const glm::mat4& model);
 
 // Per-instance previous-frame data for the velocity target, mirrors
-// InstanceMotion in lib/velocity.slang (80 bytes): last frame's model matrix
-// and, for skinned instances, the address of last frame's skinned positions
-// (float4 per vertex; 0 = reuse this frame's vertex position).
-// `has_prev_positions` mirrors prev_positions != 0 for the shader (a null test
-// there would need shaderInt64); make_instance_motion keeps them in step.
+// InstanceMotion in lib/velocity.slang (64 bytes): last frame's model matrix.
+// Last frame's skinned positions are per draw (InstancedDraw::prev_positions):
+// the shader must not dereference a pointer read from this array, which
+// MoltenVK mistranslates (issue #103, tests/rhi/msl_portability_test.cpp).
 struct InstanceMotion {
-    glm::mat4       prev_model{1.0F};
-    VkDeviceAddress prev_positions = 0;
-    std::uint32_t   has_prev_positions = 0;
-    std::uint32_t   pad = 0;
+    glm::mat4 prev_model{1.0F};
 };
 
-[[nodiscard]] inline InstanceMotion make_instance_motion(const glm::mat4& prev_model,
-                                                         VkDeviceAddress prev_positions = 0) {
+[[nodiscard]] inline InstanceMotion make_instance_motion(const glm::mat4& prev_model) {
     InstanceMotion m;
     m.prev_model = prev_model;
-    m.prev_positions = prev_positions;
-    m.has_prev_positions = prev_positions != 0 ? 1U : 0U;
     return m;
 }
-static_assert(sizeof(InstanceMotion) == 80, "must match lib/velocity.slang InstanceMotion");
+static_assert(sizeof(InstanceMotion) == 64, "must match lib/velocity.slang InstanceMotion");
 
 // One instanced draw: `instance_count` instances of `mesh` with `material`,
 // reading InstancedDrawList::instances[first_instance ..
 // first_instance + instance_count). The same shape serves the automatic
 // batching here and explicit multi-placement sources later (R9.2
 // InstancedMesh appends its transforms and one InstancedDraw).
+// `prev_positions` (DrawItem::prev_positions, 0 = none) belongs to a
+// single-instance draw: last frame's positions of exactly its vertices.
 struct InstancedDraw {
     const asset::MeshAsset*     mesh     = nullptr;
     const asset::MaterialAsset* material = nullptr;
     VkBuffer                    skinned_vertices = VK_NULL_HANDLE; // see DrawItem
+    VkDeviceAddress             prev_positions = 0;                // see DrawItem
     std::uint32_t               first_instance = 0;
     std::uint32_t               instance_count = 0;
 };
@@ -117,8 +113,9 @@ struct InstancedDrawList {
 // Groups `items` by (mesh, material) into instanced draws. Deterministic:
 // draws appear in the order their first item appears in `items`, and each
 // draw's instances keep the items' relative order. Skinned items (with
-// `skinned_vertices`) are never merged — each reads its own skinned vertex
-// buffer — and stay single-instance draws at their position in that order.
+// `skinned_vertices` or `prev_positions`) are never merged — each reads its
+// own per-vertex buffers — and stay single-instance draws at their position
+// in that order.
 // Items without a mesh are dropped.
 [[nodiscard]] InstancedDrawList batch_draws(std::span<const DrawItem> items);
 

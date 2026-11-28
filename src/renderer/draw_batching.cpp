@@ -29,7 +29,7 @@ struct BatchKeyHash {
 constexpr std::uint32_t kDropped = std::numeric_limits<std::uint32_t>::max();
 
 [[nodiscard]] InstanceMotion motion_for(const DrawItem& item) {
-    return make_instance_motion(item.prev_model.value_or(item.model), item.prev_positions);
+    return make_instance_motion(item.prev_model.value_or(item.model));
 }
 
 [[nodiscard]] InstancedDraw draw_for(const DrawItem& item) {
@@ -37,6 +37,7 @@ constexpr std::uint32_t kDropped = std::numeric_limits<std::uint32_t>::max();
     d.mesh = item.mesh;
     d.material = item.material;
     d.skinned_vertices = item.skinned_vertices;
+    d.prev_positions = item.prev_positions;
     return d;
 }
 
@@ -74,7 +75,9 @@ InstancedDrawList batch_draws(std::span<const DrawItem> items) {
         if (item.mesh == nullptr) continue;
         const auto next = static_cast<std::uint32_t>(out.draws.size());
         std::uint32_t d = next;
-        if (item.skinned_vertices == VK_NULL_HANDLE) {
+        // Per-vertex data (skinned vertices, last frame's positions) is the
+        // draw's own: such items stay single-instance draws.
+        if (item.skinned_vertices == VK_NULL_HANDLE && item.prev_positions == 0) {
             d = batch_of.try_emplace(BatchKey{item.mesh, item.material}, next).first->second;
         }
         if (d == next) out.draws.push_back(draw_for(item));

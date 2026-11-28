@@ -1,5 +1,5 @@
 //! The look-tuning tools (`render_settings_*`, `material_*`) and the
-//! `tune_look` prompt, end to end against the mock engine.
+//! `tune-look` prompt, end to end against the mock engine.
 
 mod common;
 
@@ -134,7 +134,7 @@ async fn tuning_tools_and_prompt_are_listed() {
     assert!(schema.contains("clearcoat_roughness") && schema.contains("revert"));
 
     let prompts = client.list_all_prompts().await.unwrap();
-    assert!(prompts.iter().any(|p| p.name == "tune_look"));
+    assert!(prompts.iter().any(|p| p.name == "tune-look"));
     client.cancel().await.unwrap();
 }
 
@@ -282,7 +282,7 @@ async fn tune_look_prompt_puts_exposure_first() {
     let args = json!({"goal": "warmer and less washed out", "entity": "Car"});
     let prompt = client
         .get_prompt(
-            GetPromptRequestParams::new("tune_look")
+            GetPromptRequestParams::new("tune-look")
                 .with_arguments(args.as_object().unwrap().clone()),
         )
         .await
@@ -302,7 +302,7 @@ async fn tune_look_prompt_puts_exposure_first() {
     assert!(at("material_set") < at("One change per step"));
 
     let bare = client
-        .get_prompt(GetPromptRequestParams::new("tune_look"))
+        .get_prompt(GetPromptRequestParams::new("tune-look"))
         .await
         .unwrap();
     let ContentBlock::Text(b) = &bare.messages[0].content else {

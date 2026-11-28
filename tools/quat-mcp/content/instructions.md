@@ -8,14 +8,28 @@ World building:
 - Placement: `scene_get` reports `world_bounds` / `local_bounds` (size and origin of any model); `world_place_on_ground` sets an entity down on the terrain or on colliders below it, optionally tilted to the slope. Do not guess sink depths.
 - Looking: the user may be using the viewport. Prefer `screenshot` with a `camera` (a position and `look_at`, or `frame` an entity) for verification shots, which leaves their view alone; use `camera_set` only to change what they see. The camera's clip planes follow the scene (distant streamed terrain stays visible), so leave `near` / `far` alone unless a shot needs them.
 
-To change how the scene looks, tune the renderer (`render_settings_get` / `render_settings_set` / `render_settings_schema`: exposure, bloom, anti-aliasing, shadows, sky light, clouds) and per-entity materials (`material_get` / `material_set`), checking each change with `screenshot`; the `tune_look` prompt walks through it.
+To change how the scene looks, tune the renderer (`render_settings_get` / `render_settings_set` / `render_settings_schema`: exposure, bloom, anti-aliasing, shadows, sky light, clouds) and per-entity materials (`material_get` / `material_set`), checking each change with `screenshot`.
 
 NPC behaviour is a behaviour tree per entity: `bt_leaves` lists the node kinds and leaves, `bt_set` writes a whole tree, `bt_get` shows it with stable node ids for the incremental `bt_add_node` / `bt_move_node` / `bt_remove_node` / `bt_set_params`, and `bt_status` shows what each node did on the last tick during Play.
 
-Gameplay is written as Lua scripts: read the `quat://docs/scripting` resource, write files with `script_create` / `script_update` (compiled first; errors name the line), attach them with the `script` component, run with `sim_play` and read `debug_log` (category `script`). The `write_game_script` prompt walks through it.
+Gameplay is written as Lua scripts: read the `quat://docs/scripting` resource, write files with `script_create` / `script_update` (compiled first; errors name the line), attach them with the `script` component, run with `sim_play` and read `debug_log` (category `script`).
 
 Custom looks: write a material shader (a Slang module) with `shader_template` → `shader_create`, assign it with `scene_update` (`primitive.shader`), screenshot and refine with `shader_update`; compile errors come back with file, line and column.
 
 If a tool says quat-mcp cannot connect to the engine or that the engine rejected the session, the engine is not running with remote control on that port, or its session token does not match: pass the error's advice on to the user instead of retrying. Never ask the user to paste the session token into the conversation.
 
-Engine errors name the offending field and what was expected — fix the call instead of repeating it. The `build_world`, `inspect_scene`, `debug_session`, `design_behavior`, `tune_look`, `write_game_script` and `write_material_shader` prompts describe the workflows in detail.
+Engine errors name the offending field and what was expected — fix the call instead of repeating it.
+
+Step-by-step workflows for common tasks, with verification steps and pitfalls:
+{% for skill in skills %}
+- `{{ skill.name }}`{% if serve_skills %} (`{{ skill.uri }}`){% endif %}
+{%- endfor %}
+{% if serve_skills and serve_prompts %}
+They are Agent Skills (read the `SKILL.md` with `resources/read`, or load them through your client's skills support) and prompts of the same name.
+{%- elif serve_skills %}
+They are Agent Skills: read the `SKILL.md` with `resources/read`, or load them through your client's skills support.
+{%- elif serve_prompts %}
+They are available as prompts of the same name.
+{%- else %}
+They are available as skills of the same name when the quat-3d plugin is installed.
+{%- endif %} Follow the matching one when a task fits it.
