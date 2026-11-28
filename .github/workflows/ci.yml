@@ -364,12 +364,14 @@ jobs:
         if: always() && steps.build.outcome == 'success'
         run: ctest --test-dir build/macos-release -L sdk --output-on-failure
 
-      # MoltenVK releases the shader checks cover: Homebrew's (the GPU step's
-      # ICD), the latest release, and 1.4.0 / 1.4.1, which LunarG SDKs still
-      # ship and whose SPIRV-Cross emits Metal that does not compile for an
-      # atomic through a buffer device address (the owner's startup failure
-      # Homebrew's 1.4.2 hid). Deduplicated; tag -> revision is fixed, so the
-      # list keys the SPIRV-Cross build cache.
+      # SPIRV-Cross revisions the shader checks cover: the pins of Homebrew's
+      # MoltenVK (the GPU step's ICD), the latest release (newest supported),
+      # 1.4.1 and 1.4.0 (oldest supported), plus the LunarG Vulkan SDK
+      # 1.4.341 tag (the minimum SDK, whose MoltenVK overrides the bundled
+      # one when its setup-env is sourced). 1.4.0, 1.4.1 and SDK 1.4.341 emit
+      # Metal that does not compile for an atomic through a buffer device
+      # address (#130, which Homebrew's 1.4.2 hid). Deduplicated; each entry
+      # maps to a fixed revision, so the list keys the SPIRV-Cross build cache.
       - name: Resolve MoltenVK versions
         id: mvk
         if: always() && steps.build.outcome == 'success'
@@ -378,7 +380,7 @@ jobs:
         run: |
           brew_ver=$(brew list --versions molten-vk | awk '{print $2}' | sed 's/_[0-9]*$//')
           latest=$(gh release view -R KhronosGroup/MoltenVK --json tagName -q .tagName)
-          tags=$(printf '%s\n' "v$brew_ver" "$latest" v1.4.1 v1.4.0 | awk 'NF && !seen[$0]++' | tr '\n' ' ' | sed 's/ *$//')
+          tags=$(printf '%s\n' "v$brew_ver" "$latest" v1.4.1 v1.4.0 spirv-cross@vulkan-sdk-1.4.341.0 | awk 'NF && !seen[$0]++' | tr '\n' ' ' | sed 's/ *$//')
           echo "Homebrew MoltenVK v$brew_ver, latest release $latest; checking: $tags"
           echo "brew=v$brew_ver" >> "$GITHUB_OUTPUT"
           echo "latest=$latest" >> "$GITHUB_OUTPUT"
@@ -408,10 +410,10 @@ jobs:
           set -o pipefail
           status=0
           for tag in $TAGS; do
-            echo "::group::MoltenVK $tag"
+            echo "::group::$tag"
             bin=$(scripts/build-mvk-spirv-cross.sh "$tag" "$RUNNER_TEMP/mvk-spirv-cross" | tail -n1)
             echo "::endgroup::"
-            echo "== MoltenVK $tag"
+            echo "== $tag"
             SPIRV_CROSS="$bin" scripts/msl-check.sh cooked/shaders "$RUNNER_TEMP/msl/$tag" \
               | grep -v '^ok ' || status=1
           done

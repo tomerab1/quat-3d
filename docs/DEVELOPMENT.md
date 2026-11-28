@@ -262,7 +262,7 @@ demand (`workflow_dispatch`):
 |---|---|---|---|
 | `linux` | ubuntu-24.04 | `release` | CPU + GPU on Mesa lavapipe; then `game` once more with `ENGINE_EDITOR=OFF` (sharing the dependency tree) |
 | `windows` | windows-2022 | `windows-release` | CPU + GPU on Mesa lavapipe (Windows build, from `jakoch/install-vulkan-sdk-action`) |
-| `macos` | macos-15 (Apple Silicon) | `macos-release` | CPU; MSL check of every cooked shader with SPIRV-Cross at each covered MoltenVK release's pin + `xcrun metal` (blocking); GPU on MoltenVK (Homebrew's, the latest release and 1.4.1) over the runner's paravirtual Metal device — informational (`continue-on-error`) until P1 makes it a gate |
+| `macos` | macos-15 (Apple Silicon) | `macos-release` | CPU; MSL check of every cooked shader with SPIRV-Cross at each supported MoltenVK / Vulkan SDK revision + `xcrun metal` (blocking); GPU on MoltenVK (Homebrew's, the latest release and 1.4.1) over the runner's paravirtual Metal device — informational (`continue-on-error`) until P1 makes it a gate |
 | `rust` | ubuntu-24.04 | — | `tools/quat-mcp` fmt, clippy, tests |
 
 Each C++ job pins vcpkg to the manifest baseline and Slang to the same
@@ -288,7 +288,9 @@ the shader and the error:
   at that release's `ExternalRevisions/SPIRV-Cross_repo_revision` (about a
   minute; it also runs on Linux, where it reproduces translation output but
   not Metal compile errors). The `macos` job runs the check, blocking, for
-  Homebrew's MoltenVK, the latest release, 1.4.1 and 1.4.0. Homebrew's own
+  Homebrew's MoltenVK, the latest release, 1.4.1, 1.4.0 and the LunarG
+  Vulkan SDK 1.4.341 tag (`spirv-cross@vulkan-sdk-1.4.341.0`; the script
+  takes `spirv-cross@<tag-or-commit>` for any SPIRV-Cross revision). Homebrew's own
   `spirv-cross` and Ubuntu's 2021 package are not MoltenVK's revisions and
   both miss real failures. `mvk_debug` (below) shows MoltenVK's own
   translation.
@@ -303,6 +305,42 @@ the shader and the error:
   saw), and uploads them as the `macos-mvk-debug` artifact. The same
   variables work on a Mac when running `engine_tests` by hand (MoltenVK's
   `Docs/MoltenVK_Configuration_Parameters.md` lists them all).
+
+### Which MoltenVK runs (macOS)
+
+`Quat3D.app` bundles the Vulkan loader and MoltenVK (`Frameworks/`, ICD
+manifest in `Resources/vulkan/icd.d`), but the loader honours the standard
+driver variables first, as it does for every Vulkan application, and the
+engine does not override them:
+
+- **A LunarG Vulkan SDK environment replaces the bundled MoltenVK.** The
+  SDK's `setup-env.sh` exports `VK_DRIVER_FILES` / `VK_ICD_FILENAMES` (and
+  `VK_LAYER_PATH`) pointing at the SDK's own MoltenVK. The executable
+  started from a shell that sourced it (directly or from a login profile),
+  e.g. `Quat3D.app/Contents/MacOS/<exe>` or the packaged smoke test, runs on
+  the SDK's MoltenVK. A Finder or `open` launch does not inherit the shell's
+  environment, unless `launchctl setenv` or `open --env` passes the
+  variables on.
+  The same holds for `VK_ADD_DRIVER_FILES` and, when the bundled loader is
+  not used (a build tree run against Homebrew's loader), for Homebrew's
+  `molten-vk`.
+- **Startup logs the driver that actually loaded** (category `rhi`, on every
+  platform): `driver: MoltenVK 1.4.1 (id 14, …, Vulkan 1.4.x) on Apple M2;
+  VK_ICD_FILENAMES=/Users/…/VulkanSDK/…/MoltenVK_icd.json`. The name and
+  version come from `VkPhysicalDeviceDriverProperties` (`driverName`,
+  `driverInfo`); the tail names the loader variable that chose the driver,
+  or `ICDs: loader default discovery`. Ask for this line in any macOS
+  rendering report.
+- **Supported minimum: MoltenVK 1.4.0, LunarG Vulkan SDK 1.4.341.** CI's MSL
+  check covers these SPIRV-Cross revisions plus Homebrew's and the latest
+  MoltenVK release, so a shader that compiles there compiles on any
+  supported Mac. Older MoltenVK builds are not tested. Those revisions
+  mistranslate some shapes newer ones handle, such as an atomic through a
+  buffer device address (#130), and `msl_portability_test` rejects those
+  shapes on every platform.
+- To run on the bundled MoltenVK from an SDK shell, unset the variables
+  first: `env -u VK_DRIVER_FILES -u VK_ICD_FILENAMES -u VK_ADD_DRIVER_FILES
+  Quat3D.app/Contents/MacOS/<exe>`.
 
 ## Engine SDK
 
