@@ -47,6 +47,12 @@ jobs:
         shell: bash
         run: bash scripts/release-notes.sh "$GITHUB_REF_NAME" > /dev/null
 
+      # Every archive ships THIRD_PARTY_NOTICES.md: its summary must list every
+      # vcpkg dependency, FetchContent package and font (as in CI).
+      - name: Third-party notices
+        if: runner.os == 'Linux'
+        run: python3 -I scripts/check-third-party-notices.py
+
       - name: Set up build
         id: setup
         uses: ./.github/actions/setup-build

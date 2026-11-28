@@ -16,6 +16,9 @@
 #            The bundle carries the Vulkan loader + MoltenVK (Contents/Frameworks,
 #            ICD manifest in Contents/Resources/vulkan/icd.d) and the data in
 #            Contents/Resources; ad-hoc code-signed.
+# Every archive also carries LICENSE (quat-3d, MIT) and THIRD_PARTY_NOTICES.md
+# (every component's licence text) next to the game; on macOS also inside the
+# app's Contents/Resources.
 #
 # Prints the archive path as the last line.
 set -euo pipefail
@@ -52,6 +55,17 @@ copy_data() {
   cp -R "$root/cooked/shaders" "$1/cooked/shaders"
 }
 
+# copy_licences <dest> [<title>=<licence-file> ...]: LICENSE (quat-3d, MIT) and
+# THIRD_PARTY_NOTICES.md (the summary plus every component's licence text, from
+# scripts/third-party-notices.sh); the extra arguments add the licences of
+# bundled platform runtimes.
+copy_licences() {
+  local dest=$1
+  shift
+  cp "$root/LICENSE" "$dest/LICENSE"
+  bash "$root/scripts/third-party-notices.sh" "$build_dir" "$dest/THIRD_PARTY_NOTICES.md" "$@"
+}
+
 case "$os" in
 linux-x64)
   cp "$build_dir/game" "$stage/game"
@@ -60,13 +74,30 @@ linux-x64)
   # ship it next to the game. Everything else is either statically linked
   # (vcpkg's static triplet) or a base system library.
   mkdir -p "$stage/lib"
-  ldd "$stage/game" | awk '/=> \// && /libc\+\+|libunwind/ { print $3 }' | while read -r lib; do
+  runtime_libs=$(ldd "$stage/game" | awk '/=> \// && /libc\+\+|libunwind/ { print $3 }')
+  for lib in $runtime_libs; do
     cp -L "$lib" "$stage/lib/"
+  done
+  # Their licence texts: the Debian/Ubuntu copyright file of each library's
+  # package (libc++1-18, libunwind-18, ...), once per package.
+  runtime_licences=()
+  seen=" "
+  for lib in $runtime_libs; do
+    pkg=$(dpkg -S "$(readlink -f "$lib")" 2>/dev/null | sed -n '1s/:.*//p' || true)
+    [ -n "$pkg" ] || { echo "::warning::no package owns $lib: its licence text is not in THIRD_PARTY_NOTICES.md" >&2; continue; }
+    case "$seen" in *" $pkg "*) continue ;; esac
+    seen="$seen$pkg "
+    if [ -f "/usr/share/doc/$pkg/copyright" ]; then
+      runtime_licences+=("$pkg (bundled in lib/)=/usr/share/doc/$pkg/copyright")
+    else
+      echo "::warning::no /usr/share/doc/$pkg/copyright: the $pkg licence text is not in THIRD_PARTY_NOTICES.md" >&2
+    fi
   done
   # RUNPATH is not transitive: the bundled libs find each other via $ORIGIN.
   patchelf --set-rpath '$ORIGIN/lib' "$stage/game"
   for lib in "$stage"/lib/*; do patchelf --set-rpath '$ORIGIN' "$lib"; done
   cp "$root/packaging/README-RUN-linux.txt" "$stage/README-RUN.txt"
+  copy_licences "$stage" ${runtime_licences[@]+"${runtime_licences[@]}"}
   archive="$out_dir/$name.tar.gz"
   tar -C "$out_dir" -czf "$archive" "$name"
   ;;
@@ -83,6 +114,9 @@ windows-x64)
   cp "${crt_dirs[0]}"/*.dll "$stage/"
   copy_data "$stage"
   cp "$root/packaging/README-RUN-windows.txt" "$stage/README-RUN.txt"
+  # The MSVC runtime DLLs come without a licence file; the summary in
+  # THIRD_PARTY_NOTICES.md names the Visual Studio redistribution terms.
+  copy_licences "$stage"
   archive="$out_dir/$name.zip"
   (cd "$out_dir" && 7z a -tzip -bso0 -bsp0 "$archive" "$name")
   ;;
@@ -145,6 +179,24 @@ PY
   plist_version=$(printf '%s' "${version#v}" | grep -E '^[0-9]+(\.[0-9]+)*$' || echo 0.0.0)
   sed -e "s/@VERSION@/$plist_version/g" -e "s/@MINOS@/$minos/g" \
     "$root/packaging/macos/Info.plist.in" > "$contents/Info.plist"
+
+  # Licences, before signing (the signature seals Contents/Resources): in the
+  # bundle so they travel with the app, and next to it in the archive. The
+  # bundled loader's and MoltenVK's texts are the files Homebrew keeps in
+  # each keg.
+  runtime_licences=()
+  for formula in molten-vk vulkan-loader; do
+    keg="$(brew --prefix "$formula")"
+    found=0
+    for f in "$keg"/LICENSE* "$keg"/COPYING*; do
+      [ -f "$f" ] || continue
+      runtime_licences+=("$formula (bundled in Quat3D.app)=$f")
+      found=1
+    done
+    [ "$found" = 1 ] || echo "::warning::no licence file in $keg: the $formula licence text is not in THIRD_PARTY_NOTICES.md" >&2
+  done
+  copy_licences "$contents/Resources" ${runtime_licences[@]+"${runtime_licences[@]}"}
+  cp "$contents/Resources/LICENSE" "$contents/Resources/THIRD_PARTY_NOTICES.md" "$stage/"
 
   # Ad-hoc signature (no Developer ID): inner code first, then the bundle.
   # Apple Silicon refuses unsigned code, and install_name_tool invalidated the

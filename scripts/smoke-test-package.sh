@@ -2,7 +2,8 @@
 # Smoke-test a release archive from scripts/package-release.sh: unpack it into
 # a scratch directory, launch the packaged game for 30 frames with a software
 # or runner GPU, and require a clean exit plus a written screenshot. The game
-# must find its data next to itself (packaged builds embed no source path).
+# must find its data next to itself (packaged builds embed no source path),
+# and the archive must carry LICENSE and THIRD_PARTY_NOTICES.md.
 #
 #   scripts/smoke-test-package.sh <archive> <scratch-dir>
 #
@@ -92,6 +93,12 @@ case "$archive" in
   exit 2
   ;;
 esac
+
+for f in LICENSE THIRD_PARTY_NOTICES.md; do
+  [ -s "${dir%/}/$f" ] || { echo "the package has no $f" >&2; exit 1; }
+done
+grep -q '^## Licence texts' "${dir%/}/THIRD_PARTY_NOTICES.md" \
+  || { echo "THIRD_PARTY_NOTICES.md has no licence texts" >&2; exit 1; }
 
 grep -q 'data root (install directory)' "$log" \
   || { echo "game did not resolve its data next to the executable" >&2; exit 1; }

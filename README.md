@@ -129,7 +129,8 @@ Ready-to-run builds are attached to each
 [`.github/workflows/release.yml`](.github/workflows/release.yml) for every
 `v*` tag), with release notes listing what changed (also in
 [`CHANGELOG.md`](CHANGELOG.md)). Every archive contains a `README-RUN.txt`
-with the launch options and troubleshooting.
+with the launch options and troubleshooting, plus `LICENSE` and
+`THIRD_PARTY_NOTICES.md` (see [License](#license)).
 
 | Download | Run |
 |---|---|
@@ -477,3 +478,11 @@ ports/, triplets/   vcpkg customisations
 Vulkan 1.3 · Slang · SDL3 · Jolt Physics · EnTT · fastgltf · glm · Dear ImGui +
 ImGuizmo · Vulkan Memory Allocator · Recast/Detour · GameNetworkingSockets ·
 Lua 5.4 + sol2 · KTX-Software (Basis Universal) · meshoptimizer · nlohmann/json · CMake + vcpkg
+
+## License
+
+quat-3d is released under the [MIT License](LICENSE). It builds on
+third-party libraries, fonts and code, each under its own licence; they are
+listed in [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md). Every release
+archive carries `LICENSE` and a `THIRD_PARTY_NOTICES.md` with the full
+licence text of each component.
