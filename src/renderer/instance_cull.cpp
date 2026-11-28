@@ -10,7 +10,7 @@
 
 namespace engine::renderer {
 
-std::array<glm::vec4, 6> frustum_planes(const glm::mat4& view_proj) {
+std::array<glm::vec4, 6> cull_frustum_planes(const glm::mat4& view_proj) {
     // Gribb & Hartmann 2001: the rows of the clip matrix give the planes;
     // Vulkan's [0, 1] depth makes the near plane row 2 alone.
     const glm::mat4 m = glm::transpose(view_proj);
@@ -25,7 +25,7 @@ std::array<glm::vec4, 6> frustum_planes(const glm::mat4& view_proj) {
 
 CullViewGpu camera_cull_view(const glm::mat4& view_proj) {
     CullViewGpu v;
-    v.planes = frustum_planes(view_proj);
+    v.planes = cull_frustum_planes(view_proj);
     v.kind = static_cast<std::uint32_t>(CullViewKind::planes);
     return v;
 }
@@ -52,7 +52,7 @@ ResolvedCullView resolve_cull_view(const CullViewGpu& view, const GpuCascades& c
         break;
     case CullViewKind::cascade: {
         const std::uint32_t c = std::min(view.cascade, max_cascades - 1);
-        out.planes = frustum_planes(cascades.view_proj[c]);
+        out.planes = cull_frustum_planes(cascades.view_proj[c]);
         out.near_extrude = std::max(cascades.limits.y, 0.0F);
         out.texel_world = cascades.texel_world[static_cast<glm::length_t>(c)];
         out.min_caster_texels = view.min_caster_texels;

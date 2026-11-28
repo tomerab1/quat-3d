@@ -57,7 +57,7 @@ glm::vec3 cascade_centre(const r::GpuCascades& cs, std::uint32_t c) {
 } // namespace
 
 TEST(InstanceCull, PlanesAreInwardAndNormalised) {
-    const auto planes = r::frustum_planes(camera_view_proj());
+    const auto planes = r::cull_frustum_planes(camera_view_proj());
     for (const glm::vec4& p : planes) {
         EXPECT_NEAR(glm::length(glm::vec3(p)), 1.0F, 1e-5F);
         // A point straight ahead, inside the frustum, is on the inner side.

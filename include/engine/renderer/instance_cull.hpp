@@ -113,7 +113,7 @@ struct ResolvedCullView {
 
 // Gribb-Hartmann planes of `view_proj` (Vulkan [0, 1] depth), inward,
 // normalised: left, right, bottom, top, near, far.
-[[nodiscard]] std::array<glm::vec4, 6> frustum_planes(const glm::mat4& view_proj);
+[[nodiscard]] std::array<glm::vec4, 6> cull_frustum_planes(const glm::mat4& view_proj);
 
 // The camera view.
 [[nodiscard]] CullViewGpu camera_cull_view(const glm::mat4& view_proj);
