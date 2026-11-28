@@ -27,6 +27,13 @@ cmake --install build/release --prefix ~/sdk/quat3d-0.1
 scripts/package-sdk.sh build/release dist v0.1.0
 ```
 
+`package-sdk.sh` also writes the generated licence notices
+(`THIRD_PARTY_NOTICES.md` at the root and in `share/quat3d/`). A plain
+`cmake --install` has only `LICENSE`. With it, `quat-pack` refuses to package
+a game until `share/quat3d/THIRD_PARTY_NOTICES.md` exists: a game package
+never ships without the licences of the libraries it bundles. See
+[game-packaging.md](game-packaging.md#licences).
+
 Use `ENGINE_PACKAGE_BUILD=ON` for an SDK you hand to others. Without it,
 `engine_rhi` embeds this checkout's slangc path for shader hot reload (the
 development data-root fallback is compiled into the engine's own `game`
@@ -52,7 +59,7 @@ tree nor the build tree.
 | `lib/cmake/quat3d/` | `quat3dConfig.cmake`, `quat3dConfigVersion.cmake`, `quat3dTargets*.cmake`, `quat3d-toolchain.cmake`, `Quat3dGame.cmake`, `Quat3dToolchainCheck.cmake` |
 | `bin/` | `quat-cook`, `quat-pack`, `quat-player` and `quat-player-shipping` (P4: run and package a data-plus-Lua game), `slangc` (plus Slang's DLLs on Windows), `quat-mcp` (release archives), and the dependency DLLs on Windows |
 | `deps/` | the release half of the vcpkg tree the engine was built with: every library the engine links, plus GoogleTest. A game never runs vcpkg |
-| `share/quat3d/` | a data root: `cooked/shaders/` (the engine's shaders), `assets/shaders/lib/*.slang` (the modules material shaders import), `assets/fonts/` (the editor's fonts and icons), plus licences. It is also `quat-pack`'s engine root (`scripts/package-release.sh`, `scripts/smoke-test-package.sh`, `packaging/`), which `bin/quat-pack` finds on its own |
+| `share/quat3d/` | a data root: `cooked/shaders/` (the engine's shaders), `assets/shaders/lib/*.slang` (the modules material shaders import), `assets/fonts/` (the editor's fonts and icons), plus licences: `LICENSE` and the `THIRD_PARTY_NOTICES.md` that `quat-pack` copies into every game package (#122). It is also `quat-pack`'s engine root (`scripts/package-release.sh`, `scripts/smoke-test-package.sh`, `packaging/`), which `bin/quat-pack` finds on its own |
 
 ## Using it
 

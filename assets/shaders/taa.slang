@@ -51,6 +51,11 @@ SamplerState            g_linear;   // bilinear, clamp to edge
 StructuredBuffer<float> g_exposure; // [0] = adapted average luminance
 [format("rgba16f")] RWTexture2D<float4> g_history_out;
 [format("rgba16f")] RWTexture2D<float4> g_out;
+// Debug counter (NonFiniteCounters), bound as a descriptor: an atomic through
+// a buffer device address is mistranslated by
+// MoltenVK's SPIRV-Cross into Metal that does not compile.
+// Always bound (a dummy when counting is off); written only under the flag.
+RWStructuredBuffer<uint> g_non_finite;
 
 // Mirrors TaaPushConstants in taa_pass.cpp (96 bytes).
 struct Params {
@@ -61,11 +66,10 @@ struct Params {
     float4 blend;        // x max accumulated weight, y sample falloff (per display px^2),
                          // z clip rejection (weight lost per unit of clipping),
                          // w frame index (dither seed)
-    uint   count_non_finite; // 1: count rejected values into *non_finite
+    uint   count_non_finite; // 1: count rejected values into g_non_finite[0]
     uint   pad0;
-    // Debug counter (NonFiniteCounters). Guarded by the flag, not compared
-    // with null: a 64-bit comparison needs the optional shaderInt64 feature.
-    uint*  non_finite;
+    uint   pad1;
+    uint   pad2;
 }
 [[vk::push_constant]] Params pc;
 
@@ -94,7 +98,7 @@ float4 stochastic_round_half(float4 v, float4 u) {
 void count_non_finite() {
     if (pc.count_non_finite != 0) {
         uint previous;
-        InterlockedAdd(*pc.non_finite, 1u, previous);
+        InterlockedAdd(g_non_finite[0], 1u, previous);
     }
 }
 

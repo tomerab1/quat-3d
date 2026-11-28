@@ -91,8 +91,14 @@ public:
 
     // Acquire an image matching the description, reusing a free cached one when
     // possible. The returned view/image are owned by the pool — do not destroy.
+    // `storage_format` (VK_FORMAT_UNDEFINED: `format`) is the VkImage's own
+    // format when it differs from the view's: an sRGB format and its UNORM
+    // twin (formats.hpp). Such an image is created mutable-format, listing
+    // both, and its view is in `format`; byte copies move it in
+    // `storage_format` (see add_byte_copy).
     [[nodiscard]] std::expected<ResourceBinding, core::Error>
-    acquire(VkFormat format, VkExtent2D extent, VkImageUsageFlags usage);
+    acquire(VkFormat format, VkExtent2D extent, VkImageUsageFlags usage,
+            VkFormat storage_format = VK_FORMAT_UNDEFINED);
 
     // Mark every acquired image free for reuse on the next frame, and free
     // images that no frame has acquired for `max_idle_resets` resets (a
@@ -117,6 +123,7 @@ private:
         VkImageView       view   = VK_NULL_HANDLE;
         VkImageView       unorm_view = VK_NULL_HANDLE;    // imported only, set_unorm_view
         VkFormat          format = VK_FORMAT_UNDEFINED;
+        VkFormat          storage_format = VK_FORMAT_UNDEFINED;
         VkExtent2D        extent{};
         VkImageUsageFlags usage  = 0;
         bool              in_use = false;
@@ -213,9 +220,19 @@ public:
                                  VkAccessFlags2 available_access = 0);
 
     // Declare a graph-managed transient image. Backed by the transient pool at
-    // compile time. `usage` must cover every way passes touch it.
+    // compile time. `usage` must cover every way passes touch it. Passes see
+    // it in `format`; `storage_format` stores it in the sRGB / UNORM twin of
+    // `format` instead (TransientImagePool::acquire), so it can be
+    // byte-copied to or from an image of that format without reinterpreting
+    // it — e.g. a UNORM render target that is copied into an sRGB swapchain.
     ResourceHandle create_transient_image(const char* name, VkFormat format,
-                                          VkExtent2D extent, VkImageUsageFlags usage);
+                                          VkExtent2D extent, VkImageUsageFlags usage,
+                                          VkFormat storage_format = VK_FORMAT_UNDEFINED);
+
+    // The format the VkImage behind `image` was created with: what a byte copy
+    // moves (the format passed to import_image, or a transient's storage
+    // format).
+    [[nodiscard]] VkFormat storage_format(ResourceHandle image) const;
 
     // Fluent pass declaration. Returned by reference into the graph's pass list;
     // valid until the next add_pass / compile call.
@@ -284,6 +301,7 @@ private:
         VkImageView       view   = VK_NULL_HANDLE;
         VkImageView       unorm_view = VK_NULL_HANDLE;    // imported only, set_unorm_view
         VkFormat          format = VK_FORMAT_UNDEFINED;
+        VkFormat          storage_format = VK_FORMAT_UNDEFINED; // the VkImage's own format
         VkExtent2D        extent{};
         VkImageUsageFlags usage  = 0;                 // transient only
         VkImageLayout     initial_layout = VK_IMAGE_LAYOUT_UNDEFINED;
@@ -320,6 +338,20 @@ private:
     std::vector<std::vector<VkBufferMemoryBarrier2>> pass_buffer_barriers_; // per order_ slot
     std::vector<VkImageMemoryBarrier2>              final_barriers_;
 };
+
+// Adds a transfer pass copying the whole colour image `src` into `dst`
+// (mip 0, layer 0, `extent`) byte for byte. Both must be stored in the same
+// format (RenderGraph::storage_format); an error otherwise, before anything is
+// recorded. A copy between an sRGB format and its UNORM twin is valid Vulkan,
+// but MoltenVK performs it through a texture view in the other format, and for
+// a swapchain image it caches that view of the current CAMetalDrawable's
+// texture for the image's lifetime: later frames copy into a recycled
+// drawable and vkDestroySwapchainKHR releases the stale view (a crash at exit).
+// Store the other side in the same format instead
+// (create_transient_image's `storage_format`).
+[[nodiscard]] std::expected<void, core::Error>
+add_byte_copy(RenderGraph& graph, const char* name, ResourceHandle src, ResourceHandle dst,
+              VkExtent2D extent);
 
 // Builds a tiny two-pass graph (clear a transient image, then copy it to a host
 // buffer) with the passes declared out of dependency order, compiles + executes
