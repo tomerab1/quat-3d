@@ -16,6 +16,7 @@
 #include <imgui_internal.h> // DockBuilder, ImGuiSettingsHandler
 
 #include "editor_shell.hpp"
+#include "engine/core/utf8_path.hpp"
 #include "prefs.hpp"
 
 namespace engine::editor::shell {
@@ -60,7 +61,7 @@ void install_settings(EditorShell& shell, bool use_saved_layout) {
     std::filesystem::create_directories(dir, ec);
     if (ec) {
         std::fprintf(stderr, "[editor] cannot create %s (%s); layout will not persist\n",
-                     dir.string().c_str(), ec.message().c_str());
+                     core::path_to_utf8(dir).c_str(), ec.message().c_str());
         return;
     }
     const std::u8string p = (dir / "editor.ini").u8string();

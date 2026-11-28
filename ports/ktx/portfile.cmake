@@ -57,6 +57,10 @@ vcpkg_cmake_configure(
         -DKTX_GIT_VERSION_FULL=v${VERSION}-vcpkg
         -DKTX_FEATURE_TESTS=OFF
         -DKTX_FEATURE_LOADTEST_APPS=OFF
+        # external/etcdec/etcdec.cxx is not open source (Ericsson licence,
+        # KTX-Software LICENSE.md "Special Cases"); the engine only transcodes
+        # Basis Universal and never unpacks ETC in software.
+        -DKTX_FEATURE_ETC_UNPACK=OFF
         ${FEATURE_OPTIONS}
         ${OPTIONS}
     OPTIONS_DEBUG

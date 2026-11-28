@@ -150,3 +150,37 @@ TEST(GpuHdrGuard, BloomPrefilterDropsANanTexel) {
     EXPECT_GE(counts[static_cast<std::size_t>(r::NonFiniteSource::bloom_prefilter)], 1U);
     EXPECT_EQ(counters->collect(0)[0], 0U) << "collect resets the counters";
 }
+
+// Each counter starts its own storage-buffer descriptor (the shaders bind it
+// as RWStructuredBuffer<uint>, not through a device-address pointer): every
+// address is aligned to minStorageBufferOffsetAlignment and distinct, and a
+// count lands in its own slot and source only.
+TEST(GpuHdrGuard, NonFiniteCountersAreSeparateDescriptorAlignedSlots) {
+    QUAT_REQUIRE_GPU(g);
+    constexpr std::uint32_t k_slots = 2;
+    auto counters = r::NonFiniteCounters::create(g->device, g->allocator, k_slots);
+    ASSERT_OK(counters);
+    const VkDeviceSize align = g->device.properties().limits.minStorageBufferOffsetAlignment;
+    std::vector<VkDeviceAddress> seen;
+    for (std::uint32_t slot = 0; slot < k_slots; ++slot) {
+        for (std::uint32_t s = 0; s < r::NonFiniteCounters::k_sources; ++s) {
+            const VkDeviceAddress a = counters->address(slot, static_cast<r::NonFiniteSource>(s));
+            ASSERT_NE(a, 0U);
+            EXPECT_EQ(a % align, 0U) << "slot " << slot << " source " << s;
+            for (const VkDeviceAddress b : seen) {
+                EXPECT_GE(a > b ? a - b : b - a, r::NonFiniteCounters::k_counter_range);
+            }
+            seen.push_back(a);
+        }
+    }
+    EXPECT_EQ(counters->address(k_slots, r::NonFiniteSource::taa_history), 0U);
+
+    auto img = bloom_over(*g, k_half_nan, 1,
+                          counters->address(1, r::NonFiniteSource::bloom_prefilter));
+    ASSERT_OK(img);
+    const auto slot0 = counters->collect(0);
+    const auto slot1 = counters->collect(1);
+    for (const std::uint32_t c : slot0) EXPECT_EQ(c, 0U) << "slot 0 was not bound";
+    EXPECT_GE(slot1[static_cast<std::size_t>(r::NonFiniteSource::bloom_prefilter)], 1U);
+    EXPECT_EQ(slot1[static_cast<std::size_t>(r::NonFiniteSource::taa_history)], 0U);
+}
