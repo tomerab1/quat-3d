@@ -161,7 +161,8 @@ Details the contract leaves open, as implemented:
   `hdri.{intensity, rotation_deg, sun}` and `sky` are the render settings'
   `environment` group (`hdri_intensity`, `hdri_rotation_deg`, `hdri_sun`,
   `source`). With `sun` on, the panorama's sun drives the shadowed
-  directional light instead of the scene's `dir_light`. Scene files save the
+  directional light instead of the scene's `dir_light` (and instead of the
+  world clock's sun: see "Who owns the sun" below). Scene files save the
   path under `"environment": {"hdri": ...}`. `environment.get` reports
   `hdri: {path, loaded, width, height, sun_found, error?, intensity,
   rotation_deg, sun}` and `sky`.
@@ -352,7 +353,7 @@ values. Unknown fields are errors (they name the known fields).
 | `scene.set_parent` | `{entity, parent, keep_world?=true}` | `{id}` |
 | `scene.clear` | `{keep_lights?=true}` | `{destroyed: n}` |
 | `scene.batch` | `{commands:[{method, params}], stop_on_error?=true}` | `{results:[{ok:true, result} \| {ok:false, error:{code,message}}]}` — a string `"@N"` in an `entity`/`parent` field means the `id` returned by command N of this batch. Deferred methods cannot be batched. |
-| `environment.get` | — | `{sun:{azimuth_deg, elevation_deg, intensity, color, driven_by_clock}, clouds:{enabled, coverage, density, bottom_km, thickness_km, size_km, detail, wind_speed, wind_dir_deg, shadows}, sky, hdri:{path, loaded, width, height, sun_found, error?, intensity, rotation_deg, sun}}` |
+| `environment.get` | — | `{sun:{azimuth_deg, elevation_deg, intensity, color, source, driven_by_clock}, clouds:{enabled, coverage, density, bottom_km, thickness_km, size_km, detail, wind_speed, wind_dir_deg, shadows}, sky, hdri:{path, loaded, width, height, sun_found, error?, intensity, rotation_deg, sun}}` |
 | `environment.set` | same shape, every field optional; `sky: "procedural" \| "hdri"`, `hdri.path` loads a file | `environment.get` result |
 | `world.ground_height` | `{points:[[x,z],...]}` (≤ 1024) | `{heights:[y \| null], generating}` — null where no tile is loaded; `not_found` without terrain |
 | `terrain.status` | — | `{present, entity, streaming, generating, tiles_loaded, tiles_wanted, anchor, tile_size, bounds:{min,max} \| null}` (`{present:false}` without terrain) |
@@ -381,8 +382,26 @@ compass bearing: a scene has no compass until it has a world clock.
 `time.get`'s `sun.azimuth_deg` is the compass bearing (0 = north = −Z by
 default, 90 = east = +X), so the same light reads differently in the two
 (e.g. the Sun due south at noon: `time.get` 180, `environment.get` −90).
-`driven_by_clock` is true while the world clock positions the sun (then
-`environment.set` refuses angles and intensity).
+
+**Who owns the sun.** Exactly one thing positions the light the frame is lit
+with, and `sun.source` names it (`engine/scene/sun_source.hpp`; the renderer,
+`environment.*` and the editor share the decision):
+
+| `source` | When | `environment.set` sun edits |
+|---|---|---|
+| `"hdri"` | `sky` is `"hdri"`, a panorama is loaded and `hdri.sun` is on | all refused (angles, intensity, colour): turn it with `hdri.rotation_deg`, scale it with `hdri.intensity`, or set `hdri.sun` false |
+| `"clock"` | otherwise, while a world clock is `enabled` with `drive_sun` | angles and intensity refused (use `time.set` / `time.skip`, `sun_intensity`); colour allowed |
+| `"manual"` | otherwise | all allowed |
+
+`environment.get`'s `sun` is the lit one: under `"hdri"` the panorama's sun
+as the environment's rotation and intensity place it (intensity 0 when the
+panorama has no sun), whether or not the scene has a `dir_light`. A request
+is judged by the owner it leaves: `{hdri: {sun: false}, sun: {...}}` is
+checked against the clock or the scene, not the HDRI. `driven_by_clock` is
+`source == "clock"`. Under an HDRI the world clock keeps running — its sky
+(Sun and Moon positions, stars) advances and it keeps the `dir_light`
+current — but that light does not reach the frame, so turning the HDRI or
+its sun off hands the sun back to the clock without a jump.
 
 Methods that need something only the full application has (camera,
 screenshot, clouds, glTF spawn, play/stop, save/load, nav bake, and the
@@ -1068,7 +1087,9 @@ while `enabled` and `drive_sun` it writes the scene's first `dir_light`:
 direction toward the apparent Sun, intensity `sun_intensity` × the fraction
 of the solar disc above the horizon. Disabled, nothing is touched.
 `environment.set` refuses sun angles / intensity while the clock drives the
-sun.
+sun. An HDRI with its own sun outranks the clock (`environment.get`
+`sun.source` is then `"hdri"`): the clock keeps advancing but its light is
+not the one rendered.
 
 Clock fields (also the `world_clock` component of the scene codec):
 `enabled`, `datetime` (ISO-8601 `YYYY-MM-DDThh:mm[:ss[.fff]][Z|±hh:mm]`,

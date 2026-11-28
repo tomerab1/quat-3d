@@ -5,9 +5,10 @@
 //
 // A8 settings: `environment.source` hdri lights and draws the scene with the
 // loaded HDRI (rotation, intensity; `hdri_sun` turns its sun into the
-// shadowed directional light) and falls back to the procedural / atmosphere
-// sky while none is loaded; `ssr` drives SsrPass; `ibl.multiscatter` and
-// `ibl.horizon_occlusion` go to the lighting pass.
+// shadowed directional light — scene::resolve_sun decides, in gather) and
+// falls back to the procedural / atmosphere sky while none is loaded; `ssr`
+// drives SsrPass; `ibl.multiscatter` and `ibl.horizon_occlusion` go to the
+// lighting pass.
 
 #include "app/frame_renderer.hpp"
 
@@ -102,13 +103,16 @@ FrameRenderer::set_hdri(const std::string& relative, const std::filesystem::path
     hdri_status_.loaded = true;
     hdri_status_.width = image->width;
     hdri_status_.height = image->height;
-    hdri_status_.sun_found = hdri_->sun().found;
     std::fprintf(stderr, "[info] hdri '%s' loaded (%ux%u, %s)\n", relative.c_str(), image->width,
-                 image->height, hdri_status_.sun_found ? "sun found" : "no sun");
+                 image->height, hdri_->sun().found ? "sun found" : "no sun");
     // Reflections and the temporal history saw the old lighting.
     temporal_.reset();
     if (ssr_) ssr_->reset();
     return {};
+}
+
+const engine::renderer::HdriSun* FrameRenderer::hdri_sun() const {
+    return hdri_ && hdri_->has_image() ? &hdri_->sun() : nullptr;
 }
 
 bool FrameRenderer::hdri_active() const {
@@ -118,20 +122,12 @@ bool FrameRenderer::hdri_active() const {
 }
 
 engine::renderer::HdriBakeSettings FrameRenderer::hdri_bake_settings() const {
-    const engine::renderer::EnvironmentSettings& e = settings_.environment;
+    const engine::renderer::EnvironmentSettings e = settings_.environment.sanitized();
     engine::renderer::HdriBakeSettings b;
-    b.rotation_deg = engine::renderer::EnvironmentSettings::k_rotation_deg.clamp(e.hdri_rotation_deg);
-    b.intensity = engine::renderer::EnvironmentSettings::k_intensity.clamp(e.hdri_intensity);
+    b.rotation_deg = e.hdri_rotation_deg;
+    b.intensity = e.hdri_intensity;
     b.remove_sun = e.hdri_sun;
     return b;
-}
-
-void FrameRenderer::apply_hdri_sun(engine::renderer::DirectionalLightParams& light) const {
-    if (!hdri_active() || !settings_.environment.hdri_sun) return;
-    const engine::renderer::HdriSunLight sun = hdri_->sun_light(hdri_bake_settings());
-    // No sun in the panorama (overcast, interior): no directional light.
-    light.direction = glm::vec4(sun.direction_to_sun, 0.0F);
-    light.color = glm::vec4(sun.color, sun.found ? sun.intensity : 0.0F);
 }
 
 FrameRenderer::EnvironmentMaps FrameRenderer::add_environment(engine::rhi::RenderGraph& graph,

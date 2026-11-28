@@ -26,6 +26,7 @@
 
 #include "engine/core/error.hpp"
 #include "engine/project/package_manifest.hpp"
+#include "engine/renderer/hdri_sun.hpp"
 #include "engine/rhi/shader_status.hpp"
 
 struct SDL_Window;
@@ -124,6 +125,9 @@ struct EditorContext {
     std::string                 hdri_path;
     std::string                 hdri_status;
     std::optional<std::string>* hdri_request = nullptr;
+    // The loaded HDRI's sun analysis (nullopt: none loaded): with the render
+    // settings it says who owns the sun (scene::resolve_sun, issue #121).
+    std::optional<renderer::HdriSun> hdri_sun;
     // Project root for the asset browser (empty disables the panel).
     std::string project_root;
     // Out: glTF path the user asked to instantiate (double-click or viewport

@@ -12,6 +12,7 @@
 #include <entt/entity/fwd.hpp>
 
 namespace engine::renderer {
+struct HdriSun;
 struct PhysicalCamera;
 struct RenderSettings;
 }
@@ -28,6 +29,7 @@ struct HdriPanel {
     const std::string&          status;
     const std::string&          project_root; // .hdr files are browsed under it
     std::optional<std::string>* request = nullptr; // null hides the file row
+    const renderer::HdriSun*    sun = nullptr;     // the loaded HDRI's sun; null: none loaded
 };
 
 // The "Renderer" window: the scene's sun (azimuth / elevation / colour /

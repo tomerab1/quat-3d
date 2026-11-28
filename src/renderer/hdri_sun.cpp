@@ -114,4 +114,19 @@ HdriSun analyze_hdri_sun(const asset::HdrImage& image) {
     return sun;
 }
 
+HdriSunLight hdri_sun_light(const HdriSun& sun, float rotation_deg, float intensity) {
+    HdriSunLight out;
+    if (!sun.found) return out;
+    out.found = true;
+    out.direction_to_sun =
+        glm::normalize(panorama_to_world(sun.direction, glm::radians(rotation_deg)));
+    const glm::vec3 e = sun.irradiance * std::max(intensity, 0.0F);
+    const float peak = std::max({e.r, e.g, e.b});
+    if (peak > 0.0F) {
+        out.color = e / peak;
+        out.intensity = peak;
+    }
+    return out;
+}
+
 } // namespace engine::renderer

@@ -213,13 +213,6 @@ bool clock_only_entity(const entt::registry& r, entt::entity e) {
     return true;
 }
 
-bool clock_drives_sun(const entt::registry& r) {
-    const entt::entity e = scene::find_world_clock(r);
-    if (e == entt::null) return false;
-    const scene::WorldClock& c = r.get<scene::WorldClock>(e);
-    return c.enabled && c.drive_sun;
-}
-
 void draw_world_clock(entt::registry& r, entt::entity e, scene::WorldClock& c) {
     const scene::WorldClock before = c;
     (void)ui::prop_bool("Enabled", c.enabled, {.tooltip = "Run the clock and derive the sky from it"});

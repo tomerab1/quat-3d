@@ -1,6 +1,7 @@
 #include "tuning_panels.hpp"
 #include "weather_panel.hpp"
 
+#include <array>
 #include <cmath>
 #include <cstddef>
 #include <cstdio>
@@ -20,6 +21,7 @@
 #include "engine/scene/components.hpp"
 #include "engine/scene/material_override.hpp"
 #include "engine/scene/scene.hpp"
+#include "engine/scene/sun_source.hpp"
 #include "time_of_day_panel.hpp"
 #include "shell/panels.hpp"
 #include "ui/icons.hpp"
@@ -144,7 +146,7 @@ void draw_setting(RenderSettings& s, const RenderSettingDesc& d) {
     return !s.exposure.auto_exposure && d.name != "auto";
 }
 
-void draw_sun(scene::Scene* scene) {
+void draw_sun(const RenderSettings& settings, scene::Scene* scene, const renderer::HdriSun* hdri) {
     scene::DirectionalLight* sun = nullptr;
     if (scene != nullptr) {
         for (const entt::entity e : scene->registry().view<scene::DirectionalLight>()) {
@@ -157,10 +159,26 @@ void draw_sun(scene::Scene* scene) {
         return;
     }
     if (!ui::begin_property_grid("sun")) return;
-    // While the world clock drives the light, its angles and strength come
-    // from the clock (Time of Day below): shown, not editable.
-    const bool driven = clock_drives_sun(scene->registry());
-    if (driven) ui::prop_note("Driven by the world clock (Time of Day).");
+    // The sun's owner, decided as the frame lights with it
+    // (scene::resolve_sun): while the world clock drives the light, its
+    // angles and strength come from the clock (Time of Day below); while the
+    // HDRI's own sun lights the scene, this light waits underneath. Shown,
+    // not editable.
+    const scene::SceneSun lit = scene::resolve_sun(scene->registry(), settings.environment, hdri);
+    const scene::SunSource owner = lit.source;
+    const bool driven = owner != scene::SunSource::manual;
+    if (owner == scene::SunSource::hdri && lit.light) {
+        ui::prop_note("Lit by the HDRI's own sun (Sky & HDRI: rotation, intensity, sun).");
+        const glm::vec3 d = glm::normalize(lit.light->direction);
+        std::array<char, 64> buf{};
+        (void)std::snprintf(buf.data(), buf.size(), "%.0f° / %.0f°, intensity %.2f",
+                            glm::degrees(std::atan2(d.z, d.x)),
+                            glm::degrees(std::asin(glm::clamp(-d.y, -1.0F, 1.0F))),
+                            lit.light->intensity);
+        ui::prop_value("HDRI sun", buf.data(), "Azimuth / elevation (as below) and intensity", true);
+    } else if (owner == scene::SunSource::clock) {
+        ui::prop_note("Driven by the world clock (Time of Day).");
+    }
     ImGui::BeginDisabled(driven);
     // direction = travel direction (sun -> scene), unit length; same angle
     // convention as environment.get / environment.set.
@@ -179,7 +197,9 @@ void draw_sun(scene::Scene* scene) {
             glm::vec3(std::cos(el) * std::cos(az), -std::sin(el), std::cos(el) * std::sin(az));
     }
     ImGui::EndDisabled();
+    ImGui::BeginDisabled(owner == scene::SunSource::hdri); // the HDRI's sun has its own colour
     (void)ui::prop_color3("Colour", sun->color, {.reset = glm::vec3(1.0F)});
+    ImGui::EndDisabled();
     ImGui::BeginDisabled(driven);
     (void)ui::prop_float("Intensity", sun->intensity, {.speed = 0.05F, .min = 0.0F, .max = 100.0F});
     ImGui::EndDisabled();
@@ -295,7 +315,7 @@ void draw_renderer_panel(RenderSettings& settings, scene::Scene* scene, const Hd
     // and bloom's "Intensity") stay distinct.
     if (ui::section_header(ui::label(icon::sun, "Sun").c_str())) {
         ImGui::PushID("sun");
-        draw_sun(scene);
+        draw_sun(settings, scene, hdri.sun);
         ImGui::PopID();
     }
     if (ui::section_header(ui::label(icon::clock_3, "Time of Day").c_str())) {

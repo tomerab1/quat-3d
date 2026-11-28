@@ -32,6 +32,7 @@
 #include "engine/scene/instanced_mesh.hpp"
 #include "engine/scene/scene.hpp"
 #include "engine/scene/material_override.hpp"
+#include "engine/scene/sun_source.hpp"
 #include "engine/renderer/weather_surfaces.hpp"
 #include "engine/scene/weather_frame.hpp"
 
@@ -161,15 +162,15 @@ FrameScene FrameRenderer::gather(engine::scene::Scene& scene,
     // R11: render extent, jitter, view motion, camera-cut flag (frame_temporal.cpp).
     begin_view(out, cam, draw_extent, frame_number);
 
+    // The sun's one owner — the HDRI's own sun (R21), the world clock's light
+    // or the scene's — decided as environment.get reports it (#121).
     engine::renderer::DirectionalLightParams& light = out.light;
-    const auto light_view = scene.registry().view<const engine::scene::DirectionalLight>();
-    for (const entt::entity e : light_view) {
-        const auto& dl = light_view.get<const engine::scene::DirectionalLight>(e);
-        light.direction = glm::vec4(-glm::normalize(dl.direction), 0.0F);
-        light.color = glm::vec4(dl.color, dl.intensity);
-        break;
+    const engine::scene::SceneSun sun =
+        engine::scene::resolve_sun(scene.registry(), settings_.environment, hdri_sun());
+    if (sun.light) {
+        light.direction = glm::vec4(-glm::normalize(sun.light->direction), 0.0F);
+        light.color = glm::vec4(sun.light->color, sun.light->intensity);
     }
-    apply_hdri_sun(light); // R21: the HDRI's own sun, when selected
 
     // Gather point lights from the ECS (world position from Transform); the
     // light-cull compute pass bins them into view clusters on the GPU.

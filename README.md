@@ -66,7 +66,8 @@ The editor (dark theme; a light theme is one click away in View > Theme):
   (ROADMAP R22.2)
 - Image-based lighting that keeps up with the sky in real time
 - HDRI environments: light and backdrop a scene with a Radiance `.hdr`
-  panorama (rotation, intensity). Its sun becomes a shadow-casting sun light.
+  panorama (rotation, intensity). Its sun becomes a shadow-casting sun light,
+  taking over from the world clock's sun while it is on.
 - Energy-conserving specular: rough metals keep their brightness
   (multiple-scattering GGX), and normal-mapped surfaces stop reflecting the
   sky below their horizon

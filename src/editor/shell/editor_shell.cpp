@@ -416,7 +416,8 @@ void EditorShell::draw_panels() {
     if (c.scene != nullptr) draw_inspector(*c.scene, selected, inspector, open(Panel::inspector));
     if (c.renderer != nullptr) {
         draw_renderer_panel(*c.renderer, c.scene,
-                            {c.hdri_path, c.hdri_status, c.project_root, c.hdri_request},
+                            {c.hdri_path, c.hdri_status, c.project_root, c.hdri_request,
+                             c.hdri_sun ? &*c.hdri_sun : nullptr},
                             c.view_lens, c.view_fov_y);
     }
     if (c.scene != nullptr) {

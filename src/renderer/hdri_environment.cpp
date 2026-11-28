@@ -463,19 +463,7 @@ const HdriSun& HdriEnvironment::sun() const {
 }
 
 HdriSunLight HdriEnvironment::sun_light(const HdriBakeSettings& settings) const {
-    HdriSunLight out;
-    const HdriSun& s = sun();
-    if (!s.found) return out;
-    out.found = true;
-    out.direction_to_sun =
-        glm::normalize(panorama_to_world(s.direction, glm::radians(settings.rotation_deg)));
-    const glm::vec3 e = s.irradiance * std::max(settings.intensity, 0.0F);
-    const float peak = std::max({e.r, e.g, e.b});
-    if (peak > 0.0F) {
-        out.color = e / peak;
-        out.intensity = peak;
-    }
-    return out;
+    return hdri_sun_light(sun(), settings.rotation_deg, settings.intensity);
 }
 
 std::uint32_t HdriEnvironment::face_size() const { return has_image() ? impl_->maps->face : 0; }

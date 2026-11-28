@@ -299,8 +299,9 @@ const ImDrawData* EditorBridge::build_ui(float dt, int draw_count,
             ui_ctx.hdri_status = "failed: " + hdri.error;
         } else if (hdri.loaded) {
             ui_ctx.hdri_status = std::to_string(hdri.width) + "x" + std::to_string(hdri.height) +
-                                 (hdri.sun_found ? ", sun found" : ", no sun");
+                                 (hdri.sun.found ? ", sun found" : ", no sun");
         }
+        if (hdri.loaded) ui_ctx.hdri_sun = hdri.sun;
         ui_ctx.hdri_request = &pending_hdri_;
     }
     ui_ctx.project_root = engine::core::path_to_utf8(project_root()); // UTF-8 for ImGui

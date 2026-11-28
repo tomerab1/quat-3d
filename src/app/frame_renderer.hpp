@@ -105,7 +105,6 @@ struct HdriStatus {
     bool          loaded = false;
     std::uint32_t width = 0;
     std::uint32_t height = 0;
-    bool          sun_found = false;
     std::string   error;
 };
 
@@ -293,6 +292,9 @@ public:
     [[nodiscard]] std::expected<void, engine::core::Error>
     set_hdri(const std::string& relative, const std::filesystem::path& project_root);
     [[nodiscard]] const HdriStatus& hdri_status() const { return hdri_status_; }
+    // The loaded HDRI's sun analysis; null while no HDRI is loaded. With the
+    // render settings it decides who owns the sun (scene::resolve_sun).
+    [[nodiscard]] const engine::renderer::HdriSun* hdri_sun() const;
     // Command buffers and frame synchronisation.
     void create_frame_sync();
     // QUAT_SCREENSHOT: the final frame is written to `path` as binary PPM.
@@ -378,9 +380,6 @@ private:
     // The HDRI is loaded and selected (settings_.environment.source).
     [[nodiscard]] bool hdri_active() const;
     [[nodiscard]] engine::renderer::HdriBakeSettings hdri_bake_settings() const;
-    // With the HDRI active and its sun matched, the panorama's sun replaces
-    // the scene's directional light (direction, colour, intensity).
-    void apply_hdri_sun(engine::renderer::DirectionalLightParams& light) const;
     // Declares the HDRI bake (when its inputs changed) or the sky probe's
     // step, before every pass that samples the maps; returns those maps.
     [[nodiscard]] EnvironmentMaps add_environment(engine::rhi::RenderGraph& graph,
