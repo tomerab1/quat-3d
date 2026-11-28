@@ -84,8 +84,12 @@ target_compile_definitions(engine_flags INTERFACE
     GLM_FORCE_RADIANS
     $<$<CONFIG:Release>:NDEBUG>)
 
+# ENGINE_EDITOR is defined per target (engine_editor_build below), not on
+# engine_flags: an editor build also compiles quat-player (P4) from the same
+# application sources without it.
+add_library(engine_editor_build INTERFACE)
 if(ENGINE_EDITOR)
-    target_compile_definitions(engine_flags INTERFACE ENGINE_EDITOR)
+    target_compile_definitions(engine_editor_build INTERFACE ENGINE_EDITOR)
 endif()
 
 if(ENGINE_DESCRIPTOR_SETS_FALLBACK)
@@ -129,8 +133,9 @@ find_package(GameNetworkingSockets CONFIG REQUIRED)
 # Lua 5.4 (C library, longjmp error handling) + sol2 (header-only bindings).
 find_package(Lua REQUIRED)
 find_package(sol2 CONFIG REQUIRED)
-# OpenSSL's libcrypto: the CSPRNG behind remote-control session tokens
-# (engine_remote). GameNetworkingSockets already depends on it.
+# OpenSSL's libcrypto (GameNetworkingSockets already depends on it): the CSPRNG
+# behind remote-control session tokens (engine_remote) and SHA-256 for game
+# package manifests (engine_pack).
 find_package(OpenSSL REQUIRED COMPONENTS Crypto)
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/FetchAcl.cmake) # ACL + RTM (header-only)
 # miniaudio: vcpkg's port is header-only (it installs miniaudio.h and nothing
@@ -168,9 +173,24 @@ add_library(engine_core STATIC
     src/core/file_watcher.cpp
     src/core/child_process.cpp
     src/core/asset_root.cpp
+    src/core/path_confine.cpp
     src/core/env.cpp)
 target_link_libraries(engine_core PUBLIC engine_flags Threads::Threads)
 target_include_directories(engine_core PUBLIC ${ENGINE_PUBLIC_INCLUDE})
+
+# ---------------------------------------------------------------------------
+# engine_project — game projects (ROADMAP P4): the game.json descriptor and
+# its validation, the package manifest, and BuildJob (quat-pack run in the
+# background for the editor's export dialog and remote project.build).
+# Graphics-free.
+# ---------------------------------------------------------------------------
+add_library(engine_project STATIC
+    src/project/game_project.cpp
+    src/project/package_manifest.cpp
+    src/project/build_job.cpp)
+target_link_libraries(engine_project PUBLIC engine_flags engine_core nlohmann_json::nlohmann_json)
+target_link_libraries(engine_project PRIVATE glm::glm Threads::Threads)
+target_include_directories(engine_project PUBLIC ${ENGINE_PUBLIC_INCLUDE})
 
 # ---------------------------------------------------------------------------
 # engine_rhi — thin Vulkan abstraction (instance/device, swapchain, ...).
@@ -197,8 +217,9 @@ target_link_libraries(engine_rhi PUBLIC
     engine_flags engine_core Vulkan::Vulkan GPUOpen::VulkanMemoryAllocator)
 # engine_core is public: shader hot reload's headers use its watcher/process
 # types, and the debug messenger routes validation messages into its log ring.
-# The hot-reload compile worker runs on a std::thread.
-target_link_libraries(engine_rhi PRIVATE Threads::Threads)
+# The hot-reload compile worker runs on a std::thread; hot reload defaults on
+# in editor builds (engine_editor_build).
+target_link_libraries(engine_rhi PRIVATE Threads::Threads engine_editor_build)
 # nlohmann_json is an implementation detail of the reflection parser (PRIVATE);
 # glm because the parser reads slangc's JSON through core::JsonFields.
 target_link_libraries(engine_rhi PRIVATE nlohmann_json::nlohmann_json glm::glm)
@@ -306,6 +327,7 @@ add_library(engine_scene STATIC
     src/scene/bt_graph.cpp
     src/scene/bt_graph_edit.cpp
     src/scene/scene_io.cpp
+    src/scene/scene_references.cpp
     src/scene/component_json.cpp
     src/scene/component_json_physics.cpp
     src/scene/particle_json.cpp
@@ -539,12 +561,13 @@ add_library(engine_remote_world STATIC
     src/remote/world/physics_body_commands.cpp
     src/remote/world/physics_query_commands.cpp
     src/remote/world/weather_commands.cpp
+    src/remote/world/project_commands.cpp
     src/remote/world/script_commands.cpp
     src/remote/world/image_encode.cpp
     src/remote/world/stb_image_write_impl.cpp)
 target_link_libraries(engine_remote_world PUBLIC
     engine_flags engine_core engine_remote engine_scene engine_physics engine_nav engine_weather
-    engine_script)
+    engine_script engine_project)
 target_include_directories(engine_remote_world PUBLIC ${ENGINE_PUBLIC_INCLUDE})
 target_include_directories(engine_remote_world SYSTEM PRIVATE ${Stb_INCLUDE_DIR})
 # stb's implementation TU is not warning-clean under our strict flags.
@@ -645,6 +668,7 @@ if(ENGINE_EDITOR)
         src/editor/shell/commands.cpp
         src/editor/shell/dialogs.cpp
         src/editor/shell/editor_shell.cpp
+        src/editor/shell/export_dialog.cpp
         src/editor/shell/fuzzy.cpp
         src/editor/shell/layout.cpp
         src/editor/shell/menu.cpp
@@ -669,8 +693,9 @@ if(ENGINE_EDITOR)
     # vcpkg target does not declare the imgui dependency, so a single-pass
     # linker must see it first to resolve its ImGui references.
     target_link_libraries(engine_editor
-        PUBLIC engine_flags engine_scene engine_script
-        PRIVATE unofficial::imgui-node-editor::imgui-node-editor
+        PUBLIC engine_flags engine_scene engine_script engine_project
+        PRIVATE engine_editor_build
+                unofficial::imgui-node-editor::imgui-node-editor
                 imgui::imgui imguizmo::imguizmo SDL3::SDL3)
     target_include_directories(engine_editor PUBLIC ${ENGINE_PUBLIC_INCLUDE})
     # Vendored third-party backend: not warning-clean under our strict flags.
@@ -685,13 +710,19 @@ endif()
 # src/app/ is the application layer (Application owns the window, device and
 # frame loop; FrameRenderer, WorldRuntime, FlyCamera, EditorBridge, the remote
 # bridge and the startup scenes run inside it); it is not an engine library.
-# main.cpp only parses the environment and hands off to Application.
+# Two executables share it (P4): `game` (the editor build when ENGINE_EDITOR is
+# on) and `quat-player`, the runtime player games ship with — always built
+# without the editor. Each entry point only parses the environment and hands
+# off to Application.
 #
 # game_world holds the window-free part of the app layer — WorldRuntime (the
 # simulated world: demo scenes, terrain, grass, particles, navmesh, audio,
 # play mode and gameplay scripts) — so tests can drive the exact frame-loop
 # simulation path (tests/app/, including the play state machine) without SDL.
-add_library(game_world STATIC
+# world_runtime.cpp has editor-only behaviour (script hot reload on, the play
+# session's physics world), so an editor build compiles it twice: game_world
+# with ENGINE_EDITOR for `game`, game_world_runtime without it for the players.
+set(GAME_WORLD_SOURCES
     src/app/world_runtime.cpp
     src/app/demo_scenes.cpp
     src/app/audio_runtime.cpp
@@ -699,29 +730,47 @@ add_library(game_world STATIC
     src/app/grass_runtime.cpp
     src/app/particle_runtime.cpp
     src/app/nav_bake.cpp)
-target_link_libraries(game_world PUBLIC
+set(GAME_WORLD_LIBRARIES
     engine_flags engine_core engine_rhi engine_asset engine_scene engine_renderer engine_physics
     engine_terrain engine_nav engine_net engine_audio engine_script)
+add_library(game_world STATIC ${GAME_WORLD_SOURCES})
+target_link_libraries(game_world PUBLIC ${GAME_WORLD_LIBRARIES})
+target_link_libraries(game_world PRIVATE engine_editor_build)
 target_include_directories(game_world PUBLIC
     ${ENGINE_PUBLIC_INCLUDE}
     ${CMAKE_CURRENT_SOURCE_DIR}/src)
+if(ENGINE_EDITOR)
+    add_library(game_world_runtime STATIC ${GAME_WORLD_SOURCES})
+    target_link_libraries(game_world_runtime PUBLIC ${GAME_WORLD_LIBRARIES})
+    target_include_directories(game_world_runtime PUBLIC
+        ${ENGINE_PUBLIC_INCLUDE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/src)
+else()
+    add_library(game_world_runtime ALIAS game_world)
+endif()
 
-add_executable(game
-    src/main.cpp
+set(QUAT_APP_SOURCES
     src/app/application.cpp
+    src/app/app_config.cpp
+    src/app/build_service.cpp
     src/app/fly_camera.cpp
     src/app/frame_graph.cpp
     src/app/frame_temporal.cpp
     src/app/frame_renderer.cpp
+    src/app/game_boot.cpp
+    src/app/game_startup.cpp
     src/app/input_sampler.cpp
     src/app/remote_bridge.cpp
     src/app/screenshot_capture.cpp
+    src/app/window_icon.cpp
     src/app/asset_root.cpp)
-target_link_libraries(game PRIVATE
-    game_world
+set(QUAT_APP_LIBRARIES
     engine_flags engine_core engine_rhi engine_asset engine_scene engine_renderer engine_physics
     engine_terrain engine_nav engine_net engine_remote engine_remote_world engine_audio
-    engine_script SDL3::SDL3)
+    engine_script engine_project SDL3::SDL3)
+
+add_executable(game src/main.cpp ${QUAT_APP_SOURCES})
+target_link_libraries(game PRIVATE game_world ${QUAT_APP_LIBRARIES} engine_editor_build)
 if(MSVC)
     # Linker map for the game_has_no_texture_encoder test.
     target_link_options(game PRIVATE "/MAP:$<TARGET_FILE_DIR:game>/game.map")
@@ -730,14 +779,75 @@ if(ENGINE_EDITOR)
     target_sources(game PRIVATE src/app/editor_bridge.cpp)
     target_link_libraries(game PRIVATE engine_editor)
 endif()
-target_include_directories(game PRIVATE
-    ${ENGINE_PUBLIC_INCLUDE}
-    ${CMAKE_CURRENT_SOURCE_DIR}/src)
+
+add_executable(quat-player src/player/main.cpp ${QUAT_APP_SOURCES})
+target_link_libraries(quat-player PRIVATE game_world_runtime ${QUAT_APP_LIBRARIES})
+
+# quat-player-shipping: what `quat-pack --config shipping` ships. Built with
+# QUAT_SHIPPING, which compiles remote control out (no endpoint, no remote
+# screenshots, no QUAT_GAME override): it does not link engine_remote /
+# engine_remote_world at all, so any remote reference left in the shipping
+# path fails the link, and the quat_player_shipping_has_no_remote test checks
+# the symbol table.
+set(QUAT_SHIPPING_APP_SOURCES ${QUAT_APP_SOURCES})
+list(REMOVE_ITEM QUAT_SHIPPING_APP_SOURCES
+    src/app/screenshot_capture.cpp # remote render.screenshot only
+    src/app/build_service.cpp)     # project.build / the editor's export only
+set(QUAT_SHIPPING_APP_LIBRARIES ${QUAT_APP_LIBRARIES})
+list(REMOVE_ITEM QUAT_SHIPPING_APP_LIBRARIES engine_remote engine_remote_world)
+add_executable(quat-player-shipping src/player/main.cpp ${QUAT_SHIPPING_APP_SOURCES})
+target_link_libraries(quat-player-shipping PRIVATE game_world_runtime ${QUAT_SHIPPING_APP_LIBRARIES})
+target_compile_definitions(quat-player-shipping PRIVATE QUAT_SHIPPING)
+if(MSVC)
+    # Linker map for the quat_player_shipping_has_no_remote test.
+    target_link_options(quat-player-shipping PRIVATE
+        "/MAP:$<TARGET_FILE_DIR:quat-player-shipping>/quat-player-shipping.map")
+endif()
+
+# A game double-clicked on Windows opens no console window (wWinMain entry).
+set_target_properties(quat-player quat-player-shipping PROPERTIES WIN32_EXECUTABLE TRUE)
+
+foreach(app_target game quat-player quat-player-shipping)
+    target_include_directories(${app_target} PRIVATE
+        ${ENGINE_PUBLIC_INCLUDE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    # stb_image decodes the window icon (the implementation is in engine_scene).
+    target_include_directories(${app_target} SYSTEM PRIVATE ${Stb_INCLUDE_DIR})
+endforeach()
 # Data root, resolved at runtime (src/app/asset_root.hpp): QUAT_ASSET_ROOT, the
 # executable's directory (packaged builds), then - development builds only -
 # the source tree baked in here.
 if(NOT ENGINE_PACKAGE_BUILD)
     set_property(SOURCE src/app/asset_root.cpp APPEND PROPERTY COMPILE_DEFINITIONS
+        QUAT_BUILD_TREE_ROOT="${CMAKE_CURRENT_SOURCE_DIR}"
+        QUAT_BUILD_TREE_SHADER_DIR="${CMAKE_CURRENT_SOURCE_DIR}/cooked/shaders")
+endif()
+
+# ---------------------------------------------------------------------------
+# engine_pack + quat-pack — game packaging (ROADMAP P4): collects the files a
+# game references (through the scene codec, glTF and Lua scanners), cooks
+# them with quat-cook when available, stages the data root with a manifest,
+# and drives scripts/package-release.sh for the per-OS layout. Tool-side only:
+# never linked into the game or the player.
+# ---------------------------------------------------------------------------
+add_library(engine_pack STATIC
+    src/pack/digest.cpp
+    src/pack/lua_refs.cpp
+    src/pack/gltf_refs.cpp
+    src/pack/dependencies.cpp
+    src/pack/stage.cpp
+    src/pack/pack_cli.cpp)
+target_link_libraries(engine_pack PUBLIC engine_flags engine_core engine_project engine_scene)
+target_link_libraries(engine_pack PRIVATE OpenSSL::Crypto)
+target_include_directories(engine_pack PUBLIC ${ENGINE_PUBLIC_INCLUDE})
+
+add_executable(quat-pack tools/quat-pack/main.cpp)
+target_link_libraries(quat-pack PRIVATE engine_flags engine_pack)
+target_compile_definitions(quat-pack PRIVATE QUAT_VERSION="${PROJECT_VERSION}")
+# Development builds find the cooked shaders and the layout scripts in the
+# source tree; packaged builds take --shaders / --engine-root.
+if(NOT ENGINE_PACKAGE_BUILD)
+    target_compile_definitions(quat-pack PRIVATE
         QUAT_BUILD_TREE_ROOT="${CMAKE_CURRENT_SOURCE_DIR}"
         QUAT_BUILD_TREE_SHADER_DIR="${CMAKE_CURRENT_SOURCE_DIR}/cooked/shaders")
 endif()
@@ -754,6 +864,8 @@ add_subdirectory(tests)
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/CompileShaders.cmake)
 add_shader_compilation(shaders)
 add_dependencies(game shaders)
+add_dependencies(quat-player shaders)
+add_dependencies(quat-player-shipping shaders)
 # Shader hot reload (R2) runs the same slangc the build cooks with. Not in
 # packaged builds: no build-machine paths there, and hot reload defaults off.
 if(NOT ENGINE_PACKAGE_BUILD)

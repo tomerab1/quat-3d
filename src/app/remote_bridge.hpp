@@ -70,6 +70,9 @@ class SimClock;
 namespace engine::nav {
 class NavMesh;
 }
+namespace engine::project {
+class BuildJob;
+}
 namespace engine::physics {
 class PhysicsWorld;
 }
@@ -98,6 +101,8 @@ class EditorLayer;
 #endif
 
 namespace quat::app {
+
+struct OpenGame;
 
 // Frame-loop state the bridge reads and drives. Non-owning: main() owns all of
 // it and keeps it alive for the bridge's lifetime.
@@ -162,6 +167,13 @@ struct RemoteBridgeTargets {
     bool* play = nullptr;
 
     std::filesystem::path project_root;
+
+    // Game packaging (P4): the open game project (null: none) and the job
+    // project.build runs quat-pack in. allow_endpoint false keeps the
+    // endpoint closed whatever QUAT_REMOTE says (shipping game packages).
+    const OpenGame*             game = nullptr;
+    engine::project::BuildJob* build_job = nullptr;
+    bool                        allow_endpoint = true;
 };
 
 class RemoteBridge {

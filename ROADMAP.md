@@ -408,8 +408,19 @@ JSON-RPC over loopback TCP to the engine.
   credentials as CI secrets, signing skipped on forks. Bundle a MoltenVK /
   Vulkan loader built for the engine's macOS 14 minimum (Homebrew bottles
   raise it to the runner's OS).
-- [ ] **P4 — Game packaging.** Engine-as-library + game project template,
-  editor vs runtime builds, cooked asset bundles, shipping config, depot layout.
+- [x] **P4 — Game packaging.** Game projects (`game.json`: name, reverse-DNS
+  id, version, start scene, window, icon, content roots — strictly validated,
+  format-versioned) with the sample `games/coin-collector`; the runtime player
+  `quat-player` (same engine libraries and application layer, no editor, no
+  hot reload, remote control only in development packages) built beside the
+  editor; `quat-pack`: files collected by following references (scene codec,
+  glTF URIs, Lua requires/literals), cooked with `quat-cook` when present,
+  `manifest.json`, per-OS layout and smoke test through the P6 scripts
+  (Linux tar.gz, Windows zip, macOS `.app` with Info.plist + icon from
+  `game.json`); release-workflow packages per OS; editor (E7) and MCP
+  (`project.*`) triggers. See docs/game-packaging.md. *Scope moved:* Steam
+  depot layout → P3; follow-ups: Windows `.exe` icon resource, exporting from
+  a downloaded editor release, cross-OS packaging.
 - [ ] **P5 — Native Metal backend.** On top of P2.
 - [ ] **P8 — Engine SDK** (design:
   [`docs/design/cozy-builder.md` §3.3–3.5](docs/design/cozy-builder.md#33-how-the-game-consumes-the-engine-an-installed-sdk-package-p8)).
@@ -607,7 +618,11 @@ the engine.
 - [ ] **E4 — Workflow.** Multi-select, copy/paste, snapping, focus, search.
 - [ ] **E5 — Preferences + layouts.** Persisted settings, key bindings.
 - [ ] **E6 — Asset thumbnails + previews.**
-- [ ] **E7 — Build & export dialog** (drives P4).
+- [x] **E7 — Build & export dialog** (drives P4). File → Build & Export…:
+  host target, output folder, shipping/development, optional smoke test;
+  runs `quat-pack` in the background with progress, its log and a "Show in
+  folder" toast. Restyled on E8's widget kit, toasts and command registry
+  when those land.
 - [ ] **E8 — Editor UI/UX redesign** *(owner request, top editor priority)*.
   A coherent, modern editor on par with Unreal 5 / Godot 4 / Blender:
   - [x] **E8.1 Design system** (`src/editor/ui/`): theme tokens (dark + light,

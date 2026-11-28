@@ -20,6 +20,8 @@ Gameplay is written as Lua scripts: read the `quat://docs/scripting` resource, w
 
 Custom looks: write a material shader (a Slang module) with `shader_template` → `shader_create`, assign it with `scene_update` (`primitive.shader`), screenshot and refine with `shader_update`; compile errors come back with file, line and column.
 
+A game made here ships as a standalone package: `project_info` shows the open game project, `project_build` packages it for the engine's OS in the background and `project_build_status` reports progress and the archive.
+
 If a tool says quat-mcp cannot connect to the engine or that the engine rejected the session, the engine is not running with remote control on that port, or its session token does not match: pass the error's advice on to the user instead of retrying. Never ask the user to paste the session token into the conversation.
 
 Engine errors name the offending field and what was expected — fix the call instead of repeating it.

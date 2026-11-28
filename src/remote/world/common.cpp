@@ -261,6 +261,7 @@ void register_world_commands(RpcServer& server, scene::Scene& scene, WorldServic
     world::register_physics_body_commands(server, ctx);
     world::register_physics_query_commands(server, ctx);
     world::register_weather_commands(server, ctx);
+    world::register_project_commands(server, ctx);
     world::register_script_commands(server, ctx);
     world::register_shader_commands(server, ctx);
 }

@@ -91,7 +91,24 @@ std::expected<DemoScene, engine::core::Error>
 build_demo_scene(engine::scene::Scene& scene, engine::asset::AssetManager& assets,
                  engine::rhi::GpuAllocator& allocator,
                  const engine::rhi::TransferContext& setup_transfer,
-                 const std::filesystem::path& project_root) {
+                 const std::filesystem::path& project_root,
+                 const std::optional<std::filesystem::path>& start_scene,
+                 engine::renderer::RenderSettings* render_settings) {
+    if (start_scene) {
+        if (auto loaded = engine::scene::load_scene(scene, *start_scene, allocator,
+                                                    setup_transfer, assets, render_settings);
+            !loaded) {
+            std::fprintf(stderr, "[fatal] start scene: %s\n", loaded.error().message.c_str());
+            return std::unexpected(engine::core::Error{"start scene load failed"});
+        }
+        std::fprintf(stderr, "[game] start scene loaded: %s (%zu entities)\n",
+                     engine::core::path_to_utf8(*start_scene).c_str(),
+                     static_cast<std::size_t>(
+                         scene.registry().view<engine::scene::Transform>().size()));
+        DemoScene out;
+        out.from_scene_file = true;
+        return out;
+    }
     entt::entity spin_entity = entt::null;
     entt::entity demo_root = entt::null;
     entt::entity pedestal = entt::null;

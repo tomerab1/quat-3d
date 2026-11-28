@@ -11,9 +11,11 @@
 #include <glm/gtc/matrix_transform.hpp>
 
 #include "app/asset_root.hpp"
+#include "app/build_service.hpp"
 #include "app/load_transfer.hpp"
 #include "app/remote_bridge.hpp"
 #include "engine/core/utf8_path.hpp"
+#include "engine/project/game_project.hpp"
 #include "engine/renderer/render_settings.hpp"
 #include "engine/rhi/device.hpp"
 #include "engine/rhi/gpu_allocator.hpp"
@@ -33,7 +35,8 @@ void EditorBridge::create(SDL_Window* window, bool enabled) {
     play_use_scene_camera_ = std::getenv("QUAT_GAME_CAMERA") != nullptr;
     if (!enabled) return;
     if (auto e = engine::editor::EditorLayer::create(
-            window, engine::core::path_to_utf8(project_root())); // UTF-8 (#24)
+            window, engine::core::path_to_utf8(project_root()), // UTF-8 (#24)
+            engine::core::path_to_utf8(data_root()));            // editor fonts (P4)
         e) {
         editor_ = std::move(*e);
         // QUAT_EDITOR_THEME=light|dark picks the theme (over the one saved in
@@ -296,8 +299,43 @@ const ImDrawData* EditorBridge::build_ui(float dt, int draw_count,
     ui_ctx.view = cam.view;
     ui_ctx.proj_no_flip = cam.projection;
     ui_ctx.proj_no_flip[1][1] *= -1.0F; // undo the Vulkan Y flip for ImGuizmo
+    if (t_.build_job != nullptr) {
+        ui_ctx.build_job = t_.build_job;
+        if (t_.game != nullptr) {
+            ui_ctx.game = &t_.game->project;
+            ui_ctx.game_root = engine::core::path_to_utf8(t_.game->root);
+        }
+        ui_ctx.start_export = [this](const engine::editor::ExportRequest& r) {
+            return start_export(r);
+        };
+    }
     editor_.build_ui(ui_ctx);
     return editor_.end_frame();
+}
+
+std::expected<std::uint64_t, engine::core::Error>
+EditorBridge::start_export(const engine::editor::ExportRequest& request) {
+    namespace fs = std::filesystem;
+    fs::path root;
+    if (request.project.empty()) {
+        if (t_.game == nullptr) return std::unexpected(engine::core::Error{"no game project"});
+        root = t_.game->root;
+    } else {
+        root = engine::core::path_from_utf8(request.project);
+        if (root.is_relative()) root = data_root() / root;
+        // Validate here so the dialog shows the precise problem right away.
+        if (auto p = engine::project::load_game_project(root); !p) {
+            return std::unexpected(p.error());
+        }
+    }
+    if (request.output.empty()) return std::unexpected(engine::core::Error{"no output folder"});
+    fs::path out = engine::core::path_from_utf8(request.output);
+    if (out.is_relative()) out = root / out;
+    return start_game_build(*t_.build_job, root,
+                            {.target = {},
+                             .output = out.lexically_normal(),
+                             .config = request.config,
+                             .smoke_test = request.smoke_test});
 }
 
 } // namespace quat::app

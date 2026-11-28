@@ -192,6 +192,8 @@ Windows the command ends in `quat-mcp.exe`.
 | `shader_template` | `shader.template` | The starter material shader module |
 | `shader_create` / `shader_update` | `shader.create` / `shader.update` | Write + compile a material shader; errors as `file:line:column` with a caret; a failed update keeps the old version |
 | `shader_delete` | `shader.delete` | Delete a material shader; entities using it fall back to the built-in |
+| `project_info` | `project.info` | The open game project (`game.json`), its executable name and the host target |
+| `project_build` / `project_build_status` | `project.build` / `project.build_status` | Package the game for the host OS in the background; poll progress, log tail and the archive path |
 
 Tool descriptions spell out units and conventions (metres, Y up, Euler degrees
 in YXZ order, `"#rrggbb"` sRGB colours for primitives and linear `[r,g,b]` for
@@ -292,10 +294,10 @@ Layout:
 |---|---|
 | `content/` | **Everything the model reads**, as Markdown: server instructions, one file per tool description, the component reference, the workflow skills and their prompt templates ([MiniJinja](https://docs.rs/minijinja)). See `content/README.md`. |
 | `src/client/` | Engine JSON-RPC client: `mod.rs` (calls, reconnects, handshake), `connection.rs` (socket, reader task, in-flight calls), `error.rs` (error codes, `EngineError`), `token_file.rs` (the engine's session token file) |
-| `src/server/` | MCP server: `mod.rs` (handler, resource), tools grouped by area (`scene_tools.rs`, `world_tools.rs`, `sim_tools.rs`, `debug_tools.rs`, `behavior_tools.rs`, `tuning_tools.rs`, `script_tools.rs`, `shader_tools.rs`, each its own rmcp router), `bt_outline.rs` (behaviour-tree outlines), `results.rs` |
+| `src/server/` | MCP server: `mod.rs` (handler, resource), tools grouped by area (`scene_tools.rs`, `world_tools.rs`, `sim_tools.rs`, `debug_tools.rs`, `behavior_tools.rs`, `tuning_tools.rs`, `script_tools.rs`, `shader_tools.rs`, `project_tools.rs`, each its own rmcp router), `bt_outline.rs` (behaviour-tree outlines), `results.rs` |
 | `src/skills/` | The workflows: `mod.rs` (skill catalog: `skills/list`, `skills/get`, `skill://` resources), `frontmatter.rs` (Agent Skills rules), `prompts.rs` (prompts generated from the skills), `embedded.rs` (the compiled-in files), `tests.rs` (sync tests) |
 | `plugin/` | The Claude Code plugin: `.claude-plugin/plugin.json`, `.mcp.json`, and `skills/`, a copy of `content/skills/` |
-| `src/params.rs`, `src/params/` | Typed tool inputs — their doc comments are the JSON schemas the model reads (`debug.rs`, `behavior.rs`, `tuning.rs`, `script.rs`, `shader.rs` per area) |
+| `src/params.rs`, `src/params/` | Typed tool inputs — their doc comments are the JSON schemas the model reads (`debug.rs`, `behavior.rs`, `tuning.rs`, `script.rs`, `shader.rs`, `project.rs` per area) |
 | `src/content.rs` | Embeds `content/` and renders the instructions and document templates |
 | `src/config.rs` | Flags / environment |
 

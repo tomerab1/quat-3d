@@ -8,6 +8,9 @@
 # Cooked assets (offline-generated, never committed)
 /cooked/
 
+# Game packages (quat-pack / project.build default output)
+/games/*/dist/
+
 # Downloaded glTF test models (Khronos sample assets — fetched on demand, not committed)
 /sample-assets/
 

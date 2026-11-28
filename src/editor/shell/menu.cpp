@@ -54,6 +54,8 @@ void file_menu(EditorShell& shell) {
     item(shell, "file.save");
     item(shell, "file.save_as");
     ImGui::Separator();
+    item(shell, "file.export");
+    ImGui::Separator();
     item(shell, "file.exit");
 }
 

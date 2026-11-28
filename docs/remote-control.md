@@ -919,6 +919,37 @@ hint to call `sim.play`. Entities are ids or unique names.
   constraint in play mode once both bodies exist and one is dynamic, and
   rebuilds it when a body is rebuilt. `scene.get` shows `active`.
 
+## Game projects and packaging (ROADMAP P4)
+
+The game project the engine has open (`QUAT_GAME=<project dir>`, or the
+player's own `game.json`) and packaging it into a standalone game for the
+engine's OS (docs/game-packaging.md). The engine
+(`src/remote/world/project_commands.cpp`) runs `quat-pack` in the background
+(`engine/project/build_job.hpp`); quat-mcp's `project_*` tools follow this
+table.
+
+| Method | Params | Result |
+|---|---|---|
+| `project.info` | — | `{open, host_target, root?, game?, executable?, build?}` — `game` is `game.json` (defaults written out); `open:false` comes with a `reason` |
+| `project.build` | `{target?, output?="dist", config?="shipping", smoke_test?=false}` | `{job, state:"running", target, config, output}` |
+| `project.build_status` | `{log_lines?=40}` (0..1000) | `{job, state, progress, step, steps, step_name, package?, folder?, error?, elapsed_s, log:[lines]}` |
+
+- `target` is `linux-x64`, `windows-x64` or `macos-arm64`; anything but the
+  engine's own OS fails (`failed`): a package needs that OS's player build
+  and tools.
+- `output` is relative to the game project and confined to it, and may not
+  equal, lie inside or contain a content root or the start scene's folder
+  (`invalid_params`, e.g. `output: 'assets/dist' is inside the content root
+  'assets'`).
+- `config` `development` packages `quat-player` (accepts `QUAT_REMOTE`);
+  `shipping` packages `quat-player-shipping`, which has no remote control.
+- `state` is `idle`, `running`, `succeeded`, `failed` or `cancelled`;
+  `package` / `folder` are relative to the game project. A build while one
+  runs fails (`failed`, naming the running job).
+- Without a game project open, `project.build` fails; a build without the
+  `quat-pack` / `quat-player` executables next to the engine (or
+  `QUAT_PACK` / `QUAT_PLAYER`) fails with the path it looked at.
+
 ## Errors
 
 | Code | Meaning |

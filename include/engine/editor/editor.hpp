@@ -11,6 +11,7 @@
 
 #include <cstdint>
 #include <expected>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <string>
@@ -23,6 +24,7 @@
 #include <glm/glm.hpp>
 
 #include "engine/core/error.hpp"
+#include "engine/project/package_manifest.hpp"
 #include "engine/rhi/shader_status.hpp"
 
 struct SDL_Window;
@@ -30,6 +32,10 @@ union SDL_Event;
 struct ImDrawData;
 struct ImVec2;
 
+namespace engine::project {
+class BuildJob;
+struct GameProject;
+} // namespace engine::project
 namespace engine::core {
 class SimClock;
 }
@@ -49,6 +55,14 @@ class BehaviorPanel;
 namespace shell {
 class EditorShell;
 }
+
+// What File > Build & Export... asks the application to package (E7).
+struct ExportRequest {
+    std::string                    project; // UTF-8 project directory; empty: the open one
+    std::string                    output;  // UTF-8 output folder (absolute or project-relative)
+    project::PackageConfig         config = project::PackageConfig::shipping;
+    bool                           smoke_test = false;
+};
 
 // Animation panel state owned by EditorLayer (editor state stays out of the
 // ECS).
@@ -148,16 +162,28 @@ struct EditorContext {
     bool* new_scene_request = nullptr;
     // Real frame time (seconds) for toasts and the status bar.
     float dt = 0.0F;
+
+    // ---- Build & Export (E7 slice of P4) ----------------------------------
+    // The open game project (null: none, the dialog then asks for a project
+    // folder), the packaging job whose progress and log it shows, and how to
+    // start one. Null / empty disables File > Build & Export.
+    const project::GameProject* game = nullptr;
+    std::string                 game_root; // UTF-8
+    project::BuildJob*          build_job = nullptr;
+    std::function<std::expected<std::uint64_t, core::Error>(const ExportRequest&)> start_export;
 };
 
 class EditorLayer {
 public:
     // Creates the ImGui context (docking enabled) and the SDL3 platform
-    // backend for `window`, with the editor fonts loaded from
-    // `<project_root>/assets/fonts` (ImGui's built-in font when missing).
-    // One EditorLayer per process.
+    // backend for `window`. `project_root` (UTF-8) is the project being
+    // edited: scene files, the asset browser and <project>/.quat/editor.ini.
+    // The editor fonts load from `<data_root>/assets/fonts` (ImGui's built-in
+    // font when missing); `data_root` is the engine's data root, which differs
+    // from the project root when a game project is open (P4). One EditorLayer
+    // per process.
     [[nodiscard]] static std::expected<EditorLayer, core::Error>
-    create(SDL_Window* window, const std::string& project_root);
+    create(SDL_Window* window, const std::string& project_root, const std::string& data_root);
 
     EditorLayer(); // out of line: BehaviorPanel is incomplete here
     ~EditorLayer();

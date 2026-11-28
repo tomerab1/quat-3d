@@ -469,6 +469,50 @@ token, so other users on the machine and web pages in your browser cannot
 drive the engine. See [`tools/quat-mcp/README.md`](tools/quat-mcp/README.md)
 for Claude Desktop setup, explicit tokens, the full tool list and the workflows.
 
+## Make a game and ship it
+
+A game is a folder with a `game.json` next to its scenes, Lua scripts and
+assets — [`games/coin-collector`](games/coin-collector) is a complete
+example:
+
+```json
+{
+  "format": 1,
+  "name": "Coin Collector",
+  "id": "dev.quat3d.coin-collector",
+  "version": "0.1.0",
+  "start_scene": "assets/scenes/coin_collector.json",
+  "window": { "title": "Coin Collector", "width": 1280, "height": 720 },
+  "icon": "assets/icons/coin-collector.png"
+}
+```
+
+1. **Build it in the editor (or over MCP).** `QUAT_GAME=games/coin-collector
+   ./build/release/game` opens the project: scenes save and load inside it,
+   and an assistant connected through quat-mcp can build the world and write
+   the scripts.
+2. **Play it as players will.** `QUAT_GAME=games/coin-collector
+   ./build/release/quat-player` runs the game without the editor: its start
+   scene, its window and icon, no developer tools.
+3. **Package it.** *File → Build & Export…* in the editor, the
+   `project_build` MCP tool, or the command line:
+
+   ```sh
+   ./build/release/quat-pack games/coin-collector \
+       --player ./build/release/quat-player --out dist --smoke-test
+   ```
+
+   This writes `dist/coin-collector-0.1.0-linux-x64.tar.gz` (a `.zip` with
+   `Coin Collector.app` on macOS, with `coin-collector.exe` on Windows):
+   only the files the game uses, cooked, with a manifest, the C++ runtime
+   or Vulkan-on-Metal inside, and a `README-RUN.txt` — unzip and
+   double-click. Packages are built on the OS they are for; the
+   [Release workflow](.github/workflows/release.yml) packages the sample game
+   for all three and offers them as downloads.
+
+The details — project format, what ships, versioning, signing — are in
+[`docs/game-packaging.md`](docs/game-packaging.md).
+
 ## Testing
 
 Tests use [GoogleTest](https://github.com/google/googletest) and run without
@@ -512,6 +556,7 @@ The plan lives in [`ROADMAP.md`](ROADMAP.md), grouped into tracks:
 | [`docs/cinematic-showcase.md`](docs/cinematic-showcase.md) | The CC0 cinematic forest scene: assets and credits, fetching, renders, the MCP recipe |
 | [`docs/reading/README.md`](docs/reading/README.md) | Reading list: the papers and talks behind the engine's techniques, with where each lives in the code |
 | [`docs/remote-control.md`](docs/remote-control.md) | The remote-control protocol AI tools use to drive the engine |
+| [`docs/game-packaging.md`](docs/game-packaging.md) | Game projects, the runtime player and `quat-pack` packaging |
 | [`docs/editor-ux.md`](docs/editor-ux.md) | The editor's design system: principles, tokens, widget kit, layout, shortcuts |
 | [`docs/CYCLE.md`](docs/CYCLE.md) | How development runs: the repeating plan → parallel agents → merge → CI → audit → learn cycle |
 | [`docs/LEARNINGS.md`](docs/LEARNINGS.md) | Lessons recorded by past cycles |
@@ -528,8 +573,13 @@ include/engine/     Public headers, one folder per module
 src/                Implementation, mirroring include/ (rhi, renderer, scene, physics, ...)
 src/editor/         The editor (only in builds with ENGINE_EDITOR=ON, the default)
 src/remote/         Remote-control endpoint used by AI tooling
+src/app/            Application layer shared by `game` (editor build) and `quat-player`
+src/project/, src/pack/  Game projects (game.json) and packaging (quat-pack)
+games/              Games made with the engine (game.json + their assets)
+packaging/          Per-OS packaging templates (README-RUN, Info.plist)
 tools/quat-mcp/     MCP server for AI assistants (Rust, standalone Cargo crate),
                     its workflow skills and the Claude Code plugin
+tools/quat-pack/    Game packager entry point
 tools/quat-cook/    Offline asset cooker CLI (src/cook/ holds the cooking library)
 tests/              GoogleTest suite (engine_tests): tests/<module>/, shared helpers in tests/support/
 docs/               Project documentation

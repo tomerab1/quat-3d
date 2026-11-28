@@ -1,6 +1,7 @@
 // Shell dialogs (ROADMAP E8.2): File > Open / Save As, Help > Keyboard
 // Shortcuts (generated from the command registry, so it is always the real
-// table), Help > About and Edit > Preferences.
+// table), Help > About and Edit > Preferences. File > Build & Export lives
+// in export_dialog.cpp.
 
 #include <algorithm>
 #include <map>
@@ -251,6 +252,7 @@ void draw_dialogs(EditorShell& shell) {
     shortcuts_window(shell);
     about_window(shell);
     preferences_window(shell);
+    if (shell.ctx != nullptr) draw_export_dialog(shell.export_dialog, *shell.ctx);
 }
 
 } // namespace engine::editor::shell

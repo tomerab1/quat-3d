@@ -12,9 +12,10 @@
 // behaviour-tree authoring (ROADMAP A7): bt.leaves, bt.get, bt.set,
 // bt.add_node, bt.remove_node, bt.move_node, bt.set_params, bt.status — the
 // gameplay script files (ROADMAP G7): script.list / get / create / update /
-// delete / check — and material shader authoring (ROADMAP A6): shader.list /
-// get / template / create / update / delete. The method contract is
-// docs/remote-control.md.
+// delete / check — material shader authoring (ROADMAP A6): shader.list /
+// get / template / create / update / delete — and game packaging (ROADMAP
+// P4): project.info, project.build, project.build_status. The method
+// contract is docs/remote-control.md.
 //
 // Scene editing works on any Scene. Everything that only the running
 // application has — the view camera, the renderer's settings, terrain heights,
@@ -38,6 +39,8 @@
 #include <glm/glm.hpp>
 
 #include "engine/core/error.hpp"
+#include "engine/project/build_job.hpp"
+#include "engine/project/game_project.hpp"
 #include "engine/remote/rpc_server.hpp"
 #include "engine/weather/wind_field.hpp"
 
@@ -100,6 +103,20 @@ struct FrameStats {
     std::uint32_t                samples = 0;
     std::optional<std::uint32_t> draws;            // scene draws last frame, after batching
     std::optional<std::uint64_t> resident_bytes;   // process resident memory
+};
+
+// The game project the engine opened (QUAT_GAME, or the player's game.json).
+struct GameProjectInfo {
+    std::filesystem::path root; // absolute; holds game.json
+    project::GameProject  project;
+};
+
+// A validated project.build request.
+struct ProjectBuildParams {
+    std::string            target; // empty: the host's
+    std::filesystem::path  output; // absolute, inside the game project
+    project::PackageConfig config = project::PackageConfig::shipping;
+    bool                   smoke_test = false;
 };
 
 // Terrain generation state (terrain.status). Tile counts and bounds are those
@@ -212,6 +229,17 @@ struct WorldServices {
     // Authored material shaders (non-owning; its poll() must run every frame
     // so shader.create / update replies go out). Null: shader.* unavailable.
     rhi::MaterialShaderRegistry* material_shaders = nullptr;
+
+    // ---- Game projects and packaging (ROADMAP P4) -----------------------------
+
+    // The open game project; nullopt when the engine runs without one.
+    std::function<std::optional<GameProjectInfo>()> game_project;
+    // Starts packaging the open project in the background (quat-pack);
+    // returns the job number. Fails when a build runs or the tools are missing.
+    std::function<std::expected<std::uint64_t, core::Error>(const ProjectBuildParams&)>
+        project_build;
+    // The packaging job's state (idle before the first build).
+    std::function<project::BuildStatus()> project_build_status;
 };
 
 // Registers every world command on `server`. `scene` must outlive the server's

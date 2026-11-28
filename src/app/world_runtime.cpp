@@ -135,8 +135,11 @@ WorldRuntime::~WorldRuntime() {
 bool WorldRuntime::build_scene(engine::scene::Scene& scene, engine::asset::AssetManager& assets,
                                engine::rhi::GpuAllocator& allocator,
                                const engine::rhi::TransferContext& setup_transfer,
-                               const std::filesystem::path& project_root) {
-    auto demo_result = build_demo_scene(scene, assets, allocator, setup_transfer, project_root);
+                               const std::filesystem::path& project_root,
+                               const std::optional<std::filesystem::path>& start_scene,
+                               engine::renderer::RenderSettings* render_settings) {
+    auto demo_result = build_demo_scene(scene, assets, allocator, setup_transfer, project_root,
+                                        start_scene, render_settings);
     if (!demo_result) return false;
     demo_ = std::move(*demo_result);
     return true;
@@ -203,7 +206,6 @@ void WorldRuntime::init_scripts(const std::filesystem::path& project_root,
 
 void WorldRuntime::fill_remote_targets(RemoteBridgeTargets& targets) {
     targets.terrain_height = [this](float lx, float lz) { return local_ground_height(lx, lz); };
-    targets.terrain_status = [this] { return terrain_status(); };
     targets.terrain_streamer = &terrain_streamer_;
     targets.terrain_heightmap = &terrain_heightmap_;
     targets.terrain_anchor = &terrain_anchor_;

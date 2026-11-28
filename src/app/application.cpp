@@ -13,6 +13,7 @@
 
 #include "app/asset_root.hpp"
 #include "app/demo_scenes.hpp"
+#include "app/window_icon.hpp"
 #include "engine/core/utf8_path.hpp"
 #include "engine/scene/bounds.hpp"
 #include "engine/scene/components.hpp"
@@ -20,8 +21,6 @@
 
 namespace quat::app {
 namespace {
-
-constexpr char k_window_title[] = "quat-3d";
 
 #ifndef NDEBUG
 constexpr bool k_enable_validation = true;
@@ -75,12 +74,18 @@ bool Application::init_platform() {
     }
     platform_.sdl_initialized = true;
 
-    platform_.window =
-        SDL_CreateWindow(k_window_title, config_.window_width, config_.window_height,
-                         SDL_WINDOW_RESIZABLE | SDL_WINDOW_VULKAN);
+    SDL_WindowFlags flags = SDL_WINDOW_RESIZABLE | SDL_WINDOW_VULKAN;
+    if (config_.fullscreen) flags |= SDL_WINDOW_FULLSCREEN;
+    platform_.window = SDL_CreateWindow(config_.window_title.c_str(), config_.window_width,
+                                        config_.window_height, flags);
     if (platform_.window == nullptr) {
         SDL_Log("SDL_CreateWindow failed: %s", SDL_GetError());
         return false;
+    }
+    if (config_.window_icon) {
+        if (auto icon = set_window_icon(platform_.window, *config_.window_icon); !icon) {
+            std::fprintf(stderr, "[warn] %s\n", icon.error().message.c_str());
+        }
     }
 
     Uint32 sdl_ext_count = 0;
@@ -96,7 +101,7 @@ bool Application::init_platform() {
     auto device_result = engine::rhi::Device::create({
         .instance_extensions = {sdl_extensions, sdl_ext_count},
         .enable_validation = k_enable_validation,
-        .application_name = k_window_title,
+        .application_name = config_.window_title.c_str(),
         .create_surface = [window](VkInstance instance)
             -> std::expected<VkSurfaceKHR, engine::core::Error> {
             VkSurfaceKHR surface = VK_NULL_HANDLE;
@@ -150,8 +155,10 @@ bool Application::init_subsystems() {
     pipeline_cache_ = std::move(*pipeline_cache);
     // Pipeline-cache paths are UTF-8 strings (opened via path_from_utf8).
     shader_dir_ = engine::core::path_to_utf8(cooked_shader_dir());
-    shader_reload_ = engine::rhi::ShaderHotReload::create_from_environment( // R2
-        pipeline_cache_, project_root() / "assets" / "shaders", cooked_shader_dir());
+    if (config_.shader_hot_reload) { // R2; never in the game player
+        shader_reload_ = engine::rhi::ShaderHotReload::create_from_environment(
+            pipeline_cache_, data_root() / "assets" / "shaders", cooked_shader_dir());
+    }
     const VkDevice vk_device = device_.handle();
 
     // One-time transfer context for setup uploads (demo mesh/material + each
@@ -186,8 +193,11 @@ bool Application::init_subsystems() {
 
     // QUAT_GLTF=<path> instantiates a real glTF scene graph; otherwise a
     // spinning demo cube stands in (see demo_scenes.hpp).
-    const bool scene_ok = world_.build_scene(scene_, assets_, allocator_, setup_transfer,
-                                             project_root());
+    // A game's start scene (quat-player) replaces the demo scenes and
+    // brings its own look (render settings).
+    const bool scene_ok =
+        world_.build_scene(scene_, assets_, allocator_, setup_transfer, project_root(),
+                           config_.start_scene, &renderer_.render_settings());
 
     vkDestroyCommandPool(vk_device, setup_pool, nullptr);
 
@@ -239,7 +249,9 @@ bool Application::init_subsystems() {
                   .shader_reload = shader_reload_.get(),
                   .render_settings = &renderer_.render_settings(),
                   .reset_temporal = [this] { renderer_.reset_temporal(); },
-                  .remote = &*remote_});
+                  .remote = &*remote_,
+                  .game = config_.game ? &*config_.game : nullptr,
+                  .build_job = &build_job_});
 #endif
     return true;
 }
@@ -287,12 +299,22 @@ void Application::connect_remote() {
     remote_targets.material_overrides = &renderer_.material_overrides();
     remote_targets.reset_temporal = [this] { renderer_.reset_temporal(); };
     world_.fill_remote_targets(remote_targets);
+#if !defined(QUAT_SHIPPING)
+    // terrain.status only (remote control): wired here, not in WorldRuntime,
+    // whose library the shipping player shares with quat-player.
+    remote_targets.terrain_status = [this] { return world_.terrain_status(); };
+#endif
     remote_targets.play = world_.has_demo_physics() ? nullptr : play_mode_.request();
 #ifdef ENGINE_EDITOR
     editor_.fill_remote_targets(remote_targets);
 #endif
     remote_targets.shader_reload = shader_reload_.get(); // A6: shader.create / update compile
     remote_targets.project_root = project_root();
+    // Game projects (P4): project.info / project.build; shipping packages
+    // keep the endpoint closed whatever QUAT_REMOTE says.
+    remote_targets.allow_endpoint = config_.remote_allowed;
+    remote_targets.game = config_.game ? &*config_.game : nullptr;
+    remote_targets.build_job = &build_job_;
     remote_.emplace(std::move(remote_targets), k_frames_in_flight);
 }
 
@@ -392,8 +414,12 @@ bool Application::run_frame() {
     const engine::scene::CameraMatrices cam = update_world(dt, sim_dt, aspect);
     // A screenshot with its own camera renders this frame from there (issue
     // #41); terrain streaming, audio and the editor UI stay with the user's view.
+#if defined(QUAT_SHIPPING)
+    const engine::scene::CameraMatrices& view = cam; // no remote screenshots
+#else
     const std::optional<engine::remote::CameraPose> shot = remote_->screenshot_view();
     const engine::scene::CameraMatrices view = shot ? shot_view(*shot, aspect) : cam;
+#endif
     // A camera cut (a remote teleport, or a screenshot's own camera and the
     // frame returning from it): the temporal history restarts instead of
     // blending across the jump (R11).
@@ -524,6 +550,7 @@ engine::scene::CameraMatrices Application::update_world(float dt, float sim_dt, 
     return cam;
 }
 
+#if !defined(QUAT_SHIPPING)
 engine::scene::CameraMatrices Application::shot_view(const engine::remote::CameraPose& pose,
                                                      float aspect) const {
     // Clip planes derived for the shot's own position, with its overrides.
@@ -536,6 +563,7 @@ engine::scene::CameraMatrices Application::shot_view(const engine::remote::Camer
                          glm::radians(glm::clamp(pose.pitch_deg, -89.0F, 89.0F)),
                          glm::radians(pose.fov_deg), clip, aspect);
 }
+#endif // !QUAT_SHIPPING
 
 void Application::update_view_clip() {
     // Scanning every drawable is cheap but not free: refresh the bounds a few
