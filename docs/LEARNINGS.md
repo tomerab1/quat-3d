@@ -7,12 +7,6 @@ into CLAUDE.md or the brief template in [`CYCLE.md`](CYCLE.md).
 
 ## Agents and orchestration
 
-- **Worktree-isolated agents cannot run "complex" shell commands** (heredocs
-  writing files, multi-statement Python with `git` in the text, chained
-  `mv` + `sed`): the sandbox refuses them as unverifiable. Write edit
-  scripts to the scratchpad with the Write tool and run them with the
-  worktree path as an argument; keep shell commands to one plain step.
-
 - **The worktree isolation guard refuses complex shell commands** (heredocs
   with quotes, `cd` into computed paths, git on paths it cannot verify). A
   worker loses turns retrying them. → Write edit scripts / build scripts as
@@ -62,21 +56,6 @@ into CLAUDE.md or the brief template in [`CYCLE.md`](CYCLE.md).
 
 ## Build and CI
 
-- **A real configure + link works without vcpkg** (R13.1): point CMake at
-  a prefix of locally built dependencies instead of the vcpkg toolchain:
-  `cmake -G Ninja -DCMAKE_CXX_COMPILER=clang++
-  -DCMAKE_CXX_FLAGS=-stdlib=libc++ -DCMAKE_EXE_LINKER_FLAGS=-stdlib=libc++
-  -DCMAKE_PREFIX_PATH=<prefix> -DCMAKE_MODULE_PATH=<dir with a FindStb.cmake
-  setting Stb_INCLUDE_DIR> -DENGINE_EDITOR=OFF
-  -DFETCHCONTENT_FULLY_DISCONNECTED=ON -DFETCHCONTENT_SOURCE_DIR_ACL=<acl>
-  -DFETCHCONTENT_SOURCE_DIR_RTM=<rtm> -DMINIAUDIO_INCLUDE_DIR=~/deps/miniaudio`.
-  The prefix holds the libc++ builds of SDL3, Jolt, fastgltf, recast, GNS,
-  GTest, VMA and EnTT with their CMake configs (R17 built one). This links
-  `game` and `engine_tests` exactly as CI does, so missing CMake entries show
-  up as link errors. Builds share the container's disk with other agents:
-  one failed with "No space left on device"; check `df` first and rerun.
-  If CMakeLists.txt changes while ninja runs, the running build links with
-  the old target list. Rerun ninja after editing CMake lists.
 - **A clean auto-merge can still break the build.** Merging master (#20)
   into the E8 branch raised no conflict, but master had renamed
   `WorldRuntime::clear_spin_entity` while the branch added a new call to it;
@@ -281,35 +260,6 @@ into CLAUDE.md or the brief template in [`CYCLE.md`](CYCLE.md).
 
 ## C++ in this codebase
 
-- **A feature must not change scenes that do not use it** (R13.1 review).
-  The first R13.1 cut changed every master scene: cloud shadows defaulted
-  on, clouds moved from camera-relative to world-anchored, and grass swapped
-  its sway for the wind field. That breaks the CI screenshot baselines and
-  the owner's existing scenes. Gate new looks on the feature's presence
-  (here a weather entity), keep the old path verbatim, and test that the
-  absent-feature constants equal the old ones.
-- **Data that is constant over tens of metres belongs in a map, not a
-  per-pixel march** (R13.1 review): cloud shadows first ray-marched 12 fBm
-  per pixel in the lighting pass. A cloud shadow map (one compute pass, an
-  orthographic projection along the sun, texel-snapped) costs the same at any
-  resolution, needs no TAA to converge, and can be shared with fog and
-  transparents.
-- **Travelling-wave phases must not use a turbulent direction** (R13.1
-  review): `dot(root, local_dir)` far from the origin jumps by many radians
-  when the local wind turns slightly. Use the mean heading (or a hash) for
-  phases; keep the local direction for the displacement only.
-
-- **A Slang pass shader and a library module must not share a name**
-  (R13.1): `assets/shaders/wind_field.slang` importing
-  `lib/wind_field.slang` fails with "module `wind_field` recursively imports
-  itself" (and slangc then segfaults, see below). Name libraries
-  `<topic>_common`, as `grass_common` and `wind_common` do.
-- **Weather and other per-pixel layers go in the lighting pass, not the
-  GBuffer, while A6 reshapes the GBuffer** (R13.1): wet / snow layers modify
-  the decoded surface in lighting.slang (lib/weather_surface.slang,
-  ISurfaceLayer), so no GBuffer channel or writer changed. Lagarde's
-  porosity then has to be derived from the dry roughness / metallic, as his
-  own code does; a per-material porosity needs a GBuffer channel later.
 - **Optimising a fixed-step system must not change its floats (#84).** Nav
   feeds network prediction, so the separation grid had to match the
   all-pairs loop bit for bit. Two traps: float sums depend on order (sort
@@ -730,15 +680,3 @@ it reordered, and an unvalidated ini file. Each lived in code only reachable
 through an ImGui frame. **Rule:** UI actions are plain functions over the
 registry or the state struct, called by the widget and by GoogleTest;
 anything read from disk goes through a pure, tested parser.
-
-## A merge can silently drop half of a "previous frame" evaluation (R13.1 × R11)
-
-R11 gave grass motion vectors by evaluating each blade again at last
-frame's wind time; R13.1 bent the blades in a wind field texture. Resolving
-the conflict textually would have evaluated both frames in THIS frame's
-field, so gusts sweeping through the grass produced no motion vectors (TAA
-ghosting on exactly the motion weather adds). **Rule:** when a feature adds
-an input to something the velocity pass evaluates twice, the input must
-exist for the previous frame too (here: WindFieldPass also evaluates last
-frame's params, `prev_texture`), with a GPU test that the input's own change
-reaches the velocity target.
