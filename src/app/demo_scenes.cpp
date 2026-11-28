@@ -9,6 +9,8 @@
 #include <glm/gtc/matrix_transform.hpp>
 
 #include "engine/asset/asset_manager.hpp"
+#include "engine/core/env.hpp"
+#include "engine/core/utf8_path.hpp"
 #include "engine/asset/material_asset.hpp"
 #include "engine/asset/mesh_asset.hpp"
 #include "engine/rhi/gpu_allocator.hpp"
@@ -16,6 +18,7 @@
 #include "engine/scene/gltf_loader.hpp"
 #include "engine/scene/primitives.hpp"
 #include "engine/scene/scene.hpp"
+#include "engine/scene/scene_io.hpp"
 
 namespace quat::app {
 
@@ -23,10 +26,72 @@ using engine::scene::make_box_data;
 using engine::scene::make_cube_data;
 using engine::scene::make_sphere_data;
 
+namespace {
+
+// R10.3 demo effects beside the physics pile: additive sparks that bounce on
+// the floor (depth-buffer collision) and lit smoke (weighted blended OIT).
+// Fixed seeds: the same simulation steps give the same particles.
+void add_demo_particles(engine::scene::Scene& scene) {
+    namespace r = engine::renderer;
+    using engine::scene::ParticleEmitter;
+    using engine::scene::Transform;
+
+    const entt::entity sparks = scene.create_entity("sparks");
+    scene.registry().get<Transform>(sparks).local =
+        glm::translate(glm::mat4(1.0F), glm::vec3(-3.0F, 0.2F, 1.5F));
+    r::ParticleEmitterSettings& s = scene.registry().emplace<ParticleEmitter>(sparks).settings;
+    s.seed = 7;
+    s.max_particles = 2048;
+    s.rate = 220.0F;
+    s.lifetime = {0.8F, 1.6F};
+    s.shape = r::ParticleShape::cone;
+    s.radius = 0.05F;
+    s.cone_angle_deg = 30.0F;
+    s.speed = {3.0F, 6.0F};
+    s.size = {0.03F, 0.06F};
+    s.color_keys = 3;
+    s.color_curve = {{{0.0F, {1.0F, 0.85F, 0.4F, 1.0F}},
+                      {0.5F, {1.0F, 0.35F, 0.05F, 1.0F}},
+                      {1.0F, {0.6F, 0.1F, 0.0F, 0.0F}}}};
+    s.emissive = 12.0F;
+    s.collide = true;
+    s.bounce = 0.4F;
+    s.friction = 0.3F;
+    s.soft_distance = 0.0F;
+
+    const entt::entity smoke = scene.create_entity("smoke");
+    scene.registry().get<Transform>(smoke).local =
+        glm::translate(glm::mat4(1.0F), glm::vec3(3.0F, 0.1F, 1.0F));
+    r::ParticleEmitterSettings& m = scene.registry().emplace<ParticleEmitter>(smoke).settings;
+    m.seed = 11;
+    m.max_particles = 512;
+    m.rate = 24.0F;
+    m.lifetime = {4.0F, 6.0F};
+    m.shape = r::ParticleShape::sphere;
+    m.radius = 0.3F;
+    m.speed = {0.1F, 0.4F};
+    m.gravity = {0.15F, 0.6F, 0.0F}; // buoyant, drifting with a light breeze
+    m.drag = 0.4F;
+    m.size = {0.6F, 1.0F};
+    m.size_keys = 2;
+    m.size_curve = {{{0.0F, 0.6F}, {1.0F, 2.5F}}};
+    m.color_keys = 3;
+    m.color_curve = {{{0.0F, {0.35F, 0.35F, 0.37F, 0.0F}},
+                      {0.15F, {0.35F, 0.35F, 0.37F, 0.55F}},
+                      {1.0F, {0.5F, 0.5F, 0.52F, 0.0F}}}};
+    m.spin_deg = {-20.0F, 20.0F};
+    m.blend = r::ParticleBlend::alpha;
+    m.lighting = r::ParticleLighting::lit;
+    m.soft_distance = 0.5F;
+}
+
+} // namespace
+
 std::expected<DemoScene, engine::core::Error>
 build_demo_scene(engine::scene::Scene& scene, engine::asset::AssetManager& assets,
                  engine::rhi::GpuAllocator& allocator,
-                 const engine::rhi::TransferContext& setup_transfer) {
+                 const engine::rhi::TransferContext& setup_transfer,
+                 const std::filesystem::path& project_root) {
     entt::entity spin_entity = entt::null;
     entt::entity demo_root = entt::null;
     entt::entity pedestal = entt::null;
@@ -39,15 +104,30 @@ build_demo_scene(engine::scene::Scene& scene, engine::asset::AssetManager& asset
     entt::entity character_entity = entt::null;
     bool scene_ok = true;
 
-    if (const char* gltf_path = std::getenv("QUAT_GLTF"); gltf_path != nullptr) {
-        auto roots = engine::scene::GltfLoader::instantiate(gltf_path, allocator, setup_transfer,
+    if (auto scene_path = engine::core::env_path("QUAT_SCENE")) {
+        std::filesystem::path path = std::move(*scene_path);
+        if (path.is_relative()) path = project_root / path;
+        if (auto loaded = engine::scene::load_scene(scene, path, allocator, setup_transfer, assets);
+            !loaded) {
+            std::fprintf(stderr, "[fatal] QUAT_SCENE load failed: %s\n",
+                         loaded.error().message.c_str());
+            return std::unexpected(engine::core::Error{"scene file load failed"});
+        }
+        std::fprintf(stderr, "[info] loaded scene %s\n", engine::core::path_to_utf8(path).c_str());
+        DemoScene out;
+        out.from_scene_file = true;
+        return out;
+    }
+    if (const auto gltf_path = engine::core::env_path("QUAT_GLTF")) {
+        auto roots = engine::scene::GltfLoader::instantiate(*gltf_path, allocator, setup_transfer,
                                                             assets, scene);
         if (!roots) {
             std::fprintf(stderr, "[fatal] glTF instantiate failed: %s\n",
                          roots.error().message.c_str());
             scene_ok = false;
         } else {
-            std::fprintf(stderr, "[info] loaded '%s': %zu root node(s), %zu entities\n", gltf_path,
+            std::fprintf(stderr, "[info] loaded '%s': %zu root node(s), %zu entities\n",
+                         engine::core::path_to_utf8(*gltf_path).c_str(),
                          roots->size(),
                          static_cast<std::size_t>(
                              scene.registry().view<engine::scene::Transform>().size()));
@@ -150,6 +230,7 @@ build_demo_scene(engine::scene::Scene& scene, engine::asset::AssetManager& asset
                                                    glm::vec3(0.0F));
                 scene.registry().emplace<RigidBody>(glass, BodyMotion::static_body, 1.0F, no_body);
             }
+            add_demo_particles(scene);
         }
     } else if (std::getenv("QUAT_CHARACTER") != nullptr) {
         // Character demo: walk a capsule around a floor with WASD (third-person).
@@ -335,7 +416,7 @@ build_demo_scene(engine::scene::Scene& scene, engine::asset::AssetManager& asset
     DemoScene out;
     out.physics_mode = physics_mode;
     out.character_mode = character_mode;
-    out.from_gltf = std::getenv("QUAT_GLTF") != nullptr;
+    out.from_gltf = engine::core::env_path("QUAT_GLTF").has_value();
     out.physics_world = std::move(physics_world);
     out.character_entity = character_entity;
     out.spin_entity = spin_entity;

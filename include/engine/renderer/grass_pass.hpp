@@ -32,6 +32,7 @@
 #include <cstdint>
 #include <expected>
 #include <memory>
+#include <optional>
 #include <span>
 #include <string>
 #include <vector>
@@ -55,13 +56,16 @@ class PipelineCache;
 
 namespace engine::renderer {
 
-// What one frame's grass needs.
+// What one frame's grass needs. The velocity target (R11) gets each blade's
+// motion from the wind at `prev_time_s` (unset: no wind motion) and the view
+// motion of the GBuffer it draws into.
 struct GrassFrame {
     GrassSettings settings{};
     glm::mat4     draw_view_proj{1.0F}; // the frame's (jittered) view-projection
     glm::mat4     cull_view_proj{1.0F}; // unjittered, for frustum culling
     glm::vec3     camera{0.0F};
     float         time_s = 0.0F;        // wind clock
+    std::optional<float> prev_time_s{}; // the wind clock last frame
     std::span<const TerrainHeightTile> terrain{}; // nearest first; the first 4 are used
 };
 

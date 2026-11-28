@@ -81,6 +81,7 @@ void expect_params_layout(const char* shader) {
         {"pad", offsetof(a::PbrMaterialParams, pad)},
         {"uv_mat", offsetof(a::PbrMaterialParams, uv_mat)},
         {"uv_offset", offsetof(a::PbrMaterialParams, uv_offset)},
+        {"shader_params", offsetof(a::PbrMaterialParams, shader_params)},
     };
     // A path of object keys into `j`, or null where it is not there.
     const auto at = [](const json* j, std::initializer_list<const char*> keys) -> const json* {

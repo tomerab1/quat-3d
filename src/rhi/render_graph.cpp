@@ -76,6 +76,13 @@ struct UsageState {
                     | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
                 VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT
                     | VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT};
+    case ResourceUsage::depth_read:
+        return {VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL,
+                VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT
+                    | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT
+                    | VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+                VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT
+                    | VK_ACCESS_2_SHADER_SAMPLED_READ_BIT};
     case ResourceUsage::sampled:
         return {VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
                 VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,

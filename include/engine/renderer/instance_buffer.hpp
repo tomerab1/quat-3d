@@ -39,12 +39,22 @@ public:
     upload(const rhi::Device& device, rhi::GpuAllocator& allocator,
            std::span<const InstanceData> instances);
 
-    [[nodiscard]] std::uint32_t capacity() const noexcept { return capacity_; }
+    // Same for the parallel per-instance motion records (R11); use a separate
+    // InstanceBuffer from the one holding the InstanceData.
+    [[nodiscard]] std::expected<VkDeviceAddress, core::Error>
+    upload(const rhi::Device& device, rhi::GpuAllocator& allocator,
+           std::span<const InstanceMotion> motion);
+
+    [[nodiscard]] VkDeviceSize capacity_bytes() const noexcept { return capacity_; }
 
 private:
+    [[nodiscard]] std::expected<VkDeviceAddress, core::Error>
+    upload_bytes(const rhi::Device& device, rhi::GpuAllocator& allocator, const void* data,
+                 VkDeviceSize bytes);
+
     rhi::GpuBuffer  buffer_;
     VkDeviceAddress address_  = 0;
-    std::uint32_t   capacity_ = 0; // in instances
+    VkDeviceSize    capacity_ = 0; // in bytes
 };
 
 } // namespace engine::renderer

@@ -7,6 +7,36 @@ into CLAUDE.md or the brief template in [`CYCLE.md`](CYCLE.md).
 
 ## Agents and orchestration
 
+- **The worktree isolation guard refuses complex shell commands** (heredocs
+  with quotes, `cd` into computed paths, git on paths it cannot verify). A
+  worker loses turns retrying them. → Write edit scripts / build scripts as
+  files in the worker's scratch subdirectory and run them with one plain
+  command; run git only as simple commands inside the worktree.
+
+- **Interleaved work on several issues is costly to split into per-issue
+  commits.** A9 built #37–#39 in one working tree; splitting needed
+  hunk-picking (`git apply --cached` of a filtered `git diff`), and one hunk
+  mixed two issues, so the first staged commit did not compile — caught only
+  because the staged tree was exported (`git checkout-index -a
+  --prefix=<dir>/`) and compile-checked on its own. → Commit each issue as
+  soon as it is done; when a split is unavoidable, compile-check the staged
+  tree, not the working tree.
+- **Worktree-isolated agents get compound shell commands refused.** `cd`
+  into a computed path, heredoc scripts, or `sed -i 'a\'` next to a `git`
+  call are rejected as unverifiable. → Write edit scripts to the
+  scratchpad and run them with a plain `python3 <script>`; run `git`
+  commands on their own from the worktree root.
+- **`origin/master` moves under a worktree agent.** Worktrees share the
+  repository's refs, so another session's fetch can advance `origin/master`
+  mid-task: A9 merged one master and then restored two files "from
+  `origin/master`", silently taking them from a newer one. → Resolve merges
+  against the merge's own parent (`HEAD^2`, or a SHA noted when merging),
+  never a moving ref.
+- **Merge `master` into a long-running feature branch before handing it
+  back.** A9's branch base was overtaken by A8 (#17) and G8 during the work;
+  merging `origin/master` at the end (7 conflicts in remote / quat-mcp
+  files) and re-running the checks there saves the orchestrator the same
+  resolution with less context.
 - **Unpushed worktree commits die with the container.** Worker agents push
   their `feat/<id>` branch to origin after every commit (owner's rule,
   2026-11-27). `feat/**` pushes don't trigger CI, so they never cancel a
@@ -83,6 +113,26 @@ into CLAUDE.md or the brief template in [`CYCLE.md`](CYCLE.md).
 - **`git ls-files` + `check-compile.sh` catches includes lost in merges.**
   `skinning_pass.cpp` used `glm::mat4` with no glm include after S3.3
   removed the self-test that pulled it in.
+- **The container disk is shared by every worktree agent and fills up.**
+  During the A9 review fixes the volume hit 0 bytes free (command output was
+  lost); quat-mcp's `target/` alone had grown to 11 GB, mostly
+  `target/debug/incremental`. → Build Rust with `CARGO_INCREMENTAL=0` in
+  agent worktrees, delete scratch build trees when done, and check
+  `df -h /` before long builds.
+- **Ad-hoc local test builds: cap parallel compiles at `nproc`.** Starting
+  ~45 clang processes at once on a 4-core container crashed one with
+  SIGBUS (exit 135), and a file edited while its object was compiling left
+  an object newer than the source but built from the old text (a test
+  silently missing). → Throttle (`while [ $(jobs -rp | wc -l) -ge 4 ];
+  do wait -n; done`) and delete objects whose sources changed during a
+  build.
+- **The cloud container's proxy blocks api.polyhaven.com** (403 "no rule
+  allows this host"; crates.io works). Network-facing tools are built
+  against the documented API and tested offline: an in-memory fake behind
+  an `Http` trait, plus a loopback HTTP stand-in for the real reqwest path.
+- **reqwest 0.13's default TLS pulls in aws-lc-sys** (a CMake/C build);
+  quat-mcp uses reqwest 0.12 with `rustls-tls-native-roots` (ring, the
+  platform trust store, which also picks up the proxy CA).
 - **Link the game executable locally after any merge that touches library
   targets.** R17 linked libktx into `game` directly while engine_asset only
   compiled against its headers; the tests (linking the full libktx) passed,
@@ -193,6 +243,56 @@ into CLAUDE.md or the brief template in [`CYCLE.md`](CYCLE.md).
   the sRGB target (`RenderGraph::set_unorm_view`, mutable-format swapchain)
   or a UNORM scratch + byte copy; its pixel tests cover partial coverage
   (half-alpha quads, the complement of black-on-white vs white-on-black).
+- **A new member of a class with a hand-written move must be added to the
+  move too.** R10.3 added `Device::independent_blend_` and set it in
+  `create()`, but `Device::operator=(Device&&)` copies members one by one:
+  the moved-into device (the one everyone uses) reported the feature
+  missing. → grep for the class's move constructor / assignment whenever a
+  member is added; prefer `= default` moves where the class allows it.
+- **Slang's `SV_InstanceID` needs the DrawParameters capability** (it lowers
+  to InstanceIndex - BaseInstance), which the device does not enable — the
+  validation layer flags every pipeline. Use `instancing.slang`'s
+  `instance_index()` (plain InstanceIndex) in vertex shaders.
+- **Half-float accumulation buffers stall and drift.** A running average
+  whose per-frame weight falls below ~1/1000 (R11's TAAU at 50% render scale)
+  loses its updates to RGBA16F rounding, and the float->half conversion mode
+  is implementation-defined (lavapipe truncates: a systematic darkening that
+  the 1/weight averaging amplifies); the upscale test's error rose from
+  0.0017 to 0.0047. Round explicitly and stochastically onto the half grid in
+  the shader (taa.slang `stochastic_round_half`) — it matches RGBA32F at half
+  the bandwidth. Adding a dither and letting the hardware round is not enough
+  (still biased under truncation).
+- **A Slang pointer null test (`p != nullptr`) emits the Int64 capability**,
+  which needs `shaderInt64` (not enabled): the validation layer rejects the
+  pipeline. Pass a presence flag next to device addresses instead.
+- **A pipeline without descriptor sets drawn while a descriptor buffer is
+  bound** fails VUID-vkCmdDraw-None-08117 (it lacks the descriptor-buffer
+  flag). Give it an empty descriptor-buffer set layout (VelocityPass).
+- **Slang lays out `uint3` at 16-byte alignment in push constants**: `uint;
+  uint3` is a 28-byte block, not 16. Pad with scalars.
+- **Never raise a Lua error from a C++ frame.** The engine builds without
+  exceptions, so Lua (compiled as C) unwinds errors with longjmp, which skips
+  the destructors of every C++ frame in between. Script bindings return
+  `Result<T>` and a plain C trampoline (`checked_call`, src/script/lua_bind)
+  raises after the C++ function returned; C callbacks that raise (allocator,
+  count hook, require) hold no C++ objects at that point. Look up callbacks
+  with raw gets so no script metamethod runs outside a protected call (G7).
+- **sol2 3.5.0 member-variable pointers do not compile with clang 18**
+  (`address of overloaded function 'call' does not match required type`):
+  bind fields with `sol::property(getter, setter)` lambdas instead.
+- **A script's own pcall must not swallow a resource limit.** The sandbox's
+  pcall/xpcall re-raise once the instruction or memory budget is exhausted;
+  otherwise `while true do pcall(f) end` hangs the engine despite the hook.
+- **slangc puts every `.slang` input of one run into one module** (A6):
+  `extern struct` in one file and `export struct` in another conflict, and
+  `-entry` cannot find a generic entry point for `-specialize`. Link-time
+  specialisation works by passing the *cooked* driver module instead:
+  `slangc material.slang cooked/driver.slang-module -I lib -I cooked`. A
+  serialized module finds its own imports only as `.slang-module`s on an `-I`
+  path, so the cooked directory must be on it.
+- **Adding a field to an aggregate config struct warns at every positional
+  `{a, b, c}` initialisation** (`-Wmissing-field-initializers`, part of
+  `-Wextra`). Grep the call sites (tests included) in the same change.
 - **Explicit thermal erosion is diffusion: a slope N cells long needs ~N²
   steps** (issue #69). The interior of a uniform ramp gives as much as it
   receives, so it only relaxes from its crest and toe; 400 steps left 55-75°

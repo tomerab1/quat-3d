@@ -40,6 +40,7 @@ derive_material(const MaterialAsset& base, const PbrMaterialParams& params,
     // the derived material's own. A field added to MaterialAsset is copied here.
     MaterialAsset derived;
     derived.textures = base.textures;
+    derived.shader = base.shader; // the authored material shader it draws with (A6)
     // Then the overridden parameters, uploaded into the new buffer.
     derived.params = params;
     if (auto ok = upload_params(derived, allocator, transfer); !ok) {

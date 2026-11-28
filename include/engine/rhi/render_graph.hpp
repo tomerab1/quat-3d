@@ -24,6 +24,10 @@ class Device;
 enum class ResourceUsage : std::uint8_t {
     color_attachment,
     depth_attachment,
+    // Read-only depth: depth-tested (no writes) as the attachment and sampled
+    // in the fragment shader in the same pass (DEPTH_READ_ONLY_OPTIMAL) —
+    // soft particles fade against the depth they are tested against.
+    depth_read,
     sampled,          // read in a fragment shader as a sampled image
     sampled_compute,  // read in a compute shader as a sampled image
     sampled_graphics, // read in vertex and fragment shaders as a sampled image (e.g. VTF)

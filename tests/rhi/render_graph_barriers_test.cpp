@@ -502,4 +502,32 @@ TEST(RenderGraphBuffers, IndirectUsageOnAnImageIsAnError) {
     ASSERT_ERR(graph.compile());
 }
 
+// R10.3: a read-only depth pass (depth-tested and sampled in the same pass,
+// soft particles) moves the depth to DEPTH_READ_ONLY_OPTIMAL and makes the
+// depth writes visible to the fragment tests and the fragment shader; a
+// later sampled read transitions it again.
+TEST(RenderGraphDepth, DepthReadTransitionsToReadOnlyForTestsAndSampling) {
+    RenderGraph graph;
+    const auto depth = graph.import_image("depth", VK_NULL_HANDLE, VK_NULL_HANDLE,
+                                          VK_FORMAT_D32_SFLOAT, k_extent,
+                                          VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_UNDEFINED);
+    (void)graph.add_pass("opaque", PassType::graphics).writes(depth, ResourceUsage::depth_attachment);
+    (void)graph.add_pass("particles", PassType::graphics).reads(depth, ResourceUsage::depth_read);
+    (void)graph.add_pass("taa", PassType::graphics).reads(depth, ResourceUsage::sampled);
+    ASSERT_OK(graph.compile());
+    const auto b = graph.planned_barriers("particles");
+    ASSERT_EQ(b.size(), 1U);
+    EXPECT_EQ(b[0].oldLayout, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL);
+    EXPECT_EQ(b[0].newLayout, VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL);
+    EXPECT_EQ(b[0].subresourceRange.aspectMask, VkImageAspectFlags{VK_IMAGE_ASPECT_DEPTH_BIT});
+    EXPECT_TRUE(b[0].srcAccessMask & VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT);
+    EXPECT_TRUE(b[0].dstStageMask & VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT);
+    EXPECT_TRUE(b[0].dstStageMask & VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT);
+    EXPECT_TRUE(b[0].dstAccessMask & VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT);
+    EXPECT_TRUE(b[0].dstAccessMask & VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
+    const auto t = graph.planned_barriers("taa");
+    ASSERT_EQ(t.size(), 1U);
+    EXPECT_EQ(t[0].newLayout, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+}
+
 } // namespace

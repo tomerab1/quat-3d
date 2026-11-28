@@ -21,11 +21,17 @@
 namespace engine::scene {
 class Scene;
 }
+namespace engine::script {
+class ScriptRuntime;
+}
 
 namespace engine::editor::panels {
 
 struct InspectorState {
     std::filesystem::path project_root; // asset pickers are confined to it
+    // Gameplay scripts (G7): the properties a Script component's file
+    // declares (may be null).
+    script::ScriptRuntime* scripts = nullptr;
     std::string add_filter;     // Add Component search
     std::string clipboard_type; // codec name of the copied component ("" = none)
     std::string clipboard_json; // its values
