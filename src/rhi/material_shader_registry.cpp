@@ -7,6 +7,7 @@
 #include <system_error>
 #include <utility>
 
+#include "engine/core/utf8_path.hpp"
 #include "engine/rhi/material_shader_names.hpp"
 #include "engine/rhi/material_shader_source.hpp"
 #include "engine/rhi/shader_hot_reload.hpp"
@@ -77,6 +78,11 @@ MaterialShaderRegistry::MaterialShaderRegistry(Config config, ShaderHotReload* r
     config_.module_dir = config_.module_dir.lexically_normal();
     config_.cooked_dir = config_.cooked_dir.lexically_normal();
     config_.display_root = config_.display_root.lexically_normal();
+    if (!config_.display_root.empty()) {
+        std::error_code ec;
+        canonical_root_ = fs::weakly_canonical(config_.display_root, ec);
+        if (ec) canonical_root_ = config_.display_root;
+    }
 }
 
 // ---- Paths ------------------------------------------------------------------
@@ -96,22 +102,70 @@ std::vector<fs::path> MaterialShaderRegistry::cooked_paths(std::string_view name
     return out;
 }
 
+namespace {
+
+// `rel` names something inside the root it was computed against.
+[[nodiscard]] bool inside_root(const fs::path& rel) {
+    return !rel.empty() && rel.is_relative() && *rel.begin() != "..";
+}
+
+} // namespace
+
 std::string MaterialShaderRegistry::display(const fs::path& path) const {
     const fs::path norm = path.lexically_normal();
     if (!config_.display_root.empty()) {
-        const fs::path rel = norm.lexically_relative(config_.display_root);
-        if (!rel.empty() && *rel.begin() != "..") return rel.generic_string();
+        if (const fs::path rel = norm.lexically_relative(config_.display_root); inside_root(rel)) {
+            return core::path_to_generic_utf8(rel);
+        }
+        std::error_code ec;
+        const fs::path canon = fs::weakly_canonical(norm, ec);
+        if (!ec) {
+            if (const fs::path rel = canon.lexically_relative(canonical_root_); inside_root(rel)) {
+                return core::path_to_generic_utf8(rel);
+            }
+        }
     }
-    return norm.generic_string();
+    return core::path_to_generic_utf8(norm);
+}
+
+std::string MaterialShaderRegistry::display_printed(const std::string& printed) const {
+    // Not a path (a link error has none), or not text we can convert.
+    if (printed.empty() || config_.display_root.empty() || !core::is_valid_utf8(printed)) {
+        return printed;
+    }
+    // Resolved before comparing: slangc prints native separators and whatever
+    // spelling of the directory it was given (RUNNER~1 vs runneradmin).
+    std::error_code ec;
+    const fs::path file = fs::weakly_canonical(core::path_from_utf8(printed), ec);
+    if (ec) return printed;
+    if (const fs::path rel = file.lexically_relative(canonical_root_); inside_root(rel)) {
+        return core::path_to_generic_utf8(rel);
+    }
+    return printed;
 }
 
 std::string MaterialShaderRegistry::shorten_paths(std::string text) const {
     if (config_.display_root.empty()) return text;
-    std::string prefix = config_.display_root.generic_string();
-    if (!prefix.ends_with('/')) prefix += '/';
-    for (std::size_t pos = text.find(prefix); pos != std::string::npos;
-         pos = text.find(prefix, pos)) {
-        text.erase(pos, prefix.size());
+    // Every spelling of the root a tool may print: as given and resolved,
+    // with '/' and with native separators (backslashes on Windows).
+    std::vector<std::string> prefixes;
+    for (const fs::path& root : {config_.display_root, canonical_root_}) {
+        for (std::string p : {core::path_to_generic_utf8(root), core::path_to_utf8(root)}) {
+            const char sep = p.find('\\') != std::string::npos ? '\\' : '/';
+            if (!p.ends_with(sep)) p += sep;
+            if (std::find(prefixes.begin(), prefixes.end(), p) == prefixes.end()) {
+                prefixes.push_back(std::move(p));
+            }
+        }
+    }
+    // Longest first, so a shorter spelling never cuts into a longer one.
+    std::sort(prefixes.begin(), prefixes.end(),
+              [](const std::string& l, const std::string& r) { return l.size() > r.size(); });
+    for (const std::string& prefix : prefixes) {
+        for (std::size_t pos = text.find(prefix); pos != std::string::npos;
+             pos = text.find(prefix, pos)) {
+            text.erase(pos, prefix.size());
+        }
     }
     return text;
 }
@@ -120,8 +174,15 @@ std::vector<ShaderDiagnostic> MaterialShaderRegistry::located(std::string_view o
     std::vector<ShaderDiagnostic> out = parse_slang_diagnostics(output);
     bool unresolved = false;
     for (ShaderDiagnostic& d : out) {
-        d.file = shorten_paths(d.file);
-        d.message = shorten_paths(d.message);
+        const std::string printed = d.file;
+        d.file = display_printed(printed);
+        d.message = shorten_paths(std::move(d.message));
+        if (d.file != printed) { // the message may quote the file as printed
+            for (std::size_t pos = d.message.find(printed); pos != std::string::npos;
+                 pos = d.message.find(printed, pos + d.file.size())) {
+                d.message.replace(pos, printed.size(), d.file);
+            }
+        }
         unresolved = unresolved || d.message.find("unresolved external symbol") != std::string::npos;
     }
     if (unresolved) {
