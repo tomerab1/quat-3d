@@ -54,6 +54,14 @@ public float gtao_specular_occlusion(float3 bent_normal, float visibility, float
     return saturate(cap_intersection(cos_vis, cos_spec, dot(bent_normal, r)) / max(spec_cap, 1e-4));
 }
 
+// A one-sided depth slope still counts as the texel's own surface while its
+// second difference (how much the slope changes over the next texel) stays
+// within this fraction of the slope itself: a curve that bends by less than
+// a factor of 1.5 per texel, such as a sphere's limb seen edge-on, keeps its
+// ramp. Anything sharper is a depth edge (a jump over one texel has a second
+// difference equal to the jump) and gets no ramp.
+static const float CONTACT_CURVE_LIMIT = 0.5;
+
 // Depth texel `p`, background (1) outside the image.
 float depth_texel(Texture2D depth, int2 p, int2 last) {
     if (any(p < 0) || any(p > last)) {
@@ -70,8 +78,9 @@ float depth_texel(Texture2D depth, int2 p, int2 last) {
 // the texel: keep the side whose next texel continues the same surface, the
 // one-sided difference with the smaller second difference on its own side
 // (as in Y. Wu's depth-buffer normal reconstruction), so the slope never
-// spans the edge. A texel that neither side continues (a feature one pixel
-// thin) gets slope 0: its own depth, never a ramp toward what is behind it.
+// spans the edge. That side is accepted within CONTACT_CURVE_LIMIT; a texel
+// that neither side continues (a feature one pixel thin) gets slope 0: its
+// own depth, never a ramp toward what is behind it.
 float depth_slope(Texture2D depth, int2 texel, int2 axis, int2 last, float dm, float d0,
                   float dp, float tol) {
     bool vm = all(texel - axis >= 0) && dm < 1.0;
@@ -97,7 +106,7 @@ float depth_slope(Texture2D depth, int2 texel, int2 axis, int2 last, float dm, f
     }
     float slope = back_curve <= fwd_curve ? back : fwd;
     float curve = min(back_curve, fwd_curve);
-    return curve <= max(tol, 0.5 * abs(slope)) ? slope : 0.0;
+    return curve <= max(tol, CONTACT_CURVE_LIMIT * abs(slope)) ? slope : 0.0;
 }
 
 // Contact shadow: 1 = lit, 0 = a short ray toward the sun hits the depth
@@ -116,7 +125,8 @@ float depth_slope(Texture2D depth, int2 texel, int2 axis, int2 last, float dm, f
 // dotted halo (#86). The planarity tolerance is relative to d + A = B / w,
 // the reciprocal view distance: 1e-3 of it is a depth step of 0.1 % of the
 // distance, the same as the self-hit guard below, plus ~16 ulps of a D32
-// depth near 1.
+// depth near 1. Standard Z is assumed (cleared to 1, background d >= 1): the
+// background tests here and in depth_slope flip for reversed Z.
 public float contact_shadow(Texture2D depth, SamplerState point_sampler, uint2 size,
                             float4 clip0, float4 clip1, float2 depth_lin, uint steps,
                             float thickness, float noise) {
