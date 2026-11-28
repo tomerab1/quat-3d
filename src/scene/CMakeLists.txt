@@ -25,7 +25,8 @@ add_library(engine_scene STATIC
     scene_io.cpp
     scene_references.cpp
     component_json.cpp
-    component_json_physics.cpp
+    component_json_common.cpp
+    component_registry.cpp
     lens_json.cpp
     particle_json.cpp
     script_component.cpp
@@ -68,6 +69,16 @@ target_link_libraries(engine_scene PRIVATE fastgltf::fastgltf engine_gltf_io)
 target_include_directories(engine_scene SYSTEM PRIVATE ${Stb_INCLUDE_DIR})
 target_include_directories(engine_scene PRIVATE ${PROJECT_SOURCE_DIR}/src)
 target_include_directories(engine_scene PUBLIC ${ENGINE_PUBLIC_INCLUDE})
+# Codec components (ROADMAP S9): one file per component in codec/, each
+# defining engine::scene::codec::register_<file stem>(ComponentRegistry&). The
+# call list is generated from the directory: a new component is a new file.
+quat_generate_registration(engine_scene
+    DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/codec
+    PATTERN   "*.cpp"
+    TEMPLATE  ${CMAKE_CURRENT_SOURCE_DIR}/engine_components.cpp.in
+    OUTPUT    ${CMAKE_CURRENT_BINARY_DIR}/generated/engine_components.cpp
+    DECLARE   "[[nodiscard]] std::expected<void, core::Error> register_@NAME@(ComponentRegistry& registry)"
+    CALL      "    keep_first(codec::register_@NAME@(registry))")
 
 # engine_gltf_io — glTF parse + validation, EXT_meshopt_compression decoding
 # and buffer access (src/scene/gltf/gltf_io.hpp): fastgltf only, no ECS or

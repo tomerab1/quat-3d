@@ -1,0 +1,148 @@
+// Codec component `instanced_mesh`: Many placements of one model (glTF or primitive shape), drawn instanced.
+// Registered by the generated engine_components.cpp (ROADMAP S9); see
+// include/engine/scene/component_registry.hpp and src/scene/codec/README.md.
+
+#define GLM_ENABLE_EXPERIMENTAL
+#include <expected>
+#include <glm/gtc/quaternion.hpp>
+#include <glm/gtx/euler_angles.hpp>
+#include <string>
+#include <string_view>
+#include <utility>
+
+#include "engine/core/json_fields.hpp"
+#include "engine/scene/component_registry.hpp"
+#include "engine/scene/components.hpp"
+#include "engine/scene/instanced_mesh.hpp"
+#include "scene/component_json_internal.hpp"
+
+namespace engine::scene::codec {
+
+namespace {
+
+using namespace detail;
+using core::EnumName;
+using core::JsonFields;
+
+[[nodiscard]] json encode_instance(const InstanceTransform& t) {
+    float yaw = 0.0F;
+    float pitch = 0.0F;
+    float roll = 0.0F;
+    glm::extractEulerAngleYXZ(glm::mat4_cast(t.rotation), yaw, pitch, roll);
+    json out = {{"position", vec3_json(t.position)},
+                {"rotation", vec3_json(glm::degrees(glm::vec3(pitch, yaw, roll)))}};
+    if (t.scale.x == t.scale.y && t.scale.x == t.scale.z) {
+        out["scale"] = t.scale.x;
+    } else {
+        out["scale"] = vec3_json(t.scale);
+    }
+    return out;
+}
+
+// One placement: {position, rotation (Euler degrees, YXZ), scale (number or
+// [x, y, z])} with identity defaults, or a bare [x, y, z] position.
+[[nodiscard]] std::expected<InstanceTransform, core::Error>
+decode_instance(const json& v, const std::string& where, bool strict) {
+    InstanceTransform t;
+    if (v.is_array()) {
+        if (!JsonFields::read_vec3(v, t.position)) {
+            return std::unexpected(core::Error{where + ": expected [x, y, z] or an object"});
+        }
+        return t;
+    }
+    JsonFields f(v, where, strict);
+    glm::vec3 rotation_deg(0.0F);
+    f.vec3("position", t.position).vec3("rotation", rotation_deg);
+    f.known({"scale"});
+    if (const json* sc = f.raw("scale")) {
+        float uniform = 0.0F;
+        if (JsonFields::read_float(*sc, uniform)) {
+            t.scale = glm::vec3(uniform);
+        } else if (!JsonFields::read_vec3(*sc, t.scale)) {
+            f.fail("scale", "expected a number or [x, y, z]");
+        }
+    }
+    if (auto ok = f.finish(); !ok) return std::unexpected(ok.error());
+    if (glm::any(glm::lessThan(glm::abs(t.scale), glm::vec3(1e-6F)))) {
+        return std::unexpected(core::Error{where + ".scale: components must be non-zero"});
+    }
+    const glm::vec3 r = glm::radians(rotation_deg);
+    t.rotation = glm::normalize(glm::quat_cast(glm::eulerAngleYXZ(r.y, r.x, r.z)));
+    return t;
+}
+
+} // namespace
+
+std::expected<void, core::Error> register_instanced_mesh(ComponentRegistry& registry) {
+    ComponentCodec codec{.name = "instanced_mesh",
+                         .summary = "Many placements of one model (glTF or primitive shape), drawn instanced",
+                         .addable = true,
+                         .writable = true,
+                         .order = 400};
+    codec.encode = [](const entt::registry& r, entt::entity e, const EncodeOptions& /*options*/) {
+        json out;
+        const auto* m = &r.get<InstancedMesh>(e);
+        json j = primitive_fields_json(m->primitive);
+        j["gltf"] = m->gltf_path;
+        j["node"] = m->gltf_node;
+        j["cast_shadows"] = m->cast_shadows;
+        j["instance_count"] = m->instances.size();
+        // A scatter regenerates the placements: they are derived data, not
+        // part of the entity's description (and can number in the tens of
+        // thousands).
+        if (!r.all_of<Scatter>(e)) {
+            json list = json::array();
+            for (const InstanceTransform& t : m->instances) list.push_back(encode_instance(t));
+            j["instances"] = std::move(list);
+        }
+        out["instanced_mesh"] = std::move(j);
+        return std::move(out["instanced_mesh"]);
+    };
+    codec.apply = [](entt::registry& r, entt::entity e, const json& v, bool strict)
+        -> std::expected<void, core::Error> {
+        constexpr std::string_view name = "instanced_mesh";
+        const bool scattered = r.all_of<Scatter>(e);
+        return merge<InstancedMesh>(r, e, v, name, strict, [&](JsonFields& f, InstancedMesh& m) {
+            read_primitive_fields(f, m.primitive);
+            f.string("gltf", m.gltf_path, k_max_asset_path).string("node", m.gltf_node, 1024);
+            check_project_path(f, "gltf", m.gltf_path);
+            f.boolean("cast_shadows", m.cast_shadows);
+            f.known({"instance_count", "instances"});
+            (void)f.raw("instance_count"); // echoed back by encode; ignored on input
+            const json* list = f.raw("instances");
+            if (list == nullptr || list->is_null()) return;
+            if (scattered) {
+                f.fail("instances", "generated by the entity's scatter (remove the scatter to "
+                                    "place instances by hand)");
+                return;
+            }
+            if (!list->is_array() || list->size() > k_max_instances) {
+                f.fail("instances", "expected an array of at most " +
+                                        std::to_string(k_max_instances) + " placements");
+                return;
+            }
+            std::vector<InstanceTransform> placed;
+            placed.reserve(list->size());
+            for (std::size_t i = 0; i < list->size(); ++i) {
+                auto t = decode_instance((*list)[i],
+                                         "instanced_mesh.instances[" + std::to_string(i) + "]",
+                                         strict);
+                if (!t) {
+                    f.fail("instances", t.error().message);
+                    return;
+                }
+                placed.push_back(*t);
+            }
+            m.instances = std::move(placed);
+        });
+    };
+    codec.remove = [](entt::registry& r, entt::entity e) {
+        // A scatter without a mesh would re-add a default one: it goes too.
+        const bool had = r.remove<InstancedMesh>(e) > 0;
+        if (had) r.remove<InstancedMeshParts, Scatter>(e);
+        return had;
+    };
+    return registry.add(typed_codec<InstancedMesh>(std::move(codec)));
+}
+
+} // namespace engine::scene::codec

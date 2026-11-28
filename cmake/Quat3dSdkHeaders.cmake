@@ -35,6 +35,7 @@ set(QUAT3D_SDK_STABLE_HEADERS
     engine/scene/camera_framing.hpp
     engine/scene/camera_rig.hpp
     engine/scene/component_json.hpp
+    engine/scene/component_registry.hpp
     engine/scene/components.hpp
     engine/scene/ground_placement.hpp
     engine/scene/navigation.hpp

@@ -202,6 +202,7 @@ set(ENGINE_PUBLIC_INCLUDE
 # defining its own libraries, sources and links. The order is the build's
 # definition order (the SDK's derived library list follows it).
 # ---------------------------------------------------------------------------
+include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/QuatRegistration.cmake)
 add_subdirectory(src/core)
 add_subdirectory(src/project)
 add_subdirectory(src/input)
