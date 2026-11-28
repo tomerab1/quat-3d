@@ -377,6 +377,12 @@ void FrameRenderer::recreate_render_finished() {
 }
 
 bool FrameRenderer::ensure_swapchain(VkExtent2D pixel_extent) {
+    // Also rebuild when the window's pixel size moved without an event the
+    // loop saw (a density change can arrive before or without one).
+    const VkExtent2D built_for = swapchain_->requested_extent();
+    if (pixel_extent.width != built_for.width || pixel_extent.height != built_for.height) {
+        needs_recreate_ = true;
+    }
     if (!needs_recreate_) return true;
     if (auto r = swapchain_->recreate(pixel_extent); !r) {
         std::fprintf(stderr, "[fatal] swapchain recreate failed: %s\n",

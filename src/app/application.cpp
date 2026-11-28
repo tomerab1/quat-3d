@@ -96,7 +96,13 @@ bool Application::init_platform() {
     }
     platform_.sdl_initialized = true;
 
-    SDL_WindowFlags flags = SDL_WINDOW_RESIZABLE | SDL_WINDOW_VULKAN;
+    // HIGH_PIXEL_DENSITY: on Retina Macs and scaled Wayland outputs the
+    // framebuffer gets every physical pixel (SDL_GetWindowSizeInPixels is
+    // the window's point size x its pixel density); without it the OS
+    // renders the window at 1x and upscales it, blurring the scene and the
+    // UI. On Windows and X11 windows are already sized in pixels.
+    SDL_WindowFlags flags =
+        SDL_WINDOW_RESIZABLE | SDL_WINDOW_VULKAN | SDL_WINDOW_HIGH_PIXEL_DENSITY;
     if (config_.fullscreen) flags |= SDL_WINDOW_FULLSCREEN;
     platform_.window = SDL_CreateWindow(config_.window_title.c_str(), config_.window_width,
                                         config_.window_height, flags);
@@ -398,7 +404,12 @@ bool Application::pump_events() {
         case SDL_EVENT_KEY_DOWN:
             if (event.key.key == SDLK_ESCAPE) running = false;
             break;
+        // A resize, or a move between displays of different density (Retina
+        // <-> standard): the framebuffer's pixel size changes even when the
+        // window's point size does not.
         case SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED:
+        case SDL_EVENT_WINDOW_DISPLAY_SCALE_CHANGED:
+        case SDL_EVENT_WINDOW_DISPLAY_CHANGED:
             renderer_.request_swapchain_recreate();
             break;
         case SDL_EVENT_MOUSE_BUTTON_DOWN:
