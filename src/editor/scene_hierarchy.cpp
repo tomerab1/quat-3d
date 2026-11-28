@@ -12,11 +12,12 @@
 
 #include "engine/scene/components.hpp"
 #include "engine/scene/scene.hpp"
-#include "scene_snapshot.hpp"
+#include "engine/scene/scene_snapshot.hpp"
 #include "shell/scene_actions.hpp"
 #include "ui/fonts.hpp"
 #include "ui/icons.hpp"
 #include "ui/metrics.hpp"
+#include "ui/toasts.hpp"
 #include "ui/widgets.hpp"
 
 namespace engine::editor {
@@ -53,6 +54,18 @@ entt::entity create_menu(scene::Scene& scene, entt::entity parent, const glm::ve
         }
     }
     return created;
+}
+
+// Re-parents keeping the world pose; tells the user when a zero-scaled
+// parent cannot hold it (the drop is refused).
+void reparent(scene::Scene& scene, entt::entity child, entt::entity parent) {
+    if (shell::reparent_keep_world(scene, child, parent) ==
+        shell::ReparentResult::singular_parent) {
+        ui::notify(ui::ToastKind::warning,
+                   "Cannot move \"" + entity_label(scene.registry(), child) + "\" under \"" +
+                       entity_label(scene.registry(), parent) +
+                       "\": its scale is zero, so the entity could not keep its place");
+    }
 }
 
 struct RowContext {
@@ -98,12 +111,14 @@ void row_context_menu(RowContext& ctx, entt::entity e) {
         begin_rename(ctx.state, ctx.scene, e);
     }
     if (ImGui::MenuItem(ui::label(icon::copy, "Duplicate").c_str(), "Ctrl+D")) {
-        if (const entt::entity c = duplicate_entity(ctx.scene, e); c != entt::null) ctx.selected = c;
+        if (const entt::entity c = scene::duplicate_entity(ctx.scene, e); c != entt::null) {
+            ctx.selected = c;
+        }
         ctx.mutated = true;
     }
     if (ctx.scene.registry().all_of<scene::Parent>(e) &&
         ImGui::MenuItem(ui::label(icon::arrow_up, "Unparent").c_str())) {
-        (void)shell::reparent_keep_world(ctx.scene, e, entt::null);
+        reparent(ctx.scene, e, entt::null);
         ctx.mutated = true;
     }
     ImGui::Separator();
@@ -131,7 +146,7 @@ void drag_and_drop(RowContext& ctx, entt::entity e, const std::string& label) {
             std::memcpy(&id, p->Data, sizeof(id));
             const auto dragged = static_cast<entt::entity>(id);
             if (ctx.scene.registry().valid(dragged) && dragged != e) {
-                (void)shell::reparent_keep_world(ctx.scene, dragged, e);
+                reparent(ctx.scene, dragged, e);
                 ctx.mutated = true;
             }
         }
@@ -325,7 +340,7 @@ void draw_scene_hierarchy(scene::Scene& scene, entt::entity& selected, Hierarchy
                 std::uint32_t id = 0;
                 std::memcpy(&id, p->Data, sizeof(id));
                 const auto dragged = static_cast<entt::entity>(id);
-                if (r.valid(dragged)) (void)shell::reparent_keep_world(scene, dragged, entt::null);
+                if (r.valid(dragged)) reparent(scene, dragged, entt::null);
             }
             ImGui::EndDragDropTarget();
         }

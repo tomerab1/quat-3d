@@ -1,0 +1,1 @@
+The Lua gameplay scripting reference (docs/scripting.md): script files and callbacks, the entity / scene / physics / input / time / log API, math types, limits, sandbox, properties and hot reload. Read it before writing a script.

@@ -115,9 +115,13 @@ constexpr std::array k_fields = {
     return nullptr;
 }
 
-[[nodiscard]] std::uint64_t override_hash(const MaterialOverride& o, asset::AssetId base) {
+// What a derived material is built from: the base asset, the base's material
+// shader (A6; the derived copy draws with it) and the overridden fields.
+[[nodiscard]] std::uint64_t override_hash(const MaterialOverride& o, asset::AssetId base,
+                                          std::string_view shader) {
     Fnv64 h;
     h.u64(base.value);
+    h.str(shader);
     h.u32(o.mask);
     for (const MaterialFieldInfo& f : k_fields) {
         if ((o.mask & f.bit) == 0) continue;
@@ -391,7 +395,9 @@ const asset::MaterialAsset* MaterialOverrideStore::drawn(const entt::registry& r
     const Entry& entry = it->second;
     // Stale (edited since the last resolve, or another entity reusing the id):
     // the base until resolve() catches up.
-    if (entry.base != base_id || entry.hash != override_hash(*o, base_id)) return base;
+    if (entry.base != base_id || entry.hash != override_hash(*o, base_id, base->shader)) {
+        return base;
+    }
     return entry.material.get();
 }
 
@@ -404,7 +410,7 @@ bool MaterialOverrideStore::needs_resolve(const entt::registry& r) const {
         const auto it = state_->entries.find(e);
         const asset::AssetId base = mr.material.id();
         if (it == state_->entries.end() || it->second.base != base ||
-            it->second.hash != override_hash(o, base)) {
+            it->second.hash != override_hash(o, base, mr.material->shader)) {
             return true;
         }
     }
@@ -431,11 +437,11 @@ MaterialOverrideStore::resolve(entt::registry& r, rhi::GpuAllocator& allocator,
     for (auto [e, mr, o] : r.view<const MeshRenderer, const MaterialOverride>().each()) {
         if (o.mask == 0 || !mr.material.valid()) continue;
         const asset::AssetId base_id = mr.material.id();
-        const std::uint64_t hash = override_hash(o, base_id);
+        const asset::MaterialAsset& base = *mr.material;
+        const std::uint64_t hash = override_hash(o, base_id, base.shader);
         Entry& entry = st.entries[e];
         if (entry.hash == hash && entry.base == base_id && entry.hash != 0) continue;
 
-        const asset::MaterialAsset& base = *mr.material;
         auto derived = asset::derive_material(base, apply_material_override(base.params, o),
                                               allocator, transfer);
         st.retire(std::move(entry.material), frame);

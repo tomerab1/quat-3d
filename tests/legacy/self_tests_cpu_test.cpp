@@ -12,7 +12,7 @@
 #include "support/expect_ok.hpp"
 
 #ifdef ENGINE_EDITOR
-#include "editor/scene_snapshot.hpp"
+#include "engine/scene/scene_snapshot.hpp"
 #endif
 
 namespace scn = engine::scene;
@@ -20,7 +20,7 @@ namespace scn = engine::scene;
 TEST(Scene, Ecs) { ASSERT_OK(scn::run_ecs_self_test()); }
 TEST(Scene, Systems) { ASSERT_OK(scn::run_scene_self_test()); }
 #ifdef ENGINE_EDITOR
-TEST(Editor, PlayModeSnapshot) { ASSERT_OK(engine::editor::run_scene_snapshot_self_test()); }
+TEST(Editor, PlayModeSnapshot) { ASSERT_OK(engine::scene::run_scene_snapshot_self_test()); }
 #endif
 
 TEST(Animation, SkeletonLoad) { ASSERT_OK(scn::run_skeleton_load_self_test()); }

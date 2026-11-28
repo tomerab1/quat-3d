@@ -32,7 +32,8 @@ constexpr std::size_t k_max_pending_shots = 8;
 
 } // namespace
 
-void ScreenshotCapture::request(std::uint32_t max_size, remote::Responder responder) {
+void ScreenshotCapture::request(const remote::ScreenshotRequest& req,
+                                remote::Responder responder) {
     std::size_t in_flight = pending.size() + encodings.size();
     for (const Slot& s : slots) in_flight += s.waiting.size();
     if (in_flight >= k_max_pending_shots) {
@@ -40,7 +41,18 @@ void ScreenshotCapture::request(std::uint32_t max_size, remote::Responder respon
                                          "too many screenshots in flight; retry shortly"));
         return;
     }
-    pending.push_back({max_size, std::move(responder)});
+    pending.push_back({req.max_size, std::move(responder), req.camera, next_id++});
+}
+
+std::optional<remote::CameraPose> ScreenshotCapture::begin_frame() {
+    frame_view = 0;
+    for (const PendingShot& p : pending) {
+        if (p.view) {
+            frame_view = p.id;
+            return p.view;
+        }
+    }
+    return std::nullopt;
 }
 
 void ScreenshotCapture::finish_encodings() {
@@ -69,12 +81,24 @@ void ScreenshotCapture::record(VkCommandBuffer cmd, std::uint32_t slot_index,
     if (pending.empty() || slot_index >= slots.size()) return;
     Slot& slot = slots[slot_index];
     if (!slot.waiting.empty()) return; // on_frame_complete not run yet: next frame
+    // The requests this frame was rendered for: the one whose camera it used,
+    // or every viewport request when it used the viewport camera.
+    std::vector<PendingShot> taken;
+    for (auto it = pending.begin(); it != pending.end();) {
+        const bool match = frame_view == 0 ? !it->view.has_value() : it->id == frame_view;
+        if (match) {
+            taken.push_back(std::move(*it));
+            it = pending.erase(it);
+        } else {
+            ++it;
+        }
+    }
+    if (taken.empty()) return;
     const std::optional<bool> bgra = is_bgra(src.format);
     const auto fail_pending = [&](const std::string& why) {
-        for (PendingShot& p : pending) {
+        for (PendingShot& p : taken) {
             p.responder.reply(remote::rpc_fail(remote::rpc_code::failed, "screenshot: " + why));
         }
-        pending.clear();
     };
     if (!bgra || src.image == VK_NULL_HANDLE || src.extent.width == 0 || src.extent.height == 0) {
         fail_pending("the frame's colour format is not 8-bit RGBA/BGRA");
@@ -146,8 +170,7 @@ void ScreenshotCapture::record(VkCommandBuffer cmd, std::uint32_t slot_index,
 
     slot.extent = src.extent;
     slot.bgra = *bgra;
-    slot.waiting = std::move(pending);
-    pending.clear();
+    slot.waiting = std::move(taken);
 }
 
 void ScreenshotCapture::on_frame_complete(std::uint32_t slot_index) {

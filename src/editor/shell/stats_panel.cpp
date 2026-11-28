@@ -13,6 +13,7 @@
 #include "../ui/metrics.hpp"
 #include "../ui/widgets.hpp"
 #include "editor_shell.hpp"
+#include "../script_inspector.hpp"
 
 namespace engine::editor::shell {
 
@@ -109,6 +110,7 @@ void draw_stats_panel(EditorShell& shell) {
     } else {
         ui::text_colored(ui::tokens().text_disabled, "Shader hot reload is off");
     }
+    draw_script_status(ctx.scripts); // G7: per-file script state
     ImGui::End();
 }
 

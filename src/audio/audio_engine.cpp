@@ -15,6 +15,7 @@
 #include <miniaudio.h>
 
 #include "engine/core/path_confine.hpp"
+#include "engine/core/utf8_path.hpp"
 
 namespace engine::audio {
 
@@ -200,7 +201,7 @@ std::expected<AudioEngine, core::Error> AudioEngine::create(const AudioEngineCon
     }
     impl.engine_ready = true;
     impl.has_device = !config.no_device;
-    impl.asset_root = std::filesystem::path(config.asset_root);
+    impl.asset_root = config.asset_root;
     impl.max_decoded_clip_bytes = config.max_decoded_clip_bytes;
 
     // Sub-mix buses, each feeding the engine endpoint (= the master bus).

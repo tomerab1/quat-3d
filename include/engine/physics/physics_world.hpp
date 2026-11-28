@@ -141,12 +141,27 @@ public:
     [[nodiscard]] bool character_on_ground(std::uint32_t character) const;
 
     // Trigger (sensor) overlap events recorded during the most recent update().
-    // Valid until the next update() call.
+    // Valid until the next update() call. A character controller takes part
+    // through its inner body, which overlaps sensors only (no physical
+    // response); body_owner() maps it to the character's owner.
     [[nodiscard]] std::span<const TriggerEvent> trigger_events() const;
 
+    // The owner a body was created with (a character's owner for its inner
+    // body); no_owner for unowned or unknown bodies.
+    [[nodiscard]] std::uint32_t body_owner(std::uint32_t body) const;
+
+    // ---- Dynamic body control (gameplay scripts) ---------------------------
+    // No-ops unless `body` is a live dynamic body. The impulse is in N·s
+    // (kg·m/s) and wakes the body.
+    [[nodiscard]] bool is_dynamic(std::uint32_t body) const;
+    void add_impulse(std::uint32_t body, const glm::vec3& impulse);
+    void set_linear_velocity(std::uint32_t body, const glm::vec3& velocity);
+    [[nodiscard]] glm::vec3 linear_velocity(std::uint32_t body) const;
+
     // ---- Queries (debugging, gameplay) -------------------------------------
-    // Bodies in the simulation (all kinds, terrain included) and how many of
-    // them are awake (active rigid bodies).
+    // Bodies in the simulation (all kinds, terrain included; not the
+    // characters' inner bodies) and how many of them are awake (active rigid
+    // bodies).
     [[nodiscard]] std::uint32_t body_count() const;
     [[nodiscard]] std::uint32_t active_body_count() const;
     // Live character controllers.

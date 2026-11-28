@@ -201,7 +201,8 @@ bool prop_float(const char* text, float& v, const DragSpec& spec, const PropOpts
         if (spec.slider && spec.min < spec.max) {
             return slider_float("##v", &v, spec.min, spec.max, spec.format);
         }
-        return ImGui::DragFloat("##v", &v, spec.speed, spec.min, spec.max, spec.format);
+        return ImGui::DragFloat("##v", &v, spec.speed, spec.min, spec.max, spec.format,
+                                spec.clamp ? ImGuiSliderFlags_AlwaysClamp : 0);
     });
 }
 
@@ -279,6 +280,13 @@ bool slider_int(const char* id, int* v, int min, int max, const char* format,
                        [&] { return ImGui::SliderInt(id, v, min, max, format, flags); });
 }
 
+bool swatch_text_is_dark(Rgba color) {
+    const Rgba shown{std::clamp(color.r, 0.0F, 1.0F), std::clamp(color.g, 0.0F, 1.0F),
+                     std::clamp(color.b, 0.0F, 1.0F), 1.0F};
+    // Black (L = 0) and white (L = 1) give equal contrast at L ~ 0.179.
+    return relative_luminance(shown) > 0.1791F;
+}
+
 bool color_field(const char* id, float* rgba, bool alpha, bool hdr) {
     ImGui::PushID(id);
     ImGuiColorEditFlags flags = ImGuiColorEditFlags_Float | ImGuiColorEditFlags_AlphaPreviewHalf;
@@ -302,19 +310,18 @@ bool color_field(const char* id, float* rgba, bool alpha, bool hdr) {
                       static_cast<double>(rgba[1]), static_cast<double>(rgba[2]));
     }
     // The swatch shows the colour as stored (clamped, over the half
-    // checkerboard when translucent): pick black or white text by WCAG
-    // contrast against it, on a translucent backing of the other so the
-    // values stay readable over any colour and the checkerboard.
-    const Rgba shown{std::clamp(col.x, 0.0F, 1.0F), std::clamp(col.y, 0.0F, 1.0F),
-                     std::clamp(col.z, 0.0F, 1.0F), 1.0F};
-    constexpr Rgba black{0.06F, 0.07F, 0.08F, 1.0F};
-    constexpr Rgba white{0.96F, 0.97F, 0.98F, 1.0F};
-    const bool dark_text = contrast_ratio(black, shown) >= contrast_ratio(white, shown);
+    // checkerboard when translucent): black or white text by the swatch's
+    // luminance, on a translucent backing of the other so the values stay
+    // readable over any colour and the checkerboard.
+    const bool dark_text = swatch_text_is_dark({col.x, col.y, col.z, 1.0F});
+    constexpr Rgba black{0.0F, 0.0F, 0.0F, 1.0F};
+    constexpr Rgba white{1.0F, 1.0F, 1.0F, 1.0F};
     const ImVec2 ts = ImGui::CalcTextSize(text);
     const float pad = scaled(Spacing::xs);
     if (ts.x + pad * 3.0F < max.x - min.x) {
         ImDrawList* dl = ImGui::GetWindowDrawList();
-        const ImVec2 tp(min.x + pad * 1.5F, min.y + (max.y - min.y - ts.y) * 0.5F);
+        const ImVec2 tp(std::round(min.x + pad * 1.5F),
+                        std::round(min.y + (max.y - min.y - ts.y) * 0.5F));
         dl->AddRectFilled(ImVec2(tp.x - pad * 0.5F, tp.y - scaled(1.0F)),
                           ImVec2(tp.x + ts.x + pad * 0.5F, tp.y + ts.y + scaled(1.0F)),
                           to_u32(with_alpha(dark_text ? white : black, 0.55F)),

@@ -16,6 +16,8 @@
 #include "audio_inspector.hpp"
 #include "behavior_panel.hpp"
 #include "grass_inspector.hpp"
+#include "particle_inspector.hpp"
+#include "script_inspector.hpp"
 #include "tuning_panels.hpp"
 #include "engine/editor/editor.hpp"
 #include "engine/scene/behavior.hpp"
@@ -130,6 +132,31 @@ struct ComponentInspector<scene::Grass> {
     static constexpr const char* codec = "grass";
     static constexpr const char* icon = icon::sprout;
     static void draw(entt::registry&, entt::entity, scene::Grass& grass) { draw_grass(grass); }
+};
+
+// GPU particles (R10.3): the emitter's own editor (plain ImGui widgets, no
+// property grid).
+template <>
+struct ComponentInspector<scene::ParticleEmitter> {
+    static constexpr const char* title = "Particle Emitter";
+    static constexpr const char* codec = "particle_emitter";
+    static constexpr const char* icon = icon::sparkles;
+    static void draw(entt::registry&, entt::entity, scene::ParticleEmitter& emitter) {
+        draw_particle_emitter(emitter);
+    }
+};
+
+// Gameplay script (G7): file, enable, status and the file's declared
+// properties (read from the script runtime).
+template <>
+struct ComponentInspector<scene::Script> {
+    static constexpr const char* title = "Script";
+    static constexpr const char* codec = "script";
+    static constexpr const char* icon = icon::file_code;
+    static void draw(entt::registry&, entt::entity, scene::Script& script,
+                     const panels::InspectorState& state) {
+        draw_script_fields(script, state.scripts);
+    }
 };
 
 template <>
@@ -530,11 +557,13 @@ void draw_inspector(scene::Scene& scene, entt::entity selected, panels::Inspecto
     inspect<scene::FootIK>(state, r, selected, true);
     inspect<scene::Terrain>(state, r, selected, true);
     inspect<scene::Grass>(state, r, selected, true);
+    inspect<scene::ParticleEmitter>(state, r, selected, true);
     inspect<scene::InstancedMesh>(state, r, selected, true); // removal takes parts + scatter
     inspect<scene::Scatter>(state, r, selected, true);
     inspect<scene::NavAgent>(state, r, selected, true);
     inspect<scene::BehaviorTree>(state, r, selected, true);
     inspect<scene::PatrolRoute>(state, r, selected, true);
+    inspect<scene::Script>(state, r, selected, true);
     inspect<scene::Collider>(state, r, selected, true);
     inspect<scene::RigidBody>(state, r, selected, true);
     inspect<scene::AudioSource>(state, r, selected, true);

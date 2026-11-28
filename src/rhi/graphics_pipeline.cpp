@@ -157,6 +157,12 @@ GraphicsPipeline::create(const Device& device, VkPipelineCache cache, const Crea
     }
     std::vector<VkPipelineColorBlendAttachmentState> blend_attachments(
         info.color_formats.size(), blend_template);
+    if (!info.blend_attachments.empty()) {
+        if (info.blend_attachments.size() != info.color_formats.size()) {
+            return fail("GraphicsPipeline::create: blend_attachments must match color_formats");
+        }
+        blend_attachments.assign(info.blend_attachments.begin(), info.blend_attachments.end());
+    }
 
     VkPipelineColorBlendStateCreateInfo color_blend{};
     color_blend.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;

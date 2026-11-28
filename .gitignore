@@ -11,6 +11,9 @@
 # Downloaded glTF test models (Khronos sample assets — fetched on demand, not committed)
 /sample-assets/
 
+# CC0 models quat-mcp's asset_fetch downloads from Poly Haven (fetched on demand)
+/assets/meshes/polyhaven/
+
 # vcpkg
 /vcpkg_installed/
 /vcpkg/

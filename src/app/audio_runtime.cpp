@@ -10,7 +10,7 @@
 
 namespace quat::app {
 
-AudioRuntime AudioRuntime::create(const std::string& asset_root) {
+AudioRuntime AudioRuntime::create(const std::filesystem::path& asset_root) {
     AudioRuntime out;
     engine::audio::AudioEngineConfig config;
     config.asset_root = asset_root;

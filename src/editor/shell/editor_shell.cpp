@@ -15,7 +15,7 @@
 #include "../panels/console.hpp"
 #include "../physics_debug.hpp"
 #include "../scene_hierarchy.hpp"
-#include "../scene_snapshot.hpp"
+#include "engine/scene/scene_snapshot.hpp"
 #include "../tuning_panels.hpp"
 #include "../ui/icons.hpp"
 #include "../ui/toasts.hpp"
@@ -64,12 +64,17 @@ EditorShell::~EditorShell() = default;
 
 void EditorShell::force_theme(ui::ThemeId theme) {
     appearance_.set_theme(theme);
-    theme_forced_ = true;
+    theme_pref_.forced = true;
+}
+
+void EditorShell::choose_theme(ui::ThemeId theme) {
+    appearance_.set_theme(theme);
+    theme_pref_.forced = false;
 }
 
 EditorPrefs EditorShell::prefs() const {
     EditorPrefs p;
-    p.light_theme = appearance_.theme_id() == ui::ThemeId::light;
+    p.light_theme = theme_to_save(theme_pref_, appearance_.theme_id() == ui::ThemeId::light);
     p.panel_open = panel_open;
     p.snap_enabled = snap.enabled;
     p.snap_move = snap.translate;
@@ -82,7 +87,8 @@ EditorPrefs EditorShell::prefs() const {
 }
 
 void EditorShell::apply_prefs(const EditorPrefs& p) {
-    if (!theme_forced_) {
+    theme_pref_.saved_light = p.light_theme;
+    if (!theme_pref_.forced) {
         appearance_.set_theme(p.light_theme ? ui::ThemeId::light : ui::ThemeId::dark);
     }
     panel_open = p.panel_open;
@@ -211,7 +217,7 @@ void EditorShell::register_commands() {
     c.add({.id = "edit.duplicate", .label = "Duplicate", .category = "Edit", .icon = icon::copy,
            .shortcut = ImGuiMod_Ctrl | ImGuiKey_D, .scope = ShortcutScope::selection,
            .enabled = selection_ok, .action = [this] {
-               const entt::entity copy = duplicate_entity(*ctx->scene, selected);
+               const entt::entity copy = scene::duplicate_entity(*ctx->scene, selected);
                if (copy != entt::null) selected = copy;
            }});
     c.add({.id = "edit.delete", .label = "Delete", .category = "Edit", .icon = icon::trash_2,
@@ -256,11 +262,11 @@ void EditorShell::register_commands() {
            }});
     c.add({.id = "view.theme.dark", .label = "Dark Theme", .category = "View", .icon = icon::moon,
            .checked = [this] { return appearance_.theme_id() == ui::ThemeId::dark; },
-           .action = [this] { appearance_.set_theme(ui::ThemeId::dark); }});
+           .action = [this] { choose_theme(ui::ThemeId::dark); }});
     c.add({.id = "view.theme.light", .label = "Light Theme", .category = "View",
            .icon = icon::sun_medium,
            .checked = [this] { return appearance_.theme_id() == ui::ThemeId::light; },
-           .action = [this] { appearance_.set_theme(ui::ThemeId::light); }});
+           .action = [this] { choose_theme(ui::ThemeId::light); }});
     c.add({.id = "view.viewport_stats", .label = "Viewport Statistics", .category = "View",
            .icon = icon::activity, .checked = [this] { return show_viewport_stats; },
            .action = [this] { show_viewport_stats = !show_viewport_stats; }});
@@ -394,6 +400,7 @@ void EditorShell::draw_panels() {
     const EditorContext& c = *ctx;
     const auto open = [this](Panel p) { return &panel_open[static_cast<std::size_t>(p)]; };
     draw_viewport(*this);
+    inspector.scripts = c.scripts; // a Script's declared properties (G7)
     if (c.scene != nullptr) draw_inspector(*c.scene, selected, inspector, open(Panel::inspector));
     if (c.renderer != nullptr) draw_renderer_panel(*c.renderer, c.scene);
     if (c.scene != nullptr) {

@@ -1,1 +1,1 @@
-List entities: `{total, entities:[{id, name, parent, components, world_position}]}`. Filter by name substring or by component; page with `limit` (default 100) and `offset`. Use the returned ids to reference entities.
+List entities: `{total, entities:[{id, name, parent, components, world_position, world_bounds}]}`. Filter by name substring or by component; page with `limit` (default 100) and `offset`. Use the returned ids to reference entities. `world_bounds` (`{min, max}` or null) is the world-space box around what the entity and its children draw, as in `scene_get`.

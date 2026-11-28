@@ -8,5 +8,6 @@ Examples:
 - shadows further out, coarser near the camera: `{"shadows": {"max_distance": 400, "split_lambda": 0.6}}`
 - stronger, wider ambient occlusion: `{"ao": {"radius": 1.5, "strength": 3}}`
 - dimmer sky light: `{"ibl": {"intensity": 0.6}}`
+- render at half resolution per axis and upscale (needs TAA on): `{"upscaler": {"mode": "performance"}}`
 
 Change one group at a time and compare screenshots; `render_settings_reset` undoes a group.

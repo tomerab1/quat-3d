@@ -214,6 +214,18 @@ std::expected<void, core::Error> TransparentPass::ensure_scene_color(VkExtent2D 
     return {};
 }
 
+std::expected<void, core::Error> TransparentPass::set_texture_lod_bias(float bias) {
+    if (bias == lod_bias_ && sampler_.handle() != VK_NULL_HANDLE) return {};
+    // The slot's previous frame has finished and the material descriptors are
+    // rebuilt every add_to_graph, so the old sampler can go now.
+    auto sampler = rhi::create_sampler(device_->handle(), rhi::SamplerAddress::repeat,
+                                       material_sampler_max_lod, 0.0F, bias);
+    if (!sampler) return std::unexpected(sampler.error());
+    sampler_ = std::move(*sampler);
+    lod_bias_ = bias;
+    return {};
+}
+
 std::expected<void, core::Error>
 TransparentPass::add_to_graph(rhi::RenderGraph& graph, rhi::ResourceHandle hdr,
                               rhi::ResourceHandle depth, VkExtent2D extent,
