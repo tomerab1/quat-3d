@@ -8,11 +8,12 @@ ships with an editor for building scenes. The long-term goal is an engine you
 can ship real games with — including on Steam — and that AI assistants can
 drive directly to build and debug worlds from a prompt.
 
-> **Project status:** the core engine (rendering, animation, physics, terrain,
-> NPCs, basic multiplayer, editor) works. Current work is a stability pass
-> (bug audit, automated tests, CI), followed by AI tooling over the Model
-> Context Protocol, macOS support, and audio. See [Roadmap](#roadmap) and
-> [`docs/STATUS.md`](docs/STATUS.md) for what is in progress right now.
+> **Project status:** v0.1.0 is the first release. The core engine
+> (rendering, animation, physics, terrain, NPCs, basic multiplayer, audio,
+> Lua scripting, editor) works on Linux, Windows and macOS, AI assistants can
+> drive it over the Model Context Protocol, and games made with it can be
+> packaged. See [Roadmap](#roadmap) and [`docs/STATUS.md`](docs/STATUS.md)
+> for what is in progress right now.
 
 ## Screenshots
 
@@ -116,7 +117,10 @@ The editor (dark theme; a light theme is one click away in View > Theme):
   height limits, distance level of detail, no popping); with weather it bends
   in a global wind field computed on the GPU: gust fronts sweep across the
   field and eddies swirl through it
-- Jolt physics: rigid bodies, character controller, triggers, terrain collision
+- Jolt physics: rigid bodies, character controllers that collide with each
+  other, triggers, terrain collision, joints (fixed, point, hinge, slider,
+  distance) with limits and motors, contact and trigger events, and gravity
+  saved with the scene
 
 **Audio**
 - miniaudio-based mixer with music / sfx / ui / ambience buses, 3D positional
@@ -161,6 +165,9 @@ The editor (dark theme; a light theme is one click away in View > Theme):
   searchable Add Component list; hierarchy search, type icons, rename,
   duplicate and drag-to-re-parent
 - Save and load scenes as JSON; click-to-walk and patrol authoring for NPCs
+- *File → Build & Export…* (Ctrl+B) packages the open game project with
+  `quat-pack`, with live progress — see
+  [Make a game and ship it](#make-a-game-and-ship-it)
 
 ## Platforms
 
@@ -178,8 +185,17 @@ three platforms (see [`.github/workflows/ci.yml`](.github/workflows/ci.yml)):
 Ready-to-run builds are attached to each
 [GitHub Release](../../releases) (built and smoke-tested by
 [`.github/workflows/release.yml`](.github/workflows/release.yml) for every
-`v*` tag). Every archive contains a `README-RUN.txt` with the launch options
-and troubleshooting.
+`v*` tag), with release notes listing what changed (also in
+[`CHANGELOG.md`](CHANGELOG.md)). Every engine archive contains a
+`README-RUN.txt` with the launch options and troubleshooting, `quat-mcp` (the
+MCP server for AI assistants; see [Use it with Claude Code](#use-it-with-claude-code)),
+and `LICENSE` and `THIRD_PARTY_NOTICES.md` (see [License](#license)); game
+packages carry the last two as well. The tools (`quat-cook`, `quat-pack`,
+`quat-player`) are in the engine SDK, `quat3d-sdk-<version>-<os>`, which each
+release also carries (see
+[Building a game against the SDK](#building-a-game-against-the-sdk)), next to
+the sample game, `coin-collector-<version>-<os>`, packaged with `quat-pack`
+(see [Make a game and ship it](#make-a-game-and-ship-it)).
 
 | Download | Run |
 |---|---|
@@ -307,6 +323,7 @@ Environment variables switch on extra modes:
 | `QUAT_SCENE=<file>` | Load a scene file (project-relative) instead of the showcase scene |
 | `QUAT_INPUT_USER_FILE=<path>` | The player's input rebinding file (default `input.json` in the per-user preferences directory; empty = none) — see [`docs/input.md`](docs/input.md) |
 | `QUAT_HDRI=<file>` | Light the scene with a Radiance `.hdr` panorama (project-relative). `scripts/fetch-hdri.sh <id>` downloads a CC0 one from Poly Haven into `hdri-cache/` |
+| `QUAT_GAME=<dir>` | Open a game project (a folder with a `game.json`, e.g. `games/coin-collector`): scene files, scripts and the asset browser use it — see [Make a game and ship it](#make-a-game-and-ship-it) |
 | `QUAT_PLAY=1` | Enter Play mode on the first frame (a non-editor build also plays a `QUAT_SCENE` game) |
 | `QUAT_GAME_CAMERA=1` | Editor builds: Play looks through the scene's active camera from the start ("Game camera"), e.g. for a scene's hero shot |
 | `QUAT_SCRIPT_HOT_RELOAD=0` / `=1` | Turn script hot reload off (editor) / on (non-editor builds) |
@@ -330,7 +347,7 @@ Environment variables switch on extra modes:
 | `QUAT_EDITOR_SELECT=<name>` / `QUAT_EDITOR_FOCUS=<panel>` | Select an entity / bring a panel forward at startup (`scripts/editor-screenshots.sh`) |
 | `QUAT_WINDOW_SIZE=<w>x<h>` | Initial window size (default 1280x720) |
 | `QUAT_NO_VSYNC=1` | Disable vsync |
-| `QUAT_NO_MUTABLE_SWAPCHAIN=1` | Act as a driver without `VK_KHR_swapchain_mutable_format`: the editor UI composites through a scratch image and a copy instead of a UNORM view of the swapchain (same pixels; for checking that fallback) |
+| `QUAT_NO_MUTABLE_SWAPCHAIN=1` | Act as a driver without `VK_KHR_swapchain_mutable_format`: the editor UI composites through a scratch image and a copy instead of a UNORM view of the swapchain (same pixels; for checking that fallback, which MoltenVK older than 1.4.3 always uses) |
 | `QUAT_NO_AUDIO=1` | Mute: run audio without opening a playback device |
 | `QUAT_NON_FINITE_CHECK=1` | Count NaN/Inf values the bloom / TAA guards replace and log them per frame (always on in debug builds) |
 | `QUAT_MAX_FRAMES=<n>` + `QUAT_SCREENSHOT=<file.ppm>` | Render n frames, save the last one, exit (headless checks) |
@@ -486,7 +503,9 @@ validation errors, and see what each node did on the last tick — write
 material shaders: Slang modules the engine compiles (returning the compiler
 errors with line numbers), assigns to entities and hot-swaps while it runs —
 and profile it: the costliest passes and systems on the CPU and GPU, frame
-captures with spikes and their causes, draw / triangle / memory counters.
+captures with spikes and their causes, draw / triangle / memory counters —
+set the time of day (`time_set` / `time_skip`) — and package the open game
+(`project_build`).
 For world building it reports entity bounds, sets models down on terrain or
 colliders (`world_place_on_ground`), takes screenshots from any camera without
 moving yours, and searches and downloads CC0 models from Poly Haven
@@ -500,7 +519,8 @@ controllers.
 It also ships **workflow skills** — step-by-step guides with verification
 steps and pitfalls for building a level, tuning the look, authoring
 materials, writing gameplay scripts, designing NPC behaviour, debugging
-physics glitches and playtesting. They are
+physics glitches, playtesting, setting the weather and finding performance
+problems. They are
 [Agent Skills](https://agentskills.io) served over the MCP skills extension,
 and the same guides are MCP prompts for clients without skills support.
 
@@ -538,6 +558,58 @@ endpoint listens on `127.0.0.1` only and refuses connections without the
 token, so other users on the machine and web pages in your browser cannot
 drive the engine. See [`tools/quat-mcp/README.md`](tools/quat-mcp/README.md)
 for Claude Desktop setup, explicit tokens, the full tool list and the workflows.
+
+### Use it with Claude Code
+
+Every [release archive](#download-a-build) ships `quat-mcp`, so a download is
+enough to drive the engine from Claude Code; no Rust toolchain is needed.
+
+1. Unpack the archive. `quat-mcp` is next to the game on Linux
+   (`quat-mcp`) and Windows (`quat-mcp.exe`). On macOS it is inside the app,
+   at `Quat3D.app/Contents/MacOS/quat-mcp`; run
+   `xattr -dr com.apple.quarantine Quat3D.app` once so it may start.
+2. Start the game with the remote-control endpoint on port 7878:
+
+   | OS | Command |
+   |---|---|
+   | Linux | `QUAT_REMOTE=1 ./game` |
+   | Windows (PowerShell) | `$env:QUAT_REMOTE=1; .\game.exe` |
+   | macOS | `QUAT_REMOTE=1 ./Quat3D.app/Contents/MacOS/game` |
+
+3. Connect Claude Code to the bundled server, in one of two ways:
+
+   - **The quat-3d plugin (recommended).** It registers quat-mcp and
+     installs the workflow skills. In Claude Code:
+
+     ```
+     /plugin marketplace add tomerab1/quat-3d
+     /plugin install quat-3d@quat-3d
+     ```
+
+     When the plugin is enabled, Claude Code asks for its options:
+     - `quat_mcp_command`: the absolute path of the bundled `quat-mcp`;
+     - `engine_port`: `7878`;
+     - `project_root`: the game's data folder. That is the unpacked folder,
+       or `Quat3D.app/Contents/Resources` on macOS. `asset_fetch` saves the
+       models it downloads there, so the game can load them.
+
+     The skills appear as `/quat-3d:build-level`, `/quat-3d:tune-look` and
+     so on.
+   - **`claude mcp add`**: register only the server, by its absolute path:
+
+     ```sh
+     claude mcp add quat-3d -- /path/to/quat-3d-<version>-linux-x64/quat-mcp \
+       --project-root /path/to/quat-3d-<version>-linux-x64
+     ```
+
+     The workflows are then served by quat-mcp itself, as skills or, in
+     clients without skills support, as prompts such as
+     `/mcp__quat-3d__build-level`.
+
+   Neither way needs a port or token option: quat-mcp reads the session
+   token from the file the game writes.
+4. In Claude Code, ask for something like *"add a sphere above the ground and
+   take a screenshot"*. `/mcp` shows the server and its tools.
 
 ## Make a game and ship it
 
@@ -643,6 +715,8 @@ The plan lives in [`ROADMAP.md`](ROADMAP.md), grouped into tracks:
 |---|---|
 | [`docs/STATUS.md`](docs/STATUS.md) | What is in progress, what is blocked, what comes next |
 | [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md) | Building, testing, CI, and conventions for contributors |
+| [`docs/RELEASING.md`](docs/RELEASING.md) | Cutting a release: versions, tags, the release-notes file, the checklist |
+| [`CHANGELOG.md`](CHANGELOG.md) | Every release, newest first, linking its notes in `docs/releases/` |
 | [`docs/sdk.md`](docs/sdk.md) | The engine SDK: building a game in its own repository against an installed, versioned `quat3d` CMake package |
 | [`docs/scripting.md`](docs/scripting.md) | Lua gameplay scripting: callbacks, the engine API, limits, hot reload |
 | [`docs/input.md`](docs/input.md) | Input actions: action-map format, triggers, modifiers, contexts, rebinding |
@@ -689,3 +763,11 @@ ports/, triplets/   vcpkg customisations
 Vulkan 1.3 · Slang · SDL3 · Jolt Physics · EnTT · fastgltf · glm · Dear ImGui +
 ImGuizmo · Vulkan Memory Allocator · Recast/Detour · GameNetworkingSockets ·
 Lua 5.4 + sol2 · KTX-Software (Basis Universal) · meshoptimizer · nlohmann/json · CMake + vcpkg
+
+## License
+
+quat-3d is released under the [MIT License](LICENSE). It builds on
+third-party libraries, fonts and code, each under its own licence; they are
+listed in [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md). Every release
+archive carries `LICENSE` and a `THIRD_PARTY_NOTICES.md` with the full
+licence text of each component.

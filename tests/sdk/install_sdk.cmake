@@ -35,6 +35,10 @@ foreach(required
         share/quat3d/licenses/acl-LICENSE
         share/quat3d/licenses/rtm-LICENSE
         share/quat3d/licenses/slang-LICENSE
+        # quat-3d's own licence, at the root and in quat-pack's engine root,
+        # which copies it into every game package (#122).
+        LICENSE
+        share/quat3d/LICENSE
         # quat-pack's engine root (P4).
         share/quat3d/scripts/package-release.sh
         share/quat3d/scripts/smoke-test-package.sh

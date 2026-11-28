@@ -36,7 +36,8 @@ err(MaterialShaderRegistry::ErrorKind kind, std::string message) {
 [[nodiscard]] bool write_text(const fs::path& path, std::string_view text) {
     std::error_code ec;
     fs::create_directories(path.parent_path(), ec);
-    const fs::path tmp = path.string() + ".tmp";
+    fs::path tmp = path;
+    tmp += ".tmp";
     {
         std::ofstream out(tmp, std::ios::binary | std::ios::trunc);
         if (!out) return false;
@@ -94,8 +95,8 @@ fs::path MaterialShaderRegistry::source_path(std::string_view name) const {
 std::vector<fs::path> MaterialShaderRegistry::cooked_paths(std::string_view name) const {
     std::vector<fs::path> out;
     for (const material_shaders::Variant& v : material_shaders::variants) {
-        const fs::path spv = material_shaders::cooked_spv_path(config_.cooked_dir.string(), name,
-                                                               v.name);
+        const fs::path spv = core::path_from_utf8(material_shaders::cooked_spv_path(
+            core::path_to_utf8(config_.cooked_dir), name, v.name));
         out.push_back(spv);
         out.push_back(fs::path(spv).replace_extension(".json"));
     }
@@ -268,7 +269,7 @@ std::vector<MaterialShaderRegistry::Info> MaterialShaderRegistry::list() const {
          !ec && it != fs::directory_iterator(); it.increment(ec)) {
         const fs::path& p = it->path();
         if (p.extension() != ".slang") continue;
-        const std::string stem = p.stem().string();
+        const std::string stem = core::path_to_utf8(p.stem());
         if (material_shaders::valid_name(stem) && stem != material_shaders::builtin_name) {
             names.push_back(stem);
         }
@@ -421,8 +422,9 @@ void MaterialShaderRegistry::finish_compile(Op& op) {
     // before any pipeline uses the material.
     if (out.ok) {
         for (const material_shaders::Variant& v : material_shaders::variants) {
-            const fs::path json = fs::path(material_shaders::cooked_spv_path(
-                                               config_.cooked_dir.string(), op.name, v.name))
+            const fs::path json = core::path_from_utf8(material_shaders::cooked_spv_path(
+                                                           core::path_to_utf8(config_.cooked_dir),
+                                                           op.name, v.name))
                                       .replace_extension(".json");
             const fs::path base = config_.cooked_dir / (std::string(v.builtin_program) + ".json");
             auto mine_text = read_text(json);
@@ -518,7 +520,7 @@ std::vector<std::string> MaterialShaderRegistry::library_modules() const {
     std::error_code ec;
     for (fs::directory_iterator it(config_.module_dir, ec);
          !ec && it != fs::directory_iterator(); it.increment(ec)) {
-        if (it->path().extension() == ".slang") out.push_back(it->path().stem().string());
+        if (it->path().extension() == ".slang") out.push_back(core::path_to_utf8(it->path().stem()));
     }
     std::sort(out.begin(), out.end());
     return out;

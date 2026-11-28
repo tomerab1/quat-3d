@@ -8,6 +8,7 @@
 
 #include <imgui.h>
 
+#include "engine/core/utf8_path.hpp"
 #include "icons.hpp"
 
 namespace engine::editor::ui {
@@ -68,9 +69,10 @@ ImFont* add_ttf(ImFontAtlas& atlas, const fs::path& file, float px, DpiScale dpi
     cfg.OversampleV = 1;
     cfg.PixelSnapH = merge; // icons on whole pixels; text keeps sub-pixel advances
     if (!merge) cfg.GlyphExcludeRanges = k_private_use;
-    const std::string name = file.filename().string();
+    const std::string name = core::path_to_utf8(file.filename());
     std::snprintf(cfg.Name, sizeof(cfg.Name), "%s %.0fpx", name.c_str(), static_cast<double>(px));
-    return atlas.AddFontFromFileTTF(file.string().c_str(), px, &cfg, ranges);
+    // UTF-8: ImGui opens it with the wide API on Windows (ImFileOpen).
+    return atlas.AddFontFromFileTTF(core::path_to_utf8(file).c_str(), px, &cfg, ranges);
 }
 
 } // namespace
@@ -122,7 +124,7 @@ FontSet load_fonts(ImFontAtlas& atlas, const fs::path& font_dir, DpiScale dpi) {
         body = atlas.AddFontDefault(&cfg);
         set.fonts = {body, body, body, body};
         std::fprintf(stderr, "[editor] UI fonts missing under %s; using the built-in font\n",
-                     font_dir.string().c_str());
+                     core::path_to_utf8(font_dir).c_str());
         set_fonts(set);
         return set;
     }

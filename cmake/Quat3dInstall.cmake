@@ -246,12 +246,13 @@ install(PROGRAMS
     DESTINATION ${QUAT3D_SHARE_DIR}/scripts)
 install(DIRECTORY ${PROJECT_SOURCE_DIR}/packaging/ DESTINATION ${QUAT3D_SHARE_DIR}/packaging)
 # The engine's LICENSE (#96), at the SDK root and in share/quat3d, the engine
-# root quat-pack copies it from into every game package (#122). The full
+# root quat-pack copies it from into every game package (#122;
+# find_game_notices in scripts/package-release.sh). The full
 # THIRD_PARTY_NOTICES.md files are generated from the build when the SDK is
 # packaged (scripts/package-sdk.sh): the repository's copy is only the summary
 # table, which quat-pack rightly ignores.
-install(FILES ${PROJECT_SOURCE_DIR}/LICENSE DESTINATION . OPTIONAL)
-install(FILES ${PROJECT_SOURCE_DIR}/LICENSE DESTINATION ${QUAT3D_SHARE_DIR} OPTIONAL)
+install(FILES ${PROJECT_SOURCE_DIR}/LICENSE DESTINATION .)
+install(FILES ${PROJECT_SOURCE_DIR}/LICENSE DESTINATION ${QUAT3D_SHARE_DIR})
 
 # ---------------------------------------------------------------------------
 # deps/: the vcpkg installed tree for this triplet, release half only (the SDK
