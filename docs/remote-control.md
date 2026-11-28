@@ -1093,6 +1093,51 @@ apparent (refracted), topocentric. Event times are local ISO-8601 strings
 atmosphere, at normal incidence (Sun: 133 334 lx / R²; Moon: Krisciunas &
 Schaefer 1991).
 
+## Runtime geometry (ROADMAP R23.2)
+
+Meshes generated at runtime live in the renderer's dynamic mesh store under
+string ids (1-128 printable ASCII characters, no spaces). An entity shows one
+with a `dynamic_mesh` component: `{mesh, generator?, material?, collider?}`.
+- `generator` is a generator spec (below). It runs when the store has no mesh
+  under `mesh`, and again whenever it is edited, so scene files keep it.
+- `material` holds the flat material fields of `primitive`: `color`,
+  `metallic`, `roughness`, `emissive`, `shader`, `shader_params`.
+- `collider` is `none` or `mesh`: a static triangle-mesh body owned by the
+  entity, so ray casts return the entity.
+
+An entity cannot carry both `primitive` and `dynamic_mesh`.
+
+Uploads are spread over frames: at most a byte budget (8 MiB) is copied per
+frame. A mesh is drawn from the frame after its last copy, and until then the
+previous version keeps drawing. `resident` tells whether the latest version
+is the one being drawn. The same JSON surface is the Lua `geometry` table
+([`scripting.md`](scripting.md#geometry)), and docs/geometry.md has the
+generator spec schema.
+
+| Method | Params | Result |
+|---|---|---|
+| `geometry.generate` | `{spec, id?}` | with `id`: the stored mesh's info; without: `{vertices, triangles, bounds, hash}` only |
+| `geometry.polygon` | `{op, subject, clip?, delta?, join?, miter_limit?, arc_tolerance?, epsilon?, fill?}` | `{polygons: [{outer, holes}], area}` |
+| `mesh.dynamic.list` | — | `{meshes: [info], stats: {meshes, pending_uploads, pending_bytes, uploaded_bytes_last_frame, resident_bytes, frame_byte_budget}}` |
+| `mesh.dynamic.get` | `{id}` | info |
+| `mesh.dynamic.set` | `{id, positions, indices, normals?, uvs?, crease_angle?}` | info; normals (by crease angle, default 40°), box UVs and tangents are computed when absent |
+| `mesh.dynamic.update_vertices` | `{id, first, positions, normals?}` | info; a region update: only those vertices' bytes are uploaded |
+| `mesh.dynamic.remove` | `{id}` | `{removed}` |
+
+Info is `{id, version, resident_version, resident, vertices, triangles,
+bytes, bounds: {min, max}, hash}`. `hash` is a 16-hex-digit `mesh_hash`, and
+the same input gives the same hash on every platform.
+
+`geometry.polygon` takes polygons as `{outer: [[x, z], ...], holes: [[[x, z], ...], ...]}`.
+Its ops are `offset`, `union`, `intersect`, `subtract`, `xor`, `repair`
+(with `fill` `non_zero` or `even_odd`) and `simplify` (`epsilon` metres).
+`join` is `miter`, `round` or `square`. Results are canonical: outer rings
+counter-clockwise, holes clockwise, snapped to a 2^-16 m grid.
+
+Errors are `invalid_params` naming the field (`spec.polygon: ring 0 has 2
+points, needs at least 3`). The methods that need the store return
+`unavailable` when the engine runs without a renderer.
+
 ## Errors
 
 | Code | Meaning |

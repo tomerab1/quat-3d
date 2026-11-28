@@ -481,6 +481,18 @@ JSON-RPC over loopback TCP to the engine.
     static colliders (boxes / convex / mesh, built on the job pool,
     owner = entity); navmesh dirty regions. No Vulkan types in the public
     API (P2). *(needs R9.2, R17; A6 #19 for emissive custom data)*
+    - [x] **R23.2.1** The store, staging-ring uploads with a per-frame
+      budget, frame-boundary swaps, region (vertex-range) updates, deferred
+      retirement; `DynamicMesh` resolved to a `MeshRenderer` (batching,
+      shadows, velocity, bounds, picking); generator specs in scene files;
+      static mesh colliders owned by the entity; codec, remote `geometry.*` /
+      `mesh.dynamic.*`, MCP tools, Lua `geometry`; the `village` showcase
+      scene ([`docs/geometry.md`](docs/geometry.md#dynamic-meshes)).
+    - [ ] **R23.2.2** Per-instance custom data (`vec4`) on `InstancedMesh`
+      and `DynamicMesh` for the material interface; stable instance ranges
+      per source key; box / convex collider modes and collider builds on
+      the job pool (mesh colliders build on the main thread today);
+      navmesh dirty regions; per-submesh materials; an Inspector panel.
   - [ ] **R23.3 GPU-generated meshes.** Generator-registered Slang compute
     modules (A6 interface rules) writing vertex / index / instance buffers
     and indirect args from pooled buffers in a render-graph compute pass,
