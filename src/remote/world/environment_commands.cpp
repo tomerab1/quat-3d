@@ -40,11 +40,6 @@ struct SunAngles {
     return {std::cos(el) * std::cos(az), -std::sin(el), std::cos(el) * std::sin(az)};
 }
 
-[[nodiscard]] entt::entity find_sun(const entt::registry& r) {
-    for (const entt::entity e : r.view<const scene::DirectionalLight>()) return e;
-    return entt::null;
-}
-
 // The cloud layer is the `clouds` group of the render settings: same codec,
 // same ranges as render.settings.*.
 [[nodiscard]] const renderer::RenderSettingGroup& clouds_group() {
@@ -169,6 +164,8 @@ RpcResult environment_set(Context& ctx, const Json& params) {
     const Json* sky_in = f.raw("sky");
     const Json* hdri_in = f.raw("hdri");
     if (auto ok = finish(f); !ok) return std::unexpected(ok.error());
+    // The HDRI as it stands before this request (read once).
+    const HdriInfo hdri_before = ctx.services.hdri_info ? ctx.services.hdri_info() : HdriInfo{};
 
     // Decode every group completely before changing anything.
     std::optional<renderer::RenderSettings> settings;
@@ -216,14 +213,15 @@ RpcResult environment_set(Context& ctx, const Json& params) {
     // The sun, judged by the owner this request leaves (it may change the sky
     // source, hdri.sun or the HDRI file): a write the world clock (R22.1) or
     // the HDRI's sun (R21) would override is refused (issue #121).
-    const entt::entity existing = find_sun(r);
+    const entt::entity existing = scene::sun_light_entity(r);
     scene::DirectionalLight light =
         existing != entt::null ? r.get<scene::DirectionalLight>(existing) : scene::DirectionalLight{};
     bool set_sun = false;
     if (sun_json != nullptr && !sun_json->is_null()) {
         core::JsonFields s(*sun_json, "sun");
-        bool hdri_loaded = ctx.services.hdri_info && ctx.services.hdri_info().loaded;
-        if (hdri_path) hdri_loaded = !hdri_path->empty(); // a failed load refuses the request
+        // A path in the request is predicted loaded: a failed load refuses
+        // the whole request anyway (before anything is applied).
+        const bool hdri_loaded = hdri_path ? !hdri_path->empty() : hdri_before.loaded;
         const scene::SunSource owner = scene::sun_source(
             r, settings ? settings->environment : environment_settings(ctx), hdri_loaded);
         if (auto ok = check_sun_owner(owner, s); !ok) return std::unexpected(ok.error());

@@ -11,6 +11,11 @@
 
 namespace engine::scene {
 
+entt::entity sun_light_entity(const entt::registry& registry) {
+    for (const entt::entity e : registry.view<const DirectionalLight>()) return e;
+    return entt::null;
+}
+
 SunSource sun_source(const entt::registry& registry,
                      const renderer::EnvironmentSettings& environment, bool hdri_loaded) {
     if (hdri_loaded && environment.hdri_sun &&
@@ -38,10 +43,8 @@ SceneSun resolve_sun(const entt::registry& registry,
                                      sun.found ? sun.intensity : 0.0F};
         return out;
     }
-    // The renderer lights with the first DirectionalLight.
-    for (const entt::entity e : registry.view<const DirectionalLight>()) {
+    if (const entt::entity e = sun_light_entity(registry); e != entt::null) {
         out.light = registry.get<const DirectionalLight>(e);
-        break;
     }
     return out;
 }

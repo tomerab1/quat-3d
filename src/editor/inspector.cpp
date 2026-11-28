@@ -25,11 +25,13 @@
 #include "engine/asset/material_asset.hpp"
 #include "engine/asset/mesh_asset.hpp"
 #include "engine/editor/editor.hpp"
+#include "engine/renderer/reflection_settings.hpp"
 #include "engine/scene/behavior.hpp"
 #include "engine/scene/camera_rig.hpp"
 #include "engine/scene/components.hpp"
 #include "engine/scene/scatter.hpp"
 #include "engine/scene/scene.hpp"
+#include "engine/scene/sun_source.hpp"
 #include "engine/scene/world_clock.hpp"
 #include "inspector_world.hpp"
 #include "panels/inspector_parts.hpp"
@@ -97,7 +99,20 @@ struct ComponentInspector<scene::DirectionalLight> {
     static constexpr const char* codec = "dir_light";
     static constexpr const char* icon = icon::sun;
     static constexpr bool property_grid = true;
-    static void draw(entt::registry&, entt::entity, scene::DirectionalLight& light) {
+    static void draw(entt::registry& r, entt::entity e, scene::DirectionalLight& light,
+                     const panels::InspectorState& state) {
+        // The scene's sun light may be overridden by its owner (issue #121).
+        if (e == scene::sun_light_entity(r)) {
+            const renderer::EnvironmentSettings defaults{};
+            const scene::SunSource owner = scene::sun_source(
+                r, state.environment != nullptr ? *state.environment : defaults,
+                state.hdri_sun != nullptr);
+            if (owner == scene::SunSource::hdri) {
+                ui::prop_note("Overridden by the HDRI's own sun (Renderer > Sky & HDRI).");
+            } else if (owner == scene::SunSource::clock) {
+                ui::prop_note("Overridden by the world clock (Time of Day).");
+            }
+        }
         (void)ui::prop_vec3("Direction", light.direction,
                             {.speed = 0.01F, .min = -1.0F, .max = 1.0F},
                             {.tooltip = "Travel direction of the light (sun to scene)"});

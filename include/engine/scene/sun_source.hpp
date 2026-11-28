@@ -44,6 +44,10 @@ inline constexpr std::array<std::string_view, 3> sun_source_names{"manual", "clo
     return sun_source_names[static_cast<std::size_t>(source)];
 }
 
+// The scene's sun light: the first DirectionalLight — the one the renderer
+// lights with and the world clock drives — or entt::null.
+[[nodiscard]] entt::entity sun_light_entity(const entt::registry& registry);
+
 // The owner of the sun. `hdri_loaded`: an HDRI panorama is loaded (with or
 // without a sun — a sunless HDRI still owns the light, and puts it out).
 [[nodiscard]] SunSource sun_source(const entt::registry& registry,

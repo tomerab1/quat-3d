@@ -3,7 +3,9 @@
 // from the clock (issue #121).
 
 #include <cmath>
+#include <expected>
 #include <string>
+#include <vector>
 
 #include <glm/glm.hpp>
 #include <gtest/gtest.h>
@@ -13,6 +15,7 @@
 #include "engine/scene/sun_source.hpp"
 #include "engine/scene/world_clock.hpp"
 #include "remote/world_fixture.hpp"
+#include "support/temp_dir.hpp"
 
 namespace {
 
@@ -135,9 +138,19 @@ class TimeWithHdri : public quat::test::WorldCommands {
 protected:
     r::RenderSettings        settings;
     engine::remote::HdriInfo hdri;
+    quat::test::TempDir      root{"time_hdri_root"};
+    std::vector<std::string> loads; // services.set_hdri calls
     void SetUp() override {
         services.render_settings = &settings;
         services.hdri_info = [this] { return hdri; };
+        services.project_root = [this] { return root.path(); };
+        services.set_hdri = [this](const std::string& relative)
+            -> std::expected<void, engine::core::Error> {
+            loads.push_back(relative);
+            hdri.path = relative;
+            hdri.loaded = !relative.empty();
+            return {};
+        };
         register_commands();
         hdri.path = "hdri-cache/field.hdr";
         hdri.loaded = true;
@@ -205,6 +218,24 @@ TEST_F(TimeWithHdri, TheHdriSunOwnsTheLightAndEnvironmentGetSaysSo) {
                          "the world clock drives the sun"));
     EXPECT_TRUE(settings.environment.hdri_sun);
     EXPECT_EQ(ok("environment.get")["sun"], env["sun"]);
+}
+
+// The owner is predicted from the request: a request that loads an HDRI
+// (with its sun on) and moves the sun is refused before the file loads.
+TEST_F(TimeWithHdri, ARequestLoadingAnHdriCannotAlsoMoveTheSun) {
+    hdri = {}; // nothing loaded yet
+    (void)ok("time.set", {{"datetime", "2026-06-21T12:00:00+02:00"}, {"time_scale", 0}});
+    const Json before = ok("environment.get");
+    EXPECT_EQ(before["sun"]["source"], "clock");
+    const std::string msg = err("environment.set",
+                                {{"sky", "hdri"}, {"hdri", {{"path", "x.hdr"}}},
+                                 {"sun", {{"elevation_deg", 10}}}},
+                                code::invalid_params);
+    EXPECT_TRUE(contains(msg, "sun.elevation_deg: the HDRI's own sun lights the scene")) << msg;
+    EXPECT_TRUE(loads.empty());
+    EXPECT_FALSE(hdri.loaded);
+    EXPECT_EQ(settings.environment.source, static_cast<int>(r::SkySource::procedural));
+    EXPECT_EQ(ok("environment.get"), before);
 }
 
 TEST_F(TimeWithHdri, TheClockTakesTheSunBackWhenTheHdriLetsGo) {
