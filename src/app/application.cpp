@@ -469,6 +469,7 @@ bool Application::run_frame() {
         return true;
     }
     if (!renderer_.ensure_swapchain(pixel_extent)) return false;
+    renderer_.set_display_scale(SDL_GetWindowDisplayScale(platform_.window));
 
     const std::uint32_t slot = renderer_.wait_for_slot();
     if (shader_reload_) shader_reload_->update(presented_); // R2: swap rebuilt pipelines
@@ -540,12 +541,14 @@ bool Application::run_frame() {
     frame_inputs.build_ui = [&]() {
         QUAT_ZONE_N("editor_ui");
         // record() calls this after batching, so the count is this frame's.
-        return editor_.build_ui(dt, static_cast<int>(renderer_.draw_count()), cam);
+        return editor_.build_ui(dt, static_cast<int>(renderer_.draw_count()),
+                                renderer_.render_extent(), renderer_.draw_extent(), cam);
     };
 #endif
     if (!renderer_.record(frame_inputs)) return false;
     // A5 debug.stats: the frame's submitted draws, counted after batching.
     remote_->note_draws(renderer_.draw_count());
+    remote_->note_resolution(renderer_.render_extent(), renderer_.draw_extent());
 
     remote_->record_capture(renderer_.command_buffer(), renderer_.frame_slot(),
                             renderer_.capture_source());

@@ -138,8 +138,9 @@ struct RigView {
     float     fov_y = 1.0F;  // radians
     float     aspect = 1.0F; // width / height
 };
-// The world ray through a viewport pixel (`pointer` in pixels of a viewport
-// `viewport_px` large, y down): {origin, unit direction}.
+// The world ray through a viewport point (`pointer` in the window coordinates
+// of a viewport `viewport_px` large, y down; only the ratio matters, so points
+// and framebuffer pixels give the same ray): {origin, unit direction}.
 struct Ray {
     glm::vec3 origin{0.0F};
     glm::vec3 dir{0.0F, 0.0F, -1.0F};

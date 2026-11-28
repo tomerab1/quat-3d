@@ -212,6 +212,13 @@ TEST(RenderSettingsJson, ChoiceFieldsUseNames) {
         EXPECT_TRUE(contains(result.error().message, "\"balanced\"")) << result.error().message;
         EXPECT_EQ(untouched.upscaler.mode, settings.upscaler.mode);
     }
+    // The default mode is stored by name as "auto" (resolved per display at
+    // render time), so scenes stay portable between HiDPI and standard machines.
+    EXPECT_EQ(s::encode_render_settings(r::RenderSettings{}, "upscaler")["upscaler"]["mode"],
+              "auto");
+    ASSERT_OK(s::apply_render_settings_json(settings, json{{"upscaler", {{"mode", "auto"}}}},
+                                            true));
+    EXPECT_EQ(r::upscaler_mode(settings.upscaler), r::UpscalerMode::automatic);
 }
 
 } // namespace

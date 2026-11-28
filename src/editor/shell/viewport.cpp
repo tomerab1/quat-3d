@@ -20,6 +20,7 @@
 #include "../ui/metrics.hpp"
 #include "../ui/widgets.hpp"
 #include "editor_shell.hpp"
+#include "engine/core/pixel_scale.hpp"
 #include "engine/renderer/imgui_pass.hpp" // viewport_texture_id
 #include "engine/scene/components.hpp"
 #include "engine/scene/scene.hpp"
@@ -168,21 +169,30 @@ void stats_overlay(EditorShell& shell, const ImVec2& min, const ImVec2& max) {
     const ui::Theme& t = ui::tokens();
     ui::FontScope mono(ui::FontRole::mono);
     const float fps = ImGui::GetIO().Framerate;
-    char lines[4][64];
+    // Resolutions in framebuffer pixels: the scene's render size (before the
+    // upscaler) and the output it is resolved to (the panel's pixel size).
+    const FrameResolution& res = ctx.resolution;
+    const std::uint32_t out_w = res.output_width != 0 ? res.output_width : shell.viewport_width;
+    const std::uint32_t out_h = res.output_height != 0 ? res.output_height : shell.viewport_height;
+    const std::uint32_t render_w = res.render_width != 0 ? res.render_width : out_w;
+    const std::uint32_t render_h = res.render_height != 0 ? res.render_height : out_h;
+    constexpr int k_lines = 5;
+    char lines[k_lines][64];
     std::snprintf(lines[0], sizeof(lines[0]), "%6.1f fps", static_cast<double>(fps));
     std::snprintf(lines[1], sizeof(lines[1]), "%6.2f ms cpu", static_cast<double>(ctx.frame_ms));
     std::snprintf(lines[2], sizeof(lines[2]), "%6d draws", ctx.draw_count);
-    std::snprintf(lines[3], sizeof(lines[3]), "%u x %u", shell.viewport_width,
-                  shell.viewport_height);
+    std::snprintf(lines[3], sizeof(lines[3]), "render %u x %u", render_w, render_h);
+    std::snprintf(lines[4], sizeof(lines[4]), "output %u x %u", out_w, out_h);
     float w = 0.0F;
     for (const auto& l : lines) w = std::max(w, ImGui::CalcTextSize(l).x);
     const float pad = ui::scaled(ui::Spacing::xs);
     const float lh = ImGui::GetTextLineHeight();
-    const ImVec2 box_max(max.x - pad, min.y + pad + lh * 4.0F + pad * 1.5F);
+    const ImVec2 box_max(max.x - pad,
+                         min.y + pad + lh * static_cast<float>(k_lines) + pad * 1.5F);
     const ImVec2 box_min(box_max.x - w - pad * 2.0F, min.y + pad);
     overlay_backdrop(box_min, box_max);
     ImDrawList* dl = ImGui::GetWindowDrawList();
-    for (int i = 0; i < 4; ++i) {
+    for (int i = 0; i < k_lines; ++i) {
         const float tw = ImGui::CalcTextSize(lines[i]).x;
         dl->AddText(ImVec2(box_max.x - pad - tw, box_min.y + pad * 0.75F + lh * static_cast<float>(i)),
                     ui::to_u32(i == 0 ? t.text : t.text_secondary), lines[i]);
@@ -202,9 +212,16 @@ void draw_viewport(EditorShell& shell) {
         ImGui::End();
         return;
     }
+    // The panel is laid out in window points; the scene renders at the
+    // panel's size in framebuffer pixels (x2 on a Retina display), so the
+    // image is drawn 1:1 and not magnified by the compositor. Mouse, picking
+    // and gizmo coordinates stay in points, relative to the image rect.
     const ImVec2 avail = ImGui::GetContentRegionAvail();
-    shell.viewport_width = static_cast<std::uint32_t>(std::max(avail.x, 1.0F));
-    shell.viewport_height = static_cast<std::uint32_t>(std::max(avail.y, 1.0F));
+    const ImVec2 fb_scale = ImGui::GetIO().DisplayFramebufferScale;
+    const core::PixelExtent px = core::points_to_pixel_extent(
+        avail.x, avail.y, fb_scale.x, fb_scale.y, 1, k_max_viewport_pixels);
+    shell.viewport_width = px.width;
+    shell.viewport_height = px.height;
     ImGui::Image(static_cast<ImTextureID>(renderer::ImGuiPass::viewport_texture_id), avail);
     shell.viewport_hovered = ImGui::IsItemHovered();
     const ImVec2 min = ImGui::GetItemRectMin();

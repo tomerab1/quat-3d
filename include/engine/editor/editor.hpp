@@ -94,12 +94,30 @@ struct RemoteStatus {
     std::size_t   clients = 0; // connected tools (the MCP bridge)
 };
 
+// Limits of the Viewport panel's scene image per axis, in pixels: at least a
+// few pixels when the panel is collapsed; at most 8192 (a 5K display's
+// full-width panel at 2x is 5120), within every desktop GPU's image limit.
+inline constexpr std::uint32_t k_min_viewport_pixels = 16;
+inline constexpr std::uint32_t k_max_viewport_pixels = 8192;
+
+// The scene's resolutions this frame, in pixels: `render` is what the scene
+// rasterises at (the upscaler's render scale applied), `output` what it is
+// resolved / upscaled to (the Viewport panel's image, or the swapchain when
+// the scene fills the window). Zero before the first frame.
+struct FrameResolution {
+    std::uint32_t render_width = 0;
+    std::uint32_t render_height = 0;
+    std::uint32_t output_width = 0;
+    std::uint32_t output_height = 0;
+};
+
 // Everything the UI needs from (and feeds back to) the engine for one frame.
 struct EditorContext {
     // Stats panel inputs.
     float frame_ms     = 0.0F;
     int   draw_count   = 0;
     int   entity_count = 0;
+    FrameResolution resolution; // shown by the viewport overlay, Stats, Profiler
     // Shader hot-reload state (R2), listed in the Stats panel; null when hot
     // reload is off.
     const std::vector<rhi::ShaderStatus>* shader_statuses = nullptr;
@@ -228,8 +246,10 @@ public:
     // scale: the renderer must re-upload it before drawing this frame's UI.
     [[nodiscard]] bool take_font_atlas_changed();
 
-    // The Viewport panel's content size (pixels) and hover state from the last
-    // built frame — the scene renders at this size, and camera input is only
+    // The Viewport panel's content size in framebuffer pixels (its point size
+    // x ImGui's DisplayFramebufferScale: twice the point size on a Retina
+    // display) and hover state from the last built frame — the scene renders
+    // at this size (before the upscaler's render scale), and camera input is only
     // captured while the cursor is over the panel. Zero size until the first
     // frame; callers fall back to the swapchain extent.
     [[nodiscard]] std::uint32_t viewport_width() const;

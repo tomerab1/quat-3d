@@ -11,6 +11,7 @@
 #include "../ui/fonts.hpp"
 #include "../ui/icons.hpp"
 #include "../ui/metrics.hpp"
+#include "../ui/resolution_text.hpp"
 #include "../ui/widgets.hpp"
 #include "editor_shell.hpp"
 #include "../script_inspector.hpp"
@@ -102,7 +103,9 @@ void draw_stats_panel(EditorShell& shell) {
         std::snprintf(buf, sizeof(buf), "%d", ctx.entity_count);
         ui::prop_value("Entities", buf, nullptr, true);
         std::snprintf(buf, sizeof(buf), "%u x %u", shell.viewport_width, shell.viewport_height);
-        ui::prop_value("Viewport", buf, "Scene render size", true);
+        ui::prop_value("Viewport", buf, "The Viewport panel's size in framebuffer pixels", true);
+        ui::prop_value("Resolution", ui::resolution_text(ctx.resolution),
+                       "Scene render size -> output size (the upscaler's render scale)", true);
         ui::end_property_grid();
     }
     if (ctx.shader_statuses != nullptr) {

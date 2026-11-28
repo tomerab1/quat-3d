@@ -30,6 +30,7 @@ struct ProfilerState {
     std::vector<float>             frame_ms;
     std::vector<float>             gpu_ms;
     core::FrameSummary             frame{};
+    std::string                    resolution = "-"; // render -> output (ui::resolution_text)
 };
 
 // Copies the profiler's statistics into `state` unless it is frozen.

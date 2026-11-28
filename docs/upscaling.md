@@ -19,7 +19,13 @@ extent, jitter, view motion, camera cuts, the upscale) are in
 `src/app/frame_temporal.cpp`. The render extent is the display (draw)
 extent scaled by the upscaler settings (`upscaler_settings.hpp`): `native_aa`
 1.0, `quality` 1/1.5, `balanced` 1/1.7, `performance` 1/2 per axis, or an
-explicit `render_scale` override. Material textures are sampled with a LOD
+explicit `render_scale` override. The default mode, `auto`, resolves each
+frame against the window's display scale (`SDL_GetWindowDisplayScale`):
+`quality` at 1.5 or more (a Retina Mac, a 4K monitor at 150-200 %), where
+native rendering would shade 2.25-4x the pixels, else `native_aa`. Scene
+files store `auto`, so the choice follows the machine the scene is opened on.
+The display (draw) extent is in framebuffer pixels: the editor viewport's
+point size times its pixel density. Material textures are sampled with a LOD
 bias of log2(render / display) (`texture_lod_bias`), so upscaled frames keep
 display-resolution texture detail.
 

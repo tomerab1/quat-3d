@@ -11,6 +11,7 @@ Examples:
 - sharper, longer reflections on glossy floors: `{"ssr": {"quality": "high", "max_roughness": 0.7}}`
 - compare the old single-scattering metals: `{"ibl": {"multiscatter": false}}`
 - render at half resolution per axis and upscale (needs TAA on): `{"upscaler": {"mode": "performance"}}`
+- render every pixel even on a HiDPI display (the default `auto` renders at 2/3 per axis there): `{"upscaler": {"mode": "native_aa"}}`
 - filmic highlights: `{"tonemap": {"operator": "agx"}}`
 - shallow depth of field (the active camera's lens and focus decide the blur): `{"dof": {"enabled": true}}`
 - warm golden-hour grade: `{"grading": {"temperature_k": 5200, "contrast": 1.1, "gain_r": 1.04, "lift_b": 0.02}}`

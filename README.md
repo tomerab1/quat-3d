@@ -75,8 +75,14 @@ The editor (dark theme; a light theme is one click away in View > Theme):
   frames, falling back to the environment where they miss
 - Temporal anti-aliasing and upscaling (TAAU) with per-object motion vectors for
   moving, skinned, instanced and wind-animated geometry; render scale modes
-  (native, quality, balanced, performance), set like every other render
-  setting from the Renderer panel, `render.settings.*` / MCP or a scene file
+  (auto, native, quality, balanced, performance), set like every other render
+  setting from the Renderer panel, `render.settings.*` / MCP or a scene file.
+  The default `auto` renders at the quality scale (2/3 per axis) on HiDPI
+  displays and natively elsewhere
+- HiDPI: the window gets every physical pixel on Retina Macs and scaled
+  Wayland / Windows displays; the scene, the editor viewport and the UI render
+  at the framebuffer's pixel size (the viewport's stats overlay shows the
+  render and output resolutions)
 - Cinematic camera and post: a physical lens on every camera (aperture,
   shutter, ISO, focal length, focus distance) driving exposure (EV100),
   bokeh depth of field and motion blur (both off by default); AgX, ACES and
@@ -156,7 +162,7 @@ The editor (dark theme; a light theme is one click away in View > Theme):
   animation preview, behaviour-tree graph editor, physics, stats and profiler
   panels; the layout and preferences persist per project
 - Dark and light themes (WCAG AA contrast), Inter + JetBrains Mono with Lucide
-  icons, scaling with the display's DPI
+  icons, scaling with the display's DPI (fonts rasterised at the pixel density)
 - A command palette (Ctrl+P) over every action, one shortcut table (F1), a
   toolbar with play / pause / step / stop, move / rotate / scale gizmos in
   world or local space with snapping, and a status bar with frame timing,

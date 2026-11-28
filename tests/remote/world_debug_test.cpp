@@ -147,6 +147,10 @@ TEST_F(DebugCommands, StatsReportCountersFromEveryService) {
     frame.samples = 240;
     frame.draws = 37;
     frame.resident_bytes = 1234567;
+    frame.render_width = 1307;
+    frame.render_height = 1045;
+    frame.output_width = 1960;
+    frame.output_height = 1568;
     ring.push(core::LogLevel::warn, "a", "w");
     ring.push(core::LogLevel::error, "a", "e");
     auto physics_world = PhysicsWorld::create();
@@ -164,6 +168,9 @@ TEST_F(DebugCommands, StatsReportCountersFromEveryService) {
     EXPECT_FLOAT_EQ(s["fps"].get<float>(), 62.5F);
     EXPECT_EQ(s["draws"], 37);
     EXPECT_EQ(s["memory"]["resident_bytes"], 1234567);
+    EXPECT_EQ(s["resolution"]["render"], Json::array({1307, 1045}));
+    EXPECT_EQ(s["resolution"]["output"], Json::array({1960, 1568}));
+    EXPECT_NEAR(s["resolution"]["render_scale"].get<double>(), 1307.0 / 1960.0, 1e-9);
     EXPECT_EQ(s["entities"], 1);
     EXPECT_EQ(s["physics"]["bodies"], 1);
     EXPECT_EQ(s["physics"]["characters"], 1);

@@ -105,6 +105,8 @@ pub struct TaaParams {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum UpscalerMode {
+    /// `quality` on high-density displays (display scale >= 1.5), else `native_aa`.
+    Auto,
     /// Full resolution, anti-aliasing only.
     NativeAa,
     /// Render scale 1/1.5 per axis.
@@ -128,7 +130,7 @@ pub enum UpscalerBackend {
 #[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct UpscalerParams {
-    /// Render resolution (needs `taa.enabled`): `native_aa` (default), `quality`, `balanced` or `performance`.
+    /// Render resolution (needs `taa.enabled`): `auto` (default), `native_aa`, `quality`, `balanced` or `performance`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mode: Option<UpscalerMode>,
     /// Render scale per axis overriding the mode when above 0, 0..1 (min effective 0.25; default 0 = off).

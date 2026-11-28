@@ -8,6 +8,7 @@
 
 #include <optional>
 #include <string>
+#include <string_view>
 
 #include <entt/entity/fwd.hpp>
 
@@ -34,10 +35,12 @@ struct HdriPanel {
 // intensity of its DirectionalLight), its time of day (time_of_day_panel.hpp)
 // and weather (weather_panel.hpp), the lens of the view camera (the editor's
 // fly camera; null: none shown), then one section per RenderSettings group
-// with a reset button; the "Sky & HDRI" section also has the HDRI file row.
+// with a reset button; the "Sky & HDRI" section also has the HDRI file row,
+// and "Upscaling" shows `resolution` (the frame's render -> output size,
+// which is what the `auto` mode resolved to on this display).
 void draw_renderer_panel(renderer::RenderSettings& settings, scene::Scene* scene,
                          const HdriPanel& hdri, renderer::PhysicalCamera* view_lens = nullptr,
-                         float view_fov_y = 1.0471976F);
+                         float view_fov_y = 1.0471976F, std::string_view resolution = {});
 
 // R20 physical lens controls (aperture, shutter, ISO, focal length, sensor,
 // focus distance) plus the resulting EV100; `fov_y` is the camera's own

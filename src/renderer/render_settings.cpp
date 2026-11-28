@@ -91,8 +91,8 @@ constexpr std::array k_core_fields = {
     // ---- upscaler ----
     RenderSettingDesc{"upscaler", "mode", "mode", T::choice, 0.0F,
                       static_cast<float>(upscaler_mode_names.size() - 1), 0.0F, "",
-                      "Render scale per axis: native_aa 1, quality 1/1.5, balanced 1/1.7, "
-                      "performance 1/2 (needs TAA on)",
+                      "Render scale per axis: auto (quality on HiDPI displays, else native), "
+                      "native_aa 1, quality 1/1.5, balanced 1/1.7, performance 1/2 (needs TAA)",
                       &field_ref<&S::upscaler, &UpscalerSettings::mode>, upscaler_mode_names},
     RenderSettingDesc{"upscaler", "render_scale", "scale override", T::number, 0.0F, 1.0F, 0.0F,
                       "x", "Overrides the mode's render scale per axis when above 0 (min 0.25)",

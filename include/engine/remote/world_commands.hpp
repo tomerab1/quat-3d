@@ -116,6 +116,12 @@ struct FrameStats {
     std::uint32_t                samples = 0;
     std::optional<std::uint32_t> draws;            // scene draws last frame, after batching
     std::optional<std::uint64_t> resident_bytes;   // process resident memory
+    // The scene's render extent (before upscaling) and output extent (the
+    // editor viewport image or the window), in pixels; 0 before a frame.
+    std::uint32_t render_width = 0;
+    std::uint32_t render_height = 0;
+    std::uint32_t output_width = 0;
+    std::uint32_t output_height = 0;
 };
 
 // The game project the engine opened (QUAT_GAME, or the player's game.json).
