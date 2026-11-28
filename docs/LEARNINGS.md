@@ -7,13 +7,6 @@ into CLAUDE.md or the brief template in [`CYCLE.md`](CYCLE.md).
 
 ## Agents and orchestration
 
-- **Worktree-isolated agents get compound shell commands refused.** The
-  isolation guard rejects heredocs and multi-step commands that mention
-  paths it cannot verify (R22 lost several calls to "too complex to
-  verify"). → Write edit scripts to the agent's own scratchpad directory
-  and run them with the worktree path as an argument; keep git commands
-  plain and separate.
-
 - **The worktree isolation guard refuses complex shell commands** (heredocs
   with quotes, `cd` into computed paths, git on paths it cannot verify). A
   worker loses turns retrying them. → Write edit scripts / build scripts as
