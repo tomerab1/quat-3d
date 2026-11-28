@@ -280,7 +280,8 @@ add_library(engine_spline STATIC
     src/spline/closest.cpp
     src/spline/crossings.cpp
     src/spline/offset.cpp
-    src/spline/ground.cpp)
+    src/spline/ground.cpp
+    src/spline/network.cpp)
 target_link_libraries(engine_spline PUBLIC engine_flags glm::glm)
 target_include_directories(engine_spline PUBLIC ${ENGINE_PUBLIC_INCLUDE})
 target_compile_options(engine_spline PRIVATE $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-ffp-contract=off>)
@@ -700,6 +701,7 @@ add_library(engine_remote_world STATIC
     src/remote/world/camera_rig_commands.cpp
     src/remote/world/spline_common.cpp
     src/remote/world/spline_commands.cpp
+    src/remote/world/spline_network_commands.cpp
     src/remote/world/profile_commands.cpp
     src/remote/world/image_encode.cpp
     src/remote/world/stb_image_write_impl.cpp)

@@ -7,8 +7,8 @@ use rmcp::{tool, tool_router};
 use super::QuatServer;
 use super::results::to_params;
 use crate::params::{
-    SplineClosestParams, SplineCrossingsParams, SplineEntityParams, SplineOffsetParams,
-    SplineSampleParams, SplineSetParams,
+    SplineClosestParams, SplineCrossingsParams, SplineEntityParams, SplineNetworkParams,
+    SplineOffsetParams, SplineSampleParams, SplineSetParams,
 };
 
 #[tool_router(router = spline_tools, vis = "pub(super)")]
@@ -48,6 +48,12 @@ impl QuatServer {
     #[tool(annotations(read_only_hint = true))]
     async fn spline_offset(&self, params: Parameters<SplineOffsetParams>) -> CallToolResult {
         self.run("spline.offset", Some(to_params(&params.0))).await
+    }
+
+    #[doc = include_str!("../../content/tools/spline_network.md")]
+    #[tool(annotations(read_only_hint = true))]
+    async fn spline_network(&self, params: Parameters<SplineNetworkParams>) -> CallToolResult {
+        self.run("spline.network", Some(to_params(&params.0))).await
     }
 }
 

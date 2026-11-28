@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <string>
 
 #include <entt/entity/registry.hpp>
 
@@ -107,6 +108,48 @@ std::size_t update_spline_caches(entt::registry& r, const spline::GroundHeightFn
     for (const entt::entity e : r.view<const SplineCache>(entt::exclude<Spline>)) stale.push_back(e);
     for (const entt::entity e : stale) r.remove<SplineCache>(e);
     return rebuilt;
+}
+
+} // namespace engine::scene
+
+namespace engine::scene {
+
+std::expected<SceneCurveNetwork, core::Error> build_curve_network(const entt::registry& r, std::uint32_t network,
+                                                                  const spline::NetworkOptions& options) {
+    if (network == 0) return std::unexpected(core::make_error("network: expected a non-zero network number"));
+    SceneCurveNetwork out;
+    std::vector<std::uint32_t> ids;
+    for (const entt::entity e : r.view<const Spline>()) {
+        const Spline& s = r.get<const Spline>(e);
+        if (s.network != network) continue;
+        auto c = spline::Curve::build(world_spline(r, e));
+        if (!c) {
+            return std::unexpected(core::make_error("entity " + std::to_string(entt::to_integral(e)) +
+                                                    ": spline is invalid: " + c.error().message));
+        }
+        const std::uint32_t id = s.id != 0 ? s.id : static_cast<std::uint32_t>(entt::to_integral(e));
+        for (std::size_t i = 0; i < ids.size(); ++i) {
+            if (ids[i] == id) {
+                return std::unexpected(core::make_error(
+                    "spline id " + std::to_string(id) + " is used by entities " +
+                    std::to_string(entt::to_integral(out.entities[i])) + " and " +
+                    std::to_string(entt::to_integral(e)) + " (give each spline in a network its own id)"));
+            }
+        }
+        ids.push_back(id);
+        out.entities.push_back(e);
+        out.curves.push_back(std::move(*c));
+    }
+    if (out.curves.empty()) {
+        return std::unexpected(core::make_error("network " + std::to_string(network) + ": no spline has it"));
+    }
+    std::vector<spline::NetworkCurve> in;
+    in.reserve(out.curves.size());
+    for (std::size_t i = 0; i < out.curves.size(); ++i) in.push_back({ids[i], &out.curves[i]});
+    auto net = spline::build_network(in, options);
+    if (!net) return std::unexpected(net.error());
+    out.network = std::move(*net);
+    return out;
 }
 
 } // namespace engine::scene

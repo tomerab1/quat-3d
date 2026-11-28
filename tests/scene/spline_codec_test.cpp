@@ -129,3 +129,45 @@ TEST(SplineCache, RetriesSamplesOverUnloadedGround) {
 
 } // namespace
 } // namespace quat::test
+
+namespace quat::test {
+namespace {
+
+TEST(SplineSceneNetwork, JoinsTheSplinesOfOneNetworkInWorldSpace) {
+    entt::registry r;
+    auto make = [&r](std::uint32_t network, std::uint32_t id, glm::vec3 a, glm::vec3 b, float dx) {
+        const entt::entity e = r.create();
+        s::Transform t;
+        t.world[3] = glm::vec4(dx, 0, 0, 1);
+        r.emplace<s::Transform>(e, t);
+        s::Spline sp;
+        sp.kind = s::SplineKind::polyline;
+        sp.network = network;
+        sp.id = id;
+        sp.points = {{a, 1, 0, 0}, {b, 1, 0, 0}};
+        r.emplace<s::Spline>(e, sp);
+        return e;
+    };
+    const entt::entity a = make(1, 0, {-5, 0, 0}, {5, 0, 0}, 0.0F);
+    make(1, 7, {0, 0, -5}, {0, 0, 5}, 2.0F);  // moved: crosses at world x = 2
+    make(2, 0, {0, 0, -5}, {0, 0, 5}, 0.0F);  // another network: ignored
+    auto net = s::build_curve_network(r, 1);
+    ASSERT_TRUE(net.has_value()) << net.error().message;
+    EXPECT_EQ(net->network.edges.size(), 4U);
+    EXPECT_EQ(net->entities.size(), 2U);
+    bool crossed = false;
+    for (const auto& n : net->network.nodes) {
+        if (n.kind == engine::spline::NodeKind::cross) {
+            crossed = true;
+            EXPECT_NEAR(n.position.x, 2.0F, 1e-4F);
+        }
+    }
+    EXPECT_TRUE(crossed);
+
+    r.get<s::Spline>(a).id = 7;
+    EXPECT_NE(s::build_curve_network(r, 1).error().message.find("spline id 7 is used by entities"), std::string::npos);
+    EXPECT_EQ(s::build_curve_network(r, 9).error().message, "network 9: no spline has it");
+}
+
+} // namespace
+} // namespace quat::test

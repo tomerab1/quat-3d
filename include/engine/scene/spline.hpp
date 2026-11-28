@@ -12,6 +12,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <expected>
 #include <string>
 #include <vector>
 
@@ -19,6 +20,7 @@
 
 #include "engine/spline/curve.hpp"
 #include "engine/spline/ground.hpp" // GroundHeightFn (the type navigation.hpp declares)
+#include "engine/spline/network.hpp"
 #include "engine/spline/spline.hpp"
 
 namespace engine::scene {
@@ -54,5 +56,19 @@ std::size_t update_spline_caches(entt::registry& registry, const spline::GroundH
 // The spline of `e` in world space (its Transform::world applied; identity
 // without a Transform).
 [[nodiscard]] Spline world_spline(const entt::registry& registry, entt::entity e);
+
+// The curve network (G18.2) of every spline whose `network` field is
+// `network` (non-zero), in world space. A spline's network id is its `id`,
+// or its entity's integer id when that is 0. `entities` and `curves` are
+// indexed by NetworkEdge::curve_index. Errors: no such splines, two splines
+// with one id (naming both entities), a spline that does not compile.
+struct SceneCurveNetwork {
+    spline::CurveNetwork      network;
+    std::vector<entt::entity> entities;
+    std::vector<spline::Curve> curves;
+};
+[[nodiscard]] std::expected<SceneCurveNetwork, core::Error>
+build_curve_network(const entt::registry& registry, std::uint32_t network,
+                    const spline::NetworkOptions& options = {});
 
 } // namespace engine::scene

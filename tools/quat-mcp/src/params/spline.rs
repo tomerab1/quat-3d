@@ -147,3 +147,18 @@ pub struct SplineOffsetParams {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub trim: Option<bool>,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SplineNetworkParams {
+    /// The splines' `network` number (> 0).
+    pub network: u32,
+    /// Endpoints this close (metres, seen from above) join one node
+    /// (default 0.25).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub snap_radius: Option<f64>,
+    /// A two-way node turning less than this many degrees is `straight`, else
+    /// a `bend` (default 15).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub straight_deg: Option<f64>,
+}

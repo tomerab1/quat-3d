@@ -93,6 +93,7 @@ async fn lists_tools_prompts_and_resources() {
         "spline_closest",
         "spline_crossings",
         "spline_offset",
+        "spline_network",
     ] {
         assert!(
             names.contains(&expected),

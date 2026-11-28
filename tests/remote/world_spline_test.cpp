@@ -93,3 +93,36 @@ TEST_F(WorldSpline, ClosestCrossingsAndOffset) {
 
 } // namespace
 } // namespace quat::test
+
+namespace quat::test {
+namespace {
+
+TEST_F(WorldSpline, NetworkReportsNodesAndEdges) {
+    auto make = [this](const char* name, Json points) {
+        return ok("scene.create", {{"name", name},
+                                   {"components",
+                                    {{"spline", {{"kind", "polyline"}, {"network", 3}, {"points", std::move(points)}}}}}})["id"];
+    };
+    const Json a = make("a", {{-5, 0, 0}, {5, 0, 0}});
+    make("b", {{0, 0, -5}, {0, 0, 5}});
+    const Json out = ok("spline.network", {{"network", 3}});
+    ASSERT_EQ(out["edges"].size(), 4U);
+    ASSERT_EQ(out["nodes"].size(), 5U);
+    int crosses = 0;
+    for (const Json& n : out["nodes"]) {
+        EXPECT_EQ(n["id"].get<std::string>().size(), 16U);
+        if (n["kind"] == "cross") {
+            ++crosses;
+            EXPECT_EQ(n["ends"].size(), 4U);
+        }
+    }
+    EXPECT_EQ(crosses, 1);
+    EXPECT_EQ(out["edges"][0]["entity"], a);
+
+    EXPECT_EQ(err("spline.network", {{"network", 4}}, rc::not_found), "network 4: no spline has it");
+    EXPECT_NE(err("spline.network", Json::object(), rc::invalid_params).find("network"), std::string::npos);
+    err("spline.network", {{"network", 3}, {"snap_radius", 0}}, rc::invalid_params);
+}
+
+} // namespace
+} // namespace quat::test

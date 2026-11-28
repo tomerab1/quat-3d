@@ -3,7 +3,9 @@
 // Helpers shared by the spline.* world commands (spline_commands.cpp,
 // spline_network_commands.cpp; ROADMAP G18).
 
+#include <cstdint>
 #include <expected>
+#include <string>
 #include <string_view>
 
 #include "engine/spline/curve.hpp"
@@ -20,6 +22,12 @@ namespace engine::remote::world {
 
 // {entity, spline, length, segments, closed, bounds}.
 [[nodiscard]] Json spline_summary(const Context& ctx, entt::entity e);
+
+// A 64-bit network / node / edge id as 16 hex digits (JSON numbers carry
+// only 53 bits exactly).
+[[nodiscard]] std::string id_string(std::uint64_t id);
+
+void register_spline_network_commands(RpcServer& server, const ContextPtr& ctx);
 
 // Terrain height in world space (null when the scene has no terrain).
 [[nodiscard]] spline::GroundHeightFn ground_fn(const Context& ctx);
