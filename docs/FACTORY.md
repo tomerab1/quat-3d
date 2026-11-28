@@ -86,7 +86,9 @@ Code review can't see what the engine draws. Visual QA looks at real renders.
   `Fixes #N` in the body, creates its Reviewer session, addresses blocking
   review comments (or sends them back to the worker), merges once CI is fully
   green and no blocking comment is open (CYCLE.md merge rule).
-- Records process failures in docs/LEARNINGS.md.
+- Records process failures in docs/LEARNINGS.md and carries workers'
+  "Lessons for LEARNINGS" from their PR bodies into it. It is the only role
+  that edits docs/LEARNINGS.md and docs/STATUS.md.
 
 ### Worker (worktree agent)
 - Exactly as in CYCLE.md's brief template; the brief names the issue(s), and
