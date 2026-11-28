@@ -1,4 +1,4 @@
-// Guarded Radiance .hdr decoding (R21): a round trip through stb_image_write
+// Guarded Radiance .hdr decoding (R21): a round trip through a test RGBE encoder
 // (run-length encoded and flat scanlines), header checks against the texture
 // limits and the load budget before anything is allocated, and a corruption
 // fuzz run that must only ever produce an image or an error.
@@ -16,17 +16,17 @@
 #include <vector>
 
 #include <gtest/gtest.h>
-#include <stb_image_write.h>
 
 #include "engine/asset/hdr_decode.hpp"
 #include "support/expect_ok.hpp"
+#include "support/rgbe_encode.hpp"
 #include "support/temp_dir.hpp"
 
 namespace {
 
 namespace asset = engine::asset;
 
-// A `w` x `h` gradient with a bright "sun" texel, encoded by stb_image_write
+// A `w` x `h` gradient with a bright "sun" texel, encoded by encode_rgbe
 // (RLE scanlines for widths 8..32767, flat ones otherwise).
 std::vector<float> gradient(int w, int h) {
     std::vector<float> rgb(static_cast<std::size_t>(w * h * 3));
@@ -43,15 +43,7 @@ std::vector<float> gradient(int w, int h) {
 }
 
 std::vector<std::byte> encode(int w, int h, const std::vector<float>& rgb) {
-    std::vector<std::byte> out;
-    stbi_write_hdr_to_func(
-        [](void* ctx, void* data, int n) {
-            auto* o = static_cast<std::vector<std::byte>*>(ctx);
-            const auto* p = static_cast<const std::byte*>(data);
-            o->insert(o->end(), p, p + n);
-        },
-        &out, w, h, 3, rgb.data());
-    return out;
+    return quat::test::encode_rgbe(w, h, rgb);
 }
 
 std::vector<std::byte> bytes_of(const std::string& s) {

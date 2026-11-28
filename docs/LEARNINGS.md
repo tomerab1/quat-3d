@@ -667,3 +667,12 @@ it reordered, and an unvalidated ini file. Each lived in code only reachable
 through an ImGui frame. **Rule:** UI actions are plain functions over the
 registry or the state struct, called by the widget and by GoogleTest;
 anything read from disk goes through a pure, tested parser.
+
+## A test linked against a third-party feature the engine compiles out (R21)
+
+`hdr_decode_test.cpp` encoded its inputs with `stbi_write_hdr_to_func`. The
+engine's only stb_image_write TU defines `STBI_WRITE_NO_STDIO`, which also
+removes stb's HDR writer, so `engine_tests` failed to link in CI; the local
+build had passed against a different prefix. **Rule:** tests do not call
+third-party functions the engine's own build may configure away; encode test
+inputs with a small encoder under `tests/support/` (here `rgbe_encode.hpp`).
