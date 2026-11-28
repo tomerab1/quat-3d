@@ -54,9 +54,9 @@ the model:
 - **Getting started**, linking the README at the tag (`blob/vX.Y.Z/…`);
 - **Known issues and limitations**, from `docs/STATUS.md` and the open
   issues: honest and short;
-- **Third-party assets and licences** for everything the archives ship. The
-  archives contain `assets/` as committed; see
-  `scripts/package-release.sh`.
+- **Licence and third-party notices**: quat-3d's licence (MIT), and the
+  libraries, runtimes and assets the archives ship. The archives contain
+  `assets/` as committed; see `scripts/package-release.sh`.
 
 Rules:
 
@@ -82,7 +82,11 @@ notes. A prerelease without a notes file gets the generated notes only.
    `gh workflow run release.yml --ref master`.
 2. **Notes, version and changelog are merged.** The PR from
    [Release notes](#release-notes) has landed on `master`.
-3. **Tag `master`'s merge commit** and push the tag:
+3. **Licence and notices are current.** `LICENSE` is unchanged, or any
+   change is intended. `THIRD_PARTY_NOTICES.md` has a row with the right
+   licence for every dependency added since the last release; CI's
+   `scripts/check-third-party-notices.py` checks that each one is listed.
+4. **Tag `master`'s merge commit** and push the tag:
 
    ```sh
    git fetch origin
@@ -92,9 +96,10 @@ notes. A prerelease without a notes file gets the generated notes only.
 
    Check that `origin/master` is the merge commit of the notes PR, with no
    newer, untested commit on top of it.
-4. **Watch the workflow** (Actions → Release). When it finishes, check the
+5. **Watch the workflow** (Actions → Release). When it finishes, check the
    published release: the curated notes come first, then the generated PR
-   list, and three archives are attached.
+   list, and three archives are attached, each with `LICENSE` and
+   `THIRD_PARTY_NOTICES.md`.
 
 ## What the workflow does
 
@@ -103,14 +108,20 @@ notes. A prerelease without a notes file gets the generated notes only.
 1. **package** runs on `ubuntu-24.04`, `windows-2022` and `macos-15`, and
    each runner does the following:
    1. Checks that the notes exist (`scripts/release-notes.sh`), so a missing
-      file fails within a minute rather than after the builds.
+      file fails within a minute rather than after the builds. On Linux it
+      also checks that `THIRD_PARTY_NOTICES.md` lists every dependency.
    2. Builds `game` in Release with `ENGINE_PACKAGE_BUILD=ON`, which embeds
       no source-tree paths.
    3. Validates the tag.
-   4. Packages the build with `scripts/package-release.sh`.
+   4. Packages the build with `scripts/package-release.sh`. Each archive
+      gets `LICENSE`, plus a `THIRD_PARTY_NOTICES.md` that
+      `scripts/third-party-notices.sh` writes: the repository's summary
+      followed by every vcpkg port's, FetchContent package's, font's and
+      bundled runtime's licence text from the build.
    5. Smoke-tests the archive with `scripts/smoke-test-package.sh`. The test
       unpacks it under a path with a space and non-ASCII characters, runs 30
-      frames headless, and requires a clean exit and a screenshot.
+      frames headless, and requires a clean exit, a screenshot and the two
+      licence files.
 2. **publish** runs only on tags, after all three packages pass:
    1. Makes a sparse checkout of `docs/releases/` and `scripts/`, with no
       stored token.
