@@ -120,6 +120,12 @@ TEST_F(ComponentJson, TerrainCarriesErosionModelAndGpuFlag) {
     EXPECT_EQ(out["terrain"]["erosion_steps"], 50);
     EXPECT_EQ(out["terrain"]["gpu"], false);
     EXPECT_FALSE(apply("terrain", {{"erosion", "rivers"}}));
+
+    // Issue #69: talus relaxation cycles, on (3) by default.
+    EXPECT_EQ(out["terrain"]["erosion_relax"], 3);
+    ASSERT_OK(apply("terrain", {{"erosion_relax", 0}}));
+    EXPECT_EQ(r.get<s::Terrain>(e).params.grid.relax_cycles, 0U);
+    EXPECT_FALSE(apply("terrain", {{"erosion_relax", 9}}));
 }
 
 // Audit D3: grid erosion cost (resolution² x steps) is bounded at the codec,
@@ -135,6 +141,56 @@ TEST_F(ComponentJson, TerrainGridErosionCostIsBounded) {
     EXPECT_EQ(r.get<s::Terrain>(e).params.resolution, 2049U);
     ASSERT_OK(apply("terrain", {{"erosion", "droplets"}, {"resolution", 8193}}));
     EXPECT_EQ(r.get<s::Terrain>(e).params.resolution, 8193U);
+}
+
+// Issue #67: each field is in range on its own, but tiles kept loaded x
+// resolution² (and droplets x tiles) is bounded as a whole, with an error
+// naming the field and the largest values that fit. A rejected request
+// leaves the component as it was.
+TEST_F(ComponentJson, TerrainCombinedBudgetIsBounded) {
+    ASSERT_OK(apply("terrain", {{"seed", 7}})); // the defaults fit
+    const auto huge = apply("terrain", {{"erosion", "droplets"},
+                                        {"resolution", 8193},
+                                        {"streaming", true},
+                                        {"stream_radius", 8}});
+    ASSERT_FALSE(huge);
+    const std::string& why = huge.error().message;
+    EXPECT_NE(why.find("stream_radius"), std::string::npos) << why;
+    EXPECT_NE(why.find("289 tile(s)"), std::string::npos) << why;
+    EXPECT_NE(why.find("resolution <= 513"), std::string::npos) << why; // 289 x 513² fits
+    EXPECT_NE(why.find("stream_radius <= 0"), std::string::npos) << why;
+    EXPECT_FALSE(r.get<s::Terrain>(e).streaming) << "a rejected request changed the component";
+    EXPECT_EQ(r.get<s::Terrain>(e).params.resolution, 1025U);
+
+    EXPECT_FALSE(apply("terrain", {{"resolution", 4097}, {"erosion_steps", 0},
+                                   {"streaming", true}, {"stream_radius", 4}}));
+    // The editor's largest window at the default resolution, a 2049² window
+    // of radius 2, and a single 8193² tile all fit.
+    ASSERT_OK(apply("terrain", {{"streaming", true}, {"stream_radius", 4}}));
+    ASSERT_OK(apply("terrain", {{"resolution", 2049}, {"erosion_steps", 1000},
+                                {"stream_radius", 2}}));
+    EXPECT_FALSE(apply("terrain", {{"stream_radius", 3}}));
+    ASSERT_OK(apply("terrain", {{"erosion", "droplets"}, {"resolution", 8193},
+                                {"streaming", false}}));
+
+    // Droplet work scales with the window too.
+    ASSERT_OK(apply("terrain", {{"resolution", 513}, {"droplets", 1'000'000}}));
+    const auto droplets = apply("terrain", {{"streaming", true}, {"stream_radius", 4}});
+    ASSERT_FALSE(droplets);
+    EXPECT_NE(droplets.error().message.find("droplets"), std::string::npos);
+    EXPECT_NE(droplets.error().message.find("<= 617283"), std::string::npos)
+        << droplets.error().message; // 50M / 81 tiles
+
+    // The error names the field the request changed (PR #90 review).
+    ASSERT_OK(apply("terrain", {{"stream_radius", 4}, {"streaming", false}}));
+    const auto toggled = apply("terrain", {{"streaming", true}});
+    ASSERT_FALSE(toggled);
+    EXPECT_EQ(toggled.error().message.rfind("terrain.streaming", 0), 0U)
+        << toggled.error().message;
+    ASSERT_OK(apply("terrain", {{"droplets", 100'000}, {"streaming", true}}));
+    const auto more = apply("terrain", {{"droplets", 1'000'000}});
+    ASSERT_FALSE(more);
+    EXPECT_EQ(more.error().message.rfind("terrain.droplets", 0), 0U) << more.error().message;
 }
 
 TEST_F(ComponentJson, MergeKeepsFieldsNotMentioned) {
