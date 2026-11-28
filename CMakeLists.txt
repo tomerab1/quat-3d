@@ -469,6 +469,8 @@ add_library(engine_scene STATIC
     src/scene/camera_rig.cpp
     src/scene/camera_rig_system.cpp
     src/scene/component_json_camera_rig.cpp
+    src/scene/component_json_spline.cpp
+    src/scene/spline_system.cpp
     src/scene/world_clock.cpp
     src/scene/world_clock_json.cpp
     src/scene/world_clock_api.cpp

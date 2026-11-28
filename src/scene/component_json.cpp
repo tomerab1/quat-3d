@@ -36,6 +36,7 @@
 
 #include "component_json_animation.hpp"
 #include "component_json_camera_rig.hpp"
+#include "component_json_spline.hpp"
 
 namespace engine::scene {
 
@@ -75,6 +76,7 @@ constexpr std::array k_components = {
     ComponentInfo{"foot_ik", "Foot placement on uneven ground for an animated character (leg IK + pelvis)", true, true},
     ComponentInfo{"camera_rig", "Orbit / strategy camera rig driving the entity: focus, yaw, pitch eased with zoom, distance, springs, ground following, bounds", true, true},
     ComponentInfo{"camera_rig_input", "Input actions that drive the entity's camera_rig (pan, orbit, zoom to cursor, grab-the-world drag)", true, true},
+    ComponentInfo{"spline", "Curve through control points (centripetal Catmull-Rom, cubic Bezier or polyline) with per-point width / height / tags, optionally draped on the ground and joined into a curve network", true, true},
     ComponentInfo{"mesh", "glTF mesh provenance (read-only)", false, false},
 };
 
@@ -661,6 +663,7 @@ json encode_components(const entt::registry& r, entt::entity e, const EncodeOpti
     if (const auto* c = pick.get<CameraRigInput>("camera_rig_input")) {
         out["camera_rig_input"] = detail::encode_camera_rig_input(*c);
     }
+    if (const auto* c = pick.get<Spline>("spline")) out["spline"] = detail::encode_spline(*c);
     if (options.include_read_only) {
         if (const auto* m = pick.get<MeshSource>("mesh")) {
             out["mesh"] = {{"mesh_key", m->mesh_key},
@@ -707,6 +710,7 @@ std::vector<std::string_view> component_names(const entt::registry& r, entt::ent
     add(r.all_of<FootIK>(e), "foot_ik");
     add(r.all_of<CameraRig>(e), "camera_rig");
     add(r.all_of<CameraRigInput>(e), "camera_rig_input");
+    add(r.all_of<Spline>(e), "spline");
     add(include_read_only && r.all_of<MeshSource>(e), "mesh");
     return out;
 }
@@ -1032,6 +1036,7 @@ std::expected<void, core::Error> apply_component(entt::registry& r, entt::entity
     if (name == "camera_rig_input") {
         return merge<CameraRigInput>(r, e, v, name, strict, detail::decode_camera_rig_input);
     }
+    if (name == "spline") return merge<Spline>(r, e, v, name, strict, detail::decode_spline);
     return std::unexpected(core::Error{"component '" + std::string(name) + "' has no decoder"});
 }
 
@@ -1075,6 +1080,10 @@ bool remove_component(entt::registry& r, entt::entity e, std::string_view name) 
     if (name == "foot_ik") return r.remove<FootIK>(e) > 0;
     if (name == "camera_rig") return r.remove<CameraRig>(e) > 0;
     if (name == "camera_rig_input") return r.remove<CameraRigInput>(e) > 0;
+    if (name == "spline") {
+        r.remove<SplineCache>(e);
+        return r.remove<Spline>(e) > 0;
+    }
     return false; // transform (not removable) or unknown
 }
 

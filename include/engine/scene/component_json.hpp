@@ -36,6 +36,8 @@
 //   camera_rig       orbit / strategy camera rig (targets, limits, springs, bounds;
 //                    `current` is read-only)
 //   camera_rig_input G5 action names that drive the camera rig
+//   spline           control points (+ width / height / tags), kind, closed,
+//                    ground following, curve network (component_json_spline.cpp)
 //   mesh             read-only (glTF provenance; scene_io resolves it)
 //
 // Decoding merges: fields present in the JSON overwrite the component's
