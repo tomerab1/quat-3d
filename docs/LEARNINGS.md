@@ -254,19 +254,6 @@ into CLAUDE.md or the brief template in [`CYCLE.md`](CYCLE.md).
   `spirv-cross` is not the revision MoltenVK embeds (it only shares this
   bug), and Ubuntu's 2021 package reports a different, spurious packing
   error for the same shader: confirm with the `mvk_debug` CI run.
-- **A view that reinterprets a swapchain image's format goes stale on
-  MoltenVK (before 1.4.3).** #126 met it in `vkCmdCopyImage` (UNORM -> sRGB
-  into the swapchain); the editor UI's UNORM `VkImageView` of the sRGB
-  swapchain image is the same hazard: MoltenVK caches a Metal texture view
-  of the first drawable, and the image gets another drawable on every
-  acquire (fixed upstream by MoltenVK#2747). CI could not see it: the 1.4.1
-  GPU leg has no window, and Homebrew's 1.4.2 has the fix. → Rule: on
-  MoltenVK, touch a swapchain image only in its own format unless the
-  driver is known good (`rhi::swapchain_format_views_track_images`); the
-  UI's copy-composite path exists for that. And never key a workaround on
-  the version a release *first* fixed something in: MoltenVK main reports
-  the next version for months before it ships (1.4.2 from December 2025,
-  released July 2026), so require the version after it.
 - **A failed pipeline creation must carry its VkResult.** The macOS failure
   above printed only "vkCreateGraphicsPipelines failed"; the RHI's errors
   now include the result code.
