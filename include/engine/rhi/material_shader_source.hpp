@@ -13,6 +13,19 @@
 //     `__exported` (`__include`, `__import`, ...), no character literals
 //     (a `"` inside `'"'` would open a fake string), and no backslash line
 //     splicing outside string literals.
+// It must not take the GPU down either (issue #110): a material runs for every
+// GBuffer pixel, and one that touches memory it does not own or never ends
+// loses the device. So it may also not contain
+//   * inline SPIR-V (`spirv_asm`) or `vk::` attributes / intrinsics;
+//   * pointers: pointer types (`float*`, `T*` for a struct it declares,
+//     `vector<..>*`, casts `(T*)` / `bit_cast<T*>`), `Ptr<T>` and friends, a
+//     dereference `*p`, an address `&x`, or `p->field`;
+//   * buffer device addresses (`ConstBufferPointer`, `RawBufferLoad`,
+//     `buffer_reference`);
+//   * loops that never end by themselves: `for (...; ; ...)`, `while (true)`.
+// Loops need compile-time bounds; Slang has no attribute that caps a loop's
+// iterations at run time, so that rule is documented for authors (MCP shader
+// tool descriptions) rather than enforced.
 // Comments and string literals are ignored when looking for these; a string
 // literal ends at its line's end at the latest, so nothing after a newline is
 // ever hidden from the check.
