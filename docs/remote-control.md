@@ -337,6 +337,13 @@ values. Unknown fields are errors (they name the known fields).
 | `camera.get` | — | `{position, yaw_deg, pitch_deg, fov_deg, near, far, near_auto, far_auto}` |
 | `camera.set` | `{position?, look_at?, yaw_deg?, pitch_deg?, fov_deg?, near?, far?, cut?}` | `camera.get` result |
 | `camera.frame` | `{entity?}` (whole scene when omitted) | `camera.get` result |
+| `camera.rig.get` | `{entity?}` (the active camera's rig, or the only one) | `{entity, camera_rig:{...targets, limits, bounds, current:{focus, yaw_deg, pitch_deg, distance, eye}}, camera_rig_input?}` — see [`camera-rig.md`](camera-rig.md) |
+| `camera.rig.set` | `{entity?, immediate?=false, ...camera_rig fields}` | `camera.rig.get` result; `immediate` snaps the damped pose and places the entity |
+| `camera.rig.frame` | `{entity?, target?, margin?=0.1, immediate?=false}` | `camera.rig.get` result: focus at the content's centre, distance (and pitch) fitted at the rig's yaw |
+| `input.actions` | `{action?}` | `{contexts:[{name, on_stack, exclusive, consume}], stack:[names], actions:[{name, type, context, trigger, bindings, value:[x,y], active, actuated, held_s}]}` — see [`input.md`](input.md) |
+| `input.inject` | `{action, value: bool \| number \| [x,y], frames?=1}` or `{action, clear:true}` | `{action, value, frames}`; the value replaces the bindings' for those frames and goes through the trigger |
+| `input.bind` | `{action, bindings:[...] \| null, save?=true}` | the action (as in `input.actions`) + `saved`; null restores the map's bindings; `save` writes the user's rebinding file |
+| `input.context` | `{push: name}` or `{pop: name}` | `{contexts, stack}` |
 | `render.screenshot` *(deferred)* | `{max_size?=1024, camera?:{position?, look_at? \| yaw_deg?/pitch_deg?, frame?, fov_deg?, near?, far?}}` | `{mime:"image/png", width, height, data:<base64>}` |
 | `asset.list_models` | — | `{models:[project-relative paths of .gltf/.glb]}` |
 | `asset.spawn_model` | `{path, name?, parent?, components?}` | `{roots:[ids]}` |

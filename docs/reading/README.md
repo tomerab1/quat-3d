@@ -212,13 +212,20 @@ Design: [`docs/design/cozy-builder.md` §4.14](../design/cozy-builder.md#414-sea
 | 🗺 | **Realistic Simulation of Seasonal Variant Maples** — Zhou, Dong & Mei (chlorophyll / carotenoid / anthocyanin over time). [HAL](https://hal.archives-ouvertes.fr/inria-00521833) | R25.2 ramp authoring |
 | 🗺 | **Flocks, Herds, and Schools: A Distributed Behavioral Model** — Reynolds, SIGGRAPH 1987 (boids). [DOI](https://doi.org/10.1145/37401.37406) | G16.9 birds |
 
+## Input
+
+| | Reading | In quat-3d |
+|---|---|---|
+| ✅ | **Input System: Actions, Interactions and Processors** — Unity Technologies, Input System package manual. [docs.unity3d.com](https://docs.unity3d.com/Packages/com.unity.inputsystem@1.11/manual/Actions.html) | G5.1 action / binding / trigger / modifier model (`include/engine/input/action_map.hpp`) |
+| ✅ | **Enhanced Input** — Epic Games, Unreal Engine documentation (input mapping contexts with priority and consumption, chorded actions). [dev.epicgames.com](https://dev.epicgames.com/documentation/en-us/unreal-engine/enhanced-input-in-unreal-engine) | G5.1 context stack and chords (`src/input/actions.cpp`) |
+
 ## Cameras, tools & game architecture
 
 | | Reading | In quat-3d |
 |---|---|---|
-| 🗺 | **Critically Damped Ease-In/Ease-Out Smoothing** — Lowe, Game Programming Gems 4 (2004). See also Holden's *Spring-It-On* under Animation. | G15.1 camera rig smoothing |
-| 🗺 | **50 Game Camera Mistakes** — Nesky, GDC 2014. [GDC Vault](https://www.gdcvault.com/play/1020460/50-Camera) | G15 camera rigs |
-| 🗺 | **Real-Time Cameras** — Haigh-Hutchinson, Morgan Kaufmann 2009. | G15 camera rigs |
+| ✅ | **Critically Damped Ease-In/Ease-Out Smoothing** — Lowe, Game Programming Gems 4 (2004). See also Holden's *Spring-It-On* under Animation. | `include/engine/core/spring.hpp`; G15.1 camera rig smoothing (`src/scene/camera_rig_system.cpp`) |
+| ✅ | **50 Game Camera Mistakes** — Nesky, GDC 2014. [GDC Vault](https://www.gdcvault.com/play/1020460/50-Camera) | G15.1 pitch eased with zoom (`src/scene/camera_rig.cpp`) |
+| ✅ | **Real-Time Cameras** — Haigh-Hutchinson, Morgan Kaufmann 2009. | G15.1 target-space orbit rig (`include/engine/scene/camera_rig.hpp`) |
 | 🗺 | **Semantic Versioning 2.0.0** — Preston-Werner. [semver.org](https://semver.org/spec/v2.0.0.html) | P8 SDK versioning policy |
 | 🗺 | **CMake: Importing and Exporting Guide** — Kitware (exported targets, package config and version files). [cmake.org](https://cmake.org/cmake/help/latest/guide/importing-exporting/index.html) | P8 `find_package(quat3d CONFIG)` |
 | 🗺 | **Game Programming Patterns: Command** — Nystrom, 2014. [online](https://gameprogrammingpatterns.com/command.html) · and **Design Patterns** — Gamma, Helm, Johnson, Vlissides, 1994 (Command, Memento). | E1 `core::CommandStack`; G16.6 undo/redo |
@@ -227,7 +234,7 @@ Design: [`docs/design/cozy-builder.md` §4.14](../design/cozy-builder.md#414-sea
 
 | | Reading | In quat-3d |
 |---|---|---|
-| ✅ | **Spring-It-On: The Game Developer's Spring-Roll-Call** — Holden, 2021 (critically damped springs). [theorangeduck.com](https://www.theorangeduck.com/page/spring-roll-call) | `src/animation/ik/foot_placement.cpp` |
+| ✅ | **Spring-It-On: The Game Developer's Spring-Roll-Call** — Holden, 2021 (critically damped springs). [theorangeduck.com](https://www.theorangeduck.com/page/spring-roll-call) | `include/engine/core/spring.hpp` (foot placement, the G15.1 camera rig) |
 | 🗺 | **FABRIK: A fast, iterative solver for the Inverse Kinematics problem** — Aristidou & Lasenby, Graphical Models 2011. [project page](https://www.andreasaristidou.com/FABRIK) | Multi-bone IK chains (today: analytic two-bone IK in `include/engine/animation/two_bone_ik.hpp`) |
 | 🗺 | **Motion Matching and The Road to Next-Gen Animation** — Clavet, GDC 2016. [GDC Vault](https://www.gdcvault.com/play/1022985/Motion-Matching-and-The-Road) | Animation track |
 | 🗺 | **Learned Motion Matching** — Holden, Kanoun, Perepichka, Popa, SIGGRAPH 2020. [theorangeduck.com](https://www.theorangeduck.com/page/learned-motion-matching) | Animation track |

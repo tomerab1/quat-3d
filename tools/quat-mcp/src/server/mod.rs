@@ -13,6 +13,8 @@ mod behavior_tools;
 mod bt_outline;
 #[allow(clippy::doc_markdown)]
 mod debug_tools;
+#[allow(clippy::doc_markdown)]
+mod input_tools;
 mod results;
 #[allow(clippy::doc_markdown)]
 mod scene_tools;
@@ -138,6 +140,7 @@ impl QuatServer {
             + Self::script_tools()
             + Self::asset_tools()
             + Self::shader_tools()
+            + Self::input_tools()
     }
 
     /// Timeout for slow engine work (loading, baking, screenshots).

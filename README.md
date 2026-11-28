@@ -93,6 +93,12 @@ The editor (dark theme; a light theme is one click away in View > Theme):
   input (keyboard, mouse, gamepad), audio and navigation, sandboxed with
   per-call time and memory limits, hot-reloaded on save — see
   [`docs/scripting.md`](docs/scripting.md)
+- Input actions: JSON action maps over keyboard, mouse and gamepad (chords,
+  composites, triggers such as tap / hold / drag, dead zones, contexts),
+  rebinding saved per player — see [`docs/input.md`](docs/input.md)
+- Orbit / strategy camera rig: springs, pitch eased with zoom, grab-the-world
+  drag, zoom to the cursor, ground following, bounds — see
+  [`docs/camera-rig.md`](docs/camera-rig.md)
 - NPC navigation (Recast/Detour navmesh), path following, patrol routes
 - Data-driven behaviour trees (JSON)
 - Multiplayer foundations: client/server transport, state replication,
@@ -247,6 +253,7 @@ Environment variables switch on extra modes:
 | Variable | Effect |
 |---|---|
 | `QUAT_SCENE=<file>` | Load a scene file (project-relative) instead of the showcase scene |
+| `QUAT_INPUT_USER_FILE=<path>` | The player's input rebinding file (default `input.json` in the per-user preferences directory; empty = none) — see [`docs/input.md`](docs/input.md) |
 | `QUAT_PLAY=1` | Enter Play mode on the first frame (a non-editor build also plays a `QUAT_SCENE` game) |
 | `QUAT_SCRIPT_HOT_RELOAD=0` / `=1` | Turn script hot reload off (editor) / on (non-editor builds) |
 | `QUAT_GLTF=<file>` | Load a glTF/GLB model instead of the showcase scene |
@@ -474,6 +481,8 @@ The plan lives in [`ROADMAP.md`](ROADMAP.md), grouped into tracks:
 | [`docs/STATUS.md`](docs/STATUS.md) | What is in progress, what is blocked, what comes next |
 | [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md) | Building, testing, CI, and conventions for contributors |
 | [`docs/scripting.md`](docs/scripting.md) | Lua gameplay scripting: callbacks, the engine API, limits, hot reload |
+| [`docs/input.md`](docs/input.md) | Input actions: action-map format, triggers, modifiers, contexts, rebinding |
+| [`docs/camera-rig.md`](docs/camera-rig.md) | The orbit / strategy camera rig and its input |
 | [`docs/reading/README.md`](docs/reading/README.md) | Reading list: the papers and talks behind the engine's techniques, with where each lives in the code |
 | [`docs/remote-control.md`](docs/remote-control.md) | The remote-control protocol AI tools use to drive the engine |
 | [`docs/editor-ux.md`](docs/editor-ux.md) | The editor's design system: principles, tokens, widget kit, layout, shortcuts |
