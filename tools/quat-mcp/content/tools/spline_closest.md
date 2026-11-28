@@ -1,0 +1,1 @@
+The point on a spline nearest a world `point`: `position`, `distance` along the curve from its start, `param` (segment index plus fraction), `tangent`, `width` there, and `gap` (how far away the query point is). Pass `"xz": true` to measure in the ground plane and ignore height, e.g. to find which part of a wall the cursor is over.

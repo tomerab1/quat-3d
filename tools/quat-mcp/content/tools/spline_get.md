@@ -1,0 +1,1 @@
+Read an entity's spline: its control points (entity-local), kind, `closed`, `follow_ground`, `network` and `id`, plus derived values in world space: `length` (metres), `segments`, and `bounds` (`min` / `max`, grown by each point's width and height). `valid` is false with an `error` when the points do not make a curve of that kind.

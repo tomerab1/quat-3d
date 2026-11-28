@@ -87,6 +87,12 @@ async fn lists_tools_prompts_and_resources() {
         "camera_rig_get",
         "camera_rig_set",
         "camera_rig_frame",
+        "spline_get",
+        "spline_set",
+        "spline_sample",
+        "spline_closest",
+        "spline_crossings",
+        "spline_offset",
     ] {
         assert!(
             names.contains(&expected),

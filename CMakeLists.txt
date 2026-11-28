@@ -697,6 +697,8 @@ add_library(engine_remote_world STATIC
     src/remote/world/script_commands.cpp
     src/remote/world/input_commands.cpp
     src/remote/world/camera_rig_commands.cpp
+    src/remote/world/spline_common.cpp
+    src/remote/world/spline_commands.cpp
     src/remote/world/profile_commands.cpp
     src/remote/world/image_encode.cpp
     src/remote/world/stb_image_write_impl.cpp)
