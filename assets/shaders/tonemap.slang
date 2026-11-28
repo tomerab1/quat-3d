@@ -4,7 +4,7 @@
 // field, motion blur and bloom) and produces the display-encoded LDR image:
 //
 //   lateral chromatic aberration (spectral taps) -> exposure (auto, manual or
-//   the physical camera's EV100; computed on the CPU) -> vignette (the lens's
+//   the physical camera's EV100, relative to the frame's pre-exposure) -> vignette (the lens's
 //   cos^4 falloff and an artistic one, applied to light) -> scene-referred
 //   grading (lib/color.slang) -> tonemap operator -> sRGB encode -> look LUT
 //   -> film grain.
@@ -34,8 +34,8 @@ VsOut vertex_main(uint id : SV_VertexID) {
 
 // Mirrors PostParams in tonemap_pass.cpp (240 bytes).
 struct PostParams {
-    float4  exposure;     // x 1 = read g_exposure, y key, z min, w max
-    float4  exposure2;    // x scale (2^compensation, x physical EV100 exposure)
+    float4  exposure;     // x 1 = read g_exposure, y 1 / pre-exposure
+    float4  exposure2;    // x scale (2^compensation, x physical EV100 exposure, / pre-exposure)
     Grading grading;
     float4  vignette;     // x natural (cos^4) strength, y artistic, z smoothness, w aspect
     float4  lens;         // xy tan(fov / 2) horizontal / vertical, z chromatic aberration
@@ -48,7 +48,7 @@ struct PostParams {
 
 Texture2D               g_hdr;
 SamplerState            g_sampler;  // bilinear, clamp to edge
-StructuredBuffer<float> g_exposure; // [0] = adapted average luminance
+StructuredBuffer<float> g_exposure; // ExposureState: [1] = auto exposure
 ConstantBuffer<PostParams> g_post;
 Texture3D               g_lut;      // look LUT (lib/color.slang sample_lut)
 
@@ -115,8 +115,9 @@ float4 post_main<T : ITonemapper>(VsOut input, T op) {
     float3 hdr = sample_hdr(uv);
     float exposure = g_post.exposure2.x;
     if (g_post.exposure.x > 0.5) {
-        const float avg = max(g_exposure[0], 1e-4);
-        exposure *= clamp(g_post.exposure.y / avg, g_post.exposure.z, g_post.exposure.w);
+        // The auto exposure applies to true luminance; the HDR image was
+        // pre-exposed (lib/photometry: R22.2.1), so divide that back out.
+        exposure *= g_exposure[1] * g_post.exposure.y;
     }
     hdr *= exposure * vignette(uv);
     hdr = grade(g_post.grading, hdr);

@@ -147,7 +147,9 @@ load_with_layout(const rhi::Device& device, ParticlePass::State& s, rhi::Pipelin
     g.camera_right = glm::vec4(f.view[0][0], f.view[1][0], f.view[2][0], 0.0F);
     g.camera_up = glm::vec4(f.view[0][1], f.view[1][1], f.view[2][1], 0.0F);
     g.sun_direction = f.light.direction;
-    g.sun_color = glm::vec4(glm::vec3(f.light.color) * f.light.color.w, 0.0F);
+    const bool pre_ok = std::isfinite(f.pre_exposure) && f.pre_exposure > 0.0F;
+    g.sun_color = glm::vec4(glm::vec3(f.light.color) * f.light.color.w,
+                            pre_ok ? f.pre_exposure : 1.0F);
     g.ambient = f.light.ambient;
     const float w = static_cast<float>(std::max(f.extent.width, 1U));
     const float h = static_cast<float>(std::max(f.extent.height, 1U));

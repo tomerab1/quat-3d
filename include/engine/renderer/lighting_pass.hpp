@@ -97,6 +97,9 @@ struct LightingTuning {
     // directional light; the background draws it back as an analytic disc
     // (angular diameter = the shadows' sun size) carrying the light's energy.
     bool hdri_sun_disc = false;
+    // R22.2.1: the HDR target's pre-exposure (photometry.hpp); every value
+    // the pass writes is multiplied by it.
+    float pre_exposure = 1.0F;
 };
 
 class LightingPass {

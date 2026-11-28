@@ -48,7 +48,7 @@ static const float SKY_LUT_BRIGHTNESS = 8.0;
 // match prefilter_mip_count in ibl_pass.cpp.
 static const float PREFILTER_MAX_LOD = 4.0;
 
-// Per-frame values (std140, 368 bytes; LightingConstants in lighting_pass.cpp).
+// Per-frame values (std140, 384 bytes; LightingConstants in lighting_pass.cpp).
 // Matrices are glm columns (applied with mul_cols).
 struct LightingConstants {
     float4 inv_view_proj[4]; // clip -> world (jittered), reconstructs positions
@@ -70,6 +70,8 @@ struct LightingConstants {
     float4 cloud_shadow_v;
     float4 realism;          // x multiscatter, y horizon occlusion, z reflections bound,
                              // w HDRI sun disc 1 - cos(radius) (0 = none) (R21)
+    float4 exposure;         // x pre-exposure: every value written to g_hdr is
+                             // multiplied by it (R22.2.1, lib photometry)
 }
 ConstantBuffer<LightingConstants> g_frame;
 
@@ -363,7 +365,7 @@ void compute_main(uint3 tid : SV_DispatchThreadID) {
                 bg = sky(ray, sun);
             }
         }
-        g_hdr[coord] = float4(hdr_store(bg), 1.0);
+        g_hdr[coord] = float4(hdr_store(bg * g_frame.exposure.x), 1.0);
         return;
     }
 
@@ -482,5 +484,5 @@ void compute_main(uint3 tid : SV_DispatchThreadID) {
         color *= csm_debug_color(cascade);
     }
     color += g_emissive.Load(int3(coord, 0)).rgb; // self-emission, unlit (after AO and the debug tint)
-    g_hdr[coord] = float4(hdr_store(color), 1.0);
+    g_hdr[coord] = float4(hdr_store(color * g_frame.exposure.x), 1.0);
 }

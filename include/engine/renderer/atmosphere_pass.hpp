@@ -2,8 +2,10 @@
 
 // AtmospherePass — physically-based sky LUTs (Phase 11, Slice 11.1).
 //
-// Hillaire 2020: transmittance (256x64) and multiple-scattering (32x32) LUTs
-// are computed once at creation (sun-independent); the sky-view LUT (192x108
+// Hillaire 2020: transmittance (256x64) and multiple-scattering (32x32) LUTs,
+// and the sky irradiance LUT (R22.2.1, 128x1: the ground's skylight per unit
+// light irradiance, Bruneton & Neyret 2008), are computed once at creation
+// (sun-independent); the sky-view LUT (192x108
 // lat-long) is recomputed whenever the sun direction changes — blocking at
 // startup (ensure_skyview), or as a render-graph pass at runtime
 // (add_skyview_update_to_graph) so sun drags never stall the pipeline. The
@@ -31,11 +33,27 @@ class PipelineCache;
 
 namespace engine::renderer {
 
+// The lights of the sky-view LUT beyond its unit sun (R22.2.1), as
+// irradiances relative to the extra-atmospheric sun (photometry.hpp:
+// lux / k_sun_reference_lux). They light the planet surface below the
+// horizon; the Moon's own scattering in the sky is R22.2.2.
+struct SkyLights {
+    float     sun_irradiance = 1.0F;  // the LUT's sun (1 = the reference sun)
+    glm::vec3 moon_direction{0.0F, -1.0F, 0.0F}; // toward the Moon (world)
+    float     moon_irradiance = 0.0F;
+    // Natural night-sky floor on the ground (stars, airglow, zodiacal light).
+    float     night_irradiance = 0.0F;
+
+    friend bool operator==(const SkyLights&, const SkyLights&) = default;
+};
+
 class AtmospherePass {
 public:
     // LUT resolutions (RGBA16F), for readback in tests and debug tooling.
     static constexpr VkExtent2D transmittance_extent{256, 64};
     static constexpr VkExtent2D skyview_extent{192, 108};
+    // Sky irradiance LUT (RGBA32F; lib/atmosphere.slang SKY_IRRADIANCE_*).
+    static constexpr VkExtent2D sky_irradiance_extent{128, 1};
 
     // Builds pipelines + LUT images and computes the static LUTs (blocking).
     [[nodiscard]] static std::expected<AtmospherePass, core::Error>
@@ -51,18 +69,22 @@ public:
     // Recomputes the sky-view LUT when `sun_to` (unit, toward the sun) moved
     // since the last call. Blocking compute submit on the graphics queue —
     // startup and tests only; the frame loop uses the graph variant below.
-    [[nodiscard]] std::expected<void, core::Error> ensure_skyview(const glm::vec3& sun_to);
+    [[nodiscard]] std::expected<void, core::Error> ensure_skyview(const glm::vec3& sun_to,
+                                                                  const SkyLights& lights = {});
 
     // Graph variant: when the sun moved, records the LUT recompute as a
     // compute pass with its own barriers. Declare it BEFORE any pass that
     // samples skyview_view() this frame (the graph keeps declaration order
-    // for independent passes). No-op when the sun is unchanged.
+    // for independent passes). No-op when the sun and lights are unchanged.
     [[nodiscard]] std::expected<void, core::Error>
-    add_skyview_update_to_graph(rhi::RenderGraph& graph, const glm::vec3& sun_to);
+    add_skyview_update_to_graph(rhi::RenderGraph& graph, const glm::vec3& sun_to,
+                                const SkyLights& lights = {});
 
     [[nodiscard]] bool valid() const { return skyview_view_.handle() != VK_NULL_HANDLE; }
     [[nodiscard]] VkImageView skyview_view() const { return skyview_view_.handle(); }
     [[nodiscard]] VkImageView transmittance_view() const { return transmittance_view_.handle(); }
+    [[nodiscard]] VkImageView sky_irradiance_view() const { return sky_irradiance_view_.handle(); }
+    [[nodiscard]] VkImage sky_irradiance_image() const { return sky_irradiance_.handle(); }
     // Raw LUT images (SHADER_READ_ONLY_OPTIMAL between uses), for readback.
     [[nodiscard]] VkImage skyview_image() const { return skyview_.handle(); }
     [[nodiscard]] VkImage transmittance_image() const { return transmittance_.handle(); }
@@ -79,11 +101,16 @@ private:
     rhi::ImageView transmittance_view_;
     rhi::GpuImage  multiscatter_;
     rhi::ImageView multiscatter_view_;
+    rhi::GpuImage  sky_irradiance_;
+    rhi::ImageView sky_irradiance_view_;
     rhi::GpuImage  skyview_;
     rhi::ImageView skyview_view_;
     rhi::Sampler   sampler_;
 
+    [[nodiscard]] bool skyview_current(const glm::vec3& sun, const SkyLights& lights) const;
+
     glm::vec3 skyview_sun_{0.0F};
+    SkyLights skyview_lights_{};
 
     // Per-frame update descriptors, ring-buffered past frames-in-flight (2).
     std::array<rhi::DescriptorBuffer, 3> db_ring_;

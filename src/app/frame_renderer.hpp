@@ -36,6 +36,7 @@
 #include <vulkan/vulkan.h>
 
 #include "app/screenshot_capture.hpp" // CaptureSource
+#include "engine/astro/sky_state.hpp"
 #include "engine/renderer/atmosphere_pass.hpp"
 #include "engine/renderer/bloom_pass.hpp"
 #include "engine/renderer/color_lut.hpp"
@@ -58,6 +59,7 @@
 #include "engine/renderer/shadow_ao_settings.hpp"
 #include "engine/renderer/render_settings.hpp"
 #include "engine/renderer/shadow_pass.hpp"
+#include "engine/renderer/star_field_pass.hpp"
 #include "engine/renderer/skinning_pass.hpp"
 #include "engine/renderer/ssr_pass.hpp"
 #include "engine/renderer/tonemap_pass.hpp"
@@ -162,6 +164,8 @@ struct DeferredFrame {
     // R20 cinematic post (optional: they need extended storage formats).
     engine::renderer::DofPass        dof;
     engine::renderer::MotionBlurPass motion_blur;
+    // R22.2.1 bright stars (invalid without the catalogue or the atmosphere).
+    engine::renderer::StarFieldPass  stars;
     // The look LUT this slot's last frame sampled: kept alive until the slot
     // records again (its fence has then been waited), so swapping the LUT
     // never frees one a frame in flight still reads.
@@ -205,6 +209,8 @@ struct FrameScene {
     // (wind heading from the grass, when it has some) without one.
     engine::weather::WeatherState weather{};
     bool                          has_weather = false;
+    // R22.1: the world clock's sky (none without an enabled clock).
+    std::optional<engine::astro::SkyState> sky;
 };
 
 // Everything record() draws besides the gathered scene.
@@ -286,6 +292,12 @@ public:
     // renders without them.
     void create_reflections(engine::rhi::PipelineCache& pipeline_cache,
                             const std::string& shader_dir);
+    // R22.2.1: loads the bright star catalogue (`catalogue`, cooked
+    // assets/sky/bright_stars.qsc) and creates each slot's star pass. A
+    // missing or invalid file only warns: the sky renders without stars.
+    void create_star_field(engine::rhi::PipelineCache& pipeline_cache,
+                           const std::string& shader_dir,
+                           const std::filesystem::path& catalogue);
     // Loads `relative` (a project-relative Radiance .hdr confined to
     // `project_root`; empty clears it) as the environment's HDRI, used while
     // render_settings().environment.source is hdri. A failed load keeps the
@@ -395,6 +407,16 @@ private:
     [[nodiscard]] engine::renderer::LightingTuning
     lighting_tuning(engine::rhi::ResourceHandle reflections, VkImageView background) const;
     // The editor's R12 settings (defaults in headless builds).
+    // R22.2.1 night sky (frame_night_sky.cpp): the exposure this frame's
+    // HDR is pre-exposed with, the sky-view LUT's extra lights, and the star
+    // field over the lit HDR.
+    [[nodiscard]] float choose_pre_exposure(const FrameInputs& in) const;
+    [[nodiscard]] engine::renderer::SkyLights sky_lights(const FrameScene& scene) const;
+    void add_star_field(engine::rhi::RenderGraph& graph, const FrameInputs& in,
+                        const engine::renderer::GBufferTargets& gbuffer,
+                        engine::rhi::ResourceHandle hdr,
+                        const engine::renderer::CloudSettings& clouds);
+
     [[nodiscard]] engine::renderer::CsmSettings current_csm() const;
     [[nodiscard]] engine::renderer::GtaoSettings current_gtao() const;
     [[nodiscard]] engine::renderer::ContactShadowSettings current_contact_shadows() const;
@@ -450,6 +472,9 @@ private:
     std::array<DeferredFrame, k_frames_in_flight>    frames_;
 
     std::optional<engine::renderer::AtmospherePass> atmosphere_;
+    std::shared_ptr<const engine::renderer::StarCatalogueGpu> star_catalogue_;
+    // The frame being recorded is pre-exposed with this (choose_pre_exposure).
+    float pre_exposure_ = 1.0F;
     std::optional<engine::renderer::DynamicIbl>     dynamic_ibl_;
     // R21: the HDRI panorama's maps and the screen-space reflections (shared
     // by both slots; each owns its own cross-frame state).

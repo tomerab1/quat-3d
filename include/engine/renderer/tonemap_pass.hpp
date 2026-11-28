@@ -43,9 +43,13 @@ struct TonemapLook {
     // The look LUT (null or grading.lut_contribution 0: none). Must stay
     // alive until the graph has executed.
     const ColorLutTexture* lut = nullptr;
-    // > 0: the physical camera's exposure multiplier (exposure_from_ev100),
-    // which replaces auto exposure; the compensation still applies.
+    // > 0: the physical camera's exposure multiplier in HDR units
+    // (photometry::exposure_from_ev100_units), which replaces auto exposure;
+    // the compensation still applies.
     float physical_exposure = 0.0F;
+    // The multiplier the HDR image was pre-exposed with (photometry.hpp);
+    // the tonemap applies exposure / pre_exposure.
+    float pre_exposure = 1.0F;
     float fov_y  = 1.0471976F; // vertical field of view (natural vignette)
     float time_s = 0.0F;       // film grain clock
 };
@@ -66,11 +70,12 @@ public:
     // must already be a graph resource — imported swapchain or transient). The
     // descriptor and parameter buffers are owned by the pass and hold this
     // call's values until the next call: add it once per graph execution.
-    // `exposure_buffer` is the device address of the auto-exposure pass's adapted-
-    // luminance buffer. Exposure = clamp(key / adapted, min, max) * 2^EV when it is
+    // `exposure_buffer` is the device address of the auto-exposure pass's
+    // state (ExposureState). Exposure = its auto exposure * 2^EV when it is
     // set and `exposure.auto_exposure` is on, the physical camera's exposure *
-    // 2^EV when `look.physical_exposure` > 0, else 2^EV (the default settings
-    // with no buffer give a multiplier of exactly 1).
+    // 2^EV when `look.physical_exposure` > 0, else 2^EV; divided by
+    // `look.pre_exposure` (the default settings with no buffer give a
+    // multiplier of exactly 1).
     [[nodiscard]] std::expected<void, core::Error>
     add_to_graph(rhi::RenderGraph& graph, rhi::ResourceHandle hdr, rhi::ResourceHandle output,
                  VkExtent2D extent, VkDeviceAddress exposure_buffer = 0,

@@ -73,7 +73,7 @@ public struct ParticleFrame {
     public float4 camera_right;     // world-space billboard axes
     public float4 camera_up;
     public float4 sun_direction;    // xyz towards the sun
-    public float4 sun_color;        // rgb x intensity
+    public float4 sun_color;        // rgb x intensity, w = the frame's pre-exposure
     public float4 ambient;          // rgb
     public float4 screen;           // width, height, 1 / width, 1 / height
     public uint4  misc;             // y = pool capacity, w = emitter count

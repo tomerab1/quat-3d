@@ -56,6 +56,7 @@ struct ParticleFrameInputs {
     engine::renderer::DirectionalLightParams     sun{};
     VkExtent2D                                   extent{0, 0};
     float                                        sim_dt = 0.0F; // 0 = paused
+    float                                        pre_exposure = 1.0F; // R22.2.1 HDR scale
 };
 
 class ParticleRuntime {

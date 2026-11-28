@@ -278,6 +278,11 @@ FrameScene FrameRenderer::gather(engine::scene::Scene& scene,
 
     // R13.1: the weather this frame renders.
     out.has_weather = engine::scene::frame_weather(scene.registry(), out.weather);
+    // R22.1: the world clock's sky (stars, Moon, the night ground).
+    for (const entt::entity e : scene.registry().view<const engine::astro::SkyState>()) {
+        out.sky = scene.registry().get<const engine::astro::SkyState>(e);
+        break;
+    }
     weather_ = out.weather;
     has_weather_ = out.has_weather;
     camera_pos_ = cam.position;
@@ -301,6 +306,8 @@ bool FrameRenderer::record(const FrameInputs& in) {
     // draw_extent, where post-processing and the UI run.
     const VkExtent2D render_extent = fs.render_extent;
     apply_texture_lod_bias(fr, render_extent, draw_extent);
+    // R22.2.1: every light this frame writes into the HDR is pre-exposed.
+    pre_exposure_ = choose_pre_exposure(in);
     const auto atmos_skyview = [&]() {
         return atmosphere_ ? atmosphere_->skyview_view() : VK_NULL_HANDLE;
     };
@@ -318,7 +325,7 @@ bool FrameRenderer::record(const FrameInputs& in) {
     // probe's (one step per frame, flipping when a cycle completes).
     const glm::vec3 sun_to = glm::vec3(fs.light.direction);
     if (atmosphere_) {
-        if (auto r = atmosphere_->add_skyview_update_to_graph(graph, sun_to); !r) {
+        if (auto r = atmosphere_->add_skyview_update_to_graph(graph, sun_to, sky_lights(fs)); !r) {
             std::fprintf(stderr, "[warn] sky-view update: %s\n", r.error().message.c_str());
         }
     }
@@ -455,6 +462,7 @@ bool FrameRenderer::record(const FrameInputs& in) {
         fs.weather,
         in.terrain != nullptr ? in.terrain_snowline : engine::renderer::k_no_snowline_m);
     tuning.cloud_shadow = cloud_shadow;
+    tuning.pre_exposure = pre_exposure_;
     auto hdr = fr.lighting.add_to_graph(graph, *gbuffer, render_extent, fs.light,
                                         fs.jittered_inv_vp, cam.position, occlusion, clustered,
                                         /*enable_sky=*/true, ibl_views, atmos_skyview(),
@@ -463,9 +471,12 @@ bool FrameRenderer::record(const FrameInputs& in) {
         std::fprintf(stderr, "[fatal] lighting pass: %s\n", hdr.error().message.c_str());
         return false;
     }
+    // R22.2.1: the stars over the sky, before anything blends over it.
+    add_star_field(graph, in, *gbuffer, *hdr, clouds);
     // Forward-blend transparent geometry over the lit HDR, depth-tested
     // against the opaque GBuffer depth.
     if (!fs.transparent_draws.empty()) {
+        fr.transparent.set_pre_exposure(pre_exposure_);
         if (auto r = fr.transparent.add_to_graph(graph, *hdr, gbuffer->depth, render_extent,
                                                  fs.jittered_vp, fs.light, cam.position,
                                                  fs.transparent_draws, ibl_views, clustered,
@@ -481,7 +492,7 @@ bool FrameRenderer::record(const FrameInputs& in) {
     if (in.particles != nullptr) {
         in.particles->add_to_graph(graph, *in.registry,
                                    {frame_, &*gbuffer, *hdr, &clustered, &cam, fs.jittered_vp,
-                                    fs.light, render_extent, in.sim_dt});
+                                    fs.light, render_extent, in.sim_dt, pre_exposure_});
     }
     // R21: this frame's lit HDR is what next frame's reflections show.
     add_reflection_color(graph, *hdr);
@@ -510,8 +521,9 @@ bool FrameRenderer::record(const FrameInputs& in) {
     // Auto-exposure: measure the (post-bloom) HDR luminance and adapt over
     // time. It keeps measuring in manual mode, so switching back to auto
     // starts from the current scene instead of a stale value.
-    if (auto r = fr.exposure.add_to_graph(graph, *hdr, draw_extent, in.dt,
-                                          settings.exposure.adaptation_s);
+    if (auto r = fr.exposure.add_to_graph(
+            graph, *hdr, draw_extent, in.dt,
+            engine::renderer::ExposureMetering::from(settings.exposure, pre_exposure_));
         !r) {
         std::fprintf(stderr, "[fatal] exposure pass: %s\n", r.error().message.c_str());
         return false;

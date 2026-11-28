@@ -56,10 +56,11 @@ constexpr float k_max_feedback = 0.98F;
 constexpr float k_sample_falloff = 8.0F;
 // Accumulated weight lost per unit (resolve space) the clip moved the history.
 constexpr float k_clip_rejection = 8.0F;
-// Exposure = key / adapted luminance, clamped (same as the tonemap pass).
-constexpr float k_exposure_key = 0.18F;
-constexpr float k_min_exposure = 0.05F;
-constexpr float k_max_exposure = 16.0F;
+// [floats] of the ExposureState the resolve binds.
+constexpr VkDeviceSize k_exposure_bytes = 4 * sizeof(float);
+[[nodiscard]] float valid_pre_exposure(float pre) {
+    return std::isfinite(pre) && pre > 0.0F ? pre : 1.0F;
+}
 
 // taa.slang's resources, by name; binding slots come from its reflection.
 enum Resource : std::uint8_t {
@@ -179,12 +180,12 @@ TaaPass::create(const rhi::Device& device, rhi::GpuAllocator& allocator, rhi::Pi
     // A valid buffer for the exposure slot when the caller has none (the
     // shader does not read it then).
     auto unit = allocator.create_buffer(
-        sizeof(float), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+        k_exposure_bytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
         VMA_MEMORY_USAGE_AUTO,
         VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT);
     if (!unit) return std::unexpected(unit.error());
-    constexpr float k_one = 1.0F;
-    std::memcpy(unit->mapped(), &k_one, sizeof(k_one));
+    constexpr std::array<float, 4> k_unit{1.0F, 1.0F, 0.0F, 0.18F};
+    std::memcpy(unit->mapped(), k_unit.data(), sizeof(k_unit));
     if (auto f = unit->flush(); !f) return std::unexpected(f.error());
     out.unit_exposure_ = std::move(*unit);
     out.unit_exposure_address_ = rhi::buffer_device_address(device.handle(), out.unit_exposure_);
@@ -243,8 +244,13 @@ TaaPass::add_to_graph(rhi::RenderGraph& graph, const UpscalerInputs& in) {
     push.display_size = size_vec(display);
     push.jitter = glm::vec4(in.jitter.pixels, glm::clamp(in.sharpness, 0.0F, 1.0F),
                             hist.valid_ ? 1.0F : 0.0F);
-    push.exposure = glm::vec4(in.exposure != 0 ? 1.0F : 0.0F, k_exposure_key, k_min_exposure,
-                              k_max_exposure);
+    // The resolve weights samples in exposed space: the auto exposure of
+    // the true luminance over this frame's pre-exposure (~1). The history
+    // was pre-exposed with the previous frame's multiplier: rescale it.
+    const float pre = valid_pre_exposure(in.pre_exposure);
+    const float history_scale = hist.valid_ ? pre / valid_pre_exposure(hist.pre_exposure_) : 1.0F;
+    push.exposure = glm::vec4(in.exposure != 0 ? 1.0F : 0.0F, 1.0F / pre,
+                              std::isfinite(history_scale) ? history_scale : 1.0F, 0.0F);
     push.blend = glm::vec4(max_weight(in.feedback), k_sample_falloff, k_clip_rejection,
                            static_cast<float>(hist.frame_ % (1U << 24))); // dither seed
     push.count_non_finite = in.non_finite_counter != 0 ? 1U : 0U;
@@ -287,7 +293,7 @@ TaaPass::add_to_graph(rhi::RenderGraph& graph, const UpscalerInputs& in) {
             frame_descriptor_.write_sampled_image(s[r_velocity], ctx.resolve(velocity).view, ro);
             frame_descriptor_.write_sampled_image(s[r_history], ctx.resolve(h_prev).view, ro);
             frame_descriptor_.write_sampler(s[r_sampler], sampler_.handle());
-            frame_descriptor_.write_storage_buffer(s[r_exposure], exposure, sizeof(float));
+            frame_descriptor_.write_storage_buffer(s[r_exposure], exposure, k_exposure_bytes);
             frame_descriptor_.write_storage_image(s[r_history_out], ctx.resolve(h_cur).view,
                                                   VK_IMAGE_LAYOUT_GENERAL);
             frame_descriptor_.write_storage_image(s[r_out], ctx.resolve(h_out).view,
@@ -306,6 +312,7 @@ TaaPass::add_to_graph(rhi::RenderGraph& graph, const UpscalerInputs& in) {
     hp.stage = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT;
     hp.access = 0; // read only: the next writer needs an execution dependency only
     hist.valid_ = true;
+    hist.pre_exposure_ = pre;
     ++hist.frame_;
     return h_out;
 }

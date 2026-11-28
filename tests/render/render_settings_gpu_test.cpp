@@ -13,6 +13,7 @@
 #include <vulkan/vulkan.h>
 
 #include "engine/renderer/exposure_pass.hpp"
+#include "engine/renderer/photometry.hpp"
 #include "engine/renderer/render_settings.hpp"
 #include "engine/renderer/taa_pass.hpp"
 #include "engine/renderer/upscaler.hpp"
@@ -100,7 +101,8 @@ std::expected<HostImage, Error> tonemap(quat::test::GpuContext& g, const Uniform
     const rhi::ResourceHandle in = hdr.import(graph);
     VkDeviceAddress exposure_buffer = 0;
     if (exposure != nullptr) {
-        if (auto a = exposure->add_to_graph(graph, in, k_extent, 1000.0F, settings.adaptation_s);
+        if (auto a = exposure->add_to_graph(graph, in, k_extent, 1000.0F,
+                                            r::ExposureMetering::from(settings, 1.0F));
             !a) {
             return std::unexpected(a.error());
         }
@@ -149,15 +151,24 @@ TEST(GpuRenderSettings, AutoExposureAppliesKeyClampsAndCompensation) {
     ASSERT_OK(ldr);
     const float adapted = exposure->adapted_luminance();
     ASSERT_GT(adapted, 0.1F);
-    const float e = std::clamp(s.key / adapted, s.min_exposure, s.max_exposure) * 2.0F;
+    // 0.5 units is 8000 cd/m², above the adaptive key's reference: the key
+    // is the user's.
+    const float e = r::photometry::auto_exposure(adapted, s.key, s.adaptive_key, s.min_ev100,
+                                                 s.max_ev100) *
+                    2.0F;
+    EXPECT_NEAR(exposure->exposure(), e / 2.0F, e * 1e-3F);
     EXPECT_NEAR(ldr->rgba8(3, 3).r, reference(0.5F, e), 2);
 
-    // The max clamp caps the auto exposure (before compensation).
+    // The EV100 range caps the auto exposure (before compensation): a scene
+    // this bright with min EV100 above its own EV is exposed for that EV.
     s.compensation_ev = 0.0F;
-    s.max_exposure = 0.1F;
+    s.min_ev100 = 18.0F;
+    s.max_ev100 = 20.0F;
     ldr = tonemap(*g, *hdr, s, &*exposure);
     ASSERT_OK(ldr);
-    EXPECT_NEAR(ldr->rgba8(3, 3).r, reference(0.5F, 0.1F), 2);
+    const float capped = r::photometry::exposure_from_ev100_units(18.0F);
+    EXPECT_NEAR(exposure->exposure(), capped, capped * 1e-3F);
+    EXPECT_NEAR(ldr->rgba8(3, 3).r, reference(0.5F, capped), 2);
 }
 
 // TAA settings reach the resolve (R11 TAAU, mapped by apply_taa_settings):

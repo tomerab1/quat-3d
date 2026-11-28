@@ -83,8 +83,7 @@ void compute_main(uint3 tid : SV_DispatchThreadID) {
                 if (mu_sun_t > 0.0) {
                     float3 sun_trans =
                         sample_transmittance(g_transmittance, g_samp, rt, mu_sun_t);
-                    const float3 ground_albedo = float3(0.3, 0.3, 0.3);
-                    luminance += throughput * sun_trans * mu_sun_t * ground_albedo /
+                    luminance += throughput * sun_trans * mu_sun_t * ATMOS_GROUND_ALBEDO /
                                  ATMOS_PI * sphere_weight;
                 }
             }

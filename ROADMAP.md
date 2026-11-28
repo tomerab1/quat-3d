@@ -426,31 +426,65 @@ JSON-RPC over loopback TCP to the engine.
     quat-mcp tools, an editor Time of Day section and CI sunrise / noon /
     sunset screenshots and the Lua `time.clock` / `set_clock` / `skip` (#87).
   - [ ] **R22.2 Night sky rendering** (after #80 lighting realism and #64
-    weather land; state of the art, physical units throughout):
-    - *Atmosphere:* Hillaire 2020 with the Moon as a second light; airglow and
-      zodiacal light (Jensen et al. 2001); a light-pollution skyglow parameter
-      (Garstang model).
-    - *Stars:* a tiered catalogue — bright stars (Hipparcos or Yale BSC) as
-      energy-conserving, TAA-stable sub-pixel PSF splats in physical units,
-      B−V → colour, airmass extinction from the transmittance LUT, refraction
-      near the horizon, scintillation; faint stars and the Milky Way as an HDR
-      sky texture (ESA Gaia sky map, CC BY-SA 3.0 IGO, or NASA SVS Deep Star
-      Maps, public domain — licences verified before import) rotated by
-      `SkyState`'s sidereal matrix.
-    - *Moon:* NASA CGI Moon Kit textures; a Hapke / Lommel-Seeliger BRDF with
-      the opposition surge; correct phase and libration (from `SkyState`);
-      earthshine; moonlight as the shadow caster with a twilight hand-off
-      from the sun.
-    - *Perception:* wide-range histogram auto-exposure (R22.1's sunrise /
-      sunset captures come out washed out: the current exposure over-brightens
-      a low sun); scotopic / mesopic
-      response with the Purkinje shift; night acuity loss and noise
-      (Thompson, Shirley & Ferwerda 2002; Kirk & O'Brien 2011).
-    - *Integration:* time-sliced IBL rebakes; moonlit volumetric clouds and
-      fog; optional aurora and meteors.
-    - *Validation:* photometric reference checks (full-moon ground
-      illuminance ≈ 0.1–0.3 lux, moonless clear sky ≈ 0.001 lux, Sirius at
-      magnitude −1.46) and twilight / night golden screenshots.
+    weather land; state of the art, physical units throughout). Too large for
+    one change: delivered in the slices below, each with its acceptance
+    criteria. Photometric calibration shared by every slice: one HDR unit is
+    16 000 cd/m² (the sky-view LUT's ×8 stands for the ≈128 klux
+    extra-atmospheric Sun), so sky, stars, Moon and ground share one scale.
+    - [ ] **R22.2.1 Exposure, ground and bright stars.**
+      - *Wide-range auto-exposure:* pre-exposed HDR (Lagarde & de Rousiers
+        2014; the frame's exposure is applied where light is written so
+        RGBA16F holds 10⁻⁴ lux nights and 10⁵ lux noons), a 256-bin
+        log-luminance compute histogram over ~40 EV with percentile
+        metering, a temporally smoothed (log-domain) adapted luminance and
+        an adaptive key (Krawczyk, Myszkowski & Seidel 2005), clamped in
+        EV100 (`exposure.min_ev100` / `max_ev100` replace the multiplier
+        clamps). R20's physical camera and manual EV stay available and use
+        the same calibration. Fixes R22.1's washed-out low-sun frames.
+      - *Ground (#98, #13):* the below-horizon ground is a Lambertian planet
+        surface lit by the transmitted Sun and Moon and by a precomputed
+        sky-irradiance LUT (Bruneton & Neyret 2008), seen through the
+        camera-to-ground transmittance and in-scattering (aerial
+        perspective), so it meets the sky without a step.
+      - *Stars:* the Yale Bright Star Catalogue (cooked offline into
+        `assets/sky/bright_stars.qsc`; licence recorded) as energy-conserving
+        sub-pixel Gaussian PSF splats in physical units (a compute pass),
+        B−V → colour, extinction from the transmittance LUT, scintillation
+        growing with airmass, rotated by `SkyState::world_from_celestial`,
+        dimmed by clouds; daylight hides them through exposure alone.
+      - *Acceptance:* GPU tests — exposure converges for 0.001 lux and
+        100 000 lux scenes; Sirius renders 1.49 mag brighter than Vega
+        (energy ratio 3.94 ± 3 %); stars change no tonemapped pixel at noon;
+        the ground / sky luminance ratio across the horizon stays under 1.5
+        for sun elevations −6° … 90°. CI golden rows `twilight` and `night`.
+    - [ ] **R22.2.2 Moon.** NASA CGI Moon Kit albedo + elevation (public
+      domain), a Hapke / Lommel-Seeliger BRDF with the opposition surge,
+      phase and libration from `SkyState`, earthshine; the Moon as a second
+      light in the sky-view LUT (Hillaire 2020) and as the directional
+      shadow caster with a twilight hand-off from the Sun; IBL / irradiance
+      baked with a normalisation so night ambient survives RGBA16F.
+      *Acceptance:* full-moon ground illuminance 0.1–0.3 lux, the lit
+      fraction and bright-limb angle match `SkyState` in a render, moonlit
+      golden row.
+    - [ ] **R22.2.3 Milky Way and faint stars.** An HDR celestial texture
+      (ESA Gaia sky map CC BY-SA 3.0 IGO, or NASA SVS Deep Star Maps, public
+      domain — licence verified first) for stars below the catalogue limit
+      and the galactic band, in physical units with the bright catalogue
+      stars removed, rotated by the sidereal matrix; refraction of star
+      positions near the horizon. *Acceptance:* integrated star-field
+      illuminance ≈ 3·10⁻⁴ lux; no double-counted bright stars.
+    - [ ] **R22.2.4 Night-sky glow.** Airglow and zodiacal light (Jensen et
+      al. 2001) and a light-pollution skyglow parameter (Garstang 1986).
+      *Acceptance:* moonless clear-sky ground illuminance ≈ 0.001 lux;
+      zenith sky ≈ 21.5 mag/arcsec² without pollution.
+    - [ ] **R22.2.5 Night perception.** Scotopic / mesopic response with the
+      Purkinje shift, night acuity loss and noise (Thompson, Shirley &
+      Ferwerda 2002; Kirk & O'Brien 2011). *Acceptance:* photopic output
+      unchanged above ~3 cd/m²; a test of the mesopic blend.
+    - [ ] **R22.2.6 Integration.** Time-sliced IBL rebakes as the sky
+      changes; moonlit volumetric clouds and fog; optional aurora and
+      meteors. *Acceptance:* a time-lapse from noon to midnight without
+      pops; golden rows for a moonlit cloudy night.
 - [ ] **R23 — Runtime procedural geometry** (design:
   [`docs/design/cozy-builder.md` §4.4](docs/design/cozy-builder.md#44-runtime-procedural-geometry-r23)).
   Generic: any game that builds meshes at runtime (builders, roads, rivers,

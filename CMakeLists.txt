@@ -353,7 +353,8 @@ add_library(engine_astro STATIC
     src/astro/moon_terms.cpp
     src/astro/ephemeris.cpp
     src/astro/events.cpp
-    src/astro/sky_state.cpp)
+    src/astro/sky_state.cpp
+    src/astro/star_catalogue.cpp)
 target_link_libraries(engine_astro PUBLIC engine_flags glm::glm)
 target_include_directories(engine_astro PUBLIC ${ENGINE_PUBLIC_INCLUDE})
 
@@ -700,6 +701,8 @@ add_library(engine_renderer STATIC
     src/renderer/ssr_pass.cpp
     src/renderer/bloom_pass.cpp
     src/renderer/exposure_pass.cpp
+    src/renderer/photometry.cpp
+    src/renderer/star_field_pass.cpp
     src/renderer/taa_pass.cpp
     src/renderer/jitter.cpp
     src/renderer/velocity.cpp
@@ -715,7 +718,7 @@ add_library(engine_renderer STATIC
     src/renderer/cloud_shadow_pass.cpp
     src/renderer/cloud_shadow_reference.cpp)
 target_link_libraries(engine_renderer PUBLIC
-    engine_flags engine_rhi engine_asset engine_terrain engine_weather glm::glm)
+    engine_flags engine_rhi engine_asset engine_terrain engine_weather engine_astro glm::glm)
 target_include_directories(engine_renderer PUBLIC ${ENGINE_PUBLIC_INCLUDE})
 
 # The ImGui overlay pass is editor-only. It is a from-scratch renderer on the
@@ -854,6 +857,7 @@ set(QUAT_APP_SOURCES
     src/app/frame_graph.cpp
     src/app/frame_temporal.cpp
     src/app/frame_post.cpp
+    src/app/frame_night_sky.cpp
     src/app/frame_environment.cpp
     src/app/frame_renderer.cpp
     src/app/frame_profiling.cpp

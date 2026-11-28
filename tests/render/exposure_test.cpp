@@ -85,7 +85,9 @@ public:
         constexpr VkImageLayout ro = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
         const rhi::ResourceHandle hdr = graph.import_image("test_hdr", image, view_.handle(),
                                                            k_hdr_format, k_extent, ro, ro);
-        if (auto a = pass.add_to_graph(graph, hdr, k_extent, dt); !a) {
+        r::ExposureMetering metering;
+        metering.pre_exposure = pre_exposure_;
+        if (auto a = pass.add_to_graph(graph, hdr, k_extent, dt, metering); !a) {
             return std::unexpected(a.error());
         }
         if (auto c = graph.compile(); !c) return std::unexpected(c.error());
@@ -95,8 +97,13 @@ public:
         return pass.adapted_luminance();
     }
 
+    // The pre-exposure the next frames' images are measured with (the image
+    // holds luminance x pre).
+    void set_pre_exposure(float pre) { pre_exposure_ = pre; }
+
 private:
     quat::test::GpuContext* g_ = nullptr;
+    float                   pre_exposure_ = 1.0F;
     rhi::GpuImage           image_;
     rhi::ImageView          view_;
 };
@@ -133,8 +140,9 @@ TEST(GpuExposure, SharedStateAdaptsWithConfiguredTimeConstant) {
     r::ExposurePass* slots[2] = {&*slot_a, &*slot_b};
 
     // Adapted to the dim scene, then the scene brightens: after n frames of dt
-    // the adapted value is l_bright + (l_dim - l_bright) * exp(-n dt / tau),
-    // whichever slot recorded each frame.
+    // the adapted log luminance is log l_bright + (log l_dim - log l_bright) *
+    // exp(-n dt / tau) (R22.2.1 adapts in the log domain, as the eye's
+    // response is logarithmic), whichever slot recorded each frame.
     auto seeded = hdr->frame(*slots[0], k_dim, k_instant);
     ASSERT_OK(seeded);
     EXPECT_NEAR(*seeded, *l_dim, *l_dim * 1e-3F);
@@ -143,10 +151,10 @@ TEST(GpuExposure, SharedStateAdaptsWithConfiguredTimeConstant) {
     for (int n = 1; n <= 10; ++n) {
         auto adapted = hdr->frame(*slots[n % 2], k_bright, k_dt);
         ASSERT_OK(adapted) << "frame " << n;
-        const float expected =
-            *l_bright + (*l_dim - *l_bright) *
-                            std::exp(-static_cast<float>(n) * k_dt /
-                                     r::ExposurePass::k_adaptation_tau);
+        const float expected = std::exp2(
+            std::log2(*l_bright) + (std::log2(*l_dim) - std::log2(*l_bright)) *
+                                       std::exp(-static_cast<float>(n) * k_dt /
+                                                r::ExposurePass::k_adaptation_tau));
         EXPECT_NEAR(*adapted, expected, expected * 0.01F) << "frame " << n;
         EXPECT_FLOAT_EQ(slot_a->adapted_luminance(), slot_b->adapted_luminance());
     }

@@ -3,6 +3,8 @@
 
 #include "app/frame_renderer.hpp"
 
+#include "app/asset_root.hpp"
+
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
@@ -312,6 +314,11 @@ void FrameRenderer::create_environment(engine::scene::Scene& scene,
             std::fprintf(stderr, "[warn] dynamic IBL create failed: %s\n",
                          dyn.error().message.c_str());
         }
+    }
+    // R22.2.1: the bright star catalogue (engine data, not the project's).
+    if (atmosphere_) {
+        create_star_field(pipeline_cache, shader_dir,
+                          data_root() / "assets" / "sky" / "bright_stars.qsc");
     }
 }
 

@@ -46,11 +46,15 @@ struct UpscalerInputs {
     // Optional (invalid = none): R8 UNORM at render extent, 1 = the pixel's
     // history is unreliable (particles, alpha-blended surfaces).
     rhi::ResourceHandle reactive{};
-    // Device address of the adapted average luminance (ExposureState; one
-    // float, last written by the previous frame's exposure pass). 0 = an
-    // exposure of 1. Backends weight their history in exposed, tonemapped
-    // space so HDR highlights do not dominate the resolve.
+    // Device address of the auto-exposure state (ExposureState; [1] is the
+    // exposure the previous frame's exposure pass left). 0 = an exposure of
+    // 1. Backends weight their history in exposed, tonemapped space so HDR
+    // highlights do not dominate the resolve.
     VkDeviceAddress exposure = 0;
+    // The multiplier `color` was pre-exposed with (photometry.hpp). The
+    // history was pre-exposed with the previous frame's: backends rescale it
+    // by the ratio.
+    float           pre_exposure = 1.0F;
     VkExtent2D      render_extent{0, 0};
     VkExtent2D      display_extent{0, 0};
     ViewJitter      jitter{};

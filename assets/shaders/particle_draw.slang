@@ -122,7 +122,8 @@ VsOut vertex_main(uint vertex_id : SV_VertexID) {
     } else {
         rgb *= e.render.y;
     }
-    o.color = float4(rgb, color.a);
+    // Pre-exposed like every light written into the HDR (R22.2.1).
+    o.color = float4(rgb * g_frame.sun_color.w, color.a);
     return o;
 }
 

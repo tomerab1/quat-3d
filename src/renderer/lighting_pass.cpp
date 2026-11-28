@@ -46,8 +46,9 @@ struct LightingConstants {
     glm::vec4 cloud_shadow_u{0.0F}; // CloudShadowProjection
     glm::vec4 cloud_shadow_v{0.0F};
     glm::vec4 realism{0.0F};    // multiscatter, horizon occlusion, reflections bound, sun disc 1 - cos r (R21)
+    glm::vec4 exposure{1.0F, 0.0F, 0.0F, 0.0F}; // x pre-exposure (R22.2.1)
 };
-static_assert(sizeof(LightingConstants) == 368, "must match lighting.slang LightingConstants");
+static_assert(sizeof(LightingConstants) == 384, "must match lighting.slang LightingConstants");
 
 // lighting.slang's resources by name; slots_ holds their reflected bindings
 // in this order.
@@ -267,6 +268,8 @@ LightingPass::add_to_graph(rhi::RenderGraph& graph, const GBufferTargets& gbuffe
     }
     c.realism = {flag(tuning.multiscatter && ibl.valid()), flag(tuning.horizon_occlusion),
                  flag(reflections.valid()), disc_one_minus_cos};
+    const bool pre_ok = std::isfinite(tuning.pre_exposure) && tuning.pre_exposure > 0.0F;
+    c.exposure = {pre_ok ? tuning.pre_exposure : 1.0F, 0.0F, 0.0F, 0.0F};
     // Host writes land before vkQueueSubmit, which makes them visible.
     std::memcpy(constants_.mapped(), &c, sizeof(c));
     if (auto f = constants_.flush(0, sizeof(c)); !f) return std::unexpected(f.error());

@@ -1,6 +1,7 @@
 #include "engine/renderer/transparent_pass.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <array>
 #include <bit>
 #include <cstddef>
@@ -214,6 +215,10 @@ std::expected<void, core::Error> TransparentPass::ensure_scene_color(VkExtent2D 
     return {};
 }
 
+void TransparentPass::set_pre_exposure(float pre_exposure) {
+    pre_exposure_ = std::isfinite(pre_exposure) && pre_exposure > 0.0F ? pre_exposure : 1.0F;
+}
+
 std::expected<void, core::Error> TransparentPass::set_texture_lod_bias(float bias) {
     if (bias == lod_bias_ && sampler_.handle() != VK_NULL_HANDLE) return {};
     // The slot's previous frame has finished and the material descriptors are
@@ -322,7 +327,7 @@ TransparentPass::add_to_graph(rhi::RenderGraph& graph, rhi::ResourceHandle hdr,
     push.instances = *instances;
     push.camera_pos = glm::vec4(camera_pos, std::max(ibl_intensity, 0.0F)); // w: IBL scale
     // light_direction.w / ambient.w carry the render extent (for screen UVs).
-    push.light_direction = glm::vec4(glm::vec3(light.direction), static_cast<float>(extent.width));
+    push.light_direction = glm::vec4(glm::vec3(light.direction), pre_exposure_);
     push.light_color = light.color;
     push.ambient = glm::vec4(glm::vec3(light.ambient), static_cast<float>(extent.height));
 

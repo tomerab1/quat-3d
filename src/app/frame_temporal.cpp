@@ -74,8 +74,10 @@ FrameRenderer::add_upscale(engine::rhi::RenderGraph& graph, const FrameScene& sc
     in.color = hdr;
     in.depth = gbuffer.depth;
     in.velocity = gbuffer.velocity;
-    // The adapted luminance the previous frame's exposure pass left.
+    // The exposure the previous frame's exposure pass left, and this
+    // frame's pre-exposure (R22.2.1: the history is rescaled by the ratio).
     in.exposure = exposure_state_->address();
+    in.pre_exposure = pre_exposure_;
     in.render_extent = scene.render_extent;
     in.display_extent = display;
     in.jitter = scene.jitter;
