@@ -2,6 +2,8 @@
 //! skills extension (SEP-2640), the `skill://` resources and the prompts
 //! generated from the same skills.
 
+mod common;
+
 use std::collections::BTreeSet;
 use std::sync::Arc;
 use std::time::Duration;
@@ -43,7 +45,7 @@ async fn connect(workflows: Workflows) -> RunningService<RoleClient, ()> {
         let running = server.serve(server_io).await.expect("server starts");
         let _ = running.waiting().await;
     });
-    ().serve(client_io).await.expect("client connects")
+    common::client(client_io).await
 }
 
 fn mcp_code(error: &ServiceError) -> Option<ErrorCode> {

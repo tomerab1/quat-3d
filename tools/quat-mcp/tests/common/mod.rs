@@ -287,3 +287,51 @@ pub fn scene_handler() -> impl Fn(&str, &Value) -> Action + Send + Sync + 'stati
         _ => Action::Error(-32601, format!("unknown method '{method}'")),
     }
 }
+
+// ---- MCP client ----------------------------------------------------------
+
+/// The protocol the end-to-end suite speaks: `QUAT_MCP_TEST_PROTOCOL`, or
+/// 2025-11-25 (the `initialize` handshake). CI runs the suite once more with
+/// `QUAT_MCP_TEST_PROTOCOL=2026-07-28` (stateless `server/discover`).
+pub fn protocol() -> rmcp::model::ProtocolVersion {
+    match std::env::var("QUAT_MCP_TEST_PROTOCOL").ok().as_deref() {
+        None | Some("" | "2025-11-25") => rmcp::model::ProtocolVersion::V_2025_11_25,
+        Some("2026-07-28") => rmcp::model::ProtocolVersion::V_2026_07_28,
+        Some(other) => panic!("QUAT_MCP_TEST_PROTOCOL={other}: use 2025-11-25 or 2026-07-28"),
+    }
+}
+
+/// Connect `handler` as an MCP client over `io`, speaking `version`.
+pub async fn client_with<S, T>(
+    handler: S,
+    io: T,
+    version: rmcp::model::ProtocolVersion,
+) -> rmcp::service::RunningService<rmcp::RoleClient, S>
+where
+    S: rmcp::Service<rmcp::RoleClient>,
+    T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Send + 'static,
+{
+    use rmcp::ServiceExt as _;
+    use rmcp::service::{ClientLifecycleMode, ClientServiceExt as _};
+    if version.has_initialize() {
+        handler.serve(io).await.expect("client connects")
+    } else {
+        handler
+            .serve_with_lifecycle(
+                io,
+                ClientLifecycleMode::Discover {
+                    preferred_versions: vec![version],
+                },
+            )
+            .await
+            .expect("client connects")
+    }
+}
+
+/// Connect a plain client (no elicitation) over `io`, speaking [`protocol`].
+pub async fn client<T>(io: T) -> rmcp::service::RunningService<rmcp::RoleClient, ()>
+where
+    T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Send + 'static,
+{
+    client_with((), io, protocol()).await
+}

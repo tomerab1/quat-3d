@@ -46,7 +46,7 @@ async fn connect(engine_addr: &str) -> RunningService<RoleClient, ()> {
         let running = server.serve(server_io).await.expect("server starts");
         let _ = running.waiting().await;
     });
-    ().serve(client_io).await.expect("client connects")
+    common::client(client_io).await
 }
 
 async fn call(client: &RunningService<RoleClient, ()>, tool: &str, args: Value) -> CallToolResult {

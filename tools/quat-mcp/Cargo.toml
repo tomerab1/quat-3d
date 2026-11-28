@@ -11,7 +11,8 @@ name = "quat-mcp"
 path = "src/main.rs"
 
 [dependencies]
-rmcp = { version = "3.12", default-features = false, features = ["server", "macros", "transport-io", "schemars", "base64"] }
+rmcp = { version = "3.12", default-features = false, features = ["server", "macros", "transport-io", "schemars", "base64", "elicitation"] }
+base64 = "0.22"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "io-std", "sync", "time", "fs", "process"] }
 tokio-util = { version = "0.7", features = ["codec"] }
 futures = "0.3"
@@ -34,7 +35,7 @@ yaml_serde = "0.10"
 dirs = "6"
 
 [dev-dependencies]
-rmcp = { version = "3.12", default-features = false, features = ["server", "client", "macros", "transport-io", "schemars", "base64"] }
+rmcp = { version = "3.12", default-features = false, features = ["server", "client", "macros", "transport-io", "schemars", "base64", "elicitation"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "sync", "time", "fs"] }
 tempfile = "3"
 

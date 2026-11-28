@@ -1,0 +1,1 @@
+The source of one Lua gameplay script. `{+path}` is the path under `assets/scripts/`, slashes included (for example `quat://script/ai/patrol.lua`). Use `script_get` to also see the entities using it and its load or runtime errors.

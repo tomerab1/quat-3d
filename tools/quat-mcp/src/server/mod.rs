@@ -11,16 +11,21 @@ mod asset_tools;
 #[allow(clippy::doc_markdown)]
 mod behavior_tools;
 mod bt_outline;
+mod confirm;
 #[allow(clippy::doc_markdown)]
 mod debug_tools;
+mod icons;
 #[allow(clippy::doc_markdown)]
 mod input_tools;
+pub mod outputs;
 #[allow(clippy::doc_markdown)]
 mod physics;
+pub mod policy;
 #[allow(clippy::doc_markdown)]
 mod profile_tools;
 #[allow(clippy::doc_markdown)]
 mod project_tools;
+mod resources;
 mod results;
 #[allow(clippy::doc_markdown)]
 mod scene_tools;
@@ -43,13 +48,14 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use rmcp::handler::server::router::tool::ToolRouter;
+use rmcp::handler::server::tool::ToolCallContext;
 use rmcp::model::{
-    CallToolResult, GetPromptRequestMethod, GetPromptRequestParams, GetPromptResponse,
+    CallToolRequestParams, CallToolResponse, CallToolResult, CompleteRequestParams, CompleteResult,
+    ContentBlock, GetPromptRequestMethod, GetPromptRequestParams, GetPromptResponse,
     GetSkillRequestMethod, GetSkillRequestParams, GetSkillResult, Implementation,
-    ListPromptsRequestMethod, ListPromptsResult, ListResourcesResult, ListSkillsRequestMethod,
-    ListSkillsResult, PaginatedRequestParams, PromptsCapability, ReadResourceRequestParams,
-    ReadResourceResponse, ReadResourceResult, Resource, ResourceContents, ServerCapabilities,
-    ServerConfig,
+    ListPromptsRequestMethod, ListPromptsResult, ListResourceTemplatesResult, ListResourcesResult,
+    ListSkillsRequestMethod, ListSkillsResult, PaginatedRequestParams, PromptsCapability,
+    ReadResourceRequestParams, ReadResourceResponse, ServerCapabilities, ServerConfig,
 };
 use rmcp::service::RequestContext;
 use rmcp::{ErrorData, RoleServer, ServerHandler, tool_handler};
@@ -60,6 +66,7 @@ use crate::content;
 use crate::skills::{self, prompts};
 
 pub use asset_tools::AssetConfig;
+pub use resources::{ENTITY_TEMPLATE, SCRIPT_TEMPLATE, SHADER_TEMPLATE};
 pub use results::{error_result, normalize_method};
 pub use world_tools::MAX_GROUND_POINTS;
 
@@ -76,6 +83,7 @@ pub struct QuatServer {
     assets: Arc<asset_tools::AssetService>,
     workflows: Workflows,
     instructions: String,
+    confirmations: Arc<confirm::Confirmations>,
     tool_router: ToolRouter<Self>,
 }
 
@@ -117,6 +125,7 @@ impl QuatServer {
             assets: asset_tools::AssetService::new(AssetConfig::default()),
             workflows: Workflows::default(),
             instructions: content::instructions(skills::catalog().skills(), Workflows::default()),
+            confirmations: Arc::default(),
             tool_router: Self::tools(),
         }
     }
@@ -138,9 +147,16 @@ impl QuatServer {
         self
     }
 
-    /// Every tool this server offers, across all tool groups.
+    /// Every tool this server offers, across all tool groups, with the
+    /// per-tool policy (annotations, icons, output schemas) applied.
     #[must_use]
     pub fn tools() -> ToolRouter<Self> {
+        let mut router = Self::tool_groups();
+        policy::apply(&mut router);
+        router
+    }
+
+    fn tool_groups() -> ToolRouter<Self> {
         Self::scene_tools()
             + Self::world_tools()
             + Self::sim_tools()
@@ -156,6 +172,33 @@ impl QuatServer {
             + Self::project_tools()
             + Self::time_tools()
             + Self::input_tools()
+    }
+
+    /// Run a tool call through the router, asking for confirmation first
+    /// when its policy says so, then add structured content and resource
+    /// links to the result.
+    async fn dispatch(
+        &self,
+        request: CallToolRequestParams,
+        context: RequestContext<RoleServer>,
+    ) -> Result<CallToolResponse, ErrorData> {
+        let name = request.name.to_string();
+        let policy = policy::get(&name);
+        let request = match policy.filter(|p| p.confirm) {
+            Some(p) => match self.confirmations.gate(p, request, &context).await {
+                confirm::Gate::Proceed(request) => request,
+                confirm::Gate::Respond(response) => return Ok(response),
+            },
+            None => request,
+        };
+        let response = self
+            .tool_router
+            .call(ToolCallContext::new(self, request, context))
+            .await?;
+        Ok(match response {
+            CallToolResponse::Complete(result) => finish(&name, result).into(),
+            other => other,
+        })
     }
 
     /// Timeout for slow engine work (loading, baking, screenshots).
@@ -201,12 +244,45 @@ impl QuatServer {
     }
 }
 
+/// Add `structuredContent` (tools with an output schema) and resource links
+/// to a successful result whose text is the engine's JSON reply.
+fn finish(name: &str, mut result: CallToolResult) -> CallToolResult {
+    if result.is_error == Some(true) {
+        return result;
+    }
+    let reply = result
+        .content
+        .first()
+        .and_then(|c| c.as_text())
+        .and_then(|t| serde_json::from_str::<Value>(&t.text).ok());
+    if outputs::has_schema(name) {
+        let checked = reply
+            .as_ref()
+            .ok_or_else(|| "the reply is not JSON".to_owned())
+            .and_then(|r| outputs::reply_matches(name, r).map(|()| r));
+        match checked {
+            Ok(reply) => result.structured_content = Some(reply.clone()),
+            Err(e) => {
+                return CallToolResult::error(vec![ContentBlock::text(format!(
+                    "{name}: the engine's reply does not match this tool's output schema ({e}); \
+                     the engine and quat-mcp versions may differ. Use engine_call for the raw reply."
+                ))]);
+            }
+        }
+    }
+    if let Some(reply) = &reply {
+        result.content.extend(resources::links(name, reply));
+    }
+    result
+}
+
 #[tool_handler(router = self.tool_router)]
 impl ServerHandler for QuatServer {
     fn get_info(&self) -> ServerConfig {
         let builder = ServerCapabilities::builder()
             .enable_tools()
-            .enable_resources();
+            .enable_resources()
+            .enable_completions();
         let mut capabilities = if self.workflows.skills {
             builder.enable_skills().build()
         } else {
@@ -216,7 +292,11 @@ impl ServerHandler for QuatServer {
             capabilities.prompts = Some(PromptsCapability::default());
         }
         ServerConfig::new(capabilities)
-            .with_server_info(Implementation::new("quat-mcp", env!("CARGO_PKG_VERSION")))
+            .with_server_info(
+                Implementation::new("quat-mcp", env!("CARGO_PKG_VERSION"))
+                    .with_title("quat-3d")
+                    .with_icons(icons::icons(icons::Group::Server).to_vec()),
+            )
             .with_instructions(self.instructions.clone())
     }
 
@@ -266,27 +346,34 @@ impl ServerHandler for QuatServer {
             .map(Into::into)
     }
 
+    async fn call_tool(
+        &self,
+        request: CallToolRequestParams,
+        context: RequestContext<RoleServer>,
+    ) -> Result<CallToolResponse, ErrorData> {
+        self.dispatch(request, context).await
+    }
+
     async fn list_resources(
         &self,
         _request: Option<PaginatedRequestParams>,
         _context: RequestContext<RoleServer>,
     ) -> Result<ListResourcesResult, ErrorData> {
-        let mut resources = vec![
-            Resource::new(SCENE_SUMMARY_URI, "scene_summary")
-                .with_title("Current scene summary")
-                .with_description(include_str!("../../content/resources/scene_summary.md").trim())
-                .with_mime_type("application/json"),
-            Resource::new(SCRIPTING_REFERENCE_URI, "scripting_reference")
-                .with_title("Lua scripting reference")
-                .with_description(
-                    include_str!("../../content/resources/scripting_reference.md").trim(),
-                )
-                .with_mime_type("text/markdown"),
-        ];
+        let mut resources = resources::fixed();
         if self.workflows.skills {
             resources.extend(skills::catalog().resources());
         }
         Ok(ListResourcesResult::with_all_items(resources))
+    }
+
+    async fn list_resource_templates(
+        &self,
+        _request: Option<PaginatedRequestParams>,
+        _context: RequestContext<RoleServer>,
+    ) -> Result<ListResourceTemplatesResult, ErrorData> {
+        Ok(ListResourceTemplatesResult::with_all_items(
+            resources::templates(),
+        ))
     }
 
     async fn read_resource(
@@ -319,37 +406,15 @@ impl ServerHandler for QuatServer {
                 None,
             ));
         }
-        if request.uri == SCRIPTING_REFERENCE_URI {
-            return Ok(ReadResourceResult::new(vec![
-                ResourceContents::text(content::SCRIPTING_REFERENCE, SCRIPTING_REFERENCE_URI)
-                    .with_mime_type("text/markdown"),
-            ])
-            .into());
-        }
-        if request.uri != SCENE_SUMMARY_URI {
-            return Err(ErrorData::resource_not_found(
-                format!(
-                    "unknown resource `{}`; available: {SCENE_SUMMARY_URI}, \
-                     {SCRIPTING_REFERENCE_URI}{}",
-                    request.uri,
-                    if self.workflows.skills {
-                        format!(", {}", skills::catalog().uris())
-                    } else {
-                        String::new()
-                    }
-                ),
-                None,
-            ));
-        }
-        let summary = self
-            .scene_summary()
-            .await
-            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
-        let text = serde_json::to_string_pretty(&summary).unwrap_or_else(|_| summary.to_string());
-        Ok(ReadResourceResult::new(vec![
-            ResourceContents::text(text, SCENE_SUMMARY_URI).with_mime_type("application/json"),
-        ])
-        .into())
+        self.read_uri(&request.uri).await.map(Into::into)
+    }
+
+    async fn complete(
+        &self,
+        request: CompleteRequestParams,
+        _context: RequestContext<RoleServer>,
+    ) -> Result<CompleteResult, ErrorData> {
+        self.complete_argument(&request).await
     }
 }
 

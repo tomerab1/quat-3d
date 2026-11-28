@@ -263,7 +263,51 @@ New: `debug-physics-glitch` and `playtest`.
 **Resources** — `quat://scene/summary`: engine info, the first 500 entities,
 the environment and the camera as JSON; `quat://docs/scripting`: the Lua
 scripting reference (the engine's `docs/scripting.md`); and the skill files
-(`skill://<name>/SKILL.md`).
+(`skill://<name>/SKILL.md`). Three **resource templates** address engine
+objects: `quat://entity/{entity}` (an entity as `scene_get` JSON, by id or
+unique name), `quat://script/{+path}` (a Lua script's source) and
+`quat://shader/{name}` (a material shader's Slang source). Their arguments
+complete (`completion/complete`) from the running engine: entity names,
+script paths, shader names.
+
+## Protocol
+
+quat-mcp targets **MCP 2026-07-28** (rmcp 3.12): stateless clients connect
+with `server/discover`, and 2025-11-25 clients (and older) with the
+`initialize` handshake. Roots, sampling and logging are deprecated in
+2026-07-28 and not used.
+
+- **Annotations.** Every tool has a title and all four hints
+  (`readOnlyHint`, `destructiveHint`, `idempotentHint`, `openWorldHint`) set
+  explicitly — the MCP defaults for a missing hint are "destructive" and
+  "open world". They come from one table, `src/server/policy.rs`, which a
+  rule test keeps complete and coherent (getters and lists are read-only,
+  deleting tools are destructive, only the Poly Haven tools are open-world).
+  Tools whose results grow with the scene (lists, logs, sources, schemas,
+  profiles) carry `_meta["anthropic/maxResultSizeChars"] = 400000`, so
+  Claude clients keep their results inline.
+- **Structured output.** Stable tools declare an `outputSchema` and return
+  `structuredContent` next to the JSON text: `engine_info`, `scene_list`,
+  `scene_create`, `scene_destroy`, `scene_clear`, `scene_save`,
+  `scene_load`, `world_ground_height`, `terrain_status`,
+  `physics_get_gravity`, `physics_set_gravity`, `script_list`,
+  `shader_list`, `events_poll`, `project_build_status`. A reply that no
+  longer matches its schema (an engine of another version) is a tool error
+  that says so.
+- **Resource links.** `scene_create` and `asset_spawn_model` link to the new
+  entity, `script_create` / `script_update` to the script and
+  `shader_create` / `shader_update` to the shader.
+- **Confirmations.** `scene_clear`, `scene_load`, `script_delete` and
+  `shader_delete` ask the user before running, with the question in
+  `content/confirm/<tool>.md`. On 2026-07-28 the call answers
+  `input_required` with a form elicitation (MRTR); the client asks and
+  retries with the answer and an opaque `requestState` that is bound to the
+  tool and its arguments and used once. On older protocols quat-mcp sends
+  `elicitation/create`. A client without elicitation gets the question back
+  as a tool error, and the model calls again with `confirm: true` once the
+  user agreed. A declined confirmation changes nothing.
+- **Icons.** The server and every tool group have an SVG icon (`icons/`),
+  served as data URIs in a light- and a dark-theme colour.
 
 ## Example session
 
@@ -285,12 +329,16 @@ scripting reference (the engine's `docs/scripting.md`); and the skill files
 cargo fmt --check
 cargo clippy --all-targets -- -D warnings
 cargo test
+QUAT_MCP_TEST_PROTOCOL=2026-07-28 cargo test   # the end-to-end suite on the stateless protocol
 ```
 
 The tests run without the engine: `tests/common/mod.rs` is a mock engine (a
 tokio TCP server speaking the line protocol) used to test the client
 (handshake, tokens and the token file, id matching, timeouts, reconnects, error mapping, size
-limits) and the tools end to end through an in-process MCP client.
+limits) and the tools end to end through an in-process MCP client. The
+client speaks 2025-11-25 unless `QUAT_MCP_TEST_PROTOCOL=2026-07-28` is set
+(CI runs both); `tests/protocol.rs` runs the protocol features on both
+revisions in every run.
 
 Layout:
 
@@ -298,7 +346,8 @@ Layout:
 |---|---|
 | `content/` | **Everything the model reads**, as Markdown: server instructions, one file per tool description, the component reference, the workflow skills and their prompt templates ([MiniJinja](https://docs.rs/minijinja)). See `content/README.md`. |
 | `src/client/` | Engine JSON-RPC client: `mod.rs` (calls, reconnects, handshake), `connection.rs` (socket, reader task, in-flight calls), `error.rs` (error codes, `EngineError`), `token_file.rs` (the engine's session token file) |
-| `src/server/` | MCP server: `mod.rs` (handler, resource), tools grouped by area (`scene_tools.rs`, `world_tools.rs`, `sim_tools.rs`, `debug_tools.rs`, `behavior_tools.rs`, `tuning_tools.rs`, `script_tools.rs`, `shader_tools.rs`, `project_tools.rs`, each its own rmcp router), `bt_outline.rs` (behaviour-tree outlines), `results.rs` |
+| `src/server/` | MCP server: `mod.rs` (handler, resource), tools grouped by area (`scene_tools.rs`, `world_tools.rs`, `sim_tools.rs`, `debug_tools.rs`, `behavior_tools.rs`, `tuning_tools.rs`, `script_tools.rs`, `shader_tools.rs`, `project_tools.rs`, each its own rmcp router), `bt_outline.rs` (behaviour-tree outlines), `results.rs`; `policy.rs` (per-tool title, hints, icon group, result size, confirmation), `outputs.rs` (typed results of the stable tools), `confirm.rs` (confirmations), `resources.rs` (resources, templates, completions, links), `icons.rs` |
+| `icons/` | SVG icons of the server and the tool groups |
 | `src/skills/` | The workflows: `mod.rs` (skill catalog: `skills/list`, `skills/get`, `skill://` resources), `frontmatter.rs` (Agent Skills rules), `prompts.rs` (prompts generated from the skills), `embedded.rs` (the compiled-in files), `tests.rs` (sync tests) |
 | `plugin/` | The Claude Code plugin: `.claude-plugin/plugin.json`, `.mcp.json`, and `skills/`, a copy of `content/skills/` |
 | `src/params.rs`, `src/params/` | Typed tool inputs — their doc comments are the JSON schemas the model reads (`debug.rs`, `behavior.rs`, `tuning.rs`, `script.rs`, `shader.rs`, `project.rs` per area) |
@@ -307,8 +356,9 @@ Layout:
 
 To change what the model is told, edit the Markdown — no prose lives in Rust
 string literals (error messages excepted). A new tool is a function with
-`#[doc = include_str!("../../content/tools/<name>.md")]` + `#[tool]`; a test
-fails if a tool and its Markdown file don't match one-to-one.
+`#[doc = include_str!("../../content/tools/<name>.md")]` + `#[tool]` and a
+row in `src/server/policy.rs`; tests fail if a tool and its Markdown file
+or its policy row don't match one-to-one.
 
 A new workflow is a directory `content/skills/<name>/` with a `SKILL.md`
 (frontmatter `name`, `description`, `compatibility`, and

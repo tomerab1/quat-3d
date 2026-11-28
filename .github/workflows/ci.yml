@@ -459,3 +459,8 @@ jobs:
 
       - name: Tests
         run: cargo test --locked
+
+      - name: Tests (MCP 2026-07-28)
+        env:
+          QUAT_MCP_TEST_PROTOCOL: "2026-07-28"
+        run: cargo test --locked --tests

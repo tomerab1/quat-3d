@@ -9,10 +9,11 @@ Rust string literals. The crate embeds these files at compile time with
 | `instructions.md` | MCP server instructions (sent on `initialize`), a MiniJinja template that lists the workflows |
 | `components.md` | Component reference appended to the tools that take component payloads |
 | `tools/<tool>.md` | The description of the MCP tool with that name |
-| `resources/<resource>.md` | The description of the MCP resource with that name |
+| `resources/<resource>.md` | The description of the MCP resource or resource template with that name |
 | `skills/<name>/SKILL.md` | A workflow as an [Agent Skill](https://agentskills.io/specification): YAML frontmatter (`name` = directory, `description` of what and when, `compatibility`, `metadata.quat-mcp-tools` = every tool the text names), then the instructions. Served over the MCP skills extension, as a prompt, and in the Claude Code plugin |
 | `prompts/<name>.md` | The prompt made from skill `<name>`: YAML frontmatter with the prompt's `title` and `arguments` (`name`, `description`, `required`), then a [MiniJinja](https://docs.rs/minijinja) template (`{{ arg }}`, `{% if arg %}…{% endif %}`) that frames the request and places the skill's instructions with `{{ skill }}` |
 | `assets/<document>.md` | Templates for files the server writes |
+| `confirm/<tool>.md` | The question a destructive tool asks the user before it runs (elicitation), a MiniJinja template over the call's arguments; one per tool whose policy says `confirm` |
 
 Write for the model: say what the tool returns, when to use it, and give a
 short JSON example where the shape is not obvious. Keep each file focused;

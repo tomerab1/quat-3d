@@ -30,6 +30,10 @@ If a tool says quat-mcp cannot connect to the engine or that the engine rejected
 
 Engine errors name the offending field and what was expected — fix the call instead of repeating it.
 
+Destructive whole-scene and file operations (`scene_clear`, `scene_load`, `script_delete`, `shader_delete`) ask the user first. If a tool says the user did not confirm, nothing changed: do not retry unless they ask.
+
+Entities, scripts and material shaders are also resources: `quat://entity/{entity}` (id or unique name), `quat://script/{+path}` and `quat://shader/{name}`. Tools that create one link to it.
+
 Step-by-step workflows for common tasks, with verification steps and pitfalls:
 {% for skill in skills %}
 - `{{ skill.name }}`{% if serve_skills %} (`{{ skill.uri }}`){% endif %}
