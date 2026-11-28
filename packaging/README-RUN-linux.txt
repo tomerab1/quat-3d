@@ -35,6 +35,17 @@ Options (environment variables)
     QUAT_ASSET_ROOT=<dir>                 data directory (assets/ + cooked/shaders/);
                                           default: the folder that holds `game`
 
+AI assistants (Claude Code)
+---------------------------
+quat-mcp, next to the game, is the MCP server that lets Claude Code drive
+the running game. Start the game with the endpoint, then register the
+server by its absolute path (the token needs no setup):
+
+    QUAT_REMOTE=1 ./game
+    claude mcp add quat-3d -- "$PWD/quat-mcp" --project-root "$PWD"
+
+--project-root is where asset_fetch saves downloaded models (this folder).
+
 Troubleshooting
 ---------------
 - "no data directory ... found": assets/ and cooked/ must stay next to

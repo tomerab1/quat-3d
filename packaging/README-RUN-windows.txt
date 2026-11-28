@@ -36,6 +36,18 @@ PowerShell:  $env:QUAT_TERRAIN = "1"; .\game.exe
     QUAT_ASSET_ROOT=<dir>                 data directory (assets\ + cooked\shaders\);
                                           default: the folder that holds game.exe
 
+AI assistants (Claude Code)
+---------------------------
+quat-mcp.exe, next to the game, is the MCP server that lets Claude Code
+drive the running game. Start the game with the endpoint, then register
+the server by its absolute path (the token needs no setup). In PowerShell,
+from this folder:
+
+    $env:QUAT_REMOTE=1; .\game.exe
+    claude mcp add quat-3d -- "$PWD\quat-mcp.exe" --project-root "$PWD"
+
+--project-root is where asset_fetch saves downloaded models (this folder).
+
 Troubleshooting
 ---------------
 - "vulkan-1.dll was not found": install or update the GPU driver.

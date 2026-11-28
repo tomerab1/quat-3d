@@ -47,6 +47,19 @@ see the log):
     QUAT_ASSET_ROOT=<dir>                 data directory (assets/ + cooked/shaders/);
                                           default: Quat3D.app/Contents/Resources
 
+AI assistants (Claude Code)
+---------------------------
+Quat3D.app/Contents/MacOS/quat-mcp is the MCP server that lets Claude Code
+drive the running game. Run `xattr -dr com.apple.quarantine Quat3D.app`
+once so it may start. Then start the game with the endpoint, and register
+the server by its absolute path (the token needs no setup):
+
+    QUAT_REMOTE=1 ./Quat3D.app/Contents/MacOS/game
+    claude mcp add quat-3d -- "$PWD/Quat3D.app/Contents/MacOS/quat-mcp" \
+      --project-root "$PWD/Quat3D.app/Contents/Resources"
+
+--project-root is where asset_fetch saves downloaded models.
+
 Troubleshooting
 ---------------
 - Gatekeeper refuses to open the app: see "Run" above.

@@ -129,8 +129,9 @@ Ready-to-run builds are attached to each
 [`.github/workflows/release.yml`](.github/workflows/release.yml) for every
 `v*` tag), with release notes listing what changed (also in
 [`CHANGELOG.md`](CHANGELOG.md)). Every archive contains a `README-RUN.txt`
-with the launch options and troubleshooting, plus `LICENSE` and
-`THIRD_PARTY_NOTICES.md` (see [License](#license)).
+with the launch options and troubleshooting, `quat-mcp` (the MCP server for AI
+assistants; see [Use it with Claude Code](#use-it-with-claude-code)), and
+`LICENSE` and `THIRD_PARTY_NOTICES.md` (see [License](#license)).
 
 | Download | Run |
 |---|---|
@@ -405,6 +406,42 @@ endpoint listens on `127.0.0.1` only and refuses connections without the
 token, so other users on the machine and web pages in your browser cannot
 drive the engine. See [`tools/quat-mcp/README.md`](tools/quat-mcp/README.md)
 for Claude Desktop setup, explicit tokens and the full tool list.
+
+### Use it with Claude Code
+
+Every [release archive](#download-a-build) ships `quat-mcp`, so a download is
+enough to drive the engine from Claude Code; no Rust toolchain is needed.
+
+1. Unpack the archive. `quat-mcp` is next to the game on Linux
+   (`quat-mcp`) and Windows (`quat-mcp.exe`). On macOS it is inside the app,
+   at `Quat3D.app/Contents/MacOS/quat-mcp`; run
+   `xattr -dr com.apple.quarantine Quat3D.app` once so it may start.
+2. Start the game with the remote-control endpoint on port 7878:
+
+   | OS | Command |
+   |---|---|
+   | Linux | `QUAT_REMOTE=1 ./game` |
+   | Windows (PowerShell) | `$env:QUAT_REMOTE=1; .\game.exe` |
+   | macOS | `QUAT_REMOTE=1 ./Quat3D.app/Contents/MacOS/game` |
+
+3. Register the bundled server with Claude Code, using its absolute path:
+
+   ```sh
+   claude mcp add quat-3d -- /path/to/quat-3d-<version>-linux-x64/quat-mcp \
+     --project-root /path/to/quat-3d-<version>-linux-x64
+   ```
+
+   Port 7878 and the session token need no options: quat-mcp reads the token
+   from the file the game writes. `--project-root` is the game's data folder
+   (the unpacked folder; on macOS `Quat3D.app/Contents/Resources`), where
+   `asset_fetch` saves downloaded models so the game can load them. It can be
+   left out if you do not download models.
+4. In Claude Code, ask for something like *"add a sphere above the ground and
+   take a screenshot"*. `/mcp` shows the server and its tools.
+
+A Claude Code plugin with workflow skills (build-level, tune-look, playtest
+and more) is in progress (ROADMAP A12). It takes the quat-mcp path as an
+option, so it will work with the bundled binary too.
 
 ## Testing
 
