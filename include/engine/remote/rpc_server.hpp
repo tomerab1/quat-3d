@@ -145,10 +145,11 @@ public:
     // false when no method has that name.
     bool set_method_schemas(const std::string& name, Json params_schema, Json result_schema);
     [[nodiscard]] std::vector<MethodInfo> methods() const;
-    // Names registered more than once, in order (the later registration
-    // replaced the earlier, with an error logged). Modules are registered from
-    // generated tables, so a clash is a bug this lets tests catch.
-    [[nodiscard]] std::span<const std::string> replaced_methods() const;
+    // Names registered a second time, in order. add_method /
+    // add_deferred_method refuse a name that is already registered (the first
+    // registration stays, an error is logged): modules are registered from
+    // generated tables, so a clash is a bug, never an override.
+    [[nodiscard]] std::span<const std::string> refused_methods() const;
 
     // Invoke a synchronous method in-process. Deferred methods are rejected
     // (`unavailable`) — they cannot complete inside a single call.

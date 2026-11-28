@@ -182,6 +182,22 @@ TEST_F(RemoteRpcServer, InProcessCallRejectsDeferredMethods) {
     EXPECT_EQ(r.error().code, rpc_code::unavailable);
 }
 
+// A second registration of a name is refused, not a silent override: the
+// first handler keeps answering and the clash is recorded (and logged).
+TEST_F(RemoteRpcServer, DuplicateMethodNameIsRefused) {
+    EXPECT_TRUE(server->refused_methods().empty());
+    server->add_method("test.add", "shadow", [](const Json&) -> RpcResult { return Json("shadow"); });
+    server->add_deferred_method("test.add", "shadow", [](const Json&, Responder) {});
+    ASSERT_EQ(server->refused_methods().size(), 2u);
+    EXPECT_EQ(server->refused_methods()[0], "test.add");
+    const RpcResult r = server->call("test.add", Json{{"a", 1}, {"b", 1}});
+    ASSERT_TRUE(r.has_value()) << r.error().message;
+    EXPECT_TRUE(*r == Json(2.0)) << text(*r);
+    std::size_t listed = 0;
+    for (const auto& m : server->methods()) listed += m.name == "test.add" ? 1u : 0u;
+    EXPECT_EQ(listed, 1u);
+}
+
 TEST_F(RemoteRpcServer, CallWithoutHelloIsRejectedAndDisconnected) {
     TestClient c = connect();
     Json reply = c.request(*server, call_msg(1, "test.add", {{"a", 1}, {"b", 1}}));

@@ -5,11 +5,11 @@
 
 #include <algorithm>
 #include <cctype>
-#include <cstdio>
 #include <string_view>
 #include <unordered_map>
 #include <utility>
 
+#include "engine/core/log.hpp"
 #include "socket.hpp"
 
 namespace engine::remote {
@@ -111,10 +111,8 @@ struct RpcServer::Impl {
     std::vector<Client>                      clients;
     std::uint32_t                            next_client = 1;
     std::unordered_map<std::string, Method>  methods;
-    // Names registered more than once (the later registration replaced the
-    // earlier): with generated module tables nothing orders two modules that
-    // pick the same name, so this is reported and tested, never relied on.
-    std::vector<std::string>                 replaced;
+    // Names whose second registration was refused (see insert()).
+    std::vector<std::string>                 refused;
     std::shared_ptr<Responder::Target>       target = std::make_shared<Responder::Target>();
 
     Impl() { target->impl = this; }
@@ -122,13 +120,18 @@ struct RpcServer::Impl {
     Impl(const Impl&) = delete;
     Impl& operator=(const Impl&) = delete;
 
+    // A name already registered is refused (the first registration stays):
+    // modules are registered from generated tables, so nothing orders two
+    // that pick the same name, and a silent replacement would be wrong at run
+    // time. The error is logged and recorded for tests.
     void insert(std::string name, Method m) {
         if (methods.contains(name)) {
-            std::fprintf(stderr, "[remote][error] method '%s' registered twice; the later "
-                                 "registration replaces the earlier\n", name.c_str());
-            replaced.push_back(name);
+            core::log(core::LogLevel::error, "remote",
+                      "method '{}' is already registered; the second registration is refused", name);
+            refused.push_back(std::move(name));
+            return;
         }
-        methods.insert_or_assign(std::move(name), std::move(m));
+        methods.emplace(std::move(name), std::move(m));
     }
 
     Client* find_client(std::uint32_t id) {
@@ -233,7 +236,7 @@ void RpcServer::add_deferred_method(std::string name, std::string summary,
     impl_->insert(std::move(name), std::move(m));
 }
 
-std::span<const std::string> RpcServer::replaced_methods() const { return impl_->replaced; }
+std::span<const std::string> RpcServer::refused_methods() const { return impl_->refused; }
 
 bool RpcServer::set_method_schemas(const std::string& name, Json params_schema, Json result_schema) {
     const auto it = impl_->methods.find(name);
