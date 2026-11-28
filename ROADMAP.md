@@ -245,6 +245,14 @@ JSON-RPC over loopback TCP to the engine.
     (GBuffer + CSM casters, separate pipelines so opaque keeps early-Z,
     coverage-preserving alpha mips), translucent (coloured) shadows for
     transmissive / blended casters (#35, #23, #62).
+  - [x] R12.12 Contact shadows: per-surface depth reconstruction (nearest
+    texel along its own plane, neighbours chosen by second difference), so
+    the march never hits a phantom surface interpolated across a silhouette
+    (#86).
+  - [ ] R12.13 Depth-slope prepass for contact shadows: a compute pass writes
+    each texel's selected `depth_slope` (x/y) once, so a march step costs
+    2 plain loads (depth + slope) instead of 2 gathers plus up to 4
+    divergent loads; GTAO could reuse it for depth-derived normals.
 - [ ] **R13 — Weather + wind.** One `WeatherState` (ECS singleton, Lua + MCP
   `set_weather`) driving a global wind field (grass, foliage, cloth, particles,
   ocean, clouds), wetness/snow layers, rain with an occlusion map, cloud
