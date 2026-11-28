@@ -159,6 +159,11 @@ private:
     InstanceBuffer                     instances_;
     std::vector<rhi::DescriptorBuffer> frame_descriptors_;
     std::vector<FrameDraw>             frame_draws_;
+    // Scratch for frames with mirrored instances, which need the draw list
+    // partitioned (kept across frames so its storage is reused); frames
+    // without any draw from the caller's list directly.
+    InstancedDrawList                  mirrored_split_;
+    std::vector<std::uint32_t>         unmirrored_;
 };
 
 } // namespace engine::renderer
