@@ -279,6 +279,26 @@ impl ServerHandler for QuatServer {
         {
             return Ok(file.into());
         }
+        // SEP-2640: a skill file the server does not serve is invalid params,
+        // as for `skills/get`, not resource-not-found.
+        if request.uri.starts_with(skills::SCHEME) {
+            return Err(ErrorData::invalid_params(
+                if self.workflows.skills {
+                    format!(
+                        "unknown skill file `{}`; available: {}",
+                        request.uri,
+                        skills::catalog().uris()
+                    )
+                } else {
+                    format!(
+                        "unknown skill file `{}`: this server does not serve skills \
+                         (started with --skills=false)",
+                        request.uri
+                    )
+                },
+                None,
+            ));
+        }
         if request.uri == SCRIPTING_REFERENCE_URI {
             return Ok(ReadResourceResult::new(vec![
                 ResourceContents::text(content::SCRIPTING_REFERENCE, SCRIPTING_REFERENCE_URI)
