@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <expected>
 #include <functional>
+#include <memory>
 #include <span>
 #include <string_view>
 
@@ -27,6 +28,13 @@ enum class DescriptorBackend : std::uint8_t { ext_descriptor_buffer, classic_set
 // SDL_Vulkan_CreateSurface). See Device::CreateInfo::create_surface.
 using CreateSurfaceFn = std::function<std::expected<VkSurfaceKHR, core::Error>(VkInstance)>;
 
+// Severity of a debug-messenger (validation layer) message.
+enum class DebugMessageSeverity : std::uint8_t { warning, error };
+// Receives every message the debug messenger reports, after it went to the
+// engine log. Called on the thread that made the Vulkan call. See
+// Device::CreateInfo::on_debug_message.
+using DebugMessageFn = std::function<void(DebugMessageSeverity, std::string_view message)>;
+
 // Owns the core Vulkan objects: instance, (debug build) debug messenger, the
 // window surface (when one was requested), the selected physical device, the
 // logical device, and its queues. Move-only RAII wrapper — destroying it tears
@@ -50,6 +58,11 @@ public:
         // for a surface-less device (tools, tests): present_queue() is then
         // null and queue_families().present is VK_QUEUE_FAMILY_IGNORED.
         CreateSurfaceFn create_surface{};
+        // Optional. With validation enabled, also receives every warning- and
+        // error-severity message (instance creation and destruction
+        // included). The test fixture uses it to fail the running test on a
+        // validation error; the engine itself only logs them.
+        DebugMessageFn on_debug_message{};
     };
 
     [[nodiscard]] static std::expected<Device, core::Error> create(const CreateInfo& info);
@@ -181,6 +194,10 @@ private:
     bool                     simulate_missing_swapchain_mutable_format_ = false;
     bool                     memory_budget_ = false;
     CalibratedTimestamps     calibrated_timestamps_ = CalibratedTimestamps::none;
+    // CreateInfo::on_debug_message, on the heap: the messenger (and the
+    // instance's pNext-chained messenger, used until vkDestroyInstance
+    // returns) hold its address as user data, which must survive moves.
+    std::unique_ptr<DebugMessageFn> debug_message_fn_;
 };
 
 } // namespace engine::rhi

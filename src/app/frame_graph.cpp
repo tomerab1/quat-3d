@@ -132,6 +132,10 @@ engine::renderer::CloudSettings FrameRenderer::current_clouds() const {
 
 void FrameRenderer::advance_time(float dt) {
     cloud_time_s_ += dt;
+    material_time_s_ += static_cast<double>(dt);
+    for (DeferredFrame& frame : frames_) {
+        frame.mesh.set_material_time(static_cast<float>(material_time_s_));
+    }
     if (has_weather_) {
         cloud_drift_km_ += engine::scene::cloud_wind(weather_, settings_.clouds) * (dt * 0.001F);
     }

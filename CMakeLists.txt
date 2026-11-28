@@ -91,6 +91,18 @@ else()
         -fno-exceptions -fno-rtti)
 endif()
 
+# Warnings as errors for first-party code (CI turns it on on every OS; see
+# docs/DEVELOPMENT.md, "CI"). Only engine_flags carries it, so vcpkg ports,
+# FetchContent dependencies and the third-party TUs below (-w) are unaffected.
+# Off by default so a newer local compiler's new warning never blocks a build.
+option(ENGINE_WERROR "Treat compiler warnings as errors in first-party targets" OFF)
+if(ENGINE_WERROR)
+    # BUILD_INTERFACE, like the warning levels above: never exported to SDK
+    # consumers (their code is not ours to fail on warnings).
+    target_compile_options(engine_flags INTERFACE
+        $<BUILD_INTERFACE:$<IF:$<CXX_COMPILER_ID:MSVC>,/WX,-Werror>>)
+endif()
+
 # Third-party implementation TUs (VMA, stb, miniaudio, vendored backends) are
 # compiled with warnings off: -w on clang/gcc. Nothing on MSVC — /w would
 # collide with engine_flags' /W4 (D9025), and the third-party headers already

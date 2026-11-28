@@ -61,6 +61,22 @@ ctest --test-dir build/release --output-on-failure
 ./build/release/engine_tests --require-gpu             # fail (not skip) GPU tests without a device
 ```
 
+**Validation (`--validation` / `QUAT_VALIDATION=1`).** The shared GPU
+device runs under `VK_LAYER_KHRONOS_validation`, and every error-severity
+message fails the test that was running when it arrived, as
+`Vulkan validation error in <Suite>.<Test>: <message>` (the fixture's sink,
+`quat::test::report_validation_message`, passed as
+`Device::CreateInfo::on_debug_message`). Errors outside any test (objects
+leaked at device destruction, after the last test) fail the run. Warnings
+are only logged. Asking for validation without the layer installed is an
+error: there is no device, so GPU tests skip, or fail under
+`--require-gpu` — a run never silently loses validation. Install the layer
+with `apt-get install vulkan-validationlayers` (Linux) or the Vulkan SDK
+(Windows; CI registers the SDK's `VkLayer_khronos_validation.json` under
+`HKLM\SOFTWARE\Khronos\Vulkan\ExplicitLayers`, since the loader ignores
+`VK_LAYER_PATH` in an elevated process). A test that creates its
+own validated `Device` passes `quat::test::report_validation_message` too.
+
 Without a GPU, point the Vulkan loader at Mesa's software driver:
 
 ```sh
@@ -260,8 +276,8 @@ demand (`workflow_dispatch`):
 
 | Job | Runner | Preset | Tests |
 |---|---|---|---|
-| `linux` | ubuntu-24.04 | `release` | CPU + GPU on Mesa lavapipe; then `game` once more with `ENGINE_EDITOR=OFF` (sharing the dependency tree) |
-| `windows` | windows-2022 | `windows-release` | CPU + GPU on Mesa lavapipe (Windows build, from `jakoch/install-vulkan-sdk-action`) |
+| `linux` | ubuntu-24.04 | `release` | CPU + GPU on Mesa lavapipe under the validation layer; then `game` once more with `ENGINE_EDITOR=OFF` (sharing the dependency tree) |
+| `windows` | windows-2022 | `windows-release` | CPU + GPU on Mesa lavapipe (Windows build, from `jakoch/install-vulkan-sdk-action`) under the SDK's validation layer |
 | `macos` | macos-15 (Apple Silicon) | `macos-release` | CPU; MSL check of every cooked shader with SPIRV-Cross at each supported MoltenVK / Vulkan SDK revision + `xcrun metal` (blocking); GPU on MoltenVK (Homebrew's, the latest release and 1.4.1) over the runner's paravirtual Metal device — informational (`continue-on-error`) until P1 makes it a gate |
 | `rust` | ubuntu-24.04 | — | `tools/quat-mcp` fmt, clippy, tests |
 
@@ -271,6 +287,49 @@ so only the first run (or a dependency change) pays for the full dependency
 build (cold: ~17 min macOS, ~28 min Windows). Logs are uploaded as an artifact when
 a run fails. The Windows and macOS test steps print GoogleTest's brief summary
 (`GTEST_BRIEF=1`), so skipped GPU tests are visible in the log.
+
+Gates and policies:
+
+- **Warnings are errors** on every OS: CI configures with
+  `-DENGINE_WERROR=ON`, which adds `-Werror` (`/WX` on MSVC) to
+  `engine_flags`, i.e. first-party targets only. vcpkg ports, the
+  FetchContent headers and the third-party translation units compiled with
+  `ENGINE_THIRD_PARTY_TU_FLAGS` are unaffected. Local builds leave it off
+  (a newer compiler's new warning should not block work); turn it on with
+  the same flag before pushing. Fix a warning at its cause, never by
+  silencing it.
+- **Validation:** the Linux and Windows GPU tests run with
+  `QUAT_VALIDATION=1` (see Testing): a validation error fails the test that
+  caused it. macOS (MoltenVK, informational) runs without the layer.
+- **Deterministic captures (#128):** a `QUAT_MAX_FRAMES` run advances
+  every frame by a fixed 1/60 s (`QUAT_FIXED_DT` overrides), and every
+  time-driven system (grass and foliage wind, weather, particles, water,
+  clouds, the material clock, TAA history) follows that frame clock, never
+  the wall clock. The `Determinism check` step renders `mountain-forest`
+  and `showcase` a second time and requires the PPM to be bit-identical to
+  the Screenshots step's (`scripts/compare_ppm.py`); on failure the PPMs are
+  uploaded as `linux-determinism`. New per-frame state must read the frame
+  `dt`, not a clock.
+- **Cancelling superseded runs:** runs share a concurrency group per pull
+  request (`ci-pr-<N>`) or per ref. A new push to a PR cancels its running
+  build. Pushes to `master`, manual runs and tags (`release.yml`) are never
+  cancelled: a new push waits, and GitHub keeps only the newest pending run.
+- **`publish-screenshots` has no concurrency group**, since a group cancels
+  queued jobs, which dropped most PRs' publishes. Concurrent publishes are
+  safe: each one commits on the tip it fetched and pushes without force,
+  and a rejected push re-applies the run on the new tip (up to 12
+  attempts, with jittered back-off).
+- **Supply chain:** every workflow defaults to `permissions: contents:
+  read`; only `publish-screenshots` (pushes `ci-screenshots`) and the
+  release `publish` job have `contents: write`. Jobs that run build output
+  or third-party build scripts check out with `persist-credentials: false`.
+  Every third-party action is pinned to a full commit SHA (version in a
+  comment) and `.github/dependabot.yml` proposes weekly updates. The Slang
+  archive is checked against a pinned SHA-256 on every OS (update
+  `slang-sha256-*` in `.github/actions/setup-build/action.yml` together
+  with `slang-version`). The Windows Vulkan SDK action gets the job token
+  (`github_token`), since anonymous GitHub API calls hit the runner IP's
+  rate limit.
 
 ### Debugging MoltenVK
 
@@ -550,8 +609,11 @@ git clone https://github.com/microsoft/vcpkg.git ~/vcpkg
 git -C ~/vcpkg checkout 10ceb139a610ebf3c6aa49cdc4a4b7f3db5d3f2b
 ~/vcpkg/bootstrap-vcpkg.sh -disableMetrics
 
-# slangc (GitHub release downloads are reachable)
-mkdir -p ~/slang && curl -sSL https://github.com/shader-slang/slang/releases/download/v2025.6.1/slang-2025.6.1-linux-x86_64.tar.gz | tar xz -C ~/slang
+# slangc (GitHub release downloads are reachable), checked against the
+# SHA-256 that .github/actions/setup-build/action.yml pins
+curl -fsSL -o /tmp/slang.tgz https://github.com/shader-slang/slang/releases/download/v2025.6.1/slang-2025.6.1-linux-x86_64.tar.gz
+echo "836c8a23b5619dcfec13676c924ddadb46d8dd5e82cae2cad26d3a28da4d7538  /tmp/slang.tgz" | sha256sum -c -
+mkdir -p ~/slang && tar xzf /tmp/slang.tgz -C ~/slang
 export PATH="$HOME/slang/bin:$PATH"
 
 cmake --preset release -DENGINE_PROFILE=OFF   # first run builds all dependencies (long)

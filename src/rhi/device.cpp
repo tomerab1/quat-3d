@@ -54,19 +54,24 @@ VKAPI_ATTR VkBool32 VKAPI_CALL debug_callback(
     VkDebugUtilsMessageSeverityFlagBitsEXT severity,
     VkDebugUtilsMessageTypeFlagsEXT /*types*/,
     const VkDebugUtilsMessengerCallbackDataEXT* data,
-    void* /*user*/) {
+    void* user) {
     // Routed into the engine log ring (category "vulkan") so remote debugging
     // (debug.log) sees validation messages; log() also echoes to stderr.
+    const bool is_error = (severity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT) != 0;
     core::LogLevel level = core::LogLevel::info;
-    if (severity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT)        level = core::LogLevel::error;
+    if (is_error)                                                        level = core::LogLevel::error;
     else if (severity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT) level = core::LogLevel::warn;
-    core::log(level, "vulkan", "{}", data != nullptr && data->pMessage != nullptr
-                                         ? data->pMessage
-                                         : "(no message)");
+    const char* message = data != nullptr && data->pMessage != nullptr ? data->pMessage
+                                                                       : "(no message)";
+    core::log(level, "vulkan", "{}", message);
+    if (user != nullptr) {
+        const auto& sink = *static_cast<const DebugMessageFn*>(user);
+        sink(is_error ? DebugMessageSeverity::error : DebugMessageSeverity::warning, message);
+    }
     return VK_FALSE;
 }
 
-VkDebugUtilsMessengerCreateInfoEXT make_debug_messenger_info() {
+VkDebugUtilsMessengerCreateInfoEXT make_debug_messenger_info(DebugMessageFn* sink) {
     VkDebugUtilsMessengerCreateInfoEXT info{};
     info.sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT;
     info.messageSeverity = VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT
@@ -75,6 +80,7 @@ VkDebugUtilsMessengerCreateInfoEXT make_debug_messenger_info() {
                      | VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT
                      | VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT;
     info.pfnUserCallback = debug_callback;
+    info.pUserData = sink;
     return info;
 }
 
@@ -295,7 +301,11 @@ std::expected<Device, core::Error> Device::create(const CreateInfo& info) {
     }
 #endif
 
-    VkDebugUtilsMessengerCreateInfoEXT debug_info = make_debug_messenger_info();
+    if (want_validation && info.on_debug_message) {
+        dev.debug_message_fn_ = std::make_unique<DebugMessageFn>(info.on_debug_message);
+    }
+    VkDebugUtilsMessengerCreateInfoEXT debug_info =
+        make_debug_messenger_info(dev.debug_message_fn_.get());
 
     VkInstanceCreateInfo instance_info{};
     instance_info.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
@@ -598,6 +608,9 @@ void Device::destroy() noexcept {
         vkDestroyInstance(instance_, nullptr);
         instance_ = VK_NULL_HANDLE;
     }
+    // Only now: vkDestroyInstance still reports through the instance's
+    // pNext-chained messenger, whose user data is this function.
+    debug_message_fn_.reset();
     physical_device_ = VK_NULL_HANDLE;
     graphics_queue_ = compute_queue_ = transfer_queue_ = present_queue_ = VK_NULL_HANDLE;
 }
@@ -615,6 +628,7 @@ Device& Device::operator=(Device&& other) noexcept {
         destroy();
         instance_        = std::exchange(other.instance_, VK_NULL_HANDLE);
         debug_messenger_ = std::exchange(other.debug_messenger_, VK_NULL_HANDLE);
+        debug_message_fn_ = std::move(other.debug_message_fn_);
         surface_         = std::exchange(other.surface_, VK_NULL_HANDLE);
         physical_device_ = std::exchange(other.physical_device_, VK_NULL_HANDLE);
         device_          = std::exchange(other.device_, VK_NULL_HANDLE);

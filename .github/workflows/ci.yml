@@ -32,14 +32,17 @@ on:
         type: boolean
         default: false
 
-# A running build is never cancelled: a new push waits for it (GitHub keeps
-# only the newest pending run per group), so every build finishes even while
-# commits land frequently.
+# Pull requests: a new push cancels the PR's running build, whose result no
+# longer matters. Pushes to master (and manual runs) are never cancelled: a
+# new push waits for the running build (GitHub keeps only the newest pending
+# run per group), so every merged state finishes building.
 concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: false
+  group: ci-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
-# Least privilege: CI only reads the repository.
+# Least privilege: CI only reads the repository; publish-screenshots alone
+# widens it. Every action is pinned to a full commit SHA (the tag in the
+# comment); .github/dependabot.yml proposes updates.
 permissions:
   contents: read
 
@@ -56,7 +59,7 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
 
@@ -68,25 +71,27 @@ jobs:
 
       # xvfb: the Screenshots step runs the game under xvfb-run. patchelf: the
       # package_licences test lays out a game package (scripts/package-release.sh).
+      # vulkan-validationlayers: the GPU tests run under the Khronos layer.
       - name: Set up build
         id: setup
         uses: ./.github/actions/setup-build
         with:
-          extra-apt-packages: xvfb patchelf
+          extra-apt-packages: xvfb patchelf vulkan-validationlayers
 
       # The release preset compiles the Tracy client in (ENGINE_PROFILE=ON,
       # on demand: it costs nothing without a viewer), so the tests run with
       # it; the no-editor game below keeps ENGINE_PROFILE=OFF compiling.
+      # ENGINE_WERROR: first-party warnings fail the build (every OS).
       - name: Configure
         id: configure
-        run: cmake --preset release
+        run: cmake --preset release -DENGINE_WERROR=ON
 
       # Saved right after configure (where vcpkg builds the dependencies) and
       # even when configure fails, so neither a dependency failure nor a later
       # engine compile/test failure discards the dependencies already built.
       - name: Save vcpkg binary cache
         if: always() && steps.setup.outputs.cache-key != ''
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: ${{ github.workspace }}/.vcpkg-archives
           key: ${{ steps.setup.outputs.cache-key }}
@@ -98,8 +103,12 @@ jobs:
 
       # Mesa's software Vulkan driver. The manifest's file name differs between
       # distro releases (lvp_icd.json on Ubuntu 24.04, lvp_icd.<arch>.json
-      # elsewhere), so find it instead of hard-coding it.
-      - name: Tests (CPU + GPU on lavapipe)
+      # elsewhere), so find it instead of hard-coding it. QUAT_VALIDATION: the
+      # GPU tests run under the validation layer, and any error-severity
+      # message fails the test that caused it (tests/support/gpu_context.hpp).
+      - name: Tests (CPU + GPU on lavapipe, validation layer)
+        env:
+          QUAT_VALIDATION: 1
         run: |
           icd=$(ls /usr/share/vulkan/icd.d/lvp_icd*.json | head -n1)
           echo "Using Vulkan ICD: $icd"
@@ -107,7 +116,7 @@ jobs:
           # Includes the engine SDK guards (label sdk, ROADMAP P8): install
           # into a fresh prefix, build + test examples/sdk-consumer against
           # it alone, self-contained public headers, refusals, layering.
-          ctest --test-dir build/release --output-on-failure --timeout 900
+          ctest --test-dir build/release --output-on-failure --timeout 1800
 
       # The game without the editor layer (and without Tracy) compiles other
       # code paths (it broke once unnoticed). Shares the release build's vcpkg_installed tree, so
@@ -118,7 +127,7 @@ jobs:
       - name: Build game without the editor (ENGINE_EDITOR=OFF, ENGINE_PROFILE=OFF)
         if: ${{ !cancelled() && steps.configure.outcome == 'success' }}
         run: |
-          cmake --preset release -B build/release-noeditor \
+          cmake --preset release -B build/release-noeditor -DENGINE_WERROR=ON \
             -DENGINE_PROFILE=OFF -DENGINE_EDITOR=OFF -DVCPKG_MANIFEST_INSTALL=OFF \
             -DVCPKG_INSTALLED_DIR="${{ github.workspace }}/build/release/vcpkg_installed"
           cmake --build build/release-noeditor --target game
@@ -134,7 +143,7 @@ jobs:
       - name: Restore showcase downloads
         id: showcase-downloads
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: |
             assets/meshes/polyhaven
@@ -147,7 +156,7 @@ jobs:
       - name: Restore showcase cooked models
         id: showcase-cooked
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: |
             assets/meshes/polyhaven/*/*.glb
@@ -166,7 +175,7 @@ jobs:
 
       - name: Save showcase downloads
         if: ${{ !cancelled() && steps.showcase-fetch.outcome == 'success' && steps.showcase-downloads.outputs.cache-hit != 'true' }}
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: |
             assets/meshes/polyhaven
@@ -178,7 +187,7 @@ jobs:
 
       - name: Save showcase cooked models
         if: ${{ !cancelled() && steps.showcase-fetch.outcome == 'success' && steps.showcase-cooked.outputs.cache-hit != 'true' }}
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: |
             assets/meshes/polyhaven/*/*.glb
@@ -189,18 +198,60 @@ jobs:
       # also when the tests failed. continue-on-error is TEMPORARY, until the
       # headless scenes have proven stable in CI: a crashed or hung scene is
       # reported (step summary + ::error annotation) without failing the job.
+      # KEEP_PPM: the full-resolution frames the determinism check compares.
       - name: Screenshots
         id: shots
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         continue-on-error: true
+        env:
+          KEEP_PPM: mountain-forest showcase
         run: scripts/ci-screenshots.sh build/release/game screenshots
+
+      # The same build renders the same frame (#128): bounded runs advance by a
+      # fixed 1/60 s (QUAT_MAX_FRAMES), so a second render of these scenes
+      # must be bit-identical to the Screenshots step's. mountain-forest has
+      # the most time-driven content (grass wind, foliage, clouds); showcase
+      # is the control. Fails the job; the PPMs are uploaded for diffing.
+      - name: Determinism check (second render must be identical)
+        id: determinism
+        if: ${{ !cancelled() && steps.shots.outcome != 'skipped' }}
+        run: |
+          scenes="mountain-forest showcase"
+          GITHUB_STEP_SUMMARY="" KEEP_PPM="$scenes" SCENES="$scenes" \
+            scripts/ci-screenshots.sh build/release/game determinism >/dev/null || true
+          status=0
+          for scene in $scenes; do
+            if [ ! -f "screenshots/$scene.ppm" ] || [ ! -f "determinism/$scene.ppm" ]; then
+              echo "::warning title=Determinism check::$scene: no capture in one of the runs (see the Screenshots step)"
+              continue
+            fi
+            if ! result=$(python3 scripts/compare_ppm.py "screenshots/$scene.ppm" "determinism/$scene.ppm"); then
+              echo "::error title=Non-deterministic capture::$scene: $result"
+              status=1
+            else
+              echo "$scene: $result"
+            fi
+          done
+          exit "$status"
+
+      - name: Upload determinism captures on failure
+        if: ${{ failure() && steps.determinism.outcome == 'failure' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: linux-determinism
+          path: |
+            screenshots/*.ppm
+            determinism/*.ppm
+          retention-days: 7
 
       - name: Upload screenshots
         if: ${{ !cancelled() && steps.shots.outcome != 'skipped' }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: linux-screenshots
-          path: screenshots/
+          path: |
+            screenshots/
+            !screenshots/*.ppm
           retention-days: 14
           if-no-files-found: ignore
 
@@ -226,7 +277,7 @@ jobs:
 
       - name: Upload logs on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: linux-logs
           path: |
@@ -241,6 +292,13 @@ jobs:
   # artifact. The only job with a write token; it runs no build output, and
   # never for fork PRs. Runs also when the linux job failed (a bad capture is
   # exactly what needs looking at).
+  #
+  # No concurrency group: a group holds one running and one pending job and
+  # cancels any older pending one, which dropped most PRs' publishes while
+  # runs overlapped. Concurrent publishes are safe without it: each commits
+  # on the branch tip it fetched and pushes without force, so a push that
+  # lost the race is rejected and the script re-applies its run on the new
+  # tip (scripts/ci-publish-screenshots.sh).
   publish-screenshots:
     name: Publish screenshots
     needs: linux
@@ -252,16 +310,15 @@ jobs:
     timeout-minutes: 15
     permissions:
       contents: write
-    concurrency:
-      group: ci-screenshots
-      cancel-in-progress: false
     steps:
-      - uses: actions/checkout@v4
+      # Keeps the job token as the git credential: the publish script pushes
+      # with it.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Download screenshots
         id: download
         continue-on-error: true
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: linux-screenshots
           path: screenshots
@@ -280,7 +337,9 @@ jobs:
     runs-on: windows-2022
     timeout-minutes: 180
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
 
       # Vulkan SDK + runtime + lavapipe, Slang, vcpkg, MSVC developer env.
       - name: Set up build
@@ -289,11 +348,11 @@ jobs:
 
       - name: Configure
         id: configure
-        run: cmake --preset windows-release
+        run: cmake --preset windows-release -DENGINE_WERROR=ON
 
       - name: Save vcpkg binary cache
         if: always() && steps.setup.outputs.cache-key != ''
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: ${{ github.workspace }}/.vcpkg-archives
           key: ${{ steps.setup.outputs.cache-key }}
@@ -310,13 +369,16 @@ jobs:
           GTEST_BRIEF: 1
         run: ctest --test-dir build/windows-release -R engine_tests_cpu -V --timeout 900
 
-      - name: Tests (GPU on lavapipe)
+      # Under the SDK's validation layer (registered by setup-build),
+      # failing on any error-severity message as on Linux.
+      - name: Tests (GPU on lavapipe, validation layer)
         if: always() && steps.build.outcome == 'success'
         env:
           GTEST_BRIEF: 1
+          QUAT_VALIDATION: 1
         run: |
           vulkaninfoSDK --summary
-          ctest --test-dir build/windows-release -R engine_tests_gpu -V --timeout 900
+          ctest --test-dir build/windows-release -R engine_tests_gpu -V --timeout 1800
 
       # Engine SDK (P8): install into a fresh prefix, then build and test
       # examples/sdk-consumer and the public headers against it alone.
@@ -326,7 +388,7 @@ jobs:
 
       - name: Upload logs on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: windows-logs
           path: |
@@ -340,7 +402,9 @@ jobs:
     runs-on: macos-15
     timeout-minutes: 180
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
 
       # Homebrew Vulkan loader + MoltenVK, Slang, vcpkg.
       - name: Set up build
@@ -349,11 +413,11 @@ jobs:
 
       - name: Configure
         id: configure
-        run: cmake --preset macos-release
+        run: cmake --preset macos-release -DENGINE_WERROR=ON
 
       - name: Save vcpkg binary cache
         if: always() && steps.setup.outputs.cache-key != ''
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: ${{ github.workspace }}/.vcpkg-archives
           key: ${{ steps.setup.outputs.cache-key }}
@@ -401,7 +465,7 @@ jobs:
       - name: Restore SPIRV-Cross builds (MoltenVK pins)
         id: spvc-cache
         if: always() && steps.mvk.outcome == 'success'
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: ${{ runner.temp }}/mvk-spirv-cross
           key: mvk-spirv-cross-${{ runner.os }}-${{ steps.mvk.outputs.tags }}
@@ -440,7 +504,7 @@ jobs:
 
       - name: Save SPIRV-Cross builds (MoltenVK pins)
         if: always() && steps.spvc-cache.outcome == 'success' && steps.spvc-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: ${{ runner.temp }}/mvk-spirv-cross
           key: ${{ steps.spvc-cache.outputs.cache-primary-key }}
@@ -506,7 +570,7 @@ jobs:
 
       - name: Upload MoltenVK debug log
         if: always() && inputs.mvk_debug
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: macos-mvk-debug
           path: ${{ runner.temp }}/mvk-debug/
@@ -515,7 +579,7 @@ jobs:
 
       - name: Upload logs on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: macos-logs
           path: |
@@ -528,20 +592,28 @@ jobs:
     name: quat-mcp (Rust fmt, clippy, tests)
     runs-on: ubuntu-24.04
     timeout-minutes: 30
+    # Runs crates' build scripts and proc-macros: read-only token, not
+    # persisted in the checkout.
+    permissions:
+      contents: read
     defaults:
       run:
         working-directory: tools/quat-mcp
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
 
       - name: Rust toolchain
-        # Same version as tools/quat-mcp/rust-toolchain.toml.
-        uses: dtolnay/rust-toolchain@1.97.0
+        # Same version as tools/quat-mcp/rust-toolchain.toml. The action's
+        # branch is named after the version; the SHA pins that branch's head.
+        uses: dtolnay/rust-toolchain@fa51344246423bb1896f389ae2a83b9784ddb363 # 1.97.0
         with:
+          toolchain: 1.97.0
           components: rustfmt, clippy
 
       - name: Cargo cache
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           workspaces: tools/quat-mcp
 

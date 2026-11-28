@@ -68,13 +68,30 @@ runs:
         install_lavapipe: true
         cache: true
         stripdown: true
+        # Authenticated GitHub API calls (the lavapipe download): anonymous
+        # ones share the runner IP's rate limit and failed at random.
+        github_token: ${{ github.token }}
 
-    - name: Vulkan runtime on PATH (Windows)
+    # The SDK's validation layer is not registered (the action runs no
+    # installer). Register its manifest where the SDK installer would, as the
+    # action does for lavapipe's ICD: the loader ignores VK_LAYER_PATH in an
+    # elevated process, which the runner's is. Tests that ask for validation
+    # fail when the layer is missing.
+    - name: Vulkan runtime on PATH, validation layer (Windows)
       if: runner.os == 'Windows'
       shell: pwsh
       run: |
         "$env:VULKAN_SDK\runtime\x64" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
         "$env:VULKAN_SDK\Bin" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+        $layer = Join-Path $env:VULKAN_SDK "Bin\VkLayer_khronos_validation.json"
+        if (Test-Path $layer) {
+          $key = "HKLM:\SOFTWARE\Khronos\Vulkan\ExplicitLayers"
+          if (-not (Test-Path $key)) { New-Item -Path $key -Force | Out-Null }
+          New-ItemProperty -Path $key -Name $layer -PropertyType DWord -Value 0 -Force | Out-Null
+          Write-Output "Registered validation layer: $layer"
+        } else {
+          Write-Output "::warning title=Vulkan SDK::no validation layer at $layer"
+        }
 
     # ---- macOS: Homebrew's loader + MoltenVK ICD ---------------------------
     # VULKAN_SDK points CMake's FindVulkan at the Homebrew prefix.
@@ -154,7 +171,7 @@ runs:
     # (a failed run) is kept and completed next time.
     - name: Restore vcpkg binary cache
       id: vcpkg-cache
-      uses: actions/cache/restore@v4
+      uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
       with:
         path: ${{ github.workspace }}/.vcpkg-archives
         key: vcpkg-${{ runner.os == 'Linux' && 'linux' || runner.os == 'Windows' && 'windows' || 'macos' }}-${{ inputs.vcpkg-commit }}-${{ hashFiles('vcpkg.json', 'triplets/**', 'ports/**') }}-${{ github.run_id }}
