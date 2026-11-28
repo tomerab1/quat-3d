@@ -1,9 +1,9 @@
 #include "engine/renderer/terrain_gpu_tiles.hpp"
 
-#include <chrono>
 #include <cstdio>
 #include <iterator>
 #include <utility>
+#include <vector>
 
 #include "engine/terrain/generator.hpp"
 
@@ -22,7 +22,8 @@ GpuTileSource::create(const rhi::Device& device, rhi::GpuAllocator& allocator,
 GpuTileSource::~GpuTileSource() {
     // Never leave a consumer waiting on a future nobody will fulfil.
     abandon();
-    // cpu_fallbacks_' futures join their workers as they are destroyed.
+    // abandon() cancelled the CPU fallbacks, so cpu_fallbacks_' destructor
+    // joins workers that are already stopping.
 }
 
 void GpuTileSource::abandon() {
@@ -31,6 +32,9 @@ void GpuTileSource::abandon() {
         pending.promise.set_value(terrain::Heightmap{});
     }
     pending_.clear();
+    // Tiles regenerating on the CPU are given up too: their futures resolve
+    // invalid as soon as the workers reach a cancellation check (#78).
+    cpu_fallbacks_.cancel_all();
 }
 
 bool GpuTileSource::supports(const terrain::TerrainParams& params) const {
@@ -63,9 +67,7 @@ void GpuTileSource::tick() {
     for (auto it = parked_.begin(); it != parked_.end();) {
         it = --it->second.frames_left <= 0 ? parked_.erase(it) : std::next(it);
     }
-    std::erase_if(cpu_fallbacks_, [](const std::future<void>& f) {
-        return f.wait_for(std::chrono::seconds(0)) == std::future_status::ready;
-    });
+    cpu_fallbacks_.reap();
     synth_.tick();
 }
 
@@ -98,11 +100,10 @@ void GpuTileSource::deliver(TerrainSynthPass::Result result) {
 void GpuTileSource::fall_back_to_cpu(std::uint64_t id) {
     const auto it = pending_.find(id);
     if (it == pending_.end()) return;
-    cpu_fallbacks_.push_back(std::async(
-        std::launch::async,
-        [promise = std::move(it->second.promise), params = it->second.params]() mutable {
-            promise.set_value(terrain::generate(params));
-        }));
+    // The request's token goes with it: cancelling the tile still stops the
+    // CPU generation, as it would have stopped the GPU job (#78).
+    cpu_fallbacks_.start(it->second.params, std::move(it->second.promise),
+                         std::move(it->second.cancel));
     pending_.erase(it);
 }
 
