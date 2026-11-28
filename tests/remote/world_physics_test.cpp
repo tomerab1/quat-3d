@@ -211,6 +211,9 @@ TEST_F(BodyCommands, ForceDurationsAreWholeSteps) {
                       {{"entity", "Crate"}, {"force", {1, 0, 0}}, {"duration_s", 0.03}});
     EXPECT_EQ(s["steps"], 4) << "0.03 s is 3.6 steps: rounded to 4";
     EXPECT_NEAR(s["duration_s"].get<float>(), 4.0F * PhysicsWorld::fixed_timestep, 1e-6F);
+    const Json one = ok("physics.apply",
+                        {{"entity", "Crate"}, {"force", {1, 0, 0}}, {"duration_s", 0.0083}});
+    EXPECT_EQ(one["steps"], 1) << "a value just short of one step rounds to one";
     const Json d = ok("physics.apply", {{"entity", "Crate"}, {"torque", {0, 1, 0}}});
     EXPECT_EQ(d["steps"], 2) << "the default 1/60 s is two steps";
 }

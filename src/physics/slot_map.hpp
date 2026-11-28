@@ -8,8 +8,9 @@
 // table (issue #47); the generation, bumped on every free, makes a stale
 // handle to a recycled slot resolve to nothing instead of aliasing the new
 // occupant. The generation is 8 bits; a slot whose generation would wrap is
-// retired rather than reused, so no handle ever comes back to life. Index 0xFFFFFF is never handed out, so 0xFFFFFFFF (the engine's
-// "invalid" sentinel) is never a live handle.
+// retired rather than reused, so no handle ever comes back to life. Index
+// 0xFFFFFF is never handed out, so 0xFFFFFFFF (the engine's "invalid"
+// sentinel) is never a live handle.
 
 #include <cstddef>
 #include <cstdint>

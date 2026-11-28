@@ -117,7 +117,7 @@ pub struct PhysicsApplyParams {
     /// World-space point to push at (impulse or force only): off-centre pushes also spin.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub at_point: Option<Vec3>,
-    /// Seconds of simulated time a force or torque acts, 1/120..10 (default 1/60), in whole 1/120 s steps.
+    /// Seconds of simulated time a force or torque acts, up to 10 (default 1/60), rounded to whole 1/120 s steps (at least one).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub duration_s: Option<f64>,
 }

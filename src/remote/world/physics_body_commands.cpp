@@ -202,8 +202,8 @@ RpcResult physics_set(Context& ctx, const Json& params) {
     // Validate everything before changing anything.
     const scene::BodyMotion target = motion.value_or(rb.motion);
     bool rebuild = motion && *motion != rb.motion &&
-                         (*motion == scene::BodyMotion::static_body ||
-                          rb.motion == scene::BodyMotion::static_body);
+                   (*motion == scene::BodyMotion::static_body ||
+                    rb.motion == scene::BodyMotion::static_body);
     if ((linear || angular_deg) && target != scene::BodyMotion::dynamic) {
         return bad_params(std::string(linear ? "linear_velocity" : "angular_velocity") + ": " +
                           entity_label(*e) + "'s body is " +
@@ -279,8 +279,9 @@ RpcResult physics_apply(Context& ctx, const Json& params) {
     bounded_vec3(f, "at_point", at_point, 1.0e6F, "m");
     float duration = k_default_force_s;
     const bool has_duration = f.has("duration_s");
-    // Forces act in whole fixed steps: shorter than one step cannot be honoured.
-    f.number("duration_s", duration, PhysicsWorld::fixed_timestep,
+    // Forces act in whole fixed steps (force_steps rounds to the nearest):
+    // anything that rounds to at least one step is accepted.
+    f.number("duration_s", duration, 0.5F * PhysicsWorld::fixed_timestep,
              PhysicsWorld::max_force_duration);
     if (auto ok = finish(f); !ok) return std::unexpected(ok.error());
     if (!e) return std::unexpected(e.error());

@@ -391,7 +391,7 @@ For world building it reports entity bounds, sets models down on terrain or
 colliders (`world_place_on_ground`), takes screenshots from any camera without
 moving yours, and searches and downloads CC0 models from Poly Haven
 (`asset_search` / `asset_fetch`, into the gitignored `assets/meshes/polyhaven/`).
-It also controls physics in a running game: read and set body velocities, push
+Physics in a running game: read and set body velocities, push
 bodies with impulses and forces, change the scene's gravity, query every hit
 along a ray, overlaps and shape casts, follow a feed of contact and trigger
 events, author joints (hinges, sliders, distance ropes …) and walk character
