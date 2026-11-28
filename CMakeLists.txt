@@ -684,9 +684,10 @@ add_library(game_world STATIC
     src/app/play_mode.cpp
     src/app/grass_runtime.cpp
     src/app/particle_runtime.cpp
-    src/app/nav_bake.cpp)
+    src/app/nav_bake.cpp
+    src/app/input_runtime.cpp)
 target_link_libraries(game_world PUBLIC
-    engine_flags engine_core engine_rhi engine_asset engine_scene engine_renderer engine_physics
+    engine_flags engine_core engine_input engine_rhi engine_asset engine_scene engine_renderer engine_physics
     engine_terrain engine_nav engine_net engine_audio engine_script)
 target_include_directories(game_world PUBLIC
     ${ENGINE_PUBLIC_INCLUDE}

@@ -166,6 +166,11 @@ public:
     // history); false when nothing changed or a Play failed to start.
     bool apply_play(PlayMode& mode, engine::scene::Scene& scene);
     [[nodiscard]] bool play_physics_active() const { return play_physics_.has_value(); }
+    // The physics world being simulated (play's, or a demo's), or null.
+    [[nodiscard]] const engine::physics::PhysicsWorld* simulated_physics() const {
+        if (play_physics_) return &*play_physics_;
+        return demo_.physics_world ? &*demo_.physics_world : nullptr;
+    }
 
     // ---- Navmesh / terrain -------------------------------------------------
     // A navmesh describes the geometry it was baked from: drop it when that

@@ -120,6 +120,11 @@ std::uint32_t EditorLayer::viewport_height() const {
 bool EditorLayer::viewport_hovered() const {
     return shell_ != nullptr && shell_->viewport_hovered;
 }
+std::array<float, 4> EditorLayer::viewport_rect() const {
+    if (shell_ == nullptr) return {};
+    return {shell_->viewport_rect[0], shell_->viewport_rect[1], shell_->viewport_rect[2],
+            shell_->viewport_rect[3]};
+}
 entt::entity EditorLayer::selected() const {
     return shell_ != nullptr ? shell_->selected : entt::null;
 }
