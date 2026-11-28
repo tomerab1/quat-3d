@@ -75,11 +75,16 @@ data_source_bytes(const fastgltf::Asset& asset, const fastgltf::DataSource& sour
 // role normal or single_channel only when that is the image's sole use.
 // `fallback` marks the core `source` of a KHR_texture_basisu texture; such an
 // image needs no decoding unless something else samples it.
+// `alpha_test_cutoff` is the alphaCutoff of an alphaMode MASK material using
+// the image as base colour (the lowest, when several do: it keeps the most
+// coverage); its mips then preserve alpha-test coverage
+// (engine/asset/alpha_coverage.hpp), at load and when cooked.
 struct ImageUsage {
     asset::TextureRole       role        = asset::TextureRole::color;
     asset::TextureColorSpace color_space = asset::TextureColorSpace::linear;
     bool                     sampled     = false;
     bool                     fallback    = false;
+    std::optional<float>     alpha_test_cutoff;
 };
 [[nodiscard]] std::vector<ImageUsage> image_usages(const fastgltf::Asset& asset);
 

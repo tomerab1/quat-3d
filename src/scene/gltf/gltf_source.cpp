@@ -1,5 +1,7 @@
 // glTF buffer / image data access and image usage (see gltf_io.hpp).
 
+#include <algorithm>
+#include <optional>
 #include <variant>
 #include <vector>
 
@@ -84,6 +86,16 @@ std::vector<ImageUsage> image_usages(const fastgltf::Asset& asset) {
         mark(mat.occlusionTexture, single);
         mark(mat.pbrData.metallicRoughnessTexture, other);
         if (mat.volume != nullptr) mark(mat.volume->thicknessTexture, other);
+        const auto& base = mat.pbrData.baseColorTexture;
+        if (mat.alphaMode == fastgltf::AlphaMode::Mask && base.has_value() &&
+            base->textureIndex < asset.textures.size()) {
+            if (const auto img = texture_image(asset.textures[base->textureIndex]);
+                img && *img < n) {
+                std::optional<float>& c = out[*img].alpha_test_cutoff;
+                const float cutoff = std::clamp(mat.alphaCutoff, 0.0F, 1.0F);
+                c = c.has_value() ? std::min(*c, cutoff) : cutoff;
+            }
+        }
     }
     for (std::size_t i = 0; i < n; ++i) {
         if (srgb[i] != 0) out[i].color_space = asset::TextureColorSpace::srgb;

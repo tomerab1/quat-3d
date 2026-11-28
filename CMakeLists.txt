@@ -129,6 +129,9 @@ find_package(GameNetworkingSockets CONFIG REQUIRED)
 # Lua 5.4 (C library, longjmp error handling) + sol2 (header-only bindings).
 find_package(Lua REQUIRED)
 find_package(sol2 CONFIG REQUIRED)
+# OpenSSL's libcrypto: the CSPRNG behind remote-control session tokens
+# (engine_remote). GameNetworkingSockets already depends on it.
+find_package(OpenSSL REQUIRED COMPONENTS Crypto)
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/FetchAcl.cmake) # ACL + RTM (header-only)
 # miniaudio: vcpkg's port is header-only (it installs miniaudio.h and nothing
 # else), so it is wrapped in an imported target here and engine_audio compiles
@@ -159,6 +162,8 @@ add_library(engine_core STATIC
     src/core/log.cpp
     src/core/stderr_capture.cpp
     src/core/sim_clock.cpp
+    src/core/frame_timer.cpp
+    src/core/path_confine.cpp
     src/core/file_watcher.cpp
     src/core/child_process.cpp
     src/core/asset_root.cpp
@@ -183,7 +188,10 @@ add_library(engine_rhi STATIC
     src/rhi/graphics_pipeline.cpp
     src/rhi/compute_pipeline.cpp
     src/rhi/shader_compiler.cpp
-    src/rhi/shader_hot_reload.cpp)
+    src/rhi/shader_diagnostics.cpp
+    src/rhi/shader_hot_reload.cpp
+    src/rhi/material_shader_registry.cpp
+    src/rhi/material_shader_source.cpp)
 target_link_libraries(engine_rhi PUBLIC
     engine_flags engine_core Vulkan::Vulkan GPUOpen::VulkanMemoryAllocator)
 # engine_core is public: shader hot reload's headers use its watcher/process
@@ -207,6 +215,7 @@ set_source_files_properties(src/rhi/vma_impl.cpp PROPERTIES COMPILE_OPTIONS "${E
 # engine_image — graphics-free texture data, limits and the guarded PNG/JPEG
 # decoder (stb_image), shared by engine_asset and the cooker.
 add_library(engine_image STATIC
+    src/asset/alpha_coverage.cpp
     src/asset/texture_data.cpp
     src/asset/image_decode.cpp)
 target_link_libraries(engine_image PUBLIC engine_flags)
@@ -398,9 +407,12 @@ set_target_properties(quat-cook PROPERTIES QUAT_KTX_FULL ON)
 # in 12.1; chunked LOD rendering and Jolt height fields layer on in 12.2/12.3.
 # ---------------------------------------------------------------------------
 add_library(engine_terrain STATIC
+    src/terrain/budget.cpp
+    src/terrain/cpu_tile_jobs.cpp
     src/terrain/generator.cpp
     src/terrain/grid_erosion.cpp
-    src/terrain/streamer.cpp)
+    src/terrain/streamer.cpp
+    src/terrain/talus_relax.cpp)
 target_link_libraries(engine_terrain PUBLIC engine_flags glm::glm)
 target_include_directories(engine_terrain PUBLIC ${ENGINE_PUBLIC_INCLUDE})
 
@@ -423,6 +435,9 @@ add_library(engine_net STATIC
     src/net/character_step.cpp
     src/net/net_ids.cpp
     src/net/transport.cpp
+    src/net/transport_common.cpp
+    src/net/host_access.cpp
+    src/net/session_config.cpp
     src/net/replication.cpp
     src/net/replication_transport.cpp
     src/net/prediction.cpp
@@ -445,7 +460,7 @@ add_library(engine_audio STATIC
     src/audio/audio_engine.cpp
     src/audio/miniaudio_impl.cpp)
 target_link_libraries(engine_audio PUBLIC engine_flags glm::glm)
-target_link_libraries(engine_audio PRIVATE miniaudio_headers)
+target_link_libraries(engine_audio PRIVATE miniaudio_headers engine_core)
 target_include_directories(engine_audio PUBLIC ${ENGINE_PUBLIC_INCLUDE})
 # miniaudio's implementation is not warning-clean under our strict flags.
 set_source_files_properties(src/audio/miniaudio_impl.cpp PROPERTIES COMPILE_OPTIONS "${ENGINE_THIRD_PARTY_TU_FLAGS}")
@@ -454,15 +469,22 @@ set_source_files_properties(src/audio/miniaudio_impl.cpp PROPERTIES COMPILE_OPTI
 # engine_remote — remote-control endpoint (Phase 15): loopback JSON-RPC 2.0
 # over TCP, poll-driven on the main thread. Out-of-process tools (the quat-mcp
 # Model Context Protocol bridge in tools/quat-mcp) drive the engine through it.
-# nlohmann_json is PUBLIC: the handler API traffics in JSON values.
+# nlohmann_json is PUBLIC: the handler API traffics in JSON values. OpenSSL's
+# libcrypto (PRIVATE) generates the session tokens (session_token.cpp).
 # ---------------------------------------------------------------------------
 add_library(engine_remote STATIC
     src/remote/rpc_server.cpp
+    src/remote/session_token.cpp
     src/remote/socket.cpp)
 target_link_libraries(engine_remote PUBLIC engine_flags nlohmann_json::nlohmann_json)
+target_link_libraries(engine_remote PRIVATE OpenSSL::Crypto)
 target_include_directories(engine_remote PUBLIC ${ENGINE_PUBLIC_INCLUDE})
+# The user-only token file: one implementation per platform (private_file.hpp).
 if(WIN32)
-    target_link_libraries(engine_remote PRIVATE ws2_32)
+    target_sources(engine_remote PRIVATE src/remote/private_file_win32.cpp)
+    target_link_libraries(engine_remote PRIVATE ws2_32 advapi32)
+else()
+    target_sources(engine_remote PRIVATE src/remote/private_file_posix.cpp)
 endif()
 
 # ---------------------------------------------------------------------------
@@ -485,6 +507,7 @@ add_library(engine_remote_world STATIC
     src/remote/world/app_commands.cpp
     src/remote/world/debug_commands.cpp
     src/remote/world/debug_query_commands.cpp
+    src/remote/world/shader_commands.cpp
     src/remote/world/tuning_commands.cpp
     src/remote/world/behavior_commands.cpp
     src/remote/world/behavior_edit_commands.cpp
@@ -514,6 +537,7 @@ add_library(engine_renderer STATIC
     src/renderer/instance_buffer.cpp
     src/renderer/non_finite_counters.cpp
     src/renderer/mesh_pass.cpp
+    src/renderer/material_pipelines.cpp
     src/renderer/lighting_pass.cpp
     src/renderer/light_clusters.cpp
     src/renderer/light_cull_pass.cpp
@@ -524,6 +548,7 @@ add_library(engine_renderer STATIC
     src/renderer/particle_draw.cpp
     src/renderer/tonemap_pass.cpp
     src/renderer/skinning_pass.cpp
+    src/renderer/shadow_casters.cpp
     src/renderer/shadow_pass.cpp
     src/renderer/transparent_pass.cpp
     src/renderer/ibl_pass.cpp
@@ -579,6 +604,30 @@ if(ENGINE_EDITOR)
         src/editor/particle_inspector.cpp
         src/editor/behavior_panel.cpp
         src/editor/behavior_canvas.cpp
+        src/editor/inspector_world.cpp
+        src/editor/panels/console.cpp
+        src/editor/panels/inspector_parts.cpp
+        src/editor/shell/command_palette.cpp
+        src/editor/shell/commands.cpp
+        src/editor/shell/dialogs.cpp
+        src/editor/shell/editor_shell.cpp
+        src/editor/shell/fuzzy.cpp
+        src/editor/shell/layout.cpp
+        src/editor/shell/menu.cpp
+        src/editor/shell/panels.cpp
+        src/editor/shell/prefs.cpp
+        src/editor/shell/scene_actions.cpp
+        src/editor/shell/stats_panel.cpp
+        src/editor/shell/status_bar.cpp
+        src/editor/shell/toolbar.cpp
+        src/editor/shell/viewport.cpp
+        src/editor/ui/appearance.cpp
+        src/editor/ui/fonts.cpp
+        src/editor/ui/theme.cpp
+        src/editor/ui/toasts.cpp
+        src/editor/ui/widgets_asset.cpp
+        src/editor/ui/widgets_controls.cpp
+        src/editor/ui/widgets_property.cpp
         src/editor/vendor/imgui_impl_sdl3.cpp)
     # engine_scene is PUBLIC: editor.hpp exposes entt entity types (selection)
     # and the hierarchy/inspector panels reflect scene components.

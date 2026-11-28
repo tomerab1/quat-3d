@@ -1,6 +1,7 @@
 // Grid erosion — the CPU reference of the GPU synthesis pass's erosion
 // (ROADMAP R10.2). Virtual-pipe hydraulic erosion (Mei, Decaudin & Hu 2007)
-// with a depth-limited capacity (Stava et al. 2008) and thermal weathering.
+// with a depth-limited capacity (Stava et al. 2008) and thermal weathering,
+// followed by the talus relaxation of talus_relax.cpp.
 //
 // Each iteration runs four grid passes, exactly like the four compute
 // dispatches in assets/shaders/terrain_synth.slang (erode_flux, erode_water,
@@ -22,6 +23,7 @@
 #include <glm/glm.hpp>
 
 #include "engine/terrain/generator.hpp"
+#include "engine/terrain/talus_relax.hpp"
 
 namespace engine::terrain {
 
@@ -252,7 +254,10 @@ bool erode_grid(std::vector<float>& heights_m, std::uint32_t resolution, float c
     for (std::int32_t w = 1; w < workers; ++w) threads.emplace_back(run, w);
     run(0);
     for (std::thread& t : threads) t.join();
-    return !stop;
+    if (stop) return false;
+    // Thermal erosion to its steady state: the interleaved weathering above
+    // only acts locally (issue #69).
+    return relax_talus(heights_m, resolution, cell_m, params.talus, params.relax_cycles, cancel);
 }
 
 } // namespace engine::terrain

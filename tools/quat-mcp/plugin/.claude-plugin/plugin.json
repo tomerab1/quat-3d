@@ -11,7 +11,7 @@
     "quat_mcp_command": {
       "type": "string",
       "title": "quat-mcp binary",
-      "description": "The quat-mcp server to run: \"quat-mcp\" when it is on your PATH (cargo install --path tools/quat-mcp), or the absolute path of tools/quat-mcp/target/release/quat-mcp.",
+      "description": "The quat-mcp server to run: \"quat-mcp\" when it is on your PATH (cargo install --path tools/quat-mcp), or an absolute path - the quat-mcp bundled in a release (next to game on Linux, quat-mcp.exe next to game.exe on Windows, Quat3D.app/Contents/MacOS/quat-mcp on macOS) or tools/quat-mcp/target/release/quat-mcp.",
       "default": "quat-mcp"
     },
     "engine_port": {
@@ -19,6 +19,12 @@
       "title": "Engine port",
       "description": "The port the engine's remote-control endpoint listens on (the engine's QUAT_REMOTE value).",
       "default": "7878"
+    },
+    "project_root": {
+      "type": "string",
+      "title": "Project root",
+      "description": "Where asset_fetch saves downloaded models (into its assets/). For a release, its data folder: the folder holding game or game.exe, or Quat3D.app/Contents/Resources on macOS. Empty: the directory Claude Code runs quat-mcp in.",
+      "default": ""
     }
   }
 }

@@ -10,6 +10,7 @@
 
 #include <array>
 #include <cstdint>
+#include <string>
 
 #include <glm/glm.hpp>
 #include <vulkan/vulkan.h>
@@ -32,6 +33,9 @@ enum MaterialTextureFlags : std::uint32_t {
     material_transmission           = 1u << 6, // refractive glass (KHR_materials_transmission)
     material_double_sided           = 1u << 7, // glTF doubleSided -> disable back-face culling
     material_has_thickness          = 1u << 8, // KHR_materials_volume thicknessTexture (G channel)
+    // glTF alphaMode MASK: base-colour alpha x factor is tested against
+    // alpha_cutoff (discard below) in every pass that draws the surface.
+    material_alpha_mask             = 1u << 9,
 };
 
 // Texture slot indices for the per-slot KHR_texture_transform arrays below.
@@ -46,7 +50,7 @@ enum MaterialTextureSlot : std::size_t {
     material_slot_count,
 };
 
-// GPU uniform-buffer layout, std140-compatible (240 bytes). Field order and
+// GPU uniform-buffer layout, std140-compatible (272 bytes). Field order and
 // padding mirror PbrMaterialParams in material.slang exactly.
 struct PbrMaterialParams {
     glm::vec4     base_color_factor{1.0F, 1.0F, 1.0F, 1.0F};
@@ -79,9 +83,12 @@ struct PbrMaterialParams {
         glm::vec4{1.0F, 0.0F, 0.0F, 1.0F}, glm::vec4{1.0F, 0.0F, 0.0F, 1.0F},
         glm::vec4{1.0F, 0.0F, 0.0F, 1.0F}, glm::vec4{1.0F, 0.0F, 0.0F, 1.0F}};
     std::array<glm::vec4, material_slot_count / 2> uv_offset{};
+    // Free parameters for an authored material shader (ROADMAP A6,
+    // MaterialInput::params.shader_params); the built-in material ignores them.
+    std::array<glm::vec4, 2> shader_params{};
 };
-static_assert(sizeof(PbrMaterialParams) == 240,
-              "PbrMaterialParams must stay 240 bytes and std140-compatible to "
+static_assert(sizeof(PbrMaterialParams) == 272,
+              "PbrMaterialParams must stay 272 bytes and std140-compatible to "
               "match material.slang");
 
 // The (optional) textures a material samples. A slot is a null handle when the
@@ -102,6 +109,11 @@ struct MaterialAsset {
     VkDeviceAddress   param_address = 0;     // device address of param_buffer
     PbrMaterialParams params{};
     MaterialTextures  textures;
+    // Authored material shader drawing this material (ROADMAP A6): the stem
+    // of assets/shaders/materials/<shader>.slang. Empty = the built-in PBR
+    // program. Only the GBuffer pass honours it (blended materials render
+    // forward with the built-in shading).
+    std::string       shader;
 
     [[nodiscard]] bool valid() const noexcept {
         return param_buffer.handle() != VK_NULL_HANDLE && param_address != 0;

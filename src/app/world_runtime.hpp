@@ -234,6 +234,7 @@ private:
     engine::terrain::CancelToken             terrain_cancel_; // stops terrain_job_ on the CPU
     engine::terrain::Heightmap               terrain_heightmap_; // CPU copy retained for physics (12.3)
     std::optional<engine::terrain::TerrainStreamer> terrain_streamer_; // 12.4
+    std::string terrain_budget_error_; // last over-budget configuration reported (#67)
     // Terrain placement, written by the per-frame upkeep and read at the top
     // of the next frame by the nav ground snap (the anchor moves rarely).
     glm::vec3 terrain_anchor_{0.0F};
@@ -245,7 +246,8 @@ private:
 
     // Networking (Phase 14; S1 B1-B5): QUAT_HOST=<port> hosts this scene,
     // QUAT_JOIN=<ip:port> joins a host running the same scene. See
-    // engine/net/session.hpp for the per-frame protocol.
+    // engine/net/session.hpp for the per-frame protocol and
+    // engine/net/session_config.hpp for the QUAT_NET_* host options.
     engine::net::NetSession net_;
     std::map<glm::ivec2, std::uint32_t, engine::terrain::TileCoordLess>
         terrain_bodies_; // streamed tiles' play-mode physics bodies

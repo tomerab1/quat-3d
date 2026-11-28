@@ -13,12 +13,11 @@ use super::prompts::{Prompts, SKILL_VARIABLE};
 use super::{Catalog, TOOLS_KEY, catalog};
 use crate::server::{QuatServer, SCENE_SUMMARY_URI, SCRIPTING_REFERENCE_URI};
 
-/// Tool groups still in flight on other branches (profiling, shaders,
+/// Tool groups still in flight on other branches (profiling,
 /// physics control, events, input injection): a skill must not name their
 /// tools before they exist here.
 const PENDING_TOOL_PREFIXES: &[&str] = &[
     "profile",
-    "shader",
     "physics",
     "events",
     "input",
@@ -33,6 +32,7 @@ const NOT_TOOLS: &[&str] = &[
     "local_bounds",
     "nav_agent",
     "nav_agent_state",
+    "shader_params",
     "world_bounds",
     "world_position",
 ];
@@ -443,7 +443,7 @@ fn plugin_and_marketplace_manifests_agree() {
     assert_eq!(args, ["--skills=false", "--prompts=false"]);
     let serialized = servers.to_string().to_lowercase();
     assert!(!serialized.contains("token"), "no secrets in the plugin");
-    for option in ["quat_mcp_command", "engine_port"] {
+    for option in ["quat_mcp_command", "engine_port", "project_root"] {
         assert!(
             serialized.contains(&format!("user_config.{option}")),
             "{option}"

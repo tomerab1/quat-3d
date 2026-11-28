@@ -77,7 +77,8 @@ TEST(TerrainGridErosion, ThermalWeatheringRelaxesSteepSlopes) {
     h[16 * 33 + 16] = 20.0F;
     t::GridErosionParams p;
     p.iterations = 40;
-    p.rain = 0.0F; // thermal only
+    p.rain = 0.0F;       // thermal only
+    p.relax_cycles = 0;  // the interleaved weathering itself (talus_relax_test covers the rest)
     t::erode_grid(h, 33, 1.0F, p);
     EXPECT_LT(h[16 * 33 + 16], 10.0F);
     EXPECT_GT(h[16 * 33 + 17], 0.5F);

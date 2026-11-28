@@ -49,7 +49,8 @@ TEST(NetReplicationLoopback, ClientTransformConvergesOnTheServers) {
         st.local[3] = glm::vec4(next, 1.0F);
         st.world = st.local;
         (void)pair.server->poll();
-        replication.tick(server_reg, *pair.server, dt);
+        const engine::net::ClientId recipients[] = {pair.id};
+        replication.tick(server_reg, *pair.server, recipients, dt);
 
         for (const NetEvent& ev : pair.client->poll()) {
             if (ev.type == NetEvent::Type::message) receiver.receive(ev.payload);

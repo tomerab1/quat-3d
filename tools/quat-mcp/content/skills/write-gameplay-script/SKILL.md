@@ -3,7 +3,7 @@ name: write-gameplay-script
 description: Write gameplay for a running quat-3d game as Lua scripts - pickups, doors, spinners, spawners, score keeping, character control - compiled before saving, attached with the script component, run in play mode and debugged from the script log. Use when asked to add behaviour, interaction, game rules or controls to a quat-3d scene with code.
 compatibility: Needs the quat-mcp MCP server connected to a running quat-3d engine (started with QUAT_REMOTE) built with Lua scripting.
 metadata:
-  quat-mcp-tools: "scene_list scene_get scene_update scene_batch script_list script_get script_check script_create script_update sim_play sim_stop debug_log debug_watch debug_pause debug_step screenshot scene_save"
+  quat-mcp-tools: "scene_list scene_get scene_update scene_batch script_list script_get script_check script_create script_update script_delete scene_remove_components sim_play sim_stop debug_log debug_watch debug_pause debug_step debug_resume screenshot scene_save"
 ---
 
 # Write a gameplay script
@@ -70,7 +70,9 @@ read the log, fix one thing at a time.
    at a time and re-read the log after each change.
 7. **Finish.** `sim_stop` restores the scene as it was before Play (what
    scripts spawned or moved disappears; the script components stay).
-   `scene_save` keeps the setup if asked. Summarise what the script does,
+   `scene_save` keeps the setup if asked. `script_delete` the drafts you
+   wrote and no longer use (it reports `entities_still_using`: detach those
+   first with `scene_remove_components`). Summarise what the script does,
    its properties, and how to play it (controls).
 
 ## Verify
@@ -78,8 +80,8 @@ read the log, fix one thing at a time.
 - `script_list`: the script's `status.state` is `ok` and `failed` is 0
   after playing.
 - `debug_watch` the scripted entities while playing (or with
-  `debug_pause` and `debug_step`) and see the values change as intended;
-  `screenshot` shows the effect.
+  `debug_pause` and `debug_step`, then `debug_resume`) and see the values
+  change as intended; `screenshot` shows the effect.
 - The script log holds no errors since your last change.
 
 ## Pitfalls

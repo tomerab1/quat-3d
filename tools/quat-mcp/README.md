@@ -30,12 +30,33 @@ cargo build --release
 
 ```sh
 QUAT_REMOTE=7878 ./build/release/game                            # listen on 127.0.0.1:7878
-QUAT_REMOTE=7878 QUAT_REMOTE_TOKEN=s3cret ./build/release/game   # also require a token
+QUAT_REMOTE=7878 QUAT_REMOTE_TOKEN=s3cret ./build/release/game   # choose the token yourself
 ```
 
 quat-mcp connects lazily on the first tool call and reconnects automatically
 if the engine is restarted, so the engine and the AI client can be started in
 any order.
+
+### Session token
+
+The engine always requires a session token. Unless you give it one with
+`QUAT_REMOTE_TOKEN`, it generates a random 256-bit token for each run and
+writes it to a token file only your user can read; quat-mcp reads that file,
+so **no token configuration is needed**. It reads the file again on every
+reconnect, so restarting the engine (which changes the token) needs no
+quat-mcp restart.
+
+| Platform | Token file (`<port>` = the engine's port) |
+|---|---|
+| Linux | `$XDG_RUNTIME_DIR/quat-3d/remote-<port>.token`, else `~/.local/state/quat-3d/remote-<port>.token` |
+| macOS | `~/Library/Application Support/quat-3d/remote-<port>.token` |
+| Windows | `%LOCALAPPDATA%\quat-3d\remote-<port>.token` |
+
+Set `QUAT_REMOTE_TOKEN_FILE` to the same path for both to move it (for
+example when the engine and quat-mcp see different `XDG_RUNTIME_DIR`
+values), or `QUAT_REMOTE_TOKEN` to the same value for both to skip the file.
+See [Session token](../../docs/remote-control.md#session-token) in the
+protocol docs.
 
 ## Configuration
 
@@ -45,7 +66,8 @@ Every option is a flag or an environment variable:
 |---|---|---|---|
 | `--port` | `QUAT_REMOTE_PORT` | `7878` | Engine port (the engine's `QUAT_REMOTE` value) |
 | `--host` | `QUAT_REMOTE_HOST` | `127.0.0.1` | Engine host |
-| `--token` | `QUAT_REMOTE_TOKEN` | none | Token, if the engine requires one |
+| `--token` | `QUAT_REMOTE_TOKEN` | none | Token, if the engine was started with `QUAT_REMOTE_TOKEN` |
+| `--token-file` | `QUAT_REMOTE_TOKEN_FILE` | per-user file for `--port` | Where to read the engine's token when `--token` is not given |
 | `--timeout-secs` | `QUAT_MCP_TIMEOUT_SECS` | `15` | Per-request timeout |
 | `--long-timeout-secs` | `QUAT_MCP_LONG_TIMEOUT_SECS` | `120` | Timeout for screenshots, batches, model spawn, scene load/save/clear, nav bake |
 | `--max-reply-mb` | `QUAT_MCP_MAX_REPLY_MB` | `64` | Largest reply accepted from the engine |
@@ -82,7 +104,9 @@ claude mcp add quat-3d \
   -- /absolute/path/to/quat-3d/tools/quat-mcp/target/release/quat-mcp
 ```
 
-With a token, add `--env QUAT_REMOTE_TOKEN=s3cret`. Use `--scope user` to make
+If you started the engine with `QUAT_REMOTE_TOKEN`, add
+`--env QUAT_REMOTE_TOKEN=s3cret`; otherwise the token file is found
+automatically. Use `--scope user` to make
 the server available in every project, or `--scope project` to write it into
 the repository's `.mcp.json` for the whole team. Check the connection with
 `claude mcp list`, or `/mcp` inside a session.
@@ -99,16 +123,16 @@ Edit `claude_desktop_config.json` (Settings → Developer → Edit Config; on ma
     "quat-3d": {
       "command": "/absolute/path/to/quat-3d/tools/quat-mcp/target/release/quat-mcp",
       "env": {
-        "QUAT_REMOTE_PORT": "7878",
-        "QUAT_REMOTE_TOKEN": "s3cret"
+        "QUAT_REMOTE_PORT": "7878"
       }
     }
   }
 }
 ```
 
-Leave out `QUAT_REMOTE_TOKEN` if the engine runs without one. On Windows the
-command ends in `quat-mcp.exe`.
+Add `"QUAT_REMOTE_TOKEN": "s3cret"` only if you started the engine with
+`QUAT_REMOTE_TOKEN`; otherwise quat-mcp reads the engine's token file. On
+Windows the command ends in `quat-mcp.exe`.
 
 ## What the model gets
 
@@ -156,6 +180,11 @@ command ends in `quat-mcp.exe`.
 | `script_list` / `script_get` | `script.list` / `script.get` | Lua scripts with their status (errors with file:line); read one |
 | `script_create` / `script_update` | `script.create` / `script.update` | Write a script (compiled first, syntax errors name the line); updates hot-reload while playing |
 | `script_delete` / `script_check` | `script.delete` / `script.check` | Delete a script; compile a draft without saving |
+| `shader_list` | `shader.list` | Material shaders (built-in + authored) and their compile state |
+| `shader_get` | `shader.get` | One material shader's source, state and last diagnostics |
+| `shader_template` | `shader.template` | The starter material shader module |
+| `shader_create` / `shader_update` | `shader.create` / `shader.update` | Write + compile a material shader; errors as `file:line:column` with a caret; a failed update keeps the old version |
+| `shader_delete` | `shader.delete` | Delete a material shader; entities using it fall back to the built-in |
 
 Tool descriptions spell out units and conventions (metres, Y up, Euler degrees
 in YXZ order, `"#rrggbb"` sRGB colours for primitives and linear `[r,g,b]` for
@@ -173,7 +202,7 @@ written once as [Agent Skills](https://agentskills.io) in
 |---|---|
 | `build-level` | Build or extend a level: inspect, plan in metres, `scene_batch`, screenshot, iterate |
 | `tune-look` | Exposure first, then bloom, shadows, AO, sky light and materials, one change per screenshot |
-| `author-material-shader` | PBR materials (metal, plastic, car paint, glass, emission) from reference values |
+| `author-material-shader` | PBR materials (metal, plastic, car paint, glass, emission) from reference values, and Slang material shaders with `shader_*` |
 | `write-gameplay-script` | Lua scripts: read the reference, write, compile, attach, play, read the log |
 | `design-npc-behaviour` | Behaviour trees: leaves, plan, `bt_set`, play, `bt_status` / `debug_watch` |
 | `debug-physics-glitch` | Falling through, jitter, tunnelling, stuck bodies: pause, step, watch, raycast |
@@ -228,7 +257,7 @@ cargo test
 
 The tests run without the engine: `tests/common/mod.rs` is a mock engine (a
 tokio TCP server speaking the line protocol) used to test the client
-(handshake and tokens, id matching, timeouts, reconnects, error mapping, size
+(handshake, tokens and the token file, id matching, timeouts, reconnects, error mapping, size
 limits) and the tools end to end through an in-process MCP client.
 
 Layout:
@@ -236,11 +265,11 @@ Layout:
 | Path | What |
 |---|---|
 | `content/` | **Everything the model reads**, as Markdown: server instructions, one file per tool description, the component reference, the workflow skills and their prompt templates ([MiniJinja](https://docs.rs/minijinja)). See `content/README.md`. |
-| `src/client/` | Engine JSON-RPC client: `mod.rs` (calls, reconnects, handshake), `connection.rs` (socket, reader task, in-flight calls), `error.rs` (error codes, `EngineError`) |
-| `src/server/` | MCP server: `mod.rs` (handler, resource), tools grouped by area (`scene_tools.rs`, `world_tools.rs`, `sim_tools.rs`, `debug_tools.rs`, `behavior_tools.rs`, `tuning_tools.rs`, `script_tools.rs`, each its own rmcp router), `bt_outline.rs` (behaviour-tree outlines), `results.rs` |
+| `src/client/` | Engine JSON-RPC client: `mod.rs` (calls, reconnects, handshake), `connection.rs` (socket, reader task, in-flight calls), `error.rs` (error codes, `EngineError`), `token_file.rs` (the engine's session token file) |
+| `src/server/` | MCP server: `mod.rs` (handler, resource), tools grouped by area (`scene_tools.rs`, `world_tools.rs`, `sim_tools.rs`, `debug_tools.rs`, `behavior_tools.rs`, `tuning_tools.rs`, `script_tools.rs`, `shader_tools.rs`, each its own rmcp router), `bt_outline.rs` (behaviour-tree outlines), `results.rs` |
 | `src/skills/` | The workflows: `mod.rs` (skill catalog: `skills/list`, `skills/get`, `skill://` resources), `frontmatter.rs` (Agent Skills rules), `prompts.rs` (prompts generated from the skills), `embedded.rs` (the compiled-in files), `tests.rs` (sync tests) |
 | `plugin/` | The Claude Code plugin: `.claude-plugin/plugin.json`, `.mcp.json`, and `skills/`, a copy of `content/skills/` |
-| `src/params.rs`, `src/params/` | Typed tool inputs — their doc comments are the JSON schemas the model reads (`debug.rs`, `behavior.rs`, `tuning.rs`, `script.rs` per area) |
+| `src/params.rs`, `src/params/` | Typed tool inputs — their doc comments are the JSON schemas the model reads (`debug.rs`, `behavior.rs`, `tuning.rs`, `script.rs`, `shader.rs` per area) |
 | `src/content.rs` | Embeds `content/` and renders the instructions and document templates |
 | `src/config.rs` | Flags / environment |
 

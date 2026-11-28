@@ -16,6 +16,13 @@
 
 namespace quat::test {
 
+// A port no earlier test in this process used (lingering connections never
+// leak between tests).
+[[nodiscard]] inline std::uint16_t next_loopback_port() {
+    static std::uint16_t next_port = 42777;
+    return next_port++;
+}
+
 struct LoopbackPair {
     std::optional<engine::net::NetServer> server;
     std::optional<engine::net::NetClient> client;
@@ -23,8 +30,7 @@ struct LoopbackPair {
 
     // Starts listening on a fresh port and begins connecting the client.
     [[nodiscard]] std::expected<void, engine::core::Error> open() {
-        static std::uint16_t next_port = 42777;
-        const std::uint16_t  port = next_port++;
+        const std::uint16_t port = next_loopback_port();
         auto s = engine::net::NetServer::listen(port);
         if (!s) return std::unexpected(s.error());
         server.emplace(std::move(*s));
