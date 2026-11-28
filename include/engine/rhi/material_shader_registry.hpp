@@ -157,8 +157,17 @@ private:
     [[nodiscard]] std::uint32_t attempts_of(const std::filesystem::path& source) const;
     [[nodiscard]] std::vector<ShaderDiagnostic> located(std::string_view output) const;
     [[nodiscard]] std::string display(const std::filesystem::path& path) const;
+    // A file name slangc printed (UTF-8, native separators, possibly another
+    // spelling of the same directory) as a display path when it lies under
+    // the display root; otherwise unchanged.
+    [[nodiscard]] std::string display_printed(const std::string& printed) const;
 
     Config           config_;
+    // config_.display_root resolved (fs::weakly_canonical): reported paths are
+    // compared in resolved form, since tools may print another spelling of
+    // the same directory (a Windows 8.3 short name such as RUNNER~1 in the
+    // temp path, a symlink).
+    std::filesystem::path canonical_root_;
     ShaderHotReload* reload_ = nullptr; // non-owning
     std::deque<Op>   ops_;              // front() is the running one
     bool             polling_ = false;
