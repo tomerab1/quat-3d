@@ -18,12 +18,15 @@
 #include <nlohmann/json.hpp>
 
 #include "engine/core/json_fields.hpp"
+#include "engine/core/utf8_path.hpp"
 #include "engine/physics/physics_world.hpp"
 #include "engine/rhi/material_shader_names.hpp"
 #include "engine/scene/components.hpp"
 #include "engine/scene/material_override.hpp"
 #include "engine/scene/script_component.hpp"
 #include "component_json_internal.hpp"
+#include "engine/terrain/budget.hpp"
+#include "engine/terrain/talus_relax.hpp"
 
 #include "component_json_animation.hpp"
 
@@ -90,6 +93,19 @@ constexpr EnumName<AudioCommand> k_audio_commands[] = {
     {"none", AudioCommand::none}, {"play", AudioCommand::play}, {"stop", AudioCommand::stop},
     {"pause", AudioCommand::pause}, {"resume", AudioCommand::resume}};
 constexpr std::size_t k_max_clip_path = 4096;
+
+// Clips are project-relative (issue #66); AudioEngine::load re-checks against
+// the real root, symlinks included. Null when `clip` is acceptable.
+[[nodiscard]] const char* clip_path_problem(const std::string& clip) {
+    if (clip.empty()) return nullptr;
+    const std::filesystem::path p = core::path_from_utf8(clip);
+    if (p.is_absolute() || p.has_root_name() || p.has_root_directory()) {
+        return "must be a path relative to the project root, not an absolute path";
+    }
+    const std::filesystem::path norm = p.lexically_normal();
+    if (!norm.empty() && *norm.begin() == "..") return "must stay inside the project root";
+    return nullptr;
+}
 
 template <typename E, std::size_t N>
 [[nodiscard]] std::string enum_name(const EnumName<E> (&names)[N], E value) {
@@ -618,6 +634,7 @@ json encode_components(const entt::registry& r, entt::entity e, const EncodeOpti
                           {"erosion", enum_name(k_erosion_models, t->params.erosion_model)},
                           {"droplets", t->params.erosion_droplets},
                           {"erosion_steps", t->params.grid.iterations},
+                          {"erosion_relax", t->params.grid.relax_cycles},
                           {"snowline", t->snowline_m},
                           {"streaming", t->streaming},
                           {"stream_radius", t->stream_radius},
@@ -908,9 +925,13 @@ std::expected<void, core::Error> apply_component(entt::registry& r, entt::entity
         });
     }
     if (name == "script") {
+        // A remote request must name the file (the model gets a precise
+        // error). Lenient decoding — the editor's Add Component, which adds
+        // every component from {}, and scene files — accepts a script without
+        // one yet: an empty path runs nothing until a file is picked.
         const bool adding = !r.all_of<Script>(e);
-        return merge<Script>(r, e, v, name, strict, [adding](JsonFields& f, Script& sc) {
-            if (adding && !f.has("path")) {
+        return merge<Script>(r, e, v, name, strict, [adding, strict](JsonFields& f, Script& sc) {
+            if (strict && adding && !f.has("path")) {
                 f.fail("path", "required when adding a script (relative to assets/scripts/)");
             }
             decode_script_fields(f, sc);
@@ -929,6 +950,7 @@ std::expected<void, core::Error> apply_component(entt::registry& r, entt::entity
             f.enumeration("erosion", p.erosion_model, k_erosion_models);
             f.integer("droplets", p.erosion_droplets, 0, 50'000'000);
             f.integer("erosion_steps", p.grid.iterations, 0, terrain::max_grid_erosion_steps);
+            f.integer("erosion_relax", p.grid.relax_cycles, 0, terrain::max_talus_relax_cycles);
             f.number("snowline", t.snowline_m);
             f.boolean("streaming", t.streaming);
             f.integer("stream_radius", t.stream_radius, 0, 8);
@@ -942,6 +964,20 @@ std::expected<void, core::Error> apply_component(entt::registry& r, entt::entity
                            " and resolution^2 x erosion_steps <= " +
                            std::to_string(terrain::max_grid_erosion_texel_steps) +
                            " (e.g. 1025 at 5000 steps)");
+            }
+            // The fields above are bounded one by one; their product (tiles
+            // kept loaded x resolution², droplets x tiles) is bounded here (#67).
+            if (const auto over = terrain::terrain_budget_problem(p, t.streaming, t.stream_radius)) {
+                // Blame the first budget-relevant field the request changed.
+                const char* field = "resolution";
+                for (const char* key : {"stream_radius", "resolution", "droplets", "erosion",
+                                        "erosion_steps", "streaming"}) {
+                    if (f.has(key)) {
+                        field = key;
+                        break;
+                    }
+                }
+                f.fail(field, over->message);
             }
             // Only a new shape regenerates (issue #38): `snowline` is
             // shading, and the runtime applies `stream_radius` (resizing the
@@ -970,6 +1006,7 @@ std::expected<void, core::Error> apply_component(entt::registry& r, entt::entity
         return merge<AudioSource>(r, e, v, name, strict, [](JsonFields& f, AudioSource& a) {
             f.string("clip", a.clip, k_max_clip_path).enumeration("bus", a.bus, k_audio_buses);
             if (a.clip.find('\0') != std::string::npos) f.fail("clip", "must not contain NUL");
+            if (const char* why = clip_path_problem(a.clip); why != nullptr) f.fail("clip", why);
             f.number("volume", a.volume, 0.0F, 16.0F).number("pitch", a.pitch, 0.01F, 16.0F);
             f.boolean("loop", a.loop).boolean("play_on_start", a.play_on_start);
             f.boolean("spatial", a.spatial);

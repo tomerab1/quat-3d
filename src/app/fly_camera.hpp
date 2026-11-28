@@ -102,6 +102,7 @@ public:
     // Explicit clip planes (remote camera.set); nullopt = derived.
     std::optional<float> near_override;
     std::optional<float> far_override;
+    float     speed_scale = 1.0F; // editor toolbar's camera speed multiplier
 
 private:
     engine::scene::ClipRange auto_clip_{};

@@ -26,9 +26,11 @@
 #include "engine/asset/asset_manager.hpp"
 #include "engine/core/log.hpp"
 #include "engine/core/sim_clock.hpp"
+#include "engine/core/utf8_path.hpp"
 #include "engine/nav/navmesh.hpp"
 #include "engine/physics/physics_world.hpp"
 #include "engine/remote/rpc_server.hpp"
+#include "engine/remote/session_token.hpp"
 #include "engine/remote/world_commands.hpp"
 #include "engine/rhi/device.hpp"
 #include "engine/rhi/gpu_allocator.hpp"
@@ -88,6 +90,7 @@ struct RemoteBridge::Impl {
     // Declared first so responders below are destroyed (answering "dropped")
     // while the server still exists.
     std::optional<remote::RpcServer> server;
+    remote::SessionTokenFile         token_file; // removed when the bridge goes away
     // Authored material shaders (A6); after `server` so pending create /
     // update replies are dropped while the server still exists.
     std::optional<engine::rhi::MaterialShaderRegistry> material_shaders;
@@ -187,7 +190,9 @@ struct RemoteBridge::Impl {
                                                            *t.scene);
         });
         if (!ctx) return std::unexpected(ctx.error());
-        if (roots) std::fprintf(stderr, "[remote] spawned %s\n", engine::core::path_to_utf8(path).c_str());
+        if (roots) {
+            std::fprintf(stderr, "[remote] spawned %s\n", engine::core::path_to_utf8(path).c_str());
+        }
         return roots;
     }
 
@@ -332,19 +337,54 @@ struct RemoteBridge::Impl {
         const unsigned long requested = std::strtoul(env, nullptr, 10);
         config.port = (requested > 1 && requested <= 65535) ? static_cast<std::uint16_t>(requested)
                                                             : std::uint16_t{7878};
+        // Never unauthenticated (issue #56): without QUAT_REMOTE_TOKEN the
+        // session gets a fresh random token. Either way the token is published
+        // in a user-only file, where quat-mcp finds it (session_token.hpp).
         if (const char* token = std::getenv("QUAT_REMOTE_TOKEN"); token != nullptr) {
             config.token = token;
         }
-        const bool has_token = !config.token.empty();
+        const bool generated = config.token.empty();
+        if (generated) {
+            auto token = remote::generate_session_token();
+            if (!token) {
+                std::fprintf(stderr, "[warn] remote control disabled: %s\n",
+                             token.error().message.c_str());
+                return;
+            }
+            config.token = std::move(*token);
+        }
+        const std::string token = config.token;
         auto listened = remote::RpcServer::listen(std::move(config));
         if (!listened) {
             std::fprintf(stderr, "[warn] remote control disabled: %s\n",
                          listened.error().message.c_str());
             return;
         }
+        auto published = remote::token_file_path(listened->port(),
+                                                 remote::TokenPathEnv::from_process())
+                             .and_then([&](std::filesystem::path path) {
+                                 return remote::SessionTokenFile::publish(std::move(path), token);
+                             });
+        if (!published && generated) {
+            // Nobody could learn the generated token: an endpoint no tool can use.
+            std::fprintf(stderr,
+                         "[warn] remote control disabled: cannot publish the session token: %s "
+                         "(set QUAT_REMOTE_TOKEN_FILE, or QUAT_REMOTE_TOKEN and give the same "
+                         "token to quat-mcp)\n",
+                         published.error().message.c_str());
+            return;
+        }
         server = std::move(*listened);
-        std::fprintf(stderr, "[remote] listening on 127.0.0.1:%u (%s)\n", server->port(),
-                     has_token ? "token required" : "no token");
+        if (published) {
+            token_file = std::move(*published);
+            std::fprintf(stderr, "[remote] listening on 127.0.0.1:%u; session token in %s\n",
+                         server->port(), engine::core::path_to_utf8(token_file.path()).c_str());
+        } else {
+            std::fprintf(stderr,
+                         "[remote] listening on 127.0.0.1:%u with QUAT_REMOTE_TOKEN (token file "
+                         "not written: %s)\n",
+                         server->port(), published.error().message.c_str());
+        }
 
         server->add_method(
             "engine.info", "Engine name, frame counter, entity count and play state.",
@@ -512,8 +552,8 @@ void RemoteBridge::note_draws(std::size_t draws) {
     impl_->draws = static_cast<std::uint32_t>(std::min<std::size_t>(draws, UINT32_MAX));
 }
 
-engine::core::StderrCapture capture_stderr_for_remote() {
-    if (std::getenv("QUAT_REMOTE") == nullptr) return {};
+engine::core::StderrCapture capture_stderr_for_remote(bool editor_console) {
+    if (std::getenv("QUAT_REMOTE") == nullptr && !editor_console) return {};
     if (const char* opt = std::getenv("QUAT_LOG_CAPTURE"); opt != nullptr && std::string(opt) == "0") {
         return {};
     }
@@ -536,5 +576,15 @@ void RemoteBridge::on_frame_complete(std::uint32_t frame_slot) {
 }
 
 bool RemoteBridge::listening() const { return impl_->server.has_value(); }
+
+std::uint16_t RemoteBridge::port() const {
+    return impl_->server.has_value() ? impl_->server->port() : std::uint16_t{0};
+}
+
+std::size_t RemoteBridge::client_count() const {
+    return impl_->server.has_value() ? impl_->server->client_count() : 0;
+}
+
+engine::core::SimClock& RemoteBridge::sim_clock() { return impl_->clock; }
 
 } // namespace quat::app

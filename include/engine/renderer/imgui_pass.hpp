@@ -57,6 +57,12 @@ public:
     ImGuiPass(const ImGuiPass&) = delete;
     ImGuiPass& operator=(const ImGuiPass&) = delete;
 
+    // Re-uploads the current ImGui context's font atlas (after the editor
+    // rebuilt it for a new display scale). The caller guarantees the GPU no
+    // longer uses this pass's previous atlas (device idle).
+    [[nodiscard]] std::expected<void, core::Error>
+    upload_font_atlas(const rhi::TransferContext& transfer);
+
     // Copies `draw_data` (vertices, indices, clipped draw commands) into this
     // pass's host-visible buffers and appends a graphics pass compositing the
     // UI over `target`. No-op when there is nothing to draw. The copy means
