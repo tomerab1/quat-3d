@@ -9,8 +9,8 @@ use serde::Deserialize;
 use super::QuatServer;
 use super::results::{error_result, invalid_input, to_params};
 use crate::params::{
-    CameraFrameParams, CameraSetParams, EnvironmentSetParams, GroundHeightParams, ScreenshotParams,
-    SpawnModelParams,
+    CameraFrameParams, CameraSetParams, EnvironmentSetParams, GroundHeightParams,
+    PlaceOnGroundParams, ScreenshotParams, SpawnModelParams,
 };
 
 /// Most `world_ground_height` points one call may carry (contract limit).
@@ -53,8 +53,13 @@ impl QuatServer {
                  an engine bug.",
             );
         };
+        let source = if params.camera.is_some() {
+            "Screenshot from the requested camera (the viewport camera was not moved)"
+        } else {
+            "Viewport screenshot"
+        };
         let caption = format!(
-            "Viewport screenshot, {}x{} px ({}).",
+            "{source}, {}x{} px ({}).",
             shot.width, shot.height, shot.mime
         );
         CallToolResult::success(vec![
@@ -96,6 +101,22 @@ impl QuatServer {
         }
         self.run("world.ground_height", Some(to_params(&params.0)))
             .await
+    }
+
+    #[doc = include_str!("../../content/tools/world_place_on_ground.md")]
+    #[tool(annotations(idempotent_hint = true))]
+    async fn world_place_on_ground(
+        &self,
+        params: Parameters<PlaceOnGroundParams>,
+    ) -> CallToolResult {
+        self.run("world.place_on_ground", Some(to_params(&params.0)))
+            .await
+    }
+
+    #[doc = include_str!("../../content/tools/terrain_status.md")]
+    #[tool(annotations(read_only_hint = true))]
+    async fn terrain_status(&self) -> CallToolResult {
+        self.run("terrain.status", None).await
     }
 
     // ---- camera / screenshot ----------------------------------------------

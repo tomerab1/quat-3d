@@ -22,6 +22,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <filesystem>
 #include <functional>
 #include <memory>
 #include <optional>
@@ -45,18 +46,22 @@
 #include "engine/renderer/hiz_pass.hpp"
 #include "engine/renderer/light_clusters.hpp"
 #include "engine/renderer/light_cull_pass.hpp"
+#include "engine/renderer/jitter.hpp"
 #include "engine/renderer/lighting_pass.hpp"
 #include "engine/renderer/mesh_pass.hpp"
+#include "engine/renderer/motion_history.hpp"
 #include "engine/renderer/non_finite_counters.hpp"
 #include "engine/renderer/shadow_ao_settings.hpp"
 #include "engine/renderer/render_settings.hpp"
 #include "engine/renderer/shadow_pass.hpp"
 #include "engine/renderer/skinning_pass.hpp"
-#include "engine/renderer/taa_pass.hpp"
 #include "engine/renderer/tonemap_pass.hpp"
 #include "engine/renderer/transparent_pass.hpp"
 #include "engine/renderer/cloud_shadow_pass.hpp"
 #include "engine/renderer/wind_field_pass.hpp"
+#include "engine/renderer/upscaler.hpp"
+#include "engine/renderer/velocity.hpp"
+#include "engine/renderer/velocity_pass.hpp"
 #include "engine/rhi/gpu_allocator.hpp"
 #include "engine/rhi/render_graph.hpp"
 #include "engine/scene/material_override.hpp"
@@ -83,6 +88,7 @@ struct CameraMatrices;
 namespace quat::app {
 
 class GrassRuntime;
+class ParticleRuntime;
 
 inline constexpr std::uint32_t k_frames_in_flight = 2;
 // Stage the image-acquire semaphore is waited at; the swapchain image's first
@@ -97,14 +103,20 @@ inline constexpr VkPipelineStageFlags2 k_acquire_wait_stage =
 inline constexpr VkPipelineStageFlags2 k_present_signal_stage =
     VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT;
 
-// Per-skinned-entity GPU buffers for one frame slot: the joint matrices (host
-// visible, re-uploaded each frame) and the skinned vertex output (device local,
-// written by the skinning pass and read by the GBuffer as a vertex buffer).
+// Per-skinned-entity GPU buffers for one frame slot: this and last frame's
+// joint matrices (host visible, re-uploaded each frame), the skinned vertex
+// output (device local, written by the skinning pass and read by the GBuffer
+// as a vertex buffer) and the positions skinned with last frame's palette
+// (velocity, R11).
 struct SkinnedEntityGpu {
     engine::rhi::GpuBuffer joints;
+    engine::rhi::GpuBuffer prev_joints;
     engine::rhi::GpuBuffer skinned_verts;
+    engine::rhi::GpuBuffer prev_positions;
     VkDeviceAddress        joints_addr = 0;
+    VkDeviceAddress        prev_joints_addr = 0;
     VkDeviceAddress        skinned_addr = 0;
+    VkDeviceAddress        prev_positions_addr = 0;
     std::uint32_t          vertex_count = 0;
     std::uint32_t          joint_count = 0;
 };
@@ -126,14 +138,13 @@ struct DeferredFrame {
     engine::renderer::TransparentPass transparent;
     engine::renderer::BloomPass      bloom;
     engine::renderer::ExposurePass   exposure;
-    engine::renderer::TaaPass        taa;
     engine::renderer::WindFieldPass  wind;          // R13.1 global wind field
     engine::renderer::CloudShadowPass cloud_shadow; // R13.1 cloud shadow map
 #ifdef ENGINE_EDITOR
     engine::renderer::ImGuiPass      imgui;
-    // Offscreen scene target for the editor's Viewport panel: TAA resolves the
-    // frame here (instead of the swapchain) and the UI samples it. Recreated
-    // when the panel is resized.
+    // Offscreen scene target for the editor's Viewport panel: the tonemapped
+    // frame lands here (instead of the swapchain) and the UI samples it.
+    // Recreated when the panel is resized.
     engine::rhi::GpuImage            viewport_image;
     engine::rhi::ImageView           viewport_view;
     VkExtent2D                       viewport_extent{0, 0};
@@ -144,8 +155,14 @@ struct DeferredFrame {
 };
 
 // The scene's render inputs for one frame, gathered after the simulation.
+// The scene renders at `render_extent` (the upscaler's render scale applied to
+// the draw extent) with the projection jittered by `jitter` (R11).
 struct FrameScene {
-    glm::mat4 jittered_vp{1.0F};     // TAA-jittered view-projection
+    VkExtent2D                     render_extent{0, 0};
+    engine::renderer::ViewJitter   jitter{};
+    engine::renderer::ViewMotion   motion{};      // velocity: previous view, jitter
+    bool                           reset_history = false; // first frame after reset_temporal()
+    glm::mat4 jittered_vp{1.0F};     // jittered view-projection
     glm::mat4 jittered_inv_vp{1.0F};
     engine::renderer::DirectionalLightParams       light;
     std::vector<engine::renderer::GpuLight>        point_lights;
@@ -178,6 +195,8 @@ struct FrameInputs {
     // GPU grass around the camera (null: none); `sim_dt` drives its wind.
     GrassRuntime* grass = nullptr;
     float         sim_dt = 0.0F;
+    // GPU particles (null: none); simulated on `sim_dt` (frozen while paused).
+    ParticleRuntime* particles = nullptr;
 #ifdef ENGINE_EDITOR
     // Builds the editor UI (after the scene passes are declared) and returns
     // its draw data, drawn over the swapchain as the last pass.
@@ -206,14 +225,28 @@ public:
                                      const engine::rhi::TransferContext& setup_transfer,
                                      const std::string& shader_dir,
                                      engine::rhi::Swapchain& swapchain, bool with_ui);
-    // Every tunable renderer parameter (A8). Read by the passes each frame;
-    // the editor's Renderer panel, the remote API and scene files edit it.
+    // Every tunable renderer parameter (A8, including the R11 upscaler
+    // group). Read by the passes each frame; the editor's Renderer panel, the
+    // remote API and scene files edit it.
     [[nodiscard]] engine::renderer::RenderSettings& render_settings() { return settings_; }
     // Per-entity derived materials of MaterialOverride components (A8): the
     // remote bridge resolves them each frame, gather() draws them.
     [[nodiscard]] engine::scene::MaterialOverrideStore& material_overrides() {
         return material_overrides_;
     }
+    // Camera cut (scene load, play enter / exit, active-camera change,
+    // teleport): the next frame drops the motion history and previous view
+    // (velocity 0) and resolves without the TAA / upscaler history.
+    void reset_temporal() {
+        temporal_.reset();
+        prev_wind_params_.reset(); // a cut: no field motion across it
+    }
+#ifdef ENGINE_EDITOR
+    // Re-uploads the editor's font atlas into every frame slot's UI pass
+    // after the editor rebuilt it (display scale change). Waits for the
+    // device to idle first; rare, so the stall does not matter.
+    void reload_ui_fonts();
+#endif
     // Atmosphere LUTs + dynamic IBL probe, lit by the scene's sun. Optional:
     // failures are logged and fall back to the procedural sky / flat ambient.
     void create_environment(engine::scene::Scene& scene,
@@ -222,7 +255,7 @@ public:
     // Command buffers and frame synchronisation.
     void create_frame_sync();
     // QUAT_SCREENSHOT: the final frame is written to `path` as binary PPM.
-    void set_screenshot_path(std::optional<std::string> path) {
+    void set_screenshot_path(std::optional<std::filesystem::path> path) {
         screenshot_path_ = std::move(path);
     }
     // Teardown, after the device went idle. Idempotent.
@@ -267,6 +300,23 @@ public:
 
 private:
     [[nodiscard]] engine::renderer::CloudSettings current_clouds() const;
+
+    // ---- R11 temporal view and upscale (frame_temporal.cpp) -----------------
+    // The upscaler settings in effect: settings_.upscaler, at native scale
+    // while settings_.taa is off (upscaling needs the temporal resolve).
+    [[nodiscard]] engine::renderer::UpscalerSettings current_upscaler() const;
+    // Fills `out`'s render extent, jitter (none while TAA is off), jittered
+    // matrices, view motion and camera-cut flag; starts the motion frame.
+    void begin_view(FrameScene& out, const engine::scene::CameraMatrices& cam,
+                    VkExtent2D draw_extent, std::uint64_t frame_number);
+    // Material texture LOD bias for rendering at `render` and showing at `display`.
+    void apply_texture_lod_bias(DeferredFrame& frame, VkExtent2D render, VkExtent2D display);
+    // Declares the upscale of `hdr` (render extent) to `display`; returns the
+    // display-extent HDR image post-processing continues from.
+    [[nodiscard]] std::expected<engine::rhi::ResourceHandle, engine::core::Error>
+    add_upscale(engine::rhi::RenderGraph& graph, const FrameScene& scene,
+                engine::rhi::ResourceHandle hdr, const engine::renderer::GBufferTargets& gbuffer,
+                VkExtent2D display);
     // The editor's R12 settings (defaults in headless builds).
     [[nodiscard]] engine::renderer::CsmSettings current_csm() const;
     [[nodiscard]] engine::renderer::GtaoSettings current_gtao() const;
@@ -295,11 +345,17 @@ private:
     bool                          has_weather_ = false;
     glm::vec3                     camera_pos_{0.0F};
     engine::weather::WindAdvection wind_clock_{};
+    // The wind field params the last frame drew (grass velocity, R11).
+    std::optional<engine::weather::WindFieldParams> prev_wind_params_{};
 
-    // Temporal state shared by both slots (audit A2 / A11): one TAA history and
-    // one adapted luminance, each advanced exactly once per frame. Declared
-    // before `frames_` so it outlives every pass that references it.
-    std::shared_ptr<engine::renderer::TaaHistory>    taa_history_;
+    // Temporal state shared by both slots (audit A2 / A11): the upscaler (its
+    // history), one adapted luminance and the motion history, each advanced
+    // exactly once per frame. Declared before `frames_` so it outlives every
+    // pass that references it.
+    std::unique_ptr<engine::renderer::Upscaler>      upscaler_;
+    bool                                             backend_warned_ = false;
+    engine::renderer::VelocityPass                   velocity_;
+    engine::renderer::TemporalView                   temporal_;
     std::shared_ptr<engine::renderer::ExposureState> exposure_state_;
     // The cascaded shadow map + GPU fit state, shared by both slots (R12).
     std::shared_ptr<engine::renderer::CsmShared>     csm_shared_;
@@ -326,7 +382,7 @@ private:
     VkExtent2D    draw_extent_{0, 0};
     std::size_t   draw_count_ = 0;
 
-    std::optional<std::string> screenshot_path_;
+    std::optional<std::filesystem::path> screenshot_path_;
     engine::rhi::GpuBuffer     screenshot_buffer_;
 };
 

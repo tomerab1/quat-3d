@@ -3,7 +3,8 @@
 // zero-strength R9.3 sway both leave only the static lean, and the flutter
 // phase stays put far from the origin when the turbulence turns the local
 // wind. Seen from straight above (orthographic), where a blade's coverage is
-// its horizontal extent.
+// its horizontal extent. The velocity target (R11) carries the field's own
+// motion: blades are evaluated again in last frame's field.
 
 #include <cmath>
 #include <cstdint>
@@ -26,6 +27,7 @@
 #include "engine/weather/wind_field.hpp"
 #include "support/expect_ok.hpp"
 #include "support/gpu_context.hpp"
+#include "render/velocity_rig.hpp"
 #include "support/render_readback.hpp"
 
 namespace {
@@ -195,6 +197,84 @@ TEST(GpuGrassWind, FlutterPhaseIsStableFarFromTheOrigin) {
     auto jumped = render_grass(*g, centre, 1.0F, before, 6.0F, 3.5F);
     ASSERT_OK(jumped);
     EXPECT_GT(differing(*a, *jumped), 2 * turned);
+}
+
+// Gusts sweeping through the grass move the blades even when the flutter
+// clock stands still: with last frame's field bound (WindFieldPass's
+// prev_texture) the velocity target sees that motion; the same field on both
+// sides, or none for last frame, gives none.
+TEST(GpuGrassWind, FieldMotionReachesTheVelocityTarget) {
+    QUAT_REQUIRE_GPU(g);
+    auto grass = r::GrassPass::create(g->device, g->allocator, g->cache, g->transfer, g->shader_dir, 1);
+    ASSERT_OK(grass);
+    auto wind_pass = r::WindFieldPass::create(g->device, g->allocator, g->cache, g->shader_dir);
+    ASSERT_OK(wind_pass);
+    constexpr VkExtent2D extent{96, 96};
+    r::GrassFrame frame;
+    frame.settings.terrain_only = false;
+    frame.settings.wind_strength = 1.0F;
+    frame.camera = glm::vec3(0.0F, 1.2F, 0.0F);
+    const glm::mat4 view =
+        glm::lookAt(frame.camera, glm::vec3(10.0F, 0.0F, 0.0F), glm::vec3(0.0F, 1.0F, 0.0F));
+    glm::mat4 proj = glm::perspective(glm::radians(70.0F), 1.0F, 0.1F, 200.0F);
+    proj[1][1] *= -1.0F;
+    frame.cull_view_proj = frame.draw_view_proj = proj * view;
+    frame.time_s = 2.0F;
+    frame.prev_time_s = frame.time_s; // the flutter clock stands still
+
+    // A gusty, turbulent wind half a second apart on its own clock (moderate,
+    // so the blades are not bent to saturation).
+    w::WeatherState s;
+    s.wind_speed = 8.0F;
+    s.wind_dir_deg = 0.0F;
+    s.gustiness = 1.0F;
+    s.turbulence = 1.0F;
+    w::WindAdvection clock;
+    clock.advance(s.wind_speed, 40.0F);
+    const w::WindFieldParams before = w::wind_field_params(s, clock);
+    clock.advance(s.wind_speed, 0.5F);
+    const w::WindFieldParams now = w::wind_field_params(s, clock);
+
+    const auto moving_pixels =
+        [&](const std::optional<w::WindFieldParams>& prev) -> std::expected<std::size_t, Error> {
+        auto mesh = r::MeshPass::create(g->device, g->allocator, g->cache, g->transfer,
+                                        g->shader_dir);
+        if (!mesh) return std::unexpected(mesh.error());
+        rhi::TransientImagePool pool(g->device, g->allocator);
+        rhi::RenderGraph graph(pool);
+        auto field =
+            wind_pass->add_to_graph(graph, now, glm::vec2(frame.camera.x, frame.camera.z), prev);
+        if (!field) return std::unexpected(field.error());
+        if (field->prev_texture.valid() != prev.has_value()) {
+            return std::unexpected(Error{"prev_texture must exist exactly with prev params"});
+        }
+        frame.wind = *field;
+        auto gbuffer = mesh->add_to_graph(graph, extent, frame.draw_view_proj,
+                                          r::InstancedDrawList{});
+        if (!gbuffer) return std::unexpected(gbuffer.error());
+        auto out = grass->add_to_graph(graph, 0, frame, &*gbuffer, extent);
+        if (!out) return std::unexpected(out.error());
+        auto vel = quat::test::render_to_host(*g, graph, gbuffer->velocity, extent, 4);
+        if (!vel) return std::unexpected(vel.error());
+        std::size_t moving = 0;
+        for (std::uint32_t y = extent.height * 3 / 4; y < extent.height; ++y) {
+            for (std::uint32_t x = 0; x < extent.width; ++x) {
+                const glm::vec2 v = quat::test::velocity::velocity_at(*vel, x, y);
+                if (glm::length(v) * static_cast<float>(extent.width) > 0.05F) ++moving;
+            }
+        }
+        return moving;
+    };
+    auto same = moving_pixels(now);
+    ASSERT_OK(same);
+    EXPECT_EQ(*same, 0U) << "an unchanged field must not produce motion";
+    auto first = moving_pixels(std::nullopt);
+    ASSERT_OK(first);
+    EXPECT_EQ(*first, 0U) << "without last frame's field there is no field motion";
+    auto gusting = moving_pixels(before);
+    ASSERT_OK(gusting);
+    EXPECT_GT(*gusting, static_cast<std::size_t>(extent.width) * (extent.height / 4) / 4)
+        << "blades moved by the advected field wrote no motion";
 }
 
 } // namespace

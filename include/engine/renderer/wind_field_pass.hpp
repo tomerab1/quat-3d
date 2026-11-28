@@ -13,12 +13,17 @@
 // weather::wind_profile(). It is a transient graph image, so the graph orders
 // the write before every reader.
 //
-// One instance per frame in flight (its descriptor buffer is rewritten each
+// With last frame's params it also evaluates them into a second texture over
+// the same rect, so motion vectors (grass velocity, R11) can compare a blade
+// in this frame's and last frame's field without a CPU round trip.
+//
+// One instance per frame in flight (its descriptor buffers are rewritten each
 // frame).
 
 #include <array>
 #include <cstdint>
 #include <expected>
+#include <optional>
 #include <string>
 
 #include <glm/glm.hpp>
@@ -63,6 +68,9 @@ static_assert(sizeof(WindFieldGpu) == 64, "must match lib/wind_common.slang Wind
 // One frame's wind texture in the graph.
 struct WindFieldOutput {
     rhi::ResourceHandle texture; // wind_field_format, resolution²
+    // Last frame's field over the same rect (invalid without last frame's
+    // params: consumers use `texture` for both frames).
+    rhi::ResourceHandle prev_texture;
     // (world X, world Z of the texture's corner, 1 / covered size m, 0) —
     // wind_texture_sample()'s `rect`.
     glm::vec4 rect{0.0F};
@@ -89,14 +97,19 @@ public:
     [[nodiscard]] bool valid() const { return pipeline_.handle() != VK_NULL_HANDLE; }
 
     // Declares the wind texture and the compute pass that fills it with
-    // `params` around `camera_xz`. The descriptor buffer is owned by the pass
-    // and rewritten by the next call, so the graph must have executed (the
-    // frame slot's fence waited) before reuse.
+    // `params` around `camera_xz`, plus — with `prev_params` — last frame's
+    // field into `prev_texture` over the same rect. The descriptor buffers are
+    // owned by the pass and rewritten by the next call, so the graph must have
+    // executed (the frame slot's fence waited) before reuse.
     [[nodiscard]] std::expected<WindFieldOutput, core::Error>
     add_to_graph(rhi::RenderGraph& graph, const weather::WindFieldParams& params,
-                 glm::vec2 camera_xz);
+                 glm::vec2 camera_xz,
+                 const std::optional<weather::WindFieldParams>& prev_params = std::nullopt);
 
 private:
+    void add_dispatch(rhi::RenderGraph& graph, const char* name, rhi::ResourceHandle texture,
+                      const WindFieldGpu& push, rhi::DescriptorBuffer& set);
+
     const rhi::Device* device_ = nullptr;    // non-owning
     rhi::GpuAllocator* allocator_ = nullptr; // non-owning
 
@@ -105,6 +118,7 @@ private:
     rhi::ManagedPipeline           pipeline_;
     std::uint32_t                  out_slot_ = 0; // g_wind's reflected binding
     rhi::DescriptorBuffer          frame_descriptor_;
+    rhi::DescriptorBuffer          prev_descriptor_; // last frame's field
 };
 
 } // namespace engine::renderer

@@ -33,6 +33,11 @@ namespace engine::renderer {
 // One mesh to skin: storage-buffer device addresses + sizes for the inputs and
 // the output, plus the vertex count. The output buffer must be created with
 // STORAGE + VERTEX + SHADER_DEVICE_ADDRESS usage.
+//
+// Velocity (R11): when `prev_positions_out` is set, the vertices are also
+// skinned with `prev_joints` (last frame's palette, same joint count; unset =
+// `joints`) and their positions written there as one float4 per vertex — the
+// DrawItem::prev_positions the GBuffer computes skinned motion from.
 struct SkinDispatch {
     VkDeviceAddress vertices_in = 0;
     VkDeviceSize    vertices_in_size = 0;
@@ -43,6 +48,9 @@ struct SkinDispatch {
     VkDeviceAddress vertices_out = 0;
     VkDeviceSize    vertices_out_size = 0;
     std::uint32_t   vertex_count = 0;
+    VkDeviceAddress prev_joints = 0;
+    VkDeviceAddress prev_positions_out = 0;
+    VkDeviceSize    prev_positions_out_size = 0;
 };
 
 class SkinningPass {
@@ -58,7 +66,8 @@ public:
     SkinningPass& operator=(const SkinningPass&) = delete;
 
     // Record all skinning dispatches into `cmd` followed by one barrier from
-    // compute storage-write to vertex-attribute read. The per-dispatch descriptor
+    // compute storage-write to vertex-attribute and vertex-shader storage reads
+    // (previous positions are read through a device address). The per-dispatch descriptor
     // buffers are owned by the pass and rebuilt each call, so `cmd` must be
     // submitted (and complete) before record() is called again on this instance.
     [[nodiscard]] std::expected<void, core::Error>
@@ -71,6 +80,7 @@ private:
     rhi::DescriptorBufferFunctions db_fns_{};
     rhi::DescriptorSetLayout       layout_;
     rhi::ManagedPipeline           pipeline_;
+    std::vector<std::uint32_t>     slots_; // reflected binding of each resource
 
     std::vector<rhi::DescriptorBuffer> frame_descriptors_;
 };

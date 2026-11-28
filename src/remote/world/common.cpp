@@ -12,6 +12,7 @@
 #include <nlohmann/json.hpp>
 
 #include "engine/core/path_confine.hpp"
+#include "engine/core/utf8_path.hpp"
 
 #include "engine/scene/component_json.hpp"
 #include "engine/scene/components.hpp"
@@ -211,7 +212,7 @@ std::expected<std::filesystem::path, RpcError> project_path(const Context& ctx,
     }
     auto confined = confine_to_root(ctx.services.project_root(), raw);
     if (!confined) return bad_params(std::string(key) + ": " + confined.error().message);
-    relative = std::filesystem::path(raw).lexically_normal().generic_string();
+    relative = core::path_to_generic_utf8(core::path_from_utf8(raw).lexically_normal());
     return *confined;
 }
 
@@ -230,6 +231,8 @@ void register_world_commands(RpcServer& server, scene::Scene& scene, WorldServic
     world::register_scene_commands(server, ctx);
     world::register_batch_command(server, ctx);
     world::register_environment_commands(server, ctx);
+    world::register_terrain_commands(server, ctx);
+    world::register_placement_commands(server, ctx);
     world::register_camera_commands(server, ctx);
     world::register_app_commands(server, ctx);
     world::register_debug_commands(server, ctx);
@@ -238,6 +241,8 @@ void register_world_commands(RpcServer& server, scene::Scene& scene, WorldServic
     world::register_behavior_commands(server, ctx);
     world::register_behavior_edit_commands(server, ctx);
     world::register_weather_commands(server, ctx);
+    world::register_script_commands(server, ctx);
+    world::register_shader_commands(server, ctx);
 }
 
 } // namespace engine::remote

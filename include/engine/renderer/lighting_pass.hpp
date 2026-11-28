@@ -123,7 +123,7 @@ public:
 private:
     // Descriptor slots of lighting.slang's resources, from reflection (in
     // the order of kResources in lighting_pass.cpp).
-    static constexpr std::size_t k_slot_count = 23;
+    static constexpr std::size_t k_slot_count = 25;
 
     const rhi::Device* device_    = nullptr;   // non-owning
     rhi::GpuAllocator* allocator_ = nullptr;   // non-owning
@@ -144,6 +144,9 @@ private:
     // Bound when no cascaded shadows are supplied (never sampled then).
     rhi::GpuImage  fallback_shadow_;
     rhi::ImageView fallback_shadow_view_;
+    // Bound when the frame has no translucent shadow casters (never read).
+    rhi::GpuImage  fallback_transmittance_;
+    rhi::ImageView fallback_transmittance_view_;
     rhi::GpuBuffer fallback_cascades_;
 
     rhi::DescriptorBuffer frame_descriptor_;   // rebuilt each add_to_graph call

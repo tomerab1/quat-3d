@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstddef>
 #include <type_traits>
 
 namespace engine::renderer {
@@ -34,6 +35,7 @@ constexpr std::array k_groups = {
     RenderSettingGroup{"exposure", "Exposure", "Auto exposure and exposure compensation"},
     RenderSettingGroup{"bloom", "Bloom", "Glow around bright highlights"},
     RenderSettingGroup{"taa", "Anti-aliasing", "Temporal anti-aliasing"},
+    RenderSettingGroup{"upscaler", "Upscaling", "Render resolution and temporal upscaling"},
     RenderSettingGroup{"shadows", "Shadows", "Cascaded sun shadow maps"},
     RenderSettingGroup{"ao", "Ambient occlusion", "GTAO with bent normals"},
     RenderSettingGroup{"contact_shadows", "Contact shadows",
@@ -85,6 +87,23 @@ constexpr std::array k_fields = {
     RenderSettingDesc{"taa", "feedback", "feedback", T::number, 0.0F, 0.98F, 0.9F, "",
                       "History weight: higher is smoother but ghosts more",
                       &field_ref<&S::taa, &TaaSettings::feedback>},
+    // ---- upscaler ----
+    RenderSettingDesc{"upscaler", "mode", "mode", T::choice, 0.0F,
+                      static_cast<float>(upscaler_mode_names.size() - 1), 0.0F, "",
+                      "Render scale per axis: native_aa 1, quality 1/1.5, balanced 1/1.7, "
+                      "performance 1/2 (needs TAA on)",
+                      &field_ref<&S::upscaler, &UpscalerSettings::mode>, upscaler_mode_names},
+    RenderSettingDesc{"upscaler", "render_scale", "scale override", T::number, 0.0F, 1.0F, 0.0F,
+                      "x", "Overrides the mode's render scale per axis when above 0 (min 0.25)",
+                      &field_ref<&S::upscaler, &UpscalerSettings::render_scale>},
+    RenderSettingDesc{"upscaler", "sharpness", "sharpness", T::number, 0.0F, 1.0F, 0.25F, "",
+                      "Sharpens the current frame's reconstruction",
+                      &field_ref<&S::upscaler, &UpscalerSettings::sharpness>},
+    RenderSettingDesc{"upscaler", "backend", "backend", T::choice, 0.0F,
+                      static_cast<float>(upscaler_backend_names.size() - 1), 0.0F, "",
+                      "taau (built in); fsr2 is not built yet and falls back to taau",
+                      &field_ref<&S::upscaler, &UpscalerSettings::backend>,
+                      upscaler_backend_names},
     // ---- shadows (cascaded sun shadow maps) ----
     RenderSettingDesc{"shadows", "enabled", "enabled", T::boolean, 0.0F, 1.0F, 1.0F,
                       "", "Render the sun's cascaded shadow maps; off skips the shadow passes",
@@ -308,6 +327,21 @@ float render_setting_value(const RenderSettings& settings, const RenderSettingDe
     if (ref.b != nullptr) return *ref.b ? 1.0F : 0.0F;
     if (ref.i != nullptr) return static_cast<float>(*ref.i);
     return *ref.f;
+}
+
+std::string_view render_setting_choice_name(const RenderSettingDesc& field, float value) {
+    if (field.type != RenderSettingType::choice || !std::isfinite(value)) return {};
+    const long i = std::lround(value);
+    if (i < 0 || static_cast<std::size_t>(i) >= field.choices.size()) return {};
+    return field.choices[static_cast<std::size_t>(i)];
+}
+
+std::optional<int> render_setting_choice_index(const RenderSettingDesc& field,
+                                               std::string_view name) {
+    for (std::size_t i = 0; i < field.choices.size(); ++i) {
+        if (field.choices[i] == name) return static_cast<int>(i);
+    }
+    return std::nullopt;
 }
 
 void set_render_setting(RenderSettings& settings, const RenderSettingDesc& field, float value) {

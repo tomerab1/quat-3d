@@ -10,6 +10,10 @@ use serde::Serialize;
 /// MCP server instructions, sent to the client on `initialize`.
 pub const INSTRUCTIONS: &str = include_str!("../content/instructions.md");
 
+/// The Lua scripting reference served as the `quat://docs/scripting`
+/// resource — the engine's own docs/scripting.md, so there is one source.
+pub const SCRIPTING_REFERENCE: &str = include_str!("../../../docs/scripting.md");
+
 /// Prompt templates by name.
 const PROMPTS: &[(&str, &str)] = &[
     (
@@ -33,13 +37,27 @@ const PROMPTS: &[(&str, &str)] = &[
         "set_weather",
         include_str!("../content/prompts/set_weather.md"),
     ),
+    (
+        "write_game_script",
+        include_str!("../content/prompts/write_game_script.md"),
+    ),
+    (
+        "write_material_shader",
+        include_str!("../content/prompts/write_material_shader.md"),
+    ),
 ];
+
+/// Templates for files the server writes (rendered with the same engine).
+const DOCUMENTS: &[(&str, &str)] = &[(
+    "asset_license",
+    include_str!("../content/assets/license.md"),
+)];
 
 static TEMPLATES: LazyLock<Environment<'static>> = LazyLock::new(|| {
     let mut env = Environment::new();
     // A misspelt variable is a bug, not an empty string.
     env.set_undefined_behavior(UndefinedBehavior::Strict);
-    for (name, source) in PROMPTS {
+    for (name, source) in PROMPTS.iter().chain(DOCUMENTS) {
         // Templates are compiled into the binary; `templates_compile` below
         // proves they parse, so a failure here cannot ship.
         if let Err(e) = env.add_template(name, source) {
@@ -57,6 +75,14 @@ pub fn render_prompt<S: Serialize>(name: &str, args: S) -> Result<String, miniji
     TEMPLATES.get_template(name)?.render(args)
 }
 
+/// Render the document template `name` (see `DOCUMENTS`) with `args`.
+///
+/// # Errors
+/// The template does not exist or refers to an argument `args` lacks.
+pub fn render_document<S: Serialize>(name: &str, args: S) -> Result<String, minijinja::Error> {
+    render_prompt(name, args)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -64,7 +90,7 @@ mod tests {
 
     #[test]
     fn templates_compile() {
-        for (name, source) in PROMPTS {
+        for (name, source) in PROMPTS.iter().chain(DOCUMENTS) {
             let mut env = Environment::new();
             env.add_template(name, source)
                 .unwrap_or_else(|e| panic!("{name}: {e}"));

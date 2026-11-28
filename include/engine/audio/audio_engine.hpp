@@ -18,6 +18,7 @@
 
 #include <cstdint>
 #include <expected>
+#include <filesystem>
 #include <memory>
 #include <span>
 #include <string>
@@ -37,7 +38,7 @@ struct AudioEngineConfig {
     // Clip paths are relative to this directory (empty: the CWD) and must
     // stay inside it (issue #66: clips come from scene files and remote
     // requests).
-    std::string asset_root{};
+    std::filesystem::path asset_root{};
     // Most memory a non-streamed sound may decode into: its length at the
     // engine's sample rate × channels × sizeof(float), read from the file's
     // headers before anything is decoded (a file larger than this is refused

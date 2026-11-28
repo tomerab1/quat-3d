@@ -1,7 +1,7 @@
 // lighting.slang — deferred PBR lighting pass (Phase 3 Slice 3.6; PBR in 4.5).
 //
 // A fullscreen compute pass: reads the GBuffer (albedo, octahedral world normal,
-// packed metallic/roughness/occlusion, depth) and shades one directional light
+// packed metallic/roughness/occlusion, emission, depth) and shades one directional light
 // with a Cook-Torrance microfacet BRDF (GGX NDF, height-correlated Smith
 // visibility, Schlick Fresnel) plus a flat ambient term, writing linear HDR
 // colour. World position is reconstructed from depth via the inverse view-proj,
@@ -46,7 +46,8 @@ static const float PREFILTER_MAX_LOD = 4.0;
 struct LightingConstants {
     float4 inv_view_proj[4]; // clip -> world (jittered), reconstructs positions
     float4 view_proj[4];     // world -> clip (jittered); clip.w = view distance
-    float4 camera_pos;       // xyz = world-space camera position, w = sun shadows (CSM) on
+    float4 camera_pos;       // xyz = world-space camera position, w = sun shadows: 0 off,
+                             // 1 CSM, 2 CSM + translucent casters
     float4 direction;        // xyz = direction TO the light (normalised), w = sky mode
     float4 color;            // rgb = colour, w = intensity
     float4 ambient;          // rgb = flat ambient colour, w = IBL intensity
@@ -72,6 +73,9 @@ Texture2D                               g_clearcoat; // r = coat strength, g = c
 
 // Cascaded sun shadows (bound to fallbacks when camera_pos.w < 0.5).
 Texture2DArray                g_shadow_map;
+// Translucent casters' transmittance (lib/csm.slang; read when camera_pos.w
+// > 1.5): rgb = light let through, a = nearest translucent caster depth.
+Texture2DArray                g_shadow_transmittance;
 SamplerComparisonState        g_shadow_cmp;
 SamplerState                  g_point_sampler;
 StructuredBuffer<CascadeData> g_cascades;
@@ -95,6 +99,7 @@ StructuredBuffer<uint2>       g_cluster_grid;    // offset, count
 StructuredBuffer<uint>        g_cluster_indices;
 // Cloud shadow map (CloudShadowPass; sampled when weather_b.x > 0.5).
 Texture2D                     g_cloud_shadow;
+Texture2D                     g_emissive; // GBuffer emission: rgb emitted radiance (A6)
 
 // Schlick Fresnel with a roughness term, for the ambient/environment specular
 // (the view-independent IBL term, unlike the per-light f_schlick).
@@ -217,24 +222,28 @@ float3 layer_clearcoat_ibl(float3 base, float3 N, float3 V, float cc, float ccr)
     return base * (1.0 - cc * coat_fresnel(ndotv)) + cc * coat;
 }
 
-// The sun's visibility at `world_pos`: cascaded shadow map times the
-// contact-shadow march. `cascade` receives the cascade used (debug view).
-float sun_visibility(int2 coord, uint2 size, float3 world_pos, float3 n, float3 ldir,
-                     out uint cascade) {
+// The sun's visibility at `world_pos` (rgb: coloured by translucent
+// casters): cascaded shadow map times the translucent casters' transmittance
+// times the contact-shadow march. `cascade` receives the cascade used (debug
+// view).
+float3 sun_visibility(int2 coord, uint2 size, float3 world_pos, float3 n, float3 ldir,
+                      out uint cascade) {
     cascade = CSM_MAX_CASCADES;
     float noise = interleaved_gradient_noise(float2(coord) + g_frame.csm_misc.y);
     float4 clip = mul_cols(g_frame.view_proj, float4(world_pos, 1.0));
-    float vis = 1.0;
+    float3 vis = float3(1.0, 1.0, 1.0);
     if (g_frame.camera_pos.w > 0.5) {
         CsmFilter f;
         f.pcf_radius = g_frame.csm_filter.x;
         f.light_tan = g_frame.csm_filter.y;
         f.normal_bias = g_frame.csm_filter.z;
         f.depth_bias = g_frame.csm_filter.w;
+        // Translucent casters' tint filtered with the same kernel (w > 1.5).
         vis = csm_visibility(g_cascades[0], g_shadow_map, g_shadow_cmp, g_point_sampler,
-                             world_pos, n, ldir, clip.w, f, noise, cascade);
+                             g_shadow_transmittance, g_frame.camera_pos.w > 1.5, world_pos, n,
+                             ldir, clip.w, f, noise, cascade);
     }
-    if (g_frame.contact.x > 0.0 && vis > 0.0 && dot(n, ldir) > 0.0) {
+    if (g_frame.contact.x > 0.0 && any(vis > 0.0) && dot(n, ldir) > 0.0) {
         // Start just off the surface so the march does not re-hit its own pixel.
         float3 start = world_pos + n * (clip.w * 0.002);
         float4 clip0 = mul_cols(g_frame.view_proj, float4(start, 1.0));
@@ -339,9 +348,10 @@ void compute_main(uint3 tid : SV_DispatchThreadID) {
                                              ATMOS_VIEW_HEIGHT, ldir.y);
     }
     uint   cascade = CSM_MAX_CASCADES;
-    float  shadow = sun_visibility(coord, uint2(width, height), world_pos, n, ldir, cascade);
-    if (g_frame.weather_b.x > 0.5 && shadow > 0.0) {
-        // Cloud shadows: the sun through the cloud layer above this point.
+    float3 shadow = sun_visibility(coord, uint2(width, height), world_pos, n, ldir, cascade);
+    if (g_frame.weather_b.x > 0.5 && max(shadow.r, max(shadow.g, shadow.b)) > 0.0) {
+        // Cloud shadows: the sun through the cloud layer above this point
+        // (grey: composes with the coloured transmissive-caster shadow).
         CloudShadowProjection csp;
         csp.u_axis = g_frame.cloud_shadow_u;
         csp.v_axis = g_frame.cloud_shadow_v;
@@ -395,5 +405,6 @@ void compute_main(uint3 tid : SV_DispatchThreadID) {
     if (g_frame.csm_misc.x > 0.5) {
         color *= csm_debug_color(cascade);
     }
+    color += g_emissive.Load(int3(coord, 0)).rgb; // self-emission, unlit (after AO and the debug tint)
     g_hdr[coord] = float4(hdr_store(color), 1.0);
 }

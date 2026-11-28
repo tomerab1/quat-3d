@@ -2,6 +2,8 @@
 
 // Inspector editors for the animation components (G8). Private editor
 // header; inspector.cpp's ComponentInspector specialisations delegate here.
+// Both draw property-grid rows (call inside ui::begin_property_grid); Foot
+// IK's enable toggle sits in its component header.
 
 #include <entt/entity/fwd.hpp>
 

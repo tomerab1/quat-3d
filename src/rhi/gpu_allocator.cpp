@@ -483,7 +483,7 @@ create_image_view(VkDevice device, VkImage image, VkFormat format,
 
 std::expected<Sampler, core::Error>
 create_sampler(VkDevice device, SamplerAddress address, std::uint32_t mip_levels,
-               float max_anisotropy) {
+               float max_anisotropy, float mip_lod_bias) {
     VkSamplerAddressMode mode = VK_SAMPLER_ADDRESS_MODE_REPEAT;
     switch (address) {
         case SamplerAddress::repeat:          mode = VK_SAMPLER_ADDRESS_MODE_REPEAT; break;
@@ -500,6 +500,8 @@ create_sampler(VkDevice device, SamplerAddress address, std::uint32_t mip_levels
     info.addressModeV = mode;
     info.addressModeW = mode;
     info.maxLod = static_cast<float>(mip_levels);
+    // maxSamplerLodBias is at least 2 on every conformant device.
+    info.mipLodBias = std::clamp(mip_lod_bias, -2.0F, 2.0F);
     info.anisotropyEnable = max_anisotropy > 0.0F ? VK_TRUE : VK_FALSE;
     info.maxAnisotropy = std::max(max_anisotropy, 1.0F);
     info.borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_BLACK;

@@ -71,6 +71,9 @@ Every option is a flag or an environment variable:
 | `--timeout-secs` | `QUAT_MCP_TIMEOUT_SECS` | `15` | Per-request timeout |
 | `--long-timeout-secs` | `QUAT_MCP_LONG_TIMEOUT_SECS` | `120` | Timeout for screenshots, batches, model spawn, scene load/save/clear, nav bake |
 | `--max-reply-mb` | `QUAT_MCP_MAX_REPLY_MB` | `64` | Largest reply accepted from the engine |
+| `--project-root` | `QUAT_MCP_PROJECT_ROOT` | current directory | The quat-3d checkout `asset_fetch` downloads into (`assets/meshes/polyhaven/`) |
+| `--polyhaven-api` | `QUAT_MCP_POLYHAVEN_API` | `https://api.polyhaven.com` | Poly Haven API base URL |
+| `--asset-max-mb` | `QUAT_MCP_ASSET_MAX_MB` | `512` | Largest model download `asset_fetch` accepts |
 | — | `QUAT_MCP_LOG` | `info` | Log filter (`debug`, `quat_mcp=trace`, …) |
 
 Logs go to stderr; stdout carries the MCP protocol.
@@ -131,9 +134,12 @@ Windows the command ends in `quat-mcp.exe`.
 | `scene_batch` | `scene.batch` | Many commands in one frame, with `"@N"` back-references |
 | `environment_get` / `environment_set` | `environment.*` | Sun angles and colour, volumetric clouds |
 | `world_ground_height` | `world.ground_height` | Terrain height under `[x, z]` points |
+| `terrain_status` | `terrain.status` | Whether terrain tiles are still generating; loaded tiles and bounds |
+| `world_place_on_ground` | `world.place_on_ground` | Rest an entity's bounds on the terrain or colliders below it, optionally tilted to the slope |
 | `camera_get` / `camera_set` / `camera_frame` | `camera.*` | Read, place or auto-frame the viewport camera |
-| `screenshot` | `render.screenshot` | The viewport as an MCP **image** (PNG) plus a caption |
+| `screenshot` | `render.screenshot` | The viewport (or an explicit camera, leaving the viewport alone) as an MCP **image** (PNG) plus a caption |
 | `asset_list_models` / `asset_spawn_model` | `asset.*` | Find and spawn glTF models |
+| `asset_search` / `asset_fetch` | — (Poly Haven API) | Search CC0 models on Poly Haven; download one (glTF + includes, size-capped, checksummed, with `LICENSE.md` / `polyhaven.json`) into `assets/meshes/polyhaven/<id>/`, cooked with `quat-cook` when it is on PATH |
 | `sim_play` / `sim_stop` | `sim.*` | Enter / leave play mode |
 | `scene_save` / `scene_load` | `scene.save` / `scene.load` | Project-relative JSON scene files |
 | `nav_bake` | `nav.bake` | Bake the navmesh for NPC agents |
@@ -154,6 +160,14 @@ Windows the command ends in `quat-mcp.exe`.
 | `render_settings_schema` | `render.settings.schema` | Every tunable field with type, range, default, unit and hint (settings and material factors) |
 | `material_get` / `material_set` | `material.get` / `material.set` | An entity's PBR factors (colour, roughness, metallic, clearcoat, glass, emission …); per-entity edits and reverts |
 | `weather_get` / `weather_set` | `weather.get` / `weather.set` | The scene's weather: wind, cloud cover, rain / snow, wetness, snow cover, temperature; wind velocity at points |
+| `script_list` / `script_get` | `script.list` / `script.get` | Lua scripts with their status (errors with file:line); read one |
+| `script_create` / `script_update` | `script.create` / `script.update` | Write a script (compiled first, syntax errors name the line); updates hot-reload while playing |
+| `script_delete` / `script_check` | `script.delete` / `script.check` | Delete a script; compile a draft without saving |
+| `shader_list` | `shader.list` | Material shaders (built-in + authored) and their compile state |
+| `shader_get` | `shader.get` | One material shader's source, state and last diagnostics |
+| `shader_template` | `shader.template` | The starter material shader module |
+| `shader_create` / `shader_update` | `shader.create` / `shader.update` | Write + compile a material shader; errors as `file:line:column` with a caret; a failed update keeps the old version |
+| `shader_delete` | `shader.delete` | Delete a material shader; entities using it fall back to the built-in |
 
 Tool descriptions spell out units and conventions (metres, Y up, Euler degrees
 in YXZ order, `"#rrggbb"` sRGB colours for primitives and linear `[r,g,b]` for
@@ -170,12 +184,16 @@ pause / step → raycast / nav path → conclude), `design_behavior` (an NPC
 behaviour tree: leaves → plan → `bt_set` or edits → play → `bt_status` /
 `debug_watch` → iterate), `tune_look` (screenshot → read settings and
 schema → exposure first, then bloom, shadows, sky light and materials, one
-change and one screenshot at a time) and `set_weather` (screenshot → wind and
-clouds → precipitation and surfaces → check). In Claude Code they appear as
-`/mcp__quat-3d__build_world`.
+change and one screenshot at a time), `set_weather` (screenshot → wind and
+clouds → precipitation and surfaces → check), `write_game_script` (read the
+Lua reference → write → compile → attach → play → read the log → iterate) and
+`write_material_shader` (template → write → `shader_create` → fix from the
+diagnostics → assign to an entity → screenshot → iterate). In Claude Code they
+appear as `/mcp__quat-3d__build_world`.
 
-**Resource** — `quat://scene/summary`: engine info, the first 500 entities,
-the environment and the camera as JSON.
+**Resources** — `quat://scene/summary`: engine info, the first 500 entities,
+the environment and the camera as JSON; `quat://docs/scripting`: the Lua
+scripting reference (the engine's `docs/scripting.md`).
 
 ## Example session
 
@@ -210,8 +228,8 @@ Layout:
 |---|---|
 | `content/` | **Everything the model reads**, as Markdown: server instructions, one file per tool description, the component reference, prompt templates ([MiniJinja](https://docs.rs/minijinja)). See `content/README.md`. |
 | `src/client/` | Engine JSON-RPC client: `mod.rs` (calls, reconnects, handshake), `connection.rs` (socket, reader task, in-flight calls), `error.rs` (error codes, `EngineError`), `token_file.rs` (the engine's session token file) |
-| `src/server/` | MCP server: `mod.rs` (handler, resource), tools grouped by area (`scene_tools.rs`, `world_tools.rs`, `sim_tools.rs`, `debug_tools.rs`, `behavior_tools.rs`, `tuning_tools.rs`, each its own rmcp router), `bt_outline.rs` (behaviour-tree outlines), `prompts.rs`, `results.rs` |
-| `src/params.rs`, `src/params/` | Typed tool inputs — their doc comments are the JSON schemas the model reads (`debug.rs`, `behavior.rs`, `tuning.rs` per area) |
+| `src/server/` | MCP server: `mod.rs` (handler, resource), tools grouped by area (`scene_tools.rs`, `world_tools.rs`, `sim_tools.rs`, `debug_tools.rs`, `behavior_tools.rs`, `tuning_tools.rs`, `script_tools.rs`, `shader_tools.rs`, each its own rmcp router), `bt_outline.rs` (behaviour-tree outlines), `prompts.rs`, `results.rs` |
+| `src/params.rs`, `src/params/` | Typed tool inputs — their doc comments are the JSON schemas the model reads (`debug.rs`, `behavior.rs`, `tuning.rs`, `script.rs`, `shader.rs` per area) |
 | `src/content.rs` | Embeds `content/` and renders prompt templates |
 | `src/config.rs` | Flags / environment |
 

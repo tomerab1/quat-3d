@@ -79,7 +79,8 @@ DemoResult run_physics_demo(quat::test::GpuContext& ctx, int frames, float time_
     quat::app::WorldRuntime world;
     {
         const ScopedEnv physics("QUAT_PHYSICS", "1");
-        EXPECT_TRUE(world.build_scene(scene, assets, ctx.allocator, ctx.transfer));
+        EXPECT_TRUE(world.build_scene(scene, assets, ctx.allocator, ctx.transfer,
+                                      QUAT_PROJECT_ROOT));
     }
     EXPECT_TRUE(world.physics_mode());
 

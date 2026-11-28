@@ -16,6 +16,7 @@
 #include "engine/asset/material_asset.hpp"
 #include "engine/asset/mesh_asset.hpp"
 #include "engine/renderer/draw_batching.hpp"
+#include "engine/renderer/motion_history.hpp"
 #include "engine/scene/components.hpp"
 #include "engine/scene/instanced_mesh.hpp"
 
@@ -255,6 +256,40 @@ TEST_F(InstancedMeshCollect, ResolveIsNeededWhenTheSourceChanges) {
     node.gltf_node = "Trunk";
     EXPECT_NE(s::instanced_mesh_source_hash(gltf), s::instanced_mesh_source_hash(node));
     EXPECT_NE(s::instanced_mesh_source_hash(gltf), s::instanced_mesh_source_hash(mesh));
+}
+
+// R11: with a MotionHistory, each instance's motion record is the entity's
+// previous world transform times its placement (and part); without previous
+// data (first frame) it equals the current model (camera-only velocity).
+TEST_F(InstancedMeshCollect, MotionRecordsFollowTheEntitysPreviousTransform) {
+    const glm::mat4 crown_local = glm::translate(glm::mat4(1.0F), glm::vec3(0.0F, 2.0F, 0.0F));
+    const glm::mat4 world0 = glm::translate(glm::mat4(1.0F), glm::vec3(0.0F, 0.0F, -5.0F));
+    const entt::entity e = make_entity(world0, 4, glm::vec3(0.0F),
+                                       {part(trunk, bark), part(crown, bark, crown_local)});
+    engine::renderer::MotionHistory history;
+
+    history.begin_frame();
+    InstancedDrawList first;
+    s::append_instanced_draws(r, view_proj, s::InstancedPass::opaque, first, &history);
+    ASSERT_EQ(first.motion.size(), first.instances.size());
+    for (std::size_t i = 0; i < first.instances.size(); ++i) {
+        expect_mat_near(first.motion[i].prev_model, first.instances[i].model);
+    }
+
+    const glm::mat4 world1 = glm::translate(glm::mat4(1.0F), glm::vec3(0.5F, 0.0F, -5.0F));
+    r.get<s::Transform>(e).world = world1;
+    history.begin_frame();
+    InstancedDrawList second;
+    s::append_instanced_draws(r, view_proj, s::InstancedPass::opaque, second, &history);
+    ASSERT_EQ(second.motion.size(), 8U);
+    const auto& mesh = r.get<s::InstancedMesh>(e);
+    for (std::size_t i = 0; i < 4; ++i) {
+        const glm::mat4 placement = s::instance_matrix(mesh.instances[i]);
+        expect_mat_near(second.instances[i].model, world1 * placement);
+        expect_mat_near(second.motion[i].prev_model, world0 * placement);
+        expect_mat_near(second.motion[4 + i].prev_model, world0 * placement * crown_local);
+        EXPECT_EQ(second.motion[i].has_prev_positions, 0U);
+    }
 }
 
 } // namespace

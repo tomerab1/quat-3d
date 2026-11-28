@@ -1,0 +1,3 @@
+List the Lua gameplay scripts under `assets/scripts/`: `{scripts: [{path, bytes, entities, status?}], running}`. `entities` counts the entities whose `script` component uses the file. `status` appears once the engine has loaded or checked the file: `{state: "ok" | "error", message?, instances, failed, reloads}` — `message` is the last error with its `file:line`, `failed` counts entities whose script stopped on an error. `running` is true while play mode runs scripts.
+
+Start here before writing a script (reuse or follow existing ones) and after `sim_play` to see which scripts failed. The Lua API is the `quat://docs/scripting` resource.

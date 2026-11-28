@@ -27,6 +27,7 @@
 #include <glm/gtc/quaternion.hpp>
 #include <glm/gtx/matrix_decompose.hpp>
 
+#include "engine/core/utf8_path.hpp"
 #include "engine/animation/clip.hpp"
 #include "engine/animation/skeleton.hpp"
 #include "engine/asset/asset_manager.hpp"
@@ -272,7 +273,7 @@ std::expected<std::vector<animation::SkeletonAsset>, core::Error>
 GltfLoader::load_skeletons(const std::filesystem::path& path) {
     auto data = fastgltf::GltfDataBuffer::FromPath(path);
     if (data.error() != fastgltf::Error::None) {
-        return fail("fastgltf: could not read '" + path.string() + "': " +
+        return fail("fastgltf: could not read '" + core::path_to_utf8(path) + "': " +
                     std::string(fastgltf::getErrorMessage(data.error())));
     }
     return parse_and_extract_skeletons(data.get(), path.parent_path());
@@ -293,7 +294,7 @@ std::expected<std::vector<animation::AnimClipAsset>, core::Error>
 GltfLoader::load_animations(const std::filesystem::path& path) {
     auto data = fastgltf::GltfDataBuffer::FromPath(path);
     if (data.error() != fastgltf::Error::None) {
-        return fail("fastgltf: could not read '" + path.string() + "': " +
+        return fail("fastgltf: could not read '" + core::path_to_utf8(path) + "': " +
                     std::string(fastgltf::getErrorMessage(data.error())));
     }
     return parse_and_extract_animations(data.get(), path.parent_path());

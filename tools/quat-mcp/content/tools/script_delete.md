@@ -1,0 +1,1 @@
+Delete a Lua script file from `assets/scripts/`; returns `{path, deleted, entities_still_using}`. Entities keep their `script` component (pointing at the missing file) — remove it with `scene_remove_components` (`["script"]`) or point it at another script. Running instances keep their loaded code until play stops.

@@ -71,11 +71,31 @@ WindFieldPass::create(const rhi::Device& device, rhi::GpuAllocator& allocator,
     return out;
 }
 
+// Fills `texture` with the field `push` describes.
+void WindFieldPass::add_dispatch(rhi::RenderGraph& graph, const char* name,
+                                 rhi::ResourceHandle texture, const WindFieldGpu& push,
+                                 rhi::DescriptorBuffer& set) {
+    (void)graph.add_pass(name, rhi::PassType::compute)
+        .writes(texture, rhi::ResourceUsage::storage_write)
+        .execute([this, texture, push, set = &set](rhi::PassContext& ctx) {
+            const VkCommandBuffer cmd = ctx.cmd();
+            set->write_storage_image(out_slot_, ctx.resolve(texture).view,
+                                     VK_IMAGE_LAYOUT_GENERAL);
+            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline_.handle());
+            set->bind(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline_.layout(), 0);
+            vkCmdPushConstants(cmd, pipeline_.layout(), VK_SHADER_STAGE_COMPUTE_BIT, 0,
+                               sizeof(push), &push);
+            constexpr std::uint32_t groups = (wind_field_resolution + 7) / 8;
+            vkCmdDispatch(cmd, groups, groups, 1);
+        });
+}
+
 std::expected<WindFieldOutput, core::Error>
 WindFieldPass::add_to_graph(rhi::RenderGraph& graph, const weather::WindFieldParams& params,
-                            glm::vec2 camera_xz) {
+                            glm::vec2 camera_xz,
+                            const std::optional<weather::WindFieldParams>& prev_params) {
     if (!valid()) return fail("wind field pass: not created");
-    // Created here, not in create(): the descriptor buffer refers to layout_,
+    // Created here, not in create(): the descriptor buffers refer to layout_,
     // which must not move afterwards (the pass is moved into its frame slot).
     auto db = rhi::DescriptorBuffer::create(*device_, *allocator_, db_fns_, layout_);
     if (!db) return std::unexpected(db.error());
@@ -86,26 +106,23 @@ WindFieldPass::add_to_graph(rhi::RenderGraph& graph, const weather::WindFieldPar
     out.rect = {corner, 1.0F / kExtentM, 0.0F};
     out.heading = params.direction;
     constexpr VkExtent2D extent{wind_field_resolution, wind_field_resolution};
-    out.texture = graph.create_transient_image(
-        "wind_field", wind_field_format, extent,
-        VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT |
-            VK_IMAGE_USAGE_TRANSFER_SRC_BIT);
+    constexpr VkImageUsageFlags usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT |
+                                        VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+    out.texture = graph.create_transient_image("wind_field", wind_field_format, extent, usage);
+    add_dispatch(graph, "wind_field", out.texture, pack_wind_field(params, corner, wind_field_texel_m),
+                 frame_descriptor_);
 
-    const WindFieldGpu push = pack_wind_field(params, corner, wind_field_texel_m);
-    const rhi::ResourceHandle texture = out.texture;
-    (void)graph.add_pass("wind_field", rhi::PassType::compute)
-        .writes(texture, rhi::ResourceUsage::storage_write)
-        .execute([this, texture, push](rhi::PassContext& ctx) {
-            const VkCommandBuffer cmd = ctx.cmd();
-            frame_descriptor_.write_storage_image(out_slot_, ctx.resolve(texture).view,
-                                                  VK_IMAGE_LAYOUT_GENERAL);
-            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline_.handle());
-            frame_descriptor_.bind(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline_.layout(), 0);
-            vkCmdPushConstants(cmd, pipeline_.layout(), VK_SHADER_STAGE_COMPUTE_BIT, 0,
-                               sizeof(push), &push);
-            constexpr std::uint32_t groups = (wind_field_resolution + 7) / 8;
-            vkCmdDispatch(cmd, groups, groups, 1);
-        });
+    if (prev_params) {
+        // Last frame's field over THIS frame's rect: the field is a function
+        // of world position, so the blades sample both at the same uv.
+        auto prev_db = rhi::DescriptorBuffer::create(*device_, *allocator_, db_fns_, layout_);
+        if (!prev_db) return std::unexpected(prev_db.error());
+        prev_descriptor_ = std::move(*prev_db);
+        out.prev_texture =
+            graph.create_transient_image("wind_field_prev", wind_field_format, extent, usage);
+        add_dispatch(graph, "wind_field_prev", out.prev_texture,
+                     pack_wind_field(*prev_params, corner, wind_field_texel_m), prev_descriptor_);
+    }
     return out;
 }
 
