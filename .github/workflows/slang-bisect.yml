@@ -136,7 +136,7 @@ jobs:
 
   reflection-diff:
     needs: bisect
-    if: always()
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/download-artifact@v4
