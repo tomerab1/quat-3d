@@ -73,9 +73,10 @@ TEST_F(SeasonCodec, SeasonRejectsBadFieldsAndASecondSeason) {
 }
 
 TEST_F(SeasonCodec, ClimateCurvesRoundTripAndAreValidated) {
+    // Curves are floats: values exact in binary round-trip bit for bit.
     const json authored = {{"temperature_c", {-5.0, 5.0, 20.0, 5.0}},
                            {"diurnal_range_c", {8.0}},
-                           {"precipitation_chance", {0.2, 0.6}},
+                           {"precipitation_chance", {0.25, 0.75}},
                            {"cloud_cover", {0.5}},
                            {"wind_speed", {3.0, 6.0, 3.0}},
                            {"temperature_variability_c", 2.0},
