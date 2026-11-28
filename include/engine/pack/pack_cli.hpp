@@ -54,6 +54,14 @@ struct PackDefaults {
     std::string                          engine_version;
 };
 
+// The engine SDK layout (ROADMAP P8, docs/sdk.md): quat-pack installed in
+// <sdk>/bin finds the engine root (scripts/ + packaging/) and the cooked
+// engine shaders in <sdk>/share/quat3d. Fills the defaults a development
+// build did not bake in, from `tool_dir` (quat-pack's directory); leaves
+// any default already set. No-op when tool_dir/../share/quat3d does not
+// hold scripts/package-release.sh.
+void apply_installed_sdk_defaults(PackDefaults& defaults);
+
 // Parses argv[1..]; the error explains the usage problem.
 [[nodiscard]] std::expected<PackOptions, core::Error>
 parse_pack_args(std::span<const std::string> args);

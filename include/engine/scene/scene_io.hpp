@@ -16,13 +16,17 @@
 #include <string>
 
 #include "engine/core/error.hpp"
-#include "engine/rhi/gpu_allocator.hpp"
 
 namespace engine::asset {
 class AssetManager;
 }
 namespace engine::renderer {
 struct RenderSettings;
+}
+// Opaque here (P8: this header is installed without the RHI headers).
+namespace engine::rhi {
+class GpuAllocator;
+struct TransferContext;
 }
 
 namespace engine::scene {

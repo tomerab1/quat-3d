@@ -547,17 +547,25 @@ JSON-RPC over loopback TCP to the engine.
   depot layout → P3; follow-ups: Windows `.exe` icon resource, exporting from
   a downloaded editor release, cross-OS packaging.
 - [ ] **P5 — Native Metal backend.** On top of P2.
-- [ ] **P8 — Engine SDK** (design:
-  [`docs/design/cozy-builder.md` §3.3–3.5](docs/design/cozy-builder.md#33-how-the-game-consumes-the-engine-an-installed-sdk-package-p8)).
-  The installable, versioned CMake package that games in their own
-  repositories build against:
-  - `find_package(quat3d 0.N CONFIG)` with exported `quat3d::` targets;
-  - only the stable public headers installed (no Vulkan types in them);
-  - a bundled dependency prefix for the SDK's triplet;
+- [x] **P8 — Engine SDK** (design:
+  [`docs/design/cozy-builder.md` §3.3–3.5](docs/design/cozy-builder.md#33-how-the-game-consumes-the-engine-an-installed-sdk-package-p8);
+  guide: [`docs/sdk.md`](docs/sdk.md)). The installable, versioned CMake
+  package that games in their own repositories build against:
+  - `find_package(quat3d 0.N CONFIG)` with exported `quat3d::engine`,
+    `quat3d::remote`, `quat3d::editor`;
+  - only the stable public headers installed, with no Vulkan in them
+    (`components.hpp`, `scene.hpp`, `scene_io.hpp` decoupled;
+    `material_params.hpp` split out);
+  - `engine/version.hpp` and `quat3d::version()`;
+  - a bundled dependency prefix (`deps/`, the release half of the vcpkg
+    tree);
   - `quat3d-toolchain.cmake`, with mismatched compilers refused;
-  - `Quat3dGame.cmake` (`quat_add_game_module` / `quat_add_game`);
-  - tools (`quat-cook`, `quat-pack`, `slangc`, `quat-mcp`), engine shaders
-    and the public Slang interfaces;
+  - `SameMinorVersion` while 0.x;
+  - `Quat3dGame.cmake` with `quat_add_game()`: data root, game material
+    shaders, Windows DLLs;
+  - tools (`quat-cook`, `quat-pack`, `quat-player`, `slangc`, `quat-mcp`),
+    engine shaders and the Slang lib modules; `share/quat3d` is quat-pack's
+    engine root;
   - per-OS SDK archives from the release workflow.
 
   Semver policy: 0.x breaks only in MINOR releases, with CHANGELOG
@@ -565,14 +573,29 @@ JSON-RPC over loopback TCP to the engine.
   only in MAJOR releases. No ABI promise. Data formats are versioned
   separately and read backwards.
 
-  Checks:
+  Checks (CTest label `sdk`, all OSes):
+  - `sdk_install`;
   - `public_headers_self_contained`;
-  - `examples/sdk-consumer` built only against the installed package, as
-    the `sdk_consumer` CTest on every PR and on all OSes before release
-    upload;
-  - a source-checkout override (`QUAT3D_SOURCE_DIR`) for co-development.
+  - `sdk_consumer` (`examples/sdk-consumer`, built only against the
+    installed package);
+  - the version and compiler refusals;
+  - `layering_check` (text and link graph) with a negative test.
 
-  *(needs P6/S4 #24, P4 #55; first SDK with v0.1.0 or the release after)*
+  The engine also builds as a sub-project with the same target names
+  (source override for co-development).
+- [ ] **P8.1 — SDK follow-ups.**
+  - promote a Vulkan-free `instanced_mesh.hpp` seam into the stable set;
+  - `CHANGELOG.md` "Breaking" sections per the policy, once #96's CHANGELOG
+    lands;
+  - `quat_add_game_module()` and module registration (G17.1);
+  - `quat3d::editor` is exported as a placeholder: install the editor
+    headers a per-game editor needs (with G17.1);
+  - trim the Windows SDK (104 MB packed / 583 MB unpacked against ~50 MB
+    on Linux and macOS): MSVC static libraries without embedded debug info,
+    and no gmock / protoc / upb in `deps/`;
+  - stable headers that do not exist yet (`engine/game/*`, `geometry/*`,
+    `camera_rig`, `spline`, `command_stack`, …) join the set as their items
+    land.
 
 ## G — Gameplay systems
 
