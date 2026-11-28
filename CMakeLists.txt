@@ -507,6 +507,7 @@ add_library(engine_script STATIC
     src/script/script_api_entity.cpp
     src/script/script_api_scene.cpp
     src/script/script_api_services.cpp
+    src/script/script_api_terrain.cpp
     src/script/script_api_input.cpp
     src/script/script_source.cpp
     src/script/script_runtime.cpp
@@ -678,6 +679,7 @@ add_library(engine_remote_world STATIC
     src/remote/world/script_commands.cpp
     src/remote/world/input_commands.cpp
     src/remote/world/camera_rig_commands.cpp
+    src/remote/world/terrain_edit_commands.cpp
     src/remote/world/profile_commands.cpp
     src/remote/world/image_encode.cpp
     src/remote/world/stb_image_write_impl.cpp)
