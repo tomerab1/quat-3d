@@ -17,6 +17,25 @@ the current state is in [`STATUS.md`](STATUS.md).
 - Tick the roadmap checkbox in the commit that completes an item, and update
   `docs/STATUS.md` at the end of each work session.
 
+## Adding features without central lists (S9)
+
+A feature adds its own files. Each registration point is a directory, and
+the build generates the list of what it holds, so parallel branches do not
+conflict on shared tables (`cmake/QuatRegistration.cmake`, and the
+`registration_generator` CTest):
+
+| To add | Add a file | Registered by |
+|---|---|---|
+| A source file of a module | `src/<module>/…` and one line in `src/<module>/CMakeLists.txt` | the module's own CMake file (the root `CMakeLists.txt` only adds module directories) |
+| A scene-codec component (scene files, remote API, Lua) | `src/scene/codec/<name>.cpp` defining `engine::scene::codec::register_<name>(ComponentRegistry&)` | generated from the directory; see `src/scene/codec/README.md` for the canonical `order` |
+| A remote command module | `src/remote/world/<domain>_commands.cpp` defining `register_<domain>_commands(RpcServer&, const ContextPtr&)` | generated from the directory |
+| An Inspector section | `src/editor/inspectors/<name>.cpp` specialising `ComponentInspector<T>` and defining `register_<name>_inspector(InspectorRegistry&)` | generated from the directory |
+| A quat-mcp tool group | `tools/quat-mcp/src/server/<area>_tools.rs` with `#[tool_router(router = <area>_tools)]` | one line in `tool_groups!` (`server/mod.rs`); parameters in `params/<area>.rs` with one line in `param_groups!` |
+
+The registered name is the file's stem. Tests check that each generated
+table matches its directory, so a file that registers under another name
+fails CI.
+
 ## Build presets
 
 | Preset | Use |
