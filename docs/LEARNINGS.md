@@ -56,22 +56,6 @@ into CLAUDE.md or the brief template in [`CYCLE.md`](CYCLE.md).
 
 ## Build and CI
 
-- **Killing a wrapper orphans the game it started.** `timeout` or a
-  `TaskStop` on a script that ran `xvfb-run game` killed the script, and the
-  game (re-parented to init) kept rendering on the CPU for hours; a dozen
-  such leftovers made a 4-core container's load average 50-70 and every
-  build crawl (cinematic showcase, 2026-11-27). Rule: start the game in its
-  own process group and signal the group, and turn SIGTERM / SIGINT into
-  that cleanup (`scripts/render-shots.py` does). After a run, `pgrep -af
-  build/game` must be empty.
-- **Edge-collapse simplification deletes small cards.** quat-cook's first
-  `--simplify` of Poly Haven's fir let meshoptimizer collapse needle
-  clusters smaller than the error bound. It reached the triangle target
-  with 10 % of the leaf area, and CI showed bare poles (#99). A test that
-  measured leaf area before and after caught it. Rule: an LOD test checks
-  coverage (area), not only the triangle count; foliage is thinned, never
-  collapsed.
-
 - **A clean auto-merge can still break the build.** Merging master (#20)
   into the E8 branch raised no conflict, but master had renamed
   `WorldRuntime::clear_spin_entity` while the branch added a new call to it;
