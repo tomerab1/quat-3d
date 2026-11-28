@@ -9,10 +9,9 @@ stream in and out, regenerate on the GPU, or the terrain moves.
 ![Terrain edits](screenshots/terrain-edits.png)
 
 *`assets/scenes/terrain_edits.json` (CI scene `terrain-edits`): a plinth
-flattened into the foot of a hillside, a gravel apron, a garden soil patch
-and a dirt path with its grass cleared and its ground smoothed. Grass thins
-on the embankment (the slope fade) and regrows on the levelled, unmasked
-ring around the apron.*
+flattened at the foot of a hillside, a gravel apron, a garden soil patch and
+a dirt path with its grass cleared and its ground smoothed. Grass regrows on
+the levelled, unmasked ring around the apron.*
 
 ## Stamps
 
@@ -56,6 +55,11 @@ Recipes (the cozy builder's, [`design/cozy-builder.md`](design/cozy-builder.md))
   `falloff` 2–8 m (a wider falloff gives a gentler, grassed embankment), at
   the median ground height under it; then `paint gravel` and `paint grass 0`
   slightly wider than the footprint.
+  Cutting a level pad deep into a slope leaves a cut bank steeper than the
+  slope itself, whatever the falloff (the cut deepens as the falloff
+  widens): past the grass layer's slope limit it shows the terrain's bare
+  rock shading. Site foundations where the cut stays shallow, or dress the
+  bank (a retaining wall, a `smooth` and a `paint soil` stamp).
 - **Path**: a `capsule` along the stroke: `paint dirt`, `paint grass 0`, and a
   light `smooth` (strength 0.5–0.8, 1–2 iterations).
 

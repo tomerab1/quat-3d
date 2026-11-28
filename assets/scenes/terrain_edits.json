@@ -10,14 +10,14 @@
       "terrain_edits": {
         "next_id": 9,
         "stamps": [
-          {"id": 1, "shape": "polygon", "points": [[116, -26], [128, -26], [128, -14], [116, -14]], "radius": 1.0, "falloff": 8.0, "op": "flatten", "strength": 1.0, "height": 49.6, "pivot": [122, -20], "normal": [0, 1, 0]},
-          {"id": 2, "shape": "polygon", "points": [[116, -26], [128, -26], [128, -14], [116, -14]], "radius": 1.2, "falloff": 0.6, "op": "paint", "strength": 1.0, "channel": "gravel", "value": 1.0},
-          {"id": 3, "shape": "polygon", "points": [[116, -26], [128, -26], [128, -14], [116, -14]], "radius": 1.6, "falloff": 0.8, "op": "paint", "strength": 1.0, "channel": "grass", "value": 0.0},
-          {"id": 4, "shape": "capsule", "points": [[114.5, -20], [106, -16], [97, -23], [88, -19], [79, -27], [68, -22], [58, -30]], "radius": 1.0, "falloff": 1.2, "op": "paint", "strength": 1.0, "channel": "dirt", "value": 1.0},
-          {"id": 5, "shape": "capsule", "points": [[114.5, -20], [106, -16], [97, -23], [88, -19], [79, -27], [68, -22], [58, -30]], "radius": 0.9, "falloff": 1.0, "op": "paint", "strength": 1.0, "channel": "grass", "value": 0.0},
-          {"id": 6, "shape": "capsule", "points": [[114.5, -20], [106, -16], [97, -23], [88, -19], [79, -27], [68, -22], [58, -30]], "radius": 1.5, "falloff": 1.5, "op": "smooth", "strength": 0.8, "iterations": 2},
-          {"id": 7, "shape": "circle", "points": [[104, -31]], "radius": 2.6, "falloff": 0.7, "op": "paint", "strength": 1.0, "channel": "soil", "value": 1.0},
-          {"id": 8, "shape": "circle", "points": [[104, -31]], "radius": 2.4, "falloff": 0.5, "op": "paint", "strength": 1.0, "channel": "grass", "value": 0.0}
+          {"id": 1, "shape": "polygon", "points": [[108, -26], [120, -26], [120, -14], [108, -14]], "radius": 1.0, "falloff": 6.0, "op": "flatten", "strength": 1.0, "height": 48.5, "pivot": [114, -20], "normal": [0, 1, 0]},
+          {"id": 2, "shape": "polygon", "points": [[108, -26], [120, -26], [120, -14], [108, -14]], "radius": 1.2, "falloff": 0.6, "op": "paint", "strength": 1.0, "channel": "gravel", "value": 1.0},
+          {"id": 3, "shape": "polygon", "points": [[108, -26], [120, -26], [120, -14], [108, -14]], "radius": 1.6, "falloff": 0.8, "op": "paint", "strength": 1.0, "channel": "grass", "value": 0.0},
+          {"id": 4, "shape": "capsule", "points": [[108.5, -20], [103, -17], [97, -23], [88, -19], [79, -27], [68, -22], [58, -30]], "radius": 1.0, "falloff": 1.2, "op": "paint", "strength": 1.0, "channel": "dirt", "value": 1.0},
+          {"id": 5, "shape": "capsule", "points": [[108.5, -20], [103, -17], [97, -23], [88, -19], [79, -27], [68, -22], [58, -30]], "radius": 0.9, "falloff": 1.0, "op": "paint", "strength": 1.0, "channel": "grass", "value": 0.0},
+          {"id": 6, "shape": "capsule", "points": [[108.5, -20], [103, -17], [97, -23], [88, -19], [79, -27], [68, -22], [58, -30]], "radius": 1.5, "falloff": 1.5, "op": "smooth", "strength": 0.8, "iterations": 2},
+          {"id": 7, "shape": "circle", "points": [[100, -32]], "radius": 2.6, "falloff": 0.7, "op": "paint", "strength": 1.0, "channel": "soil", "value": 1.0},
+          {"id": 8, "shape": "circle", "points": [[100, -32]], "radius": 2.4, "falloff": 0.5, "op": "paint", "strength": 1.0, "channel": "grass", "value": 0.0}
         ]
       }
     },
@@ -29,7 +29,7 @@
     {
       "name": "camera",
       "parent": -1,
-      "transform": {"position": [93, 56.5, -47], "look_at": [116, 50, -20]},
+      "transform": {"position": [86, 55.5, -47], "look_at": [109, 49, -20]},
       "camera": {"fov_deg": 55, "near": 0.2, "far": 3000, "active": true}
     },
     {
@@ -40,13 +40,13 @@
     {
       "name": "cottage",
       "parent": -1,
-      "transform": {"position": [122, 51.6, -20], "scale": [9, 4, 7]},
+      "transform": {"position": [114, 50.5, -20], "scale": [9, 4, 7]},
       "primitive": {"shape": "cube", "color": "#d8cdb6", "roughness": 0.85}
     },
     {
       "name": "cottage_roof",
       "parent": -1,
-      "transform": {"position": [122, 55.2, -20], "rotation": [0, 45, 0], "scale": [13, 3.2, 13]},
+      "transform": {"position": [114, 54.1, -20], "rotation": [0, 45, 0], "scale": [13, 3.2, 13]},
       "primitive": {"shape": "cone", "color": "#7a3b2a", "roughness": 0.8}
     }
   ]
