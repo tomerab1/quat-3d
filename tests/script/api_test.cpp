@@ -3,6 +3,9 @@
 
 #include <glm/gtc/matrix_transform.hpp>
 
+#include <nlohmann/json.hpp>
+
+#include "engine/input/actions.hpp"
 #include "engine/scene/component_json.hpp"
 #include "engine/script/script_input.hpp"
 #include "script/script_fixture.hpp"
@@ -161,6 +164,36 @@ TEST_F(ScriptTest, InputReadsTheSampledState) {
     in.begin_frame(); // space still held: no longer "pressed"
     frames();
     EXPECT_TRUE(has_line(script_log(), "keys\ttrue\tfalse\tfalse"));
+}
+
+// Review #111: with several fixed steps in one update, a press reaches
+// on_fixed_update once (the runtime's nested latch), for both a held
+// down-trigger's edge and a one-frame pressed trigger.
+TEST_F(ScriptTest, FixedStepsSeeEachPressOnce) {
+    write("count.lua", R"(
+        function on_fixed_update(self, dt)
+            if input.action_pressed("jump") then self.presses = (self.presses or 0) + 1 end
+            if input.action("kick") then self.kicks = (self.kicks or 0) + 1 end
+        end
+        function on_update(self, dt) print("counts", self.presses or 0, self.kicks or 0) end
+    )");
+    scripted("c", "count.lua");
+    auto map = engine::input::parse_action_map(nlohmann::json::parse(R"({"actions": [
+        {"name": "jump", "type": "button", "bindings": ["key:space"]},
+        {"name": "kick", "type": "button", "trigger": "pressed", "bindings": ["key:k"]}]})"));
+    ASSERT_OK(map);
+    engine::input::Actions actions(*map);
+    engine::input::DeviceState in;
+    in.keys.set(*engine::input::key_from_name("space"));
+    in.keys.set(*engine::input::key_from_name("k"));
+    start();
+    engine::script::ScriptServices services;
+    services.input = &in;
+    services.actions = &actions;
+    runtime->set_services(services);
+    actions.update(in, 0.06F);
+    runtime->update(0.06F); // three fixed steps of 1/60
+    EXPECT_TRUE(has_line(script_log(), "counts\t1\t1"));
 }
 
 TEST_F(ScriptTest, CrossScriptCalls) {

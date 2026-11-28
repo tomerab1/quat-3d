@@ -104,6 +104,9 @@ jobs:
           icd=$(ls /usr/share/vulkan/icd.d/lvp_icd*.json | head -n1)
           echo "Using Vulkan ICD: $icd"
           export VK_ICD_FILENAMES="$icd"
+          # Includes the engine SDK guards (label sdk, ROADMAP P8): install
+          # into a fresh prefix, build + test examples/sdk-consumer against
+          # it alone, self-contained public headers, refusals, layering.
           ctest --test-dir build/release --output-on-failure --timeout 900
 
       # The game without the editor layer (and without Tracy) compiles other
@@ -315,6 +318,12 @@ jobs:
           vulkaninfoSDK --summary
           ctest --test-dir build/windows-release -R engine_tests_gpu -V --timeout 900
 
+      # Engine SDK (P8): install into a fresh prefix, then build and test
+      # examples/sdk-consumer and the public headers against it alone.
+      - name: SDK (install + consumer)
+        if: always() && steps.build.outcome == 'success'
+        run: ctest --test-dir build/windows-release -L sdk --output-on-failure
+
       - name: Upload logs on failure
         if: failure()
         uses: actions/upload-artifact@v4
@@ -358,6 +367,12 @@ jobs:
         env:
           GTEST_BRIEF: 1
         run: ctest --test-dir build/macos-release -R engine_tests_cpu -V --timeout 900
+
+      # Engine SDK (P8): install into a fresh prefix, then build and test
+      # examples/sdk-consumer and the public headers against it alone.
+      - name: SDK (install + consumer)
+        if: always() && steps.build.outcome == 'success'
+        run: ctest --test-dir build/macos-release -L sdk --output-on-failure
 
       # Every cooked shader through SPIRV-Cross (Homebrew's CLI; MoltenVK
       # embeds the same library at its own pinned revision) and Apple's Metal

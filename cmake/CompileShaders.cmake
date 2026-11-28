@@ -24,9 +24,9 @@
 find_program(SLANGC_EXECUTABLE slangc REQUIRED)
 
 function(add_shader_compilation TARGET_NAME)
-    set(shader_src_dir ${CMAKE_SOURCE_DIR}/assets/shaders)
+    set(shader_src_dir ${PROJECT_SOURCE_DIR}/assets/shaders)
     set(shader_lib_dir ${shader_src_dir}/lib)
-    set(shader_out_dir ${CMAKE_SOURCE_DIR}/cooked/shaders)
+    set(shader_out_dir ${PROJECT_SOURCE_DIR}/cooked/shaders)
 
     file(GLOB shader_sources CONFIGURE_DEPENDS ${shader_src_dir}/*.slang)
     file(GLOB shader_modules CONFIGURE_DEPENDS ${shader_lib_dir}/*.slang)

@@ -1,0 +1,3 @@
+Make an input action read a value for some frames, as if a player pressed it. Use it to playtest gameplay scripts and camera rigs without a keyboard: `{"action": "jump", "value": true}` presses jump for one frame, `{"action": "move_y", "value": 1, "frames": 120}` walks forward for about two seconds, and `{"action": "camera.pan", "value": [1, 0], "frames": 30}` pans an axis2d action right. `{"action": "jump", "clear": true}` stops an injection early.
+
+The value goes through the action's trigger, so a `pressed` or `drag` action behaves as it would for a real press. Run the simulation (`sim_play`) and check the result with `debug_watch` or `screenshot`.

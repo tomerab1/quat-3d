@@ -102,9 +102,10 @@ notes. A prerelease without a notes file gets the generated notes only.
    newer, untested commit on top of it.
 5. **Watch the workflow** (Actions → Release). When it finishes, check the
    published release: the curated notes come first, then the generated PR
-   list, and six archives are attached: three engine archives and the
-   three `coin-collector-<version>-<os>` sample-game archives, each with
-   `LICENSE` and `THIRD_PARTY_NOTICES.md`.
+   list, and nine archives are attached: three engine archives, the
+   three `coin-collector-<version>-<os>` sample-game archives and the three
+   `quat3d-sdk-<version>-<os>` SDK archives, each with `LICENSE` and
+   `THIRD_PARTY_NOTICES.md`.
 
 ## What the workflow does
 
@@ -141,6 +142,12 @@ notes. A prerelease without a notes file gets the generated notes only.
       `LICENSE` and the build's `THIRD_PARTY_NOTICES.md` from step 5; the
       layout fails if they are missing. It is smoke-tested the same way,
       licence files included, and must also load its start scene.
+   8. Builds and checks the engine SDK (`ctest -L sdk`: install into a fresh
+      prefix, build and test `examples/sdk-consumer` against it) and
+      archives it with `scripts/package-sdk.sh`. The SDK carries `LICENSE`
+      and generated notices at its root and in `share/quat3d/` (the
+      `--no-rust` notices `quat-pack` copies into game packages). A tag
+      fails without them.
 2. **publish** runs only on tags, after all three packages pass:
    1. Makes a sparse checkout of `docs/releases/` and `scripts/`, with no
       stored token.

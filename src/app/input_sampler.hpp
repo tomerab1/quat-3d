@@ -26,9 +26,16 @@ public:
     void init();
     void begin_frame() { state_.begin_frame(); }
     void process_event(const SDL_Event& event);
-    // Reads the keyboard / mouse state. `keyboard_blocked`: a UI text field
-    // owns the keyboard this frame.
-    void sample(bool keyboard_blocked);
+    // Reads the keyboard / mouse state and the window (size as the scene
+    // viewport, fullscreen, focus). `keyboard_blocked`: a UI text field owns
+    // the keyboard this frame; `pointer_blocked`: the pointer is over UI.
+    void sample(SDL_Window* window, bool keyboard_blocked, bool pointer_blocked);
+    // The scene's viewport in window coordinates (the editor's Viewport
+    // panel); the whole window when not set this frame.
+    void set_viewport(glm::vec2 origin, glm::vec2 size) {
+        state_.viewport_origin = origin;
+        state_.viewport_size = size;
+    }
 
     [[nodiscard]] const engine::script::ScriptInput& state() const { return state_; }
 

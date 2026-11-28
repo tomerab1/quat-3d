@@ -132,6 +132,12 @@ The editor (dark theme; a light theme is one click away in View > Theme):
   input (keyboard, mouse, gamepad), audio and navigation, sandboxed with
   per-call time and memory limits, hot-reloaded on save — see
   [`docs/scripting.md`](docs/scripting.md)
+- Input actions: JSON action maps over keyboard, mouse and gamepad (chords,
+  composites, triggers such as tap / hold / drag, dead zones, contexts),
+  rebinding saved per player — see [`docs/input.md`](docs/input.md)
+- Orbit / strategy camera rig: springs, pitch eased with zoom, grab-the-world
+  drag, zoom to the cursor, ground following, bounds — see
+  [`docs/camera-rig.md`](docs/camera-rig.md)
 - NPC navigation (Recast/Detour navmesh), path following, patrol routes
 - Data-driven behaviour trees (JSON)
 - Multiplayer foundations: client/server transport, state replication,
@@ -184,11 +190,12 @@ Ready-to-run builds are attached to each
 `README-RUN.txt` with the launch options and troubleshooting, `quat-mcp` (the
 MCP server for AI assistants; see [Use it with Claude Code](#use-it-with-claude-code)),
 and `LICENSE` and `THIRD_PARTY_NOTICES.md` (see [License](#license)); game
-packages carry the last two as well. The
-editor's own tools (`quat-cook`, `quat-pack`, `quat-player`) are not in the
-archives yet: cooking assets and packaging games need a [source build](#building).
-Each release also carries the sample game, `coin-collector-<version>-<os>`,
-packaged with `quat-pack` (see [Make a game and ship it](#make-a-game-and-ship-it)).
+packages carry the last two as well. The tools (`quat-cook`, `quat-pack`,
+`quat-player`) are in the engine SDK, `quat3d-sdk-<version>-<os>`, which each
+release also carries (see
+[Building a game against the SDK](#building-a-game-against-the-sdk)), next to
+the sample game, `coin-collector-<version>-<os>`, packaged with `quat-pack`
+(see [Make a game and ship it](#make-a-game-and-ship-it)).
 
 | Download | Run |
 |---|---|
@@ -314,6 +321,7 @@ Environment variables switch on extra modes:
 |---|---|
 | `QUAT_DEMO=mountain` | Open the mountain-forest showcase (`assets/scenes/mountain_forest.json`) instead of the material showcase |
 | `QUAT_SCENE=<file>` | Load a scene file (project-relative) instead of the showcase scene |
+| `QUAT_INPUT_USER_FILE=<path>` | The player's input rebinding file (default `input.json` in the per-user preferences directory; empty = none) — see [`docs/input.md`](docs/input.md) |
 | `QUAT_HDRI=<file>` | Light the scene with a Radiance `.hdr` panorama (project-relative). `scripts/fetch-hdri.sh <id>` downloads a CC0 one from Poly Haven into `hdri-cache/` |
 | `QUAT_GAME=<dir>` | Open a game project (a folder with a `game.json`, e.g. `games/coin-collector`): scene files, scripts and the asset browser use it — see [Make a game and ship it](#make-a-game-and-ship-it) |
 | `QUAT_PLAY=1` | Enter Play mode on the first frame (a non-editor build also plays a `QUAT_SCENE` game) |
@@ -647,6 +655,27 @@ example:
 The details — project format, what ships, versioning, signing — are in
 [`docs/game-packaging.md`](docs/game-packaging.md).
 
+## Building a game against the SDK
+
+Games in their own repositories link an installed engine SDK instead of the
+engine sources. Each release attaches `quat3d-sdk-<version>-<os>` archives,
+or you can install one from a build with
+`cmake --install build/release --prefix <sdk>`. Then:
+
+```cmake
+find_package(quat3d 0.1 CONFIG REQUIRED)
+quat_add_game(my_game SOURCES src/main.cpp ASSETS assets)
+```
+
+```sh
+cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE=<sdk>/lib/cmake/quat3d/quat3d-toolchain.cmake
+```
+
+[`docs/sdk.md`](docs/sdk.md) covers the layout, which headers are stable,
+the toolchain rules and the versioning policy.
+[`examples/sdk-consumer/`](examples/sdk-consumer) is a working example, and
+CI builds it on every PR.
+
 ## Testing
 
 Tests use [GoogleTest](https://github.com/google/googletest) and run without
@@ -688,7 +717,10 @@ The plan lives in [`ROADMAP.md`](ROADMAP.md), grouped into tracks:
 | [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md) | Building, testing, CI, and conventions for contributors |
 | [`docs/RELEASING.md`](docs/RELEASING.md) | Cutting a release: versions, tags, the release-notes file, the checklist |
 | [`CHANGELOG.md`](CHANGELOG.md) | Every release, newest first, linking its notes in `docs/releases/` |
+| [`docs/sdk.md`](docs/sdk.md) | The engine SDK: building a game in its own repository against an installed, versioned `quat3d` CMake package |
 | [`docs/scripting.md`](docs/scripting.md) | Lua gameplay scripting: callbacks, the engine API, limits, hot reload |
+| [`docs/input.md`](docs/input.md) | Input actions: action-map format, triggers, modifiers, contexts, rebinding |
+| [`docs/camera-rig.md`](docs/camera-rig.md) | The orbit / strategy camera rig and its input |
 | [`docs/cinematic-showcase.md`](docs/cinematic-showcase.md) | The CC0 cinematic forest scene: assets and credits, fetching, renders, the MCP recipe |
 | [`docs/reading/README.md`](docs/reading/README.md) | Reading list: the papers and talks behind the engine's techniques, with where each lives in the code |
 | [`docs/remote-control.md`](docs/remote-control.md) | The remote-control protocol AI tools use to drive the engine |
@@ -721,6 +753,7 @@ tools/quat-cook/    Offline asset cooker CLI (src/cook/ holds the cooking librar
 tools/asset-gen/    quat-asset-gen: procedural nature models -> assets/meshes/nature/
 assets/scenes/      Showcase scene files (scene JSON v2)
 tests/              GoogleTest suite (engine_tests): tests/<module>/, shared helpers in tests/support/
+examples/sdk-consumer/  A tiny game built only against the installed SDK (CI guard; docs/sdk.md)
 docs/               Project documentation
 ports/, triplets/   vcpkg customisations
 ```

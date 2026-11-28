@@ -15,6 +15,7 @@
 #include <entt/entity/entity.hpp>
 
 #include "engine/core/file_watcher.hpp"
+#include "engine/input/actions.hpp"
 #include "engine/script/script_runtime.hpp"
 #include "lua_vm.hpp"
 #include "script_api.hpp"
@@ -44,6 +45,11 @@ struct Session {
     std::unordered_map<std::string, std::string> module_errors; // path -> why it did not load
     std::vector<Instance>                       instances;     // creation order
     double                                      fixed_accumulator = 0.0;
+    // Input (G5): the update's simulation sample, and the latch that hands
+    // each fixed step the edges since the previous one.
+    input::ActionSample                         update_sample;
+    input::ActionSample                         fixed_sample;
+    input::StepLatch                            fixed_latch;
 
     [[nodiscard]] Instance* find(entt::entity e);
 };
@@ -71,6 +77,8 @@ struct ScriptRuntime::Impl {
     std::vector<ScriptStatus>                statuses;
     std::optional<core::FileWatcher>         watcher;
     std::unordered_map<std::string, detail::Description> descriptions;
+    // The default action map over services.input, when no service is given.
+    std::optional<input::Actions>            fallback_actions;
 
     [[nodiscard]] ScriptStatus& status(std::string_view path);
     void set_error(std::string_view path, const std::string& message);

@@ -8,7 +8,7 @@ are cut.
 
 | Version | Notes | Summary |
 |---|---|---|
-| v0.1.0 | [`docs/releases/v0.1.0.md`](docs/releases/v0.1.0.md) | First release: engine, editor, MCP server with workflow skills and a Claude Code plugin, Lua scripting, weather and a real-time sky clock, SSR and HDRI lighting, a cinematic camera, physics control over MCP, profiling, game packaging, Linux / Windows / macOS builds with quat-mcp bundled, and the Coin Collector sample game |
+| v0.1.0 | [`docs/releases/v0.1.0.md`](docs/releases/v0.1.0.md) | First release: engine, editor, MCP server with workflow skills and a Claude Code plugin, Lua scripting, weather and a real-time sky clock, SSR and HDRI lighting, a cinematic camera, physics control over MCP, profiling, input action maps and a strategy camera rig, game packaging, the engine SDK (`find_package(quat3d)`), Linux / Windows / macOS builds with quat-mcp bundled, and the Coin Collector sample game |
 
 ## Breaking changes
 

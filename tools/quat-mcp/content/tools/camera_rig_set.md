@@ -1,0 +1,3 @@
+Move a camera rig's targets: `focus` (the ground point it orbits), `yaw_deg` (0 = +X, 90 = +Z), `distance` (metres), and `pitch_deg` when pitch does not follow the zoom. The camera glides there on its springs. Pass `"immediate": true` to jump there at once, for example before a `screenshot` so the shot comes from an exact, repeatable pose.
+
+Any other `camera_rig` field goes in `more`, e.g. `{"more": {"yaw_step_deg": 45, "bounds": {"shape": "rect", "min": [-60, -60], "max": [60, 60], "margin": 20}}}`. To add a rig to an entity, use `scene_update` with `{"camera_rig": {}}` (plus `camera` for the lens, and `camera_rig_input` to drive it from input actions).
