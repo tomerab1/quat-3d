@@ -511,6 +511,30 @@ JSON-RPC over loopback TCP to the engine.
     and grass flattened under snow. *(needs R25.1, R13.1 #64, G19.1)*
   - [ ] **R25.4 Frozen water**: ice and frost on water below 0 °C. *(needs
     R16)*
+- [ ] **R26 — Terrain materials and foliage alpha** *(owner report: "the
+  ground is one flat, glossy mint-green colour"; issues #15, #27, #60)*.
+  - [ ] **R26.1 Layered terrain material.** A `terrain.material` of up to 8
+    PBR layers (albedo, normal, packed roughness / AO / height) placed by
+    slope, altitude (world or snowline-relative), curvature and flow
+    (GPU-computed per tile from the heightmap) and painted weights (G19
+    paint channels), composited bottom to top and height-blended (Mittring
+    2007; Mishkinis 2013). Triplanar projection on steep slopes only,
+    hex-tiled stochastic texturing (Heitz & Neyret 2018; Mikkelsen 2022),
+    macro variation and a distance-dependent macro colour; evaluated in
+    terrain.slang through a Slang `ITerrainMaterial`. Presets
+    `temperate_meadow` (the default), `alpine`, `desert`, `forest_floor`;
+    codec, inspector, remote / MCP docs.
+  - [ ] **R26.2 Terrain texture sets.** CC0 Poly Haven sets (grass, dirt,
+    rock, cliff, forest floor, sand, snow) fetched with pinned hashes by
+    `scripts/fetch-polyhaven.py` and cooked by `quat-cook --terrain-layer`
+    to KTX2 / UASTC (BC7 / BC5 / ASTC at load) with mips; untextured layers
+    fall back to tinted procedural detail.
+  - [ ] **R26.3 Foliage alpha quality.** Hashed alpha testing (Wyman &
+    McGuire 2017) on the coverage-preserving mips (R12.11), resolved by TAA,
+    with the same coverage in the GBuffer and shadow passes.
+  - [ ] **R26.4 Tests and renders.** CPU tests of the blend rules, a GPU test
+    that layer selection follows slope and altitude, the `terrain-materials`
+    CI screenshot scene.
 
 ## P — Platforms & shipping
 

@@ -58,6 +58,7 @@ set(QUAT3D_SDK_SUPPORT_HEADERS
     engine/renderer/particles.hpp
     engine/renderer/physical_camera.hpp
     engine/scene/animation_system.hpp
-    engine/terrain/generator.hpp)
+    engine/terrain/generator.hpp
+    engine/terrain/material.hpp)
 
 set(QUAT3D_SDK_HEADERS ${QUAT3D_SDK_STABLE_HEADERS} ${QUAT3D_SDK_SUPPORT_HEADERS})

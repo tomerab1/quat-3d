@@ -429,6 +429,7 @@ add_library(engine_scene STATIC
     src/scene/component_json_physics.cpp
     src/scene/lens_json.cpp
     src/scene/particle_json.cpp
+    src/scene/terrain_material_json.cpp
     src/scene/script_component.cpp
     src/scene/scene_snapshot.cpp
     src/scene/component_json_animation.cpp
@@ -549,6 +550,7 @@ add_library(engine_terrain STATIC
     src/terrain/cpu_tile_jobs.cpp
     src/terrain/generator.cpp
     src/terrain/grid_erosion.cpp
+    src/terrain/material.cpp
     src/terrain/streamer.cpp
     src/terrain/talus_relax.cpp)
 target_link_libraries(engine_terrain PUBLIC engine_flags glm::glm)
