@@ -27,11 +27,21 @@ cmake --install build/release --prefix ~/sdk/quat3d-0.1
 scripts/package-sdk.sh build/release dist v0.1.0
 ```
 
-Use `ENGINE_PACKAGE_BUILD=ON` for an SDK you hand to others. Without it, the
-engine libraries embed this checkout's paths: slangc for shader hot reload,
-and the development data-root fallback. The CMake package files are
+Use `ENGINE_PACKAGE_BUILD=ON` for an SDK you hand to others. Without it,
+`engine_rhi` embeds this checkout's slangc path for shader hot reload (the
+development data-root fallback is compiled into the engine's own `game`
+executable only, not into any SDK library). The CMake package files are
 relocatable either way. `sdk_install` checks that they name neither the source
 tree nor the build tree.
+
+## Prerequisites
+
+- **Vulkan headers and loader**: the one link dependency the SDK does not
+  bundle in `deps/`. Install the Vulkan SDK on Windows and macOS (or set
+  `VULKAN_SDK`), or `libvulkan-dev` / your distribution's loader package on
+  Linux. `find_package(quat3d)` names this when it is missing.
+- CMake 3.22+ and Ninja (or Visual Studio's generator on Windows), and the
+  toolchain listed above.
 
 ## Layout
 
@@ -81,7 +91,7 @@ Targets:
 |---|---|
 | `quat3d::engine` | the engine libraries: core, scene/ECS, physics, script, terrain, navigation, networking, audio, asset, renderer |
 | `quat3d::remote` | `quat3d::engine` plus the remote-control endpoint and world commands |
-| `quat3d::editor` | `quat3d::engine` plus the ImGui editor layer (SDKs built with `ENGINE_EDITOR=ON`) |
+| `quat3d::editor` | **placeholder**: the ImGui editor layer's libraries (SDKs built with `ENGINE_EDITOR=ON`), but no editor headers are installed yet, so a game has nothing to call. It becomes usable with G17.1's per-game editor |
 
 `quat3d::engine` carries the settings the headers depend on: C++23,
 `GLM_FORCE_DEPTH_ZERO_TO_ONE` / `GLM_FORCE_RADIANS`, no exceptions, no RTTI,
@@ -89,8 +99,8 @@ and `ENGINE_EDITOR` when the SDK was built with it. Warning flags are not
 passed on to your code.
 
 `quat_add_game(<target> SOURCES … [ASSETS dir] [MATERIALS dir] [LIBRARIES …] [REMOTE] [EDITOR])`
-makes the executable's directory a data root (`engine/core/asset_root.hpp`
-layout):
+makes the executable's directory a data root, the layout the engine reads its
+data from (`assets/` next to `cooked/shaders/`):
 - the SDK's `cooked/shaders/`;
 - your `MATERIALS` cooked into `cooked/shaders/materials/`;
 - the SDK's `assets/fonts/`;
@@ -210,6 +220,7 @@ before uploading each SDK archive.
 | `sdk_config_refusal_version` | `find_package(quat3d 0.<N+1>)` is refused |
 | `sdk_config_refusal_compiler` | Linux: configuring with GCC is refused with the toolchain message |
 | `sdk_toolchain_rules` | the compiler-match rule, in script mode |
-| `layering_check` | nothing under `src/ include/ tools/ tests/ assets/ cmake/` refers to `games/` or `examples/`; installed headers include only installed headers (`cmake/CheckLayering.cmake`) |
+| `layering_check` | nothing under `src/ include/ tools/ tests/ assets/ cmake/` refers to `games/` or `examples/` (includes, Lua requires, any CMake path token); installed headers include only installed headers (`cmake/CheckLayering.cmake`). Its link-graph half runs at configure time: no engine target links a non-engine local target, by name or inside a generator expression (`cmake/CheckLinkLayering.cmake`) |
+| `layering_check_detects_violation` | both halves fail on fixture violations (`tests/sdk/layering_fixture/`) |
 
 Locally: `ctest --test-dir build/release -L sdk --output-on-failure`.

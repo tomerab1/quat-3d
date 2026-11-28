@@ -199,7 +199,7 @@ The engine repository (`quat-3d`) ships an SDK. The game repository
 **CI checks in this repository (P8 + G17.1).** Each one is a CTest test,
 so it runs on every PR with the rest of the headless suite.
 
-- **`layering_check`** (`scripts/check-layering.sh`) fails when:
+- **`layering_check`** (`cmake/CheckLayering.cmake`, link graph in `cmake/CheckLinkLayering.cmake`) fails when:
   - any file under `src/ include/ tools/ tests/ assets/ cmake/` refers to
     `games/` or `examples/` in an `#include`, a CMake path or a Lua
     `require`. The only exceptions are the top-level `option`-guarded

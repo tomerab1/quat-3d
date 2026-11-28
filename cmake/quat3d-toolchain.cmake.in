@@ -20,7 +20,7 @@ set(_quat3d_sdk_stdlib "@QUAT3D_SDK_STDLIB@")
 # The compiler, when the project did not choose one (a mismatch is reported
 # by quat3dConfig.cmake, naming this file).
 if(_quat3d_sdk_id STREQUAL "Clang" AND NOT CMAKE_CXX_COMPILER AND NOT DEFINED ENV{CXX})
-    set(CMAKE_C_COMPILER "clang")
+    set(CMAKE_C_COMPILER "@QUAT3D_SDK_C_COMPILER_NAME@")
     set(CMAKE_CXX_COMPILER "@QUAT3D_SDK_CXX_COMPILER_NAME@")
 elseif(_quat3d_sdk_id STREQUAL "MSVC" AND NOT CMAKE_CXX_COMPILER AND NOT DEFINED ENV{CXX})
     set(CMAKE_C_COMPILER "cl")

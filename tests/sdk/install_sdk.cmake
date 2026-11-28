@@ -29,7 +29,12 @@ foreach(required
         include/engine/scene/scene.hpp
         share/quat3d/cooked/shaders
         share/quat3d/assets/shaders/lib/material.slang
-        share/quat3d/assets/fonts)
+        share/quat3d/assets/fonts
+        # Licences of code compiled into lib/ that vcpkg's copyright files do
+        # not cover (a new FetchContent dependency adds its own here).
+        share/quat3d/licenses/acl-LICENSE
+        share/quat3d/licenses/rtm-LICENSE
+        share/quat3d/licenses/slang-LICENSE)
     if(NOT EXISTS "${PREFIX}/${required}")
         message(FATAL_ERROR "the installed SDK lacks ${required}")
     endif()

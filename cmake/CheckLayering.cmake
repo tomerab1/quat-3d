@@ -5,11 +5,16 @@
 #   - a file under src/ include/ tools/ tests/ assets/ cmake/ refers to games/
 #     or examples/ in an #include, a CMake path or a Lua require (the root
 #     CMakeLists.txt's option-guarded add_subdirectory lines are the only
-#     allowed references, and tests/sdk/, which builds examples/sdk-consumer
-#     against the installed SDK, the way a game does);
+#     allowed references, plus tests/sdk/CMakeLists.txt's -DSOURCE= line,
+#     which builds examples/sdk-consumer as a separate project against the
+#     installed SDK, the way a game does);
 #   - an installed public header (cmake/Quat3dSdkHeaders.cmake) includes an
 #     engine header that is not installed, a private src/ path, or a
 #     graphics-API header.
+# The link-graph half (no engine target links a sample target) runs at
+# configure time: cmake/CheckLinkLayering.cmake. The CTest
+# layering_check_detects_violation (tests/sdk/layering_negative_test.cmake)
+# proves both halves fail on violations.
 cmake_policy(VERSION 3.22)
 if(NOT ROOT)
     message(FATAL_ERROR "usage: cmake -DROOT=<repo> -P CheckLayering.cmake")
@@ -21,24 +26,47 @@ set(patterns
     "#[ \t]*include[ \t]*[<\"][^>\"]*(games|examples)/"
     "require[ \t]*\\(?[ \t]*[\"'][^\"']*(games|examples)[./]"
     "(\\$\\{[A-Za-z_]*(SOURCE|PROJECT)_DIR\\}|\\.\\.)/(games|examples)/")
+# In CMake files any path token naming games/ or examples/ counts (a relative
+# add_subdirectory(examples/x) or target_sources(... examples/x.cpp) too),
+# outside comments.
+set(cmake_pattern "(^|[^A-Za-z0-9_.-])(games|examples)/")
+# tests/sdk/CMakeLists.txt builds the SDK consumer as a separate project
+# against the installed SDK (-DSOURCE=...), the way a game does; nothing
+# links it. That line is the only sanctioned reference outside the root.
+set(sanctioned "^[ \t]*-DSOURCE=[^ ]*PROJECT_SOURCE_DIR[^ ]*/examples/sdk-consumer ")
 foreach(dir src include tools tests assets cmake)
     file(GLOB_RECURSE files "${ROOT}/${dir}/*.cpp" "${ROOT}/${dir}/*.hpp" "${ROOT}/${dir}/*.h"
         "${ROOT}/${dir}/*.lua" "${ROOT}/${dir}/*.cmake" "${ROOT}/${dir}/CMakeLists.txt"
         "${ROOT}/${dir}/*.rs" "${ROOT}/${dir}/*.slang")
     foreach(file IN LISTS files)
         file(RELATIVE_PATH rel "${ROOT}" "${file}")
-        if(rel MATCHES "^tests/sdk/" OR rel MATCHES "^cmake/CheckLayering.cmake$"
+        # Fixture trees of the negative test violate the rules on purpose.
+        if(rel MATCHES "^tests/sdk/layering_fixture/" OR rel MATCHES "^cmake/CheckLayering.cmake$"
            OR rel MATCHES "/target/")
             continue()
         endif()
         file(STRINGS "${file}" lines)
         foreach(pattern IN LISTS patterns)
             foreach(line IN LISTS lines)
+                if(rel STREQUAL "tests/sdk/CMakeLists.txt" AND line MATCHES "${sanctioned}")
+                    continue()
+                endif()
                 if(line MATCHES "${pattern}")
                     list(APPEND problems "${rel}: refers to a sample: ${line}")
                 endif()
             endforeach()
         endforeach()
+        if(rel MATCHES "(\\.cmake|CMakeLists\\.txt)$")
+            foreach(line IN LISTS lines)
+                string(REGEX REPLACE "#.*$" "" code "${line}")
+                if(rel STREQUAL "tests/sdk/CMakeLists.txt" AND code MATCHES "${sanctioned}")
+                    continue()
+                endif()
+                if(code MATCHES "${cmake_pattern}")
+                    list(APPEND problems "${rel}: refers to a sample: ${line}")
+                endif()
+            endforeach()
+        endif()
     endforeach()
 endforeach()
 file(STRINGS "${ROOT}/CMakeLists.txt" lines)

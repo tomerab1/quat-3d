@@ -88,7 +88,17 @@ find_dependency(Threads)
 find_dependency(glm CONFIG)
 find_dependency(EnTT CONFIG)
 find_dependency(nlohmann_json CONFIG)
-find_dependency(Vulkan)
+# Vulkan is the one link dependency deps/ does not carry: the loader and
+# headers come from the system (the Vulkan SDK on Windows and macOS,
+# libvulkan-dev or another loader package on Linux). Name that prerequisite
+# instead of FindVulkan's generic error.
+find_package(Vulkan QUIET)
+if(NOT Vulkan_FOUND)
+    set(${CMAKE_FIND_PACKAGE_NAME}_NOT_FOUND_MESSAGE
+        "quat3d needs the Vulkan headers and loader, which are not bundled in the SDK: install the Vulkan SDK (Windows, macOS; or set VULKAN_SDK) or libvulkan-dev (Linux).")
+    set(${CMAKE_FIND_PACKAGE_NAME}_FOUND FALSE)
+    return()
+endif()
 find_dependency(VulkanMemoryAllocator CONFIG)
 find_dependency(fastgltf CONFIG)
 find_dependency(Ktx CONFIG)

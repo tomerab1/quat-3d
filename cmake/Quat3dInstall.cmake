@@ -53,6 +53,15 @@ if(ENGINE_EDITOR)
     list(APPEND QUAT3D_EXPORTED_TARGETS engine_editor quat3d_editor)
 endif()
 
+# layering_check's link-graph half: once every target exists (samples are
+# added later), no engine target may link a non-engine local target.
+# engine_cook is an engine library outside the SDK; acl_headers is the
+# configure-time ACL/RTM helper (cmake/FetchAcl.cmake).
+include(${CMAKE_CURRENT_LIST_DIR}/CheckLinkLayering.cmake)
+set_property(GLOBAL PROPERTY QUAT3D_LAYERING_ENGINE_TARGETS ${QUAT3D_EXPORTED_TARGETS} engine_cook)
+set_property(GLOBAL PROPERTY QUAT3D_LAYERING_ALLOWED_LOCAL acl_headers)
+cmake_language(DEFER DIRECTORY ${PROJECT_SOURCE_DIR} CALL quat3d_check_link_layering)
+
 # Quat3dGame.cmake works from a source checkout too (QUAT3D_SOURCE_DIR).
 set(QUAT3D_DATA_DIR ${PROJECT_SOURCE_DIR} CACHE INTERNAL "")
 set(QUAT3D_SLANGC ${SLANGC_EXECUTABLE} CACHE INTERNAL "")
@@ -99,6 +108,9 @@ else()
     set(QUAT3D_SDK_STDLIB libstdc++)
 endif()
 get_filename_component(QUAT3D_SDK_CXX_COMPILER_NAME "${CMAKE_CXX_COMPILER}" NAME)
+# The matching C driver (clang++-18 -> clang-18), so a game that enables C
+# does not mix compiler versions.
+string(REPLACE "clang++" "clang" QUAT3D_SDK_C_COMPILER_NAME "${QUAT3D_SDK_CXX_COMPILER_NAME}")
 
 configure_package_config_file(
     ${CMAKE_CURRENT_LIST_DIR}/quat3dConfig.cmake.in
@@ -178,6 +190,12 @@ install(DIRECTORY ${PROJECT_SOURCE_DIR}/assets/shaders/lib/
     FILES_MATCHING PATTERN "*.slang")
 install(DIRECTORY ${PROJECT_SOURCE_DIR}/assets/fonts/
     DESTINATION ${QUAT3D_SHARE_DIR}/assets/fonts)
+# Licences of code compiled into the SDK's libraries that does not come
+# through vcpkg (deps/share/<port>/copyright covers those): ACL and RTM are
+# header-only FetchContent dependencies built into libengine_animation
+# (cmake/FetchAcl.cmake). sdk_install requires every file named here.
+install(FILES ${acl_SOURCE_DIR}/LICENSE DESTINATION ${QUAT3D_SHARE_DIR}/licenses RENAME acl-LICENSE)
+install(FILES ${rtm_SOURCE_DIR}/LICENSE DESTINATION ${QUAT3D_SHARE_DIR}/licenses RENAME rtm-LICENSE)
 # LICENSE / THIRD_PARTY_NOTICES.md arrive with the release-notes work (#96).
 install(FILES
     ${PROJECT_SOURCE_DIR}/LICENSE

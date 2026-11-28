@@ -402,7 +402,7 @@ JSON-RPC over loopback TCP to the engine.
   - `sdk_consumer` (`examples/sdk-consumer`, built only against the
     installed package);
   - the version and compiler refusals;
-  - `layering_check`.
+  - `layering_check` (text and link graph) with a negative test.
 
   The engine also builds as a sub-project with the same target names
   (source override for co-development).
@@ -414,6 +414,8 @@ JSON-RPC over loopback TCP to the engine.
   - `CHANGELOG.md` "Breaking" sections per the policy, once #96's CHANGELOG
     lands;
   - `quat_add_game_module()` and module registration (G17.1);
+  - `quat3d::editor` is exported as a placeholder: install the editor
+    headers a per-game editor needs (with G17.1);
   - stable headers that do not exist yet (`engine/game/*`, `geometry/*`,
     `camera_rig`, `spline`, `command_stack`, …) join the set as their items
     land.

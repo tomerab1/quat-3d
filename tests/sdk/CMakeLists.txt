@@ -6,6 +6,7 @@
 #   sdk_config_refusal_compiler   a mismatched compiler is refused (Linux: g++)
 #   sdk_toolchain_rules           the compiler-match rule, in script mode
 #   layering_check                no engine file depends on a game or sample
+#   layering_check_detects_violation  both layering halves fail on fixture violations
 set(sdk_test_dir ${CMAKE_BINARY_DIR}/sdk-test)
 set(sdk_prefix ${sdk_test_dir}/prefix)
 set(run_project ${CMAKE_CURRENT_SOURCE_DIR}/run_project.cmake)
@@ -58,4 +59,8 @@ add_test(NAME sdk_toolchain_rules
             -P ${CMAKE_CURRENT_SOURCE_DIR}/toolchain_check_test.cmake)
 add_test(NAME layering_check
     COMMAND ${CMAKE_COMMAND} -DROOT=${PROJECT_SOURCE_DIR} -P ${PROJECT_SOURCE_DIR}/cmake/CheckLayering.cmake)
-set_tests_properties(sdk_install ${sdk_tests} sdk_toolchain_rules layering_check PROPERTIES LABELS sdk)
+add_test(NAME layering_check_detects_violation
+    COMMAND ${CMAKE_COMMAND} -DSOURCE_DIR=${PROJECT_SOURCE_DIR} -DBINARY=${sdk_test_dir}/layering-link
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/layering_negative_test.cmake)
+set_tests_properties(sdk_install ${sdk_tests} sdk_toolchain_rules layering_check
+    layering_check_detects_violation PROPERTIES LABELS sdk)

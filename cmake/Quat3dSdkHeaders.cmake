@@ -13,7 +13,7 @@
 #
 # Every installed header must compile alone against the installed tree with
 # only glm, EnTT and nlohmann_json (the public_headers_self_contained test)
-# and must not include a header outside this list (scripts/check-layering.sh).
+# and must not include a header outside this list (layering_check, cmake/CheckLayering.cmake).
 # Graphics-API headers (engine/rhi/*, engine/renderer/*_pass.hpp,
 # vulkan/vulkan.h, vk_mem_alloc.h) are never installed: a game that needs
 # rendering access gets a minimal Vulkan-free interface promoted into this set.
