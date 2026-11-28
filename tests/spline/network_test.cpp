@@ -7,6 +7,7 @@
 #include <gtest/gtest.h>
 
 #include "engine/spline/network.hpp"
+#include "engine/spline/queries.hpp"
 
 namespace quat::test {
 namespace {
@@ -175,6 +176,22 @@ TEST(SplineNetwork, IdsAreStableUnderLocalEditsAndInputOrder) {
     for (const auto id : edges) kept += grown_edges.contains(id) ? 1U : 0U;
     EXPECT_EQ(kept, edges.size() - 1);
     EXPECT_EQ(grown.net.edges.size(), n.net.edges.size() + 3); // split edge -> 2, plus curve 4's two halves
+}
+
+// Far from the origin (float ulp ~ 0.004 m at 5e4) chords must follow the
+// curve, not rounding noise: no phantom crossings, the same network.
+TEST(SplineNetwork, LargeCoordinatesFindNoPhantomCrossings) {
+    for (const float b : {1.0e3F, 5.0e4F, 1.0e5F, 5.0e5F}) {
+        Net n;
+        n.add(1, line({{b, 0, b}, {b + 50, 0, b + 40}, {b + 100, 0, b}, {b + 150, 0, b + 40}},
+                      sp::SplineKind::centripetal_catmull_rom));
+        n.add(2, line({{b + 75, 0, b - 10}, {b + 75, 0, b + 60}}));
+        EXPECT_TRUE(sp::self_crossings_xz(n.curves[0]).empty()) << "b = " << b;
+        EXPECT_EQ(sp::crossings_xz(n.curves[0], n.curves[1]).size(), 1U) << "b = " << b;
+        n.build();
+        EXPECT_EQ(n.net.nodes.size(), 5U) << "b = " << b;
+        EXPECT_EQ(n.net.edges.size(), 4U) << "b = " << b;
+    }
 }
 
 TEST(SplineNetwork, RejectsBadInput) {

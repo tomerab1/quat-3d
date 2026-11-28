@@ -3,6 +3,7 @@
 // through the component codec (entity:set("spline", {...})).
 
 #include <algorithm>
+#include <cmath>
 #include <string>
 
 #include <entt/entity/registry.hpp>
@@ -79,6 +80,55 @@ void drape_from_cache(const Resolved& r, spline::CurveSample& s) {
         t["right"] = f.right;
     }
     return t;
+}
+
+// spline.fit options, checked like the remote method's: known keys only,
+// numbers in range, `output` one of two names.
+[[nodiscard]] Result<void> read_stroke_options(const sol::table& opts, spline::StrokeOptions& o) {
+    struct Range {
+        const char* key;
+        float*      out;
+        float       lo;
+        float       hi;
+    };
+    const Range numbers[] = {{"sample_spacing", &o.sample_spacing, 0.01F, 100.0F},
+                             {"jitter_tolerance", &o.jitter_tolerance, 0.0F, 100.0F},
+                             {"fit_tolerance", &o.fit_tolerance, 0.001F, 100.0F},
+                             {"corner_cos", &o.corner_cos, -1.0F, 1.0F},
+                             {"close_radius", &o.close_radius, 0.0F, 1000.0F},
+                             {"min_length", &o.min_length, 0.0F, 1.0e6F},
+                             {"width", &o.width, 0.0F, spline::k_max_width}};
+    for (const auto& [key_obj, value] : opts) {
+        if (key_obj.get_type() != sol::type::string) return fail("spline.fit: option keys must be names");
+        const std::string key = key_obj.as<std::string>();
+        if (key == "output") {
+            const std::string out = value.is<std::string>() ? value.as<std::string>() : std::string();
+            if (out == "cubic_bezier") {
+                o.output = spline::StrokeOutput::cubic_bezier;
+            } else if (out == "catmull_rom") {
+                o.output = spline::StrokeOutput::catmull_rom;
+            } else {
+                return fail("spline.fit: output must be \"catmull_rom\" or \"cubic_bezier\"");
+            }
+            continue;
+        }
+        const Range* r = nullptr;
+        for (const Range& n : numbers) {
+            if (key == n.key) r = &n;
+        }
+        if (r == nullptr) {
+            return fail("spline.fit: unknown option '" + key +
+                        "' (known: sample_spacing, jitter_tolerance, fit_tolerance, corner_cos, close_radius, "
+                        "min_length, width, output)");
+        }
+        const float v = value.get_type() == sol::type::number ? value.as<float>() : std::nanf("");
+        if (!(v >= r->lo && v <= r->hi)) {
+            return fail("spline.fit: " + key + " must be a number in [" + std::to_string(r->lo) + ", " +
+                        std::to_string(r->hi) + "]");
+        }
+        *r->out = v;
+    }
+    return {};
 }
 
 } // namespace
@@ -183,19 +233,7 @@ void register_spline(LuaVm& vm, ApiContext& c) {
               }
               spline::StrokeOptions o;
               if (opts) {
-                  o.fit_tolerance = opts->get_or("fit_tolerance", o.fit_tolerance);
-                  o.jitter_tolerance = opts->get_or("jitter_tolerance", o.jitter_tolerance);
-                  o.sample_spacing = opts->get_or("sample_spacing", o.sample_spacing);
-                  o.corner_cos = opts->get_or("corner_cos", o.corner_cos);
-                  o.close_radius = opts->get_or("close_radius", o.close_radius);
-                  o.min_length = opts->get_or("min_length", o.min_length);
-                  o.width = opts->get_or("width", o.width);
-                  const std::string output = opts->get_or("output", std::string("catmull_rom"));
-                  if (output == "cubic_bezier") {
-                      o.output = spline::StrokeOutput::cubic_bezier;
-                  } else if (output != "catmull_rom") {
-                      return fail("spline.fit: output must be \"catmull_rom\" or \"cubic_bezier\"");
-                  }
+                  if (auto ok = read_stroke_options(*opts, o); !ok.value) return std::unexpected(ok.value.error());
               }
               auto fit = spline::fit_stroke(stroke, o);
               if (!fit) return fail("spline.fit: " + fit.error().message);

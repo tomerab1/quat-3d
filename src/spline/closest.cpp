@@ -13,6 +13,7 @@ namespace {
 constexpr int k_coarse_samples = 16;
 constexpr int k_newton_steps = 8;
 constexpr int k_flatten_depth = 16;
+constexpr std::size_t k_flatten_budget = 1U << 20; // chords per flatten() call
 
 [[nodiscard]] float dot3(const glm::vec3& a, const glm::vec3& b) { return a.x * b.x + a.y * b.y + a.z * b.z; }
 
@@ -82,18 +83,30 @@ struct Candidate {
     return std::sqrt(worst);
 }
 
-void flatten_segment(const glm::vec3 (&p)[4], float u0, float u1, float base, float tol, int depth,
-                     std::vector<PolylinePoint>& out) {
-    if (depth >= k_flatten_depth || flatness(p) <= tol) {
-        out.push_back({p[3], base + u1});
+// Subdivides `p` (control points relative to `origin`, so flatness and the
+// split arithmetic run on small numbers even far from the world origin) until
+// it is within `tol` of its chord.
+void flatten_segment(const glm::vec3 (&p)[4], const glm::vec3& origin, float u0, float u1, float base, float tol,
+                     int depth, int max_depth, std::vector<PolylinePoint>& out) {
+    if (depth >= max_depth || flatness(p) <= tol) {
+        out.push_back({origin + p[3], base + u1});
         return;
     }
     glm::vec3 l[4];
     glm::vec3 r[4];
     bezier_split(p, 0.5F, l, r);
     const float m = 0.5F * (u0 + u1);
-    flatten_segment(l, u0, m, base, tol, depth + 1, out);
-    flatten_segment(r, m, u1, base, tol, depth + 1, out);
+    flatten_segment(l, origin, u0, m, base, tol, depth + 1, max_depth, out);
+    flatten_segment(r, origin, m, u1, base, tol, depth + 1, max_depth, out);
+}
+
+// The spacing of floats near the curve's largest coordinate: a tolerance
+// below a few of these chases rounding noise (and finds phantom crossings).
+[[nodiscard]] float coordinate_ulp(const Curve& c) {
+    const Bounds& b = c.bounds();
+    float m = 0.0F;
+    for (int a = 0; a < 3; ++a) m = std::max({m, std::abs(b.min[a]), std::abs(b.max[a])});
+    return std::nextafter(m, std::numeric_limits<float>::infinity()) - m;
 }
 
 } // namespace
@@ -136,10 +149,19 @@ std::vector<PolylinePoint> flatten(const Curve& curve, float tolerance) {
     std::vector<PolylinePoint> out;
     const auto segs = curve.segments();
     if (segs.empty()) return out;
-    const float tol = std::isfinite(tolerance) ? std::max(tolerance, 1.0e-6F) : 1.0e-3F;
+    float tol = std::isfinite(tolerance) ? std::max(tolerance, 1.0e-6F) : 1.0e-3F;
+    tol = std::max(tol, 8.0F * coordinate_ulp(curve));
+    // A total chord budget: each segment may split at most 2^depth times.
+    int max_depth = 1;
+    while (max_depth < k_flatten_depth && (segs.size() << (max_depth + 1)) <= k_flatten_budget) ++max_depth;
+    out.reserve(segs.size() + 1);
     out.push_back({segs[0].p[0], 0.0F});
     for (std::size_t i = 0; i < segs.size(); ++i) {
-        flatten_segment(segs[i].p, 0.0F, 1.0F, static_cast<float>(i), tol, 0, out);
+        const glm::vec3 origin = segs[i].p[0];
+        const glm::vec3 local[4] = {glm::vec3(0.0F), segs[i].p[1] - origin, segs[i].p[2] - origin,
+                                    segs[i].p[3] - origin};
+        flatten_segment(local, origin, 0.0F, 1.0F, static_cast<float>(i), tol, 0, max_depth, out);
+        out.back().position = segs[i].p[3]; // the segment's exact end, not origin + (end - origin)
     }
     return out;
 }

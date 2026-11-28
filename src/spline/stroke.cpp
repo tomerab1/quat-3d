@@ -33,14 +33,18 @@ constexpr int k_max_refinements = 12;
 }
 
 // A run of freehand points (resampled, de-jittered) split at its corners.
-// `loop`: the run is a whole closed stroke, ending where it starts.
-void fit_freehand(std::span<const glm::vec3> raw, const StrokeOptions& o, bool loop, std::vector<Segment>& out) {
+// `loop`: the run is a whole closed stroke, ending where it starts. Appends
+// the pieces to `out` and, per piece, whether its start is a sharp joint
+// (a corner, or the joint with what came before) to `sharp`. Returns whether
+// a loop's seam is smooth (one tangent across it).
+bool fit_freehand(std::span<const glm::vec3> raw, const StrokeOptions& o, bool loop, std::vector<Segment>& out,
+                  std::vector<char>& sharp) {
     const std::vector<glm::vec3> dense = resample_polyline(raw, o.sample_spacing);
     const std::vector<std::size_t> keep = simplify_rdp(dense, o.jitter_tolerance);
     std::vector<glm::vec3> clean;
     clean.reserve(keep.size());
     for (const std::size_t i : keep) clean.push_back(dense[i]);
-    if (clean.size() < 2) return;
+    if (clean.size() < 2) return false;
     // Corners: interior vertices of the simplified polyline that turn sharply.
     std::vector<std::size_t> cuts{0};
     for (std::size_t i = 1; i + 1 < clean.size(); ++i) {
@@ -63,8 +67,10 @@ void fit_freehand(std::span<const glm::vec3> raw, const StrokeOptions& o, bool l
         const glm::vec3 t1 = dot3(seam, seam) > 0.0F ? seam : glm::vec3(0.0F);
         const glm::vec3 t2 = dot3(seam, seam) > 0.0F ? -seam : glm::vec3(0.0F);
         const std::vector<Segment> segs = fit_cubics(pts, o.fit_tolerance, t1, t2);
+        for (std::size_t k = 0; k < segs.size(); ++k) sharp.push_back(k == 0 && (c > 0 || !out.empty()) ? 1 : 0);
         out.insert(out.end(), segs.begin(), segs.end());
     }
+    return dot3(seam, seam) > 0.0F;
 }
 
 // Largest distance between a Catmull-Rom segment and the stretch [ua, ub]
@@ -94,15 +100,22 @@ void fit_freehand(std::span<const glm::vec3> raw, const StrokeOptions& o, bool l
 
 // Centripetal Catmull-Rom points that follow the fitted Béziers within the
 // tolerance: start from their anchors and add each over-tolerance span's
-// midpoint until none is left (or the point budget is reached).
-[[nodiscard]] std::vector<glm::vec3> to_catmull_rom(const std::vector<Segment>& bez, bool closed,
-                                                    const StrokeOptions& o) {
+// midpoint until none is left (or the point budget is reached). A sharp
+// joint (a corner, either end of a straight segment) is a doubled knot: the
+// zero knot gap gives chord tangents on both sides (segments.cpp), so the
+// corner stays exactly sharp and a straight run between two doubled knots is
+// exactly straight.
+[[nodiscard]] std::vector<glm::vec3> to_catmull_rom(const std::vector<Segment>& bez, const std::vector<char>& sharp,
+                                                    bool closed, const StrokeOptions& o) {
     struct Knot {
         std::size_t bez;
         float       u;
     };
     std::vector<Knot> knots;
-    for (std::size_t i = 0; i < bez.size(); ++i) knots.push_back({i, 0.0F});
+    for (std::size_t i = 0; i < bez.size(); ++i) {
+        knots.push_back({i, 0.0F});
+        if (sharp[i] != 0 && (i > 0 || closed)) knots.push_back({i, 0.0F});
+    }
     if (!closed) knots.push_back({bez.size() - 1, 1.0F});
     auto position = [&bez](const Knot& k) { return bezier_point(bez[k.bez].p, k.u); };
     for (int round = 0; round < k_max_refinements; ++round) {
@@ -116,6 +129,7 @@ void fit_freehand(std::span<const glm::vec3> raw, const StrokeOptions& o, bool l
             const Knot a = knots[j];
             const Knot b = knots[(j + 1) % knots.size()];
             next.push_back(a);
+            if (b.bez == a.bez && b.u == a.u) continue; // the two halves of a doubled knot
             const float ub = b.bez == a.bez && b.u > a.u ? b.u : 1.0F;
             if (knots.size() + (refined ? 1U : 0U) >= o.max_points) continue;
             if (deviation(cr[j], bez[a.bez], a.u, ub) > o.fit_tolerance) {
@@ -168,6 +182,12 @@ std::expected<StrokeFit, core::Error> fit_stroke(std::span<const StrokePoint> in
         }
         if (i > 0) length += len3(p - input[i - 1].position);
     }
+    if (length / o.sample_spacing > static_cast<float>(k_max_resampled)) {
+        return std::unexpected(core::make_error(
+            "sample_spacing: use >= " + std::to_string(length / static_cast<float>(k_max_resampled)) +
+            " m for this " + std::to_string(length) + " m stroke (at most " + std::to_string(k_max_resampled) +
+            " resampled points)"));
+    }
     if (!(length >= o.min_length)) {
         return std::unexpected(core::make_error("the stroke is " + std::to_string(length) +
                                                 " m long, shorter than min_length " + std::to_string(o.min_length)));
@@ -191,16 +211,19 @@ std::expected<StrokeFit, core::Error> fit_stroke(std::span<const StrokePoint> in
     }
     // Pieces: runs of freehand points, and single straight segments.
     std::vector<Segment> bez;
+    std::vector<char> sharp; // per piece: its start is a sharp joint
+    bool smooth_seam = false;
     const bool single_freehand =
         std::none_of(pts.begin() + 1, pts.end(), [](const StrokePoint& p) { return p.straight; });
     std::vector<glm::vec3> run{pts[0].position};
     auto flush = [&](bool loop) {
-        if (run.size() >= 2) fit_freehand(run, o, loop, bez);
+        if (run.size() >= 2) smooth_seam = fit_freehand(run, o, loop, bez, sharp);
         run.clear();
     };
     for (std::size_t i = 1; i < pts.size(); ++i) {
         if (pts[i].straight) {
             flush(false);
+            sharp.push_back(bez.empty() ? 0 : 1);
             bez.push_back(line_segment(pts[i - 1].position, pts[i].position));
             run.push_back(pts[i].position);
         } else {
@@ -209,7 +232,10 @@ std::expected<StrokeFit, core::Error> fit_stroke(std::span<const StrokePoint> in
     }
     flush(closed && single_freehand);
     if (bez.empty()) return std::unexpected(core::make_error("the stroke has no extent after resampling"));
-    if (closed) bez.back().p[3] = bez.front().p[0]; // exact seam
+    if (closed) {
+        bez.back().p[3] = bez.front().p[0]; // exact seam
+        sharp[0] = smooth_seam ? 0 : 1;
+    }
 
     StrokeFit fit;
     fit.closed = closed;
@@ -223,7 +249,7 @@ std::expected<StrokeFit, core::Error> fit_stroke(std::span<const StrokePoint> in
         if (!closed) fit.spline.points.push_back({bez.back().p[3], o.width, 0.0F, 0});
     } else {
         fit.spline.kind = SplineKind::centripetal_catmull_rom;
-        for (const glm::vec3& p : to_catmull_rom(bez, closed, o)) fit.spline.points.push_back({p, o.width, 0.0F, 0});
+        for (const glm::vec3& p : to_catmull_rom(bez, sharp, closed, o)) fit.spline.points.push_back({p, o.width, 0.0F, 0});
     }
     if (fit.spline.points.size() > o.max_points) {
         return std::unexpected(core::make_error("the fit needs " + std::to_string(fit.spline.points.size()) +

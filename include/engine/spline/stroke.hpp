@@ -36,8 +36,11 @@ namespace engine::spline {
 // ---- Pipeline stages (exposed for reuse and tests) -------------------------
 
 // Points every `spacing` metres along the polyline (3D arc length), first and
-// last included. Fewer than two input points are returned as they are.
-[[nodiscard]] std::vector<glm::vec3> resample_polyline(std::span<const glm::vec3> points, float spacing);
+// last included. Fewer than two input points are returned as they are. At
+// most `max_points` points: a spacing too fine for the length is widened.
+inline constexpr std::size_t k_max_resampled = 1U << 20;
+[[nodiscard]] std::vector<glm::vec3> resample_polyline(std::span<const glm::vec3> points, float spacing,
+                                                       std::size_t max_points = k_max_resampled);
 
 // Ramer–Douglas–Peucker (U. Ramer 1972; D. Douglas & T. Peucker 1973):
 // indices of the points kept so that no dropped point is farther than

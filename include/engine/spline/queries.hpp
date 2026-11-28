@@ -58,6 +58,10 @@ struct CrossingOptions {
 
 // A curve flattened to a polyline within `tolerance` metres (adaptive:
 // straight runs stay one chord). Each point carries its curve parameter.
+// Segments are subdivided in coordinates relative to their start, and the
+// tolerance is at least 8 ulps of the curve's largest coordinate, so far
+// from the origin the chords follow the curve, not float rounding. At most
+// about 2^20 chords per call (fewer subdivisions per segment on huge curves).
 struct PolylinePoint {
     glm::vec3 position{0.0F};
     float     param = 0.0F;

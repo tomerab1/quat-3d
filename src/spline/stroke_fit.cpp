@@ -184,12 +184,18 @@ private:
 
 } // namespace
 
-std::vector<glm::vec3> resample_polyline(std::span<const glm::vec3> pts, float spacing) {
+std::vector<glm::vec3> resample_polyline(std::span<const glm::vec3> pts, float spacing, std::size_t max_points) {
     std::vector<glm::vec3> out;
     if (pts.size() < 2 || !(spacing > 0.0F) || !std::isfinite(spacing)) {
         out.assign(pts.begin(), pts.end());
         return out;
     }
+    // Never more than max_points: a spacing too fine for the length widens.
+    float total = 0.0F;
+    for (std::size_t i = 1; i < pts.size(); ++i) total += len3(pts[i] - pts[i - 1]);
+    const std::size_t cap = std::max<std::size_t>(max_points, 2);
+    if (total / spacing > static_cast<float>(cap - 2)) spacing = total / static_cast<float>(cap - 2);
+    out.reserve(std::min<std::size_t>(cap, static_cast<std::size_t>(total / spacing) + 2));
     out.push_back(pts[0]);
     float carry = 0.0F; // distance walked since the last emitted point
     for (std::size_t i = 1; i < pts.size(); ++i) {
@@ -197,12 +203,17 @@ std::vector<glm::vec3> resample_polyline(std::span<const glm::vec3> pts, float s
         const glm::vec3 b = pts[i];
         const float seg = len3(b - a);
         if (!(seg > 0.0F)) continue;
-        float s = spacing - carry; // first emission on this segment
-        while (s <= seg) {
-            out.push_back(a + (b - a) * (s / seg));
-            s += spacing;
+        // Emissions at first + k * spacing, by integer k: a float accumulator
+        // stops advancing once its ulp exceeds the spacing (long segments).
+        const float first = spacing - carry;
+        float last = -carry; // position of the last emission on this segment's scale
+        for (std::size_t k = 0;; ++k) {
+            const float s_k = first + spacing * static_cast<float>(k);
+            if (!(s_k <= seg) || out.size() + 1 >= cap) break;
+            out.push_back(a + (b - a) * (s_k / seg));
+            last = s_k;
         }
-        carry = seg - (s - spacing);
+        carry = seg - last;
     }
     // The last point exactly (replacing a sample that landed very close).
     if (len3(out.back() - pts.back()) < 0.5F * spacing && out.size() > 1) {

@@ -145,18 +145,24 @@ TEST(SplineStroke, StraightSegmentsStayStraightAndCornersSharp) {
     ASSERT_GE(bez->beziers.size(), 2U);
     for (int k = 0; k < 4; ++k) EXPECT_EQ(bez->beziers[0].p[k].z, 0.0F) << "exactly straight";
 
-    const auto cr = sp::fit_stroke(pts); // Catmull-Rom: refined to the tolerance
+    // Catmull-Rom output (the default): doubled knots at the corner keep the
+    // straight run exactly straight and the corner exactly sharp.
+    const auto cr = sp::fit_stroke(pts);
     ASSERT_TRUE(cr.has_value());
     const sp::Curve c = curve_of(*cr);
-    float worst = 0.0F;
-    for (int i = 0; i <= 100; ++i) {
-        const glm::vec3 p = c.sample_at(c.length() * static_cast<float>(i) / 100.0F).position;
-        // Distance from the L the user drew.
-        const float d = p.x <= 10.0F && p.z <= 0.0F ? std::abs(p.z) : std::min(std::abs(p.x - 10.0F), std::abs(p.z));
-        worst = std::max(worst, p.x < 10.0F && p.z > 0.0F ? std::min(10.0F - p.x, p.z) : d);
+    const float corner = sp::closest_point(c, {10, 0, 0})->distance;
+    EXPECT_NEAR(corner, 10.0F, 1e-4F);
+    for (int i = 0; i <= 200; ++i) {
+        const glm::vec3 p = c.sample_at(corner * static_cast<float>(i) / 200.0F).position;
+        EXPECT_EQ(p.z, 0.0F) << "the straight run bows at x = " << p.x;
+        EXPECT_EQ(p.y, 0.0F);
     }
-    EXPECT_LE(worst, 0.1F + 1e-3F);
-    EXPECT_LE(sp::closest_point(c, {10, 0, 0})->gap, 0.1F) << "the corner stays sharp";
+    EXPECT_LE(sp::closest_point(c, {10, 0, 0})->gap, 1e-6F) << "the corner stays sharp";
+    // Past the corner the freehand run is straight too (it was drawn straight).
+    for (int i = 1; i <= 50; ++i) {
+        const glm::vec3 p = c.sample_at(corner + (c.length() - corner) * static_cast<float>(i) / 50.0F).position;
+        EXPECT_NEAR(p.x, 10.0F, 1e-4F);
+    }
 }
 
 TEST(SplineStroke, RefusesBadStrokes) {
