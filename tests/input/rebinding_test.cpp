@@ -84,5 +84,19 @@ TEST(InputRebinding, FileRoundTripAndBadFilesChangeNothing) {
     EXPECT_ERR(engine::input::load_overrides_file(c, path));
 }
 
+// Review #111: a rebind survives a map reload only onto an action of the
+// same type.
+TEST(InputRebinding, MapReloadDropsRebindsWhoseTypeChanged) {
+    Actions a;
+    ASSERT_OK(a.rebind("jump", {binding("key:j")}));
+    ASSERT_OK(a.rebind("move_x", {binding("gamepad:right_x")}));
+    engine::input::ActionMap changed = engine::input::default_action_map();
+    changed.actions[static_cast<std::size_t>(changed.find_action("jump"))].type = engine::input::ActionType::axis1d;
+    a.set_map(changed);
+    const json o = a.overrides_json()["bindings"];
+    EXPECT_FALSE(o.contains("jump")) << "the type changed";
+    EXPECT_EQ(o["move_x"], json::array({"gamepad:right_x"}));
+}
+
 } // namespace
 } // namespace quat::test

@@ -68,6 +68,9 @@ TEST_F(WorldInput, InjectDrivesTheActionForFrames) {
     EXPECT_NE(err("input.inject", {{"action", "warp"}, {"value", 1}}, rc::invalid_params).find("known:"),
               std::string::npos);
     err("input.inject", {{"action", "jump"}, {"value", 1}, {"frames", 0}}, rc::invalid_params);
+    EXPECT_NE(err("input.inject", {{"action", "move_x"}, {"value", {1, 0}}}, rc::invalid_params).find("axis1d"),
+              std::string::npos)
+        << "a 2D value on a 1D action is refused, not truncated";
 }
 
 TEST_F(WorldInput, BindRebindsSavesAndResets) {

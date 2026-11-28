@@ -106,8 +106,12 @@ RpcResult input_inject(Context& ctx, const Json& params) {
     if (!ok || glm::any(glm::greaterThan(glm::abs(v), glm::vec2(1.0e5F)))) {
         return bad_params("value: expected true / false (button), a number (axis1d) or [x, y] (axis2d)");
     }
-    if (d.type == input::ActionType::axis2d && value->is_number()) {
+    if (d.type == input::ActionType::axis2d && !value->is_array()) {
         return bad_params("value: '" + d.name + "' is an axis2d action: give [x, y]");
+    }
+    if (d.type != input::ActionType::axis2d && value->is_array()) {
+        return bad_params("value: '" + d.name + "' is a " + std::string(input::action_type_name(d.type)) +
+                          " action: give " + (d.type == input::ActionType::button ? "true / false" : "a number"));
     }
     if (auto r = a.inject(d.name, v, frames); !r) return bad_params(r.error().message);
     return Json{{"action", d.name}, {"value", Json::array({v.x, v.y})}, {"frames", frames}};

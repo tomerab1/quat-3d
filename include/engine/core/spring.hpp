@@ -40,7 +40,7 @@ inline void spring_damper(glm::vec<N, float>& x, glm::vec<N, float>& v,
     for (glm::length_t i = 0; i < N; ++i) spring_damper(x[i], v[i], goal[i], half_life, dt);
 }
 
-// The angle in (-180, 180] degrees equivalent to `deg`.
+// The angle in [-180, 180) degrees equivalent to `deg`.
 [[nodiscard]] inline float wrap_degrees(float deg) {
     float w = std::fmod(deg + 180.0F, 360.0F);
     if (w < 0.0F) w += 360.0F;

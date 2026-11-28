@@ -86,7 +86,7 @@ struct CameraRig {
     bool  pitch_follows_zoom = true;
     float min_pitch_deg = -89.0F;  // limits of a free pitch (and of clearance)
     float max_pitch_deg = -5.0F;
-    float yaw_step_deg = 0.0F;     // 0: free rotation; e.g. 45 or 90 to snap
+    float yaw_step_deg = 0.0F;     // 0: free rotation; else a divisor of 360 (45, 90) to snap
     float focus_halflife_s = 0.12F;
     float yaw_halflife_s = 0.10F;
     float zoom_halflife_s = 0.15F;

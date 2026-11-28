@@ -48,7 +48,16 @@ TEST(CameraRigSpring, HalfLifeNoOvershootAndFrameRateIndependence) {
     for (int i = 0; i < 960; ++i) spring_damper(b, vb, 10.0F, 0.15F, 1.0F / 240.0F);
     EXPECT_LE(worst, 10.0F + 1e-4F);
     EXPECT_NEAR(a, 10.0F, 1e-3F);
-    EXPECT_NEAR(a, b, 1e-4F) << "frame-rate independent";
+    EXPECT_NEAR(a, b, 1e-4F);
+
+    // Frame-rate independence where it matters: mid-transition, from a
+    // moving start (review #111) — 6 x 1/60 s against 24 x 1/240 s.
+    float p = 0.0F, vp = 25.0F, q = 0.0F, vq = 25.0F;
+    for (int i = 0; i < 6; ++i) spring_damper(p, vp, 10.0F, 0.15F, 1.0F / 60.0F);
+    for (int i = 0; i < 24; ++i) spring_damper(q, vq, 10.0F, 0.15F, 1.0F / 240.0F);
+    ASSERT_GT(std::abs(p - 10.0F), 1.0F) << "still mid-transition";
+    EXPECT_NEAR(p, q, 1e-4F) << "frame-rate independent";
+    EXPECT_NEAR(vp, vq, 1e-3F);
 
     // Zero half-life snaps.
     float c = 3.0F, vc = 5.0F;
@@ -310,6 +319,37 @@ TEST_F(RigFixture, DragGrabsTheWorldThenSpringsBackIntoBounds) {
     settle(300);
     EXPECT_LE(std::abs(rig().state.focus.x), 5.0F + 1e-3F);
     EXPECT_LE(std::abs(rig().state.focus.z), 5.0F + 1e-3F);
+}
+
+// Review #111: the release glide is the exact integral of the decaying
+// velocity, so a flick travels the same distance at 30 and 240 Hz.
+TEST(CameraRigSystem, InertiaGlideIsFrameRateIndependent) {
+    const auto glide = [](int hz) {
+        entt::registry r;
+        const entt::entity e = r.create();
+        r.emplace<s::Transform>(e);
+        auto& rig = r.emplace<s::CameraRig>(e);
+        rig.focus_halflife_s = 0.0F; // read the target directly
+        s::camera_rig_system(r, 0.0F, {});
+        rig.state.drag_vel = glm::vec2(10.0F, 0.0F);
+        const float dt = 1.0F / static_cast<float>(hz);
+        for (int i = 0; i < hz * 3; ++i) s::camera_rig_system(r, dt, {});
+        return rig.focus.x;
+    };
+    const float expected = 10.0F * 0.15F / std::log(2.0F); // v0 * h / ln 2
+    EXPECT_NEAR(glide(30), expected, 0.01F);
+    EXPECT_NEAR(glide(240), expected, 0.01F);
+}
+
+TEST_F(RigFixture, YawStepsStayOnTheLatticeAcrossTheWrap) {
+    rig().yaw_step_deg = 90.0F;
+    rig().yaw_deg = 90.0F;
+    settle(1);
+    for (int i = 0; i < 3; ++i) {
+        frame([](engine::input::DeviceState& d) { d.keys.set(*engine::input::key_from_name("e")); });
+        frame([](engine::input::DeviceState& d) { d.keys.reset(); });
+    }
+    EXPECT_FLOAT_EQ(rig().yaw_deg, 0.0F) << "90 + 3 x 90 wraps to 0";
 }
 
 TEST_F(RigFixture, FollowsTheGroundAndKeepsClearance) {

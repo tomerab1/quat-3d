@@ -1,6 +1,8 @@
 // Rebinding and its per-user persistence, and action-map files — see
 // include/engine/input/actions.hpp.
 
+#include <atomic>
+#include <chrono>
 #include <cstdio>
 #include <fstream>
 #include <iterator>
@@ -132,13 +134,21 @@ std::expected<void, core::Error> load_overrides_file(Actions& actions, const std
 std::expected<void, core::Error> save_overrides_file(const Actions& actions, const std::filesystem::path& path) {
     std::error_code ec;
     if (path.has_parent_path()) std::filesystem::create_directories(path.parent_path(), ec);
+    // A unique temporary name: two engine instances saving at once must not
+    // write into the same file.
+    static std::atomic<unsigned> counter{0};
     std::filesystem::path tmp = path;
-    tmp += ".tmp";
+    tmp += "." + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + "-" +
+           std::to_string(counter.fetch_add(1)) + ".tmp";
     {
         std::ofstream out(tmp, std::ios::binary | std::ios::trunc);
         if (!out) return std::unexpected(core::Error{core::path_to_utf8(tmp) + ": cannot write"});
         out << actions.overrides_json().dump(2, ' ', false, Json::error_handler_t::replace) << '\n';
-        if (!out) return std::unexpected(core::Error{core::path_to_utf8(tmp) + ": write failed"});
+        out.close(); // flush now: a failure here (a full disk) must not replace the good file
+        if (!out) {
+            std::filesystem::remove(tmp, ec);
+            return std::unexpected(core::Error{core::path_to_utf8(tmp) + ": write failed"});
+        }
     }
     std::filesystem::rename(tmp, path, ec);
     if (ec) {

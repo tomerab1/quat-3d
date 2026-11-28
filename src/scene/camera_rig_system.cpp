@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <numbers>
 
 #include <entt/entity/registry.hpp>
 
@@ -18,6 +19,7 @@ namespace {
 
 constexpr float k_default_fov = 1.0471976F; // 60 degrees
 constexpr float k_inertia_stop = 1.0e-3F;   // m/s
+constexpr float k_release_filter_halflife_s = 0.03F;
 
 [[nodiscard]] const input::ActionState* action(const RigEnvironment& env, const std::string& name) {
     if (env.actions == nullptr || name.empty()) return nullptr;
@@ -84,10 +86,14 @@ void apply_rotation(CameraRig& rig, const CameraRigInput& in, const RigEnvironme
             rig.state.yaw_accum_deg -= dir * step;
         }
         rig.yaw_deg = std::round(rig.yaw_deg / step) * step;
+        // Wrapping keeps the lattice only for a step that divides 360 (the
+        // codec requires one; a step set from code that does not stays
+        // unwrapped rather than drift off the lattice).
+        const float turns = 360.0F / step;
+        if (std::abs(turns - std::round(turns)) < 1.0e-3F) rig.yaw_deg = core::wrap_degrees(rig.yaw_deg);
     } else {
-        rig.yaw_deg += rate * in.orbit_speed_deg * dt + delta;
+        rig.yaw_deg = core::wrap_degrees(rig.yaw_deg + rate * in.orbit_speed_deg * dt + delta);
     }
-    rig.yaw_deg = core::wrap_degrees(rig.yaw_deg);
     if (!rig.pitch_follows_zoom) {
         if (const auto* s = action(env, in.pitch_delta)) {
             rig.pitch_deg = std::clamp(rig.pitch_deg + s->value.x * in.orbit_delta_deg,
@@ -148,7 +154,9 @@ void apply_input(CameraRig& rig, const CameraRigInput& in, const RigEnvironment&
             rig.bounds, rig_focus_keeping_point(view, env.pointer, env.viewport_px, st.drag_anchor));
         if (dt > 0.0F) {
             const glm::vec2 v((moved.x - st.focus.x) / dt, (moved.z - st.focus.z) / dt);
-            st.drag_vel = glm::mix(st.drag_vel, v, 0.5F); // the release velocity, lightly filtered
+            // The release velocity, lightly filtered in half-life form so the
+            // same flick glides the same at any frame rate.
+            st.drag_vel += (v - st.drag_vel) * (1.0F - std::exp2(-dt / k_release_filter_halflife_s));
         }
         st.focus.x = rig.focus.x = moved.x;
         st.focus.z = rig.focus.z = moved.z;
@@ -159,11 +167,15 @@ void apply_input(CameraRig& rig, const CameraRigInput& in, const RigEnvironment&
 void step_rig(CameraRig& rig, const RigEnvironment& env, float dt) {
     RigState& st = rig.state;
     // Inertia after a drag.
-    if (!st.dragging && glm::length(st.drag_vel) > k_inertia_stop) {
-        rig.focus.x += st.drag_vel.x * dt;
-        rig.focus.z += st.drag_vel.y * dt;
-        const float h = rig.drag_inertia_halflife_s;
-        st.drag_vel *= h > 0.0F ? std::exp2(-dt / h) : 0.0F;
+    if (!st.dragging && glm::length(st.drag_vel) > k_inertia_stop && rig.drag_inertia_halflife_s > 0.0F) {
+        // Exact integral of an exponentially decaying velocity over dt, so
+        // the total glide (v0 * h / ln 2) does not depend on the frame rate.
+        const float k = std::numbers::ln2_v<float> / rig.drag_inertia_halflife_s;
+        const float decay = std::exp(-k * dt);
+        const glm::vec2 moved = st.drag_vel * ((1.0F - decay) / k);
+        rig.focus.x += moved.x;
+        rig.focus.z += moved.y;
+        st.drag_vel *= decay;
     } else if (!st.dragging) {
         st.drag_vel = glm::vec2(0.0F);
     }

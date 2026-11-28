@@ -117,6 +117,12 @@ void decode_camera_rig(JsonFields& f, CameraRig& r) {
     f.number("min_pitch_deg", r.min_pitch_deg, -89.0F, 89.0F);
     f.number("max_pitch_deg", r.max_pitch_deg, -89.0F, 89.0F);
     f.number("yaw_step_deg", r.yaw_step_deg, 0.0F, 180.0F);
+    if (r.yaw_step_deg > 0.0F) {
+        const float turns = 360.0F / r.yaw_step_deg;
+        if (std::abs(turns - std::round(turns)) > 1.0e-3F) {
+            f.fail("yaw_step_deg", "must divide 360 (e.g. 15, 30, 45, 90), or be 0 for free rotation");
+        }
+    }
     f.number("focus_halflife_s", r.focus_halflife_s, 0.0F, 10.0F);
     f.number("yaw_halflife_s", r.yaw_halflife_s, 0.0F, 10.0F);
     f.number("zoom_halflife_s", r.zoom_halflife_s, 0.0F, 10.0F);

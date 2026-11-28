@@ -54,6 +54,7 @@ TEST(CameraRigCodec, RejectsBadValues) {
     EXPECT_ERR(s::apply_component(r, e, "camera_rig", {{"bounds", {{"min", {1, 2, 3}}}}}, true));
     EXPECT_ERR(s::apply_component(r, e, "camera_rig", {{"zoom", 3}}, true)) << "unknown field";
     EXPECT_ERR(s::apply_component(r, e, "camera_rig_input", {{"zoom_step", 0.5}}, true));
+    EXPECT_ERR(s::apply_component(r, e, "camera_rig", {{"yaw_step_deg", 50}}, true)) << "must divide 360";
     EXPECT_FALSE(r.all_of<s::CameraRig>(e)) << "a failed decode adds nothing";
 }
 

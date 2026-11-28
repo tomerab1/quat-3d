@@ -27,6 +27,22 @@ constexpr int   k_max_inject_frames = 36000;
     return v;
 }
 
+// Whether a mouse button any of the action's bindings reads (as its source,
+// a composite part or its `with` gate) is held.
+[[nodiscard]] bool holds_pointer_button(const ActionDesc& a, const DeviceState& d) {
+    const auto held = [&](const Source& s) {
+        return s.control == Control::mouse_button && s.index < DeviceState::mouse_button_count &&
+               d.mouse.test(s.index);
+    };
+    for (const Binding& b : a.bindings) {
+        if (held(b.source) || held(b.with)) return true;
+        for (const Source& p : b.parts) {
+            if (held(p)) return true;
+        }
+    }
+    return false;
+}
+
 [[nodiscard]] bool one_frame(TriggerKind k) {
     return k == TriggerKind::pressed || k == TriggerKind::released || k == TriggerKind::tap ||
            k == TriggerKind::double_click;
@@ -40,18 +56,23 @@ Actions::Actions(ActionMap map) { set_map(std::move(map)); }
 
 void Actions::set_map(ActionMap map) {
     // Keep the user's rebinds for actions the new map still has.
-    std::vector<std::pair<std::string, std::vector<Binding>>> kept;
+    struct Kept {
+        std::string          name;
+        ActionType           type;
+        std::vector<Binding> bindings;
+    };
+    std::vector<Kept> kept;
     for (const ActionDesc& a : map_.actions) {
         const int d = defaults_.find_action(a.name);
-        if (d >= 0 && defaults_.actions[idx(d)].bindings != a.bindings) kept.emplace_back(a.name, a.bindings);
+        if (d >= 0 && defaults_.actions[idx(d)].bindings != a.bindings) kept.push_back({a.name, a.type, a.bindings});
     }
     defaults_ = std::move(map);
     map_ = defaults_;
-    for (auto& [name, bindings] : kept) {
-        const int i = map_.find_action(name);
-        if (i >= 0 && map_.actions[idx(i)].type == defaults_.actions[idx(i)].type) {
-            map_.actions[idx(i)].bindings = std::move(bindings);
-        }
+    for (Kept& k : kept) {
+        // A rebind only survives onto an action of the same type (a 2D
+        // composite means nothing on a button).
+        const int i = map_.find_action(k.name);
+        if (i >= 0 && map_.actions[idx(i)].type == k.type) map_.actions[idx(i)].bindings = std::move(k.bindings);
     }
     stack_.clear();
     for (std::size_t i = 0; i < map_.contexts.size(); ++i) {
@@ -208,7 +229,12 @@ void Actions::update(const DeviceState& device, float dt) {
                 rt.smoothed += (value - rt.smoothed) * k;
                 value = rt.smoothed;
             }
-            rt.pointer_captured = actuated && (pointer_used || (rt.pointer_captured && rt.was_actuated));
+            // Mouse capture lasts while the binding that took the pointer still
+            // holds one of its buttons, not only while the value is non-zero:
+            // a right-drag orbit reads a zero delta on frames the mouse does
+            // not move, and must not lose the pointer then.
+            rt.pointer_captured = (actuated && pointer_used) ||
+                                  (rt.pointer_captured && (actuated || holds_pointer_button(a, device)));
             frame_.states[i].value = value;
             evaluate_trigger(i, actuated, dt, pointer);
             if (ctx_desc.consume && actuated) {
@@ -267,8 +293,10 @@ ActionSample StepLatch::take(const ActionMap& map) {
         s.ended = ended_[i] != 0;
         // A one-frame trigger that fired since the last take is active for
         // this one, even when the sample it fired in was never taken.
+        // Only the edge counts: the latest sample still reads active until the
+        // next add(), and a second take in the same frame must not see it again.
         if (i < map.actions.size() && one_frame(map.actions[i].trigger.kind)) {
-            s.active = s.active || s.started;
+            s.active = s.started;
         }
         started_[i] = 0;
         ended_[i] = 0;

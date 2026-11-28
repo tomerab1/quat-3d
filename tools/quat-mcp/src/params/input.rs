@@ -24,13 +24,25 @@ pub struct InputInjectParams {
     /// What the action reads: true / false for a button, a number for an
     /// axis1d, [x, y] for an axis2d (y is forward / up).
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub value: Option<Value>,
+    pub value: Option<InjectValue>,
     /// For how many frames (1..36000, default 1).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub frames: Option<u32>,
     /// true: stop an injection early (give no value).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub clear: Option<bool>,
+}
+
+/// An injected action value.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(untagged)]
+pub enum InjectValue {
+    /// A button: pressed or released.
+    Button(bool),
+    /// An axis1d value.
+    Axis(f64),
+    /// An axis2d value [x, y].
+    Axis2d([f64; 2]),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]

@@ -336,6 +336,63 @@ TEST(InputActions, InjectionOverridesForFrames) {
     EXPECT_ERR(a.inject("jump", {1.0F, 0.0F}, 0));
 }
 
+// Review #111: a one-frame trigger fired in one frame is active for exactly
+// one take, even when a consumer takes twice before the next update (two
+// fixed steps in one frame).
+TEST(InputActions, OneFrameTriggerReachesExactlyOneTake) {
+    Actions a = make(R"({"actions": [{"name": "kick", "type": "button", "trigger": "pressed", "bindings": ["key:k"]},
+                                     {"name": "walk", "type": "button", "bindings": ["key:w"]}]})");
+    DeviceState d;
+    frame(a, d, [](DeviceState& s) {
+        s.keys.set(key("k"));
+        s.keys.set(key("w"));
+    });
+    const auto first = a.take_sim_sample();
+    const auto second = a.take_sim_sample();
+    EXPECT_TRUE(first.states[0].active);
+    EXPECT_TRUE(first.states[0].started);
+    EXPECT_FALSE(second.states[0].active) << "the press is consumed by the first step";
+    EXPECT_FALSE(second.states[0].started);
+    EXPECT_TRUE(second.states[1].active) << "a held down-trigger stays active";
+    EXPECT_FALSE(second.states[1].started);
+
+    // The same through a nested latch fed once and taken twice.
+    engine::input::StepLatch latch;
+    frame(a, d, [](DeviceState& s) { s.keys.reset(); });
+    frame(a, d, [](DeviceState& s) { s.keys.set(key("k")); });
+    latch.add(a.take_sim_sample());
+    EXPECT_TRUE(latch.take(a.map()).states[0].active);
+    EXPECT_FALSE(latch.take(a.map()).states[0].active);
+}
+
+// Review #111: a delta-driven orbit gated on a held button keeps the
+// pointer on frames where the mouse does not move, so the drag continues
+// across UI panels.
+TEST(InputActions, PointerCaptureSurvivesFramesWithoutMotion) {
+    Actions a = make(k_layered);
+    DeviceState d;
+    frame(a, d, [](DeviceState& s) {
+        s.mouse.set(2);
+        s.mouse_delta = {4.0F, 0.0F};
+    });
+    EXPECT_FLOAT_EQ(a.state("camera.orbit")->value.x, 4.0F);
+    frame(a, d, [](DeviceState&) {}); // button held, no motion this frame
+    frame(a, d, [](DeviceState& s) {
+        s.pointer_blocked = true; // the pointer crossed onto a panel
+        s.mouse_delta = {3.0F, 0.0F};
+    });
+    EXPECT_FLOAT_EQ(a.state("camera.orbit")->value.x, 3.0F) << "still captured";
+    frame(a, d, [](DeviceState& s) {
+        s.mouse.reset(2);
+        s.mouse_delta = {3.0F, 0.0F};
+    });
+    frame(a, d, [](DeviceState& s) {
+        s.mouse.set(2);
+        s.mouse_delta = {3.0F, 0.0F};
+    });
+    EXPECT_FLOAT_EQ(a.state("camera.orbit")->value.x, 0.0F) << "a new press over the UI does not start";
+}
+
 // The same device sequence gives bit-identical samples (no clocks, no
 // randomness), so a recorded input stream replays exactly.
 TEST(InputActions, Deterministic) {
