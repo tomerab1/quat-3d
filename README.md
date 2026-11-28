@@ -127,8 +127,9 @@ three platforms (see [`.github/workflows/ci.yml`](.github/workflows/ci.yml)):
 Ready-to-run builds are attached to each
 [GitHub Release](../../releases) (built and smoke-tested by
 [`.github/workflows/release.yml`](.github/workflows/release.yml) for every
-`v*` tag). Every archive contains a `README-RUN.txt` with the launch options
-and troubleshooting.
+`v*` tag), with release notes listing what changed (also in
+[`CHANGELOG.md`](CHANGELOG.md)). Every archive contains a `README-RUN.txt`
+with the launch options and troubleshooting.
 
 | Download | Run |
 |---|---|
@@ -443,6 +444,8 @@ The plan lives in [`ROADMAP.md`](ROADMAP.md), grouped into tracks:
 |---|---|
 | [`docs/STATUS.md`](docs/STATUS.md) | What is in progress, what is blocked, what comes next |
 | [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md) | Building, testing, CI, and conventions for contributors |
+| [`docs/RELEASING.md`](docs/RELEASING.md) | Cutting a release: versions, tags, the release-notes file, the checklist |
+| [`CHANGELOG.md`](CHANGELOG.md) | Every release, newest first, linking its notes in `docs/releases/` |
 | [`docs/scripting.md`](docs/scripting.md) | Lua gameplay scripting: callbacks, the engine API, limits, hot reload |
 | [`docs/reading/README.md`](docs/reading/README.md) | Reading list: the papers and talks behind the engine's techniques, with where each lives in the code |
 | [`docs/remote-control.md`](docs/remote-control.md) | The remote-control protocol AI tools use to drive the engine |

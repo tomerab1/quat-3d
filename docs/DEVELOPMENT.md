@@ -252,9 +252,11 @@ a clean exit, a screenshot, and data resolved next to the executable):
 
 Each archive carries `packaging/README-RUN-<os>.txt` as `README-RUN.txt`.
 Pushing a `v*` tag publishes a GitHub Release (tags with a `-`, e.g.
-`v0.2.0-rc1`, are prereleases); running the workflow by hand
+`v0.2.0-rc.1`, are prereleases) whose notes are `docs/releases/<tag>.md`
+followed by GitHub's generated PR list; a release tag without that file fails
+the workflow. Running the workflow by hand
 (`gh workflow run release.yml --ref <branch>`) only uploads the packages as
-workflow artifacts.
+workflow artifacts. How to cut a release: [`RELEASING.md`](RELEASING.md).
 
 ### Screenshots
 
