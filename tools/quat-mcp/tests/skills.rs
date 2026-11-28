@@ -110,6 +110,19 @@ async fn skills_are_listed_and_their_files_match_the_manifests() {
         Some(ErrorCode::INVALID_PARAMS),
         "{unknown}"
     );
+    // A skill file that is not served is invalid params too (SEP-2640).
+    let missing = client
+        .read_resource(ReadResourceRequestParams::new(
+            "skill://build-level/missing.md",
+        ))
+        .await
+        .unwrap_err();
+    assert_eq!(
+        mcp_code(&missing),
+        Some(ErrorCode::INVALID_PARAMS),
+        "{missing}"
+    );
+    assert!(missing.to_string().contains("skill://build-level/SKILL.md"));
 
     let resources = client.list_all_resources().await.unwrap();
     for name in SKILLS {
@@ -195,7 +208,8 @@ async fn workflows_can_be_turned_off() {
         ))
         .await
         .unwrap_err();
-    assert!(read.to_string().contains("unknown resource"), "{read}");
+    assert!(read.to_string().contains("unknown skill file"), "{read}");
+    assert_eq!(mcp_code(&read), Some(ErrorCode::INVALID_PARAMS), "{read}");
     client.cancel().await.unwrap();
 
     // Prompts alone, for clients without skills that still want them.
