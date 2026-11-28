@@ -28,6 +28,8 @@ pub enum SettingsGroup {
     Environment,
     Ssr,
     Clouds,
+    #[serde(rename = "night_sky")]
+    NightSky,
     Dof,
     #[serde(rename = "motion_blur")]
     MotionBlur,
@@ -56,18 +58,32 @@ pub struct ExposureParams {
     /// Mid-grey the average scene luminance maps to, 0.01..1 (default 0.18).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub key: Option<f64>,
-    /// Lowest auto exposure multiplier, 0.001..64 (default 0.05).
+    /// Darkest scene auto exposure adapts to, in EV100, -20..30 (default -14; a moonless night is about -11).
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub min_exposure: Option<f64>,
-    /// Highest auto exposure multiplier, 0.001..64 (default 16).
+    pub min_ev100: Option<f64>,
+    /// Brightest scene auto exposure adapts to, in EV100, -20..30 (default 20; sunlit snow is about 16).
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub max_exposure: Option<f64>,
+    pub max_ev100: Option<f64>,
+    /// Show dim scenes dimmer, as the eye sees them (default true); false = always `key`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub adaptive_key: Option<bool>,
     /// Eye adaptation time constant in seconds, 0.05..10 (default 1.1).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub adaptation_s: Option<f64>,
     /// Expose from the active camera's aperture, shutter and ISO (EV100); overrides `auto`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub physical: Option<bool>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct NightSkyParams {
+    /// Draw the bright star catalogue (needs the world clock).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stars: Option<bool>,
+    /// Star twinkling strength, 0..4 (default 1; 0 = steady).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scintillation: Option<f64>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
@@ -313,7 +329,7 @@ pub struct SsrParams {
 #[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct RenderSettingsSetParams {
-    /// Exposure: auto / manual, compensation in EV, auto-exposure limits.
+    /// Exposure: auto / manual, compensation in EV, auto-exposure range in EV100.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub exposure: Option<ExposureParams>,
     /// Bloom (glow around bright highlights).
@@ -346,6 +362,9 @@ pub struct RenderSettingsSetParams {
     /// Volumetric clouds (same fields as `environment_set`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub clouds: Option<CloudParams>,
+    /// Stars of the world clock's night sky.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub night_sky: Option<NightSkyParams>,
     /// Depth of field from the active camera's lens.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dof: Option<DofParams>,
@@ -378,6 +397,7 @@ impl RenderSettingsSetParams {
             && self.environment.is_none()
             && self.ssr.is_none()
             && self.clouds.is_none()
+            && self.night_sky.is_none()
             && self.dof.is_none()
             && self.motion_blur.is_none()
             && self.tonemap.is_none()

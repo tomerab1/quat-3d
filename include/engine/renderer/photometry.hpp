@@ -17,7 +17,7 @@
 // it by the frame's pre-exposure, the previous frame's exposure, so RGBA16F
 // keeps its precision from 10⁻⁴ lux nights to 10⁵ lux noons.
 //
-// Auto exposure meters a 256-bin log2-luminance histogram (Tardif / DICE,
+// Auto exposure meters a 256-bin log2-luminance histogram (Opsenica 2019,
 // the standard histogram metering of Unreal's eye adaptation): the mean
 // log2 luminance of the pixels between two percentiles, smoothed over time
 // in the log domain, and mapped to the display by an adaptive key —
@@ -79,6 +79,12 @@ struct MeteringParams {
 // of the non-black bins; NaN when every pixel is black.
 [[nodiscard]] float metered_log2(std::span<const std::uint32_t, k_histogram_bins> bins,
                                  const MeteringParams& params = {});
+
+// When a frame holds nothing measurable (all black: the scene may be darker
+// than the pre-exposure lets RGBA16F hold), exposure_average.slang jumps the
+// adapted luminance this many EV below the darkest luminance the frame could
+// have shown; the EV100 clamp bounds the climb.
+inline constexpr float k_underexposed_step_ev = 4.0F;
 
 // Exponential adaptation in the log domain: `previous` moved toward
 // `target` with time constant `tau` over `dt` seconds.

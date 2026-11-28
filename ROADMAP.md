@@ -431,7 +431,7 @@ JSON-RPC over loopback TCP to the engine.
     criteria. Photometric calibration shared by every slice: one HDR unit is
     16 000 cd/m² (the sky-view LUT's ×8 stands for the ≈128 klux
     extra-atmospheric Sun), so sky, stars, Moon and ground share one scale.
-    - [ ] **R22.2.1 Exposure, ground and bright stars.**
+    - [x] **R22.2.1 Exposure, ground and bright stars.**
       - *Wide-range auto-exposure:* pre-exposed HDR (Lagarde & de Rousiers
         2014; the frame's exposure is applied where light is written so
         RGBA16F holds 10⁻⁴ lux nights and 10⁵ lux noons), a 256-bin
@@ -464,8 +464,9 @@ JSON-RPC over loopback TCP to the engine.
       shadow caster with a twilight hand-off from the Sun; IBL / irradiance
       baked with a normalisation so night ambient survives RGBA16F.
       *Acceptance:* full-moon ground illuminance 0.1–0.3 lux, the lit
-      fraction and bright-limb angle match `SkyState` in a render, moonlit
-      golden row.
+      fraction and bright-limb angle match `SkyState` in a render, a
+      `night-moonlit` golden row (Paris, 2026-12-24 22:00: full moon 41° up)
+      with the foreground moonlit as the ground beyond it already is.
     - [ ] **R22.2.3 Milky Way and faint stars.** An HDR celestial texture
       (ESA Gaia sky map CC BY-SA 3.0 IGO, or NASA SVS Deep Star Maps, public
       domain — licence verified first) for stars below the catalogue limit

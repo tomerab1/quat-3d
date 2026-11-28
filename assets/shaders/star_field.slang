@@ -118,6 +118,16 @@ void splat_main(uint3 tid : SV_DispatchThreadID) {
 
     // Atmosphere: extinction along the line of sight, then the clouds.
     float3 trans = sample_transmittance(g_transmittance, g_samp, ATMOS_VIEW_HEIGHT, dir.y);
+    // Pixel solid angle shrinks off axis as cos^3 of the angle to the view axis.
+    float cos_axis = max(dot(dir, g_frame.forward.xyz), 1e-3);
+    float omega = g_frame.forward.w * cos_axis * cos_axis * cos_axis;
+    float3 clear_sky = s.color_seed.rgb * s.direction_lux.w * trans * g_frame.params.x / omega;
+    // A star whose brightest pixel (a third of its energy at most) stays
+    // 100x below one 8-bit step of the display at this exposure cannot show
+    // (daylight, or below the eye's limit): skip the cloud march for it.
+    // Its splat would round away anyway; scintillation brightens by at most
+    // exp(2.45 sigma - sigma^2 / 2) < 8x (sigma <= 1).
+    if (max(clear_sky.r, max(clear_sky.g, clear_sky.b)) * 0.33 * 8.0 < 1e-5) return;
     float clouds = 1.0;
     if (g_frame.sun.w > 0.5) {
         CloudParams cp = unpack_cloud_params(g_frame.cloud_a, g_frame.cloud_b);
@@ -135,11 +145,7 @@ void splat_main(uint3 tid : SV_DispatchThreadID) {
                       lerp(common_n, twinkle_noise(t, frac(seed + 0.611)), chroma));
     float3 scint = exp(sigma * n - 0.5 * sigma * sigma);
 
-    // Pixel solid angle shrinks off axis as cos^3 of the angle to the view axis.
-    float cos_axis = max(dot(dir, g_frame.forward.xyz), 1e-3);
-    float omega = g_frame.forward.w * cos_axis * cos_axis * cos_axis;
-    float3 radiance = s.color_seed.rgb * s.direction_lux.w * trans * clouds * scint *
-                      g_frame.params.x / omega;
+    float3 radiance = clear_sky * clouds * scint;
     if (!(max(radiance.r, max(radiance.g, radiance.b)) > 0.0)) return;
 
     float weight_sum = 0.0;

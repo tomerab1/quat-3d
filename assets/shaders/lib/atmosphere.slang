@@ -109,6 +109,13 @@ public float3 sample_transmittance(Texture2D lut, SamplerState samp, float r, fl
     return lut.SampleLevel(samp, transmittance_uv_from(r, mu), 0.0).rgb;
 }
 
+// Transmittance toward a light from radius r, 0 when the planet blocks it
+// (the LUT is only defined for rays that reach the top of the atmosphere).
+public float3 sun_transmittance_above_ground(Texture2D lut, SamplerState samp, float r,
+                                             float mu) {
+    return intersects_ground(r, mu) ? float3(0.0, 0.0, 0.0) : sample_transmittance(lut, samp, r, mu);
+}
+
 // ---------------------------------------------------------------------------
 // Multiple-scattering LUT mapping: x = sun zenith cosine, y = altitude.
 // ---------------------------------------------------------------------------
@@ -180,6 +187,16 @@ public float3 sample_skyview(Texture2D lut, SamplerState samp, float3 view_dir,
 
     float2 uv = skyview_uv_from(view_zenith_cos, azimuth_cos, below);
     return decode_skyview(lut.SampleLevel(samp, uv, 0.0));
+}
+
+// Ambient light on the cloud layer (LUT units) from the sky near the zenith:
+// 0.8 of it plus a bluish floor for the clouds' undersides. The floor scales
+// with the sky's brightness (full by a clear day's zenith of ~0.05 per unit
+// sun, R22.2.1): a constant would light clouds at night, where the
+// pre-exposure magnifies the sky ~10⁷ times.
+public float3 cloud_ambient_from_zenith(float3 zenith) {
+    float day = saturate(dot(zenith, float3(0.2126, 0.7152, 0.0722)) / 0.05);
+    return zenith * 0.8 + float3(0.008, 0.011, 0.016) * day;
 }
 
 // ---------------------------------------------------------------------------
@@ -405,9 +422,11 @@ public float4 march_clouds(float3 dir, float3 sun_dir, Texture2D transmittance_l
 
     float mu_sun = clamp(sun_dir.y, -1.0, 1.0);
     float cos_theta = dot(dir, sun_dir);
-    float3 sun_trans = sample_transmittance(transmittance_lut, samp,
-                                            clamp(r + 2.0, ATMOS_GROUND_RADIUS, ATMOS_TOP_RADIUS),
-                                            mu_sun);
+    // A sun below the horizon does not light the clouds directly (the LUT
+    // has no meaning for rays into the planet; at night's pre-exposure any
+    // leak would glow).
+    float3 sun_trans = sun_transmittance_above_ground(
+        transmittance_lut, samp, clamp(r + 2.0, ATMOS_GROUND_RADIUS, ATMOS_TOP_RADIUS), mu_sun);
     float3 sun_energy = sun_trans * 0.45;
     float phase = lerp(cloud_hg_phase(cos_theta, 0.55), cloud_hg_phase(cos_theta, -0.2), 0.3) +
                   0.12;

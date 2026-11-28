@@ -62,8 +62,14 @@ The editor (dark theme; a light theme is one click away in View > Theme):
   north-east at midsummer, polar day, the equation of time — and tracks the
   Moon's position and phase (Meeus' algorithms, tested against the USNO
   almanac to within half a minute). Edit it in the editor's Time of Day section or
-  over MCP (`time_set`) or from Lua (`time.set_clock`); the night sky itself (stars, Moon disc) is next
-  (ROADMAP R22.2)
+  over MCP (`time_set`) or from Lua (`time.set_clock`)
+- A starry night sky: the Yale Bright Star Catalogue's 9000 stars in their
+  real positions for the clock's date and place, with true colours,
+  brightness and twinkling, dimmed by air mass and clouds; the ground below
+  the horizon is lit by the sun, moon and sky. Auto exposure follows the
+  light from a moonless night to noon in physical units, so stars fade out
+  at dawn on their own (the Moon disc, Milky Way and airglow are next:
+  ROADMAP R22.2)
 - Image-based lighting that keeps up with the sky in real time
 - HDRI environments: light and backdrop a scene with a Radiance `.hdr`
   panorama (rotation, intensity). Its sun becomes a shadow-casting sun light.

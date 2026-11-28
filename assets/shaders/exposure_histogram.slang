@@ -6,7 +6,7 @@
 // noon), bin 0 holds black, NaN and anything darker. Workgroup-local
 // counts first (one global atomic per bin and group, not per pixel). The
 // histogram feeds exposure_average.slang. Mirrors
-// engine::renderer::photometry::histogram_bin. (Tardif / DICE histogram
+// engine::renderer::photometry::histogram_bin. (Opsenica 2019 histogram
 // metering; Lagarde & de Rousiers 2014 pre-exposure.)
 
 [[vk::binding(0)]] Texture2D                g_hdr;

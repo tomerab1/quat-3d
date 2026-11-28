@@ -8,8 +8,8 @@
 // toward it in the log domain, and turns it into an exposure through the
 // adaptive key (Krawczyk et al. 2005) clamped to an EV100 range. The tonemap
 // and TAA passes read that exposure; the frame renderer reads it back to
-// pre-expose the next frame. (Tardif / DICE histogram metering; Lagarde &
-// de Rousiers 2014.)
+// pre-expose the next frame. (Histogram metering: Opsenica 2019 and Unreal;
+// pre-exposure: Lagarde & de Rousiers 2014.)
 //
 // The adapted luminance lives in an ExposureState shared by every
 // frame-in-flight slot (audit A11): each frame advances the one value by that

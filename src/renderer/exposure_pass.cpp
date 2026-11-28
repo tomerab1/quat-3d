@@ -52,8 +52,10 @@ struct AverageParams {
     float max_exposure;
     float nits_per_unit;
     float key_reference;
+    float log_inv_pre_exposure;
+    float pad0, pad1, pad2;
 };
-static_assert(sizeof(AverageParams) == 48);
+static_assert(sizeof(AverageParams) == 64);
 
 [[nodiscard]] float finite_or(float v, float fallback) { return std::isfinite(v) ? v : fallback; }
 
@@ -233,7 +235,11 @@ ExposurePass::add_to_graph(rhi::RenderGraph& graph, rhi::ResourceHandle hdr, VkE
                      photometry::exposure_from_ev100_units(hi_ev),
                      photometry::exposure_from_ev100_units(lo_ev),
                      photometry::k_nits_per_unit,
-                     photometry::krawczyk_key(photometry::k_adaptive_key_reference_nits)};
+                     photometry::krawczyk_key(photometry::k_adaptive_key_reference_nits),
+                     -std::log2(std::max(pre, 1e-30F)),
+                     0.0F,
+                     0.0F,
+                     0.0F};
 
     graph.add_pass("exposure", rhi::PassType::compute)
         .reads(hdr, rhi::ResourceUsage::sampled_compute)

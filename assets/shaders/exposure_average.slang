@@ -32,7 +32,11 @@ struct Params {
     float max_exposure;
     float nits_per_unit;
     float key_reference; // Krawczyk key at the reference luminance
+    float log_inv_pre_exposure; // log2(1 / the frame's pre-exposure)
+    float pad0, pad1, pad2;
 };
+
+static const float UNDEREXPOSED_STEP_EV = 4.0;
 [[vk::push_constant]] Params pc;
 
 groupshared float s_scan[256];
@@ -91,9 +95,23 @@ void compute_main(uint gi : SV_GroupIndex) {
                 const float rate = 1.0 - exp(-pc.dt / max(pc.tau, 1e-3));
                 state += (target - state) * rate;
             }
-        } else if (!seeded) {
-            state = log2(0.18); // all black and never seeded: a neutral start
+        } else {
+            // Nothing measurable: the scene is either black or darker than
+            // this pre-exposure lets RGBA16F hold (a night loaded with a day
+            // exposure). Assume the latter and jump below the darkest
+            // luminance the frame could have shown (the smallest normal half,
+            // 2^-14, over the pre-exposure), UNDEREXPOSED_STEP_EV further; the
+            // EV100 clamp bounds the climb, and a genuinely black frame stays
+            // black at any exposure. photometry::k_underexposed_step_ev.
+            state = min(seeded ? state : 0.0, -14.0 + pc.log_inv_pre_exposure) -
+                    UNDEREXPOSED_STEP_EV;
         }
+        // Never adapt far beyond the EV100 range (the exposure clamps there
+        // anyway; this keeps the state from drifting off while a frame stays
+        // black). The margin covers the adaptive key, which is at most
+        // 4.4 EV below the user key.
+        state = clamp(state, log2(pc.key / pc.max_exposure) - 6.0,
+                      log2(pc.key / pc.min_exposure) + 1.0);
         const float adapted = exp2(state);
         float key = pc.key;
         if (pc.adaptive_key > 0.5) {

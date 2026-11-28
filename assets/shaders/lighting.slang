@@ -346,10 +346,8 @@ void compute_main(uint3 tid : SV_DispatchThreadID) {
                 // is too coarse for them), analytic sun disc tinted by the
                 // transmittance and dimmed behind clouds.
                 bg = sample_skyview(g_skyview, g_ibl_sampler, ray, sun).rgb;
-                float3 cloud_ambient =
-                    sample_skyview(g_skyview, g_ibl_sampler, float3(0.2, 0.97, 0.0), sun).rgb *
-                        0.8 +
-                    float3(0.008, 0.011, 0.016);
+                float3 cloud_ambient = cloud_ambient_from_zenith(
+                    sample_skyview(g_skyview, g_ibl_sampler, float3(0.2, 0.97, 0.0), sun));
                 CloudParams cp = unpack_cloud_params(g_frame.cloud_a, g_frame.cloud_b);
                 float jitter = interleaved_gradient_noise(float2(coord));
                 float4 clouds = march_clouds(ray, sun, g_transmittance_lut, g_ibl_sampler,
@@ -357,7 +355,7 @@ void compute_main(uint3 tid : SV_DispatchThreadID) {
                 bg = (bg * clouds.a + clouds.rgb) * SKY_LUT_BRIGHTNESS;
                 float cos_sun = dot(ray, sun);
                 if (cos_sun > 0.9998) {
-                    float3 sun_trans = sample_transmittance(
+                    float3 sun_trans = sun_transmittance_above_ground(
                         g_transmittance_lut, g_ibl_sampler, ATMOS_VIEW_HEIGHT, sun.y);
                     bg += sun_trans * clouds.a * 80.0 * smoothstep(0.9998, 0.99995, cos_sun);
                 }
@@ -408,8 +406,8 @@ void compute_main(uint3 tid : SV_DispatchThreadID) {
     float3 ldir   = normalize(g_frame.direction.xyz);
     float3 sun_radiance = g_frame.color.rgb * g_frame.color.w;
     if (g_frame.direction.w > 1.5 && g_frame.direction.w < 2.5) {
-        sun_radiance *= sample_transmittance(g_transmittance_lut, g_ibl_sampler,
-                                             ATMOS_VIEW_HEIGHT, ldir.y);
+        sun_radiance *= sun_transmittance_above_ground(g_transmittance_lut, g_ibl_sampler,
+                                                       ATMOS_VIEW_HEIGHT, ldir.y);
     }
     // R21: the split-sum DFG at this pixel drives the multiple-scattering
     // energy of both the punctual lights and the environment (only with real

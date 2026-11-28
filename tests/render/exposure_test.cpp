@@ -18,6 +18,8 @@
 #include <vulkan/vulkan.h>
 
 #include "engine/renderer/exposure_pass.hpp"
+#include "engine/renderer/photometry.hpp"
+#include "engine/renderer/render_settings.hpp"
 #include "engine/rhi/device.hpp"
 #include "engine/rhi/gpu_allocator.hpp"
 #include "engine/rhi/render_graph.hpp"
@@ -186,4 +188,40 @@ TEST(GpuExposure, BrightSceneRaisesTheAdaptedLuminance) {
     auto bright = hdr->frame(*pass, 2.0F, 1000.0F);
     ASSERT_OK(bright);
     EXPECT_GT(*bright, *dim + 0.5F);
+}
+
+// R22.2.1: the engine's loop — each frame's HDR is pre-exposed with the
+// previous frame's exposure — converges from a fresh state on a grey card
+// under a 10⁻³ lux night and under a 10⁵ lux noon: the exposure reaches the
+// meter's CPU reference (photometry::auto_exposure) and the pre-exposed
+// image ends at display scale, far from RGBA16F's limits. The night starts
+// below what the first frame's pre-exposure can hold (the image clears to
+// 0), so it also covers the meter's underexposure ramp.
+TEST(GpuExposure, ConvergesFromAMillilxNightToAHundredKiloluxNoon) {
+    QUAT_REQUIRE_GPU(g);
+    auto hdr = HdrImage::create(*g);
+    ASSERT_OK(hdr);
+    const r::ExposureSettings settings;
+    for (const float lux : {1e-3F, 1e5F}) {
+        auto pass = r::ExposurePass::create(g->device, g->allocator, g->cache, g->shader_dir);
+        ASSERT_OK(pass);
+        const float scene = 0.18F * lux / 3.14159265F / r::photometry::k_nits_per_unit;
+        float pre = 1.0F;
+        for (int frame = 0; frame < 300; ++frame) { // 10 s at 30 fps, ~9 time constants
+            hdr->set_pre_exposure(pre);
+            auto adapted = hdr->frame(*pass, scene * pre, 1.0F / 30.0F);
+            ASSERT_OK(adapted) << lux << " lux, frame " << frame;
+            pre = pass->exposure();
+        }
+        const float expected = r::photometry::auto_exposure(scene, settings.key, true,
+                                                            settings.min_ev100,
+                                                            settings.max_ev100);
+        // One histogram bin (0.157 EV) of quantisation plus RGBA16F rounding.
+        EXPECT_NEAR(std::log2(pass->exposure()), std::log2(expected), 0.2F) << lux << " lux";
+        EXPECT_NEAR(std::log2(pass->adapted_luminance()), std::log2(scene), 0.2F)
+            << lux << " lux";
+        // Display scale: the adaptive key (0.18 by day, dimmer by night).
+        EXPECT_GT(scene * pre, 0.002F) << lux << " lux";
+        EXPECT_LT(scene * pre, 0.25F) << lux << " lux";
+    }
 }
