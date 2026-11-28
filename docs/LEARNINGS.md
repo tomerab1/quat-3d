@@ -189,8 +189,9 @@ into CLAUDE.md or the brief template in [`CYCLE.md`](CYCLE.md).
   all-pairs loop bit for bit. Two traps: float sums depend on order (sort
   the neighbours back into view order), and kinematic agents move while the
   same loop is still running (the grid re-files each one as it moves). →
-  Keep the old loop behind a test-only reference switch
-  (`NavSeparationScratch::all_pairs`) and compare whole-registry state
+  Keep the old loop behind a reference switch that only tests can reach (a
+  private field plus `friend struct NavSeparationTestAccess`, defined in
+  `tests/`, as #90 did) and compare whole-registry state
   bytewise tick after tick. Mutating the new code (dropping the sort, the
   re-file, or the cell headroom) must make that test fail. The nav tests
   link locally without Jolt: recast sources plus a stub

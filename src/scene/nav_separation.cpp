@@ -1,6 +1,14 @@
 // Uniform-grid neighbour search for nav agent separation (#84); see
 // nav_separation.hpp.
 //
+// The grid is Teschner et al.'s hashed uniform grid ("Optimized Spatial
+// Hashing for Collision Detection of Deformable Objects", VMV 2003), laid out
+// as in S. Green's "Particle Simulation using CUDA" (NVIDIA, 2010): entries
+// sorted by cell hash, with a start table instead of per-cell lists. Here a
+// counting sort does the sorting, in O(n). Cells hash with Knuth's
+// multiplicative (Fibonacci) hashing, The Art of Computer Programming,
+// vol. 3, section 6.4.
+//
 // Layout: every cell (cx, cz) is hashed into one of 2^k buckets (at least 2n,
 // so most buckets hold one cell). A counting sort over the buckets files the
 // agents into one flat array, `entries_`, with `start_[b]` giving where
@@ -60,14 +68,20 @@ constexpr double        kInvCell = 1.0 / static_cast<double>(SeparationGrid::kCe
 } // namespace
 
 std::uint32_t SeparationGrid::bucket_of(std::uint64_t cell) const {
-    // Fibonacci hashing: the high bits of the product mix both coordinates.
+    // Fibonacci hashing (Knuth, TAOCP vol. 3, 6.4): multiply by 2^64 / phi
+    // and keep the high bits, which mix both coordinates.
     return static_cast<std::uint32_t>((cell * 0x9E3779B97F4A7C15ULL) >> shift_);
 }
 
 void SeparationGrid::build(std::span<const glm::vec2> positions) {
-    assert(positions.size() < kNoSlot);
-    const auto n = static_cast<std::uint32_t>(positions.size());
-    pos_.assign(positions.begin(), positions.end());
+    begin();
+    for (const glm::vec2& p : positions) add(p);
+    finish();
+}
+
+void SeparationGrid::finish() {
+    assert(pos_.size() < kNoSlot);
+    const auto n = static_cast<std::uint32_t>(pos_.size());
     cell_.resize(n);
     home_.resize(n);
     slot_.resize(n);

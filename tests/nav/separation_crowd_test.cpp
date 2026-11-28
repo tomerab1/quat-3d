@@ -19,10 +19,24 @@
 #include "nav/nav_fixtures.hpp"
 #include "scene/nav_separation.hpp"
 
+namespace engine::scene::nav_detail {
+
+// Switches a registry's nav_agent_system to the all-pairs reference loop
+// (a friend of NavSeparationScratch, defined only here so shipped code has no
+// way back to O(n^2)).
+struct NavSeparationTestAccess {
+    static void use_all_pairs(entt::registry& registry) {
+        registry.ctx().emplace<NavSeparationScratch>().all_pairs_ = true;
+    }
+};
+
+} // namespace engine::scene::nav_detail
+
 namespace {
 
 namespace s = engine::scene;
 using engine::scene::nav_detail::NavSeparationScratch;
+using engine::scene::nav_detail::NavSeparationTestAccess;
 using quat::test::add_box;
 using quat::test::kNavDt;
 
@@ -93,12 +107,22 @@ void step_characters(entt::registry& r) {
         if (!same_bytes(ta.world, tb.world) || !same_bytes(ta.local, tb.local)) {
             return "transform of agent " + id;
         }
+        // Every NavAgent field but planned_generation, which names each
+        // world's own bake (unique per NavMesh::build in the process).
         if (na.active != nb.active || na.arrived != nb.arrived || na.failed != nb.failed ||
-            na.paused != nb.paused || na.waypoint != nb.waypoint ||
-            na.path.size() != nb.path.size() || !same_bytes(na.progress_best, nb.progress_best) ||
-            !same_bytes(na.progress_timer, nb.progress_timer) ||
-            na.plan_failures != nb.plan_failures) {
+            na.paused != nb.paused || na.commanded != nb.commanded ||
+            na.waypoint != nb.waypoint || na.path_partial != nb.path_partial ||
+            na.plan_failures != nb.plan_failures || !same_bytes(na.target, nb.target) ||
+            !same_bytes(na.planned_target, nb.planned_target) ||
+            !same_bytes(na.retry_s, nb.retry_s) ||
+            !same_bytes(na.progress_best, nb.progress_best) ||
+            !same_bytes(na.progress_timer, nb.progress_timer)) {
             return "nav state of agent " + id;
+        }
+        if (na.path.size() != nb.path.size() ||
+            (!na.path.empty() &&
+             std::memcmp(na.path.data(), nb.path.data(), na.path.size() * sizeof(glm::vec3)) != 0)) {
+            return "path of agent " + id;
         }
         const auto* ca = a.try_get<s::CharacterController>(e);
         const auto* cb = b.try_get<s::CharacterController>(e);
@@ -117,7 +141,7 @@ struct Pair {
     Pair(std::size_t n, std::uint32_t seed, float half) {
         populate(grid, n, seed, half);
         populate(all_pairs, n, seed, half);
-        all_pairs.registry.ctx().emplace<NavSeparationScratch>().all_pairs = true;
+        NavSeparationTestAccess::use_all_pairs(all_pairs.registry);
     }
     void tick() {
         for (auto* w : {&grid, &all_pairs}) {

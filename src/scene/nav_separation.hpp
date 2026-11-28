@@ -15,15 +15,25 @@
 // - Agents moved during the tick (kinematic agents step one at a time) are
 //   re-filed with move(), so later agents see their new positions.
 // The all-pairs loop is kept in nav_agent_system as the reference the tests
-// compare against (NavSeparationScratch::all_pairs).
+// compare against (NavSeparationScratch, through NavSeparationTestAccess).
+//
+// Techniques (docs/reading/README.md, "Animation, physics & navigation"):
+// - Hashed uniform grid for neighbour queries: Teschner et al., "Optimized
+//   Spatial Hashing for Collision Detection of Deformable Objects", VMV 2003.
+// - Its counting-sort layout (agents sorted by cell hash, plus a cell-start
+//   table instead of per-cell lists): S. Green, "Particle Simulation using
+//   CUDA", NVIDIA, 2010.
+// - Fibonacci (multiplicative) hashing of the cell key: Knuth, The Art of
+//   Computer Programming, vol. 3, section 6.4.
 
 #include <cstdint>
 #include <span>
 #include <vector>
 
-#include <entt/entity/entity.hpp>
 #include <glm/geometric.hpp>
 #include <glm/vec2.hpp>
+
+#include "engine/scene/navigation.hpp"
 
 namespace engine::scene::nav_detail {
 
@@ -50,7 +60,13 @@ public:
     // that push each other are never more than one cell apart.
     static constexpr float kCellSize = 1.25F;
 
-    // Files every agent into its cell: O(n + table size), table size < 4n.
+    // Filing in three steps, so callers write positions straight into the
+    // grid: begin(), add() each agent in order, then finish() files every
+    // agent into its cell in O(n + table size), with table size < 4n.
+    void begin() { pos_.clear(); }
+    void add(const glm::vec2& pos) { pos_.push_back(pos); }
+    void finish();
+    // begin() + add() of every position + finish().
     void build(std::span<const glm::vec2> positions);
 
     // Agent `agent` now stands at `pos` (later steer() calls see it there).
@@ -98,19 +114,25 @@ private:
 
 // nav_agent_system's per-registry scratch, held as a registry context
 // variable (registry.ctx()) so the system itself stays stateless.
-struct NavSeparationScratch {
-    SeparationGrid            grid;
-    std::vector<glm::vec2>    positions; // this tick's agent positions, view order
-    std::vector<entt::entity> entities;  // the same order (debug check of the index)
-
-    // Test reference: steer with the all-pairs loop the grid replaced.
-    bool          all_pairs = false;
-    std::uint64_t all_pairs_checks = 0; // its distance tests in the last tick
+class NavSeparationScratch {
+public:
+    SeparationGrid grid; // this tick's agents, in view order
 
     // Distance tests the last tick spent on separation (either path).
     [[nodiscard]] std::uint64_t neighbour_checks() const {
-        return all_pairs ? all_pairs_checks : grid.checks();
+        return all_pairs_ ? all_pairs_checks_ : grid.checks();
     }
+
+private:
+    friend void ::engine::scene::nav_agent_system(entt::registry& registry,
+                                                  const nav::NavMesh& navmesh, float dt,
+                                                  const GroundHeightFn& ground_height);
+    // Tests switch the system to the all-pairs reference (defined in tests/,
+    // so shipped code has no way back to O(n^2)).
+    friend struct NavSeparationTestAccess;
+
+    bool          all_pairs_ = false;    // steer with the all-pairs loop the grid replaced
+    std::uint64_t all_pairs_checks_ = 0; // its distance tests in the last tick
 };
 
 } // namespace engine::scene::nav_detail

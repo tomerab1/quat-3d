@@ -1,5 +1,6 @@
 // NavAgent path following + separation steering (Phase 13, Slice 13.2).
 
+#include <bit>
 #include <cassert>
 #include <cmath>
 #include <cstdint>
@@ -95,9 +96,15 @@ void feed_patrol_routes(entt::registry& registry) {
     }
 }
 
+// Bitwise equality (NaN positions included), for the debug index check.
+[[maybe_unused]] bool same_bits(const glm::vec2& a, const glm::vec2& b) {
+    return std::bit_cast<std::uint32_t>(a.x) == std::bit_cast<std::uint32_t>(b.x) &&
+           std::bit_cast<std::uint32_t>(a.y) == std::bit_cast<std::uint32_t>(b.y);
+}
+
 // The all-pairs separation loop the grid replaced (#84): every agent in the
 // view, in view order, at its current position. Kept as the reference the
-// tests compare the grid against bit for bit (NavSeparationScratch::all_pairs).
+// tests compare the grid against bit for bit (NavSeparationTestAccess).
 template <typename View>
 [[nodiscard]] glm::vec2 separation_all_pairs(const View& view, entt::entity self,
                                              const glm::vec3& pos, glm::vec2 steer,
@@ -185,19 +192,22 @@ void nav_agent_system(entt::registry& registry, const nav::NavMesh& navmesh, flo
     // Separation neighbours: every agent (active or not) filed into the grid
     // once per tick, indexed in view order — the order the loop below visits.
     auto& separation = registry.ctx().emplace<NavSeparationScratch>();
-    separation.positions.clear();
-    separation.entities.clear();
-    for (auto [e, transform, agent] : view.each()) {
-        separation.positions.push_back(xz(glm::vec3(transform.world[3])));
-        separation.entities.push_back(e);
+    separation.all_pairs_checks_ = 0;
+    if (!separation.all_pairs_) {
+        separation.grid.begin();
+        for (auto [e, transform, agent] : view.each()) {
+            separation.grid.add(xz(glm::vec3(transform.world[3])));
+        }
+        separation.grid.finish();
     }
-    separation.all_pairs_checks = 0;
-    if (!separation.all_pairs) separation.grid.build(separation.positions);
 
     std::uint32_t index = 0;
     for (auto [e, transform, agent] : view.each()) {
         const std::uint32_t self = index++;
-        assert(self < separation.entities.size() && separation.entities[self] == e);
+        // Index `self` is this agent, at its live position (moves re-filed).
+        assert(separation.all_pairs_ ||
+               (self < separation.grid.size() &&
+                same_bits(separation.grid.position(self), xz(glm::vec3(transform.world[3])))));
         auto* controller = registry.try_get<CharacterController>(e);
         if (!agent.active) {
             stop(controller);
@@ -302,8 +312,8 @@ void nav_agent_system(entt::registry& registry, const nav::NavMesh& navmesh, flo
         // Every agent counts as an obstacle, active or not; only active ones
         // steer.
         glm::vec2 steer =
-            separation.all_pairs
-                ? separation_all_pairs(view, e, pos, dir, separation.all_pairs_checks)
+            separation.all_pairs_
+                ? separation_all_pairs(view, e, pos, dir, separation.all_pairs_checks_)
                 : separation.grid.steer(self, dir);
         if (const float m = glm::length(steer); m > 1.0F) steer /= m;
 
@@ -341,7 +351,7 @@ void nav_agent_system(entt::registry& registry, const nav::NavMesh& navmesh, flo
             pose[3] = glm::vec4(new_pos, 1.0F);
             set_world_transform(registry, e, pose);
             // Agents later in this tick see it at its new position.
-            if (!separation.all_pairs) {
+            if (!separation.all_pairs_) {
                 separation.grid.move(self, xz(glm::vec3(transform.world[3])));
             }
         }
