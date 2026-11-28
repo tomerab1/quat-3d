@@ -40,6 +40,11 @@ public:
     [[nodiscard]] bool requested() const { return requested_; }
     // A play session is running (the last apply() started one).
     [[nodiscard]] bool active() const { return active_; }
+    // While playing: the edit scene as Play captured it (Stop restores it).
+    // Null outside play. The device-loss recovery save writes it.
+    [[nodiscard]] const engine::scene::SceneSnapshot* edit_snapshot() const {
+        return active_ && snapshot_ ? &*snapshot_ : nullptr;
+    }
 
     // Performs the requested transition, if any. Returns false when a Play
     // failed to start (the error is logged and the request cleared).

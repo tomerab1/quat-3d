@@ -141,7 +141,13 @@ for blends such as dusty or partly painted metal.
   wrong; the error names it.
 - A material shader cannot use `#include` or other preprocessor
   directives, import files by path, or declare textures, buffers or global
-  parameters: everything comes in through `MaterialInput`. A compile error
+  parameters: everything comes in through `MaterialInput`. Inline SPIR-V
+  (`spirv_asm`), `vk::` intrinsics, pointers and buffer device addresses
+  are refused too.
+- Give every loop a compile-time bound (`for (int i = 0; i < 4; ++i)`).
+  The shader runs for every pixel, and a loop that never ends hangs the GPU:
+  the device is lost and the engine exits after writing a recovery save.
+  `for (;;)` and `while (true)` are refused. A compile error
   without a location usually means the `export struct SurfaceMaterial`
   line is missing or the module declares its own parameters.
 - With a shader the object stays opaque: glass and liquids need

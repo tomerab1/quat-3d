@@ -9,6 +9,7 @@
 
 #include "engine/rhi/device.hpp"
 #include "engine/rhi/formats.hpp"
+#include "engine/rhi/queue_submit.hpp"
 
 namespace engine::rhi {
 
@@ -221,7 +222,10 @@ std::expected<void, core::Error> Swapchain::build(VkExtent2D window_extent) {
 }
 
 std::expected<void, core::Error> Swapchain::recreate(VkExtent2D window_extent) {
-    vkDeviceWaitIdle(device_->handle());
+    // A lost device is reported, not rebuilt against (issue #110).
+    if (const VkResult r = vkDeviceWaitIdle(device_->handle()); r != VK_SUCCESS) {
+        return fail(queue_error_message("swapchain recreate", "vkDeviceWaitIdle", r));
+    }
     destroy_resources();
     return build(window_extent);
 }

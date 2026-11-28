@@ -29,6 +29,10 @@ struct AppConfig {
     std::optional<std::filesystem::path> screenshot_path;
     // False with QUAT_NO_UI=1: no editor shell (deterministic headless renders).
     bool editor_ui = true;
+    // QUAT_GPU_TIMEOUT_MS: how long a frame may run on the GPU before the
+    // frame loop reports a GPU hang (issue #110); none = the default
+    // (FrameFences::k_default_timeout_ns, 10 s).
+    std::optional<std::uint64_t> gpu_timeout_ns;
 
     // The window (a game's game.json sets these for the player;
     // QUAT_WINDOW_SIZE=<w>x<h> sets the initial size, e.g. for headless
@@ -51,7 +55,13 @@ struct AppConfig {
     std::optional<OpenGame> game;
 };
 
-// QUAT_MAX_FRAMES, QUAT_SCREENSHOT, QUAT_NO_UI and QUAT_WINDOW_SIZE.
+// QUAT_MAX_FRAMES, QUAT_SCREENSHOT, QUAT_NO_UI, QUAT_WINDOW_SIZE and
+// QUAT_GPU_TIMEOUT_MS.
 [[nodiscard]] AppConfig app_config_from_environment();
+
+// QUAT_GPU_TIMEOUT_MS's value in nanoseconds: a whole number of milliseconds
+// from 100 to 3600000 (one hour). None for anything else (the default
+// applies).
+[[nodiscard]] std::optional<std::uint64_t> parse_gpu_timeout_ms(const char* text);
 
 } // namespace quat::app

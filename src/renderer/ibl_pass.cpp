@@ -8,6 +8,7 @@
 
 #include "engine/rhi/device.hpp"
 #include "engine/rhi/pipeline_cache.hpp"
+#include "engine/rhi/queue_submit.hpp"
 
 namespace engine::renderer {
 
@@ -121,11 +122,9 @@ template <typename Record>
     si.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO_2;
     si.commandBufferInfoCount = 1;
     si.pCommandBufferInfos = &ci;
-    const VkResult r = vkQueueSubmit2(device.graphics_queue(), 1, &si, VK_NULL_HANDLE);
-    if (r == VK_SUCCESS) vkQueueWaitIdle(device.graphics_queue());
+    auto done = rhi::submit_and_wait_idle(device.graphics_queue(), si, "ibl");
     vkDestroyCommandPool(device.handle(), pool, nullptr);
-    return r == VK_SUCCESS ? std::expected<void, core::Error>{}
-                           : fail("ibl: vkQueueSubmit2 failed");
+    return done;
 }
 
 } // namespace

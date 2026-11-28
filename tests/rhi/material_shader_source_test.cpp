@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <filesystem>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include <gtest/gtest.h>
@@ -129,6 +130,87 @@ TEST(MaterialShaderSource, RefusesLegacyAndReservedDoubleUnderscoreSpellings) {
         EXPECT_NE(why.find("`__import`"), std::string::npos) << file << ": " << why;
     }
     EXPECT_NE(refusal("dunder_include.slang").find("`__include`"), std::string::npos);
+}
+
+// GPU safety (issue #110): a model-authored material must not be able to
+// take the GPU down. Inline SPIR-V, pointers, raw buffer-device-address
+// access and loops that obviously never end are refused with a message that
+// names the construct.
+TEST(MaterialShaderSource, RefusesInlineSpirvPointersAndRawAddresses) {
+    const std::vector<std::pair<const char*, const char*>> cases{
+        {"spirv_asm.slang", "inline SPIR-V (`spirv_asm`)"},
+        {"pointer_cast.slang", "pointer dereference"},
+        {"pointer_declaration.slang", "pointer types (`float4*`)"},
+        {"pointer_user_type.slang", "pointer types (`Node*`)"},
+        {"pointer_dereference.slang", "pointer dereference (`*p`)"},
+        {"pointer_arrow.slang", "member access through a pointer (`->`)"},
+        {"address_of.slang", "taking an address (`&x`)"},
+        {"ptr_type.slang", "pointers (`Ptr<T>`)"},
+        {"raw_buffer_load.slang", "`vk::` attributes and intrinsics"},
+    };
+    for (const auto& [file, what] : cases) {
+        const std::string why = refusal(file);
+        EXPECT_NE(why.find(what), std::string::npos) << file << ": " << why;
+    }
+}
+
+TEST(MaterialShaderSource, RefusesLoopsThatNeverEnd) {
+    for (const char* file : {"endless_for.slang", "endless_while.slang"}) {
+        const std::string why = refusal(file);
+        EXPECT_NE(why.find("loops need a bound known at compile time"), std::string::npos)
+            << file << ": " << why;
+    }
+}
+
+// `body` inside a material's evaluate().
+std::string material_with(const std::string& helpers, const std::string& body) {
+    return "import material;\n" + helpers +
+           "\nstruct M : IMaterial {\n"
+           "    static SurfaceSample evaluate(MaterialInput input) {\n"
+           "        SurfaceSample s = input.standard;\n" +
+           body +
+           "\n        return s;\n    }\n}\n"
+           "export struct SurfaceMaterial : IMaterial = M;\n";
+}
+
+TEST(MaterialShaderSource, PointerChecksLeaveArithmeticAlone) {
+    const std::vector<std::string> modules = library_modules();
+    // Multiplication, compound assignment, bitwise and logical and, postfix
+    // increments, return-type arrows and bounded loops all look like the
+    // refused constructs to a careless scan.
+    const std::vector<std::pair<std::string, std::string>> ok{
+        {"", "s.roughness = s.roughness * 0.5;"},
+        {"", "s.roughness *= 0.5;"},
+        {"", "float k = (s.metallic + 1.0) * -s.roughness * 2.0e-1;"},
+        {"", "uint bits = asuint(s.roughness) & 0xffu; s.metallic = float(bits) * 0.01;"},
+        {"", "if (s.alpha > 0.5 && s.metallic < 0.5) s.roughness = 0.2;"},
+        {"", "int i = 0; float k = i++ * 2.0; s.roughness = k * s.albedo.x;"},
+        {"", "float3 v = s.albedo; s.roughness = v.x * v.y * v[2];"},
+        {"", "for (int i = 0; i < 4; ++i) { s.roughness *= 0.9; }"},
+        {"", "[MaxIters(8)] while (s.roughness > 0.1) { s.roughness *= 0.5; }"},
+        {"func half_of(x: float) -> float { return x * 0.5; }",
+         "s.roughness = half_of(s.roughness) * half_of(1.0);"},
+        {"struct Ramp { float a; }", "Ramp r = { 2.0 }; s.roughness = r.a * 0.25;"},
+        {"", "s.roughness = sin(input.time) * cos(input.time) * (1.0 / 3.0);"},
+    };
+    for (const auto& [helpers, body] : ok) {
+        const auto r = check_material_source(material_with(helpers, body), modules);
+        EXPECT_TRUE(r.has_value()) << body << ": " << (r ? "" : r.error().message);
+    }
+    const std::vector<std::pair<std::string, std::string>> refused{
+        {"", "float* p;"},
+        {"", "float x = bit_cast<float*>(uint64_t(0))[0];"},
+        {"", "vector<float, 3>* p;"},
+        {"", "float x = 1.0; float y = x * *(&x);"},
+        {"", "for (;;) { }"},
+        {"", "do { } while (1);"},
+        {"", "float x = ConstBufferPointer<float>::fromUInt(4096).get();"},
+        {"", "[[vk::ext_instruction(1)]] float x;"},
+    };
+    for (const auto& [helpers, body] : refused) {
+        EXPECT_FALSE(check_material_source(material_with(helpers, body), modules).has_value())
+            << body;
+    }
 }
 
 TEST(ShaderDependencies, IgnoresStringImportsLeavingTheTree) {

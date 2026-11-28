@@ -9,6 +9,7 @@
 
 #include "engine/core/error.hpp"
 #include "engine/rhi/gpu_allocator.hpp"
+#include "engine/rhi/queue_submit.hpp"
 
 namespace engine::rhi::detail {
 
@@ -44,15 +45,9 @@ run_one_time_commands(const TransferContext& transfer, Record&& record) {
     submit.commandBufferInfoCount = 1;
     submit.pCommandBufferInfos = &cmd_info;
 
-    const VkResult r = vkQueueSubmit2(transfer.queue, 1, &submit, VK_NULL_HANDLE);
-    if (r == VK_SUCCESS) {
-        vkQueueWaitIdle(transfer.queue);
-    }
+    auto done = submit_and_wait_idle(transfer.queue, submit, "one-time commands");
     vkFreeCommandBuffers(transfer.device, transfer.pool, 1, &cmd);
-    if (r != VK_SUCCESS) {
-        return std::unexpected(core::Error{"vkQueueSubmit2 (one-time) failed"});
-    }
-    return {};
+    return done;
 }
 
 } // namespace engine::rhi::detail

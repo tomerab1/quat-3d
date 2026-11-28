@@ -145,6 +145,15 @@ control (`shader.*` methods, see [`remote-control.md`](remote-control.md#materia
 - Sources sent over remote control may not read other files: no `#`
   directives, no `__include`, no `import "<path>"`, and `import` only names a
   library module (`rhi::check_material_source`).
+- Nor may they take the GPU down (issue #110). Inline SPIR-V (`spirv_asm`),
+  `vk::` attributes and intrinsics, pointers (`T*`, `Ptr<T>`, `*p`, `&x`,
+  `->`) and buffer device addresses (`ConstBufferPointer`, `RawBufferLoad`)
+  are refused, and so are loops without an end (`for (;;)`,
+  `while (true)`). Every loop needs a compile-time bound. Slang has no
+  attribute that caps loop iterations at run time (`[MaxIters]` and
+  `[unroll]` are only hints), so a loop bounded by data can still hang the
+  GPU. The frame loop then reports the hang or device loss, writes a
+  recovery save and exits (README, "When the GPU fails").
 - Test material sources live in `tests/data/materials/`;
   `tests/support/material_shader_tree.hpp` builds a scratch project with the
   library modules cooked.

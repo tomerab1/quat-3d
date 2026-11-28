@@ -12,6 +12,7 @@
 #include "engine/rhi/device.hpp"
 #include "engine/rhi/formats.hpp"
 #include "engine/rhi/gpu_profiler.hpp"
+#include "engine/rhi/queue_submit.hpp"
 
 namespace engine::rhi {
 
@@ -786,11 +787,11 @@ run_render_graph_self_test(const Device& device, GpuAllocator& allocator,
             submit.commandBufferInfoCount = 1;
             submit.pCommandBufferInfos = &cmd_info;
 
-            if (vkQueueSubmit2(device.graphics_queue(), 1, &submit, VK_NULL_HANDLE)
-                != VK_SUCCESS) {
-                result = fail("render graph self-test: vkQueueSubmit2 failed");
+            if (auto done = submit_and_wait_idle(device.graphics_queue(), submit,
+                                                 "render graph self-test");
+                !done) {
+                result = std::unexpected(done.error());
             } else {
-                vkQueueWaitIdle(device.graphics_queue());
                 std::array<std::uint8_t, 4> got{};
                 std::memcpy(got.data(), readback->mapped(), got.size());
                 for (std::size_t i = 0; i < got.size(); ++i) {

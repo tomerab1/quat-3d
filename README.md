@@ -334,9 +334,20 @@ Environment variables switch on extra modes:
 | `QUAT_NO_AUDIO=1` | Mute: run audio without opening a playback device |
 | `QUAT_NON_FINITE_CHECK=1` | Count NaN/Inf values the bloom / TAA guards replace and log them per frame (always on in debug builds) |
 | `QUAT_MAX_FRAMES=<n>` + `QUAT_SCREENSHOT=<file.ppm>` | Render n frames, save the last one, exit (headless checks) |
+| `QUAT_GPU_TIMEOUT_MS=<ms>` | How long a frame may run on the GPU before it counts as a GPU hang (default 10000, range 100 to 3600000) |
 | `QUAT_ASSET_ROOT=<dir>` | Data directory holding `assets/` and `cooked/shaders/` (default: next to the executable — inside a macOS app, `Contents/Resources` — then, in development builds, the source tree) |
 | `TRACY_PORT=<port>` | `ENGINE_PROFILE` builds: the port the Tracy client listens on (default 8086, loopback only) |
 | `TRACY_NO_SYS_TRACE=1` | `ENGINE_PROFILE` builds run as root / administrator: do not start Tracy's kernel sampling and context-switch tracing |
+
+### When the GPU fails
+
+If the GPU is lost (`VK_ERROR_DEVICE_LOST`), a frame hangs for longer than `QUAT_GPU_TIMEOUT_MS`, or a submit or present fails, the engine stops rendering. It does not freeze. It then:
+
+- logs a `[fatal] GPU device lost` line (or "GPU hang" / "GPU submit failed"), the last pipeline created or hot-reloaded, and the driver's `VK_EXT_device_fault` report when the driver offers one;
+- writes a recovery save of the scene to `recovery/` in the project. While playing, it writes two files: the edit scene as `<stem>.scene.json` and the play state as `<stem>.play.scene.json`;
+- exits with status 3.
+
+Open the recovery file with **File > Open Scene...** in the editor, or with `scene.load` over remote control. A material shader that loops forever is the usual cause, so remote-authored materials are checked before they compile (see [material shaders](docs/DEVELOPMENT.md#material-shaders)).
 
 ### Networking
 

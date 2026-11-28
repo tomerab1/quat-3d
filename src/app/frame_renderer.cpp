@@ -1,17 +1,16 @@
-// FrameRenderer setup, frame synchronisation, submission and screenshots.
-// The per-frame scene gather and render-graph build are in frame_graph.cpp.
+// FrameRenderer setup, frame synchronisation and submission. The per-frame
+// scene gather and render-graph build are in frame_graph.cpp, the
+// QUAT_SCREENSHOT capture in frame_screenshot.cpp.
 
 #include "app/frame_renderer.hpp"
 
 #include <cstdio>
 #include <cstdlib>
-#include <fstream>
 #include <string>
 #include <utility>
 
 #include "engine/core/profile.hpp"
 #include "app/load_transfer.hpp"
-#include "engine/core/utf8_path.hpp"
 #include "engine/rhi/device.hpp"
 #include "engine/rhi/formats.hpp"
 #include "engine/rhi/pipeline_cache.hpp"
@@ -315,7 +314,7 @@ void FrameRenderer::create_environment(engine::scene::Scene& scene,
     }
 }
 
-void FrameRenderer::create_frame_sync() {
+bool FrameRenderer::create_frame_sync(std::uint64_t gpu_timeout_ns) {
     const VkDevice vk_device = device_->handle();
     {
         VkCommandPoolCreateInfo pool_info{};
@@ -334,16 +333,21 @@ void FrameRenderer::create_frame_sync() {
     }
     for (std::uint32_t i = 0; i < k_frames_in_flight; ++i) {
         image_available_[i] = make_semaphore(vk_device);
-        VkFenceCreateInfo fence_info{};
-        fence_info.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
-        fence_info.flags = VK_FENCE_CREATE_SIGNALED_BIT;
-        vkCreateFence(vk_device, &fence_info, nullptr, &in_flight_[i]);
+    }
+    if (auto fences = fences_.create(
+            make_vulkan_queue_sync_ops(vk_device, device_->graphics_queue()), k_frames_in_flight,
+            gpu_timeout_ns);
+        !fences) {
+        std::fprintf(stderr, "[fatal] frame fence creation failed: %s\n",
+                     describe_gpu_fault(fences.error()).c_str());
+        return false;
     }
     render_finished_.assign(swapchain_->image_count(), VK_NULL_HANDLE);
     for (VkSemaphore& s : render_finished_) {
         s = make_semaphore(vk_device);
     }
     create_gpu_profiler();
+    return true;
 }
 
 void FrameRenderer::destroy_frame_sync() {
@@ -357,10 +361,9 @@ void FrameRenderer::destroy_frame_sync() {
     render_finished_.clear();
     for (std::uint32_t i = 0; i < k_frames_in_flight; ++i) {
         vkDestroySemaphore(vk_device, image_available_[i], nullptr);
-        vkDestroyFence(vk_device, in_flight_[i], nullptr);
         image_available_[i] = VK_NULL_HANDLE;
-        in_flight_[i] = VK_NULL_HANDLE;
     }
+    fences_.destroy();
     vkDestroyCommandPool(vk_device, command_pool_, nullptr);
     command_pool_ = VK_NULL_HANDLE;
 }
@@ -388,10 +391,15 @@ bool FrameRenderer::ensure_swapchain(VkExtent2D pixel_extent) {
     return true;
 }
 
-std::uint32_t FrameRenderer::wait_for_slot() {
+std::expected<std::uint32_t, GpuFault> FrameRenderer::wait_for_slot() {
     {
         QUAT_ZONE_C("wait_gpu", engine::core::ProfileCategory::wait);
-        vkWaitForFences(device_->handle(), 1, &in_flight_[frame_], VK_TRUE, UINT64_MAX);
+        // Finite: a GPU that never finishes the frame is reported as a hang
+        // instead of freezing the loop (issue #110).
+        if (auto waited = fences_.wait(frame_); !waited) {
+            std::fprintf(stderr, "[fatal] %s\n", describe_gpu_fault(waited.error()).c_str());
+            return std::unexpected(waited.error());
+        }
     }
     collect_gpu_timings();
     if (non_finite_) {
@@ -426,12 +434,16 @@ FrameRenderer::Acquire FrameRenderer::acquire_and_begin() {
         return Acquire::retry;
     }
     if (acquire != VK_SUCCESS && acquire != VK_SUBOPTIMAL_KHR) {
-        std::fprintf(stderr, "[fatal] vkAcquireNextImageKHR failed (%d)\n",
-                     static_cast<int>(acquire));
+        const GpuFault fault =
+            fences_.report(classify_gpu_fault(acquire, "vkAcquireNextImageKHR")).error();
+        std::fprintf(stderr, "[fatal] %s\n", describe_gpu_fault(fault).c_str());
         return Acquire::failed;
     }
 
-    vkResetFences(vk_device, 1, &in_flight_[frame_]);
+    if (auto reset = fences_.reset(frame_); !reset) {
+        std::fprintf(stderr, "[fatal] %s\n", describe_gpu_fault(reset.error()).c_str());
+        return Acquire::failed;
+    }
 
     VkCommandBuffer cmd = command_buffers_[frame_];
     vkResetCommandBuffer(cmd, 0);
@@ -464,93 +476,6 @@ CaptureSource FrameRenderer::capture_source() const {
     }
 #endif
     return capture;
-}
-
-bool FrameRenderer::record_screenshot_copy(VkCommandBuffer cmd) {
-    // Screenshot capture on the final frame: the graph leaves the swapchain
-    // image in PRESENT_SRC — round-trip it through TRANSFER_SRC and copy to
-    // a host-visible buffer, written out as PPM after the queue idles.
-    const VkExtent2D present_extent = swapchain_->extent();
-    const VkDeviceSize shot_bytes =
-        static_cast<VkDeviceSize>(present_extent.width) * present_extent.height * 4;
-    if (screenshot_buffer_.handle() == VK_NULL_HANDLE) {
-        auto buf = allocator_->create_buffer(shot_bytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-                                             VMA_MEMORY_USAGE_AUTO,
-                                             VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT |
-                                                 VMA_ALLOCATION_CREATE_MAPPED_BIT);
-        if (buf) screenshot_buffer_ = std::move(*buf);
-    }
-    if (screenshot_buffer_.handle() == VK_NULL_HANDLE) return false;
-
-    const VkImage shot_image = swapchain_->images()[image_index_];
-    VkImageMemoryBarrier2 to_src{};
-    to_src.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2;
-    to_src.srcStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
-    to_src.srcAccessMask = VK_ACCESS_2_MEMORY_WRITE_BIT;
-    to_src.dstStageMask = VK_PIPELINE_STAGE_2_COPY_BIT;
-    to_src.dstAccessMask = VK_ACCESS_2_TRANSFER_READ_BIT;
-    to_src.oldLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
-    to_src.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
-    to_src.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    to_src.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    to_src.image = shot_image;
-    to_src.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
-    VkDependencyInfo dep{};
-    dep.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO;
-    dep.imageMemoryBarrierCount = 1;
-    dep.pImageMemoryBarriers = &to_src;
-    vkCmdPipelineBarrier2(cmd, &dep);
-
-    VkBufferImageCopy region{};
-    region.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
-    region.imageExtent = {present_extent.width, present_extent.height, 1};
-    vkCmdCopyImageToBuffer(cmd, shot_image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-                           screenshot_buffer_.handle(), 1, &region);
-
-    VkImageMemoryBarrier2 to_present = to_src;
-    to_present.srcStageMask = VK_PIPELINE_STAGE_2_COPY_BIT;
-    to_present.srcAccessMask = VK_ACCESS_2_TRANSFER_READ_BIT;
-    // Chained onto by the render-finished signal (see k_present_signal_stage).
-    to_present.dstStageMask = k_present_signal_stage;
-    to_present.dstAccessMask = 0;
-    to_present.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
-    to_present.newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
-    dep.pImageMemoryBarriers = &to_present;
-    vkCmdPipelineBarrier2(cmd, &dep);
-    return true;
-}
-
-void FrameRenderer::write_screenshot() const {
-    const VkExtent2D present_extent = swapchain_->extent();
-    // fs::path all the way: a non-ASCII path (e.g. CJK on Windows) must not go
-    // through a narrow fopen.
-    const std::string shown = engine::core::path_to_utf8(*screenshot_path_);
-    const bool bgra = swapchain_->format() == VK_FORMAT_B8G8R8A8_SRGB ||
-                      swapchain_->format() == VK_FORMAT_B8G8R8A8_UNORM;
-    if (std::ofstream out(*screenshot_path_, std::ios::binary | std::ios::trunc); out) {
-        out << "P6\n" << present_extent.width << ' ' << present_extent.height << "\n255\n";
-        const auto* px = static_cast<const std::uint8_t*>(screenshot_buffer_.mapped());
-        std::vector<std::uint8_t> row(static_cast<std::size_t>(present_extent.width) * 3);
-        for (std::uint32_t y = 0; y < present_extent.height; ++y) {
-            for (std::uint32_t x = 0; x < present_extent.width; ++x) {
-                const std::uint8_t* p =
-                    px + (static_cast<std::size_t>(y) * present_extent.width + x) * 4;
-                row[x * 3 + 0] = bgra ? p[2] : p[0];
-                row[x * 3 + 1] = p[1];
-                row[x * 3 + 2] = bgra ? p[0] : p[2];
-            }
-            out.write(reinterpret_cast<const char*>(row.data()),
-                      static_cast<std::streamsize>(row.size()));
-        }
-        out.close();
-        if (out) {
-            std::fprintf(stderr, "[screenshot] wrote %s\n", shown.c_str());
-        } else {
-            std::fprintf(stderr, "[screenshot] write failed for %s\n", shown.c_str());
-        }
-    } else {
-        std::fprintf(stderr, "[screenshot] could not open %s\n", shown.c_str());
-    }
 }
 
 bool FrameRenderer::submit_and_present(bool screenshot_frame) {
@@ -588,7 +513,14 @@ bool FrameRenderer::submit_and_present(bool screenshot_frame) {
     submit.pSignalSemaphoreInfos = &signal;
     {
         QUAT_ZONE_N("queue_submit");
-        vkQueueSubmit2(device_->graphics_queue(), 1, &submit, in_flight_[frame_]);
+        // A failed submit leaves the slot's fence signalled (FrameFences), so
+        // nothing waits on it forever; the frame is not presented (its
+        // render-finished semaphore will never be signalled) and the loop
+        // stops on the fault.
+        if (auto submitted = fences_.submit(frame_, submit); !submitted) {
+            std::fprintf(stderr, "[fatal] %s\n", describe_gpu_fault(submitted.error()).c_str());
+            return false;
+        }
     }
 
     VkSwapchainKHR sc = swapchain_->handle();
@@ -607,13 +539,18 @@ bool FrameRenderer::submit_and_present(bool screenshot_frame) {
     if (present_result == VK_ERROR_OUT_OF_DATE_KHR || present_result == VK_SUBOPTIMAL_KHR) {
         needs_recreate_ = true;
     } else if (present_result != VK_SUCCESS) {
-        std::fprintf(stderr, "[fatal] vkQueuePresentKHR failed (%d)\n",
-                     static_cast<int>(present_result));
+        const GpuFault fault =
+            fences_.report(classify_gpu_fault(present_result, "vkQueuePresentKHR")).error();
+        std::fprintf(stderr, "[fatal] %s\n", describe_gpu_fault(fault).c_str());
         return false;
     }
 
     if (screenshot_recorded) {
-        vkQueueWaitIdle(device_->graphics_queue());
+        // The frame's own fence, with the same hang timeout as the loop.
+        if (auto waited = fences_.wait(frame_); !waited) {
+            std::fprintf(stderr, "[fatal] %s\n", describe_gpu_fault(waited.error()).c_str());
+            return false;
+        }
         write_screenshot();
     }
 

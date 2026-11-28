@@ -48,3 +48,6 @@ imgui.ini
 # Editor layout + preferences (per project, per user)
 .quat/
 __pycache__/
+
+# Recovery saves written when the GPU is lost (issue #110, src/app/device_loss.hpp)
+/recovery/
