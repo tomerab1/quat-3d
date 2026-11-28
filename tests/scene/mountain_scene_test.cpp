@@ -237,6 +237,28 @@ TEST(MountainScene, LayersPlaceTheExpectedInstanceCounts) {
     std::printf("[ mountain ] total %zu instances\n", total);
 }
 
+// The cliff-rock layers (boulders, spires) stay out of the meadow in front
+// of the camera: steep micro-relief there would otherwise put a rock against
+// the lens. Only meadow_rocks is placed in the foreground on purpose.
+TEST(MountainScene, CliffRocksStayOutOfTheForeground) {
+    const SceneData& d = scene_data();
+    ASSERT_TRUE(d.map.valid());
+    constexpr float k_clear_radius = 120.0F; // metres around the camera, in XZ
+    const s::ScatterGround g = d.ground();
+    std::size_t checked = 0;
+    for (const Layer& layer : d.layers) {
+        if (layer.name != "rocks_boulders" && layer.name != "rocks_spires") continue;
+        SCOPED_TRACE(layer.name);
+        for (const s::InstanceTransform& t : s::generate_scatter(layer.scatter, layer.world, g)) {
+            const glm::vec3 p(layer.world * glm::vec4(t.position, 1.0F));
+            ++checked;
+            ASSERT_GT(glm::length(glm::vec2(p.x - d.camera.x, p.z - d.camera.z)), k_clear_radius)
+                << "rock at " << p.x << ", " << p.z;
+        }
+    }
+    EXPECT_GT(checked, 0U);
+}
+
 TEST(MountainScene, PlacementsHonourTheirSlopeAndHeightLimits) {
     const SceneData& d = scene_data();
     ASSERT_TRUE(d.map.valid());

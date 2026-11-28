@@ -97,9 +97,9 @@
     {
       "name": "rocks_boulders",
       "parent": -1,
-      "transform": {"position": [-100, 0, -250]},
+      "transform": {"position": [-100, 0, -400]},
       "instanced_mesh": {"gltf": "assets/meshes/nature/rock_boulder.glb"},
-      "scatter": {"size": [1600, 1400], "seed": 301, "density": 0.0007, "min_spacing": 5, "scale": [0.8, 3.0], "align_to_normal": 0.7, "slope": [30, 70], "height": [250, 480], "max_instances": 20000}
+      "scatter": {"size": [1600, 1100], "seed": 301, "density": 0.0007, "min_spacing": 5, "scale": [0.8, 3.0], "align_to_normal": 0.7, "slope": [30, 70], "height": [250, 480], "max_instances": 20000}
     },
     {
       "name": "rocks_scree",
@@ -111,9 +111,9 @@
     {
       "name": "rocks_spires",
       "parent": -1,
-      "transform": {"position": [-100, 0, -250]},
+      "transform": {"position": [-100, 0, -400]},
       "instanced_mesh": {"gltf": "assets/meshes/nature/rock_spire.glb"},
-      "scatter": {"size": [1600, 1400], "seed": 303, "density": 0.0004, "min_spacing": 8, "scale": [1.0, 3.5], "align_to_normal": 0.4, "slope": [38, 75], "height": [260, 520], "max_instances": 5000}
+      "scatter": {"size": [1600, 1100], "seed": 303, "density": 0.0004, "min_spacing": 8, "scale": [1.0, 3.5], "align_to_normal": 0.4, "slope": [38, 75], "height": [260, 520], "max_instances": 5000}
     },
     {
       "name": "forest_edge_bushes",
