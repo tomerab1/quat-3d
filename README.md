@@ -75,8 +75,10 @@ The editor (dark theme; a light theme is one click away in View > Theme):
 **World**
 - Procedural terrain: seeded generation with erosion, level of detail, and
   seamless streaming for kilometre-scale worlds; tiles (noise + hydraulic /
-  thermal erosion) are synthesised on the GPU in milliseconds, with the
-  deterministic CPU generator as fallback and reference
+  thermal erosion, with steep faces relaxed to the talus angle by a multigrid
+  solver) are synthesised on the GPU in milliseconds, with the deterministic
+  CPU generator as fallback and reference; one memory budget bounds the
+  resolution x streaming radius of a world
 - Dense, wind-animated grass generated on the GPU every frame around the
   camera (slope / height limits, distance level of detail, no popping)
 - Jolt physics: rigid bodies, character controller, triggers, terrain collision

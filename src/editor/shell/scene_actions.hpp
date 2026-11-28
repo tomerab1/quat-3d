@@ -4,6 +4,7 @@
 // used by the menus, the command palette, shortcuts and the hierarchy's
 // context menu alike.
 
+#include <cstdint>
 #include <span>
 #include <string_view>
 
@@ -44,10 +45,18 @@ void delete_entity_tree(scene::Scene& scene, entt::entity root, entt::entity& se
 // cached Transform.world, which is only refreshed when the scene ticks).
 [[nodiscard]] glm::mat4 current_world(const entt::registry& registry, entt::entity e);
 
+enum class ReparentResult : std::uint8_t {
+    done,
+    refused,         // invalid entity or a cycle (Scene::set_parent refuses)
+    singular_parent, // the parent's world matrix has no inverse (a zero scale)
+};
+
 // Re-parents `child` under `parent` (entt::null = root) without moving it:
-// its local transform is rewritten so its world pose stays put. False (and
-// nothing changes) when Scene::set_parent refuses (cycle, invalid entity).
-bool reparent_keep_world(scene::Scene& scene, entt::entity child, entt::entity parent);
+// its local transform is rewritten so its world pose stays put. Nothing
+// changes unless the result is `done`; a parent whose world matrix cannot be
+// inverted (zero or non-finite scale) cannot hold the pose and is refused.
+[[nodiscard]] ReparentResult reparent_keep_world(scene::Scene& scene, entt::entity child,
+                                                 entt::entity parent);
 
 // Where new entities appear: `distance` in front of the camera of `view`.
 [[nodiscard]] glm::vec3 spawn_point(const glm::mat4& view, float distance = 5.0F);

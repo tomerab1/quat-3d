@@ -20,6 +20,8 @@
 #include "engine/rhi/material_shader_names.hpp"
 #include "engine/scene/components.hpp"
 #include "engine/scene/scatter.hpp"
+#include "engine/terrain/budget.hpp"
+#include "engine/terrain/talus_relax.hpp"
 #include "ui/icons.hpp"
 #include "ui/widgets.hpp"
 
@@ -43,6 +45,11 @@ void draw_terrain(scene::Terrain& terrain) {
     if (p.erosion_model == terrain::ErosionModel::grid) {
         (void)ui::prop_u32("Erosion steps", p.grid.iterations,
                            {.speed = 5.0F, .min = 0, .max = 5'000});
+        (void)ui::prop_u32("Talus relax", p.grid.relax_cycles,
+                           {.min = 0, .max = static_cast<int>(terrain::max_talus_relax_cycles),
+                            .slider = true},
+                           {.reset = 3U,
+                            .tooltip = "Cycles bringing slopes down to the talus angle (0 = off)"});
     } else {
         (void)ui::prop_u32("Droplets", p.erosion_droplets,
                            {.speed = 1000.0F, .min = 0, .max = 1'000'000});
@@ -61,6 +68,12 @@ void draw_terrain(scene::Terrain& terrain) {
         // The runtime resizes the window and keeps the loaded tiles.
         (void)ui::prop_int("Radius (tiles)", terrain.stream_radius,
                            {.min = 1, .max = 4, .slider = true});
+    }
+    if (const auto over = terrain::terrain_budget_problem(p, terrain.streaming,
+                                                          terrain.stream_radius)) {
+        // #67: the runtime does not generate this configuration.
+        const std::string note = "Over budget, not generated: " + over->message;
+        ui::prop_note(note.c_str(), ui::tokens().warning);
     }
     ui::prop_begin("", nullptr, false, false);
     if (ui::button(ui::label(icon::refresh_cw, "Regenerate").c_str(), ui::ButtonKind::secondary,

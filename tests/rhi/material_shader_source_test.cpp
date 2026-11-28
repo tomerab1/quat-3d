@@ -51,6 +51,43 @@ TEST(MaterialShaderSource, RefusesEverythingThatReadsOtherFiles) {
     EXPECT_GE(checked, 8);
 }
 
+// Sources may arrive with CRLF line ends (a Windows editor, a remote client):
+// the checker reports the same lines and accepts the same files.
+std::string with_crlf(const std::string& lf) {
+    std::string out;
+    out.reserve(lf.size() + lf.size() / 16);
+    for (const char c : lf) {
+        if (c == '\n') out += '\r';
+        out += c;
+    }
+    return out;
+}
+
+TEST(MaterialShaderSource, CrlfSourcesReportTheSameLines) {
+    const std::vector<std::string> modules = library_modules();
+    int checked = 0;
+    for (const auto& entry : fs::directory_iterator(data_dir() / "unsafe")) {
+        const std::string text = quat::test::read_text_file(entry.path());
+        const auto lf = check_material_source(text, modules);
+        const auto crlf = check_material_source(with_crlf(text), modules);
+        ASSERT_FALSE(lf.has_value()) << entry.path();
+        ASSERT_FALSE(crlf.has_value()) << entry.path() << " accepted with CRLF line ends";
+        const auto line_of = [](const std::string& message) {
+            return message.substr(0, message.find(':'));
+        };
+        EXPECT_EQ(line_of(crlf.error().message), line_of(lf.error().message))
+            << entry.path() << ": " << crlf.error().message;
+        ++checked;
+    }
+    EXPECT_GE(checked, 8);
+    for (const fs::path& file :
+         {data_dir() / "flat_glow.slang", data_dir() / "tricky_but_safe.slang",
+          quat::test::repo_shader_dir() / "templates" / "material.slang"}) {
+        const auto r = check_material_source(with_crlf(quat::test::read_text_file(file)), modules);
+        EXPECT_TRUE(r.has_value()) << file << ": " << (r ? "" : r.error().message);
+    }
+}
+
 TEST(MaterialShaderSource, AcceptsTheShippedAndTestMaterials) {
     const std::vector<std::string> modules = library_modules();
     for (const fs::path& file :

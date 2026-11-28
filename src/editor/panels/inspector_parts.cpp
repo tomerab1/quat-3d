@@ -124,11 +124,13 @@ std::expected<void, core::Error> reset_component(entt::registry& r, entt::entity
     // One value per field the entity has: the default, or null where the
     // defaults leave the field out (an optional override: null clears it).
     // An instanced mesh's placements are its content, not a setting (and a
-    // scatter owns them): Reset keeps them, Remove clears them.
+    // scatter owns them): Reset keeps them, Remove clears them. A script's
+    // file is its content the same way.
     nlohmann::json reset = nlohmann::json::object();
     if (current->is_object() && defaults.is_object()) {
         for (const auto& [key, value] : current->items()) {
             if (codec == "instanced_mesh" && key == "instances") continue;
+            if (codec == "script" && key == "path") continue;
             const auto it = defaults.find(key);
             reset[key] = it != defaults.end() ? *it : nlohmann::json(nullptr);
         }

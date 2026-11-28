@@ -1,3 +1,9 @@
 # Append-only logs: every PR appends lessons at the end; resolve concurrent
 # appends by keeping both sides instead of conflicting (see S9).
 docs/LEARNINGS.md merge=union
+
+# Shader sources and test fixtures keep LF on every platform: tests read
+# fixtures byte for byte (e.g. "expect-line: N" markers in material shader
+# fixtures), and a Windows checkout with core.autocrlf would add CRs.
+assets/shaders/** text eol=lf
+tests/data/** text eol=lf

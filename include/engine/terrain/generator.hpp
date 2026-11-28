@@ -64,7 +64,11 @@ enum class ErosionModel : std::uint8_t {
 // 2008), plus thermal weathering that relaxes slopes steeper than the talus
 // angle. Runs in metres and seconds on the tile's height grid. Every step
 // reads only the previous step's state (no scatter, no atomics), so the
-// result is deterministic on the CPU and on the GPU.
+// result is deterministic on the CPU and on the GPU. After the last step the
+// suspended sediment settles and, with relax_cycles > 0, thermal erosion is
+// run to its steady state by a multigrid talus relaxation (talus_relax.hpp):
+// the interleaved weathering only acts locally, so without it steep faces
+// never come down to the talus angle (issue #69).
 struct GridErosionParams {
     std::uint32_t iterations = 200; // simulation steps; 0 disables the pass
     float time_step = 0.05F;        // s per step
@@ -77,6 +81,7 @@ struct GridErosionParams {
     float max_depth = 0.3F;         // m: capacity ramps to full strength at this water depth
     float talus = 0.5F;             // tan of the thermal talus angle (~27 degrees)
     float thermal_rate = 0.5F;      // share of the excess over the talus slope moved per step
+    std::uint32_t relax_cycles = 3; // talus relaxation cascades after the steps; 0 disables
 };
 
 struct TerrainParams {
@@ -175,7 +180,8 @@ struct GridErosionStep {
 [[nodiscard]] GridErosionStep grid_erosion_step(const GridErosionParams& params, float cell_m);
 
 // Grid erosion of `heights_m` (resolution² metres, cells `cell_m` apart) in
-// place, without the border fade.
+// place, without the border fade: the simulation steps, sediment settling,
+// then the talus relaxation.
 // Returns false (leaving `heights_m` partly eroded) when `cancel` was set.
 bool erode_grid(std::vector<float>& heights_m, std::uint32_t resolution, float cell_m,
                 const GridErosionParams& params, const std::atomic<bool>* cancel = nullptr);

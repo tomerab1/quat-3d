@@ -299,7 +299,7 @@ radius),
 `point_light`, `dir_light`, `camera`, `collider`, `rigidbody`, `character`,
 `nav_agent`, `behavior`, `patrol`, `terrain` (only an edit that changes the
 generated heights — `seed`, `resolution`, `tile_size`, `height`, `octaves`,
-`warp`, `erosion`, `droplets`, `erosion_steps` — regenerates it; `snowline` is
+`warp`, `erosion`, `droplets`, `erosion_steps`, `erosion_relax` — regenerates it; `snowline` is
 shading, `stream_radius` resizes the streaming window keeping loaded tiles,
 `gpu` picks the generator of the next tile), `net_replicated`,
 `audio_source` (`clip`: a project-relative file — absolute paths, `..`

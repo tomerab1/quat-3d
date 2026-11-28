@@ -145,6 +145,29 @@ TEST_F(MaterialShaderRegistryTest, FailedCreateReportsLocatedDiagnosticsAndLeave
     EXPECT_EQ(registry_->list().size(), 1U);
 }
 
+// slangc may print the project under another spelling than the display root
+// (native separators, a Windows 8.3 short name, a symlink): diagnostics are
+// still project-relative. Here the display root is a symlink to the project.
+TEST_F(MaterialShaderRegistryTest, DiagnosticsAreRelativeToAnotherSpellingOfTheRoot) {
+    const fs::path alias =
+        tree_.project.parent_path() / (tree_.project.filename().string() + "-alias");
+    std::error_code ec;
+    fs::create_directory_symlink(tree_.project, alias, ec);
+    // Windows only allows symlinks with Developer Mode or the privilege; the
+    // 8.3 short-name spelling CI's temp path has there is covered by the
+    // tests above.
+    if (ec) GTEST_SKIP() << "cannot create a directory symlink here: " << ec.message();
+    registry_.reset();
+    auto rc = tree_.registry_config();
+    rc.display_root = alias;
+    registry_.emplace(rc, reload_.get());
+    const Outcome r = run(true, "broken", quat::test::test_material("broken.slang"));
+    fs::remove(alias, ec);
+    ASSERT_OK(r);
+    ASSERT_FALSE(r->diagnostics.empty()) << r->log;
+    EXPECT_EQ(r->diagnostics.front().file, "assets/shaders/materials/broken.slang");
+}
+
 TEST_F(MaterialShaderRegistryTest, FailedUpdateKeepsThePreviousVersion) {
     const std::string good = quat::test::test_material("flat_glow.slang");
     ASSERT_TRUE(run(true, "glow", good).value_or(MaterialShaderRegistry::Outcome{}).ok);
