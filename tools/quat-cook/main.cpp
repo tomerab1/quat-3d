@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "engine/cook/gltf_cooker.hpp"
+#include "engine/cook/terrain_layer.hpp"
 
 namespace {
 
@@ -29,7 +30,13 @@ constexpr std::string_view k_usage =
     "  --simplify R                 keep about R (0..1) of each mesh's triangles (default 1)\n"
     "  --simplify-error E           simplifier error bound, relative to the model size\n"
     "                               (default 0.01)\n"
-    "  --blend-to-mask C            BLEND materials become MASK with alpha cutoff C\n";
+    "  --blend-to-mask C            BLEND materials become MASK with alpha cutoff C\n"
+    "\n"
+    "usage: quat-cook --terrain-layer <output-dir> --albedo <img> --normal <img>\n"
+    "                 [--arm <img> | --roughness <img> --ao <img>] [--height <img>]\n"
+    "                 [--normal-dx] [--size N] [--threads N]\n"
+    "  terrain layer texture set: albedo.ktx2, normal.ktx2, packed.ktx2 (N x N,\n"
+    "  power of two, default 1024); --normal-dx for DirectX-convention normal maps\n";
 
 [[nodiscard]] bool parse_codec(std::string_view s, engine::cook::BasisCodec& out) {
     if (s == "etc1s") out = engine::cook::BasisCodec::etc1s;
@@ -50,9 +57,51 @@ constexpr std::string_view k_usage =
     return 2;
 }
 
+// quat-cook --terrain-layer <out-dir> ... (R26.2).
+[[nodiscard]] int cook_terrain_layer_cli(int argc, char** argv) {
+    if (argc < 3) return usage_error("missing output directory");
+    engine::cook::TerrainLayerSources src;
+    engine::cook::TerrainLayerCookOptions o;
+    for (int i = 3; i < argc; ++i) {
+        const std::string_view arg = argv[i];
+        if (arg == "--normal-dx") {
+            src.normal_opengl = false;
+            continue;
+        }
+        if (i + 1 >= argc) return usage_error("missing value: " + std::string(arg));
+        const char* value = argv[++i];
+        double n = 0;
+        if (arg == "--albedo") src.albedo = value;
+        else if (arg == "--normal") src.normal = value;
+        else if (arg == "--arm") src.arm = value;
+        else if (arg == "--roughness") src.roughness = value;
+        else if (arg == "--ao") src.occlusion = value;
+        else if (arg == "--height") src.height = value;
+        else if (!parse_number(value, n) || n < 0) return usage_error("bad number for " + std::string(arg));
+        else if (arg == "--size") o.size = static_cast<std::uint32_t>(n);
+        else if (arg == "--threads") o.textures.threads = static_cast<std::uint32_t>(n);
+        else return usage_error("unknown option: " + std::string(arg));
+    }
+    const auto start = std::chrono::steady_clock::now();
+    auto stats = engine::cook::cook_terrain_layer(src, argv[2], o);
+    if (!stats) {
+        std::fprintf(stderr, "%s\n", stats.error().message.c_str());
+        return 1;
+    }
+    const double secs =
+        std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+    std::printf("terrain layer -> %s in %.1fs\n  total   %llu -> %llu bytes\n", argv[2], secs,
+                static_cast<unsigned long long>(stats->input_bytes),
+                static_cast<unsigned long long>(stats->output_bytes));
+    return 0;
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
+    if (argc >= 2 && std::string_view(argv[1]) == "--terrain-layer") {
+        return cook_terrain_layer_cli(argc, argv);
+    }
     if (argc < 3) return usage_error("missing input or output");
     engine::cook::CookOptions o;
     for (int i = 3; i < argc; ++i) {

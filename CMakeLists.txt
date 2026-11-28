@@ -529,6 +529,7 @@ add_library(engine_cook STATIC
     src/cook/mesh_cook.cpp
     src/cook/mesh_simplify.cpp
     src/cook/mesh_streams.cpp
+    src/cook/terrain_layer.cpp
     src/cook/texture_encode.cpp)
 target_link_libraries(engine_cook PUBLIC engine_flags)
 target_link_libraries(engine_cook PRIVATE

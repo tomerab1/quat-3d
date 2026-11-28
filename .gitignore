@@ -48,3 +48,6 @@ imgui.ini
 # Editor layout + preferences (per project, per user)
 .quat/
 __pycache__/
+
+# Terrain layer texture sets cooked by scripts/fetch-polyhaven.py (R26.2)
+/assets/terrain/sets/

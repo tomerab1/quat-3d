@@ -15,6 +15,12 @@ namespace {
 constexpr float k_open_low_altitude = -99999.0F;
 constexpr float k_open_high_altitude = 99999.0F;
 
+// The CC0 grass sets are photographed soil-and-grass (olive-brown on
+// average); a meadow seen from afar is the green of its blades, so the
+// grass layers are tinted toward it (the grass pass covers the near field).
+constexpr glm::vec3 k_meadow_tint{0.62F, 0.95F, 0.42F};
+constexpr glm::vec3 k_alpine_tint{0.6F, 0.85F, 0.45F};
+
 [[nodiscard]] float smoothstep(float e0, float e1, float x) {
     const float t = std::clamp((x - e0) / (e1 - e0), 0.0F, 1.0F);
     return t * t * (3.0F - 2.0F * t);
@@ -91,10 +97,10 @@ constexpr float k_open_high_altitude = 99999.0F;
     LayerRule rock = slope_rule(33.0F, 90.0F, 5.0F, 0.5F);
     rock.paint = PaintChannel::g;
     m.layers = {
-        layer("meadow", "grass", {1.0F, 1.0F, 1.0F}, 3.0F),
-        layer("dirt", "dirt", {1.0F, 1.0F, 1.0F}, 3.5F, dirt),
-        layer("rock", "rock", {1.0F, 1.0F, 1.0F}, 6.0F, rock),
-        layer("snow", "snow", {1.0F, 1.0F, 1.0F}, 5.0F, snow_rule(52.0F)),
+        layer("meadow", "grass", k_meadow_tint, 2.5F),
+        layer("dirt", "dirt", {1.0F, 1.0F, 1.0F}, 2.5F, dirt),
+        layer("rock", "rock", {1.0F, 1.0F, 1.0F}, 3.0F, rock),
+        layer("snow", "snow", {1.0F, 1.0F, 1.0F}, 3.0F, snow_rule(52.0F)),
     };
     m.layers[2].height_offset = 0.1F; // rock pokes through the grass edge
     return m;
@@ -110,11 +116,11 @@ constexpr float k_open_high_altitude = 99999.0F;
     LayerRule scree = slope_rule(26.0F, 90.0F, 5.0F, 0.6F);
     scree.paint = PaintChannel::g;
     m.layers = {
-        layer("alpine grass", "grass", {0.85F, 0.9F, 0.8F}, 3.0F),
-        layer("dirt", "dirt", {1.0F, 1.0F, 1.0F}, 3.5F, dirt),
-        layer("scree", "rock", {1.0F, 1.0F, 1.0F}, 5.0F, scree),
-        layer("cliff", "cliff", {1.0F, 1.0F, 1.0F}, 14.0F, slope_rule(44.0F, 90.0F, 5.0F, 0.4F)),
-        layer("snow", "snow", {1.0F, 1.0F, 1.0F}, 5.0F, snow_rule(58.0F)),
+        layer("alpine grass", "grass", k_alpine_tint, 2.5F),
+        layer("dirt", "dirt", {1.0F, 1.0F, 1.0F}, 2.5F, dirt),
+        layer("scree", "rock", {1.0F, 1.0F, 1.0F}, 3.0F, scree),
+        layer("cliff", "cliff", {1.0F, 1.0F, 1.0F}, 6.0F, slope_rule(44.0F, 90.0F, 5.0F, 0.4F)),
+        layer("snow", "snow", {1.0F, 1.0F, 1.0F}, 3.0F, snow_rule(58.0F)),
     };
     m.layers[3].height_offset = 0.15F;
     return m;
@@ -130,10 +136,10 @@ constexpr float k_open_high_altitude = 99999.0F;
     LayerRule rock = slope_rule(24.0F, 90.0F, 5.0F, 0.5F);
     rock.paint = PaintChannel::g;
     m.layers = {
-        layer("sand", "sand", {1.0F, 1.0F, 1.0F}, 4.0F),
-        layer("hardpan", "dirt", {1.05F, 0.95F, 0.85F}, 4.0F, hardpan),
-        layer("rock", "rock", {1.1F, 0.95F, 0.82F}, 6.0F, rock),
-        layer("cliff", "cliff", {1.1F, 0.93F, 0.8F}, 14.0F, slope_rule(42.0F, 90.0F, 5.0F, 0.4F)),
+        layer("sand", "sand", {1.0F, 1.0F, 1.0F}, 2.0F),
+        layer("hardpan", "dirt", {1.05F, 0.95F, 0.85F}, 2.5F, hardpan),
+        layer("rock", "rock", {1.1F, 0.95F, 0.82F}, 3.0F, rock),
+        layer("cliff", "cliff", {1.1F, 0.93F, 0.8F}, 6.0F, slope_rule(42.0F, 90.0F, 5.0F, 0.4F)),
     };
     return m;
 }
@@ -154,10 +160,10 @@ constexpr float k_open_high_altitude = 99999.0F;
     soil.strength = 0.0F; // painted only (garden soil)
     soil.paint = PaintChannel::b;
     m.layers = {
-        layer("forest floor", "forest_floor", {1.0F, 1.0F, 1.0F}, 3.0F),
-        layer("clearing", "grass", {0.9F, 0.95F, 0.85F}, 3.0F, clearing),
-        layer("dirt", "dirt", {0.85F, 0.85F, 0.85F}, 3.5F, dirt),
-        layer("rock", "rock", {1.0F, 1.0F, 1.0F}, 6.0F, rock),
+        layer("forest floor", "forest_floor", {1.0F, 1.0F, 1.0F}, 2.5F),
+        layer("clearing", "grass", k_meadow_tint, 2.5F, clearing),
+        layer("dirt", "dirt", {0.85F, 0.85F, 0.85F}, 2.5F, dirt),
+        layer("rock", "rock", {1.0F, 1.0F, 1.0F}, 3.0F, rock),
         layer("soil", "dirt", {0.6F, 0.55F, 0.5F}, 3.0F, soil),
     };
     return m;

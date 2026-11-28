@@ -26,7 +26,11 @@ api.polyhaven.com), redirects included; they are streamed to disk with a size
 cap and a wall-clock deadline, and every path from the API is confined to the
 asset's folder.
 
---cook-with runs the engine's cooker (quat-cook) for each model whose manifest
+--cook-with runs the engine's cooker (quat-cook) for each texture whose
+manifest entry has a `terrain_layer` ({"set": "grass", "size": 1024}): the
+terrain material's texture set assets/terrain/sets/<set>/{albedo,normal,
+packed}.ktx2 (`quat-cook --terrain-layer`, from the Diffuse, nor_gl, arm and
+Displacement maps), and for each model whose manifest
 entry has a `cook` list: one GLB per entry (KTX2 textures, meshopt meshes,
 `--simplify` levels of detail), <id>.glb unless the entry names its
 `output`; the scene files reference those. A cooked file is rebuilt only
@@ -73,6 +77,9 @@ DIRS = {
     "hdri": pathlib.Path("assets/hdri/polyhaven"),
 }
 RESOLUTIONS = ("1k", "2k", "4k")
+TERRAIN_SETS_DIR = pathlib.Path("assets/terrain/sets")
+TERRAIN_LAYER_MAPS = ("Diffuse", "nor_gl", "arm", "Displacement")
+TERRAIN_LAYER_FILES = ("albedo.ktx2", "normal.ktx2", "packed.ktx2")
 TEXTURE_MAPS = ("Diffuse", "nor_gl", "arm", "Rough", "AO", "Displacement")
 
 
@@ -386,6 +393,46 @@ def cook_outputs(asset):
     return outs
 
 
+def terrain_layer_spec(asset):
+    """(set name, size) of a texture's `terrain_layer`, or None."""
+    spec = asset.get("terrain_layer")
+    if spec is None:
+        return None
+    if asset["type"] != "texture" or not isinstance(spec, dict):
+        raise FetchError(f"{asset['id']}: terrain_layer belongs on a texture, as an object")
+    name, size = spec.get("set"), spec.get("size", 1024)
+    if not isinstance(name, str) or safe_relative(name) is None or "/" in name:
+        raise FetchError(f"{asset['id']}: terrain_layer.set must be a plain name")
+    if not isinstance(size, int) or size < 4 or size > 8192 or size & (size - 1):
+        raise FetchError(f"{asset['id']}: terrain_layer.size must be a power of two")
+    missing = [m for m in TERRAIN_LAYER_MAPS if m not in asset["maps"]]
+    if missing:
+        raise FetchError(f"{asset['id']}: a terrain layer needs the maps {missing}")
+    return name, size
+
+
+def cook_terrain_layer(asset, plan, folder, cooker, force):
+    """Cooks a texture's terrain layer set unless it is current; True if it ran."""
+    name, size = terrain_layer_spec(asset)
+    files = {m: folder / p for m, (p, _) in zip(asset["maps"], plan)}
+    out = ROOT / TERRAIN_SETS_DIR / name
+    stamp = out / "cook-stamp"
+    want = json.dumps({"size": size, "inputs": {m: md5_of(files[m]) for m in TERRAIN_LAYER_MAPS}})
+    if (not force and stamp.is_file() and stamp.read_text() == want
+            and all((out / f).is_file() for f in TERRAIN_LAYER_FILES)):
+        return False
+    log(f"{asset['id']}: cooking terrain layer set '{name}' ({size}x{size})")
+    args = [str(cooker), "--terrain-layer", str(out), "--albedo", str(files["Diffuse"]),
+            "--normal", str(files["nor_gl"]), "--arm", str(files["arm"]),
+            "--height", str(files["Displacement"]), "--size", str(size)]
+    r = subprocess.run(args, capture_output=True, text=True, timeout=1800, check=False)
+    if r.returncode != 0:
+        raise FetchError(f"{asset['id']}: quat-cook --terrain-layer failed ({r.returncode}): "
+                         f"{(r.stderr or r.stdout).strip()[-2000:]}")
+    stamp.write_text(want)
+    return True
+
+
 def cook(asset, folder, cooker, gltf_rel, force):
     """Cooks every output that is missing or stale; returns how many ran."""
     ran = 0
@@ -445,6 +492,7 @@ def load_manifest(path):
             raise FetchError(f"{aid}: listed twice")
         seen.add((kind, aid))
         cook_outputs(a)
+        terrain_layer_spec(a)
     return assets
 
 
@@ -454,6 +502,8 @@ def expected_outputs(asset):
     outs += [folder / name for name, _ in cook_outputs(asset)]
     if asset["type"] == "texture" and asset.get("ground"):
         outs.append(folder / asset["ground"]["file"])
+    if (layer := terrain_layer_spec(asset)) is not None:
+        outs += [ROOT / TERRAIN_SETS_DIR / layer[0] / f for f in TERRAIN_LAYER_FILES]
     return outs
 
 
@@ -480,6 +530,11 @@ def fetch_asset(asset, cooker, recook):
         if out is None or out.suffix != ".gltf":
             raise FetchError(f"{aid}: ground.file must be a relative .gltf name")
         (folder / out).write_text(json.dumps(ground_gltf(asset, plan, spec)) + "\n")
+    if kind == "texture" and terrain_layer_spec(asset) is not None:
+        if cooker is None:
+            note += "; terrain layer not cooked (no --cook-with)"
+        elif cook_terrain_layer(asset, plan, folder, cooker, recook):
+            note += "; terrain layer cooked"
     if kind == "model" and asset.get("cook") is not None:
         if cooker is None:
             note += "; not cooked (no --cook-with)"
