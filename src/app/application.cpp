@@ -481,7 +481,10 @@ bool Application::run_frame() {
             ? 1.0F
             : static_cast<float>(draw_extent.width) / static_cast<float>(draw_extent.height);
 
-    const float dt = frame_timer_.tick(SDL_GetTicksNS());
+    // Measured frame time, or the fixed one of a reproducible run (#128); the
+    // timer keeps ticking either way so switching modes never sees a gap.
+    const float measured_dt = frame_timer_.tick(SDL_GetTicksNS());
+    const float dt = config_.fixed_dt.value_or(measured_dt);
     renderer_.advance_time(dt);
     const float sim_dt = remote_->advance_sim(dt); // A5: pause / step / time scale
 
@@ -547,7 +550,7 @@ bool Application::run_frame() {
     // Average frame time over the run, skipping the first frame (it carries
     // one-time pipeline/descriptor warmup). Reported at exit.
     if (presented_ > 0) {
-        frame_time_sum_ += dt;
+        frame_time_sum_ += measured_dt; // real cost, also in fixed-dt runs
         frame_time_samples_ += 1;
     }
     // Advances every frame (audit A1): drives TAA jitter, the demo cube,

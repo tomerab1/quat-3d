@@ -311,8 +311,11 @@ public:
     // also logs once when that frame's guards replaced non-finite values.
     std::uint32_t wait_for_slot();
     [[nodiscard]] Acquire acquire_and_begin();
-    // Accumulates the time that drives the clouds' drift (with the scene's
-    // weather: integrates its wind at cloud height, R13.1).
+    // Accumulates the frame clock: the clouds' drift (with the scene's
+    // weather: integrates its wind at cloud height, R13.1) and the material
+    // clock (MaterialInput::time), so animated materials follow frame time
+    // like everything else instead of the wall clock (deterministic captures,
+    // #128).
     void advance_time(float dt);
     // The global wind field's clock (advanced by simulated time in record()):
     // CPU wind queries use it to match what the frame draws.
@@ -426,6 +429,7 @@ private:
     // frame loop accumulates it always, like the animated sky in other engines
     // — not gated on play mode.
     float cloud_time_s_ = 0.0F;
+    double material_time_s_ = 0.0; // double: no precision loss over long sessions
     // R13.1: while the scene has weather, the clouds' drift integrated from
     // its wind (km), and the weather / camera of the last gathered frame.
     glm::vec2                     cloud_drift_km_{0.0F};

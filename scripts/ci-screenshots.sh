@@ -20,7 +20,9 @@
 # Environment: VK_ICD_FILENAMES (default: the first lavapipe manifest found),
 # SCENE_TIMEOUT (seconds per scene, default 300; a row may raise its own with
 # SCENE_TIMEOUT=<s> in its environment column), SCENES (space-separated
-# subset of the scene names below).
+# subset of the scene names below), KEEP_PPM (space-separated scene names
+# whose full-resolution <scene>.ppm is kept next to the PNG: CI's determinism
+# check compares them, scripts/compare_ppm.py).
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -171,7 +173,7 @@ for row in "${SCENE_TABLE[@]}"; do
     if ! python3 "$ROOT/scripts/ppm_to_png.py" "$ppm" "$png" --downscale "$factor" >>"$log" 2>&1; then
       status="no image (PPM conversion failed)"
     fi
-    rm -f "$ppm"
+    case " ${KEEP_PPM:-} " in *" $name "*) ;; *) rm -f "$ppm" ;; esac
   fi
 
   # QUAT_NON_FINITE_CHECK=1: the engine logs when its bloom / TAA guards had

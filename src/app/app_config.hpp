@@ -25,6 +25,12 @@ struct AppConfig {
     // QUAT_MAX_FRAMES: auto-quit after this many presented frames (0 = run
     // until the window closes). Headless smoke tests verify clean teardown.
     std::uint64_t max_frames = 0;
+    // Fixed frame time in seconds, instead of the measured one: every
+    // time-dependent system (wind, weather, particles, water, materials, TAA
+    // history) then advances identically on every machine, so a capture after
+    // N frames is reproducible (#128). Set for QUAT_MAX_FRAMES runs (1/60 s);
+    // QUAT_FIXED_DT=<seconds> sets it explicitly, QUAT_FIXED_DT=0 turns it off.
+    std::optional<float> fixed_dt;
     // QUAT_SCREENSHOT (with QUAT_MAX_FRAMES): the final frame as binary PPM.
     std::optional<std::filesystem::path> screenshot_path;
     // False with QUAT_NO_UI=1: no editor shell (deterministic headless renders).
@@ -51,7 +57,8 @@ struct AppConfig {
     std::optional<OpenGame> game;
 };
 
-// QUAT_MAX_FRAMES, QUAT_SCREENSHOT, QUAT_NO_UI and QUAT_WINDOW_SIZE.
+// QUAT_MAX_FRAMES, QUAT_FIXED_DT, QUAT_SCREENSHOT, QUAT_NO_UI and
+// QUAT_WINDOW_SIZE.
 [[nodiscard]] AppConfig app_config_from_environment();
 
 } // namespace quat::app

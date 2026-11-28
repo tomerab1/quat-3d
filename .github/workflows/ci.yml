@@ -185,18 +185,60 @@ jobs:
       # also when the tests failed. continue-on-error is TEMPORARY, until the
       # headless scenes have proven stable in CI: a crashed or hung scene is
       # reported (step summary + ::error annotation) without failing the job.
+      # KEEP_PPM: the full-resolution frames the determinism check compares.
       - name: Screenshots
         id: shots
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         continue-on-error: true
+        env:
+          KEEP_PPM: mountain-forest showcase
         run: scripts/ci-screenshots.sh build/release/game screenshots
+
+      # The same build renders the same frame (#128): bounded runs advance by a
+      # fixed 1/60 s (QUAT_MAX_FRAMES), so a second render of these scenes
+      # must be bit-identical to the Screenshots step's. mountain-forest has
+      # the most time-driven content (grass wind, foliage, clouds); showcase
+      # is the control. Fails the job; the PPMs are uploaded for diffing.
+      - name: Determinism check (second render must be identical)
+        id: determinism
+        if: ${{ !cancelled() && steps.shots.outcome != 'skipped' }}
+        run: |
+          scenes="mountain-forest showcase"
+          GITHUB_STEP_SUMMARY="" KEEP_PPM="$scenes" SCENES="$scenes" \
+            scripts/ci-screenshots.sh build/release/game determinism >/dev/null || true
+          status=0
+          for scene in $scenes; do
+            if [ ! -f "screenshots/$scene.ppm" ] || [ ! -f "determinism/$scene.ppm" ]; then
+              echo "::warning title=Determinism check::$scene: no capture in one of the runs (see the Screenshots step)"
+              continue
+            fi
+            if ! result=$(python3 scripts/compare_ppm.py "screenshots/$scene.ppm" "determinism/$scene.ppm"); then
+              echo "::error title=Non-deterministic capture::$scene: $result"
+              status=1
+            else
+              echo "$scene: $result"
+            fi
+          done
+          exit "$status"
+
+      - name: Upload determinism captures on failure
+        if: ${{ failure() && steps.determinism.outcome == 'failure' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: linux-determinism
+          path: |
+            screenshots/*.ppm
+            determinism/*.ppm
+          retention-days: 7
 
       - name: Upload screenshots
         if: ${{ !cancelled() && steps.shots.outcome != 'skipped' }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: linux-screenshots
-          path: screenshots/
+          path: |
+            screenshots/
+            !screenshots/*.ppm
           retention-days: 14
           if-no-files-found: ignore
 

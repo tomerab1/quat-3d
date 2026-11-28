@@ -334,7 +334,8 @@ Environment variables switch on extra modes:
 | `QUAT_NO_MUTABLE_SWAPCHAIN=1` | Act as a driver without `VK_KHR_swapchain_mutable_format`: the editor UI composites through a scratch image and a copy instead of a UNORM view of the swapchain (same pixels; for checking that fallback) |
 | `QUAT_NO_AUDIO=1` | Mute: run audio without opening a playback device |
 | `QUAT_NON_FINITE_CHECK=1` | Count NaN/Inf values the bloom / TAA guards replace and log them per frame (always on in debug builds) |
-| `QUAT_MAX_FRAMES=<n>` + `QUAT_SCREENSHOT=<file.ppm>` | Render n frames, save the last one, exit (headless checks) |
+| `QUAT_MAX_FRAMES=<n>` + `QUAT_SCREENSHOT=<file.ppm>` | Render n frames, save the last one, exit (headless checks). Frames then advance by a fixed 1/60 s, so the capture is the same on every machine |
+| `QUAT_FIXED_DT=<seconds>` | Advance every frame by this fixed time instead of the measured one (`0`: measured, also in `QUAT_MAX_FRAMES` runs) |
 | `QUAT_ASSET_ROOT=<dir>` | Data directory holding `assets/` and `cooked/shaders/` (default: next to the executable — inside a macOS app, `Contents/Resources` — then, in development builds, the source tree) |
 | `TRACY_PORT=<port>` | `ENGINE_PROFILE` builds: the port the Tracy client listens on (default 8086, loopback only) |
 | `TRACY_NO_SYS_TRACE=1` | `ENGINE_PROFILE` builds run as root / administrator: do not start Tracy's kernel sampling and context-switch tracing |

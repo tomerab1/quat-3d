@@ -301,6 +301,15 @@ Gates and policies:
 - **Validation:** the Linux and Windows GPU tests run with
   `QUAT_VALIDATION=1` (see Testing): a validation error fails the test that
   caused it. macOS (MoltenVK, informational) runs without the layer.
+- **Deterministic captures (#128):** a `QUAT_MAX_FRAMES` run advances
+  every frame by a fixed 1/60 s (`QUAT_FIXED_DT` overrides), and every
+  time-driven system (grass and foliage wind, weather, particles, water,
+  clouds, the material clock, TAA history) follows that frame clock, never
+  the wall clock. The `Determinism check` step renders `mountain-forest`
+  and `showcase` a second time and requires the PPM to be bit-identical to
+  the Screenshots step's (`scripts/compare_ppm.py`); on failure the PPMs are
+  uploaded as `linux-determinism`. New per-frame state must read the frame
+  `dt`, not a clock.
 - **Cancelling superseded runs:** runs share a concurrency group per pull
   request (`ci-pr-<N>`) or per ref. A new push to a PR cancels its running
   build. Pushes to `master`, manual runs and tags (`release.yml`) are never
