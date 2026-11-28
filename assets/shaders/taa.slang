@@ -160,7 +160,9 @@ float4 sample_history(float2 uv) {
                        g_history.SampleLevel(g_linear, t12, 0) * wc +
                        g_history.SampleLevel(g_linear, float2(t3.x, t12.y), 0) * wd +
                        g_history.SampleLevel(g_linear, float2(t12.x, t3.y), 0) * we;
-    return max(sum / (wa + wb + wc + wd + we), 0.0);
+    // Raw (Catmull-Rom can undershoot below 0): the caller tests the result
+    // for NaN / Inf before clamping it, since max() may hide a NaN.
+    return sum / (wa + wb + wc + wd + we);
 }
 
 [shader("compute")]
@@ -229,8 +231,9 @@ void compute_main(uint3 tid : SV_DispatchThreadID) {
     const bool reprojected = all(isfinite(velocity));
     if (pc.jitter.w > 0.5 && !reprojected) count_non_finite();
     if (pc.jitter.w > 0.5 && reprojected && all(prev_uv >= 0.0) && all(prev_uv <= 1.0)) {
-        const float4 h = sample_history(prev_uv);
-        if (all(isfinite(h))) {
+        const float4 raw_history = sample_history(prev_uv);
+        if (all(isfinite(raw_history))) {
+            const float4 h = max(raw_history, 0.0);
             const float3 sigma = sqrt(max(m2 / 9.0 - mean * mean, 0.0));
             const float3 box_min = max(nmin, mean - CLIP_GAMMA * sigma);
             const float3 box_max = min(nmax, mean + CLIP_GAMMA * sigma);

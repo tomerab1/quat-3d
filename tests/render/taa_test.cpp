@@ -367,6 +367,18 @@ TEST(GpuTaa, NonFiniteInputsNeverReachTheHistory) {
             return up->add_to_graph(graph, slot, counted);
         });
         ASSERT_OK(o) << "frame " << i;
+        // Per-frame delta (collect() reads and zeroes the counter): each bad
+        // input must be rejected and counted on its own frame.
+        const auto counts = counters->collect(0);
+        const std::uint32_t rejected =
+            counts[static_cast<std::size_t>(r::NonFiniteSource::taa_history)];
+        if (i == k_nan_velocity_frame) {
+            EXPECT_GE(rejected, 1U) << "the NaN reprojection was not counted";
+        } else if (i == k_inf_color_frame) {
+            EXPECT_GE(rejected, 1U) << "the Inf colour sample was not counted";
+        } else {
+            EXPECT_EQ(rejected, 0U) << "frame " << i << " has only finite inputs";
+        }
         for (std::uint32_t y = 0; y < extent.height; ++y) {
             for (std::uint32_t x = 0; x < extent.width; ++x) {
                 const glm::vec4 c = o->rgba16f(x, y);
@@ -385,7 +397,4 @@ TEST(GpuTaa, NonFiniteInputsNeverReachTheHistory) {
             }
         }
     }
-    const auto counts = counters->collect(0);
-    EXPECT_GE(counts[static_cast<std::size_t>(r::NonFiniteSource::taa_history)], 2U)
-        << "the rejected reprojection and colour sample were not both counted";
 }
