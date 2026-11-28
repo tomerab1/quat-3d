@@ -84,6 +84,16 @@ VsOut vertex_main(uint id : SV_VertexID) {
 // The cooked texture arrays; untextured layers (slice < 0) are their tinted
 // colour with procedural metre-scale detail.
 struct ArrayLayerSource : ITerrainLayerSource {
+    float4 global(uint index) {
+        if (index == 0) return g_material.global0;
+        if (index == 1) return g_material.global1;
+        float4 g = g_material.global2;
+        g.y = pc.shade.z; // this frame's snowline
+        return g;
+    }
+
+    TerrainLayerGpu layer(uint index) { return g_material.layers[index]; }
+
     LayerTexel sample(TerrainLayerGpu l, float2 uv, float2 duvdx, float2 duvdy) {
         LayerTexel t;
         if (l.surface.w < 0.0) {
@@ -177,8 +187,6 @@ TerrainSurface shade<M : ITerrainMaterial>(M material, VsOut input) {
 [shader("fragment")]
 GBufferOut fragment_main(VsOut input) {
     LayeredTerrainMaterial<ArrayLayerSource> material;
-    material.params = g_material;
-    material.params.global2.y = pc.shade.z; // this frame's snowline
     material.source = ArrayLayerSource();
     const TerrainSurface surf = shade(material, input);
 

@@ -75,7 +75,16 @@ public struct LayerTexel {
     public float  height;    // 0..1
 }
 
+// The material's data and textures. Layers are read one element at a time
+// (never the whole TerrainMaterialParams by value): SPIRV-Cross turns a copy
+// of the constant buffer's layer array into an spvUnsafeArray copy that the
+// Metal compiler rejects (MoltenVK), so nothing here copies the array.
 public interface ITerrainLayerSource {
+    // TerrainMaterialParams.global0 .. global2 (index 0..2), with this
+    // frame's values (global2.y = snowline) filled in.
+    float4 global(uint index);
+    // TerrainMaterialParams.layers[index].
+    TerrainLayerGpu layer(uint index);
     // Full-detail sample of layer `l` at `uv` (texture repeats) with gradients.
     LayerTexel sample(TerrainLayerGpu l, float2 uv, float2 duvdx, float2 duvdy);
     // The layer's mean texel (its smallest mip).
@@ -168,15 +177,17 @@ float paint_of(float channel, float4 paint) {
 }
 
 // Composited rule coverages (bottom to top) with painted weights over them.
-public void terrain_layer_weights(TerrainMaterialParams m, TerrainSurfaceInput s, float noise,
-                                  out float w[TERRAIN_MAX_LAYERS]) {
-    uint n = min(uint(m.global0.x), TERRAIN_MAX_LAYERS);
+public void terrain_layer_weights<S : ITerrainLayerSource>(S src, TerrainSurfaceInput s,
+                                                          float noise,
+                                                          out float w[TERRAIN_MAX_LAYERS]) {
+    uint n = min(uint(src.global(0).x), TERRAIN_MAX_LAYERS);
+    const float snowline = src.global(2).y;
     float remaining = 1.0;
     [unroll]
     for (int i = int(TERRAIN_MAX_LAYERS) - 1; i >= 1; --i) {
         w[i] = 0.0;
         if (uint(i) < n) {
-            float c = terrain_rule_coverage(m.layers[i], s, noise, m.global2.y);
+            float c = terrain_rule_coverage(src.layer(uint(i)), s, noise, snowline);
             w[i] = c * remaining;
             remaining -= w[i];
         }
@@ -187,7 +198,7 @@ public void terrain_layer_weights(TerrainMaterialParams m, TerrainSurfaceInput s
     float paint_sum = 0.0;
     [unroll]
     for (uint i = 0; i < TERRAIN_MAX_LAYERS; ++i) {
-        painted[i] = i < n ? paint_of(m.layers[i].affinity.w, s.paint) : 0.0;
+        painted[i] = i < n ? paint_of(src.layer(i).affinity.w, s.paint) : 0.0;
         paint_sum += painted[i];
     }
     if (paint_sum > 0.0) {
@@ -350,31 +361,32 @@ LayerTexel sample_layer<S : ITerrainLayerSource>(S src, TerrainLayerGpu l, Terra
 }
 
 public struct LayeredTerrainMaterial<S : ITerrainLayerSource> : ITerrainMaterial {
-    public TerrainMaterialParams params;
     public S source;
 
     public TerrainSurface evaluate(TerrainSurfaceInput s) {
-        TerrainMaterialParams m = params;
-        uint n = min(uint(m.global0.x), TERRAIN_MAX_LAYERS);
+        const float4 g0 = source.global(0);
+        const float4 g1 = source.global(1);
+        const float4 g2 = source.global(2);
+        uint n = min(uint(g0.x), TERRAIN_MAX_LAYERS);
 
         // Break-up noise of the band edges: metre-scale over 10 m patches.
         float noise = terrain_fbm(s.world_pos.xz * 0.11 + 3.7);
         float w[TERRAIN_MAX_LAYERS];
-        terrain_layer_weights(m, s, noise, w);
+        terrain_layer_weights(source, s, noise, w);
 
         // Projection: top-down below the triplanar slope, triplanar above.
-        float tri = smoothstep(m.global0.z - 5.0, m.global0.z + 5.0, s.slope_deg);
-        float3 pw = pow(abs(s.normal), m.global0.w);
+        float tri = smoothstep(g0.z - 5.0, g0.z + 5.0, s.slope_deg);
+        float3 pw = pow(abs(s.normal), g0.w);
         pw /= max(pw.x + pw.y + pw.z, 1e-5);
         pw = lerp(float3(0.0, 1.0, 0.0), pw, tri);
         pw = select(pw < 0.03, float3(0.0, 0.0, 0.0), pw);
         pw /= max(pw.x + pw.y + pw.z, 1e-5);
         Projection proj;
         proj.plane_w = pw;
-        proj.hex = m.global2.x;
+        proj.hex = g2.x;
 
         // Far field: the layers' mean texel instead of the detail.
-        float far = saturate((s.view_distance - m.global1.z) * m.global1.w);
+        float far = saturate((s.view_distance - g1.z) * g1.w);
         bool detail = far < 0.999;
 
         LayerTexel texel[TERRAIN_MAX_LAYERS];
@@ -386,7 +398,7 @@ public struct LayeredTerrainMaterial<S : ITerrainLayerSource> : ITerrainMaterial
             normals[i] = s.normal;
             h[i] = 0.0;
             if (i < n && w[i] > 0.001) {
-                TerrainLayerGpu l = m.layers[i];
+                TerrainLayerGpu l = source.layer(i);
                 LayerTexel mean = source.mean(l);
                 LayerTexel t = mean;
                 if (detail) {
@@ -401,7 +413,7 @@ public struct LayeredTerrainMaterial<S : ITerrainLayerSource> : ITerrainMaterial
                 h[i] = saturate(t.height + l.surface.z);
             }
         }
-        terrain_height_blend(w, h, m.global0.y);
+        terrain_height_blend(w, h, g0.y);
 
         TerrainSurface o;
         o.albedo = float3(0.0, 0.0, 0.0);
@@ -418,8 +430,8 @@ public struct LayeredTerrainMaterial<S : ITerrainLayerSource> : ITerrainMaterial
         o.normal = normalize(o.normal + s.normal * 1e-4);
 
         // Macro variation: +-strength brightness over macro-scale patches.
-        float macro = terrain_fbm(s.world_pos.xz * m.global1.y);
-        o.albedo *= 1.0 + m.global1.x * (macro * 2.0 - 1.0);
+        float macro = terrain_fbm(s.world_pos.xz * g1.y);
+        o.albedo *= 1.0 + g1.x * (macro * 2.0 - 1.0);
         o.albedo = saturate(o.albedo);
         // Physically plausible ground: no rough natural surface goes glossy.
         o.roughness = clamp(o.roughness, 0.3, 1.0);
