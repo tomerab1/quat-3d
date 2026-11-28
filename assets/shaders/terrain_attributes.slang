@@ -120,6 +120,6 @@ void attr_finalize(uint3 id : SV_DispatchThreadID) {
     const float c6 = (ring_mean(p, 6) - h) / (6.0 * pc.metres);
     const float concavity = clamp(2.5 * (c2 + c6), -1.0, 1.0);
     const float flow = g_flow[pc.cur * pc.resolution * pc.resolution + index_of(p)];
-    const float wet = saturate(log2(max(flow, 1.0)) / 8.0);
+    const float wet = saturate(log2(max(flow, 1.0)) / 10.0);
     g_out[p] = float4(concavity * 0.5 + 0.5, wet, 0.0, 1.0);
 }

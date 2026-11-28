@@ -114,6 +114,13 @@ inline constexpr std::array<std::string_view, 4> material_preset_names = {
 
 [[nodiscard]] bool is_texture_set(std::string_view name);
 
+// Layer-stack edits (inspector actions; false when not applicable). A new
+// layer goes on top, covering slopes of 30..90 degrees, with `texture_set`.
+bool add_material_layer(TerrainMaterial& material, std::string_view texture_set);
+bool remove_material_layer(TerrainMaterial& material, std::size_t index);
+// Moves layer `index` one step toward the top (+1) or the bottom (-1).
+bool move_material_layer(TerrainMaterial& material, std::size_t index, int step);
+
 // ---- CPU reference of the blend maths (mirrors lib/terrain_material.slang) --
 
 // What the rules read at one ground point.

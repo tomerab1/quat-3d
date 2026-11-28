@@ -22,6 +22,7 @@
 #include "engine/scene/scatter.hpp"
 #include "engine/terrain/budget.hpp"
 #include "engine/terrain/talus_relax.hpp"
+#include "terrain_material_inspector.hpp"
 #include "ui/icons.hpp"
 #include "ui/widgets.hpp"
 
@@ -59,6 +60,7 @@ void draw_terrain(scene::Terrain& terrain) {
     (void)ui::prop_bool("Generate on GPU", terrain.gpu_generate);
     (void)ui::prop_float("Snowline", terrain.snowline_m,
                          {.speed = 1.0F, .min = -1000.0F, .max = 5000.0F, .format = "%.0f m"});
+    draw_terrain_material(terrain.material);
     ui::prop_separator("Streaming");
     if (ui::prop_bool("Streaming", terrain.streaming,
                       {.tooltip = "An endless seeded world streams in around the camera"})) {

@@ -43,6 +43,14 @@ Units are metres, seconds and degrees; Y is up.
    - Models and props on uneven ground: `world_place_on_ground` (it reads
      their bounds) instead of guessing heights. Batch many placements with
      `scene_batch` (method `world.place_on_ground`).
+   - Ground is a `terrain`, never a flat primitive with a colour (that reads
+     as a plastic sheet). Its `material` gives a textured, rule-blended
+     ground by default (`temperate_meadow`); pick the preset that fits
+     (`alpine`, `desert`, `forest_floor`). For a small scene (a camp, a
+     yard) keep it gentle: `{"tile_size": 256, "resolution": 257, "height":
+     6, "frequency": 1.5, "erosion": "grid", "erosion_steps": 60}` gives
+     soft hummocks over 256 m; the terrain's centre sits at its entity
+     position.
    - Repeated objects (forests, rock fields) are one entity with an
      `instanced_mesh` plus a `scatter`, never one entity per copy. Ground
      cover is one entity with a `grass` component.

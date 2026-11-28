@@ -1,0 +1,101 @@
+{
+  "version": 2,
+  "render_settings": {
+    "version": 1,
+    "shadows": {
+      "max_distance": 400,
+      "caster_distance": 200
+    }
+  },
+  "entities": [
+    {
+      "name": "terrain",
+      "parent": -1,
+      "transform": {
+        "position": [
+          0,
+          0,
+          0
+        ]
+      },
+      "terrain": {
+        "seed": 7,
+        "resolution": 513,
+        "tile_size": 600,
+        "height": 80,
+        "octaves": 6,
+        "frequency": 0.9,
+        "gain": 0.5,
+        "warp": 0.3,
+        "erosion": "grid",
+        "erosion_steps": 250,
+        "erosion_relax": 3,
+        "erosion_talus": 1.4,
+        "snowline": 1000,
+        "streaming": false,
+        "gpu": true,
+        "material": "temperate_meadow"
+      }
+    },
+    {
+      "name": "sun",
+      "parent": -1,
+      "dir_light": {
+        "direction": [
+          -0.72,
+          -0.42,
+          0.55
+        ],
+        "color": [
+          1.0,
+          0.93,
+          0.82
+        ],
+        "intensity": 6.0
+      }
+    },
+    {
+      "name": "camera",
+      "parent": -1,
+      "transform": {
+        "position": [
+          -200,
+          52,
+          -200
+        ],
+        "look_at": [
+          40,
+          60,
+          60
+        ]
+      },
+      "camera": {
+        "fov_deg": 55,
+        "near": 0.3,
+        "far": 3000,
+        "active": true
+      }
+    },
+    {
+      "name": "meadow_grass",
+      "parent": -1,
+      "grass": {
+        "seed": 5,
+        "density": 40,
+        "radius": 45,
+        "blade_height": [
+          0.15,
+          0.45
+        ],
+        "slope": [
+          0,
+          32
+        ],
+        "height": [
+          -10000,
+          10000
+        ]
+      }
+    }
+  ]
+}

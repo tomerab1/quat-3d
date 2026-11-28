@@ -5,6 +5,8 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstddef>
+#include <utility>
 #include <string>
 
 namespace engine::terrain {
@@ -76,7 +78,8 @@ constexpr glm::vec3 k_alpine_tint{0.6F, 0.85F, 0.45F};
 [[nodiscard]] LayerRule gully_rule(float max_slope, float strength) {
     LayerRule r = slope_rule(0.0F, max_slope, 5.0F, 0.5F);
     r.flow = 1.0F;
-    r.concavity = 0.35F;
+    r.concavity = 0.5F;
+    r.noise = 0.8F;
     r.strength = strength;
     return r;
 }
@@ -92,7 +95,7 @@ constexpr glm::vec3 k_alpine_tint{0.6F, 0.85F, 0.45F};
 [[nodiscard]] TerrainMaterial temperate_meadow() {
     TerrainMaterial m;
     m.preset = "temperate_meadow";
-    LayerRule dirt = gully_rule(32.0F, 0.9F);
+    LayerRule dirt = gully_rule(32.0F, 0.7F);
     dirt.paint = PaintChannel::r;
     LayerRule rock = slope_rule(33.0F, 90.0F, 5.0F, 0.5F);
     rock.paint = PaintChannel::g;
@@ -184,6 +187,33 @@ TerrainMaterial default_terrain_material() { return temperate_meadow(); }
 
 bool is_texture_set(std::string_view name) {
     return std::ranges::find(texture_set_names, name) != texture_set_names.end();
+}
+
+bool add_material_layer(TerrainMaterial& material, std::string_view texture_set) {
+    if (material.layers.size() >= max_material_layers || !is_texture_set(texture_set)) {
+        return false;
+    }
+    MaterialLayer l;
+    l.name = std::string(texture_set);
+    l.texture_set = std::string(texture_set);
+    l.rule = slope_rule(30.0F, 90.0F, 5.0F, 0.4F);
+    material.layers.push_back(std::move(l));
+    return true;
+}
+
+bool remove_material_layer(TerrainMaterial& material, std::size_t index) {
+    if (index >= material.layers.size() || material.layers.size() <= 1) return false;
+    material.layers.erase(material.layers.begin() + static_cast<std::ptrdiff_t>(index));
+    return true;
+}
+
+bool move_material_layer(TerrainMaterial& material, std::size_t index, int step) {
+    if (index >= material.layers.size() || (step != 1 && step != -1)) return false;
+    if (step < 0 && index == 0) return false;
+    const std::size_t to = step > 0 ? index + 1 : index - 1;
+    if (to >= material.layers.size()) return false;
+    std::swap(material.layers[index], material.layers[to]);
+    return true;
 }
 
 float rule_coverage(const LayerRule& rule, const SurfacePoint& p) {

@@ -793,6 +793,7 @@ if(ENGINE_EDITOR)
         src/editor/behavior_panel.cpp
         src/editor/behavior_canvas.cpp
         src/editor/inspector_world.cpp
+        src/editor/terrain_material_inspector.cpp
         src/editor/panels/console.cpp
         src/editor/panels/inspector_parts.cpp
         src/editor/panels/profiler.cpp

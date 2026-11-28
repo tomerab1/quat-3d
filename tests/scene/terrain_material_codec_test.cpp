@@ -1,6 +1,8 @@
 // terrain.material codec (R26.1): presets by name, overrides, layer merges,
 // round trips and precise errors for remote clients.
 
+#include <filesystem>
+#include <fstream>
 #include <string>
 
 #include <entt/entity/registry.hpp>
@@ -103,6 +105,31 @@ TEST_F(TerrainMaterialCodec, RejectsBadInputPrecisely) {
     EXPECT_FALSE(apply({{"material", {{"colour", 1}}}})); // unknown field (strict)
     // A failed edit leaves the material as it was.
     EXPECT_EQ(material().preset, "temperate_meadow");
+}
+
+// The CI scenes of the terrain material decode strictly (no stale fields).
+TEST(TerrainMaterialScenes, ShowcaseScenesDecode) {
+    for (const char* file : {"assets/scenes/terrain_materials.json", "assets/scenes/terrain_forest.json"}) {
+        std::ifstream in(std::filesystem::path(QUAT_PROJECT_ROOT) / file);
+        ASSERT_TRUE(in) << file;
+        const json scene = json::parse(in, nullptr, false);
+        ASSERT_FALSE(scene.is_discarded()) << file;
+        bool has_terrain = false;
+        for (const json& e : scene["entities"]) {
+            entt::registry r;
+            const entt::entity id = r.create();
+            for (const auto& [name, value] : e.items()) {
+                // Models are fetched separately (CI); the rest must decode.
+                if (name == "name" || name == "parent" || name == "instanced_mesh" ||
+                    name == "scatter") {
+                    continue;
+                }
+                ASSERT_OK(s::apply_component(r, id, name, value, true)) << file << " " << name;
+            }
+            has_terrain = has_terrain || r.all_of<s::Terrain>(id);
+        }
+        EXPECT_TRUE(has_terrain) << file;
+    }
 }
 
 } // namespace

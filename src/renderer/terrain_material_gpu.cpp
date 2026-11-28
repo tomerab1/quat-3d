@@ -124,7 +124,7 @@ std::vector<glm::vec2> terrain_attributes_reference(std::span<const float> heigh
             const float c6 = (ring(x, z, 6) - h) / (6.0F * mpt);
             const float concavity = std::clamp(2.5F * (c2 + c6), -1.0F, 1.0F);
             const std::size_t i = static_cast<std::size_t>(z) * resolution + static_cast<std::size_t>(x);
-            const float wet = std::clamp(std::log2(std::max(flow[i], 1.0F)) / 8.0F, 0.0F, 1.0F);
+            const float wet = std::clamp(std::log2(std::max(flow[i], 1.0F)) / 10.0F, 0.0F, 1.0F);
             out[i] = {concavity * 0.5F + 0.5F, wet};
         }
     }

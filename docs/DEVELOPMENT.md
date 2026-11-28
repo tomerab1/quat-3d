@@ -216,6 +216,25 @@ Cooked files target the engine: see the normal-map note below.
 | `--simplify R` / `--simplify-error E` | 1 / 0.01 | keep about R (0..1] of each primitive's triangles |
 | `--blend-to-mask C` | off | BLEND materials become MASK with alpha cutoff C |
 
+**Terrain layer texture sets** (R26.2): `quat-cook --terrain-layer <dir>
+--albedo <img> --normal <img> [--arm <img> | --roughness <img> --ao <img>]
+[--height <img>] [--normal-dx] [--size N]` cooks one PBR texture set into
+`<dir>/albedo.ktx2` (sRGB), `normal.ktx2` (X/Y layout, +Y along +v: OpenGL
+sources are flipped) and `packed.ktx2` (R roughness, G occlusion, B height
+normalised to 0..1), all `N` x `N` (power of two, default 1024) with full
+mips, UASTC + Zstd. The terrain material builds texture arrays from them,
+so every set must share one size. The engine's sets are CC0 Poly Haven
+textures listed in `assets/terrain/layers.json` (pinned like the showcase
+assets) and land in `assets/terrain/sets/<set>/` (gitignored):
+
+```sh
+python3 scripts/fetch-polyhaven.py assets/terrain/layers.json --cook-with build/release/quat-cook
+```
+
+Without them the terrain still renders: each layer falls back to its tinted
+mean colour with procedural detail. CI fetches and caches them with the
+showcase assets.
+
 At load the engine picks the transcode target from what the device samples
 (`rhi::TextureCaps`, enabled at device creation):
 

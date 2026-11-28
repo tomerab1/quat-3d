@@ -175,6 +175,27 @@ TEST(TerrainMaterial, PresetsAreValid) {
     EXPECT_EQ(engine::terrain::default_terrain_material().preset, "temperate_meadow");
 }
 
+TEST(TerrainMaterial, LayerStackEdits) {
+    TerrainMaterial m = engine::terrain::default_terrain_material();
+    const std::size_t n = m.layers.size();
+    EXPECT_TRUE(engine::terrain::add_material_layer(m, "sand"));
+    ASSERT_EQ(m.layers.size(), n + 1);
+    EXPECT_EQ(m.layers.back().texture_set, "sand");
+    EXPECT_FALSE(engine::terrain::add_material_layer(m, "lava"));
+    EXPECT_TRUE(engine::terrain::move_material_layer(m, n, -1));
+    EXPECT_EQ(m.layers[n - 1].texture_set, "sand");
+    EXPECT_FALSE(engine::terrain::move_material_layer(m, 0, -1));
+    EXPECT_FALSE(engine::terrain::move_material_layer(m, n, 1)); // already on top
+    EXPECT_TRUE(engine::terrain::remove_material_layer(m, n - 1));
+    EXPECT_EQ(m.layers.size(), n);
+    while (m.layers.size() < engine::terrain::max_material_layers) {
+        ASSERT_TRUE(engine::terrain::add_material_layer(m, "rock"));
+    }
+    EXPECT_FALSE(engine::terrain::add_material_layer(m, "rock"));
+    while (m.layers.size() > 1) ASSERT_TRUE(engine::terrain::remove_material_layer(m, 0));
+    EXPECT_FALSE(engine::terrain::remove_material_layer(m, 0)); // keeps the base layer
+}
+
 TEST(TerrainMaterial, MeadowPutsRockOnCliffsAndSnowUpHigh) {
     const TerrainMaterial m = engine::terrain::default_terrain_material();
     SurfacePoint p = flat_point();
@@ -187,7 +208,7 @@ TEST(TerrainMaterial, MeadowPutsRockOnCliffsAndSnowUpHigh) {
     p.height_m = 0.0F;
     p.flow = 0.95F;             // a wet gully
     p.concavity = 0.6F;
-    EXPECT_GT(engine::terrain::layer_weights(m, p)[1], 0.8F);
+    EXPECT_GT(engine::terrain::layer_weights(m, p)[1], 0.6F); // bare dirt in the gully
 }
 
 } // namespace

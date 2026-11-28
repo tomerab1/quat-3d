@@ -1,0 +1,273 @@
+{
+  "version": 2,
+  "render_settings": {
+    "version": 1,
+    "exposure": {
+      "auto": true
+    },
+    "shadows": {
+      "max_distance": 120,
+      "caster_distance": 150
+    }
+  },
+  "entities": [
+    {
+      "name": "terrain",
+      "parent": -1,
+      "transform": {
+        "position": [
+          0,
+          0,
+          0
+        ]
+      },
+      "terrain": {
+        "seed": 3,
+        "resolution": 257,
+        "tile_size": 256,
+        "height": 4,
+        "octaves": 6,
+        "frequency": 1.5,
+        "gain": 0.5,
+        "warp": 0.3,
+        "erosion": "grid",
+        "erosion_steps": 60,
+        "snowline": 1000,
+        "streaming": false,
+        "gpu": true,
+        "material": "forest_floor"
+      }
+    },
+    {
+      "name": "sun",
+      "parent": -1,
+      "dir_light": {
+        "direction": [
+          -0.62,
+          -0.5,
+          -0.6
+        ],
+        "color": [
+          1.0,
+          0.9,
+          0.75
+        ],
+        "intensity": 6.0
+      }
+    },
+    {
+      "name": "camera",
+      "parent": -1,
+      "transform": {
+        "position": [
+          0,
+          2.9,
+          12
+        ],
+        "look_at": [
+          0,
+          6.5,
+          -30
+        ]
+      },
+      "camera": {
+        "fov_deg": 55,
+        "near": 0.1,
+        "far": 800,
+        "active": true
+      }
+    },
+    {
+      "name": "FirNear_a",
+      "parent": -1,
+      "transform": {
+        "position": [
+          0,
+          0,
+          -30
+        ]
+      },
+      "instanced_mesh": {
+        "gltf": "assets/meshes/polyhaven/fir_tree_01/fir_tree_01.glb",
+        "node": "fir_tree_01_a_LOD0",
+        "cast_shadows": true
+      },
+      "scatter": {
+        "seed": 51,
+        "area": "rect",
+        "size": [
+          70,
+          36
+        ],
+        "density": 0.005,
+        "min_spacing": 4.0,
+        "scale": [
+          0.75,
+          1.15
+        ],
+        "mirror": 0.5,
+        "max_instances": 400
+      }
+    },
+    {
+      "name": "FirFar_a",
+      "parent": -1,
+      "transform": {
+        "position": [
+          0,
+          0,
+          -90
+        ]
+      },
+      "instanced_mesh": {
+        "gltf": "assets/meshes/polyhaven/fir_tree_01/fir_tree_01_far.glb",
+        "node": "fir_tree_01_a_LOD0",
+        "cast_shadows": false
+      },
+      "scatter": {
+        "seed": 81,
+        "area": "rect",
+        "size": [
+          200,
+          80
+        ],
+        "density": 0.004,
+        "min_spacing": 4.0,
+        "scale": [
+          0.75,
+          1.15
+        ],
+        "mirror": 0.5,
+        "max_instances": 400
+      }
+    },
+    {
+      "name": "FirNear_b",
+      "parent": -1,
+      "transform": {
+        "position": [
+          0,
+          0,
+          -30
+        ]
+      },
+      "instanced_mesh": {
+        "gltf": "assets/meshes/polyhaven/fir_tree_01/fir_tree_01.glb",
+        "node": "fir_tree_01_b_LOD0",
+        "cast_shadows": true
+      },
+      "scatter": {
+        "seed": 52,
+        "area": "rect",
+        "size": [
+          70,
+          36
+        ],
+        "density": 0.005,
+        "min_spacing": 4.0,
+        "scale": [
+          0.75,
+          1.15
+        ],
+        "mirror": 0.5,
+        "max_instances": 400
+      }
+    },
+    {
+      "name": "FirFar_b",
+      "parent": -1,
+      "transform": {
+        "position": [
+          0,
+          0,
+          -90
+        ]
+      },
+      "instanced_mesh": {
+        "gltf": "assets/meshes/polyhaven/fir_tree_01/fir_tree_01_far.glb",
+        "node": "fir_tree_01_b_LOD0",
+        "cast_shadows": false
+      },
+      "scatter": {
+        "seed": 82,
+        "area": "rect",
+        "size": [
+          200,
+          80
+        ],
+        "density": 0.004,
+        "min_spacing": 4.0,
+        "scale": [
+          0.75,
+          1.15
+        ],
+        "mirror": 0.5,
+        "max_instances": 400
+      }
+    },
+    {
+      "name": "FirNear_c",
+      "parent": -1,
+      "transform": {
+        "position": [
+          0,
+          0,
+          -30
+        ]
+      },
+      "instanced_mesh": {
+        "gltf": "assets/meshes/polyhaven/fir_tree_01/fir_tree_01.glb",
+        "node": "fir_tree_01_c_LOD0",
+        "cast_shadows": true
+      },
+      "scatter": {
+        "seed": 53,
+        "area": "rect",
+        "size": [
+          70,
+          36
+        ],
+        "density": 0.005,
+        "min_spacing": 4.0,
+        "scale": [
+          0.75,
+          1.15
+        ],
+        "mirror": 0.5,
+        "max_instances": 400
+      }
+    },
+    {
+      "name": "FirFar_c",
+      "parent": -1,
+      "transform": {
+        "position": [
+          0,
+          0,
+          -90
+        ]
+      },
+      "instanced_mesh": {
+        "gltf": "assets/meshes/polyhaven/fir_tree_01/fir_tree_01_far.glb",
+        "node": "fir_tree_01_c_LOD0",
+        "cast_shadows": false
+      },
+      "scatter": {
+        "seed": 83,
+        "area": "rect",
+        "size": [
+          200,
+          80
+        ],
+        "density": 0.004,
+        "min_spacing": 4.0,
+        "scale": [
+          0.75,
+          1.15
+        ],
+        "mirror": 0.5,
+        "max_instances": 400
+      }
+    }
+  ]
+}

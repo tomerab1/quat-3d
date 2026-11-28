@@ -228,7 +228,7 @@ TEST(GpuTerrainMaterial, AttributeBakeMatchesCpuReference) {
     EXPECT_LE(worst, 2.0F / 255.0F) << "GPU bake drifts from the CPU reference";
     // The valley floor collects water; the slopes stay dry; the floor is
     // concave (hollow), the flanks not.
-    EXPECT_GT(ref[40 * res + 32].y, 0.6F);
+    EXPECT_GT(ref[40 * res + 32].y, 0.5F);
     EXPECT_GT(ref[40 * res + 32].y, ref[40 * res + 8].y + 0.15F);
     EXPECT_GT(ref[40 * res + 32].x, 0.55F);
 }
