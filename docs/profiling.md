@@ -15,7 +15,7 @@ quat-3d has two profilers that share the same instrumentation (ROADMAP R4):
 | `ENGINE_PROFILE` | Default |
 |---|---|
 | `ON` | `Debug` and `RelWithDebInfo` builds, and the `release` preset |
-| `OFF` | plain `Release` builds, CI's Linux no-editor game build and the packaged release builds |
+| `OFF` | plain `Release` builds (the `windows-release` and `macos-release` presets), CI's Linux no-editor game build and the packaged release builds |
 
 ```sh
 cmake --preset release                      # Tracy on (the preset sets it)
@@ -23,7 +23,11 @@ cmake --preset release -DENGINE_PROFILE=OFF # Tracy off
 ```
 
 The Tracy client comes from vcpkg (overlay port `ports/tracy`, version
-0.13.1). It is built with `TRACY_ON_DEMAND`, so the game collects nothing until
+0.13.1) as the manifest feature `profiling`. CMake asks for that feature
+itself (`VCPKG_MANIFEST_FEATURES`, before `project()`) only when
+`ENGINE_PROFILE` is on, so a build with `ENGINE_PROFILE=OFF` on any OS
+neither downloads nor builds Tracy. Switching `ENGINE_PROFILE` on in an
+existing build directory installs it on the next configure. It is built with `TRACY_ON_DEMAND`, so the game collects nothing until
 a viewer connects: without a viewer, every zone costs one check. The overlay
 also builds it with `TRACY_ONLY_LOCALHOST`, so the game listens for the viewer
 on the loopback interface only, like the remote-control endpoint.
@@ -65,16 +69,22 @@ What you see:
 
 ### Editor panel
 
-**View → Profiler** (docked at the bottom with Assets and Animation):
+**View → Profiler** (tabbed along the bottom with Assets, Console, Animation,
+Behaviour, Physics and Stats; closable, and its open state is saved with the
+other editor preferences). It is drawn with the editor's design system
+(`src/editor/panels/profiler.cpp`: theme tokens, widget kit, monospace
+numbers):
 
+- a toolbar: **Freeze** / resume, **Reset**, the zone kind (All, Passes,
+  Systems, Scopes, Waits), the frame budget, and a filter field;
 - the frame time, CPU time (frame minus waits), GPU time and wait time,
   each as average, p95 and max over the last 240 frames, and the fps;
 - a graph of the frame (wall) time and the GPU time per frame against a
-  budget line (`budget ms`, default 16.7);
+  dashed budget line (default 16.7 ms);
 - a table of passes, systems and scopes with CPU and GPU avg / p95 / max and
-  calls per frame. Click a column header to sort, filter by kind or name.
-  **Freeze** holds the current numbers while you read them; **Reset** clears
-  the statistics.
+  calls per frame, kinds tinted by category and values over the budget in
+  the error colour. Click a column header to sort. **Freeze** holds the
+  current numbers while you read them; **Reset** clears the statistics.
 
 ### Remote control and MCP
 

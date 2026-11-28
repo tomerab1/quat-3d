@@ -170,7 +170,7 @@ these and take colours and sizes from the tokens.
 | Hierarchy | Viewport (no tab bar)                  | Inspector | Renderer |
 |           |  [overlays][stats]           fps / ms  |                      |
 +-----------+----------------------------------------+                      |
-| Assets | Console | Animation | Behaviour | Physics | Stats                 |
+| Assets | Console | Animation | Behaviour | Physics | Stats | Profiler      |
 +---------------------------------------------------------------------------+
 | Editing | selection | 18 entities | newest log line ... | MCP | fps / ms   |  status bar
 +---------------------------------------------------------------------------+
@@ -282,6 +282,14 @@ there, Shift+click adds a patrol waypoint.
   one line from its context menu, clear; monospace with token level colours.
   Editor builds tee stderr into the ring whenever the UI is up (previously
   only with `QUAT_REMOTE`).
+- **Profiler** (R4, `panels/profiler.cpp`): the built-in frame profiler.
+  Toolbar with freeze / reset toggles, kind buttons (All / Passes / Systems /
+  Scopes / Waits), the frame budget and a search field; a property-grid
+  summary of frame / CPU / GPU / wait time (avg, p95, max; monospace) with a
+  warning note when GPU timing is off; a frame-time graph in token colours
+  (wall time accent, GPU info, budget dashed in the warning colour); a
+  sortable zone table with category-tinted kinds and values over the budget
+  in the error colour; empty states for no profiler and no matching zones.
 
 ## Resolution
 

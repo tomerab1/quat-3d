@@ -633,10 +633,10 @@ if(ENGINE_EDITOR)
         src/editor/particle_inspector.cpp
         src/editor/behavior_panel.cpp
         src/editor/behavior_canvas.cpp
-        src/editor/profiler_panel.cpp
         src/editor/inspector_world.cpp
         src/editor/panels/console.cpp
         src/editor/panels/inspector_parts.cpp
+        src/editor/panels/profiler.cpp
         src/editor/shell/command_palette.cpp
         src/editor/shell/commands.cpp
         src/editor/shell/dialogs.cpp

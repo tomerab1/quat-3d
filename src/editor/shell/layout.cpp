@@ -1,8 +1,8 @@
 // Default dock layout and persisted editor preferences (ROADMAP E8.2).
 //
 // Layout: Hierarchy left, Viewport centre, Inspector right (Renderer tabbed
-// behind it), Assets / Console / Animation / Behaviour / Physics / Stats
-// tabbed along the bottom of the left and centre columns.
+// behind it), Assets / Console / Animation / Behaviour / Physics / Stats /
+// Profiler tabbed along the bottom of the left and centre columns.
 // ImGui saves the dock tree to <project>/.quat/editor.ini; the
 // "[QuatEditor][Prefs]" section next to it keeps the theme, closed panels,
 // snapping and recent scenes.
@@ -85,7 +85,7 @@ void build_default_layout(unsigned int dockspace_id) {
         ImGui::DockBuilderDockWindow(panel_window_id(p).c_str(), right);
     }
     for (const Panel p : {Panel::assets, Panel::console, Panel::animation, Panel::behaviour,
-                          Panel::physics, Panel::stats}) {
+                          Panel::physics, Panel::stats, Panel::profiler}) {
         ImGui::DockBuilderDockWindow(panel_window_id(p).c_str(), bottom);
     }
     // The viewport has no tab bar: it is the document, not a tool.
