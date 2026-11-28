@@ -161,6 +161,18 @@ The world clock and ephemerides of R22.1 (`src/astro/`, `src/scene/world_clock.c
 | 🗺 | **A Spatial Post-Processing Algorithm for Images of Night Scenes** — Thompson, Shirley & Ferwerda, Journal of Graphics Tools 7(1), 2002 | R22.2 night perception (blue shift, acuity loss, noise) |
 | 🗺 | **Perceptually Based Tone Mapping for Low-Light Conditions** — Kirk & O'Brien, SIGGRAPH 2011 | R22.2 scotopic / mesopic tone mapping |
 
+## Seasons & climate
+
+The season state and climate of R25.1 (`src/scene/season.cpp`, `src/weather/climate*.cpp`). The seasonal materials and snow masks planned for R25.2 / R25.3 are listed under their rendering topics.
+
+| | Reading | In quat-3d |
+|---|---|---|
+| 🔧 | **Temperature and pressure dependence of the rain-snow phase transition over land and ocean** — Dai, Geophysical Research Letters 35, L12802, 2008. [DOI](https://doi.org/10.1029/2008GL033295). The tanh fit of snow frequency against air temperature (land: 50 % near +1.2 °C) | `snow_fraction`, `src/weather/climate.cpp` (R25.1) |
+| 🔧 | **A model for diurnal variation in soil and air temperature** — Parton & Logan, Agricultural Meteorology 23, 205, 1981. [DOI](https://doi.org/10.1016/0002-1571(81)90105-9). The diurnal course; one harmonic with the maximum ~3 h after solar noon | `sample_climate`, `src/weather/climate.cpp` (R25.1) |
+| 🔧 | **What are the seasons?** — Trenberth, Bulletin of the AMS 64(11), 1276, 1983. [DOI](https://doi.org/10.1175/1520-0477(1983)064<1276:WATS>2.0.CO;2). Astronomical vs temperature seasons and the ~1-month lag of the annual cycle that shapes the default climate | `Climate` defaults, `include/engine/weather/climate.hpp` (R25.1) |
+| 🔧 | **A class of local interpolating splines** — Catmull & Rom, in Computer Aided Geometric Design, Academic Press, 1974. The uniform spline through the climate keys (periodic) | `sample_curve`, `src/weather/climate.cpp` (R25.1) |
+| 🔧 | **Fast splittable pseudorandom number generators** — Steele, Lea & Flood, OOPSLA 2014. [DOI](https://doi.org/10.1145/2660193.2660195). SplitMix64, a stateless hash per weather period | `weather_day`, `src/weather/climate_sequence.cpp` (R25.1) |
+
 ## Anti-aliasing, post-processing & camera
 
 | | Reading | In quat-3d |

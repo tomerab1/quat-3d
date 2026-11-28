@@ -312,6 +312,7 @@ Environment variables switch on extra modes:
 | `QUAT_SCRIPT_HOT_RELOAD=0` / `=1` | Turn script hot reload off (editor) / on (non-editor builds) |
 | `QUAT_GLTF=<file>` | Load a glTF/GLB model instead of the showcase scene |
 | `QUAT_TERRAIN=1` | Add a procedural terrain tile (with a grass field) |
+| `QUAT_SEASON=<season or phase>` | Hold a season (`spring` … `winter`, or a year phase 0..1) that sets the world clock's date and drives the weather from the climate; `QUAT_SEASON_SEED=<n>` picks the weather sequence. Five simulated minutes of weather are run first so wet ground and snow show |
 | `QUAT_TIME=<ISO-8601>` | Start with a world clock at this date and time (e.g. `2026-06-21T21:30+02:00`) driving the sun; `QUAT_LATLON=<lat>,<lon>` sets the place (default Paris), `QUAT_TIME_SCALE=<n>` the clock speed (default 1, 0 = frozen) |
 | `QUAT_PHYSICS=1` / `QUAT_CHARACTER=1` | Physics (with sparks and smoke) / character-controller demo scenes |
 | `QUAT_HOST=<port>` / `QUAT_JOIN=<ip:port>` | Host or join a networked session (host listens on 127.0.0.1 only unless `QUAT_NET_BIND` says otherwise) — see [Networking](#networking) |

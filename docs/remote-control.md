@@ -564,7 +564,7 @@ these methods, the quat-mcp `weather_*` tools and the editor's Renderer panel.
 | Method | Params | Result |
 |---|---|---|
 | `weather.get` | `{schema?: bool, wind_at?: [[x, y, z], ...]}` (≤ 1024 points) | `{present, entity, weather: {<field>: value}, schema?: [{name, group, label, type, min?, max?, default, unit?, hint, values?}], wind_at?: [[vx, vy, vz], ...]}` |
-| `weather.set` | `{reset?: bool, <field>: value, ...}` | `weather.get` result |
+| `weather.set` | `{reset?: bool, <field>: value, ...}` | `weather.get` result; turns the season's `weather_auto` off (R25.1) |
 
 Fields:
 
@@ -1092,6 +1092,55 @@ apparent (refracted), topocentric. Event times are local ISO-8601 strings
 `"night"` when the Sun stays up / down). Illuminances are outside the
 atmosphere, at normal incidence (Sun: 133 334 lx / R²; Moon: Krisciunas &
 Schaefer 1991).
+
+## Seasons (ROADMAP R25.1)
+
+The scene's season: one `season` component per scene
+(`engine/scene/season.hpp`), with an optional `climate` component on the
+same entity (`engine/weather/climate.hpp`; the default is a stylised cool
+temperate profile). `year_phase` runs 0..1 from the local spring equinox
+(0.25 summer solstice, 0.5 autumn equinox, 0.75 winter solstice); south of
+the equator it is shifted by half a year.
+
+- `mode` `"clock"`: the phase is the world clock's apparent solar ecliptic
+  longitude / 360 (R22.1's Sun), so the seasons fall on their real dates for
+  its latitude. Without an enabled clock the phase holds.
+- `"independent"`: the phase advances by `phase_rate` years per simulated
+  second (`year_minutes` = 1 / (60 × phase_rate)); whole years count up
+  `year`. With `drive_clock_date` the clock's date becomes the day whose Sun
+  is at the phase, keeping its time of day.
+- `"manual"`: the phase holds (it still drives the date with
+  `drive_clock_date`).
+
+While `weather_auto` is on, a seeded weather sequence (one kind per
+`weather_period_days` of the season year: clear, fair, overcast, showers,
+rain, storm, snow, with a temperature anomaly) writes the scene's weather
+wind, clouds, precipitation and temperature, creating the weather when the
+scene has none; `step_weather` accumulates wetness and snow from them. With
+`weather_clock_time` (default) the accumulation runs in world-clock time
+(simulation dt × the clock's `time_scale`). `weather.set` turns
+`weather_auto` off.
+
+Season fields (also the `season` component of the scene codec): `enabled`,
+`mode`, `year_phase` (0..1), `year` (1800..2199), `phase_rate` (0..1),
+`drive_clock_date`, `weather_auto`, `weather_seed` (0..2³²−1),
+`weather_clock_time`. Climate fields (the `climate` component):
+`temperature_c` (−60..50), `diurnal_range_c` (0..30),
+`precipitation_chance` (0..1), `cloud_cover` (0..1), `wind_speed` (0..40):
+arrays of 1..48 numbers, key i at year phase i / n; plus
+`temperature_variability_c` (0..15), `weather_period_days` (0.25..60),
+`transition` (0..1).
+
+| Method | Params | Result |
+|---|---|---|
+| `season.get` | `{climate?: bool}` | season fields + `in_scene`, `entity`, `year_minutes`, `day_minutes`, `has_clock`, `season`, `weights:{spring, summer, autumn, winter}`, `southern`, `day_length_h`, `polar`, `climate:{custom, mean_temperature_c, diurnal_range_c, temperature_c, precipitation_chance, cloud_cover, wind_speed, snow_fraction}`, `weather?:{kind, precipitation_type, temperature_anomaly_c, period, blend_to_next}`, `climate_curves?` |
+| `season.set` | any season field, plus `season` (`"spring"` … `"winter"`: the middle of it; not with `year_phase`), `year_minutes` (0..1e6), `day_minutes` (the clock's `time_scale` = 1440 / minutes; needs a clock), `real_calendar` (clock mode on today's date at real speed; creates the clock), `climate` (object merged into the climate, or `null` for the default), `weather_preset` (a kind applied now in this season's climate; turns `weather_auto` off), `spin_up_s` (0..3600: simulate up to the new state so surfaces show it) | `season.get` result; creates the season |
+
+In clock mode `season` / `year_phase` move the clock's date (keeping its
+time of day). Weather presets follow the season: `showers` and `storm` fall
+as snow when Dai's (2008) snow fraction at the current temperature is at
+least one half; `rain` raises the temperature to at least +2 °C and `snow`
+lowers it to at most −1 °C.
 
 ## Errors
 
