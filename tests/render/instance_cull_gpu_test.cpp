@@ -1,7 +1,7 @@
 // GPU instance culling (R6 / R9.4): the cull kernels match the CPU reference
-// (instance_cull.hpp) view by view, and culled rendering matches unculled
-// rendering pixel for pixel — the shadow cascades with GPU culling on and off,
-// and both the cascades and the GBuffer on the direct-draw fallback.
+// (instance_cull.hpp) view by view, and culled rendering lights the same
+// pixels as unculled rendering — shadow culling on and off, and the GBuffer
+// and cascades on the direct-draw fallback.
 
 #include <algorithm>
 #include <array>
@@ -24,6 +24,7 @@
 #include "engine/renderer/instance_buffer.hpp"
 #include "engine/renderer/instance_cull.hpp"
 #include "engine/renderer/instance_cull_pass.hpp"
+#include "engine/renderer/lighting_pass.hpp"
 #include "engine/renderer/mesh_pass.hpp"
 #include "engine/renderer/shadow_pass.hpp"
 #include "engine/rhi/device.hpp"
@@ -130,45 +131,97 @@ std::vector<std::uint32_t> host_u32(const rhi::GpuBuffer& b, std::size_t count) 
     return out;
 }
 
-// Every layer of the cascaded shadow map, as raw depth texels.
-std::expected<std::vector<std::uint8_t>, Error>
-render_shadow_map(quat::test::GpuContext& g, r::ShadowPass& pass, const occ::Camera& cam,
-                  const r::CsmSettings& settings, const r::InstancedDrawList& list) {
-    rhi::TransientImagePool pool(g.device, g.allocator);
-    rhi::RenderGraph graph(pool);
-    auto shadows = pass.add_to_graph(graph, csm_view(cam), settings, nullptr, list);
-    if (!shadows) return std::unexpected(shadows.error());
-    const std::uint32_t texel = pass.shared().format() == VK_FORMAT_D16_UNORM ? 2 : 4;
-    const VkDeviceSize layer = VkDeviceSize{r::shadow_map_size} * r::shadow_map_size * texel;
-    const auto layers = static_cast<std::uint32_t>(settings.cascade_count);
-    auto host = quat::test::host_readback_buffer(g.allocator, layer * layers);
-    if (!host) return std::unexpected(host.error());
-    const VkBuffer dst = host->handle();
-    const rhi::ResourceHandle map = shadows->shadow_map;
-    (void)graph.add_pass("test_shadow_readback", rhi::PassType::transfer)
-        .reads(map, rhi::ResourceUsage::transfer_src)
-        .execute([=](rhi::PassContext& ctx) {
-            for (std::uint32_t c = 0; c < layers; ++c) {
-                VkBufferImageCopy region{};
-                region.bufferOffset = layer * c;
-                region.imageSubresource = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, c, 1};
-                region.imageExtent = {r::shadow_map_size, r::shadow_map_size, 1};
-                vkCmdCopyImageToBuffer(ctx.cmd(), ctx.resolve(map).image,
-                                       VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, dst, 1, &region);
-            }
-        });
-    if (auto done = run(g, graph); !done) return std::unexpected(done.error());
-    if (auto inv = host->invalidate_mapped(); !inv) return std::unexpected(inv.error());
-    std::vector<std::uint8_t> out(static_cast<std::size_t>(layer * layers));
-    std::memcpy(out.data(), host->mapped(), out.size());
-    return out;
-}
-
 std::size_t differing(const std::vector<std::uint8_t>& a, const std::vector<std::uint8_t>& b) {
     if (a.size() != b.size()) return std::max(a.size(), b.size());
     std::size_t n = 0;
     for (std::size_t i = 0; i < a.size(); ++i) n += a[i] != b[i] ? 1 : 0;
     return n;
+}
+
+// The scattered field on a floor, with the passes that light it.
+struct Lit {
+    asset::MeshAsset     floor;
+    asset::MeshAsset     a;
+    asset::MeshAsset     b;
+    asset::MaterialAsset grey;
+    r::MeshPass          mesh;
+    r::ShadowPass        shadow;
+    r::LightingPass      lighting;
+};
+
+std::expected<void, Error> make_lit(quat::test::GpuContext& g, Lit& out) {
+    auto floor = occ::upload_box(g, {-150.0F, -0.5F, -200.0F}, {150.0F, 0.0F, 30.0F});
+    if (!floor) return std::unexpected(floor.error());
+    auto a = unit_box(g, false);
+    if (!a) return std::unexpected(a.error());
+    auto b = unit_box(g, true);
+    if (!b) return std::unexpected(b.error());
+    auto grey = occ::upload_grey(g);
+    if (!grey) return std::unexpected(grey.error());
+    auto mesh = r::MeshPass::create(g.device, g.allocator, g.cache, g.transfer, g.shader_dir);
+    if (!mesh) return std::unexpected(mesh.error());
+    auto shadow = r::ShadowPass::create(g.device, g.allocator, g.cache, g.shader_dir);
+    if (!shadow) return std::unexpected(shadow.error());
+    auto lighting = r::LightingPass::create(g.device, g.allocator, g.cache, g.shader_dir);
+    if (!lighting) return std::unexpected(lighting.error());
+    out.floor = std::move(*floor);
+    out.a = std::move(*a);
+    out.b = std::move(*b);
+    out.grey = std::move(*grey);
+    out.mesh = std::move(*mesh);
+    out.shadow = std::move(*shadow);
+    out.lighting = std::move(*lighting);
+    return {};
+}
+
+// GBuffer -> cascades -> lighting of the field (plus the floor, which
+// casts too); returns the HDR image.
+std::expected<quat::test::HostImage, Error> render_lit(quat::test::GpuContext& g, Lit& lit,
+                                                       const r::CsmSettings& csm) {
+    constexpr VkExtent2D extent{320, 240};
+    const occ::Camera cam = occ::look_at(k_eye, k_target, 60.0F, 4.0F / 3.0F, 0.1F, 150.0F);
+    r::InstancedDrawList list = scatter(lit.a, lit.b, &lit.grey);
+    r::InstancedDraw floor_draw;
+    floor_draw.mesh = &lit.floor;
+    floor_draw.material = &lit.grey;
+    floor_draw.first_instance = static_cast<std::uint32_t>(list.instances.size());
+    floor_draw.instance_count = 1;
+    list.instances.push_back(r::make_instance_data(glm::mat4(1.0F)));
+    list.draws.push_back(floor_draw);
+
+    rhi::TransientImagePool pool(g.device, g.allocator);
+    rhi::RenderGraph graph(pool);
+    auto gbuffer = lit.mesh.add_to_graph(graph, extent, cam.view_proj, list);
+    if (!gbuffer) return std::unexpected(gbuffer.error());
+    auto shadows = lit.shadow.add_to_graph(graph, csm_view(cam), csm, nullptr, list);
+    if (!shadows) return std::unexpected(shadows.error());
+    r::DirectionalLightParams sun;
+    sun.direction = glm::vec4(k_to_light, 0.0F);
+    sun.color = {1.0F, 1.0F, 1.0F, 3.0F};
+    sun.ambient = {0.05F, 0.05F, 0.05F, 0.0F};
+    r::LightingOcclusion occlusion;
+    occlusion.shadows = *shadows;
+    occlusion.csm = csm;
+    occlusion.projection = cam.proj;
+    auto hdr = lit.lighting.add_to_graph(graph, *gbuffer, extent, sun,
+                                         glm::inverse(cam.view_proj), cam.position, occlusion);
+    if (!hdr) return std::unexpected(hdr.error());
+    return quat::test::render_to_host(g, graph, *hdr, extent, 8);
+}
+
+// Pixels lit at under half the brightest pixel's luminance (shadowed floor).
+std::size_t shadowed_pixels(const quat::test::HostImage& img) {
+    float peak = 0.0F;
+    std::vector<float> luma;
+    for (std::uint32_t y = 0; y < img.extent.height; ++y) {
+        for (std::uint32_t x = 0; x < img.extent.width; ++x) {
+            const glm::vec4 c = img.rgba16f(x, y);
+            luma.push_back(0.2126F * c.r + 0.7152F * c.g + 0.0722F * c.b);
+            peak = std::max(peak, luma.back());
+        }
+    }
+    return static_cast<std::size_t>(
+        std::count_if(luma.begin(), luma.end(), [peak](float l) { return l < 0.5F * peak; }));
 }
 
 // Restores the device's indirect-draw features when a test ends.
@@ -226,6 +279,8 @@ TEST(GpuInstanceCull, MatchesTheCpuReferenceInEveryView) {
     in.camera = cam.position;
     in.cascades = graph.import_buffer("test_cascades", cascade_buffer->handle(), sizeof(cascades));
     in.cascades_address = rhi::buffer_device_address(g->device.handle(), *cascade_buffer);
+    const r::CullReceiver receiver = r::cull_receiver(cam.view, cam.proj);
+    in.receiver = &receiver;
     ASSERT_OK(culler->add_to_graph(graph, culled, in));
     const r::InstanceCuller::Outputs out = culler->outputs();
     ASSERT_TRUE(out.visible.valid());
@@ -261,7 +316,7 @@ TEST(GpuInstanceCull, MatchesTheCpuReferenceInEveryView) {
 
     std::size_t compared = 0;
     for (std::size_t v = 0; v < views.size(); ++v) {
-        const r::ResolvedCullView rv = r::resolve_cull_view(views[v], cascades);
+        const r::ResolvedCullView rv = r::resolve_cull_view(views[v], cascades, &receiver);
         for (std::size_t d = 0; d < 2; ++d) {
             const r::CullDrawGpu& dr = draws[d];
             // The GPU's survivors of this draw, in its range of the list.
@@ -307,92 +362,48 @@ TEST(GpuInstanceCull, MatchesTheCpuReferenceInEveryView) {
     EXPECT_EQ(kept_in(3), n);
 }
 
-TEST(GpuInstanceCull, CulledCascadesMatchUnculledOnes) {
+// The lit frame of the scattered field on a floor: culled casters (camera,
+// cascade volumes, receiver slices) must leave every pixel unchanged.
+TEST(GpuInstanceCull, CulledShadowsLightTheSamePixels) {
     QUAT_REQUIRE_GPU(g);
-    auto a = unit_box(*g, false);
-    ASSERT_OK(a);
-    auto b = unit_box(*g, true);
-    ASSERT_OK(b);
-    const r::InstancedDrawList list = scatter(*a, *b, nullptr);
-    const occ::Camera cam = occ::look_at(k_eye, k_target, 60.0F, 1.0F, 0.1F, 150.0F);
-    auto pass = r::ShadowPass::create(g->device, g->allocator, g->cache, g->shader_dir);
-    ASSERT_OK(pass);
-
+    Lit lit;
+    ASSERT_OK(make_lit(*g, lit));
     r::CsmSettings off = cpu_fit_settings();
     off.gpu_culling = false;
-    auto reference = render_shadow_map(*g, *pass, cam, off, list);
+    auto reference = render_lit(*g, lit, off);
     ASSERT_OK(reference);
-    // The casters land in the map (depth below the clear value 1).
-    const std::size_t cleared = differing(*reference, std::vector<std::uint8_t>(
-                                                          reference->size(), 0xFF));
-    ASSERT_GT(cleared, reference->size() / 100);
-    // Culling alone (no projected-size cull) draws exactly the same depths.
+    // Shadows land on the floor (some pixels are much darker than others).
+    ASSERT_GT(shadowed_pixels(*reference), 500U);
+
+    // Culling alone (no projected-size cull) lights exactly the same pixels.
     r::CsmSettings on = cpu_fit_settings();
     on.caster_min_texels = 0.0F;
-    auto culled = render_shadow_map(*g, *pass, cam, on, list);
+    auto culled = render_lit(*g, lit, on);
     ASSERT_OK(culled);
-    EXPECT_EQ(differing(*reference, *culled), 0U);
+    EXPECT_EQ(differing(reference->bytes, culled->bytes), 0U);
 
     // The projected-size cull drops only small casters from coarse
-    // cascades: a few texels change, most do not.
+    // cascades: few pixels change.
     on.caster_min_texels = 4.0F;
-    auto small = render_shadow_map(*g, *pass, cam, on, list);
+    auto small = render_lit(*g, lit, on);
     ASSERT_OK(small);
-    const std::size_t changed = differing(*reference, *small);
-    EXPECT_LT(changed, reference->size() / 20);
+    EXPECT_LT(differing(reference->bytes, small->bytes), reference->bytes.size() / 50);
 }
 
 TEST(GpuInstanceCull, DirectFallbackDrawsTheSameImages) {
     QUAT_REQUIRE_GPU(g);
-    auto a = unit_box(*g, false);
-    ASSERT_OK(a);
-    auto b = unit_box(*g, true);
-    ASSERT_OK(b);
-    auto grey = occ::upload_grey(*g);
-    ASSERT_OK(grey);
-    const r::InstancedDrawList list = scatter(*a, *b, &*grey);
-    const occ::Camera cam = occ::look_at(k_eye, k_target, 60.0F, 1.0F, 0.1F, 150.0F);
-    constexpr VkExtent2D extent{256, 256};
-    const r::CsmSettings csm = [] {
-        r::CsmSettings s = cpu_fit_settings();
-        s.caster_min_texels = 0.0F;
-        return s;
-    }();
-
-    const auto gbuffer_albedo = [&](r::MeshPass& mesh) -> std::expected<quat::test::HostImage, Error> {
-        rhi::TransientImagePool pool(g->device, g->allocator);
-        rhi::RenderGraph graph(pool);
-        auto targets = mesh.add_to_graph(graph, extent, cam.view_proj, list);
-        if (!targets) return std::unexpected(targets.error());
-        return quat::test::render_to_host(*g, graph, targets->albedo, extent, 4);
-    };
-
-    auto mesh = r::MeshPass::create(g->device, g->allocator, g->cache, g->transfer, g->shader_dir);
-    ASSERT_OK(mesh);
-    auto shadow = r::ShadowPass::create(g->device, g->allocator, g->cache, g->shader_dir);
-    ASSERT_OK(shadow);
-    auto culled_albedo = gbuffer_albedo(*mesh);
-    ASSERT_OK(culled_albedo);
-    auto culled_map = render_shadow_map(*g, *shadow, cam, csm, list);
-    ASSERT_OK(culled_map);
+    Lit lit;
+    ASSERT_OK(make_lit(*g, lit));
+    r::CsmSettings csm = cpu_fit_settings();
+    csm.caster_min_texels = 0.0F;
+    auto culled = render_lit(*g, lit, csm);
+    ASSERT_OK(culled);
+    ASSERT_GT(shadowed_pixels(*culled), 500U);
 
     const SimulateNoIndirect no_indirect(g->device);
-    auto direct_mesh =
-        r::MeshPass::create(g->device, g->allocator, g->cache, g->transfer, g->shader_dir);
-    ASSERT_OK(direct_mesh);
-    auto direct_shadow = r::ShadowPass::create(g->device, g->allocator, g->cache, g->shader_dir);
-    ASSERT_OK(direct_shadow);
-    auto direct_albedo = gbuffer_albedo(*direct_mesh);
-    ASSERT_OK(direct_albedo);
-    auto direct_map = render_shadow_map(*g, *direct_shadow, cam, csm, list);
-    ASSERT_OK(direct_map);
-
-    EXPECT_EQ(differing(culled_albedo->bytes, direct_albedo->bytes), 0U);
-    EXPECT_EQ(differing(*culled_map, *direct_map), 0U);
-    // Something was drawn.
-    std::size_t lit = 0;
-    for (std::size_t i = 3; i < culled_albedo->bytes.size(); i += 4) {
-        lit += culled_albedo->bytes[i] != 0 ? 1 : 0;
-    }
-    EXPECT_GT(lit, 1000U);
+    Lit direct;
+    ASSERT_OK(make_lit(*g, direct));
+    auto fallback = render_lit(*g, direct, csm);
+    ASSERT_OK(fallback);
+    EXPECT_EQ(differing(culled->bytes, fallback->bytes), 0U);
 }

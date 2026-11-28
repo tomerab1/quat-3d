@@ -255,7 +255,8 @@ JSON-RPC over loopback TCP to the engine.
     - [x] R9.4.1 Per-view GPU instance culling: a compute pass culls the
       frame's instanced draw lists per view (camera; each sun cascade
       against its light-space volume extruded toward the sun by the caster
-      reach) into compacted visible lists + indexed indirect commands
+      reach, and to the casters whose shadow can reach the camera slice the
+      cascade shades) into compacted visible lists + indexed indirect commands
       (draw-indirect-count where offered, direct fallback without
       drawIndirectFirstInstance); the GBuffer and shadow passes draw from
       them. Shadow savings: a projected-size cull for casters

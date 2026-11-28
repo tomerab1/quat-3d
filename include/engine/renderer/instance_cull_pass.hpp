@@ -59,6 +59,9 @@ struct InstanceCullInput {
     // when no view is a cascade.
     rhi::ResourceHandle cascades{};
     VkDeviceAddress     cascades_address = 0;
+    // The camera receiving the shadows: cascade views then also cull casters
+    // whose shadow cannot reach the slice they shade (cull_receiver()).
+    const CullReceiver* receiver = nullptr;
 };
 
 class InstanceCuller {

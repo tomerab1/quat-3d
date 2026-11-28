@@ -170,3 +170,39 @@ TEST(InstanceCull, ReferenceListsEachViewsSurvivorsPerDrawInOrder) {
     EXPECT_EQ(out[1][0], (std::vector<std::uint32_t>{0, 1, 2, 3, 4, 5}));
     EXPECT_EQ(out[1][1], (std::vector<std::uint32_t>{6, 7, 8, 9}));
 }
+
+TEST(InstanceCull, ReceiverSlicesDropCastersWhoseShadowCannotReachThem) {
+    // Sun overhead, camera at the origin looking down -z: a bush beside the
+    // camera shades only the near slice; its shadow falls straight down, so
+    // it never reaches cascade 3's slice tens of metres ahead, although
+    // cascade 3's square contains it.
+    const r::GpuCascades cs = overhead_cascades();
+    const glm::mat4 view = glm::lookAt(glm::vec3(0.0F), glm::vec3(0.0F, 0.0F, -1.0F),
+                                       glm::vec3(0.0F, 1.0F, 0.0F));
+    glm::mat4 proj = glm::perspective(glm::radians(60.0F), 1.0F, 0.1F, 100.0F);
+    proj[1][1] *= -1.0F;
+    const r::CullReceiver receiver = r::cull_receiver(view, proj);
+    // The receiver depth plane measures distance ahead of the camera.
+    EXPECT_NEAR(glm::dot(glm::vec3(receiver.depth), glm::vec3(0.0F, 0.0F, -7.0F)) +
+                    receiver.depth.w, 7.0F, 1e-5F);
+    const r::CullDrawGpu d = unit_draw();
+    const glm::vec4 bush(0.0F, -1.0F, -2.0F, 0.5F);
+    ASSERT_GT(cs.split_far.z, 10.0F); // cascade 3 starts well past the bush
+    for (std::uint32_t c : {0U, 3U}) {
+        const r::ResolvedCullView box = r::resolve_cull_view(r::cascade_cull_view(c, 0.0F), cs);
+        const r::ResolvedCullView slice =
+            r::resolve_cull_view(r::cascade_cull_view(c, 0.0F), cs, &receiver);
+        ASSERT_TRUE(r::cull_accepts(box, d, bush, glm::vec3(0.0F))) << "cascade " << c;
+        EXPECT_EQ(r::cull_accepts(slice, d, bush, glm::vec3(0.0F)), c == 0) << "cascade " << c;
+    }
+    // A tall caster above the far slice casts into it: kept.
+    const glm::vec3 far_point = cascade_centre(cs, 3);
+    const glm::vec4 tower(far_point.x, far_point.y + 20.0F, far_point.z, 2.0F);
+    const r::ResolvedCullView slice3 =
+        r::resolve_cull_view(r::cascade_cull_view(3, 0.0F), cs, &receiver);
+    EXPECT_TRUE(r::cull_accepts(slice3, d, tower, glm::vec3(0.0F)));
+    // Behind the camera, the overhead sun's shadow stays behind it too.
+    const r::ResolvedCullView slice0 =
+        r::resolve_cull_view(r::cascade_cull_view(0, 0.0F), cs, &receiver);
+    EXPECT_FALSE(r::cull_accepts(slice0, d, {0.0F, 0.0F, 30.0F, 0.5F}, glm::vec3(0.0F)));
+}

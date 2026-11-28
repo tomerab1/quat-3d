@@ -316,6 +316,8 @@ ShadowPass::add_to_graph(rhi::RenderGraph& graph, const CsmView& view,
     cull.camera = glm::vec3(glm::inverse(view.view)[3]);
     cull.cascades = out.cascades;
     cull.cascades_address = cascades_address_;
+    const CullReceiver receiver = cull_receiver(view.view, view.projection);
+    cull.receiver = &receiver;
     if (auto r = culler_.add_to_graph(graph, casters, cull); !r) {
         return std::unexpected(r.error());
     }

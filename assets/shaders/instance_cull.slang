@@ -31,6 +31,9 @@ static const uint MAX_VIEWS = 5;
 static const uint KIND_PLANES = 0;
 static const uint KIND_CASCADE = 1;
 static const uint NEVER_CULL = 1;
+// Receiver-slice filter margin in shadow texels (instance_cull.hpp
+// cull_receiver_margin_texels).
+static const float RECEIVER_MARGIN_TEXELS = 32.0;
 
 // Mirrors engine::renderer::CullDrawGpu (48 bytes).
 struct CullDraw {
@@ -54,7 +57,7 @@ struct CullView {
     uint   pad;
 }
 
-// Mirrors engine::renderer::CullParamsGpu (608 bytes).
+// Mirrors engine::renderer::CullParamsGpu (688 bytes).
 struct CullParams {
     float4   camera;
     uint     view_count;
@@ -63,8 +66,10 @@ struct CullParams {
     uint     command_count;  // per view
     uint     instance_count; // per view (visible list stride)
     uint     groups_x;
-    uint     pad0;
+    uint     has_receiver;   // 1: cascade views test the receiver slices
     uint     pad1;
+    float4   receiver_sides[4]; // receiver camera side planes, inward
+    float4   receiver_depth;    // view depth as a plane: dot(xyz, x) + w
     CullView views[MAX_VIEWS];
 }
 
@@ -111,6 +116,26 @@ bool accepts(CullView view, CullDraw draw, float3 centre, float radius) {
         planes[4] = normalised(r2);
         planes[5] = normalised(r3 - r2);
         near_extrude = max(d.limits.y, 0.0);
+        if (g_params.has_receiver != 0) {
+            // The caster's sphere swept away from the sun across the
+            // cascade must reach the camera slice this cascade shades.
+            float prev_start = c >= 2 ? d.split_far[c - 2] : d.params.y;
+            float start = c == 0 ? d.params.y : d.split_far[c - 1];
+            if (c > 0) start -= d.params.z * (start - prev_start);
+            float3 b = centre + planes[4].xyz * (d.depth_range[c] + near_extrude);
+            float slack = radius + RECEIVER_MARGIN_TEXELS * d.texel_world[c];
+            for (uint i = 0; i < 4; ++i) {
+                float4 p = g_params.receiver_sides[i];
+                float da = dot(p.xyz, centre) + p.w;
+                float db = dot(p.xyz, b) + p.w;
+                if (max(da, db) < -slack) return false;
+            }
+            float4 f = g_params.receiver_depth;
+            float za = dot(f.xyz, centre) + f.w;
+            float zb = dot(f.xyz, b) + f.w;
+            if (max(za, zb) < start - slack) return false;
+            if (min(za, zb) > d.split_far[c] + slack) return false;
+        }
     } else {
         for (uint i = 0; i < 6; ++i) planes[i] = view.planes[i];
     }

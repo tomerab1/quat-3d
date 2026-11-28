@@ -183,6 +183,11 @@ std::expected<void, core::Error> InstanceCuller::upload_inputs(const InstancedDr
     p.command_count = command_count_;
     p.instance_count = instance_count_;
     p.groups_x = std::max(groups_x_, 1U);
+    if (in.receiver != nullptr) {
+        p.has_receiver = 1;
+        p.receiver_sides = in.receiver->sides;
+        p.receiver_depth = in.receiver->depth;
+    }
     for (std::uint32_t v = 0; v < view_count_; ++v) {
         // The direct fallback draws every instance: its lists must be full.
         p.views[v] = indirect_ ? in.views[v] : keep_all_cull_view();

@@ -21,6 +21,17 @@
 //     the cascade views are only resolvable on the GPU in a live frame); its
 //     near plane is pushed toward the sun by the cascade's caster reach
 //     (GpuCascades::limits.y), the volume a pancaked caster can shadow from.
+//   * shadow views with a receiver camera: the caster's shadow volume (its
+//     sphere swept away from the sun across the cascade's depth) must reach
+//     the slice of the camera frustum the cascade shades (its split range,
+//     widened by the blend band into the previous cascade, and a filter
+//     margin). Foliage around the camera no longer goes into the coarse
+//     cascades whose slices start tens of metres away, although their
+//     squares contain it. Exact for every receiver the camera can see (the
+//     per-plane test of a swept sphere against a convex volume is
+//     conservative); after Bittner et al. 2011, "Shadow Caster Culling for
+//     Efficient Shadow Mapping" (I3D), the receiver-volume form without the
+//     visibility mask;
 //   * shadow views: the projected-size cull — a caster whose bounding
 //     diameter covers fewer than `min_caster_texels` shadow texels of the
 //     cascade is dropped (small foliage stops casting into far cascades,
@@ -94,11 +105,24 @@ struct CullParamsGpu {
     std::uint32_t command_count = 0; // per view
     std::uint32_t instance_count = 0; // per view (visible list stride)
     std::uint32_t groups_x = 0;       // dispatch width (chunks fold into y beyond it)
-    std::uint32_t pad0 = 0;
+    std::uint32_t has_receiver = 0;   // 1: cascade views test the receiver slices below
     std::uint32_t pad1 = 0;
+    // The camera whose pixels receive the shadows: its four side planes
+    // (inward, normalised) and its view depth as a plane (xyz forward, w
+    // offset: depth(x) = dot(xyz, x) + w), the distance the cascades split.
+    std::array<glm::vec4, 4> receiver_sides{};
+    glm::vec4     receiver_depth{0.0F};
     std::array<CullViewGpu, max_cull_views> views{};
 };
-static_assert(sizeof(CullParamsGpu) == 608, "must match instance_cull.slang CullParams");
+static_assert(sizeof(CullParamsGpu) == 688, "must match instance_cull.slang CullParams");
+
+// The receiver camera of shadow views (CullParamsGpu::receiver_*), from its
+// unjittered view and projection.
+struct CullReceiver {
+    std::array<glm::vec4, 4> sides{};
+    glm::vec4                depth{0.0F};
+};
+[[nodiscard]] CullReceiver cull_receiver(const glm::mat4& view, const glm::mat4& projection);
 
 // A view resolved to what the per-instance test needs (CPU reference; the
 // shader resolves cascade views the same way from the GPU-fitted buffer).
@@ -109,6 +133,13 @@ struct ResolvedCullView {
     float min_caster_texels = 0.0F;
     bool  shadow = false;       // apply the draws' caster distance
     bool  keep_all = false;
+    // Receiver slice (cascade views with a receiver camera).
+    bool      has_receiver = false;
+    CullReceiver receiver{};
+    glm::vec2 slice{0.0F};      // view-depth range the cascade shades
+    glm::vec3 away{0.0F};       // unit direction away from the sun
+    float     sweep = 0.0F;     // how far a shadow can reach across the cascade
+    float     margin = 0.0F;    // filter footprint around a receiver, world units
 };
 
 // Gribb-Hartmann planes of `view_proj` (Vulkan [0, 1] depth), inward,
@@ -122,9 +153,11 @@ struct ResolvedCullView {
 // Everything visible.
 [[nodiscard]] CullViewGpu keep_all_cull_view();
 
-// Resolves `view` (cascade views against `cascades`) for the CPU reference.
+// Resolves `view` (cascade views against `cascades`, and `receiver`'s
+// slices when given) for the CPU reference.
 [[nodiscard]] ResolvedCullView resolve_cull_view(const CullViewGpu& view,
-                                                 const GpuCascades& cascades);
+                                                 const GpuCascades& cascades,
+                                                 const CullReceiver* receiver = nullptr);
 
 // World bounding sphere (xyz centre, w radius) of `local` through `model`.
 [[nodiscard]] glm::vec4 world_sphere(const glm::mat4& model, const glm::vec4& local);
@@ -139,6 +172,11 @@ struct ResolvedCullView {
 [[nodiscard]] std::vector<std::vector<std::vector<std::uint32_t>>>
 reference_cull(std::span<const CullViewGpu> views, const GpuCascades& cascades,
                std::span<const CullDrawGpu> draws, std::span<const glm::mat4> models,
-               const glm::vec3& camera);
+               const glm::vec3& camera, const CullReceiver* receiver = nullptr);
+
+// Shadow-filter margin around a receiver, in shadow texels of the cascade
+// (PCF / PCSS kernel, normal offset, blocker search), used by the
+// receiver-slice test.
+inline constexpr float cull_receiver_margin_texels = 32.0F;
 
 } // namespace engine::renderer

@@ -44,7 +44,17 @@ CullViewGpu keep_all_cull_view() {
     return v;
 }
 
-ResolvedCullView resolve_cull_view(const CullViewGpu& view, const GpuCascades& cascades) {
+CullReceiver cull_receiver(const glm::mat4& view, const glm::mat4& projection) {
+    CullReceiver r;
+    const std::array<glm::vec4, 6> planes = cull_frustum_planes(projection * view);
+    for (std::size_t i = 0; i < r.sides.size(); ++i) r.sides[i] = planes[i];
+    // View depth = -z of view space (the cascades split along it).
+    r.depth = -glm::vec4(view[0][2], view[1][2], view[2][2], view[3][2]);
+    return r;
+}
+
+ResolvedCullView resolve_cull_view(const CullViewGpu& view, const GpuCascades& cascades,
+                                   const CullReceiver* receiver) {
     ResolvedCullView out;
     switch (static_cast<CullViewKind>(view.kind)) {
     case CullViewKind::planes:
@@ -57,6 +67,20 @@ ResolvedCullView resolve_cull_view(const CullViewGpu& view, const GpuCascades& c
         out.texel_world = cascades.texel_world[static_cast<glm::length_t>(c)];
         out.min_caster_texels = view.min_caster_texels;
         out.shadow = true;
+        if (receiver != nullptr) {
+            // The cascade shades [start, split_far[c]], where its start
+            // reaches back into the previous cascade's blend band.
+            const auto ci = static_cast<glm::length_t>(c);
+            const float prev_start = c >= 2 ? cascades.split_far[ci - 2] : cascades.params.y;
+            float start = c == 0 ? cascades.params.y : cascades.split_far[ci - 1];
+            if (c > 0) start -= cascades.params.z * (start - prev_start);
+            out.has_receiver = true;
+            out.receiver = *receiver;
+            out.slice = {start, cascades.split_far[ci]};
+            out.away = glm::vec3(out.planes[4]); // depth grows away from the sun
+            out.sweep = cascades.depth_range[ci] + out.near_extrude;
+            out.margin = cull_receiver_margin_texels * out.texel_world;
+        }
         break;
     }
     default:
@@ -84,6 +108,23 @@ bool cull_accepts(const ResolvedCullView& view, const CullDrawGpu& draw, const g
         const float slack = i == 4 ? view.near_extrude : 0.0F;
         if (glm::dot(glm::vec3(p), c) + p.w < -(r + slack)) return false;
     }
+    if (view.has_receiver) {
+        // The caster's sphere swept away from the sun across the cascade
+        // must reach the camera slice the cascade shades (a segment-swept
+        // sphere against each plane of a convex volume: conservative).
+        const glm::vec3 b = c + view.away * view.sweep;
+        const float slack = r + view.margin;
+        for (const glm::vec4& p : view.receiver.sides) {
+            const float da = glm::dot(glm::vec3(p), c) + p.w;
+            const float db = glm::dot(glm::vec3(p), b) + p.w;
+            if (std::max(da, db) < -slack) return false;
+        }
+        const glm::vec4& f = view.receiver.depth;
+        const float za = glm::dot(glm::vec3(f), c) + f.w;
+        const float zb = glm::dot(glm::vec3(f), b) + f.w;
+        if (std::max(za, zb) < view.slice.x - slack) return false;
+        if (std::min(za, zb) > view.slice.y + slack) return false;
+    }
     if (view.shadow) {
         // Projected size: a caster narrower than the threshold in texels.
         if (view.texel_world > 0.0F && view.min_caster_texels > 0.0F &&
@@ -100,10 +141,10 @@ bool cull_accepts(const ResolvedCullView& view, const CullDrawGpu& draw, const g
 std::vector<std::vector<std::vector<std::uint32_t>>>
 reference_cull(std::span<const CullViewGpu> views, const GpuCascades& cascades,
                std::span<const CullDrawGpu> draws, std::span<const glm::mat4> models,
-               const glm::vec3& camera) {
+               const glm::vec3& camera, const CullReceiver* receiver) {
     std::vector<std::vector<std::vector<std::uint32_t>>> out(views.size());
     for (std::size_t v = 0; v < views.size(); ++v) {
-        const ResolvedCullView view = resolve_cull_view(views[v], cascades);
+        const ResolvedCullView view = resolve_cull_view(views[v], cascades, receiver);
         out[v].resize(draws.size());
         for (std::size_t d = 0; d < draws.size(); ++d) {
             const CullDrawGpu& draw = draws[d];
