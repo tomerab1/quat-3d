@@ -7,13 +7,6 @@ into CLAUDE.md or the brief template in [`CYCLE.md`](CYCLE.md).
 
 ## Agents and orchestration
 
-- **Worktree-isolated agents cannot write outside their worktree from Bash**
-  (P4, 2026-11-27): writes to the shared scratchpad, `for` loops around git
-  and heredocs feeding interpreters were refused as unverifiable. Keep build
-  outputs and helper scripts under the worktree's ignored `build/` and run
-  them as plain `python3 build/...` / `bash build/...` commands. A local
-  build script must track header dependencies (`-MMD`), or every header
-  edit recompiles the tree — slow when several agents share four cores.
 - **The worktree isolation guard refuses complex shell commands** (heredocs
   with quotes, `cd` into computed paths, git on paths it cannot verify). A
   worker loses turns retrying them. → Write edit scripts / build scripts as
@@ -687,30 +680,3 @@ it reordered, and an unvalidated ini file. Each lived in code only reachable
 through an ImGui frame. **Rule:** UI actions are plain functions over the
 registry or the state struct, called by the widget and by GoogleTest;
 anything read from disk goes through a pure, tested parser.
-
-## The shipping player broke on a merge no check compiled (P4 train merge)
-
-Merging train #93 into #55, `RemoteBridge` had grown `spawn_model` (Lua
-scripts), `screenshot_view`, `port()` and `client_count()` (E8 status bar)
-reaching members that `quat-player-shipping` compiles out (`QUAT_SHIPPING`);
-`WorldRuntime` gained editor-only behaviour that a shared `game_world`
-library would have frozen to the editor build. `scripts/check-compile.sh`
-compiled every file once, with `ENGINE_EDITOR` and the source-tree path
-macros defined, so none of it showed.
-**Rule:** code compiled into several executables is checked in each of their
-configurations. `check-compile.sh` now also compiles `src/app/` and
-`src/player/` without the editor and with `QUAT_SHIPPING`; a library holding
-`#ifdef ENGINE_EDITOR` code is built once per configuration
-(`game_world` / `game_world_runtime`).
-
-## A conflicted source list was resolved to one side (P4 train merge)
-
-Resolving `engine_editor`'s source list in the train merge, one side was
-taken whole: the E8 shell's 24 sources vanished, and `game` failed to link
-(`EditorShell` undefined) after a CI round-trip. Per-file compile checks
-cannot see this, and neither can a check that only verifies the listed
-paths exist.
-**Rule:** a conflicted list (sources, link libraries, includes) is resolved
-as the union of both sides. After the merge, confirm every `src/` and
-`tools/` `.cpp` appears in a CMake source list, and that nothing the other
-side added was dropped (`git diff <other-parent> -- CMakeLists.txt | grep '^-'`).
