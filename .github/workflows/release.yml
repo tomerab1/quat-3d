@@ -1,8 +1,11 @@
 name: Release
 
-# Downloadable builds of the game/editor for Linux, Windows and macOS, and of
-# the sample game made with it (games/coin-collector, ROADMAP P4).
-#   - Tag push v*: build, package, smoke-test, publish a GitHub Release.
+# Downloadable builds of the game/editor for Linux, Windows and macOS, of the
+# sample game made with it (games/coin-collector, ROADMAP P4), and of the
+# engine SDK (ROADMAP P8, docs/sdk.md).
+#   - Tag push v*: build, package, smoke-test, publish a GitHub Release whose
+#     notes are docs/releases/<tag>.md (required unless the tag is a
+#     prerelease) followed by GitHub's generated PR list. See docs/RELEASING.md.
 #   - workflow_dispatch: the same builds, uploaded as workflow artifacts only
 #     (a playable test build of the sample game per OS).
 # Packaging: scripts/package-release.sh (engine) and quat-pack (games, which
@@ -41,6 +44,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Fail a release tag without curated notes now, not after the builds;
+      # the publish job resolves the same file (docs/RELEASING.md).
+      - name: Release notes present
+        if: github.ref_type == 'tag'
+        shell: bash
+        run: bash scripts/release-notes.sh "$GITHUB_REF_NAME" > /dev/null
+
+      # Every archive ships THIRD_PARTY_NOTICES.md: its summary must list every
+      # vcpkg dependency, FetchContent package and font (as in CI).
+      - name: Third-party notices
+        if: runner.os == 'Linux'
+        run: python3 -I scripts/check-third-party-notices.py
+
       - name: Set up build
         id: setup
         uses: ./.github/actions/setup-build
@@ -65,6 +81,22 @@ jobs:
       - name: Build
         if: steps.configure.outcome == 'success'
         run: cmake --build --preset ${{ matrix.preset }} --target game quat-player quat-player-shipping quat-pack
+
+      # quat-mcp ships next to the game in every archive. Same toolchain as
+      # CI's quat-mcp job (tools/quat-mcp/rust-toolchain.toml).
+      - name: Rust toolchain
+        uses: dtolnay/rust-toolchain@fa51344246423bb1896f389ae2a83b9784ddb363 # 1.97.0
+
+      - name: Cargo cache
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: tools/quat-mcp
+          # Like the vcpkg cache: tag runs restore, never save.
+          save-if: ${{ github.ref_type != 'tag' }}
+
+      - name: Build quat-mcp
+        working-directory: tools/quat-mcp
+        run: cargo build --release --locked
 
       # Tags must look like v1.2.3 or v1.2.3-rc.1: the version ends up in file
       # names, Info.plist and the release title.
@@ -98,6 +130,9 @@ jobs:
 
       # The sample game through quat-pack (packaged before any smoke test: the
       # macOS one uninstalls Homebrew's Vulkan, which the bundle copies from).
+      # It ships LICENSE and the THIRD_PARTY_NOTICES.md the Package step above
+      # wrote to $BUILD_DIR (no quat-mcp crates), found next to quat-player;
+      # without them the layout fails.
       # A package build of quat-pack has no source-tree defaults, so the
       # shaders and the layout scripts are passed explicitly. Tags package the
       # game's own version; other runs add the commit as the build id.
@@ -220,22 +255,45 @@ jobs:
     runs-on: ubuntu-24.04
     permissions:
       contents: write
+    # This job holds a write token: actions pinned by commit, and the checkout
+    # is only the release notes and their resolver, without a stored token.
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          sparse-checkout: |
+            docs/releases
+            scripts
+          persist-credentials: false
+
+      # docs/releases/<tag>.md, required unless the tag is a prerelease
+      # (scripts/release-notes.sh; empty output = generated notes only).
+      - name: Release notes
+        id: notes
+        shell: bash
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          body_path=$(bash scripts/release-notes.sh "$TAG")
+          echo "body_path=$body_path" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           pattern: quat-3d-*
           path: dist
           merge-multiple: true
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           pattern: coin-collector-*
           path: dist
           merge-multiple: true
 
+      # With both set, action-gh-release v3 puts the body_path file first and
+      # GitHub's generated notes (the merged PRs, "Full Changelog") below it.
       - name: Release
         uses: softprops/action-gh-release@8a0cd651e5b2365bd640854a3fa5dfc70e4875f3 # v3.0.4
         with:
+          body_path: ${{ steps.notes.outputs.body_path }}
           files: dist/*
           fail_on_unmatched_files: true
           generate_release_notes: true
