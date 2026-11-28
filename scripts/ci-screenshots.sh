@@ -44,7 +44,7 @@ SCENE_TABLE=(
   "showcase|30|QUAT_NO_UI=1|Showcase scene, no UI"
   "terrain|90|QUAT_NO_UI=1 QUAT_TERRAIN=1|Showcase + GPU-generated terrain tile"
   "physics|90|QUAT_NO_UI=1 QUAT_PHYSICS=1|Physics demo (Jolt) after 90 frames"
-  "cinematic|24|QUAT_NO_UI=1 QUAT_PLAY=1 QUAT_SCENE=assets/scenes/cinematic_forest.json|Cinematic forest clearing at golden hour (CC0 Poly Haven assets), hero camera|assets/showcase/cinematic/assets.json"
+  "cinematic|16|QUAT_NO_UI=1 QUAT_PLAY=1 QUAT_SCENE=assets/scenes/cinematic_forest.json|Cinematic forest clearing at golden hour (CC0 Poly Haven assets), hero camera|assets/showcase/cinematic/assets.json"
 )
 
 die() { echo "ci-screenshots: $*" >&2; exit 2; }

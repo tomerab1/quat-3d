@@ -15,12 +15,12 @@
         "Rob Tuytel": "photography",
         "Rico Cilliers": "modeling"
       },
-      "use": "Hero trees of the forest edge around the clearing (three variants, 18 m). Cooked to two levels of detail, 10 % (near) and 2.5 % (far rows): the 7 M-triangle needle geometry is far beyond a software rasteriser, and the BLEND twig cards become alpha-tested.",
+      "use": "Hero trees of the forest edge around the clearing (three variants, 18 m). Cooked to two levels of detail, 6 % (near rows) and 1.5 % (far rows): the 7 M-triangle needle geometry is far beyond a software rasteriser, and the BLEND twig cards become alpha-tested.",
       "cook": [
         {
           "args": [
             "--simplify",
-            "0.1",
+            "0.06",
             "--simplify-error",
             "0.002",
             "--blend-to-mask",
@@ -31,7 +31,7 @@
           "output": "fir_tree_01_far.glb",
           "args": [
             "--simplify",
-            "0.025",
+            "0.015",
             "--simplify-error",
             "0.004",
             "--blend-to-mask",
@@ -50,12 +50,12 @@
         "Rob Tuytel": "photography",
         "Rico Cilliers": "modeling"
       },
-      "use": "Young firs inside the clearing (three variants, 0.7-1.3 m).",
+      "use": "Young firs inside the clearing (three variants, 0.7-1.3 m), cooked to 25 %.",
       "cook": [
         {
           "args": [
             "--simplify",
-            "0.1",
+            "0.25",
             "--simplify-error",
             "0.002"
           ]
@@ -72,12 +72,12 @@
         "Rob Tuytel": "photography",
         "Rico Cilliers": "modeling"
       },
-      "use": "Young pines inside the clearing (three variants).",
+      "use": "Young pines inside the clearing (three variants), cooked to 25 %.",
       "cook": [
         {
           "args": [
             "--simplify",
-            "0.1",
+            "0.25",
             "--simplify-error",
             "0.002"
           ]
