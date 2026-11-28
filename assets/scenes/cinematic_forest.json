@@ -4,7 +4,7 @@
     "version": 1,
     "exposure": {
       "auto": true,
-      "compensation_ev": 0.0
+      "compensation_ev": -0.3
     },
     "bloom": {
       "enabled": true,
@@ -99,15 +99,15 @@
       "parent": -1,
       "grass": {
         "seed": 11,
-        "density": 60,
-        "radius": 22,
+        "density": 140,
+        "radius": 18,
         "blade_height": [
-          0.05,
-          0.2
+          0.04,
+          0.14
         ],
         "blade_width": [
-          0.008,
-          0.016
+          0.006,
+          0.012
         ],
         "base_color": [
           0.025,
@@ -479,8 +479,8 @@
           44,
           34
         ],
-        "density": 0.07,
-        "min_spacing": 0.9,
+        "density": 0.12,
+        "min_spacing": 0.8,
         "scale": [
           0.8,
           1.5
@@ -515,8 +515,8 @@
           44,
           34
         ],
-        "density": 0.07,
-        "min_spacing": 0.9,
+        "density": 0.12,
+        "min_spacing": 0.8,
         "scale": [
           0.8,
           1.5
@@ -551,8 +551,8 @@
           44,
           34
         ],
-        "density": 0.07,
-        "min_spacing": 0.9,
+        "density": 0.12,
+        "min_spacing": 0.8,
         "scale": [
           0.8,
           1.5
@@ -587,8 +587,8 @@
           44,
           34
         ],
-        "density": 0.07,
-        "min_spacing": 0.9,
+        "density": 0.12,
+        "min_spacing": 0.8,
         "scale": [
           0.8,
           1.5
@@ -893,291 +893,579 @@
       }
     },
     {
-      "name": "ForestNorth_a",
+      "name": "ForestNear_N_a",
       "parent": -1,
       "transform": {
         "position": [
           0,
           0,
-          -33
+          -26
         ]
       },
       "instanced_mesh": {
         "gltf": "assets/meshes/polyhaven/fir_tree_01/fir_tree_01.glb",
-        "cast_shadows": true,
-        "node": "fir_tree_01_a_LOD0"
+        "node": "fir_tree_01_a_LOD0",
+        "cast_shadows": true
       },
       "scatter": {
         "seed": 51,
         "area": "rect",
         "size": [
-          90,
-          22
+          70,
+          12
         ],
-        "density": 0.005,
-        "min_spacing": 4.5,
+        "density": 0.007,
+        "min_spacing": 4.0,
         "scale": [
           0.75,
           1.15
         ],
         "mirror": 0.5,
-        "max_instances": 200
+        "max_instances": 400
       }
     },
     {
-      "name": "ForestWest_a",
+      "name": "ForestNear_W_a",
       "parent": -1,
       "transform": {
         "position": [
-          -27,
+          -24,
           0,
-          -8
+          -6
         ]
       },
       "instanced_mesh": {
         "gltf": "assets/meshes/polyhaven/fir_tree_01/fir_tree_01.glb",
-        "cast_shadows": true,
-        "node": "fir_tree_01_a_LOD0"
+        "node": "fir_tree_01_a_LOD0",
+        "cast_shadows": true
       },
       "scatter": {
         "seed": 61,
         "area": "rect",
         "size": [
-          16,
-          30
+          12,
+          28
         ],
-        "density": 0.005,
-        "min_spacing": 4.5,
+        "density": 0.007,
+        "min_spacing": 4.0,
         "scale": [
           0.75,
           1.15
         ],
         "mirror": 0.5,
-        "max_instances": 200
+        "max_instances": 400
       }
     },
     {
-      "name": "ForestEast_a",
+      "name": "ForestNear_E_a",
       "parent": -1,
       "transform": {
         "position": [
-          27,
+          24,
           0,
-          -8
+          -6
         ]
       },
       "instanced_mesh": {
         "gltf": "assets/meshes/polyhaven/fir_tree_01/fir_tree_01.glb",
-        "cast_shadows": true,
-        "node": "fir_tree_01_a_LOD0"
+        "node": "fir_tree_01_a_LOD0",
+        "cast_shadows": true
       },
       "scatter": {
         "seed": 71,
         "area": "rect",
         "size": [
-          16,
-          30
+          12,
+          28
         ],
-        "density": 0.005,
-        "min_spacing": 4.5,
+        "density": 0.007,
+        "min_spacing": 4.0,
         "scale": [
           0.75,
           1.15
         ],
         "mirror": 0.5,
-        "max_instances": 200
+        "max_instances": 400
       }
     },
     {
-      "name": "ForestNorth_b",
+      "name": "ForestFar_N_a",
       "parent": -1,
       "transform": {
         "position": [
           0,
           0,
-          -33
+          -60
+        ]
+      },
+      "instanced_mesh": {
+        "gltf": "assets/meshes/polyhaven/fir_tree_01/fir_tree_01_far.glb",
+        "node": "fir_tree_01_a_LOD0",
+        "cast_shadows": true
+      },
+      "scatter": {
+        "seed": 81,
+        "area": "rect",
+        "size": [
+          180,
+          56
+        ],
+        "density": 0.006,
+        "min_spacing": 4.0,
+        "scale": [
+          0.75,
+          1.15
+        ],
+        "mirror": 0.5,
+        "max_instances": 400
+      }
+    },
+    {
+      "name": "ForestFar_W_a",
+      "parent": -1,
+      "transform": {
+        "position": [
+          -60,
+          0,
+          0
+        ]
+      },
+      "instanced_mesh": {
+        "gltf": "assets/meshes/polyhaven/fir_tree_01/fir_tree_01_far.glb",
+        "node": "fir_tree_01_a_LOD0",
+        "cast_shadows": true
+      },
+      "scatter": {
+        "seed": 91,
+        "area": "rect",
+        "size": [
+          56,
+          64
+        ],
+        "density": 0.006,
+        "min_spacing": 4.0,
+        "scale": [
+          0.75,
+          1.15
+        ],
+        "mirror": 0.5,
+        "max_instances": 400
+      }
+    },
+    {
+      "name": "ForestFar_E_a",
+      "parent": -1,
+      "transform": {
+        "position": [
+          60,
+          0,
+          0
+        ]
+      },
+      "instanced_mesh": {
+        "gltf": "assets/meshes/polyhaven/fir_tree_01/fir_tree_01_far.glb",
+        "node": "fir_tree_01_a_LOD0",
+        "cast_shadows": true
+      },
+      "scatter": {
+        "seed": 101,
+        "area": "rect",
+        "size": [
+          56,
+          64
+        ],
+        "density": 0.006,
+        "min_spacing": 4.0,
+        "scale": [
+          0.75,
+          1.15
+        ],
+        "mirror": 0.5,
+        "max_instances": 400
+      }
+    },
+    {
+      "name": "ForestNear_N_b",
+      "parent": -1,
+      "transform": {
+        "position": [
+          0,
+          0,
+          -26
         ]
       },
       "instanced_mesh": {
         "gltf": "assets/meshes/polyhaven/fir_tree_01/fir_tree_01.glb",
-        "cast_shadows": true,
-        "node": "fir_tree_01_b_LOD0"
+        "node": "fir_tree_01_b_LOD0",
+        "cast_shadows": true
       },
       "scatter": {
         "seed": 52,
         "area": "rect",
         "size": [
-          90,
-          22
+          70,
+          12
         ],
-        "density": 0.005,
-        "min_spacing": 4.5,
+        "density": 0.007,
+        "min_spacing": 4.0,
         "scale": [
           0.75,
           1.15
         ],
         "mirror": 0.5,
-        "max_instances": 200
+        "max_instances": 400
       }
     },
     {
-      "name": "ForestWest_b",
+      "name": "ForestNear_W_b",
       "parent": -1,
       "transform": {
         "position": [
-          -27,
+          -24,
           0,
-          -8
+          -6
         ]
       },
       "instanced_mesh": {
         "gltf": "assets/meshes/polyhaven/fir_tree_01/fir_tree_01.glb",
-        "cast_shadows": true,
-        "node": "fir_tree_01_b_LOD0"
+        "node": "fir_tree_01_b_LOD0",
+        "cast_shadows": true
       },
       "scatter": {
         "seed": 62,
         "area": "rect",
         "size": [
-          16,
-          30
+          12,
+          28
         ],
-        "density": 0.005,
-        "min_spacing": 4.5,
+        "density": 0.007,
+        "min_spacing": 4.0,
         "scale": [
           0.75,
           1.15
         ],
         "mirror": 0.5,
-        "max_instances": 200
+        "max_instances": 400
       }
     },
     {
-      "name": "ForestEast_b",
+      "name": "ForestNear_E_b",
       "parent": -1,
       "transform": {
         "position": [
-          27,
+          24,
           0,
-          -8
+          -6
         ]
       },
       "instanced_mesh": {
         "gltf": "assets/meshes/polyhaven/fir_tree_01/fir_tree_01.glb",
-        "cast_shadows": true,
-        "node": "fir_tree_01_b_LOD0"
+        "node": "fir_tree_01_b_LOD0",
+        "cast_shadows": true
       },
       "scatter": {
         "seed": 72,
         "area": "rect",
         "size": [
-          16,
-          30
+          12,
+          28
         ],
-        "density": 0.005,
-        "min_spacing": 4.5,
+        "density": 0.007,
+        "min_spacing": 4.0,
         "scale": [
           0.75,
           1.15
         ],
         "mirror": 0.5,
-        "max_instances": 200
+        "max_instances": 400
       }
     },
     {
-      "name": "ForestNorth_c",
+      "name": "ForestFar_N_b",
       "parent": -1,
       "transform": {
         "position": [
           0,
           0,
-          -33
+          -60
+        ]
+      },
+      "instanced_mesh": {
+        "gltf": "assets/meshes/polyhaven/fir_tree_01/fir_tree_01_far.glb",
+        "node": "fir_tree_01_b_LOD0",
+        "cast_shadows": true
+      },
+      "scatter": {
+        "seed": 82,
+        "area": "rect",
+        "size": [
+          180,
+          56
+        ],
+        "density": 0.006,
+        "min_spacing": 4.0,
+        "scale": [
+          0.75,
+          1.15
+        ],
+        "mirror": 0.5,
+        "max_instances": 400
+      }
+    },
+    {
+      "name": "ForestFar_W_b",
+      "parent": -1,
+      "transform": {
+        "position": [
+          -60,
+          0,
+          0
+        ]
+      },
+      "instanced_mesh": {
+        "gltf": "assets/meshes/polyhaven/fir_tree_01/fir_tree_01_far.glb",
+        "node": "fir_tree_01_b_LOD0",
+        "cast_shadows": true
+      },
+      "scatter": {
+        "seed": 92,
+        "area": "rect",
+        "size": [
+          56,
+          64
+        ],
+        "density": 0.006,
+        "min_spacing": 4.0,
+        "scale": [
+          0.75,
+          1.15
+        ],
+        "mirror": 0.5,
+        "max_instances": 400
+      }
+    },
+    {
+      "name": "ForestFar_E_b",
+      "parent": -1,
+      "transform": {
+        "position": [
+          60,
+          0,
+          0
+        ]
+      },
+      "instanced_mesh": {
+        "gltf": "assets/meshes/polyhaven/fir_tree_01/fir_tree_01_far.glb",
+        "node": "fir_tree_01_b_LOD0",
+        "cast_shadows": true
+      },
+      "scatter": {
+        "seed": 102,
+        "area": "rect",
+        "size": [
+          56,
+          64
+        ],
+        "density": 0.006,
+        "min_spacing": 4.0,
+        "scale": [
+          0.75,
+          1.15
+        ],
+        "mirror": 0.5,
+        "max_instances": 400
+      }
+    },
+    {
+      "name": "ForestNear_N_c",
+      "parent": -1,
+      "transform": {
+        "position": [
+          0,
+          0,
+          -26
         ]
       },
       "instanced_mesh": {
         "gltf": "assets/meshes/polyhaven/fir_tree_01/fir_tree_01.glb",
-        "cast_shadows": true,
-        "node": "fir_tree_01_c_LOD0"
+        "node": "fir_tree_01_c_LOD0",
+        "cast_shadows": true
       },
       "scatter": {
         "seed": 53,
         "area": "rect",
         "size": [
-          90,
-          22
+          70,
+          12
         ],
-        "density": 0.005,
-        "min_spacing": 4.5,
+        "density": 0.007,
+        "min_spacing": 4.0,
         "scale": [
           0.75,
           1.15
         ],
         "mirror": 0.5,
-        "max_instances": 200
+        "max_instances": 400
       }
     },
     {
-      "name": "ForestWest_c",
+      "name": "ForestNear_W_c",
       "parent": -1,
       "transform": {
         "position": [
-          -27,
+          -24,
           0,
-          -8
+          -6
         ]
       },
       "instanced_mesh": {
         "gltf": "assets/meshes/polyhaven/fir_tree_01/fir_tree_01.glb",
-        "cast_shadows": true,
-        "node": "fir_tree_01_c_LOD0"
+        "node": "fir_tree_01_c_LOD0",
+        "cast_shadows": true
       },
       "scatter": {
         "seed": 63,
         "area": "rect",
         "size": [
-          16,
-          30
+          12,
+          28
         ],
-        "density": 0.005,
-        "min_spacing": 4.5,
+        "density": 0.007,
+        "min_spacing": 4.0,
         "scale": [
           0.75,
           1.15
         ],
         "mirror": 0.5,
-        "max_instances": 200
+        "max_instances": 400
       }
     },
     {
-      "name": "ForestEast_c",
+      "name": "ForestNear_E_c",
       "parent": -1,
       "transform": {
         "position": [
-          27,
+          24,
           0,
-          -8
+          -6
         ]
       },
       "instanced_mesh": {
         "gltf": "assets/meshes/polyhaven/fir_tree_01/fir_tree_01.glb",
-        "cast_shadows": true,
-        "node": "fir_tree_01_c_LOD0"
+        "node": "fir_tree_01_c_LOD0",
+        "cast_shadows": true
       },
       "scatter": {
         "seed": 73,
         "area": "rect",
         "size": [
-          16,
-          30
+          12,
+          28
         ],
-        "density": 0.005,
-        "min_spacing": 4.5,
+        "density": 0.007,
+        "min_spacing": 4.0,
         "scale": [
           0.75,
           1.15
         ],
         "mirror": 0.5,
-        "max_instances": 200
+        "max_instances": 400
+      }
+    },
+    {
+      "name": "ForestFar_N_c",
+      "parent": -1,
+      "transform": {
+        "position": [
+          0,
+          0,
+          -60
+        ]
+      },
+      "instanced_mesh": {
+        "gltf": "assets/meshes/polyhaven/fir_tree_01/fir_tree_01_far.glb",
+        "node": "fir_tree_01_c_LOD0",
+        "cast_shadows": true
+      },
+      "scatter": {
+        "seed": 83,
+        "area": "rect",
+        "size": [
+          180,
+          56
+        ],
+        "density": 0.006,
+        "min_spacing": 4.0,
+        "scale": [
+          0.75,
+          1.15
+        ],
+        "mirror": 0.5,
+        "max_instances": 400
+      }
+    },
+    {
+      "name": "ForestFar_W_c",
+      "parent": -1,
+      "transform": {
+        "position": [
+          -60,
+          0,
+          0
+        ]
+      },
+      "instanced_mesh": {
+        "gltf": "assets/meshes/polyhaven/fir_tree_01/fir_tree_01_far.glb",
+        "node": "fir_tree_01_c_LOD0",
+        "cast_shadows": true
+      },
+      "scatter": {
+        "seed": 93,
+        "area": "rect",
+        "size": [
+          56,
+          64
+        ],
+        "density": 0.006,
+        "min_spacing": 4.0,
+        "scale": [
+          0.75,
+          1.15
+        ],
+        "mirror": 0.5,
+        "max_instances": 400
+      }
+    },
+    {
+      "name": "ForestFar_E_c",
+      "parent": -1,
+      "transform": {
+        "position": [
+          60,
+          0,
+          0
+        ]
+      },
+      "instanced_mesh": {
+        "gltf": "assets/meshes/polyhaven/fir_tree_01/fir_tree_01_far.glb",
+        "node": "fir_tree_01_c_LOD0",
+        "cast_shadows": true
+      },
+      "scatter": {
+        "seed": 103,
+        "area": "rect",
+        "size": [
+          56,
+          64
+        ],
+        "density": 0.006,
+        "min_spacing": 4.0,
+        "scale": [
+          0.75,
+          1.15
+        ],
+        "mirror": 0.5,
+        "max_instances": 400
       }
     }
   ]

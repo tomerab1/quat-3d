@@ -15,12 +15,25 @@
         "Rob Tuytel": "photography",
         "Rico Cilliers": "modeling"
       },
-      "use": "Hero trees of the forest edge around the clearing (three variants, 18 m). Cooked to a 2.5 % level of detail: the 7 M-triangle needle geometry is far beyond a software rasteriser, and the BLEND twig cards become alpha-tested.",
+      "use": "Hero trees of the forest edge around the clearing (three variants, 18 m). Cooked to two levels of detail, 10 % (near) and 2.5 % (far rows): the 7 M-triangle needle geometry is far beyond a software rasteriser, and the BLEND twig cards become alpha-tested.",
       "cook": [
         {
           "args": [
             "--simplify",
+            "0.1",
+            "--simplify-error",
+            "0.002",
+            "--blend-to-mask",
+            "0.5"
+          ]
+        },
+        {
+          "output": "fir_tree_01_far.glb",
+          "args": [
+            "--simplify",
             "0.025",
+            "--simplify-error",
+            "0.004",
             "--blend-to-mask",
             "0.5"
           ]
@@ -42,7 +55,9 @@
         {
           "args": [
             "--simplify",
-            "0.06"
+            "0.1",
+            "--simplify-error",
+            "0.002"
           ]
         }
       ]
@@ -62,7 +77,9 @@
         {
           "args": [
             "--simplify",
-            "0.06"
+            "0.1",
+            "--simplify-error",
+            "0.002"
           ]
         }
       ]
@@ -194,12 +211,12 @@
         "nor_gl",
         "arm"
       ],
-      "use": "Forest-floor ground plane (generated ground.gltf, 160 m, the texture repeating every 2.5 m).",
+      "use": "Forest-floor ground plane (generated ground.gltf, 400 m, the texture repeating every 2.5 m).",
       "ground": {
         "file": "ground.gltf",
-        "size": 160,
+        "size": 400,
         "tile": 2.5,
-        "segments": 32
+        "segments": 64
       }
     },
     {

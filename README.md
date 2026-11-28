@@ -340,6 +340,22 @@ The language reference, callbacks and the whole engine API are in
 [`docs/scripting.md`](docs/scripting.md). AI assistants can write and debug
 scripts through MCP (`script_*` tools and the `write_game_script` prompt).
 
+### Cinematic showcase (CC0 Poly Haven assets)
+
+`assets/scenes/cinematic_forest.json` is a pine-forest clearing at golden
+hour built from real downloaded CC0 models, textures and an HDRI from
+[Poly Haven](https://polyhaven.com). The assets are not committed; fetch
+and cook them first (about 560 MB, checksums verified), then run it:
+
+```sh
+python3 scripts/fetch-polyhaven.py assets/showcase/cinematic/assets.json \
+  --cook-with build/release/quat-cook
+QUAT_SCENE=assets/scenes/cinematic_forest.json QUAT_PLAY=1 ./build/release/game
+```
+
+The assets, credits, stills and the MCP recipe for building scenes like it
+are in [`docs/cinematic-showcase.md`](docs/cinematic-showcase.md).
+
 ### Sample models
 
 Put glTF models under `sample-assets/` (not committed) and they show up in the
@@ -444,6 +460,7 @@ The plan lives in [`ROADMAP.md`](ROADMAP.md), grouped into tracks:
 | [`docs/STATUS.md`](docs/STATUS.md) | What is in progress, what is blocked, what comes next |
 | [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md) | Building, testing, CI, and conventions for contributors |
 | [`docs/scripting.md`](docs/scripting.md) | Lua gameplay scripting: callbacks, the engine API, limits, hot reload |
+| [`docs/cinematic-showcase.md`](docs/cinematic-showcase.md) | The CC0 cinematic forest scene: assets and credits, fetching, renders, the MCP recipe |
 | [`docs/reading/README.md`](docs/reading/README.md) | Reading list: the papers and talks behind the engine's techniques, with where each lives in the code |
 | [`docs/remote-control.md`](docs/remote-control.md) | The remote-control protocol AI tools use to drive the engine |
 | [`docs/editor-ux.md`](docs/editor-ux.md) | The editor's design system: principles, tokens, widget kit, layout, shortcuts |

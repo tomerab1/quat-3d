@@ -21,8 +21,9 @@ About 560 MB is downloaded (480 MB of it the full fir tree's geometry) into
 `assets/hdri/polyhaven/`, exactly where quat-mcp's `asset_fetch` puts
 models. Each file is checked against the size and MD5 Poly Haven publishes;
 re-running only verifies. The cooker then writes one GLB per model (KTX2
-textures, meshoptimizer meshes); the heavy firs are cooked to a 5 %
-level of detail with `quat-cook --simplify`. The first cook takes a few
+textures, meshoptimizer meshes); the heavy firs are cooked to two levels of
+detail with `quat-cook --simplify` (10 % for the rows around the clearing,
+2.5 % for the rows behind), the saplings to 10 %. The first cook takes a few
 minutes (most of it the fir). CI does the same before its screenshots and
 caches the result.
 
@@ -30,9 +31,9 @@ caches the result.
 
 | Poly Haven id | Kind | Res. | Use in the scene | Authors |
 |---|---|---|---|---|
-| [`fir_tree_01`](https://polyhaven.com/a/fir_tree_01) | model | 1k | the forest edge (3 variants, 18 m), cooked to 5 % with BLEND twigs made alpha-tested | Rob Tuytel (photography), Rico Cilliers (modeling) |
-| [`fir_sapling`](https://polyhaven.com/a/fir_sapling) | model | 1k | young firs in the clearing (cooked to 20 %) | Rob Tuytel, Rico Cilliers |
-| [`pine_sapling_small`](https://polyhaven.com/a/pine_sapling_small) | model | 1k | young pines in the clearing (cooked to 20 %) | Rob Tuytel, Rico Cilliers |
+| [`fir_tree_01`](https://polyhaven.com/a/fir_tree_01) | model | 1k | the forest (3 variants, 18 m), cooked to 10 % (near rows) and 2.5 % (far rows), BLEND twigs made alpha-tested | Rob Tuytel (photography), Rico Cilliers (modeling) |
+| [`fir_sapling`](https://polyhaven.com/a/fir_sapling) | model | 1k | young firs in the clearing (cooked to 10 %) | Rob Tuytel, Rico Cilliers |
+| [`pine_sapling_small`](https://polyhaven.com/a/pine_sapling_small) | model | 1k | young pines in the clearing (cooked to 10 %) | Rob Tuytel, Rico Cilliers |
 | [`fern_02`](https://polyhaven.com/a/fern_02) | model | 1k | foreground framing and ground cover (4 variants) | Rob Tuytel (scanning), Rico Cilliers (modeling) |
 | [`dead_tree_trunk`](https://polyhaven.com/a/dead_tree_trunk) | model | 1k | the hero fallen log | Rob Tuytel |
 | [`tree_stump_01`](https://polyhaven.com/a/tree_stump_01), [`tree_stump_02`](https://polyhaven.com/a/tree_stump_02) | model | 1k | stumps | Rob Tuytel |
@@ -48,8 +49,9 @@ is cooked. Every download folder also gets a `LICENSE.md` and a
 
 ## The scene
 
-- **Layout.** A clearing about 25 m across, open towards the north, ringed
-  by full-size firs (three `scatter` belts per variant). Young firs and
+- **Layout.** A clearing about 25 m across, ringed by full-size firs: near
+  rows (10 % LOD) 16–30 m from its centre, far rows (2.5 % LOD) out to
+  about 90 m, one `scatter` per variant and belt. Young firs and
   pines, ferns and mossy rocks are scattered inside; the hero fallen log,
   a stump, two rocks and two branches are placed by hand in the middle
   ground; four ferns sit right in front of the lens as foreground framing.
@@ -61,8 +63,8 @@ is cooked. Every download folder also gets a `LICENSE.md` and a
   the hero camera's axis: the scene is back-lit, so long shadows run towards
   the lens and the grass and fern edges catch the light. Fill comes from the
   sky (the dynamic IBL probe of the procedural atmosphere).
-- **Ground.** The forest-floor texture on a generated 160 m plane, under a
-  GPU grass field (`grass`, `terrain_only: false`) with a light wind.
+- **Ground.** The forest-floor texture on a generated 400 m plane, under a
+  short, dense GPU grass field (`grass`, `terrain_only: false`) with a light wind.
 - **Camera.** `HeroCamera`: 0.42 m above the ground, 38° vertical field of
   view (about a 35 mm lens), the log on the left third, the bright gap in
   the tree line on the right third.
