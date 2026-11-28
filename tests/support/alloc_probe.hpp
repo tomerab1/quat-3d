@@ -2,8 +2,8 @@
 
 // Allocation probe for memory-bound tests: engine_tests replaces the global
 // operator new / delete (alloc_probe.cpp) so a test can measure the largest
-// single heap allocation made inside a scope, e.g. that untrusted input is
-// refused before anything large is allocated:
+// single heap allocation made inside a scope (and how many were made), e.g.
+// that untrusted input is refused before anything large is allocated:
 //
 //   quat::test::AllocProbe probe;          // starts recording
 //   (void)apply_alpha_tested_mips(...);
@@ -25,6 +25,8 @@ public:
 
     // Largest single operator-new request since construction, in bytes.
     [[nodiscard]] std::size_t largest() const;
+    // Number of operator-new calls since construction.
+    [[nodiscard]] std::size_t count() const;
 };
 
 } // namespace quat::test

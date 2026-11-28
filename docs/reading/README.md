@@ -240,6 +240,9 @@ Design: [`docs/design/cozy-builder.md` §4.14](../design/cozy-builder.md#414-sea
 | 🗺 | **XPBD: Position-Based Simulation of Compliant Constrained Dynamics** — Macklin, Müller, Chentanez, MIG 2016. [PDF](https://matthias-research.github.io/pages/publications/XPBD.pdf) | Cloth (G-track) |
 | ✅ | **Jolt Physics** documentation — Rouwé. [jrouwe.github.io/JoltPhysics](https://jrouwe.github.io/JoltPhysics/) | `src/physics/` |
 | ✅ | **Recast & Detour** — Mononen. [GitHub](https://github.com/recastnavigation/recastnavigation) | Navigation meshes and pathfinding |
+| 🔧 | **Optimized Spatial Hashing for Collision Detection of Deformable Objects** — Teschner, Heidelberger, Müller, Pomeranets, Gross, VMV 2003. A uniform grid hashed into a fixed-size table, for neighbour queries without a grid the size of the world. [PDF](https://cgweb.informatik.uni-freiburg.de/publications/2003_VMV_collisionDetectionHashing.pdf) | Nav agent separation neighbours, `src/scene/nav_separation.cpp` (#94) |
+| 🔧 | **Particle Simulation using CUDA** — Green (NVIDIA), 2010. Sort particles by cell hash and keep a cell-start table, instead of per-cell lists. [PDF](https://developer.download.nvidia.com/assets/cuda/files/particles.pdf) | The same grid's flat layout, built with a counting sort (#94) |
+| 🔧 | **The Art of Computer Programming, Vol. 3: Sorting and Searching**, §6.4 (multiplicative "Fibonacci" hashing) — Knuth, 2nd ed., 1998. [book page](https://www-cs-faculty.stanford.edu/~knuth/taocp.html) | Cell-key hash in `src/scene/nav_separation.cpp` (#94) |
 
 ## Networking
 
