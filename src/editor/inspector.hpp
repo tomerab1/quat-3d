@@ -15,8 +15,8 @@ namespace panels {
 struct InspectorState;
 }
 
-// Draws the "Inspector" window for `selected` (component editors via
-// ComponentInspector<T> specialisations in the .cpp) when `*open` (null:
+// Draws the "Inspector" window for `selected` (one section per component,
+// src/editor/inspectors/<name>.cpp: see inspectors/inspect.hpp) when `*open` (null:
 // always, no close button). `state` holds the Add Component search and the
 // copied component values (EditorShell owns it).
 void draw_inspector(scene::Scene& scene, entt::entity selected, panels::InspectorState& state,

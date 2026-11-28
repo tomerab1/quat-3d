@@ -119,6 +119,11 @@ Game modules (the `Registrar`, generated registration calls, and a per-game
 player and editor) arrive with ROADMAP **G17.1** as `quat_add_game_module()`
 and new options here.
 
+A game registers its own codec components at boot, through the stable
+`engine/scene/component_registry.hpp` (`component_registry().add(...)`; they
+sort after every engine component), not through the engine's generated
+registration tables, which are build-tree only.
+
 Package variables:
 - `QUAT3D_SDK_ROOT`;
 - `QUAT3D_DATA_DIR` (`share/quat3d`);

@@ -28,13 +28,30 @@ include(${CMAKE_CURRENT_LIST_DIR}/Quat3dSdkHeaders.cmake)
 # quat3d::remote and quat3d::editor; the ALIASes give an engine source
 # checkout (QUAT3D_SOURCE_DIR, docs/sdk.md) the same names.
 # ---------------------------------------------------------------------------
-# The engine libraries are every engine_* library target of this directory,
-# derived rather than listed, so a new engine library (engine_weather, ...)
+# The engine libraries are every engine_* library target of the engine's
+# module directories (src/<module>/CMakeLists.txt), derived rather than listed, so a new engine library (engine_weather, ...)
 # joins the SDK and quat3d::engine without an edit here; the sdk_consumer and
 # public-header guards then check it is installable. Not in the SDK:
 # engine_cook (offline cooker, shipped as bin/quat-cook) and the editor
 # (exported only with ENGINE_EDITOR, below).
-get_property(quat3d_directory_targets DIRECTORY ${PROJECT_SOURCE_DIR} PROPERTY BUILDSYSTEM_TARGETS)
+# The root directory and every module directory under src/ (S9: one
+# CMakeLists.txt per module), depth-first in add_subdirectory order, which is
+# the definition order. Games and samples (games/, examples/) and tests/ are
+# never walked: an engine library lives under src/.
+function(quat3d_engine_directory_targets dir out)
+    get_property(targets DIRECTORY ${dir} PROPERTY BUILDSYSTEM_TARGETS)
+    get_property(subdirs DIRECTORY ${dir} PROPERTY SUBDIRECTORIES)
+    foreach(sub IN LISTS subdirs)
+        cmake_path(IS_PREFIX PROJECT_SOURCE_DIR "${sub}" NORMALIZE inside_project)
+        file(RELATIVE_PATH rel "${PROJECT_SOURCE_DIR}" "${sub}")
+        if(inside_project AND rel MATCHES "^src(/|$)")
+            quat3d_engine_directory_targets(${sub} sub_targets)
+            list(APPEND targets ${sub_targets})
+        endif()
+    endforeach()
+    set(${out} ${targets} PARENT_SCOPE)
+endfunction()
+quat3d_engine_directory_targets(${PROJECT_SOURCE_DIR} quat3d_directory_targets)
 set(QUAT3D_ENGINE_LIBRARIES)
 foreach(target IN LISTS quat3d_directory_targets)
     if(NOT target MATCHES "^engine_" OR target MATCHES "^engine_(cook|editor)$")

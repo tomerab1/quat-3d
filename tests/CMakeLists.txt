@@ -95,6 +95,13 @@ else()
     message(WARNING "binary-content checks (no texture encoder, no remote control): no nm found; not registered")
 endif()
 
+# Registration tables (S9): a file dropped into a registration directory is
+# registered without editing a list.
+add_test(NAME registration_generator
+    COMMAND ${CMAKE_COMMAND} -DROOT=${PROJECT_SOURCE_DIR}
+            -DWORK=${CMAKE_CURRENT_BINARY_DIR}/registration_generator
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/registration_generator_test.cmake)
+
 # Game packages carry the engine's LICENSE and THIRD_PARTY_NOTICES.md (#122):
 # scripts/package-release.sh with a real player (Linux: the layout under test
 # runs ldd / patchelf on it). Skipped (77) without patchelf.

@@ -33,6 +33,7 @@
 #include <expected>
 #include <functional>
 #include <memory>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -137,6 +138,11 @@ public:
     void add_method(std::string name, std::string summary, SyncHandler handler);
     void add_deferred_method(std::string name, std::string summary, DeferredHandler handler);
     [[nodiscard]] std::vector<MethodInfo> methods() const;
+    // Names registered a second time, in order. add_method /
+    // add_deferred_method refuse a name that is already registered (the first
+    // registration stays, an error is logged): modules are registered from
+    // generated tables, so a clash is a bug, never an override.
+    [[nodiscard]] std::span<const std::string> refused_methods() const;
 
     // Invoke a synchronous method in-process. Deferred methods are rejected
     // (`unavailable`) — they cannot complete inside a single call.

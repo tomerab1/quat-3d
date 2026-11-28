@@ -9,6 +9,7 @@
 #include <unordered_map>
 #include <utility>
 
+#include "engine/core/log.hpp"
 #include "socket.hpp"
 
 namespace engine::remote {
@@ -110,12 +111,28 @@ struct RpcServer::Impl {
     std::vector<Client>                      clients;
     std::uint32_t                            next_client = 1;
     std::unordered_map<std::string, Method>  methods;
+    // Names whose second registration was refused (see insert()).
+    std::vector<std::string>                 refused;
     std::shared_ptr<Responder::Target>       target = std::make_shared<Responder::Target>();
 
     Impl() { target->impl = this; }
     ~Impl() { target->impl = nullptr; }
     Impl(const Impl&) = delete;
     Impl& operator=(const Impl&) = delete;
+
+    // A name already registered is refused (the first registration stays):
+    // modules are registered from generated tables, so nothing orders two
+    // that pick the same name, and a silent replacement would be wrong at run
+    // time. The error is logged and recorded for tests.
+    void insert(std::string name, Method m) {
+        if (methods.contains(name)) {
+            core::log(core::LogLevel::error, "remote",
+                      "method '{}' is already registered; the second registration is refused", name);
+            refused.push_back(std::move(name));
+            return;
+        }
+        methods.emplace(std::move(name), std::move(m));
+    }
 
     Client* find_client(std::uint32_t id) {
         for (Client& c : clients) {
@@ -208,7 +225,7 @@ void RpcServer::add_method(std::string name, std::string summary, SyncHandler ha
     Method m;
     m.info = {name, std::move(summary), false};
     m.sync = std::move(handler);
-    impl_->methods.insert_or_assign(std::move(name), std::move(m));
+    impl_->insert(std::move(name), std::move(m));
 }
 
 void RpcServer::add_deferred_method(std::string name, std::string summary,
@@ -216,8 +233,10 @@ void RpcServer::add_deferred_method(std::string name, std::string summary,
     Method m;
     m.info = {name, std::move(summary), true};
     m.deferred = std::move(handler);
-    impl_->methods.insert_or_assign(std::move(name), std::move(m));
+    impl_->insert(std::move(name), std::move(m));
 }
+
+std::span<const std::string> RpcServer::refused_methods() const { return impl_->refused; }
 
 std::vector<MethodInfo> RpcServer::methods() const {
     std::vector<MethodInfo> out;
