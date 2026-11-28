@@ -25,12 +25,12 @@ struct CloudTemporal {
 ConstantBuffer<CloudTemporal> g_temporal;
 
 Texture2D    g_current;       // rgba16f (march output)
-Texture2D    g_current_depth; // r32f
+Texture2D    g_current_depth; // r16f (km)
 Texture2D    g_history;       // rgba16f (last frame's output)
-Texture2D    g_history_depth; // r32f
+Texture2D    g_history_depth; // r16f (km)
 SamplerState g_sampler;       // bilinear, clamp
 [format("rgba16f")] RWTexture2D<float4> g_out;
-[format("r32f")] RWTexture2D<float>     g_out_depth;
+[format("r16f")] RWTexture2D<float>     g_out_depth;
 
 float4 mul_cols4(float4 cols[4], float4 v) {
     return cols[0] * v.x + cols[1] * v.y + cols[2] * v.z + cols[3] * v.w;

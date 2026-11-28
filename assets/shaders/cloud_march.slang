@@ -45,7 +45,7 @@ Texture3D    g_ap;
 SamplerState g_lut_sampler; // bilinear, clamp
 Texture2D    g_depth;       // full-resolution scene depth
 [format("rgba16f")] RWTexture2D<float4> g_cloud;
-[format("r32f")] RWTexture2D<float>     g_cloud_depth;
+[format("r16f")] RWTexture2D<float>     g_cloud_depth;
 
 float4 mul_cols4(float4 cols[4], float4 v) {
     return cols[0] * v.x + cols[1] * v.y + cols[2] * v.z + cols[3] * v.w;

@@ -43,7 +43,11 @@ namespace engine::renderer {
 class CloudNoisePass;
 
 inline constexpr VkFormat cloud_color_format = VK_FORMAT_R16G16B16A16_SFLOAT;
-inline constexpr VkFormat cloud_depth_format = VK_FORMAT_R32_SFLOAT;
+// The cloud depth (km) is sampled bilinearly (reprojection, composite):
+// R16F filtering is mandatory in Vulkan, R32F filtering is not (Apple GPUs
+// expose it only with supports32BitFloatFiltering). Half precision keeps
+// ~8 m at 10 km, and CLOUD_NO_DEPTH (1e4 km) is well inside its range.
+inline constexpr VkFormat cloud_depth_format = VK_FORMAT_R16_SFLOAT;
 // Weight of the current march in the temporal blend (~16 frames of history).
 inline constexpr float k_cloud_temporal_blend = 0.06F;
 

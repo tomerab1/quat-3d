@@ -13,6 +13,8 @@
 #include <glm/glm.hpp>
 #include <gtest/gtest.h>
 
+#include "engine/renderer/cloud_noise_pass.hpp"
+#include "engine/renderer/volumetric_cloud_pass.hpp"
 #include "support/expect_ok.hpp"
 #include "support/gpu_context.hpp"
 #include "support/volumetrics_harness.hpp"
@@ -97,6 +99,18 @@ TEST(GpuVolumetricClouds, CloudsAppearAndConverge) {
             hi = std::max(hi, last.rgba16f(x, y).a);
         }
     }
+    if (lo >= 0.3F) {
+        // Diagnostic for a clear image: does a fresh harness (fresh
+        // pipelines' descriptors, noise and history) see clouds?
+        auto again = VolumetricsHarness::create(*g);
+        ASSERT_OK(again);
+        auto one = (*again)->render(scene, 0, 0.0F);
+        ASSERT_OK(one);
+        ADD_FAILURE() << "no clouds after 24 frames; a second harness's first frame has mean "
+                         "transmittance "
+                      << mean_transmittance(one->clouds) << " (frame 0 of the first: "
+                      << mean_transmittance(frames.front()) << ")";
+    }
     EXPECT_LT(lo, 0.3F) << "dense clouds somewhere";
     EXPECT_GT(hi, 0.95F) << "and clear sky between them";
     const float t = mean_transmittance(last);
@@ -112,6 +126,22 @@ TEST(GpuVolumetricClouds, CloudsAppearAndConverge) {
     EXPECT_LT(d8, d0);
     EXPECT_LT(d16, d8);
     EXPECT_LT(mean_abs_diff(frames[22], last), 2e-3F);
+}
+
+// Every format the cloud passes sample bilinearly must be filterable without
+// optional features, and every format they write must be a storage format:
+// R32F linear filtering, for one, is optional (absent on Apple GPUs without
+// supports32BitFloatFiltering), so the cloud depth is R16F.
+TEST(GpuVolumetricClouds, FormatsAreFilterableAndStorable) {
+    QUAT_REQUIRE_GPU(g);
+    const VkFormatFeatureFlags need = VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT |
+                                      VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT |
+                                      VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT;
+    for (const VkFormat f : {r::cloud_color_format, r::cloud_depth_format, r::cloud_noise_format}) {
+        VkFormatProperties props{};
+        vkGetPhysicalDeviceFormatProperties(g->device.physical_device(), f, &props);
+        EXPECT_EQ(props.optimalTilingFeatures & need, need) << "format " << static_cast<int>(f);
+    }
 }
 
 TEST(GpuVolumetricClouds, DeterministicForTheSameFrames) {
