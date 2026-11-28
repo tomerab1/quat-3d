@@ -46,6 +46,9 @@ the model:
 
 - a short intro;
 - **Highlights**: 5–8 bullets with the big user-visible changes;
+- **Breaking changes**, when there are any: a renamed or removed tool,
+  prompt, remote method, component field, Lua API or file format. Give an
+  old-to-new table;
 - one section per ROADMAP track (Rendering, AI tooling / MCP, Editor,
   Gameplay, Platforms & packaging, Stability & security). Each item is one
   line in user terms, with its PR numbers;
@@ -66,7 +69,8 @@ Rules:
 - Docs-only and CI-plumbing PRs stay out of the feature lists. CI gets one
   line at most.
 - Write the notes as a PR to `master`, together with the version bump and a
-  new top line in `CHANGELOG.md`.
+  new top line in `CHANGELOG.md`. Copy the breaking changes into the
+  changelog's Breaking changes section too.
 
 The publish job uses the notes file as the release body. GitHub's
 generated notes (the list of merged PRs and the "Full Changelog" link) are

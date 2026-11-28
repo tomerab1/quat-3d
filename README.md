@@ -454,24 +454,40 @@ enough to drive the engine from Claude Code; no Rust toolchain is needed.
    | Windows (PowerShell) | `$env:QUAT_REMOTE=1; .\game.exe` |
    | macOS | `QUAT_REMOTE=1 ./Quat3D.app/Contents/MacOS/game` |
 
-3. Register the bundled server with Claude Code, using its absolute path:
+3. Connect Claude Code to the bundled server, in one of two ways:
 
-   ```sh
-   claude mcp add quat-3d -- /path/to/quat-3d-<version>-linux-x64/quat-mcp \
-     --project-root /path/to/quat-3d-<version>-linux-x64
-   ```
+   - **The quat-3d plugin (recommended).** It registers quat-mcp and
+     installs the workflow skills. In Claude Code:
 
-   Port 7878 and the session token need no options: quat-mcp reads the token
-   from the file the game writes. `--project-root` is the game's data folder
-   (the unpacked folder; on macOS `Quat3D.app/Contents/Resources`), where
-   `asset_fetch` saves downloaded models so the game can load them. It can be
-   left out if you do not download models.
+     ```
+     /plugin marketplace add tomerab1/quat-3d
+     /plugin install quat-3d@quat-3d
+     ```
+
+     When the plugin is enabled, Claude Code asks for its options:
+     - `quat_mcp_command`: the absolute path of the bundled `quat-mcp`;
+     - `engine_port`: `7878`;
+     - `project_root`: the game's data folder. That is the unpacked folder,
+       or `Quat3D.app/Contents/Resources` on macOS. `asset_fetch` saves the
+       models it downloads there, so the game can load them.
+
+     The skills appear as `/quat-3d:build-level`, `/quat-3d:tune-look` and
+     so on.
+   - **`claude mcp add`**: register only the server, by its absolute path:
+
+     ```sh
+     claude mcp add quat-3d -- /path/to/quat-3d-<version>-linux-x64/quat-mcp \
+       --project-root /path/to/quat-3d-<version>-linux-x64
+     ```
+
+     The workflows are then served by quat-mcp itself, as skills or, in
+     clients without skills support, as prompts such as
+     `/mcp__quat-3d__build-level`.
+
+   Neither way needs a port or token option: quat-mcp reads the session
+   token from the file the game writes.
 4. In Claude Code, ask for something like *"add a sphere above the ground and
    take a screenshot"*. `/mcp` shows the server and its tools.
-
-A Claude Code plugin with workflow skills (build-level, tune-look, playtest
-and more) is in progress (ROADMAP A12). It takes the quat-mcp path as an
-option, so it will work with the bundled binary too.
 
 ## Testing
 

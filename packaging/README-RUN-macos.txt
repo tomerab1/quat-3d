@@ -60,6 +60,12 @@ the server by its absolute path (the token needs no setup):
 
 --project-root is where asset_fetch saves downloaded models.
 
+Or install the quat-3d plugin, which adds the workflow skills: in Claude
+Code run `/plugin marketplace add tomerab1/quat-3d` and
+`/plugin install quat-3d@quat-3d`, then give its quat_mcp_command option
+the absolute path above, and its project_root option the --project-root
+value.
+
 Troubleshooting
 ---------------
 - Gatekeeper refuses to open the app: see "Run" above.
