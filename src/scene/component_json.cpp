@@ -910,9 +910,13 @@ std::expected<void, core::Error> apply_component(entt::registry& r, entt::entity
         });
     }
     if (name == "script") {
+        // A remote request must name the file (the model gets a precise
+        // error). Lenient decoding — the editor's Add Component, which adds
+        // every component from {}, and scene files — accepts a script without
+        // one yet: an empty path runs nothing until a file is picked.
         const bool adding = !r.all_of<Script>(e);
-        return merge<Script>(r, e, v, name, strict, [adding](JsonFields& f, Script& sc) {
-            if (adding && !f.has("path")) {
+        return merge<Script>(r, e, v, name, strict, [adding, strict](JsonFields& f, Script& sc) {
+            if (strict && adding && !f.has("path")) {
                 f.fail("path", "required when adding a script (relative to assets/scripts/)");
             }
             decode_script_fields(f, sc);

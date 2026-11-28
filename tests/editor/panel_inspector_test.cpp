@@ -59,6 +59,24 @@ TEST(EditorInspector, ResetRestoresEveryAddableCodecInPlace) {
     }
 }
 
+// G7 through the editor path: Add Component decodes {} leniently, so a Script
+// arrives without a file (the inspector's picker sets it); Reset restores
+// its settings but keeps the file, which is content (like instanced_mesh
+// placements).
+TEST(EditorInspector, AddedScriptKeepsItsFileAcrossReset) {
+    s::Scene scene;
+    entt::registry& r = scene.registry();
+    const entt::entity e = scene.create_entity("coin");
+    ASSERT_OK(s::apply_component(r, e, "script", json::object(), false));
+    ASSERT_TRUE(r.all_of<s::Script>(e));
+    EXPECT_TRUE(r.get<s::Script>(e).path.empty()) << "no file yet: it runs nothing";
+    ASSERT_OK(s::apply_component(r, e, "script", json{{"path", "coin.lua"}, {"enabled", false}},
+                                 false));
+    ASSERT_OK(p::reset_component(r, e, "script"));
+    EXPECT_EQ(r.get<s::Script>(e).path, "coin.lua");
+    EXPECT_TRUE(r.get<s::Script>(e).enabled) << "settings go back to their defaults";
+}
+
 TEST(EditorInspector, ResetUndoesEditsAndClearsOverrides) {
     s::Scene scene;
     entt::registry& r = scene.registry();
