@@ -57,7 +57,7 @@ Merged on 2026-11-27 after cycle 2:
 | #49 | R14 mountain forest showcase | `feat/mountain-scene` | worker moving shadows onto R12's CSM + master merge |
 | #52 | E8 editor UI/UX redesign | `feat/e8-editor-ux` | draft; worker running |
 | #53 | A9 world-building (fixes #37–#42) | `feat/a9-worldbuilding` | draft; worker running |
-| #54 | A10.1 physics control (fixes #47 #48) | `feat/a10-physics-control` | draft; worker running |
+| #54 | A10.1 physics control (fixes #47 #48) | `feat/a10-physics-control` | train #93 merged in; review fixes pushed (set_motion fallback, SlotMap wrap, duration_s in whole steps, read_bool, O(1) strongest impact, lock-free EventRing); CI pending, then re-review |
 | #55 | P4 game packaging + E7 export | `feat/p4-game-packaging` | draft; worker running |
 
 Queued for the next free agents, in order:

@@ -27,12 +27,15 @@ namespace {
     return Motion::static_body;
 }
 
-[[nodiscard]] float clamp_duration(float duration_s) {
-    if (!std::isfinite(duration_s)) return 0.0F;
-    return std::clamp(duration_s, 0.0F, PhysicsWorld::max_force_duration);
-}
-
 } // namespace
+
+int PhysicsWorld::force_steps(float duration_s) {
+    constexpr int max_steps = static_cast<int>(max_force_duration / fixed_timestep + 0.5F);
+    if (!std::isfinite(duration_s)) return 1;
+    const float steps = std::round(duration_s / fixed_timestep);
+    return std::clamp(static_cast<int>(std::min(steps, static_cast<float>(max_steps))), 1,
+                      max_steps);
+}
 
 std::optional<PhysicsWorld::BodyState> PhysicsWorld::body_state(std::uint32_t body) const {
     if (!impl_ || body == invalid_body) return std::nullopt;
@@ -90,7 +93,7 @@ void PhysicsWorld::add_force(std::uint32_t body, const glm::vec3& force, float d
     if (!is_dynamic(body)) return;
     impl_->forces.push_back({.body = JPH::BodyID(body),
                              .force = to_jph(force),
-                             .remaining = clamp_duration(duration_s)});
+                             .steps_left = force_steps(duration_s)});
     impl_->system.GetBodyInterface().ActivateBody(JPH::BodyID(body));
 }
 
@@ -101,7 +104,7 @@ void PhysicsWorld::add_force(std::uint32_t body, const glm::vec3& force,
                              .force = to_jph(force),
                              .point = to_jph_r(world_point),
                              .at_point = true,
-                             .remaining = clamp_duration(duration_s)});
+                             .steps_left = force_steps(duration_s)});
     impl_->system.GetBodyInterface().ActivateBody(JPH::BodyID(body));
 }
 
@@ -109,7 +112,7 @@ void PhysicsWorld::add_torque(std::uint32_t body, const glm::vec3& torque, float
     if (!is_dynamic(body)) return;
     impl_->forces.push_back({.body = JPH::BodyID(body),
                              .torque = to_jph(torque),
-                             .remaining = clamp_duration(duration_s)});
+                             .steps_left = force_steps(duration_s)});
     impl_->system.GetBodyInterface().ActivateBody(JPH::BodyID(body));
 }
 

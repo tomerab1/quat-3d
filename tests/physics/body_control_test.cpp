@@ -109,6 +109,23 @@ TEST_F(BodyControl, AForceActsForItsDurationOnly) {
     EXPECT_NEAR(world->linear_velocity(ball).x, 5.0F, 0.15F) << "the force outlived its duration";
 }
 
+// Forces act in whole fixed steps: a duration rounds to the nearest step
+// count (at least one), and the body gets exactly force * steps * dt.
+TEST_F(BodyControl, ForceDurationsRoundToWholeSteps) {
+    EXPECT_EQ(PhysicsWorld::force_steps(0.001F), 1) << "shorter than a step still acts once";
+    EXPECT_EQ(PhysicsWorld::force_steps(k_step * 3.4F), 3);
+    EXPECT_EQ(PhysicsWorld::force_steps(k_step * 3.6F), 4);
+    EXPECT_EQ(PhysicsWorld::force_steps(-1.0F), 1);
+    EXPECT_EQ(PhysicsWorld::force_steps(1.0e9F), 1200) << "clamped to max_force_duration";
+    EXPECT_FLOAT_EQ(PhysicsWorld::force_duration(k_step * 3.4F), 3.0F * k_step);
+
+    const std::uint32_t ball = add_ball(glm::vec3(0.0F, 5.0F, 0.0F));
+    world->add_force(ball, glm::vec3(12.0F, 0.0F, 0.0F), k_step * 2.9F); // 3 steps
+    steps(10);
+    EXPECT_NEAR(world->linear_velocity(ball).x, 12.0F * 3.0F * k_step, 1e-4F)
+        << "the force must act for exactly the reported number of steps";
+}
+
 TEST_F(BodyControl, TorqueAndAngularImpulseSpinTheBody) {
     const std::uint32_t a = add_ball(glm::vec3(-5.0F, 5.0F, 0.0F));
     const std::uint32_t b = add_ball(glm::vec3(5.0F, 5.0F, 0.0F));

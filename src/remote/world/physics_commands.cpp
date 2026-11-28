@@ -273,8 +273,8 @@ RpcResult character_move(Context& ctx, const Json& params) {
     f.known({"velocity", "target", "jump"});
     float jump = 0.0F;
     if (const Json* j = f.raw("jump"); j != nullptr && !j->is_null()) {
-        if (j->is_boolean()) {
-            jump = j->get<bool>() ? k_default_jump : 0.0F;
+        if (bool b = false; core::JsonFields::read_bool(*j, b)) {
+            jump = b ? k_default_jump : 0.0F;
         } else if (!core::JsonFields::read_float(*j, jump) || !(jump > 0.0F) || jump > k_max_jump) {
             f.fail("jump", "expected true (5 m/s) or a take-off speed in (0, 50] m/s");
         }

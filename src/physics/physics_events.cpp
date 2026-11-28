@@ -81,8 +81,7 @@ void ContactTracker::process(std::span<const RawContact> raw, std::uint64_t step
                              std::vector<PhysicsWorld::ContactEvent>& out) {
     // Adds first: a sub-shape pair handed over between two others in one
     // step must not end the body pair's contact.
-    std::vector<std::size_t>   started; // indices into `out` of this step's begin events
-    std::vector<std::uint64_t> added;   // pairs re-added this step
+    std::vector<std::uint64_t> added; // pairs re-added this step
     for (const RawContact& c : raw) {
         if (!c.added) continue;
         Pair& p = pairs_[key(c.body1, c.body2)];
@@ -96,10 +95,10 @@ void ContactTracker::process(std::span<const RawContact> raw, std::uint64_t step
         }
         if (p.touching++ > 0) {
             // Another sub-shape of a pair that began this step: keep the
-            // strongest impact.
-            for (const std::size_t i : started) {
-                PhysicsWorld::ContactEvent& ev = out[i];
-                if (key(ev.body_a, ev.body_b) == key(c.body1, c.body2) && c.impulse > ev.impulse) {
+            // strongest impact (O(1): the pair knows its begin event).
+            if (p.begin_event != no_event) {
+                PhysicsWorld::ContactEvent& ev = out[p.begin_event];
+                if (c.impulse > ev.impulse) {
                     ev.impulse = c.impulse;
                     ev.point = c.point;
                     ev.normal = ev.body_a == c.body1 ? c.normal : -c.normal;
@@ -124,7 +123,7 @@ void ContactTracker::process(std::span<const RawContact> raw, std::uint64_t step
         ev.normal = swap ? -c.normal : c.normal;
         ev.impulse = c.impulse;
         ev.step = step;
-        started.push_back(out.size());
+        p.begin_event = out.size();
         out.push_back(ev);
     }
 
@@ -165,7 +164,10 @@ void ContactTracker::process(std::span<const RawContact> raw, std::uint64_t step
         }
     }
     for (const std::uint64_t k : added) {
-        if (const auto it = pairs_.find(k); it != pairs_.end()) it->second.added_now = false;
+        if (const auto it = pairs_.find(k); it != pairs_.end()) {
+            it->second.added_now = false;
+            it->second.begin_event = no_event;
+        }
     }
 }
 

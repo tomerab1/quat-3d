@@ -23,7 +23,6 @@ std::string_view to_string(EventKind kind) {
 EventRing::EventRing(std::size_t capacity) : capacity_(std::max<std::size_t>(capacity, 1)) {}
 
 std::uint64_t EventRing::push(Event event) {
-    const std::scoped_lock lock(mutex_);
     event.seq = next_seq_++;
     if (events_.size() == capacity_) events_.pop_front();
     events_.push_back(event);
@@ -31,12 +30,10 @@ std::uint64_t EventRing::push(Event event) {
 }
 
 void EventRing::drop(std::uint64_t count) {
-    const std::scoped_lock lock(mutex_);
     next_seq_ += count;
 }
 
 EventQueryResult EventRing::query(std::uint64_t since, std::size_t max) const {
-    const std::scoped_lock lock(mutex_);
     EventQueryResult out;
     out.last_seq = next_seq_ - 1;
     out.oldest_seq = events_.empty() ? 0 : events_.front().seq;
@@ -59,12 +56,10 @@ EventQueryResult EventRing::query(std::uint64_t since, std::size_t max) const {
 }
 
 std::uint64_t EventRing::last_seq() const {
-    const std::scoped_lock lock(mutex_);
     return next_seq_ - 1;
 }
 
 std::size_t EventRing::size() const {
-    const std::scoped_lock lock(mutex_);
     return events_.size();
 }
 

@@ -198,6 +198,47 @@ TEST_F(BodyCommands, ApplyPushesADynamicBody) {
     EXPECT_GT(ok("physics.get", {{"entity", "Crate"}})["angular_velocity"][1].get<float>(), 1.0F);
 }
 
+// Forces act in whole 1/120 s steps: a duration below one step is refused,
+// others are rounded and the reply says what is actually applied.
+TEST_F(BodyCommands, ForceDurationsAreWholeSteps) {
+    crate();
+    const auto code = rpc_code::invalid_params;
+    EXPECT_NE(err("physics.apply", {{"entity", "Crate"}, {"force", {1, 0, 0}}, {"duration_s", 0.001}},
+                  code)
+                  .find("duration_s"),
+              std::string::npos);
+    const Json s = ok("physics.apply",
+                      {{"entity", "Crate"}, {"force", {1, 0, 0}}, {"duration_s", 0.03}});
+    EXPECT_EQ(s["steps"], 4) << "0.03 s is 3.6 steps: rounded to 4";
+    EXPECT_NEAR(s["duration_s"].get<float>(), 4.0F * PhysicsWorld::fixed_timestep, 1e-6F);
+    const Json d = ok("physics.apply", {{"entity", "Crate"}, {"torque", {0, 1, 0}}});
+    EXPECT_EQ(d["steps"], 2) << "the default 1/60 s is two steps";
+}
+
+// A body whose component no longer matches what Jolt built (here: built
+// static, component edited to kinematic behind the world's back) cannot
+// switch motion in place; physics.set rebuilds it instead of leaving the
+// component and the body disagreeing.
+TEST_F(BodyCommands, AMotionSwitchJoltRefusesFallsBackToARebuild) {
+    const Json id = spawn("Slab", {{"collider", {{"shape", "box"}}},
+                                   {"rigidbody", {{"motion", "static"}}}});
+    auto& rb = reg().get<engine::scene::RigidBody>(entity(id));
+    rb.motion = engine::scene::BodyMotion::kinematic;
+    EXPECT_NE(err("physics.set",
+                  {{"entity", "Slab"}, {"motion_type", "dynamic"}, {"linear_velocity", {1, 0, 0}}},
+                  rpc_code::unavailable)
+                  .find("rebuilt"),
+              std::string::npos)
+        << "velocities cannot ride along with a rebuild";
+    EXPECT_EQ(rb.motion, engine::scene::BodyMotion::kinematic) << "a refused call changes nothing";
+    const Json s = ok("physics.set", {{"entity", "Slab"}, {"motion_type", "dynamic"}});
+    EXPECT_TRUE(s["rebuilt"].get<bool>());
+    EXPECT_EQ(rb.motion, engine::scene::BodyMotion::dynamic);
+    EXPECT_EQ(rb.body, PhysicsWorld::invalid_body);
+    simulate(1);
+    EXPECT_EQ(ok("physics.get", {{"entity", "Slab"}})["motion_type"], "dynamic");
+}
+
 TEST_F(BodyCommands, ErrorsArePrecise) {
     crate();
     spawn("Wall", {{"collider", {{"shape", "box"}}}, {"rigidbody", {{"motion", "static"}}}});

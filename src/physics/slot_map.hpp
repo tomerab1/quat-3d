@@ -7,7 +7,8 @@
 // are reused, so long sessions that create and destroy objects keep a bounded
 // table (issue #47); the generation, bumped on every free, makes a stale
 // handle to a recycled slot resolve to nothing instead of aliasing the new
-// occupant. Index 0xFFFFFF is never handed out, so 0xFFFFFFFF (the engine's
+// occupant. The generation is 8 bits; a slot whose generation would wrap is
+// retired rather than reused, so no handle ever comes back to life. Index 0xFFFFFF is never handed out, so 0xFFFFFFFF (the engine's
 // "invalid" sentinel) is never a live handle.
 
 #include <cstddef>
@@ -61,15 +62,24 @@ public:
         s->value = T{};
         s->live = false;
         s->generation = static_cast<std::uint8_t>(s->generation + 1U);
-        free_.push_back(id & index_mask);
+        // A wrapped generation would make the slot's first handle valid again
+        // (an alias of whatever lives there next). Retire the index instead:
+        // one slot per 256 reuses of it, a bounded and negligible cost.
+        if (s->generation != 0) {
+            free_.push_back(id & index_mask);
+        } else {
+            ++retired_;
+        }
         --live_;
         return true;
     }
 
     // Live entries.
     [[nodiscard]] std::size_t size() const { return live_; }
-    // Slots ever allocated (live + free): what the table costs in memory.
+    // Slots ever allocated (live + free + retired): what the table costs in memory.
     [[nodiscard]] std::size_t capacity() const { return slots_.size(); }
+    // Slots retired after their generation wrapped (never reused).
+    [[nodiscard]] std::size_t retired() const { return retired_; }
 
     // f(handle, value&) for every live entry, in index order.
     template <typename F>
@@ -109,6 +119,7 @@ private:
     std::vector<Slot>          slots_;
     std::vector<std::uint32_t> free_;
     std::size_t                live_ = 0;
+    std::size_t                retired_ = 0;
 };
 
 } // namespace engine::physics::detail

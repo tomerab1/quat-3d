@@ -17,6 +17,7 @@
 
 #include <array>
 #include <atomic>
+#include <cstddef>
 #include <cstdint>
 #include <span>
 #include <unordered_map>
@@ -120,7 +121,12 @@ private:
         bool          trigger = false;
         bool          dormant = false; // touching, but a body fell asleep
         bool          added_now = false;
+        // Index into `out` of the begin event while the pair began in the
+        // step being processed (no_event otherwise): later sub-shape adds of
+        // that step update it directly instead of searching.
+        std::size_t   begin_event = no_event;
     };
+    static constexpr std::size_t no_event = static_cast<std::size_t>(-1);
     [[nodiscard]] static std::uint64_t key(std::uint32_t a, std::uint32_t b) {
         return a < b ? (std::uint64_t{a} << 32U) | b : (std::uint64_t{b} << 32U) | a;
     }

@@ -246,8 +246,15 @@ public:
     // Impulses (N*s) change the velocity at once and wake the body; a force
     // (N) or torque (N*m) acts on every simulation step for `duration_s` of
     // simulated time (Jolt clears forces after each step, so the world keeps
-    // re-applying them), clamped to max_force_duration.
+    // re-applying them). Forces act in whole fixed steps: the duration is
+    // rounded to the nearest step count, at least one, at most
+    // max_force_duration (force_steps / force_duration say what it becomes).
     static constexpr float max_force_duration = 10.0F;
+    [[nodiscard]] static int force_steps(float duration_s);
+    // The simulated time a force given for `duration_s` actually acts.
+    [[nodiscard]] static float force_duration(float duration_s) {
+        return static_cast<float>(force_steps(duration_s)) * fixed_timestep;
+    }
     [[nodiscard]] bool is_dynamic(std::uint32_t body) const;
     void add_impulse(std::uint32_t body, const glm::vec3& impulse);
     void add_impulse(std::uint32_t body, const glm::vec3& impulse, const glm::vec3& world_point);

@@ -152,14 +152,14 @@ struct BodyRecord {
     bool          sensor = false;
 };
 
-// A force / torque that keeps acting for `remaining` simulated seconds.
+// A force / torque that keeps acting for `steps_left` more fixed steps.
 struct ForceRecord {
     JPH::BodyID body;
     JPH::Vec3   force = JPH::Vec3::sZero();
     JPH::Vec3   torque = JPH::Vec3::sZero();
     JPH::RVec3  point = JPH::RVec3::sZero();
     bool        at_point = false;
-    float       remaining = 0.0F;
+    int         steps_left = 1;
 };
 
 // A joint (Jolt constraint) and the bodies it holds. The local points let
@@ -242,9 +242,9 @@ struct PhysicsWorld::Impl {
         }
     }
 
-    // Applies the timed forces for one step of `dt` and retires expired ones
+    // Applies the timed forces for one fixed step and retires expired ones
     // (and those of removed or no longer dynamic bodies).
-    void apply_forces(float dt) {
+    void apply_forces() {
         if (forces.empty()) return;
         JPH::BodyInterface& bi = system.GetBodyInterfaceNoLock();
         std::erase_if(forces, [&](detail::ForceRecord& f) {
@@ -257,8 +257,7 @@ struct PhysicsWorld::Impl {
                 bi.AddForce(f.body, f.force);
             }
             if (!f.torque.IsNearZero(0.0F)) bi.AddTorque(f.body, f.torque);
-            f.remaining -= dt;
-            return f.remaining <= 1e-6F;
+            return --f.steps_left <= 0;
         });
     }
 

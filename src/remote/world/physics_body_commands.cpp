@@ -201,7 +201,7 @@ RpcResult physics_set(Context& ctx, const Json& params) {
 
     // Validate everything before changing anything.
     const scene::BodyMotion target = motion.value_or(rb.motion);
-    const bool rebuild = motion && *motion != rb.motion &&
+    bool rebuild = motion && *motion != rb.motion &&
                          (*motion == scene::BodyMotion::static_body ||
                           rb.motion == scene::BodyMotion::static_body);
     if ((linear || angular_deg) && target != scene::BodyMotion::dynamic) {
@@ -219,14 +219,22 @@ RpcResult physics_set(Context& ctx, const Json& params) {
     }
 
     if (motion && *motion != rb.motion) {
-        rb.motion = *motion;
-        if (rebuild) {
-            rb.body = PhysicsWorld::invalid_body; // physics_system sweeps and rebuilds it
-        } else {
-            (void)world.set_motion(body, *motion == scene::BodyMotion::dynamic
-                                             ? physics::Motion::dynamic
-                                             : physics::Motion::kinematic);
+        // Dynamic <-> kinematic switches in place. When Jolt refuses (a body
+        // built static whose component has since changed), the switch falls
+        // back to a rebuild so the component and the body never disagree.
+        if (!rebuild && !world.set_motion(body, *motion == scene::BodyMotion::dynamic
+                                                     ? physics::Motion::dynamic
+                                                     : physics::Motion::kinematic)) {
+            if (linear || angular_deg || (wake.has_value() && !*wake)) {
+                return rpc_fail(rpc_code::unavailable,
+                                "motion_type: " + entity_label(*e) +
+                                    "'s body cannot switch in place and is rebuilt on the next "
+                                    "frame; set velocities or sleep in a later call");
+            }
+            rebuild = true;
         }
+        rb.motion = *motion;
+        if (rebuild) rb.body = PhysicsWorld::invalid_body; // physics_system sweeps and rebuilds it
     }
     // The component carries the authoring values (a rebuilt body keeps them).
     if (gravity_factor) rb.gravity_factor = *gravity_factor;
@@ -271,7 +279,9 @@ RpcResult physics_apply(Context& ctx, const Json& params) {
     bounded_vec3(f, "at_point", at_point, 1.0e6F, "m");
     float duration = k_default_force_s;
     const bool has_duration = f.has("duration_s");
-    f.number("duration_s", duration, 1.0e-4F, PhysicsWorld::max_force_duration);
+    // Forces act in whole fixed steps: shorter than one step cannot be honoured.
+    f.number("duration_s", duration, PhysicsWorld::fixed_timestep,
+             PhysicsWorld::max_force_duration);
     if (auto ok = finish(f); !ok) return std::unexpected(ok.error());
     if (!e) return std::unexpected(e.error());
 
@@ -327,7 +337,11 @@ RpcResult physics_apply(Context& ctx, const Json& params) {
     }
     Json out = body_json(r, *e, *world.body_state(body));
     out["applied"] = applied;
-    if (force || torque) out["duration_s"] = duration;
+    if (force || torque) {
+        // What the world actually applies: the duration rounded to whole steps.
+        out["duration_s"] = PhysicsWorld::force_duration(duration);
+        out["steps"] = PhysicsWorld::force_steps(duration);
+    }
     return out;
 }
 

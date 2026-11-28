@@ -1,7 +1,7 @@
 Push a dynamic rigid body. Give exactly one of:
 
 - `impulse` (N·s): an instant kick. The velocity changes at once by impulse / mass, so `[0, 5, 0]` on a 1 kg crate launches it up at 5 m/s.
-- `force` (N): applied every simulation step for `duration_s` seconds of simulated time (default 1/60, at most 10). Force × duration is the total impulse.
+- `force` (N): applied every simulation step for `duration_s` seconds of simulated time (default 1/60, at least one step of 1/120 s, at most 10). Forces act in whole fixed steps of 1/120 s, so the duration is rounded to the nearest step count; the reply's `duration_s` and `steps` say what was applied. Force × duration is the total impulse.
 - `angular_impulse` (N·m·s): an instant spin about the world axes through the centre of mass.
 - `torque` (N·m): a twist applied every step for `duration_s`.
 

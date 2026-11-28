@@ -671,3 +671,14 @@ it reordered, and an unvalidated ini file. Each lived in code only reachable
 through an ImGui frame. **Rule:** UI actions are plain functions over the
 registry or the state struct, called by the widget and by GoogleTest;
 anything read from disk goes through a pure, tested parser.
+
+## Two branches split the same file two ways (A10.1 × G7)
+
+#54 and #22 each split `physics_world.cpp` into a shared
+`physics_world_impl.hpp` + `physics_queries.cpp`, independently, so the train
+merge hit add/add conflicts on whole files and a design disagreement (the
+character inner-body layer) hidden inside them. **Rule:** a worker that
+splits a file another open PR also touches says so in its PR body and the
+orchestrator lands one split first; the other branch merges it before going
+further. Cross-PR design choices are settled on one PR (here: the review
+thread on #54) and recorded in the merge commit.

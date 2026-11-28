@@ -13,14 +13,15 @@
 //
 // Physics contacts and trigger overlaps are the first producers: the physics
 // world collects them lock-free on its worker threads and the frame loop
-// pushes them here after each simulation update (main thread). The ring
-// itself is thread-safe.
+// pushes them here after each simulation update (main thread). Main thread
+// only: its one producer (publish_physics_events) and its one consumer
+// (events.poll, served from the remote poll) both run there, so it takes no
+// lock (CLAUDE.md: no engine-level mutexes on hot paths).
 
 #include <array>
 #include <cstddef>
 #include <cstdint>
 #include <deque>
-#include <mutex>
 #include <optional>
 #include <string_view>
 #include <vector>
@@ -82,12 +83,11 @@ public:
 
 private:
     const std::size_t  capacity_;
-    mutable std::mutex mutex_;
     std::deque<Event>  events_;
     std::uint64_t      next_seq_ = 1;
 };
 
-// The process-wide ring (created on first use, thread-safe).
+// The process-wide ring (created on first use; main thread only).
 [[nodiscard]] EventRing& event_ring();
 
 } // namespace engine::core

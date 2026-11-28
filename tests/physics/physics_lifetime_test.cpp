@@ -47,6 +47,25 @@ TEST(SlotMap, RecyclesFreedSlotsWithANewGeneration) {
     EXPECT_FALSE(map.erase(SlotMap<int>::invalid));
 }
 
+// A tile streaming in and out frees and reuses the same slot every cycle; the
+// 8-bit generation must not wrap back to a handle someone still holds.
+TEST(SlotMap, AWrappedGenerationRetiresTheSlotInsteadOfAliasing) {
+    SlotMap<int> map;
+    const std::uint32_t first = map.insert(0);
+    std::uint32_t       h = first;
+    for (int i = 1; i <= 256; ++i) {
+        ASSERT_TRUE(map.erase(h));
+        h = map.insert(i);
+        ASSERT_NE(h, SlotMap<int>::invalid);
+        EXPECT_NE(h, first) << "cycle " << i << ": the first handle came back to life";
+        EXPECT_EQ(map.get(first), nullptr) << "cycle " << i;
+    }
+    EXPECT_EQ(map.retired(), 1U) << "the slot retires once its generation would wrap";
+    EXPECT_EQ(map.capacity(), 2U) << "the replacement slot is new; the table stays bounded";
+    EXPECT_EQ(map.size(), 1U);
+    EXPECT_EQ(*map.get(h), 256);
+}
+
 class PhysicsLifetime : public ::testing::Test {
 protected:
     void SetUp() override {
