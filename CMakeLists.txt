@@ -547,6 +547,8 @@ set_target_properties(quat-cook PROPERTIES QUAT_KTX_FULL ON)
 add_library(engine_terrain STATIC
     src/terrain/budget.cpp
     src/terrain/cpu_tile_jobs.cpp
+    src/terrain/edits.cpp
+    src/terrain/edits_apply.cpp
     src/terrain/generator.cpp
     src/terrain/grid_erosion.cpp
     src/terrain/streamer.cpp

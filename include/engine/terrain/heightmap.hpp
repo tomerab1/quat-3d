@@ -25,6 +25,18 @@ struct Heightmap {
     // image, already on the GPU, which renderer::TerrainPass::set_tile adopts
     // instead of uploading `heights` again.
     std::uint64_t      gpu_tile = 0;
+    // Edit layers (G19.1, engine/terrain/edits.hpp). All empty while no stamp
+    // has touched the tile. `heights` then holds the edited ground and
+    // `base_heights` the generated one the edits are recomputed from;
+    // `paint` is RGBA8 per texel (dirt, gravel, soil, grass mask);
+    // `edit_cells` fingerprints the edited ground per cell
+    // (edit_cells_per_side², row-major) for region-limited consumers.
+    std::vector<float>         base_heights;
+    std::vector<std::uint32_t> paint;
+    std::vector<std::uint64_t> edit_cells;
+    // TerrainEditList::revision the edits were applied at (0: none). A GPU
+    // tile carrying edits also has its paint image on the GPU (gpu_tile).
+    std::uint64_t              edit_revision = 0;
 
     [[nodiscard]] bool valid() const {
         return resolution > 1 &&
