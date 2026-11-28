@@ -43,6 +43,12 @@ struct CsmSettings {
     // How far behind a cascade (toward the sun) casters are still captured.
     float         caster_distance = 200.0F;
     bool          debug_cascades = false; // tint each pixel by its cascade
+    // R6 / R9.4: cull the casters per cascade on the GPU (off: every caster
+    // in the CPU-culled list is drawn into every cascade).
+    bool          gpu_culling = true;
+    // Projected-size cull: a caster whose bounding diameter covers fewer
+    // shadow texels of a cascade than this is not drawn into it (0 = off).
+    float         caster_min_texels = 1.0F;
 
     static constexpr IntRange  k_cascade_count{1, 4};
     static constexpr FloatRange k_split_lambda{0.0F, 1.0F};
@@ -53,6 +59,7 @@ struct CsmSettings {
     static constexpr FloatRange k_normal_bias{0.0F, 8.0F};
     static constexpr FloatRange k_depth_bias{0.0F, 8.0F};
     static constexpr FloatRange k_caster_distance{1.0F, 10000.0F};
+    static constexpr FloatRange k_caster_min_texels{0.0F, 16.0F};
 
     [[nodiscard]] constexpr CsmSettings sanitized() const {
         CsmSettings s = *this;
@@ -65,6 +72,7 @@ struct CsmSettings {
         s.normal_bias = k_normal_bias.clamp(normal_bias);
         s.depth_bias = k_depth_bias.clamp(depth_bias);
         s.caster_distance = k_caster_distance.clamp(caster_distance);
+        s.caster_min_texels = k_caster_min_texels.clamp(caster_min_texels);
         return s;
     }
 };

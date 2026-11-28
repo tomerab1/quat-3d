@@ -192,6 +192,9 @@ MeshPass::create(const rhi::Device& device, rhi::GpuAllocator& allocator,
     if (!mat) return std::unexpected(mat.error());
     out.default_material_ = std::move(*mat);
 
+    auto culler = InstanceCuller::create(device, allocator, cache, cooked_shader_dir);
+    if (!culler) return std::unexpected(culler.error());
+    out.culler_ = std::move(*culler);
     return out;
 }
 
@@ -255,6 +258,16 @@ MeshPass::add_to_graph(rhi::RenderGraph& graph, VkExtent2D extent, const glm::ma
     frame_push_.jitter_ndc = motion.jitter_ndc;
     frame_push_.has_motion = frame_motion_ != 0 ? 1U : 0U;
 
+    // R6 / R9.4: cull the instances against the camera on the GPU; the draws
+    // below read the survivors through the visible list.
+    const std::array<CullViewGpu, 1> views{camera_cull_view(view_proj)};
+    InstanceCullInput cull;
+    cull.instances = frame_instances_;
+    cull.views = views;
+    cull.camera = glm::vec3(frame_push_.camera);
+    if (auto r = culler_.add_to_graph(graph, list, cull); !r) return std::unexpected(r.error());
+    frame_push_.visible = culler_.visible_address(0);
+
     // GBuffer targets. SAMPLED is added so the lighting pass (3.6) can read them;
     // TRANSFER_SRC lets tests and debug tooling read them back.
     const VkImageUsageFlags color_usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT
@@ -282,7 +295,8 @@ MeshPass::add_to_graph(rhi::RenderGraph& graph, VkExtent2D extent, const glm::ma
     // One descriptor buffer per distinct material this frame (batches already
     // merged identical mesh+material draws; meshes sharing a material share it).
     std::unordered_map<const asset::MaterialAsset*, std::uint32_t> descriptor_of;
-    for (const InstancedDraw& d : list.draws) {
+    for (std::size_t draw_index = 0; draw_index < list.draws.size(); ++draw_index) {
+        const InstancedDraw& d = list.draws[draw_index];
         if (d.mesh == nullptr || !d.mesh->valid() || d.instance_count == 0) continue;
         if (static_cast<std::size_t>(d.first_instance) + d.instance_count >
             list.instances.size()) {
@@ -323,6 +337,7 @@ MeshPass::add_to_graph(rhi::RenderGraph& graph, VkExtent2D extent, const glm::ma
         fd.first_instance = d.first_instance;
         fd.instance_count = d.instance_count;
         fd.descriptor_index = slot->second;
+        fd.draw = static_cast<std::uint32_t>(draw_index);
         const GBufferVariant variant = gbuffer_variant(mat);
         const rhi::ManagedPipeline* custom =
             variant.module.empty() ? nullptr : materials_.find(variant.module);
@@ -352,8 +367,9 @@ MeshPass::add_to_graph(rhi::RenderGraph& graph, VkExtent2D extent, const glm::ma
                      });
 
     const GBufferTargets t = targets;
-    graph.add_pass("gbuffer", rhi::PassType::graphics)
-        .writes(t.albedo, rhi::ResourceUsage::color_attachment)
+    auto pass = graph.add_pass("gbuffer", rhi::PassType::graphics);
+    culler_.declare_reads(pass);
+    pass.writes(t.albedo, rhi::ResourceUsage::color_attachment)
         .writes(t.normal, rhi::ResourceUsage::color_attachment)
         .writes(t.material, rhi::ResourceUsage::color_attachment)
         .writes(t.clearcoat, rhi::ResourceUsage::color_attachment)
@@ -450,12 +466,10 @@ MeshPass::add_to_graph(rhi::RenderGraph& graph, VkExtent2D extent, const glm::ma
                 vkCmdBindVertexBuffers(cmd, 0, 1, &fd.vertex_buffer, &offset);
                 vkCmdBindIndexBuffer(cmd, fd.index_buffer, 0, VK_INDEX_TYPE_UINT32);
 
-                // firstInstance selects the draw's instance range; the shader
-                // indexes the array with InstanceIndex (which includes it).
-                for (const asset::SubMesh& sm : fd.submeshes) {
-                    vkCmdDrawIndexed(cmd, sm.index_count, fd.instance_count, sm.index_offset, 0,
-                                     fd.first_instance);
-                }
+                // The camera's surviving instances (one indirect command per
+                // submesh): firstInstance starts the draw's range of the
+                // visible list, which the shader indexes with InstanceIndex.
+                culler_.draw(cmd, 0, fd.draw);
             }
 
             vkCmdEndRendering(cmd);

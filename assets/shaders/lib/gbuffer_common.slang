@@ -22,7 +22,7 @@ import instancing;
 import pbr;
 import velocity;
 
-// Mirrors engine::renderer::GBufferPushConstants (192 bytes). Everything is
+// Mirrors engine::renderer::GBufferPushConstants (208 bytes). Everything is
 // per pass except has_prev_positions / prev_positions, which the pass pushes
 // per draw.
 //
@@ -40,8 +40,11 @@ import velocity;
 public struct GBufferPushConstants {
     public float4x4        view_proj;      // this frame, jittered
     public float4x4        prev_view_proj; // last frame, unjittered
-    public InstanceData*   instances;      // indexed by instance_index() (includes firstInstance)
+    public InstanceData*   instances;      // indexed through the visible list
     public InstanceMotion* motion;         // parallel to instances, valid when has_motion != 0
+    // The camera's culled list (R6 / R9.4), indexed by instance_index()
+    // (includes firstInstance): the instance index into `instances` / `motion`.
+    public VisibleInstance* visible;
     public float2          jitter_ndc;     // this frame's projection jitter
     public uint            has_motion;     // 0: camera-only velocity (no previous poses)
     // Per draw: 1 when prev_positions holds last frame's skinned positions (a
@@ -50,6 +53,8 @@ public struct GBufferPushConstants {
     public float           time;           // material clock, seconds
     public float           pad;
     public PrevPosition*   prev_positions; // per draw: one per vertex (skinned draws)
+    public uint            pad2a;          // camera is 16-byte aligned
+    public uint            pad2b;
     // xyz = camera position, w = 1; for an orthographic view w = 0 and xyz is
     // the unit direction toward the camera.
     public float4          camera;
@@ -89,7 +94,7 @@ public struct GBufferOut {
 }
 
 public GBufferVsOut gbuffer_vertex(GBufferVsIn input) {
-    const uint instance = instance_index();
+    const uint instance = pc.visible[instance_index()].index;
     InstanceData inst = pc.instances[instance];
     GBufferVsOut o;
     float4 world = inst.world_position(input.position);

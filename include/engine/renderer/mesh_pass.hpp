@@ -42,6 +42,7 @@
 #include "engine/core/error.hpp"
 #include "engine/renderer/draw_batching.hpp"
 #include "engine/renderer/instance_buffer.hpp"
+#include "engine/renderer/instance_cull_pass.hpp"
 #include "engine/renderer/material_pipelines.hpp"
 #include "engine/renderer/velocity.hpp"
 #include "engine/rhi/descriptor_buffer.hpp"
@@ -115,24 +116,27 @@ struct GBufferPushConstants {
     glm::mat4       prev_view_proj{1.0F};
     VkDeviceAddress instances = 0;
     VkDeviceAddress motion = 0;
+    VkDeviceAddress visible = 0; // the camera's culled list (InstanceCuller)
     glm::vec2       jitter_ndc{0.0F};
     std::uint32_t   has_motion = 0;
     std::uint32_t   has_prev_positions = 0; // per draw
     float           time = 0.0F; // material clock, seconds
     float           pad = 0.0F;
     VkDeviceAddress prev_positions = 0; // per draw
+    std::array<std::uint32_t, 2> pad2{}; // camera is 16-byte aligned
     // xyz = camera position, w = 1; orthographic: xyz = unit direction toward
     // the camera, w = 0.
     glm::vec4       camera{0.0F, 0.0F, 0.0F, 1.0F};
 };
-static_assert(sizeof(GBufferPushConstants) == 192, "must match gbuffer_common.slang");
+static_assert(sizeof(GBufferPushConstants) == 208, "must match gbuffer_common.slang");
 static_assert(offsetof(GBufferPushConstants, instances) == 128, "must match gbuffer_common.slang");
-static_assert(offsetof(GBufferPushConstants, has_prev_positions) == 156,
+static_assert(offsetof(GBufferPushConstants, visible) == 144, "must match gbuffer_common.slang");
+static_assert(offsetof(GBufferPushConstants, has_prev_positions) == 164,
               "must match gbuffer_common.slang");
-static_assert(offsetof(GBufferPushConstants, time) == 160, "must match gbuffer_common.slang");
-static_assert(offsetof(GBufferPushConstants, prev_positions) == 168,
+static_assert(offsetof(GBufferPushConstants, time) == 168, "must match gbuffer_common.slang");
+static_assert(offsetof(GBufferPushConstants, prev_positions) == 176,
               "must match gbuffer_common.slang");
-static_assert(offsetof(GBufferPushConstants, camera) == 176, "must match gbuffer_common.slang");
+static_assert(offsetof(GBufferPushConstants, camera) == 192, "must match gbuffer_common.slang");
 
 class MeshPass {
 public:
@@ -193,6 +197,7 @@ private:
         std::uint32_t            first_instance = 0;
         std::uint32_t            instance_count = 0;
         std::uint32_t            descriptor_index = 0;
+        std::uint32_t            draw = 0; // index in the draw list (culler)
         const rhi::ManagedPipeline* pipeline = nullptr; // built-in or material shader
         GBufferAlphaMode         alpha = GBufferAlphaMode::opaque;
     };
@@ -225,6 +230,8 @@ private:
     // Per-frame, rebuilt each add_to_graph call.
     InstanceBuffer                     instances_;
     InstanceBuffer                     motion_;
+    // R6 / R9.4: the camera's GPU instance cull (one view).
+    InstanceCuller                     culler_;
     VkDeviceAddress                    frame_instances_ = 0;
     VkDeviceAddress                    frame_motion_ = 0;
     GBufferPushConstants               frame_push_{};

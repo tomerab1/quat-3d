@@ -293,3 +293,31 @@ TEST_F(InstancedMeshCollect, MotionRecordsFollowTheEntitysPreviousTransform) {
 }
 
 } // namespace
+
+TEST_F(InstancedMeshCollect, ShadowDistanceSplitsShadowDrawsOnly) {
+    // Two entities of the same model; one stops casting beyond 30 m (R9.4:
+    // the GPU cull reads the distance per draw, so they cannot share one).
+    make_entity(glm::mat4(1.0F), 4, glm::vec3(0.0F, 0.0F, -5.0F), {part(trunk, bark)});
+    const entt::entity far =
+        make_entity(glm::mat4(1.0F), 3, glm::vec3(2.0F, 0.0F, -5.0F), {part(trunk, bark)});
+    r.get<s::InstancedMesh>(far).shadow_distance = 30.0F;
+
+    InstancedDrawList shadow;
+    s::append_instanced_draws(r, view_proj, s::InstancedPass::shadow, shadow);
+    ASSERT_EQ(shadow.draws.size(), 2U);
+    // (entt visits entities in no promised order)
+    const bool limited_first = shadow.draws[0].shadow_distance > 0.0F;
+    const auto& unlimited = shadow.draws[limited_first ? 1 : 0];
+    const auto& limited = shadow.draws[limited_first ? 0 : 1];
+    EXPECT_EQ(unlimited.shadow_distance, 0.0F);
+    EXPECT_EQ(unlimited.instance_count, 4U);
+    EXPECT_EQ(limited.shadow_distance, 30.0F);
+    EXPECT_EQ(limited.instance_count, 3U);
+
+    // The GBuffer ignores it: one shared draw.
+    InstancedDrawList opaque;
+    s::append_instanced_draws(r, view_proj, s::InstancedPass::opaque, opaque);
+    ASSERT_EQ(opaque.draws.size(), 1U);
+    EXPECT_EQ(opaque.draws[0].shadow_distance, 0.0F);
+    EXPECT_EQ(opaque.draws[0].instance_count, 7U);
+}

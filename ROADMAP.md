@@ -252,6 +252,23 @@ JSON-RPC over loopback TCP to the engine.
     the camera (the standard approach for dense ground cover).
   - **R9.4 Instance culling + LOD.** GPU frustum/occlusion culling per
     instance (with R6) and distance fade / LOD selection.
+    - [x] R9.4.1 Per-view GPU instance culling: a compute pass culls the
+      frame's instanced draw lists per view (camera; each sun cascade
+      against its light-space volume extruded toward the sun by the caster
+      reach, and to the casters whose shadow can reach the camera slice the
+      cascade shades) into compacted visible lists + indexed indirect commands
+      (draw-indirect-count where offered, direct fallback without
+      drawIndirectFirstInstance); the GBuffer and shadow passes draw from
+      them. Shadow savings: a projected-size cull for casters
+      (`shadows.caster_min_texels`) and a per-model caster distance
+      (`instanced_mesh.shadow_distance`). CPU reference + GPU tests.
+    - [ ] R9.4.2 Instance LOD: distance / screen-size selection with a
+      hysteresis band and a dithered crossfade, from R17.1's mesh LODs
+      (cooker LODs via meshoptimizer); a `shadow_lod` bias for casters.
+    - [ ] R9.4.3 Two-pass Hi-Z occlusion culling for the main view (Haar &
+      Aaltonen 2015) on R12's pyramid (shared with R6).
+    - [ ] R9.4.4 Far-cascade caching / staggered updates, if correct with
+      moving casters.
   - **R9.5 Placement along curves, on surfaces, masks and brushes**
     (design: [`docs/design/cozy-builder.md` §4.5](docs/design/cozy-builder.md#45-placement-along-curves-on-surfaces-and-brushes-r95)).
     Scatter domains beyond rect / circle: along a G18 spline or curve

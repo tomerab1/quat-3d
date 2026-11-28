@@ -5,8 +5,10 @@
 // renderer's instanced draw lists — one InstancedDraw per (mesh, material)
 // across every InstancedMesh entity, never one entity or draw per placement.
 //
-// Culling is per instance on the CPU against a bounding sphere (the union of
-// the model's parts); GPU culling and LOD arrive with R9.4.
+// A coarse per-instance cull runs here on the CPU against a bounding sphere
+// (the union of the model's parts); the passes then cull each view on the GPU
+// (R6 / R9.4, renderer/instance_cull_pass.hpp): per shadow cascade, with the
+// projected-size and caster-distance (InstancedMesh::shadow_distance) tests.
 //
 // Frame-loop use (after the scene's transforms are current):
 //   append_instanced_transparent_items(reg, cam_vp, transparent_items) // before sorting

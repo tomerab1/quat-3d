@@ -40,12 +40,14 @@ struct ComputeKernel {
 };
 
 // Loads `spv` (cooked_shader_dir-relative name without extension) and builds
-// the kernel for `requests`. `what` prefixes errors.
+// the kernel for `requests` from its entry point `entry`. `what` prefixes
+// errors.
 [[nodiscard]] std::expected<ComputeKernel, core::Error>
 build_compute_kernel(const rhi::Device& device, const rhi::DescriptorBufferFunctions& fns,
                      rhi::PipelineCache& cache, const std::string& cooked_shader_dir,
                      const char* shader, std::span<const rhi::BindingRequest> requests,
-                     std::uint32_t push_bytes, const char* what);
+                     std::uint32_t push_bytes, const char* what,
+                     const char* entry = "compute_main");
 
 // One descriptor set (buffer) for `kernel`.
 [[nodiscard]] std::expected<rhi::DescriptorBuffer, core::Error>

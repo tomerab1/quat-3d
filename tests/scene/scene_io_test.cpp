@@ -164,6 +164,7 @@ TEST(GpuSceneIo, RoundTripsInstancedMeshAndScatter) {
     auto& mesh = scene.registry().emplace<s::InstancedMesh>(rocks);
     mesh.primitive.shape = s::PrimitiveShape::sphere;
     mesh.cast_shadows = false;
+    mesh.shadow_distance = 45.0F;
     for (int i = 0; i < 3; ++i) {
         s::InstanceTransform t;
         t.position = glm::vec3(static_cast<float>(i), 0.5F, -2.0F);
@@ -192,6 +193,7 @@ TEST(GpuSceneIo, RoundTripsInstancedMeshAndScatter) {
     const auto& lmesh = r.get<s::InstancedMesh>(lr);
     EXPECT_EQ(lmesh.primitive.shape, s::PrimitiveShape::sphere);
     EXPECT_FALSE(lmesh.cast_shadows);
+    EXPECT_EQ(lmesh.shadow_distance, 45.0F);
     ASSERT_EQ(lmesh.instances.size(), 3U);
     EXPECT_EQ(lmesh.instances[2].position, glm::vec3(2.0F, 0.5F, -2.0F));
     EXPECT_FLOAT_EQ(lmesh.instances[2].scale.x, 2.5F);

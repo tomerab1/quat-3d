@@ -35,11 +35,14 @@ import csm;
 import instancing;
 import material;
 
-// Mirrors engine::renderer::ShadowMaterialPushConstants (48 bytes).
+// Mirrors engine::renderer::ShadowMaterialPushConstants (64 bytes).
 struct PushConstants {
-    CascadeData*  cascades;
-    InstanceData* instances; // indexed by instance_index() (includes firstInstance)
-    float4        to_light;  // xyz = unit direction toward the sun
+    CascadeData*     cascades;
+    InstanceData*    instances; // indexed through the visible list
+    VisibleInstance* visible;   // this cascade's culled list, indexed by instance_index()
+    uint             pad_a;
+    uint             pad_b;
+    float4           to_light;  // xyz = unit direction toward the sun
     uint          cascade;
     uint          pad0;
     uint          pad1;
@@ -69,7 +72,7 @@ struct VsOut {
 
 [shader("vertex")]
 VsOut vertex_main(VsIn input) {
-    InstanceData inst = pc.instances[instance_index()];
+    InstanceData inst = pc.instances[pc.visible[instance_index()].index];
     VsOut o;
     o.clip = csm_mul(pc.cascades[0], pc.cascade, inst.world_position(input.position));
     o.depth = o.clip.z / o.clip.w;
@@ -94,7 +97,7 @@ struct MaskedVsOut {
 
 [shader("vertex")]
 MaskedVsOut vertex_masked(MaskedVsIn input) {
-    InstanceData inst = pc.instances[instance_index()];
+    InstanceData inst = pc.instances[pc.visible[instance_index()].index];
     MaskedVsOut o;
     o.clip = csm_mul(pc.cascades[0], pc.cascade, inst.world_position(input.position));
     o.uv = input.uv;

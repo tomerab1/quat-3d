@@ -132,6 +132,10 @@ struct InstancedMesh {
     Primitive                      primitive{};
     std::vector<InstanceTransform> instances;
     bool                           cast_shadows = true;
+    // Placements farther than this from the camera (metres, bounding sphere
+    // edge) cast no sun shadow (R9.4: distant foliage stops costing shadow
+    // passes); 0 = no limit.
+    float                          shadow_distance = 0.0F;
 };
 
 // One (mesh, material) of an InstancedMesh's model; `local` places it in the

@@ -178,6 +178,12 @@ pub struct ShadowParams {
     /// How far toward the sun casters are captured, metres 1..10000 (default 200).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub caster_distance: Option<f64>,
+    /// Cull shadow casters per cascade on the GPU (default true; off for A/B profiling).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gpu_culling: Option<bool>,
+    /// Casters narrower than this many shadow texels of a cascade skip it, 0..16 (default 1; 0 = off).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub caster_min_texels: Option<f64>,
     /// Tint each pixel by its cascade (debug view).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub debug_cascades: Option<bool>,

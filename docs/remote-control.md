@@ -293,7 +293,8 @@ numbers — see [Material shaders](#material-shaders-roadmap-a6)),
 `instanced_mesh` (many copies of one model in one entity, drawn instanced:
 `gltf` path relative to the project root + optional `node`, or — with `gltf`
 empty — the `primitive` fields `shape` / `color` / `metallic` / `roughness` /
-`emissive`; `cast_shadows`; `instances`: `[{position, rotation (Euler degrees
+`emissive`; `cast_shadows`; `shadow_distance` (metres from the camera
+beyond which placements cast no sun shadow, 0 = no limit); `instances`: `[{position, rotation (Euler degrees
 YXZ), scale (number or [x,y,z])}, ...]` or bare `[x,y,z]` positions, at most
 100000, entity-local; read-only `instance_count`. `instances` is omitted —
 and cannot be written — while a `scatter` generates them),
@@ -503,7 +504,7 @@ Settings groups (the renderer implements exactly these):
 | `bloom` | `enabled`, `threshold` [0, 8], `knee` [0, 1], `intensity` [0, 1], `radius` [0.2, 2] |
 | `taa` | `enabled` (off: no jitter, no history — the frame passes through — and native resolution), `feedback` [0, 0.98] (history weight; the resolve caps a pixel's accumulated sample weight at 1 / (1 − feedback)) |
 | `upscaler` | `mode` `"native_aa"` \| `"quality"` \| `"balanced"` \| `"performance"` (render scale 1, 1/1.5, 1/1.7, 1/2 per axis; needs TAA on), `render_scale` [0, 1] (overrides the mode when > 0, min 0.25), `sharpness` [0, 1], `backend` `"taau"` \| `"fsr2"` (FSR 2 is not built yet: falls back to `taau`) |
-| `shadows` | cascaded sun shadows: `enabled` (off: no shadow passes), `max_distance` [5, 5000] m (where shadows end), `cascades` integer [1, 4], `split_lambda` [0, 1] (0 linear, 1 logarithmic splits), `fit_to_depth` (fit the cascades to the frame's depth range on the GPU), `blend_band` [0, 0.5], `pcf_radius` [0, 8] texels, `sun_size_deg` [0, 10] (PCSS penumbra; 0 = fixed filter), `normal_bias_texels` / `depth_bias_texels` [0, 8], `caster_distance` [1, 10000] m, `debug_cascades`. Deprecated (accepted, ignored): `extent_m`, `depth_bias`, `slope_bias` |
+| `shadows` | cascaded sun shadows: `enabled` (off: no shadow passes), `max_distance` [5, 5000] m (where shadows end), `cascades` integer [1, 4], `split_lambda` [0, 1] (0 linear, 1 logarithmic splits), `fit_to_depth` (fit the cascades to the frame's depth range on the GPU), `blend_band` [0, 0.5], `pcf_radius` [0, 8] texels, `sun_size_deg` [0, 10] (PCSS penumbra; 0 = fixed filter), `normal_bias_texels` / `depth_bias_texels` [0, 8], `caster_distance` [1, 10000] m, `gpu_culling` (cull casters per cascade on the GPU), `caster_min_texels` [0, 16] (casters narrower than this many texels of a cascade skip it; 0 = off), `debug_cascades`. Deprecated (accepted, ignored): `extent_m`, `depth_bias`, `slope_bias` |
 | `ao` | GTAO: `enabled`, `radius` [0.05, 10] m, `strength` [0.5, 5], `falloff_range` [0, 1], `sample_distribution_power` [1, 4], `thin_occluder_compensation` [0, 0.7], `depth_mip_offset` [0, 8], `slices` integer [1, 9], `steps_per_slice` integer [1, 8], `denoise_passes` integer [0, 3], `denoise_blur_beta` [0.1, 10], `bent_normals`, `specular_occlusion`, `multi_bounce` |
 | `contact_shadows` | `enabled`, `length` [0.01, 4] m, `steps` integer [2, 64], `thickness` [0.01, 4] m, `intensity` [0, 1] |
 | `ibl` | `intensity` [0, 4] — scales image-based ambient light and reflections |

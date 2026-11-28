@@ -139,6 +139,12 @@ void draw_instanced_mesh(entt::registry& r, entt::entity e, scene::InstancedMesh
         draw_primitive(p);
     }
     (void)ui::prop_bool("Cast shadows", mesh.cast_shadows, {.reset = true});
+    if (mesh.cast_shadows) {
+        (void)ui::prop_float("Shadow distance", mesh.shadow_distance,
+                             {.speed = 1.0F, .min = 0.0F, .max = 100000.0F, .format = "%.0f m"},
+                             {.reset = 0.0F,
+                              .tooltip = "Farther placements cast no shadow (0 = no limit)"});
+    }
 
     char buf[96];
     if (const auto* parts = r.try_get<scene::InstancedMeshParts>(e)) {
