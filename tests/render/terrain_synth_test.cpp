@@ -180,6 +180,64 @@ TEST(GpuTerrainSynth, GridErosionTracksTheCpuReference) {
     }
 }
 
+// Issue #69 / PR #90 review: the relax_* kernels and terrain::run_talus_op
+// produce the same bits from the same input. With rain and thermal
+// weathering off, the simulation steps leave the noise field bit for bit
+// (every update adds an exact zero), so a GPU job without relaxation reads
+// back the GPU's own noise field N. Feeding that N to the CPU reference
+// (erode_grid: the same identity steps, then relax_talus) must reproduce,
+// bit for bit, what the GPU job with relaxation reads back: N + (E - N)
+// where the border fade is 1, N where it is 0.
+TEST(GpuTerrainSynth, TalusRelaxationIsBitIdenticalToTheCpuReference) {
+    QUAT_REQUIRE_GPU(g);
+    r::TerrainSynthPass pass = make_pass(*g);
+    ASSERT_TRUE(pass.valid());
+
+    t::TerrainParams p = noise_params();
+    p.erosion_model = t::ErosionModel::grid;
+    p.grid.iterations = 1;
+    p.grid.rain = 0.0F;
+    p.grid.thermal_rate = 0.0F;
+    p.grid.talus = 0.25F; // the 60 m relief has plenty steeper than 14°
+    ASSERT_EQ(p.grid.relax_cycles, 3U);
+    t::TerrainParams unrelaxed = p;
+    unrelaxed.grid.relax_cycles = 0;
+
+    const t::Heightmap noise = synthesize(*g, pass, unrelaxed); // the GPU's own N
+    const t::Heightmap gpu = synthesize(*g, pass, p);
+    ASSERT_TRUE(noise.valid());
+    ASSERT_TRUE(gpu.valid());
+
+    std::vector<float> cpu = noise.heights;
+    const std::uint32_t res = p.resolution;
+    ASSERT_TRUE(t::erode_grid(cpu, res, noise.metres_per_texel(), p.grid));
+
+    int compared = 0;
+    int mismatches = 0;
+    double moved = 0.0;
+    for (std::uint32_t z = 0; z < res; ++z) {
+        for (std::uint32_t x = 0; x < res; ++x) {
+            const std::size_t i = static_cast<std::size_t>(z) * res + x;
+            const float fade = t::grid_erosion_fade(x, z, res);
+            float expected = noise.heights[i];
+            if (fade >= 1.0F) {
+                const float d = cpu[i] - noise.heights[i];
+                expected = noise.heights[i] + d;
+            } else if (fade > 0.0F) {
+                continue; // the blend may fuse on the GPU: not the relaxation's bits
+            }
+            ++compared;
+            mismatches += same_bits(gpu.heights[i], expected) ? 0 : 1;
+            moved = std::max(moved, static_cast<double>(std::abs(cpu[i] - noise.heights[i])));
+        }
+    }
+    std::printf("[terrain synth] talus relaxation: %d of %d texels differ from the CPU "
+                "reference; it moved up to %.3g m\n",
+                mismatches, compared, moved);
+    ASSERT_GT(moved, 1.0) << "the relaxation did nothing";
+    EXPECT_EQ(mismatches, 0) << "the GPU cascade's bits differ from run_talus_op's";
+}
+
 TEST(GpuTerrainSynth, AdjacentGpuTilesShareBitIdenticalEdges) {
     QUAT_REQUIRE_GPU(g);
     r::TerrainSynthPass pass = make_pass(*g);
@@ -288,9 +346,9 @@ TEST(GpuTerrainSynth, TileImageHoldsTheReadBackHeights) {
         << "the sampled tile image differs from the read-back heights";
 }
 
-// The six kernels are hot-reloadable pipelines whose bindings come from
+// The ten kernels are hot-reloadable pipelines whose bindings come from
 // reflection by name: reloading the unchanged shader passes the R2
-// compatibility check, rebuilds all six, and synthesis still matches.
+// compatibility check, rebuilds all ten, and synthesis still matches.
 TEST(GpuTerrainSynth, HotReloadRebuildsEveryKernel) {
     QUAT_REQUIRE_GPU(g);
     r::TerrainSynthPass pass = make_pass(*g);
@@ -301,7 +359,7 @@ TEST(GpuTerrainSynth, HotReloadRebuildsEveryKernel) {
     auto report = g->cache.reload(g->shader_dir + "/terrain_synth.spv");
     ASSERT_OK(report);
     EXPECT_TRUE(report->errors.empty()) << report->errors.front();
-    EXPECT_GE(report->rebuilt, 6U);
+    EXPECT_GE(report->rebuilt, 10U);
     const t::Heightmap after = synthesize(*g, pass, p);
     ASSERT_TRUE(after.valid());
     EXPECT_TRUE(bit_identical(before, after)) << "the reloaded kernels changed the result";

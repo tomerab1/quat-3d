@@ -100,4 +100,19 @@ TEST(ScriptComponent, BadValuesAreRejectedWithPreciseErrors) {
     EXPECT_TRUE(remove_component(r, e, "script") == false);
 }
 
+// Lenient decoding (the editor's Add Component, scene files) may add a script
+// before its file is chosen; it runs nothing until a path is set. Remote
+// requests (strict) must name the file (above).
+TEST(ScriptComponent, LenientAddWithoutAPathLeavesItEmpty) {
+    Scene scene;
+    entt::registry& r = scene.registry();
+    const entt::entity e = scene.create_entity("x");
+    ASSERT_OK(apply_component(r, e, "script", json::object(), false));
+    ASSERT_TRUE(r.all_of<Script>(e));
+    EXPECT_TRUE(r.get<Script>(e).path.empty());
+    ASSERT_OK(apply_component(r, e, "script", json{{"path", "coin.lua"}}, true))
+        << "a later strict edit of an existing script need not repeat anything else";
+    EXPECT_EQ(r.get<Script>(e).path, "coin.lua");
+}
+
 } // namespace
