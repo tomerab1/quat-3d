@@ -67,7 +67,9 @@ damped on a **log** scale, so a zoom step feels the same at 6 m and at 180 m.
   field of view, so a focal length set on the lens is respected. With
   `focus_lens` (the default), the lens's `focus_distance_m` follows the
   rig's damped distance, so depth of field, including a tilt-shift look,
-  stays focused on what the rig orbits.
+  stays focused on what the rig orbits. The rig writes the focus distance
+  every frame, so a `focus_distance_m` set by hand on that camera is
+  overwritten. To focus the lens yourself, set `focus_lens` to false.
 
 The rig runs on **real** time, before the scene tick, so the camera still
 moves while the simulation is paused.
