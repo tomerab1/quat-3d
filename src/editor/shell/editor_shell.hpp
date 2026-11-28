@@ -25,6 +25,7 @@
 #include "../asset_browser.hpp"
 #include "../panels/inspector_parts.hpp"
 #include "../scene_hierarchy.hpp"
+#include "../spline_gizmo.hpp"
 #include "../ui/appearance.hpp"
 #include "commands.hpp"
 #include "export_dialog.hpp"
@@ -129,6 +130,7 @@ public:
     bool                     rename_pending = false; // F2: the hierarchy starts renaming
     AnimationPreviewState    anim_state;
     PhysicsDebugState        physics_state;
+    SplineGizmoState         spline_gizmo;  // G18.3 spline handles + draw mode
     HierarchyState                        hierarchy;
     AssetBrowserState                     assets;
     std::unique_ptr<BehaviorPanel>        behavior_panel;

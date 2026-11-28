@@ -78,6 +78,8 @@ void register_math(LuaVm& vm);
 void register_entity(LuaVm& vm, ApiContext& ctx);
 void register_scene(LuaVm& vm, ApiContext& ctx);
 void register_services(LuaVm& vm, ApiContext& ctx);
+// The `spline` table (G18): queries on an entity's spline.
+void register_spline(LuaVm& vm, ApiContext& ctx);
 void register_input(LuaVm& vm, ApiContext& ctx);
 
 // Transform helpers shared by the entity and scene bindings.

@@ -732,17 +732,17 @@ the engine.
     game skills from `<project>/mcp/skills/` served beside A12's. The game
     repository's `.mcp.json` runs the SDK's matching `quat-mcp`. *(needs
     G17.1, A12 #83)*
-- [ ] **G18 — Splines and curve networks.**
-  - [ ] **G18.1 `Spline` component + curve library**: centripetal
+- [x] **G18 — Splines and curve networks.** ([`docs/splines.md`](docs/splines.md))
+  - [x] **G18.1 `Spline` component + curve library**: centripetal
     Catmull-Rom (Yuksel et al. 2011), cubic Bézier and polylines with
     per-point width / height / tags; arc-length tables and even-spacing
     sampling; up-locked and rotation-minimising frames (Wang et al. 2008);
     closest point, XZ intersections, offsets, bounds; ground projection via
     `GroundHeightFn`; codec, remote `spline.*`, MCP, Lua.
-  - [ ] **G18.2 Curve networks**: endpoint snapping, splits at crossings,
+  - [x] **G18.2 Curve networks**: endpoint snapping, splits at crossings,
     node classification (end / bend / T / X / n-way), ids stable under
     local edits. *(needs G18.1)*
-  - [ ] **G18.3 Stroke capture**: pointer drag → ground hits → resample,
+  - [x] **G18.3 Stroke capture**: pointer drag → ground hits → resample,
     Ramer–Douglas–Peucker, Schneider (1990) cubic fit → spline; loop
     closing, straight segments; shared by games and the editor's spline
     gizmo. *(needs G18.1, G5.1)*

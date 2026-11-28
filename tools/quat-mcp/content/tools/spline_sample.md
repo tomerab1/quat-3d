@@ -1,0 +1,3 @@
+Evenly spaced points along a spline in world space, for placing things along it (posts, trees, lamps). Each sample has `position`, unit `tangent`, the interpolated `width`, `height` and `tags`, and `distance` from the start. With `frames`, it also has `up` and `right` vectors: `up_locked` keeps up vertical (walls, fences), and `rotation_minimising` twists as little as possible (rails, ribbons on slopes). `right` points to the right of the direction of travel.
+
+`spacing` is in metres (default 1) and gives at most 4096 samples. `phase` shifts the first sample. `fit_to_ends` adjusts the spacing so samples land exactly on both ends. Samples follow the terrain when the spline does (`ground` overrides this), and `missing_ground` counts samples over terrain that is not loaded.

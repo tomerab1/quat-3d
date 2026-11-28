@@ -232,9 +232,16 @@ void draw_viewport(EditorShell& shell) {
 
     if (ctx.scene != nullptr) {
         gizmo(shell, min, max);
-        picking(shell, min, max);
+        // The spline gizmo (G18.3) handles its clicks before selection picking.
+        const bool spline_used =
+            !ImGuizmo::IsOver() && !ImGuizmo::IsUsing() &&
+            spline_gizmo(*ctx.scene, shell.selected, ctx.view_proj, min, max,
+                         shell.viewport_hovered && !overlay_rect(min).contains(ImGui::GetMousePos()),
+                         shell.spline_gizmo);
+        if (!spline_used) picking(shell, min, max);
     }
     overlay_toolbar(shell, min);
+    if (ctx.scene != nullptr) spline_gizmo_overlay(*ctx.scene, shell.selected, min, max, shell.spline_gizmo);
     stats_overlay(shell, min, max);
     ImGui::End();
 }

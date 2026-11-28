@@ -276,6 +276,27 @@ Key names: `a`–`z`, `0`–`9`, `f1`–`f12`, `space`, `enter` (`return`),
 `grave`, `comma`, `period`, `slash`, `caps_lock`. Unknown names raise an
 error listing what exists.
 
+## `spline`
+
+Queries on an entity's spline (G18, [`splines.md`](splines.md)) in world
+space. Edit the spline itself through the codec: `e:set("spline", {...})`.
+
+| Call | Notes |
+|---|---|
+| `spline.length(e)` | Length in metres. |
+| `spline.at(e, distance)` | `{ position, tangent, up, right, width, height, tags, distance }` at that distance from the start (up-locked frame). |
+| `spline.sample(e, spacing, opts?)` | An array of samples every `spacing` metres (at most 4096); `opts`: `phase`, `fit_to_ends`, `frames` (`"up_locked"` or `"rotation_minimising"`: adds `up` / `right`). A spline that follows the ground is draped through its cached samples. |
+| `spline.closest(e, point, xz?)` | `{ position, distance, gap, param }`, or `nil` on an empty spline. |
+| `spline.fit(points, opts?)` | Fits a stroke (`vec3`s, or `{ position = vec3, straight = true }` for a straight segment) into a `spline` component table for `e:set("spline", t)`; `opts`: `fit_tolerance`, `jitter_tolerance`, `sample_spacing`, `corner_cos`, `close_radius`, `min_length`, `width`, `output` (`"catmull_rom"` or `"cubic_bezier"`). |
+
+```lua
+-- Lamps every 6 m along the path this entity carries.
+for _, s in ipairs(spline.sample(self.entity, 6, { fit_to_ends = true })) do
+    local lamp = scene.spawn({ name = "lamp", point_light = { radius = 8 } })
+    lamp:set_position(s.position + s.right * (s.width * 0.5 + 0.3) + vec3(0, 2.5, 0))
+end
+```
+
 ## `time`, `log`, `print`
 
 | Call | Returns |

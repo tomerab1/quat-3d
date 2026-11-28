@@ -26,6 +26,7 @@
 #include "engine/scene/components.hpp"
 #include "engine/scene/ground_placement.hpp"
 #include "engine/scene/scene.hpp"
+#include "engine/scene/spline.hpp"
 #include "engine/scene/view_clip.hpp"
 #include "engine/terrain/budget.hpp"
 
@@ -306,6 +307,9 @@ void WorldRuntime::simulate(engine::scene::Scene& scene, std::uint64_t frame_num
         simulate_slice(scene, slices.dt, play);
     }
     scene.tick(sim_dt, foot_probe_); // advances any Animators by simulated time
+    // Splines (G18): world-space curves and ground-draped samples for the
+    // edits and transforms resolved above.
+    engine::scene::update_spline_caches(scene.registry(), ground_height_at_);
 
     // Replication: the host broadcasts moved entities (fresh world poses).
     QUAT_ZONE_C("net_publish", engine::core::ProfileCategory::system);

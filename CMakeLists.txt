@@ -265,6 +265,32 @@ target_link_libraries(engine_input PUBLIC engine_flags engine_core nlohmann_json
 target_include_directories(engine_input PUBLIC ${ENGINE_PUBLIC_INCLUDE})
 
 # ---------------------------------------------------------------------------
+# engine_spline — splines and curve networks (G18): the curve library
+# (centripetal Catmull-Rom, Bézier, polylines, arc length, frames, queries,
+# offsets, ground projection), curve networks and stroke capture. CPU-only
+# and Vulkan-free. Bit-identical results on every platform: the code uses
+# only + - * / sqrt, and floating-point contraction (FMA fusion, which
+# clang enables by default on arm64) is off. MSVC's default /fp:precise
+# does not contract.
+# ---------------------------------------------------------------------------
+add_library(engine_spline STATIC
+    src/spline/segments.cpp
+    src/spline/curve.cpp
+    src/spline/frames.cpp
+    src/spline/closest.cpp
+    src/spline/crossings.cpp
+    src/spline/offset.cpp
+    src/spline/ground.cpp
+    src/spline/network.cpp
+    src/spline/stroke_fit.cpp
+    src/spline/stroke.cpp)
+target_link_libraries(engine_spline PUBLIC engine_flags glm::glm)
+# Stroke capture reads G5 input actions (stroke.hpp forward-declares them).
+target_link_libraries(engine_spline PRIVATE engine_input)
+target_include_directories(engine_spline PUBLIC ${ENGINE_PUBLIC_INCLUDE})
+target_compile_options(engine_spline PRIVATE $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-ffp-contract=off>)
+
+# ---------------------------------------------------------------------------
 # engine_rhi — thin Vulkan abstraction (instance/device, swapchain, ...).
 # ---------------------------------------------------------------------------
 add_library(engine_rhi STATIC
@@ -450,6 +476,8 @@ add_library(engine_scene STATIC
     src/scene/camera_rig.cpp
     src/scene/camera_rig_system.cpp
     src/scene/component_json_camera_rig.cpp
+    src/scene/component_json_spline.cpp
+    src/scene/spline_system.cpp
     src/scene/world_clock.cpp
     src/scene/world_clock_json.cpp
     src/scene/world_clock_api.cpp
@@ -462,7 +490,7 @@ add_library(engine_scene STATIC
 # handle and the glTF loader extracts skins.
 target_link_libraries(engine_scene PUBLIC
     engine_flags engine_input engine_asset engine_rhi engine_renderer engine_animation engine_physics
-    engine_terrain engine_nav engine_audio engine_weather engine_astro EnTT::EnTT)
+    engine_terrain engine_nav engine_audio engine_weather engine_astro engine_spline EnTT::EnTT)
 # fastgltf and stb (image decode) are implementation details of the loader.
 # nlohmann_json is PUBLIC: component_json.hpp exposes JSON values (the codec
 # shared by scene files and the remote-control API).
@@ -509,6 +537,7 @@ add_library(engine_script STATIC
     src/script/script_api_scene.cpp
     src/script/script_api_services.cpp
     src/script/script_api_input.cpp
+    src/script/script_api_spline.cpp
     src/script/script_source.cpp
     src/script/script_runtime.cpp
     src/script/script_files.cpp)
@@ -676,6 +705,10 @@ add_library(engine_remote_world STATIC
     src/remote/world/script_commands.cpp
     src/remote/world/input_commands.cpp
     src/remote/world/camera_rig_commands.cpp
+    src/remote/world/spline_common.cpp
+    src/remote/world/spline_commands.cpp
+    src/remote/world/spline_network_commands.cpp
+    src/remote/world/spline_fit_commands.cpp
     src/remote/world/profile_commands.cpp
     src/remote/world/image_encode.cpp
     src/remote/world/stb_image_write_impl.cpp)
@@ -782,6 +815,7 @@ if(ENGINE_EDITOR)
         src/editor/script_inspector.cpp
         src/editor/animation_inspector.cpp
         src/editor/camera_rig_inspector.cpp
+        src/editor/spline_gizmo.cpp
         src/editor/grass_inspector.cpp
         src/editor/particle_inspector.cpp
         src/editor/physics_inspector.cpp

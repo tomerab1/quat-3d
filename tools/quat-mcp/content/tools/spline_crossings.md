@@ -1,0 +1,1 @@
+Where two splines cross when seen from above (XZ): each crossing gives `param_a` / `param_b` and `position_a` / `position_b` (each on its own curve, at its own height). Omit `other` to list where a spline crosses itself. Use this to find junctions before adding a gate, bridge or intersection.

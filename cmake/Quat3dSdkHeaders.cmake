@@ -41,6 +41,14 @@ set(QUAT3D_SDK_STABLE_HEADERS
     engine/scene/scatter.hpp
     engine/scene/scene.hpp
     engine/scene/scene_io.hpp
+    engine/scene/spline.hpp
+    engine/spline/curve.hpp
+    engine/spline/frames.hpp
+    engine/spline/ground.hpp
+    engine/spline/network.hpp
+    engine/spline/queries.hpp
+    engine/spline/spline.hpp
+    engine/spline/stroke.hpp
     engine/terrain/heightmap.hpp)
 
 set(QUAT3D_SDK_SUPPORT_HEADERS
