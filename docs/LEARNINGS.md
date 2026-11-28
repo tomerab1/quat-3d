@@ -664,3 +664,15 @@ configurations. `check-compile.sh` now also compiles `src/app/` and
 `src/player/` without the editor and with `QUAT_SHIPPING`; a library holding
 `#ifdef ENGINE_EDITOR` code is built once per configuration
 (`game_world` / `game_world_runtime`).
+
+## A conflicted source list was resolved to one side (P4 train merge)
+
+Resolving `engine_editor`'s source list in the train merge, one side was
+taken whole: the E8 shell's 24 sources vanished, and `game` failed to link
+(`EditorShell` undefined) after a CI round-trip. Per-file compile checks
+cannot see this, and neither can a check that only verifies the listed
+paths exist.
+**Rule:** a conflicted list (sources, link libraries, includes) is resolved
+as the union of both sides. After the merge, confirm every `src/` and
+`tools/` `.cpp` appears in a CMake source list, and that nothing the other
+side added was dropped (`git diff <other-parent> -- CMakeLists.txt | grep '^-'`).
