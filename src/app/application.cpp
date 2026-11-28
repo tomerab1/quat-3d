@@ -289,10 +289,12 @@ void Application::init_scripts() {
     if (play_on_start && !world_.has_demo_physics()) *play_mode_.request() = true;
 }
 
+#if !defined(QUAT_SHIPPING)
 engine::remote::HdriInfo Application::hdri_info() const {
     const HdriStatus& s = renderer_.hdri_status();
     return engine::remote::HdriInfo{s.path, s.loaded, s.width, s.height, s.sun_found, s.error};
 }
+#endif // !QUAT_SHIPPING
 
 void Application::load_startup_hdri() {
     std::string hdri = world_.startup_environment().hdri;
@@ -328,12 +330,13 @@ void Application::connect_remote() {
     remote_targets.wind_clock = [this] { return renderer_.wind_clock(); };
     remote_targets.material_overrides = &renderer_.material_overrides();
     remote_targets.reset_temporal = [this] { renderer_.reset_temporal(); };
+    world_.fill_remote_targets(remote_targets);
+#if !defined(QUAT_SHIPPING)
+    // environment.* HDRI control (R21), remote control only.
     remote_targets.hdri_info = [this] { return hdri_info(); };
     remote_targets.set_hdri = [this](const std::string& relative) {
         return renderer_.set_hdri(relative, project_root());
     };
-    world_.fill_remote_targets(remote_targets);
-#if !defined(QUAT_SHIPPING)
     // terrain.status only (remote control): wired here, not in WorldRuntime,
     // whose library the shipping player shares with quat-player.
     remote_targets.terrain_status = [this] { return world_.terrain_status(); };
