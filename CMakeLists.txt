@@ -265,6 +265,27 @@ target_link_libraries(engine_input PUBLIC engine_flags engine_core nlohmann_json
 target_include_directories(engine_input PUBLIC ${ENGINE_PUBLIC_INCLUDE})
 
 # ---------------------------------------------------------------------------
+# engine_spline — splines and curve networks (G18): the curve library
+# (centripetal Catmull-Rom, Bézier, polylines, arc length, frames, queries,
+# offsets, ground projection), curve networks and stroke capture. CPU-only
+# and Vulkan-free. Bit-identical results on every platform: the code uses
+# only + - * / sqrt, and floating-point contraction (FMA fusion, which
+# clang enables by default on arm64) is off. MSVC's default /fp:precise
+# does not contract.
+# ---------------------------------------------------------------------------
+add_library(engine_spline STATIC
+    src/spline/segments.cpp
+    src/spline/curve.cpp
+    src/spline/frames.cpp
+    src/spline/closest.cpp
+    src/spline/crossings.cpp
+    src/spline/offset.cpp
+    src/spline/ground.cpp)
+target_link_libraries(engine_spline PUBLIC engine_flags glm::glm)
+target_include_directories(engine_spline PUBLIC ${ENGINE_PUBLIC_INCLUDE})
+target_compile_options(engine_spline PRIVATE $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-ffp-contract=off>)
+
+# ---------------------------------------------------------------------------
 # engine_rhi — thin Vulkan abstraction (instance/device, swapchain, ...).
 # ---------------------------------------------------------------------------
 add_library(engine_rhi STATIC
@@ -460,7 +481,7 @@ add_library(engine_scene STATIC
 # handle and the glTF loader extracts skins.
 target_link_libraries(engine_scene PUBLIC
     engine_flags engine_input engine_asset engine_rhi engine_renderer engine_animation engine_physics
-    engine_terrain engine_nav engine_audio engine_weather engine_astro EnTT::EnTT)
+    engine_terrain engine_nav engine_audio engine_weather engine_astro engine_spline EnTT::EnTT)
 # fastgltf and stb (image decode) are implementation details of the loader.
 # nlohmann_json is PUBLIC: component_json.hpp exposes JSON values (the codec
 # shared by scene files and the remote-control API).
