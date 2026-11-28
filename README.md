@@ -304,6 +304,8 @@ instead of Homebrew, set `VULKAN_SDK=$HOME/VulkanSDK/<version>/macOS`.
 A Vulkan 1.3 driver with dynamic rendering, synchronization2 and buffer device
 addresses, plus `VK_EXT_descriptor_buffer` (any recent NVIDIA, AMD or Intel
 driver, or Mesa) — or a build with `ENGINE_DESCRIPTOR_SETS_FALLBACK=ON`.
+In such a build `QUAT_FORCE_DESCRIPTOR_SETS=1` takes the classic-sets path on
+any device, so Linux runs (lavapipe included) reproduce what macOS runs do.
 
 ## Running
 

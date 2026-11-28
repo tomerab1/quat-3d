@@ -4,6 +4,8 @@
 #include <array>
 #include <cstdint>
 #include <cstring>
+#include <optional>
+#include <vector>
 
 #include <gtest/gtest.h>
 #include <vulkan/vulkan.h>
@@ -112,6 +114,63 @@ TEST(GpuAllocator, StagedUploadRoundTripsThroughTheTransferQueue) {
     for (std::size_t i = 0; i < source.size(); ++i) {
         ASSERT_EQ(got[i], source[i]) << "first mismatch at byte " << i;
     }
+}
+
+// The classic-sets fallback (every macOS / MoltenVK run) turns descriptor
+// buffer addresses back into VkBuffer + offset. Through rounds of creating
+// and destroying buffers — VMA hands freed ranges to new buffers, so
+// addresses repeat — every address inside a live buffer must resolve to that
+// buffer at the right offset, and never to a destroyed one; addresses are
+// per device.
+TEST(GpuAllocator, ClassicFallbackResolvesAddressesThroughReuse) {
+#ifndef ENGINE_DESCRIPTOR_SETS_FALLBACK
+    GTEST_SKIP() << "built without ENGINE_DESCRIPTOR_SETS_FALLBACK";
+#else
+    QUAT_REQUIRE_GPU(g);
+    using engine::rhi::GpuBuffer;
+    const VkDevice dev = g->device.handle();
+    const VkBufferUsageFlags usage =
+        VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
+    std::vector<std::optional<GpuBuffer>> live(48);
+    auto check_all = [&](int round) {
+        for (std::size_t i = 0; i < live.size(); ++i) {
+            if (!live[i]) continue;
+            const GpuBuffer& b = *live[i];
+            const VkDeviceAddress base = engine::rhi::buffer_device_address(dev, b);
+            for (const VkDeviceSize off : {VkDeviceSize{0}, b.size() / 2, b.size() - 1}) {
+                const auto found = engine::rhi::find_buffer_for_address(dev, base + off);
+                ASSERT_TRUE(found.has_value()) << "round " << round << " buffer " << i;
+                EXPECT_EQ(found->buffer, b.handle()) << "round " << round << " buffer " << i;
+                EXPECT_EQ(found->offset, off) << "round " << round << " buffer " << i;
+            }
+            // Another device never sees this one's buffers.
+            const VkDevice other = reinterpret_cast<VkDevice>(&live); // a key, never called
+            EXPECT_FALSE(engine::rhi::find_buffer_for_address(other, base).has_value());
+        }
+    };
+    for (int round = 0; round < 6; ++round) {
+        for (std::size_t i = 0; i < live.size(); ++i) {
+            if (live[i]) continue;
+            // Mixed sizes (the engine's constant blocks are 256-byte aligned
+            // slices of small buffers) so freed ranges are reused unevenly.
+            const VkDeviceSize size = 256U * (1U + (i * 7U + static_cast<std::size_t>(round)) % 5U);
+            auto b = g->allocator.create_buffer(
+                size, usage, VMA_MEMORY_USAGE_AUTO,
+                VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT |
+                    VMA_ALLOCATION_CREATE_MAPPED_BIT);
+            ASSERT_OK(b);
+            live[i] = std::move(*b);
+        }
+        check_all(round);
+        // Free every other (alternating parity) and one moved-over buffer.
+        for (std::size_t i = static_cast<std::size_t>(round % 2); i < live.size(); i += 2) {
+            live[i].reset();
+        }
+        if (live[1] && live[3]) *live[1] = std::move(*live[3]); // move-assign frees live[1]'s
+        live[3].reset();
+        check_all(round);
+    }
+#endif
 }
 
 } // namespace
