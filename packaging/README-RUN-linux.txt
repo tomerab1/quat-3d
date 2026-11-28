@@ -23,6 +23,14 @@ Requirements
 
 Options (environment variables)
 -------------------------------
+    QUAT_DEMO=mountain ./game             the mountain-forest showcase
+    QUAT_TIME=2026-06-21T21:30+02:00 ./game
+                                          a world clock at that date and time
+                                          drives the sun; QUAT_LATLON=<lat>,<lon>
+                                          sets the place (default Paris),
+                                          QUAT_TIME_SCALE=<n> its speed (0 = frozen)
+    QUAT_HDRI=hdri/sky.hdr ./game         light the scene with a Radiance .hdr
+                                          panorama (path relative to this folder)
     QUAT_TERRAIN=1 ./game                 add a procedural terrain tile
     QUAT_PHYSICS=1 ./game                 physics demo scene
     QUAT_CHARACTER=1 ./game               character-controller demo
@@ -34,6 +42,23 @@ Options (environment variables)
     QUAT_NO_AUDIO=1                       mute (no playback device)
     QUAT_ASSET_ROOT=<dir>                 data directory (assets/ + cooked/shaders/);
                                           default: the folder that holds `game`
+
+AI assistants (Claude Code)
+---------------------------
+quat-mcp, next to the game, is the MCP server that lets Claude Code drive
+the running game. Start the game with the endpoint, then register the
+server by its absolute path (the token needs no setup):
+
+    QUAT_REMOTE=1 ./game
+    claude mcp add quat-3d -- "$PWD/quat-mcp" --project-root "$PWD"
+
+--project-root is where asset_fetch saves downloaded models (this folder).
+
+Or install the quat-3d plugin, which adds the workflow skills: in Claude
+Code run `/plugin marketplace add tomerab1/quat-3d` and
+`/plugin install quat-3d@quat-3d`, then give its quat_mcp_command option
+the absolute path above, and its project_root option the --project-root
+value.
 
 Troubleshooting
 ---------------

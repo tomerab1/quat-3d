@@ -23,3 +23,8 @@ Troubleshooting
       @EXE@.exe > log.txt 2>&1
   and open log.txt.
 - "vulkan-1.dll was not found" / no suitable GPU: update the GPU driver.
+
+Licences
+--------
+LICENSE and THIRD_PARTY_NOTICES.md (next to @EXE@.exe) are the licences of the
+quat-3d engine and of the third-party libraries this game ships with.
