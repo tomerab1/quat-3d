@@ -94,19 +94,26 @@ PrimitiveAssets load_primitive_assets(const Primitive& primitive, rhi::GpuAlloca
         return upload_mesh(make_primitive_data(primitive.shape), allocator, transfer);
     });
 
+    out.material = load_primitive_material(primitive, allocator, transfer, assets, &out.material_key);
+    return out;
+}
+
+asset::AssetHandle<asset::MaterialAsset> load_primitive_material(const Primitive& primitive,
+                                                                 rhi::GpuAllocator& allocator,
+                                                                 const rhi::TransferContext& transfer,
+                                                                 asset::AssetManager& assets,
+                                                                 std::string* key_out) {
     const asset::PbrMaterialParams params = primitive_material_params(primitive);
     char hex[17];
     std::snprintf(hex, sizeof hex, "%016llx",
                   static_cast<unsigned long long>(material_hash(params, primitive.shader)));
-    out.material_key = std::string("primitive/material/") + hex;
-    out.material =
-        assets.load<asset::MaterialAsset>(out.material_key, [&](const std::filesystem::path&) {
-            auto material =
-                asset::upload_material(params, asset::MaterialTextures{}, allocator, transfer);
-            if (material) material->shader = primitive.shader;
-            return material;
-        });
-    return out;
+    const std::string key = std::string("primitive/material/") + hex;
+    if (key_out != nullptr) *key_out = key;
+    return assets.load<asset::MaterialAsset>(key, [&](const std::filesystem::path&) {
+        auto material = asset::upload_material(params, asset::MaterialTextures{}, allocator, transfer);
+        if (material) material->shader = primitive.shader;
+        return material;
+    });
 }
 
 std::expected<std::size_t, core::Error>

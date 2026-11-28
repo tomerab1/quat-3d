@@ -235,6 +235,58 @@ public:
         return *this;
     }
 
+    // Array of [x, y] (double) points (at most `max_count`), e.g. polygons.
+    JsonFields& dvec2_list(std::string_view key, std::vector<glm::dvec2>& out,
+                           std::size_t max_count = 4096) {
+        if (const Json* v = take(key)) {
+            if (!read_dvec2_list(*v, out, max_count)) {
+                fail(key, "expected an array of [x, y] points (at most " + std::to_string(max_count) + ")");
+            }
+        }
+        return *this;
+    }
+
+    // Array of [x, y, z] (double) points (at most `max_count`), e.g. paths.
+    JsonFields& dvec3_list(std::string_view key, std::vector<glm::dvec3>& out,
+                           std::size_t max_count = 4096) {
+        if (const Json* v = take(key)) {
+            bool ok = v->is_array() && v->size() <= max_count;
+            std::vector<glm::dvec3> pts;
+            for (std::size_t i = 0; ok && i < v->size(); ++i) {
+                const Json& p = (*v)[i];
+                glm::dvec3 q{};
+                ok = p.is_array() && p.size() == 3 && read_double(p[0], q.x) && read_double(p[1], q.y) &&
+                     read_double(p[2], q.z);
+                pts.push_back(q);
+            }
+            if (ok) {
+                out = std::move(pts);
+            } else {
+                fail(key, "expected an array of [x, y, z] points (at most " + std::to_string(max_count) + ")");
+            }
+        }
+        return *this;
+    }
+
+    // Array of finite numbers (at most `max_count`).
+    JsonFields& number_list(std::string_view key, std::vector<double>& out, std::size_t max_count = 4096) {
+        if (const Json* v = take(key)) {
+            bool ok = v->is_array() && v->size() <= max_count;
+            std::vector<double> values;
+            for (std::size_t i = 0; ok && i < v->size(); ++i) {
+                double d = 0.0;
+                ok = read_double((*v)[i], d);
+                values.push_back(d);
+            }
+            if (ok) {
+                out = std::move(values);
+            } else {
+                fail(key, "expected an array of at most " + std::to_string(max_count) + " finite numbers");
+            }
+        }
+        return *this;
+    }
+
     // Records an externally detected problem with `key` (first error wins).
     void fail(std::string_view key, const std::string& what) {
         if (error_.empty()) error_ = path(key) + ": " + what;
@@ -277,6 +329,27 @@ public:
             return false;
         }
         out = static_cast<float>(d);
+        return true;
+    }
+    [[nodiscard]] static bool read_double(const Json& v, double& out) {
+        if (!v.is_number()) return false;
+        const double d = v.get<double>();
+        if (!std::isfinite(d)) return false;
+        out = d;
+        return true;
+    }
+    // [[x, y], ...] with at most `max_count` points; `out` is untouched on failure.
+    [[nodiscard]] static bool read_dvec2_list(const Json& v, std::vector<glm::dvec2>& out, std::size_t max_count) {
+        if (!v.is_array() || v.size() > max_count) return false;
+        std::vector<glm::dvec2> pts;
+        pts.reserve(v.size());
+        for (std::size_t i = 0; i < v.size(); ++i) {
+            const Json& p = v[i];
+            glm::dvec2 q{};
+            if (!p.is_array() || p.size() != 2 || !read_double(p[0], q.x) || !read_double(p[1], q.y)) return false;
+            pts.push_back(q);
+        }
+        out = std::move(pts);
         return true;
     }
     [[nodiscard]] static bool read_bool(const Json& v, bool& out) {

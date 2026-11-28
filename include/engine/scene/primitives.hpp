@@ -102,6 +102,14 @@ struct PrimitiveAssets {
                                                     const rhi::TransferContext& transfer,
                                                     asset::AssetManager& assets);
 
+// The material alone (the shape is ignored), cached under the same
+// "primitive/material/<hash>" key; `key_out` receives the key. DynamicMesh
+// and InstancedMesh materials come from here.
+[[nodiscard]] asset::AssetHandle<asset::MaterialAsset>
+load_primitive_material(const Primitive& primitive, rhi::GpuAllocator& allocator,
+                        const rhi::TransferContext& transfer, asset::AssetManager& assets,
+                        std::string* key_out = nullptr);
+
 // (Re)builds the MeshRenderer of every Primitive whose `resolved` hash differs
 // from its current fields. Meshes and materials are shared through `assets`:
 // meshes under "primitive/mesh/<shape>", materials under
