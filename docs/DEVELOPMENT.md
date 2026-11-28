@@ -321,7 +321,8 @@ engine does not override them:
   the SDK's MoltenVK. A Finder or `open` launch does not inherit the shell's
   environment, unless `launchctl setenv` or `open --env` passes the
   variables on.
-  The same holds for `VK_ADD_DRIVER_FILES` and, when the bundled loader is
+  The same holds for `VK_ADD_DRIVER_FILES`, `VK_LOADER_DRIVERS_SELECT` /
+  `VK_LOADER_DRIVERS_DISABLE` (manifest-name globs) and, when the bundled loader is
   not used (a build tree run against Homebrew's loader), for Homebrew's
   `molten-vk`.
 - **Startup logs the driver that actually loaded** (category `rhi`, on every
@@ -340,7 +341,8 @@ engine does not override them:
   shapes on every platform.
 - To run on the bundled MoltenVK from an SDK shell, unset the variables
   first: `env -u VK_DRIVER_FILES -u VK_ICD_FILENAMES -u VK_ADD_DRIVER_FILES
-  Quat3D.app/Contents/MacOS/<exe>`.
+  -u VK_LOADER_DRIVERS_SELECT -u VK_LOADER_DRIVERS_DISABLE
+  Quat3D.app/Contents/MacOS/game`.
 
 ## Engine SDK
 

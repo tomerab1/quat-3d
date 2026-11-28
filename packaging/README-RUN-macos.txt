@@ -55,10 +55,14 @@ Troubleshooting
   Vulkan driver that loaded and its version (VK_LOADER_DEBUG=driver shows
   how the loader chose it).
 - A Vulkan SDK in your Terminal environment (LunarG's setup-env.sh sets
-  VK_DRIVER_FILES / VK_ICD_FILENAMES) makes the app use the SDK's MoltenVK
+  VK_DRIVER_FILES / VK_ICD_FILENAMES; VK_ADD_DRIVER_FILES and
+  VK_LOADER_DRIVERS_SELECT / _DISABLE also steer the loader) makes the app
+  use the SDK's MoltenVK
   instead of the bundled one; the "[rhi] driver:" line then names that
   variable. Supported: MoltenVK 1.4.0 / Vulkan SDK 1.4.341 or newer. To use
   the bundled MoltenVK, launch it without them:
 
-      env -u VK_DRIVER_FILES -u VK_ICD_FILENAMES ./Quat3D.app/Contents/MacOS/game
+      env -u VK_DRIVER_FILES -u VK_ICD_FILENAMES -u VK_ADD_DRIVER_FILES \
+          -u VK_LOADER_DRIVERS_SELECT -u VK_LOADER_DRIVERS_DISABLE \
+          ./Quat3D.app/Contents/MacOS/game
 - "no data directory ... found": the bundle was modified; extract it again.

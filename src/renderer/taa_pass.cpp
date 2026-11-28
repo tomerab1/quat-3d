@@ -312,6 +312,7 @@ TaaPass::add_to_graph(rhi::RenderGraph& graph, const UpscalerInputs& in) {
             frame_descriptor_.bind(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline_.layout(), 0);
             vkCmdPushConstants(cmd, pipeline_.layout(), kComputeStage, 0, sizeof(push), &push);
             vkCmdDispatch(cmd, (display.width + 7) / 8, (display.height + 7) / 8, 1);
+            if (push.count_non_finite != 0) NonFiniteCounters::make_host_visible(cmd);
         });
 
     // What this frame leaves the pair in, for the next frame's import.

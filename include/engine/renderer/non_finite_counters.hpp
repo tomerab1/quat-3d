@@ -55,6 +55,12 @@ public:
     // not created.
     [[nodiscard]] VkDeviceAddress address(std::uint32_t slot, NonFiniteSource source) const;
 
+    // Records the barrier that makes a counting compute dispatch's atomic
+    // writes visible to the host (COMPUTE_SHADER storage write -> HOST read).
+    // A fence wait alone covers device access only, so a pass records this
+    // after each dispatch that counted, before collect() reads the slot.
+    static void make_host_visible(VkCommandBuffer cmd);
+
     // Reads and zeroes `slot`'s counters. Call after the slot's fence (its
     // previous frame's GPU work) has completed and before recording into it.
     [[nodiscard]] Counts collect(std::uint32_t slot);

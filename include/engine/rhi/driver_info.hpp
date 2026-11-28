@@ -39,7 +39,8 @@ using GetEnvFn = std::function<const char*(const char* name)>;
 [[nodiscard]] DriverInfo query_driver_info(VkPhysicalDevice physical_device);
 
 // The set loader driver-selection variables (VK_DRIVER_FILES,
-// VK_ICD_FILENAMES, VK_ADD_DRIVER_FILES), in that order. The engine honours
+// VK_ICD_FILENAMES, VK_ADD_DRIVER_FILES, VK_LOADER_DRIVERS_SELECT,
+// VK_LOADER_DRIVERS_DISABLE), in that order. The engine honours
 // them, as any Vulkan application does; they are only reported.
 [[nodiscard]] std::vector<LoaderDriverOverride> loader_driver_overrides(const GetEnvFn& getenv);
 

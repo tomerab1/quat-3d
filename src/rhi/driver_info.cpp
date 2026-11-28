@@ -17,10 +17,12 @@ template <std::size_t N>
     return {text, strnlen(text, N)};
 }
 
-constexpr std::array<std::string_view, 3> k_driver_variables{
-    "VK_DRIVER_FILES",     // loader 1.3.207+: replaces driver discovery
-    "VK_ICD_FILENAMES",    // its deprecated alias (LunarG setup-env still sets it)
-    "VK_ADD_DRIVER_FILES", // adds drivers ahead of the discovered ones
+constexpr std::array<std::string_view, 5> k_driver_variables{
+    "VK_DRIVER_FILES",           // loader 1.3.207+: replaces driver discovery
+    "VK_ICD_FILENAMES",          // its deprecated alias (LunarG setup-env still sets it)
+    "VK_ADD_DRIVER_FILES",       // adds drivers ahead of the discovered ones
+    "VK_LOADER_DRIVERS_SELECT",  // loader 1.3.234+: keep only manifests matching these globs
+    "VK_LOADER_DRIVERS_DISABLE", // loader 1.3.234+: drop manifests matching these globs
 };
 
 } // namespace

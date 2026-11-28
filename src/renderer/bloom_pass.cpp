@@ -31,7 +31,8 @@ struct DownParams {
 };
 static_assert(sizeof(DownParams) == 16, "must match bloom_down.slang Params");
 
-// bloom_down.slang's resources, by name; binding slots come from its reflection.
+// Each shader's resources, by name; binding slots come from its reflection
+// (CLAUDE.md: never hard-code binding indices).
 enum DownResource : std::uint8_t { d_src, d_sampler, d_dst, d_non_finite, d_count };
 constexpr std::array<rhi::BindingRequest, d_count> kDownResources{{
     {"g_src", VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE},
@@ -39,6 +40,41 @@ constexpr std::array<rhi::BindingRequest, d_count> kDownResources{{
     {"g_dst", VK_DESCRIPTOR_TYPE_STORAGE_IMAGE},
     {"g_non_finite", VK_DESCRIPTOR_TYPE_STORAGE_BUFFER},
 }};
+enum UpResource : std::uint8_t { u_src, u_sampler, u_base, u_dst, u_count };
+constexpr std::array<rhi::BindingRequest, u_count> kUpResources{{
+    {"g_src", VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE},
+    {"g_samp", VK_DESCRIPTOR_TYPE_SAMPLER},
+    {"g_base", VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE},
+    {"g_dst", VK_DESCRIPTOR_TYPE_STORAGE_IMAGE},
+}};
+enum CompositeResource : std::uint8_t { c_bloom, c_sampler, c_hdr, c_count };
+constexpr std::array<rhi::BindingRequest, c_count> kCompositeResources{{
+    {"g_bloom", VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE},
+    {"g_samp", VK_DESCRIPTOR_TYPE_SAMPLER},
+    {"g_hdr", VK_DESCRIPTOR_TYPE_STORAGE_IMAGE},
+}};
+static_assert(d_count == BloomPass::k_down_resources, "resize BloomPass::down_slots_");
+static_assert(u_count == BloomPass::k_up_resources, "resize BloomPass::up_slots_");
+static_assert(c_count == BloomPass::k_composite_resources, "resize BloomPass::composite_slots_");
+
+// One pass's shader, reflected layout and slots.
+template <std::size_t N>
+[[nodiscard]] std::expected<const rhi::LoadedShader*, core::Error>
+reflect_layout(const rhi::Device& device, const rhi::DescriptorBufferFunctions& fns,
+               rhi::PipelineCache& cache, const std::string& spv,
+               const std::array<rhi::BindingRequest, N>& requests,
+               std::array<std::uint32_t, N>& slots, rhi::DescriptorSetLayout& layout) {
+    auto shader = cache.load(spv);
+    if (!shader) return std::unexpected(shader.error());
+    auto bindings = rhi::reflected_bindings((*shader)->reflection, requests, kComputeStage);
+    if (!bindings) return fail("bloom: " + bindings.error().message);
+    for (std::size_t i = 0; i < N; ++i) slots[i] = (*bindings)[i].binding;
+    auto created = rhi::DescriptorSetLayout::create(device, fns, *bindings);
+    if (!created) return std::unexpected(created.error());
+    layout = std::move(*created);
+    return *shader;
+}
+
 struct UpParams {
     float radius, pad0, pad1, pad2;
 };
@@ -72,43 +108,25 @@ BloomPass::create(const rhi::Device& device, rhi::GpuAllocator& allocator,
     out.db_fns_ = rhi::DescriptorBufferFunctions::load(device.handle());
     if (!out.db_fns_.valid()) return fail("bloom: descriptor buffer functions unavailable");
 
-    using rhi::DescriptorBinding;
-    auto down_shader = cache.load(cooked_shader_dir + "/bloom_down.spv");
+    auto down_shader = reflect_layout(device, out.db_fns_, cache,
+                                      cooked_shader_dir + "/bloom_down.spv", kDownResources,
+                                      out.down_slots_, out.down_layout_);
     if (!down_shader) return std::unexpected(down_shader.error());
-    auto down_b = rhi::reflected_bindings((*down_shader)->reflection, kDownResources, kComputeStage);
-    if (!down_b) return fail("bloom: " + down_b.error().message);
-    for (std::size_t i = 0; i < down_b->size(); ++i) out.down_slots_[i] = (*down_b)[i].binding;
-    const std::array<DescriptorBinding, 3> composite_b{{
-        {0, 0, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, kComputeStage},
-        {0, 1, VK_DESCRIPTOR_TYPE_SAMPLER, 1, kComputeStage},
-        {0, 2, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, kComputeStage},
-    }};
-    const std::array<DescriptorBinding, 4> up_b{{
-        {0, 0, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, kComputeStage},
-        {0, 1, VK_DESCRIPTOR_TYPE_SAMPLER, 1, kComputeStage},
-        {0, 2, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, kComputeStage},
-        {0, 3, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, kComputeStage},
-    }};
-    auto down_layout = rhi::DescriptorSetLayout::create(device, out.db_fns_, *down_b);
-    if (!down_layout) return std::unexpected(down_layout.error());
-    out.down_layout_ = std::move(*down_layout);
-    auto composite_layout = rhi::DescriptorSetLayout::create(device, out.db_fns_, composite_b);
-    if (!composite_layout) return std::unexpected(composite_layout.error());
-    out.composite_layout_ = std::move(*composite_layout);
-    auto up_layout = rhi::DescriptorSetLayout::create(device, out.db_fns_, up_b);
-    if (!up_layout) return std::unexpected(up_layout.error());
-    out.up_layout_ = std::move(*up_layout);
+    auto up_shader = reflect_layout(device, out.db_fns_, cache, cooked_shader_dir + "/bloom_up.spv",
+                                    kUpResources, out.up_slots_, out.up_layout_);
+    if (!up_shader) return std::unexpected(up_shader.error());
+    auto comp_shader = reflect_layout(device, out.db_fns_, cache,
+                                      cooked_shader_dir + "/bloom_composite.spv",
+                                      kCompositeResources, out.composite_slots_,
+                                      out.composite_layout_);
+    if (!comp_shader) return std::unexpected(comp_shader.error());
 
     auto down = make_pipeline(cache, *down_shader, out.down_layout_, sizeof(DownParams));
     if (!down) return std::unexpected(down.error());
     out.down_pipeline_ = std::move(*down);
-    auto up_shader = cache.load(cooked_shader_dir + "/bloom_up.spv");
-    if (!up_shader) return std::unexpected(up_shader.error());
     auto up = make_pipeline(cache, *up_shader, out.up_layout_, sizeof(UpParams));
     if (!up) return std::unexpected(up.error());
     out.up_pipeline_ = std::move(*up);
-    auto comp_shader = cache.load(cooked_shader_dir + "/bloom_composite.spv");
-    if (!comp_shader) return std::unexpected(comp_shader.error());
     auto comp = make_pipeline(cache, *comp_shader, out.composite_layout_, sizeof(CompositeParams));
     if (!comp) return std::unexpected(comp.error());
     out.composite_pipeline_ = std::move(*comp);
@@ -192,6 +210,7 @@ BloomPass::add_to_graph(rhi::RenderGraph& graph, rhi::ResourceHandle hdr, VkExte
                              count ? 1U : 0U};
                 vkCmdPushConstants(cmd, down_pipeline_.layout(), kComputeStage, 0, sizeof(p), &p);
                 vkCmdDispatch(cmd, groups(ds.width), groups(ds.height), 1);
+                if (count) NonFiniteCounters::make_host_visible(cmd);
             });
     }
 
@@ -209,10 +228,11 @@ BloomPass::add_to_graph(rhi::RenderGraph& graph, rhi::ResourceHandle hdr, VkExte
             .writes(dst, rhi::ResourceUsage::storage_write)
             .execute([this, di = *idx, src, base, dst, us, params](rhi::PassContext& ctx) {
                 rhi::DescriptorBuffer& db = frame_descriptors_[di];
-                db.write_sampled_image(0, ctx.resolve(src).view, ro);
-                db.write_sampler(1, sampler_.handle());
-                db.write_sampled_image(2, ctx.resolve(base).view, ro);
-                db.write_storage_image(3, ctx.resolve(dst).view, gen);
+                const auto& s = up_slots_;
+                db.write_sampled_image(s[u_src], ctx.resolve(src).view, ro);
+                db.write_sampler(s[u_sampler], sampler_.handle());
+                db.write_sampled_image(s[u_base], ctx.resolve(base).view, ro);
+                db.write_storage_image(s[u_dst], ctx.resolve(dst).view, gen);
                 const VkCommandBuffer cmd = ctx.cmd();
                 vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, up_pipeline_.handle());
                 db.bind(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, up_pipeline_.layout(), 0);
@@ -234,9 +254,10 @@ BloomPass::add_to_graph(rhi::RenderGraph& graph, rhi::ResourceHandle hdr, VkExte
         .writes(hdr, rhi::ResourceUsage::storage_read_write)
         .execute([this, di = *cidx, bloom, hdr, extent, params](rhi::PassContext& ctx) {
             rhi::DescriptorBuffer& db = frame_descriptors_[di];
-            db.write_sampled_image(0, ctx.resolve(bloom).view, ro);
-            db.write_sampler(1, sampler_.handle());
-            db.write_storage_image(2, ctx.resolve(hdr).view, gen);
+            const auto& s = composite_slots_;
+            db.write_sampled_image(s[c_bloom], ctx.resolve(bloom).view, ro);
+            db.write_sampler(s[c_sampler], sampler_.handle());
+            db.write_storage_image(s[c_hdr], ctx.resolve(hdr).view, gen);
             const VkCommandBuffer cmd = ctx.cmd();
             vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, composite_pipeline_.handle());
             db.bind(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, composite_pipeline_.layout(), 0);

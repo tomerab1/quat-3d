@@ -8,6 +8,7 @@
 // speculars, emissive surfaces) a physically-plausible glow.
 
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <expected>
 #include <string>
@@ -60,15 +61,24 @@ public:
     // storage-buffer descriptor); 0 turns it off.
     void set_non_finite_counter(VkDeviceAddress counter) { non_finite_counter_ = counter; }
 
+    // Descriptor resources per shader (bloom_down, bloom_up, bloom_composite).
+    static constexpr std::size_t k_down_resources      = 4;
+    static constexpr std::size_t k_up_resources        = 4;
+    static constexpr std::size_t k_composite_resources = 3;
+
 private:
     const rhi::Device* device_    = nullptr;
     rhi::GpuAllocator* allocator_ = nullptr;
 
     rhi::DescriptorBufferFunctions db_fns_{};
-    rhi::DescriptorSetLayout       down_layout_;  // reflected from bloom_down.slang
-    std::array<std::uint32_t, 4>   down_slots_{};  // reflected binding of each down resource
-    rhi::DescriptorSetLayout       composite_layout_; // sampled, sampler, storage
-    rhi::DescriptorSetLayout       up_layout_;     // sampled, sampler, sampled, storage
+    // Layouts and binding slots reflected from each shader (bloom_pass.cpp
+    // lists the resources by name).
+    rhi::DescriptorSetLayout       down_layout_;
+    rhi::DescriptorSetLayout       up_layout_;
+    rhi::DescriptorSetLayout       composite_layout_;
+    std::array<std::uint32_t, k_down_resources>      down_slots_{};
+    std::array<std::uint32_t, k_up_resources>        up_slots_{};
+    std::array<std::uint32_t, k_composite_resources> composite_slots_{};
     rhi::ManagedPipeline           down_pipeline_;
     rhi::ManagedPipeline           up_pipeline_;
     rhi::ManagedPipeline           composite_pipeline_;

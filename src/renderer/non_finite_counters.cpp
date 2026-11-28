@@ -52,6 +52,20 @@ VkDeviceAddress NonFiniteCounters::address(std::uint32_t slot, NonFiniteSource s
     return address_ + index * stride_;
 }
 
+void NonFiniteCounters::make_host_visible(VkCommandBuffer cmd) {
+    VkMemoryBarrier2 mb{};
+    mb.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2;
+    mb.srcStageMask = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT;
+    mb.srcAccessMask = VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT;
+    mb.dstStageMask = VK_PIPELINE_STAGE_2_HOST_BIT;
+    mb.dstAccessMask = VK_ACCESS_2_HOST_READ_BIT;
+    VkDependencyInfo dep{};
+    dep.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO;
+    dep.memoryBarrierCount = 1;
+    dep.pMemoryBarriers = &mb;
+    vkCmdPipelineBarrier2(cmd, &dep);
+}
+
 NonFiniteCounters::Counts NonFiniteCounters::collect(std::uint32_t slot) {
     Counts counts{};
     if (address_ == 0 || slot >= slots_) return counts;

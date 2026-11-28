@@ -39,11 +39,16 @@ TEST(DriverInfo, ReportsTheLoaderDriverVariablesThatAreSet) {
         fake_env({{"VK_ICD_FILENAMES", "/sdk/MoltenVK_icd.json"},
                   {"VK_ADD_DRIVER_FILES", ""}, // empty = unset
                   {"VK_DRIVER_FILES", "/sdk/a.json:/sdk/b.json"},
+                  {"VK_LOADER_DRIVERS_DISABLE", "*MoltenVK*"},
+                  {"VK_LOADER_DRIVERS_SELECT", "*lvp*"},
                   {"VK_LAYER_PATH", "/sdk/layers"}})); // not a driver variable
-    ASSERT_EQ(overrides.size(), 2U);
+    ASSERT_EQ(overrides.size(), 4U);
     EXPECT_EQ(overrides[0].variable, "VK_DRIVER_FILES");
     EXPECT_EQ(overrides[0].value, "/sdk/a.json:/sdk/b.json");
     EXPECT_EQ(overrides[1].variable, "VK_ICD_FILENAMES");
+    EXPECT_EQ(overrides[2].variable, "VK_LOADER_DRIVERS_SELECT");
+    EXPECT_EQ(overrides[2].value, "*lvp*");
+    EXPECT_EQ(overrides[3].variable, "VK_LOADER_DRIVERS_DISABLE");
     EXPECT_TRUE(rhi::loader_driver_overrides(fake_env({})).empty());
     EXPECT_TRUE(rhi::loader_driver_overrides(nullptr).empty());
 }

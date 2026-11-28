@@ -67,8 +67,18 @@ enum Op : std::uint32_t {
     op_in_bounds_ptr_access_chain = 70,
     op_composite_extract = 81,
     op_copy_object = 83,
+    op_undef = 1,
     op_function_parameter = 55,
+    op_function_call = 57,
+    op_image_texel_pointer = 60,
     op_convert_u_to_ptr = 120,
+    op_copy_logical = 400,
+    op_type_untyped_pointer_khr = 4417,
+    op_untyped_variable_khr = 4418,
+    op_untyped_access_chain_khr = 4419,
+    op_untyped_in_bounds_access_chain_khr = 4420,
+    op_untyped_ptr_access_chain_khr = 4423,
+    op_untyped_in_bounds_ptr_access_chain_khr = 4424,
     op_bitcast = 124,
     op_select = 169,
     op_phi = 245,
@@ -106,6 +116,8 @@ constexpr std::uint32_t k_uniform = 2;
 constexpr std::uint32_t k_push_constant = 9;
 constexpr std::uint32_t k_storage_buffer = 12;
 constexpr std::uint32_t k_physical = 5349; // PhysicalStorageBuffer
+// Not a SPIR-V storage class: the walker could not resolve a pointer's type.
+constexpr std::uint32_t k_unresolved = 0xFFFFFFFFU;
 
 struct Inst {
     std::uint32_t              op = 0;
@@ -133,6 +145,9 @@ public:
 
     // Atomics whose pointer operand is a PhysicalStorageBuffer pointer (any
     // atomic reached through a buffer device address), named by the pointer.
+    // Fails closed: an atomic whose pointer's type cannot be resolved (its
+    // defining instruction is one the walker does not record) is reported
+    // too, so a new shape is looked at instead of passing silently.
     [[nodiscard]] std::vector<std::string> atomics_through_device_addresses() const {
         std::vector<std::string> bad;
         for (const Inst& atomic : atomics_) {
@@ -140,8 +155,12 @@ public:
             const std::size_t at = no_result ? 0 : 2;
             if (atomic.operands.size() <= at) continue;
             const std::uint32_t pointer = atomic.operands[at];
-            if (storage_class(type_of(pointer)) == k_physical) {
+            const std::uint32_t storage = storage_class(type_of(pointer));
+            if (storage == k_physical) {
                 bad.push_back("atomic op " + std::to_string(atomic.op) + " on " + name_of(pointer));
+            } else if (storage == k_unresolved) {
+                bad.push_back("atomic op " + std::to_string(atomic.op) + " on " + name_of(pointer) +
+                              " (unresolved pointer type)");
             }
         }
         return bad;
@@ -188,6 +207,7 @@ private:
         case op_type_runtime_array:
         case op_type_struct:
         case op_type_pointer:
+        case op_type_untyped_pointer_khr:
             if (!inst.operands.empty()) defs_[inst.operands[0]] = std::move(inst);
             return;
         case op_constant:
@@ -212,9 +232,18 @@ private:
             defs_[id] = std::move(inst);
             return;
         }
+        case op_undef:
         case op_function_parameter:
-            // [result type, result id]: only its type matters (a pointer
-            // argument of an inlined-out helper).
+        case op_function_call:
+        case op_image_texel_pointer:
+        case op_copy_logical:
+        case op_untyped_variable_khr:
+        case op_untyped_access_chain_khr:
+        case op_untyped_in_bounds_access_chain_khr:
+        case op_untyped_ptr_access_chain_khr:
+        case op_untyped_in_bounds_ptr_access_chain_khr:
+            // [result type, result id, ...]: only the type matters here (a
+            // pointer argument or return of a helper Slang kept, ...).
             if (inst.operands.size() >= 2) defs_[inst.operands[1]] = std::move(inst);
             return;
         default:
@@ -239,13 +268,16 @@ private:
                                                                      : it->second.operands[0];
     }
 
-    // Storage class of a pointer type (0 when not a known pointer type).
+    // Storage class of a (typed or untyped) pointer type; k_unresolved when
+    // the type is not a pointer type the walker recorded.
     [[nodiscard]] std::uint32_t storage_class(std::uint32_t pointer_type) const {
         const auto it = defs_.find(pointer_type);
-        return it != defs_.end() && it->second.op == op_type_pointer &&
+        return it != defs_.end() &&
+                       (it->second.op == op_type_pointer ||
+                        it->second.op == op_type_untyped_pointer_khr) &&
                        it->second.operands.size() >= 2
                    ? it->second.operands[1]
-                   : 0;
+                   : k_unresolved;
     }
 
     [[nodiscard]] std::uint32_t pointee(std::uint32_t pointer_type) const {
@@ -602,6 +634,32 @@ TEST(MslPortability, AcceptsAtomicsOnDescriptorAndWorkgroupMemory) {
     EXPECT_TRUE(atomics_through_device_addresses(m.words()).empty());
 }
 
+// A pointer returned by a helper Slang kept as a function (`InterlockedAdd(
+// *counter_ptr(), 1)`) is resolved through OpFunctionCall's result type, and
+// a pointer whose definition the walker does not know is reported rather
+// than passed (fail closed).
+TEST(MslPortability, ResolvesCallResultsAndFailsClosedOnUnknownPointers) {
+    {
+        Module m;
+        const std::uint32_t psb_u32 = m.ptr(k_physical, m.u32());
+        const std::uint32_t helper = m.constant(99); // stands in for the OpFunction id
+        m.atomic_add(m.value(op_function_call, psb_u32, {helper}));
+        const auto bad = atomics_through_device_addresses(m.words());
+        ASSERT_EQ(bad.size(), 1U);
+        EXPECT_EQ(bad[0].find("unresolved"), std::string::npos) << bad[0];
+    }
+    {
+        Module m;
+        constexpr std::uint32_t k_op_ext_inst = 12; // a defining op the walker does not record
+        const std::uint32_t mystery = m.value(k_op_ext_inst, m.ptr(k_storage_buffer, m.u32()),
+                                              {m.constant(1), m.constant(2)});
+        m.atomic_add(mystery);
+        const auto bad = atomics_through_device_addresses(m.words());
+        ASSERT_EQ(bad.size(), 1U);
+        EXPECT_NE(bad[0].find("unresolved"), std::string::npos) << bad[0];
+    }
+}
+
 // No cooked shader does an atomic through a buffer device address.
 TEST(MslPortability, NoCookedShaderHasAnAtomicThroughADeviceAddress) {
     const std::filesystem::path dir = QUAT_COOKED_SHADER_DIR;
@@ -614,9 +672,11 @@ TEST(MslPortability, NoCookedShaderHasAnAtomicThroughADeviceAddress) {
         ASSERT_FALSE(words.empty()) << entry.path();
         for (const std::string& atomic : atomics_through_device_addresses(words)) {
             ADD_FAILURE() << entry.path().filename() << ": " << atomic
-                          << " goes through a buffer device address; MoltenVK's SPIRV-Cross "
-                             "emits Metal that does not compile for it. Bind the counter as a "
-                             "storage buffer (RWStructuredBuffer<uint>) instead";
+                          << ": an atomic through a buffer device address (or through a "
+                             "pointer this test cannot resolve; teach the walker its defining "
+                             "op). MoltenVK's SPIRV-Cross emits Metal that does not compile for "
+                             "it. Bind the counter as a storage buffer (RWStructuredBuffer<uint>) "
+                             "instead";
         }
         ++checked;
     }
