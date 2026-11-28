@@ -274,7 +274,7 @@ add_library(engine_image STATIC
     src/asset/alpha_coverage.cpp
     src/asset/texture_data.cpp
     src/asset/image_decode.cpp
-    src/asset/cube_lut.cpp)
+    src/asset/cube_lut.cpp
     src/asset/hdr_decode.cpp)
 target_link_libraries(engine_image PUBLIC engine_flags)
 target_link_libraries(engine_image PRIVATE engine_stb_image)
