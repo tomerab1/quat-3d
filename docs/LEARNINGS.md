@@ -56,20 +56,6 @@ into CLAUDE.md or the brief template in [`CYCLE.md`](CYCLE.md).
 
 ## Build and CI
 
-- **Tracy's `TRACY_ON_DEMAND` does not make an idle client free when the
-  process is privileged.** The client starts kernel sampling and
-  context-switch tracing at startup (before any viewer connects) whenever it
-  may — root in cloud containers, administrator on Windows. Run headless
-  tests and benchmarks there with `TRACY_NO_SYS_TRACE=1`. vcpkg's `tracy`
-  port also has no loopback-only option; `ports/tracy` (overlay) builds the
-  client with `TRACY_ONLY_LOCALHOST`, matching the remote endpoint (R4).
-- **The shared container can be 15x oversubscribed** (load average 64 on 4
-  cores with ~5 agents building, R4): a cold CMake build of `game` +
-  `engine_tests` then takes hours at `-j2`. Start the real build in the
-  background first, get fast feedback from `scripts/check-compile.sh` on the
-  changed TUs (both `ENGINE_PROFILE` configurations), and keep working
-  while it runs.
-
 - **A clean auto-merge can still break the build.** Merging master (#20)
   into the E8 branch raised no conflict, but master had renamed
   `WorldRuntime::clear_spin_entity` while the branch added a new call to it;
@@ -694,27 +680,3 @@ it reordered, and an unvalidated ini file. Each lived in code only reachable
 through an ImGui frame. **Rule:** UI actions are plain functions over the
 registry or the state struct, called by the widget and by GoogleTest;
 anything read from disk goes through a pure, tested parser.
-
-## A font pushed across a scrolling table broke ImGui's font stack (R4)
-
-The ported Profiler panel pushed the monospace font (a `ui::FontScope`)
-before `BeginTable(... ScrollY)` and popped it after `EndTable`. The table's
-scrolling child window restores the font stack when it ends, so every frame
-logged "Calling PopFont() too many times". Only the panel test that counts
-ImGui's recoverable errors (as `panel_sweep_test.cpp` does) caught it.
-**Rule:** push and pop fonts / style inside the same window — between
-`TableHeadersRow` and `EndTable` for table rows; panel tests install the
-error callback and assert zero errors.
-
-## Dependency headers for compile checks come from conda-forge (factory)
-
-With the GitHub proxy limited to this repository, `~/deps` cannot be cloned.
-conda-forge (`conda.anaconda.org`) and crates.io are reachable: entt, Jolt,
-SDL3, VMA, gtest, Tracy, Lua and sol2 come as conda packages (`.conda` = zip
-of `pkg-*.tar.zst`); Dear ImGui docking 1.92.x and ImGuizmo come vendored in
-the `dear-imgui-sys` / `dear-imguizmo-sys` crates (`static.crates.io`), and
-apt's `googletest` package has the sources to build a libc++ GoogleTest.
-That is enough for `scripts/check-compile.sh` on most of the engine (not
-fastgltf / ktx / meshoptimizer users) and to link and run the editor panel
-tests. **Rule:** before saying a compile check is impossible, try those
-mirrors; say which versions differ from vcpkg's pins.
