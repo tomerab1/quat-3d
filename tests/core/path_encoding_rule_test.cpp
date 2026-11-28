@@ -106,13 +106,23 @@ TEST(PathEncodingRule, SourcesNeverConvertPathsToTheNarrowEncoding) {
         << report;
 }
 
+// Source lines holding string literals, as escaped ordinary literals in named
+// constants: MSVC's preprocessor mis-parses raw string literals that contain
+// quotes when they appear inside macro arguments such as EXPECT_EQ (C2187).
+constexpr std::string_view k_url_line = "f(\"file://\" + p.string()); // x";
+constexpr std::string_view k_url_code = "f(\"file://\" + p.string()); ";
+constexpr std::string_view k_escaped_quote_line = "f(\"a\\\"//\" + p.string());";
+constexpr std::string_view k_char_line = "c = '/'; // x";
+constexpr std::string_view k_char_code = "c = '/'; ";
+constexpr std::string_view k_log_url_line = "log(\"file://\" + p.string());";
+
 TEST(PathEncodingRule, TheScanSeesCodeButNotComments) {
     EXPECT_EQ(code_of("auto s = p.string(); // ok"), "auto s = p.string(); ");
     EXPECT_EQ(code_of("// never with .string()"), "");
     // `//` inside a literal is not a comment.
-    EXPECT_EQ(code_of(R"(f("file://" + p.string()); // x)"), R"(f("file://" + p.string()); )");
-    EXPECT_EQ(code_of(R"(f("a\"//" + p.string());)"), R"(f("a\"//" + p.string());)");
-    EXPECT_EQ(code_of("c = '/'; // x"), "c = '/'; ");
+    EXPECT_EQ(code_of(k_url_line), k_url_code);
+    EXPECT_EQ(code_of(k_escaped_quote_line), k_escaped_quote_line);
+    EXPECT_EQ(code_of(k_char_line), k_char_code);
 }
 
 TEST(PathEncodingRule, CatchesMemberAndPointerCalls) {
@@ -120,7 +130,7 @@ TEST(PathEncodingRule, CatchesMemberAndPointerCalls) {
     EXPECT_TRUE(converts_to_narrow("auto s = p.generic_string();"));
     EXPECT_TRUE(converts_to_narrow("auto s = file.value->string();"));
     EXPECT_TRUE(converts_to_narrow("auto s = it->path().stem()->generic_string();"));
-    EXPECT_TRUE(converts_to_narrow(code_of(R"(log("file://" + p.string());)")));
+    EXPECT_TRUE(converts_to_narrow(code_of(k_log_url_line)));
     EXPECT_FALSE(converts_to_narrow("std::string s = std::string();"));
     EXPECT_FALSE(converts_to_narrow("const auto s = core::path_to_utf8(p);"));
     EXPECT_FALSE(converts_to_narrow("x.u8string(); y.generic_u8string();"));
