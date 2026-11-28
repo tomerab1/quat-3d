@@ -78,6 +78,13 @@ into CLAUDE.md or the brief template in [`CYCLE.md`](CYCLE.md).
   the 40-minute forced rebuild failed late. → After any merge, compile-check
   the TUs both sides touched (`scripts/check-compile.sh` on the merge's file
   list) before starting a long build.
+- **A signature changed while resolving a conflict has callers outside the
+  merge's file list.** PR #49's train merge gave `WorldRuntime::build_scene`
+  a `RenderSettings&` parameter; every file in the merge diff compiled, but
+  a train test (`tests/app/world_runtime_physics_test.cpp`) still called
+  the old signature and broke CI's build. → When a resolution changes a
+  declaration, `grep -rn` its name over `src/` and `tests/` and
+  compile-check every caller.
 - **Hand-rolled local builds must rebuild dependents of changed headers.**
   The E8 worker's scratch build script recompiled a `.cpp` only when it was
   newer than its object; after a member was added to `EditorShell`, stale
