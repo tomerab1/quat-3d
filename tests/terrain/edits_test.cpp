@@ -185,6 +185,36 @@ TEST(TerrainEdits, ListAssignsStableIdsAndOrders) {
     EXPECT_FALSE(TerrainEditList{}.assign(dup));
 }
 
+TEST(TerrainEdits, ListStoresCanonicalStamps) {
+    TerrainStamp paint = circle({0, 0}, 3.0F, 1.0F, StampOp::paint);
+    paint.channel = PaintChannel::grass;
+    paint.value = 0.0F;
+    paint.height = 99.0F; // ignored by paint
+    paint.amount = 5.0F;  // ignored by paint
+    paint.iterations = 7; // ignored by paint
+    TerrainEditList list;
+    auto id = list.add(paint);
+    ASSERT_TRUE(id);
+    const TerrainStamp& stored = *list.find(*id);
+    EXPECT_EQ(stored.height, 0.0F);
+    EXPECT_EQ(stored.amount, 0.0F);
+    EXPECT_EQ(stored.iterations, 1U);
+    EXPECT_EQ(stored.channel, PaintChannel::grass); // its own fields are kept
+    EXPECT_EQ(stored.value, 0.0F);
+    // Changing only an ignored field is no change at all.
+    const std::uint64_t r = list.revision();
+    paint.height = 5.0F;
+    ASSERT_TRUE(list.update(*id, paint));
+    EXPECT_EQ(list.revision(), r);
+    EXPECT_TRUE(changed_regions(list.stamps(), std::vector<TerrainStamp>{
+                                                   [&] {
+                                                       TerrainStamp c = canonical_stamp(paint);
+                                                       c.id = *id;
+                                                       return c;
+                                                   }()})
+                    .empty());
+}
+
 TEST(TerrainEdits, ChangedRegionsCoverOnlyChangedStamps) {
     const std::vector<TerrainStamp> before = mixed_list();
     std::vector<TerrainStamp> after = before;
