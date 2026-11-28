@@ -20,6 +20,9 @@
 #
 # Shader hot reload (src/rhi/shader_compiler.cpp, ShaderCompiler::arguments)
 # runs slangc with these exact flags at runtime — keep the two in sync.
+# Search paths (-I) come before the inputs: slangc 2025.20+ loads a
+# `.slang-module` input (the material driver) as soon as it parses it and
+# resolves the module's imports against the -I paths seen so far (#136).
 
 find_program(SLANGC_EXECUTABLE slangc REQUIRED)
 
@@ -81,7 +84,7 @@ function(add_shader_compilation TARGET_NAME)
         add_custom_command(
             OUTPUT ${mod}
             COMMAND ${CMAKE_COMMAND} -E make_directory ${shader_out_dir}
-            COMMAND ${SLANGC_EXECUTABLE} ${src} -I ${shader_lib_dir} -o ${mod}
+            COMMAND ${SLANGC_EXECUTABLE} -I ${shader_lib_dir} ${src} -o ${mod}
             DEPENDS ${src}
             COMMENT "slangc module ${name}.slang -> .slang-module"
             VERBATIM)
@@ -98,7 +101,7 @@ function(add_shader_compilation TARGET_NAME)
         add_custom_command(
             OUTPUT ${spv} ${json}
             COMMAND ${CMAKE_COMMAND} -E make_directory ${shader_out_dir}
-            COMMAND ${SLANGC_EXECUTABLE} ${src} -I ${shader_lib_dir}
+            COMMAND ${SLANGC_EXECUTABLE} -I ${shader_lib_dir} ${src}
                     -target spirv -emit-spirv-directly -fvk-use-entrypoint-name
                     -o ${spv} -reflection-json ${json}
             ${validate}
@@ -120,8 +123,8 @@ function(add_shader_compilation TARGET_NAME)
             add_custom_command(
                 OUTPUT ${spv} ${json}
                 COMMAND ${CMAKE_COMMAND} -E make_directory ${material_out_dir}
-                COMMAND ${SLANGC_EXECUTABLE} ${src} ${driver} -I ${shader_lib_dir}
-                        -I ${shader_out_dir}
+                COMMAND ${SLANGC_EXECUTABLE} -I ${shader_lib_dir} -I ${shader_out_dir}
+                        ${src} ${driver}
                         -target spirv -emit-spirv-directly -fvk-use-entrypoint-name
                         -o ${spv} -reflection-json ${json}
                 ${validate}
