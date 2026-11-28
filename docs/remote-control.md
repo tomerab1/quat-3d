@@ -127,7 +127,7 @@ wired into the game by `src/app/remote_bridge.cpp`), plus:
 | Method | Params | Result |
 |---|---|---|
 | `session.hello` | `{token}` — required first call on every connection | `{protocol, server, methods}` |
-| `rpc.methods` | — | `[{name, summary, deferred}]` |
+| `rpc.methods` | — | `[{name, summary, deferred, params_schema?, result_schema?}]` (schemas: game-module methods, G17.1) |
 | `engine.info` | — | `{engine, frame, entities, playing, paused, editor}` |
 
 `rpc.methods` lists every registered method with a one-line summary.
@@ -342,7 +342,7 @@ values. Unknown fields are errors (they name the known fields).
 
 | Method | Params | Result |
 |---|---|---|
-| `scene.components` | — | `[{name, summary, addable, writable}]` |
+| `scene.components` | — | `[{name, summary, addable, writable, schema?}]` (`schema`: the JSON Schema of field-table components, e.g. game modules', G17.1) |
 | `scene.list` | `{name_contains?, component?, limit?=100, offset?=0}` | `{total, entities:[{id, name, parent, components:[names], world_position, world_bounds}]}` |
 | `scene.get` | `{entity}` | `{id, name, parent, children:[ids], world_bounds, local_bounds, components:{...}}` |
 | `scene.create` | `{name?, parent?, components?:{...}}` | `{id, name}` |

@@ -91,7 +91,8 @@ Targets:
 |---|---|
 | `quat3d::engine` | the engine libraries: core, scene/ECS, physics, script, terrain, navigation, networking, audio, asset, renderer |
 | `quat3d::remote` | `quat3d::engine` plus the remote-control endpoint and world commands |
-| `quat3d::editor` | **placeholder**: the ImGui editor layer's libraries (SDKs built with `ENGINE_EDITOR=ON`), but no editor headers are installed yet, so a game has nothing to call. It becomes usable with G17.1's per-game editor |
+| `quat3d::editor` | the ImGui editor layer's libraries (SDKs built with `ENGINE_EDITOR=ON`); no editor headers are installed: a game reaches the editor through `quat3d::player_editor` |
+| `quat3d::player`, `quat3d::player_shipping`, `quat3d::player_editor` | the application layer behind `engine::game::run_player` / `run_editor` (`engine/game/player.hpp`): what a game with native modules links its executables against (G17.1; `quat_add_game(... MODULES)` does it) |
 
 `quat3d::engine` carries the settings the headers depend on: C++23,
 `GLM_FORCE_DEPTH_ZERO_TO_ONE` / `GLM_FORCE_RADIANS`, no exceptions, no RTTI,
@@ -108,9 +109,11 @@ data from (`assets/` next to `cooked/shaders/`):
 
 On Windows it also copies the dependency DLLs; call
 `quat_copy_runtime_dlls(<target>)` to do the same for your test executables.
-Game modules (the `Registrar`, generated registration calls, and a per-game
-player and editor) arrive with ROADMAP **G17.1** as `quat_add_game_module()`
-and new options here.
+Native game modules (G17.1): `quat_add_game_module(<target> SOURCES …
+REGISTER <ns::fn>)` makes a module library, and
+`quat_add_game(<target> PROJECT_DIR <dir> MODULES <module>…)` builds the game's
+player, shipping player and editor with a generated `main()` that registers
+them. See [`game-modules.md`](game-modules.md).
 
 Package variables:
 - `QUAT3D_SDK_ROOT`;
@@ -128,7 +131,7 @@ override them).
 
 [`examples/sdk-consumer/`](../examples/sdk-consumer) is a complete, tested
 example: a component, a system, a remote method, a save chunk, a physics body,
-and GoogleTest from the SDK's `deps/`.
+a native module with its own players, and GoogleTest from the SDK's `deps/`.
 
 ### Toolchain
 
@@ -161,7 +164,7 @@ Installed headers (`cmake/Quat3dSdkHeaders.cmake`):
 
 | Set | Headers |
 |---|---|
-| **Stable API** | `engine/core/{error, json_fields, log, path_confine, sim_clock, spring, utf8_path}.hpp` · `engine/input/{actions, action_map, device_state}.hpp` · `engine/scene/{components, scene, scene_io, component_json, scatter, ground_placement, camera_framing, camera_rig, navigation}.hpp` · `engine/physics/physics_world.hpp` · `engine/project/game_project.hpp` · `engine/terrain/heightmap.hpp` · `engine/remote/rpc_server.hpp` · `engine/version.hpp` |
+| **Stable API** | `engine/core/{error, json_fields, log, path_confine, sim_clock, spring, utf8_path}.hpp` · `engine/game/{module, fields, module_set, json_schema, player}.hpp` (G17.1) · `engine/input/{actions, action_map, device_state}.hpp` · `engine/scene/{components, scene, scene_io, component_json, component_registry, field_table, scatter, ground_placement, camera_framing, camera_rig, navigation}.hpp` · `engine/script/module_bind.hpp` · `engine/physics/physics_world.hpp` · `engine/project/game_project.hpp` · `engine/terrain/heightmap.hpp` · `engine/remote/rpc_server.hpp` · `engine/version.hpp` |
 | **Support** (the stable headers include them; same versioning) | `engine/animation/{animator, clip, foot_placement, inertialization, skeleton, two_bone_ik}.hpp` · `engine/asset/{asset_manager, material_params}.hpp` · `engine/audio/audio_types.hpp` · `engine/nav/navmesh.hpp` · `engine/renderer/{grass, particles, physical_camera}.hpp` (settings structs) · `engine/scene/animation_system.hpp` · `engine/terrain/generator.hpp` |
 
 Not installed, and not API:

@@ -29,14 +29,14 @@ games/coin-collector/
   assets/meshes, textures, audio ...    whatever the scenes reference
 ```
 
-`game.json` (format 1) is strictly validated: unknown keys, wrong types, bad
+`game.json` (format 1 or 2) is strictly validated: unknown keys, wrong types, bad
 paths and a format newer than the engine reads are errors that name the
 field. Read through `engine/core/json_fields.hpp`
 (`engine::project::load_game_project`).
 
 | Field | Required | Meaning |
 |---|---|---|
-| `format` | yes | Project format version; `1`. A newer value asks for a newer engine. |
+| `format` | yes | Project format version: `1`, or `2` for the keys marked *(2)*. A newer value asks for a newer engine. |
 | `name` | yes | Display name: window title default, macOS bundle name. |
 | `id` | yes | Reverse-DNS identifier (`dev.quat3d.coin-collector`): macOS `CFBundleIdentifier`; its last segment, lower-cased, names the executable and the package. |
 | `version` | yes | `MAJOR.MINOR.PATCH` with an optional `-prerelease` (`0.1.0`, `1.2.0-rc.1`). |
@@ -44,6 +44,9 @@ field. Read through `engine/core/json_fields.hpp`
 | `window` | no | `{title, width, height, fullscreen}`; defaults: the name, 1280×720, windowed. |
 | `icon` | no | Project-relative `.png`: window icon everywhere, `.icns` in the macOS bundle. |
 | `content` | no | Project-relative files or directories always shipped whole (see below). |
+| `modules` *(2)* | no | Native game modules the game needs ([`game-modules.md`](game-modules.md)); a player built without one of them refuses the game. Such a game ships with its own player (`quat-pack --player <game>`), not `quat-player`. |
+| `mcp` *(2)* | no | Project-relative folder of game MCP tools and skills (G17.2). |
+| `engine` *(2)* | no | Engine versions the game was built for, e.g. `">=0.1,<0.2"`; another engine refuses to load it with "this game needs engine …". |
 
 Every path is project-relative with `/` separators, may not be absolute or
 contain `..`, and is confined to the project root again on disk (symlinks

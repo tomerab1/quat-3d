@@ -592,9 +592,10 @@ JSON-RPC over loopback TCP to the engine.
   - promote a Vulkan-free `instanced_mesh.hpp` seam into the stable set;
   - `CHANGELOG.md` "Breaking" sections per the policy, once #96's CHANGELOG
     lands;
-  - `quat_add_game_module()` and module registration (G17.1);
-  - `quat3d::editor` is exported as a placeholder: install the editor
-    headers a per-game editor needs (with G17.1);
+  - ~~`quat_add_game_module()` and module registration (G17.1)~~ (done in G17.1);
+  - ~~`quat3d::editor` placeholder~~: G17.1 exports `quat3d::player_editor`
+    (the editor with a game's modules); editor headers stay uninstalled
+    until a game needs to extend the editor itself;
   - trim the Windows SDK (104 MB packed / 583 MB unpacked against ~50 MB
     on Linux and macOS): MSVC static libraries without embedded debug info,
     and no gmock / protoc / upb in `deps/`;
@@ -711,7 +712,7 @@ Everything here is engine code with generic names; game rules never enter
 the engine.
 
 - [ ] **G17 — Game modules (extension points).**
-  - [ ] **G17.1 Native game modules.** A game registers its own components
+  - [x] **G17.1 Native game modules.** A game registers its own components
     (field tables → codec, remote schema, Lua, inspector rows; no ImGui in
     games), stateless systems in named phases (input / pre_physics /
     post_physics / post_transform / pre_render) with ordering, remote
@@ -729,6 +730,12 @@ the engine.
     on the in-tree samples, enforced by a `layering_check` CTest and a
     `QUAT_BUILD_SAMPLES=OFF` CI entry. Games build only against the
     installed SDK (P8). *(needs P8, S9, P4 #55, G7 #22)*
+    *Done:* `engine/game/{module, fields, module_set, json_schema, player}.hpp`,
+    the player libraries (`quat3d::player*`), `quat_add_game_module()`,
+    format 2, coin-collector ported (guide: docs/game-modules.md, which
+    lists the differences from the design sketch). UI screens and save
+    chunks fail the boot until G6.1 / G11.1; `Services` grows as E1, G19,
+    R23.2 and R25 land.
   - [ ] **G17.2 Declared game MCP tools and skills.** Module methods carry
     MCP metadata (tool name, Markdown description from the project's `mcp/`
     folder, annotations); `rpc.methods` returns schemas + metadata and
