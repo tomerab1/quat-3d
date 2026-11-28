@@ -58,7 +58,8 @@ Merged on 2026-11-27 after cycle 2:
 | #52 | E8 editor UI/UX redesign | `feat/e8-editor-ux` | draft; worker running |
 | #53 | A9 world-building (fixes #37–#42) | `feat/a9-worldbuilding` | draft; worker running |
 | #54 | A10.1 physics control (fixes #47 #48) | `feat/a10-physics-control` | draft; worker running |
-| #55 | P4 game packaging + E7 export | `feat/p4-game-packaging` | merged with train #93 (31f5fc1); Export dialog ported to the E8 shell (`src/editor/shell/export_dialog.cpp`, Ctrl+B, toast actions); waits for CI, then lands after the train. Release PR #96 also edits `scripts/package-release.sh`: whichever lands second keeps one script with the engine release as the default mode and games as `--exe/--data` options (#96's quat-mcp copy is engine-release only; its licence files belong in game packages too) |
+| #55 | P4 game packaging + E7 export | `feat/p4-game-packaging` | merged with train #93 (16e429c) and master (8103526); Export dialog ported to the E8 shell (`src/editor/shell/export_dialog.cpp`, Ctrl+B, toast actions); waits for CI, then lands after the train. Release PR #96 also edits `scripts/package-release.sh`: whichever lands second keeps one script with the engine release as the default mode and games as `--exe/--data` options (#96's quat-mcp copy is engine-release only; its licence files belong in game packages too) |
+| #83 | A12.1 skills (MCP skills extension, prompts, Claude Code plugin) | `feat/a12-skills` | train #93 merged in (A6 shader + G7 script tools used by the skills; plugin works with the release-bundled quat-mcp); A12.2 waits on #54, A10.4, R4 |
 
 Queued for the next free agents, in order:
 1. R13 weather.

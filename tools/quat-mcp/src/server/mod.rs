@@ -1,5 +1,6 @@
 //! The MCP server: one tool per engine method (docs/remote-control.md, v1
-//! contract) grouped by area, workflow prompts, and a scene-summary resource.
+//! contract) grouped by area, the workflows as skills and prompts
+//! (`crate::skills`), and the scene-summary and scripting resources.
 //! Everything the model reads is Markdown under `content/`.
 
 // Tool modules attach `content/tools/*.md` as doc attributes, so clippy's
@@ -14,7 +15,6 @@ mod bt_outline;
 mod debug_tools;
 #[allow(clippy::doc_markdown)]
 mod project_tools;
-mod prompts;
 mod results;
 #[allow(clippy::doc_markdown)]
 mod scene_tools;
@@ -32,25 +32,24 @@ mod world_tools;
 use std::sync::Arc;
 use std::time::Duration;
 
-use rmcp::handler::server::router::prompt::PromptRouter;
 use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::model::{
-    CallToolResult, Implementation, ListResourcesResult, PaginatedRequestParams,
-    ReadResourceRequestParams, ReadResourceResponse, ReadResourceResult, Resource,
-    ResourceContents, ServerCapabilities, ServerConfig,
+    CallToolResult, GetPromptRequestMethod, GetPromptRequestParams, GetPromptResponse,
+    GetSkillRequestMethod, GetSkillRequestParams, GetSkillResult, Implementation,
+    ListPromptsRequestMethod, ListPromptsResult, ListResourcesResult, ListSkillsRequestMethod,
+    ListSkillsResult, PaginatedRequestParams, PromptsCapability, ReadResourceRequestParams,
+    ReadResourceResponse, ReadResourceResult, Resource, ResourceContents, ServerCapabilities,
+    ServerConfig,
 };
 use rmcp::service::RequestContext;
-use rmcp::{ErrorData, RoleServer, ServerHandler, prompt_handler, tool_handler};
+use rmcp::{ErrorData, RoleServer, ServerHandler, tool_handler};
 use serde_json::{Value, json};
 
 use crate::client::{EngineClient, EngineError};
 use crate::content;
+use crate::skills::{self, prompts};
 
 pub use asset_tools::AssetConfig;
-pub use prompts::{
-    BuildWorldArgs, DebugSessionArgs, DesignBehaviorArgs, InspectSceneArgs, TuneLookArgs,
-    WriteGameScriptArgs, WriteMaterialShaderArgs,
-};
 pub use results::{error_result, normalize_method};
 pub use world_tools::MAX_GROUND_POINTS;
 
@@ -65,8 +64,28 @@ pub struct QuatServer {
     engine: Arc<EngineClient>,
     long_timeout: Duration,
     assets: Arc<asset_tools::AssetService>,
+    workflows: Workflows,
+    instructions: String,
     tool_router: ToolRouter<Self>,
-    prompt_router: PromptRouter<Self>,
+}
+
+/// Which surfaces serve the workflows in `content/skills/`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Workflows {
+    /// The MCP skills extension: `skills/list`, `skills/get` and the
+    /// `skill://` resources.
+    pub skills: bool,
+    /// One MCP prompt per skill.
+    pub prompts: bool,
+}
+
+impl Default for Workflows {
+    fn default() -> Self {
+        Self {
+            skills: true,
+            prompts: true,
+        }
+    }
 }
 
 impl std::fmt::Debug for QuatServer {
@@ -74,6 +93,7 @@ impl std::fmt::Debug for QuatServer {
         f.debug_struct("QuatServer")
             .field("engine", &self.engine.config())
             .field("long_timeout", &self.long_timeout)
+            .field("workflows", &self.workflows)
             .finish_non_exhaustive()
     }
 }
@@ -85,9 +105,19 @@ impl QuatServer {
             engine,
             long_timeout,
             assets: asset_tools::AssetService::new(AssetConfig::default()),
+            workflows: Workflows::default(),
+            instructions: content::instructions(skills::catalog().skills(), Workflows::default()),
             tool_router: Self::tools(),
-            prompt_router: Self::prompt_router(),
         }
+    }
+
+    /// Serve the workflows as skills and/or prompts (default: both). The
+    /// Claude Code plugin ships the skills as files and turns both off.
+    #[must_use]
+    pub fn with_workflows(mut self, workflows: Workflows) -> Self {
+        self.workflows = workflows;
+        self.instructions = content::instructions(skills::catalog().skills(), workflows);
+        self
     }
 
     /// Where the asset tools download from and to (default: Poly Haven into
@@ -155,18 +185,68 @@ impl QuatServer {
 }
 
 #[tool_handler(router = self.tool_router)]
-#[prompt_handler(router = self.prompt_router)]
 impl ServerHandler for QuatServer {
     fn get_info(&self) -> ServerConfig {
-        ServerConfig::new(
-            ServerCapabilities::builder()
-                .enable_tools()
-                .enable_prompts()
-                .enable_resources()
-                .build(),
-        )
-        .with_server_info(Implementation::new("quat-mcp", env!("CARGO_PKG_VERSION")))
-        .with_instructions(content::INSTRUCTIONS)
+        let builder = ServerCapabilities::builder()
+            .enable_tools()
+            .enable_resources();
+        let mut capabilities = if self.workflows.skills {
+            builder.enable_skills().build()
+        } else {
+            builder.build()
+        };
+        if self.workflows.prompts {
+            capabilities.prompts = Some(PromptsCapability::default());
+        }
+        ServerConfig::new(capabilities)
+            .with_server_info(Implementation::new("quat-mcp", env!("CARGO_PKG_VERSION")))
+            .with_instructions(self.instructions.clone())
+    }
+
+    async fn list_skills(
+        &self,
+        _request: Option<PaginatedRequestParams>,
+        _context: RequestContext<RoleServer>,
+    ) -> Result<ListSkillsResult, ErrorData> {
+        if !self.workflows.skills {
+            return Err(ErrorData::method_not_found::<ListSkillsRequestMethod>());
+        }
+        Ok(skills::catalog().list_skills())
+    }
+
+    async fn get_skill(
+        &self,
+        request: GetSkillRequestParams,
+        _context: RequestContext<RoleServer>,
+    ) -> Result<GetSkillResult, ErrorData> {
+        if !self.workflows.skills {
+            return Err(ErrorData::method_not_found::<GetSkillRequestMethod>());
+        }
+        skills::catalog().get_skill(&request.uri)
+    }
+
+    async fn list_prompts(
+        &self,
+        _request: Option<PaginatedRequestParams>,
+        _context: RequestContext<RoleServer>,
+    ) -> Result<ListPromptsResult, ErrorData> {
+        if !self.workflows.prompts {
+            return Err(ErrorData::method_not_found::<ListPromptsRequestMethod>());
+        }
+        Ok(ListPromptsResult::with_all_items(prompts::prompts().list()))
+    }
+
+    async fn get_prompt(
+        &self,
+        request: GetPromptRequestParams,
+        _context: RequestContext<RoleServer>,
+    ) -> Result<GetPromptResponse, ErrorData> {
+        if !self.workflows.prompts {
+            return Err(ErrorData::method_not_found::<GetPromptRequestMethod>());
+        }
+        prompts::prompts()
+            .get(&request.name, request.arguments.as_ref())
+            .map(Into::into)
     }
 
     async fn list_resources(
@@ -174,7 +254,7 @@ impl ServerHandler for QuatServer {
         _request: Option<PaginatedRequestParams>,
         _context: RequestContext<RoleServer>,
     ) -> Result<ListResourcesResult, ErrorData> {
-        Ok(ListResourcesResult::with_all_items(vec![
+        let mut resources = vec![
             Resource::new(SCENE_SUMMARY_URI, "scene_summary")
                 .with_title("Current scene summary")
                 .with_description(include_str!("../../content/resources/scene_summary.md").trim())
@@ -185,7 +265,11 @@ impl ServerHandler for QuatServer {
                     include_str!("../../content/resources/scripting_reference.md").trim(),
                 )
                 .with_mime_type("text/markdown"),
-        ]))
+        ];
+        if self.workflows.skills {
+            resources.extend(skills::catalog().resources());
+        }
+        Ok(ListResourcesResult::with_all_items(resources))
     }
 
     async fn read_resource(
@@ -193,6 +277,11 @@ impl ServerHandler for QuatServer {
         request: ReadResourceRequestParams,
         _context: RequestContext<RoleServer>,
     ) -> Result<ReadResourceResponse, ErrorData> {
+        if self.workflows.skills
+            && let Some(file) = skills::catalog().read(&request.uri)
+        {
+            return Ok(file.into());
+        }
         if request.uri == SCRIPTING_REFERENCE_URI {
             return Ok(ReadResourceResult::new(vec![
                 ResourceContents::text(content::SCRIPTING_REFERENCE, SCRIPTING_REFERENCE_URI)
@@ -204,8 +293,13 @@ impl ServerHandler for QuatServer {
             return Err(ErrorData::resource_not_found(
                 format!(
                     "unknown resource `{}`; available: {SCENE_SUMMARY_URI}, \
-                     {SCRIPTING_REFERENCE_URI}",
-                    request.uri
+                     {SCRIPTING_REFERENCE_URI}{}",
+                    request.uri,
+                    if self.workflows.skills {
+                        format!(", {}", skills::catalog().uris())
+                    } else {
+                        String::new()
+                    }
                 ),
                 None,
             ));
