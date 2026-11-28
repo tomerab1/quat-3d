@@ -129,6 +129,7 @@ struct RemoteBridge::Impl {
     std::size_t                            frame_next = 0;
     float                                  frame_last_ms = 0.0F;
     std::optional<std::uint32_t>           draws;
+    std::array<std::uint32_t, 4>           resolution{}; // render w/h, output w/h
 
     // ---- Helpers ------------------------------------------------------------
 
@@ -264,6 +265,10 @@ struct RemoteBridge::Impl {
         }
         fs.avg_ms = frame_count > 0 ? sum / static_cast<float>(frame_count) : 0.0F;
         fs.draws = draws;
+        fs.render_width = resolution[0];
+        fs.render_height = resolution[1];
+        fs.output_width = resolution[2];
+        fs.output_height = resolution[3];
         fs.resident_bytes = resident_bytes();
         return fs;
     }
@@ -651,6 +656,10 @@ std::optional<engine::remote::CameraPose> RemoteBridge::screenshot_view() {
 
 void RemoteBridge::note_draws(std::size_t draws) {
     impl_->draws = static_cast<std::uint32_t>(std::min<std::size_t>(draws, UINT32_MAX));
+}
+
+void RemoteBridge::note_resolution(VkExtent2D render, VkExtent2D output) {
+    impl_->resolution = {render.width, render.height, output.width, output.height};
 }
 
 engine::core::StderrCapture capture_stderr_for_remote(bool editor_console) {

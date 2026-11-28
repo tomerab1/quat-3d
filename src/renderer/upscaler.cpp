@@ -7,6 +7,7 @@
 #include <cstddef>
 #include <utility>
 
+#include "engine/core/pixel_scale.hpp"
 #include "engine/renderer/taa_pass.hpp"
 
 namespace engine::renderer {
@@ -14,7 +15,8 @@ namespace engine::renderer {
 namespace {
 
 // Render scale per axis of each mode, in enum order.
-constexpr std::array<float, upscaler_mode_names.size()> kModeScale{1.0F, 1.0F / 1.5F,
+// (`automatic` before it is resolved renders at native scale.)
+constexpr std::array<float, upscaler_mode_names.size()> kModeScale{1.0F, 1.0F, 1.0F / 1.5F,
                                                                   1.0F / 1.7F, 0.5F};
 constexpr float kMinScale = 0.25F;
 
@@ -31,6 +33,17 @@ UpscalerMode upscaler_mode(const UpscalerSettings& settings) {
 
 UpscalerBackend upscaler_backend(const UpscalerSettings& settings) {
     return clamp_index<UpscalerBackend, upscaler_backend_names.size()>(settings.backend);
+}
+
+UpscalerMode resolve_upscaler_mode(UpscalerMode mode, float display_scale) {
+    if (mode != UpscalerMode::automatic) return mode;
+    return core::is_high_density_display(display_scale) ? UpscalerMode::quality
+                                                        : UpscalerMode::native_aa;
+}
+
+UpscalerSettings resolve_upscaler_settings(UpscalerSettings settings, float display_scale) {
+    settings.mode = static_cast<int>(resolve_upscaler_mode(upscaler_mode(settings), display_scale));
+    return settings;
 }
 
 float upscaler_mode_scale(UpscalerMode mode) {

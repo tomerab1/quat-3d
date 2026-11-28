@@ -107,9 +107,59 @@ TEST(UpscalerSettings, ModesMapToRenderExtents) {
     EXPECT_EQ(r::upscaler_render_extent({2, 1}, s).height, 1U);
 }
 
+// fix/hidpi-rendering: the default `auto` mode renders at the quality scale
+// on high-density displays (Retina, 4K at 150-200 %) and natively elsewhere;
+// explicit modes are never changed by the display.
+TEST(UpscalerSettings, AutoModeFollowsTheDisplayDensity) {
+    const r::UpscalerSettings defaults;
+    EXPECT_EQ(r::upscaler_mode(defaults), r::UpscalerMode::automatic);
+    EXPECT_EQ(r::to_string(r::UpscalerMode::automatic), "auto");
+    EXPECT_EQ(r::resolve_upscaler_mode(r::UpscalerMode::automatic, 1.0F),
+              r::UpscalerMode::native_aa);
+    EXPECT_EQ(r::resolve_upscaler_mode(r::UpscalerMode::automatic, 1.25F),
+              r::UpscalerMode::native_aa);
+    EXPECT_EQ(r::resolve_upscaler_mode(r::UpscalerMode::automatic, 1.5F),
+              r::UpscalerMode::quality);
+    EXPECT_EQ(r::resolve_upscaler_mode(r::UpscalerMode::automatic, 2.0F),
+              r::UpscalerMode::quality);
+    EXPECT_EQ(r::resolve_upscaler_mode(r::UpscalerMode::performance, 2.0F),
+              r::UpscalerMode::performance);
+    EXPECT_EQ(r::resolve_upscaler_mode(r::UpscalerMode::native_aa, 2.0F),
+              r::UpscalerMode::native_aa);
+    // The owner's Retina viewport: 980 x 784 points -> 1960 x 1568 pixels,
+    // rendered at 2/3 and upscaled by TAAU.
+    const r::UpscalerSettings retina = r::resolve_upscaler_settings(defaults, 2.0F);
+    const VkExtent2D e = r::upscaler_render_extent({1960, 1568}, retina);
+    EXPECT_EQ(e.width, 1307U);
+    EXPECT_EQ(e.height, 1045U);
+    const VkExtent2D standard =
+        r::upscaler_render_extent({1960, 1568}, r::resolve_upscaler_settings(defaults, 1.0F));
+    EXPECT_EQ(standard.width, 1960U);
+    // Unresolved, `auto` renders natively; the scale override still wins.
+    EXPECT_FLOAT_EQ(r::upscaler_render_scale(defaults), 1.0F);
+    r::UpscalerSettings over = defaults;
+    over.render_scale = 0.5F;
+    EXPECT_FLOAT_EQ(r::upscaler_render_scale(r::resolve_upscaler_settings(over, 2.0F)), 0.5F);
+}
+
+// Render extents of odd and tiny displays: rounded per axis, never zero.
+TEST(UpscalerSettings, RenderExtentRoundingAndMinimum) {
+    r::UpscalerSettings s;
+    s.mode = static_cast<int>(r::UpscalerMode::quality);
+    EXPECT_EQ(r::upscaler_render_extent({1001, 667}, s).width, 667U);  // 667.33
+    EXPECT_EQ(r::upscaler_render_extent({1001, 667}, s).height, 445U); // 444.67
+    s.mode = static_cast<int>(r::UpscalerMode::balanced);
+    EXPECT_EQ(r::upscaler_render_extent({981, 785}, s).width, 577U);   // 577.06
+    s.mode = static_cast<int>(r::UpscalerMode::performance);
+    EXPECT_EQ(r::upscaler_render_extent({1, 1}, s).width, 1U);
+    EXPECT_EQ(r::upscaler_render_extent({3, 5}, s).height, 3U); // 2.5 rounds away from 0
+    EXPECT_EQ(r::upscaler_render_extent({0, 16}, s).width, 0U); // empty stays empty
+}
+
 TEST(UpscalerSettings, NamesRoundTrip) {
-    for (const r::UpscalerMode m : {r::UpscalerMode::native_aa, r::UpscalerMode::quality,
-                                    r::UpscalerMode::balanced, r::UpscalerMode::performance}) {
+    for (const r::UpscalerMode m :
+         {r::UpscalerMode::automatic, r::UpscalerMode::native_aa, r::UpscalerMode::quality,
+          r::UpscalerMode::balanced, r::UpscalerMode::performance}) {
         EXPECT_EQ(r::parse_upscaler_mode(r::to_string(m)), m);
     }
     for (const r::UpscalerBackend b : {r::UpscalerBackend::taau, r::UpscalerBackend::fsr2}) {

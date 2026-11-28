@@ -119,6 +119,17 @@ scale (content scale, snapped to 1/8) and the font rasteriser density (pixel
 density). Fonts are rebuilt and re-uploaded when either changes (moving the
 window to another monitor); every size goes through `ui::scaled()`.
 
+The window is created with `SDL_WINDOW_HIGH_PIXEL_DENSITY`, so on a Retina
+Mac (and a scaled Wayland output) the layout is in points and the framebuffer
+in pixels (ImGui's `DisplayFramebufferScale` = 2); on Windows the window is
+in pixels and only the content scale (150 %) scales the UI. The Viewport
+panel renders the scene at its size in **pixels** (points x
+`DisplayFramebufferScale`, `core::points_to_pixel_extent`), so the image is
+drawn 1:1; mouse, picking, gizmo and overlay coordinates stay in points
+relative to the image rect. The viewport stats overlay shows the scene's
+`render` size (before the upscaler) and `output` size; the Stats panel,
+Profiler and Renderer > Upscaling show both as "render -> output (scale)".
+
 ## Fonts
 
 Vendored under `assets/fonts/` with their licences, loaded from the project

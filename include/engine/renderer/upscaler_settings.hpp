@@ -21,7 +21,13 @@ enum class UpscalerBackend : std::uint8_t {
 };
 
 // Quality modes and their render scale per axis (AMD's FSR 2 ratios).
+// `automatic` (the default, "auto" in JSON) picks per display when the frame
+// renders: `quality` on a high-density display (display scale >= 1.5: a
+// Retina Mac, a 4K monitor at 150-200 %), where native resolution costs
+// 2.25-4x the pixels for little visible gain, else `native_aa`. It is stored
+// as `auto`, so a scene saved on one machine still adapts on another.
 enum class UpscalerMode : std::uint8_t {
+    automatic,   // quality on high-density displays, else native_aa
     native_aa,   // 1.0: anti-aliasing only
     quality,     // 1 / 1.5
     balanced,    // 1 / 1.7
@@ -29,15 +35,15 @@ enum class UpscalerMode : std::uint8_t {
 };
 
 // Names in enum order: the descriptor table's choices and the JSON values.
-inline constexpr std::array<std::string_view, 4> upscaler_mode_names{
-    "native_aa", "quality", "balanced", "performance"};
+inline constexpr std::array<std::string_view, 5> upscaler_mode_names{
+    "auto", "native_aa", "quality", "balanced", "performance"};
 inline constexpr std::array<std::string_view, 2> upscaler_backend_names{"taau", "fsr2"};
 
 // A plain struct of the descriptor table's field types (A8): the enums are
 // stored as their index; read them through upscaler_mode() /
 // upscaler_backend(), which clamp. Out-of-range values are clamped where used.
 struct UpscalerSettings {
-    int   mode = static_cast<int>(UpscalerMode::native_aa);
+    int   mode = static_cast<int>(UpscalerMode::automatic);
     // > 0 overrides the mode's render scale (per axis, clamped to [0.25, 1]).
     float render_scale = 0.0F;
     // Sharpening of the current frame's reconstruction, [0, 1].
@@ -48,6 +54,16 @@ struct UpscalerSettings {
 [[nodiscard]] UpscalerMode    upscaler_mode(const UpscalerSettings& settings);
 [[nodiscard]] UpscalerBackend upscaler_backend(const UpscalerSettings& settings);
 
+// The concrete mode `mode` means on a display of `display_scale`
+// (SDL_GetWindowDisplayScale): `automatic` resolves, the others are returned
+// as they are.
+[[nodiscard]] UpscalerMode resolve_upscaler_mode(UpscalerMode mode, float display_scale);
+// `settings` with an `automatic` mode resolved for `display_scale`.
+[[nodiscard]] UpscalerSettings resolve_upscaler_settings(UpscalerSettings settings,
+                                                         float display_scale);
+
+// The render scale of a concrete mode (an unresolved `automatic` counts as
+// native).
 [[nodiscard]] float upscaler_mode_scale(UpscalerMode mode);
 // The render scale `settings` select (override or mode), clamped.
 [[nodiscard]] float upscaler_render_scale(const UpscalerSettings& settings);

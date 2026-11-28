@@ -120,6 +120,20 @@ TEST(CameraRigMaths, ZoomToCursorKeepsTheGroundPointUnderTheCursor) {
     EXPECT_NEAR(glm::length(centre.focus - rig.focus), 0.0F, 1e-3F);
 }
 
+// HiDPI (fix/hidpi-rendering): the pointer and the viewport are in the same
+// window coordinates; a 2x display doubles both, and the ray must not move.
+TEST(CameraRigMaths, PointerRayIsIndependentOfPixelDensity) {
+    const s::RigView view{glm::vec3(3.0F, 0.0F, -2.0F), 30.0F, 50.0F, 40.0F, k_fov,
+                          k_viewport.x / k_viewport.y};
+    for (const glm::vec2 cursor :
+         {glm::vec2(10.0F, 700.0F), k_viewport * 0.5F, glm::vec2(1279.0F, 1.0F)}) {
+        const s::Ray points = s::rig_pointer_ray(view, cursor, k_viewport);
+        const s::Ray pixels = s::rig_pointer_ray(view, cursor * 2.0F, k_viewport * 2.0F);
+        EXPECT_NEAR(glm::length(points.origin - pixels.origin), 0.0F, 1e-4F);
+        EXPECT_NEAR(glm::length(points.dir - pixels.dir), 0.0F, 1e-5F);
+    }
+}
+
 TEST(CameraRigMaths, Bounds) {
     s::RigBounds b;
     b.shape = s::RigBounds::Shape::rect;

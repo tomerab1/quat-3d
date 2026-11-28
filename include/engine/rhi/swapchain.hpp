@@ -13,6 +13,15 @@ namespace engine::rhi {
 
 class Device;
 
+// The swapchain image extent for a surface with capabilities `caps` and a
+// window measured at `window_pixels` (SDL_GetWindowSizeInPixels: the
+// framebuffer size, which on a high-density display is the window's point
+// size times its pixel density). A surface that reports its current extent
+// gets exactly that; one that leaves it to the swapchain (0xFFFFFFFF, as on
+// Wayland) gets the window's pixel size clamped to the supported range.
+[[nodiscard]] VkExtent2D choose_swapchain_extent(const VkSurfaceCapabilitiesKHR& caps,
+                                                 VkExtent2D window_pixels);
+
 // Owns the VkSwapchainKHR and its image views. The surface is owned elsewhere
 // (normally the Device, via CreateInfo::create_surface); the swapchain only
 // references it, and creation fails clearly when the device's present queue
@@ -43,6 +52,10 @@ public:
     [[nodiscard]] VkSwapchainKHR handle() const { return swapchain_; }
     [[nodiscard]] VkFormat format() const { return format_; }
     [[nodiscard]] VkExtent2D extent() const { return extent_; }
+    // The window pixel extent the swapchain was last built for (the argument
+    // of create / recreate); differs from extent() when the surface dictates
+    // its own size. A different window pixel size means the swapchain is stale.
+    [[nodiscard]] VkExtent2D requested_extent() const { return requested_extent_; }
     [[nodiscard]] std::uint32_t image_count() const {
         return static_cast<std::uint32_t>(images_.size());
     }
@@ -65,6 +78,7 @@ private:
     VkSwapchainKHR             swapchain_ = VK_NULL_HANDLE;
     VkFormat                   format_ = VK_FORMAT_UNDEFINED;
     VkExtent2D                 extent_{};
+    VkExtent2D                 requested_extent_{};
     std::vector<VkImage>       images_;
     std::vector<VkImageView>   image_views_;
     std::vector<VkImageView>   unorm_image_views_;

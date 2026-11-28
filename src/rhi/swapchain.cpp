@@ -35,15 +35,6 @@ namespace {
                            : formats.front();
 }
 
-[[nodiscard]] VkExtent2D clamp_extent(const VkSurfaceCapabilitiesKHR& caps, VkExtent2D wanted) {
-    if (caps.currentExtent.width != UINT32_MAX) {
-        return caps.currentExtent;
-    }
-    return VkExtent2D{
-        std::clamp(wanted.width, caps.minImageExtent.width, caps.maxImageExtent.width),
-        std::clamp(wanted.height, caps.minImageExtent.height, caps.maxImageExtent.height)};
-}
-
 // Whether swapchain images of `format` + `usage` can be created mutable-format
 // with the view formats in `list` (the implied image parameters of
 // VK_SWAPCHAIN_CREATE_MUTABLE_FORMAT_BIT_KHR, VUID-VkSwapchainCreateInfoKHR-
@@ -81,6 +72,21 @@ namespace {
 }
 
 } // namespace
+
+VkExtent2D choose_swapchain_extent(const VkSurfaceCapabilitiesKHR& caps,
+                                   VkExtent2D window_pixels) {
+    // A defined currentExtent is the surface's size in pixels (the layer's
+    // drawable size on macOS) and must be used as is
+    // (VUID-VkSwapchainCreateInfoKHR-imageExtent-01274).
+    if (caps.currentExtent.width != UINT32_MAX) {
+        return caps.currentExtent;
+    }
+    // Otherwise (Wayland) the swapchain decides the size: the window's
+    // size in pixels, never its size in points.
+    return VkExtent2D{
+        std::clamp(window_pixels.width, caps.minImageExtent.width, caps.maxImageExtent.width),
+        std::clamp(window_pixels.height, caps.minImageExtent.height, caps.maxImageExtent.height)};
+}
 
 std::expected<Swapchain, core::Error>
 Swapchain::create(const Device& device, VkSurfaceKHR surface, VkExtent2D window_extent) {
@@ -121,7 +127,7 @@ std::expected<void, core::Error> Swapchain::build(VkExtent2D window_extent) {
     }
 
     const VkSurfaceFormatKHR surface_format = choose_format(gpu, surface_);
-    const VkExtent2D extent = clamp_extent(caps, window_extent);
+    const VkExtent2D extent = choose_swapchain_extent(caps, window_extent);
 
     std::uint32_t image_count = caps.minImageCount + 1;
     if (caps.maxImageCount > 0 && image_count > caps.maxImageCount) {
@@ -195,6 +201,7 @@ std::expected<void, core::Error> Swapchain::build(VkExtent2D window_extent) {
 
     format_ = surface_format.format;
     extent_ = extent;
+    requested_extent_ = window_extent;
 
     std::uint32_t actual_count = 0;
     vkGetSwapchainImagesKHR(device_->handle(), swapchain_, &actual_count, nullptr);
@@ -271,6 +278,7 @@ Swapchain& Swapchain::operator=(Swapchain&& other) noexcept {
         swapchain_   = std::exchange(other.swapchain_, VK_NULL_HANDLE);
         format_      = std::exchange(other.format_, VK_FORMAT_UNDEFINED);
         extent_      = other.extent_;
+        requested_extent_ = other.requested_extent_;
         images_      = std::move(other.images_);
         image_views_ = std::move(other.image_views_);
         unorm_image_views_ = std::move(other.unorm_image_views_);

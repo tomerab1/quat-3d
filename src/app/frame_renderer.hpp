@@ -330,6 +330,14 @@ public:
     // (opaque + shadow + transparent, InstancedMesh batches included). Valid
     // from inside build_ui on.
     [[nodiscard]] std::size_t draw_count() const { return draw_count_; }
+    // The scene's render extent (before upscaling) and the draw extent it is
+    // resolved to (the editor viewport image, or the swapchain), in pixels,
+    // for the frame record() is building. Valid from inside build_ui on.
+    [[nodiscard]] VkExtent2D render_extent() const { return render_extent_; }
+    // The window's display scale (SDL_GetWindowDisplayScale), which the
+    // upscaler's `auto` mode resolves against; call before record().
+    void set_display_scale(float scale) { display_scale_ = scale; }
+    [[nodiscard]] VkExtent2D draw_extent() const { return draw_extent_; }
 
     [[nodiscard]] VkCommandBuffer command_buffer() const { return command_buffers_[frame_]; }
     [[nodiscard]] std::uint32_t frame_slot() const { return frame_; }
@@ -474,6 +482,8 @@ private:
     std::uint32_t frame_ = 0;       // current frame-in-flight slot
     std::uint32_t image_index_ = 0; // acquired swapchain image
     VkExtent2D    draw_extent_{0, 0};
+    VkExtent2D    render_extent_{0, 0}; // draw_extent_ x the upscaler's render scale
+    float         display_scale_ = 1.0F; // the window's (resolves upscaler `auto`)
     std::size_t   draw_count_ = 0;
 
     // R20 look LUT: the settings path it was loaded for (also after a failed

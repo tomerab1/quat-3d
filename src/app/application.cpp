@@ -96,7 +96,13 @@ bool Application::init_platform() {
     }
     platform_.sdl_initialized = true;
 
-    SDL_WindowFlags flags = SDL_WINDOW_RESIZABLE | SDL_WINDOW_VULKAN;
+    // HIGH_PIXEL_DENSITY: on Retina Macs and scaled Wayland outputs the
+    // framebuffer gets every physical pixel (SDL_GetWindowSizeInPixels is
+    // the window's point size x its pixel density); without it the OS
+    // renders the window at 1x and upscales it, blurring the scene and the
+    // UI. On Windows and X11 windows are already sized in pixels.
+    SDL_WindowFlags flags =
+        SDL_WINDOW_RESIZABLE | SDL_WINDOW_VULKAN | SDL_WINDOW_HIGH_PIXEL_DENSITY;
     if (config_.fullscreen) flags |= SDL_WINDOW_FULLSCREEN;
     platform_.window = SDL_CreateWindow(config_.window_title.c_str(), config_.window_width,
                                         config_.window_height, flags);
@@ -398,7 +404,12 @@ bool Application::pump_events() {
         case SDL_EVENT_KEY_DOWN:
             if (event.key.key == SDLK_ESCAPE) running = false;
             break;
+        // A resize, or a move between displays of different density (Retina
+        // <-> standard): the framebuffer's pixel size changes even when the
+        // window's point size does not.
         case SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED:
+        case SDL_EVENT_WINDOW_DISPLAY_SCALE_CHANGED:
+        case SDL_EVENT_WINDOW_DISPLAY_CHANGED:
             renderer_.request_swapchain_recreate();
             break;
         case SDL_EVENT_MOUSE_BUTTON_DOWN:
@@ -458,6 +469,7 @@ bool Application::run_frame() {
         return true;
     }
     if (!renderer_.ensure_swapchain(pixel_extent)) return false;
+    renderer_.set_display_scale(SDL_GetWindowDisplayScale(platform_.window));
 
     const std::uint32_t slot = renderer_.wait_for_slot();
     if (shader_reload_) shader_reload_->update(presented_); // R2: swap rebuilt pipelines
@@ -529,12 +541,14 @@ bool Application::run_frame() {
     frame_inputs.build_ui = [&]() {
         QUAT_ZONE_N("editor_ui");
         // record() calls this after batching, so the count is this frame's.
-        return editor_.build_ui(dt, static_cast<int>(renderer_.draw_count()), cam);
+        return editor_.build_ui(dt, static_cast<int>(renderer_.draw_count()),
+                                renderer_.render_extent(), renderer_.draw_extent(), cam);
     };
 #endif
     if (!renderer_.record(frame_inputs)) return false;
     // A5 debug.stats: the frame's submitted draws, counted after batching.
     remote_->note_draws(renderer_.draw_count());
+    remote_->note_resolution(renderer_.render_extent(), renderer_.draw_extent());
 
     remote_->record_capture(renderer_.command_buffer(), renderer_.frame_slot(),
                             renderer_.capture_source());

@@ -286,7 +286,8 @@ bool draw_lens_controls(renderer::PhysicalCamera& lens, float fov_y) {
 }
 
 void draw_renderer_panel(RenderSettings& settings, scene::Scene* scene, const HdriPanel& hdri,
-                         renderer::PhysicalCamera* view_lens, float view_fov_y) {
+                         renderer::PhysicalCamera* view_lens, float view_fov_y,
+                         std::string_view resolution) {
     if (!ImGui::Begin(shell::panel_window_name(shell::Panel::renderer).c_str())) {
         ImGui::End();
         return;
@@ -336,6 +337,10 @@ void draw_renderer_panel(RenderSettings& settings, scene::Scene* scene, const Hd
                 ImGui::EndDisabled();
             }
             if (g.name == "environment") draw_hdri_file(hdri);
+            if (g.name == "upscaler" && !resolution.empty()) {
+                ui::prop_value("Resolution", resolution,
+                               "This frame: render size -> output size in pixels", true);
+            }
             ui::prop_begin("", nullptr, false, false);
             if (ui::button(ui::label(icon::rotate_ccw, "Reset group").c_str(),
                            ui::ButtonKind::ghost)) {

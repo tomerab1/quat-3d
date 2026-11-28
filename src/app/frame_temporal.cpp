@@ -19,7 +19,9 @@
 namespace quat::app {
 
 engine::renderer::UpscalerSettings FrameRenderer::current_upscaler() const {
-    engine::renderer::UpscalerSettings s = settings_.upscaler;
+    // `auto` resolves for the display the window is on (set_display_scale).
+    engine::renderer::UpscalerSettings s =
+        engine::renderer::resolve_upscaler_settings(settings_.upscaler, display_scale_);
     if (!settings_.taa.enabled) {
         s.mode = static_cast<int>(engine::renderer::UpscalerMode::native_aa);
         s.render_scale = 0.0F;

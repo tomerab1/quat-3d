@@ -87,7 +87,9 @@ it.
 - `debug_stats`: frame time (`frame_time_ms` avg and worst) is not much
   higher than before. AO, shadow cascades and `max_distance` cost GPU time;
   `{"upscaler": {"mode": "performance"}}` renders at half resolution per axis
-  and upscales (needs `taa` enabled) when frame time is the problem.
+  and upscales (needs `taa` enabled) when frame time is the problem;
+  `debug_stats.resolution` shows the render and output sizes (the default
+  `auto` mode already renders at 2/3 per axis on HiDPI displays).
 
 ## Pitfalls
 

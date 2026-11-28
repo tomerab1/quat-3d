@@ -86,8 +86,13 @@ bool EditorBridge::keyboard_captured() const {
 VkExtent2D EditorBridge::scene_extent(VkExtent2D present_extent) const {
     VkExtent2D draw_extent = present_extent;
     if (editor_.active() && editor_.viewport_width() > 0 && editor_.viewport_height() > 0) {
-        draw_extent.width = std::clamp(editor_.viewport_width(), 16U, 4096U);
-        draw_extent.height = std::clamp(editor_.viewport_height(), 16U, 4096U);
+        // The panel's size in framebuffer pixels (EditorLayer::viewport_width).
+        using engine::editor::k_max_viewport_pixels;
+        using engine::editor::k_min_viewport_pixels;
+        draw_extent.width =
+            std::clamp(editor_.viewport_width(), k_min_viewport_pixels, k_max_viewport_pixels);
+        draw_extent.height =
+            std::clamp(editor_.viewport_height(), k_min_viewport_pixels, k_max_viewport_pixels);
     }
     return draw_extent;
 }
@@ -274,13 +279,15 @@ void EditorBridge::handle_ground_click() {
     }
 }
 
-const ImDrawData* EditorBridge::build_ui(float dt, int draw_count,
+const ImDrawData* EditorBridge::build_ui(float dt, int draw_count, VkExtent2D render,
+                                         VkExtent2D output,
                                          const engine::scene::CameraMatrices& cam) {
     engine::scene::Scene& scene = *t_.scene;
     WorldRuntime& world = *t_.world;
     engine::editor::EditorContext ui_ctx;
     ui_ctx.frame_ms = dt * 1000.0F;
     ui_ctx.draw_count = draw_count;
+    ui_ctx.resolution = {render.width, render.height, output.width, output.height};
     ui_ctx.entity_count =
         static_cast<int>(scene.registry().view<engine::scene::Transform>().size());
     ui_ctx.shader_statuses = t_.shader_reload != nullptr ? &t_.shader_reload->statuses() : nullptr;

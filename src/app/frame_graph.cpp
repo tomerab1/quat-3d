@@ -300,6 +300,7 @@ bool FrameRenderer::record(const FrameInputs& in) {
     // R11: the scene renders at render_extent; the upscaler resolves to
     // draw_extent, where post-processing and the UI run.
     const VkExtent2D render_extent = fs.render_extent;
+    render_extent_ = render_extent;
     apply_texture_lod_bias(fr, render_extent, draw_extent);
     const auto atmos_skyview = [&]() {
         return atmosphere_ ? atmosphere_->skyview_view() : VK_NULL_HANDLE;

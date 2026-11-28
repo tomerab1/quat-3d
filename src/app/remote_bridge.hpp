@@ -29,6 +29,7 @@
 //                        advance_sim_unrendered() instead on iterations that
 //                        draw nothing (minimised)
 //   note_draws(n)        the frame's submitted draw count (debug.stats)
+//   note_resolution()    the frame's render / output extents (debug.stats)
 //   screenshot_view()    before the frame's view: a screenshot's own camera
 //                        to render this frame from, if one is pending
 //   record_capture()     after the frame's graph is recorded: copies the
@@ -209,6 +210,8 @@ public:
     // stays frozen, but stepping callers still get their reply.
     [[nodiscard]] float advance_sim_unrendered();
     void note_draws(std::size_t draws);
+    // The frame's render and output extents in pixels (debug.stats).
+    void note_resolution(VkExtent2D render, VkExtent2D output);
     // True once after a remote camera move that was a cut (a teleport: camera.set
     // with `cut`, or a jump / turn past the threshold; camera.frame): the frame
     // restarts temporal history (TAA) instead of blending across the jump.

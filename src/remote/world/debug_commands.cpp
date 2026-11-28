@@ -100,12 +100,20 @@ RpcResult debug_stats(Context& ctx, const Json& params) {
         out["draws"] = fs.draws ? Json(*fs.draws) : Json(nullptr);
         out["memory"] = fs.resident_bytes ? Json{{"resident_bytes", *fs.resident_bytes}}
                                           : Json(nullptr);
+        out["resolution"] =
+            fs.output_width == 0 || fs.output_height == 0
+                ? Json(nullptr)
+                : Json{{"render", {fs.render_width, fs.render_height}},
+                       {"output", {fs.output_width, fs.output_height}},
+                       {"render_scale", static_cast<double>(fs.render_width) /
+                                            static_cast<double>(fs.output_width)}};
     } else {
         out["frame"] = nullptr;
         out["frame_time_ms"] = nullptr;
         out["fps"] = nullptr;
         out["draws"] = nullptr;
         out["memory"] = nullptr;
+        out["resolution"] = nullptr;
     }
     out["entities"] = r.view<const scene::Transform>().size();
 

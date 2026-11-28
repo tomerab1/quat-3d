@@ -31,8 +31,12 @@ struct DeviceState {
     std::bitset<key_count> keys_prev; // held last frame
     std::bitset<mouse_button_count> mouse;
     std::bitset<mouse_button_count> mouse_prev;
-    glm::vec2 mouse_position{0.0F}; // pixels, window space
-    glm::vec2 mouse_delta{0.0F};    // pixels moved this frame
+    // Window coordinates, as SDL reports them: points on a high-density
+    // macOS / Wayland window (half the framebuffer's pixels at 2x), pixels on
+    // Windows and X11. Only ever compared with viewport_* (same space), so
+    // rays and edge zones do not depend on the pixel density.
+    glm::vec2 mouse_position{0.0F}; // window coordinates
+    glm::vec2 mouse_delta{0.0F};    // window coordinates moved this frame
     float     mouse_wheel = 0.0F;   // wheel steps this frame (+ away from the user)
 
     bool gamepad_connected = false;
@@ -50,7 +54,7 @@ struct DeviceState {
     // drag that leaves the viewport continues.
     bool pointer_blocked = false;
 
-    // The rectangle the scene is drawn into, in window pixels (the whole
+    // The rectangle the scene is drawn into, in window coordinates (the whole
     // window, or the editor's Viewport panel). Pointer positions and screen-
     // edge zones are measured against it; an empty size means the window.
     glm::vec2 viewport_origin{0.0F};

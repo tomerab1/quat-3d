@@ -76,15 +76,21 @@ an unknown field or a bad value is an error that names its path, e.g.
 |---|---|
 | `key:<name>`, `key:ctrl+z`, `key:ctrl+shift+z` | A key. Chord modifiers are `ctrl`, `shift` and `alt`, either side of the keyboard. |
 | `mouse:left\|middle\|right\|x1\|x2` | A mouse button. |
-| `mouse:delta`, `mouse:delta_x`, `mouse:delta_y` | Pixels moved this frame. y is down. |
+| `mouse:delta`, `mouse:delta_x`, `mouse:delta_y` | Window coordinates moved this frame. y is down. |
 | `mouse:wheel` | Wheel steps this frame. Positive is away from the user. |
-| `pointer`, `pointer_x`, `pointer_y` | The pointer in viewport pixels. y is down. |
+| `pointer`, `pointer_x`, `pointer_y` | The pointer relative to the viewport, in window coordinates. y is down. |
 | `edge`, `edge_x`, `edge_y` | The direction of the screen edge the pointer is in (top = up). |
 | `gamepad:<button>` | `south`/`a`, `east`/`b`, `west`/`x`, `north`/`y`, `back`, `guide`, `start`, `left_stick`, `right_stick` (the stick clicks), `left_shoulder`, `right_shoulder`, `dpad_*`. |
 | `gamepad:<axis>` | `left_x`, `left_y`, `right_x`, `right_y` (y down, as SDL reports), `left_trigger`, `right_trigger`. |
 | `gamepad:left_stick_xy`, `gamepad:right_stick_xy` (also `_x` / `_y`) | A stick as 2D, with y up. |
 
 Key names are the ones `input.key` takes in [`scripting.md`](scripting.md#input).
+
+Pointer positions, deltas, `edge_px` and `drag` distances are in window
+coordinates as SDL reports them: pixels on Windows and X11, points on a
+high-density macOS / Wayland window (one point is two framebuffer pixels on a
+Retina display), so they keep their physical size on every display. Rays
+through the pointer depend only on its position relative to the viewport.
 
 `edge` zones are `edge_px` wide (default 8). By default they work only while
 the window is fullscreen and focused; set `"windowed": true` to use them in a

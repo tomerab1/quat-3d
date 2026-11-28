@@ -141,7 +141,10 @@ public:
     // ---- Frame hooks -------------------------------------------------------
     void begin_frame();
     void handle_ground_click();
-    [[nodiscard]] const ImDrawData* build_ui(float dt, int draw_count,
+    // `render` / `output`: the scene's render extent and the extent it is
+    // upscaled to this frame (pixels), for the stats overlay and profiler.
+    [[nodiscard]] const ImDrawData* build_ui(float dt, int draw_count, VkExtent2D render,
+                                             VkExtent2D output,
                                              const engine::scene::CameraMatrices& cam);
 
 private:

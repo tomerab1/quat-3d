@@ -109,6 +109,9 @@ void summary(const core::FrameProfiler& profiler, const ProfilerState& state) {
     std::snprintf(frames, sizeof(frames), "%u / %u", profiler.frames_in_window(),
                   profiler.window());
     ui::prop_value("Window", frames, "Frames summarised (rolling)", true);
+    ui::prop_value("Resolution", state.resolution,
+                   "Scene render size -> output size this frame (the upscaler's render scale)",
+                   true);
     if (!profiler.gpu_timing_available()) {
         const std::string note = "GPU timing off: " + std::string(profiler.gpu_status());
         ui::prop_note(note.c_str(), ui::tokens().warning);

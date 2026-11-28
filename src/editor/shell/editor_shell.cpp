@@ -20,6 +20,7 @@
 #include "../tuning_panels.hpp"
 #include "../ui/icons.hpp"
 #include "../ui/toasts.hpp"
+#include "../ui/resolution_text.hpp"
 #include "engine/core/sim_clock.hpp"
 #include "engine/scene/components.hpp"
 #include "engine/scene/scene.hpp"
@@ -417,7 +418,7 @@ void EditorShell::draw_panels() {
     if (c.renderer != nullptr) {
         draw_renderer_panel(*c.renderer, c.scene,
                             {c.hdri_path, c.hdri_status, c.project_root, c.hdri_request},
-                            c.view_lens, c.view_fov_y);
+                            c.view_lens, c.view_fov_y, ui::resolution_text(c.resolution));
     }
     if (c.scene != nullptr) {
         if (rename_pending) {
@@ -440,6 +441,7 @@ void EditorShell::draw_panels() {
                            c.build_navmesh_request, c.nav_edges, c.nav_status);
     }
     draw_stats_panel(*this);
+    if (!profiler->frozen) profiler->resolution = ui::resolution_text(c.resolution);
     panels::draw_profiler(c.profiler, *profiler, panel_window_name(Panel::profiler).c_str(),
                           open(Panel::profiler));
 }
