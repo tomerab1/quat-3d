@@ -51,7 +51,7 @@ jobs:
       # finds its data next to the executable.
       - name: Configure
         id: configure
-        run: cmake --preset ${{ matrix.preset }} -DENGINE_PACKAGE_BUILD=ON -DENGINE_PROFILE=OFF
+        run: cmake --preset ${{ matrix.preset }} -DENGINE_PACKAGE_BUILD=ON -DENGINE_PROFILE=OFF -DENGINE_VALIDATE_SHADERS=ON
 
       # Not on tag refs: tag runs restore the caches master/CI built but never
       # add their own (a tag's cache would only serve that one tag).

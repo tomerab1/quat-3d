@@ -23,6 +23,43 @@
 
 find_program(SLANGC_EXECUTABLE slangc REQUIRED)
 
+# ENGINE_VALIDATE_SHADERS (top-level CMakeLists.txt, issue #136): each cooked
+# .spv is checked by `spirv-val --target-env vulkan1.3` in the same build step
+# that writes it, so an invalid module fails the build (and is rebuilt next
+# time). The Vulkan environment rules matter: an ArrayStride on an array used
+# by a Function/Workgroup variable (VUID-StandaloneSpirv-None-10684) passes
+# plain spirv-val but is rejected by the validation layer. SPIRV-Tools checks
+# explicit layouts per storage class from v2025.1 (v2025.2 fixed pointer
+# types), so an older spirv-val -- e.g. Ubuntu 24.04's -- is refused. The
+# vcpkg host tool (manifest feature `shader-validation`) is on
+# CMAKE_PROGRAM_PATH and wins over PATH.
+set(QUAT_SPIRV_VAL_COMMAND)
+if(ENGINE_VALIDATE_SHADERS)
+    find_program(SPIRV_VAL_EXECUTABLE spirv-val REQUIRED)
+    execute_process(COMMAND ${SPIRV_VAL_EXECUTABLE} --version
+        OUTPUT_VARIABLE spirv_val_version ERROR_QUIET)
+    string(REGEX MATCH "v(20[0-9][0-9])\\.([0-9]+)" spirv_val_tag "${spirv_val_version}")
+    set(spirv_val_year ${CMAKE_MATCH_1})
+    set(spirv_val_minor ${CMAKE_MATCH_2})
+    if(NOT spirv_val_tag OR spirv_val_year LESS 2025
+            OR (spirv_val_year EQUAL 2025 AND spirv_val_minor LESS 2))
+        message(FATAL_ERROR "ENGINE_VALIDATE_SHADERS needs SPIRV-Tools v2025.2 or newer "
+            "(explicit-layout checks); ${SPIRV_VAL_EXECUTABLE} reports: ${spirv_val_version}")
+    endif()
+    message(STATUS "Cooked shaders validated by ${SPIRV_VAL_EXECUTABLE} (${spirv_val_tag})")
+    set(QUAT_SPIRV_VAL_COMMAND ${SPIRV_VAL_EXECUTABLE} --target-env vulkan1.3)
+endif()
+
+# Sets <out_var> to the extra custom-command step that validates <spv>, or to
+# nothing when ENGINE_VALIDATE_SHADERS is off.
+function(quat_spirv_validate_command out_var spv)
+    if(QUAT_SPIRV_VAL_COMMAND)
+        set(${out_var} COMMAND ${QUAT_SPIRV_VAL_COMMAND} ${spv} PARENT_SCOPE)
+    else()
+        set(${out_var} "" PARENT_SCOPE)
+    endif()
+endfunction()
+
 function(add_shader_compilation TARGET_NAME)
     set(shader_src_dir ${PROJECT_SOURCE_DIR}/assets/shaders)
     set(shader_lib_dir ${shader_src_dir}/lib)
@@ -57,12 +94,14 @@ function(add_shader_compilation TARGET_NAME)
         get_filename_component(name ${src} NAME_WE)
         set(spv  ${shader_out_dir}/${name}.spv)
         set(json ${shader_out_dir}/${name}.json)
+        quat_spirv_validate_command(validate ${spv})
         add_custom_command(
             OUTPUT ${spv} ${json}
             COMMAND ${CMAKE_COMMAND} -E make_directory ${shader_out_dir}
             COMMAND ${SLANGC_EXECUTABLE} ${src} -I ${shader_lib_dir}
                     -target spirv -emit-spirv-directly -fvk-use-entrypoint-name
                     -o ${spv} -reflection-json ${json}
+            ${validate}
             DEPENDS ${src} ${module_outputs}
             COMMENT "slangc ${name}.slang -> SPIR-V + reflection"
             VERBATIM)
@@ -77,6 +116,7 @@ function(add_shader_compilation TARGET_NAME)
             set(driver ${shader_out_dir}/material_pass_${variant}.slang-module)
             set(spv  ${material_out_dir}/${name}.${variant}.spv)
             set(json ${material_out_dir}/${name}.${variant}.json)
+            quat_spirv_validate_command(validate ${spv})
             add_custom_command(
                 OUTPUT ${spv} ${json}
                 COMMAND ${CMAKE_COMMAND} -E make_directory ${material_out_dir}
@@ -84,6 +124,7 @@ function(add_shader_compilation TARGET_NAME)
                         -I ${shader_out_dir}
                         -target spirv -emit-spirv-directly -fvk-use-entrypoint-name
                         -o ${spv} -reflection-json ${json}
+                ${validate}
                 DEPENDS ${src} ${module_outputs}
                 COMMENT "slangc material ${name}.slang (${variant}) -> SPIR-V + reflection"
                 VERBATIM)

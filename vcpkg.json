@@ -46,6 +46,18 @@
     "gtest"
   ],
   "features": {
+    "shader-validation": {
+      "description": "spirv-val for the cook-time SPIR-V gate (ENGINE_VALIDATE_SHADERS=ON; CMake requests this feature itself)",
+      "dependencies": [
+        {
+          "name": "spirv-tools",
+          "host": true,
+          "features": [
+            "tools"
+          ]
+        }
+      ]
+    },
     "profiling": {
       "description": "Tracy profiler client (ENGINE_PROFILE=ON; CMake requests this feature itself)",
       "dependencies": [

@@ -12,6 +12,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: slang-bisect
+  cancel-in-progress: true
+
 jobs:
   spirv-val:
     runs-on: ubuntu-24.04
@@ -64,7 +68,8 @@ jobs:
           C=slang/bin/slangc; fail=0
           for f in $S/lib/*.slang; do n=$(basename $f .slang); $C $f -I $S/lib -o $O/$n.slang-module || { echo "MODULE-FAIL $n"; fail=1; }; done
           for f in $S/*.slang; do n=$(basename $f .slang)
-            $C $f -I $S/lib -target spirv -emit-spirv-directly -fvk-use-entrypoint-name -o $O/$n.spv -reflection-json $O/$n.json || { echo "COMPILE-FAIL $n"; fail=1; }
+            $C $f -I $S/lib -target spirv -emit-spirv-directly -fvk-use-entrypoint-name -o $O/$n.spv -reflection-json $O/$n.json 2> err.txt || { echo "COMPILE-FAIL $n"; fail=1; }
+            if [ -s err.txt ]; then echo "DIAG $n:"; head -20 err.txt; fi
           done
           for f in $S/materials/*.slang; do n=$(basename $f .slang)
             $C $f $O/material_pass_gbuffer.slang-module -I $S/lib -I $O -target spirv -emit-spirv-directly -fvk-use-entrypoint-name -o $O/materials/$n.gbuffer.spv -reflection-json $O/materials/$n.gbuffer.json || { echo "COMPILE-FAIL material $n"; fail=1; }
@@ -75,6 +80,57 @@ jobs:
           done
           echo "RESULT v$V: $bad of $total .spv fail spirv-val; compile-fail=$fail"
           tar -czf cooked-$V.tgz cooked
+      - name: New explicit-layout test against this version's cooked shaders
+        run: |
+          git clone -q --depth 1 -b v1.17.0 https://github.com/google/googletest.git gt
+          G=gt/googletest
+          g++ -std=c++23 -O1 -Wall -Wextra -Wshadow -Werror -fno-exceptions -fno-rtti -I$G/include -I$G \
+            -DQUAT_COOKED_SHADER_DIR="\"$PWD/cooked/shaders\"" tests/rhi/spirv_explicit_layout_test.cpp \
+            $G/src/gtest-all.cc $G/src/gtest_main.cc -o layout_test -lpthread
+          ./layout_test 2>&1 | grep -E 'Failure|\.spv|PASSED|FAILED' | head -40 || true
+      - name: Workaround probes
+        env: { V: '${{ matrix.version }}' }
+        run: |
+          C=slang/bin/slangc; D=spvt/spirv-dis; mkdir -p p; cd p
+          cat > inst.slang <<'X'
+          struct VOut { float4 pos : SV_Position; };
+          [shader("vertex")] VOut main(uint iid : SV_InstanceID) { VOut o; o.pos = float4(float(iid), 0, 0, 1); return o; }
+          X
+          cat > nullp.slang <<'X'
+          struct PC { float* p; };
+          [[vk::push_constant]] ConstantBuffer<PC> pc;
+          RWStructuredBuffer<float> o;
+          [shader("compute")] [numthreads(1, 1, 1)] void main() { if (pc.p != nullptr) o[0] = *pc.p; }
+          X
+          cat > u3.slang <<'X'
+          struct PC { uint a; uint3 b; };
+          [[vk::push_constant]] ConstantBuffer<PC> pc;
+          RWStructuredBuffer<uint> o;
+          [shader("compute")] [numthreads(1, 1, 1)] void main() { o[0] = pc.a + pc.b.x + pc.b.z; }
+          X
+          cat > disc.slang <<'X'
+          interface IKeep { static bool keep(float a); }
+          struct Opaque : IKeep { static bool keep(float a) { return true; } }
+          float4 shade<K : IKeep>(float a) { if (!K::keep(a)) discard; return float4(a); }
+          [shader("fragment")] float4 main(float a : A) : SV_Target { return shade<Opaque>(a); }
+          X
+          cat > mat.slang <<'X'
+          struct PC { float4x4 m; float3x3 n; };
+          [[vk::push_constant]] ConstantBuffer<PC> pc;
+          RWStructuredBuffer<float4> o;
+          [shader("compute")] [numthreads(1, 1, 1)] void main() { o[0] = mul(pc.m, float4(1, 2, 3, 1)) + float4(mul(pc.n, float3(1, 2, 3)), 0); }
+          X
+          printf 'void main() { int x = undefined_thing; }\n' > bad.slang
+          F="-target spirv -emit-spirv-directly -fvk-use-entrypoint-name"
+          for n in inst nullp u3 disc mat; do $C $n.slang $F -o $n.spv -reflection-json $n.json || echo "PROBE-COMPILE-FAIL $n"; done
+          echo "PROBE v$V DrawParameters(SV_InstanceID): $($D inst.spv | grep -c 'Capability DrawParameters')"
+          echo "PROBE v$V Int64(nullptr test): $($D nullp.spv | grep -c 'Capability Int64')"
+          echo "PROBE v$V uint3-after-uint offset: $($D u3.spv | grep 'OpMemberDecorate %PC_std430 1 Offset\|OpMemberDecorate .* 1 Offset' | head -2 | tr '\n' ' ')"
+          echo "PROBE v$V dead discard ops: $($D disc.spv | grep -c 'OpKill\|OpTerminateInvocation\|OpDemoteToHelperInvocation')"
+          echo "PROBE v$V matrix decorations: $($D mat.spv | grep 'RowMajor\|ColMajor\|MatrixStride' | tr -s ' ' | tr '\n' ';')"
+          echo "PROBE v$V matrix reflection: $(jq -c '[.. | objects | select(has("matrixLayout") or has("rowCount")) ] | .[0:3]' mat.json 2>/dev/null | cut -c1-300)"
+          $C bad.slang -target spirv -o bad.spv -reflection-json bad.json > /dev/null 2>&1; echo "PROBE v$V compile error + reflection-json exit: $?"
+          echo "PROBE v$V bad.spv written: $(test -e bad.spv && echo yes || echo no)"
       - uses: actions/upload-artifact@v4
         with: { name: 'cooked-${{ matrix.version }}', path: 'cooked-${{ matrix.version }}.tgz' }
 
