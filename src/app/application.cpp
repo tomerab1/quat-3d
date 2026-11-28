@@ -297,6 +297,14 @@ void Application::connect_remote() {
     remote_targets.render_settings = &renderer_.render_settings();
     remote_targets.material_overrides = &renderer_.material_overrides();
     remote_targets.reset_temporal = [this] { renderer_.reset_temporal(); };
+    remote_targets.input = &input_runtime_;
+    remote_targets.view_aspect = [this] {
+        VkExtent2D e = renderer_.present_extent();
+#ifdef ENGINE_EDITOR
+        e = editor_.scene_extent(e);
+#endif
+        return e.height == 0 ? 0.0F : static_cast<float>(e.width) / static_cast<float>(e.height);
+    };
     world_.fill_remote_targets(remote_targets);
     remote_targets.play = world_.has_demo_physics() ? nullptr : play_mode_.request();
 #ifdef ENGINE_EDITOR

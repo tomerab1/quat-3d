@@ -12,7 +12,9 @@
 // bt.get, bt.set, bt.add_node, bt.remove_node, bt.move_node, bt.set_params,
 // bt.status — the gameplay script files (ROADMAP G7): script.list / get /
 // create / update / delete / check — and material shader authoring (ROADMAP
-// A6): shader.list / get / template / create / update / delete. The method
+// A6): shader.list / get / template / create / update / delete — input
+// actions (ROADMAP G5): input.actions / inject / bind / context — and camera
+// rigs (ROADMAP G15.1): camera.rig.get / set / frame. The method
 // contract is
 // docs/remote-control.md.
 //
@@ -44,6 +46,9 @@ namespace engine::core {
 class LogRing;
 class SimClock;
 } // namespace engine::core
+namespace engine::input {
+class Actions;
+}
 namespace engine::nav {
 class NavMesh;
 }
@@ -197,6 +202,19 @@ struct WorldServices {
     // Authored material shaders (non-owning; its poll() must run every frame
     // so shader.create / update replies go out). Null: shader.* unavailable.
     rhi::MaterialShaderRegistry* material_shaders = nullptr;
+
+    // ---- Input actions (ROADMAP G5) ----------------------------------------------
+
+    // The application's action service (non-owning): input.actions / inject /
+    // bind / context. Null: input.* unavailable.
+    input::Actions* actions = nullptr;
+    // Writes the user's rebinding file (input.bind with save).
+    std::function<std::expected<void, core::Error>()> save_input_bindings;
+
+    // ---- Camera rigs (ROADMAP G15.1) ----------------------------------------------
+
+    // Width / height of the scene view (camera.rig.frame); 16:9 without it.
+    std::function<float()> view_aspect;
 };
 
 // Registers every world command on `server`. `scene` must outlive the server's

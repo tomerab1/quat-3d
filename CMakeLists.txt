@@ -531,10 +531,12 @@ add_library(engine_remote_world STATIC
     src/remote/world/behavior_commands.cpp
     src/remote/world/behavior_edit_commands.cpp
     src/remote/world/script_commands.cpp
+    src/remote/world/input_commands.cpp
+    src/remote/world/camera_rig_commands.cpp
     src/remote/world/image_encode.cpp
     src/remote/world/stb_image_write_impl.cpp)
 target_link_libraries(engine_remote_world PUBLIC
-    engine_flags engine_core engine_remote engine_scene engine_physics engine_nav engine_script)
+    engine_flags engine_core engine_input engine_remote engine_scene engine_physics engine_nav engine_script)
 target_include_directories(engine_remote_world PUBLIC ${ENGINE_PUBLIC_INCLUDE})
 target_include_directories(engine_remote_world SYSTEM PRIVATE ${Stb_INCLUDE_DIR})
 # stb's implementation TU is not warning-clean under our strict flags.

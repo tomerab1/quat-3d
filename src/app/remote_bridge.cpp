@@ -2,6 +2,8 @@
 
 #include "app/remote_bridge.hpp"
 
+#include "app/input_runtime.hpp"
+
 #include <array>
 #include <algorithm>
 #include <cmath>
@@ -301,6 +303,11 @@ struct RemoteBridge::Impl {
         s.physics_world = [this] { return physics_world(); };
         if (t.scripts != nullptr) s.scripts = [this] { return t.scripts; };
         if (material_shaders) s.material_shaders = &*material_shaders;
+        if (t.input != nullptr) {
+            s.actions = &t.input->actions();
+            s.save_input_bindings = [this] { return t.input->save_overrides(); };
+        }
+        s.view_aspect = t.view_aspect;
         return s;
     }
 
