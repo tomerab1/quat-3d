@@ -137,10 +137,10 @@ bool WorldRuntime::build_scene(engine::scene::Scene& scene, engine::asset::Asset
                                engine::rhi::GpuAllocator& allocator,
                                const engine::rhi::TransferContext& setup_transfer,
                                const std::filesystem::path& project_root,
-                               const std::optional<std::filesystem::path>& start_scene,
-                               engine::renderer::RenderSettings* render_settings) {
+                               engine::renderer::RenderSettings& render_settings,
+                               const std::optional<std::filesystem::path>& start_scene) {
     auto demo_result = build_demo_scene(scene, assets, allocator, setup_transfer, project_root,
-                                        start_scene, render_settings);
+                                        render_settings, start_scene);
     if (!demo_result) return false;
     demo_ = std::move(*demo_result);
     return true;

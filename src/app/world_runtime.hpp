@@ -86,14 +86,15 @@ public:
     // ---- Setup -------------------------------------------------------------
     // Builds the startup scene (see demo_scenes.hpp). False on failure.
     // `start_scene` (a game's, P4) is loaded instead of a demo scene; its
-    // render settings replace `*render_settings`.
+    // render settings replace `render_settings`.
     [[nodiscard]] bool build_scene(engine::scene::Scene& scene,
                                    engine::asset::AssetManager& assets,
                                    engine::rhi::GpuAllocator& allocator,
                                    const engine::rhi::TransferContext& setup_transfer,
                                    const std::filesystem::path& project_root,
-                                   const std::optional<std::filesystem::path>& start_scene = std::nullopt,
-                                   engine::renderer::RenderSettings* render_settings = nullptr);
+                                   engine::renderer::RenderSettings& render_settings,
+                                   const std::optional<std::filesystem::path>& start_scene =
+                                       std::nullopt);
     // The startup scene file's environment (QUAT_SCENE or a game's start
     // scene; empty otherwise).
     [[nodiscard]] const engine::scene::SceneEnvironment& startup_environment() const {

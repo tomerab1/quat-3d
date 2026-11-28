@@ -21,7 +21,7 @@ public struct GrassParams {
     public uint4    draw;          // x near index count, y far index count, z near segments, w far segments
     public float4   tile_rect[4];  // xy origin XZ, z size, w base y
     public float4   tile_info[4];  // x texel uv, y metres per texel
-    public float4   ground;        // x min ground y, y max ground y (tile culling bounds)
+    public float4   ground;        // x min ground y, y max ground y (tile culling bounds), z slope fade start normal.y
     public float4   wind_rect;     // R13.1 wind texture: xy world XZ corner, z 1 / size m, w log-profile factor at blade height
     public float4   wind_flow;     // R13.1: xy mean heading (flutter phase), z 1 = wind field bound (else the R9.3 sway)
     public float4x4 prev_view_proj; // velocity (R11): last frame, unjittered
@@ -72,6 +72,14 @@ public float grass_thinning(GrassParams p, float distance) {
 public float grass_keep(GrassParams p, float distance) {
     if (distance >= p.cell.y) return 0.0;
     return grass_thinning(p, distance) * (1.0 - smoothstep(p.lod.y, p.cell.y, distance));
+}
+
+// Slope fade (grass_slope_keep): full density at normal.y >= ground.z,
+// thinning to 0 at the steepest allowed slope (limits.x).
+public float grass_slope_keep(GrassParams p, float normal_y) {
+    if (p.ground.z <= -1.5) return 1.0;
+    if (p.ground.z <= p.limits.x) return normal_y >= p.limits.x ? 1.0 : 0.0;
+    return smoothstep(p.limits.x, p.ground.z, normal_y);
 }
 
 public float grass_blade_fade(float keep, float threshold) {

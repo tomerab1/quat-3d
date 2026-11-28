@@ -59,8 +59,10 @@ public:
     // transforms are current) from a fixed heading, looking down 25 degrees,
     // as close as fits them with a 10% margin (scene::frame_box) — the same
     // view every run. The physics demo gets a fixed view of its drop zone
-    // instead. Builds without the editor also create the scene camera entity
-    // here.
+    // instead. A scene with an active Camera entity (a scene file) opens
+    // looking through it: its pose and field of view (clip planes stay
+    // derived, set_derived_clip). Builds without the editor drive that
+    // entity, or create the scene camera entity here when there is none.
     [[nodiscard]] static FlyCamera create(engine::scene::Scene& scene, const Start& start);
 
     // Per frame, before the event pump: clears the accumulated mouse look.

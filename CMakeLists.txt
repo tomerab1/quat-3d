@@ -930,6 +930,11 @@ if(NOT ENGINE_PACKAGE_BUILD)
 endif()
 
 # ---------------------------------------------------------------------------
+# Offline asset generator (procedural nature models -> assets/meshes/nature/).
+# ---------------------------------------------------------------------------
+add_subdirectory(tools/asset-gen)
+
+# ---------------------------------------------------------------------------
 # Tests (GoogleTest) — see tests/CMakeLists.txt. `ctest --test-dir build/<preset>`.
 # ---------------------------------------------------------------------------
 enable_testing()

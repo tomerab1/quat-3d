@@ -33,6 +33,9 @@ TIMEOUT="${SCENE_TIMEOUT:-300}"
 # Frame counts: TAA history and auto-exposure settle within ~30 frames; the
 # GPU terrain tile (513^2, 200 erosion steps, async readback) needs a few
 # frames to arrive, and the physics scene needs simulated seconds to fall.
+# mountain-forest: its tile (400 erosion steps + talus relaxation) lands by frame ~6, then ~11k
+# scattered instances + grass draw at ~2-3 s per frame on lavapipe (4 cores):
+# 60-100 s, inside the default timeout.
 # Editor rows run at 1600x900 from the default layout (QUAT_EDITOR_LAYOUT;
 # scripts/editor-screenshots.sh captures more editor states) and are never
 # downscaled.
@@ -53,6 +56,7 @@ SCENE_TABLE=(
   "sunset|30|QUAT_NO_UI=1 QUAT_TIME=2026-06-21T21:35:00+02:00 QUAT_LATLON=48.8566,2.3522 QUAT_TIME_SCALE=0|World clock: Paris, June solstice, 21:35 (sun 2.5° up, north-west)"
   "editor-time-of-day|30|QUAT_WINDOW_SIZE=1600x900 QUAT_EDITOR_LAYOUT=default QUAT_EDITOR_SELECT=world_clock QUAT_TIME=2026-06-21T21:35:00+02:00 QUAT_TIME_SCALE=0|Editor: the world clock in the Inspector at sunset"
   "showcase-hdri|40|QUAT_NO_UI=1 QUAT_HDRI=hdri-cache/kloofendal_48d_partly_cloudy_2k.hdr|Showcase lit by a CC0 Poly Haven HDRI (R21: HDRI IBL, its sun as the shadowed light, SSR)"
+  "mountain-forest|30|QUAT_NO_UI=1 QUAT_DEMO=mountain|Mountain + forest showcase: terrain, scattered trees and rocks, GPU grass"
 )
 # HDRI panoramas the scenes use, fetched into hdri-cache/ (gitignored).
 HDRIS=("kloofendal_48d_partly_cloudy 2k")
@@ -102,7 +106,7 @@ summary="$OUT/summary.md"
 {
   echo "## Screenshots"
   echo
-  echo "Rendered on lavapipe under Xvfb (\`scripts/ci-screenshots.sh\`, ${TIMEOUT} s timeout per scene)."
+  echo "Rendered on lavapipe under Xvfb (\`scripts/ci-screenshots.sh\`, ${TIMEOUT} s timeout per scene unless a scene sets more)."
   echo
   echo "| Scene | Result | Time | Setup |"
   echo "|---|---|---|---|"

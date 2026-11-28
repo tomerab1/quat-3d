@@ -4,6 +4,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <string>
+#include <string_view>
 
 #include <entt/entity/registry.hpp>
 #include <glm/gtc/matrix_transform.hpp>
@@ -96,14 +97,14 @@ build_demo_scene(engine::scene::Scene& scene, engine::asset::AssetManager& asset
                  engine::rhi::GpuAllocator& allocator,
                  const engine::rhi::TransferContext& setup_transfer,
                  const std::filesystem::path& project_root,
-                 const std::optional<std::filesystem::path>& start_scene,
-                 engine::renderer::RenderSettings* render_settings) {
+                 engine::renderer::RenderSettings& render_settings,
+                 const std::optional<std::filesystem::path>& start_scene) {
     if (start_scene) {
         // A game's start scene brings its own look: render settings and the
         // scene-level environment (its HDRI, R21).
         engine::scene::SceneEnvironment environment;
         if (auto loaded = engine::scene::load_scene(scene, *start_scene, allocator,
-                                                    setup_transfer, assets, render_settings,
+                                                    setup_transfer, assets, &render_settings,
                                                     &environment);
             !loaded) {
             std::fprintf(stderr, "[fatal] start scene: %s\n", loaded.error().message.c_str());
@@ -136,7 +137,7 @@ build_demo_scene(engine::scene::Scene& scene, engine::asset::AssetManager& asset
         // The file's render settings and environment (HDRI) apply as well.
         engine::scene::SceneEnvironment environment;
         if (auto loaded = engine::scene::load_scene(scene, path, allocator, setup_transfer, assets,
-                                                    render_settings, &environment);
+                                                    &render_settings, &environment);
             !loaded) {
             std::fprintf(stderr, "[fatal] QUAT_SCENE load failed: %s\n",
                          loaded.error().message.c_str());
@@ -148,7 +149,24 @@ build_demo_scene(engine::scene::Scene& scene, engine::asset::AssetManager& asset
         out.environment = std::move(environment);
         return out;
     }
-    if (const auto gltf_path = engine::core::env_path("QUAT_GLTF")) {
+    if (const char* demo = std::getenv("QUAT_DEMO"); demo != nullptr) {
+        const DemoSceneFile* file = nullptr;
+        for (const DemoSceneFile& d : k_demo_scenes) {
+            if (std::string_view(demo) == d.name) file = &d;
+        }
+        if (file == nullptr) {
+            std::fprintf(stderr, "[fatal] QUAT_DEMO=%s: unknown demo (try 'mountain')\n", demo);
+            scene_ok = false;
+        } else if (auto loaded = engine::scene::load_scene(scene, project_root / file->path,
+                                                           allocator, setup_transfer, assets,
+                                                           &render_settings);
+                   !loaded) {
+            std::fprintf(stderr, "[fatal] QUAT_DEMO=%s: %s\n", demo, loaded.error().message.c_str());
+            scene_ok = false;
+        } else {
+            std::fprintf(stderr, "[info] demo '%s' loaded from %s\n", demo, file->path);
+        }
+    } else if (const auto gltf_path = engine::core::env_path("QUAT_GLTF")) {
         auto roots = engine::scene::GltfLoader::instantiate(*gltf_path, allocator, setup_transfer,
                                                             assets, scene);
         if (!roots) {
@@ -459,6 +477,7 @@ build_demo_scene(engine::scene::Scene& scene, engine::asset::AssetManager& asset
 }
 
 void add_default_lighting(engine::scene::Scene& scene, bool fill_lights, entt::entity root) {
+if (!scene.registry().view<engine::scene::DirectionalLight>().empty()) return;
 // A sun light, and a camera that auto-frames whatever was loaded.
 const entt::entity sun_entity = scene.create_entity("sun");
 scene.registry().emplace<engine::scene::DirectionalLight>(

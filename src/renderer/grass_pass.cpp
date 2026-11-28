@@ -143,7 +143,7 @@ void append_strip(std::vector<std::uint32_t>& out, std::uint32_t segments) {
         lo = std::min(lo, s.ground_y);
         hi = std::max(hi, s.ground_y);
     }
-    p.ground = glm::vec4(lo, hi, 0.0F, 0.0F);
+    p.ground = glm::vec4(lo, hi, grass_slope_fade_start(s), 0.0F);
     p.wind_rect = frame.wind.valid() ? frame.wind.rect : glm::vec4(0.0F, 0.0F, 1.0F, 0.0F);
     p.wind_rect.w = weather::wind_profile(kBladeWindHeightM);
     // Without a field (no weather) the blades keep the R9.3 sway exactly.

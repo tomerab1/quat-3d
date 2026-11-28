@@ -25,6 +25,7 @@ target_link_libraries(engine_tests PRIVATE
     engine_remote engine_remote_world engine_audio engine_weather engine_script engine_cook
     engine_gltf_io game_world # gltf_io.hpp internals (fastgltf)
     engine_project engine_pack
+    quat_asset_gen
     GTest::gtest)
 # Full libktx in this program (engine_cook encodes; the tests decode ASTC
 # references through it): engine_asset then links KTX::ktx instead of

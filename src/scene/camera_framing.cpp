@@ -39,4 +39,18 @@ glm::vec3 frame_box(const glm::vec3& lo, const glm::vec3& hi, const FramingParam
     return centre - fwd * distance;
 }
 
+FlyAngles fly_angles_from_world(const glm::mat4& world) {
+    const glm::vec3 fwd = -glm::normalize(glm::vec3(world[2]));
+    FlyAngles out;
+    out.pitch = std::asin(glm::clamp(fwd.y, -1.0F, 1.0F));
+    if (glm::length(glm::vec2(fwd.x, fwd.z)) > 1e-3F) {
+        out.yaw = std::atan2(fwd.z, fwd.x);
+    } else {
+        // right = (-sin yaw, 0, cos yaw) for an unrolled camera.
+        const glm::vec3 right(world[0]);
+        out.yaw = std::atan2(-right.x, right.z);
+    }
+    return out;
+}
+
 } // namespace engine::scene

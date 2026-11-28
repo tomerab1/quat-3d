@@ -203,7 +203,7 @@ bool Application::init_subsystems() {
     // brings its own look (render settings).
     const bool scene_ok =
         world_.build_scene(scene_, assets_, allocator_, setup_transfer, project_root(),
-                           config_.start_scene, &renderer_.render_settings());
+                           renderer_.render_settings(), config_.start_scene);
 
     vkDestroyCommandPool(vk_device, setup_pool, nullptr);
 

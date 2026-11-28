@@ -124,7 +124,8 @@ void compute_main(uint3 group : SV_GroupID, uint3 thread : SV_GroupThreadID,
             ground_y <= g_params.limits.w) {
             blade.root.y = ground_y;
             const float dist = length(blade.root - cam);
-            const float fade = grass_blade_fade(grass_keep(g_params, dist), threshold);
+            const float fade = grass_blade_fade(
+                grass_keep(g_params, dist) * grass_slope_keep(g_params, n.y), threshold);
             if (fade > 0.0) {
                 placed = true;
                 const BladeShape shape = blade_shape(g_params, hash);

@@ -19,6 +19,12 @@ drive directly to build and debug worlds from a prompt.
 Real engine output, rendered headless on a software Vulkan driver (lavapipe) by
 the CI screenshot pipeline.
 
+![mountain forest](docs/screenshots/mountain-forest.png)
+
+*Mountain forest (`QUAT_DEMO=mountain`): GPU-synthesised, eroded terrain,
+~10k GPU-instanced trees, rocks and bushes scattered by slope and height
+(procedurally generated models), GPU grass, golden-hour sun.*
+
 | Showcase (PBR materials, glass) | Terrain (GPU synthesis + GPU grass) | Physics |
 |---|---|---|
 | ![showcase](docs/screenshots/showcase.png) | ![terrain](docs/screenshots/terrain.png) | ![physics](docs/screenshots/physics.png) |
@@ -291,6 +297,7 @@ Environment variables switch on extra modes:
 
 | Variable | Effect |
 |---|---|
+| `QUAT_DEMO=mountain` | Open the mountain-forest showcase (`assets/scenes/mountain_forest.json`) instead of the material showcase |
 | `QUAT_SCENE=<file>` | Load a scene file (project-relative) instead of the showcase scene |
 | `QUAT_HDRI=<file>` | Light the scene with a Radiance `.hdr` panorama (project-relative). `scripts/fetch-hdri.sh <id>` downloads a CC0 one from Poly Haven into `hdri-cache/` |
 | `QUAT_PLAY=1` | Enter Play mode on the first frame (a non-editor build also plays a `QUAT_SCENE` game) |
@@ -638,6 +645,8 @@ tools/quat-mcp/     MCP server for AI assistants (Rust, standalone Cargo crate),
                     its workflow skills and the Claude Code plugin
 tools/quat-pack/    Game packager entry point
 tools/quat-cook/    Offline asset cooker CLI (src/cook/ holds the cooking library)
+tools/asset-gen/    quat-asset-gen: procedural nature models -> assets/meshes/nature/
+assets/scenes/      Showcase scene files (scene JSON v2)
 tests/              GoogleTest suite (engine_tests): tests/<module>/, shared helpers in tests/support/
 docs/               Project documentation
 ports/, triplets/   vcpkg customisations

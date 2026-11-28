@@ -241,10 +241,10 @@ FrameDrawLists build_frame_draw_lists(const entt::registry& registry,
                                       std::span<const renderer::DrawItem> opaque_items,
                                       std::span<const renderer::DrawItem> shadow_items,
                                       const glm::mat4& camera_view_proj,
-                                      const glm::mat4& light_view_proj,
+                                      const glm::mat4& shadow_cull_view_proj,
                                       renderer::MotionHistory* opaque_motion) {
     FrameDrawLists lists{renderer::batch_draws(opaque_items), renderer::batch_draws(shadow_items)};
-    append_instanced_draws(registry, light_view_proj, InstancedPass::shadow, lists.shadow);
+    append_instanced_draws(registry, shadow_cull_view_proj, InstancedPass::shadow, lists.shadow);
     append_instanced_draws(registry, camera_view_proj, InstancedPass::opaque, lists.opaque,
                            opaque_motion);
     return lists;

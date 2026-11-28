@@ -356,11 +356,12 @@ folder.
 After the tests (also when they fail), the `linux` job renders a fixed set of
 scenes with the real `game` binary on lavapipe under Xvfb —
 `scripts/ci-screenshots.sh`: the showcase with and without the editor UI,
-`QUAT_TERRAIN=1`, `QUAT_PHYSICS=1`, an HDRI-lit showcase (`QUAT_HDRI`, the
+`QUAT_TERRAIN=1`, `QUAT_PHYSICS=1`, the mountain-forest showcase
+(`QUAT_DEMO=mountain`), an HDRI-lit showcase (`QUAT_HDRI`, the
 CC0 panorama fetched by `scripts/fetch-hdri.sh`), the world clock at sunrise, solar
 noon and sunset (`QUAT_TIME`, frozen) and the editor's world-clock Inspector, each with a frame budget, muted audio
-and a per-scene timeout (`SCENE_TIMEOUT`, default 300 s) so a hang fails that
-scene instead of the job. Each final frame is converted to PNG
+and a per-scene timeout (`SCENE_TIMEOUT`, default 300 s; a scene row can raise its
+own) so a hang fails that scene instead of the job. Each final frame is converted to PNG
 (`scripts/ppm_to_png.py`, halved when 1280 px or wider, except the editor capture, kept full size so its UI stays readable). A crash, timeout or
 missing image is listed in the step summary with the log tail and an
 `::error` annotation. The step is `continue-on-error` for now (temporary,
@@ -402,6 +403,25 @@ manifests, the fetch script and the cooker sources). Fetching is
 Run locally: `scripts/ci-screenshots.sh build/release/game /tmp/shots`
 (`SCENES="showcase physics"` picks a subset; needs `xvfb` and
 `mesa-vulkan-drivers`).
+
+## Generated assets
+
+The nature models in `assets/meshes/nature/` (conifers and their
+distant-forest variants, broadleaf trees, rocks, a bush) are generated, not
+authored: `tools/asset-gen` builds them procedurally from a seed and writes
+glTF 2.0 binaries. The `quat-asset-gen` tool is not part of the default
+build (`EXCLUDE_FROM_ALL`; its library is built for `engine_tests`); after
+changing the generator, build it explicitly and regenerate:
+
+```sh
+cmake --build --preset release --target quat-asset-gen
+./build/release/tools/asset-gen/quat-asset-gen assets/meshes/nature   # --seed N (default 1)
+```
+
+`AssetGen.CommittedAssetsAreCurrent` fails while the committed files are
+stale. The mountain showcase (`assets/scenes/mountain_forest.json`) scatters
+them; `MountainScene.*` checks its instance counts and that every placement
+respects its layer's slope / height limits.
 
 ## Building in a cloud container
 

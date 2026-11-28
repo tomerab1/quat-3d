@@ -6,6 +6,7 @@
 // environment variables:
 //   QUAT_SCENE=<file>  load a scene file (project-relative unless absolute),
 //                      e.g. a scripted game; it brings its own lights
+//   QUAT_DEMO=<name>   a showcase scene file from assets/scenes/ (k_demo_scenes)
 //   QUAT_GLTF=<file>   instantiate a glTF scene graph
 //   QUAT_PHYSICS=1     a pile of boxes dropped on a floor (owns a physics world)
 //   QUAT_CHARACTER=1   a WASD capsule character on a floor (owns a physics world)
@@ -62,25 +63,37 @@ struct DemoScene {
     engine::scene::SceneEnvironment environment;
 };
 
+// QUAT_DEMO scenes: a name and its scene file (relative to the project root).
+// The file's render_settings block (shadow coverage, clouds, ...) applies.
+struct DemoSceneFile {
+    const char* name;
+    const char* path;
+};
+inline constexpr DemoSceneFile k_demo_scenes[] = {
+    {"mountain", "assets/scenes/mountain_forest.json"},
+};
+
 // Half the height of the pedestal mesh (a box) as built; its Transform scales
 // it to the depth it needs.
 inline constexpr float k_pedestal_mesh_half_height = 0.25F;
 
 // Build the startup scene into `scene` (meshes/materials uploaded through
 // `transfer` and cached in `assets`): `start_scene` when given (its render
-// settings replace `*render_settings`), else QUAT_SCENE (a relative path
-// resolves against `project_root`), else a demo scene.
+// settings replace `render_settings`), else QUAT_SCENE (a relative path
+// resolves against `project_root`), else a QUAT_DEMO scene file (also under
+// `project_root`; sets `render_settings` too), else a demo scene.
 [[nodiscard]] std::expected<DemoScene, engine::core::Error>
 build_demo_scene(engine::scene::Scene& scene, engine::asset::AssetManager& assets,
                  engine::rhi::GpuAllocator& allocator,
                  const engine::rhi::TransferContext& setup_transfer,
                  const std::filesystem::path& project_root,
-                 const std::optional<std::filesystem::path>& start_scene = std::nullopt,
-                 engine::renderer::RenderSettings* render_settings = nullptr);
+                 engine::renderer::RenderSettings& render_settings,
+                 const std::optional<std::filesystem::path>& start_scene = std::nullopt);
 
 // The sun, plus two coloured point lights unless the scene came from a glTF
 // file (a model is shown under just its own lighting setup). The point lights
-// hang under `root` when given, so they move with the demo content.
+// hang under `root` when given, so they move with the demo content. A scene
+// that brings its own sun (a scene file) keeps its lighting as authored.
 void add_default_lighting(engine::scene::Scene& scene, bool fill_lights,
                           entt::entity root = entt::null);
 
