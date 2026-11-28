@@ -1,0 +1,43 @@
+// The `spline` script table (ROADMAP G18.1): length, sampling with frames,
+// closest point, and edits through the component codec.
+
+#include "engine/scene/spline.hpp"
+#include "script/script_fixture.hpp"
+
+namespace quat::test {
+namespace {
+
+TEST_F(ScriptTest, SplineQueriesAndCodecEdits) {
+    write("path.lua", R"(
+        function on_start(self)
+            local e = self.entity
+            e:set("spline", { kind = "polyline", follow_ground = false,
+                              points = { vec3(0, 0, 0), vec3(10, 0, 0), { position = vec3(10, 0, 6), width = 3 } } })
+            print("length", string.format("%.3f", spline.length(e)))
+            local s = spline.sample(e, 4, { fit_to_ends = true, frames = "up_locked" })
+            print("samples", #s, string.format("%.3f %.3f", s[2].position.x, s[2].right.z))
+            local at = spline.at(e, 13)
+            print("at", string.format("%.3f %.3f %.3f", at.position.x, at.position.z, at.width))
+            local c = spline.closest(e, vec3(4, 7, 2), true)
+            print("closest", string.format("%.3f %.3f", c.distance, c.gap))
+            local ok, err = pcall(spline.sample, e, 0)
+            print("bad", ok, err)
+            ok, err = pcall(e.set, e, "spline", { closed = true, points = { vec3(0, 0, 0), vec3(1, 0, 0) } })
+            print("invalid", ok, err)
+        end
+    )");
+    (void)scripted("path", "path.lua");
+    start();
+    frames();
+    const auto log = script_log();
+    EXPECT_TRUE(has_line(log, "length\t16.000")) << ::testing::PrintToString(log);
+    EXPECT_TRUE(has_line(log, "samples\t5\t4.000 1.000")) << ::testing::PrintToString(log);
+    EXPECT_TRUE(has_line(log, "at\t10.000 3.000 2.000")) << ::testing::PrintToString(log);
+    EXPECT_TRUE(has_line(log, "closest\t4.000 2.000")) << ::testing::PrintToString(log);
+    EXPECT_TRUE(has_line(log, "bad\tfalse\tspline.sample: spacing must give at most 4096 samples"));
+    EXPECT_TRUE(has_line(log, "invalid\tfalse\tspline.points: a closed polyline spline needs at least 3 points"))
+        << ::testing::PrintToString(log);
+}
+
+} // namespace
+} // namespace quat::test

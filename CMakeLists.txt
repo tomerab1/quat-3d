@@ -530,6 +530,7 @@ add_library(engine_script STATIC
     src/script/script_api_scene.cpp
     src/script/script_api_services.cpp
     src/script/script_api_input.cpp
+    src/script/script_api_spline.cpp
     src/script/script_source.cpp
     src/script/script_runtime.cpp
     src/script/script_files.cpp)
