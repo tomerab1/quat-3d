@@ -82,6 +82,13 @@ void compute_main(uint3 tid : SV_DispatchThreadID) {
     // `luminance`: aerial perspective).
     if (ground) {
         luminance += throughput * e_ground * ATMOS_GROUND_ALBEDO / ATMOS_PI;
+    } else {
+        // The natural night sky (stars below the catalogue, airglow,
+        // zodiacal light) as the uniform dome that puts the night floor's
+        // illuminance on the ground: L = E / pi, ~3e-4 cd/m² (21.7
+        // mag/arcsec², a dark site's zenith) for 1e-3 lux. R22.2.4 replaces
+        // it with airglow and zodiacal light.
+        luminance += pc.night.x / ATMOS_PI;
     }
 
     g_out[tid.xy] = float4(luminance * exp2(-log_inv_scale), log_inv_scale);

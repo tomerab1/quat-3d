@@ -1,8 +1,12 @@
 // The planet surface below the horizon (R22.2.1, issues #98 and #13): a
 // Lambertian ground lit by the transmitted Sun / Moon and the sky irradiance
 // LUT, seen through the sky-view LUT's aerial perspective.
-//   - It meets the sky without a step: across sun elevations -6..90 deg the
-//     luminance just above and just below the horizon differ by < 1.5x.
+//   - It meets the sky without a hard step: across sun elevations -6..90 deg
+//     the sky just above the horizon is at most 2.5x the ground just below
+//     (#98's step was ~10x with a hue jump). Some step is physical: the
+//     farthest ground seen from 200 m is ~50 km away (the 0.45 deg dip),
+//     where clear air passes about half of its light, while the horizon sky
+//     integrates hundreds of km of haze; measured 1.6-2.1x at low sun.
 //   - At a 2.5 deg sun it is not the saturated rust of #98: skylight keeps
 //     it bluish-neutral.
 //   - Under a moon alone, the ground straight down has the luminance of an
@@ -81,7 +85,8 @@ TEST(GpuAtmosphereGround, MeetsTheSkyWithoutAStepAtEverySunElevation) {
             ASSERT_GT(sky, 0.0F) << elevation << " deg, column " << x;
             ASSERT_GT(ground, 0.0F) << elevation << " deg, column " << x;
             const float ratio = std::max(sky, ground) / std::min(sky, ground);
-            EXPECT_LT(ratio, 1.5F) << "sun " << elevation << " deg, column " << x;
+            EXPECT_LT(ratio, 2.5F) << "sun " << elevation << " deg, column " << x << " sky "
+                                   << sky << " ground " << ground;
         }
     }
 }
@@ -125,4 +130,27 @@ TEST(GpuAtmosphereGround, MoonlitGroundHasTheMoonsIlluminance) {
     const float direct = k_moon_lux * 0.8F * std::sin(glm::radians(45.0F));
     const float expected = luminance(k_albedo) / 3.14159265F * (direct + ph::k_night_sky_floor_lux);
     EXPECT_NEAR(nits, expected, expected * 0.35F);
+}
+
+// A moonless night is not black: the sky dome carries the night-sky floor
+// as the uniform luminance that lights the ground with it, E / pi (about
+// 3e-4 cd/m², a dark site's zenith of ~21.7 mag/arcsec²).
+TEST(GpuAtmosphereGround, MoonlessNightSkyHasTheDarkSiteLuminance) {
+    QUAT_REQUIRE_GPU(g);
+    auto pass = r::AtmospherePass::create(g->device, g->allocator, g->cache, g->shader_dir);
+    ASSERT_OK(pass);
+    namespace ph = r::photometry;
+    r::SkyLights lights;
+    lights.night_irradiance = ph::k_night_sky_floor_lux / ph::k_sun_reference_lux;
+    auto lut = skyview(*g, *pass, toward(-57.0F, 0.0F), lights);
+    ASSERT_OK(lut);
+    const float expected = ph::k_night_sky_floor_lux / 3.14159265F;
+    // The zenith row (v = 0) and the row just above the horizon.
+    for (const std::uint32_t row : {0U, k_sky.height / 2 - 1}) {
+        glm::vec3 sky(0.0F);
+        for (std::uint32_t x = 0; x < k_sky.width; ++x) sky += texel(*lut, x, row);
+        sky /= static_cast<float>(k_sky.width);
+        const float nits = luminance(sky) * ph::k_sun_reference_lux;
+        EXPECT_NEAR(nits, expected, expected * 0.1F) << "row " << row;
+    }
 }

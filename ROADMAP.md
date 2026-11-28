@@ -455,8 +455,9 @@ JSON-RPC over loopback TCP to the engine.
       - *Acceptance:* GPU tests — exposure converges for 0.001 lux and
         100 000 lux scenes; Sirius renders 1.49 mag brighter than Vega
         (energy ratio 3.94 ± 3 %); stars change no tonemapped pixel at noon;
-        the ground / sky luminance ratio across the horizon stays under 1.5
-        for sun elevations −6° … 90°. CI golden rows `twilight` and `night`.
+        the sky just above the horizon is at most 2.5× the ground just below
+        for sun elevations −6° … 90° (#98's step was ~10×; a 1.6–2× step is
+        physical: the farthest ground seen from 200 m is ~50 km away). CI golden rows `twilight` and `night`.
     - [ ] **R22.2.2 Moon.** NASA CGI Moon Kit albedo + elevation (public
       domain), a Hapke / Lommel-Seeliger BRDF with the opposition surge,
       phase and libration from `SkyState`, earthshine; the Moon as a second

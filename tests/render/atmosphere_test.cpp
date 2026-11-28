@@ -1,6 +1,7 @@
 // Physically based atmosphere LUTs, read back after ensure_skyview with a high
 // sun: the transmittance LUT reddens long horizon paths relative to the
-// zenith, and the sky-view LUT is blue above the horizon and darker below.
+// zenith, and the sky-view LUT is blue above the horizon and ground-coloured
+// below.
 
 #include <cstddef>
 #include <cstdint>
@@ -94,9 +95,17 @@ TEST(GpuAtmosphere, SkyAboveTheHorizonIsBlue) {
     EXPECT_GT(up.b, up.r);
 }
 
-TEST(GpuAtmosphere, BelowTheHorizonIsDimmerThanTheSky) {
+// Below the horizon is the lit ground, not more sky: under a high sun it is
+// far less blue than the sky. (Not dimmer: sunlit ground of albedo 0.24 is
+// as bright as a clear zenith sky, ~7000 cd/m²; R22.2.1 fixed the sky-view
+// mapping that had every ground ray read the nadir row.)
+TEST(GpuAtmosphere, BelowTheHorizonIsTheGroundNotTheSky) {
     QUAT_REQUIRE_GPU(g);
     const auto& l = luts(*g);
     ASSERT_OK(l);
-    EXPECT_LT(row_mean(*l, k_sky.height - 2).b, row_mean(*l, k_sky.height / 8).b);
+    const glm::vec4 ground = row_mean(*l, k_sky.height - 2);
+    const glm::vec4 sky = row_mean(*l, k_sky.height / 8);
+    ASSERT_GT(ground.r, 0.0F);
+    ASSERT_GT(sky.r, 0.0F);
+    EXPECT_LT(ground.b / ground.r, 0.6F * sky.b / sky.r);
 }

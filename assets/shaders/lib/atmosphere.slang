@@ -131,17 +131,27 @@ public float3 sample_multiscatter(Texture2D lut, SamplerState samp, float r, flo
 // square-root latitude warp that concentrates texels at the horizon. The
 // x axis is the azimuth relative to the sun.
 // ---------------------------------------------------------------------------
+// Zenith angle of the horizon seen from the view height: 90 deg plus the dip
+// acos(R_ground / R_view) (0.45 deg at 200 m), Hillaire's
+// ZenithHorizonAngle = pi - Beta. The upper half of the LUT (v < 0.5) spans
+// the sky down to it, the lower half the ground from it to the nadir (R22.2.1:
+// the LUT used pi / 2 + Beta, ~179.5 deg, so only ~16 of its rows held sky and
+// every ground ray read the nadir row: a flat ground without aerial
+// perspective, issue #13).
+public float skyview_zenith_horizon() {
+    return ATMOS_PI * 0.5 + acos(clamp(ATMOS_GROUND_RADIUS / ATMOS_VIEW_HEIGHT, -1.0, 1.0));
+}
+
 public float2 skyview_uv_from(float view_zenith_cos, float light_azimuth_cos,
                               bool below_horizon) {
     float view_zenith = acos(clamp(view_zenith_cos, -1.0, 1.0));
-    float horizon = acos(clamp(ATMOS_GROUND_RADIUS / ATMOS_VIEW_HEIGHT, -1.0, 1.0));
-    float beta = ATMOS_PI * 0.5 - horizon; // horizon angle below zenith-90
+    float zenith_horizon = skyview_zenith_horizon();
     float v;
     if (!below_horizon) {
-        float coord = 1.0 - sqrt(saturate(1.0 - view_zenith / (ATMOS_PI * 0.5 + beta)));
+        float coord = 1.0 - sqrt(saturate(1.0 - view_zenith / zenith_horizon));
         v = coord * 0.5;
     } else {
-        float coord = (view_zenith - (ATMOS_PI * 0.5 + beta)) / (ATMOS_PI * 0.5 - beta);
+        float coord = (view_zenith - zenith_horizon) / (ATMOS_PI - zenith_horizon);
         v = 0.5 + 0.5 * sqrt(saturate(coord));
     }
     float u = acos(clamp(light_azimuth_cos, -1.0, 1.0)) / ATMOS_PI;
@@ -149,14 +159,13 @@ public float2 skyview_uv_from(float view_zenith_cos, float light_azimuth_cos,
 }
 
 public void skyview_params_from_uv(float2 uv, out float view_zenith, out float light_azimuth) {
-    float horizon = acos(clamp(ATMOS_GROUND_RADIUS / ATMOS_VIEW_HEIGHT, -1.0, 1.0));
-    float beta = ATMOS_PI * 0.5 - horizon;
+    float zenith_horizon = skyview_zenith_horizon();
     if (uv.y < 0.5) {
         float coord = 1.0 - uv.y * 2.0;
-        view_zenith = (1.0 - coord * coord) * (ATMOS_PI * 0.5 + beta);
+        view_zenith = (1.0 - coord * coord) * zenith_horizon;
     } else {
         float coord = uv.y * 2.0 - 1.0;
-        view_zenith = (ATMOS_PI * 0.5 + beta) + coord * coord * (ATMOS_PI * 0.5 - beta);
+        view_zenith = zenith_horizon + coord * coord * (ATMOS_PI - zenith_horizon);
     }
     light_azimuth = uv.x * ATMOS_PI;
 }
