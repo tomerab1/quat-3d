@@ -109,6 +109,13 @@ public float3 sample_transmittance(Texture2D lut, SamplerState samp, float r, fl
     return lut.SampleLevel(samp, transmittance_uv_from(r, mu), 0.0).rgb;
 }
 
+// Transmittance toward a light from radius r, 0 when the planet blocks it
+// (the LUT is only defined for rays that reach the top of the atmosphere).
+public float3 sun_transmittance_above_ground(Texture2D lut, SamplerState samp, float r,
+                                             float mu) {
+    return intersects_ground(r, mu) ? float3(0.0, 0.0, 0.0) : sample_transmittance(lut, samp, r, mu);
+}
+
 // ---------------------------------------------------------------------------
 // Multiple-scattering LUT mapping: x = sun zenith cosine, y = altitude.
 // ---------------------------------------------------------------------------
@@ -124,17 +131,27 @@ public float3 sample_multiscatter(Texture2D lut, SamplerState samp, float r, flo
 // square-root latitude warp that concentrates texels at the horizon. The
 // x axis is the azimuth relative to the sun.
 // ---------------------------------------------------------------------------
+// Zenith angle of the horizon seen from the view height: 90 deg plus the dip
+// acos(R_ground / R_view) (0.45 deg at 200 m), Hillaire's
+// ZenithHorizonAngle = pi - Beta. The upper half of the LUT (v < 0.5) spans
+// the sky down to it, the lower half the ground from it to the nadir (R22.2.1:
+// the LUT used pi / 2 + Beta, ~179.5 deg, so only ~16 of its rows held sky and
+// every ground ray read the nadir row: a flat ground without aerial
+// perspective, issue #13).
+public float skyview_zenith_horizon() {
+    return ATMOS_PI * 0.5 + acos(clamp(ATMOS_GROUND_RADIUS / ATMOS_VIEW_HEIGHT, -1.0, 1.0));
+}
+
 public float2 skyview_uv_from(float view_zenith_cos, float light_azimuth_cos,
                               bool below_horizon) {
     float view_zenith = acos(clamp(view_zenith_cos, -1.0, 1.0));
-    float horizon = acos(clamp(ATMOS_GROUND_RADIUS / ATMOS_VIEW_HEIGHT, -1.0, 1.0));
-    float beta = ATMOS_PI * 0.5 - horizon; // horizon angle below zenith-90
+    float zenith_horizon = skyview_zenith_horizon();
     float v;
     if (!below_horizon) {
-        float coord = 1.0 - sqrt(saturate(1.0 - view_zenith / (ATMOS_PI * 0.5 + beta)));
+        float coord = 1.0 - sqrt(saturate(1.0 - view_zenith / zenith_horizon));
         v = coord * 0.5;
     } else {
-        float coord = (view_zenith - (ATMOS_PI * 0.5 + beta)) / (ATMOS_PI * 0.5 - beta);
+        float coord = (view_zenith - zenith_horizon) / (ATMOS_PI - zenith_horizon);
         v = 0.5 + 0.5 * sqrt(saturate(coord));
     }
     float u = acos(clamp(light_azimuth_cos, -1.0, 1.0)) / ATMOS_PI;
@@ -142,22 +159,28 @@ public float2 skyview_uv_from(float view_zenith_cos, float light_azimuth_cos,
 }
 
 public void skyview_params_from_uv(float2 uv, out float view_zenith, out float light_azimuth) {
-    float horizon = acos(clamp(ATMOS_GROUND_RADIUS / ATMOS_VIEW_HEIGHT, -1.0, 1.0));
-    float beta = ATMOS_PI * 0.5 - horizon;
+    float zenith_horizon = skyview_zenith_horizon();
     if (uv.y < 0.5) {
         float coord = 1.0 - uv.y * 2.0;
-        view_zenith = (1.0 - coord * coord) * (ATMOS_PI * 0.5 + beta);
+        view_zenith = (1.0 - coord * coord) * zenith_horizon;
     } else {
         float coord = uv.y * 2.0 - 1.0;
-        view_zenith = (ATMOS_PI * 0.5 + beta) + coord * coord * (ATMOS_PI * 0.5 - beta);
+        view_zenith = zenith_horizon + coord * coord * (ATMOS_PI - zenith_horizon);
     }
     light_azimuth = uv.x * ATMOS_PI;
 }
 
+// The sky-view LUT stores luminance x a per-update scale (so twilight and
+// night skies keep RGBA16F precision; R22.2.1) and log2(1 / scale) in alpha,
+// constant over the image, so bilinear filtering decodes exactly.
+public float3 decode_skyview(float4 texel) {
+    return texel.rgb * exp2(texel.a);
+}
+
 // Samples the sky-view LUT for a world-space view direction (y up) and sun
-// direction (pointing FROM the scene TOWARD the sun). rgb = sky luminance,
-// a = cloud transmittance along the ray (1 = clear).
-public float4 sample_skyview(Texture2D lut, SamplerState samp, float3 view_dir,
+// direction (pointing FROM the scene TOWARD the sun). Returns the sky
+// luminance per unit extra-atmospheric sun irradiance (decoded).
+public float3 sample_skyview(Texture2D lut, SamplerState samp, float3 view_dir,
                              float3 sun_dir) {
     float view_zenith_cos = view_dir.y;
     float horizon_cos = -sqrt(max(1.0 - (ATMOS_GROUND_RADIUS * ATMOS_GROUND_RADIUS) /
@@ -172,7 +195,106 @@ public float4 sample_skyview(Texture2D lut, SamplerState samp, float3 view_dir,
     float azimuth_cos = dot(view_h, sun_h);
 
     float2 uv = skyview_uv_from(view_zenith_cos, azimuth_cos, below);
-    return lut.SampleLevel(samp, uv, 0.0);
+    return decode_skyview(lut.SampleLevel(samp, uv, 0.0));
+}
+
+// Ambient light on the cloud layer (LUT units) from the sky near the zenith:
+// 0.8 of it plus a bluish floor for the clouds' undersides. The floor scales
+// with the sky's brightness (full by a clear day's zenith of ~0.05 per unit
+// sun, R22.2.1): a constant would light clouds at night, where the
+// pre-exposure magnifies the sky ~10⁷ times.
+public float3 cloud_ambient_from_zenith(float3 zenith) {
+    float day = saturate(dot(zenith, float3(0.2126, 0.7152, 0.0722)) / 0.05);
+    return zenith * 0.8 + float3(0.008, 0.011, 0.016) * day;
+}
+
+// ---------------------------------------------------------------------------
+// In-scattering along a ray (Hillaire 2020, sec. 5): single scattering with
+// the real phase functions through the transmittance LUT plus the
+// multiple-scattering LUT's isotropic term, integrated analytically per step.
+// From radius r along zenith cosine mu for `length` km; the sun's zenith
+// cosine is taken as constant along the ray (rays from the ground are short
+// next to the planet radius; Hillaire's ground-level sky-view does the same).
+// Returns luminance per unit sun irradiance; `throughput` is the ray's
+// transmittance.
+// ---------------------------------------------------------------------------
+public float3 integrate_inscattering(Texture2D transmittance_lut, Texture2D multiscatter_lut,
+                                     SamplerState samp, float r, float mu, float mu_sun,
+                                     float cos_theta, float length, int steps,
+                                     out float3 throughput) {
+    float dt = length / float(steps);
+    float phase_r = rayleigh_phase(cos_theta);
+    float phase_m = mie_phase(cos_theta);
+    float3 luminance = float3(0.0, 0.0, 0.0);
+    throughput = float3(1.0, 1.0, 1.0);
+    for (int i = 0; i < steps; ++i) {
+        float t = (float(i) + 0.5) * dt;
+        float rt = sqrt(r * r + t * t + 2.0 * r * t * mu);
+        rt = clamp(rt, ATMOS_GROUND_RADIUS + 1e-4, ATMOS_TOP_RADIUS);
+        MediumSample m = sample_medium(rt - ATMOS_GROUND_RADIUS);
+        float3 step_trans = exp(-m.extinction * dt);
+        float3 sun_trans = intersects_ground(rt, mu_sun)
+                               ? float3(0.0, 0.0, 0.0)
+                               : sample_transmittance(transmittance_lut, samp, rt, mu_sun);
+        float3 multi = sample_multiscatter(multiscatter_lut, samp, rt, mu_sun);
+        float3 scatter_phased = m.rayleigh_scatter * phase_r + m.mie_scatter.xxx * phase_m;
+        float3 scatter_total = m.rayleigh_scatter + m.mie_scatter.xxx;
+        float3 s = scatter_phased * sun_trans + scatter_total * multi;
+        luminance += throughput * (s - s * step_trans) / max(m.extinction, 1e-6);
+        throughput *= step_trans;
+    }
+    return luminance;
+}
+
+// ---------------------------------------------------------------------------
+// Ground (R22.2.1, issues #13 / #98). The planet surface below the horizon
+// is Lambertian with ATMOS_GROUND_ALBEDO (also the multiple-scattering LUT's
+// ground bounce), lit by
+//   - each light's transmitted direct beam, E · T(mu) · max(mu, 0),
+//   - the skylight that light scatters down, E · E_sky(mu) (the sky
+//     irradiance LUT: the cosine-weighted hemisphere of in-scattered
+//     luminance per unit irradiance, Bruneton & Neyret 2008's irradiance
+//     texture),
+//   - the natural night-sky floor (stars, airglow, zodiacal light: ~10⁻³ lux
+//     on a clear moonless night, Jensen et al. 2001),
+// and seen through the camera-to-ground transmittance and in-scattering of
+// the sky-view LUT (aerial perspective), so it fades into the horizon.
+// Irradiances are relative to the extra-atmospheric sun (the LUT's unit).
+// ---------------------------------------------------------------------------
+// Grey-green terrestrial albedo (vegetation and soil average ~0.2-0.3).
+public static const float3 ATMOS_GROUND_ALBEDO = float3(0.24, 0.25, 0.21);
+
+// Sky irradiance LUT: SKY_IRRADIANCE_TEXELS texels over the light's zenith
+// cosine in [SKY_IRRADIANCE_MU_MIN, 1] (RGBA32F, read with Load and
+// interpolated geometrically: the irradiance spans decades across twilight).
+public static const uint  SKY_IRRADIANCE_TEXELS = 128;
+public static const float SKY_IRRADIANCE_MU_MIN = -0.5;
+
+public float sky_irradiance_mu_from_texel(uint x) {
+    return SKY_IRRADIANCE_MU_MIN +
+           (1.0 - SKY_IRRADIANCE_MU_MIN) * float(x) / float(SKY_IRRADIANCE_TEXELS - 1);
+}
+
+public float3 sample_sky_irradiance(Texture2D lut, float mu_light) {
+    float x = saturate((mu_light - SKY_IRRADIANCE_MU_MIN) / (1.0 - SKY_IRRADIANCE_MU_MIN)) *
+              float(SKY_IRRADIANCE_TEXELS - 1);
+    uint i0 = min(uint(x), SKY_IRRADIANCE_TEXELS - 2);
+    float f = x - float(i0);
+    float3 a = max(lut.Load(int3(int(i0), 0, 0)).rgb, 1e-30);
+    float3 b = max(lut.Load(int3(int(i0) + 1, 0, 0)).rgb, 1e-30);
+    return exp2(lerp(log2(a), log2(b), f));
+}
+
+// Irradiance on horizontal ground from one light of extra-atmospheric
+// irradiance `e` (relative) at zenith cosine `mu_light`.
+public float3 ground_irradiance_from(Texture2D transmittance_lut, Texture2D sky_irradiance_lut,
+                                     SamplerState samp, float mu_light, float e) {
+    if (e <= 0.0) return float3(0.0, 0.0, 0.0);
+    float r = ATMOS_GROUND_RADIUS + 1e-3;
+    float3 direct = mu_light > 0.0
+                        ? sample_transmittance(transmittance_lut, samp, r, mu_light) * mu_light
+                        : float3(0.0, 0.0, 0.0);
+    return e * (direct + sample_sky_irradiance(sky_irradiance_lut, mu_light));
 }
 
 // ---------------------------------------------------------------------------
@@ -309,9 +431,11 @@ public float4 march_clouds(float3 dir, float3 sun_dir, Texture2D transmittance_l
 
     float mu_sun = clamp(sun_dir.y, -1.0, 1.0);
     float cos_theta = dot(dir, sun_dir);
-    float3 sun_trans = sample_transmittance(transmittance_lut, samp,
-                                            clamp(r + 2.0, ATMOS_GROUND_RADIUS, ATMOS_TOP_RADIUS),
-                                            mu_sun);
+    // A sun below the horizon does not light the clouds directly (the LUT
+    // has no meaning for rays into the planet; at night's pre-exposure any
+    // leak would glow).
+    float3 sun_trans = sun_transmittance_above_ground(
+        transmittance_lut, samp, clamp(r + 2.0, ATMOS_GROUND_RADIUS, ATMOS_TOP_RADIUS), mu_sun);
     float3 sun_energy = sun_trans * 0.45;
     float phase = lerp(cloud_hg_phase(cos_theta, 0.55), cloud_hg_phase(cos_theta, -0.2), 0.3) +
                   0.12;

@@ -2,11 +2,13 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstring>
 #include <memory>
 #include <string>
 #include <utility>
 
+#include "engine/renderer/photometry.hpp"
 #include "engine/rhi/device.hpp"
 #include "engine/rhi/gpu_allocator.hpp"
 #include "engine/rhi/pipeline_cache.hpp"
@@ -20,28 +22,44 @@ namespace {
 }
 
 constexpr VkShaderStageFlags kComputeStage = VK_SHADER_STAGE_COMPUTE_BIT;
-constexpr std::uint32_t      kBins         = 256;
+constexpr std::uint32_t      kBins         = photometry::k_histogram_bins;
 constexpr VkDeviceSize       kHistBytes    = kBins * sizeof(std::uint32_t);
+constexpr VkDeviceSize       kStateBytes   = ExposureState::k_floats * sizeof(float);
 
-// Log-luminance range covered by the histogram (EV ~[-8, +4]).
-constexpr float kMinLogLum = -8.0F;
-constexpr float kMaxLogLum = 4.0F;
-constexpr float kLogLumRange = kMaxLogLum - kMinLogLum;
+constexpr float kMinLogLum = photometry::k_histogram_min_log2;
+constexpr float kLogLumRange = photometry::k_histogram_max_log2 - photometry::k_histogram_min_log2;
 
+// Mirror the push constants of exposure_histogram.slang / exposure_average.slang.
 struct HistogramParams {
     float         min_log_lum;
     float         inv_log_lum_range;
     std::uint32_t width;
     std::uint32_t height;
+    float         inv_pre_exposure;
+    float         center_weight;
+    float         pad0, pad1;
 };
+static_assert(sizeof(HistogramParams) == 32);
 struct AverageParams {
     float min_log_lum;
     float log_lum_range;
     float dt;
-    float num_pixels;
     float tau;
-    float pad0, pad1, pad2;
+    float low_percent;
+    float high_percent;
+    float key;
+    float adaptive_key;
+    float min_exposure;
+    float max_exposure;
+    float nits_per_unit;
+    float key_reference;
+    float log_inv_pre_exposure;
+    float reset;
+    float pad0, pad1;
 };
+static_assert(sizeof(AverageParams) == 64);
+
+[[nodiscard]] float finite_or(float v, float fallback) { return std::isfinite(v) ? v : fallback; }
 
 [[nodiscard]] std::expected<rhi::ManagedPipeline, core::Error>
 make_pipeline(rhi::PipelineCache& cache, const std::string& spv,
@@ -85,13 +103,14 @@ ExposureState::create(const rhi::Device& device, rhi::GpuAllocator& allocator) {
     // Host-visible so it starts at 0 (the shader seeds from the first frame's
     // measured luminance when prev <= 0) and can be read back for inspection.
     auto buffer = allocator.create_buffer(
-        sizeof(float),
+        kStateBytes,
         VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
         VMA_MEMORY_USAGE_AUTO,
         VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT);
     if (!buffer) return std::unexpected(buffer.error());
-    const float zero = 0.0F;
-    std::memcpy(buffer->mapped(), &zero, sizeof(zero));
+    // Not seeded; exposure 1 until the first frame is measured.
+    const std::array<float, ExposureState::k_floats> init{0.0F, 1.0F, 0.0F, 0.18F};
+    std::memcpy(buffer->mapped(), init.data(), sizeof(init));
     if (auto flushed = buffer->flush(); !flushed) return std::unexpected(flushed.error());
     auto state = std::make_shared<ExposureState>(Key{});
     state->buffer_ = std::move(*buffer);
@@ -99,12 +118,38 @@ ExposureState::create(const rhi::Device& device, rhi::GpuAllocator& allocator) {
     return state;
 }
 
-float ExposureState::adapted_luminance() const {
-    if (buffer_.mapped() == nullptr) return 0.0F;
+namespace {
+// Element `i` of the mapped state, or `fallback`.
+[[nodiscard]] float read_state(const rhi::GpuBuffer& buffer, std::size_t i, float fallback) {
+    if (buffer.mapped() == nullptr) return fallback;
     // Device writes reach the host only after an invalidate on non-coherent
     // memory (a no-op on coherent memory).
-    if (!buffer_.invalidate_mapped()) return 0.0F;
-    return *static_cast<const float*>(buffer_.mapped());
+    if (!buffer.invalidate_mapped()) return fallback;
+    float v = 0.0F;
+    std::memcpy(&v, static_cast<const char*>(buffer.mapped()) + i * sizeof(float), sizeof(v));
+    return v;
+}
+} // namespace
+
+float ExposureState::adapted_luminance() const { return read_state(buffer_, 0, 0.0F); }
+
+float ExposureState::exposure() const {
+    const float e = read_state(buffer_, 1, 1.0F);
+    return std::isfinite(e) && e > 0.0F ? e : 1.0F;
+}
+
+float ExposureState::key() const { return read_state(buffer_, 3, 0.18F); }
+
+ExposureMetering ExposureMetering::from(const ExposureSettings& settings, float pre_exposure) {
+    ExposureMetering m;
+    m.adaptation_tau = settings.adaptation_s;
+    m.key = settings.key;
+    m.adaptive_key = settings.adaptive_key;
+    m.min_ev100 = settings.min_ev100;
+    m.max_ev100 = settings.max_ev100;
+    m.center_weight = settings.center_weight;
+    m.pre_exposure = pre_exposure;
+    return m;
 }
 
 std::expected<ExposurePass, core::Error>
@@ -163,7 +208,7 @@ ExposurePass::create(const rhi::Device& device, rhi::GpuAllocator& allocator,
 
 std::expected<void, core::Error>
 ExposurePass::add_to_graph(rhi::RenderGraph& graph, rhi::ResourceHandle hdr, VkExtent2D extent,
-                           float dt, float adaptation_tau) {
+                           float dt, const ExposureMetering& metering) {
     auto hist_db = rhi::DescriptorBuffer::create(*device_, *allocator_, db_fns_, histogram_layout_);
     if (!hist_db) return std::unexpected(hist_db.error());
     histogram_descriptor_ = std::move(*hist_db);
@@ -176,11 +221,30 @@ ExposurePass::add_to_graph(rhi::RenderGraph& graph, rhi::ResourceHandle hdr, VkE
     const VkBuffer exp_buf = state_->buffer();
     const VkDeviceAddress exp_addr = state_->address();
 
-    HistogramParams hp{kMinLogLum, 1.0F / kLogLumRange, extent.width, extent.height};
-    AverageParams ap{kMinLogLum, kLogLumRange, dt,
-                     static_cast<float>(extent.width) * static_cast<float>(extent.height),
-                     std::max(adaptation_tau, 1e-3F),
-                     0.0F, 0.0F, 0.0F};
+    const float pre = finite_or(metering.pre_exposure, 1.0F);
+    HistogramParams hp{kMinLogLum, 1.0F / kLogLumRange, extent.width, extent.height,
+                       1.0F / std::max(pre, 1e-30F),
+                       std::clamp(finite_or(metering.center_weight, 0.0F), 0.0F, 1.0F), 0.0F,
+                       0.0F};
+    const float lo_ev = std::min(metering.min_ev100, metering.max_ev100);
+    const float hi_ev = std::max(metering.min_ev100, metering.max_ev100);
+    const float low = std::clamp(finite_or(metering.low_percent, 0.1F), 0.0F, 1.0F);
+    AverageParams ap{kMinLogLum,
+                     kLogLumRange,
+                     std::max(finite_or(dt, 0.0F), 0.0F),
+                     std::max(finite_or(metering.adaptation_tau, k_adaptation_tau), 1e-3F),
+                     low,
+                     std::clamp(finite_or(metering.high_percent, 0.9F), low, 1.0F),
+                     std::max(finite_or(metering.key, 0.18F), 1e-4F),
+                     metering.adaptive_key ? 1.0F : 0.0F,
+                     photometry::exposure_from_ev100_units(hi_ev),
+                     photometry::exposure_from_ev100_units(lo_ev),
+                     photometry::k_nits_per_unit,
+                     photometry::krawczyk_key(photometry::k_adaptive_key_reference_nits),
+                     -std::log2(std::max(pre, 1e-30F)),
+                     metering.reset ? 1.0F : 0.0F,
+                     0.0F,
+                     0.0F};
 
     graph.add_pass("exposure", rhi::PassType::compute)
         .reads(hdr, rhi::ResourceUsage::sampled_compute)
@@ -191,7 +255,7 @@ ExposurePass::add_to_graph(rhi::RenderGraph& graph, rhi::ResourceHandle hdr, VkE
             // its average dispatch wrote it and its tonemap read it. Order this
             // frame's read-modify-write after both (same queue, earlier
             // submission; the fences alone no longer cover it).
-            buffer_barrier(cmd, exp_buf, sizeof(float),
+            buffer_barrier(cmd, exp_buf, kStateBytes,
                            VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT |
                                VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
                            VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT,
@@ -202,7 +266,7 @@ ExposurePass::add_to_graph(rhi::RenderGraph& graph, rhi::ResourceHandle hdr, VkE
             histogram_descriptor_.write_sampled_image(0, ctx.resolve(hdr).view, ro);
             histogram_descriptor_.write_storage_buffer(1, hist_addr, kHistBytes);
             average_descriptor_.write_storage_buffer(0, hist_addr, kHistBytes);
-            average_descriptor_.write_storage_buffer(1, exp_addr, sizeof(float));
+            average_descriptor_.write_storage_buffer(1, exp_addr, kStateBytes);
 
             // Clear the histogram, then build it.
             vkCmdFillBuffer(cmd, hist_buf, 0, kHistBytes, 0);
@@ -230,7 +294,7 @@ ExposurePass::add_to_graph(rhi::RenderGraph& graph, rhi::ResourceHandle hdr, VkE
             // Make the adapted luminance visible to the tonemap fragment shader
             // and to host reads (adapted_luminance()) once the frame's fence
             // has signalled.
-            buffer_barrier(cmd, exp_buf, sizeof(float), VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+            buffer_barrier(cmd, exp_buf, kStateBytes, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
                            VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT,
                            VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_2_HOST_BIT,
                            VK_ACCESS_2_SHADER_STORAGE_READ_BIT | VK_ACCESS_2_HOST_READ_BIT);

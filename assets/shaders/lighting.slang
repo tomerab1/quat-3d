@@ -48,7 +48,7 @@ static const float SKY_LUT_BRIGHTNESS = 8.0;
 // match prefilter_mip_count in ibl_pass.cpp.
 static const float PREFILTER_MAX_LOD = 4.0;
 
-// Per-frame values (std140, 368 bytes; LightingConstants in lighting_pass.cpp).
+// Per-frame values (std140, 384 bytes; LightingConstants in lighting_pass.cpp).
 // Matrices are glm columns (applied with mul_cols).
 struct LightingConstants {
     float4 inv_view_proj[4]; // clip -> world (jittered), reconstructs positions
@@ -70,6 +70,10 @@ struct LightingConstants {
     float4 cloud_shadow_v;
     float4 realism;          // x multiscatter, y horizon occlusion, z reflections bound,
                              // w HDRI sun disc 1 - cos(radius) (0 = none) (R21)
+    float4 exposure;         // x pre-exposure: every value written to g_hdr is
+                             // multiplied by it (R22.2.1, lib photometry);
+                             // y 1 / the IBL maps' baked scale; z 1 / the
+                             // pre-exposure g_reflections was traced in
 }
 ConstantBuffer<LightingConstants> g_frame;
 
@@ -136,11 +140,14 @@ float3 ibl_ambient(float3 N, float3 diffuse_n, float3 V, float3 albedo, float me
     float3 F = fresnel_schlick_roughness(ndotv, f0, roughness);
     IblEnergy e = ibl_energy(f0, F, dfg, albedo * (1.0 - metallic), g_frame.realism.x > 0.5);
 
-    float3 irradiance = g_irradiance.SampleLevel(g_ibl_sampler, diffuse_n, 0.0).rgb;
+    float3 irradiance =
+        g_irradiance.SampleLevel(g_ibl_sampler, diffuse_n, 0.0).rgb * g_frame.exposure.y;
     float3 R = reflect(-V, N);
     float3 prefiltered =
-        g_prefiltered.SampleLevel(g_ibl_sampler, R, roughness * PREFILTER_MAX_LOD).rgb;
-    float3 radiance = lerp(prefiltered * specular_occlusion, reflection.rgb, reflection.a);
+        g_prefiltered.SampleLevel(g_ibl_sampler, R, roughness * PREFILTER_MAX_LOD).rgb *
+        g_frame.exposure.y;
+    float3 radiance = lerp(prefiltered * specular_occlusion,
+                           reflection.rgb * g_frame.exposure.z, reflection.a);
     return e.single * radiance + (e.multi + e.diffuse) * irradiance * diffuse_occlusion;
 }
 
@@ -259,7 +266,8 @@ float3 layer_clearcoat_ibl(float3 base, float3 N, float3 V, float cc, float ccr)
     if (cc <= 0.0) return base;
     float ndotv = max(dot(N, V), 1e-4);
     float3 R = reflect(-V, N);
-    float3 prefiltered = g_prefiltered.SampleLevel(g_ibl_sampler, R, ccr * PREFILTER_MAX_LOD).rgb;
+    float3 prefiltered =
+        g_prefiltered.SampleLevel(g_ibl_sampler, R, ccr * PREFILTER_MAX_LOD).rgb * g_frame.exposure.y;
     float2 brdf = g_brdf_lut.SampleLevel(g_ibl_sampler, float2(ndotv, ccr), 0.0).rg;
     float3 coat = prefiltered * (0.04 * brdf.x + brdf.y);
     return base * (1.0 - cc * coat_fresnel(ndotv)) + cc * coat;
@@ -344,10 +352,8 @@ void compute_main(uint3 tid : SV_DispatchThreadID) {
                 // is too coarse for them), analytic sun disc tinted by the
                 // transmittance and dimmed behind clouds.
                 bg = sample_skyview(g_skyview, g_ibl_sampler, ray, sun).rgb;
-                float3 cloud_ambient =
-                    sample_skyview(g_skyview, g_ibl_sampler, float3(0.2, 0.97, 0.0), sun).rgb *
-                        0.8 +
-                    float3(0.008, 0.011, 0.016);
+                float3 cloud_ambient = cloud_ambient_from_zenith(
+                    sample_skyview(g_skyview, g_ibl_sampler, float3(0.2, 0.97, 0.0), sun));
                 CloudParams cp = unpack_cloud_params(g_frame.cloud_a, g_frame.cloud_b);
                 float jitter = interleaved_gradient_noise(float2(coord));
                 float4 clouds = march_clouds(ray, sun, g_transmittance_lut, g_ibl_sampler,
@@ -355,7 +361,7 @@ void compute_main(uint3 tid : SV_DispatchThreadID) {
                 bg = (bg * clouds.a + clouds.rgb) * SKY_LUT_BRIGHTNESS;
                 float cos_sun = dot(ray, sun);
                 if (cos_sun > 0.9998) {
-                    float3 sun_trans = sample_transmittance(
+                    float3 sun_trans = sun_transmittance_above_ground(
                         g_transmittance_lut, g_ibl_sampler, ATMOS_VIEW_HEIGHT, sun.y);
                     bg += sun_trans * clouds.a * 80.0 * smoothstep(0.9998, 0.99995, cos_sun);
                 }
@@ -363,7 +369,7 @@ void compute_main(uint3 tid : SV_DispatchThreadID) {
                 bg = sky(ray, sun);
             }
         }
-        g_hdr[coord] = float4(hdr_store(bg), 1.0);
+        g_hdr[coord] = float4(hdr_store(bg * g_frame.exposure.x), 1.0);
         return;
     }
 
@@ -406,8 +412,8 @@ void compute_main(uint3 tid : SV_DispatchThreadID) {
     float3 ldir   = normalize(g_frame.direction.xyz);
     float3 sun_radiance = g_frame.color.rgb * g_frame.color.w;
     if (g_frame.direction.w > 1.5 && g_frame.direction.w < 2.5) {
-        sun_radiance *= sample_transmittance(g_transmittance_lut, g_ibl_sampler,
-                                             ATMOS_VIEW_HEIGHT, ldir.y);
+        sun_radiance *= sun_transmittance_above_ground(g_transmittance_lut, g_ibl_sampler,
+                                                       ATMOS_VIEW_HEIGHT, ldir.y);
     }
     // R21: the split-sum DFG at this pixel drives the multiple-scattering
     // energy of both the punctual lights and the environment (only with real
@@ -482,5 +488,5 @@ void compute_main(uint3 tid : SV_DispatchThreadID) {
         color *= csm_debug_color(cascade);
     }
     color += g_emissive.Load(int3(coord, 0)).rgb; // self-emission, unlit (after AO and the debug tint)
-    g_hdr[coord] = float4(hdr_store(color), 1.0);
+    g_hdr[coord] = float4(hdr_store(color * g_frame.exposure.x), 1.0);
 }

@@ -28,7 +28,7 @@ struct PushConstants {
     InstanceData* instances;  // indexed by instance_index() (includes firstInstance)
     uint2         pad;
     float4   camera_pos;      // xyz, w = IBL intensity
-    float4   light_direction; // xyz = to light, w = screen width (unused)
+    float4   light_direction; // xyz = to light, w = the HDR pre-exposure (R22.2.1)
     float4   light_color;     // rgb, w intensity
     float4   ambient;         // rgb, w = screen height (unused)
 }
@@ -238,12 +238,15 @@ float4 fragment_main(VsOut input) : SV_Target0 {
         float3 irradiance =
             g_irradiance.SampleLevel(g_ibl_sampler, world_n, 0.0).rgb * pc.camera_pos.w;
         float3 diffuse = irradiance * albedo * occ;
-        float3 base_diffuse = lerp(diffuse, transmitted, g_params.transmission_factor);
 
         float3 point_spec = clustered_lighting(input.world_pos, world_n, V, albedo, metallic,
                                                roughness, f0, true);
 
-        float3 color = (1.0 - F) * base_diffuse + spec_ibl + sun_spec + point_spec + emissive;
+        // Light is pre-exposed (R22.2.1); the transmitted scene colour
+        // already is.
+        const float pre = pc.light_direction.w;
+        float3 base = lerp(diffuse * pre, transmitted, g_params.transmission_factor);
+        float3 color = (1.0 - F) * base + (spec_ibl + sun_spec + point_spec + emissive) * pre;
         return float4(hdr_store(color), 1.0); // background already composited
     }
 
@@ -252,5 +255,5 @@ float4 fragment_main(VsOut input) : SV_Target0 {
     lit += clustered_lighting(input.world_pos, world_n, V, albedo, metallic, roughness,
                               float3(0.04, 0.04, 0.04), false);
     float3 ambient = pc.ambient.rgb * albedo * occ;
-    return float4(hdr_store(lit + ambient + emissive), alpha);
+    return float4(hdr_store((lit + ambient + emissive) * pc.light_direction.w), alpha);
 }

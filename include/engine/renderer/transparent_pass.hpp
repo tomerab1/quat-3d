@@ -113,6 +113,11 @@ public:
     // pass's slot; the scene-colour sampler (transmission blur) is unaffected.
     [[nodiscard]] std::expected<void, core::Error> set_texture_lod_bias(float bias);
 
+    // The HDR target's pre-exposure (photometry.hpp, R22.2.1): light this
+    // pass adds is multiplied by it (the transmitted scene colour already
+    // is). Applies to the next add_to_graph calls; default 1.
+    void set_pre_exposure(float pre_exposure);
+
 private:
     // Mip levels of the scene-colour snapshot — how far rough transmission can
     // blur. Must cover the LOD range transparent.slang computes from roughness.
@@ -144,6 +149,7 @@ private:
     rhi::ManagedPipeline           transmission_pipeline_; // depth write, dynamic cull
     rhi::Sampler                   sampler_;
     float                          lod_bias_ = 0.0F; // the material sampler's mipLodBias
+    float                          pre_exposure_ = 1.0F;
     rhi::Sampler                   scene_sampler_; // samples the scene-colour mip chain
     asset::TextureAsset            fallback_texture_;
     asset::MaterialAsset           default_material_;

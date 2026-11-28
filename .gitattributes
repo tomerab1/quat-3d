@@ -7,3 +7,6 @@ docs/LEARNINGS.md merge=union
 # fixtures), and a Windows checkout with core.autocrlf would add CRs.
 assets/shaders/** text eol=lf
 tests/data/** text eol=lf
+
+# Cooked binary star catalogue (R22.2.1): bytes, never line-ending converted.
+assets/sky/*.qsc binary

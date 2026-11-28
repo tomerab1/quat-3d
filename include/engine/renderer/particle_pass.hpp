@@ -70,6 +70,9 @@ struct ParticleFrame {
     glm::vec3 camera{0.0F};
     DirectionalLightParams light{};
     VkExtent2D extent{0, 0};
+    // The frame's HDR pre-exposure (photometry.hpp): particle light is
+    // multiplied by it like every light written into the HDR.
+    float pre_exposure = 1.0F;
 };
 
 // Scene inputs. `depth` / `normal` (GBuffer) are needed by collision and soft

@@ -25,8 +25,11 @@ makes every other judgement misleading, so it always comes first.
    `render_settings_schema` once for every field's range, unit and default,
    `environment_get` for the sun and clouds.
 4. **Exposure first.** With `auto` on, adjust `compensation_ev` in steps of
-   0.3 to 1 EV. Touch `key`, `min_exposure` or `max_exposure` only if auto
-   exposure pumps or overreacts. Turn `auto` off for a fixed, repeatable
+   0.3 to 1 EV. Touch `key`, `min_ev100` / `max_ev100` (the scene
+   brightness range auto exposure follows) or `adaptive_key` only if auto
+   exposure pumps or overreacts. For a back-lit subject against a bright
+   sky, raise `center_weight` (or add compensation) rather than lowering
+   `key`. Turn `auto` off for a fixed, repeatable
    exposure (exposure = 2^`compensation_ev`).
 5. **Then tonemap and highlights.** Pick the `tonemap` `operator`: `aces`
    (contrasty, saturated), `agx` (natural roll-off of bright colours toward

@@ -18,6 +18,8 @@
 #include <vulkan/vulkan.h>
 
 #include "engine/renderer/exposure_pass.hpp"
+#include "engine/renderer/photometry.hpp"
+#include "engine/renderer/render_settings.hpp"
 #include "engine/rhi/device.hpp"
 #include "engine/rhi/gpu_allocator.hpp"
 #include "engine/rhi/render_graph.hpp"
@@ -85,7 +87,9 @@ public:
         constexpr VkImageLayout ro = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
         const rhi::ResourceHandle hdr = graph.import_image("test_hdr", image, view_.handle(),
                                                            k_hdr_format, k_extent, ro, ro);
-        if (auto a = pass.add_to_graph(graph, hdr, k_extent, dt); !a) {
+        r::ExposureMetering metering;
+        metering.pre_exposure = pre_exposure_;
+        if (auto a = pass.add_to_graph(graph, hdr, k_extent, dt, metering); !a) {
             return std::unexpected(a.error());
         }
         if (auto c = graph.compile(); !c) return std::unexpected(c.error());
@@ -95,8 +99,13 @@ public:
         return pass.adapted_luminance();
     }
 
+    // The pre-exposure the next frames' images are measured with (the image
+    // holds luminance x pre).
+    void set_pre_exposure(float pre) { pre_exposure_ = pre; }
+
 private:
     quat::test::GpuContext* g_ = nullptr;
+    float                   pre_exposure_ = 1.0F;
     rhi::GpuImage           image_;
     rhi::ImageView          view_;
 };
@@ -133,8 +142,9 @@ TEST(GpuExposure, SharedStateAdaptsWithConfiguredTimeConstant) {
     r::ExposurePass* slots[2] = {&*slot_a, &*slot_b};
 
     // Adapted to the dim scene, then the scene brightens: after n frames of dt
-    // the adapted value is l_bright + (l_dim - l_bright) * exp(-n dt / tau),
-    // whichever slot recorded each frame.
+    // the adapted log luminance is log l_bright + (log l_dim - log l_bright) *
+    // exp(-n dt / tau) (R22.2.1 adapts in the log domain, as the eye's
+    // response is logarithmic), whichever slot recorded each frame.
     auto seeded = hdr->frame(*slots[0], k_dim, k_instant);
     ASSERT_OK(seeded);
     EXPECT_NEAR(*seeded, *l_dim, *l_dim * 1e-3F);
@@ -143,10 +153,10 @@ TEST(GpuExposure, SharedStateAdaptsWithConfiguredTimeConstant) {
     for (int n = 1; n <= 10; ++n) {
         auto adapted = hdr->frame(*slots[n % 2], k_bright, k_dt);
         ASSERT_OK(adapted) << "frame " << n;
-        const float expected =
-            *l_bright + (*l_dim - *l_bright) *
-                            std::exp(-static_cast<float>(n) * k_dt /
-                                     r::ExposurePass::k_adaptation_tau);
+        const float expected = std::exp2(
+            std::log2(*l_bright) + (std::log2(*l_dim) - std::log2(*l_bright)) *
+                                       std::exp(-static_cast<float>(n) * k_dt /
+                                                r::ExposurePass::k_adaptation_tau));
         EXPECT_NEAR(*adapted, expected, expected * 0.01F) << "frame " << n;
         EXPECT_FLOAT_EQ(slot_a->adapted_luminance(), slot_b->adapted_luminance());
     }
@@ -178,4 +188,40 @@ TEST(GpuExposure, BrightSceneRaisesTheAdaptedLuminance) {
     auto bright = hdr->frame(*pass, 2.0F, 1000.0F);
     ASSERT_OK(bright);
     EXPECT_GT(*bright, *dim + 0.5F);
+}
+
+// R22.2.1: the engine's loop — each frame's HDR is pre-exposed with the
+// previous frame's exposure — converges from a fresh state on a grey card
+// under a 10⁻³ lux night and under a 10⁵ lux noon: the exposure reaches the
+// meter's CPU reference (photometry::auto_exposure) and the pre-exposed
+// image ends at display scale, far from RGBA16F's limits. The night starts
+// below what the first frame's pre-exposure can hold (the image clears to
+// 0), so it also covers the meter's underexposure ramp.
+TEST(GpuExposure, ConvergesFromAMillilxNightToAHundredKiloluxNoon) {
+    QUAT_REQUIRE_GPU(g);
+    auto hdr = HdrImage::create(*g);
+    ASSERT_OK(hdr);
+    const r::ExposureSettings settings;
+    for (const float lux : {1e-3F, 1e5F}) {
+        auto pass = r::ExposurePass::create(g->device, g->allocator, g->cache, g->shader_dir);
+        ASSERT_OK(pass);
+        const float scene = 0.18F * lux / 3.14159265F / r::photometry::k_nits_per_unit;
+        float pre = 1.0F;
+        for (int frame = 0; frame < 300; ++frame) { // 10 s at 30 fps, ~9 time constants
+            hdr->set_pre_exposure(pre);
+            auto adapted = hdr->frame(*pass, scene * pre, 1.0F / 30.0F);
+            ASSERT_OK(adapted) << lux << " lux, frame " << frame;
+            pre = pass->exposure();
+        }
+        const float expected = r::photometry::auto_exposure(scene, settings.key, true,
+                                                            settings.min_ev100,
+                                                            settings.max_ev100);
+        // One histogram bin (0.157 EV) of quantisation plus RGBA16F rounding.
+        EXPECT_NEAR(std::log2(pass->exposure()), std::log2(expected), 0.2F) << lux << " lux";
+        EXPECT_NEAR(std::log2(pass->adapted_luminance()), std::log2(scene), 0.2F)
+            << lux << " lux";
+        // Display scale: the adaptive key (0.18 by day, dimmer by night).
+        EXPECT_GT(scene * pre, 0.002F) << lux << " lux";
+        EXPECT_LT(scene * pre, 0.25F) << lux << " lux";
+    }
 }

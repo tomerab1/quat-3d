@@ -50,6 +50,10 @@ struct IblCycleParams {
     VkImageView   skyview = VK_NULL_HANDLE;
     VkImageView   transmittance = VK_NULL_HANDLE;
     CloudSettings clouds{};
+    // Multiplier baked into the maps: the frame's HDR pre-exposure, so a
+    // night sky (~1e-8 HDR units) does not underflow the RGBA16F cubes.
+    // Consumers divide the sampled radiance by scale() (R22.2.1).
+    float scale = 1.0F;
 };
 
 class DynamicIbl {
@@ -72,6 +76,8 @@ public:
     // The handles change on cycle completion — fetch every frame, after
     // add_step_to_graph.
     [[nodiscard]] IblViewSet views() const;
+    // The IblCycleParams::scale the maps behind views() were baked with.
+    [[nodiscard]] float scale() const { return set_scale_[front_]; }
 
     // Record the next refresh step into the frame graph (call once per frame,
     // before declaring any pass that samples views()). `params` is latched at
@@ -132,6 +138,7 @@ private:
 
     std::array<ProbeSet, 2> sets_;
     std::uint32_t           front_ = 0;
+    std::array<float, 2>    set_scale_{1.0F, 1.0F}; // per set: its bake scale
     std::uint32_t           step_  = 0; // next step of the current cycle
     IblCycleParams          cycle_params_{};
     float                   last_cycle_start_s_ = 0.0F; // clouds.time_s clock

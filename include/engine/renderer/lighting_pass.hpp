@@ -97,6 +97,14 @@ struct LightingTuning {
     // directional light; the background draws it back as an analytic disc
     // (angular diameter = the shadows' sun size) carrying the light's energy.
     bool hdri_sun_disc = false;
+    // R22.2.1: the HDR target's pre-exposure (photometry.hpp); every value
+    // the pass writes is multiplied by it.
+    float pre_exposure = 1.0F;
+    // The multiplier baked into the IBL maps (DynamicIbl::scale; 1 for static
+    // and HDRI maps) and the pre-exposure of the HDR the reflections were
+    // traced in (the previous frame's); both are divided out when sampled.
+    float ibl_scale = 1.0F;
+    float reflection_pre_exposure = 1.0F;
 };
 
 class LightingPass {

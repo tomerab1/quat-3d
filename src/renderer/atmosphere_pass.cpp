@@ -1,6 +1,8 @@
 #include "engine/renderer/atmosphere_pass.hpp"
 
+#include <algorithm>
 #include <array>
+#include <cmath>
 #include <string>
 #include <utility>
 
@@ -24,9 +26,30 @@ constexpr std::uint32_t kMultiScatterSize = 32;
 constexpr std::uint32_t kSkyViewW = AtmospherePass::skyview_extent.width;
 constexpr std::uint32_t kSkyViewH = AtmospherePass::skyview_extent.height;
 
+constexpr VkFormat kIrradianceFormat = VK_FORMAT_R32G32B32A32_SFLOAT;
+// lib/atmosphere.slang SKY_IRRADIANCE_TEXELS.
+constexpr std::uint32_t kIrradianceW = AtmospherePass::sky_irradiance_extent.width;
+
+// Mirrors atmos_skyview.slang PushConstants.
 struct SkyViewPush {
-    float sun_direction[4];
+    glm::vec4 sun_direction{0.0F}; // xyz toward the sun, w relative irradiance
+    glm::vec4 moon_direction{0.0F};
+    glm::vec4 night{0.0F};         // x night-sky floor (relative)
 };
+static_assert(sizeof(SkyViewPush) == 48);
+
+[[nodiscard]] float finite_nonneg(float v) { return std::isfinite(v) ? std::max(v, 0.0F) : 0.0F; }
+
+[[nodiscard]] SkyViewPush make_push(const glm::vec3& sun, const SkyLights& lights) {
+    SkyViewPush push{};
+    push.sun_direction = glm::vec4(sun, finite_nonneg(lights.sun_irradiance));
+    glm::vec3 moon = lights.moon_direction;
+    const float len = glm::length(moon);
+    moon = std::isfinite(len) && len > 1e-6F ? moon / len : glm::vec3(0.0F, -1.0F, 0.0F);
+    push.moon_direction = glm::vec4(moon, finite_nonneg(lights.moon_irradiance));
+    push.night = glm::vec4(finite_nonneg(lights.night_irradiance), 0.0F, 0.0F, 0.0F);
+    return push;
+}
 
 [[nodiscard]] std::expected<rhi::ManagedPipeline, core::Error>
 make_pipeline(rhi::PipelineCache& cache, const std::string& spv,
@@ -126,17 +149,28 @@ AtmospherePass::create(const rhi::Device& device, rhi::GpuAllocator& allocator,
         {0, 1, VK_DESCRIPTOR_TYPE_SAMPLER, 1, kComputeStage},
         {0, 2, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, kComputeStage},
     }};
-    const std::array<DescriptorBinding, 4> sky_b{{
+    // Sky irradiance: transmittance, multiple scattering, sampler, output.
+    const std::array<DescriptorBinding, 4> irr_b{{
         {0, 0, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, kComputeStage},
         {0, 1, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, kComputeStage},
         {0, 2, VK_DESCRIPTOR_TYPE_SAMPLER, 1, kComputeStage},
         {0, 3, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, kComputeStage},
+    }};
+    // Sky view: the same, plus the sky irradiance LUT (ground lighting).
+    const std::array<DescriptorBinding, 5> sky_b{{
+        {0, 0, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, kComputeStage},
+        {0, 1, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, kComputeStage},
+        {0, 2, VK_DESCRIPTOR_TYPE_SAMPLER, 1, kComputeStage},
+        {0, 3, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, kComputeStage},
+        {0, 4, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, kComputeStage},
     }};
 
     auto trans_layout = rhi::DescriptorSetLayout::create(device, out.db_fns_, lut_b);
     if (!trans_layout) return std::unexpected(trans_layout.error());
     auto ms_layout = rhi::DescriptorSetLayout::create(device, out.db_fns_, ms_b);
     if (!ms_layout) return std::unexpected(ms_layout.error());
+    auto irr_layout = rhi::DescriptorSetLayout::create(device, out.db_fns_, irr_b);
+    if (!irr_layout) return std::unexpected(irr_layout.error());
     auto sky_layout = rhi::DescriptorSetLayout::create(device, out.db_fns_, sky_b);
     if (!sky_layout) return std::unexpected(sky_layout.error());
 
@@ -146,6 +180,9 @@ AtmospherePass::create(const rhi::Device& device, rhi::GpuAllocator& allocator,
     auto ms_pipe = make_pipeline(cache, cooked_shader_dir + "/atmos_multiscatter.spv",
                                  *ms_layout, 0);
     if (!ms_pipe) return std::unexpected(ms_pipe.error());
+    auto irr_pipe = make_pipeline(cache, cooked_shader_dir + "/atmos_sky_irradiance.spv",
+                                  *irr_layout, 0);
+    if (!irr_pipe) return std::unexpected(irr_pipe.error());
     auto sky_pipe = make_pipeline(cache, cooked_shader_dir + "/atmos_skyview.spv",
                                   *sky_layout, sizeof(SkyViewPush));
     if (!sky_pipe) return std::unexpected(sky_pipe.error());
@@ -161,6 +198,9 @@ AtmospherePass::create(const rhi::Device& device, rhi::GpuAllocator& allocator,
     if (!ms_img) return std::unexpected(ms_img.error());
     auto sky_img = allocator.create_image(kLutFormat, {kSkyViewW, kSkyViewH}, lut_usage);
     if (!sky_img) return std::unexpected(sky_img.error());
+    auto irr_img = allocator.create_image(kIrradianceFormat, {kIrradianceW, 1}, lut_usage);
+    if (!irr_img) return std::unexpected(irr_img.error());
+    out.sky_irradiance_ = std::move(*irr_img);
     out.transmittance_ = std::move(*trans_img);
     out.multiscatter_ = std::move(*ms_img);
     out.skyview_ = std::move(*sky_img);
@@ -172,6 +212,9 @@ AtmospherePass::create(const rhi::Device& device, rhi::GpuAllocator& allocator,
     auto mv = rhi::create_image_view(dev, out.multiscatter_.handle(), kLutFormat);
     if (!mv) return std::unexpected(mv.error());
     out.multiscatter_view_ = std::move(*mv);
+    auto iv = rhi::create_image_view(dev, out.sky_irradiance_.handle(), kIrradianceFormat);
+    if (!iv) return std::unexpected(iv.error());
+    out.sky_irradiance_view_ = std::move(*iv);
     auto sv = rhi::create_image_view(dev, out.skyview_.handle(), kLutFormat);
     if (!sv) return std::unexpected(sv.error());
     out.skyview_view_ = std::move(*sv);
@@ -188,6 +231,8 @@ AtmospherePass::create(const rhi::Device& device, rhi::GpuAllocator& allocator,
     if (!trans_db) return std::unexpected(trans_db.error());
     auto ms_db = rhi::DescriptorBuffer::create(device, allocator, out.db_fns_, *ms_layout);
     if (!ms_db) return std::unexpected(ms_db.error());
+    auto irr_db = rhi::DescriptorBuffer::create(device, allocator, out.db_fns_, *irr_layout);
+    if (!irr_db) return std::unexpected(irr_db.error());
 
     constexpr VkImageLayout gen = VK_IMAGE_LAYOUT_GENERAL;
     constexpr VkImageLayout ro = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
@@ -195,10 +240,15 @@ AtmospherePass::create(const rhi::Device& device, rhi::GpuAllocator& allocator,
     ms_db->write_sampled_image(0, out.transmittance_view_.handle(), ro);
     ms_db->write_sampler(1, out.sampler_.handle());
     ms_db->write_storage_image(2, out.multiscatter_view_.handle(), gen);
+    irr_db->write_sampled_image(0, out.transmittance_view_.handle(), ro);
+    irr_db->write_sampled_image(1, out.multiscatter_view_.handle(), ro);
+    irr_db->write_sampler(2, out.sampler_.handle());
+    irr_db->write_storage_image(3, out.sky_irradiance_view_.handle(), gen);
 
     const VkImage trans_image = out.transmittance_.handle();
     const VkImage ms_image = out.multiscatter_.handle();
     const VkImage sky_image = out.skyview_.handle();
+    const VkImage irr_image = out.sky_irradiance_.handle();
     auto baked = submit_blocking(device, [&](VkCommandBuffer cmd) {
         transition(cmd, trans_image, VK_IMAGE_LAYOUT_UNDEFINED, gen,
                    VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT, 0,
@@ -222,6 +272,17 @@ AtmospherePass::create(const rhi::Device& device, rhi::GpuAllocator& allocator,
                    VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
                    VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
 
+        // Sky irradiance (reads both LUTs above).
+        transition(cmd, irr_image, VK_IMAGE_LAYOUT_UNDEFINED, gen,
+                   VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT, 0,
+                   VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT);
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, irr_pipe->handle());
+        irr_db->bind(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, irr_pipe->layout(), 0);
+        vkCmdDispatch(cmd, (kIrradianceW + 63) / 64, 1, 1);
+        transition(cmd, irr_image, gen, ro, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                   VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                   VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
+
         // The sky-view image starts in SHADER_READ_ONLY (black is fine until
         // the first ensure_skyview) so the lighting pass can always bind it.
         transition(cmd, sky_image, VK_IMAGE_LAYOUT_UNDEFINED, ro,
@@ -235,9 +296,14 @@ AtmospherePass::create(const rhi::Device& device, rhi::GpuAllocator& allocator,
     return out;
 }
 
-std::expected<void, core::Error> AtmospherePass::ensure_skyview(const glm::vec3& sun_to) {
+bool AtmospherePass::skyview_current(const glm::vec3& sun, const SkyLights& lights) const {
+    return glm::dot(sun, skyview_sun_) > 0.99999F && lights == skyview_lights_;
+}
+
+std::expected<void, core::Error> AtmospherePass::ensure_skyview(const glm::vec3& sun_to,
+                                                                const SkyLights& lights) {
     const glm::vec3 sun = glm::normalize(sun_to);
-    if (glm::dot(sun, skyview_sun_) > 0.99999F) return {}; // unchanged
+    if (skyview_current(sun, lights)) return {}; // unchanged
 
     // Fresh descriptor buffer per recompute: sun changes are user-driven and
     // rare, and a local buffer cannot dangle across moves of this pass.
@@ -249,12 +315,8 @@ std::expected<void, core::Error> AtmospherePass::ensure_skyview(const glm::vec3&
     db->write_sampled_image(1, multiscatter_view_.handle(), ro);
     db->write_sampler(2, sampler_.handle());
     db->write_storage_image(3, skyview_view_.handle(), gen);
-
-    SkyViewPush push{};
-    push.sun_direction[0] = sun.x;
-    push.sun_direction[1] = sun.y;
-    push.sun_direction[2] = sun.z;
-    push.sun_direction[3] = 0.0F;
+    db->write_sampled_image(4, sky_irradiance_view_.handle(), ro);
+    const SkyViewPush push = make_push(sun, lights);
 
     const VkImage sky_image = skyview_.handle();
     auto submitted = submit_blocking(*device_, [&](VkCommandBuffer cmd) {
@@ -274,13 +336,15 @@ std::expected<void, core::Error> AtmospherePass::ensure_skyview(const glm::vec3&
     if (!submitted) return std::unexpected(submitted.error());
 
     skyview_sun_ = sun;
+    skyview_lights_ = lights;
     return {};
 }
 
 std::expected<void, core::Error>
-AtmospherePass::add_skyview_update_to_graph(rhi::RenderGraph& graph, const glm::vec3& sun_to) {
+AtmospherePass::add_skyview_update_to_graph(rhi::RenderGraph& graph, const glm::vec3& sun_to,
+                                            const SkyLights& lights) {
     const glm::vec3 sun = glm::normalize(sun_to);
-    if (glm::dot(sun, skyview_sun_) > 0.99999F) return {}; // unchanged
+    if (skyview_current(sun, lights)) return {}; // unchanged
 
     auto db = rhi::DescriptorBuffer::create(*device_, *allocator_, db_fns_, skyview_layout_);
     if (!db) return std::unexpected(db.error());
@@ -290,14 +354,10 @@ AtmospherePass::add_skyview_update_to_graph(rhi::RenderGraph& graph, const glm::
     db->write_sampled_image(1, multiscatter_view_.handle(), ro);
     db->write_sampler(2, sampler_.handle());
     db->write_storage_image(3, skyview_view_.handle(), gen);
+    db->write_sampled_image(4, sky_irradiance_view_.handle(), ro);
     ring_ = (ring_ + 1) % db_ring_.size();
     db_ring_[ring_] = std::move(*db);
-
-    SkyViewPush push{};
-    push.sun_direction[0] = sun.x;
-    push.sun_direction[1] = sun.y;
-    push.sun_direction[2] = sun.z;
-    push.sun_direction[3] = 0.0F;
+    const SkyViewPush push = make_push(sun, lights);
 
     auto pass = graph.add_pass("skyview_update", rhi::PassType::compute);
     pass.execute([this, slot = ring_, push](rhi::PassContext& ctx) {
@@ -323,6 +383,7 @@ AtmospherePass::add_skyview_update_to_graph(rhi::RenderGraph& graph, const glm::
     });
 
     skyview_sun_ = sun;
+    skyview_lights_ = lights;
     return {};
 }
 

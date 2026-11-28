@@ -46,7 +46,7 @@ Texture2D               g_depth;    // render extent, [0, 1], 1 = far
 Texture2D<float2>       g_velocity; // render extent, uv_current - uv_previous
 Texture2D               g_history;  // display extent, rgb last result, a accumulated weight
 SamplerState            g_linear;   // bilinear, clamp to edge
-StructuredBuffer<float> g_exposure; // [0] = adapted average luminance
+StructuredBuffer<float> g_exposure; // ExposureState: [1] = auto exposure
 [format("rgba16f")] RWTexture2D<float4> g_history_out;
 [format("rgba16f")] RWTexture2D<float4> g_out;
 // Debug counter (NonFiniteCounters), bound as a descriptor: an atomic through
@@ -60,7 +60,8 @@ struct Params {
     float4 render_size;  // xy extent, zw 1 / extent
     float4 display_size; // xy extent, zw 1 / extent
     float4 jitter;       // xy jitter (render pixels), z sharpness, w history valid
-    float4 exposure;     // x read g_exposure, y key, z min, w max exposure
+    float4 exposure;     // x read g_exposure, y 1 / pre-exposure, z history rescale
+                         // (this frame's pre-exposure / the history's)
     float4 blend;        // x max accumulated weight, y sample falloff (per display px^2),
                          // z clip rejection (weight lost per unit of clipping),
                          // w frame index (dither seed)
@@ -179,9 +180,14 @@ void compute_main(uint3 tid : SV_DispatchThreadID) {
     const float ratio = pc.display_size.x * pc.render_size.z; // display / render per axis
     const float falloff = pc.blend.y * ratio * ratio;          // per render px^2
 
+    // Exposed space: the colour is pre-exposed (R22.2.1), so the exposure
+    // relative to it is the auto exposure over the pre-exposure (~1; the
+    // previous frame's value). Clamped so a stale value cannot flatten the
+    // resolve.
     float exposure = 1.0;
     if (pc.exposure.x > 0.5) {
-        exposure = clamp(pc.exposure.y / max(g_exposure[0], 1e-4), pc.exposure.z, pc.exposure.w);
+        exposure = clamp(g_exposure[1] * pc.exposure.y, 1.0 / 64.0, 64.0);
+        if (!isfinite(exposure)) exposure = 1.0;
     }
 
     // This pixel in render-sample coordinates: sample i sits at rpos == i.
@@ -237,7 +243,8 @@ void compute_main(uint3 tid : SV_DispatchThreadID) {
     if (pc.jitter.w > 0.5 && reprojected && all(prev_uv >= 0.0) && all(prev_uv <= 1.0)) {
         const float4 raw_history = sample_history(prev_uv);
         if (all(isfinite(raw_history))) {
-            const float4 h = max(raw_history, 0.0);
+            // Re-expose the history if the pre-exposure moved since it was stored.
+            const float4 h = max(raw_history, 0.0) * float4(pc.exposure.zzz, 1.0);
             const float3 sigma = sqrt(max(m2 / 9.0 - mean * mean, 0.0));
             const float3 box_min = max(nmin, mean - CLIP_GAMMA * sigma);
             const float3 box_max = min(nmax, mean + CLIP_GAMMA * sigma);

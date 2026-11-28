@@ -33,8 +33,16 @@ struct ExposureSettings {
     bool  physical        = false;
     float compensation_ev = 0.0F;  // bias in stops (manual mode: exposure = 2^EV)
     float key             = 0.18F; // mid-grey the adapted luminance maps to
-    float min_exposure    = 0.05F; // auto exposure multiplier clamp
-    float max_exposure    = 16.0F;
+    // Auto exposure range in EV100 (R22.2.1): the scenes it adapts to, from
+    // a moonless night (~-11) to sunlit snow (~16).
+    float min_ev100       = -14.0F;
+    float max_ev100       = 20.0F;
+    // Krawczyk et al. 2005's adaptive key: dim scenes are shown dimmer than
+    // `key` (photometry.hpp); off = always `key`.
+    bool  adaptive_key    = true;
+    // Centre-weighted metering (photometry::metering_weight): 0 meters the
+    // frame evenly, 1 weighs the corners at ~4 % of the centre.
+    float center_weight   = 0.75F;
     float adaptation_s    = 1.1F;  // exponential adaptation time constant
 };
 
@@ -65,6 +73,12 @@ struct IblSettings {
     bool  horizon_occlusion = true;
 };
 
+// The night sky over the world clock (R22.2.1).
+struct NightSkySettings {
+    bool  stars = true;         // the bright star catalogue
+    float scintillation = 1.0F; // twinkle strength (0 = steady)
+};
+
 struct RenderSettings {
     ExposureSettings exposure;
     BloomSettings    bloom;
@@ -79,6 +93,7 @@ struct RenderSettings {
     // CloudSettings::time_s is frame-loop state, not a setting: the renderer
     // overwrites it each frame and the table does not list it.
     CloudSettings    clouds;
+    NightSkySettings night_sky; // R22.2.1
     // R20: the cinematic post stack (post_settings.hpp).
     DofSettings        dof;
     MotionBlurSettings motion_blur;

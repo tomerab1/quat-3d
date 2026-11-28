@@ -109,6 +109,7 @@ private:
     VkExtent2D           extent_{0, 0};
     std::uint64_t        frame_ = 0;
     bool                 valid_ = false;
+    float                pre_exposure_ = 1.0F; // the stored history's pre-exposure
 };
 
 class TaaPass {

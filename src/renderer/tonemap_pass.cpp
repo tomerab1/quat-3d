@@ -42,7 +42,7 @@ constexpr std::array<const char*, tonemap_operator_names.size()> kEntries{
 
 // Mirrors PostParams in tonemap.slang.
 struct PostParams {
-    glm::vec4           exposure{0.0F};  // x read the buffer, y key, z min, w max
+    glm::vec4           exposure{0.0F};  // x read the buffer, y 1 / pre-exposure
     glm::vec4           exposure2{0.0F}; // x scale
     grading::GradingGpu grading{};
     glm::vec4           vignette{0.0F};  // x natural, y artistic, z smoothness, w aspect
@@ -64,10 +64,16 @@ constexpr float k_grain_rate_hz = 24.0F;
                                      const ExposureSettings& exposure, const TonemapLook& look) {
     PostParams p{};
     const bool physical = look.physical_exposure > 0.0F && std::isfinite(look.physical_exposure);
-    p.exposure = glm::vec4(auto_exposure && !physical ? 1.0F : 0.0F, exposure.key,
-                           std::min(exposure.min_exposure, exposure.max_exposure),
-                           std::max(exposure.min_exposure, exposure.max_exposure));
-    p.exposure2.x = std::exp2(exposure.compensation_ev) * (physical ? look.physical_exposure : 1.0F);
+    const float pre = std::isfinite(look.pre_exposure) && look.pre_exposure > 0.0F
+                          ? look.pre_exposure
+                          : 1.0F;
+    const bool from_buffer = auto_exposure && !physical;
+    // Auto: the shader multiplies by the buffer's exposure over the
+    // pre-exposure (exposure.y); fixed exposures divide it out here. The
+    // pre-exposure is divided out exactly once either way.
+    p.exposure = glm::vec4(from_buffer ? 1.0F : 0.0F, 1.0F / pre, 0.0F, 0.0F);
+    p.exposure2.x = std::exp2(exposure.compensation_ev) *
+                    (physical ? look.physical_exposure : 1.0F) / (from_buffer ? 1.0F : pre);
     p.grading = grading::make_grading_gpu(look.grading);
 
     const float w = static_cast<float>(std::max(extent.width, 1U));
@@ -145,11 +151,12 @@ TonemapPass::create(const rhi::Device& device, rhi::GpuAllocator& allocator,
             VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT |
                 VMA_ALLOCATION_CREATE_MAPPED_BIT);
     };
-    // Fallback exposure buffer (one float) bound when auto-exposure is off.
-    auto buf = host_buffer(sizeof(float), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+    // Fallback exposure state (ExposureState layout, exposure 1) bound when
+    // auto-exposure is off.
+    auto buf = host_buffer(4 * sizeof(float), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
     if (!buf) return std::unexpected(buf.error());
-    const float one = 1.0F;
-    std::memcpy(buf->mapped(), &one, sizeof(one));
+    const std::array<float, 4> unit{1.0F, 1.0F, 0.0F, 0.18F};
+    std::memcpy(buf->mapped(), unit.data(), sizeof(unit));
     if (auto flushed = buf->flush(); !flushed) return std::unexpected(flushed.error());
     out.fallback_exposure_buffer_ = std::move(*buf);
     out.fallback_exposure_address_ =
@@ -215,7 +222,7 @@ TonemapPass::add_to_graph(rhi::RenderGraph& graph, rhi::ResourceHandle hdr,
             const VkImageView hdr_view = ctx.resolve(hdr).view;
             frame_descriptor_.write_sampled_image(s[r_hdr], hdr_view, ro);
             frame_descriptor_.write_sampler(s[r_sampler], sampler_.handle());
-            frame_descriptor_.write_storage_buffer(s[r_exposure], exposure_addr, sizeof(float));
+            frame_descriptor_.write_storage_buffer(s[r_exposure], exposure_addr, 4 * sizeof(float));
             frame_descriptor_.write_uniform_buffer(s[r_post], params_address_, sizeof(PostParams));
             frame_descriptor_.write_sampled_image(s[r_lut], lut_view, ro);
 

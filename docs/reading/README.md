@@ -29,7 +29,9 @@ If you read only a few things, read these. They underpin most of the engine.
    SIGGRAPH 2014. The most complete practical PBR write-up: units, lights,
    materials, IBL. [course notes (PDF)](https://seblagarde.files.wordpress.com/2015/07/course_notes_moving_frostbite_to_pbr_v32.pdf)
    Its camera chapter (EV100 from aperture, shutter and ISO) is R20's
-   physical exposure: `src/renderer/physical_camera.cpp`.
+   physical exposure: `src/renderer/physical_camera.cpp`; R22.2.1 adds its
+   pre-exposure and a photometric calibration so auto exposure spans a
+   10⁻⁴ lux night to a 10⁵ lux noon (`include/engine/renderer/photometry.hpp`).
 4. **Physically Based Rendering: From Theory to Implementation, 4th ed.** —
    Pharr, Jakob, Humphreys. Free online; the theory behind microfacets,
    sampling and volumes. [pbr-book.org](https://pbr-book.org/4ed/contents)
@@ -140,7 +142,7 @@ If you read only a few things, read these. They underpin most of the engine.
 
 ## Astronomy & time of day
 
-The world clock and ephemerides of R22.1 (`src/astro/`, `src/scene/world_clock.cpp`) and the night sky planned for R22.2.
+The world clock and ephemerides of R22.1 (`src/astro/`, `src/scene/world_clock.cpp`) and the night sky of R22.2 (slice 1: exposure, ground, bright stars).
 
 | | Reading | In quat-3d |
 |---|---|---|
@@ -155,7 +157,13 @@ The world clock and ephemerides of R22.1 (`src/astro/`, `src/scene/world_clock.c
 | 🔧 | **A model of the brightness of moonlight** — Krisciunas & Schaefer, PASP 103, 1033, 1991. [DOI](https://doi.org/10.1086/132921) | Moon illuminance, `src/astro/moon.cpp` (#87) |
 | 🔧 | **Revised optical air mass tables and approximation formula** — Kasten & Young, Applied Optics 28(22), 4735, 1989. [DOI](https://doi.org/10.1364/AO.28.004735) | `airmass`, `src/astro/coords.cpp` (#87) |
 | 🔧 | **Reference luminous solar constant and solar luminance for illuminance calculations** — Darula, Kittler & Gueymard, Solar Energy 79(5), 559, 2005. [DOI](https://doi.org/10.1016/j.solener.2005.01.004) | Sun illuminance (133 334 lx), `src/astro/sun.cpp` (#87) |
-| 🗺 | **A Physically-Based Night Sky Model** — Jensen, Durand, Stark, Premože, Dorsey & Shirley, SIGGRAPH 2001. The canonical reference for R22.2: stars, moonlight, airglow, zodiacal light, scotopic viewing | R22.2 night sky |
+| 🔧 | **A Physically-Based Night Sky Model** — Jensen, Durand, Stark, Premože, Dorsey & Shirley, SIGGRAPH 2001. The canonical reference for R22.2: stars, moonlight, airglow, zodiacal light, scotopic viewing | Star field as physical point sources and the ~10⁻³ lux night-sky floor (`star_field.slang`, `photometry.hpp`, R22.2.1); airglow, zodiacal light, scotopic viewing in later slices |
+| 🔧 | **The Bright Star Catalogue, 5th revised ed.** — Hoffleit & Warren, Yale University Observatory, 1991 (CDS / NASA ADC catalogue V/50). [VizieR](https://cdsarc.cds.unistra.fr/viz-bin/cat/V/50) | `assets/sky/bright_stars.qsc`, `scripts/cook-star-catalogue.py` (R22.2.1) |
+| 🔧 | **New insights into black bodies** — Ballesteros, EPL 97, 34008, 2012 (B−V → effective temperature). [DOI](https://doi.org/10.1209/0295-5075/97/34008) | `star_temperature_k`, `src/astro/star_catalogue.cpp` (R22.2.1) |
+| 🔧 | **Simple Analytic Approximations to the CIE XYZ Color Matching Functions** — Wyman, Sloan & Shirley, JCGT 2(2), 2013. [paper](https://jcgt.org/published/0002/02/01/) | Star colours from black bodies, `blackbody_rgb` (R22.2.1) |
+| 🔧 | **Telescopic limiting magnitudes** — Schaefer, PASP 102, 212, 1990 (and Allen's *Astrophysical Quantities*): the magnitude zero point, 2.54 µlux at V = 0. [DOI](https://doi.org/10.1086/132629) | `star_illuminance_lux` (R22.2.1) |
+| 🔧 | **Scintillation of stars** — Young, AJ 72, 747, 1967; and **Atmospheric intensity scintillation of stars** — Dravins, Lindegren, Mezey & Young, PASP 109, 173, 1997. [DOI](https://doi.org/10.1086/133872) | Log-normal twinkling growing with airmass, `star_field.slang` (R22.2.1) |
+| 🔧 | **Precomputed Atmospheric Scattering** — Bruneton & Neyret, EGSR 2008 (the ground irradiance texture). [paper](https://inria.hal.science/inria-00288758) | Sky irradiance LUT and the lit ground below the horizon, `atmos_sky_irradiance.slang`, `lib/atmosphere.slang` (R22.2.1, #98, #13) |
 | 🗺 | **Model for artificial night-sky illumination** — Garstang, PASP 98, 1986 | R22.2 light-pollution skyglow |
 | 🗺 | **Theory of Reflectance and Emittance Spectroscopy** — Hapke, Cambridge University Press (2nd ed. 2012). Lunar BRDF and the opposition surge | R22.2 Moon shading |
 | 🗺 | **A Spatial Post-Processing Algorithm for Images of Night Scenes** — Thompson, Shirley & Ferwerda, Journal of Graphics Tools 7(1), 2002 | R22.2 night perception (blue shift, acuity loss, noise) |
@@ -165,6 +173,9 @@ The world clock and ephemerides of R22.1 (`src/astro/`, `src/scene/world_clock.c
 
 | | Reading | In quat-3d |
 |---|---|---|
+| 🔧 | **Lightness Perception in Tone Reproduction for High Dynamic Range Images** — Krawczyk, Myszkowski & Seidel, Eurographics 2005 (the adaptive key). [DOI](https://doi.org/10.1111/j.1467-8659.2005.00888.x) | `adaptive_key`, `photometry.hpp`, `exposure_average.slang` (R22.2.1) |
+| 🔧 | **Automatic Exposure Using a Luminance Histogram** — Opsenica, 2019 (log-luminance histogram built and reduced in compute shaders), and Unreal Engine's histogram eye adaptation (percentile window, EV100 range). [blog](https://bruop.github.io/exposure/) · [Unreal docs](https://dev.epicgames.com/documentation/en-us/unreal-engine/auto-exposure-in-unreal-engine) | `exposure_histogram.slang`, `exposure_average.slang` (percentile metering, R22.2.1) |
+| 🔧 | **Centre-weighted metering** — the metering mode of film and digital cameras (more weight on the centre of the frame, which holds the subject), as Unreal Engine's auto-exposure metering mask applies it. [Unreal docs](https://dev.epicgames.com/documentation/en-us/unreal-engine/auto-exposure-in-unreal-engine) · [Cambridge in Colour: camera metering](https://www.cambridgeincolour.com/tutorials/camera-metering.htm) | `metering_weight` (`photometry.hpp`, `exposure_histogram.slang`; #142) |
 | ✅ | **High Quality Temporal Supersampling** — Karis, SIGGRAPH 2014. [course page](https://advances.realtimerendering.com/s2014/) | `assets/shaders/taa.slang` |
 | ✅ | **An Excursion in Temporal Supersampling** — Salvi, GDC 2016 (variance clipping). [PDF](https://developer.download.nvidia.com/gameworks/events/GDC2016/msalvi_temporal_supersampling.pdf) | `taa.slang` |
 | ✅ | **Temporal AA and the Quest for the Holy Trail** — López, 2022. Approachable TAA overview. [blog](https://www.elopezr.com/temporal-aa-and-the-quest-for-the-holy-trail/) | `taa.slang`; TAAU upscaler (R11) |

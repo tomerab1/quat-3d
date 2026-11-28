@@ -207,6 +207,7 @@ void ParticleRuntime::add_to_graph(engine::rhi::RenderGraph& graph, const entt::
     frame.camera = in.camera->position;
     frame.light = in.sun;
     frame.extent = in.extent;
+    frame.pre_exposure = in.pre_exposure;
     r::ParticleTargets targets;
     targets.depth = in.gbuffer->depth;
     targets.normal = in.gbuffer->normal;

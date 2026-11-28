@@ -1,6 +1,8 @@
 #include "engine/renderer/dynamic_ibl.hpp"
 
+#include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstdint>
 #include <string>
 #include <utility>
@@ -22,6 +24,8 @@ constexpr VkFormat           kCubeFormat   = VK_FORMAT_R16G16B16A16_SFLOAT;
 
 // Resolutions match the blocking IblBaker so the two paths are comparable.
 constexpr std::uint32_t kEnvSize        = 256;
+// EV the frame's pre-exposure may move from the maps' scale before a re-bake.
+constexpr float k_rescale_ev = 4.0F;
 constexpr std::uint32_t kIrradianceSize = ibl_irradiance_size;
 constexpr std::uint32_t kPrefilterSize  = ibl_prefilter_size;
 constexpr std::uint32_t kBrdfSize       = ibl_brdf_lut_size;
@@ -52,6 +56,8 @@ struct BakeParams {
     std::uint32_t face_size = 0;
     std::uint32_t face_offset = 0;
     std::uint32_t tile_x = 0, tile_y = 0;
+    float         scale = 1.0F;
+    float         pad0 = 0.0F, pad1 = 0.0F, pad2 = 0.0F;
 };
 struct IrradianceParams {
     std::uint32_t face_size = 0;
@@ -327,6 +333,7 @@ DynamicIbl::create(const rhi::Device& device, rhi::GpuAllocator& allocator,
 
     // --- initial blocking cycle so views() is complete from frame one ---------
     out.cycle_params_ = initial;
+    out.set_scale_[1] = initial.scale;
     out.last_cycle_start_s_ = initial.clouds.time_s;
     std::vector<rhi::DescriptorBuffer> dbs;
     dbs.reserve(kCycleSteps);
@@ -399,6 +406,7 @@ void DynamicIbl::record_step(VkCommandBuffer cmd, std::uint32_t step, std::uint3
         bp.face_offset = step / kTilesFace;
         bp.tile_x = (tile % kTilesEdge) * kEnvTile;
         bp.tile_y = (tile / kTilesEdge) * kEnvTile;
+        bp.scale = params.scale;
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, env_pipeline_.handle());
         db.bind(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, env_pipeline_.layout(), 0);
         vkCmdPushConstants(cmd, env_pipeline_.layout(), kComputeStage, 0, sizeof(bp), &bp);
@@ -458,14 +466,21 @@ std::expected<void, core::Error> DynamicIbl::add_step_to_graph(rhi::RenderGraph&
             a.wind_dir_deg != b.wind_dir_deg;
         const bool atmos_changed = params.skyview != cycle_params_.skyview ||
                                    params.transmittance != cycle_params_.transmittance;
+        // A cycle re-bakes at the new pre-exposure once it is k_rescale_ev
+        // away from the one in the maps: the maps stay exact (consumers divide
+        // by scale()), only their RGBA16F headroom would drift.
+        const bool exposure_moved =
+            std::abs(std::log2(std::max(params.scale, 1e-30F) /
+                               std::max(cycle_params_.scale, 1e-30F))) > k_rescale_ev;
         const bool drift_due =
             a.enabled && a.wind_speed > 0.0F &&
             a.time_s - last_cycle_start_s_ >= kDriftRefreshSeconds;
-        if (!(sun_moved || clouds_edited || atmos_changed || drift_due)) {
+        if (!(sun_moved || clouds_edited || atmos_changed || exposure_moved || drift_due)) {
             return {};
         }
         cycle_params_ = params; // latch for face consistency
         last_cycle_start_s_ = a.time_s;
+        set_scale_[front_ ^ 1U] = params.scale; // the set this cycle writes
     }
     const std::uint32_t step = step_;
     const std::uint32_t back = front_ ^ 1U; // latched: front_ flips below, the

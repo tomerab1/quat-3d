@@ -6,6 +6,7 @@
 
 #include "app/frame_renderer.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <memory>
@@ -13,6 +14,7 @@
 #include <utility>
 
 #include "app/asset_root.hpp"
+#include "engine/renderer/photometry.hpp"
 #include "engine/asset/cube_lut.hpp"
 #include "engine/core/path_confine.hpp"
 #include "engine/renderer/physical_camera.hpp"
@@ -153,11 +155,33 @@ engine::renderer::TonemapLook FrameRenderer::tonemap_look(const FrameInputs& in,
     look.film = settings_.film;
     look.lut = lut_.get();
     if (settings_.exposure.physical) {
-        look.physical_exposure = r::exposure_from_ev100(r::ev100(lens.camera));
+        // R22.2.1: in HDR units (photometry.hpp), so the camera's EV100 means
+        // what it means on a real camera (sunny 16 is EV100 15).
+        look.physical_exposure = r::photometry::exposure_from_ev100_units(r::ev100(lens.camera));
     }
+    look.pre_exposure = pre_exposure_;
     look.fov_y = lens.fov_y;
     look.time_s = cloud_time_s_;
     return look;
+}
+
+float FrameRenderer::choose_pre_exposure(const FrameInputs& in) const {
+    // The exposure this frame will most likely be shown with: the previous
+    // frame's auto exposure (read back from the host-visible state; one or
+    // two frames old, which only matters as a scale shared by every pass of
+    // this frame), the physical camera's, or the manual one, times the
+    // compensation. Pre-exposed HDR then holds display-scale values whatever
+    // the scene's light level (Lagarde & de Rousiers 2014).
+    const r::ExposureSettings& e = settings_.exposure;
+    float exposure = 1.0F;
+    if (e.physical) {
+        exposure = r::photometry::exposure_from_ev100_units(r::ev100(active_lens(in).camera));
+    } else if (e.auto_exposure && exposure_state_) {
+        exposure = exposure_state_->exposure();
+    }
+    exposure *= std::exp2(std::isfinite(e.compensation_ev) ? e.compensation_ev : 0.0F);
+    // Keep the HDR's dynamic range usable even for absurd settings.
+    return std::isfinite(exposure) ? std::clamp(exposure, 1e-12F, 1e12F) : 1.0F;
 }
 
 } // namespace quat::app

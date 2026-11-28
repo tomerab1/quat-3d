@@ -22,6 +22,8 @@ struct BakeParams {
                         // dispatches all 6 layers)
     uint   tile_x;      // texel offset of this dispatch's tile (0 = full face)
     uint   tile_y;
+    float  scale;       // radiance multiplier: the frame's pre-exposure for the
+                        // dynamic probe (DynamicIbl::scale), 1 for static bakes
 }
 [[vk::push_constant]] BakeParams pc;
 
@@ -48,8 +50,7 @@ void compute_main(uint3 tid : SV_DispatchThreadID) {
         // march the lighting background uses), so reflections match the sky.
         float3 sky_rgb = sample_skyview(g_skyview, g_samp, dir, sun).rgb;
         float3 cloud_ambient =
-            sample_skyview(g_skyview, g_samp, float3(0.2, 0.97, 0.0), sun).rgb * 0.8 +
-            float3(0.008, 0.011, 0.016);
+            cloud_ambient_from_zenith(sample_skyview(g_skyview, g_samp, float3(0.2, 0.97, 0.0), sun));
         CloudParams cp = unpack_cloud_params(pc.cloud_a, pc.cloud_b);
         float jitter = interleaved_gradient_noise(
             float2(px.x + face * pc.face_size, px.y));
@@ -59,11 +60,11 @@ void compute_main(uint3 tid : SV_DispatchThreadID) {
         float cos_sun = dot(dir, sun);
         if (cos_sun > 0.9998) {
             float3 sun_trans =
-                sample_transmittance(g_transmittance, g_samp, ATMOS_VIEW_HEIGHT, sun.y);
+                sun_transmittance_above_ground(g_transmittance, g_samp, ATMOS_VIEW_HEIGHT, sun.y);
             radiance += sun_trans * clouds.a * 80.0 * smoothstep(0.9998, 0.99995, cos_sun);
         }
     } else {
         radiance = sky(dir, sun);
     }
-    g_out[uint3(px, face)] = float4(radiance, 1.0);
+    g_out[uint3(px, face)] = float4(radiance * pc.scale, 1.0);
 }

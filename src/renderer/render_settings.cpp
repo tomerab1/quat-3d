@@ -34,6 +34,7 @@ constexpr std::array k_groups = {
                        "Procedural sky or an HDRI panorama for background, ambient and reflections"},
     RenderSettingGroup{"ssr", "Reflections", "Screen-space reflections over the environment"},
     RenderSettingGroup{"clouds", "Clouds", "Volumetric cloud layer of the sky"},
+    RenderSettingGroup{"night_sky", "Night sky", "Stars of the world clock's sky"},
     RenderSettingGroup{"dof", "Depth of field", "Bokeh blur from the camera's lens and focus"},
     RenderSettingGroup{"motion_blur", "Motion blur", "Blur along motion over the camera's shutter"},
     RenderSettingGroup{"tonemap", "Tonemapping", "HDR to display mapping"},
@@ -53,12 +54,18 @@ constexpr std::array k_core_fields = {
     RenderSettingDesc{"exposure", "key", "key (mid-grey)", T::number, 0.01F, 1.0F, 0.18F, "",
                       "Brightness the average scene luminance is mapped to",
                       &field_ref<&S::exposure, &ExposureSettings::key>},
-    RenderSettingDesc{"exposure", "min_exposure", "min exposure", T::number, 0.001F, 64.0F, 0.05F,
-                      "x", "Lowest auto exposure multiplier (how far bright scenes darken)",
-                      &field_ref<&S::exposure, &ExposureSettings::min_exposure>},
-    RenderSettingDesc{"exposure", "max_exposure", "max exposure", T::number, 0.001F, 64.0F, 16.0F,
-                      "x", "Highest auto exposure multiplier (how far dark scenes brighten)",
-                      &field_ref<&S::exposure, &ExposureSettings::max_exposure>},
+    RenderSettingDesc{"exposure", "min_ev100", "min EV100", T::number, -20.0F, 30.0F, -14.0F,
+                      "EV", "Darkest scene auto exposure adapts to (a moonless night is ~-11)",
+                      &field_ref<&S::exposure, &ExposureSettings::min_ev100>},
+    RenderSettingDesc{"exposure", "max_ev100", "max EV100", T::number, -20.0F, 30.0F, 20.0F,
+                      "EV", "Brightest scene auto exposure adapts to (sunlit snow is ~16)",
+                      &field_ref<&S::exposure, &ExposureSettings::max_ev100>},
+    RenderSettingDesc{"exposure", "adaptive_key", "adaptive key", T::boolean, 0.0F, 1.0F, 1.0F,
+                      "", "Show dim scenes dimmer, as the eye sees them (Krawczyk et al. 2005)",
+                      &field_ref<&S::exposure, &ExposureSettings::adaptive_key>},
+    RenderSettingDesc{"exposure", "center_weight", "centre weighting", T::number, 0.0F, 1.0F,
+                      0.75F, "", "Meter the centre of the frame more than its edges; 0 = even",
+                      &field_ref<&S::exposure, &ExposureSettings::center_weight>},
     RenderSettingDesc{"exposure", "adaptation_s", "adaptation time", T::number, 0.05F, 10.0F, 1.1F,
                       "s", "Time constant of the eye adaptation",
                       &field_ref<&S::exposure, &ExposureSettings::adaptation_s>},
@@ -321,18 +328,30 @@ constexpr std::array k_core_fields = {
     RenderSettingDesc{"clouds", "shadows", "shadows", T::boolean, 0.0F, 1.0F, 1.0F, "",
                       "With weather: clouds shadow the sun on the ground",
                       &field_ref<&S::clouds, &CloudSettings::shadows>},
+    // ---- night sky (R22.2.1) ----
+    RenderSettingDesc{"night_sky", "stars", "stars", T::boolean, 0.0F, 1.0F, 1.0F, "",
+                      "Draw the bright star catalogue (needs the world clock)",
+                      &field_ref<&S::night_sky, &NightSkySettings::stars>},
+    RenderSettingDesc{"night_sky", "scintillation", "twinkle", T::number, 0.0F, 4.0F, 1.0F, "",
+                      "Strength of star twinkling (grows toward the horizon); 0 = steady",
+                      &field_ref<&S::night_sky, &NightSkySettings::scintillation>},
 };
 
 constexpr auto k_fields = concat_fields(k_core_fields, k_post_fields);
 
-// Keys of the pre-R12 single shadow map (one orthographic box), still
-// accepted from older scene files and clients.
+// Retired keys still accepted from older scene files and clients: the
+// pre-R12 single shadow map (one orthographic box) and the pre-R22.2.1
+// auto-exposure multiplier clamps.
 constexpr std::array k_deprecated = {
     DeprecatedRenderSetting{"shadows", "extent_m",
                             "replaced by max_distance (the cascades follow the camera)"},
     DeprecatedRenderSetting{"shadows", "depth_bias", "replaced by depth_bias_texels"},
     DeprecatedRenderSetting{"shadows", "slope_bias",
                             "replaced by the per-tap receiver-plane bias and normal_bias_texels"},
+    DeprecatedRenderSetting{"exposure", "min_exposure",
+                            "replaced by max_ev100 (the auto exposure range in EV100)"},
+    DeprecatedRenderSetting{"exposure", "max_exposure",
+                            "replaced by min_ev100 (the auto exposure range in EV100)"},
 };
 
 } // namespace

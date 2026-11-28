@@ -32,7 +32,9 @@ struct BakeParams {
     glm::vec4     cloud_a{0.0F}; // CloudSettings::pack_a (LUT-sky path only)
     glm::vec4     cloud_b{0.0F}; // CloudSettings::pack_b
     std::uint32_t face_size = 0;
-    std::uint32_t pad0 = 0, pad1 = 0, pad2 = 0;
+    std::uint32_t pad0 = 0, pad1 = 0, pad2 = 0; // face_offset, tile_x, tile_y: full bake
+    float         scale = 1.0F; // ibl_bake_env.slang: the static bake is unscaled
+    float         pad3 = 0.0F, pad4 = 0.0F, pad5 = 0.0F;
 };
 struct IrradianceParams {
     std::uint32_t face_size = 0;
