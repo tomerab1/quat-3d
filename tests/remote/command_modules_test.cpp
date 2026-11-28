@@ -41,8 +41,8 @@ TEST(CommandModules, GeneratedFromTheWorldDirectory) {
 // no two modules register the same name (the later would silently win).
 TEST_F(WorldCommands, EveryModuleRegistersItsMethods) {
     register_commands();
-    EXPECT_TRUE(server.replaced_methods().empty())
-        << "registered twice: " << server.replaced_methods().front();
+    EXPECT_TRUE(server.refused_methods().empty())
+        << "registered twice: " << server.refused_methods().front();
     std::set<std::string> methods;
     for (const auto& m : server.methods()) methods.insert(m.name);
     for (const char* name :

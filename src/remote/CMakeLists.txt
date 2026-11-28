@@ -10,7 +10,7 @@ add_library(engine_remote STATIC
     session_token.cpp
     socket.cpp)
 target_link_libraries(engine_remote PUBLIC engine_flags nlohmann_json::nlohmann_json)
-target_link_libraries(engine_remote PRIVATE OpenSSL::Crypto)
+target_link_libraries(engine_remote PRIVATE OpenSSL::Crypto engine_core) # engine_core: the log
 target_include_directories(engine_remote PUBLIC ${ENGINE_PUBLIC_INCLUDE})
 # The user-only token file: one implementation per platform (private_file.hpp).
 if(WIN32)
