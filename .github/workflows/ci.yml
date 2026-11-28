@@ -342,3 +342,8 @@ jobs:
 
       - name: Tests
         run: cargo test --locked
+
+      # Every crate in Cargo.lock declares an accepted licence; release
+      # archives ship quat-mcp with its crates' licence texts.
+      - name: Licences
+        run: python3 -I ../../scripts/rust-notices.py check Cargo.toml

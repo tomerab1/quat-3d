@@ -112,16 +112,22 @@ notes. A prerelease without a notes file gets the generated notes only.
       also checks that `THIRD_PARTY_NOTICES.md` lists every dependency.
    2. Builds `game` in Release with `ENGINE_PACKAGE_BUILD=ON`, which embeds
       no source-tree paths.
-   3. Validates the tag.
-   4. Packages the build with `scripts/package-release.sh`. Each archive
-      gets `LICENSE`, plus a `THIRD_PARTY_NOTICES.md` that
-      `scripts/third-party-notices.sh` writes: the repository's summary
-      followed by every vcpkg port's, FetchContent package's, font's and
-      bundled runtime's licence text from the build.
-   5. Smoke-tests the archive with `scripts/smoke-test-package.sh`. The test
-      unpacks it under a path with a space and non-ASCII characters, runs 30
-      frames headless, and requires a clean exit, a screenshot and the two
-      licence files.
+   3. Builds `quat-mcp` with `cargo build --release --locked`, on the Rust
+      toolchain CI uses (`tools/quat-mcp/rust-toolchain.toml`).
+   4. Validates the tag.
+   5. Packages the build with `scripts/package-release.sh`:
+      - `quat-mcp` goes next to the game, or into
+        `Quat3D.app/Contents/MacOS/` on macOS;
+      - `LICENSE` goes in every archive;
+      - so does a `THIRD_PARTY_NOTICES.md`, written by
+        `scripts/third-party-notices.sh`. It is the repository's summary,
+        followed by the licence texts from the build: every vcpkg port,
+        FetchContent package, font, bundled runtime, and every Rust crate
+        in `quat-mcp`.
+   6. Smoke-tests the archive with `scripts/smoke-test-package.sh`. The test
+      unpacks it under a path with a space and non-ASCII characters and runs
+      30 frames headless. It requires a clean exit and a screenshot. It also
+      requires the two licence files and a working `quat-mcp --version`.
 2. **publish** runs only on tags, after all three packages pass:
    1. Makes a sparse checkout of `docs/releases/` and `scripts/`, with no
       stored token.

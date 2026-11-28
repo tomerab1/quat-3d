@@ -5,11 +5,14 @@ third-party software listed below, each under its own licence.
 
 In the release archives, this file is followed by the full licence text of
 every component. The release packaging (`scripts/third-party-notices.sh`)
-appends the texts from the build: vcpkg installs each port's licence as
-`share/<port>/copyright`, and FetchContent leaves each source tree in place.
-In the repository, this file is the summary, and
-`scripts/check-third-party-notices.py` (run in CI) checks that every vcpkg
-dependency, FetchContent package and bundled font has a row here.
+appends the texts from the build. vcpkg installs each port's licence as
+`share/<port>/copyright`, FetchContent leaves each source tree in place, and
+Cargo keeps each crate's source in its registry. In the repository, this
+file is the summary. Two scripts check it in CI:
+`scripts/check-third-party-notices.py` checks that every vcpkg dependency,
+FetchContent package and bundled font has a row here, and
+`scripts/rust-notices.py check` checks that every crate in quat-mcp's
+`Cargo.lock` declares an accepted licence.
 
 Licences are SPDX identifiers. The ones for vcpkg ports come from the port
 metadata at the manifest's `builtin-baseline`.
@@ -76,9 +79,17 @@ in the archives. They include `protobuf` (BSD-3-Clause), `abseil`
 
 On Linux and Windows, the Vulkan loader and driver come from the system.
 
+## quat-mcp (Rust)
+
+`quat-mcp`, the MCP server that ships with the game, is MIT-licensed like
+the rest of quat-3d. The archive's copy of this file lists every Rust crate
+compiled into it, with its version and licence, followed by the crate's own
+licence files. The list is generated from `Cargo.lock` with `cargo metadata`
+(`scripts/rust-notices.py`). Most crates are MIT and/or Apache-2.0. One,
+`option-ext`, is MPL-2.0; it is used unmodified, and its source is on
+crates.io.
+
 ## Not in the archives
 
-- **`quat-mcp`** (`tools/quat-mcp`) is built from source with Cargo. Its
-  crates carry their own licences; `cargo tree` lists them.
 - **Poly Haven models** that `asset_fetch` downloads are CC0. Each is saved
   with a `LICENSE.md` in the gitignored `assets/meshes/polyhaven/<id>/`.

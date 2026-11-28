@@ -7,6 +7,8 @@
 #   - the FetchContent packages (ACL, RTM): <build>/_deps/<name>-src/LICENSE,
 #     or the FETCHCONTENT_SOURCE_DIR_<NAME> an offline build points at;
 #   - the fonts in assets/fonts/ and the XeGTAO port (texts in the repository);
+#   - the Rust crates compiled into quat-mcp (scripts/rust-notices.py over
+#     `cargo metadata`, texts from the Cargo registry: build quat-mcp first);
 #   - extra files given on the command line (platform runtimes).
 # Used by scripts/package-release.sh.
 #
@@ -66,11 +68,28 @@ fetch_source() {
 }
 
 # A failed run leaves no half-written notices behind.
+rust_notices="$out.rust.tmp"
 cleanup() {
   local status=$?
+  rm -f "$rust_notices"
   [ "$status" -eq 0 ] || rm -f "$out"
 }
 trap cleanup EXIT
+
+# Python 3 under whichever name this OS has (Windows runners: python or py),
+# given paths it can open (POSIX-style shell paths are converted on Windows).
+python=""
+for candidate in python3 python py; do
+  if command -v "$candidate" > /dev/null &&
+     "$candidate" -c 'import sys; sys.exit(sys.version_info < (3, 9))' 2> /dev/null; then
+    python=$candidate
+    break
+  fi
+done
+[ -n "$python" ] || { echo "no Python 3.9+ for the Rust notices (scripts/rust-notices.py)" >&2; exit 1; }
+native() { if command -v cygpath > /dev/null; then cygpath -w "$1"; else printf '%s' "$1"; fi; }
+"$python" -I "$(native "$root/scripts/rust-notices.py")" markdown \
+  "$(native "$root/tools/quat-mcp/Cargo.toml")" "$(native "$rust_notices")"
 
 {
   tr -d '\r' < "$root/THIRD_PARTY_NOTICES.md"
@@ -109,6 +128,8 @@ trap cleanup EXIT
     [ ${#files[@]} -gt 0 ] || { echo "no licence file in assets/fonts/$name" >&2; exit 1; }
     emit "$name" "${files[@]}"
   done
+
+  tr -d '\r' < "$rust_notices"
 
   if [ $# -gt 0 ]; then
     printf '\n### Platform runtimes\n'

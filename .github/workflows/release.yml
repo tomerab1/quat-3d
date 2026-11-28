@@ -78,6 +78,22 @@ jobs:
         if: steps.configure.outcome == 'success'
         run: cmake --build --preset ${{ matrix.preset }} --target game
 
+      # quat-mcp ships next to the game in every archive. Same toolchain as
+      # CI's quat-mcp job (tools/quat-mcp/rust-toolchain.toml).
+      - name: Rust toolchain
+        uses: dtolnay/rust-toolchain@1.97.0
+
+      - name: Cargo cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: tools/quat-mcp
+          # Like the vcpkg cache: tag runs restore, never save.
+          save-if: ${{ github.ref_type != 'tag' }}
+
+      - name: Build quat-mcp
+        working-directory: tools/quat-mcp
+        run: cargo build --release --locked
+
       # Tags must look like v1.2.3 or v1.2.3-rc.1: the version ends up in file
       # names, Info.plist and the release title.
       - name: Version

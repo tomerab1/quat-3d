@@ -3,7 +3,8 @@
 # a scratch directory, launch the packaged game for 30 frames with a software
 # or runner GPU, and require a clean exit plus a written screenshot. The game
 # must find its data next to itself (packaged builds embed no source path),
-# and the archive must carry LICENSE and THIRD_PARTY_NOTICES.md.
+# the archive must carry LICENSE and THIRD_PARTY_NOTICES.md, and the bundled
+# quat-mcp must run (`quat-mcp --version`).
 #
 #   scripts/smoke-test-package.sh <archive> <scratch-dir>
 #
@@ -42,6 +43,7 @@ case "$archive" in
   icds=(/usr/share/vulkan/icd.d/lvp_icd*.json)
   export VK_ICD_FILENAMES="${icds[0]}"
   (cd "$scratch" && xvfb-run -a -s "-screen 0 1280x720x24" "$dir/game") 2>&1 | tee "$log"
+  mcp_version=$("$dir/quat-mcp" --version)
   ;;
 *windows-x64.zip)
   (cd "$scratch" && 7z x -bso0 -bsp0 "$archive")
@@ -52,7 +54,7 @@ case "$archive" in
   # Windows system DLL; vulkan-1.dll comes with the GPU driver.
   missing=0
   # dumpbin gets relative names: it may not take a non-ASCII argument intact.
-  for bin in "$dir/game.exe" "$dir"/*.dll; do
+  for bin in "$dir/game.exe" "$dir/quat-mcp.exe" "$dir"/*.dll; do
     while read -r dll; do
       case "${dll,,}" in
         api-ms-*|ext-ms-*|vulkan-1.dll) continue ;;
@@ -69,6 +71,7 @@ case "$archive" in
   clean_path="$sys32:$(dirname "$sys32")"
   [ -n "${VULKAN_SDK:-}" ] && clean_path="$clean_path:$(cygpath -u "$VULKAN_SDK")/runtime/x64"
   (cd "$scratch" && PATH="$clean_path" "$dir/game.exe") 2>&1 | tee "$log"
+  mcp_version=$(PATH="$clean_path" "$dir/quat-mcp.exe" --version | tr -d '\r')
   ;;
 *macos-arm64.zip)
   ditto -x -k "$archive" "$scratch"
@@ -87,12 +90,17 @@ case "$archive" in
   (cd "$scratch" && "$app/Contents/MacOS/game") 2>&1 | tee "$log"
   grep -q 'Quat3D.app/Contents/Resources/vulkan/icd.d' "$log" \
     || { echo "loader did not use the bundled MoltenVK manifest" >&2; exit 1; }
+  mcp_version=$("$app/Contents/MacOS/quat-mcp" --version)
   ;;
 *)
   echo "unknown archive type: $archive" >&2
   exit 2
   ;;
 esac
+
+# The bundled MCP server starts and reports its version.
+echo "$mcp_version"
+[[ "$mcp_version" == "quat-mcp "* ]] || { echo "quat-mcp --version printed '$mcp_version'" >&2; exit 1; }
 
 for f in LICENSE THIRD_PARTY_NOTICES.md; do
   [ -s "${dir%/}/$f" ] || { echo "the package has no $f" >&2; exit 1; }

@@ -19,6 +19,11 @@
 # Every archive also carries LICENSE (quat-3d, MIT) and THIRD_PARTY_NOTICES.md
 # (every component's licence text) next to the game; on macOS also inside the
 # app's Contents/Resources.
+# And quat-mcp, the MCP server AI tools drive the game through, built first
+# with `cargo build --release --locked` in tools/quat-mcp (or QUAT_MCP=<path>):
+# next to the game on Linux and Windows; on macOS in Quat3D.app/Contents/MacOS
+# beside the game, so the bundle's signature and one quarantine removal cover
+# it.
 #
 # Prints the archive path as the last line.
 set -euo pipefail
@@ -40,6 +45,10 @@ case "$(uname -s)" in
 esac
 
 name="quat-3d-${version}-${os}"
+exe=""
+[ "$os" = windows-x64 ] && exe=.exe
+mcp="${QUAT_MCP:-$root/tools/quat-mcp/target/release/quat-mcp$exe}"
+[ -f "$mcp" ] || { echo "no quat-mcp at $mcp (run cargo build --release --locked in tools/quat-mcp)" >&2; exit 1; }
 mkdir -p "$out_dir"
 out_dir="$(cd "$out_dir" && pwd)"
 stage="$out_dir/$name"
@@ -69,6 +78,7 @@ copy_licences() {
 case "$os" in
 linux-x64)
   cp "$build_dir/game" "$stage/game"
+  cp "$mcp" "$stage/quat-mcp"
   copy_data "$stage"
   # libc++ (and what it pulls in) is not installed on most distributions:
   # ship it next to the game. Everything else is either statically linked
@@ -104,6 +114,7 @@ linux-x64)
 
 windows-x64)
   cp "$build_dir/game.exe" "$stage/"
+  cp "$mcp" "$stage/quat-mcp.exe"
   # vcpkg's applocal step already copied the game's DLL dependencies next to
   # game.exe in the build directory.
   cp "$build_dir"/*.dll "$stage/"
@@ -126,6 +137,7 @@ macos-arm64)
   contents="$app/Contents"
   mkdir -p "$contents/MacOS" "$contents/Frameworks" "$contents/Resources/vulkan/icd.d"
   cp "$build_dir/game" "$contents/MacOS/game"
+  cp "$mcp" "$contents/MacOS/quat-mcp"
   copy_data "$contents/Resources"
   # Vulkan-on-Metal inside the bundle: the loader (linked by the game) and the
   # MoltenVK driver. The loader searches Contents/Resources/vulkan/icd.d of the
@@ -163,7 +175,7 @@ PY
   install_name_tool -add_rpath @executable_path/../Frameworks "$contents/MacOS/game"
 
   # Nothing may still point into the build machine's Homebrew prefix.
-  if otool -L "$contents/MacOS/game" "$contents"/Frameworks/*.dylib | grep -E '/opt/homebrew|/usr/local/(opt|Cellar)'; then
+  if otool -L "$contents"/MacOS/* "$contents"/Frameworks/*.dylib | grep -E '/opt/homebrew|/usr/local/(opt|Cellar)'; then
     echo "bundle still references Homebrew libraries" >&2
     exit 1
   fi
@@ -171,7 +183,7 @@ PY
   # The bundle's minimum macOS is the highest one any of its binaries was
   # built for: the game and vcpkg ports target 14.0 (arm64-osx-14 triplet),
   # Homebrew's loader/MoltenVK bottles the runner's own release.
-  minos=$(for bin in "$contents/MacOS/game" "$contents"/Frameworks/*.dylib; do
+  minos=$(for bin in "$contents"/MacOS/* "$contents"/Frameworks/*.dylib; do
             otool -l "$bin" | awk '/LC_BUILD_VERSION/ { f = 1 } f && $1 == "minos" && !done { print $2; done = 1 }'
           done | sort -V | tail -n1)
   echo "bundle minimum macOS: ${minos:?could not read minos}"
@@ -201,7 +213,7 @@ PY
   # Ad-hoc signature (no Developer ID): inner code first, then the bundle.
   # Apple Silicon refuses unsigned code, and install_name_tool invalidated the
   # original signatures.
-  codesign --force --sign - "$contents"/Frameworks/*.dylib
+  codesign --force --sign - "$contents"/Frameworks/*.dylib "$contents/MacOS/quat-mcp"
   codesign --force --sign - "$app"
   codesign --verify --deep --strict "$app"
 
