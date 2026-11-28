@@ -4,6 +4,7 @@
 // thinned to whole cards that grow to keep its coverage; BLEND materials
 // become MASK.
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
@@ -81,6 +82,46 @@ Geometry leaves() {
         g.indices.insert(g.indices.end(), {base, base + 1, base + 2, base, base + 2, base + 3});
     }
     return g;
+}
+
+// Three disconnected copies of hill() 20 m apart (a rock set's boulders):
+// solid geometry, not aggregate detail.
+Geometry boulders() {
+    const Geometry one = hill();
+    Geometry g;
+    for (int k = 0; k < 3; ++k) {
+        const auto base = static_cast<std::uint32_t>(g.positions.size() / 3);
+        for (std::size_t i = 0; i < one.positions.size(); i += 3) {
+            g.positions.insert(g.positions.end(), {one.positions[i] + 20.0F * static_cast<float>(k),
+                                                   one.positions[i + 1], one.positions[i + 2]});
+        }
+        g.normals.insert(g.normals.end(), one.normals.begin(), one.normals.end());
+        g.uvs.insert(g.uvs.end(), one.uvs.begin(), one.uvs.end());
+        for (const std::uint32_t v : one.indices) g.indices.push_back(base + v);
+    }
+    return g;
+}
+
+// leaves() with every triangle on its own three vertices, as exporters split
+// vertices at UV seams / hard normals: a card is two index-disconnected
+// triangles that share positions.
+Geometry split_leaves() {
+    const Geometry w = leaves();
+    Geometry g;
+    for (const std::uint32_t v : w.indices) {
+        g.positions.insert(g.positions.end(), {w.positions[v * 3], w.positions[v * 3 + 1],
+                                               w.positions[v * 3 + 2]});
+        g.normals.insert(g.normals.end(), {w.normals[v * 3], w.normals[v * 3 + 1],
+                                           w.normals[v * 3 + 2]});
+        g.uvs.insert(g.uvs.end(), {w.uvs[v * 2], w.uvs[v * 2 + 1]});
+        g.indices.push_back(static_cast<std::uint32_t>(g.indices.size()));
+    }
+    return g;
+}
+
+std::vector<char> file_bytes(const fs::path& path) {
+    std::ifstream f(path, std::ios::binary);
+    return {std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>()};
 }
 
 void append(std::vector<std::uint8_t>& bin, const void* data, std::size_t bytes) {
@@ -250,4 +291,82 @@ TEST(GltfCookLod, BlendMaterialsBecomeMaskOnlyWhenAsked) {
     EXPECT_EQ(json["materials"][0]["alphaMode"], "MASK");
     ASSERT_TRUE(json["materials"][0]["alphaCutoff"].is_number());
     EXPECT_NEAR(json["materials"][0]["alphaCutoff"].get<double>(), 0.3, 1e-6);
+}
+
+TEST(GltfCookLod, SolidPrimitivesKeepTheirShapeWhenTheBoundStopsShortOfTheTarget) {
+    // PR #91 review: a tight error bound stops edge collapse above the target;
+    // the solid boulders must keep that result (not be thinned: dropping two
+    // boulders and growing the third would change the model).
+    quat::test::TempDir dir("gltf-cook-lod-boulders");
+    const Geometry g = boulders();
+    const fs::path src = write_gltf(dir.path(), g, "OPAQUE");
+    const fs::path out = dir.path() / "boulders_lod.glb";
+    engine::cook::CookOptions o = options(0.1F);
+    o.meshes.simplify_error = 0.0005F;
+    auto stats = engine::cook::cook_gltf(src, out, o);
+    ASSERT_OK(stats);
+    auto before = GltfLoader::load_mesh_data(src);
+    auto after = GltfLoader::load_mesh_data(out);
+    ASSERT_OK(before);
+    ASSERT_OK(after);
+    EXPECT_GT(after->indices.size(), 0U);
+    EXPECT_LE(after->indices.size(), before->indices.size());
+    // Same extent: nothing grew, no boulder vanished.
+    EXPECT_LT(glm::length(after->bounds.min - before->bounds.min), 0.05F);
+    EXPECT_LT(glm::length(after->bounds.max - before->bounds.max), 0.05F);
+    int per_boulder[3] = {0, 0, 0};
+    for (const engine::asset::Vertex& v : after->vertices) {
+        ++per_boulder[std::clamp(static_cast<int>(std::lround(v.position.x / 20.0F)), 0, 2)];
+        const float x = v.position.x - 20.0F * std::round(v.position.x / 20.0F);
+        EXPECT_NEAR(v.position.y, 2.0F * std::exp(-(x * x + v.position.z * v.position.z) / 20.0F),
+                    1e-3F);
+    }
+    for (const int n : per_boulder) EXPECT_GT(n, 0);
+}
+
+TEST(GltfCookLod, CardsSplitAtSeamsAreThinnedAsWholeCards) {
+    // Elements are found by position: a card whose two triangles use separate
+    // vertices must be kept or dropped as one, and grown as one.
+    quat::test::TempDir dir("gltf-cook-lod-split");
+    const Geometry g = split_leaves();
+    const fs::path src = write_gltf(dir.path(), g, "MASK");
+    const fs::path out = dir.path() / "split_lod.glb";
+    ASSERT_OK(engine::cook::cook_gltf(src, out, options(0.1F)));
+    auto before = GltfLoader::load_mesh_data(src);
+    auto after = GltfLoader::load_mesh_data(out);
+    ASSERT_OK(before);
+    ASSERT_OK(after);
+    const std::size_t tris = after->indices.size() / 3;
+    EXPECT_GT(tris, before->indices.size() / 3 / 20);
+    EXPECT_LT(tris, before->indices.size() / 3 / 6);
+    EXPECT_NEAR(total_area(*after) / total_area(*before), 1.0, 0.2);
+    // Every kept triangle still shares an edge (two positions) with exactly
+    // one other: its card's other half, grown about the same centre.
+    const auto pos = [&](std::size_t i) { return after->vertices[after->indices[i]].position; };
+    for (std::size_t t = 0; t < tris; ++t) {
+        int partners = 0;
+        for (std::size_t u = 0; u < tris; ++u) {
+            if (u == t) continue;
+            int shared = 0;
+            for (std::size_t a = 0; a < 3; ++a) {
+                for (std::size_t b = 0; b < 3; ++b) {
+                    shared += glm::length(pos(t * 3 + a) - pos(u * 3 + b)) < 1e-4F ? 1 : 0;
+                }
+            }
+            partners += shared >= 2 ? 1 : 0;
+        }
+        EXPECT_EQ(partners, 1) << "triangle " << t;
+    }
+}
+
+TEST(GltfCookLod, ThinningIsDeterministic) {
+    quat::test::TempDir dir("gltf-cook-lod-determinism");
+    const fs::path src = write_gltf(dir.path(), leaves(), "MASK");
+    const fs::path a = dir.path() / "a.glb";
+    const fs::path b = dir.path() / "b.glb";
+    ASSERT_OK(engine::cook::cook_gltf(src, a, options(0.1F)));
+    ASSERT_OK(engine::cook::cook_gltf(src, b, options(0.1F)));
+    const std::vector<char> bytes_a = file_bytes(a);
+    EXPECT_FALSE(bytes_a.empty());
+    EXPECT_EQ(bytes_a, file_bytes(b));
 }

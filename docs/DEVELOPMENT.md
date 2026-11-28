@@ -169,11 +169,14 @@ Cooked files target the engine: see the normal-map note below.
 - **Level of detail** (`--simplify R`): before the passes above, each
   primitive is reduced to about R of its triangles with meshoptimizer's
   attribute-aware simplifier (normals and UVs weigh in; error bound
-  `--simplify-error`, relative to the model's size). Foliage made of
+  `--simplify-error`, relative to the model's size). When the bound stops it
+  above the target, the result is kept: the LOD misses its budget rather than
+  change shape. Foliage made of
   thousands of disconnected cards or needle clusters cannot be simplified
   that way (small cards vanish within the error bound and the canopy
-  empties), so a primitive whose components average fewer than 24 triangles,
-  or one that pass leaves above twice the target, is thinned instead, as foliage LODs usually are: a deterministic
+  empties), so a primitive of at least 64 position-welded components that
+  average fewer than 24 triangles is thinned instead (stochastic
+  simplification of aggregate detail, Cook et al. 2007), as foliage LODs usually are: a deterministic
   subset of whole components (cards, needle clusters) is kept and each grows
   about its centre by 1/sqrt(kept share), so the canopy keeps its projected
   area. (Vertex clustering merges neighbouring cards into large triangles
@@ -320,7 +323,7 @@ fetched first: before the Screenshots step, CI runs
 `scripts/fetch-polyhaven.py` on every `assets/showcase/*/assets.json` with
 the build's `quat-cook`, caching the result (`actions/cache`, keyed on the
 manifests, the fetch script and the cooker sources). Fetching is
-`continue-on-error`; a row whose manifest is not satisfied is reported as
+`continue-on-error` with a 25-minute timeout, and its downloads and cooked models are cached separately; a row whose manifest is not satisfied is reported as
 *skipped (assets not fetched)*, not as a failure. See
 [`cinematic-showcase.md`](cinematic-showcase.md).
 

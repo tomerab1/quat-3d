@@ -1,5 +1,6 @@
 #include "engine/renderer/draw_batching.hpp"
 
+#include <algorithm>
 #include <cstddef>
 #include <functional>
 #include <limits>
@@ -117,6 +118,35 @@ InstancedDrawList unbatched_draws(std::span<const DrawItem> items) {
         out.motion.push_back(motion_for(item));
     }
     return out;
+}
+
+std::vector<std::uint32_t> partition_mirrored(InstancedDrawList& list) {
+    std::vector<std::uint32_t> unmirrored;
+    unmirrored.reserve(list.draws.size());
+    const bool with_motion = list.motion.size() == list.instances.size();
+    std::vector<InstanceData>   instances;
+    std::vector<InstanceMotion> motion;
+    for (const InstancedDraw& d : list.draws) {
+        const std::size_t first = d.first_instance;
+        const std::size_t end = std::min(first + d.instance_count, list.instances.size());
+        instances.clear();
+        motion.clear();
+        for (int pass = 0; pass < 2; ++pass) { // unmirrored, then mirrored
+            for (std::size_t i = first; i < end; ++i) {
+                if (is_mirrored(list.instances[i]) != (pass == 1)) continue;
+                instances.push_back(list.instances[i]);
+                if (with_motion) motion.push_back(list.motion[i]);
+            }
+            if (pass == 0) unmirrored.push_back(static_cast<std::uint32_t>(instances.size()));
+        }
+        std::copy(instances.begin(), instances.end(),
+                  list.instances.begin() + static_cast<std::ptrdiff_t>(first));
+        if (with_motion) {
+            std::copy(motion.begin(), motion.end(),
+                      list.motion.begin() + static_cast<std::ptrdiff_t>(first));
+        }
+    }
+    return unmirrored;
 }
 
 } // namespace engine::renderer

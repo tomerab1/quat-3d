@@ -55,9 +55,10 @@ struct MeshCookOptions {
     bool  compress           = true;  // EXT_meshopt_compression
     // Level-of-detail reduction: in (0, 1), each cooked primitive keeps about
     // this fraction of its triangles (attribute-aware meshopt_simplify within
-    // `simplify_error`, relative to the model's extent; disconnected foliage
-    // that cannot get within twice the target is thinned instead: whole cards
-    // are kept and grown to keep the foliage's coverage). 1 = off.
+    // `simplify_error`, relative to the model's extent, keeping its shape when
+    // the bound stops it short of the target; aggregate foliage — many small
+    // disconnected cards / needle clusters — is thinned instead: whole cards
+    // are kept and grown to keep its coverage, after Cook et al. 2007). 1 = off.
     float simplify_ratio     = 1.0F;
     float simplify_error     = 0.01F;
 };
