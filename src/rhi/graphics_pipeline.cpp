@@ -203,9 +203,15 @@ GraphicsPipeline::create(const Device& device, VkPipelineCache cache, const Crea
     pipeline_info.pDynamicState = &dynamic_state;
     pipeline_info.layout = out.layout_;
 
-    if (vkCreateGraphicsPipelines(vk_device, cache, 1, &pipeline_info, nullptr, &out.pipeline_)
-        != VK_SUCCESS) {
-        return fail("GraphicsPipeline::create: vkCreateGraphicsPipelines failed");
+    // The VkResult tells shader-translation failures on MoltenVK
+    // (VK_ERROR_INITIALIZATION_FAILED; set MVK_CONFIG_LOG_LEVEL for the text)
+    // apart from out-of-memory.
+    if (const VkResult r =
+            vkCreateGraphicsPipelines(vk_device, cache, 1, &pipeline_info, nullptr, &out.pipeline_);
+        r != VK_SUCCESS) {
+        return fail(std::format("GraphicsPipeline::create: vkCreateGraphicsPipelines failed: "
+                                "VkResult({})",
+                                static_cast<int>(r)));
     }
     return out;
 }
