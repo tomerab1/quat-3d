@@ -107,6 +107,15 @@ The editor (dark theme; a light theme is one click away in View > Theme):
   0.1 mm of the source animation
 
 **World**
+- Layered terrain material: up to eight photo-scanned CC0 PBR layers
+  (grass, dirt, rock, cliff, forest floor, sand, snow) placed by slope,
+  altitude, curvature, water flow and painted weights, height-blended, with
+  triplanar cliffs, hex-tiled stochastic texturing and distance colour;
+  presets `temperate_meadow` (default), `alpine`, `desert`, `forest_floor`.
+  Fetch the textures with `python3 scripts/fetch-polyhaven.py
+  assets/terrain/layers.json --cook-with build/release/quat-cook`.
+- Foliage: hashed alpha testing on coverage-preserving mips, resolved by TAA
+  (no single-pixel leaf speckle), with matching shadow coverage.
 - Procedural terrain: seeded generation with erosion, level of detail, and
   seamless streaming for kilometre-scale worlds; tiles (noise + hydraulic /
   thermal erosion, with steep faces relaxed to the talus angle by a multigrid

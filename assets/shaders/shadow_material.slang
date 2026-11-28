@@ -41,7 +41,7 @@ struct PushConstants {
     InstanceData* instances; // indexed by instance_index() (includes firstInstance)
     float4        to_light;  // xyz = unit direction toward the sun
     uint          cascade;
-    uint          pad0;
+    uint          alpha_hash; // 1: hashed alpha test (lib/alpha_test.slang), fixed seed
     uint          pad1;
     uint          pad2;
 }
@@ -88,8 +88,9 @@ struct MaskedVsIn {
 }
 
 struct MaskedVsOut {
-    float4 clip : SV_Position;
-    float2 uv   : TEXCOORD0;
+    float4 clip       : SV_Position;
+    float2 uv         : TEXCOORD0;
+    float3 object_pos : TEXCOORD1; // hashed alpha test domain, as in the GBuffer
 }
 
 [shader("vertex")]
@@ -98,14 +99,19 @@ MaskedVsOut vertex_masked(MaskedVsIn input) {
     MaskedVsOut o;
     o.clip = csm_mul(pc.cascades[0], pc.cascade, inst.world_position(input.position));
     o.uv = input.uv;
+    o.object_pos = input.position;
     return o;
 }
 
-// Depth-only alpha-tested caster: nothing is written but depth.
+// Depth-only alpha-tested caster: nothing is written but depth. The same
+// coverage as the GBuffer: hashed (fixed seed) when the GBuffer hashes.
 [shader("fragment")]
 void fragment_masked(MaskedVsOut input) {
     float alpha = material_base_color(g_params, g_base_color, g_samp, input.uv).a;
-    AlphaMasked::test(alpha, g_params.alpha_cutoff);
+    AlphaTestInput alpha_input;
+    alpha_input.object_pos = input.object_pos;
+    alpha_input.seed = pc.alpha_hash != 0 ? 0.0 : -1.0;
+    AlphaMasked::test(alpha, g_params.alpha_cutoff, alpha_input);
 }
 
 // Cosine-weighted hemispherical average of the dielectric Fresnel
@@ -142,7 +148,10 @@ float3 surface_transmittance(float4 base, float thickness_world) {
 float4 fragment_translucent(VsOut input) : SV_Target0 {
     float4 base = material_base_color(g_params, g_base_color, g_samp, input.uv);
     if ((g_params.flags & MATERIAL_ALPHA_MASK) != 0) {
-        AlphaMasked::test(base.a, g_params.alpha_cutoff);
+        AlphaTestInput alpha_input;
+        alpha_input.object_pos = float3(0.0, 0.0, 0.0);
+        alpha_input.seed = -1.0; // transmittance map: the plain cutoff
+        AlphaMasked::test(base.a, g_params.alpha_cutoff, alpha_input);
     }
     float3 n = normalize(input.world_n);
     // Absorb once per volume: on the light's entry face only.

@@ -57,6 +57,12 @@ SCENE_TABLE=(
   "editor-time-of-day|30|QUAT_WINDOW_SIZE=1600x900 QUAT_EDITOR_LAYOUT=default QUAT_EDITOR_SELECT=world_clock QUAT_TIME=2026-06-21T21:35:00+02:00 QUAT_TIME_SCALE=0|Editor: the world clock in the Inspector at sunset"
   "showcase-hdri|40|QUAT_NO_UI=1 QUAT_HDRI=hdri-cache/kloofendal_48d_partly_cloudy_2k.hdr|Showcase lit by a CC0 Poly Haven HDRI (R21: HDRI IBL, its sun as the shadowed light, SSR)"
   "mountain-forest|30|QUAT_NO_UI=1 QUAT_DEMO=mountain|Mountain + forest showcase: terrain, scattered trees and rocks, GPU grass"
+  # Layered terrain material (R26): meadow hill with rock ridges and dirt in
+  # the gullies; and a fir forest on forest-floor ground (hashed alpha
+  # foliage, R26.3). The texture sets come from assets/terrain/layers.json
+  # (untextured layers fall back to their tinted colour).
+  "terrain-materials|40|QUAT_NO_UI=1 QUAT_PLAY=1 QUAT_GAME_CAMERA=1 QUAT_SCENE=assets/scenes/terrain_materials.json|Terrain materials (R26.1): meadow hill, rock ridges, dirt in gullies, GPU grass"
+  "terrain-forest|30|SCENE_TIMEOUT=900 QUAT_NO_UI=1 QUAT_PLAY=1 QUAT_GAME_CAMERA=1 QUAT_WINDOW_SIZE=960x540 QUAT_SCENE=assets/scenes/terrain_forest.json|Fir forest on forest-floor terrain (R26.1 + hashed alpha foliage R26.3)|assets/showcase/cinematic/assets.json"
 )
 # HDRI panoramas the scenes use, fetched into hdri-cache/ (gitignored).
 HDRIS=("kloofendal_48d_partly_cloudy 2k")

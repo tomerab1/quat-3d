@@ -23,7 +23,10 @@ GBufferVsOut vertex_main(GBufferVsIn input) {
 
 GBufferOut gbuffer_shade<A : IAlphaMode>(GBufferVsOut input, bool front_face) {
     SurfaceSample s = gbuffer_evaluate<StandardMaterial>(input);
-    A::test(s.alpha, g_material.params.alpha_cutoff);
+    AlphaTestInput alpha_input;
+    alpha_input.object_pos = input.object_pos;
+    alpha_input.seed = pc.alpha_hash;
+    A::test(s.alpha, g_material.params.alpha_cutoff, alpha_input);
     return gbuffer_pack(input, s, front_face);
 }
 

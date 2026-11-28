@@ -395,6 +395,7 @@ void WorldRuntime::update_terrain(engine::scene::Scene& scene, const glm::vec3& 
         const auto* tf = scene.registry().try_get<engine::scene::Transform>(te);
         terrain_anchor_ = tf != nullptr ? glm::vec3(tf->world[3]) : glm::vec3(0.0F);
         terrain_snowline_ = tcomp.snowline_m;
+        terrain_pass_.set_material(tcomp.material);
 
         // #67: a configuration over the memory / droplet budget is not
         // generated (the codec rejects it; editor edits bypass the codec).

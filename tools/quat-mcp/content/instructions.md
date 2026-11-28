@@ -3,6 +3,7 @@ quat-mcp drives a running quat-3d game engine (Vulkan renderer, Jolt physics, ed
 Good workflow: `scene_components` and `scene_list` to inspect, plan with coordinates in metres (Y up), build with `scene_batch` (`"@N"` refers to the id created by command N of the batch), then `screenshot` (with a `camera` to frame what you built) and iterate with `scene_update`.
 
 World building:
+- Ground: use a `terrain` (its `material` preset gives textured, slope- and altitude-blended ground; see `scene_components`), not a flat primitive with a colour.
 - Terrain: after creating or reshaping a terrain (new `seed`, `height`, `tile_size`, ...), wait until `terrain_status` reports `generating: false` before placing things or taking screenshots. Shading edits such as `snowline` apply at once and need no wait.
 - Models: `asset_list_models` lists what the project has; `asset_search` + `asset_fetch` download free CC0 models from Poly Haven (trees, rocks, props) into the project. Mind `polycount` when you need many copies; use an `instanced_mesh` (plus `scatter`) for forests and rock fields instead of one entity per copy.
 - Placement: `scene_get` reports `world_bounds` / `local_bounds` (size and origin of any model); `world_place_on_ground` sets an entity down on the terrain or on colliders below it, optionally tilted to the slope. Do not guess sink depths.

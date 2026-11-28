@@ -28,8 +28,8 @@ struct TerrainPushConstants {
     glm::mat4 view_proj{1.0F};
     glm::vec4 chunk{0.0F};  // origin xz, chunk size m, skirt depth m
     glm::vec4 region{0.0F}; // uv offset, uv scale, metres per texel
-    glm::vec4 shade{0.0F};  // grid_n, heightmap texel uv, snowline m, rock slope
-    glm::vec4 misc{0.0F};   // x = origin y, yzw unused
+    glm::vec4 shade{0.0F};  // grid_n, heightmap texel uv, snowline m, unused
+    glm::vec4 misc{0.0F};   // x = origin y, yzw = camera world position
     glm::mat4 prev_view_proj{1.0F}; // velocity: last frame, unjittered
     glm::vec4 motion{0.0F};         // xy = this frame's jitter (NDC)
 };
@@ -123,9 +123,18 @@ TerrainPass::create(const rhi::Device& device, rhi::GpuAllocator& allocator,
     if (!out.db_fns_.valid()) return fail("terrain pass: descriptor buffer functions unavailable");
 
     using rhi::DescriptorBinding;
-    const std::array<DescriptorBinding, 2> bindings{{
+    // terrain.slang's bindings: heightmap, clamp sampler, edit paint (G19),
+    // attributes, material constants, the three layer arrays, wrap sampler.
+    const std::array<DescriptorBinding, 9> bindings{{
         {0, 0, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, kStages},
         {0, 1, VK_DESCRIPTOR_TYPE_SAMPLER, 1, kStages},
+        {0, 2, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, kStages},
+        {0, 3, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, kStages},
+        {0, 4, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, kStages},
+        {0, 5, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, kStages},
+        {0, 6, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, kStages},
+        {0, 7, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, kStages},
+        {0, 8, VK_DESCRIPTOR_TYPE_SAMPLER, 1, kStages},
     }};
     auto layout = rhi::DescriptorSetLayout::create(device, out.db_fns_, bindings);
     if (!layout) return std::unexpected(layout.error());
@@ -168,6 +177,19 @@ TerrainPass::create(const rhi::Device& device, rhi::GpuAllocator& allocator,
         return std::unexpected(shadow.error());
     }
 
+    if (auto material = out.create_material_resources(transfer); !material) {
+        return std::unexpected(material.error());
+    }
+    // Curvature / flow attributes are optional: without them every tile reads
+    // flat, dry ground.
+    if (auto baker = TerrainAttributeBaker::create(device, allocator, cache, cooked_shader_dir);
+        baker) {
+        out.attributes_ = std::move(*baker);
+    } else {
+        std::fprintf(stderr, "[terrain] attribute bake unavailable (%s)\n",
+                     baker.error().message.c_str());
+    }
+
     // GPU synthesis is optional: without it tiles generate on the CPU.
     if (auto gpu = GpuTileSource::create(device, allocator, cache, cooked_shader_dir); gpu) {
         out.gpu_tiles_ = std::move(*gpu);
@@ -205,14 +227,24 @@ std::expected<void, core::Error> TerrainPass::set_tile(const glm::ivec2& coord,
     tile.min_height = map.min_height;
     tile.max_height = map.max_height;
 
-    auto db = rhi::DescriptorBuffer::create(*device_, *allocator_, db_fns_, layout_);
+    // Curvature / flow for the material, baked by the next frame's graph.
+    if (attributes_.valid() && map.resolution <= TerrainAttributeBaker::max_resolution) {
+        auto attr = attributes_.schedule(tile.view.handle(), map.resolution,
+                                         map.metres_per_texel(), terrain_flow_sweeps);
+        if (attr) {
+            tile.attributes = std::move(attr->image);
+            tile.attributes_view = std::move(attr->view);
+        } else {
+            std::fprintf(stderr, "[terrain] attributes: %s\n", attr.error().message.c_str());
+        }
+    }
+
+    auto db = make_tile_descriptor(tile);
     if (!db) return std::unexpected(db.error());
-    db->write_sampled_image(0, tile.view.handle(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-    db->write_sampler(1, sampler_.handle());
     tile.descriptor = std::move(*db);
 
     if (auto it = tiles_.find(coord); it != tiles_.end()) {
-        retired_.emplace_back(3, std::move(it->second)); // outlive in-flight frames
+        retire_tile(std::move(it->second)); // outlive in-flight frames
         tiles_.erase(it);
     }
     tiles_.emplace(coord, std::move(tile));
@@ -229,12 +261,17 @@ void TerrainPass::tick() {
             ++it;
         }
     }
+    std::erase_if(retired_buffers_, [](auto& b) { return --b.first <= 0; });
+    std::erase_if(retired_descriptors_, [](auto& d) { return --d.first <= 0; });
+    attributes_.tick();
+    // New texture arrays: new views and slices.
+    if (textures_ && textures_->poll()) refresh_material(true);
     if (gpu_tiles_) gpu_tiles_->tick();
 }
 
 void TerrainPass::remove_tile(const glm::ivec2& coord) {
     if (auto it = tiles_.find(coord); it != tiles_.end()) {
-        retired_.emplace_back(3, std::move(it->second));
+        retire_tile(std::move(it->second));
         tiles_.erase(it);
     }
 }
@@ -322,6 +359,12 @@ void TerrainPass::add_to_graph(rhi::RenderGraph& graph, const renderer::GBufferT
     // GPU tile synthesis records its compute work into this frame (it is
     // independent of the draws below and of the GBuffer).
     if (gpu_tiles_) gpu_tiles_->add_to_graph(graph);
+    // Attribute bakes of newly adopted tiles, recorded before the draws that
+    // sample them (the bake leaves its images shader-readable).
+    if (attributes_.pending()) {
+        graph.add_pass("terrain_attributes", rhi::PassType::compute)
+            .execute([this](rhi::PassContext& ctx) { attributes_.record(ctx.cmd()); });
+    }
     if (tiles_.empty()) return;
 
     collect_chunks(view_proj, camera_pos, anchor, frame_draws_);
@@ -338,7 +381,7 @@ void TerrainPass::add_to_graph(rhi::RenderGraph& graph, const renderer::GBufferT
         .writes(t.emissive, rhi::ResourceUsage::color_attachment)
         .writes(t.velocity, rhi::ResourceUsage::color_attachment)
         .writes(t.depth, rhi::ResourceUsage::depth_attachment)
-        .execute([this, t, extent, vp, origin_y, snowline_m](rhi::PassContext& ctx) {
+        .execute([this, t, extent, vp, origin_y, snowline_m, camera_pos](rhi::PassContext& ctx) {
             const VkCommandBuffer cmd = ctx.cmd();
             const auto color_attachment = [](VkImageView view) {
                 VkRenderingAttachmentInfo ai{};
@@ -393,8 +436,8 @@ void TerrainPass::add_to_graph(rhi::RenderGraph& graph, const renderer::GBufferT
                     push.chunk = draw.chunk;
                     push.region = draw.region;
                     push.shade = glm::vec4(static_cast<float>(chunk_quads), texel_uv,
-                                           snowline_m, 0.72F);
-                    push.misc = glm::vec4(origin_y, 0.0F, 0.0F, 0.0F);
+                                           snowline_m, 0.0F);
+                    push.misc = glm::vec4(origin_y, camera_pos);
                     push.prev_view_proj = t.motion.prev_view_proj;
                     push.motion = glm::vec4(t.motion.jitter_ndc, 0.0F, 0.0F);
                     vkCmdPushConstants(cmd, pipeline_.layout(), kStages, 0, sizeof(push), &push);

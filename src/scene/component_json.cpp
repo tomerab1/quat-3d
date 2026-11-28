@@ -626,6 +626,7 @@ json encode_components(const entt::registry& r, entt::entity e, const EncodeOpti
                           {"erosion_rate", t->params.grid.erode_rate},
                           {"erosion_thermal", t->params.grid.thermal_rate},
                           {"snowline", t->snowline_m},
+                          {"material", detail::encode_terrain_material(t->material)},
                           {"streaming", t->streaming},
                           {"stream_radius", t->stream_radius},
                           {"gpu", t->gpu_generate}};
@@ -929,6 +930,7 @@ std::expected<void, core::Error> apply_component(entt::registry& r, entt::entity
             f.number("erosion_rate", p.grid.erode_rate, 0.0F, 10.0F);
             f.number("erosion_thermal", p.grid.thermal_rate, 0.0F, 1.0F);
             f.number("snowline", t.snowline_m);
+            detail::decode_terrain_material(f, "material", t.material);
             f.boolean("streaming", t.streaming);
             f.integer("stream_radius", t.stream_radius, 0, 8);
             f.boolean("gpu", t.gpu_generate);

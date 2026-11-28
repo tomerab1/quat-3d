@@ -431,6 +431,7 @@ add_library(engine_scene STATIC
     src/scene/component_json_physics.cpp
     src/scene/lens_json.cpp
     src/scene/particle_json.cpp
+    src/scene/terrain_material_json.cpp
     src/scene/script_component.cpp
     src/scene/scene_snapshot.cpp
     src/scene/component_json_animation.cpp
@@ -530,6 +531,7 @@ add_library(engine_cook STATIC
     src/cook/mesh_cook.cpp
     src/cook/mesh_simplify.cpp
     src/cook/mesh_streams.cpp
+    src/cook/terrain_layer.cpp
     src/cook/texture_encode.cpp)
 target_link_libraries(engine_cook PUBLIC engine_flags)
 target_link_libraries(engine_cook PRIVATE
@@ -551,6 +553,7 @@ add_library(engine_terrain STATIC
     src/terrain/cpu_tile_jobs.cpp
     src/terrain/generator.cpp
     src/terrain/grid_erosion.cpp
+    src/terrain/material.cpp
     src/terrain/streamer.cpp
     src/terrain/talus_relax.cpp)
 target_link_libraries(engine_terrain PUBLIC engine_flags glm::glm)
@@ -738,7 +741,11 @@ add_library(engine_renderer STATIC
     src/renderer/motion_history.cpp
     src/renderer/upscaler.cpp
     src/renderer/atmosphere_pass.cpp
+    src/renderer/terrain_attributes.cpp
+    src/renderer/terrain_material_gpu.cpp
     src/renderer/terrain_pass.cpp
+    src/renderer/terrain_pass_material.cpp
+    src/renderer/terrain_textures.cpp
     src/renderer/terrain_gpu_tiles.cpp
     src/renderer/terrain_synth_pass.cpp
     src/renderer/terrain_shadow.cpp
@@ -788,6 +795,7 @@ if(ENGINE_EDITOR)
         src/editor/behavior_panel.cpp
         src/editor/behavior_canvas.cpp
         src/editor/inspector_world.cpp
+        src/editor/terrain_material_inspector.cpp
         src/editor/panels/console.cpp
         src/editor/panels/inspector_parts.cpp
         src/editor/panels/profiler.cpp

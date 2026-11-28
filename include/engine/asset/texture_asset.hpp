@@ -8,6 +8,7 @@
 
 #include <cstdint>
 #include <expected>
+#include <span>
 
 #include <vulkan/vulkan.h>
 
@@ -43,4 +44,23 @@ struct TextureAsset {
 upload_texture_data(const TextureData& data, rhi::GpuAllocator& allocator,
                     const rhi::TransferContext& transfer);
 
+// A 2D array texture: one image of `layers` slices sharing extent, format
+// and mip chain, with a VK_IMAGE_VIEW_TYPE_2D_ARRAY view (swizzled like the
+// layers). No sampler: array users bind their own.
+struct TextureArray {
+    rhi::GpuImage  image;
+    rhi::ImageView view;
+    std::uint32_t  layers = 0;
+    std::uint32_t  mip_levels = 0;
+    VkFormat       format = VK_FORMAT_UNDEFINED;
+};
+
+// Uploads `layers` (each with its full mip chain listed in `levels`, all with
+// the same extent, format, colour space, swizzle and level count) as the
+// slices of one array image, left in SHADER_READ_ONLY_OPTIMAL.
+[[nodiscard]] std::expected<TextureArray, core::Error>
+upload_texture_array(std::span<const TextureData* const> layers, rhi::GpuAllocator& allocator,
+                     const rhi::TransferContext& transfer);
+
 } // namespace engine::asset
+

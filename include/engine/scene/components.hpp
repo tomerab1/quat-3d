@@ -26,6 +26,7 @@
 #include "engine/animation/skeleton.hpp"
 #include "engine/asset/asset_manager.hpp"
 #include "engine/terrain/generator.hpp"
+#include "engine/terrain/material.hpp"
 #include "engine/asset/material_params.hpp"
 #include "engine/core/error.hpp"
 #include "engine/renderer/grass.hpp"
@@ -453,6 +454,10 @@ struct Terrain {
         return p;
     }();
     float snowline_m = 110.0F; // world height where snow takes over
+    // Layered PBR material (R26.1): texture-set layers placed by slope,
+    // altitude, curvature / flow and painted weights. Shading only — edits
+    // never regenerate the terrain.
+    terrain::TerrainMaterial material = terrain::default_terrain_material();
     bool  regenerate = true;   // consumed by the frame loop
     // Streaming (12.4): keep a (2*radius+1)² window of seamless tiles loaded
     // around the camera instead of one fixed tile.

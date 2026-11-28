@@ -1,0 +1,164 @@
+{
+  "name": "Terrain layer texture sets",
+  "description": "CC0 PBR texture sets of the layered terrain material (ROADMAP R26.2): each becomes assets/terrain/sets/<set>/{albedo,normal,packed}.ktx2 through quat-cook --terrain-layer. Every asset is from Poly Haven and CC0; attribution is recorded although the licence does not require it.",
+  "license": "CC0-1.0",
+  "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+  "fetch": "python3 scripts/fetch-polyhaven.py assets/terrain/layers.json --cook-with build/release/quat-cook",
+  "assets": [
+    {
+      "id": "leafy_grass",
+      "type": "texture",
+      "resolution": "1k",
+      "license": "CC0-1.0",
+      "source_url": "https://polyhaven.com/a/leafy_grass",
+      "authors": {
+        "Charlotte Baglioni": "All"
+      },
+      "maps": [
+        "Diffuse",
+        "nor_gl",
+        "arm",
+        "Displacement"
+      ],
+      "use": "Terrain layer set \"grass\": Meadow ground: short leafy grass (2 m).",
+      "terrain_layer": {
+        "set": "grass",
+        "size": 1024
+      },
+      "content_sha256": "9ff7494208072646f7df4d46539f306cd82c5199d7f3be9c692fab2f765c59bb"
+    },
+    {
+      "id": "dirt",
+      "type": "texture",
+      "resolution": "1k",
+      "license": "CC0-1.0",
+      "source_url": "https://polyhaven.com/a/dirt",
+      "authors": {
+        "Charlotte Baglioni": "All"
+      },
+      "maps": [
+        "Diffuse",
+        "nor_gl",
+        "arm",
+        "Displacement"
+      ],
+      "use": "Terrain layer set \"dirt\": Bare soil of paths, gullies and painted dirt (2 m).",
+      "terrain_layer": {
+        "set": "dirt",
+        "size": 1024
+      },
+      "content_sha256": "5e2f476d256ef0eba1727243f9a19a2f45781684e8aaea15ff2ad6107ee9663f"
+    },
+    {
+      "id": "rocks_ground_02",
+      "type": "texture",
+      "resolution": "1k",
+      "license": "CC0-1.0",
+      "source_url": "https://polyhaven.com/a/rocks_ground_02",
+      "authors": {
+        "Rob Tuytel": "All"
+      },
+      "maps": [
+        "Diffuse",
+        "nor_gl",
+        "arm",
+        "Displacement"
+      ],
+      "use": "Terrain layer set \"rock\": Stony ground and scree on steep slopes (2 m).",
+      "terrain_layer": {
+        "set": "rock",
+        "size": 1024
+      },
+      "content_sha256": "ad86a9b4ef3ee8c9ff5c8adb5577d92e014b518c48f65f1283a42d8d9be6e7a1"
+    },
+    {
+      "id": "rock_face_03",
+      "type": "texture",
+      "resolution": "1k",
+      "license": "CC0-1.0",
+      "source_url": "https://polyhaven.com/a/rock_face_03",
+      "authors": {
+        "Dario Barresi": "Photography",
+        "Rico Cilliers": "Processing"
+      },
+      "maps": [
+        "Diffuse",
+        "nor_gl",
+        "arm",
+        "Displacement"
+      ],
+      "use": "Terrain layer set \"cliff\": Rock faces of cliffs, triplanar (2.7 m).",
+      "terrain_layer": {
+        "set": "cliff",
+        "size": 1024
+      },
+      "content_sha256": "abe02f726d6b4f5e5cf4e07d24b1c184a0b7e3f8b80af70c1a69c47240042f84"
+    },
+    {
+      "id": "forrest_ground_01",
+      "type": "texture",
+      "resolution": "1k",
+      "license": "CC0-1.0",
+      "source_url": "https://polyhaven.com/a/forrest_ground_01",
+      "authors": {
+        "Rob Tuytel": "All"
+      },
+      "maps": [
+        "Diffuse",
+        "nor_gl",
+        "arm",
+        "Displacement"
+      ],
+      "use": "Terrain layer set \"forest_floor\": Needles, leaves and twigs under trees (2 m).",
+      "terrain_layer": {
+        "set": "forest_floor",
+        "size": 1024
+      },
+      "content_sha256": "ee60fd00805a5da64ca40f688f2a2783539b397ff705a9aa2b20c07997c8b835"
+    },
+    {
+      "id": "sand_01",
+      "type": "texture",
+      "resolution": "1k",
+      "license": "CC0-1.0",
+      "source_url": "https://polyhaven.com/a/sand_01",
+      "authors": {
+        "Rob Tuytel": "All"
+      },
+      "maps": [
+        "Diffuse",
+        "nor_gl",
+        "arm",
+        "Displacement"
+      ],
+      "use": "Terrain layer set \"sand\": Fine desert / beach sand (1.5 m).",
+      "terrain_layer": {
+        "set": "sand",
+        "size": 1024
+      },
+      "content_sha256": "01fd3717ff9d1967ca104e67d0232ebadc15233066b37cdab22b22020488f1c9"
+    },
+    {
+      "id": "snow_02",
+      "type": "texture",
+      "resolution": "1k",
+      "license": "CC0-1.0",
+      "source_url": "https://polyhaven.com/a/snow_02",
+      "authors": {
+        "Rob Tuytel": "All"
+      },
+      "maps": [
+        "Diffuse",
+        "nor_gl",
+        "arm",
+        "Displacement"
+      ],
+      "use": "Terrain layer set \"snow\": Wind-packed snow above the snowline (2 m).",
+      "terrain_layer": {
+        "set": "snow",
+        "size": 1024
+      },
+      "content_sha256": "6e592c0a613eadb953b2a898a70bd76011a69ac2f60457e89c862b68d38c7744"
+    }
+  ]
+}

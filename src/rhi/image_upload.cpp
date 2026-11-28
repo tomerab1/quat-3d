@@ -21,7 +21,8 @@ namespace {
 void image_barrier(VkCommandBuffer cmd, VkImage image, std::uint32_t levels,
                    VkPipelineStageFlags2 src_stage, VkAccessFlags2 src_access,
                    VkPipelineStageFlags2 dst_stage, VkAccessFlags2 dst_access,
-                   VkImageLayout old_layout, VkImageLayout new_layout) {
+                   VkImageLayout old_layout, VkImageLayout new_layout,
+                   std::uint32_t layers = 1) {
     VkImageMemoryBarrier2 b{};
     b.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2;
     b.srcStageMask = src_stage;
@@ -33,7 +34,7 @@ void image_barrier(VkCommandBuffer cmd, VkImage image, std::uint32_t levels,
     b.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
     b.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
     b.image = image;
-    b.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, levels, 0, 1};
+    b.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, levels, 0, layers};
     VkDependencyInfo dep{};
     dep.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO;
     dep.imageMemoryBarrierCount = 1;
@@ -48,13 +49,24 @@ upload_device_image_levels(GpuAllocator& allocator, const TransferContext& trans
                            const void* data, VkDeviceSize size, VkExtent2D extent,
                            VkFormat format, std::span<const ImageLevelRegion> levels,
                            VkImageUsageFlags usage) {
+    return upload_device_image_array_levels(allocator, transfer, data, size, extent, format,
+                                            levels, 1, usage);
+}
+
+std::expected<GpuImage, core::Error>
+upload_device_image_array_levels(GpuAllocator& allocator, const TransferContext& transfer,
+                                 const void* data, VkDeviceSize size, VkExtent2D extent,
+                                 VkFormat format, std::span<const ImageLevelRegion> levels,
+                                 std::uint32_t layers, VkImageUsageFlags usage) {
     QUAT_ZONE_N("upload_image");
-    if (levels.empty() || levels.size() > full_mip_levels(extent)) {
-        return fail("upload_device_image_levels: bad mip level count");
+    if (layers == 0 || levels.empty() || levels.size() % layers != 0 ||
+        levels.size() / layers > full_mip_levels(extent)) {
+        return fail("upload_device_image_levels: bad mip level / layer count");
     }
+    const auto level_count = static_cast<std::uint32_t>(levels.size() / layers);
     for (std::size_t i = 0; i < levels.size(); ++i) {
         const ImageLevelRegion& l = levels[i];
-        const auto shift = static_cast<std::uint32_t>(i);
+        const auto shift = static_cast<std::uint32_t>(i % level_count);
         if (l.width != std::max(extent.width >> shift, 1U) ||
             l.height != std::max(extent.height >> shift, 1U)) {
             return fail("upload_device_image_levels: level " + std::to_string(i) +
@@ -71,17 +83,17 @@ upload_device_image_levels(GpuAllocator& allocator, const TransferContext& trans
     std::memcpy(staging->mapped(), data, size);
     if (auto flushed = staging->flush(); !flushed) return std::unexpected(flushed.error());
 
-    const auto level_count = static_cast<std::uint32_t>(levels.size());
     auto image = allocator.create_image(
         format, extent, usage | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
-        level_count);
+        level_count, layers);
     if (!image) return std::unexpected(image.error());
 
     std::vector<VkBufferImageCopy> regions(levels.size());
     for (std::size_t i = 0; i < levels.size(); ++i) {
         VkBufferImageCopy& r = regions[i];
         r.bufferOffset = levels[i].offset;
-        r.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, static_cast<std::uint32_t>(i), 0, 1};
+        r.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, static_cast<std::uint32_t>(i % level_count),
+                              static_cast<std::uint32_t>(i / level_count), 1};
         r.imageExtent = {levels[i].width, levels[i].height, 1};
     }
 
@@ -90,14 +102,14 @@ upload_device_image_levels(GpuAllocator& allocator, const TransferContext& trans
         image_barrier(cmd, dst, level_count, VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT,
                       VK_ACCESS_2_NONE, VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT,
                       VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_IMAGE_LAYOUT_UNDEFINED,
-                      VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+                      VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, layers);
         vkCmdCopyBufferToImage(cmd, staging->handle(), dst, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
                                static_cast<std::uint32_t>(regions.size()), regions.data());
         image_barrier(cmd, dst, level_count, VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT,
                       VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT |
                                                           VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
                       VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-                      VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+                      VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, layers);
     });
     if (!uploaded) return std::unexpected(uploaded.error());
     return std::move(*image);

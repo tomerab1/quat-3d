@@ -30,7 +30,9 @@
 
 #include <cstdint>
 #include <expected>
+#include <filesystem>
 #include <map>
+#include <optional>
 #include <memory>
 #include <string>
 #include <utility>
@@ -42,13 +44,17 @@
 #include "engine/core/error.hpp"
 #include "engine/renderer/mesh_pass.hpp"
 #include "engine/renderer/shadow_pass.hpp"
+#include "engine/renderer/terrain_attributes.hpp"
 #include "engine/renderer/terrain_gpu_tiles.hpp"
+#include "engine/renderer/terrain_material_gpu.hpp"
+#include "engine/renderer/terrain_textures.hpp"
 #include "engine/renderer/terrain_height_source.hpp"
 #include "engine/rhi/descriptor_buffer.hpp"
 #include "engine/rhi/gpu_allocator.hpp"
 #include "engine/rhi/managed_pipeline.hpp"
 #include "engine/rhi/render_graph.hpp"
 #include "engine/terrain/heightmap.hpp"
+#include "engine/terrain/material.hpp"
 #include "engine/terrain/streamer.hpp"
 #include "engine/terrain/tile_generator.hpp"
 
@@ -90,6 +96,21 @@ public:
     // (no compute shader, descriptor buffers...). Its tiles are synthesised
     // by add_to_graph, so their futures only progress while frames run.
     [[nodiscard]] terrain::TileGenerator* tile_generator() const { return gpu_tiles_.get(); }
+
+    // The layered material (R26.1) every tile is shaded with. Cheap when
+    // unchanged (call every frame); a change re-uploads the material
+    // constants and requests its texture sets, which load in the background
+    // (untextured layers draw their procedural fallback meanwhile).
+    void set_material(const terrain::TerrainMaterial& material);
+    // Directory holding assets/terrain/sets (the engine's data root).
+    void set_texture_root(const std::filesystem::path& root) {
+        if (textures_) textures_->set_root(root);
+    }
+    // Waits for the requested texture sets and applies them (tests, tools).
+    void wait_for_textures();
+    [[nodiscard]] const TerrainTextures* textures() const {
+        return textures_ ? &*textures_ : nullptr;
+    }
 
     // Retire a tile (streaming unload). No-op for unknown coordinates.
     void remove_tile(const glm::ivec2& coord);
@@ -160,6 +181,9 @@ private:
     struct Tile {
         rhi::GpuImage         image;
         rhi::ImageView        view;
+        // Curvature / flow (TerrainAttributeBaker); null: default_attributes_.
+        rhi::GpuImage         attributes;
+        rhi::ImageView        attributes_view;
         rhi::DescriptorBuffer descriptor;
         std::uint32_t         resolution = 0;
         float                 tile_size_m = 0.0F;
@@ -192,6 +216,31 @@ private:
 
     rhi::ManagedPipeline   shadow_pipeline_;     // terrain_shadow.slang, depth only
     std::vector<TileDraws> shadow_draws_;        // rebuilt each shadow_casters call
+
+    // Layered material (R26.1, terrain_pass_material.cpp).
+    std::optional<TerrainTextures> textures_;
+    TerrainAttributeBaker          attributes_;
+    terrain::TerrainMaterial       material_;
+    bool                           material_set_ = false;
+    TerrainMaterialGpu             material_gpu_{};
+    rhi::GpuBuffer                 material_buffer_; // host-visible uniform
+    std::vector<std::pair<int, rhi::GpuBuffer>>        retired_buffers_;
+    std::vector<std::pair<int, rhi::DescriptorBuffer>> retired_descriptors_;
+    // 1x1 defaults: unpainted (G19 paint) and flat, dry attributes.
+    rhi::GpuImage                  default_paint_;
+    rhi::ImageView                 default_paint_view_;
+    rhi::GpuImage                  default_attributes_;
+    rhi::ImageView                 default_attributes_view_;
+
+    [[nodiscard]] std::expected<void, core::Error>
+    create_material_resources(const rhi::TransferContext& transfer);
+    // Re-packs the material (texture slices may have changed) and, when the
+    // constants differ, uploads a new buffer and rewrites every descriptor.
+    void refresh_material(bool force);
+    [[nodiscard]] std::expected<rhi::DescriptorBuffer, core::Error>
+    make_tile_descriptor(const Tile& tile) const;
+    void rewrite_descriptors();
+    void retire_tile(Tile&& tile);
 };
 
 } // namespace engine::renderer

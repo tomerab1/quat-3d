@@ -269,6 +269,16 @@ upload_device_image_levels(GpuAllocator& allocator, const TransferContext& trans
                            VkFormat format, std::span<const ImageLevelRegion> levels,
                            VkImageUsageFlags usage = VK_IMAGE_USAGE_SAMPLED_BIT);
 
+// A 2D array image of `layers` layers, each with the same mip chain: `levels`
+// holds layer 0's levels, then layer 1's, ... (levels.size() = layers x mip
+// levels). Left in SHADER_READ_ONLY_OPTIMAL.
+[[nodiscard]] std::expected<GpuImage, core::Error>
+upload_device_image_array_levels(GpuAllocator& allocator, const TransferContext& transfer,
+                                 const void* data, VkDeviceSize size, VkExtent2D extent,
+                                 VkFormat format, std::span<const ImageLevelRegion> levels,
+                                 std::uint32_t layers,
+                                 VkImageUsageFlags usage = VK_IMAGE_USAGE_SAMPLED_BIT);
+
 // Creates a VkImageView over `image` wrapped in an RAII ImageView. Defaults to a
 // 2D colour view of mip 0; the extra parameters cover cube views
 // (VK_IMAGE_VIEW_TYPE_CUBE, layer_count = 6), single-mip array views for storage

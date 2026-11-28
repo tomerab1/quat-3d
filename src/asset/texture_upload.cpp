@@ -2,6 +2,7 @@
 
 #include "engine/asset/texture_asset.hpp"
 
+#include <cstring>
 #include <string>
 #include <utility>
 #include <vector>
@@ -98,6 +99,61 @@ upload_texture_data(const TextureData& data, rhi::GpuAllocator& allocator,
     texture.height = data.height;
     texture.format = format;
     return texture;
+}
+
+std::expected<TextureArray, core::Error>
+upload_texture_array(std::span<const TextureData* const> layers, rhi::GpuAllocator& allocator,
+                     const rhi::TransferContext& transfer) {
+    if (layers.empty()) return fail("upload_texture_array: no layers");
+    const TextureData& first = *layers[0];
+    if (first.levels.empty()) return fail("upload_texture_array: layers need their mip levels");
+    std::uint64_t total = 0;
+    for (const TextureData* t : layers) {
+        if (t->width != first.width || t->height != first.height || t->format != first.format ||
+            t->color_space != first.color_space || t->swizzle != first.swizzle ||
+            t->levels.size() != first.levels.size()) {
+            return fail("upload_texture_array: layers differ in extent, format or mip count");
+        }
+        for (const TextureLevel& l : t->levels) {
+            if (l.size != texel_level_size(t->format, l.width, l.height) || l.offset > t->pixels.size() ||
+                l.size > t->pixels.size() - l.offset) {
+                return fail("upload_texture_array: level size does not match its extent");
+            }
+            total += l.size;
+        }
+    }
+    // Repack every layer's levels into one blob, layer-major.
+    PixelBuffer blob = PixelBuffer::allocate(static_cast<std::size_t>(total));
+    if (blob.empty()) return fail("upload_texture_array: out of memory");
+    std::vector<rhi::ImageLevelRegion> regions;
+    regions.reserve(layers.size() * first.levels.size());
+    std::uint64_t offset = 0;
+    for (const TextureData* t : layers) {
+        for (const TextureLevel& l : t->levels) {
+            std::memcpy(blob.data() + offset, t->pixels.data() + l.offset, l.size);
+            regions.push_back({offset, l.size, l.width, l.height});
+            offset += l.size;
+        }
+    }
+    const VkFormat format = texel_vk_format(first.format, first.color_space);
+    const auto mips = static_cast<std::uint32_t>(first.levels.size());
+    const auto count = static_cast<std::uint32_t>(layers.size());
+    auto image = rhi::upload_device_image_array_levels(allocator, transfer, blob.data(), blob.size(),
+                                                       {first.width, first.height}, format, regions,
+                                                       count);
+    if (!image) return std::unexpected(image.error());
+    auto view = rhi::create_image_view(transfer.device, image->handle(), format,
+                                       VK_IMAGE_ASPECT_COLOR_BIT, mips,
+                                       VK_IMAGE_VIEW_TYPE_2D_ARRAY, 0, 0, count,
+                                       component_mapping(first.swizzle));
+    if (!view) return std::unexpected(view.error());
+    TextureArray out;
+    out.image = std::move(*image);
+    out.view = std::move(*view);
+    out.layers = count;
+    out.mip_levels = mips;
+    out.format = format;
+    return out;
 }
 
 } // namespace engine::asset

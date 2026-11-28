@@ -229,6 +229,13 @@ Details the contract leaves open, as implemented:
   playing for a `QUAT_SCENE` / `QUAT_PLAY` run); `unavailable` in the physics
   / character demo modes, which own their physics world. `scene.save` /
   `scene.load` are refused (`failed`) while playing.
+- **Terrain material** (R26.1): `scene.update` with `{"terrain": {"material":
+  "alpine"}}` switches the ground to a preset; an object (`preset`,
+  `blend_depth`, `triplanar_slope`, `stochastic`, `macro_*`, `far_*`,
+  `layers` with texture set, tint, tiling and slope / altitude / concavity /
+  flow / paint rules) tweaks it. Shading only: nothing regenerates. Errors
+  name the field (`terrain.material: layers[1].texture: expected one of
+  ...`). The full field list is in quat-mcp's `components.md`.
 - **Terrain queries** (issue #39) use the terrain the runtime drives: the
   first entity with a `terrain` component. The runtime samples its tiles
   relative to the terrain's anchor; `world.ground_height` places the anchor

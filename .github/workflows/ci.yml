@@ -142,7 +142,7 @@ jobs:
             !assets/meshes/polyhaven/*/*.cook-stamp
             assets/textures/polyhaven
             assets/hdri/polyhaven
-          key: showcase-downloads-${{ hashFiles('assets/showcase/**/assets.json', 'scripts/fetch-polyhaven.py') }}
+          key: showcase-downloads-${{ hashFiles('assets/showcase/**/assets.json', 'assets/terrain/layers.json', 'scripts/fetch-polyhaven.py') }}
 
       - name: Restore showcase cooked models
         id: showcase-cooked
@@ -152,7 +152,8 @@ jobs:
           path: |
             assets/meshes/polyhaven/*/*.glb
             assets/meshes/polyhaven/*/*.cook-stamp
-          key: showcase-cooked-${{ hashFiles('assets/showcase/**/assets.json', 'src/cook/**', 'include/engine/cook/**', 'tools/quat-cook/**') }}
+            assets/terrain/sets
+          key: showcase-cooked-${{ hashFiles('assets/showcase/**/assets.json', 'assets/terrain/layers.json', 'src/cook/**', 'include/engine/cook/**', 'tools/quat-cook/**') }}
 
       - name: Fetch showcase assets
         id: showcase-fetch
@@ -160,7 +161,7 @@ jobs:
         continue-on-error: true
         timeout-minutes: 25
         run: |
-          for manifest in assets/showcase/*/assets.json; do
+          for manifest in assets/showcase/*/assets.json assets/terrain/layers.json; do
             python3 scripts/fetch-polyhaven.py "$manifest" --cook-with build/release/quat-cook
           done
 
@@ -183,6 +184,7 @@ jobs:
           path: |
             assets/meshes/polyhaven/*/*.glb
             assets/meshes/polyhaven/*/*.cook-stamp
+            assets/terrain/sets
           key: ${{ steps.showcase-cooked.outputs.cache-primary-key }}
 
       # Real engine frames on lavapipe under Xvfb (scripts/ci-screenshots.sh),

@@ -244,6 +244,7 @@ void ShadowPass::draw_material_casters(VkCommandBuffer cmd, const rhi::ManagedPi
     push.instances = frame_instances_;
     push.to_light = frame_to_light_;
     push.cascade = cascade;
+    push.alpha_hash = alpha_hash_ ? 1U : 0U;
     vkCmdPushConstants(cmd, pipeline.layout(), kPushStages, 0, sizeof(push), &push);
     std::uint32_t bound = std::numeric_limits<std::uint32_t>::max();
     for (const FrameDraw& fd : draws) {
