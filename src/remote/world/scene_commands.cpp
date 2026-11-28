@@ -8,6 +8,7 @@
 #include <nlohmann/json.hpp>
 
 #include "engine/scene/component_json.hpp"
+#include "engine/scene/component_registry.hpp"
 #include "engine/scene/components.hpp"
 #include "engine/scene/scene.hpp"
 #include "internal.hpp"
@@ -45,11 +46,16 @@ std::size_t destroy_subtree(scene::Scene& scene, entt::entity root) {
 
 RpcResult scene_components(const Json&) {
     Json out = Json::array();
-    for (const scene::ComponentInfo& c : scene::component_infos()) {
-        out.push_back({{"name", std::string(c.name)},
-                       {"summary", std::string(c.summary)},
-                       {"addable", c.addable},
-                       {"writable", c.writable}});
+    const scene::ComponentRegistry& registry = scene::component_registry();
+    for (std::size_t i = 0; i < registry.size(); ++i) {
+        const scene::ComponentCodec& c = registry.at(i);
+        Json entry = {{"name", c.name},
+                      {"summary", c.summary},
+                      {"addable", c.addable},
+                      {"writable", c.writable}};
+        // Field-table components (game modules, G17.1) describe their fields.
+        if (c.schema) entry["schema"] = *c.schema;
+        out.push_back(std::move(entry));
     }
     return out;
 }

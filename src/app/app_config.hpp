@@ -6,10 +6,15 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <memory>
 #include <optional>
 #include <string>
 
 #include "engine/project/game_project.hpp"
+
+namespace engine::game {
+class ModuleSet;
+}
 
 namespace quat::app {
 
@@ -49,6 +54,9 @@ struct AppConfig {
     bool remote_allowed = true;
 
     std::optional<OpenGame> game;
+    // The game's native modules (G17.1), registered before the start scene
+    // loads; null: none (the stock players).
+    std::shared_ptr<const engine::game::ModuleSet> modules;
 };
 
 // QUAT_MAX_FRAMES, QUAT_SCREENSHOT, QUAT_NO_UI and QUAT_WINDOW_SIZE.

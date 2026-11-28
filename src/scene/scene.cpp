@@ -79,7 +79,7 @@ bool Scene::set_parent(entt::entity child, entt::entity parent) {
     return true;
 }
 
-void Scene::tick(float dt, const FootGroundProbe& ground) {
+void Scene::tick(float dt, const FootGroundProbe& ground, const SceneTickHooks& hooks) {
     // Transforms first: the animation system folds each skinned entity's
     // current Transform.world into its skinning matrices, so worlds must be
     // up to date before sampling (animation writes no transforms itself).
@@ -87,6 +87,7 @@ void Scene::tick(float dt, const FootGroundProbe& ground) {
         QUAT_ZONE_C("transform_system", core::ProfileCategory::system);
         transform_system(registry_);
     }
+    if (hooks.post_transform) hooks.post_transform(dt);
     {
         QUAT_ZONE_C("animation_system", core::ProfileCategory::system);
         animation_system(registry_, dt, ground);
@@ -99,6 +100,7 @@ void Scene::tick(float dt, const FootGroundProbe& ground) {
         QUAT_ZONE_C("world_clock_system", core::ProfileCategory::system);
         world_clock_system(registry_, dt); // date / time, sun and sky (R22.1)
     }
+    if (hooks.pre_render) hooks.pre_render(dt);
     QUAT_ZONE_C("render_collect_system", core::ProfileCategory::system);
     render_collect_system(registry_, draw_list_);
 }

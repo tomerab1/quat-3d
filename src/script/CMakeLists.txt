@@ -16,6 +16,7 @@ add_library(engine_script STATIC
     script_api_scene.cpp
     script_api_services.cpp
     script_api_input.cpp
+    script_api_modules.cpp
     script_source.cpp
     script_runtime.cpp
     script_files.cpp)

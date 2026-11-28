@@ -1,5 +1,7 @@
 #include "app/application.hpp"
 
+#include "engine/game/module_set.hpp"
+
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -289,6 +291,12 @@ bool Application::init_subsystems() {
 void Application::init_scripts() {
     input_.init();
     input_runtime_.init(project_root(), user_input_file());
+    if (config_.modules) { // G17.1: before the scripts, which take their Lua modules
+        if (auto ok = config_.modules->apply_input(input_runtime_.actions()); !ok) {
+            std::fprintf(stderr, "[game][error] module input actions: %s\n", ok.error().message.c_str());
+        }
+        world_.modules().bind(config_.modules.get(), &input_runtime_.actions(), project_root());
+    }
     engine::script::ScriptServices services;
     services.input = &input_.state();
     services.actions = &input_runtime_.actions();

@@ -109,6 +109,10 @@ struct MethodInfo {
     std::string name;
     std::string summary;
     bool        deferred = false;
+    // JSON Schemas of the parameters and the result (game-module methods,
+    // G17.1); null when the method declares none. rpc.methods reports them.
+    Json        params_schema = nullptr;
+    Json        result_schema = nullptr;
 };
 
 class RpcServer {
@@ -136,6 +140,9 @@ public:
 
     void add_method(std::string name, std::string summary, SyncHandler handler);
     void add_deferred_method(std::string name, std::string summary, DeferredHandler handler);
+    // Attaches JSON Schemas to a registered method (rpc.methods lists them);
+    // false when no method has that name.
+    bool set_method_schemas(const std::string& name, Json params_schema, Json result_schema);
     [[nodiscard]] std::vector<MethodInfo> methods() const;
 
     // Invoke a synchronous method in-process. Deferred methods are rejected

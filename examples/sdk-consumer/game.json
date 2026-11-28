@@ -1,0 +1,9 @@
+{
+  "format": 2,
+  "name": "SDK Consumer",
+  "id": "dev.quat3d.sdk-consumer",
+  "version": "0.1.0",
+  "start_scene": "assets/scenes/spinners.json",
+  "modules": ["sdk_consumer"],
+  "engine": ">=0.1,<0.2"
+}

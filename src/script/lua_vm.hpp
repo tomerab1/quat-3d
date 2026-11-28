@@ -85,6 +85,9 @@ public:
     // Adds a global every script sees. Tables (and sol2 usertype tables) are
     // exposed through read-only proxies.
     void expose(std::string_view name, const sol::object& value);
+    // What require("<name>") returns, without a script file: a native module
+    // (G17.1). It shadows assets/scripts/<name>.lua.
+    void preload(std::string_view name, const sol::object& value);
 
     // Compiles `source` as script `path` and runs it once in a fresh
     // environment, under the call limits. The module is what the chunk

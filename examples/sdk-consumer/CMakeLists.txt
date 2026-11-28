@@ -31,6 +31,18 @@ else()
     target_compile_options(sdk_consumer_module PRIVATE -Wall -Wextra -Wshadow -Werror)
 endif()
 
+# The native module (ROADMAP G17.1) and the game's own players built from
+# it: sdk_consumer_player (+ -shipping, -editor) with a generated main().
+quat_add_game_module(sdk_consumer_game_module
+    SOURCES src/spinner_module.cpp
+    REGISTER consumer::register_module
+    NAME sdk_consumer)
+target_link_libraries(sdk_consumer_game_module PUBLIC sdk_consumer_module)
+quat_add_game(sdk_consumer_player
+    PROJECT_DIR ${CMAKE_CURRENT_SOURCE_DIR}
+    ASSETS assets
+    MODULES sdk_consumer_game_module)
+
 quat_add_game(sdk_consumer_game
     SOURCES src/main.cpp
     ASSETS assets
@@ -39,7 +51,7 @@ quat_add_game(sdk_consumer_game
 
 enable_testing()
 add_executable(sdk_consumer_tests tests/spinner_test.cpp)
-target_link_libraries(sdk_consumer_tests PRIVATE sdk_consumer_module GTest::gtest GTest::gtest_main)
+target_link_libraries(sdk_consumer_tests PRIVATE sdk_consumer_game_module GTest::gtest GTest::gtest_main)
 quat_copy_runtime_dlls(sdk_consumer_tests) # Windows: the SDK's dependency DLLs
 add_test(NAME sdk_consumer_tests COMMAND sdk_consumer_tests)
 # The game runs headless: it checks its data root and steps its world.

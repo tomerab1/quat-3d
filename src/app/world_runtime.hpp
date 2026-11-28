@@ -25,6 +25,7 @@
 
 #include "app/audio_runtime.hpp"
 #include "app/demo_scenes.hpp"
+#include "app/module_runtime.hpp"
 #include "app/play_mode.hpp"
 #include "app/grass_runtime.hpp"
 #include "app/particle_runtime.hpp"
@@ -113,6 +114,9 @@ public:
     // with the play physics world when play starts.
     void init_scripts(const std::filesystem::path& project_root,
                       engine::script::ScriptServices services);
+    // Game modules (G17.1): their systems run in play; their Lua modules join
+    // the script runtime, so bind them before init_scripts().
+    [[nodiscard]] ModuleRuntime& modules() { return modules_; }
     [[nodiscard]] engine::script::ScriptRuntime* scripts() {
         return scripts_ ? &*scripts_ : nullptr;
     }
@@ -274,6 +278,7 @@ private:
     std::vector<std::uint32_t>     probe_owners_; // foot_probe_ scratch: owners to skip
     std::optional<AudioRuntime>   audio_;
     std::optional<engine::script::ScriptRuntime> scripts_;
+    ModuleRuntime                                modules_;
     engine::script::ScriptServices               script_services_;
 };
 

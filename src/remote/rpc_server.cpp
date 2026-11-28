@@ -206,7 +206,7 @@ std::size_t RpcServer::client_count() const { return impl_ ? impl_->clients.size
 
 void RpcServer::add_method(std::string name, std::string summary, SyncHandler handler) {
     Method m;
-    m.info = {name, std::move(summary), false};
+    m.info = {name, std::move(summary), false, nullptr, nullptr};
     m.sync = std::move(handler);
     impl_->methods.insert_or_assign(std::move(name), std::move(m));
 }
@@ -214,9 +214,17 @@ void RpcServer::add_method(std::string name, std::string summary, SyncHandler ha
 void RpcServer::add_deferred_method(std::string name, std::string summary,
                                     DeferredHandler handler) {
     Method m;
-    m.info = {name, std::move(summary), true};
+    m.info = {name, std::move(summary), true, nullptr, nullptr};
     m.deferred = std::move(handler);
     impl_->methods.insert_or_assign(std::move(name), std::move(m));
+}
+
+bool RpcServer::set_method_schemas(const std::string& name, Json params_schema, Json result_schema) {
+    const auto it = impl_->methods.find(name);
+    if (it == impl_->methods.end()) return false;
+    it->second.info.params_schema = std::move(params_schema);
+    it->second.info.result_schema = std::move(result_schema);
+    return true;
 }
 
 std::vector<MethodInfo> RpcServer::methods() const {
@@ -249,12 +257,15 @@ void RpcServer::Impl::register_builtins() {
     hello.info = {"session.hello",
                   "Authenticate ({token}) and get the protocol version. Required as the first "
                   "call on every connection.",
-                  false};
+                  false,
+                  nullptr,
+                  nullptr};
     hello.sync = [](const Json&) -> RpcResult { return Json::object(); };
     methods.insert_or_assign("session.hello", std::move(hello));
 
     Method list;
-    list.info = {"rpc.methods", "List every method with a one-line summary.", false};
+    list.info = {"rpc.methods", "List every method with a one-line summary.", false, nullptr,
+                 nullptr};
     list.sync = [this](const Json&) -> RpcResult {
         std::vector<const Method*> sorted;
         for (const auto& [name, m] : methods) sorted.push_back(&m);
@@ -263,9 +274,12 @@ void RpcServer::Impl::register_builtins() {
         });
         Json out = Json::array();
         for (const Method* m : sorted) {
-            out.push_back({{"name", m->info.name},
-                           {"summary", m->info.summary},
-                           {"deferred", m->info.deferred}});
+            Json entry = {{"name", m->info.name},
+                          {"summary", m->info.summary},
+                          {"deferred", m->info.deferred}};
+            if (!m->info.params_schema.is_null()) entry["params_schema"] = m->info.params_schema;
+            if (!m->info.result_schema.is_null()) entry["result_schema"] = m->info.result_schema;
+            out.push_back(std::move(entry));
         }
         return out;
     };

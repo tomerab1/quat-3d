@@ -64,7 +64,7 @@ jobs:
 
       - name: Build
         if: steps.configure.outcome == 'success'
-        run: cmake --build --preset ${{ matrix.preset }} --target game quat-player quat-player-shipping quat-pack
+        run: cmake --build --preset ${{ matrix.preset }} --target game quat-player quat-player-shipping quat-pack coin-collector
 
       # Tags must look like v1.2.3 or v1.2.3-rc.1: the version ends up in file
       # names, Info.plist and the release title.
@@ -96,8 +96,10 @@ jobs:
           echo "archive=dist/$(basename "$archive")" >> "$GITHUB_OUTPUT"
           ls -l dist
 
-      # The sample game through quat-pack (packaged before any smoke test: the
-      # macOS one uninstalls Homebrew's Vulkan, which the bundle copies from).
+      # The sample game through quat-pack with its own player (a native game
+      # module since G17.1: the stock quat-player refuses its game.json),
+      # packaged before any smoke test (the macOS one uninstalls Homebrew's
+      # Vulkan, which the bundle copies from).
       # A package build of quat-pack has no source-tree defaults, so the
       # shaders and the layout scripts are passed explicitly. Tags package the
       # game's own version; other runs add the commit as the build id.
@@ -109,7 +111,7 @@ jobs:
         run: |
           build_id=()
           if [ "$GITHUB_REF_TYPE" != "tag" ]; then build_id=(--build-id "dev.${GITHUB_SHA::7}"); fi
-          "$BUILD_DIR/quat-pack" games/coin-collector --player "$BUILD_DIR/quat-player" \
+          "$BUILD_DIR/quat-pack" games/coin-collector --player "$BUILD_DIR/games/coin-collector/coin-collector" \
             --out dist-game --shaders cooked/shaders --engine-root . "${build_id[@]}" | tee pack.log
           archive=$(sed -n 's/^\[pack\] package //p' pack.log | tail -n1)
           [ -n "$archive" ] || { echo "::error::quat-pack wrote no package"; exit 1; }

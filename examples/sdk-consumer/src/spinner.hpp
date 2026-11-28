@@ -17,6 +17,9 @@ class RpcServer;
 namespace engine::scene {
 class Scene;
 }
+namespace engine::game {
+class Registrar;
+}
 
 namespace consumer {
 
@@ -40,5 +43,9 @@ void register_spinner_methods(engine::remote::RpcServer& server, engine::scene::
 // untrusted (a save file): malformed entries fail with a precise error.
 [[nodiscard]] std::expected<std::size_t, engine::core::Error>
 load_spinners(entt::registry& registry, const nlohmann::json& chunk);
+
+// The native module (G17.1, spinner_module.cpp): Spinner as a field-table
+// component, spinner_system in the pre_physics phase, "consumer.count".
+[[nodiscard]] std::expected<void, engine::core::Error> register_module(engine::game::Registrar& registrar);
 
 } // namespace consumer

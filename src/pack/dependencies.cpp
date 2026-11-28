@@ -71,6 +71,7 @@ public:
     Collector(fs::path root) : root_(std::move(root)) {}
 
     std::expected<GameFiles, core::Error> run(const project::GameProject& project) {
+        native_modules_ = project.modules;
         add(std::string(project::k_game_project_file), FileKind::project, "the game project");
         if (!project.icon.empty()) add(project.icon, FileKind::icon, "game.json icon");
         if (auto ok = add_existing(project.start_scene, "game.json start_scene", FileKind::scene);
@@ -261,6 +262,9 @@ private:
         for (const LuaLiteral& lit : lua_string_literals(text)) {
             const std::string where = "script '" + script + "' line " + std::to_string(lit.line);
             if (lit.required) {
+                // A native module's Lua module (G17.1) shares the module's
+                // name and has no file: require("coin_collector").
+                if (std::ranges::find(native_modules_, lit.text) != native_modules_.end()) continue;
                 std::string module = lit.text;
                 if (module.ends_with(".lua")) module.resize(module.size() - 4);
                 std::replace(module.begin(), module.end(), '.', '/');
@@ -316,6 +320,7 @@ private:
     std::deque<std::pair<Scan, std::string>>         queue_;
     std::map<std::string, std::vector<PathRewrite>>  rewrites_;
     std::vector<std::string>                         warnings_;
+    std::vector<std::string>                         native_modules_; // game.json "modules"
 };
 
 void rewrite_string(json& value, std::span<const PathRewrite> rewrites, std::size_t& changed) {

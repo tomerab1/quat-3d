@@ -27,6 +27,7 @@ add_library(engine_scene STATIC
     component_json.cpp
     component_json_common.cpp
     component_registry.cpp
+    field_table.cpp
     lens_json.cpp
     particle_json.cpp
     script_component.cpp

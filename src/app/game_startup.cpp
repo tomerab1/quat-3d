@@ -10,9 +10,11 @@
 
 namespace quat::app {
 
-std::expected<void, engine::core::Error> boot_player(AppConfig& config) {
+std::expected<void, engine::core::Error> boot_player(AppConfig& config,
+                                                     const std::optional<std::filesystem::path>& default_game) {
     GameBootInputs inputs;
     inputs.game_override = engine::core::env_path("QUAT_GAME");
+    if (!inputs.game_override) inputs.game_override = default_game; // a per-game player (G17.1)
     inputs.data_root = data_root(); // exits with a [fatal] line when there is none
 #if defined(QUAT_SHIPPING)
     inputs.shipping_build = true; // QUAT_GAME ignored, remote control compiled out
@@ -29,8 +31,10 @@ std::expected<void, engine::core::Error> boot_player(AppConfig& config) {
     return {};
 }
 
-void open_game_from_environment(AppConfig& config) {
-    const auto game = engine::core::env_path("QUAT_GAME");
+void open_game_from_environment(AppConfig& config,
+                                const std::optional<std::filesystem::path>& default_game) {
+    auto game = engine::core::env_path("QUAT_GAME");
+    if (!game) game = default_game; // a per-game editor (G17.1)
     if (!game) return;
     GameBootInputs inputs;
     inputs.game_override = game;

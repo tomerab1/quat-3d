@@ -1,9 +1,17 @@
 {
-  "format": 1,
+  "format": 2,
   "name": "Coin Collector",
   "id": "dev.quat3d.coin-collector",
   "version": "0.1.0",
   "start_scene": "assets/scenes/coin_collector.json",
-  "window": { "title": "Coin Collector", "width": 1280, "height": 720 },
-  "icon": "assets/icons/coin-collector.png"
+  "window": {
+    "title": "Coin Collector",
+    "width": 1280,
+    "height": 720
+  },
+  "icon": "assets/icons/coin-collector.png",
+  "modules": [
+    "coin_collector"
+  ],
+  "engine": ">=0.1,<0.2"
 }

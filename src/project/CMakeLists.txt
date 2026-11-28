@@ -6,6 +6,7 @@
 # ---------------------------------------------------------------------------
 add_library(engine_project STATIC
     game_project.cpp
+    engine_range.cpp
     package_manifest.cpp
     build_job.cpp)
 target_link_libraries(engine_project PUBLIC engine_flags engine_core nlohmann_json::nlohmann_json)

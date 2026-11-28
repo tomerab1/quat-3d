@@ -297,6 +297,15 @@ std::expected<std::unique_ptr<LuaVm>, core::Error> LuaVm::create(const std::file
     return vm;
 }
 
+void LuaVm::preload(std::string_view name, const sol::object& value) {
+    lua_State* L = state();
+    lua_getfield(L, LUA_REGISTRYINDEX, k_loaded_key);
+    value.push(L);
+    const std::string key = std::string(name) + ".lua"; // require()'s cache key
+    lua_setfield(L, -2, key.c_str());
+    lua_pop(L, 1);
+}
+
 LuaVm::~LuaVm() {
     sandbox_ = sol::table(); // release the reference before the state closes
 }

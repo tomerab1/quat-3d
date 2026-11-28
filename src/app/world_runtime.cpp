@@ -199,6 +199,9 @@ void WorldRuntime::init_scripts(const std::filesystem::path& project_root,
     if (const char* env = std::getenv("QUAT_SCRIPT_HOT_RELOAD"); env != nullptr) {
         options.watch = std::strcmp(env, "0") != 0;
     }
+    if (const engine::game::ModuleSet* m = modules_.modules(); m != nullptr) {
+        options.modules.assign(m->lua_modules().begin(), m->lua_modules().end());
+    }
     services.project_root = project_root;
     script_services_ = std::move(services);
     scripts_.emplace(std::move(options));
@@ -211,6 +214,7 @@ void WorldRuntime::fill_remote_targets(RemoteBridgeTargets& targets) {
     targets.terrain_heightmap = &terrain_heightmap_;
     targets.terrain_anchor = &terrain_anchor_;
     targets.navmesh = &nav_.mesh;
+    targets.modules = &modules_;
     targets.spin_entity = &demo_.spin_entity;
     targets.demo_physics = &demo_.physics_world;
     targets.scripts = scripts();
@@ -295,6 +299,12 @@ void WorldRuntime::simulate(engine::scene::Scene& scene, std::uint64_t frame_num
     // still resolves transforms and animates).
     const bool simulates = demo_.physics_world.has_value() ||
                            (play != nullptr && play_physics_.has_value());
+    // Game module systems (G17.1) are gameplay: they run in play.
+    using engine::game::Phase;
+    const bool run_modules = play != nullptr && modules_.active();
+    engine::physics::PhysicsWorld* const physics =
+        play_physics_ ? &*play_physics_ : (demo_.physics_world ? &*demo_.physics_world : nullptr);
+    if (run_modules) modules_.run(Phase::input, scene, physics, frame_number, sim_dt);
     engine::core::SimSlices slices =
         engine::core::slice_sim_dt(sim_dt, engine::physics::PhysicsWorld::max_update_dt);
     if (slices.count == 0) slices = {.count = 1, .dt = 0.0F};
@@ -303,9 +313,18 @@ void WorldRuntime::simulate(engine::scene::Scene& scene, std::uint64_t frame_num
             QUAT_ZONE_C("transform_system", engine::core::ProfileCategory::system);
             engine::scene::transform_system(scene.registry());
         }
+        if (run_modules) modules_.run(Phase::pre_physics, scene, physics, frame_number, slices.dt);
         simulate_slice(scene, slices.dt, play);
+        if (run_modules) modules_.run(Phase::post_physics, scene, physics, frame_number, slices.dt);
     }
-    scene.tick(sim_dt, foot_probe_); // advances any Animators by simulated time
+    if (run_modules && !simulates) { // no physics this frame: once, on the frame's time
+        modules_.run(Phase::pre_physics, scene, physics, frame_number, sim_dt);
+        modules_.run(Phase::post_physics, scene, physics, frame_number, sim_dt);
+    }
+    // Advances any Animators by simulated time; modules' post_transform and
+    // pre_render phases run inside it.
+    scene.tick(sim_dt, foot_probe_,
+               run_modules ? modules_.hooks(scene, physics, frame_number) : engine::scene::SceneTickHooks{});
 
     // Replication: the host broadcasts moved entities (fresh world poses).
     QUAT_ZONE_C("net_publish", engine::core::ProfileCategory::system);

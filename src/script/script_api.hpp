@@ -5,6 +5,7 @@
 
 #include <cstdint>
 #include <functional>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -12,6 +13,8 @@
 #include <entt/entity/fwd.hpp>
 #include <glm/glm.hpp>
 #include <nlohmann/json_fwd.hpp>
+
+#include "engine/script/module_bind.hpp"
 
 #include "engine/input/actions.hpp"
 #include "engine/script/script_runtime.hpp"
@@ -78,6 +81,8 @@ void register_math(LuaVm& vm);
 void register_entity(LuaVm& vm, ApiContext& ctx);
 void register_scene(LuaVm& vm, ApiContext& ctx);
 void register_services(LuaVm& vm, ApiContext& ctx);
+// Native Lua modules of game modules (G17.1), reached with require(name).
+void register_modules(LuaVm& vm, std::span<const LuaModuleDesc> modules);
 void register_input(LuaVm& vm, ApiContext& ctx);
 
 // Transform helpers shared by the entity and scene bindings.
