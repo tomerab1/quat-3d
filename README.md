@@ -220,6 +220,7 @@ CMake options:
 | `ENGINE_EDITOR` | `ON` | Build the editor layer |
 | `ENGINE_PROFILE` | `ON` for Debug / RelWithDebInfo and the `release` preset, else `OFF` | Compile in the [Tracy](https://github.com/wolfpld/tracy) profiler client (on demand: no cost until a viewer connects) — see [Profiling](#profiling) |
 | `ENGINE_PACKAGE_BUILD` | `OFF` | Release archives: no source-tree paths compiled in |
+| `ENGINE_WERROR` | `OFF` (CI: `ON`) | Treat compiler warnings in the engine's own code as errors |
 
 ### Linux
 

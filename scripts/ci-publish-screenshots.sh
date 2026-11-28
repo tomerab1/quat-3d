@@ -9,7 +9,8 @@
 #   index.md                             every run, newest first, images inline
 #
 # Commits are append-only (a new commit on top of the remote branch, never a
-# force-push); a push that loses a race re-applies the run on the new tip.
+# force-push); a push that loses a race re-applies the run on the new tip, so
+# concurrent publishes are safe.
 # Retention: each publish keeps the newest KEEP_RUNS runs (default 10) per
 # key and the newest KEEP_DEFAULT_RUNS (default 20) of the default branch
 # (DEFAULT_BRANCH, default master); older run directories are deleted from
@@ -155,8 +156,11 @@ apply_run() {
     commit --quiet -m "Screenshots: $key @ $short (run $GITHUB_RUN_ID)"
 }
 
+# The workflow runs publishes concurrently (no concurrency group: one would
+# cancel queued publishes), so losing a push race is normal: re-apply on the
+# new tip with a growing, jittered back-off so racing jobs spread out.
 pushed=0
-for attempt in 1 2 3 4 5; do
+for attempt in $(seq 1 12); do
   checkout_tip
   apply_run
   if git -C "$work" push --quiet origin "HEAD:refs/heads/$BRANCH"; then
@@ -164,7 +168,7 @@ for attempt in 1 2 3 4 5; do
     break
   fi
   echo "ci-publish-screenshots: push attempt $attempt lost a race; retrying on the new tip" >&2
-  sleep $((attempt * 3))
+  sleep $((attempt * 2 + RANDOM % 5))
 done
 [ "$pushed" -eq 1 ] || die "could not push to $BRANCH"
 commit="$(git -C "$work" rev-parse HEAD)"

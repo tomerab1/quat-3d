@@ -1,0 +1,16 @@
+# Keeps the SHA-pinned GitHub Actions current (issue #73): one grouped PR a
+# week for the workflows and the shared setup-build action. vcpkg, Slang and
+# the Vulkan SDK are pinned by hand (.github/actions/setup-build/action.yml).
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directories:
+      - /
+      - /.github/actions/setup-build
+    schedule:
+      interval: weekly
+    groups:
+      github-actions:
+        patterns: ["*"]
+    commit-message:
+      prefix: "[S] ci:"
