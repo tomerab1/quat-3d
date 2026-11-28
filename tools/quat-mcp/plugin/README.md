@@ -50,7 +50,12 @@ Drive a running quat-3d engine from Claude Code: the
      `/home/me/quat-3d-linux/quat-mcp`,
      `C:\Games\quat-3d\quat-mcp.exe` or
      `/Applications/Quat3D.app/Contents/MacOS/quat-mcp`; for a source build
-     not on your PATH, `tools/quat-mcp/target/release/quat-mcp`.
+     not on your PATH, the absolute path of
+     `tools/quat-mcp/target/release/quat-mcp`. A relative path resolves
+     against the directory Claude Code was started in. The default
+     `quat-mcp` needs `~/.cargo/bin` on the PATH of the Claude Code process,
+     which an app launched from the desktop often lacks: if `/mcp` shows the
+     server failed, give an absolute path.
    - `engine_port` — default `7878`, the engine's `QUAT_REMOTE` value.
    - `project_root` — where `asset_fetch` saves downloaded models (into its
      `assets/`, where the engine finds them). Recommended for a release: the
