@@ -181,6 +181,21 @@ bool FrameRenderer::create_passes(const engine::rhi::Device& device,
             std::fprintf(stderr, "[warn] hi-z pass unavailable (CPU cascade fit): %s\n",
                          hiz.error().message.c_str());
         }
+        // R20 depth of field + motion blur, optional for the same reason.
+        if (auto dof = engine::renderer::DofPass::create(device, allocator, pipeline_cache,
+                                                         shader_dir)) {
+            f.dof = std::move(*dof);
+        } else if (&f == &frames_[0]) {
+            std::fprintf(stderr, "[warn] depth of field unavailable: %s\n",
+                         dof.error().message.c_str());
+        }
+        if (auto mb = engine::renderer::MotionBlurPass::create(device, allocator, pipeline_cache,
+                                                               shader_dir)) {
+            f.motion_blur = std::move(*mb);
+        } else if (&f == &frames_[0]) {
+            std::fprintf(stderr, "[warn] motion blur unavailable: %s\n",
+                         mb.error().message.c_str());
+        }
         if (auto gtao = engine::renderer::GtaoPass::create(device, allocator, pipeline_cache,
                                                            shader_dir)) {
             f.gtao = std::move(*gtao);

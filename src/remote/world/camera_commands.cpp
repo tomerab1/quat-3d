@@ -8,6 +8,7 @@
 #include <nlohmann/json.hpp>
 
 #include "engine/scene/components.hpp"
+#include "engine/scene/lens_json.hpp"
 #include "engine/scene/scene.hpp"
 #include "internal.hpp"
 
@@ -16,6 +17,12 @@ namespace engine::remote::world {
 namespace {
 
 constexpr float k_max_pitch = 89.0F;
+
+[[nodiscard]] Json lens_json(const renderer::PhysicalCamera& l) {
+    Json out = Json::object();
+    scene::write_lens_fields(out, l);
+    return out;
+}
 
 struct ClipLimits {
     float       lo;
@@ -37,7 +44,8 @@ constexpr float k_cut_turn_deg = 30.0F;
                 {"near", p.near_m},
                 {"far", p.far_m},
                 {"near_auto", !p.near_override.has_value()},
-                {"far_auto", !p.far_override.has_value()}};
+                {"far_auto", !p.far_override.has_value()},
+                {"lens", lens_json(p.lens)}};
 }
 
 // A clip-plane override: absent keeps the current one, null returns to the
@@ -57,6 +65,20 @@ void read_clip(core::JsonFields& f, std::string_view key, std::optional<float>& 
         return;
     }
     out = value;
+}
+
+// Merges the optional `lens` object (R20) into `lens`; fields it omits keep
+// their values. Errors land in `f` under "lens.<field>".
+void read_lens(core::JsonFields& f, renderer::PhysicalCamera& lens) {
+    const Json* v = f.raw("lens");
+    if (v == nullptr || v->is_null()) return;
+    if (!v->is_object()) {
+        f.fail("lens", "expected an object of lens fields");
+        return;
+    }
+    core::JsonFields l(*v, "lens");
+    scene::read_lens_fields(l, lens);
+    if (auto ok = finish(l); !ok) f.fail("lens", ok.error().message);
 }
 
 [[nodiscard]] glm::vec3 forward_of(const CameraPose& p) {
@@ -107,6 +129,7 @@ void read_view(core::JsonFields& f, CameraPose& pose) {
     if (pose.near_override && pose.far_override && *pose.far_override <= *pose.near_override) {
         f.fail("far", "must be greater than near");
     }
+    read_lens(f, pose.lens);
     if (has_target && has_angles) f.fail("look_at", "give either look_at or yaw_deg/pitch_deg, not both");
     if (has_target && f.ok()) {
         if (glm::length(target - pose.position) < 1e-4F) {
@@ -230,12 +253,12 @@ void screenshot(Context& ctx, const Json& params, Responder responder) {
 void register_camera_commands(RpcServer& server, const ContextPtr& ctx) {
     server.add_method("camera.get",
                       "View camera: {position, yaw_deg (0 = +X, 90 = +Z), pitch_deg (up > 0), "
-                      "fov_deg, near, far, near_auto, far_auto}.",
+                      "fov_deg, near, far, near_auto, far_auto, lens}.",
                       [ctx](const Json& p) { return camera_get(*ctx, p); });
     server.add_method("camera.set",
                       "Move the view camera: {position?, look_at? | yaw_deg?/pitch_deg?, "
                       "fov_deg?, near?, far? (null = derived from the scene), cut? (default: "
-                      "a jump > 10% of far or a turn > 30 degrees)}; returns camera.get.",
+                      "a jump > 10% of far or a turn > 30 degrees), lens?}; returns camera.get.",
                       [ctx](const Json& p) { return camera_set(*ctx, p); });
     server.add_method("camera.frame",
                       "Point the view camera at an entity (and its children) or, without "

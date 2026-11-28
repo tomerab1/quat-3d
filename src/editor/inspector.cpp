@@ -355,6 +355,10 @@ struct ComponentInspector<scene::Camera> {
         }
         ui::prop_note("Put the camera on a child entity offset from the body; on the mesh itself "
                       "the view sits inside the geometry.");
+        // R20 physical lens: exposure (with exposure "physical"), depth of
+        // field and the motion blur shutter.
+        ui::prop_separator("Lens");
+        (void)draw_lens_controls(camera.lens, camera.fov_y);
     }
 };
 

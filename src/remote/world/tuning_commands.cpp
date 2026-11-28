@@ -2,11 +2,13 @@
 // PBR factors an entity is drawn with) — ROADMAP A8.
 
 #include <string>
+#include <utility>
 #include <vector>
 
 #include <glm/glm.hpp>
 #include <nlohmann/json.hpp>
 
+#include "engine/asset/cube_lut.hpp"
 #include "engine/asset/material_asset.hpp"
 #include "engine/renderer/render_settings.hpp"
 #include "engine/scene/components.hpp"
@@ -50,13 +52,32 @@ RpcResult settings_get(Context& ctx, const Json& params) {
     return scene::encode_render_settings(**settings, *group);
 }
 
+// A changed look LUT path must name a readable, valid .cube file inside the
+// project (the renderer loads it on the next frame; checking here gives the
+// caller the precise error instead of a log line).
+[[nodiscard]] std::expected<void, RpcError> check_lut(Context& ctx, const std::string& path) {
+    if (path.empty()) return {};
+    if (!ctx.services.project_root) return unavailable("the project root (grading.lut)");
+    auto file = confine_to_root(ctx.services.project_root(), path);
+    if (!file) return bad_params("grading.lut: " + file.error().message);
+    if (auto lut = asset::load_cube_lut(*file); !lut) {
+        return bad_params("grading.lut: " + lut.error().message);
+    }
+    return {};
+}
+
 RpcResult settings_set(Context& ctx, const Json& params) {
     if (!params.is_object()) return bad_params("expected {<group>: {<field>: value}}");
     auto settings = settings_of(ctx);
     if (!settings) return std::unexpected(settings.error());
-    if (auto ok = scene::apply_render_settings_json(**settings, params, /*strict=*/true); !ok) {
+    renderer::RenderSettings next = **settings;
+    if (auto ok = scene::apply_render_settings_json(next, params, /*strict=*/true); !ok) {
         return bad_params(ok.error().message);
     }
+    if (next.grading.lut != (*settings)->grading.lut) {
+        if (auto ok = check_lut(ctx, next.grading.lut); !ok) return std::unexpected(ok.error());
+    }
+    **settings = std::move(next);
     return scene::encode_render_settings(**settings);
 }
 

@@ -176,6 +176,13 @@ struct RemoteBridge::Impl {
         p.yaw_deg = glm::degrees(*t.cam_yaw);
         p.pitch_deg = glm::degrees(*t.cam_pitch);
         p.fov_deg = glm::degrees(*t.cam_fov_y);
+        if (t.cam_lens != nullptr) p.lens = *t.cam_lens;
+#ifndef ENGINE_EDITOR
+        // Without the editor the view renders through the scene camera: report
+        // its lens, so camera.set (which merges into this pose) writes the
+        // authored lens back instead of the fly camera's defaults.
+        p.lens = engine::scene::active_camera_lens(t.scene->registry(), p.lens);
+#endif
         if (t.cam_near_override != nullptr) p.near_override = *t.cam_near_override;
         if (t.cam_far_override != nullptr) p.far_override = *t.cam_far_override;
         const engine::scene::ClipRange derived =
@@ -192,6 +199,7 @@ struct RemoteBridge::Impl {
         *t.cam_yaw = glm::radians(p.yaw_deg);
         *t.cam_pitch = glm::radians(glm::clamp(p.pitch_deg, -89.0F, 89.0F));
         *t.cam_fov_y = glm::radians(p.fov_deg);
+        if (t.cam_lens != nullptr) *t.cam_lens = engine::renderer::sanitized(p.lens);
         if (t.cam_near_override != nullptr) *t.cam_near_override = p.near_override;
         if (t.cam_far_override != nullptr) *t.cam_far_override = p.far_override;
         // A teleport (`cut`, explicit or judged from the jump) restarts the
@@ -203,6 +211,7 @@ struct RemoteBridge::Impl {
         entt::registry& r = t.scene->registry();
         if (const entt::entity cam = engine::scene::find_active_camera(r); cam != entt::null) {
             r.get<engine::scene::Camera>(cam).fov_y = *t.cam_fov_y;
+            if (t.cam_lens != nullptr) r.get<engine::scene::Camera>(cam).lens = *t.cam_lens;
         }
 #endif
     }

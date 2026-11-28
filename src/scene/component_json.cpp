@@ -22,6 +22,7 @@
 #include "engine/physics/physics_world.hpp"
 #include "engine/rhi/material_shader_names.hpp"
 #include "engine/scene/components.hpp"
+#include "engine/scene/lens_json.hpp"
 #include "engine/scene/material_override.hpp"
 #include "engine/scene/script_component.hpp"
 #include "component_json_internal.hpp"
@@ -580,6 +581,7 @@ json encode_components(const entt::registry& r, entt::entity e, const EncodeOpti
                          {"near", c->near_z},
                          {"far", c->far_z},
                          {"active", c->is_active}};
+        write_lens_fields(out["camera"], c->lens);
     }
     for (const std::string_view name : detail::k_physics_components) {
         if (options.only.empty() || std::ranges::find(options.only, name) != options.only.end()) {
@@ -827,6 +829,7 @@ std::expected<void, core::Error> apply_component(entt::registry& r, entt::entity
             c.fov_y = glm::radians(fov_deg);
             f.number("near", c.near_z, 1e-4F).number("far", c.far_z, 1e-3F).boolean("active", c.is_active);
             if (c.far_z <= c.near_z) f.fail("far", "must be greater than near");
+            read_lens_fields(f, c.lens); // R20 physical lens
         });
     }
     if (detail::is_physics_component(name)) {

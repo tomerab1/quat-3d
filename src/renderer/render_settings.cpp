@@ -4,29 +4,16 @@
 #include <array>
 #include <cmath>
 #include <cstddef>
+#include <string>
 #include <type_traits>
+
+#include "render_settings_fields.hpp"
 
 namespace engine::renderer {
 
 namespace {
 
-// Typed reference to member `Field` of group `Group` of a RenderSettings.
-template <auto Group, auto Field>
-RenderSettingRef field_ref(RenderSettings& s) {
-    auto& v = (s.*Group).*Field;
-    using V = std::remove_cvref_t<decltype(v)>;
-    if constexpr (std::is_same_v<V, bool>) {
-        return {.b = &v};
-    } else if constexpr (std::is_same_v<V, int>) {
-        return {.i = &v};
-    } else {
-        static_assert(std::is_same_v<V, float>, "settings fields are bool, int or float");
-        return {.f = &v};
-    }
-}
-
-using T = RenderSettingType;
-using S = RenderSettings;
+using namespace settings_table; // field_ref, T, S
 using Csm = CsmSettings;
 using Gtao = GtaoSettings;
 using Contact = ContactShadowSettings;
@@ -42,9 +29,15 @@ constexpr std::array k_groups = {
                        "Screen-space sun shadows for small detail"},
     RenderSettingGroup{"ibl", "Environment light", "Image-based ambient light and reflections"},
     RenderSettingGroup{"clouds", "Clouds", "Volumetric cloud layer of the sky"},
+    RenderSettingGroup{"dof", "Depth of field", "Bokeh blur from the camera's lens and focus"},
+    RenderSettingGroup{"motion_blur", "Motion blur", "Blur along motion over the camera's shutter"},
+    RenderSettingGroup{"tonemap", "Tonemapping", "HDR to display mapping"},
+    RenderSettingGroup{"grading", "Colour grading",
+                       "White balance, contrast, lift / gamma / gain and look LUT"},
+    RenderSettingGroup{"film", "Lens and film", "Vignette, film grain and chromatic aberration"},
 };
 
-constexpr std::array k_fields = {
+constexpr std::array k_core_fields = {
     // ---- exposure ----
     RenderSettingDesc{"exposure", "auto", "auto exposure", T::boolean, 0.0F, 1.0F, 1.0F, "",
                       "Adapt to the scene's measured brightness; off = fixed exposure",
@@ -64,6 +57,9 @@ constexpr std::array k_fields = {
     RenderSettingDesc{"exposure", "adaptation_s", "adaptation time", T::number, 0.05F, 10.0F, 1.1F,
                       "s", "Time constant of the eye adaptation",
                       &field_ref<&S::exposure, &ExposureSettings::adaptation_s>},
+    RenderSettingDesc{"exposure", "physical", "physical camera", T::boolean, 0.0F, 1.0F, 0.0F, "",
+                      "Expose from the camera's aperture, shutter and ISO (EV100); overrides auto",
+                      &field_ref<&S::exposure, &ExposureSettings::physical>},
     // ---- bloom ----
     RenderSettingDesc{"bloom", "enabled", "enabled", T::boolean, 0.0F, 1.0F, 1.0F, "",
                       "Run the bloom pass",
@@ -280,6 +276,8 @@ constexpr std::array k_fields = {
                       &field_ref<&S::clouds, &CloudSettings::shadows>},
 };
 
+constexpr auto k_fields = concat_fields(k_core_fields, k_post_fields);
+
 // Keys of the pre-R12 single shadow map (one orthographic box), still
 // accepted from older scene files and clients.
 constexpr std::array k_deprecated = {
@@ -326,7 +324,48 @@ float render_setting_value(const RenderSettings& settings, const RenderSettingDe
     const RenderSettingRef ref = field.ref(copy);
     if (ref.b != nullptr) return *ref.b ? 1.0F : 0.0F;
     if (ref.i != nullptr) return static_cast<float>(*ref.i);
-    return *ref.f;
+    if (ref.f != nullptr) return *ref.f;
+    return 0.0F;
+}
+
+std::string render_setting_text(const RenderSettings& settings, const RenderSettingDesc& field) {
+    RenderSettings copy = settings;
+    const RenderSettingRef ref = field.ref(copy);
+    return ref.s != nullptr ? *ref.s : std::string();
+}
+
+std::string check_render_setting_path(const RenderSettingDesc& field, std::string_view text) {
+    if (field.type != RenderSettingType::path) return "not a path field";
+    if (text.empty()) return {};
+    if (text.size() > 256) return "path longer than 256 bytes";
+    for (const char c : text) {
+        const auto u = static_cast<unsigned char>(c);
+        if (u < 0x20 || u == 0x7F || c == '\\' || c == ':') {
+            return "path has a control character, backslash or colon (use a relative path "
+                   "with '/')";
+        }
+    }
+    if (text.front() == '/') return "path must be relative to the project root";
+    std::size_t start = 0;
+    while (start <= text.size()) {
+        const std::size_t end = std::min(text.find('/', start), text.size());
+        if (text.substr(start, end - start) == "..") return "path must not contain '..'";
+        start = end + 1;
+    }
+    const std::string_view ext = field.unit;
+    if (!ext.empty() && (text.size() <= ext.size() ||
+                         text.substr(text.size() - ext.size()) != ext)) {
+        return "expected a " + std::string(ext) + " file";
+    }
+    return {};
+}
+
+bool set_render_setting_text(RenderSettings& settings, const RenderSettingDesc& field,
+                             std::string_view text) {
+    const RenderSettingRef ref = field.ref(settings);
+    if (ref.s == nullptr || !check_render_setting_path(field, text).empty()) return false;
+    *ref.s = std::string(text);
+    return true;
 }
 
 std::string_view render_setting_choice_name(const RenderSettingDesc& field, float value) {
@@ -346,6 +385,7 @@ std::optional<int> render_setting_choice_index(const RenderSettingDesc& field,
 
 void set_render_setting(RenderSettings& settings, const RenderSettingDesc& field, float value) {
     const RenderSettingRef ref = field.ref(settings);
+    if (ref.s != nullptr) return;
     if (ref.b != nullptr) {
         *ref.b = value != 0.0F;
         return;
@@ -369,7 +409,12 @@ bool reset_render_settings(RenderSettings& settings, std::string_view group) {
     }
     if (find_render_setting_group(group) == nullptr) return false;
     for (const RenderSettingDesc& d : k_fields) {
-        if (d.group == group) set_render_setting(settings, d, d.default_value);
+        if (d.group != group) continue;
+        if (d.type == RenderSettingType::path) {
+            (void)set_render_setting_text(settings, d, "");
+        } else {
+            set_render_setting(settings, d, d.default_value);
+        }
     }
     return true;
 }

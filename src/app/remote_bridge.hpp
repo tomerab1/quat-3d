@@ -118,6 +118,7 @@ struct RemoteBridgeTargets {
     float*     cam_yaw = nullptr;
     float*     cam_pitch = nullptr;
     float*     cam_fov_y = nullptr;
+    engine::renderer::PhysicalCamera* cam_lens = nullptr; // R20 view lens
     // Clip planes (issue #37): overrides camera.set writes (nullopt = derived)
     // and the planes derived from the scene this frame.
     std::optional<float>*           cam_near_override = nullptr;

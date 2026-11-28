@@ -219,7 +219,9 @@ glm::vec3 FlyCamera::forward() const {
 // belong to the user's scene, keep their authored transforms, and take over the
 // view only in play mode. Conventions mirror camera_system (Vulkan Y flip).
 engine::scene::CameraMatrices FlyCamera::matrices(float aspect) const {
-    return view_matrices(pos, yaw, pitch, fov_y, clip(), aspect);
+    // R20: a focal length on the lens sets the field of view.
+    return view_matrices(pos, yaw, pitch, engine::renderer::effective_fov_y(lens, fov_y), clip(),
+                         aspect);
 }
 
 engine::scene::CameraMatrices view_matrices(const glm::vec3& pos, float yaw, float pitch,

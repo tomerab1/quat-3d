@@ -30,6 +30,7 @@
 #include "engine/asset/mesh_asset.hpp"
 #include "engine/core/error.hpp"
 #include "engine/renderer/grass.hpp"
+#include "engine/renderer/physical_camera.hpp"
 #include "engine/renderer/particles.hpp"
 
 namespace engine::scene {
@@ -238,11 +239,15 @@ struct FootIK {
 // Perspective camera parameters. The view/projection matrices are derived each
 // frame by CameraSystem from this plus the entity's world Transform (4.3).
 // Aspect ratio is supplied by the renderer from the swapchain extent.
+// `lens` (R20) is the physical camera: aperture / shutter / ISO drive the
+// physical exposure mode, depth of field and the motion-blur shutter; a focal
+// length > 0 replaces fov_y (renderer::effective_fov_y).
 struct Camera {
     float fov_y  = glm::radians(60.0F); // vertical field of view, radians
     float near_z = 0.1F;
     float far_z  = 1000.0F;
     bool  is_active = true;
+    renderer::PhysicalCamera lens{};
 };
 
 // Collision shape for a physics body. Primitive shapes only; `half_extents`

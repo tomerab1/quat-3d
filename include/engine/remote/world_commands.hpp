@@ -44,6 +44,7 @@
 #include "engine/project/build_job.hpp"
 #include "engine/project/game_project.hpp"
 #include "engine/remote/rpc_server.hpp"
+#include "engine/renderer/physical_camera.hpp"
 #include "engine/weather/wind_field.hpp"
 
 namespace engine::core {
@@ -94,6 +95,9 @@ struct CameraPose {
     std::optional<float> near_override{};
     std::optional<float> far_override{};
     bool      cut = false;
+    // R20 physical lens of the view (exposure, depth of field, shutter); a
+    // focal length > 0 overrides fov_deg.
+    renderer::PhysicalCamera lens{};
 };
 
 // Frame timing over the last `samples` frames and renderer counters, for

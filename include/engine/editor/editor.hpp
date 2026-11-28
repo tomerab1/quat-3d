@@ -41,6 +41,7 @@ class FrameProfiler;
 class SimClock;
 }
 namespace engine::renderer {
+struct PhysicalCamera;
 struct RenderSettings;
 }
 namespace engine::scene {
@@ -111,6 +112,11 @@ struct EditorContext {
     // Renderer settings the Renderer panel edits (owned by the frame
     // renderer; may be null).
     renderer::RenderSettings* renderer = nullptr;
+    // R20: the lens of the editor's view camera (the fly camera), shown in
+    // the Renderer panel; null while the view is a scene camera (its lens is
+    // edited in the inspector). `view_fov_y` is that camera's own FOV.
+    renderer::PhysicalCamera* view_lens = nullptr;
+    float                     view_fov_y = 1.0471976F;
     // Project root for the asset browser (empty disables the panel).
     std::string project_root;
     // Out: glTF path the user asked to instantiate (double-click or viewport

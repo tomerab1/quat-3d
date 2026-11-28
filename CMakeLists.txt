@@ -273,7 +273,8 @@ set_source_files_properties(src/rhi/vma_impl.cpp PROPERTIES COMPILE_OPTIONS "${E
 add_library(engine_image STATIC
     src/asset/alpha_coverage.cpp
     src/asset/texture_data.cpp
-    src/asset/image_decode.cpp)
+    src/asset/image_decode.cpp
+    src/asset/cube_lut.cpp)
 target_link_libraries(engine_image PUBLIC engine_flags)
 target_link_libraries(engine_image PRIVATE engine_stb_image)
 target_include_directories(engine_image PUBLIC ${ENGINE_PUBLIC_INCLUDE})
@@ -383,6 +384,7 @@ add_library(engine_scene STATIC
     src/scene/scene_references.cpp
     src/scene/component_json.cpp
     src/scene/component_json_physics.cpp
+    src/scene/lens_json.cpp
     src/scene/particle_json.cpp
     src/scene/script_component.cpp
     src/scene/scene_snapshot.cpp
@@ -658,6 +660,12 @@ add_library(engine_renderer STATIC
     src/renderer/particle_sort.cpp
     src/renderer/particle_draw.cpp
     src/renderer/tonemap_pass.cpp
+    src/renderer/color_grading.cpp
+    src/renderer/color_lut.cpp
+    src/renderer/physical_camera.cpp
+    src/renderer/post_stage.cpp
+    src/renderer/dof_pass.cpp
+    src/renderer/motion_blur_pass.cpp
     src/renderer/skinning_pass.cpp
     src/renderer/shadow_casters.cpp
     src/renderer/shadow_pass.cpp
@@ -817,6 +825,7 @@ set(QUAT_APP_SOURCES
     src/app/fly_camera.cpp
     src/app/frame_graph.cpp
     src/app/frame_temporal.cpp
+    src/app/frame_post.cpp
     src/app/frame_renderer.cpp
     src/app/frame_profiling.cpp
     src/app/game_boot.cpp

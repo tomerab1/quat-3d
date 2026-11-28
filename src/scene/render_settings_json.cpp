@@ -40,7 +40,8 @@ using renderer::RenderSettingType;
     case RenderSettingType::boolean: return "boolean";
     case RenderSettingType::number: return "number";
     case RenderSettingType::integer: return "integer";
-    case RenderSettingType::choice: return "string";
+    case RenderSettingType::choice:
+    case RenderSettingType::path: return "string";
     }
     return "number";
 }
@@ -51,6 +52,7 @@ using renderer::RenderSettingType;
     case RenderSettingType::integer: return static_cast<std::int64_t>(std::lround(v));
     case RenderSettingType::number: return v;
     case RenderSettingType::choice: return std::string(renderer::render_setting_choice_name(d, v));
+    case RenderSettingType::path: return std::string();
     }
     return v;
 }
@@ -133,6 +135,21 @@ using renderer::RenderSettingType;
             return fail(where + "." + key + ": unknown field (known: " + known_fields(g) + ")");
         }
         if (value.is_null()) continue; // explicit null == absent, like JsonFields
+        if (d->type == RenderSettingType::path) {
+            std::string text;
+            if (!core::JsonFields::read_string(value, text)) {
+                return fail(where + "." + key + ": expected a project-relative " +
+                            std::string(d->unit) + " path or \"\" for none");
+            }
+            if (const std::string why = renderer::check_render_setting_path(*d, text);
+                !why.empty()) {
+                // Scene files keep loading with the field cleared.
+                if (strict) return fail(where + "." + key + ": " + why);
+                text.clear();
+            }
+            (void)renderer::set_render_setting_text(out, *d, text);
+            continue;
+        }
         const std::optional<float> v = decode_value(*d, value, strict);
         if (!v) return fail(where + "." + key + ": " + expectation(*d));
         renderer::set_render_setting(out, *d, *v);
@@ -145,9 +162,10 @@ using renderer::RenderSettingType;
 json encode_render_setting_group(const RenderSettings& settings, const RenderSettingGroup& group) {
     json out = json::object();
     for (const RenderSettingDesc& d : renderer::render_setting_fields()) {
-        if (d.group == group.name) {
-            out[std::string(d.name)] = value_json(d, renderer::render_setting_value(settings, d));
-        }
+        if (d.group != group.name) continue;
+        out[std::string(d.name)] = d.type == RenderSettingType::path
+                                       ? json(renderer::render_setting_text(settings, d))
+                                       : value_json(d, renderer::render_setting_value(settings, d));
     }
     return out;
 }
@@ -204,11 +222,15 @@ json render_settings_schema() {
                 json names = json::array();
                 for (const std::string_view c : d.choices) names.push_back(c);
                 f["enum"] = std::move(names);
+            } else if (d.type == RenderSettingType::path) {
+                f["format"] = "path";
+                f["extension"] = d.unit;
+                f["default"] = "";
             } else if (d.type != RenderSettingType::boolean) {
                 f["min"] = value_json(d, d.min);
                 f["max"] = value_json(d, d.max);
             }
-            if (!d.unit.empty()) f["unit"] = d.unit;
+            if (!d.unit.empty() && d.type != RenderSettingType::path) f["unit"] = d.unit;
             fields.push_back(std::move(f));
         }
         json group = {

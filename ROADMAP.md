@@ -364,6 +364,20 @@ JSON-RPC over loopback TCP to the engine.
   (MoltenVK included) has a path; foliage and instanced meshes first, then
   shadows (virtual shadow maps as a follow-up). *(very large; after R5, R6,
   R9.4)*
+- [ ] **R20 — Cinematic camera + post stack.** A physical camera on the
+  `camera` component (aperture, shutter, ISO → EV100 exposure after Lagarde
+  & de Rousiers 2014; focal length + sensor → FOV; focus distance), a
+  gather-based bokeh depth of field in compute (Jimenez 2014: half
+  resolution, split near / far fields, CoC tile max + dilation, near-field
+  bleeding), McGuire 2012 tile-max / neighbour-max motion blur from R11's
+  velocity with the camera's shutter, AgX (Blender 4) and Khronos PBR
+  Neutral beside ACES, colour grading (white balance, contrast /
+  saturation / lift-gamma-gain in ACEScct, `.cube` look LUTs as validated
+  untrusted input) and film extras (cos⁴ + artistic vignette, temporally
+  stable grain, chromatic aberration), all in the A8 settings table, over
+  MCP and in the editor. Post runs after TAAU at the display extent:
+  TAAU → DoF → motion blur → bloom → exposure → tonemap / grade / film.
+  *(medium; after R11)*
 - [ ] **R22 — Time of day, sun & moon, night sky** *(owner request: "starry
   nights … a time system where the sun rises and sets, with a moon")*.
   Canonical reference: Jensen, Durand, Stark, Premože, Dorsey, Shirley, "A

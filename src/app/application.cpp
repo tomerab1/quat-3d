@@ -299,6 +299,7 @@ void Application::connect_remote() {
     remote_targets.cam_yaw = &camera_.yaw;
     remote_targets.cam_pitch = &camera_.pitch;
     remote_targets.cam_fov_y = &camera_.fov_y;
+    remote_targets.cam_lens = &camera_.lens;
     remote_targets.cam_near_override = &camera_.near_override;
     remote_targets.cam_far_override = &camera_.far_override;
     remote_targets.cam_derived_clip = &camera_.derived_clip();
@@ -450,6 +451,10 @@ bool Application::run_frame() {
     frame_inputs.cam = &view;
     frame_inputs.draw_extent = draw_extent;
     frame_inputs.dt = dt;
+#ifdef ENGINE_EDITOR
+    // The editor views through its fly camera unless Play uses the scene's.
+    if (!editor_.through_scene_camera()) frame_inputs.view_lens = &camera_.lens;
+#endif
     frame_inputs.grass = world_.grass();
     frame_inputs.particles = world_.particles();
     frame_inputs.sim_dt = sim_dt;

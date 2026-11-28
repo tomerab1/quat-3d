@@ -9,6 +9,7 @@ use serde_json::{Map, Value};
 mod behavior;
 mod debug;
 mod physics;
+mod post;
 mod profile;
 mod project;
 mod script;
@@ -20,6 +21,7 @@ mod world;
 pub use behavior::*;
 pub use debug::*;
 pub use physics::*;
+pub use post::*;
 pub use profile::*;
 pub use project::*;
 pub use script::*;
@@ -317,6 +319,9 @@ pub struct CameraSetParams {
     /// than 10% of the far plane or turns more than 30 degrees.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cut: Option<bool>,
+    /// Physical lens of the view (depth of field, motion blur, physical exposure); omitted fields keep their values.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lens: Option<LensParams>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
