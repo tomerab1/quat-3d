@@ -41,7 +41,12 @@ done
 ls "$stage"/bin
 # Size and contents report for the release log (what a game downloads).
 echo "== SDK sizes"
-du -sh "$stage" "$stage"/* "$stage"/deps/* "$stage"/share/quat3d/*
+# One du call per level: du counts a directory once, so listing a parent
+# with its children would print the parent alone.
+du -sh "$stage"
+du -sh "$stage"/*
+du -sh "$stage"/deps/*
+du -sh "$stage"/share/quat3d/*
 echo "== deps/share ports"
 ls "$stage"/deps/share
 echo "== deps/lib"
