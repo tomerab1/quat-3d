@@ -60,6 +60,7 @@ Merged on 2026-11-27 after cycle 2:
 | #54 | A10.1 physics control (fixes #47 #48) | `feat/a10-physics-control` | draft; worker running |
 | #55 | P4 game packaging + E7 export | `feat/p4-game-packaging` | draft; worker running |
 | #82 | R4 profiling (Tracy, built-in profiler, `profile.*` + MCP), R4.5 added | `feat/r4-profiling` | train head merged; Profiler panel ported onto E8 (`panels/profiler.cpp`, `Panel::profiler`); Tracy is the vcpkg feature `profiling` (only `ENGINE_PROFILE=ON` builds it); zones for scripts / particles / upscaler; waiting on CI |
+| #83 | A12.1 skills (MCP skills extension, prompts, Claude Code plugin) | `feat/a12-skills` | train #93 merged in (A6 shader + G7 script tools used by the skills; plugin works with the release-bundled quat-mcp); A12.2 waits on #54, A10.4, R4 |
 
 Queued for the next free agents, in order:
 1. R13 weather.

@@ -25,6 +25,15 @@ S3 GoogleTest → S7/S8 (thin `main.cpp`, split oversized files) → R9
 instancing → rest of S → A (AI tooling / MCP) → P1/P2 (Mac) → G1 (audio) →
 the rest by need.
 
+**Owner's target game: [Cozy Builder](#games-built-on-the-engine-not-part-of-it)
+(G16), in its own repository.** The owner decided this by default on
+2026-11-28. Nothing above is reordered. **After the v0.1.0 release**, the
+generic engine items G16 depends on take priority over the remaining
+G/R/E work, in the order of
+[`docs/design/cozy-builder.md` §9](docs/design/cozy-builder.md#9-phasing):
+P8 → G17.1 → G5.1 → G15.1 → G18.1 → R23.1 → R23.2 → G19.1 → R9.5 →
+G18.2/G18.3 → E1 → G6.1 → G11.1 → G17.2 → R25.1 → R25.2/R25.3 → R24 → R23.3.
+
 ---
 
 ## S — Stability & quality *(current focus)*
@@ -149,14 +158,25 @@ JSON-RPC over loopback TCP to the engine.
   (MRTR + legacy, `confirm: true` fallback); icons; the test suite on
   protocol 2025-11-25 and 2026-07-28. Roots / sampling / logging stay
   unused (deprecated).
-- [ ] **A12 — Skills** *(M)*: quat-3d workflows as Agent Skills in
-  `tools/quat-mcp/content/skills/` (build-level, tune-look,
-  debug-physics-glitch, write-gameplay-script, design-npc-behaviour,
-  author-material-shader, playtest), served over MCP (SEP-2640 skills
-  extension), packaged as a Claude Code plugin + marketplace entry, and
-  rendered as the MCP prompts for clients without skills; tests keep
-  skills, tool names and resources in sync. Each skill ships with the tools
-  it needs (A10.x, A6, G7, A9).
+- [ ] **A12 — Skills** *(M)*: quat-3d workflows as Agent Skills
+  (research: [`docs/research/mcp-skills.md`](docs/research/mcp-skills.md)).
+  - [x] **A12.1 Skills, serving, plugin.** `tools/quat-mcp/content/skills/`
+    (build-level, tune-look, debug-physics-glitch, write-gameplay-script,
+    design-npc-behaviour, author-material-shader, playtest, plus
+    inspect-scene and debug-session from the old prompts), served over MCP
+    with the skills extension (SEP-2640, rmcp 3.12), rendered as the MCP
+    prompts (replacing `content/prompts/`), packaged as a Claude Code plugin
+    (`tools/quat-mcp/plugin/`) + marketplace (`.claude-plugin/`); sync tests
+    keep skills, tool names, resources, prompts and the plugin copy
+    consistent. Built on the tools on the base branch (A5, A6, A7, A8, A9,
+    G7): author-material-shader covers factors and A6 Slang material
+    shaders (it replaces the `write_material_shader` prompt). The plugin
+    runs a source build or the quat-mcp bundled in a release (P4,
+    `project_root` option = the release's data folder).
+  - [ ] **A12.2 Skills follow their tools.** Extend the skills as the tools
+    they need land: debug-physics-glitch with A10.1 physics control (#54: velocities,
+    contacts, events), playtest with A10.4 (`input.inject`,
+    `sim.run_until`) and R4 profiling (`profile_*`).
 
 ## R — Rendering & performance
 
@@ -221,6 +241,16 @@ JSON-RPC over loopback TCP to the engine.
     the camera (the standard approach for dense ground cover).
   - **R9.4 Instance culling + LOD.** GPU frustum/occlusion culling per
     instance (with R6) and distance fade / LOD selection.
+  - **R9.5 Placement along curves, on surfaces, masks and brushes**
+    (design: [`docs/design/cozy-builder.md` §4.5](docs/design/cozy-builder.md#45-placement-along-curves-on-surfaces-and-brushes-r95)).
+    Scatter domains beyond rect / circle: along a G18 spline or curve
+    network (1D spacing with jitter, bands across the curve, tangent / normal
+    alignment), on mesh surfaces (area-weighted triangle sampling with
+    normal filters, `DynamicMesh` included); inclusion / exclusion masks
+    (distance to curves, polygons, volumes; G19 paint channels); a
+    `ScatterBrush` of replayable add / erase strokes, each seeded, so undo
+    is popping a stroke. Deterministic as R9.2. *(needs G18.1, G19.1 for
+    paint masks)*
 - [ ] **R10 — GPU compute migration.** Move data-parallel work to compute
   passes (CLAUDE.md "GPU compute first"):
   - ✅ **R10.1 Clustered light culling on the GPU.** (cycle 1) Phase 7.2 shipped a flat
@@ -291,6 +321,66 @@ JSON-RPC over loopback TCP to the engine.
   (MoltenVK included) has a path; foliage and instanced meshes first, then
   shadows (virtual shadow maps as a follow-up). *(very large; after R5, R6,
   R9.4)*
+- [ ] **R23 — Runtime procedural geometry** (design:
+  [`docs/design/cozy-builder.md` §4.4](docs/design/cozy-builder.md#44-runtime-procedural-geometry-r23)).
+  Generic: any game that builds meshes at runtime (builders, roads, rivers,
+  destruction debris).
+  - [ ] **R23.1 Geometry kernel** (`engine_geometry`, CPU, deterministic,
+    no graphics dependency): Clipper2 polygon offset / booleans / repair,
+    earcut triangulation with holes, a weighted straight skeleton (own
+    implementation; CGAL's is GPL) per Aichholzer et al. 1995, Felkel &
+    Obdržálek 1998 with Eder / Held / Palfrader 2020's robustness lessons and
+    Kelly & Wonka 2011 weights; profile sweeps along G18 frames, lofts,
+    tapered extrusion; a `MeshData` builder (welding, crease normals,
+    MikkTSpace tangents, box / planar / along-curve UVs, meshopt); seeded
+    procedural stone meshes. Fixture + fuzz property tests.
+  - [ ] **R23.2 Dynamic meshes.** `DynamicMesh` component + a
+    `DynamicMeshStore` service: CPU `MeshData` uploaded through a staging
+    ring with a per-frame byte budget, swapped at a frame boundary (old mesh
+    draws until the new one is resident), retired via
+    `DeferredReleaseQueue`; drawn through the normal batching / shadow /
+    velocity paths. Per-instance custom data (`vec4`: tint, appear time) on
+    `InstancedMesh` and `DynamicMesh` readable by the material interface;
+    stable instance ranges per source key (partial updates); generated
+    static colliders (boxes / convex / mesh, built on the job pool,
+    owner = entity); navmesh dirty regions. No Vulkan types in the public
+    API (P2). *(needs R9.2, R17; A6 #19 for emissive custom data)*
+  - [ ] **R23.3 GPU-generated meshes.** Generator-registered Slang compute
+    modules (A6 interface rules) writing vertex / index / instance buffers
+    and indirect args from pooled buffers in a render-graph compute pass,
+    each with a CPU reference the tests compare against (R10.2 pattern).
+    *(needs R23.2, A6)*
+- [ ] **R24 — Decals.** Deferred box-projected decals writing GBuffer
+  albedo / normal / roughness with angle fade and sort order (Kim,
+  SIGGRAPH 2012), instanced and culled like instances; clustered decals for
+  the forward pass later (on R10.1). Remote / MCP / Lua placement. *(needs
+  R12's depth inputs)*
+- [ ] **R25 — Seasons** (design:
+  [`docs/design/cozy-builder.md` §4.14](docs/design/cozy-builder.md#414-seasons-r25)).
+  Generic season machinery; games supply per-asset content.
+  - [ ] **R25.1 Season state + climate.** A `SeasonState` singleton:
+    `year_phase` from the R22.1 Sun's ecliptic longitude (by hemisphere), or
+    an independent phase rate, or manual. Season weights, and an option to
+    drive the `WorldClock` date from the season (day length follows it while
+    `fixed_day` loops the time of day). A `Climate` component (temperature,
+    precipitation and cloud curves over the year) drives `WeatherState`
+    through a seeded daily sequence, so R13's accumulation brings and melts
+    snow. `season.*` remote / MCP / Lua. *(needs R22.1 #87, R13.1 #64)*
+  - [ ] **R25.2 Seasonal materials and variants.** A Slang `ISeasonal`
+    interface (no `#ifdef`): `ColourRamp` (1D ramp at phase + per-instance
+    spread), `LeafDrop` (hashed alpha over a phase interval, applied in
+    depth / shadow / velocity passes too), `Blossom`, and `SeasonalGrass` for
+    R9.3. A material JSON `season` block. `SeasonalVariants` mesh sets per
+    phase interval, chosen per instance. A particle-rate hook over the phase
+    (falling leaves). *(needs R25.1, A6 #19, R12.11, R9.3)*
+  - [ ] **R25.3 Snow accumulation masks.** A top-down precipitation
+    occlusion map shared with R13's rain occlusion (Ohlsson & Seipel 2004;
+    Reynolds, Laycock & Day 2015), re-rendered on geometry change. Coverage
+    from accumulation × exposure × slope × material `snow_affinity` with
+    noise, blended into the GBuffer. A terrain `snow_clear` paint channel,
+    and grass flattened under snow. *(needs R25.1, R13.1 #64, G19.1)*
+  - [ ] **R25.4 Frozen water**: ice and frost on water below 0 °C. *(needs
+    R16)*
 
 ## P — Platforms & shipping
 
@@ -316,6 +406,32 @@ JSON-RPC over loopback TCP to the engine.
 - [ ] **P4 — Game packaging.** Engine-as-library + game project template,
   editor vs runtime builds, cooked asset bundles, shipping config, depot layout.
 - [ ] **P5 — Native Metal backend.** On top of P2.
+- [ ] **P8 — Engine SDK** (design:
+  [`docs/design/cozy-builder.md` §3.3–3.5](docs/design/cozy-builder.md#33-how-the-game-consumes-the-engine-an-installed-sdk-package-p8)).
+  The installable, versioned CMake package that games in their own
+  repositories build against:
+  - `find_package(quat3d 0.N CONFIG)` with exported `quat3d::` targets;
+  - only the stable public headers installed (no Vulkan types in them);
+  - a bundled dependency prefix for the SDK's triplet;
+  - `quat3d-toolchain.cmake`, with mismatched compilers refused;
+  - `Quat3dGame.cmake` (`quat_add_game_module` / `quat_add_game`);
+  - tools (`quat-cook`, `quat-pack`, `slangc`, `quat-mcp`), engine shaders
+    and the public Slang interfaces;
+  - per-OS SDK archives from the release workflow.
+
+  Semver policy: 0.x breaks only in MINOR releases, with CHANGELOG
+  migration notes and one-minor `[[deprecated]]` shims; from 1.0, breaks
+  only in MAJOR releases. No ABI promise. Data formats are versioned
+  separately and read backwards.
+
+  Checks:
+  - `public_headers_self_contained`;
+  - `examples/sdk-consumer` built only against the installed package, as
+    the `sdk_consumer` CTest on every PR and on all OSes before release
+    upload;
+  - a source-checkout override (`QUAT3D_SOURCE_DIR`) for co-development.
+
+  *(needs P6/S4 #24, P4 #55; first SDK with v0.1.0 or the release after)*
 
 ## G — Gameplay systems
 
@@ -332,12 +448,35 @@ JSON-RPC over loopback TCP to the engine.
   interest management, RPCs, lag compensation, dedicated-server build.
 - [ ] **G5 — Input actions.** Action maps over keyboard/mouse/gamepad,
   rebinding, saved per user.
+  - [ ] **G5.1 Action maps** (design:
+    [`docs/design/cozy-builder.md` §4.1](docs/design/cozy-builder.md#41-input-actions-g5)):
+    JSON action-map assets (button / 1D / 2D actions; keys, mouse buttons,
+    mouse delta, wheel, pointer, screen-edge zones, gamepad, chords),
+    triggers (pressed / released / held / tap / hold / double-click / drag
+    with a pixel dead zone), modifiers (dead zone, scale, invert, smoothing,
+    camera-relative), a context stack (UI consumes pointer input over
+    widgets), C++ service + Lua (`input.action`, G7's API kept) + remote
+    `input.inject`; G7's built-in axes / actions become the default map.
+    *(needs G7 #22)*
+  - [ ] **G5.2 Rebinding + per-user persistence** (user overrides beside
+    the project defaults; device glyph names for UI). *(needs G6.1)*
 - [ ] **G7 — Game scripting (Lua 5.4 + sol2).** `Script` component with
   lifecycle callbacks, a sandboxed per-scene Lua state with instruction and
   memory limits, an API over entities/components (via the codec), input,
   physics, audio, navigation; hot reload; remote `script.*` + MCP tools so
   assistants can write gameplay; a small playable example.
 - [ ] **G6 — In-game UI.** A runtime UI system for games (not ImGui).
+  - [ ] **G6.1 Core subset** (design:
+    [`docs/design/cozy-builder.md` §4.8](docs/design/cozy-builder.md#48-runtime-ui-subset-g61)):
+    retained widget tree from JSON layouts (panel, row / column flex layout,
+    icon button, toggle group, slider, thumbnail list / grid, label,
+    tooltip, modal), theme tokens, DPI scaling, SDF text (Inter) and Lucide
+    icons, G5 input routing (pointer over UI never reaches the world),
+    bindings to actions and to values exposed by C++ modules and Lua, a pass
+    after tonemap composited in sRGB (#102), keyboard / gamepad focus.
+    *(needs G5.1)*
+  - [ ] **G6.2 The rest**: rich text, animation, localisation tables,
+    screen transitions.
 
 - [ ] **G8 — Animation upgrades.** Inertialization, two-bone foot IK,
   ACL compression; then Jolt ragdolls / powered hit reactions, Jolt cloth,
@@ -358,6 +497,17 @@ is JSON/Lua so it is authorable over MCP.
 - [ ] **G11 — Save / load game state.** Versioned save files (player,
   world deltas, script state via an explicit Lua `save`/`load` contract,
   quest/inventory state), slots + autosave, migration on version bump.
+  - [ ] **G11.1 Save core** (design:
+    [`docs/design/cozy-builder.md` §4.9](docs/design/cozy-builder.md#49-save--load-g111)):
+    slots written atomically (version, game id + version, play time,
+    thumbnail) holding chunks — an engine `entities` chunk (entities tagged
+    `Saved`, through the component codec), `world_clock`, `season`, `weather`,
+    `terrain_edits`, plus chunks game modules register with a version and
+    migrations (unknown chunks kept); a `Transient` tag that scene files and
+    saves skip (derived content); autosave; loads validated through
+    `core::JsonFields`. *(needs G17.1)*
+  - [ ] **G11.2 Lua save contract** (the `save` / `load` script functions,
+    quest / inventory state with G12 / G13).
 - [ ] **G12 — Dialogue + quests.** Data-driven dialogue graphs (choices,
   conditions, Lua hooks, localisable string tables) and a quest system
   (objectives, triggers, journal), each with an editor node view (reusing
@@ -368,12 +518,84 @@ is JSON/Lua so it is authorable over MCP.
 - [ ] **G14 — Combat.** Hitbox/hurtbox shapes on skeleton joints, animation
   events/notifies and root motion (extends G8), damage pipeline, lock-on
   targeting, NPC combat behaviour-tree leaves.
-- [ ] **G15 — Third-person camera rig.** Orbit/follow camera with collision
+- [ ] **G15 — Camera rigs.** Orbit/follow camera with collision
   (sphere cast), lock-on framing, smoothing, cutscene camera tracks.
+  - [ ] **G15.1 Orbit / strategy rig** (design:
+    [`docs/design/cozy-builder.md` §4.2](docs/design/cozy-builder.md#42-camera-rig-g151-orbit--strategy-rig)):
+    a generic `CameraRig` component (focus, yaw, pitch, distance; pitch
+    easing with log-distance; free yaw or yaw steps), every degree of
+    freedom on an exact critically damped spring (Holden 2021, Lowe 2004;
+    log distance for uniform zoom), key / stick / edge-scroll pan, grab-the-
+    world drag pan with inertia, zoom toward the cursor, ground-following
+    focus height and camera ground clearance, soft bounds, framing via
+    `frame_box()`; optional `CameraRigInput` mapping G5 actions; remote
+    `camera.rig.get / set / frame`, quat-mcp tools, Lua. *(needs G5.1)*
+  - [ ] **G15.2 Third-person follow rig**: collision by sphere cast
+    (A10.1), lock-on framing (G14).
+  - [ ] **G15.3 Cutscene camera tracks** on G18 splines.
+
+**Generic building blocks for game projects** (first consumer: the Cozy
+Builder, G16; design: [`docs/design/cozy-builder.md`](docs/design/cozy-builder.md)).
+Everything here is engine code with generic names; game rules never enter
+the engine.
+
+- [ ] **G17 — Game modules (extension points).**
+  - [ ] **G17.1 Native game modules.** A game registers its own components
+    (field tables → codec, remote schema, Lua, inspector rows; no ImGui in
+    games), stateless systems in named phases (input / pre_physics /
+    post_physics / post_transform / pre_render) with ordering, remote
+    methods with JSON Schemas, Lua modules, G5 action maps, G6 screens and
+    G11 save chunks through an `engine::game::Registrar`, with services
+    (physics queries, terrain edits, dynamic meshes, assets, WorldClock,
+    season, weather, job pool, command stack) behind Vulkan-free headers.
+    Static C++ libraries are linked into per-game player + editor executables
+    by the SDK's `quat_add_game()`: explicit generated registration, no
+    plugin DLLs (no stable C++ ABI, macOS signing). `game.json` format 2
+    adds `modules`, `mcp` and an `engine` version range; format 1 stays
+    valid.
+
+    **Layering rule + CI**: nothing in this repository depends on a game or
+    on the in-tree samples, enforced by a `layering_check` CTest and a
+    `QUAT_BUILD_SAMPLES=OFF` CI entry. Games build only against the
+    installed SDK (P8). *(needs P8, S9, P4 #55, G7 #22)*
+  - [ ] **G17.2 Declared game MCP tools and skills.** Module methods carry
+    MCP metadata (tool name, Markdown description from the project's `mcp/`
+    folder, annotations); `rpc.methods` returns schemas + metadata and
+    quat-mcp registers them as dynamic tools on connect (name and
+    collision checks, `tools/list_changed`), with no Rust code per game;
+    game skills from `<project>/mcp/skills/` served beside A12's. The game
+    repository's `.mcp.json` runs the SDK's matching `quat-mcp`. *(needs
+    G17.1, A12 #83)*
+- [ ] **G18 — Splines and curve networks.**
+  - [ ] **G18.1 `Spline` component + curve library**: centripetal
+    Catmull-Rom (Yuksel et al. 2011), cubic Bézier and polylines with
+    per-point width / height / tags; arc-length tables and even-spacing
+    sampling; up-locked and rotation-minimising frames (Wang et al. 2008);
+    closest point, XZ intersections, offsets, bounds; ground projection via
+    `GroundHeightFn`; codec, remote `spline.*`, MCP, Lua.
+  - [ ] **G18.2 Curve networks**: endpoint snapping, splits at crossings,
+    node classification (end / bend / T / X / n-way), ids stable under
+    local edits. *(needs G18.1)*
+  - [ ] **G18.3 Stroke capture**: pointer drag → ground hits → resample,
+    Ramer–Douglas–Peucker, Schneider (1990) cubic fit → spline; loop
+    closing, straight segments; shared by games and the editor's spline
+    gizmo. *(needs G18.1, G5.1)*
+- [ ] **G19 — Terrain editing.**
+  - [ ] **G19.1 Edit layers**: an ordered, serialised list of stamps
+    (polygon / curve capsule / circle with falloff): flatten to a height or
+    plane, raise / lower, smooth, paint material channels and a grass mask;
+    applied after generation per tile, deterministic (CPU reference + GPU
+    path on R10.2 tiles), region-limited recompute that refreshes the
+    terrain pass, Jolt height fields, Scatter revisions, the grass mask and
+    nav regions; `terrain.edit.*` remote / MCP / Lua and a `TerrainEdits`
+    service. *(needs R10.2)*
 
 ## E — Editor (production readiness)
 
 - [ ] **E1 — Undo/redo.** Command stack covering every editor and remote edit.
+  The stack is an engine library (`core::CommandStack` in `engine_core`:
+  apply / revert, drag merging, transactions, memory budget, clean marker)
+  that games use at runtime too (G16), not editor-only code.
 - [ ] **E2 — Project + asset database.** Project file, stable asset GUIDs
   instead of paths, import settings.
 - [ ] **E3 — Prefabs.**
@@ -416,6 +638,90 @@ is JSON/Lua so it is authorable over MCP.
     `scripts/editor-screenshots.sh` and `docs/screenshots/editor/`; the CI
     screenshot job captures the editor at 1600x900 once it adopts that
     script's settings.
+
+---
+
+## Games (built on the engine, not part of it)
+
+Games live in **their own repositories** and build against a tagged engine
+SDK (P8) through `find_package(quat3d CONFIG)`. They use only its stable
+public headers, Lua, data and the remote/MCP API. Each game repository has
+its own ROADMAP, STATUS and CI. The items here track each game's phases and
+their **engine** dependencies, so that engine priorities stay visible.
+Engine items never depend on game items.
+
+- [ ] **G16 — Cozy Builder** *(owner's target game)*: a Tiny Glade-style,
+  exterior-only, no-fail-state town builder with a ~60° tilted strategy
+  camera, freehand walls / paths / fences / ivy and sketched building
+  footprints procedurally generated with detail (stones, crenellations,
+  gates, windows, doors, straight-skeleton roofs), adapting to the terrain,
+  with day / night, weather and seasons for mood. The setting is a medieval /
+  fairy-tale village. Repository: `cozy-builder`, which the owner creates
+  and connects to Claude's GitHub app. Design:
+  [`docs/design/cozy-builder.md`](docs/design/cozy-builder.md) (Part II
+  moves to the game repository in G16.1).
+  - [x] **G16.0 Design.** The document above: engine / game split, game
+    modules, engine capabilities, generation rules, MCP tools, assets,
+    performance targets, tests, phasing.
+  - [ ] **G16.1 Project skeleton in the `cozy-builder` repository.**
+    Needs from the owner: the empty repository, connected to Claude's GitHub
+    app. SDK releases download from public GitHub Releases with no token.
+    Then:
+    - `engine.lock` and CI against the SDK tag (build, tests, Linux
+      screenshots, an SDK-bump PR flow);
+    - Part II of the design moved there;
+    - `game.json` format 2 and module registration;
+    - the fixed meadow scene (terrain + grass + WorldClock + SeasonState);
+    - the camera rig with the owner's numbers and the input map;
+    - `cozy_builder_tests`;
+    - the asset fetch script with SHA-256 + licence records and a seasonal
+      inventory.
+
+    It runs and packages. *(needs P8, G17.1, G5.1, G15.1, P4 #55)*
+  - [ ] **G16.2 Walls.** Strokes → wall curve network, junction rules
+    (pillars, corner towers), profile sweep with terrain adaptation, stones
+    in courses, crenellations, box colliders, picking, erase, ghost +
+    validation; `build_wall_path`, `build_remove`, `build_query`,
+    `build_validate`. *(needs G18.1–G18.3, R23.1, R23.2, R9.5)*
+  - [ ] **G16.3 Buildings and roofs.** Footprints, merge groups, floors,
+    CGA-style façade rules (door near a path, windows by bay),
+    straight-skeleton hip / gable / mansard roofs and cone tower roofs,
+    foundation flattening + plinth, towers; `build_house`, `build_tower`,
+    `build_styles`. *(needs G16.2, G19.1, R23.1)*
+  - [ ] **G16.4 Paths, gates, fences, ivy.** Brush-painted paths (terrain
+    paint + decals + stepping stones), gates where paths cross walls and
+    fences, ivy growth; `build_path`, `build_fence`. *(needs G16.2, G19.1,
+    R24, R9.5)*
+  - [ ] **G16.5 Decoration and mood.** Free props with surface alignment,
+    foliage brush, lamps on at dusk from `SkyState`, window glow, weather
+    presets; `build_place`, `build_paint_foliage`. *(needs R9.5, R22.1 #87,
+    R13.1 #64, A6 #19)*
+  - [ ] **G16.6 Build UI, undo / redo, save / load.** Tool bar, style strip,
+    mood panel, menu + slots, autosave; `build_undo` / `build_redo`.
+    *(needs G6.1, E1, G11.1)*
+  - [ ] **G16.7 MCP and the `build-town` skill.** G17.2 declarations for
+    every `build.*` tool, the skill, a demo town built from a command list,
+    golden screenshots (noon / dusk / night / rain) in the game
+    repository's CI. *(needs G17.2, G16.2–G16.6, #20's screenshot harness in
+    the SDK)*
+  - [ ] **G16.8 Scale and polish.** The performance targets (design §7) on
+    a stress town, GPU detail generation where budgets miss, grow-in
+    animations, tilt-shift DoF, a packaged release. *(needs R9.4, R23.3,
+    R20 #79, R4 #82)*
+  - [ ] **G16.9 Ambient life** *(optional, late phase)*: villagers, sheep
+    and birds. Villagers and sheep use `NavAgent` + behaviour trees, birds
+    are boids flocks, and the navmesh is refreshed on edits. *(needs R23.2)*
+  - [ ] **G16.10 Seasons.** A climate profile; per-asset seasonal variants
+    (ramps, leaf drop, blossom, bare variants); snow affinity in styles;
+    roof snow caps; path `snow_clear`; seasonal audio and decorations; the
+    season dial; four-season golden screenshots. *(needs R25.1–R25.3,
+    G16.5; runs beside G16.6–G16.8)*
+
+  Later, by default and not yet scheduled: generated maps (after the fixed
+  meadow), gamepad support (after desktop), and water and bridges (after
+  R16, with R25.4 freezing), which come before G16.9 ambient life. The
+  default season pace is a 40-minute year with a 12-minute day, with a
+  "follow the real calendar" option.
 
 ---
 

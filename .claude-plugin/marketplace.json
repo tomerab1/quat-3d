@@ -1,0 +1,16 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "quat-3d",
+  "description": "Claude Code plugins for the quat-3d game engine",
+  "owner": {
+    "name": "quat-3d"
+  },
+  "plugins": [
+    {
+      "name": "quat-3d",
+      "description": "Drive a running quat-3d engine from Claude Code: the quat-mcp MCP server plus workflow skills for building levels, tuning the look, materials, gameplay scripts, NPC behaviour, physics debugging and playtesting.",
+      "source": "./tools/quat-mcp/plugin",
+      "category": "development"
+    }
+  ]
+}

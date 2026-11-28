@@ -99,9 +99,10 @@ quat-mcp exposes them as tools:
 | `profile_capture` | Records N frames (default 120), waits for the result (bounded, default 30 s) and returns the top zones by total and p95, the spikes over a budget with their worst zones, and per-frame times. Call again with `{"id": N}` to keep waiting. |
 | `profile_counters` | Draws, instances, triangles, GPU memory per heap and entity counts. |
 
-The `find_performance_problem` prompt walks a model through a profiling
-session: baseline capture, CPU- or GPU-bound, locate, test one fix at a
-time, report with numbers.
+The `find-performance-problem` workflow (an Agent Skill in
+`tools/quat-mcp/content/skills/`, also served as a prompt of the same name)
+walks a model through a profiling session: baseline capture, CPU- or
+GPU-bound, locate, test one fix at a time, report with numbers.
 
 ## How it works
 

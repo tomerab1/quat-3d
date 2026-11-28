@@ -1,4 +1,4 @@
-//! The profiling tools (`profile_*`) and the `find_performance_problem`
+//! The profiling tools (`profile_*`) and the `find-performance-problem`
 //! prompt, end to end against the mock engine.
 
 mod common;
@@ -126,7 +126,7 @@ async fn profile_tools_and_prompt_are_listed() {
     let schema = serde_json::to_string(&capture.input_schema).unwrap();
     assert!(schema.contains("budget_ms") && schema.contains("max_wait_s"));
     let prompts = client.list_all_prompts().await.unwrap();
-    assert!(prompts.iter().any(|p| p.name == "find_performance_problem"));
+    assert!(prompts.iter().any(|p| p.name == "find-performance-problem"));
     client.cancel().await.unwrap();
 }
 
@@ -242,13 +242,13 @@ async fn profile_counters_calls_the_engine_without_params() {
 }
 
 #[tokio::test]
-async fn find_performance_problem_prompt_uses_the_budget() {
+async fn find_performance_problem_prompt_names_the_target() {
     let engine = MockEngine::start(None, profile_handler(1)).await;
     let client = connect(&engine.addr_string()).await;
-    let args = json!({"symptom": "stutters when turning", "target_fps": 120});
+    let args = json!({"symptom": "stutters when turning", "target_fps": "120"});
     let prompt = client
         .get_prompt(
-            GetPromptRequestParams::new("find_performance_problem")
+            GetPromptRequestParams::new("find-performance-problem")
                 .with_arguments(args.as_object().unwrap().clone()),
         )
         .await
@@ -257,19 +257,23 @@ async fn find_performance_problem_prompt_uses_the_budget() {
         panic!("text prompt expected");
     };
     assert!(t.text.contains("The symptom: stutters when turning"));
-    assert!(t.text.contains("a frame budget of 8.33 ms"), "{}", t.text);
-    assert!(t.text.contains(r#""budget_ms": 8.33"#));
+    assert!(t.text.contains("The target: 120 fps"), "{}", t.text);
+    assert!(
+        t.text.contains("1000 / 120 ms as `budget_ms`"),
+        "{}",
+        t.text
+    );
     let at = |s: &str| t.text.find(s).unwrap_or_else(|| panic!("missing {s}"));
     assert!(at("profile_capture") < at("profile_counters"));
 
     let bare = client
-        .get_prompt(GetPromptRequestParams::new("find_performance_problem"))
+        .get_prompt(GetPromptRequestParams::new("find-performance-problem"))
         .await
         .unwrap();
     let ContentBlock::Text(b) = &bare.messages[0].content else {
         panic!("text prompt expected");
     };
-    assert!(!b.text.contains("The symptom:") && !b.text.contains("budget_ms\": "));
+    assert!(!b.text.contains("The symptom:") && !b.text.contains("The target:"));
     assert!(!b.text.contains("{{") && !b.text.contains("{%"));
     client.cancel().await.unwrap();
 }
