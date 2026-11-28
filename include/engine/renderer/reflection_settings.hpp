@@ -34,6 +34,14 @@ struct EnvironmentSettings {
 
     static constexpr FloatRange k_intensity{0.0F, 100.0F};
     static constexpr FloatRange k_rotation_deg{-360.0F, 360.0F};
+
+    // Intensity and rotation in range (the bake and the HDRI's sun use these).
+    [[nodiscard]] constexpr EnvironmentSettings sanitized() const {
+        EnvironmentSettings s = *this;
+        s.hdri_intensity = k_intensity.clamp(hdri_intensity);
+        s.hdri_rotation_deg = k_rotation_deg.clamp(hdri_rotation_deg);
+        return s;
+    }
 };
 
 [[nodiscard]] SkySource sky_source(const EnvironmentSettings& settings);

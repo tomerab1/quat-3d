@@ -21,10 +21,6 @@ void draw_world_clock(entt::registry& registry, entt::entity entity, scene::Worl
 // that adds one.
 void draw_time_of_day_section(scene::Scene* scene);
 
-// True when the scene's clock currently drives its DirectionalLight (the
-// Sun section then shows the light's angles read-only).
-[[nodiscard]] bool clock_drives_sun(const entt::registry& registry);
-
 // True for an entity that only holds the world clock (and the Transform
 // every entity gets): it has no place in the world, so the Inspector hides
 // its Transform section and the viewport draws no gizmo for it.

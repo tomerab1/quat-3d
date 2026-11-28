@@ -1,8 +1,10 @@
 // environment.* (sun, clouds, sky source and HDRI).
 
 #include <cmath>
+#include <expected>
 #include <optional>
 #include <string>
+#include <string_view>
 
 #include <glm/gtc/constants.hpp>
 #include <nlohmann/json.hpp>
@@ -12,7 +14,7 @@
 #include "engine/scene/components.hpp"
 #include "engine/scene/render_settings_json.hpp"
 #include "engine/scene/scene.hpp"
-#include "engine/scene/world_clock.hpp"
+#include "engine/scene/sun_source.hpp"
 #include "internal.hpp"
 
 namespace engine::remote::world {
@@ -38,11 +40,6 @@ struct SunAngles {
     return {std::cos(el) * std::cos(az), -std::sin(el), std::cos(el) * std::sin(az)};
 }
 
-[[nodiscard]] entt::entity find_sun(const entt::registry& r) {
-    for (const entt::entity e : r.view<const scene::DirectionalLight>()) return e;
-    return entt::null;
-}
-
 // The cloud layer is the `clouds` group of the render settings: same codec,
 // same ranges as render.settings.*.
 [[nodiscard]] const renderer::RenderSettingGroup& clouds_group() {
@@ -55,15 +52,22 @@ struct SunAngles {
     return *renderer::find_render_setting_group("environment");
 }
 
-[[nodiscard]] Json hdri_json(const Context& ctx) {
+// The environment settings the renderer uses (defaults without a renderer:
+// procedural sky, so no HDRI owns the sun).
+[[nodiscard]] const renderer::EnvironmentSettings& environment_settings(const Context& ctx) {
+    static const renderer::EnvironmentSettings k_defaults{};
+    return ctx.services.render_settings != nullptr ? ctx.services.render_settings->environment
+                                                   : k_defaults;
+}
+
+[[nodiscard]] Json hdri_json(const Context& ctx, const HdriInfo& info) {
     Json out = Json::object();
     if (ctx.services.hdri_info) {
-        const HdriInfo info = ctx.services.hdri_info();
         out["path"] = info.path.empty() ? Json(nullptr) : Json(info.path);
         out["loaded"] = info.loaded;
         out["width"] = info.width;
         out["height"] = info.height;
-        out["sun_found"] = info.sun_found;
+        out["sun_found"] = info.sun.found;
         if (!info.error.empty()) out["error"] = info.error;
     } else {
         out["path"] = nullptr;
@@ -97,22 +101,24 @@ RpcResult environment_get(Context& ctx, const Json& params) {
     core::JsonFields f(params, "");
     if (auto ok = finish(f); !ok) return std::unexpected(ok.error());
     const entt::registry& r = ctx.scene->registry();
+    const HdriInfo hdri = ctx.services.hdri_info ? ctx.services.hdri_info() : HdriInfo{};
 
     Json out = Json::object();
-    if (const entt::entity sun = find_sun(r); sun != entt::null) {
-        const auto& light = r.get<scene::DirectionalLight>(sun);
-        const SunAngles a = angles_of(light.direction);
+    // The sun the frame is lit with, decided as the renderer decides it
+    // (issue #121): the HDRI's own sun, the clock's light or the scene's.
+    if (const scene::SceneSun sun =
+            scene::resolve_sun(r, environment_settings(ctx), hdri.loaded ? &hdri.sun : nullptr);
+        sun.light) {
+        const SunAngles a = angles_of(sun.light->direction);
         // azimuth_deg here is the world-space angle of the light's travel
         // direction (the editor's convention; a scene without a world clock
         // has no compass). time.get reports the Sun's compass bearing.
-        const entt::entity clock = scene::find_world_clock(r);
-        const bool driven = clock != entt::null && r.get<scene::WorldClock>(clock).enabled &&
-                            r.get<scene::WorldClock>(clock).drive_sun;
         out["sun"] = {{"azimuth_deg", a.azimuth_deg},
                       {"elevation_deg", a.elevation_deg},
-                      {"intensity", light.intensity},
-                      {"color", vec3_json(light.color)},
-                      {"driven_by_clock", driven}};
+                      {"intensity", sun.light->intensity},
+                      {"color", vec3_json(sun.light->color)},
+                      {"source", std::string(scene::sun_source_name(sun.source))},
+                      {"driven_by_clock", sun.source == scene::SunSource::clock}};
     } else {
         out["sun"] = nullptr;
     }
@@ -124,8 +130,30 @@ RpcResult environment_get(Context& ctx, const Json& params) {
                      ? Json(std::string(renderer::sky_source_names[static_cast<std::size_t>(
                            renderer::sky_source(ctx.services.render_settings->environment))]))
                      : Json(nullptr);
-    out["hdri"] = hdri_json(ctx);
+    out["hdri"] = hdri_json(ctx, hdri);
     return out;
+}
+
+// Refuses a sun edit the sun's owner would overwrite: the world clock owns
+// the angles and the strength, the HDRI's sun all of it (colour included).
+[[nodiscard]] std::expected<void, RpcError> check_sun_owner(scene::SunSource owner,
+                                                            core::JsonFields& s) {
+    for (const char* key : {"azimuth_deg", "elevation_deg", "intensity", "color"}) {
+        if (!s.has(key)) continue;
+        if (owner == scene::SunSource::hdri) {
+            return bad_params(std::string("sun.") + key +
+                              ": the HDRI's own sun lights the scene (sky \"hdri\" with "
+                              "hdri.sun true); turn it with hdri.rotation_deg, scale it with "
+                              "hdri.intensity, or set hdri.sun false to light with the scene's sun");
+        }
+        if (owner == scene::SunSource::clock && std::string_view(key) != "color") {
+            return bad_params(std::string("sun.") + key +
+                              ": the world clock drives the sun; change the time with "
+                              "time.set / time.skip (sun_intensity for the strength), or "
+                              "time.set {drive_sun:false} first");
+        }
+    }
+    return {};
 }
 
 RpcResult environment_set(Context& ctx, const Json& params) {
@@ -136,50 +164,10 @@ RpcResult environment_set(Context& ctx, const Json& params) {
     const Json* sky_in = f.raw("sky");
     const Json* hdri_in = f.raw("hdri");
     if (auto ok = finish(f); !ok) return std::unexpected(ok.error());
+    // The HDRI as it stands before this request (read once).
+    const HdriInfo hdri_before = ctx.services.hdri_info ? ctx.services.hdri_info() : HdriInfo{};
 
-    // Decode both groups completely before changing anything.
-    const entt::entity existing = find_sun(r);
-    scene::DirectionalLight light =
-        existing != entt::null ? r.get<scene::DirectionalLight>(existing) : scene::DirectionalLight{};
-    bool set_sun = false;
-    if (sun_json != nullptr && !sun_json->is_null()) {
-        core::JsonFields s(*sun_json, "sun");
-        // The world clock (R22.1) owns the sun's position and strength
-        // while it drives the light; a write here would be undone next tick.
-        if (const entt::entity c = scene::find_world_clock(r); c != entt::null) {
-            const scene::WorldClock& clock = r.get<scene::WorldClock>(c);
-            for (const char* key : {"azimuth_deg", "elevation_deg", "intensity"}) {
-                if (clock.enabled && clock.drive_sun && s.has(key)) {
-                    return bad_params(std::string("sun.") + key +
-                                      ": the world clock drives the sun; change the time with "
-                                      "time.set / time.skip (sun_intensity for the strength), or "
-                                      "time.set {drive_sun:false} first");
-                }
-            }
-        }
-        SunAngles a = existing != entt::null ? angles_of(light.direction) : SunAngles{};
-        s.number("azimuth_deg", a.azimuth_deg, -360.0F, 360.0F);
-        s.number("elevation_deg", a.elevation_deg, -90.0F, 90.0F);
-        s.number("intensity", light.intensity, 0.0F, 1.0e5F);
-        if (const Json* c = s.raw("color")) {
-            glm::vec4 rgba(light.color, 1.0F);
-            if (c->is_array()) {
-                // Light colours may exceed 1 (HDR tint); arrays go through color3.
-                const Json holder{{"color", *c}}; // JsonFields keeps a reference
-                core::JsonFields wrap(holder, "sun");
-                wrap.color3("color", light.color);
-                if (auto ok = wrap.finish(); !ok) s.fail("color", "expected [r, g, b] >= 0 or \"#rrggbb\"");
-            } else if (auto ok = scene::decode_color(*c, rgba); ok) {
-                light.color = glm::vec3(rgba);
-            } else {
-                s.fail("color", ok.error().message);
-            }
-        }
-        if (auto ok = finish(s); !ok) return std::unexpected(ok.error());
-        light.direction = direction_of(a);
-        set_sun = true;
-    }
-
+    // Decode every group completely before changing anything.
     std::optional<renderer::RenderSettings> settings;
     if (clouds_in != nullptr && !clouds_in->is_null()) {
         if (ctx.services.render_settings == nullptr) return unavailable("cloud control");
@@ -221,6 +209,45 @@ RpcResult environment_set(Context& ctx, const Json& params) {
             return bad_params(ok.error().message);
         }
     }
+
+    // The sun, judged by the owner this request leaves (it may change the sky
+    // source, hdri.sun or the HDRI file): a write the world clock (R22.1) or
+    // the HDRI's sun (R21) would override is refused (issue #121).
+    const entt::entity existing = scene::sun_light_entity(r);
+    scene::DirectionalLight light =
+        existing != entt::null ? r.get<scene::DirectionalLight>(existing) : scene::DirectionalLight{};
+    bool set_sun = false;
+    if (sun_json != nullptr && !sun_json->is_null()) {
+        core::JsonFields s(*sun_json, "sun");
+        // A path in the request is predicted loaded: a failed load refuses
+        // the whole request anyway (before anything is applied).
+        const bool hdri_loaded = hdri_path ? !hdri_path->empty() : hdri_before.loaded;
+        const scene::SunSource owner = scene::sun_source(
+            r, settings ? settings->environment : environment_settings(ctx), hdri_loaded);
+        if (auto ok = check_sun_owner(owner, s); !ok) return std::unexpected(ok.error());
+        SunAngles a = existing != entt::null ? angles_of(light.direction) : SunAngles{};
+        s.number("azimuth_deg", a.azimuth_deg, -360.0F, 360.0F);
+        s.number("elevation_deg", a.elevation_deg, -90.0F, 90.0F);
+        s.number("intensity", light.intensity, 0.0F, 1.0e5F);
+        if (const Json* c = s.raw("color")) {
+            glm::vec4 rgba(light.color, 1.0F);
+            if (c->is_array()) {
+                // Light colours may exceed 1 (HDR tint); arrays go through color3.
+                const Json holder{{"color", *c}}; // JsonFields keeps a reference
+                core::JsonFields wrap(holder, "sun");
+                wrap.color3("color", light.color);
+                if (auto ok = wrap.finish(); !ok) s.fail("color", "expected [r, g, b] >= 0 or \"#rrggbb\"");
+            } else if (auto ok = scene::decode_color(*c, rgba); ok) {
+                light.color = glm::vec3(rgba);
+            } else {
+                s.fail("color", ok.error().message);
+            }
+        }
+        if (auto ok = finish(s); !ok) return std::unexpected(ok.error());
+        light.direction = direction_of(a);
+        set_sun = true;
+    }
+
     if (hdri_path) {
         if (!ctx.services.set_hdri) return unavailable("HDRI loading");
         if (auto loaded = ctx.services.set_hdri(*hdri_path); !loaded) {
@@ -242,7 +269,8 @@ RpcResult environment_set(Context& ctx, const Json& params) {
 void register_environment_commands(RpcServer& server, const ContextPtr& ctx) {
     server.add_method("environment.get",
                       "Sun (azimuth_deg = atan2(d.z, d.x), elevation_deg = asin(-d.y) of the "
-                      "light's travel direction d; intensity; linear color), cloud layer, sky "
+                      "light's travel direction d; intensity; linear color; source: \"hdri\" | "
+                      "\"clock\" | \"manual\", the sun's owner; driven_by_clock), cloud layer, sky "
                       "source and HDRI {path, loaded, width, height, sun_found, error?, "
                       "intensity, rotation_deg, sun}. sun/clouds are null when "
                       "absent/unavailable.",
@@ -252,7 +280,8 @@ void register_environment_commands(RpcServer& server, const ContextPtr& ctx) {
                       "clouds:{enabled, coverage, density, bottom_km, thickness_km, size_km, "
                       "detail, wind_speed, wind_dir_deg, shadows}, sky: \"procedural\" | \"hdri\", "
                       "hdri:{path (project-relative .hdr; null clears), intensity, "
-                      "rotation_deg, sun}}; returns environment.get.",
+                      "rotation_deg, sun}}; sun edits the owner would override (the clock: angles, "
+                      "intensity; the HDRI's sun: all) are refused. Returns environment.get.",
                       [ctx](const Json& p) { return environment_set(*ctx, p); });
 }
 

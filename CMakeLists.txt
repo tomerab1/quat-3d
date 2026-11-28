@@ -453,6 +453,7 @@ add_library(engine_scene STATIC
     src/scene/world_clock.cpp
     src/scene/world_clock_json.cpp
     src/scene/world_clock_api.cpp
+    src/scene/sun_source.cpp
     src/scene/bounds.cpp
     src/scene/view_clip.cpp)
 # EnTT is PUBLIC: components.hpp exposes entt types (Parent/Children) to consumers.

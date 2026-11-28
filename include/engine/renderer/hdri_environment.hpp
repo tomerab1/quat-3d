@@ -66,16 +66,6 @@ struct HdriBakeSettings {
     bool operator==(const HdriBakeSettings&) const = default;
 };
 
-// The HDRI's sun as a directional light, in world space after the bake
-// settings' rotation and intensity. `found` false: the panorama has no sun
-// (overcast, interior); intensity is then 0.
-struct HdriSunLight {
-    bool      found = false;
-    glm::vec3 direction_to_sun{0.0F, 1.0F, 0.0F};
-    glm::vec3 color{1.0F};     // max component 1
-    float     intensity = 0.0F; // colour * intensity = the clamped-off irradiance
-};
-
 class HdriEnvironment {
 public:
     static constexpr std::uint32_t k_max_face = 1024;          // environment cube face cap

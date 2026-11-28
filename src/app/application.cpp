@@ -310,7 +310,10 @@ void Application::init_scripts() {
 #if !defined(QUAT_SHIPPING)
 engine::remote::HdriInfo Application::hdri_info() const {
     const HdriStatus& s = renderer_.hdri_status();
-    return engine::remote::HdriInfo{s.path, s.loaded, s.width, s.height, s.sun_found, s.error};
+    const engine::renderer::HdriSun* sun = renderer_.hdri_sun();
+    // `loaded` and `sun` are what the frame lights with (scene::resolve_sun).
+    return engine::remote::HdriInfo{s.path, sun != nullptr, s.width, s.height,
+                                    sun != nullptr ? *sun : engine::renderer::HdriSun{}, s.error};
 }
 #endif // !QUAT_SHIPPING
 

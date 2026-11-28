@@ -40,4 +40,19 @@ struct HdriSun {
 
 [[nodiscard]] HdriSun analyze_hdri_sun(const asset::HdrImage& image);
 
+// The HDRI's sun as a directional light, in world space after the
+// environment's rotation and intensity. `found` false: the panorama has no
+// sun (overcast, interior); intensity is then 0.
+struct HdriSunLight {
+    bool      found = false;
+    glm::vec3 direction_to_sun{0.0F, 1.0F, 0.0F};
+    glm::vec3 color{1.0F};     // max component 1
+    float     intensity = 0.0F; // colour * intensity = the clamped-off irradiance
+};
+
+// `sun` placed in the world: the panorama rotated by `rotation_deg` about +Y
+// (counter-clockwise seen from above) and scaled by `intensity` (as the
+// environment's bake applies them).
+[[nodiscard]] HdriSunLight hdri_sun_light(const HdriSun& sun, float rotation_deg, float intensity);
+
 } // namespace engine::renderer

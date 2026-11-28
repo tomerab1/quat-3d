@@ -18,6 +18,10 @@
 
 #include "engine/core/error.hpp"
 
+namespace engine::renderer {
+struct EnvironmentSettings;
+struct HdriSun;
+} // namespace engine::renderer
 namespace engine::scene {
 class Scene;
 }
@@ -32,6 +36,11 @@ struct InspectorState {
     // Gameplay scripts (G7): the properties a Script component's file
     // declares (may be null).
     script::ScriptRuntime* scripts = nullptr;
+    // Who owns the sun (scene::sun_source): the renderer's environment
+    // settings (null: none, defaults apply) and the loaded HDRI's sun (null:
+    // none loaded).
+    const renderer::EnvironmentSettings* environment = nullptr;
+    const renderer::HdriSun*             hdri_sun = nullptr;
     std::string add_filter;     // Add Component search
     std::string clipboard_type; // codec name of the copied component ("" = none)
     std::string clipboard_json; // its values

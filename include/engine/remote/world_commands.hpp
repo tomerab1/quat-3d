@@ -47,6 +47,7 @@
 #include "engine/project/build_job.hpp"
 #include "engine/project/game_project.hpp"
 #include "engine/remote/rpc_server.hpp"
+#include "engine/renderer/hdri_sun.hpp"
 #include "engine/renderer/physical_camera.hpp"
 #include "engine/weather/wind_field.hpp"
 
@@ -139,7 +140,9 @@ struct HdriInfo {
     bool          loaded = false;
     std::uint32_t width = 0;
     std::uint32_t height = 0;
-    bool          sun_found = false;
+    // The panorama's sun analysis (sun.found: it has one); with the render
+    // settings it decides who owns the sun (scene::resolve_sun).
+    renderer::HdriSun sun;
     std::string   error; // why the last load failed
 };
 

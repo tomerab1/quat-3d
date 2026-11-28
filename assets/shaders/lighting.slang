@@ -312,7 +312,9 @@ void compute_main(uint3 tid : SV_DispatchThreadID) {
     int2 coord = int2(tid.xy);
 
     float4 mat = g_material.Load(int3(coord, 0));
-    if (mat.a < 0.5) { // background: sky (g_frame.direction.w: 0 off, 1 procedural, 2 LUT)
+    // Background: the sky, by g_frame.direction.w: 0 off, 1 procedural,
+    // 2 atmosphere LUT, 3 HDRI environment (R21).
+    if (mat.a < 0.5) {
         float3 bg = float3(0.0, 0.0, 0.0);
         if (g_frame.direction.w > 0.5) {
             float bg_depth = g_depth.Load(int3(coord, 0)).r;

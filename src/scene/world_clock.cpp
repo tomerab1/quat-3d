@@ -11,6 +11,7 @@
 
 #include "engine/astro/events.hpp"
 #include "engine/scene/components.hpp"
+#include "engine/scene/sun_source.hpp"
 
 namespace engine::scene {
 
@@ -96,12 +97,11 @@ void apply_world_clock(entt::registry& registry) {
     const astro::SkyState sky = astro::compute_sky_state(c.utc, observer_of(c));
     registry.emplace_or_replace<astro::SkyState>(e, sky);
     if (!c.drive_sun) return;
-    // The renderer lights with the first DirectionalLight (frame_graph).
-    for (const entt::entity l : registry.view<DirectionalLight>()) {
+    // The scene's sun light (sun_source.hpp: the one the renderer lights with).
+    if (const entt::entity l = sun_light_entity(registry); l != entt::null) {
         DirectionalLight& light = registry.get<DirectionalLight>(l);
         light.direction = -sky.sun_direction; // the light travels from the Sun
         light.intensity = c.sun_intensity * sky.sun_disc_visible;
-        break;
     }
 }
 

@@ -16,6 +16,7 @@
 #include "../panels/profiler.hpp"
 #include "../physics_debug.hpp"
 #include "../scene_hierarchy.hpp"
+#include "engine/renderer/render_settings.hpp"
 #include "engine/scene/scene_snapshot.hpp"
 #include "../tuning_panels.hpp"
 #include "../ui/icons.hpp"
@@ -413,10 +414,14 @@ void EditorShell::draw_panels() {
     const auto open = [this](Panel p) { return &panel_open[static_cast<std::size_t>(p)]; };
     draw_viewport(*this);
     inspector.scripts = c.scripts; // a Script's declared properties (G7)
+    // The sun's owner, for the Directional Light's note (issue #121).
+    inspector.environment = c.renderer != nullptr ? &c.renderer->environment : nullptr;
+    inspector.hdri_sun = c.hdri_sun ? &*c.hdri_sun : nullptr;
     if (c.scene != nullptr) draw_inspector(*c.scene, selected, inspector, open(Panel::inspector));
     if (c.renderer != nullptr) {
         draw_renderer_panel(*c.renderer, c.scene,
-                            {c.hdri_path, c.hdri_status, c.project_root, c.hdri_request},
+                            {c.hdri_path, c.hdri_status, c.project_root, c.hdri_request,
+                             c.hdri_sun ? &*c.hdri_sun : nullptr},
                             c.view_lens, c.view_fov_y);
     }
     if (c.scene != nullptr) {

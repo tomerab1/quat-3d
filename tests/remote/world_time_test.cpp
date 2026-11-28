@@ -1,19 +1,28 @@
-// time.get / time.set / time.skip (ROADMAP R22.1) and environment.set's
-// refusal to move a clock-driven sun.
+// time.get / time.set / time.skip (ROADMAP R22.1), environment.set's
+// refusal to move a clock-driven sun, and the HDRI's sun taking the light
+// from the clock (issue #121).
 
+#include <cmath>
+#include <expected>
 #include <string>
+#include <vector>
 
 #include <glm/glm.hpp>
 #include <gtest/gtest.h>
 
+#include "engine/renderer/hdri_sun.hpp"
+#include "engine/renderer/render_settings.hpp"
+#include "engine/scene/sun_source.hpp"
 #include "engine/scene/world_clock.hpp"
 #include "remote/world_fixture.hpp"
+#include "support/temp_dir.hpp"
 
 namespace {
 
 using quat::test::Json;
 namespace code = engine::remote::rpc_code;
 namespace s = engine::scene;
+namespace r = engine::renderer;
 
 bool contains(const std::string& haystack, const std::string& needle) {
     return haystack.find(needle) != std::string::npos;
@@ -121,6 +130,145 @@ TEST_F(TimeCommands, EnvironmentSetCannotMoveADrivenSun) {
     env = ok("environment.set", {{"sun", {{"elevation_deg", 10}}}});
     EXPECT_NEAR(env["sun"]["elevation_deg"].get<double>(), 10.0, 1e-3);
     EXPECT_EQ(env["sun"]["driven_by_clock"], false);
+    EXPECT_EQ(env["sun"]["source"], "manual");
+}
+
+// A loaded HDRI (services.hdri_info, faked) under a running world clock.
+class TimeWithHdri : public quat::test::WorldCommands {
+protected:
+    r::RenderSettings        settings;
+    engine::remote::HdriInfo hdri;
+    quat::test::TempDir      root{"time_hdri_root"};
+    std::vector<std::string> loads; // services.set_hdri calls
+    void SetUp() override {
+        services.render_settings = &settings;
+        services.hdri_info = [this] { return hdri; };
+        services.project_root = [this] { return root.path(); };
+        services.set_hdri = [this](const std::string& relative)
+            -> std::expected<void, engine::core::Error> {
+            loads.push_back(relative);
+            hdri.path = relative;
+            hdri.loaded = !relative.empty();
+            return {};
+        };
+        register_commands();
+        hdri.path = "hdri-cache/field.hdr";
+        hdri.loaded = true;
+        hdri.width = 2048;
+        hdri.height = 1024;
+        hdri.sun.found = true;
+        hdri.sun.direction = glm::normalize(glm::vec3(0.5F, 0.6F, -0.4F));
+        hdri.sun.irradiance = glm::vec3(30.0F, 24.0F, 15.0F);
+    }
+    // The sun the frame is lit with: FrameRenderer::gather's decision.
+    [[nodiscard]] s::SceneSun lit() {
+        return s::resolve_sun(reg(), settings.environment, hdri.loaded ? &hdri.sun : nullptr);
+    }
+    // environment.get's sun is the lit one.
+    void expect_reported_as_lit(const Json& sun) {
+        const s::SceneSun l = lit();
+        ASSERT_TRUE(l.light.has_value());
+        const glm::vec3 d = glm::normalize(l.light->direction);
+        EXPECT_EQ(sun["source"], std::string(s::sun_source_name(l.source)));
+        EXPECT_EQ(sun["driven_by_clock"], l.source == s::SunSource::clock);
+        EXPECT_NEAR(sun["azimuth_deg"].get<float>(), glm::degrees(std::atan2(d.z, d.x)), 1e-3F);
+        EXPECT_NEAR(sun["elevation_deg"].get<float>(), glm::degrees(std::asin(-d.y)), 1e-3F);
+        EXPECT_NEAR(sun["intensity"].get<float>(), l.light->intensity, 1e-4F);
+        for (int i = 0; i < 3; ++i) {
+            EXPECT_NEAR(sun["color"][i].get<float>(), l.light->color[i], 1e-5F);
+        }
+    }
+};
+
+TEST_F(TimeWithHdri, TheHdriSunOwnsTheLightAndEnvironmentGetSaysSo) {
+    (void)ok("time.set", {{"datetime", "2026-06-21T12:00:00+02:00"}, {"time_scale", 0}});
+    const Json env = ok("environment.set", {{"sky", "hdri"}, {"hdri", {{"rotation_deg", 30}}}});
+    ASSERT_TRUE(env["sun"].is_object());
+    EXPECT_EQ(env["sun"]["source"], "hdri");
+    EXPECT_EQ(env["sun"]["driven_by_clock"], false);
+    expect_reported_as_lit(env["sun"]);
+    // It is the panorama's sun as the environment places it.
+    const r::HdriSunLight expected = r::hdri_sun_light(hdri.sun, 30.0F, 1.0F);
+    EXPECT_NEAR(env["sun"]["elevation_deg"].get<float>(),
+                glm::degrees(std::asin(expected.direction_to_sun.y)), 1e-3F);
+    EXPECT_NEAR(env["sun"]["intensity"].get<float>(), expected.intensity, 1e-4F);
+
+    // The clock keeps running (its sky still advances for stars and moon)
+    // but no longer reaches the light.
+    const Json before = ok("time.get");
+    (void)ok("time.skip", {{"hours", 3}});
+    const Json after = ok("time.get");
+    EXPECT_NE(before["sun"]["elevation_deg"], after["sun"]["elevation_deg"]);
+    EXPECT_NE(before["moon"]["elevation_deg"], after["moon"]["elevation_deg"]);
+    const Json still = ok("environment.get");
+    EXPECT_EQ(still["sun"], env["sun"]);
+    expect_reported_as_lit(still["sun"]);
+
+    // Sun edits name the HDRI, colour included, and change nothing.
+    for (const std::string key : {"elevation_deg", "azimuth_deg", "intensity"}) {
+        const std::string msg = err("environment.set", {{"sun", {{key, 10}}}}, code::invalid_params);
+        EXPECT_TRUE(contains(msg, "sun." + key + ": the HDRI's own sun lights the scene")) << msg;
+    }
+    EXPECT_TRUE(contains(err("environment.set", {{"sun", {{"color", "#ffffff"}}}}, code::invalid_params),
+                         "hdri.rotation_deg"));
+    // Turning hdri.sun off in the same request hands the sun to the clock,
+    // which still refuses the angles; the refusal changes nothing.
+    EXPECT_TRUE(contains(err("environment.set", {{"hdri", {{"sun", false}}}, {"sun", {{"elevation_deg", 10}}}},
+                             code::invalid_params),
+                         "the world clock drives the sun"));
+    EXPECT_TRUE(settings.environment.hdri_sun);
+    EXPECT_EQ(ok("environment.get")["sun"], env["sun"]);
+}
+
+// The owner is predicted from the request: a request that loads an HDRI
+// (with its sun on) and moves the sun is refused before the file loads.
+TEST_F(TimeWithHdri, ARequestLoadingAnHdriCannotAlsoMoveTheSun) {
+    hdri = {}; // nothing loaded yet
+    (void)ok("time.set", {{"datetime", "2026-06-21T12:00:00+02:00"}, {"time_scale", 0}});
+    const Json before = ok("environment.get");
+    EXPECT_EQ(before["sun"]["source"], "clock");
+    const std::string msg = err("environment.set",
+                                {{"sky", "hdri"}, {"hdri", {{"path", "x.hdr"}}},
+                                 {"sun", {{"elevation_deg", 10}}}},
+                                code::invalid_params);
+    EXPECT_TRUE(contains(msg, "sun.elevation_deg: the HDRI's own sun lights the scene")) << msg;
+    EXPECT_TRUE(loads.empty());
+    EXPECT_FALSE(hdri.loaded);
+    EXPECT_EQ(settings.environment.source, static_cast<int>(r::SkySource::procedural));
+    EXPECT_EQ(ok("environment.get"), before);
+}
+
+TEST_F(TimeWithHdri, TheClockTakesTheSunBackWhenTheHdriLetsGo) {
+    (void)ok("time.set", {{"datetime", "2026-06-21T12:00:00+02:00"}, {"time_scale", 0}});
+    (void)ok("environment.set", {{"sky", "hdri"}});
+    EXPECT_EQ(ok("environment.get")["sun"]["source"], "hdri");
+
+    // hdri.sun off: the HDRI lights as captured and the clock's light stays.
+    Json env = ok("environment.set", {{"hdri", {{"sun", false}}}});
+    EXPECT_EQ(env["sun"]["source"], "clock");
+    EXPECT_EQ(env["sun"]["driven_by_clock"], true);
+    expect_reported_as_lit(env["sun"]);
+    const entt::entity light = *reg().view<s::DirectionalLight>().begin();
+    EXPECT_NEAR(env["sun"]["intensity"].get<float>(), reg().get<s::DirectionalLight>(light).intensity,
+                1e-5F);
+
+    // Back on, then the panorama unloaded: the clock again.
+    (void)ok("environment.set", {{"hdri", {{"sun", true}}}});
+    EXPECT_EQ(ok("environment.get")["sun"]["source"], "hdri");
+    hdri.loaded = false;
+    env = ok("environment.get");
+    EXPECT_EQ(env["sun"]["source"], "clock");
+    expect_reported_as_lit(env["sun"]);
+
+    // Without the clock driving it, the sun is the scene's own again.
+    hdri.loaded = true;
+    (void)ok("time.set", {{"drive_sun", false}});
+    EXPECT_EQ(ok("environment.get")["sun"]["source"], "hdri");
+    (void)ok("environment.set", {{"sky", "procedural"}});
+    env = ok("environment.set", {{"sun", {{"elevation_deg", 20}}}});
+    EXPECT_EQ(env["sun"]["source"], "manual");
+    EXPECT_NEAR(env["sun"]["elevation_deg"].get<double>(), 20.0, 1e-3);
+    expect_reported_as_lit(env["sun"]);
 }
 
 TEST_F(TimeCommands, TheClockIsASceneComponent) {
