@@ -260,20 +260,35 @@ TransientImagePool& TransientImagePool::operator=(TransientImagePool&& other) no
 }
 
 std::expected<ResourceBinding, core::Error>
-TransientImagePool::acquire(VkFormat format, VkExtent2D extent, VkImageUsageFlags usage) {
+TransientImagePool::acquire(VkFormat format, VkExtent2D extent, VkImageUsageFlags usage,
+                            VkFormat storage_format) {
     if (allocator_ == nullptr || device_ == nullptr) {
         return fail("TransientImagePool::acquire on a null pool");
     }
+    if (storage_format == VK_FORMAT_UNDEFINED) storage_format = format;
+    // Only an sRGB format and its UNORM twin: same bytes, so every view and
+    // byte copy of the image means the same thing.
+    const bool mutable_storage = storage_format != format;
+    if (mutable_storage && storage_unorm(storage_format) != storage_unorm(format)) {
+        return fail(std::format("TransientImagePool: storage format {} is not the sRGB / UNORM "
+                                "twin of view format {}",
+                                static_cast<int>(storage_format), static_cast<int>(format)));
+    }
 
     for (Entry& e : entries_) {
-        if (!e.in_use && e.format == format && e.usage == usage
-            && e.extent.width == extent.width && e.extent.height == extent.height) {
+        if (!e.in_use && e.format == format && e.storage_format == storage_format &&
+            e.usage == usage && e.extent.width == extent.width &&
+            e.extent.height == extent.height) {
             e.in_use = true;
             return ResourceBinding{e.image.handle(), e.view, e.format, e.extent};
         }
     }
 
-    auto image = allocator_->create_image(format, extent, usage);
+    const std::array<VkFormat, 2> view_formats{storage_format, format};
+    auto image = mutable_storage
+                     ? allocator_->create_image(storage_format, extent, usage, 1, 1,
+                                                VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT, view_formats)
+                     : allocator_->create_image(format, extent, usage);
     if (!image) return std::unexpected(image.error());
 
     // A view is only valid (and only needed) when the image can be bound as an
@@ -300,6 +315,7 @@ TransientImagePool::acquire(VkFormat format, VkExtent2D extent, VkImageUsageFlag
     entry.image = std::move(*image);
     entry.view = view;
     entry.format = format;
+    entry.storage_format = storage_format;
     entry.extent = extent;
     entry.usage = usage;
     entry.in_use = true;
@@ -351,6 +367,7 @@ ResourceHandle RenderGraph::import_image(const char* name, VkImage image, VkImag
     r.image = image;
     r.view = view;
     r.format = format;
+    r.storage_format = format;
     r.extent = extent;
     r.initial_layout = current_layout;
     r.final_layout = final_layout;
@@ -381,15 +398,22 @@ ResourceHandle RenderGraph::import_buffer(const char* name, VkBuffer buffer, VkD
 }
 
 ResourceHandle RenderGraph::create_transient_image(const char* name, VkFormat format,
-                                                   VkExtent2D extent, VkImageUsageFlags usage) {
+                                                   VkExtent2D extent, VkImageUsageFlags usage,
+                                                   VkFormat storage_format) {
     Resource r;
     r.name = name;
     r.imported = false;
     r.format = format;
+    r.storage_format = storage_format != VK_FORMAT_UNDEFINED ? storage_format : format;
     r.extent = extent;
     r.usage = usage;
     resources_.push_back(std::move(r));
     return ResourceHandle{static_cast<std::uint32_t>(resources_.size() - 1)};
+}
+
+VkFormat RenderGraph::storage_format(ResourceHandle image) const {
+    if (!image.valid() || image.index >= resources_.size()) return VK_FORMAT_UNDEFINED;
+    return resources_[image.index].storage_format;
 }
 
 RenderGraph::PassBuilder RenderGraph::add_pass(const char* name, PassType type) {
@@ -444,7 +468,7 @@ std::expected<void, core::Error> RenderGraph::compile() {
     }
     for (Resource& r : resources_) {
         if (!r.imported) {
-            auto img = pool_->acquire(r.format, r.extent, r.usage);
+            auto img = pool_->acquire(r.format, r.extent, r.usage, r.storage_format);
             if (!img) return std::unexpected(img.error());
             r.image = img->image;
             r.view = img->view;

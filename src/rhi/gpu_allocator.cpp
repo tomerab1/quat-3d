@@ -304,10 +304,17 @@ GpuAllocator::create_staging_buffer(VkDeviceSize size, VkBufferUsageFlags usage)
 std::expected<GpuImage, core::Error>
 GpuAllocator::create_image(VkFormat format, VkExtent2D extent, VkImageUsageFlags usage,
                            std::uint32_t mip_levels, std::uint32_t array_layers,
-                           VkImageCreateFlags flags) {
+                           VkImageCreateFlags flags, std::span<const VkFormat> view_formats) {
     VkImageCreateInfo image_info{};
     image_info.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
     image_info.flags = flags;
+    VkImageFormatListCreateInfo format_list{};
+    if (!view_formats.empty()) {
+        format_list.sType = VK_STRUCTURE_TYPE_IMAGE_FORMAT_LIST_CREATE_INFO;
+        format_list.viewFormatCount = static_cast<std::uint32_t>(view_formats.size());
+        format_list.pViewFormats = view_formats.data();
+        image_info.pNext = &format_list;
+    }
     image_info.imageType = VK_IMAGE_TYPE_2D;
     image_info.format = format;
     image_info.extent = {extent.width, extent.height, 1};
