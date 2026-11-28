@@ -128,6 +128,10 @@ void decode_spline(JsonFields& f, Spline& s) {
         }
     }
     if (!f.ok()) return;
+    // A spline without points is a valid component ("no curve yet": added
+    // empty, then drawn or given points); its cache reports why it does not
+    // compile. Once it has points, the whole spline must make a curve.
+    if (s.points.empty()) return;
     if (auto valid = spline::validate(s); !valid) fail_with_path(f, valid.error().message);
 }
 

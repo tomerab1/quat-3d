@@ -45,6 +45,8 @@ TEST(SplineCodec, RoundTripsBothPointForms) {
 }
 
 TEST(SplineCodec, MergesAndValidatesTheWhole) {
+    s::Spline empty;
+    EXPECT_EQ(decode(json::object(), empty), "") << "an empty spline is a valid component (added, then drawn)";
     s::Spline sp;
     ASSERT_EQ(decode(json::parse(R"({"points": [[0,0,0], [5,0,0]]})"), sp), "");
     EXPECT_EQ(sp.kind, s::SplineKind::centripetal_catmull_rom);

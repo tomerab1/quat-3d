@@ -13,7 +13,8 @@ namespace engine::scene::detail {
 [[nodiscard]] nlohmann::json encode_spline(const Spline& spline);
 // Merges fields into `spline`; `points` (when present) replaces every point.
 // The result is validated whole (spline::validate), so a field that makes
-// the curve impossible (a closed polyline of 2 points) is an error.
+// the curve impossible (a closed polyline of 2 points) is an error. A
+// spline with no points at all is accepted (added empty, drawn later).
 void decode_spline(core::JsonFields& fields, Spline& spline);
 
 // One point: [x, y, z] or {position, width?, height?, tags?}.

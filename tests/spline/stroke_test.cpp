@@ -115,7 +115,10 @@ TEST(SplineStroke, NoisyLoopClosesAndStaysNearTheStroke) {
     const sp::Curve c = curve_of(*fit);
     // Every hit (except the dropped tail near the seam) is near the curve.
     raw.resize(190);
-    EXPECT_LE(max_gap(c, raw), 0.1F + 0.05F + 0.02F);
+    // The Bézier fit is within fit_tolerance of the de-jittered stroke, the
+    // Catmull-Rom points within fit_tolerance of the fit, the de-jittering
+    // within jitter_tolerance of the hits, which carry +-0.02 of noise.
+    EXPECT_LE(max_gap(c, raw), 0.1F + 0.1F + 0.05F + 0.02F);
     EXPECT_NEAR(c.length(), 2.0F * k_pi * 8.0F, 0.5F);
     EXPECT_LT(fit->spline.points.size(), 40U) << "the fit is compact";
 

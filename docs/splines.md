@@ -46,7 +46,9 @@ A point with the defaults (width 1, height 0, tags 0) is written as a bare
 `[x, y, z]`. The codec validates the whole spline after a merge: an edit
 that makes it impossible, such as closing a two-point curve, fails with the
 field at fault (`spline.points: a closed centripetal_catmull_rom spline
-needs at least 3 points, got 2`).
+needs at least 3 points, got 2`). A spline with no points at all is a valid
+component, as when it is added empty and then drawn. Its cache reports why
+it has no curve yet.
 
 ### SplineCache
 
