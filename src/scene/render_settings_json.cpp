@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
 #include <optional>
 #include <string>
@@ -39,6 +40,7 @@ using renderer::RenderSettingType;
     case RenderSettingType::boolean: return "boolean";
     case RenderSettingType::number: return "number";
     case RenderSettingType::integer: return "integer";
+    case RenderSettingType::choice: return "string";
     }
     return "number";
 }
@@ -48,12 +50,20 @@ using renderer::RenderSettingType;
     case RenderSettingType::boolean: return v != 0.0F;
     case RenderSettingType::integer: return static_cast<std::int64_t>(std::lround(v));
     case RenderSettingType::number: return v;
+    case RenderSettingType::choice: return std::string(renderer::render_setting_choice_name(d, v));
     }
     return v;
 }
 
 [[nodiscard]] std::string expectation(const RenderSettingDesc& d) {
     if (d.type == RenderSettingType::boolean) return "expected true or false";
+    if (d.type == RenderSettingType::choice) {
+        std::string s = "expected one of ";
+        for (std::size_t i = 0; i < d.choices.size(); ++i) {
+            s += (i == 0 ? "\"" : ", \"") + std::string(d.choices[i]) + "\"";
+        }
+        return s;
+    }
     std::string s = std::string("expected ") +
                     (d.type == RenderSettingType::integer ? "an integer" : "a number") + " in [" +
                     trim(d.min) + ", " + trim(d.max) + "]";
@@ -67,6 +77,13 @@ using renderer::RenderSettingType;
     if (d.type == RenderSettingType::boolean) {
         if (!v.is_boolean()) return std::nullopt;
         return v.get<bool>() ? 1.0F : 0.0F;
+    }
+    if (d.type == RenderSettingType::choice) {
+        std::string name;
+        if (!core::JsonFields::read_string(v, name)) return std::nullopt;
+        const std::optional<int> index = renderer::render_setting_choice_index(d, name);
+        if (!index) return std::nullopt;
+        return static_cast<float>(*index);
     }
     float f = 0.0F;
     if (d.type == RenderSettingType::integer && strict) {
@@ -183,7 +200,11 @@ json render_settings_schema() {
                       {"type", type_name(d.type)},
                       {"default", value_json(d, d.default_value)},
                       {"hint", d.hint}};
-            if (d.type != RenderSettingType::boolean) {
+            if (d.type == RenderSettingType::choice) {
+                json names = json::array();
+                for (const std::string_view c : d.choices) names.push_back(c);
+                f["enum"] = std::move(names);
+            } else if (d.type != RenderSettingType::boolean) {
                 f["min"] = value_json(d, d.min);
                 f["max"] = value_json(d, d.max);
             }

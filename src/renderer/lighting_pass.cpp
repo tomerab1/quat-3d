@@ -50,7 +50,7 @@ enum Slot : std::uint8_t {
     s_frame, s_albedo, s_normal, s_material, s_depth, s_hdr, s_clearcoat, s_shadow_map,
     s_shadow_cmp, s_point, s_cascades, s_ao, s_irradiance, s_prefiltered, s_brdf_lut,
     s_ibl_sampler, s_skyview, s_transmittance, s_cluster_params, s_lights, s_cluster_grid,
-    s_cluster_indices, s_shadow_transmittance, s_count
+    s_cluster_indices, s_emissive, s_shadow_transmittance, s_count
 };
 constexpr std::array<rhi::BindingRequest, s_count> kResources{{
     {"g_frame", VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER},
@@ -75,6 +75,7 @@ constexpr std::array<rhi::BindingRequest, s_count> kResources{{
     {"g_lights", VK_DESCRIPTOR_TYPE_STORAGE_BUFFER},
     {"g_cluster_grid", VK_DESCRIPTOR_TYPE_STORAGE_BUFFER},
     {"g_cluster_indices", VK_DESCRIPTOR_TYPE_STORAGE_BUFFER},
+    {"g_emissive", VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE},
     {"g_shadow_transmittance", VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE},
 }};
 
@@ -131,6 +132,7 @@ LightingPass::create(const rhi::Device& device, rhi::GpuAllocator& allocator,
     if (!shader) return std::unexpected(shader.error());
     auto bindings = rhi::reflected_bindings((*shader)->reflection, kResources, kComputeStage);
     if (!bindings) return fail("lighting pass: " + bindings.error().message);
+    static_assert(s_count == k_slot_count, "lighting_pass.hpp k_slot_count must match kResources");
     for (std::size_t i = 0; i < s_count; ++i) out.slots_[i] = (*bindings)[i].binding;
     auto layout = rhi::DescriptorSetLayout::create(device, out.db_fns_, *bindings);
     if (!layout) return std::unexpected(layout.error());
@@ -262,6 +264,7 @@ LightingPass::add_to_graph(rhi::RenderGraph& graph, const GBufferTargets& gbuffe
         .reads(gbuffer.normal, rhi::ResourceUsage::sampled_compute)
         .reads(gbuffer.material, rhi::ResourceUsage::sampled_compute)
         .reads(gbuffer.clearcoat, rhi::ResourceUsage::sampled_compute)
+        .reads(gbuffer.emissive, rhi::ResourceUsage::sampled_compute)
         .reads(gbuffer.depth, rhi::ResourceUsage::sampled_compute)
         .reads(shadow_map, rhi::ResourceUsage::sampled_compute)
         .reads(transmittance, rhi::ResourceUsage::sampled_compute)
@@ -317,6 +320,7 @@ LightingPass::add_to_graph(rhi::RenderGraph& graph, const GBufferTargets& gbuffe
         d.write_storage_buffer(s[s_lights], cl.lights, cl.lights_size);
         d.write_storage_buffer(s[s_cluster_grid], cl.grid, cl.grid_size);
         d.write_storage_buffer(s[s_cluster_indices], cl.indices, cl.indices_size);
+        d.write_sampled_image(s[s_emissive], ctx.resolve(gbuffer.emissive).view, ro);
 
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline_.handle());
         d.bind(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline_.layout(), 0);

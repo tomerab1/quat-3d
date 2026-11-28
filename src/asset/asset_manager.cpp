@@ -1,4 +1,5 @@
 #include "engine/asset/asset_manager.hpp"
+#include "engine/core/utf8_path.hpp"
 
 #include <cstddef>
 #include <string>
@@ -107,7 +108,7 @@ constexpr std::uint64_t kPrime5 = 2870177450012600261ULL;
 AssetId asset_id_from_path(std::string_view relative_path) {
     // Normalise so "a/b.gltf", "./a/b.gltf", and "a\\b.gltf" map to one id.
     std::filesystem::path path = std::filesystem::path(relative_path).lexically_normal();
-    std::string canonical = path.generic_string();
+    std::string canonical = core::path_to_generic_utf8(path);
     return AssetId{xxhash64(canonical.data(), canonical.size())};
 }
 

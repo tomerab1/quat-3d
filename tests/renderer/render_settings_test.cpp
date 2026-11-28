@@ -50,6 +50,12 @@ TEST(RenderSettings, TableEntriesAreConsistent) {
         case r::RenderSettingType::boolean: EXPECT_NE(ref.b, nullptr) << key; break;
         case r::RenderSettingType::number: EXPECT_NE(ref.f, nullptr) << key; break;
         case r::RenderSettingType::integer: EXPECT_NE(ref.i, nullptr) << key; break;
+        case r::RenderSettingType::choice:
+            // An index into the names: the range covers exactly the choices.
+            EXPECT_NE(ref.i, nullptr) << key;
+            EXPECT_EQ(d.min, 0.0F) << key;
+            EXPECT_EQ(static_cast<std::size_t>(d.max) + 1, d.choices.size()) << key;
+            break;
         }
         EXPECT_EQ(r::find_render_setting(d.group, d.name), &d) << key;
     }

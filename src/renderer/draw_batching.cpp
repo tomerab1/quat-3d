@@ -27,6 +27,10 @@ struct BatchKeyHash {
 
 constexpr std::uint32_t kDropped = std::numeric_limits<std::uint32_t>::max();
 
+[[nodiscard]] InstanceMotion motion_for(const DrawItem& item) {
+    return make_instance_motion(item.prev_model.value_or(item.model), item.prev_positions);
+}
+
 [[nodiscard]] InstancedDraw draw_for(const DrawItem& item) {
     InstancedDraw d;
     d.mesh = item.mesh;
@@ -86,11 +90,14 @@ InstancedDrawList batch_draws(std::span<const DrawItem> items) {
 
     // Pass 3: scatter the instance records (items keep their relative order).
     out.instances.resize(total);
+    out.motion.resize(total);
     std::vector<std::uint32_t> cursor(out.draws.size());
     for (std::size_t d = 0; d < out.draws.size(); ++d) cursor[d] = out.draws[d].first_instance;
     for (std::size_t i = 0; i < items.size(); ++i) {
         if (draw_of[i] == kDropped) continue;
-        out.instances[cursor[draw_of[i]]++] = make_instance_data(items[i].model);
+        const std::uint32_t slot = cursor[draw_of[i]]++;
+        out.instances[slot] = make_instance_data(items[i].model);
+        out.motion[slot] = motion_for(items[i]);
     }
     return out;
 }
@@ -98,6 +105,7 @@ InstancedDrawList batch_draws(std::span<const DrawItem> items) {
 InstancedDrawList unbatched_draws(std::span<const DrawItem> items) {
     InstancedDrawList out;
     out.instances.reserve(items.size());
+    out.motion.reserve(items.size());
     out.draws.reserve(items.size());
     for (const DrawItem& item : items) {
         if (item.mesh == nullptr) continue;
@@ -106,6 +114,7 @@ InstancedDrawList unbatched_draws(std::span<const DrawItem> items) {
         d.instance_count = 1;
         out.draws.push_back(d);
         out.instances.push_back(make_instance_data(item.model));
+        out.motion.push_back(motion_for(item));
     }
     return out;
 }

@@ -17,6 +17,7 @@
 #include <glm/gtc/quaternion.hpp>
 #include <imgui.h>
 
+#include "engine/rhi/material_shader_names.hpp"
 #include "engine/scene/components.hpp"
 #include "engine/scene/scatter.hpp"
 #include "engine/terrain/budget.hpp"
@@ -53,7 +54,9 @@ void draw_terrain(scene::Terrain& terrain) {
         (void)ui::prop_u32("Droplets", p.erosion_droplets,
                            {.speed = 1000.0F, .min = 0, .max = 1'000'000});
     }
-    if (ui::prop_bool("Generate on GPU", terrain.gpu_generate)) terrain.regenerate = true;
+    // CPU and GPU synthesis produce the same heights: the choice applies to
+    // the next tile generated (no regeneration).
+    (void)ui::prop_bool("Generate on GPU", terrain.gpu_generate);
     (void)ui::prop_float("Snowline", terrain.snowline_m,
                          {.speed = 1.0F, .min = -1000.0F, .max = 5000.0F, .format = "%.0f m"});
     ui::prop_separator("Streaming");
@@ -61,9 +64,10 @@ void draw_terrain(scene::Terrain& terrain) {
                       {.tooltip = "An endless seeded world streams in around the camera"})) {
         terrain.regenerate = true; // rebuild in the new mode
     }
-    if (terrain.streaming &&
-        ui::prop_int("Radius (tiles)", terrain.stream_radius, {.min = 1, .max = 4, .slider = true})) {
-        terrain.regenerate = true;
+    if (terrain.streaming) {
+        // The runtime resizes the window and keeps the loaded tiles.
+        (void)ui::prop_int("Radius (tiles)", terrain.stream_radius,
+                           {.min = 1, .max = 4, .slider = true});
     }
     if (const auto over = terrain::terrain_budget_problem(p, terrain.streaming,
                                                           terrain.stream_radius)) {
@@ -99,6 +103,24 @@ void draw_primitive(scene::Primitive& p) {
     (void)ui::prop_float("Roughness", p.roughness, {.min = 0.0F, .max = 1.0F, .slider = true},
                          {.reset = 0.5F});
     (void)ui::prop_color3("Emissive", p.emissive, {.reset = glm::vec3(0.0F)}, /*hdr=*/true);
+
+    // Material shader (A6): assets/shaders/materials/<name>.slang; the name
+    // commits on Enter (every edit re-resolves the material).
+    std::string shader = p.shader;
+    if (ui::prop_text("Shader", shader,
+                      {.tooltip = "Material shader under assets/shaders/materials/ (Enter to "
+                                  "apply); empty = built-in PBR"},
+                      /*commit_on_enter=*/true)) {
+        if (shader.empty() || shader == rhi::material_shaders::builtin_name) {
+            p.shader.clear();
+        } else if (rhi::material_shaders::valid_name(shader)) {
+            p.shader = shader;
+        }
+    }
+    if (!p.shader.empty()) {
+        (void)ui::prop_vec4("Shader params 0", p.shader_params[0], {.speed = 0.01F});
+        (void)ui::prop_vec4("Shader params 1", p.shader_params[1], {.speed = 0.01F});
+    }
 }
 
 void draw_instanced_mesh(entt::registry& r, entt::entity e, scene::InstancedMesh& mesh,

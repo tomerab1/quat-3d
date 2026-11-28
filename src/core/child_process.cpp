@@ -1,4 +1,6 @@
 #include "engine/core/child_process.hpp"
+#include "engine/core/env.hpp"
+#include "engine/core/utf8_path.hpp"
 
 #include <algorithm>
 #include <cerrno>
@@ -51,7 +53,7 @@ enum class Abort : std::uint8_t { none, timed_out, cancelled, failed };
 [[nodiscard]] std::unexpected<Error> abort_error(Abort why, const fs::path& program,
                                                  const ProcessOptions& options,
                                                  const std::string& output) {
-    std::string what = program.filename().string();
+    std::string what = core::path_to_utf8(program.filename());
     if (why == Abort::timed_out) {
         what += " timed out after " + std::to_string(options.timeout.count()) +
                 " ms and was killed";
@@ -244,7 +246,7 @@ run_process(const fs::path& program, std::span<const std::string> args,
     null_in = INVALID_HANDLE_VALUE;
     if (!started) {
         CloseHandle(read_end);
-        return fail("CreateProcess failed for " + program.string() + " (error " +
+        return fail("CreateProcess failed for " + core::path_to_utf8(program) + " (error " +
                     std::to_string(create_error) + ")");
     }
     CloseHandle(pi.hThread);
@@ -511,8 +513,10 @@ run_process(const fs::path& program, std::span<const std::string> args,
 #endif
 
 std::optional<fs::path> find_on_path(std::string_view name) {
-    const char* path_env = std::getenv("PATH");
-    if (path_env == nullptr) return std::nullopt;
+    // UTF-8 (read from the UTF-16 environment on Windows); each entry is
+    // converted back with path_from_utf8.
+    const std::optional<std::string> path_env = env_utf8("PATH");
+    if (!path_env) return std::nullopt;
 #if defined(_WIN32)
     constexpr char separator = ';';
     const std::string file = std::string(name) + ".exe";
@@ -520,14 +524,14 @@ std::optional<fs::path> find_on_path(std::string_view name) {
     constexpr char separator = ':';
     const std::string file(name);
 #endif
-    const std::string_view paths(path_env);
+    const std::string_view paths(*path_env);
     std::size_t start = 0;
     while (start <= paths.size()) {
         std::size_t end = paths.find(separator, start);
         if (end == std::string_view::npos) end = paths.size();
         const std::string_view dir = paths.substr(start, end - start);
         if (!dir.empty()) {
-            const fs::path candidate = fs::path(std::string(dir)) / file;
+            const fs::path candidate = path_from_utf8(dir) / file;
             std::error_code ec;
             if (fs::is_regular_file(candidate, ec)) {
 #if defined(_WIN32)

@@ -1,4 +1,4 @@
-#include "scene_snapshot.hpp"
+#include "engine/scene/scene_snapshot.hpp"
 
 #include <cstdint>
 #include <string>
@@ -9,7 +9,7 @@
 
 #include "engine/scene/scene.hpp"
 
-namespace engine::editor {
+namespace engine::scene {
 
 namespace {
 
@@ -175,4 +175,4 @@ std::expected<void, core::Error> run_scene_snapshot_self_test() {
     return {};
 }
 
-} // namespace engine::editor
+} // namespace engine::scene

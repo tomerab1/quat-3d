@@ -165,7 +165,8 @@ TEST(AlphaVariantShaders, GBufferEntryPointsWriteTheSameTargets) {
     }
     const Module gbuffer = load("gbuffer.spv");
     const std::set<std::uint32_t> opaque = output_locations(gbuffer, "fragment_main");
-    EXPECT_EQ(opaque, (std::set<std::uint32_t>{0, 1, 2, 3})); // albedo, normal, material, coat
+    // albedo, normal, material, coat, emission (A6), velocity (R11)
+    EXPECT_EQ(opaque, (std::set<std::uint32_t>{0, 1, 2, 3, 4, 5}));
     EXPECT_EQ(output_locations(gbuffer, "fragment_masked"), opaque);
 }
 

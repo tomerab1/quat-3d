@@ -77,7 +77,9 @@ namespace engine::scene {
 [[nodiscard]] std::uint64_t primitive_hash(const Primitive& primitive);
 
 // The flat PBR material a Primitive renders with: its colour (alpha < 1 ->
-// alpha-blended), metallic/roughness and emission; planes are double-sided.
+// alpha-blended unless a material shader is set), metallic/roughness,
+// emission and shader parameters; planes are double-sided. (The shader name
+// itself goes on the MaterialAsset, see load_primitive_assets.)
 [[nodiscard]] asset::PbrMaterialParams primitive_material_params(const Primitive& primitive);
 
 // True when some Primitive's MeshRenderer is missing or stale. Cheap (no GPU
@@ -103,7 +105,8 @@ struct PrimitiveAssets {
 // (Re)builds the MeshRenderer of every Primitive whose `resolved` hash differs
 // from its current fields. Meshes and materials are shared through `assets`:
 // meshes under "primitive/mesh/<shape>", materials under
-// "primitive/material/<16 hex digits>" (a hash of the material parameters), so
+// "primitive/material/<16 hex digits>" (a hash of the material parameters and
+// material shader), so
 // a thousand identical blocks cost one mesh and one material. Uploads block on
 // `transfer`. Returns the number of entities rebuilt; an asset that fails to
 // upload is reported after every entity has been processed (the entity then
