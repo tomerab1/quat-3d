@@ -269,6 +269,7 @@ target_include_directories(engine_input PUBLIC ${ENGINE_PUBLIC_INCLUDE})
 # ---------------------------------------------------------------------------
 add_library(engine_rhi STATIC
     src/rhi/device.cpp
+    src/rhi/driver_info.cpp
     src/rhi/queue_selection.cpp
     src/rhi/swapchain.cpp
     src/rhi/gpu_allocator.cpp
@@ -278,6 +279,7 @@ add_library(engine_rhi STATIC
     src/rhi/pipeline_cache.cpp
     src/rhi/descriptor_buffer.cpp
     src/rhi/render_graph.cpp
+    src/rhi/render_graph_copy.cpp
     src/rhi/gpu_profiler.cpp
     src/rhi/graphics_pipeline.cpp
     src/rhi/compute_pipeline.cpp

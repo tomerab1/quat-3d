@@ -59,7 +59,9 @@ int main(int argc, char** argv) {
                   static_cast<std::streamsize>(bytes.size()));
         out.close();
         if (!out) {
-            std::fprintf(stderr, "quat-asset-gen: failed to write '%s'\n", path.string().c_str());
+            const std::u8string shown = path.u8string(); // .string() aborts on Windows
+            std::fprintf(stderr, "quat-asset-gen: failed to write '%s'\n",
+                         reinterpret_cast<const char*>(shown.c_str()));
             return 1;
         }
         std::printf("%-22s %6zu triangles %7zu bytes\n", std::string(catalogue[i].file).c_str(),
