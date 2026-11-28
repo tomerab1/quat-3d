@@ -189,15 +189,24 @@ TEST(DrawBatching, MotionRecordsFollowTheirInstances) {
         const r::InstanceMotion& m = list.motion[i];
         if (same(model, items[0].model)) {
             EXPECT_TRUE(same(m.prev_model, *items[0].prev_model));
-            EXPECT_EQ(m.has_prev_positions, 0U);
         } else if (same(model, items[1].model)) {
             EXPECT_TRUE(same(m.prev_model, items[1].model));
         } else {
             EXPECT_TRUE(same(m.prev_model, *items[2].prev_model));
-            EXPECT_EQ(m.prev_positions, 0x1000U);
-            EXPECT_EQ(m.has_prev_positions, 1U);
         }
     }
+    // Last frame's positions are per vertex of one item: that item is its own
+    // single-instance draw carrying the address (the others carry none).
+    ASSERT_EQ(list.draws.size(), 3U);
+    int with_prev = 0;
+    for (const r::InstancedDraw& d : list.draws) {
+        if (d.prev_positions == 0) continue;
+        ++with_prev;
+        EXPECT_EQ(d.prev_positions, 0x1000U);
+        ASSERT_EQ(d.instance_count, 1U);
+        EXPECT_TRUE(same(list.instances[d.first_instance].model, items[2].model));
+    }
+    EXPECT_EQ(with_prev, 1);
     const r::InstancedDrawList flat = r::unbatched_draws(items);
     ASSERT_EQ(flat.motion.size(), 3U);
     EXPECT_TRUE(same(flat.motion[2].prev_model, *items[2].prev_model));

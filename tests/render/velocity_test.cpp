@@ -126,6 +126,29 @@ TEST(GpuVelocity, StaticSceneWithMovingCameraIsCameraOnly) {
     expect_velocity(velocity_at(*vel, 2, 2), want, "background");
 }
 
+// Last frame's skinned positions are per vertex of one instance: the GBuffer
+// pass refuses a draw that would share them between instances (the address
+// is never dereferenced: the pass fails before recording).
+TEST(GpuVelocity, PrevPositionsOnAMultiInstanceDrawAreRejected) {
+    QUAT_REQUIRE_GPU(g);
+    auto mesh = quad(*g);
+    ASSERT_OK(mesh);
+    const glm::mat4 vp = camera(glm::vec3(0.0F, 0.0F, 3.0F));
+    std::array<r::DrawItem, 2> items{};
+    items[0].mesh = items[1].mesh = &*mesh;
+    items[1].model = glm::translate(glm::mat4(1.0F), glm::vec3(0.5F, 0.0F, 0.0F));
+    r::InstancedDrawList list = r::batch_draws(items);
+    ASSERT_EQ(list.draws.size(), 1U);
+    ASSERT_EQ(list.draws[0].instance_count, 2U);
+    list.draws[0].prev_positions = 0x1000;
+    EXPECT_ERR(render_velocity(*g, list, vp, vp, r::ViewMotion::still(vp)));
+    // The same address on a single-instance draw is accepted by batching.
+    items[0].prev_positions = 0x1000;
+    const r::InstancedDrawList split = r::batch_draws(items);
+    ASSERT_EQ(split.draws.size(), 2U);
+    for (const r::InstancedDraw& d : split.draws) EXPECT_EQ(d.instance_count, 1U);
+}
+
 // Two instances of one mesh batched into a single instanced draw, each with
 // its own previous pose: every instance carries its own motion.
 TEST(GpuVelocity, InstancesCarryTheirOwnMotion) {
