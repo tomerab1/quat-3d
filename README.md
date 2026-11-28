@@ -353,6 +353,8 @@ python3 scripts/fetch-polyhaven.py assets/showcase/cinematic/assets.json \
 QUAT_SCENE=assets/scenes/cinematic_forest.json QUAT_PLAY=1 ./build/release/game
 ```
 
+![cinematic forest clearing](docs/screenshots/cinematic-hero.jpg)
+
 The assets, credits, stills and the MCP recipe for building scenes like it
 are in [`docs/cinematic-showcase.md`](docs/cinematic-showcase.md).
 

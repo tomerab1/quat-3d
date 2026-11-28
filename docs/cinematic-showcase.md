@@ -8,6 +8,14 @@ into gitignored caches. This page lists the assets, shows how to fetch and
 render the scene, and gives the MCP recipe a model can follow to build
 scenes like it.
 
+| Hero camera (0.5 m above the ground, back-lit) | Wide establishing shot |
+|---|---|
+| ![hero](screenshots/cinematic-hero.jpg) | ![wide](screenshots/cinematic-wide.jpg) |
+
+Rendered at 1920x1080 on lavapipe with `scripts/render-shots.py` (shown at
+1280x720); before the cinematic-post (depth of field, grading) and HDRI
+lighting features land.
+
 ## Fetch the assets
 
 ```sh
