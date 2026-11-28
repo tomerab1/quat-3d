@@ -3,6 +3,7 @@
 
 #include <filesystem>
 #include <fstream>
+#include <system_error>
 #include <iterator>
 #include <string>
 
@@ -305,9 +306,15 @@ TEST(SceneIo, SavesThePhysicsSettingsBlock) {
     s::physics_settings_mut(scene.registry()).gravity = glm::vec3(0.0F, -1.62F, 0.5F);
     const auto path = std::filesystem::temp_directory_path() / "quat_physics_settings.json";
     ASSERT_OK(s::save_scene(scene, path));
-    std::ifstream in(path);
-    const nlohmann::json root = nlohmann::json::parse(in, nullptr, false);
-    std::filesystem::remove(path);
+    nlohmann::json root;
+    {
+        // Closed before the remove: Windows cannot delete an open file.
+        std::ifstream in(path);
+        root = nlohmann::json::parse(in, nullptr, false);
+    }
+    std::error_code ec;
+    std::filesystem::remove(path, ec);
+    EXPECT_FALSE(ec) << ec.message();
     ASSERT_FALSE(root.is_discarded());
     ASSERT_TRUE(root.contains("physics_settings"));
     EXPECT_EQ(root["physics_settings"]["version"], s::k_physics_settings_version);

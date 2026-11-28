@@ -682,3 +682,15 @@ splits a file another open PR also touches says so in its PR body and the
 orchestrator lands one split first; the other branch merges it before going
 further. Cross-PR design choices are settled on one PR (here: the review
 thread on #54) and recorded in the merge commit.
+
+## A test deleted a file it still had open (A10.1, Windows)
+
+`SceneIo.SavesThePhysicsSettingsBlock` called `std::filesystem::remove`
+while its `std::ifstream` on the file was still open. Linux allows that;
+Windows refuses, the throwing overload raised `filesystem_error`, and with
+exceptions disabled MSVC aborted the whole CPU test binary (`0xc0000409`, no
+test name under `GTEST_BRIEF`). **Rule:** close streams (scope them) before
+removing their files, and clean up with the `std::error_code` overloads of
+`std::filesystem` calls — never the throwing ones, in tests or engine code.
+To find which test aborted a `GTEST_BRIEF` run, use the last log line
+printed before the crash plus the alphabetical link order of `tests/**`.
