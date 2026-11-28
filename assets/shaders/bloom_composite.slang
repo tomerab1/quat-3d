@@ -7,9 +7,9 @@
 
 import hdr;
 
-[[vk::binding(0)]] Texture2D          g_bloom; // half-res accumulated bloom
-[[vk::binding(1)]] SamplerState       g_samp;
-[[vk::binding(2)]] [format("rgba16f")] RWTexture2D<float4> g_hdr;   // full-res HDR (in/out)
+Texture2D          g_bloom; // half-res accumulated bloom
+SamplerState       g_samp;
+[format("rgba16f")] RWTexture2D<float4> g_hdr;   // full-res HDR (in/out)
 
 struct Params {
     float intensity;
