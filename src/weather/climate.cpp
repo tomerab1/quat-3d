@@ -133,8 +133,13 @@ float snow_fraction(float t_c) {
     constexpr double c = 1.1662;
     constexpr double d = 1.0223;
     if (!std::isfinite(t_c)) return 0.0F;
+    // The fit's asymptotes (a (1 - d) ~ 1.1 % when warm, -a (1 + d) ~ 97.5 %
+    // when cold) are fitting residue, not climate: normalised onto [0, 1],
+    // which keeps the 50 % point at c.
+    const double lo = a * (1.0 - d);
+    const double hi = -a * (1.0 + d);
     const double percent = a * (std::tanh(b * (static_cast<double>(t_c) - c)) - d);
-    return static_cast<float>(std::clamp(percent / 100.0, 0.0, 1.0));
+    return static_cast<float>(std::clamp((percent - lo) / (hi - lo), 0.0, 1.0));
 }
 
 } // namespace engine::weather

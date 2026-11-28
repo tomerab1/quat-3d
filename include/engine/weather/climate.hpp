@@ -133,7 +133,8 @@ inline constexpr double k_diurnal_max_hour = 15.0; // local solar time of the da
 [[nodiscard]] float air_temperature(const ClimateSample& sample, float anomaly_c, float cloud_cover);
 
 // Fraction of precipitation falling as snow at air temperature `t_c`
-// (Dai 2008, land): ~0.97 well below 0 C, 0.5 near +1.2 C, ~0.01 above +6 C.
+// (Dai 2008, land; the fit's ~1 % / ~97.5 % asymptotes normalised to 0 / 1):
+// 0.5 at +1.17 C, > 0.95 below -2 C, < 0.02 above +6 C.
 [[nodiscard]] float snow_fraction(float t_c);
 
 // ---- Weather kinds, presets and the daily sequence --------------------------------
