@@ -738,7 +738,11 @@ add_library(engine_renderer STATIC
     src/renderer/motion_history.cpp
     src/renderer/upscaler.cpp
     src/renderer/atmosphere_pass.cpp
+    src/renderer/terrain_attributes.cpp
+    src/renderer/terrain_material_gpu.cpp
     src/renderer/terrain_pass.cpp
+    src/renderer/terrain_pass_material.cpp
+    src/renderer/terrain_textures.cpp
     src/renderer/terrain_gpu_tiles.cpp
     src/renderer/terrain_synth_pass.cpp
     src/renderer/terrain_shadow.cpp

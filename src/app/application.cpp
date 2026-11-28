@@ -240,6 +240,8 @@ bool Application::init_subsystems() {
     load_startup_hdri();
     // Terrain, networking (QUAT_HOST / QUAT_JOIN) and the QUAT_TERRAIN tile.
     world_.init(device_, allocator_, pipeline_cache_, shader_dir_, project_root(), scene_);
+    // Terrain layer texture sets are engine data (R26.2), whatever game is open.
+    world_.terrain_pass().set_texture_root(data_root());
 
     // Free-fly view camera, seeded by framing the scene.
     // Issue #8: frame the demo content (not its ground plate) for the view it

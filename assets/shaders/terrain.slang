@@ -8,20 +8,24 @@
 // every LOD and skirts (dropped by skirt_depth_m) hide the cracks between
 // neighbouring chunks at different LODs.
 //
-// Shading is fully procedural: slope/height splat between grass, rock and
-// snow, broken up by triplanar FBM detail (sin-free hash — NVIDIA fast-trig
-// collapses frac(sin()) lattices). Writes the same GBuffer layout as
-// gbuffer.slang; the deferred lighting pass shades terrain like any mesh.
+// Shading is the layered terrain material (R26.1, lib/terrain_material.slang)
+// through ITerrainMaterial: texture-set layers from the cooked texture arrays
+// (ArrayLayerSource; an untextured layer falls back to its tinted colour with
+// procedural detail), placed by slope, altitude, the per-tile curvature /
+// flow attributes (terrain_attributes.slang) and the edit paint channels.
+// Writes the same GBuffer layout as gbuffer.slang; the deferred lighting
+// pass shades terrain like any mesh.
 
 import velocity;
 import terrain_grid;
+import terrain_material;
 
 struct PushConstants {
     float4x4 view_proj;      // jittered
     float4   chunk;  // x,y = chunk origin (world xz), z = chunk size m, w = skirt depth m
     float4   region; // x,y = heightmap uv offset, z = uv scale, w = metres per texel
-    float4   shade;  // x = grid_n, y = heightmap texel uv, z = snowline m, w = rock slope
-    float4   misc;   // x = tile origin world y, yzw unused
+    float4   shade;  // x = grid_n, y = heightmap texel uv, z = snowline m, w unused
+    float4   misc;   // x = tile origin world y, yzw = camera world position
     float4x4 prev_view_proj; // last frame, unjittered (terrain is static: camera motion only)
     float4   motion;         // xy = this frame's jitter (NDC), zw unused
 }
@@ -29,6 +33,20 @@ struct PushConstants {
 
 [[vk::binding(0)]] Texture2D    g_heightmap; // R32F, metres
 [[vk::binding(1)]] SamplerState g_sampler;   // linear clamp
+// Edit paint (G19 terrain edits): r dirt, g gravel, b garden soil weights,
+// a grass-density mask (read by the grass pass, not here). A 1x1 "unpainted"
+// texel for tiles without edits.
+[[vk::binding(2)]] Texture2D    g_paint;
+// Per-tile attributes (terrain_attributes.slang): r = concavity * 0.5 + 0.5,
+// g = flow (0 dry .. 1 water collects).
+[[vk::binding(3)]] Texture2D    g_attributes;
+[[vk::binding(4)]] ConstantBuffer<TerrainMaterialParams> g_material;
+// Layer texture sets, one array slice per textured set: sRGB albedo, X/Y
+// normal (RG), packed R roughness / G occlusion / B height.
+[[vk::binding(5)]] Texture2DArray g_albedo;
+[[vk::binding(6)]] Texture2DArray g_normal;
+[[vk::binding(7)]] Texture2DArray g_packed;
+[[vk::binding(8)]] SamplerState   g_wrap; // trilinear + anisotropic, repeat
 
 struct VsOut {
     float4 clip      : SV_Position;
@@ -63,44 +81,58 @@ VsOut vertex_main(uint id : SV_VertexID) {
     return o;
 }
 
-// --------------------------------------------------------------------------
-// Procedural detail noise (sin-free hash12 + rotated-octave FBM).
-// --------------------------------------------------------------------------
-float detail_hash(float2 p) {
-    float3 q = frac(float3(p.x, p.y, p.x) * 0.1031);
-    q += dot(q, float3(q.y, q.z, q.x) + 33.33);
-    return frac((q.x + q.y) * q.z);
-}
-
-float detail_noise(float2 p) {
-    float2 i = floor(p);
-    float2 f = frac(p);
-    float2 u = f * f * (3.0 - 2.0 * f);
-    float a = detail_hash(i);
-    float b = detail_hash(i + float2(1, 0));
-    float c = detail_hash(i + float2(0, 1));
-    float d = detail_hash(i + float2(1, 1));
-    return lerp(lerp(a, b, u.x), lerp(c, d, u.x), u.y);
-}
-
-float detail_fbm(float2 p) {
-    const float2x2 rot = float2x2(0.80, 0.60, -0.60, 0.80);
-    float v = 0.0;
-    float amp = 0.5;
-    for (int i = 0; i < 4; ++i) {
-        v += amp * detail_noise(p);
-        p = mul(rot, p) * 2.13 + float2(7.3, 3.1);
-        amp *= 0.5;
+// The cooked texture arrays; untextured layers (slice < 0) are their tinted
+// colour with procedural metre-scale detail.
+struct ArrayLayerSource : ITerrainLayerSource {
+    LayerTexel sample(TerrainLayerGpu l, float2 uv, float2 duvdx, float2 duvdy) {
+        LayerTexel t;
+        if (l.surface.w < 0.0) {
+            const float d = terrain_fbm(uv * 2.0);
+            t.albedo = l.fallback.rgb * (0.8 + 0.4 * d);
+            t.normal_xy = float2(0.0, 0.0);
+            t.roughness = l.fallback.w;
+            t.occlusion = 1.0;
+            t.height = d;
+            return t;
+        }
+        const float3 a = float3(uv, l.surface.w);
+        t.albedo = g_albedo.SampleGrad(g_wrap, a, duvdx, duvdy).rgb;
+        t.normal_xy = g_normal.SampleGrad(g_wrap, a, duvdx, duvdy).rg * 2.0 - 1.0;
+        const float3 p = g_packed.SampleGrad(g_wrap, a, duvdx, duvdy).rgb;
+        t.roughness = p.r;
+        t.occlusion = p.g;
+        t.height = p.b;
+        return t;
     }
-    return v;
+
+    LayerTexel mean(TerrainLayerGpu l) {
+        LayerTexel t;
+        t.normal_xy = float2(0.0, 0.0);
+        if (l.surface.w < 0.0) {
+            t.albedo = l.fallback.rgb;
+            t.roughness = l.fallback.w;
+            t.occlusion = 1.0;
+            t.height = 0.5;
+            return t;
+        }
+        const float3 a = float3(0.5, 0.5, l.surface.w);
+        const float lod = g_material.global2.z; // the 1x1 mip
+        t.albedo = g_albedo.SampleLevel(g_wrap, a, lod).rgb;
+        const float3 p = g_packed.SampleLevel(g_wrap, a, lod).rgb;
+        t.roughness = p.r;
+        t.occlusion = p.g;
+        t.height = p.b;
+        return t;
+    }
 }
 
-// Triplanar FBM: blend the three world-plane projections by the normal.
-float triplanar_fbm(float3 wp, float3 n, float freq) {
-    float3 w = abs(n);
-    w /= (w.x + w.y + w.z);
-    return detail_fbm(wp.zy * freq) * w.x + detail_fbm(wp.xz * freq) * w.y +
-           detail_fbm(wp.xy * freq) * w.z;
+struct GBufferOut {
+    float4 albedo    : SV_Target0;
+    float2 normal    : SV_Target1;
+    float4 material  : SV_Target2; // r metallic, g roughness, b occlusion, a mask
+    float2 clearcoat : SV_Target3;
+    float4 emissive  : SV_Target4; // terrain emits nothing
+    float2 velocity  : SV_Target5;
 }
 
 float2 sign_nonzero(float2 v) {
@@ -116,17 +148,8 @@ float2 oct_encode(float3 n) {
     return e;
 }
 
-struct GBufferOut {
-    float4 albedo    : SV_Target0;
-    float2 normal    : SV_Target1;
-    float4 material  : SV_Target2; // r metallic, g roughness, b occlusion, a mask
-    float2 clearcoat : SV_Target3;
-    float4 emissive  : SV_Target4; // terrain emits nothing
-    float2 velocity  : SV_Target5;
-}
-
-[shader("fragment")]
-GBufferOut fragment_main(VsOut input) {
+// Shading of one ground point by material M.
+TerrainSurface shade<M : ITerrainMaterial>(M material, VsOut input) {
     // World normal from heightmap central differences (LOD-independent — the
     // full-resolution field shades even the coarsest chunks).
     const float du = pc.shade.y;
@@ -137,36 +160,32 @@ GBufferOut fragment_main(VsOut input) {
     const float hu = g_heightmap.SampleLevel(g_sampler, input.uv + float2(0.0, du), 0.0).r;
     const float3 n = normalize(float3(hl - hr, 2.0 * mpt, hd - hu));
 
-    // Procedural splat: grass on flat ground, rock on slopes, snow up high.
-    const float detail = triplanar_fbm(input.world, n, 0.15);    // metre-scale
-    const float macro = triplanar_fbm(input.world, n, 0.011);    // ~100 m patches
+    const float2 attr = g_attributes.SampleLevel(g_sampler, input.uv, 0.0).rg;
+    TerrainSurfaceInput s;
+    s.world_pos = input.world;
+    s.normal = n;
+    s.slope_deg = degrees(acos(saturate(n.y)));
+    s.concavity = attr.r * 2.0 - 1.0;
+    s.flow = attr.g;
+    s.paint = g_paint.SampleLevel(g_sampler, input.uv, 0.0);
+    s.view_distance = length(input.world - pc.misc.yzw);
+    s.dpdx = ddx(input.world);
+    s.dpdy = ddy(input.world);
+    return material.evaluate(s);
+}
 
-    const float3 grass = lerp(float3(0.10, 0.17, 0.06), float3(0.16, 0.22, 0.09), macro);
-    const float3 rock = lerp(float3(0.21, 0.19, 0.17), float3(0.30, 0.27, 0.24), detail);
-    const float3 snow = float3(0.83, 0.86, 0.90);
-
-    const float rock_w =
-        smoothstep(pc.shade.w + 0.12, pc.shade.w - 0.12, n.y + (detail - 0.5) * 0.10);
-    // Snow holds on slopes up to ~50 degrees at the snowline, rising to ~60
-    // degrees 200 m above it, where colder, wind-packed snow and rime plaster
-    // steeper faces (slopes past ~60 degrees shed their snow and stay rock).
-    const float above_snowline = saturate((input.world.y - pc.shade.z) / 200.0);
-    const float snow_hold_ny = lerp(0.643, 0.5, above_snowline); // cos 50 .. cos 60 deg
-    const float snow_w = smoothstep(pc.shade.z - 12.0, pc.shade.z + 12.0,
-                                    input.world.y + (macro - 0.5) * 30.0) *
-                         smoothstep(snow_hold_ny - 0.06, snow_hold_ny + 0.06,
-                                    n.y + (detail - 0.5) * 0.08);
-
-    float3 albedo = lerp(grass, rock, rock_w);
-    albedo = lerp(albedo, snow, snow_w);
-    albedo *= 0.85 + 0.3 * detail; // break up tiling
-
-    float roughness = lerp(lerp(0.95, 0.90, rock_w), 0.55, snow_w);
+[shader("fragment")]
+GBufferOut fragment_main(VsOut input) {
+    LayeredTerrainMaterial<ArrayLayerSource> material;
+    material.params = g_material;
+    material.params.global2.y = pc.shade.z; // this frame's snowline
+    material.source = ArrayLayerSource();
+    const TerrainSurface surf = shade(material, input);
 
     GBufferOut o;
-    o.albedo = float4(albedo, 1.0);
-    o.normal = oct_encode(n);
-    o.material = float4(0.0, roughness, 1.0, 1.0);
+    o.albedo = float4(surf.albedo, 1.0);
+    o.normal = oct_encode(surf.normal);
+    o.material = float4(0.0, surf.roughness, surf.occlusion, 1.0);
     o.clearcoat = float2(0.0, 0.0);
     o.emissive = float4(0.0, 0.0, 0.0, 0.0);
     o.velocity = surface_velocity(input.cur_clip, input.prev_clip, pc.motion.xy);
