@@ -53,13 +53,6 @@ into CLAUDE.md or the brief template in [`CYCLE.md`](CYCLE.md).
   the method table in `remote-control.md`; write the contract first.
 - **Agents must not edit STATUS.md / ROADMAP.md** — the orchestrator owns
   them; parallel edits always conflict.
-- **The worktree-isolation guard refuses compound shell commands it cannot
-  parse.** A10.1 lost many round trips: heredocs piped to `python3`, and
-  `git` chained with `&&`, `$(...)` or redirects, were refused as "too
-  complex to verify". → Write edit scripts and commit messages to the
-  scratchpad with the file-writing tool, then run `python3 <script>` /
-  `git commit -F <file>` as plain commands. Keep `git` calls simple and
-  one per command.
 
 ## Build and CI
 
@@ -267,28 +260,6 @@ into CLAUDE.md or the brief template in [`CYCLE.md`](CYCLE.md).
 
 ## C++ in this codebase
 
-- **Jolt reports a sleeping body's contacts as removed.** `OnContactRemoved`
-  fires when a body falls asleep, although it still touches. Per-sub-shape
-  callbacks also arrive many times per body pair (height fields, meshes).
-  A10.1's ContactTracker therefore counts sub-shape contacts per body pair
-  (adds before removals within a step) and parks the pairs of sleeping
-  bodies until they wake. → Never forward raw Jolt contact callbacks as
-  gameplay events.
-- **Jolt measures constraints as body 2 relative to body 1.** A slider
-  built as (this body, world) reported -0.5 while its body moved +0.5 along
-  the axis, and a [0, 1] limit locked it in place. → Create constraints as
-  (target or world, this body) so angles and positions describe the joint's
-  own body.
-- **Dry runs on a scratch registry cannot resolve references to other
-  entities.** `apply_components_atomic` validates components on a
-  one-entity scratch registry, so a joint `target` by name or id was "not
-  found". → Resolve cross-entity fields against the live registry before
-  the dry run, and dry run the rest without them.
-- **A test must fail without the fix.** The first #48 test (a box dropped
-  on a character) passed without the inner body, because a CharacterVirtual
-  that is updated pushes dynamic bodies itself. Only an idle (NetDriven)
-  character showed the bug. → Revert the fix locally once and watch the
-  test fail.
 - **Optimising a fixed-step system must not change its floats (#84).** Nav
   feeds network prediction, so the separation grid had to match the
   all-pairs loop bit for bit. Two traps: float sums depend on order (sort
@@ -709,26 +680,3 @@ it reordered, and an unvalidated ini file. Each lived in code only reachable
 through an ImGui frame. **Rule:** UI actions are plain functions over the
 registry or the state struct, called by the widget and by GoogleTest;
 anything read from disk goes through a pure, tested parser.
-
-## Two branches split the same file two ways (A10.1 × G7)
-
-#54 and #22 each split `physics_world.cpp` into a shared
-`physics_world_impl.hpp` + `physics_queries.cpp`, independently, so the train
-merge hit add/add conflicts on whole files and a design disagreement (the
-character inner-body layer) hidden inside them. **Rule:** a worker that
-splits a file another open PR also touches says so in its PR body and the
-orchestrator lands one split first; the other branch merges it before going
-further. Cross-PR design choices are settled on one PR (here: the review
-thread on #54) and recorded in the merge commit.
-
-## A test deleted a file it still had open (A10.1, Windows)
-
-`SceneIo.SavesThePhysicsSettingsBlock` called `std::filesystem::remove`
-while its `std::ifstream` on the file was still open. Linux allows that;
-Windows refuses, the throwing overload raised `filesystem_error`, and with
-exceptions disabled MSVC aborted the whole CPU test binary (`0xc0000409`, no
-test name under `GTEST_BRIEF`). **Rule:** close streams (scope them) before
-removing their files, and clean up with the `std::error_code` overloads of
-`std::filesystem` calls — never the throwing ones, in tests or engine code.
-To find which test aborted a `GTEST_BRIEF` run, use the last log line
-printed before the crash plus the alphabetical link order of `tests/**`.
