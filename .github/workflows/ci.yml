@@ -281,14 +281,19 @@ jobs:
           GTEST_BRIEF: 1
         run: ctest --test-dir build/macos-release -R engine_tests_cpu -V --timeout 900
 
-      # Every cooked shader through SPIRV-Cross (MoltenVK's SPIR-V -> MSL
-      # translator) and Apple's Metal compiler: names the shader and the
-      # translator's error, which MoltenVK reports only as a failed
-      # vkCreate*Pipelines (issue #103). Informational, like the GPU step.
+      # Every cooked shader through SPIRV-Cross (Homebrew's CLI; MoltenVK
+      # embeds the same library at its own pinned revision) and Apple's Metal
+      # compiler: names the shader and the translator's error, which MoltenVK
+      # reports only as a failed vkCreate*Pipelines (issue #103).
+      # Informational, like the GPU step; the mvk_debug input shows MoltenVK's
+      # own translation.
       - name: MSL translation check (informational)
         if: always() && steps.build.outcome == 'success'
         continue-on-error: true
         run: |
+          # The step's default shell has no pipefail: without it the filter
+          # (which always matches the summary line) would hide a failure.
+          set -o pipefail
           brew install spirv-cross
           scripts/msl-check.sh cooked/shaders "$RUNNER_TEMP/msl" | grep -v '^ok '
 

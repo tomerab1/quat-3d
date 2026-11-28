@@ -238,14 +238,22 @@ into CLAUDE.md or the brief template in [`CYCLE.md`](CYCLE.md).
   array index — `motion[instance].prev_positions[vertex]` became
   `motion[instance + vertex].prev_positions`, which Metal refused
   ("cannot initialize a variable of type 'float4' with an lvalue of type
-  'const device float4 *const device'"). Pointing it at a struct changed
-  nothing. → Buffer-addressed records hold no pointers; per-draw addresses
-  go in push constants (`MslPortability.*` enforces it on every platform).
-  The informational macOS GPU step had shown 108/192 for a whole train
-  without anyone reading why; `scripts/msl-check.sh` (SPIRV-Cross + `xcrun
-  metal`, run by the macOS job) names the shader and the Metal error in
-  seconds. Ubuntu's 2021 `spirv-cross` package reports a different
-  (spurious) packing error for the same shader: diagnose with Homebrew's.
+  'const device float4 *const device'"; MoltenVK: VK_ERROR_INITIALIZATION_FAILED).
+  Pointing it at a struct changed nothing. It is an upstream SPIRV-Cross
+  bug, fixed on main by 89a33616 (#2705, "Do not fold OpPtrAccessChain into
+  the chain of a loaded pointer", 2026-10-14), which neither MoltenVK 1.4.2
+  nor its main branch pins yet. → Rule: never index a pointer that was
+  reached through any `[...]` (array element, pointer index, StructuredBuffer
+  or ConstantBuffer array element, pointer array in push constants); read
+  per-draw addresses straight from push constants. `MslPortability.*`
+  enforces it on every platform; relax it once the runners' MoltenVK ships
+  a SPIRV-Cross with the fix. The informational macOS GPU step had shown
+  108/192 for a whole train without anyone reading why;
+  `scripts/msl-check.sh` (SPIRV-Cross + `xcrun metal`, run by the macOS
+  job) names the shader and the Metal error in seconds. Homebrew's
+  `spirv-cross` is not the revision MoltenVK embeds (it only shares this
+  bug), and Ubuntu's 2021 package reports a different, spurious packing
+  error for the same shader: confirm with the `mvk_debug` CI run.
 - **A failed pipeline creation must carry its VkResult.** The macOS failure
   above printed only "vkCreateGraphicsPipelines failed"; the RHI's errors
   now include the result code.

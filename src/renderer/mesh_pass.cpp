@@ -288,6 +288,11 @@ MeshPass::add_to_graph(rhi::RenderGraph& graph, VkExtent2D extent, const glm::ma
             list.instances.size()) {
             return fail("gbuffer pass: draw instance range exceeds the instance array");
         }
+        // Last frame's positions are per vertex of one instance: shared by
+        // several, every instance but one would get the wrong motion.
+        if (d.prev_positions != 0 && d.instance_count != 1) {
+            return fail("gbuffer pass: a draw with prev_positions must have exactly one instance");
+        }
         const asset::MaterialAsset& mat =
             (d.material != nullptr && d.material->valid()) ? *d.material : default_material_;
 

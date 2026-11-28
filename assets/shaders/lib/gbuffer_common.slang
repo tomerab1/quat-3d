@@ -31,8 +31,12 @@ import velocity;
 // pointer loaded from an array element into that element's index, so
 // `motion[instance].prev_positions[vertex]` became
 // `motion[instance + vertex].prev_positions` and the GBuffer pipelines failed
-// to compile on Metal (issue #103). A pointer read straight from the push
-// constants has no index to fold into.
+// to compile on Metal (issue #103). Rule: never index a pointer that was
+// reached through any [...]; a pointer read straight from the push constants
+// has no index to fold into (MslPortability.* checks every cooked shader).
+// Fixed upstream in SPIRV-Cross 89a33616 (#2705, "Do not fold OpPtrAccessChain
+// into the chain of a loaded pointer", 2026-10-14); the rule can be relaxed
+// once the MoltenVK on the macOS runners ships a SPIRV-Cross with that fix.
 public struct GBufferPushConstants {
     public float4x4        view_proj;      // this frame, jittered
     public float4x4        prev_view_proj; // last frame, unjittered

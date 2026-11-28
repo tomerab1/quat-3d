@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # msl-check.sh — translate every cooked SPIR-V entry point to Metal Shading
-# Language with SPIRV-Cross (the translator MoltenVK embeds) and, on macOS,
-# compile the result with Apple's Metal compiler.
+# Language with SPIRV-Cross (the library MoltenVK embeds, though the installed
+# CLI is a different revision than MoltenVK's pin) and, on macOS, compile the
+# result with Apple's Metal compiler.
 #
 # MoltenVK reports a failed SPIR-V -> MSL conversion only as a failed
 # vkCreate*Pipelines call; this names the shader, the entry point and the

@@ -248,6 +248,8 @@ the shader and the error:
   also runs on Linux with `apt install spirv-cross`, but Ubuntu 24.04's
   package is from 2021 and both misses and invents errors compared with the
   current SPIRV-Cross; trust the macOS step (Homebrew's `spirv-cross`).
+  Neither is the revision MoltenVK pins, so confirm a finding with
+  `mvk_debug` (below), which shows MoltenVK's own translation.
 - **`mvk_debug` workflow input:** `gh workflow run ci.yml --ref <branch> -f
   mvk_debug=true` runs the macOS GPU tests with `MVK_CONFIG_LOG_LEVEL=4`
   (debug), `MVK_CONFIG_DEBUG=1` (the generated MSL of each converted shader)
