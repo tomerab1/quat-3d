@@ -221,7 +221,8 @@ TEST(GpuSpecularEnergy, HdriSunDiscCarriesTheSunsIrradiance) {
     ASSERT_OK(f);
     constexpr float k_sun_size_deg = 10.0F;
     constexpr float k_irradiance = 2.0F;
-    const auto background = [&](bool disc) -> std::expected<quat::test::HostImage, Error> {
+    const auto background = [&](bool disc, float sun_size_deg)
+        -> std::expected<quat::test::HostImage, Error> {
         rhi::TransientImagePool pool(g->device, g->allocator);
         rhi::RenderGraph graph(pool);
         auto targets = f->mesh_pass->add_to_graph(graph, k_extent, glm::mat4(1.0F),
@@ -232,7 +233,7 @@ TEST(GpuSpecularEnergy, HdriSunDiscCarriesTheSunsIrradiance) {
         light.color = {1.0F, 1.0F, 1.0F, k_irradiance};
         light.ambient = {0.0F, 0.0F, 0.0F, 0.0F};
         r::LightingOcclusion occlusion;
-        occlusion.csm.light_size_deg = k_sun_size_deg;
+        occlusion.csm.light_size_deg = sun_size_deg;
         r::LightingTuning tuning;
         tuning.environment = f->env->environment_view();
         tuning.hdri_sun_disc = disc;
@@ -243,8 +244,8 @@ TEST(GpuSpecularEnergy, HdriSunDiscCarriesTheSunsIrradiance) {
         if (!hdr) return std::unexpected(hdr.error());
         return quat::test::render_to_host(*g, graph, *hdr, k_extent, 8);
     };
-    auto with = background(true);
-    auto without = background(false);
+    auto with = background(true, k_sun_size_deg);
+    auto without = background(false, k_sun_size_deg);
     ASSERT_OK(with);
     ASSERT_OK(without);
     const glm::uvec2 c = with->centre();
@@ -253,4 +254,17 @@ TEST(GpuSpecularEnergy, HdriSunDiscCarriesTheSunsIrradiance) {
     EXPECT_NEAR(with->rgba16f(c.x, c.y).g, expected, 0.03F * expected);
     EXPECT_NEAR(without->rgba16f(c.x, c.y).g, 1.0F, 0.02F); // the clamped sky alone
     EXPECT_NEAR(with->rgba16f(0, 0).g, 1.0F, 0.02F);        // far from the sun: no disc
+
+    // A point sun (size 0: hard shadows) still gets a tiny disc, and the
+    // frame stays finite: 1 - cos r must not cancel to 0 (issue #45's NaN
+    // block starts from one Inf / NaN pixel).
+    auto point = background(true, 0.0F);
+    ASSERT_OK(point);
+    for (std::uint32_t y = 0; y < k_extent.height; ++y) {
+        for (std::uint32_t x = 0; x < k_extent.width; ++x) {
+            const glm::vec4 p = point->rgba16f(x, y);
+            ASSERT_TRUE(std::isfinite(p.r) && std::isfinite(p.g) && std::isfinite(p.b))
+                << "pixel " << x << "," << y;
+        }
+    }
 }

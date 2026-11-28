@@ -58,7 +58,7 @@ struct LightingConstants {
     float4 contact;          // x intensity (0 = off), y length m, z steps, w thickness m
     float4 ao;               // x GTAO on, y bent normals, z specular occlusion, w multi-bounce
     float4 realism;          // x multiscatter, y horizon occlusion, z reflections bound,
-                             // w HDRI sun disc angular radius (radians, 0 = none) (R21)
+                             // w HDRI sun disc 1 - cos(radius) (0 = none) (R21)
 }
 ConstantBuffer<LightingConstants> g_frame;
 
@@ -312,11 +312,17 @@ void compute_main(uint3 tid : SV_DispatchThreadID) {
                 // light; draw it back as a disc carrying that irradiance
                 // (E / solid angle), so the sky and screen-space reflections
                 // show the sun the scene is lit by.
-                if (g_frame.realism.w > 0.0) {
-                    float one_minus_cos = 1.0 - cos(g_frame.realism.w);
-                    float t = (dot(ray, sun) - (1.0 - one_minus_cos)) / one_minus_cos;
+                // 1 - cos of the angle to the sun comes from the chord,
+                // |ray - sun|^2 / 2, which keeps its precision where
+                // 1 - dot(ray, sun) cancels in fp32 (a 0.27 deg disc is
+                // ~1e-5 below 1).
+                float disc_one_minus_cos = g_frame.realism.w; // 2 sin^2(r/2), from the CPU
+                if (disc_one_minus_cos > 0.0) {
+                    float3 chord = ray - sun;
+                    float t = 1.0 - 0.5 * dot(chord, chord) / disc_one_minus_cos;
                     float disc = smoothstep(0.0, 0.25, t); // antialiased rim
-                    bg += g_frame.color.rgb * g_frame.color.w * disc / (2.0 * PI * one_minus_cos);
+                    bg += g_frame.color.rgb * g_frame.color.w * disc /
+                          (2.0 * PI * disc_one_minus_cos);
                 }
             } else if (g_frame.direction.w > 1.5) {
                 // Physically-based sky: atmosphere from the sky-view LUT,

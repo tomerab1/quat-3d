@@ -41,7 +41,7 @@ struct LightingConstants {
     glm::vec4 csm_misc{0.0F};   // debug cascades, noise offset, depth -> view (A, B)
     glm::vec4 contact{0.0F};    // intensity (0 = off), length, steps, thickness
     glm::vec4 ao{0.0F};         // on, bent normals, specular occlusion, multi-bounce
-    glm::vec4 realism{0.0F};    // multiscatter, horizon occlusion, reflections bound, sun disc radius (R21)
+    glm::vec4 realism{0.0F};    // multiscatter, horizon occlusion, reflections bound, sun disc 1 - cos r (R21)
 };
 static_assert(sizeof(LightingConstants) == 304, "must match lighting.slang LightingConstants");
 
@@ -242,16 +242,20 @@ LightingPass::add_to_graph(rhi::RenderGraph& graph, const GBufferTargets& gbuffe
     fill_occlusion(c, occlusion);
     // R21: the energy terms need the real DFG LUT (the fallback is black).
     const rhi::ResourceHandle reflections = tuning.reflections;
-    // The HDRI sun disc's angular radius (radians; 0 = none): half the
-    // shadows' sun size, so the disc matches the penumbra it casts.
-    constexpr float k_min_disc_radius = 0.0005F; // ~0.03 deg: a point sun still shows
-    const float disc_radius =
-        tuning.hdri_sun_disc && has_hdri && enable_sky
-            ? std::max(glm::radians(0.5F * occlusion.csm.sanitized().light_size_deg),
-                       k_min_disc_radius)
-            : 0.0F;
+    // The HDRI sun disc as 1 - cos r (0 = none), r = half the shadows' sun
+    // size so the disc matches the penumbra it casts. Computed here as
+    // 2 sin^2(r / 2) in double: 1 - cos r in fp32 cancels to 0 at small r.
+    constexpr double k_min_disc_radius = 0.0005; // ~0.03 deg: a point sun still shows
+    float disc_one_minus_cos = 0.0F;
+    if (tuning.hdri_sun_disc && has_hdri && enable_sky) {
+        const double r =
+            std::max(static_cast<double>(glm::radians(0.5F * occlusion.csm.sanitized().light_size_deg)),
+                     k_min_disc_radius);
+        const double s = std::sin(0.5 * r);
+        disc_one_minus_cos = static_cast<float>(2.0 * s * s);
+    }
     c.realism = {flag(tuning.multiscatter && ibl.valid()), flag(tuning.horizon_occlusion),
-                 flag(reflections.valid()), disc_radius};
+                 flag(reflections.valid()), disc_one_minus_cos};
     // Host writes land before vkQueueSubmit, which makes them visible.
     std::memcpy(constants_.mapped(), &c, sizeof(c));
     if (auto f = constants_.flush(0, sizeof(c)); !f) return std::unexpected(f.error());
