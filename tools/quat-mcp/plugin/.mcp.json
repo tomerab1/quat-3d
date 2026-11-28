@@ -1,0 +1,10 @@
+{
+  "quat-3d": {
+    "command": "${user_config.quat_mcp_command}",
+    "args": ["--skills=false", "--prompts=false"],
+    "env": {
+      "QUAT_REMOTE_PORT": "${user_config.engine_port}",
+      "QUAT_MCP_PROJECT_ROOT": "${user_config.project_root}"
+    }
+  }
+}

@@ -37,6 +37,7 @@ async fn main() -> anyhow::Result<()> {
     let engine = Arc::new(EngineClient::new(config));
     let service = QuatServer::new(engine, cli.long_timeout())
         .with_assets(cli.asset_config())
+        .with_workflows(cli.workflows())
         .serve(rmcp::transport::stdio())
         .await
         .context("starting the MCP server on stdio")?;
