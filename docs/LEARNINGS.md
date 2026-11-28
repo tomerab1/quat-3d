@@ -56,18 +56,6 @@ into CLAUDE.md or the brief template in [`CYCLE.md`](CYCLE.md).
 
 ## Build and CI
 
-- **`timeout … xvfb-run game` leaks the game when the timeout fires.**
-  `timeout` kills `xvfb-run`, not the game it started; the orphaned games
-  (and their Xvfb servers) keep rendering on lavapipe. On 2026-11-27 a dozen
-  of them from earlier render scripts held the container's load average near
-  60 for hours, and every later build crawled. → Render scripts run the game
-  under `timeout` *inside* `xvfb-run` (`xvfb-run … timeout N game`), kill it
-  by PID when done, and check `ps` for leftovers before reporting.
-- **libc++ 18 has no floating-point `std::from_chars`** (the overload is
-  deleted). Parse untrusted decimal text (the R20 `.cube` parser) with
-  `std::strtof` on a bounded, NUL-terminated copy of the token after
-  checking its characters, and require the whole token to be consumed.
-
 - **A clean auto-merge can still break the build.** Merging master (#20)
   into the E8 branch raised no conflict, but master had renamed
   `WorldRuntime::clear_spin_entity` while the branch added a new call to it;
@@ -692,19 +680,3 @@ it reordered, and an unvalidated ini file. Each lived in code only reachable
 through an ImGui frame. **Rule:** UI actions are plain functions over the
 registry or the state struct, called by the widget and by GoogleTest;
 anything read from disk goes through a pure, tested parser.
-
-## Shader and C++ checks without vcpkg or slangc (R20)
-
-R20's review fixes touched the RHI, the tonemap shader and the camera
-codec in a container where vcpkg cannot fetch sources and `slangc` is not
-installed. Ubuntu still packages enough for useful checks:
-`apt-get install libvulkan-memory-allocator-dev libgtest-dev libglm-dev
-nlohmann-json3-dev libvulkan-dev` lets `g++-13 -std=c++23 -fsyntax-only`
-check RHI / renderer files (clang 18 with libstdc++ has no `std::expected`),
-and CPU-only tests link against `-lgtest -lgtest_main`. PyPI's `slangpy`
-bundles the Slang compiler: `create_device(type=vulkan, include_paths=...)`
-on `/opt/lavapipe/lvp_icd.json`, then `load_module` + `link_program` with
-the entry points compiles a shader (a deliberately broken copy must fail
-first, to prove the check is real). **Rule:** before pushing shader or
-RHI changes from a cloud container, compile them this way; it is not a
-substitute for CI's full build and GPU tests.
