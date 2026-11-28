@@ -624,6 +624,7 @@ Device& Device::operator=(Device&& other) noexcept {
         transfer_queue_  = std::exchange(other.transfer_queue_, VK_NULL_HANDLE);
         present_queue_   = std::exchange(other.present_queue_, VK_NULL_HANDLE);
         properties_     = other.properties_;
+        driver_         = std::move(other.driver_);
         descriptor_buffer_props_ = other.descriptor_buffer_props_;
         max_sampler_anisotropy_  = other.max_sampler_anisotropy_;
         independent_blend_       = other.independent_blend_;
